@@ -68,9 +68,15 @@ constexpr auto kAsmTtl      = std::chrono::seconds(30);
 // host's receive path, since host-to-client is a distinct stream direction).
 coop::blob_chunks::Assembler g_clientAssembler;
 coop::player_profile::Profile g_pendingApply;
-// Client: where the applied profile says this player stood; the world-appearance placement reads
-// it once (TakeJoinPose). Not valid on a first join, or when the player left dead.
+// Client: where the join's world appearance puts this player, and the pose for a ProfilePose; the
+// placement reads both once (TakeJoinPlacement).
 coop::player_profile::Pose g_joinPose;
+JoinPlacement g_joinPlacement = JoinPlacement::StartPoint;
+
+bool JoinStaysAtHost() {
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::join_at_host);
+    return s;
+}
 std::atomic<bool> g_hasPendingApply{false};
 // Client: this session's world was built from a host profile. The stream to the host is gated on
 // it, because a world that came up without one carries nothing of the player's, and streaming that
@@ -190,6 +196,7 @@ void OnSaveObjectReady(void* saveSlotObject) {
     if (!g_joinApplyArmed.exchange(false, std::memory_order_acq_rel)) return;  // not a join's load
     g_profileApplied = false;
     g_joinPose = {};
+    g_joinPlacement = JoinStaysAtHost() ? JoinPlacement::AtHost : JoinPlacement::StartPoint;
     if (!g_hasPendingApply.load(std::memory_order_acquire)) {
         const bool emptied = ue_wrap::inventory::ApplyToSaveObject(
             saveSlotObject, ue_wrap::inventory::PlayerInventory{});
@@ -197,7 +204,7 @@ void OnSaveObjectReady(void* saveSlotObject) {
         const bool vitals = ue_wrap::vitals::ReadDefaults(fresh) &&
                             ue_wrap::vitals::ApplySnapshot(saveSlotObject, fresh);
         namespace N = ue_wrap::profile::name;
-        if (!JoinStaysAtHost())
+        if (g_joinPlacement == JoinPlacement::StartPoint)
             ue_wrap::vitals::WritePlayerTransform(saveSlotObject, N::kKPPSpawnX, N::kKPPSpawnY,
                                                   N::kKPPSpawnZ, 0.f);
         UE_LOGE("player_inventory[client]: SaveObjectReady with no profile from the host -- %s, "
@@ -235,13 +242,12 @@ void OnSaveObjectReady(void* saveSlotObject) {
     // Where the game itself believes this player is: its anti-noclip check falls back there, and
     // in a join capture that is where the HOST stood.
     namespace N = ue_wrap::profile::name;
+    if (g_joinPlacement != JoinPlacement::AtHost && g_joinPose.valid) g_joinPlacement = JoinPlacement::ProfilePose;
     bool placed = true;
-    if (JoinStaysAtHost())
-        g_joinPose = {};
-    else if (g_joinPose.valid)
+    if (g_joinPlacement == JoinPlacement::ProfilePose)
         placed = ue_wrap::vitals::WritePlayerTransform(saveSlotObject, g_joinPose.x, g_joinPose.y,
                                                        g_joinPose.z, g_joinPose.yaw);
-    else
+    else if (g_joinPlacement == JoinPlacement::StartPoint)
         placed = ue_wrap::vitals::WritePlayerTransform(saveSlotObject, N::kKPPSpawnX, N::kKPPSpawnY,
                                                        N::kKPPSpawnZ, 0.f);
     g_profileApplied = true;
@@ -250,7 +256,10 @@ void OnSaveObjectReady(void* saveSlotObject) {
             saveSlotObject, g_pendingApply.items.inventory.size(),
             g_pendingApply.items.equipment.size(), g_pendingApply.items.hold.size(),
             !vitalsOk ? "NOT WRITTEN" : alive ? "restored" : "fresh", v.health, v.maxHealth, v.food,
-            v.sleep, JoinStaysAtHost() ? "the host's (join_at_host)" : g_joinPose.valid ? "restored" : "start point",
+            v.sleep,
+            g_joinPlacement == JoinPlacement::AtHost        ? "the host's (join_at_host)"
+            : g_joinPlacement == JoinPlacement::ProfilePose ? "restored"
+                                                            : "start point",
             placed ? "" : ", playerTransform NOT written");
 }
 
@@ -555,16 +564,15 @@ bool HasPendingApply() { return g_hasPendingApply.load(std::memory_order_acquire
 
 void BeginJoinApply() { g_joinApplyArmed.store(true, std::memory_order_release); }
 
-bool JoinStaysAtHost() {
-    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::join_at_host);
-    return s;
-}
-
-bool TakeJoinPose(float& x, float& y, float& z, float& yaw) {
-    if (!g_joinPose.valid) return false;
-    x = g_joinPose.x; y = g_joinPose.y; z = g_joinPose.z; yaw = g_joinPose.yaw;
-    g_joinPose = {};  // the join's appearance only: a later body in this session is a respawn
-    return true;
+JoinPlacement TakeJoinPlacement(float& x, float& y, float& z, float& yaw) {
+    const JoinPlacement at = g_joinPlacement;
+    if (at == JoinPlacement::ProfilePose) {
+        x = g_joinPose.x; y = g_joinPose.y; z = g_joinPose.z; yaw = g_joinPose.yaw;
+    }
+    // The join's appearance only: a later body in this session is a respawn.
+    g_joinPlacement = JoinPlacement::StartPoint;
+    g_joinPose = {};
+    return at;
 }
 
 void OnDisconnectForSlot(int peerSlot) {
@@ -586,6 +594,7 @@ void OnDisconnect() {
     g_lastItemsHash = 0;
     g_lastSend = Clock::time_point{};
     g_joinPose = {};
+    g_joinPlacement = JoinPlacement::StartPoint;
     g_standingPose = {};
     g_oversizeHash = 0;
     g_lastPoll = Clock::time_point{};

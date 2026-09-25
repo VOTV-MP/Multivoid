@@ -57,15 +57,13 @@ bool HasPendingApply();
 // other load in the process -- a later Host-with-save above all -- is left alone. Any thread.
 void BeginJoinApply();
 
-// CLIENT: where the applied profile says this player stood, for the join's world appearance.
-// One-shot: a later body in the same session is a respawn, which belongs at the start point.
-// False on a first join, for a player who left dead, and with no profile applied: the caller
-// then uses the start point. Game thread.
-bool TakeJoinPose(float& x, float& y, float& z, float& yaw);
-
-// CLIENT, dev: the join's appearance stays where the transferred save put the player, the host's
-// own position, and neither the profile's pose nor the start point is written (join_at_host).
-bool JoinStaysAtHost();
+// CLIENT: where the join's world appearance puts this player, taken once: a later body in the same
+// session is a respawn, which belongs at the start point. ProfilePose fills x, y, z and yaw with where
+// the applied profile says the player stood. AtHost (the dev row join_at_host) leaves the player where
+// the transferred save put it, the host's own position. StartPoint on a first join, for a player who
+// left dead, with no profile applied, and for every later body. Game thread.
+enum class JoinPlacement : uint8_t { StartPoint, ProfilePose, AtHost };
+JoinPlacement TakeJoinPlacement(float& x, float& y, float& z, float& yaw);
 
 // Per-slot disconnect (host): re-arm the on-join push for that slot. The leaver's profile stays
 // held by GUID. Client: no-op. Game thread.
