@@ -245,7 +245,6 @@ int ReadOpen(void* door, bool settled) {
 }
 int ReadOpenIntent(void* door) { return ReadOpen(door, false); }
 
-// Waits until this copy reads `want`, up to `boundMs`; the milliseconds it took, or -1 at the bound.
 // Whether the local hand holds an item of class `cls` (nullptr: holds nothing), within `boundMs`.
 bool WaitForHand(const wchar_t* cls, int boundMs) {
     for (int waited = 0; waited <= boundMs; waited += 100) {
@@ -269,6 +268,7 @@ bool TakeIntoHand(const wchar_t* item, const wchar_t* cls) {
     }) == 1;
 }
 
+// Waits until this copy reads `want`, up to `boundMs`; the milliseconds it took, or -1 at the bound.
 int WaitForOpen(void* door, int want, int boundMs, bool settled = false) {
     for (int waited = 0; waited <= boundMs; waited += 100) {
         if (ReadOpen(door, settled) == want) return waited;
@@ -607,14 +607,18 @@ DWORD WINAPI WalkerThread(LPVOID) {
     };
     float hitDamage = kHitDamage;
     bool armed = !client;
-    if (back2 && client) {
-        const bool empty = WaitForHand(nullptr, 0);
+    // A client already holding something is no clean test of a hand with nothing that swings, and its
+    // item would be written over: the unarmed and armed legs are skipped, and the hits run at 50.
+    const bool emptyHand = back2 && client && WaitForHand(nullptr, 0);
+    if (back2 && client && !emptyHand)
+        UE_LOGW("[DOOR-DRILL] client door=%ls: the hand holds an item already -- the pry and hit checks are "
+                "INCONCLUSIVE", pick->door.c_str());
+    if (back2 && client && emptyHand) {
         pryOnce();
         hitOnce(kHitDamage);
         const bool stayed = WaitForOpen(door, 1, 1500) < 0;
-        UE_LOGI("[DOOR-DRILL] client UNARMED door=%ls: a pry and a hit of %.0f with %s, the door %s", pick->door.c_str(),
-                kHitDamage, empty ? "nothing held" : "an item held (not a clean test)",
-                stayed ? "stayed shut, as it should" : "OPENED -- FAIL");
+        UE_LOGI("[DOOR-DRILL] client UNARMED door=%ls: a pry and a hit of %.0f with nothing held, the door %s",
+                pick->door.c_str(), kHitDamage, stayed ? "stayed shut, as it should" : "OPENED -- FAIL");
         ue_wrap::weapon_catalog::Swing swing;
         armed = TakeIntoHand(L"crowbar", L"prop_crowbar_C") && WaitForHand(L"prop_crowbar_C", 3000) &&
                 GT::RunAndWait([&swing](std::atomic<int>& done) {
@@ -634,12 +638,12 @@ DWORD WINAPI WalkerThread(LPVOID) {
     }
     UE_LOGI("[DOOR-DRILL] %s HIT door=%ls: back at the approach=%d, opened at hit %d (damage %.1f each, %d at "
             "most)", Side(), pick->door.c_str(), back2 ? 1 : 0, hitOpenedAt, hitDamage, kHitMax);
-    if (back2 && client && armed) {
-        // The crowbar goes, as a pry takes it: the hand empty, a crowbar the last it held.
-        const bool stowed = TakeIntoHand(L"None", nullptr) && WaitForHand(nullptr, 3000);
+    if (back2 && client && armed && emptyHand) {
+        // The crowbar goes from the hand, as a pry takes it: the hand empty, a crowbar the last it held.
+        const bool gone = TakeIntoHand(L"None", nullptr) && WaitForHand(nullptr, 3000);
         pryOnce();
-        UE_LOGI("[DOOR-DRILL] client PRY door=%ls: the crowbar stowed=%d, a pry sent; the host runs it", pick->door.c_str(),
-                stowed ? 1 : 0);
+        UE_LOGI("[DOOR-DRILL] client PRY door=%ls: the crowbar gone from the hand=%d, a pry sent; the host runs it",
+                pick->door.c_str(), gone ? 1 : 0);
     }
     UE_LOGI("[DOOR-DRILL] %s sensor stubs reached the gate %d time(s), on any door", Side(),
             g_stubCalls.load(std::memory_order_relaxed));

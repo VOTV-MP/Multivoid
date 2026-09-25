@@ -95,6 +95,14 @@ float HorizDist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     return std::sqrt(dx * dx + dy * dy);
 }
 
+// A code the keys can enter: digits only, as the keypad's inputNumber appends.
+bool Typeable(const std::wstring& code) {
+    if (code.empty()) return false;
+    for (wchar_t c : code)
+        if (c < L'0' || c > L'9') return false;
+    return true;
+}
+
 // The keypad this peer's navmesh reaches by the shortest walk, among keypads the lane names that gate
 // a door: a route asked for the keypad itself ends on the floor below it, where a player stands to use
 // it. From far off every route stops short at the search's node limit, and then the nearest keypad a
@@ -108,6 +116,8 @@ bool PickReachableKeypad(void* player, const ue_wrap::FVector& at, DR::DirectorG
         void* o = R::ObjectAt(i);
         if (!o || !R::IsLive(o) || !PL::IsPasswordLock(o) || !PL::GatedDoor(o)) continue;
         if (coop::keypad_sync::KeypadKey(o).empty()) continue;
+        PL::State st;  // a code a player can type: the alpha bunker's are letters
+        if (!PL::ReadState(o, st) || !Typeable(st.password)) continue;
         ue_wrap::FVector p{};
         if (!E::TryGetActorLocation(o, p)) continue;
         cands.push_back({o, p, HorizDist(p, at)});
@@ -479,8 +489,9 @@ void Tick(coop::net::Session* session) {
         UE_LOGI("[KEYPAD-DRILL] client at keypad='%ls' (password of %zu digit(s)): buf '%ls' active %d reset %d",
                 g_key.c_str(), g_password.size(), g_last.buffer.c_str(), g_last.active ? 1 : 0,
                 g_last.isReset ? 1 : 0);
-        if (g_key.empty() || g_password.empty() || g_last.isReset) {
-            UE_LOGW("[KEYPAD-DRILL] client: the keypad is unnamed, has no password or is setting one -- INCONCLUSIVE");
+        if (g_key.empty() || !Typeable(g_password) || g_last.isReset) {
+            UE_LOGW("[KEYPAD-DRILL] client: the keypad is unnamed, has no code the keys can enter, or is setting "
+                    "one -- INCONCLUSIVE");
             Done("unusable keypad");
             return;
         }

@@ -7,9 +7,9 @@
 //               outside after the swing, and from the approach point (usually listed) after it.
 //   CLOSE    -- after each stay, walks fifteen metres away; the autoclose shuts the door within five
 //               seconds of its list emptying.
-//   HIT      -- a client's pry and hit with nothing held, which the host refuses; a crowbar taken
-//               into the hand, one hit past its swing, which the host cuts, then its swings until
-//               the door opens; the crowbar stowed and a pry, which the host runs. The host hits at 50.
+//   HIT      -- (a client with an empty hand) a pry and a hit, which the host refuses; a crowbar taken
+//               into the hand, one hit past its swing, which the host cuts, its swings until the door
+//               opens, the crowbar gone and a pry, which the host runs. The host hits at 50.
 // EACH peer logs every change in each door's sensor list and open flag, and every begin and end event
 // of the walked door's sensor, with the component and the list it left. Tagged [DOOR-DRILL]; run on
 // both peers (door_drill=1); the walker's DONE line ends it.
