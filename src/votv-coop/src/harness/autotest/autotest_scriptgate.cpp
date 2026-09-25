@@ -6,7 +6,9 @@
 // with its entry-point argument and its caller. Every refusal has a state observable outside the
 // gate (the break flag, an efficiency sentinel) or, for the two Blueprint-internal routes, the
 // post callback that only a run body reaches. A negative arm shows the same verb running once
-// the watch is gone. Env VOTVCOOP_RUN_SCRIPT_GATE_DRILL=1; the lines are tagged [SCRIPTGATE].
+// the watch is gone. A class arm watches the day-night cycle's and the wind's ReceiveTick by class and
+// name over real ticks, beside an unscoped watch on the same name that sees every class's. Armed by
+// script_gate_drill=1; the lines are tagged [SCRIPTGATE].
 
 #include "harness/autotest.h"
 
@@ -37,6 +39,7 @@ namespace SB = ue_wrap::serverbox;
 constexpr DWORD kWorldWaitMs = 240'000;
 constexpr DWORD kPollMs = 2000;
 constexpr int   kTagFix = 1, kTagCheck = 2, kTagCalc = 3, kTagUber = 4, kTagHealth = 5;
+constexpr int   kTagScopedCycle = 6, kTagScopedWind = 7, kTagPlainTick = 8;
 constexpr int   kSendNameEntry = 3501;   // the ubergraph entry sendName's stub names
 constexpr float kSentinel = -1.0f;       // no efficiency the game computes is negative
 
@@ -141,6 +144,39 @@ void PostHealth(const SG::Call& call) {
         g_healthPtr = p;
         std::memcpy(&g_healthSeen, p, sizeof(g_healthSeen));
     }
+}
+
+// The class arm. ReceiveTick is owned by many classes; a watch scoped to the day-night cycle and one
+// scoped to the wind must call back for their own class's body only, and an unscoped watch on the
+// same name, the control, counts every class's in the same window. The counters move only while
+// the arm is on, which is switched on the game thread so no callback of one tick sees half of it.
+const wchar_t* const kTickName  = L"ReceiveTick";
+const wchar_t* const kCycleName = L"daynightCycle_C";
+const wchar_t* const kWindName  = L"directionalWind_C";
+bool g_classArmOn = false;
+struct ClassArm { int scoped = 0, scopedForeign = 0, plain = 0; };
+ClassArm g_cycleArm, g_windArm;
+int g_plainOther = 0;   // unscoped fires on a body neither class owns
+
+bool OwnedBy(const SG::Call& call, const wchar_t* cls) {
+    void* owner = R::OuterOf(call.function);
+    return owner && R::NameEquals(R::NameOf(owner), cls);
+}
+void PostScopedCycle(const SG::Call& call) {
+    if (!g_classArmOn) return;
+    ++g_cycleArm.scoped;
+    if (!OwnedBy(call, kCycleName)) ++g_cycleArm.scopedForeign;
+}
+void PostScopedWind(const SG::Call& call) {
+    if (!g_classArmOn) return;
+    ++g_windArm.scoped;
+    if (!OwnedBy(call, kWindName)) ++g_windArm.scopedForeign;
+}
+void PostPlainTick(const SG::Call& call) {
+    if (!g_classArmOn) return;
+    if (OwnedBy(call, kCycleName)) ++g_cycleArm.plain;
+    else if (OwnedBy(call, kWindName)) ++g_windArm.plain;
+    else ++g_plainOther;
 }
 
 // Run `fn` on the game thread and wait for it; false when the pump never ran it.
@@ -321,6 +357,51 @@ void RunScriptGateDrill() {
         Check(v, st.offGameThread == 0, "no watched body was reached off the game thread");
         Check(v, st.faults == 0, "no callback faulted");
         SB::WriteAggregates(base);   // the farm's totals as they were before the drill
+    });
+
+    // The class arm, over the world's own ticks: registered, live once both of its names resolve,
+    // counted for three seconds.
+    bool watched = false;
+    OnGameThread([&] {
+        watched = SG::WatchClassName(kCycleName, kTickName, kTagScopedCycle, nullptr, &PostScopedCycle) &&
+                  SG::WatchClassName(kWindName, kTickName, kTagScopedWind, nullptr, &PostScopedWind) &&
+                  SG::WatchName(kTickName, kTagPlainTick, nullptr, &PostPlainTick);
+    });
+    Check(v, watched, "class arm: the two scoped watches and the control registered");
+    bool live = false;
+    for (int i = 0; i < 50 && !live; ++i) {
+        live = SG::ClassNameWatchLive(kCycleName, kTickName, kTagScopedCycle) &&
+               SG::ClassNameWatchLive(kWindName, kTickName, kTagScopedWind) &&
+               SG::NameWatchLive(kTickName, kTagPlainTick);
+        if (!live) ::Sleep(100);
+    }
+    Check(v, live, "class arm: all three watches live");
+    OnGameThread([] { g_classArmOn = true; });
+    ::Sleep(3000);
+    OnGameThread([&] {
+        g_classArmOn = false;
+        UE_LOGI("[SCRIPTGATE] class arm over 3 s: cycle scoped=%d (foreign %d) unscoped=%d; wind scoped=%d "
+                "(foreign %d) unscoped=%d; unscoped on other classes=%d",
+                g_cycleArm.scoped, g_cycleArm.scopedForeign, g_cycleArm.plain, g_windArm.scoped,
+                g_windArm.scopedForeign, g_windArm.plain, g_plainOther);
+        Check(v, g_cycleArm.scoped > 0 && g_cycleArm.scopedForeign == 0,
+              "class arm: the cycle's scoped watch called back, for the cycle's own body only");
+        Check(v, g_windArm.scoped > 0 && g_windArm.scopedForeign == 0,
+              "class arm: the wind's scoped watch called back, for the wind's own body only");
+        Check(v, g_cycleArm.scoped == g_cycleArm.plain && g_windArm.scoped == g_windArm.plain,
+              "class arm: each scoped watch fired exactly as often as the control saw its class");
+        Check(v, g_plainOther > 0,
+              "class arm: other classes' ReceiveTick bodies ran in the window, and no scoped watch "
+              "called back for them");
+        Check(v, SG::GetStats().faults == 0, "class arm: no callback faulted");
+        // Retired, so every class's ReceiveTick stops being a gate hit for the rest of the process.
+        Check(v, SG::UnwatchClassName(kCycleName, kTickName, kTagScopedCycle, nullptr, &PostScopedCycle) &&
+                 SG::UnwatchClassName(kWindName, kTickName, kTagScopedWind, nullptr, &PostScopedWind) &&
+                 SG::UnwatchName(kTickName, kTagPlainTick, nullptr, &PostPlainTick),
+              "class arm: the three watches retired");
+        Check(v, !SG::ClassNameWatchLive(kCycleName, kTickName, kTagScopedCycle) &&
+                 !SG::NameWatchLive(kTickName, kTagPlainTick),
+              "class arm: a retired watch reads as not live");
     });
 
     // The tax base over a five-second window with counting armed.

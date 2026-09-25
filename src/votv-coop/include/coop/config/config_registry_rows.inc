@@ -628,6 +628,11 @@ CFG_FLAG(host_window_autoopen, "host_window_autoopen", "dev", false, "VOTVCOOP_H
     "Show the native HOST GAME window as soon as it is built, without a click -- the same "
     "reason browser_autoopen exists, for the screen the browser's Host button will open. "
     "Requires browser_native=1.")
+CFG_FLAG(script_gate_drill, "script_gate_drill", "dev", false, "VOTVCOOP_RUN_SCRIPT_GATE_DRILL",
+    "Drill (solo or host): the script-body gate refuses Blueprint verbs per call on one of two signal "
+    "servers on every dispatch route, reads an out parameter through the frame, and watches two classes' "
+    "ReceiveTick by class and name beside an unscoped control. MUTATES the two servers' break state, "
+    "restored after.")
 CFG_FLAG(class_lifetime_probe, "class_lifetime_probe", "dev", false, "VOTVCOOP_CLASS_LIFETIME_PROBE",
     "Probe: once per world, the menu's included, and every 30 s within one, every loaded Blueprint and "
     "native class judged against the identity it had when last seen (the same object, the same address "

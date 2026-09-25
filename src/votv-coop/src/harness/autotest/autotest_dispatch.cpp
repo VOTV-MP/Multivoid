@@ -34,6 +34,17 @@ void SpawnIf(const char* envKey, const char* label,
     }
 }
 
+// The same for a drill armed by a config row, which a rig sets and the peer's config census
+// confirms.
+void SpawnIfRow(const coop::config_registry::FlagRow& row, const char* label,
+                LPTHREAD_START_ROUTINE thread, coop::net::Role role) {
+    if (!cfg::ResolveFlag(row)) return;
+    UE_LOGI("harness: %s=1 (%s) -- spawning %s thread", row.row->key, RoleStr(role), label);
+    if (HANDLE h = ::CreateThread(nullptr, 0, thread, nullptr, 0, nullptr)) {
+        ::CloseHandle(h);
+    }
+}
+
 }  // namespace
 
 bool IsClientRole() {
@@ -199,7 +210,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
 
     // The script-body gate drill: Blueprint verbs refused per call on one of two signal servers,
     // on every dispatch route, with state observables and a negative arm.
-    SpawnIf("VOTVCOOP_RUN_SCRIPT_GATE_DRILL", "script-body gate drill", &ScriptGateDrillThread, role);
+    SpawnIfRow(coop::config_registry::rows::script_gate_drill, "script-body gate drill",
+               &ScriptGateDrillThread, role);
     // The spawn-menu cross-peer drill: the client drives the menu's own spawn, both peers diff
     // their own world for the catalog row.
     SpawnIf("VOTVCOOP_RUN_MENUSPAWN_DRILL", "spawn-menu cross-peer drill", &MenuSpawnDrillThread, role);

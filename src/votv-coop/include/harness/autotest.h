@@ -309,7 +309,8 @@ DWORD WINAPI FloodProbeThread(LPVOID arg);
 
 // The script-body gate drill (harness/autotest/autotest_scriptgate.cpp), solo or host: on two
 // signal servers, verbs refused per call on every dispatch route, with state observables and a
-// negative arm. Env VOTVCOOP_RUN_SCRIPT_GATE_DRILL=1.
+// negative arm; then a class arm that watches two classes' ReceiveTick by class and name beside an
+// unscoped control, over the world's own ticks. Armed by script_gate_drill=1.
 void RunScriptGateDrill();
 DWORD WINAPI ScriptGateDrillThread(LPVOID arg);
 

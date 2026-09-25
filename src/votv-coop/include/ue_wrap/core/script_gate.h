@@ -5,8 +5,8 @@
 // already built: the instance, the function, the evaluated parameters, the caller's frame. A
 // MinHook detour on that loop is therefore the one seam that sees every call with its arguments
 // and can refuse to run the body. Consumers watch a UFunction (exact object) or a function name
-// (every class's function of that name), get a pre callback with the frame and a verdict, and a
-// post callback after the body. The MTA shape is the multiplayer_sa hook layer: a detour at the
+// (every class's function of that name, or one class's), get a pre callback with the frame and a
+// verdict, and a post callback after the body. The MTA shape is the multiplayer_sa hook layer: a detour at the
 // game function's entry, a handler that returns whether the original runs
 // (reference/mtasa-blue/Client/multiplayer_sa/CMultiplayerSA.cpp:6355, ProcessCollisionHandler).
 // Engine-wrapper layer (principle 7): no gameplay or network logic.
@@ -77,6 +77,30 @@ void ResolvePendingNames();
 // run, so a consumer that publishes its own readiness has to ask this instead. `name` is the same
 // literal that was registered. Any thread.
 bool NameWatchLive(const wchar_t* name, int tag);
+
+// Watch the body of function `name` that class `className` owns: a name watch whose entry also
+// carries the owning class's name, compared only after the function's name has matched, so other
+// classes' bodies of that name are passed over with no callback. The owner is the function's outer,
+// the class whose body runs: a subclass that overrides `name` owns its own body and is not matched,
+// one that inherits `className`'s body is. For "an instance of the class or below", filter on the
+// call's object's class chain in the callback instead, comparing names up the super chain, since a
+// class can be a new object in every world. Keyed on names, the watch is registered once and matches
+// every incarnation of a class that comes back as a new object. Both names must have static lifetime
+// and resolve on the game thread as a name watch's does. The class is matched by its short name, where
+// UE4SS matches a hooked function's whole outer path, package included: two loaded classes of one name
+// would both match. Any thread.
+bool WatchClassName(const wchar_t* className, const wchar_t* name, int tag, PreFn pre, PostFn post);
+
+// Retire a name watch, or a class-scoped one, given the literals, tag and callbacks that registered it;
+// false when none matches. Its slots stay keyed, so the probe chain stays walkable and they still
+// count against the table's capacity; one retired while its name was pending is dropped at the
+// resolve. Any thread.
+bool UnwatchName(const wchar_t* name, int tag, PreFn pre, PostFn post);
+bool UnwatchClassName(const wchar_t* className, const wchar_t* name, int tag, PreFn pre, PostFn post);
+
+// Is that class-scoped watch LIVE, both of its names resolved? The literals that were registered.
+// Any thread.
+bool ClassNameWatchLive(const wchar_t* className, const wchar_t* name, int tag);
 
 // How many registered name watches still wait for their FName. At 0 every name watch is settled:
 // live, or dead for good because its name resolved into a full table (the gate logs which). A
