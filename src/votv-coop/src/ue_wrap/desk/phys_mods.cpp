@@ -35,6 +35,8 @@ Clock::time_point g_nextTry{};
 constexpr int kProbeMax = 64;
 void* g_classForByte[kProbeMax] = {};
 bool  g_probed[kProbeMax] = {};
+bool  g_allowed[kProbeMax] = {};        // the desk's isModuleAllowed, per byte
+bool  g_allowedAsked[kProbeMax] = {};
 
 R::InstanceOffset g_slotsOff{L"physModSlots"};  // TArray<UPrimitiveComponent*>
 
@@ -187,6 +189,19 @@ void* ClassForByte(uint8_t byte) {
     g_probed[byte] = true;  // latch only on a SUCCESSFUL call (a null result = a
     g_classForByte[byte] = cls;  // legit unmapped byte, cached as a negative)
     return cls;
+}
+
+bool IsModuleAllowed(uint8_t byte) {
+    if (!g_resolved || byte == 0 || byte >= kProbeMax) return false;
+    if (g_allowedAsked[byte]) return g_allowed[byte];
+    void* desk = ue_wrap::console_desk::Instance();
+    void* fn = desk ? R::FindDispatchFunctionCached(R::ClassOf(desk), L"isModuleAllowed") : nullptr;
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    if (!f.valid() || !f.Set<uint8_t>(L"ItemToFind", byte) || !ue_wrap::Call(desk, f)) return false;  // asked again
+    g_allowed[byte] = f.Get<bool>(L"allowed");
+    g_allowedAsked[byte] = true;  // a pure function of the byte: the answer holds
+    return g_allowed[byte];
 }
 
 uint8_t ByteForClass(void* cls) {

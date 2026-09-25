@@ -62,7 +62,14 @@ bool CallPressSlot(void* desk, void* player, int slot);
 
 // lib.physModToActor(byte) -> the module class for `byte` (null on fail /
 // unresolved / byte unmapped). Reflected static-library call on the lib CDO.
+// It maps more than the desk takes (ATV upgrades, radar modules): IsModuleAllowed
+// is the desk's own answer.
 void* ClassForByte(uint8_t byte);
+
+// Does the desk take a module of `byte` into a slot? The desk's own isModuleAllowed
+// (a fixed list of types), asked once per byte and kept; a call that fails is asked
+// again next time. False while unresolved. Game thread.
+bool IsModuleAllowed(uint8_t byte);
 
 // The byte a module CLASS encodes: reads the class's default object's module
 // byte... NOT AVAILABLE statically-cheap; instead the reverse map is built by

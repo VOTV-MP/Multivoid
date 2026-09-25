@@ -280,11 +280,13 @@ void OnPhysMods(const coop::net::PhysModsStatePayload& p, uint8_t senderSlot) {
         UE_LOGW("physmods: host op=%u slot=%u byte=%u declined (desk unresolved)", p.op, p.slot, p.byte);
         return;
     }
-    // A client op names a desk slot and a module the game maps (lib.physModToActor), or it is dropped: the
-    // host writes nothing else into its array, its save or its updPhysMods.
-    if (p.slot >= PM::kSlots || !p.byte || !PM::ClassForByte(p.byte)) {
-        UE_LOGW("physmods: host op=%u slot=%u byte=%u from slot %u -- not a desk slot and module, dropping",
-                p.op, p.slot, p.byte, senderSlot);
+    // A client op names a desk slot and a module the desk itself takes (its isModuleAllowed), or it is
+    // refused: the host writes nothing else into its array, its save or its updPhysMods, and the author
+    // gets the canonical back, as for any refusal.
+    if (p.slot >= PM::kSlots || !PM::IsModuleAllowed(p.byte)) {
+        UE_LOGW("physmods: host op=%u slot=%u byte=%u from slot %u -- not a desk slot and module it takes, "
+                "refused", p.op, p.slot, p.byte, senderSlot);
+        if (senderSlot != 0 && senderSlot < coop::net::kMaxPeers) HostBroadcastCanonical(s, senderSlot);
         return;
     }
     uint8_t arr[PM::kSlots];
