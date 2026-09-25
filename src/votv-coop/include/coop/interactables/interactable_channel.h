@@ -81,10 +81,14 @@ public:
     // HostAuth device reaches the host outside the channel -- a door's as a door verb intent
     // (coop/interactables/door_verb_intent), a switch's through the light lane -- and its own world
     // is kept off it outside the channel too: a door's state verbs refuse a client's local calls
-    // (coop/interactables/door_state_verbs), a light group's gate is shut for a switch's press.
+    // (coop/interactables/door_state_verbs), and so does a light group's runTrigger
+    // (coop/interactables/lightgroup_verbs).
     enum class Mode { Symmetric, HostAuth };
 
     explicit Channel(const Adapter& a, Mode mode = Mode::Symmetric) : a_(a), mode_(mode) {}
+
+    // The wire kind this channel sends and receives.
+    coop::net::ReliableKind Kind() const { return a_.kind; }
 
     // Registers this channel as a scan-hub consumer. Called from Install, not the constructor: the
     // channel instances are namespace-scope statics in another TU, and cross-TU static-init order

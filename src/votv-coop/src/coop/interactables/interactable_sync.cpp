@@ -169,17 +169,13 @@ Channel g_doorBox{g_doorBoxAdapter};  // no auto-revert: symmetric
 // accept verb this engine cannot reach) and live in coop::keypad_sync; KeypadState routes there
 // from event_feed, not through ChannelForKind.
 
+// Every channel, once: each list below walks this one, in this order.
+Channel* const kChannels[] = {&g_door, &g_light, &g_lightGroup, &g_container, &g_garage, &g_appliance, &g_doorBox};
+
 Channel* ChannelForKind(coop::net::ReliableKind k) {
-    switch (k) {
-    case coop::net::ReliableKind::DoorState:      return &g_door;
-    case coop::net::ReliableKind::LightState:     return &g_light;
-    case coop::net::ReliableKind::LightGroupState:return &g_lightGroup;
-    case coop::net::ReliableKind::ContainerState: return &g_container;
-    case coop::net::ReliableKind::GarageDoorState:return &g_garage;
-    case coop::net::ReliableKind::ApplianceState: return &g_appliance;
-    case coop::net::ReliableKind::LockerDoorState:return &g_doorBox;
-    default:                                      return nullptr;
-    }
+    for (Channel* ch : kChannels)
+        if (ch->Kind() == k) return ch;
+    return nullptr;
 }
 
 // Each channel is sent at the verbs that write its state (door_state_verbs, lightgroup_verbs,
@@ -189,25 +185,13 @@ Channel* ChannelForKind(coop::net::ReliableKind k) {
 // The receiver index: the channels register as scan-hub consumers, and the hub builds every index
 // on its own sliced cadence.
 void IndexChannels() {
-    g_door.RegisterWithScanHub();
-    g_light.RegisterWithScanHub();
-    g_lightGroup.RegisterWithScanHub();
-    g_container.RegisterWithScanHub();
-    g_garage.RegisterWithScanHub();
-    g_appliance.RegisterWithScanHub();
-    g_doorBox.RegisterWithScanHub();
+    for (Channel* ch : kChannels) ch->RegisterWithScanHub();
 }
 
 }  // namespace
 
 void Install(coop::net::Session* session) {
-    g_door.SetSession(session);
-    g_light.SetSession(session);
-    g_lightGroup.SetSession(session);
-    g_container.SetSession(session);
-    g_garage.SetSession(session);
-    g_appliance.SetSession(session);
-    g_doorBox.SetSession(session);
+    for (Channel* ch : kChannels) ch->SetSession(session);
     IndexChannels();              // build the key->actor index (edges and the probe name by it; receivers resolve by it)
 }
 
@@ -251,34 +235,16 @@ std::wstring ContainerKey(void* swinger) { return g_container.KeyForActor(swinge
 std::wstring LightSwitchKey(void* sw) { return g_light.KeyForActor(sw); }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
-    g_door.QueueConnectBroadcastForSlot(peerSlot);
-    g_light.QueueConnectBroadcastForSlot(peerSlot);
-    g_lightGroup.QueueConnectBroadcastForSlot(peerSlot);
-    g_container.QueueConnectBroadcastForSlot(peerSlot);
-    g_garage.QueueConnectBroadcastForSlot(peerSlot);
-    g_appliance.QueueConnectBroadcastForSlot(peerSlot);
-    g_doorBox.QueueConnectBroadcastForSlot(peerSlot);
+    for (Channel* ch : kChannels) ch->QueueConnectBroadcastForSlot(peerSlot);
 }
 
 void Tick() {
-    g_door.Tick();
-    g_light.Tick();
-    g_lightGroup.Tick();
-    g_container.Tick();
-    g_garage.Tick();
-    g_appliance.Tick();
-    g_doorBox.Tick();
+    for (Channel* ch : kChannels) ch->Tick();
     ue_wrap::door_box::TickVerify();  // force-snap far-frozen locker/console swings
 }
 
 void OnDisconnect() {
-    g_door.OnDisconnect();
-    g_light.OnDisconnect();
-    g_lightGroup.OnDisconnect();
-    g_container.OnDisconnect();
-    g_garage.OnDisconnect();
-    g_appliance.OnDisconnect();
-    g_doorBox.OnDisconnect();
+    for (Channel* ch : kChannels) ch->OnDisconnect();
     ue_wrap::door_box::OnDisconnect();  // drop the mid-swing verify entries
 }
 
