@@ -100,6 +100,42 @@ struct Verbs {
     void* removeFromParent = nullptr;  // UWidget::RemoveFromParent
     void* isInViewport = nullptr;      // UUserWidget::IsInViewport
     void* setVisibility = nullptr;     // UWidget::SetVisibility
+};
+Verbs g_verbs;
+
+// FindFunction is exact-owner, so each engine verb resolves off the class that declares it:
+// Widget for RemoveFromParent and SetVisibility, UserWidget for IsInViewport. Off the BP class
+// they return null. Both classes are one index lookup, a miss included, so this is asked every tick
+// until they are listed and settles then: a verb a loaded class lacks is a fact of this game build
+// and turns the revive off, said once.
+bool ResolveVerbs() {
+    if (g_verbs.resolved) return g_verbsResolved.load(std::memory_order_acquire);
+    void* const widgetCls = ue_wrap::object_index::ClassByName(P::name::WidgetClass);
+    void* const userWidgetCls = ue_wrap::object_index::ClassByName(P::name::UserWidgetClass);
+    if (!widgetCls || !userWidgetCls) return false;
+    Verbs v;
+    v.removeFromParent = R::FindFunction(widgetCls, L"RemoveFromParent");
+    v.setVisibility = R::FindFunction(widgetCls, P::name::WidgetSetVisibilityFn);
+    v.isInViewport = R::FindFunction(userWidgetCls, L"IsInViewport");
+    v.resolved = true;
+    g_verbs = v;
+    const bool ok = v.removeFromParent && v.isInViewport && v.setVisibility;
+    g_verbsResolved.store(ok, std::memory_order_release);
+    if (!ok) {
+        UE_LOGW("death_revive: a revive verb is missing on its loaded class (remove=%p inViewport=%p setVis=%p) "
+                "-- the revive is off for this game build", v.removeFromParent, v.isInViewport, v.setVisibility);
+        return false;
+    }
+    UE_LOGI("death_revive: revive verbs resolved (remove=%p inViewport=%p setVis=%p)",
+            v.removeFromParent, v.isInViewport, v.setVisibility);
+    return true;
+}
+
+// The HUD the death leaves behind, best-effort and never in the arm gate (see ClearDamageIndicator):
+// asked where it is used, each class one index lookup until the three are listed, then settled; a
+// member a loaded class lacks stays unset and only its clear is lost.
+struct Hud {
+    bool resolved = false;
     // The damage indicator's four directional accumulators. Add Player Damage accumulates
     // damage/maxHealth*4 into the quadrant of the hit, so the killing hit leaves red on screen past
     // a revive to full health.
@@ -110,46 +146,26 @@ struct Verbs {
     // ReconcileRunEndLatches().
     int32_t offDmgFull = -1;        // ui_damageIndicator_C.dmg_full  (UImage*)
 };
-Verbs g_verbs;
+Hud g_hud;
 
-// FindFunction is exact-owner, so each engine verb resolves off the class that declares it:
-// Widget for RemoveFromParent and SetVisibility, UserWidget for IsInViewport. Off the BP class
-// they return null.
-bool ResolveVerbs() {
-    if (g_verbs.resolved) return g_verbsResolved.load(std::memory_order_acquire);
-    // Each class is one index lookup, a miss included, so this is asked every tick until all five are
-    // loaded (the widget ones load with gameplay), and it settles only then: a member a loaded class
-    // lacks is a fact of this game build, and a missing verb turns the revive off, said once.
-    void* const widgetCls = ue_wrap::object_index::ClassByName(P::name::WidgetClass);
-    void* const userWidgetCls = ue_wrap::object_index::ClassByName(P::name::UserWidgetClass);
+bool ResolveHud() {
+    if (g_hud.resolved) return true;
     void* const gmCls = ue_wrap::object_index::ClassByName(P::name::GamemodeClass);
     void* const uiCls = ue_wrap::object_index::ClassByName(L"ui_UI_C");
     void* const dmgCls = ue_wrap::object_index::ClassByName(L"ui_damageIndicator_C");
-    if (!widgetCls || !userWidgetCls || !gmCls || !uiCls || !dmgCls) return false;
-    Verbs v;
-    v.removeFromParent = R::FindFunction(widgetCls, L"RemoveFromParent");
-    v.setVisibility = R::FindFunction(widgetCls, P::name::WidgetSetVisibilityFn);
-    v.isInViewport = R::FindFunction(userWidgetCls, L"IsInViewport");
-    v.offPlayerInterface = R::FindPropertyOffset(gmCls, L"playerInterface");
-    v.offDamageIndicator = R::FindPropertyOffset(uiCls, L"umg_damageIndicator");
-    v.offDmgUp = R::FindPropertyOffset(dmgCls, L"damage_up");
-    v.offDmgDown = R::FindPropertyOffset(dmgCls, L"damage_down");
-    v.offDmgLeft = R::FindPropertyOffset(dmgCls, L"damage_left");
-    v.offDmgRight = R::FindPropertyOffset(dmgCls, L"damage_right");
-    v.offDmgFull = R::FindPropertyOffset(dmgCls, L"dmg_full");
-    v.resolved = true;
-    g_verbs = v;
-    const bool ok = v.removeFromParent && v.isInViewport && v.setVisibility;
-    g_verbsResolved.store(ok, std::memory_order_release);
-    if (!ok) {
-        UE_LOGW("death_revive: a revive verb is missing on its loaded class (remove=%p inViewport=%p setVis=%p) "
-                "-- the revive is off for this game build", v.removeFromParent, v.isInViewport, v.setVisibility);
-        return false;
-    }
-    UE_LOGI("death_revive: revive verbs resolved (remove=%p inViewport=%p setVis=%p "
-            "playerInterface=0x%X damageIndicator=0x%X dmg_full=0x%X)",
-            v.removeFromParent, v.isInViewport, v.setVisibility,
-            v.offPlayerInterface, v.offDamageIndicator, v.offDmgFull);
+    if (!gmCls || !uiCls || !dmgCls) return false;
+    Hud h;
+    h.offPlayerInterface = R::FindPropertyOffset(gmCls, L"playerInterface");
+    h.offDamageIndicator = R::FindPropertyOffset(uiCls, L"umg_damageIndicator");
+    h.offDmgUp = R::FindPropertyOffset(dmgCls, L"damage_up");
+    h.offDmgDown = R::FindPropertyOffset(dmgCls, L"damage_down");
+    h.offDmgLeft = R::FindPropertyOffset(dmgCls, L"damage_left");
+    h.offDmgRight = R::FindPropertyOffset(dmgCls, L"damage_right");
+    h.offDmgFull = R::FindPropertyOffset(dmgCls, L"dmg_full");
+    h.resolved = true;
+    g_hud = h;
+    UE_LOGI("death_revive: HUD offsets resolved (playerInterface=0x%X damageIndicator=0x%X dmg_full=0x%X)",
+            h.offPlayerInterface, h.offDamageIndicator, h.offDmgFull);
     return true;
 }
 
@@ -204,18 +220,18 @@ void ReconcileRunEndLatches() {
     }
 
     // [1] the HUD latch.
-    if (g_verbs.offPlayerInterface >= 0 && g_verbs.offDamageIndicator >= 0 &&
-        g_verbs.offDmgFull >= 0 && g_verbs.setVisibility) {
+    if (ResolveHud() && g_hud.offPlayerInterface >= 0 && g_hud.offDamageIndicator >= 0 &&
+        g_hud.offDmgFull >= 0 && g_verbs.setVisibility) {
         void* gm = ue_wrap::world_singleton::Gamemode();
         if (gm) {
             void* ui = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gm) +
-                                                 g_verbs.offPlayerInterface);
+                                                 g_hud.offPlayerInterface);
             if (ui && R::IsLive(ui)) {
                 void* ind = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(ui) +
-                                                     g_verbs.offDamageIndicator);
+                                                     g_hud.offDamageIndicator);
                 if (ind && R::IsLive(ind)) {
                     void* full = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(ind) +
-                                                          g_verbs.offDmgFull);
+                                                          g_hud.offDmgFull);
                     if (full && R::IsLive(full)) {
                         ue_wrap::ParamFrame f(g_verbs.setVisibility);
                         if (f.valid()) {
@@ -250,21 +266,21 @@ void ClearRunEndPause() {
 // it would be worse. The acceptance test asserts it, so a regression stays visible. Returns the
 // largest value found, or a negative number if the chain did not resolve.
 float ClearDamageIndicator(float* outBefore = nullptr) {
-    if (g_verbs.offPlayerInterface < 0 || g_verbs.offDamageIndicator < 0 ||
-        g_verbs.offDmgUp < 0 || g_verbs.offDmgDown < 0 ||
-        g_verbs.offDmgLeft < 0 || g_verbs.offDmgRight < 0)
+    if (!ResolveHud() || g_hud.offPlayerInterface < 0 || g_hud.offDamageIndicator < 0 ||
+        g_hud.offDmgUp < 0 || g_hud.offDmgDown < 0 ||
+        g_hud.offDmgLeft < 0 || g_hud.offDmgRight < 0)
         return -1.f;
     void* gm = ue_wrap::world_singleton::Gamemode();
     if (!gm) return -1.f;
     void* ui = *reinterpret_cast<void* const*>(reinterpret_cast<uint8_t*>(gm) +
-                                               g_verbs.offPlayerInterface);
+                                               g_hud.offPlayerInterface);
     if (!ui || !R::IsLive(ui)) return -1.f;
     void* ind = *reinterpret_cast<void* const*>(reinterpret_cast<uint8_t*>(ui) +
-                                                g_verbs.offDamageIndicator);
+                                                g_hud.offDamageIndicator);
     if (!ind || !R::IsLive(ind)) return -1.f;
     auto* base = reinterpret_cast<uint8_t*>(ind);
-    const int32_t offs[4] = {g_verbs.offDmgUp, g_verbs.offDmgDown,
-                             g_verbs.offDmgLeft, g_verbs.offDmgRight};
+    const int32_t offs[4] = {g_hud.offDmgUp, g_hud.offDmgDown,
+                             g_hud.offDmgLeft, g_hud.offDmgRight};
     // The value returned is read after the write: a completion test must not read back its own
     // write, and here the write is the whole operation. The caller reporting what it cleared gets
     // the pre-write value too.
