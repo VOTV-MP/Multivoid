@@ -9,6 +9,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 
@@ -37,6 +38,7 @@ void* g_lightningStrikeClass = nullptr;
 int32_t g_spawnActorClassParamOff = -1;
 int32_t g_spawnTransformParamOff  = -1;
 bool g_observerRegistered = false;
+bool g_observerRefused = false;  // the observer table was full this session: a capacity fault, said once
 
 // HOST POST observer on BeginDeferredActorSpawnFromClass. Fires for EVERY deferred spawn (it also
 // carries NPC and prop spawns); filtered by ActorClass == lightningStrike_C. The strike's actor
@@ -115,8 +117,9 @@ bool TryResolve() {
     }
     if (g_spawnActorClassParamOff < 0 || g_spawnTransformParamOff < 0) return false;
 
+    // One index lookup, a miss included, so a caller may ask on every use until the class loads.
     if (!g_lightningStrikeClass) {
-        g_lightningStrikeClass = R::FindClass(P::name::LightningStrikeClass);
+        g_lightningStrikeClass = ue_wrap::object_index::ClassByName(P::name::LightningStrikeClass);
     }
     if (!g_lightningStrikeClass) return false;
 
@@ -124,12 +127,13 @@ bool TryResolve() {
 }
 
 bool RegisterHostObserver() {
-    if (g_observerRegistered) return true;
+    if (g_observerRegistered || g_observerRefused) return true;
     if (!TryResolve()) return false;
     if (!GT::RegisterPostObserver(g_beginDeferredSpawnFn, &OnSpawnPostLightning)) {
+        g_observerRefused = true;
         UE_LOGE("weather: lightning POST observer registration FAILED "
-                "(observer table full? bump kMaxObservers)");
-        return false;
+                "(observer table full? bump kMaxObservers) -- no strike is sent this session");
+        return true;
     }
     g_observerRegistered = true;
     UE_LOGI("weather: HOST lightning POST observer registered on %ls @ %p "
@@ -146,6 +150,7 @@ void OnDisconnect() {
         g_observerRegistered = false;
         UE_LOGI("weather: lightning OnDisconnect unregistered POST observer");
     }
+    g_observerRefused = false;
     // Clear cached session pointer so a stale Session* can't leak into the
     // next session's observer fires before SetSession is re-called.
     g_session.store(nullptr, std::memory_order_release);
@@ -158,8 +163,7 @@ void Apply(const coop::net::LightningStrikePayload& payload) {
     }
     // The "is sender host?" trust-bound check is the world event dispatcher's: it validates
     // senderPeerSlot == 0 before posting here.
-    if (!g_gameplayStaticsCdo || !g_beginDeferredSpawnFn || !g_finishSpawnFn ||
-        !g_lightningStrikeClass) {
+    if (!TryResolve()) {
         UE_LOGW("weather: lightning Apply spawn path not resolved "
                 "(cdo=%p begin=%p finish=%p cls=%p) -- dropping",
                 g_gameplayStaticsCdo, g_beginDeferredSpawnFn, g_finishSpawnFn,

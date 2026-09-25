@@ -31,8 +31,9 @@ void SetSession(coop::net::Session* session);
 bool TryResolve();
 
 // HOST-only: register the POST observer on BeginDeferredActorSpawnFromClass if not already
-// registered AND TryResolve() succeeded. Returns true if the observer is now active (whether
-// already-registered or newly-registered). Safe to call every net-pump tick.
+// registered AND TryResolve() succeeded. Returns true once settled for the session: the observer is
+// active, or the observer table refused it (said once). False while a dependency is not loaded yet,
+// asked again at no cost. Safe to call every net-pump tick.
 bool RegisterHostObserver();
 
 // Receiver: spawn lightningStrike_C at the wire-received location via the standard BeginDeferred +

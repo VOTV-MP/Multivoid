@@ -391,17 +391,9 @@ void Install(coop::net::Session* session) {
 
     // Lightning: the host observes BeginDeferredActorSpawnFromClass (a POST observer; nothing to
     // cancel, the client never spawns lightning locally since timerLightning is suppressed) and
-    // broadcasts the strike. SetSession on every re-entry, so the once-registered observer reads
-    // the current session.
+    // broadcasts the strike; a client's Apply resolves its spawn path per use. SetSession on every
+    // re-entry, so the once-registered observer reads the current session.
     coop::weather_lightning::SetSession(session);
-    if (isHost) {
-        coop::weather_lightning::RegisterHostObserver();
-        // RegisterHostObserver resolves first and is retried by the re-entry until the spawn path
-        // loads.
-    } else {
-        // The client needs the spawn path for Apply.
-        coop::weather_lightning::TryResolve();
-    }
 
     // Fog: the role-gated, echo-suppressed spawnFog interceptor, so a client never makes
     // uncommanded fog. The latch waits on it: an unregistered interceptor must retry, not leave the
@@ -412,6 +404,10 @@ void Install(coop::net::Session* session) {
     // destroyed at FinishSpawningActor, the one place the organic roll surfaces (its caller is
     // invisible to every ProcessEvent seam). The latch waits on it too.
     if (!coop::weather_event_births::Install(session, isHost)) return;
+
+    // The host's lightning observer: the latch waits on it too, so a strike class that loads after
+    // the rest is still observed (its lookups are index lookups, so the re-entry costs nothing).
+    if (isHost && !coop::weather_lightning::RegisterHostObserver()) return;
 
     g_installed = true;
 }
