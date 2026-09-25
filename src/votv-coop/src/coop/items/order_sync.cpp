@@ -1,11 +1,10 @@
 // coop/items/order_sync.cpp -- see coop/items/order_sync.h. Delivery-drone ECONOMY: a client
-// forwards its order to the host, and the host performs and charges for it.
+// sends its order to the host, and the host performs and charges for it.
 //
-// CLIENT: polls saveSlot.orders.Num as a watermark (the commit verb is blueprint-internal and
-// unobservable); on an increment it reads the new order's list_store row names, chunks them to
-// fit kMaxReliablePayload, forwards them, and quiets the mirror drone's self-takeoff. It never
-// mutates its own orders array: removeOrderCart needs the laptop UI and pops index 0
-// unconditionally, and a client never saves, so the retained local entries are harmless.
+// CLIENT: the gate, at the laptop's makeAnOrder, reads the order the player placed from the verb's
+// own parameter and sends its list_store row names to the host in chunks that fit
+// kMaxReliablePayload. The order does not enter the client's own queue (the host's queue, mirrored
+// by order_queue_sync, is the only one) and the client's drone is not sent (the host's flies).
 //
 // HOST: assembles the chunks per (slot, orderId), prices the order from its own store table,
 // checks its OWN balance, commits through the native makeAnOrder, confirms by an orders.Num +1
@@ -15,6 +14,8 @@
 #include "coop/items/order_sync.h"
 
 #include "coop/comms/peer_action_feed.h"
+#include "coop/items/order_queue_sync.h"
+#include "coop/items/order_rows.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -22,6 +23,8 @@
 #include "coop/world/balance_sync.h"
 
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/world/economy.h"
 #include "ue_wrap/world/order_economy.h"
 #include "ue_wrap/world/store_catalog.h"
@@ -41,13 +44,14 @@ namespace {
 namespace OE  = ue_wrap::order_economy;
 namespace SC  = ue_wrap::store_catalog;
 namespace E   = ue_wrap::economy;
+namespace R   = ue_wrap::reflection;
+namespace sg  = ue_wrap::script_gate;
 namespace net = coop::net;
 
 std::atomic<net::Session*> g_session{nullptr};
 
-// Per-item wire prefix: nameLen(1). Price, size, category and class are not on the wire; the
-// host resolves all of them from the row name in its own table.
-constexpr int      kItemFixed         = 1;
+// An item on the wire is its row name (coop/items/order_rows.h). Price, size, category and class are
+// not on the wire; the host resolves all of them from the row name in its own table.
 constexpr uint64_t kAssemblyTimeoutMs = 15000;  // drop a partial order whose chunks stop arriving
 constexpr uint64_t kPendingTimeoutMs  = 60000;  // drop a completed order the world never lets us commit
 constexpr size_t   kMaxAssembly       = 16;     // cap concurrent partial orders, PER SLOT (see below)
@@ -56,7 +60,6 @@ constexpr int      kMaxCommitTries    = 3;      // a commit that keeps failing w
 constexpr size_t   kMaxInFlight       = 32;     // client: remembered orders awaiting a verdict
 
 // ---- client forward state (game thread only) ----
-int32_t  g_forwardedThrough = -1;  // watermark: orders.Num value we've forwarded up to (-1 = unprimed)
 uint32_t g_orderIdCounter   = 0;   // monotonic id per forwarded order (uniqueness within this sender)
 
 // What we sent, per orderId, so a REFUSAL can put the cart back. Dropped on the first verdict and
@@ -104,11 +107,8 @@ float RollEta() {
     return s_dist(s_rng);
 }
 
-// Reset all per-session state. Called by BOTH Install (session start) and OnDisconnect
-// (teardown), so a reconnect that re-Installs without a preceding OnDisconnect cannot retain a
-// stale client watermark and double-forward last session's queued orders.
+// Reset all per-session state at teardown (OnDisconnect).
 void ResetState() {
-    g_forwardedThrough = -1;
     g_orderIdCounter   = 0;
     g_inFlight.clear();
     for (int i = 0; i < g_bySlot.size(); ++i) {
@@ -117,28 +117,8 @@ void ResetState() {
     }
 }
 
-// list_store keys are ASCII identifiers -> narrow/widen losslessly (non-ASCII -> '?', which simply
-// fails the host's catalog lookup and refuses the order, loudly, rather than silently mis-resolving).
-std::string NarrowAscii(const std::wstring& w) {
-    std::string s;
-    s.reserve(w.size());
-    for (wchar_t c : w) s.push_back((c >= 0 && c < 128) ? static_cast<char>(c) : '?');
-    return s;
-}
-std::wstring WidenAscii(const uint8_t* p, int n) {
-    std::wstring w;
-    w.reserve(static_cast<size_t>(n));
-    for (int i = 0; i < n; ++i) w.push_back(static_cast<wchar_t>(p[i]));
-    return w;
-}
-
 // ---- CLIENT: serialize + chunk + forward one order ----
-void ForwardOrder(net::Session* s, int32_t idx) {
-    OE::OrderData od;
-    if (!OE::ReadOrder(idx, od)) {
-        UE_LOGW("order_sync: ReadOrder(%d) failed -- skip", idx);
-        return;
-    }
+void ForwardOrder(net::Session* s, const OE::OrderData& od) {
     const size_t total = od.rowNames.size();
     if (total > static_cast<size_t>(net::kMaxOrderItems)) {
         // Do NOT truncate. The client has already been debited locally for ALL of these, so
@@ -146,9 +126,9 @@ void ForwardOrder(net::Session* s, int32_t idx) {
         // one the player paid for, silently. The game's own cart caps at 50, so a legitimate order
         // can never reach this; refusing the whole thing is right for the only case that can, and
         // the player is told.
-        UE_LOGW("order_sync: order idx=%d has %zu items > cap %d -- NOT forwarding (a partial basket "
+        UE_LOGW("order_sync: an order of %zu items > cap %d -- NOT forwarding (a partial basket "
                 "would be priced and delivered differently from the one that was paid for)",
-                idx, total, net::kMaxOrderItems);
+                total, net::kMaxOrderItems);
         coop::peer_action_feed::AnnounceDirect(
             static_cast<uint8_t>(coop::players::Registry::Get().LocalPeerId()),
             L"could not order: too many items in one order");
@@ -164,20 +144,10 @@ void ForwardOrder(net::Session* s, int32_t idx) {
         uint8_t buf[net::kMaxReliablePayload];
         int pos = static_cast<int>(sizeof(net::OrderRequestHeader));
         const size_t chunkStart = i;
-        uint16_t chunkCount = 0;
-        while (i < total) {
-            std::string name = NarrowAscii(od.rowNames[i]);
-            if (name.size() > static_cast<size_t>(net::kMaxOrderRowName))
-                name.resize(static_cast<size_t>(net::kMaxOrderRowName));
-            const int itemSize = kItemFixed + static_cast<int>(name.size());
-            if (pos + itemSize > net::kMaxReliablePayload) break;  // this chunk is full
-            buf[pos++] = static_cast<uint8_t>(name.size());
-            std::memcpy(buf + pos, name.data(), name.size());
-            pos += static_cast<int>(name.size());
-            sent.push_back(od.rowNames[i]);
-            ++chunkCount;
-            ++i;
-        }
+        const uint16_t chunkCount = static_cast<uint16_t>(
+            coop::order_rows::Pack(od.rowNames, i, buf, pos, net::kMaxReliablePayload));
+        for (uint16_t k = 0; k < chunkCount; ++k) sent.push_back(od.rowNames[i + k]);
+        i += chunkCount;
         if (chunkCount == 0) {
             // A single item that cannot fit even an empty chunk -- impossible given the caps
             // (header 12 + 1 + name<=96 = 109 <= 228). ABORT the whole forward rather than skip the
@@ -211,25 +181,64 @@ void ForwardOrder(net::Session* s, int32_t idx) {
         }
         g_inFlight[orderId] = std::move(sent);
     }
-    UE_LOGI("order_sync: forwarded order idx=%d id=%u items=%zu in %d chunk(s)", idx, orderId, total,
-            chunks);
+    UE_LOGI("order_sync: forwarded order id=%u items=%zu in %d chunk(s)", orderId, total, chunks);
 }
 
-void TickClient(net::Session* s) {
-    static bool s_tickLogged = false;
-    if (!s_tickLogged) { s_tickLogged = true; UE_LOGI("order_sync: client Tick active (polling saveSlot.orders)"); }
-    const int32_t count = OE::OrderCount();
-    if (count < 0) return;  // store not resolved yet (booting / at the menu)
-    if (g_forwardedThrough < 0) {
-        g_forwardedThrough = count;  // prime: pre-existing orders are old local save state, not forwarded
-        UE_LOGI("order_sync: client watermark primed at orders.Num=%d (pre-existing not forwarded)", count);
-        return;
+// ---- CLIENT: the gate at the order verbs ----
+// A client's laptop runs makeAnOrder as single player does -- from its order button, or with
+// automatic set from a world event (daynightCycle's daily order, trigger_eventer's gifts) -- and the
+// body appends to the local queue (addOrderCart) and sends the drone (sendShop) with orders[0]. On a
+// client the queue and the drone are the host's, so at the gate:
+//   makeAnOrder entry: a player's order goes to the host as a request; a world event's is left to
+//     the host's own copy of the event, which makes it there;
+//   addOrderCart entry, from makeAnOrder: refused, so the local queue holds only what the host's
+//     queue sends (order_queue_sync);
+//   the drone's sendShop entry: refused, whoever calls it.
+// makeAnOrder's own body runs on: it clears the cart and its slot widgets, as the button expects.
+constexpr const wchar_t* kLaptopClass = L"ui_laptop_C";
+constexpr const wchar_t* kDroneClass  = L"drone_C";
+constexpr const wchar_t* kMakeVerb    = L"makeAnOrder";
+constexpr const wchar_t* kAddVerb     = L"addOrderCart";
+constexpr const wchar_t* kSendVerb    = L"sendShop";
+constexpr int kTagMake = 0x4F534D4B;  // 'OSMK'
+constexpr int kTagAdd  = 0x4F534144;  // 'OSAD'
+constexpr int kTagSend = 0x4F535344;  // 'OSSD'
+bool g_gateWatched = false;
+
+net::Session* ClientSession() {
+    net::Session* s = g_session.load(std::memory_order_acquire);
+    return (s && s->connected() && s->role() != net::Role::Host) ? s : nullptr;
+}
+
+sg::Verdict OnMakeAnOrderPre(const sg::Call& c) {
+    net::Session* s = ClientSession();
+    if (!s) return sg::Verdict::Run;
+    const int32_t autoOff = R::FindParamOffset(c.function, L"automatic");
+    if (autoOff >= 0 && c.locals && c.locals[autoOff]) {
+        UE_LOGI("order_sync: a world event's order on this client is not sent -- the host's copy of the "
+                "event makes it");
+        return sg::Verdict::Run;
     }
-    if (count < g_forwardedThrough) { g_forwardedThrough = count; return; }  // queue shrank -- re-sync
-    if (count == g_forwardedThrough) return;
-    for (int32_t idx = g_forwardedThrough; idx < count; ++idx) ForwardOrder(s, idx);
-    g_forwardedThrough = count;
-    OE::QuietLocalDrone();  // reset the mirror drone's self-takeoff once after forwarding
+    const int32_t itemOff = R::FindParamOffset(c.function, L"NewItem");
+    const uint8_t* order = itemOff >= 0 ? sg::OutParamPtr(c, itemOff) : nullptr;  // passed by reference
+    if (!order && itemOff >= 0 && c.locals) order = c.locals + itemOff;
+    OE::OrderData od;
+    if (!order || !OE::ReadOrderAt(order, od)) {
+        UE_LOGW("order_sync: this client's order could not be read -- not sent");
+        return sg::Verdict::Run;
+    }
+    ForwardOrder(s, od);
+    return sg::Verdict::Run;
+}
+
+sg::Verdict OnAddOrderCartPre(const sg::Call& c) {
+    // The mirror's own append comes through ProcessEvent, with no calling Blueprint frame.
+    if (!ClientSession() || !c.callerFunction) return sg::Verdict::Run;
+    return R::NameEquals(R::NameOf(c.callerFunction), kMakeVerb) ? sg::Verdict::Cancel : sg::Verdict::Run;
+}
+
+sg::Verdict OnSendShopPre(const sg::Call&) {
+    return ClientSession() ? sg::Verdict::Cancel : sg::Verdict::Run;
 }
 
 // ---- HOST: tell one client its order was not performed, and undo what its local run already did ----
@@ -391,17 +400,21 @@ void OnRefused(const void* payload, int len) {
 
 void Install(net::Session* session) {
     // Install is the per-net-pump-tick idempotent "ensure" path, as in every sync subsystem, NOT a
-    // once-per-session call, so it must not reset state here -- that would re-prime the client
-    // watermark every tick and never forward. Per-session reset lives in OnDisconnect, which
-    // net_pump calls on every session-teardown edge.
+    // once-per-session call, so it must not reset state here. Per-session reset lives in
+    // OnDisconnect, which net_pump calls on every session-teardown edge.
     g_session.store(session, std::memory_order_release);
+    if (!g_gateWatched)
+        g_gateWatched = sg::WatchClassName(kLaptopClass, kMakeVerb, kTagMake, &OnMakeAnOrderPre, nullptr) &&
+                        sg::WatchClassName(kLaptopClass, kAddVerb, kTagAdd, &OnAddOrderCartPre, nullptr) &&
+                        sg::WatchClassName(kDroneClass, kSendVerb, kTagSend, &OnSendShopPre, nullptr);
+    coop::order_queue_sync::Install(session);
 }
 
 void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
     if (s->role() == net::Role::Host) TickHost(s);
-    else                              TickClient(s);
+    coop::order_queue_sync::Tick();
 }
 
 void OnReliable(const void* payload, int len, uint8_t senderSlot) {
@@ -428,15 +441,9 @@ void OnReliable(const void* payload, int len, uint8_t senderSlot) {
     const uint8_t* end = static_cast<const uint8_t*>(payload) + len;
     std::vector<std::wstring> chunkNames;
     chunkNames.reserve(h.chunkItems);
-    for (uint16_t k = 0; k < h.chunkItems; ++k) {
-        if (p + kItemFixed > end) { UE_LOGW("order_sync: OrderRequest truncated item -- drop"); return; }
-        const uint8_t nameLen = *p++;
-        if (nameLen == 0 || nameLen > net::kMaxOrderRowName || p + nameLen > end) {
-            UE_LOGW("order_sync: OrderRequest bad nameLen=%u -- drop", nameLen);
-            return;
-        }
-        chunkNames.push_back(WidenAscii(p, nameLen));
-        p += nameLen;
+    if (!coop::order_rows::Unpack(p, end, h.chunkItems, chunkNames)) {
+        UE_LOGW("order_sync: OrderRequest carries a truncated or oversized item -- drop");
+        return;
     }
 
     SlotOrders& so = g_bySlot[static_cast<int>(senderSlot)];
@@ -494,6 +501,7 @@ void OnReliableRefused(const void* payload, int len) {
 
 void OnDisconnect() {
     ResetState();
+    coop::order_queue_sync::OnDisconnect();
 }
 
 }  // namespace coop::order_sync

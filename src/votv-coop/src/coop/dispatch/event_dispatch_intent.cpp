@@ -20,6 +20,7 @@
 #include "coop/interactables/keypad_verbs.h"  // CLIENT->HOST digit, submit, cancel, keycard, reset
 #include "coop/interactables/drone_call_intent.h"  // CLIENT->HOST press of the drone console
 #include "coop/items/coingun_sync.h"
+#include "coop/items/order_queue_sync.h"  // HOST->CLIENT the delivery order queue
 #include "coop/items/order_sync.h"
 #include "coop/props/pack_trash_intent.h"  // CLIENT->HOST bagging of a pile or clump
 #include "coop/props/prop_drop_intent.h"  // CLIENT->HOST client-placed keyed prop
@@ -108,6 +109,14 @@ bool HandleIntentEvent(net::Session& session,
             break;
         }
         coop::coingun_sync::OnReliableResult(msg.payload, static_cast<int>(msg.payloadLen));
+        break;
+    }
+    case net::ReliableKind::OrderQueue: {
+        // The host's delivery order queue, as each change ran (reset, append, pop); a client mirrors
+        // it and never writes its own. HOST->CLIENT, never relayed; order_queue_sync checks the
+        // sender is slot 0 and no-ops on the host.
+        coop::order_queue_sync::OnReliable(msg.payload, static_cast<int>(msg.payloadLen),
+                                           static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::OrderRefused: {

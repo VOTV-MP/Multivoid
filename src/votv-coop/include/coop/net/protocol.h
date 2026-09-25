@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 186;
+inline constexpr uint16_t kProtocolVersion = 187;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -830,6 +830,12 @@ enum class ReliableKind : uint8_t {
     // 1 and refuses 0. Late join: the transferred save carries `fixed`, and the connect snapshot says
     // it again. KeyedTogglePayload.
     OvenRepairState = 151,
+
+    // Host to all: the delivery order queue (saveSlot.orders), which a client mirrors and never
+    // writes itself -- reset, an order appended at the end, or the first order popped, as the host's
+    // own addOrderCart and removeOrderCart ran. A joiner gets a reset and every queued order at its
+    // world-ready. OrderQueueHeader, then an append's packed items as OrderRequest packs them.
+    OrderQueue = 152,
 };
 
 #pragma pack(push, 1)
@@ -1953,6 +1959,21 @@ struct OrderRequestHeader {
     uint16_t _pad;        // 2
 };
 static_assert(sizeof(OrderRequestHeader) == 12, "OrderRequestHeader must be 12 bytes");
+
+// The host's delivery queue as clients mirror it (OrderQueue): this header, then, for an append,
+// chunkItems packed items as OrderRequest packs them. An append that does not fit one datagram is
+// split into consecutive messages; a client assembles them in order (one lane) and appends once all
+// totalItems arrived.
+struct OrderQueueHeader {
+    uint8_t  op;          // 1 -- 0 reset (empty the queue), 1 append, 2 pop the first order
+    uint8_t  _pad[3];     // 3
+    float    eta;         // 4 -- append: the order's delivery time (Fstruct_storeOrder.time); else 0
+    uint16_t totalItems;  // 2 -- append: items in the whole order (1..kMaxOrderItems); else 0
+    uint16_t baseIndex;   // 2 -- append: index of this message's first item
+    uint16_t chunkItems;  // 2 -- append: items carried in this message
+    uint16_t _pad2;       // 2
+};
+static_assert(sizeof(OrderQueueHeader) == 16, "OrderQueueHeader must be 16 bytes");
 
 // Economy wire bounds (host trust boundary -- a client must not make the host allocate unbounded).
 inline constexpr int kMaxOrderItems   = 64;  // a cart > 64 line-items is rejected as garbage

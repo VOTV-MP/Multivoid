@@ -23,10 +23,11 @@
 namespace ue_wrap::order_economy {
 
 // One order as the wire and the arbiter see it: the row names of its items in cart order,
-// multiplicity preserved. Everything else (price, object, size, category, asProp) the host
-// resolves from its own table; it never travels.
+// multiplicity preserved, and its delivery time. Everything else (price, object, size, category,
+// asProp) a peer resolves from its own table; it never travels.
 struct OrderData {
     std::vector<std::wstring> rowNames;
+    float eta = 0.f;  // Fstruct_storeOrder.time, seconds
 };
 
 // The count of orders in the local queue; -1 if unresolved (booting, the menu). The host also
@@ -39,6 +40,10 @@ int32_t OrderCount();
 // order has no items, or the catalog is unusable (the row-name offset comes from
 // store_catalog, which owns the row's shape). Game thread.
 bool ReadOrder(int32_t index, OrderData& out);
+
+// Read the order stored at `order`, an Fstruct_storeOrder (makeAnOrder's parameter, say), into
+// `out`: its items' row names and its time. False as ReadOrder's. Game thread.
+bool ReadOrderAt(const void* order, OrderData& out);
 
 // Host: commit `order` as a real delivery through the native makeAnOrder. Every item is looked
 // up in store_catalog and the live table row copied wholesale into a heap items buffer the
@@ -58,14 +63,15 @@ bool CommitOrder(const OrderData& order, float etaSeconds, bool automatic);
 // still-loading world must defer. Game thread.
 bool CanCommit();
 
-// Client: after forwarding a locally-placed order, reset the mirror drone's self-takeoff (the
-// local makeAnOrder set this peer's drone active with an order) so it cannot fake a local
-// flight; the drone stays a pure host-driven mirror. Writes the empty-queue rest state. Safe if
-// the send never ran; false if the drone is unresolvable. Game thread. Not undone: the local
-// send also stores the drone's order (inert, since the client drone's tick is suppressed) and,
-// with a broken radio tower, adds an email locally, which the host also does on commit, a
-// duplicate-email path not suppressible from here.
-bool QuietLocalDrone();
+// Client: append `order` (its rows and time) to the local queue through the laptop's own
+// addOrderCart, which also adds the queue's order slot widget: the host's queue as this peer
+// mirrors it. The items are built as CommitOrder builds them. False, appending nothing, when the
+// laptop or the catalog is unusable or a row is unknown. Game thread.
+bool AppendOrder(const OrderData& order);
+
+// Client: pop the local queue's first order through the laptop's own removeOrderCart, which also
+// removes its slot widget. False when the laptop is unresolved or the queue is empty. Game thread.
+bool PopOrder();
 
 // Client: put `rowNames` back into the laptop's cart through the native addStoreCart, once per
 // row with the live table row. Used only when the host refuses a forwarded order: single

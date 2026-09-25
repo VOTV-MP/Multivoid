@@ -5,14 +5,15 @@
 // engine only through ue_wrap::order_economy.
 //
 // MODEL: the economy is host-authoritative. VOTV has no engine replication, so a CLIENT's laptop
-// order is entirely client-local -- makeAnOrder appends to the CLIENT's own saveSlot.orders and
-// flies the CLIENT's mirror drone. The commit verb is blueprint-internal and unobservable, so
-// the client polls its saveSlot.orders count each net-pump tick; on an increment it serializes
-// the new order (each item's `object` class NAME, price, size, category and time), chunks it
-// across reliable datagrams of kMaxReliablePayload, forwards it, then RESETS its mirror drone,
-// so its locally-run sendShop cannot fake a takeoff. The HOST assembles the chunks per
-// (senderSlot, orderId) and re-commits through Uui_laptop_C::makeAnOrder(order, automatic=true).
-// The delivered cargo box rides the existing prop pipeline and the drone body rides DroneState.
+// order would be entirely client-local: makeAnOrder appends to the client's own saveSlot.orders and
+// sends the client's drone. At the script gate, on a client, makeAnOrder's entry reads the order the
+// player placed from its own parameter and sends its row names to the host, chunked across reliable
+// datagrams of kMaxReliablePayload; the addOrderCart it runs is refused (the client's queue is the
+// host's, order_queue_sync) and so is the drone's sendShop (the host's drone flies). A world event's
+// automatic order is not sent: the host's own copy of the event makes it. The HOST assembles the
+// chunks per (senderSlot, orderId) and re-commits through Uui_laptop_C::makeAnOrder(order,
+// automatic=true). The delivered cargo box rides the existing prop pipeline and the drone body rides
+// DroneState.
 
 #pragma once
 
@@ -22,12 +23,12 @@ namespace coop::net { class Session; }
 
 namespace coop::order_sync {
 
-// Store the session pointer + reset state. Game thread.
+// Store the session pointer and register the gate's watches (idempotent), the queue mirror's too.
+// Game thread.
 void Install(coop::net::Session* session);
 
-// Per-tick pump (net-pump, game thread):
-//   CLIENT -> poll saveSlot.orders.Num; forward each new order; quiet the mirror drone.
-//   HOST   -> retry pending completed-order commits + evict stale partial assemblies.
+// Per-tick pump (net-pump, game thread): the HOST retries pending completed-order commits and
+// evicts stale partial assemblies; the queue mirror applies what waited on the laptop.
 void Tick();
 
 // Receiver entry (HOST ingest): an OrderRequest chunk arrived from `senderSlot`, a client. The
@@ -45,7 +46,8 @@ void OnReliable(const void* payload, int len, uint8_t senderSlot);
 // message. A host receiving this (it should not) no-ops. Game thread.
 void OnReliableRefused(const void* payload, int len);
 
-// Session teardown: reset the client watermark + drop host assembly/commit queues. Game thread.
+// Session teardown: drop the client's in-flight orders, the host's assemblies and commit queues,
+// and the queue mirror's state. Game thread.
 void OnDisconnect();
 
 }  // namespace coop::order_sync

@@ -62,22 +62,15 @@ bool ResolveGmOffsets(void* gm) {
     return g_offSaveSlot >= 0;
 }
 
-// Adrone_C field offsets (constant per class; resolved ONCE -- never FindPropertyOffset on a
-// per-tick path, the standing perf ban). CanCommit + QuietLocalDrone run while a commit is
-// pending / just after a client forward.
+// Adrone_C field offset (constant per class; resolved ONCE -- never FindPropertyOffset on a
+// per-tick path, the standing perf ban). CanCommit runs while a commit is pending.
 bool    g_droneOffsetsDone = false;
 int32_t g_offDroneSell     = -1;  // sellLocation (sendShop/beginFly read it)
-int32_t g_offDroneActive   = -1;  // Active
-int32_t g_offDroneFlying   = -1;  // flyingType
-int32_t g_offDroneHasOrder = -1;  // hasOrder
 void ResolveDroneOffsets(void* drone) {
     if (g_droneOffsetsDone) return;
     void* dCls = R::ClassOf(drone);
     if (!dCls) return;
     g_offDroneSell     = R::FindPropertyOffset(dCls, L"sellLocation");
-    g_offDroneActive   = R::FindPropertyOffset(dCls, L"Active");
-    g_offDroneFlying   = R::FindPropertyOffset(dCls, L"flyingType");
-    g_offDroneHasOrder = R::FindPropertyOffset(dCls, L"hasOrder");
     g_droneOffsetsDone = true;
 }
 
@@ -99,6 +92,30 @@ void* ResolveSaveSlot(int32_t* outOrdersOff) {
     if (g_offOrders < 0) return nullptr;
     if (outOrdersOff) *outOrdersOff = g_offOrders;
     return save;
+}
+
+// The row names of the items, and the time, of the Fstruct_storeOrder at `order`. generateStore
+// stamps the list_store row key into each Fstruct_store.name, so that IS the shop identity of a line
+// item -- and the only part of it that travels. True when a row name was read.
+bool ReadItems(const void* order, int32_t nameOff, OrderData& out) {
+    const uint8_t* o = static_cast<const uint8_t*>(order);
+    const uint8_t* itemsData = *reinterpret_cast<const uint8_t* const*>(o + kOrderItemsOff + 0);
+    int32_t itemsNum = *reinterpret_cast<const int32_t*>(o + kOrderItemsOff + 8);
+    out.eta = *reinterpret_cast<const float*>(o + kOrderTimeOff);
+    if (!itemsData || itemsNum <= 0) return false;
+    if (itemsNum > kReadItemCap) itemsNum = kReadItemCap;
+    out.rowNames.reserve(static_cast<size_t>(itemsNum));
+    for (int32_t i = 0; i < itemsNum; ++i) {
+        R::FName nm;
+        std::memcpy(&nm, itemsData + static_cast<size_t>(i) * kItemStride + nameOff, sizeof(nm));
+        std::wstring s = R::ToString(nm);
+        if (s.empty() || s == L"None") {
+            UE_LOGW("order_economy: an order's item %d carries no row name -- skipping", i);
+            continue;
+        }
+        out.rowNames.push_back(std::move(s));
+    }
+    return !out.rowNames.empty();
 }
 
 }  // namespace
@@ -137,27 +154,15 @@ bool ReadOrder(int32_t index, OrderData& out) {
     if (index < 0 || index >= num) return false;
     void* ordersData = ReadAt<void*>(save, off + 0);
     if (!ordersData) return false;
+    return ReadItems(reinterpret_cast<uint8_t*>(ordersData) + static_cast<size_t>(index) * kOrderStride, nameOff,
+                     out);
+}
 
-    void* order = reinterpret_cast<uint8_t*>(ordersData) + static_cast<size_t>(index) * kOrderStride;
-    void* itemsData = ReadAt<void*>(order, kOrderItemsOff + 0);
-    int32_t itemsNum = ReadAt<int32_t>(order, kOrderItemsOff + 8);
-    if (!itemsData || itemsNum <= 0) return false;
-    if (itemsNum > kReadItemCap) itemsNum = kReadItemCap;
-
-    out.rowNames.reserve(static_cast<size_t>(itemsNum));
-    for (int32_t i = 0; i < itemsNum; ++i) {
-        void* item = reinterpret_cast<uint8_t*>(itemsData) + static_cast<size_t>(i) * kItemStride;
-        // generateStore stamps the list_store row key into Fstruct_store.name, so this IS the
-        // shop identity of the line item -- and the only part of it that travels.
-        const R::FName nm = ReadAt<R::FName>(item, nameOff);
-        std::wstring s = R::ToString(nm);
-        if (s.empty() || s == L"None") {
-            UE_LOGW("order_economy: ReadOrder(%d) item %d carries no row name -- skipping", index, i);
-            continue;
-        }
-        out.rowNames.push_back(std::move(s));
-    }
-    return !out.rowNames.empty();
+bool ReadOrderAt(const void* order, OrderData& out) {
+    out.rowNames.clear();
+    if (!order || !ue_wrap::store_catalog::Ready()) return false;  // Ready() builds it; see ReadOrder
+    const int32_t nameOff = ue_wrap::store_catalog::NameOffset();
+    return nameOff >= 0 && ReadItems(order, nameOff, out);
 }
 
 bool CanCommit() {
@@ -174,21 +179,29 @@ bool CanCommit() {
     return true;
 }
 
-bool CommitOrder(const OrderData& order, float etaSeconds, bool automatic) {
-    namespace SC = ue_wrap::store_catalog;
+namespace {
 
+// The laptop widget (ui_laptop_C), which owns the order verbs, or null.
+void* Laptop() {
     void* gm = world_singleton::Gamemode();
-    if (!gm || !ResolveGmOffsets(gm) || g_offLaptop < 0) return false;
-    void* laptop = ReadPtr(gm, g_offLaptop);
-    if (!laptop) { UE_LOGW("order_economy: CommitOrder -- laptop null"); return false; }
+    if (!gm || !ResolveGmOffsets(gm) || g_offLaptop < 0) return nullptr;
+    return ReadPtr(gm, g_offLaptop);
+}
 
+// Build `order` as a native Fstruct_storeOrder in `orderStruct`, its items in `itemsBuf` (which must
+// outlive the call it is handed to): each item the live list_store row copied wholesale, the pinned
+// empty FText over subcategory and the row key stamped into name. ALL-OR-NOTHING: an unknown row
+// builds nothing.
+bool BuildOrder(const OrderData& order, float etaSeconds, std::vector<uint8_t>& itemsBuf,
+                uint8_t (&orderStruct)[kOrderStride], const char* who) {
+    namespace SC = ue_wrap::store_catalog;
     size_t n = order.rowNames.size();
     if (n == 0) return false;
     if (n > kCommitItemCap) n = kCommitItemCap;
 
     if (!SC::Ready()) {
-        UE_LOGW("order_economy: CommitOrder -- store_catalog INVALID; refusing to commit an order "
-                "whose items we cannot name or price");
+        UE_LOGW("order_economy: %s -- store_catalog INVALID; refusing to build an order whose items we cannot "
+                "name or price", who);
         return false;
     }
     const int32_t subcatOff = SC::SubcategoryOffset();
@@ -199,7 +212,7 @@ bool CommitOrder(const OrderData& order, float etaSeconds, bool automatic) {
     // where our committed row deliberately differs from what the host's own Button_order builds.
     uint8_t emptyText[ue_wrap::ftext_utils::kFTextSize];
     if (!ue_wrap::ftext_utils::EmptyFText(emptyText)) {
-        UE_LOGW("order_economy: CommitOrder -- empty FText unresolved (Kismet not ready) -- defer");
+        UE_LOGW("order_economy: %s -- empty FText unresolved (Kismet not ready) -- defer", who);
         return false;
     }
 
@@ -207,11 +220,11 @@ bool CommitOrder(const OrderData& order, float etaSeconds, bool automatic) {
     // copying each LIVE list_store row wholesale. ALL-OR-NOTHING: an unknown row name aborts the
     // whole commit, because a partial delivery would hand over goods the arbiter could not name
     // while the caller has already priced the full basket.
-    std::vector<uint8_t> itemsBuf(n * static_cast<size_t>(kItemStride), 0);
+    itemsBuf.assign(n * static_cast<size_t>(kItemStride), 0);
     for (size_t i = 0; i < n; ++i) {
         const SC::Row* row = SC::Find(order.rowNames[i]);
         if (!row || !row->data) {
-            UE_LOGW("order_economy: CommitOrder -- unknown store row '%ls' -- committing NOTHING",
+            UE_LOGW("order_economy: %s -- unknown store row '%ls' -- building NOTHING", who,
                     order.rowNames[i].c_str());
             return false;
         }
@@ -232,11 +245,23 @@ bool CommitOrder(const OrderData& order, float etaSeconds, bool automatic) {
     }
 
     // Wrap in a native Fstruct_storeOrder { items TArray; time f32 }.
-    uint8_t orderStruct[kOrderStride] = {0};
+    std::memset(orderStruct, 0, kOrderStride);
     *reinterpret_cast<void**>(orderStruct + kOrderItemsOff + 0)   = itemsBuf.data();
     *reinterpret_cast<int32_t*>(orderStruct + kOrderItemsOff + 8) = static_cast<int32_t>(n);
     *reinterpret_cast<int32_t*>(orderStruct + kOrderItemsOff + 12) = static_cast<int32_t>(n);
     *reinterpret_cast<float*>(orderStruct + kOrderTimeOff) = etaSeconds;
+    return true;
+}
+
+}  // namespace
+
+bool CommitOrder(const OrderData& order, float etaSeconds, bool automatic) {
+    void* laptop = Laptop();
+    if (!laptop) { UE_LOGW("order_economy: CommitOrder -- laptop null"); return false; }
+    std::vector<uint8_t> itemsBuf;
+    uint8_t orderStruct[kOrderStride];
+    if (!BuildOrder(order, etaSeconds, itemsBuf, orderStruct, "CommitOrder")) return false;
+    const size_t n = itemsBuf.size() / static_cast<size_t>(kItemStride);
 
     void* fn = R::FindFunction(R::ClassOf(laptop), L"makeAnOrder");
     if (!fn) { UE_LOGW("order_economy: CommitOrder -- makeAnOrder UFunction not found"); return false; }
@@ -256,16 +281,25 @@ bool CommitOrder(const OrderData& order, float etaSeconds, bool automatic) {
     return ok;
 }
 
-bool QuietLocalDrone() {
-    void* gm = world_singleton::Gamemode();
-    if (!gm || !ResolveGmOffsets(gm) || g_offDrone < 0) return false;
-    void* drone = ReadPtr(gm, g_offDrone);
-    if (!drone) return false;
-    ResolveDroneOffsets(drone);
-    if (g_offDroneActive   >= 0) *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(drone) + g_offDroneActive)    = false;
-    if (g_offDroneFlying   >= 0) *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(drone) + g_offDroneFlying) = -1;
-    if (g_offDroneHasOrder >= 0) *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(drone) + g_offDroneHasOrder)  = false;
-    return true;
+bool AppendOrder(const OrderData& order) {
+    void* laptop = Laptop();
+    void* fn = laptop ? R::FindDispatchFunctionCached(R::ClassOf(laptop), L"addOrderCart") : nullptr;
+    if (!fn) return false;
+    std::vector<uint8_t> itemsBuf;
+    uint8_t orderStruct[kOrderStride];
+    if (!BuildOrder(order, order.eta, itemsBuf, orderStruct, "AppendOrder")) return false;
+    ue_wrap::ParamFrame f(fn);
+    // itemsBuf outlives the call: addOrderCart's Array_Add deep-copies the struct into the queue.
+    return f.valid() && f.SetRaw(L"NewItem", orderStruct, kOrderStride) && ue_wrap::Call(laptop, f);
+}
+
+bool PopOrder() {
+    if (OrderCount() <= 0) return false;  // removeOrderCart pops index 0 with no bound check
+    void* laptop = Laptop();
+    void* fn = laptop ? R::FindDispatchFunctionCached(R::ClassOf(laptop), L"removeOrderCart") : nullptr;
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    return f.valid() && ue_wrap::Call(laptop, f);
 }
 
 int32_t RestoreCartItems(const std::vector<std::wstring>& rowNames) {

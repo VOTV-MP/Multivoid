@@ -13,6 +13,7 @@
 #include "coop/interactables/desk_input_sync.h"
 #include "coop/interactables/deck_play_sync.h"  // deck playback lane
 #include "coop/interactables/physmods_sync.h"  // desk physical-modules lane
+#include "coop/items/order_queue_sync.h"  // the delivery order queue, the host's, mirrored
 #include "coop/interactables/drive_sync.h"  // drive chain (slots + payloads)
 #include "coop/interactables/drive_rack_sync.h"  // rack storage
 #include "coop/interactables/meadow_db_sync.h"  // meadow signal-DB mirror (multiset shadow + join seed)
@@ -349,6 +350,7 @@ void ConnectReplayForSlot(int slot) {
     coop::power_sync::QueueConnectBroadcastForSlot(slot);  // base power-panel breakers
     coop::atv_sync::QueueConnectBroadcastForSlot(slot);  // ATV body pose (adopt=1)
     coop::drone_sync::QueueConnectBroadcastForSlot(slot);  // delivery drone pose (adopt=1)
+    coop::order_queue_sync::QueueConnectBroadcastForSlot(slot);  // the delivery order queue: a reset + every queued order
     coop::turbine_sync::QueueConnectBroadcastForSlot(slot);  // wind-turbine facing/spin snap
     coop::device_occupancy::QueueConnectBroadcastForSlot(slot);  // live device claims (busy table)
     coop::console_state_sync::QueueConnectBroadcastForSlot(slot);  // sky-signal snapshot + desk adopt
