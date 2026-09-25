@@ -182,7 +182,7 @@ void ClaimConversionGhosts(uint32_t srcEid, bool wantNpc, float x, float y, floa
     std::unordered_set<void*> mirrors;
     CollectMirrorActors(/*wantProp=*/!wantNpc, /*wantNpc=*/wantNpc, mirrors);
     const int32_t n = R::NumObjects();
-    constexpr float kR2 = 500.f * 500.f;  // the new form spawns at the kerfur's own transform
+    constexpr float kR2 = 500.f * 500.f;  // the verb's new form spawns about the old one (not in the flesh room)
     // The conversion verb spawns exactly one actor per base class at the conversion position, so
     // only the nearest untracked candidate per base class is claimed. Claiming everything within
     // the radius took the player's pre-existing save-loaded kerfur props, and the orphan reaper

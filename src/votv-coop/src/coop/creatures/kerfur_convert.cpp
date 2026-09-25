@@ -230,7 +230,7 @@ void PollKerfurConversions() {
         seen.insert(eid);
         if (R::IsLiveByIndex(actor, el->GetInternalIdx())) {
             // Every sighting refreshes the generation (the live actor is its identity) and re-arms
-            // the entry; only a read position enters it, so a death is judged against a real pose.
+            // the entry; only a read location enters it, so a death is judged against a real place.
             RefreshWatch(eid, actor);
             continue;
         }
@@ -251,7 +251,7 @@ void PollKerfurConversions() {
             // before the host's PropSpawn arrives. The claim searches around the last pose, so a
             // kerfur never placed while alive claims nothing.
             if (placed) coop::kerfur_convert_client::ClaimConversionGhosts(eid, /*wantNpc=*/false, lx, ly, lz);
-            else UE_LOGW("kerfur_convert: eid=%u had no readable pose alive -- its local ghost is not claimed", eid);
+            else UE_LOGW("kerfur_convert: eid=%u had no readable location alive -- its local ghost is not claimed", eid);
         } else if (isHost) {
             // The old form is dead here, so no reject can need its rotation. A kerfur never placed
             // alive has no pose to converge at: its death is retired as a plain one.
@@ -260,7 +260,7 @@ void PollKerfurConversions() {
                                         static_cast<coop::element::ElementId>(eid), /*toProp=*/1,
                                         lx, ly, lz, /*rot0=*/nullptr);
             } else {
-                UE_LOGW("kerfur_convert: host NPC eid=%u had no readable pose alive -- retired as a plain death", eid);
+                UE_LOGW("kerfur_convert: host NPC eid=%u had no readable location alive -- retired as a plain death", eid);
                 coop::kerfur_convert_host::RetireNpcFormAsDeath(el->GetId(), actor);
             }
         }
@@ -296,7 +296,7 @@ void PollKerfurConversions() {
             // destroy-and-respawn pop, and no untracked ghost a grab could duplicate. As above, a
             // kerfur never placed while alive claims nothing.
             if (placed) coop::kerfur_convert_client::ClaimConversionGhosts(eid, /*wantNpc=*/true, lx, ly, lz);
-            else UE_LOGW("kerfur_convert: eid=%u had no readable pose alive -- its local ghost is not claimed", eid);
+            else UE_LOGW("kerfur_convert: eid=%u had no readable location alive -- its local ghost is not claimed", eid);
         } else if (isHost) {
             // A prop never placed while alive has no pose to converge at: the reaper drains its element
             // and relays the destroy, and its kerfur record is released here, a plain death.
@@ -305,7 +305,7 @@ void PollKerfurConversions() {
                                         static_cast<coop::element::ElementId>(eid), /*toProp=*/0,
                                         lx, ly, lz, /*rot0=*/nullptr);   // dead here, as above
             } else {
-                UE_LOGW("kerfur_convert: host prop eid=%u had no readable pose alive -- released as a plain death", eid);
+                UE_LOGW("kerfur_convert: host prop eid=%u had no readable location alive -- released as a plain death", eid);
                 coop::kerfur_entity::ReleaseKerfurForEid(el->GetId());
             }
         }
@@ -430,8 +430,8 @@ bool TryAdoptFreshKerfurProp(void* actor) {
     // duplicate. A genuine product is always untracked at both consult sites.
     if (PT::GetPropElementIdForActor(actor) != coop::element::kInvalidId) return false;
 
-    // Match the fresh prop against a dead, unhandled, generation-valid kerfur NPC mirror within the
-    // verb's spawn radius (the new form spawns at the kerfur's own transform).
+    // Match the fresh prop against a dead, unhandled, generation-valid kerfur NPC mirror within 500 cm
+    // (the verb drops the prop at the kerfur's transform; a flesh-room drop is far off and not matched).
     ue_wrap::FVector ploc{};
     if (!ue_wrap::engine::TryGetActorLocation(actor, ploc)) {
         UE_LOGW("kerfur_convert: first refusal declined for fresh kerfur prop %p -- its location could not be "
@@ -440,8 +440,6 @@ bool TryAdoptFreshKerfurProp(void* actor) {
     }
     constexpr float kR2 = 500.f * 500.f;
     coop::element::ElementId oldEid = coop::element::kInvalidId;
-    void*   deadActor = nullptr;
-    int32_t deadIdx   = -1;
     float   bestD2    = kR2;
     float   wx = 0, wy = 0, wz = 0;
     std::vector<coop::element::Npc*> npcs;
@@ -461,8 +459,6 @@ bool TryAdoptFreshKerfurProp(void* actor) {
         if (d2 < bestD2) {
             bestD2 = d2;
             oldEid = el->GetId();
-            deadActor = a;
-            deadIdx = el->GetInternalIdx();
             wx = it->second.x; wy = it->second.y; wz = it->second.z;
         }
     }
@@ -494,7 +490,6 @@ bool TryAdoptFreshKerfurProp(void* actor) {
             "KerfurConvert broadcast, NO generic PropSpawn)",
             actor, static_cast<unsigned>(newEid), static_cast<unsigned>(oldEid),
             std::sqrt(bestD2));
-    (void)deadActor; (void)deadIdx;
     return true;
 }
 

@@ -1,8 +1,9 @@
 // coop/creatures/kerfur_convert.h -- host-authoritative kerfur conversion, NPC to prop and
 // back; without it a client's toggle left a second kerfur lying on the host. The game's
 // verbs: turn off runs dropKerfurProp, which spawns the prop (and a floppy if carried) at the
-// NPC's transform and destroys the NPC, refused for a sentient kerfur or one flagged kill;
-// turn on runs spawnKerfuro, which spawns the NPC and destroys the prop on success. Every
+// NPC's transform, or at (0,0,20000) in the flesh room, and destroys the NPC, refused for a
+// sentient kerfur or one flagged kill; turn on runs spawnKerfuro, which spawns the NPC upright
+// 50 cm above the prop's spawn point, keeping only its yaw, and destroys the prop on success. Every
 // spawn and destroy inside them is blueprint-internal, dispatched past ProcessEvent, so no
 // interceptor sees a conversion. The host detects its own conversions event-driven at the
 // chokepoints (the fresh prop's expression edge for turn off, the prop's destroy edge for turn
@@ -50,11 +51,12 @@ void Tick();
 // verb's fresh prop spawns invisibly and the generic pipeline would claim and broadcast it as
 // a keyed prop within a tick, leaving the client with its NPC mirror and a prop mirror, the
 // duplicate; so every generic express lane offers a kerfur prop here first. If the actor is
-// untracked and a dead, unhandled kerfur NPC watch sits within the verb's spawn radius, this
-// is the conversion product: converge it now (mint the eid silently, release the dead NPC
-// element, rebind the form, broadcast the convert, floppies) and return true, and the caller
-// must not express. Otherwise false (a tracked prop is an established identity; a hand-placed
-// or bought one is an ordinary spawn) and the generic keyed-prop path is correct. The kerfur
+// untracked and a dead, unhandled kerfur NPC watch sits within 500 cm, this is the conversion
+// product: converge it now (mint the eid silently, release the dead NPC element, rebind the
+// form, broadcast the convert, floppies) and return true, and the caller must not express.
+// Otherwise false (a tracked prop is an established identity; a hand-placed or bought one is an
+// ordinary spawn; a prop whose location or rotation cannot be read is declined, as is a
+// flesh-room drop far from its kerfur) and the generic keyed-prop path is correct. The kerfur
 // is one entity and the convert is its sole conversion wire signal. Host, game thread.
 bool TryAdoptFreshKerfurProp(void* actor);
 
@@ -62,15 +64,16 @@ bool TryAdoptFreshKerfurProp(void* actor);
 // twin of TryAdoptFreshKerfurProp. The turn-on verb spawns the NPC and then destroys the
 // prop, so when the prop's destroy seam fires inside the verb the conversion-product NPC
 // already exists, zero ticks old, a synchronous premise no periodic enroll lane can beat. If
-// a fresh unowned kerfur NPC sits within the spawn radius, this death is conversion churn the
+// the form assembler captured that NPC in the verb's bracket, this death is conversion churn the
 // kerfur layer owns and the caller must not broadcast a destroy: the client suppresses the
 // keyed-destroy relay (it would kill the host's authoritative prop before the turn-on request
 // lands, and the kerfur would vanish on every peer), the poll's request and ghost machinery
 // staying its driver; the host converges inline (register the NPC silently, rebind the form,
 // one convert broadcast), since its prop element is drained synchronously with the death and
-// the poll's premise never holds. No adjacent fresh NPC: false, and a genuine destroy keeps
-// the generic relay. `dyingEid` is the seam's element id before the unmark; invalid means the
-// host declines (no wire identity to converge). Game thread, the destroy seam.
+// the poll's premise never holds. No captured NPC: false, and a genuine destroy keeps the
+// generic relay; the host also declines an NPC whose location or rotation cannot be read.
+// `dyingEid` is the seam's element id before the unmark; invalid means the host declines (no
+// wire identity to converge). Game thread, the destroy seam.
 bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid);
 
 // The last location, and the last rotation, the death-watch read for kerfur form `eid` while `actor`

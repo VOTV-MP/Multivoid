@@ -53,11 +53,12 @@ std::atomic<bool> g_ready{false};  // the request latch (flips with the residual
 // ---- host-side converge -------------------------------------------------------
 // After the verb ran on the host (its own radial menu OR a client request), drive the SOLE
 // conversion signal KerfurConvert: find the new-form actor (the verb spawned it via EX_CallMath --
-// PE-invisible, so it is UNTRACKED), register it SILENTLY at a host-range eid, release the dying form
-// SILENTLY, and BindFormActor (rebinds the stable KerfurId IN PLACE + broadcasts KerfurConvert). No
-// EntityDestroy / PropSpawn for the kerfur itself -- the kerfur is one entity, not a destroy+create
-// across two pipelines. The dropped FLOPPY (a normal prop, NOT part of the kerfur identity) still
-// rides the ordinary keyed ExpressSpawnedProp -> PropSpawn. Game thread.
+// PE-invisible), register it SILENTLY at a host-range eid, release the dying form SILENTLY, and
+// BindFormActor (rebinds the stable KerfurId IN PLACE + broadcasts KerfurConvert). No EntityDestroy
+// / PropSpawn for a converted kerfur -- the kerfur is one entity, not a destroy+create across two
+// pipelines; a turn-off that cannot bind its new form retires the NPC as a plain death instead. The
+// dropped FLOPPY (a normal prop, NOT part of the kerfur identity) still rides the ordinary keyed
+// ExpressSpawnedProp -> PropSpawn. Game thread.
 
 // Find the host's untracked, live kerfur actor of the requested form nearest (x,y,z): the verb's
 // freshly-spawned new-form body. UNTRACKED = not yet a host element (g_actorToNpcId / the prop
@@ -66,7 +67,7 @@ void* FindNewFormKerfurActor(bool wantNpc, float x, float y, float z) {
     void* base = wantNpc ? g_kerfurNpcClass : g_kerfurPropClass;
     if (!base) return nullptr;
     const int32_t n = R::NumObjects();
-    constexpr float kR2 = 500.f * 500.f;  // the new form spawns at the kerfur's own transform
+    constexpr float kR2 = 500.f * 500.f;  // the verb's new form spawns about the old one (not in the flesh room)
     void* best = nullptr;
     float bestD2 = kR2;
     for (int32_t i = 0; i < n; ++i) {
@@ -206,24 +207,18 @@ void ExpressConversionFloppies(float x, float y, float z) {
         UE_LOGI("kerfur_convert: expressed %d dropped floppy prop(s) (normal keyed PropSpawn)", ingested);
 }
 
-// `capturedForm` is the DETERMINISTIC successor B, captured in-bracket at its
-// FinishSpawningActor (coop/creatures/kerfur_form_assembler); when supplied and live it replaces
-// the probabilistic FindNewFormKerfurActor(position) search. nullptr falls back to that search.
-// Everything downstream -- the silent mint, the silent release, BindFormActor -> KerfurConvert --
-// is the same either way: the capture only fixes WHICH B, not the converge.
+// The successor B is the DETERMINISTIC one the form assembler captured in the verb's bracket at its
+// FinishSpawningActor (coop/creatures/kerfur_form_assembler), when that is still live; else the
+// FindNewFormKerfurActor(position) search. Everything downstream -- the silent mint, the silent
+// release, BindFormActor -> KerfurConvert -- is the same either way: the capture only fixes WHICH B.
 void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::ElementId oldEid,
-                             uint8_t toProp, float px, float py, float pz, const ue_wrap::FRotator* rot0,
-                             void* capturedForm, int32_t capturedIdx) {
+                             uint8_t toProp, float px, float py, float pz, const ue_wrap::FRotator* rot0) {
     namespace KE = coop::kerfur_entity;
-    // 2a-capture: if no explicit successor B was threaded in, pull the assembler's DETERMINISTIC
-    // in-bracket B (a turn-ON wants the NPC successor; a turn-OFF wants the prop). This replaces
-    // FindNewFormKerfurActor's proximity search on the request route. An empty slot (already
-    // consumed by the destroy-edge first refusal, or a genuinely absent B) -> the legacy search.
-    if (!capturedForm) {
-        auto cap = coop::kerfur_form_assembler::ConsumeCapturedForm(/*wantNpc=*/toProp == 0);
-        capturedForm = cap.actor;
-        capturedIdx  = cap.idx;
-    }
+    // A turn-ON wants the NPC successor, a turn-OFF the prop. An empty slot (already consumed by the
+    // destroy-edge first refusal, or a genuinely absent B) -> the search.
+    const auto cap = coop::kerfur_form_assembler::ConsumeCapturedForm(/*wantNpc=*/toProp == 0);
+    void* const capturedForm = cap.actor;
+    const int32_t capturedIdx = cap.idx;
     const bool haveCaptured = capturedForm && R::IsLiveByIndex(capturedForm, capturedIdx);
     if (haveCaptured)
         UE_LOGI("kerfur_convert: 2a-capture converge (%s) eid=%u -> captured successor %p "
@@ -231,7 +226,8 @@ void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::Elem
                 toProp ? "turn_off" : "turn-on", static_cast<unsigned>(oldEid), capturedForm);
     if (toProp) {
         // turn_off: NPC -> prop. The NPC should have died; a kerfur prop (+ maybe floppy) spawned at
-        // its position. A SENTIENT kerfur refused -> the NPC is still live -> echo a reject.
+        // its transform, or at (0,0,20000) in the flesh room. A SENTIENT kerfur refused -> the NPC is
+        // still live -> echo a reject.
         if (oldActor && R::IsLiveByIndex(oldActor, oldIdx)) {
             // The reject still goes out: unread, at the form's own last pose; with no rotation at all it
             // cannot place the restored form, and is not sent.
@@ -244,9 +240,9 @@ void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::Elem
                                          cls ? R::ToString(R::NameOf(cls)) : std::wstring());
             return;
         }
-        // The NPC died inside the verb, a destroy no hook sees. A converge that cannot bind the new
-        // prop retires it as a plain death: no KerfurConvert will carry its eid, and a silent release
-        // would leave every client's mirror of it standing.
+        // The NPC died inside the verb, a destroy npc_sync's observer does not see. A converge that
+        // cannot bind the new prop retires it as a plain death: no KerfurConvert will carry its eid,
+        // and a silent release would orphan every client's mirror of it.
         void* newProp = haveCaptured ? capturedForm : FindNewFormKerfurActor(/*wantNpc=*/false, px, py, pz);
         if (!newProp) {
             UE_LOGW("kerfur_convert: turn_off converge -- no new kerfur prop near (%.0f,%.0f,%.0f); dead NPC eid=%u "
