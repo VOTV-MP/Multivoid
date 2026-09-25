@@ -60,6 +60,7 @@ Reg  g_reg[kWatchCount] = {};
 bool g_settled = false;
 
 uint64_t g_sent = 0, g_ran = 0, g_denied = 0, g_worldRefused = 0;
+uint64_t g_quietHits = 0;   // hits the host ran that left their door as it was
 
 uint64_t NowMs() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -129,6 +130,10 @@ void Execute(coop::net::Session& s, const coop::net::DoorVerbIntentPayload& p, u
     if (dispatched) ++g_ran; else ++g_denied;
     // The door's own body owns the outcome, so a press on an unpowered door or a hit below the pry
     // leaves the state as it was; the line says which, and the door's state verbs send any change.
+    // A hit that changed nothing is said for its first three and every twentieth, as the client's own
+    // hit line is: melee is up to four swings a second a client.
+    const bool changed = readBefore && readAfter && before != after;
+    if (p.verb == V::kHit && dispatched && !changed && ++g_quietHits > 3 && g_quietHits % 20 != 0) return;
     UE_LOGI("[DOOR-VERB] host ran slot %u's %s on key='%ls': dispatched=%d damage=%.1f, open %s -> %s",
             static_cast<unsigned>(slot), VerbName(p.verb), key.c_str(), dispatched ? 1 : 0, p.damage,
             readBefore ? (before ? "1" : "0") : "(unread)", readAfter ? (after ? "1" : "0") : "(unread)");
@@ -294,6 +299,7 @@ void OnDisconnect() {
         g_rate[slot] = Bucket{};
     }
     g_sent = g_ran = g_denied = g_worldRefused = 0;
+    g_quietHits = 0;
 }
 
 }  // namespace coop::door_verb_intent
