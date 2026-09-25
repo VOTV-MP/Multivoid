@@ -66,6 +66,8 @@ struct MarkScope {
 };
 
 uint64_t g_sentEvents = 0, g_sentStates = 0, g_applied = 0, g_dropped = 0;
+// Digits, and the states of a typed buffer that follow every one, said for the first forty each way.
+uint64_t g_typedSent = 0, g_typedApplied = 0;
 
 const char* EventName(uint8_t ev) {
     switch (static_cast<coop::net::KeypadEvent>(ev)) {
@@ -158,7 +160,9 @@ void RegisterWithScanHub() {
 
 // ---- the client's apply ------------------------------------------------------------------------
 // The settled state, written whole -- the buffer, the password, the verdict and the mode -- then
-// setActive(false), which repaints and hands the power on to the pair and the gated door.
+// setActive. The verdict is handed on to the pair and the gated door (isPairCall false) only when
+// this state changes it: a digit's or a reset's state, like the host's own chain for them, leaves
+// both as they are, and the keypad is only repainted, which is all setActive does for a pair's call.
 void ApplyStateNow(void* lock, const coop::net::KeypadSyncPayload& p) {
     PL::State cur;
     if (!PL::ReadState(lock, cur)) return;
@@ -166,10 +170,11 @@ void ApplyStateNow(void* lock, const coop::net::KeypadSyncPayload& p) {
     const std::wstring password = UnpackDigits(p.pw, p.pwLen, sizeof(p.pw));
     if (cur.buffer != buffer) PL::WriteBuffer(lock, buffer);
     if (cur.password != password) PL::WritePassword(lock, password);
+    const bool verdictMoves = cur.active != (p.active != 0);
     PL::WriteActive(lock, p.active != 0);
     PL::WriteResetMode(lock, p.isReset != 0);
     MarkScope mark(lock, Verb::SetActive);
-    PL::CallSetActive(lock, false);
+    PL::CallSetActive(lock, !verdictMoves);
 }
 
 void ApplyState(void* lock, const std::wstring& key, const coop::net::KeypadSyncPayload& p) {
@@ -216,8 +221,12 @@ void Apply(void* lock, const std::wstring& key, const coop::net::KeypadSyncPaylo
     }
     }
     ++g_applied;
-    // Digits are said for the first few keypads' worth; everything else, and every failure, is said.
-    if (!ok || p.event != static_cast<uint8_t>(coop::net::KeypadEvent::Digit) || g_applied <= 20)
+    // Digits, and the states of a typed buffer that follow every one, are said for the first forty;
+    // everything else, and every failure, is said.
+    const bool typed = p.event == static_cast<uint8_t>(coop::net::KeypadEvent::Digit) ||
+                       (p.event == static_cast<uint8_t>(coop::net::KeypadEvent::State) && p.bufLen > 0);
+    if (typed) ++g_typedApplied;
+    if (!ok || !typed || g_typedApplied <= 40)
         UE_LOGI("keypad: applied the host's %s on key='%ls' (arg=%u; the host's buf='%ls' active=%u reset=%u)%s",
                 EventName(p.event), key.c_str(), static_cast<unsigned>(p.arg), BufferOf(p).c_str(),
                 static_cast<unsigned>(p.active), static_cast<unsigned>(p.isReset), ok ? "" : " -- FAILED to dispatch");
@@ -305,6 +314,7 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(g_sentEvents), static_cast<unsigned long long>(g_sentStates),
                 static_cast<unsigned long long>(g_applied), static_cast<unsigned long long>(g_dropped));
     g_sentEvents = g_sentStates = g_applied = g_dropped = 0;
+    g_typedSent = g_typedApplied = 0;
     g_pending.clear();
     g_parked.clear();
     g_snapshotOwed = 0;
@@ -380,7 +390,8 @@ void SendState(void* lock) {
     }
     ++g_sentStates;
     // A state with a typed buffer follows every digit, so it is said for the first forty.
-    if (st.buffer.empty() || g_sentStates <= 40)
+    if (!st.buffer.empty()) ++g_typedSent;
+    if (st.buffer.empty() || g_typedSent <= 40)
         UE_LOGI("keypad: host sent the state key='%ls' settled on: buf='%ls' active=%d reset=%d", key.c_str(),
                 st.buffer.c_str(), st.active ? 1 : 0, st.isReset ? 1 : 0);
 }
