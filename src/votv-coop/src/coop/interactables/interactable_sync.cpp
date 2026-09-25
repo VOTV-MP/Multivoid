@@ -36,8 +36,9 @@ void* g_applyingGroup = nullptr;
 
 struct ApplyMark {
     void*& slot;
-    ApplyMark(void*& s, void* actor) : slot(s) { slot = actor; }
-    ~ApplyMark() { slot = nullptr; }
+    void* outer;
+    ApplyMark(void*& s, void* actor) : slot(s), outer(s) { slot = actor; }
+    ~ApplyMark() { slot = outer; }
 };
 
 const Adapter g_doorAdapter = {

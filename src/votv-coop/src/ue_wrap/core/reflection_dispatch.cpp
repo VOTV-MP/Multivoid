@@ -60,8 +60,8 @@ struct CachedDispatch {
     ue_wrap::CachedObjRef cls;
     ue_wrap::CachedObjRef fn;   // unset for a miss
 };
-// Looked up by the caller's own name, a view: a hit builds no string (the names asked for are longer
-// than a wide string's inline buffer, so each lookup was a heap allocation).
+// Looked up by the caller's own name, a view: a hit builds no string (most names asked for are longer
+// than a wide string's inline buffer, so most lookups were a heap allocation).
 struct NameHash {
     using is_transparent = void;
     size_t operator()(std::wstring_view s) const noexcept { return std::hash<std::wstring_view>{}(s); }

@@ -446,14 +446,15 @@ CFG_FLAG(door_drill_host, "door_drill_host", "dev", false, "VOTVCOOP_DOOR_DRILL_
     "With door_drill: the walker runs on the HOST instead of the client, so its own player in its own "
     "door is single player's reading of the same phases -- the control for the client's run.")
 CFG_FLAG(appliance_drill, "appliance_drill", "dev", false, "VOTVCOOP_APPLIANCE_DRILL",
-    "Drill (BOTH peers): the faucet with the lowest save key, toggled by the client through the tap's "
-    "own action and toggled back by the host once it crossed; each peer logs every change of its "
-    "state. Lines tagged [APPL-DRILL]; the client's DONE line ends it.")
+    "Drill (BOTH peers): the faucet with the lowest key in the appliance lane, toggled by the client "
+    "through the tap's own action and toggled back by the host whenever it crossed; each peer logs "
+    "every change of its state. Lines tagged [APPL-DRILL]; the client's DONE line ends it.")
 CFG_FLAG(light_drill, "light_drill", "dev", false, "VOTVCOOP_LIGHT_DRILL",
-    "Drill (BOTH peers): the light switch with the lowest save key whose group's breaker is on, pressed "
-    "by the client through the switch's own use() -- its own copy of the group must not move -- and by "
-    "the host once the client's press moved its group; each peer logs every change of the group. Lines "
-    "tagged [LIGHT-DRILL]; the client's DONE line ends it.")
+    "Drill (BOTH peers): the light switch with the lowest key in the switch lane whose group the group "
+    "lane names and whose breaker is on, pressed by the client through the switch's own use() -- its "
+    "own copy of the group must not move -- and back by the host whenever a client's press moved its "
+    "group; each peer logs every change of the group. Lines tagged [LIGHT-DRILL]; the client's DONE "
+    "line ends it.")
 CFG_STRING(door_drill_door, "door_drill_door", "dev", "", "VOTVCOOP_DOOR_DRILL_DOOR", false,
     "With door_drill: the object name of the one door the walker walks to (e.g. "
     "door_GEN_VARIABLE_door_C_CAT_45); empty walks the nearest one its navmesh reaches.")

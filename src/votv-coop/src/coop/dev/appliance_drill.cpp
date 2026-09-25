@@ -155,12 +155,16 @@ void Tick(coop::net::Session* session) {
         g_last = cur;
     }
     if (host && g_phase == Phase::Waiting) {
-        // The client's toggle has crossed once this copy reads the other state; the host answers it.
+        // The client's toggle has crossed once this copy reads the other state; the host answers it and
+        // goes on waiting, so a client that joins again drills again.
         if (cur != g_start) {
             UE_LOGI("[APPL-DRILL] host SAW the client's toggle key='%ls' after %lld ms", g_key.c_str(), ms);
             const bool ran = Toggle();
-            UE_LOGI("[APPL-DRILL] host TOGGLE back key='%ls': dispatched=%d", g_key.c_str(), ran ? 1 : 0);
-            Done("the client's toggle crossed; toggled back");
+            bool now = false;
+            if (A::TryReadState(g_faucet, now)) g_last = now ? 1 : 0;
+            UE_LOGI("[APPL-DRILL] host TOGGLE back key='%ls': dispatched=%d, state now %d", g_key.c_str(),
+                    ran ? 1 : 0, g_last);
+            g_since = Clock::now();
         }
         return;  // no bound here: the host waits for however long the client's join takes
     }

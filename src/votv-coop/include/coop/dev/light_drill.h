@@ -1,11 +1,11 @@
 // coop/dev/light_drill.h -- the light lanes' drill: a client's switch press moves the host's group,
 // and never its own copy alone. No walk: each peer fires the switch's own use() through reflection,
 // as a player's press dispatches it, and waits on what the other did:
-//   HOST   -- once hosting, picks the switch with the lowest save key whose group's breaker is on,
-//             and reads the group's state.
-//   CLIENT -- once its join is over, picks the same switch, presses it, and reads its own copy of
-//             the group straight after: the press must have flipped the switch and left the group.
-//   HOST   -- once its group shows the client's press, presses the switch itself.
+//   HOST   -- once hosting, picks the switch with the lowest key in the switch lane whose group the
+//             group lane names and whose breaker is on, and reads the group's state.
+//   CLIENT -- once its join is over, picks the same switch and, once its instrument is live, presses
+//             it and reads its own copy straight after: the switch flipped and the group left.
+//   HOST   -- whenever its group shows a client's press, presses the switch back, and waits again.
 //   CLIENT -- once the group lane has applied the host's change and then the host's press to its
 //             copy (counted at the group's own runTrigger, so two in one tick are both seen), DONE.
 // Each peer logs every change of that group's state. Lines are tagged [LIGHT-DRILL]. Run on both
