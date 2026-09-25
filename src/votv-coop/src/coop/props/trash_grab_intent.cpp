@@ -246,7 +246,7 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint16_t reqId, uint8_t s
         // near, or cannot be shown to be. Nothing to heal and nothing to destroy; broadcasting either
         // would answer a reach question with an identity remedy.
         UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- REASON=%s (dist=%.0f allowed=%.0f); the pile "
-                "is real and untouched, the sender is just not near it",
+                "is real and untouched, and the sender is not shown to be near it",
                 eid, senderSlot, coop::element::OutcomeName(sub.outcome), sub.distUU, sub.reachUU);
         Refuse(s, senderSlot, eid, reqId, coop::net::GrabRefusedReason::OutOfReach);
         return;

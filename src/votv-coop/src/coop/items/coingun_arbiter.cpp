@@ -213,8 +213,9 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
             const bool logIt = Refuse(s, senderSlot, coop::net::CoinGunResultCode::TooFarAway);
             if (logIt) UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=too-far-away "
                     "(verdict=%s dist=%.0f allowed=%.0f; 'no-body' with -1 for both means the sender "
-                    "has no live puppet here, so there is no body to measure a reach from and we "
-                    "refuse rather than assume one). The gun traces 1000 uu from the "
+                    "has no puppet here that took a pose, so there is no body to measure a reach from, "
+                    "and 'no-target' that the prop's place cannot be read; we refuse rather than assume "
+                    "one). The gun traces 1000 uu from the "
                     "sender's own camera, so a prop outside that reach was not shot -- naming it is "
                     "enumeration, not a sale.",
                     senderSlot, artifact.c_str(), coop::element::OutcomeName(sub.outcome),

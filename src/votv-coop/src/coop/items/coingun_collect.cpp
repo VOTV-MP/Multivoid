@@ -295,9 +295,10 @@ void OnCoinCollect(const uint8_t* payload, int len, uint8_t senderSlot, void* lo
         sub.outcome == coop::element::IntentOutcome::NoBody ||
         sub.outcome == coop::element::IntentOutcome::NoTarget) {
         UE_LOGW("coingun[host collect]: REFUSED slot=%u eid=%u -- REASON=%s (dist=%.0f allowed=%.0f). "
-                "'no-body' means the sender has no live puppet on the host, so there is no body to "
-                "measure a reach from and we refuse rather than assume one -- the same fail-closed "
-                "answer the sale lane gives. The coin stays where it is.",
+                "'no-body' means the sender has no puppet on the host that took a pose, so there is no "
+                "body to measure a reach from, and 'no-target' that the coin's place cannot be read; "
+                "either way we refuse rather than assume one -- the same fail-closed answer the sale "
+                "lane gives. The coin stays where it is.",
                 senderSlot, p.elementId, coop::element::OutcomeName(sub.outcome),
                 sub.distUU, sub.reachUU);
         return;
