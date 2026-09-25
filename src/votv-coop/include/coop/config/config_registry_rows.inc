@@ -475,10 +475,12 @@ CFG_FLAG(keypad_drill, "keypad_drill", "dev", false, "VOTVCOOP_KEYPAD_DRILL",
     "ended by its own copy landing on the host's verdict with the gated door's power; the host logs "
     "every keypad's changes. Lines tagged [KEYPAD-DRILL]; the client's DONE line ends it.")
 CFG_FLAG(physmods_drill, "physmods_drill", "dev", false, "VOTVCOOP_PHYSMODS_DRILL",
-    "Drill (BOTH peers): once the joiner's world is ready the host plugs a module into the desk through "
-    "its own plugInModule, the client plugs another once the host's has reached it, and the host's DONE "
-    "line says whether its array holds both; a joiner whose desk already holds modules at its world-ready "
-    "(a rejoin into the drill's world) plugs nothing and says what it loaded. Lines tagged [PHYSMODS-DRILL].")
+    "Drill (BOTH peers), on an empty desk: the host plugs a module through the desk's plugInModule, the "
+    "client plugs a second of that type into another slot, the host unplugs its own through the desk's E "
+    "press, then the client unplugs its own the same way and plugs one of another type; the host's DONE "
+    "line says whether its array holds that one module alone. A joiner whose desk already holds modules at "
+    "its world-ready (a rejoin into the drill's world) plugs nothing and says what it loaded. Lines tagged "
+    "[PHYSMODS-DRILL].")
 CFG_STRING(toggle_drill, "toggle_drill", "dev", "", "VOTVCOOP_TOGGLE_DRILL", false,
     "Drill (BOTH peers), by kind: garage, tap (a faucet or a sink), locker or lid. The device of that kind "
     "with the lowest key in its lane, toggled through its own verb by the client and toggled back by "

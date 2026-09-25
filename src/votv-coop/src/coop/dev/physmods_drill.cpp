@@ -3,11 +3,11 @@
 #include "coop/dev/physmods_drill.h"
 
 #include "coop/config/config.h"
+#include "coop/interactables/physmods_sync.h"  // CanonicalsAdopted
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
 
-#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/desk/console_desk.h"
@@ -16,7 +16,8 @@
 #include "ue_wrap/engine/engine_pawn.h"  // DestroyActor
 
 #include <cstdint>
-#include <cstring>
+#include <cstdio>
+#include <string>
 
 namespace coop::dev::physmods_drill {
 namespace {
@@ -26,28 +27,57 @@ namespace PM = ue_wrap::phys_mods;
 namespace CD = ue_wrap::console_desk;
 namespace E  = ue_wrap::engine;
 
-// Once per process (the host keeps its process across a client's rejoin).
-uint8_t g_hostByte = 0;
-uint8_t g_clientByte = 0;
-bool    g_plugged = false;             // this peer plugged its module
-uint8_t g_afterPlug[PM::kSlots] = {};  // the host's array right after its plug
-// Per session.
-bool    g_done = false;                // this peer's verdict is said
-bool    g_armed = false;               // the client's array at its world-ready is taken
-uint8_t g_armArray[PM::kSlots] = {};
+// The host's legs, once per process.
+enum class Host : uint8_t { Start, Plugged, Unplugged, Done };
+Host    g_host = Host::Start;
+int     g_hostSlot = -1;   // leg 1's slot
+uint8_t g_hostType = 0;    // leg 1's module type, of which leg 2 plugs a second
+// The client's legs, once per session.
+enum class Client : uint8_t { Arm, Waiting, Plugged, Acking, Done };
+Client   g_client = Client::Arm;
+int      g_theirSlot = -1;  // where the host's module arrived
+int      g_mySlot = -1;     // leg 2's slot
+uint8_t  g_myType = 0;
+uint64_t g_adoptsAtLeg4 = 0;
+// Set before a lifted call and cleared after it: a fault inside the call is absorbed past the call's
+// frame, and the next tick puts back the coldswap it left lifted.
+bool g_liftOut = false;
 
-bool Holds(const uint8_t arr[PM::kSlots], uint8_t b) {
-    if (!b) return false;
-    for (int i = 0; i < PM::kSlots; ++i)
-        if (arr[i] == b) return true;
-    return false;
+int CountModules(const uint8_t arr[PM::kSlots]) {
+    int n = 0;
+    for (int i = 0; i < PM::kSlots; ++i) n += arr[i] ? 1 : 0;
+    return n;
 }
 
-// A byte of `arr` that `base` lacks and is not `skip`, or 0.
-uint8_t NewByte(const uint8_t arr[PM::kSlots], const uint8_t base[PM::kSlots], uint8_t skip) {
+int FirstEmpty(const uint8_t arr[PM::kSlots]) {
     for (int i = 0; i < PM::kSlots; ++i)
-        if (arr[i] && arr[i] != skip && !Holds(base, arr[i])) return arr[i];
-    return 0;
+        if (!arr[i]) return i;
+    return -1;
+}
+
+int FirstFilled(const uint8_t arr[PM::kSlots]) {
+    for (int i = 0; i < PM::kSlots; ++i)
+        if (arr[i]) return i;
+    return -1;
+}
+
+// The slot holding `byte`, other than `skip`, or -1.
+int SlotOf(const uint8_t arr[PM::kSlots], uint8_t byte, int skip) {
+    for (int i = 0; i < PM::kSlots; ++i)
+        if (i != skip && arr[i] == byte) return i;
+    return -1;
+}
+
+// "{slot:byte ...}" for the filled slots.
+std::string Describe(const uint8_t arr[PM::kSlots]) {
+    std::string out = "{";
+    char buf[16];
+    for (int i = 0; i < PM::kSlots; ++i) {
+        if (!arr[i]) continue;
+        std::snprintf(buf, sizeof(buf), out.size() > 1 ? " %d:%u" : "%d:%u", i, arr[i]);
+        out += buf;
+    }
+    return out + "}";
 }
 
 bool ReadDeskBool(void* desk, const wchar_t* name) {
@@ -65,7 +95,7 @@ void WriteDeskBool(void* desk, const wchar_t* name, bool on) {
     b = on ? static_cast<uint8_t>(b | mask) : static_cast<uint8_t>(b & ~mask);
 }
 
-// plugInModule explodes a hot plug: a console active with coldswap on.
+// plugInModule and the press's unplug both explode on a hot desk: a console active with coldswap on.
 bool WouldExplode(void* desk) {
     const bool active = ReadDeskBool(desk, L"active_console") || ReadDeskBool(desk, L"active_comp") ||
                         ReadDeskBool(desk, L"active_coords") || ReadDeskBool(desk, L"active_download") ||
@@ -73,55 +103,158 @@ bool WouldExplode(void* desk) {
     return active && ReadDeskBool(desk, L"coldswapEnabled");
 }
 
-// The desk's slot component for array index `i` (physModSlots, a TArray of primitive components).
-void* SlotComponent(void* desk, int i) {
-    const int32_t off = R::FindPropertyOffset(R::ClassOf(desk), L"physModSlots");
-    if (off < 0) return nullptr;
-    const uint8_t* base = reinterpret_cast<const uint8_t*>(desk) + off;
-    void* const* data = *reinterpret_cast<void* const* const*>(base);
-    const int32_t num = *reinterpret_cast<const int32_t*>(base + 8);
-    return (data && i >= 0 && i < num) ? data[i] : nullptr;
+void PutBack(void* desk) {
+    if (g_liftOut && desk) WriteDeskBool(desk, L"coldswapEnabled", true);
+    g_liftOut = false;
 }
 
-// Plugs a module of the lowest byte not in the array (nor `avoid`) through the desk's plugInModule, spawned
-// at the desk as a carried one arrives there; a byte the desk refuses (isModuleAllowed) is passed over and
-// its module destroyed. A desk that would explode the hot plug has coldswap lifted for the drill's own
-// call and put back in the same tick, so the plug is the one a cold desk takes. The plugged byte, or 0.
-uint8_t PlugOneOnce(void* desk, void* pawn, uint8_t avoid);
-uint8_t PlugOne(void* desk, void* pawn, uint8_t avoid) {
-    const bool lift = WouldExplode(desk);
-    if (lift) WriteDeskBool(desk, L"coldswapEnabled", false);
-    const uint8_t byte = PlugOneOnce(desk, pawn, avoid);
-    if (lift) WriteDeskBool(desk, L"coldswapEnabled", true);
-    return byte;
+// The drill's own call, on a desk that would explode it, runs with coldswap lifted, so it is the call
+// a cold desk takes.
+template <class F>
+bool Lifted(void* desk, F call) {
+    g_liftOut = WouldExplode(desk);
+    if (g_liftOut) WriteDeskBool(desk, L"coldswapEnabled", false);
+    const bool ok = call();
+    PutBack(desk);
+    return ok;
 }
 
-uint8_t PlugOneOnce(void* desk, void* pawn, uint8_t avoid) {
-    void* fn = R::FindDispatchFunctionCached(R::ClassOf(desk), L"plugInModule");
+// A module of `byte` into empty slot `slot`: one spawned at the desk and handed to plugInModule, as a
+// carried one arrives there. One the desk refuses (a type off its list) is destroyed, not left lying
+// at the desk. True when the slot holds `byte` after.
+bool Plug(void* desk, void* pawn, int slot, uint8_t byte) {
+    void* cls = PM::ClassForByte(byte);
     ue_wrap::FVector at{};
-    if (!fn || !E::TryGetActorLocation(desk, at)) return 0;
+    if (!cls || !E::TryGetActorLocation(desk, at)) return false;
+    void* module = E::SpawnActor(cls, {at.X, at.Y, at.Z + 120.f});
+    if (!module) return false;
+    uint8_t arr[PM::kSlots];
+    const bool took = Lifted(desk, [&] { return PM::CallPlugInModule(desk, module, slot, pawn); }) &&
+                      PM::ReadArray(arr) && arr[slot] == byte;
+    if (!took && R::IsLive(module)) E::DestroyActor(module);
+    return took;
+}
+
+// The lowest module type the desk takes, other than `avoid`, plugged into `slot`; 0 when none took.
+uint8_t PlugAnyType(void* desk, void* pawn, int slot, uint8_t avoid) {
     for (int b = 1; b < 64; ++b) {
-        uint8_t arr[PM::kSlots];
-        if (!PM::ReadArray(arr)) return 0;
         const uint8_t byte = static_cast<uint8_t>(b);
-        if (byte == avoid || Holds(arr, byte)) continue;
-        void* cls = PM::ClassForByte(byte);
-        if (!cls) continue;
-        int freeSlot = -1;
-        for (int i = 0; i < PM::kSlots && freeSlot < 0; ++i)
-            if (!arr[i]) freeSlot = i;
-        void* slot = freeSlot >= 0 ? SlotComponent(desk, freeSlot) : nullptr;
-        if (!slot) return 0;
-        void* module = E::SpawnActor(cls, {at.X, at.Y, at.Z + 120.f});
-        if (!module) continue;
-        ue_wrap::ParamFrame f(fn);
-        const bool called = f.valid() && f.Set<void*>(L"holdActor", module) && f.Set<void*>(L"slot", slot) &&
-                            f.Set<void*>(L"player", pawn) && ue_wrap::Call(desk, f);
-        uint8_t after[PM::kSlots];
-        if (called && PM::ReadArray(after) && Holds(after, byte)) return byte;
-        if (R::IsLive(module)) E::DestroyActor(module);  // refused: not left lying at the desk
+        if (byte == avoid || !PM::ClassForByte(byte)) continue;
+        if (Plug(desk, pawn, slot, byte)) return byte;
     }
     return 0;
+}
+
+// A player's E on `slot`: the slot empty after, the press made and the slot still full, or no press made
+// (the desk wrapper's log names the step).
+enum class Out : uint8_t { Emptied, StillFull, NoPress };
+Out Unplug(void* desk, void* pawn, int slot) {
+    if (!Lifted(desk, [&] { return PM::CallPressSlot(desk, pawn, slot); })) return Out::NoPress;
+    uint8_t arr[PM::kSlots];
+    return PM::ReadArray(arr) && !arr[slot] ? Out::Emptied : Out::StillFull;
+}
+
+const char* Say(Out o) {
+    switch (o) {
+    case Out::Emptied:   return "the slot is empty";
+    case Out::StillFull: return "the press ran and the slot still holds it, FAIL";
+    case Out::NoPress:   return "no press was made, FAIL";
+    }
+    return "?";
+}
+
+void HostTick(void* desk, void* pawn, const uint8_t arr[PM::kSlots]) {
+    switch (g_host) {
+    case Host::Start: {
+        g_host = Host::Done;
+        if (const int n = CountModules(arr)) {
+            UE_LOGW("[PHYSMODS-DRILL] host REFUSED the desk holds %d module(s) %s at the drill's start; the drill "
+                    "needs an empty desk, since its rejoin leg reads a module at the joiner's world-ready as the "
+                    "joiner's own load", n, Describe(arr).c_str());
+            return;
+        }
+        g_hostSlot = 0;
+        g_hostType = PlugAnyType(desk, pawn, g_hostSlot, 0);
+        UE_LOGI("[PHYSMODS-DRILL] host leg 1 plugged byte=%u into slot=%d through plugInModule%s", g_hostType,
+                g_hostSlot, g_hostType ? "" : " -- NO module landed");
+        if (g_hostType) g_host = Host::Plugged;
+        return;
+    }
+    case Host::Plugged: {
+        const int theirs = SlotOf(arr, g_hostType, g_hostSlot);
+        if (theirs < 0) return;  // the client's second module of this type has not arrived
+        g_host = Host::Done;
+        const Out out = Unplug(desk, pawn, g_hostSlot);
+        UE_LOGI("[PHYSMODS-DRILL] host leg 3 saw the client's second byte=%u in slot=%d and unplugged its own "
+                "slot=%d through the E press -- %s", g_hostType, theirs, g_hostSlot, Say(out));
+        if (out == Out::Emptied) g_host = Host::Unplugged;
+        return;
+    }
+    case Host::Unplugged: {
+        // Both modules of the type gone, and the client's other one in.
+        if (SlotOf(arr, g_hostType, -1) >= 0 || !CountModules(arr)) return;
+        g_host = Host::Done;
+        const bool pass = CountModules(arr) == 1;
+        UE_LOGI("[PHYSMODS-DRILL] host DONE the array is %s: both modules of byte=%u are gone and the client's "
+                "module of another type is in -- %s", Describe(arr).c_str(), g_hostType,
+                pass ? "PASS" : "FAIL (one module expected)");
+        return;
+    }
+    case Host::Done:
+        return;
+    }
+}
+
+void ClientTick(void* desk, void* pawn, const uint8_t arr[PM::kSlots]) {
+    switch (g_client) {
+    case Client::Arm: {
+        if (const int n = CountModules(arr)) {
+            g_client = Client::Done;
+            UE_LOGI("[PHYSMODS-DRILL] client REJOIN DONE its load wrote %d module(s) %s and this session plugged "
+                    "nothing", n, Describe(arr).c_str());
+            return;
+        }
+        g_client = Client::Waiting;
+        return;
+    }
+    case Client::Waiting: {
+        g_theirSlot = FirstFilled(arr);
+        if (g_theirSlot < 0) return;  // the host's module arrives through its canonical
+        g_myType = arr[g_theirSlot];
+        g_mySlot = FirstEmpty(arr);
+        g_client = Client::Done;
+        const bool in = g_mySlot >= 0 && Plug(desk, pawn, g_mySlot, g_myType);
+        UE_LOGI("[PHYSMODS-DRILL] client leg 2 saw the host's byte=%u in slot=%d and plugged a second byte=%u into "
+                "slot=%d through plugInModule%s", g_myType, g_theirSlot, g_myType, g_mySlot,
+                in ? "" : " -- NO module landed");
+        if (in) g_client = Client::Plugged;
+        return;
+    }
+    case Client::Plugged: {
+        if (arr[g_theirSlot]) return;  // the host's unplug has not arrived
+        g_client = Client::Done;
+        const Out out = Unplug(desk, pawn, g_mySlot);
+        uint8_t now[PM::kSlots];
+        const int slot = PM::ReadArray(now) ? FirstEmpty(now) : -1;
+        const uint8_t other = (out == Out::Emptied && slot >= 0) ? PlugAnyType(desk, pawn, slot, g_myType) : 0;
+        g_adoptsAtLeg4 = coop::physmods_sync::CanonicalsAdopted();
+        UE_LOGI("[PHYSMODS-DRILL] client leg 4 saw the host's slot=%d empty, unplugged its own slot=%d through the "
+                "E press (%s) and plugged byte=%u into slot=%d", g_theirSlot, g_mySlot, Say(out), other, slot);
+        if (out == Out::Emptied && other) g_client = Client::Acking;
+        return;
+    }
+    case Client::Acking: {
+        // The host broadcasts its canonical after each op it applies: two back means both were applied.
+        const uint64_t back = coop::physmods_sync::CanonicalsAdopted() - g_adoptsAtLeg4;
+        if (back < 2) return;
+        g_client = Client::Done;
+        UE_LOGI("[PHYSMODS-DRILL] client ACKED the host's canonical came back %llu time(s) after leg 4; the array is "
+                "%s", static_cast<unsigned long long>(back), Describe(arr).c_str());
+        return;
+    }
+    case Client::Done:
+        return;
+    }
 }
 
 }  // namespace
@@ -132,61 +265,25 @@ bool IsEnabled() {
 }
 
 void Tick(coop::net::Session* s) {
-    if (!IsEnabled() || g_done || !s || !s->connected()) return;
+    if (!IsEnabled()) return;
+    if (g_liftOut) PutBack(CD::Instance());  // a lifted call that faulted
+    if (!s || !s->connected()) return;
     const bool host = s->role() == coop::net::Role::Host;
+    if (host ? g_host == Host::Done : g_client == Client::Done) return;
     if (host ? !s->IsSlotWorldReady(1) : !coop::net_pump::HasAnnouncedWorldReady()) return;
     if (!PM::EnsureResolved()) return;
     void* desk = CD::Instance();
     void* pawn = coop::players::Registry::Get().Local();
     uint8_t arr[PM::kSlots];
     if (!desk || !pawn || !PM::ReadArray(arr)) return;
-
-    if (host) {
-        if (!g_plugged) {
-            g_plugged = true;
-            g_hostByte = PlugOne(desk, pawn, 0);
-            PM::ReadArray(g_afterPlug);
-            UE_LOGI("[PHYSMODS-DRILL] host plugged byte=%u through plugInModule%s", g_hostByte,
-                    g_hostByte ? "" : " -- NO module landed");
-            if (!g_hostByte) g_done = true;
-            return;
-        }
-        g_clientByte = NewByte(arr, g_afterPlug, 0);
-        if (!g_clientByte) return;
-        g_done = true;
-        UE_LOGI("[PHYSMODS-DRILL] host DONE the array holds its byte=%u and the client's byte=%u -- %s",
-                g_hostByte, g_clientByte, Holds(arr, g_hostByte) ? "PASS" : "FAIL (its own byte is gone)");
-        return;
-    }
-
-    if (g_plugged) return;
-    if (!g_armed) {
-        std::memcpy(g_armArray, arr, PM::kSlots);
-        g_armed = true;
-        // The drill starts on an empty desk, so modules already here at the joiner's world-ready are a
-        // rejoin into the drill's world, written by this peer's own load: it plugs nothing and says what
-        // it loaded, and the host's log shows whether any op came of that load.
-        int loaded = 0;
-        for (int i = 0; i < PM::kSlots; ++i) loaded += arr[i] ? 1 : 0;
-        if (loaded) {
-            g_done = true;
-            UE_LOGI("[PHYSMODS-DRILL] client REJOIN DONE its load wrote %d module(s) (first bytes %u, %u) and "
-                    "this session plugged nothing", loaded, arr[0], arr[1]);
-        }
-        return;
-    }
-    g_hostByte = NewByte(arr, g_armArray, 0);  // the host's module arrives through its canonical
-    if (!g_hostByte) return;
-    g_plugged = true;
-    g_done = true;
-    g_clientByte = PlugOne(desk, pawn, g_hostByte);
-    UE_LOGI("[PHYSMODS-DRILL] client saw the host's byte=%u and plugged byte=%u through plugInModule%s",
-            g_hostByte, g_clientByte, g_clientByte ? "" : " -- NO module landed");
+    if (host)
+        HostTick(desk, pawn, arr);
+    else
+        ClientTick(desk, pawn, arr);
 }
 
 void OnDisconnect() {
-    g_done = false;
-    g_armed = false;
+    g_client = Client::Arm;
 }
 
 }  // namespace coop::dev::physmods_drill
