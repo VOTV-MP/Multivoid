@@ -3,13 +3,14 @@
 #include "coop/dev/toggle_drill.h"
 
 #include "coop/config/config.h"
-#include "coop/interactables/interactable_sync.h"  // the appliance lane's key
+#include "coop/interactables/interactable_sync.h"  // each lane's key
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/roster.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
 
+#include "ue_wrap/actors/swinger.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/devices/appliance.h"
@@ -27,6 +28,7 @@ namespace R  = ue_wrap::reflection;
 namespace A  = ue_wrap::appliance;
 namespace DB = ue_wrap::door_box;
 namespace G  = ue_wrap::garage;
+namespace SW = ue_wrap::swinger;
 using Clock = std::chrono::steady_clock;
 
 // A step that waits on the other peer's toggle ends here: that toggle waits for its device to take
@@ -51,12 +53,18 @@ bool GarageAtRest(void* g) {
 bool GarageToggle(void* g, void* p) { return G::CallRunTrigger(g, p, 0); }
 bool TapToggle(void* a, void* p) { return A::CallAction(a, p, A::kTapToggleAction); }
 bool LockerToggle(void* l, void* p) { return DB::CallAction(l, p, DB::kToggleAction); }
+bool LidToggle(void* s, void*) {
+    bool open = false;
+    return SW::TryReadOpen(s, open) && (open ? SW::CallClose(s) : SW::CallOpen(s, false));
+}
 
+// Each device is keyed by its lane, whose name for it both peers share once both index it.
+namespace IS = coop::interactable_sync;
 constexpr Kind kKinds[] = {
-    { "garage", &G::EnsureResolved, &G::IsGarage, &G::GetNameKey, &G::TryReadOpen, &GarageAtRest, &GarageToggle },
-    { "tap", &A::EnsureResolved, &A::IsTap, &coop::interactable_sync::ApplianceKey, &A::TryReadState, nullptr,
-      &TapToggle },
-    { "locker", &DB::EnsureResolved, &DB::IsLocker, &DB::GetNameKey, &DB::TryReadOpened, nullptr, &LockerToggle },
+    { "garage", &G::EnsureResolved, &G::IsGarage, &IS::GarageKey, &G::TryReadOpen, &GarageAtRest, &GarageToggle },
+    { "tap", &A::EnsureResolved, &A::IsTap, &IS::ApplianceKey, &A::TryReadState, nullptr, &TapToggle },
+    { "locker", &DB::EnsureResolved, &DB::IsLocker, &IS::DoorBoxKey, &DB::TryReadOpened, nullptr, &LockerToggle },
+    { "lid", &SW::EnsureResolved, &SW::IsSwinger, &IS::ContainerKey, &SW::TryReadOpen, nullptr, &LidToggle },
 };
 
 enum class Phase { Unpicked, Waiting, Toggled, Done };
@@ -139,7 +147,7 @@ const Kind* KindOf() {
         if (want.empty()) return nullptr;
         for (const Kind& k : kKinds)
             if (want == k.name) return &k;
-        UE_LOGW("[TOGGLE-DRILL] toggle_drill='%s' names no kind (garage, tap, locker) -- the drill is off",
+        UE_LOGW("[TOGGLE-DRILL] toggle_drill='%s' names no kind (garage, tap, locker, lid) -- the drill is off",
                 want.c_str());
         return nullptr;
     }();

@@ -55,6 +55,12 @@ bool ApplyingDoor(void* door);
 // Game thread.
 std::wstring ApplianceKey(void* a);
 
+// The garage, door-box and container lanes' names for their devices, the same way: the index key, or
+// empty when the lane does not index the device. Game thread.
+std::wstring GarageKey(void* g);
+std::wstring DoorBoxKey(void* box);
+std::wstring ContainerKey(void* swinger);
+
 // The light switch lane's key for `sw`, or "" when the lane does not index it in the current world.
 // Game thread.
 std::wstring LightSwitchKey(void* sw);
@@ -84,6 +90,10 @@ void OnApplianceVerb(void* appliance);
 // (coop/interactables/toggle_verbs); the box lane sends the `opened` it left when that changed.
 // Game thread.
 void OnDoorBoxVerb(void* box);
+
+// Any peer: a lid's open or close just ran on `swinger` (coop/interactables/toggle_verbs); the
+// container lane sends the `opened` it left when that changed. Game thread.
+void OnContainerVerb(void* swinger);
 
 // Whether the light group lane's own apply is running on `root` now: a client's copy of a group
 // refuses every runTrigger but that one. Game thread.

@@ -8,6 +8,7 @@
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/actors/swinger.h"
 #include "ue_wrap/devices/appliance.h"
 #include "ue_wrap/devices/door_box.h"
 #include "ue_wrap/devices/garage.h"
@@ -43,6 +44,10 @@ constexpr Row kRows[] = {
       &coop::interactable_sync::OnDoorBoxVerb },
     { L"actionOptionIndex", 0x44424149 /*'DBAI'*/, "a drone console's action", &ue_wrap::door_box::IsDroneConsole,
       &coop::interactable_sync::OnDoorBoxVerb },
+    { L"open", 0x53574F50 /*'SWOP'*/, "a lid's open", &ue_wrap::swinger::IsSwinger,
+      &coop::interactable_sync::OnContainerVerb },
+    { L"close", 0x5357434C /*'SWCL'*/, "a lid's close", &ue_wrap::swinger::IsSwinger,
+      &coop::interactable_sync::OnContainerVerb },
 };
 constexpr int kRowCount = static_cast<int>(sizeof(kRows) / sizeof(kRows[0]));
 

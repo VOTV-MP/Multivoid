@@ -473,7 +473,7 @@ CFG_FLAG(keypad_drill, "keypad_drill", "dev", false, "VOTVCOOP_KEYPAD_DRILL",
     "ended by its own copy landing on the host's verdict with the gated door's power; the host logs "
     "every keypad's changes. Lines tagged [KEYPAD-DRILL]; the client's DONE line ends it.")
 CFG_STRING(toggle_drill, "toggle_drill", "dev", "", "VOTVCOOP_TOGGLE_DRILL", false,
-    "Drill (BOTH peers), by kind: garage, tap (a faucet or a sink) or locker. The device of that kind "
+    "Drill (BOTH peers), by kind: garage, tap (a faucet or a sink), locker or lid. The device of that kind "
     "with the lowest key in its lane, toggled through its own verb by the client and toggled back by "
     "the host whenever it crossed; each peer logs every change of its state. Lines tagged "
     "[TOGGLE-DRILL]; the client's DONE line ends it.")

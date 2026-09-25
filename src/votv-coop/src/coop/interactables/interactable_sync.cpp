@@ -123,6 +123,9 @@ const Adapter g_containerAdapter = {
     &ue_wrap::prop::GetKeyString,  // a swinger is an Aprop_C
     &ue_wrap::swinger::TryReadOpen,
     [](void* a, bool on) -> bool { return on ? ue_wrap::swinger::CallOpen(a, false) : ue_wrap::swinger::CallClose(a); },
+    nullptr,
+    // Each peer sends its lid at its open or close (coop/interactables/toggle_verbs).
+    /*edgeFed*/ true,
 };
 // The garage door (Agarage_C), symmetric: no sensor and no autoclose, so a symmetric poll never
 // oscillates. Its identity is the level-export FName, not the save key: a garage that misses
@@ -254,11 +257,16 @@ void OnApplianceVerb(void* appliance) { g_appliance.OnLocalEdge(appliance); }
 
 void OnDoorBoxVerb(void* box) { g_doorBox.OnLocalEdge(box); }
 
+void OnContainerVerb(void* swinger) { g_container.OnLocalEdge(swinger); }
+
 bool ApplyingLightGroup(void* root) { return root && root == g_applyingGroup; }
 
 bool ApplyingDoor(void* door) { return door && door == g_applyingDoor; }
 
 std::wstring ApplianceKey(void* a) { return g_appliance.KeyForActor(a); }
+std::wstring GarageKey(void* g) { return g_garage.KeyForActor(g); }
+std::wstring DoorBoxKey(void* box) { return g_doorBox.KeyForActor(box); }
+std::wstring ContainerKey(void* swinger) { return g_container.KeyForActor(swinger); }
 
 std::wstring LightSwitchKey(void* sw) { return g_light.KeyForActor(sw); }
 
