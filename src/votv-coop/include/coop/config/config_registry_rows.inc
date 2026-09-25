@@ -438,14 +438,16 @@ CFG_FLAG(load_reroll_watch, "load_reroll_watch", "dev", false, "VOTVCOOP_LOAD_RE
     "since both run inside the load, and logs the first calls with their callers. It holds the "
     "script gate on while set, with or without a session, so every lane's gate watch also runs "
     "outside a session for that run; read-only otherwise.")
-CFG_ENUM(midnight_drill, "midnight_drill", "dev", "off", "off|awake|asleep|cheat|mode5", "VOTVCOOP_MIDNIGHT_DRILL",
+CFG_ENUM(midnight_drill, "midnight_drill", "dev", "off", "off|awake|asleep|cheat|mode5|malformed",
+    "VOTVCOOP_MIDNIGHT_DRILL",
     "Drill (BOTH peers, with rollover_watch), once a client's join is over. awake and asleep: the "
     "host sets its clock just short of midnight; awake: both peers stay up; asleep: both go to bed "
     "first, so the midnight falls inside the shared sleep's fast-forward. cheat: the host leaves its "
     "clock alone and the client writes a day onto its own, three times, as the cheat menu's day "
     "button does. mode5: each peer spawns game mode 5's master, which resets the day every second, "
-    "and the client says whether its own reset kept running. Run it on a fresh host world; every "
-    "refused step is logged and ends the arm as invalid.")
+    "and the client says whether its own reset kept running. malformed: the host puts three clock "
+    "samples whose day is not a number, and the client's log says where each was refused. Run it on a "
+    "fresh host world; every refused step is logged and ends the arm as invalid.")
 CFG_ENUM(fireext_drill, "fireext_drill", "dev", "off", "off|carry|short|client|join",
     "VOTVCOOP_FIREEXT_DRILL",
     "Drill (BOTH peers): a wall-mounted fire extinguisher taken off through the use key's own grab "

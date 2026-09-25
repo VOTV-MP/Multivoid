@@ -1,5 +1,5 @@
 // coop/dev/midnight_drill.h -- drill: a midnight where the day rollover can be watched (ini
-// midnight_drill=off|awake|asleep|cheat|mode5 / env VOTVCOOP_MIDNIGHT_DRILL; BOTH peers, with
+// midnight_drill=off|awake|asleep|cheat|mode5|malformed / env VOTVCOOP_MIDNIGHT_DRILL; BOTH peers, with
 // rollover_watch on, on a fresh host world, since a save can carry an active event).
 // Every phase waits on a state its peer can read, never on a clock. The host arms once a client's join
 // is over by its own account (the slot world-ready, its bracket closed). awake sets the clock to 0.999 of
@@ -10,8 +10,9 @@
 // alone, and the joined client writes a day onto its own three times, as the cheat menu's day button
 // does, and says how each next tick ended (its own midnight rolled, the lane held its last sample over
 // it, or a new one met it). mode5 spawns game mode 5's master on each peer once joined; the client says
-// whether its own reset kept running. A refused step ends the arm INVALID. The evidence: rollover_watch's
-// DAY and OUTPUTS lines for awake and asleep; for cheat and mode5, its run counts and the lane's count.
+// whether its own reset kept running. malformed: the host puts three clock samples with a NaN day. A
+// refused step ends the arm INVALID. The evidence: rollover_watch's DAY and OUTPUTS lines for awake and
+// asleep; for cheat and mode5, its run counts and the lane's count; for malformed, the client's log.
 #pragma once
 
 namespace coop::net { class Session; }

@@ -28,6 +28,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <string>
 
 namespace coop::dev::midnight_drill {
@@ -40,7 +41,7 @@ namespace sg  = ue_wrap::script_gate;
 namespace AE  = ue_wrap::active_events;
 namespace WI  = ue_wrap::world_identity;
 
-enum class Arm { Off, Awake, Asleep, Cheat, Mode5 };
+enum class Arm { Off, Awake, Asleep, Cheat, Mode5, Malformed };
 
 // The host: the join and the set, then (asleep) a quiet world, the bed, the fast-forward, the wake.
 // The client: (asleep) the join, the bed, the fast-forward, the wake; (cheat) its writes. The set and
@@ -52,6 +53,7 @@ constexpr float kAsleepFraction = 0.98f;   // runway for the bed and the gate, b
 constexpr float kNeedForTheArm  = 30.f;    // the wake loop ends a sleep at a need of 100
 constexpr int   kCheatWrites    = 3;       // one write can meet a host sample at the same tick
 constexpr int   kMode5Drops     = 12;      // past the first five backward-run lines, where they thin out
+constexpr int   kMalformedSends = 3;       // one a pump tick: a newer good sample can take a slot's place
 constexpr auto  kMode5Quiet     = std::chrono::seconds(30);  // no drop in this long: no host reset arrives
 constexpr auto  kMode5Restore   = std::chrono::seconds(25);  // the master's needs restore fires every 10 s
 constexpr float kMode5Food      = 50.f;    // this client's food before the spawn, for the restore to lift
@@ -79,6 +81,8 @@ uint64_t g_cheatHashRan = 0;   // generteHashcode's run count before the write
 coop::time_sync::LocalWrites g_cheatFound{};  // the lane's count of the writes it found, before the write
 int32_t  g_cheatDayZ = -1;     // this client's day number before the write
 float    g_cheatDay = 0.f;     // and its `day`
+
+int      g_malformedSent = 0;  // the malformed arm, host: the samples put so far
 
 // The mode5 arm, client: its master spawned, the drops of its `day` seen since and when the last came,
 // and the clock lane's count of the local writes it found, before the spawn.
@@ -110,6 +114,7 @@ Arm ArmOf() {
              : v == "asleep" ? Arm::Asleep
              : v == "cheat"  ? Arm::Cheat
              : v == "mode5"  ? Arm::Mode5
+             : v == "malformed" ? Arm::Malformed
                              : Arm::Off;
     }();
     return a;
@@ -121,6 +126,7 @@ const char* ArmName() {
     case Arm::Asleep: return "asleep";
     case Arm::Cheat:  return "cheat";
     case Arm::Mode5:  return "mode5";
+    case Arm::Malformed: return "malformed";
     default:          return "off";
     }
 }
@@ -132,6 +138,9 @@ const char* ArmPlan(bool host) {
     if (ArmOf() == Arm::Mode5)
         return host ? "spawning game mode 5's master once a client's join is over"
                     : "spawning game mode 5's master once joined, then watching the host's resets";
+    if (ArmOf() == Arm::Malformed)
+        return host ? "sending malformed clock samples once a client's join is over"
+                    : "watching; the host sends malformed clock samples";
     if (host) return "waiting for a client's join to end";
     return ArmOf() == Arm::Asleep ? "going to bed once joined" : "watching; the host sets the clock";
 }
@@ -318,6 +327,20 @@ void TickHost(coop::net::Session* s) {
         if (ArmOf() == Arm::Cheat) {
             UE_LOGI("midnight_drill: [H] arm cheat -- slot %d's join is over; this host's clock is left alone "
                     "while its client writes a day onto its own", g_slot);
+            g_step = Step::Done;
+            return;
+        }
+        if (ArmOf() == Arm::Malformed) {
+            // A sample no clock can hold, as a broken sender would put it: the day is not a number.
+            coop::net::TimeSyncPayload bad{};
+            bad.totalTime = 0.f;
+            bad.day = std::numeric_limits<float>::quiet_NaN();
+            int32_t h = 0, m = 0;
+            DNC::ReadSavedTime(h, m, bad.dayZ);
+            s->SendHostClock(bad);
+            if (++g_malformedSent < kMalformedSends) return;
+            UE_LOGI("midnight_drill: [H] malformed done -- %d clock samples with a NaN day put for slot %d's client, "
+                    "one a pump tick", g_malformedSent, g_slot);
             g_step = Step::Done;
             return;
         }
@@ -561,6 +584,7 @@ void OnDisconnect() {
     g_minutesAtAccel = 0;
     g_pokedRate = false;
     g_musicsCleared = false;
+    g_malformedSent = 0;
     g_cheatWrites = g_cheatRolled = g_cheatHeld = g_cheatMet = g_cheatUnaccounted = 0;
     g_cheatPending = false;
     g_cheatHashRan = 0;
