@@ -467,6 +467,11 @@ CFG_FLAG(door_drill, "door_drill", "dev", false, "VOTVCOOP_DOOR_DRILL",
 CFG_FLAG(door_drill_host, "door_drill_host", "dev", false, "VOTVCOOP_DOOR_DRILL_HOST",
     "With door_drill: the walker runs on the HOST instead of the client, so its own player in its own "
     "door is single player's reading of the same phases -- the control for the client's run.")
+CFG_FLAG(blackout_drill, "blackout_drill", "dev", false, "VOTVCOOP_BLACKOUT_DRILL",
+    "Drill (BOTH peers): the host fires the solar event once a client's world is ready, cutting every breaker "
+    "of the power panel on both peers (the client replays it); each peer's DONE comes once its own panel reads "
+    "every breaker cut. For the lanes' dev probe (channel_shadow_probe=1) to watch a blackout. Lines tagged "
+    "[BLACKOUT-DRILL]; the client's DONE line ends it. MUTATES the world (the power), so it is armed per run.")
 CFG_FLAG(light_drill, "light_drill", "dev", false, "VOTVCOOP_LIGHT_DRILL",
     "Drill (BOTH peers): the light switch with the lowest key in the switch lane whose group the group "
     "lane names and whose breaker is on, pressed by the client through the switch's own use() -- its "
