@@ -11,7 +11,9 @@
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 
+#include <functional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 namespace ue_wrap::reflection {
@@ -57,14 +59,20 @@ struct CachedDispatch {
     ue_wrap::CachedObjRef cls;
     ue_wrap::CachedObjRef fn;   // unset for a miss
 };
-std::unordered_map<void*, std::unordered_map<std::wstring, CachedDispatch>> g_cache;
+// Looked up by the caller's own name, a view: a hit builds no string (the names asked for are longer
+// than a wide string's inline buffer, so each lookup was a heap allocation).
+struct NameHash {
+    using is_transparent = void;
+    size_t operator()(std::wstring_view s) const noexcept { return std::hash<std::wstring_view>{}(s); }
+};
+std::unordered_map<void*, std::unordered_map<std::wstring, CachedDispatch, NameHash, std::equal_to<>>> g_cache;
 
 }  // namespace
 
 void* FindDispatchFunctionCached(void* cls, const wchar_t* funcName) {
     if (!cls || !funcName) return nullptr;
     auto& byName = g_cache[cls];
-    const auto it = byName.find(funcName);
+    const auto it = byName.find(std::wstring_view(funcName));
     if (it != byName.end()) {
         const CachedDispatch& c = it->second;
         if (c.cls.Alive()) {
