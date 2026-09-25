@@ -58,6 +58,26 @@ const Watched kWatched[] = {
     {P::name::GamemodeClass, nullptr},
     {L"ui_menu_C", nullptr},
     {P::name::GameplayStaticsClass, L"PlaySound2D"},  // native: the control
+    // Every other class a lane holds or names by class and function.
+    {L"kerfurOmega_col_C", L"dropKerfurProp"},
+    {L"kerfurOmega_col_gamer_C", L"dropKerfurProp"},
+    {L"prop_floppyDisc_C", nullptr},
+    {L"eyer_C", nullptr},
+    {L"event_trashPiles_C", nullptr},
+    {L"arirTrasher_C", L"trash"},
+    {L"baseCleaner_trashBits_C", nullptr},
+    {L"prop_garbageClump_C", nullptr},
+    {L"actorChipPile_C", nullptr},
+    {L"prop_food_C", nullptr},
+    {L"prop_impostor_C", nullptr},
+    {L"mushroomMaster_C", L"Spawn"},
+    {L"mushroomSpawner_C", L"Spawn"},
+    {L"ticker_yellowWispSpawner_C", L"ReceiveTick"},
+    {L"ticker_wispSpawner_C", L"ReceiveTick"},
+    {L"cockroachMaster_C", L"summonRoach"},
+    {L"ticker_insomniacSpawner_C", L"ReceiveTick"},
+    {L"ticker_fossilhoundSpawner_C", L"ReceiveTick"},
+    {L"ticker_roachSummoner_C", L"ReceiveTick"},
 };
 
 const wchar_t* const kBlueprintMetas[] = {
