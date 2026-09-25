@@ -22,9 +22,9 @@ namespace coop::kerfur_convert_client {
 // every attempt, so a reconnect that changes the session stays fresh here.
 void SetSession(coop::net::Session* session);
 
-// The resolved kerfur class pointers (the NPC base, the prop base, the floppy), pushed by the
-// install on every attempt as soon as they resolve.
-void SetClasses(void* npcClass, void* propClass, void* floppyClass);
+// The resolved kerfur class pointers (the NPC base, the prop base), pushed by the install as soon
+// as both resolve; the floppy class is looked up where it is used.
+void SetClasses(void* npcClass, void* propClass);
 
 // Find and park the client's own just-spawned conversion ghosts near the site; the poll's
 // client branch drives it on a detected local toggle. The custody narrative is in the .cpp.

@@ -20,11 +20,11 @@ struct KerfurConvertPayload;
 
 namespace coop::kerfur_convert_host {
 
-// Resolved kerfur class pointers (npc base, prop base, floppy). Pushed by kerfur_convert::Install
-// on every attempt, right after its opportunistic resolve block, as an idempotent overwrite: the
-// converge machinery (poll-driven ConvergeAfterConversion and ExpressConversionFloppies) works as
-// soon as the classes resolve, including in the DISABLED install state.
-void SetClasses(void* npcClass, void* propClass, void* floppyClass);
+// Resolved kerfur class pointers (npc base, prop base). Pushed by kerfur_convert::Install as soon as
+// both resolve, as an idempotent overwrite: the converge machinery (poll-driven
+// ConvergeAfterConversion and ExpressConversionFloppies) works from then, including in the DISABLED
+// install state. The floppy class and a collar variant's dropKerfurProp are looked up where used.
+void SetClasses(void* npcClass, void* propClass);
 
 // Resolved verb refs and the request latch. Pushed ONLY at the Install SUCCESS site, the same
 // instant the residual's g_installed latches, so OnConvertRequest's gate flips exactly when the
@@ -32,8 +32,7 @@ void SetClasses(void* npcClass, void* propClass, void* floppyClass);
 // signature changed, never reaches here, so a request in that state is DROPPED rather than
 // CallFunction-ing a signature-changed verb over a zeroed 16-byte frame. That would be an over-read
 // -- latent on the current game build, where the verbs take no params.
-void SetVerbs(void* dropPropFnBase, void* dropPropFnCol, void* dropPropFnColGamer,
-              void* colClass, void* colGamerClass, void* spawnKerfuroFn, int32_t killOff);
+void SetVerbs(void* spawnKerfuroFn, int32_t killOff);
 
 // HOST-only receiver for KerfurConvertRequest (wired in event_dispatch_intent).
 // Validates + executes the verb + converges, all on the game thread (the

@@ -24,6 +24,7 @@
 #include "coop/props/prop_lifecycle.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 
 #include <atomic>
@@ -40,12 +41,6 @@ namespace PT = coop::prop_element_tracker;
 // attempt, SetVerbs at the success site; read-only on the game thread here).
 void* g_kerfurNpcClass  = nullptr;
 void* g_kerfurPropClass = nullptr;
-void* g_floppyClass     = nullptr;
-void* g_dropPropFnBase     = nullptr;
-void* g_dropPropFnCol      = nullptr;
-void* g_dropPropFnColGamer = nullptr;
-void* g_colClass           = nullptr;
-void* g_colGamerClass      = nullptr;
 void* g_spawnKerfuroFn     = nullptr;
 int32_t g_killOff          = -1;
 std::atomic<bool> g_ready{false};  // the request latch (flips with the residual's success g_installed)
@@ -132,26 +127,11 @@ void ReleaseHostPropSilent(void* deadActor) {
     PT::UnmarkKnownKeyedProp(deadActor);  // drains the Prop Element + frees its eid (ABBA-safe)
 }
 
-// Pick the most-derived dropKerfurProp declarer for this actor's class --
-// ProcessEvent runs exactly the UFunction passed, so this IS the virtual
-// dispatch the BP's own by-name call would have done.
+// The most-derived dropKerfurProp declarer for this actor's class, a collar variant's override
+// included: ProcessEvent runs exactly the UFunction passed, so this IS the virtual dispatch the BP's
+// own by-name call would have done. The base declares it, so a kerfur always has one.
 void* PickDropPropFn(void* cls) {
-    if (g_dropPropFnColGamer && g_colGamerClass &&
-        R::IsDescendantOfAny(cls, &g_colGamerClass, 1)) return g_dropPropFnColGamer;
-    if (g_dropPropFnCol && g_colClass &&
-        R::IsDescendantOfAny(cls, &g_colClass, 1)) {
-        return g_dropPropFnCol;
-    }
-    if (!g_dropPropFnColGamer || !g_dropPropFnCol) {
-        // If the actor IS a col variant but its override never resolved, the
-        // base body still converts correctly minus the collar drop -- log it.
-        static std::atomic<bool> sWarned{false};
-        if (g_colClass && R::IsDescendantOfAny(cls, &g_colClass, 1) &&
-            !sWarned.exchange(true)) {
-            UE_LOGW("kerfur_convert: col-variant kerfur converted via BASE dropKerfurProp (override unresolved at install latch)");
-        }
-    }
-    return g_dropPropFnBase;
+    return R::FindDispatchFunctionCached(cls, L"dropKerfurProp");
 }
 
 // Request-verb bracket + converge handshake between OnConvertRequest and the destroy-edge
@@ -184,7 +164,8 @@ void RetireNpcFormAsDeath(coop::element::ElementId eid, void* actor) {
 // it the NORMAL keyed way (ExpressSpawnedProp -> PropSpawn), latch-deduped, only UNTRACKED, near the
 // conversion site.
 void ExpressConversionFloppies(float x, float y, float z) {
-    if (!g_floppyClass) return;
+    void* floppyCls = ue_wrap::object_index::ClassByName(L"prop_floppyDisc_C");
+    if (!floppyCls) return;
     const int32_t n = R::NumObjects();
     constexpr float kR2 = 500.f * 500.f;
     int ingested = 0;
@@ -192,7 +173,7 @@ void ExpressConversionFloppies(float x, float y, float z) {
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
         void* cls = R::ClassOf(obj);
-        if (!cls || !R::IsDescendantOfAny(cls, &g_floppyClass, 1)) continue;
+        if (!cls || !R::IsDescendantOfAny(cls, &floppyCls, 1)) continue;
         if (!R::IsLive(obj)) continue;
         if (PT::GetPropElementIdForActor(obj) != coop::element::kInvalidId) continue;  // tracked
         if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;
@@ -370,8 +351,14 @@ void OnConvertRequest(const coop::net::KerfurConvertPayload& payload,
                     "last live location for the converge", payload.elementId, senderPeerSlot);
             return;
         }
+        void* const dropFn = PickDropPropFn(cls);
+        if (!dropFn) {
+            UE_LOGW("kerfur_convert: turn_off request eid=%u from slot %u refused -- its class declares no "
+                    "dropKerfurProp", payload.elementId, senderPeerSlot);
+            return;
+        }
         uint8_t frame[16] = {};  // verbs take no params (install-guarded); zeroed frame for safety
-        R::CallFunction(actor, PickDropPropFn(cls), frame);
+        R::CallFunction(actor, dropFn, frame);
         ConvergeAfterConversion(actor, idx, eid, /*toProp=*/1, pos0.X, pos0.Y, pos0.Z, rotKnown ? &rot0 : nullptr);
     } else {
         auto* el = coop::element::MirrorManager<coop::element::Prop>::Instance().Get(eid);
@@ -427,19 +414,12 @@ void RecordSeamConvergedInBracket(coop::element::ElementId dyingEid) {
         g_seamConvergedEid = static_cast<uint32_t>(dyingEid);
 }
 
-void SetClasses(void* npcClass, void* propClass, void* floppyClass) {
+void SetClasses(void* npcClass, void* propClass) {
     g_kerfurNpcClass  = npcClass;
     g_kerfurPropClass = propClass;
-    g_floppyClass     = floppyClass;
 }
 
-void SetVerbs(void* dropPropFnBase, void* dropPropFnCol, void* dropPropFnColGamer,
-              void* colClass, void* colGamerClass, void* spawnKerfuroFn, int32_t killOff) {
-    g_dropPropFnBase     = dropPropFnBase;
-    g_dropPropFnCol      = dropPropFnCol;
-    g_dropPropFnColGamer = dropPropFnColGamer;
-    g_colClass           = colClass;
-    g_colGamerClass      = colGamerClass;
+void SetVerbs(void* spawnKerfuroFn, int32_t killOff) {
     g_spawnKerfuroFn     = spawnKerfuroFn;
     g_killOff            = killOff;
     g_ready.store(true, std::memory_order_release);

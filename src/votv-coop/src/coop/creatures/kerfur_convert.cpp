@@ -56,24 +56,17 @@ coop::net::Session* LoadSession() {
 }
 
 // Resolved engine refs: written by Install on the game thread before the interceptor registers,
-// read-only after, including from parallel-anim workers. The kerfur, collar and floppy classes are
-// loaded at the main menu and live for the process (coop/dev/class_lifetime_probe measures it), so
-// these refs and the interceptor hold across a world change.
+// read-only after, including from parallel-anim workers. The kerfur classes are loaded at the main
+// menu and live for the process (coop/dev/class_lifetime_probe measures it), so these refs and the
+// interceptor hold across a world change.
 void* g_kerfurNpcClass  = nullptr;  // kerfurOmega_C (the NPC base; ~20 data-only skin subclasses)
 void* g_kerfurPropClass = nullptr;  // prop_kerfurOmega_C (the prop base; skins likewise)
-void* g_floppyClass     = nullptr;  // prop_floppyDisc_C (dropKerfurProp may also drop the carried floppy)
 void* g_actionNameFn    = nullptr;  // kerfurOmega_C::actionName (the menu dispatcher -- kerfur_command relay)
 int32_t g_nameParamOff  = -1;       // actionName 'name' FString param offset
 int32_t g_killOff       = -1;       // kerfurOmega_C::kill bool (the BP's own turn_off guard)
-// The verb declarers. dropKerfurProp is overridden by kerfurOmega_col_C and
-// kerfurOmega_col_gamer_C; ProcessEvent executes exactly the UFunction passed, so the host picks
-// the most-derived declarer the target descends from. The col pair is optional: unresolved by
-// latch time, the base runs and the collar drop is skipped.
+// The base verb declarers, whose signatures the install checks. dropKerfurProp is overridden by the
+// collar variants; the host runs the most-derived declarer, looked up on the target's own class.
 void* g_dropPropFnBase     = nullptr;  // kerfurOmega_C::dropKerfurProp
-void* g_dropPropFnCol      = nullptr;  // kerfurOmega_col_C::dropKerfurProp (optional)
-void* g_dropPropFnColGamer = nullptr;  // kerfurOmega_col_gamer_C::dropKerfurProp (optional)
-void* g_colClass           = nullptr;
-void* g_colGamerClass      = nullptr;
 void* g_spawnKerfuroFn     = nullptr;  // prop_kerfurOmega_C::spawnKerfuro (sole declarer)
 
 // The menu verbs are EX_LocalVirtualFunction, invisible to the ProcessEvent detour, so no
@@ -349,19 +342,10 @@ void Install(coop::net::Session* session) {
     if (!g_spawnKerfuroFn) g_spawnKerfuroFn = R::FindFunction(g_kerfurPropClass, L"spawnKerfuro");
     if (g_killOff < 0)     g_killOff = R::FindPropertyOffset(g_kerfurNpcClass, L"kill");
 
-    // Optional refs (the collar-variant overrides and the floppy class); a miss degrades to the base
-    // verb and a one-class walk.
-    if (!g_colClass)      g_colClass      = ue_wrap::object_index::ClassByName(L"kerfurOmega_col_C");
-    if (!g_colGamerClass) g_colGamerClass = ue_wrap::object_index::ClassByName(L"kerfurOmega_col_gamer_C");
-    if (g_colClass && !g_dropPropFnCol)
-        g_dropPropFnCol = R::FindFunction(g_colClass, L"dropKerfurProp");
-    if (g_colGamerClass && !g_dropPropFnColGamer)
-        g_dropPropFnColGamer = R::FindFunction(g_colGamerClass, L"dropKerfurProp");
-    if (!g_floppyClass)   g_floppyClass   = ue_wrap::object_index::ClassByName(L"prop_floppyDisc_C");
     // The class pointers go to the client and host TUs before any refusal below, so they have them in
     // the disabled state too, where claims keep working.
-    coop::kerfur_convert_client::SetClasses(g_kerfurNpcClass, g_kerfurPropClass, g_floppyClass);
-    coop::kerfur_convert_host::SetClasses(g_kerfurNpcClass, g_kerfurPropClass, g_floppyClass);
+    coop::kerfur_convert_client::SetClasses(g_kerfurNpcClass, g_kerfurPropClass);
+    coop::kerfur_convert_host::SetClasses(g_kerfurNpcClass, g_kerfurPropClass);
 
     if (!g_actionNameFn || g_nameParamOff < 0 || !g_dropPropFnBase || !g_spawnKerfuroFn) {
         UE_LOGE("kerfur_convert: partial resolve (actionName=%p nameOff=%d drop=%p spawn=%p) -- module "
@@ -390,12 +374,9 @@ void Install(coop::net::Session* session) {
     }
     // The verb refs and the request latch flip only at this success site; the disabled path above
     // never reaches it, so requests drop there (fail closed; see kerfur_convert_host.h).
-    coop::kerfur_convert_host::SetVerbs(g_dropPropFnBase, g_dropPropFnCol, g_dropPropFnColGamer,
-                                        g_colClass, g_colGamerClass, g_spawnKerfuroFn, g_killOff);
-    UE_LOGI("kerfur_convert: installed (actionName nameOff=%d, killOff=%d, col=%s colGamer=%s floppy=%s; conversion = death-watch poll)",
-            g_nameParamOff, g_killOff,
-            g_dropPropFnCol ? "yes" : "no", g_dropPropFnColGamer ? "yes" : "no",
-            g_floppyClass ? "yes" : "no");
+    coop::kerfur_convert_host::SetVerbs(g_spawnKerfuroFn, g_killOff);
+    UE_LOGI("kerfur_convert: installed (actionName nameOff=%d, killOff=%d; conversion = death-watch poll)",
+            g_nameParamOff, g_killOff);
 }
 
 void Tick() {

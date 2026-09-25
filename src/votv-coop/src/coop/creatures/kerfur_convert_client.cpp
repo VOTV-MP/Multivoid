@@ -20,6 +20,7 @@
 #include "ue_wrap/actors/kerfur.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/puppet.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 
 #include <atomic>
@@ -43,7 +44,6 @@ coop::net::Session* LoadSession() {
 // The resolved kerfur classes, pushed by the install on every attempt; read on the game thread.
 void* g_kerfurNpcClass  = nullptr;
 void* g_kerfurPropClass = nullptr;
-void* g_floppyClass     = nullptr;
 
 // The client-side apply: materialise, or adopt this peer's claimed local ghost into, a kerfur
 // mirror of the form at host-range `eid`. `adoptEid` is the converting mirror's eid (the host's
@@ -174,7 +174,10 @@ void ClaimConversionGhosts(uint32_t srcEid, bool wantNpc, float x, float y, floa
         if (g_kerfurNpcClass) { bases[0] = g_kerfurNpcClass; nBases = 1; }
     } else if (g_kerfurPropClass) {
         bases[0] = g_kerfurPropClass; nBases = 1;
-        if (g_floppyClass) { bases[1] = g_floppyClass; nBases = 2; }
+        if (void* floppy = ue_wrap::object_index::ClassByName(L"prop_floppyDisc_C")) {
+            bases[1] = floppy;
+            nBases = 2;
+        }
     }
     if (nBases == 0) return;
     // The host's authoritative kerfurs of this form are wire mirrors, skipped; the only non-mirror
@@ -342,10 +345,9 @@ void SetSession(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
 }
 
-void SetClasses(void* npcClass, void* propClass, void* floppyClass) {
+void SetClasses(void* npcClass, void* propClass) {
     g_kerfurNpcClass  = npcClass;
     g_kerfurPropClass = propClass;
-    g_floppyClass     = floppyClass;
 }
 
 void OnDisconnect() {
