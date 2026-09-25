@@ -1,18 +1,17 @@
 // coop/interactables/grime_sync.h -- surface grime sync (Agrime_C::process, the wall, ceiling and
-// floor dirt), on ReliableKind::GrimeState.
-// Gameplay and network layer (principle 7): the wire protocol, the poll, the minimum-wins apply,
-// the position-to-actor index, the death-watch, the deferred-apply retry and the connect snapshot.
-// Its engine reads go through ue_wrap::grime and ue_wrap::engine, plus reflection for the liveness
-// and class tests.
+// floor dirt), on ReliableKind::GrimeState. Gameplay and network layer (principle 7): the wire, the
+// clean verb's watch, the minimum-wins apply, the position-to-actor index, the decals' end of play,
+// the deferred-apply retry and the connect snapshot; engine reads through ue_wrap::grime and
+// ue_wrap::engine, plus reflection for the liveness and class tests.
 //
 // A monotone minimum register, the window_sync shape keyed differently. A LEVEL-PLACED decal has a
 // saved transform, so both peers put each one at an identical world position, and that position IS
 // its cross-peer identity: the key is a quantised world-position string. Runtime splatter is OUT of
 // this lane for the same reason -- its spawn position is not deterministic across peers, so nothing
-// here can name it. Only a FALL is propagated; a rise means the decal reloaded and the poll resyncs
-// silently, so MIN(local, wire) converges concurrent wipes and a streamed-out decal sends nothing.
-// A one-hit super-sponge outruns the poll, destroying the actor inside the Blueprint before the
-// next read, so a decal vanishing NEAR the camera is a wipe and one far away is a stream-out.
+// here can name it. Only a FALL is propagated: a clean's fall, read before and after the verb's body
+// on the script gate, so MIN(local, wire) converges concurrent wipes. A clean that takes the process
+// below zero destroys the decal inside the Blueprint; the engine's end of play says destroyed, a wipe
+// sent as zero, or streamed out, which sends nothing.
 
 #pragma once
 
@@ -41,11 +40,11 @@ void OnReliable(const coop::net::KeyedScalarPayload& payload, uint8_t senderPeer
 // connect edge. Game thread.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
-// Per-tick: poll for live `process` decreases (broadcast wipes) + retry deferred applies
-// (throttled). Call every net-pump tick on the game thread.
+// Per-tick: install the clean watch and the end-of-play subscription until they take, and retry the
+// deferred applies (throttled). Call every net-pump tick on the game thread.
 void Tick();
 
-// Session teardown: clear the per-session poll baseline + pending applies.
+// Session teardown: clear the per-session last-known values, the pending applies and the wiped keys.
 void OnDisconnect();
 
 // DEV-DRILL ONLY: the quantised position key this module would index `actor` under. The

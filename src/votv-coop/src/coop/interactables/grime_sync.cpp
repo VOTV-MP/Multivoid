@@ -3,19 +3,20 @@
 // by a quantised world-position string instead of a key name: a grime decal is a static
 // level-placed actor, so its saved transform is identical across peers (the same save) and
 // its position is its cross-peer identity. The one engine difference from the window: the
-// apply repaints through the decal's own apply-material verb, not a pure setter. A gradual
-// wipe is caught by the normal process poll (driven to invisible); a one-shot super-sponge
-// wipe (the process past zero in a single hit, so the actor self-destructs before the poll
-// sees the low value) is caught by a proximity-gated death watch: a decal that vanishes near
-// the local camera was wiped (broadcast zero), a far one is a sublevel stream-out, ignored
-// (ungated, the connect stream-out flooded false destroys). The destroy observer is not
-// usable, since the blueprint-internal clean bypasses the ProcessEvent detour. If a third
-// keyed-float channel appears, generalise the window and grime pair into a shared adapter
-// and channel, as the interactable sync did for its bool features.
+// apply repaints through the decal's own apply-material verb, not a pure setter. A wipe is
+// seen at the verb that makes it: grime_C::clean, the one writer of `process` a player or the
+// weather runs (a sponge stroke, the rain), watched on the script gate before and after its
+// body. A clean that takes the process below zero destroys the decal inside its body; the
+// engine's end of play reports that destroy with its reason (coop/element/death_seam), so a
+// wipe to destruction and a sublevel's stream-out are told apart by what the engine says,
+// never by where the camera stands. If a third keyed-float channel appears, generalise the
+// window and grime pair into a shared adapter and channel, as the interactable sync did for
+// its bool features.
 
 #include "coop/interactables/grime_sync.h"
 
 #include "coop/config/config.h"
+#include "coop/element/death_seam.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
@@ -25,6 +26,7 @@
 #include "ue_wrap/devices/grime.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/engine/world_identity.h"     // gen-stamped index (dead-world guard)
 #include "coop/element/object_scan_hub.h"      // the shared sliced scan pass
 
@@ -33,7 +35,6 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <cwchar>          // swscanf (decode a PosKey back to a world position for the proximity check)
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -47,17 +48,13 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace G = ue_wrap::grime;
 namespace E = ue_wrap::engine;
+namespace sg = ue_wrap::script_gate;
 
 using coop::net::WireKeyFromString;
 using coop::net::StringFromWireKey;
 using coop::net::FnvKey;
 
 constexpr auto kRetryRebuildThrottle = std::chrono::seconds(2);
-// The poll throttle. Unlike the window (a handful of instances), grime has about a thousand
-// decals, so polling every frame is wasteful; a sponge wipe lasts a second or two over
-// several hits, so 20 Hz still captures the process gradient finely while cutting the
-// per-poll cost several-fold.
-constexpr auto kPollThrottle = std::chrono::milliseconds(50);
 constexpr auto kPendingTTL = std::chrono::seconds(25);
 // The process changes in discrete wipe steps; this epsilon only filters float-equality noise.
 constexpr float kProcessEps = 0.0005f;
@@ -66,28 +63,12 @@ constexpr float kProcessEps = 0.0005f;
 // both; the grid only has to be fine enough that two distinct decals never share a cell, and
 // 2 cm plus the type disambiguator is ample.
 constexpr double kPosGrid = 2.0;
-// The death-watch proximity radius (cm). A decal that vanishes from the index was either wiped
-// (the local player one-shot-cleaned it, above all with the max-strength super sponge, which
-// drives the process past zero in a single hit the 20 Hz poll never captures) or streamed
-// out (its sublevel unloaded as the player moved; a connect teleport unloads hundreds at
-// once). They are told apart by proximity to the local camera: a decal can only be sponged
-// from where the player stands, within a few metres of the view, whereas a streamed-out
-// sublevel is far away. A vanish within this radius is a wipe (broadcast zero, driving the
-// peer's mirror clean); a farther vanish is ignored. Eight metres is generous against any
-// sponge reach (the sponge cleans by contact within its clean radius, arm's length plus a
-// little) yet far below the connect-teleport stream-out distance. Erring loose is
-// deliberate: a miss silently breaks the sync for that wipe, whereas a rare false fire only
-// min-applies zero, a recoverable spurious clean.
-constexpr float kWipeProximityCm  = 800.0f;
-constexpr float kWipeProximityCm2 = kWipeProximityCm * kWipeProximityCm;
-
 bool ProbeLog() {
     static const bool s_enabled = ::coop::config::ResolveFlag(::coop::config_registry::rows::grime_log);
     return s_enabled;
 }
 
 std::atomic<coop::net::Session*> g_session{nullptr};
-std::atomic<bool> g_echo{false};  // belt-and-suspenders: suppress the poll mid-apply (GT-serial anyway)
 
 struct Ref { void* actor; int32_t idx; };
 std::mutex g_indexMutex;
@@ -106,10 +87,8 @@ std::unordered_map<std::wstring, Pending> g_pending;  // GT-only: deferred Grime
 std::unordered_set<std::wstring> g_wipedKeys;
 
 std::chrono::steady_clock::time_point g_lastRetry{};  // GT-only: rebuild + deferred-retry throttle
-std::chrono::steady_clock::time_point g_lastPoll{};   // GT-only: process-poll throttle
 size_t g_lastLogCount = SIZE_MAX;  // GT-only: dedup the rebuilt log
 uint64_t g_lastLogHash = 0;        // GT-only
-std::vector<std::pair<std::wstring, float>> g_sendScratch;  // GT-only: reused buffer for the RARE wipes to broadcast (usually empty -> no per-poll alloc)
 
 // The cross-peer identity of a static grime decal: its quantised world position and type.
 // The same save gives the identical saved transform, so the identical key on both peers.
@@ -126,18 +105,6 @@ std::wstring PosKey(void* grime) {
     k += std::to_wstring(q(loc.Z)); k += L'_';
     k += std::to_wstring(type);
     return k;
-}
-
-// Recover a decal's approximate world position from its key (the inverse of the
-// quantisation). Used only by the death-watch proximity check, where the grid error is
-// negligible against the radius. False if the key is malformed.
-bool DecodePosKey(const std::wstring& key, ue_wrap::FVector& out) {
-    int gx = 0, gy = 0, gz = 0, type = 0;
-    if (std::swscanf(key.c_str(), L"g_%d_%d_%d_%d", &gx, &gy, &gz, &type) < 3) return false;
-    out.X = static_cast<float>(gx * kPosGrid);
-    out.Y = static_cast<float>(gy * kPosGrid);
-    out.Z = static_cast<float>(gz * kPosGrid);
-    return true;
 }
 
 // The world generation of the last completed hub pass; a stale-generation index is treated
@@ -245,8 +212,8 @@ void RegisterWithScanHub() {
 
 // Apply a remote process value: adopt takes the wire value as is (the host connect
 // snapshot); otherwise the minimum of local and wire (a live wipe can only clean, never
-// re-dirty). Idempotent if already at the target. Primes the last-known value so the next
-// poll sees no delta (the echo guard).
+// re-dirty). Idempotent if already at the target. The apply writes the field and repaints; it
+// runs no clean, so it is never heard back as a wipe.
 void ApplyResolved(void* actor, const std::wstring& key, float wireProcess, bool adopt, unsigned fromSlot) {
     float cur = 0.f;
     if (!G::ReadProcess(actor, cur)) return;
@@ -258,88 +225,76 @@ void ApplyResolved(void* actor, const std::wstring& key, float wireProcess, bool
             UE_LOGI("grime: apply key='%ls' already %.3f -- idempotent skip", key.c_str(), target);
         return;
     }
-    g_echo.store(true, std::memory_order_release);
     const bool ok = G::WriteProcessAndApply(actor, target);
-    g_echo.store(false, std::memory_order_release);
     { std::lock_guard<std::mutex> lk(g_stateMutex); g_lastKnown[key] = target; }
     UE_LOGI("grime: applied process=%.3f (wire=%.3f adopt=%d) ok=%d key='%ls' (from slot %u)",
             target, wireProcess, adopt ? 1 : 0, ok ? 1 : 0, key.c_str(), fromSlot);
 }
 
-// The sender: poll every indexed decal for a process decrease (broadcast a wipe) and the
-// death watch (an indexed decal no longer live self-destructed from a wipe below zero, so
-// broadcast a destroy). Game thread.
-void PollAndBroadcast() {
-    if (g_echo.load(std::memory_order_acquire)) return;
+constexpr int kTagGrimeClean = 0x4752494D;  // 'GRIM'
+bool g_watchInstalled = false;
+bool g_endSubscribed = false;
+
+// The decal a clean is running on and its process before the body. A clean never nests on one decal.
+void* g_cleaning = nullptr;
+float g_before = 0.f;
+
+// The decal's cross-peer key, from the index's cache: a decal that is not indexed is runtime splatter,
+// which this lane cannot name.
+std::wstring KeyOf(void* actor) {
+    const auto it = g_posKeyByActor.find(actor);
+    return it == g_posKeyByActor.end() ? std::wstring() : it->second.key;
+}
+
+void Send(const std::wstring& key, float value) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
-    // Collect the rare wipes to broadcast after releasing the locks. The index is iterated in
-    // place rather than snapshotting every key into a scratch vector each poll: the position
-    // keys exceed the small-string limit, so a per-poll snapshot would heap-thrash a thousand
-    // allocations. A wipe is a rare user action, so the scratch is empty on virtually every
-    // poll. The locks are game-thread-serial with the rebuild (no observer, so no real
-    // contention); a direct field read and the by-index liveness check are safe under them.
-    auto& toSend = g_sendScratch;
-    toSend.clear();
-    std::vector<std::wstring> vanished;  // decals gone from the index this poll (wiped OR streamed out); empty in steady state
+    coop::net::KeyedScalarPayload p{};
+    WireKeyFromString(key, p.key);
+    p.value = value;
+    p.adopt = 0;  // a live wipe: receivers apply the minimum
+    if (s->SendReliable(coop::net::ReliableKind::GrimeState, &p, sizeof(p)))
+        UE_LOGI("grime: sent process=%.3f key='%ls'", value, key.c_str());
+    else
+        UE_LOGW("grime: SendReliable failed key='%ls'", key.c_str());
+}
+
+sg::Verdict OnCleanPre(const sg::Call& call) {
+    g_cleaning = nullptr;
+    if (call.object && G::IsGrime(call.object) && G::ReadProcess(call.object, g_before)) g_cleaning = call.object;
+    return sg::Verdict::Run;
+}
+
+// After the body: the process it left, sent when it fell. A clean that took it below zero destroyed the
+// decal inside the body; its end of play sends the wipe instead (OnGrimeEnd).
+void OnCleanPost(const sg::Call& call) {
+    if (!g_cleaning || call.object != g_cleaning) return;
+    g_cleaning = nullptr;
+    if (!R::IsLiveByIndex(call.object, R::InternalIndexOf(call.object))) return;
+    float cur = 0.f;
+    if (!G::ReadProcess(call.object, cur) || cur >= g_before - kProcessEps) return;  // an uncleanable decal
+    const std::wstring key = KeyOf(call.object);
+    if (key.empty()) return;
+    { std::lock_guard<std::mutex> lk(g_stateMutex); g_lastKnown[key] = cur; }
+    Send(key, cur);
+}
+
+// A decal's end of play. A stream-out only leaves the index (a stream-back re-adds it); a destroy is a
+// clean that took the process below zero, sent as a wipe to zero and kept for a joiner's snapshot.
+void OnGrimeEnd(const coop::element::death_seam::ActorEnd& end) {
+    const std::wstring key = KeyOf(end.actor);
+    if (key.empty()) return;
     {
         std::lock_guard<std::mutex> lkI(g_indexMutex);
-        if (g_byKey.empty()) return;
         std::lock_guard<std::mutex> lkS(g_stateMutex);
-        for (auto& kv : g_byKey) {
-            if (!R::IsLiveByIndex(kv.second.actor, kv.second.idx)) { vanished.push_back(kv.first); continue; }
-            float cur = 0.f;
-            if (!G::ReadProcess(kv.second.actor, cur)) continue;
-            auto it = g_lastKnown.find(kv.first);
-            if (it == g_lastKnown.end()) { g_lastKnown.emplace(kv.first, cur); continue; }  // prime silently
-            if (cur < it->second - kProcessEps) { toSend.emplace_back(kv.first, cur); it->second = cur; }  // a (partial) wipe
-            else if (cur > it->second + kProcessEps) { it->second = cur; }  // got dirtier (save reload) -- resync silently, never propagate a re-dirty
-        }
+        const auto it = g_byKey.find(key);
+        if (it != g_byKey.end() && it->second.actor == end.actor) g_byKey.erase(it);
+        g_lastKnown.erase(key);
     }
-    // A vanished decal was wiped (the one-shot self-destruct at a negative process, the
-    // super-sponge case the poll cannot see, since the actor is gone before the next poll) or
-    // streamed out (its sublevel unloaded). Tell them apart by proximity to the local camera: a
-    // wipe happens at the player, a streamed-out sublevel is far. For a near decal broadcast
-    // zero, so the peer's mirror min-applies zero, fully clean; far vanishes are ignored. The
-    // camera UFunction is read once, only when something vanished. Then drop every vanished
-    // decal from the index (a stream-back re-adds it on the next rebuild).
-    if (!vanished.empty()) {
-        const ue_wrap::FVector cam = E::GetCameraLocation();
-        for (const auto& key : vanished) {
-            ue_wrap::FVector gp;
-            if (!DecodePosKey(key, gp)) continue;
-            const float dx = cam.X - gp.X, dy = cam.Y - gp.Y, dz = cam.Z - gp.Z;
-            if (dx * dx + dy * dy + dz * dz > kWipeProximityCm2) continue;  // far -> stream-out, not a wipe
-            coop::net::KeyedScalarPayload p{};
-            WireKeyFromString(key, p.key);
-            p.value = 0.f;  // wiped to destruction -> drive the mirror fully clean (MIN-applied -> invisible)
-            p.adopt = 0;
-            if (s->SendReliable(coop::net::ReliableKind::GrimeState, &p, sizeof(p))) {
-                g_wipedKeys.insert(key);  // remember for the connect-snapshot (a joiner cleans pre-join wipes)
-                UE_LOGI("grime: sent WIPE (value=0) key='%ls'", key.c_str());
-            }
-        }
-        std::lock_guard<std::mutex> lkI(g_indexMutex);
-        std::lock_guard<std::mutex> lkS(g_stateMutex);
-        for (const auto& key : vanished) {
-            const auto it = g_byKey.find(key);
-            if (it != g_byKey.end()) {
-                g_posKeyByActor.erase(it->second.actor);   // its cached key goes with it
-                g_byKey.erase(it);
-            }
-            g_lastKnown.erase(key);
-        }
-    }
-    for (auto& t : toSend) {
-        coop::net::KeyedScalarPayload p{};
-        WireKeyFromString(t.first, p.key);
-        p.value = t.second;
-        p.adopt = 0;  // live wipe -> receivers apply MIN
-        if (s->SendReliable(coop::net::ReliableKind::GrimeState, &p, sizeof(p)))
-            UE_LOGI("grime: sent process=%.3f key='%ls'", t.second, t.first.c_str());
-        else
-            UE_LOGW("grime: SendReliable failed key='%ls'", t.first.c_str());
-    }
+    g_posKeyByActor.erase(end.actor);
+    if (end.streamedOut) return;
+    g_wipedKeys.insert(key);
+    Send(key, 0.f);  // wiped to destruction: the peers' copies go fully clean
 }
 
 }  // namespace
@@ -421,6 +376,11 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 void Tick() {
     if (!G::EnsureResolved()) return;
     RegisterWithScanHub();  // safety net for any order where Tick precedes Install
+    // The clean verb's watch and the decals' end of play, each asked again until it takes.
+    if (!g_watchInstalled) g_watchInstalled = sg::WatchName(L"clean", kTagGrimeClean, &OnCleanPre, &OnCleanPost);
+    if (!g_endSubscribed && coop::element::death_seam::Install())
+        g_endSubscribed = coop::element::death_seam::SubscribeClass(L"grime_C", &OnGrimeEnd);
+    sg::ResolvePendingNames();
     if (!IndexCurrent()) return;  // index belongs to a dead world -- wait for the hub's next pass
     const auto now = std::chrono::steady_clock::now();
     if (now - g_lastRetry >= kRetryRebuildThrottle) {
@@ -445,10 +405,6 @@ void Tick() {
                 UE_LOGI("grime: retry tick -- applied %d deferred, dropped %d expired, %d still pending",
                         applied, expired, still);
         }
-    }
-    if (now - g_lastPoll >= kPollThrottle) {
-        g_lastPoll = now;
-        PollAndBroadcast();
     }
 }
 
