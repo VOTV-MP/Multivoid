@@ -7,7 +7,7 @@
 #include "coop/net/session.h"
 
 #include "coop/config/config.h"           // Resolve* for the rows below
-#include "coop/config/config_registry.h"  // rows: net_fakelink_kbs, the connect cap
+#include "coop/config/config_registry.h"  // rows: the fake-link knobs, the connect cap
 #include "coop/net/connect_history.h"
 #include "coop/net/ice_policy.h"         // what the player's net.ice refuses
 #include "coop/net/master_slots.h"       // an empty relay is the chosen master's
@@ -82,6 +82,20 @@ bool EnsureGnsInit() {
             UE_LOGW("net: FAKE LINK LIMIT %ld KB/s outbound (drill knob net.fakelink_kbs) -- "
                     "packets beyond the budget are silently dropped",
                     fakeKbs);
+        }
+        // The reordering knob, the same physics on the receiving side: a LAN delivers in order, so
+        // without it no run ever exercises a stream's newest-wins store against an older datagram.
+        const long reorderPct =
+            coop::config::ResolveInt(coop::config_registry::rows::net_fakereorder_pct);
+        if (reorderPct > 0) {
+            const long reorderMs =
+                coop::config::ResolveInt(coop::config_registry::rows::net_fakereorder_ms);
+            utils->SetGlobalConfigValueFloat(k_ESteamNetworkingConfig_FakePacketReorder_Recv,
+                                             static_cast<float>(reorderPct));
+            utils->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_FakePacketReorder_Time,
+                                             static_cast<int32>(reorderMs));
+            UE_LOGW("net: FAKE REORDER %ld%% of received packets held back %ld ms (drill knobs "
+                    "net.fakereorder_pct, net.fakereorder_ms)", reorderPct, reorderMs);
         }
     }
     g_inited = true;

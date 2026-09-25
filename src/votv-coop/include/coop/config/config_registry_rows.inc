@@ -68,6 +68,12 @@ CFG_INT(net_fakelink_kbs, "net.fakelink_kbs", "net", 0, 0, 1048576, "VOTVCOOP_NE
     "Simulated OUTBOUND link capacity, KB/s (GNS FakeRateLimit_Send: a process-global policer "
     "that silently DROPS packets beyond the budget -- worst-case thin-uplink physics). 0 = off. "
     "Testing knob for the overdrive drill; pair with net.sendrate_kbs above this value.")
+CFG_INT(net_fakereorder_pct, "net.fakereorder_pct", "net", 0, 0, 100, "VOTVCOOP_NET_FAKEREORDER_PCT",
+    "Percent of RECEIVED packets held back by net.fakereorder_ms (GNS FakePacketReorder_Recv, "
+    "process-global), so the packets behind them arrive first: a reordering link, which a LAN "
+    "never is. 0 = off. Testing knob for the newest-wins stream stores.")
+CFG_INT(net_fakereorder_ms, "net.fakereorder_ms", "net", 50, 1, 1000, "VOTVCOOP_NET_FAKEREORDER_MS",
+    "How long net.fakereorder_pct holds a received packet back, ms (GNS FakePacketReorder_Time).")
 // The default is the token rather than the list it stands for (protocol.h kOfficialMasterSlots):
 // a player who adds a master of their own keeps the official ones a later build ships instead
 // of freezing the ones they copied.

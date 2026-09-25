@@ -95,19 +95,27 @@ void Session::StoreRemoteWorldActorBatch(const void* data, int len, uint32_t seq
     // [WA-TRACE client-store] 1 Hz: what actually arrived over the wire this second (+ how many
     // datagrams the stale-seq guard dropped). If host-serialize moves but this is frozen/absent,
     // the wire hop is the break; if stale-drops dominate, the seq guard is eating the stream.
+    // olderStored counts the batches stored at or behind the newest one stored since the stream was
+    // last reset: a newest-wins store keeps it at 0, so under net.fakereorder_pct anything else is
+    // an older batch applied after a newer one.
     static long long s_lastMs = 0;   // net-thread only -- no race
     static unsigned s_staleDrops = 0;
+    static unsigned s_olderStored = 0;
+    static uint32_t s_newestStored = 0;
     std::lock_guard<std::mutex> lk(remoteMutex_);
+    const bool fresh = !hasRemoteWorldActorBatch_ && lastRemoteWorldActorSeq_ == 0;
     if (hasRemoteWorldActorBatch_ && static_cast<int32_t>(seq - lastRemoteWorldActorSeq_) <= 0) {
         ++s_staleDrops;
         return;  // stale
     }
+    if (!fresh && static_cast<int32_t>(seq - s_newestStored) <= 0) ++s_olderStored;
+    else s_newestStored = seq;
     const long long nowMs = TraceNowMs();
     if (nowMs - s_lastMs >= 1000 && count > 0) {
         s_lastMs = nowMs;
         const auto& f = batch[0];
-        UE_LOGI("[WA-TRACE client-store] n=%d seq=%u first: eid=%u (%.0f,%.0f,%.0f) staleDrops=%u",
-                count, seq, f.elementId, f.x, f.y, f.z, s_staleDrops);
+        UE_LOGI("[WA-TRACE client-store] n=%d seq=%u first: eid=%u (%.0f,%.0f,%.0f) staleDrops=%u "
+                "olderStored=%u", count, seq, f.elementId, f.x, f.y, f.z, s_staleDrops, s_olderStored);
         s_staleDrops = 0;
     }
     remoteWorldActorBatch_ = std::move(batch);
