@@ -268,7 +268,7 @@ Every place two seams can express one actor, and what deduplicates it:
 | a client grabbing or sweeping shared trash and the host's authoring | the client suppresses the native grab and sends an intent, and refuses its broom stroke whole and sends what the stroke read of its holder; the host performs both, so a client authors shared trash by neither `[V]` |
 | the character interceptor and the event-actor interceptor on one call | disjoint allowlists; the substrate supports several interceptors `[V]` |
 | a nested deferred spawn stealing a pending id in the post observer | correlation on the parameter pointer `[V]` |
-| a client's own conversion of a kerfur, and the host's | none of a client's exists: its gate refuses the verb and asks, so the host's is the one conversion `[RD]` |
+| a client's own conversion of a kerfur, and the host's | none of a client's exists: its gate refuses the verb and asks, so the host's is the one conversion `[V]` (`kerfur_convert_drill`) |
 | the kerfur's eye camera and the whole prop identity universe | child actors are excluded at six surfaces `[V]` |
 | a joiner's save-loaded anchored hook and the host's replay of the same hook | the host mints the save key, and the joiner skips a key the game already resolves `[V]` |
 | a level-placed hook variant, which attaches itself on every peer | it is not in the lane's class table, and the owner's own field can never name it `[V]` |
