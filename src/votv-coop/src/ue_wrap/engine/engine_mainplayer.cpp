@@ -280,6 +280,14 @@ bool CallMainPlayerUpdateHold(void* mainPlayer) {
     return f.valid() && Call(mainPlayer, f);
 }
 
+bool CallMainPlayerUseSelectedAction(void* mainPlayer) {
+    if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
+    void* fn = R::FindFunction(R::ClassOf(mainPlayer), L"useSelectedAction");
+    if (!fn) return false;
+    ParamFrame f(fn);
+    return f.valid() && Call(mainPlayer, f);
+}
+
 bool ReadMainPlayerGrabState(void* mainPlayer, MainPlayerGrabState& out) {
     out = {};
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
@@ -303,29 +311,39 @@ bool ReadMainPlayerGrabState(void* mainPlayer, MainPlayerGrabState& out) {
     return true;
 }
 
-void* ReadMainPlayerHitActor(void* mainPlayer) {
+namespace {
+
+struct HitField { void* cls = nullptr; int32_t hitOff = -1; int32_t fieldOff = -1; };
+HitField g_hitActor, g_hitComponent;
+
+// A TWeakObjectPtr field of hitResult. Two offsets, resolved by name once a class: hitResult on the
+// player, then the field inside FHitResult. The engine holds the object as a slot and a serial, so it
+// is resolved through the object array rather than dereferenced, and a recycled slot answers null.
+void* ReadHitResultObject(void* mainPlayer, const wchar_t* field, HitField& c) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return nullptr;
-    // Two offsets, resolved once: hitResult on the player, then the actor inside FHitResult. The
-    // engine holds that actor as a TWeakObjectPtr -- a slot and a serial -- so it is resolved
-    // through the object array rather than dereferenced, and a recycled slot answers null.
-    static void*   sCls = nullptr;
-    static int32_t sHitOff = -1;
-    static int32_t sActorOff = -1;
     void* cls = R::ClassOf(mainPlayer);
     if (!cls) return nullptr;
-    if (cls != sCls) {
-        sCls = cls;
-        sHitOff = R::FindPropertyOffset(cls, L"hitResult");
-        sActorOff = -1;
+    if (cls != c.cls) {
+        c.cls = cls;
+        c.hitOff = R::FindPropertyOffset(cls, L"hitResult");
+        c.fieldOff = -1;
         if (void* inner = R::PropertyInnerStruct(cls, L"hitResult"))
-            sActorOff = R::FindPropertyOffset(inner, L"Actor");
+            c.fieldOff = R::FindPropertyOffset(inner, field);
     }
-    if (sHitOff < 0 || sActorOff < 0) return nullptr;
-    const uint8_t* weak = reinterpret_cast<const uint8_t*>(mainPlayer) + sHitOff + sActorOff;
+    if (c.hitOff < 0 || c.fieldOff < 0) return nullptr;
+    const uint8_t* weak = reinterpret_cast<const uint8_t*>(mainPlayer) + c.hitOff + c.fieldOff;
     int32_t idx = 0, serial = 0;
     std::memcpy(&idx, weak, sizeof(idx));
     std::memcpy(&serial, weak + sizeof(idx), sizeof(serial));
     return R::ResolveWeakObject(idx, serial);
+}
+
+}  // namespace
+
+void* ReadMainPlayerHitActor(void* mainPlayer) { return ReadHitResultObject(mainPlayer, L"Actor", g_hitActor); }
+
+void* ReadMainPlayerHitComponent(void* mainPlayer) {
+    return ReadHitResultObject(mainPlayer, L"Component", g_hitComponent);
 }
 
 void* ReadMainPlayerLookAtActor(void* mainPlayer) {

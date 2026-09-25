@@ -378,4 +378,12 @@ void TickSmartApply() {
     }
 }
 
+void* PartOf(void* door, const wchar_t* name) {
+    if (!door || !name) return nullptr;
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(door), name);
+    if (off < 0) return nullptr;
+    void* part = *reinterpret_cast<void* const*>(reinterpret_cast<const char*>(door) + off);
+    return (part && R::IsLive(part)) ? part : nullptr;
+}
+
 }  // namespace ue_wrap::door

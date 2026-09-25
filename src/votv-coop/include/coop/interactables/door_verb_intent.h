@@ -43,4 +43,8 @@ void OnPeerLeft(uint8_t slot);
 // The session ended: the queues, the rates and the counters, with one summary line.
 void OnDisconnect();
 
+// CLIENT: how many door verbs this client has sent the host this session, for a drill that reads
+// whether a press went. Game thread.
+uint64_t SentCount();
+
 }  // namespace coop::door_verb_intent

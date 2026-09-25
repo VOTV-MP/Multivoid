@@ -66,6 +66,11 @@ bool ReadMainPlayerGrabState(void* mainPlayer, MainPlayerGrabState& out);
 // False when the function does not resolve or the call fails. Game thread.
 bool CallMainPlayerUpdateHold(void* mainPlayer);
 
+// The player's own E handler, useSelectedAction: the selected action sent to whatever its interaction
+// trace hit (hitResult's actor), the press a player makes. A dev drill's press through the player's
+// input. False when the function does not resolve or the call fails. Game thread.
+bool CallMainPlayerUseSelectedAction(void* mainPlayer);
+
 // AmainPlayer_C::hitResult's actor -- the RAW interaction trace, the field the game's own tool
 // bodies break when they decide what a press is on. It is not the same answer as lookAtActor
 // below: that one is derived from this trace later in the tick and is skipped while a grab is
@@ -74,6 +79,9 @@ bool CallMainPlayerUpdateHold(void* mainPlayer);
 // the trace hit nothing, when the weak pointer's slot has been recycled, or while it is
 // unresolved. Reflection-resolved, offsets cached. Game thread.
 void* ReadMainPlayerHitActor(void* mainPlayer);
+
+// The same trace's component: the part of the actor the trace struck. Null as above. Game thread.
+void* ReadMainPlayerHitComponent(void* mainPlayer);
 
 // AmainPlayer_C::lookAtActor, the interactable under the crosshair; nullptr if unresolved or
 // nothing is aimed at. Reflection-resolved. Game thread.

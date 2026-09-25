@@ -358,6 +358,8 @@ void OnPeerLeft(uint8_t slot) {
     g_cutSaid[slot] = false;
 }
 
+uint64_t SentCount() { return g_sent; }
+
 void OnDisconnect() {
     if (g_sent || g_ran || g_denied || g_worldRefused || g_loadNative)
         UE_LOGI("[DOOR-VERB] session end -- sent=%llu ran=%llu denied=%llu world-damage refused=%llu "
