@@ -4,13 +4,13 @@
 // through here via ONE Adapter -- this wrapper is the per-class dispatch.
 //
 // All six are Aactor_save_C descendants carrying a single bool on/off toggle and a no-arg
-// refresh verb (upd/updIsOn), except serverBox which exposes a named SetActive(bool) setter.
+// refresh verb (upd/updIsOn), except serverBox, whose setter visual(bool) writes its bool.
 // None has a sensor / autoclose -> none auto-reverts -> they sync SYMMETRICALLY (like
 // lights/garage), driven by the generic Channel's state poll of each class's bool. Identity =
 // the inherited Aactor_save_C::Key (save-persistent, cross-peer stable). The per-class bool name
 // and the apply verb live in ONE table, appliance.cpp's g_descs, and a name that does not resolve
 // leaves its class out: sink fires updIsOn() then upd() because its BP fires both, serverBox goes
-// through SetActive(bool).
+// through visual(bool).
 
 #pragma once
 
@@ -36,7 +36,7 @@ std::wstring GetKeyString(void* a);
 // (null / class not in the set / not resolved); leaves `on` untouched on failure.
 bool TryReadState(void* a, bool& on);
 
-// Drive the appliance to `on`: serverBox via SetActive(bool); the rest by direct-writing the
+// Drive the appliance to `on`: serverBox via visual(bool); the rest by direct-writing the
 // bool then calling the no-arg refresh verb (upd/updIsOn) so the mesh/FX/audio repaint from
 // the new state. MUST run on the game thread. False on null / unresolved.
 bool ApplyState(void* a, bool on);

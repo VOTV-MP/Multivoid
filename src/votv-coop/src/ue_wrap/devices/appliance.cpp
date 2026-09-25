@@ -18,15 +18,15 @@ namespace {
 
 namespace R = reflection;
 
-// One descriptor per appliance class. `applyTakesBool` marks the named setter (serverBox's
-// SetActive(bool)); the others direct-write the bool then call a no-arg refresh verb. The bool is the
-// one the class's own getData saves: the state its use verb toggles.
+// One descriptor per appliance class. `applyParam` names the bool parameter of a setter that writes
+// the bool itself (serverBox's visual(active)); the others direct-write the bool then call a no-arg
+// refresh verb. The bool is the one the class's own getData saves: the state its use verb toggles.
 struct Desc {
     const wchar_t* className;
     const wchar_t* boolName;
     const wchar_t* applyFn;
     const wchar_t* applyFn2;       // optional 2nd refresh verb (sink: upd() AFTER updIsOn()); nullptr if none
-    bool           applyTakesBool;
+    const wchar_t* applyParam;     // the setter's bool parameter; nullptr for a no-arg refresh verb
     // resolved lazily (game-thread serial -- no lock):
     void*   cls;
     int32_t boolOff;
@@ -37,7 +37,7 @@ struct Desc {
 
 // sink_C's BP player_use calls updIsOn() THEN upd() -- updIsOn() flips the tap state, upd()
 // repaints the water particle/sound; mirroring only one would leave the FX out of sync. So
-// sink carries a 2nd verb. The others' player_use calls a single verb (or SetActive).
+// sink carries a 2nd verb. The others' player_use calls a single verb.
 //
 // The verb is per class, NOT per name: prop_shower_C owns an upd(), but it is the one that
 // repaints the DIRT scalar on the cubicle's material, and the tap's own branch instead calls
@@ -48,12 +48,12 @@ struct Desc {
 // The faucet's is `active`, which its use action toggles before calling upd() and its getData saves;
 // its `turnOn` is the look-at flag lookAt sets while a player aims at the tap (faucet_C's bytecode).
 Desc g_descs[] = {
-    { L"faucet_C",         L"active",       L"upd",       nullptr, false, nullptr, -1, nullptr, nullptr, false },
-    { L"sink_C",           L"isOn",         L"updIsOn",   L"upd",  false, nullptr, -1, nullptr, nullptr, false },
-    { L"prop_shower_C",    L"running_cold", L"updWater",  nullptr, false, nullptr, -1, nullptr, nullptr, false },
-    { L"kitchen_C",        L"Active",       L"upd",       nullptr, false, nullptr, -1, nullptr, nullptr, false },
-    { L"serverBox_C",      L"Active",       L"SetActive", nullptr, true,  nullptr, -1, nullptr, nullptr, false },
-    { L"wallunit_tapes_C", L"Active",       L"upd",       nullptr, false, nullptr, -1, nullptr, nullptr, false },
+    { L"faucet_C",         L"active",       L"upd",       nullptr, nullptr,   nullptr, -1, nullptr, nullptr, false },
+    { L"sink_C",           L"isOn",         L"updIsOn",   L"upd",  nullptr,   nullptr, -1, nullptr, nullptr, false },
+    { L"prop_shower_C",    L"running_cold", L"updWater",  nullptr, nullptr,   nullptr, -1, nullptr, nullptr, false },
+    { L"kitchen_C",        L"Active",       L"upd",       nullptr, nullptr,   nullptr, -1, nullptr, nullptr, false },
+    { L"serverBox_C",      L"active",       L"visual",    nullptr, L"active", nullptr, -1, nullptr, nullptr, false },
+    { L"wallunit_tapes_C", L"Active",       L"upd",       nullptr, nullptr,   nullptr, -1, nullptr, nullptr, false },
 };
 constexpr int kNumDescs = sizeof(g_descs) / sizeof(g_descs[0]);
 
@@ -163,15 +163,16 @@ bool TryReadState(void* a, bool& on) {
 bool ApplyState(void* a, bool on) {
     Desc* d = DescFor(a);
     if (!d) return false;
-    if (d->applyTakesBool) {
-        // serverBox: SetActive(bNewActive) sets Active AND repaints in one named setter.
+    if (d->applyParam) {
+        // serverBox: visual(active) is `this.active = active` and a check() repaint, the call a kerfur
+        // Omega makes; its setActive(bNewActive) only switches the loop and sound components and
+        // writes no `active` (serverBox_C's bytecode), so a copy set through it kept its old state.
         if (!d->fn) {
             if (d->boolOff >= 0) *reinterpret_cast<bool*>(reinterpret_cast<char*>(a) + d->boolOff) = on;
             return false;
         }
         ParamFrame f(d->fn);
-        if (!f.valid()) return false;
-        f.Set<bool>(L"bNewActive", on);
+        if (!f.valid() || !f.Set<bool>(d->applyParam, on)) return false;
         return Call(a, f);
     }
     // The rest: direct-write the bool, then call the no-arg refresh verb (upd/updIsOn) so the mesh,
