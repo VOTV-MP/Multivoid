@@ -10,6 +10,7 @@
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/devices/door.h"          // TryReadActive: the gated door's power
 #include "ue_wrap/devices/passwordlock.h"
 #include "ue_wrap/engine/world_identity.h"   // the world generation the index is stamped with
 
@@ -125,6 +126,25 @@ void StateToPayload(const std::wstring& key, const PL::State& st, coop::net::Key
 
 std::wstring BufferOf(const coop::net::KeypadSyncPayload& p) { return UnpackDigits(p.buf, p.bufLen, sizeof(p.buf)); }
 
+// Whether handing `lock`'s verdict on would change nothing on this copy: its pair and its gated door
+// already hold `active`, as setActive(false) would leave them. A joiner's snapshot hands it on then,
+// so the joiner's pair and door end as the host's whatever its load left there; a door whose power
+// moved without its keypad (a vent crawler's event, the door's own events) keeps it.
+bool HandOnChangesNothing(void* lock, bool active) {
+    void* pair = PL::PairOf(lock);
+    void* door = PL::GatedDoor(lock);
+    if (!pair && !door) return false;  // nothing to hand on to
+    if (pair) {
+        PL::State ps;
+        if (!PL::ReadState(pair, ps) || ps.active != active) return false;
+    }
+    if (door) {
+        bool on = false;
+        if (!ue_wrap::door::TryReadActive(door, on) || on != active) return false;
+    }
+    return true;
+}
+
 // ---- the index ---------------------------------------------------------------------------------
 void HubPassBegin(void*, bool /*isFull*/) { g_scanFound.clear(); }
 
@@ -181,8 +201,8 @@ void RegisterWithScanHub() {
 // The settled state -- the buffer, the password when it reads as UTF-8, the verdict and the mode --
 // then setActive as the host's chain ended: handing the verdict on to the pair and the gated door
 // (isPairCall false) when the host's did (the state's arg), otherwise only a repaint, which is all
-// setActive does for a pair's call. A digit's, a reset's and a joiner's snapshot states hand nothing
-// on: the load set each door from the host's save, and a keypad copies its door as it begins play.
+// setActive does for a pair's call. A digit's and a reset's states hand nothing on; a joiner's
+// snapshot hands it on where the host's pair and door already hold it (HandOnChangesNothing).
 void ApplyStateNow(void* lock, const coop::net::KeypadSyncPayload& p) {
     PL::State cur;
     if (!PL::ReadState(lock, cur)) return;
@@ -296,16 +316,26 @@ void OnReliable(const coop::net::KeypadSyncPayload& payload) {
     const std::wstring key = coop::net::StringFromWireKey(payload.key);
     if (key.empty()) return;
     if (void* lock = ResolveKeypad(key)) {
-        g_pending.erase(key);  // a state parked before the index is older than this record
+        // A state that waited for the index is older than this record, so it goes first.
+        if (auto it = g_pending.find(key); it != g_pending.end()) {
+            const coop::net::KeypadSyncPayload older = it->second.p;
+            g_pending.erase(it);
+            Apply(lock, key, older);
+        }
         Apply(lock, key, payload);
         return;
     }
-    // A verb for a keypad not indexed yet is dropped: the state its chain settles on follows it,
-    // and a state waits here until the keypad is indexed.
-    if (payload.event == static_cast<uint8_t>(coop::net::KeypadEvent::State))
-        g_pending[key] = Pending{payload, Clock::now() + kPendingTTL};
-    else
+    // A verb for a keypad not indexed yet is dropped: the state its chain settles on follows it. A
+    // state waits here until the keypad is indexed, the latest one, with a hand-on any waiting one
+    // carried kept.
+    if (payload.event == static_cast<uint8_t>(coop::net::KeypadEvent::State)) {
+        Pending& waiting = g_pending[key];
+        const uint8_t handedOn = static_cast<uint8_t>((payload.arg | waiting.p.arg) & 1);
+        waiting = Pending{payload, Clock::now() + kPendingTTL};
+        waiting.p.arg = handedOn;
+    } else {
         ++g_dropped;
+    }
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
@@ -326,6 +356,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         coop::net::KeypadSyncPayload p{};
         StateToPayload(e.key, st, p);
         p.event = static_cast<uint8_t>(coop::net::KeypadEvent::State);
+        p.arg = HandOnChangesNothing(e.actor, st.active) ? 1 : 0;
         if (s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::KeypadState, &p, sizeof(p))) ++sent;
     }
     UE_LOGI("keypad: connect-snapshot -- sent %d state(s) to slot %d (of %zu indexed)", sent, peerSlot,

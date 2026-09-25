@@ -31,7 +31,8 @@ void Tick();
 // CLIENT: a record from the host, its format already checked by the dispatcher. Game thread.
 void OnReliable(const coop::net::KeypadSyncPayload& payload);
 
-// HOST: each indexed keypad's state to a joiner at its world-ready replay. Game thread.
+// HOST: each indexed keypad's state to a joiner at its world-ready replay, handing the verdict on
+// where the host's pair and gated door already hold it. Game thread.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
 // The session ended: the pending states and the counters, with one summary line.

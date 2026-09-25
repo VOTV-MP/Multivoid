@@ -124,7 +124,9 @@ each body on the host the verb goes to every client, which runs the same verb on
 the keypad's own chain plays its sounds and lands the same state; after it the state the chain
 settled on goes too -- at the keypad's setActive, its pair's with it and the password in it; at a
 digit or a reset that started no open -- and a joiner gets each keypad's state in its snapshot
-(`coop/interactables/keypad_sync`). A client's copy is written to that state whatever its own
+(`coop/interactables/keypad_sync`), handed on to its pair and door where the host's already hold
+it, so a door ends as the host's even when a chain ran after the host's save was taken. A client's
+copy is written to that state whatever its own
 replay met, but one that arrives while the copy's own replayed open, on the keypad or its pair, is
 still in its 0.2 s wait is written at that chain's end, so it never lands under the tail that
 reads the set-new-code mode and writes the pair. On a client every call of those
