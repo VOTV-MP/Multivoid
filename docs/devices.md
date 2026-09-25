@@ -53,8 +53,8 @@ script-body gate refuses the door's entry verb there and sends it to the host
 (`coop/interactables/door_verb_intent`), which
 runs the same verb on its own copy, so the door's own body decides it once -- its power gate with
 the blackout clause, a swing already moving, the pry. A verb that reaches the host before the
-sender's body does (a client's first pose spawns it) waits for the body, since the host measures
-the sender's reach from it. The cut is at those entry verbs rather than
+sender's body has taken its first pose waits for it, since the host measures the sender's reach
+from that body. The cut is at those entry verbs rather than
 at `doorOpen`/`doorClose`: every in-door caller reaches those two through the door's own event
 graph, where a press cannot be told from a hit or a trigger, and a hit moves both leaves before it
 ever reaches `doorOpen`. The host's door then closes by its own
@@ -119,17 +119,20 @@ and its gated door. The host's copy decides. Every change goes through one of th
 verbs -- a digit, an open with its verdict, the scripted guesser, the set-new-code mode, a false
 entry -- and the script-body gate watches them by name (`coop/interactables/keypad_verbs`): before
 each body on the host the verb goes to every client, which runs the same verb on its own copy, so
-the keypad's own chain plays its sounds and lands the same state; after the keypad's setActive
-the state the chain settled on goes too, its pair's with it and the password in it, and a joiner
-gets each keypad's state in its snapshot (`coop/interactables/keypad_sync`). A state that arrives
-while the client's own replayed open is still in its 0.2 s wait is written at that chain's end,
-so it never lands under the tail that reads the set-new-code mode. On a client every call of those
+the keypad's own chain plays its sounds and lands the same state; after it the state the chain
+settled on goes too -- at the keypad's setActive, its pair's with it and the password in it; at a
+digit or a reset that started no open -- and a joiner gets each keypad's state in its snapshot
+(`coop/interactables/keypad_sync`). A client's copy is written to that state whatever its own
+replay met, but one that arrives while the copy's own replayed open, on the keypad or its pair, is
+still in its 0.2 s wait is written at that chain's end, so it never lands under the tail that
+reads the set-new-code mode and writes the pair. On a client every call of those
 verbs is refused but the lane's own; a player's own entries -- a digit, the accept or cancel key,
 the numpad's (told apart by the key, since the numpad's accept passes the copy's own verdict), a
 keycard's swipe, a pass changer -- go to the host as an intent, and the host runs the verb on its
-copy, judging a submit against its own password; entries typed before the host has the sender's
-body wait for it, in order, so no digit of a code is lost. A keycard's verdict is taken only while
-the sender holds a keycard. An accept unlocks a door; opening it is an ordinary press of the door.
+copy, judging a submit against its own password. The entries run in order, and the next one waits
+while the host has no body for the sender and while the keypad's open is in the 0.2 s tail that
+clears its buffer, so none is lost to either wait. A keycard's verdict is taken only while the
+sender holds a keycard. An accept unlocks a door; opening it is an ordinary press of the door.
 
 ### Power, turbine, windows, grime
 

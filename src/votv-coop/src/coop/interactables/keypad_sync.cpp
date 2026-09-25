@@ -47,9 +47,10 @@ struct Pending { coop::net::KeypadSyncPayload p; Clock::time_point deadline; };
 std::unordered_map<std::wstring, Pending> g_pending;
 Clock::time_point g_nextRetry{};
 
-// A state that arrived while this copy's own replayed open was in its 0.2 s wait: the host sends
-// its state after its tail, which can land before this copy's tail has read `isReset`. It is written
-// at this copy's own chain end instead, the tail's setActive (OnClientChainEnd).
+// A state that arrived while this copy's own replayed open, on the keypad or on its pair, was in its
+// 0.2 s wait: the host sends its state after its tail, which can land before this copy's tail has
+// read `isReset`, and the tail writes the pair too (the new code, the verdict it hands on). It is
+// written at that chain's end instead, the tail's setActive (OnClientChainEnd).
 std::unordered_map<std::wstring, coop::net::KeypadSyncPayload> g_parked;
 
 // Joiners whose snapshot waited for the index to be current, one bit a slot.
@@ -172,7 +173,8 @@ void ApplyStateNow(void* lock, const coop::net::KeypadSyncPayload& p) {
 }
 
 void ApplyState(void* lock, const std::wstring& key, const coop::net::KeypadSyncPayload& p) {
-    if (PL::IsEntering(lock)) {
+    void* pair = PL::PairOf(lock);
+    if (PL::IsEntering(lock) || (pair && PL::IsEntering(pair))) {
         g_parked[key] = p;
         return;
     }
@@ -324,13 +326,18 @@ void* ResolveKeypad(const std::wstring& key) {
 }
 
 void OnClientChainEnd(void* lock) {
+    auto writeParked = [](void* k) {
+        auto it = g_parked.find(KeypadKey(k));
+        if (it == g_parked.end()) return;
+        const coop::net::KeypadSyncPayload p = it->second;
+        g_parked.erase(it);
+        ApplyStateNow(k, p);
+    };
     if (g_parked.empty()) return;
-    const std::wstring key = KeypadKey(lock);
-    auto it = g_parked.find(key);
-    if (it == g_parked.end()) return;
-    const coop::net::KeypadSyncPayload p = it->second;
-    g_parked.erase(it);
-    ApplyStateNow(lock, p);
+    writeParked(lock);
+    // The pair's waited for this chain; one in a chain of its own waits for that one's end.
+    void* pair = PL::PairOf(lock);
+    if (pair && !PL::IsEntering(pair)) writeParked(pair);
 }
 
 bool Applying(void* lock, Verb verb) { return lock && g_mark.lock == lock && g_mark.verb == verb; }
@@ -372,8 +379,10 @@ void SendState(void* lock) {
         return;
     }
     ++g_sentStates;
-    UE_LOGI("keypad: host sent the state key='%ls' settled on: buf='%ls' active=%d reset=%d", key.c_str(),
-            st.buffer.c_str(), st.active ? 1 : 0, st.isReset ? 1 : 0);
+    // A state with a typed buffer follows every digit, so it is said for the first forty.
+    if (st.buffer.empty() || g_sentStates <= 40)
+        UE_LOGI("keypad: host sent the state key='%ls' settled on: buf='%ls' active=%d reset=%d", key.c_str(),
+                st.buffer.c_str(), st.active ? 1 : 0, st.isReset ? 1 : 0);
 }
 
 }  // namespace coop::keypad_sync

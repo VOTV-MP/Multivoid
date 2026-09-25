@@ -5,8 +5,9 @@
 //     held pass changer's reset are refused and sent to the host as KeypadIntent, read on this copy
 //     as its player's input. Every other call of those verbs, open2, falseEnterEvent, and setActive
 //     from anything but a keypad (the world's writers) is refused without a send.
-//   - HOST, before the body: the verb goes to every client as KeypadState, to replay; after
-//     setActive(false), the state the chain settled on, the pair's with it.
+//   - HOST, before the body: the verb goes to every client as KeypadState, to replay; after it, the
+//     state its chain settled on: at setActive(false), the pair's with it; at a digit or a reset
+//     that started no open. A client's copy is written to it whatever its own replay met.
 //   - CLIENT, after its own chain's setActive(false): a state that waited for the chain is written.
 //   - HOST: a client's intent runs on the host's copy, checked for reach, for the held item a keycard
 //     or pass changer needs, and for rate, from a bounded queue per sender.
@@ -28,8 +29,9 @@ namespace coop::keypad_verbs {
 void Install(coop::net::Session* session);
 
 // Settles the watches and says once when they are live. Host: runs the queued intents in order, each
-// sender at a bounded rate; a sender whose first pose has not arrived has no body to measure its reach
-// from, and its intents wait for it, so no digit of a code is lost. Game thread, once per pump tick.
+// sender at a bounded rate. The head waits while its sender has no body to measure the reach from
+// (the first pose not yet applied) and while its keypad's open is in its 0.2 s tail, so no entry is
+// lost to either wait. Game thread, once per pump tick.
 void Tick(coop::net::Session& session);
 
 // HOST: a client's intent from the wire, its format already checked by the dispatcher. Queued, and

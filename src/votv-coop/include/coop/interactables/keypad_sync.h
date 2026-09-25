@@ -52,12 +52,13 @@ bool Applying(void* lock, Verb verb);
 bool ApplyingAny(void* lock);
 
 // HOST: what `lock` is doing, to every client -- a verb it is about to run (from the verb's own
-// watch, before its body), or its settled state (after its setActive(false)). Game thread.
+// watch, before its body), or the state its chain settled on (after it). Game thread.
 void SendEvent(void* lock, coop::net::KeypadEvent event, uint8_t arg);
 void SendState(void* lock);
 
 // CLIENT: `lock`'s own chain ended at its setActive(false): a state that arrived while the chain was
-// in its wait is written now. Game thread.
+// in its wait, for `lock` or for its pair (which the tail writes too), is written now; the pair's
+// waits instead for a chain of its own still in its wait. Game thread.
 void OnClientChainEnd(void* lock);
 
 }  // namespace coop::keypad_sync

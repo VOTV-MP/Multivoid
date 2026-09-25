@@ -33,13 +33,14 @@ using KeypadEvent = coop::net::KeypadEvent;
 // The verbs, watched by name: every class's function of that name fires, so each callback's first
 // test is the keypad class. `open`, `reset` and `setActive` are common names. playerAnykey is the
 // numpad's entry, watched for which key it got: its accept calls open(password == buffer), which a
-// copy whose digits are still crossing judges false, the same call its cancel makes.
+// copy whose digits are still crossing judges false, the same call its cancel makes. `post` marks the
+// verbs whose chain can settle at their own end: setActive's, a digit's and a reset's.
 struct VerbWatch { const wchar_t* name; int tag; KS::Verb verb; bool post; bool anyKey; };
 constexpr VerbWatch kWatches[] = {
-    { L"inputNumber",     0x4b50494e /*'KPIN'*/, KS::Verb::InputNumber, false, false },
+    { L"inputNumber",     0x4b50494e /*'KPIN'*/, KS::Verb::InputNumber, true,  false },
     { L"open",            0x4b504f50 /*'KPOP'*/, KS::Verb::Open,        false, false },
     { L"open2",           0x4b504f32 /*'KPO2'*/, KS::Verb::Open2,       false, false },
-    { L"reset",           0x4b505253 /*'KPRS'*/, KS::Verb::Reset,       false, false },
+    { L"reset",           0x4b505253 /*'KPRS'*/, KS::Verb::Reset,       true,  false },
     { L"falseEnterEvent", 0x4b504645 /*'KPFE'*/, KS::Verb::FalseEnter,  false, false },
     { L"setActive",       0x4b505341 /*'KPSA'*/, KS::Verb::SetActive,   true,  false },
     { L"playerAnykey",    0x4b50414b /*'KPAK'*/, KS::Verb::InputNumber, false, true },
@@ -123,9 +124,10 @@ bool CallerIs(const sg::Call& call, const wchar_t* className) {
 }
 
 // ---- the host ----------------------------------------------------------------------------------
-// False keeps the intent at its sender's queue head: the host has no body for the sender yet (its first
-// pose has not arrived), so its reach cannot be measured, and the input waits for the body rather than
-// being lost. Everything else is run or refused, and consumed.
+// False keeps the intent at its sender's queue head, to wait: for the sender's body, which the host
+// spawns on its first pose and measures the reach from, or for the keypad's open, whose tail 0.2 s
+// later wipes the buffer or, setting a new code, saves it (passwordLock's open, after its Delay), so
+// an entry run into the tail would be lost or folded in. Everything else is run or refused, consumed.
 bool Execute(coop::net::Session& s, const coop::net::KeypadIntentPayload& p, uint8_t slot) {
     const std::wstring key = coop::net::StringFromWireKey(p.key);
     void* lock = KS::ResolveKeypad(key);
@@ -144,7 +146,6 @@ bool Execute(coop::net::Session& s, const coop::net::KeypadIntentPayload& p, uin
         }
         return false;
     }
-    g_waitSaid[slot] = false;
     if (!subject) {
         ++g_denied;
         UE_LOGI("[KEYPAD-VERB] DENY slot=%u %s key='%ls' -- %s (%.0f uu of %.0f)", static_cast<unsigned>(slot),
@@ -161,6 +162,7 @@ bool Execute(coop::net::Session& s, const coop::net::KeypadIntentPayload& p, uin
                 static_cast<unsigned>(slot), IntentName(p.verb), key.c_str(), needs);
         return true;
     }
+    if (PL::IsEntering(lock)) return false;
     bool dispatched = false;
     bool verdict = false;
     switch (p.verb) {
@@ -315,16 +317,30 @@ sg::Verdict OnVerbPre(const sg::Call& call) {
     return w->anyKey ? ClientAnyKey(*s, call) : ClientPre(*s, call, w->verb);
 }
 
-// After setActive's propagating call (isPairCall false), which ends every chain that moved a keypad.
-// HOST: the settled state of the keypad and of the pair it handed its state to. CLIENT: this copy's
-// own chain ended, so a state that waited for it is written.
-void OnSetActivePost(const sg::Call& call) {
+// After a verb's body. HOST: the state its chain settled on goes to every client, which a client's copy
+// is written to whatever its own replay met (a replayed digit can land in its own open's tail): after
+// setActive's propagating call (isPairCall false), which ends every chain that moved a keypad, its own
+// and its pair's; after a digit or a reset that started no open, its own, and a reset's pair. CLIENT,
+// after its own chain's setActive: a state that waited for that chain is written.
+void OnVerbPost(const sg::Call& call) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
     if (!call.object || !PL::IsPasswordLock(call.object)) return;
+    const VerbWatch* w = WatchOf(call.tag);
+    if (!w) return;
+    const bool host = s->role() == coop::net::Role::Host;
+    if (w->verb != KS::Verb::SetActive) {
+        // An open's chain settles at its own setActive; a protected keypad's reset changes nothing.
+        if (!host || PL::IsEntering(call.object)) return;
+        if (w->verb == KS::Verb::Reset && PL::IsProtected(call.object)) return;
+        KS::SendState(call.object);
+        if (w->verb == KS::Verb::Reset)
+            if (void* pair = PL::PairOf(call.object)) KS::SendState(pair);
+        return;
+    }
     const int32_t off = ParamOffset(g_pairParam, call, L"isPairCall");
     if (off < 0 || *reinterpret_cast<const bool*>(call.locals + off)) return;
-    if (s->role() == coop::net::Role::Host) {
+    if (host) {
         KS::SendState(call.object);
         if (void* pair = PL::PairOf(call.object)) KS::SendState(pair);
         return;
@@ -335,7 +351,7 @@ void OnSetActivePost(const sg::Call& call) {
 void RegisterWatches() {
     for (int i = 0; i < kWatchCount; ++i) {
         if (g_reg[i] != Reg::Pending) continue;
-        if (sg::WatchName(kWatches[i].name, kWatches[i].tag, &OnVerbPre, kWatches[i].post ? &OnSetActivePost : nullptr)) {
+        if (sg::WatchName(kWatches[i].name, kWatches[i].tag, &OnVerbPre, kWatches[i].post ? &OnVerbPost : nullptr)) {
             g_reg[i] = Reg::Registered;
             continue;
         }
@@ -374,8 +390,12 @@ void Tick(coop::net::Session& session) {
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         if (g_pending[slot].empty() || !TakeToken(slot)) continue;
         const coop::net::KeypadIntentPayload p = g_pending[slot].front();
-        if (Execute(session, p, slot)) g_pending[slot].pop_front();
-        else g_rate[slot].tokens += 1.0f;   // a wait runs nothing, so it spends no token
+        if (Execute(session, p, slot)) {
+            g_pending[slot].pop_front();
+            g_waitSaid[slot] = false;        // a consumed intent ends the wait's streak
+        } else {
+            g_rate[slot].tokens += 1.0f;     // a wait runs nothing, so it spends no token
+        }
     }
 }
 

@@ -119,7 +119,6 @@ bool Execute(coop::net::Session& s, const coop::net::DoorVerbIntentPayload& p, u
         }
         return false;
     }
-    g_waitSaid[slot] = false;
     if (!subject) {
         ++g_denied;
         UE_LOGI("[DOOR-VERB] DENY slot=%u %s key='%ls' -- %s (%.0f uu of %.0f)",
@@ -273,8 +272,12 @@ void Tick(coop::net::Session& session) {
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         if (g_pending[slot].empty() || !TakeToken(slot)) continue;
         const coop::net::DoorVerbIntentPayload p = g_pending[slot].front();
-        if (Execute(session, p, slot)) g_pending[slot].pop_front();
-        else g_rate[slot].tokens += 1.0f;   // a wait runs nothing, so it spends no token
+        if (Execute(session, p, slot)) {
+            g_pending[slot].pop_front();
+            g_waitSaid[slot] = false;        // a consumed verb ends the wait's streak
+        } else {
+            g_rate[slot].tokens += 1.0f;     // a wait runs nothing, so it spends no token
+        }
     }
 }
 

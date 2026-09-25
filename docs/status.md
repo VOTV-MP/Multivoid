@@ -55,7 +55,7 @@ host validates and commits contested writes), `local` (never shared).
 
 | System | Synced | Owner | Late join | State |
 |---|---|---|---|---|
-| Doors, keypads, locks | a door's state, sent at its own verbs; a keypad's verbs, replayed from the host, and the state each chain settles on; a client's own door press, hit and pry and its keypad entries run on the host | host | snapshot | tested |
+| Doors, keypads, locks | a door's state, sent at its own verbs; a keypad's verbs, replayed from the host, and the state each chain settles on; a client's own door press, hit and pry and its keypad entries run on the host | host | snapshot | tested; a pry, a keycard and a pass changer built |
 | Lights and light groups | switch state; the group's live state | presser; host for the group | snapshot | built |
 | Power panels, turbine, grime, windows, appliances | the mask, the float, the decrease-only cleanliness, the one-bit states | presser or host | snapshot | built; windows tested |
 | The bay window's dirt | each sponge dab on its render target: the pixel, the edge, the brush's opacity and colour | presser, relayed by the host | the host's transferred save | built |
