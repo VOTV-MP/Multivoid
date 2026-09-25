@@ -55,9 +55,9 @@ using coop::net::FnvKey;
 constexpr float kProcessEps = 0.0005f;
 // The position quantisation grid (cm). A decal's saved position is bit-identical across peers
 // (the same save, a static actor), so any deterministic quantisation yields the same key on
-// both; the grid has to be fine enough that distinct decals rarely share a cell. A base world's 1117
-// decals land on 1087 keys: 30 stand in a cell another of their type holds, and the lane treats a
-// cell's decals as one -- the floor is kept per key, so a fall on one lowers its twins at the next
+// both; the grid has to be fine enough that distinct decals rarely share a cell. The rig's save puts
+// 1117 decals on 1087 keys: 30 stand in a cell another of their type holds, and the lane treats a
+// cell's decals as one -- the floor is kept per key, so a fall on one lowers its twins at the next full
 // pass.
 constexpr double kPosGrid = 2.0;
 bool ProbeLog() {
@@ -67,7 +67,10 @@ bool ProbeLog() {
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-struct Ref { void* actor; int32_t idx; };
+// An indexed decal: the actor, its slot and the serial the slot held when a pass took it (the key cache's
+// own), so a new object the allocator put at the address in the same slot is never read as the decal.
+struct Ref { void* actor; int32_t idx; int32_t serial; };
+bool Holds(const Ref& r) { return R::IsLiveByIndex(r.actor, r.idx) && R::SlotSerial(r.idx) == r.serial; }
 std::mutex g_indexMutex;
 std::unordered_map<std::wstring, Ref> g_byKey;
 
@@ -120,7 +123,7 @@ void* ResolveFast(const std::wstring& key) {
     if (!IndexCurrent()) return nullptr;  // a stale-generation index is another world's actors
     std::lock_guard<std::mutex> lk(g_indexMutex);
     auto it = g_byKey.find(key);
-    if (it != g_byKey.end() && R::IsLiveByIndex(it->second.actor, it->second.idx))
+    if (it != g_byKey.end() && Holds(it->second))
         return it->second.actor;
     return nullptr;
 }
@@ -190,7 +193,8 @@ void HubMatch(void*, void* obj) {
     }
     if (g_scanIsFull) g_scanNextCache.insert_or_assign(obj, ck);   // full pass rebuilds the cache
     else              g_posKeyByActor.insert_or_assign(obj, ck);   // tail pass: cache the NEW actor's key
-    g_scanFound.emplace_back(std::move(ck.key), Ref{ obj, idx });
+    const int32_t serial = ck.serial;
+    g_scanFound.emplace_back(std::move(ck.key), Ref{ obj, idx, serial });
 }
 
 size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
@@ -204,7 +208,7 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         for (auto& f : g_scanFound) g_byKey[f.first] = f.second;
         if (!isFull) {                                         // tail pass: prune dead entries (cheap, O(index))
             for (auto it = g_byKey.begin(); it != g_byKey.end(); ) {
-                if (R::IsLiveByIndex(it->second.actor, it->second.idx)) ++it;
+                if (Holds(it->second)) ++it;
                 else { g_posKeyByActor.erase(it->second.actor); it = g_byKey.erase(it); }
             }
         }
@@ -219,7 +223,7 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
     auto& floor = Floor();
     if (!floor.empty()) {
         for (const auto& f : g_scanFound) {
-            if (!R::IsLiveByIndex(f.second.actor, f.second.idx)) continue;
+            if (!Holds(f.second)) continue;
             const auto it = floor.find(f.first);
             if (it == floor.end()) continue;
             float cur = 0.f;
@@ -346,8 +350,9 @@ void OnReliable(const coop::net::KeyedScalarPayload& payload, uint8_t senderPeer
     // The trust boundary (the same as the window's): adopt (as is, able to re-dirty) is honoured
     // only from the host; a client edge is forced to a min-wins live fall.
     const bool adopt = (payload.adopt != 0) && (senderPeerSlot == 0);
-    // The floor takes the value whether or not the decal is here to show it: one that is not yet indexed
-    // takes it when a pass reaches it. The host's snapshot is adopted as is; a peer's fall only lowers.
+    // The floor takes the value whether or not the decal is here to show it. A peer's fall is written only
+    // to a decal reading above it, and a pass lowers a decal to its floor and never raises one, so the host's
+    // snapshot raises only a decal this peer indexes when the value arrives.
     auto& floor = Floor();
     if (adopt) floor[key] = payload.value;
     else if (!Lower(key, payload.value)) return;  // not below what this peer already holds
@@ -373,10 +378,15 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     {
         std::lock_guard<std::mutex> lk(g_indexMutex);
         total = g_byKey.size();
+        auto& floor = Floor();
         for (auto& kv : g_byKey) {
-            if (!R::IsLiveByIndex(kv.second.actor, kv.second.idx)) continue;
+            if (!Holds(kv.second)) continue;
             float process = 0.f;
             if (!G::ReadProcess(kv.second.actor, process)) continue;
+            // The lower of the decal and its floor: a cell's twin the host cleaned lowers the key until the
+            // next full pass lowers this one too.
+            const auto fl = floor.find(kv.first);
+            if (fl != floor.end() && fl->second < process) process = fl->second;
             coop::net::KeyedScalarPayload p{};
             WireKeyFromString(kv.first, p.key);
             p.value = process;
@@ -387,9 +397,9 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         // And the floor of every key the index does not hold live: a decal ended here -- zero -- or
         // streamed out, which the joiner has from its own copy of the save and must see as this world
         // has it.
-        for (const auto& kv : Floor()) {
+        for (const auto& kv : floor) {
             const auto idx = g_byKey.find(kv.first);
-            if (idx != g_byKey.end() && R::IsLiveByIndex(idx->second.actor, idx->second.idx)) continue;
+            if (idx != g_byKey.end() && Holds(idx->second)) continue;
             coop::net::KeyedScalarPayload p{};
             WireKeyFromString(kv.first, p.key);
             p.value = kv.second;

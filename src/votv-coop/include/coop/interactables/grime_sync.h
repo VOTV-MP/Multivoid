@@ -31,13 +31,15 @@ namespace coop::grime_sync {
 void Install(coop::net::Session* session);
 
 // Receiver entry: a GrimeState packet arrived (event_feed has copied and range-checked it). A live
-// fall (adopt 0) lowers the key's floor, a value of the host's connect snapshot (adopt 1) sets it,
-// and the decal, when this peer indexes it, is written to the floor; one not indexed yet takes it
-// when a pass reaches it. Called from event_feed's reliable drain loop.
+// fall (adopt 0) lowers the key's floor and is written to a decal reading above it; a value of the
+// host's connect snapshot (adopt 1) sets the floor and is written as is to a decal indexed when it
+// arrives. A pass lowers a decal it takes to its floor and never raises one. Called from event_feed's
+// reliable drain loop.
 void OnReliable(const coop::net::KeyedScalarPayload& payload, uint8_t senderPeerSlot);
 
-// HOST-only: snapshot the current `process` of every indexed grime, and the floor of every key the
-// index does not hold (a decal ended here, or streamed out), to a freshly connected client
+// HOST-only: snapshot the current `process` of every indexed grime (the lower of it and its floor),
+// and the floor of every key the index does not hold live (a decal ended here, or streamed out), to a
+// freshly connected client
 // `peerSlot` with adopt=1 (the joiner adopts the host's world). Called from the net-pump connect
 // edge. Game thread.
 void QueueConnectBroadcastForSlot(int peerSlot);
@@ -48,8 +50,8 @@ void Tick();
 
 // DEV-DRILL ONLY: the quantised position key this module would index `actor` under. The
 // scan-parity drill uses it so its independent walk counts DISTINCT CELLS the way the index
-// does. An instance count over-reads, because the grid is not collision-free: a base world's 1117
-// decals land on 1087 cells.
+// does. An instance count over-reads, because the grid is not collision-free: the rig's save puts
+// 1117 decals on 1087 keys.
 std::wstring DebugPosKeyForActor(void* actor);
 
 }  // namespace coop::grime_sync
