@@ -61,15 +61,6 @@ uint32_t g_malformed = 0;
 uint32_t g_appliedSince = 0;  // samples since the last convergence line, which reports them every 10 s
 Clock::time_point g_nextStreamLine{};
 
-// Receive-side format check: a NaN or absurd clock written raw into the cycle reaches the sun and
-// moon rotation (a black sky, a rotator assert). The accumulators are cycle units, 4500 a day by
-// default, and `day` goes below zero while the game's rewind runs the clock backward; the day number
-// counts days.
-bool IsWellFormed(const coop::net::TimeSyncPayload& p) {
-    return std::isfinite(p.totalTime) && std::isfinite(p.day) && std::fabs(p.totalTime) <= 1.0e7f &&
-           std::fabs(p.day) <= 1.0e7f && p.dayZ >= 0 && p.dayZ <= 1000000;
-}
-
 // CLIENT: game mode 5's master sets the cycle's `day` to 0, waits a second and loops, on every peer. Its
 // begin-play runs one pass of that loop inline beside six flows of its own (the needs restore, the
 // ambience, four spawners), and the loop's wait resumes its ubergraph at the loop's entry, whenever the
@@ -223,8 +214,10 @@ void OnCycleTickPre(void* self, void* /*function*/, void* /*params*/) {
     }
     // A `day` past the day's end would run this client's own midnight at the tick -- the game's roll
     // test is `day > maxTime` -- and the host wraps inside its own tick, so no sample it makes has one.
+    // The sample's format was checked at receive (coop/net's ValidateClock); the day length is this
+    // cycle's, so the test against it is here.
     float maxT = 0.f;
-    if (!IsWellFormed(p) || !DNC::ReadMaxTimeOf(self, maxT) || maxT <= 0.f || p.day > maxT) {
+    if (!DNC::ReadMaxTimeOf(self, maxT) || maxT <= 0.f || p.day > maxT) {
         const uint32_t n = ++g_malformed;
         if (n <= 5 || (n % 100) == 0)
             UE_LOGW("time_sync: streamed clock out of range (t=%.1f d=%.1f day %d; the day ends at %.1f) -- "

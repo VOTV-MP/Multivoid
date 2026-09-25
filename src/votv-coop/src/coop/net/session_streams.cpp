@@ -334,6 +334,19 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         if (cfg_.role == Role::Host) break;
         ClockPosePacket pkt;
         std::memcpy(&pkt, data, sizeof(pkt));
+        // A sample no clock can hold is refused here, before the store: stored, it stood in for the last
+        // good one until the next came, and the clock lane dropped it only when it read it.
+        if (!ValidateClock(pkt.clock)) {
+            std::uint32_t n = 0;
+            {
+                std::lock_guard<std::mutex> lk(remoteMutex_);
+                n = ++host_.clockRefused;
+            }
+            if (n <= 5 || (n % 100) == 0)
+                UE_LOGW("net: a host clock sample failed validation (totalTime=%.1f day=%.1f day number %d) -- "
+                        "refused before the store (#%u)", pkt.clock.totalTime, pkt.clock.day, pkt.clock.dayZ, n);
+            break;
+        }
         std::lock_guard<std::mutex> lk(remoteMutex_);
         host_.clock.Offer(seq, pkt.clock);  // an older or duplicate sample keeps the newer one
         break;

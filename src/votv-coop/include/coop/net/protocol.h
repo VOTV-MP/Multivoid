@@ -3026,4 +3026,14 @@ inline bool ValidatePose(const PoseSnapshot& p) {
     return true;
 }
 
+// Reject a clock sample no clock can hold, BEFORE it is stored: a NaN or absurd value written into the
+// cycle reaches the sun and moon rotation (a black sky, a rotator assert). The accumulators are cycle
+// units, 4500 a day by default, and `day` goes below zero while the game's rewind runs the clock back;
+// the day number counts days. Whether `day` is past this world's day length is the clock lane's test, as
+// only the cycle knows its length. true == safe to store.
+inline bool ValidateClock(const TimeSyncPayload& c) {
+    return std::isfinite(c.totalTime) && std::isfinite(c.day) && std::fabs(c.totalTime) <= 1.0e7f &&
+           std::fabs(c.day) <= 1.0e7f && c.dayZ >= 0 && c.dayZ <= 1000000;
+}
+
 }  // namespace coop::net

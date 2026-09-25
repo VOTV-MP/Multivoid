@@ -38,6 +38,7 @@ struct HostStreams {
     StreamSlot<std::vector<WorldActorPoseSnapshot>> worldActorBatch;
     EidPoseMerge<TrashClumpPoseSnapshot>            trashCarry;
     EidPoseMerge<PropPoseSnapshot>                  propDrive;
+    std::uint32_t                                   clockRefused = 0;  // failed ValidateClock, for the line
 
     void Reset() { *this = HostStreams{}; }
 };
