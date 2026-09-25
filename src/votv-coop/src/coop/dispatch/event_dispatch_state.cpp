@@ -16,6 +16,7 @@
 #include "coop/interactables/grime_sync.h"
 #include "coop/interactables/interactable_sync.h"
 #include "coop/creatures/kerfur_convert_client.h"
+#include "coop/creatures/kerfus_state.h"  // HOST->CLIENT a Kerfus's on, charging and energy
 #include "coop/interactables/keypad_sync.h"
 #include "coop/interactables/power_sync.h"
 #include "coop/props/container_contents_sync.h"  // the container stack slice lane
@@ -537,6 +538,30 @@ bool HandleStateEvent(net::Session& session,
         net::KerfurConvertBroadcastPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         coop::kerfur_convert_client::OnKerfurConvert(p, localPlayer);
+        break;
+    }
+    case net::ReliableKind::KerfusState: {
+        // The host's state for one Kerfus: on, charging, energy. Client-only apply (a client runs none
+        // of the Kerfus's brain); host-authoritative, slot 0 only. coop::kerfus_state.
+        if (session.role() != net::Role::Client) {
+            break;
+        }
+        if (msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: KerfusState from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::KerfusStatePayload)) {
+            UE_LOGW("event_feed: KerfusState payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::KerfusStatePayload));
+            break;
+        }
+        net::KerfusStatePayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (!std::isfinite(p.energy)) {
+            UE_LOGW("event_feed: KerfusState eid=%u with a non-finite energy -- dropping", p.elementId);
+            break;
+        }
+        coop::kerfus_state::OnState(p);
         break;
     }
     default:

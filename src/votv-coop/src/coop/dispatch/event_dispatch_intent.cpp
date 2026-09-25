@@ -20,6 +20,7 @@
 #include "coop/interactables/door_verb_intent.h"  // CLIENT->HOST press, hit or pry of a base door
 #include "coop/interactables/keypad_verbs.h"  // CLIENT->HOST digit, submit, cancel, keycard, reset
 #include "coop/interactables/drone_call_intent.h"  // CLIENT->HOST press of the drone console
+#include "coop/creatures/kerfus_intent.h"  // CLIENT->HOST a Kerfus verb (on/off, fix the servers, pat)
 #include "coop/items/coingun_sync.h"
 #include "coop/items/order_queue_sync.h"  // HOST->CLIENT the delivery order queue
 #include "coop/items/order_sync.h"
@@ -404,6 +405,28 @@ bool HandleIntentEvent(net::Session& session,
         UE_LOGI("[DRONE-CALL] RECEIVED slot=%d", msg.senderPeerSlot);
         coop::drone_call_intent::OnDroneFlyIntent(session, p,
                                                   static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::KerfusIntent: {
+        // CLIENT->HOST a Kerfus verb its gate refused: on/off, fix the servers, pat. The host resolves
+        // the Kerfus by its prop eid within the sender's reach and runs the same verb on its copy; the
+        // resolve, the reach and the rate live in the module, the format here. coop::kerfus_intent.
+        if (session.role() != net::Role::Host) {
+            UE_LOGW("event_feed: KerfusIntent received on a client -- dropping");
+            break;
+        }
+        if (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: KerfusIntent from invalid senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::KerfusIntentPayload)) {
+            UE_LOGW("event_feed: KerfusIntent payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::KerfusIntentPayload));
+            break;
+        }
+        net::KerfusIntentPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::kerfus_intent::OnIntent(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::BroomStroke: {

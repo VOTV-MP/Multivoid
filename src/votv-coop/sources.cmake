@@ -190,6 +190,10 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/kerfur_form_assembler.cpp
     src/coop/creatures/kerfur_prop_adoption.cpp
     src/coop/creatures/kerfur_reconcile.cpp
+    src/coop/creatures/kerfus_brain.cpp
+    src/coop/creatures/kerfus_intent.cpp
+    src/coop/creatures/kerfus_lanes.cpp
+    src/coop/creatures/kerfus_state.cpp
     src/coop/interactables/keypad_sync.cpp
     src/coop/interactables/keypad_verbs.cpp
     src/coop/world/time_sync.cpp

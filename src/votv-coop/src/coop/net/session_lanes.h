@@ -180,6 +180,10 @@ inline Lane LaneForKind(ReliableKind k) {
     // datagram kind, and a receiver that never parked the prop treats the end as a closed
     // generation and no more. The default, by decision.
     case ReliableKind::PropDriveEnd:      return Lane::Normal;
+    // The Kerfus pair is ordered against nothing: a state for a Kerfus whose mirror has not bound
+    // waits for the bind, and the host resolves an intent by eid. The default, by decision.
+    case ReliableKind::KerfusState:       return Lane::Normal;
+    case ReliableKind::KerfusIntent:      return Lane::Normal;
     default:                           return Lane::Normal;
     }
 }

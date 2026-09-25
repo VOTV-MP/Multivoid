@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 190;
+inline constexpr uint16_t kProtocolVersion = 191;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -837,6 +837,21 @@ enum class ReliableKind : uint8_t {
     // own addOrderCart and removeOrderCart ran. A joiner gets a reset and every queued order at its
     // world-ready. OrderQueueHeader, then an append's packed items, by row or by class.
     OrderQueue = 152,
+
+    // Host to all: a plain kerfur's (the Kerfus, p_kerfus_C) live state -- whether it is on, whether
+    // it is charging, its energy -- by its prop eid. A client never runs the Kerfus's brain, so this
+    // is the only writer of those fields there; it applies them and runs the game's own refresh.
+    // Sent on an edge and on an energy step, at most once a second a Kerfus for energy alone. Late
+    // join: every Kerfus's state again at the joiner's world-ready. KerfusStatePayload.
+    KerfusState = 153,
+
+    // Client to host: my player used this Kerfus -- turned it on or off, sent it to fix the servers,
+    // or patted it. A client refuses those at the Kerfus's own verbs and asks here; the host runs the
+    // same verb on its copy, whose result reaches every peer as KerfusState and through the lanes the
+    // verb touches. Trust: the Kerfus must be one the host holds and within the sender's reach, and a
+    // sender's intents run at a bounded rate from a bounded queue. Never relayed. Late join: nothing
+    // to replay, as for DoorVerbIntent. KerfusIntentPayload.
+    KerfusIntent = 154,
 };
 
 #pragma pack(push, 1)
@@ -1232,6 +1247,30 @@ struct KerfurCommandPayload {
     uint8_t  _pad[3];    // zeroed
 };
 static_assert(sizeof(KerfurCommandPayload) == 8, "KerfurCommandPayload must be 8 bytes");
+
+// A Kerfus's live state (KerfusState), host to all: the plain kerfur by its host-range prop eid, the
+// two flags a client shows and its energy (unclamped above 100 while it charges, as the game keeps it).
+struct KerfusStatePayload {
+    uint32_t elementId;  // the Kerfus's host-range prop eid
+    uint8_t  flags;      // kerfus_state_flags
+    uint8_t  _pad[3];    // zeroed
+    float    energy;     // the host's energy
+};
+static_assert(sizeof(KerfusStatePayload) == 12, "KerfusStatePayload must be 12 bytes");
+
+namespace kerfus_state_flags {
+inline constexpr uint8_t kActive   = 0x01;  // `active`: on, following, draining
+inline constexpr uint8_t kCharging = 0x02;  // `charging`: on a live cord
+}  // namespace kerfus_state_flags
+
+// A Kerfus verb (KerfusIntent), client to host: the action a client's gate refused on the Kerfus's
+// actionOptionIndex or actionName, by the host-range prop eid its mirror is bound at.
+struct KerfusIntentPayload {
+    uint32_t elementId;  // the Kerfus's host-range prop eid
+    uint8_t  action;     // enum_interactionActions: 8 on/off, 4 fix the servers, 6 pat
+    uint8_t  _pad[3];    // zeroed
+};
+static_assert(sizeof(KerfusIntentPayload) == 8, "KerfusIntentPayload must be 8 bytes");
 
 // A release (PropRelease): the prop by key, and for a keyless trash entity the eid and its
 // generation; its world transform and its inherited linear and angular velocity at the release edge.
