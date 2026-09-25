@@ -3,6 +3,7 @@
 #include "harness/pump.h"
 
 #include "coop/comms/chat_feed.h"
+#include "coop/dev/class_lifetime_probe.h"
 #include "coop/dev/object_overlay.h"
 #include "coop/dev/ragdoll_bone_overlay.h"
 #include "coop/dev/function_lookup_parity.h"
@@ -84,6 +85,8 @@ void TickFrameTail() {
     // a class the menu loads is judged too; each a latched read when off.
     coop::dev::world_singleton_parity::Tick();
     coop::dev::function_lookup_parity::Tick();
+    // [dev] Whether a class and its functions outlive the world that loaded them; a latched read when off.
+    coop::dev::class_lifetime_probe::Tick();
     TickShutdownHooks();
 }
 

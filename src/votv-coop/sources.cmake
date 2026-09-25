@@ -432,6 +432,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/end_play_probe.cpp
     src/coop/dev/death_seam_census.cpp
     src/coop/dev/grime_drill.cpp
+    src/coop/dev/class_lifetime_probe.cpp
   src/coop/dev/floppy_selftest.cpp
     src/coop/dev/floppy_selftest_world.cpp
     src/coop/dev/hookdrag_selftest.cpp

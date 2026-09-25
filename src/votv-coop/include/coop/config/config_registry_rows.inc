@@ -628,3 +628,8 @@ CFG_FLAG(host_window_autoopen, "host_window_autoopen", "dev", false, "VOTVCOOP_H
     "Show the native HOST GAME window as soon as it is built, without a click -- the same "
     "reason browser_autoopen exists, for the screen the browser's Host button will open. "
     "Requires browser_native=1.")
+CFG_FLAG(class_lifetime_probe, "class_lifetime_probe", "dev", false, "VOTVCOOP_CLASS_LIFETIME_PROBE",
+    "Probe: once per world, the menu's included, and every 30 s within one, every loaded Blueprint and "
+    "native class judged against the identity it had when last seen (the same object, the same address "
+    "holding a new one, a new address, or gone), with the functions its watched rows name judged the "
+    "same way. Read-only but for the slot serials it assigns.")
