@@ -7,7 +7,6 @@
 #include "ue_wrap/world/daynightcycle.h"
 
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
 

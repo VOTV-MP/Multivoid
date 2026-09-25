@@ -188,12 +188,24 @@ std::atomic<void (*)()> g_pumpPrologue{nullptr};
 void RunPumpPrologue() {
     void (*fn)() = g_pumpPrologue.load(std::memory_order_acquire);
     if (!fn) return;
+    const auto t0 = std::chrono::steady_clock::now();
     D::LastTaskFault() = {};
     if (D::RunTaskSEH(Task(fn)) != 0) {
-        const D::TaskFaultInfo& f = D::LastTaskFault();
-        UE_LOGE("game_thread: the pump prologue FAULT code=0x%08lX ip=%p [%s] access=%p; the tasks still run",
-                f.code, f.faultingIP, D::FormatModuleRva(f.faultingIP), f.accessAddr);
+        // Said for the first three and then every thousandth: a fault that repeats every drain would
+        // otherwise print sixty lines a second.
+        static unsigned long long s_faults = 0;
+        if (++s_faults <= 3 || s_faults % 1000 == 0) {
+            const D::TaskFaultInfo& f = D::LastTaskFault();
+            UE_LOGE("game_thread: the pump prologue FAULT #%llu code=0x%08lX ip=%p [%s] access=%p; the tasks "
+                    "still run", s_faults, f.code, f.faultingIP, D::FormatModuleRva(f.faultingIP), f.accessAddr);
+        }
     }
+    // Outside the task drain's own bracket, so it is timed here on the same threshold.
+    const long long ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    if (ms >= 10)
+        UE_LOGI("[HITCH-SRC] pump prologue (the object index's drain) = %lld ms (OUR code caused this frame's cost)",
+                ms);
 }
 
 // The spawn-refusal deferral episode. Tasks assume a world that spawns, but an outermost dispatch

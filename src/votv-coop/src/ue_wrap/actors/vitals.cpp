@@ -3,7 +3,6 @@
 #include "ue_wrap/actors/vitals.h"
 
 #include "ue_wrap/actors/save_record.h"
-#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/fstring_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -66,8 +65,8 @@ bool EnsureBase() {
 // stale menu-era UsaveSlot_C from ui_saveSlots arrays) is the unambiguous path.
 void* ResolveSlot() {
     if (!EnsureBase()) return nullptr;
-    return *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(world_singleton::GameInstance()) + g_cache.saveGameInstOff);
+    void* gi = world_singleton::GameInstance();
+    return gi ? *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gi) + g_cache.saveGameInstOff) : nullptr;
 }
 
 int32_t ResolveFieldOffset(Field f) {

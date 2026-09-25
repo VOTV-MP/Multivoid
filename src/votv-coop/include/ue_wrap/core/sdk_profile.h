@@ -506,8 +506,8 @@ inline constexpr size_t AmainGamemode_saveSlot              = 0x04B0;  // UsaveS
 // save_capture's safety probe reads its Num (@ +0x8).
 inline constexpr size_t UsaveSlot_objectsData              = 0x0300;  // TArray<Fstruct_save>
 
-// AmainGamemode_C::daynightCycle is resolved through R::FindObjectByClass(L"daynightCycle_C"),
-// so no gamemode offset is needed.
+// AmainGamemode_C::daynightCycle is the world singleton's daynightCycle_C, so no gamemode offset
+// is needed.
 }  // namespace off
 
 // The EPropertyFlags bits tested (engine-stable).

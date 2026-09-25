@@ -14,7 +14,6 @@
 
 #include "ue_wrap/engine/engine.h"
 
-#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"

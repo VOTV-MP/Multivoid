@@ -1,4 +1,4 @@
-// coop/dev/run_and_wait_selftest.h -- [dev] the one game-thread wait (ue_wrap/core/game_thread.h)
+// coop/dev/run_and_wait_selftest.h -- [dev] RunAndWait, the game-thread wait (ue_wrap/core/game_thread.h),
 // driven through every way a body can end: an answer, no answer, a fault, a C++ throw, and a call made
 // on the game thread itself. Each must come back as the header documents, so the fault path is
 // measured rather than argued. Armed per run by run_and_wait_selftest=1; one pass per process, from a

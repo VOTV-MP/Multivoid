@@ -5,6 +5,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <chrono>
 
@@ -17,8 +18,6 @@ namespace E = ue_wrap::engine;
 struct TArrayView { uint8_t* data; int32_t num; int32_t max; };
 
 void* g_gamemodeCls = nullptr;
-void* g_gamemode = nullptr;
-int32_t g_gamemodeIdx = -1;
 int32_t g_offDishs = -1;        // mainGamemode_C::dishs (TArray<Adish_C*>)
 int32_t g_offActiveDishes = -1; // mainGamemode_C::activeDishes (TArray<bool>)
 
@@ -120,19 +119,7 @@ void ResolvePass() {
     }
 }
 
-void* Gamemode() {
-    if (g_gamemode && R::IsLiveByIndex(g_gamemode, g_gamemodeIdx)) return g_gamemode;
-    g_gamemode = nullptr;
-    if (!g_gamemodeCls) return nullptr;
-    for (void* obj : R::FindObjectsByClass(L"mainGamemode_C")) {
-        if (obj && R::IsLive(obj)) {
-            g_gamemode = obj;
-            g_gamemodeIdx = R::InternalIndexOf(obj);
-            break;
-        }
-    }
-    return g_gamemode;
-}
+void* Gamemode() { return world_singleton::Gamemode(); }
 
 TArrayView* Dishs() {
     void* gm = Gamemode();

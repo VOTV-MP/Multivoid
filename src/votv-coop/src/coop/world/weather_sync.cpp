@@ -85,11 +85,10 @@ std::atomic<uint64_t> g_lastSentSig{kNoSendYet};
 bool g_pendingApply = false;
 coop::net::WeatherStatePayload g_pendingApplyPayload{};
 
-// The cached cycle (one per session; FindObjectByClass is a full array walk), re-validated with
-// IsLiveByIndex: on world teardown the cycle's GUObjectArray slot is recycled to another actor,
-// and plain IsLive passed the recycled slot, so a weather apply dispatched the cycle's UFunctions
-// on a foreign object and the engine fataled on exit to menu. The serial check rejects the
-// recycled slot and the pointer re-resolves. Game thread only.
+// The cycle, from the world singleton, which holds it by slot, serial and world: on a world teardown
+// the cycle's slot is recycled to another actor, and a check by liveness alone once let a weather
+// apply dispatch the cycle's UFunctions on a foreign object, and the engine fataled on exit to menu.
+// Game thread only.
 void* ResolveCycle() { return ue_wrap::world_singleton::Find(P::name::DaynightCycleClass); }
 
 bool ReadCycleState(void* cycle, coop::net::WeatherStatePayload& out) {

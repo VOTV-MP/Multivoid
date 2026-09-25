@@ -18,11 +18,12 @@ namespace {
 namespace R  = ue_wrap::reflection;
 namespace P  = ue_wrap::profile;
 namespace WI = ue_wrap::world_identity;
+namespace WS = ue_wrap::world_singleton;
 
 // The classes the tree keeps one of: the class and the instance are both compared.
 const wchar_t* const kSingletons[] = {
     P::name::GamemodeClass, P::name::GameInstanceClass, P::name::DaynightCycleClass,
-    P::name::DirectionalWindClass, P::name::PlayerCameraManagerClass,
+    P::name::DirectionalWindClass, P::name::PlayerCameraManagerClass, P::name::WorldClass,
     L"drone_C", L"laptop_C", L"wallunit_tapes_C",
 };
 // Classes with many instances, or none: only the class is compared, since "the first" differs by
@@ -32,6 +33,21 @@ const wchar_t* const kClasses[] = {
     L"mainPlayer_C", L"actorChipPile_C", L"no_such_class_C",
 };
 
+// What the walk would hand out under the singleton's own rule: the first instance in array order
+// that is live and readable, not a default object and, when it has a world, of the running one.
+// Array order and the index's newest-first order agree whenever a world holds one of the class.
+void* WalkUnderTheRule(const wchar_t* name) {
+    void* const world = WI::CurrentWorld();
+    for (void* obj : R::FindObjectsByClass(name)) {
+        const int32_t idx = R::InternalIndexOf(obj);
+        if (R::SlotFlags(idx) & (R::slot_flags::Dying | R::slot_flags::NotYetReadable)) continue;
+        void* const w = WI::WorldOf(obj);
+        if (w && world && w != world) continue;
+        return obj;
+    }
+    return nullptr;
+}
+
 }  // namespace
 
 void Tick() {
@@ -40,32 +56,31 @@ void Tick() {
     static uint32_t s_doneGen = 0;
     const uint32_t gen = WI::Generation();
     if (gen == s_doneGen) return;
-    if (WI::CurrentWorldKind() != WI::WorldKind::Gameplay) return;
-    if (!ue_wrap::world_singleton::Gamemode()) return;   // the world's gamemode is up
+    // Once per world; a gameplay world is compared once its gamemode is up.
+    const WI::WorldKind kind = WI::CurrentWorldKind();
+    if (kind == WI::WorldKind::Unknown) return;
+    if (kind == WI::WorldKind::Gameplay && !WS::Gamemode()) return;
     s_doneGen = gen;
-    int ok = 0, n = 0;
+    int ok = 0, n = 0, bothNull = 0;
+    auto judge = [&](const wchar_t* what, void* index, void* walk) {
+        ++n;
+        const bool same = index == walk;
+        if (same) ++ok;
+        if (same && !index) ++bothNull;
+        UE_LOGI("ws_parity: %ls index=%p walk=%p -- %s", what, index, walk,
+                !same ? "MISMATCH" : index ? "same" : "same (both null)");
+    };
     for (const wchar_t* name : kSingletons) {
-        ++n;
-        void* clsIndex = ue_wrap::object_index::ClassByName(name);
-        void* clsWalk  = R::FindClass(name);
-        void* instIndex = ue_wrap::world_singleton::Find(name);
-        void* instWalk  = R::FindObjectByClass(name);
-        // The walk hands out an instance marked for death; the singleton never does.
-        const bool instOk = instIndex == instWalk || (!instIndex && instWalk && !R::IsLive(instWalk));
-        const bool rowOk = clsIndex == clsWalk && instOk;
-        if (rowOk) ++ok;
-        UE_LOGI("ws_parity: %ls class index=%p walk=%p | instance singleton=%p walk=%p -- %s", name, clsIndex,
-                clsWalk, instIndex, instWalk, rowOk ? "same" : "MISMATCH");
+        judge(name, ue_wrap::object_index::ClassByName(name), R::FindClass(name));
+        judge(name, WS::Find(name), WalkUnderTheRule(name));
     }
-    for (const wchar_t* name : kClasses) {
-        ++n;
-        void* clsIndex = ue_wrap::object_index::ClassByName(name);
-        void* clsWalk  = R::FindClass(name);
-        const bool rowOk = clsIndex == clsWalk;
-        if (rowOk) ++ok;
-        UE_LOGI("ws_parity: %ls class index=%p walk=%p -- %s", name, clsIndex, clsWalk, rowOk ? "same" : "MISMATCH");
-    }
-    UE_LOGI("ws_parity: VERDICT %s (%d/%d) world gen=%u", ok == n ? "PASS" : "FAIL", ok, n, gen);
+    // The named accessors hold their own references, which the ~50 call sites read.
+    judge(L"Gamemode()", WS::Gamemode(), WalkUnderTheRule(P::name::GamemodeClass));
+    judge(L"GameInstance()", WS::GameInstance(), WalkUnderTheRule(P::name::GameInstanceClass));
+    for (const wchar_t* name : kClasses)
+        judge(name, ue_wrap::object_index::ClassByName(name), R::FindClass(name));
+    UE_LOGI("ws_parity: VERDICT %s (%d/%d, %d both null) world gen=%u kind=%d", ok == n ? "PASS" : "FAIL", ok, n,
+            bothNull, gen, static_cast<int>(kind));
 }
 
 }  // namespace coop::dev::world_singleton_parity

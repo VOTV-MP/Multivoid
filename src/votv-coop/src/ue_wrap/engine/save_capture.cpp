@@ -9,7 +9,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/sdk_profile.h"
-#include "ue_wrap/engine/world_identity.h"  // the gamemode must belong to the CURRENT world
+#include "ue_wrap/world/world_singleton.h"  // the gamemode, of the CURRENT world
 
 #include <atomic>
 #include <cstdint>
@@ -72,26 +72,6 @@ void OnGetEventPost(const script_gate::Call& c) {
     if (out && *out == 0) RaiseGather();
 }
 
-// This world's gamemode, or null; CaptureLiveWorldToScratchSlot says why the first candidate of the
-// scan is not good enough.
-void* CurrentGamemode() {
-    void* const nowWorld = ::ue_wrap::world_identity::CurrentWorld();
-    for (void* cand : R::FindObjectsByClass(P::name::GamemodeClass)) {
-        // With no current world there is nothing to judge against -- boot, mid-travel, or a
-        // recook that broke the world lookup, in which case WorldOf answers null for everything
-        // too -- so take the first candidate, which is what an unfiltered scan would return.
-        if (!nowWorld) return cand;
-        // Otherwise the stamp must name THIS world. A null stamp is a rejection here, not a
-        // shrug: elsewhere null means "not world-scoped", but that answer belongs to classes,
-        // CDOs and assets, whose outer chain reaches a package. A gamemode INSTANCE is outered
-        // to its level in one hop, so the only way it stamps null is that the level's owning
-        // world has already been nulled -- which names a torn-down world, the very thing being
-        // excluded.
-        if (::ue_wrap::world_identity::WorldOf(cand) == nowWorld) return cand;
-    }
-    return nullptr;
-}
-
 }  // namespace
 
 void SetWorldGatherHook(WorldGatherFn fn) { g_gatherHook.store(fn, std::memory_order_release); }
@@ -138,7 +118,7 @@ EventState GameEventState() {
     if (!s_libCdo.Alive()) s_libCdo.Set(R::FindClassDefaultObject(L"lib_C"));
     void* libCdo = s_libCdo.Raw();
     if (libCdo && !s_getEventFn) s_getEventFn = R::FindFunction(R::ClassOf(libCdo), L"getEvent");
-    void* gm = CurrentGamemode();
+    void* gm = world_singleton::Gamemode();
     if (!libCdo || !s_getEventFn || !gm) return EventState::Unknown;
     ue_wrap::ParamFrame f(s_getEventFn);
     if (!f.valid()) return EventState::Unknown;
@@ -153,19 +133,15 @@ bool CaptureLiveWorldToScratchSlot(const std::wstring& scratchSlotName) {
 
     // 1. The host gamemode owns the live world and the save container.
     //
-    // IT MUST BE THIS WORLD'S GAMEMODE. FindObjectsByClass skips only nulls and the CDO -- no
-    // liveness test, no world filter -- and answers in GUObjectArray index order. A dying world's
-    // actors are not kill-flagged until the GC purge, which can run tens of seconds behind, and
-    // after a menu-to-game cycle the OLD mainGamemode sits at a LOWER index than the new one. So
-    // the scan reads candidates until one names this world, rather than judging the first and
-    // stopping: judging only the first turns the very case this guard exists for into a refusal to
-    // capture, since the stale gamemode fails the world test and the live one is never reached.
+    // IT MUST BE THIS WORLD'S GAMEMODE. A dying world's actors are not kill-flagged until the GC
+    // purge, which can run tens of seconds behind, so a gamemode found by liveness alone can be the
+    // world the game just left; the world singleton hands out only one of the running world.
     //
     // Serializing the stale one produces no torn write but a structurally complete save that
     // describes nothing -- a saveSlot whose object arrays are empty, terminator intact, a kilobyte
     // or so long. A joiner handed that keeps its own world, and the two then disagree on every door
     // and vehicle.
-    void* gm = CurrentGamemode();
+    void* gm = world_singleton::Gamemode();
     void* gmCls = gm ? R::ClassOf(gm) : nullptr;
     if (!gm || !gmCls) {
         UE_LOGW("save_capture: no mainGamemode belonging to the CURRENT world -- refusing to "

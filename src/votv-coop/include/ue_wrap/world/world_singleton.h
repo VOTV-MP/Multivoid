@@ -3,12 +3,15 @@
 //
 // A resolver used to cache a pointer and, on a miss, walk the whole array for the class by name;
 // with the class absent (a menu, another level, a world without it) that walk ran on every call,
-// per tick for some. Here a miss is one lookup in the object index: the class is found among the
-// loaded classes by name, and its live instances are the index's own list of it. The found instance
-// is held in a CachedObjRef, revalidated by slot, serial and world without touching the object, and
-// looked up again only after it is gone. Exact class, never a subclass, and never the class default
-// object, as reflection::FindObjectByClass. The running world is not one of these:
-// engine/world_identity's CurrentWorld names it. Game thread.
+// per tick for some. Here a miss asks the object index: the class is found among the loaded classes
+// by name, and its instances are the index's own list of it. An instance is handed out only when it
+// is live and readable (not marked for death, not still being loaded or constructed), is not the
+// class default object and, for an actor, belongs to the running world: a departed world's actors
+// stay unmarked until the purge. It is then held in a CachedObjRef, revalidated by slot, serial and
+// world without touching the object, and looked up again only after that fails. Exact class, never a
+// subclass. The index is drained before each batch of game-thread tasks, so a reader outside one (an
+// observer inside a blocking load) sees it as the last batch left it. The running world is not one of
+// these: engine/world_identity's CurrentWorld names it. Game thread.
 #pragma once
 
 namespace ue_wrap::world_singleton {

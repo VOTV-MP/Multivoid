@@ -30,7 +30,6 @@ void* g_addSignalFn = nullptr;          // ui_laptop_C::addSignal(data)
 void* g_removeSignalFn = nullptr;       // ui_laptop_C::removeSignal(index)
 void* g_genSignalListFn = nullptr;      // ui_laptop_C::genSignalList() (zero-arg rebuild)
 
-
 std::chrono::steady_clock::time_point g_nextResolve{};
 bool g_coreResolved = false;
 
@@ -57,7 +56,7 @@ void ResolvePass() {
     // FindClass on the save-slot class name; ClassOf is authoritative).
     if (g_offSlotSignals < 0 && g_offGmSaveSlot >= 0) {
         void* gm = world_singleton::Gamemode();
-        if (gm && g_offGmSaveSlot >= 0) {
+        if (gm) {
             void* slotObj = *reinterpret_cast<void**>(
                 reinterpret_cast<uint8_t*>(gm) + g_offGmSaveSlot);
             if (slotObj && R::IsLive(slotObj))

@@ -19,6 +19,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/devices/serverbox.h"
 #include "ue_wrap/engine/world_identity.h"   // Generation, the baseline's anchor
+#include "ue_wrap/world/world_singleton.h"   // Gamemode, its other anchor
 
 #include <atomic>
 #include <chrono>
@@ -74,6 +75,7 @@ bool ReadState(coop::net::ServerStatePayload& p) {
 
 // ---- host poll baseline ---------------------------------------------------------------------------
 uint32_t g_polledWorldGen = 0;
+void* g_polledGm = nullptr;  // the gamemode the baseline was read from; an identity, never dereferenced
 bool  g_primed = false;
 uint64_t g_lastMask = 0;
 int32_t  g_lastBroken = 0;
@@ -171,10 +173,12 @@ void Tick() {
     if (!ReadState(p)) return;
     // A world or save reload minted a new gamemode with its world -> baseline meaningless; re-prime
     // silently (a prime must never masquerade as an edge; the join-edge + the next real transition
-    // deliver state).
+    // deliver state). The gamemode is the anchor as much as the generation: in a travel the world
+    // reads unknown for a while, and a gamemode swapped inside it keeps the generation.
     const uint32_t gen = ue_wrap::world_identity::Generation();
-    if (gen != g_polledWorldGen || !g_primed) {
-        g_polledWorldGen = gen; g_primed = true; UpdateBaseline(p);
+    void* const gm = ue_wrap::world_singleton::Gamemode();
+    if (gen != g_polledWorldGen || gm != g_polledGm || !g_primed) {
+        g_polledWorldGen = gen; g_polledGm = gm; g_primed = true; UpdateBaseline(p);
         return;
     }
     if (!StateChanged(p)) return;
@@ -228,7 +232,7 @@ void OnReliable(const coop::net::ServerStatePayload& payload, int senderPeerSlot
 }
 
 void OnDisconnect() {
-    g_polledWorldGen = 0; g_primed = false;
+    g_polledWorldGen = 0; g_polledGm = nullptr; g_primed = false;
     g_lastMask = 0; g_lastBroken = 0; g_lastPollMs = 0;
     // Restore the neutralized breaker: KillLocalBreaker disabled the actor tick, and resetting only
     // the latch left servers permanently unbreakable in the SAME process after the session (solo

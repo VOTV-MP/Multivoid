@@ -43,7 +43,7 @@ constexpr int32_t kReadItemCap = 256;
 // kMaxOrderItems independently; this is the engine layer's own bound (principle 7: no net dependency).
 constexpr size_t  kCommitItemCap = 64;
 
-// ---- cached resolution (mirrors ue_wrap/world/economy.cpp) --------------------------------------
+// ---- cached offsets (the gamemode itself is the world singleton's) ----------------------------------
 
 // mainGamemode_C field offsets (constant per class; resolved once).
 int32_t g_offSaveSlot   = -1;

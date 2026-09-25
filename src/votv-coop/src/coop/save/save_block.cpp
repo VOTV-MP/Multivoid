@@ -3,6 +3,7 @@
 #include "coop/save/save_block.h"
 
 #include "coop/net/session.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
@@ -22,11 +23,10 @@ namespace {
 std::atomic<coop::net::Session*> g_session{nullptr};
 
 // --- Part 3 state: the native save-cycle gate (see the header) ---
-// The gamemode instance is world-lifetime: IsLiveByIndex-revalidated per tick, taken
-// from the world singleton again after a world change. disableSave is a BP BoolProperty --
-// resolved via FindBoolProperty (real byte+mask; never a raw whole-byte guess).
-void* g_gm = nullptr;                 // the gamemode disableSave is held on (this world)
-int32_t g_gmIdx = -1;                 // its GUObjectArray index (liveness guard)
+// The gamemode disableSave is held on, by slot, serial and world, taken from the world singleton
+// again once that fails. disableSave is a BP BoolProperty -- resolved via FindBoolProperty (real
+// byte+mask; never a raw whole-byte guess).
+ue_wrap::CachedObjRef g_gm;
 int32_t g_disableSaveOff = -1;        // disableSave byte offset within the gamemode
 uint8_t g_disableSaveMask = 0;        // ...and its bit mask inside that byte
 
@@ -46,9 +46,9 @@ void LogBlockedSave(const wchar_t* slot) {
 // mirror loaded. `g_gm` is that world's gamemode (the one Tick holds disableSave on), so "the
 // mirror is what is loaded" is: it is still live, and it belongs to the current world.
 bool MirrorWorldIsCurrent() {
-    if (!g_gm || !R::IsLiveByIndex(g_gm, g_gmIdx)) return false;
+    if (!g_gm.Get()) return false;
     void* const now = ue_wrap::world_identity::CurrentWorld();
-    return now && ue_wrap::world_identity::WorldOf(g_gm) == now;
+    return now && g_gm.StampedWorld() == now;
 }
 
 // The gate on the engine's save function (ue_wrap/engine/save_to_slot_hook), asked for every world
@@ -84,8 +84,7 @@ void Tick(coop::net::Session* session) {
 
     // Steady state: cached live gamemode -> one masked-bit read, write only on the
     // false->true edge (the bit is ours to hold: no bytecode ever writes it).
-    if (g_gm && !R::IsLiveByIndex(g_gm, g_gmIdx)) { g_gm = nullptr; g_gmIdx = -1; }
-    if (!g_gm) {
+    if (!g_gm.Get()) {
         // No gamemode (menu / join window / world change) is one lookup in the world singleton,
         // never a walk. A class without the field does not grow it, so its absence is said once
         // and the gate stays open from then on.
@@ -101,17 +100,16 @@ void Tick(coop::net::Session* session) {
                 return;
             }
         }
-        g_gm = gm;
-        g_gmIdx = R::InternalIndexOf(gm);
+        g_gm.Set(gm);
     }
 
-    auto* p = reinterpret_cast<uint8_t*>(g_gm) + g_disableSaveOff;
+    auto* p = reinterpret_cast<uint8_t*>(g_gm.Raw()) + g_disableSaveOff;
     if ((*p & g_disableSaveMask) == 0) {
         *p |= g_disableSaveMask;
         UE_LOGI("save_block: client native save cycle OFF -- disableSave=true on gamemode %p "
                 "(+0x%X mask 0x%02X; saveSlot_C::save gates gather+write on it, disk hook "
                 "stays as the belt)",
-                g_gm, static_cast<unsigned>(g_disableSaveOff), g_disableSaveMask);
+                g_gm.Raw(), static_cast<unsigned>(g_disableSaveOff), g_disableSaveMask);
     }
 }
 

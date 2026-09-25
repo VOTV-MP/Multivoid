@@ -41,6 +41,7 @@ std::vector<Event>                       g_pending;  // drained events not yet a
 size_t                                   g_pendingHead = 0;
 bool                                     g_installed = false;
 bool                                     g_seeded = false;
+bool                                     g_draining = false;  // a drain's callbacks run inside it
 Observer                                 g_observer{};
 size_t                                   g_linked = 0;
 // The 60 s summary's counters. `recycled`: births whose slot and pointer a new object of another
@@ -52,8 +53,8 @@ std::chrono::steady_clock::time_point g_summarySince{};
 // The loaded classes by name. A class object is an instance of a meta-class (Class,
 // BlueprintGeneratedClass, WidgetBlueprintGeneratedClass and the like), and a meta-class is whatever
 // the class of an indexed object's class is, so the metas are learned from the objects themselves,
-// never by name. Each class object is listed under its short name, lower-cased (the engine compares
-// names without case), when it links and dropped when it unlinks: a class loaded with no instance is
+// never by name. Each class object is listed under its short name, hashed and compared without case
+// (as the engine compares names), when it links and dropped when it unlinks: a class loaded with no instance is
 // found as surely as one with many, and a class never loaded answers null in one lookup, where
 // reflection::FindClass walks the whole array on every miss.
 struct NameHash {
@@ -77,8 +78,8 @@ std::vector<void*>                                                    g_metas;  
 std::unordered_map<std::wstring, std::vector<int32_t>, NameHash, NameEq> g_classSlotsByName; // name -> class-object slots
 std::unordered_map<int32_t, std::wstring>                             g_classNameBySlot;   // the key each listed slot is under
 
-// Events applied per Drain, so a level load's backlog (a few hundred thousand) spreads over a few
-// ticks instead of landing whole on one frame.
+// Events applied per Drain, so a level load's backlog (a few hundred thousand) spreads over several
+// task batches instead of landing whole on one.
 constexpr size_t kMaxAppliedPerDrain = 16384;
 
 void EnsureSlot(int32_t index) {
@@ -286,7 +287,11 @@ bool Install() {
 
 size_t Drain() {
     UE_ASSERT_GAME_THREAD("object_index::Drain");
-    if (!g_installed) return 0;
+    if (!g_installed || g_draining) return 0;
+    struct Draining {
+        Draining() { g_draining = true; }
+        ~Draining() { g_draining = false; }
+    } draining;
     if (!g_seeded) {
         if (!R::ObjectArrayAddress()) return 0;
         Seed();
@@ -348,6 +353,7 @@ size_t ForEachClass(ClassFn fn, void* ctx) {
 void SetObserver(const Observer& o) { g_observer = o; }
 
 void* ClassByName(const wchar_t* name) {
+    UE_ASSERT_GAME_THREAD("object_index::ClassByName");
     if (!name || !*name) return nullptr;
     const auto it = g_classSlotsByName.find(std::wstring_view(name));
     if (it == g_classSlotsByName.end()) return nullptr;

@@ -12,12 +12,9 @@ namespace {
 
 namespace R = ue_wrap::reflection;
 
-// Cached gamemode pointer (singleton-per-session); revalidated via IsLive, re-walked
-// via FindObjectByClass on a level transition. NOT a per-frame full-array scan (cached).
-
 // Cached property offsets. Constant per BP class (mainGamemode_C / saveSlot_C never
-// change at runtime; a level transition re-walks the gamemode pointer but resolves the
-// SAME class), so resolve each ONCE -- FindPropertyOffset walks the class property list
+// change at runtime; a level transition hands out a new gamemode of the SAME class), so
+// resolve each ONCE -- FindPropertyOffset walks the class property list
 // + super chain, which the project forbids on a per-frame path (TickHost runs every
 // net-pump tick on the host; cf. ue_wrap/actors/vitals.cpp's same caching). -1 = unresolved.
 int32_t g_offSave   = -1;
@@ -39,7 +36,6 @@ void* ResolveSaveSlotAndPoints(int32_t* outOff) {
 }
 
 }  // namespace
-
 
 void* SaveSlotPtr() {  // the shared gamemode->saveSlot resolve, ptr only
     void* gm = world_singleton::Gamemode();

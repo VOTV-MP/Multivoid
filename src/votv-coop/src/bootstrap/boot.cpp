@@ -103,6 +103,22 @@ void LogUe4ssPresence() {
     UE_LOGI("boot: UE4SS host: '%ls' version %s", path, ver);
 }
 
+// The stand-down: this build of the game is not the one the mod targets, found before anything was
+// hooked. Said on the loader's own Win32 modal, never an overlay this path must not install.
+void StandDownUnsupportedBuild() {
+    ue_wrap::log::Flush();
+    bootstrap::ShowRefuseDialog(
+        L"Multivoid -- unsupported game build",
+        L"Multivoid did not start.\n\n"
+        L"It could not find the parts of the game it needs, which means this "
+        L"version of Voices of the Void is not the one this build of Multivoid "
+        L"targets.\n\n"
+        L"The game itself is unaffected and will keep running normally -- "
+        L"Multivoid simply stood down instead of guessing.\n\n"
+        L"Check for a Multivoid update built for your game version. Details are "
+        L"in multivoid.log (look for 'STANDING DOWN').");
+}
+
 DWORD WINAPI BootThread(LPVOID rawTag) {
     const char* entryTag = static_cast<const char*>(rawTag);
     WriteMarker(entryTag);
@@ -173,25 +189,21 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
                 "VOTV %s; this game build does not match it, so ProcessEvent will NOT "
                 "be hooked and no session can start. Re-derive sdk_profile.h "
                 "(docs/versioning.md).", healthFails, coop::version::kGameTarget);
-        ue_wrap::log::Flush();
-        bootstrap::ShowRefuseDialog(
-            L"Multivoid -- unsupported game build",
-            L"Multivoid did not start.\n\n"
-            L"It could not find the parts of the game it needs, which means this "
-            L"version of Voices of the Void is not the one this build of Multivoid "
-            L"targets.\n\n"
-            L"The game itself is unaffected and will keep running normally -- "
-            L"Multivoid simply stood down instead of guessing.\n\n"
-            L"Check for a Multivoid update built for your game version. Details are "
-            L"in multivoid.log (look for 'HEALTH: FAIL').");
+        StandDownUnsupportedBuild();
         return 0;
     }
 
     // The engine's create and delete notifications, registered as early as the profile is proven
     // so nothing born after this point escapes the object index; the index itself seeds on the
-    // first game-thread drain.
-    if (!ue_wrap::object_index::Install())
-        UE_LOGW("boot: the object index could not register with the engine -- discovery falls back to nothing (see uobject_listeners lines above)");
+    // first game-thread drain. The game instance, the gamemode and the world context are found
+    // through it, so a build whose notification lists do not read as the profile says stands down.
+    if (!ue_wrap::object_index::Install()) {
+        UE_LOGE("boot: STANDING DOWN -- the object index could not register with the engine's object "
+                "notifications (the uobject_listeners lines above say why). The game instance, the "
+                "gamemode and the world context are found through it, so no session can start.");
+        StandDownUnsupportedBuild();
+        return 0;
+    }
 
     // Establish a game-thread execution context: hook ProcessEvent so we have a
     // guaranteed game-thread callback to drive UFunction calls from (ProcessEvent

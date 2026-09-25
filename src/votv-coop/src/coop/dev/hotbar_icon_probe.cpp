@@ -5,6 +5,7 @@
 #include "coop/config/config.h"
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/hotbar/icons.h"
@@ -74,7 +75,10 @@ int g_calls = 0;
 sg::Verdict OnRefreshPre(const sg::Call& c) {
     ++g_calls;
     // Read HERE, not deferred to the next tick: the tick is exactly what a world load blocks, and
-    // an instrument must not schedule its own reading against the verb it is reading.
+    // an instrument must not schedule its own reading against the verb it is reading. For the same
+    // reason no task batch has drained the object index inside the load, and the reading finds the
+    // gamemode through it: the probe drains it first.
+    ue_wrap::object_index::Drain();
     HB::State s;
     const bool have = HB::Read(s);
     UE_LOGI("hotbar_probe: VERB #%d t=%llums %s caller=%ls", g_calls,
@@ -87,6 +91,7 @@ sg::Verdict OnRefreshPre(const sg::Call& c) {
 }
 
 void OnRefreshPost(const sg::Call&) {
+    ue_wrap::object_index::Drain();
     HB::State s;
     if (!HB::Read(s) || s.slots <= 0) return;
     UE_LOGI("hotbar_probe:   VERB #%d left: %s", g_calls, SlotLine(s).c_str());

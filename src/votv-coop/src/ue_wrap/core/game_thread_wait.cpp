@@ -1,4 +1,4 @@
-// ue_wrap/core/game_thread_wait.cpp -- the one wait on the game thread, RunAndWait. See game_thread.h.
+// ue_wrap/core/game_thread_wait.cpp -- RunAndWait, the game-thread wait with a fault guard. See game_thread.h.
 #include "ue_wrap/core/game_thread.h"
 
 #include "ue_wrap/core/log.h"

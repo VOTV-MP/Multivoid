@@ -27,8 +27,10 @@ namespace ue_wrap::object_index {
 // runs on the first Drain, so events recorded between the two are folded in rather than lost.
 bool Install();
 
-// Apply the queued events, seeding first; budgeted, so a level load's backlog spreads over ticks.
-// Returns the number of events applied. Game thread; the dispatcher's prologue is its caller.
+// Apply the queued events, seeding first; budgeted per call, and the dispatcher's prologue calls it
+// once per batch of posted tasks, so a level load's backlog spreads over batches (a frame with several
+// batches applies several budgets). Returns the number of events applied. Game thread; re-entry from
+// inside a drain applies nothing.
 size_t Drain();
 
 bool IsSeeded();

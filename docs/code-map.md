@@ -65,7 +65,7 @@ these from outside the game.
 | `ue_wrap/actors/` | the game's actor classes | `puppet` + `puppet_spawn`, `prop`, `kerfur`, `wisp`, `inventory`, `vitals`, `sleep`, `swinger`, `save_record` (the Fstruct_save codec, and the actor's own getData/loadData), `floppy_disc`, `begin_equipment`, `broom` |
 | `ue_wrap/devices/` | keyed devices | `door`, `door_box`, `lightswitch`, `passwordlock`, `power_control`, `garage`, `appliance`, `base_window`, `grime`, `windturbine`, `drone`, `atv` + `atv_condition`, `laptop`, `portable_pc`, `floppybox`, `serverbox` |
 | `ue_wrap/desk/` | the signal workstation | `dish`, `console_desk`, `coords_panel`, `coord_tower` (the three triangulation towers), `comp_pane`, `device_screen`, `drive_chain`, `tape_caddy`, `phys_mods`, `saved_signals`, `meadow_store`, `signal_dynamic`, `space_renderer`, `desk_audio`, `daily_task` |
-| `ue_wrap/world/` | world singletons | `daynightcycle`, `active_events` (the gamemode's running-event refcount and its senders), `skysphere`, `directionalwind`, `game_rules`, `game_mode` (the mode enum and the running world's mode byte), `economy`, `order_economy`, `store_catalog`, `email`, `votv_lib` |
+| `ue_wrap/world/` | world singletons | `world_singleton` (one live instance of a class the game keeps one of, from the object index, of the running world), `daynightcycle`, `active_events` (the gamemode's running-event refcount and its senders), `skysphere`, `directionalwind`, `game_rules`, `game_mode` (the mode enum and the running world's mode byte), `economy`, `order_economy`, `store_catalog`, `email`, `votv_lib` |
 
 ## `loader/` and `bootstrap/`
 

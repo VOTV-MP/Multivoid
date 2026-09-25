@@ -10,7 +10,7 @@
 // on its own + fight the stream -- the npc/clump mirror discipline). The drone moves the ACTOR
 // (not a physics body), so actor-level TryGetActorLocation/SetActorLocation is the transform.
 //
-// Identity = SINGLETON (resolve via FindObjectByClass(drone_C); both peers load the same placed
+// Identity = SINGLETON (the world singleton's drone_C; both peers load the same placed
 // drone). It has no top-level Key (its key lives inside Data) -- but a singleton needs no key.
 // State we read: Active (dormant<->flying).
 

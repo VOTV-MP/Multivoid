@@ -5,17 +5,12 @@
 
 #include <cstdint>
 
-#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile.h"
 
-namespace R = ue_wrap::reflection;
 namespace P = ue_wrap::profile;
 
 namespace ue_wrap::spawn_gate {
-namespace {
-
-}  // namespace
 
 bool WorldRefusesSpawns() {
     void* gi = world_singleton::GameInstance();
