@@ -8,9 +8,11 @@
 //             active 0, the buffer empty; DENY a wrong code on the keys and the accept key: active
 //             0, the buffer empty, the door's active 0. A keypad already unlocked starts with DENY.
 //             Straight after typing, its own copy must read as before: the input runs on the host.
-//   HOST   -- logs every change of every keypad that gates a door.
-// A leg that has not landed in 10 s fails. Lines are tagged [KEYPAD-DRILL]. Run on both peers of a
-// pair (keypad_drill=1); the client's DONE line ends it.
+//   HOST   -- logs every change of every keypad that gates a door, with its door's active.
+// Each peer censuses the named keypads that gate a door, each door's active beside its keypad's: the
+// host at its start, the client at its start and its end. A leg that has not landed in 10 s fails.
+// Lines are tagged [KEYPAD-DRILL]. Run on both peers of a pair (keypad_drill=1); the client's DONE
+// line ends it.
 
 #pragma once
 

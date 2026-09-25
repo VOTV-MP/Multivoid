@@ -183,8 +183,49 @@ bool DoorActive(bool& on) {
     return door && ue_wrap::door::TryReadActive(door, on);
 }
 
+// A keypad's gated door as 1, 0, or -1 when it has none or its active is unreadable.
+int DoorOf(void* lock) {
+    void* door = PL::GatedDoor(lock);
+    bool on = false;
+    return door && ue_wrap::door::TryReadActive(door, on) ? (on ? 1 : 0) : -1;
+}
+
+// Every named keypad that gates a door, the door's active beside the keypad's: the keypad's setActive
+// hands its verdict on to the door, so a door that reads otherwise opens as its keypad does not say.
+// Sorted by key, seven to a line, so the host's census and the client's compare entry by entry.
+void Census(const char* when) {
+    struct Row { std::wstring key; bool keypad; int door; };
+    std::vector<Row> rows;
+    int unnamed = 0, differ = 0;
+    const int32_t n = R::NumObjects();
+    for (int32_t i = 0; i < n; ++i) {
+        void* o = R::ObjectAt(i);
+        if (!o || !R::IsLive(o) || !PL::IsPasswordLock(o) || !PL::GatedDoor(o)) continue;
+        std::wstring key = coop::keypad_sync::KeypadKey(o);
+        PL::State st;
+        if (key.empty() || !PL::ReadState(o, st)) { ++unnamed; continue; }
+        const int door = DoorOf(o);
+        if (door != (st.active ? 1 : 0)) ++differ;
+        rows.push_back({std::move(key), st.active, door});
+    }
+    std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.key < b.key; });
+    UE_LOGI("[KEYPAD-DRILL] %s census %s: %zu named keypad(s) gate a door (%d unnamed or unread), %d whose "
+            "door's active differs from the keypad's (key:keypad/door, ! where they differ)", Side(), when,
+            rows.size(), unnamed, differ);
+    for (size_t at = 0; at < rows.size(); at += 7) {
+        std::wstring line;
+        for (size_t i = at; i < rows.size() && i < at + 7; ++i) {
+            const Row& r = rows[i];
+            line += L" " + r.key + (r.keypad ? L":1/" : L":0/") + (r.door < 0 ? L"?" : r.door ? L"1" : L"0");
+            if (r.door != (r.keypad ? 1 : 0)) line += L"!";
+        }
+        UE_LOGI("[KEYPAD-DRILL] %s census %s:%ls", Side(), when, line.c_str());
+    }
+}
+
 void Done(const char* verdict) {
     g_phase = Phase::Done;
+    Census("at the end");
     UE_LOGI("[KEYPAD-DRILL] %s DONE keypad='%ls' %s", Side(), g_key.c_str(), verdict);
 }
 
@@ -325,6 +366,7 @@ void HostTick() {
         }
         if (g_watched.empty()) return;  // the lane names them on a later pass
         UE_LOGI("[KEYPAD-DRILL] host watches %zu keypad(s) that gate a door", g_watched.size());
+        Census("at the start");
         return;
     }
     for (Watched& w : g_watched) {
@@ -332,8 +374,8 @@ void HostTick() {
         PL::State cur;
         if (!PL::ReadState(w.lock, cur)) continue;
         if (cur.buffer == w.last.buffer && cur.active == w.last.active && cur.isReset == w.last.isReset) continue;
-        UE_LOGI("[KEYPAD-DRILL] host keypad='%ls' reads buf '%ls' active %d reset %d", w.key.c_str(),
-                cur.buffer.c_str(), cur.active ? 1 : 0, cur.isReset ? 1 : 0);
+        UE_LOGI("[KEYPAD-DRILL] host keypad='%ls' reads buf '%ls' active %d reset %d door %d", w.key.c_str(),
+                cur.buffer.c_str(), cur.active ? 1 : 0, cur.isReset ? 1 : 0, DoorOf(w.lock));
         w.last = cur;
     }
 }
@@ -354,6 +396,7 @@ void Tick(coop::net::Session* session) {
         return;
     }
     if (g_phase == Phase::Unpicked) {
+        Census("at the start");
         if (!g_walkerStarted.exchange(true)) {
             if (HANDLE h = ::CreateThread(nullptr, 0, &WalkerThread, nullptr, 0, nullptr)) ::CloseHandle(h);
         }
@@ -396,8 +439,8 @@ void Tick(coop::net::Session* session) {
     PL::State cur;
     if (!PL::ReadState(g_lock, cur)) return;
     if (!g_haveLast || cur.buffer != g_last.buffer || cur.active != g_last.active || cur.isReset != g_last.isReset) {
-        UE_LOGI("[KEYPAD-DRILL] client keypad='%ls' reads buf '%ls' active %d reset %d", g_key.c_str(),
-                cur.buffer.c_str(), cur.active ? 1 : 0, cur.isReset ? 1 : 0);
+        UE_LOGI("[KEYPAD-DRILL] client keypad='%ls' reads buf '%ls' active %d reset %d door %d", g_key.c_str(),
+                cur.buffer.c_str(), cur.active ? 1 : 0, cur.isReset ? 1 : 0, DoorOf(g_lock));
         g_last = cur;
         g_haveLast = true;
     }
