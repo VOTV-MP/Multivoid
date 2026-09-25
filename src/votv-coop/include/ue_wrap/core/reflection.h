@@ -56,9 +56,6 @@ void SetCoopCallCensus(bool on);
 // Every dispatch CallFunction has issued, armed or not -- the reflected-call rate, read as a
 // delta over a window rather than against uptime.
 unsigned long long CoopCallCountTotal();
-// Every whole-array walk the finders (FindObject, FindClass on a miss, FindFunction, FindObjectByClass,
-// FindObjectsByClass, FindClassDefaultObject, CountObjectsByClass) have made, read as a rate.
-unsigned long long ArrayWalkCountTotal();
 // Slot i's target UFunction and its cumulative count; false past the last populated slot.
 bool CoopCallSiteAt(int i, void** outFn, unsigned long long* outCount);
 

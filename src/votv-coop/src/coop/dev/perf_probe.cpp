@@ -12,14 +12,18 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/core/walk_census.h"
 
 #include <windows.h>
 #include <psapi.h>  // PROCESS_MEMORY_COUNTERS_EX + K32GetProcessMemoryInfo (kernel32 export; no psapi.lib link)
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <cwchar>
 #include <string>
 
@@ -64,11 +68,65 @@ unsigned long long g_lastPECoop = 0;
 // The reflected-call window: the call total and the ParamFrame counters, which are counted
 // whether or not the dispatch knobs are armed.
 unsigned long long g_lastCalls = 0, g_lastPfFrames = 0, g_lastPfAllocs = 0, g_lastPfBytes = 0;
+unsigned long long g_lastWalks = 0;  // the finders' whole-array walks (walk_census)
 unsigned long long g_lastPE = 0, g_lastPEGT = 0, g_lastSelfNs = 0, g_lastSelfSamp = 0,
                    g_lastObsNs = 0, g_lastFrames = 0;
 // The whole-detour window state; see the whole readout in Sample.
 unsigned long long g_lastWholeNs = 0, g_lastEngineNs = 0, g_lastWholeSamp = 0, g_lastTopLevel = 0;
 std::array<unsigned long long, static_cast<size_t>(Bucket::Count)> g_lastBuckets{};
+
+// Every tenth summary: which call sites the window's whole-array walks came from, as module+RVA (the
+// payload's .map resolves them), most first. A finder called by another finder names that finder. The
+// first summary sets the baseline, so each line covers the ten summaries before it; walks the site
+// table could not hold are named as such.
+void LogWalkSitesEveryTenth() {
+    namespace WC = ue_wrap::walk_census;
+    struct Row { void* ip; unsigned long long d; };
+    static int s_n = 0;
+    static unsigned long long s_last[WC::kSiteSlots] = {};
+    static unsigned long long s_lastUnattributed = 0;
+    static Row rows[WC::kSiteSlots];
+    const bool baseline = s_n == 0;
+    if (s_n++ % 10 != 0) return;
+    int nRows = 0;
+    for (int i = 0; i < WC::kSiteSlots; ++i) {
+        void* ip = nullptr;
+        unsigned long long c = 0;
+        if (!WC::ArrayWalkSiteAt(i, &ip, &c)) break;
+        const unsigned long long d = c - s_last[i];
+        s_last[i] = c;
+        if (ip && d) rows[nRows++] = {ip, d};
+    }
+    const unsigned long long unattributed = WC::ArrayWalkUnattributedTotal();
+    const unsigned long long dUnattributed = unattributed - s_lastUnattributed;
+    s_lastUnattributed = unattributed;
+    if (baseline || (nRows == 0 && dUnattributed == 0)) return;
+    const int shown = nRows < 6 ? nRows : 6;
+    std::partial_sort(rows, rows + shown, rows + nRows, [](const Row& a, const Row& b) { return a.d > b.d; });
+    std::string out;
+    for (int i = 0; i < shown; ++i) {
+        HMODULE mod = nullptr;
+        char name[MAX_PATH] = {};
+        uintptr_t rva = 0;
+        if (::GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                 static_cast<LPCWSTR>(rows[i].ip), &mod) && mod) {
+            ::GetModuleFileNameA(mod, name, MAX_PATH);
+            rva = reinterpret_cast<uintptr_t>(rows[i].ip) - reinterpret_cast<uintptr_t>(mod);
+        }
+        const char* base = std::strrchr(name, '\\');
+        char cell[160];
+        std::snprintf(cell, sizeof(cell), "%s%s+0x%llX x%llu", out.empty() ? "" : ", ", base ? base + 1 : "?",
+                      static_cast<unsigned long long>(rva), rows[i].d);
+        out += cell;
+    }
+    if (dUnattributed) {
+        char cell[96];
+        std::snprintf(cell, sizeof(cell), "%sunattributed (the site table is full) x%llu", out.empty() ? "" : ", ",
+                      dUnattributed);
+        out += cell;
+    }
+    UE_LOGW("[perf] finder walks by call site (10 s): %s", out.c_str());
+}
 
 }  // namespace
 
@@ -157,6 +215,7 @@ void Sample() {
         // The reflected-call counters are cumulative from process start, so a window that begins
         // at zero reports the whole boot as one second's rate. Seed them with the clock.
         g_lastCalls = R::CoopCallCountTotal();
+        g_lastWalks = ue_wrap::walk_census::ArrayWalkCountTotal();
         const ue_wrap::FrameStats fs0 = ue_wrap::GetFrameStats();
         g_lastPfFrames = fs0.frames; g_lastPfAllocs = fs0.allocs; g_lastPfBytes = fs0.bytes;
         return;  // establish the first baseline; report from the next window
@@ -326,10 +385,9 @@ void Sample() {
     // cover and not how often one was used.
     {
         const unsigned long long calls = R::CoopCallCountTotal();
-        const unsigned long long walks = R::ArrayWalkCountTotal();
-        static unsigned long long sLastWalks = 0;
-        const unsigned long long dWalks = walks - sLastWalks;
-        sLastWalks = walks;
+        const unsigned long long walks = ue_wrap::walk_census::ArrayWalkCountTotal();
+        const unsigned long long dWalks = walks - g_lastWalks;
+        g_lastWalks = walks;
         const ue_wrap::FrameStats fs = ue_wrap::GetFrameStats();
         const unsigned long long dCalls = calls - g_lastCalls;
         const unsigned long long dPf    = fs.frames - g_lastPfFrames;
@@ -343,13 +401,14 @@ void Sample() {
         // to subtract.
         unsigned long long banded = 0;
         for (int i = 0; i < 5; ++i) banded += fs.bucket[i];
-        UE_LOGW("[perf] reflected calls=%.0f/s (%.1f/frame) | array walks=%.1f/s | ParamFrame=%.0f/s "
+        UE_LOGW("[perf] reflected calls=%.0f/s (%.1f/frame) | finder walks=%.1f/s | ParamFrame=%.0f/s "
                 "alloc=%.0f/s (%.1f KB/s) | sizes 0-16:%llu 17-32:%llu 33-64:%llu 65-128:%llu 129-256:%llu "
                 "over-256:%llu max=%d (cumulative %llu allocs of %llu frames)",
                 dCalls / elapsed, dFr > 0 ? static_cast<double>(dCalls) / dFr : 0.0, dWalks / elapsed,
                 dPf / elapsed, allocPerSec, (dBytes / elapsed) / 1024.0,
                 fs.bucket[0], fs.bucket[1], fs.bucket[2], fs.bucket[3], fs.bucket[4],
                 fs.allocs - banded, fs.maxSize, fs.allocs, fs.frames);
+        LogWalkSitesEveryTenth();
     }
 
     if (g_dispatch) {

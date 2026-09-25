@@ -31,6 +31,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/core/hook_drill.cpp
     src/ue_wrap/core/game_thread.cpp
     src/ue_wrap/core/game_thread_wait.cpp
+    src/ue_wrap/core/walk_census.cpp
     src/ue_wrap/core/pe_detour.cpp
     src/ue_wrap/core/pe_diag.cpp
     src/ue_wrap/engine/spawn_gate.cpp

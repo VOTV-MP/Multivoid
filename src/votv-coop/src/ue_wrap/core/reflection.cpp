@@ -1,4 +1,7 @@
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/walk_census.h"
+
+#include <intrin.h>  // _ReturnAddress: a walk names its caller
 #include "ue_wrap/core/cached_obj_ref.h"
 
 #include "ue_wrap/core/log.h"
@@ -34,9 +37,6 @@ FNameToStringFn g_fnameToString = nullptr;
 // UObject* was freed by GC, expected for a stale cache that then re-resolves; a high rate
 // flags a lifetime issue.
 std::atomic<uint64_t> g_isLiveFaultCount{0};
-// Every walk of the whole object array by the finders below (a FindClass hit on its cache walks
-// nothing): the rate the perf probe prints, so a lookup that walks per call shows as a number.
-std::atomic<uint64_t> g_arrayWalks{0};
 ProcessEventFn g_processEvent = nullptr;
 
 }  // namespace
@@ -436,11 +436,9 @@ inline bool ObjClassMatches(void* obj, const wchar_t* className, uint64_t hash, 
 }
 }  // namespace
 
-unsigned long long ArrayWalkCountTotal() { return g_arrayWalks.load(std::memory_order_relaxed); }
-
 void* FindObject(const wchar_t* name, const wchar_t* className) {
     if (!name) return nullptr;
-    ++g_arrayWalks;
+    walk_census::NoteArrayWalk(_ReturnAddress());
     const int32_t n = NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* obj = ObjectAt(i);
@@ -465,7 +463,7 @@ void* FindClass(const wchar_t* className) {
     // later.
     uint64_t hash = 0;
     if (void* cached = BeginClassWalk(className, hash)) return cached;
-    ++g_arrayWalks;
+    walk_census::NoteArrayWalk(_ReturnAddress());
     const int32_t n = NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* obj = ObjectAt(i);
@@ -489,7 +487,7 @@ void* FindFunction(void* owningClass, const wchar_t* funcName) {
     if (!owningClass || !funcName) return nullptr;
     uint64_t fnHash = 0;
     void* fnCls = BeginClassWalk(L"Function", fnHash);
-    ++g_arrayWalks;
+    walk_census::NoteArrayWalk(_ReturnAddress());
     const int32_t n = NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* obj = ObjectAt(i);
@@ -505,7 +503,7 @@ void* FindObjectByClass(const wchar_t* className) {
     if (!className) return nullptr;
     uint64_t hash = 0;
     void* want = BeginClassWalk(className, hash);
-    ++g_arrayWalks;
+    walk_census::NoteArrayWalk(_ReturnAddress());
     const int32_t n = NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* obj = ObjectAt(i);
@@ -528,7 +526,7 @@ void* FindClassDefaultObject(const wchar_t* className) {
 std::vector<ObjectRef> ChildObjectsOf(void* outer) {
     std::vector<ObjectRef> out;
     if (!outer) return out;
-    ++g_arrayWalks;
+    walk_census::NoteArrayWalk(_ReturnAddress());
     const int32_t n = NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* obj = ObjectAt(i);
@@ -578,7 +576,7 @@ int32_t CountObjectsByClass(const wchar_t* className) {
     int32_t count = 0;
     uint64_t hash = 0;
     void* want = BeginClassWalk(className, hash);
-    ++g_arrayWalks;
+    walk_census::NoteArrayWalk(_ReturnAddress());
     const int32_t n = NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* obj = ObjectAt(i);
@@ -595,7 +593,7 @@ std::vector<void*> FindObjectsByClass(const wchar_t* className) {
     if (!className) return out;
     uint64_t hash = 0;
     void* want = BeginClassWalk(className, hash);
-    ++g_arrayWalks;
+    walk_census::NoteArrayWalk(_ReturnAddress());
     const int32_t n = NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* obj = ObjectAt(i);
