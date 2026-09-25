@@ -14,10 +14,12 @@
 #include "ue_wrap/engine/engine.h"  // SpawnActor (the plug-dup REFUND) + TryGetActorLocation
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <vector>
 
 namespace coop::physmods_sync {
 namespace {
@@ -25,15 +27,14 @@ namespace {
 namespace PM = ue_wrap::phys_mods;
 namespace CD = ue_wrap::console_desk;
 namespace R  = ue_wrap::reflection;
+namespace sg = ue_wrap::script_gate;
 using Clock = std::chrono::steady_clock;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-constexpr auto kPoll = std::chrono::milliseconds(1000);
-Clock::time_point g_nextPoll{};
-
-uint8_t g_prev[PM::kSlots] = {};
-bool    g_havePrev = false;
+// The parked canonical's wait for the desk, paced as the resolve's own backoff is.
+constexpr auto kParkedRetry = std::chrono::milliseconds(1000);
+Clock::time_point g_nextParkedTry{};
 
 // A canonical array that arrived before the desk resolved (a joiner's replay
 // racing its world load) parks here and applies at resolve.
@@ -71,14 +72,13 @@ void HostBroadcastCanonical(coop::net::Session* s, int onlySlot = -1) {
         s->SendReliable(coop::net::ReliableKind::PhysModsState, &p, sizeof(p));
 }
 
-// Diff live vs g_prev and emit ops (the drain half of drain-before-adopt).
-// The array is a SET, so the diff decomposes into vanished bytes (unplugs)
-// + appeared bytes (plugs) regardless of slot movement.
-void DrainLocalDiff(coop::net::Session* s, const uint8_t live[PM::kSlots]) {
+// The ops of one local edit: the array is a SET, so the change decomposes into vanished bytes
+// (unplugs) and appeared bytes (plugs) regardless of slot movement.
+void SendLocalEdit(coop::net::Session* s, const uint8_t before[PM::kSlots], const uint8_t live[PM::kSlots]) {
     const bool isHost = (s->role() == coop::net::Role::Host);
     bool hostChanged = false;
     for (int i = 0; i < PM::kSlots; ++i) {
-        const uint8_t b = g_prev[i];
+        const uint8_t b = before[i];
         if (!b) continue;
         bool still = false;
         for (int j = 0; j < PM::kSlots; ++j) if (live[j] == b) { still = true; break; }
@@ -92,7 +92,7 @@ void DrainLocalDiff(coop::net::Session* s, const uint8_t live[PM::kSlots]) {
         const uint8_t b = live[i];
         if (!b) continue;
         bool had = false;
-        for (int j = 0; j < PM::kSlots; ++j) if (g_prev[j] == b) { had = true; break; }
+        for (int j = 0; j < PM::kSlots; ++j) if (before[j] == b) { had = true; break; }
         if (!had) {
             UE_LOGI("physmods: local PLUG byte=%u -- %s", b,
                     isHost ? "canonical will carry it" : "op to host");
@@ -105,13 +105,48 @@ void DrainLocalDiff(coop::net::Session* s, const uint8_t live[PM::kSlots]) {
 }
 
 void AdoptCanonical(const uint8_t bytes[PM::kSlots]) {
-    {
-        coop::desk_snd_fx::ScopedWireApply guard;
-        if (!PM::WriteArray(bytes)) return;
-        PM::CallUpdPhysMods();
+    coop::desk_snd_fx::ScopedWireApply guard;
+    if (!PM::WriteArray(bytes)) return;
+    PM::CallUpdPhysMods();
+}
+
+// The edits from play are the desk's two verbs that write the array: plugInModule (a module into a
+// free slot) and playerHitWith, whose unplug branch reborns the module into the hand and zeroes its
+// slot (a hit on a slot with a module in hand runs plugInModule inside it). setData writes the array
+// wholesale on a save load and is not an edit, so a joiner's load sends nothing; nor are this lane's
+// own applies, which write the array and run updPhysMods, never a verb. Each watched body snapshots
+// the array at entry and sends what it changed at exit; after a send every enclosing body's snapshot
+// moves to the array as sent, so a plug inside a hit is sent once.
+constexpr int kTagPlug = 0x504C5547;  // 'PLUG'
+constexpr int kTagHit  = 0x50484954;  // 'PHIT'
+bool g_editsWatched = false;
+
+struct InFlight {
+    void*   stack;
+    uint8_t before[PM::kSlots];
+};
+std::vector<InFlight> g_inFlight;  // game thread only
+
+sg::Verdict OnEditPre(const sg::Call& call) {
+    InFlight f{call.stack, {}};
+    if (PM::ReadArray(f.before)) g_inFlight.push_back(f);
+    return sg::Verdict::Run;
+}
+
+void OnEditPost(const sg::Call& call) {
+    // The innermost entry of this body; any above it is a body that ended without its post.
+    for (size_t i = g_inFlight.size(); i-- > 0;) {
+        if (g_inFlight[i].stack != call.stack) continue;
+        uint8_t before[PM::kSlots];
+        std::memcpy(before, g_inFlight[i].before, PM::kSlots);
+        g_inFlight.resize(i);
+        uint8_t live[PM::kSlots];
+        if (!PM::ReadArray(live) || std::memcmp(before, live, PM::kSlots) == 0) return;
+        auto* s = g_session.load(std::memory_order_acquire);
+        if (s && s->connected()) SendLocalEdit(s, before, live);
+        for (InFlight& outer : g_inFlight) std::memcpy(outer.before, live, PM::kSlots);
+        return;
     }
-    std::memcpy(g_prev, bytes, PM::kSlots);
-    g_havePrev = true;
 }
 
 void RecordDeny(uint8_t slot, uint8_t byte) {
@@ -151,39 +186,23 @@ void ClientHandleDeny(uint8_t origOp, uint8_t byte) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    if (!g_editsWatched)
+        g_editsWatched =
+            sg::WatchClassName(L"analogDScreenTest_C", L"plugInModule", kTagPlug, &OnEditPre, &OnEditPost) &&
+            sg::WatchClassName(L"analogDScreenTest_C", L"playerHitWith", kTagHit, &OnEditPre, &OnEditPost);
 }
 
 void Tick() {
+    if (!g_havePendingCanon) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return;
     const auto now = Clock::now();
-    if (now < g_nextPoll) return;
-    g_nextPoll = now + kPoll;
-
-    if (!PM::EnsureResolved() || !CD::Instance()) return;  // backoff inside; baselines untouched
-
-    if (g_havePendingCanon) {
-        AdoptCanonical(g_pendingCanon);
-        g_havePendingCanon = false;
-        UE_LOGI("physmods: parked canonical applied at desk resolve");
-        return;
-    }
-
-    uint8_t live[PM::kSlots];
-    if (!PM::ReadArray(live)) return;
-    if (!g_havePrev) {  // prime-on-first-poll: a save-loaded array is never a diff
-        std::memcpy(g_prev, live, PM::kSlots);
-        g_havePrev = true;
-        return;
-    }
-    if (!s->connected()) {  // SP half of a session: track silently, never send
-        std::memcpy(g_prev, live, PM::kSlots);
-        return;
-    }
-    if (std::memcmp(live, g_prev, PM::kSlots) != 0) {
-        DrainLocalDiff(s, live);
-        std::memcpy(g_prev, live, PM::kSlots);
-    }
+    if (now < g_nextParkedTry) return;
+    g_nextParkedTry = now + kParkedRetry;
+    if (!PM::EnsureResolved() || !CD::Instance()) return;  // backoff inside
+    AdoptCanonical(g_pendingCanon);
+    g_havePendingCanon = false;
+    UE_LOGI("physmods: parked canonical applied at desk resolve");
 }
 
 void OnPhysMods(const coop::net::PhysModsStatePayload& p, uint8_t senderSlot) {
@@ -204,13 +223,7 @@ void OnPhysMods(const coop::net::PhysModsStatePayload& p, uint8_t senderSlot) {
             UE_LOGI("physmods: canonical parked (desk unresolved)");
             return;
         }
-        // Drain-before-adopt: our un-polled local edges must not be eaten.
-        uint8_t live[PM::kSlots];
-        if (g_havePrev && PM::ReadArray(live) &&
-            std::memcmp(live, g_prev, PM::kSlots) != 0) {
-            DrainLocalDiff(s, live);
-            std::memcpy(g_prev, live, PM::kSlots);
-        }
+        // A local edit was sent at its verb, so adopting the canonical eats nothing.
         AdoptCanonical(p.bytes);
         static uint64_t s_n = 0;
         if ((++s_n % 8) == 1)
@@ -296,8 +309,6 @@ void OnPhysMods(const coop::net::PhysModsStatePayload& p, uint8_t senderSlot) {
         }
         PM::CallUpdPhysMods();
     }
-    std::memcpy(g_prev, arr, PM::kSlots);  // the host's own baseline follows its canonical
-    g_havePrev = true;
     HostBroadcastCanonical(s);
     UE_LOGI("physmods: host applied op=%u byte=%u from slot %u -- canonical broadcast",
             p.op, p.byte, senderSlot);
@@ -328,11 +339,10 @@ bool HostShouldReapModuleBirth(uint8_t senderSlot, void* moduleClass) {
 }
 
 void OnDisconnect() {
-    g_havePrev = false;
     g_havePendingCanon = false;
-    std::memset(g_prev, 0, sizeof(g_prev));
+    g_inFlight.clear();
     for (auto& d : g_denies) d = DenyRec{};
-    g_nextPoll = {};
+    g_nextParkedTry = {};
     PM::ResetCache();
 }
 
