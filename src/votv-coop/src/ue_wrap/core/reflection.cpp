@@ -406,7 +406,10 @@ void* BeginClassWalk(const wchar_t* className, uint64_t& hashOut) {
             if (it != g_classCache.end()) ref = it->second.cls;
         }
         void* live = ref.Get();
-        if (live && NameEquals(NameOf(live), className)) return live;
+        if (live && NameEquals(NameOf(live), className)) {
+            // A class still being loaded is not handed out yet, and its entry is kept for when it is.
+            return (SlotFlags(InternalIndexOf(live)) & slot_flags::NotYetReadable) ? nullptr : live;
+        }
     }
     std::lock_guard<std::mutex> lk(g_classCacheMu);
     auto it = g_classCache.find(hashOut);
@@ -469,6 +472,9 @@ void* FindClass(const wchar_t* className) {
         void* obj = ObjectAt(i);
         if (!obj) continue;
         if (!NameEquals(NameOf(obj), className)) continue;
+        // A class still being loaded is not found yet: its function list and its properties are linked
+        // as its load finishes, so a lookup through it now would miss what it will hold.
+        if (SlotFlags(i) & slot_flags::NotYetReadable) continue;
         // Its meta-class identifies it as a class object: every UClass-derived meta-type ends in
         // "Class" (BlueprintGeneratedClass, WidgetBlueprintGeneratedClass, DynamicClass and the
         // rest), so the suffix match resolves blueprint-generated classes too, and the exact name
@@ -487,8 +493,10 @@ void* FindFunction(void* owningClass, const wchar_t* funcName) {
     if (!owningClass || !funcName) return nullptr;
     uint64_t fnHash = 0;
     void* fnCls = BeginClassWalk(L"Function", fnHash);
-    // The class's own functions are its Children list: tens of entries, where the object array holds a
-    // quarter of a million. Bounded, so a link that loops cannot hold the caller.
+    // The class's own functions are its Children list, at most several hundred entries (672 on
+    // KismetMathLibrary, the longest), where the object array holds a quarter of a million; RE-UE4SS
+    // reads the same list (reference/RE-UE4SS/UE4SS/src/LuaType/LuaUStruct.cpp:70). Bounded, so a link
+    // that loops cannot hold the caller.
     constexpr int32_t kMaxChildren = 65536;
     void* f = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(owningClass) + O::UStruct_Children);
     for (int32_t hops = 0; f && hops < kMaxChildren; ++hops) {

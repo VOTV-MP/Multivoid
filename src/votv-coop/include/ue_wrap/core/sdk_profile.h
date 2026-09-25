@@ -296,7 +296,9 @@ inline constexpr size_t FProperty_Offset_Internal = 0x4C; // int32 (byte offset 
 inline constexpr size_t UStruct_SuperStruct = 0x40;
 // UStruct::Children, the struct's own UFields -- since UE4.25 moved properties to ChildProperties, a
 // class's UFunctions -- each linked to the next through UField::Next, the first field after UObject.
-// Between SuperStruct and ChildProperties in the 4.27 layout; function_lookup_parity checks it.
+// Between SuperStruct and ChildProperties in the 4.27 layout, as RE-UE4SS's member layout gives them
+// (reference/RE-UE4SS/assets/MemberVarLayoutTemplates/MemberVariableLayout_4_27_Template.ini,
+// UStruct Children and UField Next); function_lookup_parity checks it.
 inline constexpr size_t UStruct_Children = 0x48;
 inline constexpr size_t UField_Next = 0x28;
 

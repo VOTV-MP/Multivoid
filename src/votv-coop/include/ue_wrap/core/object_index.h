@@ -54,8 +54,8 @@ size_t ForEachClass(ClassFn fn, void* ctx);
 
 // The loaded class whose short name is `name`, compared without case as the engine compares names:
 // a class object the index holds, found in one lookup whether or not the class has an instance.
-// Null when no such class is loaded. Where two packages load classes of one name, the first still
-// standing. Game thread.
+// Null when no such class is loaded, or while it is still being loaded. Where two packages load
+// classes of one name, the first still standing. Game thread.
 void* ClassByName(const wchar_t* name);
 
 // The one observer of the class set and of births (the scan hub): a class's first instance

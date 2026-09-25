@@ -361,7 +361,10 @@ void* ClassByName(const wchar_t* name) {
     if (it == g_classSlotsByName.end()) return nullptr;
     for (int32_t i : it->second) {
         const Slot& s = g_slots[static_cast<size_t>(i)];
-        if (TenantOf(i, s.obj, s.cls) == Tenant::Named) return s.obj;
+        if (TenantOf(i, s.obj, s.cls) != Tenant::Named) continue;
+        // A class still being loaded is not found yet, as reflection::FindClass answers.
+        if (R::SlotFlags(i) & R::slot_flags::NotYetReadable) continue;
+        return s.obj;
     }
     return nullptr;
 }

@@ -4,13 +4,14 @@
 // address here; the perf probe prints the rate and, every ten seconds, the six call sites most of the
 // window's walks came from, as module+RVA the payload's linker map resolves. A finder a finder calls
 // (FindClassDefaultObject calls FindObject) names that finder. FindFunction reads a class's own list.
+// A loop written by hand over NumObjects and ObjectAt calls no finder and is not counted.
 // Lock-free, any thread. Engine-wrapper layer (principle 7).
 
 #pragma once
 
 namespace ue_wrap::walk_census {
 
-// The call-site table's slots: the six finders have about 640 call sites in the source, and the
+// The call-site table's slots: the six finders have about 620 call sites in the source, and the
 // first table, of 64, was full of boot-time sites within seconds, so every later site went uncounted.
 inline constexpr int kSiteSlots = 4096;
 

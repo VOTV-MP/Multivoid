@@ -159,13 +159,16 @@ void*        OuterOf(void* uobject);  // OuterPrivate
 void* FindObject(const wchar_t* name, const wchar_t* className = nullptr);
 
 // A UClass by name (its meta-class is Class, BlueprintGeneratedClass or similar), e.g.
-// FindClass(L"mainPlayer_C").
+// FindClass(L"mainPlayer_C"). A class still being loaded is not found yet: its function list and
+// its properties are linked as its load finishes.
 void* FindClass(const wchar_t* className);
 
 // A UFunction named `funcName` declared by `owningClass`, read from the class's own function list
 // (UStruct::Children), never the object array; it does not climb to super classes. This answers WHICH
 // CLASS DECLARES IT, the right question for a declaration census and for a hook that must not reach a
-// sibling class.
+// sibling class. `owningClass` must be live, since the list is read through it: a Blueprint class dies
+// with its world and its address can be reused, so a class held across a world change is found again
+// (object_index::ClassByName, or a CachedObjRef) rather than passed as it was kept.
 void* FindFunction(void* owningClass, const wchar_t* funcName);
 
 // The UFunction an instance of `cls` would DISPATCH for `funcName`: the declaration on `cls` if it
@@ -176,7 +179,8 @@ void* FindFunction(void* owningClass, const wchar_t* funcName);
 // `outDeclaringClass` receives the class the result is declared on, and a caller must read it: when
 // it is not `cls`, that one UFunction serves every class under the declarer, so a hook on it fires
 // for the siblings too. Either cover them deliberately or filter on the instance in the callback.
-// Cost is one object-array walk per hop, so this is an install-time resolve; throttle any retry.
+// Cost is one read of each hop's function list, a name rendered per entry compared; a path that
+// asks on every call takes the memoised form below.
 // The climb stops after 16 hops, which no chain in this cook approaches; null means the name is
 // declared nowhere on the chain, which for a leaf class usually means it is native.
 void* FindDispatchFunction(void* cls, const wchar_t* funcName, void** outDeclaringClass);
@@ -268,9 +272,9 @@ int32_t FunctionFrameSize(void* function);
 // Byte offset of parameter `paramName` in the frame, or -1.
 int32_t FindParamOffset(void* function, const wchar_t* paramName);
 
-// Byte offset of an instance property named `propName` on `owningClass` (a UClass*). Walks the
-// class's own ChildProperties chain, then climbs the SuperStruct chain on a miss. -1 if not
-// found. Cache the result; the walk is linear.
+// Byte offset of an instance property named `propName` on `owningClass` (a UClass*, live, as for
+// FindFunction). Walks the class's own ChildProperties chain, then climbs the SuperStruct chain on
+// a miss. -1 if not found. Cache the result; the walk is linear.
 int32_t FindPropertyOffset(void* owningClass, const wchar_t* propName);
 
 // The prefix-matched variant for GUID-mangled BP struct members: a UserDefinedStruct member
