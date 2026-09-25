@@ -11,6 +11,7 @@
 #include "coop/net/net_stats.h"            // session traffic accounting (the one counter owner)
 #include "coop/net/origin_context.h"       // which occupancy a relayed stream packet belongs to
 #include "coop/net/protocol.h"
+#include "coop/net/remote_streams.h"       // what a receiver keeps of each stream, by owner
 #include "coop/net/send_admission.h"       // the send buffer's headroom rule
 #include "coop/net/send_backlog.h"         // the reliable-send delivery guarantee
 #include "coop/net/send_rate_control.h"    // what each peer's link measures out at
@@ -168,10 +169,6 @@ public:
     // consistent. Game thread.
     PoseTurn PropDrivePoseTurn(uint32_t eid) const;
     void PublishPropDrivePose(const PropPoseSnapshot& pose);
-    // Session stop: every pose-batch tracker and buffer (the NPC, world-actor, trash-carry and
-    // driven-prop kinds) back to empty, so a client rejoining a fresh host does not judge the new
-    // host's sequence against the old one's. Any thread with the session stopped.
-    void ResetPoseBatches();
 
     // Per-peer reads; false if peerSlot is out of range, the slot has no pose yet, or the session
     // is not Connected. outIsNew tells a fresh arrival from a re-read of the last one.
@@ -459,10 +456,33 @@ private:
     int FindFreePeerSlotForClient();
     // The peer slot that owns hConn, or -1.
     int FindPeerSlotForConn(uint32_t hConn);
-    // Per-peer reset, at the slot's disconnect and at session stop; slot 0's covers the host's single
+    // Per-peer reset, at the slot's disconnect and at session stop; slot 0's covers the host's own
     // streams too. The caller holds remoteMutex_.
     void ResetPeerRemoteState(int peerSlot);
     void ResetOriginStreams(int peerSlot);  // the relayed streams only; remoteMutex_ held
+    // Session stop: the host's batches still waiting to be sent back to empty. Session stopped.
+    void ResetLocalBatches();
+
+    // A game-thread read or take of one received stream: nothing unless connected, the slot in
+    // range. Takes remoteMutex_.
+    template <class T>
+    bool ReadOrigin(int slot, StreamSlot<T> OriginStreams::*stream, T& out, bool* isNew) {
+        if (!connected() || slot < 0 || slot >= kMaxPeers) return false;
+        std::lock_guard<std::mutex> lk(remoteMutex_);
+        return (origin_[slot].*stream).Read(out, isNew);
+    }
+    template <class T>
+    bool ReadHost(StreamSlot<T> HostStreams::*stream, T& out, bool* isNew) {
+        if (!connected()) return false;
+        std::lock_guard<std::mutex> lk(remoteMutex_);
+        return (host_.*stream).Read(out, isNew);
+    }
+    template <class S, class T>
+    bool TakeHost(S HostStreams::*stream, T& out) {
+        if (!connected()) return false;
+        std::lock_guard<std::mutex> lk(remoteMutex_);
+        return (host_.*stream).Take(out);
+    }
 
     // Host relay of an unreliable datagram from `originSlot` to every other client: the header's
     // senderEpoch rewritten to the host's (the receiver's epoch latch is per connection) and
@@ -636,8 +656,9 @@ private:
     // Host WorldActor pose batch (SetLocalWorldActorPoseBatch); empty = nothing to send.
     std::vector<WorldActorPoseSnapshot> localWorldActorBatch_;
     bool hasLocalWorldActorBatch_ = false;
-    // The host-originated trash-carry and driven-prop lanes, each queue with its own two mutexes, and
-    // whether a client's batch of either has been said this session (net thread sets, Stop clears).
+    // The host-originated trash-carry and driven-prop queues, each with its own mutex (what a client
+    // receives of them is in host_), and whether a client's batch of either has been said this
+    // session (net thread sets, Stop clears).
     EidPoseQueue<TrashClumpPoseSnapshot> trashCarryPoses_;
     EidPoseQueue<PropPoseSnapshot>       propDrivePoses_;
     std::atomic<bool> saidClientTrashCarry_{false}, saidClientPropDrive_{false};
@@ -654,72 +675,14 @@ private:
     ReelPosePayload localReelPose_{};
     bool reelPoseDirty_ = false;
 
-    // Per-peer remote pose slots: the net thread writes under remoteMutex_, the game thread reads
-    // through TryGetRemotePose.
+    // What this peer keeps of the streams it receives (coop/net/remote_streams.h): the net thread
+    // stores, the game thread reads or takes, both under remoteMutex_. Each origin slot's streams,
+    // and on a client the host's own.
     std::mutex remoteMutex_;
     OriginContext originContext_;    // a client's relayed-stream latches, under remoteMutex_
     StreamRefusals streamRefusals_;
-    std::array<PoseSnapshot, kMaxPeers> remotePoses_{};
-    std::array<bool, kMaxPeers> hasRemote_{};
-    std::array<uint32_t, kMaxPeers> lastRemoteSeq_{};
-    std::array<uint64_t, kMaxPeers> remoteStamp_{};
-    std::array<uint64_t, kMaxPeers> lastReadStamp_{};
-    std::array<PropPoseSnapshot, kMaxPeers> remotePropPoses_{};
-    std::array<bool, kMaxPeers> hasRemoteProp_{};
-    std::array<uint32_t, kMaxPeers> lastRemotePropSeq_{};
-    std::array<uint64_t, kMaxPeers> remotePropStamp_{};
-    std::array<uint64_t, kMaxPeers> lastReadPropStamp_{};
-    // Per-peer ragdoll pelvis physics (the prop's per-slot stamp/seq shape).
-    std::array<RagdollPoseSnapshot, kMaxPeers> remoteRagdollPoses_{};
-    std::array<bool, kMaxPeers> hasRemoteRagdoll_{};
-    std::array<uint32_t, kMaxPeers> lastRemoteRagdollSeq_{};
-    std::array<uint64_t, kMaxPeers> remoteRagdollStamp_{};
-    std::array<uint64_t, kMaxPeers> lastReadRagdollStamp_{};
-    // Per-peer hand-item transform (the same per-slot shape).
-    std::array<HandPoseSnapshot, kMaxPeers> remoteHandPoses_{};
-    std::array<bool, kMaxPeers> hasRemoteHand_{};
-    std::array<uint32_t, kMaxPeers> lastRemoteHandSeq_{};
-    std::array<uint64_t, kMaxPeers> remoteHandStamp_{};
-    std::array<uint64_t, kMaxPeers> lastReadHandStamp_{};
-    // Per-peer coords-panel cursor (the same per-slot shape).
-    std::array<DeskCursorPoseSnapshot, kMaxPeers> remoteDeskCursors_{};
-    std::array<bool, kMaxPeers> hasRemoteDeskCursor_{};
-    std::array<uint32_t, kMaxPeers> lastRemoteDeskCursorSeq_{};
-    std::array<uint64_t, kMaxPeers> remoteDeskCursorStamp_{};
-    std::array<uint64_t, kMaxPeers> lastReadDeskCursorStamp_{};
-    // The latest host clock (one slot: the host is the only sender); drained by TryGetHostClock,
-    // newest wins by seq.
-    TimeSyncPayload remoteHostClock_{};
-    bool hasRemoteHostClock_ = false;
-    uint32_t lastRemoteHostClockSeq_ = 0;
-    uint64_t remoteHostClockStamp_ = 0;
-    uint64_t lastReadHostClockStamp_ = 0;
-    // The latest host download-sim vector; drained by TryGetHostDeskSim.
-    DeskSimSnapshot remoteDeskSim_{};
-    bool hasRemoteDeskSim_ = false;
-    uint32_t lastRemoteDeskSimSeq_ = 0;
-    uint64_t remoteDeskSimStamp_ = 0;
-    uint64_t lastReadDeskSimStamp_ = 0;
-    // The latest dish-pose batch; drained by TryGetHostDishPose.
-    DishPoseBody remoteDishPose_{};
-    bool hasRemoteDishPose_ = false;
-    uint32_t lastRemoteDishPoseSeq_ = 0;
-    uint64_t remoteDishPoseStamp_ = 0;
-    uint64_t lastReadDishPoseStamp_ = 0;
-    // The latest reel corrector; drained by TryGetHostReelPose.
-    ReelPosePayload remoteReelPose_{};
-    bool hasRemoteReelPose_ = false;
-    uint32_t lastRemoteReelPoseSeq_ = 0;
-    uint64_t remoteReelPoseStamp_ = 0;
-    uint64_t lastReadReelPoseStamp_ = 0;
-    // The latest NPC pose batch; drained by TakeRemoteNpcBatch.
-    std::vector<EntityPoseSnapshot> remoteNpcBatch_;
-    bool     hasRemoteNpcBatch_ = false;
-    uint32_t lastRemoteNpcSeq_  = 0;
-    // The latest WorldActor batch; drained by TakeRemoteWorldActorBatch.
-    std::vector<WorldActorPoseSnapshot> remoteWorldActorBatch_;
-    bool     hasRemoteWorldActorBatch_ = false;
-    uint32_t lastRemoteWorldActorSeq_  = 0;
+    std::array<OriginStreams, kMaxPeers> origin_{};
+    HostStreams host_;
     // Per-slot expected senderEpoch, latched from the slot's first packet (0 = not yet); a
     // mismatching packet is dropped at HandleMessage entry. Cleared in ResetPeerRemoteState so the
     // next occupant re-latches. Under remoteMutex_.

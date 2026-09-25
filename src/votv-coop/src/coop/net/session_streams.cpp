@@ -5,7 +5,8 @@
 //   host-single: ClockPose / DeskSimPose / DishPose / ReelPose
 // in four surfaces:
 //   - the game-thread publishers  (Set*)         -- local slots under localMutex_
-//   - the game-thread readers     (TryGet*)      -- remote slots under remoteMutex_
+//   - the game-thread readers     (TryGet*)      -- the received streams under remoteMutex_,
+//     kept by owner (coop/net/remote_streams.h)
 //   - the net-thread receive-store (StoreStreamPacket) -- HandleMessage's grouped scalar
 //     case labels delegate here
 //   - the net-thread send fan-out (SendStreamsTick) -- one per-tick loop, including the
@@ -90,97 +91,39 @@ void Session::SetHostReelPose(const ReelPosePayload& body) {
 // --- game-thread readers ----------------------------------------------------
 
 bool Session::TryGetRemotePose(int peerSlot, PoseSnapshot& out, bool* outIsNew) {
-    if (state_.load() != ConnState::Connected) return false;
-    if (peerSlot < 0 || peerSlot >= kMaxPeers) return false;
-    std::lock_guard<std::mutex> lk(remoteMutex_);
-    if (!hasRemote_[peerSlot]) return false;
-    out = remotePoses_[peerSlot];
-    if (outIsNew) *outIsNew = (remoteStamp_[peerSlot] != lastReadStamp_[peerSlot]);
-    lastReadStamp_[peerSlot] = remoteStamp_[peerSlot];
-    return true;
+    return ReadOrigin(peerSlot, &OriginStreams::pose, out, outIsNew);
 }
 
 bool Session::TryGetRemotePropPose(int peerSlot, PropPoseSnapshot& out, bool* outIsNew) {
-    if (state_.load() != ConnState::Connected) return false;
-    if (peerSlot < 0 || peerSlot >= kMaxPeers) return false;
-    std::lock_guard<std::mutex> lk(remoteMutex_);
-    if (!hasRemoteProp_[peerSlot]) return false;
-    out = remotePropPoses_[peerSlot];
-    if (outIsNew) *outIsNew = (remotePropStamp_[peerSlot] != lastReadPropStamp_[peerSlot]);
-    lastReadPropStamp_[peerSlot] = remotePropStamp_[peerSlot];
-    return true;
+    return ReadOrigin(peerSlot, &OriginStreams::prop, out, outIsNew);
 }
 
 bool Session::TryGetRemoteRagdollPose(int peerSlot, RagdollPoseSnapshot& out, bool* outIsNew) {
-    if (state_.load() != ConnState::Connected) return false;
-    if (peerSlot < 0 || peerSlot >= kMaxPeers) return false;
-    std::lock_guard<std::mutex> lk(remoteMutex_);
-    if (!hasRemoteRagdoll_[peerSlot]) return false;
-    out = remoteRagdollPoses_[peerSlot];
-    if (outIsNew) *outIsNew = (remoteRagdollStamp_[peerSlot] != lastReadRagdollStamp_[peerSlot]);
-    lastReadRagdollStamp_[peerSlot] = remoteRagdollStamp_[peerSlot];
-    return true;
+    return ReadOrigin(peerSlot, &OriginStreams::ragdoll, out, outIsNew);
 }
 
 bool Session::TryGetRemoteHandPose(int peerSlot, HandPoseSnapshot& out, bool* outIsNew) {
-    if (state_.load() != ConnState::Connected) return false;
-    if (peerSlot < 0 || peerSlot >= kMaxPeers) return false;
-    std::lock_guard<std::mutex> lk(remoteMutex_);
-    if (!hasRemoteHand_[peerSlot]) return false;
-    out = remoteHandPoses_[peerSlot];
-    if (outIsNew) *outIsNew = (remoteHandStamp_[peerSlot] != lastReadHandStamp_[peerSlot]);
-    lastReadHandStamp_[peerSlot] = remoteHandStamp_[peerSlot];
-    return true;
+    return ReadOrigin(peerSlot, &OriginStreams::hand, out, outIsNew);
 }
 
 bool Session::TryGetRemoteDeskCursor(int peerSlot, DeskCursorPoseSnapshot& out, bool* outIsNew) {
-    if (state_.load() != ConnState::Connected) return false;
-    if (peerSlot < 0 || peerSlot >= kMaxPeers) return false;
-    std::lock_guard<std::mutex> lk(remoteMutex_);
-    if (!hasRemoteDeskCursor_[peerSlot]) return false;
-    out = remoteDeskCursors_[peerSlot];
-    if (outIsNew) *outIsNew = (remoteDeskCursorStamp_[peerSlot] != lastReadDeskCursorStamp_[peerSlot]);
-    lastReadDeskCursorStamp_[peerSlot] = remoteDeskCursorStamp_[peerSlot];
-    return true;
+    return ReadOrigin(peerSlot, &OriginStreams::deskCursor, out, outIsNew);
 }
 
 bool Session::TryGetHostClock(TimeSyncPayload& out, bool* outIsNew) {
-    if (state_.load() != ConnState::Connected) return false;
-    std::lock_guard<std::mutex> lk(remoteMutex_);
-    if (!hasRemoteHostClock_) return false;
-    out = remoteHostClock_;
-    if (outIsNew) *outIsNew = (remoteHostClockStamp_ != lastReadHostClockStamp_);
-    lastReadHostClockStamp_ = remoteHostClockStamp_;
-    return true;
+    return ReadHost(&HostStreams::clock, out, outIsNew);
 }
 
 bool Session::TryGetHostDeskSim(DeskSimSnapshot& out, bool* outIsNew) {
-    if (state_.load() != ConnState::Connected) return false;
-    std::lock_guard<std::mutex> lk(remoteMutex_);
-    if (!hasRemoteDeskSim_) return false;
-    out = remoteDeskSim_;
-    if (outIsNew) *outIsNew = (remoteDeskSimStamp_ != lastReadDeskSimStamp_);
-    lastReadDeskSimStamp_ = remoteDeskSimStamp_;
-    return true;
+    return ReadHost(&HostStreams::deskSim, out, outIsNew);
 }
 
 bool Session::TryGetHostReelPose(ReelPosePayload& out, bool* outIsNew) {
-    std::lock_guard<std::mutex> lk(remoteMutex_);
-    if (!hasRemoteReelPose_) return false;
-    out = remoteReelPose_;
-    if (outIsNew) *outIsNew = (remoteReelPoseStamp_ != lastReadReelPoseStamp_);
-    lastReadReelPoseStamp_ = remoteReelPoseStamp_;
-    return true;
+    return ReadHost(&HostStreams::reel, out, outIsNew);
 }
 
 bool Session::TryGetHostDishPose(DishPoseBody& out, bool* outIsNew) {
-    if (state_.load() != ConnState::Connected) return false;
-    std::lock_guard<std::mutex> lk(remoteMutex_);
-    if (!hasRemoteDishPose_) return false;
-    out = remoteDishPose_;
-    if (outIsNew) *outIsNew = (remoteDishPoseStamp_ != lastReadDishPoseStamp_);
-    lastReadDishPoseStamp_ = remoteDishPoseStamp_;
-    return true;
+    return ReadHost(&HostStreams::dish, out, outIsNew);
 }
 
 // A client's roster edge for a relayed slot: the occupancy that left has its late packets refused and
@@ -224,11 +167,12 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         std::memcpy(&h, data, sizeof(h));
         ctx = h.originContext;
     }
+    OriginStreams& origin = origin_[routeSlot];
     const auto occupancyAccepted = [&](MsgType kind) {  // under remoteMutex_
         if (originContext_.Accepts(routeSlot, ctx)) return true;
         if (kind == MsgType::PoseSnapshot)
             streamRefusals_.Refused(routeSlot, StreamRefusals::Why::OtherOccupancy, seq,
-                                    lastRemoteSeq_[routeSlot]);
+                                    origin.pose.LastSeq());
         return false;
     };
     switch (type) {
@@ -239,22 +183,17 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         if (!ValidatePose(pkt.pose)) {
             std::lock_guard<std::mutex> lk(remoteMutex_);
             streamRefusals_.Refused(routeSlot, StreamRefusals::Why::FailedValidation, seq,
-                                    lastRemoteSeq_[routeSlot]);
+                                    origin.pose.LastSeq());
             return;
         }
         {
             std::lock_guard<std::mutex> lk(remoteMutex_);
             if (!occupancyAccepted(type)) break;
-            if (hasRemote_[routeSlot] &&
-                static_cast<int32_t>(seq - lastRemoteSeq_[routeSlot]) <= 0) {
+            if (!origin.pose.Offer(seq, pkt.pose)) {
                 streamRefusals_.Refused(routeSlot, StreamRefusals::Why::StaleSequence, seq,
-                                        lastRemoteSeq_[routeSlot]);
+                                        origin.pose.LastSeq());
                 break;  // stale or a duplicate for this origin: not stored, and not relayed
             }
-            remotePoses_[routeSlot] = pkt.pose;
-            lastRemoteSeq_[routeSlot] = seq;
-            hasRemote_[routeSlot] = true;
-            ++remoteStamp_[routeSlot];
             streamRefusals_.Accepted(routeSlot);
         }
         // Bill this peer for the distance it just CLAIMED to have covered. After the freshness
@@ -293,14 +232,7 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         {
             std::lock_guard<std::mutex> lk(remoteMutex_);
             if (!occupancyAccepted(type)) break;
-            if (hasRemoteProp_[routeSlot] &&
-                static_cast<int32_t>(seq - lastRemotePropSeq_[routeSlot]) <= 0) {
-                break;
-            }
-            remotePropPoses_[routeSlot] = pkt.pose;
-            lastRemotePropSeq_[routeSlot] = seq;
-            hasRemoteProp_[routeSlot] = true;
-            ++remotePropStamp_[routeSlot];
+            if (!origin.prop.Offer(seq, pkt.pose)) break;
         }
         // Host relay: forward this client's held-prop pose to every OTHER client.
         if (cfg_.role == Role::Host) {
@@ -336,14 +268,7 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         {
             std::lock_guard<std::mutex> lk(remoteMutex_);
             if (!occupancyAccepted(type)) break;
-            if (hasRemoteRagdoll_[routeSlot] &&
-                static_cast<int32_t>(seq - lastRemoteRagdollSeq_[routeSlot]) <= 0) {
-                break;
-            }
-            remoteRagdollPoses_[routeSlot] = pkt.pose;
-            lastRemoteRagdollSeq_[routeSlot] = seq;
-            hasRemoteRagdoll_[routeSlot] = true;
-            ++remoteRagdollStamp_[routeSlot];
+            if (!origin.ragdoll.Offer(seq, pkt.pose)) break;
         }
         // Host relay: forward this client's ragdoll pose to every OTHER client.
         if (cfg_.role == Role::Host) {
@@ -366,14 +291,7 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         {
             std::lock_guard<std::mutex> lk(remoteMutex_);
             if (!occupancyAccepted(type)) break;
-            if (hasRemoteHand_[routeSlot] &&
-                static_cast<int32_t>(seq - lastRemoteHandSeq_[routeSlot]) <= 0) {
-                break;
-            }
-            remoteHandPoses_[routeSlot] = pkt.pose;
-            lastRemoteHandSeq_[routeSlot] = seq;
-            hasRemoteHand_[routeSlot] = true;
-            ++remoteHandStamp_[routeSlot];
+            if (!origin.hand.Offer(seq, pkt.pose)) break;
         }
         // Host relay: forward this client's hand pose to every OTHER client.
         if (cfg_.role == Role::Host) {
@@ -391,14 +309,7 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         {
             std::lock_guard<std::mutex> lk(remoteMutex_);
             if (!occupancyAccepted(type)) break;
-            if (hasRemoteDeskCursor_[routeSlot] &&
-                static_cast<int32_t>(seq - lastRemoteDeskCursorSeq_[routeSlot]) <= 0) {
-                break;
-            }
-            remoteDeskCursors_[routeSlot] = pkt.pose;
-            lastRemoteDeskCursorSeq_[routeSlot] = seq;
-            hasRemoteDeskCursor_[routeSlot] = true;
-            ++remoteDeskCursorStamp_[routeSlot];
+            if (!origin.deskCursor.Offer(seq, pkt.pose)) break;
         }
         // Host relay: forward this client's cursor to every OTHER client.
         if (cfg_.role == Role::Host) {
@@ -414,17 +325,8 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         if (cfg_.role == Role::Host) break;
         ClockPosePacket pkt;
         std::memcpy(&pkt, data, sizeof(pkt));
-        {
-            std::lock_guard<std::mutex> lk(remoteMutex_);
-            if (hasRemoteHostClock_ &&
-                static_cast<int32_t>(seq - lastRemoteHostClockSeq_) <= 0) {
-                break;  // older/duplicate snapshot -- keep the newer one
-            }
-            remoteHostClock_ = pkt.clock;
-            lastRemoteHostClockSeq_ = seq;
-            hasRemoteHostClock_ = true;
-            ++remoteHostClockStamp_;
-        }
+        std::lock_guard<std::mutex> lk(remoteMutex_);
+        host_.clock.Offer(seq, pkt.clock);  // an older or duplicate sample keeps the newer one
         break;
     }
     case MsgType::DeskSimPose: {  // HOST->all download-sim output vector (single value, newest-wins)
@@ -434,17 +336,8 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         if (cfg_.role == Role::Host) break;
         DeskSimPosePacket pkt;
         std::memcpy(&pkt, data, sizeof(pkt));
-        {
-            std::lock_guard<std::mutex> lk(remoteMutex_);
-            if (hasRemoteDeskSim_ &&
-                static_cast<int32_t>(seq - lastRemoteDeskSimSeq_) <= 0) {
-                break;  // older/duplicate snapshot -- keep the newer one
-            }
-            remoteDeskSim_ = pkt.sim;
-            lastRemoteDeskSimSeq_ = seq;
-            hasRemoteDeskSim_ = true;
-            ++remoteDeskSimStamp_;
-        }
+        std::lock_guard<std::mutex> lk(remoteMutex_);
+        host_.deskSim.Offer(seq, pkt.sim);  // an older or duplicate snapshot keeps the newer one
         break;
     }
     case MsgType::DishPose: {  // HOST->all dish-pose row batch (newest-wins)
@@ -453,17 +346,8 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         DishPosePacket pkt;
         std::memcpy(&pkt, data, sizeof(pkt));
         if (pkt.body.count > kMaxDishes) return;
-        {
-            std::lock_guard<std::mutex> lk(remoteMutex_);
-            if (hasRemoteDishPose_ &&
-                static_cast<int32_t>(seq - lastRemoteDishPoseSeq_) <= 0) {
-                break;  // older/duplicate batch -- keep the newer one
-            }
-            remoteDishPose_ = pkt.body;
-            lastRemoteDishPoseSeq_ = seq;
-            hasRemoteDishPose_ = true;
-            ++remoteDishPoseStamp_;
-        }
+        std::lock_guard<std::mutex> lk(remoteMutex_);
+        host_.dish.Offer(seq, pkt.body);  // an older or duplicate batch keeps the newer one
         break;
     }
     case MsgType::ReelPose: {  // HOST->all reel corrector (newest-wins)
@@ -471,17 +355,8 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         if (cfg_.role == Role::Host) break;  // host-originated; never applied locally
         ReelPosePacket pkt;
         std::memcpy(&pkt, data, sizeof(pkt));
-        {
-            std::lock_guard<std::mutex> lk(remoteMutex_);
-            if (hasRemoteReelPose_ &&
-                static_cast<int32_t>(seq - lastRemoteReelPoseSeq_) <= 0) {
-                break;  // older/duplicate -- keep the newer one
-            }
-            remoteReelPose_ = pkt.body;
-            lastRemoteReelPoseSeq_ = seq;
-            hasRemoteReelPose_ = true;
-            ++remoteReelPoseStamp_;
-        }
+        std::lock_guard<std::mutex> lk(remoteMutex_);
+        host_.reel.Offer(seq, pkt.body);  // an older or duplicate one keeps the newer one
         break;
     }
     default:

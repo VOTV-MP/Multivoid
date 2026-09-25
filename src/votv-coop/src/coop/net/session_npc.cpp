@@ -25,13 +25,7 @@ void Session::SetLocalNpcPoseBatch(const std::vector<EntityPoseSnapshot>& batch)
 }
 
 bool Session::TakeRemoteNpcBatch(std::vector<EntityPoseSnapshot>& out) {
-    if (state_.load() != ConnState::Connected) return false;
-    std::lock_guard<std::mutex> lk(remoteMutex_);
-    if (!hasRemoteNpcBatch_) return false;
-    out = std::move(remoteNpcBatch_);
-    remoteNpcBatch_.clear();
-    hasRemoteNpcBatch_ = false;  // consume-once
-    return true;
+    return TakeHost(&HostStreams::npcBatch, out);  // consume-once
 }
 
 int Session::SerializeLocalNpcBatch(uint8_t* buf) {
@@ -54,8 +48,9 @@ int Session::SerializeLocalNpcBatch(uint8_t* buf) {
 void Session::StoreRemoteNpcBatch(const void* data, int len, uint32_t seq) {
     // HOST->client NPC pose batch. The host ORIGINATES it (never relays or receives it), so this
     // lands only on clients. Parse and store the LATEST into the npc-batch slot the game thread
-    // drains (npc_mirror::TickClientNpcs); newest-wins via seq. Per-entry float validation happens
-    // at the game-thread apply, so a NaN cannot reach SetActorLocation.
+    // takes (npc_mirror::TickClientNpcs); newest-wins via seq, written in place into the buffer the
+    // last take handed back. Per-entry float validation happens at the game-thread apply, so a NaN
+    // cannot reach SetActorLocation.
     if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader))) return;
     EntityPoseBatchHeader bh;
     std::memcpy(&bh, static_cast<const uint8_t*>(data) + sizeof(PacketHeader), sizeof(bh));
@@ -64,16 +59,14 @@ void Session::StoreRemoteNpcBatch(const void* data, int len, uint32_t seq) {
     const int need = static_cast<int>(sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader)) +
                      count * static_cast<int>(sizeof(EntityPoseSnapshot));
     if (len < need) return;  // truncated datagram
-    std::vector<EntityPoseSnapshot> batch(static_cast<size_t>(count));
+    std::lock_guard<std::mutex> lk(remoteMutex_);
+    std::vector<EntityPoseSnapshot>* batch = host_.npcBatch.Claim(seq);
+    if (!batch) return;  // stale, or a duplicate
+    batch->resize(static_cast<size_t>(count));
     if (count > 0)
-        std::memcpy(batch.data(),
+        std::memcpy(batch->data(),
                     static_cast<const uint8_t*>(data) + sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader),
                     static_cast<size_t>(count) * sizeof(EntityPoseSnapshot));
-    std::lock_guard<std::mutex> lk(remoteMutex_);
-    if (hasRemoteNpcBatch_ && static_cast<int32_t>(seq - lastRemoteNpcSeq_) <= 0) return;  // stale
-    remoteNpcBatch_ = std::move(batch);
-    lastRemoteNpcSeq_ = seq;
-    hasRemoteNpcBatch_ = true;
 }
 
 }  // namespace coop::net

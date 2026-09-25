@@ -286,28 +286,11 @@ void Session::ResetPeerRemoteState(int peerSlot) {
     ResetOriginStreams(peerSlot);
     // The slot's occupancy is forgotten with its connection: the next latches from its first packet.
     originContext_.Clear(peerSlot);
-    // On a client slot 0 is the host, and its single streams -- the clock, the download sim, the dish
-    // and reel poses -- are its remote state too. Their sequence is the host process's own counter, so
-    // a client judging a restarted host's samples against the last host's would drop every one until
-    // the new counter passed the old. A host never writes these fields.
-    if (peerSlot == 0) {
-        hasRemoteHostClock_ = false;
-        lastRemoteHostClockSeq_ = 0;
-        remoteHostClockStamp_ = 0;
-        lastReadHostClockStamp_ = 0;
-        hasRemoteDeskSim_ = false;
-        lastRemoteDeskSimSeq_ = 0;
-        remoteDeskSimStamp_ = 0;
-        lastReadDeskSimStamp_ = 0;
-        hasRemoteDishPose_ = false;
-        lastRemoteDishPoseSeq_ = 0;
-        remoteDishPoseStamp_ = 0;
-        lastReadDishPoseStamp_ = 0;
-        hasRemoteReelPose_ = false;
-        lastRemoteReelPoseSeq_ = 0;
-        remoteReelPoseStamp_ = 0;
-        lastReadReelPoseStamp_ = 0;
-    }
+    // On a client slot 0 is the host, and its own streams -- the clock, the download sim, the dish and
+    // reel poses, the batches -- go with the link: their sequence is the host process's counter, so a
+    // client judging a restarted host's against the last host's would drop every one until the new
+    // counter passed the old. A host never stores these.
+    if (peerSlot == 0) host_.Reset();
     // Clear the latched senderEpoch so the next connection on this slot re-latches on its first
     // packet; a reconnecting peer's fresh epoch would otherwise fail the compare.
     expectedEpoch_[peerSlot] = 0;
@@ -319,29 +302,7 @@ void Session::ResetPeerRemoteState(int peerSlot) {
 void Session::ResetOriginStreams(int peerSlot) {
     if (peerSlot < 0 || peerSlot >= kMaxPeers) return;
     streamRefusals_.Clear(peerSlot);
-    hasRemote_[peerSlot] = false;
-    lastRemoteSeq_[peerSlot] = 0;
-    remoteStamp_[peerSlot] = 0;
-    lastReadStamp_[peerSlot] = 0;
-    hasRemoteProp_[peerSlot] = false;
-    lastRemotePropSeq_[peerSlot] = 0;
-    remotePropStamp_[peerSlot] = 0;
-    lastReadPropStamp_[peerSlot] = 0;
-    // The ragdoll slot too, so a reconnecting peer inherits no stale stream.
-    hasRemoteRagdoll_[peerSlot] = false;
-    lastRemoteRagdollSeq_[peerSlot] = 0;
-    remoteRagdollStamp_[peerSlot] = 0;
-    lastReadRagdollStamp_[peerSlot] = 0;
-    // The hand-item slot, the same reason.
-    hasRemoteHand_[peerSlot] = false;
-    lastRemoteHandSeq_[peerSlot] = 0;
-    remoteHandStamp_[peerSlot] = 0;
-    lastReadHandStamp_[peerSlot] = 0;
-    // The desk cursor slot, the same reason.
-    hasRemoteDeskCursor_[peerSlot] = false;
-    lastRemoteDeskCursorSeq_[peerSlot] = 0;
-    remoteDeskCursorStamp_[peerSlot] = 0;
-    lastReadDeskCursorStamp_[peerSlot] = 0;
+    origin_[peerSlot].Reset();
 }
 
 int Session::connectedPeerCount() const {

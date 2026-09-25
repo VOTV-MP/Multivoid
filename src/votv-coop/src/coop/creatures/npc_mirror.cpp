@@ -544,7 +544,9 @@ void TickClientNpcs() {
 
     // 1. The latest batch, if any: an interpolation window per NPC. Per-entry validation is the
     // trust boundary.
-    std::vector<coop::net::EntityPoseSnapshot> batch;
+    // Kept across ticks and handed in empty: the take swaps buffers, so neither thread allocates.
+    static std::vector<coop::net::EntityPoseSnapshot> batch;
+    batch.clear();
     if (s->TakeRemoteNpcBatch(batch)) {
         for (const auto& snap : batch) {
             if (!std::isfinite(snap.x) || !std::isfinite(snap.y) || !std::isfinite(snap.z) ||

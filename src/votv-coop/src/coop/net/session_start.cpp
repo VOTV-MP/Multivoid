@@ -470,16 +470,15 @@ void Session::Stop() {
     // cleared above the join, this write raced a pass still in flight during the few milliseconds
     // until the thread exited.
     peer_admission::ClientReset();
-    // The pose batches die with the session too: their sequence trackers are per host process, and
-    // a client rejoining a fresh host would otherwise drop every batch as stale until the new
-    // host's sequence climbed past the old one's.
-    ResetPoseBatches();
-    // And every slot's receive state and epoch latch, for the same reason: the close path resets a
-    // slot when its peer closes or the link fails, but a connection this side closes is neither, and
-    // the loop below empties its slot first, so a session that ends here would carry its last
-    // senders' sequences into the next.
+    // Every slot's receive state and epoch latch, and with slot 0 the host's own streams: the close
+    // path resets a slot when its peer closes or the link fails, but a connection this side closes is
+    // neither, and the loop below empties its slot first, so a session that ends here would carry its
+    // last senders' sequences into the next, and a client rejoining a fresh host would drop every
+    // sample until the new host's sequence climbed past the old one's.
     { std::lock_guard<std::mutex> lk(remoteMutex_);
       for (int i = 0; i < kMaxPeers; ++i) ResetPeerRemoteState(i); }
+    // And the host's batches still waiting to go out.
+    ResetLocalBatches();
 
     auto* sockets = SteamNetworkingSockets();
     if (sockets) {

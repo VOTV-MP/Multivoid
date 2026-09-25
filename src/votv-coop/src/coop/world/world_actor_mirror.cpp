@@ -314,7 +314,9 @@ void TickClientWorldActors() {
     // First, apply the latest received batch: open an interpolation window per actor. The
     // per-entry float validation is the trust boundary (a NaN must not reach the location and
     // rotation writes).
-    std::vector<coop::net::WorldActorPoseSnapshot> batch;
+    // Kept across ticks and handed in empty: the take swaps buffers, so neither thread allocates.
+    static std::vector<coop::net::WorldActorPoseSnapshot> batch;
+    batch.clear();
     if (s->TakeRemoteWorldActorBatch(batch)) {
         // A once-a-second per-entry outcome trace: every skip branch below was silent, and a wrong
         // eid, a not-a-mirror or a range-clamped entry freezes the mirror with zero evidence; a

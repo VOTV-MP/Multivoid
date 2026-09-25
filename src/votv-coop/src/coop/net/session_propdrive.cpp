@@ -30,8 +30,7 @@ void Session::PublishPropDrivePose(const PropPoseSnapshot& pose) {
 }
 
 bool Session::TakeRemotePropDriveBatch(std::vector<PropPoseSnapshot>& out) {
-    if (state_.load() != ConnState::Connected) return false;
-    return propDrivePoses_.Take(out);
+    return TakeHost(&HostStreams::propDrive, out);
 }
 
 int Session::SerializeLocalPropDriveBatch(uint8_t* buf) {
@@ -89,19 +88,15 @@ void Session::StoreRemotePropDriveBatch(const void* data, int len, uint32_t seq)
             return;
         }
     }
-    propDrivePoses_.Merge(batch, count, seq);
+    std::lock_guard<std::mutex> lk(remoteMutex_);
+    host_.propDrive.Merge(batch, count, seq);
 }
 
-void Session::ResetPoseBatches() {
+void Session::ResetLocalBatches() {
     {
         std::lock_guard<std::mutex> lk(localMutex_);
         localNpcBatch_.clear();        hasLocalNpcBatch_ = false;
         localWorldActorBatch_.clear(); hasLocalWorldActorBatch_ = false;
-    }
-    {
-        std::lock_guard<std::mutex> lk(remoteMutex_);
-        remoteNpcBatch_.clear();        hasRemoteNpcBatch_ = false;        lastRemoteNpcSeq_ = 0;
-        remoteWorldActorBatch_.clear(); hasRemoteWorldActorBatch_ = false; lastRemoteWorldActorSeq_ = 0;
     }
     trashCarryPoses_.Reset();
     propDrivePoses_.Reset();

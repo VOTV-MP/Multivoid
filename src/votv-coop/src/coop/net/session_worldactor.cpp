@@ -36,13 +36,7 @@ void Session::SetLocalWorldActorPoseBatch(const std::vector<WorldActorPoseSnapsh
 }
 
 bool Session::TakeRemoteWorldActorBatch(std::vector<WorldActorPoseSnapshot>& out) {
-    if (state_.load() != ConnState::Connected) return false;
-    std::lock_guard<std::mutex> lk(remoteMutex_);
-    if (!hasRemoteWorldActorBatch_) return false;
-    out = std::move(remoteWorldActorBatch_);
-    remoteWorldActorBatch_.clear();
-    hasRemoteWorldActorBatch_ = false;  // consume-once
-    return true;
+    return TakeHost(&HostStreams::worldActorBatch, out);  // consume-once
 }
 
 int Session::SerializeLocalWorldActorBatch(uint8_t* buf) {
@@ -87,11 +81,6 @@ void Session::StoreRemoteWorldActorBatch(const void* data, int len, uint32_t seq
     const int need = static_cast<int>(sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader)) +
                      count * static_cast<int>(sizeof(WorldActorPoseSnapshot));
     if (len < need) return;  // truncated datagram
-    std::vector<WorldActorPoseSnapshot> batch(static_cast<size_t>(count));
-    if (count > 0)
-        std::memcpy(batch.data(),
-                    static_cast<const uint8_t*>(data) + sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader),
-                    static_cast<size_t>(count) * sizeof(WorldActorPoseSnapshot));
     // [WA-TRACE client-store] 1 Hz: what actually arrived over the wire this second (+ how many
     // datagrams the stale-seq guard dropped). If host-serialize moves but this is frozen/absent,
     // the wire hop is the break; if stale-drops dominate, the seq guard is eating the stream.
@@ -103,24 +92,27 @@ void Session::StoreRemoteWorldActorBatch(const void* data, int len, uint32_t seq
     static unsigned s_olderStored = 0;
     static uint32_t s_newestStored = 0;
     std::lock_guard<std::mutex> lk(remoteMutex_);
-    const bool fresh = !hasRemoteWorldActorBatch_ && lastRemoteWorldActorSeq_ == 0;
-    if (hasRemoteWorldActorBatch_ && static_cast<int32_t>(seq - lastRemoteWorldActorSeq_) <= 0) {
+    const bool fresh = !host_.worldActorBatch.Latched();
+    std::vector<WorldActorPoseSnapshot>* batch = host_.worldActorBatch.Claim(seq);
+    if (!batch) {
         ++s_staleDrops;
-        return;  // stale
+        return;  // stale, or a duplicate
     }
     if (!fresh && static_cast<int32_t>(seq - s_newestStored) <= 0) ++s_olderStored;
     else s_newestStored = seq;
+    batch->resize(static_cast<size_t>(count));
+    if (count > 0)
+        std::memcpy(batch->data(),
+                    static_cast<const uint8_t*>(data) + sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader),
+                    static_cast<size_t>(count) * sizeof(WorldActorPoseSnapshot));
     const long long nowMs = TraceNowMs();
     if (nowMs - s_lastMs >= 1000 && count > 0) {
         s_lastMs = nowMs;
-        const auto& f = batch[0];
+        const auto& f = (*batch)[0];
         UE_LOGI("[WA-TRACE client-store] n=%d seq=%u first: eid=%u (%.0f,%.0f,%.0f) staleDrops=%u "
                 "olderStored=%u", count, seq, f.elementId, f.x, f.y, f.z, s_staleDrops, s_olderStored);
         s_staleDrops = 0;
     }
-    remoteWorldActorBatch_ = std::move(batch);
-    lastRemoteWorldActorSeq_ = seq;
-    hasRemoteWorldActorBatch_ = true;
 }
 
 }  // namespace coop::net

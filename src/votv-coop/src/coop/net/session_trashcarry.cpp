@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <vector>
 
 namespace coop::net {
@@ -29,8 +30,7 @@ void Session::PublishTrashCarryPose(const TrashClumpPoseSnapshot& pose, bool ahe
 }
 
 bool Session::TakeRemoteTrashCarryBatch(std::vector<TrashClumpPoseSnapshot>& out) {
-    if (state_.load() != ConnState::Connected) return false;
-    return trashCarryPoses_.Take(out);
+    return TakeHost(&HostStreams::trashCarry, out);
 }
 
 int Session::SerializeLocalTrashCarryBatch(uint8_t* buf) {
@@ -91,7 +91,8 @@ void Session::StoreRemoteTrashCarryBatch(const void* data, int len, uint32_t seq
             return;
         }
     }
-    trashCarryPoses_.Merge(batch, count, seq);
+    std::lock_guard<std::mutex> lk(remoteMutex_);
+    host_.trashCarry.Merge(batch, count, seq);
 }
 
 }  // namespace coop::net

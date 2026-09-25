@@ -332,6 +332,7 @@ set(VOTVCOOP_SOURCES
     src/coop/net/session_relay.cpp
     src/coop/net/origin_context.cpp
     src/coop/net/stream_refusals.cpp
+    src/coop/net/stream_slot_selftest.cpp
     src/coop/net/send_admission.cpp
     src/coop/net/send_backlog.cpp
     src/coop/net/send_rate_control.cpp

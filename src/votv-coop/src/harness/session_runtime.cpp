@@ -28,6 +28,7 @@
 #include "coop/net/lobby_password.h"
 #include "coop/net/peer_admission.h"
 #include "coop/net/peer_identity.h"
+#include "coop/net/stream_slot.h"
 #include "coop/player/movement_ledger.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/puppet_drive.h"
@@ -191,6 +192,9 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     // And the per-source history behind the connection cap and the password-guess bound: a count
     // that refuses, a refusal that lifts, a window that slides, a full table that refuses nobody.
     coop::net::connect_history::RunSelftest();
+    // And the newest-wins latch every received stream keeps: no LAN run reorders a datagram, so the
+    // batch that arrives behind one already taken is refused here, on pinned sequences.
+    coop::net::stream_slot::RunSelftest();
     // And the lobby password inside it: if the salt were ignored, every locked lobby would open to
     // one table, and the only visible difference is that joins keep succeeding. The negatives are
     // the test: one password under two host keys must not collide, an empty password must refuse to
