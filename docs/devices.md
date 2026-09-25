@@ -20,15 +20,19 @@ family is an adapter over its engine wrapper (`ue_wrap/devices/`), a few lines e
 switches, light groups, container lids, the garage, the appliances, the lockers.
 
 The owner polls each indexed instance's state field once a tick -- every peer on a symmetric
-channel, the host alone on a light group -- which catches every writer at once (a press, an NPC's
-proximity, a keypad unlock, a script) without watching each. On a change it broadcasts the new
-state with the instance's key, the host relays a client's symmetric edge to the other clients, and
-a receiver resolves the instance by key and applies it, moving its own poll baseline so nothing
-echoes. Doors are sent at the door's own verbs instead: every writer of a door's open state goes
-through `doorOpen` or `doorClose`, and the script-body gate watches both
-(`coop/interactables/door_state_verbs`). After either body on the host the lane sends the state it
-left; a send no peer can take yet (every client still loading) is retried each tick. While that is
-measured, the door poll runs beside it as a probe that logs and sends any change no verb reported.
+channel -- which catches every writer at once (a press, an NPC's proximity, a keypad unlock, a
+script) without watching each. On a change it broadcasts the new state with the instance's key,
+the host relays a client's symmetric edge to the other clients, and a receiver resolves the
+instance by key and applies it, moving its own poll baseline so nothing echoes. Doors and light
+groups are sent at their own verbs instead: every live writer of a door's open state goes through
+`doorOpen` or `doorClose`, and of a group's `isActive` through its `runTrigger`, and the
+script-body gate watches them (`coop/interactables/door_state_verbs`,
+`coop/interactables/lightgroup_verbs`). After the body on the host the lane sends the state it left;
+a send no peer can take (none is world-ready) counts as made, since each joiner's snapshot at its
+ready edge carries the state. While that is measured, the host's poll runs beside them as a probe
+that logs and sends any change no verb reported (a `SHADOW MISS`). It retires, and the door and
+group polls with it, once a long session with every writer class live -- creatures, the keypad, a
+blackout, the eventers -- logs no `SHADOW MISS` on the host.
 
 The key is the game's own for the save-persisted instances and a portable identity computed
 by both peers for the rest (`coop/element/portable_identity`): the game mints a random key per
@@ -40,7 +44,10 @@ Two modes. A device that reverts on its own, a door that auto-closes or a light 
 re-derives, is host-authoritative: the host's copy is the one that moves, and a client renders it.
 A client's copy of a door moves only by the host's state: its own `doorOpen` and `doorClose` are
 refused unless our apply is running them, so its autoclose, a creature or a trigger on that machine
-cannot move it alone. A client's own press, hit or pry of a door never runs on its copy either: the
+cannot move it alone. A client's copy of a light group likewise: its `runTrigger` is refused unless
+the group lane's own apply is running it, so a switch pressed there, an eventer's flicker or that
+machine's own breaker cannot move the group; the switch still flips, and its bit reaches the host
+on the switch lane, whose replay of the press is what moves the host's group. A client's own press, hit or pry of a door never runs on its copy either: the
 script-body gate refuses the door's entry verb there and sends it to the host
 (`coop/interactables/door_verb_intent`), which
 runs the same verb on its own copy, so the door's own body decides it once -- its power gate with
@@ -294,7 +301,7 @@ own re-take is touched and an ejecting peer behaves exactly as it does in single
 
 | State | Owner | Shape |
 |---|---|---|
-| a door, a light group | the host | a door is sent at its own verbs, a light group by the host's poll; a client's own door verb is an intent the host runs |
+| a door, a light group | the host | each is sent at its own verbs; a client's own door verb is an intent the host runs, and its own group writes are refused |
 | a light switch, a lid, the garage, an appliance, a locker, the power panel | any peer | symmetric state edges, relayed |
 | a keypad's buffer and its accept | the presser | the input mirrored; the native chain replayed |
 | the turbine | the host | six floats a second |

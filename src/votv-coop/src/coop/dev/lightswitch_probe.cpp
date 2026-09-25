@@ -180,7 +180,8 @@ void RunGroupApplySelftest() {
     const std::wstring key = LS::GetKeyString(root);
     bool before = false;
     if (!LS::TryReadActive(root, before)) { UE_LOGW("[lightswitch_probe] GROUP SELFTEST: isActive unreadable -- SKIPPED"); return; }
-    const bool gatePrior = LS::GetGroupGate(root);
+    bool gatePrior = true;
+    if (!LS::TryReadBreaker(root, gatePrior)) { UE_LOGW("[lightswitch_probe] GROUP SELFTEST: breaker unreadable -- SKIPPED"); return; }
 
     int pass = 0, fail = 0;
     auto check = [&](const char* what, bool ok) {
@@ -188,13 +189,18 @@ void RunGroupApplySelftest() {
         else    { ++fail; UE_LOGE("[lightswitch_probe] GROUP SELFTEST  FAIL %s", what); }
     };
 
-    // 1. THE DEFECT: with the gate shut, the switch's own verb cannot move the group.
-    // RAII for the same reason the production path uses it -- three ProcessEvent calls happen
-    // inside this scope and a fault in any of them would otherwise leave the gate shut forever,
-    // in a field that is save-persistent.
+    // 1. THE DEFECT: with the gate shut, the switch's own verb cannot move the group. The gate is
+    // shut through the group's own setActive, and put back by RAII: three ProcessEvent calls happen
+    // inside this scope, and a fault in any of them would otherwise leave the gate shut forever, in
+    // a field that is save-persistent.
     {  // the hold's scope: everything needing the gate shut happens inside it
-    LS::ScopedGroupGateShut hold(root);
-    check("gate reads back shut after the scoped shut", hold.shut() && LS::GetGroupGate(root) == false);
+    struct Hold {
+        void* root; bool prior;
+        ~Hold() { LS::CallSetBreaker(root, prior); }
+    } hold{root, gatePrior};
+    LS::CallSetBreaker(root, false);
+    bool gateNow = true;
+    check("gate reads back shut after the group's setActive(false)", LS::TryReadBreaker(root, gateNow) && !gateNow);
     // Assert the DISPATCH happened before asserting that it changed nothing. Without this,
     // "the gate correctly refused" and "the call never resolved" are the same green -- and the
     // second one is the likelier failure after a game update renames the verb.
@@ -219,7 +225,8 @@ void RunGroupApplySelftest() {
 
     // 3. Assert the restore ACTUALLY happened rather than trusting that the destructor ran:
     //    "it leaves nothing behind" is the claim that matters, so it gets its own assertion.
-    check("gate restored to its prior value at scope exit", LS::GetGroupGate(root) == gatePrior);
+    bool gateAfter = !gatePrior;
+    check("gate restored to its prior value at scope exit", LS::TryReadBreaker(root, gateAfter) && gateAfter == gatePrior);
 
     UE_LOGI("[lightswitch_probe] GROUP SELFTEST: %s (%d passed, %d failed) key='%ls' gateWas=%d isActiveWas=%d",
             fail == 0 ? "ALL PASS" : "FAILED", pass, fail, key.c_str(), gatePrior ? 1 : 0, before ? 1 : 0);

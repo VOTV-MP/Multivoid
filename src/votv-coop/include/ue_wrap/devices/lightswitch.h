@@ -69,11 +69,6 @@ bool CallUse(void* sw);                     // use() -- flips the switch visual 
 // The GROUP's live state is trigger_lightRoot_C::isActive, and until now nothing on either
 // peer owned or reconciled it. These are the primitives the group lane drives it with.
 
-// The lightRoot this switch fires. The BP reads `objects[0]` (the inherited
-// triggerBase_C::objects array) and casts it to the int_Ttrigger interface; the older
-// `Trigger` pointer field is the fallback. nullptr if neither resolves to a lightRoot.
-void* ResolveSwitchRoot(void* sw);
-
 // runTrigger(owner, index) on a lightRoot. The BP switches on index:
 //   0 -> `IFNOT(active) POP` then isActive := !isActive; updLig()   (the GATED toggle a switch uses)
 //   1 -> isActive := true;  updLig()                                 (absolute ON,  UNGATED)
@@ -87,36 +82,12 @@ bool CallRunTrigger(void* root, int32_t index);
 // that gate governs LOCAL presses, not what this peer is told the world looks like.
 bool ApplyGroupState(void* root, bool on);
 
-// Read/write the group's ENABLE GATE (`active`) -- used to make a CLIENT's native press
-// presentation-only for the duration of one input dispatch, the same lever the door lane
-// pulls on Adoor_C::Active. Never leave it cleared past the dispatch: a gate left shut is a
-// player whose light switches silently stopped working.
-bool GetGroupGate(void* root);
-void SetGroupGate(void* root, bool open);
+// The group's breaker (`active`): runTrigger's index 0 toggles only while it is set, and the absolute
+// setters ignore it. Read by name; false when it did not resolve. Game thread.
+bool TryReadBreaker(void* root, bool& open);
 
-// Is gating actually AVAILABLE? SetGroupGate fails CLOSED on an unresolved offset -- which is
-// right for the WRITE and wrong for the CALLER, because a suppression that silently did not
-// happen fails OPEN. Ask this before relying on the guard; do not infer it from GetGroupGate,
-// which reports the authored default when it cannot read.
-bool GroupGateAvailable();
-
-// RAII gate hold: shut on construction, restore the PRIOR value on destruction. Use this and
-// never a straight-line save/shut/restore -- the DLL is built /EHa, so the __except unwind at
-// the ProcessEvent task boundary still runs C++ destructors, and a UFunction call that faults
-// between a manual shut and its restore would otherwise leave the gate shut FOREVER. `active`
-// is save-persistent, so that leak is written into the player's save and follows them into
-// single-player: every switch in that group flips and clicks and moves no light, permanently.
-class ScopedGroupGateShut {
-public:
-    explicit ScopedGroupGateShut(void* root);
-    ~ScopedGroupGateShut();
-    ScopedGroupGateShut(const ScopedGroupGateShut&) = delete;
-    ScopedGroupGateShut& operator=(const ScopedGroupGateShut&) = delete;
-    bool shut() const { return shut_; }   // false = the guard is NOT in force (see GroupGateAvailable)
-private:
-    void* root_ = nullptr;
-    bool  prior_ = true;
-    bool  shut_  = false;
-};
+// The group's own setActive(bool), the verb that sets its breaker. Game thread. False on
+// null/unresolved.
+bool CallSetBreaker(void* root, bool open);
 
 }  // namespace ue_wrap::lightswitch

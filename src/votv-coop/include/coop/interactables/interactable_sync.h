@@ -47,6 +47,18 @@ void* ResolveDoor(const std::wstring& key);
 // sends the state it left when that changed. Game thread.
 void OnDoorStateVerb(void* door);
 
+// The light group lane's key for `root`, or "" when the lane does not index it in the current world.
+// Game thread.
+std::wstring LightGroupKey(void* root);
+
+// Host: a group's runTrigger just ran on `root` (coop/interactables/lightgroup_verbs); the group lane
+// sends the state it left when that changed. Game thread.
+void OnLightGroupVerb(void* root);
+
+// Whether the light group lane's own apply is running on `root` now: a client's copy of a group
+// refuses every runTrigger but that one. Game thread.
+bool ApplyingLightGroup(void* root);
+
 // HOST-only: snapshot the FULL current state (open AND closed / on AND off) of
 // every indexed instance (all channels) to a freshly connected client `peerSlot`.
 // A joiner loads its own save, so a host-turned-OFF switch (from a saved/default
