@@ -97,6 +97,7 @@ DWORD WINAPI WalkThread(LPVOID arg) {
 void StartWalk(const ue_wrap::FVector& to) {
     g_walk = std::make_shared<Walk>();
     g_walk->goal.targetPos = to;
+    g_walk->goal.epoch = coop::director::WalkEpoch();  // the walk ends with this session (EndWalks)
     g_walk->goal.reachCm = kReachCm;
     auto* arg = new std::shared_ptr<Walk>(g_walk);
     if (HANDLE t = ::CreateThread(nullptr, 0, &WalkThread, arg, 0, nullptr)) ::CloseHandle(t);
@@ -395,10 +396,6 @@ void Tick(coop::net::Session* s) {
 
 void OnDisconnect() {
     ++g_session;
-    if (g_walk) {  // the worker still holds it: the director's run ends at its next tick
-        g_walk->goal.failed = true;
-        g_walk->goal.failReason = "session ended";
-    }
     g_armMs = 0;
     g_step = Step::Arm;
     g_stepTicks = 0;

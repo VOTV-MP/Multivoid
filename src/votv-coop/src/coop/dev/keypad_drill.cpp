@@ -47,10 +47,15 @@ constexpr int   kCandidates = 14;      // the nearest keypads by straight distan
 enum class Leg { Press, Accept, Cancel, Deny, Tail };
 enum class Phase { Unpicked, Walking, Typing, Landing, Done };
 
-// What the walker thread hands the game thread: the keypad it stood at, or that it could not.
-std::atomic<void*> g_arrivedAt{nullptr};
-std::atomic<int>   g_walkResult{0};   // 0 walking, 1 arrived, 2 no keypad or no arrival
-std::atomic<bool>  g_walkerStarted{false};
+// One walk: the walker thread's own record of the keypad it stood at, or that it could not. The game thread
+// holds the current one and lets go of it at a session's end, so a walker still out writes only into its
+// own; its walk carries the director's epoch of that session, which the session's end moves past.
+struct Walk {
+    std::atomic<void*> arrivedAt{nullptr};
+    std::atomic<int>   result{0};  // 0 walking, 1 arrived, 2 no keypad or no arrival
+    uint32_t           epoch = 0;
+};
+std::shared_ptr<Walk> g_walk;  // game thread only
 
 void*        g_lock = nullptr;
 int32_t      g_lockIdx = -1;
@@ -184,9 +189,11 @@ void* LateKeypad(std::wstring& keyOut) {
 int WalkSeconds(float routeCm) { return std::clamp(static_cast<int>(routeCm / 100.f) + 60, 90, 900); }
 
 // The client walks to its keypad with the director, as a player would stand at it.
-DWORD WINAPI WalkerThread(LPVOID) {
+DWORD WINAPI WalkerThread(LPVOID arg) {
+    const std::shared_ptr<Walk> walk = *std::unique_ptr<std::shared_ptr<Walk>>(static_cast<std::shared_ptr<Walk>*>(arg));
     auto goal = std::make_shared<DR::DirectorGoal>();
     goal->reachCm = kStandCm;
+    goal->epoch = walk->epoch;
     auto len = std::make_shared<float>(0.f);
     const int picked = GT::RunAndWait([goal, len](std::atomic<int>& done) {
         void* p = coop::players::Registry::Get().Local();
@@ -198,7 +205,7 @@ DWORD WINAPI WalkerThread(LPVOID) {
         done.store(PickReachableKeypad(p, at, *goal, *len) ? 1 : 2);
     });
     if (picked != 1) {
-        g_walkResult.store(2);
+        walk->result.store(2);
         return 0;
     }
     UE_LOGI("[KEYPAD-DRILL] client walks to a keypad at (%.0f,%.0f,%.0f), a %.0fcm route", goal->targetPos.X,
@@ -207,11 +214,11 @@ DWORD WINAPI WalkerThread(LPVOID) {
     DR::AddWalkToProcesses(mgr, *goal);
     const bool at = mgr.Run(*goal, WalkSeconds(*len)) && goal->reached;
     if (!at) {
-        g_walkResult.store(2);
+        walk->result.store(2);
         return 0;
     }
-    g_arrivedAt.store(goal->targetActor);
-    g_walkResult.store(1);
+    walk->arrivedAt.store(goal->targetActor);
+    walk->result.store(1);
     return 0;
 }
 
@@ -533,21 +540,30 @@ void Tick(coop::net::Session* session) {
     }
     if (g_phase == Phase::Unpicked) {
         Census("at the start");
-        if (!g_walkerStarted.exchange(true)) {
-            if (HANDLE h = ::CreateThread(nullptr, 0, &WalkerThread, nullptr, 0, nullptr)) ::CloseHandle(h);
+        if (!g_walk) {
+            auto walk = std::make_shared<Walk>();
+            walk->epoch = DR::WalkEpoch();
+            auto* arg = new std::shared_ptr<Walk>(walk);
+            if (HANDLE h = ::CreateThread(nullptr, 0, &WalkerThread, arg, 0, nullptr)) {
+                ::CloseHandle(h);
+            } else {
+                delete arg;
+                walk->result.store(2);
+            }
+            g_walk = std::move(walk);
         }
         g_phase = Phase::Walking;
         return;
     }
     if (g_phase == Phase::Walking) {
-        const int result = g_walkResult.load();
+        const int result = g_walk ? g_walk->result.load() : 2;
         if (result == 0) return;
         if (result == 2) {
             UE_LOGW("[KEYPAD-DRILL] client: no keypad reached -- INCONCLUSIVE");
             Done("no keypad reached");
             return;
         }
-        g_lock = g_arrivedAt.load();
+        g_lock = g_walk->arrivedAt.load();
         g_lockIdx = R::InternalIndexOf(g_lock);
         g_key = coop::keypad_sync::KeypadKey(g_lock);
         PL::ReadState(g_lock, g_last);
@@ -603,10 +619,8 @@ void OnDisconnect() {
     g_failures = 0;
     g_lateDone = false;
     g_watched.clear();
-    // A walker still running finishes its walk; its result is for the session that started it.
-    g_walkerStarted.store(false);
-    g_walkResult.store(0);
-    g_arrivedAt.store(nullptr);
+    // A walker still out writes into its own record, and its walk ends with the session (EndWalks).
+    g_walk.reset();
     g_phase = Phase::Unpicked;
 }
 

@@ -2,6 +2,7 @@
 // made them.
 
 #include "coop/dev/dev_lanes.h"
+#include "coop/dev/director/director.h"  // EndWalks: a drill's walks end with their session
 
 #include "coop/dev/atv_probe.h"
 #include "coop/dev/blackout_drill.h"  // [dev] a blackout on both peers, for the lanes' dev probe
@@ -78,6 +79,8 @@ void Install(coop::net::Session& session) {
 }
 
 void EndSession() {
+    // A drill's director walks end with their session: the pawn they drive outlives it.
+    coop::director::EndWalks();
     // The two prop-seam probes print their run totals before the state they describe is cleared.
     coop::dev::prop_birth_key_probe::EmitVerdict();
     coop::dev::spawn_match_probe::EmitVerdict();

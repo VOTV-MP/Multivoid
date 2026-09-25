@@ -46,12 +46,16 @@ constexpr int kHostSettleTicks   = 600;  // ~10 s past the host's player standin
 constexpr float kDrillFood = 37.f, kDrillSleep = 61.f;
 constexpr int kMaxTries    = 8;     // per wanted kind: a full inventory refuses everything, so never one dispatch per prop in the world
 
+// The director's walk epoch read on the game thread before the walker starts: its walk ends with that session.
+std::atomic<uint32_t> g_walkEpoch{0};
+
 // The walk: the director's route over the NavMesh to a reachable point some way off, so the pose
 // the profile records is somewhere the start point is not. A worker thread, since the director's
 // Run blocks; every engine touch inside it is posted to the game thread by the director itself.
 DWORD WINAPI WalkAwayThread(LPVOID /*arg*/) {
     namespace D = coop::director;
     auto goal = std::make_shared<D::DirectorGoal>();
+    goal->epoch = g_walkEpoch.load(std::memory_order_acquire);
     auto picked = std::make_shared<std::atomic<int>>(0);
     ue_wrap::game_thread::Post([goal, picked] {
         // A point the NavMesh can route to, eight ways round at 15 m: the route's own last point
@@ -147,6 +151,7 @@ void Tick(coop::net::Session* session) {
     UE_LOGI("[INV-PICKUP-DRILL] vitals set to food=%.0f sleep=%.0f -> %hs", kDrillFood, kDrillSleep,
             wrote ? "written" : "WRITE FAILED");
 
+    g_walkEpoch.store(coop::director::WalkEpoch(), std::memory_order_release);
     if (HANDLE t = ::CreateThread(nullptr, 0, &WalkAwayThread, nullptr, 0, nullptr)) ::CloseHandle(t);
 }
 

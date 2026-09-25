@@ -21,6 +21,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace coop::director {
@@ -59,6 +60,10 @@ struct DirectorGoal {
     bool              straight    = false;
     bool              failed      = false;    // set by any process on a hard failure
     const char*       failReason  = "";
+    // The walks' epoch this walk belongs to: WalkEpoch() read on the game thread when its drill started
+    // it, inside its session. A run whose epoch EndWalks has moved past fails at its next tick. Unset,
+    // the run takes the epoch it starts in.
+    std::optional<uint32_t> epoch;
     // The route the Goto last walked, its start first, refilled on each path it takes: ground the
     // walker has crossed, for a scenario that needs a point it can surely stand on again.
     std::vector<ue_wrap::FVector> route;
@@ -86,12 +91,19 @@ public:
 class ControlManager {
 public:
     void Add(std::unique_ptr<IProcess> proc);
-    // Drive until goal.grabbed / goal.failed / the deadline. Returns true iff goal.grabbed.
+    // Drive until goal.grabbed / goal.reached / goal.failed / the deadline, or until the walks' epoch
+    // moves past the goal's. Returns true iff the goal was grabbed or reached.
     bool Run(DirectorGoal& goal, int maxSeconds);
 private:
     std::vector<std::unique_ptr<IProcess>> procs_;
     IProcess* inControl_ = nullptr;
 };
+
+// The walks' epoch, and its end: EndWalks fails every run in flight at its next tick, and every run whose
+// goal carries an earlier epoch. A walk belongs to the session its drill runs in, and the pawn it drives
+// outlives that session, so the session's end calls it. Any thread.
+uint32_t WalkEpoch();
+void EndWalks();
 
 // Build the walked-grab process set for `goal` and add it to `mgr`
 // (ClearHand prio 100 > Goto prio 50 > Grab prio 40). In proc_walkgrab.cpp.

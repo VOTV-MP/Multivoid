@@ -129,6 +129,8 @@ std::chrono::steady_clock::time_point g_nextSample{};
 int g_puppetEntries = 0;   // readings in which a puppet was newly inside a door's sensor
 
 std::atomic<bool> g_walkerStarted{false};
+// The director's walk epoch when the walker started, inside its session: every walk it makes belongs there.
+std::atomic<uint32_t> g_walkerEpoch{0};
 
 // The milestone the rig itself waits on, so the drill starts on the world it measures: a client
 // once the host's snapshot is applied, the host once a client is in.
@@ -409,6 +411,7 @@ DWORD WINAPI WalkerThread(LPVOID) {
     };
     auto pick = std::make_shared<Pick>();
     auto toDoor = std::make_shared<DR::DirectorGoal>();
+    toDoor->epoch = g_walkerEpoch.load(std::memory_order_acquire);
     toDoor->reachCm = kReachCm;
     const int picked = GT::RunAndWait([pick, toDoor](std::atomic<int>& done) {
         void* p = coop::players::Registry::Get().Local();
@@ -498,6 +501,7 @@ DWORD WINAPI WalkerThread(LPVOID) {
     struct Pass { bool opened = false, inside = false, away = false; int listedBefore = -1, kept = -1, closedMs = -1; };
     auto walkTo = [&](const ue_wrap::FVector& at, bool straight) {
         auto goal = std::make_shared<DR::DirectorGoal>();
+        goal->epoch = g_walkerEpoch.load(std::memory_order_acquire);
         goal->targetPos = at;
         goal->reachCm = kReachCm;
         goal->straight = straight;
@@ -546,6 +550,7 @@ DWORD WINAPI WalkerThread(LPVOID) {
             return r;
         }
         auto inDoor = std::make_shared<DR::DirectorGoal>();
+        inDoor->epoch = g_walkerEpoch.load(std::memory_order_acquire);
         inDoor->targetPos = stand;
         inDoor->reachCm = kInSensorCm;
         inDoor->straight = true;  // a step in plain view, before the door's own five seconds run out
@@ -694,6 +699,7 @@ void Tick(coop::net::Session* session) {
     if (!g_listed) ListDoors();
     Sample();
     if (coop::roster::LocalIsHost() == WalkerIsHost() && !g_walkerStarted.exchange(true)) {
+        g_walkerEpoch.store(DR::WalkEpoch(), std::memory_order_release);
         if (HANDLE h = ::CreateThread(nullptr, 0, &WalkerThread, nullptr, 0, nullptr))
             ::CloseHandle(h);
     }

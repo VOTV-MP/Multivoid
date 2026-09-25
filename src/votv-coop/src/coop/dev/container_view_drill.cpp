@@ -155,14 +155,22 @@ bool PickAtv(void* player, const FVector& at, DR::DirectorGoal& goal, float& len
 
 int WalkSeconds(float routeCm) { return std::clamp(static_cast<int>(routeCm / 100.f) + 60, 90, 900); }
 
+// What StartWalk hands its walker: the walk, the generation it belongs to, and the director's walk epoch read on
+// the game thread as it started, so the walk ends with the session that asked for it.
+struct WalkArg {
+    Walk     walk;
+    uint32_t gen;
+    uint32_t epoch;
+};
+
 // The walks, with the director: to the ATV, then back to where the client started.
 DWORD WINAPI WalkerThread(LPVOID arg) {
-    // The walk and the generation it belongs to, packed by StartWalk.
-    const uintptr_t packed = reinterpret_cast<uintptr_t>(arg);
-    const auto walk = static_cast<Walk>(packed & 1u);
-    const uint32_t gen = static_cast<uint32_t>(packed >> 1);
+    const WalkArg a = *std::unique_ptr<WalkArg>(static_cast<WalkArg*>(arg));
+    const Walk walk = a.walk;
+    const uint32_t gen = a.gen;
     auto goal = std::make_shared<DR::DirectorGoal>();
     goal->reachCm = kStandCm;
+    goal->epoch = a.epoch;
     auto len = std::make_shared<float>(0.f);
     auto idx = std::make_shared<int32_t>(-1);
     if (walk == Walk::ToAtv) {
@@ -199,9 +207,10 @@ void StartWalk(Walk walk) {
         g_walk.result = 0;
         gen = g_walk.gen;
     }
-    const uintptr_t packed = (static_cast<uintptr_t>(gen) << 1) | static_cast<uintptr_t>(walk);
-    HANDLE h = ::CreateThread(nullptr, 0, &WalkerThread, reinterpret_cast<LPVOID>(packed), 0, nullptr);
+    auto* arg = new WalkArg{walk, gen, DR::WalkEpoch()};
+    HANDLE h = ::CreateThread(nullptr, 0, &WalkerThread, arg, 0, nullptr);
     if (!h) {
+        delete arg;
         // No walker, no walk: the outcome says so at once, rather than the drill waiting on a result
         // nothing will publish.
         UE_LOGW("[CVIEW-DRILL] client: the walker thread did not start (error %lu)", ::GetLastError());

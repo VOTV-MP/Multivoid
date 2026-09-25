@@ -148,6 +148,7 @@ void StartWalk(const ue_wrap::FVector& to, float reachCm) {
     g_walk = std::make_shared<Walk>();
     g_walk->goal.targetPos = to;
     g_walk->goal.reachCm = reachCm;
+    g_walk->goal.epoch = coop::director::WalkEpoch();  // the walk ends with this session (EndWalks)
     auto* arg = new std::shared_ptr<Walk>(g_walk);
     if (HANDLE t = ::CreateThread(nullptr, 0, &WalkThread, arg, 0, nullptr)) ::CloseHandle(t);
     else { delete arg; g_walk->state.store(2); }

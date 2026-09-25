@@ -395,6 +395,7 @@ DWORD WINAPI WalkThread(LPVOID arg) {
 void StartWalk(const ue_wrap::FVector& to, float reachCm, bool carry) {
     g_walk = std::make_shared<Walk>();
     g_walk->goal.targetPos = to;
+    g_walk->goal.epoch = coop::director::WalkEpoch();  // the walk ends with this session (EndWalks)
     g_walk->goal.reachCm = reachCm;
     g_walk->carry = carry;
     auto* arg = new std::shared_ptr<Walk>(g_walk);
@@ -695,10 +696,6 @@ void OnDisconnect() {
     g_probeTicks = -1;
     g_afterTicks = -1;
     g_tailEnded = false;
-    if (g_walk) {  // the worker still holds it: the director's run ends at its next tick
-        g_walk->goal.failed = true;
-        g_walk->goal.failReason = "session ended";
-    }
     g_walk.reset();
 }
 

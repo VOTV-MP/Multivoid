@@ -23,7 +23,12 @@ constexpr int kTickMs      = 4;     // near frame rate: AddMovementInput must re
                                     // frame ~9ms) brakes between inputs -> near-zero net speed (measured
                                     // -- a 20 ms tick gave ~5 cm/s). The game-thread round trip paces
                                     // the real rate; this just removes the extra sleep between frames.
+std::atomic<uint32_t> g_walkEpoch{0};  // EndWalks moves it; a run ends when it passes the run's own
 }  // namespace
+
+uint32_t WalkEpoch() { return g_walkEpoch.load(std::memory_order_acquire); }
+
+void EndWalks() { g_walkEpoch.fetch_add(1, std::memory_order_acq_rel); }
 
 void ControlManager::Add(std::unique_ptr<IProcess> proc) { procs_.push_back(std::move(proc)); }
 
@@ -34,10 +39,17 @@ bool ControlManager::Run(DirectorGoal& goal, int maxSeconds) {
     // kTickMs` ticks therefore ran a 60 s deadline for about 150 s, long enough for a caller's
     // own run to be killed while the walk it gave up on was still grinding.
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(maxSeconds);
+    const uint32_t epoch = goal.epoch.value_or(WalkEpoch());
     const char* lastDriver = "";
     // Each tick waits until its closure has run or faulted (GT::RunAndWait), so no closure outlives
     // this frame, and the references it holds are always live.
     for (int tick = 0; std::chrono::steady_clock::now() < deadline; ++tick) {
+        // The session this walk belongs to has ended: the pawn it drives is no longer the drill's.
+        if (WalkEpoch() != epoch) {
+            UE_LOGW("director: the walks were ended with their session -- run CANCELLED (tick=%d)", tick);
+            if (!goal.failed) { goal.failed = true; goal.failReason = "walks_ended"; }
+            return false;
+        }
         const int r = GT::RunAndWait([this, &goal, &lastDriver](std::atomic<int>& d) {
             PlayerContext ctx;
             if (!ctx.Refresh()) {
