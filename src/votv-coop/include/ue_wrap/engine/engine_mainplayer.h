@@ -61,6 +61,11 @@ struct MainPlayerGrabState {
 
 bool ReadMainPlayerGrabState(void* mainPlayer, MainPlayerGrabState& out);
 
+// The player's own updateHold: the hand item rebuilt from the save slot's first hold slot, the one
+// held before destroyed. A dev drill's equip, after ue_wrap/actors/inventory::WriteHeldItem.
+// False when the function does not resolve or the call fails. Game thread.
+bool CallMainPlayerUpdateHold(void* mainPlayer);
+
 // AmainPlayer_C::hitResult's actor -- the RAW interaction trace, the field the game's own tool
 // bodies break when they decide what a press is on. It is not the same answer as lookAtActor
 // below: that one is derived from this trace later in the tick and is skipped while a grab is

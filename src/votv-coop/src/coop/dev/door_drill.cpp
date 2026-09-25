@@ -5,6 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
 #include "coop/net/session.h"
+#include "coop/player/hand_item.h"        // the local hand, for the crowbar the hit phase takes
 #include "coop/player/players_registry.h"
 #include "coop/player/roster.h"
 #include "coop/session/join_progress.h"
@@ -14,8 +15,11 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/actors/inventory.h"          // the hold slot the crowbar is written to
 #include "ue_wrap/devices/door.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_mainplayer.h"  // the game's updateHold
+#include "ue_wrap/world/weapon_catalog.h"      // what a crowbar's swing deals
 
 #include <windows.h>
 
@@ -63,8 +67,10 @@ constexpr int   kCloseWaitMs = 15000;
 // (damage / 25)^1.5 * 5 over a 0.01 s step, and the door opens once the right leaf is more than 90
 // from its open offset of 70 (door_C::addDamage): a 10-damage swing (the crowbar, a
 // mop, a broom; a player with nothing held does not swing) needs about 27 hits, 50 needs three.
+// The host's walker hits at 50; a client's hits are bounded by its held item's swing, so it swings a
+// crowbar at the most a crowbar's swing deals.
 constexpr float kHitDamage   = 50.f;
-constexpr int   kHitMax      = 8;
+constexpr int   kHitMax      = 40;
 constexpr DWORD kHitEveryMs  = 700;
 constexpr int   kReadMax     = 16;
 
@@ -240,6 +246,29 @@ int ReadOpen(void* door, bool settled) {
 int ReadOpenIntent(void* door) { return ReadOpen(door, false); }
 
 // Waits until this copy reads `want`, up to `boundMs`; the milliseconds it took, or -1 at the bound.
+// Whether the local hand holds an item of class `cls` (nullptr: holds nothing), within `boundMs`.
+bool WaitForHand(const wchar_t* cls, int boundMs) {
+    for (int waited = 0; waited <= boundMs; waited += 100) {
+        const int held = GT::RunAndWait([cls](std::atomic<int>& done) {
+            void* a = coop::hand_item::LocalHandActor();
+            done.store(cls ? (a && R::ClassNameOf(a) == cls ? 1 : 2) : (a ? 2 : 1));
+        });
+        if (held == 1) return true;
+        ::Sleep(100);
+    }
+    return false;
+}
+
+// The local hand takes `item` of class `cls` (list_props' row name and its class), or empties with
+// "None" and no class: the hold slot written, then the game's own updateHold.
+bool TakeIntoHand(const wchar_t* item, const wchar_t* cls) {
+    return GT::RunAndWait([item, cls](std::atomic<int>& done) {
+        void* p = coop::players::Registry::Get().Local();
+        done.store(p && ue_wrap::inventory::WriteHeldItem(item, cls) && ue_wrap::engine::CallMainPlayerUpdateHold(p)
+                       ? 1 : 2);
+    }) == 1;
+}
+
 int WaitForOpen(void* door, int want, int boundMs, bool settled = false) {
     for (int waited = 0; waited <= boundMs; waited += 100) {
         if (ReadOpen(door, settled) == want) return waited;
@@ -563,20 +592,55 @@ DWORD WINAPI WalkerThread(LPVOID) {
     const Pass inSettled = outSettled.closedMs >= 0 ? runPass("approach, after the swing", false, true) : Pass{};
 
     // HIT: back at the approach point, a weapon's hits until the door's pry opens it. A client's copy
-    // must not move under its own hits: each one is refused there and run on the host.
+    // must not move under its own verbs: each one is refused there and run on the host, which holds a
+    // pry to a crowbar last held and a hit to what the held item's swing deals (door_verb_intent).
     const bool back2 = inSettled.closedMs >= 0 && walkTo(toDoor->targetPos, /*straight*/ false);
+    const bool client = !coop::roster::LocalIsHost();
+    auto hitOnce = [door](float damage) {
+        GT::RunAndWait([door, damage](std::atomic<int>& done) {
+            void* p = coop::players::Registry::Get().Local();
+            done.store(p && D::CallHit(door, p, damage) ? 1 : 2);
+        });
+    };
+    auto pryOnce = [door]() {
+        GT::RunAndWait([door](std::atomic<int>& done) { done.store(D::CallCrowbarOpen(door) ? 1 : 2); });
+    };
+    float hitDamage = kHitDamage;
+    bool armed = !client;
+    if (back2 && client) {
+        const bool empty = WaitForHand(nullptr, 0);
+        pryOnce();
+        hitOnce(kHitDamage);
+        const bool stayed = WaitForOpen(door, 1, 1500) < 0;
+        UE_LOGI("[DOOR-DRILL] client UNARMED door=%ls: a pry and a hit of %.0f with %s, the door %s", pick->door.c_str(),
+                kHitDamage, empty ? "nothing held" : "an item held (not a clean test)",
+                stayed ? "stayed shut, as it should" : "OPENED -- FAIL");
+        ue_wrap::weapon_catalog::Swing swing;
+        armed = TakeIntoHand(L"crowbar", L"prop_crowbar_C") && WaitForHand(L"prop_crowbar_C", 3000) &&
+                GT::RunAndWait([&swing](std::atomic<int>& done) {
+                    done.store(ue_wrap::weapon_catalog::Lookup(L"crowbar", swing) && swing.canSwing ? 1 : 2);
+                }) == 1;
+        if (armed) hitDamage = swing.maxDamage;
+        UE_LOGI("[DOOR-DRILL] client ARMED=%d door=%ls: a crowbar in hand, a swing of at most %.1f; one hit of "
+                "%.1f the host must cut", armed ? 1 : 0, pick->door.c_str(), hitDamage, hitDamage * 10.f);
+        if (armed) hitOnce(hitDamage * 10.f);
+    }
     int hitOpenedAt = -1;
-    if (back2) {
+    if (back2 && armed) {
         for (int hit = 1; hit <= kHitMax && hitOpenedAt < 0; ++hit) {
-            GT::RunAndWait([door](std::atomic<int>& done) {
-                void* p = coop::players::Registry::Get().Local();
-                done.store(p && D::CallHit(door, p, kHitDamage) ? 1 : 2);
-            });
+            hitOnce(hitDamage);
             if (WaitForOpen(door, 1, static_cast<int>(kHitEveryMs)) >= 0) hitOpenedAt = hit;
         }
     }
-    UE_LOGI("[DOOR-DRILL] %s HIT door=%ls: back at the approach=%d, opened at hit %d (damage %.0f each, %d at "
-            "most)", Side(), pick->door.c_str(), back2 ? 1 : 0, hitOpenedAt, kHitDamage, kHitMax);
+    UE_LOGI("[DOOR-DRILL] %s HIT door=%ls: back at the approach=%d, opened at hit %d (damage %.1f each, %d at "
+            "most)", Side(), pick->door.c_str(), back2 ? 1 : 0, hitOpenedAt, hitDamage, kHitMax);
+    if (back2 && client && armed) {
+        // The crowbar goes, as a pry takes it: the hand empty, a crowbar the last it held.
+        const bool stowed = TakeIntoHand(L"None", nullptr) && WaitForHand(nullptr, 3000);
+        pryOnce();
+        UE_LOGI("[DOOR-DRILL] client PRY door=%ls: the crowbar stowed=%d, a pry sent; the host runs it", pick->door.c_str(),
+                stowed ? 1 : 0);
+    }
     UE_LOGI("[DOOR-DRILL] %s sensor stubs reached the gate %d time(s), on any door", Side(),
             g_stubCalls.load(std::memory_order_relaxed));
     UE_LOGI("[DOOR-DRILL] %s DONE at=%d outsideMidSwing(before=%d kept=%d closedMs=%d) "

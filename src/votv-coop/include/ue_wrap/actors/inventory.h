@@ -108,4 +108,10 @@ int32_t LivePersonalStoreCount();
 // `saveSlot` is null or dead, GMalloc is unresolved, or there is no player slot. Game thread.
 bool ApplyToSaveObject(void* saveSlot, const PlayerInventory& inv);
 
+// Writes the live save slot's first hold slot, the hand, for a dev drill that takes an item into the
+// hand: the item's name (list_props' row) and its record's class, which is what the player's
+// updateHold spawns as the hand item ("None" and a null class empty the hand). False when the save
+// slot or its hold slot cannot be reached, or `classLeaf` names no loaded class. Game thread.
+bool WriteHeldItem(const std::wstring& name, const wchar_t* classLeaf);
+
 }  // namespace ue_wrap::inventory

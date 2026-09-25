@@ -177,6 +177,19 @@ void* ResolveSaveSlot() {
     return (save && R::IsLive(save)) ? save : nullptr;
 }
 
+bool WriteHeldItem(const std::wstring& name, const wchar_t* classLeaf) {
+    void* save = ResolveSaveSlot();
+    if (!save) return false;
+    const SR::Arr hd = SR::ReadArr(save, kOff_hold);
+    if (!hd.data || hd.num < 1) return false;
+    void* cls = classLeaf ? R::FindClass(classLeaf) : nullptr;
+    if (classLeaf && !cls) return false;
+    auto* slot = const_cast<uint8_t*>(hd.data);
+    SR::WriteFNameField(slot + kEquip_propName, name);
+    std::memcpy(slot + kEquip_data, &cls, sizeof(void*));  // the embedded Fstruct_save's class, its first member
+    return true;
+}
+
 bool ReadAll(PlayerInventory& out) {
     out.inventory.clear();
     out.equipment.clear();

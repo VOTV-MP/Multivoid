@@ -272,6 +272,14 @@ void* ReadPhysicsHandleGrabbedComponent(void* phc) {
     return comp;  // may be nullptr if the PHC has no current grabbed component
 }
 
+bool CallMainPlayerUpdateHold(void* mainPlayer) {
+    if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
+    void* fn = R::FindFunction(R::ClassOf(mainPlayer), L"updateHold");
+    if (!fn) return false;
+    ParamFrame f(fn);
+    return f.valid() && Call(mainPlayer, f);
+}
+
 bool ReadMainPlayerGrabState(void* mainPlayer, MainPlayerGrabState& out) {
     out = {};
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
