@@ -307,8 +307,8 @@ void TryArm() {
 }
 
 // This peer's share of the rollover, which its own machine keeps: the profile's days lived, the cycle's
-// midnights since its world loaded and the day's music flags. Said when the watch arms, then whenever a read, once a second,
-// finds them moved: the rollover writes them a frame or more after its DAY line.
+// midnights since its world loaded and the day's music flags. Said when the watch arms, then whenever a
+// read, once a second, finds them moved: the rollover writes them a frame or more after its DAY line.
 Outputs ReadOutputs() {
     Outputs o{};
     void* cycle = DNC::Cycle();

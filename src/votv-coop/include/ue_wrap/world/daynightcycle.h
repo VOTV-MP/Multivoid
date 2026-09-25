@@ -129,8 +129,8 @@ bool ReadSleeplessDaysOf(void* cycle, int32_t& out);
 bool WriteSleeplessDaysOf(void* cycle, int32_t v);
 
 // A save slot's musics[]: one flag a day's music sting, cleared by the sting's check as its time comes,
-// whether or not the sting plays. The rollover sets them all again. How many are set, of how many; and every one written `set`. False if the slot is null or the
-// member does not resolve.
+// whether or not the sting plays. The rollover sets them all again. How many are set, of how many; and
+// every one written `set`. False if the slot is null or the member does not resolve.
 bool ReadMusicsOf(void* saveSlot, int32_t& set, int32_t& count);
 bool WriteAllMusicsOf(void* saveSlot, bool set);
 
