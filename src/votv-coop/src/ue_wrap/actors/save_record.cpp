@@ -279,8 +279,8 @@ const ClassVerbs* VerbsFor(void* cls) {
     if (it != g_verbs.end()) return &it->second;
     ClassVerbs v;
     // The lineage FIRST: a class off the Aprop_C chain resolves nothing. FindDispatchFunction
-    // walks the whole object array once per level of the chain, and the key index this lane is
-    // driven from also holds trash piles, clumps and chip piles, none descended from Aprop_C.
+    // reads the function list of every level of the chain, and the key index this lane is driven
+    // from also holds trash piles, clumps and chip piles, none descended from Aprop_C.
     if (R::IsDescendantOfAny(cls, &g_propCls, 1)) {
         v.getData  = R::FindDispatchFunction(cls, L"getData", nullptr);
         v.loadData = R::FindDispatchFunction(cls, L"loadData", nullptr);

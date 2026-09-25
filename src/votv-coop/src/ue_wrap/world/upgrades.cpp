@@ -197,9 +197,8 @@ bool ApplyUpgradedHook() {
 int RefreshOpenRows() {
     void* cls = R::FindClass(kRowClass);
     if (!cls) return 0;
-    // The memoised lookup, not FindFunction: that one has no cache of any kind, so a plain call
-    // here would walk the whole object array on every purchase and on every mirror the client
-    // applies. This one holds the answer by slot and serial, and holds a miss as a miss.
+    // The memoised lookup: this runs on every purchase and on every mirror the client applies, and
+    // a hit renders no name. It holds the answer by slot and serial, and holds a miss as a miss.
     void* fn = R::FindDispatchFunctionCached(cls, kRowRefresh);
     if (!fn) return 0;
     struct Ctx { void* fn; int n; } ctx{ fn, 0 };

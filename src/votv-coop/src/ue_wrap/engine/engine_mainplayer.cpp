@@ -425,7 +425,7 @@ bool WriteMainPlayerGrabbingPair(void* mainPlayer, void* actor, void* component)
 bool SetPhysicsHandleTarget(void* phc, const FVector& location, const FRotator& rotation) {
     if (!phc || !R::IsLive(phc)) return false;
     // Resolved once, found or not: this runs every tick of a carry, and a miss must not turn into a
-    // class and function walk per tick.
+    // class walk and a function-list read per tick.
     static void* fn = nullptr;
     static bool  tried = false;
     if (!tried) {

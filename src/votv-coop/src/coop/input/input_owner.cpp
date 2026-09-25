@@ -122,9 +122,8 @@ bool UiInputModeUp() {
 // the client, which joined later, parked immediately. So it installs from Init on the first
 // posted task, and the 1 Hz tick retries a BOUNDED number of times.
 //
-// Bounded, and on the slow cadence, because a retry is not cheap: FindFunction has no result
-// cache and walks every UObject per call, so an unbounded 10 Hz retry would cost several times
-// what the scan it gates ever did. A seam that has not taken in ten tries is not going to.
+// Bounded, and on the slow cadence: a seam that has not taken in ten tries is not going to, and a
+// class that is not found costs a whole-array walk per try (FindClass caches only a hit).
 enum class SeamState { Pending, Installed, GaveUp };
 SeamState g_seam = SeamState::Pending;
 int  g_seamTries = 0;

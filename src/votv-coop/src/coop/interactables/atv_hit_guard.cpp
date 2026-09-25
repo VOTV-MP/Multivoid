@@ -114,7 +114,7 @@ bool OnAtvHitPre(void* self, void* params) { return NeuterHit(self, params, Idx)
 
 void InstallHitGuard() {
     if (g_hitGuardArmed.load(std::memory_order_relaxed)) return;
-    // The attempt is latched, not only the success: below are seven object-array walks and a full
+    // The attempt is latched, not only the success: below are seven function lookups and a full
     // ini read, and an armed flag that is false on every failure path would redo them on every
     // call in a session where the delegates do not resolve.
     static std::atomic<bool> sTried{false};

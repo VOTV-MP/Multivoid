@@ -30,7 +30,10 @@ void Tick() {
     if (ue_wrap::object_index::Backlog() != 0) return;
     s_doneGen = gen;
     void* classCls = R::FindClass(L"Class");
-    if (!classCls) return;
+    if (!classCls) {
+        UE_LOGW("fn_parity: VERDICT FAIL (the Class class did not resolve; nothing was judged) world gen=%u", gen);
+        return;
+    }
     int functions = 0, same = 0, shown = 0;
     for (void* fn : R::FindObjectsByClass(L"Function")) {
         const int32_t idx = R::InternalIndexOf(fn);

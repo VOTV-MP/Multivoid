@@ -26,8 +26,7 @@ int32_t g_offBodyDirt = -1, g_offFuel = -1, g_offHealth = -1;
 int32_t g_offHasSpare = -1, g_offSpareDur = -1, g_offSpareDirt = -1, g_offSpareFixes = -1;
 int32_t g_offSkip = -1;
 
-// The four reducer UFunctions, resolved once (R::FindFunction has NO result cache -- the
-// browser perf lane measured a full GUObjectArray walk per call; never resolve in a hot path).
+// The four reducer UFunctions, resolved with the offsets in Resolve().
 void* g_fnUpdTires = nullptr;
 void* g_fnUpdDirt = nullptr;
 void* g_fnUpdSpare = nullptr;

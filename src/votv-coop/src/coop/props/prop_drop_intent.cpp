@@ -320,8 +320,7 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (g_installed) return;
 
-    // Throttle the object-array walks while the UFunction is unresolved (it loads on gameplay
-    // entry).
+    // Throttle a retry while GameplayStatics does not resolve: a class miss walks the whole array.
     static int s_retry = 0;
     if (s_retry > 0) { --s_retry; return; }
 

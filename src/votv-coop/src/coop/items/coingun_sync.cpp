@@ -233,8 +233,8 @@ void PrepareCoinMirror(void* coin) {
     if (!sphere) return;
     // Resolved on the declaring class: FindFunction matches the owning class exactly and does not
     // climb, and SetSimulatePhysics is declared on UPrimitiveComponent, so asking the sphere's own
-    // class could never succeed, and each miss was a full walk, once per mirrored coin. The
-    // negative is latched, so a failure costs one walk.
+    // class could never succeed. The negative is latched, so a failure is said once, not once per
+    // mirrored coin.
     static bool sSetSimResolveFailed = false;
     if (!g_setSimFn && !sSetSimResolveFailed) {
         if (void* primCls = R::FindClass(L"PrimitiveComponent"))
@@ -242,8 +242,8 @@ void PrepareCoinMirror(void* coin) {
         if (!g_setSimFn) {
             sSetSimResolveFailed = true;
             UE_LOGW("coingun[mirror]: SetSimulatePhysics unresolved on UPrimitiveComponent -- mirrors "
-                    "will keep simulating and may drift from the host's pose. Latched: this walk is "
-                    "not repeated per coin.");
+                    "will keep simulating and may drift from the host's pose. Latched: this lookup "
+                    "is not repeated per coin.");
         }
     }
     if (!g_setSimFn) return;
@@ -264,10 +264,10 @@ std::mutex g_birthMu;
 std::unordered_map<void*, int32_t> g_pointsOffByClass;   // UClass* -> the points offset (-1 = absent)
 std::unordered_map<void*, int32_t> g_meshOffByClass;     // UClass* -> the mesh component offset
 void* g_getMaterialFn = nullptr;                          // UPrimitiveComponent::GetMaterial
-bool  g_getMaterialResolveFailed = false;                 // the negative latched; a miss is a full walk
+bool  g_getMaterialResolveFailed = false;                 // the negative latched, its warning said once
 
-// The declaring class, resolved once for this file, positive and negative both latched: two
-// functions each resolving it cost two full walks on a client's first mirrored coin.
+// The declaring class, resolved once for this file, positive and negative both latched: a native
+// class lives as long as the process, and a miss would walk the whole array once per coin.
 void* g_primCompCls = nullptr;
 bool  g_primCompResolveFailed = false;
 
@@ -354,7 +354,7 @@ void DescribeCoin(void* coin, int32_t& outPoints, std::wstring& outMaterial) {
     if (!mesh) return;
 
     // Declared on UPrimitiveComponent, and FindFunction does not climb, so the declarer is asked.
-    // The resolve happens outside the lock (a full walk, and idempotent), and the result is read
+    // The resolve happens outside the lock (a list read, and idempotent), and the result is read
     // into a local under it, since the pointer is plain storage.
     void* getMatFn = nullptr;
     {
@@ -371,7 +371,7 @@ void DescribeCoin(void* coin, int32_t& outPoints, std::wstring& outMaterial) {
                 g_getMaterialResolveFailed = true;
                 UE_LOGW("coingun[birth]: UPrimitiveComponent::GetMaterial unresolved -- the birth "
                         "instrument will print mat='<unresolved>' for the rest of this session. "
-                        "Latched: this walk is not repeated per coin.");
+                        "Latched: this lookup is not repeated per coin.");
             }
         }
         getMatFn = g_getMaterialFn;
@@ -563,9 +563,9 @@ void Install(coop::net::Session* session) {
     // and sellObject, the collect lane the coin's overlap delegate, so either can resolve first,
     // and gating on one latch alone would strand the other.
     if (g_installed.load(std::memory_order_acquire) && internal::CollectInstalled()) return;
-    // This runs at the pump rate, and every resolve below is a full walk with a name render per
-    // entry; in a world where the coin class is not resident (it loads with the gun asset) that
-    // would be several walks per tick, so the retry is bound to about 1 Hz.
+    // This runs at the pump rate, and a class resolve below walks the whole array on a miss; in a
+    // world where the coin class is not resident (it loads with the gun asset) that would be
+    // several walks per tick, so the retry is bound to one tick in 125, about every 2 s.
     static uint32_t sResolveN = 0;
     if ((sResolveN++ % 125u) != 0u) return;
 

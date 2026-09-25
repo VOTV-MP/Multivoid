@@ -317,7 +317,7 @@ bool WorldActorSuppress_Interceptor(void* self, void* params) {
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (g_installed.load(std::memory_order_acquire)) return;
-    // The unresolved-window retries are throttled, since each Find walks the object array. Unlike
+    // The unresolved-window retries are throttled, since a class miss walks the object array. Unlike
     // npc_sync this waits only for the engine-core spawn path, not the actor classes, so it
     // resolves promptly.
     static int s_retry = 0;
