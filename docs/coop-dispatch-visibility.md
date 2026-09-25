@@ -27,8 +27,8 @@ it on itself.
 ## Visible and invisible
 
 **Visible**, reaching `ProcessEvent`: native engine code entering a function. Input action events,
-the engine lifecycle of dispatched actors (`ReceiveBeginPlay`, `ReceiveTick`), RPC-style and
-native-event entry points, the `GameplayStatics` calls when a native, engine or spawner caller
+the engine lifecycle of dispatched actors (`ReceiveBeginPlay`, `ReceiveTick`) on a class that
+implements the event, RPC-style and native-event entry points, the `GameplayStatics` calls when a native, engine or spawner caller
 issues them, multicast delegate broadcasts (a component hit, a widget click), an engine-initiated
 destroy, and the mod's own reflected calls, which re-enter the detour nested in the dispatch that
 made them, where the pump does not drain. `[V]`
@@ -36,6 +36,17 @@ made them, where the pump does not drain. `[V]`
 **Invisible**, routed through the Blueprint VM below the hook: the `EX_LocalVirtualFunction`,
 `EX_VirtualFunction`, `EX_FinalFunction`, `EX_LocalFinalFunction` and `EX_CallMath` opcodes, so
 every Blueprint-to-Blueprint call, a Blueprint self-destroy, and native C++ internal calls. `[RD]`
+
+**An actor's Blueprint event that its class does not implement never reaches the detour from the
+engine.** The event's C++ thunk calls the actor's virtual `ProcessEvent`, and `AActor::ProcessEvent`
+(the one direct caller of the hooked `UObject::ProcessEvent`, image+0x28D4530 on 0.9.0n) returns
+before that call for a function that is neither native nor carries script. An observer on
+`Actor.ReceiveEndPlay` counted none against 1188 `K2_DestroyActor` in a host's run; a class that
+implements the event dispatches its own function instead, another pointer. A component or a widget
+enters `UObject::ProcessEvent` either way, as does a reflected call of the mod's own, and its
+empty-script check comes after the detour. The PE
+registries say so as such a registration takes its slot (`game_thread: the observer on ... can
+never fire`); an actor's end of play has its native seam, `ue_wrap/engine/actor_end_play`. `[V]`
 
 The same `GameplayStatics` function is in both lists. `BeginDeferredActorSpawnFromClass` reaches
 `ProcessEvent` from a spawner's native caller and is `EX_CallMath` from a Blueprint graph; the pile
@@ -105,6 +116,7 @@ Never spawn from an observer directly; post it. `[V]`
 | `UGameplayStatics::OpenLevel` | a final call into a native | not to the detour; yes to a plain function detour | nothing of ours sits here any more: the author is a parameter of `loadLevel` and is gone by this hop, so the veto moved UP to the gate and this detour was deleted with its AOB `[V]` |
 | an engine-initiated destroy of a tracked actor | engine | yes | the creature and world-actor pre observers `[V]` |
 | any Blueprint destroy (a pickup, a morph) | `EX_CallMath` or a final call into the native | not to the detour; yes to the native seam | the prop destroy seam `[V]` |
+| an actor's end of play, any route (a destroy of any kind, a stream-out, a world teardown) | native `AActor::EndPlay` | not to the detour unless the class implements `ReceiveEndPlay` | the native detour on `AActor::EndPlay` (`ue_wrap/engine/actor_end_play`) `[V]` |
 | a finish-spawning from a graph (a container extract, a drop, a place) | `EX_CallMath` | not to the detour; yes to the native seam | the host spawn watcher with a one-tick drain `[V]` |
 | a script function called locally (a container take) | inline in the VM | no, to both | the script-body gate at the body's entry; the effect polled or reconciled `[RD]` |
 | a disc-holding device's SLOT ENTRY -- the hitbox delegate that takes a disc nobody pressed anything for (one on the signal server, two on the laptop) | delegate broadcast | yes, and interceptable | a disc is marked in transit at its own spawn and the entry is cancelled for one; the mark has to be set at the DEFERRED spawn, since a collider reports its overlaps as it registers, inside the finish `[V]` |
@@ -121,7 +133,7 @@ Never spawn from an observer directly; post it. `[V]`
 | the toolgun's spawn (`tool_spawn_C`) | `EX_CallMath` from `ExecuteUbergraph_tool_spawn`, which carries its own copy of the three catalog branches and never calls the gamemode verb | not to the detour; yes to the native seam | the caller frame the native seam already holds names the ubergraph, and it finishes nothing else `[V]` for the bytecode, `[?]` for a run |
 | a hook's constraint build (`SetConstrainedComponents`, from `attach_a` or `makeAttachments`) | a final call into a native, from the graph | not to the detour; yes to the native seam, on every route | a client breaks every hook tie there; the host keeps its own and builds a client's on its mirror `[V]` |
 | begin-play of a save-loaded actor | no dispatch the session sees | caught by the object scan at world start `[V]` |
-| begin-play of a runtime-spawned actor | maybe | unverified | probe before relying on it `[?]` |
+| begin-play of a runtime-spawned actor | the engine, through the actor's `ProcessEvent` | yes on a class that implements `ReceiveBeginPlay`; never on one that does not, since `AActor::ProcessEvent` returns first | observe the implementing class's own function `[V]` |
 | a cosmetic emitter spawn | `EX_CallMath` | no | the verb that spawns it: the cue lane watches `runEvent` return for the row whose body spawns the emitter (a script-gate watch), and a joiner's snapshot reads the live particle components from the object index `[V]` |
 | the save write | native C++ | not to the detour | the native detour that blocks a client's world save `[V]` |
 | the pause (menu and console paths) | `EX_CallMath`, and the console bypasses the statics entirely | no, on two paths | enforce the state every tick `[V]` |
@@ -275,7 +287,3 @@ like `upd*` or `refresh*` promises nothing, and a list of such verbs assembled f
 does not transfer to another -- here none of the nine painted any field the periodic caller wrote,
 so the pulse bought nothing and cost a visible defect. Full trail:
 `src/votv-coop/src/ue_wrap/desk/console_desk.cpp` (the chain, with what each verb is for).
-
-## Needs a probe
-
-- Whether begin-play of a normal runtime-spawned actor reaches `ProcessEvent`. `[?]`

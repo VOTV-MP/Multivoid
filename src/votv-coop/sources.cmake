@@ -35,6 +35,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/core/pe_detour.cpp
     src/ue_wrap/core/pe_diag.cpp
     src/ue_wrap/engine/spawn_gate.cpp
+    src/ue_wrap/engine/actor_end_play.cpp
     src/ue_wrap/core/ufunction_hook.cpp
     src/ue_wrap/core/script_gate.cpp
     src/ue_wrap/engine/engine.cpp
@@ -418,6 +419,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/hand_drop_selftest.cpp
     src/coop/dev/run_and_wait_selftest.cpp
     src/coop/dev/world_singleton_parity.cpp
+    src/coop/dev/end_play_probe.cpp
   src/coop/dev/floppy_selftest.cpp
     src/coop/dev/floppy_selftest_world.cpp
     src/coop/dev/hookdrag_selftest.cpp

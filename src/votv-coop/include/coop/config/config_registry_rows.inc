@@ -301,6 +301,10 @@ CFG_FLAG(world_singleton_parity, "world_singleton_parity", "dev", false, "VOTVCO
     "Probe: once per gameplay world, the object index's loaded-class lookup and the world singleton "
     "checked against the whole-array walks they replace, one row per name and a verdict. Read-only; "
     "the walks it makes for the comparison are its own.")
+CFG_FLAG(end_play_probe, "end_play_probe", "dev", false, "VOTVCOOP_END_PLAY_PROBE",
+    "Probe: every actor's end of play counted by reason, and each destroyed one matched to the "
+    "K2_DestroyActor call it ran inside; the ends with no such call, and the calls with no end, named "
+    "by class every 30 s. Read-only.")
 CFG_FLAG(event_drill, "event_drill", "dev", false, "VOTVCOOP_EVENT_DRILL",
     "Drill (BOTH peers): the host fires the meteor shower before the client's world is up (the join "
     "snapshot carries it) and then through the scheduler itself (the clock set to day 2 00:18), then "
