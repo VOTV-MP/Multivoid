@@ -468,6 +468,11 @@ CFG_FLAG(kerfur_menu_drill, "kerfur_menu_drill", "dev", false, "VOTVCOOP_KERFUR_
     "Drill (HOST): once a client's join is over, spawn a kerfur, turn it off "
     "by its verb, then turn the prop back on through the menu event a press dispatches, where the "
     "verb runs nested inside a watched body. Prints the kerfur form assembler's order counters.")
+CFG_FLAG(kerfur_convert_drill, "kerfur_convert_drill", "dev", false, "VOTVCOOP_KERFUR_CONVERT_DRILL",
+    "Drill (BOTH peers): the host spawns a kerfur carrying a disc; the client turns it off by its verb "
+    "and back on by the prop's turn-on action while a disc of its own lies 2 m away, then says whether "
+    "both conversions applied, the carried disc arrived once and its own disc survived. "
+    "'[KERFUR-DRILL] client DONE' ends it.")
 CFG_FLAG(door_drill, "door_drill", "dev", false, "VOTVCOOP_DOOR_DRILL",
     "Drill (BOTH peers): the client walks with the bot director to the nearest door its navmesh "
     "reaches and uses it as a player does -- three presses, each followed by a stay in its sensor until "
