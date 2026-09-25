@@ -42,6 +42,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/engine/engine_save.cpp
     src/ue_wrap/actors/begin_equipment.cpp
     src/ue_wrap/actors/container_openers.cpp
+    src/ue_wrap/actors/container_view.cpp
     src/ue_wrap/actors/floppy_disc.cpp
     src/ue_wrap/actors/hook.cpp
     src/ue_wrap/world/keyed_objects.cpp
@@ -382,6 +383,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/container_contents_sync.cpp
     src/coop/props/container_park.cpp
     src/coop/props/container_slice_wire.cpp
+    src/coop/props/container_view_close.cpp
     src/coop/props/container_write_policy.cpp
     src/coop/dev/delivery_census_probe.cpp
     src/coop/dev/store_table_probe.cpp
@@ -423,6 +425,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/world_singleton_parity.cpp
     src/coop/dev/function_lookup_parity.cpp
     src/coop/dev/container_opener_probe.cpp
+    src/coop/dev/container_view_drill.cpp
     src/coop/dev/end_play_probe.cpp
   src/coop/dev/floppy_selftest.cpp
     src/coop/dev/floppy_selftest_world.cpp

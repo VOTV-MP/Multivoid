@@ -291,6 +291,10 @@ CFG_FLAG(container_opener_probe, "container_opener_probe", "dev", false, "VOTVCO
     "Probe (host): once each client's world is up and it has a body, every drone, dronesack and ATV with "
     "the container it opens, the lookups both ways that must name the pair, and each client's reach to "
     "both, again when a client stands at an opener; a verdict per pass. Read-only.")
+CFG_FLAG(container_view_drill, "container_view_drill", "dev", false, "VOTVCOOP_CONTAINER_VIEW_DRILL",
+    "Drill (client): walks to the ATV, opens its container through the game's own openPropInv, then walks "
+    "back; the view must stay open while the ATV is within reach and close on the tick it leaves it. Run it "
+    "with join_at_host=1. Lines tagged [CVIEW-DRILL]; the client's DONE line, carrying the verdict, ends it.")
 CFG_FLAG(hand_drop_selftest, "hand_drop_selftest", "dev", false, "VOTVCOOP_HAND_DROP_SELFTEST",
     "Autonomous selftest: a prop through a player's hotbar HAND and back out -- pick it up with "
     "the game's own verb, drop it, first with the host holding and then with the client, twice "
