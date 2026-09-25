@@ -197,8 +197,9 @@ void OnSaveObjectReady(void* saveSlotObject) {
         const bool vitals = ue_wrap::vitals::ReadDefaults(fresh) &&
                             ue_wrap::vitals::ApplySnapshot(saveSlotObject, fresh);
         namespace N = ue_wrap::profile::name;
-        ue_wrap::vitals::WritePlayerTransform(saveSlotObject, N::kKPPSpawnX, N::kKPPSpawnY,
-                                              N::kKPPSpawnZ, 0.f);
+        if (!JoinStaysAtHost())
+            ue_wrap::vitals::WritePlayerTransform(saveSlotObject, N::kKPPSpawnX, N::kKPPSpawnY,
+                                                  N::kKPPSpawnZ, 0.f);
         UE_LOGE("player_inventory[client]: SaveObjectReady with no profile from the host -- %s, "
                 "vitals %s; this session plays empty-handed and reports nothing back, the profile "
                 "on the host is untouched",
@@ -234,18 +235,22 @@ void OnSaveObjectReady(void* saveSlotObject) {
     // Where the game itself believes this player is: its anti-noclip check falls back there, and
     // in a join capture that is where the HOST stood.
     namespace N = ue_wrap::profile::name;
-    const bool placed = g_joinPose.valid
-        ? ue_wrap::vitals::WritePlayerTransform(saveSlotObject, g_joinPose.x, g_joinPose.y,
-                                                g_joinPose.z, g_joinPose.yaw)
-        : ue_wrap::vitals::WritePlayerTransform(saveSlotObject, N::kKPPSpawnX, N::kKPPSpawnY,
-                                                N::kKPPSpawnZ, 0.f);
+    bool placed = true;
+    if (JoinStaysAtHost())
+        g_joinPose = {};
+    else if (g_joinPose.valid)
+        placed = ue_wrap::vitals::WritePlayerTransform(saveSlotObject, g_joinPose.x, g_joinPose.y,
+                                                       g_joinPose.z, g_joinPose.yaw);
+    else
+        placed = ue_wrap::vitals::WritePlayerTransform(saveSlotObject, N::kKPPSpawnX, N::kKPPSpawnY,
+                                                       N::kKPPSpawnZ, 0.f);
     g_profileApplied = true;
     UE_LOGI("player_inventory[client]: applied per-player profile to save object %p (carried=%zu "
             "equip=%zu hold=%zu | vitals %s: hp=%.0f/%.0f food=%.0f sleep=%.0f | pose %s%s)",
             saveSlotObject, g_pendingApply.items.inventory.size(),
             g_pendingApply.items.equipment.size(), g_pendingApply.items.hold.size(),
             !vitalsOk ? "NOT WRITTEN" : alive ? "restored" : "fresh", v.health, v.maxHealth, v.food,
-            v.sleep, g_joinPose.valid ? "restored" : "start point",
+            v.sleep, JoinStaysAtHost() ? "the host's (join_at_host)" : g_joinPose.valid ? "restored" : "start point",
             placed ? "" : ", playerTransform NOT written");
 }
 
@@ -549,6 +554,11 @@ bool SendInventoryToSlot(int peerSlot) {
 bool HasPendingApply() { return g_hasPendingApply.load(std::memory_order_acquire); }
 
 void BeginJoinApply() { g_joinApplyArmed.store(true, std::memory_order_release); }
+
+bool JoinStaysAtHost() {
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::join_at_host);
+    return s;
+}
 
 bool TakeJoinPose(float& x, float& y, float& z, float& yaw) {
     if (!g_joinPose.valid) return false;

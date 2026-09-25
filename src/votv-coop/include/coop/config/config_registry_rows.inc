@@ -467,6 +467,11 @@ CFG_FLAG(lookat_aim_drill, "lookat_aim_drill", "dev", false, "VOTVCOOP_LOOKAT_AI
     "Drill (BOTH peers): walk to the nearest prop with the bot director, turn the camera onto it, "
     "and hold there without pressing anything, so the churn probe above has an aim to read. Says "
     "one readiness line once the game's own trace resolves the prop.")
+CFG_FLAG(join_at_host, "join_at_host", "dev", false, "VOTVCOOP_JOIN_AT_HOST",
+    "Drill (CLIENT): the join's world appearance keeps the transferred save's player transform, which "
+    "is where the host stood, instead of this player's profile pose or the start point. For a drill "
+    "that needs the client at the base: the start point is a 770 m walk from it that the director "
+    "does not finish on the rig. Off, the placement is the game's own.")
 CFG_FLAG(rehost_rejoin, "rehost_rejoin", "dev", false, "VOTVCOOP_REHOST_REJOIN",
     "Drill (CLIENT): join the host again without restarting the game. At the main menu, with no "
     "session and no join in flight, a file named multivoid-rejoin.trigger beside the game exe is "

@@ -63,6 +63,10 @@ void BeginJoinApply();
 // then uses the start point. Game thread.
 bool TakeJoinPose(float& x, float& y, float& z, float& yaw);
 
+// CLIENT, dev: the join's appearance stays where the transferred save put the player, the host's
+// own position, and neither the profile's pose nor the start point is written (join_at_host).
+bool JoinStaysAtHost();
+
 // Per-slot disconnect (host): re-arm the on-join push for that slot. The leaver's profile stays
 // held by GUID. Client: no-op. Game thread.
 void OnDisconnectForSlot(int peerSlot);

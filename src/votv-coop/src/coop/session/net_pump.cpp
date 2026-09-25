@@ -574,7 +574,7 @@ void Tick(coop::net::Session& session) {
         // screen still covers the swap. A returning player appears once at the spot their profile
         // says they were standing on; every other body of the session, a respawn included, at the
         // start point.
-        if (localNow && isConnected && !isHost) {
+        if (localNow && isConnected && !isHost && !coop::player_inventory_sync::JoinStaysAtHost()) {
             float x = 0, y = 0, z = 0, yaw = 0;
             if (coop::player_inventory_sync::TakeJoinPose(x, y, z, yaw)) {
                 coop::teleport_client::ApplyLocally({x, y, z, 0.f, yaw, 0.f});
