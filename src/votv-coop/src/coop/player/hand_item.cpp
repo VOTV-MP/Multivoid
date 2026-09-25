@@ -74,8 +74,9 @@ struct Mirror {
     int32_t      idx   = -1;  // GUObjectArray index (IsLiveByIndex validation)
     std::wstring cls;
     std::wstring name;
-    int32_t      puppetIdx = -1;  // the puppet we attached to (re-attach on respawn)
-    bool         failed = false;  // the spawn of cls/name on puppetIdx failed; actor is null
+    int32_t      puppetIdx = -1;     // the puppet we attached to (re-attach on respawn)...
+    int32_t      puppetSerial = 0;   // ...and its slot's serial: a successor in the slot is a new puppet
+    bool         failed = false;     // the spawn of cls/name on this puppet failed; actor is null
 };
 Mirror g_mirrors[coop::players::kMaxPeers];  // GT-only
 
@@ -271,6 +272,7 @@ void NoteSpawnFailed(uint8_t slot, const SlotHand& want, void* puppetActor) {
     m.cls = want.cls;
     m.name = want.name;
     m.puppetIdx = R::InternalIndexOf(puppetActor);
+    m.puppetSerial = R::AllocateSlotSerial(m.puppetIdx);
     m.failed = true;
 }
 
@@ -335,6 +337,7 @@ void SpawnMirror(uint8_t slot, void* puppetActor) {
     m.cls = want.cls;
     m.name = want.name;
     m.puppetIdx = R::InternalIndexOf(puppetActor);
+    m.puppetSerial = R::AllocateSlotSerial(m.puppetIdx);
     UE_LOGI("hand_item: slot %u mirror SPAWNED cls='%ls' name='%ls' (display-only, view-anchored)",
             static_cast<unsigned>(slot), want.cls.c_str(), want.name.c_str());
 }
@@ -546,7 +549,8 @@ void TickMirrors() {
             }
         }
         const int32_t pupIdx = R::InternalIndexOf(puppetActor);
-        const bool sameWant = m.cls == want.cls && m.name == want.name && m.puppetIdx == pupIdx;
+        const bool sameWant = m.cls == want.cls && m.name == want.name && m.puppetIdx == pupIdx &&
+                              R::SlotSerial(pupIdx) == m.puppetSerial;
         if (mirrorLive && sameWant) {
             DriveMirror(m.actor, pup, want);  // steady state: re-command the view hold
             continue;
