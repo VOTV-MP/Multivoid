@@ -179,7 +179,7 @@ bool Session::Start(const Config& cfg, Refusal* why) {
     // reused after a Stop would otherwise fan out the prior session's last pose, pelvis, hand,
     // cursor, host sample or batch on its first send, before the game thread publishes this
     // session's.
-    ResetLocalStreams();
+    ResetOutboundStreams();
 
     if (!EnsureGnsInit()) return false;
 

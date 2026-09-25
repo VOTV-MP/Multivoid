@@ -32,7 +32,7 @@ namespace coop::net {
 
 void Session::SetLocalWorldActorPoseBatch(const std::vector<WorldActorPoseSnapshot>& batch) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    localWorldActorBatch_ = batch;  // empty -> nothing to fan out (actors gone); the copy reuses the capacity
+    outbound_.worldActorBatch = batch;  // empty -> nothing to fan out (actors gone); the copy reuses the capacity
 }
 
 bool Session::TakeRemoteWorldActorBatch(std::vector<WorldActorPoseSnapshot>& out) {
@@ -43,10 +43,10 @@ int Session::SerializeLocalWorldActorBatch(uint8_t* buf) {
     // Serialize ONCE per send (same body for every peer; only the per-peer header seq differs). One
     // datagram = PacketHeader(20) + EntityPoseBatchHeader(4) + N*WorldActorPoseSnapshot(48), MTU-capped
     // at kMaxWorldActorBatchEntries. The leading PacketHeader bytes are left for the caller to stamp
-    // per-peer. Only the HOST ever populates localWorldActorBatch_, so on a client this returns 0.
+    // per-peer. Only the HOST ever populates outbound_.worldActorBatch, so on a client this returns 0.
     std::lock_guard<std::mutex> lk(localMutex_);
-    if (localWorldActorBatch_.empty()) return 0;
-    size_t n = localWorldActorBatch_.size();
+    if (outbound_.worldActorBatch.empty()) return 0;
+    size_t n = outbound_.worldActorBatch.size();
     if (n > static_cast<size_t>(kMaxWorldActorBatchEntries)) n = kMaxWorldActorBatchEntries;  // cap (TickPoseStream already caps)
     // [WA-TRACE host-serialize] 1 Hz: what the net thread actually fans out this second. If
     // host-read moves but this is frozen, the game->net batch handoff is the break.
@@ -55,7 +55,7 @@ int Session::SerializeLocalWorldActorBatch(uint8_t* buf) {
         const long long nowMs = TraceNowMs();
         if (nowMs - s_lastMs >= 1000) {
             s_lastMs = nowMs;
-            const auto& f = localWorldActorBatch_[0];
+            const auto& f = outbound_.worldActorBatch[0];
             UE_LOGI("[WA-TRACE host-serialize] n=%zu first: eid=%u (%.0f,%.0f,%.0f)",
                     n, f.elementId, f.x, f.y, f.z);
         }
@@ -63,7 +63,7 @@ int Session::SerializeLocalWorldActorBatch(uint8_t* buf) {
     EntityPoseBatchHeader bh{};
     bh.count = static_cast<uint8_t>(n);
     std::memcpy(buf + sizeof(PacketHeader), &bh, sizeof(bh));
-    std::memcpy(buf + sizeof(PacketHeader) + sizeof(bh), localWorldActorBatch_.data(),
+    std::memcpy(buf + sizeof(PacketHeader) + sizeof(bh), outbound_.worldActorBatch.data(),
                 n * sizeof(WorldActorPoseSnapshot));
     return static_cast<int>(sizeof(PacketHeader) + sizeof(bh) + n * sizeof(WorldActorPoseSnapshot));
 }

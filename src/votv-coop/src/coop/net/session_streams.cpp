@@ -5,7 +5,7 @@
 //   host-single: ClockPose / DeskSimPose / DishPose / ReelPose
 // in four surfaces:
 //   - the game-thread publishers  (Set*)         -- what this peer sends under localMutex_
-//     (coop/net/local_streams.h), reset whole at Start
+//     (coop/net/outbound_streams.h), reset whole at Start
 //   - the game-thread readers     (TryGet*)      -- the received streams under remoteMutex_,
 //     kept by owner (coop/net/remote_streams.h)
 //   - the net-thread receive-store (StoreStreamPacket) -- HandleMessage's grouped scalar
@@ -37,56 +37,54 @@ void Session::SetLocalPose(const PoseSnapshot& pose) {
     // hitch would otherwise pair an old position with a fresh stamp.
     const uint32_t stateMs = NowStateTimeMs24();
     std::lock_guard<std::mutex> lk(localMutex_);
-    local_.pose.Put(true, pose);
-    local_.poseStateMs = stateMs;
+    outbound_.samples.pose.Put(true, pose);
+    outbound_.samples.poseStateMs = stateMs;
 }
 
 void Session::SetLocalPropPose(bool set, const PropPoseSnapshot& pose) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    local_.prop.Put(set, pose);
+    outbound_.samples.prop.Put(set, pose);
 }
 
 void Session::SetLocalRagdollPose(bool set, const RagdollPoseSnapshot& pose) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    local_.ragdoll.Put(set, pose);
+    outbound_.samples.ragdoll.Put(set, pose);
 }
 
 void Session::SetLocalHandPose(bool set, const HandPoseSnapshot& pose) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    local_.hand.Put(set, pose);
+    outbound_.samples.hand.Put(set, pose);
 }
 
 void Session::SetLocalDeskCursor(bool set, const DeskCursorPoseSnapshot& pose) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    local_.deskCursor.Put(set, pose);
+    outbound_.samples.deskCursor.Put(set, pose);
 }
 
 void Session::SendHostClock(const TimeSyncPayload& clock) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    local_.clock.Put(clock);
+    outbound_.samples.clock.Put(clock);
 }
 
 void Session::SetHostDeskSim(bool set, const DeskSimSnapshot& sim) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    local_.deskSim.Put(set, sim);
+    outbound_.samples.deskSim.Put(set, sim);
 }
 
 void Session::SetHostDishPose(const DishPoseBody& body) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    local_.dish.Put(body);
+    outbound_.samples.dish.Put(body);
 }
 
 void Session::SetHostReelPose(const ReelPosePayload& body) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    local_.reel.Put(body);
+    outbound_.samples.reel.Put(body);
 }
 
-void Session::ResetLocalStreams() {
+void Session::ResetOutboundStreams() {
     {
         std::lock_guard<std::mutex> lk(localMutex_);
-        local_ = LocalStreams{};
-        localNpcBatch_.clear();
-        localWorldActorBatch_.clear();
+        outbound_ = OutboundStreams{};
     }
     trashCarryPoses_.Reset();
     propDrivePoses_.Reset();
@@ -389,11 +387,11 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
     constexpr auto kDeskSimSendInterval = std::chrono::milliseconds(100);  // ~10 Hz
 
     if (state_.load() == ConnState::Connected && now >= nextSend) {
-        LocalStreams local;
+        OutboundSamples local;
         { std::lock_guard<std::mutex> lk(localMutex_);
-          local = local_;
+          local = outbound_.samples;
           // The one-shot samples are taken here; the lanes that publish them own the cadence.
-          local_.clock.due = local_.dish.due = local_.reel.due = false; }
+          outbound_.samples.clock.due = outbound_.samples.dish.due = outbound_.samples.reel.due = false; }
         const bool isHost = cfg_.role == Role::Host;
         const bool have = local.pose.set, haveProp = local.prop.set, haveRagdoll = local.ragdoll.set,
                    haveHand = local.hand.set, haveDeskCursor = local.deskCursor.set;
@@ -402,7 +400,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
         const bool reelPoseDue = local.reel.due && isHost;
         const bool deskSimDue = local.deskSim.set && isHost && now >= nextDeskSimSend;
         // Serialize the live NPC pose batch ONCE (same body for every peer; only the per-peer
-        // header seq differs). SerializeLocalNpcBatch (session_npc.cpp) reads localNpcBatch_ under
+        // header seq differs). SerializeLocalNpcBatch (session_npc.cpp) reads outbound_.npcBatch under
         // localMutex_ + writes the body after the leading PacketHeader, returning 0 when there is
         // no batch to send this tick (no intermediate copy).
         uint8_t npcBuf[kNpcPoseDatagramMax];

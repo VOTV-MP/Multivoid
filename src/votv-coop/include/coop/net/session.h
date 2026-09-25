@@ -8,9 +8,9 @@
 #include "coop/net/eid_pose_lane.h"        // the trash-carry and driven-prop pose lanes
 #include "coop/net/end_reason.h"           // the code a close carries to the peer
 #include "coop/net/link_kind.h"            // how a player's traffic reaches the session
-#include "coop/net/local_streams.h"        // what this peer sends on its streams
 #include "coop/net/net_stats.h"            // session traffic accounting (the one counter owner)
 #include "coop/net/origin_context.h"       // which occupancy a relayed stream packet belongs to
+#include "coop/net/outbound_streams.h"     // what this peer sends on its streams
 #include "coop/net/protocol.h"
 #include "coop/net/remote_streams.h"       // what a receiver keeps of each stream, by owner
 #include "coop/net/send_admission.h"       // the send buffer's headroom rule
@@ -150,7 +150,7 @@ public:
     // cursor moved, false on release or still. Sent only while set.
     void SetLocalDeskCursor(bool set, const DeskCursorPoseSnapshot& pose);
 
-    // Host: the NPC pose batch (one EntityPoseSnapshot per live NPC), copied into localNpcBatch_
+    // Host: the NPC pose batch (one EntityPoseSnapshot per live NPC), copied into outbound_.npcBatch
     // with its capacity reused, so neither side allocates per tick; an empty batch clears it. Game
     // thread.
     void SetLocalNpcPoseBatch(const std::vector<EntityPoseSnapshot>& batch);
@@ -462,9 +462,9 @@ private:
     // streams too. The caller holds remoteMutex_.
     void ResetPeerRemoteState(int peerSlot);
     void ResetOriginStreams(int peerSlot);  // the relayed streams only; remoteMutex_ held
-    // Everything this peer has to send, back to empty under the locks its writers take: Start's first
-    // step, since Start can run off the game thread.
-    void ResetLocalStreams();
+    // Everything this peer has to send, back to empty under the locks its writers take. Start's, before
+    // the net thread spawns: Start can run off the game thread.
+    void ResetOutboundStreams();
 
     // A game-thread read or take of one received stream: nothing unless connected, the slot in
     // range. Takes remoteMutex_.
@@ -634,13 +634,10 @@ private:
     // for LanDirect.
     std::shared_ptr<SignalingClient> signaling_;
 
-    // What this peer sends on its streams (coop/net/local_streams.h): the game thread writes, the
-    // net thread's send round copies it whole, both under localMutex_.
+    // What this peer sends on its streams (coop/net/outbound_streams.h): the game thread writes, the
+    // net thread's send round copies the samples and serializes the batches, both under localMutex_.
     std::mutex localMutex_;
-    LocalStreams local_;
-    // The host's NPC and WorldActor pose batches, under localMutex_ too; empty = nothing to send.
-    std::vector<EntityPoseSnapshot> localNpcBatch_;
-    std::vector<WorldActorPoseSnapshot> localWorldActorBatch_;
+    OutboundStreams outbound_;
     // The host-originated trash-carry and driven-prop queues, each with its own mutex (what a client
     // receives of them is in host_).
     EidPoseQueue<TrashClumpPoseSnapshot> trashCarryPoses_;
