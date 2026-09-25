@@ -92,6 +92,7 @@ Never spawn from an observer directly; post it. `[V]`
 |---|---|---|---|
 | the player's use input (E) | native input | yes, pre and post | the desk and pile lanes read what the press is about to act on `[V]` |
 | a light group's `runTrigger` (`trigger_lightRoot_C`: 0 the toggle its breaker gates, 1 on, 2 off), the route of every live writer of its `isActive` -- a switch's use, powerControl, the gamemode, an eventer, a keyhole, a generator | Blueprint calls | no, to the detour | the script-body gate watches it BY NAME: after the body on the host, the group lane sends the state the call left; before the body on a client, every call on a group the lane indexes is refused but the lane's own apply to that group `[RD]` |
+| a light switch's `use` (`lightswitch_C`: runTrigger 0 on its group, its click, `a` negated, its mesh), the one writer of the switch's `a` | Blueprint calls | no, to the detour | the script-body gate watches it BY NAME: after the body on every peer (a client once its world is ready), the switch lane sends the `a` the call left; the lane's own apply replays `use`, its echo, which sends nothing `[RD]` |
 | the player's drop input (R) | native input | yes | not hooked; the pickup and drop are seam-driven below `[V]` |
 | the ATV's seven component-hit delegates | delegate broadcast | yes, and interceptable | the hit guard zeroes a non-owner's impulse `[V]` |
 | the inventory widget's buttons | widget delegate | yes | `[V]` |

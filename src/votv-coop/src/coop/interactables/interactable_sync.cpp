@@ -82,6 +82,9 @@ const Adapter g_lightAdapter = {
     // (coop/interactables/lightgroup_verbs). On the host the full use() runs: replaying the client's
     // switch edge is how its press becomes an authoritative group change.
     [](void* a, bool /*on*/) -> bool { return ue_wrap::lightswitch::CallUse(a); },
+    nullptr,
+    // Each peer sends its switch at its use() (coop/interactables/toggle_verbs).
+    /*edgeFed*/ true,
 };
 // The light group (Atrigger_lightRoot_C), the state a player sees. The switch adapter syncs the
 // switch's `a`, this one the group's isActive: the game keeps them decoupled (use() toggles `a`
@@ -233,6 +236,8 @@ void OnDoorStateVerb(void* door) { g_door.OnLocalEdge(door); }
 std::wstring LightGroupKey(void* root) { return g_lightGroup.KeyForActor(root); }
 
 void OnLightGroupVerb(void* root) { g_lightGroup.OnLocalEdge(root); }
+
+void OnLightSwitchVerb(void* sw) { g_light.OnLocalEdge(sw); }
 
 bool ApplyingLightGroup(void* root) { return root && root == g_applyingGroup; }
 

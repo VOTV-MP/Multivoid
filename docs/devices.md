@@ -48,7 +48,10 @@ or a trigger on that machine cannot move it alone -- nor a creature mirror that 
 our own code moves it. A client's copy of a light group likewise: its `runTrigger` is refused unless
 the group lane's own apply is running it, so a switch pressed there, an eventer's flicker or that
 machine's own breaker cannot move the group; the switch still flips, and its bit reaches the host
-on the switch lane, whose replay of the press is what moves the host's group. A client's own press, hit or pry of a door never runs on its copy either: the
+on the switch lane, whose replay of the press is what moves the host's group. The switch lane sends
+a switch's `a` at its `use()`, the one writer of `a`, on the peer that ran it
+(`coop/interactables/toggle_verbs`); the poll beside it only reports a change no `use()` made.
+A client's own press, hit or pry of a door never runs on its copy either: the
 script-body gate refuses the door's entry verb there and sends it to the host
 (`coop/interactables/door_verb_intent`), which
 runs the same verb on its own copy, so the door's own body decides it once -- its power gate with
@@ -385,7 +388,7 @@ an error line.
 
 | Concept | Files |
 |---|---|
-| the engine and the adapters | `coop/interactables/interactable_channel.h`, `coop/interactables/interactable_sync`, `coop/interactables/door_verb_intent`, `coop/interactables/door_state_verbs`, `ue_wrap/devices/door`, `ue_wrap/devices/door_box`, `ue_wrap/devices/lightswitch`, `ue_wrap/devices/garage`, `ue_wrap/devices/appliance` |
+| the engine and the adapters | `coop/interactables/interactable_channel.h`, `coop/interactables/interactable_sync`, `coop/interactables/door_verb_intent`, `coop/interactables/door_state_verbs`, `coop/interactables/toggle_verbs`, `coop/interactables/verb_lanes`, `ue_wrap/devices/door`, `ue_wrap/devices/door_box`, `ue_wrap/devices/lightswitch`, `ue_wrap/devices/garage`, `ue_wrap/devices/appliance` |
 | keypads | `coop/interactables/keypad_sync`, `ue_wrap/devices/passwordlock` |
 | power, turbine, windows, grime | `coop/interactables/power_sync`, `coop/interactables/turbine_sync`, `coop/interactables/window_sync`, `coop/interactables/grime_sync`, `ue_wrap/devices/power_control`, `ue_wrap/devices/windturbine`, `ue_wrap/devices/base_window`, `ue_wrap/devices/grime` |
 | the drone | `coop/interactables/drone_sync`, `coop/interactables/drone_call_intent`, `ue_wrap/devices/drone` |

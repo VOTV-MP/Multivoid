@@ -199,11 +199,15 @@ public:
     }
 
     // The authority's edge on an edge-fed channel: a watched verb just ran on `actor`, so the state
-    // it left is read and sent when it differs from what the peers last got. Game thread.
+    // it left is read and sent when it differs from what the peers last got. On a HostAuth channel
+    // the host is the authority; on a Symmetric one each peer is over its own changes, and a verb the
+    // channel's own apply ran is that apply's echo. Game thread.
     void OnLocalEdge(void* actor) {
         if (!a_.edgeFed || !actor) return;
+        if (echo_.load(std::memory_order_acquire)) return;  // the channel's own apply
         auto* s = session_.load(std::memory_order_acquire);
-        if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
+        if (!s || !s->connected()) return;
+        if (mode_ == Mode::HostAuth && s->role() != coop::net::Role::Host) return;
         const std::wstring key = KeyForActor(actor);
         if (key.empty()) return;  // not indexed: no peer could name it
         bool cur = false;

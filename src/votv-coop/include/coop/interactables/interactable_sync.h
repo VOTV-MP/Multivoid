@@ -67,6 +67,10 @@ std::wstring LightGroupKey(void* root);
 // sends the state it left when that changed. Game thread.
 void OnLightGroupVerb(void* root);
 
+// Any peer: a switch's use() just ran on `sw` (coop/interactables/toggle_verbs); the switch lane
+// sends the `a` it left when that changed, unless the lane's own apply ran it. Game thread.
+void OnLightSwitchVerb(void* sw);
+
 // Whether the light group lane's own apply is running on `root` now: a client's copy of a group
 // refuses every runTrigger but that one. Game thread.
 bool ApplyingLightGroup(void* root);
