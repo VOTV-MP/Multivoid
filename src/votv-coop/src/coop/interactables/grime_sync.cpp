@@ -75,25 +75,35 @@ bool Holds(const Ref& r) { return R::IsLiveByIndex(r.actor, r.idx) && R::SlotSer
 std::mutex g_indexMutex;
 std::unordered_map<std::wstring, Ref> g_byKey;
 
+// A per-key register of the running world: another world's is dropped the first time it is touched in
+// this one, a value that arrives before the new world's first pass included. A peer leaving does not
+// clear it. Game thread only.
+struct WorldRegister {
+    std::unordered_map<std::wstring, float> map;
+    uint32_t gen = 0;
+    std::unordered_map<std::wstring, float>& Get() {
+        const uint32_t now = ue_wrap::world_identity::Generation();
+        if (now != gen) {
+            map.clear();
+            gen = now;
+        }
+        return map;
+    }
+};
+
 // The floor: per key, the lowest process this peer knows the decal at in this world -- a fall it made
 // or was sent, a destroy (zero), the value it streamed out at, or the host's snapshot as adopted. It is
 // the lane's register: a decal the index takes (a stream-back, one the join brought, one that was not
 // here when its value arrived) is lowered to it, and the host's snapshot sends it for every key its
-// index does not hold. World-scoped: a new world generation clears it, a peer leaving does not. Game
-// thread only.
-std::unordered_map<std::wstring, float> g_floor;
-uint32_t g_floorGen = 0;
+// index does not hold.
+WorldRegister g_floor;
+std::unordered_map<std::wstring, float>& Floor() { return g_floor.Get(); }
 
-// The register of the running world: another world's is dropped the first time it is touched in this
-// one, a value that arrives before the new world's first pass included.
-std::unordered_map<std::wstring, float>& Floor() {
-    const uint32_t gen = ue_wrap::world_identity::Generation();
-    if (gen != g_floorGen) {
-        g_floor.clear();
-        g_floorGen = gen;
-    }
-    return g_floor;
-}
+// Per key with no floor yet, the process its decal had when this peer's first fall on it began: what
+// every peer holds for a key nobody has moved in this world, so falls under the epsilon add up from it.
+// Kept apart from the floor, which lowers every decal of the key's cell and carries only values that
+// were sent, so a fall that has not gone out moves nothing but its own decal.
+WorldRegister g_unmoved;
 
 size_t g_lastLogCount = SIZE_MAX;  // GT-only: dedup the rebuilt log
 uint64_t g_lastLogHash = 0;        // GT-only
@@ -309,15 +319,16 @@ void OnLowerPost(const sg::Call& call) {
     if (!G::ReadProcess(call.object, cur) || cur >= g_before) return;  // an uncleanable decal
     const std::wstring key = KeyOf(call.object, idx, R::SlotSerial(idx));
     if (key.empty()) return;
-    // Measured against the floor, the lowest value this peer knows for the key, so falls smaller than
-    // the epsilon add up and go out once they pass it; a first such fall seeds the floor at the entry.
+    // Measured against the floor, the lowest value this peer knows for the key, or, before the key has
+    // one, the process its decal had when this peer's first fall on it began: falls smaller than the
+    // epsilon add up and go out once they pass it.
     auto& floor = Floor();
     const auto it = floor.find(key);
-    if (cur >= (it != floor.end() ? it->second : g_before) - kProcessEps) {
-        if (it == floor.end()) floor[key] = g_before;
-        return;
-    }
+    auto& unmoved = g_unmoved.Get();
+    const float from = it != floor.end() ? it->second : unmoved.emplace(key, g_before).first->second;
+    if (cur >= from - kProcessEps) return;
     Lower(key, cur);
+    unmoved.erase(key);
     Send(key, cur);
 }
 

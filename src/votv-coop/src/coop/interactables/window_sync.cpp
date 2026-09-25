@@ -226,9 +226,11 @@ void OnWipePost(const sg::Call& call) {
 
 // DEV-ONLY synthetic wipe (`window_synth=1`). One-shot, host-only, armed when the joiner's world is
 // ready: it runs cleanSponge through the verb itself, as a sponge would, on the first indexed window
-// with dirt left (the body returns at 0), in falls too small to send alone, so the watch above sends
-// their sum and the client applies it -- the live-wipe chain end to end without a hand at the
-// keyboard. Run it with window_log=1, which logs the send and the apply. NOT shipped behavior.
+// with dirt left (the body returns at 0), in falls too small to send alone: the watch above sends the
+// value once their fall passes the epsilon, about halfway through, and the client applies it, and
+// the rest, under the epsilon, stays on the host by design -- the live-wipe chain end to end without a
+// hand at the keyboard. Run it with window_log=1, which logs the send and the apply. NOT shipped
+// behavior.
 void MaybeSyntheticWipe() {
     static const bool s_on = ::coop::config::ResolveFlag(::coop::config_registry::rows::window_synth);
     if (!s_on) return;
