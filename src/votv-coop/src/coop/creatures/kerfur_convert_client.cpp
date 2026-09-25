@@ -41,7 +41,7 @@ coop::net::Session* LoadSession() {
     return g_session.load(std::memory_order_acquire);
 }
 
-// The resolved kerfur classes, pushed by the install on every attempt; read on the game thread.
+// The resolved kerfur classes, pushed by the install once both resolve; read on the game thread.
 void* g_kerfurNpcClass  = nullptr;
 void* g_kerfurPropClass = nullptr;
 
@@ -198,13 +198,15 @@ void ClaimConversionGhosts(uint32_t srcEid, bool wantNpc, float x, float y, floa
         if (!obj) continue;
         void* cls = R::ClassOf(obj);
         if (!cls) continue;
-        if (!R::IsLive(obj)) continue;
-        if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;
-        if (mirrors.count(obj)) continue;  // a host wire mirror -- not our ghost
+        // The class first, a few pointer reads: the name test below renders a name, and on every
+        // slot of the array that is the walk's whole cost.
         int b = -1;  // which base class this actor is (nearest tracked per base)
         for (size_t bi = 0; bi < nBases; ++bi)
             if (R::IsDescendantOfAny(cls, &bases[bi], 1)) { b = static_cast<int>(bi); break; }
         if (b < 0) continue;
+        if (!R::IsLive(obj)) continue;
+        if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;
+        if (mirrors.count(obj)) continue;  // a host wire mirror -- not our ghost
         ue_wrap::FVector loc{};
         if (!ue_wrap::engine::TryGetActorLocation(obj, loc)) continue;  // unplaceable: never the nearest
         const float dx = loc.X - x, dy = loc.Y - y, dz = loc.Z - z;

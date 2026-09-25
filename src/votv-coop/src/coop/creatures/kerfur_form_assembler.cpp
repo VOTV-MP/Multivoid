@@ -22,6 +22,7 @@
 
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile_names.h"
 #include "ue_wrap/core/ufunction_hook.h"
@@ -144,8 +145,14 @@ bool IsKerfurFormClass(void* cls) {
     if (!bases[0] || !bases[1]) return false;
     return R::IsDescendantOfAny(cls, bases, 2);
 }
+// The floppy class is looked up where it is used, one index lookup until it is listed, and kept only
+// once found: an optional class is never memoised as missing.
 bool IsFloppyClass(void* cls) {
     void* fb = g_floppyClass.load(std::memory_order_relaxed);
+    if (!fb && GT::IsGameThread()) {
+        fb = ue_wrap::object_index::ClassByName(L"prop_floppyDisc_C");
+        if (fb) g_floppyClass.store(fb, std::memory_order_relaxed);
+    }
     return fb && R::IsDescendantOfAny(cls, &fb, 1);
 }
 // Is `cls` the NPC form rather than the prop form? Called only after the form test, to tag the
@@ -332,10 +339,8 @@ void EnsureSeamsInstalled() {
             g_npcClass.store(R::FindClass(L"kerfurOmega_C"), std::memory_order_relaxed);
         if (!g_propClass.load(std::memory_order_relaxed))
             g_propClass.store(R::FindClass(L"prop_kerfurOmega_C"), std::memory_order_relaxed);
-        if (!g_floppyClass.load(std::memory_order_relaxed))
-            g_floppyClass.store(R::FindClass(L"prop_floppyDisc_C"), std::memory_order_relaxed);
-        // The two form bases must resolve before the filters mean anything; the floppy is
-        // non-fatal, since a null class just leaves floppy spawns uncounted.
+        // The two form bases must resolve before the filters mean anything; the floppy is looked up
+        // where it is counted (IsFloppyClass).
         if (!g_npcClass.load(std::memory_order_relaxed) ||
             !g_propClass.load(std::memory_order_relaxed))
             return;  // retry next tick
@@ -356,9 +361,8 @@ void EnsureSeamsInstalled() {
     const bool b = ue_wrap::ufunction_hook::InstallPostHook(g_destroyFn, &OnDestroy);
     g_seamsInstalled.store(true, std::memory_order_release);  // latch regardless (idempotent hooks)
     UE_LOGI("[kerfur_asm] containment seams installed: FinishSpawningActor=%d K2_DestroyActor=%d "
-            "(npc=%p prop=%p floppy=%p)", a ? 1 : 0, b ? 1 : 0,
-            g_npcClass.load(std::memory_order_relaxed), g_propClass.load(std::memory_order_relaxed),
-            g_floppyClass.load(std::memory_order_relaxed));
+            "(npc=%p prop=%p; the floppy class is looked up where it is counted)", a ? 1 : 0, b ? 1 : 0,
+            g_npcClass.load(std::memory_order_relaxed), g_propClass.load(std::memory_order_relaxed));
 }
 
 void DumpSummary(const char* when) {

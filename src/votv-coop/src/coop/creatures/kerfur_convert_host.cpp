@@ -37,8 +37,8 @@ namespace {
 namespace R  = ue_wrap::reflection;
 namespace PT = coop::prop_element_tracker;
 
-// Resolved kerfur refs (pushed by kerfur_convert::Install: SetClasses every
-// attempt, SetVerbs at the success site; read-only on the game thread here).
+// Resolved kerfur refs (pushed by kerfur_convert::Install: SetClasses once both
+// classes resolve, SetVerbs at the success site; read-only on the game thread here).
 void* g_kerfurNpcClass  = nullptr;
 void* g_kerfurPropClass = nullptr;
 void* g_spawnKerfuroFn     = nullptr;
@@ -351,14 +351,8 @@ void OnConvertRequest(const coop::net::KerfurConvertPayload& payload,
                     "last live location for the converge", payload.elementId, senderPeerSlot);
             return;
         }
-        void* const dropFn = PickDropPropFn(cls);
-        if (!dropFn) {
-            UE_LOGW("kerfur_convert: turn_off request eid=%u from slot %u refused -- its class declares no "
-                    "dropKerfurProp", payload.elementId, senderPeerSlot);
-            return;
-        }
         uint8_t frame[16] = {};  // verbs take no params (install-guarded); zeroed frame for safety
-        R::CallFunction(actor, dropFn, frame);
+        R::CallFunction(actor, PickDropPropFn(cls), frame);
         ConvergeAfterConversion(actor, idx, eid, /*toProp=*/1, pos0.X, pos0.Y, pos0.Z, rotKnown ? &rot0 : nullptr);
     } else {
         auto* el = coop::element::MirrorManager<coop::element::Prop>::Instance().Get(eid);
