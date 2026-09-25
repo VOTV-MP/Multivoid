@@ -55,8 +55,8 @@ coop::net::Session* ConnectedAs(coop::net::Role role) {
 // CLIENT, before the body.
 sg::Verdict OnStatePre(const sg::Call& call) {
     if (!ConnectedAs(coop::net::Role::Client)) return sg::Verdict::Run;
-    if (call.fromOurCode) return sg::Verdict::Run;  // our apply, or a replay's own door call
     if (!call.object || !D::IsDoor(call.object)) return sg::Verdict::Run;
+    if (coop::interactable_sync::ApplyingDoor(call.object)) return sg::Verdict::Run;  // the lane's own apply
     const std::wstring key = coop::interactable_sync::DoorKey(call.object);
     if (key.empty()) return sg::Verdict::Run;  // no lane owns it: native
     ++g_refused;

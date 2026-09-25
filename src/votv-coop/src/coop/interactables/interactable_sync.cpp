@@ -28,9 +28,17 @@ namespace {
 // The reflection alias, ProbeLog, the WireKey conversions, the constants, Adapter and Channel are
 // in scope from coop/interactables/interactable_channel.h, included inside this namespace.
 
-// The light group lane's own apply, while it runs: a client refuses every runTrigger on a group
-// but this one (coop/interactables/lightgroup_verbs). Game-thread serial.
+// The door and light group lanes' own applies, while they run: a client refuses every state verb on
+// a door and every runTrigger on a group but these (coop/interactables/door_state_verbs,
+// lightgroup_verbs). Game-thread serial.
+void* g_applyingDoor = nullptr;
 void* g_applyingGroup = nullptr;
+
+struct ApplyMark {
+    void*& slot;
+    ApplyMark(void*& s, void* actor) : slot(s) { slot = actor; }
+    ~ApplyMark() { slot = nullptr; }
+};
 
 const Adapter g_doorAdapter = {
     "door", coop::net::ReliableKind::DoorState,
@@ -42,7 +50,11 @@ const Adapter g_doorAdapter = {
     &ue_wrap::door::TryReadOpenIntent,
     // The receiver apply is the door's own swing wherever this peer ticks the door, and a
     // force-snap where the swing froze out of tick range (SmartApply and its verify).
-    [](void* a, bool on) -> bool { ue_wrap::door::SmartApply(a, on); return true; },
+    [](void* a, bool on) -> bool {
+        ApplyMark mark(g_applyingDoor, a);
+        ue_wrap::door::SmartApply(a, on);
+        return true;
+    },
     // The apply is a swing that needs finishing.
     &ue_wrap::door::TickSmartApply,
     // The host sends a door at its state verbs (coop/interactables/door_state_verbs).
@@ -93,10 +105,7 @@ const Adapter g_lightGroupAdapter = {
         // repainting a whole group, for no state change.
         bool cur = false;
         if (ue_wrap::lightswitch::TryReadActive(a, cur) && cur == on) return true;
-        struct Mark {
-            explicit Mark(void* g) { g_applyingGroup = g; }
-            ~Mark() { g_applyingGroup = nullptr; }
-        } mark(a);
+        ApplyMark mark(g_applyingGroup, a);
         return ue_wrap::lightswitch::ApplyGroupState(a, on);
     },
     nullptr,  // no TickApply: runTrigger lands the state in its own body
@@ -225,6 +234,8 @@ std::wstring LightGroupKey(void* root) { return g_lightGroup.KeyForActor(root); 
 void OnLightGroupVerb(void* root) { g_lightGroup.OnLocalEdge(root); }
 
 bool ApplyingLightGroup(void* root) { return root && root == g_applyingGroup; }
+
+bool ApplyingDoor(void* door) { return door && door == g_applyingDoor; }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
     g_door.QueueConnectBroadcastForSlot(peerSlot);

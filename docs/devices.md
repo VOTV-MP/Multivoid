@@ -43,8 +43,9 @@ and containers in a world were addressable only by the peer that loaded them.
 Two modes. A device that reverts on its own, a door that auto-closes or a light group the game
 re-derives, is host-authoritative: the host's copy is the one that moves, and a client renders it.
 A client's copy of a door moves only by the host's state: its own `doorOpen` and `doorClose` are
-refused unless our apply is running them, so its autoclose, a creature or a trigger on that machine
-cannot move it alone. A client's copy of a light group likewise: its `runTrigger` is refused unless
+refused unless the door lane's own apply to that door is running them, so its autoclose, a creature
+or a trigger on that machine cannot move it alone -- nor a creature mirror that overlaps a door as
+our own code moves it. A client's copy of a light group likewise: its `runTrigger` is refused unless
 the group lane's own apply is running it, so a switch pressed there, an eventer's flicker or that
 machine's own breaker cannot move the group; the switch still flips, and its bit reaches the host
 on the switch lane, whose replay of the press is what moves the host's group. A client's own press, hit or pry of a door never runs on its copy either: the

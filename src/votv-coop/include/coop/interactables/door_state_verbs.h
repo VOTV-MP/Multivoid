@@ -7,11 +7,11 @@
 //   - HOST, after the body: the channel reads the state the verb left and sends it when it changed
 //     (Channel::OnLocalEdge), so a door crosses the moment it starts to swing, whoever moved it.
 //   - CLIENT, before the body: a client's copy of a door the lane indexes is the host's to move, so
-//     a call that is not our own apply is refused -- its autoclose, a jammed door's late unjam, a
-//     creature or a trigger on this machine would otherwise move this copy alone. Our apply runs
-//     through our own dispatch (any reflected call of ours on this thread) and passes, and so does a
-//     lane's device replay whose door call happens inside it; a latent one (a keypad's delayed open)
-//     is refused, and the host's own copy of it arrives as DoorState.
+//     every call is refused but the door lane's own apply to that door -- its autoclose, a jammed
+//     door's late unjam, a creature or a trigger on this machine would otherwise move this copy
+//     alone. That covers a call made inside one of our own reflected calls too: a creature mirror we
+//     move overlaps a door and opens it from inside our move, and a device replay's door call is
+//     refused the same way; the host's own copy of either arrives as DoorState.
 // A door the lane does not index keeps its native verbs: the lane has no name for it.
 
 #pragma once

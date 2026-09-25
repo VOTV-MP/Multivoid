@@ -47,6 +47,10 @@ void* ResolveDoor(const std::wstring& key);
 // sends the state it left when that changed. Game thread.
 void OnDoorStateVerb(void* door);
 
+// Whether the door lane's own apply is running on `door` now: a client's copy of a door refuses
+// every doorOpen and doorClose but that one. Game thread.
+bool ApplyingDoor(void* door);
+
 // The light group lane's key for `root`, or "" when the lane does not index it in the current world.
 // Game thread.
 std::wstring LightGroupKey(void* root);
