@@ -170,6 +170,15 @@ bool IsDoorBox(void* obj) { return DescOf(obj) != nullptr; }
 bool IsLocker(void* obj) { return obj && g_locker.cls && DescOf(obj) == &g_locker; }
 bool IsDroneConsole(void* obj) { return obj && g_console.cls && DescOf(obj) == &g_console; }
 
+bool CallAction(void* actor, void* player, uint8_t action) {
+    void* cls = actor ? R::ClassOf(actor) : nullptr;
+    void* fn = cls ? R::FindDispatchFunctionCached(cls, L"actionOptionIndex") : nullptr;
+    if (!fn) return false;
+    ParamFrame f(fn);
+    if (!f.valid() || !f.Set<void*>(L"player", player) || !f.Set<uint8_t>(L"action", action)) return false;
+    return Call(actor, f);
+}
+
 std::wstring GetNameKey(void* actor) {
     if (!actor) return std::wstring();
     return R::ToString(R::NameOf(actor));

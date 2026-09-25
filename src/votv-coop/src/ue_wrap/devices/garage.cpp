@@ -20,6 +20,8 @@ std::atomic<bool> g_resolved{false};
 
 void*   g_garageCls = nullptr;  // garage_C UClass
 int32_t g_openOff   = -1;       // Agarage_C::Open     (0x02E8)
+int32_t g_movOff    = -1;       // Agarage_C::mov, true mid-swing (optional: only a drill reads it)
+void*   g_runTriggerFn = nullptr;  // runTrigger(owner, index), the wall button's call (optional, a drill's)
 void*   g_acivaeFn  = nullptr;  // acivae() -- the NATIVE animated swing (the montage from position
                                 // 0 at half rate, and the move timeline over its full length). NOT
                                 // settime, which runs the same timeline and then JUMPS it: the
@@ -51,6 +53,8 @@ bool EnsureResolved() {
 
     g_garageCls = cls;
     g_openOff   = openOff;
+    g_movOff    = R::FindPropertyOffset(cls, L"mov");
+    g_runTriggerFn = R::FindFunction(cls, L"runTrigger");
     g_acivaeFn  = acivaeFn;
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("garage: resolved garage_C=%p Open@0x%04X acivae=%p (identity=level-export FName)",
@@ -105,6 +109,19 @@ bool ApplyOpen(void* g, bool open) {
         *reinterpret_cast<bool*>(reinterpret_cast<char*>(g) + g_openOff) = open;
     ParamFrame f(g_acivaeFn);  // acivae() takes no params -- it reads the Open field for direction
     if (!f.valid()) return false;
+    return Call(g, f);
+}
+
+bool TryReadMoving(void* g, bool& moving) {
+    if (!g || g_movOff < 0) return false;
+    moving = *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(g) + g_movOff);
+    return true;
+}
+
+bool CallRunTrigger(void* g, void* owner, int32_t index) {
+    if (!g || !g_runTriggerFn) return false;
+    ParamFrame f(g_runTriggerFn);
+    if (!f.valid() || !f.Set<void*>(L"owner", owner) || !f.Set<int32_t>(L"index", index)) return false;
     return Call(g, f);
 }
 

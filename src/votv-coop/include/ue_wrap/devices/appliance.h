@@ -41,12 +41,13 @@ bool TryReadState(void* a, bool& on);
 // the new state. MUST run on the game thread. False on null / unresolved.
 bool ApplyState(void* a, bool on);
 
-// The faucet's toggle, as its getActionOptions offers it while a player aims at the tap (faucet_C's
-// bytecode; the other action it offers, 7, takes the tap off).
-inline constexpr uint8_t kFaucetToggleAction = 5;
+// A tap's toggle, as its getActionOptions offers it while a player aims at it: a faucet's and a
+// sink's action 5 negates their bool with no other condition (their bytecode; a faucet's 7 takes the
+// tap off, and a shower's 5 toggles only while its useType is 0).
+inline constexpr uint8_t kTapToggleAction = 5;
 
-// True iff `obj` is a faucet_C, once that class has resolved. Game thread.
-bool IsFaucet(void* obj);
+// True iff `obj` is a faucet_C or a sink_C, once its class has resolved. Game thread.
+bool IsTap(void* obj);
 
 // The appliance's own action verb as a player's interaction dispatches it: actionOptionIndex with
 // `player` and `action`. False when the class has no such verb or the call did not run. Game thread.

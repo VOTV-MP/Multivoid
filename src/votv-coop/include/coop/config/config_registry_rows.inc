@@ -461,10 +461,6 @@ CFG_FLAG(door_drill, "door_drill", "dev", false, "VOTVCOOP_DOOR_DRILL",
 CFG_FLAG(door_drill_host, "door_drill_host", "dev", false, "VOTVCOOP_DOOR_DRILL_HOST",
     "With door_drill: the walker runs on the HOST instead of the client, so its own player in its own "
     "door is single player's reading of the same phases -- the control for the client's run.")
-CFG_FLAG(appliance_drill, "appliance_drill", "dev", false, "VOTVCOOP_APPLIANCE_DRILL",
-    "Drill (BOTH peers): the faucet with the lowest key in the appliance lane, toggled by the client "
-    "through the tap's own action and toggled back by the host whenever it crossed; each peer logs "
-    "every change of its state. Lines tagged [APPL-DRILL]; the client's DONE line ends it.")
 CFG_FLAG(light_drill, "light_drill", "dev", false, "VOTVCOOP_LIGHT_DRILL",
     "Drill (BOTH peers): the light switch with the lowest key in the switch lane whose group the group "
     "lane names and whose breaker is on, pressed by the client through the switch's own use() -- its "
@@ -476,6 +472,11 @@ CFG_FLAG(keypad_drill, "keypad_drill", "dev", false, "VOTVCOOP_KEYPAD_DRILL",
     "password through the numpad, a numpad cancel after two digits and a wrong code on the keys, each "
     "ended by its own copy landing on the host's verdict with the gated door's power; the host logs "
     "every keypad's changes. Lines tagged [KEYPAD-DRILL]; the client's DONE line ends it.")
+CFG_STRING(toggle_drill, "toggle_drill", "dev", "", "VOTVCOOP_TOGGLE_DRILL", false,
+    "Drill (BOTH peers), by kind: garage, tap (a faucet or a sink) or locker. The device of that kind "
+    "with the lowest key in its lane, toggled through its own verb by the client and toggled back by "
+    "the host whenever it crossed; each peer logs every change of its state. Lines tagged "
+    "[TOGGLE-DRILL]; the client's DONE line ends it.")
 CFG_STRING(door_drill_door, "door_drill_door", "dev", "", "VOTVCOOP_DOOR_DRILL_DOOR", false,
     "With door_drill: the object name of the one door the walker walks to (e.g. "
     "door_GEN_VARIABLE_door_C_CAT_45); empty walks the nearest one its navmesh reaches.")

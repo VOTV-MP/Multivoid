@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 namespace ue_wrap::door_box {
@@ -40,6 +41,12 @@ bool TryReadOpened(void* actor, bool& out);
 // of its actionOptionIndex. Game thread.
 bool IsLocker(void* obj);
 bool IsDroneConsole(void* obj);
+
+// A locker's or the console's toggle, as a player's interaction dispatches it: actionOptionIndex
+// with `player` and `action`; action 10 or 11 toggles `opened` on either, unless a locker is blocked
+// (their bytecode). False when the verb did not run. For a dev drill. Game thread.
+inline constexpr uint8_t kToggleAction = 10;
+bool CallAction(void* actor, void* player, uint8_t action);
 
 // Apply `want` natively: locker -> the BP verb Open(want); console -> write
 // opened + setButtonsCollision() + Timeline Play/Reverse. Registers the actor

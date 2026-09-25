@@ -197,12 +197,13 @@ bool ApplyState(void* a, bool on) {
     return ok;
 }
 
-bool IsFaucet(void* obj) {
-    static const Desc* s_faucet = nullptr;
-    if (!s_faucet)
-        for (const Desc& d : g_descs)
-            if (std::wcscmp(d.className, L"faucet_C") == 0) s_faucet = &d;
-    return obj && s_faucet && s_faucet->cls && R::ClassOf(obj) == s_faucet->cls;
+bool IsTap(void* obj) {
+    void* cls = obj ? R::ClassOf(obj) : nullptr;
+    if (!cls) return false;
+    for (const Desc& d : g_descs)
+        if (d.cls == cls && (std::wcscmp(d.className, L"faucet_C") == 0 || std::wcscmp(d.className, L"sink_C") == 0))
+            return true;
+    return false;
 }
 
 bool CallAction(void* a, void* player, uint8_t action) {

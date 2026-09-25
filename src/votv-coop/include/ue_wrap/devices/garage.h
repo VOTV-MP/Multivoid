@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 namespace ue_wrap::garage {
@@ -44,5 +45,14 @@ bool TryReadOpen(void* g, bool& open);
 // SetNewTime to second 0 or 1 of a six-second track, so a close snaps shut and an open lurches
 // and runs on. Must run on the game thread. False on null or an unresolved UFunction.
 bool ApplyOpen(void* g, bool open);
+
+// Whether the garage is mid-swing, its `mov`: its runTrigger ignores a call then. False if the read
+// could not be made (null, or the field did not resolve). Game thread.
+bool TryReadMoving(void* g, bool& moving);
+
+// The garage's own runTrigger(owner, index), the wall button's call: Open negated and the swing,
+// unless it is mid-swing. For a dev drill. False on null, an unresolved UFunction or a failed
+// dispatch. Game thread.
+bool CallRunTrigger(void* g, void* owner, int32_t index);
 
 }  // namespace ue_wrap::garage
