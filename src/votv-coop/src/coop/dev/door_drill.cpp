@@ -5,6 +5,7 @@
 
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/director/door_approach.h"
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"        // the local hand, for the crowbar the hit phase takes
 #include "coop/player/players_registry.h"
@@ -77,9 +78,6 @@ namespace sg = ue_wrap::script_gate;
 
 constexpr auto  kSampleEvery = std::chrono::milliseconds(250);
 constexpr float kReachCm     = 60.f;    // at the approach point, not merely near it
-constexpr float kApproachCm  = 90.f;    // in front of or behind the leaf: a closed door's own origin
-                                        // sits in its nav modifier, where no route ends
-constexpr float kRouteEndCm  = 100.f;   // a route that ends farther from its point never gets there
 constexpr int   kCandidates  = 12;      // the nearest doors by straight distance; each costs two routes
 constexpr float kAwayCm      = 1500.f;  // the walk away: this far back along the route, out of any sensor
 constexpr float kInSensorCm  = 30.f;    // at the sensor box's centre: where the autoclose counts a player
@@ -199,7 +197,7 @@ void Sample() {
 // route search stops at its node limit, and the director's re-path finishes it on the way.
 bool PickReachableDoor(void* player, const ue_wrap::FVector& at, DR::DirectorGoal& goal,
                        std::wstring& nameOut, std::vector<ue_wrap::FVector>& routeOut, float& lenOut) {
-    struct Cand { const Door* door; ue_wrap::FVector pos; float dist; };
+    struct Cand { const Door* door; float dist; };
     std::vector<Cand> cands;
     const std::wstring only(OnlyDoor().begin(), OnlyDoor().end());
     for (const Door& d : g_doors) {
@@ -207,39 +205,24 @@ bool PickReachableDoor(void* player, const ue_wrap::FVector& at, DR::DirectorGoa
         if (!only.empty() && d.name != only) continue;
         ue_wrap::FVector p{};
         if (!E::TryGetActorLocation(d.actor, p)) continue;
-        cands.push_back({&d, p, HorizDist(p, at)});
+        cands.push_back({&d, HorizDist(p, at)});
     }
     std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.dist < b.dist; });
     if (cands.size() > kCandidates) cands.resize(kCandidates);
-    float best = 1e30f;
-    int noRoute = 0, endsFar = 0;
+    DR::DoorApproach best;
     for (const Cand& c : cands) {
-        const ue_wrap::FVector fwd = E::GetActorForwardVector(c.door->actor);
-        for (const float side : {1.f, -1.f}) {
-            const ue_wrap::FVector target{c.pos.X + fwd.X * kApproachCm * side,
-                                          c.pos.Y + fwd.Y * kApproachCm * side, c.pos.Z};
-            std::vector<ue_wrap::FVector> path;
-            if (!E::FindNavPath(player, at, target, path) || path.empty()) { ++noRoute; continue; }
-            if (HorizDist(path.back(), target) > kRouteEndCm) {
-                ++endsFar;
-                if (only.empty()) continue;
-            }
-            float len = 0.f;
-            for (size_t i = 1; i < path.size(); ++i) len += HorizDist(path[i - 1], path[i]);
-            if (len >= best) continue;
-            best = len;
-            goal.targetActor = c.door->actor;
-            goal.targetPos = target;
-            nameOut = c.door->name;
-            routeOut = path;
-            lenOut = len;
-        }
+        if (!DR::PickDoorApproach(player, at, c.door->actor, !only.empty(), best)) continue;
+        goal.targetActor = c.door->actor;
+        goal.targetPos = best.target;
+        nameOut = c.door->name;
+        routeOut = best.route;
+        lenOut = best.len;
     }
     if (!goal.targetActor)
         UE_LOGW("[DOOR-DRILL] %s at (%.0f,%.0f,%.0f): %zu nearest doors, the nearest %.0fcm off; "
                 "%d approach points had no route, %d a route ending over %.0fcm short", Side(),
-                at.X, at.Y, at.Z, cands.size(), cands.empty() ? -1.f : cands.front().dist, noRoute,
-                endsFar, kRouteEndCm);
+                at.X, at.Y, at.Z, cands.size(), cands.empty() ? -1.f : cands.front().dist, best.noRoute,
+                best.endsFar, DR::kRouteEndCm);
     return goal.targetActor != nullptr;
 }
 
