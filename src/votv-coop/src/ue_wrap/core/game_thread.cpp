@@ -12,6 +12,7 @@
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/spawn_gate.h"
 
 #include <windows.h>
@@ -64,6 +65,28 @@ inline void BloomClear(std::atomic<uint64_t>* bloom) {
     for (int i = 0; i < D::kBloomWords; ++i) bloom[i].store(0, std::memory_order_release);
 }
 
+// A registration the engine's calls can never fire, said as it takes its slot: AActor::ProcessEvent
+// returns before UObject::ProcessEvent, where the detour sits, for a function that is neither native
+// nor carries script. So a Blueprint event an actor class declares and does not implement is never
+// dispatched to the detour by the engine, and a subclass that implements it dispatches its own function
+// instead (an observer on Actor.ReceiveEndPlay saw none against 1188 K2_DestroyActor on a host). Only a
+// reflected call of ours, which enters UObject::ProcessEvent directly, reaches it. A class other than an
+// actor reaches the detour either way.
+void WarnIfNeverDispatched(void* targetFn, const char* kind) {
+    namespace P = ue_wrap::profile;
+    const auto* fn = static_cast<const uint8_t*>(targetFn);
+    if (*reinterpret_cast<const uint32_t*>(fn + P::off::UFunction_FunctionFlags) & P::off::FUNC_Native) return;
+    if (*reinterpret_cast<const int32_t*>(fn + P::off::UStruct_ScriptNum) > 0) return;
+    static void* s_actor = nullptr;
+    if (!s_actor) s_actor = reflection::FindClass(P::name::ActorClass);
+    void* const owner = reflection::OuterOf(targetFn);
+    if (!s_actor || !owner || !reflection::IsDescendantOfAny(owner, &s_actor, 1)) return;
+    UE_LOGW("game_thread: the %s on %ls.%ls (%p) can never fire on the engine's calls -- an actor's "
+            "Blueprint event with no script never reaches ProcessEvent from the engine; watch the "
+            "implementing class's own function or the engine's native seam", kind, reflection::ToString(reflection::NameOf(owner)).c_str(),
+            reflection::ToString(reflection::NameOf(targetFn)).c_str(), targetFn);
+}
+
 // The multi-slot pre-dispatch interceptor table, the same atomic-slot shape as the observer
 // tables; a null target is a free slot. The detour walks the table on each dispatch, and the
 // first callback returning true cancels the original.
@@ -100,6 +123,7 @@ bool SetInterceptorSlot(void* targetFn, UFunctionInterceptor cb) {
             g_interceptors[i].targetFn.store(targetFn, std::memory_order_release);
             D::g_interceptorActive.fetch_add(1, std::memory_order_release);
             BloomAdd(D::g_intcBloom, targetFn);  // O(1) presence probe
+            WarnIfNeverDispatched(targetFn, "interceptor");
             return true;
         }
     }
@@ -156,6 +180,7 @@ bool SetObserverSlot(ObserverSlot table[], std::atomic<int>& activeCounter,
             table[i].targetFn.store(targetFn, std::memory_order_release);
             activeCounter.fetch_add(1, std::memory_order_release);
             BloomAdd(bloom, targetFn);  // O(1) presence probe
+            WarnIfNeverDispatched(targetFn, "observer");
             return true;
         }
     }
