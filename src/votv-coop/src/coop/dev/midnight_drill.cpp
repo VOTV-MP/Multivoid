@@ -15,9 +15,11 @@
 
 #include "ue_wrap/actors/sleep.h"
 #include "ue_wrap/actors/vitals.h"
+#include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/world/active_events.h"
 #include "ue_wrap/world/daynightcycle.h"
@@ -38,7 +40,7 @@ namespace sg  = ue_wrap::script_gate;
 namespace AE  = ue_wrap::active_events;
 namespace WI  = ue_wrap::world_identity;
 
-enum class Arm { Off, Awake, Asleep, Cheat };
+enum class Arm { Off, Awake, Asleep, Cheat, Mode5 };
 
 // The host: the join and the set, then (asleep) a quiet world, the bed, the fast-forward, the wake.
 // The client: (asleep) the join, the bed, the fast-forward, the wake; (cheat) its writes. The set and
@@ -49,6 +51,10 @@ constexpr float kAwakeFraction  = 0.999f;  // a few game units before the wrap
 constexpr float kAsleepFraction = 0.98f;   // runway for the bed and the gate, burnt at 1x until then
 constexpr float kNeedForTheArm  = 30.f;    // the wake loop ends a sleep at a need of 100
 constexpr int   kCheatWrites    = 3;       // one write can meet a host sample at the same tick
+constexpr int   kMode5Drops     = 12;      // past the first five backward-run lines, where they thin out
+constexpr auto  kMode5Quiet     = std::chrono::seconds(30);  // no drop in this long: no host reset arrives
+constexpr auto  kMode5Restore   = std::chrono::seconds(25);  // the master's needs restore fires every 10 s
+constexpr float kMode5Food      = 50.f;    // this client's food before the spawn, for the restore to lift
 
 // Game thread only, but for the session pointer the Install fanout stores.
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -73,6 +79,15 @@ coop::time_sync::LocalWrites g_cheatFound{};  // the lane's count of the writes 
 int32_t  g_cheatDayZ = -1;     // this client's day number before the write
 float    g_cheatDay = 0.f;     // and its `day`
 
+// The mode5 arm, client: its master spawned, the drops of its `day` seen since and when the last came,
+// and the clock lane's count of the local writes it found, before the spawn.
+bool     g_m5Spawned = false;
+int      g_m5Drops = 0;
+float    g_m5LastDay = 0.f;
+std::chrono::steady_clock::time_point g_m5LastDrop{};
+std::chrono::steady_clock::time_point g_m5SpawnAt{};
+coop::time_sync::LocalWrites g_m5Found{};
+
 // Who ends the night. Three classes declare a function of this name (the gamemode's, the player's,
 // the ATV's wakeUp), so the watch keeps only the gamemode's, by its declaring class. Each entry is
 // logged with its caller; our own sleep lane's reflected wakeup at the END is one of them.
@@ -90,7 +105,11 @@ int      g_wakeLines = 0;
 Arm ArmOf() {
     static const Arm a = [] {
         const std::string v = coop::config::ResolveEnum(::coop::config_registry::rows::midnight_drill);
-        return v == "awake" ? Arm::Awake : v == "asleep" ? Arm::Asleep : v == "cheat" ? Arm::Cheat : Arm::Off;
+        return v == "awake"  ? Arm::Awake
+             : v == "asleep" ? Arm::Asleep
+             : v == "cheat"  ? Arm::Cheat
+             : v == "mode5"  ? Arm::Mode5
+                             : Arm::Off;
     }();
     return a;
 }
@@ -100,6 +119,7 @@ const char* ArmName() {
     case Arm::Awake:  return "awake";
     case Arm::Asleep: return "asleep";
     case Arm::Cheat:  return "cheat";
+    case Arm::Mode5:  return "mode5";
     default:          return "off";
     }
 }
@@ -108,6 +128,9 @@ const char* ArmName() {
 const char* ArmPlan(bool host) {
     if (ArmOf() == Arm::Cheat)
         return host ? "this host leaves its clock alone" : "writing a day onto this client's clock once joined";
+    if (ArmOf() == Arm::Mode5)
+        return host ? "spawning game mode 5's master once a client's join is over"
+                    : "spawning game mode 5's master once joined, then watching the host's resets";
     if (host) return "waiting for a client's join to end";
     return ArmOf() == Arm::Asleep ? "going to bed once joined" : "watching; the host sets the clock";
 }
@@ -153,6 +176,14 @@ void PrintRunway(float frac) {
             "%.2f s at 20x",
             frac, maxTime, units, scale, rt.diffMult, rt.settingMultiplayer, rt.sleepingTimeDilation, dilation, here,
             fast);
+}
+
+// Game mode 5's master, as the gamemode spawns it in that mode: its begin-play starts the loop that
+// resets `day` to 0 every second. The class loads with its package.
+bool SpawnModeResetMaster() {
+    void* cls = ue_wrap::asset_load::LoadObjectByPath(L"/Game/objects/halloweenMaster.halloweenMaster_C");
+    if (!cls) cls = R::FindClass(L"halloweenMaster_C");
+    return cls && ue_wrap::engine::SpawnActor(cls, {0.f, 0.f, 0.f}) != nullptr;
 }
 
 bool HostDayMoved() {
@@ -279,6 +310,16 @@ void TickHost(coop::net::Session* s) {
             g_step = Step::Done;
             return;
         }
+        if (ArmOf() == Arm::Mode5) {
+            if (!SpawnModeResetMaster()) {
+                Invalid('H', "game mode 5's master did not load or spawn");
+                return;
+            }
+            UE_LOGI("midnight_drill: [H] arm mode5 -- slot %d's join is over; game mode 5's master spawned, its "
+                    "reset of the day every second runs on this host", g_slot);
+            g_step = Step::Done;
+            return;
+        }
         int32_t h = 0, m = 0;
         if (!DNC::ReadSavedTime(h, m, g_setDayZ)) return;
         const float frac = ArmOf() == Arm::Awake ? kAwakeFraction : kAsleepFraction;
@@ -393,10 +434,64 @@ void TickCheat() {
             kCheatWrites, day, day + maxT, maxT, z);
 }
 
+// The mode5 arm: game mode 5's master on this client too, once it is on the host's clock. Its begin-play
+// runs one pass of the reset inline, which the clock lane can find once; after that only the host's
+// resets should reach this client, as samples that drop its `day`. Once it has dropped kMode5Drops times
+// the arm is judged by the clock lane's count of the local writes it found since the spawn, at most that
+// one pass, and by the master's other flows still running here: its needs restore, a 10 s timer, lifts
+// the food this arm sets to kMode5Food before the spawn back to 100, which it waits kMode5Restore for. A
+// client no drop reaches in kMode5Quiet ends the arm INVALID.
+void TickMode5() {
+    if (g_step == Step::Done || g_step == Step::Invalid || !g_pokedRate) return;
+    float total = 0.f, day = 0.f, scale = 0.f;
+    if (!DNC::ReadClock(total, day, scale) || coop::time_sync::LastHostDayZ() < 0 || scale != 0.f) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (!g_m5Spawned) {
+        g_m5Spawned = true;
+        g_m5Found = coop::time_sync::LocalWritesFound();
+        g_m5LastDay = day;
+        g_m5LastDrop = g_m5SpawnAt = now;
+        ue_wrap::vitals::Write(ue_wrap::vitals::Field::Food, kMode5Food);
+        if (!SpawnModeResetMaster()) {
+            Invalid('C', "game mode 5's master did not load or spawn");
+            return;
+        }
+        UE_LOGI("midnight_drill: [C] arm mode5 -- game mode 5's master spawned on this client at day=%.2f, its "
+                "food set to %.0f; watching for %d drops of its day", day, kMode5Food, kMode5Drops);
+        return;
+    }
+    if (day < g_m5LastDay) {
+        ++g_m5Drops;
+        g_m5LastDrop = now;
+    }
+    g_m5LastDay = day;
+    if (now - g_m5LastDrop > kMode5Quiet) {
+        Invalid('C', "no drop of this client's day for 30 s: the host's resets are not reaching it");
+        return;
+    }
+    if (g_m5Drops < kMode5Drops) return;
+    float food = -1.f;
+    ue_wrap::vitals::Read(ue_wrap::vitals::Field::Food, &food);
+    const bool restored = food >= 99.f;
+    if (!restored && now - g_m5SpawnAt < kMode5Restore) return;  // the restore's first fire is 10 s in
+    const coop::time_sync::LocalWrites w = coop::time_sync::LocalWritesFound();
+    const uint32_t found = (w.held - g_m5Found.held) + (w.met - g_m5Found.met);
+    UE_LOGI("midnight_drill: [C] mode5 done -- %d drops of this client's day; the clock lane found %u local "
+            "write(s) since the spawn; food %.0f -> %.1f: %s", g_m5Drops, found, kMode5Food, food,
+            found > 1   ? "FAIL, this client's own reset kept running"
+            : !restored ? "FAIL, the master's needs restore did not run here"
+                        : "PASS, no more than its begin-play's one pass, and its other flows ran");
+    g_step = Step::Done;
+}
+
 void TickClient() {
     PokeClockRate();
     if (ArmOf() == Arm::Cheat) {
         TickCheat();
+        return;
+    }
+    if (ArmOf() == Arm::Mode5) {
+        TickMode5();
         return;
     }
     if (ArmOf() != Arm::Asleep) return;  // awake: the client only watches
@@ -454,6 +549,11 @@ void OnDisconnect() {
     g_cheatPending = false;
     g_cheatHashRan = 0;
     g_cheatFound = coop::time_sync::LocalWrites{};
+    g_m5Spawned = false;
+    g_m5Drops = 0;
+    g_m5LastDay = 0.f;
+    g_m5LastDrop = g_m5SpawnAt = {};
+    g_m5Found = coop::time_sync::LocalWrites{};
     g_cheatDayZ = -1;
     g_cheatDay = 0.f;
     g_wakeLines = 0;
