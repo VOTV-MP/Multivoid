@@ -396,6 +396,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/delivery_census_probe.cpp
     src/coop/dev/store_table_probe.cpp
     src/coop/dev/order_selftest.cpp
+    src/coop/dev/order_probe.cpp
     src/ue_wrap/actors/inventory.cpp
     src/ue_wrap/hotbar/icons.cpp
     src/coop/items/hotbar_icon_edge.cpp

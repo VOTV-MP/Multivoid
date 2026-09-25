@@ -381,6 +381,8 @@ CFG_FLAG(store_table_probe, "store_table_probe", "dev", false, nullptr,
     "Diagnostic census: which mechanism can read a list_store row (one-shot).")
 CFG_FLAG(order_selftest, "order_selftest", "dev", false, "VOTVCOOP_ORDER_SELFTEST",
     "Selftest: a client places a real shop order so host-side pricing is exercised.")
+CFG_FLAG(order_probe, "order_probe", "dev", false, "VOTVCOOP_ORDER_PROBE",
+    "Probe (BOTH peers): logs each write of the delivery order queue (makeAnOrder with its caller, addOrderCart, removeOrderCart), the drone's sendShop, checkOrders and compileOrder, and the day cycle's hourly call that makes the daily order. Lines tagged [ORDER-PROBE].")
 CFG_FLAG(flashlight_log, "flashlight_log", "dev", false, nullptr,
     "Diagnostic logging for flashlight/item-activate sync.")
 CFG_FLAG(kerfur_census, "kerfur_census", "dev", false, nullptr,
