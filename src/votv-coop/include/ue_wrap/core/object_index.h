@@ -35,6 +35,12 @@ size_t Drain();
 
 bool IsSeeded();
 
+// The events the last drain took from the engine's notifications and left for the next, being over
+// its budget: zero when, as of that drain, the index held every birth and death the engine had
+// announced. After a level load it stays above zero for a few batches, and an object born in the
+// load may be missing until then: the events apply in order, so at zero every one is in. Game thread.
+size_t Backlog();
+
 using InstanceFn = void (*)(void* ctx, void* obj, int32_t index);
 using ClassFn    = void (*)(void* ctx, void* cls, void* anyInstance);
 

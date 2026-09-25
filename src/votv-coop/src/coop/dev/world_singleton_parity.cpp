@@ -10,6 +10,7 @@
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/world/world_singleton.h"
 
+#include <chrono>
 #include <cstdint>
 
 namespace coop::dev::world_singleton_parity {
@@ -53,14 +54,21 @@ void* WalkUnderTheRule(const wchar_t* name) {
 void Tick() {
     static const bool s_on = coop::config::ResolveFlag(::coop::config_registry::rows::world_singleton_parity);
     if (!s_on) return;
-    static uint32_t s_doneGen = 0;
+    static uint32_t s_doneGen = 0, s_seenGen = 0;
+    static std::chrono::steady_clock::time_point s_seenAt{};
     const uint32_t gen = WI::Generation();
     if (gen == s_doneGen) return;
-    // Once per world; a gameplay world is compared once its gamemode is up.
+    const auto now = std::chrono::steady_clock::now();
+    if (gen != s_seenGen) { s_seenGen = gen; s_seenAt = now; }
+    // Once per world, the menu's included; a gameplay world is compared once its gamemode is up.
     const WI::WorldKind kind = WI::CurrentWorldKind();
     if (kind == WI::WorldKind::Unknown) return;
     if (kind == WI::WorldKind::Gameplay && !WS::Gamemode()) return;
+    // And once the index holds the world's load: an instance born in it is not listed until the drain
+    // has applied the load's backlog, so a menu judged on its first tick read four rows as absent.
+    if (ue_wrap::object_index::Backlog() != 0) return;
     s_doneGen = gen;
+    const long long waitedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - s_seenAt).count();
     int ok = 0, n = 0, bothNull = 0;
     auto judge = [&](const wchar_t* what, void* index, void* walk) {
         ++n;
@@ -79,8 +87,8 @@ void Tick() {
     judge(L"GameInstance()", WS::GameInstance(), WalkUnderTheRule(P::name::GameInstanceClass));
     for (const wchar_t* name : kClasses)
         judge(name, ue_wrap::object_index::ClassByName(name), R::FindClass(name));
-    UE_LOGI("ws_parity: VERDICT %s (%d/%d, %d both null) world gen=%u kind=%d", ok == n ? "PASS" : "FAIL", ok, n,
-            bothNull, gen, static_cast<int>(kind));
+    UE_LOGI("ws_parity: VERDICT %s (%d/%d, %d both null) world gen=%u kind=%d, judged %lld ms after the probe "
+            "first saw it", ok == n ? "PASS" : "FAIL", ok, n, bothNull, gen, static_cast<int>(kind), waitedMs);
 }
 
 }  // namespace coop::dev::world_singleton_parity

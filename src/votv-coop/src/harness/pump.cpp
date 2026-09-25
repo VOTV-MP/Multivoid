@@ -5,6 +5,7 @@
 #include "coop/comms/chat_feed.h"
 #include "coop/dev/object_overlay.h"
 #include "coop/dev/ragdoll_bone_overlay.h"
+#include "coop/dev/world_singleton_parity.h"
 #include "coop/player/death_revive.h"
 #include "coop/player/nameplate.h"
 #include "coop/player/run_end_travel.h"
@@ -27,6 +28,21 @@ uint64_t g_lastDrain = 0;   // game thread
 // The session this pump ticks, handed over at boot rather than reached for: the pump is a leaf,
 // and a module that calls up into the lifecycle driver that calls it is a cycle nothing needs.
 std::atomic<coop::net::Session*> g_session{nullptr};
+
+// The shutdown hooks, run every tick regardless of possession and idempotent: the HWND subclass
+// and the window title must work before the local player exists (a close on the splash). The
+// run-ending seam is registered here unconditionally rather than lazily from the pump: registered
+// only while a session runs, the single-player guarantee would rest on the watch's absence rather
+// than on the seam's own session test, and a negative-control run would grade a watch that was
+// never there.
+void TickShutdownHooks() {
+    coop::net::Session* s = g_session.load(std::memory_order_acquire);
+    if (!s) return;
+    coop::shutdown::Install(s);
+    coop::shutdown::UpdateWindowTitle();
+    coop::death_revive::Install(s);
+    coop::player::run_end_travel::Install(s);
+}
 
 }  // namespace
 
@@ -53,20 +69,19 @@ void PostMenuTick() {
         coop::net::Session* s = g_session.load(std::memory_order_acquire);
         if (!s) return;
         coop::net_pump::Tick(*s);
-        coop::nameplate::Update();
-        coop::dev::object_overlay::Update(); coop::dev::ragdoll_bone_overlay::Update();
-        coop::chat_feed::Tick();
-        TickShutdownHooks();
+        TickFrameTail();
     });
 }
 
-void TickShutdownHooks() {
-    coop::net::Session* s = g_session.load(std::memory_order_acquire);
-    if (!s) return;
-    coop::shutdown::Install(s);
-    coop::shutdown::UpdateWindowTitle();
-    coop::death_revive::Install(s);
-    coop::player::run_end_travel::Install(s);
+void TickFrameTail() {
+    // Self-clearing and cheap when idle: an empty nameplate snapshot hides the HUD at the menu.
+    coop::nameplate::Update();
+    coop::dev::object_overlay::Update(); coop::dev::ragdoll_bone_overlay::Update();
+    coop::chat_feed::Tick();
+    // [dev] Once per world, the menu's included, where a lookup that outlived the world it came from
+    // would show; a latched read when off.
+    coop::dev::world_singleton_parity::Tick();
+    TickShutdownHooks();
 }
 
 void TickWatchdogs() {

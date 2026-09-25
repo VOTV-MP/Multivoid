@@ -8,14 +8,11 @@
 #include "harness/world_boot.h"
 
 #include "coop/config/config.h"
-#include "coop/comms/chat_feed.h"
 #include "coop/creatures/npc_sync.h"
 #include "coop/dev/dev_gate.h"
 #include "coop/dev/force_weather.h"
 #include "coop/dev/hotbar_icon_probe.h"
 #include "coop/dev/load_reroll_watch.h"
-#include "coop/dev/object_overlay.h"
-#include "coop/dev/ragdoll_bone_overlay.h"
 #include "coop/dev/rehost_rejoin.h"
 #include "coop/dev/restore_vitals.h"
 #include "coop/dispatch/event_feed.h"
@@ -32,7 +29,6 @@
 #include "coop/net/peer_admission.h"
 #include "coop/net/peer_identity.h"
 #include "coop/player/movement_ledger.h"
-#include "coop/player/nameplate.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/puppet_drive.h"
 #include "coop/player/remote_player.h"
@@ -443,14 +439,8 @@ void RunPlayLoop(bool bootedIntoGameplay) {
             if (running || inGameplayWorld) {
                 coop::roster::Refresh();
             }
-            // Always, self-clearing: re-project the nameplates (an empty snapshot with no puppets,
-            // so the HUD auto-hides at the menu), age the chat feed, tick the dev overlays; all
-            // cheap no-ops when idle.
-            coop::nameplate::Update();
-            coop::dev::object_overlay::Update(); coop::dev::ragdoll_bone_overlay::Update();
-            coop::chat_feed::Tick();
-            // Always: the close subclass and the window title must work at the menu too.
-            harness::pump::TickShutdownHooks();
+            // Always: the tail every composite runs, the menu-mode join's included.
+            harness::pump::TickFrameTail();
         });
         harness::pump::TickWatchdogs();
         if (running && ++tick % 120 == 0) {  // ~every 2 s at 60 Hz: stats for the LAN tests

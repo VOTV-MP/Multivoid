@@ -37,8 +37,8 @@ struct Pick {
 };
 
 // Into `ref`, the newest instance of the loaded class named `className` that is live and readable (not
-// marked for death, not still being loaded or constructed), not its default object, and, for an
-// actor, of the running world: a departed world's actor stays unmarked until the purge, and one whose
+// marked for death, not still being loaded or constructed), not its default object, and, when it has
+// a world, of the running one: a departed world's actor stays unmarked until the purge, and one whose
 // level has already lost its world stamps no world at all, so an actor must stamp the running one.
 // With no running world to judge against, the stamp only has to exist, the rule a held reference
 // keeps. Null, with the ref reset, when the class is not loaded or has no such instance.
@@ -54,10 +54,12 @@ void* Resolve(const wchar_t* className, CachedObjRef& ref) {
         if (*reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(obj) + P::off::UObject_ObjectFlags) &
             kRF_ClassDefaultObject)
             return;
-        if (p.actor) {
-            void* const w = world_identity::WorldOf(obj);
-            if (!w || (p.world && w != p.world)) return;
-        }
+        // Every instance that has a world is judged by it, not only an actor: the held reference rejects
+        // one of another world on its first Get, so taking it would hide a later instance of the
+        // running one (the menu's own UWorld read as absent behind another world's).
+        void* const w = world_identity::WorldOf(obj);
+        if (p.actor && !w) return;
+        if (w && p.world && w != p.world) return;
         p.ref->Set(obj);
     }, &pick);
     return ref.Get();

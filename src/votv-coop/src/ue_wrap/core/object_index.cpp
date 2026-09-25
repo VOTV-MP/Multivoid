@@ -318,6 +318,8 @@ size_t Drain() {
 
 bool IsSeeded() { return g_seeded; }
 
+size_t Backlog() { return g_pending.size() - g_pendingHead; }
+
 size_t ForEachInstance(void* cls, InstanceFn fn, void* ctx) {
     auto it = g_classes.find(cls);
     if (it == g_classes.end()) return 0;

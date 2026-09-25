@@ -47,18 +47,15 @@ void PostComposite(Body&& body) {
 }
 
 // The composite every wait loop OUTSIDE gameplay posts: the session tick the save transfer lives
-// in, the nameplates, the dev overlays, the chat feed and the shutdown hooks. The loop that waits
-// for the transfer is the loop that posts the tick the transfer runs in, so without this a
-// menu-mode join deadlocks at "Connecting".
+// in, then the frame tail. The loop that waits for the transfer is the loop that posts the tick the
+// transfer runs in, so without this a menu-mode join deadlocks at "Connecting".
 void PostMenuTick();
 
-// The shutdown hooks, run every tick regardless of possession and idempotent: the HWND subclass
-// and the window title must work before the local player exists (a close on the splash). The
-// run-ending seam is registered here unconditionally rather than lazily from the pump: registered
-// only while a session runs, the single-player guarantee would rest on the watch's absence rather
-// than on the seam's own session test, and a negative-control run would grade a watch that was
-// never there. Safe off the game thread.
-void TickShutdownHooks();
+// The tail every composite runs, in a session or out of one, at the menu or in a world: the
+// nameplates, the dev overlays, the chat feed, the lookup parity probe and the shutdown hooks. One
+// list, so an item added for one composite runs on the other's frames too: a join's menu is ticked by
+// this module's own composite, not the play loop's. Game thread.
+void TickFrameTail();
 
 // The watchdogs that cover a failure of the PUMP itself, and therefore the one thing that must
 // not ride in the pump's own composite: a stalled game thread stops the watchdog and the task it
