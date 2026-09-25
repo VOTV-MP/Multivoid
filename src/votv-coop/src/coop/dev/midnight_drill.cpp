@@ -65,6 +65,7 @@ int     g_slot = -1;          // the host's client whose join armed it
 int32_t g_setDayZ = -1;       // the host's day number when it set the clock
 uint64_t g_minutesAtAccel = 0;  // this peer's minute pulses when the fast-forward began
 bool     g_pokedRate = false;   // the clock latch's control write is done (client, once per session)
+bool     g_musicsCleared = false;  // this peer's music flags were cleared for the midnight (once per session)
 
 // The cheat arm, client: the writes made and how each ended, and the one awaiting the cycle's tick
 // with what it is judged against.
@@ -184,6 +185,16 @@ bool SpawnModeResetMaster() {
     void* cls = ue_wrap::asset_load::LoadObjectByPath(L"/Game/objects/halloweenMaster.halloweenMaster_C");
     if (!cls) cls = R::FindClass(L"halloweenMaster_C");
     return cls && ue_wrap::engine::SpawnActor(cls, {0.f, 0.f, 0.f}) != nullptr;
+}
+
+// Before the midnight, this peer's music flags go clear, as the day's stings leave them, so the
+// rollover's setting them all again shows in rollover_watch's OUTPUTS line. Once a session.
+void ClearMusicsForTheMidnight(char role) {
+    if (g_musicsCleared) return;
+    g_musicsCleared = true;
+    const bool cleared = DNC::WriteAllMusicsOf(DNC::SaveSlotOfCycle(DNC::Cycle()), false);
+    UE_LOGI("midnight_drill: [%c] this peer's music flags %s for the midnight to set again", role,
+            cleared ? "cleared" : "did NOT clear");
 }
 
 bool HostDayMoved() {
@@ -325,6 +336,7 @@ void TickHost(coop::net::Session* s) {
         const float frac = ArmOf() == Arm::Awake ? kAwakeFraction : kAsleepFraction;
         UE_LOGI("midnight_drill: [H] arm %s -- slot %d's join is over (world-ready, bracket closed); setting "
                 "the clock to %.3f of day %d", ArmName(), g_slot, frac, g_setDayZ);
+        ClearMusicsForTheMidnight('H');
         PrintRunway(frac);
         if (!coop::dev::set_clock::ApplyTimeFraction(frac)) {
             Invalid('H', "the clock set was refused (the dev gate, or a clock that did not resolve)");
@@ -494,6 +506,9 @@ void TickClient() {
         TickMode5();
         return;
     }
+    if (coop::net_pump::HasAnnouncedWorldReady() &&
+        coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle)
+        ClearMusicsForTheMidnight('C');
     if (ArmOf() != Arm::Asleep) return;  // awake: the client only watches
     switch (g_step) {
     case Step::WaitJoin:
@@ -545,6 +560,7 @@ void OnDisconnect() {
     g_setDayZ = -1;
     g_minutesAtAccel = 0;
     g_pokedRate = false;
+    g_musicsCleared = false;
     g_cheatWrites = g_cheatRolled = g_cheatHeld = g_cheatMet = g_cheatUnaccounted = 0;
     g_cheatPending = false;
     g_cheatHashRan = 0;

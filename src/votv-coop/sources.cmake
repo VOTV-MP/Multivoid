@@ -129,6 +129,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/actors/kerfur.cpp
     src/ue_wrap/world/votv_lib.cpp
     src/ue_wrap/world/economy.cpp
+    src/ue_wrap/world/profile.cpp
     src/ue_wrap/world/order_economy.cpp
     src/ue_wrap/world/store_catalog.cpp
     src/ue_wrap/world/weapon_catalog.cpp

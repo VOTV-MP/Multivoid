@@ -121,4 +121,17 @@ void WriteTimeScaleOf(void* cycle, float scale);  // on a given cycle, as ReadCl
 // False if `saveSlot` is null or the field is unresolved.
 bool LatchDailyDeliveryOf(void* saveSlot);
 
+// ---- the rollover's per-machine outputs (coop/world/day_edge performs them on a client) ----
+// A cycle's sleeplessDays: the midnights since its world loaded, the cycle's own member and never saved.
+// Every rollover adds one, asleep or awake, and the `insomniac` achievement progresses at seven. False
+// if the cycle is null or the member does not resolve.
+bool ReadSleeplessDaysOf(void* cycle, int32_t& out);
+bool WriteSleeplessDaysOf(void* cycle, int32_t v);
+
+// A save slot's musics[]: one flag a day's music sting, cleared by the sting's check as its time comes,
+// whether or not the sting plays. The rollover sets them all again. How many are set, of how many; and every one written `set`. False if the slot is null or the
+// member does not resolve.
+bool ReadMusicsOf(void* saveSlot, int32_t& set, int32_t& count);
+bool WriteAllMusicsOf(void* saveSlot, bool set);
+
 }  // namespace ue_wrap::daynightcycle

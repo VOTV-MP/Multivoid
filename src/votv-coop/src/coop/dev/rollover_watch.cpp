@@ -15,6 +15,7 @@
 #include "ue_wrap/world/daynightcycle.h"
 #include "ue_wrap/world/game_mode.h"
 #include "ue_wrap/world/game_rules_pane.h"
+#include "ue_wrap/world/profile.h"
 
 #include <windows.h>
 
@@ -100,6 +101,15 @@ uint32_t g_saidWaiting = 0;         // the reads already named as what arming wa
 uint64_t g_armedDigest = 0;
 uint64_t g_lastDigest = 0;
 Clock::time_point g_nextDigestRead{};
+// This peer's rollover outputs as last said, and when they are next read.
+struct Outputs {
+    int32_t days = -1, sleepless = -1, musicsSet = -1, musics = -1;
+    bool operator!=(const Outputs& o) const {
+        return days != o.days || sleepless != o.sleepless || musicsSet != o.musicsSet || musics != o.musics;
+    }
+};
+Outputs g_outputs{};
+Clock::time_point g_nextOutputsRead{};
 int32_t  g_lastOwnDayZ = INT_MIN;
 int32_t  g_lastHostDayZ = -1;
 float    g_dayMax = -1.f;           // the highest `day` since the last DAY line
@@ -255,6 +265,8 @@ void Waiting(uint32_t bit, const char* what) {
     UE_LOGI("rollover_watch: [%c] not armed yet -- %s; arming when it is", RoleChar(), what);
 }
 
+void CheckOutputs(bool arming);  // below, beside the digest's reader
+
 void TryArm() {
     float total = 0, day = 0, scale = 0, maxTime = 0;
     int32_t th = 0, tm = 0, tz = 0, sh = 0, sm = 0, sz = 0;
@@ -285,12 +297,40 @@ void TryArm() {
             th, tm, tz, day, hostDay, static_cast<unsigned long long>(dg.digest), dg.filled, dg.dishes,
             st.wYear, st.wMonth, st.wDay, BadsunHeld(), sg::IsEnabled() ? "on" : "OFF",
             g_live < 0 ? 0 : g_live, kCount);
+    CheckOutputs(true);
     g_armed = true;
     g_armedDigest = g_lastDigest = dg.digest;
     g_nextDigestRead = Clock::now() + std::chrono::seconds(1);
     g_lastOwnDayZ = sz;
     g_lastHostDayZ = IsHost() ? -1 : coop::time_sync::LastHostDayZ();
     g_dayMax = day;
+}
+
+// This peer's share of the rollover, which its own machine keeps: the profile's days lived, the cycle's
+// midnights since its world loaded and the day's music flags. Said when the watch arms, then whenever a read, once a second,
+// finds them moved: the rollover writes them a frame or more after its DAY line.
+Outputs ReadOutputs() {
+    Outputs o{};
+    void* cycle = DNC::Cycle();
+    ue_wrap::profile::ReadDaysTotal(o.days);
+    DNC::ReadSleeplessDaysOf(cycle, o.sleepless);
+    DNC::ReadMusicsOf(DNC::SaveSlotOfCycle(cycle), o.musicsSet, o.musics);
+    return o;
+}
+
+void CheckOutputs(bool arming) {
+    const auto t = Clock::now();
+    if (!arming && t < g_nextOutputsRead) return;
+    g_nextOutputsRead = t + std::chrono::seconds(1);
+    const Outputs o = ReadOutputs();
+    if (arming)
+        UE_LOGI("rollover_watch: [%c] ARMED outputs -- profile days_total %d, sleeplessDays %d, musics set %d of %d",
+                RoleChar(), o.days, o.sleepless, o.musicsSet, o.musics);
+    else if (o != g_outputs)
+        UE_LOGI("rollover_watch: [%c] OUTPUTS moved -- profile days_total %d -> %d, sleeplessDays %d -> %d, musics "
+                "set %d -> %d of %d", RoleChar(), g_outputs.days, o.days, g_outputs.sleepless, o.sleepless,
+                g_outputs.musicsSet, o.musicsSet, o.musics);
+    g_outputs = o;
 }
 
 // Re-read at every generteHashcode burst and once a second; printed on change.
@@ -416,6 +456,7 @@ void Tick() {
     if (!DNC::ReadClock(total, day, scale)) return;
     if (day > g_dayMax) g_dayMax = day;
     CheckDigest(hashBurst);
+    CheckOutputs(false);
     if (g_settleTicks >= 0) CheckSettled();
     CheckDay(day, scale);
 }
@@ -434,6 +475,8 @@ void OnDisconnect() {
     g_armed = false;
     g_saidWaiting = 0;
     g_armedDigest = g_lastDigest = 0;
+    g_outputs = Outputs{};
+    g_nextOutputsRead = Clock::time_point{};
     g_lastOwnDayZ = INT_MIN;
     g_lastHostDayZ = -1;
     g_dayMax = -1.f;

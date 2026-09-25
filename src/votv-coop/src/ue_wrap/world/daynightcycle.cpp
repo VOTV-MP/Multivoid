@@ -179,6 +179,20 @@ struct LatchedMember {
 LatchedMember g_gmSaveSlot{L"mainGamemode_C", L"saveSlot", "the save slot's clock fields are out of reach"};
 LatchedMember g_slotDailyDelivery{L"saveSlot_C", L"dailyDelivery", "the 6 am order latch cannot be set"};
 LatchedMember g_slotSavedTime{L"saveSlot_C", L"savedtime", "the day number can be neither read nor written"};
+LatchedMember g_slotMusics{L"saveSlot_C", L"musics", "the day's music flags cannot be set again"};
+LatchedMember g_cycleSleepless{L"daynightCycle_C", L"sleeplessDays", "the midnights since load cannot be counted"};
+
+// UE4.27 TArray<bool>: its data, then its count and capacity; one byte an element.
+struct BoolArray {
+    uint8_t* data;
+    int32_t num;
+    int32_t max;
+};
+BoolArray* MusicsIn(void* saveSlot) {
+    const int32_t off = g_slotMusics.Of(saveSlot);
+    if (!saveSlot || off < 0) return nullptr;
+    return reinterpret_cast<BoolArray*>(reinterpret_cast<uint8_t*>(saveSlot) + off);
+}
 // The running world's live saveSlot, for a caller with no cycle in hand, or null.
 void* LiveSaveSlot() {
     void* gm = world_singleton::Gamemode();   // world-stamped: never a dying world's
@@ -213,6 +227,36 @@ bool IsMenuCycle(void* cycle) {
         return false;
     }
     return (*(reinterpret_cast<const uint8_t*>(gm) + s_off) & s_mask) != 0;
+}
+
+bool ReadSleeplessDaysOf(void* cycle, int32_t& out) {
+    const int32_t off = g_cycleSleepless.Of(cycle);
+    if (!cycle || off < 0) return false;
+    out = *reinterpret_cast<const int32_t*>(reinterpret_cast<const uint8_t*>(cycle) + off);
+    return true;
+}
+
+bool WriteSleeplessDaysOf(void* cycle, int32_t v) {
+    const int32_t off = g_cycleSleepless.Of(cycle);
+    if (!cycle || off < 0) return false;
+    *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(cycle) + off) = v;
+    return true;
+}
+
+bool ReadMusicsOf(void* saveSlot, int32_t& set, int32_t& count) {
+    const BoolArray* a = MusicsIn(saveSlot);
+    if (!a || a->num < 0 || (a->num > 0 && !a->data)) return false;
+    set = 0;
+    for (int32_t i = 0; i < a->num; ++i) set += a->data[i] ? 1 : 0;
+    count = a->num;
+    return true;
+}
+
+bool WriteAllMusicsOf(void* saveSlot, bool set) {
+    BoolArray* a = MusicsIn(saveSlot);
+    if (!a || a->num < 0 || (a->num > 0 && !a->data)) return false;
+    for (int32_t i = 0; i < a->num; ++i) a->data[i] = set ? 1 : 0;
+    return true;
 }
 
 bool LatchDailyDeliveryOf(void* saveSlot) {
