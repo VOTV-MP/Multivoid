@@ -3,7 +3,7 @@
 //
 // Some entities are designed to stalk THE player. Suppressing them on clients would delete the
 // encounter; host-rolling them would anchor them to the wrong player. So each peer KEEPS its native
-// roll -- the spawner ticker is not parked -- OWNS the entity it rolled, whose native AI targets
+// roll -- the spawner ticker runs on every peer -- OWNS the entity it rolled, whose native AI targets
 // its own player, and BROADCASTS it so every other peer renders a display mirror.
 //
 // The first member is eyer_C, from ticker_eyers: the night stalker that watches you, angers when
@@ -27,10 +27,10 @@ struct OwnerEntityDestroyPayload;
 
 namespace coop::owner_entity_sync {
 
-// Cache the session, resolve the member classes (lazy retry -- they load with the world), and
-// register the BeginDeferred POST observer that catches a local native spawn of a member class and
-// broadcasts OwnerEntitySpawn. ScopedMirrorSpawn excludes our own mirror spawns from it. Net-pump
-// ensure.
+// Cache the session, resolve the member classes' names (the observer judges a spawn by its class's
+// name, so it arms before a member class loads), and register the BeginDeferred POST observer that
+// catches a local native spawn of a member class and broadcasts OwnerEntitySpawn. ScopedMirrorSpawn
+// excludes our own mirror spawns from it. Net-pump ensure.
 void Install(coop::net::Session* session);
 
 // 4 Hz driver (TickGameplay), the OWNER side of the lane: stream OwnerEntityPose while the entity

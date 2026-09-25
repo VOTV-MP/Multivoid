@@ -32,9 +32,10 @@ struct PropStickStatePayload;
 
 namespace coop::prop_stick_sync {
 
-// Idempotent install, retried on a throttle (one net-pump tick in 125) until comp_wallAttachable_C
-// loads, and run once on demand when a join's converge or a live message needs the lane first. Two
-// halves, each latched on its own, so a recook that loses one leaves the other working: the stick
+// Idempotent install: one index lookup a call until comp_wallAttachable_C is loaded, after which each
+// half settles on its first attempt; run once on demand when a join's converge or a live message
+// needs the lane first. Two halves, each latched on its own, so a recook that loses one leaves the
+// other working: the stick
 // (the component class, ExecuteUbergraph_comp_wallAttachable, the component's `prop` field and
 // forceStick, then the POST observer) and the unstick (unstick and its script-gate watch). Caches
 // `session`.

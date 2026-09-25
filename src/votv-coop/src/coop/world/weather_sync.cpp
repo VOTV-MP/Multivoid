@@ -19,12 +19,14 @@
 #include "ue_wrap/world/directionalwind.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -36,7 +38,9 @@ namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
 
-// UFunction pointers, resolved once per process (UClass-stable across cycle recreation).
+// UFunction pointers, resolved once per process: the cycle and wind classes are loaded at the main
+// menu and live for the process (coop/dev/class_lifetime_probe measures it), so these and the
+// registrations on them hold across a world change.
 void* g_timerRainFn       = nullptr;
 void* g_timerLightningFn  = nullptr;
 void* g_fogEventFn        = nullptr;
@@ -236,7 +240,11 @@ bool OnWindOriginPreSuppress(void* /*self*/, void* /*params*/) {
 // The installer, re-entered every pump tick until it latches.
 
 bool TryResolveAllFunctions() {
-    void* cls = R::FindClass(P::name::DaynightCycleClass);
+    // Once a function is missing from a loaded class the answer is final (a recooked Blueprint), so it
+    // is said once and not asked again.
+    static bool s_refused = false;
+    if (s_refused) return false;
+    void* cls = ue_wrap::object_index::ClassByName(P::name::DaynightCycleClass);
     if (!cls) return false;
 
     struct Entry { const wchar_t* name; void** out; };
@@ -263,7 +271,11 @@ bool TryResolveAllFunctions() {
         if (void* fn = R::FindFunction(cls, e.name)) { *e.out = fn; ++mResolved; }
     }
     // All five schedulers (broadcast and suppression) and all three mutator targets.
-    return sResolved == 5 && mResolved == 3;
+    if (sResolved == 5 && mResolved == 3) return true;
+    s_refused = true;
+    UE_LOGE("weather: %d/5 schedulers and %d/3 mutators resolved on %ls -- the weather lane stays off",
+            sResolved, mResolved, P::name::DaynightCycleClass);
+    return false;
 }
 
 }  // namespace
@@ -280,41 +292,34 @@ void Install(coop::net::Session* session) {
 
     // The wind interceptor sits above the cycle-gated early-out: the directionalWind class may load
     // after the cycle. The role gates refresh every call (a reconnect with the other role needs no
-    // re-registration); the registration itself is once, best effort, retried next tick.
+    // re-registration); the registration itself is once.
     g_windIsClient.store(session && session->role() != coop::net::Role::Host,
                          std::memory_order_release);
     // The scheduler gate, refreshed the same way.
     g_schedulerSuppressActive.store(session && session->role() != coop::net::Role::Host,
                                     std::memory_order_release);
     if (!g_windOriginInterceptorReg) {
-        // The resolve is throttled to one attempt in 125 ticks: FindClass walks the whole
-        // GUObjectArray, and this sits above the latch. directionalWind loads at gamemode
-        // BeginPlay, before Install runs, so it resolves on about the first attempt; the throttle
-        // bounds the class-never-loads case.
-        static uint32_t sWindResolveN = 0;
-        if ((sWindResolveN++ % 125) == 0) {
-            if (void* wc = R::FindClass(P::name::DirectionalWindClass)) {
-                if (void* fn = R::FindFunction(wc, L"changeWindOrigin")) {
-                    if (GT::RegisterInterceptor(fn, &OnWindOriginPreSuppress)) {
-                        g_windOriginInterceptorReg = true;
-                        UE_LOGI("weather: changeWindOrigin PRE-interceptor registered (@%p; "
-                                "client-suppressed wind-gust roll, host pass-through)", fn);
-                    } else {
-                        UE_LOGW("weather: changeWindOrigin interceptor registration FAILED "
-                                "(table full?) -- retrying");
-                    }
-                }
+        // One index probe a call until the class is found. From its first sight the attempt settles:
+        // a missing function is a recooked Blueprint, and a full table is a capacity fault to fix, not
+        // a slot to wait for.
+        if (void* wc = ue_wrap::object_index::ClassByName(P::name::DirectionalWindClass)) {
+            g_windOriginInterceptorReg = true;
+            void* fn = R::FindFunction(wc, L"changeWindOrigin");
+            if (!fn) {
+                UE_LOGW("weather: directionalWind has no changeWindOrigin -- a client rolls its own gusts");
+            } else if (GT::RegisterInterceptor(fn, &OnWindOriginPreSuppress)) {
+                UE_LOGI("weather: changeWindOrigin PRE-interceptor registered (@%p; "
+                        "client-suppressed wind-gust roll, host pass-through)", fn);
+            } else {
+                UE_LOGE("weather: changeWindOrigin interceptor registration FAILED (the interceptor "
+                        "table is full) -- a client rolls its own gusts");
             }
         }
     }
 
     if (g_installed) return;
 
-    if (!TryResolveAllFunctions()) {
-        // The cycle class is not loaded yet, or a UFunction was renamed by a recook; retry next
-        // tick.
-        return;
-    }
+    if (!TryResolveAllFunctions()) return;  // the cycle class is not loaded yet, or refused for good
 
     if (!session) {
         // No session yet; the harness re-calls with it.
@@ -493,17 +498,19 @@ void TickConnect() {
         }
     }
 
-    // The host's pulse (MTA's CBlendedWeather::DoPulse): the full state to every client every 150
-    // ticks, independent of change detection. A client that fresh-boots its own New Game world
-    // rolls rain and fog at BeginPlay before the interceptors install, and a static-clear host
-    // emits no change to tell it to clear; the pulse lands within a second or two, the client's
+    // The host's pulse (MTA's CBlendedWeather::DoPulse): the full state to every client every two
+    // seconds of wall time, independent of change detection. A client that fresh-boots its own New
+    // Game world rolls rain and fog at BeginPlay before the interceptors install, and a static-clear
+    // host emits no change to tell it to clear; the pulse lands within two seconds, the client's
     // diff-gated apply clears the leaked rain and fog, and it is a no-op after. The interceptors
     // stop further rolls; the pulse mops up the pre-install leak.
     {
         auto* s = g_session.load(std::memory_order_acquire);
         if (s && s->connected() && s->role() == coop::net::Role::Host && g_installed) {
-            static uint32_t sPulseN = 0;
-            if ((sPulseN++ % 150) == 0) {
+            static std::chrono::steady_clock::time_point sLastPulse{};
+            const auto now = std::chrono::steady_clock::now();
+            if (now - sLastPulse >= std::chrono::seconds(2)) {
+                sLastPulse = now;
                 void* cycle = ResolveCycle();
                 if (cycle && R::IsLive(cycle)) {
                     coop::net::WeatherStatePayload p{};

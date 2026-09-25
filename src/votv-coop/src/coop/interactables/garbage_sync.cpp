@@ -20,6 +20,7 @@
 #include "coop/net/session.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 
 #include <atomic>
@@ -39,8 +40,10 @@ coop::net::Session* LoadSession() {
     return g_session_ptr.load(std::memory_order_acquire);
 }
 
-// Installer state, one-shot per process; Install retries until the open-container class is
-// loaded (blueprint classes load on demand at the first world enter).
+// Installer state, one-shot per process: set once the open-container half has settled, installed or
+// refused for good. The classes this file hooks are loaded at the main menu and live for the process
+// (coop/dev/class_lifetime_probe measures it), so the pointers below and the registrations hold across
+// a world change.
 std::atomic<bool> g_installed{false};
 
 // The garbage-container class, resolved once at install and reused per tick for a
@@ -148,7 +151,8 @@ bool InstallSpawnerSuppressors() {
         const wchar_t* fn;
         UFunctionInterceptor cb;
         const char* tag;
-        bool registered;  // per target, so a settled row is not re-resolved and re-logged
+        bool settled;     // registered, or refused for good: a settled row is not tried again
+        bool registered;
     };
     // The bound-event name for the trash-piles event is the full canonical delegate signature
     // from the header dump; long names are routine in blueprint overlap handlers, and the
@@ -164,27 +168,30 @@ bool InstallSpawnerSuppressors() {
         {L"event_trashPiles_C",
             L"BndEvt__event_funnyGascans_Box_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature",
             &OnEventTrashPilesOverlapPre,
-            "event_trashPiles.BndEvt"},
+            "event_trashPiles.BndEvt", false, false},
         {L"arirTrasher_C", L"trash",
             &OnArirTrasherTrashPre,
-            "arirTrasher.trash"},
+            "arirTrasher.trash", false, false},
         {L"baseCleaner_trashBits_C", L"ReceiveBeginPlay",
             &OnBaseCleanerTrashBitsBeginPlayPre,
-            "baseCleaner_trashBits.BeginPlay"},
+            "baseCleaner_trashBits.BeginPlay", false, false},
     };
-    int registered = 0;
+    int settled = 0;
     for (auto& t : targets) {
-        // A settled row is skipped entirely. Without this, one class that never loads on a map
-        // keeps the whole block retrying, and every already-registered row pays another object
-        // array walk and prints its install line again, once a second for the session.
-        if (t.registered) { ++registered; continue; }
-        void* cls = R::FindClass(t.cls);
-        if (!cls) continue;  // BP class not loaded yet; retry next Install()
+        if (t.settled) { ++settled; continue; }
+        // One index probe while the class is not loaded; the next call asks again.
+        void* cls = ue_wrap::object_index::ClassByName(t.cls);
+        if (!cls) continue;
+        // A Blueprint class loads with its functions, so from here the row settles either way: a
+        // missing name is a recooked Blueprint, and a full table is a capacity fault to fix, not a
+        // slot to wait for.
+        t.settled = true;
+        ++settled;
         void* declarer = nullptr;
         void* fn = R::FindDispatchFunction(cls, t.fn, &declarer);
         if (!fn) {
-            UE_LOGW("garbage_sync[spawner]: UFunction '%ls' not found on %ls or its supers -- skipping",
-                    t.fn, t.cls);
+            UE_LOGW("garbage_sync[spawner]: UFunction '%ls' not found on %ls or its supers -- that "
+                    "spawner runs on a client", t.fn, t.cls);
             continue;
         }
         // The class its callback filters on, captured from the row that owns it -- not a second
@@ -199,25 +206,24 @@ bool InstallSpawnerSuppressors() {
                     t.cls, t.fn, R::ToString(R::NameOf(declarer)).c_str());
         }
         if (!GT::RegisterInterceptor(fn, t.cb)) {
-            UE_LOGE("garbage_sync[spawner]: RegisterInterceptor failed for %ls::%ls (table full?)",
-                    t.cls, t.fn);
+            UE_LOGE("garbage_sync[spawner]: RegisterInterceptor failed for %ls::%ls (the interceptor "
+                    "table is full) -- that spawner runs on a client", t.cls, t.fn);
             continue;
         }
         t.registered = true;
-        ++registered;
         UE_LOGI("garbage_sync[spawner]: PRE-interceptor installed -- %ls::%ls (%s)",
                 t.cls, t.fn, t.tag);
     }
-    // Latch as installed only when all targets resolved and registered: a partial install
-    // leaves some spawners ungated and the per-peer divergence remains. Install drives this
-    // half on its own until then: it used to be called only from the tail of the container
-    // install, which had already latched and returned early, so the retry promised here could
-    // never run and a class not loaded at that one instant stayed ungated for the session.
+    // Latched once every row has settled. Install drives this half on its own until then: it used
+    // to be called only from the tail of the container install, which had already latched and
+    // returned early, so a class not loaded at that one instant stayed ungated for the session.
     const int total = static_cast<int>(sizeof(targets) / sizeof(targets[0]));
-    if (registered == total) {
+    if (settled == total) {
         g_spawnersInstalled.store(true, std::memory_order_release);
-        UE_LOGI("garbage_sync[spawner]: install complete -- %d spawners suppressed on client (tool_garbageSpawner_C deliberately allow-through per principle 6)",
-                registered);
+        int registered = 0;
+        for (const auto& t : targets) registered += t.registered ? 1 : 0;
+        UE_LOGI("garbage_sync[spawner]: install complete -- %d of %d spawners suppressed on client (tool_garbageSpawner_C deliberately allow-through per principle 6)",
+                registered, total);
         return true;
     }
     return false;
@@ -230,29 +236,23 @@ void SetSession(coop::net::Session* session) {
 }
 
 void Install() {
-    // The two halves retry independently: each resolves classes the other does not, and a
-    // spawner class can load long after the open container does. Throttled, because a miss
-    // costs an object-array walk per name per attempt and this runs on every pump tick.
-    if (!g_spawnersInstalled.load(std::memory_order_acquire)) {
-        static uint32_t sSpawnerTry = 0;
-        if ((sSpawnerTry++ % 125) == 0) InstallSpawnerSuppressors();
-    }
+    // The two halves settle independently, each on the classes the other does not resolve; a class
+    // lookup is one index probe, so both run on every call until they have.
+    InstallSpawnerSuppressors();
     if (g_installed.load(std::memory_order_acquire)) return;
     // The filter class is also the resolve subject: ask it which body ITS instances run, so a cook
     // that ever gives the garbage container its own ReceiveTick is hooked on that one instead of on
     // the base it would override (the R-11 rule; the declarer is logged when it is not this class).
-    void* garbageCls = R::FindClass(L"prop_garbageContainer_C");
-    if (!garbageCls) {
-        // The class is not loaded yet; retry on the next Install call. No noise: the class loads on
-        // the first world enter, so this is expected for the first seconds after boot.
-        return;
-    }
+    void* garbageCls = ue_wrap::object_index::ClassByName(L"prop_garbageContainer_C");
+    if (!garbageCls) return;
+    // Settled from here, as a spawner row is above.
+    g_installed.store(true, std::memory_order_release);
     g_garbageContainerCls = garbageCls;
     void* declarer = nullptr;
     void* tickFn = R::FindDispatchFunction(garbageCls, L"ReceiveTick", &declarer);
     if (!tickFn) {
         UE_LOGW("garbage_sync: ReceiveTick not found on prop_garbageContainer_C or its supers -- "
-                "BP class loaded but missing the expected name; the CXX dump may be stale");
+                "BP class loaded but missing the expected name; the container runs on a client");
         return;
     }
     if (declarer != garbageCls) {
@@ -262,10 +262,10 @@ void Install() {
     }
     const bool okTick = GT::RegisterInterceptor(tickFn, &OnOpenContainerReceiveTickPre);
     if (!okTick) {
-        UE_LOGE("garbage_sync: RegisterInterceptor(ReceiveTick) failed -- interceptor table full?");
+        UE_LOGE("garbage_sync: RegisterInterceptor(ReceiveTick) failed (the interceptor table is "
+                "full) -- the container runs on a client");
         return;
     }
-    g_installed.store(true, std::memory_order_release);
     UE_LOGI("garbage_sync: installed -- ReceiveTick PRE-interceptor (client-side, garbageContainer "
             "UClass=%p, declared on %ls)",
             g_garbageContainerCls, R::ToString(R::NameOf(declarer)).c_str());

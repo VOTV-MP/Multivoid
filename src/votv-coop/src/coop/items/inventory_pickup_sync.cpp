@@ -8,8 +8,10 @@
 #include "coop/props/prop_sound.h"
 
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 
 #include <atomic>
@@ -24,19 +26,19 @@ namespace GT = ue_wrap::game_thread;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// Resolution / registration latches (Install retries throttled until done).
+// Resolved once by Install on the game thread, before the observer registers; read-only after.
 void*   g_playSound2DFn = nullptr;
-void*   g_inventoryCue  = nullptr;  // the cue OBJECT -- the observer predicate is a pointer compare
+// The cue is judged by its name, which lives for the process, so no pointer to the asset is held.
+R::FName g_cueName{};
 int32_t g_offSound = -1;
 int32_t g_offPitch = -1;
 int32_t g_offWco   = -1;
 bool    g_observerRegistered = false;
-uint32_t g_resolveN = 0;  // ~1 Hz throttle on the resolve walk (Install runs per pump tick)
 
 // POST observer on UGameplayStatics::PlaySound2D, which dispatches at human-event rate game-wide
 // (UI clicks, 2D cues); the body is three cached-offset reads and compares, exiting on the first
 // mismatch. The predicate:
-//   Sound == inventory_Cue    pointer compare against the resolved cue object
+//   Sound is inventory_Cue    its name against the resolved one, two integer compares
 //   1.05 < pitch < 1.2        the collect plays 1.1; the same cue on a climb plays 0.9
 //   WorldContext == LOCAL     the collector. A puppet has no input stack and can never dispatch
 //                             this; and the gamemode's own collect helper plays the same cue at
@@ -46,13 +48,14 @@ uint32_t g_resolveN = 0;  // ~1 Hz throttle on the resolve walk (Install runs pe
 // passes all three tests is one collect.
 void OnPlaySound2DPost(void* /*self*/, void* /*function*/, void* params) {
     if (!GT::IsGameThread() || !params) return;
-    if (!g_inventoryCue) return;  // cue not resolved yet -> predicate undecidable
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
 
     const auto* p = static_cast<const uint8_t*>(params);
     void* sound = *reinterpret_cast<void* const*>(p + g_offSound);
-    if (sound != g_inventoryCue) return;
+    if (!sound) return;
+    const R::FName& soundName = R::NameOf(sound);
+    if (soundName.ComparisonIndex != g_cueName.ComparisonIndex || soundName.Number != g_cueName.Number) return;
     const float pitch = *reinterpret_cast<const float*>(p + g_offPitch);
     if (pitch <= 1.05f || pitch >= 1.2f) return;  // rejects the climb play at 0.9
     void* wco = *reinterpret_cast<void* const*>(p + g_offWco);
@@ -72,23 +75,18 @@ void OnPlaySound2DPost(void* /*self*/, void* /*function*/, void* params) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    if (g_observerRegistered && g_inventoryCue) return;
-
-    // Throttle the GUObjectArray walks to ~1 Hz until everything resolves
-    // (the cue asset streams in with gameplay; GameplayStatics exists at boot).
-    if ((g_resolveN++ % 125) != 0) return;
-
-    if (!g_inventoryCue) {
-        g_inventoryCue = R::FindObject(L"inventory_Cue", L"SoundCue");
-        if (g_inventoryCue)
-            UE_LOGI("inventory_pickup: resolved inventory_Cue=%p", g_inventoryCue);
-    }
     if (g_observerRegistered) return;
 
     if (!g_playSound2DFn) {
-        if (void* cls = R::FindClass(L"GameplayStatics"))
-            g_playSound2DFn = R::FindFunction(cls, L"PlaySound2D");
-        if (!g_playSound2DFn) return;  // engine class not indexed yet -- retry
+        // A native class, in the index from boot; a missing function would be an engine change.
+        void* cls = ue_wrap::object_index::ClassByName(L"GameplayStatics");
+        if (!cls) return;
+        g_playSound2DFn = R::FindFunction(cls, L"PlaySound2D");
+        if (!g_playSound2DFn) {
+            UE_LOGE("inventory_pickup: GameplayStatics has no PlaySound2D -- blip sync disabled");
+            g_observerRegistered = true;
+            return;
+        }
         g_offSound = R::FindParamOffset(g_playSound2DFn, L"Sound");
         g_offPitch = R::FindParamOffset(g_playSound2DFn, L"PitchMultiplier");
         g_offWco   = R::FindParamOffset(g_playSound2DFn, L"WorldContextObject");
@@ -104,14 +102,24 @@ void Install(coop::net::Session* session) {
             return;
         }
     }
+    // Neither failure below clears by retrying, so each disables the lane with one line, as the
+    // offsets' does above.
+    g_cueName = ue_wrap::fname_utils::StringToFName(L"inventory_Cue");
+    if (g_cueName.ComparisonIndex == 0) {
+        UE_LOGE("inventory_pickup: the cue's name did not convert -- blip sync disabled");
+        g_observerRegistered = true;
+        return;
+    }
     if (!GT::RegisterPostObserver(g_playSound2DFn, &OnPlaySound2DPost)) {
-        UE_LOGE("inventory_pickup: POST observer registration FAILED (table full?) -- retrying");
+        UE_LOGE("inventory_pickup: POST observer registration FAILED (the observer table is full) -- "
+                "blip sync disabled");
+        g_observerRegistered = true;
         return;
     }
     g_observerRegistered = true;
     UE_LOGI("inventory_pickup: observer installed on GameplayStatics::PlaySound2D @ %p "
-            "(offs Sound=%d Pitch=%d WCO=%d, cue=%p)",
-            g_playSound2DFn, g_offSound, g_offPitch, g_offWco, g_inventoryCue);
+            "(offs Sound=%d Pitch=%d WCO=%d, cue name index=%d)",
+            g_playSound2DFn, g_offSound, g_offPitch, g_offWco, g_cueName.ComparisonIndex);
 }
 
 void OnReliable(const coop::net::InventoryPickupPayload& payload) {

@@ -13,10 +13,12 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
@@ -37,14 +39,17 @@ namespace GT = ue_wrap::game_thread;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// Resolve / registration latches.
+// The capture observers' target, resolved once: the spawner class is loaded at the main menu and
+// lives for the process (coop/dev/class_lifetime_probe measures it), so the registration holds across
+// a world change.
 void* g_fireflyClass  = nullptr;
 void* g_fireflyTickFn = nullptr;
 bool  g_hooksRegistered = false;
-uint32_t g_resolveN = 0;  // ~1 Hz throttle on the FindClass walk until registered
 
-// Reflected spawn path (resolved once; GUObjectArray entries are stable in shipped UE4).
-void* g_effFireflies        = nullptr;  // the eff_fireflies UParticleSystem template
+// The reflected spawn path, resolved where a packet needs it. The template is held by slot and
+// serial, so an asset that comes back as another object after a world change is found again; the
+// GameplayStatics default object and its function are native and live for the process.
+ue_wrap::CachedObjRef g_effFireflies;  // the eff_fireflies UParticleSystem template
 void* g_gameplayStaticsCdo  = nullptr;
 void* g_spawnEmitterFn      = nullptr;
 
@@ -125,35 +130,39 @@ void OnFireflyTickPost(void* /*self*/, void* /*function*/, void* /*params*/) {
 }
 
 // ---- reflected spawn path resolve ---------------------------------------
+// The loaded particle system named eff_fireflies, from the object index's list of that class, or null.
+void* FindEmitterTemplate() {
+    void* psClass = ue_wrap::object_index::ClassByName(L"ParticleSystem");
+    if (!psClass) return nullptr;
+    void* found = nullptr;
+    ue_wrap::object_index::ForEachInstance(psClass, [](void* ctx, void* obj, int32_t index) {
+        void*& out = *static_cast<void**>(ctx);
+        // An index member may still be loading or dying; its slot's flags say so.
+        if (out || (R::SlotFlags(index) & (R::slot_flags::Dying | R::slot_flags::NotYetReadable))) return;
+        if (R::NameEquals(R::NameOf(obj), kEffFireflies)) out = obj;
+    }, &found);
+    return found;
+}
+
 bool ResolveSpawn() {
-    if (g_effFireflies && g_gameplayStaticsCdo && g_spawnEmitterFn) return true;
-    if (!g_effFireflies)
-        g_effFireflies = R::FindObject(kEffFireflies, L"ParticleSystem");
+    if (!g_effFireflies.Alive()) g_effFireflies.Set(FindEmitterTemplate());
     if (!g_gameplayStaticsCdo)
         g_gameplayStaticsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
     if (g_gameplayStaticsCdo && !g_spawnEmitterFn) {
         if (void* cls = R::ClassOf(g_gameplayStaticsCdo))
             g_spawnEmitterFn = R::FindFunction(cls, L"SpawnEmitterAtLocation");
     }
-    return g_effFireflies && g_gameplayStaticsCdo && g_spawnEmitterFn;
+    return g_effFireflies.Alive() && g_gameplayStaticsCdo && g_spawnEmitterFn;
 }
 
 }  // namespace
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-
-    ResolveSpawn();  // opportunistic (cheap once cached); needed before a packet lands
-
     if (g_hooksRegistered) return;
 
-    // Throttle the FindClass walk to ~1 Hz until the firefly BP class loads + we register
-    // (the class is gamemode-spawned and may be absent for a while). Install() runs every
-    // ~125 Hz NetPumpTick.
-    if ((g_resolveN++ % 125) != 0) return;
-
-    if (!g_fireflyClass) g_fireflyClass = R::FindClass(kFireflyClass);
-    if (!g_fireflyClass) return;  // BP class not loaded yet -- retry next tick.
+    if (!g_fireflyClass) g_fireflyClass = ue_wrap::object_index::ClassByName(kFireflyClass);
+    if (!g_fireflyClass) return;
     if (!g_fireflyTickFn) g_fireflyTickFn = R::FindFunction(g_fireflyClass, L"ReceiveTick");
     if (!g_fireflyTickFn) {
         UE_LOGW("firefly: '%ls' has no ReceiveTick -- CXX dump stale?; skipping", kFireflyClass);
@@ -162,17 +171,18 @@ void Install(coop::net::Session* session) {
     }
 
     // PRE+POST capture observers on the firefly ReceiveTick (every peer captures its own
-    // spawns). Roll back PRE if POST fails so a retry is clean (no duplicate slot).
+    // spawns). A full observer table is a capacity fault to fix, not a slot to wait for, so a failed
+    // registration ends the attempts, the PRE rolled back when the POST fails.
+    g_hooksRegistered = true;
     if (!GT::RegisterPreObserver(g_fireflyTickFn, &OnFireflyTickPre)) {
-        UE_LOGE("firefly: PRE observer registration FAILED (table full?) -- retrying next tick");
+        UE_LOGE("firefly: PRE observer registration FAILED (the observer table is full) -- capture disabled");
         return;
     }
     if (!GT::RegisterPostObserver(g_fireflyTickFn, &OnFireflyTickPost)) {
-        UE_LOGE("firefly: POST observer registration FAILED (table full?) -- rolling back, retrying");
+        UE_LOGE("firefly: POST observer registration FAILED (the observer table is full) -- capture disabled");
         GT::UnregisterObservers(g_fireflyTickFn, &OnFireflyTickPre);
         return;
     }
-    g_hooksRegistered = true;
     UE_LOGI("firefly: capture observers installed on %ls::ReceiveTick @ %p "
             "(peer-symmetric; spawn-path resolved=%d)",
             kFireflyClass, g_fireflyTickFn, ResolveSpawn() ? 1 : 0);
@@ -183,7 +193,7 @@ void OnReliable(const coop::net::FireflySpawnPayload& payload) {
     if (!std::isfinite(payload.x) || !std::isfinite(payload.y) || !std::isfinite(payload.z)) return;
     if (!ResolveSpawn()) {
         UE_LOGW("firefly: OnReliable spawn path unresolved (eff=%p cdo=%p fn=%p) -- dropping",
-                g_effFireflies, g_gameplayStaticsCdo, g_spawnEmitterFn);
+                g_effFireflies.Get(), g_gameplayStaticsCdo, g_spawnEmitterFn);
         return;
     }
     void* worldCtx = coop::players::Registry::Get().Local();
@@ -194,7 +204,7 @@ void OnReliable(const coop::net::FireflySpawnPayload& payload) {
     ue_wrap::FRotator rot{ 0.f, 0.f, 0.f };
     ue_wrap::ParamFrame f(g_spawnEmitterFn);
     f.Set<void*>(L"WorldContextObject", worldCtx);
-    f.Set<void*>(L"EmitterTemplate", g_effFireflies);
+    f.Set<void*>(L"EmitterTemplate", g_effFireflies.Get());
     f.SetRaw(L"Location", &loc, sizeof(loc));
     f.SetRaw(L"Rotation", &rot, sizeof(rot));
     f.SetRaw(L"Scale", &scale, sizeof(scale));

@@ -13,8 +13,10 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/actors/puppet.h"                  // DisableCharacterTicks (the npc-mirror park)
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -45,14 +47,17 @@ constexpr const wchar_t* kOwnerEntityClasses[] = {
 constexpr size_t kOwnerEntityClassCount =
     sizeof(kOwnerEntityClasses) / sizeof(kOwnerEntityClasses[0]);
 
-// Resolved UClass* per row. Written on the game thread (Install retry), read
-// by the POST observer (game-thread too -- actor spawns are GT-only).
-void* g_classes[kOwnerEntityClassCount] = {};
+// Each row's class is judged by its name, which lives for the process, so the observer can arm before
+// the class loads and no class pointer is held. Resolved by Install before the observer arms, read by
+// the POST observer, both on the game thread. The receiver looks the class up where it spawns.
+R::FName g_classNames[kOwnerEntityClassCount] = {};
 
 int ClassIdOf(void* cls) {
     if (!cls) return -1;
+    const R::FName& name = R::NameOf(cls);
     for (size_t i = 0; i < kOwnerEntityClassCount; ++i)
-        if (g_classes[i] == cls) return static_cast<int>(i);
+        if (name.ComparisonIndex == g_classNames[i].ComparisonIndex && name.Number == g_classNames[i].Number)
+            return static_cast<int>(i);
     return -1;
 }
 
@@ -124,7 +129,7 @@ void OnSpawnPost(void* /*self*/, void* /*function*/, void* params) {
 
     void* actorClass = *reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(params) + g_classParamOff);
-    const int classId = ClassIdOf(actorClass);   // exact-ptr fast reject
+    const int classId = ClassIdOf(actorClass);   // two integer compares a row
     if (classId < 0) return;
     void* actor = *reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(params) + g_returnParamOff);
@@ -173,11 +178,10 @@ void AnnounceOwned(coop::net::Session* s, Owned& o, long long now) {
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (g_observerArmed) return;
-    static uint32_t sN = 0;
-    if ((sN++ % 125) != 0) return;  // ~1 Hz of the pump while unresolved
 
+    // Native classes, in the index from boot: the observer arms on the first call.
     if (!g_beginDeferredFn) {
-        void* gsCls = R::FindClass(P::name::GameplayStaticsClass);
+        void* gsCls = ue_wrap::object_index::ClassByName(P::name::GameplayStaticsClass);
         if (!gsCls) return;
         g_beginDeferredFn = R::FindFunction(gsCls, P::name::BeginDeferredSpawnFn);
         if (!g_beginDeferredFn) {
@@ -195,17 +199,23 @@ void Install(coop::net::Session* session) {
         }
     }
     if (!g_k2DestroyFn) {
-        if (void* actorCls = R::FindClass(P::name::ActorClassName))
-            g_k2DestroyFn = R::FindFunction(actorCls, L"K2_DestroyActor");
-        if (!g_k2DestroyFn) return;  // retry (engine class -- resolves at boot)
+        void* actorCls = ue_wrap::object_index::ClassByName(P::name::ActorClassName);
+        if (!actorCls) return;
+        g_k2DestroyFn = R::FindFunction(actorCls, L"K2_DestroyActor");
+        if (!g_k2DestroyFn) {
+            UE_LOGW("owner_entity: Actor has no K2_DestroyActor -- lane disabled");
+            g_observerArmed = true;
+            return;
+        }
     }
-    // Member classes load with the world -- retry until all resolve.
-    size_t resolved = 0;
     for (size_t i = 0; i < kOwnerEntityClassCount; ++i) {
-        if (!g_classes[i]) g_classes[i] = R::FindClass(kOwnerEntityClasses[i]);
-        if (g_classes[i]) ++resolved;
+        g_classNames[i] = ue_wrap::fname_utils::StringToFName(kOwnerEntityClasses[i]);
+        if (g_classNames[i].ComparisonIndex == 0) {
+            UE_LOGW("owner_entity: the name '%ls' did not convert -- lane disabled", kOwnerEntityClasses[i]);
+            g_observerArmed = true;
+            return;
+        }
     }
-    if (resolved < kOwnerEntityClassCount) return;
 
     if (!GT::RegisterPostObserver(g_beginDeferredFn, &OnSpawnPost)) {
         UE_LOGE("owner_entity: RegisterPostObserver FAILED (table full?) -- lane disabled");
@@ -317,12 +327,12 @@ void OnSpawnMsg(const coop::net::OwnerEntitySpawnPayload& p, int senderPeerSlot)
             return;
         }
     }
-    void* cls = g_classes[p.classId];
-    if (!cls) return;  // classes unresolved: the keepalive re-delivers post-resolve
+    void* cls = ue_wrap::object_index::ClassByName(kOwnerEntityClasses[p.classId]);
+    if (!cls) return;  // not loaded on this peer yet: the keepalive re-delivers
     // Resolve-once statics (GT-only path): the GameplayStatics CDO + Finish fn.
     static void* s_gsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
     static void* s_finishFn = [] {
-        void* gsCls = R::FindClass(P::name::GameplayStaticsClass);
+        void* gsCls = ue_wrap::object_index::ClassByName(P::name::GameplayStaticsClass);
         return gsCls ? R::FindFunction(gsCls, P::name::FinishSpawningActorFn) : nullptr;
     }();
     void* gsCdo = s_gsCdo;

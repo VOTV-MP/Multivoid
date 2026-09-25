@@ -15,6 +15,7 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/actors/vitals.h"
 
@@ -38,14 +39,14 @@ constexpr float kMaxDamagePerHit = 1000.f;
 
 bool ValidDamage(float d) { return std::isfinite(d) && d > 0.f && d <= kMaxDamagePerHit; }
 
-// The impact-entry cancel. mainPlayer_C's three native->BP impact events, resolved lazily (the
-// class loads with gameplay). One shared PRE callback, registered once for each.
+// The impact-entry cancel. mainPlayer_C's three native->BP impact events, one shared PRE callback
+// registered once for each. The class is loaded at the main menu and lives for the process
+// (coop/dev/class_lifetime_probe measures it), so the registrations hold across a world change.
 const wchar_t* const kImpactEntryNames[3] = {
     L"impactDamage", L"impactDamageCPP", L"impactSquishCPP",
 };
 void*    g_impactFns[3] = {};
 bool     g_impactInterceptorsDone = false;
-uint32_t g_resolveThrottle = 0;
 uint32_t g_canceled = 0;   // rate-latched log counter
 
 // The LOCAL possessed player, published by Tick (game thread) for the interceptor's any-thread
@@ -88,19 +89,22 @@ void Tick() {
     // Registry::Local() is GT-only and cached).
     g_localPawn.store(coop::players::Registry::Get().Local(), std::memory_order_release);
     if (g_impactInterceptorsDone) return;
-    // FindClass walks GUObjectArray -- ~1 Hz of the pump until mainPlayer_C loads
-    // (the wisp_attack Install throttle shape).
-    if ((g_resolveThrottle++ % 125) != 0) return;
-    void* cls = R::FindClass(L"mainPlayer_C");
+    void* cls = ue_wrap::object_index::ClassByName(L"mainPlayer_C");
     if (!cls) return;
+    // A Blueprint class loads with its functions, so the first attempt with the class present is the
+    // last: a name that does not resolve is a recooked Blueprint, and a full table is a capacity fault
+    // to fix, not a slot to wait for.
+    g_impactInterceptorsDone = true;
     bool all = true;
     for (int i = 0; i < 3; ++i) {
-        if (!g_impactFns[i]) g_impactFns[i] = R::FindFunction(cls, kImpactEntryNames[i]);
-        if (!g_impactFns[i]) { all = false; continue; }
-        if (!GT::RegisterInterceptor(g_impactFns[i], &OnImpactEntryPre)) all = false;
+        g_impactFns[i] = R::FindFunction(cls, kImpactEntryNames[i]);
+        if (g_impactFns[i] && GT::RegisterInterceptor(g_impactFns[i], &OnImpactEntryPre)) continue;
+        all = false;
+        UE_LOGE("player_damage: impact entry %ls %s -- a non-local body runs its damage body", kImpactEntryNames[i],
+                g_impactFns[i] ? "did not register (the interceptor table is full)"
+                               : "is not declared on mainPlayer_C (a recooked Blueprint)");
     }
     if (all) {
-        g_impactInterceptorsDone = true;
         UE_LOGI("player_damage: impact-entry PRE cancels installed (impactDamage=%p "
                 "impactDamageCPP=%p impactSquishCPP=%p) -- non-local bodies never run "
                 "the saveSlot damage body",

@@ -16,6 +16,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
@@ -50,10 +51,11 @@ coop::net::Session* LoadSession() {
     return g_session.load(std::memory_order_acquire);
 }
 
-// ---- resolved engine refs, written on the game thread by the install -- the throttled Install, or
-// on demand when a join's converge or a live message needs the lane first -- before the observer
-// and the watch register; read-only afterwards. The component class can be taken from a live
-// component before either (WallAttachCompOf).
+// ---- resolved engine refs, written on the game thread by the install -- Install, or on demand when
+// a join's converge or a live message needs the lane first -- before the observer and the watch
+// register; read-only afterwards. The component class is loaded at the main menu and lives for the
+// process (coop/dev/class_lifetime_probe measures it), so neither the class nor the functions below
+// go stale across a world change.
 void* g_compClass        = nullptr;  // comp_wallAttachable_C
 void* g_uberFn           = nullptr;  // comp_wallAttachable_C::ExecuteUbergraph_comp_wallAttachable
 void* g_forceStickFn     = nullptr;  // comp_wallAttachable_C::forceStick(bool skipHolding)
@@ -90,12 +92,11 @@ struct CompOffset {
 };
 std::unordered_map<void*, CompOffset> g_compOffsets;
 
-// The on-demand install runs once a session; the throttled Install keeps retrying after it.
+// The on-demand install runs once a session; Install keeps retrying after it.
 bool g_onDemandTried = false;
 
-// The wall-attach component `actor` carries, checked for its class, or null. Before the throttled
-// install has found the class, a live component names it: a joiner's first snapshot can arrive
-// before that install runs, and this takes the class without a walk of the object array.
+// The wall-attach component `actor` carries, checked for its class, or null. The class comes from the
+// object index, so a joiner's first snapshot, which can arrive before Install runs, needs no install.
 void* WallAttachCompOf(void* actor) {
     UE_ASSERT_GAME_THREAD("prop_stick_sync::WallAttachCompOf");
     if (!actor) return nullptr;
@@ -111,10 +112,8 @@ void* WallAttachCompOf(void* actor) {
     if (!comp || !R::IsLive(comp)) return nullptr;
     void* compCls = R::ClassOf(comp);
     if (!compCls) return nullptr;
-    if (!g_compClass) {
-        if (R::ClassNameOf(comp) != L"comp_wallAttachable_C") return nullptr;
-        g_compClass = compCls;
-    }
+    if (!g_compClass) g_compClass = ue_wrap::object_index::ClassByName(L"comp_wallAttachable_C");
+    if (!g_compClass) return nullptr;
     return R::IsDescendantOfAny(compCls, &g_compClass, 1) ? comp : nullptr;
 }
 
@@ -216,22 +215,29 @@ Fill FillIdentityAndPose(coop::net::PropStickStatePayload& p, void* prop, std::w
     return Fill::Ok;
 }
 
+// Each half settles on its first attempt: the class loads with its functions, so a name that does not
+// resolve is a recooked Blueprint, and a full table is a capacity fault to fix, not a slot to wait for.
+// A settled half that failed is latched disabled, so a received message is refused rather than written
+// into a frame it no longer fits.
+void DisableStickHalf() {
+    g_stickDisabled.store(true, std::memory_order_release);
+    g_stickInstalled.store(true, std::memory_order_release);
+}
+void DisableUnstickHalf() {
+    g_unstickDisabled.store(true, std::memory_order_release);
+    g_unstickInstalled.store(true, std::memory_order_release);
+}
+
 void InstallStickHalf() {
-    if (!g_uberFn) {
-        g_uberFn = R::FindFunction(g_compClass, L"ExecuteUbergraph_comp_wallAttachable");
-        if (g_uberFn) g_entryParamOff = R::FindParamOffset(g_uberFn, L"EntryPoint");
-    }
-    if (!g_forceStickFn) {
-        g_forceStickFn = R::FindFunction(g_compClass, L"forceStick");
-        if (g_forceStickFn) g_skipHoldingOff = R::FindParamOffset(g_forceStickFn, L"skipHolding");
-    }
+    g_uberFn = R::FindFunction(g_compClass, L"ExecuteUbergraph_comp_wallAttachable");
+    g_entryParamOff = g_uberFn ? R::FindParamOffset(g_uberFn, L"EntryPoint") : -1;
+    g_forceStickFn = R::FindFunction(g_compClass, L"forceStick");
+    g_skipHoldingOff = g_forceStickFn ? R::FindParamOffset(g_forceStickFn, L"skipHolding") : -1;
     if (!g_uberFn || g_entryParamOff < 0 || !g_forceStickFn || g_skipHoldingOff < 0) {
-        static bool sSaid = false;
-        if (!sSaid) {
-            sSaid = true;
-            UE_LOGW("prop_stick_sync: partial stick resolve (uber=%p entryOff=%d force=%p skipOff=%d) -- retrying",
-                    g_uberFn, g_entryParamOff, g_forceStickFn, g_skipHoldingOff);
-        }
+        UE_LOGE("prop_stick_sync: stick resolve failed (uber=%p entryOff=%d force=%p skipOff=%d) -- stick half "
+                "DISABLED (a recooked comp_wallAttachable)", g_uberFn, g_entryParamOff, g_forceStickFn,
+                g_skipHoldingOff);
+        DisableStickHalf();
         return;
     }
     const int32_t forceFrame = R::FunctionFrameSize(g_forceStickFn);
@@ -242,16 +248,12 @@ void InstallStickHalf() {
         // house pattern of ue_wrap/engine/engine_physics).
         UE_LOGE("prop_stick_sync: forceStick signature drift (skipHoldingOff=%d frameSize=%d vs a 16-byte "
                 "frame) -- stick half DISABLED (re-RE comp_wallAttachable)", g_skipHoldingOff, forceFrame);
-        g_stickDisabled.store(true, std::memory_order_release);
-        g_stickInstalled.store(true, std::memory_order_release);  // latch off
+        DisableStickHalf();
         return;
     }
     if (!GT::RegisterPostObserver(g_uberFn, &OnCompUbergraphPost)) {
-        static bool sSaid = false;
-        if (!sSaid) {
-            sSaid = true;
-            UE_LOGE("prop_stick_sync: RegisterPostObserver failed (table full?) -- retrying");
-        }
+        UE_LOGE("prop_stick_sync: RegisterPostObserver failed (the observer table is full) -- stick half DISABLED");
+        DisableStickHalf();
         return;
     }
     g_stickInstalled.store(true, std::memory_order_release);
@@ -260,33 +262,25 @@ void InstallStickHalf() {
 }
 
 void InstallUnstickHalf() {
-    if (!g_unstickFn) {
-        g_unstickFn = R::FindFunction(g_compClass, L"unstick");
-        if (g_unstickFn) g_withToolOff = R::FindParamOffset(g_unstickFn, L"withTool");
-    }
+    g_unstickFn = R::FindFunction(g_compClass, L"unstick");
+    g_withToolOff = g_unstickFn ? R::FindParamOffset(g_unstickFn, L"withTool") : -1;
     if (!g_unstickFn || g_withToolOff < 0) {
-        static bool sSaid = false;
-        if (!sSaid) {
-            sSaid = true;
-            UE_LOGW("prop_stick_sync: partial unstick resolve (unstick=%p toolOff=%d) -- retrying", g_unstickFn,
-                    g_withToolOff);
-        }
+        UE_LOGE("prop_stick_sync: unstick resolve failed (unstick=%p toolOff=%d) -- unstick half DISABLED (a "
+                "recooked comp_wallAttachable)", g_unstickFn, g_withToolOff);
+        DisableUnstickHalf();
         return;
     }
     const int32_t unstickFrame = R::FunctionFrameSize(g_unstickFn);
     if (g_withToolOff >= 16 || unstickFrame > 16) {
         UE_LOGE("prop_stick_sync: unstick signature drift (withToolOff=%d frameSize=%d vs a 16-byte frame) -- "
                 "unstick half DISABLED (re-RE comp_wallAttachable)", g_withToolOff, unstickFrame);
-        g_unstickDisabled.store(true, std::memory_order_release);
-        g_unstickInstalled.store(true, std::memory_order_release);  // latch off
+        DisableUnstickHalf();
         return;
     }
+    // The gate refuses only a native or null function, a full table or a gate that never installed.
     if (!sg::Watch(g_unstickFn, kTagUnstick, &OnUnstickPre, nullptr)) {
-        static bool sSaid = false;
-        if (!sSaid) {
-            sSaid = true;
-            UE_LOGW("prop_stick_sync: the script gate refused the unstick watch -- retrying");
-        }
+        UE_LOGE("prop_stick_sync: the script gate refused the unstick watch -- unstick half DISABLED");
+        DisableUnstickHalf();
         return;
     }
     g_unstickInstalled.store(true, std::memory_order_release);
@@ -296,21 +290,20 @@ void InstallUnstickHalf() {
 // The component's pieces and each half not yet installed. Needs the class. Game thread.
 void InstallHalves() {
     if (!g_compClass) return;
-    if (g_compPropOff < 0) g_compPropOff = R::FindPropertyOffset(g_compClass, L"prop");
+    g_compPropOff = R::FindPropertyOffset(g_compClass, L"prop");
     if (g_compPropOff < 0) {
-        static bool sSaid = false;
-        if (!sSaid) {
-            sSaid = true;
-            UE_LOGW("prop_stick_sync: comp_wallAttachable_C::prop did not resolve -- retrying");
-        }
+        UE_LOGE("prop_stick_sync: comp_wallAttachable_C::prop did not resolve -- both halves DISABLED (a "
+                "recooked comp_wallAttachable)");
+        DisableStickHalf();
+        DisableUnstickHalf();
         return;
     }
     if (!g_stickInstalled.load(std::memory_order_acquire)) InstallStickHalf();
     if (!g_unstickInstalled.load(std::memory_order_acquire)) InstallUnstickHalf();
 }
 
-// A join's converge or a live message needs the lane before the throttled Install has run: one
-// attempt a session, after which the throttle carries the retries. Game thread.
+// A join's converge or a live message needs the lane before Install has run: one attempt a session,
+// after which Install carries the retries. Game thread.
 void InstallOnDemand() {
     if (g_onDemandTried) return;
     if (g_stickInstalled.load(std::memory_order_acquire) && g_unstickInstalled.load(std::memory_order_acquire))
@@ -421,13 +414,10 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (g_stickInstalled.load(std::memory_order_acquire) && g_unstickInstalled.load(std::memory_order_acquire))
         return;
-    // FindClass walks GUObjectArray on a miss -- throttle like the sibling
-    // installs. No give-up cap: cameras/whiteboards can be acquired mid-game.
-    static uint32_t sResolveN = 0;
-    if ((sResolveN++ % 125) != 0) return;
-
-    if (!g_compClass) g_compClass = R::FindClass(L"comp_wallAttachable_C");
-    if (!g_compClass) return;  // the BP class is not loaded yet
+    // One index lookup a call until the class is found; it is loaded at the main menu, before any
+    // session, so the first call finds it.
+    if (!g_compClass) g_compClass = ue_wrap::object_index::ClassByName(L"comp_wallAttachable_C");
+    if (!g_compClass) return;
     InstallHalves();
 }
 
@@ -489,7 +479,7 @@ void OnStickState(const coop::net::PropStickStatePayload& payload, uint8_t sende
                 unstick ? "UNSTICK" : "STICK", keyW.c_str(), payload.elementId, senderPeerSlot);
         return;
     }
-    void* comp = WallAttachCompOf(prop);  // takes the component class from the copy if nothing has yet
+    void* comp = WallAttachCompOf(prop);  // the component, checked against the index's class
     if (!comp) {
         UE_LOGW("prop_stick_sync: %s target %p carries no wall-attach component -- dropped",
                 unstick ? "UNSTICK" : "STICK", prop);
@@ -548,7 +538,7 @@ void ConvergeStuck(void* actor, uint8_t physFlags) {
     if (hostStuck == copyStuck) return;  // nearly every row: two field reads and out
     void* comp = WallAttachCompOf(actor);
     if (!comp) return;
-    InstallOnDemand();  // a join's snapshot can arrive before the throttled install has run
+    InstallOnDemand();  // a join's snapshot can arrive before Install has run
     const std::wstring keyW = ue_wrap::prop::GetInteractableKeyString(actor);
     if (!hostStuck) {
         const bool ok = ReplayUnstick(actor);

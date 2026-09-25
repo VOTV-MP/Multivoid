@@ -24,6 +24,7 @@
 #include "ue_wrap/engine/engine.h"      // TryGetActorLocation (converge/seam position reads)
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "coop/config/config.h"  // the script_gate_log flag
 #include "ue_wrap/core/script_gate.h"  // CurrentThreadCall, the destroy provenance
@@ -55,7 +56,9 @@ coop::net::Session* LoadSession() {
 }
 
 // Resolved engine refs: written by Install on the game thread before the interceptor registers,
-// read-only after, including from parallel-anim workers.
+// read-only after, including from parallel-anim workers. The kerfur, collar and floppy classes are
+// loaded at the main menu and live for the process (coop/dev/class_lifetime_probe measures it), so
+// these refs and the interceptor hold across a world change.
 void* g_kerfurNpcClass  = nullptr;  // kerfurOmega_C (the NPC base; ~20 data-only skin subclasses)
 void* g_kerfurPropClass = nullptr;  // prop_kerfurOmega_C (the prop base; skins likewise)
 void* g_floppyClass     = nullptr;  // prop_floppyDisc_C (dropKerfurProp may also drop the carried floppy)
@@ -325,16 +328,13 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     coop::kerfur_convert_client::SetSession(session);  // mirrors the store above
     if (g_installed.load(std::memory_order_acquire)) return;
-    // FindClass walks GUObjectArray on a miss, so one attempt per 125 pump ticks; the
-    // all-resolved latch is the only early-out, and partial retries are idempotent. No give-up cap:
-    // the kerfur classes load lazily (a kerfur can be bought mid-session), so the module keeps
-    // watching.
-    static uint32_t sResolveN = 0;
-    if ((sResolveN++ % 125) != 0) return;
-
-    if (!g_kerfurNpcClass)  g_kerfurNpcClass  = R::FindClass(L"kerfurOmega_C");
-    if (!g_kerfurPropClass) g_kerfurPropClass = R::FindClass(L"prop_kerfurOmega_C");
-    if (!g_kerfurNpcClass || !g_kerfurPropClass) return;  // BP classes not loaded yet
+    // One index probe a call until both base classes are found. From then the install settles on
+    // this call, whatever resolves: a Blueprint class loads with its functions, and a full table is a
+    // capacity fault to fix, not a slot to wait for.
+    if (!g_kerfurNpcClass)  g_kerfurNpcClass  = ue_wrap::object_index::ClassByName(L"kerfurOmega_C");
+    if (!g_kerfurPropClass) g_kerfurPropClass = ue_wrap::object_index::ClassByName(L"prop_kerfurOmega_C");
+    if (!g_kerfurNpcClass || !g_kerfurPropClass) return;
+    g_installed.store(true, std::memory_order_release);
     // The resolved bases are shared with kerfur_entity, so its class gates answer without
     // re-resolving.
     coop::kerfur_entity::SetKerfurClasses(g_kerfurNpcClass, g_kerfurPropClass);
@@ -349,22 +349,23 @@ void Install(coop::net::Session* session) {
     if (!g_spawnKerfuroFn) g_spawnKerfuroFn = R::FindFunction(g_kerfurPropClass, L"spawnKerfuro");
     if (g_killOff < 0)     g_killOff = R::FindPropertyOffset(g_kerfurNpcClass, L"kill");
 
-    // Optional refs (the collar-variant overrides and the floppy class), resolved opportunistically
-    // until the latch; a miss degrades to the base verb and a one-class walk.
-    if (!g_colClass)      g_colClass      = R::FindClass(L"kerfurOmega_col_C");
-    if (!g_colGamerClass) g_colGamerClass = R::FindClass(L"kerfurOmega_col_gamer_C");
+    // Optional refs (the collar-variant overrides and the floppy class); a miss degrades to the base
+    // verb and a one-class walk.
+    if (!g_colClass)      g_colClass      = ue_wrap::object_index::ClassByName(L"kerfurOmega_col_C");
+    if (!g_colGamerClass) g_colGamerClass = ue_wrap::object_index::ClassByName(L"kerfurOmega_col_gamer_C");
     if (g_colClass && !g_dropPropFnCol)
         g_dropPropFnCol = R::FindFunction(g_colClass, L"dropKerfurProp");
     if (g_colGamerClass && !g_dropPropFnColGamer)
         g_dropPropFnColGamer = R::FindFunction(g_colGamerClass, L"dropKerfurProp");
-    if (!g_floppyClass)   g_floppyClass   = R::FindClass(L"prop_floppyDisc_C");
-    // The class pointers are pushed to the client and host TUs on every attempt, so they see them
-    // as soon as they resolve, the disabled state included, where claims keep working.
+    if (!g_floppyClass)   g_floppyClass   = ue_wrap::object_index::ClassByName(L"prop_floppyDisc_C");
+    // The class pointers go to the client and host TUs before any refusal below, so they have them in
+    // the disabled state too, where claims keep working.
     coop::kerfur_convert_client::SetClasses(g_kerfurNpcClass, g_kerfurPropClass, g_floppyClass);
     coop::kerfur_convert_host::SetClasses(g_kerfurNpcClass, g_kerfurPropClass, g_floppyClass);
 
     if (!g_actionNameFn || g_nameParamOff < 0 || !g_dropPropFnBase || !g_spawnKerfuroFn) {
-        UE_LOGW("kerfur_convert: partial resolve (actionName=%p nameOff=%d drop=%p spawn=%p) -- retrying",
+        UE_LOGE("kerfur_convert: partial resolve (actionName=%p nameOff=%d drop=%p spawn=%p) -- module "
+                "DISABLED (a recooked kerfur Blueprint)",
                 g_actionNameFn, g_nameParamOff, g_dropPropFnBase, g_spawnKerfuroFn);
         return;
     }
@@ -378,20 +379,19 @@ void Install(coop::net::Session* session) {
     if (!R::FunctionParams(g_dropPropFnBase).empty() ||
         !R::FunctionParams(g_spawnKerfuroFn).empty()) {
         UE_LOGE("kerfur_convert: verb signature changed (dropKerfurProp/spawnKerfuro now take params) -- module DISABLED (re-RE the conversion BPs)");
-        g_installed.store(true, std::memory_order_release);  // latch off
         return;
     }
 
     // The one interceptor, for the kerfur_command relay.
     if (!GT::RegisterInterceptor(g_actionNameFn, &OnKerfurActionNamePre)) {
-        UE_LOGE("kerfur_convert: RegisterInterceptor(actionName) failed (table full?)");
+        UE_LOGE("kerfur_convert: RegisterInterceptor(actionName) failed (the interceptor table is full) "
+                "-- module DISABLED");
         return;
     }
     // The verb refs and the request latch flip only at this success site; the disabled path above
     // never reaches it, so requests drop there (fail closed; see kerfur_convert_host.h).
     coop::kerfur_convert_host::SetVerbs(g_dropPropFnBase, g_dropPropFnCol, g_dropPropFnColGamer,
                                         g_colClass, g_colGamerClass, g_spawnKerfuroFn, g_killOff);
-    g_installed.store(true, std::memory_order_release);
     UE_LOGI("kerfur_convert: installed (actionName nameOff=%d, killOff=%d, col=%s colGamer=%s floppy=%s; conversion = death-watch poll)",
             g_nameParamOff, g_killOff,
             g_dropPropFnCol ? "yes" : "no", g_dropPropFnColGamer ? "yes" : "no",

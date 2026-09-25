@@ -20,9 +20,9 @@ namespace coop::net { class Session; struct InventoryPickupPayload; }
 
 namespace coop::inventory_pickup_sync {
 
-// Idempotent; call from NetPumpTick. Resolves GameplayStatics::PlaySound2D +
-// the param offsets + the inventory_Cue asset (throttled retry until found),
-// then registers the POST observer once.
+// Idempotent; call from NetPumpTick. Resolves GameplayStatics::PlaySound2D, its
+// param offsets and the inventory cue's name, then registers the POST observer
+// once; a failure no retry mends disables the lane with one line.
 void Install(coop::net::Session* session);
 
 // A peer collected an item -- play the blip at their broadcast position.

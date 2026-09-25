@@ -17,8 +17,9 @@ namespace coop::player_damage {
 // Store the session pointer for SendPlayerDamage; idempotent, nullptr disables sends. Game thread.
 void Install(coop::net::Session* session);
 
-// Per tick, game thread: lazily resolve mainPlayer_C's three impact entries and register the
-// non-local-body PRE cancel; throttled, cheap once latched. Called from subsystems::TickGameplay.
+// Per tick, game thread: once mainPlayer_C is loaded, resolve its three impact entries and register
+// the non-local-body PRE cancel, settled on that first attempt; one latched read after. Called from
+// subsystems::TickGameplay.
 void Tick();
 
 // Owner side: validate the payload, verify on the game thread that it addresses this peer
