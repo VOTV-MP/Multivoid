@@ -35,6 +35,9 @@ int32_t g_isMovingOff  = -1;       // Adoor_C::isMoving -- swing in progress
 // the jam shake write it too, while the move timeline is still, so the reader takes it only while
 // that timeline plays. Read by name; unresolved, the intent reader falls back to the settled flag.
 int32_t g_dirOff       = -1;       // Adoor_C::dir
+// Adoor_C::jammed: a jammed door's doorOpen plays the jam shake instead of opening. Unresolved, an
+// apply leaves a stale local jam where it is.
+int32_t g_jammedOff    = -1;
 int32_t g_moveOff      = -1;       // Adoor_C::move (UTimelineComponent*), the swing's own timeline
 // UTimelineComponent::TheTimeline.bPlaying, the flag IsPlaying returns: its byte in the component
 // and its bit (a bitfield it shares with bLooping and bReversePlayback). Offset -1 is unresolved.
@@ -125,6 +128,7 @@ bool EnsureResolved() {
     int32_t activeOff = R::FindPropertyOffset(doorCls, L"Active");
     if (activeOff < 0) activeOff = kActiveOffFallback;
     const int32_t dirOff = R::FindPropertyOffset(doorCls, L"dir");
+    const int32_t jammedOff = R::FindPropertyOffset(doorCls, L"jammed");
     const int32_t moveOff = R::FindPropertyOffset(doorCls, L"move");
     int32_t playingOff = -1;
     uint8_t playingMask = 0;
@@ -161,6 +165,7 @@ bool EnsureResolved() {
     g_keyOff       = keyOff;
     g_isOpenedOff  = isOpenedOff;
     g_isMovingOff  = isMovingOff;
+    g_jammedOff    = jammedOff;
     g_dirOff       = dirOff;
     g_moveOff      = moveOff;
     g_playingOff   = playingOff;
@@ -336,6 +341,10 @@ void SmartApply(void* door, bool open) {
     if (!moving && g_isOpenedOff >= 0 &&
         *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(door) + g_isOpenedOff) == open)
         return;
+    // A door the authority opened is not jammed there, so a jam this copy still holds is stale: a
+    // joiner loads `jammed` from the save and runs its own unjam timer from its own load, and a
+    // jammed copy's doorOpen would play the jam shake instead of opening.
+    if (open && g_jammedOff >= 0) *reinterpret_cast<bool*>(reinterpret_cast<char*>(door) + g_jammedOff) = false;
     // Play the native animated swing (smooth wherever the door ticks, any distance up to its
     // real tick range, no magic radius).
     if (open) CallDoorOpen(door, true); else CallDoorClose(door, true);
