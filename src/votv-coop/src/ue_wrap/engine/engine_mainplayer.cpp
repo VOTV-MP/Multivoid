@@ -288,6 +288,18 @@ bool CallMainPlayerUseSelectedAction(void* mainPlayer) {
     return f.valid() && Call(mainPlayer, f);
 }
 
+bool CallMainPlayerHoldObject(void* mainPlayer, void* target, bool& collected) {
+    collected = false;
+    if (!mainPlayer || !R::IsLive(mainPlayer) || !target) return false;
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(mainPlayer), L"Hold Object");
+    if (!fn) return false;
+    ParamFrame f(fn);
+    if (!f.valid() || !f.Set<bool>(L"useHold", false) || !f.Set<void*>(L"manual", target) || !Call(mainPlayer, f))
+        return false;
+    collected = f.Get<bool>(L"collected");
+    return true;
+}
+
 bool ReadMainPlayerGrabState(void* mainPlayer, MainPlayerGrabState& out) {
     out = {};
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;

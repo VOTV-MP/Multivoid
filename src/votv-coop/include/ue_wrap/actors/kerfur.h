@@ -70,6 +70,15 @@ void SetCommandState(void* actor, uint8_t state);
 // if actionName is unresolved. Game thread only.
 bool RunActionName(void* kerfurActor, void* playerActor, const wchar_t* name);
 
+// Whether the Omega holds a disc it took for its reports (`hasFloppy`). False when it is not an Omega or
+// the field did not resolve. Game thread.
+bool ReadHasFloppy(void* actor, bool& has);
+
+// The Omega's `targetActor`, what its last move() went for: its follow sets the player it reads, fix_servers
+// the server, a reports task the dish console; patrol and fix_transformers clear it, idle leaves it. Null
+// when it is not an Omega, the field did not resolve, or it is unset. Game thread.
+void* ReadTargetActor(void* actor);
+
 // Drive an owned-follow kerfur toward `targetActor` (the requesting player's body -- the host
 // mainPlayer_C or a remote puppet) via the engine's stock MoveTo async proxy
 // (UAIBlueprintHelperLibrary::CreateMoveToProxyObject(Pawn=kerfur, Destination, TargetActor,

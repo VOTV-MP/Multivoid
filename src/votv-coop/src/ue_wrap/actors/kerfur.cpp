@@ -169,6 +169,25 @@ bool RunActionName(void* kerfurActor, void* playerActor, const wchar_t* name) {
     return ue_wrap::Call(kerfurActor, f);
 }
 
+bool ReadHasFloppy(void* actor, bool& has) {
+    if (!IsKerfurActor(actor)) return false;
+    static int32_t sOff = -2;
+    static uint8_t sMask = 0;
+    if (sOff == -2 && !R::FindBoolProperty(ResolveKerfurClass(), L"hasFloppy", sOff, sMask)) sOff = -1;
+    if (sOff < 0) return false;
+    has = (static_cast<const uint8_t*>(actor)[sOff] & sMask) != 0;
+    return true;
+}
+
+void* ReadTargetActor(void* actor) {
+    if (!IsKerfurActor(actor)) return nullptr;
+    static int32_t sOff = -2;
+    if (sOff == -2) sOff = R::FindPropertyOffset(ResolveKerfurClass(), L"targetActor");
+    if (sOff < 0) return nullptr;
+    void* t = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(actor) + sOff);
+    return (t && R::IsLive(t)) ? t : nullptr;
+}
+
 void IssueFollowMoveTo(void* kerfurPawn, void* targetActor,
                        float destX, float destY, float destZ, float acceptRadius) {
     if (!kerfurPawn || !R::IsLive(kerfurPawn)) return;

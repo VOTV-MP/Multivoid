@@ -27,6 +27,7 @@
 #include "coop/dev/hookdrag_selftest.h"  // [dev] a prop dragged by a hook, driven
 #include "coop/dev/inventory_pickup_drill.h"  // dev drill: one client pickup through putObjectInventory2
 #include "coop/dev/kerfur_convert_drill.h"  // [dev] a client turns a kerfur off and on beside a disc of its own
+#include "coop/dev/kerfur_serve_drill.h"  // [dev] the host runs a client's Omega commands for that client
 #include "coop/dev/kerfus_drill.h"  // [dev] a client turns the plain kerfur on and off through the host
 #include "coop/dev/kerfur_menu_drill.h"  // [dev] a kerfur turned on through its menu event, nested in a watched body
 #include "coop/dev/keypad_drill.h"  // [dev] whether a client's typing lands on the host's verdict on both copies
@@ -74,6 +75,7 @@ void Install(coop::net::Session& session) {
     coop::dev::kerfur_menu_drill::Install(&session);  // [dev] the kerfur menu drill (no-op unless kerfur_menu_drill=1)
     coop::dev::kerfur_convert_drill::Install(&session);  // [dev] the kerfur conversion drill (no-op unless kerfur_convert_drill=1)
     coop::dev::kerfus_drill::Install(&session);  // [dev] the Kerfus drill (no-op unless kerfus_drill=1)
+    coop::dev::kerfur_serve_drill::Install(&session);  // [dev] the Omega serve drill (kerfur_serve_drill=1)
     coop::dev::container_selftest::Install(&session);  // [dev] the container-lane e2e circle (no-op unless container_selftest=1)
     coop::dev::drive_selftest::Install(&session);  // [dev] rack-lane e2e circles (no-op unless drive_selftest=1)
     coop::dev::hand_drop_selftest::Install(&session);  // [dev] hand pickup+drop episodes (no-op unless hand_drop_selftest=1)
@@ -96,6 +98,7 @@ void EndSession() {
     coop::dev::kerfur_menu_drill::OnDisconnect();  // [dev] back to the first phase
     coop::dev::kerfur_convert_drill::OnDisconnect();  // [dev] back to the first phase
     coop::dev::kerfus_drill::OnDisconnect();  // [dev] back to the first phase
+    coop::dev::kerfur_serve_drill::OnDisconnect();  // [dev] back to the first phase
     coop::dev::door_drill::OnDisconnect();  // [dev] the door list and readings belong to one world
     coop::dev::toggle_drill::OnDisconnect();  // [dev] the device and its phase belong to one world
     coop::dev::blackout_drill::OnDisconnect();  // [dev] the panel and the phase belong to one world
@@ -132,6 +135,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::kerfur_menu_drill::Tick();  // [dev] the kerfur menu drill's phases (a single bool read when off)
     coop::dev::kerfur_convert_drill::Tick();  // [dev] the kerfur conversion drill's phases (a single bool read when off)
     coop::dev::kerfus_drill::Tick();  // [dev] the Kerfus drill's phases (a single bool read when off)
+    coop::dev::kerfur_serve_drill::Tick();  // [dev] the Omega serve drill's phases (a single bool read when off)
     coop::dev::prop_birth_key_probe::Tick();  // [dev] periodic seam totals (a single bool read when off)
     coop::dev::food_clock_probe::Tick();  // [dev] the food catch-up's clock reading (a single bool read when off)
     coop::dev::lookat_churn_probe::Tick();  // [dev] the interaction UI's rebuild rate under a held aim (a single bool read when off)

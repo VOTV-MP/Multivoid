@@ -499,6 +499,13 @@ CFG_FLAG(kerfus_drill, "kerfus_drill", "dev", false, "VOTVCOOP_KERFUS_DRILL",
     "then the host possesses it, the client walks back once the haunting's energy pin shows, and the Kerfus "
     "must go off away from where it settled. The rig client joins at the base. '[KERFUS-DRILL] client DONE "
     "PASS|FAIL' ends it; '[KERFUS-DRILL] INVALID' is a step that could not run.")
+CFG_FLAG(kerfur_serve_drill, "kerfur_serve_drill", "dev", false, "VOTVCOOP_KERFUR_SERVE_DRILL",
+    "Drill (BOTH peers): the host spawns a kerfur Omega, takes a red disc in hand and stays put; the client's "
+    "first command is get_reports, and the host's disc must stay in its hand with the Omega holding none, back "
+    "in the follow state; the client then walks to a pile the director keeps 10 m from the host and commands "
+    "follow, and the Omega must settle by it in the follow state (the client's 'leg A' line); then the client "
+    "commands idle, the host runs the kill verb, and the murderous Omega must go for the host. '[KERFUR-SERVE] "
+    "host DONE' ends it; '[KERFUR-SERVE] INVALID' is a step that could not run.")
 CFG_FLAG(door_drill, "door_drill", "dev", false, "VOTVCOOP_DOOR_DRILL",
     "Drill (BOTH peers): the client walks with the bot director to the nearest door its navmesh "
     "reaches and uses it as a player does -- three presses, each followed by a stay in its sensor until "

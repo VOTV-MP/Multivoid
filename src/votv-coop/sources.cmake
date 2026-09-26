@@ -446,6 +446,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/kerfur_menu_drill.cpp
     src/coop/dev/kerfur_convert_drill.cpp
     src/coop/dev/kerfus_drill.cpp
+    src/coop/dev/kerfur_serve_drill.cpp
     src/coop/dev/load_reroll_watch.cpp
     src/coop/dev/container_selftest.cpp
     src/coop/dev/drive_selftest.cpp
