@@ -56,6 +56,7 @@
 #include "coop/dev/store_table_probe.h"  // which mechanism can read a list_store row
 #include "coop/dev/toggle_drill.h"  // [dev] whether a toggle device's state crosses both ways
 #include "coop/dev/vitals_keepalive.h"  // [dev] autonomous long-exposure keepalive (ini vitals_keepalive_sec)
+#include "coop/dev/world_roll_drill.h"  // [dev] the day's world rolls: the host's crosses, a client's own is refused
 #include "coop/dev/perf_probe.h"
 #include "coop/net/session.h"
 
@@ -68,6 +69,7 @@ void Install(coop::net::Session& session) {
     coop::dev::desk_diag::Install(&session);  // [dev] desk divergence census: per-peer desk/comp/dish/coordLog snapshot (no-op unless desk_diag=1)
     coop::dev::rollover_watch::Install(&session);  // [dev] the day rollover instrument (no-op unless rollover_watch=1)
     coop::dev::midnight_drill::Install(&session);  // [dev] the midnight drill (no-op unless midnight_drill is set)
+    coop::dev::world_roll_drill::Install(&session);  // [dev] the world roll drill (no-op unless world_roll_drill is set)
     coop::dev::kerfur_menu_drill::Install(&session);  // [dev] the kerfur menu drill (no-op unless kerfur_menu_drill=1)
     coop::dev::kerfur_convert_drill::Install(&session);  // [dev] the kerfur conversion drill (no-op unless kerfur_convert_drill=1)
     coop::dev::kerfus_drill::Install(&session);  // [dev] the Kerfus drill (no-op unless kerfus_drill=1)
@@ -89,6 +91,7 @@ void EndSession() {
     coop::dev::lookat_churn_probe::OnDisconnect();  // [dev] the aim episodes, after the run's last reading
     coop::dev::rollover_watch::OnDisconnect();  // [dev] the per-world arm and the session's watch totals
     coop::dev::midnight_drill::OnDisconnect();  // [dev] back to the first phase
+    coop::dev::world_roll_drill::OnDisconnect();  // [dev] back to the first phase
     coop::dev::kerfur_menu_drill::OnDisconnect();  // [dev] back to the first phase
     coop::dev::kerfur_convert_drill::OnDisconnect();  // [dev] back to the first phase
     coop::dev::kerfus_drill::OnDisconnect();  // [dev] back to the first phase
@@ -123,6 +126,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::desk_diag::Tick();  // [dev] desk divergence census (single bool read when off; self-throttled)
     coop::dev::rollover_watch::Tick();  // [dev] the day rollover (a single bool read when off)
     coop::dev::midnight_drill::Tick();  // [dev] the midnight drill's phases (a single enum read when off)
+    coop::dev::world_roll_drill::Tick();  // [dev] the world roll drill's arms (a single enum read when off)
     coop::dev::kerfur_menu_drill::Tick();  // [dev] the kerfur menu drill's phases (a single bool read when off)
     coop::dev::kerfur_convert_drill::Tick();  // [dev] the kerfur conversion drill's phases (a single bool read when off)
     coop::dev::kerfus_drill::Tick();  // [dev] the Kerfus drill's phases (a single bool read when off)

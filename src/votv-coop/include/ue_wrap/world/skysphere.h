@@ -41,4 +41,12 @@ bool ReadSky(FRotator& skyWorldRot, float& moonPhase);
 // No-op if not resolved / not streamed in. Game thread.
 void ApplySky(const FRotator& skyWorldRot, float moonPhase);
 
+// The sky eye, Anewsky_C::eye: the day's noon roll calls setEye, which swaps the moon's texture for an
+// eye's. False if not resolved or not streamed in. Game thread.
+bool ReadEye(bool& eye);
+
+// The sky's own setEye(eye), the verb the noon roll calls. False if not streamed in or the verb did not
+// resolve. Game thread.
+bool CallSetEye(bool eye);
+
 }  // namespace ue_wrap::skysphere

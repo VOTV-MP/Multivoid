@@ -156,4 +156,29 @@ void ApplySky(const FRotator& skyWorldRot, float moonPhase) {
     }
 }
 
+bool ReadEye(bool& eye) {
+    void* sky = Sky();
+    if (!sky) return false;
+    // The bool's place is the class's layout, the same in every world, so it is found once.
+    static int32_t sOff = -2;
+    static uint8_t sMask = 0;
+    if (sOff == -2) {
+        int32_t off = -1;
+        sOff = R::FindBoolProperty(R::ClassOf(sky), L"eye", off, sMask) ? off : -1;
+        if (sOff < 0) UE_LOGW("skysphere: newsky_C.eye did not resolve by name -- the eye cannot be read");
+    }
+    if (sOff < 0) return false;
+    eye = (*(reinterpret_cast<const uint8_t*>(sky) + sOff) & sMask) != 0;
+    return true;
+}
+
+bool CallSetEye(bool eye) {
+    void* sky = Sky();
+    void* fn = sky ? R::FindDispatchFunctionCached(R::ClassOf(sky), L"setEye") : nullptr;
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    if (!f.valid() || !f.Set<bool>(L"eye", eye)) return false;
+    return ue_wrap::Call(sky, f);
+}
+
 }  // namespace ue_wrap::skysphere
