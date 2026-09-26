@@ -87,9 +87,10 @@ roach a client stomps or eats is a consumed intent to the host (`coop/creatures/
 
 ### The kerfur
 
-There are two robots. The regular one, the kerfus, is a corded prop with three radial actions and
-has no sync of any kind. The upgraded one, the kerfur Omega, is a character with ten actions and
-is what follows.
+There are two robots. The regular one, the kerfus, is a corded prop with three radial actions: its
+brain runs on the host alone, a client shows the host's state and drive, its verbs are asked of the
+host, and one a client turns on follows that client (`coop/creatures/kerfus_lanes`). The upgraded
+one, the kerfur Omega, is a character with ten actions and is what follows.
 
 It has two forms of two classes: the active robot, `kerfurOmega_C`, a character; and the
 powered-off object, `prop_kerfurOmega_C`, a prop. Turning it off spawns the prop at the robot's
@@ -107,8 +108,11 @@ captured deterministically at its spawn through the gate's window
 
 The radial menu (follow, idle, patrol, fix the servers, get the reports, fix the transformers) is
 relayed host-authoritatively (`coop/creatures/kerfur_command`): the host cancels the local
-dispatch on both roles and re-runs the verb, and follow follows the peer who asked, where the
-native follow pins the host's pawn. On a client the chosen verb is read at the E-input seam, the
+dispatch on both roles and re-runs the game's own verb with the kerfur serving the peer who asked
+(`coop/creatures/served_player`), so its reads of the player answer that peer: follow follows it,
+patrol circles it. A request waits while the host has no body for its sender, and a verb the game
+refuses changes nobody's service. Nothing writes a puppet's hand yet, so a client's get the reports
+gets the game's refusal hint, shown on the host. On a client the chosen verb is read at the E-input seam, the
 one dispatched through the engine, before the local dispatch runs
 (`coop/creatures/kerfur_menu_input`). At a join a save-loaded kerfur prop is adopted by class and
 nearest pose once the load tail settles (`coop/creatures/kerfur_prop_adoption`), and a kerfur
@@ -138,7 +142,7 @@ on [players.md](players.md).
 | `WispGrab`, `WispTear` | the host to the victim; the host to all | the grab and its delay; the tear to play on the mirror |
 | `RoachState`, `RoachConsumed` | the host to all; a client to the host | a page of the infestation; a stomped or eaten roach |
 | `KerfurConvertRequest`, `KerfurConvert` | a client to the host; the host to all | a turn-on or turn-off to perform; the form transition with both ids, the form, the class and the pose |
-| `KerfurCommand` | a client to the host; the host to all | a radial verb, and whom to follow |
+| `KerfurCommand` | a client to the host | a radial verb, which the host runs serving the sender |
 
 ## Late join
 
@@ -153,7 +157,6 @@ wisp in flight is transient and owes nothing.
 
 | Limit | Evidence |
 |---|---|
-| The regular robot, the kerfus, is not synced at all; each peer's copy runs its own work queue | `[V]` no module under `coop/creatures` names its class |
 | The Omega's take-object, pat, equipment, kill and sit-on-the-ATV verbs are not synced | `[V]` `coop/creatures/kerfur_command`, the verb table |
 | The Omega's floppy state is not synced, so a relayed get-reports diverges on its result; its accessories and carried object likewise | `[V]` no lane under `coop/creatures` carries them |
 | Only one stalker class is owned per peer so far | `[V]` `coop/creatures/owner_entity_sync`, the member table |
@@ -169,5 +172,6 @@ wisp in flight is transient and owes nothing.
 | per-peer creatures | `coop/creatures/owner_entity_sync` |
 | the killer wisp | `coop/creatures/wisp_attack_sync`, `coop/creatures/wisp_grab_hold`, `coop/creatures/wisp_tear_mirror`, `coop/player/ragdoll_gate` |
 | roaches | `coop/creatures/roach_sync` |
-| the kerfur | `coop/creatures/kerfur_entity`, `coop/creatures/kerfur_convert` with its host and client halves, `coop/creatures/kerfur_form_assembler`, `coop/creatures/kerfur_command`, `coop/creatures/kerfur_menu_input`, `coop/creatures/kerfur_prop_adoption`, `coop/creatures/kerfur_reconcile` |
-| tests | `harness/autotest/autotest_kwisp_probe.cpp`, `harness/autotest/autotest_wisplane.cpp`, `coop/dev/kerfur_convert_drill` (a client turns a kerfur off and on beside a disc of its own) |
+| the kerfur | `coop/creatures/kerfur_entity`, `coop/creatures/kerfur_convert` with its host and client halves, `coop/creatures/kerfur_form_assembler`, `coop/creatures/kerfur_command`, `coop/creatures/kerfur_menu_input`, `coop/creatures/kerfur_prop_adoption`, `coop/creatures/kerfur_reconcile`, `coop/creatures/served_player` |
+| the kerfus | `coop/creatures/kerfus_lanes` with `kerfus_brain`, `kerfus_state`, `kerfus_intent` and `kerfus_follow`; `ue_wrap/actors/kerfus` |
+| tests | `harness/autotest/autotest_kwisp_probe.cpp`, `harness/autotest/autotest_wisplane.cpp`, `coop/dev/kerfur_convert_drill` (a client turns a kerfur off and on beside a disc of its own), `coop/dev/kerfur_serve_drill` (a client's commands to the Omega run for that client), `coop/dev/kerfus_drill` (a kerfus a client turns on follows it) |
