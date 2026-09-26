@@ -20,6 +20,7 @@
 #include "ue_wrap/desk/meadow_store.h"
 #include "ue_wrap/desk/signal_dynamic.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <iterator>
@@ -150,6 +151,15 @@ int32_t PendingNetAll() {
     return n;
 }
 
+// Whether a line of this row's content still waits. A later line of the row goes behind it: a delete
+// that overtook its row's append would find nothing and leave a tombstone the append then dies on, so no
+// peer would hold the row while the author's shadow counted it.
+bool RowWaits(uint64_t hash) {
+    for (const auto& p : g_pending)
+        if (p.hash == hash) return true;
+    return false;
+}
+
 void EraseFirst(std::vector<uint64_t>& seq, uint64_t hash) {
     for (auto it = seq.begin(); it != seq.end(); ++it) {
         if (*it == hash) { seq.erase(it); return; }
@@ -220,7 +230,7 @@ void AuthorLine(coop::net::Session* s, uint64_t hash, bool isDelete,
     ++g_opCounter;
     if (isDelete) EraseFirst(g_orderBase, hash);
     else g_orderBase.push_back(hash);
-    const bool sendable = s && s->connected() && CanSend() && !(g_debugHoldAppends && !isDelete);
+    const bool sendable = s && s->connected() && CanSend() && !(g_debugHoldAppends && !isDelete) && !RowWaits(hash);
     bool sent = false;
     if (sendable) {
         sent = isDelete ? SendDeleteBroadcast(s, hash)
@@ -366,9 +376,15 @@ void OnWriterPost(const sg::Call&) {
 // already served the masked ones.
 void RetryPending(coop::net::Session* s) {
     if (!s || !s->connected() || !CanSend()) return;
+    std::vector<uint64_t> stuck;  // rows with a line still waiting ahead: their later lines wait too
     for (auto it = g_pending.begin(); it != g_pending.end();) {
         Pending& p = *it;
-        if (g_debugHoldAppends && !p.isDelete) { ++it; continue; }
+        if ((g_debugHoldAppends && !p.isDelete) ||
+            std::find(stuck.begin(), stuck.end(), p.hash) != stuck.end()) {
+            stuck.push_back(p.hash);
+            ++it;
+            continue;
+        }
         bool done = false;
         if (p.excludeMask == 0) {
             done = p.isDelete ? SendDeleteBroadcast(s, p.hash)
@@ -404,6 +420,7 @@ void RetryPending(coop::net::Session* s) {
             }
             it = g_pending.erase(it);
         } else {
+            stuck.push_back(p.hash);
             ++it;
         }
     }

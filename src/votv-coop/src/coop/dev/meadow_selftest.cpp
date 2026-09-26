@@ -31,28 +31,30 @@ using Clock = std::chrono::steady_clock;
 constexpr auto kStepBound = std::chrono::seconds(60);
 
 // The drill's rows. The rename keeps a row's id and changes its name, so A and A2 are one row of the
-// database under two contents. X and Y are the race's: X the client's, held, Y the host's.
-enum RowId : int { kA, kB, kA2, kC, kX, kY, kRowCount };
+// database under two contents. X and Y are the race's: X the client's, held, Y the host's. X2 is the
+// client's row added and removed while held, whose two lines must reach the host in their order.
+enum RowId : int { kA, kB, kA2, kC, kX, kY, kX2, kRowCount };
 const wchar_t* const kName[kRowCount] = {L"MEADOW-SELFTEST-A", L"MEADOW-SELFTEST-B", L"MEADOW-SELFTEST-A2",
-                                         L"MEADOW-SELFTEST-C", L"MEADOW-SELFTEST-X", L"MEADOW-SELFTEST-Y"};
+                                         L"MEADOW-SELFTEST-C", L"MEADOW-SELFTEST-X", L"MEADOW-SELFTEST-Y",
+                                         L"MEADOW-SELFTEST-X2"};
 const wchar_t* const kId[kRowCount] = {L"selftest-a", L"selftest-b", L"selftest-a", L"selftest-c", L"selftest-x",
-                                       L"selftest-y"};
-constexpr RowId kAllRows[] = {kA, kB, kA2, kC, kX, kY};
+                                       L"selftest-y", L"selftest-x2"};
+constexpr RowId kAllRows[] = {kA, kB, kA2, kC, kX, kY, kX2};
 
 // What each peer's lane must have sent by the end: the host's two adds, the rename as a delete and an
 // append, the order lines of the rename and the move, the two removals, and the race's row and its
-// removal; the client's two rows and their removals. The host's canonical orders, sent after it applies a
+// removal; the client's three rows and their removals. The host's canonical orders, sent after it applies a
 // client's line, are counted apart: at least one, the race's.
 constexpr uint64_t kHostAppends = 4, kHostDeletes = 4, kHostOrders = 2;
-constexpr uint64_t kClientAppends = 2, kClientDeletes = 2, kClientOrders = 0;
+constexpr uint64_t kClientAppends = 3, kClientDeletes = 3, kClientOrders = 0;
 
 enum class HostStep : uint8_t {
     Ready, Add, AddSent, Rename, RenameSent, Move, MoveSent, Remove, RemoveSent, ClientRow, RaceSettle, RaceAdd,
-    RaceSent, RaceRow, RaceRemove, RaceRemoveSent, Cleanup, Done
+    RaceSent, RaceRow, RaceRemove, RaceRemoveSent, RowWatch, Cleanup, Done
 };
 enum class ClientStep : uint8_t {
     Ready, Watch, Add, AddSent, RaceHold, Remove, RemoveSent, RaceWaitY, RaceOrder, RaceRemove, RaceRemoveSent,
-    Cleanup, Done
+    RowHold, RowRemove, RowSent, Cleanup, Done
 };
 
 HostStep   g_host   = HostStep::Ready;
@@ -67,6 +69,7 @@ std::vector<uint64_t> g_expect[4];  // client: the host's four states, in turn
 int        g_reached = 0;           // client: how many of them the database has passed through
 bool       g_clientRowIn = false, g_clientRowOut = false;  // host: the client's row, seen
 bool       g_raceRowIn = false, g_raceRowOut = false;      // host: the client's race row, seen
+bool       g_heldRowIn = false, g_heldRowOut = false;      // host: the client's held-and-removed row, seen
 uint64_t   g_canonicalsBefore = 0;                         // host: the lane's canonical orders before the race
 
 bool Enabled() {
@@ -160,6 +163,16 @@ void OnApplied() {
         } else if (x < 0 && g_raceRowIn) {
             g_raceRowOut = true;
             UE_LOGI("[meadow_selftest] host: the client's row X left");
+        }
+    }
+    if (g_isHost && !g_heldRowOut) {
+        const bool in = IndexOf(seq, HashOf(kX2)) >= 0;
+        if (in && !g_heldRowIn) {
+            g_heldRowIn = true;
+            UE_LOGI("[meadow_selftest] host: the client's row X2 arrived");
+        } else if (!in && g_heldRowIn) {
+            g_heldRowOut = true;
+            UE_LOGI("[meadow_selftest] host: the client's row X2 left");
         }
     }
 }
@@ -371,21 +384,32 @@ void HostTick(coop::net::Session& s) {
             Enter(HostStep::Done);
         }
         return;
-    case HostStep::RaceRemoveSent: {
-        const MDB::SentCounts d = SentSinceArm();
-        if (d.deletes < 4) {
+    case HostStep::RaceRemoveSent:
+        if (SentSinceArm().deletes >= 4) {
+            Enter(HostStep::RowWatch);
+        } else if (StepExpired()) {
+            UE_LOGW("[meadow_selftest] FAIL in session %d: the lane did not send row Y's removal within 60 s",
+                    g_session);
+            Enter(HostStep::Done);
+        }
+        return;
+    case HostStep::RowWatch: {
+        // The client's X2 came and went while its lines were held: they must land in their order, the append
+        // first, or the delete finds nothing and the append dies on its tombstone.
+        if (!g_heldRowOut) {
             if (StepExpired()) {
-                UE_LOGW("[meadow_selftest] FAIL in session %d: the lane did not send row Y's removal within 60 s",
-                        g_session);
-                Enter(HostStep::Done);
+                UE_LOGW("[meadow_selftest] FAIL in session %d: the client's row X2 did not %s within 60 s", g_session,
+                        g_heldRowIn ? "leave" : "arrive");
+                Enter(HostStep::Cleanup);
             }
             return;
         }
+        const MDB::SentCounts d = SentSinceArm();
         const uint64_t canonicals = MDB::SentLines().canonicals - g_canonicalsBefore;
         if (d.appends == kHostAppends && d.deletes == kHostDeletes && d.orders == kHostOrders && canonicals >= 1)
             UE_LOGI("[meadow_selftest] host DONE in session %d: the lane sent its verbs' lines and nothing else "
                     "(%llu appends, %llu deletes, %llu order lines), its canonical order after the client's lines "
-                    "(%llu since the race began), and the client's rows arrived and left -- PASS",
+                    "(%llu since the race began), and the client's rows, X2's in their order, arrived and left -- PASS",
                     g_session, static_cast<unsigned long long>(d.appends),
                     static_cast<unsigned long long>(d.deletes), static_cast<unsigned long long>(d.orders),
                     static_cast<unsigned long long>(canonicals));
@@ -564,11 +588,43 @@ void ClientTick() {
             Enter(ClientStep::Done);
         }
         return;
-    case ClientStep::RaceRemoveSent: {
+    case ClientStep::RaceRemoveSent:
+        if (SentSinceArm().deletes >= 2) {
+            Enter(ClientStep::RowHold);
+        } else if (StepExpired()) {
+            UE_LOGW("[meadow_selftest] FAIL in session %d: the lane did not send row X's removal within 60 s",
+                    g_session);
+            Enter(ClientStep::Done);
+        }
+        return;
+    case ClientStep::RowHold:
+        // X2 goes in and out with its lines held: its removal must wait behind its own append.
+        MDB::DebugHoldAppends(true);
+        if (!MS::ApplyAddSignal(MakeRow(kX2))) {
+            MDB::DebugHoldAppends(false);
+            UE_LOGW("[meadow_selftest] ABANDONED in session %d: the laptop refused X2's addSignal", g_session);
+            Enter(ClientStep::Cleanup);
+            return;
+        }
+        UE_LOGI("[meadow_selftest] client added row X2 with its line held");
+        Enter(ClientStep::RowRemove);
+        return;
+    case ClientStep::RowRemove:
+        if (TakeOut(kX2)) {
+            MDB::DebugHoldAppends(false);
+            UE_LOGI("[meadow_selftest] client removed row X2 and released its lines");
+            Enter(ClientStep::RowSent);
+        } else if (StepExpired()) {
+            MDB::DebugHoldAppends(false);
+            UE_LOGW("[meadow_selftest] FAIL in session %d: removeSignal did not take row X2 out within 60 s", g_session);
+            Enter(ClientStep::Done);
+        }
+        return;
+    case ClientStep::RowSent: {
         const MDB::SentCounts d = SentSinceArm();
-        if (d.deletes < 2) {
+        if (d.appends < 3 || d.deletes < 3) {
             if (StepExpired()) {
-                UE_LOGW("[meadow_selftest] FAIL in session %d: the lane did not send row X's removal within 60 s",
+                UE_LOGW("[meadow_selftest] FAIL in session %d: the lane did not send X2's two lines within 60 s",
                         g_session);
                 Enter(ClientStep::Done);
             }
@@ -591,7 +647,7 @@ void ClientTick() {
     }
     case ClientStep::Cleanup:
         MDB::DebugHoldAppends(false);
-        if (TakeOut(kC) && TakeOut(kX)) {
+        if (TakeOut(kC) && TakeOut(kX) && TakeOut(kX2)) {
             Enter(ClientStep::Done);
         } else if (StepExpired()) {
             UE_LOGW("[meadow_selftest] client could not take its rows out within 60 s");
@@ -620,6 +676,7 @@ void OnDisconnect() {
     g_reached = 0;
     g_clientRowIn = g_clientRowOut = false;
     g_raceRowIn = g_raceRowOut = false;
+    g_heldRowIn = g_heldRowOut = false;
     for (auto& e : g_expect) e.clear();
     ++g_session;
 }
