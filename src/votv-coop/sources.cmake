@@ -192,6 +192,7 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/kerfur_prop_adoption.cpp
     src/coop/creatures/kerfur_reconcile.cpp
     src/coop/creatures/kerfus_brain.cpp
+    src/coop/creatures/kerfus_follow.cpp
     src/coop/creatures/kerfus_intent.cpp
     src/coop/creatures/kerfus_lanes.cpp
     src/coop/creatures/kerfus_state.cpp

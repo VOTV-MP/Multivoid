@@ -23,8 +23,8 @@ struct KerfusIntentPayload;
 
 namespace coop::kerfus_intent {
 
-// Watch the two verbs (a client refuses them) and cache the session. Idempotent; retried until the
-// gate takes them. Game thread.
+// Watch the two verbs -- a client refuses them; on a host an on/off press is credited to its presser
+// (kerfus_follow) -- and cache the session. Idempotent; retried until the gate takes them. Game thread.
 void Install(coop::net::Session* session);
 
 // HOST per pump tick: run one queued intent per peer per token. Game thread.

@@ -2,6 +2,7 @@
 
 #include "coop/creatures/kerfus_intent.h"
 
+#include "coop/creatures/kerfus_follow.h"
 #include "coop/element/element.h"
 #include "coop/element/intent_authority.h"
 #include "coop/element/registry.h"
@@ -52,6 +53,12 @@ bool g_nameWatched = false;
 bool g_saidLive = false;
 
 unsigned long long g_sent = 0, g_run = 0, g_denied = 0;
+
+// The request whose verb the host is running: its Kerfus and the slot that asked. Set around the call,
+// read at the verb's entry, so the on/off press is credited to its presser. Verbs run synchronously on
+// the game thread, so one pair does.
+void*   g_runningKerfus = nullptr;
+uint8_t g_runningSlot = 0;
 bool g_saidNoEid = false;
 bool g_waitSaid[coop::net::kMaxPeers] = {};
 
@@ -105,9 +112,13 @@ void Send(coop::net::Session* s, void* kerfus, uint8_t action) {
                 static_cast<unsigned>(action), static_cast<unsigned>(eid), g_sent);
 }
 
+bool OnHost() {
+    auto* s = g_session.load(std::memory_order_acquire);
+    return s && s->running() && s->role() == coop::net::Role::Host;
+}
+
 sg::Verdict OnActionPre(const sg::Call& c) {
-    auto* s = ClientSession();
-    if (!s || !c.object) return sg::Verdict::Run;
+    if (!c.object) return sg::Verdict::Run;
     static void*   sFn = nullptr;
     static int32_t sActionOff = -1;
     if (c.function != sFn) {
@@ -116,6 +127,14 @@ sg::Verdict OnActionPre(const sg::Call& c) {
     }
     if (sActionOff < 0) return sg::Verdict::Run;
     const uint8_t action = c.locals[sActionOff];
+    if (OnHost()) {
+        // The host runs every press; on/off credits its presser, the request's slot or the host's own.
+        if (action == kActionToggle)
+            coop::kerfus_follow::OnToggle(c.object, c.object == g_runningKerfus ? g_runningSlot : 0);
+        return sg::Verdict::Run;
+    }
+    auto* s = ClientSession();
+    if (!s) return sg::Verdict::Run;
     if (!IsVerb(action)) return sg::Verdict::Run;  // the colour variant's picker and anything else stay local
     Send(s, c.object, action);
     return sg::Verdict::Cancel;
@@ -133,8 +152,7 @@ std::wstring ReadFStringParam(const uint8_t* locals, int32_t off) {
 }
 
 sg::Verdict OnNamePre(const sg::Call& c) {
-    auto* s = ClientSession();
-    if (!s || !c.object) return sg::Verdict::Run;
+    if (!c.object) return sg::Verdict::Run;
     static void*   sFn = nullptr;
     static int32_t sNameOff = -1;
     if (c.function != sFn) {
@@ -142,6 +160,13 @@ sg::Verdict OnNamePre(const sg::Call& c) {
         sNameOff = R::FindParamOffset(c.function, L"name");
     }
     const std::wstring name = ReadFStringParam(c.locals, sNameOff);
+    if (OnHost()) {
+        // The host's own named option; a request always arrives as an action.
+        if (name == L"activate") coop::kerfus_follow::OnToggle(c.object, 0);
+        return sg::Verdict::Run;
+    }
+    auto* s = ClientSession();
+    if (!s) return sg::Verdict::Run;
     uint8_t action = 0;
     if (name == L"activate") action = kActionToggle;
     else if (name == L"use") action = kActionUse;
@@ -176,7 +201,12 @@ bool Execute(coop::net::Session& s, const coop::net::KerfusIntentPayload& p, uin
     void* k = subj.actor;
     // The verbs read neither the player nor the hit (bp_cfg: no read of either in the ubergraph), so the
     // host's own player stands in; the Kerfus's own guards (energy, on, possessed) judge the press.
-    if (!UK::RunActionOptionIndex(k, coop::players::Registry::Get().Local(), p.action)) {
+    g_runningKerfus = k;
+    g_runningSlot = slot;
+    const bool ran = UK::RunActionOptionIndex(k, coop::players::Registry::Get().Local(), p.action);
+    g_runningKerfus = nullptr;
+    g_runningSlot = 0;
+    if (!ran) {
         ++g_denied;
         UE_LOGW("kerfus_intent: slot=%u -- the Kerfus's actionOptionIndex did not resolve, or its body faulted",
                 static_cast<unsigned>(slot));
