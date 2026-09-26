@@ -119,13 +119,15 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
             }
         }
     }
-    // The canonical order always rides after the deltas on the same FIFO lane: the joiner's save
-    // order may predate in-window moves, and order is synced state. The FIFO guard: with lines
-    // still pending the order would reference undelivered hashes, so defer to the retry's canonical
-    // broadcast, which reaches this slot too after the flush.
+    // The canonical order always rides after the deltas on the same FIFO lane: the joiner's save order
+    // may predate in-window moves, the seed's appends went in hash order, and order is synced state. The
+    // FIFO guard: with lines still waiting the order would name hashes not yet delivered, so it is owed to
+    // this slot and the retry sends it once none waits -- as it is when this send is refused.
     int sentO = 0;
-    if (!seq.empty() && waiting.empty() && I::SendOrder(s, seq, peerSlot)) sentO = 1;
-    else if (!waiting.empty()) I::HoldOrder();
+    if (!seq.empty()) {
+        if (waiting.empty() && I::SendOrder(s, seq, peerSlot)) sentO = 1;
+        else I::OweOrderTo(peerSlot);
+    }
     I::CountSeedLines(static_cast<uint64_t>(sentA + sentD + sentO));
     if (sentA || sentD || sentO)
         UE_LOGI("meadow_db: seed slot=%d +%d/-%d rows%s", peerSlot, sentA, sentD,
@@ -137,7 +139,7 @@ void CancelJoinSnapshot(int peerSlot) {
     if (peerSlot <= 0 || peerSlot >= coop::net::kMaxPeers) return;
     g_snap[peerSlot] = SlotSnap{};
     g_seededOnce[peerSlot] = false;
-    I::ClearSlotAssemblies(static_cast<uint8_t>(peerSlot));
+    I::ForgetSlot(static_cast<uint8_t>(peerSlot));
     const uint32_t bit = 1u << peerSlot;
     for (auto& p : I::Waiting()) {
         p.excludeMask &= ~bit;   // slot reuse must not inherit stale excludes

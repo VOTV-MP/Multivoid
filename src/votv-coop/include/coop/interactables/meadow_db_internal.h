@@ -39,14 +39,15 @@ uint32_t NextSeq();
 // client's op to the host, or the join seed's canonical to one joiner).
 bool SendOrder(coop::net::Session* s, const std::vector<uint64_t>& seq, int toSlot);
 
-// An order held for the retry, which sends it once no line waits.
-void HoldOrder();
+// The seed's canonical order owed to `slot`: the retry sends it once no line waits.
+void OweOrderTo(int slot);
 
 // The seed's lines, in the session totals.
 void CountSeedLines(uint64_t n);
 
-// A recycled slot must not finish the departed peer's half-sent row or order.
-void ClearSlotAssemblies(uint8_t slot);
+// A departed slot: a recycled one must not finish the departed peer's half-sent row or order, nor be owed
+// its seed's order.
+void ForgetSlot(uint8_t slot);
 
 // meadow_db_join.cpp: every slot's snapshot and first-seed mark dropped, at the session's end.
 void ResetJoinSeeds();

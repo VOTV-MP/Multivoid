@@ -29,7 +29,7 @@ namespace coop::meadow_db_sync {
 void Install(coop::net::Session* session);
 
 // Per-tick: the writers' watches until they are live, then the retries once a second
-// while one waits (a pending line, a tombstone, a held order, a half-assembled row).
+// while one waits (a pending line, a tombstone, a held or owed order, a half-assembled row).
 // The CLIENT lane sends nothing until its own world-ready announce -- pre-ready
 // organics accumulate as pending and flush at ready -- so a client line cannot reach
 // the host before the flip and ride the seed back as a duplicate.
@@ -47,9 +47,11 @@ void OnDelete(const coop::net::ContentHashPayload& p, uint8_t senderSlot);
 // Wire ingest: one chunk of an order-as-state line (MeadowOrder) -- the sort order
 // IS synced, as state: the baseline is the hash SEQUENCE. Client lines are
 // host-terminal (the host applies last-writer-wins and broadcasts ITS canonical);
-// clients apply host-authored lines only. Apply = byte-permute + reflected
-// genSignalList. An order line is deferred while any append or delete is still
-// pending, so it can never overtake a line it references.
+// clients apply host-authored lines only. After applying a client's append or
+// delete the host sends its canonical too, since the author placed its row where
+// its own lines left it. Apply = byte-permute + reflected genSignalList. An order
+// line is deferred while any append or delete is still pending, so it can never
+// overtake a line it references.
 void OnOrderChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 
 // HOST, save_transfer OnRequest (same GT callback as the scratch-save capture):
@@ -74,9 +76,17 @@ void CancelJoinSnapshot(int peerSlot);
 void OnDisconnect();
 
 // The appends, deletes and order lines this peer's lane has delivered this session, for the dev
-// selftest's waits. Game thread.
-struct SentCounts { uint64_t appends; uint64_t deletes; uint64_t orders; };
+// selftest's waits: `orders` the lines its own order changes sent, `canonicals` the host's canonical
+// sent after a client's line, or owed to a joiner. Game thread.
+struct SentCounts { uint64_t appends; uint64_t deletes; uint64_t orders; uint64_t canonicals; };
 SentCounts SentLines();
+
+// [dev] While held, this peer's appends wait as a refused send's do and go when released: the selftest's
+// race, a row on this peer that no other peer has seen yet. Game thread.
+void DebugHoldAppends(bool hold);
+
+// [dev] Whether this host owes every peer its canonical order, for the selftest's race. Game thread.
+bool OwesCanonical();
 
 // [dev] Called on the game thread after each line this peer's lane applies to its database -- an append,
 // a delete, an order -- so the selftest sees every state the database passes through, not only the ones
