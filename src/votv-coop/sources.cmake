@@ -69,6 +69,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/devices/grime.cpp
     src/ue_wrap/world/daynightcycle.cpp
     src/ue_wrap/world/active_events.cpp
+    src/ue_wrap/world/jellyfish_path.cpp
     src/ue_wrap/world/skysphere.cpp
     src/ue_wrap/world/directionalwind.cpp
     src/ue_wrap/devices/lightswitch.cpp
