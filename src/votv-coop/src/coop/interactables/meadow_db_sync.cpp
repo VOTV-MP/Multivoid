@@ -61,7 +61,7 @@ constexpr Writer kWriters[] = {
 };
 constexpr int kTagWriter = 0x4D445742;  // 'MDWB'
 bool g_writersWatched = false;  // registered, once a process
-bool g_writersLive = false;     // their names resolved at the gate
+bool g_writersSettled = false;  // their names resolved at the gate, each live or dead for good
 
 // The lane's own verb calls in progress (game thread). Its applies run the same verbs a player does, and
 // keep the shadow themselves in the same callback, so a writer's exit inside one sends nothing. A scope
@@ -350,7 +350,15 @@ coop::net::Session* RunningSession() {
 }
 
 sg::Verdict OnWriterPre(const sg::Call&) {
-    if (g_applyDepth == 0 && RunningSession()) g_primeMissed = !EnsurePrimed();
+    if (g_applyDepth > 0 || !RunningSession()) return sg::Verdict::Run;
+    g_primeMissed = !EnsurePrimed();
+    // At a writer's entry the shadow and the waiting lines add up to the database, unless a change came
+    // outside the watched writers' bodies -- a fault or another watcher's Cancel skips a writer's exit.
+    // Said here; this body's exit sends that change with its own.
+    const int32_t n = g_primeMissed ? -1 : MS::Count();
+    if (n >= 0 && n != SumShadow() + PendingNetAll())
+        UE_LOGW("meadow_db: the database holds %d row(s) at a writer's entry where the lane accounts for %d -- "
+                "a change came outside the watched writers", n, SumShadow() + PendingNetAll());
     return sg::Verdict::Run;
 }
 
@@ -568,12 +576,24 @@ void ApplyOrderBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
     }
 }
 
-void WatchUntilLive() {
+// Asked until the gate has settled every name watch: a watch refused at registration or dead in a full
+// table never goes live, and asking after that would walk the table every tick. A writer still waiting
+// for its name is not dead yet, so the settling waits for the gate's own count.
+void WatchUntilSettled() {
     sg::ResolvePendingNames();
+    size_t live = 0;
     for (const Writer& w : kWriters)
-        if (!sg::ClassNameWatchLive(w.cls, w.fn, kTagWriter)) return;
-    g_writersLive = true;
-    UE_LOGI("meadow_db: the database's %zu writers are watched at the script-body gate", std::size(kWriters));
+        if (sg::ClassNameWatchLive(w.cls, w.fn, kTagWriter)) ++live;
+    if (live < std::size(kWriters) && sg::PendingNameCount() > 0) return;
+    g_writersSettled = true;
+    if (live == std::size(kWriters)) {
+        UE_LOGI("meadow_db: the database's %zu writers are watched at the script-body gate", std::size(kWriters));
+        return;
+    }
+    for (const Writer& w : kWriters)
+        if (!sg::ClassNameWatchLive(w.cls, w.fn, kTagWriter))
+            UE_LOGW("meadow_db: the writer %ls::%ls is NOT watched -- a change it makes goes out only with the "
+                    "next watched writer's", w.cls, w.fn);
 }
 
 void LogTotals(Clock::time_point now) {
@@ -613,7 +633,7 @@ void Install(coop::net::Session* session) {
 void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return;
-    if (!g_writersLive) WatchUntilLive();
+    if (!g_writersSettled) WatchUntilSettled();
     const auto now = Clock::now();
     LogTotals(now);
     // The retries -- a line whose send failed or waits for this client's world-ready, a delete that

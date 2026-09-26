@@ -28,7 +28,7 @@ namespace coop::meadow_db_sync {
 
 void Install(coop::net::Session* session);
 
-// Per-tick: the writers' watches until they are live, then the retries once a second
+// Per-tick: the writers' watches until the gate settles them, then the retries once a second
 // while one waits (a pending line, a tombstone, a held or owed order, a half-assembled row).
 // The CLIENT lane sends nothing until its own world-ready announce -- pre-ready
 // organics accumulate as pending and flush at ready -- so a client line cannot reach
