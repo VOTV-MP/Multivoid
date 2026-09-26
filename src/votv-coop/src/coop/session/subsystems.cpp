@@ -24,8 +24,9 @@
 #include "coop/world/daily_task_sync.h"
 #include "coop/interactables/device_occupancy.h"
 #include "coop/world/email_sync.h"
-#include "coop/interactables/laptop_sync.h"  // the stationary PC lane and its lid
+#include "coop/interactables/laptop_sync.h"  // the stationary PC lane
 #include "coop/interactables/laptop_buffer_sync.h"  // the PC buffer quad lane
+#include "coop/interactables/portable_pc_lid.h"  // the portable PC's lid lane
 #include "coop/interactables/floppy_slot_entry.h"
 #include "coop/interactables/floppy_slot_sync.h"
 #include "coop/interactables/floppybox_sync.h"  // the disc crate LIFO lane
@@ -203,6 +204,7 @@ void Install(coop::net::Session& session) {
     coop::console_state_sync::Install(&session);  // signal-catcher state mirror (sky signals + desk + dish aim)
     coop::signal_catch_sync::Install(&session);  // the signal-catch consume replay (dish slew + downloader arm on every peer)
     coop::laptop_sync::Install(&session);  // the stationary PC power + floppy lane
+    coop::portable_pc_lid::Install(&session);  // the portable PC's lid, on its own verb
     coop::laptop_buffer_sync::Install(&session);  // the PC buffer quad
     coop::floppybox_sync::Install(&session);  // the disc crate stack
     coop::props::container_contents_sync::Install(&session);  // container contents
@@ -309,7 +311,8 @@ void ConnectReplayForSlot(int slot) {
     coop::signal_sync::QueueConnectBroadcastForSlot(slot);  // the join-window saved-signal seed, both signs
     coop::email_sync::QueueConnectBroadcastForSlot(slot);  // the join-window email seed, both signs
     coop::signal_catch_sync::QueueConnectBroadcastForSlot(slot);  // the in-flight catch replay (the identity half) and the kind-2 state seed
-    coop::laptop_sync::QueueConnectBroadcastForSlot(slot);  // PC power/slot state + content + live disc rows (ground truth) + lid rows
+    coop::laptop_sync::QueueConnectBroadcastForSlot(slot);  // PC power/slot state + the slot's content (ground truth)
+    coop::portable_pc_lid::QueueConnectBroadcastForSlot(slot);  // every open portable PC lid
     coop::laptop_buffer_sync::QueueConnectBroadcastForSlot(slot);  // the canonical quad (in-lane after the op=3 + slot content)
     coop::floppybox_sync::QueueConnectBroadcastForSlot(slot);  // one canonical per live box
     coop::props::container_contents_sync::QueueConnectBroadcastForSlot(slot);  // one slice per live world container (principle 8 anchor over the join snapshot)
@@ -477,6 +480,7 @@ DisconnectStats DisconnectAll() {
     coop::signal_catch_sync::OnDisconnect();
     coop::prop_save_data::OnDisconnect();
     coop::laptop_sync::OnDisconnect();
+    coop::portable_pc_lid::OnDisconnect();
     coop::laptop_buffer_sync::OnDisconnect();  // quad shadow + assembler + selftest
     coop::floppybox_sync::OnDisconnect();  // box shadows + taken-ring + pendings
     coop::props::container_contents_sync::OnDisconnect();  // dirty set + retry + parked + assembler
@@ -578,7 +582,8 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:console_state"}; coop::console_state_sync::Tick(); }  // signal-catcher: host sky poll / client mirror sweep / desk + dish owner streams
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal_catch"}; coop::signal_catch_sync::Tick(); }  // the catch and cleared detectors, 1 Hz
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:propsave"}; coop::prop_save_data::Drive(); }  // budgeted park applies + the 1 Hz assembler sweep
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:laptop"}; coop::laptop_sync::Tick(); }  // PC power/floppy edge polls (4 Hz) + content watches + lid sweep (1 Hz)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:laptop"}; coop::laptop_sync::Tick(); }  // PC power/floppy edge polls (4 Hz)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:pc_lid"}; coop::portable_pc_lid::Tick(); }  // the lid's watch until live, then waiting lines and held edges (1 Hz while any)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:laptop_quad"}; coop::laptop_buffer_sync::Tick(); }  // quad int pre-filter poll (4 Hz)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:floppybox"}; coop::floppybox_sync::Tick(); }  // box sweep (1 Hz)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:containerContents"}; coop::props::container_contents_sync::Tick(); }  // edge-driven dirty drain (4 Hz gate)

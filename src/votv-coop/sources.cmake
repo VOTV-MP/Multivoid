@@ -387,6 +387,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/dish_sync.cpp
     src/coop/interactables/tape_caddy_sync.cpp
     src/coop/interactables/laptop_sync.cpp
+    src/coop/interactables/portable_pc_lid.cpp
     src/coop/interactables/laptop_buffer_sync.cpp
     src/coop/interactables/floppy_slot_entry.cpp
     src/coop/interactables/floppy_slot_sync.cpp
@@ -472,6 +473,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/event_drill.cpp
     src/coop/dev/toggle_drill.cpp
     src/coop/dev/blackout_drill.cpp
+    src/coop/dev/lid_drill.cpp
     src/coop/dev/light_drill.cpp
     src/coop/dev/keypad_drill.cpp
     src/coop/dev/lookat_aim_drill.cpp

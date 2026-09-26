@@ -1,4 +1,5 @@
-// coop/interactables/laptop_sync.h -- the stationary PC (Alaptop_C) power, floppy and lid lane.
+// coop/interactables/laptop_sync.h -- the stationary PC (Alaptop_C) power and floppy lane, and the
+// LaptopState wire the portable PC's lid (coop/interactables/portable_pc_lid) rides as op 6.
 //
 // Edges are authored by the presser, there is ONE destroy owner -- the existing K2_DestroyActor
 // seam -- the HOST is content authority, and a joiner gets ground-truth rows rather than a replayed
@@ -18,9 +19,8 @@ namespace coop::laptop_sync {
 
 void Install(coop::net::Session* session);
 
-// 4 Hz: resolve and the instance-generation check, the power and slot edge polls, the client's
-// pending-eject-content drain, the deferred disc-content retries and the 1 Hz lid sweep. Three
-// axes:
+// 4 Hz: resolve, the content streams' TTL sweep and a parked slot edge's lost-content fallback, the
+// power target, and the power and slot edge polls. Two axes:
 //   POWER   the isOpened edge, polled because every entry verb is EX-invisible. A
 //           receiver replays the native actionOptionIndex(b8) under the wire-apply
 //           echo guard when local differs from wire; one whose powered or anim gate
@@ -28,24 +28,21 @@ void Install(coop::net::Session* session);
 //           wall-power input.
 //   FLOPPY  floppyType change edges, insert and eject, plus the slot scalars and
 //           content strings.
-//   LID     the portable PC (prop_portablePc_C) is a remote terminal to THIS laptop
-//           with its own lid state: a 1 Hz element walk, idempotent any-peer lines,
-//           a reflected Open() apply and join rows. Its buffer QUAD lives in
-//           laptop_buffer_sync, whose shadow prime piggybacks PrimeBaselines.
+// The portable PC (prop_portablePc_C) is a remote terminal to THIS laptop: its lid is
+// coop/interactables/portable_pc_lid's, on op 6, and its buffer QUAD laptop_buffer_sync's, whose
+// shadow prime piggybacks PrimeBaselines.
 void Tick();
 
-// Wire ingest (both roles). HOST: applies + re-fans (except origin).
+// Wire ingest (both roles). HOST: applies + re-fans (except origin). Op 6 goes to the lid lane.
 void OnLaptopState(const coop::net::LaptopStatePayload& p, uint8_t senderSlot);
 
 // LaptopBlob content chunks: the host re-fans a client's chunks one for one, then both roles
-// assemble and apply. The head is [kind][eid] -- kind 0 is slot content, pairing with the parked
-// op=1/3 edge, kind 1 is disc content by eid. For a disc the HOST loadDatas its authoritative actor
-// and re-fans; a receiver writes its mirror when that materializes, retrying until then, and a
-// client-ejected disc's content travels client to host after the adoption eid-binding.
+// assemble and apply. The blob is the laptop SLOT's content alone, pairing with the parked op=1/3
+// edge; a disc's content is its save record, which coop/props/prop_save_data carries by Key.
 void OnLaptopBlobChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 
-// HOST: ship the joiner the full laptop state (op=3 + slot-content blob) +
-// one disc-content blob per live content-bearing disc + the lid rows.
+// HOST: ship the joiner the laptop's state (op=3) and, with a disc in its slot, the slot's content
+// blob. The lid lane sends its own rows.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
 void OnDisconnect();

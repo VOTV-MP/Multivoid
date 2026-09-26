@@ -31,6 +31,7 @@
 #include "coop/dev/kerfur_menu_drill.h"  // [dev] a kerfur turned on through its menu event, nested in a watched body
 #include "coop/dev/keypad_drill.h"  // [dev] whether a client's typing lands on the host's verdict on both copies
 #include "coop/dev/keypad_probe.h"
+#include "coop/dev/lid_drill.h"  // [dev] the portable PC's lid, opened on the host and closed on the client
 #include "coop/dev/light_drill.h"  // [dev] whether a client's switch press moves the host's group, and never its own
 #include "coop/dev/light_group_census.h"
 #include "coop/dev/lightswitch_probe.h"
@@ -105,6 +106,7 @@ void EndSession() {
     coop::dev::drone_call_drill::OnDisconnect();  // [dev] the console, the legs and the host's watch belong to one world
     coop::dev::order_selftest::OnDisconnect();  // [dev] a rejoin's peers run their legs again
     coop::dev::meadow_selftest::OnDisconnect();  // [dev] a rejoin's peers run their legs again
+    coop::dev::lid_drill::OnDisconnect();  // [dev] the PC and the legs belong to one world
     coop::dev::grime_drill::OnDisconnect();  // [dev] the decals and the phase belong to one world
     coop::dev::lookat_aim_drill::OnDisconnect();  // [dev] the held target, which the next world does not have
     coop::dev::fireext_drill::OnDisconnect();  // [dev] back to the first step, the watch emptied
@@ -138,6 +140,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::event_drill::Tick(&session);  // [dev] the event drill's fires and count (a single bool read when off)
     coop::dev::toggle_drill::Tick(&session);  // [dev] the toggle drill's toggles (a single check when off)
     coop::dev::blackout_drill::Tick(&session);  // [dev] the blackout drill's fire and reads (a single bool read when off)
+    coop::dev::lid_drill::Tick(&session);  // [dev] the lid drill's legs (a single bool read when off)
     coop::dev::light_drill::Tick(&session);  // [dev] the light drill's presses (a single bool read when off)
     coop::dev::keypad_drill::Tick(&session);  // [dev] the keypad drill's legs (a single bool read when off)
     coop::dev::fireext_drill::Tick(&session);  // [dev] the fire extinguisher drill (a single bool read when off)
