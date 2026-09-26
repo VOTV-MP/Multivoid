@@ -169,8 +169,10 @@ its self-destroy is retired by the pose walk. `[V]`
 A second interceptor on the same deferred-spawn call carries a disjoint, name-matched allowlist
 (the event classes load lazily), a full-rotation pose batch, a spawn that carries scale and a
 class-interpreted birth blob, and a dead-retire in the pose walk for the actors that destroy
-themselves at an event's end. A graph spawner (the pyramid's) is caught at the native seam. A
-heading that lives outside the actor's rotation streams as an auxiliary yaw. `[V]`
+themselves at an event's end. A graph spawner (the pyramid's, the jellyfish path's) is caught at
+the native seam. A heading that lives outside the actor's rotation streams as an auxiliary yaw. A
+mirror's tick is parked and whatever component its class simulates with is stopped, found from the
+class's members, so the pose drive alone moves it. `[V]`
 
 **The materialisation window.** A mirror's component delegates bind during its begin-play, inside
 the finish-spawning call, while its row is installed only after that call returns; so for a

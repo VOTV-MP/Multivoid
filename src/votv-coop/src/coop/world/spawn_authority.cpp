@@ -11,7 +11,8 @@
 // refusing the tick stops the roll and the product, and the products are host-mirrored; the roach
 // master's tick drives roach movement, the food-eat mutation and crush traces, which a client running
 // it would diverge, so it and its summoner are refused while the roach sync drives the client
-// population.
+// population. The jellyfish path's spawn makes seven fish inside its graph, and the host's are
+// mirrored through the source-gated catch, so a client's own, its 18:00 roll's, is refused.
 
 #include "coop/world/spawn_authority.h"
 
@@ -53,6 +54,8 @@ constexpr Row kRows[] = {
     // Sky wisps: world-anchored, so the host rolls; the source-gated catch and the variant
     // allowlist mirror the products.
     {L"ticker_wispSpawner_C",        L"ReceiveTick",    "wispSpawner.ReceiveTick"},
+    // The space jellyfish: the host's run is mirrored through the source-gated catch.
+    {L"jellyfishPath_C",             L"spawn",          "jellyfishPath.spawn"},
     // The roach sim's entries: the ticker's cross-object call and the three looping timer
     // delegates. The roach sync drives the client population instead.
     {L"cockroachMaster_C",           L"summonRoach",    "cockroachMaster.summonRoach"},

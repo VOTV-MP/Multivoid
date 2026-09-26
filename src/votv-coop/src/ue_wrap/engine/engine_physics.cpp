@@ -9,6 +9,9 @@
 #include "ue_wrap/core/types.h"
 
 #include <cstdint>
+#include <deque>
+#include <string>
+#include <vector>
 
 namespace ue_wrap::engine {
 namespace {
@@ -66,6 +69,30 @@ bool Resolve(Thunk& t) {
     return true;
 }
 
+// The component members of a class, found once per class name: its own and its generated parents', up to the
+// first native class, whose members are not variables. A Blueprint's component variable is an instanced object
+// member of pointer size. A deque, so an entry handed out stays where it is when another is added.
+struct ClassMembers {
+    R::FName name;
+    std::vector<int32_t> offs;
+};
+std::deque<ClassMembers> g_componentMembers;  // a handful of classes
+
+const std::vector<int32_t>& ComponentMembers(void* cls) {
+    const R::FName& nm = R::NameOf(cls);
+    for (const ClassMembers& m : g_componentMembers)
+        if (m.name.ComparisonIndex == nm.ComparisonIndex && m.name.Number == nm.Number) return m.offs;
+    ClassMembers& m = g_componentMembers.emplace_back(ClassMembers{nm, {}});
+    for (void* c = cls; c; c = R::SuperStructOf(c)) {
+        const std::wstring n = R::ToString(R::NameOf(c));
+        if (n.size() < 2 || n.compare(n.size() - 2, 2, L"_C") != 0) break;
+        for (const R::StructFieldInfo& f : R::EnumerateStructFields(c))
+            if ((f.flags & P::cpf::InstancedReference) && f.size == static_cast<int32_t>(sizeof(void*)))
+                m.offs.push_back(f.offset);
+    }
+    return m.offs;
+}
+
 void SetVelocity(Thunk& t, void* component, float x, float y, float z) {
     if (!component || !Resolve(t)) return;
     unsigned char frame[kFrameBytes] = {};
@@ -97,6 +124,26 @@ bool IsComponentSimulatingPhysics(void* component) {
     *reinterpret_cast<R::FName*>(frame + g_isSimulating.off0) = R::FName{0, 0};  // None: the whole body
     R::CallFunction(component, g_isSimulating.fn, frame);
     return *reinterpret_cast<bool*>(frame + g_isSimulating.off1);
+}
+
+int StopActorSimulating(void* actor) {
+    void* cls = actor ? R::ClassOf(actor) : nullptr;
+    if (!cls) return 0;
+    if (!g_primitiveClass.Alive()) g_primitiveClass.Set(R::FindClass(P::name::PrimitiveComponentClass));
+    void* prim = g_primitiveClass.Raw();
+    if (!prim) return 0;
+    int stopped = 0;
+    for (int32_t off : ComponentMembers(cls)) {
+        void* comp = *reinterpret_cast<void* const*>(static_cast<const char*>(actor) + off);
+        // Only the actor's own: a variable can hold another actor's component.
+        if (!comp || !R::IsLive(comp) || R::OuterOf(comp) != actor) continue;
+        void* compCls = R::ClassOf(comp);
+        if (!compCls || !R::IsDescendantOfAny(compCls, &prim, 1)) continue;
+        if (!IsComponentSimulatingPhysics(comp)) continue;
+        SetComponentSimulatePhysics(comp, false);
+        ++stopped;
+    }
+    return stopped;
 }
 
 }  // namespace ue_wrap::engine

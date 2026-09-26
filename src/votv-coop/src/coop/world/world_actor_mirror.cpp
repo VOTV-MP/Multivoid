@@ -19,6 +19,7 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_physics.h"  // StopActorSimulating
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
@@ -200,8 +201,7 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
     // here, so every mirrored coin was born at the class default and painted bronze, and the
     // default is also the commonest real denomination, which is why the field report said
     // "different" and not "always wrong". We set the input and let the game paint; nothing here
-    // touches a material. Class-scoped, matching the prepare call below: the coin lane owns the
-    // coin specifics. A zero length means leave the default alone: writing zero would be an
+    // touches a material. Class-scoped: the coin lane owns the coin specifics. A zero length means leave the default alone: writing zero would be an
     // invisible fail-open, painting bronze exactly like the bug.
     if (classW == L"baocoin_C" && payload.birthLen != 0) {
         if (payload.birthLen != sizeof(int32_t)) {
@@ -245,10 +245,11 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
     // dead-reckoning model).
     E::SetActorTickEnabled(spawned, false);
     // A pose-driven mirror must not also simulate: the two fight and the mirror drifts off the
-    // host's transform. The coin's sphere simulates physics, the first simulating member of this
-    // allowlist; the other classes are event actors that do not. Class-scoped on purpose: the
-    // general invariant is named here, not applied.
-    if (classW == L"baocoin_C") coop::coingun_sync::PrepareCoinMirror(spawned);
+    // host's transform. The coin simulates with its sphere and the jellyfish with its capsule, each its
+    // root; whatever component a mirrored class simulates with is stopped, found from its members.
+    if (const int stopped = E::StopActorSimulating(spawned))
+        UE_LOGI("world-actor[client OnSpawn]: eid=%u '%ls' -- %d simulating component(s) stopped, the pose "
+                "drive moves it", payload.elementId, classW.c_str(), stopped);
     coop::world_actor_sync::NoteMirrorActor(spawned, /*add=*/true);
     // The instrument. This line fires once per mirror, keyed by eid, so the birth seam is where
     // host and client can be paired; the host logs its own points and material at its enrol.

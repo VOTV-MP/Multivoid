@@ -21,4 +21,10 @@ void SetComponentAngularVelocity(void* component, float wx, float wy, float wz);
 // False for null or when it did not resolve.
 bool IsComponentSimulatingPhysics(void* component);
 
+// Every primitive component the actor's Blueprint chain declares as a member (a component variable) that
+// simulates is stopped; returns how many were. For an actor driven from elsewhere, which must not also
+// simulate. The members are found once per class name, a Blueprint's layout being the same in every world.
+// Null-safe.
+int StopActorSimulating(void* actor);
+
 }  // namespace ue_wrap::engine

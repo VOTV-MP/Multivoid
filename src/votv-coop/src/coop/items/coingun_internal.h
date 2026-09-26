@@ -9,7 +9,7 @@
 // Two subsystems shared one file until it passed the 800-LOC soft cap:
 //   - THE SALE (coingun_sync.cpp + coingun_arbiter.cpp) -- a client shoots a prop; the host prices
 //     and mints. Owns CoinGunSell / CoinGunResult, the `playerHandUse_LMB` verb, the client-coin
-//     barrier, the sold-set, PrepareCoinMirror.
+//     barrier, the sold-set.
 //   - THE COLLECT (coingun_collect.cpp) -- somebody picks a coin up; the host performs the credit.
 //     Owns CoinCollect, the `actionOptionIndex` verb, the overlap interceptor.
 // They meet only on what this header declares. Game thread unless a function says otherwise.

@@ -63,12 +63,6 @@ void OnCoinCollect(const uint8_t* payload, int len, uint8_t senderSlot, void* lo
 // are not world-scoped and stay.
 void OnDisconnect();
 
-// For a freshly materialised baocoin_C mirror: stops it simulating. Targets the coin's Sphere
-// component by name, the one shipping bSimulatePhysics true, which is not the root (the collect
-// sphere is declared first), so the actor-level helper would miss it and the mirror would fight
-// the pose drive. Resolved on the declaring class, UPrimitiveComponent.
-void PrepareCoinMirror(void* coin);
-
 // The coin's birth value: baocoin_C's ReceiveBeginPlay picks the material from `points`, once
 // (up to 10 bronze, 11 to 25 silver, 26 and above gold), and `sell` writes that int between
 // BeginDeferredActorSpawnFromClass and FinishSpawningActor, so a mirror born at the CDO default
@@ -90,8 +84,8 @@ int32_t ReadCoinPoints(void* coin);
 bool SeedCoinMirror(void* coin, int32_t points);
 
 // The instrument: a coin's `points` and the material its BeginPlay painted, read off the component
-// named `baocoin` (the bytecode names it at all three SetMaterial sites; the root is the collect
-// sphere, and a reader aimed there returns null on both peers and agrees by construction). The
+// named `baocoin` (the bytecode names it at all three SetMaterial sites; the root is `Sphere`, the
+// simulating body, and a reader aimed there returns null on both peers and agrees by construction). The
 // material is independent evidence, painted by the game from the real value, so a bad read shows
 // as a mismatch on one line. `material` is empty if the component or function does not resolve.
 void DescribeCoin(void* coin, int32_t& outPoints, std::wstring& outMaterial);

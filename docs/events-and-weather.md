@@ -27,8 +27,8 @@ again, and game mode 0's day-number achievements `[RD]` (`coop/world/day_edge`).
 still run, so the game's automatic 6 am drone order is latched on a client: its slot can load the
 flag open from the save, and the midnight that re-opens it daily is the host's alone; the weather
 births and the event walk are held too (below), and the sky eye is the host's (a client's own noon
-roll is refused) `[V]`, while the jellyfish, the flesh rain, the gifts and the red sky's noon end run
-per peer (the known limits). Game mode 5 resets the time
+roll is refused) `[V]`, and so is the jellyfish (a client's own 18:00 spawn is refused) `[V]`, while
+the flesh rain, the gifts and the red sky's noon end run per peer (the known limits). Game mode 5 resets the time
 of day every second on every machine; a client refuses its own copy of that loop at the loop's
 once-a-second resume, after the one pass its begin-play runs, which the clock takes back `[V]`, and
 the mode's other flows run on: its needs restore `[V]`, its ambience and spawners `[RD]` (measured
@@ -115,7 +115,9 @@ name-matched allowlist disjoint from the character one, a full-rotation pose bat
 that carries scale and a class-interpreted birth blob (a coin is born with the points its
 material comes from), a destroy broadcast, and a dead-retire in the host's pose walk for the
 actors that destroy themselves at an event's end. A spawner that runs inside a Blueprint (the
-pyramid's) is caught at the native function seam and gated by the spawning class. A heading
+pyramid's, the jellyfish path's) is caught at the native function seam and gated by the spawning
+class. A mirror stops whatever its class simulates with (the coin's sphere, the jellyfish's
+capsule), so the pose drive alone moves it `[V]`. A heading
 that lives outside the actor's rotation streams as an auxiliary yaw.
 
 The walking pyramid rides those rails for its spawn, pose and despawn, the creature lane for
@@ -192,7 +194,7 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 |---|---|
 | A black fog the host rolls has no wire lane yet; the client's own rolls are suppressed | `[V]` `coop/world/weather_event_births` |
 | A client's own noon pulse still ends a red sky: when the host's start reaches it before its clock passes noon, the client's pulse ends the new one | `[RD]` the red sky's noon toggle and the catch's birth-only seam |
-| The jellyfish and the flesh rain are rolled by every peer's own hour pulse, and neither is mirrored (the sky eye is not: `SkyState` carries it and a client's own `setEye` is refused) | `[RD]` the clock's hour roll; the jellyfish is on the world-actor mirror's list, but its spawn happens inside a Blueprint where the mirror's catch does not see it |
+| The flesh rain is rolled by every peer's own hour pulse and is not mirrored (the sky eye and the jellyfish are not: `SkyState` carries the eye, the world-actor lane the host's fish, and a client's own `setEye` and path spawn are refused) | `[RD]` the clock's hour roll; the jellyfish is on the world-actor mirror's list, but its spawn happens inside a Blueprint where the mirror's catch does not see it |
 | A decorated Christmas tree spawns its gifts on each peer whose player sleeps through midnight, and a client's gifts are its own | `[RD]` the tree's own check of the local player's sleep at hour 0 |
 | Several rolls are still per peer: the rare gamemode rolls (the one-percent forced quit), the server break-minigame variant, the underground loot mounds, the signal scramble and the radio-tower shuffle | `[V]` no lane under `coop/world` carries them; `coop/interactables/garbage_sync` names the mounds |
 | The deer, hexahive, walking-tree, dirt-hole, beehive, flora and mannequin spawners are neither refused on a client nor mirrored from the host, so each peer rolls its own | `[V]` no row of `coop/world/spawn_authority` names them; the table in `docs/npcs-and-kerfur.md`, "Which spawners a client refuses" |

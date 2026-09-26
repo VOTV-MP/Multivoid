@@ -64,8 +64,6 @@ std::atomic<bool> g_verbRegistered{false};
 void* g_finishSpawnFn = nullptr;
 void* g_coinClass     = nullptr;
 void* g_gunClass      = nullptr;   // prop_coingun_C, the context gate
-int32_t g_offCoinSphere  = -1;   // Abaocoin_C::Sphere, the simulating component (not the root)
-void* g_setSimFn      = nullptr;   // UPrimitiveComponent::SetSimulatePhysics
 
 // Diagnostics; they ride the event logs.
 std::atomic<unsigned long long> g_capturedCoins{0};
@@ -215,45 +213,6 @@ const wchar_t* ResultText(coop::net::CoinGunResultCode code) {
 
 }  // namespace
 
-void PrepareCoinMirror(void* coin) {
-    // The simulating component by name: Abaocoin_C declares the collect sphere first, the mesh
-    // second and `Sphere` (the one shipping with physics on) third, so a root-component call would
-    // log physics-off while Sphere kept simulating and fought the pose drive. A component is a
-    // UObject, so it takes a normal reflected call.
-    if (!coin) return;
-    if (g_offCoinSphere < 0 && g_coinClass)
-        g_offCoinSphere = R::FindPropertyOffset(g_coinClass, L"Sphere");
-    if (g_offCoinSphere < 0) {
-        UE_LOGW("coingun[mirror]: coin %p -- 'Sphere' offset unresolved, cannot stop the mirror "
-                "simulating; it may drift from the host's authoritative pose", coin);
-        return;
-    }
-    void* sphere = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(coin) + g_offCoinSphere);
-    if (!sphere) return;
-    // Resolved on the declaring class: FindFunction matches the owning class exactly and does not
-    // climb, and SetSimulatePhysics is declared on UPrimitiveComponent, so asking the sphere's own
-    // class could never succeed. The negative is latched, so a failure is said once, not once per
-    // mirrored coin.
-    static bool sSetSimResolveFailed = false;
-    if (!g_setSimFn && !sSetSimResolveFailed) {
-        if (void* primCls = R::FindClass(L"PrimitiveComponent"))
-            g_setSimFn = R::FindFunction(primCls, L"SetSimulatePhysics");
-        if (!g_setSimFn) {
-            sSetSimResolveFailed = true;
-            UE_LOGW("coingun[mirror]: SetSimulatePhysics unresolved on UPrimitiveComponent -- mirrors "
-                    "will keep simulating and may drift from the host's pose. Latched: this lookup "
-                    "is not repeated per coin.");
-        }
-    }
-    if (!g_setSimFn) return;
-    ue_wrap::ParamFrame f(g_setSimFn);
-    if (!f.valid()) return;
-    f.Set<bool>(L"bSimulate", false);
-    const bool ok = ue_wrap::Call(sphere, f);
-    UE_LOGI("coingun[mirror]: coin %p -- Sphere(%p) SetSimulatePhysics(false) dispatch=%d (a pose-driven "
-            "mirror must not also simulate)", coin, sphere, ok ? 1 : 0);
-}
-
 // The coin's birth value.
 namespace {
 
@@ -297,7 +256,7 @@ int32_t MeshOffsetFor(void* cls) {
     auto it = g_meshOffByClass.find(cls);
     if (it != g_meshOffByClass.end()) return it->second;
     // By name, and the name is `baocoin`: the ubergraph sets the material on that component on
-    // every branch; `collect` is the root and `Sphere` the simulating body.
+    // every branch; `Sphere` is the root and the simulating body.
     const int32_t off = R::FindPropertyOffset(cls, L"baocoin");
     g_meshOffByClass[cls] = off;
     return off;

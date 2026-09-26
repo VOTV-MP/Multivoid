@@ -127,13 +127,15 @@ coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& 
 // client's ticker is cancelled in the spawn authority); and the sell gun's coin mint, whose
 // deferred spawn inside the sell verb is bytecode-internal on the host's own sale and on the
 // re-commit of a client's sale alike, so the world-actor lane's interceptor never sees it and
-// without this row the coin allowlist entry is inert. A future creature event adds its
-// trigger class here once its target class joins the NPC allowlist.
+// without this row the coin allowlist entry is inert; and the jellyfish path, whose spawn makes
+// its seven fish inside its own graph. A future creature event adds its trigger class here once
+// its target class joins the NPC allowlist.
 constexpr const wchar_t* kExSpawnSourceClasses[] = {
     L"trigger_wispSwarm_C",   // the wisps event swarm
     L"piramidSpawner_C",      // the piramid event chain
     L"ticker_wispSpawner_C",  // the ambient sky wisps
     L"prop_coingun_C",        // the sell gun's coin mint
+    L"jellyfishPath_C",       // the space jellyfish's seven, on the world-actor lane
 };
 
 // A source's output may be a world-actor-lane class (the pyramid): the same catch seam,
@@ -199,8 +201,8 @@ void InstallExSpawnCatch(void* beginDeferredFn) {
     // Func thunk on the same UFunction (the trash collect's ambient-prop observer), and both fire.
     if (ue_wrap::ufunction_hook::InstallPostHook(beginDeferredFn, &OnBeginDeferredExSpawn)) {
         UE_LOGI("npc-sync[ex-spawn]: Func-thunk catch installed on BeginDeferred (source-gated: "
-                "trigger_wispSwarm_C -> wisp_C, piramidSpawner_C -> killerwisp_C + piramid2_C; "
-                "EX_CallMath spawns now enroll)");
+                "trigger_wispSwarm_C -> wisp_C, piramidSpawner_C -> killerwisp_C + piramid2_C, "
+                "jellyfishPath_C -> jellyfish_C; EX_CallMath spawns now enroll)");
     } else {
         UE_LOGW("npc-sync[ex-spawn]: InstallPostHook FAILED -- EX_CallMath creature spawns will "
                 "NOT mirror this session (event-swarm wisps host-only)");

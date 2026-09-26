@@ -58,9 +58,9 @@ enum class Dispatch : uint8_t {
                    // verb table in the .cpp) -- the exact UFunction the game's own timer/RNG calls.
                    // NOT exposed (documented, deliberate): superFogEvent (a literal 5%% roll inside --
                    // a deterministic lever needs the superFog_C spawn transform, follow-up),
-                   // fleshRain/spawnErrorObject (need a spawn transform), jellyfishPath spawn
-                   // (verb/owner not confirmed in the current CXX dump); the sky's setEye is
-                   // driven by the world roll drill (coop/dev/world_roll_drill) instead.
+                   // fleshRain/spawnErrorObject (need a spawn transform); the sky's setEye and
+                   // the jellyfish path's spawn are driven by the world roll drill
+                   // (coop/dev/world_roll_drill) instead.
 };
 
 struct EventInfo {
