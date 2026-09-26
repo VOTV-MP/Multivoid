@@ -38,13 +38,13 @@ bool    g_valid     = false;  // a build produced a usable catalog
 // A failed build is not one thing, and treating it as one is wrong in BOTH directions:
 //   HARD -- a verdict about LAYOUT or DATA (the price gate disagreed, duplicate row keys,
 //           row-struct members missing). Retrying cannot change the answer, so latch it forever.
-//   SOFT -- something was not resolvable YET (the table, the function library, the RowMap head).
-//           Retrying is right, but the retry runs FindObject, a full GUObjectArray walk that
-//           renders an FName per object; with no latch at all on this path a host with a pending
-//           order can re-walk the whole array once per order per frame. So: retry, on a
-//           wall-clock throttle.
+//   SOFT -- something not there YET: the table not loaded or still loading, or a member name the
+//           engine cannot convert until Kismet is up. Retrying is right, but the retry runs
+//           FindObject, a full GUObjectArray walk that renders an FName per object; with no latch at
+//           all on this path a host with a pending order can re-walk the whole array once per order
+//           per frame. So: retry, on a wall-clock throttle.
 // Latching a SOFT failure permanently is the opposite error -- it refuses every client order for
-// the rest of the session because a UFunction happened to be unresolved for one tick.
+// the rest of the session because the table was still loading on one tick.
 enum class Outcome { Never, Soft, Hard };
 // EObjectFlags (UE4.27 ObjectMacros.h): the object's load has not run, or its PostLoad has not.
 constexpr int32_t kRfNeedLoad     = 0x00000400;

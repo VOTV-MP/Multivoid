@@ -7,8 +7,9 @@
 // ReceiveTick (Damping/Speed/Pitch/vecForce vs a world Spline) -- reproducing it bit-exact on a
 // remote is fragile, so we HOST-AUTHORITATIVELY stream the resolved actor TRANSFORM and the client
 // mirrors it kinematically (SuppressTick stops the client drone's own ReceiveTick so it can't fly
-// on its own + fight the stream -- the npc/clump mirror discipline). The drone moves the ACTOR
-// (not a physics body), so actor-level TryGetActorLocation/SetActorLocation is the transform.
+// on its own + fight the stream -- the npc/clump mirror discipline). The drone flies by forces on its
+// root sphere (`coll`), which carries the actor, so actor-level TryGetActorLocation/SetActorLocation
+// is the transform.
 //
 // Identity = SINGLETON (the world singleton's drone_C; both peers load the same placed
 // drone). It has no top-level Key (its key lives inside Data) -- but a singleton needs no key.
@@ -23,8 +24,8 @@ namespace ue_wrap::drone {
 // Resolve Adrone_C + the Active offset. Idempotent; true once resolved. Game thread.
 bool EnsureResolved();
 
-// The singleton delivery drone actor, or nullptr if not present. Cached + IsLive-revalidated;
-// the underlying FindObjectByClass scan is throttled (the per-frame-scan ban). Game thread.
+// The singleton delivery drone actor, or nullptr if not present: the world singleton's drone_C
+// (world_singleton::Find, answered by the object index, never an array walk). Game thread.
 void* Find();
 
 // Active -- TRUE while the drone is flying a delivery (false = dormant/parked).

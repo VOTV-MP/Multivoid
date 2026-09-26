@@ -2,8 +2,9 @@
 // (Adrone_C). Offsets resolved from the live class via reflection (version-portable); the Alpha
 // 0.9.0-n value is a logged fallback. The pose and the state bits are read from memory (the root
 // component's relative transform, the dust component's bIsActive bit), writes go through
-// ue_wrap::engine at the actor level (the drone moves the actor via its BP ReceiveTick, no physics
-// body). Find() is the world singleton's drone_C.
+// ue_wrap::engine at the actor level: the drone flies by forces on its root sphere (`coll`, pushed by
+// AddForce and AddTorqueInDegrees in its ReceiveTick), which carries the actor. Find() is the world
+// singleton's drone_C.
 
 #include "ue_wrap/devices/drone.h"
 

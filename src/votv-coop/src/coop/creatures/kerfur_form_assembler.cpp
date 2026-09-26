@@ -54,8 +54,8 @@ constexpr const wchar_t* kVerbNameTurnOn  = L"spawnKerfuro";
 
 // Is the calling thread inside one of our own two verbs? The gates below must not test the
 // active flag alone: it is true for any registered verb on this thread, and other modules
-// publish verb ids 1 and 2 for their own verbs (the container's addObject, the meadow's mark,
-// the drive's put-in and pulled-out), so the id would not help either. Under a foreign verb's
+// publish verb ids 1 and 2 for their own verbs (the container's addObject, the drive's put-in and
+// pulled-out, the broom's stroke), so the id would not help either. Under a foreign verb's
 // bracket an unrelated spawn would count as ours and the request-scope test would go false.
 // Reachable: the coin gun destroying a kerfur prop nests our destroy inside its bracket.
 bool InKerfurVerb(const sg::Active& av) {
