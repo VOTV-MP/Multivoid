@@ -249,14 +249,18 @@ bool TryReadOpenIntent(void* door, bool& open) {
     // While the door's move timeline plays, report the swing's destination instead of the opened
     // flag (set at the swing's end, half a second later), so the host sends an open or close the
     // instant it begins: the door's own dir, which doorOpen and doorClose write in their own body
-    // before starting that timeline, so a read straight after the verb sees it. Any other motion --
-    // the jam shake sets isMoving and plays its own timeline -- leaves the door where its opened flag
-    // says. The timeline's flag is read only while isMoving is set: a byte read, and none at rest.
+    // before starting that timeline, so a read straight after the verb sees it. The same once the
+    // timeline has stopped at that end but the swing's end function has not yet rewritten the flag:
+    // the finish window, which a read between verbs can land in. Any other motion -- the jam shake
+    // sets isMoving and plays its own timeline -- leaves the door where its opened flag says. The
+    // timeline's flag is read only while isMoving is set: a byte read, and none at rest.
     const bool moving = (g_isMovingOff >= 0) &&
         *reinterpret_cast<const bool*>(base + g_isMovingOff);
-    bool swinging = false;
+    bool swinging = false, inWindow = false, toOpen = false;
     if (moving && g_dirOff >= 0 && MoveTimelinePlaying(door, swinging) && swinging)
         open = *reinterpret_cast<const uint8_t*>(base + g_dirOff) == 0;
+    else if (moving && TryReadFinishWindow(door, inWindow, toOpen) && inWindow)
+        open = toOpen;
     else
         open = isOpened;
     return true;
