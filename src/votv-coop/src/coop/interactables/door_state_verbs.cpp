@@ -14,6 +14,7 @@
 #include <atomic>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace coop::door_state_verbs {
@@ -75,6 +76,43 @@ constexpr StateWatch kProbeWatches[] = {
 };
 bool g_probeRegistered = false;
 
+// The probe's read of each swing's finish window, HOST, before the move timeline's update body: its final tick
+// has stopped it (the update runs after the stop), so a door whose isMoving still holds there is in the window.
+// The lane's intent read there is held until the swing's end function has run, and then set against where the
+// door settled, the open flag that function writes: a read the window got wrong disagrees with the settle.
+constexpr int kTagFinishWindow = 0x4453464e;  // 'DSFN'
+constexpr int kTagFinishSettle = 0x44535354;  // 'DSST'
+std::unordered_map<void*, bool> g_windowIntent;  // a door in its window -> the intent read there
+uint64_t g_windowReads = 0, g_windowDisagreed = 0;
+
+sg::Verdict OnMoveUpdatePre(const sg::Call& call) {
+    if (!ConnectedAs(coop::net::Role::Host)) return sg::Verdict::Run;
+    if (!call.object || !D::IsDoor(call.object)) return sg::Verdict::Run;
+    bool inWindow = false, toOpen = false, intent = false;
+    if (!D::TryReadFinishWindow(call.object, inWindow, toOpen) || !inWindow) return sg::Verdict::Run;
+    if (!D::TryReadOpenIntent(call.object, intent)) return sg::Verdict::Run;
+    g_windowIntent[call.object] = intent;
+    return sg::Verdict::Run;
+}
+
+void OnMoveFinishedPost(const sg::Call& call) {
+    if (!ConnectedAs(coop::net::Role::Host)) return;
+    const auto it = call.object ? g_windowIntent.find(call.object) : g_windowIntent.end();
+    if (it == g_windowIntent.end()) return;
+    const bool intent = it->second;
+    g_windowIntent.erase(it);
+    bool settled = false;
+    if (!D::IsDoor(call.object) || !D::TryReadOpen(call.object, settled)) return;
+    ++g_windowReads;
+    if (intent != settled) ++g_windowDisagreed;
+    char desc[160] = "";
+    D::DescribeSwing(call.object, desc, sizeof desc);
+    UE_LOGI("[DOOR-STATE] probe: the swing's finish window on key='%ls' read %s; the door settled %s (%llu of %llu "
+            "window reads disagree with the settle) -- %s", coop::interactable_sync::DoorKey(call.object).c_str(),
+            intent ? "OPEN" : "SHUT", settled ? "OPEN" : "SHUT", static_cast<unsigned long long>(g_windowDisagreed),
+            static_cast<unsigned long long>(g_windowReads), desc);
+}
+
 void OnProbePost(const sg::Call& call) {
     if (!ConnectedAs(coop::net::Role::Host)) return;
     if (!call.object || !D::IsDoor(call.object)) return;
@@ -121,6 +159,9 @@ void RegisterWatches() {
         for (const StateWatch& w : kProbeWatches)
             if (!sg::WatchName(w.name, w.tag, nullptr, &OnProbePost))
                 UE_LOGW("[DOOR-STATE] the probe's watch on '%ls' was refused", w.name);
+        if (!sg::WatchName(L"move__UpdateFunc", kTagFinishWindow, &OnMoveUpdatePre, nullptr) ||
+            !sg::WatchName(L"move__FinishedFunc", kTagFinishSettle, nullptr, &OnMoveFinishedPost))
+            UE_LOGW("[DOOR-STATE] the probe's watches on the swing's finish window were refused");
     }
     for (int i = 0; i < kWatchCount; ++i) {
         if (g_reg[i] != Reg::Pending) continue;
@@ -168,6 +209,12 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(g_loadNative), static_cast<unsigned long long>(g_edges));
     g_refused = g_edges = g_loadNative = 0;
     g_saidRefused.clear();
+    if (g_windowReads)
+        UE_LOGI("[DOOR-STATE] session end -- the probe read %llu swing(s) in their finish window, %llu of them "
+                "disagreeing with the settle", static_cast<unsigned long long>(g_windowReads),
+                static_cast<unsigned long long>(g_windowDisagreed));
+    g_windowReads = g_windowDisagreed = 0;
+    g_windowIntent.clear();
 }
 
 }  // namespace coop::door_state_verbs

@@ -55,6 +55,7 @@ uint8_t g_playingMask  = 0;
 // force-snap moves nothing. The direction is the timeline's own and updates on its next tick, so no
 // reader uses it.
 int32_t g_moveAlphaOff = -1;       // float, 0 closed .. 1 open
+constexpr float kAlphaEps = 1e-3f;  // the timeline's value at an end, as its stop leaves it
 int32_t g_moveDirOff   = -1;       // uint8, 0 forward (open), 1 backward (close)
 int32_t g_sensorOff    = -1;       // Adoor_C::sensor (UBoxComponent*)
 int32_t g_sensorOverlapsOff = -1;  // Adoor_C::sensorOverlaps (TArray<AActor*>)
@@ -316,6 +317,19 @@ bool TryReadActive(void* door, bool& on) {
 bool TryReadIgnoresBlackout(void* door, bool& ignores) {
     if (!door || !g_resolved.load(std::memory_order_acquire) || g_ignoreBlackoutOff < 0) return false;
     ignores = (*(reinterpret_cast<const uint8_t*>(door) + g_ignoreBlackoutOff) & g_ignoreBlackoutMask) != 0;
+    return true;
+}
+
+bool TryReadFinishWindow(void* door, bool& inWindow, bool& toOpen) {
+    if (!door || g_isMovingOff < 0 || g_dirOff < 0 || g_moveAlphaOff < 0) return false;
+    const char* base = reinterpret_cast<const char*>(door);
+    bool playing = false;
+    if (!MoveTimelinePlaying(door, playing)) return false;
+    const bool moving = *reinterpret_cast<const bool*>(base + g_isMovingOff);
+    toOpen = *reinterpret_cast<const uint8_t*>(base + g_dirOff) == 0;
+    // The timeline's value is 0 closed and 1 open; a stop at either end reads it exactly there.
+    const float alpha = *reinterpret_cast<const float*>(base + g_moveAlphaOff);
+    inWindow = moving && !playing && (toOpen ? alpha >= 1.f - kAlphaEps : alpha <= kAlphaEps);
     return true;
 }
 

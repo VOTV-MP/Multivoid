@@ -84,6 +84,16 @@ bool TryReadActive(void* door, bool& on);
 // is off only if it does not. False on a null door or an unresolved field. Game thread.
 bool TryReadIgnoresBlackout(void* door, bool& ignores);
 
+// Whether the door is in its swing's finish window: its move timeline has stopped at the end its dir points
+// to while isMoving still holds, the swing's end function (move__FinishedFunc, which copies the timeline's
+// direction into dir and derives isOpened from it) not yet run. The timeline's final tick stops it, updates it
+// and only then calls that function, and a reader can run between (the pump drains at any outermost dispatch).
+// `toOpen` is the swing's destination. The same condition holds for a moment in states where the destination
+// equals the open flag -- a jam's shake on a shut door until its first event rewrites dir, and doorOpen and
+// doorClose before they start the timeline -- so a reader gets the flag's answer there either way. False when
+// the fields do not resolve. Game thread.
+bool TryReadFinishWindow(void* door, bool& inWindow, bool& toOpen);
+
 // The door's swing as its fields hold it, for a probe's line: isOpened, isMoving, dir, whether the move
 // timeline plays, jammed and the timeline's value (-1 for a field that did not resolve). Game thread.
 void DescribeSwing(void* door, char* out, size_t n);
