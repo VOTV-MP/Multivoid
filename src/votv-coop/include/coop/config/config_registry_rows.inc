@@ -448,13 +448,14 @@ CFG_ENUM(midnight_drill, "midnight_drill", "dev", "off", "off|awake|asleep|cheat
     "and the client says whether its own reset kept running. malformed: the host puts three clock "
     "samples whose day is not a number, and the client's log says where each was refused. Run it on a "
     "fresh host world; every refused step is logged and ends the arm as invalid.")
-CFG_ENUM(world_roll_drill, "world_roll_drill", "dev", "off", "off|eye_host|eye_client",
+CFG_ENUM(world_roll_drill, "world_roll_drill", "dev", "off", "off|eye_host|eye_client|eye_join",
     "VOTVCOOP_WORLD_ROLL_DRILL",
     "Drill (BOTH peers), the day's world rolls: each a host roll that must cross and a client's own that "
     "must be refused. eye_host: once a client's join is over the host's sky runs setEye(true), as its noon "
     "roll would, and the client's copy must show the eye within 20 s; eye_client: the joined client runs "
-    "its own setEye(true) and the gate must refuse it, its copy's eye unchanged. Run it on a fresh host "
-    "world; every refused step is logged and ends the arm as invalid.")
+    "its own setEye(true) and the gate must refuse it, its copy's eye unchanged; eye_join: the host's sky "
+    "runs setEye(true) before any client's world is ready, and the joiner's copy must show it. Run it on a "
+    "fresh host world; every refused step is logged and ends the arm as invalid.")
 CFG_ENUM(fireext_drill, "fireext_drill", "dev", "off", "off|carry|short|client|join",
     "VOTVCOOP_FIREEXT_DRILL",
     "Drill (BOTH peers): a wall-mounted fire extinguisher taken off through the use key's own grab "

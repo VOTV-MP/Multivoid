@@ -249,9 +249,9 @@ bool HandleWorldEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::SkyState: {
-        // The host-authoritative night-sky orientation and moon phase, host to client, trust-gated
+        // The host-authoritative night-sky orientation, moon phase and eye, host to client, trust-gated
         // to slot 0 like the clock. The client writes the sky mesh's world rotation and the moon
-        // phase (the module no-ops on the host).
+        // phase and runs the sky's setEye for the eye (the module no-ops on the host).
         if (msg.senderPeerSlot != 0) {
             UE_LOGW("event_feed: SkyState from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
             break;

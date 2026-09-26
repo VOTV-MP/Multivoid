@@ -26,8 +26,9 @@ of midnights since its world loaded (the insomniac achievement at seven), the da
 again, and game mode 0's day-number achievements `[RD]` (`coop/world/day_edge`). Its hour pulses
 still run, so the game's automatic 6 am drone order is latched on a client: its slot can load the
 flag open from the save, and the midnight that re-opens it daily is the host's alone; the weather
-births and the event walk are held too (below), while the sky eye, the jellyfish, the flesh rain,
-the gifts and the red sky's noon end run per peer (the known limits). Game mode 5 resets the time
+births and the event walk are held too (below), and the sky eye is the host's (a client's own noon
+roll is refused) `[V]`, while the jellyfish, the flesh rain, the gifts and the red sky's noon end run
+per peer (the known limits). Game mode 5 resets the time
 of day every second on every machine; a client refuses its own copy of that loop at the loop's
 once-a-second resume, after the one pass its begin-play runs, which the clock takes back `[V]`, and
 the mode's other flows run on: its needs restore `[V]`, its ambience and spawners `[RD]` (measured
@@ -37,8 +38,8 @@ at the normal speed, where a game minute holds about six, so a client's own minu
 its sun, sounds, decals and weekday, follow the host's minute for minute `[RD]`; in the shared
 sleep (on [players.md](players.md)) one comes about every 80 ms `[RD]`, and a frame longer than
 that on either peer can merge two and skip a minute's pulse `[RD]` -- one night gave 44 of 45
-`[V]`. The star dome's random orientation and the save-derived moon phase are pushed once
-(`coop/world/sky_sync`).
+`[V]`. The star dome's random orientation, the save-derived moon phase and the sky eye stream from
+the host once a second (`coop/world/sky_sync`) `[V]`.
 
 ### Weather
 
@@ -164,7 +165,7 @@ task state (`coop/world/daily_task_sync`). The rewards land in the shared balanc
 
 | Kind | Direction | Carries |
 |---|---|---|
-| `ClockPose` (stream), `SkyState` | the host to all | the clock and the day number; the dome and the moon |
+| `ClockPose` (stream), `SkyState` | the host to all | the clock and the day number; the dome, the moon and the eye |
 | `WeatherState`, `LightningStrike`, `RedSky` | the host to all | the state fields; a strike location; the red sky's edge |
 | `FireflySpawn` | each peer, relayed | one spawn |
 | `EventFire`, `EventSnapshot`, `EventCue` | the host to all; the host to one joiner; the host to all | a fired row; an in-flight event; an emitter cue |
@@ -176,8 +177,8 @@ task state (`coop/world/daily_task_sync`). The rewards land in the shared balanc
 ## Late join
 
 The clock streams from the connect, so a joiner's first sample once its world exists sets its time
-and day number; the sky, the weather state and an active red sky are seeded at the joiner's
-connect.
+and day number; the sky (its eye included), the weather state and an active red sky are seeded at
+the joiner's world-ready.
 The in-flight events arrive as snapshot entries and replay with the override; the live cues are
 re-sent; every tracked event actor is re-spawned on the joiner; the pyramid's gather in flight
 is re-sent after its mirrors exist; the alarm's current flag is sent unconditionally, and the
@@ -191,7 +192,7 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 |---|---|
 | A black fog the host rolls has no wire lane yet; the client's own rolls are suppressed | `[V]` `coop/world/weather_event_births` |
 | A client's own noon pulse still ends a red sky: when the host's start reaches it before its clock passes noon, the client's pulse ends the new one | `[RD]` the red sky's noon toggle and the catch's birth-only seam |
-| The sky eye, the jellyfish and the flesh rain are rolled by every peer's own hour pulse, and none of them is mirrored | `[RD]` the clock's hour roll; the jellyfish is on the world-actor mirror's list, but its spawn happens inside a Blueprint where the mirror's catch does not see it |
+| The jellyfish and the flesh rain are rolled by every peer's own hour pulse, and neither is mirrored (the sky eye is not: `SkyState` carries it and a client's own `setEye` is refused) | `[RD]` the clock's hour roll; the jellyfish is on the world-actor mirror's list, but its spawn happens inside a Blueprint where the mirror's catch does not see it |
 | A decorated Christmas tree spawns its gifts on each peer whose player sleeps through midnight, and a client's gifts are its own | `[RD]` the tree's own check of the local player's sleep at hour 0 |
 | Several rolls are still per peer: the rare gamemode rolls (the one-percent forced quit), the server break-minigame variant, the underground loot mounds, the signal scramble and the radio-tower shuffle | `[V]` no lane under `coop/world` carries them; `coop/interactables/garbage_sync` names the mounds |
 | The deer, hexahive, walking-tree, dirt-hole, beehive, flora and mannequin spawners are neither refused on a client nor mirrored from the host, so each peer rolls its own | `[V]` no row of `coop/world/spawn_authority` names them; the table in `docs/npcs-and-kerfur.md`, "Which spawners a client refuses" |
@@ -208,4 +209,4 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 | events | `coop/world/event_fire_sync`, `coop/world/event_active_sync`, `coop/world/event_cue_sync`, `coop/dev/event_trigger` |
 | event actors and the pyramid | `coop/world/world_actor_sync`, `coop/world/world_actor_mirror`, `coop/creatures/piramid_sync` |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
-| tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`; the event drill, `coop/dev/event_drill` |
+| tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |

@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 191;
+inline constexpr uint16_t kProtocolVersion = 192;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -247,8 +247,8 @@ enum class ReliableKind : uint8_t {
     // level-export name (its save key can be None after a reload). KeyedTogglePayload.
     GarageDoorState = 33,
 
-    // Host to all: the star dome's world rotation and the moon phase, about once a second and on a
-    // connect edge. SkyStatePayload.
+    // Host to all: the star dome's world rotation, the moon phase and the sky eye, about once a
+    // second and at a joiner's world-ready. SkyStatePayload.
     SkyState = 34,
 
     // Any peer, relayed by the host: a simple on/off appliance (faucet, sink, shower, oven, server
@@ -2854,15 +2854,17 @@ static_assert(sizeof(TaskNewStatePayload) == 180, "TaskNewStatePayload must be 1
 static_assert(sizeof(TaskNewStatePayload) <= 256 - 20 - 8,
               "TaskNewStatePayload must fit in one reliable datagram");
 
-// The night sky (SkyState): the star dome's world rotation (its random initial yaw plus spin) and
-// the moon phase; the client writes both.
+// The night sky (SkyState): the star dome's world rotation (its random initial yaw plus spin), the
+// moon phase and the eye; the client writes the first two and runs the sky's setEye for the eye.
 struct SkyStatePayload {
     float skyPitch;    // sky mesh WORLD rotation (FRotator) -- pitch
     float skyYaw;      //   yaw  (the dominant value: random initial offset + accumulated spin)
     float skyRoll;     //   roll
     float moonPhase;   // Anewsky_C::moonPhase_mirror (= UsaveSlot_C::moonPhase)
+    uint8_t eye;       // Anewsky_C::eye, the noon roll's setEye (the moon's texture swapped for an eye's)
+    uint8_t pad[3];
 };
-static_assert(sizeof(SkyStatePayload) == 16, "SkyStatePayload must be 16 bytes");
+static_assert(sizeof(SkyStatePayload) == 20, "SkyStatePayload must be 20 bytes");
 
 namespace weather_flags {
 inline constexpr uint8_t kIsRaining       = 0x01;

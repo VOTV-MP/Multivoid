@@ -22,7 +22,7 @@ namespace {
 
 namespace SKY = ue_wrap::skysphere;
 
-enum class Arm { Off, EyeHost, EyeClient };
+enum class Arm { Off, EyeHost, EyeClient, EyeJoin };
 enum class Step { Wait, Done, Invalid };
 
 // Game thread only, but for the session pointer the Install fanout stores.
@@ -40,6 +40,7 @@ Arm ArmOf() {
         const std::string v = coop::config::ResolveEnum(::coop::config_registry::rows::world_roll_drill);
         return v == "eye_host"   ? Arm::EyeHost
              : v == "eye_client" ? Arm::EyeClient
+             : v == "eye_join"   ? Arm::EyeJoin
                                  : Arm::Off;
     }();
     return a;
@@ -49,6 +50,7 @@ const char* ArmName() {
     switch (ArmOf()) {
     case Arm::EyeHost:   return "eye_host";
     case Arm::EyeClient: return "eye_client";
+    case Arm::EyeJoin:   return "eye_join";
     default:             return "off";
     }
 }
@@ -57,6 +59,8 @@ const char* ArmName() {
 const char* ArmPlan(bool host) {
     if (ArmOf() == Arm::EyeHost)
         return host ? "setting the sky's eye once a client's join is over" : "watching for the host's sky eye";
+    if (ArmOf() == Arm::EyeJoin)
+        return host ? "setting the sky's eye before any client's world is ready" : "watching for the host's standing eye";
     return host ? "watching; the client sets its own sky eye" : "setting this copy's own sky eye once joined";
 }
 
@@ -65,11 +69,35 @@ void Invalid(char role, const char* why) {
     UE_LOGW("world_roll_drill: [%c] INVALID (arm %s) -- %s", role, ArmName(), why);
 }
 
+// eye_join, the host: its eye is set before any client's world is ready, so a joiner meets it standing and only
+// the snapshot at its world-ready, or the stream after it, can carry it (the save has no eye). The sky is waited for.
+void SetEyeBeforeJoin(coop::net::Session* s) {
+    bool eye = false;
+    if (!SKY::ReadEye(eye)) return;
+    for (int slot = 1; slot < static_cast<int>(coop::players::kMaxPeers); ++slot)
+        if (s->IsSlotWorldReady(slot)) {
+            Invalid('H', "a client's world was ready before this host could set its eye");
+            return;
+        }
+    if (!SKY::CallSetEye(true)) {
+        Invalid('H', "the sky's setEye did not run");
+        return;
+    }
+    SKY::ReadEye(eye);
+    UE_LOGI("world_roll_drill: [H] arm eye_join -- no client's world is ready yet; its setEye(true) ran, this host's "
+            "eye reads %d", eye ? 1 : 0);
+    g_step = Step::Done;
+}
+
 // The host, once a client's join is over (its slot world-ready, the join's bracket closed). eye_host: the
 // host's own noon verb, as its roll would run it; eye_client: the host's eye is left alone, and said, so the
 // client's verdict has the value its copy must keep.
 void TickHost(coop::net::Session* s) {
     if (g_step != Step::Wait) return;
+    if (ArmOf() == Arm::EyeJoin) {
+        SetEyeBeforeJoin(s);
+        return;
+    }
     for (int slot = 1; slot < static_cast<int>(coop::players::kMaxPeers) && g_slot < 0; ++slot)
         if (s->IsSlotWorldReady(slot) && coop::prop_snapshot::IsBracketClosed(slot)) g_slot = slot;
     if (g_slot < 0) return;
@@ -84,7 +112,8 @@ void TickHost(coop::net::Session* s) {
     g_step = Step::Done;
 }
 
-// The client, once its join is over. eye_host: the host's eye must reach this copy within kEyeBound. eye_client:
+// The client, once its join is over. eye_host and eye_join: the host's eye must reach this copy within kEyeBound.
+// eye_client:
 // this copy's own setEye(true), as its noon roll would call it, must be refused at the gate, the copy's eye
 // unchanged, since a client never rolls the sky; the gate's own count tells a refusal from a body that ran and
 // changed nothing (the copy can already read 1, the host's noon having rolled it). A call that did not run, or a
@@ -101,7 +130,7 @@ void TickClient() {
         if (now - g_eyeSince > kEyeBound) Invalid('C', "the sky's eye did not read");
         return;
     }
-    if (ArmOf() == Arm::EyeHost) {
+    if (ArmOf() == Arm::EyeHost || ArmOf() == Arm::EyeJoin) {
         const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_eyeSince).count();
         if (eye) {
             UE_LOGI("world_roll_drill: [C] %s DONE -- the host's eye reached this copy %lld ms after its join -- PASS",

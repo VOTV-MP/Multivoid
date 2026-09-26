@@ -25,7 +25,6 @@ namespace R = reflection;
 namespace E = engine;
 
 std::atomic<bool> g_resolved{false};
-void*   g_skyCls         = nullptr;  // newsky_C UClass
 int32_t g_skyCompOff     = -1;       // Anewsky_C::sky (UStaticMeshComponent*)
 int32_t g_moonPhaseOff   = -1;       // Anewsky_C::moonPhase_mirror (float)
 int32_t g_saveMoonOff    = -2;       // UsaveSlot_C::moonPhase (float); -2 = not looked at yet, -1 = looked and failed
@@ -98,7 +97,6 @@ bool EnsureResolved() {
         moonOff = kMoonPhaseOffFallback;
     }
 
-    g_skyCls         = cls;
     g_skyCompOff     = skyOff;
     g_moonPhaseOff   = moonOff;
     g_resolved.store(true, std::memory_order_release);
