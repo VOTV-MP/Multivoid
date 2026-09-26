@@ -66,7 +66,7 @@ bool UseAction(void* pc, void* player, uint8_t action) {
 }
 
 bool LidOf(void* pc, bool& opened) {
-    return pc && PPC::IsPortablePcClass(R::ClassOf(pc)) && PPC::ReadOpened(pc, opened);
+    return PPC::IsPortablePc(pc) && PPC::ReadOpened(pc, opened);
 }
 
 void* SpawnInFrontOfPlayer() {

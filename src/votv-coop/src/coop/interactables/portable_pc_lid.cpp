@@ -8,7 +8,6 @@
 
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/devices/portable_pc.h"
 
@@ -22,7 +21,6 @@ namespace coop::portable_pc_lid {
 namespace {
 
 namespace PPC = ue_wrap::portable_pc;
-namespace R   = ue_wrap::reflection;
 namespace sg  = ue_wrap::script_gate;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -118,7 +116,7 @@ coop::net::LaptopStatePayload LidLine(uint32_t eid, bool opened) {
 }
 
 bool IsPc(void* actor) {
-    return actor && PPC::IsPortablePcClass(R::ClassOf(actor));
+    return PPC::IsPortablePc(actor);
 }
 
 bool ReadLid(void* actor, bool& opened) {
@@ -297,19 +295,19 @@ void OnLid(const coop::net::LaptopStatePayload& p, uint8_t senderSlot) {
 void QueueConnectBroadcastForSlot(int peerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
-    // Only an open lid is a row: `opened` is runtime-only, so every copy the joiner has loaded closed.
-    int rows = 0;
-    std::vector<coop::element::Registry::ActorIdPair> pairs;
-    coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, pairs);
-    for (const auto& pr : pairs) {
+    // Only an open lid is a row: `opened` is runtime-only, so every copy the joiner has loaded closed. The
+    // PCs are the object index's, not every prop element; the placed ones are those an element names.
+    struct Rows { coop::net::Session* s; int slot; int sent; } rows{s, peerSlot, 0};
+    PPC::ForEachPc([](void* ctx, void* pc) {
+        auto& r = *static_cast<Rows*>(ctx);
+        const coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(pc);
         bool opened = false;
-        if (!pr.actor || !R::IsLiveByIndex(pr.actor, pr.internalIdx) || !ReadLid(pr.actor, opened) || !opened)
-            continue;
-        const coop::net::LaptopStatePayload lp = LidLine(static_cast<uint32_t>(pr.id), true);
-        s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::LaptopState, &lp, sizeof(lp));
-        ++rows;
-    }
-    if (rows) UE_LOGI("portable_pc_lid: %d open lid(s) -> slot %d", rows, peerSlot);
+        if (eid == coop::element::kInvalidId || !PPC::ReadOpened(pc, opened) || !opened) return;
+        const coop::net::LaptopStatePayload lp = LidLine(static_cast<uint32_t>(eid), true);
+        r.s->SendReliableToSlot(r.slot, coop::net::ReliableKind::LaptopState, &lp, sizeof(lp));
+        ++r.sent;
+    }, &rows);
+    if (rows.sent) UE_LOGI("portable_pc_lid: %d open lid(s) -> slot %d", rows.sent, peerSlot);
 }
 
 Counts LineCounts() {
@@ -322,7 +320,6 @@ void OnDisconnect() {
     g_held.clear();
     g_nextRetry = 0;
     g_inFlight.clear();
-    PPC::ResetCache();
 }
 
 }  // namespace coop::portable_pc_lid

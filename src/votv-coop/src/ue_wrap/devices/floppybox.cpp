@@ -15,7 +15,7 @@ namespace {
 namespace R = reflection;
 namespace F = field_io;
 
-// ClassOf verdict cache (the portable_pc shape): NameOf once per distinct
+// ClassOf verdict cache, keyed by the class pointer: NameOf once per distinct
 // UClass; no FindClass polling (the box spawns from save/shop).
 std::unordered_map<void*, bool> g_verdict;
 void* g_cls = nullptr;
