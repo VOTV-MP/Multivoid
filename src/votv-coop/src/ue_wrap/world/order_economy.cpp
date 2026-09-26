@@ -359,12 +359,18 @@ bool QueueChainSet(void* widget) {
 bool CommitOrder(const OrderData& order, float etaSeconds, bool automatic) {
     void* laptop = Laptop();
     if (!laptop) { UE_LOGW("order_economy: CommitOrder -- laptop null"); return false; }
+    // makeAnOrder's first step is addOrderCart, through the same chain: unset, it skips the Add and still
+    // makes the slot widget, once per retry of the caller's.
+    if (!QueueChainSet(laptop)) {
+        UE_LOGW("order_economy: CommitOrder -- the laptop's queue chain is unset");
+        return false;
+    }
     std::vector<uint8_t> itemsBuf;
     uint8_t orderStruct[kOrderStride];
     if (!BuildOrder(order, etaSeconds, itemsBuf, orderStruct, "CommitOrder")) return false;
     const size_t n = itemsBuf.size() / static_cast<size_t>(kItemStride);
 
-    void* fn = R::FindFunction(R::ClassOf(laptop), L"makeAnOrder");
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(laptop), L"makeAnOrder");
     if (!fn) { UE_LOGW("order_economy: CommitOrder -- makeAnOrder UFunction not found"); return false; }
     ue_wrap::ParamFrame f(fn);
     if (!f.valid()) return false;
@@ -412,7 +418,7 @@ bool MakeDailyOrder() {
     void* makeFn = cycle ? R::FindDispatchFunctionCached(R::ClassOf(cycle), L"Make Default Order") : nullptr;
     void* orderFn = laptop ? R::FindDispatchFunctionCached(R::ClassOf(laptop), L"makeAnOrder") : nullptr;
     const int32_t before = OrderCount();
-    if (!makeFn || !orderFn || before < 0) return false;
+    if (!makeFn || !orderFn || before < 0 || !QueueChainSet(laptop)) return false;
     ue_wrap::ParamFrame built(makeFn);
     uint8_t order[kOrderStride] = {};
     if (!built.valid() || !ue_wrap::Call(cycle, built) || !built.GetRaw(L"struct_storeOrder", order, kOrderStride))

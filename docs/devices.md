@@ -271,9 +271,10 @@ goes to every client as the laptop's own queue functions run, and a client's que
 the same functions (`coop/items/order_queue_sync`). A shop item travels by its row; an item a world
 event built outside the shop has no row and travels by its class, and by the list_props name a generic
 prop carries in its asProp (the daily delivery's reel case), rebuilt in the one shape every such builder
-makes. A client that cannot build an item leaves it out, down to an order of no items that
-still keeps its place, so the host's next delivery takes the same order off both queues; and a change
-counts as applied only when the queue moved by exactly one.
+makes. A change waits, in its place, while the client's laptop, its shop catalog or the engine's name
+conversion is not ready yet; an item the client can never build is left out, down to an order of no
+items that still keeps its place, so the host's next delivery takes the same order off both queues; and
+a change counts as applied only when the queue moved by exactly one.
 
 ### The coin gun
 

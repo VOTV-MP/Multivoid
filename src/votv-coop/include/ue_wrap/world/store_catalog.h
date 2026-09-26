@@ -57,10 +57,10 @@ const Row* Find(const std::wstring& rowName);
 // the client had already debited itself and disarmed its own delivery.
 int32_t SubcategoryOffset();
 
-// Byte offset of the `name` FName inside a row, resolved by name. This module owns the row's SHAPE,
-// so the one other place that reads a field out of an Fstruct_store -- order_economy::ReadOrderAt on
-// the CLIENT, pulling the row keys out of the order a player placed -- asks here rather than carrying
-// its own literal. -1 if unusable, and it BUILDS if needed, like SubcategoryOffset.
+// Byte offset of the `name` FName inside a row, resolved by name. This module owns the row's SHAPE, so
+// order_economy's readers of an Fstruct_store -- ReadOrderAt on the CLIENT, pulling the row keys out of
+// the order a player placed, and the queue mirror's (through ReadLayout) -- ask here rather than carry
+// their own literals. -1 if unusable, and it BUILDS if needed, like SubcategoryOffset.
 int32_t NameOffset();  // same: BUILDS if needed (see SubcategoryOffset)
 
 // The row struct's fields as reflection names them, for a reader that prices nothing -- the queue
@@ -73,8 +73,11 @@ struct Layout {
 // False until a build resolved the row struct; BUILDS if needed, under the same throttle as Ready().
 bool ReadLayout(Layout& out);
 
-// Whether the price gate refused the catalog for good (a layout verdict about the walk): no row will
-// ever be found in this process, where a false Ready() alone may only mean "not built yet".
+// Whether the catalog is refused for good -- a verdict about the loaded table or the walk: row struct
+// members missing, duplicate row keys, no RowStruct or no walkable RowMap, a price column unreadable or
+// of another length, or a price the column disagrees with. No row will ever be found in this process,
+// where a false Ready() alone may only mean "not built yet" (the table not found or still loading, or
+// the engine's name conversion not up).
 bool Refused();
 
 }  // namespace ue_wrap::store_catalog

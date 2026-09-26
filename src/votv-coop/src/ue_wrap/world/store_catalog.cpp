@@ -8,8 +8,10 @@
 #include "ue_wrap/world/store_catalog.h"
 
 #include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/data_table.h"
 
 #include <chrono>
@@ -44,6 +46,9 @@ bool    g_valid     = false;  // a build produced a usable catalog
 // Latching a SOFT failure permanently is the opposite error -- it refuses every client order for
 // the rest of the session because a UFunction happened to be unresolved for one tick.
 enum class Outcome { Never, Soft, Hard };
+// EObjectFlags (UE4.27 ObjectMacros.h): the object's load has not run, or its PostLoad has not.
+constexpr int32_t kRfNeedLoad     = 0x00000400;
+constexpr int32_t kRfNeedPostLoad = 0x00001000;
 Outcome  g_outcome      = Outcome::Never;
 uint64_t g_lastAttemptMs = 0;
 constexpr uint64_t kRebuildThrottleMs = 3000;
@@ -100,11 +105,18 @@ void Build() {
 
     void* table = ResolveTable();
     if (!table) return;  // not loaded yet -- SOFT, so Ready() retries on the throttle
+    // A table still being loaded is not one to judge: its RowStruct and RowMap come with its load. Past
+    // it, every failure below is a fact about the table or the walk, which a later build would read the
+    // same, so it is a verdict (Hard): a consumer waiting on the catalog stops waiting.
+    const int32_t flags = *reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(table) +
+                                                            profile::off::UObject_ObjectFlags);
+    if (flags & (kRfNeedLoad | kRfNeedPostLoad)) return;  // SOFT
 
     void* rowStruct = DT::RowStruct(table);
     if (!rowStruct) {
-        UE_LOGE("store_catalog: list_store's RowStruct did not resolve -- catalog INVALID");
-        return;  // SOFT: a reflection miss, not a verdict about the data
+        UE_LOGE("store_catalog: list_store's RowStruct did not resolve on the loaded table -- catalog INVALID");
+        g_outcome = Outcome::Hard;
+        return;
     }
 
     const int32_t offPrice  = R::FindPropertyOffsetByPrefix(rowStruct, L"price_");
@@ -139,7 +151,10 @@ void Build() {
 
     // ---- the walk -------------------------------------------------------------------------------
     std::vector<DT::RowRef> refs;
-    if (!DT::Rows(table, refs, "store_catalog")) return;  // SOFT, and said by the walk: catalog INVALID
+    if (!DT::Rows(table, refs, "store_catalog")) {  // said by the walk
+        g_outcome = Outcome::Hard;  // the RowMap of a loaded table is not what the walk reads
+        return;
+    }
 
     std::vector<int32_t> walkPrices;
     walkPrices.reserve(refs.size());
@@ -165,18 +180,27 @@ void Build() {
     // to a slower path rather than to a false INVALID.
     const std::wstring mangled = DT::MemberName(rowStruct, L"price_");
 
+    // The column getter takes its member by name, and the engine's name conversion answers None until
+    // Kismet is up: a read that failed for that alone is not yet a verdict.
+    const R::FName probe = ue_wrap::fname_utils::StringToFName(L"price");
+    if (probe.ComparisonIndex == 0 && probe.Number == 0) {
+        g_rows.clear();
+        return;  // SOFT
+    }
     std::vector<int32_t> colPrices;
     if ((mangled.empty() || !ReadPriceColumn(table, mangled, colPrices)) &&
         !ReadPriceColumn(table, L"price", colPrices)) {
         UE_LOGE("store_catalog: the price column could not be read, so the walk cannot be verified "
                 "-- catalog INVALID (refusing to price orders off an unverified read)");
         g_rows.clear();
+        g_outcome = Outcome::Hard;
         return;
     }
     if (colPrices.size() != walkPrices.size()) {
         UE_LOGE("store_catalog: gate length mismatch -- walk=%zu column=%zu -- catalog INVALID",
                 walkPrices.size(), colPrices.size());
         g_rows.clear();
+        g_outcome = Outcome::Hard;  // a fact about the table
         return;
     }
     for (size_t i = 0; i < colPrices.size(); ++i) {
