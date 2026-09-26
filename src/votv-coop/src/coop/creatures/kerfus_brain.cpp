@@ -18,7 +18,7 @@ namespace UK = ue_wrap::kerfus;
 namespace sg = ue_wrap::script_gate;
 
 
-// The brain's bodies (p_kerfus.cpp, bp_cfg 2026-09-23): the tick (energy drain and charge, the wheel's
+// The brain's bodies (p_kerfus.cpp, bp_cfg): the tick (energy drain and charge, the wheel's
 // torque, the stuck jump), the two timer events that re-path and unstick it, the movement functions,
 // the server job, the laptop's jump, the haunting, and the cord events, whose one effect is `charging`.
 // The water events set only the body's damping, and upd() only its looks and sounds, so both stay.
@@ -107,12 +107,6 @@ void OnDisconnect() {
                 total, g_refused[0], g_fixRefused);
     for (size_t i = 0; i < kBrainCount; ++i) { g_refused[i] = 0; g_said[i] = false; }
     g_fixRefused = 0;
-}
-
-unsigned long long RefusedCount() {
-    unsigned long long total = g_fixRefused;
-    for (size_t i = 0; i < kBrainCount; ++i) total += g_refused[i];
-    return total;
 }
 
 }  // namespace coop::kerfus_brain

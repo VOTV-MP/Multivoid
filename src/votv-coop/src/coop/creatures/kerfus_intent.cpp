@@ -289,6 +289,4 @@ void OnDisconnect() {
     g_saidNoEid = false;
 }
 
-unsigned long long SentCount() { return g_sent; }
-
 }  // namespace coop::kerfus_intent

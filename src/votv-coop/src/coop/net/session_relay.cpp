@@ -2,10 +2,7 @@
 
 // The "host as relay hub" subsystem. In the star topology a packet from client A reaches only the
 // host, so these two methods forward A's packets to the OTHER clients and peers can see each other.
-// MTA has the same shape: its server relays puresync and RPC as they arrive, but re-sends a relayed
-// puresync as a packet of its own (Server/mods/deathmatch/logic/net/CSimPlayerManager.cpp:229-249),
-// so a client judges the server's order, where this relay keeps the origin's seq and a receiver
-// judges per origin (coop/net/stream_slot.h).
+// MTA has the same shape: its server relays puresync and RPC as they arrive.
 //
 // Both are Session member functions, declared in coop/net/session.h and defined here, and they are
 // called only from Session::HandleMessage, on the net thread, host role only.
@@ -36,7 +33,10 @@ namespace coop::net {
 
 void Session::RelayUnreliableToOtherClients(int originSlot, const void* data, int len) {
     // Forward an unreliable datagram -- a pose, a prop pose, a voice frame -- that the host just
-    // received from `originSlot` to every OTHER connected client.
+    // received from `originSlot` to every OTHER connected client, with the origin's seq, so a receiver
+    // judges order per origin (coop/net/stream_slot.h). MTA's server re-sends a relayed puresync as a
+    // packet of its own, so a client judges the server's order
+    // (reference/mtasa-blue/Server/mods/deathmatch/logic/net/CSimPlayerManager.cpp:229-249).
     if (cfg_.role != Role::Host) return;
     if (len < static_cast<int>(sizeof(PacketHeader)) || len > kMaxPacketBytes) return;
     auto* sockets = SteamNetworkingSockets();

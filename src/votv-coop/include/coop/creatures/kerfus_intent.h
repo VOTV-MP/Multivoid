@@ -1,7 +1,7 @@
 // coop/creatures/kerfus_intent.h -- a client's own use of a Kerfus, as an intent the host performs.
 //
 // The Kerfus has three verbs, reached through its E-press (actionOptionIndex) or its named options
-// (actionName) on the same branches (p_kerfus.cpp, bp_cfg 2026-09-23): on/off (action 8, "activate",
+// (actionName) on the same branches (p_kerfus.cpp, bp_cfg): on/off (action 8, "activate",
 // needs energy), fix the servers (4, "use", needs it on) and pat (6, "pat", needs it on; more than 50
 // quick pats blow it up). All three are refused while it is possessed. A client runs none of the
 // Kerfus's brain (kerfus_brain), so a verb run on its copy would flip a field the host never hears of
@@ -38,8 +38,5 @@ void OnPeerLeft(uint8_t slot);
 
 // Session end: the queues, the buckets and the counters go.
 void OnDisconnect();
-
-// CLIENT: the intents this client has sent this session (the kerfus drill's proof). Game thread.
-unsigned long long SentCount();
 
 }  // namespace coop::kerfus_intent

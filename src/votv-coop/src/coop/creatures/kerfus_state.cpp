@@ -112,7 +112,6 @@ struct Waiting {
     uint64_t since;
 };
 std::unordered_map<uint32_t, Waiting> g_waiting;
-unsigned long long g_applied = 0;
 bool g_saidWrongClass = false;
 
 // False while the Kerfus's mirror is not bound here: the state waits.
@@ -137,7 +136,6 @@ bool Apply(const coop::net::KerfusStatePayload& p) {
         UK::RunUpd(k, false);
         UE_LOGI("kerfus_state: CLIENT Kerfus eid=%u %s (energy %.1f)", p.elementId, active ? "ON" : "OFF", p.energy);
     }
-    ++g_applied;
     return true;
 }
 
@@ -198,10 +196,7 @@ void OnState(const coop::net::KerfusStatePayload& payload) {
 void OnDisconnect() {
     g_host.clear();
     g_waiting.clear();
-    g_applied = 0;
     g_saidWrongClass = false;
 }
-
-unsigned long long AppliedCount() { return g_applied; }
 
 }  // namespace coop::kerfus_state

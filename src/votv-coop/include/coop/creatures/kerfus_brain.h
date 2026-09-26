@@ -30,7 +30,4 @@ void Tick();
 // Session end: the per-session "said" latches reset and the refusal counts are logged.
 void OnDisconnect();
 
-// How many brain bodies this client has refused this session (the kerfus drill's proof). Game thread.
-unsigned long long RefusedCount();
-
 }  // namespace coop::kerfus_brain

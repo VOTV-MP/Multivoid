@@ -11,8 +11,8 @@
 // that as the haunting's energy pin and walks back to where it pressed the Kerfus (possessed 1 m from its
 // player, a Kerfus stalls), and it must go off at least 6 m from where it settled, its copy having moved
 // on the host's drive stream (PASS); one that follows the client back, on, is FAIL. Every wait has its
-// readiness or a window; a step that cannot run ends the drill INVALID. The rig client must join at the
-// base (tools/rig_profile_pose.py): the save's Kerfus is there.
+// readiness or a window; a step that cannot run ends the drill INVALID. The client must join at the
+// base, where the save's Kerfus is.
 
 #pragma once
 

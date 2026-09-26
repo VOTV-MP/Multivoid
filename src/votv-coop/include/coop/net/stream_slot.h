@@ -2,11 +2,12 @@
 // any order, so the receiver keeps each stream's sequence itself and refuses a datagram at or behind
 // the last one stored. MTA sends its sync UNRELIABLE_SEQUENCED and leaves that drop to RakNet, per
 // connection and ordering channel (reference/mtasa-blue/Client/mods/deathmatch/logic/CNetAPI.cpp:373),
-// and its server re-sends each relayed puresync as a packet of its own (Server/mods/deathmatch/logic/
-// net/CSimPlayerManager.cpp:229-249, :459), so a client judges the server's order. GNS has no
-// sequenced unreliable send, and our relay keeps the origin's sequence (coop/net/session_relay.cpp),
-// so the latch lives here, one per stream and per origin, and whoever owns a group of these resets it
-// at the owner's edges (coop/net/remote_streams.h). Not locked: the owner's lock guards every call.
+// and its server re-sends each relayed puresync as a packet of its own
+// (reference/mtasa-blue/Server/mods/deathmatch/logic/net/CSimPlayerManager.cpp:229-249, :459), so a
+// client judges the server's order. GNS has no sequenced unreliable send, and our relay keeps the
+// origin's sequence (coop/net/session_relay.cpp), so the latch lives here, one per stream and per
+// origin, and whoever owns a group of these resets it at the owner's edges (coop/net/remote_streams.h).
+// Not locked: the owner's lock guards every call.
 #pragma once
 
 #include <cstdint>
