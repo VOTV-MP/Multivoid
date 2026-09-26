@@ -1,8 +1,9 @@
 // ue_wrap/devices/drone.cpp -- see ue_wrap/devices/drone.h. Engine access for the delivery drone
 // (Adrone_C). Offsets resolved from the live class via reflection (version-portable); the Alpha
-// 0.9.0-n value is a logged fallback. Transform reads/writes go through ue_wrap::engine at the
-// actor level (the drone moves the actor via its BP ReceiveTick, no physics body). Find() mirrors
-// the skysphere and daynightcycle cached-singleton + throttled-scan shape.
+// 0.9.0-n value is a logged fallback. The pose and the state bits are read from memory (the root
+// component's relative transform, the dust component's bIsActive bit), writes go through
+// ue_wrap::engine at the actor level (the drone moves the actor via its BP ReceiveTick, no physics
+// body). Find() is the world singleton's drone_C.
 
 #include "ue_wrap/devices/drone.h"
 
@@ -18,6 +19,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 
 namespace ue_wrap::drone {
 namespace {
@@ -33,14 +35,24 @@ constexpr int32_t kActiveOffFallback = 0x0370;
 
                                // (the project rule; IsLive(ptr) derefs the maybe-freed object itself)
 
+// ---- The pose, read from memory (AActor::RootComponent, then the root's relative transform) ----
+bool    g_poseTried       = false;
+bool    g_poseResolved    = false;
+int32_t g_rootOff         = -1;  // AActor::RootComponent
+int32_t g_relLocOff       = -1;  // USceneComponent::RelativeLocation
+int32_t g_relRotOff       = -1;  // USceneComponent::RelativeRotation
+int32_t g_attachParentOff = -1;  // USceneComponent::AttachParent
+
 // ---- FX mirroring -- resolved lazily (separate from the pose path) ----
 bool    g_fxResolved   = false;
+bool    g_fxTried      = false;  // one attempt once the class is loaded: what it misses stays missing
 int32_t g_canTakeOffOff = -1;  // Adrone_C::canTakeOff @0x0500 (arrival edge)
 int32_t g_dustOff       = -1;  // Adrone_C::eff_droneDust @0x0278 (UParticleSystemComponent*)
 int32_t g_audioAlarmOff = -1;  // Adrone_C::audio_alarm  @0x0230 (UAudioComponent*)
 void*   g_setActiveFn   = nullptr;  // UActorComponent::SetActive(bool bNewActive, bool bReset)
 void*   g_activateFn    = nullptr;  // UActorComponent::Activate(bool bReset)
-void*   g_isActiveFn    = nullptr;  // UActorComponent::IsActive() -> bool
+int32_t g_activeByteOff  = -1;      // UActorComponent::bIsActive, a bitfield byte (what IsActive returns)
+uint8_t g_activeMask     = 0;
 int32_t g_lightAlarmOff = -1;       // Adrone_C::light_alarm @0x0240 (UPointLightComponent*) -- arrival signal light
 void*   g_setFloatParamFn = nullptr;// UFXSystemComponent::SetFloatParameter(FName, float) -- dust intensity
 void*   g_setVisFn        = nullptr;// USceneComponent::SetVisibility(bool, bool) -- the signal light
@@ -66,7 +78,8 @@ constexpr int32_t kContainerFallback = 0x04F8;
 
 bool EnsureFxResolved() {
     if (g_fxResolved) return true;
-    if (!EnsureResolved() || !g_cls) return false;
+    if (g_fxTried || !EnsureResolved() || !g_cls) return false;
+    g_fxTried = true;
     g_canTakeOffOff = R::FindPropertyOffset(g_cls, L"canTakeOff");
     if (g_canTakeOffOff < 0) g_canTakeOffOff = kCanTakeOffFallback;
     g_dustOff = R::FindPropertyOffset(g_cls, L"eff_droneDust");
@@ -79,16 +92,16 @@ bool EnsureFxResolved() {
     if (g_hasSackOff < 0) g_hasSackOff = kHasSackFallback;
     g_containerOff = R::FindPropertyOffset(g_cls, L"container");
     if (g_containerOff < 0) g_containerOff = kContainerFallback;
-    // SetActive/Activate/IsActive are declared on UActorComponent (the components' base); resolve
+    // SetActive/Activate and bIsActive are declared on UActorComponent (the components' base); resolve
     // them there and dispatch on the concrete component instance (ProcessEvent resolves the impl).
     if (void* acCls = R::FindClass(L"ActorComponent")) {
         g_setActiveFn = R::FindFunction(acCls, L"SetActive");
         g_activateFn  = R::FindFunction(acCls, L"Activate");
-        g_isActiveFn  = R::FindFunction(acCls, L"IsActive");
+        R::FindBoolProperty(acCls, L"bIsActive", g_activeByteOff, g_activeMask);
     }
-    if (!g_setActiveFn || !g_activateFn || !g_isActiveFn) {
-        UE_LOGW("drone: FX component UFunctions incomplete (SetActive=%p Activate=%p IsActive=%p) -- "
-                "FX mirror disabled", g_setActiveFn, g_activateFn, g_isActiveFn);
+    if (!g_setActiveFn || !g_activateFn || g_activeByteOff < 0) {
+        UE_LOGW("drone: FX component members incomplete (SetActive=%p Activate=%p bIsActive@%d) -- "
+                "FX mirror disabled", g_setActiveFn, g_activateFn, g_activeByteOff);
         return false;
     }
     // Best-effort FX-polish UFunctions (dust intensity + the signal light) -- not required for the
@@ -122,11 +135,28 @@ void* ReadComp(void* drone, int32_t off) {
     return (c && R::IsLive(c)) ? c : nullptr;
 }
 
+// UActorComponent::IsActive returns bIsActive, so the bit is read where it lives.
 bool ComponentIsActive(void* comp) {
-    if (!comp || !g_isActiveFn) return false;
-    ParamFrame f(g_isActiveFn);
-    if (!f.valid() || !Call(comp, f)) return false;
-    return f.Get<bool>(L"ReturnValue");
+    if (!comp || g_activeByteOff < 0) return false;
+    return (*(reinterpret_cast<const uint8_t*>(comp) + g_activeByteOff) & g_activeMask) != 0;
+}
+
+bool EnsurePoseResolved() {
+    if (g_poseResolved) return true;
+    if (g_poseTried) return false;
+    g_poseTried = true;
+    if (void* actorCls = R::FindClass(L"Actor")) g_rootOff = R::FindPropertyOffset(actorCls, L"RootComponent");
+    if (void* sceneCls = R::FindClass(profile::name::SceneComponentClass)) {
+        g_relLocOff = R::FindPropertyOffset(sceneCls, L"RelativeLocation");
+        g_relRotOff = R::FindPropertyOffset(sceneCls, profile::name::RelativeRotationProp);
+        g_attachParentOff = R::FindPropertyOffset(sceneCls, L"AttachParent");
+    }
+    g_poseResolved = g_rootOff >= 0 && g_relLocOff >= 0 && g_relRotOff >= 0 && g_attachParentOff >= 0;
+    if (!g_poseResolved)
+        UE_LOGW("drone: the root's pose members did not resolve (RootComponent@%d RelativeLocation@%d "
+                "RelativeRotation@%d AttachParent@%d) -- the pose is read through the engine",
+                g_rootOff, g_relLocOff, g_relRotOff, g_attachParentOff);
+    return g_poseResolved;
 }
 
 void SetComponentActive(void* comp, bool on) {
@@ -176,8 +206,21 @@ bool IsActive(void* drone) {
     return *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(drone) + g_activeOff);
 }
 
-bool GetTransform(void* drone, FVector& loc, FRotator& rot) {
-    return drone && E::TryGetActorLocation(drone, loc) && E::TryGetActorRotation(drone, rot);
+bool ReadPose(void* drone, FVector& loc, FRotator& rot) {
+    if (!drone) return false;
+    if (EnsurePoseResolved()) {
+        const char* d = static_cast<const char*>(drone);
+        void* root = *reinterpret_cast<void* const*>(d + g_rootOff);
+        if (root && R::IsLive(root)) {
+            const char* r = static_cast<const char*>(root);
+            if (*reinterpret_cast<void* const*>(r + g_attachParentOff) == nullptr) {
+                std::memcpy(&loc, r + g_relLocOff, sizeof(loc));
+                std::memcpy(&rot, r + g_relRotOff, sizeof(rot));
+                return true;
+            }
+        }
+    }
+    return E::TryGetActorLocation(drone, loc) && E::TryGetActorRotation(drone, rot);
 }
 
 bool DriveMirror(void* drone, const FVector& loc, const FRotator& rot) {

@@ -61,8 +61,9 @@ struct DroneMirror {
 DroneMirror g_m;
 
 // What the host last sent (game thread only): a pose goes when the drone moved away from it, and a
-// state when Active or the FX / gate bits differ from it.
-uint64_t g_lastSentMs = 0;
+// state when Active or the FX / gate bits differ from it. The check itself runs at the send cadence,
+// so a parked drone costs a few memory reads twenty times a second.
+uint64_t g_nextCheckMs = 0;
 bool     g_haveSent   = false;
 FVector  g_sentLoc{};
 FRotator g_sentRot{};
@@ -75,14 +76,27 @@ uint64_t NowMs() {
         std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
-bool FillPayload(void* drone, bool active, bool adopt, coop::net::DroneStatePayload& p) {
-    FVector loc; FRotator rot;
-    if (!D::GetTransform(drone, loc, rot)) return false;
+// The host's drone as one check reads it, from memory.
+struct HostRead {
+    FVector  loc{};
+    FRotator rot{};
+    bool     active = false;
+    uint8_t  bits = 0;  // bit0 rotor dust, bit1 canTakeOff (arrived), bit2 hasSack
+};
+
+bool ReadHost(void* drone, HostRead& r) {
+    if (!D::ReadPose(drone, r.loc, r.rot)) return false;
+    r.active = D::IsActive(drone);
+    r.bits = D::ReadFxBits(drone);
+    return true;
+}
+
+void FillPayload(void* drone, const HostRead& r, bool adopt, coop::net::DroneStatePayload& p) {
     std::memset(&p, 0, sizeof(p));
-    p.x = loc.X; p.y = loc.Y; p.z = loc.Z;
-    p.pitch = rot.Pitch; p.yaw = rot.Yaw; p.roll = rot.Roll;
-    p.active = active ? 1 : 0;
-    p.stateBits = D::ReadFxBits(drone);  // bit0=rotor dust active, bit1=canTakeOff (arrived) -- FX mirror
+    p.x = r.loc.X; p.y = r.loc.Y; p.z = r.loc.Z;
+    p.pitch = r.rot.Pitch; p.yaw = r.rot.Yaw; p.roll = r.rot.Roll;
+    p.active = r.active ? 1 : 0;
+    p.stateBits = r.bits;
     p.adopt = adopt ? 1 : 0;
     // The dust anchor: the blueprint pins the bAbsoluteLocation eff_droneDust to its ground-trace
     // hit every tick, and the mirror replays from this. A dust bit without a readable anchor is
@@ -92,7 +106,6 @@ bool FillPayload(void* drone, bool active, bool adopt, coop::net::DroneStatePayl
         if (D::ReadDustAnchor(drone, a)) { p.dustX = a.X; p.dustY = a.Y; p.dustZ = a.Z; }
         else                             { p.stateBits &= ~D::kFxDust; }
     }
-    return true;
 }
 
 void AdvanceInterp(DroneMirror& e) {
@@ -237,8 +250,10 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::net::kMaxPeers)) return;
     void* drone = D::Find();
     if (!drone) { UE_LOGI("drone: connect-snapshot -- no drone present (skip) slot %d", peerSlot); return; }
+    HostRead r;
+    if (!ReadHost(drone, r)) return;
     coop::net::DroneStatePayload p{};
-    if (!FillPayload(drone, D::IsActive(drone), /*adopt*/true, p)) return;
+    FillPayload(drone, r, /*adopt*/true, p);
     s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::DroneState, &p, sizeof(p));
     UE_LOGI("drone: connect-snapshot -- sent pose to slot %d (active=%d)", peerSlot, p.active);
 }
@@ -258,28 +273,26 @@ void Tick() {
         // Active and the FX / gate bits the moment they change, moving or not: a sack put on a parked
         // drone is a change a client's gate fields need.
         const uint64_t nowMs = NowMs();
-        if (nowMs - g_lastSentMs < kSendIntervalMs) return;
-        FVector loc; FRotator rot;
-        if (!D::GetTransform(drone, loc, rot)) return;
-        const bool active = D::IsActive(drone);
-        const uint8_t bits = D::ReadFxBits(drone);
-        const float dx = loc.X - g_sentLoc.X, dy = loc.Y - g_sentLoc.Y, dz = loc.Z - g_sentLoc.Z;
+        if (nowMs < g_nextCheckMs) return;
+        g_nextCheckMs = nowMs + kSendIntervalMs;
+        HostRead r;
+        if (!ReadHost(drone, r)) return;
+        const float dx = r.loc.X - g_sentLoc.X, dy = r.loc.Y - g_sentLoc.Y, dz = r.loc.Z - g_sentLoc.Z;
         const bool moved =
             !g_haveSent || dx * dx + dy * dy + dz * dz > kMoveEpsCm * kMoveEpsCm ||
-            std::fabs(ue_wrap::NormalizeAxis(rot.Pitch - g_sentRot.Pitch)) > kTurnEpsDeg ||
-            std::fabs(ue_wrap::NormalizeAxis(rot.Yaw - g_sentRot.Yaw)) > kTurnEpsDeg ||
-            std::fabs(ue_wrap::NormalizeAxis(rot.Roll - g_sentRot.Roll)) > kTurnEpsDeg;
-        const bool streaming = active || (bits & D::kFxDust) != 0;
-        if (!streaming && !moved && active == g_sentActive && bits == g_sentBits) return;
+            std::fabs(ue_wrap::NormalizeAxis(r.rot.Pitch - g_sentRot.Pitch)) > kTurnEpsDeg ||
+            std::fabs(ue_wrap::NormalizeAxis(r.rot.Yaw - g_sentRot.Yaw)) > kTurnEpsDeg ||
+            std::fabs(ue_wrap::NormalizeAxis(r.rot.Roll - g_sentRot.Roll)) > kTurnEpsDeg;
+        const bool streaming = r.active || (r.bits & D::kFxDust) != 0;
+        if (!streaming && !moved && r.active == g_sentActive && r.bits == g_sentBits) return;
         coop::net::DroneStatePayload p{};
-        if (!FillPayload(drone, active, /*adopt*/false, p)) return;
+        FillPayload(drone, r, /*adopt*/false, p);
         if (!s->SendReliable(coop::net::ReliableKind::DroneState, &p, sizeof(p))) return;
-        g_lastSentMs = nowMs;
         g_haveSent = true;
-        g_sentLoc = loc;
-        g_sentRot = rot;
-        g_sentActive = active;
-        g_sentBits = bits;  // the bits as read: FillPayload drops the dust bit when its anchor is unread
+        g_sentLoc = r.loc;
+        g_sentRot = r.rot;
+        g_sentActive = r.active;
+        g_sentBits = r.bits;  // the bits as read: FillPayload drops the dust bit when its anchor is unread
     } else {
         // CLIENT: the drone is ALWAYS a mirror -- suppress its own flight tick once, take a word that
         // waited for the drone to resolve, then drive the interp toward the last streamed pose (no-op
@@ -300,7 +313,7 @@ void OnDisconnect() {
         if (void* drone = D::Find()) D::RestoreTick(drone);  // restore single-player flight
     }
     g_m = DroneMirror{};
-    g_lastSentMs = 0;
+    g_nextCheckMs = 0;
     g_haveSent = false;
     g_sentLoc = FVector{};
     g_sentRot = FRotator{};

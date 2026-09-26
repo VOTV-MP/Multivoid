@@ -30,9 +30,12 @@ void* Find();
 // Active -- TRUE while the drone is flying a delivery (false = dormant/parked).
 bool IsActive(void* drone);
 
-// Root actor world transform (loc + full rotation -- the drone leans/pitches in flight). False on
-// null or an unreadable location or rotation.
-bool GetTransform(void* drone, FVector& loc, FRotator& rot);
+// The drone's world transform (loc + full rotation -- it leans and pitches in flight), read from memory:
+// its root component's relative location and rotation, which are its world ones while the root hangs
+// from nothing -- always, for the delivery drone, which moves itself and carries the sack, never the
+// other way round. An attached root is read through the engine instead. False on null or an unread
+// pose. Game thread.
+bool ReadPose(void* drone, FVector& loc, FRotator& rot);
 
 // CLIENT mirror: snap the drone to the streamed transform. SetActorLocation + SetActorRotation.
 bool DriveMirror(void* drone, const FVector& loc, const FRotator& rot);
@@ -64,8 +67,9 @@ inline constexpr uint8_t kFxDust     = 0x01;
 inline constexpr uint8_t kFxArrived  = 0x02;
 inline constexpr uint8_t kFxHasSack  = 0x04;
 
-// HOST: read the synced drone state into the packed stateBits byte (kFxDust|kFxArrived|kFxHasSack).
-// Reads eff_droneDust.IsActive() + canTakeOff + hasSack. Game thread.
+// HOST: read the synced drone state into the packed stateBits byte (kFxDust|kFxArrived|kFxHasSack):
+// eff_droneDust's bIsActive bit (what its IsActive returns), canTakeOff and hasSack, all from memory
+// with no engine call. Game thread.
 uint8_t ReadFxBits(void* drone);
 
 // HOST: read eff_droneDust's world location (the BP pins it to its ground-trace hit per tick) for
