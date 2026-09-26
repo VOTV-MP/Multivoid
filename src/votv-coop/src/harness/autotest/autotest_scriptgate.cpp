@@ -39,7 +39,7 @@ namespace SB = ue_wrap::serverbox;
 constexpr DWORD kWorldWaitMs = 240'000;
 constexpr DWORD kPollMs = 2000;
 constexpr int   kTagFix = 1, kTagCheck = 2, kTagCalc = 3, kTagUber = 4, kTagHealth = 5;
-constexpr int   kTagScopedCycle = 6, kTagScopedWind = 7, kTagPlainTick = 8;
+constexpr int   kTagScopedCycle = 6, kTagScopedWind = 7, kTagPlainTick = 8, kTagRetireFirst = 9;
 constexpr int   kSendNameEntry = 3501;   // the ubergraph entry sendName's stub names
 constexpr float kSentinel = -1.0f;       // no efficiency the game computes is negative
 
@@ -172,6 +172,8 @@ void PostScopedWind(const SG::Call& call) {
     ++g_windArm.scoped;
     if (!OwnedBy(call, kWindName)) ++g_windArm.scopedForeign;
 }
+void PostNothing(const SG::Call&) {}
+
 void PostPlainTick(const SG::Call& call) {
     if (!g_classArmOn) return;
     if (OwnedBy(call, kCycleName)) ++g_cycleArm.plain;
@@ -402,6 +404,24 @@ void RunScriptGateDrill() {
         Check(v, !SG::ClassNameWatchLive(kCycleName, kTickName, kTagScopedCycle) &&
                  !SG::NameWatchLive(kTickName, kTagPlainTick),
               "class arm: a retired watch reads as not live");
+    });
+
+    // A watch retired before its name resolves keeps its slot: the resolve re-keys it disabled, so watching it
+    // again is live at once, with no new placeholder waiting for its name.
+    OnGameThread([&] {
+        const bool reg = SG::WatchClassName(kCycleName, kTickName, kTagRetireFirst, nullptr, &PostNothing);
+        const bool retired = SG::UnwatchClassName(kCycleName, kTickName, kTagRetireFirst, nullptr, &PostNothing);
+        SG::ResolvePendingNames();
+        const bool stayedRetired = !SG::ClassNameWatchLive(kCycleName, kTickName, kTagRetireFirst);
+        const int pendingBefore = SG::PendingNameCount();
+        const bool again = SG::WatchClassName(kCycleName, kTickName, kTagRetireFirst, nullptr, &PostNothing);
+        const bool liveAtOnce = SG::ClassNameWatchLive(kCycleName, kTickName, kTagRetireFirst);
+        const int pendingAfter = SG::PendingNameCount();
+        Check(v, reg && retired && stayedRetired,
+              "retire first: a watch retired while its name was pending stays retired through the resolve");
+        Check(v, again && liveAtOnce && pendingAfter == pendingBefore,
+              "retire first: watching it again is live at once, with no new pending name");
+        SG::UnwatchClassName(kCycleName, kTickName, kTagRetireFirst, nullptr, &PostNothing);
     });
 
     // The tax base over a five-second window with counting armed.

@@ -391,16 +391,18 @@ bool IsInstalled() { return g_installed.load(std::memory_order_acquire); }
 namespace {
 
 // Registration under the mutex: an idempotent re-register re-enables the same slot; a new pair
-// takes the first empty slot of the probe chain. Returns false when the chain is full.
+// takes the first empty slot of the probe chain. `enabled` false keeps an entry for a later re-register
+// without firing it. Returns false when the chain is full.
 bool Register(Entry* table, std::atomic<int>& count, int& keyed, std::uint64_t key, int tag,
               PreFn pre, PostFn post, const wchar_t* name, const wchar_t* className,
-              std::uint64_t classKey, bool resolved) {
+              std::uint64_t classKey, bool resolved, bool enabled = true) {
     for (int i = SlotOf(key), n = 0; n < kSlots; ++n, i = (i + 1) & (kSlots - 1)) {
         Entry& e = table[i];
         const std::uint64_t k = e.key.load(std::memory_order_relaxed);
         if (k == key && e.tag == tag && e.pre == pre && e.post == post && e.name == name &&
             e.className == className) {
-            if (!e.enabled.exchange(true, std::memory_order_release)) count.fetch_add(1, std::memory_order_release);
+            if (enabled && !e.enabled.exchange(true, std::memory_order_release))
+                count.fetch_add(1, std::memory_order_release);
             return true;
         }
         if (k != 0) continue;
@@ -408,10 +410,10 @@ bool Register(Entry* table, std::atomic<int>& count, int& keyed, std::uint64_t k
         e.tag = tag; e.pre = pre; e.post = post; e.name = name;
         e.className = className; e.classKey = classKey;
         e.resolved.store(resolved, std::memory_order_relaxed);
-        e.enabled.store(true, std::memory_order_relaxed);
+        e.enabled.store(enabled, std::memory_order_relaxed);
         e.key.store(key, std::memory_order_release);   // published last: the reader sees a whole entry
         ++keyed;
-        count.fetch_add(1, std::memory_order_release);
+        if (enabled) count.fetch_add(1, std::memory_order_release);
         return true;
     }
     return false;
@@ -540,7 +542,7 @@ bool ScopedWatchSettled(const wchar_t* className, const wchar_t* name, int tag) 
 
 namespace {
 // Disable every entry of that name watch: the resolved one, or the placeholder still waiting for its
-// name, which the resolve then drops instead of re-keying.
+// name, which the resolve then re-keys disabled, its literals kept for a re-watch.
 bool UnwatchNameScoped(const wchar_t* className, const wchar_t* name, int tag, PreFn pre, PostFn post) {
     if (!name) return false;
     std::lock_guard<std::mutex> lk(g_regMutex);
@@ -580,6 +582,10 @@ bool NameWatchSettled(const wchar_t* name, int tag) { return ScopedWatchSettled(
 
 bool ClassNameWatchLive(const wchar_t* className, const wchar_t* name, int tag) {
     return className && ScopedWatchLive(className, name, tag);
+}
+
+bool ClassNameWatchSettled(const wchar_t* className, const wchar_t* name, int tag) {
+    return className && ScopedWatchSettled(className, name, tag);
 }
 
 int PendingNameCount() { return g_namesPending.load(std::memory_order_acquire); }
@@ -623,14 +629,19 @@ void ResolvePendingNames() {
             e.className = nullptr;
             e.resolved.store(true, std::memory_order_release);
             g_namesPending.fetch_sub(1, std::memory_order_release);
-            if (!wasEnabled) continue;   // retired while it waited for its name
-            g_nameWatches.fetch_sub(1, std::memory_order_release);
+            if (wasEnabled) g_nameWatches.fetch_sub(1, std::memory_order_release);
             const wchar_t* ofClass = p.className ? L" of class " : L"";
             const wchar_t* cls = p.className ? p.className : L"";
+            // One retired while it waited is re-keyed too, disabled with its literals: a later watch of it
+            // re-enables that slot, where a dropped one would take a new placeholder each time.
             if (Register(g_nameTable, g_nameWatches, g_nameKeyed, NameKey(f), e.tag, e.pre, e.post, p.name,
-                         p.className, p.className ? NameKey(c) : 0, /*resolved=*/true)) {
-                UE_LOGI("script_gate: name '%ls'%ls%ls resolved (cmp=0x%x number=0x%x) -- the watch is live",
-                        p.name, ofClass, cls, f.ComparisonIndex, f.Number);
+                         p.className, p.className ? NameKey(c) : 0, /*resolved=*/true, /*enabled=*/wasEnabled)) {
+                if (wasEnabled)
+                    UE_LOGI("script_gate: name '%ls'%ls%ls resolved (cmp=0x%x number=0x%x) -- the watch is live",
+                            p.name, ofClass, cls, f.ComparisonIndex, f.Number);
+                else
+                    UE_LOGI("script_gate: name '%ls'%ls%ls resolved after its watch was retired -- kept for a "
+                            "re-watch", p.name, ofClass, cls);
             } else {
                 UE_LOGE("script_gate: name '%ls'%ls%ls resolved but the table is full -- the watch is dead",
                         p.name, ofClass, cls);

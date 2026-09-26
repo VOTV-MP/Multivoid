@@ -99,14 +99,18 @@ bool WatchClassName(const wchar_t* className, const wchar_t* name, int tag, PreF
 
 // Retire a name watch, or a class-scoped one, given the literals, tag and callbacks that registered it;
 // false when none matches. Its slots stay keyed, so the probe chain stays walkable and they still
-// count against the table's capacity; one retired while its name was pending is dropped at the
-// resolve. Any thread.
+// count against the table's capacity; one retired while its name was pending is re-keyed disabled at
+// the resolve, so watching it again re-enables its slot. Any thread.
 bool UnwatchName(const wchar_t* name, int tag, PreFn pre, PostFn post);
 bool UnwatchClassName(const wchar_t* className, const wchar_t* name, int tag, PreFn pre, PostFn post);
 
 // Is that class-scoped watch LIVE, both of its names resolved? The literals that were registered.
 // Any thread.
 bool ClassNameWatchLive(const wchar_t* className, const wchar_t* name, int tag);
+
+// Has that class-scoped watch SETTLED: live, or dead for good, as NameWatchSettled says of a name watch.
+// A consumer driving its watch to live stops here either way. Any thread.
+bool ClassNameWatchSettled(const wchar_t* className, const wchar_t* name, int tag);
 
 // How many registered name watches still wait for their FName. At 0 every name watch is settled:
 // live, or dead for good because its name resolved into a full table (the gate logs which). A
