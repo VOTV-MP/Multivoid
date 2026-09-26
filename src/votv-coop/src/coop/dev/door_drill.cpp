@@ -315,9 +315,9 @@ void OnCheckSensorPost(const sg::Call& call) {
 // entry of the actor. Each line names the component, its actor and the list the handler left.
 struct SensorEvent { const wchar_t* name; int tag; const char* what; };
 constexpr SensorEvent kSensorEvents[] = {
-    { L"BndEvt__door_sensor_ComponentBoundEvent_2_ComponentBeginOverlapSignature__DelegateSignature",
+    { L"BndEvt__door_sensor_K2Node_ComponentBoundEvent_2_ComponentBeginOverlapSignature__DelegateSignature",
       0x44444242 /*'DDBB'*/, "BEGIN" },
-    { L"BndEvt__door_sensor_ComponentBoundEvent_3_ComponentEndOverlapSignature__DelegateSignature",
+    { L"BndEvt__door_sensor_K2Node_ComponentBoundEvent_3_ComponentEndOverlapSignature__DelegateSignature",
       0x44444245 /*'DDBE'*/, "END" },
 };
 constexpr int kTagUbergraph = 0x44445547;  // 'DDUG'
