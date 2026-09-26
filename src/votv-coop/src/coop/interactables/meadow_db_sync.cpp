@@ -1,16 +1,16 @@
 // coop/interactables/meadow_db_sync.cpp -- see coop/interactables/meadow_db_sync.h. A
 // content-hash multiset shadow over the saved signals, taken the first time a world needs it and
 // reconciled at the exit of every body that writes the database; id-preserving reflected addSignal and
-// removeSignal applies; tombstone counts; a symmetric per-slot join seed, where the seed delta per hash
-// is the current count minus the snapshot count minus the unmasked pending net, with op-counter masks.
-// An apply and its shadow update are game-thread-atomic per line. The client lane sends nothing until
-// its own world-ready announce.
+// removeSignal applies; tombstone counts. The per-slot join seed is meadow_db_join.cpp's, sharing the
+// waiting lines through meadow_db_internal.h. An apply and its shadow update are game-thread-atomic per
+// line. The client lane sends nothing until its own world-ready announce.
 
 #include "coop/interactables/meadow_db_sync.h"
 
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
 #include "coop/interactables/meadow_db_hash.h"
+#include "coop/interactables/meadow_db_internal.h"
 #include "coop/interactables/signal_wire.h"
 #include "coop/session/net_pump.h"
 
@@ -90,28 +90,13 @@ std::vector<uint64_t> g_orderBase;
 coop::blob_chunks::Assembler g_orderAsm;
 
 // Pending: authored lines whose send failed, and a pre-ready client's organic lines.
-struct Pending {
-    uint64_t hash = 0;
-    bool     isDelete = false;
-    uint64_t bornOp = 0;                 // vs SlotSnap.opAt (mask criterion)
-    uint32_t excludeMask = 0;            // slots the seed already covered
-    uint32_t sentMask = 0;               // slots already delivered (masked retry)
-    std::vector<uint8_t> blob;           // append: serialized row (sans image)
-};
+using internal::Pending;
 std::vector<Pending> g_pending;
 
 // Tombstones: outstanding unresolved deletes, one entry per count.
 struct Tomb { uint64_t hash; Clock::time_point until; };
 std::vector<Tomb> g_tombs;
 
-// Per-slot join-seed snapshots.
-struct SlotSnap {
-    bool valid = false;
-    uint64_t opAt = 0;
-    std::map<uint64_t, int32_t> counts;
-};
-SlotSnap g_snap[coop::net::kMaxPeers];
-bool g_seededOnce[coop::net::kMaxPeers] = {};  // the connect replay re-fires on every world-change re-announce; only the first missing snapshot warns
 bool g_orderPending = false;  // an order change detected but not yet sent/broadcast
 
 coop::blob_chunks::Assembler g_assembler;
@@ -131,10 +116,7 @@ void NotifyApplied() {
 
 // Helpers.
 
-bool IsHost() {
-    auto* s = g_session.load(std::memory_order_acquire);
-    return s && s->role() == coop::net::Role::Host;
-}
+using internal::IsHost;
 
 // The client lane is mute until its own world-ready announce: a pre-ready client line reaching
 // the host before the flip rides the seed back as a duplicate. The host is always ready.
@@ -209,16 +191,7 @@ bool SendDeleteBroadcast(coop::net::Session* s, uint64_t hash) {
     return s->SendReliable(coop::net::ReliableKind::MeadowDelete, &p, sizeof(p));
 }
 
-// A negative slot broadcasts (the host canonical); otherwise point-to-point (a client's op to
-// the host, or the join seed's canonical to one joiner).
-bool SendOrder(coop::net::Session* s, const std::vector<uint64_t>& seq, int toSlot) {
-    const std::vector<uint8_t> blob = MH::OrderBlob(seq);
-    if (toSlot < 0)
-        return coop::blob_chunks::SendBlob(
-            s, coop::net::ReliableKind::MeadowOrder, g_nextSeq++, blob);
-    return coop::blob_chunks::SendBlobToSlot(
-        s, toSlot, coop::net::ReliableKind::MeadowOrder, g_nextSeq++, blob);
-}
+using internal::SendOrder;
 
 // Author one line: try to send now; on failure (or a muted pre-ready client) queue it as
 // pending. The shadow advances only on success; the order baseline at once, since every
@@ -641,121 +614,12 @@ void OnOrderChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
         ApplyOrderBlob(blob, senderSlot);
 }
 
-void CaptureJoinSnapshot(int peerSlot) {
-    if (peerSlot <= 0 || peerSlot >= coop::net::kMaxPeers) return;
-    if (!IsHost()) return;
-    SlotSnap& snap = g_snap[peerSlot];
-    snap = SlotSnap{};
-    if (!MS::EnsureResolved()) {
-        UE_LOGW("meadow_db: join snapshot for slot %d skipped (store unresolved)", peerSlot);
-        return;
-    }
-    if (!MH::HashStore(snap.counts, nullptr)) {
-        UE_LOGW("meadow_db: join snapshot for slot %d unreadable -- no seed", peerSlot);
-        return;
-    }
-    snap.opAt = g_opCounter;
-    snap.valid = true;
-    UE_LOGI("meadow_db: join snapshot for slot %d (%zu distinct hashes, op=%llu)",
-            peerSlot, snap.counts.size(),
-            static_cast<unsigned long long>(snap.opAt));
-}
-
-void QueueConnectBroadcastForSlot(int peerSlot) {
-    if (peerSlot <= 0 || peerSlot >= coop::net::kMaxPeers) return;
-    if (!IsHost()) return;
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected()) return;
-    SlotSnap& snap = g_snap[peerSlot];
-    if (!snap.valid) {
-        // No snapshot means no knowledge of the save baseline; seeding the full store would
-        // duplicate the joiner's save copy. Loud only at the slot's first replay: the connect
-        // replay re-fires on every mid-session world-change re-announce, where a consumed snapshot
-        // is normal, and a warning per cave travel would bury real join failures.
-        if (!g_seededOnce[peerSlot])
-            UE_LOGW("meadow_db: no join snapshot for slot %d -- seed skipped", peerSlot);
-        return;
-    }
-    g_seededOnce[peerSlot] = true;
-    if (!MS::EnsureResolved()) { snap.valid = false; return; }
-
-    std::map<uint64_t, int32_t> cur;
-    std::vector<uint64_t> seq;
-    if (!MH::HashStore(cur, &seq)) { snap.valid = false; return; }
-
-    // The mask criterion: a pending born before the snapshot has its effect inside the save the
-    // joiner loaded, so the retry must skip this slot; younger pendings deliver through the retry
-    // and stay out of the seed.
-    const uint32_t bit = 1u << peerSlot;
-    std::map<uint64_t, int32_t> unmaskedNet;
-    for (auto& p : g_pending) {
-        if (p.bornOp <= snap.opAt) p.excludeMask |= bit;
-        else unmaskedNet[p.hash] += p.isDelete ? -1 : 1;
-    }
-
-    // The seed delta per hash over the union: current minus snapshot minus the unmasked pending
-    // net.
-    std::map<uint64_t, int32_t> delta = cur;
-    for (const auto& [h, c] : snap.counts) delta[h] -= c;
-    for (const auto& [h, c] : unmaskedNet) delta[h] -= c;
-
-    int sentA = 0, sentD = 0;
-    for (const auto& [h, d] : delta) {
-        if (d > 0) {
-            const int32_t idx = MH::IndexOf(h);
-            if (idx < 0) continue;  // raced away; the store moved -- fine
-            SD::Row r;
-            if (!MS::ReadRow(idx, r)) continue;
-            const std::vector<uint8_t> blob = coop::signal_wire::Serialize(r, false);
-            for (int32_t k = 0; k < d; ++k) {
-                if (coop::blob_chunks::SendBlobToSlot(
-                        s, peerSlot, coop::net::ReliableKind::MeadowAppend,
-                        g_nextSeq++, blob))
-                    ++sentA;
-            }
-        } else if (d < 0) {
-            coop::net::ContentHashPayload cp{h};
-            for (int32_t k = 0; k < -d; ++k) {
-                if (s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::MeadowDelete,
-                                          &cp, sizeof(cp)))
-                    ++sentD;
-            }
-        }
-    }
-    // The canonical order always rides after the deltas on the same FIFO lane: the joiner's save
-    // order may predate in-window moves, and order is synced state. The FIFO guard: with lines
-    // still pending the order would reference undelivered hashes, so defer to the retry's canonical
-    // broadcast, which reaches this slot too after the flush.
-    int sentO = 0;
-    if (!seq.empty() && g_pending.empty() && SendOrder(s, seq, peerSlot)) sentO = 1;
-    else if (!g_pending.empty()) g_orderPending = true;
-    g_cSeedLines += static_cast<uint64_t>(sentA + sentD + sentO);
-    if (sentA || sentD || sentO)
-        UE_LOGI("meadow_db: seed slot=%d +%d/-%d rows%s", peerSlot, sentA, sentD,
-                sentO ? " +order" : "");
-    snap.valid = false;
-}
-
 SentCounts SentLines() {
     return {g_cAppendsSent, g_cDeletesSent, g_cOrderSent};
 }
 
 void SetApplyObserver(ApplyObserver fn) {
     g_applyObserver = fn;
-}
-
-void CancelJoinSnapshot(int peerSlot) {
-    if (peerSlot <= 0 || peerSlot >= coop::net::kMaxPeers) return;
-    g_snap[peerSlot] = SlotSnap{};
-    g_seededOnce[peerSlot] = false;
-    // A recycled slot must not finish the departed peer's half-sent row or order.
-    g_assembler.ClearSlot(static_cast<uint8_t>(peerSlot));
-    g_orderAsm.ClearSlot(static_cast<uint8_t>(peerSlot));
-    const uint32_t bit = 1u << peerSlot;
-    for (auto& p : g_pending) {
-        p.excludeMask &= ~bit;   // slot reuse must not inherit stale excludes
-        p.sentMask &= ~bit;
-    }
 }
 
 void OnDisconnect() {
@@ -766,8 +630,7 @@ void OnDisconnect() {
     g_tombs.clear();
     g_orderBase.clear();
     g_orderPending = false;
-    for (auto& sn : g_snap) sn = SlotSnap{};
-    for (auto& so : g_seededOnce) so = false;
+    internal::ResetJoinSeeds();
     g_primed = false;
     g_primeMissed = false;
     g_primedIn.Reset();
@@ -778,5 +641,37 @@ void OnDisconnect() {
     g_cTombConsumed = g_cSeedLines = 0;
     g_cOrderSent = g_cOrderApplied = 0;
 }
+
+namespace internal {
+
+std::vector<Pending>& Waiting() { return g_pending; }
+uint64_t OpCounter() { return g_opCounter; }
+coop::net::Session* SessionPtr() { return g_session.load(std::memory_order_acquire); }
+
+bool IsHost() {
+    auto* s = g_session.load(std::memory_order_acquire);
+    return s && s->role() == coop::net::Role::Host;
+}
+
+uint32_t NextSeq() { return g_nextSeq++; }
+
+bool SendOrder(coop::net::Session* s, const std::vector<uint64_t>& seq, int toSlot) {
+    const std::vector<uint8_t> blob = MH::OrderBlob(seq);
+    if (toSlot < 0)
+        return coop::blob_chunks::SendBlob(
+            s, coop::net::ReliableKind::MeadowOrder, g_nextSeq++, blob);
+    return coop::blob_chunks::SendBlobToSlot(
+        s, toSlot, coop::net::ReliableKind::MeadowOrder, g_nextSeq++, blob);
+}
+
+void HoldOrder() { g_orderPending = true; }
+void CountSeedLines(uint64_t n) { g_cSeedLines += n; }
+
+void ClearSlotAssemblies(uint8_t slot) {
+    g_assembler.ClearSlot(slot);
+    g_orderAsm.ClearSlot(slot);
+}
+
+}  // namespace internal
 
 }  // namespace coop::meadow_db_sync
