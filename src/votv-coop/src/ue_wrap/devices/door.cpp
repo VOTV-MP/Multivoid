@@ -28,7 +28,6 @@ namespace R = reflection;
 // Game-thread writes; observer reads.
 std::atomic<bool> g_resolved{false};
 
-void*   g_doorCls      = nullptr;  // door_C UClass
 int32_t g_keyOff       = -1;       // AtriggerBase_C::Key
 int32_t g_isOpenedOff  = -1;       // Adoor_C::isOpened
 int32_t g_isMovingOff  = -1;       // Adoor_C::isMoving -- swing in progress
@@ -49,10 +48,6 @@ int32_t g_moveOff      = -1;       // Adoor_C::move (UTimelineComponent*), the s
 // and its bit (a bitfield it shares with bLooping and bReversePlayback). Offset -1 is unresolved.
 int32_t g_playingOff   = -1;
 uint8_t g_playingMask  = 0;
-void*   g_doorOpenFn   = nullptr;  // Adoor_C::doorOpen(bool bypassCheck)
-void*   g_doorCloseFn  = nullptr;  // Adoor_C::doorClose(bool bypassCheck)
-void*   g_moveFinishFn = nullptr;  // Adoor_C::move__FinishedFunc() -- sets isOpened + stops the timeline
-void*   g_moveUpdateFn = nullptr;  // Adoor_C::move__UpdateFunc()  -- lerps the door MESH from move_a (the visual)
 // The move timeline's output value and direction, which only the force-snap writes: the timeline's
 // finish copies the direction into dir and derives isOpened from it. Their names carry a per-asset
 // GUID suffix (move_a_<guid>, move__Direction_<guid>), so they resolve by prefix; unresolved, the
@@ -62,13 +57,25 @@ int32_t g_moveAlphaOff = -1;       // float, 0 closed .. 1 open
 int32_t g_moveDirOff   = -1;       // uint8, 0 forward (open), 1 backward (close)
 int32_t g_sensorOff    = -1;       // Adoor_C::sensor (UBoxComponent*)
 int32_t g_sensorOverlapsOff = -1;  // Adoor_C::sensorOverlaps (TArray<AActor*>)
-// The door's power flag, which a press gates on first. The gamemode's power trigger, the keypad's
-// set-active and the save write it.
+// The door's power flag, which a press gates on first. A keypad's setActive, ventCrawler (the signal room
+// door) and the save write it, and a level trigger's runTrigger 2/3 could; no power path does (the panel's
+// blackout leaves it alone, measured).
 int32_t g_activeOff      = -1;     // Adoor_C::Active (power)
 
 // A door class whose required fields or verbs did not resolve: asked again only when another class
 // object comes, said once for it.
 void* g_failedCls = nullptr;
+
+// door_C as this world holds it. A Blueprint class can get a new object in a new world, so the pointer is
+// kept only while its slot and serial still hold it and is looked up by name again when they do not: one
+// slot read a call, and the index lookup only after a world change. Game thread.
+ue_wrap::CachedObjRef g_doorClsRef;
+void* DoorClass() {
+    if (void* c = g_doorClsRef.Get()) return c;
+    void* c = ue_wrap::object_index::ClassByName(L"door_C");
+    if (c) g_doorClsRef.Set(c);
+    return c;
+}
 
 // The smart-apply verify list: a door we just tried to animate; if it has not reached the
 // target by the deadline (the swing froze, beyond tick range) it is force-snapped. Game
@@ -104,7 +111,7 @@ bool EnsureResolved() {
     if (g_resolved.load(std::memory_order_acquire)) return true;
 
     // One object-index lookup a call until the class loads, which costs nothing while it has not.
-    void* doorCls = ue_wrap::object_index::ClassByName(L"door_C");
+    void* doorCls = DoorClass();
     if (!doorCls || doorCls == g_failedCls) return false;
 
     // The key is declared on the trigger base, which the property lookup climbs to; the opened flag
@@ -154,15 +161,14 @@ bool EnsureResolved() {
         UE_LOGW("door: the move timeline's value or direction did not resolve (%d, %d) -- a force-snap moves "
                 "nothing", moveAlphaOff, moveDirOff);
 
-    void* moveFinishFn = R::FindFunction(doorCls, L"move__FinishedFunc");  // for ForceOpen/ForceClose
-    void* moveUpdateFn = R::FindFunction(doorCls, L"move__UpdateFunc");    // drives the mesh from move_a
+    // The force-snap's two timeline functions are asked here only so a build without them says so; each
+    // call resolves its instance's own, as every verb here does.
+    void* moveFinishFn = R::FindFunction(doorCls, L"move__FinishedFunc");
+    void* moveUpdateFn = R::FindFunction(doorCls, L"move__UpdateFunc");
     if (!moveFinishFn || !moveUpdateFn)
         UE_LOGW("door: move__FinishedFunc=%p / move__UpdateFunc=%p -- force-snap may not move the mesh",
                 moveFinishFn, moveUpdateFn);
 
-    g_moveFinishFn = moveFinishFn;
-    g_moveUpdateFn = moveUpdateFn;
-    g_doorCls      = doorCls;
     g_keyOff       = keyOff;
     g_isOpenedOff  = isOpenedOff;
     g_isMovingOff  = isMovingOff;
@@ -179,8 +185,6 @@ bool EnsureResolved() {
     g_moveAlphaOff = moveAlphaOff;
     g_moveDirOff   = moveDirOff;
     g_activeOff      = activeOff;
-    g_doorOpenFn   = openFn;
-    g_doorCloseFn  = closeFn;
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("door: resolved door_C=%p Key@0x%04X isOpened@0x%04X dir@0x%04X move@0x%04X "
             "sensorOverlaps@0x%04X Active@0x%04X doorOpen=%p doorClose=%p", doorCls, keyOff,
@@ -216,11 +220,10 @@ bool ReadSensorBox(void* door, FVector& centre, FVector& halfExtent) {
 }
 
 bool IsDoor(void* obj) {
-    if (!obj || !g_doorCls) return false;
+    if (!obj || !g_resolved.load(std::memory_order_acquire)) return false;
+    void* doorCls = DoorClass();
     void* cls = R::ClassOf(obj);
-    if (!cls) return false;
-    void* bases[1] = { g_doorCls };
-    return R::IsDescendantOfAny(cls, bases, 1);
+    return doorCls && cls && R::IsDescendantOfAny(cls, &doorCls, 1);
 }
 
 std::wstring GetKeyString(void* door) {
@@ -286,16 +289,18 @@ bool CallCrowbarOpen(void* door) {
 }
 
 bool CallDoorOpen(void* door, bool bypass) {
-    if (!door || !g_doorOpenFn) return false;
-    ParamFrame f(g_doorOpenFn);
+    void* fn = EntryVerb(door, L"doorOpen");
+    if (!fn) return false;
+    ParamFrame f(fn);
     if (!f.valid()) return false;
     f.Set<bool>(L"bypassCheck", bypass);
     return Call(door, f);
 }
 
 bool CallDoorClose(void* door, bool bypass) {
-    if (!door || !g_doorCloseFn) return false;
-    ParamFrame f(g_doorCloseFn);
+    void* fn = EntryVerb(door, L"doorClose");
+    if (!fn) return false;
+    ParamFrame f(fn);
     if (!f.valid()) return false;
     f.Set<bool>(L"bypassCheck", bypass);
     return Call(door, f);
@@ -329,8 +334,8 @@ static void ForceTo(void* door, bool open) {
     if (g_moveAlphaOff < 0 || g_moveDirOff < 0) return;
     *reinterpret_cast<float*>(reinterpret_cast<char*>(door) + g_moveAlphaOff) = open ? 1.0f : 0.0f;
     *reinterpret_cast<uint8_t*>(reinterpret_cast<char*>(door) + g_moveDirOff)  = open ? 0 : 1;  // Forward/Backward
-    if (g_moveUpdateFn) { ParamFrame u(g_moveUpdateFn); if (u.valid()) Call(door, u); }  // move the MESH
-    if (g_moveFinishFn) { ParamFrame f(g_moveFinishFn); if (f.valid()) Call(door, f); }  // set isOpened + stop
+    if (void* fn = EntryVerb(door, L"move__UpdateFunc")) { ParamFrame u(fn); if (u.valid()) Call(door, u); }  // the MESH
+    if (void* fn = EntryVerb(door, L"move__FinishedFunc")) { ParamFrame f(fn); if (f.valid()) Call(door, f); }  // isOpened
 }
 
 void ForceOpen(void* door)  { if (door) ForceTo(door, true); }
@@ -399,7 +404,7 @@ void* PartOf(void* door, const wchar_t* name) {
 }
 
 bool CallRunTrigger(void* door, void* owner, int32_t index) {
-    void* fn = door ? R::FindDispatchFunctionCached(R::ClassOf(door), L"runTrigger") : nullptr;
+    void* fn = EntryVerb(door, L"runTrigger");
     if (!fn) return false;
     ParamFrame f(fn);
     if (!f.valid() || !f.Set<void*>(L"owner", owner) || !f.Set<int32_t>(L"index", index)) return false;

@@ -5,6 +5,7 @@
 
 #include "ue_wrap/actors/swinger.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -20,25 +21,30 @@ namespace R = reflection;
 
 std::atomic<bool> g_resolved{false};
 
-void*   g_swingerCls = nullptr;  // prop_swinger_C UClass
 int32_t g_openedOff  = -1;       // Aprop_swinger_C::opened
 int32_t g_lockableOff = -1;      // Aprop_swinger_C::isLockable (optional: only a drill reads it)
-void*   g_openFn     = nullptr;  // Open(bool Damage)
-void*   g_closeFn    = nullptr;  // Close()
 
 // A swinger class whose `opened` or verbs did not resolve: said once, asked again only for another
 // class object.
 void* g_failedCls = nullptr;
 
-// The verb THIS swinger runs. IsSwinger admits any descendant, and a UFunction handed to
-// ProcessEvent is the body that runs -- the engine does not re-resolve it by name -- so the base
-// pair would run the plain door's body on a fire door, which overrides both Open and Close.
-// The resolve is cached by the reflection layer, keyed on the class and revalidated.
-void* VerbFor(void* swinger, const wchar_t* name, void* baseFn) {
-    void* cls = R::ClassOf(swinger);
-    if (!cls || cls == g_swingerCls) return baseFn;
-    void* fn = R::FindDispatchFunctionCached(cls, name);
-    return fn ? fn : baseFn;
+// prop_swinger_C as this world holds it: kept only while its slot and serial still hold it, looked up by
+// name again after a world gave the class a new object. Game thread.
+ue_wrap::CachedObjRef g_swingerClsRef;
+void* SwingerClass() {
+    if (void* c = g_swingerClsRef.Get()) return c;
+    void* c = ue_wrap::object_index::ClassByName(L"prop_swinger_C");
+    if (c) g_swingerClsRef.Set(c);
+    return c;
+}
+
+// The verb THIS swinger runs (Open(bool Damage), Close()). IsSwinger admits any descendant, and a
+// UFunction handed to ProcessEvent is the body that runs -- the engine does not re-resolve it by name --
+// so a base-class pointer would run the plain door's body on a fire door, which overrides both. The
+// resolve is cached by the reflection layer, keyed on the class and revalidated.
+void* VerbFor(void* swinger, const wchar_t* name) {
+    void* cls = swinger ? R::ClassOf(swinger) : nullptr;
+    return cls ? R::FindDispatchFunctionCached(cls, name) : nullptr;
 }
 
 }  // namespace
@@ -47,7 +53,7 @@ bool EnsureResolved() {
     if (g_resolved.load(std::memory_order_acquire)) return true;
 
     // One object-index lookup a call until the class loads, which costs nothing while it has not.
-    void* cls = ue_wrap::object_index::ClassByName(L"prop_swinger_C");
+    void* cls = SwingerClass();
     if (!cls || cls == g_failedCls) return false;
 
     const int32_t openedOff = R::FindPropertyOffset(cls, L"opened");
@@ -60,11 +66,8 @@ bool EnsureResolved() {
         return false;
     }
 
-    g_swingerCls = cls;
     g_openedOff  = openedOff;
     g_lockableOff = R::FindPropertyOffset(cls, L"isLockable");
-    g_openFn     = openFn;
-    g_closeFn    = closeFn;
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("swinger: resolved prop_swinger_C=%p opened@0x%04X Open=%p Close=%p",
             cls, openedOff, openFn, closeFn);
@@ -72,11 +75,10 @@ bool EnsureResolved() {
 }
 
 bool IsSwinger(void* obj) {
-    if (!obj || !g_swingerCls) return false;
+    if (!obj || !g_resolved.load(std::memory_order_acquire)) return false;
+    void* swingerCls = SwingerClass();
     void* cls = R::ClassOf(obj);
-    if (!cls) return false;
-    void* bases[1] = { g_swingerCls };
-    return R::IsDescendantOfAny(cls, bases, 1);
+    return swingerCls && cls && R::IsDescendantOfAny(cls, &swingerCls, 1);
 }
 
 bool TryReadLockable(void* swinger, bool& lockable) {
@@ -93,16 +95,18 @@ bool TryReadOpen(void* swinger, bool& on) {
 }
 
 bool CallOpen(void* swinger, bool damage) {
-    if (!swinger || !g_openFn) return false;
-    ParamFrame f(VerbFor(swinger, L"Open", g_openFn));
+    void* const fn = VerbFor(swinger, L"Open");
+    if (!fn) return false;
+    ParamFrame f(fn);
     if (!f.valid()) return false;
     f.Set<bool>(L"Damage", damage);
     return Call(swinger, f);
 }
 
 bool CallClose(void* swinger) {
-    if (!swinger || !g_closeFn) return false;
-    ParamFrame f(VerbFor(swinger, L"Close", g_closeFn));
+    void* const fn = VerbFor(swinger, L"Close");
+    if (!fn) return false;
+    ParamFrame f(fn);
     if (!f.valid()) return false;
     return Call(swinger, f);
 }

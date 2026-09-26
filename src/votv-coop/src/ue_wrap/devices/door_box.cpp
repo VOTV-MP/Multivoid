@@ -2,6 +2,7 @@
 
 #include "ue_wrap/devices/door_box.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -17,16 +18,19 @@ namespace {
 namespace R = reflection;
 
 // Per-class resolution. The wrapper is operational when EITHER class resolved
-// (the console may stream in later than the lockers or vice versa).
+// (the console may stream in later than the lockers or vice versa). The class is kept only while its
+// slot and serial still hold it -- a Blueprint class can get a new object in a new world -- and the
+// family's verbs (its apply verb, a__UpdateFunc which rotates the axis from alpha, a__FinishedFunc
+// which on a locker slams it shut and restores the collision) resolve per instance.
 struct ClassDesc {
-    void*   cls = nullptr;
+    const wchar_t* name = nullptr;  // the family's class
+    const wchar_t* verb = nullptr;  // its own apply verb
+    ue_wrap::CachedObjRef clsRef;   // the class as this world holds it
+    bool    resolved = false;       // the offsets below are read
     void*   failedCls = nullptr;  // a class whose `opened` did not resolve: said once, not asked again
     int32_t offOpened = -1;
     int32_t offAlpha = -1;      // the swing timeline's value, a_a_<guid>, by its prefix
     int32_t offDirection = -1;  // its TEnumAsByte<ETimelineDirection>, a__Direction_<guid>
-    void*   updateFn = nullptr;     // a__UpdateFunc (rotates the axis from alpha)
-    void*   finishedFn = nullptr;   // a__FinishedFunc (locker: close-slam + collision restore)
-    void*   verbFn = nullptr;       // the family's own apply verb, resolved WITH the class
     int32_t offTimeline = -1;   // UTimelineComponent* A
     int32_t offTrigger = -1;    // locker only: AActor* triggerOnOpen (the davyJones gate)
 };
@@ -49,14 +53,30 @@ struct Verify {
 };
 std::vector<Verify> g_verify;  // GT-only
 
-// Everything a family needs is resolved on the ONE tick its class first appears, verb included:
-// a verb resolved later, under a latch that another family already closed, is a verb never
-// resolved at all -- whichever class streams in second used to lose its own. Every offset is read
-// by name, the swing timeline's GUID-suffixed ones by their prefix; a family whose `opened` does not
-// resolve stays out, said once, and one whose swing does not runs without the snap.
+// The family's class as this world holds it, looked up by name again once its slot or serial no longer
+// holds the kept one. Game thread.
+void* ClassFor(ClassDesc& d) {
+    if (void* c = d.clsRef.Get()) return c;
+    void* c = d.name ? ue_wrap::object_index::ClassByName(d.name) : nullptr;
+    if (c) d.clsRef.Set(c);
+    return c;
+}
+
+// One of an instance's verbs: its class's own, memoised by the reflection layer.
+void* Verb(void* actor, const wchar_t* name) {
+    void* cls = actor ? R::ClassOf(actor) : nullptr;
+    return cls && name ? R::FindDispatchFunctionCached(cls, name) : nullptr;
+}
+
+// A family's offsets are read on the ONE tick its class first appears, each family on its own edge: a
+// latch shared with the family that streamed in first would have left the second unresolved. Every
+// offset is read by name, the swing timeline's GUID-suffixed ones by their prefix; a family whose
+// `opened` does not resolve stays out, said once, and one whose swing does not runs without the snap.
 bool ResolveClass(ClassDesc& d, const wchar_t* clsName, const wchar_t* verbName) {
-    if (d.cls) return true;
-    void* cls = ue_wrap::object_index::ClassByName(clsName);
+    d.name = clsName;
+    d.verb = verbName;
+    if (d.resolved) return true;
+    void* cls = ClassFor(d);
     if (!cls || cls == d.failedCls) return false;
     const int32_t opened = R::FindPropertyOffset(cls, L"opened");
     if (opened < 0) {
@@ -64,23 +84,24 @@ bool ResolveClass(ClassDesc& d, const wchar_t* clsName, const wchar_t* verbName)
         UE_LOGE("door_box: %ls.opened did not resolve by name -- that family stays out of the sync", clsName);
         return false;
     }
-    d.cls = cls;
     d.offOpened = opened;
     d.offAlpha = R::FindPropertyOffsetByPrefix(cls, L"a_a_");
     d.offDirection = R::FindPropertyOffsetByPrefix(cls, L"a__Direction_");
     d.offTimeline = R::FindPropertyOffset(cls, L"a");
-    d.verbFn = R::FindFunction(cls, verbName);
-    d.updateFn = R::FindFunction(cls, L"a__UpdateFunc");
-    d.finishedFn = R::FindFunction(cls, L"a__FinishedFunc");
     d.offTrigger = R::FindPropertyOffset(cls, L"triggerOnOpen");  // locker only; -1 on the console
-    if (!d.verbFn)
+    d.resolved = true;
+    // The verbs are asked here only so a build without them says so; each call resolves its own.
+    void* const verbFn = R::FindFunction(cls, verbName);
+    void* const updateFn = R::FindFunction(cls, L"a__UpdateFunc");
+    void* const finishedFn = R::FindFunction(cls, L"a__FinishedFunc");
+    if (!verbFn)
         UE_LOGW("door_box: %ls::%ls unresolved -- that family's apply degrades to snap-only",
                 clsName, verbName);
     if (d.offAlpha < 0 || d.offDirection < 0 || d.offTimeline < 0)
         UE_LOGW("door_box: %ls's swing timeline did not resolve (value %d, direction %d, component %d) -- no "
                 "snap for that family", clsName, d.offAlpha, d.offDirection, d.offTimeline);
     UE_LOGI("door_box: resolved %ls=%p opened@0x%04X swing@%d/%d/%d verb=%p upd=%p fin=%p", clsName, cls,
-            opened, d.offAlpha, d.offDirection, d.offTimeline, d.verbFn, d.updateFn, d.finishedFn);
+            opened, d.offAlpha, d.offDirection, d.offTimeline, verbFn, updateFn, finishedFn);
     return true;
 }
 
@@ -96,13 +117,10 @@ const ClassDesc* DescOf(void* obj) {
     if (!obj) return nullptr;
     void* cls = R::ClassOf(obj);
     if (!cls) return nullptr;
-    if (g_locker.cls) {
-        void* bases[1] = { g_locker.cls };
-        if (R::IsDescendantOfAny(cls, bases, 1)) return &g_locker;
-    }
-    if (g_console.cls) {
-        void* bases[1] = { g_console.cls };
-        if (R::IsDescendantOfAny(cls, bases, 1)) return &g_console;
+    for (ClassDesc* d : { &g_locker, &g_console }) {
+        if (!d->resolved) continue;
+        void* base = ClassFor(*d);
+        if (base && R::IsDescendantOfAny(cls, &base, 1)) return d;
     }
     return nullptr;
 }
@@ -116,8 +134,8 @@ void ForceSnap(void* actor, const ClassDesc& d, bool want) {
     *reinterpret_cast<float*>(reinterpret_cast<char*>(actor) + d.offAlpha) = want ? 1.0f : 0.0f;
     *reinterpret_cast<uint8_t*>(reinterpret_cast<char*>(actor) + d.offDirection) =
         want ? 0u : 1u;  // ETimelineDirection: 0=Forward, 1=Backward
-    if (d.updateFn) { ParamFrame f(d.updateFn); if (f.valid()) Call(actor, f); }
-    if (d.finishedFn) { ParamFrame f(d.finishedFn); if (f.valid()) Call(actor, f); }
+    if (void* fn = Verb(actor, L"a__UpdateFunc")) { ParamFrame f(fn); if (f.valid()) Call(actor, f); }
+    if (void* fn = Verb(actor, L"a__FinishedFunc")) { ParamFrame f(fn); if (f.valid()) Call(actor, f); }
 }
 
 // The timeline verbs belong to no family, so they are resolved on their own rather than with
@@ -146,14 +164,14 @@ bool EnsureResolved() {
     ResolveClass(g_locker, L"locker_C", L"Open");
     ResolveClass(g_console, L"droneConsole_C", L"setButtonsCollision");
     ResolveTimelineVerbs();
-    return g_locker.cls || g_console.cls;
+    return g_locker.resolved || g_console.resolved;
 }
 
-uint64_t ResolvedFamilyCount() { return (g_locker.cls ? 1u : 0u) + (g_console.cls ? 1u : 0u); }
+uint64_t ResolvedFamilyCount() { return (g_locker.resolved ? 1u : 0u) + (g_console.resolved ? 1u : 0u); }
 
 bool IsDoorBox(void* obj) { return DescOf(obj) != nullptr; }
-bool IsLocker(void* obj) { return obj && g_locker.cls && DescOf(obj) == &g_locker; }
-bool IsDroneConsole(void* obj) { return obj && g_console.cls && DescOf(obj) == &g_console; }
+bool IsLocker(void* obj) { return obj && g_locker.resolved && DescOf(obj) == &g_locker; }
+bool IsDroneConsole(void* obj) { return obj && g_console.resolved && DescOf(obj) == &g_console; }
 
 bool CallAction(void* actor, void* player, uint8_t action) {
     void* cls = actor ? R::ClassOf(actor) : nullptr;
@@ -190,10 +208,11 @@ bool ApplyOpened(void* actor, bool want) {
     const bool triggerWired =
         isLocker && d->offTrigger >= 0 &&
         *reinterpret_cast<void* const*>(reinterpret_cast<const char*>(actor) + d->offTrigger) != nullptr;
-    if (isLocker && g_locker.verbFn && !triggerWired) {
+    void* const verb = Verb(actor, d->verb);
+    if (isLocker && verb && !triggerWired) {
         // The full native verb: writes opened, plays the sound, swings the
         // Timeline, sets door collision.
-        ParamFrame f(g_locker.verbFn);
+        ParamFrame f(verb);
         if (!f.valid()) return false;
         f.Set<bool>(L"opened", want);
         if (!Call(actor, f)) return false;
@@ -208,8 +227,8 @@ bool ApplyOpened(void* actor, bool want) {
         // opened := want, refresh the button/blinklight collision, drive the
         // swing natively via the Timeline component.
         *reinterpret_cast<bool*>(reinterpret_cast<char*>(actor) + d->offOpened) = want;
-        if (d == &g_console && g_console.verbFn) {
-            ParamFrame f(g_console.verbFn);
+        if (d == &g_console && verb) {
+            ParamFrame f(verb);
             if (f.valid()) Call(actor, f);
         }
         void* tl = d->offTimeline < 0 ? nullptr : *reinterpret_cast<void* const*>(

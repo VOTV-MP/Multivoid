@@ -76,7 +76,7 @@ bool CallDoorClose(void* door, bool bypass);
 bool CallRunTrigger(void* door, void* owner, int32_t index);
 
 // Read the door's power flag, the field its open gate reads: a keypad's setActive writes it, as
-// do power triggers and the save. False on a null door or an unresolved field. Game thread.
+// do ventCrawler on one door and the save, and a level trigger's runTrigger 2/3 could. False on a null door or an unresolved field. Game thread.
 bool TryReadActive(void* door, bool& on);
 
 // Read the door's ignoreBlackout, level data only its save load writes: the power panel's blackout opens

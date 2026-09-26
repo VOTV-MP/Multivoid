@@ -5,6 +5,7 @@
 
 #include "ue_wrap/devices/appliance.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/log.h"
@@ -29,13 +30,14 @@ struct Desc {
     const wchar_t* applyFn;
     const wchar_t* applyFn2;       // optional 2nd refresh verb (sink: upd() AFTER updIsOn()); nullptr if none
     const wchar_t* applyParam;     // the setter's bool parameter; nullptr for a no-arg refresh verb
-    // resolved lazily (game-thread serial -- no lock):
-    void*   cls;
-    int32_t keyOff;                // the Key the class inherits from Aactor_save_C
-    int32_t boolOff;
-    void*   fn;
-    void*   fn2;
-    bool    unusable;              // its class loaded but its Key or bool did not resolve: left out, said once
+    // Resolved lazily (game-thread serial -- no lock). The class is kept only while its slot and serial
+    // still hold it, a Blueprint class being able to get a new object in a new world; the verbs resolve
+    // per instance; the offsets are the class's layout, the same in every world, so they are read once.
+    int32_t keyOff = -1;           // the Key the class inherits from Aactor_save_C
+    int32_t boolOff = -1;
+    bool    resolved = false;
+    bool    unusable = false;      // its class loaded but its Key or bool did not resolve: left out, said once
+    ue_wrap::CachedObjRef clsRef;  // the class as this world holds it
 };
 
 // sink_C's BP player_use calls updIsOn() THEN upd() -- updIsOn() flips the tap state, upd()
@@ -51,17 +53,29 @@ struct Desc {
 // The faucet's is `active`, which its use action toggles before calling upd() and its getData saves;
 // its `turnOn` is the look-at flag lookAt sets while a player aims at the tap (faucet_C's bytecode).
 Desc g_descs[] = {
-    { L"faucet_C",         L"active",       L"upd",       nullptr, nullptr,   nullptr, -1, -1, nullptr, nullptr, false },
-    { L"sink_C",           L"isOn",         L"updIsOn",   L"upd",  nullptr,   nullptr, -1, -1, nullptr, nullptr, false },
-    { L"prop_shower_C",    L"running_cold", L"updWater",  nullptr, nullptr,   nullptr, -1, -1, nullptr, nullptr, false },
-    { L"kitchen_C",        L"Active",       L"upd",       nullptr, nullptr,   nullptr, -1, -1, nullptr, nullptr, false },
-    { L"serverBox_C",      L"active",       L"visual",    nullptr, L"active", nullptr, -1, -1, nullptr, nullptr, false },
-    { L"wallunit_tapes_C", L"Active",       L"upd",       nullptr, nullptr,   nullptr, -1, -1, nullptr, nullptr, false },
+    { L"faucet_C",         L"active",       L"upd",       nullptr, nullptr   },
+    { L"sink_C",           L"isOn",         L"updIsOn",   L"upd",  nullptr   },
+    { L"prop_shower_C",    L"running_cold", L"updWater",  nullptr, nullptr   },
+    { L"kitchen_C",        L"Active",       L"upd",       nullptr, nullptr   },
+    { L"serverBox_C",      L"active",       L"visual",    nullptr, L"active" },
+    { L"wallunit_tapes_C", L"Active",       L"upd",       nullptr, nullptr   },
 };
 constexpr int kNumDescs = sizeof(g_descs) / sizeof(g_descs[0]);
 
-void* g_bases[kNumDescs] = {};         // resolved class pointers, for the IsAppliance fast filter
-int   g_nBases = 0;
+// A descriptor's class as this world holds it, looked up by name again once its slot or serial no longer
+// holds the kept one. Game thread.
+void* ClassFor(Desc& d) {
+    if (void* c = d.clsRef.Get()) return c;
+    void* c = ue_wrap::object_index::ClassByName(d.className);
+    if (c) d.clsRef.Set(c);
+    return c;
+}
+
+// One of an instance's verbs: its class's own, memoised by the reflection layer.
+void* Verb(void* a, const wchar_t* name) {
+    void* cls = a && name ? R::ClassOf(a) : nullptr;
+    return cls ? R::FindDispatchFunctionCached(cls, name) : nullptr;
+}
 
 // The oven's `fixed`, on the class of the oven it is read from.
 R::InstanceOffset g_ovenFixed{L"fixed"};
@@ -73,11 +87,11 @@ Desc* DescFor(void* obj) {
     void* cls = R::ClassOf(obj);
     if (!cls) return nullptr;
     for (auto& d : g_descs)
-        if (d.cls && cls == d.cls) return &d;          // exact match (fast path)
+        if (d.resolved && cls == ClassFor(d)) return &d;  // exact match (fast path)
     for (auto& d : g_descs) {
-        if (!d.cls) continue;
-        void* base[1] = { d.cls };
-        if (R::IsDescendantOfAny(cls, base, 1)) return &d;  // subclass fallback
+        if (!d.resolved) continue;
+        void* base = ClassFor(d);
+        if (base && R::IsDescendantOfAny(cls, &base, 1)) return &d;  // subclass fallback
     }
     return nullptr;
 }
@@ -88,10 +102,11 @@ bool EnsureResolved() {
     // Each leaf class as it streams in: a class held or left out costs a flag test, and one not loaded
     // yet one object-index lookup, which costs nothing on a miss. Then its bool, its verbs and its
     // Key, which is declared on the Aactor_save_C base and which the property lookup climbs to.
-    bool newlyResolved = false;
+    int resolved = 0;
     for (auto& d : g_descs) {
-        if (d.cls || d.unusable) continue;
-        void* cls = ue_wrap::object_index::ClassByName(d.className);
+        if (d.resolved) { ++resolved; continue; }
+        if (d.unusable) continue;
+        void* cls = ClassFor(d);
         if (!cls) continue;
         const int32_t keyOff = R::FindPropertyOffset(cls, L"Key");
         const int32_t off = R::FindPropertyOffset(cls, d.boolName);
@@ -101,6 +116,7 @@ bool EnsureResolved() {
                     d.className, keyOff < 0 ? L"Key" : d.boolName);
             continue;
         }
+        // The verbs are asked here only so a build without them says so; each call resolves its own.
         void* fn = R::FindFunction(cls, d.applyFn);
         if (!fn)
             UE_LOGW("appliance: %ls.%ls() apply verb not found -- field write only",
@@ -111,29 +127,30 @@ bool EnsureResolved() {
             if (!fn2)
                 UE_LOGW("appliance: %ls.%ls() 2nd refresh verb not found", d.className, d.applyFn2);
         }
-        d.cls = cls;
         d.keyOff = keyOff;
         d.boolOff = off;
-        d.fn = fn;
-        d.fn2 = fn2;
-        newlyResolved = true;
+        d.resolved = true;
+        ++resolved;
         UE_LOGI("appliance: resolved %ls Key@0x%04X bool@0x%04X fn=%p fn2=%p", d.className, keyOff, off, fn, fn2);
     }
-    if (newlyResolved) {
-        g_nBases = 0;
-        for (auto& d : g_descs)
-            if (d.cls) g_bases[g_nBases++] = d.cls;
-    }
-    return g_nBases > 0;
+    return resolved > 0;
 }
 
-uint64_t ResolvedClassCount() { return static_cast<uint64_t>(g_nBases); }
+uint64_t ResolvedClassCount() {
+    uint64_t n = 0;
+    for (const Desc& d : g_descs) n += d.resolved ? 1u : 0u;
+    return n;
+}
 
 bool IsAppliance(void* obj) {
-    if (!obj || g_nBases == 0) return false;
-    void* cls = R::ClassOf(obj);
+    void* cls = obj ? R::ClassOf(obj) : nullptr;
     if (!cls) return false;
-    return R::IsDescendantOfAny(cls, g_bases, g_nBases);
+    void* bases[kNumDescs];
+    int n = 0;
+    for (auto& d : g_descs)
+        if (d.resolved)
+            if (void* c = ClassFor(d)) bases[n++] = c;
+    return n > 0 && R::IsDescendantOfAny(cls, bases, n);
 }
 
 std::wstring GetKeyString(void* a) {
@@ -158,11 +175,12 @@ bool ApplyState(void* a, bool on) {
         // serverBox: visual(active) is `this.active = active` and a check() repaint, the call a kerfur
         // Omega makes; its setActive(bNewActive) only switches the loop and sound components and
         // writes no `active` (serverBox_C's bytecode), so a copy set through it kept its old state.
-        if (!d->fn) {
+        void* const fn = Verb(a, d->applyFn);
+        if (!fn) {
             if (d->boolOff >= 0) *reinterpret_cast<bool*>(reinterpret_cast<char*>(a) + d->boolOff) = on;
             return false;
         }
-        ParamFrame f(d->fn);
+        ParamFrame f(fn);
         if (!f.valid() || !f.Set<bool>(d->applyParam, on)) return false;
         return Call(a, f);
     }
@@ -175,14 +193,14 @@ bool ApplyState(void* a, bool on) {
     if (d->boolOff < 0) return false;
     *reinterpret_cast<bool*>(reinterpret_cast<char*>(a) + d->boolOff) = on;
     bool ok = true;
-    if (d->fn) {
-        ParamFrame f(d->fn);
+    if (void* const fn = Verb(a, d->applyFn)) {
+        ParamFrame f(fn);
         if (f.valid()) ok = Call(a, f);
     }
     // sink: upd() AFTER updIsOn() so the water particle/sound repaints too (mirrors the BP's
-    // player_use sequence). nullptr/no-op for the single-verb appliances.
-    if (d->fn2) {
-        ParamFrame f2(d->fn2);
+    // player_use sequence). No second verb for the single-verb appliances.
+    if (void* const fn2 = d->applyFn2 ? Verb(a, d->applyFn2) : nullptr) {
+        ParamFrame f2(fn2);
         if (f2.valid()) Call(a, f2);
     }
     return ok;
@@ -191,8 +209,9 @@ bool ApplyState(void* a, bool on) {
 bool IsTap(void* obj) {
     void* cls = obj ? R::ClassOf(obj) : nullptr;
     if (!cls) return false;
-    for (const Desc& d : g_descs)
-        if (d.cls == cls && (std::wcscmp(d.className, L"faucet_C") == 0 || std::wcscmp(d.className, L"sink_C") == 0))
+    for (Desc& d : g_descs)
+        if ((std::wcscmp(d.className, L"faucet_C") == 0 || std::wcscmp(d.className, L"sink_C") == 0) &&
+            d.resolved && ClassFor(d) == cls)
             return true;
     return false;
 }
@@ -200,8 +219,8 @@ bool IsTap(void* obj) {
 bool IsOven(void* obj) {
     void* cls = obj ? R::ClassOf(obj) : nullptr;
     if (!cls) return false;
-    for (const Desc& d : g_descs)
-        if (d.cls == cls && std::wcscmp(d.className, L"kitchen_C") == 0) return true;
+    for (Desc& d : g_descs)
+        if (std::wcscmp(d.className, L"kitchen_C") == 0 && d.resolved && ClassFor(d) == cls) return true;
     return false;
 }
 

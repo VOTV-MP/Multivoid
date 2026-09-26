@@ -5,6 +5,7 @@
 
 #include "ue_wrap/devices/garage.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -20,15 +21,12 @@ namespace R = reflection;
 
 std::atomic<bool> g_resolved{false};
 
-void*   g_garageCls = nullptr;  // garage_C UClass
 int32_t g_openOff   = -1;       // Agarage_C::Open
 int32_t g_movOff    = -1;       // Agarage_C::mov, true mid-swing (optional: only a drill reads it)
-void*   g_runTriggerFn = nullptr;  // runTrigger(owner, index), the wall button's call (optional, a drill's)
-void*   g_acivaeFn  = nullptr;  // acivae() -- the NATIVE animated swing (the montage from position
-                                // 0 at half rate, and the move timeline over its full length). NOT
-                                // settime, which runs the same timeline and then JUMPS it: the
-                                // montage at full rate from position 100, then move.SetNewTime
-                                // to second 0 or 1 of a six-second track.
+// The verbs, resolved per instance (Verb below): runTrigger(owner, index), the wall button's call (a drill's),
+// and acivae() -- the NATIVE animated swing (the montage from position 0 at half rate, and the move timeline
+// over its full length). NOT settime, which runs the same timeline and then JUMPS it: the montage at full
+// rate from position 100, then move.SetNewTime to second 0 or 1 of a six-second track.
 // No Key offset: identity is the level-export FName (GetNameKey), not the save key -- see
 // garage.h for why the key cannot serve as one.
 
@@ -36,13 +34,29 @@ void*   g_acivaeFn  = nullptr;  // acivae() -- the NATIVE animated swing (the mo
 // object.
 void* g_failedCls = nullptr;
 
+// garage_C as this world holds it: kept only while its slot and serial still hold it, looked up by name again
+// after a world gave the class a new object. Game thread.
+ue_wrap::CachedObjRef g_garageClsRef;
+void* GarageClass() {
+    if (void* c = g_garageClsRef.Get()) return c;
+    void* c = ue_wrap::object_index::ClassByName(L"garage_C");
+    if (c) g_garageClsRef.Set(c);
+    return c;
+}
+
+// One of the garage's verbs on this instance: its class's own, memoised by the reflection layer.
+void* Verb(void* g, const wchar_t* name) {
+    void* cls = g ? R::ClassOf(g) : nullptr;
+    return cls ? R::FindDispatchFunctionCached(cls, name) : nullptr;
+}
+
 }  // namespace
 
 bool EnsureResolved() {
     if (g_resolved.load(std::memory_order_acquire)) return true;
 
     // One object-index lookup a call until the class loads, which costs nothing while it has not.
-    void* cls = ue_wrap::object_index::ClassByName(L"garage_C");
+    void* cls = GarageClass();
     if (!cls || cls == g_failedCls) return false;
     const int32_t openOff = R::FindPropertyOffset(cls, L"Open");
     void* acivaeFn = R::FindFunction(cls, L"acivae");
@@ -53,26 +67,23 @@ bool EnsureResolved() {
         return false;
     }
 
-    g_garageCls = cls;
     g_openOff   = openOff;
     g_movOff    = R::FindPropertyOffset(cls, L"mov");
-    g_runTriggerFn = R::FindFunction(cls, L"runTrigger");
-    g_acivaeFn  = acivaeFn;
+    void* const runTriggerFn = R::FindFunction(cls, L"runTrigger");  // asked here only to say its absence
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("garage: resolved garage_C=%p Open@0x%04X acivae=%p (identity=level-export FName)",
             cls, openOff, acivaeFn);
-    if (g_movOff < 0 || !g_runTriggerFn)
+    if (g_movOff < 0 || !runTriggerFn)
         UE_LOGW("garage: mov@%d runTrigger=%p did not both resolve -- a drill cannot wait for a garage's rest "
-                "or toggle it", g_movOff, g_runTriggerFn);
+                "or toggle it", g_movOff, runTriggerFn);
     return true;
 }
 
 bool IsGarage(void* obj) {
-    if (!obj || !g_garageCls) return false;
+    if (!obj || !g_resolved.load(std::memory_order_acquire)) return false;
+    void* garageCls = GarageClass();
     void* cls = R::ClassOf(obj);
-    if (!cls) return false;
-    void* bases[1] = { g_garageCls };
-    return R::IsDescendantOfAny(cls, bases, 1);
+    return garageCls && cls && R::IsDescendantOfAny(cls, &garageCls, 1);
 }
 
 std::wstring GetNameKey(void* g) {
@@ -91,7 +102,8 @@ bool TryReadOpen(void* g, bool& open) {
 }
 
 bool ApplyOpen(void* g, bool open) {
-    if (!g || !g_acivaeFn) return false;
+    void* const acivae = Verb(g, L"acivae");
+    if (!acivae) return false;
     // Idempotent: if already in the target state, do nothing (skip the re-trigger + the echo).
     bool cur = false;
     if (TryReadOpen(g, cur) && cur == open) return true;
@@ -112,7 +124,7 @@ bool ApplyOpen(void* g, bool open) {
     // door, last writer wins. This is the local E-press path minus the toggle and that guard.
     if (g_openOff >= 0)
         *reinterpret_cast<bool*>(reinterpret_cast<char*>(g) + g_openOff) = open;
-    ParamFrame f(g_acivaeFn);  // acivae() takes no params -- it reads the Open field for direction
+    ParamFrame f(acivae);  // acivae() takes no params -- it reads the Open field for direction
     if (!f.valid()) return false;
     return Call(g, f);
 }
@@ -124,8 +136,9 @@ bool TryReadMoving(void* g, bool& moving) {
 }
 
 bool CallRunTrigger(void* g, void* owner, int32_t index) {
-    if (!g || !g_runTriggerFn) return false;
-    ParamFrame f(g_runTriggerFn);
+    void* const fn = Verb(g, L"runTrigger");
+    if (!fn) return false;
+    ParamFrame f(fn);
     if (!f.valid() || !f.Set<void*>(L"owner", owner) || !f.Set<int32_t>(L"index", index)) return false;
     return Call(g, f);
 }
