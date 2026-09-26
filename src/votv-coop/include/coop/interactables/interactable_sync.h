@@ -8,12 +8,11 @@
 //   - LockerDoorState (50):  lockers and the drone-console box (level-export name)
 //   - LightGroupState (129): light groups   (runTrigger on the root, host-authoritative)
 //   - OvenRepairState (151): the kitchen oven's repair (its fix(), one way)
-// Gameplay/network layer (principle 7): the wire protocol, the senders, the receiver apply, the key
-// index, the deferred-apply retry and the connect snapshot; the engine only through ue_wrap. Every
-// channel is sent at the verbs that write its state, on the authority: the host for doors and light
-// groups (coop/interactables/door_state_verbs, lightgroup_verbs), the peer that ran it for the
-// symmetric rest (coop/interactables/toggle_verbs). A write no verb makes, a save's load, reaches a
-// joiner in the connect snapshot. The model: docs/devices.md.
+// Gameplay/network layer (principle 7): the wire protocol, the senders, the receiver apply, the key index, the
+// deferred-apply retry and the connect snapshot; the engine only through ue_wrap. Every channel is sent at the verbs
+// that write its state, on the authority: the host for doors and light groups (coop/interactables/door_state_verbs,
+// lightgroup_verbs), the peer that ran it for the symmetric rest (coop/interactables/toggle_verbs). A write no verb
+// makes, a save's load, reaches a joiner in the connect snapshot. The model: docs/devices.md.
 
 #pragma once
 
