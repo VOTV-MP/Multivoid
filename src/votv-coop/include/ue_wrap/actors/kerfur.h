@@ -51,24 +51,26 @@ void DriveKerfurState(void* actor, uint8_t state, bool spooky);
 // exact inverse of the BP's K2_SetTimerDelegate arm). No-op on non-kerfur.
 void NeutralizeAiTimers(void* actor);
 
-// ---- host-authoritative menu command relay + ownership-aware follow ----------------------
+// ---- host-authoritative menu command relay ---------------------------------------------------
 
 // Read the kerfur's `kill` (murderfur-mode) guard. actionName refuses the whole radial menu
 // when kill==true; the relay replicates that guard before executing. false if unresolvable.
 bool ReadKill(void* actor);
 
-// Write ONLY the command State byte (enum_kerfurCommand) -- used to park a host-side
-// owned-follow kerfur in idle (b1) so the BP's own move() stops re-pinning player-0, while we
-// drive the path ourselves. No-op on non-kerfur. (DriveKerfurState writes State+spooky together
-// for the mirror; this writes State alone on the host's real kerfur.)
-void SetCommandState(void* actor, uint8_t state);
-
 // Execute a radial-menu verb on the host's real kerfur exactly as the BP would: call
 // kerfurOmega_C::actionName(playerActor, <zeroed Hit>, name) via ProcessEvent. The BP branch
-// sets State + move()/dropObject() and honors its own kill/busy guards. `playerActor` must be a
-// valid AmainPlayer_C (the non-follow verbs don't read it, but pass a live one). Returns false
-// if actionName is unresolved. Game thread only.
+// sets State + move()/dropObject() and honors its own kill/busy guards. Only take_object and
+// equipment read `playerActor` (holdObject_kerf, objectViewer assign); pass a live
+// AmainPlayer_C all the same. Returns false if actionName is unresolved. Game thread only.
 bool RunActionName(void* kerfurActor, void* playerActor, const wchar_t* name);
+
+// Is `out` the variable the disc insert's player reads write: lib.getMainPlayer's out argument as
+// passed from the Omega's ubergraph (`callerFunction`, whose frame is `callerLocals`)? The insert's
+// four reads (get_reports, state 4) all write CallFunc_getMainPlayer_AsMain_Player_1; the Omega's
+// other getMainPlayer reads -- murder mode, the petting, loadHoldItem (nothing calls it) -- write others.
+// False until the class loads, and while this build's class lacks the variable (said once per class
+// object). Game thread.
+bool IsInsertPlayerRead(void* callerFunction, const uint8_t* callerLocals, const uint8_t* out);
 
 // Whether the Omega holds a disc it took for its reports (`hasFloppy`). False when it is not an Omega or
 // the field did not resolve. Game thread.
@@ -78,15 +80,5 @@ bool ReadHasFloppy(void* actor, bool& has);
 // the server, a reports task the dish console; patrol and fix_transformers clear it, idle leaves it. Null
 // when it is not an Omega, the field did not resolve, or it is unset. Game thread.
 void* ReadTargetActor(void* actor);
-
-// Drive an owned-follow kerfur toward `targetActor` (the requesting player's body -- the host
-// mainPlayer_C or a remote puppet) via the engine's stock MoveTo async proxy
-// (UAIBlueprintHelperLibrary::CreateMoveToProxyObject(Pawn=kerfur, Destination, TargetActor,
-// AcceptanceRadius, false)). The kerfur is a real pawn with a working AIController (it follows
-// player-0 natively), so this paths over navmesh. Pass BOTH targetActor AND its location as
-// Destination (Destination is always honored; TargetActor following is best-effort for a
-// non-pawn puppet). Fire-and-forget (the returned proxy self-manages). Game thread only.
-void IssueFollowMoveTo(void* kerfurPawn, void* targetActor,
-                       float destX, float destY, float destZ, float acceptRadius);
 
 }  // namespace ue_wrap::kerfur

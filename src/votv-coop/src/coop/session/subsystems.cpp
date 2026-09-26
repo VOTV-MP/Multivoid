@@ -55,7 +55,7 @@
 #include "coop/props/prop_drop_intent.h"  // client-place -> host-auth keyed-prop DROP INTENT
 #include "coop/props/prop_spawn_authoring.h"  // a PLAYER's spawn verb vs the world's own spawns
 #include "coop/creatures/kerfur_convert.h"  // host-authoritative kerfur on/off conversion (the dupe fix)
-#include "coop/creatures/kerfur_command.h"  // host-authoritative kerfur menu command relay + ownership follow
+#include "coop/creatures/kerfur_command.h"  // host-authoritative kerfur menu command relay, serving the requester
 #include "coop/creatures/kerfur_menu_input.h"  // client radial-menu verb detection (InpActEvt_use PRE -> kerfur_command relay)
 #include "coop/creatures/kerfur_entity.h"  // the stable-KerfurId authority table
 #include "coop/creatures/kerfur_form_assembler.h"  // script-body gate consumer (observe-only + containment counter)
@@ -100,6 +100,7 @@
 #include "coop/props/pack_trash_intent.h"
 #include "coop/interactables/verb_lanes.h"  // the interactable lanes on a device's own verbs, at the script gate
 #include "coop/creatures/kerfus_lanes.h"  // the plain kerfur: its brain on the host, its state and drive, its verbs
+#include "coop/creatures/served_player.h"  // a robot the host runs for a client reads that client as its player
 #include "coop/items/broom_push.h"
 #include "coop/props/trash_pile_sync.h"
 #include "coop/save/save_block.h"
@@ -243,8 +244,9 @@ void Install(coop::net::Session& session) {
     coop::prop_drop_intent::Install(&session);  // CLIENT FinishSpawn post-hook (chains after host_spawn_watcher's) -> place detect -> host DROP INTENT
     coop::kerfur_entity::SetSession(&session);  // the stable-KerfurId authority table: the session for the host id-allocation role gate and the broadcasts
     coop::kerfur_convert::Install(&session);  // host-authoritative kerfur on/off conversion (a client's verb refused -> request; the host's verb converges at its return)
+    coop::served_player::Install(&session);  // HOST: the player-0 read seams the next two lanes serve through
     coop::kerfus_lanes::Install(session);  // the plain kerfur: a client refuses its brain and its verbs, the host sends its state
-    coop::kerfur_command::Install(&session);  // host-authoritative kerfur menu command relay + ownership-aware Follow
+    coop::kerfur_command::Install(&session);  // host-authoritative kerfur menu relay, serving the requester
     coop::kerfur_menu_input::Install(&session);  // client radial-menu verb detect (InpActEvt_use PRE -- the actionName dispatch is PE-invisible) -> kerfur_command relay
     coop::kerfur_form_assembler::Install(&session);  // script-body gate consumer: watch the two conversion verbs
     coop::prop_stick_sync::Install(&session);  // wall-attachable stick mirror (camera-on-wall -- commit observer -> PropStickState; receiver replays forceStick)
@@ -405,7 +407,8 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::desk_snd_fx::OnPeerLeft(slot);  // host-owned teardown of the leaver's loop sounds (broadcast OFF)
     coop::upgrade_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and its queued purchases
     coop::comp_sync::OnPeerDisconnect(static_cast<uint8_t>(slot));  // pause the mirror if the decode simulator left
-    coop::kerfur_command::OnPeerDisconnect(static_cast<uint8_t>(slot));  // release any kerfur the leaver was owned-following
+    coop::served_player::OnPeerLeft(static_cast<uint8_t>(slot));  // robots serving the leaver read the host
+    coop::kerfur_command::OnPeerLeft(static_cast<uint8_t>(slot));  // and its waiting kerfur commands go
     coop::voice_chat::OnDisconnectSlot(slot);  // drop the leaver's voice channel + icon state
     coop::sleep_sync::OnDisconnectForSlot(slot);  // drop the leaver from the sleep tally (re-gate)
     coop::owner_entity_sync::OnPeerLeftSlot(slot);  // destroy the leaver's owner-entity mirrors (its eyer dies with it)
@@ -445,7 +448,7 @@ DisconnectStats DisconnectAll() {
     // lives on (a host whose last client left) takes it again on its next tick.
     ReleaseSessionGateHold();
     coop::kerfur_entity::OnDisconnect();  // clear the KerfurId table + free its reserved host ids
-    coop::kerfur_command::OnDisconnect();  // drop pending menu commands + owned-follow map
+    coop::kerfur_command::OnDisconnect();  // drop pending and waiting menu commands
     coop::kerfur_menu_input::OnDisconnect();  // drop the cached session (the InpActEvt_use observer stays registered)
     coop::prop_stick_sync::OnDisconnect();  // drop commit-pending stick records
     coop::item_activate::OnDisconnect();
@@ -514,6 +517,7 @@ DisconnectStats DisconnectAll() {
     coop::pack_trash_intent::OnDisconnect();  // with no session the game's own bagging stands
     coop::verb_lanes::OnDisconnect();  // and each verb lane's queues, rates and summary line
     coop::kerfus_lanes::OnDisconnect();  // and the Kerfus lanes' records, waiting states and queues
+    coop::served_player::OnDisconnect();  // and every served robot's record: its seams disarm
     coop::broom_push::OnDisconnect();  // forget pushes not yet handed on
     coop::trash_collect_sync::OnDisconnect();
     coop::trash_channel::OnDisconnect();  // drop the per-eid trash sync-time-context map
@@ -625,7 +629,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; coop::broom_push::Tick(); }  // HOST: stream the props and clumps a broom stroke pushed (AFTER the drain above, which names the trash that same stroke dispensed)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::prop_drop_intent::Tick(&session); }  // CLIENT: author a PropDropIntent for a detected place whose Key is parked (cheap no-op when empty / on host)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::kerfur_form_assembler::Tick(); }  // GT FName-resolve the 2 verbs + bind the containment seams (latches once; no-op after)
-    { PP::Scope _s{PP::Bucket::TrashWatch};    coop::kerfur_command::Tick(); }  // drain menu commands + advance the ownership-follow loop (cheap no-op when idle)
+    { PP::Scope _s{PP::Bucket::TrashWatch};    coop::kerfur_command::Tick(); }  // menu commands; HOST: waiting ones
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::prop_stick_sync::Tick(); }  // broadcast recorded stick commits NOW -- must precede local_streams' release edge (net_pump runs TickGameplay first)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:pause_guard"}; coop::pause_guard::Tick(isConnected); }  // coop no-pause invariant -- un-pause the world while connected (ESC menu stays usable; a paused peer froze its pose stream)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:run_end"}; coop::player::run_end_travel::Tick(); }  // the run-ending seam's session-scoped work: publish the seam's readiness (the verdict itself runs in the VM's body loop)
@@ -649,6 +653,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:pack_trash"}; coop::pack_trash_intent::Tick(session); }  // client: spend the tools its presses sent; HOST: run one queued pack a tick a client
     { PP::Scope _s{PP::Bucket::Interactable}; coop::verb_lanes::Tick(session); }  // settle each verb lane's watches; HOST: run their queued intents
     { PP::Scope _s{PP::Bucket::Interactable}; coop::kerfus_lanes::Tick(session); }  // the Kerfus lanes' watches; CLIENT: waiting states; HOST: queued verbs
+    { PP::Scope _s{PP::Bucket::Interactable}; coop::served_player::Tick(); }  // HOST: the served robots' seams
     { PP::Scope _s{PP::Bucket::Balance};       coop::balance_sync::Tick(); }  // host polls saveSlot.Points + broadcasts on change; client retries the pending mirror apply
     { PP::Scope _s{PP::Bucket::Balance};       ue_wrap::ScopedWalkTimer _w{"sync:upgrades"}; coop::upgrade_sync::Tick(session); }  // host polls the upgrade struct + broadcasts on change, and runs one queued purchase a tick a client; client retries the pending mirror
     coop::dev::dev_lanes::TickProbes(session, isConnected, isHost);  // [dev] the RE probes, each self-installing when its knob is set

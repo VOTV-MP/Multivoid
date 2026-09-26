@@ -24,13 +24,7 @@ struct StateFields {
     int32_t activeOff = -1, chargingOff = -1, energyOff = -1;
     uint8_t activeMask = 0, chargingMask = 0;
 };
-// The task target and the possess point: what the path goal's answer reads.
-struct TaskFields {
-    State   s;
-    int32_t moveToOff = -1, possessOff = -1;
-};
 StateFields g_state;
-TaskFields  g_task;
 
 // Latches `s` on the result and names a missing field once.
 bool Settle(State& s, bool ok, const char* missing, const char* group) {
@@ -53,19 +47,6 @@ bool ResolveState(void* k) {
     f.s = g_state.s;
     g_state = f;
     return Settle(g_state.s, missing == nullptr, missing, "on, charging and energy");
-}
-
-bool ResolveTask(void* k) {
-    if (g_task.s.latch != 0) return g_task.s.latch > 0;
-    if (!k || !IsKerfus(k)) return false;
-    void* cls = R::ClassOf(k);
-    TaskFields f;
-    const char* missing = nullptr;
-    if ((f.moveToOff = R::FindPropertyOffset(cls, L"moveTo")) < 0) missing = "moveTo";
-    else if ((f.possessOff = R::FindPropertyOffset(cls, L"possessLoc")) < 0) missing = "possessLoc";
-    f.s = g_task.s;
-    g_task = f;
-    return Settle(g_task.s, missing == nullptr, missing, "task and possess point");
 }
 
 uint8_t* At(void* k, int32_t off) { return static_cast<uint8_t*>(k) + off; }
@@ -112,28 +93,6 @@ bool WriteEnergy(void* k, float energy) {
     if (!ResolveState(k)) return false;
     *reinterpret_cast<float*>(At(k, g_state.energyOff)) = energy;
     return true;
-}
-
-void* ValidTask(void* k) {
-    if (!ResolveTask(k)) return nullptr;
-    void* t = *reinterpret_cast<void* const*>(At(k, g_task.moveToOff));
-    return (t && R::IsLive(t)) ? t : nullptr;
-}
-
-bool ReadPossessLoc(void* k, FVector& at) {
-    if (!ResolveTask(k)) return false;
-    at = *reinterpret_cast<const FVector*>(At(k, g_task.possessOff));
-    return true;
-}
-
-int32_t TargetActorPossessOut(void* fn) {
-    static void*   sFn = nullptr;
-    static int32_t sOff = -1;
-    if (fn != sFn) {
-        sFn = fn;
-        sOff = fn ? R::FindParamOffset(fn, L"possessLoc") : -1;
-    }
-    return sOff;
 }
 
 bool RunUpd(void* k, bool skipFace) {

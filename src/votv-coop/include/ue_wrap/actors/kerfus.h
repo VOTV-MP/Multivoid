@@ -1,10 +1,9 @@
 // ue_wrap/actors/kerfus.h -- engine substrate for the plain kerfur (the Kerfus: p_kerfus_C and its
-// colour variants): the fields its sync reads and writes, its task and possess state, its refresh and
-// E-press verbs, and where its path-goal function keeps its out parameter. Pure reflection and
-// UFunction access; no net or gameplay logic (principle 7). The variants inherit every field and
-// function named here, so each group of fields resolves once, off the first Kerfus seen, and a group
-// with a field this build lacks is said once, naming it, and not looked up again. Every accessor takes
-// a Kerfus (IsKerfus): once a group has resolved it reads whatever pointer it is handed. The kerfurOmega
+// colour variants): the fields its sync reads and writes, and its refresh, E-press and possess verbs.
+// Pure reflection and UFunction access; no net or gameplay logic (principle 7). The variants inherit
+// every field and function named here, so the group of fields resolves once, off the first Kerfus seen,
+// and a field this build lacks is said once, naming it, and not looked up again. Every accessor takes a
+// Kerfus (IsKerfus): once the group has resolved it reads whatever pointer it is handed. The kerfurOmega
 // NPC is ue_wrap/actors/kerfur. Game thread, every function.
 
 #pragma once
@@ -29,17 +28,6 @@ bool ReadCharging(void* k, bool& on);
 bool WriteCharging(void* k, bool on);
 bool ReadEnergy(void* k, float& energy);
 bool WriteEnergy(void* k, float energy);
-
-// Its task target: `moveTo` when IsValid, the test its Blueprint makes, else null (no task, or a
-// target already destroyed). A group of its own with the possess point.
-void* ValidTask(void* k);
-
-// The haunting's possess point, the member `possessLoc`: zero while it is not possessed.
-bool ReadPossessLoc(void* k, FVector& at);
-
-// Where the path-goal function targetActor (`fn`) keeps its out `possessLoc`: an Offset_Internal for
-// script_gate::OutParamPtr, or -1.
-int32_t TargetActorPossessOut(void* fn);
 
 // The game's own refresh after `active` changes: upd(skipFace) -- the face, the sounds, the camera.
 bool RunUpd(void* k, bool skipFace);

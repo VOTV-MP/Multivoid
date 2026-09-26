@@ -1,15 +1,15 @@
-// coop/creatures/kerfur_command.h -- the kerfur's radial menu, relayed host-authoritatively, with a follow
-// that follows whoever picked it. The subsystem's page is docs/npcs-and-kerfur.md.
+// coop/creatures/kerfur_command.h -- the kerfur's radial menu, relayed host-authoritatively; the kerfur
+// serves whoever picked a verb.
 //
-// The game's own actionName sets the kerfur's State and calls move(), and its follow branch pins
-// `GetPlayerPawn(self, 0)` -- on the host, always the HOST's pawn, since a remote player is a bare
-// skeletal-mesh puppet with no pawn of its own. So the stock follow always follows the host, and a
-// client picking a verb on its adopted mirror would run it locally on a parked actor. Both roles
-// therefore CANCEL the local dispatch and the host performs the verb: the State verbs by re-running
-// the real actionName (they ignore the Player param, and the State change reaches the mirrors on
-// the existing pose stream), follow by pinning State to idle -- silencing the game's own player-0
-// mover -- and driving its own MoveTo loop toward the owner's body. turn_off stays in
-// kerfur_convert, being a prop conversion rather than a State change.
+// The game's own actionName sets the kerfur's State and calls move(), and its verbs read the player as
+// player 0 -- the follow MoveTo and the patrol on GetPlayerPawn(0), the disc insert on lib.getMainPlayer()
+// -- which on the host is always the host. Both roles CANCEL the local dispatch (a client's mirror is a
+// parked actor) and the host runs the real actionName with the requester recorded in served_player first,
+// so those reads answer that player's puppet and the game's own follow follows it; a request waits while
+// the host has no body for its sender. A command the game refuses (kill mode, a job) changes nobody's
+// service, the host's own hands the kerfur back to player 0, a leaver's ends, and murder mode's at its
+// startKill, before the chase reads anyone. Nothing writes a puppet's hand, so a client's get_reports gets
+// the game's refusal hint, shown on the host. turn_off stays in kerfur_convert. Page: docs/npcs-and-kerfur.md.
 //
 // Principle 7: gameplay/network module; engine access through ue_wrap/kerfur and game_thread only.
 
@@ -51,32 +51,29 @@ Command CommandFromActionName(const std::wstring& name);
 // thread-local guard catches.
 bool TryRecordMenuCommand(void* self, const std::wstring& name, bool isClient);
 
-// Store the session pointer, re-cached on every call so a reconnect lands. Nothing else installs
-// here: the actionName interceptor belongs to kerfur_convert, and the verb and move UFunctions
-// resolve lazily on first use inside ue_wrap/kerfur.
+// Store the session pointer, re-cached on every call so a reconnect lands, and on a host register the
+// startKill watch once and settle it at once; a refused or dead watch is said once, and from then an Omega
+// serves no client. The actionName interceptor belongs to kerfur_convert. Game thread.
 void Install(coop::net::Session* session);
 
-// HOST-only receiver for a KerfurCommand request, wired in event_dispatch_intent. Resolves the eid
-// to a kerfur and drops the request unless the eid is in the host-allocated range, the actor is
-// live, it is a kerfur, the command is a known one, and the kerfur is not in kill mode -- the last
-// matching the game's own actionName guard, where a murderfur refuses the menu. Then: follow sets
-// the owner to the sending slot, State to idle and starts the loop; any other verb ends an
-// owned-follow and runs the real actionName. Game thread.
+// HOST-only receiver for a KerfurCommand request, wired in event_dispatch_intent. It waits while the host
+// has no posed body for the sender or the Omega's seams are still settling (the sender's latest request per
+// kerfur, in arrival order), then resolves the eid to a kerfur and drops the request unless the eid is in
+// the host-allocated range, the actor is live, it is a kerfur, the command is a known one, and the kerfur is
+// not in kill mode or on a job -- the last two matching the game's own guards. Then the kerfur serves the
+// sending slot and the real actionName runs; a verb that did not run restores whom it served. Game thread.
 void OnCommandRequest(const coop::net::KerfurCommandPayload& payload, uint8_t senderPeerSlot);
 
 // Game thread (net-pump tick): drain the recorded actions (client -> send request; host -> execute
-// locally) AND advance the ownership-follow loop (re-issue MoveTo toward each owner's body on a
-// cadence). Cheap no-op when nothing is pending and no kerfur is in owned-follow.
+// locally), run the waiting requests whose sender can now be served, and settle the startKill watch.
+// Cheap no-op when nothing is pending.
 void Tick();
 
-// A single peer (client `slot`) left: end every owned-follow that leaver held, restoring those
-// kerfurs to State=follow so the game's own branch resumes -- following the host -- and our MoveTo
-// loop stops driving them. Without it the kerfur stays pinned to idle while the loop chases a
-// puppet body that is gone. Game thread, on the per-slot disconnect edge in
-// subsystems::DisconnectSlot.
-void OnPeerDisconnect(uint8_t slot);
+// A peer left: its waiting requests go. Game thread, on the per-slot disconnect edge.
+void OnPeerLeft(uint8_t slot);
 
-// Clear per-session state (pending queue + owned-follow map). Net disconnect (all peers gone).
+// Clear the pending queue and the waiting requests. Net disconnect (all peers gone); served_player drops
+// the served kerfurs.
 void OnDisconnect();
 
 }  // namespace coop::kerfur_command

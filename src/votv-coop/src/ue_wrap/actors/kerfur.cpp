@@ -4,6 +4,7 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 
@@ -139,13 +140,6 @@ bool ReadKill(void* actor) {
     return *reinterpret_cast<const bool*>(reinterpret_cast<const uint8_t*>(actor) + g_offKill);
 }
 
-void SetCommandState(void* actor, uint8_t state) {
-    if (!IsKerfurActor(actor)) return;
-    ResolveKerfurOffsets();
-    if (g_offState >= 0)
-        *reinterpret_cast<uint8_t*>(reinterpret_cast<uint8_t*>(actor) + g_offState) = state;
-}
-
 bool RunActionName(void* kerfurActor, void* playerActor, const wchar_t* name) {
     if (!IsKerfurActor(kerfurActor) || !name) return false;
     static void* sActionNameFn = nullptr;
@@ -169,6 +163,27 @@ bool RunActionName(void* kerfurActor, void* playerActor, const wchar_t* name) {
     return ue_wrap::Call(kerfurActor, f);
 }
 
+bool IsInsertPlayerRead(void* callerFunction, const uint8_t* callerLocals, const uint8_t* out) {
+    // Resolved per class object, and again when the ubergraph function held is no longer that class's live
+    // one: a world that reloads the class brings a new function, possibly at the old class's address.
+    static void*   sCls = nullptr;
+    static void*   sUber = nullptr;
+    static int32_t sUberIdx = -1;
+    static int32_t sOff = -1;
+    void* kc = ue_wrap::object_index::ClassByName(P::name::NpcClass_KerfurOmega);
+    if (!kc) return false;
+    if (kc != sCls || (sUber && (!R::IsLiveByIndex(sUber, sUberIdx) || R::OuterOf(sUber) != kc))) {
+        sCls = kc;
+        sUber = R::FindFunction(kc, L"ExecuteUbergraph_kerfurOmega");
+        sUberIdx = sUber ? R::InternalIndexOf(sUber) : -1;
+        sOff = sUber ? R::FindPropertyOffset(sUber, L"CallFunc_getMainPlayer_AsMain_Player_1") : -1;
+        if (sOff < 0)
+            UE_LOGW("kerfur: the disc insert's player variable did not resolve (ubergraph %p) -- a served "
+                    "Omega's insert reads player 0 while this class lives", sUber);
+    }
+    return sOff >= 0 && callerFunction == sUber && callerLocals && out == callerLocals + sOff;
+}
+
 bool ReadHasFloppy(void* actor, bool& has) {
     if (!IsKerfurActor(actor)) return false;
     static int32_t sOff = -2;
@@ -186,37 +201,6 @@ void* ReadTargetActor(void* actor) {
     if (sOff < 0) return nullptr;
     void* t = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(actor) + sOff);
     return (t && R::IsLive(t)) ? t : nullptr;
-}
-
-void IssueFollowMoveTo(void* kerfurPawn, void* targetActor,
-                       float destX, float destY, float destZ, float acceptRadius) {
-    if (!kerfurPawn || !R::IsLive(kerfurPawn)) return;
-    static void* sAiCdo  = nullptr;
-    static void* sMoveFn = nullptr;
-    if (!sAiCdo) sAiCdo = R::FindClassDefaultObject(L"AIBlueprintHelperLibrary");
-    if (sAiCdo && !sMoveFn) {
-        if (void* ac = R::FindClass(L"AIBlueprintHelperLibrary"))
-            sMoveFn = R::FindFunction(ac, L"CreateMoveToProxyObject");
-    }
-    if (!sAiCdo || !sMoveFn) {
-        static bool sWarned = false;
-        if (!sWarned) { sWarned = true;
-            UE_LOGW("kerfur: CreateMoveToProxyObject unresolved -- ownership-follow disabled"); }
-        return;
-    }
-    // UAIBlueprintHelperLibrary::CreateMoveToProxyObject(WorldContextObject, Pawn, Destination,
-    // TargetActor, AcceptanceRadius, bStopOnOverlap). Pawn = the kerfur (it has the AIController);
-    // TargetActor (the puppet) is best-effort follow, Destination is the always-honored fallback.
-    ue_wrap::ParamFrame f(sMoveFn);
-    if (!f.valid()) return;
-    f.Set<void*>(L"WorldContextObject", kerfurPawn);
-    f.Set<void*>(L"Pawn", kerfurPawn);
-    const float dest[3] = {destX, destY, destZ};
-    f.SetRaw(L"Destination", dest, sizeof(dest));
-    f.Set<void*>(L"TargetActor", targetActor);  // may be null -> Destination-only
-    f.Set<float>(L"AcceptanceRadius", acceptRadius);
-    f.Set<uint8_t>(L"bStopOnOverlap", uint8_t{0});
-    ue_wrap::Call(sAiCdo, f);  // returns a proxy we don't keep (fire-and-forget)
 }
 
 }  // namespace ue_wrap::kerfur

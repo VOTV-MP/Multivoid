@@ -233,9 +233,9 @@ bool HandleIntentEvent(net::Session& session,
     }
     case net::ReliableKind::KerfurCommand: {
         // client->host kerfur radial-menu command (follow/idle/patrol/...). Host-authoritative; the
-        // handler validates the element + kerfur class + the BP kill-guard, then runs the verb (or,
-        // for Follow, starts the host-side MoveTo loop toward the REQUESTING player's body --
-        // senderSlot). coop::kerfur_command.
+        // handler waits for the sender's body, validates the element + kerfur class + the BP guards,
+        // then runs the verb with the kerfur serving the REQUESTING player (senderSlot).
+        // coop::kerfur_command.
         if (session.role() != net::Role::Host) {
             UE_LOGW("event_feed: KerfurCommand received on a client -- dropping");
             break;
