@@ -84,6 +84,10 @@ bool TryReadActive(void* door, bool& on);
 // is off only if it does not. False on a null door or an unresolved field. Game thread.
 bool TryReadIgnoresBlackout(void* door, bool& ignores);
 
+// The door's swing as its fields hold it, for a probe's line: isOpened, isMoving, dir, whether the move
+// timeline plays, jammed and the timeline's value (-1 for a field that did not resolve). Game thread.
+void DescribeSwing(void* door, char* out, size_t n);
+
 // The actors the door's own sensor holds now: sensorOverlaps, which the sensor's begin- and
 // end-overlap handlers fill with every Pawn and prop that enters and leaves it; the autoclose
 // reads its length every five seconds and closes the door at the first reading that finds it

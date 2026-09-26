@@ -16,6 +16,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <unordered_map>
 
 namespace ue_wrap::door {
@@ -316,6 +317,21 @@ bool TryReadIgnoresBlackout(void* door, bool& ignores) {
     if (!door || !g_resolved.load(std::memory_order_acquire) || g_ignoreBlackoutOff < 0) return false;
     ignores = (*(reinterpret_cast<const uint8_t*>(door) + g_ignoreBlackoutOff) & g_ignoreBlackoutMask) != 0;
     return true;
+}
+
+void DescribeSwing(void* door, char* out, size_t n) {
+    if (!out || n == 0) return;
+    out[0] = 0;
+    if (!door || !g_resolved.load(std::memory_order_acquire)) return;
+    const char* base = reinterpret_cast<const char*>(door);
+    auto flag = [base](int32_t off) { return off < 0 ? -1 : (*reinterpret_cast<const bool*>(base + off) ? 1 : 0); };
+    bool playing = false;
+    const int play = MoveTimelinePlaying(door, playing) ? (playing ? 1 : 0) : -1;
+    const int dir = g_dirOff < 0 ? -1 : *reinterpret_cast<const uint8_t*>(base + g_dirOff);
+    const int jammed = g_jammedOff < 0 ? -1 : ((*reinterpret_cast<const uint8_t*>(base + g_jammedOff) & g_jammedMask) ? 1 : 0);
+    const float alpha = g_moveAlphaOff < 0 ? -1.f : *reinterpret_cast<const float*>(base + g_moveAlphaOff);
+    std::snprintf(out, n, "isOpened=%d isMoving=%d dir=%d playing=%d jammed=%d alpha=%.2f", flag(g_isOpenedOff),
+                  flag(g_isMovingOff), dir, play, jammed, alpha);
 }
 
 // Snap a door fully to a state, mesh and flag, proximity-independent: set the timeline alpha

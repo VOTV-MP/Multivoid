@@ -2,6 +2,7 @@
 
 #include "coop/interactables/door_state_verbs.h"
 
+#include "coop/interactables/interactable_channel.h"  // ShadowProbe, the dev probe's flag
 #include "coop/interactables/interactable_sync.h"  // the door lane's key, and the host's edge
 #include "coop/net/session.h"
 #include "coop/session/net_pump.h"  // IsInAnnouncedWorld: a client's own world load runs natively
@@ -57,6 +58,34 @@ coop::net::Session* ConnectedAs(coop::net::Role role) {
     return (s && s->connected() && s->role() == role) ? s : nullptr;
 }
 
+// The dev probe's watches (channel_shadow_probe), HOST, after the body: the door's bodies that write what the
+// lane's intent reads (isMoving, dir) outside doorOpen, doorClose and the swing's end -- the jam shake's end
+// (isMoving false, dir 1), the jam's first event (dir 0) and a hit (dir 1, at rest only: it returns on a moving
+// door) -- and the sensor's begin and end, the passage of whoever walks through, each said with the swing it
+// leaves, so a SHADOW MISS can be matched to what ran before it. The component events' names carry K2Node_,
+// as the bytecode listing has them; the pseudo-C++ drops it.
+constexpr StateWatch kProbeWatches[] = {
+    { L"addDamage",                   0x44534144 /*'DSAD'*/, "a hit (addDamage)",     false },
+    { L"openJammed__FinishedFunc",    0x44534a45 /*'DSJE'*/, "the jam shake's end",   false },
+    { L"openJammed__jam1__EventFunc", 0x44534a31 /*'DSJ1'*/, "the jam's first event", false },
+    { L"BndEvt__door_sensor_K2Node_ComponentBoundEvent_2_ComponentBeginOverlapSignature__DelegateSignature",
+      0x44535342 /*'DSSB'*/, "the sensor's begin overlap", false },
+    { L"BndEvt__door_sensor_K2Node_ComponentBoundEvent_3_ComponentEndOverlapSignature__DelegateSignature",
+      0x44535345 /*'DSSE'*/, "the sensor's end overlap", false },
+};
+bool g_probeRegistered = false;
+
+void OnProbePost(const sg::Call& call) {
+    if (!ConnectedAs(coop::net::Role::Host)) return;
+    if (!call.object || !D::IsDoor(call.object)) return;
+    char desc[160] = "";
+    D::DescribeSwing(call.object, desc, sizeof desc);
+    for (const StateWatch& w : kProbeWatches)
+        if (w.tag == call.tag)
+            UE_LOGI("[DOOR-STATE] probe: %s on key='%ls' -- %s", w.what,
+                    coop::interactable_sync::DoorKey(call.object).c_str(), desc);
+}
+
 // CLIENT, before the body.
 sg::Verdict OnStatePre(const sg::Call& call) {
     if (!ConnectedAs(coop::net::Role::Client)) return sg::Verdict::Run;
@@ -87,6 +116,12 @@ void OnStatePost(const sg::Call& call) {
 }
 
 void RegisterWatches() {
+    if (!g_probeRegistered && coop::interactable_sync::ShadowProbe()) {
+        g_probeRegistered = true;
+        for (const StateWatch& w : kProbeWatches)
+            if (!sg::WatchName(w.name, w.tag, nullptr, &OnProbePost))
+                UE_LOGW("[DOOR-STATE] the probe's watch on '%ls' was refused", w.name);
+    }
     for (int i = 0; i < kWatchCount; ++i) {
         if (g_reg[i] != Reg::Pending) continue;
         if (sg::WatchName(kWatches[i].name, kWatches[i].tag, kWatches[i].refuseOnClient ? &OnStatePre : nullptr,

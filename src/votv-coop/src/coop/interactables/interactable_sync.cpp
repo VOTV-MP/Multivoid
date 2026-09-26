@@ -58,6 +58,9 @@ const Adapter g_doorAdapter = {
     },
     // The apply is a swing that needs finishing.
     &ue_wrap::door::TickSmartApply,
+    nullptr,
+    // The dev probe says a door's swing fields beside a SHADOW MISS.
+    &ue_wrap::door::DescribeSwing,
 };
 const Adapter g_lightAdapter = {
     // Keyed on the switch, so the receiver replays use() and the switch flips visibly with its

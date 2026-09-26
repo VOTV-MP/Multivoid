@@ -76,6 +76,8 @@ struct Adapter {
     bool (*ApplyState)(void* actor, bool on);  // drive to target (channel echo-suppresses)
     void (*TickApply)();                       // per-tick completion of an async apply (doors); null = none
     uint64_t (*ResolvedCount)();               // classes resolved one at a time; null = together (scan_hub)
+    // The dev probe's view of the device's raw state for a SHADOW MISS line; null = the state bit only.
+    void (*Describe)(void* actor, char* out, size_t n) = nullptr;
 };
 
 // The engine.
@@ -150,9 +152,39 @@ public:
                 auto it = lastKnown_.find(r.first);
                 accounted = it != lastKnown_.end() && it->second == cur;
             }
-            if (!accounted)
-                UE_LOGW("%s: SHADOW MISS key='%ls' %s -> %s with no watched verb reporting it", a_.name,
-                        r.first.c_str(), cur ? "OFF" : "ON", cur ? "ON" : "OFF");
+            // A miss is traced for a while: each later change of that key is said with the raw state, and
+            // the trace's end says where the key stood, so a transient read tells itself from a real change.
+            const bool traced = probeTrace_.count(r.first) != 0;
+            if (accounted && !traced) continue;
+            char desc[160] = "";
+            if (a_.Describe) a_.Describe(r.second.actor, desc, sizeof desc);
+            if (!accounted) {
+                UE_LOGW("%s: SHADOW MISS key='%ls' %s -> %s with no watched verb reporting it%s%s", a_.name,
+                        r.first.c_str(), cur ? "OFF" : "ON", cur ? "ON" : "OFF", desc[0] ? " -- " : "", desc);
+                probeTrace_[r.first] = {r.second.actor, r.second.idx,
+                                        std::chrono::steady_clock::now() + kProbeTrace};
+            } else {
+                UE_LOGI("%s: SHADOW TRACE key='%ls' %s -> %s, what the lane sent%s%s", a_.name, r.first.c_str(),
+                        cur ? "OFF" : "ON", cur ? "ON" : "OFF", desc[0] ? " -- " : "", desc);
+            }
+        }
+        EndProbeTraces();
+    }
+
+    // Each trace past its time says where its key stands now, raw state included, and ends.
+    void EndProbeTraces() {
+        if (probeTrace_.empty()) return;
+        const auto now = std::chrono::steady_clock::now();
+        for (auto it = probeTrace_.begin(); it != probeTrace_.end();) {
+            if (now < it->second.until) { ++it; continue; }
+            bool cur = false;
+            char desc[160] = "";
+            const bool live = R::IsLiveByIndex(it->second.actor, it->second.idx);
+            if (live && a_.Describe) a_.Describe(it->second.actor, desc, sizeof desc);
+            if (live && a_.ReadState(it->second.actor, cur))
+                UE_LOGI("%s: SHADOW TRACE key='%ls' ends reading %s%s%s", a_.name, it->first.c_str(),
+                        cur ? "ON" : "OFF", desc[0] ? " -- " : "", desc);
+            it = probeTrace_.erase(it);
         }
     }
 
@@ -318,6 +350,7 @@ public:
                     a_.name, static_cast<unsigned long long>(unindexedEdges_));
         unindexedEdges_ = 0;
         probeLast_.clear();
+        probeTrace_.clear();
         std::lock_guard<std::mutex> lk(stateMutex_);
         const size_t n = lastKnown_.size();
         lastKnown_.clear();
@@ -562,6 +595,10 @@ private:
     std::unordered_map<std::wstring, Pending> pending_;            // GT-only
     std::vector<std::pair<std::wstring, Ref>> pollScratch_;       // GT-only: the dev probe's snapshot buffer
     std::unordered_map<std::wstring, bool> probeLast_;           // GT-only: the dev probe's own baseline
+    // GT-only: the keys a SHADOW MISS put under trace, with the instance and the trace's end.
+    struct ProbeTrace { void* actor; int32_t idx; std::chrono::steady_clock::time_point until; };
+    static constexpr auto kProbeTrace = std::chrono::seconds(3);
+    std::unordered_map<std::wstring, ProbeTrace> probeTrace_;
     std::chrono::steady_clock::time_point lastRetry_{};           // GT-only
     size_t lastLogCount_ = SIZE_MAX;                              // GT-only: dedup the rebuilt log
     uint64_t lastLogHash_ = 0;                                   // GT-only
