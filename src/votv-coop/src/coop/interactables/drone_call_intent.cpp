@@ -26,8 +26,8 @@ namespace R  = ue_wrap::reflection;
 namespace sg = ue_wrap::script_gate;
 
 // The verb the console's buttons arrive on, watched on the console's own class by name, so the watch
-// matches whichever class the running world loads under that name (poll arc 2.7: a level class is
-// never kept by pointer across worlds).
+// matches whichever class the running world loads under that name: a level class is never kept by
+// pointer across worlds.
 const wchar_t* const kConsoleClass = L"droneConsole_C";
 const wchar_t* const kActionVerb   = L"actionOptionIndex";
 constexpr int kTagDroneCall = 0x44524f4e;  // 'DRON'

@@ -75,7 +75,7 @@ bool TriggerFly(void* console) {
     void* drone = *reinterpret_cast<void**>(reinterpret_cast<char*>(console) + g_conDroneOff);
     if (!drone || !R::IsLive(drone)) return false;
     // Looked up through the cache that holds it by slot and serial, never kept by a bare pointer across
-    // worlds (poll arc 2.7's rule for a level class's function).
+    // worlds: a level class's function dies with its world.
     void* fn = R::FindDispatchFunctionCached(R::ClassOf(drone), L"triggerFly");
     if (!fn) return false;
     ue_wrap::ParamFrame f(fn);

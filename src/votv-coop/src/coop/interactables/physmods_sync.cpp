@@ -82,7 +82,7 @@ void HostBroadcastCanonical(coop::net::Session* s, int onlySlot = -1) {
 // A refused op goes back to its author with the canonical array behind it: the author's own array
 // left the canonical when its verb ran, and adopting it is what brings the two together again. MTA
 // answers a refused element-data change the same way, with the server's value sent to that player
-// alone (Server/mods/deathmatch/logic/CGame.cpp:2779, Packet_CustomData).
+// alone (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:2779, Packet_CustomData).
 void SendDeny(coop::net::Session* s, uint8_t author, const coop::net::PhysModsStatePayload& op) {
     if (author == 0 || author >= coop::net::kMaxPeers) return;
     coop::net::PhysModsStatePayload d{};

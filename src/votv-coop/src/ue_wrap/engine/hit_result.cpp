@@ -16,8 +16,7 @@ namespace {
 namespace R = reflection;
 
 // GameplayStatics is a native class: the same object for the process, as every native class was in
-// the class-lifetime census (poll arc section 2.7), so its CDO, its function and the struct the function
-// returns are kept.
+// the class-lifetime census, so its CDO, its function and the struct the function returns are kept.
 void* g_cdo = nullptr;
 void* g_makeFn = nullptr;
 void* g_hitStruct = nullptr;  // FHitResult's UScriptStruct, the return value's type

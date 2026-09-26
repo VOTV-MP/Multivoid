@@ -10,10 +10,9 @@
 // its own drone tick, so the drone there is ALWAYS a mirror rather than a second flier fighting the
 // stream, and drives the streamed transform kinematically through the interpolation window. Host to
 // client only, never relayed, honoured only from slot 0. Identity is the singleton found by class:
-// both peers load the same placed drone, and a joiner gets the current pose with adopt=1.
-//
-// The delivered CARGO (orderbox, giftbox, crate, dronesack -- all Aprop_C) rides the existing prop
-// pipeline, so it needs no drone-specific packet.
+// both peers load the same placed drone, and a joiner gets the current pose with adopt=1. The delivered
+// CARGO (orderbox, giftbox, crate, dronesack -- all Aprop_C) rides the prop pipeline, with no packet of
+// its own.
 
 #pragma once
 

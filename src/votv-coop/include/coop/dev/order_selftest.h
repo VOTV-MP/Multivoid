@@ -25,17 +25,16 @@ namespace coop::dev::order_selftest {
 //            balance (priced from its own table, its own balance checked, the orders.Num edge
 //            confirmed), the client's balance mirror converges on the same figure, and the client's
 //            "[order_selftest] client DONE ... PASS" says the host's daily order reached its queue by
-//            class with every item built. Read the charge off the client's own log line rather than
-//            expecting a fixed number -- the price comes from the live shop.
-//   RED   -- run it again with VOTVCOOP_STORE_CATALOG_BREAK=1 in the HOST's environment. The
-//            catalog gate must reject the corrupted read: the host refuses the order and charges
-//            nothing, the client logs the refusal and restores its cart. That is the drill for the
-//            fail-closed branch, which a healthy build can never fire on its own.
+//            class with every item built. Read the charge off the client's own line: the price comes
+//            from the live shop.
+//   RED   -- run it again with VOTVCOOP_STORE_CATALOG_BREAK=1 in the HOST's environment: the catalog
+//            gate must reject the corrupted read, the host refusing the order and charging nothing, the
+//            client logging the refusal and restoring its cart -- the fail-closed branch, which a
+//            healthy build never fires on its own.
 
 // ini-gated OFF (`[dev] order_selftest=1`); never ships enabled. It DOES mutate state -- a balance
-// debit and two orders -- which is why it is a knob and not a passive readout; but every effect is
-// either what a human purchase or the day cycle does, or what the feature under test is supposed to
-// correct. (RULE 2 exempts probes and diagnostics.)
+// debit and two orders -- but every effect is what a human purchase or the day cycle does, or what the
+// feature under test is supposed to correct.
 
 // The legs, once enabled; a single bool read when off. Game thread.
 void Tick(coop::net::Session* session);

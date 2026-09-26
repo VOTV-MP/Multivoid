@@ -1,20 +1,18 @@
-// ue_wrap/world/order_economy.h -- engine access for the laptop shop order queue (the save
-// slot's orders, the delivery-drone economy). Engine-wrapper layer: no network or coop state;
-// order_sync drives the client-to-host order economy through here. The game has no
-// replication, so a client's order is client-local; coop forwards it to the host, which
-// re-commits it here through the same native makeAnOrder, the host being the delivery
-// authority. An item on the wire is a `list_store` row name and nothing else. The host prices
-// the order from its own copy of the table: makeAnOrder itself charges nothing (the charge is
-// in the laptop's order button, before the call), so a client-supplied price could never be
-// collected by the host. A class name cannot name an item, since many rows share one object
-// class, and the shop stamps the row key into the store struct's name, so a placed order
-// already carries the right identity. The commit copies the live table row wholesale: the
-// delivered order box branches on the item's object and asProp fields and passes asProp to
-// the player, so a row with those fields blank mis-delivers. The one field overwritten is
-// subcategory, stamped with the pinned empty FText (the order box's own items ship the same),
-// since copying the live FText would rest on who deep-copies it and when. The queue MIRROR is the
-// one place a class does name an item: a world event builds its order outside the shop (the daily
-// delivery, a gift) with no row at all, setting only the item's class, so that is what travels.
+// ue_wrap/world/order_economy.h -- engine access for the laptop shop order queue (the save slot's
+// orders, the delivery-drone economy). Engine-wrapper layer: no network or coop state; order_sync drives
+// the client-to-host order economy through here. The game has no replication, so a client's order is
+// client-local; coop forwards it to the host, which re-commits it here through the same native
+// makeAnOrder, the host being the delivery authority. An item on the wire is a `list_store` row name and
+// nothing else. The host prices the order from its own copy of the table: makeAnOrder itself charges
+// nothing (the charge is in the laptop's order button, before the call), so a client-supplied price could
+// never be collected by the host. A class name cannot name an item, since many rows share one object
+// class, and the shop stamps the row key into the store struct's name, so a placed order already carries
+// the right identity. The commit copies the live table row wholesale: the delivered order box branches on
+// the item's object and asProp fields and passes asProp to the player, so a row with those fields blank
+// mis-delivers. The one field overwritten is subcategory, stamped with the pinned empty FText (the order
+// box's own items ship the same), since copying the live FText would rest on who deep-copies it and when.
+// The queue MIRROR is the one place a class does name an item: a world event builds its order outside the
+// shop (the daily delivery, a gift) with no row at all, setting only the item's class, so that travels.
 
 #pragma once
 

@@ -2,18 +2,17 @@
 // Principle-7 engine-wrapper layer (NO network/coop state). coop::drone_sync drives the
 // host-authoritative pose mirror through here.
 //
-// Adrone_C : AActor (direct) is the SINGLETON delivery drone (one per save, world-placed; NOT
-// the player-piloted recon Aprop_rdrone_C). Its flight is a per-tick BP float integrator in
-// ReceiveTick (Damping/Speed/Pitch/vecForce vs a world Spline) -- reproducing it bit-exact on a
-// remote is fragile, so we HOST-AUTHORITATIVELY stream the resolved actor TRANSFORM and the client
-// mirrors it kinematically (SuppressTick stops the client drone's own ReceiveTick so it can't fly
-// on its own + fight the stream -- the npc/clump mirror discipline). The drone flies by forces on its
-// root sphere (`coll`), which carries the actor, so actor-level TryGetActorLocation/SetActorLocation
-// is the transform.
+// Adrone_C : AActor (direct) is the SINGLETON delivery drone (one per save, world-placed; NOT the
+// player-piloted recon Aprop_rdrone_C). Its flight is a per-tick BP float integrator in ReceiveTick
+// (Damping/Speed/Pitch/vecForce vs a world Spline) -- reproducing it bit-exact on a remote is fragile,
+// so we HOST-AUTHORITATIVELY stream the resolved actor TRANSFORM and the client mirrors it kinematically
+// (SuppressTick stops the client drone's own ReceiveTick so it can't fly on its own + fight the stream --
+// the npc/clump mirror discipline). The drone flies by forces on its root sphere (`coll`), which carries
+// the actor, so actor-level TryGetActorLocation/SetActorLocation is the transform.
 //
-// Identity = SINGLETON (the world singleton's drone_C; both peers load the same placed
-// drone). It has no top-level Key (its key lives inside Data) -- but a singleton needs no key.
-// State we read: Active (dormant<->flying).
+// Identity = SINGLETON (the world singleton's drone_C; both peers load the same placed drone). It has
+// no top-level Key (its key lives inside Data) -- but a singleton needs no key. State we read: Active
+// (dormant<->flying).
 
 #pragma once
 

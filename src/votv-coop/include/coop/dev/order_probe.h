@@ -1,4 +1,4 @@
-// coop/dev/order_probe.h -- [dev] the delivery-order census (FIX_PLAN R-G, F-54): who writes the save's
+// coop/dev/order_probe.h -- [dev] the delivery-order census: who writes the save's
 // order queue, on which peer, and what the drone delivers, read at the bodies through the script gate.
 // Observation only. Each peer logs, tagged [ORDER-PROBE]:
 //   ui_laptop makeAnOrder at entry: automatic, the order's item count, the queue's count, and the calling

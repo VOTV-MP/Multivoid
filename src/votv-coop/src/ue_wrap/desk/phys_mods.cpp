@@ -19,8 +19,8 @@ namespace R = ue_wrap::reflection;
 using Clock = std::chrono::steady_clock;
 
 // class-level (persist across level reloads): analogDScreenTest_C is a hard import of
-// mainGamemode_C, which the class-lifetime census found to be the same object in every world
-// (poll arc section 2.7), and lib_C and prop_physModule_C are the desk's own imports
+// mainGamemode_C, which the class-lifetime census found to be the same object in every world,
+// and lib_C and prop_physModule_C are the desk's own imports
 void*   g_deskCls = nullptr;
 int32_t g_offPhysMods = -1;      // TArray<byte>, resolved live by property name
 void*   g_updPhysModsFn = nullptr;

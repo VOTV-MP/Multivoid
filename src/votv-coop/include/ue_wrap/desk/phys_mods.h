@@ -1,19 +1,15 @@
-// ue_wrap/desk/phys_mods.h -- engine access for the desk's PHYSICAL MODULES array.
-// Principle-7 engine-wrapper layer: no network logic; coop::physmods_sync drives
-// the mirror through here.
+// ue_wrap/desk/phys_mods.h -- engine access for the desk's PHYSICAL MODULES array. Principle-7
+// engine-wrapper layer: no network logic; coop::physmods_sync drives the mirror through here.
 //
-// physMods is a TArray<TEnumAsByte<enum_physicalModules>> on
-// AanalogDScreenTest_C, fixed at 12 slots with 0 meaning empty. It is not a set:
-// plugInModule refuses a type off its isModuleAllowed list and an occupied slot,
-// never a type the desk already holds, so two modules of one type can sit on it.
-// Three writers -- plugInModule (write into an empty slot, then K2_DestroyActor on
-// the module prop), the unplug in actionOptionIndex, the E press (the module is
-// reborn INTO THE HAND through lib.physModToActor and the slot goes to 0), and
-// setData on save load, which calls updPhysMods. gatherData only READS it,
-// marshalling the array into the save. updPhysMods() is the
-// parameterless consumer re-runner and measures as a PURE function of the array
-// -- per-slot socket visuals plus Contains-gated speed, lamp and shield effects,
-// with no player references, spawns or audio -- so a mirror may call it.
+// physMods is a TArray<TEnumAsByte<enum_physicalModules>> on AanalogDScreenTest_C, fixed at 12 slots
+// with 0 meaning empty. It is not a set: plugInModule refuses a type off its isModuleAllowed list and an
+// occupied slot, never a type the desk already holds, so two modules of one type can sit on it. Three
+// writers -- plugInModule (write into an empty slot, then K2_DestroyActor on the module prop), the unplug
+// in actionOptionIndex, the E press (the module is reborn INTO THE HAND through lib.physModToActor and the
+// slot goes to 0), and setData on save load, which calls updPhysMods. gatherData only READS it,
+// marshalling the array into the save. updPhysMods() is the parameterless consumer re-runner and measures
+// as a PURE function of the array -- per-slot socket visuals plus Contains-gated speed, lamp and shield
+// effects, with no player references, spawns or audio -- so a mirror may call it.
 
 #pragma once
 

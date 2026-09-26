@@ -3,9 +3,10 @@
 // payload slots. Self-contained: public reflection primitives plus profile offsets, with its
 // calibration statics beside them and no shared private state.
 
-#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 
 #include <cwchar>

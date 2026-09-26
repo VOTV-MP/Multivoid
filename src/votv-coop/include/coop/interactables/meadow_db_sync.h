@@ -1,20 +1,17 @@
-// coop/interactables/meadow_db_sync.h -- the MEADOW signal-DATABASE mirror
-// (saveSlot.savedSignals_0, and the ui_laptop widget's arrays in each world).
-// Overview: docs/signals.md. Game thread throughout.
+// coop/interactables/meadow_db_sync.h -- the MEADOW signal-DATABASE mirror (saveSlot.savedSignals_0, and
+// the ui_laptop widget's arrays in each world). Overview: docs/signals.md. Game thread throughout.
 //
-// The store has a MOVE verb (sortSignal) and Blueprint moves deep-copy FStrings,
-// so neither the deck list's positional prefix walk nor pointer RowKeys work here.
-// The shadow is a content-hash MULTISET instead (coop/interactables/meadow_db_hash),
-// taken of the database -- its save object, which a travel keeps -- the first time the
-// lane needs it, and compared with the database at the exit
-// of each body that writes it: ui_laptop_C's addSignal, removeSignal and sortSignal,
-// and the rename window's handler, watched at the script-body gate.
+// The store has a MOVE verb (sortSignal) and Blueprint moves deep-copy FStrings, so neither the deck
+// list's positional prefix walk nor pointer RowKeys work here. The shadow is a content-hash MULTISET
+// instead (coop/interactables/meadow_db_hash), taken of the database -- its save object, which a travel
+// keeps -- the first time the lane needs it, and compared with the database at the exit of each body that
+// writes it: ui_laptop_C's addSignal, removeSignal and sortSignal, and the rename window's handler,
+// watched at the script-body gate.
 //
-// A row that came authors a MeadowAppend, one that went a MeadowDelete (a rename is
-// both), and an order that differs from what every peer will hold after those lines
-// a MeadowOrder. Applies run through reflected addSignal and removeSignal inside the
-// lane's own scope and update the shadow game-thread-atomically, which is what
-// suppresses the echo. coop/dev/meadow_selftest drives the lane end to end.
+// A row that came authors a MeadowAppend, one that went a MeadowDelete (a rename is both), and an order
+// that differs from what every peer will hold after those lines a MeadowOrder. Applies run through
+// reflected addSignal and removeSignal inside the lane's own scope and update the shadow
+// game-thread-atomically, which is what suppresses the echo. coop/dev/meadow_selftest drives the lane.
 
 #pragma once
 
