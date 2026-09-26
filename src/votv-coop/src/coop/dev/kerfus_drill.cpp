@@ -138,31 +138,10 @@ float Dist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
 }
 
 // The director blocks, so a walk runs on a worker; a step polls its state.
-struct Walk {
-    coop::director::DirectorGoal goal;
-    std::atomic<int> state{0};  // 0 walking, 1 reached, 2 failed
-};
-std::shared_ptr<Walk> g_walk;
-
-DWORD WINAPI WalkThread(LPVOID arg) {
-    auto* holder = static_cast<std::shared_ptr<Walk>*>(arg);
-    std::shared_ptr<Walk> w = *holder;
-    delete holder;
-    coop::director::ControlManager mgr;
-    coop::director::AddWalkToProcesses(mgr, w->goal);
-    mgr.Run(w->goal, kWalkDeadlineS);
-    w->state.store(w->goal.reached ? 1 : 2);
-    return 0;
-}
+std::shared_ptr<coop::director::BackgroundWalk> g_walk;
 
 void StartWalk(const ue_wrap::FVector& to, float reachCm) {
-    g_walk = std::make_shared<Walk>();
-    g_walk->goal.targetPos = to;
-    g_walk->goal.reachCm = reachCm;
-    g_walk->goal.epoch = coop::director::WalkEpoch();  // the walk ends with this session (EndWalks)
-    auto* arg = new std::shared_ptr<Walk>(g_walk);
-    if (HANDLE t = ::CreateThread(nullptr, 0, &WalkThread, arg, 0, nullptr)) ::CloseHandle(t);
-    else { delete arg; g_walk->state.store(2); }
+    g_walk = coop::director::StartBackgroundWalk(to, reachCm, kWalkDeadlineS);
 }
 
 int WalkState() { return g_walk ? g_walk->state.load() : 2; }
