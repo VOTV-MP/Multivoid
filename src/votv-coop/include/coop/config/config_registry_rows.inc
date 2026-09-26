@@ -479,10 +479,11 @@ CFG_FLAG(kerfur_convert_drill, "kerfur_convert_drill", "dev", false, "VOTVCOOP_K
     "away, then says whether both conversions applied, each form stood when its own call returned, the "
     "carried disc arrived once and its own disc survived. '[KERFUR-DRILL] client DONE' ends it.")
 CFG_FLAG(kerfus_drill, "kerfus_drill", "dev", false, "VOTVCOOP_KERFUS_DRILL",
-    "Drill (BOTH peers): the client walks to the plain kerfur (the Kerfus) and presses it on; the host, "
-    "once it is on, walks 10 to 30 m so it follows; the client walks back and presses it off, then says "
-    "whether its press stood, the host turned it on and off, and it moved on the host's drive stream. "
-    "The rig client joins at the base. '[KERFUS-DRILL] client DONE' ends it.")
+    "Drill (BOTH peers): the host stays put; the client presses the plain kerfur (the Kerfus) on, walks to "
+    "a pile the director keeps 10 m from the host, and the Kerfus must settle by the client, not the host; "
+    "then the host possesses it, the client walks back once the haunting's energy pin shows, and the Kerfus "
+    "must go off away from where it settled. The rig client joins at the base. '[KERFUS-DRILL] client DONE "
+    "PASS|FAIL' ends it; '[KERFUS-DRILL] INVALID' is a step that could not run.")
 CFG_FLAG(door_drill, "door_drill", "dev", false, "VOTVCOOP_DOOR_DRILL",
     "Drill (BOTH peers): the client walks with the bot director to the nearest door its navmesh "
     "reaches and uses it as a player does -- three presses, each followed by a stay in its sensor until "

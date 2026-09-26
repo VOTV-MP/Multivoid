@@ -126,8 +126,10 @@ void AddCarryToProcesses(ControlManager& mgr, DirectorGoal& goal);
 // Fills goal.targetActor / goal.targetPos; false when the save has no such pile. Every drill that
 // needs a player AT a pile uses this and then walks -- none computes a standoff and teleports to
 // it: a computed point can sit inside geometry, and the game's anti-noclip then takes the player
-// out of the world. Game thread.
-bool PickReachablePile(void* player, float minCm, float maxCm, DirectorGoal& goal);
+// out of the world. With `awayFrom`, a pile closer than `awayMinCm` to it, measured flat, is refused:
+// a drill that needs its walker apart from another body. Game thread.
+bool PickReachablePile(void* player, float minCm, float maxCm, DirectorGoal& goal,
+                       const ue_wrap::FVector* awayFrom = nullptr, float awayMinCm = 0.f);
 
 // True iff the last run's ClearHand had to use the effect-seam release because the input-seam
 // drop was MEASURED inert -- i.e. the drop was NOT input-seam-faithful (surfaced in the verdict).

@@ -38,7 +38,8 @@ constexpr float kMaxPileCm     = 5000.f;
 constexpr int   kMaxCandidates = 10;
 }  // namespace
 
-bool PickReachablePile(void* player, float minCm, float maxCm, DirectorGoal& goal) {
+bool PickReachablePile(void* player, float minCm, float maxCm, DirectorGoal& goal,
+                       const ue_wrap::FVector* awayFrom, float awayMinCm) {
     if (!player || !R::IsLive(player)) return false;
     PT::ReSeedKnownKeyedProps(nullptr);   // eid-bind like chippile
     ue_wrap::FVector at{};
@@ -48,6 +49,7 @@ bool PickReachablePile(void* player, float minCm, float maxCm, DirectorGoal& goa
     }
     struct Cand { void* pile; ue_wrap::FVector pos; float dist; };
     std::vector<Cand> cands;
+    int refused = 0;  // in the band but nearer `awayFrom` than awayMinCm
     const int32_t n = R::NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* o = R::ObjectAt(i);
@@ -57,9 +59,17 @@ bool PickReachablePile(void* player, float minCm, float maxCm, DirectorGoal& goa
         if (!E::TryGetActorLocation(o, p)) continue;   // unreadable: no candidate
         const float dist = HorizDist(p, at);
         if (dist < minCm || dist > maxCm) continue;
+        if (awayFrom && HorizDist(p, *awayFrom) < awayMinCm) { ++refused; continue; }
         cands.push_back({ o, p, dist });
     }
-    if (cands.empty()) { UE_LOGW("director: no chipPile in the %.0f-%.0fcm band -- aborting", minCm, maxCm); return false; }
+    if (cands.empty()) {
+        if (refused > 0)
+            UE_LOGW("director: every chipPile in the %.0f-%.0fcm band (%d) lies nearer than %.0fcm (flat) to the point "
+                    "to keep away from -- aborting", minCm, maxCm, refused, awayMinCm);
+        else
+            UE_LOGW("director: no chipPile in the %.0f-%.0fcm band -- aborting", minCm, maxCm);
+        return false;
+    }
     std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.dist < b.dist; });
     if (cands.size() > kMaxCandidates) cands.resize(kMaxCandidates);
     // Score by TOTAL ROUTE LENGTH (not point count): a pile in genuinely open space has a route ~=
@@ -84,11 +94,17 @@ bool PickReachablePile(void* player, float minCm, float maxCm, DirectorGoal& goa
     if (!goal.targetActor) {   // no grab-reachable pile -- honest: this save has none in the open
         UE_LOGW("director: NO grab-reachable chipPile (all sit off the navmesh / behind locked doors) "
                 "-- aborting; needs a pile in open reachable space (spawn one / cleaner save)");
+        if (refused > 0)
+            UE_LOGW("director: %d more chipPile(s) in the band were refused as nearer than %.0fcm (flat) to the point "
+                    "to keep away from", refused, awayMinCm);
         return false;
     }
     UE_LOGI("director: goal pile=%p pos=(%.0f,%.0f,%.0f) straight=%.0fcm routeLen=%.0fcm routePts=%d",
             goal.targetActor, goal.targetPos.X, goal.targetPos.Y, goal.targetPos.Z,
             HorizDist(goal.targetPos, at), bestLen >= 1e30f ? -1.f : bestLen, bestPts);
+    if (awayFrom)
+        UE_LOGI("director: the pick kept %.0fcm (flat) from (%.0f,%.0f,%.0f): %d pile(s) in the band refused",
+                awayMinCm, awayFrom->X, awayFrom->Y, awayFrom->Z, refused);
 
     return true;
 }
