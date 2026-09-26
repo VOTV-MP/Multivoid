@@ -21,58 +21,63 @@ namespace {
 
 struct TArrayView { uint8_t* data; int32_t num; int32_t max; };
 
-void* g_gamemodeCls = nullptr;
-void* g_laptopWidgetCls = nullptr;      // ui_laptop_C
+// The layout, read once from the live objects' own classes: the gamemode's laptop widget and save object,
+// the save object's store, the widget's device back-pointer. No class and no UFunction is kept: the verbs
+// are looked up per call on the widget's class (Verb), by slot and serial, since a class kept for the
+// process can be a new object in the next world.
 int32_t g_offGmLaptop = -1;             // mainGamemode_C::laptop (the widget ptr)
 int32_t g_offGmSaveSlot = -1;           // mainGamemode_C::saveSlot
 int32_t g_offSlotSignals = -1;          // saveSlot_C::savedSignals_0
 int32_t g_offWidgetLaptop = -1;         // ui_laptop_C::laptop (device back-ptr)
-void* g_addSignalFn = nullptr;          // ui_laptop_C::addSignal(data)
-void* g_removeSignalFn = nullptr;       // ui_laptop_C::removeSignal(index)
-void* g_genSignalListFn = nullptr;      // ui_laptop_C::genSignalList() (zero-arg rebuild)
 
 std::chrono::steady_clock::time_point g_nextResolve{};
 bool g_coreResolved = false;
+
+// The live object in `obj`'s pointer member at `off`, or nullptr.
+void* LiveAt(void* obj, int32_t off) {
+    if (!obj || off < 0) return nullptr;
+    void* p = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(obj) + off);
+    return (p && R::IsLive(p)) ? p : nullptr;
+}
 
 void ResolvePass() {
     const auto now = std::chrono::steady_clock::now();
     if (now < g_nextResolve) return;
     g_nextResolve = now + std::chrono::seconds(2);
-    if (!g_gamemodeCls) g_gamemodeCls = R::FindClass(L"mainGamemode_C");
-    if (!g_laptopWidgetCls) g_laptopWidgetCls = R::FindClass(L"ui_laptop_C");
-    if (!g_gamemodeCls || !g_laptopWidgetCls) return;
-    if (g_offGmLaptop < 0)
-        g_offGmLaptop = R::FindPropertyOffset(g_gamemodeCls, L"laptop");
-    if (g_offGmSaveSlot < 0)
-        g_offGmSaveSlot = R::FindPropertyOffset(g_gamemodeCls, L"saveSlot");
-    if (g_offWidgetLaptop < 0)
-        g_offWidgetLaptop = R::FindPropertyOffset(g_laptopWidgetCls, L"laptop");
-    if (!g_addSignalFn)
-        g_addSignalFn = R::FindFunction(g_laptopWidgetCls, L"addSignal");
-    if (!g_removeSignalFn)
-        g_removeSignalFn = R::FindFunction(g_laptopWidgetCls, L"removeSignal");
-    if (!g_genSignalListFn)
-        g_genSignalListFn = R::FindFunction(g_laptopWidgetCls, L"genSignalList");
-    // The store offset resolves off the LIVE saveSlot object's class (avoids a
-    // FindClass on the save-slot class name; ClassOf is authoritative).
-    if (g_offSlotSignals < 0 && g_offGmSaveSlot >= 0) {
-        void* gm = world_singleton::Gamemode();
-        if (gm) {
-            void* slotObj = *reinterpret_cast<void**>(
-                reinterpret_cast<uint8_t*>(gm) + g_offGmSaveSlot);
-            if (slotObj && R::IsLive(slotObj))
-                g_offSlotSignals = R::FindPropertyOffset(R::ClassOf(slotObj), L"savedSignals_0");
-        }
+    void* gm = world_singleton::Gamemode();
+    if (!gm) return;
+    if (g_offGmLaptop < 0) g_offGmLaptop = R::FindPropertyOffset(R::ClassOf(gm), L"laptop");
+    if (g_offGmSaveSlot < 0) g_offGmSaveSlot = R::FindPropertyOffset(R::ClassOf(gm), L"saveSlot");
+    if (g_offWidgetLaptop < 0) {
+        if (void* w = LiveAt(gm, g_offGmLaptop)) g_offWidgetLaptop = R::FindPropertyOffset(R::ClassOf(w), L"laptop");
+    }
+    if (g_offSlotSignals < 0) {
+        if (void* slotObj = LiveAt(gm, g_offGmSaveSlot))
+            g_offSlotSignals = R::FindPropertyOffset(R::ClassOf(slotObj), L"savedSignals_0");
     }
     const bool core = g_offGmLaptop >= 0 && g_offGmSaveSlot >= 0 &&
-                      g_offSlotSignals >= 0 && g_offWidgetLaptop >= 0 &&
-                      g_addSignalFn && g_removeSignalFn && g_genSignalListFn;
+                      g_offSlotSignals >= 0 && g_offWidgetLaptop >= 0;
     if (core && !g_coreResolved) {
         g_coreResolved = true;
-        UE_LOGI("meadow_store: resolved (laptop=0x%X saveSlot=0x%X savedSignals_0=0x%X "
-                "widget.laptop=0x%X addSignal=yes removeSignal=yes)",
+        UE_LOGI("meadow_store: resolved (laptop=0x%X saveSlot=0x%X savedSignals_0=0x%X widget.laptop=0x%X)",
                 g_offGmLaptop, g_offGmSaveSlot, g_offSlotSignals, g_offWidgetLaptop);
     }
+}
+
+// One of the widget's verbs, from its own class: memoised by the reflection layer per class, by slot and
+// serial. A null is said by the caller, since each verb's absence costs a different apply.
+void* Verb(void* w, const wchar_t* name) {
+    return R::FindDispatchFunctionCached(R::ClassOf(w), name);
+}
+
+// Throttled (5 s) diagnostic for the gate's exits -- a silent null here would
+// be a dead guard (every exit instrumented).
+void LogWidgetGate(const char* why) {
+    static std::chrono::steady_clock::time_point next{};
+    const auto now = std::chrono::steady_clock::now();
+    if (now < next) return;
+    next = now + std::chrono::seconds(5);
+    UE_LOGW("meadow_store: widget gate NULL -- %s", why);
 }
 
 // The drill's drivers' members, resolved at their first use.
@@ -113,11 +118,8 @@ void* SlotWidget(void* w, int32_t index) {
 }
 
 TArrayView* Rows() {
-    void* gm = world_singleton::Gamemode();
-    if (!gm || g_offGmSaveSlot < 0 || g_offSlotSignals < 0) return nullptr;
-    void* slotObj = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(gm) + g_offGmSaveSlot);
-    if (!slotObj || !R::IsLive(slotObj)) return nullptr;
+    void* slotObj = Database();
+    if (!slotObj || g_offSlotSignals < 0) return nullptr;
     return reinterpret_cast<TArrayView*>(
         reinterpret_cast<uint8_t*>(slotObj) + g_offSlotSignals);
 }
@@ -129,14 +131,8 @@ bool EnsureResolved() {
     return g_coreResolved;
 }
 
-// Throttled (5 s) diagnostic for the gate's exits -- a silent null here would
-// be a dead guard (every exit instrumented).
-void LogWidgetGate(const char* why) {
-    static std::chrono::steady_clock::time_point next{};
-    const auto now = std::chrono::steady_clock::now();
-    if (now < next) return;
-    next = now + std::chrono::seconds(5);
-    UE_LOGW("meadow_store: widget gate NULL -- %s", why);
+void* Database() {
+    return LiveAt(world_singleton::Gamemode(), g_offGmSaveSlot);
 }
 
 void* Widget() {
@@ -166,8 +162,10 @@ bool ReadRow(int32_t index, SD::Row& out) {
 
 bool ApplyAddSignal(const SD::Row& row) {
     void* w = Widget();
-    if (!w || !g_addSignalFn) return false;
-    ue_wrap::ParamFrame f(g_addSignalFn);
+    if (!w) return false;
+    void* fn = Verb(w, L"addSignal");
+    if (!fn) { UE_LOGW("meadow_store: addSignal not found on the laptop widget's class"); return false; }
+    ue_wrap::ParamFrame f(fn);
     if (!f.valid()) { UE_LOGW("meadow_store: addSignal ParamFrame invalid"); return false; }
     uint8_t sig[SD::kStride];
     if (!SD::BuildParamBytes(row, sig)) {
@@ -189,8 +187,10 @@ bool ApplyRemoveSignal(int32_t index) {
     TArrayView* a = Rows();
     if (!a || index < 0 || index >= a->num) return false;
     void* w = Widget();
-    if (!w || !g_removeSignalFn) return false;
-    ue_wrap::ParamFrame f(g_removeSignalFn);
+    if (!w) return false;
+    void* fn = Verb(w, L"removeSignal");
+    if (!fn) { UE_LOGW("meadow_store: removeSignal not found on the laptop widget's class"); return false; }
+    ue_wrap::ParamFrame f(fn);
     if (!f.valid()) return false;
     if (!f.Set<int32_t>(L"index", index)) return false;
     return ue_wrap::Call(w, f);
@@ -216,8 +216,10 @@ bool ReorderRows(const int32_t* srcIdx, int32_t n) {
 
 bool ApplyGenSignalList() {
     void* w = Widget();
-    if (!w || !g_genSignalListFn) return false;
-    ue_wrap::ParamFrame f(g_genSignalListFn);
+    if (!w) return false;
+    void* fn = Verb(w, L"genSignalList");
+    if (!fn) { UE_LOGW("meadow_store: genSignalList not found on the laptop widget's class"); return false; }
+    ue_wrap::ParamFrame f(fn);
     if (!f.valid()) return false;
     return ue_wrap::Call(w, f);
 }
@@ -227,7 +229,7 @@ bool MoveRow(int32_t index, int32_t delta) {
     if (!w) return Missing("MoveRow", "the laptop widget");
     void* slot = SlotWidget(w, index);
     if (g_offActiveSlot < 0) g_offActiveSlot = R::FindPropertyOffset(R::ClassOf(w), L"activeSlot");
-    void* fn = R::FindDispatchFunctionCached(R::ClassOf(w), L"sortSignal");
+    void* fn = Verb(w, L"sortSignal");
     if (!slot) return Missing("MoveRow", "the row's slot widget");
     if (g_offActiveSlot < 0 || !fn) return Missing("MoveRow", "activeSlot or sortSignal");
     *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(w) + g_offActiveSlot) = slot;

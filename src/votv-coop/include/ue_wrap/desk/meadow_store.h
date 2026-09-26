@@ -19,9 +19,14 @@
 
 namespace ue_wrap::meadow_store {
 
-// Resolve gamemode {laptop, saveSlot} offsets, the saveSlot store offset, and
-// the ui_laptop verbs (throttled lazy retry). True when the core set is up.
+// Resolve the gamemode's {laptop, saveSlot} offsets, the save object's store offset and the widget's
+// device back-pointer, each from its live object's class (throttled lazy retry). True when all four are
+// up. The verbs are looked up per call on the widget's class.
 bool EnsureResolved();
+
+// The save object that holds the store (the gamemode's saveSlot, which it takes from the game instance, so
+// a travel keeps it), or nullptr. Its identity is the database's: a new one is a new database.
+void* Database();
 
 // The live ui_laptop widget (gamemode.laptop) with a live device back-pointer (widget.laptop);
 // nullptr when either is unresolved or dead, which is the apply gate. The widget is created ONCE at
