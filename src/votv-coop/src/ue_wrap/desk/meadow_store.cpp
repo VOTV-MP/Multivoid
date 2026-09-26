@@ -129,10 +129,6 @@ bool EnsureResolved() {
     return g_coreResolved;
 }
 
-void* LaptopWidgetClass() {
-    return g_laptopWidgetCls;
-}
-
 // Throttled (5 s) diagnostic for the gate's exits -- a silent null here would
 // be a dead guard (every exit instrumented).
 void LogWidgetGate(const char* why) {

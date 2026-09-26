@@ -72,6 +72,9 @@ public:
 
     void Clear();
 
+    // Whether no half-assembly is held: a consumer sweeps only while one is.
+    bool Idle() const { return map_.empty(); }
+
     // Drop every half-assembly from ONE sender slot. Call from the per-slot disconnect fan-out: a
     // recycled slot (X -> Y, with no observable absence between them) must not merge Y's chunks
     // into X's partial.

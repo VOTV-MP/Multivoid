@@ -23,11 +23,6 @@ namespace ue_wrap::meadow_store {
 // the ui_laptop verbs (throttled lazy retry). True when the core set is up.
 bool EnsureResolved();
 
-// The resolved ui_laptop_C class (nullptr until EnsureResolved succeeds). The lane's verb-watch context
-// class-check reads this instead of running its own FindClass walk, which unthrottled per tick is
-// the pre-world 60 Hz array-walk the resolver throttle exists to prevent.
-void* LaptopWidgetClass();
-
 // The live ui_laptop widget (gamemode.laptop) with a live device back-pointer (widget.laptop);
 // nullptr when either is unresolved or dead, which is the apply gate. The widget is created ONCE at
 // mainGamemode BeginPlay and stored on the gamemode, so it is persistent per world whether or not

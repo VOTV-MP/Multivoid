@@ -4,15 +4,16 @@
 //
 // The store has a MOVE verb (sortSignal) and Blueprint moves deep-copy FStrings,
 // so neither the deck list's positional prefix walk nor pointer RowKeys work here.
-// The shadow is a content-hash MULTISET instead, re-hashed at 1 Hz only when the
-// live count differs from the shadow sum, a scoped dirty-mark fired
-// (addSignal/removeSignal/sortSignal on a ui_laptop_C), or an order change is
-// pending retry.
+// The shadow is a content-hash MULTISET instead (coop/interactables/meadow_db_hash),
+// taken the first time a world needs it and compared with the database at the exit
+// of each body that writes it: ui_laptop_C's addSignal, removeSignal and sortSignal,
+// and the rename window's handler, watched at the script-body gate.
 //
-// A count increment authors a MeadowAppend, a decrement a MeadowDelete, and a
-// reorder of the common elements a MeadowOrder. Applies run through reflected
-// addSignal and removeSignal and update the shadow game-thread-atomically, which
-// is what suppresses the echo. coop/dev/meadow_selftest drives the lane end to end.
+// A row that came authors a MeadowAppend, one that went a MeadowDelete (a rename is
+// both), and an order that differs from what every peer will hold after those lines
+// a MeadowOrder. Applies run through reflected addSignal and removeSignal inside the
+// lane's own scope and update the shadow game-thread-atomically, which is what
+// suppresses the echo. coop/dev/meadow_selftest drives the lane end to end.
 
 #pragma once
 
@@ -26,10 +27,11 @@ namespace coop::meadow_db_sync {
 
 void Install(coop::net::Session* session);
 
-// Per-tick: throttled resolve, the 1 Hz pre-gated poll, tombstone and pending
-// retry. The CLIENT lane sends nothing until its own world-ready announce --
-// pre-ready organics accumulate as pending and flush at ready -- so a client line
-// cannot reach the host before the flip and ride the seed back as a duplicate.
+// Per-tick: the writers' watches until they are live, then the retries once a second
+// while one waits (a pending line, a tombstone, a held order, a half-assembled row).
+// The CLIENT lane sends nothing until its own world-ready announce -- pre-ready
+// organics accumulate as pending and flush at ready -- so a client line cannot reach
+// the host before the flip and ride the seed back as a duplicate.
 void Tick();
 
 // Wire ingest: one chunk of an appended row (MeadowAppend).
@@ -69,10 +71,6 @@ void CancelJoinSnapshot(int peerSlot);
 
 // Aggregate teardown.
 void OnDisconnect();
-
-// Does the lane hold this world's database yet? A row added before it does is taken into the lane's
-// first picture of the database and never sent. Game thread.
-bool IsPrimed();
 
 // The appends, deletes and order lines this peer's lane has delivered this session, for the dev
 // selftest's waits. Game thread.

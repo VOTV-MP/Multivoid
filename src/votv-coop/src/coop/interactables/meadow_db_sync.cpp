@@ -1,9 +1,10 @@
 // coop/interactables/meadow_db_sync.cpp -- see coop/interactables/meadow_db_sync.h. A
-// content-hash multiset shadow over the saved signals; id-preserving reflected addSignal and
-// removeSignal applies; tombstone counts; a symmetric per-slot join seed, where the seed delta
-// per hash is the current count minus the snapshot count minus the unmasked pending net, with
-// op-counter masks. An apply and its shadow update are game-thread-atomic per line. The
-// client lane sends nothing until its own world-ready announce.
+// content-hash multiset shadow over the saved signals, taken the first time a world needs it and
+// reconciled at the exit of every body that writes the database; id-preserving reflected addSignal and
+// removeSignal applies; tombstone counts; a symmetric per-slot join seed, where the seed delta per hash
+// is the current count minus the snapshot count minus the unmasked pending net, with op-counter masks.
+// An apply and its shadow update are game-thread-atomic per line. The client lane sends nothing until
+// its own world-ready announce.
 
 #include "coop/interactables/meadow_db_sync.h"
 
@@ -13,21 +14,22 @@
 #include "coop/interactables/signal_wire.h"
 #include "coop/session/net_pump.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/desk/meadow_store.h"
 #include "ue_wrap/desk/signal_dynamic.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <atomic>
 #include <chrono>
+#include <iterator>
 #include <map>
 #include <vector>
 
 namespace coop::meadow_db_sync {
 namespace {
 
-namespace R  = ue_wrap::reflection;
 namespace MH = coop::meadow_db_hash;
 namespace MS = ue_wrap::meadow_store;
 namespace SD = ue_wrap::signal_dynamic;
@@ -36,32 +38,54 @@ using Clock = std::chrono::steady_clock;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-constexpr auto kPollInterval = std::chrono::milliseconds(1000);
-constexpr auto kAssemblyTTL  = std::chrono::seconds(20);
-constexpr auto kTombstoneTTL = std::chrono::seconds(20);
+constexpr auto kRetryInterval = std::chrono::milliseconds(1000);
+constexpr auto kAssemblyTTL   = std::chrono::seconds(20);
+constexpr auto kTombstoneTTL  = std::chrono::seconds(20);
 // The absolute size bound on the tombstone vector (see OnDelete for why the unmatched case is
 // the inserting case). Legitimate tombstones are bounded by the deletes racing an append that
 // has not landed yet, a handful within one TTL; 256 is far above that and caps the vector at
 // about 4 KB.
 constexpr size_t kTombstoneCap = 256;
-constexpr int  kVerbMark = 1;  // one id: both verbs only accelerate the poll
 
-// The shadow: the broadcast-acknowledged multiset.
+// The database's writers, from the bytecode of every asset that names it: ui_laptop_C's addSignal (an
+// Add), removeSignal (a Remove) and sortSignal (a move, a Remove then an Insert), and the rename window,
+// whose ubergraph writes a row's name in place when its button is clicked. saveSlot_C::reset_days clears
+// the store too, but only on a save the reset menu loads from disk, never on the live one. Each body's
+// entry takes the shadow if this world has none yet, and its exit sends what it changed.
+struct Writer { const wchar_t* cls; const wchar_t* fn; };
+constexpr Writer kWriters[] = {
+    {L"ui_laptop_C", L"addSignal"},
+    {L"ui_laptop_C", L"removeSignal"},
+    {L"ui_laptop_C", L"sortSignal"},
+    {L"ui_signalName_C", L"ExecuteUbergraph_ui_signalName"},
+};
+constexpr int kTagWriter = 0x4D445742;  // 'MDWB'
+bool g_writersWatched = false;  // registered, once a process
+bool g_writersLive = false;     // their names resolved at the gate
+
+// The lane's own verb calls in progress (game thread). Its applies run the same verbs a player does, and
+// keep the shadow themselves in the same callback, so a writer's exit inside one sends nothing. A scope
+// in our own frame, which every path out of the call unwinds.
+int g_applyDepth = 0;
+struct ApplyScope {
+    ApplyScope() { ++g_applyDepth; }
+    ~ApplyScope() { --g_applyDepth; }
+    ApplyScope(const ApplyScope&) = delete;
+    ApplyScope& operator=(const ApplyScope&) = delete;
+};
+
+// The shadow: the broadcast-acknowledged multiset, of the world whose gamemode `g_primedIn` holds.
 std::map<uint64_t, int32_t> g_shadow;   // ContentHash -> count
 bool g_primed = false;
-Clock::time_point g_nextPoll{};
+bool g_primeMissed = false;             // a writer entered while the database could not be read
+ue_wrap::CachedObjRef g_primedIn;
 uint64_t g_opCounter = 0;               // GT-monotonic line-author counter
 
-// The dirty mark from the virtual-verb bracket, scoped to the laptop widget's context;
-// relaxed, drained at the poll.
-std::atomic<bool> g_dirty{false};
-bool g_verbsRegistered = false;
-
-// Order as state: the sort order is synced. The baseline is the last broadcast or applied hash
-// sequence, the store's array order. Appends and deletes (organic and wire) update it in
-// place; only a reorder of the common elements (a sort move, or drift) authors an order line.
-// Convergence is host-canonical: client lines are host-terminal, the host applies
-// last-writer-wins and broadcasts its canonical, and clients apply host-authored lines only.
+// Order as state: the sort order is synced. The baseline is the sequence every peer will hold once
+// the lines authored so far reach it -- each receiver takes a delete's first row of that content out and
+// puts an append at the tail -- so an order line goes exactly when this peer's own order differs from it.
+// Convergence is host-canonical: client lines are host-terminal, the host applies last-writer-wins and
+// broadcasts its canonical, and clients apply host-authored lines only.
 std::vector<uint64_t> g_orderBase;
 coop::blob_chunks::Assembler g_orderAsm;
 
@@ -92,9 +116,9 @@ bool g_orderPending = false;  // an order change detected but not yet sent/broad
 
 coop::blob_chunks::Assembler g_assembler;
 uint32_t g_nextSeq = 1;
+Clock::time_point g_nextRetry{};
 
-// Counters for the 60 s line.
-std::atomic<uint64_t> g_cMarks{0};
+// Session totals, logged once a minute while any is not zero.
 uint64_t g_cAppendsSent = 0, g_cDeletesSent = 0, g_cAppendsApplied = 0,
          g_cDeletesApplied = 0, g_cTombConsumed = 0, g_cSeedLines = 0,
          g_cOrderSent = 0, g_cOrderApplied = 0;
@@ -131,24 +155,10 @@ int32_t PendingNetAll() {
     return n;
 }
 
-// Does the order of the common elements differ between the baseline and the live sequence?
-// Filter each to the multiset intersection, preserving order; pure appends (the tail) and
-// deletes (remove one) never change this, only a move or drift does.
-bool CommonOrderChanged(const std::vector<uint64_t>& base,
-                        const std::vector<uint64_t>& live) {
-    std::map<uint64_t, int32_t> inBase, inLive;
-    for (uint64_t h : base) ++inBase[h];
-    for (uint64_t h : live) ++inLive[h];
-    std::map<uint64_t, int32_t> quota;
-    for (const auto& [h, c] : inBase) {
-        auto it = inLive.find(h);
-        if (it != inLive.end()) quota[h] = c < it->second ? c : it->second;
+void EraseFirst(std::vector<uint64_t>& seq, uint64_t hash) {
+    for (auto it = seq.begin(); it != seq.end(); ++it) {
+        if (*it == hash) { seq.erase(it); return; }
     }
-    std::vector<uint64_t> fb, fl;
-    std::map<uint64_t, int32_t> q1 = quota, q2 = quota;
-    for (uint64_t h : base) { auto it = q1.find(h); if (it != q1.end() && it->second > 0) { --it->second; fb.push_back(h); } }
-    for (uint64_t h : live) { auto it = q2.find(h); if (it != q2.end() && it->second > 0) { --it->second; fl.push_back(h); } }
-    return fb != fl;
 }
 
 void LogDigest(const char* why) {
@@ -162,32 +172,29 @@ void LogDigest(const char* why) {
             n, static_cast<unsigned long long>(sum), why);
 }
 
-// The virtual-verb mark, capture only; the context is class-checked, since boot-window
-// dispatches of the same name from other classes must not degenerate the pre-gate.
-
-sg::Verdict OnVerbEntry(const sg::Call& b) {
-    if (b.fromOurCode) return sg::Verdict::Run;   // our own apply calls these verbs by reflection
-    void* cls = MS::LaptopWidgetClass();
-    if (!cls || !b.object) return sg::Verdict::Run;
-    if (R::ClassOf(b.object) != cls) return sg::Verdict::Run;
-    g_dirty.store(true, std::memory_order_relaxed);
-    g_cMarks.fetch_add(1, std::memory_order_relaxed);
-    return sg::Verdict::Run;
-}
-
-// Called only after the store resolved: an unthrottled class lookup retry here was a per-frame
-// pre-world array walk; the class now comes from the store's own throttled resolver.
-void EnsureVerbsRegistered() {
-    if (g_verbsRegistered) return;
-    if (!MS::LaptopWidgetClass()) return;
-    const bool ok =
-        sg::WatchName(L"addSignal",    kVerbMark, &OnVerbEntry, nullptr) &&
-        sg::WatchName(L"removeSignal", kVerbMark, &OnVerbEntry, nullptr) &&
-        sg::WatchName(L"sortSignal",   kVerbMark, &OnVerbEntry, nullptr);
-    if (ok) {
-        g_verbsRegistered = true;
-        UE_LOGI("meadow_db: 3 verb watches live (poll accelerators at the script-body gate)");
+// The shadow is taken of one world's database, the first time the lane needs it there: a writer's
+// entry, a line to apply, a retry. A new world -- a travel, a rehost's load -- takes it again, and the
+// lines still waiting in the old one go with it; a joiner's seed carries what they would have.
+bool EnsurePrimed() {
+    void* gm = ue_wrap::world_singleton::Gamemode();
+    if (g_primed && gm && g_primedIn.Is(gm)) return true;
+    if (g_primed) {
+        UE_LOGI("meadow_db: a new world -- the shadow and %zu waiting line(s) dropped",
+                g_pending.size() + g_tombs.size());
+        g_primed = false;
+        g_shadow.clear();
+        g_pending.clear();
+        g_tombs.clear();
+        g_orderBase.clear();
+        g_orderPending = false;
     }
+    if (!gm || !MS::EnsureResolved()) return false;
+    if (!MH::HashStore(g_shadow, &g_orderBase)) return false;
+    g_primedIn.Set(gm);
+    g_primed = true;
+    UE_LOGI("meadow_db: shadow primed at %zu row(s)", g_orderBase.size());
+    LogDigest("prime");
+    return true;
 }
 
 // Send paths; the shadow advances only on successful delivery.
@@ -214,10 +221,13 @@ bool SendOrder(coop::net::Session* s, const std::vector<uint64_t>& seq, int toSl
 }
 
 // Author one line: try to send now; on failure (or a muted pre-ready client) queue it as
-// pending. The shadow advances only on success.
+// pending. The shadow advances only on success; the order baseline at once, since every
+// peer will apply the line in its turn.
 void AuthorLine(coop::net::Session* s, uint64_t hash, bool isDelete,
                 const std::vector<uint8_t>& blob) {
     ++g_opCounter;
+    if (isDelete) EraseFirst(g_orderBase, hash);
+    else g_orderBase.push_back(hash);
     const bool sendable = s && s->connected() && CanSend();
     bool sent = false;
     if (sendable) {
@@ -241,6 +251,99 @@ void AuthorLine(coop::net::Session* s, uint64_t hash, bool isDelete,
         if (!isDelete) p.blob = blob;
         g_pending.push_back(std::move(p));
     }
+}
+
+// The order line, when the order every peer will hold is not this peer's: the host's goes to every
+// peer, a client's to the host, which answers with its own. The FIFO guard: an order line that
+// references a hash whose append or delete is still pending would overtake it on the wire (the lane
+// pin orders only what was handed to the transport), the receiver would skip the unknown hash and the
+// late append would land at the tail, a permanent per-peer divergence -- so it waits for the queue to
+// empty. A send failure leaves the baseline old, so the retry sends it.
+void SendOrderIfDiffers(coop::net::Session* s, const std::vector<uint64_t>& seq) {
+    if (seq == g_orderBase) {
+        g_orderPending = false;
+    } else if (!s || !s->connected()) {
+        g_orderBase = seq;  // nobody to tell; a joiner gets the save and the seed
+        g_orderPending = false;
+    } else if (!g_pending.empty() || !CanSend() || !SendOrder(s, seq, IsHost() ? -1 : 0)) {
+        g_orderPending = true;
+    } else {
+        g_orderBase = seq;
+        g_orderPending = false;
+        ++g_cOrderSent;
+        UE_LOGI("meadow_db: order %s (n=%zu)", IsHost() ? "sent to every peer" : "sent to the host", seq.size());
+    }
+}
+
+// What the writer bodies changed since the shadow, sent: each row that went a delete, each that came an
+// append in the database's own order, then the order line when the order every peer will hold after
+// those lines is not this peer's. Game thread.
+void Reconcile(coop::net::Session* s) {
+    if (!EnsurePrimed()) return;
+    std::map<uint64_t, int32_t> cur;
+    std::vector<uint64_t> seq;
+    if (!MH::HashStore(cur, &seq)) {
+        UE_LOGW("meadow_db: the database could not be read after a writer -- its change goes with the next one");
+        return;
+    }
+    // What every peer will hold: the shadow with the lines still waiting to go.
+    std::map<uint64_t, int32_t> target = g_shadow;
+    for (const auto& p : g_pending) target[p.hash] += p.isDelete ? -1 : 1;
+    static const std::vector<uint8_t> kNoBlob;
+    for (const auto& [h, c] : target) {
+        const auto it = cur.find(h);
+        for (int32_t drop = c - (it == cur.end() ? 0 : it->second); drop > 0; --drop)
+            AuthorLine(s, h, /*isDelete=*/true, kNoBlob);
+    }
+    std::map<uint64_t, int32_t> want;
+    for (const auto& [h, c] : cur) {
+        const auto it = target.find(h);
+        const int32_t w = c - (it == target.end() ? 0 : it->second);
+        if (w > 0) want[h] = w;
+    }
+    for (size_t i = 0; i < seq.size() && !want.empty(); ++i) {
+        const auto it = want.find(seq[i]);
+        if (it == want.end()) continue;
+        SD::Row r;
+        if (!MS::ReadRow(static_cast<int32_t>(i), r)) {
+            UE_LOGW("meadow_db: row %zu unreadable after a writer -- its append goes with the next one", i);
+            continue;
+        }
+        AuthorLine(s, seq[i], /*isDelete=*/false, coop::signal_wire::Serialize(r, /*adopt=*/false));
+        if (--it->second == 0) want.erase(it);
+    }
+    // A persistent mismatch after the reconcile is a real bug; every exit is instrumented.
+    const int32_t post = SumShadow() + PendingNetAll();
+    if (post != static_cast<int32_t>(seq.size()))
+        UE_LOGW("meadow_db: shadow/store mismatch persists after reconcile "
+                "(store %zu vs shadow+pending %d)", seq.size(), post);
+    else
+        LogDigest("writer");
+    SendOrderIfDiffers(s, seq);
+}
+
+// Outside a session the gate runs only for a dev probe that holds it; the lane takes no part there.
+coop::net::Session* RunningSession() {
+    auto* s = g_session.load(std::memory_order_acquire);
+    return (s && s->running()) ? s : nullptr;
+}
+
+sg::Verdict OnWriterPre(const sg::Call&) {
+    if (g_applyDepth == 0 && RunningSession()) g_primeMissed = !EnsurePrimed();
+    return sg::Verdict::Run;
+}
+
+void OnWriterPost(const sg::Call&) {
+    if (g_applyDepth > 0) return;  // the lane's own apply keeps its shadow in the same callback
+    coop::net::Session* s = RunningSession();
+    if (!s) return;
+    if (g_primeMissed) {
+        // Whatever it changed is in the lane's first picture of the database, and no peer is told.
+        g_primeMissed = false;
+        UE_LOGW("meadow_db: a writer ran while the database could not be read -- its change is not sent");
+        return;
+    }
+    Reconcile(s);
 }
 
 // Retry the queued lines. Unmasked entries retry as plain broadcasts (the channel-refused
@@ -294,6 +397,18 @@ void RetryPending(coop::net::Session* s) {
 
 void ApplyAppendBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
     const uint64_t hash = coop::signal_wire::ContentHash(blob);
+    SD::Row row;
+    bool adopt = false;
+    if (!coop::signal_wire::Deserialize(blob, row, adopt)) {
+        UE_LOGW("meadow_db: malformed row blob from slot %u -- dropped",
+                static_cast<unsigned>(senderSlot));
+        return;
+    }
+    if (!EnsurePrimed() || !MS::Widget()) {
+        UE_LOGW("meadow_db: append from slot %u dropped -- store/widget unresolved "
+                "(world transition?)", static_cast<unsigned>(senderSlot));
+        return;
+    }
     // Tombstone consume: an outstanding delete beats the append, the race cover.
     for (auto it = g_tombs.begin(); it != g_tombs.end(); ++it) {
         if (it->hash == hash) {
@@ -305,19 +420,12 @@ void ApplyAppendBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
             return;
         }
     }
-    SD::Row row;
-    bool adopt = false;
-    if (!coop::signal_wire::Deserialize(blob, row, adopt)) {
-        UE_LOGW("meadow_db: malformed row blob from slot %u -- dropped",
-                static_cast<unsigned>(senderSlot));
-        return;
+    bool added;
+    {
+        ApplyScope scope;
+        added = MS::ApplyAddSignal(row);
     }
-    if (!MS::EnsureResolved() || !MS::Widget()) {
-        UE_LOGW("meadow_db: append from slot %u dropped -- store/widget unresolved "
-                "(world transition?)", static_cast<unsigned>(senderSlot));
-        return;
-    }
-    if (MS::ApplyAddSignal(row)) {
+    if (added) {
         ++g_shadow[hash];
         g_orderBase.push_back(hash);  // addSignal appends at the tail on every peer
         ++g_cAppendsApplied;
@@ -333,16 +441,18 @@ void ApplyAppendBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
 
 // True when the delete resolved and applied, the shadow decremented.
 bool ApplyDeleteByHash(uint64_t hash) {
-    if (!g_primed) return false;
-    if (!MS::EnsureResolved() || !MS::Widget()) return false;
+    if (!EnsurePrimed() || !MS::Widget()) return false;
     const int32_t idx = MH::IndexOf(hash);
     if (idx < 0) return false;
-    if (!MS::ApplyRemoveSignal(idx)) return false;
+    bool removed;
+    {
+        ApplyScope scope;
+        removed = MS::ApplyRemoveSignal(idx);
+    }
+    if (!removed) return false;
     auto it = g_shadow.find(hash);
     if (it != g_shadow.end() && --it->second <= 0) g_shadow.erase(it);
-    for (auto ob = g_orderBase.begin(); ob != g_orderBase.end(); ++ob) {
-        if (*ob == hash) { g_orderBase.erase(ob); break; }  // one instance; drift self-heals at the next poll's order check
-    }
+    EraseFirst(g_orderBase, hash);  // the first row of that content, as every receiver takes it
     ++g_cDeletesApplied;
     UE_LOGI("meadow_db: applied delete (row %d, hash %016llx)",
             idx, static_cast<unsigned long long>(hash));
@@ -367,7 +477,7 @@ void ApplyOrderBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
                 static_cast<unsigned>(senderSlot));
         return;
     }
-    if (!MS::EnsureResolved() || !MS::Widget()) {
+    if (!EnsurePrimed() || !MS::Widget()) {
         UE_LOGW("meadow_db: order from slot %u dropped -- store/widget unresolved",
                 static_cast<unsigned>(senderSlot));
         return;
@@ -382,11 +492,14 @@ void ApplyOrderBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
     for (int32_t i = 0; i < n; ++i)
         if (perm[static_cast<size_t>(i)] != i) { identity = false; break; }
     if (!identity) {
-        if (!MS::ReorderRows(perm.data(), n)) {
-            UE_LOGW("meadow_db: order permute failed (n=%d) -- dropped", n);
-            return;
+        {
+            ApplyScope scope;
+            if (!MS::ReorderRows(perm.data(), n)) {
+                UE_LOGW("meadow_db: order permute failed (n=%d) -- dropped", n);
+                return;
+            }
+            MS::ApplyGenSignalList();
         }
-        MS::ApplyGenSignalList();
         std::vector<uint64_t> ns;
         ns.reserve(static_cast<size_t>(n));
         for (int32_t i = 0; i < n; ++i)
@@ -399,8 +512,8 @@ void ApplyOrderBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
     }
     if (host && senderSlot != 0) {
         // The canonical back to everyone, so the author sees its state confirmed. The same FIFO
-        // guard as the poll: never broadcast an order that references a still-pending append or
-        // delete.
+        // guard as a writer's order: never broadcast an order that references a still-pending
+        // append or delete.
         auto* s = g_session.load(std::memory_order_acquire);
         const bool ok = (s && s->connected())
                             ? (g_pending.empty() && SendOrder(s, seq, -1))
@@ -410,12 +523,39 @@ void ApplyOrderBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
             g_orderPending = false;
             ++g_cOrderSent;
         } else {
-            g_orderPending = true;  // baseline stays old -> the poll re-detects + rebroadcasts
+            g_orderPending = true;  // baseline stays old -> the retry sends it
         }
     } else {
         g_orderBase = seq;
         g_orderPending = false;
     }
+}
+
+void WatchUntilLive() {
+    sg::ResolvePendingNames();
+    for (const Writer& w : kWriters)
+        if (!sg::ClassNameWatchLive(w.cls, w.fn, kTagWriter)) return;
+    g_writersLive = true;
+    UE_LOGI("meadow_db: the database's %zu writers are watched at the script-body gate", std::size(kWriters));
+}
+
+void LogTotals(Clock::time_point now) {
+    if (now < g_nextStats) return;
+    g_nextStats = now + std::chrono::seconds(60);
+    if (!(g_cAppendsSent || g_cDeletesSent || g_cAppendsApplied || g_cDeletesApplied || g_cTombConsumed ||
+          g_cSeedLines || g_cOrderSent || g_cOrderApplied || !g_pending.empty()))
+        return;
+    UE_LOGI("meadow_db: session totals sent=%llu/%llu applied=%llu/%llu "
+            "order=%llu/%llu tombConsumed=%llu seed=%llu pending=%zu tombs=%zu",
+            static_cast<unsigned long long>(g_cAppendsSent),
+            static_cast<unsigned long long>(g_cDeletesSent),
+            static_cast<unsigned long long>(g_cAppendsApplied),
+            static_cast<unsigned long long>(g_cDeletesApplied),
+            static_cast<unsigned long long>(g_cOrderSent),
+            static_cast<unsigned long long>(g_cOrderApplied),
+            static_cast<unsigned long long>(g_cTombConsumed),
+            static_cast<unsigned long long>(g_cSeedLines),
+            g_pending.size(), g_tombs.size());
 }
 
 }  // namespace
@@ -424,20 +564,29 @@ void ApplyOrderBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    if (g_writersWatched) return;
+    bool ok = true;
+    for (const Writer& w : kWriters)
+        ok = sg::WatchClassName(w.cls, w.fn, kTagWriter, &OnWriterPre, &OnWriterPost) && ok;
+    g_writersWatched = ok;
+    if (!ok) UE_LOGW("meadow_db: a writer's watch was refused -- a change it makes is not sent");
 }
 
 void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return;
-    if (!MS::EnsureResolved()) return;  // 2 s throttled; gates the registration too
-    EnsureVerbsRegistered();
-    sg::ResolvePendingNames();
-
+    if (!g_writersLive) WatchUntilLive();
     const auto now = Clock::now();
-    if (now < g_nextPoll) return;
-    g_nextPoll = now + kPollInterval;
-
+    LogTotals(now);
+    // The retries -- a line whose send failed or waits for this client's world-ready, a delete that
+    // came before its row, an order held behind them, a row's chunks in flight -- once a second, and
+    // only while one of them waits.
+    if (g_pending.empty() && g_tombs.empty() && !g_orderPending && g_assembler.Idle() && g_orderAsm.Idle())
+        return;
+    if (now < g_nextRetry) return;
+    g_nextRetry = now + kRetryInterval;
     g_assembler.Sweep(now, kAssemblyTTL);
+    g_orderAsm.Sweep(now, kAssemblyTTL);
     for (auto it = g_tombs.begin(); it != g_tombs.end();) {
         if (now >= it->until) {
             UE_LOGW("meadow_db: delete for hash %016llx expired unmatched",
@@ -445,130 +594,16 @@ void Tick() {
             it = g_tombs.erase(it);
         } else ++it;
     }
-
-    const int32_t n = MS::Count();
-    if (n < 0) {
-        // World down: fresh allocations at world-up, never a diff across it; unsent lines drop with
-        // the world and heal at the join.
-        if (g_primed) {
-            g_primed = false;
-            g_shadow.clear();
-            g_pending.clear();
-            g_tombs.clear();
-            g_orderBase.clear();
-            g_orderPending = false;
-        }
-        return;
-    }
-
-    if (!g_primed) {
-        // Adopt without broadcast: absorbs the save-loaded store and any pre-prime wire applies
-        // (the prime precedes the ready flip by seconds in a real join; correct at a zero gap too).
-        if (!MH::HashStore(g_shadow, &g_orderBase)) return;
-        g_primed = true;
-        UE_LOGI("meadow_db: shadow primed at %d row(s)", n);
-        LogDigest("prime");
-    } else {
-        // The pre-gate: one count read and the scoped mark. Adds and removes change the count; a
-        // sort move fires the mark (the third matcher); no in-place edit verb exists. An unsent
-        // order change keeps retrying across polls.
-        const bool marked = g_dirty.exchange(false, std::memory_order_relaxed);
-        const int32_t expected = SumShadow() + PendingNetAll();
-        if (marked || n != expected || g_orderPending) {
-            std::map<uint64_t, int32_t> cur;
-            std::vector<uint64_t> seq;
-            if (!MH::HashStore(cur, &seq)) return;
-            // Target against current: what the store holds against the shadow plus pending.
-            std::map<uint64_t, int32_t> target = g_shadow;
-            for (const auto& p : g_pending) {
-                target[p.hash] += p.isDelete ? -1 : 1;
-            }
-            // The union walk.
-            std::vector<uint8_t> scratch;
-            for (const auto& [h, c] : cur) {
-                int32_t want = c - (target.count(h) ? target[h] : 0);
-                while (want-- > 0) {
-                    // Find a serialised row with this hash for the blob.
-                    const int32_t idx = MH::IndexOf(h);
-                    std::vector<uint8_t> blob;
-                    if (idx >= 0) {
-                        SD::Row r;
-                        if (MS::ReadRow(idx, r))
-                            blob = coop::signal_wire::Serialize(r, false);
-                    }
-                    if (blob.empty()) break;  // unreadable mid-walk: next poll
-                    AuthorLine(s, h, /*isDelete=*/false, blob);
-                }
-            }
-            for (const auto& [h, c] : target) {
-                const int32_t have = cur.count(h) ? cur[h] : 0;
-                int32_t drop = c - have;
-                static const std::vector<uint8_t> kNoBlob;
-                while (drop-- > 0) AuthorLine(s, h, /*isDelete=*/true, kNoBlob);
-            }
-            // A persistent mismatch after the reconcile is a real bug; every exit is instrumented.
-            const int32_t post = SumShadow() + PendingNetAll();
-            if (post != n)
-                UE_LOGW("meadow_db: shadow/store mismatch persists after reconcile "
-                        "(store %d vs shadow+pending %d)", n, post);
-            else
-                LogDigest("poll-reconcile");
-
-            // Order: a reorder of the common elements is a sort move, or drift. The host broadcasts
-            // its canonical; a client sends its order to the host only. A send failure leaves the
-            // baseline old, so the pending flag retries. The FIFO guard: an order line referencing
-            // a hash whose append or delete is still pending would overtake it on the wire (the
-            // lane pin orders only what was handed to the transport), so the receiver would skip
-            // the unknown hash and the late append would land at the tail, a permanent per-peer
-            // order divergence. Every order send is deferred until the pending queue is empty.
-            if (CommonOrderChanged(g_orderBase, seq)) {
-                if (!s->connected()) {
-                    g_orderBase = seq;  // solo: nobody to tell; joiners get save+seed
-                    g_orderPending = false;
-                } else if (!g_pending.empty()) {
-                    g_orderPending = true;  // retry after RetryPending flushes
-                } else if (CanSend() && SendOrder(s, seq, IsHost() ? -1 : 0)) {
-                    g_orderBase = seq;
-                    g_orderPending = false;
-                    ++g_cOrderSent;
-                    UE_LOGI("meadow_db: order %s (n=%zu)",
-                            IsHost() ? "canonical broadcast" : "sent to host", seq.size());
-                } else {
-                    g_orderPending = true;
-                }
-            } else {
-                g_orderBase = seq;  // tail/delete adjustments -- silent
-                g_orderPending = false;
-            }
-        }
-    }
-
-    // The tombstone retry; a matching row may have appeared.
+    if (!EnsurePrimed()) return;
     for (auto it = g_tombs.begin(); it != g_tombs.end();) {
         if (ApplyDeleteByHash(it->hash)) it = g_tombs.erase(it);
         else ++it;
     }
-
     RetryPending(s);
-
-    if (now >= g_nextStats) {
-        g_nextStats = now + std::chrono::seconds(60);
-        const uint64_t marks = g_cMarks.exchange(0, std::memory_order_relaxed);
-        if (marks || g_cAppendsSent || g_cDeletesSent || g_cAppendsApplied ||
-            g_cDeletesApplied || g_cTombConsumed || g_cSeedLines ||
-            g_cOrderSent || g_cOrderApplied || !g_pending.empty())
-            UE_LOGI("meadow_db: 60s marks=%llu sent=%llu/%llu applied=%llu/%llu "
-                    "order=%llu/%llu tombConsumed=%llu seed=%llu pending=%zu tombs=%zu",
-                    static_cast<unsigned long long>(marks),
-                    static_cast<unsigned long long>(g_cAppendsSent),
-                    static_cast<unsigned long long>(g_cDeletesSent),
-                    static_cast<unsigned long long>(g_cAppendsApplied),
-                    static_cast<unsigned long long>(g_cDeletesApplied),
-                    static_cast<unsigned long long>(g_cOrderSent),
-                    static_cast<unsigned long long>(g_cOrderApplied),
-                    static_cast<unsigned long long>(g_cTombConsumed),
-                    static_cast<unsigned long long>(g_cSeedLines),
-                    g_pending.size(), g_tombs.size());
+    if (g_orderPending && g_pending.empty()) {
+        std::map<uint64_t, int32_t> cur;
+        std::vector<uint64_t> seq;
+        if (MH::HashStore(cur, &seq)) SendOrderIfDiffers(s, seq);
     }
 }
 
@@ -689,7 +724,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     }
     // The canonical order always rides after the deltas on the same FIFO lane: the joiner's save
     // order may predate in-window moves, and order is synced state. The FIFO guard: with lines
-    // still pending the order would reference undelivered hashes, so defer to the poll's canonical
+    // still pending the order would reference undelivered hashes, so defer to the retry's canonical
     // broadcast, which reaches this slot too after the flush.
     int sentO = 0;
     if (!seq.empty() && g_pending.empty() && SendOrder(s, seq, peerSlot)) sentO = 1;
@@ -699,10 +734,6 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         UE_LOGI("meadow_db: seed slot=%d +%d/-%d rows%s", peerSlot, sentA, sentD,
                 sentO ? " +order" : "");
     snap.valid = false;
-}
-
-bool IsPrimed() {
-    return g_primed;
 }
 
 SentCounts SentLines() {
@@ -717,6 +748,9 @@ void CancelJoinSnapshot(int peerSlot) {
     if (peerSlot <= 0 || peerSlot >= coop::net::kMaxPeers) return;
     g_snap[peerSlot] = SlotSnap{};
     g_seededOnce[peerSlot] = false;
+    // A recycled slot must not finish the departed peer's half-sent row or order.
+    g_assembler.ClearSlot(static_cast<uint8_t>(peerSlot));
+    g_orderAsm.ClearSlot(static_cast<uint8_t>(peerSlot));
     const uint32_t bit = 1u << peerSlot;
     for (auto& p : g_pending) {
         p.excludeMask &= ~bit;   // slot reuse must not inherit stale excludes
@@ -735,9 +769,10 @@ void OnDisconnect() {
     for (auto& sn : g_snap) sn = SlotSnap{};
     for (auto& so : g_seededOnce) so = false;
     g_primed = false;
-    g_dirty.store(false, std::memory_order_relaxed);
+    g_primeMissed = false;
+    g_primedIn.Reset();
     g_nextSeq = 1;
-    g_nextPoll = {};
+    g_nextRetry = {};
     g_opCounter = 0;
     g_cAppendsSent = g_cDeletesSent = g_cAppendsApplied = g_cDeletesApplied = 0;
     g_cTombConsumed = g_cSeedLines = 0;

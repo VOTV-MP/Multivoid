@@ -4,7 +4,7 @@
 
 #include "coop/config/config.h"
 #include "coop/interactables/meadow_db_hash.h"
-#include "coop/interactables/meadow_db_sync.h"  // IsPrimed, SentLines, SetApplyObserver
+#include "coop/interactables/meadow_db_sync.h"  // SentLines, SetApplyObserver
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
@@ -154,9 +154,7 @@ void HostTick(coop::net::Session& s) {
         bool anyReady = false;
         for (int slot = 1; slot < static_cast<int>(coop::net::kMaxPeers) && !anyReady; ++slot)
             anyReady = s.IsSlotWorldReady(slot);
-        // A row added before the lane holds this world's database would be taken into the lane's first
-        // picture of it, and never sent.
-        if (!anyReady || !MDB::IsPrimed()) return;
+        if (!anyReady) return;
         if (++g_readyTicks < 2) return;  // a tick after, so the client's world-ready replay went first
         std::vector<uint64_t> seq;
         if (!MS::EnsureResolved() || !ReadSequence(seq)) return;

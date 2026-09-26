@@ -115,8 +115,9 @@ another's eject leaves the unfreeze to that grab's own hold, which reaches the d
 lane: its first pose unfreezes the copy, and its release leaves the holder's flags
 ([props.md](props.md)). An insert ends the hold of whoever carried the drive in, so a late pose of it
 cannot pull the drive back out; a drive a conflicting line ejects is unfrozen with the eject, since
-no hold follows it. The desk's twelve physical modules are a
-set, so plug and unplug are value operations the host applies and re-broadcasts whole
+no hold follows it. The desk's physical modules sit in slots, and a type
+may sit in more than one, so a plug and an unplug each name their slot; the host applies them and
+re-broadcasts the whole array, and a refused one goes back to its author with it
 (`coop/interactables/physmods_sync`). The tape caddy's reel slots are presser-authored edges, and
 its accrual is deterministic and clamped, so instead of a park the host re-snaps it once a second
 (`coop/interactables/tape_caddy_sync`). The stationary PC's power and floppy axes are presser
@@ -125,7 +126,10 @@ edit-script batches the host anchors and answers with a canonical
 (`coop/interactables/laptop_buffer_sync`), and the disc crate is a stack of tail operations with
 a deny that reaps the author's just-spawned disc (`coop/interactables/floppybox_sync`). The
 laptop's signal database is a content-hash multiset with a host-canonical order, because the
-store has a move verb (`coop/interactables/meadow_db_sync`). The signal servers' break-and-fix
+store has a move verb; each of its writers -- the laptop's add, remove and move, and the rename
+window's commit -- is watched at the script-body gate, and its exit sends what it changed, a
+rename as a delete and an append with the order line that keeps the row in its place
+(`coop/interactables/meadow_db_sync`). The signal servers' break-and-fix
 simulation is host-owned and driven into each client's server boxes as state, so a client's own
 break is overwritten within a second (`coop/interactables/serverbox_sync`). A break the client
 authors locally can still raise one transient notice before that.
