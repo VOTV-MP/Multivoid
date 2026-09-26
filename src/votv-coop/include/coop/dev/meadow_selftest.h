@@ -1,15 +1,20 @@
-// coop/dev/meadow_selftest.h -- [dev] the laptop's signal database lane end to end: the host adds a row
-// to its database and takes it out again, and the client's copy of the database follows.
-//   HOST   -- once a client's world is ready and its own lane holds this world's database, it adds the
-//             row through the laptop's addSignal, waits for the lane to send it, removes it through
-//             removeSignal and waits for the lane to send the removal. Its DONE line says both went.
-//   CLIENT -- from its own world-ready it watches its database: the host's row arrives, then leaves, and
-//             the database ends at the count it started from. Its DONE line is the verdict.
-// The row is the same on both peers (named MEADOW-SELFTEST, id selftest-0), so each finds it by the
-// lane's own content hash. "[meadow_selftest] FAIL" is the lane failing a step (a run's --fail-marker),
-// "[meadow_selftest] ABANDONED" the drill unable to do its part (--dead-marker). It writes a row into
-// the save's real database and retries the removal, so a removal that never lands is said loudly.
-// Run with meadow_selftest=1.
+// coop/dev/meadow_selftest.h -- [dev] the laptop's signal database lane end to end, through every verb
+// that writes the database: the host adds two rows, renames one through the game's rename window, moves
+// the other past it through the list's arrows and removes both; then the client adds a row of its own and
+// removes it.
+//   HOST   -- once a client's world is ready and its lane holds this world's database, it runs its verbs,
+//             each once the lane has sent the one before, then watches its own database take the client's
+//             row and give it back. Its DONE line says the lane sent exactly its verbs' lines.
+//   CLIENT -- from its own world-ready it watches its database after every line its lane applies: the
+//             host's two rows in the host's order, the rename in the renamed row's place, the move, and
+//             the database back where it started. Then it adds and removes its own row. Its DONE line
+//             says it sent exactly its own two lines, so nothing it applied went back out.
+// Each peer builds the rows alike, so their content hashes are the same on both. "[meadow_selftest]
+// FAIL" is the lane failing a step (a run's --fail-marker), "[meadow_selftest] ABANDONED" the drill
+// unable to do its part (--dead-marker); the host's DONE line comes last (--done-marker). The rows go
+// into the save's real database, and every leg that ends early takes its rows back out, retrying, so a
+// row that stays is said loudly. The rename window's exit sets the host's input mode, as a player's
+// rename does. Run with meadow_selftest=1.
 
 #pragma once
 

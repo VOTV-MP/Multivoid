@@ -62,4 +62,20 @@ bool ReorderRows(const int32_t* srcIdx, int32_t n);
 // rebuild from the data array (zero-arg; the order re-applier).
 bool ApplyGenSignalList();
 
+// The dev drill's drivers: the list verbs a player reaches from the database list, run by reflection.
+// Nothing in play calls them.
+
+// Move row `index` by `delta` places through the laptop's sortSignal, the list's arrows, which moves the
+// selected row: the row's slot widget is made the selection first, with no play of its signal. False
+// when the row's slot widget or the verb is not there. Game thread.
+bool MoveRow(int32_t index, int32_t delta);
+
+// Rename row `index` as `player` (the local mainPlayer_C) does at the laptop: the laptop's own enter for
+// the player, the rename window's init on the row's slot widget, the name into its text box, its button,
+// whose handler writes the name into the row in place, then the player's own exit from the interface.
+// The handler ends by focusing the player's active interface, which only the laptop gives it: outside
+// the laptop it is null and the handler faults. False when a link of that chain is not there, said.
+// Game thread.
+bool RenameRow(void* player, int32_t index, const wchar_t* name);
+
 }  // namespace ue_wrap::meadow_store

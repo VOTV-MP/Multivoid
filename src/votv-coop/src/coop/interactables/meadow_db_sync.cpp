@@ -21,7 +21,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <cstring>
 #include <map>
 #include <vector>
 
@@ -100,6 +99,11 @@ uint64_t g_cAppendsSent = 0, g_cDeletesSent = 0, g_cAppendsApplied = 0,
          g_cDeletesApplied = 0, g_cTombConsumed = 0, g_cSeedLines = 0,
          g_cOrderSent = 0, g_cOrderApplied = 0;
 Clock::time_point g_nextStats{};
+
+coop::meadow_db_sync::ApplyObserver g_applyObserver = nullptr;  // [dev] the selftest's
+void NotifyApplied() {
+    if (g_applyObserver) g_applyObserver();
+}
 
 // Helpers.
 
@@ -320,6 +324,7 @@ void ApplyAppendBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
         UE_LOGI("meadow_db: applied append from slot %u ('%ls' lvl %d)",
                 static_cast<unsigned>(senderSlot), row.name.c_str(), row.level);
         LogDigest("apply-append");
+        NotifyApplied();
     } else {
         UE_LOGW("meadow_db: addSignal apply FAILED for slot %u ('%ls') -- row lost",
                 static_cast<unsigned>(senderSlot), row.name.c_str());
@@ -342,6 +347,7 @@ bool ApplyDeleteByHash(uint64_t hash) {
     UE_LOGI("meadow_db: applied delete (row %d, hash %016llx)",
             idx, static_cast<unsigned long long>(hash));
     LogDigest("apply-delete");
+    NotifyApplied();
     return true;
 }
 
@@ -389,6 +395,7 @@ void ApplyOrderBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
         ++g_cOrderApplied;
         UE_LOGI("meadow_db: applied order from slot %u (n=%d)",
                 static_cast<unsigned>(senderSlot), n);
+        NotifyApplied();
     }
     if (host && senderSlot != 0) {
         // The canonical back to everyone, so the author sees its state confirmed. The same FIFO
@@ -699,7 +706,11 @@ bool IsPrimed() {
 }
 
 SentCounts SentLines() {
-    return {g_cAppendsSent, g_cDeletesSent};
+    return {g_cAppendsSent, g_cDeletesSent, g_cOrderSent};
+}
+
+void SetApplyObserver(ApplyObserver fn) {
+    g_applyObserver = fn;
 }
 
 void CancelJoinSnapshot(int peerSlot) {

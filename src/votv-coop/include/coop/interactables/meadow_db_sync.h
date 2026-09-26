@@ -74,9 +74,15 @@ void OnDisconnect();
 // first picture of the database and never sent. Game thread.
 bool IsPrimed();
 
-// The appends and deletes this peer's lane has delivered this session, for the dev selftest's waits.
-// Game thread.
-struct SentCounts { uint64_t appends; uint64_t deletes; };
+// The appends, deletes and order lines this peer's lane has delivered this session, for the dev
+// selftest's waits. Game thread.
+struct SentCounts { uint64_t appends; uint64_t deletes; uint64_t orders; };
 SentCounts SentLines();
+
+// [dev] Called on the game thread after each line this peer's lane applies to its database -- an append,
+// a delete, an order -- so the selftest sees every state the database passes through, not only the ones
+// a tick lands on. Null to clear. Game thread.
+using ApplyObserver = void (*)();
+void SetApplyObserver(ApplyObserver fn);
 
 }  // namespace coop::meadow_db_sync

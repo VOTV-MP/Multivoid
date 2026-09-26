@@ -3,6 +3,7 @@
 #include "ue_wrap/desk/meadow_store.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/ftext_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
@@ -72,6 +73,43 @@ void ResolvePass() {
                 "widget.laptop=0x%X addSignal=yes removeSignal=yes)",
                 g_offGmLaptop, g_offGmSaveSlot, g_offSlotSignals, g_offWidgetLaptop);
     }
+}
+
+// The drill's drivers' members, resolved at their first use.
+int32_t g_offSlots = -1;           // ui_laptop_C::slots (TArray<uicomp_signalSlot_C*>, one per row)
+int32_t g_offActiveSlot = -1;      // ui_laptop_C::activeSlot (the selection sortSignal moves)
+int32_t g_offPlayerInterface = -1; // mainGamemode_C::playerInterface (ui_UI_C)
+int32_t g_offSignalNameWin = -1;   // ui_UI_C::umg_signalName (the rename window, ui_signalName_C)
+int32_t g_offNameBox = -1;         // ui_signalName_C::Etxt_name (UEditableTextBox)
+int32_t g_offActiveInterface = -1; // mainPlayer_C::activeInterface (what the rename window's handler focuses)
+// The rename window's button handler: its stub enters the window's ubergraph at the rename. The name is
+// the function's own, as the bytecode listing gives it; the pseudo-C++ drops its "K2Node_".
+constexpr const wchar_t* kRenameClick =
+    L"BndEvt__button_tab_upgrades_K2Node_ComponentBoundEvent_0_OnButtonClickedEvent__DelegateSignature";
+
+// A driver's missing link, said: the drill's ABANDONED line then names the step, this line the link.
+bool Missing(const char* driver, const char* link) {
+    UE_LOGW("meadow_store: %s -- %s is not there", driver, link);
+    return false;
+}
+
+// The live object at `obj`'s member `off` (resolved by name on `obj`'s class when -1), or nullptr.
+void* Member(void* obj, int32_t& off, const wchar_t* name) {
+    if (!obj) return nullptr;
+    if (off < 0) off = R::FindPropertyOffset(R::ClassOf(obj), name);
+    if (off < 0) return nullptr;
+    void* p = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(obj) + off);
+    return (p && R::IsLive(p)) ? p : nullptr;
+}
+
+// Row `index`'s slot widget in the laptop's list, or nullptr.
+void* SlotWidget(void* w, int32_t index) {
+    if (g_offSlots < 0) g_offSlots = R::FindPropertyOffset(R::ClassOf(w), L"slots");
+    if (g_offSlots < 0) return nullptr;
+    const TArrayView* a = reinterpret_cast<const TArrayView*>(reinterpret_cast<uint8_t*>(w) + g_offSlots);
+    if (index < 0 || index >= a->num || !a->data) return nullptr;
+    void* s = reinterpret_cast<void* const*>(a->data)[index];
+    return (s && R::IsLive(s)) ? s : nullptr;
 }
 
 TArrayView* Rows() {
@@ -186,6 +224,84 @@ bool ApplyGenSignalList() {
     ue_wrap::ParamFrame f(g_genSignalListFn);
     if (!f.valid()) return false;
     return ue_wrap::Call(w, f);
+}
+
+bool MoveRow(int32_t index, int32_t delta) {
+    void* w = Widget();
+    if (!w) return Missing("MoveRow", "the laptop widget");
+    void* slot = SlotWidget(w, index);
+    if (g_offActiveSlot < 0) g_offActiveSlot = R::FindPropertyOffset(R::ClassOf(w), L"activeSlot");
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(w), L"sortSignal");
+    if (!slot) return Missing("MoveRow", "the row's slot widget");
+    if (g_offActiveSlot < 0 || !fn) return Missing("MoveRow", "activeSlot or sortSignal");
+    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(w) + g_offActiveSlot) = slot;
+    ue_wrap::ParamFrame f(fn);
+    return f.valid() && f.Set<int32_t>(L"add", delta) && ue_wrap::Call(w, f);
+}
+
+namespace {
+
+// The rename window's commit on a row, inside the laptop: its init on the row's slot widget, the name into
+// its text box, then its button.
+bool CommitRename(void* w, int32_t index, const wchar_t* name) {
+    void* slot = SlotWidget(w, index);
+    void* ui = Member(world_singleton::Gamemode(), g_offPlayerInterface, L"playerInterface");
+    void* win = Member(ui, g_offSignalNameWin, L"umg_signalName");
+    void* box = Member(win, g_offNameBox, L"Etxt_name");
+    if (!slot) return Missing("RenameRow", "the row's slot widget");
+    if (!win) return Missing("RenameRow", "the rename window (playerInterface.umg_signalName)");
+    if (!box) return Missing("RenameRow", "the rename window's text box");
+    void* initFn = R::FindDispatchFunctionCached(R::ClassOf(win), L"init");
+    void* clickFn = R::FindDispatchFunctionCached(R::ClassOf(win), kRenameClick);
+    void* setTextFn = R::FindDispatchFunctionCached(R::ClassOf(box), L"SetText");
+    if (!initFn || !clickFn || !setTextFn) return Missing("RenameRow", "init, the button's handler or SetText");
+    {
+        ue_wrap::ParamFrame f(initFn);
+        if (!f.valid() || !f.Set<void*>(L"rename", slot) || !ue_wrap::Call(win, f))
+            return Missing("RenameRow", "a call of init");
+    }
+    uint8_t text[ue_wrap::ftext_utils::kFTextSize];
+    if (!ue_wrap::ftext_utils::MintFText(name, text)) return Missing("RenameRow", "an FText of the name");
+    {
+        ue_wrap::ParamFrame f(setTextFn);
+        if (!f.valid() || !f.SetRaw(L"InText", text, ue_wrap::ftext_utils::kFTextSize) || !ue_wrap::Call(box, f))
+            return Missing("RenameRow", "a call of SetText");
+    }
+    ue_wrap::ParamFrame f(clickFn);
+    if (!f.valid() || !ue_wrap::Call(win, f)) return Missing("RenameRow", "a call of the button's handler");
+    return true;
+}
+
+}  // namespace
+
+bool RenameRow(void* player, int32_t index, const wchar_t* name) {
+    void* w = Widget();
+    if (!w) return Missing("RenameRow", "the laptop widget");
+    void* device = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(w) + g_offWidgetLaptop);
+    if (!player || !R::IsLive(player)) return Missing("RenameRow", "the local player");
+    if (!device || !R::IsLive(device)) return Missing("RenameRow", "the laptop device");
+    void* enterFn = R::FindDispatchFunctionCached(R::ClassOf(device), L"enter");
+    void* exitFn = R::FindDispatchFunctionCached(R::ClassOf(player), L"Enter Interface");
+    if (!enterFn || !exitFn) return Missing("RenameRow", "the laptop's enter or the player's Enter Interface");
+    {
+        ue_wrap::ParamFrame f(enterFn);
+        if (!f.valid() || !f.Set<void*>(L"self2", player) || !ue_wrap::Call(device, f))
+            return Missing("RenameRow", "a call of the laptop's enter");
+    }
+    const bool renamed = Member(player, g_offActiveInterface, L"activeInterface")
+                             ? CommitRename(w, index, name)
+                             : Missing("RenameRow", "the player's interface after the laptop's enter");
+    // The player's own exit from an interface, the call its exit input makes: no interface, "Exit player".
+    static wchar_t kExitFrom[] = L"Exit player";
+    R::FString from{};
+    from.Data = kExitFrom;
+    from.Num = static_cast<int32_t>(sizeof(kExitFrom) / sizeof(kExitFrom[0]));
+    from.Max = from.Num;
+    ue_wrap::ParamFrame f(exitFn);
+    if (!f.valid() || !f.Set<void*>(L"activeInterface", nullptr) || !f.SetRaw(L"callFrom", &from, sizeof(from)) ||
+        !ue_wrap::Call(player, f))
+        return Missing("RenameRow", "a call of the player's exit from the laptop");
+    return renamed;
 }
 
 }  // namespace ue_wrap::meadow_store
