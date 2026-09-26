@@ -4,9 +4,8 @@
 
 #include "coop/net/session.h"
 
+#include "ue_wrap/actors/kerfus.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/object_index.h"
-#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 
 #include <atomic>
@@ -15,11 +14,9 @@
 namespace coop::kerfus_brain {
 namespace {
 
-namespace OI = ue_wrap::object_index;
-namespace R  = ue_wrap::reflection;
+namespace UK = ue_wrap::kerfus;
 namespace sg = ue_wrap::script_gate;
 
-constexpr const wchar_t* kKerfusClass = L"p_kerfus_C";
 
 // The brain's bodies (p_kerfus.cpp, bp_cfg 2026-09-23): the tick (energy drain and charge, the wheel's
 // torque, the stuck jump), the two timer events that re-path and unstick it, the movement functions,
@@ -66,9 +63,7 @@ sg::Verdict OnBrainPre(const sg::Call& c) {
 // so this fires only for one that began before its watch went live; the fix is the host's to make.
 sg::Verdict OnServerFixPre(const sg::Call& c) {
     if (!OnClient() || !c.callerObject) return sg::Verdict::Run;
-    void* kerfus = OI::ClassByName(kKerfusClass);
-    void* cls = R::ClassOf(c.callerObject);
-    if (!kerfus || !cls || !R::IsDescendantOfAny(cls, &kerfus, 1)) return sg::Verdict::Run;
+    if (!UK::IsKerfus(c.callerObject)) return sg::Verdict::Run;
     ++g_fixRefused;
     UE_LOGW("kerfus_brain: refused a server fix() from a Kerfus's own body on this client (#%llu) -- a server "
             "job that began before the brain's watch went live", g_fixRefused);
@@ -78,7 +73,7 @@ sg::Verdict OnServerFixPre(const sg::Call& c) {
 void Register() {
     for (size_t i = 0; i < kBrainCount; ++i)
         if (!g_watched[i])
-            g_watched[i] = sg::WatchClassName(kKerfusClass, kBrain[i], kTagBrainBase + static_cast<int>(i),
+            g_watched[i] = sg::WatchClassName(UK::kClassName, kBrain[i], kTagBrainBase + static_cast<int>(i),
                                               &OnBrainPre, nullptr);
     if (!g_fixWatched)
         g_fixWatched = sg::WatchClassName(L"serverBox_C", L"fix", kTagServerFix, &OnServerFixPre, nullptr);
@@ -96,7 +91,7 @@ void Tick() {
     Register();
     sg::ResolvePendingNames();
     for (size_t i = 0; i < kBrainCount; ++i)
-        if (!g_watched[i] || !sg::ClassNameWatchLive(kKerfusClass, kBrain[i], kTagBrainBase + static_cast<int>(i)))
+        if (!g_watched[i] || !sg::ClassNameWatchLive(UK::kClassName, kBrain[i], kTagBrainBase + static_cast<int>(i)))
             return;
     if (!g_fixWatched || !sg::ClassNameWatchLive(L"serverBox_C", L"fix", kTagServerFix)) return;
     g_saidLive = true;

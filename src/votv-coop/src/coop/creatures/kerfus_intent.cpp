@@ -10,9 +10,8 @@
 #include "coop/player/players_registry.h"
 #include "coop/props/active_drive.h"
 
-#include "ue_wrap/core/call.h"
+#include "ue_wrap/actors/kerfus.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 
@@ -25,11 +24,10 @@ namespace coop::kerfus_intent {
 namespace {
 
 namespace EL = coop::element;
-namespace OI = ue_wrap::object_index;
 namespace R  = ue_wrap::reflection;
+namespace UK = ue_wrap::kerfus;
 namespace sg = ue_wrap::script_gate;
 
-constexpr const wchar_t* kKerfusClass = L"p_kerfus_C";
 constexpr int kTagAction = 0x4B464901;  // 'KFI' 1
 constexpr int kTagName   = 0x4B464902;
 
@@ -51,6 +49,7 @@ constexpr uint64_t kSayEveryMs = 10000;
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_actionWatched = false;
 bool g_nameWatched = false;
+bool g_saidLive = false;
 
 unsigned long long g_sent = 0, g_run = 0, g_denied = 0;
 bool g_saidNoEid = false;
@@ -65,12 +64,6 @@ Bucket g_rate[coop::net::kMaxPeers];
 std::deque<coop::net::KerfusIntentPayload> g_pending[coop::net::kMaxPeers];
 
 bool IsVerb(uint8_t a) { return a == kActionUse || a == kActionPat || a == kActionToggle; }
-
-bool IsKerfus(void* obj) {
-    void* kerfus = OI::ClassByName(kKerfusClass);
-    void* cls = obj ? R::ClassOf(obj) : nullptr;
-    return kerfus && cls && R::IsDescendantOfAny(cls, &kerfus, 1);
-}
 
 bool TakeToken(uint8_t slot) {
     Bucket& b = g_rate[slot];
@@ -174,24 +167,21 @@ bool Execute(coop::net::Session& s, const coop::net::KerfusIntentPayload& p, uin
         }
         return false;
     }
-    if (!subj || !IsKerfus(subj.actor)) {
+    if (!subj || !UK::IsKerfus(subj.actor)) {
         ++g_denied;
         UE_LOGI("kerfus_intent: DENY slot=%u action=%u eid=%u -- %s", static_cast<unsigned>(slot),
                 static_cast<unsigned>(p.action), p.elementId, subj ? "no Kerfus" : EL::OutcomeName(subj.outcome));
         return true;
     }
     void* k = subj.actor;
-    void* fn = R::FindDispatchFunctionCached(R::ClassOf(k), L"actionOptionIndex");
-    ue_wrap::ParamFrame f(fn);
     // The verbs read neither the player nor the hit (bp_cfg: no read of either in the ubergraph), so the
     // host's own player stands in; the Kerfus's own guards (energy, on, possessed) judge the press.
-    if (!fn || !f.valid() || !f.Set<void*>(L"player", coop::players::Registry::Get().Local()) ||
-        !f.Set<uint8_t>(L"action", p.action)) {
+    if (!UK::RunActionOptionIndex(k, coop::players::Registry::Get().Local(), p.action)) {
         ++g_denied;
-        UE_LOGW("kerfus_intent: slot=%u -- the Kerfus's actionOptionIndex did not resolve", static_cast<unsigned>(slot));
+        UE_LOGW("kerfus_intent: slot=%u -- the Kerfus's actionOptionIndex did not resolve, or its body faulted",
+                static_cast<unsigned>(slot));
         return true;
     }
-    ue_wrap::Call(k, f);
     ++g_run;
     UE_LOGI("kerfus_intent: HOST ran action %u on Kerfus eid=%u for slot %u (#%llu)", static_cast<unsigned>(p.action),
             p.elementId, static_cast<unsigned>(slot), g_run);
@@ -200,9 +190,9 @@ bool Execute(coop::net::Session& s, const coop::net::KerfusIntentPayload& p, uin
 
 void Register() {
     if (!g_actionWatched)
-        g_actionWatched = sg::WatchClassName(kKerfusClass, L"actionOptionIndex", kTagAction, &OnActionPre, nullptr);
+        g_actionWatched = sg::WatchClassName(UK::kClassName, L"actionOptionIndex", kTagAction, &OnActionPre, nullptr);
     if (!g_nameWatched)
-        g_nameWatched = sg::WatchClassName(kKerfusClass, L"actionName", kTagName, &OnNamePre, nullptr);
+        g_nameWatched = sg::WatchClassName(UK::kClassName, L"actionName", kTagName, &OnNamePre, nullptr);
 }
 
 }  // namespace
@@ -214,6 +204,15 @@ void Install(coop::net::Session* session) {
 
 void Tick(coop::net::Session& session) {
     Register();
+    if (!g_saidLive && g_actionWatched && g_nameWatched) {
+        // This lane drives its own watches to live, and says so once.
+        sg::ResolvePendingNames();
+        if (sg::ClassNameWatchLive(UK::kClassName, L"actionOptionIndex", kTagAction) &&
+            sg::ClassNameWatchLive(UK::kClassName, L"actionName", kTagName)) {
+            g_saidLive = true;
+            UE_LOGI("kerfus_intent: the Kerfus's on/off, use and pat verbs are watched");
+        }
+    }
     if (!session.running() || session.role() != coop::net::Role::Host) return;
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         if (g_pending[slot].empty() || !TakeToken(slot)) continue;

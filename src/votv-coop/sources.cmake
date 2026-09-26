@@ -127,6 +127,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/actors/puppet.cpp
     src/ue_wrap/actors/puppet_spawn.cpp
     src/ue_wrap/actors/kerfur.cpp
+    src/ue_wrap/actors/kerfus.cpp
     src/ue_wrap/world/votv_lib.cpp
     src/ue_wrap/world/economy.cpp
     src/ue_wrap/world/profile.cpp

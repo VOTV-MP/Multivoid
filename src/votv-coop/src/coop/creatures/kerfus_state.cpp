@@ -11,9 +11,8 @@
 #include "coop/props/active_drive.h"
 #include "coop/props/prop_drive_host.h"
 
-#include "ue_wrap/core/call.h"
+#include "ue_wrap/actors/kerfus.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 
@@ -26,12 +25,11 @@ namespace coop::kerfus_state {
 namespace {
 
 namespace EL = coop::element;
-namespace OI = ue_wrap::object_index;
 namespace R  = ue_wrap::reflection;
 namespace sg = ue_wrap::script_gate;
 namespace KF = coop::net::kerfus_state_flags;
+namespace UK = ue_wrap::kerfus;
 
-constexpr const wchar_t* kKerfusClass = L"p_kerfus_C";
 constexpr int kTagTick = 0x4B465401;  // 'KFT' 1
 
 // Energy alone is sent on a step of half a unit, at most once a second: the look-at shows it, and it
@@ -43,50 +41,18 @@ constexpr uint64_t kWaitExpiryMs = 120000;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_watched = false;
+bool g_saidLive = false;
 
-// The three fields, resolved once off the first Kerfus's class; the colour variants inherit them.
-struct Fields {
-    bool    resolved = false;
-    int32_t activeOff = -1, chargingOff = -1, energyOff = -1;
-    uint8_t activeMask = 0, chargingMask = 0;
-};
-Fields g_f;
-
-bool ResolveFields(void* cls) {
-    if (g_f.resolved) return true;
-    if (!cls) return false;
-    Fields f;
-    f.energyOff = R::FindPropertyOffset(cls, L"energy");
-    if (!R::FindBoolProperty(cls, L"active", f.activeOff, f.activeMask) ||
-        !R::FindBoolProperty(cls, L"charging", f.chargingOff, f.chargingMask) || f.energyOff < 0)
-        return false;
-    f.resolved = true;
-    g_f = f;
-    return true;
-}
-
-bool ReadBool(void* k, int32_t off, uint8_t mask) {
-    return (static_cast<const uint8_t*>(k)[off] & mask) != 0;
-}
-void WriteBool(void* k, int32_t off, uint8_t mask, bool v) {
-    uint8_t& b = static_cast<uint8_t*>(k)[off];
-    b = static_cast<uint8_t>(v ? (b | mask) : (b & ~mask));
-}
-float ReadEnergy(void* k) { return *reinterpret_cast<const float*>(static_cast<const uint8_t*>(k) + g_f.energyOff); }
-
-bool IsKerfus(void* obj) {
-    void* kerfus = OI::ClassByName(kKerfusClass);
-    void* cls = obj ? R::ClassOf(obj) : nullptr;
-    return kerfus && cls && R::IsDescendantOfAny(cls, &kerfus, 1);
-}
-
-coop::net::KerfusStatePayload Snapshot(void* k, EL::ElementId eid) {
-    coop::net::KerfusStatePayload p{};
+// The three fields as the wire carries them; false while they do not resolve.
+bool Snapshot(void* k, EL::ElementId eid, coop::net::KerfusStatePayload& p) {
+    bool active = false, charging = false;
+    float energy = 0.f;
+    if (!UK::ReadActive(k, active) || !UK::ReadCharging(k, charging) || !UK::ReadEnergy(k, energy)) return false;
+    p = coop::net::KerfusStatePayload{};
     p.elementId = static_cast<uint32_t>(eid);
-    p.flags = static_cast<uint8_t>((ReadBool(k, g_f.activeOff, g_f.activeMask) ? KF::kActive : 0) |
-                                   (ReadBool(k, g_f.chargingOff, g_f.chargingMask) ? KF::kCharging : 0));
-    p.energy = ReadEnergy(k);
-    return p;
+    p.flags = static_cast<uint8_t>((active ? KF::kActive : 0) | (charging ? KF::kCharging : 0));
+    p.energy = energy;
+    return true;
 }
 
 // ---- host ----------------------------------------------------------------------------------------
@@ -108,12 +74,12 @@ void OnTickPost(const sg::Call& c) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running() || s->role() != coop::net::Role::Host || !c.object) return;
     void* k = c.object;
-    if (!ResolveFields(R::ClassOf(k))) return;
+    coop::net::KerfusStatePayload now{};
     const int32_t idx = R::InternalIndexOf(k);
     HostRec& r = g_host[k];
     if (r.idx != idx) r = HostRec{idx};
     if (r.eid == EL::kInvalidId) r.eid = EL::Registry::Get().EidForActor(k);  // once, then per record
-    const coop::net::KerfusStatePayload now = Snapshot(k, r.eid);
+    if (!Snapshot(k, r.eid, now)) return;
     // The drive: held every pass while on (a hand that took it and let go is claimed again), let go
     // on the off edge.
     if (now.flags & KF::kActive) {
@@ -149,33 +115,26 @@ std::unordered_map<uint32_t, Waiting> g_waiting;
 unsigned long long g_applied = 0;
 bool g_saidWrongClass = false;
 
-void RunUpd(void* k) {
-    void* fn = R::FindDispatchFunctionCached(R::ClassOf(k), L"upd");
-    if (!fn) return;
-    ue_wrap::ParamFrame f(fn);
-    if (f.valid() && f.Set<bool>(L"skipFace", false)) ue_wrap::Call(k, f);
-}
-
 // False while the Kerfus's mirror is not bound here: the state waits.
 bool Apply(const coop::net::KerfusStatePayload& p) {
     EL::Prop* el = EL::MirrorManager<EL::Prop>::Instance().Get(static_cast<EL::ElementId>(p.elementId));
     void* k = el ? el->GetActor() : nullptr;
     if (!k || !R::IsLiveByIndex(k, el->GetInternalIdx())) return false;
-    if (!IsKerfus(k) || !ResolveFields(R::ClassOf(k))) {
+    bool wasActive = false;
+    if (!UK::IsKerfus(k) || !UK::ReadActive(k, wasActive)) {
         if (!g_saidWrongClass) {
             g_saidWrongClass = true;
             UE_LOGW("kerfus_state: a state named eid=%u, which is no Kerfus here -- dropped", p.elementId);
         }
         return true;
     }
-    const bool wasActive = ReadBool(k, g_f.activeOff, g_f.activeMask);
     const bool active = (p.flags & KF::kActive) != 0;
-    WriteBool(k, g_f.activeOff, g_f.activeMask, active);
-    WriteBool(k, g_f.chargingOff, g_f.chargingMask, (p.flags & KF::kCharging) != 0);
-    *reinterpret_cast<float*>(static_cast<uint8_t*>(k) + g_f.energyOff) = p.energy;
+    UK::WriteActive(k, active);
+    UK::WriteCharging(k, (p.flags & KF::kCharging) != 0);
+    UK::WriteEnergy(k, p.energy);
     // upd() is the game's own refresh after `active` changes: the face, the sounds, the camera.
     if (active != wasActive) {
-        RunUpd(k);
+        UK::RunUpd(k, false);
         UE_LOGI("kerfus_state: CLIENT Kerfus eid=%u %s (energy %.1f)", p.elementId, active ? "ON" : "OFF", p.energy);
     }
     ++g_applied;
@@ -186,10 +145,18 @@ bool Apply(const coop::net::KerfusStatePayload& p) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    if (!g_watched) g_watched = sg::WatchClassName(kKerfusClass, L"ReceiveTick", kTagTick, nullptr, &OnTickPost);
+    if (!g_watched) g_watched = sg::WatchClassName(UK::kClassName, L"ReceiveTick", kTagTick, nullptr, &OnTickPost);
 }
 
 void Tick() {
+    if (!g_saidLive && g_watched) {
+        // This lane drives its own watch to live, and says so once.
+        sg::ResolvePendingNames();
+        if (sg::ClassNameWatchLive(UK::kClassName, L"ReceiveTick", kTagTick)) {
+            g_saidLive = true;
+            UE_LOGI("kerfus_state: the Kerfus's tick is watched -- a host sends its state");
+        }
+    }
     if (g_waiting.empty()) return;
     const uint64_t ms = coop::active_drive::NowMs();
     for (auto it = g_waiting.begin(); it != g_waiting.end();) {
@@ -206,13 +173,14 @@ void Tick() {
 
 void OnPeerWorldReady(int slot) {
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || s->role() != coop::net::Role::Host || !g_f.resolved) return;
+    if (!s || s->role() != coop::net::Role::Host) return;
     int sent = 0;
     for (auto it = g_host.begin(); it != g_host.end();) {
         void* k = it->first;
         if (!R::IsLiveByIndex(k, it->second.idx)) { it = g_host.erase(it); continue; }
-        const coop::net::KerfusStatePayload p = Snapshot(k, it->second.eid);
-        if (p.elementId != 0 && p.elementId != static_cast<uint32_t>(EL::kInvalidId) &&
+        coop::net::KerfusStatePayload p{};
+        if (Snapshot(k, it->second.eid, p) && p.elementId != 0 &&
+            p.elementId != static_cast<uint32_t>(EL::kInvalidId) &&
             s->SendReliableToSlot(slot, coop::net::ReliableKind::KerfusState, &p, sizeof(p)))
             ++sent;
         ++it;
