@@ -263,6 +263,7 @@ std::uintptr_t __fastcall LoopDetour(void* ctx, void* stack, void* result) {
     if (void* prev = Read<void*>(stack, P::off::FFrame_PreviousFrame)) {
         call.callerObject = Read<void*>(prev, P::off::FFrame_Object);
         call.callerFunction = Read<void*>(prev, P::off::FFrame_Node);
+        call.callerLocals = Read<std::uint8_t*>(prev, P::off::FFrame_Locals);
     }
     call.stack = stack;
     call.depth = t_depth + 1;

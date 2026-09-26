@@ -30,6 +30,7 @@ struct Call {
     void*    result;          // the return value's destination, or null
     void*    callerObject;    // PreviousFrame->Object, or null
     void*    callerFunction;  // PreviousFrame->Node, or null
+    uint8_t* callerLocals;    // PreviousFrame->Locals, which an out argument naming a caller local points into
     void*    stack;           // the raw FFrame, for OutParamPtr
     int      tag;             // the watch's tag, echoed back
     int      depth;           // nesting of watched bodies on this thread; 1 = outermost
