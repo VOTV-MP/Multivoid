@@ -1,11 +1,12 @@
 // coop/interactables/meadow_db_sync.h -- the MEADOW signal-DATABASE mirror
-// (saveSlot.savedSignals_0 and the boot-persistent ui_laptop widget arrays).
+// (saveSlot.savedSignals_0, and the ui_laptop widget's arrays in each world).
 // Overview: docs/signals.md. Game thread throughout.
 //
 // The store has a MOVE verb (sortSignal) and Blueprint moves deep-copy FStrings,
 // so neither the deck list's positional prefix walk nor pointer RowKeys work here.
 // The shadow is a content-hash MULTISET instead (coop/interactables/meadow_db_hash),
-// taken the first time a world needs it and compared with the database at the exit
+// taken of the database -- its save object, which a travel keeps -- the first time the
+// lane needs it, and compared with the database at the exit
 // of each body that writes it: ui_laptop_C's addSignal, removeSignal and sortSignal,
 // and the rename window's handler, watched at the script-body gate.
 //

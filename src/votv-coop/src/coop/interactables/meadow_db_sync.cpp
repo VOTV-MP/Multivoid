@@ -1,6 +1,6 @@
 // coop/interactables/meadow_db_sync.cpp -- see coop/interactables/meadow_db_sync.h. A
-// content-hash multiset shadow over the saved signals, taken the first time a world needs it and
-// reconciled at the exit of every body that writes the database; id-preserving reflected addSignal and
+// content-hash multiset shadow over the saved signals, taken of the database the first time the lane
+// needs it and reconciled at the exit of every body that writes the database; id-preserving reflected addSignal and
 // removeSignal applies; tombstone counts. The per-slot join seed is meadow_db_join.cpp's, sharing the
 // waiting lines through meadow_db_internal.h. An apply and its shadow update are game-thread-atomic per
 // line. The client lane sends nothing until its own world-ready announce.
@@ -19,7 +19,6 @@
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/desk/meadow_store.h"
 #include "ue_wrap/desk/signal_dynamic.h"
-#include "ue_wrap/world/world_singleton.h"
 
 #include <atomic>
 #include <chrono>
@@ -51,7 +50,7 @@ constexpr size_t kTombstoneCap = 256;
 // Add), removeSignal (a Remove) and sortSignal (a move, a Remove then an Insert), and the rename window,
 // whose ubergraph writes a row's name in place when its button is clicked. saveSlot_C::reset_days clears
 // the store too, but only on a save the reset menu loads from disk, never on the live one. Each body's
-// entry takes the shadow if this world has none yet, and its exit sends what it changed.
+// entry takes the shadow if the lane has none of this database yet, and its exit sends what it changed.
 struct Writer { const wchar_t* cls; const wchar_t* fn; };
 constexpr Writer kWriters[] = {
     {L"ui_laptop_C", L"addSignal"},
@@ -74,9 +73,10 @@ struct ApplyScope {
     ApplyScope& operator=(const ApplyScope&) = delete;
 };
 
-// The shadow: the broadcast-acknowledged multiset, of the world whose gamemode `g_primedIn` holds.
+// The shadow: the broadcast-acknowledged multiset, of the database whose save object `g_primedIn` holds.
 std::map<uint64_t, int32_t> g_shadow;   // ContentHash -> count
 bool g_primed = false;
+uint64_t g_primeCount = 0;              // shadows taken this session: a writer's exit tells its own apart
 bool g_primeMissed = false;             // a writer entered while the database could not be read
 ue_wrap::CachedObjRef g_primedIn;
 uint64_t g_opCounter = 0;               // GT-monotonic line-author counter
@@ -154,14 +154,18 @@ void LogDigest(const char* why) {
             n, static_cast<unsigned long long>(sum), why);
 }
 
-// The shadow is taken of one world's database, the first time the lane needs it there: a writer's
-// entry, a line to apply, a retry. A new world -- a travel, a rehost's load -- takes it again, and the
-// lines still waiting in the old one go with it; a joiner's seed carries what they would have.
+// The shadow is taken of one database, the first time the lane needs it: a writer's entry, a line to
+// apply, a retry. The database lives on the save object the gamemode takes from the game instance, so a
+// travel keeps it, and with it the shadow, the waiting lines and the tombstones; while no gamemode holds
+// it, as in a travel, the lane waits and drops nothing. A new save object -- a load, a rehost -- is a new
+// database, taken again, and the lines still waiting in the old one go with it; a joiner's seed carries
+// what they would have.
 bool EnsurePrimed() {
-    void* gm = ue_wrap::world_singleton::Gamemode();
-    if (g_primed && gm && g_primedIn.Is(gm)) return true;
+    void* db = MS::EnsureResolved() ? MS::Database() : nullptr;
+    if (g_primed && db && g_primedIn.Is(db)) return true;
+    if (!db) return false;
     if (g_primed) {
-        UE_LOGI("meadow_db: a new world -- the shadow and %zu waiting line(s) dropped",
+        UE_LOGI("meadow_db: a new database -- the shadow and %zu waiting line(s) dropped",
                 g_pending.size() + g_tombs.size());
         g_primed = false;
         g_shadow.clear();
@@ -170,10 +174,10 @@ bool EnsurePrimed() {
         g_orderBase.clear();
         g_orderPending = false;
     }
-    if (!gm || !MS::EnsureResolved()) return false;
     if (!MH::HashStore(g_shadow, &g_orderBase)) return false;
-    g_primedIn.Set(gm);
+    g_primedIn.Set(db);
     g_primed = true;
+    ++g_primeCount;
     UE_LOGI("meadow_db: shadow primed at %zu row(s)", g_orderBase.size());
     LogDigest("prime");
     return true;
@@ -311,10 +315,14 @@ void OnWriterPost(const sg::Call&) {
     coop::net::Session* s = RunningSession();
     if (!s) return;
     if (g_primeMissed) {
-        // Whatever it changed is in the lane's first picture of the database, and no peer is told.
+        // The entry found no database. A shadow of this one kept from before the writer still diffs its
+        // change; a shadow first taken now already holds the change, and no peer is told.
         g_primeMissed = false;
-        UE_LOGW("meadow_db: a writer ran while the database could not be read -- its change is not sent");
-        return;
+        const uint64_t before = g_primeCount;
+        if (!EnsurePrimed() || g_primeCount != before) {
+            UE_LOGW("meadow_db: a writer ran before the lane had this database -- its change is not sent");
+            return;
+        }
     }
     Reconcile(s);
 }
@@ -633,6 +641,7 @@ void OnDisconnect() {
     internal::ResetJoinSeeds();
     g_primed = false;
     g_primeMissed = false;
+    g_primeCount = 0;
     g_primedIn.Reset();
     g_nextSeq = 1;
     g_nextRetry = {};
