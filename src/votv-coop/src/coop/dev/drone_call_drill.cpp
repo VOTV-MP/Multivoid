@@ -76,32 +76,11 @@ ue_wrap::FVector      g_droneRest{};
 ue_wrap::FVector      g_droneLast{};
 bool                  g_haveLast = false;
 
-// The director blocks, so a walk runs on a worker; the step polls the shared state.
-struct Walk {
-    coop::director::DirectorGoal goal;
-    std::atomic<int> state{0};  // 0 walking, 1 reached, 2 failed
-};
-std::shared_ptr<Walk> g_walk;
-
-DWORD WINAPI WalkThread(LPVOID arg) {
-    auto* holder = static_cast<std::shared_ptr<Walk>*>(arg);
-    std::shared_ptr<Walk> w = *holder;
-    delete holder;
-    coop::director::ControlManager mgr;
-    coop::director::AddWalkToProcesses(mgr, w->goal);
-    mgr.Run(w->goal, kWalkDeadlineS);
-    w->state.store(w->goal.reached ? 1 : 2);
-    return 0;
-}
+// The director blocks, so a walk runs on a worker; the step polls its state.
+std::shared_ptr<coop::director::BackgroundWalk> g_walk;
 
 void StartWalk(const ue_wrap::FVector& to) {
-    g_walk = std::make_shared<Walk>();
-    g_walk->goal.targetPos = to;
-    g_walk->goal.epoch = coop::director::WalkEpoch();  // the walk ends with this session (EndWalks)
-    g_walk->goal.reachCm = kReachCm;
-    auto* arg = new std::shared_ptr<Walk>(g_walk);
-    if (HANDLE t = ::CreateThread(nullptr, 0, &WalkThread, arg, 0, nullptr)) ::CloseHandle(t);
-    else { delete arg; g_walk->state.store(2); }
+    g_walk = coop::director::StartBackgroundWalk(to, kReachCm, kWalkDeadlineS);
 }
 
 int WalkState() { return g_walk ? g_walk->state.load() : 2; }

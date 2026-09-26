@@ -136,16 +136,18 @@ bool PickReachablePile(void* player, float minCm, float maxCm, DirectorGoal& goa
 // drop was MEASURED inert -- i.e. the drop was NOT input-seam-faithful (surfaced in the verdict).
 bool DidClearHandUseEffectFallback();
 
-// A walk-to run (AddWalkToProcesses) on a worker thread, for a drill that polls it from its game-thread
-// tick instead of blocking the thread the run drives. Started on the game thread in the drill's session,
-// the goal takes that session's walk epoch, so the walk ends with the session. `state` is 0 while it
-// walks, 1 once it reached `to` within `reachCm`, 2 when it failed, ran out of `deadlineS` or did not
-// start. In background_walk.cpp.
+// A walk-to run on a worker thread, for a drill that polls it from its game-thread tick instead of
+// blocking the thread the run drives: the walk-to set, or with `carry` the carry-to set, which keeps what
+// the hand holds. Started on the game thread in the drill's session, the goal takes that session's walk
+// epoch, so the walk ends with the session. `state` is 0 while it walks, 1 once it reached `to` within
+// `reachCm`, 2 when it failed, ran out of `deadlineS` or did not start. In background_walk.cpp.
 struct BackgroundWalk {
     DirectorGoal     goal;
+    bool             carry = false;
     std::atomic<int> state{0};
 };
-std::shared_ptr<BackgroundWalk> StartBackgroundWalk(const ue_wrap::FVector& to, float reachCm, int deadlineS);
+std::shared_ptr<BackgroundWalk> StartBackgroundWalk(const ue_wrap::FVector& to, float reachCm, int deadlineS,
+                                                    bool carry = false);
 
 // The scenario entry (director_run.cpp): resolve the player, pick an OPEN chipPile via the
 // NavMesh, run the brain to grab it. Env-gated (VOTVCOOP_RUN_DIRECTOR_WALKGRAB=1).
