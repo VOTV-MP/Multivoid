@@ -406,6 +406,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/delivery_census_probe.cpp
     src/coop/dev/store_table_probe.cpp
     src/coop/dev/order_selftest.cpp
+    src/coop/dev/meadow_selftest.cpp
     src/coop/dev/order_probe.cpp
     src/ue_wrap/actors/inventory.cpp
     src/ue_wrap/hotbar/icons.cpp
@@ -415,6 +416,7 @@ set(VOTVCOOP_SOURCES
     src/coop/net/blob_chunks.cpp
     src/coop/interactables/signal_wire.cpp
     src/coop/interactables/meadow_db_sync.cpp
+    src/coop/interactables/meadow_db_hash.cpp
     src/coop/interactables/signal_sync.cpp
     src/coop/interactables/comp_sync.cpp
     src/coop/voice/voice_chat.cpp

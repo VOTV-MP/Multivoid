@@ -283,8 +283,8 @@ CFG_FLAG(weather_observer_log, "weather_observer_log", "dev", false, nullptr,
     "Diagnostic logging for the weather sync observers.")
 CFG_FLAG(weather_probe, "weather_probe", "dev", false, nullptr,
     "Diagnostic probe block for the weather subsystem.")
-CFG_FLAG(meadow_selftest, "meadow_selftest", "dev", false, nullptr,
-    "Autonomous selftest: meadow signal database sync.")
+CFG_FLAG(meadow_selftest, "meadow_selftest", "dev", false, "VOTVCOOP_MEADOW_SELFTEST",
+    "Autonomous selftest: the laptop signal database lane, every writer on the host and a client's row.")
 CFG_FLAG(laptop_selftest, "laptop_selftest", "dev", false, "VOTVCOOP_LAPTOP_SELFTEST",
     "Autonomous selftest: laptop buffer sync.")
 CFG_FLAG(deck_selftest, "deck_selftest", "dev", false, nullptr,

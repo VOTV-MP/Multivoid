@@ -7,9 +7,9 @@
 
 #include "coop/interactables/meadow_db_sync.h"
 
-#include "coop/config/config.h"
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
+#include "coop/interactables/meadow_db_hash.h"
 #include "coop/interactables/signal_wire.h"
 #include "coop/session/net_pump.h"
 
@@ -29,6 +29,7 @@ namespace coop::meadow_db_sync {
 namespace {
 
 namespace R  = ue_wrap::reflection;
+namespace MH = coop::meadow_db_hash;
 namespace MS = ue_wrap::meadow_store;
 namespace SD = ue_wrap::signal_dynamic;
 namespace sg = ue_wrap::script_gate;
@@ -93,12 +94,6 @@ bool g_orderPending = false;  // an order change detected but not yet sent/broad
 coop::blob_chunks::Assembler g_assembler;
 uint32_t g_nextSeq = 1;
 
-// [dev] The host selftest: inject, digest 0 to 1, remove, back to 0.
-int  g_selftestStage = 0;               // 0=idle/armed 10=waiting 1=injected 2=done
-Clock::time_point g_selftestAt{};
-Clock::time_point g_selftestDeadline{};  // the remove retries until this
-uint64_t g_selftestHash = 0;
-
 // Counters for the 60 s line.
 std::atomic<uint64_t> g_cMarks{0};
 uint64_t g_cAppendsSent = 0, g_cDeletesSent = 0, g_cAppendsApplied = 0,
@@ -119,11 +114,6 @@ bool CanSend() {
     return IsHost() || coop::net_pump::HasAnnouncedWorldReady();
 }
 
-uint64_t HashRow(const SD::Row& r, std::vector<uint8_t>& scratch) {
-    scratch = coop::signal_wire::Serialize(r, /*adopt=*/false);
-    return coop::signal_wire::ContentHash(scratch);
-}
-
 int32_t SumShadow() {
     int32_t n = 0;
     for (const auto& [h, c] : g_shadow) n += c;
@@ -135,41 +125,6 @@ int32_t PendingNetAll() {
     int32_t n = 0;
     for (const auto& p : g_pending) n += p.isDelete ? -1 : 1;
     return n;
-}
-
-// Re-hash the live store into a fresh multiset, and optionally the ordered hash sequence for
-// the order mirror. False if any row is unreadable (a world transition mid-walk; retry next
-// poll). A cold, edge path only, since the pre-gate keeps it off the steady state; the per-row
-// serialise allocations are accepted there.
-bool HashStore(std::map<uint64_t, int32_t>& out, std::vector<uint64_t>* seq) {
-    out.clear();
-    if (seq) seq->clear();
-    const int32_t n = MS::Count();
-    if (n < 0) return false;
-    std::vector<uint8_t> scratch;
-    SD::Row r;
-    if (seq) seq->reserve(static_cast<size_t>(n));
-    for (int32_t i = 0; i < n; ++i) {
-        if (!MS::ReadRow(i, r)) return false;
-        const uint64_t h = HashRow(r, scratch);
-        ++out[h];
-        if (seq) seq->push_back(h);
-    }
-    return true;
-}
-
-// Find the store index of a row whose content hash matches, at apply time; deletes are rare,
-// so a linear serialise is fine.
-int32_t ResolveIndexByHash(uint64_t hash) {
-    const int32_t n = MS::Count();
-    if (n < 0) return -1;
-    std::vector<uint8_t> scratch;
-    SD::Row r;
-    for (int32_t i = 0; i < n; ++i) {
-        if (!MS::ReadRow(i, r)) continue;
-        if (HashRow(r, scratch) == hash) return i;
-    }
-    return -1;
 }
 
 // Does the order of the common elements differ between the baseline and the live sequence?
@@ -190,26 +145,6 @@ bool CommonOrderChanged(const std::vector<uint64_t>& base,
     for (uint64_t h : base) { auto it = q1.find(h); if (it != q1.end() && it->second > 0) { --it->second; fb.push_back(h); } }
     for (uint64_t h : live) { auto it = q2.find(h); if (it != q2.end() && it->second > 0) { --it->second; fl.push_back(h); } }
     return fb != fl;
-}
-
-std::vector<uint8_t> OrderBlob(const std::vector<uint64_t>& seq) {
-    const uint16_t n = static_cast<uint16_t>(seq.size() > 0xFFFF ? 0xFFFF : seq.size());
-    std::vector<uint8_t> b(2 + static_cast<size_t>(n) * 8);
-    std::memcpy(b.data(), &n, 2);
-    for (uint16_t i = 0; i < n; ++i)
-        std::memcpy(b.data() + 2 + static_cast<size_t>(i) * 8, &seq[i], 8);
-    return b;
-}
-
-bool ParseOrderBlob(const std::vector<uint8_t>& b, std::vector<uint64_t>& out) {
-    if (b.size() < 2) return false;
-    uint16_t n = 0;
-    std::memcpy(&n, b.data(), 2);
-    if (b.size() < 2 + static_cast<size_t>(n) * 8) return false;
-    out.resize(n);
-    for (uint16_t i = 0; i < n; ++i)
-        std::memcpy(&out[i], b.data() + 2 + static_cast<size_t>(i) * 8, 8);
-    return true;
 }
 
 void LogDigest(const char* why) {
@@ -266,7 +201,7 @@ bool SendDeleteBroadcast(coop::net::Session* s, uint64_t hash) {
 // A negative slot broadcasts (the host canonical); otherwise point-to-point (a client's op to
 // the host, or the join seed's canonical to one joiner).
 bool SendOrder(coop::net::Session* s, const std::vector<uint64_t>& seq, int toSlot) {
-    const std::vector<uint8_t> blob = OrderBlob(seq);
+    const std::vector<uint8_t> blob = MH::OrderBlob(seq);
     if (toSlot < 0)
         return coop::blob_chunks::SendBlob(
             s, coop::net::ReliableKind::MeadowOrder, g_nextSeq++, blob);
@@ -395,7 +330,7 @@ void ApplyAppendBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
 bool ApplyDeleteByHash(uint64_t hash) {
     if (!g_primed) return false;
     if (!MS::EnsureResolved() || !MS::Widget()) return false;
-    const int32_t idx = ResolveIndexByHash(hash);
+    const int32_t idx = MH::IndexOf(hash);
     if (idx < 0) return false;
     if (!MS::ApplyRemoveSignal(idx)) return false;
     auto it = g_shadow.find(hash);
@@ -415,7 +350,7 @@ bool ApplyDeleteByHash(uint64_t hash) {
 // and broadcasts its canonical (echo-proof: the baseline updates in the same callback).
 void ApplyOrderBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
     std::vector<uint64_t> tgt;
-    if (!ParseOrderBlob(blob, tgt)) {
+    if (!MH::ParseOrderBlob(blob, tgt)) {
         UE_LOGW("meadow_db: malformed order blob from slot %u -- dropped",
                 static_cast<unsigned>(senderSlot));
         return;
@@ -433,25 +368,10 @@ void ApplyOrderBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
     }
     std::map<uint64_t, int32_t> cur;
     std::vector<uint64_t> seq;
-    if (!HashStore(cur, &seq)) return;
+    if (!MH::HashStore(cur, &seq)) return;
     const int32_t n = static_cast<int32_t>(seq.size());
-    // The permutation: listed hashes in the target order (the first unused instance wins;
-    // duplicates are byte-identical); unlisted in-flight appends keep their relative order at the
-    // tail; missing hashes skip.
-    std::vector<int32_t> perm;
-    perm.reserve(static_cast<size_t>(n));
-    std::vector<bool> used(static_cast<size_t>(n), false);
-    for (uint64_t h : tgt) {
-        for (int32_t i = 0; i < n; ++i) {
-            if (!used[static_cast<size_t>(i)] && seq[static_cast<size_t>(i)] == h) {
-                used[static_cast<size_t>(i)] = true;
-                perm.push_back(i);
-                break;
-            }
-        }
-    }
-    for (int32_t i = 0; i < n; ++i)
-        if (!used[static_cast<size_t>(i)]) perm.push_back(i);
+    // In-flight appends the target does not list yet keep their relative order at the tail.
+    const std::vector<int32_t> perm = MH::PermutationTo(seq, tgt);
     bool identity = true;
     for (int32_t i = 0; i < n; ++i)
         if (perm[static_cast<size_t>(i)] != i) { identity = false; break; }
@@ -488,73 +408,6 @@ void ApplyOrderBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
     } else {
         g_orderBase = seq;
         g_orderPending = false;
-    }
-}
-
-// [dev] The host selftest: a synthetic 0 to 1 to 0, so the smoke's digest assert discriminates
-// its axis on an empty store.
-
-bool SelftestEnabled() {
-    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::meadow_selftest);
-    return s;
-}
-
-void SelftestTick(coop::net::Session* s) {
-    if (!SelftestEnabled() || !IsHost() || !g_primed) return;
-    if (!s || !s->connected()) return;
-    const auto now = Clock::now();
-    switch (g_selftestStage) {
-        case 0:
-            g_selftestAt = now + std::chrono::seconds(8);
-            g_selftestStage = 10;
-            break;
-        case 10: {
-            if (now < g_selftestAt) break;
-            SD::Row row;
-            row.name = L"MEADOW-SELFTEST";
-            row.id = L"selftest-0";
-            row.object.clear();   // empty = NAME_None (the literal "None" string
-            row.signal.clear();   // trips WriteFNameField's failed-intern check)
-            row.level = 1;
-            row.size = 1.0f;
-            row.decoded = 1.0f;
-            row.hasData = true;
-            if (MS::ApplyAddSignal(row)) {
-                std::vector<uint8_t> scratch;
-                g_selftestHash = HashRow(row, scratch);
-                g_selftestStage = 1;
-                g_selftestAt = now + std::chrono::seconds(8);
-                g_selftestDeadline = now + std::chrono::seconds(40);
-                UE_LOGI("meadow_db: SELFTEST injected (hash %016llx)",
-                        static_cast<unsigned long long>(g_selftestHash));
-            } else {
-                // Discriminate the failing step and retry: the widget gate may open late (the
-                // device back-pointer).
-                UE_LOGW("meadow_db: SELFTEST inject failed -- %s; retrying",
-                        MS::Widget() ? "addSignal call refused" : "widget gate closed");
-                g_selftestAt = now + std::chrono::seconds(5);
-                if (g_selftestDeadline == Clock::time_point{})
-                    g_selftestDeadline = now + std::chrono::seconds(60);
-                if (now >= g_selftestDeadline) g_selftestStage = 2;
-            }
-            break;
-        }
-        case 1: {
-            // The remove retries each poll until the deadline; a fire-and-forget failure would
-            // leave the synthetic row to be written into the real save.
-            if (now < g_selftestAt) break;
-            const int32_t idx = ResolveIndexByHash(g_selftestHash);
-            if (idx >= 0 && MS::ApplyRemoveSignal(idx)) {
-                UE_LOGI("meadow_db: SELFTEST removed");
-                g_selftestStage = 2;
-            } else if (now >= g_selftestDeadline) {
-                UE_LOGW("meadow_db: SELFTEST remove FAILED past deadline (idx=%d) -- "
-                        "synthetic row may persist in the save", idx);
-                g_selftestStage = 2;
-            }
-            break;
-        }
-        default: break;
     }
 }
 
@@ -604,7 +457,7 @@ void Tick() {
     if (!g_primed) {
         // Adopt without broadcast: absorbs the save-loaded store and any pre-prime wire applies
         // (the prime precedes the ready flip by seconds in a real join; correct at a zero gap too).
-        if (!HashStore(g_shadow, &g_orderBase)) return;
+        if (!MH::HashStore(g_shadow, &g_orderBase)) return;
         g_primed = true;
         UE_LOGI("meadow_db: shadow primed at %d row(s)", n);
         LogDigest("prime");
@@ -617,7 +470,7 @@ void Tick() {
         if (marked || n != expected || g_orderPending) {
             std::map<uint64_t, int32_t> cur;
             std::vector<uint64_t> seq;
-            if (!HashStore(cur, &seq)) return;
+            if (!MH::HashStore(cur, &seq)) return;
             // Target against current: what the store holds against the shadow plus pending.
             std::map<uint64_t, int32_t> target = g_shadow;
             for (const auto& p : g_pending) {
@@ -629,7 +482,7 @@ void Tick() {
                 int32_t want = c - (target.count(h) ? target[h] : 0);
                 while (want-- > 0) {
                     // Find a serialised row with this hash for the blob.
-                    const int32_t idx = ResolveIndexByHash(h);
+                    const int32_t idx = MH::IndexOf(h);
                     std::vector<uint8_t> blob;
                     if (idx >= 0) {
                         SD::Row r;
@@ -690,7 +543,6 @@ void Tick() {
     }
 
     RetryPending(s);
-    SelftestTick(s);
 
     if (now >= g_nextStats) {
         g_nextStats = now + std::chrono::seconds(60);
@@ -756,7 +608,7 @@ void CaptureJoinSnapshot(int peerSlot) {
         UE_LOGW("meadow_db: join snapshot for slot %d skipped (store unresolved)", peerSlot);
         return;
     }
-    if (!HashStore(snap.counts, nullptr)) {
+    if (!MH::HashStore(snap.counts, nullptr)) {
         UE_LOGW("meadow_db: join snapshot for slot %d unreadable -- no seed", peerSlot);
         return;
     }
@@ -787,7 +639,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 
     std::map<uint64_t, int32_t> cur;
     std::vector<uint64_t> seq;
-    if (!HashStore(cur, &seq)) { snap.valid = false; return; }
+    if (!MH::HashStore(cur, &seq)) { snap.valid = false; return; }
 
     // The mask criterion: a pending born before the snapshot has its effect inside the save the
     // joiner loaded, so the retry must skip this slot; younger pendings deliver through the retry
@@ -808,7 +660,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     int sentA = 0, sentD = 0;
     for (const auto& [h, d] : delta) {
         if (d > 0) {
-            const int32_t idx = ResolveIndexByHash(h);
+            const int32_t idx = MH::IndexOf(h);
             if (idx < 0) continue;  // raced away; the store moved -- fine
             SD::Row r;
             if (!MS::ReadRow(idx, r)) continue;
@@ -842,6 +694,14 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     snap.valid = false;
 }
 
+bool IsPrimed() {
+    return g_primed;
+}
+
+SentCounts SentLines() {
+    return {g_cAppendsSent, g_cDeletesSent};
+}
+
 void CancelJoinSnapshot(int peerSlot) {
     if (peerSlot <= 0 || peerSlot >= coop::net::kMaxPeers) return;
     g_snap[peerSlot] = SlotSnap{};
@@ -868,8 +728,6 @@ void OnDisconnect() {
     g_nextSeq = 1;
     g_nextPoll = {};
     g_opCounter = 0;
-    g_selftestStage = 0;
-    g_selftestHash = 0;
     g_cAppendsSent = g_cDeletesSent = g_cAppendsApplied = g_cDeletesApplied = 0;
     g_cTombConsumed = g_cSeedLines = 0;
     g_cOrderSent = g_cOrderApplied = 0;

@@ -12,7 +12,7 @@
 // A count increment authors a MeadowAppend, a decrement a MeadowDelete, and a
 // reorder of the common elements a MeadowOrder. Applies run through reflected
 // addSignal and removeSignal and update the shadow game-thread-atomically, which
-// is what suppresses the echo. [dev] meadow_selftest=1 injects a row, then removes it.
+// is what suppresses the echo. coop/dev/meadow_selftest drives the lane end to end.
 
 #pragma once
 
@@ -69,5 +69,14 @@ void CancelJoinSnapshot(int peerSlot);
 
 // Aggregate teardown.
 void OnDisconnect();
+
+// Does the lane hold this world's database yet? A row added before it does is taken into the lane's
+// first picture of the database and never sent. Game thread.
+bool IsPrimed();
+
+// The appends and deletes this peer's lane has delivered this session, for the dev selftest's waits.
+// Game thread.
+struct SentCounts { uint64_t appends; uint64_t deletes; };
+SentCounts SentLines();
 
 }  // namespace coop::meadow_db_sync
