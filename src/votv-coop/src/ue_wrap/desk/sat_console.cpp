@@ -8,7 +8,8 @@
 #include "ue_wrap/core/ftext_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/desk/console_desk.h"  // Instance, AtlasWidget
+#include "ue_wrap/desk/console_desk.h"
+#include "coop/text/i18n.h"  // Instance, AtlasWidget
 
 #include <chrono>
 
@@ -167,7 +168,7 @@ void* CreateTerminal(void* worldContext) {
         return nullptr;
     void* noPlayer = nullptr;  // the game instance owns it: no world object is its outer
     if (!f.Set(L"OwningPlayer", noPlayer) || !Call(g_wblCdo, f)) return nullptr;
-    void* made = f.Get<void*>(L"ReturnValue");
+    void* made = f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     return IsTerminal(made) ? made : nullptr;
 }
 

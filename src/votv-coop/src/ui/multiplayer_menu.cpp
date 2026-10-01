@@ -28,6 +28,7 @@
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "coop/text/i18n.h"
 
 #include <windows.h>
 
@@ -102,7 +103,7 @@ bool DoInject(void* menu) {
     if (!buttonStart) return false;  // menu not fully constructed yet
     g_button.Reset();
     void* btn = nullptr;
-    if (E::InjectCanvasButton(buttonStart, L"Multiplayer", &btn)) {
+    if (E::InjectCanvasButton(buttonStart, coop::i18n::TrW(L"Multiplayer"), &btn)) {
         g_button.Set(btn);  // fresh from the inject -- the Set contract's shape
         g_injectedMenu = menu;
         UE_LOGI("multiplayer_menu: MULTIPLAYER button injected into menu=%p (button=%p)", menu, btn);

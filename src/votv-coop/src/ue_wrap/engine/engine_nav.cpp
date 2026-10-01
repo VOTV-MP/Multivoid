@@ -16,6 +16,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
+#include "coop/text/i18n.h"
 
 #include <cmath>
 #include <cstdint>
@@ -56,7 +57,7 @@ bool FindNavPath(void* worldContext, const FVector& start, const FVector& end,
         pf.Set<void*>(L"WorldContextObject", worldContext);
         pf.Set<FVector>(L"PathStart", start);
         pf.Set<FVector>(L"PathEnd", end);
-        if (Call(g_navCdo, pf)) navPath = pf.Get<void*>(L"ReturnValue");
+        if (Call(g_navCdo, pf)) navPath = pf.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     }
     if (!navPath || !R::IsLive(navPath)) return false;
     if (g_pathPtsOff == -2) {

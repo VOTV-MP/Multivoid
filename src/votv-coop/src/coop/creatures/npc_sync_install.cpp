@@ -15,6 +15,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <cstdint>
@@ -103,7 +104,7 @@ void Install(coop::net::Session* session) {
             g_installed.store(true, std::memory_order_release);
             return;
         }
-        const int32_t retOff = R::FindParamOffset(fn, L"ReturnValue");
+        const int32_t retOff = R::FindParamOffset(fn, coop::i18n::TrW(L"ReturnValue"));
         if (retOff < 0) {
             UE_LOGW("npc-suppress: %ls.%ls 'ReturnValue' param not found -- disabled",
                     P::name::GameplayStaticsClass, P::name::BeginDeferredSpawnFn);

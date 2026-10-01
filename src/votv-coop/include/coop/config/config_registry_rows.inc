@@ -165,6 +165,13 @@ CFG_FLAG(ui_netstats, "ui.netstats", "ui", false, nullptr,
     "Show the network statistics overlay.")
 CFG_FLAG(ui_chat_peer_actions, "ui.chat.peer_actions", "ui", true, nullptr,
     "Show peer action lines (joins, pickups, device use) in the chat feed.")
+// The mod's own language. auto asks Windows; a tag names a translator's JSON pack in the
+// install's i18n folder. An explicit tag is what lets a player pin a language their system does
+// not name, and what lets a tester see English on a Chinese box.
+CFG_STRING(ui_language, "ui.language", "ui", "auto", "VOTVCOOP_UI_LANGUAGE", false,
+    "Which language the mod's own text is drawn in: auto (the Windows system language), en "
+    "(the built-in English), or a BCP-47 tag naming a JSON pack in the install's i18n folder "
+    "(e.g. zh-CN). A tag with no pack shows English.")
 CFG_STRING(browser_lastdirect, "browser.lastdirect", "ui", ::coop::net::kDefaultDirectAddr, nullptr, false,
     "The last address typed into the server browser's direct-connect box (remembered "
     "automatically). Its default names the port a host actually listens on (net.port), "

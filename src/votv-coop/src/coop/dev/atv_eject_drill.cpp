@@ -22,6 +22,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "coop/text/i18n.h"
 
 #include <cstdint>
 #include <string>
@@ -104,7 +105,7 @@ void MaybeFire(void* actor, const wchar_t* key, uint64_t nowMs, bool isHost, boo
         UE_LOGE("[ATV-EJECT-DRILL] getTire call failed");
         return;
     }
-    void* component = tireFrame.Get<void*>(L"ReturnValue");
+    void* component = tireFrame.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     if (!component) {
         UE_LOGE("[ATV-EJECT-DRILL] getTire(%d) returned null -- drill aborted", kWheelIndex);
         return;

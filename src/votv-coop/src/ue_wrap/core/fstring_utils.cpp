@@ -4,6 +4,7 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
+#include "coop/text/i18n.h"
 
 #include <cstring>
 
@@ -50,7 +51,7 @@ bool MintFString(const std::wstring& s, void* outHeader16) {
     // frame only -- the deliberate pin/leak doctrine; the engine's later
     // reassign/destroy of the field releases it with the matching allocator).
     R::FString ret{};
-    if (!f.GetRaw(L"ReturnValue", &ret, sizeof(ret))) return false;
+    if (!f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &ret, sizeof(ret))) return false;
     std::memcpy(outHeader16, &ret, sizeof(ret));
     return true;
 }

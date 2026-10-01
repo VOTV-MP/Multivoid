@@ -7,6 +7,7 @@
 #include "ui/scale.h"
 
 #include "imgui.h"
+#include "coop/text/i18n.h"
 
 #include <cmath>
 #include <cstdio>
@@ -189,7 +190,7 @@ void Render() {
             // reopen browser; a session-death flee then lands us at the main menu).
             const float btnW = S(120.0f);
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (ImGui::GetContentRegionAvail().x - btnW) * 0.5f);
-            if (ImGui::Button("Cancel", ImVec2(btnW, 0.0f))) jp::RequestCancel();
+            if (ImGui::Button(coop::i18n::Tr("Cancel"), ImVec2(btnW, 0.0f))) jp::RequestCancel();
         }
     }
     ImGui::End();

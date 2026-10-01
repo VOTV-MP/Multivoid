@@ -12,6 +12,7 @@
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "coop/text/i18n.h"
 
 #include <algorithm>
 #include <chrono>
@@ -178,7 +179,7 @@ void TryRowFromName(void* cdo, void* fn, void* table, const std::vector<std::wst
     const int32_t offTable = R::FindParamOffset(fn, L"Table");
     const int32_t offName  = R::FindParamOffset(fn, L"RowName");
     const int32_t offRow   = R::FindParamOffset(fn, L"OutRow");
-    const int32_t offRet   = R::FindParamOffset(fn, L"ReturnValue");
+    const int32_t offRet   = R::FindParamOffset(fn, coop::i18n::TrW(L"ReturnValue"));
     if (offTable < 0 || offName < 0 || offRow < 0) {
         Unavailable(L"(a) GetDataTableRowFromName", L"param offsets unresolved");
         return;
@@ -252,7 +253,7 @@ bool TryColumnAsString(void* cdo, void* fn, void* table, const std::vector<std::
     }
     if (!ue_wrap::Call(cdo, f)) { Unavailable(label, L"dispatch failed"); return false; }
     TArrayRaw arr{nullptr, 0, 0};
-    if (!f.GetRaw(L"ReturnValue", &arr, sizeof(arr))) { Unavailable(label, L"no ReturnValue param"); return false; }
+    if (!f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &arr, sizeof(arr))) { Unavailable(label, L"no ReturnValue param"); return false; }
     if (!arr.Data || arr.Num <= 0 || arr.Num > kSaneRowCap) {
         if (arr.Data) R::EngineFree(arr.Data);
         Unavailable(label, L"empty column (property name did not match?)");

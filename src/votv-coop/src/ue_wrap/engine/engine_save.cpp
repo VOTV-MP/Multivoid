@@ -15,6 +15,7 @@
 #include "ue_wrap/world/game_mode.h"
 #include "ue_wrap/world/game_rules.h"
 #include "ue_wrap/world/world_singleton.h"
+#include "coop/text/i18n.h"
 
 #include <cstdint>
 #include <cstring>
@@ -283,7 +284,7 @@ bool GetSavePrefix(uint8_t mode, std::wstring& out) {
     ParamFrame f(g_getSavePrefixFn);
     f.Set<uint8_t>(L"Index", mode);  // TEnumAsByte<enum_gamemode::Type> = 1 byte
     if (!Call(g_saveSlotsUiCdo, f)) return false;
-    const R::FString pre = f.Get<R::FString>(L"ReturnValue");
+    const R::FString pre = f.Get<R::FString>(coop::i18n::TrW(L"ReturnValue"));
     if (pre.Data && pre.Num > 1) out.assign(pre.Data, pre.Data + (pre.Num - 1));  // Num counts the null
     return true;
 }
@@ -349,7 +350,7 @@ bool LoadStorySave(const wchar_t* slot, int forceGameMode) {
         f.SetRaw(L"SlotName", &fs, sizeof(fs));
         f.Set<int32_t>(L"UserIndex", 0);
         if (!Call(g_storyGsCdo, f)) { UE_LOGE("engine: LoadStorySave -- LoadGameFromSlot call failed"); return false; }
-        g_storySave = f.Get<void*>(L"ReturnValue");
+        g_storySave = f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
         if (!g_storySave) { UE_LOGW("engine: LoadStorySave -- slot '%ls' missing/empty", slot); return false; }
         g_storySaveIdx = R::InternalIndexOf(g_storySave);  // IsLiveByIndex guard for reuse
         g_storySaveSlot = slot;                            // campaign identity
@@ -452,7 +453,7 @@ bool StartFreshGame(int gameMode) {
         ParamFrame f(createFn);
         f.Set<void*>(L"SaveGameClass", saveCls);
         if (!Call(g_storyGsCdo, f)) { UE_LOGE("engine: StartFreshGame -- CreateSaveGameObject call failed"); return false; }
-        g_storySave = f.Get<void*>(L"ReturnValue");
+        g_storySave = f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
         if (!g_storySave) { UE_LOGW("engine: StartFreshGame -- CreateSaveGameObject returned null"); return false; }
         g_storySaveIdx = R::InternalIndexOf(g_storySave);  // IsLiveByIndex guard for reuse
         g_storySaveSlot = kFreshSlotName;                  // campaign identity

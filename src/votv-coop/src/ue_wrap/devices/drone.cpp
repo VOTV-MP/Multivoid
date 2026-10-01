@@ -16,6 +16,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <cmath>
@@ -260,7 +261,7 @@ bool ReadDustAnchor(void* drone, FVector& out) {
     if (!dust) return false;
     ParamFrame f(g_getCompLocFn);
     if (!f.valid() || !Call(dust, f)) return false;
-    out = f.Get<FVector>(L"ReturnValue");
+    out = f.Get<FVector>(coop::i18n::TrW(L"ReturnValue"));
     return true;
 }
 

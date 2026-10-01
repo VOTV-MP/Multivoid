@@ -26,6 +26,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"  // NpcClass_Wisp (the wisp mirror keeps its actor tick)
 #include "ue_wrap/core/types.h"
+#include "coop/text/i18n.h"
 
 #include <cmath>
 #include <cstdint>
@@ -226,7 +227,7 @@ bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t 
             coop::npc_sync::ClearIncomingNpcSpawn();
             return false;
         }
-        spawned = begin.Get<void*>(L"ReturnValue");
+        spawned = begin.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     }
     if (!spawned) {
         UE_LOGE("npc-sync[client OnSpawn]: BeginDeferred returned null for '%ls' eid=%u "

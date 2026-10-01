@@ -11,6 +11,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/types.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <cstdint>
@@ -104,10 +105,10 @@ bool SetScalar(void* mid, R::FName name, float value) {
 
 bool GetScalar(void* mid, R::FName name, float& out) {
     ParamFrame f(g_getScalarFn);
-    if (!f.valid() || f.ParamOffset(L"ReturnValue") < 0) return false;
+    if (!f.valid() || f.ParamOffset(coop::i18n::TrW(L"ReturnValue")) < 0) return false;
     f.Set<R::FName>(L"ParameterName", name);
     if (!Call(mid, f)) return false;
-    out = f.Get<float>(L"ReturnValue");
+    out = f.Get<float>(coop::i18n::TrW(L"ReturnValue"));
     return true;
 }
 
@@ -132,11 +133,11 @@ void* EnsureBrush(void* worldContext) {
     void* parent = FindBrushParent();
     if (!g_matLibCdo || !g_createMidFn || !parent) return nullptr;
     ParamFrame f(g_createMidFn);
-    if (!f.valid() || f.ParamOffset(L"Parent") < 0 || f.ParamOffset(L"ReturnValue") < 0) return nullptr;
+    if (!f.valid() || f.ParamOffset(L"Parent") < 0 || f.ParamOffset(coop::i18n::TrW(L"ReturnValue")) < 0) return nullptr;
     if (f.ParamOffset(L"WorldContextObject") >= 0) f.Set<void*>(L"WorldContextObject", worldContext);
     f.Set<void*>(L"Parent", parent);
     if (!Call(g_matLibCdo, f)) return nullptr;
-    void* mid = f.Get<void*>(L"ReturnValue");
+    void* mid = f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     if (!mid || !g_brush.Pin(mid)) return nullptr;
     UE_LOGI("window_canvas: brush material instance %p created from %p", mid, parent);
     return mid;

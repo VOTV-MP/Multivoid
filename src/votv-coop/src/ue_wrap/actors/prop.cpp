@@ -10,7 +10,8 @@
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
-#include "ue_wrap/desk/tape_caddy.h"  // the reel Progress reader and writer
+#include "ue_wrap/desk/tape_caddy.h"
+#include "coop/text/i18n.h"  // the reel Progress reader and writer
 
 #include <atomic>
 #include <cmath>
@@ -532,10 +533,10 @@ bool ResolvePrimVelocity() {
     g_pvr.getAngFn     = fnAng;
     g_pvr.linFrameSize = R::FunctionFrameSize(fnLin);
     g_pvr.linBoneOff   = R::FindParamOffset(fnLin, L"BoneName");
-    g_pvr.linRetOff    = R::FindParamOffset(fnLin, L"ReturnValue");
+    g_pvr.linRetOff    = R::FindParamOffset(fnLin, coop::i18n::TrW(L"ReturnValue"));
     g_pvr.angFrameSize = R::FunctionFrameSize(fnAng);
     g_pvr.angBoneOff   = R::FindParamOffset(fnAng, L"BoneName");
-    g_pvr.angRetOff    = R::FindParamOffset(fnAng, L"ReturnValue");
+    g_pvr.angRetOff    = R::FindParamOffset(fnAng, coop::i18n::TrW(L"ReturnValue"));
     if (g_pvr.linBoneOff < 0 || g_pvr.linRetOff < 0 ||
         g_pvr.angBoneOff < 0 || g_pvr.angRetOff < 0) {
         UE_LOGW("prop::GetPhysicsVelocity: param offsets failed");

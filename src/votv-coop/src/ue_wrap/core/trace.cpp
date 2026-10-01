@@ -4,6 +4,7 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/reflection.h"
+#include "coop/text/i18n.h"
 
 #include <cstdint>
 
@@ -50,7 +51,7 @@ int LineBlockedStatDyn(void* worldCtx, const FVector& start, const FVector& end)
     // only -- FName/floats/weak ptrs -- so no destructor concerns on our frame).
     f.Set<bool>(L"bIgnoreSelf", true);
     if (!ue_wrap::Call(g_kslCdo, f)) return -1;
-    return f.Get<bool>(L"ReturnValue") ? 1 : 0;
+    return f.Get<bool>(coop::i18n::TrW(L"ReturnValue")) ? 1 : 0;
 }
 
 }  // namespace ue_wrap::trace

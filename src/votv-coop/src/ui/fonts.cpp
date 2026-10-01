@@ -8,6 +8,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/text/repertoire.h"
+#include "coop/text/i18n.h"   // a pack in a script our faces lack: which windows to open
 #include "ui/scale.h"
 #include "ue_wrap/core/log.h"
 
@@ -126,6 +127,27 @@ const void* ResourceTtf(int id, int* outSize) {
 // the astral planes.
 static_assert(sizeof(ImWchar) == 4,
               "IMGUI_USE_WCHAR32 must be on: the exclude set is astral");
+
+// The windows a translation pack may need and our four faces cannot draw. Overlap, not
+// containment: the generated exclude table partitions the space at its own boundaries, and a
+// range that merely STARTS inside a window would still keep every glyph after it out.
+bool OverlapsCjk(unsigned int lo, unsigned int hi) {
+    static const unsigned int kWindows[][2] = {
+        {0x3000, 0x303F},   // CJK punctuation
+        {0x3040, 0x30FF},   // kana
+        {0x3400, 0x4DBF},   // unified ext A
+        {0x4E00, 0x9FFF},   // unified
+        {0xF900, 0xFAFF},   // compatibility
+        {0xFF00, 0xFFEF},   // fullwidth forms
+    };
+    for (const auto& w : kWindows)
+        if (lo <= w[1] && hi >= w[0]) return true;
+    return false;
+}
+
+// Merged into every role when the pack's script is one of ours-missing. Declared here so
+// MergeBackstops can call it; defined below AddFromFile, which it needs.
+void MergeCjkSystemFace(float px);
 const ImWchar* ExcludeList() {
     // The drill (dev.atlas_no_exclude_drill): null lets every source bake its entire cmap, the
     // superset the invariant in ui/atlas_watch.cpp exists to catch, so that detector can be shown
@@ -139,7 +161,13 @@ const ImWchar* ExcludeList() {
         size_t n = 0;
         const coop::text::CodepointRange* r = coop::text::ExcludeRanges(&n);
         v.reserve(n * 2 + 1);
+        // A pack written in a script our faces do not carry opens those windows: the exclude
+        // set is exactly what KEEPS them out of the atlas, so a pack we would draw tofus for
+        // has to be subtracted from it. Additive and lazy -- the atlas still bakes only the
+        // glyphs a frame actually draws, so this costs nothing until a Chinese line is drawn.
+        const bool cjk = coop::i18n::LanguageUsesCjk();
         for (size_t i = 0; i < n; ++i) {
+            if (cjk && OverlapsCjk(r[i].begin, r[i].end)) continue;
             v.push_back(static_cast<ImWchar>(r[i].begin));
             v.push_back(static_cast<ImWchar>(r[i].end));
         }
@@ -185,6 +213,7 @@ void MergeBackstops(int chosenFamily, bool bold, float px) {
     // The flag still does the job under per-size baking.
     donor.FontLoaderFlags |= ImGuiFreeTypeLoaderFlags_LoadColor;
     AddFromResource(IDR_FONT_EMOJI_DONOR, px, donor);
+    MergeCjkSystemFace(px);
 }
 
 ImFont* AddFromFile(const std::string& path, float px, const ImFontConfig& baseCfg) {
@@ -193,6 +222,25 @@ ImFont* AddFromFile(const std::string& path, float px, const ImFontConfig& baseC
     ImFontConfig cfg = baseCfg;
     cfg.GlyphExcludeRanges = ExcludeList();
     return ImGui::GetIO().Fonts->AddFontFromFileTTF(path.c_str(), px, &cfg, nullptr);
+}
+
+// The script the pack needs, from the machine. A UI face first (YaHei), then the pixel/legacy
+// ones: whichever the install has, because a missing CJK face is not a reason to show tofus.
+void MergeCjkSystemFace(float px) {
+    if (!coop::i18n::LanguageUsesCjk()) return;
+    char windir[MAX_PATH] = {};
+    ::GetWindowsDirectoryA(windir, sizeof(windir));
+    const std::string win = windir[0] ? std::string(windir) + "\\Fonts\\" : std::string();
+    static const char* kCandidates[] = { "msyh.ttc", "msyhl.ttc", "simhei.ttf", "simsun.ttc" };
+    ImFontConfig merge;
+    merge.MergeMode = true;
+    for (const char* name : kCandidates) {
+        if (!AddFromFile(win + name, px, merge)) continue;
+        UE_LOGI("fonts: CJK pack -- merged the system face '%s' at %.0f px", name, px);
+        return;
+    }
+    UE_LOGW("fonts: the language pack needs CJK but no system face was found in '%s' -- these "
+            "lines will draw as boxes", win.c_str());
 }
 
 // Bake every role from the embedded families, deduping an identical (family, size, weight), so

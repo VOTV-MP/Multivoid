@@ -9,6 +9,7 @@
 #include "coop/text/utf8_codec.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
+#include "coop/text/i18n.h"
 
 #include <string>
 #include <vector>
@@ -193,7 +194,7 @@ bool RunNicknameArbiterSelftest() {
     check(twoDigit, (std::wstring(18, L'C') + L"11").c_str(), "two-digit suffix at the cap");
 
     // No collision: untouched.
-    check(AssignAgainst(L"Someone", {L"Host", L"Other"}), L"Someone", "no collision");
+    check(AssignAgainst(L"Someone", {coop::i18n::TrW(L"Host"), L"Other"}), L"Someone", "no collision");
 
     // The fold describes pixels, not strings. Two all-hanzi names share no codepoint, so a string
     // fold says distinct and neither takes a suffix, yet ImGui draws both as two identical fallback

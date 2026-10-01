@@ -273,3 +273,6 @@ docs/**
 !docs/versioning.md
 !docs/voice-and-chat.md
 reference/agency-agents/
+
+# A translator's in-progress cache (tools/i18n/translate.py), never committed.
+src/votv-coop/trans/.*.cache.json

@@ -13,6 +13,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
+#include "coop/text/i18n.h"
 
 #include <cmath>
 #include <cstdint>
@@ -41,7 +42,7 @@ bool ReadComponentIsActive(void* comp, bool* outOk) {
     ue_wrap::ParamFrame f(g_isActiveFn);
     if (!ue_wrap::Call(comp, f)) return false;
     if (outOk) *outOk = true;
-    return f.Get<bool>(L"ReturnValue");
+    return f.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 }  // namespace

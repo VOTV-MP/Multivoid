@@ -10,6 +10,7 @@
 #include "ui/native_text_field.h"   // its un-gated editing selftest
 #include "coop/net/protocol.h"  // kProtocolVersion -- the b<N> build rev in the banner
 #include "coop/version.h"
+#include "coop/text/i18n.h"   // the language pack, settled before any surface draws
 #include "harness/harness.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hook.h"
@@ -153,6 +154,13 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
                     exePath, exeSize, coop::version::kGameTarget);
         }
     }
+    // THE LANGUAGE, SETTLED BEFORE ANY SURFACE DRAWS. The pack is a JSON file a translator drops
+    // in the install's i18n folder (path anchor: ue_wrap/core/paths), so the only way a player
+    // learns why their translation did not apply is this call's own log line -- which prints the
+    // tag, the file, the entry count and every directory searched. Idempotent and read-only: a
+    // pack that is absent, malformed or half-finished leaves the English the source carries.
+    coop::i18n::Init();
+
     // THE NATIVE TEXT FIELD'S EDITING RULES, checked at BOOT and not at session start. The field
     // lives at the MENU -- the server browser's address box -- so a player can use it without a
     // session ever existing, and a check gated on a session start would never run at all.

@@ -7,6 +7,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
+#include "coop/text/i18n.h"
 
 #include <cstdint>
 #include <deque>
@@ -39,8 +40,8 @@ struct Thunk {
 Thunk g_setSimulate{P::name::SetSimulatePhysicsFn, L"bSimulate", nullptr};
 Thunk g_setLinVel{P::name::SetPhysicsLinearVelocityFn, L"NewVel", L"BoneName"};
 Thunk g_setAngVel{P::name::SetPhysicsAngularVelocityInDegreesFn, L"NewAngVel", L"BoneName"};
-Thunk g_isSimulating{P::name::IsSimulatingPhysicsFn, L"BoneName", L"ReturnValue"};
-Thunk g_getCenterOfMass{P::name::GetCenterOfMassFn, L"BoneName", L"ReturnValue"};
+Thunk g_isSimulating{P::name::IsSimulatingPhysicsFn, L"BoneName", coop::i18n::TrW(L"ReturnValue")};
+Thunk g_getCenterOfMass{P::name::GetCenterOfMassFn, L"BoneName", coop::i18n::TrW(L"ReturnValue")};
 
 // The class they are found on. A native class outlives every world, but the references are checked:
 // a freed one is found again, and each thunk, holding the class it resolved on by slot and serial,

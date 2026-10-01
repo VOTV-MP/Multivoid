@@ -17,6 +17,7 @@
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/umg_build.h"
+#include "coop/text/i18n.h"
 
 #include <string>
 
@@ -134,7 +135,7 @@ bool BuildConnect(void* parent, void* donorBtn) {
     U::SetContent(rowBox, row);
     if (void* s = NS::AddVFill(parent, rowBox, 0.f, NS::kFill, NS::kTop))
         NS::SetSlotPadding(s, P::off::UVerticalBoxSlot_Padding, 0.f, 0.f, 0.f, 6.f);
-    g_connect = NS::BuildButton(row, donorBtn, L"Connect", NS::kBtnFontPx);
+    g_connect = NS::BuildButton(row, donorBtn, coop::i18n::TrW(L"Connect"), NS::kBtnFontPx);
     if (!g_connect) {
         UE_LOGE("server_browser_actions: could not build CONNECT -- the screen would have "
                 "no way to join the server it is describing");
@@ -154,10 +155,10 @@ bool Build(void* parent, void* donorBtn) {
     // chrome read as foreign.
     struct Cell { const wchar_t* label; void** out; };
     const Cell cells[] = {
-        {L"Direct connect", &g_direct},
-        {L"Host game",      &g_host},
-        {L"Change name",    &g_rename},
-        {L"Update list",    &g_refresh},
+        {coop::i18n::TrW(L"Direct connect"), &g_direct},
+        {coop::i18n::TrW(L"Host game"),      &g_host},
+        {coop::i18n::TrW(L"Change name"),    &g_rename},
+        {coop::i18n::TrW(L"Update list"),    &g_refresh},
     };
     const int cellCount = static_cast<int>(sizeof(cells) / sizeof(cells[0]));
 

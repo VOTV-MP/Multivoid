@@ -6,6 +6,7 @@
 #include "ue_wrap/desk/console_desk.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "coop/text/i18n.h"
 
 #include <chrono>
 #include <cstring>
@@ -235,7 +236,7 @@ bool ReplayPlay(int compIdx, const char* cueName) {
     if (!cue) {
         std::wstring w(cueName, cueName + std::strlen(cueName));
         cue = R::FindObject(w.c_str(), L"SoundCue");
-        if (!cue) cue = R::FindObject(w.c_str(), L"SoundWave");
+        if (!cue) cue = R::FindObject(w.c_str(), coop::i18n::TrW(L"SoundWave"));
         g_cueCache[cueName] = {cue, cue ? R::InternalIndexOf(cue) : -1};
         if (!cue) return false;  // caller WARNs once; negative-cached above
     }

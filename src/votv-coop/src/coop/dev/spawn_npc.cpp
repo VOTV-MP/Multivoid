@@ -15,6 +15,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
+#include "coop/text/i18n.h"
 
 #include <windows.h>
 
@@ -75,7 +76,7 @@ void SpawnNpcAt(const wchar_t* className, const ue_wrap::FTransform& xform) {
             UE_LOGE("spawn_npc: BeginDeferred call failed for '%ls'", className);
             return;
         }
-        spawned = begin.Get<void*>(L"ReturnValue");
+        spawned = begin.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     }
     if (!spawned) {
         UE_LOGE("spawn_npc: BeginDeferred returned null for '%ls' (suppressed / not host?)",

@@ -10,6 +10,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "coop/text/i18n.h"
 
 #include <cstdint>
 
@@ -131,7 +132,7 @@ FVector GetComponentLocation(void* component) {
     if (!g_getCompLocFn) return loc;
     ParamFrame f(g_getCompLocFn);
     if (!Call(component, f)) return loc;
-    f.GetRaw(L"ReturnValue", &loc, sizeof(loc));
+    f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &loc, sizeof(loc));
     return loc;
 }
 
@@ -201,7 +202,7 @@ void* CreateDynamicMaterialInstance(void* component, int32_t elementIndex) {
     // SourceMaterial stays null (use the slot's current material as the MID parent);
     // OptionalName stays zeroed (FName{0,0} == NAME_None).
     if (!Call(component, f)) return nullptr;
-    return f.Get<void*>(L"ReturnValue");
+    return f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 bool SetTextureParameterValue(void* materialInstanceDynamic, const wchar_t* paramName, void* texture) {
@@ -377,7 +378,7 @@ bool IsComponentTickEnabled(void* component) {
     }
     if (!sFn) return false;
     ParamFrame f(sFn);
-    return Call(component, f) && f.Get<bool>(L"ReturnValue");
+    return Call(component, f) && f.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 }  // namespace ue_wrap::engine

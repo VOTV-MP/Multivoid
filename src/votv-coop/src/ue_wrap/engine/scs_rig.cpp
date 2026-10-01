@@ -15,6 +15,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
+#include "coop/text/i18n.h"
 
 #include <cstdint>
 #include <cstring>
@@ -263,7 +264,7 @@ void* SpawnEmitterAttachedNode(void* meshComp, const Node& n, const R::FName& bo
     f.Set<uint8_t>(L"PoolingMethod", 0);  // EPSCPoolMethod::None
     f.Set<bool>(L"bAutoActivate", true);
     if (!Call(g_gsCdo, f)) return nullptr;
-    return f.Get<void*>(L"ReturnValue");
+    return f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 void* SpawnSoundAttachedNode(void* anchorComp, const Node& n, const R::FName& bone) {
@@ -296,7 +297,7 @@ void* SpawnSoundAttachedNode(void* anchorComp, const Node& n, const R::FName& bo
     f.Set<void*>(L"ConcurrencySettings", nullptr);
     f.Set<bool>(L"bAutoDestroy", false);
     if (!Call(g_gsCdo, f)) return nullptr;
-    return f.Get<void*>(L"ReturnValue");
+    return f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 void* SpawnDecalAttachedNode(void* anchorComp, const Node& n, const R::FName& bone) {
@@ -315,7 +316,7 @@ void* SpawnDecalAttachedNode(void* anchorComp, const Node& n, const R::FName& bo
     f.Set<uint8_t>(L"LocationType", kKeepRelativeOffset);
     f.Set<float>(L"LifeSpan", 0.f);  // rig lifetime == owner lifetime
     if (!Call(g_gsCdo, f)) return nullptr;
-    return f.Get<void*>(L"ReturnValue");
+    return f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 // A point light has no gameplay-statics spawn helper: add the component deferred, copy the
@@ -348,7 +349,7 @@ void* AddPointLightNode(void* actor, void* meshComp, const Node& n, const R::FNa
     add.SetRaw(L"RelativeTransform", &tmplRel, sizeof(tmplRel));
     add.Set<bool>(L"bDeferredFinish", true);
     if (!Call(actor, add)) return nullptr;
-    void* comp = add.Get<void*>(L"ReturnValue");
+    void* comp = add.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     if (!comp) return nullptr;
 
     // Archetype copy of the plain light fields, template to instance.

@@ -15,6 +15,7 @@
 #include "ue_wrap/engine/engine_component.h"  // GetComponentLocation
 #include "ue_wrap/engine/hit_result.h"
 #include "ue_wrap/world/world_singleton.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <chrono>
@@ -87,7 +88,7 @@ struct ArrayMember {
 };
 ArrayMember g_lightRoots{L"lighRoots"};
 ArrayMember g_blackoutDoors{L"doorsOpen"};
-ArrayMember g_servers{L"servers"};
+ArrayMember g_servers{coop::i18n::TrW(L"servers")};
 
 // The stationTurnon sound, an asset held while its slot and serial still hold it.
 CachedObjRef g_turnOnCue;

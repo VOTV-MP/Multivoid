@@ -12,6 +12,7 @@
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine_component.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <chrono>
@@ -216,7 +217,7 @@ bool ReadSensorBox(void* door, FVector& centre, FVector& halfExtent) {
     if (!fn) return false;
     ParamFrame f(fn);
     if (!f.valid() || !Call(sensor, f)) return false;
-    halfExtent = f.Get<FVector>(L"ReturnValue");
+    halfExtent = f.Get<FVector>(coop::i18n::TrW(L"ReturnValue"));
     centre = ue_wrap::engine::GetComponentLocation(sensor);
     return true;
 }

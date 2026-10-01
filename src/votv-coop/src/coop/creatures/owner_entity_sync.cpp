@@ -21,6 +21,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <chrono>
@@ -190,7 +191,7 @@ void Install(coop::net::Session* session) {
             return;
         }
         g_classParamOff  = R::FindParamOffset(g_beginDeferredFn, L"ActorClass");
-        g_returnParamOff = R::FindParamOffset(g_beginDeferredFn, L"ReturnValue");
+        g_returnParamOff = R::FindParamOffset(g_beginDeferredFn, coop::i18n::TrW(L"ReturnValue"));
         g_xformParamOff  = R::FindParamOffset(g_beginDeferredFn, L"SpawnTransform");
         if (g_classParamOff < 0 || g_returnParamOff < 0 || g_xformParamOff < 0) {
             UE_LOGW("owner_entity: BeginDeferred param offsets missing -- lane disabled");
@@ -358,7 +359,7 @@ void OnSpawnMsg(const coop::net::OwnerEntitySpawnPayload& p, int senderPeerSlot)
         begin.Set<uint8_t>(L"CollisionHandlingOverride", kAlwaysSpawn);
         begin.Set<void*>(L"Owner", nullptr);
         if (!ue_wrap::Call(gsCdo, begin)) return;
-        spawned = begin.Get<void*>(L"ReturnValue");
+        spawned = begin.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
         if (!spawned) {
             UE_LOGW("owner_entity: mirror BeginDeferred null for slot=%d seq=%u", senderPeerSlot, p.seq);
             return;

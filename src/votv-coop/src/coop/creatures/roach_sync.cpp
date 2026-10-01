@@ -14,6 +14,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <chrono>
@@ -126,13 +127,13 @@ void ReadRoaches(void* master, std::vector<RoachSlot>& out) {
 bool GetCompLocation(void* comp, Vec3& out) {
     ue_wrap::ParamFrame f(g_getLocFn);
     if (!f.valid() || !ue_wrap::Call(comp, f)) return false;
-    return f.GetRaw(L"ReturnValue", &out, sizeof(out));
+    return f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &out, sizeof(out));
 }
 
 bool GetCompScale(void* comp, Vec3& out) {
     ue_wrap::ParamFrame f(g_getScaleFn);
     if (!f.valid() || !ue_wrap::Call(comp, f)) return false;
-    return f.GetRaw(L"ReturnValue", &out, sizeof(out));
+    return f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &out, sizeof(out));
 }
 
 void SetCompLocation(void* comp, const Vec3& v) {

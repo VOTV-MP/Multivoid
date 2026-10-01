@@ -9,6 +9,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <cstdint>
@@ -69,7 +70,7 @@ void ApplyGreyOut(void* button) {
     const uint64_t n = sCount.fetch_add(1, std::memory_order_relaxed) + 1;
     if (n <= 3 && g_getEnabledFn) {
         ParamFrame f(g_getEnabledFn);
-        const bool en = Call(button, f) ? f.Get<bool>(L"ReturnValue") : true;
+        const bool en = Call(button, f) ? f.Get<bool>(coop::i18n::TrW(L"ReturnValue")) : true;
         UE_LOGI("save_button_disable: greyed button_Save %p (apply #%llu, GetIsEnabled now=%d, opacity=0.35)",
                 button, static_cast<unsigned long long>(n), en ? 1 : 0);
     }

@@ -8,6 +8,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "coop/text/i18n.h"
 
 #include <chrono>
 
@@ -138,7 +139,7 @@ float GetGlobalTimeDilation() {
     if (!f.valid()) return -1.f;
     f.Set<void*>(L"WorldContextObject", ctx);
     if (!ue_wrap::Call(g_gsCdo, f)) return -1.f;
-    return f.Get<float>(L"ReturnValue");
+    return f.Get<float>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 bool ReadSleepNeed(float& out) {

@@ -5,7 +5,8 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
-#include "ue_wrap/world/game_mode.h"  // the mode byte: a GI member, not one of the rules
+#include "ue_wrap/world/game_mode.h"
+#include "coop/text/i18n.h"  // the mode byte: a GI member, not one of the rules
 
 #include <cstdint>
 #include <cstring>
@@ -74,7 +75,7 @@ std::string EnumValueName(void* enumObj, uint8_t value) {
     if (!f.valid() || !f.Set<void*>(L"Enum", enumObj) || !f.Set<uint8_t>(L"EnumeratorValue", value)) return {};
     if (!ue_wrap::Call(sCdo, f)) return {};
     R::FString ret{};
-    if (!f.GetRaw(L"ReturnValue", &ret, sizeof(ret)) || !ret.Data) return {};
+    if (!f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &ret, sizeof(ret)) || !ret.Data) return {};
     std::string out;
     for (int32_t i = 0; i + 1 < ret.Num; ++i) out.push_back(static_cast<char>(ret.Data[i]));
     R::EngineFree(ret.Data);  // the returned string is ours: the frame is freed raw, not destructed

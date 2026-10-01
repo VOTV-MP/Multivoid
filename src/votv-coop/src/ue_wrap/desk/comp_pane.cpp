@@ -7,6 +7,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/desk/console_desk.h"
+#include "coop/text/i18n.h"
 
 #include <chrono>
 #include <cstdint>
@@ -65,11 +66,11 @@ void ResolvePass() {
     // the lookup so we never grab the component instance by mistake.
     if (!g_sndWorking) {
         g_sndWorking = R::FindObject(L"computerWorking_Cue", L"SoundCue");
-        if (!g_sndWorking) g_sndWorking = R::FindObject(L"computerWorking_Cue", L"SoundWave");
+        if (!g_sndWorking) g_sndWorking = R::FindObject(L"computerWorking_Cue", coop::i18n::TrW(L"SoundWave"));
     }
     if (!g_sndWorkingEnd) {
         g_sndWorkingEnd = R::FindObject(L"computerWorking_end", L"SoundCue");
-        if (!g_sndWorkingEnd) g_sndWorkingEnd = R::FindObject(L"computerWorking_end", L"SoundWave");
+        if (!g_sndWorkingEnd) g_sndWorkingEnd = R::FindObject(L"computerWorking_end", coop::i18n::TrW(L"SoundWave"));
     }
 
     if (!g_required &&

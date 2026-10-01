@@ -10,6 +10,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/desk/console_desk.h"
 #include "ue_wrap/world/world_singleton.h"
+#include "coop/text/i18n.h"
 
 #include <chrono>
 #include <cstring>
@@ -179,7 +180,7 @@ bool PortOverlaps(void* slotActor, void* actor) {
     ue_wrap::ParamFrame f(fn);
     if (!f.valid()) return false;
     f.Set<void*>(L"Other", actor);
-    return ue_wrap::Call(port, f) && f.Get<bool>(L"ReturnValue");
+    return ue_wrap::Call(port, f) && f.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 bool ReadSlotLatch(void* slotActor, bool& recentlyDetached, int& portCollision) {
@@ -189,7 +190,7 @@ bool ReadSlotLatch(void* slotActor, bool& recentlyDetached, int& portCollision) 
     if (void* port = Port(slotActor)) {
         void* const fn = R::FindDispatchFunctionCached(R::ClassOf(port), L"GetCollisionEnabled");
         ue_wrap::ParamFrame f(fn);
-        if (fn && f.valid() && ue_wrap::Call(port, f)) portCollision = f.Get<uint8_t>(L"ReturnValue");
+        if (fn && f.valid() && ue_wrap::Call(port, f)) portCollision = f.Get<uint8_t>(coop::i18n::TrW(L"ReturnValue"));
     }
     return true;
 }

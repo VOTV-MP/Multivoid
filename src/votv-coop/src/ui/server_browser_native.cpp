@@ -24,6 +24,7 @@
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/umg_build.h"
+#include "coop/text/i18n.h"
 
 #include <windows.h>
 
@@ -196,7 +197,7 @@ bool BuildScreen(void* switcher) {
     // authors its own frame: it is the canary for a moved menu layout.
     NS::WindowShell shell;
     if (!NS::BuildWindowShell(switcher, kWindowW, kWindowH,
-                              L"Multivoid  -  Server Browser", shell))
+                              coop::i18n::TrW(L"Multivoid  -  Server Browser"), shell))
         return false;
     void* root = shell.root;
     void* col  = shell.column;
@@ -257,7 +258,7 @@ bool BuildScreen(void* switcher) {
     // runs all the way down with no dead band beside Back.
     if (void* footRow = Spawn(L"HorizontalBox", leftCol)) {
         // Sentence case: VOTV uppercases no button label anywhere.
-        g_backBtn = BuildButton(footRow, backDonor, L"Back", ui::native_screen::kBtnFontPx);
+        g_backBtn = BuildButton(footRow, backDonor, coop::i18n::TrW(L"Back"), ui::native_screen::kBtnFontPx);
         if (!g_backBtn) return false;
         NS::SetHSlot(NS::SlotOf(g_backBtn), 0.f, NS::kLeft, kCenter);
         if (void* s = NS::AddVFill(leftCol, footRow, 0.f, NS::kLeft, kBottom))
@@ -526,8 +527,8 @@ void OnMenuTick(void* menu, void* switcher) {
                     sm::Refresh();
                     SyncRows();
                     const std::string notice =
-                        "Showing the " + coop::net::master_slots::Selected().label +
-                        " server list.";
+                        coop::i18n::Tr("Showing the ") + coop::net::master_slots::Selected().label +
+                        coop::i18n::Tr("server list.");
                     panels::SetNotice(notice.c_str());
                 }
                 return;

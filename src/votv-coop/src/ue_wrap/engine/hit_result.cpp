@@ -5,6 +5,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "coop/text/i18n.h"
 
 #include <cstdint>
 #include <cstring>
@@ -40,7 +41,7 @@ bool Resolve() {
     if (!g_makeFn) {
         if (void* cls = R::FindClass(L"GameplayStatics")) g_makeFn = R::FindFunction(cls, L"MakeHitResult");
     }
-    if (!g_hitStruct && g_makeFn) g_hitStruct = R::PropertyInnerStruct(g_makeFn, L"ReturnValue");
+    if (!g_hitStruct && g_makeFn) g_hitStruct = R::PropertyInnerStruct(g_makeFn, coop::i18n::TrW(L"ReturnValue"));
     return g_cdo && g_makeFn && g_hitStruct;
 }
 
@@ -58,7 +59,7 @@ bool Build(void* actor, void* component, const FVector& location, uint8_t* hit, 
         return false;
     }
     // Weak pointers and names only: the bytes are the whole value, with nothing to release.
-    if (!f.GetRaw(L"ReturnValue", hit, size)) return false;
+    if (!f.GetRaw(coop::i18n::TrW(L"ReturnValue"), hit, size)) return false;
     // A hit that does not name what it was built on would send the call somewhere else.
     if (!Names(hit, L"Component", component) || !Names(hit, L"Actor", actor)) {
         UE_LOGW("hit_result: not built: the hit does not resolve back (component=%d actor=%d)",
@@ -76,7 +77,7 @@ bool Write(ParamFrame& frame, const wchar_t* param, void* actor, void* component
                 g_cdo ? 1 : 0, g_makeFn ? 1 : 0, g_hitStruct ? 1 : 0, frame.valid() ? 1 : 0);
         return false;
     }
-    const int32_t size = R::FindParamSize(g_makeFn, L"ReturnValue");
+    const int32_t size = R::FindParamSize(g_makeFn, coop::i18n::TrW(L"ReturnValue"));
     const int32_t into = R::FindParamSize(frame.function(), param);
     if (size <= 0 || size != into) {
         UE_LOGW("hit_result: not built: MakeHitResult returns %d bytes and '%ls' takes %d", size, param, into);
@@ -91,7 +92,7 @@ bool WriteField(void* object, const wchar_t* field, void* actor, void* component
     if (!cls || !Resolve()) return false;
     const int32_t off = R::FindPropertyOffset(cls, field);
     void* inner = R::PropertyInnerStruct(cls, field);
-    const int32_t size = R::FindParamSize(g_makeFn, L"ReturnValue");
+    const int32_t size = R::FindParamSize(g_makeFn, coop::i18n::TrW(L"ReturnValue"));
     if (off < 0 || !inner || size <= 0 || size != R::StructSize(inner)) {
         UE_LOGW("hit_result: not built: MakeHitResult returns %d bytes and '%ls' holds %d", size, field,
                 inner ? R::StructSize(inner) : -1);

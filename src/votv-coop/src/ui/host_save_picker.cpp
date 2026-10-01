@@ -16,6 +16,7 @@
 
 #include "imgui.h"
 #include "ue_wrap/world/game_mode.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <cstdint>
@@ -171,10 +172,10 @@ void Render() {
 
     bool open = true;
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
-    if (ImGui::Begin("Host Game  -  choose a world###coop_save_picker", &open, flags)) {
-        ImGui::TextUnformatted("Pick a save to host, or start a New Game:");
+    if (ImGui::Begin(coop::i18n::Tr("Host Game  -  choose a world###coop_save_picker"), &open, flags)) {
+        ImGui::TextUnformatted(coop::i18n::Tr("Pick a save to host, or start a New Game:"));
         ImGui::SameLine();
-        if (ImGui::SmallButton("Refresh")) sb::RefreshAsync();
+        if (ImGui::SmallButton(coop::i18n::Tr("Refresh"))) sb::RefreshAsync();
         ImGui::SameLine();
         ImGui::TextDisabled("(%s)", sb::Status().c_str());
         ImGui::Spacing();
@@ -221,7 +222,7 @@ void Render() {
 
         // New Game (Story) row.
         ImGui::Separator();
-        ImGui::TextUnformatted("New Game (Story):");
+        ImGui::TextUnformatted(coop::i18n::Tr("New Game (Story):"));
         ImGui::SameLine();
         ImGui::SetNextItemWidth(S(220.0f));
         // Enter in the name field = the primary action: a text field with one obvious
@@ -232,48 +233,48 @@ void Render() {
         ImGui::SameLine();
         const bool canNew = g_newName[0] != '\0';
         if (!canNew) ImGui::BeginDisabled();
-        if (ImGui::Button("New Game & Host") || (nameEnter && canNew)) DoHostNew();
+        if (ImGui::Button(coop::i18n::Tr("New Game & Host")) || (nameEnter && canNew)) DoHostNew();
         if (!canNew) ImGui::EndDisabled();
 
         // Connection type + visibility. Plain labels, with the technical depth in the hint
         // lines. TURN is deliberately NOT a choice: it is the automatic fallback inside
         // AUTOMATIC's ICE.
         ImGui::Separator();
-        ImGui::TextUnformatted("Connection:");
+        ImGui::TextUnformatted(coop::i18n::Tr("Connection:"));
         ImGui::SameLine();
         // Two, not three -- "LAN only" was never a third transport. See
         // coop/session/host_mode.h; the fallback surface tracks the native one so a player
         // who switches between them is not offered a different set of choices.
-        if (ImGui::RadioButton("AUTOMATIC (recommended)", g_connMode == 0)) g_connMode = 0;
+        if (ImGui::RadioButton(coop::i18n::Tr("AUTOMATIC (recommended)"), g_connMode == 0)) g_connMode = 0;
         ImGui::SameLine();
-        if (ImGui::RadioButton("DIRECT (you forward a port)", g_connMode == 1)) g_connMode = 1;
+        if (ImGui::RadioButton(coop::i18n::Tr("DIRECT (you forward a port)"), g_connMode == 1)) g_connMode = 1;
         if (g_connMode == 1) {
             // THE PORT IS RESOLVED, NOT SPELLED. A literal here would be right for a default
             // install and a lie for anyone who set net.port -- and it is the number the player
             // is about to type into a router. From the ON-OPEN cache, not a live resolve: see
             // Open().
-            ImGui::TextDisabled("Requires UDP port %ld forwarded to this PC. Friends join from",
+            ImGui::TextDisabled(coop::i18n::Tr("Requires UDP port %ld forwarded to this PC. Friends join from"),
                                 g_directPort);
-            ImGui::TextDisabled("the server browser or Direct Connect. Not sure? Use AUTO.");
-            ImGui::TextDisabled("Friends on your own network can join with no forwarding at all.");
-            ImGui::Checkbox("Hide from server browser (friends Direct Connect by IP)", &g_hideDirect);
+            ImGui::TextDisabled("%s", coop::i18n::Tr("the server browser or Direct Connect. Not sure? Use AUTO."));
+            ImGui::TextDisabled("%s", coop::i18n::Tr("Friends on your own network can join with no forwarding at all."));
+            ImGui::Checkbox(coop::i18n::Tr("Hide from server browser (friends Direct Connect by IP)"), &g_hideDirect);
             if (g_hideDirect)
-                ImGui::TextDisabled("Hidden: nothing is sent to the master server at any point.");
+                ImGui::TextDisabled("%s", coop::i18n::Tr("Hidden: nothing is sent to the master server at any point."));
         } else {
-            ImGui::TextDisabled("Connects directly when your network allows it, relays automatically");
-            ImGui::TextDisabled("otherwise. Works without any router setup. Always listed -- hide it");
-            ImGui::TextDisabled("in-game from the scoreboard once your friends have joined.");
+            ImGui::TextDisabled("%s", coop::i18n::Tr("Connects directly when your network allows it, relays automatically"));
+            ImGui::TextDisabled("%s", coop::i18n::Tr("otherwise. Works without any router setup. Always listed -- hide it"));
+            ImGui::TextDisabled("%s", coop::i18n::Tr("in-game from the scoreboard once your friends have joined."));
         }
 
         // Footer: Host the selected save / Cancel + the lobby params.
         ImGui::Separator();
         const bool hasSel = g_selected >= 0 && g_selected < static_cast<int>(g_saves.size());
         if (!hasSel) ImGui::BeginDisabled();
-        if (ImGui::Button("Host selected save", ImVec2(S(170.0f), 0.0f)) && hasSel)
+        if (ImGui::Button(coop::i18n::Tr("Host selected save"), ImVec2(S(170.0f), 0.0f)) && hasSel)
             AskOrHostExisting(g_saves[g_selected]);
         if (!hasSel) ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(S(90.0f), 0.0f))) open = false;
+        if (ImGui::Button(coop::i18n::Tr("Cancel"), ImVec2(S(90.0f), 0.0f))) open = false;
         ImGui::SameLine(0.0f, S(18.0f));
         ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.00f, 1.0f), "Lobby: %s%s  (max %d)",
                            g_hostName.c_str(), g_hostLocked ? "  [locked]" : "", g_hostMax);
@@ -289,18 +290,18 @@ void Render() {
                                         ImGuiCond_Always, ImVec2(0.5f, 0.5f));
                 if (ImGui::BeginPopupModal("Conflict version!###coop_save_conflict", nullptr,
                                            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
-                    ImGui::Text("This save was made in another version of the game.");
-                    ImGui::Text("Save: %s", held->version.empty() ? "unknown" : W2A(held->version).c_str());
-                    ImGui::Text("Game: %s", W2A(sb::GameVersion()).c_str());
+                    ImGui::TextUnformatted(coop::i18n::Tr("This save was made in another version of the game."));
+                    ImGui::Text(coop::i18n::Tr("Save: %s"), held->version.empty() ? "unknown" : W2A(held->version).c_str());
+                    ImGui::Text(coop::i18n::Tr("Game: %s"), W2A(sb::GameVersion()).c_str());
                     ImGui::Spacing();
                     const sb::SaveInfo launch = *held;  // DoHostExisting closes the picker
-                    if (ImGui::Button("Launch anyways", ImVec2(S(150.0f), 0.0f))) {
+                    if (ImGui::Button(coop::i18n::Tr("Launch anyways"), ImVec2(S(150.0f), 0.0f))) {
                         g_conflictSlot.clear();
                         ImGui::CloseCurrentPopup();
                         DoHostExisting(launch);
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button("Return", ImVec2(S(100.0f), 0.0f))) {
+                    if (ImGui::Button(coop::i18n::Tr("Return"), ImVec2(S(100.0f), 0.0f))) {
                         g_conflictSlot.clear();
                         ImGui::CloseCurrentPopup();
                     }

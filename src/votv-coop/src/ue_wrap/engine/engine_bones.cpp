@@ -13,6 +13,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "coop/text/i18n.h"
 
 #include <array>
 #include <cstdint>
@@ -73,14 +74,14 @@ bool BuildBoneGraph_(void* comp, int32_t n, BoneGraphCache& out) {
         ParamFrame nf(g_boneNameFn);
         nf.Set<int32_t>(L"BoneIndex", i);
         if (!Call(comp, nf)) return false;
-        nf.GetRaw(L"ReturnValue", out.names[static_cast<size_t>(i)].data(), 8);
+        nf.GetRaw(coop::i18n::TrW(L"ReturnValue"), out.names[static_cast<size_t>(i)].data(), 8);
     }
     for (int32_t i = 0; i < n; ++i) {
         ParamFrame pf(s_parentFn);
         pf.SetRaw(L"BoneName", out.names[static_cast<size_t>(i)].data(), 8);
         if (!Call(comp, pf)) continue;  // root/unresolved -> stays -1
         uint8_t pn[8] = {};
-        pf.GetRaw(L"ReturnValue", pn, sizeof(pn));
+        pf.GetRaw(coop::i18n::TrW(L"ReturnValue"), pn, sizeof(pn));
         for (int32_t j = 0; j < n; ++j) {
             if (std::memcmp(pn, out.names[static_cast<size_t>(j)].data(), 8) == 0) {
                 if (j != i) out.parent[static_cast<size_t>(i)] = j;
@@ -96,7 +97,7 @@ bool BuildBoneGraph_(void* comp, int32_t n, BoneGraphCache& out) {
 bool GetLowestBoneWorldZ(void* skelMeshComp, float& outZ) {
     if (!skelMeshComp || !ResolveBoneFns()) return false;
     int32_t n = 0;
-    { ParamFrame f(g_numBonesFn); if (Call(skelMeshComp, f)) n = f.Get<int32_t>(L"ReturnValue"); }
+    { ParamFrame f(g_numBonesFn); if (Call(skelMeshComp, f)) n = f.Get<int32_t>(coop::i18n::TrW(L"ReturnValue")); }
     if (n <= 0) return false;
     float minZ = 1.0e9f;
     bool any = false;
@@ -105,11 +106,11 @@ bool GetLowestBoneWorldZ(void* skelMeshComp, float& outZ) {
         uint8_t name[8] = {};
         { ParamFrame nf(g_boneNameFn); nf.Set<int32_t>(L"BoneIndex", i);
           if (!Call(skelMeshComp, nf)) continue;
-          nf.GetRaw(L"ReturnValue", name, sizeof(name)); }
+          nf.GetRaw(coop::i18n::TrW(L"ReturnValue"), name, sizeof(name)); }
         ParamFrame lf(g_socketLocFn);
         lf.SetRaw(L"InSocketName", name, sizeof(name));
         if (!Call(skelMeshComp, lf)) continue;
-        const FVector loc = lf.Get<FVector>(L"ReturnValue");
+        const FVector loc = lf.Get<FVector>(coop::i18n::TrW(L"ReturnValue"));
         if (!any || loc.Z < minZ) {
             minZ = loc.Z;
             lowestName = R::ToString(*reinterpret_cast<const R::FName*>(name));
@@ -126,7 +127,7 @@ int CollectSkeletonBonePoints(void* skelMeshComp, std::vector<BonePoint>& out) {
     out.clear();
     if (!skelMeshComp || !ResolveBoneFns()) return 0;
     int32_t n = 0;
-    { ParamFrame f(g_numBonesFn); if (Call(skelMeshComp, f)) n = f.Get<int32_t>(L"ReturnValue"); }
+    { ParamFrame f(g_numBonesFn); if (Call(skelMeshComp, f)) n = f.Get<int32_t>(coop::i18n::TrW(L"ReturnValue")); }
     if (n <= 0) return 0;
     // Eviction valve: ragdoll bodies churn per episode and entries are keyed by comp pointer --
     // clear the whole map past a small bound (the next Collect rebuilds one graph; dead keys are
@@ -142,7 +143,7 @@ int CollectSkeletonBonePoints(void* skelMeshComp, std::vector<BonePoint>& out) {
         lf.SetRaw(L"InSocketName", cache.names[static_cast<size_t>(i)].data(), 8);
         if (!Call(skelMeshComp, lf)) { out.clear(); return 0; }  // all-or-nothing: parent
                                                                  // indices reference the FULL array
-        out.push_back(BonePoint{lf.Get<FVector>(L"ReturnValue"), cache.parent[static_cast<size_t>(i)]});
+        out.push_back(BonePoint{lf.Get<FVector>(coop::i18n::TrW(L"ReturnValue")), cache.parent[static_cast<size_t>(i)]});
     }
     return static_cast<int>(out.size());
 }
@@ -171,7 +172,7 @@ bool GetBoneWorldLocationByName(void* skelMeshComp, const wchar_t* boneName, FVe
     ParamFrame lf(g_socketLocFn);
     lf.SetRaw(L"InSocketName", &fn, sizeof(fn));
     if (!Call(skelMeshComp, lf)) return false;
-    outLoc = lf.Get<FVector>(L"ReturnValue");
+    outLoc = lf.Get<FVector>(coop::i18n::TrW(L"ReturnValue"));
     return true;
 }
 
@@ -186,19 +187,19 @@ bool GetBoneWorldRotationByName(void* skelMeshComp, const wchar_t* boneName, FRo
     }
     if (!g_socketRotFn) return false;
     int32_t n = 0;
-    { ParamFrame f(g_numBonesFn); if (Call(skelMeshComp, f)) n = f.Get<int32_t>(L"ReturnValue"); }
+    { ParamFrame f(g_numBonesFn); if (Call(skelMeshComp, f)) n = f.Get<int32_t>(coop::i18n::TrW(L"ReturnValue")); }
     if (n <= 0) return false;
     for (int32_t i = 0; i < n; ++i) {
         uint8_t name[8] = {};
         { ParamFrame nf(g_boneNameFn); nf.Set<int32_t>(L"BoneIndex", i);
           if (!Call(skelMeshComp, nf)) continue;
-          nf.GetRaw(L"ReturnValue", name, sizeof(name)); }
+          nf.GetRaw(coop::i18n::TrW(L"ReturnValue"), name, sizeof(name)); }
         const std::wstring s = R::ToString(*reinterpret_cast<const R::FName*>(name));
         if (s == boneName) {
             ParamFrame rf(g_socketRotFn);
             rf.SetRaw(L"InSocketName", name, sizeof(name));
             if (!Call(skelMeshComp, rf)) return false;
-            outRot = rf.Get<FRotator>(L"ReturnValue");
+            outRot = rf.Get<FRotator>(coop::i18n::TrW(L"ReturnValue"));
             return true;
         }
     }

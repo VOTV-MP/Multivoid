@@ -9,6 +9,7 @@
 #include "ui/scale.h"
 
 #include "imgui.h"
+#include "coop/text/i18n.h"
 
 #include <algorithm>
 #include <atomic>
@@ -194,9 +195,9 @@ void Render() {
     g_lastFrame = frame;
     s_worldGen = worldGen;
 
-    if (ImGui::SmallButton("Refresh")) RequestSnapshot();
+    if (ImGui::SmallButton(coop::i18n::Tr("Refresh"))) RequestSnapshot();
     ImGui::SameLine();
-    ImGui::TextDisabled("Read-only. The host's save sets the rules for everyone.");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("Read-only. The host's save sets the rules for everyone."));
 
     static View s_view;       // render thread only
     static int  s_viewGen = 0;
@@ -227,7 +228,7 @@ void Render() {
     }
 
     ImGui::Spacing();
-    ImGui::Text("Gamemode:");
+    ImGui::TextUnformatted(coop::i18n::Tr("Gamemode:"));
     ImGui::SameLine();
     ImGui::TextColored(ImVec4(0.55f, 0.82f, 1.00f, 1.00f), "%s", s_view.gamemode.empty() ? "?" : s_view.gamemode.c_str());
     // The two copies the game keeps must agree; when they do not, this peer is not under the rules
@@ -288,11 +289,11 @@ void Render() {
     ImGui::Separator();
     ImGui::BeginChild("##world_rules_desc", ImVec2(0, 0));
     if (!selected) {
-        ImGui::TextDisabled("Click on the name of the rule to see its description.");
+        ImGui::TextDisabled("%s", coop::i18n::Tr("Click on the name of the rule to see its description."));
     } else {
         ImGui::TextUnformatted(selected->label.c_str());
         ImGui::PushTextWrapPos(0.f);
-        if (selected->description.empty()) ImGui::TextDisabled("(no description)");
+        if (selected->description.empty()) ImGui::TextDisabled("%s", coop::i18n::Tr("(no description)"));
         else                               ImGui::TextUnformatted(selected->description.c_str());
         ImGui::PopTextWrapPos();
     }

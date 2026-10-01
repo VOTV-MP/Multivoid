@@ -22,6 +22,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <cmath>
@@ -64,7 +65,7 @@ bool CallBoolFn(void* comp, const wchar_t* cls, const wchar_t* fn) {
     if (!f) return false;
     ue_wrap::ParamFrame pf(f);
     if (!pf.valid()) return false;
-    return ue_wrap::Call(comp, pf) && pf.Get<bool>(L"ReturnValue");
+    return ue_wrap::Call(comp, pf) && pf.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 // Start the physics simulation on a skeletal-mesh component (collision so the bodies have a
@@ -122,11 +123,11 @@ void DumpRagdollActor(void* actor, const char* tag) {
     int32_t numMat = 0;
     if (void* gn = R::FindFunction(R::FindClass(L"PrimitiveComponent"), L"GetNumMaterials")) {
         ue_wrap::ParamFrame f(gn);
-        if (ue_wrap::Call(comp, f)) numMat = f.Get<int32_t>(L"ReturnValue");
+        if (ue_wrap::Call(comp, f)) numMat = f.Get<int32_t>(coop::i18n::TrW(L"ReturnValue"));
     }
     if (void* gm = R::FindFunction(R::FindClass(L"PrimitiveComponent"), L"GetMaterial")) {
         ue_wrap::ParamFrame f(gm); f.Set<int32_t>(L"ElementIndex", 0);
-        if (ue_wrap::Call(comp, f)) { void* m = f.Get<void*>(L"ReturnValue");
+        if (ue_wrap::Call(comp, f)) { void* m = f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
             if (m && R::IsLive(m)) mat0 = R::ToString(R::NameOf(m)); }
     }
 

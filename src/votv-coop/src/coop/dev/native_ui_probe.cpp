@@ -19,6 +19,7 @@
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/world_identity.h"
+#include "coop/text/i18n.h"
 
 #include <windows.h>
 
@@ -175,7 +176,7 @@ int32_t CallIntNoArg(void* obj, void* fn) {
     if (!obj || !fn) return -1;
     ue_wrap::ParamFrame f(fn);
     if (!Call(obj, f)) return -1;
-    return f.Get<int32_t>(L"ReturnValue");
+    return f.Get<int32_t>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 ue_wrap::FVector2D DesiredSizeOf(void* widget) {
@@ -183,7 +184,7 @@ ue_wrap::FVector2D DesiredSizeOf(void* widget) {
     if (!widget || !g_fnDesiredSize) return v;
     ue_wrap::ParamFrame f(g_fnDesiredSize);
     if (!Call(widget, f)) return v;
-    f.GetRaw(L"ReturnValue", &v, sizeof(v));
+    f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &v, sizeof(v));
     return v;
 }
 
@@ -285,7 +286,7 @@ void MeasureSwitcher(void* menu) {
         ue_wrap::ParamFrame f(g_fnGetChildAt);
         f.Set<int32_t>(L"Index", i);
         if (!Call(g_switcher, f)) continue;
-        void* child = f.Get<void*>(L"ReturnValue");
+        void* child = f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
         const std::wstring cn = child ? R::ClassNameOf(child) : L"<null>";
         if (cn == L"ui_saveSlots_C") { g_childSaveSlots = child; g_idxSaveSlots = i; }
         if (cn == L"ui_settings_C")  { g_childSettings  = child; }
@@ -370,7 +371,7 @@ void RunStageA(void* menu) {
         g_fnGetActiveIdx = R::FindFunction(ws, L"GetActiveWidgetIndex");
     }
     if (void* w = R::FindClass(P::name::WidgetClass)) {
-        g_fnDesiredSize = R::FindFunction(w, L"GetDesiredSize");
+        g_fnDesiredSize = R::FindFunction(w, coop::i18n::TrW(L"GetDesiredSize"));
         g_fnIsHovered   = R::FindFunction(w, P::name::WidgetIsHoveredFn);
     }
 
@@ -481,7 +482,7 @@ bool HoveredOf(void* w) {
     if (!w || !g_fnIsHovered) return false;
     ue_wrap::ParamFrame f(g_fnIsHovered);
     if (!Call(w, f)) return false;
-    return f.Get<bool>(L"ReturnValue");
+    return f.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 void Rung1Restore(const char* why) {
@@ -576,7 +577,7 @@ void Rung1Begin(void* menu) {
                 ue_wrap::ParamFrame f(fnAdd);
                 f.Set<void*>(L"Content", child);
                 if (!Call(ovl, f)) return;
-                if (void* slot = f.Get<void*>(L"ReturnValue")) {
+                if (void* slot = f.Get<void*>(coop::i18n::TrW(L"ReturnValue"))) {
                     auto* s = reinterpret_cast<uint8_t*>(slot);
                     *(s + P::off::UOverlaySlot_HAlign) = h;
                     *(s + P::off::UOverlaySlot_VAlign) = v;
@@ -599,7 +600,7 @@ void Rung1Begin(void* menu) {
     ue_wrap::ParamFrame add(g_fnAddChild);
     add.Set<void*>(L"Content", root);
     const bool added   = Call(g_switcher, add);
-    void* slot         = add.Get<void*>(L"ReturnValue");
+    void* slot         = add.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     const int32_t nAft = CallIntNoArg(g_switcher, g_fnChildCount);
     void* backSlot = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(root) + P::off::UWidget_Slot);
     const ue_wrap::FVector2D postAdd = DesiredSizeOf(root);
