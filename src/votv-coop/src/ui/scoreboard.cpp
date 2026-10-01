@@ -12,6 +12,7 @@
 #include "ui/voice_icons.h"
 
 #include "imgui.h"
+#include "coop/text/i18n.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -78,15 +79,15 @@ void Render() {
         // The header: PLAYERS, the online count in the accent, and a dim key hint for the voice
         // settings, which live on their own surface.
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.98f, 1.00f, 1.0f));
-        ImGui::TextUnformatted("PLAYERS");
+        ImGui::TextUnformatted(coop::i18n::Tr("PLAYERS"));
         ImGui::PopStyleColor();
         ImGui::SameLine(0.0f, S(8.0f));
         if (s.inSession) ImGui::TextColored(ImVec4(0.45f, 0.78f, 1.00f, 1.0f), "%d online", s.count);
-        else             ImGui::TextDisabled("offline");
+        else             ImGui::TextDisabled("%s", coop::i18n::Tr("offline"));
         if (vs.enabled != 0 && vs.started != 0) {
             const float bw = ImGui::CalcTextSize("V: voice settings").x;
             ImGui::SameLine(ImGui::GetContentRegionMax().x - bw);
-            ImGui::TextDisabled("V: voice settings");
+            ImGui::TextDisabled("%s", coop::i18n::Tr("V: voice settings"));
         }
         ImGui::Spacing();
         ImGui::Separator();
@@ -191,12 +192,12 @@ void Render() {
                         // seat may have a new occupant.
                         const auto token =
                             coop::moderation::TokenFor(r.slot, r.playerNo, r.generation);
-                        if (ImGui::MenuItem("Teleport to me"))
+                        if (ImGui::MenuItem(coop::i18n::Tr("Teleport to me")))
                             coop::moderation::TeleportPlayerToMe(token);
-                        if (ImGui::MenuItem("Kick"))
+                        if (ImGui::MenuItem(coop::i18n::Tr("Kick")))
                             coop::moderation::KickPlayer(token);
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.45f, 0.42f, 1.0f));
-                        const bool banClicked = ImGui::MenuItem("Ban (permanent)");
+                        const bool banClicked = ImGui::MenuItem(coop::i18n::Tr("Ban (permanent)"));
                         ImGui::PopStyleColor();
                         if (banClicked) {
                             // The confirm modal executes after an arbitrary typing delay, exactly
@@ -210,7 +211,7 @@ void Render() {
                     }
                 } else {
                     ImGui::TextColored(nickCol, "%s", nick);
-                    if (r.isLocal) { ImGui::SameLine(0.0f, S(6.0f)); ImGui::TextDisabled("(you)"); }
+                    if (r.isLocal) { ImGui::SameLine(0.0f, S(6.0f)); ImGui::TextDisabled("%s", coop::i18n::Tr("(you)")); }
                     // HOST belongs on the name, not in the link column: it is a fact about who the
                     // player is, while the link column answers how their traffic reaches the
                     // session, and it explains why the host's link and ping cells read n/a. A host
@@ -266,7 +267,7 @@ void Render() {
                         ImGui::Separator();
                         float v = vs.slotVolume[r.slot];
                         bool silenced = v <= 0.001f;
-                        if (ImGui::Checkbox("Mute for me", &silenced))
+                        if (ImGui::Checkbox(coop::i18n::Tr("Mute for me"), &silenced))
                             coop::voice_chat::SetSlotVolume(r.slot, silenced ? 0.0f : 1.0f);
                         if (!silenced) {
                             if (ImGui::SliderFloat("##pvol", &v, 0.0f, 2.0f, "volume %.2fx"))
@@ -314,7 +315,7 @@ void Render() {
         }
         ImGui::PopStyleVar();     // CellPadding
         ImGui::PopStyleColor(2);  // TableRowBgAlt + TableBorderLight
-        if (s.count == 0) ImGui::TextDisabled("No players.");
+        if (s.count == 0) ImGui::TextDisabled("%s", coop::i18n::Tr("No players."));
 
         // The host-only session block. A session is configured when it is created and not
         // afterwards: the password, the lock and the connection are settled in the hosting flow,
@@ -326,7 +327,7 @@ void Render() {
         if (host) {
             ImGui::Separator();
             bool listed = coop::session_manager::ListedState();
-            if (ImGui::Checkbox("Show in server browser", &listed))
+            if (ImGui::Checkbox(coop::i18n::Tr("Show in server browser"), &listed))
                 coop::session_manager::SetListed(listed);
             ImGui::SameLine();
             ImGui::TextDisabled(listed ? "(others can find your game)"
@@ -342,8 +343,8 @@ void Render() {
                                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         if (ImGui::BeginPopupModal("Confirm ban##coop", nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("Permanently ban %s?", g_banConfirmNick);
-            ImGui::TextDisabled("Disconnected now and blocked by IP on reconnect.");
+            ImGui::Text(coop::i18n::Tr("Permanently ban %s?"), g_banConfirmNick);
+            ImGui::TextDisabled("%s", coop::i18n::Tr("Disconnected now and blocked by IP on reconnect."));
             ImGui::Spacing();
             if (ImGui::Button("Ban", ImVec2(S(110.f), 0))) {
                 coop::moderation::BanPlayer(g_banConfirmToken, "banned by host");
@@ -351,7 +352,7 @@ void Render() {
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(S(110.f), 0))) {
+            if (ImGui::Button(coop::i18n::Tr("Cancel"), ImVec2(S(110.f), 0))) {
                 g_banConfirmSlot = -1;
                 ImGui::CloseCurrentPopup();
             }

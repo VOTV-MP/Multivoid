@@ -11,7 +11,8 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/types.h"     // FTransform (SpawnMirror)
+#include "ue_wrap/core/types.h"
+#include "coop/text/i18n.h"     // FTransform (SpawnMirror)
 
 #include <atomic>
 #include <cstdint>
@@ -220,7 +221,7 @@ void* SpawnMirror(const std::wstring& className, const FVector& loc, const FRota
         begin.Set<uint8_t>(L"CollisionHandlingOverride", uint8_t{1});  // AlwaysSpawn
         begin.Set<void*>(L"Owner", nullptr);
         if (!Call(sGsCdo, begin)) return nullptr;
-        spawned = begin.Get<void*>(L"ReturnValue");
+        spawned = begin.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     }
     if (!spawned) {
         UE_LOGW("atv: SpawnMirror BeginDeferred returned null for '%ls'", className.c_str());

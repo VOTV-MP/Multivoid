@@ -21,6 +21,7 @@
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/core/object_index.h"
+#include "coop/text/i18n.h"
 
 namespace coop::prop_fresh_spawn {
 
@@ -123,7 +124,7 @@ void* Materialize(const coop::net::PropSpawnPayload& payload, int senderSlot,
             UE_LOGE("remote_prop::OnSpawn: BeginDeferredActorSpawnFromClass call failed");
             return nullptr;
         }
-        spawned = begin.Get<void*>(L"ReturnValue");
+        spawned = begin.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     }
     if (!spawned) {
         UE_LOGE("remote_prop::OnSpawn: BeginDeferred returned null");

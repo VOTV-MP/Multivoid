@@ -10,6 +10,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
+#include "coop/text/i18n.h"
 
 #include <chrono>
 #include <cmath>
@@ -78,7 +79,7 @@ void* ForceSpawnAt(const wchar_t* className, float zOffset, const char* watchHin
         begin.Set<uint8_t>(L"CollisionHandlingOverride", kAlwaysSpawn);
         begin.Set<void*>(L"Owner", nullptr);
         if (!Call(refs.gsCdo, begin)) { UE_LOGE("pinecone_probe: BeginDeferred failed for %ls", className); return nullptr; }
-        spawned = begin.Get<void*>(L"ReturnValue");
+        spawned = begin.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     }
     if (!spawned) { UE_LOGE("pinecone_probe: BeginDeferred returned null for %ls", className); return nullptr; }
     {

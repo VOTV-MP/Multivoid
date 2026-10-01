@@ -10,6 +10,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/umg_build.h"
+#include "coop/text/i18n.h"
 
 #include <cstdint>
 #include <cstring>
@@ -91,7 +92,7 @@ void* SpawnObject(void* objectClass, void* outer) {
     f.Set<void*>(L"objectClass", objectClass);
     f.Set<void*>(L"Outer", outer);
     if (!Call(g_npGsCdo, f)) return nullptr;
-    return f.Get<void*>(L"ReturnValue");
+    return f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 // Set a text block's text through the string-to-text conversion and SetText; requires the
@@ -102,7 +103,7 @@ void SetTextOnBlock(void* txt, const wchar_t* text) {
     std::wstring b(text);
     R::FString fs{b.data(), static_cast<int32_t>(b.size()) + 1, static_cast<int32_t>(b.size()) + 1};
     { ParamFrame cf(g_npConvFn); cf.SetRaw(L"inString", &fs, sizeof(fs)); Call(g_npKtlCdo, cf);  // 'inString' (lowercase i)
-      cf.GetRaw(L"ReturnValue", ftext, sizeof(ftext)); }
+      cf.GetRaw(coop::i18n::TrW(L"ReturnValue"), ftext, sizeof(ftext)); }
     ParamFrame tf(g_npTbSetTextFn); tf.SetRaw(L"InText", ftext, sizeof(ftext)); Call(txt, tf);
 }
 
@@ -528,7 +529,7 @@ bool WidgetIsHovered(void* widget) {
     if (!widget || !ResolveButtonInjectFns() || !g_biIsHoveredFn) return false;
     ParamFrame f(g_biIsHoveredFn);
     if (!Call(widget, f)) return false;
-    return f.Get<bool>(L"ReturnValue");
+    return f.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 bool SetWidgetVisibility(void* widget, uint8_t slateVis) {

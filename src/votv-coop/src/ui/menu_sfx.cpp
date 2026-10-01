@@ -7,6 +7,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
+#include "coop/text/i18n.h"
 
 namespace ui::menu_sfx {
 
@@ -31,7 +32,7 @@ void PlayNamed(const wchar_t* soundName) {
     GT::Post([soundName] {
         void* worldCtx = R::FindObjectByClass(prof::name::UiMenuClass);
         if (!worldCtx) return;
-        void* sound = R::FindObject(soundName, L"SoundWave");
+        void* sound = R::FindObject(soundName, coop::i18n::TrW(L"SoundWave"));
         if (!sound) return;
         E::PlaySoundAtLocation(worldCtx, sound, ue_wrap::FVector{0.f, 0.f, 0.f},
                                /*attenuation*/ nullptr, /*volume*/ 1.f, /*pitch*/ 1.f);

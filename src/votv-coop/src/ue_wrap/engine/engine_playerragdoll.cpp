@@ -20,6 +20,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
+#include "coop/text/i18n.h"
 
 #include <cstdint>
 #include <cstring>
@@ -106,12 +107,12 @@ bool FindBoneFName(void* meshComp, const wchar_t* wantName, uint8_t outName[8]) 
     void* nameFn = R::FindFunction(sk, L"GetBoneName");
     if (!numFn || !nameFn) return false;
     int32_t n = 0;
-    { ParamFrame f(numFn); if (Call(meshComp, f)) n = f.Get<int32_t>(L"ReturnValue"); }
+    { ParamFrame f(numFn); if (Call(meshComp, f)) n = f.Get<int32_t>(coop::i18n::TrW(L"ReturnValue")); }
     for (int32_t i = 0; i < n; ++i) {
         uint8_t name[8] = {};
         ParamFrame nf(nameFn); nf.Set<int32_t>(L"BoneIndex", i);
         if (!Call(meshComp, nf)) continue;
-        nf.GetRaw(L"ReturnValue", name, sizeof(name));
+        nf.GetRaw(coop::i18n::TrW(L"ReturnValue"), name, sizeof(name));
         if (R::ToString(*reinterpret_cast<const R::FName*>(name)) == wantName) {
             std::memcpy(outName, name, 8);
             return true;
@@ -247,14 +248,14 @@ bool ReadLocalRagdollPelvisPhysics(void* mainPlayer, FVector& outLoc, FRotator& 
     if (!EnsurePelvisFName(mesh)) return false;
     // Pelvis WORLD location + rotation (the kel-tumble anchor).
     { ParamFrame f(g_getSocketLocFn); f.SetRaw(L"InSocketName", g_pelvisFName, sizeof(g_pelvisFName));
-      if (!Call(mesh, f)) return false; outLoc = f.Get<FVector>(L"ReturnValue"); }
+      if (!Call(mesh, f)) return false; outLoc = f.Get<FVector>(coop::i18n::TrW(L"ReturnValue")); }
     { ParamFrame f(g_getSocketRotFn); f.SetRaw(L"InSocketName", g_pelvisFName, sizeof(g_pelvisFName));
-      if (!Call(mesh, f)) return false; outRot = f.Get<FRotator>(L"ReturnValue"); }
+      if (!Call(mesh, f)) return false; outRot = f.Get<FRotator>(coop::i18n::TrW(L"ReturnValue")); }
     // Pelvis linear (cm/s) + angular (deg/s) velocity -- the "physics properties".
     { ParamFrame f(g_getLinVelFn); f.SetRaw(L"BoneName", g_pelvisFName, sizeof(g_pelvisFName));
-      if (!Call(mesh, f)) return false; outLinVel = f.Get<FVector>(L"ReturnValue"); }
+      if (!Call(mesh, f)) return false; outLinVel = f.Get<FVector>(coop::i18n::TrW(L"ReturnValue")); }
     { ParamFrame f(g_getAngVelFn); f.SetRaw(L"BoneName", g_pelvisFName, sizeof(g_pelvisFName));
-      if (!Call(mesh, f)) return false; outAngVel = f.Get<FVector>(L"ReturnValue"); }
+      if (!Call(mesh, f)) return false; outAngVel = f.Get<FVector>(coop::i18n::TrW(L"ReturnValue")); }
     return true;
 }
 

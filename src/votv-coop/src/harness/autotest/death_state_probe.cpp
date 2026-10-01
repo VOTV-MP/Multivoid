@@ -14,6 +14,7 @@
 #include "ue_wrap/core/sdk_profile_names.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/world/game_mode.h"
+#include "coop/text/i18n.h"
 
 namespace harness::autotest {
 namespace {
@@ -97,7 +98,7 @@ int32_t ReadBloodBlurInViewport() {
     for (void* w : R::FindObjectsByClass(L"ui_bloodLossBlur_C")) {
         if (!w || !R::IsLive(w) || !fnInView) continue;
         ue_wrap::ParamFrame f(fnInView);
-        if (f.valid() && ue_wrap::Call(w, f) && f.Get<bool>(L"ReturnValue")) ++n;
+        if (f.valid() && ue_wrap::Call(w, f) && f.Get<bool>(coop::i18n::TrW(L"ReturnValue"))) ++n;
     }
     return n;
 }
@@ -176,7 +177,7 @@ void ReadMenuPrep(int32_t& outSwiIdx, int32_t& outCanvasVis) {
         void* fn = cls ? R::FindFunction(cls, L"GetActiveWidgetIndex") : nullptr;
         if (swi && fn && R::IsLive(swi)) {
             ue_wrap::ParamFrame f(fn);
-            if (f.valid() && ue_wrap::Call(swi, f)) outSwiIdx = f.Get<int32_t>(L"ReturnValue");
+            if (f.valid() && ue_wrap::Call(swi, f)) outSwiIdx = f.Get<int32_t>(coop::i18n::TrW(L"ReturnValue"));
         }
     }
     if (offCanvas >= 0) {
@@ -186,7 +187,7 @@ void ReadMenuPrep(int32_t& outSwiIdx, int32_t& outCanvasVis) {
         if (canvas && fn && R::IsLive(canvas)) {
             ue_wrap::ParamFrame f(fn);
             if (f.valid() && ue_wrap::Call(canvas, f))
-                outCanvasVis = static_cast<int32_t>(f.Get<uint8_t>(L"ReturnValue"));
+                outCanvasVis = static_cast<int32_t>(f.Get<uint8_t>(coop::i18n::TrW(L"ReturnValue")));
         }
     }
 }
@@ -208,7 +209,7 @@ std::wstring CensusViewportWidgets() {
         void* cls = R::ClassOf(o);
         if (!cls || !R::IsDescendantOfAny(cls, &userWidgetCls, 1)) continue;
         ue_wrap::ParamFrame f(fnInView);
-        if (!f.valid() || !ue_wrap::Call(o, f) || !f.Get<bool>(L"ReturnValue")) continue;
+        if (!f.valid() || !ue_wrap::Call(o, f) || !f.Get<bool>(coop::i18n::TrW(L"ReturnValue"))) continue;
         if (!out.empty()) out += L", ";
         out += R::ToString(R::NameOf(cls));
     }
@@ -538,7 +539,7 @@ DeathSnapshot ReadDeathState() {
         void* fnInView = userWidgetCls ? R::FindFunction(userWidgetCls, L"IsInViewport") : nullptr;
         if (!fnInView) break;
         ue_wrap::ParamFrame f(fnInView);
-        if (f.valid() && ue_wrap::Call(bs, f) && f.Get<bool>(L"ReturnValue")) {
+        if (f.valid() && ue_wrap::Call(bs, f) && f.Get<bool>(coop::i18n::TrW(L"ReturnValue"))) {
             s.blackScreenInViewport = true;
             break;
         }

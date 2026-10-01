@@ -6,6 +6,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <cmath>
@@ -110,7 +111,7 @@ bool IsGamePaused() {
     if (!f.valid()) return false;
     f.Set<void*>(L"WorldContextObject", ctx);
     if (!Call(g_pauseGsCdo, f)) return false;
-    return f.Get<bool>(L"ReturnValue");
+    return f.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 bool SetGamePaused(bool paused) {
@@ -121,7 +122,7 @@ bool SetGamePaused(bool paused) {
     f.Set<void*>(L"WorldContextObject", ctx);
     f.Set<bool>(L"bPaused", paused);
     if (!Call(g_pauseGsCdo, f)) return false;
-    return f.Get<bool>(L"ReturnValue");
+    return f.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 // Actor spawning and transform.
@@ -196,7 +197,7 @@ void* SpawnActor(void* actorClass, const FVector& location, bool inertPawn) {
         UE_LOGE("engine: BeginDeferredActorSpawnFromClass call failed");
         return nullptr;
     }
-    void* actor = begin.Get<void*>(L"ReturnValue");
+    void* actor = begin.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     if (!actor) {
         UE_LOGE("engine: BeginDeferredActorSpawnFromClass returned null");
         return nullptr;
@@ -229,7 +230,7 @@ void* SpawnActor(void* actorClass, const FVector& location, bool inertPawn) {
         UE_LOGE("engine: FinishSpawningActor call failed");
         return nullptr;
     }
-    void* finished = finish.Get<void*>(L"ReturnValue");
+    void* finished = finish.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     UE_LOGI("engine: SpawnActor -> %p (finished %p) at (%.0f,%.0f,%.0f)",
             actor, finished, location.X, location.Y, location.Z);
     return finished ? finished : actor;
@@ -272,7 +273,7 @@ void* BeginDeferredSpawn(void* actorClass, const FVector& location, const FRotat
         UE_LOGE("engine: BeginDeferredSpawn call failed");
         return nullptr;
     }
-    return begin.Get<void*>(L"ReturnValue");
+    return begin.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 bool FinishDeferredSpawn(void* actor, const FVector& location, const FRotator& rotation) {
@@ -296,7 +297,7 @@ bool TryGetActorLocation(void* actor, FVector& out) {
     if (!actor || !ResolveActorFns()) return false;
     ParamFrame f(g_getLocFn);
     if (!Call(actor, f)) return false;
-    if (!f.GetRaw(L"ReturnValue", &out, static_cast<int32_t>(sizeof(out)))) { out = FVector{}; return false; }
+    if (!f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &out, static_cast<int32_t>(sizeof(out)))) { out = FVector{}; return false; }
     return true;
 }
 
@@ -307,7 +308,7 @@ FVector GetActorScale3D(void* actor) {
     if (!actor || !ResolveActorFns() || !g_getScaleFn) return scl;
     ParamFrame f(g_getScaleFn);
     if (!Call(actor, f)) return scl;
-    f.GetRaw(L"ReturnValue", &scl, sizeof(scl));
+    f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &scl, sizeof(scl));
     return scl;
 }
 
@@ -404,7 +405,7 @@ FVector GetActorForwardVector(void* actor) {
     if (!actor || !ResolveActorFns() || !g_getFwdFn) return fwd;
     ParamFrame f(g_getFwdFn);
     if (!Call(actor, f)) return fwd;
-    f.GetRaw(L"ReturnValue", &fwd, sizeof(fwd));
+    f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &fwd, sizeof(fwd));
     return fwd;
 }
 
@@ -415,7 +416,7 @@ bool TryGetActorRotation(void* actor, FRotator& out) {
     if (!actor || !ResolveActorFns() || !g_getRotFn) return false;
     ParamFrame f(g_getRotFn);
     if (!Call(actor, f)) return false;
-    if (!f.GetRaw(L"ReturnValue", &out, static_cast<int32_t>(sizeof(out)))) { out = FRotator{}; return false; }
+    if (!f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &out, static_cast<int32_t>(sizeof(out)))) { out = FRotator{}; return false; }
     return true;
 }
 
@@ -428,7 +429,7 @@ FVector GetActorVelocity(void* actor) {
     if (!actor || !ResolveActorFns() || !g_getVelFn) return vel;
     ParamFrame f(g_getVelFn);
     if (!Call(actor, f)) return vel;
-    f.GetRaw(L"ReturnValue", &vel, sizeof(vel));
+    f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &vel, sizeof(vel));
     return vel;
 }
 
@@ -439,7 +440,7 @@ bool SetActorLocation(void* actor, const FVector& location) {
     f.Set<bool>(L"bSweep", false);
     f.Set<bool>(L"bTeleport", true);  // snap to the absolute pose (no sweep)
     if (!Call(actor, f)) return false;
-    return f.Get<bool>(L"ReturnValue");
+    return f.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 bool SetActorRotation(void* actor, const FRotator& rotation) {
@@ -451,7 +452,7 @@ bool SetActorRotation(void* actor, const FRotator& rotation) {
     f.SetRaw(L"NewRotation", &rotation, sizeof(rotation));
     f.Set<bool>(L"bTeleportPhysics", true);
     if (!Call(actor, f)) return false;
-    return f.Get<bool>(L"ReturnValue");
+    return f.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 bool SetActorScale3D(void* actor, const FVector& scale) {
@@ -476,7 +477,7 @@ FRotator GetComponentWorldRotation(void* component) {
     if (!fn) return rot;
     ParamFrame f(fn);
     if (!Call(component, f)) return rot;
-    f.GetRaw(L"ReturnValue", &rot, sizeof(rot));
+    f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &rot, sizeof(rot));
     return rot;
 }
 
@@ -520,7 +521,7 @@ bool ProjectWorldToScreen(void* playerController, const FVector& world,
     f.Set<bool>(L"bPlayerViewportRelative", viewportRelative);
     if (!Call(playerController, f)) return false;
     f.GetRaw(L"ScreenLocation", &outScreen, sizeof(outScreen));
-    return f.Get<bool>(L"ReturnValue");
+    return f.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 bool SetActorTickEnabled(void* actor, bool enabled) {
@@ -605,7 +606,7 @@ bool TeleportTo(void* actor, const FVector& location, const FRotator& rotation) 
     f.SetRaw(L"DestLocation", &location, sizeof(location));
     f.SetRaw(L"DestRotation", &rotation, sizeof(rotation));
     if (!Call(actor, f)) return false;
-    return f.Get<bool>(L"ReturnValue");
+    return f.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 

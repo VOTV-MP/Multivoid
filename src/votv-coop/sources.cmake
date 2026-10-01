@@ -327,6 +327,7 @@ set(VOTVCOOP_SOURCES
     src/coop/config/config.cpp
     src/coop/text/utf8_codec.cpp
     src/coop/text/case_fold.cpp
+    src/coop/text/i18n.cpp
     src/coop/text/repertoire.cpp
     src/coop/config/config_census.cpp
     src/coop/config/config_example.cpp

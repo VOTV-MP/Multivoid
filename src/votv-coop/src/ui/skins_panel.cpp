@@ -12,6 +12,7 @@
 #include <string>
 
 #include "imgui.h"
+#include "coop/text/i18n.h"
 
 namespace ui::skins_panel {
 namespace {
@@ -59,14 +60,14 @@ void Render() {
 
     ImGui::TextWrapped("Your body skin -- what YOU see looking down and what OTHERS see. "
                        "Saved to multivoid.ini; restored on rejoin.");
-    ImGui::TextDisabled("Skins come from converter .pak files under Content/Paks/LogicMods "
+    ImGui::TextDisabled("%s", coop::i18n::Tr("Skins come from converter .pak files under Content/Paks/LogicMods "
                         "(any subfolder). One pak may carry several skins -- the four "
-                        "scientists ship together in scientists.pak.");
-    ImGui::TextDisabled("Preview tile = <skin name>.png/.bmp beside the pak.");
-    ImGui::TextDisabled("Peers WITHOUT that pak see the default kel body instead.");
-    ImGui::TextDisabled("A pak that carries no skin (another mod's) is dropped from this "
-                        "list once the game has been asked -- it is not a skin.");
-    if (ImGui::Button("Refresh list")) {
+                        "scientists ship together in scientists.pak."));
+    ImGui::TextDisabled("%s", coop::i18n::Tr("Preview tile = <skin name>.png/.bmp beside the pak."));
+    ImGui::TextDisabled("%s", coop::i18n::Tr("Peers WITHOUT that pak see the default kel body instead."));
+    ImGui::TextDisabled("%s", coop::i18n::Tr("A pak that carries no skin (another mod's) is dropped from this "
+                        "list once the game has been asked -- it is not a skin."));
+    if (ImGui::Button(coop::i18n::Tr("Refresh list"))) {
         PublishNamesForResolve(coop::skins::Entries(true));
         // Release the cached preview textures before dropping the map -- clearing
         // alone leaks one texture+SRV per preview per refresh.
@@ -75,7 +76,7 @@ void Render() {
         g_previews.clear();
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("current: %s", current.c_str());
+    ImGui::TextDisabled(coop::i18n::Tr("current: %s"), current.c_str());
     ImGui::Separator();
 
     // gmod-style tile grid: as many tiles per row as the pane fits.

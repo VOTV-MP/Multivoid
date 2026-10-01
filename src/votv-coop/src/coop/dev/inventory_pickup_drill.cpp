@@ -21,6 +21,7 @@
 #include "ue_wrap/desk/drive_chain.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_nav.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <cmath>
@@ -446,7 +447,7 @@ void ClientWriteGateProbe() {
     f.SetRaw(L"SlotName", &fs, sizeof(fs));
     f.Set<int32_t>(L"UserIndex", 0);
     const bool called = ue_wrap::Call(gsCdo, f);
-    const bool wrote = called && f.Get<uint8_t>(L"ReturnValue") != 0;
+    const bool wrote = called && f.Get<uint8_t>(coop::i18n::TrW(L"ReturnValue")) != 0;
     UE_LOGI("[INV-PICKUP-DRILL] CLIENT write gate probe: SaveGameToSlot('%ls') -> %hs", name.c_str(),
             !called ? "CALL FAILED" : wrote ? "WRITTEN -- THE GATE LET A CLIENT WORLD SAVE THROUGH"
                                             : "refused (the gate held)");

@@ -9,7 +9,8 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/sdk_profile.h"
-#include "ue_wrap/world/world_singleton.h"  // the gamemode, of the CURRENT world
+#include "ue_wrap/world/world_singleton.h"
+#include "coop/text/i18n.h"  // the gamemode, of the CURRENT world
 
 #include <atomic>
 #include <cstdint>
@@ -300,7 +301,7 @@ bool CaptureLiveWorldToScratchSlot(const std::wstring& scratchSlotName) {
         UE_LOGW("save_capture: SaveGameToSlot dispatch failed");
         return false;
     }
-    const bool ok = f.Get<uint8_t>(L"ReturnValue") != 0;
+    const bool ok = f.Get<uint8_t>(coop::i18n::TrW(L"ReturnValue")) != 0;
     if (ok) {
         UE_LOGI("save_capture: host world serialized LIVE to scratch slot '%ls' "
                 "(objects+triggers repopulated; canonical slot untouched)",

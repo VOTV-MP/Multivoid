@@ -23,6 +23,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
+#include "coop/text/i18n.h"
 
 #include <chrono>
 #include <cmath>
@@ -183,7 +184,7 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
             D::ClearIncomingClass();
             return;
         }
-        spawned = begin.Get<void*>(L"ReturnValue");
+        spawned = begin.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     }
     if (!spawned) {
         UE_LOGE("world-actor[client OnSpawn]: BeginDeferred returned null for '%ls' eid=%u (suppressor "

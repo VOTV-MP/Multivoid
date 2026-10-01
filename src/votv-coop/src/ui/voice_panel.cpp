@@ -10,6 +10,7 @@
 #include "ui/voice_icons.h"
 
 #include "imgui.h"
+#include "coop/text/i18n.h"
 
 #include <algorithm>
 #include <atomic>
@@ -56,7 +57,7 @@ void DeviceCombo(const char* label, const coop::config_registry::StringRow& row,
                  size_t currentCap, const std::vector<std::string>& names) {
     const char* shown = current[0] ? current : "(system default)";
     if (ImGui::BeginCombo(label, shown)) {
-        if (ImGui::Selectable("(system default)", !current[0])) {
+        if (ImGui::Selectable(coop::i18n::Tr("(system default)"), !current[0])) {
             current[0] = 0;
             coop::config::WriteIniValue(row, "");
             VC::RequestDevicesRestart();
@@ -110,12 +111,12 @@ void Render() {
             if (!open) g_open.store(false, std::memory_order_relaxed);
         }
     } closeOnX{open};
-    if (ImGui::Begin("Voice chat###coop_voice_panel", &open,
+    if (ImGui::Begin(coop::i18n::Tr("Voice chat###coop_voice_panel"), &open,
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
                          ImGuiWindowFlags_NoSavedSettings)) {
         if (!s.enabled) {
-            ImGui::TextWrapped("Voice chat is turned off (voice.enabled=0 in multivoid.ini). "
-                               "Set it to 1 and restart the game to use voice.");
+            ImGui::TextWrapped("%s", coop::i18n::Tr("Voice chat is turned off (voice.enabled=0 in multivoid.ini). "
+                               "Set it to 1 and restart the game to use voice."));
             ImGui::End();
             return;  // closeOnX writes the X back on the way out
         }
@@ -148,7 +149,7 @@ void Render() {
         }
 
         bool muted = s.muted != 0;
-        if (ImGui::Checkbox("Mute my microphone", &muted)) VC::SetMuted(muted);
+        if (ImGui::Checkbox(coop::i18n::Tr("Mute my microphone"), &muted)) VC::SetMuted(muted);
 
         ImGui::Spacing();
         ImGui::SeparatorText("Activation");
@@ -162,9 +163,9 @@ void Render() {
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Hold the key to talk. Change the key via voice.ptt_key\n"
-                              "in multivoid.ini (single letter or a virtual-key number).");
-        if (ImGui::RadioButton("Voice activation", &mode, 1)) {
+            ImGui::SetTooltip("%s", coop::i18n::Tr("Hold the key to talk. Change the key via voice.ptt_key\n"
+                              "in multivoid.ini (single letter or a virtual-key number)."));
+        if (ImGui::RadioButton(coop::i18n::Tr("Voice activation"), &mode, 1)) {
             coop::config::WriteIniValue(coop::config_registry::rows::voice_mode, "activation");
             VC::RequestDevicesRestart();
         }
@@ -180,8 +181,8 @@ void Render() {
             ImGui::SameLine();
             ImGui::TextDisabled("(?)");
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Speech louder than this transmits. Watch the mic\n"
-                                  "meter: set the slider just above your room's noise.");
+                ImGui::SetTooltip("%s", coop::i18n::Tr("Speech louder than this transmits. Watch the mic\n"
+                                  "meter: set the slider just above your room's noise."));
             // 0 dB is full scale, so nothing would ever transmit: warn rather than let the panel
             // sit there silently never activating.
             if (thr > -5.0f)
@@ -215,12 +216,12 @@ void Render() {
                     sizeof(g_micCurrent), g_micDevices);
         DeviceCombo("Output", coop::config_registry::rows::voice_output_device, g_outCurrent,
                     sizeof(g_outCurrent), g_outDevices);
-        if (ImGui::SmallButton("Rescan devices")) RefreshDevices();
+        if (ImGui::SmallButton(coop::i18n::Tr("Rescan devices"))) RefreshDevices();
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Device changes apply immediately (the voice engine\n"
-                              "reopens on the game's next tick).");
+            ImGui::SetTooltip("%s", coop::i18n::Tr("Device changes apply immediately (the voice engine\n"
+                              "reopens on the game's next tick)."));
     }
     ImGui::End();
 }

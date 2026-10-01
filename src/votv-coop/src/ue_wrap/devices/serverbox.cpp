@@ -14,6 +14,7 @@
 #include "ue_wrap/engine/engine_component.h"  // GetComponentLocation
 #include "ue_wrap/engine/hit_result.h"
 #include "ue_wrap/engine/world_identity.h"
+#include "coop/text/i18n.h"
 
 #include <chrono>
 
@@ -57,7 +58,7 @@ bool EnsureServersResolved() {
     g_nextServersTryMs = now + 1000;
     void* gmCls = R::FindClass(P::name::GamemodeClass);
     if (!gmCls) return false;
-    g_offServers = R::FindPropertyOffset(gmCls, L"servers");
+    g_offServers = R::FindPropertyOffset(gmCls, coop::i18n::TrW(L"servers"));
     if (g_offServers < 0) return false;
     UE_LOGI("serverbox: server list resolved (servers=0x%X)", g_offServers);
     return true;
@@ -305,7 +306,7 @@ bool CallRepairEnd(void* box, bool correct) {
     void* w = box ? RepairWidget() : nullptr;
     if (!w) return false;
     void* wCls = R::ClassOf(w);
-    const int32_t offServer = R::FindPropertyOffset(wCls, L"server");
+    const int32_t offServer = R::FindPropertyOffset(wCls, coop::i18n::TrW(L"server"));
     void* fn = R::FindDispatchFunctionCached(wCls, L"end");
     if (offServer < 0 || !fn) return false;
     *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(w) + offServer) = box;

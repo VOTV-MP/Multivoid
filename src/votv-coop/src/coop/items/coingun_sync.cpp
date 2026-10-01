@@ -26,6 +26,7 @@
 #include "ue_wrap/core/ufunction_hook.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/engine/engine.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <chrono>
@@ -342,7 +343,7 @@ void DescribeCoin(void* coin, int32_t& outPoints, std::wstring& outMaterial) {
     if (!f.valid()) return;
     f.Set<int32_t>(L"ElementIndex", 0);
     if (!ue_wrap::Call(mesh, f)) return;
-    void* mat = f.Get<void*>(L"ReturnValue");
+    void* mat = f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     if (!mat) return;
     outMaterial = R::ToString(R::NameOf(mat));
 }

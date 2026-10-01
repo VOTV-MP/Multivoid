@@ -6,6 +6,7 @@
 #include "ui/scale.h"
 
 #include "imgui.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <mutex>
@@ -66,7 +67,7 @@ void Render() {
         ImGuiWindowFlags_NoTitleBar;
     if (ImGui::Begin("###coop_boot_warning", nullptr, flags)) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.78f, 0.35f, 1.0f));
-        ImGui::TextUnformatted("MOD INSTALL PROBLEM");
+        ImGui::TextUnformatted(coop::i18n::Tr("MOD INSTALL PROBLEM"));
         ImGui::PopStyleColor();
         ImGui::Spacing();
         ImGui::Separator();

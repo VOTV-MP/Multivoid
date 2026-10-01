@@ -11,6 +11,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/umg_build.h"
+#include "coop/text/i18n.h"
 
 #include <windows.h>
 
@@ -70,7 +71,7 @@ bool CallBoolNoArg(void* obj, const wchar_t* fn, bool& out) {
     if (!f) return false;
     ue_wrap::ParamFrame frame(f);
     if (!ue_wrap::Call(obj, frame)) return false;
-    out = frame.Get<bool>(L"ReturnValue");
+    out = frame.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
     return true;
 }
 

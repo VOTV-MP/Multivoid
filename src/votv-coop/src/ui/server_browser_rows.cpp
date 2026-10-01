@@ -14,6 +14,7 @@
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/umg_build.h"
+#include "coop/text/i18n.h"
 
 #include <windows.h>   // GetTickCount64 -- how long ago the rows we hold were fetched
 
@@ -210,7 +211,7 @@ bool RowPartsAt(int32_t i, RowParts& out) {
     }();
     if (sGetContent) {
         ue_wrap::ParamFrame f(sGetContent);
-        if (Call(box, f)) ovl = f.Get<void*>(L"ReturnValue");
+        if (Call(box, f)) ovl = f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     }
     if (!ovl) return false;
     // The kit owns its child order: reading slots by literal index broke when the native-material

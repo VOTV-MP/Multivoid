@@ -22,6 +22,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <cmath>
@@ -144,7 +145,7 @@ void RunNavHaltProbe() {
             pf.Set<float>(L"Radius", 1500.f);          // 15 m -- comfortably inside a room
             // NavData / FilterClass left null (frame is zeroed).
             if (ue_wrap::Call(navCdo, pf)) {
-                ga->reachOk = pf.Get<bool>(L"ReturnValue");
+                ga->reachOk = pf.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
                 ga->end     = pf.Get<ue_wrap::FVector>(L"RandomLocation");
             }
         }
@@ -166,7 +167,7 @@ void RunNavHaltProbe() {
             pf.Set<ue_wrap::FVector>(L"PathEnd", ga->end);
             // PathfindingContext / FilterClass left null.
             if (ue_wrap::Call(navCdo, pf))
-                navPath = pf.Get<void*>(L"ReturnValue");
+                navPath = pf.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
         }
         ga->pathReturned = (navPath != nullptr);
         if (navPath && R::IsLive(navPath)) {
@@ -178,11 +179,11 @@ void RunNavHaltProbe() {
             // A.4 -- IsValid() + GetPathLength() (corroboration).
             if (void* vfn = pathCls ? R::FindFunction(pathCls, kPathIsValidFn) : nullptr) {
                 ue_wrap::ParamFrame pf(vfn);
-                if (ue_wrap::Call(navPath, pf)) ga->pathValid = pf.Get<bool>(L"ReturnValue");
+                if (ue_wrap::Call(navPath, pf)) ga->pathValid = pf.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
             }
             if (void* lfn = pathCls ? R::FindFunction(pathCls, kPathLenFn) : nullptr) {
                 ue_wrap::ParamFrame pf(lfn);
-                if (ue_wrap::Call(navPath, pf)) ga->pathLen = pf.Get<float>(L"ReturnValue");
+                if (ue_wrap::Call(navPath, pf)) ga->pathLen = pf.Get<float>(coop::i18n::TrW(L"ReturnValue"));
             }
         }
         d.store(1);

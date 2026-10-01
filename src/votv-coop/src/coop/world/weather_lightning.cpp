@@ -12,6 +12,7 @@
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <cstdint>
@@ -196,7 +197,7 @@ void Apply(const coop::net::LightningStrikePayload& payload) {
     // the client always materialises it.
     f.Set<uint8_t>(L"CollisionHandlingOverride", 1);
     ue_wrap::Call(g_gameplayStaticsCdo, f);
-    void* actor = f.Get<void*>(L"ReturnValue");
+    void* actor = f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     if (!actor) {
         UE_LOGW("weather: lightning Apply BeginDeferred returned null "
                 "for loc=(%.0f, %.0f, %.0f) -- skipping",

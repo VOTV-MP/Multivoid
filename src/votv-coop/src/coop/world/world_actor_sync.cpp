@@ -31,6 +31,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <chrono>
@@ -333,7 +334,7 @@ void Install(coop::net::Session* session) {
         return;
     }
     const int32_t classOff = R::FindParamOffset(fn, L"ActorClass");
-    const int32_t retOff   = R::FindParamOffset(fn, L"ReturnValue");
+    const int32_t retOff   = R::FindParamOffset(fn, coop::i18n::TrW(L"ReturnValue"));
     if (classOff < 0 || retOff < 0) {
         UE_LOGW("world-actor: BeginDeferred params not found (ActorClass=%d ReturnValue=%d) -- disabled",
                 classOff, retOff);

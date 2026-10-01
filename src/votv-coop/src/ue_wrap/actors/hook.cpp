@@ -10,6 +10,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
+#include "coop/text/i18n.h"
 
 #include <chrono>
 #include <cmath>
@@ -428,7 +429,7 @@ bool AttachTailTo(void* mirror, void* ownerRootActor) {
 
     ParamFrame rc(g_fnGetRootComp);
     if (!rc.valid() || !Call(ownerRootActor, rc)) return false;
-    void* root = rc.Get<void*>(L"ReturnValue");
+    void* root = rc.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     if (!root) return false;
 
     ParamFrame f(g_fnAttachComp);
@@ -558,7 +559,7 @@ void* ComponentByName(void* actor, const wchar_t* name) {
     f.Set<void*>(g_compByNameActor.c_str(), actor);
     f.SetRaw(g_compByNameName.c_str(), &n, sizeof(n));
     if (!Call(g_cdoCodeLib, f)) return nullptr;
-    return f.Get<void*>(L"ReturnValue");
+    return f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 float MaxDistOf(void* hookActor) {

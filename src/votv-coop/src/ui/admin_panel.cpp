@@ -10,6 +10,7 @@
 #include "ui/scale.h"
 
 #include "imgui.h"
+#include "coop/text/i18n.h"
 
 #include <cstdio>
 #include <cstring>
@@ -112,18 +113,18 @@ void RenderOnlineSection(const coop::roster::Snapshot& rs) {
             // slot-addressed action captures the person, so no call site has to
             // remember which ones are destructive.
             const auto token = coop::moderation::TokenFor(r.slot, r.playerNo, r.generation);
-            if (ImGui::SmallButton("Teleport")) coop::moderation::TeleportPlayerToMe(token);
+            if (ImGui::SmallButton(coop::i18n::Tr("Teleport"))) coop::moderation::TeleportPlayerToMe(token);
             ImGui::SameLine();
-            if (ImGui::SmallButton("Kick")) coop::moderation::KickPlayer(token);
+            if (ImGui::SmallButton(coop::i18n::Tr("Kick"))) coop::moderation::KickPlayer(token);
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.45f, 0.42f, 1.0f));
-            if (ImGui::SmallButton("Ban...")) OpenBanFor(r.slot, nullptr, r.nick, token);
+            if (ImGui::SmallButton(coop::i18n::Tr("Ban..."))) OpenBanFor(r.slot, nullptr, r.nick, token);
             ImGui::PopStyleColor();
             ImGui::PopID();
         }
         ImGui::EndTable();
     }
-    if (shown == 0) ImGui::TextDisabled("No remote players connected.");
+    if (shown == 0) ImGui::TextDisabled("%s", coop::i18n::Tr("No remote players connected."));
 }
 
 void RenderOfflineSection() {
@@ -154,22 +155,22 @@ void RenderOfflineSection() {
                 return false;
             }();
             if (alreadyBanned) {
-                ImGui::TextDisabled("banned");
+                ImGui::TextDisabled("%s", coop::i18n::Tr("banned"));
             } else if (!e.ip[0]) {
-                ImGui::TextDisabled("no IP");
+                ImGui::TextDisabled("%s", coop::i18n::Tr("no IP"));
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("No stored IP for this player (P2P join) --\n"
-                                      "nothing the IP ban filter could enforce against.");
+                    ImGui::SetTooltip("%s", coop::i18n::Tr("No stored IP for this player (P2P join) --\n"
+                                      "nothing the IP ban filter could enforce against."));
             } else {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.45f, 0.42f, 1.0f));
-                if (ImGui::SmallButton("Ban...")) OpenBanFor(-1, e.guid, e.nick);
+                if (ImGui::SmallButton(coop::i18n::Tr("Ban..."))) OpenBanFor(-1, e.guid, e.nick);
                 ImGui::PopStyleColor();
             }
             ImGui::PopID();
         }
         ImGui::EndTable();
     }
-    if (shown == 0) ImGui::TextDisabled("Nobody in the registry yet (players are recorded when they join).");
+    if (shown == 0) ImGui::TextDisabled("%s", coop::i18n::Tr("Nobody in the registry yet (players are recorded when they join)."));
 }
 
 void RenderBannedSection() {
@@ -197,7 +198,7 @@ void RenderBannedSection() {
             ImGui::TableSetColumnIndex(3);
             ImGui::TextDisabled("%s", b.reason[0] ? b.reason : "--");
             ImGui::TableSetColumnIndex(4);
-            if (ImGui::SmallButton("Unban")) {
+            if (ImGui::SmallButton(coop::i18n::Tr("Unban"))) {
                 coop::moderation::Unban(b.ip);
                 g_lastRefresh = -1.0;  // reflect immediately
             }
@@ -205,7 +206,7 @@ void RenderBannedSection() {
         }
         ImGui::EndTable();
     }
-    if (g_bans.empty()) ImGui::TextDisabled("No banned players.");
+    if (g_bans.empty()) ImGui::TextDisabled("%s", coop::i18n::Tr("No banned players."));
 }
 
 void RenderBanModal() {
@@ -217,7 +218,7 @@ void RenderBanModal() {
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Ban player##admin", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Permanently ban %s?", g_banNick[0] ? g_banNick : "this player");
+        ImGui::Text(coop::i18n::Tr("Permanently ban %s?"), g_banNick[0] ? g_banNick : "this player");
         ImGui::TextDisabled(g_banSlot >= 1
                                 ? "Disconnected now and blocked by IP on reconnect."
                                 : "Blocked by their last known IP on reconnect.");
@@ -236,7 +237,7 @@ void RenderBanModal() {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(S(110.f), 0))) {
+        if (ImGui::Button(coop::i18n::Tr("Cancel"), ImVec2(S(110.f), 0))) {
             g_banSlot = -1;
             g_banGuid[0] = '\0';
             ImGui::CloseCurrentPopup();
@@ -254,7 +255,7 @@ void Render() {
     coop::roster::GetSnapshot(rs);
 
     ImGui::TextDisabled("Host administration. Bans are permanent (by IP) and survive restarts;");
-    ImGui::TextDisabled("the registry remembers every player who ever joined this host.");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("the registry remembers every player who ever joined this host."));
 
     RenderOnlineSection(rs);
     RenderOfflineSection();

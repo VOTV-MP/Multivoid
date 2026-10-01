@@ -28,6 +28,7 @@
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/umg_build.h"
+#include "coop/text/i18n.h"
 
 #include <windows.h>
 
@@ -248,12 +249,12 @@ ue_wrap::FVector2D DesiredSizeOf(void* widget) {
     if (!widget) return v;
     static void* fn = [] {
         void* w = ue_wrap::reflection::FindClass(P::name::WidgetClass);
-        return w ? ue_wrap::reflection::FindFunction(w, L"GetDesiredSize") : nullptr;
+        return w ? ue_wrap::reflection::FindFunction(w, coop::i18n::TrW(L"GetDesiredSize")) : nullptr;
     }();
     if (!fn) return v;
     ue_wrap::ParamFrame f(fn);
     if (!Call(widget, f)) return v;
-    f.GetRaw(L"ReturnValue", &v, sizeof(v));
+    f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &v, sizeof(v));
     return v;
 }
 

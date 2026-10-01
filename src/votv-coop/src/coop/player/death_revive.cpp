@@ -18,6 +18,7 @@
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/sdk_profile_names.h"
 #include "ue_wrap/engine/engine.h"
+#include "coop/text/i18n.h"
 
 #include <windows.h>
 
@@ -182,7 +183,7 @@ bool ReadInViewport(void* widget, bool& out) {
     if (!widget || !g_verbs.isInViewport || !R::IsLive(widget)) return false;
     ue_wrap::ParamFrame f(g_verbs.isInViewport);
     if (!f.valid() || !ue_wrap::Call(widget, f)) return false;
-    out = f.Get<bool>(L"ReturnValue");
+    out = f.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
     return true;
 }
 

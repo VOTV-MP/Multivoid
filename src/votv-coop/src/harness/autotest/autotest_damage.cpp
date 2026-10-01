@@ -16,6 +16,7 @@
 #include "ue_wrap/actors/puppet.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/actors/vitals.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <memory>
@@ -92,7 +93,7 @@ void ObserveDamageOnHost() {
                     if (mesh && R::IsLive(mesh)) {
                         if (void* gm = R::FindFunction(R::FindClass(L"PrimitiveComponent"), L"GetMaterial")) {
                             ue_wrap::ParamFrame f(gm); f.Set<int32_t>(L"ElementIndex", 0);
-                            if (ue_wrap::Call(mesh, f)) { void* m = f.Get<void*>(L"ReturnValue");
+                            if (ue_wrap::Call(mesh, f)) { void* m = f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
                                 if (m) matName = R::ToString(R::NameOf(m)); }
                         }
                     }
@@ -113,7 +114,7 @@ void ObserveDamageOnHost() {
                             if (mesh && R::IsLive(mesh)) {
                                 if (void* gm = R::FindFunction(R::FindClass(L"PrimitiveComponent"), L"GetMaterial")) {
                                     ue_wrap::ParamFrame f(gm); f.Set<int32_t>(L"ElementIndex", 0);
-                                    if (ue_wrap::Call(mesh, f)) { void* m = f.Get<void*>(L"ReturnValue");
+                                    if (ue_wrap::Call(mesh, f)) { void* m = f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
                                         UE_LOGI("damage_test[host]: AT CAPTURE body slot-0 = '%ls' (must still be the gore hurt skin)",
                                                 m ? R::ToString(R::NameOf(m)).c_str() : L"<null>"); }
                                 }
@@ -142,7 +143,7 @@ void ObserveDamageOnHost() {
                         if (void* gm = R::FindFunction(R::FindClass(L"PrimitiveComponent"), L"GetMaterial")) {
                             ue_wrap::ParamFrame f(gm); f.Set<int32_t>(L"ElementIndex", 0);
                             if (ue_wrap::Call(mesh, f)) {
-                                void* m = f.Get<void*>(L"ReturnValue");
+                                void* m = f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
                                 UE_LOGI("damage_test[host]: puppet body slot-0 material after flash = '%ls' (expect the kel skin, NOT the gore hurt skin)",
                                         m ? R::ToString(R::NameOf(m)).c_str() : L"<null>");
                             }

@@ -5,6 +5,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/log.h"
+#include "coop/text/i18n.h"
 
 namespace ue_wrap::data_table {
 namespace {
@@ -87,7 +88,7 @@ bool ColumnAsStrings(void* table, const std::wstring& member, std::vector<std::w
     if (!f.Set<R::FName>(L"PropertyName", ue_wrap::fname_utils::StringToFName(member))) return false;
     if (!ue_wrap::Call(cdo, f)) return false;
     TArrayRaw arr{nullptr, 0, 0};
-    if (!f.GetRaw(L"ReturnValue", &arr, sizeof(arr))) return false;
+    if (!f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &arr, sizeof(arr))) return false;
     if (!arr.Data || arr.Num <= 0 || arr.Num > kSaneRowCap) {
         if (arr.Data) R::EngineFree(arr.Data);
         return false;

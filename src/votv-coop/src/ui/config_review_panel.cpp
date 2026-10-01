@@ -9,6 +9,7 @@
 #include "ui/scale.h"
 
 #include "imgui.h"
+#include "coop/text/i18n.h"
 
 #include <cstdio>
 #include <string>
@@ -92,7 +93,7 @@ void RenderRowsOfType(const std::vector<CR::Row>& rows, CR::Row::Type type) {
                     // screenshot people paste into a bug report.
                     ImGui::TextWrapped("%s -- %s", r.key.c_str(), r.reason.c_str());
                 } else {
-                    ImGui::TextWrapped("%s = '%s' -- not a known setting (typo, or a retired key).",
+                    ImGui::TextWrapped(coop::i18n::Tr("%s = '%s' -- not a known setting (typo, or a retired key)."),
                                        r.key.c_str(), r.value.c_str());
                 }
                 break;
@@ -140,12 +141,12 @@ void RenderRowsOfType(const std::vector<CR::Row>& rows, CR::Row::Type type) {
                     break;
                 }
                 if (r.fault == coop::config::IniFault::NotText)
-                    ImGui::TextWrapped("multivoid.ini holds a zero byte or starts with a UTF-16 "
+                    ImGui::TextWrapped("%s", coop::i18n::Tr("multivoid.ini holds a zero byte or starts with a UTF-16 "
                                        "byte-order mark, as a file saved as UTF-16 (\"Unicode\") "
-                                       "does. Save it again as UTF-8.");
+                                       "does. Save it again as UTF-8."));
                 else
-                    ImGui::TextWrapped("multivoid.ini exists but could not be read (locked or "
-                                       "failing).");
+                    ImGui::TextWrapped("%s", coop::i18n::Tr("multivoid.ini exists but could not be read (locked or "
+                                       "failing)."));
                 ImGui::TextWrapped("This launch runs on environment overrides and built-in "
                                    "defaults; the settings that refuse instead of falling back "
                                    "(%s) refuse what they govern until the file can be read.",
@@ -181,17 +182,16 @@ void Render() {
                                    ImGuiWindowFlags_NoTitleBar;
     if (ImGui::Begin("###coop_config_review", nullptr, flags)) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.85f, 1.0f, 1.0f));
-        ImGui::TextUnformatted("MULTIVOID SETTINGS CHECK");
+        ImGui::TextUnformatted(coop::i18n::Tr("MULTIVOID SETTINGS CHECK"));
         ImGui::PopStyleColor();
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip(
-                "multivoid.ini was checked against the known settings at launch.\n"
+            ImGui::SetTooltip(coop::i18n::Tr("multivoid.ini was checked against the known settings at launch.\n"
                 "Nothing was changed automatically -- broken values fall back to\n"
                 "their defaults for this session, except the settings that refuse\n"
                 "instead (%s). The buttons below edit the file only when you click\n"
-                "them. This notice returns next launch while anything is still off.",
+                "them. This notice returns next launch while anything is still off."),
                 FailClosedNames().c_str());
         ImGui::Separator();
 
@@ -212,15 +212,14 @@ void Render() {
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip(
-                "Rewrites multivoid.ini in the standard layout: [net] first, [dev]\n"
+            ImGui::SetTooltip(coop::i18n::Tr("Rewrites multivoid.ini in the standard layout: [net] first, [dev]\n"
                 "last, each setting under its section, exact-duplicate lines merged.\n"
                 "Unknown settings and invalid values are commented out (kept in the\n"
                 "file, just disabled) -- that resolves their warnings above. An\n"
                 "invalid value of a setting that refuses instead (%s) is kept as\n"
                 "it is: disabling it would switch that setting to its default.\n"
                 "Conflicting duplicates are NEVER auto-resolved -- use the keep-line\n"
-                "buttons above. Your comments travel with their settings.",
+                "buttons above. Your comments travel with their settings."),
                 FailClosedNames().c_str());
         ImGui::SameLine();
         if (ui::menu_sfx::Button("Dismiss###cfgrev_dismiss", ImVec2(S(120.f), S(30.f))))
@@ -230,23 +229,23 @@ void Render() {
             if (!g_tidyOutcome.ok) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.4f, 1.0f));
                 if (g_tidyOutcome.fault == coop::config::IniFault::NotText)
-                    ImGui::TextWrapped("Could not rewrite multivoid.ini: it holds a zero byte or a "
+                    ImGui::TextWrapped("%s", coop::i18n::Tr("Could not rewrite multivoid.ini: it holds a zero byte or a "
                                        "UTF-16 byte-order mark -- nothing was changed. Save it "
-                                       "again as UTF-8 and press Tidy up again.");
+                                       "again as UTF-8 and press Tidy up again."));
                 else if (g_tidyOutcome.fault == coop::config::IniFault::ReadFailed)
-                    ImGui::TextWrapped("Could not rewrite multivoid.ini (locked or failing) -- "
+                    ImGui::TextWrapped("%s", coop::i18n::Tr("Could not rewrite multivoid.ini (locked or failing) -- "
                                        "nothing was changed. Close whatever holds the file and "
-                                       "press Tidy up again.");
+                                       "press Tidy up again."));
                 else
-                    ImGui::TextWrapped("Could not rewrite multivoid.ini (it is missing, or the "
-                                       "write failed) -- nothing was changed.");
+                    ImGui::TextWrapped("%s", coop::i18n::Tr("Could not rewrite multivoid.ini (it is missing, or the "
+                                       "write failed) -- nothing was changed."));
                 ImGui::PopStyleColor();
             } else {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.9f, 0.55f, 1.0f));
-                ImGui::TextWrapped("Tidied: %d duplicate line(s) merged, %d setting(s) placed "
+                ImGui::TextWrapped(coop::i18n::Tr("Tidied: %d duplicate line(s) merged, %d setting(s) placed "
                                    "under their sections, %d unknown/invalid line(s) commented "
                                    "out. Anything still listed above needs a choice or can't "
-                                   "be fixed from the file.",
+                                   "be fixed from the file."),
                                    g_tidyOutcome.collapsed, g_tidyOutcome.placed,
                                    g_tidyOutcome.retired);
                 ImGui::PopStyleColor();

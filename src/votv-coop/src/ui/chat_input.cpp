@@ -8,6 +8,7 @@
 #include "ui/scale.h"
 
 #include "imgui.h"
+#include "coop/text/i18n.h"
 
 #include <algorithm>
 #include <atomic>
@@ -101,7 +102,7 @@ void Render() {
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
         ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoNav;
     if (ImGui::Begin("##coop_chat_input", nullptr, flags)) {
-        ImGui::TextDisabled("say:");
+        ImGui::TextDisabled("%s", coop::i18n::Tr("say:"));
         ImGui::SameLine();
         // The chat COLUMN owns one width: the input bar matches the feed's word-wrap width (ui/hud.cpp
         // DrawChat wrapW) so the bar sits exactly under the messages instead of striping most of the

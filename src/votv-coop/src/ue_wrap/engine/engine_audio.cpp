@@ -13,6 +13,7 @@
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "coop/text/i18n.h"
 
 #include <unordered_map>
 #include <vector>
@@ -57,7 +58,7 @@ void* SpawnSoundAttenuation(const SoundAttenuationConfig& cfg) {
         f.Set<void*>(L"objectClass", g_attClass);
         f.Set<void*>(L"Outer", g_gsCdoForAtt);
         if (!Call(g_gsCdoForAtt, f)) return nullptr;
-        obj = f.Get<void*>(L"ReturnValue");
+        obj = f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     }
     if (!obj) return nullptr;
 

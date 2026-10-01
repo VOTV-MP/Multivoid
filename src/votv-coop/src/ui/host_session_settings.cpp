@@ -20,6 +20,7 @@
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/umg_build.h"
+#include "coop/text/i18n.h"
 
 #include <windows.h>
 
@@ -255,12 +256,12 @@ void RepaintChoices() {
         const bool brokered = (g_connMode == 0);
         if (g_pwHint) SetText(g_pwHint,
                 brokered
-                    ? std::wstring(L"Anyone with this can join. Give it out the way you "
-                                   L"would give out an invite link.")
+                    ? std::wstring(coop::i18n::TrW(L"Anyone with this can join. Give it out the way you "
+                                   L"would give out an invite link."))
                     // The DIRECT wording names both values a friend types into Direct Connect.
-                    : std::wstring(L"Anyone with this can join. On this connection type "
+                    : std::wstring(coop::i18n::TrW(L"Anyone with this can join. On this connection type "
                                    L"give your friends your address and this password -- "
-                                   L"they type both into Direct Connect."),
+                                   L"they type both into Direct Connect.")),
                 brokered ? kDim : kAmber);
         // The same edge. It says why the rows are fixed where they are fixed, and stays quiet on
         // DIRECT: a hint under a usable control is noise.
@@ -269,9 +270,9 @@ void RepaintChoices() {
                     g_connMode == 0
                         // Names the control that answers the intent: on this mode the password one
                         // row below is what makes a game private.
-                        ? std::wstring(L"Automatic games are always listed -- the list is how "
+                        ? std::wstring(coop::i18n::TrW(L"Automatic games are always listed -- the list is how "
                                        L"friends find you. Set a password below to keep "
-                                       L"strangers out.")
+                                       L"strangers out."))
                         : std::wstring(),
                     g_connMode == 1 ? kDim : kAmber);
         }
@@ -290,7 +291,7 @@ void SetLocked(bool locked) {
             // Fail closed: the RNG refused, so the lock stays off; a padlock with no secret is a
             // false promise.
             g_who.chosen = 0;
-            SetStatus(L"Could not generate a password on this system -- the lock stays off.",
+            SetStatus(coop::i18n::TrW(L"Could not generate a password on this system -- the lock stays off."),
                       kBad);
             RepaintChoices();
             return;
@@ -324,7 +325,7 @@ bool BuildScreen(void* switcher) {
 
     NS::WindowShell shell;
     if (!NS::BuildWindowShell(switcher, kWindowW, kWindowH,
-                              L"Multivoid  -  Session settings", shell))
+                              coop::i18n::TrW(L"Multivoid  -  Session settings"), shell))
         return false;
     void* col = shell.column;
     g_scrim   = shell.scrim;
@@ -332,13 +333,13 @@ bool BuildScreen(void* switcher) {
     // ---- what step one decided ----
     // The name is editable here (a label on the lobby); the world and the connection mode are not
     // (their consequences reach past this window, so changing them means Back). The autofill stays.
-    if (void* recap = SectionBody(col, L"Your session:")) {
+    if (void* recap = SectionBody(col, coop::i18n::TrW(L"Your session:"))) {
         // In a row of its own so kFieldW applies (a VerticalBox slot would stretch the field; see
         // the password row).
         void* nameRow = NS::Spawn(L"HorizontalBox", recap);
         if (!nameRow) return false;
         NS::AddVFill(recap, nameRow, 0.f, NS::kFill, NS::kTop);
-        g_nameField = TF::Create(nameRow, L"server name", kNameMaxBytes, kFieldW);
+        g_nameField = TF::Create(nameRow, coop::i18n::TrW(L"server name"), kNameMaxBytes, kFieldW);
         if (!g_nameField) return false;
         g_recapWorld = NS::AddText(recap, L"", 16, kDim, NS::kJustLeft, 0.f);
         g_recapConn  = NS::AddText(recap, L"", 16, kDim, NS::kJustLeft, 0.f);
@@ -348,7 +349,7 @@ bool BuildScreen(void* switcher) {
         U::SetClipping(g_recapMaster, 1);
     }
 
-    if (!HC::Build(col, L"WHO MAY JOIN", kWho, g_who)) { ReleaseFields(); return false; }
+    if (!HC::Build(col, coop::i18n::TrW(L"WHO MAY JOIN"), kWho, g_who)) { ReleaseFields(); return false; }
 
     // ---- the password block, collapsed until the lock goes on ----
     // One container, so the block appears and disappears whole; the field must not be ticked off
@@ -356,7 +357,7 @@ bool BuildScreen(void* switcher) {
     g_pwBlock = NS::Spawn(L"VerticalBox", col);
     if (!g_pwBlock) return false;
     NS::AddVFill(col, g_pwBlock, 0.f, NS::kFill, NS::kTop);
-    NS::AddText(g_pwBlock, L"Password", 16, kAccent, NS::kJustLeft, 0.f);
+    NS::AddText(g_pwBlock, coop::i18n::TrW(L"Password"), 16, kAccent, NS::kJustLeft, 0.f);
     // In a row of its own so kFieldW applies: the field is a SizeBox with a width override, a
     // VerticalBox slot fills horizontally (968 px), and a HorizontalBox slot is auto-sized, which
     // lets the override win.
@@ -375,7 +376,7 @@ bool BuildScreen(void* switcher) {
     // Always present, never collapsed: its rows carry the truth for every mode (kVis) and the hint
     // explains the mode where the choice is not the host's. The field is released on this return
     // too: OnMenuTick retries the build once a second forever after the backoff.
-    if (!HC::Build(col, L"SERVER LIST", kVis, g_vis)) {
+    if (!HC::Build(col, coop::i18n::TrW(L"SERVER LIST"), kVis, g_vis)) {
         ReleaseFields(); return false;
     }
     g_visHint = NS::AddText(col, L"", 15, kDim, NS::kJustLeft, 0.f);
@@ -389,9 +390,9 @@ bool BuildScreen(void* switcher) {
     // Footer: Back at the left, Host at the right, status between (docs/votv-ui-style.md). No
     // bordered strip: the game frames content, never a row of buttons.
     if (void* footRow = NS::Spawn(L"HorizontalBox", col)) {
-        g_backBtn = NS::BuildButton(footRow, backDonor, L"Back", NS::kBtnFontPx);
+        g_backBtn = NS::BuildButton(footRow, backDonor, coop::i18n::TrW(L"Back"), NS::kBtnFontPx);
         g_status  = NS::AddText(footRow, L"", 16, kText, NS::kJustCenter, 1.f);
-        g_hostBtn = NS::BuildButton(footRow, backDonor, L"Host", NS::kBtnFontPx);
+        g_hostBtn = NS::BuildButton(footRow, backDonor, coop::i18n::TrW(L"Host"), NS::kBtnFontPx);
         // Release on this path too: a false return leaves g_root null, the next tick rebuilds, and
         // TF::Create would mint a second Field with the first stranded in the module's live list.
         if (!g_backBtn || !g_hostBtn) { ReleaseFields(); return false; }
@@ -436,7 +437,7 @@ void DoHost() {
     if (IsLocked() && pw.empty()) {
         // A lock with no secret is refused, not announced: the player emptied the box, so they type
         // one or choose "Anyone can join".
-        SetStatus(L"Type a password, or choose \"Anyone can join\".", kBad);
+        SetStatus(coop::i18n::TrW(L"Type a password, or choose \"Anyone can join\"."), kBad);
         return;
     }
 
@@ -478,7 +479,7 @@ void DoHost() {
     if (!accepted) {
         // The window stays open on a refusal: a screen that closes on failure loses the reason with
         // it.
-        SetStatus(L"Busy -- another host or join is already starting.", kBad);
+        SetStatus(coop::i18n::TrW(L"Busy -- another host or join is already starting."), kBad);
         return;
     }
     SetStatus(L"Starting...", kText);
@@ -619,13 +620,13 @@ void Show() {
     // rather than whatever was half-typed before leaving.
     TF::SetText(g_nameField, g_name);
     SetText(g_recapWorld,
-            g_choice.newGame ? std::wstring(L"World: a new game")
-                             : L"World: " + Widen(g_choice.slot),
+            g_choice.newGame ? std::wstring(coop::i18n::TrW(L"World: a new game"))
+                             : coop::i18n::TrW(L"World: ") + Widen(g_choice.slot),
             kDim);
     SetText(g_recapConn,
             // Two arms, because there are two modes.
-            std::wstring(L"Connection: ") +
-                (g_connMode == 1 ? L"direct (you forward the port)" : L"automatic"),
+            std::wstring(coop::i18n::TrW(L"Connection: ")) +
+                (g_connMode == 1 ? coop::i18n::TrW(L"direct (you forward the port)") : L"automatic"),
             kDim);
     // Which master the session is listed on, by its label (the address is not the player's
     // concern here): the tab chosen in the server browser. On AUTOMATIC it is also the relay and
@@ -633,7 +634,7 @@ void Show() {
     const coop::net::master_slots::Slot shown = coop::net::master_slots::Selected();
     g_shownMaster = shown.label;
     g_shownMasterUrl = shown.url;
-    SetText(g_recapMaster, L"Master server: " + Widen(g_shownMaster), kDim);
+    SetText(g_recapMaster, coop::i18n::TrW(L"Master server: ") + Widen(g_shownMaster), kDim);
 
     // The lock and the password come back the way they were left.
     const std::string saved = cfg::ResolveString(::coop::config_registry::rows::net_lobby_password);

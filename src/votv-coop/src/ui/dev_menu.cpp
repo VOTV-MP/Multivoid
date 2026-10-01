@@ -37,6 +37,7 @@
 #include <vector>
 
 #include "imgui.h"
+#include "coop/text/i18n.h"
 
 namespace ui::dev_menu {
 namespace {
@@ -57,29 +58,29 @@ struct Cat  { const char* name; std::vector<Sub> subs;  bool dev; bool host = fa
 void RenderSnow() {
     bool on = coop::dev::force_weather::IsSnowOn();
     // Host-authoritative: the toggle is a no-op on a client (the module gates it).
-    if (ImGui::Checkbox("Snow", &on)) coop::dev::force_weather::SetSnow(on);
+    if (ImGui::Checkbox(coop::i18n::Tr("Snow"), &on)) coop::dev::force_weather::SetSnow(on);
     ImGui::SameLine();
     ImGui::TextDisabled("(host-authoritative; clients mirror)");
 }
 
 void RenderTeleportClients() {
-    if (ImGui::Button("Teleport clients to me")) coop::teleport_client::TeleportClientsToHost();
+    if (ImGui::Button(coop::i18n::Tr("Teleport clients to me"))) coop::teleport_client::TeleportClientsToHost();
     ImGui::SameLine();
-    ImGui::TextDisabled("(host only)");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("(host only)"));
 }
 
 void RenderFreecam() {
     bool on = coop::dev::freecam::IsActive();
-    if (ImGui::Checkbox("Freecam", &on)) coop::dev::freecam::SetActive(on);
-    ImGui::TextDisabled("HOME also toggles - WASD move, Space/Ctrl up/down,");
-    ImGui::TextDisabled("Shift fast, wheel speed, MMB bring player");
+    if (ImGui::Checkbox(coop::i18n::Tr("Freecam"), &on)) coop::dev::freecam::SetActive(on);
+    ImGui::TextDisabled("%s", coop::i18n::Tr("HOME also toggles - WASD move, Space/Ctrl up/down,"));
+    ImGui::TextDisabled("%s", coop::i18n::Tr("Shift fast, wheel speed, MMB bring player"));
 }
 
 void RenderRestoreVitals() {
-    if (ImGui::Button("Restore vitals (food / sleep / health)")) coop::dev::restore_vitals::Restore();
+    if (ImGui::Button(coop::i18n::Tr("Restore vitals (food / sleep / health)"))) coop::dev::restore_vitals::Restore();
     ImGui::SameLine();
-    ImGui::TextDisabled("(both peers)");
-    if (ImGui::Button("Set stamina low")) coop::dev::restore_vitals::SetStaminaLow();
+    ImGui::TextDisabled("%s", coop::i18n::Tr("(both peers)"));
+    if (ImGui::Button(coop::i18n::Tr("Set stamina low"))) coop::dev::restore_vitals::SetStaminaLow();
     ImGui::SameLine();
     ImGui::TextDisabled("(local test -- sleep/energy=10 -> exhausted; nameplate syncs)");
 }
@@ -89,13 +90,13 @@ void RenderSetClock() {
     int hour = 0, minute = 0, day = 0;
     float frac = 0.f;
     if (!SC::ReadCurrent(hour, minute, day, frac)) {
-        ImGui::TextDisabled("World clock not resolved yet (enter a world).");
+        ImGui::TextDisabled("%s", coop::i18n::Tr("World clock not resolved yet (enter a world)."));
         return;
     }
     ImGui::TextDisabled("Host-authoritative; the clock (timeZ -> settime) drives events + the save.");
-    ImGui::Text("Now: Day %d — %02d:%02d", day, hour, minute);
+    ImGui::Text(coop::i18n::Tr("Now: Day %d — %02d:%02d"), day, hour, minute);
     ImGui::SameLine();
-    ImGui::TextDisabled("(sun %.3f)", frac);
+    ImGui::TextDisabled(coop::i18n::Tr("(sun %.3f)"), frac);
     static int s_day = -1, s_hour = -1, s_min = -1;
     if (s_day < 0) { s_day = day; s_hour = hour; s_min = minute; }  // seed once from the live clock
     ImGui::SetNextItemWidth(S(90.f));
@@ -112,50 +113,50 @@ void RenderSetClock() {
     if (s_min < 0) s_min = 0;
     if (s_min > 59) s_min = 59;
     ImGui::SameLine();
-    if (ImGui::Button("Set clock")) SC::SetClock(s_day, s_hour, s_min);
+    if (ImGui::Button(coop::i18n::Tr("Set clock"))) SC::SetClock(s_day, s_hour, s_min);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Writes the game's own running clock (timeZ); the next minute pulse runs\n"
                           "saveSlot.settime natively. Jumping the day FORWARD fires every skipped\n"
                           "scheduled story event at once (native settime behavior; they mirror to\n"
                           "clients via EventFire). Day is the DISPLAYED day (as on the save rows).");
     ImGui::SameLine();
-    ImGui::TextDisabled("(host only)");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("(host only)"));
     float f = frac;
     ImGui::SetNextItemWidth(S(260.f));
     if (ImGui::SliderFloat("Sun position", &f, 0.0f, 0.999f, "%.3f"))
         SC::SetTimeFraction(f);  // live: drag moves the sun (totalTime := frac * MaxTime)
-    ImGui::TextDisabled("Visual only (sun angle). The clock above is what events/save follow.");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("Visual only (sun angle). The clock above is what events/save follow."));
 }
 
 void RenderPosHud() {
     bool on = coop::dev::pos_hud::IsVisible();
-    if (ImGui::Checkbox("Position / camera readout", &on)) coop::dev::pos_hud::SetVisible(on);
+    if (ImGui::Checkbox(coop::i18n::Tr("Position / camera readout"), &on)) coop::dev::pos_hud::SetVisible(on);
     ImGui::SameLine();
-    ImGui::TextDisabled("(on-screen overlay)");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("(on-screen overlay)"));
 }
 
 void RenderObjectOverlay() {
     namespace OO = coop::dev::object_overlay;
     bool on = OO::IsEnabled();
-    if (ImGui::Checkbox("World object overlay", &on)) OO::SetEnabled(on);
+    if (ImGui::Checkbox(coop::i18n::Tr("World object overlay"), &on)) OO::SetEnabled(on);
     ImGui::SameLine();
-    ImGui::TextDisabled("(labels projected onto nearby objects)");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("(labels projected onto nearby objects)"));
     ImGui::Indent(S(22.f));
     ImGui::BeginDisabled(!on);
     bool names = OO::LayerNames();
-    if (ImGui::Checkbox("Object names", &names)) OO::SetLayerNames(names);
+    if (ImGui::Checkbox(coop::i18n::Tr("Object names"), &names)) OO::SetLayerNames(names);
     ImGui::SameLine();
-    ImGui::TextDisabled("(class + prop visual row)");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("(class + prop visual row)"));
     bool net = OO::LayerNet();
-    if (ImGui::Checkbox("Net identity", &net)) OO::SetLayerNet(net);
+    if (ImGui::Checkbox(coop::i18n::Tr("Net identity"), &net)) OO::SetLayerNet(net);
     ImGui::SameLine();
-    ImGui::TextDisabled("(eid, mirror/local/untracked, key)");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("(eid, mirror/local/untracked, key)"));
     bool phys = OO::LayerPhys();
-    if (ImGui::Checkbox("Physics state", &phys)) OO::SetLayerPhys(phys);
+    if (ImGui::Checkbox(coop::i18n::Tr("Physics state"), &phys)) OO::SetLayerPhys(phys);
     ImGui::SameLine();
-    ImGui::TextDisabled("(sim/rest + static/frozen/sleep)");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("(sim/rest + static/frozen/sleep)"));
     bool hp = OO::LayerHealth();
-    if (ImGui::Checkbox("Health / progress", &hp)) OO::SetLayerHealth(hp);
+    if (ImGui::Checkbox(coop::i18n::Tr("Health / progress"), &hp)) OO::SetLayerHealth(hp);
     ImGui::SameLine();
     ImGui::TextDisabled("(creature+prop hp; decal clean/cement pools)");
     float r = OO::RadiusM();
@@ -168,34 +169,34 @@ void RenderObjectOverlay() {
 void RenderRagdollBones() {
     namespace RB = coop::dev::ragdoll_bone_overlay;
     bool on = RB::IsEnabled();
-    if (ImGui::Checkbox("Ragdoll bone skeleton", &on)) RB::SetEnabled(on);
+    if (ImGui::Checkbox(coop::i18n::Tr("Ragdoll bone skeleton"), &on)) RB::SetEnabled(on);
     ImGui::SameLine();
-    ImGui::TextDisabled("(lines between every bone of an ACTIVE ragdoll body)");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("(lines between every bone of an ACTIVE ragdoll body)"));
     ImGui::TextDisabled("The native ragdoll (C key / faint / trip) is an invisible separate actor;");
-    ImGui::TextDisabled("orange = your own ragdoll, cyan = a remote peer's mirror body.");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("orange = your own ragdoll, cyan = a remote peer's mirror body."));
 }
 
 void RenderSpawnNpc() {
-    if (ImGui::Button("Spawn kerfurOmega (in front)")) coop::dev::spawn_npc::SpawnKerfurOmega();
+    if (ImGui::Button(coop::i18n::Tr("Spawn kerfurOmega (in front)"))) coop::dev::spawn_npc::SpawnKerfurOmega();
     ImGui::SameLine();
-    ImGui::TextDisabled("(host spawns + syncs)");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("(host spawns + syncs)"));
     // Spawn the allowlisted creatures directly, because the events that would otherwise produce
     // one do not reliably leave a catchable actor: the wisp event arms an overlap box, and the
     // eventer's ventCrawler spawn goes through EX_CallMath, bypassing our interceptor and landing
     // about ten metres away in a vent (see spawn_npc).
-    if (ImGui::Button("Spawn killerWisp (in front)"))  coop::dev::spawn_npc::SpawnKillerWisp();
+    if (ImGui::Button(coop::i18n::Tr("Spawn killerWisp (in front)")))  coop::dev::spawn_npc::SpawnKillerWisp();
     ImGui::SameLine();
-    if (ImGui::Button("Spawn ventCrawler (in front)")) coop::dev::spawn_npc::SpawnVentCrawler();
+    if (ImGui::Button(coop::i18n::Tr("Spawn ventCrawler (in front)"))) coop::dev::spawn_npc::SpawnVentCrawler();
     ImGui::SameLine();
-    ImGui::TextDisabled("(mirror test: watch the client radar)");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("(mirror test: watch the client radar)"));
     // Killer-wisp cross-peer kill test: spawn the wisp ON a client puppet so it grabs the
     // CLIENT, routing the kill there, instead of the nearest, which is the host.
-    if (ImGui::Button("Spawn killerWisp ON client (coop kill test)"))
+    if (ImGui::Button(coop::i18n::Tr("Spawn killerWisp ON client (coop kill test)")))
         coop::dev::spawn_npc::SpawnKillerWispOnClient();
     ImGui::Separator();
     // Owner-entity lane test: an eyer is per-peer OWNED, its native AI stalking the spawning
     // peer, and cross-peer VISIBLE, other peers getting a brain-parked display mirror.
-    if (ImGui::Button("Spawn Eyer (in front)")) coop::dev::spawn_npc::SpawnEyer();
+    if (ImGui::Button(coop::i18n::Tr("Spawn Eyer (in front)"))) coop::dev::spawn_npc::SpawnEyer();
     ImGui::SameLine();
     ImGui::TextDisabled("(owner-entity test: it stalks YOU; peers see a harmless mirror)");
     if (ImGui::IsItemHovered())
@@ -205,22 +206,22 @@ void RenderSpawnNpc() {
 }
 
 void RenderGivePoints() {
-    if (ImGui::Button("+1000 Points")) coop::dev::add_points::GivePoints(1000);
+    if (ImGui::Button(coop::i18n::Tr("+1000 Points"))) coop::dev::add_points::GivePoints(1000);
     ImGui::SameLine();
-    ImGui::TextDisabled("(local balance -- afford drone orders)");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("(local balance -- afford drone orders)"));
 }
 
 void RenderSpawnMenuUnlock() {
     namespace SM = coop::dev::spawn_menu_unlock;
     bool on = SM::IsEnabled();
-    if (ImGui::Checkbox("Prop spawn menu in story mode (Q)", &on)) SM::SetEnabled(on);
+    if (ImGui::Checkbox(coop::i18n::Tr("Prop spawn menu in story mode (Q)"), &on)) SM::SetEnabled(on);
     ImGui::SameLine();
-    ImGui::TextDisabled("(host/local only)");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("(host/local only)"));
     ImGui::Indent(S(22.f));
-    ImGui::TextDisabled("Enables the sandbox Q spawn menu in story mode.");
-    if (ImGui::Button("Open spawn menu now")) SM::OpenNow();
+    ImGui::TextDisabled("%s", coop::i18n::Tr("Enables the sandbox Q spawn menu in story mode."));
+    if (ImGui::Button(coop::i18n::Tr("Open spawn menu now"))) SM::OpenNow();
     ImGui::SameLine();
-    ImGui::TextDisabled("(or press Q while enabled)");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("(or press Q while enabled)"));
     ImGui::Unindent(S(22.f));
 }
 
@@ -242,11 +243,11 @@ void RenderEvents() {
     namespace EF = coop::dev::event_force;
     EF::RequestRefresh();  // ~1 Hz internal limiter; keeps the ARMED badges live while the tab is open
     ImGui::TextDisabled("Trigger any game event (host only; runEvent + runSpecialEvent + ambient verbs).");
-    ImGui::TextDisabled("Grouped by strict");
-    ImGui::TextDisabled("category. 'day N' = unlock day. The cyan TIME column is the native trigger time-of-");
-    ImGui::TextDisabled("day (HH:MM anchor) / 'trigger' (story/build) / 'rep' (ariral-reputation prank pool).");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("Grouped by strict"));
+    ImGui::TextDisabled("%s", coop::i18n::Tr("category. 'day N' = unlock day. The cyan TIME column is the native trigger time-of-"));
+    ImGui::TextDisabled("%s", coop::i18n::Tr("day (HH:MM anchor) / 'trigger' (story/build) / 'rep' (ariral-reputation prank pool)."));
     ImGui::TextDisabled("Volume-gated events show a badge: fire only ARMS a level volume; NOW! completes it");
-    ImGui::TextDisabled("instantly (drives the volume's own overlap with your pawn -- the native walk-in).");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("instantly (drives the volume's own overlap with your pawn -- the native walk-in)."));
     static char filter[32] = {};
     ImGui::SetNextItemWidth(S(180.f));
     ImGui::InputTextWithHint("##evfilter", "filter (name / category / time / effect)...", filter, sizeof(filter));
@@ -276,7 +277,7 @@ void RenderEvents() {
         if (ev.risk != ET::Risk::Safe) ImGui::PopStyleColor();
         const bool hoveredBtn = ImGui::IsItemHovered();
         ImGui::SameLine();
-        if (ev.dayZ >= 0) ImGui::TextDisabled("day %-3d", ev.dayZ);
+        if (ev.dayZ >= 0) ImGui::TextDisabled(coop::i18n::Tr("day %-3d"), ev.dayZ);
         else              ImGui::TextDisabled("  -   ");
         ImGui::SameLine();
         // The native trigger TIME (hours:minutes) -- the user's key ask. Cyan so it stands out.
@@ -289,16 +290,16 @@ void RenderEvents() {
         if (box.hasBox) {
             ImGui::SameLine();
             if (!box.resolved)
-                ImGui::TextDisabled("[gate: volume ?]");
+                ImGui::TextDisabled("%s", coop::i18n::Tr("[gate: volume ?]"));
             else if (box.shots == 0)
                 ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.5f, 1.0f), "[FIRED]");
             else if (box.armed)
                 ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "[ARMED - walk-in pending]");
             else
-                ImGui::TextDisabled("[volume-gated]");
+                ImGui::TextDisabled("%s", coop::i18n::Tr("[volume-gated]"));
             ImGui::SameLine();
             ImGui::PushID(ev.name);
-            forceClicked = ImGui::SmallButton("NOW!");
+            forceClicked = ImGui::SmallButton(coop::i18n::Tr("NOW!"));
             forceHovered = ImGui::IsItemHovered();
             ImGui::PopID();
         }
@@ -306,14 +307,14 @@ void RenderEvents() {
         ImGui::TextDisabled("%s", ev.mechanism);
         const char* note = box.hasBox ? nullptr : EF::GateNote(ev.name);
         if (forceHovered) {
-            ImGui::SetTooltip("Arm + complete NOW: fires the event (clients get the arm as usual), then\n"
+            ImGui::SetTooltip(coop::i18n::Tr("Arm + complete NOW: fires the event (clients get the arm as usual), then\n"
                               "drives %s's own overlap handler with your pawn -- the same dispatch a real\n"
-                              "walk-in performs (native class filter + N bookkeeping).%s",
+                              "walk-in performs (native class filter + N bookkeeping).%s"),
                               box.boxName, danger ? "\n\nDangerous event: Ctrl+click." : "");
         } else if (hoveredBtn) {
             if (danger) {
-                ImGui::SetTooltip("%s  |  native time: %s\n%s%s%s%s\n\nStory/save progression or player relocation"
-                                  " --\ncan desync the run. Ctrl+click to trigger.", catName, ev.time, ev.mechanism,
+                ImGui::SetTooltip(coop::i18n::Tr("%s  |  native time: %s\n%s%s%s%s\n\nStory/save progression or player relocation"
+                                  " --\ncan desync the run. Ctrl+click to trigger."), catName, ev.time, ev.mechanism,
                                   (box.hasBox || note) ? "\ngate: " : "",
                                   box.hasBox ? "fire ARMS the level volume " : (note ? note : ""),
                                   box.hasBox ? box.boxName : "");
@@ -322,7 +323,7 @@ void RenderEvents() {
                                  : (ev.dispatch == ET::Dispatch::RandomPrank)  ? "runEvent (RANDOM rep-tier prank)"
                                  : (ev.dispatch == ET::Dispatch::Ambient)      ? "direct ambient UFunction (daynight/gamemode)"
                                  :                                               "runEvent";
-                ImGui::SetTooltip("%s  |  native time: %s  |  via %s\n%s%s%s%s", catName, ev.time, path, ev.mechanism,
+                ImGui::SetTooltip(coop::i18n::Tr("%s  |  native time: %s  |  via %s\n%s%s%s%s"), catName, ev.time, path, ev.mechanism,
                                   (box.hasBox || note) ? "\ngate: " : "",
                                   box.hasBox ? "fire ARMS the level volume; walk into it (or NOW!) to complete: " : (note ? note : ""),
                                   box.hasBox ? box.boxName : "");
@@ -349,20 +350,20 @@ void RenderNetStats() { ui::net_stats_panel::RenderMenuPref(); }
 // traffic; see coop::peer_action_feed.
 void RenderChatPref() {
     bool on = coop::peer_action_feed::Enabled();
-    if (ImGui::Checkbox("Peer action notifications", &on))
+    if (ImGui::Checkbox(coop::i18n::Tr("Peer action notifications"), &on))
         coop::peer_action_feed::SetEnabled(on);
-    ImGui::TextDisabled("Show a chat line when another player does a shared action");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("Show a chat line when another player does a shared action"));
     ImGui::TextDisabled("(e.g. deletes an email). Local preference; persists across");
-    ImGui::TextDisabled("sessions (ui.chat.peer_actions).");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("sessions (ui.chat.peer_actions)."));
 }
 
 // The local player's plate-visibility preference. SYNCED (a live NameplateChange plus the
 // Join prefs byte for late joiners) and persisted (multivoid.ini nameplate=).
 void RenderNameplatePref() {
     bool on = coop::nameplate::LocalVisible();
-    if (ImGui::Checkbox("Show my nameplate to other players", &on))
+    if (ImGui::Checkbox(coop::i18n::Tr("Show my nameplate to other players"), &on))
         coop::nameplate::RequestLocalVisible(on);
-    ImGui::TextDisabled("Off = your floating name/health bar disappears on every peer's");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("Off = your floating name/health bar disappears on every peer's"));
     ImGui::TextDisabled("screen -- synced live and to late joiners; persists across sessions.");
 
     // The local player's nick COLOUR preference. SYNCED (a live NickColorChange plus the Join
@@ -393,7 +394,7 @@ void RenderNameplatePref() {
                                       static_cast<uint8_t>(sCol[1] * 255.f + 0.5f),
                                       static_cast<uint8_t>(sCol[2] * 255.f + 0.5f));
     };
-    if (ImGui::Checkbox("Custom nickname color", &custom)) {
+    if (ImGui::Checkbox(coop::i18n::Tr("Custom nickname color"), &custom)) {
         sDirty = false;  // the toggle IS the commit
         coop::nick_color::RequestLocal(custom ? packWorking() : 0u);
     }
@@ -418,7 +419,7 @@ void RenderNameplatePref() {
             coop::nick_color::RequestLocal(packed);
         }
     }
-    ImGui::TextDisabled("Colors your nick everywhere it shows -- nameplate, chat, player list --");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("Colors your nick everywhere it shows -- nameplate, chat, player list --"));
     ImGui::TextDisabled("on every peer's screen. Synced live and to late joiners; persists.");
 }
 
@@ -430,7 +431,7 @@ void RenderFontPref() {
     const char* famItems[F::kFamilyCount];
     for (int i = 0; i < F::kFamilyCount; ++i)
         famItems[i] = F::FamilyLabel(static_cast<F::Family>(i));
-    ImGui::TextUnformatted("Overlay fonts (per surface):");
+    ImGui::TextUnformatted(coop::i18n::Tr("Overlay fonts (per surface):"));
     for (int r = 0; r < F::kRoleCount; ++r) {
         const auto role = static_cast<F::Role>(r);
         int cur = static_cast<int>(F::RoleFamily(role));
@@ -441,8 +442,8 @@ void RenderFontPref() {
         ImGui::PopID();
     }
     ImGui::TextDisabled("Each surface picks its own family; applies instantly.");
-    ImGui::TextDisabled("Saved to multivoid.ini (ui.font.menu/chat/net/nameplate/toast,");
-    ImGui::TextDisabled("each with its own default). Fixedsys (VOTV) = game terminal pixel");
+    ImGui::TextDisabled("%s", coop::i18n::Tr("Saved to multivoid.ini (ui.font.menu/chat/net/nameplate/toast,"));
+    ImGui::TextDisabled("%s", coop::i18n::Tr("each with its own default). Fixedsys (VOTV) = game terminal pixel"));
     ImGui::TextDisabled("font; JetBrains/Cascadia monospace; Roboto proportional.");
 
     // UI size: a multiplier on top of the resolution factor. Applied on slider
@@ -465,9 +466,9 @@ void RenderFontPref() {
     ImGui::SameLine();
     ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Scales the WHOLE overlay (menus, chat, nameplates) on top of the\n"
+        ImGui::SetTooltip("%s", coop::i18n::Tr("Scales the WHOLE overlay (menus, chat, nameplates) on top of the\n"
                           "automatic resolution scale. Applies when you release the slider\n"
-                          "(the fonts re-bake). Saved to multivoid.ini (ui.scale).");
+                          "(the fonts re-bake). Saved to multivoid.ini (ui.scale)."));
     ImGui::TextDisabled("Everything scales with the screen automatically; this is your extra zoom.");
 }
 
@@ -593,7 +594,7 @@ void Render() {
     // still be grown.
     ImGui::SetNextWindowSize(ImVec2(S(820.f), S(460.f)), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSizeConstraints(ImVec2(S(720.f), S(320.f)), ImVec2(100000.0f, 100000.0f));
-    if (!ImGui::Begin("VOTV Coop  -  Menu (F1)", nullptr, ImGuiWindowFlags_NoCollapse)) {
+    if (!ImGui::Begin(coop::i18n::Tr("VOTV Coop  -  Menu (F1)"), nullptr, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         return;
     }
@@ -641,25 +642,25 @@ void Render() {
             if (it.dev && !devMode) continue;
             if (it.render) { it.render(); ++shown; }
         }
-        if (shown == 0) ImGui::TextDisabled("No tools here yet -- coming soon.");
+        if (shown == 0) ImGui::TextDisabled("%s", coop::i18n::Tr("No tools here yet -- coming soon."));
     } else {
-        ImGui::TextDisabled("Select a category on the left.");
+        ImGui::TextDisabled("%s", coop::i18n::Tr("Select a category on the left."));
         // Which graphics API this session is running on (the overlay knows
         // because it renders through it). Answers "why does X look/behave
         // different for me" without asking the user to dig through logs.
         {
             const char* rhi = ui::overlay_backend::Kind();
             ImGui::Spacing();
-            ImGui::TextDisabled("Graphics API: %s", rhi ? rhi : "starting up");
+            ImGui::TextDisabled(coop::i18n::Tr("Graphics API: %s"), rhi ? rhi : "starting up");
         }
         if (!devMode) {
             ImGui::Spacing();
             if (g_devMode && !::coop::dev_gate::Allowed())
-                ImGui::TextWrapped("Developer tools are disabled while connected as a "
-                                   "client (host-only).");
+                ImGui::TextWrapped("%s", coop::i18n::Tr("Developer tools are disabled while connected as a "
+                                   "client (host-only)."));
             else
-                ImGui::TextWrapped("Developer tools are hidden. Set [dev] devkeys=1 in "
-                                   "multivoid.ini to show them.");
+                ImGui::TextWrapped("%s", coop::i18n::Tr("Developer tools are hidden. Set [dev] devkeys=1 in "
+                                   "multivoid.ini to show them."));
         }
     }
     ImGui::EndChild();

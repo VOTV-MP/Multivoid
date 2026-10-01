@@ -19,7 +19,8 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"       // FTransform (the reflected SpawnTransform param layout)
-#include "ue_wrap/core/ufunction_hook.h"  // the FinishSpawningActor Func patch, the keyed spawn seam
+#include "ue_wrap/core/ufunction_hook.h"
+#include "coop/text/i18n.h"  // the FinishSpawningActor Func patch, the keyed spawn seam
 
 #include <atomic>
 #include <cmath>          // asin/atan2 for the FQuat -> FRotator conversion
@@ -265,7 +266,7 @@ void Install(coop::net::Session* session) {
             return;
         }
         g_classParamOff  = R::FindParamOffset(g_beginDeferredFn, L"ActorClass");
-        g_returnParamOff = R::FindParamOffset(g_beginDeferredFn, L"ReturnValue");
+        g_returnParamOff = R::FindParamOffset(g_beginDeferredFn, coop::i18n::TrW(L"ReturnValue"));
         g_xformParamOff  = R::FindParamOffset(g_beginDeferredFn, L"SpawnTransform");
         if (g_classParamOff < 0 || g_returnParamOff < 0 || g_xformParamOff < 0) {
             UE_LOGW("host_spawn_watcher: BeginDeferred ActorClass@%d ReturnValue@%d SpawnTransform@%d not found -- disabled",
@@ -278,7 +279,7 @@ void Install(coop::net::Session* session) {
         // installs.
         g_finishSpawnFn = R::FindFunction(gsCls, P::name::FinishSpawningActorFn);
         if (g_finishSpawnFn) {
-            g_finishReturnOff = R::FindParamOffset(g_finishSpawnFn, L"ReturnValue");
+            g_finishReturnOff = R::FindParamOffset(g_finishSpawnFn, coop::i18n::TrW(L"ReturnValue"));
             if (g_finishReturnOff < 0) {
                 UE_LOGW("host_spawn_watcher: FinishSpawningActor ReturnValue param not found -- Q-menu keyed sync disabled");
                 g_finishSpawnFn = nullptr;

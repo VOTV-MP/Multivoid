@@ -17,6 +17,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "coop/text/i18n.h"
 
 #include <cstdint>
 
@@ -64,7 +65,7 @@ void* RootComponentOf(void* actor) {
     if (!fn) return nullptr;
     ParamFrame f(fn);
     if (!Call(actor, f)) return nullptr;
-    void* root = f.Get<void*>(L"ReturnValue");
+    void* root = f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     return (root && R::IsLive(root)) ? root : nullptr;
 }
 
@@ -104,8 +105,8 @@ bool GetActorRootPhysicsVelocity(void* actor, FVector& outLin, FVector& outAng) 
     void* getAng = PrimFn(&g_getAngFn, L"GetPhysicsAngularVelocityInDegrees");
     if (!getLin || !getAng) return false;
     // BoneName defaults to NAME_None (the root body) -- ParamFrame zero-inits it.
-    { ParamFrame f(getLin); if (!Call(root, f)) return false; outLin = f.Get<FVector>(L"ReturnValue"); }
-    { ParamFrame f(getAng); if (!Call(root, f)) return false; outAng = f.Get<FVector>(L"ReturnValue"); }
+    { ParamFrame f(getLin); if (!Call(root, f)) return false; outLin = f.Get<FVector>(coop::i18n::TrW(L"ReturnValue")); }
+    { ParamFrame f(getAng); if (!Call(root, f)) return false; outAng = f.Get<FVector>(coop::i18n::TrW(L"ReturnValue")); }
     return true;
 }
 
@@ -150,7 +151,7 @@ bool IsActorRootBodyAtRest(void* actor) {
     if (!fn) return false;
     ParamFrame f(fn);
     if (!Call(root, f)) return false;
-    return !f.Get<bool>(L"ReturnValue");
+    return !f.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 bool SetActorRootPhysicsVelocity(void* actor, const FVector& lin, const FVector& ang) {
@@ -177,7 +178,7 @@ float GetActorRootMass(void* actor) {
     if (!getMass) return 0.f;
     ParamFrame f(getMass);
     if (!Call(root, f)) return 0.f;
-    return f.Get<float>(L"ReturnValue");
+    return f.Get<float>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 void* GetActorRootPhysicalMaterial(void* actor) {
@@ -193,7 +194,7 @@ void* GetActorRootPhysicalMaterial(void* actor) {
     { ParamFrame f(getMat);
       f.Set<int32_t>(L"ElementIndex", 0);
       if (!Call(root, f)) return nullptr;
-      mat = f.Get<void*>(L"ReturnValue"); }
+      mat = f.Get<void*>(coop::i18n::TrW(L"ReturnValue")); }
     if (!mat || !R::IsLive(mat)) return nullptr;
     // GetPhysicalMaterial is virtual on UMaterialInterface (instance walks to its
     // parent material's assignment) -- the native thunk handles the dispatch.
@@ -204,7 +205,7 @@ void* GetActorRootPhysicalMaterial(void* actor) {
     if (!g_getPhysMatFn) return nullptr;
     ParamFrame f(g_getPhysMatFn);
     if (!Call(mat, f)) return nullptr;
-    void* physmat = f.Get<void*>(L"ReturnValue");
+    void* physmat = f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     return (physmat && R::IsLive(physmat)) ? physmat : nullptr;
 }
 

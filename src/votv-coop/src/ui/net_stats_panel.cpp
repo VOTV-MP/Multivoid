@@ -8,6 +8,7 @@
 #include "ui/scale.h"
 
 #include "imgui.h"
+#include "coop/text/i18n.h"
 
 #include <algorithm>
 #include <atomic>
@@ -223,14 +224,14 @@ void Render() {
 
 void RenderMenuPref() {
     bool on = Enabled();
-    if (ImGui::Checkbox("Show network stats overlay", &on)) SetEnabled(on);
+    if (ImGui::Checkbox(coop::i18n::Tr("Show network stats overlay"), &on)) SetEnabled(on);
     ImGui::SameLine();
     ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("A compact live panel in the top-right corner: receive/send rate right\n"
+        ImGui::SetTooltip("%s", coop::i18n::Tr("A compact live panel in the top-right corner: receive/send rate right\n"
                           "now (wire-level, includes protocol overhead), total downloaded/uploaded\n"
                           "this session, packets/s, peers + ping, and a 60 s rate graph.\n"
-                          "Works for host and clients. Saved to multivoid.ini (ui.netstats).");
+                          "Works for host and clients. Saved to multivoid.ini (ui.netstats)."));
     ImGui::TextDisabled("Off by default; persists across sessions.");
 
     // Live readout -- doubles as a preview while the overlay itself is off.
@@ -243,14 +244,14 @@ void RenderMenuPref() {
     FmtBytes(s.bytesSent, totOut, sizeof(totOut));
     ImGui::Spacing();
     ImGui::SeparatorText("Session");
-    if (!s.connected) ImGui::TextDisabled("No active session.");
-    ImGui::Text("Down:  %s now,  %s total,  %llu packets",
+    if (!s.connected) ImGui::TextDisabled("%s", coop::i18n::Tr("No active session."));
+    ImGui::Text(coop::i18n::Tr("Down:  %s now,  %s total,  %llu packets"),
                 rateIn, totIn, static_cast<unsigned long long>(s.packetsRecv));
-    ImGui::Text("Up:    %s now,  %s total,  %llu packets",
+    ImGui::Text(coop::i18n::Tr("Up:    %s now,  %s total,  %llu packets"),
                 rateOut, totOut, static_cast<unsigned long long>(s.packetsSent));
     if (s.connected) {
-        if (s.pingMaxMs >= 0) ImGui::Text("Peers: %d,  worst ping %d ms", s.peers, s.pingMaxMs);
-        else                  ImGui::Text("Peers: %d", s.peers);
+        if (s.pingMaxMs >= 0) ImGui::Text(coop::i18n::Tr("Peers: %d,  worst ping %d ms"), s.peers, s.pingMaxMs);
+        else                  ImGui::Text(coop::i18n::Tr("Peers: %d"), s.peers);
     }
 }
 

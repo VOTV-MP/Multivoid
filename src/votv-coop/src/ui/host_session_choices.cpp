@@ -11,6 +11,7 @@
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/umg_build.h"
+#include "coop/text/i18n.h"
 
 #include <cstdint>
 #include <string>
@@ -96,8 +97,8 @@ bool Build(void* column, const wchar_t* heading, const Answer (&answers)[2], Sel
         if (!r.bg || !r.a) return false;
         out.bg[i]    = r.bg;
         out.title[i] = r.a;
-        SetText(r.a, answers[i].title,  kText);
-        SetText(r.b, answers[i].detail, kDim);
+        SetText(r.a, coop::i18n::TrW(answers[i].title),  kText);
+        SetText(r.b, coop::i18n::TrW(answers[i].detail), kDim);
     }
     return true;
 }

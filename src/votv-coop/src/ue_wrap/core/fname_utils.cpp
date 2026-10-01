@@ -5,6 +5,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "coop/text/i18n.h"
 
 #include <cstdint>
 
@@ -64,7 +65,7 @@ R::FName StringToFName(const std::wstring& s) {
         UE_LOGW("fname_utils::StringToFName: ProcessEvent call failed");
         return R::FName{0, 0};
     }
-    return f.Get<R::FName>(L"ReturnValue");
+    return f.Get<R::FName>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 }  // namespace ue_wrap::fname_utils

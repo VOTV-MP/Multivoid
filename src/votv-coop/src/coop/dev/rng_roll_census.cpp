@@ -12,6 +12,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/reflection.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <chrono>
@@ -207,7 +208,7 @@ void RunCensuses() {
             if (g_isTickEnabledFn) {
                 ue_wrap::ParamFrame pf(g_isTickEnabledFn);
                 bool enabled = false;
-                if (ue_wrap::Call(t, pf) && pf.GetRaw(L"ReturnValue", &enabled, sizeof(enabled)) && enabled)
+                if (ue_wrap::Call(t, pf) && pf.GetRaw(coop::i18n::TrW(L"ReturnValue"), &enabled, sizeof(enabled)) && enabled)
                     ++e.second;
             }
         }

@@ -22,6 +22,7 @@
 #include "ue_wrap/engine/save_browser.h"
 #include "ue_wrap/engine/umg_build.h"
 #include "ue_wrap/world/game_mode.h"
+#include "coop/text/i18n.h"
 
 #include <windows.h>
 
@@ -276,15 +277,15 @@ bool BuildScreen(void* switcher) {
     // title strip) from the shared kit. No X: the exits are Back and ESC.
     NS::WindowShell shell;
     if (!NS::BuildWindowShell(switcher, kWindowW, kWindowH,
-                              L"Multivoid  -  Host Game", shell))
+                              coop::i18n::TrW(L"Multivoid  -  Host Game"), shell))
         return false;
     void* root = shell.root;
     void* col  = shell.column;
     g_scrimW   = shell.scrim;
 
-    NS::AddText(col, L"WORLD", 16, kAccent, NS::kJustLeft, 0.f);
+    NS::AddText(col, coop::i18n::TrW(L"WORLD"), 16, kAccent, NS::kJustLeft, 0.f);
     g_newGameRow = BuildRow(col, 1.f, 0.f, 0.f);
-    SetText(g_newGameRow.a, L"New game", kText);
+    SetText(g_newGameRow.a, coop::i18n::TrW(L"New game"), kText);
 
     void* listBox = NS::Spawn(L"SizeBox", col);
     g_list = listBox ? NS::Spawn(L"ScrollBox", listBox) : nullptr;
@@ -297,13 +298,13 @@ bool BuildScreen(void* switcher) {
     // buttons became unclickable. With the list absorbing the slack, kListH is a desired minimum.
     NS::AddVFill(col, listBox, 1.f, NS::kFill, NS::kFill);
 
-    NS::AddText(col, L"CONNECTION", 16, kAccent, NS::kJustLeft, 0.f);
+    NS::AddText(col, coop::i18n::TrW(L"CONNECTION"), 16, kAccent, NS::kJustLeft, 0.f);
     for (int i = 0; i < kConnCount; ++i) {
         Row r = BuildRow(col, 0.42f, 0.58f, 0.f);
         g_connRow[i]   = r.bg;
         g_connLabel[i] = r.a;
-        SetText(r.a, kConnModes[i].title,  kText);
-        SetText(r.b, kConnModes[i].detail, kDim);
+        SetText(r.a, coop::i18n::TrW(kConnModes[i].title),  kText);
+        SetText(r.b, coop::i18n::TrW(kConnModes[i].detail), kDim);
     }
 
     // The footer: Back at the left, Next at the right, the status between, and no bordered strip
@@ -312,11 +313,11 @@ bool BuildScreen(void* switcher) {
     // commit in every native window that has both.
     if (void* footRow = NS::Spawn(L"HorizontalBox", col)) {
         // Sentence case: VOTV uppercases no button label anywhere.
-        g_backBtn = NS::BuildButton(footRow, backDonor, L"Back", NS::kBtnFontPx);
+        g_backBtn = NS::BuildButton(footRow, backDonor, coop::i18n::TrW(L"Back"), NS::kBtnFontPx);
         g_status  = NS::AddText(footRow, L"", 16, kText, NS::kJustCenter, 1.f);
         // "Next", not "Host": this window no longer hosts, and a label promising the last step
         // while a second one follows is a lie the player notices at once.
-        g_hostBtn = NS::BuildButton(footRow, backDonor, L"Next", NS::kBtnFontPx);
+        g_hostBtn = NS::BuildButton(footRow, backDonor, coop::i18n::TrW(L"Next"), NS::kBtnFontPx);
         if (!g_backBtn || !g_hostBtn) return false;
         // The status text carries all the fill weight, so it takes the slack and pushes the two
         // buttons to the ends.

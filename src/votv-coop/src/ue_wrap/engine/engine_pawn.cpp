@@ -19,6 +19,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "coop/text/i18n.h"
 
 #include <cstdint>
 
@@ -75,7 +76,7 @@ void* GetController(void* pawn) {
     if (!pawn || !ResolvePawnFns()) return nullptr;
     ParamFrame f(g_getControllerFn);
     if (!Call(pawn, f)) return nullptr;
-    return f.Get<void*>(L"ReturnValue");
+    return f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 void SetControlRotation(void* controller, const FRotator& rot) {
@@ -114,7 +115,7 @@ FRotator GetControlRotation(void* controller) {
     if (!g_getControlRotFn) return rot;
     ParamFrame f(g_getControlRotFn);
     if (!Call(controller, f)) return rot;
-    f.GetRaw(L"ReturnValue", &rot, sizeof(rot));
+    f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &rot, sizeof(rot));
     return rot;
 }
 
@@ -139,7 +140,7 @@ FVector GetCameraLocation() {
     if (!mgr) return loc;
     ParamFrame f(g_getCamLocFn);
     if (!Call(mgr, f)) return loc;
-    f.GetRaw(L"ReturnValue", &loc, sizeof(loc));
+    f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &loc, sizeof(loc));
     return loc;
 }
 
@@ -150,7 +151,7 @@ FRotator GetCameraRotation() {
     if (!mgr) return rot;
     ParamFrame f(g_getCamRotFn);
     if (!Call(mgr, f)) return rot;
-    f.GetRaw(L"ReturnValue", &rot, sizeof(rot));
+    f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &rot, sizeof(rot));
     return rot;
 }
 

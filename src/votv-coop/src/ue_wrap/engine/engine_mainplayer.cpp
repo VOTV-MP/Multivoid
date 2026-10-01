@@ -15,6 +15,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/reflected_offset.h"
+#include "coop/text/i18n.h"
 
 #include <cstdint>
 #include <cstring>
@@ -123,10 +124,10 @@ void SwapComponentMaterials(void* comp, void* mat, std::vector<SavedMaterial>& s
     ResolveMatFns();
     if (!g_getNumMatFn || !g_getMatFn || !g_setMatFn) return;
     int32_t num = 0;
-    { ParamFrame f(g_getNumMatFn); if (Call(comp, f)) num = f.Get<int32_t>(L"ReturnValue"); }
+    { ParamFrame f(g_getNumMatFn); if (Call(comp, f)) num = f.Get<int32_t>(coop::i18n::TrW(L"ReturnValue")); }
     for (int32_t i = 0; i < num && i < 16; ++i) {
         void* orig = nullptr;
-        { ParamFrame f(g_getMatFn); f.Set<int32_t>(L"ElementIndex", i); if (Call(comp, f)) orig = f.Get<void*>(L"ReturnValue"); }
+        { ParamFrame f(g_getMatFn); f.Set<int32_t>(L"ElementIndex", i); if (Call(comp, f)) orig = f.Get<void*>(coop::i18n::TrW(L"ReturnValue")); }
         SavedMaterial sm;
         sm.component.Set(comp);  // comp validated at entry; orig fresh from GetMaterial
         sm.index = i;

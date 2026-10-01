@@ -20,6 +20,7 @@
 #include "ue_wrap/core/log.h"
 
 #include "imgui.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <cstdio>
@@ -114,7 +115,7 @@ void Render() {
 
     bool open = true;
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
-    const bool visible = ImGui::Begin("MULTIPLAYER###coop_browser", &open, flags);
+    const bool visible = ImGui::Begin(coop::i18n::Tr("MULTIPLAYER###coop_browser"), &open, flags);
     // The title-bar X clears `open` DURING Begin(), before the body runs -- so if `open`
     // is already false here, the X was clicked (the in-body "Close" button plays its own
     // click later). Give the X the click sound too (click only, no rollover).
@@ -122,7 +123,7 @@ void Render() {
     if (visible) {
         // Header.
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.98f, 1.00f, 1.0f));
-        ImGui::TextUnformatted("Server browser");
+        ImGui::TextUnformatted(coop::i18n::Tr("Server browser"));
         ImGui::PopStyleColor();
         ImGui::SameLine();
         ImGui::TextDisabled("(%s)", sm::DisplayVersion().c_str());
@@ -130,7 +131,7 @@ void Render() {
 
         // Your display name -- sent on Join + shown on your nameplate/scoreboard. Applies
         // to the NEXT Host/Join (persisted in session_manager; wins over the config default).
-        ImGui::TextUnformatted("Your name:");
+        ImGui::TextUnformatted(coop::i18n::Tr("Your name:"));
         ImGui::SameLine();
         ImGui::SetNextItemWidth(S(220.0f));
         if (ImGui::InputText("##nick", g_nick, sizeof(g_nick))) sm::SetNickname(g_nick);
@@ -143,7 +144,7 @@ void Render() {
         ImGui::SetNextItemWidth(S(220.0f));
         ImGui::InputText("##hostname", g_hostName, sizeof(g_hostName));
         ImGui::SameLine();
-        ImGui::Checkbox("Locked", &g_hostLocked);
+        ImGui::Checkbox(coop::i18n::Tr("Locked"), &g_hostLocked);
         ImGui::SameLine();
         if (ui::menu_sfx::Button("Host Game")) {
             // Open the save picker (native loadSlots list + New Game); on confirm it
@@ -155,7 +156,7 @@ void Render() {
         if (ui::menu_sfx::Button("Refresh")) sm::Refresh();
 
         // Direct-connect row (rung 0 -- works even with the master down).
-        ImGui::TextDisabled("Direct connect:");
+        ImGui::TextDisabled("%s", coop::i18n::Tr("Direct connect:"));
         ImGui::SameLine();
         ImGui::SetNextItemWidth(S(220.0f));
         // Enter in the address field = Connect.

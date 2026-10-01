@@ -8,6 +8,7 @@
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
+#include "coop/text/i18n.h"
 
 #include <chrono>
 
@@ -160,7 +161,7 @@ bool CueIsActive(void* cue, bool& ok) {
     if (!f.valid()) return false;
     if (!ue_wrap::Call(cue, f)) return false;
     bool active = false;
-    if (!f.GetRaw(L"ReturnValue", &active, sizeof(active))) return false;
+    if (!f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &active, sizeof(active))) return false;
     ok = true;
     return active;
 }

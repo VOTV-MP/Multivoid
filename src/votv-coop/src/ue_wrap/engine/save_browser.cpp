@@ -9,6 +9,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/game_mode.h"
+#include "coop/text/i18n.h"
 
 #include <algorithm>
 #include <atomic>
@@ -181,7 +182,7 @@ std::wstring ResolveSaveGamesDir() {
     ParamFrame f(fn);
     if (!Call(ksl, f)) return {};
     R::FString ret{};
-    f.GetRaw(L"ReturnValue", &ret, static_cast<int32_t>(sizeof(ret)));
+    f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &ret, static_cast<int32_t>(sizeof(ret)));
     std::wstring dir = FStrToW(ret);
     if (dir.empty()) return {};
     if (dir.back() != L'/' && dir.back() != L'\\') dir += L'/';
@@ -355,7 +356,7 @@ bool SlotExists(const std::wstring& slot) {
     f.SetRaw(L"SlotName", &fs, sizeof(fs));
     f.Set<int32_t>(L"UserIndex", 0);
     if (!Call(g_gsCdo, f)) return false;
-    return f.Get<bool>(L"ReturnValue");
+    return f.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 bool CreateNamedSave(const std::wstring& name, uint8_t mode, std::wstring& outSlot) {
@@ -383,7 +384,7 @@ bool CreateNamedSave(const std::wstring& name, uint8_t mode, std::wstring& outSl
         ParamFrame f(g_createFn);
         f.Set<void*>(L"SaveGameClass", saveCls);
         if (!Call(g_gsCdo, f)) { UE_LOGE("save_browser: CreateSaveGameObject call failed"); return false; }
-        save = f.Get<void*>(L"ReturnValue");
+        save = f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     }
     if (!save) { UE_LOGW("save_browser: CreateSaveGameObject returned null"); return false; }
 
@@ -412,7 +413,7 @@ bool CreateNamedSave(const std::wstring& name, uint8_t mode, std::wstring& outSl
         f.SetRaw(L"SlotName", &fs, sizeof(fs));
         f.Set<int32_t>(L"UserIndex", 0);
         if (!Call(g_gsCdo, f)) { UE_LOGE("save_browser: SaveGameToSlot call failed"); return false; }
-        ok = f.Get<bool>(L"ReturnValue");
+        ok = f.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
     }
     if (!ok) { UE_LOGW("save_browser: SaveGameToSlot('%ls') returned false", slot.c_str()); return false; }
 

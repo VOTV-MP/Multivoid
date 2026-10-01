@@ -6,7 +6,8 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
-#include "ue_wrap/engine/engine.h"  // GetWorldContext -- the Slate library calls are static
+#include "ue_wrap/engine/engine.h"
+#include "coop/text/i18n.h"  // GetWorldContext -- the Slate library calls are static
 
 #include <cstring>
 #include <cwchar>
@@ -90,7 +91,7 @@ void* AddChild(void* panel, void* child) {
     ParamFrame f(fn);
     f.Set<void*>(L"Content", child);
     if (!Call(panel, f)) return nullptr;
-    return f.Get<void*>(L"ReturnValue");
+    return f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 bool RemoveChild(void* panel, void* child) {
@@ -99,7 +100,7 @@ bool RemoveChild(void* panel, void* child) {
     ParamFrame f(fn);
     f.Set<void*>(L"Content", child);
     if (!Call(panel, f)) return false;
-    return f.Get<bool>(L"ReturnValue");
+    return f.Get<bool>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 int32_t ChildCount(void* panel) {
@@ -107,7 +108,7 @@ int32_t ChildCount(void* panel) {
     if (!panel || !fn) return -1;
     ParamFrame f(fn);
     if (!Call(panel, f)) return -1;
-    return f.Get<int32_t>(L"ReturnValue");
+    return f.Get<int32_t>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 void* ChildAt(void* panel, int32_t index) {
@@ -116,7 +117,7 @@ void* ChildAt(void* panel, int32_t index) {
     ParamFrame f(fn);
     f.Set<int32_t>(L"Index", index);
     if (!Call(panel, f)) return nullptr;
-    return f.Get<void*>(L"ReturnValue");
+    return f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 int32_t IndexOfChild(void* panel, void* child) {
@@ -125,7 +126,7 @@ int32_t IndexOfChild(void* panel, void* child) {
     ParamFrame f(fn);
     f.Set<void*>(L"Content", child);
     if (!Call(panel, f)) return -1;
-    return f.Get<int32_t>(L"ReturnValue");
+    return f.Get<int32_t>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 bool SwitcherSetIndex(void* switcher, int32_t index) {
@@ -152,7 +153,7 @@ bool ScrollOffset(void* scrollBox, float& out) {
     if (!scrollBox || !fn) return false;
     ParamFrame f(fn);
     if (!Call(scrollBox, f)) return false;
-    out = f.Get<float>(L"ReturnValue");
+    out = f.Get<float>(coop::i18n::TrW(L"ReturnValue"));
     return true;
 }
 
@@ -161,7 +162,7 @@ bool ScrollOffsetOfEnd(void* scrollBox, float& out) {
     if (!scrollBox || !fn) return false;
     ParamFrame f(fn);
     if (!Call(scrollBox, f)) return false;
-    out = f.Get<float>(L"ReturnValue");
+    out = f.Get<float>(coop::i18n::TrW(L"ReturnValue"));
     return true;
 }
 
@@ -202,13 +203,13 @@ void LogVisibilityChain(const char* tag, void* widget) {
         uint8_t vis = 255;
         {
             ParamFrame f(visFn);
-            if (Call(w, f)) vis = f.Get<uint8_t>(L"ReturnValue");
+            if (Call(w, f)) vis = f.Get<uint8_t>(coop::i18n::TrW(L"ReturnValue"));
         }
         UE_LOGW("umg: %s chain[%d] %ls '%ls' visibility=%u (%s)", tag, depth,
                 R::ClassNameOf(w).c_str(), R::ToString(R::NameOf(w)).c_str(), vis,
                 vis < 5 ? kNames[vis] : "UNREAD");
         ParamFrame p(parFn);
-        w = Call(w, p) ? p.Get<void*>(L"ReturnValue") : nullptr;
+        w = Call(w, p) ? p.Get<void*>(coop::i18n::TrW(L"ReturnValue")) : nullptr;
     }
 }
 
@@ -292,7 +293,7 @@ bool ReadCachedGeometry(void* widget, ParamFrame& abs, std::vector<uint8_t>& blo
     }
     if (!Call(widget, geom)) return false;
     blob.assign(static_cast<size_t>(geomBytes), 0);
-    return geom.GetRaw(L"ReturnValue", blob.data(), geomBytes);
+    return geom.GetRaw(coop::i18n::TrW(L"ReturnValue"), blob.data(), geomBytes);
 }
 
 // One size of that geometry: GetAbsoluteSize or GetLocalSize, which share a signature. The
@@ -311,16 +312,16 @@ bool GeometrySize(void* lib, FnCache& which, const std::vector<uint8_t>& blob, F
     if (!fn) return false;
     const int32_t geomBytes = static_cast<int32_t>(blob.size());
     ParamFrame size(fn);
-    if (size.ParamOffset(L"Geometry") != 0 || size.ParamOffset(L"ReturnValue") != geomBytes) {
+    if (size.ParamOffset(L"Geometry") != 0 || size.ParamOffset(coop::i18n::TrW(L"ReturnValue")) != geomBytes) {
         UE_LOGE("umg: SlateBlueprintLibrary signature drift -- LocalToAbsolute puts an "
                 "FGeometry at %d bytes but %ls disagrees (Geometry@%d, ReturnValue@%d). "
                 "Refusing rather than reading a truncated struct.", geomBytes, which.fn,
-                size.ParamOffset(L"Geometry"), size.ParamOffset(L"ReturnValue"));
+                size.ParamOffset(L"Geometry"), size.ParamOffset(coop::i18n::TrW(L"ReturnValue")));
         return false;
     }
     if (!size.SetRaw(L"Geometry", blob.data(), geomBytes)) return false;
     if (!Call(lib, size)) return false;
-    out = size.Get<FVector2D>(L"ReturnValue");
+    out = size.Get<FVector2D>(coop::i18n::TrW(L"ReturnValue"));
     return true;
 }
 
@@ -343,7 +344,7 @@ bool WidgetScreenRect(void* widget, FVector2D& outTopLeft, FVector2D& outSize, f
     // false, and writing the size before the second call broke that: a caller that logs a rect it
     // was told not to trust printed a half-updated one.
     outSize    = size;
-    outTopLeft = abs.Get<FVector2D>(L"ReturnValue");
+    outTopLeft = abs.Get<FVector2D>(coop::i18n::TrW(L"ReturnValue"));
     if (outScale)
         *outScale = local.Y > 0.f ? size.Y / local.Y : (local.X > 0.f ? size.X / local.X : 0.f);
     return true;
@@ -364,7 +365,7 @@ bool ViewOffsetFraction(void* scrollBox, float& out) {
     if (!scrollBox || !fn) return false;
     ParamFrame f(fn);
     if (!Call(scrollBox, f)) return false;
-    out = f.Get<float>(L"ReturnValue");
+    out = f.Get<float>(coop::i18n::TrW(L"ReturnValue"));
     return true;
 }
 
@@ -373,7 +374,7 @@ int32_t SwitcherIndex(void* switcher) {
     if (!switcher || !fn) return -1;
     ParamFrame f(fn);
     if (!Call(switcher, f)) return -1;
-    return f.Get<int32_t>(L"ReturnValue");
+    return f.Get<int32_t>(coop::i18n::TrW(L"ReturnValue"));
 }
 
 void ZeroBrushHandles(void* styleBase, const size_t* brushOffsets, int brushCount) {
@@ -570,12 +571,12 @@ bool SetSlotPaddingLive(void* slot, float left, float top, float right, float bo
 bool WidgetDesiredSize(void* widget, FVector2D& out) {
     if (!widget) return false;
     // The same cache, for the same reason: a miss here reads as "every column fits".
-    static FnCache sCache{P::name::WidgetClass, L"GetDesiredSize", nullptr, false};
+    static FnCache sCache{P::name::WidgetClass, coop::i18n::TrW(L"GetDesiredSize"), nullptr, false};
     void* const sFn = Resolve(sCache);
     if (!sFn) return false;
     ParamFrame f(sFn);
     if (!Call(widget, f)) return false;
-    out = f.Get<FVector2D>(L"ReturnValue");
+    out = f.Get<FVector2D>(coop::i18n::TrW(L"ReturnValue"));
     return true;
 }
 

@@ -26,6 +26,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile_names.h"
 #include "ue_wrap/engine/engine.h"
+#include "coop/text/i18n.h"
 
 #include <windows.h>
 
@@ -59,7 +60,7 @@ const wchar_t* JudgementName(RET::Judgement j) {
         case RET::Judgement::RunNoSession:   return L"RunNoSession";
         case RET::Judgement::RunPlayerAsked: return L"RunPlayerAsked";
         case RET::Judgement::RunNoRevive:    return L"RunNoRevive";
-        case RET::Judgement::Cancel:         return L"Cancel";
+        case RET::Judgement::Cancel:         return coop::i18n::TrW(L"Cancel");
     }
     return L"?";
 }

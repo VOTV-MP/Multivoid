@@ -24,6 +24,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/puppet.h"
 #include "ue_wrap/core/reflection.h"
+#include "coop/text/i18n.h"
 
 #include <atomic>
 #include <cmath>
@@ -65,7 +66,7 @@ bool PuppetHasFloppingRagdollBody() {
             if (mesh && R::IsLive(mesh)) {
                 if (void* awakeFn = R::FindFunction(R::FindClass(L"PrimitiveComponent"), L"IsAnyRigidBodyAwake")) {
                     ue_wrap::ParamFrame f(awakeFn);
-                    if (ue_wrap::Call(mesh, f) && f.Get<bool>(L"ReturnValue")) *ok = 1;
+                    if (ue_wrap::Call(mesh, f) && f.Get<bool>(coop::i18n::TrW(L"ReturnValue"))) *ok = 1;
                 }
             }
         }

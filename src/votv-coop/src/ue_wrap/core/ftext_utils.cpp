@@ -7,6 +7,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "coop/text/i18n.h"
 
 #include <cstring>
 
@@ -69,7 +70,7 @@ bool MintEmpty() {
     // GetRaw bounds-checks against the frame size; the FText is the ReturnValue OUT param.
     // The frame is NOT UE-destructed on ~ParamFrame, so the returned FText's ref is pinned ->
     // these bytes stay valid for the whole process.
-    if (!f.GetRaw(L"ReturnValue", g_emptyBytes, kFTextSize)) {
+    if (!f.GetRaw(coop::i18n::TrW(L"ReturnValue"), g_emptyBytes, kFTextSize)) {
         UE_LOGW("ftext_utils::MintEmpty: GetRaw(ReturnValue) failed");
         return false;
     }
@@ -101,7 +102,7 @@ bool MintFText(const wchar_t* s, void* out) {
     // Same pin mechanism as MintEmpty: ~ParamFrame raw-frees without UE-destructing
     // the OUT FText, so its +1 ref (and these bytes' validity) deliberately leak --
     // the consumer's deep-copy (Array_Add in ui_laptop.addEmail) adds its own refs.
-    return f.GetRaw(L"ReturnValue", out, kFTextSize);
+    return f.GetRaw(coop::i18n::TrW(L"ReturnValue"), out, kFTextSize);
 }
 
 std::wstring FTextToString(const void* ftext) {
@@ -122,7 +123,7 @@ std::wstring FTextToString(const void* ftext) {
     // before ~ParamFrame raw-frees the frame. (The FString heap buffer itself leaks
     // by the same deliberate mechanism -- bounded by human email rates.)
     R::FString ret{};
-    if (!f.GetRaw(L"ReturnValue", &ret, sizeof(ret))) return {};
+    if (!f.GetRaw(coop::i18n::TrW(L"ReturnValue"), &ret, sizeof(ret))) return {};
     if (!ret.Data || ret.Num <= 1) return {};
     return std::wstring(ret.Data, static_cast<size_t>(ret.Num - 1));
 }

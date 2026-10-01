@@ -3,6 +3,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "coop/text/i18n.h"
 
 #include <string>
 
@@ -47,7 +48,7 @@ void* LoadObjectByPath(const wchar_t* fullObjectPath) {
         return nullptr;
     }
 
-    void* obj = f.Get<void*>(L"ReturnValue");
+    void* obj = f.Get<void*>(coop::i18n::TrW(L"ReturnValue"));
     if (obj) {
         // Log the loaded object's identity + package chain so a NAME COLLISION is visible: our pak
         // export is named `kerfurOmega_KelSkin` (same as the game's own mesh). If the outer/package

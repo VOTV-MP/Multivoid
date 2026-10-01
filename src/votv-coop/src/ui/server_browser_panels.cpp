@@ -14,6 +14,7 @@
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/umg_build.h"
+#include "coop/text/i18n.h"
 
 #include <windows.h>
 
@@ -142,7 +143,7 @@ void* DetailLine(void* col, int32_t size, const FLinearColor& c, bool wrap = fal
     return t;
 }
 
-std::string Sec(int s) { return std::to_string(s) + "s ago"; }
+std::string Sec(int s) { return std::to_string(s) + coop::i18n::Tr("s ago"); }
 
 // How the host's players reach it, counted by the link the host measures on each: the counts behind the
 // row's word, as a tail on the connection line. None when the host reports no one, which says nothing about
@@ -169,7 +170,7 @@ bool BuildDetails(void* parent) {
     // count changes with the selection and an auto-sized box would have slid the pane below it
     // on every click; a fill slot cannot do that, since its height comes from the column, not
     // its content.
-    void* col = SectionBody(parent, kPanel, L"Server info:", 1.f, 0.f);
+    void* col = SectionBody(parent, kPanel, coop::i18n::TrW(L"Server info:"), 1.f, 0.f);
     if (!col) return false;
     // The name is the panel's own subject and gets the emphasis the row gives it.
     g_dName    = Line{DetailLine(col, 20, kText), {}};
@@ -236,7 +237,7 @@ void Sync(bool force) {
         // Empty is a state with its own sentence, not five blank lines: a panel of empty labels
         // reads as a panel that failed to load.
         g_dName.SetColor(kDim);
-        g_dName.Set("Select a server");
+        g_dName.Set(coop::i18n::Tr("Select a server"));
         g_dWorld.Set("");
         g_dVersion.Set("");
         g_dPlayers.Set("");
@@ -290,13 +291,13 @@ void Sync(bool force) {
     } else {
         const int count = rows::Count();
         const uint64_t sinceMs = rows::MsSinceFetch();
-        g_sCount.Set(std::to_string(count) + (count == 1 ? " server" : " servers"));
+        g_sCount.Set(std::to_string(count) + " " + coop::i18n::Tr(count == 1 ? "server" : "servers"));
         // Always say when, and say just now for the sub-second case rather than dropping the
         // clause: written only for a positive elapsed time, the line vanished on a capture taken
         // in the same millisecond as a fetch, and a clause that appears and disappears is a
         // worse instrument than one that is always there.
-        g_sFresh.Set(std::string("updated ") +
-                     (sinceMs < 1000 ? "just now" : Sec(static_cast<int>(sinceMs / 1000u))));
+        g_sFresh.Set(coop::i18n::Tr("updated ") +
+                     (sinceMs < 1000 ? std::string(coop::i18n::Tr("just now")) : Sec(static_cast<int>(sinceMs / 1000u))));
     }
 
     // The alarm keys on consecutive failures, never on a clock: two failed attempts means the
@@ -325,7 +326,7 @@ void Sync(bool force) {
     // The name everyone else will see, phrased as an answer rather than as a claim about what
     // the player is doing (see the status pane's note). The Change name button edits exactly
     // this value.
-    g_sNick.Set("Your name: " + sm::Nickname());
+    g_sNick.Set(coop::i18n::Tr("Your name: ") + sm::Nickname());
 }
 
 }  // namespace ui::server_browser_panels
