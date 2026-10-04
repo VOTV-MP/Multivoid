@@ -14,6 +14,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/element/quiescence_drain.h"   // ArmGhostSweep
+#include "coop/element/registry.h"           // EidForActor, locals and mirrors alike
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_sound.h"           // client-own-grab pickup cue (native grab suppressed -> synthesize locally)
 #include "coop/props/prop_synth_key.h"
@@ -272,17 +273,19 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     // load's late tail is keyed yet unknown to the wire (never expressed, never bound), and the
     // player carrying one was invisible to the host. The skip test is tracker-known: a prop with a
     // live Element is genuinely shared and the pose stream alone mirrors it; an untracked one is
-    // expressed here, key and all, the moment a player first touches it.
+    // expressed here, key and all, the moment a player first touches it. A MIRROR counts: it is a
+    // prop another peer expressed, so the registry reverse is asked rather than the tracker's
+    // locals-only accessor. Read as untracked, a mirror went out as a spawn with no eid, which its
+    // owner refuses, followed by this peer's copy of its save record, which the owner applied.
     std::wstring keyStr = ue_wrap::prop::GetInteractableKeyString(heldActor);
-    if (!keyStr.empty() && keyStr != L"None" &&
-        PT::GetPropElementIdForActor(heldActor) != coop::element::kInvalidId) {
+    const coop::element::ElementId trackedEid = coop::element::Registry::Get().EidForActor(heldActor);
+    if (!keyStr.empty() && keyStr != L"None" && trackedEid != coop::element::kInvalidId) {
         // Logged with key and eid: "the pose stream suffices" holds only while the prop is actively
         // held and streamed, so a repro can tell a tracker-known decline from a never-received
         // spawn.
         UE_LOGI("[ROCK-DROP] EnsureHeldItemBroadcast DECLINE (tracker-known): cls='%ls' key='%ls' eid=%u "
                 "-- 'pose stream suffices' assumes an active stream; false if the prop is no longer held",
-                R::ClassNameOf(heldActor).c_str(), keyStr.c_str(),
-                static_cast<unsigned>(PT::GetPropElementIdForActor(heldActor)));
+                R::ClassNameOf(heldActor).c_str(), keyStr.c_str(), static_cast<unsigned>(trackedEid));
         return false;  // keyed AND tracker-known: the peer has it; pose stream suffices
     }
 
