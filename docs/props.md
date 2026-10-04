@@ -39,7 +39,9 @@ produces, addressed by key (`coop/props/prop_save_data`). Which classes those ar
 keep: it is whether the class declares a `getData` of its own, read from the live class chain, so a
 save-backed class the game adds is carried without a change here. A record that arrives for a prop
 this peer has not created yet waits under its key until that prop appears, because a key survives
-the destroy-and-recreate that made the record need to travel in the first place.
+the destroy-and-recreate that made the record need to travel in the first place. A newer record
+for the same key replaces the waiting one whether it applies at once or waits too, so an older
+record never lands on top of a newer one.
 
 On the host, a prop born during play -- a device's eject, a drop, a place -- gets its record from
 the finish-spawning drain a tick after the birth, because the Blueprint that spawned it fills its

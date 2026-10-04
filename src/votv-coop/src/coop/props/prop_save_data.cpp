@@ -220,9 +220,23 @@ void Unpark(std::map<std::wstring, Parked>::iterator it) {
     g_parked.erase(it);
 }
 
+// A newer record for a Key supersedes whatever waits under it, whether the newer one is applied at
+// once or parked: a predecessor left behind would be landed later by Drive or a birth, on top of it.
+void DropParked(const std::wstring& key) {
+    auto it = g_parked.find(key);
+    if (it != g_parked.end()) Unpark(it);
+}
+
+// After an apply of a parked record: drop its row only if the row is still that record. A parked
+// apply runs on a COPY of the record, since the node can be replaced or erased while loadData runs,
+// and a newer record that replaced it there must survive the older one's completion.
+void UnparkIfSame(const std::wstring& key, uint64_t seq) {
+    auto it = g_parked.find(key);
+    if (it != g_parked.end() && it->second.seq == seq) Unpark(it);
+}
+
 void Park(const std::wstring& key, SR::SaveRecord&& rec, uint8_t senderSlot, size_t bytes) {
-    auto existing = g_parked.find(key);
-    if (existing != g_parked.end()) Unpark(existing);   // a newer record replaces its own predecessor
+    DropParked(key);
     SenderUse& use = g_parkUse[senderSlot];
     while (use.count >= kMaxParkedPerSender || use.bytes + bytes > kMaxParkBytesPerSender) {
         // This sender's own oldest row goes, never another sender's.
@@ -291,17 +305,26 @@ bool TryApply(void* actor, const std::wstring& key, const SR::SaveRecord& rec) {
     return true;
 }
 
-// Apply to the live actor if there is one, park by Key if there is not.
-void LandRecord(const std::wstring& key, SR::SaveRecord&& rec, uint8_t senderSlot, size_t bytes) {
+// Apply to the live actor if there is one, park by Key if there is not. Both arrival paths land
+// here, so the predecessor rule is kept in one place. True when the record was applied.
+// `budgeted` spends the per-frame apply budget; the host's take of a client intent does not, its
+// rate being bounded per sender at the door.
+bool LandRecord(const std::wstring& key, SR::SaveRecord&& rec, uint8_t senderSlot, size_t bytes,
+                bool budgeted) {
+    // The predecessor goes BEFORE the apply, so a record parked under this Key while loadData runs
+    // can only be a newer one, and nothing below removes it.
+    DropParked(key);
     // The index only, never ResolveLiveActorByKey: that one falls back to a cold GUObjectArray
     // scan on a miss, and a join hands this lane hundreds of arrivals at once. A prop the index
     // does not know yet is parked and retried at O(1) on the next frame instead.
-    void* actor = (g_applyBudget > 0) ? PT::FindLiveActorByKey(key) : nullptr;
+    void* actor = (!budgeted || g_applyBudget > 0) ? PT::FindLiveActorByKey(key) : nullptr;
     if (actor && TryApply(actor, key, rec)) {
-        --g_applyBudget;
-        return;
+        if (budgeted) --g_applyBudget;
+        return true;
     }
+    if (g_parked.count(key)) return false;   // a newer record arrived during the apply; it stays
     Park(key, std::move(rec), senderSlot, bytes);
+    return false;
 }
 
 bool SendBody(coop::net::Session* s, int peerSlot, const std::wstring& key,
@@ -513,7 +536,7 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
         return;
     }
     if (!intent) {
-        LandRecord(key, std::move(rec), senderSlot, body.size());
+        LandRecord(key, std::move(rec), senderSlot, body.size(), /*budgeted=*/true);
         return;
     }
     // The host takes a client's claim: apply or park it locally, then re-publish the result as the
@@ -529,13 +552,12 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
                 key.c_str(), static_cast<unsigned>(senderSlot));
         return;
     }
-    if (actor && TryApply(actor, key, rec)) {
+    if (LandRecord(key, SR::SaveRecord(rec), senderSlot, body.size(), /*budgeted=*/false)) {
         UE_LOGI("prop_save_data: HOST took a client record (key '%ls', slot %u) -- republishing",
                 key.c_str(), static_cast<unsigned>(senderSlot));
     } else {
         UE_LOGI("prop_save_data: HOST parked a client record (key '%ls', slot %u) -- "
                 "republishing", key.c_str(), static_cast<unsigned>(senderSlot));
-        Park(key, SR::SaveRecord(rec), senderSlot, body.size());
     }
     SendBody(&s, -1, key, rec);
 }
@@ -547,9 +569,10 @@ bool ApplyParked(void* actor, const std::wstring& key) {
     // ApplyRecord's bool is the DISPATCH's, not the Blueprint's: Aprop_C::loadData never assigns
     // its `return` out-param at all, so there is no refusal to read. A failure here is a codec or
     // reflection failure, and the record stays parked for the next frame to retry.
-    if (!TryApply(actor, key, it->second.rec)) return false;
+    const uint64_t seq = it->second.seq;
+    if (!TryApply(actor, key, SR::SaveRecord(it->second.rec))) return false;
     UE_LOGI("prop_save_data: parked record applied at birth (key '%ls')", key.c_str());
-    Unpark(it);
+    UnparkIfSame(key, seq);
     return true;
 }
 
@@ -600,31 +623,33 @@ void Drive() {
     while (looked < kParkScanPerFrame && g_applyBudget > 0 && !g_parked.empty()) {
         if (it == g_parked.end()) { it = g_parked.begin(); g_parkCursor.clear(); }
         ++looked;
+        // The Key by VALUE, and the walk resumes by it rather than by `it`: loadData re-runs the
+        // prop's init(), from which a re-entrant apply or land for this same Key can erase or
+        // replace the node this iterator names.
+        const std::wstring key = it->first;
         void* actor = (it->second.failures < kMaxApplyFailures)
-                          ? PT::FindLiveActorByKey(it->first) : nullptr;
+                          ? PT::FindLiveActorByKey(key) : nullptr;
         if (actor) {
             // The budget buys a DISPATCH, not a success: a row whose apply fails past the base
             // capture has already paid for one, and counting only successes let a handful of
             // failing rows pay a dispatch each, every frame, forever.
             --g_applyBudget;
-            // The Key by VALUE: TryApply reads it after loadData has run, and loadData re-runs the
-            // prop's init(), from which a re-entrant apply for this same Key would erase the node
-            // this iterator names.
-            const std::wstring key = it->first;
-            if (TryApply(actor, key, it->second.rec)) {
+            const uint64_t seq = it->second.seq;
+            if (TryApply(actor, key, SR::SaveRecord(it->second.rec))) {
                 ++applied;
-                const auto dead = it++;
-                Unpark(dead);
-                continue;
-            }
-            if (++it->second.failures == kMaxApplyFailures) {
-                UE_LOGW("prop_save_data: the record for key '%ls' failed to apply %d times -- it "
-                        "stays parked but is no longer retried; that prop keeps its own state",
-                        it->first.c_str(), kMaxApplyFailures);
+                UnparkIfSame(key, seq);
+            } else {
+                auto row = g_parked.find(key);
+                if (row != g_parked.end() && row->second.seq == seq &&
+                    ++row->second.failures == kMaxApplyFailures) {
+                    UE_LOGW("prop_save_data: the record for key '%ls' failed to apply %d times -- "
+                            "it stays parked but is no longer retried; that prop keeps its own "
+                            "state", key.c_str(), kMaxApplyFailures);
+                }
             }
         }
-        g_parkCursor = it->first;
-        ++it;
+        g_parkCursor = key;
+        it = g_parked.upper_bound(key);
     }
     if (applied && !g_parked.empty()) {
         UE_LOGI("prop_save_data: applied %d parked record(s) this frame (%zu still parked)",
