@@ -178,9 +178,12 @@ bool OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* localPla
             // is no before-load: an absent eid is a host-only or already-gone prop this peer never
             // mirrored, and the destroy is an idempotent no-op. Arming it would pin the order
             // owner's pending-work flag forever and run the full-array reconcile several times a
-            // second in perpetuity.
-            if (coop::join_membership_sweep::HasLoadTailQuiesced()) {
-                UE_LOGI("remote_prop::OnDestroy: key '%ls' eid=%u no local actor in STEADY state (load tail "
+            // second in perpetuity. The host has no load tail at all: its world is its own, its
+            // quiescence latch is a client's join sweep and never fires there, and the drain that
+            // applies a deferred destroy is client-only, so on the host it is always this no-op.
+            if (coop::prop_element_tracker::SessionIsHost() ||
+                coop::join_membership_sweep::HasLoadTailQuiesced()) {
+                UE_LOGI("remote_prop::OnDestroy: key '%ls' eid=%u no local actor in STEADY state (the host, or load tail "
                         "quiesced) -- no-op drop (nothing to destroy; not a before-load race; no perpetual defer)",
                         keyW.c_str(), payload.elementId);
                 return false;
