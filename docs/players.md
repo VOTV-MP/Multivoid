@@ -142,7 +142,10 @@ ever setting the dead flag. Every one of them, dying included, asks for that tra
 function, and it carries the blueprint that asked as an argument. The mod watches that function
 at the script-body gate and reads the author: the pause menu's own quit is allowed through,
 because the player asked to leave, and anything else in a live co-op session is refused
-(`coop/player/run_end_travel`).
+(`coop/player/run_end_travel`). A peer's puppet is a player body too and its own graph runs on
+this machine, so a false death of the copy reaches the same travel: that one is refused whatever
+the revive can do, and this machine's player is not revived for it; only the black screen the
+copy's chain put up is cleared.
 
 A refused run-ending is answered with a revive in its place: the position at the base gate,
 health, the dead flag, the ragdoll, the pause an ending set, and the screen artifacts the travel

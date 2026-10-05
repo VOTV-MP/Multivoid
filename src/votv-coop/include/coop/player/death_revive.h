@@ -43,6 +43,11 @@ void NoteRunEndSeamReady(bool ready);
 // in the revive's line. Game thread (the gate's callback contract).
 void NoteRunEndCancelled(void* author, const wchar_t* authorClass, bool authorIsLocalPawn);
 
+// A run-ending travel a peer's puppet authored here was refused: this machine's player did not die
+// and is not revived, but the copy's death chain may have put a black screen on this viewport, which
+// is cleared over the cleanup window. Any thread.
+void NotePeerPuppetRunEndCancelled();
+
 // The unconditional watchdog, driven from the thread that POSTS the pump composite rather than
 // from inside it -- a lens found it riding in the composite, where a stalled game thread stops
 // the watchdog and the task it watches together. If a travel was cancelled and no revive has run

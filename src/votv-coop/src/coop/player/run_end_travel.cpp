@@ -170,6 +170,20 @@ sg::Verdict OnLoadLevelPre(const sg::Call& call) {
     }
     g_menuSeen.fetch_add(1, std::memory_order_relaxed);
 
+    // A peer's puppet is a mainPlayer_C too, and its own graph runs here: a false death on the copy --
+    // fire only this machine shows, a hit no impact cancel saw -- reaches the same travel. Nothing of
+    // this machine's run ended, so the travel is refused whatever the revive can do, and this
+    // machine's player is not revived: only the black screen the copy's chain put up is cleared.
+    if (author && author != coop::players::Registry::Get().Local() &&
+        coop::players::Registry::Get().IsPuppet(author)) {
+        g_cancelled.fetch_add(1, std::memory_order_relaxed);
+        UE_LOGW("run_end_travel: REFUSED lib_C::loadLevel(\"menu\") authored by a peer's puppet "
+                "(slot %u) -- its run did not end on this machine; nothing is revived here",
+                static_cast<unsigned>(coop::players::Registry::Get().PeerIdOfActor(author)));
+        coop::death_revive::NotePeerPuppetRunEndCancelled();
+        return sg::Verdict::Cancel;
+    }
+
     const Judgement v = JudgeMenuTravel(author);
     if (v != Judgement::Cancel) {
         // Only the two that say something about this seam are worth a line per travel: a solo

@@ -443,6 +443,10 @@ bool RunRevive(coop::net::Session& session, void* pawn) {
 constexpr int kScreenCleanupTicks = 120;
 constexpr int kScreenCleanupStride = 8;
 int g_screenCleanupLeft = 0;
+// The black screen a peer's puppet's false death left on this viewport: its own window, so this
+// machine's revive state is never touched by it.
+std::atomic<bool> g_puppetResidue{false};
+int g_puppetBlackLeft = 0;
 
 // Re-attempt the three screen artifacts until they are provably gone; true when nothing is
 // left. Idempotent, one class lookup per artifact once clear.
@@ -492,6 +496,8 @@ void NoteRunEndCancelled(void* author, const wchar_t* authorClass, bool authorIs
     g_cancelAtMsAtomic.store(::GetTickCount64(), std::memory_order_release);
 }
 
+void NotePeerPuppetRunEndCancelled() { g_puppetResidue.store(true, std::memory_order_release); }
+
 void OnSessionStart() {
     // Not the game thread (see the window's own note): every field it touches here is atomic.
     g_pawnFirstMs.store(0, std::memory_order_relaxed);
@@ -501,6 +507,8 @@ void OnSessionStart() {
     g_armed.store(false, std::memory_order_release);
     g_revivePending.store(false, std::memory_order_release);
     g_cancelAtMsAtomic.store(0, std::memory_order_release);
+    g_puppetResidue.store(false, std::memory_order_release);
+    g_puppetBlackLeft = 0;
     g_wasDead = false;
     g_reviveRanThisDeath = false;
     g_lastReviveOk = false;
@@ -597,6 +605,17 @@ void Tick(coop::net::Session& session, void* localPawn) {
         g_cancelAtMs = 0;
     }
     if (haveState) g_wasDead = dead;
+
+    // A peer's puppet's refused run-ending: only its black screen, retried on the cleanup stride.
+    if (g_puppetResidue.exchange(false, std::memory_order_acq_rel)) g_puppetBlackLeft = kScreenCleanupTicks;
+    if (g_puppetBlackLeft > 0) {
+        const int tick = kScreenCleanupTicks - g_puppetBlackLeft--;
+        if (tick % kScreenCleanupStride == 0 && ClearBlackScreen()) {
+            g_puppetBlackLeft = 0;
+            UE_LOGI("death_revive: a peer puppet's run-ending left no black screen here (checked after %d "
+                    "tick(s))", tick + 1);
+        }
+    }
 
     // The deferred revive.
     if (g_revivePending.load(std::memory_order_acquire)) {
