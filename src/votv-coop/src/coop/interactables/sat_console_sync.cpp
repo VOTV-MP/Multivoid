@@ -402,9 +402,10 @@ void HostOnBlob(uint8_t slot, const std::vector<uint8_t>& blob) {
     }
     // A terminal still running a command keeps its context: its latent continuation reads the dish,
     // name and panel it started with. The game's own terminal refuses a line while busy, so does this.
-    bool busy = true;
-    if (!SC::ReadProcessing(t->pin.Raw(), busy) || busy) {
-        AnswerRefused(slot, line, busy ? kBusyLine : kErrLine);
+    bool busy = false;
+    const bool readOk = SC::ReadProcessing(t->pin.Raw(), busy);
+    if (!readOk || busy) {
+        AnswerRefused(slot, line, readOk ? kBusyLine : kErrLine);   // an unreadable flag is not "busy"
         return;
     }
     // The line runs only in the context it names. One that cannot be set up is answered err and not
