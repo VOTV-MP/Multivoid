@@ -545,7 +545,7 @@ enum class ReliableKind : uint8_t {
     // From the presser, relayed: a wall-unit reel slot insert or eject. ReelSlotPayload.
     ReelSlot = 102,
 
-    // Host to all: the daily task mirror. TaskNewStatePayload.
+    // Host to all, and to a joiner at its world-ready: the daily task mirror. TaskNewStatePayload.
     TaskNewState = 103,
 
     // Client to host: my eject birthed this prop in my hands; author it. PropDropIntentPayload;

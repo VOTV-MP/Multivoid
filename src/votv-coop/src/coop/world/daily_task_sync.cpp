@@ -28,6 +28,15 @@ uint64_t g_nextPoll = 0;
 uint64_t g_lastHash = 0;
 bool     g_haveHash = false;
 
+// CLIENT: the latest host task not yet applied, retried at the poll cadence until it lands whole;
+// a newer one replaces it. Game-thread state. The epoch moves at each disconnect, so a task the
+// last session posted is dropped instead of reaching the next one.
+std::atomic<uint32_t> g_epoch{0};
+coop::net::TaskNewStatePayload g_pending{};
+bool     g_havePending = false;
+bool     g_saidPending = false;
+uint64_t g_nextRetry = 0;
+
 uint64_t NowMs() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -73,6 +82,51 @@ bool FillPayload(coop::net::TaskNewStatePayload& p) {
     return true;
 }
 
+// Write a whole task into the local taskNew. A task already resolvable is read first, so the usual
+// failure, the save slot not up yet, writes nothing. A failure past that point leaves the fields
+// written so far; the retry writes every field again, so the struct still converges on this task.
+// The writes set the task's state only: no reward runs from here.
+bool ApplyTask(const coop::net::TaskNewStatePayload& cp) {
+    DT::View v{};
+    if (!DT::Read(v)) return false;
+    int32_t buf[64];
+    auto apply = [&buf](DT::Which which, const int16_t* src, uint8_t count) {
+        for (uint8_t i = 0; i < count; ++i) buf[i] = src[i];
+        return DT::WriteArray(which, buf, count);
+    };
+    const bool okScalars = DT::WriteScalars(cp.active != 0, cp.rewardSig, cp.rewardSat,
+                                            cp.reelBig, cp.reelSmall);
+    const bool okA = apply(DT::Which::SigRequired,    cp.sigRequired,    cp.sigRequiredCount);
+    const bool okB = apply(DT::Which::SigCompleted,   cp.sigCompleted,   cp.sigCompletedCount);
+    const bool okC = apply(DT::Which::RequiredDishes, cp.requiredDishes, cp.requiredDishesCount);
+    if (!okScalars || !okA || !okB || !okC) {
+        if (!g_saidPending)
+            UE_LOGW("[task] TaskNewState apply incomplete (scalars=%d arrays=%d/%d/%d) -- kept, retried",
+                    okScalars, okA, okB, okC);
+        return false;
+    }
+    return true;
+}
+
+// CLIENT, game thread: apply the pending task, or keep it for the next retry.
+void TryApplyPending() {
+    if (!g_havePending) return;
+    if (!ApplyTask(g_pending)) {
+        if (!g_saidPending) {
+            g_saidPending = true;
+            UE_LOGI("[task] taskNew not applicable yet -- the host's task kept, retried each second");
+        }
+        g_nextRetry = NowMs() + kPollMs;
+        return;
+    }
+    g_havePending = false;
+    g_saidPending = false;
+    UE_LOGI("[task] taskNew mirrored (active=%u sigReq=%u sigDone=%u dishes=%u "
+            "reelBig=%.1f reelSmall=%.1f)",
+            g_pending.active, g_pending.sigRequiredCount, g_pending.sigCompletedCount,
+            g_pending.requiredDishesCount, g_pending.reelBig, g_pending.reelSmall);
+}
+
 }  // namespace
 
 void Install(coop::net::Session* session) {
@@ -86,8 +140,12 @@ void Install(coop::net::Session* session) {
 void Tick() {
     UE_ASSERT_GAME_THREAD("daily_task_sync::Tick");
     coop::net::Session* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
+    if (!s || !s->connected()) return;
     const uint64_t now = NowMs();
+    if (s->role() != coop::net::Role::Host) {
+        if (g_havePending && now >= g_nextRetry) TryApplyPending();
+        return;
+    }
     if (now < g_nextPoll) return;
     g_nextPoll = now + kPollMs;
     coop::net::TaskNewStatePayload p{};
@@ -105,6 +163,20 @@ void Tick() {
             p.reelBig, p.reelSmall);
 }
 
+void SendCurrentToSlot(int slot) {
+    UE_ASSERT_GAME_THREAD("daily_task_sync::SendCurrentToSlot");
+    coop::net::Session* s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() != coop::net::Role::Host) return;
+    coop::net::TaskNewStatePayload p{};
+    if (!FillPayload(p)) {
+        UE_LOGW("[task] slot %d world-ready -- taskNew unresolvable, no task sent", slot);
+        return;
+    }
+    s->SendReliableToSlot(slot, coop::net::ReliableKind::TaskNewState, &p, sizeof(p));
+    UE_LOGI("[task] current taskNew sent to slot %d (active=%u sigReq=%u sigDone=%u dishes=%u)",
+            slot, p.active, p.sigRequiredCount, p.sigCompletedCount, p.requiredDishesCount);
+}
+
 void OnTaskNewState(const coop::net::TaskNewStatePayload& p, uint8_t senderSlot) {
     coop::net::Session* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
@@ -120,29 +192,14 @@ void OnTaskNewState(const coop::net::TaskNewStatePayload& p, uint8_t senderSlot)
         return;
     }
     const coop::net::TaskNewStatePayload cp = p;
-    GT::Post([cp]() {
-        // Widen i16 -> the engine's int32 arrays; ONE GT task = the whole apply is atomic
-        // w.r.t. every BP reader (all synchronous -- censused: getSigObj, kerfurOmega.findTask).
-        int32_t buf[64];
-        auto apply = [&buf](DT::Which which, const int16_t* src, uint8_t count) {
-            for (uint8_t i = 0; i < count; ++i) buf[i] = src[i];
-            return DT::WriteArray(which, buf, count);
-        };
-        const bool okScalars = DT::WriteScalars(cp.active != 0, cp.rewardSig, cp.rewardSat,
-                                                cp.reelBig, cp.reelSmall);
-        const bool okA = apply(DT::Which::SigRequired,    cp.sigRequired,    cp.sigRequiredCount);
-        const bool okB = apply(DT::Which::SigCompleted,   cp.sigCompleted,   cp.sigCompletedCount);
-        const bool okC = apply(DT::Which::RequiredDishes, cp.requiredDishes, cp.requiredDishesCount);
-        if (!okScalars || !okA || !okB || !okC) {
-            UE_LOGW("[task] TaskNewState apply incomplete (scalars=%d arrays=%d/%d/%d) -- "
-                    "taskNew unresolvable or an array rebuild failed; next broadcast retries",
-                    okScalars, okA, okB, okC);
-            return;
-        }
-        UE_LOGI("[task] taskNew mirrored (active=%u sigReq=%u sigDone=%u dishes=%u "
-                "reelBig=%.1f reelSmall=%.1f)",
-                cp.active, cp.sigRequiredCount, cp.sigCompletedCount, cp.requiredDishesCount,
-                cp.reelBig, cp.reelSmall);
+    const uint32_t epoch = g_epoch.load(std::memory_order_acquire);
+    GT::Post([cp, epoch]() {
+        if (epoch != g_epoch.load(std::memory_order_acquire)) return;  // posted by a session now gone
+        // Latest wins: this task replaces one still pending. An apply that succeeds is one GT task, so
+        // no BP reader (all synchronous -- censused: getSigObj, kerfurOmega.findTask) sees it half done.
+        g_pending = cp;
+        g_havePending = true;
+        TryApplyPending();
     });
 }
 
@@ -151,6 +208,10 @@ void OnDisconnect() {
     g_nextPoll = 0;
     g_lastHash = 0;
     g_haveHash = false;
+    g_epoch.fetch_add(1, std::memory_order_acq_rel);
+    g_havePending = false;
+    g_saidPending = false;
+    g_nextRetry = 0;
     UE_LOGI("[task] daily_task_sync reset (disconnect)");
 }
 

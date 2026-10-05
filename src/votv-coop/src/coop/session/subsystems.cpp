@@ -370,6 +370,7 @@ void ConnectReplayForSlot(int slot) {
     coop::world_actor_sync::QueueConnectBroadcastForSlot(slot);  // existing event WorldActors -> joiner
     coop::balance_sync::SendCurrentToSlot(slot);  // host's current balance
     coop::upgrade_sync::SendCurrentToSlot(slot);  // and the upgrade levels: the joiner's save was taken at the handshake
+    coop::daily_task_sync::SendCurrentToSlot(slot);  // and the daily task: a change in its load window was hashed but never sent to it
     // The host-to-client apply-blob push is not here: this fires at ClientWorldReady, after the
     // joiner loaded its world, so the blob would miss the pre-materialise hook; the host tick's
     // connect-edge detector drives it pre-world instead. No join teleport here either: the
