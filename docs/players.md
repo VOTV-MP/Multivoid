@@ -127,7 +127,13 @@ impact (a vehicle, a thrown prop, a coin) dispatches the game's impact events on
 was hit, and the game's health is a per-machine singleton, so an impact resolving against a
 puppet in the host's world would drain the host; an interceptor cancels the three impact entries
 on any body that is not the local possessed player, and the victim's own machine computes the
-same contact natively (`coop/player/player_damage`). Enemy hits are the one relay: the host runs
+same contact natively (`coop/player/player_damage`). The damage verb itself is refused on a
+peer's puppet the same way: fire and the other status effects tick it from the burning body's own
+graph, and a puppet set alight by a fire only this machine shows burned on and shook this
+machine's camera once a second. The body's own ignite, attempt-ignite and start-burning
+functions are refused on a puppet too: its burn loop turns this machine's view and plays its pain
+sound every second, and only its own tick, which a puppet does not run, would put it out. The fire
+is not yet a shared hazard: the owner does not burn from a fire only another machine shows. Enemy hits are the one relay: the host runs
 the enemies, and when one hits a peer's puppet the host sends that peer a reliable damage event,
 which the peer applies on its own pawn, armour and inventory mitigation included, so its health
 stream and hurt flash follow.

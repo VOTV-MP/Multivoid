@@ -11,6 +11,7 @@
 #include "coop/dev/container_selftest.h"  // [dev] container-lane e2e circle (organic addLoot)
 #include "coop/dev/container_view_drill.h"  // [dev] a container view closes as its opener leaves reach
 #include "coop/dev/death_seam_census.h"  // [dev] every element end the death seam announces
+#include "coop/dev/damage_probe.h"  // [dev] every player damage verb call, and by whom
 #include "coop/dev/delivery_census_probe.h"  // COUNT the delivery-path actors
 #include "coop/dev/desk_diag.h"  // [dev] desk/console divergence census
 #include "coop/dev/door_drill.h"  // [dev] whether a remote player counts in a door's own sensor
@@ -247,6 +248,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::run_and_wait_selftest::Tick();  // [dev] the wait's endings, once (single latched read when off)
     coop::dev::end_play_probe::Tick();  // [dev] the end-of-play seam against the K2 seam (single latched read when off)
     coop::dev::death_seam_census::Tick();  // [dev] every element end the death seam announces (latched read when off)
+    coop::dev::damage_probe::Tick();  // [dev] every player damage verb call: whose body, source, caller (latched read when off)
     coop::dev::grime_drill::Tick(&session);  // [dev] the grime drill's legs (a latched read when off)
     coop::dev::vitals_keepalive::Tick();  // [dev] long-exposure keepalive (single latched read when off)
 }

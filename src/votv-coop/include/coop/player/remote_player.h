@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include <chrono>
+
 #include "coop/element/lerp_window.h"
 #include "coop/net/protocol.h"
 #include "coop/player/puppet_body_yaw.h"
@@ -109,6 +111,7 @@ public:
     int32_t RagdollBodyIdx() const { return ragdoll_.BodyIdx(); }
 
     void* actor() const { return actor_; }
+    void ShowBurning(bool burning);
 
 private:
     // Apply curPos_, curYaw_ and curSpeed_ to the engine actor and the AnimBP. Called by Tick once
@@ -200,6 +203,12 @@ private:
     // teardown) lives in coop/player/remote_player_ragdoll.h; the glue here keys off its returns
     // (a stop resets bodyYaw_, an applied pose sets dirty_). Torn down in Destroy.
     RagdollDisplay   ragdoll_;
+    // The flame shown on this puppet, from the owner's burning bit: only the body's burningEffect
+    // component, switched on and off; never ignite, its damage loop, its 2D pain sound or its camera
+    // turn, which are the owner's. Re-asserted while the bit holds, so a respawned body shows it again.
+    bool             burningShown_ = false;
+    bool             burningTried_ = false;   // a switch to the other state was attempted and not yet taken
+    std::chrono::steady_clock::time_point burningNextTry_{};
     ue_wrap::FVector targetPos_{};
     float            targetYaw_ = 0.f;
     float            targetPitch_ = 0.f;
