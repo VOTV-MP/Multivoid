@@ -14,7 +14,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/desk/console_desk.h"  // Instance: the desk a host terminal names as its panel
-#include "ue_wrap/desk/dish.h"          // IndexOf, DishByIndex
+#include "ue_wrap/desk/dish.h"          // IndexOf, DishByIndex, Count
 #include "ue_wrap/desk/sat_console.h"
 #include "ue_wrap/engine/world_identity.h"
 
@@ -102,6 +102,7 @@ std::vector<Terminal> g_terms;
 bool g_saidRefused[kMaxPeers] = {};
 bool g_saidMalformed[kMaxPeers] = {};
 bool g_saidNoTerminal[kMaxPeers] = {};
+bool g_saidNoContext[kMaxPeers] = {};
 
 // CLIENT: the host's busy level for this terminal, and whether a line this terminal ran itself holds
 // the flag: the mirror sets it while the host's terminal is busy and clears only what it set.
@@ -330,13 +331,28 @@ Terminal* TerminalFor(uint8_t slot, const std::string& guid) {
     return &g_terms.back();
 }
 
-void ApplyContext(Terminal& t, int32_t dish, const std::wstring& name) {
-    if (t.haveContext && dish == t.dish && name == t.name) return;
-    void* d = dish >= 0 ? ue_wrap::dish::DishByIndex(dish) : nullptr;
-    if (!SC::CallInit(t.pin.Raw(), name, false, d)) return;
+// Whether a terminal stands in the context a line names. A dish index that does not resolve is not
+// ROOT: the line waits for its dish rather than running against none, and nothing is kept, so the
+// next line with the same index tries again. An index past the host's dishes is no dish at all.
+enum class Context { Ready, NotYet, Bad };
+
+Context ApplyContext(Terminal& t, int32_t dish, const std::wstring& name) {
+    if (t.haveContext && dish == t.dish && name == t.name) return Context::Ready;
+    void* d = nullptr;
+    if (dish >= 0) {
+        d = ue_wrap::dish::DishByIndex(dish);
+        if (!d) {
+            const int32_t count = ue_wrap::dish::Count();
+            return count > 0 && dish >= count ? Context::Bad : Context::NotYet;
+        }
+    }
+    // An init that fails may have set part of the context: nothing is kept, so the next line inits again.
+    t.haveContext = false;
+    if (!SC::CallInit(t.pin.Raw(), name, false, d)) return Context::NotYet;
     t.haveContext = true;
     t.dish = dish;
     t.name = name;
+    return Context::Ready;
 }
 
 void HostOnBlob(uint8_t slot, const std::vector<uint8_t>& blob) {
@@ -384,8 +400,27 @@ void HostOnBlob(uint8_t slot, const std::vector<uint8_t>& blob) {
         AnswerRefused(slot, line, kBusyLine);  // the terminal cannot take the line, as the game says it
         return;
     }
+    // A terminal still running a command keeps its context: its latent continuation reads the dish,
+    // name and panel it started with. The game's own terminal refuses a line while busy, so does this.
+    bool busy = true;
+    if (!SC::ReadProcessing(t->pin.Raw(), busy) || busy) {
+        AnswerRefused(slot, line, busy ? kBusyLine : kErrLine);
+        return;
+    }
+    // The line runs only in the context it names. One that cannot be set up is answered err and not
+    // retried: a command with an effect in the world must not run twice.
+    const Context ctx = ApplyContext(*t, dish < kNoDish ? kNoDish : dish, name);
+    if (ctx != Context::Ready) {
+        if (!g_saidNoContext[slot]) {
+            g_saidNoContext[slot] = true;
+            UE_LOGW("sat_console: HOST no context for slot %u's line (dish %d: %s) -- answered err",
+                    static_cast<unsigned>(slot), dish,
+                    ctx == Context::Bad ? "past the host's dishes" : "not resolved, or the init failed");
+        }
+        AnswerRefused(slot, line, kErrLine);
+        return;
+    }
     if (spawns) t->nextSpawnOk = now + kSpawnEvery;
-    ApplyContext(*t, dish < kNoDish ? kNoDish : dish, name);
     SC::WriteUsed(t->pin.Raw(), SC::FindPanelByName(used));
     UE_LOGI("sat_console: HOST runs '%ls' for slot %u (dish %d)", Printable(line).c_str(),
             static_cast<unsigned>(slot), dish);
@@ -504,7 +539,7 @@ void OnPeerGone(uint8_t slot) {
     if (slot >= kMaxPeers) return;
     g_asm.ClearSlot(slot);
     g_out[slot] = Outbox{};
-    g_saidRefused[slot] = g_saidMalformed[slot] = g_saidNoTerminal[slot] = false;
+    g_saidRefused[slot] = g_saidMalformed[slot] = g_saidNoTerminal[slot] = g_saidNoContext[slot] = false;
     for (Terminal& t : g_terms) {
         if (t.slot != slot) continue;
         t.slot = -1;  // its command, if any, runs to its end; the terminal waits for its typist
@@ -522,6 +557,7 @@ void OnDisconnect() {
     for (bool& b : g_saidRefused) b = false;
     for (bool& b : g_saidMalformed) b = false;
     for (bool& b : g_saidNoTerminal) b = false;
+    for (bool& b : g_saidNoContext) b = false;
     g_asm.Clear();
     if (g_counts.linesSent || g_counts.linesRun)
         UE_LOGI("sat_console: session end -- %llu line(s) sent to the host, %llu run for clients",

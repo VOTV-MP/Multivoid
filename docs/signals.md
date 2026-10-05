@@ -174,7 +174,11 @@ tower's state, the debug and joke commands that spawn or destroy things -- is re
 client and sent to the host with the terminal's context. The host keeps a terminal of the game's
 own class for each typist, never shown, and runs the line there, so the command happens once, in
 the host's world, and its results cross by their own lanes; every line that terminal prints comes
-back to its typist alone, and so does its busy state. A line whose effect is the typist's own -- its
+back to its typist alone, and so does its busy state. A line runs only once the host's terminal is
+idle and set to the dish and name the line carried; a terminal still running a command answers it
+busy, and a dish the host cannot resolve yet, or an init that fails, answers it err rather than
+running it against another context. A line is never re-run on its own, since a command such as an
+eject has an effect in the world. A line whose effect is the typist's own -- its
 compass, its terminal, the desk's radar filter and sounds on its machine -- runs where it was typed
 (`coop/interactables/sat_console_sync`, the command table in `coop/interactables/sat_console_table`).
 
