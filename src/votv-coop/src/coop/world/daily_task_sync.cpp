@@ -8,7 +8,9 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/engine/world_identity.h"
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -19,6 +21,7 @@ namespace {
 
 namespace DT = ue_wrap::daily_task;
 namespace GT = ue_wrap::game_thread;
+namespace WI = ue_wrap::world_identity;
 
 constexpr uint64_t kPollMs = 1000;  // host change-hash cadence (writers fire a few times/day)
 
@@ -36,6 +39,11 @@ coop::net::TaskNewStatePayload g_pending{};
 bool     g_havePending = false;
 bool     g_saidPending = false;
 uint64_t g_nextRetry = 0;
+void*    g_pendingWorld = nullptr;  // the world the pending task arrived in; another world drops it
+
+// HOST: the joiners still owed the whole task -- its world-ready send could not be made (the task
+// unresolvable, the send refused). Retried at the poll cadence until sent or the slot is gone.
+std::array<bool, coop::net::kMaxPeers> g_owed{};
 
 uint64_t NowMs() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -108,9 +116,16 @@ bool ApplyTask(const coop::net::TaskNewStatePayload& cp) {
     return true;
 }
 
-// CLIENT, game thread: apply the pending task, or keep it for the next retry.
+// CLIENT, game thread: apply the pending task, or keep it for the next retry. A task that arrived in
+// another world is dropped: the host sends the new world its own at that world's world-ready.
 void TryApplyPending() {
     if (!g_havePending) return;
+    if (g_pendingWorld && WI::CurrentWorld() != g_pendingWorld) {
+        g_havePending = false;
+        g_saidPending = false;
+        UE_LOGI("[task] a pending task from the previous world dropped -- this world's comes at its world-ready");
+        return;
+    }
     if (!ApplyTask(g_pending)) {
         if (!g_saidPending) {
             g_saidPending = true;
@@ -148,6 +163,11 @@ void Tick() {
     }
     if (now < g_nextPoll) return;
     g_nextPoll = now + kPollMs;
+    for (int slot = 1; slot < static_cast<int>(coop::net::kMaxPeers); ++slot) {
+        if (!g_owed[slot]) continue;
+        if (!s->IsSlotConnected(slot)) { g_owed[slot] = false; continue; }
+        SendCurrentToSlot(slot);
+    }
     coop::net::TaskNewStatePayload p{};
     if (!FillPayload(p)) return;  // taskNew unresolvable (menu / booting) -- retry next poll
     const uint64_t h = HashPayload(p);
@@ -167,12 +187,17 @@ void SendCurrentToSlot(int slot) {
     UE_ASSERT_GAME_THREAD("daily_task_sync::SendCurrentToSlot");
     coop::net::Session* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
+    if (slot < 1 || slot >= static_cast<int>(coop::net::kMaxPeers)) return;
     coop::net::TaskNewStatePayload p{};
-    if (!FillPayload(p)) {
-        UE_LOGW("[task] slot %d world-ready -- taskNew unresolvable, no task sent", slot);
+    const bool filled = FillPayload(p);
+    if (!filled || !s->SendReliableToSlot(slot, coop::net::ReliableKind::TaskNewState, &p, sizeof(p))) {
+        if (!g_owed[slot])
+            UE_LOGW("[task] slot %d -- the task could not be sent (%s); owed, retried each second", slot,
+                    filled ? "send refused" : "taskNew unresolvable");
+        g_owed[slot] = true;
         return;
     }
-    s->SendReliableToSlot(slot, coop::net::ReliableKind::TaskNewState, &p, sizeof(p));
+    g_owed[slot] = false;
     UE_LOGI("[task] current taskNew sent to slot %d (active=%u sigReq=%u sigDone=%u dishes=%u)",
             slot, p.active, p.sigRequiredCount, p.sigCompletedCount, p.requiredDishesCount);
 }
@@ -199,6 +224,7 @@ void OnTaskNewState(const coop::net::TaskNewStatePayload& p, uint8_t senderSlot)
         // no BP reader (all synchronous -- censused: getSigObj, kerfurOmega.findTask) sees it half done.
         g_pending = cp;
         g_havePending = true;
+        g_pendingWorld = WI::CurrentWorld();
         TryApplyPending();
     });
 }
@@ -212,6 +238,8 @@ void OnDisconnect() {
     g_havePending = false;
     g_saidPending = false;
     g_nextRetry = 0;
+    g_pendingWorld = nullptr;
+    g_owed.fill(false);
     UE_LOGI("[task] daily_task_sync reset (disconnect)");
 }
 

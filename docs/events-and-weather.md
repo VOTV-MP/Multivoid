@@ -149,9 +149,10 @@ mirrored from either side (`coop/world/email_sync`). The daily task is host-auth
 every live writer of it runs only on the host: the task creation is part of the midnight a
 client's clock never reaches, and the drone sale is suppressed on clients; the host polls a change hash and sends the
 task state, and sends it whole to a joiner at its world-ready, since a change during its load
-was hashed but never reached it (`coop/world/daily_task_sync`). A receiver that cannot apply a
-task yet keeps the latest one and retries it each second; the writes set the task's state and
-pay no reward. The rewards land in the shared balance, on
+was hashed but never reached it (`coop/world/daily_task_sync`); a joiner the task cannot be sent to
+yet is owed it and the host retries each second. A receiver that cannot apply a task yet keeps the
+latest one and retries it each second, and drops it if its world changes first; the writes set the
+task's state and pay no reward. The rewards land in the shared balance, on
 [devices.md](devices.md).
 
 ## Who owns what

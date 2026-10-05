@@ -25,7 +25,8 @@ void Install(coop::net::Session* session);
 void Tick();
 
 // HOST: the current task to one joiner, whatever the change hash holds (ConnectReplayForSlot,
-// at its world-ready). Game thread.
+// at its world-ready). One that cannot be sent yet is owed and retried by Tick until it is, or the
+// slot is gone. Game thread.
 void SendCurrentToSlot(int slot);
 
 // Wire handler (CLIENT): one GT task applying scalars + the three int32 arrays
