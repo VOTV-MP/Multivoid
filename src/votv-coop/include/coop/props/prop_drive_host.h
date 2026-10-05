@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include <cstddef>
+
 namespace coop::net { class Session; }
 
 namespace coop::prop_drive_host {
@@ -24,6 +26,9 @@ namespace coop::prop_drive_host {
 // stream, or the hotbar hand axis -- is refused silently, since the hand lane owns it, and so is a
 // class the wire never expresses. `reason` names the verb for the log. Game thread.
 void Claim(void* actor, const char* reason);
+
+// How many props coast with no verb's claim. Game thread.
+size_t CoastingCount();
 
 // The verb let go of `actor`: the prop coasts under the stream until it rests, then the end edge
 // fires. A no-op for an unclaimed actor. Game thread.

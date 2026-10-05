@@ -193,6 +193,13 @@ void Coast(void* actor, const char* reason) {
     Open(actor, /*claimed=*/false, reason ? reason : "");
 }
 
+size_t CoastingCount() {
+    size_t n = 0;
+    for (const Driven& d : g_driven)
+        if (!d.claimed && !d.dead) ++n;
+    return n;
+}
+
 void Release(void* actor) {
     UE_ASSERT_GAME_THREAD("prop_drive_host::Release");
     Driven* d = Find(actor);

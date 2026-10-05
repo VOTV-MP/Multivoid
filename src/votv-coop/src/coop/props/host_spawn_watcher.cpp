@@ -11,6 +11,8 @@
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_lifecycle.h"      // ExpressSpawnedProp (reuse the keyed broadcast)
 #include "coop/props/prop_save_data.h"      // PublishHostBirth (the record behind the express)
+#include "coop/props/prop_drive_host.h"          // Coast (a falling birth's pose until it rests)
+#include "coop/props/prop_wire_parity.h"         // PhysFlagsOf (frozen, static and sleep)
 #include "coop/props/remote_prop_spawn.h"
 #include "coop/props/join_membership_sweep.h"  // the join claim and sweep
 #include "ue_wrap/core/game_thread.h"
@@ -231,7 +233,8 @@ void OnFinishSpawnFunc(void* /*context*/, void* /*srcObj*/, void* result) {
     // expressing a mirror as a fresh world prop is the dupe.
     if (coop::prop_echo_suppress::IsMirrorSpawn(actor)) return;
     if (!ue_wrap::prop::IsDescendantOfProp(actor)) return;  // KEYED Aprop_C lineage only
-    if (PT::GetPropElementIdForActor(actor) != coop::element::kInvalidId) return;  // already tracked
+    // An actor the init seam already tracked is queued too: its row is out, but its fall still
+    // needs the drain's post-birth work (a spawn-menu barrel takes that route).
     if (g_pendingFinished.size() >= kMaxPendingFinished) {
         UE_LOGW("host_spawn_watcher: pending-finished cap %zu hit -- dropping %p (safety census catches it)",
                 kMaxPendingFinished, actor);
@@ -352,6 +355,33 @@ void TickWatchedProps(coop::net::Session* s) {
     }
 }
 
+// A birth this host simulates -- a spawn-menu prop in mid-air, a forage drop, a prop built from a
+// client's intent -- falls under each peer's own physics, and two simulations of one fall part
+// ways: a barrel that rolled on the host stood upright on the client. The fall goes out on the
+// driven-prop stream until the body rests, and the stream's end parks every copy at the host's
+// final pose. Frozen, static and sleeping births do not move and are left alone, and past the cap
+// a burst of births -- a spawn-menu pile, an event's debris -- falls locally as it always did, so
+// the stream's per-tick reads stay bounded.
+constexpr size_t kMaxCoastingBirths = 32;
+namespace {
+void CoastIfFalling(void* actor) {
+    namespace pf = coop::net::propspawn_flags;
+    if (coop::prop_drive_host::CoastingCount() >= kMaxCoastingBirths) {
+        static bool sSaid = false;
+        if (!sSaid) {
+            sSaid = true;
+            UE_LOGW("host_spawn_watcher: %zu births already coasting -- a further birth falls locally "
+                    "(said once)", kMaxCoastingBirths);
+        }
+        return;
+    }
+    if (PT::GetPropElementIdForActor(actor) == coop::element::kInvalidId) return;
+    const uint8_t flags = coop::prop_wire_parity::PhysFlagsOf(actor);
+    if (flags & (pf::kFrozen | pf::kStatic | pf::kSleep)) return;
+    coop::prop_drive_host::Coast(actor, "host birth");
+}
+}  // namespace
+
 void DrainPendingSpawns(coop::net::Session* s) {
     UE_ASSERT_GAME_THREAD("host_spawn_watcher::DrainPendingSpawns");
     if (g_pendingFinished.empty()) return;
@@ -361,16 +391,18 @@ void DrainPendingSpawns(coop::net::Session* s) {
     }
     for (const PendingFinishedSpawn& e : g_pendingFinished) {
         if (!e.actor || !R::IsLiveByIndex(e.actor, e.idx)) continue;   // died before adopt
-        // Tracked or mirror-bound since the enqueue (the unified Registry reverse map covers both
-        // local elements and wire mirrors): someone owns it.
-        if (coop::element::Registry::Get().EidForActor(e.actor) != coop::element::kInvalidId)
-            continue;
         // Marked as a mirror after our enqueue check: not ours.
         if (coop::prop_echo_suppress::IsMirrorSpawn(e.actor)) continue;
         // The local hotbar hand actor, the hold update's view spawn: display-only while held, and
         // the hand edge in the hand-item module expresses it if and when it is released into the
         // world. Never adopted here.
         if (e.actor == coop::hand_item::LocalHandActor()) continue;
+        // Tracked since the enqueue (the init seam expressed it first): someone owns its row, and
+        // only its fall is left to give a channel.
+        if (coop::element::Registry::Get().EidForActor(e.actor) != coop::element::kInvalidId) {
+            CoastIfFalling(e.actor);
+            continue;
+        }
         // The one-shot canonical express (the filters, the key gate, the payload, the self-claim).
         // It latches the processed-init mark on first touch, so this entry is spent regardless of
         // outcome; a still-unkeyed straggler falls to the periodic safety census.
@@ -387,6 +419,7 @@ void DrainPendingSpawns(coop::net::Session* s) {
             // it every client got the class default -- bug 19's run 1: nine of nine discs the
             // host ejected read EMPTIED on the client and INTACT on the host.
             coop::prop_save_data::PublishHostBirth(s, e.actor);
+            CoastIfFalling(e.actor);
         }
     }
     g_pendingFinished.clear();
