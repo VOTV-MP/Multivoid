@@ -26,6 +26,12 @@ namespace coop::props::container_slice_wire {
 // the transport ceiling, and a truncated blob is a silent lie. Real containers hold single digits.
 inline constexpr size_t kMaxRecords = 512;
 
+// The base a client sends with the first slice of a container it threw into the world: the host
+// built its copy from the client's intent and has published nothing for it, so there is no truth to
+// have edited from. The host decides by the transfer it awaits from that author, not by this value
+// (container_contents_sync); a host that awaits nothing judges it like any stale base.
+inline constexpr uint64_t kBirthBase = ~0ull;
+
 std::vector<uint8_t> Pack(uint32_t eid, uint64_t baseHash,
                           const std::vector<ue_wrap::save_record::SaveRecord>& recs);
 

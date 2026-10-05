@@ -14,7 +14,7 @@
 #include "coop/props/prop_spawn_authoring.h" // BirthIsPlayerAuthored (the spawn menu / the toolgun)
 #include "coop/props/prop_wire_parity.h"    // PhysFlagsOf, the one builder of a live prop's flags
 #include "coop/props/prop_element_tracker.h"// GetPropElementIdForActor, ResolveLiveActorByKey
-#include "coop/props/container_contents_sync.h"  // TakeObjInFlight -- mark a container-extraction birth
+#include "coop/props/container_contents_sync.h"  // TakeObjInFlight; a thrown container's birth slice
 #include "coop/session/world_load_episode.h"  // InEpisode (quiet during the join loadObjects churn)
 #include "ue_wrap/core/call.h"                   // ParamFrame + Call (setKey on the host re-spawn)
 #include "ue_wrap/engine/engine.h"                 // BeginDeferredSpawn/FinishDeferredSpawn/SetActorScale3D
@@ -318,6 +318,8 @@ void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::
     // machine.
     if (!coop::prop_save_data::ApplyParked(actor, key))
         coop::prop_save_data::ExpectRecordFor(key, authorSlot);
+    // A container's contents are not in its record: they come as the author's birth slice.
+    coop::props::container_contents_sync::ExpectBirthSlice(actor, authorSlot);
     return actor;
 }
 
@@ -491,6 +493,8 @@ void Tick(coop::net::Session* session) {
         // this prop from the intent and would otherwise author a class-default copy -- a blank
         // tape, an empty disc -- and broadcast that as truth.
         coop::prop_save_data::Publish(session, e.actor, key);
+        // And a container's contents, which its record does not carry, once the host's echo binds it.
+        coop::props::container_contents_sync::NoteAuthoredBirth(e.actor);
         if (parked) UnparkKey(key);   // consume from BOTH the set AND the FIFO (mirror invariant)
         // The claim, for every entry that was not claimed at the seam: this prop is now named on
         // the wire, so the join sweep must not doom it while the host's answer is in flight. A

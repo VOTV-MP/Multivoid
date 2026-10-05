@@ -108,6 +108,19 @@ waits in the same pen rather than being turned down, since refusing it would thr
 edit at exactly the moment the game is least able to judge it. A client's pen is bounded per
 author; the host's own slices are not bounded, the way nothing of the host's is.
 
+A container that is thrown changes hands without either verb: the game rebinds the thrown actor to
+its old slot of the thrower's own array, and the drop intent carries no contents, so the host's copy
+of a client's throw was born empty and every later client slice for it was refused for its base.
+The host's copy of a client's throw is now a transfer in progress: it is not published, to a joiner
+either, until the thrower's slice lands. The thrower ships its slice once the host's echo binds the
+container, and retries while its own slot is not readable yet; every slice of that author for the
+container is the newest version of the transfer, an edit made while the first one waited included,
+and is taken without a base. Whatever the host put in meanwhile is kept beside it, and the merged
+contents go to every peer, the thrower included; if the two do not fit one container, nothing is
+written and both copies keep what they hold. The wait ends after thirty seconds or when the
+thrower leaves. A container the host throws publishes its contents at the express, since the
+mirrors are born empty, retrying while its slot is not readable.
+
 Applying a slice raw-writes the receiver's own array slot and then re-derives everything a setter
 owns through the game's own verbs -- the volume and mass recalculation and the display-name
 rebuild -- rather than writing those fields directly. The add verb cannot be the apply verb: it
