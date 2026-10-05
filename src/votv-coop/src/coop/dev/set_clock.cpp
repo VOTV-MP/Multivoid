@@ -7,26 +7,70 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <mutex>
 
 namespace coop::dev::set_clock {
 
 namespace DNC = ue_wrap::daynightcycle;
 namespace GT  = ue_wrap::game_thread;
 
-bool ReadCurrent(int& hourOut, int& minuteOut, int& dayOut, float& sunFracOut) {
+namespace {
+
+// The menu's view of the clock. The F1 panel renders on the render thread and the cycle's fields
+// are the game thread's, so the panel reads this snapshot and asks the game thread to refresh it,
+// at most four times a second.
+struct Snapshot { bool ok = false; int hour = 0, minute = 0, day = 0; float sunFrac = 0.f; };
+std::mutex g_snapMu;
+Snapshot g_snap;
+std::atomic<bool> g_refreshPosted{false};
+std::atomic<uint64_t> g_nextRefreshMs{0};
+
+uint64_t NowMs() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+// Game thread: read the live clock into the snapshot.
+void Refresh() {
+    Snapshot n;
     int32_t h = 0, m = 0, d = 0;
-    if (!DNC::ReadTimeZ(h, m, d)) return false;
     float total = 0.f, dayAcc = 0.f, scale = 0.f, maxT = 0.f;
-    if (!DNC::ReadClock(total, dayAcc, scale)) return false;
-    if (!DNC::ReadMaxTime(maxT) || maxT <= 0.f) return false;
-    hourOut = h;
-    minuteOut = m;
-    dayOut = d + 1;  // the game's own display convention (savedtime.Z + 1; save_browser fix)
-    float frac = total / maxT;
-    if (frac < 0.f) frac = 0.f;
-    if (frac > 1.f) frac = 1.f;
-    sunFracOut = frac;
+    if (DNC::ReadTimeZ(h, m, d) && DNC::ReadClock(total, dayAcc, scale) && DNC::ReadMaxTime(maxT) &&
+        maxT > 0.f) {
+        n.ok = true;
+        n.hour = h;
+        n.minute = m;
+        n.day = d + 1;  // the game's own display convention (savedtime.Z + 1; save_browser fix)
+        float frac = total / maxT;
+        if (frac < 0.f) frac = 0.f;
+        if (frac > 1.f) frac = 1.f;
+        n.sunFrac = frac;
+    }
+    std::lock_guard<std::mutex> lk(g_snapMu);
+    g_snap = n;
+}
+
+}  // namespace
+
+bool ReadCurrent(int& hourOut, int& minuteOut, int& dayOut, float& sunFracOut) {
+    const uint64_t now = NowMs();
+    if (now >= g_nextRefreshMs.load(std::memory_order_relaxed) &&
+        !g_refreshPosted.exchange(true, std::memory_order_acq_rel)) {
+        g_nextRefreshMs.store(now + 250, std::memory_order_relaxed);
+        GT::Post([] {
+            Refresh();
+            g_refreshPosted.store(false, std::memory_order_release);
+        });
+    }
+    std::lock_guard<std::mutex> lk(g_snapMu);
+    if (!g_snap.ok) return false;
+    hourOut = g_snap.hour;
+    minuteOut = g_snap.minute;
+    dayOut = g_snap.day;
+    sunFracOut = g_snap.sunFrac;
     return true;
 }
 
