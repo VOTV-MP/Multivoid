@@ -165,7 +165,8 @@ frozen at the last pose across a gap -- where a held prop snaps to each pose; a 
 carries the final pose, the host's physics flags and the velocity once the prop has rested or a hand
 has taken it, and closes the stream's generation so a pose still in flight cannot park the prop
 again (`coop/props/prop_drive_stream`). A hand always wins: a claimed prop somebody grabs leaves the
-set and rides the held-prop stream.
+set and rides the held-prop stream, and a receiver yields at once to its own player's grab, which
+no stream from the host knows of yet, handing back the physics its park took.
 
 A mirror's physics and collision are set to what the game's own initialisation would have
 produced on this peer (`coop/props/prop_wire_parity`); a fresh mirror starts kinematic while it

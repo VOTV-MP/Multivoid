@@ -8,6 +8,8 @@
 #include "coop/props/prop_element_tracker.h"  // FindLiveActorByKey: the index only, never the cold walk
 #include "coop/props/prop_park.h"             // Park / Unpark: the parked prop, and a Character welded on it
 #include "coop/props/prop_wire_parity.h"      // the join converge's own physics restore
+#include "coop/player/local_streams.h"
+#include "coop/player/hand_item.h"
 #include "coop/props/remote_prop.h"           // ResolveLiveActorByEid, IsActorUnderAnyDrive
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/hot_path_guard.h"
@@ -22,6 +24,15 @@
 
 namespace coop::prop_drive_stream {
 namespace {
+
+// A hand owns the prop: a peer's held-prop stream, or this player's own grab -- its grab slot or the
+// hotbar hand axis -- which no stream from the host knows of yet. Every branch of this drive yields to
+// it, the first pose, the steady drive and both end paths, so a host stream that crossed the grab in
+// flight never pulls the prop out of this player's hand.
+bool HandOwns(void* actor) {
+    return coop::remote_prop::IsActorUnderAnyDrive(actor) || actor == coop::local_streams::LastHeldActor() ||
+           coop::hand_item::IsHandAxisActor(actor);
+}
 
 namespace AD = coop::active_drive;
 namespace E  = ue_wrap::engine;
@@ -126,7 +137,7 @@ void TickApplyAndDrive(coop::net::Session& s) {
                 if (it->second.gen == e.ctx) {
                     // The steady state: the row already names the actor. No resolve, no string.
                     if (void* live = it->second.d.LiveActor()) {
-                        if (!coop::remote_prop::IsActorUnderAnyDrive(live))   // a hand's stream wins
+                        if (!HandOwns(live))   // a hand's stream wins
                             AD::BeginLerpToPose(it->second.d, ue_wrap::FVector{e.x, e.y, e.z},
                                                 ue_wrap::FRotator{e.pitch, e.yaw, e.roll}, nowMs);
                         continue;
@@ -150,7 +161,7 @@ void TickApplyAndDrive(coop::net::Session& s) {
             if (!PR::IsDescendantOfProp(actor)) continue;
             // A hand's stream on the same prop wins: the holder is its syncer for as long as it
             // holds it, and the host closes this stream the moment it sees the hand.
-            if (coop::remote_prop::IsActorUnderAnyDrive(actor)) continue;
+            if (HandOwns(actor)) continue;
             Drive& dr = g_drives[eid];
             if (dr.d.actor && dr.d.actor != actor) GiveBackPhysics(dr, dr.d.LiveActor());
             AD::ResetDriveState(dr.d);
@@ -182,11 +193,18 @@ void TickApplyAndDrive(coop::net::Session& s) {
         Drive& dr = it->second;
         void* actor = dr.d.LiveActor();
         if (!actor) { it = g_drives.erase(it); continue; }   // the destroy crossed on its own seam
-        if (coop::remote_prop::IsActorUnderAnyDrive(actor)) {
+        if (HandOwns(actor)) {
             // A hand took it before the end edge landed: the holder's drive owns the actor from here,
             // and its release restores the physics. This drive yields for good rather than writing
             // a stale target back once the hand lets go.
-            UE_LOGI("[PROP-DRIVE] CLIENT yield eid=%u -- a held-prop stream owns the actor", it->first);
+            // This player's own hand gets the physics this park took, which no peer's release will
+            // restore; and the generation closes, so a pose of it still in flight cannot park it again.
+            const bool ownHand = actor == coop::local_streams::LastHeldActor() ||
+                                 coop::hand_item::IsHandAxisActor(actor);
+            if (ownHand) GiveBackPhysics(dr, actor);
+            g_endedGen[it->first] = dr.gen;
+            UE_LOGI("[PROP-DRIVE] CLIENT yield eid=%u -- %s owns the actor", it->first,
+                    ownHand ? "this player's hand" : "a held-prop stream");
             it = g_drives.erase(it);
             continue;
         }
@@ -216,7 +234,7 @@ void TickApplyAndDrive(coop::net::Session& s) {
         }
         void* actor = coop::remote_prop::ResolveLiveActorByEid(it->first);
         if (!actor) { ++it; continue; }
-        if (PR::IsDescendantOfProp(actor) && !coop::remote_prop::IsActorUnderAnyDrive(actor)) {
+        if (PR::IsDescendantOfProp(actor) && !HandOwns(actor)) {
             ApplyEnd(actor, it->second.p, /*parkedHere=*/false);
             UE_LOGI("[PROP-DRIVE] CLIENT END eid=%u gen=%u -> (%.1f,%.1f,%.1f) applied late (the "
                     "prop arrived after its stream ended)", it->first,
@@ -237,7 +255,7 @@ void OnEnd(const coop::net::PropDriveEndPayload& p) {
         g_endedGen[p.eid] = p.gen;
         void* actor = coop::remote_prop::ResolveLiveActorByEid(p.eid);
         if (actor) {
-            if (PR::IsDescendantOfProp(actor) && !coop::remote_prop::IsActorUnderAnyDrive(actor)) {
+            if (PR::IsDescendantOfProp(actor) && !HandOwns(actor)) {
                 ApplyEnd(actor, p, /*parkedHere=*/false);
                 UE_LOGI("[PROP-DRIVE] CLIENT END eid=%u gen=%u -> (%.1f,%.1f,%.1f) (never parked here)",
                         p.eid, static_cast<unsigned>(p.gen), p.x, p.y, p.z);
@@ -250,7 +268,7 @@ void OnEnd(const coop::net::PropDriveEndPayload& p) {
     Drive& dr = it->second;
     if (GenAfter(dr.gen, p.gen)) return;   // an end for an older generation than the live drive
     if (void* actor = dr.d.LiveActor()) {
-        if (coop::remote_prop::IsActorUnderAnyDrive(actor)) {
+        if (HandOwns(actor)) {
             // A hand's stream parked this prop after ours did, and its release will hand the
             // physics back; touching the pose or the physics here would undo that park.
             UE_LOGI("[PROP-DRIVE] CLIENT END eid=%u gen=%u -- a held-prop stream owns the actor; "
