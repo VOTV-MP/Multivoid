@@ -420,8 +420,19 @@ void HostOnBlob(uint8_t slot, const std::vector<uint8_t>& blob) {
         AnswerRefused(slot, line, kErrLine);
         return;
     }
+    // The panel the typist last used: none is a real answer (ROOT), a name that does not resolve here
+    // is not, and the line does not run against no panel in its place.
+    void* panel = used.empty() ? nullptr : SC::FindPanelByName(used);
+    if ((!used.empty() && !panel) || !SC::WriteUsed(t->pin.Raw(), panel)) {
+        if (!g_saidNoContext[slot]) {
+            g_saidNoContext[slot] = true;
+            UE_LOGW("sat_console: HOST no panel '%ls' for slot %u's line -- answered err",
+                    Printable(used).c_str(), static_cast<unsigned>(slot));
+        }
+        AnswerRefused(slot, line, kErrLine);
+        return;
+    }
     if (spawns) t->nextSpawnOk = now + kSpawnEvery;
-    SC::WriteUsed(t->pin.Raw(), SC::FindPanelByName(used));
     UE_LOGI("sat_console: HOST runs '%ls' for slot %u (dish %d)", Printable(line).c_str(),
             static_cast<unsigned>(slot), dish);
     if (!SC::RunCommand(t->pin.Raw(), line)) {
