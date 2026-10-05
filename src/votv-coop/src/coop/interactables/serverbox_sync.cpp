@@ -17,6 +17,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/devices/serverbox.h"
+#include "ue_wrap/world/economy.h"           // AddPoints and the saveSlot: the repair reward, paid on the host
 #include "ue_wrap/engine/world_identity.h"   // Generation, the baseline's anchor
 #include "ue_wrap/world/world_singleton.h"   // Gamemode, its other anchor
 
@@ -198,6 +199,75 @@ sg::Verdict OnBreakPre(const sg::Call& call) {
     return sg::Verdict::Cancel;
 }
 
+// The minigame's reward, read from ui_serverMinigame's end(correct): a box broken by damage pays nothing;
+// any other pays SelectInt(50, 15, isLol) and runs fix; then a solve time under saveSlot.servertimeBest
+// pays SelectInt(100, 30, isLol) more, and the best becomes the time (the first solve only sets it).
+constexpr int32_t kRewardPlain = 15, kRewardLol = 50, kRecordPlain = 30, kRecordLol = 100;
+
+// CLIENT: the widget's own fields the reward reads, at the moment its fix is sent.
+void ReadWidgetReward(void* widget, coop::net::ServerRepairPayload& p) {
+    static void* sCls = nullptr;
+    static int32_t sOffLol = -1, sOffTime = -1;
+    static uint8_t sMaskLol = 0;
+    void* cls = R::ClassOf(widget);
+    if (cls != sCls) {
+        sCls = cls;
+        sOffLol = -1; sOffTime = -1; sMaskLol = 0;
+        if (!R::FindBoolProperty(cls, L"isLol", sOffLol, sMaskLol)) sOffLol = -1;
+        sOffTime = R::FindPropertyOffset(cls, L"time");
+    }
+    if (sOffLol < 0 || sOffTime < 0) {
+        UE_LOGW("serverbox_sync: the repair widget's isLol/time did not resolve -- the host fixes without the reward");
+        return;
+    }
+    const auto* base = static_cast<const uint8_t*>(widget);
+    float t = 0.f;
+    std::memcpy(&t, base + sOffTime, sizeof(t));
+    p.flags = static_cast<uint8_t>(coop::net::kRepairSettles |
+                                   ((base[sOffLol] & sMaskLol) ? coop::net::kRepairLol : 0));
+    const float ds = std::isfinite(t) && t > 0.f ? t * 10.f + 0.5f : 0.f;
+    p.timeDs = static_cast<uint16_t>(ds >= 65535.f ? 65535.f : ds);
+}
+
+// CLIENT: the widget's points are the host's to pay with the fix, so its own credit is refused here: the
+// shared balance would take it, then drop it when the host's row lands, and the host's later payment showed
+// as the difference (a +15 reward, then +60 from the task, read +45).
+uint64_t g_rewardsRefused = 0;
+std::chrono::steady_clock::time_point g_nextRewardSay{};
+sg::Verdict OnRewardPre(const sg::Call& call) {
+    if (!ClientSession() || !SB::IsRepairWidget(call.callerObject)) return sg::Verdict::Run;
+    ++g_rewardsRefused;
+    if (SayNow(g_nextRewardSay))
+        UE_LOGI("serverbox_sync: this client's repair reward refused (%llu) -- the host pays it with the fix",
+                static_cast<unsigned long long>(g_rewardsRefused));
+    return sg::Verdict::Cancel;
+}
+
+// HOST: the reward of a client's repair the host just ran, as the widget computes it, from the host's own
+// box and saveSlot. Returns the base reward; `record` gets the record bonus.
+int32_t PayRepairReward(const coop::net::ServerRepairPayload& p, bool damaged, int32_t& record) {
+    record = 0;
+    if (!(p.flags & coop::net::kRepairSettles) || damaged) return 0;
+    const bool lol = (p.flags & coop::net::kRepairLol) != 0;
+    const int32_t reward = lol ? kRewardLol : kRewardPlain;
+    ue_wrap::economy::AddPoints(reward);
+    if (p.timeDs == 0) return reward;
+    void* save = ue_wrap::economy::SaveSlotPtr();
+    static int32_t sOffBest = -1;
+    if (save && sOffBest < 0) sOffBest = R::FindPropertyOffset(R::ClassOf(save), L"servertimeBest");
+    if (!save || sOffBest < 0) return reward;
+    float best = 0.f;
+    std::memcpy(&best, static_cast<uint8_t*>(save) + sOffBest, sizeof(best));
+    const float t = static_cast<float>(p.timeDs) / 10.f;
+    if (t < best) {
+        record = lol ? kRecordLol : kRecordPlain;
+        ue_wrap::economy::AddPoints(record);
+    }
+    const float next = best == 0.f ? t : std::fmin(best, t);
+    std::memcpy(static_cast<uint8_t*>(save) + sOffBest, &next, sizeof(next));
+    return reward;
+}
+
 // CLIENT: its player's repair, the gamemode's repair widget calling fix, goes to the host; any other fix is refused.
 sg::Verdict OnFixPre(const sg::Call& call) {
     auto* s = ClientSession();
@@ -216,6 +286,7 @@ sg::Verdict OnFixPre(const sg::Call& call) {
     }
     coop::net::ServerRepairPayload p{};
     p.box = static_cast<uint8_t>(box);
+    ReadWidgetReward(call.callerObject, p);
     if (s->SendReliableToSlot(0, coop::net::ReliableKind::ServerRepair, &p, sizeof(p))) ++g_counts.repairsSent;
     UE_LOGI("serverbox_sync: this player's repair of box %d sent to the host (%llu sent)", box,
             static_cast<unsigned long long>(g_counts.repairsSent));
@@ -228,11 +299,13 @@ struct Watch {
     sg::PreFn      pre;
     bool           registered = false;
     bool           settled = false;
+    const wchar_t* cls = kBoxClass;
 };
 Watch g_watches[] = {
     {kBreakVerb, kTagBreak, &OnBreakPre},
     {kTypeVerb, kTagType, &OnBreakPre},
     {kFixVerb, kTagFix, &OnFixPre},
+    {L"addPoints", 0x53425034 /* 'SBP4' */, &OnRewardPre, false, false, L"lib_C"},
 };
 bool g_watchesSettled = false;
 
@@ -243,19 +316,19 @@ void DriveWatches() {
     for (Watch& w : g_watches) {
         if (w.settled) continue;
         if (!w.registered) {
-            w.registered = sg::WatchClassName(kBoxClass, w.fn, w.tag, w.pre, nullptr);
+            w.registered = sg::WatchClassName(w.cls, w.fn, w.tag, w.pre, nullptr);
             if (!w.registered) {
                 w.settled = true;
-                UE_LOGE("serverbox_sync: the gate took no watch on %ls::%ls -- a client authors that verb", kBoxClass,
+                UE_LOGE("serverbox_sync: the gate took no watch on %ls::%ls -- a client authors that verb", w.cls,
                         w.fn);
                 continue;
             }
         }
-        if (sg::ClassNameWatchSettled(kBoxClass, w.fn, w.tag)) {
+        if (sg::ClassNameWatchSettled(w.cls, w.fn, w.tag)) {
             w.settled = true;
-            if (sg::ClassNameWatchLive(kBoxClass, w.fn, w.tag)) UE_LOGI("serverbox_sync: the watch on %ls::%ls is live",
-                                                                        kBoxClass, w.fn);
-            else UE_LOGE("serverbox_sync: the watch on %ls::%ls settled dead -- a client authors that verb", kBoxClass,
+            if (sg::ClassNameWatchLive(w.cls, w.fn, w.tag)) UE_LOGI("serverbox_sync: the watch on %ls::%ls is live",
+                                                                     w.cls, w.fn);
+            else UE_LOGE("serverbox_sync: the watch on %ls::%ls settled dead -- a client authors that verb", w.cls,
                          w.fn);
             continue;
         }
@@ -335,6 +408,7 @@ void OnRepair(const coop::net::ServerRepairPayload& payload, int senderPeerSlot)
     ReadServers(servers);
     void* box = payload.box < servers.size() ? servers[payload.box] : nullptr;
     const char* why = nullptr;
+    SB::RepairState repair{};   // the damage flag the reward reads, taken before the fix clears it
     if (!box || !R::IsLive(box)) why = "no such box";
     else if (!SB::ReadIsBroken(box)) why = "the box is not broken here";
     else {
@@ -343,7 +417,7 @@ void OnRepair(const coop::net::ServerRepairPayload& payload, int senderPeerSlot)
         else if (const auto outcome = token.Authorize(box).outcome; outcome != coop::element::IntentOutcome::Ok)
             why = outcome == coop::element::IntentOutcome::NoTarget ? "the box's place did not read"
                                                                       : "the box is out of its reach";
-        else if (!SB::CallFix(box)) why = "the box's fix did not run";
+        else if (!SB::ReadRepairState(box, repair) || !SB::CallFix(box)) why = "the box's fix did not run";
     }
     if (why) {
         ++g_counts.repairsRefused;
@@ -354,7 +428,10 @@ void OnRepair(const coop::net::ServerRepairPayload& payload, int senderPeerSlot)
         return;
     }
     ++g_counts.repairsRun;
-    UE_LOGI("serverbox_sync: HOST ran slot %u's repair of box %u", slot, payload.box);
+    int32_t record = 0;
+    const int32_t reward = PayRepairReward(payload, repair.damaged, record);
+    UE_LOGI("serverbox_sync: HOST ran slot %u's repair of box %u (reward %d, record %d%s)", slot, payload.box,
+            reward, record, (payload.flags & coop::net::kRepairSettles) ? "" : ", the sender sent no reward fields");
     BroadcastIfChanged(s, "a client's repair");
 }
 

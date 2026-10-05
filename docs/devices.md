@@ -419,7 +419,11 @@ refuses every one of them through its whole connected session, since each break 
 the host's own game makes, and its player's own repair -- the fix the gamemode's repair widget
 calls when the minigame succeeds -- goes to the host as an intent, which the host runs on its box
 when it is broken and within the player's reach, answering a refusal with its state to that player
-alone; the widget's points and stats stay the player's. The host polls each box's broken and
+alone. The widget's points are the shared balance's, so a client's own credit from the widget is
+refused and the intent carries what the reward reads (the lol mode and the solve time): the host
+pays the repair (15, or 50 in lol mode, nothing for a box broken by damage) and a record under its
+own best time (30, or 100) in the same step as the fix, and a repair it refuses pays nothing. The
+widget's stats stay the player's. The host polls each box's broken and
 damaged flags, the repair type its break rolled, and the three totals the gamemode keeps for the
 farm, broadcasts a change at once after a repair and within a second otherwise, and a client writes
 the flags and the type and calls the box's own re-skin, which is notify-free and so repaints
