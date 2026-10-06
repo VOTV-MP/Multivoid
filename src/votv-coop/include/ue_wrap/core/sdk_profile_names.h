@@ -72,6 +72,13 @@ inline constexpr const wchar_t* NpcClass_AriralPigBeater = L"npc_ariral_pigBeate
 // crawler's wall crawl is a known yaw-only gap.
 inline constexpr const wchar_t* NpcClass_KillerWisp   = L"killerwisp_C";
 inline constexpr const wchar_t* NpcClass_VentCrawler  = L"ventCrawler_C";
+// The other story-event creatures. Their packages are hard imports of the eventer and of the
+// level-placed gray controller and balls follower, so they load with the level, as ventCrawler_C
+// does. grayboar_C stays out: its SuperStruct is prop_C, not Character (the boar-war prop is the
+// prop lane's); only the grayboarPawn_C helper it mints is a Character.
+inline constexpr const wchar_t* NpcClass_GrayTest     = L"grayTest_C";      // graysforest pack
+inline constexpr const wchar_t* NpcClass_Eg           = L"eg_C";            // eggvasion and night eggs
+inline constexpr const wchar_t* NpcClass_TentacleBall = L"tentacleBall_C";  // tentacleBalls pack
 // wisp_C (Awisp_C : ACharacter): the wispSwarm-event wisp and the ambient sky wisp
 // (ticker_wispSpawner_C spawns at absolute map coordinates, world-anchored, so host-authoritative
 // too). Both spawn paths are EX_CallMath, caught by the ufunction_hook Func thunk on
@@ -107,6 +114,9 @@ inline constexpr const wchar_t* kNpcAllowlist[] = {
     NpcClass_AriralPigBeater,
     NpcClass_KillerWisp,   // yellow Killer Wisp (late-game; AIPerception like the 12)
     NpcClass_VentCrawler,  // the ventCrawler event (its wall crawl is a yaw-only gap)
+    NpcClass_GrayTest,
+    NpcClass_Eg,
+    NpcClass_TentacleBall,
     NpcClass_Wisp,         // wispSwarm-event and ambient sky wisp (both host-authoritative)
     NpcClass_WispB,        // sky-wisp color variants (ticker_wispSpawner map; direct ACharacter
     NpcClass_WispRed,      //   subclasses, NOT wisp_C children -- each needs its own row)

@@ -124,18 +124,30 @@ coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& 
 // chain (four killer wisps on the NPC lane and one pyramid on the world-actor lane, a spawn
 // the interceptor never sees); the ambient sky-wisp ticker and its colour variants (it
 // anchors at absolute map coordinates, not around a player, so the host rolls them and the
-// client's ticker is cancelled in the spawn authority); and the sell gun's coin mint, whose
-// deferred spawn inside the sell verb is bytecode-internal on the host's own sale and on the
-// re-commit of a client's sale alike, so the world-actor lane's interceptor never sees it and
-// without this row the coin allowlist entry is inert; and the jellyfish path, whose spawn makes
-// its seven fish inside its own graph. A future creature event adds its trigger class here once
-// its target class joins the NPC allowlist.
+// client's ticker is cancelled in the spawn authority); the night-egg ticker, the same
+// world-anchored shape (its tick's weighted roll mints one eg_C at random absolute map coordinates and
+// writes gamemode->eg, and the client's own tick is refused in the spawn authority); and the
+// sell gun's coin mint, whose deferred spawn inside the sell verb is bytecode-internal on the
+// host's own sale and on the re-commit of a client's sale alike, so the world-actor lane's
+// interceptor never sees it and without this row the coin allowlist entry is inert; and the
+// jellyfish path, whose spawn makes its seven fish inside its own graph. The four story-event
+// spawners below close the same gap for the event creatures: every one of their BeginDeferred
+// sites is bytecode-internal (a CallFunc inside the ubergraph, never ProcessEvent-dispatched),
+// so without the row the creature mirrors never exist. Their outputs still pass the allowlist
+// gates in the queue branch below (NPC, else world-actor), so no arbitrary EX
+// spawn enrolls.
 constexpr const wchar_t* kExSpawnSourceClasses[] = {
-    L"trigger_wispSwarm_C",   // the wisps event swarm
-    L"piramidSpawner_C",      // the piramid event chain
-    L"ticker_wispSpawner_C",  // the ambient sky wisps
-    L"prop_coingun_C",        // the sell gun's coin mint
-    L"jellyfishPath_C",       // the space jellyfish's seven, on the world-actor lane
+    L"trigger_wispSwarm_C",        // the wisps event swarm
+    L"piramidSpawner_C",           // the piramid event chain
+    L"ticker_wispSpawner_C",       // the ambient sky wisps
+    L"ticker_egSpawner_C",         // the ambient night eggs (one eg_C per successful roll)
+    L"prop_coingun_C",             // the sell gun's coin mint
+    L"jellyfishPath_C",            // the space jellyfish's seven, on the world-actor lane
+    L"trigger_eventer_C",          // the scheduler's dispatcher: ventCrawler_C, superEgger_C,
+                                   // the ufoDropper set and the other already-allowlisted outputs
+    L"grayEventController_C",      // the graysforest brain's spawn() mints the grayTest_C pack
+    L"superEgger_C",               // the egger's spwn() mints the eggvasion eg_C children
+    L"tentacleBallsFollower_C",    // the follower's runTrigger() mints the tentacleBall_C pack
 };
 
 // A source's output may be a world-actor-lane class (the pyramid): the same catch seam,
@@ -189,7 +201,18 @@ void OnBeginDeferredExSpawn(void* /*context*/, void* srcObj, void* spawned) {
     if (!coop::npc_sync::IsAllowlistedClass(cls) && !IsWaAllowlistedClass(cls)) return;
     const int32_t idx = R::InternalIndexOf(spawned);
     std::lock_guard<std::mutex> lk(g_pendingMx);
-    if (g_pendingExSpawns.size() >= kMaxPendingExSpawns) return;  // drain stalled? never grow unbounded
+    if (g_pendingExSpawns.size() >= kMaxPendingExSpawns) {
+        // The cap exists so a stalled drain cannot grow the queue unbounded; a full queue then
+        // drops every later catch quietly. Said once: the drop is per-catch, the evidence once.
+        static bool s_overflowSaid = false;
+        if (!s_overflowSaid) {
+            s_overflowSaid = true;
+            UE_LOGW("npc-sync[ex-spawn]: pending queue FULL at %zu -- dropping catches until the "
+                    "drain runs (a full queue mirrors nothing more this burst)",
+                    g_pendingExSpawns.size());
+        }
+        return;
+    }
     g_pendingExSpawns.push_back({spawned, idx});
 }
 
@@ -202,7 +225,9 @@ void InstallExSpawnCatch(void* beginDeferredFn) {
     if (ue_wrap::ufunction_hook::InstallPostHook(beginDeferredFn, &OnBeginDeferredExSpawn)) {
         UE_LOGI("npc-sync[ex-spawn]: Func-thunk catch installed on BeginDeferred (source-gated: "
                 "trigger_wispSwarm_C -> wisp_C, piramidSpawner_C -> killerwisp_C + piramid2_C, "
-                "jellyfishPath_C -> jellyfish_C; EX_CallMath spawns now enroll)");
+                "jellyfishPath_C -> jellyfish_C, trigger_eventer_C -> event outputs, "
+                "grayEventController_C -> grayTest_C, superEgger_C + ticker_egSpawner_C -> eg_C, "
+                "tentacleBallsFollower_C -> tentacleBall_C; EX_CallMath spawns now enroll)");
     } else {
         UE_LOGW("npc-sync[ex-spawn]: InstallPostHook FAILED -- EX_CallMath creature spawns will "
                 "NOT mirror this session (event-swarm wisps host-only)");

@@ -52,8 +52,10 @@ int RegisterExistingWorldNpcs(NpcEnumOrigin origin);
 // (FFrame::Object) to the spawners whose output is host-authoritative and mirrored: the
 // wisp event swarm, the piramid chain, the ambient sky-wisp ticker -- which anchors at
 // absolute map coordinates rather than around a player, so the host rolls it and the
-// client's own ticker is cancelled in the spawn authority -- and the sell gun's coin mint,
-// whose deferred spawn is bytecode-internal and invisible to the world-actor interceptor.
+// client's own ticker is cancelled in the spawn authority -- the sell gun's coin mint,
+// whose deferred spawn is bytecode-internal and invisible to the world-actor interceptor,
+// and the story-event spawners (the eventer, the gray controller, the super egger and the
+// balls follower) whose event-creature output mints inside their own graphs.
 // The catch fires PRE-Finish, with the transform still unset, which is why it only QUEUES;
 // the drain enrolls next pump tick, when FinishSpawningActor has run and the transform is
 // real. Called by npc_sync::Install once the UFunction and the allowlist resolve and the

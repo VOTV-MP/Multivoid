@@ -60,7 +60,10 @@ leaving one leaves nothing to restore.
 | mushroom master and spawner | spawn refused | they spawn at their own world transform |
 | yellow wisp spawner | tick refused | anchors on a random navmesh point; the product is host-mirrored |
 | sky wisp spawner | tick refused | absolute map coordinates, not player-anchored |
+| night egg spawner | tick refused | a weighted night roll mints one egg at random absolute map coordinates; the host's egg mirrors through the source-gated catch |
 | jellyfish path | spawn refused | its seven fish are made inside its graph; the host's run is mirrored through the source-gated catch |
+| vent crawler, grays, eggs, tentacle balls | gameplay entries refused (BeginPlay, tick, overlaps, AI and despawn verbs); animation and pose stay | on a client they exist only as host mirrors through the npc lane's allowlist |
+| gray controller, balls follower, super egger | the mint and activation bodies refused | their creature BeginDeferred calls are bytecode-internal: no spawn interceptor can see them, so the bodies must not run |
 | firefly, pinecone | left running | anchored on the local player's camera: each peer owns its roll and the others render a mirror |
 | eyer | left running | it stalks its own peer's player: each peer owns its eyer and the others render a mirror (`coop/creatures/owner_entity_sync`) |
 | underground garbage | left running | per-peer loot mounds; refusing one would delete a client's loot with no host replacement |
