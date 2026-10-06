@@ -12,10 +12,11 @@
 #include <string>
 
 // The eventer resolution and the reflected runEvent/runSpecialEvent dispatch live in
-// coop/world/event_fire_sync, which is the single owner: the menu's fire must be the SAME seam that
-// broadcasts EventFire to clients (a dev fire is not entered from the scheduler's settime, so the
-// host's scheduler watch does not broadcast it). Only the ambient/weather verb table stays here -- those
-// are dev-only levers on daynightCycle/mainGamemode timers, never on the wire.
+// coop/world/event_fire_sync, which is the single owner: the menu's fire goes through that seam
+// so the host's verb watches broadcast it to clients exactly once (a dev fire is entered with no
+// Blueprint caller, which the watch reports as the 'dev-call' origin). Only the ambient/weather
+// verb table stays here -- those are dev-only levers on daynightCycle/mainGamemode timers, never
+// on the wire.
 
 namespace coop::dev::event_trigger {
 namespace {

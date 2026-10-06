@@ -192,8 +192,8 @@ bool ForceNow(const char* eventName) {
     }
     const BoxRow* row = RowFor(eventName);
     if (!row) return false;
-    // 1) ARM through the shared fire seam (native eventer dispatch + the
-    //    EventFire broadcast -> clients replay the arm per policy). Re-arming an
+    // 1) ARM through the shared fire seam (native eventer dispatch; the host's
+    //    runEvent watch emits the EventFire -> clients replay the arm per policy). Re-arming an
     //    already-active box is a no-op (isActive=true twice).
     namespace efs = coop::event_fire_sync;
     const std::string narrow(row->event);

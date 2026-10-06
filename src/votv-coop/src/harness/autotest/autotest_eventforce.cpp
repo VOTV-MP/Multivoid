@@ -4,9 +4,10 @@
 // on the canonical row (obelisk):
 //   1. PRE  -- badge snapshot path: RequestRefresh + StatusFor until the box resolves; a fresh
 //              save must read armed=0 shots=1 ([volume-gated] badge state).
-//   2. FORCE -- ForceNow("obelisk"): HostFire arm (EventFire broadcast -> the client log
-//              must show its REPLAY line; obelisk is replay-allowlisted) + the posted overlap
-//              dispatch with the local pawn (event_force logs "'TB_event_obelisk' FORCED").
+//   2. FORCE -- ForceNow("obelisk"): HostFire arm (the runEvent watch broadcasts -> the client
+//              log shows its NOT-replayed line; obelisk's prop spawns and player punch are
+//              host-only) + the posted overlap dispatch with the local pawn (event_force logs
+//              "'TB_event_obelisk' FORCED").
 //   3. POST -- snapshot again: shots must have dropped to 0 ([FIRED] badge state), proving the
 //              native class filter + N decrement + collision-off ran in game bytecode.
 // Greppable verdict: "eventforce_test: VERDICT PASS|FAIL".

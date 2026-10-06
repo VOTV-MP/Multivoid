@@ -86,19 +86,25 @@ is left alone.
 ### Story and scheduled events
 
 The scheduler is the save's own time step: it walks the event table and runs each due row
-through the eventer, all inside Blueprints. The host sees each fire at the verb: a script-body
-watch on the eventer's `runEvent`, entered from the save's time step, broadcasts the row
-(`coop/world/event_fire_sync`). The client keeps its own copy of the walkable event list empty,
-a one-integer write held right before each tick of the clock's cycle, which the game rebuilds
-unconditionally at every world load, so its scheduler fires nothing as the host's clock moves it. What a client does with a
+through the eventer, all inside Blueprints. The host sees each fire at the verbs: script-body
+watches on the eventer's `runEvent` and `runSpecialEvent` broadcast every call whose body ran --
+a scheduled row's, a dev-menu fire's, the game's own menus', and, for the prank roll, the case
+`summonArirPrank` actually picked, one broadcast per occurrence (`coop/world/event_fire_sync`).
+The client keeps its own copy of the walkable event list empty, a one-integer write held right
+before each tick of the clock's cycle, which the game rebuilds unconditionally at every world
+load, so its scheduler fires nothing as the host's clock moves it. What a client does with a
 received fire is a per-row policy kept in the code: rows whose outputs already ride a lane
 (props, creatures, the ATV, sleep, the wisps, the cues, the devices) are not replayed, because
 replaying them would deliver the effect twice; the level flips, story flags and cosmetic sounds
-no lane carries are replayed through the same native verb; a random prank is never forwarded,
-because the client would roll a different one. A replay is skipped when the client's own passed
-list already carries the row, unless the host says the event is in flight. The developer menu's
-event trigger dispatches through the same host path, so a forced event broadcasts like a
-scheduled one.
+no lane carries are replayed through the same native verb. A prank's rolled case arrives as its
+own `runSpecialEvent` fire and meets the same policy: a graffiti decal or a scare box's arm is
+replayed, the outcome the host rolled; a case whose output rides a lane or stays on the host is
+not. A replay is skipped when the client's own passed list already carries the row, unless the
+host says the event is in flight; one whose world or eventer is not up yet waits and is retried
+each second. The developer menu's event trigger dispatches through the same host path, so a
+forced event broadcasts like a scheduled one. It refuses running clients, including a join in
+progress, and a queued trigger is bound to the submitting session's start serial and world
+generation, so restarting the same session object cannot carry an old request into the next run.
 
 The game keeps a registry of in-flight events: a reference count and the live event actors,
 maintained by the actors themselves. The host sees each event begin and end at `lib_C::setEvent`

@@ -206,7 +206,7 @@ void Install(coop::net::Session& session) {
     coop::coingun_sync::Install(&session);  // the sell gun + host-minted coins
     coop::firefly_sync::Install(&session);  // peer-symmetric ambient firefly mirror (each peer captures+shares its own)
     coop::event_cue_sync::Install(&session);  // cosmetic emitter cues: the host's runEvent watch sends them, the client replays
-    coop::event_fire_sync::Install(&session);  // scheduled events: the host's runEvent watch (settime caller) -> EventFire; client hold + policy replay
+    coop::event_fire_sync::Install(&session);  // scheduled events: the host's runEvent/runSpecialEvent watches -> EventFire; client hold + policy replay
     coop::event_active_sync::Install(&session);  // the host's setEvent watch: begin/end edges; the join snapshot reads the game's registry
     coop::alarm_sync::Install(&session);  // base radar alarm shared-world toggle (a 1 Hz active poll on both roles)
     coop::serverbox_sync::Install(&session);  // the server boxes' break state: the verbs run on the host, a client's repair sent there
