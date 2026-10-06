@@ -452,14 +452,14 @@ bool PlayFatalityMontage(void* wisp) {
         f.Set<float>(L"InPlayRate", 1.0f);
         if (!ue_wrap::Call(anim, f)) { UE_LOGW("wisp: Montage_Play call failed"); return false; }
     }
-    // Montage_JumpToSection('fatality', MontageToJumpTo). Skip-tolerant: if the jump fn is
+    // Montage_JumpToSection('fatality', Montage). Skip-tolerant: if the jump fn is
     // missing the montage still plays from the start (which begins with grab/d1.. anyway).
     if (g_montageJumpFn) {
         R::FName section = ue_wrap::fname_utils::StringToFName(L"fatality");
         ue_wrap::ParamFrame f(g_montageJumpFn);
         if (f.valid()) {
             f.SetRaw(L"SectionName", &section, sizeof(section));
-            f.Set<void*>(L"MontageToJumpTo", g_fatalityMontage);
+            f.Set<void*>(L"Montage", g_fatalityMontage);
             ue_wrap::Call(anim, f);
         }
     }

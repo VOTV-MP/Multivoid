@@ -148,7 +148,9 @@ void SetCompScale(void* comp, float s) {
     Vec3 v{s, s, s};
     ue_wrap::ParamFrame f(g_setScaleFn);
     if (!f.valid()) return;
-    f.SetRaw(L"NewScale3D", &v, sizeof(v));
+    // USceneComponent::SetWorldScale3D(FVector NewScale): a write under another name fails and the call
+    // would go out with a zero scale, which hid the roach. No call without the write.
+    if (!f.SetRaw(L"NewScale", &v, sizeof(v))) return;
     ue_wrap::Call(comp, f);
 }
 
