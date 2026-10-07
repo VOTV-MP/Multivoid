@@ -190,11 +190,12 @@ add_subdirectory(third_party/GameNetworkingSockets EXCLUDE_FROM_ALL)
 
 # --- voice chat substrate (v66; votv-voice-chat-port-design-2026-06-12.md) ---
 # libopus (BSD-3, vendored shallow clone pinned v1.5.2) -- the voice codec
-# (the same lib Simple Voice Chat wraps via opus4j). Own CMake; inherits the
-# global /MT runtime property set above.
+# (the same lib Simple Voice Chat wraps via opus4j). Its CMake overrides the
+# inherited runtime property unless OPUS_STATIC_RUNTIME is enabled.
 set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
 set(OPUS_BUILD_TESTING        OFF CACHE BOOL "" FORCE)
 set(OPUS_BUILD_PROGRAMS      OFF CACHE BOOL "" FORCE)
+set(OPUS_STATIC_RUNTIME      ON  CACHE BOOL "" FORCE)
 add_subdirectory(third_party/opus EXCLUDE_FROM_ALL)
 
 # miniaudio (public-domain/MIT-0 dual, vendored single header pinned 0.11.22)
