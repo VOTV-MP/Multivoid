@@ -7,6 +7,8 @@
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
+#include <fcntl.h>
+#include <io.h>
 #include <cstring>
 #include <string>
 #include <ctime>
@@ -66,6 +68,19 @@ std::atomic<Sink> g_sink{nullptr};
 // set, else multivoid.log (per-process names for multi-instance tests). Anchored on the exe
 // directory, the install's one real home; the DLL's own directory is loader-dependent and
 // virtualised under the shim loader.
+
+// Readers may tail the live log; other processes must not rename or truncate it.
+FILE* OpenShared(const wchar_t* path) {
+    HANDLE h = ::CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS,
+                             FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return nullptr;
+    const int fd = _open_osfhandle(reinterpret_cast<intptr_t>(h), _O_WRONLY | _O_TEXT);
+    if (fd < 0) { ::CloseHandle(h); return nullptr; }
+    FILE* f = _fdopen(fd, "w");
+    if (!f) _close(fd);
+    return f;
+}
+
 void LogPath(wchar_t (&out)[MAX_PATH]) {
     out[0] = L'\0';
     const std::wstring dir = paths::ExeDir();
@@ -88,11 +103,7 @@ void EnsureOpen() {
     if (!g_opened) {
         wchar_t path[MAX_PATH] = {};
         LogPath(path);
-        wcscpy_s(g_livePath, path);
-        // Preserve the previous session's log before the open below truncates it: players hit a
-        // problem, then often relaunch before sending the log, and one level of history means the
-        // bug session survives that relaunch. The prior process has exited (each launch is a fresh
-        // process), so the rename is safe.
+        // Preserve a closed run's log. A live writer denies rename and forces the PID fallback.
         {
             wchar_t prev[MAX_PATH] = {};
             wcscpy_s(prev, path);
@@ -103,13 +114,25 @@ void EnsureOpen() {
             } else {
                 wcscat_s(prev, L".prev");
             }
-            wcscpy_s(g_prevPath, prev);
-            ::MoveFileExW(path, prev, MOVEFILE_REPLACE_EXISTING);  // best-effort; ignore failure
+            if (::MoveFileExW(path, prev, MOVEFILE_REPLACE_EXISTING)) wcscpy_s(g_prevPath, prev);
+            g_file = OpenShared(path);
+            if (g_file) wcscpy_s(g_livePath, path);
         }
-        // Open with read sharing (others may read, not write), so the log can be tailed live while
-        // the game runs; without it the file is locked exclusively and diagnostics cannot be read
-        // until the game exits.
-        g_file = _wfsopen(path, L"w", _SH_DENYWR);
+        // This also covers an overlapping older build that does not share delete access.
+        if (!g_file) {
+            g_prevPath[0] = L'\0';
+            wchar_t alt[MAX_PATH];
+            wcscpy_s(alt, path);
+            const size_t alen = wcslen(alt);
+            if (alen > 4 && _wcsicmp(alt + alen - 4, L".log") == 0) alt[alen - 4] = L'\0';
+            wchar_t suffix[32];
+            swprintf_s(suffix, L".%lu.log", static_cast<unsigned long>(::GetCurrentProcessId()));
+            wcscat_s(alt, suffix);
+            g_file = OpenShared(alt);
+            if (g_file) {
+                wcscpy_s(g_livePath, alt);
+            }
+        }
         if (g_file) {
             std::fprintf(g_file, "==== Multivoid log ====\n");
             std::fprintf(g_file, "%s\n", kLogFormatLine);
