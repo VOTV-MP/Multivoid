@@ -47,6 +47,9 @@ times a second, keyed by the ATV's save key; the host relays a client's stream. 
 synced by the host at five hertz gated on change with a two-second keepalive floor, so a parked
 vehicle costs one packet every two seconds. An ATV that appears at runtime, from the spawn menu,
 has no save twin, so the host mints a synthetic key and announces it.
+The client parks a valid announcement until gameplay, the discovery index and load quiescence
+agree; loading spends no spawn attempt. Only an attempted spawn binds the pending row to a
+world generation. `[?]` This readiness path still needs a two-peer join and travel test.
 
 ### Condition
 

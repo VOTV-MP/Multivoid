@@ -14,6 +14,7 @@
 // tie-break, not authority.
 
 #include "coop/interactables/atv_sync.h"
+#include "atv_spawn_retry.h"
 #include "coop/interactables/atv_corrector.h"
 #include "coop/dev/atv_eject_drill.h"
 #include "coop/interactables/atv_condition_sync.h"
@@ -25,6 +26,7 @@
 #include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
 #include "coop/player/players_registry.h"   // Registry::Local / LocalPeerId / kMaxPeers
 #include "coop/player/roster_ledger.h"      // SubscribeSlotReplaced: a departed author must not hold an ATV
+#include "coop/session/world_load_episode.h"
 
 #include "ue_wrap/devices/atv.h"
 #include "ue_wrap/engine/engine.h"          // ReadMainPlayerGrabState (grabber authority) + Get/SetActorRootPhysicsVelocity
@@ -42,6 +44,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <chrono>
 #include <vector>
 
 namespace coop::atv_sync {
@@ -498,25 +501,43 @@ void OnAtvRelease(const coop::net::AtvReleasePayload& payload, uint8_t senderPee
 
 void OnAtvSpawn(const coop::net::AtvSpawnPayload& payload, uint8_t /*senderPeerSlot*/) {
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || s->role() == coop::net::Role::Host) return;  // client-only (the host owns the real ATV)
-    if (!A::EnsureResolved()) return;
+    if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;
     std::wstring synthKey = StringFromWireKey(payload.synthKey);
     if (synthKey.empty()) { UE_LOGW("atv: OnAtvSpawn empty synthKey -- dropping"); return; }
-    if (g_atvs.find(synthKey) != g_atvs.end()) return;  // already spawned (re-announce / connect dup) -- idempotent
+    // The payload is checked before any wait: a malformed spawn is dropped, only a sound one is deferred.
     if (!std::isfinite(payload.x) || !std::isfinite(payload.y) || !std::isfinite(payload.z) ||
         !std::isfinite(payload.pitch) || !std::isfinite(payload.yaw) || !std::isfinite(payload.roll)) {
         UE_LOGW("atv: OnAtvSpawn non-finite pose synthKey='%ls' -- dropping", synthKey.c_str());
+        spawn_retry::DiscardSpawn(synthKey);  // a malformed spawn is final, never retried
         return;
     }
     std::wstring className = WireClassNameToString(payload.className);
-    if (className.empty()) { UE_LOGW("atv: OnAtvSpawn empty className synthKey='%ls' -- dropping", synthKey.c_str()); return; }
+    if (className.empty()) {
+        UE_LOGW("atv: OnAtvSpawn empty className synthKey='%ls' -- dropping", synthKey.c_str());
+        spawn_retry::DiscardSpawn(synthKey);
+        return;
+    }
+    if (ue_wrap::world_identity::CurrentWorldKind() != ue_wrap::world_identity::WorldKind::Gameplay ||
+        !IndexCurrent() || !coop::world_load_episode::HasQuiesced()) {
+        spawn_retry::DeferSpawn(synthKey, payload, "receiving world not ready", false);
+        return;
+    }
+    if (!A::EnsureResolved()) { spawn_retry::DeferSpawn(synthKey, payload, "the ATV wrapper is not resolved"); return; }
+    auto known = g_atvs.find(synthKey);
+    if (known != g_atvs.end()) {
+        if (R::IsLiveByIndex(known->second.actor, known->second.idx)) { spawn_retry::DiscardSpawn(synthKey); return; }
+        if (known->second.actor) g_synthForActor.erase(known->second.actor);
+        g_atvs.erase(known);   // a dead row is not "already spawned"
+    }
     const FVector loc{ payload.x, payload.y, payload.z };
     const FRotator rot{ payload.pitch, payload.yaw, payload.roll };
     void* spawned = A::SpawnMirror(className, loc, rot);  // physics LEFT ON -- a native idle grabbable ATV
     if (!spawned) {
         UE_LOGW("atv: OnAtvSpawn SpawnMirror failed synthKey='%ls' class='%ls'", synthKey.c_str(), className.c_str());
+        spawn_retry::DeferSpawn(synthKey, payload, "SpawnMirror failed");
         return;
     }
+    spawn_retry::DiscardSpawn(synthKey);
     AtvEntry e{};
     e.actor = spawned;
     e.idx = R::InternalIndexOf(spawned);
@@ -532,6 +553,7 @@ void OnAtvDestroy(const coop::net::AtvDestroyPayload& payload, uint8_t /*senderP
     if (!s || s->role() == coop::net::Role::Host) return;  // client-only
     std::wstring synthKey = StringFromWireKey(payload.synthKey);
     if (synthKey.empty()) return;
+    spawn_retry::DiscardSpawn(synthKey);  // a destroy ends a spawn still waiting
     if (!IndexCurrent()) return;  // the pass prunes a dead-world entry itself
     auto it = g_atvs.find(synthKey);
     if (it == g_atvs.end()) return;
@@ -598,6 +620,11 @@ void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
 
     if (!s || !s->connected()) return;
+    // Deferred spawns retry only in the world the index just proved: a connected client inside
+    // Gameplay. An Unknown or loading world neither spawns nor spends an attempt.
+    if (s->role() != coop::net::Role::Host &&
+        ue_wrap::world_identity::CurrentWorldKind() == ue_wrap::world_identity::WorldKind::Gameplay)
+        spawn_retry::RetryPendingSpawns();
     void* localPlayer = coop::players::Registry::Get().Local();
     const uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
     const uint64_t nowMs = NowMs();
@@ -698,6 +725,7 @@ void Tick() {
 }
 
 void OnDisconnect() {
+    spawn_retry::Clear();
     // Disarmed first: nothing publishes an owned set from here, and a live hit must reach the game.
     coop::atv_hit_guard::SetActive(false);
     coop::atv_hit_guard::PublishOwned(nullptr, 0);
