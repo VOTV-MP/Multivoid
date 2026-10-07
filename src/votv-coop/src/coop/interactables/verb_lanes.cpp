@@ -10,6 +10,7 @@
 #include "coop/interactables/keypad_verbs.h"
 #include "coop/interactables/lightgroup_verbs.h"
 #include "coop/interactables/toggle_verbs.h"
+#include "coop/items/point_sack_intent.h"
 #include "coop/net/session.h"
 
 #include "ue_wrap/core/walk_timer.h"  // per-lane [WALK-TIME] attribution (diagnostic)
@@ -25,6 +26,7 @@ void Install(coop::net::Session& session) {
     coop::toggle_verbs::Install(&session);       // a symmetric device's state goes at the verb that writes it: each peer sends its own
     coop::keypad_verbs::Install(&session);       // a keypad's verbs: the host sends each, a client's own entries run on the host
     coop::desk_verb_intent::Install(&session);   // a client's press on the desk's save family is run by the host
+    coop::point_sack_intent::Install(&session);  // a client's opened point sack is paid by the host
 }
 
 void Tick(coop::net::Session& session) {
@@ -34,6 +36,7 @@ void Tick(coop::net::Session& session) {
     coop::door_state_verbs::Tick();     // settle the door state watches
     coop::lightgroup_verbs::Tick();     // settle the light group watch
     coop::toggle_verbs::Tick();         // settle the toggle verb watches
+    coop::point_sack_intent::Tick();    // settle the point sack watch
     coop::keypad_verbs::Tick(session);  // settle the keypad watches; HOST: run queued keypad intents
     { ue_wrap::ScopedWalkTimer _w{"sync:desk_verb"}; coop::desk_verb_intent::Tick(session); }  // settle its seams; HOST: run one queued desk press a tick a client
 }
@@ -55,6 +58,7 @@ void OnDisconnect() {
     coop::toggle_verbs::OnDisconnect();
     coop::keypad_verbs::OnDisconnect();
     coop::desk_verb_intent::OnDisconnect();
+    coop::point_sack_intent::OnDisconnect();
 }
 
 }  // namespace coop::verb_lanes

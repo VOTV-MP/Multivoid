@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 219;
+inline constexpr uint16_t kProtocolVersion = 220;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -973,6 +973,10 @@ enum class ReliableKind : uint8_t {
     // read, the first five effect entries and the effect total. Never relayed. Late join: none. Trust: as
     // StatOrderReply. StatQueryReplyPayload.
     StatQueryReply = 172,
+
+    // Client to host: my player opened this point sack; the host pays the sack's own points from its copy
+    // and destroys it, within the player's reach. Never relayed. PointSackRedeemPayload.
+    PointSackRedeem = 173,
 };
 
 #pragma pack(push, 1)
@@ -1824,6 +1828,15 @@ struct ServerRepairPayload {
     uint16_t timeDs;  // 2 -- the solve time in tenths of a second, saturated; 0 = none
 };
 static_assert(sizeof(ServerRepairPayload) == 4, "ServerRepairPayload must be 4 bytes");
+
+// A client's opened point sack (PointSackRedeem): the sack by key, the eid as the keyless fallback. Nothing
+// else is trusted: the host reads the amount from its own copy.
+struct PointSackRedeemPayload {
+    WireKey  key;        // 32 -- the sack's save Key; len=0 -> keyless, resolve by eid
+    uint32_t elementId;  // 4  -- the sack's Element id, 0 = none
+    uint32_t _pad;       // 4  -- zeroed
+};
+static_assert(sizeof(PointSackRedeemPayload) == 40, "PointSackRedeemPayload must be 40 bytes");
 
 // The server upgrades lane (ServerUpgradeState). Ops 0 (install) and 1 (take-out) name a box by its
 // servers[] index; op 2, the canonical, carries every box's level in servers[] order (a farm past 64

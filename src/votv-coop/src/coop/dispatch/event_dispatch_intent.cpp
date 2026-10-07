@@ -25,6 +25,7 @@
 #include "coop/interactables/desk_ping_sync.h"    // a ping's verdict on the main desk, and its answers
 #include "coop/interactables/desk_verb_intent.h"  // a press on the main desk's save family, and its answers
 #include "coop/items/coingun_sync.h"
+#include "coop/items/point_sack_intent.h"  // CLIENT->HOST an opened point sack
 #include "coop/items/order_queue_sync.h"  // HOST->CLIENT the delivery order queue
 #include "coop/items/order_sync.h"
 #include "coop/props/pack_trash_intent.h"  // CLIENT->HOST bagging of a pile or clump
@@ -375,6 +376,19 @@ bool HandleIntentEvent(net::Session& session,
                 static_cast<unsigned>(p.targetKind), static_cast<unsigned>(p.toolKind));
         coop::pack_trash_intent::OnPackTrashIntent(session, p,
                                                    static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::PointSackRedeem: {
+        // CLIENT->HOST: a client opened a point sack; the host pays it from its copy and destroys it. Never relayed.
+        if (session.role() != net::Role::Host || msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers ||
+            msg.payloadLen < sizeof(net::PointSackRedeemPayload)) {
+            UE_LOGW("event_feed: PointSackRedeem dropped (role, sender slot %d or length %zu)", msg.senderPeerSlot,
+                    static_cast<size_t>(msg.payloadLen));
+            break;
+        }
+        net::PointSackRedeemPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::point_sack_intent::OnRedeem(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::EraserPressIntent: {
