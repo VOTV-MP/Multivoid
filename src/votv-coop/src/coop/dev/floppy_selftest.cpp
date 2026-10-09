@@ -115,7 +115,7 @@ const Step kSteps[] = {
     { "R5-eject",  true,  0, 6, Verb::Eject,  "repeat 5 of the cross-peer eject" },
     { "R6-insert", false, 0, 7, Verb::Insert, "repeat 6 of the cross-peer eject: insert" },
     { "R6-eject",  true,  0, 7, Verb::Eject,  "repeat 6 of the cross-peer eject" },
-    // The laptop, where a live run's disc came back blank under a new key (bug 19). Its slot
+    // The laptop, where a live run's disc came back blank under a new key (#39's report). Its slot
     // content crossed as one blob cut at 4 KB, so L1 has the client eject from its copy of a slot
     // past that size; L2 is the same disc size ejected by the host, whose copy is its own.
     { "L1-insert", true,  kLaptop, 8,  Verb::Insert,
@@ -662,7 +662,12 @@ void Tick() {
     }
     if (g_finished) return;
     if (!FD::EnsureResolved()) return;  // the disc fields come from there
-    if (!W::ResolveBoxes()) return;
+    if (!W::ResolveBoxes()) {
+        // A world without three empty-slot boxes can run no episode: said as this run's failure, with
+        // its RESULT and DONE lines, rather than a peer that never ends.
+        if (W::BoxesGaveUp()) Die(isHost, "boxes", "the world never held three empty-slot server boxes", now);
+        return;
+    }
 
     if (!g_seeded) {
         g_seeded = true;

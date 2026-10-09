@@ -227,6 +227,8 @@ int      g_resolvePasses = 0;
 bool     g_resolveLatchedOff = false;
 }  // namespace
 
+bool BoxesGaveUp() { return g_resolveLatchedOff; }
+
 bool ResolveBoxes() {
     if (g_box[kTargets - 1].Raw()) return true;
     if (g_resolveLatchedOff) return false;

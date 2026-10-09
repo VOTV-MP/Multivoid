@@ -28,7 +28,7 @@ constexpr int kDiscs   = 11;
 
 // Discs 8 and 9 carry this many rows of this width, which puts the laptop's slot content past the
 // 4 KB laptop_sync used to cut a slot blob at (the rows ride twice, in the save JSON and in
-// floppyData): a live run lost a disc's content through that cut (bug 19). 31 is the laptop's own
+// floppyData): a live run lost a disc's content through that cut (#39's report). 31 is the laptop's own
 // ceiling -- ui_laptop.updFloppy resizes floppyData to at most 31 rows -- so a bigger disc would
 // measure the game's trim, which is what 64 rows did on the first run. Every other disc has one row.
 constexpr int kBigFirst = 8;
@@ -68,6 +68,8 @@ bool ReadLaptopSlot(BoxSlot& out);
 // world is up. False until every target is in hand; latches off with a line saying so rather than
 // walking the box list for the rest of the session.
 bool ResolveBoxes();
+// True once ResolveBoxes has latched off: the world never held the empty-slot boxes it needs.
+bool BoxesGaveUp();
 
 // The target box, live-checked, or null. Its label, for the log.
 void* Box(int index);
