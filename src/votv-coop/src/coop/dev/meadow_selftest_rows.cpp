@@ -33,7 +33,7 @@ SD::Row MakeRow(RowId r) {
     SD::Row row;
     row.name = kName[r];
     row.id = kId[r];
-    row.object.clear();  // empty is NAME_None; the literal "None" trips WriteFNameField's failed-intern check
+    row.object.clear();  // empty is NAME_None; the literal "None" fails LeafToFName's failed-intern check
     row.signal.clear();
     row.level = 1;
     row.size = 1.0f;

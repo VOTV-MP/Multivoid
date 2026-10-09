@@ -22,6 +22,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <cwchar>
 #include <map>
 #include <mutex>
 #include <string>
@@ -263,11 +264,15 @@ void Park(uint32_t eid, const std::vector<uint8_t>& blob, uint8_t senderSlot) {
     }
 }
 
-// A client's row a host could write: finite and non-negative where the download reads it as an amount.
+// A client's row a host could write: finite and non-negative where the download reads it as an amount,
+// and no name leaf the engine interns to NAME_None -- a leaf "None" in any case, which the write refuses
+// and no honest sender carries, since ReadFNameLeaf reads NAME_None as empty.
 bool RowSane(const SD::Row& r) {
     const float f[] = {r.size, r.decoded, r.downloadedAtQuality, r.locX, r.locY};
     for (float v : f)
         if (!std::isfinite(v)) return false;
+    for (const std::wstring* leaf : {&r.object, &r.signal})
+        if (::_wcsicmp(leaf->c_str(), L"None") == 0) return false;
     return r.size >= 0.f && r.decoded >= 0.f;
 }
 
@@ -295,20 +300,27 @@ bool HostTakeClientRow(coop::net::Session* s, uint32_t eid, void* actor, const S
     if (author == g_brought.end() || author->second.slot != senderSlot || author->second.ref.Get() != actor)
         why = "not a drive that client brought";
     else if (!IsClassDefault(actor, Hash(mine))) why = "the host already holds a row for it";
-    else if (!RowSane(row)) why = "a row with a non-finite or negative amount";
+    else if (!RowSane(row)) why = "a row with a non-finite or negative amount, or a None leaf";
     if (why) {
         SendBytes(s, eid, Bytes(mine), senderSlot);
         ++g_counts.refused;
         SayRefusal(senderSlot, eid, why);
         return false;
     }
-    if (author != g_brought.end()) g_brought.erase(author);
     {
         ApplyScope scope;
         coop::desk_snd_fx::ScopedWireApply guard;
-        if (!DC::WriteDriveRow(actor, row)) return false;
+        if (!DC::WriteDriveRow(actor, row)) {
+            // The write is all or nothing, so the drive still holds the host's row: answered like a
+            // refusal, and the permission stands, since nothing landed.
+            SendBytes(s, eid, Bytes(mine), senderSlot);
+            ++g_counts.refused;
+            SayRefusal(senderSlot, eid, "a row the drive's write refused");
+            return false;
+        }
         DC::CallDriveUpd(actor);
     }
+    g_brought.erase(eid);   // the permission is spent by a row that landed, and only by one
     // Every other client gets it; its author holds it already (MTA sends an accepted change to all but its source,
     // CGame.cpp:2761-2768).
     HostSendIfChanged(s, eid, actor, /*exceptSlot*/ senderSlot);

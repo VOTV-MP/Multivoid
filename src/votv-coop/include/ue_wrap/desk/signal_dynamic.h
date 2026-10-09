@@ -74,7 +74,9 @@ bool ReadStruct(const void* base, Row& out, bool withImage = false);
 // engine allocator), FNames interned via fname_utils. The previous string
 // buffers deliberately leak (pin doctrine; button-rate writes). The image
 // array is emptied (Num=0, allocation untouched) so a stale photo never
-// attaches to a different signal. Game thread.
+// attaches to a different signal. All or nothing: false leaves the struct
+// as it was -- a leaf the engine interns to NAME_None ("None") or a string
+// that cannot be minted writes no field at all. Game thread.
 bool WriteStructLive(void* base, const Row& in);
 
 // Build the 0x70 param-frame bytes for a struct PARAMETER (gamemode.saveSignal's

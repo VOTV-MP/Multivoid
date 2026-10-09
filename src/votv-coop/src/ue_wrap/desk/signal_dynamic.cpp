@@ -28,14 +28,13 @@ std::wstring ReadFNameLeaf(const uint8_t* p) {
     return R::ToString(n);
 }
 
-bool WriteFNameField(uint8_t* p, const std::wstring& leaf) {
-    R::FName n{};  // NAME_None for empty input
-    if (!leaf.empty()) {
-        n = ue_wrap::fname_utils::StringToFName(leaf);
-        if (n.ComparisonIndex == 0 && n.Number == 0) return false;
-    }
-    std::memcpy(p, &n, sizeof(n));
-    return true;
+// A leaf as the FName the struct stores: NAME_None for an empty leaf, and false for a non-empty one
+// the engine interns to NAME_None ("None" in any case), which no reader could tell from empty.
+bool LeafToFName(const std::wstring& leaf, R::FName& out) {
+    out = R::FName{};
+    if (leaf.empty()) return true;
+    out = ue_wrap::fname_utils::StringToFName(leaf);
+    return !(out.ComparisonIndex == 0 && out.Number == 0);
 }
 
 // A photo past this is no photo the laptop took (the local saves hold at most 8.7 KB): the array is
@@ -83,10 +82,20 @@ bool ReadStruct(const void* base, Row& out, bool withImage) {
 bool WriteStructLive(void* base, const Row& in) {
     if (!base) return false;
     uint8_t* p = static_cast<uint8_t*>(base);
-    if (!ue_wrap::fstring_utils::MintFString(in.name, p + kOff_name)) return false;
-    if (!ue_wrap::fstring_utils::MintFString(in.id, p + kOff_id)) return false;
-    if (!WriteFNameField(p + kOff_object, in.object)) return false;
-    if (!WriteFNameField(p + kOff_signal, in.signal)) return false;
+    // Every step that can fail runs first, into locals, and the struct is written only once all of
+    // them have succeeded. Written in place, a failure stopped half way: a drive kept a new name and
+    // id over its old signal, and no caller could tell which row it now held.
+    R::FName object{}, signal{};
+    if (!LeafToFName(in.object, object) || !LeafToFName(in.signal, signal)) return false;
+    uint8_t nameHeader[sizeof(R::FString)] = {};
+    uint8_t idHeader[sizeof(R::FString)] = {};
+    // A name minted before a failed id is left unreferenced, as every replaced string is (header).
+    if (!ue_wrap::fstring_utils::MintFString(in.name, nameHeader)) return false;
+    if (!ue_wrap::fstring_utils::MintFString(in.id, idHeader)) return false;
+    std::memcpy(p + kOff_name, nameHeader, sizeof(nameHeader));
+    std::memcpy(p + kOff_id, idHeader, sizeof(idHeader));
+    std::memcpy(p + kOff_object, &object, sizeof(object));
+    std::memcpy(p + kOff_signal, &signal, sizeof(signal));
     std::memcpy(p + kOff_level, &in.level, sizeof(in.level));
     std::memcpy(p + kOff_polarity, &in.polarity, sizeof(in.polarity));
     std::memcpy(p + kOff_size, &in.size, sizeof(in.size));
@@ -121,8 +130,10 @@ bool BuildParamBytes(const Row& in, uint8_t out[kStride]) {
     };
     setStr(kOff_name, in.name);
     setStr(kOff_id, in.id);
-    if (!WriteFNameField(out + kOff_object, in.object)) return false;
-    if (!WriteFNameField(out + kOff_signal, in.signal)) return false;
+    R::FName object{}, signal{};
+    if (!LeafToFName(in.object, object) || !LeafToFName(in.signal, signal)) return false;
+    std::memcpy(out + kOff_object, &object, sizeof(object));
+    std::memcpy(out + kOff_signal, &signal, sizeof(signal));
     std::memcpy(out + kOff_level, &in.level, sizeof(in.level));
     std::memcpy(out + kOff_polarity, &in.polarity, sizeof(in.polarity));
     std::memcpy(out + kOff_size, &in.size, sizeof(in.size));
