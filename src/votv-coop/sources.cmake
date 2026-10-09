@@ -651,6 +651,7 @@ set(VOTVCOOP_SOURCES
     src/ui/overlay_backend_dx12.cpp
     src/ui/overlay_backend_dx12_capture.cpp
     src/ui/dev_menu.cpp
+    src/ui/dev_panes.cpp
     src/ui/skins_panel.cpp
     src/ui/admin_panel.cpp
     src/ui/bug_report_pane.cpp
