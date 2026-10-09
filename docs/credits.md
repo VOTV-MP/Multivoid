@@ -34,7 +34,9 @@ from `git shortlog -sne` and fold each person's identity variants together.
 | **arigalit** | code · report | ATV seat contention ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)); join-time prop-count divergence; the grappling-hook lane ([#16](https://github.com/VOTV-MP/Multivoid/pull/16)) — four of its decisions are in the shipped lane | 2 commits · 2 co-authored |
 | **huoyan1231** | code · report | CI and automated builds; the b125 host-log pack | 2 commits · b134 |
 | **Marlore** | code · report | A nine-symptom pass over the trash carry ([#29](https://github.com/VOTV-MP/Multivoid/pull/29)). Four were real defects and are fixed at the root, co-authored: a refused grab that was never answered, a pile that looked different on every peer (865 of 871 measured), a thrower refused every later grab, and a fallen player who kept carrying | 6 commits · unreleased |
-| [**Wigard**](https://github.com/wigarddev) | code | A guest of a sandbox host came up in story ([#32](https://github.com/VOTV-MP/Multivoid/pull/32)) — the transfer header had carried the host's game mode from the start and the host filled it with a constant. Then seven more, each measured red and green before it was sent: a build that did not link on VS 2022 ([#30](https://github.com/VOTV-MP/Multivoid/pull/30)), the shower's mirrored toggle running the wrong verb ([#31](https://github.com/VOTV-MP/Multivoid/pull/31)), a drive left frozen in the port on the far peer ([#33](https://github.com/VOTV-MP/Multivoid/pull/33)), a pile a client bags that the host never learns of ([#34](https://github.com/VOTV-MP/Multivoid/pull/34)), a client's upgrade purchase that charged nobody ([#35](https://github.com/VOTV-MP/Multivoid/pull/35)), a prop whose record changes in place telling no one ([#36](https://github.com/VOTV-MP/Multivoid/pull/36)), the bay window's sponge dabs reaching no other peer ([#37](https://github.com/VOTV-MP/Multivoid/pull/37)), and a client's press of the drone console reaching a drone that cannot fly ([#38](https://github.com/VOTV-MP/Multivoid/pull/38)) | 11 commits · unreleased |
+| [**Wigard**](https://github.com/wigarddev) | code | A guest of a sandbox host came up in story ([#32](https://github.com/VOTV-MP/Multivoid/pull/32)) — the transfer header had carried the host's game mode from the start and the host filled it with a constant. Then seven more, each measured red and green before it was sent: a build that did not link on VS 2022 ([#30](https://github.com/VOTV-MP/Multivoid/pull/30)), the shower's mirrored toggle running the wrong verb ([#31](https://github.com/VOTV-MP/Multivoid/pull/31)), a drive left frozen in the port on the far peer ([#33](https://github.com/VOTV-MP/Multivoid/pull/33)), a pile a client bags that the host never learns of ([#34](https://github.com/VOTV-MP/Multivoid/pull/34)), a client's upgrade purchase that charged nobody ([#35](https://github.com/VOTV-MP/Multivoid/pull/35)), a prop whose record changes in place telling no one ([#36](https://github.com/VOTV-MP/Multivoid/pull/36)), the bay window's sponge dabs reaching no other peer ([#37](https://github.com/VOTV-MP/Multivoid/pull/37)), and a client's press of the drone console reaching a drone that cannot fly ([#38](https://github.com/VOTV-MP/Multivoid/pull/38)). Then a disc the host ejects that reached the others blank, with the disc drill that proves it ([#39](https://github.com/VOTV-MP/Multivoid/pull/39)), and a desk repaint whose diagnosis matched a fix main already carried ([#40](https://github.com/VOTV-MP/Multivoid/pull/40)) | 13 commits · unreleased |
+| [**Shinobu2**](https://github.com/Shinobu2) | code | About twenty lanes in one request ([#45](https://github.com/VOTV-MP/Multivoid/pull/45)), adopted lane by lane: a newer save record replacing a parked one, a thrown container that kept its contents, damage and fire refused on a peer's puppet with its flame shown, the story-event creatures mirrored, an event fire crossing at the verb it ran in, a client's point sack paid by the host, the server repair's reward, the runtime ATV spawn, a joiner's daily task and nine more | 23 commits · unreleased |
+| [**Slintchen**](https://github.com/Slintchen) | code | The request that the mod's UI speak the player's language ([#41](https://github.com/VOTV-MP/Multivoid/pull/41)): its Chinese translations, its system-face merge for CJK and its translator's guide carry into the translation layer being built | in progress |
 | [**archhn0madd**](https://github.com/archhn0madd) | code | Rejoin without a relaunch — the boot poll answered from the dying world | 1 commit |
 | **Moddy** | review · design | The architecture and documentation review that became the UE4SS move; the public UE-Modding-Tools pointer that became the blueprint-CFG rung and the migration scanner (patternsleuth); and design published for [Relay](https://github.com/modestimpala/Relay), Moddy's Blueprint networking API for VOTV ([Thunderstore](https://thunderstore.io/c/voices-of-the-void/p/Moddy/Relay/)), in its README and the [README Blueprint](https://blueprintue.com/blueprint/g3s09x9c/) that README links: the watch surface on a Blueprint function, a watch that reads the parameters before the call and can cancel it, and one that only observes after it, which became the script-body gate; the readable join reason and stable diagnostic codes, which became the join screen's named steps and the end-reason codes; the list of cheap edge protections, of which two were missing here: a per-source limit on connections and a private access list on the identity key file; the rule columns that make an actor's own save record its spawn payload, the general form of what this project's prop save-data work was building case by case; the client-only `Quiesce` column, which made this project state its parking rule once and read every park against it; the one paragraph on container handling, which made it write down and measure its own container invariants; the note that a watch on a parent class misses a child's override, which sent us to audit every hook we install, which found three seams that had never installed and two verbs called on the wrong class; and the list of what a returning player's profile covers, which is the list this project's per-player profile now carries | b122 · b143 · 2026-09-02 · b153 · b157 · b160 · b161 · b167 |
 | **SentientYeet** | review | The substrate critique that re-opened the loader decision | b143 |
@@ -150,6 +152,36 @@ Community commits are adopted with their **original authorship preserved**
   window's dirt, a render target wiped one sponge dab at a time, observed at the native draw and
   replayed on every peer. And the garage console's keyboard, which pressed a client's own mirrored
   drone, the one whose flight tick is suppressed.
+
+- **A disc the host ejects reaches the others with its files** ([#39](https://github.com/VOTV-MP/Multivoid/pull/39)),
+  with the disc drill that measured it red and green: the host's spawn drain now publishes the save record
+  of a birth it adopts, and a disc another peer holds is refused at a slot the watching peer only mirrors.
+  Adopted with authorship preserved; the drill now waits on readiness. And a desk repaint ([#40](https://github.com/VOTV-MP/Multivoid/pull/40))
+  whose diagnosis matched, exactly, a fix main had landed hours before the request.
+
+### Shinobu2
+- **About twenty lanes in one request** ([#45](https://github.com/VOTV-MP/Multivoid/pull/45)), several written
+  with AI tools, each re-derived against the tree it landed on and run on the two-peer rig before it was taken.
+  Adopted one commit per lane under Shinobu2's name, each carrying the lane's net change: a newer save record
+  that always replaces the parked one -- whose landing exposed, and so got fixed, a wait of ours that ended
+  when a record arrived instead of when it landed; a held mirror the tracker knows; no prop destroy deferred to
+  a load tail on the host; the clock panel reading a game-thread snapshot; a peer puppet's run-ending travel
+  reviving nobody; a driven prop yielding to a hand at once; the roach scale and the wisp montage's real
+  parameters; a per-process log for a second game on one install; libopus on the static runtime; a joiner's
+  daily task; a SAT console line answered in its own context; a falling host birth streaming its pose; a
+  client's point sack paid by the host; the server repair's reward paid with the fix; the runtime ATV spawn
+  waiting for a ready world; a thrown container keeping its contents; damage and fire refused on a peer's
+  puppet and its flame shown; the story-event creatures mirrored; and an event fire crossing once, at the
+  verb it ran in. One more lane found a real hole whose root was ours, a drive row the host could write
+  half-way, fixed by us with credit; a few were declined or parked, each with its reason in the reply.
+
+### Slintchen
+- **The mod's UI in the player's language** ([#41](https://github.com/VOTV-MP/Multivoid/pull/41)): a layer
+  that lets a translator ship a language without a rebuild, with a finished Chinese pack, a system-face merge
+  so CJK text renders, and a guide for translators. The layer is being rebuilt on gettext catalogues with
+  contexts and plural forms, and with only the text a player reads wrapped (the request had also wrapped
+  engine names a reflected call looks up); the translations, the face merge and the guide carry into it under
+  Slintchen's name.
 
 ### archhn0madd
 - **Rejoin without a full relaunch** — the fix for SirWilliam's report below.
