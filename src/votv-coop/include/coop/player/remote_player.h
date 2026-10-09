@@ -111,9 +111,17 @@ public:
     int32_t RagdollBodyIdx() const { return ragdoll_.BodyIdx(); }
 
     void* actor() const { return actor_; }
-    void ShowBurning(bool burning);
 
 private:
+    // The owner's burning bit onto this puppet's flame; SetTargetPose is its one caller, so the flame
+    // follows the bit and nothing else.
+    void ShowBurning(bool burning);
+    void ResetBurning() {
+        burningShown_ = false;
+        burningTried_ = false;
+        burningFailSaid_ = false;
+        burningNextTry_ = {};
+    }
     // Apply curPos_, curYaw_ and curSpeed_ to the engine actor and the AnimBP. Called by Tick once
     // per frame whether or not interpolation is active, so nothing that moved the actor between
     // frames leaves drift.
@@ -194,7 +202,7 @@ private:
     // own step every native stride, since the puppet's BP tick (where the game's accumulator lives)
     // is suppressed.
     coop::puppet_footsteps::Stride footsteps_{};
-    // The state bits (kStateBitInAir and reserved bits), snapped on every SetTargetPose, never
+    // The state bits (in air, ragdolled, burning), snapped on every SetTargetPose, never
     // interpolated. ApplyToEngine drives the movement mode from bit 0: set is falling, clear is
     // walking, which the AnimBP reads to gate the foot IK.
     uint8_t          curStateBits_ = 0;
@@ -207,7 +215,8 @@ private:
     // component, switched on and off; never ignite, its damage loop, its 2D pain sound or its camera
     // turn, which are the owner's. Re-asserted while the bit holds, so a respawned body shows it again.
     bool             burningShown_ = false;
-    bool             burningTried_ = false;   // a switch to the other state was attempted and not yet taken
+    bool             burningTried_ = false;   // the last switch did not dispatch; retried each second
+    bool             burningFailSaid_ = false;   // the missing flame was said, once per body
     std::chrono::steady_clock::time_point burningNextTry_{};
     ue_wrap::FVector targetPos_{};
     float            targetYaw_ = 0.f;

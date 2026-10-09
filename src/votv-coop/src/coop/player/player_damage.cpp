@@ -83,8 +83,8 @@ bool OnImpactEntryPre(void* self, void* /*params*/) {
 // through an impact entry: the body's own ubergraph calls Add Player Damage on itself once a second
 // for as long as it burns. A peer's puppet that walked through fire only this machine shows caught
 // it here and burned for the rest of the session, and every tick ran the damage body against this
-// machine's player: its camera shook once a second (measured with coop/dev/damage_probe: [DMG]
-// PUPPET lines at 1 Hz for seven minutes). The puppet's owner sees no such fire and takes nothing,
+// machine's player: its camera shook once a second (the burn loop's own once-a-second Delay; the
+// [DMG] probe, coop/dev/damage_probe, logs each call). The puppet's owner sees no such fire and takes nothing,
 // which is the victim-authoritative answer the impact cancel already gives. Watched at the
 // script-body gate because the verb is Blueprint-internal on every route. The mod's own calls get no
 // pass: the origin flag spans every Blueprint call nested inside one of ours, so it proves nothing
@@ -95,11 +95,10 @@ bool g_damageWatchDone = false;
 uint32_t g_verbCanceled = 0;
 
 ue_wrap::script_gate::Verdict OnDamageVerbPre(const ue_wrap::script_gate::Call& c) {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected() || !c.object) return ue_wrap::script_gate::Verdict::Run;
-    void* localPawn = g_localPawn.load(std::memory_order_acquire);
-    if (!localPawn || c.object == localPawn) return ue_wrap::script_gate::Verdict::Run;
-    if (!coop::players::Registry::Get().IsPuppet(c.object)) return ue_wrap::script_gate::Verdict::Run;
+    // IsPuppet alone: no session or local-pawn early-out in front of it, since the local pawn reads
+    // null for a whole death or travel window, and one call let through then burns for the session.
+    if (!c.object || !coop::players::Registry::Get().IsPuppet(c.object))
+        return ue_wrap::script_gate::Verdict::Run;
     const uint32_t n = ++g_verbCanceled;
     if (n <= 5 || (n % 100) == 0)
         UE_LOGI("player_damage: canceled the damage verb on a peer's puppet %p (#%u) -- its owner "
@@ -125,11 +124,10 @@ bool g_igniteWatchDone = false;
 uint32_t g_igniteCanceled = 0;
 
 ue_wrap::script_gate::Verdict OnIgnitePre(const ue_wrap::script_gate::Call& c) {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected() || !c.object) return ue_wrap::script_gate::Verdict::Run;
-    void* localPawn = g_localPawn.load(std::memory_order_acquire);
-    if (!localPawn || c.object == localPawn) return ue_wrap::script_gate::Verdict::Run;
-    if (!coop::players::Registry::Get().IsPuppet(c.object)) return ue_wrap::script_gate::Verdict::Run;
+    // IsPuppet alone: no session or local-pawn early-out in front of it, since the local pawn reads
+    // null for a whole death or travel window, and one call let through then burns for the session.
+    if (!c.object || !coop::players::Registry::Get().IsPuppet(c.object))
+        return ue_wrap::script_gate::Verdict::Run;
     const uint32_t n = ++g_igniteCanceled;
     if (n <= 5 || (n % 100) == 0)
         UE_LOGI("player_damage: refused setting a peer's puppet %p alight (#%u) -- its fire is its owner's",

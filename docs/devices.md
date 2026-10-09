@@ -118,8 +118,12 @@ container is the newest version of the transfer, an edit made while the first on
 and is taken without a base. Whatever the host put in meanwhile is kept beside it, and the merged
 contents go to every peer, the thrower included; if the two do not fit one slice, the thrower's is
 applied alone and the host's records are dropped, with a warning. A birth slice is taken unjudged
-but not unbounded: it spends its author's arrival budget like an edit. The wait ends after thirty
-seconds or when the thrower leaves. A container the host throws publishes its contents at the express, since the
+but not unbounded: it spends its author's arrival budget like an edit, and past that budget it is
+held in the pen and replayed rather than refused, since it is the thrower's only copy and is sent
+once. The pen holds eight per author, so a ninth simultaneous held slice is lost, said. Each author
+has at most 64 transfers in flight, its own oldest given up past that. The wait ends after thirty
+seconds or when the thrower leaves. A peer that joins during a transfer gets the container from the
+fan-out that completes it, not from its seed. A container the host throws publishes its contents at the express, since the
 mirrors are born empty, retrying while its slot is not readable.
 
 Applying a slice raw-writes the receiver's own array slot and then re-derives everything a setter

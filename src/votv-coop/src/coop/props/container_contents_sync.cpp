@@ -349,7 +349,7 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
     if (birth) {
         auto* s = g_session.load(std::memory_order_acquire);
         if (!s) return Ingest::Handled;
-        if (wp::SpendArrival(outEid, senderSlot, NowMs(), *s, src) == wp::Decision::TooFast)
+        if (wp::SpendArrival(outEid, senderSlot, NowMs(), *s, src, /*held=*/true) == wp::Decision::TooFast)
             return Ingest::Park;
     }
     // Host arbitration before anything is touched; a refusal is answered by re-publishing the

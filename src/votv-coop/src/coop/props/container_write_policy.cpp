@@ -83,7 +83,7 @@ Decision JudgeAgainstState(uint32_t eid, uint64_t baseHash, uint64_t nowMs) {
 }
 
 Decision SpendArrival(uint32_t eid, uint8_t authorSlot, uint64_t nowMs, coop::net::Session& session,
-                      Source src) {
+                      Source src, bool held) {
     // The budget is spent by ARRIVAL, not by acceptance: a refused slice still costs the host a
     // parse, this arbitration and a corrective re-publish. A replay out of the park spends
     // nothing -- it arrived once already, and a pen sweeping four times a second would otherwise
@@ -97,12 +97,13 @@ Decision SpendArrival(uint32_t eid, uint8_t authorSlot, uint64_t nowMs, coop::ne
         if (v.refused) {
             ++g_refused;
             UE_LOGW("container_contents: CONFLICT eid=%u slot %u -- %d slices inside %llu ms is "
-                    "past the bound; refused for %llu ms. Write REFUSED, and nothing re-published: an "
-                    "author pushing faster must not make the host spend more. Total refused this "
-                    "session: %llu",
+                    "past the bound; refused for %llu ms. %s Total refused this session: %llu",
                     eid, static_cast<unsigned>(authorSlot), v.count,
                     static_cast<unsigned long long>(kRateWindowMs),
                     static_cast<unsigned long long>(v.retryMs),
+                    held ? "A birth slice: HELD in the pen and replayed, since it is the thrower's only copy."
+                         : "Write REFUSED, and nothing re-published: an author pushing faster must not make "
+                           "the host spend more.",
                     static_cast<unsigned long long>(g_refused));
             return Decision::TooFast;
         }

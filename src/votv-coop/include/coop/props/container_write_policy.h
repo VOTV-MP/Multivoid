@@ -87,8 +87,9 @@ Decision Accept(uint32_t eid, uint64_t baseHash, uint8_t authorSlot, uint64_t no
 // The rate half alone, Accept or TooFast: an arrival spends one of its author's window, a replay
 // nothing. Accept runs it first; the lane runs it by itself for a slice it takes unjudged (a thrown
 // container's birth), which must not be free of the bound either.
+// `held` says what the caller does with a TooFast slice, for the log: refuses it, or holds it in the pen.
 Decision SpendArrival(uint32_t eid, uint8_t authorSlot, uint64_t nowMs, coop::net::Session& session,
-                      Source src);
+                      Source src, bool held = false);
 
 // The host has told the world what this container holds, by any route -- a fan-out or a targeted
 // connect seed. This is the compare-and-swap baseline a later client write is judged against.

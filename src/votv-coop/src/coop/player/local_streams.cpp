@@ -115,7 +115,7 @@ bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) 
     // The burning bit: the body's own fire runs while its burningTime is above zero (the condition
     // mainPlayer_C's tick tests before it turns the flame off), so the other screens show the flame on
     // the puppet. Display only: a receiver never ignites anything. ue_wrap::vitals reads it off the
-    // gamemode's own player, which is `local`.
+    // gamemode's own player, the body `local` names but for a few frames across a respawn.
     {
         float burn = 0.f;
         if (ue_wrap::vitals::Read(ue_wrap::vitals::Field::BurningTime, &burn) && burn > 0.f)

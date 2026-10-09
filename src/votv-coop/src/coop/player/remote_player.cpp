@@ -57,6 +57,7 @@ float Dist3(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
 }  // namespace
 
 bool RemotePlayer::Spawn(const std::string& skinName) {
+    ResetBurning();   // a new body owes no flame state to the one before it
     // Registry::Local() first (controller-filtered: the genuine local, not a puppet, which is also
     // a mainPlayer_C); FindObjectByClass as the fallback during the splash and pre-possession
     // window, where no controller is attached and no puppet exists yet. Without it Spawn failed
@@ -387,29 +388,33 @@ void RemotePlayer::SetRagdollPose(const coop::net::RagdollPoseSnapshot& snap) {
 }
 
 void RemotePlayer::ShowBurning(bool burning) {
-    // The wanted state is the owner's bit; the shown state changes only when the flame switch
-    // succeeded. Either direction is retried about once a second until it takes, and a held ON is
+    // The wanted state is the owner's bit; the shown state changes only when the flame switch was
+    // dispatched. A change is tried at once and then about once a second until it takes; a held ON is
     // re-asserted at the same cadence, which covers a body whose components were rebuilt.
     const auto now = std::chrono::steady_clock::now();
-    const bool due = now >= burningNextTry_;
-    if (burning == burningShown_ && !(burning && due)) return;
-    if (burning != burningShown_ && !due && burningTried_) return;
+    const bool change = burning != burningShown_;
+    if (!change && !(burning && now >= burningNextTry_)) return;
+    if (change && burningTried_ && now < burningNextTry_) return;
     burningNextTry_ = now + std::chrono::seconds(1);
-    burningTried_ = true;
     if (!actor_ || !R::IsLiveByIndex(actor_, internalIdx_)) return;
-    if (!ue_wrap::puppet::SetBurningFlame(actor_, burning)) return;
-    if (burning != burningShown_) {
-        UE_LOGI("remote_player: puppet %p flame %s (its owner's burning bit)", actor_, burning ? "on" : "off");
-        burningTried_ = false;
+    if (!ue_wrap::puppet::SetBurningFlame(actor_, burning)) {
+        burningTried_ = true;
+        if (!burningFailSaid_) {
+            burningFailSaid_ = true;
+            UE_LOGW("remote_player: puppet %p has no flame to switch %s (burningEffect did not resolve) -- "
+                    "its owner's burning is not shown", actor_, burning ? "on" : "off");
+        }
+        return;
     }
+    burningTried_ = false;
+    if (change)
+        UE_LOGI("remote_player: puppet %p flame %s (its owner's burning bit)", actor_, burning ? "on" : "off");
     burningShown_ = burning;
 }
 
 void RemotePlayer::Destroy() {
     if (!actor_) return;
-    burningShown_ = false;
-    burningTried_ = false;
-    burningNextTry_ = {};
+    ResetBurning();
     // The AnimInstance dies with the actor, so no field cleanup. The ragdoll display body is a
     // separate actor that would outlive the puppet as an orphan: torn down first, with its latches.
     ragdoll_.TeardownForDestroy();
