@@ -46,9 +46,10 @@ void Install(coop::net::Session* session);
 // and publish the save record of each one it adopted (prop_save_data::PublishHostBirth). A birth
 // that simulates and is awake, adopted here or tracked by the init seam before its finish, coasts
 // on the driven-prop stream until it rests (prop_drive_host::Coast), at most 32 at once.
-// ONE express attempt per entry -- the queue is cleared unconditionally, so a still-unkeyed
-// actor falls to the periodic safety census rather than being retried here. Host-side express;
-// game thread (net-pump tick).
+// ONE express attempt per entry, eight entries a tick -- an entry is spent when drained, so a
+// still-unkeyed actor falls to the periodic safety census rather than being retried here, and a
+// burst waits its turn in the queue rather than costing one frame. Host-side express; game thread
+// (net-pump tick).
 void DrainPendingSpawns(coop::net::Session* session);
 
 // Per-tick death-watch. PEER-SYMMETRIC, like the broadcaster: each peer watches the ambient

@@ -394,7 +394,14 @@ void DrainPendingSpawns(coop::net::Session* s) {
         g_pendingFinished.clear();
         return;
     }
-    for (const PendingFinishedSpawn& e : g_pendingFinished) {
+    // A burst -- a spawn-menu pile, a container's loot -- is drained a few births a tick: each adopted
+    // birth captures and sends its save record, one Blueprint dispatch and a serialise, and every client
+    // lands those records on its own 8-a-frame apply budget. The rest wait in the queue, which each tick
+    // re-checks for liveness at its top; a straggler not keyed yet gets those ticks to key.
+    constexpr size_t kDrainPerTick = 8;
+    const size_t take = g_pendingFinished.size() < kDrainPerTick ? g_pendingFinished.size() : kDrainPerTick;
+    for (size_t i = 0; i < take; ++i) {
+        const PendingFinishedSpawn& e = g_pendingFinished[i];
         if (!e.actor || !R::IsLiveByIndex(e.actor, e.idx)) continue;   // died before adopt
         // Marked as a mirror after our enqueue check: not ours.
         if (coop::prop_echo_suppress::IsMirrorSpawn(e.actor)) continue;
@@ -427,7 +434,7 @@ void DrainPendingSpawns(coop::net::Session* s) {
             CoastIfFalling(e.actor);
         }
     }
-    g_pendingFinished.clear();
+    g_pendingFinished.erase(g_pendingFinished.begin(), g_pendingFinished.begin() + static_cast<std::ptrdiff_t>(take));
 }
 
 void OnDisconnect() {
