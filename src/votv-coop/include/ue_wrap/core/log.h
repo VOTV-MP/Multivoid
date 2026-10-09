@@ -45,9 +45,12 @@ void SetSink(Sink sink);
 void Flush();
 
 // The full paths of the live log and of the file the previous run's log was kept as (the live
-// name with `.prev.log` for `.log`, `.prev` appended otherwise). The rig names its logs by the
-// VOTVCOOP_LOG environment value, so no reader may hardcode `multivoid.log`: it asks here. Opens
-// the log first, so the answer is the real one. Any thread.
+// name with `.prev.log` for `.log`, `.prev` appended otherwise). The live log is the PID-named
+// fallback (`multivoid.<PID>.log`) when another process of this install still writes the usual
+// name, and then nothing was rotated: the previous path is empty unless THIS process kept a closed
+// run's log. A fallback file is never rotated or removed; each one is an overlapped launch's whole
+// log. The rig names its logs by the VOTVCOOP_LOG environment value, so no reader may hardcode
+// `multivoid.log`: it asks here. Opens the log first, so the answer is the real one. Any thread.
 std::wstring CurrentPath();
 std::wstring PreviousPath();
 

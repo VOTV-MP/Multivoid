@@ -16,7 +16,6 @@
 #include <memory>
 #include <mutex>
 #include <new>
-#include <share.h>
 
 namespace ue_wrap::log {
 namespace {
