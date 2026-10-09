@@ -283,14 +283,17 @@ void OnEnd(const coop::net::PropDriveEndPayload& p) {
         // Never parked here. The generation still closes, so a pose of it in flight cannot park
         // the prop now; the rest pose is applied if the prop is here, kept for it if not, and
         // dropped for a prop a hand holds -- that stream owns it -- or one a hand took this generation
-        // over from: the hand moved it since, so this pose is older than where it lies.
+        // over from: the hand moved it since, so this pose is older than where it lies. An end older than
+        // the generation already closed here is stale outright and touches nothing.
+        if (auto closed = g_endedGen.find(p.eid); closed != g_endedGen.end() && GenAfter(closed->second, p.gen))
+            return;
         if (YieldedAtOrAfter(p.eid, p.gen)) {
-            g_endedGen[p.eid] = p.gen;
+            AdvanceGen(g_endedGen, p.eid, p.gen);
             UE_LOGI("[PROP-DRIVE] CLIENT END eid=%u gen=%u -- a hand took this generation over; "
                     "closed, pose not applied", p.eid, static_cast<unsigned>(p.gen));
             return;
         }
-        g_endedGen[p.eid] = p.gen;
+        AdvanceGen(g_endedGen, p.eid, p.gen);
         void* actor = coop::remote_prop::ResolveLiveActorByEid(p.eid);
         if (actor) {
             if (PR::IsDescendantOfProp(actor) && !HandOwns(actor)) {
@@ -322,7 +325,7 @@ void OnEnd(const coop::net::PropDriveEndPayload& p) {
         }
     }
     g_drives.erase(it);
-    g_endedGen[p.eid] = p.gen;
+    AdvanceGen(g_endedGen, p.eid, p.gen);
 }
 
 bool IsParked(void* actor) {
