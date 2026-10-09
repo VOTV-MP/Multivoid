@@ -115,8 +115,8 @@ ue_wrap::script_gate::Verdict OnDamageVerbPre(const ue_wrap::script_gate::Call& 
 // health write and nothing else, so ignite is refused on a peer's puppet: the owner computes its own
 // fire as it computes its own damage. It is the one way in. attemptIgnite, the verb a spreading fire
 // calls, is an empty stub on the player (its ubergraph entry is a bare pop), and startBurning is
-// private and reached from ignite alone (tools/bp_cfg.py mainPlayer --fn attemptIgnite; the
-// mainPlayer offsets listing). Both refusals ask IsPuppet rather than "not the local pawn", the
+// private and reached from ignite alone (mainPlayer_C's control-flow graph and its offset
+// listing). Both refusals ask IsPuppet rather than "not the local pawn", the
 // impact cancel's test, because a stale local pawn across a respawn must never make this machine's
 // own player immune.
 constexpr const wchar_t* kIgniteName = L"ignite";
