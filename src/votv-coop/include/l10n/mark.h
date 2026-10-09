@@ -6,3 +6,5 @@
 
 #define L10N_MARK(s)        s
 #define L10N_MARK_C(ctx, s) s
+// A plural pair in a table row: expands to `singular, plural`, two initialisers, for Tn at the drawer.
+#define L10N_MARK_N(singular, plural) singular, plural

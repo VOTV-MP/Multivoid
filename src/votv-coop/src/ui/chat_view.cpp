@@ -327,15 +327,21 @@ void Draw() {
             nickCol = IM_COL32((l.nickArgb >> 16) & 0xFFu, (l.nickArgb >> 8) & 0xFFu,
                                l.nickArgb & 0xFFu, static_cast<int>(a * 255.f));
         }
+        // Three runs at most: the text before the nick, the nick, the text after it. A chat row's
+        // nick begins it; a peer action's translated sentence may put it anywhere.
         const size_t textLen = std::strlen(l.text);
-        const char* nickEnd = l.text + ((l.nickLen && l.nickLen < textLen) ? l.nickLen : 0);
+        const bool span = l.nickLen > 0 && static_cast<size_t>(l.nickBegin) + l.nickLen <= textLen;
+        const char* nickBegin = span ? l.text + l.nickBegin : l.text;
+        const char* nickEnd = span ? nickBegin + l.nickLen : l.text;
 
         float x = pad;
         const char* seg = row[r].b;
         while (seg < row[r].e) {
-            // The row splits at the nick boundary when it falls inside this row.
-            const char* segEnd = (seg < nickEnd && nickEnd < row[r].e) ? nickEnd : row[r].e;
-            const ImU32 col = (seg < nickEnd) ? nickCol : body;
+            // The row splits at either nick boundary that falls inside it.
+            const char* segEnd = row[r].e;
+            if (seg < nickBegin && nickBegin < segEnd) segEnd = nickBegin;
+            else if (seg < nickEnd && nickEnd < segEnd) segEnd = nickEnd;
+            const ImU32 col = (seg >= nickBegin && seg < nickEnd) ? nickCol : body;
             dl->AddText(font, px, ImVec2(x - o, y), outline, seg, segEnd);
             dl->AddText(font, px, ImVec2(x + o, y), outline, seg, segEnd);
             dl->AddText(font, px, ImVec2(x, y - o), outline, seg, segEnd);

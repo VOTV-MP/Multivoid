@@ -90,8 +90,8 @@ void PushBusyLine(const std::wstring& key, const std::wstring& deviceName, uint8
     if (key == g_lastLineKey && now - g_lastLineTime < kLineCooldown) return;
     g_lastLineKey = key;
     g_lastLineTime = now;
-    coop::peer_action_feed::AnnounceDirect(
-        holder, L"is using " + (deviceName.empty() ? key : deviceName));
+    coop::peer_action_feed::AnnounceDirect(holder, coop::peer_action_feed::Action::UsingDevice,
+                                           deviceName.empty() ? key : deviceName);
 }
 
 bool g_observersInstalled = false;

@@ -32,6 +32,7 @@ struct Entry {
     uint64_t    bornMs = 0;            // wall birth (fade clock base) -- NOT identity
     uint64_t    bornSuspendedMs = 0;   // the suspension accumulator AT BIRTH (see below)
     uint32_t    nickArgb = 0;
+    uint8_t     nickBegin = 0;
     uint8_t     nickLen = 0;
     uint8_t     action = 0;
     Keep        keep = Keep::Transient;
@@ -139,6 +140,13 @@ bool NoRetain() {
     return v;
 }
 
+// The span arm's must-fail control: with this set, a peer action's nick is kept as a prefix of its
+// length, as the feed held it before a translated sentence could move it, so the drill must go red.
+bool SpanAsPrefix() {
+    static const bool v = coop::config::ResolveFlag(::coop::config_registry::rows::chat_span_prefix);
+    return v;
+}
+
 // The resurrection probe: a long-gone line was seen reappearing for half a second and fading
 // out again. Static analysis says the store cannot do it (a per-entry alpha rises only during
 // the arrival ramp and is monotone-decreasing after), so the mechanism is either a duplicate
@@ -169,9 +177,9 @@ void NoteDestroyed(const std::string& text, uint64_t key, uint64_t now) {
 }
 
 void ProbeOnPush(const char* via, const Entry& e, size_t linesNow) {
-    UE_LOGI("feed: push via=%s keep=%s nickLen=%u lines=%zu key=%llu textBytes=%zu",
+    UE_LOGI("feed: push via=%s keep=%s nickBegin=%u nickLen=%u lines=%zu key=%llu textBytes=%zu",
             via, e.keep == Keep::History ? "history" : "transient",
-            static_cast<unsigned>(e.nickLen), linesNow,
+            static_cast<unsigned>(e.nickBegin), static_cast<unsigned>(e.nickLen), linesNow,
             static_cast<unsigned long long>(e.key), e.text.size());
     for (const Expired& x : g_expired) {
         if (!x.text[0] || x.atMs == 0) continue;
@@ -322,6 +330,7 @@ void FillLine(Line& l, const Entry& e, float alpha) {
     l.alpha    = alpha;
     l.key      = e.key;
     l.nickArgb = e.nickArgb;
+    l.nickBegin = e.nickBegin;
     l.nickLen  = e.nickLen;
     l.action   = e.action;
 }
@@ -431,7 +440,7 @@ void PushWireChat(const std::string& utf8Line, uint8_t nickByteLen, uint32_t nic
     Republish(now);
 }
 
-void PushAction(const std::string& utf8Line, uint8_t nickByteLen, uint32_t nickArgb) {
+void PushAction(const std::string& utf8Line, uint8_t nickBegin, uint8_t nickByteLen, uint32_t nickArgb) {
     const uint64_t now = NowMs();
     AdvanceSuspension(now);
     Entry e;
@@ -439,7 +448,12 @@ void PushAction(const std::string& utf8Line, uint8_t nickByteLen, uint32_t nickA
     e.key = NextKey();
     e.bornMs = now;
     e.bornSuspendedMs = g_suspendedMs;
-    e.nickLen  = (nickByteLen <= e.text.size()) ? nickByteLen : 0;
+    // The span is checked as a pair against the text the cut kept: a nick the cut reached is no
+    // span at all, never a coloured tail of something else.
+    if (static_cast<size_t>(nickBegin) + nickByteLen <= e.text.size()) {
+        e.nickBegin = SpanAsPrefix() ? 0 : nickBegin;
+        e.nickLen   = nickByteLen;
+    }
     e.nickArgb = nickArgb;
     e.action   = 1;
     e.keep     = Keep::History;
@@ -507,10 +521,15 @@ void ForEachRow(const std::function<void(const RowView&)>& fn) {
     auto walk = [&fn](const std::deque<Entry>& tier, bool retained) {
         for (const Entry& e : tier) {
             const std::string_view text = e.text;
-            size_t cut = e.nickLen;  // the pushers keep nickLen <= text.size()
-            const std::string_view nick = text.substr(0, cut);
-            if (cut != 0 && text.compare(cut, 2, ": ") == 0) cut += 2;
-            fn(RowView{e.key, nick, text.substr(cut), retained});
+            // The pushers keep nickBegin + nickLen <= text.size().
+            const std::string_view nick = text.substr(e.nickBegin, e.nickLen);
+            std::string_view line = text;
+            if (e.nickBegin == 0) {
+                size_t cut = e.nickLen;
+                if (cut != 0 && text.compare(cut, 2, ": ") == 0) cut += 2;
+                line = text.substr(cut);
+            }
+            fn(RowView{e.key, nick, line, e.nickBegin, retained});
         }
     };
     walk(g_store.live(), false);

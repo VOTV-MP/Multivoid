@@ -30,12 +30,13 @@ namespace {
 
 namespace CF = coop::chat_feed;
 
-enum class Arm : uint8_t { Off, History, Seed, I18n };
+enum class Arm : uint8_t { Off, History, Seed, I18n, Span };
 
 Arm ArmNow() {
     static const Arm arm = [] {
         const std::string v = coop::config::ResolveEnum(::coop::config_registry::rows::chat_drill);
-        return v == "history" ? Arm::History : v == "seed" ? Arm::Seed : v == "i18n" ? Arm::I18n : Arm::Off;
+        return v == "history" ? Arm::History : v == "seed" ? Arm::Seed : v == "i18n" ? Arm::I18n
+             : v == "span" ? Arm::Span : Arm::Off;
     }();
     return arm;
 }
@@ -317,6 +318,28 @@ void JudgeSeed() {
 }
 
 // The start of every arm, once this peer is ready. False while it is not.
+// The span arm, on every peer and in memory: a peer-action line whose nick a translated sentence put
+// mid-line keeps that span through the feed and reads back as it was pushed; a span the 255-byte cut
+// reaches is dropped, never kept as a coloured tail; a chat row's prefix reads as before. It tests the
+// feed, not a catalogue: the lines are pushed directly, as the peer-action feed pushes its own.
+void JudgeSpan() {
+    const std::string mid = "[chat-drill] span: before Nick after";
+    const std::string cut = "[chat-drill] spancut " + std::string(240, 'x') + " Nick";
+    const auto at = static_cast<uint8_t>(mid.find("Nick"));
+    CF::PushAction(mid, at, 4, 0xFFFFFFFFu);
+    CF::PushAction(cut, static_cast<uint8_t>(cut.size() - 4), 4, 0xFFFFFFFFu);
+    bool midOk = false, cutOk = false;
+    CF::ForEachRow([&](const CF::RowView& r) {
+        if (r.line.starts_with("[chat-drill] span: "))
+            midOk = r.nick == "Nick" && r.nickBegin == at && r.line == mid;
+        else if (r.line.starts_with("[chat-drill] spancut "))
+            cutOk = r.nick.empty() && r.nickBegin == 0;
+    });
+    if (!midOk) Fail("a mid-line nick did not read back as its span");
+    else if (!cutOk) Fail("a nick past the cut kept a span");
+    else Pass();
+}
+
 bool Begin(coop::net::Session* session) {
     g_isHost = session->role() == coop::net::Role::Host;
     if (!g_isHost && !ClientReady(session)) return false;
@@ -357,6 +380,9 @@ bool Begin(coop::net::Session* session) {
         Enter(Phase::IWaitLines, kJoinWaitS, "the other roles' lines");
         break;
     }
+    case Arm::Span:
+        JudgeSpan();
+        break;
     case Arm::Off:
         g_phase = Phase::Done;
         break;

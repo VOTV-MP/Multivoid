@@ -131,7 +131,7 @@ void ForwardOrder(net::Session* s, const OE::OrderData& od) {
                 total, net::kMaxOrderItems);
         coop::peer_action_feed::AnnounceDirect(
             static_cast<uint8_t>(coop::players::Registry::Get().LocalPeerId()),
-            L"could not order: too many items in one order");
+            coop::peer_action_feed::Action::OrderTooMany);
         return;
     }
     const uint32_t orderId = ++g_orderIdCounter;
@@ -360,14 +360,16 @@ void TickHost(net::Session* s) {
 }
 
 // ---- CLIENT: a refusal came back ----
-const wchar_t* ReasonText(uint8_t reason) {
+// The feed's line for a refused order; its sentences live in the feed (coop/comms/peer_action_feed).
+coop::peer_action_feed::Action RefusalAction(uint8_t reason) {
+    using A = coop::peer_action_feed::Action;
     switch (static_cast<net::OrderRefusedReason>(reason)) {
-        case net::OrderRefusedReason::UnknownItem:  return L"an item was not in the host's store";
-        case net::OrderRefusedReason::Unaffordable: return L"there were not enough credits";
-        case net::OrderRefusedReason::NoCatalog:    return L"the host could not read its store";
-        case net::OrderRefusedReason::CommitFailed: return L"the delivery could not be placed";
+        case net::OrderRefusedReason::UnknownItem:  return A::OrderUnknownItem;
+        case net::OrderRefusedReason::Unaffordable: return A::OrderUnaffordable;
+        case net::OrderRefusedReason::NoCatalog:    return A::OrderNoCatalog;
+        case net::OrderRefusedReason::CommitFailed: return A::OrderCommitFailed;
     }
-    return L"the host refused it";
+    return A::OrderRefused;
 }
 
 void OnRefused(const void* payload, int len) {
@@ -388,12 +390,12 @@ void OnRefused(const void* payload, int len) {
     // Say it, then put the cart back. The base game's own affordability gate pops BEFORE it clears
     // the cart, so a refused purchase leaves the cart intact; our refusal arrives after the local
     // run already cleared it, and not restoring would invent a punishment single-player lacks.
-    const std::wstring line = std::wstring(L"could not order: ") + ReasonText(p.reason);
+    const auto action = RefusalAction(p.reason);
     coop::peer_action_feed::AnnounceDirect(
-        static_cast<uint8_t>(coop::players::Registry::Get().LocalPeerId()), line);
+        static_cast<uint8_t>(coop::players::Registry::Get().LocalPeerId()), action);
     const int32_t restored = OE::RestoreCartItems(rows);
-    UE_LOGW("order_sync: order id=%u REFUSED by the host (%ls); %d of %zu item(s) restored to the "
-            "cart", p.orderId, ReasonText(p.reason), restored, rows.size());
+    UE_LOGW("order_sync: order id=%u REFUSED by the host ('%s'); %d of %zu item(s) restored to the "
+            "cart", p.orderId, coop::peer_action_feed::English(action), restored, rows.size());
 }
 
 }  // namespace

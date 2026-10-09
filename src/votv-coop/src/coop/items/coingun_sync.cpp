@@ -192,23 +192,19 @@ sg::Verdict OnVerbEntry(const sg::Call& b) {
 
 // Host helpers.
 
-const wchar_t* ResultText(coop::net::CoinGunResultCode code) {
+// The feed's line for a refused sale; its sentences live in the feed (coop/comms/peer_action_feed).
+coop::peer_action_feed::Action RefusalAction(coop::net::CoinGunResultCode code) {
+    using A = coop::peer_action_feed::Action;
     switch (code) {
-        case coop::net::CoinGunResultCode::Sold:         return L"sold it";
-        case coop::net::CoinGunResultCode::NoSuchProp:
-            return L"could not sell that: the host does not have it";
-        case coop::net::CoinGunResultCode::AlreadySold:
-            return L"could not sell that: it was already sold";
-        case coop::net::CoinGunResultCode::NoGun:
-            return L"could not sell that: no coin gun exists in the host's world";
-        case coop::net::CoinGunResultCode::NotSellable:
-            return L"could not sell that: the host's store will not take it";
-        case coop::net::CoinGunResultCode::HostInternal:
-            return L"could not sell that: the host hit an internal error";
-        case coop::net::CoinGunResultCode::TooFarAway:
-            return L"could not sell that: the host does not see you next to it";
+        case coop::net::CoinGunResultCode::NoSuchProp:   return A::SellNoSuchProp;
+        case coop::net::CoinGunResultCode::AlreadySold:  return A::SellAlreadySold;
+        case coop::net::CoinGunResultCode::NoGun:        return A::SellNoGun;
+        case coop::net::CoinGunResultCode::NotSellable:  return A::SellNotSellable;
+        case coop::net::CoinGunResultCode::HostInternal: return A::SellHostInternal;
+        case coop::net::CoinGunResultCode::TooFarAway:   return A::SellTooFarAway;
+        case coop::net::CoinGunResultCode::Sold:         break;
     }
-    return L"could not sell that";
+    return A::SellRefused;
 }
 
 }  // namespace
@@ -478,23 +474,23 @@ void OnReliableResult(const uint8_t* payload, int len) {
     std::memcpy(&r, payload, sizeof(r));
     const auto code = static_cast<coop::net::CoinGunResultCode>(r.code);
 
-    std::wstring line;
+    // AnnounceDirect, not Announce: functional feedback about the player's own action, which the
+    // peer-actions toggle must not be able to hide.
+    const auto local = static_cast<uint8_t>(coop::players::Registry::Get().LocalPeerId());
     if (code == coop::net::CoinGunResultCode::Sold) {
         // The price, not a bare acknowledgement: the price multiplier is per instance and can
         // diverge (a battery by its charge, food by its uses), so the toast the player's own local
         // sell printed can name a different number than the host minted, and saying the host's
         // makes that visible.
-        line = L"sold it for " + std::to_wstring(static_cast<long long>(r.points)) +
-               L" points (the host's price)";
+        coop::peer_action_feed::AnnounceDirectCount(local, coop::peer_action_feed::Action::SoldFor, r.points);
+        UE_LOGI("coingun[client]: CoinGunResult code=%u points=%d -- sold", static_cast<unsigned>(r.code),
+                r.points);
     } else {
-        line = ResultText(code);
+        const auto action = RefusalAction(code);
+        coop::peer_action_feed::AnnounceDirect(local, action);
+        UE_LOGI("coingun[client]: CoinGunResult code=%u points=%d -- '%s'", static_cast<unsigned>(r.code),
+                r.points, coop::peer_action_feed::English(action));
     }
-    // AnnounceDirect, not Announce: functional feedback about the player's own action, which the
-    // peer-actions toggle must not be able to hide.
-    coop::peer_action_feed::AnnounceDirect(
-        static_cast<uint8_t>(coop::players::Registry::Get().LocalPeerId()), line);
-    UE_LOGI("coingun[client]: CoinGunResult code=%u points=%d -- '%ls'",
-            static_cast<unsigned>(r.code), r.points, line.c_str());
 }
 
 void OnDisconnect() {

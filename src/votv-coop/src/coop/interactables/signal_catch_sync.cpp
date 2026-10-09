@@ -292,7 +292,8 @@ void RunDetectors(coop::net::Session* s, const CD::CoordSignal& sig, bool haveSi
                         UE_LOGI("signal_catch: the host's verdict for slot %u caught '%ls' -- relayed as slot %u's",
                                 static_cast<unsigned>(author), sig.objectName.c_str(),
                                 static_cast<unsigned>(author));
-                        coop::peer_action_feed::Announce(author, L"caught signal '" + sig.objectName + L"'");
+                        coop::peer_action_feed::Announce(author, coop::peer_action_feed::Action::CaughtSignal,
+                                                         sig.objectName);
                     } else {
                         SendAs(s, p, /*author*/ 0);  // the host's own catch, to every client
                         ++g_localCatches;
@@ -302,7 +303,7 @@ void RunDetectors(coop::net::Session* s, const CD::CoordSignal& sig, bool haveSi
                         // receivers announce at their receive sites.
                         coop::peer_action_feed::Announce(
                             coop::players::Registry::Get().LocalPeerId(),
-                            L"caught signal '" + sig.objectName + L"'");
+                            coop::peer_action_feed::Action::CaughtSignal, sig.objectName);
                     }
                 }
             }
@@ -371,7 +372,8 @@ void OnReliable(const coop::net::SkySignalCatchPayload& p, uint8_t senderSlot) {
     ApplyReplay(p);
     // kind 2, a connect seed or a catch whose pinger left, is announced by nobody: no feed line.
     if (p.kind == 0)
-        coop::peer_action_feed::Announce(senderSlot, L"caught signal '" + WireName(p.row) + L"'");
+        coop::peer_action_feed::Announce(senderSlot, coop::peer_action_feed::Action::CaughtSignal,
+                                         WireName(p.row));
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {

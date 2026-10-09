@@ -72,14 +72,16 @@ enum class Keep : uint8_t {
 // tick share it. `text` holds up to 255 bytes, and a composed chat line can be longer, so it
 // is cut at birth on a character boundary. `nickArgb` is the nick prefix's colour, frozen at
 // birth and resolved once by the receiver when the line is composed (see
-// coop/comms/chat_nick_color.h); nickLen marks the prefix's bytes, and 0 is an event line in
-// one colour.
+// coop/comms/chat_nick_color.h); nickBegin and nickLen mark the nick's bytes -- at the start of a
+// chat row, anywhere in a peer-action line, whose translated sentence may put the actor mid-line --
+// and nickLen 0 is an event line in one colour.
 struct Line {
     char     text[256] = {};
     float    alpha = 1.f;     // STORE alpha (TTL curve); 0 for a retained row
     uint64_t key = 0;         // total order + entry identity (see above)
     uint32_t nickArgb = 0;    // frozen nick colour, 0xAARRGGBB; 0 when nickLen == 0
-    uint8_t  nickLen = 0;     // byte length of the nick prefix inside text
+    uint8_t  nickBegin = 0;   // byte offset of the nick inside text: 0 for a chat row's prefix
+    uint8_t  nickLen = 0;     // byte length of the nick inside text
     uint8_t  action = 0;      // 1 = a peer-action line, whose predicate the HUD draws in the action colour
 };
 
@@ -108,8 +110,10 @@ void PushWireChat(const std::string& utf8Line, uint8_t nickByteLen, uint32_t nic
                   uint32_t lineSeq, bool seeded);
 
 // Append a peer-action line, the chat shape with the action flag set, so the HUD draws the
-// predicate in the action colour. Always History. Game thread.
-void PushAction(const std::string& utf8Line, uint8_t nickByteLen, uint32_t nickArgb);
+// predicate in the action colour. The nick is the span [nickBegin, nickBegin + nickByteLen) of the
+// line, wherever its sentence puts it; a span the 255-byte cut does not keep whole is dropped and the
+// line is drawn in one colour. Always History. Game thread.
+void PushAction(const std::string& utf8Line, uint8_t nickBegin, uint8_t nickByteLen, uint32_t nickArgb);
 
 // Append an event line after `delayMs`, promoted to the live feed by Tick once due; for the
 // join announces, since a client reports world-ready before its loading screen clears and an
@@ -133,14 +137,16 @@ bool GetSnapshotIfNewer(Snapshot& out, uint32_t& gen);
 // whole overlay frame, alive.
 bool HasAny();
 
-// One row of the store as a reader walking it sees it. `nick` is the speaker's name when the row
-// has one (nickLen above 0), and `line` is the row's text after the nick and its ": " separator
-// (a row with no nick has no prefix: `nick` is empty and `line` is all of it). Both views borrow
-// the store's strings and end with the callback; `retained` says which tier the row sits in.
+// One row of the store as a reader walking it sees it. `nick` is the speaker's or actor's name when
+// the row has one (nickLen above 0), at byte `nickBegin` of the text. `line` is the row's text after
+// the nick and its ": " separator when the nick begins the row, and the whole text when it begins
+// later (a row with no nick: `nick` is empty and `line` is all of it). Both views borrow the store's
+// strings and end with the callback; `retained` says which tier the row sits in.
 struct RowView {
     unsigned long long key;
     std::string_view   nick;
     std::string_view   line;
+    unsigned           nickBegin;
     bool               retained;
 };
 

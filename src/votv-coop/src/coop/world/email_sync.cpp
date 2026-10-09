@@ -525,8 +525,8 @@ void Tick() {
         // in a session.
         if (s->connected())
             for (const std::wstring& topic : removedTopics)
-                coop::peer_action_feed::Announce(localSlot,
-                                                 L"deleted an email: " + topic);
+                coop::peer_action_feed::Announce(localSlot, coop::peer_action_feed::Action::DeletedEmail,
+                                                 topic);
         // A bulk batch of new rows in one poll is a save load, adopted as baseline and never
         // broadcast. It catches a prime that ran before the real save loaded (the count sat stable
         // at a menu or partial value), which the stabilise guard alone can miss.
@@ -636,7 +636,7 @@ void OnDelete(const coop::net::ContentHashPayload& p, uint8_t senderSlot) {
     std::wstring topic;
     if (ApplyDeleteByHash(p.contentHash, &topic)) {
         // A remote peer deleted this shared email: surface who, to the local feed.
-        coop::peer_action_feed::Announce(senderSlot, L"deleted an email: " + topic);
+        coop::peer_action_feed::Announce(senderSlot, coop::peer_action_feed::Action::DeletedEmail, topic);
     } else {
         // Deferred (row not present yet, a transient misalignment): the tombstone retry in Tick
         // applies it later without an announce, since the sender slot is not carried on the retry

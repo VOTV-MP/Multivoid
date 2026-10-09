@@ -8,10 +8,9 @@
 // ui.chat.peer_actions toggle (F1 > Cosmetics > Chat), default on -- a local view preference,
 // not a wire broadcast.
 //
-// Renders "<nick> <action>" with the nick coloured per slot (chat_feed::PushChat). The subject
-// is ALWAYS the actor's nickname, so the local actor sees the same line everyone else sees.
-// Announce() and AnnounceDirect() are GAME THREAD, as every caller is; Enabled() is lock-free.
-// The toggle follows its config row through SubscribeRow()'s subscriber (game thread).
+// The subject is ALWAYS the actor's nickname, so the local actor sees the same line everyone else
+// sees. Announce*() are GAME THREAD, as every caller is; Enabled() is lock-free. The toggle follows
+// its config row through SubscribeRow()'s subscriber (game thread).
 #pragma once
 
 #include <cstdint>
@@ -19,17 +18,49 @@
 
 namespace coop::peer_action_feed {
 
-// Announce that a peer performed `action` (a predicate like
-// L"deleted an email: Server Alert!"). `slot` is the actor's peer slot (drives the
-// nick + its color); the local slot resolves to LocalNickname(), any other to
-// NicknameForSlot(). No-op unless Enabled(). Game thread.
-void Announce(uint8_t slot, const std::wstring& action);
+// The one grammar owner for peer-attributed lines: a caller names an Action and its argument, and
+// the feed holds the sentence -- one msgid per action, the actor's nick as %1$s wherever the
+// translation puts it -- looks it up in the player's language (l10n), formats it and colours the
+// nick's span (chat_feed::PushAction). A caller never composes text and never imports l10n; Source
+// sends a token and its parameters for each client to resolve (UTIL_ClientPrintAll), and this is that
+// shape inside one peer. An action whose sentence takes a name takes it as `arg`; SoldFor takes a
+// count. The sentences are the table in peer_action_feed.cpp.
+enum class Action : uint8_t {
+    DeletedEmail,       // arg: the email's subject
+    CaughtSignal,       // arg: the signal's name
+    UsingDevice,        // arg: the device's name
+    SoldFor,            // a count: the price the host minted
+    SellNoSuchProp,
+    SellAlreadySold,
+    SellNoGun,
+    SellNotSellable,
+    SellHostInternal,
+    SellTooFarAway,
+    SellRefused,
+    OrderTooMany,
+    OrderUnknownItem,
+    OrderUnaffordable,
+    OrderNoCatalog,
+    OrderCommitFailed,
+    OrderRefused,
+    kCount
+};
 
-// Same rendering, NOT gated on the ui.chat.peer_actions toggle. The one grammar
-// owner for peer-attributed lines that are FUNCTIONAL feedback rather than
-// cosmetic ambience (device_occupancy's busy-deny notice: suppressing it would
-// reduce the deny to a bare click sound). Game thread.
-void AnnounceDirect(uint8_t slot, const std::wstring& action);
+// Announce that a peer performed `action`. `slot` is the actor's peer slot (drives the nick and its
+// colour); the local slot resolves to LocalNickname(), any other to NicknameForSlot(). An action
+// that takes no name ignores `arg`. No-op unless Enabled(). Game thread.
+void Announce(uint8_t slot, Action action, const std::wstring& arg = {});
+
+// Same rendering, NOT gated on the ui.chat.peer_actions toggle: for lines that are FUNCTIONAL
+// feedback rather than cosmetic ambience (device_occupancy's busy-deny notice: suppressing it would
+// reduce the deny to a bare click sound; a refused sale or order). Game thread.
+void AnnounceDirect(uint8_t slot, Action action, const std::wstring& arg = {});
+
+// AnnounceDirect for an action that takes a count (SoldFor): the plural form follows `n`.
+void AnnounceDirectCount(uint8_t slot, Action action, long long n);
+
+// The action's English sentence, for a log line beside the feed's.
+const char* English(Action action);
 
 // The ui.chat.peer_actions toggle: Enabled reads the live value (lazy-loads the row's
 // resolved value on first call). A change is a config SetValue; the subscriber applies it.

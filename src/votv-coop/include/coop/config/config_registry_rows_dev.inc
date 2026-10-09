@@ -189,9 +189,12 @@ CFG_ENUM(grants_drill, "grants_drill", "dev", "off", "off|grant|none|hostdeny", 
     "The local grants drill: checks this machine's dev grants against an arm's expectation.")
 CFG_ENUM(grants_drill_expect, "grants_drill_expect", "dev", "same", "same|grant|none|hostdeny",
     "VOTVCOOP_GRANTS_DRILL_EXPECT", "Judges the grants drill against another arm's expectation (a red arm).")
-CFG_ENUM(chat_drill, "chat_drill", "dev", "off", "off|history|seed|i18n", "VOTVCOOP_CHAT_DRILL",
+CFG_ENUM(chat_drill, "chat_drill", "dev", "off", "off|history|seed|i18n|span", "VOTVCOOP_CHAT_DRILL",
     "Developer: chat checks judged in memory -- history (the host), seed (the second joiner), i18n "
-    "(every peer); each prints [CHAT-DRILL] PASS, FAIL or ABORT.")
+    "(every peer), span (every peer: a mid-line nick's span through the feed); each prints "
+    "[CHAT-DRILL] PASS, FAIL or ABORT.")
+CFG_FLAG(chat_span_prefix, "chat_span_prefix", "dev", false, "VOTVCOOP_CHAT_SPAN_PREFIX",
+    "Developer: keep a peer action's nick as a prefix wherever its sentence put it (the chat drill's span red).")
 CFG_FLAG(chat_drill_bad_nick, "chat_drill_bad_nick", "dev", false, "VOTVCOOP_CHAT_DRILL_BAD_NICK",
     "Developer: the chat drill announces a wrong nickname (the i18n red).")
 CFG_FLAG(chat_no_retain, "chat_no_retain", "dev", false, "VOTVCOOP_CHAT_NO_RETAIN",
