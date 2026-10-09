@@ -8,8 +8,12 @@
 #include "coop/net/session.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/world/event_fire_sync.h"
+#include "coop/element/registry.h"
 
 #include "ue_wrap/core/log.h"
+
+#include <chrono>
+#include <vector>
 
 namespace coop::dev::event_drill {
 namespace {
@@ -76,13 +80,45 @@ void TickClient() {
             "solar and arirGraff_0 replayed", showers, fires);
 }
 
+// The egg arm (egg_drill): eggvasion's 121 eggs are the npc lane's largest population, and a still
+// mirror must cost the client nothing once its pose stops changing. Readiness, not a clock: the
+// host fires when the client's world is up, the client counts its mirrors and ends 30 s after the
+// count first passes 100, so the [perf] lines of that window are the still eggs' cost.
+bool g_eggFired = false;
+bool g_eggDone = false;
+std::chrono::steady_clock::time_point g_eggSeen{}, g_eggNextSay{};
+
+void TickEggHost(coop::net::Session& s) {
+    if (g_eggFired || !s.IsSlotWorldReady(kSlot)) return;
+    g_eggFired = true;
+    UE_LOGI("[EGG-DRILL] host: the client's world is up -- the dev fire of eggvasion");
+    EF::HostFire(EF::FireKind::RunEvent, L"eggvasion", L"None");
+}
+
+void TickEggClient() {
+    if (g_eggDone) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (now < g_eggNextSay) return;
+    g_eggNextSay = now + std::chrono::seconds(5);
+    std::vector<coop::element::Registry::ActorIdPair> npcs;
+    const size_t n = coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Npc, npcs);
+    UE_LOGI("[EGG-DRILL] client npc mirrors=%zu", n);
+    if (n <= 100) return;
+    if (g_eggSeen == std::chrono::steady_clock::time_point{}) { g_eggSeen = now; return; }
+    if (now - g_eggSeen < std::chrono::seconds(30)) return;
+    g_eggDone = true;
+    UE_LOGI("[EGG-DRILL] client DONE mirrors=%zu -- read this window's [perf] reflected calls", n);
+}
+
 }  // namespace
 
 void Tick(coop::net::Session* session) {
     static const bool s_on = coop::config::ResolveFlag(::coop::config_registry::rows::event_drill);
-    if (!s_on || !session || !session->running()) return;
-    if (session->role() == coop::net::Role::Host) TickHost(*session);
-    else TickClient();
+    static const bool s_eggs = coop::config::ResolveFlag(::coop::config_registry::rows::egg_drill);
+    if ((!s_on && !s_eggs) || !session || !session->running()) return;
+    const bool host = session->role() == coop::net::Role::Host;
+    if (s_on) { if (host) TickHost(*session); else TickClient(); }
+    if (s_eggs) { if (host) TickEggHost(*session); else TickEggClient(); }
 }
 
 }  // namespace coop::dev::event_drill

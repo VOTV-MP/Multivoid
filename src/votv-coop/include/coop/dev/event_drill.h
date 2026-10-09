@@ -13,6 +13,9 @@
 // client's DONE says it replayed both showers and the two fires. The host's save must be before the
 // second day's 00:17 or it says FAIL, so the drill runs on a New Game (mp.py smoke --host-fresh), the
 // rig's save being past that hour. Tagged [EVENT-DRILL]; both peers (event_drill=1).
+// The egg arm (egg_drill=1, tagged [EGG-DRILL]): the host fires eggvasion once the client's world is
+// up, and the client counts its NPC mirrors until 30 s after more than 100 exist, the window whose
+// [perf] lines show what the still eggs cost it.
 
 #pragma once
 
