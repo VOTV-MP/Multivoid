@@ -8,7 +8,8 @@
 // types the format names, and each conversion is written by snprintf from its own unnumbered spec.
 
 #include "l10n/l10n.h"
-#include "l10n/printf_check.h"
+#include "printf_check.h"
+#include "quiet.h"
 
 #include "ue_wrap/core/log.h"
 
@@ -103,7 +104,7 @@ int Format(char* buf, size_t size, Span* arg1, const char* fmt, va_list ap) {
         // Translations are checked at load and our English by the template gate, so this is a
         // defect in a literal: said once, never per frame.
         static std::atomic<bool> s_said{false};
-        if (!s_said.exchange(true))
+        if (!detail::g_selftestQuiet.load(std::memory_order_relaxed) && !s_said.exchange(true))
             UE_LOGE("l10n: a format the conversion grammar refuses (%s): '%.80s'", why ? why : "?", fmt);
         return -1;
     }
@@ -145,9 +146,9 @@ int Format(char* buf, size_t size, Span* arg1, const char* fmt, va_list ap) {
     }
     if (cut) pos = CutUtf8(buf, pos);
     buf[pos] = '\0';
-    if (arg1 && arg1->begin >= 0 && static_cast<size_t>(arg1->begin + arg1->len) > pos) {
-        arg1->len = static_cast<int>(pos) - arg1->begin;
-        if (arg1->len <= 0) *arg1 = Span{};
+    if (arg1 && arg1->begin >= 0) {
+        if (static_cast<size_t>(arg1->begin + arg1->len) > pos) arg1->len = static_cast<int>(pos) - arg1->begin;
+        if (arg1->len <= 0) *arg1 = Span{};   // none of argument 1 was kept
     }
     return static_cast<int>(pos);
 }

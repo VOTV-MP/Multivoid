@@ -21,6 +21,8 @@ std::string NormaliseTag(std::string_view tag) {
     // A gettext locale may carry an encoding or a modifier: `zh_CN.UTF-8`, `sr_RS@latin`.
     const size_t cut = tag.find_first_of(".@");
     if (cut != std::string_view::npos) tag = tag.substr(0, cut);
+    while (!tag.empty() && (tag.front() == ' ' || tag.front() == '\t')) tag.remove_prefix(1);
+    while (!tag.empty() && (tag.back() == ' ' || tag.back() == '\t')) tag.remove_suffix(1);
     std::vector<std::string_view> parts;
     size_t at = 0;
     while (at <= tag.size()) {
@@ -37,6 +39,7 @@ std::string NormaliseTag(std::string_view tag) {
     std::string script, region;
     for (size_t i = 1; i < parts.size(); ++i) {
         const std::string_view p = parts[i];
+        if (p.size() == 1) break;   // a BCP-47 extension or private-use singleton: what follows is not a region
         bool alpha = !p.empty(), digits = !p.empty();
         for (char c : p) {
             alpha = alpha && IsAlpha(c);

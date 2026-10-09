@@ -5,8 +5,8 @@
 // a lookup is one probe whatever the layering. Immutable once published; any thread may look up.
 #pragma once
 
-#include "l10n/plural_expr.h"
-#include "l10n/po_reader.h"
+#include "plural_expr.h"
+#include "po_reader.h"
 
 #include <atomic>
 #include <memory>
@@ -66,8 +66,9 @@ struct SourceReport {
     std::string refusal;                // why the whole file was refused, when it was
     size_t      inserted = 0;
     std::vector<po::Diag> refused;      // the reader's refused entries and the catalogue's
-    std::string pluralNote;             // why this file's Plural-Forms did not parse, when it did not
+    std::string pluralNote;             // why this file's Plural-Forms did not compile, when it did not
     std::string translator;             // Last-Translator
+    std::string team;                   // Language-Team
 };
 
 class Catalog {

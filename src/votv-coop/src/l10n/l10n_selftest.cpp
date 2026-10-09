@@ -9,9 +9,10 @@
 
 #include "catalog.h"
 #include "locale_choice.h"
-#include "l10n/plural_expr.h"
-#include "l10n/po_reader.h"
-#include "l10n/printf_check.h"
+#include "plural_expr.h"
+#include "po_reader.h"
+#include "printf_check.h"
+#include "quiet.h"
 
 #include "ue_wrap/core/log.h"
 
@@ -23,6 +24,11 @@
 #include <vector>
 
 namespace l10n {
+
+namespace detail {
+std::atomic<bool> g_selftestQuiet{false};
+}  // namespace detail
+
 namespace {
 
 #include "plural_vectors.inc"
@@ -90,6 +96,7 @@ void Conversions(Checks& c) {
     c.Ok(!Accepts("%ls") && !Accepts("%c") && !Accepts("%hd") && !Accepts("%lf"), "%ls, %c, %hd and %lf are refused");
     c.Ok(!Accepts("%.3s") && !Accepts("%05s") && !Accepts("%+u") && !Accepts("%#d"), "flags C leaves undefined are refused");
     c.Ok(!Accepts("%123d") && !Accepts("100% sure"), "a three-digit width and a bare '%' are refused");
+    c.Ok(!Accepts("%--5d") && !Accepts("%00x") && Accepts("%-08.2f"), "a flag repeated is refused, distinct flags are not");
     c.Ok(Match("%s took %d", "%2$d by %1$s"), "a reordered translation matches");
     c.Ok(Match("%d items", "%i items") && Match("%5.2f", "%.1f"), "d and i are one type; width and precision may differ");
     c.Ok(!Match("%s took %d", "%s took %s") && !Match("%d", "%ld"), "a type or length change is refused");
@@ -103,12 +110,15 @@ void Formatter(Checks& c) {
     Span sp;
     c.Ok(FmtSpan(buf, sizeof(buf), &sp, "%2$s greets %1$s.", "Nick", "Bob") > 0 && sp.begin == 11 && sp.len == 4,
          "FmtSpan reports where argument 1 landed");
-    // A cut never splits a sequence: U+4E2D is three bytes, and four fit before the cut.
-    char small[6];
-    const int n = Fmt(small, sizeof(small), "ab%s", "\xE4\xB8\xAD\xE4\xB8\xAD");
-    c.Ok(n == 5 && std::strcmp(small, "ab\xE4\xB8\xAD") == 0, "a cut keeps whole UTF-8 sequences");
-    c.Ok(FmtSpan(small, sizeof(small), &sp, "abcd%s", "Nick") == 5 && sp.begin == 4 && sp.len == 1,
+    // A cut never splits a sequence: U+4E2D is three bytes, and only two of them fit after "ab".
+    char small[5];
+    const int n = Fmt(small, sizeof(small), "ab%s", "\xE4\xB8\xAD");
+    c.Ok(n == 2 && std::strcmp(small, "ab") == 0, "a cut keeps whole UTF-8 sequences");
+    c.Ok(FmtSpan(small, sizeof(small), &sp, "abc%s", "Nick") == 4 && sp.begin == 3 && sp.len == 1,
          "a span the cut reaches is clipped");
+    c.Ok(FmtSpan(small, sizeof(small), &sp, "abcde%s", "Nick") == 4 && sp.begin == -1,
+         "a span the cut removes whole is no span");
+    c.Ok(Fmt(buf, sizeof(buf), "%s and %1$s", "x") == -1 && buf[0] == '\0', "a refused format writes nothing");
     const Label l("Apply", "apply");
     c.Ok(std::strcmp(l, "Apply###apply") == 0, "Label composes text and id");
     std::string longText(300, 'x');
@@ -116,6 +126,16 @@ void Formatter(Checks& c) {
     const size_t len = std::strlen(cut);
     c.Ok(len == 255 && std::strcmp(static_cast<const char*>(cut) + len - 10, "###keep_me") == 0,
          "a long label is cut in its text and keeps its id");
+    // 84 three-byte characters are 252 bytes; with "###id" (5) the text has 250 bytes of room, which
+    // ends inside the 84th, so the text keeps 83 of them.
+    std::string han;
+    for (int i = 0; i < 84; ++i) han += "\xE4\xB8\xAD";
+    const Label hanCut(han.c_str(), "id");
+    c.Ok(std::strlen(hanCut) == 83 * 3 + 5 && std::strcmp(static_cast<const char*>(hanCut) + 83 * 3, "###id") == 0,
+         "a label's cut never splits a character");
+    const std::string longId(100, 'i');
+    const Label idLong("x", longId.c_str());
+    c.Ok(std::strlen(idLong) == 1 + 3 + 100, "an id longer than 64 bytes is still kept whole");
 }
 
 void Tags(Checks& c) {
@@ -127,6 +147,8 @@ void Tags(Checks& c) {
          NormaliseTag("sr-Latn") == "sr" && NormaliseTag("es-419") == "es_419", "regions and scripts elsewhere");
     c.Ok(NormaliseTag("").empty() && NormaliseTag("x").empty() && NormaliseTag("12-AB").empty() &&
          NormaliseTag("auto!").empty(), "garbage is no tag");
+    c.Ok(NormaliseTag("en-u-ca-gregory") == "en" && NormaliseTag(" zh_CN ") == "zh_CN",
+         "an extension is no region, and blanks are trimmed");
 }
 
 void Reader(Checks& c) {
@@ -176,6 +198,37 @@ void Reader(Checks& c) {
     c.Ok(tmpl.ok && tmpl.charsetAssumed, "a template's CHARSET is read as UTF-8");
     std::string big(po::kMaxFileBytes + 1, '#');
     c.Ok(!po::Read(big).ok, "a file over 1 MiB is refused");
+
+    // The entry-level rows of D1 that kGood does not reach, one file each.
+    auto entryRefused = [](const std::string& body) {
+        const po::File g = po::Read(body);
+        return g.ok && g.entries.empty() && g.refused.size() == 1;
+    };
+    c.Ok(entryRefused("msgid \"%llu a\"\nmsgid_plural \"%llu as\"\nmsgstr \"%llu b\"\n"),
+         "a msgid_plural with a plain msgstr is refused");
+    c.Ok(entryRefused("msgid \"a\"\nmsgstr[0] \"b\"\n"), "msgstr[n] without msgid_plural is refused");
+    c.Ok(entryRefused("msgid \"%llu a\"\nmsgid_plural \"%llu as\"\nmsgstr[1] \"%llu b\"\nmsgstr[0] \"%llu c\"\n"),
+         "plural forms out of order are refused");
+    c.Ok(entryRefused("msgid \"a\"\nmsgstr \"\\x414\"\n"), "a hex escape of three digits is refused");
+    c.Ok(entryRefused(std::string("msgid \"a\"\nmsgstr \"") + std::string(17000, 'b') + "\"\n"),
+         "an entry over 16 KiB is refused");
+    std::string nine = "msgid \"%llu a\"\nmsgid_plural \"%llu as\"\n";
+    for (int k = 0; k < 9; ++k) nine += "msgstr[" + std::to_string(k) + "] \"%llu x\"\n";
+    c.Ok(entryRefused(nine), "more than 8 plural forms are refused");
+    c.Ok(entryRefused("msgid \"%s and %d\"\nmsgid_plural \"%s and %d\"\nmsgstr[0] \"%s\"\nmsgstr[1] \"%s and %d\"\n"),
+         "a plural form missing a conversion is refused");
+    c.Ok(entryRefused(std::string("msgid \"a\"\nmsgstr \"b") + '\0' + "c\"\n"), "a raw NUL byte in a string is refused");
+    const po::File allEmpty = po::Read("msgid \"%llu a\"\nmsgid_plural \"%llu as\"\nmsgstr[0] \"\"\nmsgstr[1] \"\"\n");
+    c.Ok(allEmpty.ok && allEmpty.entries.empty() && allEmpty.refused.empty(), "a plural with every form empty is untranslated");
+    const po::File twoIds = po::Read("msgid \"\"\nmsgid \"A\"\nmsgstr \"a\"\n");
+    c.Ok(twoIds.ok && twoIds.entries.size() == 1 && twoIds.entries[0].id == "A", "a second msgid starts a new entry");
+    c.Ok(!po::Read("\"stray\"\n").ok, "a string line with no keyword refuses the file");
+    const po::File crlf = po::Read("msgid \"\"\r\nmsgstr \"Language: de\\n\"\r\n\r\nmsgid \"a\"\r\nmsgstr \"b\"\r\n");
+    c.Ok(crlf.ok && crlf.language == "de" && crlf.entries.size() == 1, "a CRLF file loads");
+    const po::File late = po::Read("msgid \"a\"\nmsgstr \"b\"\n\nmsgid \"\"\nmsgstr \"Language: fr\\n\"\n");
+    c.Ok(late.ok && late.language == "fr" && late.entries.size() == 1, "a header after the entries is read");
+    const po::File badLine = po::Read("msgid \"a\"\nmsgstr \"b\"\n\nmsgid \"c\"\nmsgstr \"\xC3\x28\"\n");
+    c.Ok(!badLine.ok && badLine.refusal.line == 4, "a file-level refusal names its entry's line");
 }
 
 void Merge(Checks& c) {
@@ -205,6 +258,24 @@ void Merge(Checks& c) {
          pl->forms[cat.SelectForm(*pl, 5)] == "%llu muchos", "an override's plural entry takes the pack's rule");
     c.Ok(!cat.Peek(nullptr, "A")->hit.load() && cat.Find(nullptr, "A") && cat.Peek(nullptr, "A")->hit.load() &&
          cat.FoundCount() == 1, "a found lookup marks its entry; a peek does not");
+
+    // A count of forms other than the rule's, and a Plural-Forms that does not compile, with and
+    // without a pack rule to fall back on.
+    detail::Catalog c2;
+    detail::SourceReport s1, s2, s3;
+    const std::string three = std::string(hdr) +
+        "msgid \"%llu n\"\nmsgid_plural \"%llu ns\"\nmsgstr[0] \"a\"\nmsgstr[1] \"b\"\nmsgstr[2] \"c\"\n";
+    c2.Insert(po::Read(three), -1, s1);
+    c.Ok(c2.Peek(nullptr, "%llu n") == nullptr && s1.refused.size() == 1, "a count of forms other than nplurals is refused");
+    const std::string broken = "msgid \"\"\nmsgstr \"Plural-Forms: nplurals=2; plural=n ^ 1;\\n\"\n\n"
+        "msgid \"%llu n\"\nmsgid_plural \"%llu ns\"\nmsgstr[0] \"%llu a\"\nmsgstr[1] \"%llu b\"\n";
+    detail::Catalog c3;
+    c3.Insert(po::Read(broken), -1, s2);
+    c.Ok(c3.Peek(nullptr, "%llu n") == nullptr && !s2.pluralNote.empty(), "a pack whose Plural-Forms does not compile refuses its plurals");
+    const int pr = c3.Insert(po::Read(std::string(hdr)), -1, s3);
+    detail::SourceReport s4;
+    c3.Insert(po::Read(broken), pr, s4);
+    c.Ok(c3.Peek(nullptr, "%llu n") != nullptr && !s4.pluralNote.empty(), "an override's uncompilable rule falls back to the pack's");
 }
 
 // Every pack this build embeds: named L10N_<LL_CC>, and each must load with nothing refused.
@@ -239,6 +310,7 @@ void Embedded(Checks& c) {
 }  // namespace
 
 bool RunSelftest(bool injectRed) {
+    detail::g_selftestQuiet.store(true, std::memory_order_relaxed);
     Checks c;
     Plurals(c, injectRed);
     Conversions(c);
@@ -247,6 +319,7 @@ bool RunSelftest(bool injectRed) {
     Reader(c);
     Merge(c);
     Embedded(c);
+    detail::g_selftestQuiet.store(false, std::memory_order_relaxed);
     if (c.pass == c.total) {
         UE_LOGI("l10n selftest: ALL PASS (%d checks)", c.total);
         return true;

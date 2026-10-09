@@ -1,6 +1,6 @@
 // l10n/plural_expr.cpp -- see l10n/plural_expr.h.
 
-#include "l10n/plural_expr.h"
+#include "plural_expr.h"
 
 #include <cctype>
 

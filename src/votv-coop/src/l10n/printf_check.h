@@ -2,8 +2,8 @@
 // load (a translation against its msgid) and by l10n::Fmt (a format before it is written).
 //
 // A translation is untrusted text that reaches a formatter, so its conversions are a closed set:
-// `%[n$][flags][width][.prec][length]type`, flags from `-+ #0` where C defines them for the type,
-// width and precision of at most two decimal digits (no precision on `s`, which counts bytes and would
+// `%[n$][flags][width][.prec][length]type`, flags from `-+ #0` (each at most once) where C defines
+// them for the type, width and precision of at most two decimal digits (no precision on `s`, which counts bytes and would
 // cut a name), length `l` `ll` `z` with an integer type only, types `d i u x X o f F e E g G s`, and
 // `%%`. `*` (an argument no call site passes), `%n` (a write through a pointer), `%c` (a NUL or half a
 // UTF-8 sequence), wide `%ls` and every other length are refused. Numbering is all-unnumbered (the

@@ -1,8 +1,8 @@
 // l10n/l10n.h -- the mod's own interface text in the player's language.
 //
-// The shape is MTA's (Client/core/CLocalization.cpp, Client/sdk/core/CLocalizationInterface.h): gettext
-// catalogues, English as the msgid, four lookups -- T is `_`, Tc `_tc` (with a context), Tn `_tn`
-// (plural), Tcn `_tcn` -- and a marker that does nothing at run time so the template extractor finds a
+// The shape is MTA's (CLocalization.cpp, CLocalizationInterface.h): gettext
+// catalogues, English as the msgid, the lookups -- T is `_`, Tc `_tc` (with a context), Tn `_tn`
+// (plural); MTA's `_tcn` waits for a call site that needs a context and a plural at once -- and a marker that does nothing at run time so the template extractor finds a
 // string in a static table, translated where it is drawn (`_td`, here L10N_MARK). The reader, the plural
 // evaluator and the formatter are ours: MTA's parser, tinygettext, is GPL and is not vendored.
 //
@@ -22,7 +22,6 @@ namespace l10n {
 const char* T  (const char* msgid);
 const char* Tc (const char* ctx, const char* msgid);
 const char* Tn (const char* singular, const char* plural, unsigned long long n);
-const char* Tcn(const char* ctx, const char* singular, const char* plural, unsigned long long n);
 
 // "<text>###<id>" for an id-bearing ImGui widget, composed into its own buffer: a temporary that lives
 // to the end of the full expression, so `ImGui::Button(l10n::Label(l10n::T("Apply"), "apply"))` is
@@ -46,6 +45,9 @@ struct Span {
 // printf with argument numbers (`%2$s %1$s`), over the conversion grammar of l10n/printf_check.h.
 // Returns the bytes written, cut at the last whole UTF-8 sequence that fits and always terminated, or
 // -1 with an empty buffer when the format is refused. FmtSpan also reports where argument 1 landed.
+// The arguments are read by the types the format names, as printf reads them: a call passing fewer
+// arguments than its msgid's conversions is a defect at that call site, and nothing here can see it
+// (a translation cannot cause it: its conversions are pinned to the msgid's at load).
 int Fmt    (char* buf, size_t size, const char* fmt, ...);
 int FmtSpan(char* buf, size_t size, Span* arg1, const char* fmt, ...);
 

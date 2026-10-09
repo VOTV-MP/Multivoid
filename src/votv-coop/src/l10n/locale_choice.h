@@ -4,7 +4,7 @@
 // a player with an English Windows and Russian number formats has -- through
 // GetUserPreferredUILanguages, the SDK's current call (GetUserDefaultUILanguage and LCIDToLocaleName are
 // marked deprecated in winnls.h). MTA stores a `locale` setting its installer chose, default en_US
-// (Client/core/CLocalization.cpp); the mod has no installer, so the OS is the only signal at first start.
+// (CLocalization.cpp); the mod has no installer, so the OS is the only signal at first start.
 #pragma once
 
 #include <string>

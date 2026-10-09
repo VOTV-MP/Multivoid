@@ -1,8 +1,8 @@
 // l10n/po_reader.cpp -- see l10n/po_reader.h.
 
-#include "l10n/po_reader.h"
+#include "po_reader.h"
 
-#include "l10n/printf_check.h"
+#include "printf_check.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -39,7 +39,8 @@ StrResult ReadString(std::string_view s, size_t& i, std::string& out, const char
     while (i < s.size()) {
         const char c = s[i++];
         if (c == '"') return bad ? StrResult::BadEscape : StrResult::Ok;
-        if (c == '\n') return StrResult::Unterminated;
+        // A raw NUL would cut the C string a lookup returns, as the escape would.
+        if (c == '\0') { badEscape("a NUL byte in a string"); continue; }
         if (c != '\\') { out.push_back(c); continue; }
         if (i >= s.size()) return StrResult::Unterminated;
         const char e = s[i++];
@@ -119,6 +120,7 @@ struct Building {
     Entry e;
     bool  fuzzy = false;
     bool  any = false;        // a keyword has been read for it
+    bool  sawId = false;      // its msgid has been read
     bool  sawStr = false;     // a msgstr has been read: the next msgctxt/msgid starts a new entry
     int   plainStr = 0;       // msgstr lines without an index
     int   indexedStr = 0;     // msgstr[n] lines
@@ -146,6 +148,8 @@ File Read(std::string_view bytes) {
 
     std::string header;
     bool haveHeader = false;
+    int headerLine = 0;
+    int badLine = 0;   // the line a file-level refusal from finish() names
     bool pendingFuzzy = false;
     Building b;
 
@@ -156,9 +160,9 @@ File Read(std::string_view bytes) {
         for (const std::string& s : e.str) total += s.size();
         if (!b.bad && total > kMaxEntryBytes) { b.bad = true; b.why = "an entry over 16 KiB"; }
         for (const std::string* s : {&e.ctx, &e.id, &e.idPlural})
-            if (!ValidUtf8(*s)) return "bytes that are not UTF-8";
+            if (!ValidUtf8(*s)) { badLine = b.line; return "bytes that are not UTF-8"; }
         for (const std::string& s : e.str)
-            if (!ValidUtf8(s)) return "bytes that are not UTF-8";
+            if (!ValidUtf8(s)) { badLine = b.line; return "bytes that are not UTF-8"; }
         if (!b.bad && e.str.empty()) { b.bad = true; b.why = "an entry with no msgstr"; }
         // A plural entry has a msgid_plural and only msgstr[n]; a singular one exactly one msgstr.
         const bool pluralShape = !e.idPlural.empty() && b.plainStr == 0 && b.indexedStr > 0;
@@ -169,7 +173,7 @@ File Read(std::string_view bytes) {
         }
         const bool isHeader = !e.hasCtx && e.id.empty() && !e.plural;
         if (isHeader) {
-            if (!haveHeader && !b.bad) { header = e.str[0]; haveHeader = true; }
+            if (!haveHeader && !b.bad) { header = e.str[0]; haveHeader = true; headerLine = b.line; }
         } else if (b.bad) {
             f.refused.push_back(Diag{b.line, b.why ? b.why : "a malformed entry"});
         } else if (!b.fuzzy) {
@@ -230,7 +234,7 @@ File Read(std::string_view bytes) {
             // kind -- references, extracted and translator comments, `#|` previous, `#~` obsolete --
             // is ignored.
             if (i + 1 < ln.size() && ln[i + 1] == ',') {
-                if (b.sawStr) { if (const char* w = finish()) return refuse(line, w); }
+                if (b.sawStr) { if (const char* w = finish()) return refuse(badLine, w); }
                 const std::string_view flags = ln.substr(i + 2);
                 for (size_t p = 0; (p = flags.find("fuzzy", p)) != std::string_view::npos; p += 5) {
                     const bool l = p == 0 || flags[p - 1] == ' ' || flags[p - 1] == ',' || flags[p - 1] == '\t';
@@ -256,13 +260,15 @@ File Read(std::string_view bytes) {
             const std::string_view kw = ln.substr(i, k - i);
             std::string* target = nullptr;
             if (kw == "msgctxt" || kw == "msgid") {
-                if (b.sawStr || (kw == "msgctxt" && b.any) || (kw == "msgid" && !b.e.id.empty())) {
-                    if (const char* w = finish()) return refuse(line, w);
+                // A new entry: after a msgstr, or a second msgctxt, or a second msgid (an empty one
+                // included) -- the last two leave an entry with no msgstr, which finish() refuses.
+                if (b.sawStr || (kw == "msgctxt" && b.any) || (kw == "msgid" && b.sawId)) {
+                    if (const char* w = finish()) return refuse(badLine, w);
                 }
                 if (!b.any) { b.fuzzy = pendingFuzzy; pendingFuzzy = false; b.line = line; }
                 b.any = true;
                 if (kw == "msgctxt") { b.e.hasCtx = true; target = &b.e.ctx; }
-                else { target = &b.e.id; b.line = line; }
+                else { target = &b.e.id; b.line = line; b.sawId = true; }
             } else if (kw == "msgid_plural") {
                 if (!b.any) return refuse(line, "a msgid_plural with no msgid");
                 b.e.plural = true;
@@ -318,7 +324,7 @@ File Read(std::string_view bytes) {
         at = next;
         if (end == bytes.size()) break;
     }
-    if (const char* w = finish()) return refuse(line, w);
+    if (const char* w = finish()) return refuse(badLine, w);
 
     if (haveHeader) {
         f.pluralForms = HeaderField(header, "Plural-Forms");
@@ -336,7 +342,7 @@ File Read(std::string_view bytes) {
             while (!v.empty() && IsSpace(v.back())) v.remove_suffix(1);
             if (v == "CHARSET") f.charsetAssumed = true;
             else if (!EqualsNoCase(v, "UTF-8") && !EqualsNoCase(v, "UTF8"))
-                return refuse(0, "a charset other than UTF-8");
+                return refuse(headerLine, "a charset other than UTF-8");
         }
     } else {
         f.charsetAssumed = true;

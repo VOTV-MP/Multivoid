@@ -6,6 +6,7 @@ namespace l10n::detail {
 
 int Catalog::Insert(const po::File& f, int fallbackRule, SourceReport& report) {
     report.translator = f.lastTranslator;
+    report.team = f.languageTeam;
     report.refused.insert(report.refused.end(), f.refused.begin(), f.refused.end());
     int rule = fallbackRule;
     if (!f.pluralForms.empty()) {
@@ -15,10 +16,8 @@ int Catalog::Insert(const po::File& f, int fallbackRule, SourceReport& report) {
             rules_.push_back(std::move(r));
             rule = static_cast<int>(rules_.size() - 1);
         } else {
-            report.pluralNote = why;
+            report.pluralNote = why;   // a header that carried one which did not compile
         }
-    } else {
-        report.pluralNote = "no Plural-Forms in the header";
     }
     for (const po::Entry& e : f.entries) {
         if (e.plural) {

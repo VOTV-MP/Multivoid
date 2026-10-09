@@ -1,6 +1,6 @@
 // l10n/printf_check.cpp -- see l10n/printf_check.h.
 
-#include "l10n/printf_check.h"
+#include "printf_check.h"
 
 namespace l10n::printf_check {
 namespace {
@@ -47,14 +47,18 @@ bool Parse(std::string_view s, Parsed* out, const char** why) {
             c.arg = static_cast<uint8_t>(out->count + 1);
         }
         c.specBegin = static_cast<uint16_t>(i);
-        bool zero = false, sign = false, alt = false, prec = false;
+        bool zero = false, sign = false, alt = false, prec = false, left = false, plus = false, space = false;
+        // Each flag at most once, so the longest spec (5 flags, 2 width, '.', 2 precision, 2 length,
+        // the type) fits the formatter's buffer whole.
         for (; i < s.size(); ++i) {
             const char g = s[i];
-            if (g == '0') zero = true;
-            else if (g == '+' || g == ' ') sign = true;
-            else if (g == '#') alt = true;
-            else if (g != '-') break;
+            bool* seen = g == '0' ? &zero : g == '+' ? &plus : g == ' ' ? &space : g == '#' ? &alt
+                       : g == '-' ? &left : nullptr;
+            if (!seen) break;
+            if (*seen) return fail("a repeated flag");
+            *seen = true;
         }
+        sign = plus || space;
         if (i < s.size() && s[i] == '*') return fail("a '*' width or precision");
         for (int d = 0; i < s.size() && IsDigit(s[i]); ++d, ++i)
             if (d == 2) return fail("a width of more than two digits");
