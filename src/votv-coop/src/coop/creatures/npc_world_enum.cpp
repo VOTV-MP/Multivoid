@@ -206,8 +206,9 @@ void OnBeginDeferredExSpawn(void* /*context*/, void* srcObj, void* spawned) {
     if (!source) return;
     void* cls = R::ClassOf(spawned);
     if (!cls) return;
-    if (!coop::npc_sync::IsAllowlistedClass(cls) && !IsWaAllowlistedClass(cls)) return;
+    // A scoped source's outputs first: one render, before the world-actor list's per-entry renders.
     if (source->outputs && !NamesOneOf(cls, source->outputs)) return;
+    if (!coop::npc_sync::IsAllowlistedClass(cls) && !IsWaAllowlistedClass(cls)) return;
     const int32_t idx = R::InternalIndexOf(spawned);
     std::lock_guard<std::mutex> lk(g_pendingMx);
     if (g_pendingExSpawns.size() >= kMaxPendingExSpawns) {

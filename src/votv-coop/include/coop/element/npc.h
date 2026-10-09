@@ -73,6 +73,21 @@ private:
     bool             dirty_          = true;   // unapplied change to push to the engine
     bool             isWispMirror_   = false;  // wisp_C mirror: replay the landing edge (fade-in)
     bool             wispLanded_     = false;  //   ... one-shot latch (drive succeeded)
+
+    // What ApplyToEngine last wrote, and onto which actor, so a pose identical to it costs
+    // nothing: the host's rotation re-sends a mirror that lies still (an eggvasion's 121 eggs) the
+    // same pose, and each re-send reopened the interpolation window and re-teleported the actor
+    // every frame. A mirror's tick and its CMC's are parked, so nothing else moves it between two
+    // writes; a rebound actor differs, so it is written.
+    struct Applied {
+        void*            actor = nullptr;
+        ue_wrap::FVector pos{}, lookAt{};
+        float            yaw = 0.f, speed = 0.f, bodyYaw = 0.f;
+        uint8_t          stateBits = 0, kerfState = 0;
+        bool             hasLookAt = false, hasBodyYaw = false, hasKerfState = false, spooky = false;
+    } applied_;
+    bool SameAsApplied(void* actor) const;
+    void RememberApplied(void* actor);
 };
 
 }  // namespace coop::element

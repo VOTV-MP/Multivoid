@@ -133,7 +133,38 @@ void Npc::Tick() {
     if (!actor || !R::IsLiveByIndex(actor, GetInternalIdx())) return;  // unbound / GC'd mirror
     if (!hasPose_) return;  // no pose yet -- leave the mirror at its spawn transform
     AdvanceInterp();
-    if (dirty_) { ApplyToEngine(); dirty_ = false; }
+    if (dirty_) {
+        dirty_ = false;
+        if (!SameAsApplied(actor)) {
+            ApplyToEngine();
+            RememberApplied(actor);
+        }
+    }
+    // Wisp mirror: replay the native landing edge (landed=true + dir(true) -> the fade-in the wisp
+    // gates behind a CMC-tick-computed CurrentFloor read its parked CMC can never produce).
+    // Grounded-per-host = drive; retried each frame until wisp_C resolves, whether or not the pose
+    // moved (also covers a joiner mirroring an already-landed wisp: its first pose reads grounded).
+    if (isWispMirror_ && !wispLanded_ && !(curStateBits_ & coop::net::kStateBitInAir))
+        wispLanded_ = ue_wrap::wisp::DriveWispLanding(actor);
+}
+
+bool Npc::SameAsApplied(void* actor) const {
+    const Applied& a = applied_;
+    if (a.actor != actor) return false;
+    if (a.pos.X != curPos_.X || a.pos.Y != curPos_.Y || a.pos.Z != curPos_.Z) return false;
+    if (a.yaw != curYaw_ || a.speed != curSpeed_ || a.stateBits != curStateBits_) return false;
+    if (a.hasLookAt != hasLookAt_ || a.hasBodyYaw != hasBodyYaw_ || a.hasKerfState != hasKerfState_)
+        return false;
+    if (hasLookAt_ && (a.lookAt.X != curLookAt_.X || a.lookAt.Y != curLookAt_.Y || a.lookAt.Z != curLookAt_.Z))
+        return false;
+    if (hasBodyYaw_ && a.bodyYaw != curBodyYaw_) return false;
+    if (hasKerfState_ && (a.kerfState != kerfState_ || a.spooky != kerfSpooky_)) return false;
+    return true;
+}
+
+void Npc::RememberApplied(void* actor) {
+    applied_ = Applied{actor, curPos_, curLookAt_, curYaw_, curSpeed_, curBodyYaw_, curStateBits_,
+                       kerfState_, hasLookAt_, hasBodyYaw_, hasKerfState_, kerfSpooky_};
 }
 
 void Npc::ApplyToEngine() {
@@ -150,12 +181,6 @@ void Npc::ApplyToEngine() {
     const ue_wrap::FVector vel{ std::cos(yawRad) * curSpeed_, std::sin(yawRad) * curSpeed_, 0.f };
     const bool inAir = (curStateBits_ & coop::net::kStateBitInAir) != 0;
     Pup::DriveCharacterMovement(actor, vel, inAir);
-    // Wisp mirror: replay the native landing edge (landed=true + dir(true) -> the
-    // fade-in the wisp gates behind a CMC-tick-computed CurrentFloor read its parked CMC can
-    // never produce). Grounded-per-host = drive; retried per frame until wisp_C resolves (also
-    // covers a joiner mirroring an already-landed wisp: its first pose reads grounded).
-    if (isWispMirror_ && !wispLanded_ && !inAir)
-        wispLanded_ = ue_wrap::wisp::DriveWispLanding(actor);
     // Aim the mirror's head and neck at the host's streamed look target. Writes the kerfur
     // AnimBP `lookAt` + sets customLookAt=true so the mirror's own BUA stops auto-aiming at the
     // LOCAL player camera (the desync this fixes). Class-gated inside -> safe no-op on non-kerfur
