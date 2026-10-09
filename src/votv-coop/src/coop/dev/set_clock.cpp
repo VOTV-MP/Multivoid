@@ -57,12 +57,16 @@ void Refresh() {
 
 bool ReadCurrent(int& hourOut, int& minuteOut, int& dayOut, float& sunFracOut) {
     const uint64_t now = NowMs();
-    if (now >= g_nextRefreshMs.load(std::memory_order_relaxed) &&
-        !g_refreshPosted.exchange(true, std::memory_order_acq_rel)) {
+    if (GT::IsGameThread()) {
+        Refresh();   // a game-thread caller (a drill's tick) reads the clock itself, never a stale snapshot
+    } else if (now >= g_nextRefreshMs.load(std::memory_order_relaxed) &&
+               !g_refreshPosted.exchange(true, std::memory_order_acq_rel)) {
         g_nextRefreshMs.store(now + 250, std::memory_order_relaxed);
         GT::Post([] {
+            // Released however the refresh ends: a fault the pump absorbs must not freeze the panel on its
+            // last snapshot for the rest of the run.
+            struct Release { ~Release() { g_refreshPosted.store(false, std::memory_order_release); } } release;
             Refresh();
-            g_refreshPosted.store(false, std::memory_order_release);
         });
     }
     std::lock_guard<std::mutex> lk(g_snapMu);

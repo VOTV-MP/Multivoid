@@ -23,8 +23,9 @@ namespace coop::dev::set_clock {
 
 // Read the live NAMED clock (displayed day = timeZ.Z + 1, hour/minute from timeZ) + the sun
 // FRACTION (totalTime/MaxTime in [0,1)). Returns false if the world clock is not resolved yet.
-// Any thread: a snapshot the game thread refreshes at most four times a second, so the first
-// call after entering a world can return false once.
+// The game thread reads the clock itself; any other thread reads a snapshot the game thread
+// refreshes at most four times a second, which after a world change answers once for the world
+// left until its first refresh runs.
 bool ReadCurrent(int& hourOut, int& minuteOut, int& dayOut, float& sunFracOut);
 
 // HOST-only (dev_gate): set the clock to (displayed day, hour, minute). Clamps day >= 1, hour
