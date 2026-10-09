@@ -975,7 +975,9 @@ enum class ReliableKind : uint8_t {
     StatQueryReply = 172,
 
     // Client to host: my player opened this point sack; the host pays the sack's own points from its copy
-    // and destroys it, within the player's reach. Never relayed. PointSackRedeemPayload.
+    // and destroys it, within the player's reach. Never relayed. Late join: none -- the sack is its own
+    // record, gone once opened. Trust: the amount is the host's copy's and the reach the host's pose of the
+    // sender; the client names the sack and nothing else. PointSackRedeemPayload.
     PointSackRedeem = 173,
 };
 

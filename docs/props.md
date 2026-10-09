@@ -50,9 +50,8 @@ birth's own initialisation is too early for a record, and without the drain a di
 ejected reached every client blank. The drain logs its traffic once a minute
 (`HOST BIRTH RECORDS`).
 
-Point-sack redemption is a client intent: the host authorizes reach, reserves the live UObject
-incarnation across callbacks, destroys it, and pays only after that incarnation is no longer
-live (`coop/items/point_sack_intent`). A successful dispatch with the sack still live pays
+Point-sack redemption is a client intent: the host authorizes reach, destroys its copy, and pays
+only after that incarnation is no longer live (`coop/items/point_sack_intent`). A successful dispatch with the sack still live pays
 nothing. A joining client's action is also intercepted: a refused send leaves the sack intact
 for another press after joining. `[?]` Concurrent redemption needs a two-peer test; a consumed sack whose payment fails
 has no automatic recovery.

@@ -8,11 +8,11 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/players_registry.h"      // kMaxPeers
-#include "coop/props/prop_element_tracker.h"   // GetPropElementIdForActor, FindLiveActorByKey
+#include "coop/props/prop_element_tracker.h"   // FindLiveActorByKey
 
 #include "ue_wrap/actors/prop.h"               // GetInteractableKeyString
-#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/hot_path_guard.h"   // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
@@ -41,20 +41,6 @@ bool g_watchRegistered = false;
 bool g_watchSettled = false;
 uint64_t g_sent = 0, g_paid = 0, g_refused = 0;
 
-// Engine callbacks can redeem again before the outer destroy returns.
-struct Redemption {
-    ue_wrap::CachedObjRef sack;
-    Redemption* previous;
-    static Redemption* active;
-    explicit Redemption(void* actor) : previous(active) { sack.Set(actor); active = this; }
-    ~Redemption() { active = previous; }
-    static bool Contains(void* actor) {
-        for (auto* p = active; p; p = p->previous) if (p->sack.Is(actor)) return true;
-        return false;
-    }
-};
-Redemption* Redemption::active = nullptr;  // game-thread stack
-
 bool IsSack(void* actor) {
     if (!actor) return false;
     for (void* cls = R::ClassOf(actor); cls; cls = R::SuperStructOf(cls))
@@ -69,7 +55,9 @@ sg::Verdict OnActionPre(const sg::Call& c) {
     if (!s || !s->running() || s->role() != coop::net::Role::Client) return sg::Verdict::Run;
     if (!IsSack(c.object)) return sg::Verdict::Run;
     const std::wstring key = ue_wrap::prop::GetInteractableKeyString(c.object);
-    const EL::ElementId eid = coop::prop_element_tracker::GetPropElementIdForActor(c.object);
+    // The registry's reverse names a mirror as well as a local: a sack loaded from the host's save or
+    // received as a spawn is a mirror here, and a key-less one is named by this alone.
+    const EL::ElementId eid = EL::Registry::Get().EidForActor(c.object);
     coop::net::PointSackRedeemPayload p{};
     if (!key.empty() && key != L"None") coop::net::WireKeyFromString(key, p.key);
     p.elementId = eid == EL::kInvalidId ? 0u : static_cast<uint32_t>(eid);
@@ -122,7 +110,7 @@ void Tick() {
 }
 
 void OnRedeem(coop::net::Session& session, const coop::net::PointSackRedeemPayload& p, uint8_t senderSlot) {
-    if (!ue_wrap::game_thread::IsGameThread()) return;
+    UE_ASSERT_GAME_THREAD("point_sack_intent::OnRedeem");
     if (session.role() != coop::net::Role::Host) return;
     const std::wstring key = coop::net::StringFromWireKey(p.key);
     if (p.elementId != 0u && !EL::Registry::IsAllowedHostAllocatedEid(p.elementId) &&
@@ -139,14 +127,11 @@ void OnRedeem(coop::net::Session& session, const coop::net::PointSackRedeemPaylo
     // No sack is the ordinary end of a second request, or of two players opening one sack.
     if (!sack) { Refuse(senderSlot, key, p.elementId, "no such sack here -- already opened"); return; }
     if (!IsSack(sack)) { Refuse(senderSlot, key, p.elementId, "not a point sack"); return; }
-    if (Redemption::Contains(sack)) { Refuse(senderSlot, key, p.elementId, "redemption in progress"); return; }
-    const Redemption redemption(sack);
     const auto tok = EL::IntentTarget::ForClientIntent(session, senderSlot, kReachUU);
     if (const auto sub = tok.Authorize(sack); !sub) {
         Refuse(senderSlot, key, p.elementId, EL::OutcomeName(sub.outcome));
         return;
     }
-    if (!redemption.sack.Is(sack)) { Refuse(senderSlot, key, p.elementId, "sack no longer live"); return; }
     static void* sCls = nullptr;
     static int32_t sOffPoints = -1;
     void* cls = R::ClassOf(sack);
@@ -155,8 +140,10 @@ void OnRedeem(coop::net::Session& session, const coop::net::PointSackRedeemPaylo
     int32_t points = 0;
     std::memcpy(&points, static_cast<const uint8_t*>(sack) + sOffPoints, sizeof(points));
     // Call success is dispatch, not consumption. Pay only after this incarnation is dead.
+    ue_wrap::CachedObjRef incarnation;
+    incarnation.Set(sack);
     ue_wrap::engine::DestroyActor(sack);
-    if (redemption.sack.Is(sack)) {
+    if (incarnation.Is(sack)) {
         Refuse(senderSlot, key, p.elementId, "the sack is still live after destroy -- not paid");
         return;
     }
