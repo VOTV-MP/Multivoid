@@ -233,8 +233,12 @@ void OnFinishSpawnFunc(void* /*context*/, void* /*srcObj*/, void* result) {
     // expressing a mirror as a fresh world prop is the dupe.
     if (coop::prop_echo_suppress::IsMirrorSpawn(actor)) return;
     if (!ue_wrap::prop::IsDescendantOfProp(actor)) return;  // KEYED Aprop_C lineage only
-    // An actor the init seam already tracked is queued too: its row is out, but its fall still
-    // needs the drain's post-birth work (a spawn-menu barrel takes that route).
+    // An actor the init seam already tracked has its row out; only a fall is left to give it, so it
+    // is queued when it can fall (a spawn-menu barrel takes that route) and dropped here otherwise,
+    // which keeps every other tracked birth out of the queue and its cap.
+    if (PT::GetPropElementIdForActor(actor) != coop::element::kInvalidId &&
+        !(coop::prop_wire_parity::PhysFlagsOf(actor) & coop::net::propspawn_flags::kSimulatePhysics))
+        return;
     if (g_pendingFinished.size() >= kMaxPendingFinished) {
         UE_LOGW("host_spawn_watcher: pending-finished cap %zu hit -- dropping %p (safety census catches it)",
                 kMaxPendingFinished, actor);
@@ -359,7 +363,7 @@ void TickWatchedProps(coop::net::Session* s) {
 // client's intent -- falls under each peer's own physics, and two simulations of one fall part
 // ways: a barrel that rolled on the host stood upright on the client. The fall goes out on the
 // driven-prop stream until the body rests, and the stream's end parks every copy at the host's
-// final pose. Frozen, static and sleeping births do not move and are left alone, and past the cap
+// final pose. A birth that is not simulating and awake does not move and is left alone, and past the cap
 // a burst of births -- a spawn-menu pile, an event's debris -- falls locally as it always did, so
 // the stream's per-tick reads stay bounded.
 constexpr size_t kMaxCoastingBirths = 32;
@@ -376,8 +380,9 @@ void CoastIfFalling(void* actor) {
         return;
     }
     if (PT::GetPropElementIdForActor(actor) == coop::element::kInvalidId) return;
-    const uint8_t flags = coop::prop_wire_parity::PhysFlagsOf(actor);
-    if (flags & (pf::kFrozen | pf::kStatic | pf::kSleep)) return;
+    // Simulating and awake, which also means neither frozen, static nor asleep: a body born resting,
+    // or one that has landed by the drain, opens no row.
+    if (!(coop::prop_wire_parity::PhysFlagsOf(actor) & pf::kSimulatePhysics)) return;
     coop::prop_drive_host::Coast(actor, "host birth");
 }
 }  // namespace
