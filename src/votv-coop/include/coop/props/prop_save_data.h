@@ -68,9 +68,11 @@ bool PublishWithSpawn(coop::net::Session* s, void* actor, const coop::net::WireK
 // flight behind that intent. Until it lands, the host must not publish a record for this key: what
 // it would publish is the class default it just spawned, and every peer -- the author included --
 // would take that over the state the author actually has. `senderSlot` is who is owed. Cleared when
-// the record arrives, when that peer goes, at teardown, or on a timeout -- an intent can be lost to
-// a refused rate window or a malformed body, and a key nobody clears would silence this lane's
-// publisher for that prop for the whole session, the join seed included.
+// the record LANDS here, at once or from the park once the actor is indexed (not at its arrival: a
+// record that arrives first is parked, and the spawn drain publishes in that gap); when that peer
+// goes; at teardown; or on a timeout -- an intent can be lost to a refused rate window or a
+// malformed body, and a key nobody clears would silence this lane's publisher for that prop for the
+// whole session, the join seed included.
 void ExpectRecordFor(const std::wstring& key, uint8_t senderSlot);
 
 // A chunk of either kind off the wire. `intent` distinguishes PropSaveDataIntent (a client's

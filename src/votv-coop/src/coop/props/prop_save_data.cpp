@@ -284,6 +284,10 @@ bool TryApply(void* actor, const std::wstring& key, const SR::SaveRecord& rec) {
     if (!SR::ApplyRecord(actor, rec)) return false;
     ++g_appliedTotal;
     coop::dev::food_clock_probe::NoteApply(actor, key, rec);
+    // The author's record has LANDED, so the host may publish this key again. Not at its arrival:
+    // a record that arrives before the host's actor is indexed is parked, and the spawn drain runs
+    // in that gap and would publish the class default the host just spawned.
+    g_awaiting.erase(key);
     return true;
 }
 
@@ -355,15 +359,16 @@ void ExpectRecordFor(const std::wstring& key, uint8_t senderSlot) {
     g_awaiting[key] = a;
 }
 
-// True while the author's record for this key is still owed. A wait that has run out is dropped
-// here rather than lingering: an intent can be lost to a refused rate window, a malformed body, a
-// dropped peer or a prop that died first, and a key nobody clears would silence this lane's
-// publisher for that prop for the rest of the session -- the join seed included.
+// True while the author's record for this key has not landed here. A wait that has run out is
+// dropped here rather than lingering: an intent can be lost to a refused rate window, a malformed
+// body, a dropped peer or a prop that died first, or sit parked on an apply that keeps failing, and
+// a key nobody clears would silence this lane's publisher for that prop for the rest of the session
+// -- the join seed included.
 bool StillAwaited(const std::wstring& key) {
     auto it = g_awaiting.find(key);
     if (it == g_awaiting.end()) return false;
     if (NowMs() < it->second.deadlineMs) return true;
-    UE_LOGW("prop_save_data: waited %llu ms for slot %u's record for key '%ls' and it never came "
+    UE_LOGW("prop_save_data: waited %llu ms for slot %u's record for key '%ls' and it never landed "
             "-- publishing this key again from what the host has",
             static_cast<unsigned long long>(kAwaitTimeoutMs),
             static_cast<unsigned>(it->second.senderSlot), key.c_str());
@@ -511,8 +516,6 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
         LandRecord(key, std::move(rec), senderSlot, body.size());
         return;
     }
-    // The claim has landed, so the key is no longer awaited and the host may publish it again.
-    g_awaiting.erase(key);
     // The host takes a client's claim: apply or park it locally, then re-publish the result as the
     // canonical so every peer -- the author included, as the acknowledgement -- takes the same
     // bytes from the same authority.
