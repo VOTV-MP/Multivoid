@@ -38,7 +38,7 @@ void RequestRefresh();
 const char* GateNote(const char* eventName);
 
 // Arm + complete the event NOW. Arms through the SAME seam as the fire button (HostFire -> the
-// native eventer dispatch + the EventFire broadcast, so clients replay the arm per policy), then
+// native eventer dispatch, whose runEvent watch broadcasts it; clients replay per policy), then
 // drives the box's OWN BeginOverlap handler with the local player pawn as OtherActor -- the
 // native class filter, N bookkeeping and collision-disable all run in the game's own bytecode.
 // No game state is faked; it is the exact dispatch a real walk-in performs. False if the event

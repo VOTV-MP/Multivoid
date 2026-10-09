@@ -99,9 +99,12 @@ replaying them would deliver the effect twice; the level flips, story flags and 
 no lane carries are replayed through the same native verb. A prank's rolled case arrives as its
 own `runSpecialEvent` fire and meets the same policy: a graffiti decal or a scare box's arm is
 replayed, the outcome the host rolled; a case whose output rides a lane or stays on the host is
-not. A replay is skipped when the client's own passed list already carries the row, unless the
-host says the event is in flight; one whose world or eventer is not up yet waits and is retried
-each second. The developer menu's event trigger dispatches through the same host path, so a
+not. A client runs no eventer verb of its own: the game's event and cheat menus are refused there,
+and the one eventer call it runs is the replay's own. A replay is skipped when the client's own
+passed list already carries the row, unless the host says the event is in flight; one whose world
+or eventer is not up yet waits and is retried each second. A special fired before a peer joins is
+not replayed to it: a scare box armed earlier stays unarmed on the joiner, and a decal it spawned
+reaches the joiner only if a lane carries it. The developer menu's event trigger dispatches through the same host path, so a
 forced event broadcasts like a scheduled one. It refuses running clients, including a join in
 progress, and a queued trigger is bound to the submitting session's start serial and world
 generation, so restarting the same session object cannot carry an old request into the next run.

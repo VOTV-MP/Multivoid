@@ -13,6 +13,8 @@
 
 #include "coop/world/event_fire_sync.h"
 
+#include "event_fire_policy.h"  // ReplayVerdict (co-located private header)
+
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/session_serial.h"
@@ -31,6 +33,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <deque>
 #include <string>
@@ -71,8 +74,10 @@ constexpr const wchar_t* kRunEvent = L"runEvent";  // one pointer: the gate matc
 constexpr const wchar_t* kRunSpecialEvent = L"runSpecialEvent";
 bool g_watchInstalled = false;
 bool g_watchLive = false;
+bool g_watchDead = false;          // settled without going live: said once, no longer polled
 bool g_specialWatchInstalled = false;
 bool g_specialWatchLive = false;
+bool g_specialWatchDead = false;
 unsigned g_hostFireSeq = 0;  // committed host fires across both verbs (game thread)
 
 // Client suppression and replay state, game thread.
@@ -189,6 +194,39 @@ bool WatchLive(FireKind kind) {
     return sg::NameWatchLive(name, kTagEventFire) && sg::IsEnabled();
 }
 
+bool IsClientSession() {
+    auto* s = g_session.load(std::memory_order_acquire);
+    return s && s->running() && s->role() == coop::net::Role::Client;
+}
+
+// A client runs no eventer verb of its own: the game's event menu and its cheat menu reach
+// runEvent's and runSpecialEvent's bodies directly, and every spawn inside them is bytecode-internal,
+// so a fire there mints creatures and props no mirror covers. The one eventer call a client runs is
+// this module's replay, admitted by NativeFire's own scope: the eventer and the verb it dispatches,
+// once. An eventer call nested inside it is refused -- the prank roll's own runSpecialEvent among
+// them, whose chosen case the host sends as a fire of its own.
+struct Admission {
+    void* object = nullptr;
+    void* function = nullptr;
+    bool spent = false;
+};
+Admission* g_admission = nullptr;   // game thread; set for exactly the length of NativeFire's Call
+uint64_t g_clientRefused = 0;
+
+sg::Verdict OnEventerVerbPre(const sg::Call& call) {
+    if (!IsClientSession()) return sg::Verdict::Run;
+    Admission* a = g_admission;
+    if (a && !a->spent && call.object == a->object && call.function == a->function) {
+        a->spent = true;
+        return sg::Verdict::Run;
+    }
+    const uint64_t n = ++g_clientRefused;
+    if ((n & (n - 1)) == 0)
+        UE_LOGI("event_fire: refused a client's own eventer call on %p (#%llu) -- the host fires "
+                "every event", call.object, static_cast<unsigned long long>(n));
+    return sg::Verdict::Cancel;
+}
+
 // The native fire, game thread. A dispatch that faults is said and not re-run.
 bool NativeFire(FireKind kind, const std::wstring& eventName, const std::wstring& specialName) {
     void* eventer = EventerOf(ue_wrap::world_singleton::Gamemode());
@@ -215,8 +253,21 @@ bool NativeFire(FireKind kind, const std::wstring& eventName, const std::wstring
                 verb, eventName.c_str());
         return false;
     }
+    Admission adm{eventer, fn};
+    struct Scope {
+        Admission* prev;
+        explicit Scope(Admission* a) : prev(g_admission) { g_admission = a; }
+        ~Scope() { g_admission = prev; }
+    } scope(&adm);
     if (!ue_wrap::Call(eventer, f)) {
         UE_LOGW("event_fire: %s('%ls') dispatch FAILED", verb, eventName.c_str());
+        return false;
+    }
+    // On a client the gate admits this call and nothing else; a live watch that did not admit it
+    // refused it, so the body did not run.
+    if (IsClientSession() && WatchLive(kind) && !adm.spent) {
+        UE_LOGE("event_fire: %s('%ls') was refused at the gate -- the admission did not match the "
+                "call; not retried", verb, eventName.c_str());
         return false;
     }
     if (kind == FireKind::SpecialEvent)
@@ -271,10 +322,9 @@ void OnRunSpecialEventPost(const sg::Call& call) {
     const char* origin =
         (g_summonArirPrankFn && call.callerFunction == g_summonArirPrankFn) ? "prank-roll" :
         call.fromOurCode ? "dev-call" : "native";
-    const bool returned = call.result ? *static_cast<const bool*>(call.result) : true;
     ++g_hostFireSeq;
-    UE_LOGI("event_fire: host fire #%u runSpecialEvent('%s') origin=%s returned=%d -- broadcasting",
-            g_hostFireSeq, name.c_str(), origin, returned ? 1 : 0);
+    UE_LOGI("event_fire: host fire #%u runSpecialEvent('%s') origin=%s -- broadcasting",
+            g_hostFireSeq, name.c_str(), origin);
     Broadcast(FireKind::SpecialEvent, name);
 }
 
@@ -435,20 +485,34 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     // Called every pump tick by the install fanout, which is also the retry until the cycle class
     // loads and until the gate has resolved the watch's name.
+    // The PRE is the client's refusal (OnEventerVerbPre), the POST the host's emit.
     if (!g_watchInstalled)
-        g_watchInstalled = sg::WatchName(kRunEvent, kTagEventFire, nullptr, &OnRunEventPost);
+        g_watchInstalled = sg::WatchName(kRunEvent, kTagEventFire, &OnEventerVerbPre, &OnRunEventPost);
     if (!g_specialWatchInstalled)
         g_specialWatchInstalled =
-            sg::WatchName(kRunSpecialEvent, kTagEventFire, nullptr, &OnRunSpecialEventPost);
-    if ((g_watchInstalled && !g_watchLive) || (g_specialWatchInstalled && !g_specialWatchLive))
-        sg::ResolvePendingNames();
-    if (!g_watchLive && sg::NameWatchLive(kRunEvent, kTagEventFire)) {
-        g_watchLive = true;
-        UE_LOGI("event_fire: the host's fires are seen at runEvent (a script-gate watch)");
+            sg::WatchName(kRunSpecialEvent, kTagEventFire, &OnEventerVerbPre, &OnRunSpecialEventPost);
+    const bool runPending = g_watchInstalled && !g_watchLive && !g_watchDead;
+    const bool specialPending = g_specialWatchInstalled && !g_specialWatchLive && !g_specialWatchDead;
+    if (runPending || specialPending) sg::ResolvePendingNames();
+    if (runPending) {
+        if (sg::NameWatchLive(kRunEvent, kTagEventFire)) {
+            g_watchLive = true;
+            UE_LOGI("event_fire: the host's fires are seen at runEvent (a script-gate watch)");
+        } else if (sg::NameWatchSettled(kRunEvent, kTagEventFire)) {
+            g_watchDead = true;
+            UE_LOGE("event_fire: the runEvent watch settled dead -- a host's fires do not cross, and "
+                    "a client's own are not refused, this session");
+        }
     }
-    if (!g_specialWatchLive && sg::NameWatchLive(kRunSpecialEvent, kTagEventFire)) {
-        g_specialWatchLive = true;
-        UE_LOGI("event_fire: the host's special picks are seen at runSpecialEvent (a script-gate watch)");
+    if (specialPending) {
+        if (sg::NameWatchLive(kRunSpecialEvent, kTagEventFire)) {
+            g_specialWatchLive = true;
+            UE_LOGI("event_fire: the host's special picks are seen at runSpecialEvent (a script-gate watch)");
+        } else if (sg::NameWatchSettled(kRunSpecialEvent, kTagEventFire)) {
+            g_specialWatchDead = true;
+            UE_LOGE("event_fire: the runSpecialEvent watch settled dead -- a host's specials do not cross, "
+                    "and a client's own are not refused, this session");
+        }
     }
     // The client replay queue's lasting retry: a fire whose world or eventer was not up no longer
     // waits for the next fire to arrive -- this pump paces it instead.
@@ -542,7 +606,7 @@ void OnReliable(const coop::net::EventFirePayload& payload) {
     const char* lane = nullptr;
     const int verdict = ReplayVerdict(name, &lane);
     if (verdict == 0) {
-        UE_LOGI("event_fire: '%s' NOT replayed -- %s owns the outputs", name.c_str(), lane);
+        UE_LOGI("event_fire: '%s' NOT replayed (%s)", name.c_str(), lane);
         return;
     }
     if (verdict < 0) {
@@ -581,8 +645,7 @@ void ReplayInFlightRow(const std::string& rowName) {
     const char* lane = nullptr;
     const int verdict = ReplayVerdict(rowName, &lane);
     if (verdict == 0) {
-        UE_LOGI("event_fire: in-flight '%s' NOT replayed -- %s owns the outputs (its join "
-                "snapshot delivers current state)", rowName.c_str(), lane);
+        UE_LOGI("event_fire: in-flight '%s' NOT replayed (%s)", rowName.c_str(), lane);
         return;
     }
     if (verdict < 0) {
@@ -626,8 +689,8 @@ void OnClientWorldReady() {
     if (g_pending.empty())
         UE_LOGI("event_fire: world ready -- replayed the %zu queued fire(s)", before);
     else
-        UE_LOGW("event_fire: world ready with %zu of %zu queued fire(s) still pending -- "
-                "the install pump retries them", g_pending.size(), before);
+        UE_LOGI("event_fire: world ready with %zu of %zu queued fire(s) still pending -- "
+                "the install pump retries them each second", g_pending.size(), before);
 }
 
 void OnDisconnect() {

@@ -1,7 +1,7 @@
 // coop/world/event_fire_policy.cpp -- see coop/world/event_fire_sync.h. The replay policy alone
 // lives here so the dupe matrix can grow a row at a time free of the sync logic's size budget.
 
-#include "coop/world/event_fire_sync.h"
+#include "event_fire_policy.h"
 
 #include <string>
 

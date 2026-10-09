@@ -78,7 +78,7 @@ void RunAutonomousEventForceTest() {
     const bool pass = post.resolved && pre.shots >= 1 && post.shots == 0;
     if (pass)
         UE_LOGI("eventforce_test: VERDICT PASS -- shots %d -> 0 via the native overlap dispatch; "
-                "expect host 'FORCED' line + client 'REPLAY' line for the obelisk arm", pre.shots);
+                "expect host 'FORCED' line + client 'NOT replayed' line for the obelisk arm", pre.shots);
     else
         UE_LOGW("eventforce_test: VERDICT FAIL -- post shots=%d (expected 0); read the "
                 "event_force lines above for which step broke", post.shots);

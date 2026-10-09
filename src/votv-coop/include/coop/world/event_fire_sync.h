@@ -70,10 +70,6 @@ void OnClientWorldReady();
 // replayed-set, drop the session pointer. Game thread.
 void OnDisconnect();
 
-// The replay policy itself (event_fire_policy.cpp), module-internal: 1 replay, 0 known
-// no-replay (laneOut names the owning lane), -1 unknown -- the default is no-replay.
-int ReplayVerdict(const std::string& name, const char** laneOut);
-
 // [dev] How many fires this client has replayed natively, for the event drill. Any thread.
 unsigned ReplayCount();
 
