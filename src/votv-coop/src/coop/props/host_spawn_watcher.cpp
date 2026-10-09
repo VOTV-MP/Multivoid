@@ -11,7 +11,7 @@
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_lifecycle.h"      // ExpressSpawnedProp (reuse the keyed broadcast)
 #include "coop/props/prop_save_data.h"      // PublishHostBirth (the record behind the express)
-#include "coop/props/container_contents_sync.h"  // NoteHostBirth (a container's contents behind it)
+#include "coop/props/container_birth.h"  // NoteHostBirth (a container's contents behind it)
 #include "coop/props/prop_drive_host.h"          // Coast (a falling birth's pose until it rests)
 #include "coop/props/prop_wire_parity.h"         // PhysFlagsOf (frozen, static and sleep)
 #include "coop/props/remote_prop_spawn.h"
@@ -418,7 +418,7 @@ void DrainPendingSpawns(coop::net::Session* s) {
         // Tracked since the enqueue (the init seam expressed it first): someone owns its row, and
         // only its fall and a container's contents are left to give it.
         if (coop::element::Registry::Get().EidForActor(e.actor) != coop::element::kInvalidId) {
-            coop::props::container_contents_sync::NoteHostBirth(e.actor);
+            coop::props::container_birth::NoteHostBirth(e.actor);
             CoastIfFalling(e.actor);
             continue;
         }
@@ -439,7 +439,7 @@ void DrainPendingSpawns(coop::net::Session* s) {
             // host ejected read EMPTIED on the client and INTACT on the host.
             coop::prop_save_data::PublishHostBirth(s, e.actor);
             // A container's contents are not in that record: its own lane publishes them.
-            coop::props::container_contents_sync::NoteHostBirth(e.actor);
+            coop::props::container_birth::NoteHostBirth(e.actor);
             CoastIfFalling(e.actor);
         }
     }

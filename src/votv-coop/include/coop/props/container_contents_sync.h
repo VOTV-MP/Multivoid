@@ -51,22 +51,6 @@ void QueueConnectBroadcastForSlot(int peerSlot);
 // the TTL runs as a leak guard only. Called from the client-side snapshot dispatch.
 void NoteJoinSnapshotBracket(bool open);
 
-// A container that changed hands through the world: its contents are in this peer's own array,
-// bound by the game's loadData, and no verb fired to mark it. Game thread.
-//
-// CLIENT, prop_drop_intent, at the drop intent for a container it threw: once the host's echo binds
-// the actor, its slice goes to the host as a birth.
-void NoteAuthoredBirth(void* actor);
-// HOST, prop_drop_intent, at the spawn from a client's intent: the copy is empty and a transfer in
-// progress. It is not published while awaited; the author's slice is taken without a base, merged
-// with whatever the host put in meanwhile, and published to every peer.
-void ExpectBirthSlice(void* actor, uint8_t authorSlot);
-// HOST, host_spawn_watcher, when the drain takes the host's own birth: a container with contents
-// publishes them, since the mirrors are born empty. One awaited from a client says nothing.
-void NoteHostBirth(void* actor);
-// HOST: a transfer awaited from this slot ends with it. Game thread.
-void OnPeerGone(uint8_t slot);
-
 void OnDisconnect();
 
 // ---- dev-instrument seams (coop/dev/container_selftest) ------------------------

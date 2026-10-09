@@ -462,6 +462,7 @@ set(VOTVCOOP_SOURCES
     src/coop/build_trust/self_identity.cpp
     src/coop/items/inventory_wire.cpp
     src/coop/items/save_record_wire.cpp
+    src/coop/props/container_birth.cpp
     src/coop/props/container_contents_sync.cpp
     src/coop/props/container_park.cpp
     src/coop/props/container_slice_wire.cpp
