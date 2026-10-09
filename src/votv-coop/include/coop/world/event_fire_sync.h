@@ -73,8 +73,9 @@ void OnDisconnect();
 // [dev] How many fires this client has replayed natively, for the event drill. Any thread.
 unsigned ReplayCount();
 
-// Dev (the event drill): on a client, dispatch runEvent('solar') the way the game's event menu does,
-// holding no admission, and say whether the gate refused it. Game thread; false off a client.
+// Dev (the event drill): on a client, dispatch runEvent('solar') as a reflected call holding no
+// admission, and say whether the gate refused it. Game thread; false off a client or with the
+// watch not live (the call is then not made).
 bool DevProbeClientRefusal();
 
 }  // namespace coop::event_fire_sync

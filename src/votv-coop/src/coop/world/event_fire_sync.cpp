@@ -286,9 +286,10 @@ bool NativeFire(FireKind kind, const std::wstring& eventName, const std::wstring
 // The resolve latched each verb's function once; a watched call through another function (a
 // reloaded eventer class) is not announced, so it is said once rather than lost silently.
 void SayUnlatched(const char* verb, void* fn) {
-    static bool s_said = false;
-    if (s_said) return;
-    s_said = true;
+    static bool s_saidRun = false, s_saidSpecial = false;
+    bool& said = (verb[3] == 'S') ? s_saidSpecial : s_saidRun;   // "runSpecialEvent" / "runEvent"
+    if (said) return;
+    said = true;
     UE_LOGW("event_fire: a host %s ran through function %p, not the one resolved -- that fire is NOT "
             "broadcast; the eventer class was reloaded?", verb, fn);
 }
@@ -704,7 +705,7 @@ void OnClientWorldReady() {
     const size_t before = g_pending.size();
     DrainPending();
     if (g_pending.empty())
-        UE_LOGI("event_fire: world ready -- the %zu queued fire(s) replayed or skipped", before);
+        UE_LOGI("event_fire: world ready -- the %zu queued fire(s) processed", before);
     else
         UE_LOGI("event_fire: world ready with %zu of %zu queued fire(s) still pending -- "
                 "the install pump retries them each second", g_pending.size(), before);
@@ -735,13 +736,14 @@ void OnDisconnect() {
 bool DevProbeClientRefusal() {
     if (!GT::IsGameThread() || !IsClientSession() || !ResolvePass()) return false;
     void* eventer = EventerOf(ue_wrap::world_singleton::Gamemode());
-    if (!eventer || !g_runEventFn) return false;
+    // Through a live gate only: with the watch dead the call would run solar on this client.
+    if (!eventer || !g_runEventFn || !WatchLive(FireKind::RunEvent)) return false;
     ue_wrap::ParamFrame f(g_runEventFn);
     if (!f.valid() || !f.Set<R::FName>(L"event", ue_wrap::fname_utils::StringToFName(L"solar")) ||
         !f.Set<R::FName>(L"special", ue_wrap::fname_utils::StringToFName(L"None")))
         return false;
-    // The client's own call, as the game's event menu makes it: no admission is held, so the gate
-    // must refuse it.
+    // A reflected call holding no admission, as any client-native caller holds none: the gate must
+    // refuse it.
     const uint64_t before = g_clientRefused;
     ue_wrap::Call(eventer, f);
     return g_clientRefused == before + 1;

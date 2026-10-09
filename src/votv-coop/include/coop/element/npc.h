@@ -35,9 +35,9 @@ public:
     // new pose (or snaps on the first packet / a teleport). Game thread only.
     void SetTargetNpcPose(const coop::net::EntityPoseSnapshot& snap);
 
-    // CLIENT mirror: every frame -- advance the interp + push the pose to the engine (skips the
-    // engine write when frozen at target between packets). No-op until a pose arrives + the actor
-    // is live. Game thread only.
+    // CLIENT mirror: every frame -- advance the interp, and push the pose to the engine when it
+    // differs from what was last written there. No-op until a pose arrives + the actor is live.
+    // Game thread only.
     void Tick();
 
     // Wisp mirror: the wisp_C fade-in fires at a tick-driven landing edge a CMC-parked mirror can
@@ -48,7 +48,7 @@ public:
 
 private:
     void AdvanceInterp();   // advance the open window to now (mirrors RemotePlayer::AdvanceInterp)
-    void ApplyToEngine();   // SetActorLocation + SetActorRotation + DriveCharacterMovement
+    bool ApplyToEngine();   // SetActorLocation + SetActorRotation + DriveCharacterMovement; false if a transform write failed
 
     // Receiver-side interpolation state (game thread only; the engine path is single-threaded).
     ue_wrap::FVector curPos_{};

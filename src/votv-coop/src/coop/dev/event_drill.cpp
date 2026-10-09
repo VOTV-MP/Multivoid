@@ -91,13 +91,16 @@ void TickClient() {
 // count first passes 100, so the [perf] lines of that window are the eggs' cost.
 bool g_eggFired = false;
 bool g_eggDone = false;
+size_t g_eggLast = 0;     // the previous sample's count: the window opens once it stops rising
+int g_eggEmpty = 0;       // samples since the first with no NPC mirror at all
 std::chrono::steady_clock::time_point g_eggSeen{}, g_eggNextSay{};
 
 void TickEggHost(coop::net::Session& s) {
     if (g_eggFired || !s.IsSlotWorldReady(kSlot)) return;
     g_eggFired = true;
     UE_LOGI("[EGG-DRILL] host: the client's world is up -- the dev fire of eggvasion");
-    EF::HostFire(EF::FireKind::RunEvent, L"eggvasion", L"None");
+    if (!EF::HostFire(EF::FireKind::RunEvent, L"eggvasion", L"None"))
+        UE_LOGW("[EGG-DRILL] host FAIL -- the dev fire of eggvasion was refused");
 }
 
 void TickEggClient() {
@@ -108,7 +111,16 @@ void TickEggClient() {
     std::vector<coop::element::Registry::ActorIdPair> npcs;
     const size_t n = coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Npc, npcs);
     UE_LOGI("[EGG-DRILL] client npc mirrors=%zu", n);
-    if (n <= 100) return;
+    const size_t last = g_eggLast;
+    g_eggLast = n;
+    // The eggs are minted one per tenth of a second after the fire reaches the host: a client that
+    // still holds none twelve samples (a minute) into its own world has nothing to measure.
+    if (n == 0 && ++g_eggEmpty >= 12) {
+        g_eggDone = true;
+        UE_LOGW("[EGG-DRILL] client FAIL -- no NPC mirror a minute in; the eggs never reached this peer");
+        return;
+    }
+    if (n <= 100 || n > last) return;   // still arriving: the window opens once the count settles
     if (g_eggSeen == std::chrono::steady_clock::time_point{}) { g_eggSeen = now; return; }
     if (now - g_eggSeen < std::chrono::seconds(30)) return;
     g_eggDone = true;

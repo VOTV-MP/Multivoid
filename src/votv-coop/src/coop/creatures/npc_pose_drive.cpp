@@ -135,10 +135,8 @@ void Npc::Tick() {
     AdvanceInterp();
     if (dirty_) {
         dirty_ = false;
-        if (!SameAsApplied(actor)) {
-            ApplyToEngine();
-            RememberApplied(actor);
-        }
+        // Remembered only when the transform write took, so a failed write is tried again.
+        if (!SameAsApplied(actor) && ApplyToEngine()) RememberApplied(actor);
     }
     // Wisp mirror: replay the native landing edge (landed=true + dir(true) -> the fade-in the wisp
     // gates behind a CMC-tick-computed CurrentFloor read its parked CMC can never produce).
@@ -167,13 +165,13 @@ void Npc::RememberApplied(void* actor) {
                        kerfState_, hasLookAt_, hasBodyYaw_, hasKerfState_, kerfSpooky_};
 }
 
-void Npc::ApplyToEngine() {
+bool Npc::ApplyToEngine() {
     void* actor = GetActor();
-    if (!actor) return;
+    if (!actor) return false;
     // NPC capsule centre IS the actor pivot (the host streams the actor's location, the mirror is the
     // same class spawned at the same place) -- no mesh-offset reconstruction (unlike RemotePlayer).
-    E::SetActorLocation(actor, curPos_);
-    E::SetActorRotation(actor, ue_wrap::FRotator{0.f, curYaw_, 0.f});
+    const bool moved = E::SetActorLocation(actor, curPos_);
+    const bool turned = E::SetActorRotation(actor, ue_wrap::FRotator{0.f, curYaw_, 0.f});
     // Drive the mirror's OWN CMC so its AnimBP reads the right Velocity + MovementMode (the native
     // locomotion path -- the same fields the host NPC's possessed CMC carries). Reconstruct planar
     // velocity from the streamed body-yaw + speed magnitude.
@@ -184,7 +182,7 @@ void Npc::ApplyToEngine() {
     // Aim the mirror's head and neck at the host's streamed look target. Writes the kerfur
     // AnimBP `lookAt` + sets customLookAt=true so the mirror's own BUA stops auto-aiming at the
     // LOCAL player camera (the desync this fixes). Class-gated inside -> safe no-op on non-kerfur
-    // NPCs. Re-asserted each drive so a moving gaze tracks (customLookAt persists once set).
+    // NPCs. Re-asserted with every pose write, so a moving gaze tracks (customLookAt persists once set).
     if (hasLookAt_) Pup::DriveKerfurLookAt(actor, curLookAt_);
     // Drive the VISIBLE body facing -- set the mirror's ACharacter::Mesh WORLD yaw to the
     // host's streamed (interpolated) value. MUST be AFTER SetActorRotation above (moving the actor
@@ -195,6 +193,7 @@ void Npc::ApplyToEngine() {
     // state machine matches the host (the mirror runs no AI -> it can't pick its own). Class-gated
     // inside -> safe no-op on non-kerfur NPCs.
     if (hasKerfState_) ue_wrap::kerfur::DriveKerfurState(actor, kerfState_, kerfSpooky_);
+    return moved && turned;
 }
 
 }  // namespace coop::element
