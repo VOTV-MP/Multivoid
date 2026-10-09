@@ -112,10 +112,14 @@ ue_wrap::script_gate::Verdict OnDamageVerbPre(const ue_wrap::script_gate::Call& 
 // GetPlayerController(0) -- this machine's camera -- by a random ten degrees; burningTime only runs out
 // on the burning body's own tick, which a puppet does not run, so a puppet set alight burned for the
 // rest of the session and shook this machine's view every second. The damage cancel above stops the
-// health write and nothing else, so a peer's puppet is refused the three ways in: the owner computes
-// its own fire as it computes its own damage. Read from mainPlayer_C's own bytecode, decompiled with
-// UAssetGUI: the ignite, attemptIgnite and startBurning functions and the burningTime loop.
-const wchar_t* const kIgniteNames[3] = {L"ignite", L"attemptIgnite", L"startBurning"};
+// health write and nothing else, so ignite is refused on a peer's puppet: the owner computes its own
+// fire as it computes its own damage. It is the one way in. attemptIgnite, the verb a spreading fire
+// calls, is an empty stub on the player (its ubergraph entry is a bare pop), and startBurning is
+// private and reached from ignite alone (tools/bp_cfg.py mainPlayer --fn attemptIgnite; the
+// mainPlayer offsets listing). Both refusals ask IsPuppet rather than "not the local pawn", the
+// impact cancel's test, because a stale local pawn across a respawn must never make this machine's
+// own player immune.
+constexpr const wchar_t* kIgniteName = L"ignite";
 constexpr int kIgniteTag = 0x49474E54;  // 'IGNT'
 bool g_igniteWatchDone = false;
 uint32_t g_igniteCanceled = 0;
@@ -151,9 +155,8 @@ void Tick() {
     }
     if (!g_igniteWatchDone) {
         g_igniteWatchDone = true;
-        for (const wchar_t* name : kIgniteNames)
-            if (!ue_wrap::script_gate::WatchClassName(L"mainPlayer_C", name, kIgniteTag, &OnIgnitePre, nullptr))
-                UE_LOGE("player_damage: the %ls watch did not register -- a peer's puppet can burn here", name);
+        if (!ue_wrap::script_gate::WatchClassName(L"mainPlayer_C", kIgniteName, kIgniteTag, &OnIgnitePre, nullptr))
+            UE_LOGE("player_damage: the ignite watch did not register -- a peer's puppet can burn here");
     }
     if (g_impactInterceptorsDone) return;
     void* cls = ue_wrap::object_index::ClassByName(L"mainPlayer_C");

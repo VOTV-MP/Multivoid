@@ -134,4 +134,9 @@ void DisableCharacterTicks(void* actor);
 // drives that edge itself (ue_wrap::wisp::DriveWispLanding). No-op on a null or dead actor.
 void DisableMovementTick(void* actor);
 
+// The body's own flame (mainPlayer_C.burningEffect) switched on or off -- the component alone, never
+// ignite, its damage loop, its pain sound or its camera turn, which are the owner's. False when the
+// component does not resolve or the switch did not take. Game thread.
+bool SetBurningFlame(void* mainPlayerActor, bool on);
+
 }  // namespace ue_wrap::puppet

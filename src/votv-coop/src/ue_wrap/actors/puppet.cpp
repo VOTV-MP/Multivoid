@@ -5,6 +5,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/component_calls.h"  // SetActive (the body's flame)
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/reflected_offset.h"
@@ -401,6 +402,18 @@ void DisableMovementTick(void* actor) {
     if (void* cmc = ReadPtr(actor, P::off::ACharacter_CharacterMovement)) {
         if (R::IsLive(cmc)) E::SetComponentTickEnabled(cmc, false);
     }
+}
+
+bool SetBurningFlame(void* mainPlayerActor, bool on) {
+    if (!mainPlayerActor || !R::IsLive(mainPlayerActor)) return false;
+    static void* sCls = nullptr;
+    static int32_t sOffEffect = -1;
+    void* const cls = R::ClassOf(mainPlayerActor);
+    if (cls != sCls) { sCls = cls; sOffEffect = R::FindPropertyOffset(cls, L"burningEffect"); }
+    if (sOffEffect < 0) return false;
+    void* const effect = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(mainPlayerActor) + sOffEffect);
+    if (!effect || !R::IsLive(effect)) return false;
+    return component_calls::SetActive(effect, on, /*reset=*/false);
 }
 
 }  // namespace ue_wrap::puppet

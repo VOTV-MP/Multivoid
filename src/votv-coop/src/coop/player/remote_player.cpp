@@ -11,7 +11,6 @@
 #include "coop/player/skin_effects.h"
 #include "coop/player/players_registry.h"
 #include "ue_wrap/core/call.h"
-#include "ue_wrap/core/component_calls.h"   // SetActive: the puppet's burning flame
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/core/log.h"
@@ -398,14 +397,7 @@ void RemotePlayer::ShowBurning(bool burning) {
     burningNextTry_ = now + std::chrono::seconds(1);
     burningTried_ = true;
     if (!actor_ || !R::IsLiveByIndex(actor_, internalIdx_)) return;
-    static void* sCls = nullptr;
-    static int32_t sOffEffect = -1;
-    void* cls = R::ClassOf(actor_);
-    if (cls != sCls) { sCls = cls; sOffEffect = R::FindPropertyOffset(cls, L"burningEffect"); }
-    if (sOffEffect < 0) return;
-    void* effect = *reinterpret_cast<void**>(static_cast<uint8_t*>(actor_) + sOffEffect);
-    if (!effect || !R::IsLive(effect)) return;
-    if (!ue_wrap::component_calls::SetActive(effect, burning, /*reset=*/false)) return;
+    if (!ue_wrap::puppet::SetBurningFlame(actor_, burning)) return;
     if (burning != burningShown_) {
         UE_LOGI("remote_player: puppet %p flame %s (its owner's burning bit)", actor_, burning ? "on" : "off");
         burningTried_ = false;
@@ -416,6 +408,8 @@ void RemotePlayer::ShowBurning(bool burning) {
 void RemotePlayer::Destroy() {
     if (!actor_) return;
     burningShown_ = false;
+    burningTried_ = false;
+    burningNextTry_ = {};
     // The AnimInstance dies with the actor, so no field cleanup. The ragdoll display body is a
     // separate actor that would outlive the puppet as an orphan: torn down first, with its latches.
     ragdoll_.TeardownForDestroy();

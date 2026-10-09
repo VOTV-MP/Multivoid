@@ -30,7 +30,6 @@
 
 #include <cmath>
 #include <cstdint>
-#include <cstring>
 #include <string>
 
 namespace coop::local_streams {
@@ -115,17 +114,12 @@ bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) 
     }
     // The burning bit: the body's own fire runs while its burningTime is above zero (the condition
     // mainPlayer_C's tick tests before it turns the flame off), so the other screens show the flame on
-    // the puppet. Display only: a receiver never ignites anything.
+    // the puppet. Display only: a receiver never ignites anything. ue_wrap::vitals reads it off the
+    // gamemode's own player, which is `local`.
     {
-        static void* sCls = nullptr;
-        static int32_t sOffBurn = -1;
-        void* cls = ue_wrap::reflection::ClassOf(local);
-        if (cls != sCls) { sCls = cls; sOffBurn = ue_wrap::reflection::FindPropertyOffset(cls, L"burningTime"); }
-        if (sOffBurn >= 0) {
-            float burn = 0.f;
-            std::memcpy(&burn, static_cast<const uint8_t*>(local) + sOffBurn, sizeof(burn));
-            if (burn > 0.f) out.stateBits |= coop::net::kStateBitBurning;
-        }
+        float burn = 0.f;
+        if (ue_wrap::vitals::Read(ue_wrap::vitals::Field::BurningTime, &burn) && burn > 0.f)
+            out.stateBits |= coop::net::kStateBitBurning;
     }
     // The vitals (health fraction, food, sleep) in three bytes: ue_wrap::vitals reads this
     // machine's UsaveSlot_C, so each peer packs its own. Full (255) until the save resolves, so a
