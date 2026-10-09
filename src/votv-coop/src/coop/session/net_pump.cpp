@@ -25,6 +25,7 @@
 #include "coop/creatures/npc_adoption.h"
 #include "coop/creatures/kerfur_prop_adoption.h"  // OnClientWorldReady: the deferred-adoption per-world reset
 #include "coop/world/event_fire_sync.h"  // OnClientWorldReady: the fires queued in the join window
+#include "coop/world/daily_task_sync.h"  // OnClientWorldReady: a task kept from the world left behind
 #include "coop/player/puppet_drive.h"      // the puppet array and its drive
 #include "coop/props/registry_reaper.h"    // the reaper and the re-seed engine
 #include "coop/props/remote_prop_spawn.h"  // OnClientWorldReadyResetSweep (deferred prop sweep per-world reset)
@@ -458,6 +459,7 @@ void Tick(coop::net::Session& session) {
                 coop::npc_adoption::OnClientWorldReady();
                 coop::kerfur_prop_adoption::OnClientWorldReady();  // drop the stale prop-kerfur pending set
                 coop::event_fire_sync::OnClientWorldReady();  // the fires queued in the join window replay now
+                coop::daily_task_sync::OnClientWorldReady();  // a task kept from the world left behind goes
                 // The same reset for the deferred prop divergence sweep: one armed for the prior
                 // world must not fire against this one.
                 coop::join_membership_sweep::OnClientWorldReadyResetSweep();

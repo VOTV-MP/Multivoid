@@ -34,6 +34,13 @@ void SendCurrentToSlot(int slot);
 // by Tick until it does; a newer one replaces it. Trust-gated to the host sender.
 void OnTaskNewState(const coop::net::TaskNewStatePayload& p, uint8_t senderSlot);
 
+// CLIENT, at this client's ClientWorldReady announce (net_pump): a task still pending was sent for
+// the world it left, and the host's connect replay for this one follows the announce. Game thread.
+void OnClientWorldReady();
+
+// HOST: a departed slot owes nothing; a recycled one starts clean. Game thread.
+void OnPeerGone(uint8_t slot);
+
 // Session teardown: reset the hash baseline + timers. Game thread.
 void OnDisconnect();
 

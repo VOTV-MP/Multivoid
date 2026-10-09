@@ -8,7 +8,6 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/engine/world_identity.h"
 
 #include <array>
 #include <atomic>
@@ -21,7 +20,6 @@ namespace {
 
 namespace DT = ue_wrap::daily_task;
 namespace GT = ue_wrap::game_thread;
-namespace WI = ue_wrap::world_identity;
 
 constexpr uint64_t kPollMs = 1000;  // host change-hash cadence (writers fire a few times/day)
 
@@ -39,7 +37,6 @@ coop::net::TaskNewStatePayload g_pending{};
 bool     g_havePending = false;
 bool     g_saidPending = false;
 uint64_t g_nextRetry = 0;
-void*    g_pendingWorld = nullptr;  // the world the pending task arrived in; another world drops it
 
 // HOST: the joiners still owed the whole task -- its world-ready send could not be made (the task
 // unresolvable, the send refused). Retried at the poll cadence until sent or the slot is gone.
@@ -116,16 +113,10 @@ bool ApplyTask(const coop::net::TaskNewStatePayload& cp) {
     return true;
 }
 
-// CLIENT, game thread: apply the pending task, or keep it for the next retry. A task that arrived in
-// another world is dropped: the host sends the new world its own at that world's world-ready.
+// CLIENT, game thread: apply the pending task, or keep it for the next retry. A task kept from a
+// world this client has left is dropped at the new world's announce (OnClientWorldReady).
 void TryApplyPending() {
     if (!g_havePending) return;
-    if (g_pendingWorld && WI::CurrentWorld() != g_pendingWorld) {
-        g_havePending = false;
-        g_saidPending = false;
-        UE_LOGI("[task] a pending task from the previous world dropped -- this world's comes at its world-ready");
-        return;
-    }
     if (!ApplyTask(g_pending)) {
         if (!g_saidPending) {
             g_saidPending = true;
@@ -224,9 +215,19 @@ void OnTaskNewState(const coop::net::TaskNewStatePayload& p, uint8_t senderSlot)
         // no BP reader (all synchronous -- censused: getSigObj, kerfurOmega.findTask) sees it half done.
         g_pending = cp;
         g_havePending = true;
-        g_pendingWorld = WI::CurrentWorld();
         TryApplyPending();
     });
+}
+
+void OnClientWorldReady() {
+    if (!g_havePending) return;
+    g_havePending = false;
+    g_saidPending = false;
+    UE_LOGI("[task] a pending task from the previous world dropped -- this world's comes with its connect replay");
+}
+
+void OnPeerGone(uint8_t slot) {
+    if (slot < g_owed.size()) g_owed[slot] = false;
 }
 
 void OnDisconnect() {
@@ -238,7 +239,6 @@ void OnDisconnect() {
     g_havePending = false;
     g_saidPending = false;
     g_nextRetry = 0;
-    g_pendingWorld = nullptr;
     g_owed.fill(false);
     UE_LOGI("[task] daily_task_sync reset (disconnect)");
 }
