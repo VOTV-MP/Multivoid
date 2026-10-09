@@ -101,7 +101,9 @@ bool ReadState(coop::net::ServerStatePayload& p) {
     p.effCalc  = agg.efficiencyCalc;
     p.effDownl = agg.efficiencyDownload;
     p.serverCount = static_cast<uint8_t>(servers.size());
-    if (!SB::ReadRepairBest(p.timeBest)) p.timeBest = 0.f;
+    // A best that does not read, or reads as no number, goes out as none: a NaN never equals the last
+    // row and would send one every poll.
+    if (!SB::ReadRepairBest(p.timeBest) || !std::isfinite(p.timeBest)) p.timeBest = 0.f;
     return true;
 }
 

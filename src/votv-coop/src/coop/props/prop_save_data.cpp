@@ -180,6 +180,9 @@ void TickBirthLedger(uint64_t now) {
     if (!PT::SessionIsHost()) return;
     if (!g_birthWindowStartMs) { g_birthWindowStartMs = g_birthSessionStartMs = now; return; }
     if (now - g_birthWindowStartMs < kBirthReportMs) return;
+    // A minute with no host birth says nothing, and the session line under it has not moved.
+    const bool quiet = !g_birthWindow.total.records && !g_birthWindow.declined && !g_birthWindow.uncovered;
+    if (quiet) { g_birthWindowStartMs = now; return; }
     ReportBirthLedger("last minute", g_birthWindow, now - g_birthWindowStartMs);
     ReportBirthLedger("session so far", g_birthSession, now - g_birthSessionStartMs);
     g_birthWindow = BirthLedger{};
