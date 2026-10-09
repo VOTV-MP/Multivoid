@@ -89,8 +89,8 @@ constexpr Row kRows[] = {
                                                             "ventCrawler.BoxBeginOverlap"},
     // grayTest_C: BeginPlay re-attaches the mesh, waits a second and starts the wander MoveTo
     // (@1117); the 3 s loops arm from gatherTeam and step. The sphere overlap is the player
-    // catch: on a mainPlayer touch it calls grayController->despawn() (@1508). disableCams
-    // (deacCams's body, @1620) deactivates the client's own cameras, rdrone and kerfur.
+    // catch: on a mainPlayer touch it calls grayController->despawn() (@1508). disableCams is the
+    // timer entry that calls deacCams (@1620), which deactivates the client's cameras, rdrone and kerfur.
     {L"grayTest_C",                  L"ReceiveBeginPlay","grayTest.ReceiveBeginPlay"},
     {L"grayTest_C",                  L"BndEvt__grayTest_Sphere_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature",
                                                             "grayTest.SphereBeginOverlap"},

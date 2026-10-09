@@ -104,7 +104,7 @@ const NoReplayRow kNoReplayRows[] = {
 };
 
 // The interaction rows: the row's entire effect is the prank special, host-local RNG.
-bool IsPrankRow(const std::string& n) {
+static bool IsPrankRow(const std::string& n) {
     return n.rfind("arirInteraction_", 0) == 0;
 }
 

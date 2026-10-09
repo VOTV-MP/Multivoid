@@ -87,7 +87,7 @@ is left alone.
 
 The scheduler is the save's own time step: it walks the event table and runs each due row
 through the eventer, all inside Blueprints. The host sees each fire at the verbs: script-body
-watches on the eventer's `runEvent` and `runSpecialEvent` broadcast every call whose body ran --
+watches on the eventer's `runEvent` and `runSpecialEvent` broadcast every call whose body completed --
 a scheduled row's, a dev-menu fire's, the game's own menus', and, for the prank roll, the case
 `summonArirPrank` actually picked, one broadcast per occurrence (`coop/world/event_fire_sync`).
 The client keeps its own copy of the walkable event list empty, a one-integer write held right

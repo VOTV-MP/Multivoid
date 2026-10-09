@@ -76,14 +76,19 @@ void TickClient() {
     const unsigned fires = EF::ReplayCount();
     if (showers < 2 || fires < 2) return;
     g_clientDone = true;
+    // The refusal arm: the client's own eventer call, the event menu's shape, must be refused.
+    if (!EF::DevProbeClientRefusal()) {
+        UE_LOGW("[EVENT-DRILL] client FAIL -- a client's own runEvent was not refused at the gate");
+        return;
+    }
     UE_LOGI("[EVENT-DRILL] client DONE showers=%u fires=%u -- the join snapshot's shower and the scheduler's; "
-            "solar and arirGraff_0 replayed", showers, fires);
+            "solar and arirGraff_0 replayed; a client's own runEvent refused", showers, fires);
 }
 
 // The egg arm (egg_drill): eggvasion's 121 eggs are the npc lane's largest population, and a still
-// mirror must cost the client nothing once its pose stops changing. Readiness, not a clock: the
+// mirror costs the client a write only when its pose changes. Readiness, not a clock: the
 // host fires when the client's world is up, the client counts its mirrors and ends 30 s after the
-// count first passes 100, so the [perf] lines of that window are the still eggs' cost.
+// count first passes 100, so the [perf] lines of that window are the eggs' cost.
 bool g_eggFired = false;
 bool g_eggDone = false;
 std::chrono::steady_clock::time_point g_eggSeen{}, g_eggNextSay{};

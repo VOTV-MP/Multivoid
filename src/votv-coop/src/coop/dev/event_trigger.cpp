@@ -200,8 +200,8 @@ bool Trigger(const EventInfo& ev) {
     const std::string name = ev.name;
     const Dispatch dispatch = ev.dispatch;
     if (dispatch != Dispatch::Ambient) {
-        // The three eventer paths route through the SHARED fire seam: the native dispatch plus the
-        // EventFire broadcast, so connected clients replay it per policy.
+        // The three eventer paths route through the SHARED fire seam: the native dispatch, which the
+        // host's verb watches broadcast, so connected clients replay it per policy.
         namespace efs = coop::event_fire_sync;
         const std::wstring wname(name.begin(), name.end());
         const bool random = (dispatch == Dispatch::RandomPrank);

@@ -221,9 +221,14 @@ sg::Verdict OnEventerVerbPre(const sg::Call& call) {
         return sg::Verdict::Run;
     }
     const uint64_t n = ++g_clientRefused;
-    if ((n & (n - 1)) == 0)
-        UE_LOGI("event_fire: refused a client's own eventer call on %p (#%llu) -- the host fires "
-                "every event", call.object, static_cast<unsigned long long>(n));
+    if ((n & (n - 1)) == 0) {
+        const bool special = call.function == g_runSpecialEventFn;
+        const int32_t off = special ? g_offSpecialParam : g_offEventParam;
+        const std::string ev = (call.locals && off >= 0)
+            ? NarrowName(*reinterpret_cast<const R::FName*>(call.locals + off)) : std::string("?");
+        UE_LOGI("event_fire: refused a client's own %s('%s') (#%llu) -- the host fires every event",
+                special ? "runSpecialEvent" : "runEvent", ev.c_str(), static_cast<unsigned long long>(n));
+    }
     return sg::Verdict::Cancel;
 }
 
@@ -278,6 +283,16 @@ bool NativeFire(FireKind kind, const std::wstring& eventName, const std::wstring
     return true;
 }
 
+// The resolve latched each verb's function once; a watched call through another function (a
+// reloaded eventer class) is not announced, so it is said once rather than lost silently.
+void SayUnlatched(const char* verb, void* fn) {
+    static bool s_said = false;
+    if (s_said) return;
+    s_said = true;
+    UE_LOGW("event_fire: a host %s ran through function %p, not the one resolved -- that fire is NOT "
+            "broadcast; the eventer class was reloaded?", verb, fn);
+}
+
 void Broadcast(FireKind kind, const std::string& name) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
@@ -298,7 +313,8 @@ void Broadcast(FireKind kind, const std::string& name) {
 void OnRunEventPost(const sg::Call& call) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
-    if (!ResolvePass() || call.function != g_runEventFn) return;
+    if (!ResolvePass()) return;
+    if (call.function != g_runEventFn) { SayUnlatched("runEvent", call.function); return; }
     const std::string name = NarrowName(*reinterpret_cast<const R::FName*>(call.locals + g_offEventParam));
     const char* origin = call.callerFunction == g_settimeFn ? "scheduler" :
                          call.fromOurCode ? "dev-call" : "native";
@@ -316,7 +332,8 @@ void OnRunEventPost(const sg::Call& call) {
 void OnRunSpecialEventPost(const sg::Call& call) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
-    if (!ResolvePass() || call.function != g_runSpecialEventFn) return;
+    if (!ResolvePass()) return;
+    if (call.function != g_runSpecialEventFn) { SayUnlatched("runSpecialEvent", call.function); return; }
     const std::string name =
         NarrowName(*reinterpret_cast<const R::FName*>(call.locals + g_offSpecialParam));
     const char* origin =
@@ -687,7 +704,7 @@ void OnClientWorldReady() {
     const size_t before = g_pending.size();
     DrainPending();
     if (g_pending.empty())
-        UE_LOGI("event_fire: world ready -- replayed the %zu queued fire(s)", before);
+        UE_LOGI("event_fire: world ready -- the %zu queued fire(s) replayed or skipped", before);
     else
         UE_LOGI("event_fire: world ready with %zu of %zu queued fire(s) still pending -- "
                 "the install pump retries them each second", g_pending.size(), before);
@@ -713,6 +730,21 @@ void OnDisconnect() {
     g_replayed.clear();
     g_boundGen = 0;
     g_session.store(nullptr, std::memory_order_release);
+}
+
+bool DevProbeClientRefusal() {
+    if (!GT::IsGameThread() || !IsClientSession() || !ResolvePass()) return false;
+    void* eventer = EventerOf(ue_wrap::world_singleton::Gamemode());
+    if (!eventer || !g_runEventFn) return false;
+    ue_wrap::ParamFrame f(g_runEventFn);
+    if (!f.valid() || !f.Set<R::FName>(L"event", ue_wrap::fname_utils::StringToFName(L"solar")) ||
+        !f.Set<R::FName>(L"special", ue_wrap::fname_utils::StringToFName(L"None")))
+        return false;
+    // The client's own call, as the game's event menu makes it: no admission is held, so the gate
+    // must refuse it.
+    const uint64_t before = g_clientRefused;
+    ue_wrap::Call(eventer, f);
+    return g_clientRefused == before + 1;
 }
 
 unsigned ReplayCount() { return g_replays.load(std::memory_order_relaxed); }

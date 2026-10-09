@@ -164,8 +164,8 @@ CFG_FLAG(event_drill, "event_drill", "dev", false, "VOTVCOOP_EVENT_DRILL",
 CFG_FLAG(egg_drill, "egg_drill", "dev", false, "VOTVCOOP_EGG_DRILL",
     "Drill (BOTH peers): once the client's world is up the host fires eggvasion (121 eggs, the "
     "npc lane's largest population); the client says how many NPC mirrors it holds every 5 s and "
-    "DONE 30 s after more than 100 exist, so the run's [perf] lines show what the still eggs cost "
-    "it. MUTATES the world (an event), so it is armed per run.")
+    "DONE 30 s after more than 100 exist, so the run's [perf] lines show what the eggs cost it. "
+    "MUTATES the world (an event), so it is armed per run.")
 CFG_ENUM(command_drill, "command_drill", "dev", "off", "off|on|red|grant|grantred|hostdeny", "VOTVCOOP_COMMAND_DRILL",
     "Commands drill: once its world is ready, this peer submits /help and an unknown command, then a "
     "line one byte too long for a request (and, on the host, one of exactly the limit), then (a "
