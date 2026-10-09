@@ -301,10 +301,11 @@ bool TryApply(void* actor, const std::wstring& key, const SR::SaveRecord& rec) {
     if (!SR::ApplyRecord(actor, rec)) return false;
     ++g_appliedTotal;
     coop::dev::food_clock_probe::NoteApply(actor, key, rec);
-    // The author's record has LANDED, so the host may publish this key again. Not at its arrival:
-    // a record that arrives before the host's actor is indexed is parked, and the spawn drain runs
-    // in that gap and would publish the class default the host just spawned.
-    g_awaiting.erase(key);
+    // The author's record has LANDED, so the host may publish this key again, and does so here, from
+    // what it now holds: a peer that became ready while the key was awaited was declined by its join
+    // seed then. Not at its arrival: a record that arrives before the host's actor is indexed is
+    // parked, and the spawn drain runs in that gap and would publish the class default it spawned.
+    if (g_awaiting.erase(key) && g_session) Publish(g_session, actor, key);
     return true;
 }
 
@@ -369,8 +370,8 @@ bool SendBody(coop::net::Session* s, int peerSlot, const std::wstring& key,
 
 }  // namespace
 
-void ExpectRecordFor(const std::wstring& key, uint8_t senderSlot) {
-    if (key.empty()) return;
+void ExpectRecordFor(void* actor, const std::wstring& key, uint8_t senderSlot) {
+    if (key.empty() || !Covers(actor)) return;   // no record of its own here: none is owed
     if (g_awaiting.size() >= kMaxAwaiting && !g_awaiting.count(key)) {
         // OLDEST, not lexicographically first: evicting by key order drops a wait minted seconds
         // ago and keeps a stale one, which is the opposite of what a cap is for.
@@ -542,9 +543,11 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
         LandRecord(key, std::move(rec), senderSlot, body.size(), /*budgeted=*/true);
         return;
     }
-    // The host takes a client's claim: apply or park it locally, then re-publish the result as the
-    // canonical so every peer -- the author included, as the acknowledgement -- takes the same
-    // bytes from the same authority.
+    // The host takes a client's claim: apply or park it locally, then re-publish it as the canonical
+    // so every peer -- the author included, as the acknowledgement -- takes the same bytes from the
+    // same authority. A birth's record (a prop the host spawned from this author's intent) is
+    // published by its land instead (TryApply), from what the host then holds.
+    g_session = &s;
     void* actor = PT::FindLiveActorByKey(key);
     if (actor && !Covers(actor)) {
         // The claim names a class another lane owns, or one that carries no save state of its own.
@@ -555,14 +558,17 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
                 key.c_str(), static_cast<unsigned>(senderSlot));
         return;
     }
+    const bool birth = g_awaiting.count(key) != 0;
     if (LandRecord(key, SR::SaveRecord(rec), senderSlot, body.size(), /*budgeted=*/false)) {
-        UE_LOGI("prop_save_data: HOST took a client record (key '%ls', slot %u) -- republishing",
-                key.c_str(), static_cast<unsigned>(senderSlot));
+        UE_LOGI("prop_save_data: HOST took a client record (key '%ls', slot %u) -- %s",
+                key.c_str(), static_cast<unsigned>(senderSlot),
+                birth ? "published from its land" : "republishing");
     } else {
-        UE_LOGI("prop_save_data: HOST parked a client record (key '%ls', slot %u) -- "
-                "republishing", key.c_str(), static_cast<unsigned>(senderSlot));
+        UE_LOGI("prop_save_data: HOST parked a client record (key '%ls', slot %u) -- %s",
+                key.c_str(), static_cast<unsigned>(senderSlot),
+                birth ? "published when it lands" : "republishing");
     }
-    SendBody(&s, -1, key, rec);
+    if (!birth) SendBody(&s, -1, key, rec);
 }
 
 bool ApplyParked(void* actor, const std::wstring& key) {

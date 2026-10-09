@@ -72,8 +72,9 @@ bool PublishWithSpawn(coop::net::Session* s, void* actor, const coop::net::WireK
 // record that arrives first is parked, and the spawn drain publishes in that gap); when that peer
 // goes; at teardown; or on a timeout -- an intent can be lost to a refused rate window or a
 // malformed body, and a key nobody clears would silence this lane's publisher for that prop for the
-// whole session, the join seed included.
-void ExpectRecordFor(const std::wstring& key, uint8_t senderSlot);
+// whole session, the join seed included. Its land publishes the record. A class this lane does not
+// carry (`Covers`) is never owed one, so `actor` of such a class is not awaited at all.
+void ExpectRecordFor(void* actor, const std::wstring& key, uint8_t senderSlot);
 
 // A chunk of either kind off the wire. `intent` distinguishes PropSaveDataIntent (a client's
 // claim, which only the host acts on) from PropSaveData (the canonical). The session is the one
@@ -84,8 +85,8 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
 // Apply a parked record to `actor`, whose Key is now readable; called at every mirror-birth seam.
 // Unbudgeted, unlike the park drain: a newborn mirror must be right at birth, and the birth rate is
 // already paced by whatever seam produced it.
-// A record for a prop this peer has not created yet is parked BY KEY, with no expiry and no retry
-// count: an element id names an actor, and the point of the lane is that the actor is destroyed
+// A record for a prop this peer has not created yet is parked BY KEY, with no expiry (its apply is
+// retried a few times, then left parked): an element id names an actor, and the point of the lane is that the actor is destroyed
 // and remade, while a Key survives that. The park is capped by count and an eviction is loud,
 // because a bound on memory is not a deadline on an identity.
 bool ApplyParked(void* actor, const std::wstring& key);

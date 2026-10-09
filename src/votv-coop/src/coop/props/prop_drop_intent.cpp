@@ -311,13 +311,13 @@ void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::
         E::SetActorScale3D(actor, ue_wrap::FVector{clamp(p.scaleX), clamp(p.scaleY), clamp(p.scaleZ)});
     }
     // The prop's own save record, if the author's copy is already here. It usually is not -- it
-    // rides behind this intent in the same FIFO -- and then it lands on this actor by Key the
-    // moment it arrives, which is what makes the store keyed by identity rather than by actor.
+    // rides behind this intent in the same FIFO -- and then it lands on this actor by Key once the
+    // actor is indexed, which is what makes the store keyed by identity rather than by actor.
     // Until then this key is AWAITED: the host has just spawned a class-default copy, and
     // publishing that as canonical would overwrite the author's real state on the author's own
     // machine.
     if (!coop::prop_save_data::ApplyParked(actor, key))
-        coop::prop_save_data::ExpectRecordFor(key, authorSlot);
+        coop::prop_save_data::ExpectRecordFor(actor, key, authorSlot);
     // A container's contents are not in its record: they come as the author's birth slice.
     coop::props::container_contents_sync::ExpectBirthSlice(actor, authorSlot);
     return actor;
