@@ -15,19 +15,15 @@
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
 #include "coop/session/net_pump.h"
-#include "ue_wrap/actors/inventory.h"     // ResolveSaveSlot
-#include "ue_wrap/actors/prop.h"          // WalksToBase
+#include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/actors/save_record.h"
-#include "ue_wrap/core/component_calls.h"  // CallParamless
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstdint>
-#include <cstring>
 #include <map>
 #include <set>
 #include <string>
@@ -43,6 +39,7 @@ namespace sg = ue_wrap::script_gate;
 namespace wp = coop::props::container_write_policy;
 namespace pk = coop::props::container_park;
 namespace cw = coop::props::container_slice_wire;
+namespace ci = ue_wrap::container_inventory;
 
 using coop::element::LivePropActor;
 
@@ -126,138 +123,22 @@ bool IsHost() {
     return s && s->role() == coop::net::Role::Host;
 }
 
-// Reflected offsets, resolved once and cached.
-
-int32_t g_offInvIndex  = -2;  // propInventory_C.Index
-int32_t g_offInvPlayer = -2;  // propInventory_C.Player  -- the world-vs-PERSONAL discriminator
-int32_t g_offInvOwner  = -2;  // propInventory_C.Owner   -- the Aprop_container_C
-int32_t g_offGObjStack = -2;  // saveSlot_C.GObjStack
-int32_t g_offPropInv   = -2;  // prop_container_C.propInventory
-
-// An offset resolved once; -1 means looked and failed, never retried, never guessed.
-int32_t CachedOffset(int32_t& slot, void* cls, const wchar_t* name) {
-    if (slot == -2) {
-        slot = cls ? R::FindPropertyOffset(cls, name) : -1;
-        if (slot < 0)
-            UE_LOGW("container_contents: could not resolve %ls -- lane inert for it", name);
-    }
-    return slot;
-}
-
-template <class T> T ReadAt(const void* base, int32_t off) {
-    T v{};
-    std::memcpy(&v, reinterpret_cast<const uint8_t*>(base) + off, sizeof(T));
-    return v;
-}
-
-// The propInventory component of a container actor, or null.
-void* InventoryOf(void* containerActor) {
-    if (!containerActor) return nullptr;
-    if (CachedOffset(g_offPropInv, R::ClassOf(containerActor), L"propInventory") < 0) return nullptr;
-    void* inv = ReadAt<void*>(containerActor, g_offPropInv);
-    return (inv && R::IsLive(inv)) ? inv : nullptr;
-}
-
-// The owning Aprop_container_C of a propInventory component, or null.
-void* OwnerOf(void* inv) {
-    if (!inv) return nullptr;
-    if (CachedOffset(g_offInvOwner, R::ClassOf(inv), L"Owner") < 0) return nullptr;
-    void* owner = ReadAt<void*>(inv, g_offInvOwner);
-    return (owner && R::IsLive(owner)) ? owner : nullptr;
-}
-
-// Boundary 1, fail closed: true only for a world container this lane may author. Player true is a
-// personal inventory (mainPlayer and ui_playerInventory share the same global GObjStack, and
-// GObjStack[0] is the local player's inventory by construction, baked by the player container's
-// component template), and authoring it from the host would wipe that peer's inventory; an
-// unresolvable offset refuses too. The same flag is the address assertion in
-// ue_wrap::inventory::ReadLivePersonalStore, fail-closed in the other direction. GObjStackSlot and
-// that reader each resolve GObjStack and Index themselves; folding them is a refactor of a shipped
-// lane for its own arc.
-bool IsWorldContainerInventory(void* inv) {
-    if (!inv) return false;
-    if (CachedOffset(g_offInvPlayer, R::ClassOf(inv), L"Player") < 0) return false;
-    return ReadAt<uint8_t>(inv, g_offInvPlayer) == 0;
-}
-
-// The live TArray<Fstruct_save> slot for this component's contents inside the global GObjStack;
-// null if the save slot, the offsets or the index do not resolve. The contents array is the
-// struct_mObject element's single field, at +0.
-uint8_t* GObjStackSlot(void* inv) {
-    if (!inv) return nullptr;
-    void* save = ue_wrap::inventory::ResolveSaveSlot();
-    if (!save) return nullptr;
-    if (CachedOffset(g_offGObjStack, R::ClassOf(save), L"GObjStack") < 0) return nullptr;
-    if (CachedOffset(g_offInvIndex, R::ClassOf(inv), L"Index") < 0) return nullptr;
-    const int32_t idx = ReadAt<int32_t>(inv, g_offInvIndex);
-    if (idx < 0) return nullptr;  // -1 = never initialised; nothing to ship or apply
-    const SR::Arr stack = SR::ReadArr(save, g_offGObjStack);
-    if (idx >= stack.num) return nullptr;
-    return const_cast<uint8_t*>(stack.data) + static_cast<size_t>(idx) * SR::kMxStride;
-}
-
-// The container base and the inventory component's class, looked up per use, one index lookup each: a
-// class not loaded yet, or still loading, answers null and is asked for again. Game thread, as every
-// caller is.
-void* ContainerClass() { return ue_wrap::object_index::ClassByName(L"prop_container_C"); }
-void* InventoryClass() { return ue_wrap::object_index::ClassByName(L"propInventory_C"); }
-
-// A record whose class is a container: a class not loaded yet is not one now, and is asked for again at
-// the next record.
-bool RecordIsNestedContainer(const SR::SaveRecord& r) {
-    if (r.className.empty()) return false;
-    void* const base = ContainerClass();
-    if (!base) return false;
-    void* const cls = ue_wrap::object_index::ClassByName(r.className.c_str());
-    return cls && ue_wrap::prop::WalksToBase(cls, base);
-}
-
-// Is this a propInventory_C component, and is that a container actor: the verb filter matches on
-// the verb name alone, so any class with an addObject would arrive, and the apply side must not
-// read a cached component offset off an eid that resolved to something else.
-bool IsInventoryComponent(void* obj) {
-    void* base = InventoryClass();
-    return base && obj && ue_wrap::prop::WalksToBase(R::ClassOf(obj), base);
-}
-bool IsContainerActor(void* actor) {
-    void* base = ContainerClass();
-    return base && actor && ue_wrap::prop::WalksToBase(R::ClassOf(actor), base);
-}
-
-// Boundary 2: a nested container's ints[0][0] is its own GObjStack index, a slot number in the
-// sender's array that must not survive the wire. Clearing ints[] is wrong: prop_container::loadData
-// reads ints[0][0] unguarded, Array_Get zero-fills an out-of-range read, so an empty array yields
-// index 0, which propInventory::init's `index >= 0` guard passes, and the container reuses
-// GObjStack[0], a slot owned by someone else. The sentinel -1 is what the guard is written against
-// (the CDO's default); every other entry is preserved.
-void NeuterNestedIndex(SR::SaveRecord& r) {
-    if (r.ints.empty()) r.ints.resize(1);
-    if (r.ints[0].empty()) r.ints[0].resize(1);
-    r.ints[0][0] = -1;
-}
-
-// Does this record still carry a slot number from wherever it came from?
-bool CarriesForeignIndex(const SR::SaveRecord& r) {
-    return !r.ints.empty() && !r.ints[0].empty() && r.ints[0][0] != -1;
-}
-
+// BOUNDARY 1, fail closed: only a world container's own inventory is this lane's to author
+// (ci::IsWorldInventory); authoring a personal inventory from the host would wipe that peer's own.
+// BOUNDARY 2: a nested container's ints[0][0] is its own GObjStack index, a slot number in the
+// sender's array that must not survive the wire, so it is shipped and written as -1
+// (ci::ClearInventoryIndex says why never by clearing ints).
 bool ReadContents(void* inv, std::vector<SR::SaveRecord>& out, bool neuterNested = true) {
-    uint8_t* slot = GObjStackSlot(inv);
-    if (!slot) return false;
-    const SR::Arr objs = SR::ReadArr(slot, 0);  // struct_mObject.obj @ +0
-    if (static_cast<size_t>(objs.num) > cw::kMaxRecords) {
-        UE_LOGW("container_contents: %d records exceeds the %zu cap -- refusing to ship a "
-                "truncated slice", objs.num, cw::kMaxRecords);
+    int32_t count = -1;
+    if (!ci::ReadContents(inv, out, cw::kMaxRecords, &count)) {
+        if (count > static_cast<int32_t>(cw::kMaxRecords))
+            UE_LOGW("container_contents: %d records exceeds the %zu cap -- refusing to ship a "
+                    "truncated slice", count, cw::kMaxRecords);
         return false;
     }
-    out.clear();
-    out.reserve(static_cast<size_t>(objs.num));
-    for (int32_t i = 0; i < objs.num; ++i) {
-        SR::SaveRecord r;
-        SR::ReadSaveRecord(objs.data + static_cast<size_t>(i) * SR::kSaveStride, r);
-        if (neuterNested && RecordIsNestedContainer(r)) NeuterNestedIndex(r);
-        out.push_back(std::move(r));
-    }
+    if (neuterNested)
+        for (auto& r : out)
+            if (ci::IsContainerRecord(r)) ci::ClearInventoryIndex(r);
     return true;
 }
 
@@ -265,8 +146,6 @@ bool ReadContents(void* inv, std::vector<SR::SaveRecord>& out, bool neuterNested
 
 // False if the send was refused (the caller arms the retry). Run by both peers: on the host toSlot
 // < 0 fans out; on a client the same call reaches the host alone, the author-to-arbiter edge.
-// RederiveManagedState is defined below.
-void RederiveManagedState(void* owner, void* inv);
 
 bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSlot, bool force) {
     std::vector<SR::SaveRecord> recs;
@@ -328,7 +207,7 @@ bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSl
         // peer converged. A targeted send -- a joiner's seed, the truth re-sent to a refused
         // author -- changed nothing on this peer, so it re-derives nothing; the seed sends every
         // container in the world in one frame.
-        if (toSlot < 0) RederiveManagedState(OwnerOf(inv), inv);
+        if (toSlot < 0) ci::RederiveShownState(ci::OwnerOf(inv), inv);
         UE_LOGI("container_contents: eid=%u shipped %zu records (%zu B)%s%s%s",
                 eid, recs.size(), blob.size(),
                 toSlot < 0 ? "" : " [targeted]",
@@ -426,9 +305,9 @@ void DrainDirty(coop::net::Session* s) {
         // Resolved forward from the eid every sweep: a container destroyed since the edge stops
         // resolving.
         void* actor = LivePropActor(eid);
-        if (!actor || !IsContainerActor(actor)) continue;
-        void* inv = InventoryOf(actor);
-        if (!inv || !IsWorldContainerInventory(inv)) {   // BOUNDARY 1 (fail-closed)
+        if (!actor || !ci::IsContainer(actor)) continue;
+        void* inv = ci::InventoryOf(actor);
+        if (!inv || !ci::IsWorldInventory(inv)) {   // BOUNDARY 1 (fail-closed)
             // A first publication owed for it waits for the component instead of ending here.
             auto owed = g_owedFirst.find(eid);
             if (owed != g_owedFirst.end() && NowMs() < owed->second) g_retry.insert(eid);
@@ -444,28 +323,7 @@ void DrainDirty(coop::net::Session* s) {
 // The apply.
 
 // The setter-managed state (currVol, Mass, the display names) is re-derived through the engine's
-// own verbs, never raw-written; updateVolumesAndMass calls only Get Volume, and the ejector
-// checkObjectsVolume (which calls takeObj) is not called. Each verb is looked up on the instance's own
-// class through the memoised dispatch lookup, which climbs to the class that declares it --
-// updateVolumesAndMass is declared only on Aprop_container_C, and every real container is a subclass --
-// and holds its answer by the class's slot and serial, so no function of a class that is gone is
-// called. A verb that does not resolve is said once: the applied contents then show a stale currVol or
-// stale names.
-void RederiveManagedState(void* owner, void* inv) {
-    void* const updateVol =
-        owner ? R::FindDispatchFunctionCached(R::ClassOf(owner), L"updateVolumesAndMass") : nullptr;
-    void* const recalcNames = inv ? R::FindDispatchFunctionCached(R::ClassOf(inv), L"recalculateNames") : nullptr;
-    if ((owner && !updateVol) || (inv && !recalcNames)) {
-        static bool s_said = false;
-        if (!s_said) {
-            s_said = true;
-            UE_LOGW("container_contents: re-derive verb MISSING (updateVolumesAndMass=%p recalculateNames=%p) "
-                    "-- applied contents will show a STALE currVol / names", updateVol, recalcNames);
-        }
-    }
-    if (updateVol)   ue_wrap::component_calls::CallParamless(owner, updateVol);
-    if (recalcNames) ue_wrap::component_calls::CallParamless(inv, recalcNames);
-}
+// own verbs, never raw-written (ci::RederiveShownState).
 
 // What an inbound blob did to this peer; a bool cannot express it, since "handled" and "changed
 // something" are different facts and the relay needs the second. Gated on a bool that was true
@@ -483,23 +341,23 @@ Ingest ApplyContents(uint32_t eid, const std::vector<SR::SaveRecord>& recs, uint
     void* actor = LivePropActor(eid);
     if (!actor) return Ingest::Park;
     // The wire eid must name a container before a cached component offset is read off it.
-    if (!IsContainerActor(actor)) {
+    if (!ci::IsContainer(actor)) {
         UE_LOGW("container_contents: eid=%u does not resolve to a container -- refusing", eid);
         return Ingest::Handled;
     }
-    void* inv = InventoryOf(actor);
-    if (!inv || !IsInventoryComponent(inv)) return Ingest::Park;
+    void* inv = ci::InventoryOf(actor);
+    if (!inv || !ci::IsInventory(inv)) return Ingest::Park;
     {   // Identical contents -> do nothing. The raw-write orphans the previous arrays, so a
         // no-op apply must not allocate at all (that is what bounds the leak).
         auto it = g_appliedHash.find(eid);
         if (it != g_appliedHash.end() && it->second == blobHash) return Ingest::Handled;
     }
-    if (!IsWorldContainerInventory(inv)) {           // BOUNDARY 1 (fail-closed)
+    if (!ci::IsWorldInventory(inv)) {           // BOUNDARY 1 (fail-closed)
         UE_LOGW("container_contents: eid=%u resolves to a PERSONAL inventory (or an unresolvable "
                 "Player flag) -- refusing to apply", eid);
         return Ingest::Handled;                       // resolved; deliberately not applied
     }
-    uint8_t* slot = GObjStackSlot(inv);
+    uint8_t* slot = ci::ContentsSlot(inv);
     if (!slot) return Ingest::Park;
 
     // The allocator pre-flight: without it an empty array would silently replace real contents.
@@ -529,7 +387,7 @@ Ingest ApplyContents(uint32_t eid, const std::vector<SR::SaveRecord>& recs, uint
     g_appliedHash[eid] = blobHash;
     // The base a later local edit declares; never cleared by our own verb edge.
     if (!IsHost()) g_baseHash[eid] = blobHash;
-    RederiveManagedState(OwnerOf(inv), inv);
+    ci::RederiveShownState(ci::OwnerOf(inv), inv);
     UE_LOGI("container_contents: eid=%u applied %d records", eid, n);
     return Ingest::Applied;
 }
@@ -562,8 +420,8 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
             // the host spend more the faster it is pushed. No peer of this build can reach that
             // bound (one slice per container per 250 ms sweep, and only when it changed).
             void* actor = LivePropActor(outEid);
-            void* inv = actor && IsContainerActor(actor) ? InventoryOf(actor) : nullptr;
-            if (s && inv && d != wp::Decision::TooFast && IsWorldContainerInventory(inv)) {
+            void* inv = actor && ci::IsContainer(actor) ? ci::InventoryOf(actor) : nullptr;
+            if (s && inv && d != wp::Decision::TooFast && ci::IsWorldInventory(inv)) {
                 BroadcastContainer(s, outEid, inv, static_cast<int>(senderSlot), /*force=*/true);
             }
             // Handled, not Applied: never relayed; third peers run no arbitration.
@@ -583,9 +441,9 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
     // another container's contents, or a player's inventory.
     size_t foreignIndices = 0;
     for (auto& r : recs) {
-        if (!RecordIsNestedContainer(r)) continue;
-        if (CarriesForeignIndex(r)) ++foreignIndices;
-        NeuterNestedIndex(r);
+        if (!ci::IsContainerRecord(r)) continue;
+        if (ci::CarriesInventoryIndex(r)) ++foreignIndices;
+        ci::ClearInventoryIndex(r);
     }
     if (foreignIndices) {
         // A hit is a peer that is not this build, or a second producer that skipped the boundary.
@@ -598,7 +456,7 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
     bool merged = false;
     if (birth) {
         void* actor = LivePropActor(outEid);
-        void* inv = actor && IsContainerActor(actor) ? InventoryOf(actor) : nullptr;
+        void* inv = actor && ci::IsContainer(actor) ? ci::InventoryOf(actor) : nullptr;
         std::vector<SR::SaveRecord> hostRecs;
         if (inv && ReadContents(inv, hostRecs, /*neuterNested=*/false) && !hostRecs.empty()) {
             if (recs.size() + hostRecs.size() > cw::kMaxRecords) {
@@ -678,10 +536,10 @@ sg::Verdict OnVerbEntry(const sg::Call& br) {
     // The verb filter matches on the name alone, so the context is discriminated here: the first
     // non-propInventory context carrying an addObject would otherwise poison the offset cache for
     // the session.
-    if (!IsInventoryComponent(br.object)) return sg::Verdict::Run;
+    if (!ci::IsInventory(br.object)) return sg::Verdict::Run;
     // A takeObj on any inventory component arms the extraction latch; addObject must not.
     if (br.tag == kVerbTakeObj) g_takeObjInFlight.store(true, std::memory_order_relaxed);
-    void* owner = OwnerOf(br.object);
+    void* owner = ci::OwnerOf(br.object);
     if (!owner) return sg::Verdict::Run;
     const uint32_t eid =
         static_cast<uint32_t>(coop::element::Registry::Get().EidForActor(owner));
@@ -785,26 +643,26 @@ void OnContentsChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
 }
 
 void NoteAuthoredBirth(void* actor) {
-    if (IsHost() || !IsContainerActor(actor)) return;
-    void* inv = InventoryOf(actor);
-    if (!inv || !IsWorldContainerInventory(inv)) return;
+    if (IsHost() || !ci::IsContainer(actor)) return;
+    void* inv = ci::InventoryOf(actor);
+    if (!inv || !ci::IsWorldInventory(inv)) return;
     if (g_authoredBirths.size() >= kMaxBirths) g_authoredBirths.erase(g_authoredBirths.begin());
     g_authoredBirths.push_back(Birth{actor, R::InternalIndexOf(actor), 0, NowMs() + kBirthTtlMs});
     UE_LOGI("container_contents: CLIENT threw container %p -- its contents go to the host once bound", actor);
 }
 
 void ExpectBirthSlice(void* actor, uint8_t authorSlot) {
-    if (!IsHost() || !IsContainerActor(actor)) return;
+    if (!IsHost() || !ci::IsContainer(actor)) return;
     if (g_awaitedBirths.size() >= kMaxBirths) g_awaitedBirths.erase(g_awaitedBirths.begin());
     g_awaitedBirths.push_back(Birth{actor, R::InternalIndexOf(actor), authorSlot, NowMs() + kBirthTtlMs});
 }
 
 void NoteHostBirth(void* actor) {
-    if (!IsHost() || !IsContainerActor(actor)) return;
+    if (!IsHost() || !ci::IsContainer(actor)) return;
     for (const Birth& b : g_awaitedBirths)
         if (b.actor == actor) return;   // built from a client's intent: its author holds the contents
-    void* inv = InventoryOf(actor);
-    if (!inv || !IsWorldContainerInventory(inv)) return;
+    void* inv = ci::InventoryOf(actor);
+    if (!inv || !ci::IsWorldInventory(inv)) return;
     const auto eid = coop::element::Registry::Get().EidForActor(actor);
     if (eid == coop::element::kInvalidId) return;
     std::vector<SR::SaveRecord> recs;
@@ -831,16 +689,13 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 
     std::vector<coop::element::Registry::ActorIdPair> pairs;
     coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, pairs);
-    void* base = ContainerClass();
-    if (!base) return;
-
     size_t sent = 0;
     for (const auto& pr : pairs) {
         // IsLiveByIndex: the snapshot does not protect the actor pointer.
         if (!pr.actor || !R::IsLiveByIndex(pr.actor, pr.internalIdx)) continue;
-        if (!ue_wrap::prop::WalksToBase(R::ClassOf(pr.actor), base)) continue;
-        void* inv = InventoryOf(pr.actor);
-        if (!inv || !IsWorldContainerInventory(inv)) continue;   // BOUNDARY 1 (fail-closed)
+        if (!ci::IsContainer(pr.actor)) continue;
+        void* inv = ci::InventoryOf(pr.actor);
+        if (!inv || !ci::IsWorldInventory(inv)) continue;   // BOUNDARY 1 (fail-closed)
         // A transfer in progress reaches the joiner with the fan-out that completes it.
         if (AwaitedBirth(static_cast<uint32_t>(pr.id), 0)) continue;
         if (BroadcastContainer(s, static_cast<uint32_t>(pr.id), inv, peerSlot, /*force=*/true)) ++sent;
@@ -854,16 +709,14 @@ size_t SnapshotWorldContainers(WorldContainer* out, size_t want) {
     if (!out || want == 0) return 0;
     std::vector<coop::element::Registry::ActorIdPair> pairs;
     coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, pairs);
-    void* base = ContainerClass();
-    if (!base) return 0;
     size_t n = 0;
     for (const auto& pr : pairs) {
         if (n >= want) break;
         // IsLiveByIndex: the snapshot does not protect the actor pointer.
         if (!pr.actor || !R::IsLiveByIndex(pr.actor, pr.internalIdx)) continue;
-        if (!ue_wrap::prop::WalksToBase(R::ClassOf(pr.actor), base)) continue;
-        void* inv = InventoryOf(pr.actor);
-        if (!inv || !IsWorldContainerInventory(inv)) continue;   // BOUNDARY 1, the shipped one
+        if (!ci::IsContainer(pr.actor)) continue;
+        void* inv = ci::InventoryOf(pr.actor);
+        if (!inv || !ci::IsWorldInventory(inv)) continue;   // BOUNDARY 1, the shipped one
         out[n++] = WorldContainer{static_cast<uint32_t>(pr.id), pr.actor, inv};
     }
     return n;
@@ -875,13 +728,11 @@ bool ContentsDigest(uint32_t eid, int32_t& outCount, float& outVol) {
     outCount = -1;
     outVol = 0.f;
     void* actor = LivePropActor(eid);
-    if (!actor || !IsContainerActor(actor)) return false;
-    void* inv = InventoryOf(actor);
-    if (!inv || !IsWorldContainerInventory(inv)) return false;
-    if (uint8_t* slot = GObjStackSlot(inv)) outCount = SR::ReadArr(slot, 0).num;
-    static int32_t sOffCurrVol = -2;
-    if (CachedOffset(sOffCurrVol, R::ClassOf(inv), L"currVol") >= 0)
-        outVol = ReadAt<float>(inv, sOffCurrVol);
+    if (!actor || !ci::IsContainer(actor)) return false;
+    void* inv = ci::InventoryOf(actor);
+    if (!inv || !ci::IsWorldInventory(inv)) return false;
+    if (uint8_t* slot = ci::ContentsSlot(inv)) outCount = SR::ReadArr(slot, 0).num;
+    ci::CurrentVolume(inv, outVol);
     return true;
 }
 
