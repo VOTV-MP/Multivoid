@@ -77,12 +77,18 @@ Decision Judge(const Inputs& in);
 // rate and the reach, and the half a selftest can drive without an engine or a session.
 Decision JudgeAgainstState(uint32_t eid, uint64_t baseHash, uint64_t nowMs);
 
-// The stateful call the lane makes: the reach question first, then the base. Logs the refusal,
-// including which condition failed, and counts it. An eid that resolves to no live prop element is
-// NOT a reach refusal -- the lane parks such a slice and replays it, and the park is where the
-// birth-skew answer lives.
+// The stateful call the lane makes: the rate (SpendArrival), the reach question, then the base. Logs
+// the refusal, including which condition failed, and counts it. An eid that resolves to no live prop
+// element is NOT a reach refusal -- the lane parks such a slice and replays it, and the park is where
+// the birth-skew answer lives.
 Decision Accept(uint32_t eid, uint64_t baseHash, uint8_t authorSlot, uint64_t nowMs,
                 coop::net::Session& session, Source src);
+
+// The rate half alone, Accept or TooFast: an arrival spends one of its author's window, a replay
+// nothing. Accept runs it first; the lane runs it by itself for a slice it takes unjudged (a thrown
+// container's birth), which must not be free of the bound either.
+Decision SpendArrival(uint32_t eid, uint8_t authorSlot, uint64_t nowMs, coop::net::Session& session,
+                      Source src);
 
 // The host has told the world what this container holds, by any route -- a fan-out or a targeted
 // connect seed. This is the compare-and-swap baseline a later client write is judged against.

@@ -19,6 +19,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/container_inventory.h"  // IsContainer (a tracked container still owes its contents)
 #include "ue_wrap/actors/prop.h"            // IsDescendantOfProp (the keyed-prop gate for the Q-menu seam)
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -234,15 +235,19 @@ void OnFinishSpawnFunc(void* /*context*/, void* /*srcObj*/, void* result) {
     // expressing a mirror as a fresh world prop is the dupe.
     if (coop::prop_echo_suppress::IsMirrorSpawn(actor)) return;
     if (!ue_wrap::prop::IsDescendantOfProp(actor)) return;  // KEYED Aprop_C lineage only
-    // An actor the init seam already tracked has its row out; only a fall is left to give it, so it
-    // is queued when it can fall (a spawn-menu barrel takes that route) and dropped here otherwise,
-    // which keeps every other tracked birth out of the queue and its cap.
-    if (PT::GetPropElementIdForActor(actor) != coop::element::kInvalidId &&
-        !(coop::prop_wire_parity::PhysFlagsOf(actor) & coop::net::propspawn_flags::kSimulatePhysics))
+    // An actor the init seam already tracked has its row out; only a fall and a container's contents
+    // are left to give it, so it is queued when it can fall (a spawn-menu barrel takes that route) or
+    // is a container (a thrown one is rebound to its slot by its own loadData, and no verb marks it),
+    // and dropped here otherwise, which keeps every other tracked birth out of the queue and its cap.
+    const bool tracked = PT::GetPropElementIdForActor(actor) != coop::element::kInvalidId;
+    if (tracked &&
+        !(coop::prop_wire_parity::PhysFlagsOf(actor) & coop::net::propspawn_flags::kSimulatePhysics) &&
+        !ue_wrap::container_inventory::IsContainer(actor))
         return;
     if (g_pendingFinished.size() >= kMaxPendingFinished) {
-        UE_LOGW("host_spawn_watcher: pending-finished cap %zu hit -- dropping %p (safety census catches it)",
-                kMaxPendingFinished, actor);
+        UE_LOGW("host_spawn_watcher: pending-finished cap %zu hit -- dropping %p (%s)", kMaxPendingFinished,
+                actor, tracked ? "tracked: its fall and its contents are not given"
+                               : "the safety census expresses it");
         return;
     }
     g_pendingFinished.push_back(PendingFinishedSpawn{actor, R::InternalIndexOf(actor)});

@@ -82,8 +82,8 @@ Decision JudgeAgainstState(uint32_t eid, uint64_t baseHash, uint64_t nowMs) {
     return Judge(in);
 }
 
-Decision Accept(uint32_t eid, uint64_t baseHash, uint8_t authorSlot, uint64_t nowMs,
-                coop::net::Session& session, Source src) {
+Decision SpendArrival(uint32_t eid, uint8_t authorSlot, uint64_t nowMs, coop::net::Session& session,
+                      Source src) {
     // The budget is spent by ARRIVAL, not by acceptance: a refused slice still costs the host a
     // parse, this arbitration and a corrective re-publish. A replay out of the park spends
     // nothing -- it arrived once already, and a pen sweeping four times a second would otherwise
@@ -114,6 +114,12 @@ Decision Accept(uint32_t eid, uint64_t baseHash, uint8_t authorSlot, uint64_t no
                     "arbitrated but not rate-bounded", static_cast<unsigned>(authorSlot));
         }
     }
+    return Decision::Accept;
+}
+
+Decision Accept(uint32_t eid, uint64_t baseHash, uint8_t authorSlot, uint64_t nowMs,
+                coop::net::Session& session, Source src) {
+    if (SpendArrival(eid, authorSlot, nowMs, session, src) == Decision::TooFast) return Decision::TooFast;
 
     // REACH, and only where it is answerable. A container's contents are mutated through the
     // player's own look-at trace, so an author that is neither at the container nor at an actor that

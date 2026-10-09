@@ -16,6 +16,7 @@
 #include "coop/net/session.h"
 #include "coop/session/net_pump.h"
 #include "ue_wrap/actors/container_inventory.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -98,9 +99,10 @@ std::atomic<bool> g_takeObjInFlight{false};
 // sides expire, so a lost intent leaves nothing behind.
 constexpr uint64_t kBirthTtlMs = 30000;
 constexpr size_t   kMaxBirths  = 64;
+// The actor is held across ticks, so it is a CachedObjRef: a successor in the same slot at the same
+// address reads as dead rather than as the thrown container.
 struct Birth {
-    void*    actor = nullptr;
-    int32_t  idx = -1;
+    ue_wrap::CachedObjRef actor;
     uint8_t  authorSlot = 0;   // host: the author it awaits
     uint64_t deadlineMs = 0;
 };
@@ -244,8 +246,7 @@ Birth* AwaitedBirth(uint32_t eid, uint8_t authorSlot) {
     if (!actor) return nullptr;
     const uint64_t now = NowMs();
     for (Birth& b : g_awaitedBirths)
-        if (b.actor == actor && (authorSlot == 0 || b.authorSlot == authorSlot) && now < b.deadlineMs &&
-            R::IsLiveByIndex(b.actor, b.idx))
+        if (b.actor.Is(actor) && (authorSlot == 0 || b.authorSlot == authorSlot) && now < b.deadlineMs)
             return &b;
     return nullptr;
 }
@@ -254,10 +255,25 @@ void DropAwaitedBirth(uint32_t eid) {
     void* actor = LivePropActor(eid);
     if (!actor) return;
     for (size_t i = 0; i < g_awaitedBirths.size(); ++i) {
-        if (g_awaitedBirths[i].actor != actor) continue;
+        if (!g_awaitedBirths[i].actor.Is(actor)) continue;
         g_awaitedBirths.erase(g_awaitedBirths.begin() + static_cast<std::ptrdiff_t>(i));
         return;
     }
+}
+
+// One more birth, the oldest given up (and said) past the cap: throws are human-rate, so the cap
+// only bounds a peer that floods.
+void PushBirth(std::vector<Birth>& births, void* actor, uint8_t authorSlot) {
+    if (births.size() >= kMaxBirths) {
+        UE_LOGW("container_contents: %zu container transfers in flight -- the oldest is given up",
+                births.size());
+        births.erase(births.begin());
+    }
+    Birth b;
+    b.actor.Set(actor);
+    b.authorSlot = authorSlot;
+    b.deadlineMs = NowMs() + kBirthTtlMs;
+    births.push_back(std::move(b));
 }
 
 // Client: a thrown container the host's echo has bound is marked, its slice owed as a birth. Host:
@@ -265,11 +281,11 @@ void DropAwaitedBirth(uint32_t eid) {
 void SweepBirths(uint64_t now) {
     for (size_t i = 0; i < g_authoredBirths.size();) {
         const Birth& b = g_authoredBirths[i];
-        if (!R::IsLiveByIndex(b.actor, b.idx) || now >= b.deadlineMs) {
+        if (!b.actor.Alive() || now >= b.deadlineMs) {
             g_authoredBirths.erase(g_authoredBirths.begin() + static_cast<std::ptrdiff_t>(i));
             continue;
         }
-        const auto eid = coop::element::Registry::Get().EidForActor(b.actor);
+        const auto eid = coop::element::Registry::Get().EidForActor(b.actor.Get());
         if (eid == coop::element::kInvalidId) { ++i; continue; }
         g_birthEids.insert(static_cast<uint32_t>(eid));
         g_owedFirst[static_cast<uint32_t>(eid)] = b.deadlineMs;
@@ -278,7 +294,7 @@ void SweepBirths(uint64_t now) {
     }
     for (size_t i = 0; i < g_awaitedBirths.size();) {
         const Birth& b = g_awaitedBirths[i];
-        const bool live = R::IsLiveByIndex(b.actor, b.idx);
+        const bool live = b.actor.Alive();
         if (live && now < b.deadlineMs) { ++i; continue; }
         if (live)
             UE_LOGW("container_contents: the contents of a container slot %u threw never came -- it "
@@ -305,7 +321,12 @@ void DrainDirty(coop::net::Session* s) {
         // Resolved forward from the eid every sweep: a container destroyed since the edge stops
         // resolving.
         void* actor = LivePropActor(eid);
-        if (!actor || !ci::IsContainer(actor)) continue;
+        if (!actor) {   // gone: nothing is owed for it any more
+            g_owedFirst.erase(eid);
+            g_birthEids.erase(eid);
+            continue;
+        }
+        if (!ci::IsContainer(actor)) continue;
         void* inv = ci::InventoryOf(actor);
         if (!inv || !ci::IsWorldInventory(inv)) {   // BOUNDARY 1 (fail-closed)
             // A first publication owed for it waits for the component instead of ending here.
@@ -402,6 +423,13 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
     // base it names -- an edit made while the first slice waited in the pen included. There is no
     // reach to measure either: the throw put it where it is.
     const bool birth = IsHost() && senderSlot != 0 && AwaitedBirth(outEid, senderSlot) != nullptr;
+    // Unjudged is not unbounded: a birth slice spends the same arrival budget an edit does, so an
+    // author cannot make the host parse slices for this container at any rate while it waits.
+    if (birth) {
+        auto* s = g_session.load(std::memory_order_acquire);
+        if (!s || wp::SpendArrival(outEid, senderSlot, NowMs(), *s, src) == wp::Decision::TooFast)
+            return Ingest::Handled;
+    }
     // Host arbitration before anything is touched; a refusal is answered by re-publishing the
     // host's truth to the author, so it converges instead of sitting on a divergent view.
     if (IsHost() && senderSlot != 0 && !birth) {
@@ -459,15 +487,18 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
         void* inv = actor && ci::IsContainer(actor) ? ci::InventoryOf(actor) : nullptr;
         std::vector<SR::SaveRecord> hostRecs;
         if (inv && ReadContents(inv, hostRecs, /*neuterNested=*/false) && !hostRecs.empty()) {
-            if (recs.size() + hostRecs.size() > cw::kMaxRecords) {
-                // Neither half may be dropped to make the other fit: nothing is written, and the
-                // transfer stays awaited, so both copies keep what they hold.
+            if (recs.size() + hostRecs.size() <= cw::kMaxRecords) {
+                recs.insert(recs.end(), hostRecs.begin(), hostRecs.end());
+                merged = true;
+            } else {
+                // Past the slice cap the two cannot travel as one. The thrower's half is the only copy
+                // of its contents; the host's was added within the transfer's own round trip, and no
+                // other peer has seen it: the thrower's slice is applied alone, and every peer
+                // converges on it.
                 UE_LOGW("container_contents: eid=%u -- the host's %zu record(s) do not fit beside the "
-                        "thrower's %zu; the transfer is not applied", outEid, hostRecs.size(), recs.size());
-                return Ingest::Handled;
+                        "thrower's %zu under the %zu cap; the thrower's slice is applied alone and the "
+                        "host's records are dropped", outEid, hostRecs.size(), recs.size(), cw::kMaxRecords);
             }
-            recs.insert(recs.end(), hostRecs.begin(), hostRecs.end());
-            merged = true;
         }
     }
     const uint64_t contentHash = cw::ContentHash(outEid, recs);
@@ -645,22 +676,24 @@ void OnContentsChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
 void NoteAuthoredBirth(void* actor) {
     if (IsHost() || !ci::IsContainer(actor)) return;
     void* inv = ci::InventoryOf(actor);
-    if (!inv || !ci::IsWorldInventory(inv)) return;
-    if (g_authoredBirths.size() >= kMaxBirths) g_authoredBirths.erase(g_authoredBirths.begin());
-    g_authoredBirths.push_back(Birth{actor, R::InternalIndexOf(actor), 0, NowMs() + kBirthTtlMs});
+    if (!inv || !ci::IsWorldInventory(inv)) {
+        UE_LOGW("container_contents: CLIENT threw container %p, but its inventory %s -- its contents "
+                "stay on this peer only", actor, inv ? "is not a world container's" : "does not resolve");
+        return;
+    }
+    PushBirth(g_authoredBirths, actor, 0);
     UE_LOGI("container_contents: CLIENT threw container %p -- its contents go to the host once bound", actor);
 }
 
 void ExpectBirthSlice(void* actor, uint8_t authorSlot) {
     if (!IsHost() || !ci::IsContainer(actor)) return;
-    if (g_awaitedBirths.size() >= kMaxBirths) g_awaitedBirths.erase(g_awaitedBirths.begin());
-    g_awaitedBirths.push_back(Birth{actor, R::InternalIndexOf(actor), authorSlot, NowMs() + kBirthTtlMs});
+    PushBirth(g_awaitedBirths, actor, authorSlot);
 }
 
 void NoteHostBirth(void* actor) {
     if (!IsHost() || !ci::IsContainer(actor)) return;
     for (const Birth& b : g_awaitedBirths)
-        if (b.actor == actor) return;   // built from a client's intent: its author holds the contents
+        if (b.actor.Is(actor)) return;   // built from a client's intent: its author holds the contents
     void* inv = ci::InventoryOf(actor);
     if (!inv || !ci::IsWorldInventory(inv)) return;
     const auto eid = coop::element::Registry::Get().EidForActor(actor);
