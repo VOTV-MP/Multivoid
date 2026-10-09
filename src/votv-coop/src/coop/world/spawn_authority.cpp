@@ -5,23 +5,14 @@
 // spawn refused the lifespan reaps it; the yellow-wisp ticker spawns at a navmesh random-walk point,
 // not around the player, and its product is host-mirrored, so the client must not run its own
 // spawner; the sky-wisp ticker spawns the sky wisps at absolute map coordinates, so the host rolls
-// and clients mirror through the source-gated catch and the variant allowlist; the night-egg
-// ticker rolls the same world-anchored shape (a weighted night roll mints one eg_C at random
-// absolute map coordinates and writes gamemode->eg), so the host rolls and a client's own tick is refused;
-// the roach master's
+// and clients mirror through the source-gated catch and the variant allowlist; the roach master's
 // summon and its three looping timer entries fire independently of its tick. The tick rows: the
 // insomniac and fossilhound tickers roll inside their tick with no delay chains or reap duties, so
 // refusing the tick stops the roll and the product, and the products are host-mirrored; the roach
 // master's tick drives roach movement, the food-eat mutation and crush traces, which a client running
 // it would diverge, so it and its summoner are refused while the roach sync drives the client
 // population. The jellyfish path's spawn makes seven fish inside its graph, and the host's are
-// mirrored through the source-gated catch, so a client's own, its 18:00 roll's, is refused. The
-// event creatures (the vent crawler, the gray pack, the eggs and the tentacle balls) are the same
-// shape pushed one level down: on a client they exist only as host mirrors, so their AI, timers,
-// overlaps and despawn verbs are refused while the AnimBP and the pose stream stay; and the
-// bodies that mint them inside the gray controller, the balls follower and the super egger are
-// refused on the client, because their BeginDeferred calls are bytecode-internal and no spawn
-// interceptor ever sees them. The eventer's own verbs are event_fire_sync's.
+// mirrored through the source-gated catch, so a client's own, its 18:00 roll's, is refused.
 
 #include "coop/world/spawn_authority.h"
 
@@ -82,11 +73,12 @@ constexpr Row kRows[] = {
     {L"cockroachMaster_C",           L"ReceiveTick",    "cockroachMaster.ReceiveTick"},
     {L"ticker_roachSummoner_C",      L"ReceiveTick",    "roachSummoner.ReceiveTick"},
 
-    // The story-event creatures: on a client every instance is a host mirror -- the local
-    // spawn paths are suppressed through the allowlist or refused below -- so the gameplay
-    // entries are refused class-wide. Animation and presentation stay: nothing here touches
-    // the AnimBP, the timelines simply never arm without their owning entries, and the host's
-    // pose stream owns the transform.
+    // The story-event creatures: on a client every instance is a host mirror -- the local spawn
+    // paths are suppressed through the allowlist or refused below -- so their gameplay entries
+    // are refused class-wide; the eventer's own verbs are event_fire_sync's. The AnimBP and the
+    // host's pose stream stay; what a refused BeginPlay also set up is lost on the mirror: the
+    // crawler's footsteps, vent break and metal-break emitter, a ball's and a gray's mesh
+    // attach to its spring arm, a ball's ambient loop.
     // ventCrawler_C: the whole scene is the BeginPlay body -- it binds the prop_vent_C ref,
     // plays the moveTL timeline (which itself SetActorLocations the crawl), arms the vent-bang
     // and footstep events, and ends in the door writes, the setEvent flag and K2_DestroyActor
@@ -95,21 +87,20 @@ constexpr Row kRows[] = {
     {L"ventCrawler_C",               L"ReceiveBeginPlay","ventCrawler.ReceiveBeginPlay"},
     {L"ventCrawler_C",               L"BndEvt__ventCrawler_Box_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature",
                                                             "ventCrawler.BoxBeginOverlap"},
-    // grayTest_C: BeginPlay re-attaches the mesh, gathers the pack and arms the wander MoveTo
-    // plus the two looping 3 s timers and the 5-10 s despawn timer (@1117). The sphere overlap
-    // is the player-catch: on a mainPlayer touch it calls grayController->despawn() and
-    // deacCams() (@1508). deacCams/disableCams deactivate the client's own cameras, rdrone and
-    // kerfur -- the damage write, not animation.
+    // grayTest_C: BeginPlay re-attaches the mesh, waits a second and starts the wander MoveTo
+    // (@1117); the 3 s loops arm from gatherTeam and step. The sphere overlap is the player
+    // catch: on a mainPlayer touch it calls grayController->despawn() (@1508). disableCams
+    // (deacCams's body, @1620) deactivates the client's own cameras, rdrone and kerfur.
     {L"grayTest_C",                  L"ReceiveBeginPlay","grayTest.ReceiveBeginPlay"},
     {L"grayTest_C",                  L"BndEvt__grayTest_Sphere_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature",
                                                             "grayTest.SphereBeginOverlap"},
     {L"grayTest_C",                  L"deacCams",       "grayTest.deacCams"},
     {L"grayTest_C",                  L"disableCams",    "grayTest.disableCams"},
-    // eg_C: BeginPlay arms the wander (@1466); the tick bobs the mesh but also rolls the
-    // camera-distance check into retrieve() and the rendered/setEvent writes (@15) -- refusing
-    // it costs the bob, while letting it run lets a client egg hop on its own. retrieve() is
-    // the fly-away despawn: collision off, gravity off, a 10 s delay into gamemode->eg=null
-    // and setEvent (@1476). OnLanded continues the move chain (@1869).
+    // eg_C: BeginPlay arms the wander (@1466); the tick bobs the mesh and calls retrieve() once
+    // player 0's camera is within 5000 (@15) -- refusing it costs the bob, while letting it run
+    // lets a client egg leave on its own. retrieve() is the fly-away despawn whose Delay loop
+    // writes rendered and setEvent (@1024, @1476). OnLanded arms check and a 10-300 s
+    // retrieve (@1869).
     {L"eg_C",                        L"ReceiveBeginPlay","eg.ReceiveBeginPlay"},
     {L"eg_C",                        L"ReceiveTick",    "eg.ReceiveTick"},
     {L"eg_C",                        L"OnLanded",       "eg.OnLanded"},

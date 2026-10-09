@@ -119,36 +119,43 @@ coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& 
     return eid;
 }
 
-// The EX_CallMath spawn catch. The source spawner classes whose deferred-spawn output is
-// host-authoritative and mirrored: the wisps event swarm (up to 32 wisps); the piramid event
-// chain (four killer wisps on the NPC lane and one pyramid on the world-actor lane, a spawn
-// the interceptor never sees); the ambient sky-wisp ticker and its colour variants (it
-// anchors at absolute map coordinates, not around a player, so the host rolls them and the
-// client's ticker is cancelled in the spawn authority); the night-egg ticker, the same
-// world-anchored shape (its tick's weighted roll mints one eg_C at random absolute map coordinates and
-// writes gamemode->eg, and the client's own tick is refused in the spawn authority); and the
-// sell gun's coin mint, whose deferred spawn inside the sell verb is bytecode-internal on the
-// host's own sale and on the re-commit of a client's sale alike, so the world-actor lane's
-// interceptor never sees it and without this row the coin allowlist entry is inert; and the
-// jellyfish path, whose spawn makes its seven fish inside its own graph. The four story-event
-// spawners below close the same gap for the event creatures: every one of their BeginDeferred
-// sites is bytecode-internal (a CallFunc inside the ubergraph, never ProcessEvent-dispatched),
-// so without the row the creature mirrors never exist. Their outputs still pass the allowlist
-// gates in the queue branch below (NPC, else world-actor), so no arbitrary EX
-// spawn enrolls.
-constexpr const wchar_t* kExSpawnSourceClasses[] = {
-    L"trigger_wispSwarm_C",        // the wisps event swarm
-    L"piramidSpawner_C",           // the piramid event chain
-    L"ticker_wispSpawner_C",       // the ambient sky wisps
-    L"ticker_egSpawner_C",         // the ambient night eggs (one eg_C per successful roll)
-    L"prop_coingun_C",             // the sell gun's coin mint
-    L"jellyfishPath_C",            // the space jellyfish's seven, on the world-actor lane
-    L"trigger_eventer_C",          // the scheduler's dispatcher: ventCrawler_C, superEgger_C,
-                                   // the ufoDropper set and the other already-allowlisted outputs
-    L"grayEventController_C",      // the graysforest brain's spawn() mints the grayTest_C pack
-    L"superEgger_C",               // the egger's spwn() mints the eggvasion eg_C children
-    L"tentacleBallsFollower_C",    // the follower's runTrigger() mints the tentacleBall_C pack
+// The EX_CallMath spawn catch: the spawners whose deferred-spawn output is host-authoritative and
+// mirrored, each because its BeginDeferred is bytecode-internal (a CallFunc in its ubergraph, never
+// ProcessEvent-dispatched) and no interceptor sees it: the wisps event swarm (up to 32), the piramid
+// chain (four killer wisps and a pyramid on the world-actor lane), the ambient sky wisps and night
+// eggs (world-anchored, so the host rolls them and a client's ticker is refused in the spawn
+// authority), the sell gun's coin mint (the host's own sale and the re-commit of a client's alike;
+// without its row the coin allowlist entry is inert), the jellyfish path's seven, and the story-event
+// spawners' creatures. Outputs still pass the allowlist gates in the queue branch below (NPC, else
+// world-actor), so no arbitrary EX spawn enrolls. `outputs` narrows a source to the outputs whose
+// client copies the spawn authority makes inert: the eventer also mints world actors whose BeginPlay
+// plays gameplay on a mirror (soltomiaCleaning_C writes the client's ATV and mints a sponge), so they
+// stay unmirrored, as before this source, until they have refusal rows.
+struct ExSpawnSource {
+    const wchar_t* cls;
+    const wchar_t* const* outputs;   // null-terminated; null: any allowlisted output
 };
+constexpr const wchar_t* kEventerOutputs[] = {L"ventCrawler_C", L"superEgger_C", nullptr};
+constexpr ExSpawnSource kExSpawnSources[] = {
+    {L"trigger_wispSwarm_C",     nullptr},          // the wisps event swarm
+    {L"piramidSpawner_C",        nullptr},          // the piramid event chain
+    {L"ticker_wispSpawner_C",    nullptr},          // the ambient sky wisps
+    {L"ticker_egSpawner_C",      nullptr},          // the ambient night eggs, one eg_C per roll
+    {L"prop_coingun_C",          nullptr},          // the sell gun's coin mint
+    {L"jellyfishPath_C",         nullptr},          // the space jellyfish's seven (world-actor lane)
+    {L"trigger_eventer_C",       kEventerOutputs},  // the scheduler's dispatcher
+    {L"grayEventController_C",   nullptr},          // graysforest: spawn() mints the grayTest_C pack
+    {L"superEgger_C",            nullptr},          // eggvasion: spwn() mints the eg_C children
+    {L"tentacleBallsFollower_C", nullptr},          // tentacleBalls: runTrigger() mints the pack
+};
+
+// Whether `cls`'s own name is one of `names` (null-terminated). One render, then plain compares.
+bool NamesOneOf(void* cls, const wchar_t* const* names) {
+    const std::wstring n = R::ToString(R::NameOf(cls));
+    for (const wchar_t* const* o = names; *o; ++o)
+        if (_wcsicmp(n.c_str(), *o) == 0) return true;
+    return false;
+}
 
 // A source's output may be a world-actor-lane class (the pyramid): the same catch seam,
 // drained to the world-actor sync's own enrol instead of the NPC one. The same name-equality
@@ -191,14 +198,16 @@ void OnBeginDeferredExSpawn(void* /*context*/, void* srcObj, void* spawned) {
     if (!coop::npc_sync::IsInstalled()) return;
     void* srcCls = R::ClassOf(srcObj);
     if (!srcCls) return;
-    bool sourceMatch = false;
-    for (const wchar_t* name : kExSpawnSourceClasses) {
-        if (R::NameEquals(R::NameOf(srcCls), name)) { sourceMatch = true; break; }
-    }
-    if (!sourceMatch) return;
+    // One render of the source's name, then plain compares: every host deferred spawn reaches here.
+    const std::wstring srcName = R::ToString(R::NameOf(srcCls));
+    const ExSpawnSource* source = nullptr;
+    for (const ExSpawnSource& e : kExSpawnSources)
+        if (_wcsicmp(srcName.c_str(), e.cls) == 0) { source = &e; break; }
+    if (!source) return;
     void* cls = R::ClassOf(spawned);
     if (!cls) return;
     if (!coop::npc_sync::IsAllowlistedClass(cls) && !IsWaAllowlistedClass(cls)) return;
+    if (source->outputs && !NamesOneOf(cls, source->outputs)) return;
     const int32_t idx = R::InternalIndexOf(spawned);
     std::lock_guard<std::mutex> lk(g_pendingMx);
     if (g_pendingExSpawns.size() >= kMaxPendingExSpawns) {
@@ -225,7 +234,7 @@ void InstallExSpawnCatch(void* beginDeferredFn) {
     if (ue_wrap::ufunction_hook::InstallPostHook(beginDeferredFn, &OnBeginDeferredExSpawn)) {
         UE_LOGI("npc-sync[ex-spawn]: Func-thunk catch installed on BeginDeferred (source-gated: "
                 "trigger_wispSwarm_C -> wisp_C, piramidSpawner_C -> killerwisp_C + piramid2_C, "
-                "jellyfishPath_C -> jellyfish_C, trigger_eventer_C -> event outputs, "
+                "jellyfishPath_C -> jellyfish_C, trigger_eventer_C -> ventCrawler_C + superEgger_C, "
                 "grayEventController_C -> grayTest_C, superEgger_C + ticker_egSpawner_C -> eg_C, "
                 "tentacleBallsFollower_C -> tentacleBall_C; EX_CallMath spawns now enroll)");
     } else {

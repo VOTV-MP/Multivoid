@@ -24,10 +24,10 @@ void Init();
 void SpawnKerfurOmega();
 
 // Test-spawn the classes the npc_sync allowlist added, in front of the host -- THE reliable mirror
-// test. The F1 wisps and ventCrawler events do not reliably produce a catchable creature: wisps
-// arms an overlap box, and the eventer's ventCrawler spawn uses EX_CallMath, so it bypasses our
-// interceptor and lands in a far vent. See spawn_npc.cpp PostSpawnClass. Host-only (dev_gate); safe
-// off the game thread.
+// test. The F1 wisps and ventCrawler events do not reliably produce a creature in front of the
+// player: wisps arms an overlap box, and the eventer's ventCrawler lands in a far vent (its
+// EX_CallMath spawn is caught by the npc lane's EX source, not by the interceptor). See
+// spawn_npc.cpp PostSpawnClass. Host-only (dev_gate); safe off the game thread.
 void SpawnKillerWisp();
 void SpawnVentCrawler();
 
