@@ -423,7 +423,10 @@ alone. The widget's points are the shared balance's, so a client's own credit fr
 refused and the intent carries what the reward reads (the lol mode and the solve time): the host
 pays the repair (15, or 50 in lol mode, nothing for a box broken by damage) and a record under its
 own best time (30, or 100) in the same step as the fix, and a repair it refuses pays nothing. The
-widget's stats stay the player's. The host polls each box's broken and
+lol mode and the solve time are the client's report, which the host cannot check: a time under a
+second settles no record, and the host's best rides the server row to every peer, so each widget
+judges a record against the best the host pays from. The repair count stays the player's; the
+points total is the host's, its payment counting it. The host polls each box's broken and
 damaged flags, the repair type its break rolled, and the three totals the gamemode keeps for the
 farm, broadcasts a change at once after a repair and within a second otherwise, and a client writes
 the flags and the type and calls the box's own re-skin, which is notify-free and so repaints

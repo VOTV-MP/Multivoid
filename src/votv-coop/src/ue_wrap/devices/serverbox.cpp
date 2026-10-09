@@ -8,6 +8,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/economy.h"          // SaveSlotPtr: the repair record's saveSlot
 #include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile_names.h"
 #include "ue_wrap/engine/engine.h"
@@ -16,6 +17,7 @@
 #include "ue_wrap/engine/world_identity.h"
 
 #include <chrono>
+#include <cstring>
 
 namespace ue_wrap::serverbox {
 namespace {
@@ -311,6 +313,56 @@ bool CallRepairEnd(void* box, bool correct) {
     *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(w) + offServer) = box;
     ParamFrame f(fn);
     return f.valid() && f.Set<bool>(L"correct", correct) && Call(w, f);
+}
+
+namespace {
+void*    g_rewardCls = nullptr;     // the widget class the two reward offsets were read from
+int32_t  g_offIsLol = -1;           // ui_serverMinigame_C.isLol, its byte and bit
+uint8_t  g_maskIsLol = 0;
+int32_t  g_offTime = -1;            // ui_serverMinigame_C.time (float, the solve time)
+void*    g_bestCls = nullptr;       // the saveSlot class servertimeBest was read from
+int32_t  g_offBest = -1;            // saveSlot.servertimeBest (float)
+
+float* RepairBestField() {
+    void* save = economy::SaveSlotPtr();
+    if (!save) return nullptr;
+    void* cls = R::ClassOf(save);
+    if (cls != g_bestCls) {
+        g_bestCls = cls;
+        g_offBest = R::FindPropertyOffset(cls, L"servertimeBest");
+    }
+    return g_offBest < 0 ? nullptr : reinterpret_cast<float*>(static_cast<uint8_t*>(save) + g_offBest);
+}
+}  // namespace
+
+bool ReadRepairReward(void* widget, bool& lol, float& time) {
+    if (!widget) return false;
+    void* cls = R::ClassOf(widget);
+    if (cls != g_rewardCls) {
+        g_rewardCls = cls;
+        g_maskIsLol = 0;
+        if (!R::FindBoolProperty(cls, L"isLol", g_offIsLol, g_maskIsLol)) g_offIsLol = -1;
+        g_offTime = R::FindPropertyOffset(cls, L"time");
+    }
+    if (g_offIsLol < 0 || g_offTime < 0) return false;
+    const auto* base = static_cast<const uint8_t*>(widget);
+    lol = (base[g_offIsLol] & g_maskIsLol) != 0;
+    std::memcpy(&time, base + g_offTime, sizeof(time));
+    return true;
+}
+
+bool ReadRepairBest(float& out) {
+    const float* f = RepairBestField();
+    if (!f) return false;
+    out = *f;
+    return true;
+}
+
+bool WriteRepairBest(float value) {
+    float* f = RepairBestField();
+    if (!f) return false;
+    *f = value;
+    return true;
 }
 
 namespace {

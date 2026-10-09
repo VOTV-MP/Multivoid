@@ -104,6 +104,15 @@ bool IsRepairWidget(void* obj);
 // then its end(correct), whose success pays the player and calls the box's fix.
 bool CallRepairEnd(void* box, bool correct);
 
+// The repair widget's reward inputs, as its end(correct) reads them: its lol mode (the larger rewards) and the solve
+// time its Tick accumulates. False when either member did not resolve. Game thread.
+bool ReadRepairReward(void* widget, bool& lol, float& time);
+
+// The repair minigame's record, saveSlot.servertimeBest (0 until a first solve): read, and written the way
+// end(correct) writes it. False when the saveSlot or the member did not resolve. Game thread.
+bool ReadRepairBest(float& out);
+bool WriteRepairBest(float value);
+
 // ---- server upgrades ------------------------------------------------------------------------------
 
 // A box takes up to three physical upgrades. Its install is playerUsedOn with a held prop_serverUpg_C:

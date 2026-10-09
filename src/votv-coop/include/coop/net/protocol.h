@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 218;
+inline constexpr uint16_t kProtocolVersion = 219;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1809,8 +1809,9 @@ struct ServerStatePayload {
     uint64_t isBrokenMask;    // 8  -- bit i = servers[i].IsBroken (up to 64 servers)
     uint64_t damagedMask;     // 8  -- bit i = servers[i].damaged (a break from damage pays no repair points)
     uint8_t  minigame[64];    // 64 -- servers[i].minigame, the repair type (0..255; the game rolls a small index)
+    float    timeBest;        // 4  -- saveSlot.servertimeBest: the repair record the host pays against (0 = none)
 };
-static_assert(sizeof(ServerStatePayload) == 96, "ServerStatePayload must be 96 bytes");
+static_assert(sizeof(ServerStatePayload) == 100, "ServerStatePayload must be 100 bytes");
 
 // A player's finished repair (ServerRepair), client to host: the box by its servers[] index, and what the
 // minigame's own reward reads -- its lol mode and the solve time -- so the host pays it in the same step as

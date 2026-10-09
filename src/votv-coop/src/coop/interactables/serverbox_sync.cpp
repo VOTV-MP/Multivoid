@@ -101,6 +101,7 @@ bool ReadState(coop::net::ServerStatePayload& p) {
     p.effCalc  = agg.efficiencyCalc;
     p.effDownl = agg.efficiencyDownload;
     p.serverCount = static_cast<uint8_t>(servers.size());
+    if (!SB::ReadRepairBest(p.timeBest)) p.timeBest = 0.f;
     return true;
 }
 
@@ -118,7 +119,7 @@ bool StateChanged(const coop::net::ServerStatePayload& p) {
            p.brokenServers != g_last.brokenServers || p.serverCount != g_last.serverCount ||
            std::memcmp(p.minigame, g_last.minigame, sizeof(p.minigame)) != 0 ||
            std::fabs(p.effCalc  - g_last.effCalc)  > 0.005f ||
-           std::fabs(p.effDownl - g_last.effDownl) > 0.005f;
+           std::fabs(p.effDownl - g_last.effDownl) > 0.005f || p.timeBest != g_last.timeBest;
 }
 
 // HOST: the row to every client, on a change of the baseline.
@@ -148,6 +149,10 @@ void ApplyState(const coop::net::ServerStatePayload& p) {
     agg.efficiencyCalc     = p.effCalc;
     agg.efficiencyDownload = p.effDownl;
     if (!SB::WriteAggregates(agg)) return;
+    // The record the host pays against, so this peer's repair widget judges a record (its sound, its own best write)
+    // against the same best the host's payment does. The widget still writes its own solve here first; this row,
+    // broadcast after the host's repair, puts the host's answer over it.
+    if (std::isfinite(p.timeBest) && p.timeBest >= 0.f) SB::WriteRepairBest(p.timeBest);
     std::vector<void*> servers;
     ReadServers(servers);
     const bool repair = SB::EnsureRepairResolved();
@@ -206,25 +211,13 @@ constexpr int32_t kRewardPlain = 15, kRewardLol = 50, kRecordPlain = 30, kRecord
 
 // CLIENT: the widget's own fields the reward reads, at the moment its fix is sent.
 void ReadWidgetReward(void* widget, coop::net::ServerRepairPayload& p) {
-    static void* sCls = nullptr;
-    static int32_t sOffLol = -1, sOffTime = -1;
-    static uint8_t sMaskLol = 0;
-    void* cls = R::ClassOf(widget);
-    if (cls != sCls) {
-        sCls = cls;
-        sOffLol = -1; sOffTime = -1; sMaskLol = 0;
-        if (!R::FindBoolProperty(cls, L"isLol", sOffLol, sMaskLol)) sOffLol = -1;
-        sOffTime = R::FindPropertyOffset(cls, L"time");
-    }
-    if (sOffLol < 0 || sOffTime < 0) {
+    bool lol = false;
+    float t = 0.f;
+    if (!SB::ReadRepairReward(widget, lol, t)) {
         UE_LOGW("serverbox_sync: the repair widget's isLol/time did not resolve -- the host fixes without the reward");
         return;
     }
-    const auto* base = static_cast<const uint8_t*>(widget);
-    float t = 0.f;
-    std::memcpy(&t, base + sOffTime, sizeof(t));
-    p.flags = static_cast<uint8_t>(coop::net::kRepairSettles |
-                                   ((base[sOffLol] & sMaskLol) ? coop::net::kRepairLol : 0));
+    p.flags = static_cast<uint8_t>(coop::net::kRepairSettles | (lol ? coop::net::kRepairLol : 0));
     const float ds = std::isfinite(t) && t > 0.f ? t * 10.f + 0.5f : 0.f;
     p.timeDs = static_cast<uint16_t>(ds >= 65535.f ? 65535.f : ds);
 }
@@ -243,28 +236,27 @@ sg::Verdict OnRewardPre(const sg::Call& call) {
     return sg::Verdict::Cancel;
 }
 
+// The lol mode and the solve time are the client's report: the host cannot see the minigame, so it bounds what it
+// takes (bounds apply to clients). A time under this settles no record and leaves the host's best alone -- one
+// impossible time written there would sit out of every honest solve's reach for the life of the save. One second
+// is a bound chosen to sit under any solve by hand, not a measured minimum.
+constexpr uint16_t kMinSolveDs = 10;
+
 // HOST: the reward of a client's repair the host just ran, as the widget computes it, from the host's own
-// box and saveSlot. Returns the base reward; `record` gets the record bonus.
+// box and saveSlot. Returns the base reward paid; `record` gets the record bonus paid.
 int32_t PayRepairReward(const coop::net::ServerRepairPayload& p, bool damaged, int32_t& record) {
     record = 0;
     if (!(p.flags & coop::net::kRepairSettles) || damaged) return 0;
     const bool lol = (p.flags & coop::net::kRepairLol) != 0;
     const int32_t reward = lol ? kRewardLol : kRewardPlain;
-    ue_wrap::economy::AddPoints(reward);
-    if (p.timeDs == 0) return reward;
-    void* save = ue_wrap::economy::SaveSlotPtr();
-    static int32_t sOffBest = -1;
-    if (save && sOffBest < 0) sOffBest = R::FindPropertyOffset(R::ClassOf(save), L"servertimeBest");
-    if (!save || sOffBest < 0) return reward;
+    if (!ue_wrap::economy::AddPoints(reward)) return 0;
+    if (p.timeDs < kMinSolveDs) return reward;   // no time, or none a hand makes: the reward, no record
     float best = 0.f;
-    std::memcpy(&best, static_cast<uint8_t*>(save) + sOffBest, sizeof(best));
+    if (!SB::ReadRepairBest(best)) return reward;
     const float t = static_cast<float>(p.timeDs) / 10.f;
-    if (t < best) {
-        record = lol ? kRecordLol : kRecordPlain;
-        ue_wrap::economy::AddPoints(record);
-    }
-    const float next = best == 0.f ? t : std::fmin(best, t);
-    std::memcpy(static_cast<uint8_t*>(save) + sOffBest, &next, sizeof(next));
+    const int32_t bonus = lol ? kRecordLol : kRecordPlain;
+    if (t < best && ue_wrap::economy::AddPoints(bonus)) record = bonus;
+    SB::WriteRepairBest(best == 0.f ? t : std::fmin(best, t));
     return reward;
 }
 
