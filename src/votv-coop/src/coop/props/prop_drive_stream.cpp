@@ -103,10 +103,18 @@ void GiveBackPhysics(Drive& dr, void* actor) {
 bool IsOwnHand(void* actor) {
     return actor == coop::local_streams::LastHeldActor() || coop::hand_item::IsHandAxisActor(actor);
 }
+// Both records only ever move forward. The tick can yield an OLDER generation's row in the same
+// pass that the first pose yielded a newer one, and writing the older one back reopened the newer
+// generation: its end then found no yield and parked the stale rest pose after the hand let go.
+void AdvanceGen(std::unordered_map<uint32_t, uint8_t>& m, uint32_t eid, uint8_t gen) {
+    auto it = m.find(eid);
+    if (it == m.end()) m.emplace(eid, gen);
+    else if (GenAfter(gen, it->second)) it->second = gen;
+}
 void YieldToHand(uint32_t eid, uint8_t gen, Drive* dr, void* actor) {
     if (dr && actor && IsOwnHand(actor)) GiveBackPhysics(*dr, actor);
-    g_endedGen[eid]  = gen;
-    g_yieldedGen[eid] = gen;
+    AdvanceGen(g_endedGen, eid, gen);
+    AdvanceGen(g_yieldedGen, eid, gen);
 }
 bool YieldedAtOrAfter(uint32_t eid, uint8_t gen) {
     auto y = g_yieldedGen.find(eid);
