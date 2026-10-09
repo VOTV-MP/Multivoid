@@ -793,4 +793,12 @@ set(VOTVCOOP_SOURCES
     src/harness/screenshot.cpp
     src/harness/mod_environment.cpp
     src/harness/sdk_check.cpp
+    src/l10n/po_reader.cpp
+    src/l10n/plural_expr.cpp
+    src/l10n/printf_check.cpp
+    src/l10n/fmt.cpp
+    src/l10n/catalog.cpp
+    src/l10n/locale_choice.cpp
+    src/l10n/l10n.cpp
+    src/l10n/l10n_selftest.cpp
 )

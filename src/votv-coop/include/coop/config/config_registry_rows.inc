@@ -176,6 +176,10 @@ CFG_FLAG(ui_netstats, "ui.netstats", "ui", false, nullptr,
     "Show the network statistics overlay.")
 CFG_FLAG(ui_chat_peer_actions, "ui.chat.peer_actions", "ui", true, nullptr,
     "Show peer action lines (joins, pickups, device use) in the chat feed.")
+CFG_STRING(ui_language, "ui.language", "ui", "auto", "VOTVCOOP_UI_LANGUAGE", false,
+    "The language of the mod's own interface: auto follows the Windows display language, or name "
+    "a locale such as zh_CN. A language without a catalogue shows English. Takes effect at the "
+    "next start.")
 CFG_STRING(browser_lastdirect, "browser.lastdirect", "ui", ::coop::net::kDefaultDirectAddr, nullptr, false,
     "The last address typed into the server browser's direct-connect box (remembered "
     "automatically). Its default names the port a host actually listens on (net.port), "

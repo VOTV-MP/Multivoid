@@ -47,6 +47,7 @@
 #include "coop/player/remote_player.h"
 #include "coop/session/server_settings_sync.h"
 #include "coop/session/shutdown.h"
+#include "l10n/l10n.h"
 #include "ui/dev_menu.h"
 #include "ui/imgui_overlay.h"
 #include "ui/console.h"
@@ -540,6 +541,10 @@ void Start() {
     coop::voice_chat::SubscribeRows();
     coop::server_settings_sync::BindSession(session_runtime::Session());
     coop::server_settings_sync::SubscribeRows();
+    // The interface language, chosen before the overlay's first frame and fixed for the process: the
+    // selftest first, pure, then the catalogue built once from the ui.language row.
+    l10n::RunSelftest(cfg::ResolveFlag(coop::config_registry::rows::l10n_selftest_red));
+    l10n::Init(cfg::ResolveString(coop::config_registry::rows::ui_language).c_str());
     if (!ui::imgui_overlay::Init()) {
         UE_LOGW("harness: imgui_overlay::Init failed -- F1 menu unavailable this run");
     }

@@ -722,6 +722,9 @@ CFG_ENUM(auth_drill, "auth_drill", "dev", "off", "off|corrupt|silent|mismatch",
     "DIFFERENT host than the one that answered, which THIS peer must refuse itself "
     "-- it is the only arm whose refusal is ours, not the host's. "
     "Drill only.")
+CFG_FLAG(l10n_selftest_red, "l10n_selftest_red", "dev", false, "VOTVCOOP_L10N_SELFTEST_RED",
+    "The l10n selftest's red arm: one expected plural form is made wrong, so the selftest says FAIL "
+    "and the rig's verdict reads it. Changes nothing else.")
 CFG_FLAG(atlas_no_exclude_drill, "atlas_no_exclude_drill", "dev", false,
     "VOTVCOOP_ATLAS_NO_EXCLUDE",
     "Drop GlyphExcludeRanges from every font source, so the faces bake their whole "

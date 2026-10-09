@@ -10,6 +10,7 @@ One folder, one concept, named after it. `src/votv-coop/src/` holds the implemen
 |---|---|---|---|
 | gameplay and network | `coop/` | elements, sync lanes, sessions, players, the wire protocol | reflection or engine-memory access (it goes through `ue_wrap/`) |
 | what the player sees | `ui/` | the menus, the server browser, the HUD, the F1 overlay | network state |
+| the player's language | `l10n/` | the catalogues of the mod's own text, the lookups, the formatter | anything of `coop/` or `ui/` (they call it) |
 | boot glue and tests | `harness/` | the scenario runner and the scripted test scenarios | gameplay logic |
 | engine wrapper | `ue_wrap/` | reflection, signatures, hooks, the game-thread pump, one wrapper per engine or game class | network, gameplay or co-op state |
 | the loader contract | `loader/`, `bootstrap/` | `start_mod()` as UE4SS calls it, `DllMain`, the refuse dialog | everything else |
@@ -51,6 +52,15 @@ One folder, one concept, named after it. `src/votv-coop/src/` holds the implemen
 | in-game surfaces | `hud` (nameplates, chat, the event feed), `chat_input`, `chat_view`, `scoreboard`, `loading_screen`, `join_curtain`, `voice_icons` |
 | the F1 overlay | `imgui_overlay`, `overlay_backend` with `overlay_backend_dx11`, `overlay_backend_dx12`, `overlay_backend_dx12_capture`, `overlay_cursor`, `overlay_diag`, `overlay_test_arm`, `fonts`, `atlas_watch`, `input_focus` |
 | overlay panels | `dev_menu`, `admin_panel`, `skins_panel`, `voice_panel`, `world_rules_panel`, `server_settings_pane`, `bug_report_pane`, `config_review_panel`, `net_stats_panel`, `console` |
+
+## `l10n/` — the player's language
+
+`l10n` (the lookups `T`, `Tc`, `Tn`, `Tcn`, `Label`, `Fmt`, and `Init`, which builds the one catalogue),
+`po_reader` (a gettext `.po` file read, the only parser of a translator's text), `plural_expr` (a catalogue's
+plural rule, compiled once), `printf_check` (the conversions a message may carry), `fmt` (the positional
+formatter), `catalog` and `locale_choice` (private to the folder), `l10n_selftest`. The packs the mod ships
+are `src/votv-coop/locale/<ll_CC>.po`, embedded by name; `.github/ci/l10n_vectors.py` writes the selftest's
+plural vectors.
 
 ## `harness/` — boot glue and scripted tests
 
