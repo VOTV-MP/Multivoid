@@ -324,7 +324,10 @@ void JudgeSeed() {
 // feed, not a catalogue: the lines are pushed directly, as the peer-action feed pushes its own.
 void JudgeSpan() {
     const std::string mid = "[chat-drill] span: before Nick after";
-    const std::string cut = "[chat-drill] spancut " + std::string(240, 'x') + " Nick";
+    // The nick begins at byte 252 and ends at 256, one past the 255 bytes a line keeps: the feed
+    // formats into a 256-byte buffer, so no span begins past 255.
+    std::string cut = "[chat-drill] spancut ";
+    cut += std::string(252 - cut.size(), 'x') + "Nick";
     const auto at = static_cast<uint8_t>(mid.find("Nick"));
     CF::PushAction(mid, at, 4, 0xFFFFFFFFu);
     CF::PushAction(cut, static_cast<uint8_t>(cut.size() - 4), 4, 0xFFFFFFFFu);
