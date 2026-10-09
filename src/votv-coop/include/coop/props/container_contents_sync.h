@@ -61,7 +61,7 @@ void NoteAuthoredBirth(void* actor);
 // progress. It is not published while awaited; the author's slice is taken without a base, merged
 // with whatever the host put in meanwhile, and published to every peer.
 void ExpectBirthSlice(void* actor, uint8_t authorSlot);
-// HOST, host_spawn_watcher, at the express of the host's own birth: a container with contents
+// HOST, host_spawn_watcher, when the drain takes the host's own birth: a container with contents
 // publishes them, since the mirrors are born empty. One awaited from a client says nothing.
 void NoteHostBirth(void* actor);
 // HOST: a transfer awaited from this slot ends with it. Game thread.

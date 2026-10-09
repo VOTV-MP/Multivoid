@@ -416,7 +416,7 @@ void DrainPendingSpawns(coop::net::Session* s) {
         // world. Never adopted here.
         if (e.actor == coop::hand_item::LocalHandActor()) continue;
         // Tracked since the enqueue (the init seam expressed it first): someone owns its row, and
-        // only its fall is left to give a channel.
+        // only its fall and a container's contents are left to give it.
         if (coop::element::Registry::Get().EidForActor(e.actor) != coop::element::kInvalidId) {
             coop::props::container_contents_sync::NoteHostBirth(e.actor);
             CoastIfFalling(e.actor);
