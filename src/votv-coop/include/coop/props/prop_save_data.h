@@ -43,16 +43,16 @@ bool Covers(void* actor);
 // PropSaveDataIntent to the host, whose re-publish is also the acknowledgement. False when the class
 // is not covered, no peer could receive it, the capture fails, or the send did not take every chunk.
 // A caller may ignore it: a refused send is registered and re-sent from the live actor on a widening
-// The record-as-payload precedent is named in ue_wrap/actors/save_record.h, on CaptureRecord.
 // backoff, and only a give-up past that ceiling is logged as a divergence. `bytesOut`, when given,
-// receives the body size of a record that was built, sent or not.
+// receives the body size of a record that was built, sent or not. The record-as-payload precedent
+// is named in ue_wrap/actors/save_record.h, on CaptureRecord.
 bool Publish(coop::net::Session* s, void* actor, const std::wstring& key,
              size_t* bytesOut = nullptr);
 
 // HOST: the record of a prop this host just gave birth to at runtime -- a device's eject, a drop, a
 // place -- published from the seam that expresses it the tick after FinishSpawningActor, when the
 // birth has finished. The spawn row carries identity only, so without this every such prop reached
-// the clients at its class default: a disc the host ejected arrived blank (bug 19). The path keeps
+// the clients at its class default: a disc the host ejected arrived blank (#39's report). The path keeps
 // its own traffic ledger (records, bytes, the top classes), printed every 60 s and at teardown.
 bool PublishHostBirth(coop::net::Session* s, void* actor);
 

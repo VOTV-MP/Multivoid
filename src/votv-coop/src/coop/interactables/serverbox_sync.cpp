@@ -241,7 +241,8 @@ sg::Verdict OnRewardPre(const sg::Call& call) {
 // The lol mode and the solve time are the client's report: the host cannot see the minigame, so it bounds what it
 // takes (bounds apply to clients). A time under this settles no record and leaves the host's best alone -- one
 // impossible time written there would sit out of every honest solve's reach for the life of the save. One second
-// is a bound chosen to sit under any solve by hand, not a measured minimum.
+// is an assumption, not a measurement: no solve of the eight puzzles has been timed, and the bound only has to
+// sit under the fastest honest one.
 constexpr uint16_t kMinSolveDs = 10;
 
 // HOST: the reward of a client's repair the host just ran, as the widget computes it, from the host's own

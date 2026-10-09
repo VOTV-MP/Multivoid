@@ -499,7 +499,8 @@ enum class ReliableKind : uint8_t {
     PropDropIntent = 90,
 
     // Host to all, on change at about 1 Hz and to a joiner: the signal-server simulation (broken
-    // mask and aggregates); the client writes the state and re-skins. ServerStatePayload.
+    // mask and aggregates) and the repair record the host pays against; the client writes the state
+    // and re-skins. ServerStatePayload.
     ServerState = 91,
 
     // Host to all: the roach infestation as a paged snapshot; the client applies by ordinal.
@@ -926,7 +927,9 @@ enum class ReliableKind : uint8_t {
 
     // Client to host: my player finished the repair minigame on this server box, by its servers[] index; the
     // host runs the box's fix when it is broken and within the player's reach, and a refusal is answered to the
-    // presser alone with the state row (ServerState). Never relayed. ServerRepairPayload.
+    // presser alone with the state row (ServerState). It carries the minigame's lol mode and solve time, the
+    // client's own report, which the host pays the reward from; a time under a second settles no record.
+    // Never relayed. ServerRepairPayload.
     ServerRepair = 164,
 
     // Host to client: one server-scope setting of the session, a row named by its KEY (as Source names a

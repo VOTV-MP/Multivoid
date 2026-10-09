@@ -651,7 +651,7 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
                     in.st.floppyType);
             return;
         }
-        // [bug 19] What the claim replaces: an occupied slot overwritten by a claim naming another
+        // [#39's report] What the claim replaces: an occupied slot overwritten by a claim naming another
         // disc is a second author of this slot, which is how a live run lost a disc's content.
         Slot prev;
         const bool held = ReadSlotOf(kind, devices[index], prev) && prev.st.floppyType >= 0;
@@ -699,7 +699,7 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
         if (index >= n || !devices[index] || !R::IsLive(devices[index])) { ++skipped; continue; }
         if (!FS::IsSlotType(in.st.floppyType)) { ++skipped; continue; }
         g_awaiting.erase(ShadowKey(kind, index));
-        // [bug 19] What this write replaces. A live run applied two inserts of one disc within a
+        // [#39's report] What this write replaces. A live run applied two inserts of one disc within a
         // second, the second from a peer that had only watched, and the host kept the later one.
         // The rows and the JSON are read only behind an occupied slot, as ApplySlot reads them.
         FS::Scalars prevSt{};

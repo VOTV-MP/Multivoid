@@ -172,7 +172,7 @@ Transit* FindTransit(void* actor, uint64_t now) {
 // one disc, from the peer that only watched, its slot lane claiming it and its destroy relayed, and
 // the host keeping whichever claim landed last. A live run showed it: a client's laptop swallowed the
 // host's held disc at the moment the host inserted it, and a third peer's claim of its own copy
-// replaced the host's slot (bug 19). The holder's own insert is the one that counts, so a disc
+// replaced the host's slot (#39's report). The holder's own insert is the one that counts, so a disc
 // under another peer's drive is refused on every peer, the host included; every other settled disc
 // is let in, and each case is said, capped, since a slot takes a disc rarely.
 constexpr unsigned long long kMaxSettledLines = 64;

@@ -331,9 +331,9 @@ Terminal* TerminalFor(uint8_t slot, const std::string& guid) {
     return &g_terms.back();
 }
 
-// Whether a terminal stands in the context a line names. A dish index that does not resolve is not
-// ROOT: the line waits for its dish rather than running against none, and nothing is kept, so the
-// next line with the same index tries again. An index past the host's dishes is no dish at all.
+// Whether a terminal stands in the context a line names. A dish index that does not resolve yet, or a
+// context whose init fails, answers the line err rather than running it against none; nothing is kept,
+// so the next line with the same index tries again. An index past the host's dishes is no dish at all.
 enum class Context { Ready, NotYet, Bad };
 
 Context ApplyContext(Terminal& t, int32_t dish, const std::wstring& name) {

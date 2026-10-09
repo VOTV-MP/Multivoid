@@ -428,7 +428,7 @@ void DrainPendingSpawns(coop::net::Session* s) {
             // sets its state AFTER FinishSpawningActor, in the same Blueprint call: a device's
             // eject loadDatas the disc from its slot JSON and writes its rows and read-writes
             // there. That call has returned by this drain, so the record is the real one. Without
-            // it every client got the class default -- bug 19's run 1: nine of nine discs the
+            // it every client got the class default -- #39's report, run 1: nine of nine discs the
             // host ejected read EMPTIED on the client and INTACT on the host.
             coop::prop_save_data::PublishHostBirth(s, e.actor);
             CoastIfFalling(e.actor);
