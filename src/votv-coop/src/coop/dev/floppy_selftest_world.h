@@ -50,6 +50,10 @@ struct BoxSlot {
 };
 bool ReadBoxSlot(void* box, BoxSlot& out);
 
+// The key the save JSON in a device's slot names -- which disc it holds -- or empty when the slot
+// is empty or does not read.
+std::wstring SlotDiscKey(void* device, bool laptop);
+
 // The base laptop, or null before it resolves, and its slot in the same shape.
 void* Laptop();
 bool ReadLaptopSlot(BoxSlot& out);
@@ -75,6 +79,10 @@ void SeedAndStamp(coop::net::Session* session);
 // so a set that is not shared shows up as two different lists rather than as an episode that
 // quietly used another disc.
 void PickDiscs(bool isHost);
+
+// How many insertable discs in this world carry the host's stamp: the client names its discs only
+// once every stamp has landed here as the disc's save record. Walks the object array.
+int MarkedDiscCount();
 
 // Every live disc and every target box, in one line. `sinceMs` is the age of the run, printed so
 // two logs can be read side by side.

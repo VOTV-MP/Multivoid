@@ -40,6 +40,7 @@ int32_t g_offWidget = -1;
 // The buffer fields.
 int32_t g_offFloppyBuffer = -1;     // laptop.floppyBuffer (TArray<FString>)
 int32_t g_offFloppyBufUids = -1;    // laptop.floppyBufferUIDs (TArray<int32>)
+int32_t g_offFloppyProcess = -1;   // laptop.floppyProcess (bool): the slot timeline is moving a disc
 bool    g_resolved = false;
 uint64_t g_nextResolveTryMs = 0;
 
@@ -95,6 +96,9 @@ bool EnsureResolved() {
     g_offFloppyBufUids = R::FindPropertyOffset(cls, L"floppyBufferUIDs");
     if (g_offFloppyBuffer < 0)  { UE_LOGW("laptop: floppyBuffer offset -- fallback 0x4B8"); g_offFloppyBuffer = 0x4B8; }
     if (g_offFloppyBufUids < 0) { UE_LOGW("laptop: floppyBufferUIDs offset -- fallback 0x4D8"); g_offFloppyBufUids = 0x4D8; }
+    // No fallback: a busy flag read from a guessed offset would answer for a field it is not.
+    g_offFloppyProcess = R::FindPropertyOffset(cls, L"floppyProcess");
+    if (g_offFloppyProcess < 0) UE_LOGW("laptop: floppyProcess not found -- the slot reads as never busy");
 
     g_resolved = true;
     UE_LOGI("laptop: resolved (isOpened=0x%X floppyData=0x%X readWrites=0x%X action=%d)",
@@ -114,6 +118,12 @@ void* TerminalInUse() {
     if (off < 0) return nullptr;
     void* a = *reinterpret_cast<void* const*>(reinterpret_cast<const uint8_t*>(widget) + off);
     return (a && R::IsLive(a)) ? a : nullptr;
+}
+
+bool FloppyBusy() {
+    void* l = Instance();
+    if (!l || g_offFloppyProcess < 0) return false;
+    return *(reinterpret_cast<const uint8_t*>(l) + g_offFloppyProcess) != 0;
 }
 
 bool ReadPower(PowerState& out) {

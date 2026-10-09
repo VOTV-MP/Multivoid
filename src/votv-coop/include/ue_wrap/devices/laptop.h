@@ -52,6 +52,11 @@ bool CallPowerToggle();
 bool CallInsertDisc(void* disc);
 bool CallEjectDisc();
 
+// The slot timeline is still sliding a disc in or out (laptop_C.floppyProcess): both insertFloppy and ejectFloppy
+// return at once while it is (`if (floppyProcess) return;`), so a verb dispatched now does nothing. False when
+// unresolved. Game thread.
+bool FloppyBusy();
+
 // ---- the file-buffer quad ----
 struct BufferQuad {
     std::vector<std::wstring> data;      // floppyData (also slot-owned; quad reads it whole)

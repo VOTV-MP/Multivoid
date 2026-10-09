@@ -19,6 +19,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 
 namespace coop::dev::floppy_selftest {
@@ -50,23 +51,24 @@ uint64_t NowMs() {
         std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
-// The schedule, measured from the first tick at which BOTH peers are in the world. Anchoring on
-// this peer's own connect instead put the two clocks about ten seconds apart -- the host binds
-// and the client joins after a save transfer and a world load -- so a client's insert at its
-// t+20s and the host's eject of that insert at the host's t+30s landed in the same wall second,
-// and the eject read an empty slot. The gaps below are wide next to the lane's 1 Hz poll and
-// wider than the box's out-timeline, which is what hands an eject its disc.
-constexpr uint64_t kSeedMs   =  8000;
-constexpr uint64_t kPickMs   = 16000;
-constexpr uint64_t kCensusMs =  6000;
-constexpr uint64_t kPostMs   =  4000;   // the after-picture of one episode
-// The SECOND look at the same episode's disc. Ten seconds, not twelve, because the schedule has
-// one pair that shares a disc on purpose -- a host re-inserting what the client's eject handed
-// back -- and at twelve the re-insert CONSUMED that disc in the same tick as the eject's own late
-// sample, which then read it as lost. An instrument must not schedule its own reading against its
-// own next verb.
+// The episodes run in order from the first tick at which BOTH peers are in the world, and none of
+// them waits on a clock. The peer that acts fires an episode when the state it needs is true
+// here -- the disc in this world and the slot empty for an insert, the slot holding that disc for
+// an eject -- and each peer moves past an episode when it SEES its effect here. A schedule did this
+// before, and its every gap was a guess at the lane's speed: two roles' clocks ten seconds apart
+// once had an eject read an empty slot. What stays timed is what is measured over time: the
+// survival window below, and the deadline past which a state that never came is the failure.
+constexpr uint64_t kCensusMs = 6000;    // the periodic census line: a log, not a milestone
+constexpr uint64_t kPollMs   = 250;     // readiness reads; finding a disc walks the object array
+// The SECOND look at an ejected disc, this long after it appeared here: the re-swallow takes about
+// a second, so "the eject produced a disc" is not "the disc survived". The next episode waits for
+// this window to close on its own peer. That also keeps the one pair that shares a disc honest --
+// the host re-inserting what the client's eject handed back -- since the host sees that disc after
+// the client does, and so closes its window after the client's late sample, never across it.
 constexpr uint64_t kLateMs   = 10000;
-constexpr uint64_t kFinalMs  = 260000;
+// A precondition or an effect still false this long after its episode became current never came:
+// the episode fails there, named, and so does the run, since every later episode stands on it.
+constexpr uint64_t kStepDeadlineMs = 30000;
 
 enum class Verb { Insert, Eject };
 
@@ -75,7 +77,6 @@ constexpr int kLaptop = -1;
 
 struct Step {
     const char* id;
-    uint64_t    atMs;
     bool        onHost;   // the role that fires it; the other role only watches
     int         box;
     int         disc;     // the disc this episode moves: the one inserted, or the one expected out
@@ -86,76 +87,85 @@ struct Step {
 // One row per episode half. `under_test` is printed with the outcome, so one log says whether what
 // happened is the thing the episode was built to catch.
 const Step kSteps[] = {
-    { "E1-insert", 20000, false, 0,  0, Verb::Insert,
+    { "E1-insert", false, 0,  0, Verb::Insert,
       "a client insert: the disc dies here and the destroy is what crosses" },
-    { "E1-eject",  30000, true,  0,  0, Verb::Eject,
+    { "E1-eject",  true,  0,  0, Verb::Eject,
       "the host ejecting a client's insert: an empty slot means the transfer never crossed" },
-    { "E2-insert", 42000, true,  1,  1, Verb::Insert,
+    { "E2-insert", true,  1,  1, Verb::Insert,
       "a host insert: the slot state is authored on the host" },
-    { "E2-eject",  52000, false, 1,  1, Verb::Eject,
+    { "E2-eject",  false, 1,  1, Verb::Eject,
       "the client ejecting a host insert: an empty slot means the slot state never crossed" },
-    { "E4-insert", 64000, true,  1,  1, Verb::Insert,
+    { "E4-insert", true,  1,  1, Verb::Insert,
       "the host re-inserting the disc E2 handed back: the same-peer control needs its own insert" },
-    { "E4-eject",  74000, true,  1,  1, Verb::Eject,
+    { "E4-eject",  true,  1,  1, Verb::Eject,
       "the host ejecting its own insert: the disc and its content come back here" },
-    { "E3-insert", 86000, false, 2,  2, Verb::Insert,
+    { "E3-insert", false, 2,  2, Verb::Insert,
       "a client insert whose eject is the same client's" },
-    { "E3-eject",  96000, false, 2,  2, Verb::Eject,
+    { "E3-eject",  false, 2,  2, Verb::Eject,
       "a client eject: the disc is born on the client, through its own place seam" },
     // The repeats of E1, one fresh disc each, so the run answers "how often" and not "did it once".
-    // Sixteen seconds a pair: the eject is eight after its insert, the next insert eight after
-    // that, and both are wide next to the slot lane's 1 Hz poll and the box's out-timeline.
-    { "R2-insert", 108000, false, 0, 3, Verb::Insert, "repeat 2 of the cross-peer eject: insert" },
-    { "R2-eject",  116000, true,  0, 3, Verb::Eject,  "repeat 2 of the cross-peer eject" },
-    { "R3-insert", 124000, false, 0, 4, Verb::Insert, "repeat 3 of the cross-peer eject: insert" },
-    { "R3-eject",  132000, true,  0, 4, Verb::Eject,  "repeat 3 of the cross-peer eject" },
-    { "R4-insert", 140000, false, 0, 5, Verb::Insert, "repeat 4 of the cross-peer eject: insert" },
-    { "R4-eject",  148000, true,  0, 5, Verb::Eject,  "repeat 4 of the cross-peer eject" },
-    { "R5-insert", 156000, false, 0, 6, Verb::Insert, "repeat 5 of the cross-peer eject: insert" },
-    { "R5-eject",  164000, true,  0, 6, Verb::Eject,  "repeat 5 of the cross-peer eject" },
-    { "R6-insert", 172000, false, 0, 7, Verb::Insert, "repeat 6 of the cross-peer eject: insert" },
-    { "R6-eject",  180000, true,  0, 7, Verb::Eject,  "repeat 6 of the cross-peer eject" },
+    { "R2-insert", false, 0, 3, Verb::Insert, "repeat 2 of the cross-peer eject: insert" },
+    { "R2-eject",  true,  0, 3, Verb::Eject,  "repeat 2 of the cross-peer eject" },
+    { "R3-insert", false, 0, 4, Verb::Insert, "repeat 3 of the cross-peer eject: insert" },
+    { "R3-eject",  true,  0, 4, Verb::Eject,  "repeat 3 of the cross-peer eject" },
+    { "R4-insert", false, 0, 5, Verb::Insert, "repeat 4 of the cross-peer eject: insert" },
+    { "R4-eject",  true,  0, 5, Verb::Eject,  "repeat 4 of the cross-peer eject" },
+    { "R5-insert", false, 0, 6, Verb::Insert, "repeat 5 of the cross-peer eject: insert" },
+    { "R5-eject",  true,  0, 6, Verb::Eject,  "repeat 5 of the cross-peer eject" },
+    { "R6-insert", false, 0, 7, Verb::Insert, "repeat 6 of the cross-peer eject: insert" },
+    { "R6-eject",  true,  0, 7, Verb::Eject,  "repeat 6 of the cross-peer eject" },
     // The laptop, where a live run's disc came back blank under a new key (bug 19). Its slot
     // content crosses as one blob cut at 4 KB, so L1 hands the client a cut copy and has the
     // client eject from it; L2 is the same disc size ejected by the host that never lost a byte.
-    { "L1-insert", 192000, true,  kLaptop, 8,  Verb::Insert,
+    { "L1-insert", true,  kLaptop, 8,  Verb::Insert,
       "a host laptop insert of a disc whose slot content is past the 4 KB blob cut" },
-    { "L1-eject",  200000, false, kLaptop, 8,  Verb::Eject,
+    { "L1-eject",  false, kLaptop, 8,  Verb::Eject,
       "the client ejecting from ITS copy of that slot, which is what crossed" },
-    { "L2-insert", 212000, true,  kLaptop, 9,  Verb::Insert,
+    { "L2-insert", true,  kLaptop, 9,  Verb::Insert,
       "the same size into the laptop by the host: the control's insert" },
-    { "L2-eject",  220000, true,  kLaptop, 9,  Verb::Eject,
+    { "L2-eject",  true,  kLaptop, 9,  Verb::Eject,
       "the host ejecting its own insert: its copy of the slot was never cut" },
-    { "L3-insert", 232000, false, kLaptop, 10, Verb::Insert,
+    { "L3-insert", false, kLaptop, 10, Verb::Insert,
       "a client laptop insert of a one-row disc: the client-to-host slot path" },
-    { "L3-eject",  240000, true,  kLaptop, 10, Verb::Eject,
+    { "L3-eject",  true,  kLaptop, 10, Verb::Eject,
       "the host ejecting a client's laptop insert" },
 };
 constexpr size_t kStepCount = sizeof(kSteps) / sizeof(kSteps[0]);
 
-// `lateLive` is the reading the acceptance turns on: not whether the eject produced a disc, but
-// whether the disc is STILL there ten seconds later. The re-swallow takes about a second, so a
-// post-picture alone can catch a disc that is already doomed. -1 = never sampled.
+// `lateLive` and `lateIntact` are the readings the acceptance turns on: not whether the eject
+// produced a disc, but whether the disc is STILL there, carrying its content, when the survival
+// window closes. The re-swallow takes about a second, so the first sighting alone can catch a disc
+// that is already doomed. -1 = never sampled.
 // `preLive` is what keeps the ratio honest. An eject whose named disc is ALREADY lying in this
 // peer's world is not ejecting that disc -- its insert never consumed it -- so the episode measures
 // nothing and must not be counted as a survival.
 struct Outcome {
-    bool        done     = false;
-    bool        fired    = false;  // the verb was dispatched AND the game acted on it
-    int         lateLive = -1;     // -1 not sampled, 0 gone, 1 present
-    int         preLive  = -1;     // eject only: -1 not sampled, 0 the disc was away, 1 still here
-    std::string note;              // the refusal reason, or what the slot did
+    bool        done       = false;
+    bool        fired      = false;  // the verb was dispatched AND the game acted on it
+    int         lateLive   = -1;     // -1 not sampled, 0 gone, 1 present
+    int         lateIntact = -1;     // -1 not sampled, 0 emptied or gone, 1 the seeded content
+    int         preLive    = -1;     // eject only: -1 not sampled, 0 the disc was away, 1 still here
+    std::string note;                // the refusal reason, or what the slot did
 };
 Outcome g_outcome[kStepCount];
 
 uint64_t g_connectedAtMs = 0;
 uint64_t g_nextCensusMs  = 0;
-uint64_t g_postAtMs      = 0;
-int      g_postStep      = -1;
-uint64_t g_lateAtMs      = 0;
-int      g_lateStep      = -1;
 
-// The fast-destroy watch: after an eject episode, whether the disc that came out was destroyed
+// Where this peer is in the episode list. PRE: the acting peer waits for its state, the watching
+// peer goes straight to EFFECT. EFFECT: both wait to see the episode's outcome here. WINDOW: an
+// eject's survival window. The deadline runs from the moment the current phase began.
+enum class Phase { Pre, Effect, Window };
+size_t      g_cur          = 0;
+Phase       g_phase        = Phase::Pre;
+uint64_t    g_phaseSinceMs = 0;
+uint64_t    g_lateAtMs     = 0;
+uint64_t    g_nextPollMs   = 0;
+const char* g_deadStep     = nullptr;  // the episode that never became true here, if one did
+std::string g_deadWhy;
+bool        g_finished     = false;    // the verdict, the result and the done line are out
+
+// The fast-destroy watch: during an eject episode, whether the disc that came out was destroyed
 // again within moments. That is the re-swallow's signature and nothing else's -- no player is in
 // the room, and the only other actor that can reach the disc is a device.
 //
@@ -164,26 +174,22 @@ int      g_lateStep      = -1;
 // well under a second -- a quarter-second poll walked straight past it, and this counter read ZERO
 // through a run in which the disc was measurably eaten. So the moment the walk finds it, the actor
 // is held in a slot-validated ref and its liveness is read EVERY tick, which touches no memory and
-// costs nothing. One watch at a time: episodes are eight seconds apart.
-constexpr uint64_t kFastWatchMs = 4000;
+// costs nothing. The first sighting is also the eject's effect on this peer, which is why the
+// episode reads it from here rather than from its own quarter-second readiness poll.
+constexpr uint64_t kFastWatchMs = 4000;   // watched this long from its first sighting
 constexpr uint64_t kFastFindMs  =  100;   // the object-array walk, until the disc is found
 struct EjectWatch {
     std::wstring          key;
-    uint64_t              atMs      = 0;
     uint64_t              nextFind  = 0;
+    uint64_t              seenAtMs  = 0;  // 0 until the disc is first seen here
     ue_wrap::CachedObjRef actor;          // held from the first sighting; Alive() is a slot read
-    bool                  sawLive   = false;
     bool                  counted   = false;
     int                   step      = -1;
 };
 EjectWatch g_fastWatch;
 int        g_fastLost = 0;
-bool     g_watched[kStepCount] = {};  // the non-firing role's one-shot arm per episode
-static_assert(sizeof(g_watched) / sizeof(g_watched[0]) == kStepCount,
-              "one watch flag per episode, or a new row overruns it silently");
 bool     g_seeded        = false;
 bool     g_picked        = false;
-bool     g_finalDone     = false;
 
 // ---- the episodes ------------------------------------------------------------------------------
 
@@ -329,7 +335,11 @@ void ReportContent(size_t stepIdx, bool isHost, const char* when, bool isLate) {
 
     void* actor = PR::FindByKeyString(key);
     const bool live = actor && R::IsLive(actor);
-    if (isLate && s.verb == Verb::Eject) g_outcome[stepIdx].lateLive = live ? 1 : 0;
+    const bool judged = isLate && s.verb == Verb::Eject;
+    if (judged) {
+        g_outcome[stepIdx].lateLive = live ? 1 : 0;
+        g_outcome[stepIdx].lateIntact = 0;   // raised below only for the seeded content
+    }
     if (s.verb == Verb::Insert) {
         UE_LOGI("floppy_selftest: CONTENT[%s] %s role=%s -- disc key='%ls' is %s here (an insert "
                 "consumes it, so PRESENT on the peer that did not insert means the destroy has "
@@ -355,6 +365,7 @@ void ReportContent(size_t stepIdx, bool isHost, const char* when, bool isLate) {
     // The row count too: a cut copy keeps the marker, which is row 0, and loses the tail.
     const size_t wantRows = static_cast<size_t>(W::ExpectedRows(s.disc));
     if (marked && c.readWrites == wantRw && c.data.size() == wantRows) {
+        if (judged) g_outcome[stepIdx].lateIntact = 1;
         UE_LOGI("floppy_selftest: CONTENT[%s] %s role=%s -- disc key='%ls' came back INTACT "
                 "(rw=%d rows=%zu, marker present)", when, s.id, role, key.c_str(), c.readWrites,
                 c.data.size());
@@ -364,6 +375,200 @@ void ReportContent(size_t stepIdx, bool isHost, const char* when, bool isLate) {
             "(seeded %d) rows=%zu (seeded %zu) marker=%s -- the actor crossed and its save data "
             "did not", when, s.id, role, key.c_str(), c.readWrites, wantRw, c.data.size(),
             wantRows, marked ? "present" : "ABSENT");
+}
+
+// ---- readiness -------------------------------------------------------------------------------
+
+// The key the episode's device holds in its slot, empty when the slot is empty or does not read.
+std::wstring SlotKeyOf(const Step& s) {
+    void* dev = DeviceOf(s);
+    return dev ? W::SlotDiscKey(dev, s.box == kLaptop) : std::wstring();
+}
+
+bool SlotEmpty(const Step& s) {
+    void* dev = DeviceOf(s);
+    BoxSlot st{};
+    return dev && ReadDeviceSlot(s, dev, st) && st.floppyType < 0;
+}
+
+// What the ACTING peer needs before its verb: an insert, the disc here and the slot empty; an
+// eject, the slot holding that disc -- which for a cross-peer pair is the other peer's insert
+// having crossed. The laptop must also have finished sliding its last disc: both its verbs return
+// at once while its slot timeline runs, and an eject fired a second after an insert moved nothing.
+// `why` names the part that is still false.
+bool Ready(const Step& s, const char*& why) {
+    const std::wstring& key = W::DiscKey(s.disc);
+    if (s.box == kLaptop && ue_wrap::laptop::FloppyBusy()) {
+        why = "the laptop's slot is still moving a disc";
+        return false;
+    }
+    if (s.verb == Verb::Insert) {
+        void* disc = key.empty() ? nullptr : PR::FindByKeyString(key);
+        if (!disc || !R::IsLive(disc)) { why = "the named disc is not in this peer's world"; return false; }
+        if (!SlotEmpty(s)) { why = "the slot is not empty"; return false; }
+        return true;
+    }
+    if (SlotKeyOf(s) != key) { why = "the slot does not hold the named disc"; return false; }
+    return true;
+}
+
+// Both roles watch every eject, because the destroy that kills the disc is raised on the peer that
+// did NOT eject and relayed to the one that did: watching only the actor here would name the
+// symptom on one side and miss its cause on the other.
+void ArmFastWatch(size_t i) {
+    g_fastWatch = EjectWatch{};
+    g_fastWatch.key  = W::DiscKey(kSteps[i].disc);
+    g_fastWatch.step = static_cast<int>(i);
+}
+
+// What BOTH peers wait to see here once the verb is due. An insert: the slot holding the disc --
+// or, on the peer that only watches, the disc gone from its world, since the insert's destroy
+// lands ahead of its slot state and stays true after it, where a peer that inserts and ejects in
+// one breath can carry the slot past a quarter-second poll. An eject: the slot empty and the disc
+// out in this world, first seen by the fast watch, which the watching peer arms the moment its
+// slot empties -- a device refuses a disc while its slot is occupied, so no re-swallow can come
+// before that, and finding a disc walks every object in the world.
+bool EffectSeen(size_t i, bool mine, const char*& why) {
+    const Step& s = kSteps[i];
+    if (s.verb == Verb::Insert) {
+        if (SlotKeyOf(s) == W::DiscKey(s.disc)) return true;
+        void* disc = mine ? nullptr : PR::FindByKeyString(W::DiscKey(s.disc));
+        if (!mine && !(disc && R::IsLive(disc))) return true;
+        why = "the slot never held the inserted disc";
+        return false;
+    }
+    if (!SlotEmpty(s)) { why = "the slot never emptied"; return false; }
+    if (g_fastWatch.step != static_cast<int>(i)) ArmFastWatch(i);
+    if (!g_fastWatch.seenAtMs) {
+        why = "the ejected disc never appeared in this peer's world";
+        return false;
+    }
+    return true;
+}
+
+void WatchFastDestroy(bool isHost, uint64_t now) {
+    if (g_fastWatch.step < 0) return;
+    const char* id = kSteps[g_fastWatch.step].id;
+    const char* role = isHost ? "HOST" : "CLIENT";
+    if (!g_fastWatch.seenAtMs) {
+        if (now < g_fastWatch.nextFind) return;
+        g_fastWatch.nextFind = now + kFastFindMs;
+        void* a = g_fastWatch.key.empty() ? nullptr : PR::FindByKeyString(g_fastWatch.key);
+        if (!a || !R::IsLive(a)) return;
+        g_fastWatch.seenAtMs = now;
+        g_fastWatch.actor.Set(a);
+        UE_LOGI("floppy_selftest: FAST-WATCH %s role=%s -- disc key='%ls' appeared here; watching "
+                "it every tick for %llu ms", id, role, g_fastWatch.key.c_str(),
+                static_cast<unsigned long long>(kFastWatchMs));
+        return;
+    }
+    if (now - g_fastWatch.seenAtMs > kFastWatchMs) return;   // the late sample takes it from here
+    if (g_fastWatch.counted || g_fastWatch.actor.Alive()) return;
+    g_fastWatch.counted = true;
+    ++g_fastLost;
+    UE_LOGW("floppy_selftest: FAST-DESTROY %s role=%s -- disc key='%ls' was in this peer's world "
+            "after the eject and was GONE %llu ms later. Nobody is holding it and no player is near "
+            "it, so a device took it: that is the re-swallow.", id, role, g_fastWatch.key.c_str(),
+            static_cast<unsigned long long>(now - g_fastWatch.seenAtMs));
+}
+
+// The run's end on this peer, once: the final census, the episode table, this peer's judgement and
+// the line the rig ends on. PASS is every episode reached, and every ejected disc still here and
+// carrying its seeded content when its window closed, with nothing eaten on the way.
+void Finish(bool isHost) {
+    if (g_finished) return;
+    g_finished = true;
+    const char* role = isHost ? "HOST" : "CLIENT";
+    W::Census("final", isHost, NowMs() - g_connectedAtMs);
+    EmitVerdict();
+    int ejects = 0, intact = 0, unproven = 0;
+    for (size_t i = 0; i < kStepCount; ++i) {
+        if (kSteps[i].verb != Verb::Eject) continue;
+        ++ejects;
+        if (g_outcome[i].preLive == 1) ++unproven;
+        else if (g_outcome[i].lateIntact == 1) ++intact;
+    }
+    const bool pass = !g_deadStep && intact == ejects && g_fastLost == 0;
+    const std::string died = g_deadStep ? std::string("; the run died at ") + g_deadStep + ": " + g_deadWhy
+                                        : std::string();
+    if (pass) {
+        UE_LOGI("floppy_selftest: RESULT PASS role=%s -- every episode ran; %d of %d ejected discs "
+                "were here with their seeded content when the window closed", role, intact, ejects);
+    } else {
+        UE_LOGW("floppy_selftest: RESULT FAIL role=%s -- %d of %d ejected discs intact here, %d "
+                "eject(s) whose disc was never consumed, %d fast destroy(s)%s", role, intact,
+                ejects, unproven, g_fastLost, died.c_str());
+    }
+    UE_LOGI("floppy_selftest: DONE role=%s", role);
+}
+
+// An episode whose state never came: said once with what was still false, and the run ends here.
+void Die(bool isHost, const char* id, const char* why, uint64_t now) {
+    g_deadStep = id;
+    g_deadWhy = why;
+    UE_LOGW("floppy_selftest: EPISODE DEAD %s role=%s -- %s, %llu ms after it became current; "
+            "every later episode stands on it", id, isHost ? "HOST" : "CLIENT", why,
+            static_cast<unsigned long long>(now - g_phaseSinceMs));
+    Finish(isHost);
+}
+
+// One phase of the current episode per call. Every read here walks for a disc or a slot, so the
+// PRE and EFFECT reads run on the poll period, not every tick.
+void Advance(bool isHost, uint64_t now) {
+    if (g_cur >= kStepCount) return;
+    const Step& s = kSteps[g_cur];
+    const bool mine = s.onHost == isHost;
+    const char* why = "";
+    switch (g_phase) {
+    case Phase::Pre:
+        if (!mine) {
+            // The watching peer cannot see the verb, only what it does, and it sights an eject's
+            // disc where the verb runs: before it.
+            PreSight(g_cur, isHost);
+            g_phase = Phase::Effect;
+            g_phaseSinceMs = now;
+            return;
+        }
+        if (now < g_nextPollMs) return;
+        g_nextPollMs = now + kPollMs;
+        if (!Ready(s, why)) {
+            if (now - g_phaseSinceMs > kStepDeadlineMs) Die(isHost, s.id, why, now);
+            return;
+        }
+        PreSight(g_cur, isHost);
+        W::Census("before", isHost, NowMs() - g_connectedAtMs);
+        if (s.verb == Verb::Eject) ArmFastWatch(g_cur);
+        Fire(g_cur);
+        if (!g_outcome[g_cur].fired) {
+            Die(isHost, s.id, g_outcome[g_cur].note.c_str(), now);
+            return;
+        }
+        g_phase = Phase::Effect;
+        g_phaseSinceMs = now;
+        return;
+    case Phase::Effect:
+        if (now < g_nextPollMs) return;
+        g_nextPollMs = now + kPollMs;
+        if (!EffectSeen(g_cur, mine, why)) {
+            if (now - g_phaseSinceMs > kStepDeadlineMs) Die(isHost, s.id, why, now);
+            return;
+        }
+        W::Census(s.id, isHost, NowMs() - g_connectedAtMs);
+        ReportContent(g_cur, isHost, "post", false);
+        if (s.verb == Verb::Eject) {
+            g_lateAtMs = g_fastWatch.seenAtMs + kLateMs;
+            g_phase = Phase::Window;
+            return;
+        }
+        break;
+    case Phase::Window:
+        if (now < g_lateAtMs) return;
+        ReportContent(g_cur, isHost, "late", true);
+        break;
+    }
+    ++g_cur;
+    g_phase = Phase::Pre;
+    g_phaseSinceMs = now;
 }
 
 }  // namespace
@@ -421,7 +626,7 @@ void EmitVerdict() {
             "other peer's copy of that box.", isHost ? "HOST" : "CLIENT", admitted, inserts,
             inserts - admitted);
     UE_LOGI("floppy_selftest: EJECT SURVIVAL role=%s -- %d of %d sampled eject episodes still had "
-            "their disc in THIS peer's world %llus after the verb (%d eject episodes total, %d "
+            "their disc in THIS peer's world %llus after it first appeared (%d eject episodes total, %d "
             "not counted -- never sampled, or the disc was already lying here when the verb ran); "
             "fast-destroys seen here = %d. The cross-peer pair is repeated %d times, so a survival "
             "short of the sampled count is a RATE, not an anecdote.",
@@ -431,7 +636,7 @@ void EmitVerdict() {
 }
 
 void Tick() {
-    if (!Enabled()) return;
+    if (!Enabled() || g_finished) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
     const bool isHost = s->role() == coop::net::Role::Host;
@@ -443,130 +648,62 @@ void Tick() {
         if (isHost ? !s->IsSlotWorldReady(1) : !coop::net_pump::HasAnnouncedWorldReady()) return;
         g_connectedAtMs = now;
         g_nextCensusMs = now + kCensusMs;
-        UE_LOGI("floppy_selftest: ARMED role=%s (seed +%llus, discs named +%llus, first episode "
-                "+%llus)", isHost ? "HOST" : "CLIENT",
-                static_cast<unsigned long long>(kSeedMs / 1000),
-                static_cast<unsigned long long>(kPickMs / 1000),
-                static_cast<unsigned long long>(kSteps[0].atMs / 1000));
+        g_phaseSinceMs = now;
+        UE_LOGI("floppy_selftest: ARMED role=%s -- %zu episodes, each on its own readiness; an "
+                "episode not ready within %llus fails the run", isHost ? "HOST" : "CLIENT",
+                kStepCount, static_cast<unsigned long long>(kStepDeadlineMs / 1000));
     }
-    const uint64_t since = now - g_connectedAtMs;
     if (!FD::EnsureResolved()) return;  // the disc fields come from there
     if (!W::ResolveBoxes()) return;
 
-    if (!g_seeded && since >= kSeedMs) {
+    if (!g_seeded) {
         g_seeded = true;
         if (isHost) W::SeedAndStamp(s);
         W::Census("seeded", isHost, NowMs() - g_connectedAtMs);
+        g_phaseSinceMs = now;
     }
-    if (g_seeded && !g_picked && since >= kPickMs) {
-        g_picked = true;
-        W::PickDiscs(isHost);
-    }
-    if (g_picked) {
-        for (size_t i = 0; i < kStepCount; ++i) {
-            if (since < kSteps[i].atMs) continue;
-            const bool mine = kSteps[i].onHost == isHost;
-            if (mine ? g_outcome[i].done : g_watched[i]) continue;
-            PreSight(i, isHost);
-            if (mine) {
-                W::Census("before", isHost, NowMs() - g_connectedAtMs);
-                Fire(i);
-            } else {
-                // The peer that did NOT act still owes an after-picture: whether a cross-peer
-                // transfer arrived is a fact only this side can report.
-                g_watched[i] = true;
-            }
-            g_postAtMs = now + kPostMs;
-            g_postStep = static_cast<int>(i);
-            if (kSteps[i].verb == Verb::Eject) {
-                // Ejects only. An insert's late sample would be armed and then overwritten by the
-                // eject eight seconds behind it, so it would never fire; and it is the ejected
-                // disc, not the consumed one, whose survival this run is about.
-                g_lateAtMs = now + kLateMs;
-                g_lateStep = static_cast<int>(i);
-            }
-            // Both roles arm the fast-destroy watch on an eject, because the destroy that kills
-            // the disc is raised on the peer that did NOT eject and relayed to the one that did:
-            // watching only the actor here would name the symptom on one side and miss its cause
-            // on the other.
-            if (kSteps[i].verb == Verb::Eject && kSteps[i].disc >= 0 &&
-                kSteps[i].disc < kDiscs && !W::DiscKey(kSteps[i].disc).empty()) {
-                g_fastWatch = EjectWatch{};
-                g_fastWatch.key  = W::DiscKey(kSteps[i].disc);
-                g_fastWatch.atMs = now;
-                g_fastWatch.step = static_cast<int>(i);
-            }
-            break;  // one verb per tick, so two episodes can never share an after-picture
+    if (!g_picked && now >= g_nextPollMs) {
+        g_nextPollMs = now + kPollMs * 4;   // the census walks every object in the world
+        // The host's stamps reach this peer as each disc's save record, and both peers name their
+        // discs by the same rule, so a client that named them before every stamp had landed would
+        // name a different set.
+        const int marked = isHost ? kDiscs : W::MarkedDiscCount();
+        if (marked >= kDiscs) {
+            g_picked = true;
+            W::PickDiscs(isHost);
+            g_phaseSinceMs = now;
+        } else if (now - g_phaseSinceMs > kStepDeadlineMs) {
+            char why[96];
+            std::snprintf(why, sizeof(why), "%d of the host's %d stamped discs reached this peer",
+                          marked, kDiscs);
+            Die(isHost, "pick", why, now);
+            return;
         }
     }
-    if (g_postStep >= 0 && now >= g_postAtMs) {
-        W::Census(kSteps[g_postStep].id, isHost, NowMs() - g_connectedAtMs);
-        ReportContent(static_cast<size_t>(g_postStep), isHost, "post", false);
-        g_postStep = -1;
-    }
-    // The second look. A disc the post-picture found can still be eaten a second later, and "the
-    // eject produced a disc" is not "the disc survived" -- which is the whole difference here.
-    if (g_lateStep >= 0 && now >= g_lateAtMs) {
-        ReportContent(static_cast<size_t>(g_lateStep), isHost, "late", true);
-        g_lateStep = -1;
-    }
-    if (g_fastWatch.step >= 0) {
-        if (now - g_fastWatch.atMs > kFastWatchMs) {
-            if (!g_fastWatch.sawLive)
-                UE_LOGW("floppy_selftest: FAST-WATCH %s role=%s -- disc key='%ls' was NEVER seen "
-                        "alive here in the %llu ms after the eject, so this peer cannot say whether "
-                        "it was destroyed or never arrived. The survival reading below is what "
-                        "answers that.", kSteps[g_fastWatch.step].id, isHost ? "HOST" : "CLIENT",
-                        g_fastWatch.key.c_str(), static_cast<unsigned long long>(kFastWatchMs));
-            g_fastWatch.step = -1;
-        } else if (!g_fastWatch.sawLive) {
-            if (now >= g_fastWatch.nextFind) {
-                g_fastWatch.nextFind = now + kFastFindMs;
-                void* a = PR::FindByKeyString(g_fastWatch.key);
-                if (a && R::IsLive(a)) {
-                    g_fastWatch.sawLive = true;
-                    g_fastWatch.actor.Set(a);
-                    UE_LOGI("floppy_selftest: FAST-WATCH %s role=%s -- disc key='%ls' appeared here "
-                            "%llu ms after the eject; watching it every tick from now on",
-                            kSteps[g_fastWatch.step].id, isHost ? "HOST" : "CLIENT",
-                            g_fastWatch.key.c_str(),
-                            static_cast<unsigned long long>(now - g_fastWatch.atMs));
-                }
-            }
-        } else if (!g_fastWatch.counted && !g_fastWatch.actor.Alive()) {
-            g_fastWatch.counted = true;
-            ++g_fastLost;
-            UE_LOGW("floppy_selftest: FAST-DESTROY %s role=%s -- disc key='%ls' was in this peer's "
-                    "world after the eject and was GONE %llu ms later. Nobody is holding it and no "
-                    "player is near it, so a device took it: that is the re-swallow.",
-                    kSteps[g_fastWatch.step].id, isHost ? "HOST" : "CLIENT",
-                    g_fastWatch.key.c_str(),
-                    static_cast<unsigned long long>(now - g_fastWatch.atMs));
-        }
-    }
+    if (g_picked) Advance(isHost, now);
+    WatchFastDestroy(isHost, now);
     if (now >= g_nextCensusMs) {
         g_nextCensusMs = now + kCensusMs;
         W::Census("tick", isHost, NowMs() - g_connectedAtMs);
     }
-    if (!g_finalDone && since >= kFinalMs) {
-        g_finalDone = true;
-        W::Census("final", isHost, NowMs() - g_connectedAtMs);
-        EmitVerdict();
-    }
+    if (g_picked && g_cur >= kStepCount) Finish(isHost);
 }
 
 void OnDisconnect() {
     if (!Enabled()) return;
     g_connectedAtMs = 0;
     g_nextCensusMs = 0;
-    g_postAtMs = 0;
-    g_postStep = -1;
+    g_cur = 0;
+    g_phase = Phase::Pre;
+    g_phaseSinceMs = 0;
     g_lateAtMs = 0;
-    g_lateStep = -1;
+    g_nextPollMs = 0;
+    g_deadStep = nullptr;
+    g_deadWhy.clear();
+    g_finished = false;
     g_fastWatch = EjectWatch{};
     g_fastLost = 0;
-    g_seeded = g_picked = g_finalDone = false;
-    for (size_t i = 0; i < kStepCount; ++i) g_watched[i] = false;
+    g_seeded = g_picked = false;
     for (size_t i = 0; i < kStepCount; ++i) g_outcome[i] = Outcome{};
     W::Reset();
 }

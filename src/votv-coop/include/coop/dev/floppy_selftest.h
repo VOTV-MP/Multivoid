@@ -3,16 +3,14 @@
 //
 // An idle two-peer run never moves a disc between a prop and a device, so the seams that carry a
 // prop's own save data -- the keyed destroy an insert relays, the birth an eject drives -- stay
-// invisible to it. This drives the game's own verbs on a per-role timer: a client insert whose
-// host eject finds an empty slot, the mirror of that, and a client insert that the same client
-// ejects, which is the only episode putting a disc through the client's own place/birth seam.
-//
-// Each episode records the slot and the world's disc census on BOTH peers around the verb, so a
-// disc lost between them is a diff of two logs rather than an absence in one, and an episode that
-// could not fire says which precondition stopped it instead of leaving a silent gap. It MUTATES
-// the world: it inserts, ejects, seeds discs when the world holds too few, and OVERWRITES the
-// content of up to three discs it did not create -- so it is armed per run from the environment
-// and never left standing in an ini.
+// invisible to it. This drives the game's own verbs, each when its state is true on the peer that
+// acts -- inserts ejected across peers and by the same peer, then the laptop's three -- and each
+// peer moves on when it SEES an episode's effect; one whose state never comes ends the run there,
+// named. Each peer ends with `floppy_selftest: RESULT PASS|FAIL` and `floppy_selftest: DONE
+// role=<ROLE>`, the client's last. The slot and the disc census are logged on BOTH peers around
+// each verb, so a lost disc is a diff of two logs. It MUTATES the world -- inserts, ejects, seeds
+// discs, OVERWRITES the content of every disc it names -- so it is armed per run from the
+// environment and never left standing in an ini.
 
 #pragma once
 
@@ -23,15 +21,15 @@ namespace coop::dev::floppy_selftest {
 // Cache the session pointer. Call once at boot. No-op with the flag off.
 void Install(coop::net::Session* session);
 
-// Game thread, per tick. Resolves the targets, fires the episodes due for this role, and prints
-// the census on its own period. No-op with the flag off or before the session connects.
+// Game thread, per tick. Resolves the targets, fires the episodes that are ready for this role,
+// and prints the census on its own period. No-op with the flag off or before the session connects.
 void Tick();
 
 // Print what each episode did, including the ones that never fired. Called on the periodic census
 // and at teardown, since the rig kills its peers rather than disconnecting them.
 void EmitVerdict();
 
-// Clear the schedule and the resolved targets so a reconnect re-runs the episodes.
+// Clear the episode cursor and the resolved targets so a reconnect re-runs the episodes.
 void OnDisconnect();
 
 }  // namespace coop::dev::floppy_selftest

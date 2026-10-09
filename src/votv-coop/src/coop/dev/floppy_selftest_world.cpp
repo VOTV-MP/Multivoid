@@ -326,6 +326,22 @@ void* Box(int index) {
     return (index >= 0 && index < kTargets) ? g_box[index].Get() : nullptr;
 }
 
+std::wstring SlotDiscKey(void* device, bool laptop) {
+    const FS::DeviceKind kind = laptop ? FS::DeviceKind::Laptop : FS::DeviceKind::ServerBox;
+    FS::Scalars st{};
+    FS::Content c;
+    if (!device || !FS::EnsureResolved(kind) || !FS::ReadScalars(kind, device, st)) return {};
+    if (st.floppyType < 0 || !FS::ReadContent(kind, device, c)) return {};
+    return FS::ObjectDataKey(c.objectData);
+}
+
+int MarkedDiscCount() {
+    int marked = 0;
+    for (const DiscRow& d : DiscCensus())
+        if (d.insertable() && d.readWrites >= kMarkerReadWrites) ++marked;
+    return marked;
+}
+
 void* Laptop() {
     return ue_wrap::laptop::EnsureResolved() ? ue_wrap::laptop::Instance() : nullptr;
 }
