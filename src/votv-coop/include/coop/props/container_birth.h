@@ -61,4 +61,10 @@ void Forget(uint32_t eid);
 
 void Reset();
 
+// The transfer's arithmetic, un-gated at session start before any transfer exists: the per-author cap
+// that evicts that author's own oldest and nobody else's, a departing author's transfers, a gone
+// container's at the sweep, and a first publication pending, then given up once. No engine object is
+// touched. Leaves the tables empty.
+bool RunSelftest();
+
 }  // namespace coop::props::container_birth

@@ -43,6 +43,7 @@
 #include "coop/player/remote_player.h"
 #include "coop/player/roster.h"
 #include "coop/player/stat_orders_wire.h"
+#include "coop/props/container_birth.h"
 #include "coop/props/container_park.h"
 #include "coop/props/container_write_policy.h"
 #include "coop/props/prop_lifecycle.h"
@@ -240,6 +241,8 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     // And the pen beside it, whose cap has never fired in a run: every park a measured join
     // produced was host-authored, and those are deliberately not capped.
     coop::props::container_park::RunSelftest();
+    // And the transfer of a thrown container, whose cap, departure and deadline no run reaches.
+    coop::props::container_birth::RunSelftest();
     // And the server id rule: a nickname or a hand-typed name never names a folder outside
     // multivoid_servers, and a wrong rule writes somewhere else without crashing.
     coop::server_profile::RunSelftest();

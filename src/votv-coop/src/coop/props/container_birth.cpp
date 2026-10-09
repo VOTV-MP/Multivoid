@@ -33,6 +33,11 @@ std::vector<Birth> g_awaited;           // host
 std::set<uint32_t> g_hostBirths;        // host: births with contents, published by the next sweep
 std::map<uint32_t, uint64_t> g_owedFirst;   // eid -> deadline of its first publication
 
+// The selftest drives the real functions, so it would otherwise print an eviction, a departure and an
+// expiry into the session log -- lines a reader is supposed to treat as defects. Quiet for its
+// duration only, as container_park's selftest is.
+bool g_quiet = false;
+
 uint64_t NowMs() {
     return static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -50,8 +55,9 @@ void Push(std::vector<Birth>& births, void* actor, uint8_t authorSlot) {
         ++mine;
     }
     if (mine >= kMaxPerAuthor) {
-        UE_LOGW("container_birth: slot %u has %zu container transfers in flight -- its oldest is given up",
-                static_cast<unsigned>(authorSlot), mine);
+        if (!g_quiet)
+            UE_LOGW("container_birth: slot %u has %zu container transfers in flight -- its oldest is "
+                    "given up", static_cast<unsigned>(authorSlot), mine);
         births.erase(oldest);
     }
     Birth b;
@@ -99,8 +105,9 @@ void OnPeerGone(uint8_t slot) {
     // A transfer is bound to the peer that threw: a later occupant of the slot does not complete it.
     for (size_t i = 0; i < g_awaited.size();) {
         if (g_awaited[i].authorSlot != slot) { ++i; continue; }
-        UE_LOGW("container_birth: slot %u left before the contents of a container it threw came",
-                static_cast<unsigned>(slot));
+        if (!g_quiet)
+            UE_LOGW("container_birth: slot %u left before the contents of a container it threw came",
+                    static_cast<unsigned>(slot));
         g_awaited.erase(g_awaited.begin() + static_cast<std::ptrdiff_t>(i));
     }
 }
@@ -141,7 +148,7 @@ void Sweep(uint64_t nowMs, std::set<uint32_t>& dirty) {
         const Birth& b = g_awaited[i];
         const bool live = b.actor.Alive();
         if (live && nowMs < b.deadlineMs) { ++i; continue; }
-        if (live)
+        if (live && !g_quiet)
             UE_LOGW("container_birth: the contents of a container slot %u threw never came -- the host's "
                     "copy stays as it built it, and the thrower's own contents are refused from now on and "
                     "lost to it", static_cast<unsigned>(b.authorSlot));
@@ -180,6 +187,73 @@ void Reset() {
     g_awaited.clear();
     g_hostBirths.clear();
     g_owedFirst.clear();
+}
+
+bool RunSelftest() {
+    Reset();
+    g_quiet = true;
+    int pass = 0, total = 0;
+    auto check = [&](bool ok, const char* what) {
+        ++total;
+        if (ok) { ++pass; return; }
+        UE_LOGE("container_birth selftest FAIL: %s", what);
+    };
+    auto held = [](uint8_t slot) {
+        size_t n = 0;
+        for (const Birth& b : g_awaited) n += (b.authorSlot == slot) ? 1 : 0;
+        return n;
+    };
+    // Tagged by its deadline, so which transfer an eviction took is visible. No actor: the selftest
+    // runs on the session thread, where no engine object may be touched, and the cap never reads one.
+    // A live transfer's deadline and its completion are the thrown-container drill's arms.
+    auto push = [](uint8_t slot, uint64_t tag) {
+        Push(g_awaited, nullptr, slot);
+        g_awaited.back().deadlineMs = tag;
+    };
+
+    // An author over its cap gives up its OWN oldest, never another author's.
+    push(2, 1);
+    for (uint64_t i = 0; i < kMaxPerAuthor; ++i) push(1, 100 + i);
+    push(1, 999);
+    check(held(1) == kMaxPerAuthor, "an author over its cap holds exactly the cap");
+    check(held(2) == 1, "another author's transfer survives the eviction");
+    bool oldestGone = true, newestHeld = false;
+    for (const Birth& b : g_awaited) {
+        if (b.authorSlot == 1 && b.deadlineMs == 100) oldestGone = false;
+        if (b.authorSlot == 1 && b.deadlineMs == 999) newestHeld = true;
+    }
+    check(oldestGone && newestHeld, "the transfer given up is that author's oldest");
+
+    // A departing author's transfers end, and only its; a gone container's ends at the next sweep.
+    OnPeerGone(1);
+    check(held(1) == 0 && held(2) == 1, "a departing author's transfers end, and only its");
+    std::set<uint32_t> dirty;
+    Sweep(0, dirty);
+    check(g_awaited.empty() && dirty.empty(), "a transfer whose container is gone ends at the sweep");
+
+    // A first publication stays owed until its deadline and is then given up, once, with its birth
+    // mark; a sent one and a forgotten one are owed nothing.
+    g_owedFirst[7] = 5000;
+    g_birthEids.insert(7);
+    check(FirstOwed(7, 4999) == Owed::Pending && IsBirthSlice(7), "an owed first publication is pending");
+    check(FirstOwed(7, 5000) == Owed::GivenUp, "it is given up at its deadline");
+    check(FirstOwed(7, 5000) == Owed::None && !IsBirthSlice(7), "given up once, its birth mark with it");
+    g_owedFirst[8] = 5000;
+    g_birthEids.insert(8);
+    FirstSent(8);
+    check(FirstOwed(8, 0) == Owed::None && !IsBirthSlice(8), "a sent first publication is owed no more");
+    g_owedFirst[9] = 5000;
+    Forget(9);
+    check(FirstOwed(9, 0) == Owed::None, "a container that no longer resolves owes nothing");
+
+    Reset();
+    g_quiet = false;
+    if (pass == total) {
+        UE_LOGI("container_birth selftest: ALL PASS (%d checks)", total);
+        return true;
+    }
+    UE_LOGE("container_birth selftest: %d/%d checks passed", pass, total);
+    return false;
 }
 
 }  // namespace coop::props::container_birth
