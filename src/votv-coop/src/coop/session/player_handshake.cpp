@@ -430,7 +430,7 @@ bool HandleJoinMessage(net::Session& session,
         const int written =
             session.role() == net::Role::Client
                 ? l10n::Fmt(line, sizeof(line), l10n::T("Connecting to %1$s's game..."), nickUtf8.c_str())
-                : l10n::Fmt(line, sizeof(line), l10n::T("%1$s is connecting..."), nickUtf8.c_str());
+                : l10n::Fmt(line, sizeof(line), l10n::T("%1$s is connecting to the game..."), nickUtf8.c_str());
         if (written >= 0) coop::chat_feed::Push(std::string(line), coop::chat_feed::Keep::Transient);
         UE_LOGI("player_handshake: slot %d connect line shown ('%ls')", senderSlot, nick.c_str());
     }

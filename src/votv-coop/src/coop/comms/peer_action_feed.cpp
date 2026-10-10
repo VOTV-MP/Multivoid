@@ -98,7 +98,7 @@ std::string NickOf(uint8_t slot) {
     const std::wstring& nickW =
         isLocal ? coop::player_handshake::LocalNickname()
                 : coop::player_handshake::NicknameForSlot(static_cast<int>(slot));
-    return coop::chat_feed::ToUtf8(nickW.empty() ? std::wstring(L"Player") : nickW);
+    return nickW.empty() ? std::string(l10n::T("Player")) : coop::chat_feed::ToUtf8(nickW);
 }
 
 // The sentence in the player's language, formatted with the nick as argument 1, and the nick's span
