@@ -92,4 +92,12 @@ bool IsOccupiedByOther(void* actor, uint8_t* outOccupantSlot = nullptr);
 // an instrumented run can state which side of the mirror each sample came from. Game thread.
 bool OwnsTick(void* actor);
 
+// For the ATV spawn drill, game thread: HOST, the runtime ATVs announced under a synthetic key this
+// session; CLIENT, the live runtime ATV mirrors this peer fresh-spawned, the spawns its park ever
+// held, and those it holds now.
+uint32_t RuntimeAnnounced();
+int RuntimeMirrors();
+uint32_t ParkedEver();
+size_t ParkPending();
+
 }  // namespace coop::atv_sync

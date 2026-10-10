@@ -469,6 +469,13 @@ CFG_FLAG(physmods_drill, "physmods_drill", "dev", false, "VOTVCOOP_PHYSMODS_DRIL
     "line says whether its array holds that one module alone. A joiner whose desk already holds modules at "
     "its world-ready (a rejoin into the drill's world) plugs nothing and says what it loaded. Lines tagged "
     "[PHYSMODS-DRILL].")
+CFG_STRING(atv_spawn_drill, "atv_spawn_drill", "dev", "", "VOTVCOOP_ATV_SPAWN_DRILL", false,
+    "Drill (BOTH peers): a runtime ATV spawned on the host reaches each client once. run -- spawned once the client's "
+    "world is ready; join -- while it is still loading (the world-ready replay); park -- as run, with "
+    "atv_park_first_spawn=1 on the client. The client's DONE line ends it.")
+CFG_FLAG(atv_park_first_spawn, "atv_park_first_spawn", "dev", false, "VOTVCOOP_ATV_PARK_FIRST_SPAWN",
+    "Developer: the first runtime ATV spawn this client receives is parked as if its world were not ready (the ATV "
+    "spawn drill's park arm).")
 CFG_STRING(fall_drill, "fall_drill", "dev", "", "VOTVCOOP_FALL_DRILL", false,
     "Drill (BOTH peers): a host birth that falls lands on the client where it lands on the host. run -- the host "
     "drops a drive from 4 m once the client's world is ready; the client's DONE line ends it.")

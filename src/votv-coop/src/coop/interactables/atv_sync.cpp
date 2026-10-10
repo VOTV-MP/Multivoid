@@ -15,6 +15,8 @@
 
 #include "coop/interactables/atv_sync.h"
 #include "atv_spawn_park.h"
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/interactables/atv_corrector.h"
 #include "coop/dev/atv_eject_drill.h"
 #include "coop/interactables/atv_condition_sync.h"
@@ -522,6 +524,15 @@ void OnAtvSpawn(const coop::net::AtvSpawnPayload& payload, uint8_t /*senderPeerS
         spawn_park::Park(synthKey, payload, "the receiving world is not ready");
         return;
     }
+    // The ATV spawn drill's park arm: the first spawn is parked as if the world were not ready, so the park's
+    // hand-back is what spawns it.
+    static const bool s_parkFirst = coop::config::ResolveFlag(coop::config_registry::rows::atv_park_first_spawn);
+    static bool s_parkedFirst = false;
+    if (s_parkFirst && !s_parkedFirst) {
+        s_parkedFirst = true;
+        spawn_park::Park(synthKey, payload, "the drill parks the first spawn");
+        return;
+    }
     if (!A::EnsureResolved()) { spawn_park::Park(synthKey, payload, "the ATV wrapper is not resolved"); return; }
     auto known = g_atvs.find(synthKey);
     if (known != g_atvs.end()) {
@@ -549,6 +560,18 @@ void OnAtvSpawn(const coop::net::AtvSpawnPayload& payload, uint8_t /*senderPeerS
     UE_LOGI("atv: spawned runtime-ATV mirror synthKey='%ls' class='%ls' actor=%p loc=(%.0f, %.0f, %.0f)",
             synthKey.c_str(), className.c_str(), spawned, loc.X, loc.Y, loc.Z);
 }
+
+uint32_t RuntimeAnnounced() { return g_synthCounter; }
+
+int RuntimeMirrors() {
+    int n = 0;
+    for (const auto& kv : g_atvs)
+        if (kv.second.isClientSpawnedMirror && R::IsLiveByIndex(kv.second.actor, kv.second.idx)) ++n;
+    return n;
+}
+
+uint32_t ParkedEver() { return spawn_park::ParkedEver(); }
+size_t ParkPending() { return spawn_park::Pending(); }
 
 void OnAtvDestroy(const coop::net::AtvDestroyPayload& payload, uint8_t /*senderPeerSlot*/) {
     auto* s = g_session.load(std::memory_order_acquire);

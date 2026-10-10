@@ -8,6 +8,8 @@
 // ready; a world change drops it, the new world's replay bringing it again. A spawn that fails once its world is
 // ready is final: nothing here retries it. Game thread.
 #pragma once
+#include <cstddef>
+#include <cstdint>
 #include <string>
 namespace coop::net { struct AtvSpawnPayload; }
 namespace coop::atv_sync::spawn_park {
@@ -19,4 +21,7 @@ void Discard(const std::wstring& key);
 // still not ready. A half-second poll of that readiness.
 void DrainReady();
 void Clear();
+// The spawns ever parked, and those parked now. For the ATV spawn drill.
+uint32_t ParkedEver();
+size_t Pending();
 }  // namespace coop::atv_sync::spawn_park

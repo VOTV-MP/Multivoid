@@ -21,6 +21,7 @@ constexpr size_t   kCap = 16;
 constexpr uint64_t kPollMs = 500;
 uint64_t g_nextPollMs = 0;
 bool     g_saidCap = false;
+uint32_t g_parkedEver = 0;
 
 uint64_t NowMs() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -43,6 +44,7 @@ void Park(const std::wstring& key, const coop::net::AtvSpawnPayload& payload, co
         }
         UE_LOGI("atv: runtime-ATV synthKey='%ls' parked until this world is ready (%s)", key.c_str(), why);
         g_parked.emplace(key, Parked{payload, gen});
+        ++g_parkedEver;
         return;
     }
     it->second.payload = payload;   // the newest description of this ATV wins
@@ -50,6 +52,9 @@ void Park(const std::wstring& key, const coop::net::AtvSpawnPayload& payload, co
 }
 
 void Discard(const std::wstring& key) { g_parked.erase(key); }
+
+uint32_t ParkedEver() { return g_parkedEver; }
+size_t Pending() { return g_parked.size(); }
 
 void DrainReady() {
     UE_ASSERT_GAME_THREAD("atv_spawn_park::DrainReady");
