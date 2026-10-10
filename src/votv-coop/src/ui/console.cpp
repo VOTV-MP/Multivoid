@@ -109,7 +109,7 @@ void Render() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, S(6.0f));
 
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse;
-    if (ImGui::Begin("Console###coop_console", nullptr, flags)) {
+    if (ImGui::Begin(l10n::Label(l10n::T("Console"), "coop_console"), nullptr, flags)) {
         // Log scroll region (reserve a line for the input box).
         const float inputH = ImGui::GetFrameHeightWithSpacing();
         if (ImGui::BeginChild("##log", ImVec2(0.0f, -inputH), false,

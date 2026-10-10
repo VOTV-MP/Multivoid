@@ -4,6 +4,7 @@
 #include "coop/bug_report/report_bundle.h"
 #include "report_stream.h"
 
+#include "l10n/mark.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/paths.h"
 
@@ -25,7 +26,7 @@ Entry MakeEntry(const char* name, std::wstring path, bool tailOnly) {
     WIN32_FILE_ATTRIBUTE_DATA d{};
     if (e.path.empty() || !::GetFileAttributesExW(e.path.c_str(), GetFileExInfoStandard, &d) ||
         (d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
-        e.leftOut = "not present";
+        e.leftOut = L10N_MARK("not present");
         return e;
     }
     e.bytesOnDisk = (static_cast<uint64_t>(d.nFileSizeHigh) << 32) | d.nFileSizeLow;
@@ -136,8 +137,8 @@ std::vector<Entry> ListEntries() {
     if (prev.leftOut.empty()) {
         switch (CheckLogFormat(prev.path)) {
             case LogFormat::Same: break;
-            case LogFormat::Other: prev.leftOut = "written by a build with another log format"; break;
-            case LogFormat::Unreadable: prev.leftOut = "could not be read"; break;
+            case LogFormat::Other: prev.leftOut = L10N_MARK("written by a build with another log format"); break;
+            case LogFormat::Unreadable: prev.leftOut = L10N_MARK("could not be read"); break;
         }
     }
     out.push_back(std::move(prev));

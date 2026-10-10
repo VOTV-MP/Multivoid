@@ -142,7 +142,7 @@ void Render() {
             if (!open) g_open.store(false, std::memory_order_relaxed);
         }
     } closeOnX{open};
-    if (ImGui::Begin("Voice chat###coop_voice_panel", &open,
+    if (ImGui::Begin(l10n::Label(l10n::T("Voice chat"), "coop_voice_panel"), &open,
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
                          ImGuiWindowFlags_NoSavedSettings)) {
         if (!s.enabled) {

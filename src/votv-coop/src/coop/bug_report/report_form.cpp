@@ -2,6 +2,7 @@
 
 #include "coop/bug_report/report_core.h"
 
+#include "l10n/mark.h"
 #include "ue_wrap/core/log.h"
 
 namespace coop::bug_report {
@@ -27,10 +28,10 @@ std::string_view Trimmed(std::string_view s) {
 
 const char* ValidateForm(const Form& f) {
     if (CodePoints(Trimmed(f.happened)) < kHappenedMinChars)
-        return "Please describe what happened (at least 20 characters).";
+        return L10N_MARK("Please describe what happened (at least 20 characters).");
     if (f.happened.size() > kFieldMaxBytes || f.expected.size() > kFieldMaxBytes ||
         f.contact.size() > kContactMaxBytes)
-        return "That text is too long.";
+        return L10N_MARK("That text is too long.");
     return nullptr;
 }
 

@@ -8,6 +8,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/text/repertoire.h"
+#include "l10n/l10n.h"
 #include "ui/scale.h"
 #include "ue_wrap/core/log.h"
 
@@ -69,11 +70,11 @@ struct RoleDesc {
     bool   bold;             // use the family's Bold face
 };
 constexpr RoleDesc kRoles[kRoleCount] = {
-    { "Menu / panels", kUiPx,        false },  // Role::Menu (== ImGui default)
-    { "Chat",          kChatPx,      true  },  // Role::Chat
-    { "Net stats",     kUiPx,        false },  // Role::Net
-    { "Nameplates",    kNameplatePx, false },  // Role::Nameplate
-    { "Release toast", kUiPx,        false },  // Role::Toast (our update/version toast)
+    { L10N_MARK("Menu / panels"), kUiPx,        false },  // Role::Menu (== ImGui default)
+    { L10N_MARK("Chat"),          kChatPx,      true  },  // Role::Chat
+    { L10N_MARK("Net stats"),     kUiPx,        false },  // Role::Net
+    { L10N_MARK("Nameplates"),    kNameplatePx, false },  // Role::Nameplate
+    { L10N_MARK("Release toast"), kUiPx,        false },  // Role::Toast (our update/version toast)
 };
 // The per-role default family, owned by the registry's row list: the menu, chat and toast
 // default to Fixedsys, the net stats and nameplates to Roboto.
@@ -366,7 +367,7 @@ const char* FamilyLabel(Family f) {
 
 const char* RoleLabel(Role r) {
     const int i = static_cast<int>(r);
-    return (i >= 0 && i < kRoleCount) ? kRoles[i].label : "?";
+    return (i >= 0 && i < kRoleCount) ? l10n::T(kRoles[i].label) : "?";
 }
 
 Family RoleFamily(Role r) {

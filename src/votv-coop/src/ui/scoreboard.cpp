@@ -315,7 +315,7 @@ void Render() {
                         if (ImGui::Checkbox(l10n::Label(l10n::T("Mute for me"), "mute_for_me"), &silenced))
                             coop::voice_chat::SetSlotVolume(r.slot, silenced ? 0.0f : 1.0f);
                         if (!silenced) {
-                            if (ImGui::SliderFloat("##pvol", &v, 0.0f, 2.0f, "volume %.2fx"))
+                            if (ImGui::SliderFloat("##pvol", &v, 0.0f, 2.0f, l10n::T("volume %.2fx")))
                                 coop::voice_chat::SetSlotVolume(r.slot, v);
                         }
                         ImGui::EndPopup();

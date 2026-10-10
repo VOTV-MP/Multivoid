@@ -60,7 +60,8 @@ void DrawFiles() {
     char line[256];
     for (const BR::Entry& e : g_entries) {
         if (!e.leftOut.empty()) {
-            l10n::Fmt(line, sizeof(line), l10n::T("%1$s -- left out: %2$s"), e.name, e.leftOut.c_str());
+            l10n::Fmt(line, sizeof(line), l10n::T("%1$s -- left out: %2$s"), e.name,
+                      l10n::T(e.leftOut.c_str()));
             ImGui::TextDisabled("%s", line);
         } else if (e.tailOnly && e.bytesOnDisk > BR::kUe4ssTailBytes) {
             l10n::Fmt(line, sizeof(line), l10n::T("%1$s (last %2$llu KB of %3$llu KB)"), e.name,
@@ -143,7 +144,7 @@ void Render() {
     ImGui::EndDisabled();
     if (g_formError) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.45f, 0.42f, 1.0f));
-        ImGui::TextWrapped("%s", g_formError);
+        ImGui::TextWrapped("%s", l10n::T(g_formError));
         ImGui::PopStyleColor();
     }
     DrawStatus(st);

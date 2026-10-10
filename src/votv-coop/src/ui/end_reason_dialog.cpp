@@ -62,7 +62,7 @@ void Render() {
         ImGui::PushTextWrapPos(S(404.0f));
         // The code's own sentence first; the site's text under it when it adds something (the
         // two builds, the host's own words), never the same line twice.
-        ImGui::TextWrapped("%s", info.text);
+        ImGui::TextWrapped("%s", l10n::T(info.text));
         if (!notice.detail.empty() && notice.detail != info.text) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.72f, 0.66f, 0.66f, 1.0f));
             ImGui::TextWrapped("%s", notice.detail.c_str());

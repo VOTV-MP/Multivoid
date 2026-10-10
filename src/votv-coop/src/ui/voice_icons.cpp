@@ -2,6 +2,8 @@
 
 #include "ui/voice_icons.h"
 
+#include "l10n/l10n.h"
+
 #include <cmath>
 
 namespace ui::voice_icons {
@@ -97,11 +99,11 @@ void Draw(ImDrawList* dl, ImVec2 c, float size, VoiceIcon icon, float alpha) {
 
 const char* Label(VoiceIcon icon) {
     switch (icon) {
-    case VoiceIcon::Talking: return "Talking";
-    case VoiceIcon::Whispering: return "Whispering";
-    case VoiceIcon::MicMuted: return "Mic muted";
-    case VoiceIcon::Disabled: return "Voice off";
-    case VoiceIcon::Disconnected: return "Voice disconnected";
+    case VoiceIcon::Talking: return l10n::T("Talking");
+    case VoiceIcon::Whispering: return l10n::T("Whispering");
+    case VoiceIcon::MicMuted: return l10n::T("Mic muted");
+    case VoiceIcon::Disabled: return l10n::T("Voice off");
+    case VoiceIcon::Disconnected: return l10n::T("Voice disconnected");
     default: return "";
     }
 }
