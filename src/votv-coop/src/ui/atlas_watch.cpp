@@ -61,7 +61,7 @@ bool SourceCarries(ImFontAtlas* atlas, ImFontConfig* src, uint32_t cp) {
 // A source that has the codepoint and does not forbid it -- what a bake of it can come from.
 bool SomeSourceTakes(ImFont* font, uint32_t cp) {
     for (ImFontConfig* src : font->Sources)
-        if (SourceCarries(font->OwnerAtlas, src, cp) && !SourceExcludes(src, cp)) return true;
+        if (!SourceExcludes(src, cp) && SourceCarries(font->OwnerAtlas, src, cp)) return true;
     return false;
 }
 bool SourceNamed(ImFont* font, unsigned idx, const char* name) {
@@ -183,9 +183,9 @@ void RunSelftest(ImFontAtlas* atlas, ImTextureData* tex) {
     // one. U+4E00 is the first CJK ideograph and no embedded face or donor carries it; if this
     // ever goes green, the repertoire table and the fonts that shipped describe different builds.
     // Under a script a system face draws, U+4E00 is carried on purpose; the red case then probes a
-    // codepoint no source carries, embedded or system (Ugaritic, measured on the rig's faces: Ethiopic
-    // U+1200 was carried by one).
-    if (g_allowed) ok(!f->IsGlyphInFont(0x10380), "U+10380 is ABSENT (the instrument can still say no)");
+    // noncharacter, which Unicode never assigns, so no face maps it whichever candidate a machine has
+    // (measured absent from every embedded face, msyh, msyhl and simsun; Ethiopic U+1200 was carried).
+    if (g_allowed) ok(!f->IsGlyphInFont(0x1FFFF), "U+1FFFF is ABSENT (the instrument can still say no)");
     else           ok(!f->IsGlyphInFont(0x4E00), "U+4E00 is ABSENT (the instrument can still say no)");
 
     // The negative controls: the exclude mechanism asserted from the config end, which the
@@ -223,14 +223,14 @@ void RunSelftest(ImFontAtlas* atlas, ImTextureData* tex) {
     size_t nRanges = 0;
     const coop::text::CodepointRange* ranges = coop::text::ExcludeRanges(&nRanges);
     int badSources = 0, firstBad = -1;
+    const std::vector<coop::text::CodepointRange> sys = g_allowed ? SystemExpected()
+                                                                  : std::vector<coop::text::CodepointRange>();
     for (int s = 0; s < atlas->Sources.Size; ++s) {
         const ImWchar* list = atlas->Sources[s].GlyphExcludeRanges;
         // Equality, per source: the system face against its own list, every other against the
         // generated table -- so an embedded face handed the system list (all of Latin refused) is a
         // failure under every language.
         const bool system = std::strcmp(atlas->Sources[s].Name, kSystemSourceName) == 0;
-        const std::vector<coop::text::CodepointRange> sys = system ? SystemExpected()
-                                                                  : std::vector<coop::text::CodepointRange>();
         const coop::text::CodepointRange* want = system ? sys.data() : ranges;
         const size_t wantN = system ? sys.size() : nRanges;
         bool good = (list != nullptr);
@@ -247,11 +247,11 @@ void RunSelftest(ImFontAtlas* atlas, ImTextureData* tex) {
         }
         if (!good && ++badSources == 1) firstBad = s;
     }
-    ok(badSources == 0, "every ImFontConfig carries the generated exclude table");
+    ok(badSources == 0, "every ImFontConfig carries its expected exclude list");
     if (badSources > 0)
-        UE_LOGE("font selftest:   %d of %d source(s) lack the generated exclude table, first "
-                "index %d -- that config bakes its WHOLE cmap, and the fold table sentinels "
-                "every codepoint of it, so two legible names can collapse to one key.",
+        UE_LOGE("font selftest:   %d of %d source(s) lack their expected exclude list, first "
+                "index %d -- that config bakes beyond what it was given, up to its WHOLE cmap, and the "
+                "fold table sentinels every such codepoint, so two legible names can collapse to one key.",
                 badSources, atlas->Sources.Size, firstBad);
 
     // The one deliberate bake.
@@ -282,6 +282,9 @@ void RunSelftest(ImFontAtlas* atlas, ImTextureData* tex) {
     // of it has pixels and comes from that face; the blanks the table refuses and the ideographic zero
     // the allowance leaves out are taken by no source; Latin still comes from an embedded face.
     if (g_allowed) {
+        bool merged = false;
+        for (ImFontConfig* src : f->Sources) merged = merged || std::strcmp(src->Name, kSystemSourceName) == 0;
+        ok(merged, "the script's Windows face is merged (a fonts warning names the candidates if not)");
         ok(f->IsGlyphInFont(0x4E00), "U+4E00 is carried (the system face)");
         const ImFontGlyph* han = baked ? baked->FindGlyphNoFallback(static_cast<ImWchar>(0x4E00)) : nullptr;
         ok(han && han->Visible, "U+4E00 bakes with pixels at the nameplate size");
@@ -291,7 +294,7 @@ void RunSelftest(ImFontAtlas* atlas, ImTextureData* tex) {
         const ImFontGlyph* latin = baked ? baked->FindGlyphNoFallback(static_cast<ImWchar>('A')) : nullptr;
         ok(latin && !SourceNamed(f, latin->SourceIdx, kSystemSourceName), "'A' comes from an embedded face");
     } else {
-        UE_LOGI("font selftest: no CJK script is active -- the CJK arm is skipped");
+        UE_LOGI("font selftest: the language needs no script beyond our faces -- the CJK arm is skipped");
     }
 
     // A positive line carrying its counts, and that shape is load-bearing: the smoke asserted this

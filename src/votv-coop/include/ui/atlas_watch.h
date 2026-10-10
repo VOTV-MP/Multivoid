@@ -27,8 +27,9 @@ inline constexpr const char kSystemSourceName[] = "multivoid:system";
 
 // The script ranges that system face may bake: a baked glyph inside them is expected, not a superset
 // fault, and the exclude check holds the named source to the generated table united with their
-// complement. Called by ui/fonts.cpp each time it merges the face, before the next OnFrame; the
-// table is static and is kept across a context's destruction. Render thread.
+// complement. Called by ui/fonts.cpp at each Load, before any face is added and on every path, so
+// the selftest's script arm runs whether the face loaded or not (null when the language needs no
+// script); the table is static and is kept across a context's destruction. Render thread.
 void AllowScript(const coop::text::CodepointRange* ranges, size_t count);
 
 // Call once per frame, INSIDE the frame (after ImGui::NewFrame). In-frame is required, not

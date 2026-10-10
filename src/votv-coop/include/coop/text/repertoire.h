@@ -11,7 +11,8 @@
 // the authority over everyone else's name. It is generated from the fonts on disk, and the
 // ranges ui::fonts::Load bakes are emitted in the same run. The two fallback font paths bake
 // no embedded family and their atlas is short of this table, which the boot font selftest
-// logs; the FOLD does not move there, so peers still agree.
+// logs; a language pack whose script our faces lack has a Windows face bake that script beyond
+// it (ui/fonts.cpp). The FOLD moves in neither case, so peers still agree.
 #pragma once
 
 #include <cstddef>
@@ -31,19 +32,16 @@ struct CodepointRange {
 bool InRepertoire(uint32_t cp);
 
 // The codepoints we REFUSE to bake: a coarse cover holding everything the render set carries
-// that InRepertoire omits, merged across unassigned space to stay under ImGui's list cap.
+// that InRepertoire omits, merged across unassigned space to stay under ImGui's list cap. The atlas
+// is lazy and ignores ImFontConfig::GlyphRanges, so the only lever is subtractive
+// (GlyphExcludeRanges). One generator run emits both tables, so fold and bake stay one fact for
+// every embedded face; the Windows face a pack's script needs takes this table united with all
+// outside that script (ui/fonts.cpp), so it bakes the script while the fold reads it as the sentinel.
 //
-// It exists because the atlas is lazy. ImGui bakes a codepoint the first time something draws
-// it and ignores ImFontConfig::GlyphRanges, so the only surviving lever is subtractive:
-// ImFontConfig::GlyphExcludeRanges, consulted on the on-demand path. One generator run emits
-// both tables from one source set, so fold and bake stay one fact, maintained from the
-// subtractive side.
-//
-// InExcludeSet is NOT `!InRepertoire`. The repertoire is what we can draw; the exclude set is
-// what we refuse to draw. A codepoint no font carries at all is outside BOTH. The distinction
-// is load-bearing for the pack-failure detector in ui/fonts.cpp: "the font has it, we did not
-// forbid it, and it still failed to bake" is a defect, while "the font has it and we forbade
-// it" is this table working.
+// InExcludeSet is NOT `!InRepertoire`: the repertoire is what we can draw, the exclude set what we
+// refuse to draw, and a codepoint no font carries is outside BOTH. "The font has it, we did not
+// forbid it, and it still failed to bake" is a defect; "the font has it and we forbade it" is this
+// table working. The pack-failure detector (ui/atlas_watch.cpp) asks that of each source's own list.
 bool InExcludeSet(uint32_t cp);
 
 // The exclude set as ranges, for the atlas builder. Sorted, non-overlapping, and

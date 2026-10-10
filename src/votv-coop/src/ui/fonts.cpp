@@ -19,6 +19,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <climits>
 #include <cstdio>
 #include <atomic>
 #include <cstdint>
@@ -171,18 +172,46 @@ const ImWchar* ExcludeList() {
 // The allowance leaves out what looks like a Latin character while folding apart from it (U+3007, the
 // fullwidth digits and letters), and the generated table keeps U+3000 and U+FFA0 refused here too.
 // Only Simplified Chinese has a row: the one pack that ships; another script is one row.
+//
+// Each row carries its own state, the face's view and the face's exclude list: the language is
+// fixed for the process (l10n::Init runs once), so a row's state is built once and held while the
+// process lives -- the atlas reads the view in place on every rebuild -- and never another row's.
+struct SystemFace {
+    bool tried = false;
+    const char* data = nullptr;   // a read-only view of the file, never unmapped
+    size_t size = 0;
+    std::string name;
+};
+struct ScriptState {
+    SystemFace face;
+    std::vector<ImWchar> exclude;
+};
 struct ScriptDesc {
     const char* id;
-    const coop::text::CodepointRange* ranges;   // sorted
+    const coop::text::CodepointRange* ranges;   // sorted and disjoint (SortedDisjoint)
     size_t count;
     const char* const* faces;                   // first found wins; null-terminated
+    ScriptState* state;
 };
+// Both exclude-list derivations (here and ui/atlas_watch.cpp) walk the ranges in order, and their
+// equality check cannot see an input both read wrong, so the order is asserted where the row is.
+template <size_t N>
+constexpr bool SortedDisjoint(const coop::text::CodepointRange (&r)[N]) {
+    for (size_t i = 0; i < N; ++i) {
+        if (r[i].begin < 1 || r[i].begin > r[i].end || r[i].end > 0x10FFFF) return false;
+        if (i > 0 && r[i].begin <= r[i - 1].end) return false;
+    }
+    return true;
+}
 constexpr coop::text::CodepointRange kHansRanges[] = {
     {0x3001, 0x3006}, {0x3008, 0x303F}, {0x3400, 0x4DBF}, {0x4E00, 0x9FFF}, {0xF900, 0xFAFF},
     {0xFF01, 0xFF0F}, {0xFF1A, 0xFF20}, {0xFF3B, 0xFF40}, {0xFF5B, 0xFF65},
 };
+static_assert(SortedDisjoint(kHansRanges), "a script's ranges must be sorted, disjoint and inside U+0001..U+10FFFF");
 constexpr const char* kHansFaces[] = {"msyh.ttc", "msyhl.ttc", "simhei.ttf", "simsun.ttc", nullptr};
-constexpr ScriptDesc kHans = {"Hans", kHansRanges, sizeof(kHansRanges) / sizeof(kHansRanges[0]), kHansFaces};
+ScriptState g_hansState;
+constexpr ScriptDesc kHans = {"Hans", kHansRanges, sizeof(kHansRanges) / sizeof(kHansRanges[0]), kHansFaces,
+                              &g_hansState};
 
 // The script of the language whose catalogue loaded.
 const ScriptDesc* ActiveScript() {
@@ -191,16 +220,15 @@ const ScriptDesc* ActiveScript() {
     return nullptr;
 }
 
-// The face's bytes, read once per process and held while it lives: every atlas rebuild adds it from
-// memory, not owned by the atlas, as the embedded faces are added; a file add would read and hold it
-// once per role on every rebuild. A missing face is said once and its script draws as boxes.
-struct SystemFace {
-    bool tried = false;
-    std::vector<char> bytes;
-    std::string name;
-};
+// The face, mapped once per process and the view held while it lives: every atlas rebuild adds it from
+// memory, not owned by the atlas, as the embedded faces are added (a file add would read it once per
+// role on every rebuild), and FreeType reads only the pages it touches -- file-backed, so neither a
+// 20 MB private copy nor a whole-file read on the render thread. The trade: a disk error under a held
+// view faults inside FreeType where a read would have failed softly, on the local Windows directory.
+// A candidate that exists and does not open or map is named with its reason; a missing face is said
+// once and its script draws as boxes.
 const SystemFace& LoadSystemFace(const ScriptDesc& script) {
-    static SystemFace face;
+    SystemFace& face = script.state->face;
     if (face.tried) return face;
     face.tried = true;
     char windir[MAX_PATH] = {};
@@ -209,36 +237,52 @@ const SystemFace& LoadSystemFace(const ScriptDesc& script) {
     for (const char* const* f = script.faces; *f && !dir.empty(); ++f) {
         HANDLE h = ::CreateFileA((dir + *f).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
                                  FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (h == INVALID_HANDLE_VALUE) continue;
+        if (h == INVALID_HANDLE_VALUE) {
+            const DWORD err = ::GetLastError();
+            if (err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND)
+                UE_LOGW("fonts: the %s script's face '%s' is skipped -- it does not open (error %lu)", script.id, *f,
+                        static_cast<unsigned long>(err));
+            continue;
+        }
         LARGE_INTEGER size{};
-        if (::GetFileSizeEx(h, &size) && size.QuadPart > 0 && size.QuadPart < (64LL << 20)) {
-            face.bytes.resize(static_cast<size_t>(size.QuadPart));
-            DWORD got = 0;
-            if (!::ReadFile(h, face.bytes.data(), static_cast<DWORD>(face.bytes.size()), &got, nullptr) ||
-                got != face.bytes.size())
-                face.bytes.clear();
+        const void* view = nullptr;
+        const char* why = nullptr;
+        if (!::GetFileSizeEx(h, &size) || size.QuadPart <= 0) {
+            why = "its size does not read";
+        } else if (size.QuadPart > INT_MAX) {
+            why = "larger than the atlas takes (an int size)";
+        } else if (HANDLE m = ::CreateFileMappingA(h, nullptr, PAGE_READONLY, 0, 0, nullptr)) {
+            view = ::MapViewOfFile(m, FILE_MAP_READ, 0, 0, 0);
+            ::CloseHandle(m);   // the view keeps the mapping, and the file, open
+            if (!view) why = "its view does not map";
+        } else {
+            why = "it does not map";
         }
         ::CloseHandle(h);
-        if (!face.bytes.empty()) {
-            face.name = *f;
-            break;
+        if (why) {
+            UE_LOGW("fonts: the %s script's face '%s' is skipped -- %s", script.id, *f, why);
+            continue;
         }
+        face.data = static_cast<const char*>(view);
+        face.size = static_cast<size_t>(size.QuadPart);
+        face.name = *f;
+        break;
     }
-    if (face.bytes.empty())
-        UE_LOGW("fonts: the %s script needs a Windows face and none of its candidates is in '%s' -- its "
-                "characters draw as boxes", script.id, dir.c_str());
+    if (!face.data)
+        UE_LOGW("fonts: the %s script needs a Windows face and none of its candidates mapped from '%s' -- "
+                "its characters draw as boxes", script.id, dir.empty() ? "(no Windows directory)" : dir.c_str());
     else
-        UE_LOGI("fonts: %s script -- the Windows face '%s' (%zu bytes) merged into every role, restricted "
-                "to the script", script.id, face.name.c_str(), face.bytes.size());
+        UE_LOGI("fonts: %s script -- the Windows face '%s' (%zu bytes, mapped) merged into every role, "
+                "restricted to the script", script.id, face.name.c_str(), face.size);
     return face;
 }
 
 // The system face's exclude list: the generated table united with the complement of the script's
 // ranges over U+0001..U+10FFFF (never beginning at U+0000: the list is zero-terminated), merged and
-// sorted. Built once; under the no-exclude drill it is null, as every source's is.
+// sorted. Built once per row; under the no-exclude drill it is null, as every source's is.
 const ImWchar* SystemExcludeList(const ScriptDesc& script) {
     if (!ExcludeList()) return nullptr;
-    static std::vector<ImWchar> v;
+    std::vector<ImWchar>& v = script.state->exclude;
     if (!v.empty()) return v.data();
     size_t n = 0;
     const coop::text::CodepointRange* gen = coop::text::ExcludeRanges(&n);
@@ -264,21 +308,20 @@ const ImWchar* SystemExcludeList(const ScriptDesc& script) {
 }
 
 // Merged into the face just added, after the colour donor, so ImGui's walk of the sources reaches it
-// only for what every embedded face lacked. Named, so the watcher's exclude check knows it, and the
-// watcher is told the script it may bake.
+// only for what every embedded face lacked. Named, so the watcher's exclude check knows it.
 void MergeSystemFace(float px) {
     const ScriptDesc* script = ActiveScript();
     if (!script) return;
     const SystemFace& face = LoadSystemFace(*script);
-    if (face.bytes.empty()) return;
+    if (!face.data) return;
     ImFontConfig cfg;
     cfg.MergeMode = true;
     cfg.FontDataOwnedByAtlas = false;
     cfg.GlyphExcludeRanges = SystemExcludeList(*script);
     std::snprintf(cfg.Name, sizeof(cfg.Name), "%s", ui::atlas_watch::kSystemSourceName);
-    ImGui::GetIO().Fonts->AddFontFromMemoryTTF(const_cast<char*>(face.bytes.data()),
-                                               static_cast<int>(face.bytes.size()), px, &cfg, nullptr);
-    ui::atlas_watch::AllowScript(script->ranges, script->count);
+    // Read-only: with FontDataOwnedByAtlas off neither ImGui nor FreeType writes the data or frees it.
+    ImGui::GetIO().Fonts->AddFontFromMemoryTTF(const_cast<char*>(face.data), static_cast<int>(face.size), px,
+                                               &cfg, nullptr);
 }
 
 // Every add goes through this funnel or AddFromFile, and the exclude list is applied here
@@ -371,6 +414,13 @@ void Load() {
     io.Fonts->Clear();
     for (int r = 0; r < kRoleCount; ++r) { g_roleFont[r] = nullptr; g_rolePx[r] = 0.f; }
 
+    // The watcher is told the active language's script before any face is added, on every path below
+    // and face or no face: its selftest arm then runs under every script a pack needs, and a face
+    // that did not load (or a path that merges none) is a failure there, not a skipped arm.
+    {
+        const ScriptDesc* script = ActiveScript();
+        ui::atlas_watch::AllowScript(script ? script->ranges : nullptr, script ? script->count : 0);
+    }
     ReadRoleFamiliesOnce();
 
     // Baked at the real pixel size for the live resolution, never through the global font scale,
@@ -381,10 +431,15 @@ void Load() {
     // is allowed. Two reasons for 2048: the DX12 backend uploads the dirty bounding box through a
     // staging buffer that only grows, behind an untimed wait, and at 2048 the worst upload is 16.8
     // MB (67 MB at 4096); and the atlas keeps the old and new texture across a repack, so the peak
-    // is two textures, 33.6 MB here against 134 MB. Capacity is not the binding constraint: the
-    // pathological demand, every remote-text surface asking for the whole repertoire at its own
-    // size in one shared atlas, measures to about 86% of 2048 squared, which fits with 17%
-    // headroom. That is why the pack-failure detector in ui/atlas_watch.cpp is load-bearing.
+    // is two textures, 33.6 MB here against 134 MB. For the repertoire capacity is not the binding
+    // constraint: the pathological demand, every remote-text surface asking for the whole repertoire
+    // at its own size in one shared atlas, measures to about 86% of 2048 squared, which fits with 17%
+    // headroom. A pack's script is not bounded so: the system face bakes each ideograph the first time
+    // something draws it, and a baked drawn every frame (the chat) keeps every glyph it ever took, so
+    // peer text accumulates. The shipped pack's own lines fit in one baked at every scale (352
+    // ideographs, at most 45% of the atlas at the largest, so three such bakeds there would not); how
+    // much peer text fills it is not yet measured. That is why the pack-failure detector in
+    // ui/atlas_watch.cpp is load-bearing.
     io.Fonts->TexMaxWidth  = 2048;
     io.Fonts->TexMaxHeight = 2048;
     // The drill (dev.atlas_texmax_drill, 0 off): 256 starves the packer, which is how the
