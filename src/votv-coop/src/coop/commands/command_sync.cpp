@@ -33,6 +33,7 @@
 #include "coop/player/roster_ledger.h"
 #include "coop/session/player_handshake.h"
 #include "coop/text/utf8_codec.h"
+#include "l10n/l10n.h"
 
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"
@@ -236,6 +237,13 @@ void Deliver(std::string_view utf8, const std::wstring& wide) {
     if (g_observer) g_observer(utf8);
 }
 
+// The chat form of a line this peer composes for itself, in its language; the log and the
+// observer keep the English view. `msgid` views a NUL-terminated literal, so .data() is a C string.
+std::wstring Shown(std::string_view msgid) {
+    const char* text = l10n::T(msgid.data());
+    return coop::text::FromUtf8Lossy(text, std::strlen(text));
+}
+
 void ReadPosition(PlayerView& v, void* actor) {
     ue_wrap::FVector p{};
     if (!actor || !ue_wrap::engine::TryGetActorLocation(actor, p)) return;
@@ -356,8 +364,8 @@ void Submit(std::string line) {
         // A line the request cannot carry whole is refused on every peer, before the role decides
         // where it runs: it never runs cut, and a host and a client answer alike.
         if (line.size() > kLineMax) {
-            const std::string_view tooLong = "That line is too long.";
-            Deliver(tooLong, coop::text::FromUtf8Lossy(tooLong.data(), tooLong.size()));
+            const std::string_view tooLong = L10N_MARK("That line is too long.");
+            Deliver(tooLong, Shown(tooLong));
             return;
         }
         if (!inSession || s->role() == coop::net::Role::Host) {
@@ -368,15 +376,15 @@ void Submit(std::string line) {
         // has nothing to send; the hint is local text.
         if (line.empty()) {
             const std::string_view hint = coop::commands::kHelpHint;
-            Deliver(hint, coop::text::FromUtf8Lossy(hint.data(), hint.size()));
+            Deliver(hint, Shown(hint));
             return;
         }
         coop::net::CommandRequestPayload p{};
         p.len = static_cast<uint8_t>(line.size());
         std::memcpy(p.text, line.data(), line.size());
         if (!s->SendReliable(coop::net::ReliableKind::CommandRequest, &p, sizeof(p))) {
-            const std::string_view failed = "Could not send the command.";
-            Deliver(failed, coop::text::FromUtf8Lossy(failed.data(), failed.size()));
+            const std::string_view failed = L10N_MARK("Could not send the command.");
+            Deliver(failed, Shown(failed));
         }
     });
 }

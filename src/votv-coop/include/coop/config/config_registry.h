@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include "l10n/mark.h"
+
 #include <cstddef>
 #include <string>
 #include <string_view>

@@ -4,13 +4,14 @@
 
 #include "coop/comms/chat_feed.h"
 #include "coop/net/session.h"
+#include "l10n/l10n.h"
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/sleep.h"
 #include "ue_wrap/world/world_singleton.h"
 
 #include <atomic>
-#include <cstdio>
+#include <string>
 
 namespace coop::sleep_sync {
 namespace {
@@ -34,13 +35,14 @@ bool IsHost(coop::net::Session* s) { return s->role() == coop::net::Role::Host; 
 
 void PushCounterLine(uint8_t count, uint8_t total) {
     if (count == 0) return;
-    wchar_t buf[64];
-    ::swprintf(buf, 64, L"%u/%u players sleeping", static_cast<unsigned>(count),
-               static_cast<unsigned>(total));
+    char buf[128];
+    if (l10n::Fmt(buf, sizeof(buf), l10n::T("%1$u/%2$u players sleeping"),
+                  static_cast<unsigned>(count), static_cast<unsigned>(total)) < 0)
+        return;
     // All three sleep lines are Transient: they are a live STATUS readout of an
     // in-progress ritual ("2/3 players sleeping"), meaningless once it is over --
     // reading them back hours later would be noise, not history.
-    coop::chat_feed::Push(buf, coop::chat_feed::Keep::Transient);
+    coop::chat_feed::Push(std::string(buf), coop::chat_feed::Keep::Transient);
 }
 
 void ApplyDreamProbPolicy(coop::net::Session* s) {
@@ -71,7 +73,7 @@ void ApplyAccelerateLocal(coop::net::Session* s, bool on) {
             if (SLP::SetSleepViewTarget(SLP::SleepCam()))
                 UE_LOGI("sleep_sync: camera -> sleepCam (the timelapse view)");
         }
-        coop::chat_feed::Push(L"Everyone is asleep -- the night passes...",
+        coop::chat_feed::Push(std::string(l10n::T("Everyone is asleep -- the night passes...")),
                               coop::chat_feed::Keep::Transient);
         UE_LOGI("sleep_sync: ACCELERATE (local dilation -> %s)",
                 SLP::IsSleeping() ? "20" : "1 (not in bed)");
@@ -87,8 +89,8 @@ void ApplyEndLocal(coop::net::Session* s, bool natural) {
     ApplyAccelerateLocal(s, false);
     if (SLP::IsSleeping()) SLP::CallWakeup();
     if (natural) SLP::WriteSleepNeed(100.f);
-    coop::chat_feed::Push(natural ? L"Good morning -- everyone is rested."
-                                  : L"Sleep interrupted -- everyone wakes up.",
+    coop::chat_feed::Push(std::string(natural ? l10n::T("Good morning -- everyone is rested.")
+                                              : l10n::T("Sleep interrupted -- everyone wakes up.")),
                           coop::chat_feed::Keep::Transient);
     UE_LOGI("sleep_sync: END (natural=%d)", natural ? 1 : 0);
 }

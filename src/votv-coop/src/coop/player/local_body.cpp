@@ -8,6 +8,7 @@
 #include "coop/player/skin_registry.h"
 #include "coop/session/player_handshake.h"
 #include "coop/config/config.h"
+#include "l10n/l10n.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
@@ -100,10 +101,11 @@ void RequestSkin(const std::string& name) {
         if (coop::client_model::CanWearSkin(name) == coop::client_model::Wearable::No) {
             UE_LOGW("local_body: skin '%s' cannot be worn on this machine -- keeping '%s'; "
                     "not persisted and not announced", name.c_str(), g_skin.c_str());
-            coop::chat_feed::Push(
-                L"Skin '" + std::wstring(name.begin(), name.end()) +
-                    L"' is not installed here -- keeping your current one",
-                coop::chat_feed::Keep::Transient);
+            char line[256];
+            if (l10n::Fmt(line, sizeof(line),
+                          l10n::T("Skin '%s' is not installed here -- keeping your current one"),
+                          name.c_str()) >= 0)
+                coop::chat_feed::Push(std::string(line), coop::chat_feed::Keep::Transient);
             return;
         }
         // Persist only what resolved. (File IO from the game thread is what the ordering
@@ -116,8 +118,9 @@ void RequestSkin(const std::string& name) {
             coop::player_handshake::AnnounceLocalSkin(*s, name);
         // Transient: this player's own UI confirmation. The line other peers see about
         // this change ("<nick> changed skin to X", player_handshake_prefs) IS History.
-        coop::chat_feed::Push(L"Skin: " + std::wstring(name.begin(), name.end()),
-                              coop::chat_feed::Keep::Transient);
+        char line[256];
+        if (l10n::Fmt(line, sizeof(line), l10n::T("Skin: %s"), name.c_str()) >= 0)
+            coop::chat_feed::Push(std::string(line), coop::chat_feed::Keep::Transient);
     });
 }
 

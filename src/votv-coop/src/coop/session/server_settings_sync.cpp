@@ -11,7 +11,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/roster_ledger.h"
-#include "coop/text/utf8_codec.h"
+#include "l10n/l10n.h"
 
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
@@ -69,11 +69,17 @@ std::string ShownText(const reg::Row* row) {
 // The chat line for a changed notify row: our own label and our own rendering of the value,
 // never the sender's text. Source prints the event's cvar name and value string
 // (clientmode_shared.cpp:1235-1251); we print our label and our own rendering of the held value.
-std::wstring AnnouncementLine(const reg::Row* row) {
-    const char* label = reg::RowLabel(row);
+// The label and a flag's on/off are looked up in this peer's language; an enum or number stays
+// its token, the word the player also types in /set. The log lines keep ShownText's English.
+void PushAnnouncementLine(const reg::Row* row) {
     const std::string shown = ShownText(row);
-    return L"Server setting changed: " + coop::text::FromUtf8Lossy(label, std::strlen(label)) +
-           L" is now " + coop::text::FromUtf8Lossy(shown.data(), shown.size()) + L".";
+    const char* value = shown.c_str();
+    if (row->kind == reg::Kind::Flag)
+        value = shown == "on" ? l10n::Tc("setting_value", "on") : l10n::Tc("setting_value", "off");
+    char line[256];
+    if (l10n::Fmt(line, sizeof(line), l10n::T("Server setting changed: %1$s is now %2$s."),
+                  l10n::T(reg::RowLabel(row)), value) >= 0)
+        coop::chat_feed::Push(std::string(line), coop::chat_feed::Keep::History);
 }
 
 // One row to one slot. The value is printed through the registry's one printed form.
@@ -122,7 +128,7 @@ void OnReplicatedRowChanged() {
     Session* s = g_session;
     if (!s || !s->running() || s->role() != Role::Host) return;
     for (const reg::Row* row : announced) {
-        coop::chat_feed::Push(AnnouncementLine(row), coop::chat_feed::Keep::History);
+        PushAnnouncementLine(row);
         UE_LOGI("server_settings: host announced %s=%s", row->key, ShownText(row).c_str());
     }
     size_t count = 0;
@@ -228,7 +234,7 @@ void HandleServerSetting(Session& session, const Session::ReliableMessage& msg) 
     // any other row reaches no line.
     if (accepted && (p.flags & net::kServerSettingAnnounced) && reg::IsNotify(row)) {
         const uint32_t n = g_announcedCount.fetch_add(1) + 1;
-        coop::chat_feed::Push(AnnouncementLine(row), coop::chat_feed::Keep::History);
+        PushAnnouncementLine(row);
         UE_LOGI("server_settings: announced #%u %s=%s", n, row->key, ShownText(row).c_str());
     }
 }

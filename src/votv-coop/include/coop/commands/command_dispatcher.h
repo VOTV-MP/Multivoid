@@ -14,6 +14,7 @@
 #include "coop/commands/command_registry.h"
 #include "coop/commands/command_targets.h"
 #include "coop/permissions/context_set.h"
+#include "l10n/mark.h"
 
 #include <string>
 #include <string_view>
@@ -89,8 +90,9 @@ struct DispatchResult {
 };
 
 // What an empty line (a bare `/`) is answered with: by Dispatch, and by a client, which never
-// dispatches and shows it itself.
-inline constexpr std::string_view kHelpHint = "Type /help for the commands.";
+// dispatches and shows it itself. The literal is marked for translation and NUL-terminated, so a
+// client looks it up with l10n::T(kHelpHint.data()).
+inline constexpr std::string_view kHelpHint = L10N_MARK("Type /help for the commands.");
 
 // `line` is the text after the `/`. Game thread on the host (its callers); pure here.
 DispatchResult Dispatch(const Registry& reg, const Caller& caller, std::string_view line,

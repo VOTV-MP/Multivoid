@@ -4,6 +4,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/session/player_handshake.h"
 #include "coop/config/config.h"
+#include "l10n/l10n.h"
 #include "ue_wrap/core/log.h"
 
 #include <array>
@@ -68,9 +69,10 @@ void OnNickColorRowChanged() {
     if (coop::net::Session* s = g_session.load(std::memory_order_acquire))
         coop::player_handshake::AnnounceLocalNickColor(*s, packed);
     // Transient: this player's own UI confirmation, not the lobby's record.
-    coop::chat_feed::Push(IsCustom(packed) ? L"Nickname color: applied (synced to other players)"
-                                           : L"Nickname color: reset to default",
-                          coop::chat_feed::Keep::Transient);
+    coop::chat_feed::Push(
+        std::string(IsCustom(packed) ? l10n::T("Nickname color: applied (synced to other players)")
+                                     : l10n::T("Nickname color: reset to default")),
+        coop::chat_feed::Keep::Transient);
 }
 
 }  // namespace

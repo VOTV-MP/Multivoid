@@ -9,6 +9,7 @@
 #include "coop/session/player_handshake.h"
 #include "coop/voice/voice_chat.h"
 #include "coop/config/config.h"
+#include "l10n/l10n.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/trace.h"   // LineBlockedStatDyn -- the occlusion (gray plate) check
@@ -200,8 +201,8 @@ void OnNameplateRowChanged() {
     if (coop::net::Session* s = g_session.load(std::memory_order_acquire))
         coop::player_handshake::AnnounceLocalNameplate(*s, visible);
     // Transient: this player's own UI confirmation, not the lobby's record.
-    coop::chat_feed::Push(visible ? L"Nameplate: shown to other players"
-                                  : L"Nameplate: hidden from other players",
+    coop::chat_feed::Push(std::string(visible ? l10n::T("Nameplate: shown to other players")
+                                              : l10n::T("Nameplate: hidden from other players")),
                           coop::chat_feed::Keep::Transient);
 }
 

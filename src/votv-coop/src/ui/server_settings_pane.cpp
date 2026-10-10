@@ -17,6 +17,7 @@
 #include "coop/commands/command_sync.h"
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "l10n/l10n.h"
 #include "ui/scale.h"
 
 #include "imgui.h"
@@ -95,9 +96,12 @@ void DrawTyped(const CR::Row& row, RowState& st, const std::string& now) {
     ImGui::InputText("##value", st.edit, sizeof(st.edit));
     st.focused = ImGui::IsItemActive();
     ImGui::SameLine();
-    if (ImGui::SmallButton("Apply")) SubmitLine(std::string("set ") + row.key + " " + st.edit);
+    if (ImGui::SmallButton(l10n::Label(l10n::Tc("f1", "Apply"), "apply")))
+        SubmitLine(std::string("set ") + row.key + " " + st.edit);
     ImGui::SameLine();
-    ImGui::Text("now: %s", now.c_str());
+    char nowLine[kEditMax + 64];
+    l10n::Fmt(nowLine, sizeof(nowLine), l10n::T("now: %s"), now.c_str());
+    ImGui::TextUnformatted(nowLine);
 }
 
 // An enum: a combo of the row's tokens, the one equal to the cooked current value selected.
@@ -130,13 +134,13 @@ void DrawRow(const CR::Row& row, const char* label) {
     Sync(st, now);
 
     ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted(label);
+    ImGui::TextUnformatted(l10n::T(label));
     ImGui::SameLine();
     ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
         ImGui::PushTextWrapPos(S(420.0f));
-        ImGui::TextUnformatted(row.desc);
+        ImGui::TextUnformatted(l10n::T(row.desc));
         ImGui::PopTextWrapPos();
         ImGui::EndTooltip();
     }
@@ -151,8 +155,9 @@ void DrawRow(const CR::Row& row, const char* label) {
         case CR::Kind::Identity: break;
     }
     ImGui::SameLine();
-    if (ImGui::SmallButton("Reset")) SubmitLine(std::string("reset ") + row.key);
-    if (!CR::IsLive(&row)) ImGui::TextDisabled("Takes effect at the next session.");
+    if (ImGui::SmallButton(l10n::Label(l10n::Tc("f1", "Reset"), "reset")))
+        SubmitLine(std::string("reset ") + row.key);
+    if (!CR::IsLive(&row)) ImGui::TextDisabled("%s", l10n::T("Takes effect at the next session."));
     ImGui::Spacing();
     ImGui::PopID();
 }
@@ -171,7 +176,7 @@ void Render() {
         DrawRow(*row, label);
         ++drawn;
     }
-    if (drawn == 0) ImGui::TextDisabled("This server has no settings to change here.");
+    if (drawn == 0) ImGui::TextDisabled("%s", l10n::T("This server has no settings to change here."));
 }
 
 }  // namespace ui::server_settings_pane
