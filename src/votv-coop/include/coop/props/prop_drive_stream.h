@@ -15,6 +15,7 @@
 
 #include "ue_wrap/core/types.h"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace coop::net {
@@ -38,8 +39,14 @@ bool IsParked(void* actor);
 // Session end: every driven prop gets its physics back. Game thread.
 void OnDisconnect();
 
-// The last stream end applied here: its eid, the host's final pose and the tick it landed
-// (GetTickCount64). False before any. For the fall drill's verdict. Game thread.
-bool LastAppliedEnd(uint32_t* eid, ue_wrap::FVector* pose, uint64_t* atMs);
+// The stream ends applied here lately, newest first, at most `max` of the last eight: each eid, the
+// host's final pose and the tick it landed (GetTickCount64). Cleared with the session. For the fall
+// drill's verdict. Game thread.
+struct AppliedEnd {
+    uint32_t eid = 0;
+    ue_wrap::FVector pose{};
+    uint64_t atMs = 0;
+};
+size_t RecentEnds(AppliedEnd* out, size_t max);
 
 }  // namespace coop::prop_drive_stream

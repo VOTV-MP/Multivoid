@@ -22,6 +22,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 
 namespace coop::dev::fall_drill {
@@ -44,7 +45,7 @@ enum class Step : uint8_t { Arm, Track, Rest, End, Done };
 Step     g_step = Step::Arm;
 uint64_t g_stepMs = 0;
 uint64_t g_nextCheckMs = 0;
-uint64_t g_armMs = 0;          // CLIENT: when it armed; an end before this is not the drill's
+uint64_t g_baseMs = 0;         // CLIENT: the session's first tick; an end before it is not the drill's
 int      g_session = 1;
 ue_wrap::CachedObjRef g_drive; // HOST: the dropped drive
 uint32_t g_eid = 0;
@@ -127,30 +128,36 @@ void HostTick(coop::net::Session* s) {
 }
 
 void ClientTick() {
+    // The baseline is the session's first tick, before this world loads: the host drops on its own view of the
+    // slot's world-ready, which can come before this peer's own, so the end may land before the arm.
+    if (g_baseMs == 0) g_baseMs = ::GetTickCount64();
     switch (g_step) {
     case Step::Arm:
         if (!coop::net_pump::HasAnnouncedWorldReady() ||
             coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle)
             return;
-        g_armMs = ::GetTickCount64();
         Next(Step::End);
         return;
     case Step::End: {
         const uint64_t now = ::GetTickCount64();
         if (now < g_nextCheckMs) return;
         g_nextCheckMs = now + kCheckEveryMs;
+        // The newest end since the baseline whose prop is a drive here: the host's dropped drive.
+        coop::prop_drive_stream::AppliedEnd ends[8];
+        const size_t n = coop::prop_drive_stream::RecentEnds(ends, 8);
+        void* actor = nullptr;
         uint32_t eid = 0;
         ue_wrap::FVector pose{};
-        uint64_t atMs = 0;
-        void* actor = nullptr;
-        if (coop::prop_drive_stream::LastAppliedEnd(&eid, &pose, &atMs) && atMs > g_armMs)
-            actor = coop::remote_prop::ResolveLiveActorByEid(eid);
-        if (!actor || R::ClassNameOf(actor) != kDriveCls) {
+        for (size_t k = 0; k < n && !actor; ++k) {
+            if (ends[k].atMs <= g_baseMs) continue;
+            void* a = coop::remote_prop::ResolveLiveActorByEid(ends[k].eid);
+            if (a && R::ClassNameOf(a) == kDriveCls) { actor = a; eid = ends[k].eid; pose = ends[k].pose; }
+        }
+        ue_wrap::FVector here{};
+        if (!actor || !E::TryGetActorLocation(actor, here)) {
             if (Expired(kEndBoundMs)) Fail("no stream end of a fallen drive came from the host within 60 s");
             return;
         }
-        ue_wrap::FVector here{};
-        if (!E::TryGetActorLocation(actor, here)) return;
         const float off = Dist(here, pose);
         if (off > kTolCm) {
             char why[160];
@@ -182,7 +189,7 @@ void OnDisconnect() {
     if (!Enabled()) return;
     ++g_session;
     g_step = Step::Arm;
-    g_stepMs = g_nextCheckMs = g_armMs = 0;
+    g_stepMs = g_nextCheckMs = g_baseMs = 0;
     g_drive.Reset();
     g_eid = 0;
     g_fromZ = 0.f;

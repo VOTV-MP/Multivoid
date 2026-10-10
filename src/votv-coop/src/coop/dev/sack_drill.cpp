@@ -15,16 +15,17 @@
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/world/economy.h"
-#include "ue_wrap/world/world_singleton.h"
 
 #include <windows.h>
 
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <string>
 
@@ -41,7 +42,7 @@ constexpr float    kDropCm       = 20.f;    // above its feet's height, so it se
 constexpr uint64_t kPayBoundMs   = 60000;   // HOST: the spawn to the pay (the client's find, aim and press)
 constexpr uint64_t kFindBoundMs  = 60000;   // CLIENT: world-ready to the sack's mirror
 constexpr uint64_t kSeenBoundMs  = 30000;   // CLIENT: the press to its mirrored balance rising
-constexpr uint64_t kReadyBoundMs = 3000;    // CLIENT: the aim to the player's action list holding the sack's
+constexpr uint64_t kReadyBoundMs = 3000;    // CLIENT: the aim to the player's look settling on the sack
 constexpr uint64_t kCheckEveryMs = 250;
 constexpr uint64_t kSettleBoundMs = 10000;  // CLIENT: the mirror's find to it at rest (it is spawned above the floor)
 constexpr int      kRestChecks    = 4;      // ...that many reads in a row, a check apart, within a centimetre
@@ -85,7 +86,7 @@ int32_t SackPoints(void* sack) {
     return v;
 }
 
-// The player's own look state, named when its action list never takes the sack: which of
+// The player's own look state, named when its look never settles on the sack: which of
 // selectedAction's gates held (its look-at actor, the look flag, an open interface, the trace's hit).
 void SayLookState(void* player, void* sack) {
     void* cls = R::ClassOf(player);
@@ -101,6 +102,24 @@ void SayLookState(void* player, void* sack) {
     const int flag = flagRead ? ((static_cast<const uint8_t*>(player)[flagOff] & flagMask) ? 1 : 0) : -1;
     UE_LOGW("[SACK-DRILL] client: the look state -- lookAtActor=%p (the sack %p) isLookingAt=%d activeInterface=%p "
             "trace hit=%p", look, sack, flag, ui, E::ReadMainPlayerHitActor(player));
+}
+
+// CLIENT: the point sack within reach of an aim from where this player stands, the nearest -- the host spawned it
+// a metre before this player's puppet; another sack in the world is not the drill's.
+constexpr float kNearCm = 400.f;
+struct Near { ue_wrap::FVector from; void* best; float bestCm; };
+void* NearestSack(void* player) {
+    Near ctx{{}, nullptr, kNearCm};
+    void* cls = ue_wrap::object_index::ClassByName(kSackClass);
+    if (!cls || !E::TryGetActorLocation(player, ctx.from)) return nullptr;
+    ue_wrap::object_index::ForEachInstance(cls, [](void* c, void* obj, int32_t) {
+        auto* n = static_cast<Near*>(c);
+        ue_wrap::FVector at{};
+        if (R::NameStartsWith(R::NameOf(obj), L"Default__") || !E::TryGetActorLocation(obj, at)) return;
+        const float cm = std::hypot(at.X - n->from.X, at.Y - n->from.Y);
+        if (cm < n->bestCm) { n->best = obj; n->bestCm = cm; }
+    }, &ctx);
+    return ctx.best;
 }
 
 void HostTick(coop::net::Session* s) {
@@ -133,7 +152,10 @@ void HostTick(coop::net::Session* s) {
         return;
     }
     int32_t now1 = 0;
-    if (!ue_wrap::economy::ReadPoints(&now1)) return;
+    if (!ue_wrap::economy::ReadPoints(&now1)) {
+        if (Expired(kPayBoundMs)) Abandon("the host's balance is unread");
+        return;
+    }
     if (paid != g_paid0 + 1 || now1 - g_points0 != g_sackPoints) {
         char why[160];
         std::snprintf(why, sizeof(why), "the host paid %llu redemption(s) and its balance moved by %d, not one and %d",
@@ -158,12 +180,15 @@ void ClientTick() {
         Next(Step::Find);
         return;
     case Step::Find: {
-        void* sack = ue_wrap::world_singleton::Find(kSackClass);
+        void* sack = NearestSack(player);
         if (!sack) {
-            if (Expired(kFindBoundMs)) Abandon("no point sack's mirror reached this client within 60 s");
+            if (Expired(kFindBoundMs)) Abandon("no point sack's mirror stood near this client within 60 s");
             return;
         }
-        if (!ue_wrap::economy::ReadPoints(&g_points0)) return;
+        if (!ue_wrap::economy::ReadPoints(&g_points0)) {
+            if (Expired(kFindBoundMs)) Abandon("this client's balance is unread");
+            return;
+        }
         g_sack.Set(sack);
         g_restReads = 0;
         UE_LOGI("[SACK-DRILL] client: the sack's mirror is here; balance %d", g_points0);
@@ -198,19 +223,24 @@ void ClientTick() {
         if (st == coop::director::AimFan::State::Aimed) Next(Step::Ready);
         return;
     }
-    case Step::Ready:   // the player's own action list, rebuilt after the look changed, holds the sack's action
-        if (E::MainPlayerHasSelectedAction(player)) { Next(Step::Press); return; }
+    case Step::Ready:   // the trace on the sack, then the player's look settled on it (a later tick than the trace)
         if (E::ReadMainPlayerHitActor(player) != g_sack.Get()) {   // the trace left it: aim again
             g_fan = coop::director::AimFan();
             Next(Step::Aim);
             return;
         }
+        if (E::MainPlayerHasSelectedAction(player)) { Next(Step::Press); return; }
         if (Expired(kReadyBoundMs)) {
             SayLookState(player, g_sack.Get());
-            Abandon("the player's action list never held an action for the sack");
+            Abandon("the player's look never settled on the sack");
         }
         return;
     case Step::Press:
+        if (E::ReadMainPlayerHitActor(player) != g_sack.Get()) {   // the press goes to whatever the trace holds
+            g_fan = coop::director::AimFan();
+            Next(Step::Aim);
+            return;
+        }
         if (!E::CallMainPlayerUseSelectedAction(player)) { Abandon("useSelectedAction did not dispatch"); return; }
         UE_LOGI("[SACK-DRILL] client pressed the sack");
         Next(Step::Seen);

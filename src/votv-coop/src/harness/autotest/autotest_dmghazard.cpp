@@ -6,11 +6,11 @@
 
 #include "harness/autotest.h"
 
-#include "coop/config/config.h"
 #include "coop/player/player_damage.h"
 #include "coop/player/puppet_drive.h"
 #include "coop/player/remote_player.h"
 #include "coop/player/players_registry.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -27,7 +27,6 @@ namespace {
 
 namespace R = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
-namespace cfg = coop::config;
 
 // Bounded spin-wait on a game-thread task's completion flag: true if the task signalled, false if
 // it never completed within timeoutMs -- which means the posted task faulted and the SEH firewall
@@ -39,18 +38,12 @@ bool WaitDone(const std::shared_ptr<std::atomic<int>>& d, int timeoutMs) {
 }
 
 // ===================== puppet-damage hazard PROBE =====================
-// mainPlayer_C carries no per-actor health: it lives on UsaveSlot_C, reached through
-// GameInstance->save_gameInst, one store per machine (vitals.h resolves it by name). So a damage
-// entry invoked on an UNPOSSESSED host-side puppet -- a second mainPlayer_C, GetController()==null
-// -- can drain the HOST'S OWN health, and only a runtime measurement settles it: the `addDamage`
-// skipSetting guard and the subtraction itself live in BP bytecode.
-//   HOST: read own saveSlot.health, invoke a damage entry on the slot-1 puppet, re-read. A DROP
-//     means the hazard is real and native damage on a puppet has to be INTERCEPTED, not merely
-//     relayed -- which coop/player/player_damage.h does for the three impact entries. No drop,
-//     and a LOCAL control on the host's own player separates an early-out from a call that never
-//     landed. Health is restored after; the hit is 5 of ~100.
-//   CLIENT: connects, so the puppet exists. Host-only verdict.
-// A null result also fits a wisp grab: wisp_attack_sync PRE-cancels Add Player Damage during one.
+// mainPlayer_C carries no per-actor health: it lives on UsaveSlot_C, one store per machine, so a damage
+// or fire entry run on an UNPOSSESSED host-side puppet (a second mainPlayer_C) could drain or burn the
+// HOST. coop/player/player_damage refuses the damage verb and ignite on a puppet; this probe fires both
+// and addDamage at the slot-1 puppet and judges by those refusals and the host's own health, the same
+// verb at the host's own player the control that the calls land. Health is restored after; the hit is
+// 5 of ~100. The client only connects, so the puppet exists. Host-only verdict.
 
 // Invoke AmainPlayer_C::"Add Player Damage"(Damage) on `target`; true iff the UFunction resolved
 // and the call dispatched. A raw ParamFrame, so the probe can aim at a puppet. Game-thread only.
@@ -84,22 +77,24 @@ bool InvokeAddDamage(void* target, void* sourceActor, float damage) {
     return ue_wrap::Call(target, f);
 }
 
-// GT-posted wrappers: invoke, log the dispatch, bounded-wait for completion. `who` is a string
-// literal, so capturing it by pointer is safe.
-void InvokeAddPlayerDamageGT(void* target, float damage, const char* who) {
+// GT-posted wrappers: invoke, log the dispatch, bounded-wait for completion. The bodies are held by
+// slot and serial and resolved inside the game-thread task. `who` is a string literal, so capturing it
+// by pointer is safe.
+void InvokeAddPlayerDamageGT(const ue_wrap::CachedObjRef& target, float damage, const char* who) {
     auto done = std::make_shared<std::atomic<int>>(0);
     GT::Post([target, damage, who, done] {
-        const bool ok = InvokeAddPlayerDamage(target, damage);
+        const bool ok = InvokeAddPlayerDamage(target.Get(), damage);
         UE_LOGI("dmghazard[host]: Add Player Damage(%.0f) on %s dispatched=%d", damage, who, ok ? 1 : 0);
         done->store(1);
     });
     WaitDone(done, 8000);
 }
 
-void InvokeAddDamageGT(void* target, void* sourceActor, float damage, const char* who) {
+void InvokeAddDamageGT(const ue_wrap::CachedObjRef& target, float damage, const char* who) {
     auto done = std::make_shared<std::atomic<int>>(0);
-    GT::Post([target, sourceActor, damage, who, done] {
-        const bool ok = InvokeAddDamage(target, sourceActor, damage);
+    GT::Post([target, damage, who, done] {
+        void* t = target.Get();
+        const bool ok = InvokeAddDamage(t, t, damage);
         UE_LOGI("dmghazard[host]: addDamage(%.0f, skipSetting=false) on %s dispatched=%d", damage, who, ok ? 1 : 0);
         done->store(1);
     });
@@ -136,14 +131,15 @@ bool InvokeIgnite(void* target, float fuel) {
     return ue_wrap::Call(target, f);
 }
 
-// The puppet's own isBurning, by its reflected bool storage. -1 unread. Game-thread only.
-int ReadBurningGT(void* actor) {
+// The puppet's own isBurning, by its reflected bool storage, read in a game-thread task. -1 unread.
+int ReadBurningGT(const ue_wrap::CachedObjRef& ref) {
     auto done = std::make_shared<std::atomic<int>>(0);
     auto out = std::make_shared<int>(-1);
-    GT::Post([actor, out, done] {
+    GT::Post([ref, out, done] {
         int32_t off = -1;
         uint8_t mask = 0;
-        if (actor && R::IsLive(actor) && R::FindBoolProperty(R::ClassOf(actor), L"isBurning", off, mask))
+        void* actor = ref.Get();
+        if (actor && R::FindBoolProperty(R::ClassOf(actor), L"isBurning", off, mask))
             *out = (static_cast<const uint8_t*>(actor)[off] & mask) ? 1 : 0;
         done->store(1);
     });
@@ -181,25 +177,25 @@ void ProbeDamageHazardOnHost() {
     }
     // The puppet is the host's own milestone after the slot's world-ready: it spawns once the peer's
     // pose arrives. Read every 50 ms until it and this machine's player resolve, within a phase.
-    auto puppet = std::make_shared<void*>(nullptr);
-    auto local = std::make_shared<void*>(nullptr);
+    auto puppet = std::make_shared<ue_wrap::CachedObjRef>();
+    auto local = std::make_shared<ue_wrap::CachedObjRef>();
     constexpr DWORD kPuppetMs = 30'000;
-    for (DWORD waited = 0; (!*puppet || !*local) && waited < kPuppetMs; waited += kPollMs) {
+    for (DWORD waited = 0; (!puppet->Get() || !local->Get()) && waited < kPuppetMs; waited += kPollMs) {
         auto done = std::make_shared<std::atomic<int>>(0);
         GT::Post([puppet, local, done] {
             void* p = coop::puppet_drive::Puppet(1).GetActor();
-            if (p && R::IsLive(p)) *puppet = p;
+            if (p && R::IsLive(p)) puppet->Set(p);
             void* mp = coop::players::Registry::Get().Local();
-            if (mp && R::IsLive(mp)) *local = mp;
+            if (mp && R::IsLive(mp)) local->Set(mp);
             done->store(1);
         });
         WaitDone(done, 8000);
-        if (!*puppet || !*local) ::Sleep(kPollMs);
+        if (!puppet->Get() || !local->Get()) ::Sleep(kPollMs);
     }
     const float before = ReadHostHealthGT();
-    if (!*puppet || !*local || before < 0.f) {
+    if (!puppet->Get() || !local->Get() || before < 0.f) {
         UE_LOGW("dmghazard[host]: VERDICT INCONCLUSIVE -- puppet=%p local=%p health=%.2f unread after world-ready",
-                *puppet, *local, before);
+                puppet->Get(), local->Get(), before);
         UE_LOGI("dmghazard[host]: DONE");
         return;
     }
@@ -216,7 +212,7 @@ void ProbeDamageHazardOnHost() {
     // 2. addDamage at the puppet, the entry a native hit forwards to: its nested verb is refused.
     const uint32_t d2 = PD::RefusedDamage();
     const float h2 = ReadHostHealthGT();
-    InvokeAddDamageGT(*puppet, *puppet, 5.f, "PUPPET");
+    InvokeAddDamageGT(*puppet, 5.f, "PUPPET");
     const Outcome o2 = Await([d2] { return PD::RefusedDamage() > d2; }, healthBelow(h2));
     UE_LOGI("dmghazard[host]: 'addDamage' at the puppet -> %s (health %.2f -> %.2f)", Name(o2), h2,
             ReadHostHealthGT());
@@ -225,11 +221,11 @@ void ProbeDamageHazardOnHost() {
     const uint32_t i3 = PD::RefusedIgnites();
     {
         auto d = std::make_shared<std::atomic<int>>(0);
-        void* target = *puppet;
-        GT::Post([target, d] { InvokeIgnite(target, 10.f); d->store(1); });
+        const ue_wrap::CachedObjRef target = *puppet;
+        GT::Post([target, d] { InvokeIgnite(target.Get(), 10.f); d->store(1); });
         WaitDone(d, 8000);
     }
-    void* pup = *puppet;
+    const ue_wrap::CachedObjRef pup = *puppet;
     const Outcome o3 = Await([i3] { return PD::RefusedIgnites() > i3; }, [pup] { return ReadBurningGT(pup) == 1; });
     UE_LOGI("dmghazard[host]: 'ignite' at the puppet -> %s (puppet isBurning=%d)", Name(o3), ReadBurningGT(pup));
 

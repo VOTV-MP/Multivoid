@@ -1,6 +1,6 @@
 // coop/dev/drive_drill_verbs.h -- the player's own verbs the drive drill drives, each the game's own, as a player's
 // input reaches it: the pocket, the take-out from the inventory, the hand's pickup and throw. A private header of
-// coop/dev/drive_drill.cpp (src tree, not include/).
+// coop/dev/drive_drill.cpp and coop/dev/throw_drill.cpp (src tree, not include/).
 
 #pragma once
 

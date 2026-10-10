@@ -293,8 +293,13 @@ bool MainPlayerHasSelectedAction(void* mainPlayer) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
     void* fn = R::FindDispatchFunctionCached(R::ClassOf(mainPlayer), L"selectedAction");
     if (!fn) return false;
-    ParamFrame f(fn);   // the FString out param is written empty on both paths, so nothing is owned
-    return f.valid() && Call(mainPlayer, f) && f.Get<bool>(L"return");
+    ParamFrame f(fn);
+    if (!f.valid() || !Call(mainPlayer, f)) return false;
+    // asName is an out FString: three paths write it empty, the names list's path a copy of a name, which
+    // the engine allocated and the frame now owns, so it is freed here.
+    struct { wchar_t* data; int32_t num; int32_t max; } name{};
+    if (f.GetRaw(L"asName", &name, sizeof(name)) && name.data) R::EngineFree(name.data);
+    return f.Get<bool>(L"return");
 }
 
 bool CallMainPlayerHoldObject(void* mainPlayer, void* target, bool& collected) {

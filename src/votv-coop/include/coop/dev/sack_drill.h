@@ -2,8 +2,9 @@
 //   HOST   -- once slot 1's world is ready and its puppet stands, spawns a prop_pointSack_C a metre in front of the
 //             puppet and reads its own balance and the sack's points; DONE when its balance rose by exactly those
 //             points with one paid redemption, FAIL when no pay came within 60 s or the balance moved by another sum.
-//   CLIENT -- once its world is ready, finds the sack's mirror, turns its own interaction trace onto it with the aim
-//             fan, presses useSelectedAction (the player's E) and says when its mirrored balance rose.
+//   CLIENT -- once its world is ready, finds the nearest sack mirror within 4 m and waits for it to rest, turns its own
+//             interaction trace onto it with the aim fan, waits for its look to settle on it, presses
+//             useSelectedAction (the player's E) and says when its mirrored balance rose.
 // The red: point_sack_client_runs=1 on the client lets the client's own body run, so the host is never paid and its
 // FAIL ends the run. "[SACK-DRILL] FAIL" is the lane failing (--fail-marker), "[SACK-DRILL] ABANDONED" the drill unable
 // to do its part (--dead-marker). Run with sack_drill=run and --done-marker "[SACK-DRILL] host DONE".

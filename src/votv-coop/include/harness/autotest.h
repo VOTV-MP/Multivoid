@@ -17,7 +17,7 @@ namespace harness::autotest {
 // since routines poll from worker threads.
 bool IsClientRole();
 
-// The host routines' one readiness wait: slot `slot` is seated and its world is ready, the peer's
+// A host routine's readiness wait: slot `slot` is seated and its world is ready, the peer's
 // own milestone (what its rig: READY peer-world-ready line reports), polled every 50 ms for at most
 // `budgetMs`. False when the budget ran out; the caller names its phase. Any thread.
 bool WaitPeerWorldReady(int slot, DWORD budgetMs);

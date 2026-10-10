@@ -16,6 +16,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <string>
 
 namespace coop::dev::atv_spawn_drill {
@@ -28,6 +29,7 @@ constexpr float    kLiftCm        = 50.f;
 constexpr uint64_t kAnnounceBound = 30000;   // HOST: the spawn to the lane's announce
 constexpr uint64_t kMirrorBound   = 60000;   // CLIENT: world-ready to the mirror
 constexpr uint64_t kCheckEveryMs  = 250;
+constexpr int      kOnceChecks    = 4;       // CLIENT: polls in a row the count must hold at one, a second
 
 enum class Step : uint8_t { Arm, Announce, Mirror, Done };
 Step     g_step = Step::Arm;
@@ -36,6 +38,7 @@ uint64_t g_nextCheckMs = 0;
 int      g_session = 1;
 uint32_t g_announced0 = 0;   // HOST: runtime ATVs announced before the drill's
 uint32_t g_parked0 = 0;      // CLIENT: spawns parked before this session's first tick
+int      g_onceReads = 0;    // CLIENT: polls in a row with exactly one mirror and nothing parked
 bool     g_baselined = false;
 
 const std::string& Mode() {
@@ -63,8 +66,10 @@ bool Due() {
 void HostTick(coop::net::Session* s) {
     if (g_step == Step::Done || !Due()) return;
     if (g_step == Step::Arm) {
-        // join: the spawn lands while slot 1 is seated and loading, so only the world-ready replay carries it.
-        const bool ready = Mode() == "join" ? (s->IsSlotReady(1) && !s->IsSlotWorldReady(1)) : s->IsSlotWorldReady(1);
+        // join: the spawn lands while slot 1 is seated and loading, so only the world-ready replay carries it; a
+        // slot already world-ready when first seen is a window missed, the drill unable to do its part.
+        if (Mode() == "join" && s->IsSlotWorldReady(1)) { Abandon("the join window passed: slot 1 was already world-ready"); return; }
+        const bool ready = Mode() == "join" ? s->IsSlotReady(1) : s->IsSlotWorldReady(1);
         if (!ready) return;
         void* me = coop::players::Registry::Get().Local();
         ue_wrap::FVector at{};
@@ -108,13 +113,14 @@ void ClientTick() {
     // Both ways in have run once nothing waits in the park: the broadcast or replay spawned, and a park handed back.
     const int mirrors = coop::atv_sync::RuntimeMirrors();
     const bool parkedOk = Mode() != "park" || coop::atv_sync::ParkedEver() > g_parked0;
-    if (mirrors >= 1 && coop::atv_sync::ParkPending() == 0 && parkedOk) {
-        if (mirrors != 1) {
-            char why[120];
-            std::snprintf(why, sizeof(why), "%d runtime ATV mirrors stand here for one spawn", mirrors);
-            Fail(why);
-            return;
-        }
+    if (mirrors > 1) {
+        char why[120];
+        std::snprintf(why, sizeof(why), "%d runtime ATV mirrors stand here for one spawn", mirrors);
+        Fail(why);
+        return;
+    }
+    g_onceReads = mirrors == 1 && coop::atv_sync::ParkPending() == 0 && parkedOk ? g_onceReads + 1 : 0;
+    if (g_onceReads >= kOnceChecks) {   // one mirror, nothing parked, held a second: no later delivery doubled it
         UE_LOGI("[ATV-SPAWN-DRILL] client DONE in session %d (%s): one runtime ATV mirror stands here%s -- PASS",
                 g_session, Mode().c_str(), Mode() == "park" ? ", the park having held and handed back its spawn" : "");
         g_step = Step::Done;
@@ -141,6 +147,7 @@ void OnDisconnect() {
     g_stepMs = g_nextCheckMs = 0;
     g_announced0 = g_parked0 = 0;
     g_baselined = false;
+    g_onceReads = 0;
 }
 
 }  // namespace coop::dev::atv_spawn_drill

@@ -123,21 +123,18 @@ bool YieldedAtOrAfter(uint32_t eid, uint8_t gen) {
     return y != g_yieldedGen.end() && !GenAfter(gen, y->second);
 }
 
+// The last stream ends applied here, a ring of eight: a poll a quarter-second apart reads them all.
+constexpr size_t kRecentEnds = 8;
+AppliedEnd g_ends[kRecentEnds];
+size_t g_endCount = 0;   // ends recorded since the session began; the newest is at (g_endCount - 1) % kRecentEnds
+
 // The end edge on a live prop: the final pose, then the host's physics flags through the same
 // parity restore the join's converge applies after its teleport, then the velocity -- only into
 // a body this module parked and the flags leave simulating, and only when it is not zero, since
 // assigning a velocity wakes a body at rest.
-struct AppliedEnd {
-    bool have = false;
-    uint32_t eid = 0;
-    ue_wrap::FVector pose{};
-    uint64_t atMs = 0;
-};
-AppliedEnd g_lastEnd;
-
 void ApplyEnd(void* actor, const coop::net::PropDriveEndPayload& p, bool parkedHere) {
     E::SetActorLocation(actor, ue_wrap::FVector{p.x, p.y, p.z});
-    g_lastEnd = AppliedEnd{true, p.eid, ue_wrap::FVector{p.x, p.y, p.z}, ::GetTickCount64()};
+    g_ends[g_endCount++ % kRecentEnds] = AppliedEnd{p.eid, ue_wrap::FVector{p.x, p.y, p.z}, ::GetTickCount64()};
     E::SetActorRotation(actor, ue_wrap::FRotator{p.pitch, p.yaw, p.roll});
     // The host's frozen and sleep at the end first: a hook that bites a frozen prop unfreezes it on
     // the host only (hook_C's attach_a runs setPropProps), so a copy still frozen here takes the
@@ -158,12 +155,11 @@ void ApplyEnd(void* actor, const coop::net::PropDriveEndPayload& p, bool parkedH
 
 }  // namespace
 
-bool LastAppliedEnd(uint32_t* eid, ue_wrap::FVector* pose, uint64_t* atMs) {
-    if (!g_lastEnd.have) return false;
-    *eid = g_lastEnd.eid;
-    *pose = g_lastEnd.pose;
-    *atMs = g_lastEnd.atMs;
-    return true;
+size_t RecentEnds(AppliedEnd* out, size_t max) {
+    const size_t have = g_endCount < kRecentEnds ? g_endCount : kRecentEnds;
+    size_t n = 0;
+    for (; n < have && n < max; ++n) out[n] = g_ends[(g_endCount - 1 - n) % kRecentEnds];
+    return n;
 }
 
 void TickApplyAndDrive(coop::net::Session& s) {
@@ -364,6 +360,7 @@ void OnDisconnect() {
     g_yieldedGen.clear();
     g_miss.clear();
     g_pendingEnd.clear();
+    g_endCount = 0;
     g_batch.clear();
 }
 

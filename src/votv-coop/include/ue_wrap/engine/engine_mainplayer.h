@@ -73,8 +73,9 @@ bool CallMainPlayerUpdateHold(void* mainPlayer);
 bool CallMainPlayerUseSelectedAction(void* mainPlayer);
 
 // Whether useSelectedAction would act now: the player's own selectedAction, true once its look-at actor
-// answers lookAt and the action list built for it holds an action. The list is rebuilt after the look
-// changes, so a press on the tick the trace lands finds none and the game denies it. Game thread.
+// answers lookAt and the player's look flag holds -- the look took that actor, which the game settles
+// on a later tick than the trace landing, so a press on the tick the trace lands is denied. It does not
+// say which actor the look took: the caller compares the hit. Game thread.
 bool MainPlayerHasSelectedAction(void* mainPlayer);
 
 // The player's own pickup of `target`: `Hold Object` with `manual` set, which it takes before whatever the
