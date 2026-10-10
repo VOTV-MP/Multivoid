@@ -8,9 +8,9 @@
 // translation (l10n::WasFound), the join line by which of its two forms the feed holds. `translated`
 // passes when all three are translated; `english` when the interface is English and none is -- so the
 // per-peer arm (an English host, a translated client) has a pass on both peers, and `translated` under
-// an English language is the red. Lines: "[L10N-DRILL] DONE expect=<e>
-// locale=<l> found=<k>/<m> distinct=<n>" or "[L10N-DRILL] FAIL expect=<e> ...". Readiness throughout,
-// never a clock: a run that never gets there ends on the rig's budget with no line.
+// an English language is the red. It prints a DONE or a FAIL line tagged [L10N-DRILL] naming the
+// expectation, the locale and what was found or missing. Readiness throughout, never a clock: a run
+// that never gets there ends on the rig's budget with no line.
 
 #pragma once
 
