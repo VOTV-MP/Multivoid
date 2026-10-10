@@ -1,0 +1,1451 @@
+# Simplified Chinese (zh_CN) for the Multivoid interface.
+# Translated by Slintchen (PR #41): a draft made with a local model, reviewed in game by the translator,
+# converted from that request's ZH-CN.json for the entries whose English is unchanged.
+msgid ""
+msgstr ""
+"Project-Id-Version: Multivoid\n"
+"Language: zh_CN\n"
+"Last-Translator: Slintchen <80808676+Slintchen@users.noreply.github.com>\n"
+"Language-Team: Chinese (Simplified)\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+#, c-format
+msgid "%.0f cm"
+msgstr ""
+
+#, c-format
+msgid "%.1f / %.1f MB"
+msgstr ""
+
+#, c-format
+msgid "%1$s (%2$llu KB)"
+msgstr ""
+
+#, c-format
+msgid "%1$s (last %2$llu KB of %3$llu KB)"
+msgstr ""
+
+#, c-format
+msgid "%1$s -- UPDATE AVAILABLE: %2$s"
+msgstr ""
+
+#, c-format
+msgid "%1$s -- left out: %2$s"
+msgstr ""
+
+#, c-format
+msgid "%1$s = '%2$s' (%3$s) -- %4$s; not in use, %5$s overrides it."
+msgstr ""
+
+#, c-format
+msgid "%1$s = '%2$s' (%3$s) -- %4$s; nothing it governs starts until it is fixed."
+msgstr ""
+
+#, c-format
+msgid "%1$s = '%2$s' (%3$s) -- %4$s; the built-in default is used."
+msgstr ""
+
+#, c-format
+msgid "%1$s = '%2$s' -- not a known setting (typo, or a retired key)."
+msgstr "%s = '%s' —— 未知设置（拼错了，或已弃用）。"
+
+#, c-format
+msgid "%1$s appears %2$llu time with different values; the FIRST line (line %3$d) wins. Pick which one to keep:"
+msgid_plural "%1$s appears %2$llu times with different values; the FIRST line (line %3$d) wins. Pick which one to keep:"
+msgstr[0] ""
+
+#, c-format
+msgid "%1$s caught signal '%2$s'"
+msgstr ""
+
+#, c-format
+msgid "%1$s changed skin to %2$s"
+msgstr ""
+
+#, c-format
+msgid "%1$s could not order: an item was not in the host's store"
+msgstr ""
+
+#, c-format
+msgid "%1$s could not order: the delivery could not be placed"
+msgstr ""
+
+#, c-format
+msgid "%1$s could not order: the host could not read its store"
+msgstr ""
+
+#, c-format
+msgid "%1$s could not order: the host refused it"
+msgstr ""
+
+#, c-format
+msgid "%1$s could not order: there were not enough credits"
+msgstr ""
+
+#, c-format
+msgid "%1$s could not order: too many items in one order"
+msgstr ""
+
+#, c-format
+msgid "%1$s could not sell that"
+msgstr ""
+
+#, c-format
+msgid "%1$s could not sell that: it was already sold"
+msgstr ""
+
+#, c-format
+msgid "%1$s could not sell that: no coin gun exists in the host's world"
+msgstr ""
+
+#, c-format
+msgid "%1$s could not sell that: the host does not have it"
+msgstr ""
+
+#, c-format
+msgid "%1$s could not sell that: the host does not see you next to it"
+msgstr ""
+
+#, c-format
+msgid "%1$s could not sell that: the host hit an internal error"
+msgstr ""
+
+#, c-format
+msgid "%1$s could not sell that: the host's store will not take it"
+msgstr ""
+
+#, c-format
+msgid "%1$s deleted an email: %2$s"
+msgstr ""
+
+#, c-format
+msgid "%1$s is connecting to the game..."
+msgstr ""
+
+#, c-format
+msgid "%1$s is using %2$s"
+msgstr ""
+
+#, c-format
+msgid "%1$s joined the game"
+msgstr ""
+
+#, c-format
+msgid "%1$s left the game"
+msgstr ""
+
+#, c-format
+msgid "%1$s sold it for %2$lld point (the host's price)"
+msgid_plural "%1$s sold it for %2$lld points (the host's price)"
+msgstr[0] ""
+
+#, c-format
+msgid "%1$s was turned away: Game version mismatch: server plays VOTV %2$s, client has VOTV %3$s. [%4$s]"
+msgstr ""
+
+#, c-format
+msgid "%1$s was turned away: malformed join (version field missing) [%2$s]"
+msgstr ""
+
+#, c-format
+msgid "%1$s was turned away: official build %2$s [%3$s]"
+msgstr ""
+
+#, c-format
+msgid "%1$s was turned away: unofficial build %2$s [%3$s]"
+msgstr ""
+
+#, c-format
+msgid "%1$u/%2$u players sleeping"
+msgstr ""
+
+#, c-format
+msgid "%d LAN"
+msgstr ""
+
+#, c-format
+msgid "%d direct"
+msgstr ""
+
+#, c-format
+msgid "%d online"
+msgstr ""
+
+#, c-format
+msgid "%d relayed"
+msgstr ""
+
+#, c-format
+msgid "%llu rule in force differs from the rules saved with this world."
+msgid_plural "%llu rules in force differ from the rules saved with this world."
+msgstr[0] ""
+
+#, c-format
+msgid "%llu s in this step"
+msgstr ""
+
+#, c-format
+msgid "%llu server"
+msgid_plural "%llu servers"
+msgstr[0] ""
+
+#, c-format
+msgid "%s (without passwords)"
+msgstr ""
+
+#, c-format
+msgid "%u / %u objects"
+msgstr ""
+
+msgid "(hidden -- friends join by invite/IP)"
+msgstr ""
+
+msgid "(locked)"
+msgstr ""
+
+msgid "(no description)"
+msgstr "无描述"
+
+msgid "(no nick)"
+msgstr ""
+
+msgid "(no preview)"
+msgstr ""
+
+msgid "(others can find your game)"
+msgstr ""
+
+msgid "(system default)"
+msgstr ""
+
+msgid "(unnamed)"
+msgstr ""
+
+msgid "(you)"
+msgstr "（你）"
+
+msgid "(your server)"
+msgstr ""
+
+msgid ""
+"A compact live panel in the top-right corner: receive/send rate right\n"
+"now (wire-level, includes protocol overhead), total downloaded/uploaded\n"
+"this session, packets/s, peers + ping, and a 60 s rate graph.\n"
+"Works for host and clients. Saved to multivoid.ini (ui.netstats)."
+msgstr "右上角实时面板：收发速率（链路层，含协议开销）、本次会话累计下载/上传、包/秒、玩家数与延迟，以及 60 秒速率曲线。房主和客户端都能用。保存到 multivoid.ini（ui.netstats）。"
+
+msgid "A new game can take a moment to load"
+msgstr ""
+
+msgid "A newer connection with your identity replaced this one."
+msgstr ""
+
+msgid "A pak that carries no skin (another mod's) is dropped from this list once the game has been asked -- it is not a skin."
+msgstr "不含皮肤的 pak（其他模组的）在游戏扫描后会被剔除——它不是皮肤。"
+
+msgid "A player"
+msgstr ""
+
+msgid "A proof arrived before a hello."
+msgstr ""
+
+msgid "A second hello arrived on one connection."
+msgstr ""
+
+msgid "Actions"
+msgstr ""
+
+msgid "Activation"
+msgstr ""
+
+msgid "Administration"
+msgstr ""
+
+msgid "Allow other builds"
+msgstr ""
+
+msgid "Also refuse their address"
+msgstr ""
+
+msgid "Also refuses anyone connecting from the same address -- people who share their router or their provider's address are refused too. It only works on a direct connection: a player who comes through a relay is refused by their identity alone."
+msgstr ""
+
+msgid "As a client you see only what the host allows you."
+msgstr ""
+
+msgid "Ban (permanent)"
+msgstr "封禁（永久）"
+
+msgid "Ban player"
+msgstr ""
+
+msgid "Banned"
+msgstr ""
+
+msgid "Body skin not saved"
+msgstr ""
+
+msgid "COULD NOT CONNECT"
+msgstr ""
+
+#, c-format
+msgid "Cannot reach the %s server list. Check your connection."
+msgstr ""
+
+#, c-format
+msgid "Cannot reach the %s server list. Try another list above, or check your connection."
+msgstr ""
+
+msgid "Change name"
+msgstr "修改名称"
+
+msgid "Chat"
+msgstr ""
+
+msgid "Click on the name of the rule to see its description."
+msgstr "点击规则名称查看说明。"
+
+msgid "Click to mute your mic"
+msgstr ""
+
+#, c-format
+msgid "Code %s -- include it in a bug report"
+msgstr ""
+
+msgid ""
+"Colors your nick everywhere it shows -- nameplate, chat, player list --\n"
+"on every peer's screen. Synced live and to late joiners; persists."
+msgstr ""
+
+msgid "Confirm ban"
+msgstr ""
+
+#, c-format
+msgid "Connecting to %1$s's game..."
+msgstr ""
+
+#, c-format
+msgid "Connecting to %s"
+msgstr ""
+
+#, c-format
+msgid "Connection: %s"
+msgstr ""
+
+msgid "Console"
+msgstr ""
+
+msgid "Contact (optional, e.g. a Discord name)"
+msgstr ""
+
+msgid "Cosmetics"
+msgstr ""
+
+msgid "Could not compute the password proof on this machine."
+msgstr ""
+
+msgid "Could not connect to that address -- check it, or another action is already in flight."
+msgstr ""
+
+msgid "Could not find the log."
+msgstr ""
+
+msgid "Could not reach the server list."
+msgstr ""
+
+msgid "Could not read the log."
+msgstr ""
+
+msgid "Could not rewrite multivoid.ini (it is missing, or the write failed) -- nothing was changed."
+msgstr "无法重写 multivoid.ini（文件不存在或写入失败）——未做任何改动。"
+
+msgid "Could not rewrite multivoid.ini (locked or failing) -- nothing was changed. Close whatever holds the file and press Tidy up again."
+msgstr "无法重写 multivoid.ini（被锁定或失败）——什么都没有改动。关掉占用该文件的程序，再按一次「整理」。"
+
+msgid "Could not rewrite multivoid.ini: it holds a zero byte or a UTF-16 byte-order mark -- nothing was changed. Save it again as UTF-8 and press Tidy up again."
+msgstr "无法重写 multivoid.ini：它是零字节文件或带 UTF-16 字节序标记。请另存为 UTF-8，再点一次「整理」。"
+
+msgid "Could not send the command."
+msgstr ""
+
+msgid "Could not send the identity proof to the host."
+msgstr ""
+
+msgid "Could not start that connection -- another action is already in flight."
+msgstr ""
+
+msgid "Could not start the connection."
+msgstr ""
+
+msgid "Could not start the identity exchange with this host."
+msgstr ""
+
+msgid "Could not start the report."
+msgstr ""
+
+msgid "Could not write the report file."
+msgstr ""
+
+msgid "Custom nickname color"
+msgstr "自定义昵称颜色"
+
+msgid "DIRECT"
+msgstr ""
+
+msgid "DISCONNECTED"
+msgstr ""
+
+msgid "Developer tools are hidden. Set [dev] devkeys=1 in multivoid.ini to show them."
+msgstr "开发者工具已隐藏。在 multivoid.ini 里设 [dev] devkeys=1 可显示。"
+
+msgid ""
+"Device changes apply immediately (the voice engine\n"
+"reopens on the game's next tick)."
+msgstr "设备改动立即生效（语音引擎在下一帧重开）。"
+
+msgid "Devices"
+msgstr ""
+
+msgid "Direct"
+msgstr ""
+
+msgid "Direct connect"
+msgstr "直连"
+
+msgid "Disconnected now and refused whenever they rejoin."
+msgstr ""
+
+#, c-format
+msgid "Down:  %1$s now,  %2$s total,  %3$llu packet"
+msgid_plural "Down:  %1$s now,  %2$s total,  %3$llu packets"
+msgstr[0] ""
+
+msgid "Downloading the host's world"
+msgstr ""
+
+msgid ""
+"Dr. Kel\n"
+"(default)"
+msgstr ""
+
+msgid "Duplicate settings with different values"
+msgstr ""
+
+msgid "Each surface picks its own family; applies on the next frame."
+msgstr ""
+
+msgid "Everyone in the registry is online."
+msgstr ""
+
+msgid "Everyone is asleep -- the night passes..."
+msgstr ""
+
+msgid "Everything scales with the screen automatically; this is your extra zoom."
+msgstr ""
+
+msgid "Exchanging identities with the host"
+msgstr ""
+
+msgid "Files that will be included"
+msgstr ""
+
+#, c-format
+msgid "Finding a route to %s"
+msgstr ""
+
+msgid "Gamemode:"
+msgstr "游戏模式："
+
+msgid "Good morning -- everyone is rested."
+msgstr ""
+
+#, c-format
+msgid "Graphics API: %s"
+msgstr "图形API：%s"
+
+msgid "HOST"
+msgstr ""
+
+#, c-format
+msgid ""
+"Hold the key to talk. Change the key via %s\n"
+"in multivoid.ini (single letter or a virtual-key number)."
+msgstr ""
+
+msgid ""
+"Host administration. Bans follow the player and survive restarts;\n"
+"the registry remembers every player who ever joined this host."
+msgstr ""
+
+msgid "Host game"
+msgstr "创建房间"
+
+msgid "ID"
+msgstr ""
+
+msgid "Interface"
+msgstr ""
+
+#, c-format
+msgid "Joined %1$s's game"
+msgstr ""
+
+#, c-format
+msgid "Joining %s"
+msgstr ""
+
+#, c-format
+msgid "Keep line %d: %s"
+msgstr ""
+
+msgid "LAN"
+msgstr ""
+
+msgid "Last seen"
+msgstr ""
+
+#, c-format
+msgid "Last seen: %ds ago"
+msgstr ""
+
+msgid "Left the session."
+msgstr ""
+
+msgid "Let players whose Multivoid build differs from this server's join -- an unofficial build when this server runs the official one, the official build when this server runs a modified one. Applies to the next joins; players already in stay."
+msgstr ""
+
+msgid "Levels"
+msgstr ""
+
+msgid "Link"
+msgstr ""
+
+msgid "Loading the world"
+msgstr ""
+
+#, c-format
+msgid "Looking up %s"
+msgstr ""
+
+msgid "MULTIPLAYER"
+msgstr ""
+
+msgid "MULTIVOID SETTINGS CHECK"
+msgstr "MULTIVOID 设置检查"
+
+msgid "Maximum voice audibility distance in centimeters (4800 = 48 m); 0 = unlimited (a whisper stays local); the host's setting in a session. A value of 1..99 is a near-mute range, the host's to choose."
+msgstr ""
+
+msgid "Menu / panels"
+msgstr ""
+
+msgid "Mic"
+msgstr ""
+
+msgid "Mic gain"
+msgstr "麦克风增益"
+
+msgid "Mic muted"
+msgstr ""
+
+msgid "Microphone"
+msgstr ""
+
+msgid "Multivoid  -  Change name"
+msgstr "Multivoid  -  修改名称"
+
+msgid "Multivoid  -  Direct connect"
+msgstr "Multivoid  -  直连"
+
+msgid "Multivoid  -  Password"
+msgstr "Multivoid  -  密码"
+
+msgid "Multivoid  -  Server Browser"
+msgstr "Multivoid  -  服务器浏览器"
+
+msgid "Mute for me"
+msgstr "为我静音"
+
+msgid "Mute my microphone"
+msgstr "静音我的麦克风"
+
+msgid "Muted for you (click for volume)"
+msgstr ""
+
+#, c-format
+msgid "NET  %1$llu peer  %2$d ms"
+msgid_plural "NET  %1$llu peers  %2$d ms"
+msgstr[0] ""
+
+#, c-format
+msgid "NET  %llu peer"
+msgid_plural "NET  %llu peers"
+msgstr[0] ""
+
+msgid "NET  offline"
+msgstr ""
+
+msgid "Nameplate"
+msgstr ""
+
+msgid "Nameplate: hidden from other players"
+msgstr ""
+
+msgid "Nameplate: shown to other players"
+msgstr ""
+
+msgid "Nameplates"
+msgstr ""
+
+msgid "Net stats"
+msgstr ""
+
+msgid "Network"
+msgstr ""
+
+msgid "Nickname color"
+msgstr ""
+
+msgid "Nickname color: applied (synced to other players)"
+msgstr ""
+
+msgid "Nickname color: reset to default"
+msgstr ""
+
+msgid "No active session."
+msgstr "当前没有会话。"
+
+msgid "No answer from the host."
+msgstr ""
+
+msgid "No banned players."
+msgstr "暂无被封禁的玩家。"
+
+msgid "No microphone -- voice is receive-only."
+msgstr ""
+
+msgid "No output device -- you can't hear voice."
+msgstr ""
+
+msgid "No players."
+msgstr "没有玩家。"
+
+msgid "No remote players connected."
+msgstr "没有其他玩家连接。"
+
+msgid "No route to the host through its firewall or router."
+msgstr ""
+
+msgid "No tools here yet -- coming soon."
+msgstr "这里还没有工具 -- 近期推出。"
+
+msgid "Nobody in the registry yet (players are recorded when they join)."
+msgstr "名单里还没有人（玩家加入时才会记录）。"
+
+msgid ""
+"Off = your floating name/health bar disappears on every peer's\n"
+"screen -- synced live and to late joiners; persists across sessions."
+msgstr ""
+
+msgid "Off by default; persists across sessions."
+msgstr ""
+
+msgid "Offline (seen before)"
+msgstr ""
+
+msgid "Online"
+msgstr ""
+
+msgid "Other"
+msgstr ""
+
+msgid "Output"
+msgstr ""
+
+msgid "Overlay fonts (per surface):"
+msgstr "叠加层字体（分界面）："
+
+msgid "PLAYERS"
+msgstr "玩家"
+
+msgid "Password  (leave empty if the server has none)"
+msgstr "密码（服务器没设密码就留空）"
+
+msgid "Peer action notifications"
+msgstr "同伴动作提示"
+
+msgid "Peers WITHOUT that pak see the default kel body instead."
+msgstr "没装该 pak 的玩家会看到默认 kel 身体。"
+
+#, c-format
+msgid "Peers: %1$d,  worst ping %2$d ms"
+msgstr "同伴：%d，最差延迟 %d ms"
+
+#, c-format
+msgid "Peers: %d"
+msgstr "同伴：%d"
+
+#, c-format
+msgid "Permanently ban %s?"
+msgstr "永久封禁 %s？"
+
+msgid "Pick a server from the list first."
+msgstr ""
+
+msgid "Ping"
+msgstr ""
+
+msgid "Player"
+msgstr ""
+
+#, c-format
+msgid ""
+"Player id %1$s\n"
+"Address %2$s"
+msgstr ""
+
+#, c-format
+msgid "Player id %s"
+msgstr ""
+
+msgid "Players"
+msgstr ""
+
+#, c-format
+msgid "Players: %d/%d"
+msgstr ""
+
+msgid "Please describe what happened (at least 20 characters)."
+msgstr ""
+
+msgid "Preview tile = <skin name>.png/.bmp beside the pak."
+msgstr ""
+
+#, c-format
+msgid "Push-to-talk (key: %s)"
+msgstr ""
+
+msgid "RELAY"
+msgstr ""
+
+msgid "Read-only. The host's save sets the rules for everyone."
+msgstr "只读。房主的存档决定所有人的规则。"
+
+msgid "Reading rules..."
+msgstr ""
+
+msgid "Reason"
+msgstr ""
+
+msgid "Receiving world from the host"
+msgstr ""
+
+msgid "Refresh list"
+msgstr "刷新列表"
+
+msgid "Refreshing the server list..."
+msgstr ""
+
+msgid "Refused whenever they rejoin."
+msgstr ""
+
+msgid "Relay"
+msgstr ""
+
+msgid "Release toast"
+msgstr ""
+
+msgid "Remote player"
+msgstr ""
+
+msgid "Report"
+msgstr ""
+
+msgid "Report a bug"
+msgstr ""
+
+msgid "Rescan devices"
+msgstr "重新扫描设备"
+
+#, c-format
+msgid ""
+"Rewrites multivoid.ini in the standard layout: [net] first, [dev]\n"
+"last, each setting under its section, exact-duplicate lines merged.\n"
+"Unknown settings and invalid values are commented out (kept in the\n"
+"file, just disabled) -- that resolves their warnings above. An\n"
+"invalid value of a setting that refuses instead (%s) is kept as\n"
+"it is: disabling it would switch that setting to its default.\n"
+"Conflicting duplicates are NEVER auto-resolved -- use the keep-line\n"
+"buttons above. Your comments travel with their settings."
+msgstr "按标准布局重写 multivoid.ini：[net] 在前、[dev] 在后，每个设置归到自己的分区，完全重复的行合并。未知设置与无效值会被注释掉（保留在文件里，只是禁用），这样就清掉了上面的警告。遇到「拒绝回退」的设置而值无效时（%s），保持原样——禁用它等于切回默认值。互相冲突的重复行绝不会自动裁决，请用上面的「保留哪一行」按钮。你的注释会跟着对应设置一起搬。"
+
+msgid "Rule"
+msgstr ""
+
+msgid "Rules"
+msgstr ""
+
+msgid "Save report"
+msgstr ""
+
+msgid ""
+"Saved to multivoid.ini (ui.font.menu/chat/net/nameplate/toast,\n"
+"each with its own default). Fixedsys (VOTV) = game terminal pixel\n"
+"font; JetBrains/Cascadia monospace; Roboto proportional."
+msgstr ""
+
+#, c-format
+msgid "Saved: %1$s (%2$llu KB)"
+msgstr ""
+
+msgid "Saves a report file on this PC. Nothing is sent."
+msgstr ""
+
+msgid "Saving the report..."
+msgstr ""
+
+msgid ""
+"Scales the WHOLE overlay (menus, chat, nameplates) on top of the\n"
+"automatic resolution scale. Applies when you release the slider\n"
+"(the fonts re-bake). Saved to multivoid.ini (ui.scale)."
+msgstr "按自动分辨率缩放整个叠加层（菜单、聊天、名牌）。松开滑块时生效（字体会重新烘焙）。保存至 multivoid.ini（ui.scale）。"
+
+msgid "Select a category on the left."
+msgstr "在左侧选择类别。"
+
+msgid "Select a server"
+msgstr "选择一个服务器"
+
+msgid "Server address"
+msgstr "服务器地址"
+
+msgid "Server info:"
+msgstr "服务器信息："
+
+msgid "Server password"
+msgstr "服务器密码"
+
+#, c-format
+msgid "Server setting changed: %1$s is now %2$s."
+msgstr ""
+
+msgid "Server settings"
+msgstr ""
+
+msgid "Session"
+msgstr ""
+
+msgid ""
+"Show a chat line when another player does a shared action\n"
+"(e.g. deletes an email). Local preference; persists across\n"
+"sessions (ui.chat.peer_actions)."
+msgstr ""
+
+msgid "Show in folder"
+msgstr ""
+
+msgid "Show in server browser"
+msgstr "显示在服务器浏览器中"
+
+msgid "Show my nameplate to other players"
+msgstr "向其他玩家显示我的名牌"
+
+msgid "Show network stats overlay"
+msgstr "显示网络状态叠加层"
+
+#, c-format
+msgid "Showing the %s server list."
+msgstr ""
+
+#, c-format
+msgid "Skin '%s' is not installed here -- keeping your current one"
+msgstr ""
+
+#, c-format
+msgid "Skin: %s"
+msgstr ""
+
+msgid "Skins"
+msgstr ""
+
+msgid "Skins come from converter .pak files under Content/Paks/LogicMods (any subfolder). One pak may carry several skins -- the four scientists ship together in scientists.pak."
+msgstr "皮肤来自 Content/Paks/LogicMods 下的 .pak 文件（任意子文件夹）。一个 pak 可含多个皮肤——四个科学家就打包在 scientists.pak 里。"
+
+msgid "Sleep interrupted -- everyone wakes up."
+msgstr ""
+
+msgid "Something was sent before the identity was proved."
+msgstr ""
+
+msgid ""
+"Speech louder than this transmits. Watch the mic\n"
+"meter: set the slider just above your room's noise."
+msgstr "只有比这个阈值响的语音才会发送。看着麦克风条：把滑块调到略高于环境噪音的位置。"
+
+msgid "Starting your server"
+msgstr ""
+
+#, c-format
+msgid "Starting your server -- loading %s"
+msgstr ""
+
+msgid "Stats"
+msgstr ""
+
+msgid "Takes effect at the next session."
+msgstr ""
+
+msgid "Talking"
+msgstr ""
+
+msgid "Teleport to me"
+msgstr "传送到我这里"
+
+msgid "That line is too long."
+msgstr ""
+
+msgid "That text is too long."
+msgstr ""
+
+msgid "That's your own server -- you're already hosting it."
+msgstr ""
+
+msgid "The ban file has entries this version cannot read, so bans made now last until the server stops. See the log."
+msgstr ""
+
+msgid "The connection fell too far behind and was closed."
+msgstr ""
+
+msgid "The connection was lost."
+msgstr ""
+
+msgid "The download of the host's world stopped part way through."
+msgstr ""
+
+msgid "The game is closing."
+msgstr ""
+
+msgid "The game is shutting down."
+msgstr ""
+
+msgid "The host banned you."
+msgstr ""
+
+msgid "The host closed the connection."
+msgstr ""
+
+msgid "The host closed the connection: it fell too far behind."
+msgstr ""
+
+msgid "The host could not accept the connection."
+msgstr ""
+
+msgid "The host could not check the password."
+msgstr ""
+
+msgid "The host could not prove its identity."
+msgstr ""
+
+msgid "The host could not read your hello."
+msgstr ""
+
+msgid "The host could not read your proof."
+msgstr ""
+
+msgid "The host could not send its challenge."
+msgstr ""
+
+msgid "The host did not answer through the signaling server. It may be offline, or reconnecting -- try again in a minute."
+msgstr ""
+
+msgid "The host ended the session."
+msgstr ""
+
+msgid "The host has no randomness to challenge with."
+msgstr ""
+
+msgid "The host is settling its world"
+msgstr ""
+
+msgid "The host kicked you."
+msgstr ""
+
+msgid "The host never finished preparing its world for you."
+msgstr ""
+
+msgid "The host never sent you the world it owed."
+msgstr ""
+
+msgid "The host never sent your inventory."
+msgstr ""
+
+msgid "The host plays a different version of the game."
+msgstr ""
+
+msgid "The host received a malformed packet."
+msgstr ""
+
+msgid "The host runs a newer build of the mod. Update to join."
+msgstr ""
+
+msgid "The host runs an older build of the mod. They need to update."
+msgstr ""
+
+msgid "The host sent an identity challenge this build cannot read."
+msgstr ""
+
+msgid "The host was busy, and this connection was the slowest to prove itself."
+msgstr ""
+
+msgid "The host's world arrived damaged and could not be used."
+msgstr ""
+
+msgid "The host's world would not load on this machine."
+msgstr ""
+
+msgid "The identity proof did not arrive in time."
+msgstr ""
+
+msgid "The join failed before it started. The log has the error."
+msgstr ""
+
+msgid "The report could not be made."
+msgstr ""
+
+msgid "The server is full."
+msgstr ""
+
+msgid "The server list gave a bad address for this host."
+msgstr ""
+
+msgid "The signaling server could not reach the host."
+msgstr ""
+
+msgid "The transport handshake with the host failed."
+msgstr ""
+
+msgid "Their identity is not proved yet."
+msgstr ""
+
+msgid "This key holds your body skin -- if the winning value is not the one you expect, keep the other line."
+msgstr ""
+
+#, c-format
+msgid "This launch runs on environment overrides and built-in defaults; the settings that refuse instead of falling back (%s) refuse what they govern until the file can be read."
+msgstr ""
+
+msgid "This machine has no working connection to the signaling server, so the host could not be dialled."
+msgstr ""
+
+msgid ""
+"This rule is achievement-locked!\n"
+"Unlock this rule by getting following achievements:"
+msgstr ""
+
+#, c-format
+msgid ""
+"This rule is day-locked!\n"
+"Unlock this rule by playing past day %d"
+msgstr ""
+
+msgid "This server admits only the official Multivoid build. Install the official release (the whole zip)."
+msgstr ""
+
+msgid "This server has no settings to change here."
+msgstr ""
+
+msgid "This server needs a password, and nothing told this machine which host it was dialling."
+msgstr ""
+
+msgid "This server needs a password."
+msgstr ""
+
+msgid "This server runs a modified (unofficial) Multivoid build and admits only modified builds."
+msgstr ""
+
+msgid "Threshold"
+msgstr "阈值"
+
+msgid "Threshold near 0 dB -- the mic will almost never trigger. Try -50 dB."
+msgstr ""
+
+#, c-format
+msgid "Tidied: %d duplicate line(s) merged, %d setting(s) placed under their sections, %d unknown/invalid line(s) commented out. Anything still listed above needs a choice or can't be fixed from the file."
+msgstr "整理完成：合并 %d 条重复行，%d 个设置归位，%d 条未知或无效行已注释。上面还列着的，需要你选择，或无法从文件里修复。"
+
+msgid "Tidy up multivoid.ini"
+msgstr ""
+
+msgid "Too many connections from you in a short time. Try again shortly."
+msgstr ""
+
+msgid "Too many password attempts. Try again in ten minutes."
+msgstr ""
+
+msgid "Type /help for the commands."
+msgstr ""
+
+msgid "Type a name first."
+msgstr ""
+
+msgid "Type an address first -- host or host:port."
+msgstr ""
+
+msgid "Type the password this server was locked with."
+msgstr ""
+
+msgid "UI size"
+msgstr ""
+
+msgid "Unknown settings (nothing reads these)"
+msgstr ""
+
+#, c-format
+msgid "Up:    %1$s now,  %2$s total,  %3$llu packet"
+msgid_plural "Up:    %1$s now,  %2$s total,  %3$llu packets"
+msgstr[0] ""
+
+msgid "Update list"
+msgstr "更新列表"
+
+msgid "V: voice settings"
+msgstr "V: 语音设置"
+
+msgid "Value"
+msgstr ""
+
+msgid "Values that could not be used"
+msgstr ""
+
+#, c-format
+msgid "Version: %1$s%2$s"
+msgstr ""
+
+#, c-format
+msgid "Version: %1$s%2$s  -- built for a different game version"
+msgstr ""
+
+#, c-format
+msgid "Version: %1$s%2$s  -- the host must update"
+msgstr ""
+
+#, c-format
+msgid "Version: %1$s%2$s  -- you must update"
+msgstr ""
+
+msgid "Voice activation"
+msgstr "语音激活"
+
+msgid "Voice chat"
+msgstr ""
+
+#, c-format
+msgid "Voice chat is turned off (%s=0 in multivoid.ini). Set it to 1 and restart the game to use voice."
+msgstr ""
+
+msgid "Voice connected (click for volume)"
+msgstr ""
+
+msgid "Voice disconnected"
+msgstr ""
+
+msgid "Voice off"
+msgstr ""
+
+msgid "Voice range"
+msgstr ""
+
+#, c-format
+msgid "Voice range: %s"
+msgstr ""
+
+#, c-format
+msgid "Voice range: %s (set by the host)"
+msgstr ""
+
+#, c-format
+msgid "Voice range: %s (your server's; multivoid.ini until the settings page)"
+msgstr ""
+
+msgid "Voice volume"
+msgstr "语音音量"
+
+#, c-format
+msgid "Waiting for the %s list..."
+msgstr ""
+
+msgid "Waiting for the host to capture its world"
+msgstr ""
+
+msgid "Waiting for the host's world"
+msgstr ""
+
+msgid "What happened"
+msgstr ""
+
+msgid "What you expected"
+msgstr ""
+
+msgid "When"
+msgstr ""
+
+msgid "Whispering"
+msgstr ""
+
+msgid "World"
+msgstr ""
+
+msgid "World rules unavailable (still loading?)."
+msgstr ""
+
+#, c-format
+msgid "World: %s"
+msgstr ""
+
+msgid "Wrong password."
+msgstr ""
+
+msgid "You are banned from this server."
+msgstr ""
+
+#, c-format
+msgid "Your body skin (%s) could not be saved to multivoid.ini this launch -- it is temporary for this session. Fix whatever keeps the file from being read or saved (a lock from an editor or antivirus, permissions, or a file saved as UTF-16); nothing is lost once a launch can save again."
+msgstr ""
+
+msgid "Your body skin -- what YOU see looking down and what OTHERS see. Saved to multivoid.ini; restored on rejoin."
+msgstr ""
+
+msgid "Your connection presented no key identity."
+msgstr ""
+
+msgid "Your game loaded the world but never finished settling into it."
+msgstr ""
+
+msgid "Your identity changed during the exchange."
+msgstr ""
+
+msgid "Your identity proof did not verify."
+msgstr ""
+
+msgid "Your mic is muted -- click to unmute"
+msgstr ""
+
+msgid "Your mod build differs from the host's."
+msgstr ""
+
+msgid "Your name"
+msgstr "你的名字"
+
+#, c-format
+msgid "Your name: %s"
+msgstr ""
+
+msgid "Your net.ice setting could not be read as all or relay. Set it to one of them in multivoid.ini, or make the file readable."
+msgstr ""
+
+msgid "Your net.ice=relay allows only a relayed connection, and this session has no relay server."
+msgstr ""
+
+msgid "Your net.ice=relay keeps your address from other players, and a direct connection would show it to the host. Join a lobby that is not direct, or remove net.ice from multivoid.ini."
+msgstr ""
+
+#, c-format
+msgid "Your player id %s"
+msgstr ""
+
+msgid "banned"
+msgstr "已封禁"
+
+msgid "could not be read"
+msgstr ""
+
+#, c-format
+msgid "current: %s"
+msgstr "当前：%s"
+
+msgid "direct"
+msgstr ""
+
+msgid "host or host:port"
+msgstr "主机或主机:端口"
+
+msgid "multivoid.ini could not be read"
+msgstr ""
+
+msgid "multivoid.ini could not be read earlier this launch (a zero byte or a UTF-16 byte-order mark) and reads now. Settings read while it could not used their defaults; restart so every setting reads the file."
+msgstr ""
+
+msgid "multivoid.ini could not be read earlier this launch (locked or failing) and reads now. Settings read while it could not used their defaults; restart so every setting reads the file."
+msgstr ""
+
+msgid "multivoid.ini exists but could not be read (locked or failing)."
+msgstr "multivoid.ini 存在但读不出来（被占用或读取失败）。"
+
+msgid "multivoid.ini holds a zero byte or starts with a UTF-16 byte-order mark, as a file saved as UTF-16 (\"Unicode\") does. Save it again as UTF-8."
+msgstr "multivoid.ini 是零字节文件，或以 UTF-16 字节序标记开头（即用 UTF-16 保存过）。请另存为 UTF-8。"
+
+#, c-format
+msgid ""
+"multivoid.ini was checked against the known settings at launch.\n"
+"Nothing was changed automatically -- broken values fall back to\n"
+"their defaults for this session, except the settings that refuse\n"
+"instead (%s). The buttons below edit the file only when you click\n"
+"them. This notice returns next launch while anything is still off."
+msgstr "multivoid.ini 在启动时已与已知设置核对过。没有自动改动任何东西——出错的值本次会话回退到默认值，但那些「拒绝回退」的设置除外（%s）。下面的按钮只有在你点击时才编辑文件。只要还有问题，这条提示下次启动还会出现。"
+
+msgid "n/a"
+msgstr ""
+
+msgid "not blocked"
+msgstr ""
+
+msgid "not present"
+msgstr ""
+
+#, c-format
+msgid "now: %s"
+msgstr ""
+
+msgid "offline"
+msgstr ""
+
+msgid "other build"
+msgstr ""
+
+msgid "p2p"
+msgstr ""
+
+msgid "password"
+msgstr ""
+
+#, c-format
+msgid "pkt/s  %1$.0f in   %2$.0f out"
+msgstr ""
+
+msgid "reason (shown in the Banned list)"
+msgstr ""
+
+msgid "starting up"
+msgstr ""
+
+msgid "the host"
+msgstr ""
+
+msgid "this player"
+msgstr ""
+
+msgid "type a command -- 'help'"
+msgstr ""
+
+msgid "unknown"
+msgstr ""
+
+msgid "unlimited"
+msgstr ""
+
+#, c-format
+msgid "updated %ds ago"
+msgstr ""
+
+msgid "updated just now"
+msgstr ""
+
+#, c-format
+msgid "volume %.2fx"
+msgstr ""
+
+msgid "written by a build with another log format"
+msgstr ""
+
+msgid "your name"
+msgstr "你的名字"
+
+msgctxt "f1"
+msgid "Apply"
+msgstr ""
+
+msgctxt "f1"
+msgid "Ban"
+msgstr ""
+
+msgctxt "f1"
+msgid "Ban..."
+msgstr ""
+
+msgctxt "f1"
+msgid "Cancel"
+msgstr "取消"
+
+msgctxt "f1"
+msgid "Kick"
+msgstr "踢出"
+
+msgctxt "f1"
+msgid "Off"
+msgstr ""
+
+msgctxt "f1"
+msgid "On"
+msgstr ""
+
+msgctxt "f1"
+msgid "Refresh"
+msgstr "刷新"
+
+msgctxt "f1"
+msgid "Reset"
+msgstr ""
+
+msgctxt "f1"
+msgid "Teleport"
+msgstr "传送"
+
+msgctxt "f1"
+msgid "Unban"
+msgstr "解除封禁"
+
+msgctxt "hud"
+msgid "Ban"
+msgstr ""
+
+msgctxt "hud"
+msgid "Cancel"
+msgstr "取消"
+
+msgctxt "hud"
+msgid "Dismiss"
+msgstr ""
+
+msgctxt "hud"
+msgid "Kick"
+msgstr "踢出"
+
+msgctxt "hud"
+msgid "OK"
+msgstr ""
+
+msgctxt "server_browser"
+msgid "Back"
+msgstr "返回"
+
+msgctxt "server_browser"
+msgid "Connect"
+msgstr "连接"
+
+msgctxt "server_browser"
+msgid "Join"
+msgstr "加入"
+
+msgctxt "server_browser"
+msgid "OK"
+msgstr ""
+
+msgctxt "setting_value"
+msgid "off"
+msgstr ""
+
+msgctxt "setting_value"
+msgid "on"
+msgstr ""
