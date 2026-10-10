@@ -5,7 +5,8 @@
 //   CLIENT -- once its world is ready, passes when exactly one runtime ATV mirror stands here with nothing parked,
 //             held for a second; run covers either delivery (the broadcast, or the park's hand-back when it lands in
 //             a world not yet ready). In park mode atv_park_first_spawn=1 parks the first spawn that reaches a ready
-//             world, and the pass also needs the park to have held a spawn this session.
+//             world unless the park already holds it, and the pass also needs the park to have held a spawn this
+//             session.
 // "[ATV-SPAWN-DRILL] FAIL" is the lane failing (--fail-marker), "[ATV-SPAWN-DRILL] ABANDONED" the drill unable to do
 // its part (--dead-marker). Run with atv_spawn_drill=run|join|park and --done-marker "[ATV-SPAWN-DRILL] client DONE".
 

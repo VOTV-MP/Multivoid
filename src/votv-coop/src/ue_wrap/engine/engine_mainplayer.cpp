@@ -297,8 +297,8 @@ bool MainPlayerHasSelectedAction(void* mainPlayer) {
     if (!f.valid() || !Call(mainPlayer, f)) return false;
     // asName is an out FString: three paths write it empty, the names list's path a copy of a name, which
     // the engine allocated and the frame now owns, so it is freed here.
-    struct { wchar_t* data; int32_t num; int32_t max; } name{};
-    if (f.GetRaw(L"asName", &name, sizeof(name)) && name.data) R::EngineFree(name.data);
+    R::FString name{};
+    if (f.GetRaw(L"asName", &name, sizeof(name)) && name.Data) R::EngineFree(name.Data);
     return f.Get<bool>(L"return");
 }
 

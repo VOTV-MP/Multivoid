@@ -52,6 +52,7 @@ void Park(const std::wstring& key, const coop::net::AtvSpawnPayload& payload, co
 }
 
 void Discard(const std::wstring& key) { g_parked.erase(key); }
+bool Holds(const std::wstring& key) { return g_parked.count(key) != 0; }
 
 uint32_t ParkedEver() { return g_parkedEver; }
 size_t Pending() { return g_parked.size(); }

@@ -31,6 +31,17 @@ unsigned long LiveWriter(const std::wstring& path) {
     return line ? std::strtoul(line + 9, nullptr, 10) : 0;
 }
 
+// Whether `pid` names a running process: a log left by an exited one, still held open by a viewer, is not another
+// writer.
+bool Running(unsigned long pid) {
+    HANDLE p = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!p) return false;
+    DWORD code = 0;
+    const bool live = ::GetExitCodeProcess(p, &code) && code == STILL_ACTIVE;
+    ::CloseHandle(p);
+    return live;
+}
+
 }  // namespace
 
 void RunOnce() {
@@ -47,9 +58,10 @@ void RunOnce() {
     if (expected.size() > 4 && _wcsicmp(expected.c_str() + expected.size() - 4, L".log") == 0) expected.resize(expected.size() - 4);
     expected += L"." + std::to_wstring(me) + L".log";
     const unsigned long other = LiveWriter(base);
-    if (_wcsicmp(mine.c_str(), expected.c_str()) != 0 || other == 0 || other == me) {
-        UE_LOGW("[LOG-DRILL] FAIL: process %lu writes '%ls' (expected '%ls'); the usual log names process %lu",
-                me, mine.c_str(), expected.c_str(), other);
+    const bool running = other != 0 && other != me && Running(other);
+    if (_wcsicmp(mine.c_str(), expected.c_str()) != 0 || !running) {
+        UE_LOGW("[LOG-DRILL] FAIL: process %lu writes '%ls' (expected '%ls'); the usual log names process %lu "
+                "(running=%d; 0 = its process line unread)", me, mine.c_str(), expected.c_str(), other, running ? 1 : 0);
         return;
     }
     UE_LOGI("[LOG-DRILL] DONE: process %lu writes its own '%ls'; the usual log is process %lu's -- PASS", me,

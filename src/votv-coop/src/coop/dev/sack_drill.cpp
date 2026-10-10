@@ -46,6 +46,7 @@ constexpr uint64_t kReadyBoundMs = 3000;    // CLIENT: the aim to the player's l
 constexpr uint64_t kCheckEveryMs = 250;
 constexpr uint64_t kSettleBoundMs = 10000;  // CLIENT: the mirror's find to it at rest (it is spawned above the floor)
 constexpr int      kRestChecks    = 4;      // ...that many reads in a row, a check apart, within a centimetre
+constexpr int      kReaimMax      = 5;      // CLIENT: times the trace may leave the sack before the drill gives up
 
 enum class Step : uint8_t { Arm, Find, Settle, Aim, Ready, Press, Seen, Done };
 Step     g_step = Step::Arm;
@@ -60,6 +61,7 @@ coop::director::AimFan g_fan;
 ue_wrap::FVector g_lastAt{};
 int      g_restReads = 0;
 uint64_t g_nextReadMs = 0;
+int      g_reaims = 0;
 
 bool Enabled() {
     static const bool on = coop::config::ResolveString(::coop::config_registry::rows::sack_drill) == "run";
@@ -116,10 +118,18 @@ void* NearestSack(void* player) {
         auto* n = static_cast<Near*>(c);
         ue_wrap::FVector at{};
         if (R::NameStartsWith(R::NameOf(obj), L"Default__") || !E::TryGetActorLocation(obj, at)) return;
-        const float cm = std::hypot(at.X - n->from.X, at.Y - n->from.Y);
+        const float dx = at.X - n->from.X, dy = at.Y - n->from.Y, dz = at.Z - n->from.Z;
+        const float cm = std::sqrt(dx * dx + dy * dy + dz * dz);
         if (cm < n->bestCm) { n->best = obj; n->bestCm = cm; }
     }, &ctx);
     return ctx.best;
+}
+
+// CLIENT: the trace left the sack; aim again, a bounded number of times.
+void Reaim() {
+    if (++g_reaims > kReaimMax) { Abandon("the trace kept leaving the sack after the aim took it"); return; }
+    g_fan = coop::director::AimFan();
+    Next(Step::Aim);
 }
 
 void HostTick(coop::net::Session* s) {
@@ -223,28 +233,26 @@ void ClientTick() {
         if (st == coop::director::AimFan::State::Aimed) Next(Step::Ready);
         return;
     }
-    case Step::Ready:   // the trace on the sack, then the player's look settled on it (a later tick than the trace)
-        if (E::ReadMainPlayerHitActor(player) != g_sack.Get()) {   // the trace left it: aim again
-            g_fan = coop::director::AimFan();
-            Next(Step::Aim);
-            return;
-        }
+    case Step::Ready: {   // the trace on the sack, then the player's look settled on it (a later tick than the trace)
+        void* sack = g_sack.Get();
+        if (!sack) { Abandon("the sack's mirror died"); return; }
+        if (E::ReadMainPlayerHitActor(player) != sack) { Reaim(); return; }
         if (E::MainPlayerHasSelectedAction(player)) { Next(Step::Press); return; }
         if (Expired(kReadyBoundMs)) {
-            SayLookState(player, g_sack.Get());
+            SayLookState(player, sack);
             Abandon("the player's look never settled on the sack");
         }
         return;
-    case Step::Press:
-        if (E::ReadMainPlayerHitActor(player) != g_sack.Get()) {   // the press goes to whatever the trace holds
-            g_fan = coop::director::AimFan();
-            Next(Step::Aim);
-            return;
-        }
+    }
+    case Step::Press: {   // the press goes to whatever the trace holds
+        void* sack = g_sack.Get();
+        if (!sack) { Abandon("the sack's mirror died"); return; }
+        if (E::ReadMainPlayerHitActor(player) != sack) { Reaim(); return; }
         if (!E::CallMainPlayerUseSelectedAction(player)) { Abandon("useSelectedAction did not dispatch"); return; }
         UE_LOGI("[SACK-DRILL] client pressed the sack");
         Next(Step::Seen);
         return;
+    }
     case Step::Seen: {
         int32_t now1 = 0;
         if (ue_wrap::economy::ReadPoints(&now1) && now1 > g_points0) {
@@ -278,6 +286,7 @@ void OnDisconnect() {
     g_sack.Reset();
     g_restReads = 0;
     g_nextReadMs = 0;
+    g_reaims = 0;
     g_lastAt = {};
 }
 

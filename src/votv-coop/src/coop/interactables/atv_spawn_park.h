@@ -17,6 +17,8 @@ namespace coop::atv_sync::spawn_park {
 void Park(const std::wstring& key, const coop::net::AtvSpawnPayload& payload, const char* why);
 // A spawn that landed, was malformed, or whose ATV was destroyed: nothing for it waits any longer.
 void Discard(const std::wstring& key);
+// Whether a spawn for this key waits here: a hand-back still holds its entry while OnAtvSpawn runs it.
+bool Holds(const std::wstring& key);
 // Tick, inside a gameplay world: hand each parked spawn back to OnAtvSpawn, which parks it again while the world is
 // still not ready. A half-second poll of that readiness.
 void DrainReady();

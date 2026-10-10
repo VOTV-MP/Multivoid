@@ -123,8 +123,7 @@ bool YieldedAtOrAfter(uint32_t eid, uint8_t gen) {
     return y != g_yieldedGen.end() && !GenAfter(gen, y->second);
 }
 
-// The last stream ends applied here, a ring of eight: a poll a quarter-second apart reads them all.
-constexpr size_t kRecentEnds = 8;
+// The last stream ends applied here, a ring of kRecentEnds (prop_drive_stream.h).
 AppliedEnd g_ends[kRecentEnds];
 size_t g_endCount = 0;   // ends recorded since the session began; the newest is at (g_endCount - 1) % kRecentEnds
 

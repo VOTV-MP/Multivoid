@@ -64,11 +64,11 @@ void OnAtvSpawn(const coop::net::AtvSpawnPayload& payload, uint8_t /*senderPeerS
         spawn_park::Park(synthKey, payload, "the receiving world is not ready");
         return;
     }
-    // The ATV spawn drill's park arm: the first spawn is parked as if the world were not ready, so the park's
-    // hand-back is what spawns it.
+    // The ATV spawn drill's park arm: the first spawn reaching a ready world is parked as if it were not, so the
+    // park's hand-back is what spawns it. A hand-back is already the park's work and is let through.
     static const bool s_parkFirst = coop::config::ResolveFlag(coop::config_registry::rows::atv_park_first_spawn);
     static bool s_parkedFirst = false;
-    if (s_parkFirst && !s_parkedFirst) {
+    if (s_parkFirst && !s_parkedFirst && !spawn_park::Holds(synthKey)) {
         s_parkedFirst = true;
         spawn_park::Park(synthKey, payload, "the drill parks the first spawn");
         return;

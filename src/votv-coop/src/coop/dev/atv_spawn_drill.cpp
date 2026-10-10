@@ -29,7 +29,7 @@ constexpr float    kLiftCm        = 50.f;
 constexpr uint64_t kAnnounceBound = 30000;   // HOST: the spawn to the lane's announce
 constexpr uint64_t kMirrorBound   = 60000;   // CLIENT: world-ready to the mirror
 constexpr uint64_t kCheckEveryMs  = 250;
-constexpr int      kOnceChecks    = 4;       // CLIENT: polls in a row the count must hold at one, a second
+constexpr int      kOnceChecks    = 5;       // CLIENT: polls in a row the count must hold at one: a second at 4 Hz
 
 enum class Step : uint8_t { Arm, Announce, Mirror, Done };
 Step     g_step = Step::Arm;

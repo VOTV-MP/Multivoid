@@ -70,10 +70,8 @@ void Push(std::vector<Birth>& births, void* actor, uint8_t authorSlot) {
     births.push_back(std::move(b));
 }
 
-}  // namespace
-
-namespace {
 uint32_t g_endedGone = 0, g_endedExpired = 0;   // the throw drill's counts; process-long, the drill baselines
+
 }  // namespace
 
 void NoteAuthoredBirth(void* actor) {

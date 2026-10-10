@@ -142,16 +142,22 @@ void ClientTick() {
         const uint64_t now = ::GetTickCount64();
         if (now < g_nextCheckMs) return;
         g_nextCheckMs = now + kCheckEveryMs;
-        // The newest end since the baseline whose prop is a drive here: the host's dropped drive.
-        coop::prop_drive_stream::AppliedEnd ends[8];
-        const size_t n = coop::prop_drive_stream::RecentEnds(ends, 8);
+        // The one drive whose end landed here since the baseline: the host's dropped drive. Ends of two drives
+        // cannot be told apart from here, so the drill does not choose between them.
+        namespace DS = coop::prop_drive_stream;
+        DS::AppliedEnd ends[DS::kRecentEnds];
+        const size_t n = DS::RecentEnds(ends, DS::kRecentEnds);
         void* actor = nullptr;
         uint32_t eid = 0;
         ue_wrap::FVector pose{};
-        for (size_t k = 0; k < n && !actor; ++k) {
-            if (ends[k].atMs <= g_baseMs) continue;
+        for (size_t k = 0; k < n; ++k) {
+            if (ends[k].atMs <= g_baseMs || ends[k].eid == eid) continue;
             void* a = coop::remote_prop::ResolveLiveActorByEid(ends[k].eid);
-            if (a && R::ClassNameOf(a) == kDriveCls) { actor = a; eid = ends[k].eid; pose = ends[k].pose; }
+            if (!a || R::ClassNameOf(a) != kDriveCls) continue;
+            if (actor) { Abandon("the ends of two drives landed here this session; the drill cannot tell the host's"); return; }
+            actor = a;
+            eid = ends[k].eid;
+            pose = ends[k].pose;
         }
         ue_wrap::FVector here{};
         if (!actor || !E::TryGetActorLocation(actor, here)) {

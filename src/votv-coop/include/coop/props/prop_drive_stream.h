@@ -39,9 +39,10 @@ bool IsParked(void* actor);
 // Session end: every driven prop gets its physics back. Game thread.
 void OnDisconnect();
 
-// The stream ends applied here lately, newest first, at most `max` of the last eight: each eid, the
-// host's final pose and the tick it landed (GetTickCount64). Cleared with the session. For the fall
-// drill's verdict. Game thread.
+// The stream ends applied here lately, newest first, at most `max` of the last kRecentEnds: each eid,
+// the host's final pose and the tick it landed (GetTickCount64). Cleared with the session. For the fall
+// drill's verdict, which polls it at 4 Hz: an end pushed out between two polls is lost to it. Game thread.
+inline constexpr size_t kRecentEnds = 8;
 struct AppliedEnd {
     uint32_t eid = 0;
     ue_wrap::FVector pose{};
