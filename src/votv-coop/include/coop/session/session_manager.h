@@ -146,6 +146,10 @@ bool ConnectP2PDirect(const std::string& hostIdentity, const coop::net::Config& 
 // until a check completes; an unreachable master keeps the last known line.
 void RefreshLatestVersion();
 std::string LatestVersionLine(bool* outdated);
+// The build that supersedes this one ("b230", or the release's name) when the last check found one,
+// else empty: for a surface that composes its own sentence in the player's language. The line above
+// stays English for the main menu's label and the log.
+std::string LatestSuperseding();
 
 // The host hide toggle, a visibility request; the session stays live. Mirrored for ListedState.
 void SetListed(bool listed);

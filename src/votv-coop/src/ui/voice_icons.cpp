@@ -64,7 +64,6 @@ void Draw(ImDrawList* dl, ImVec2 c, float size, VoiceIcon icon, float alpha) {
     const float h = size;
     const float t = (h * 0.10f < 1.0f) ? 1.0f : h * 0.10f;
     const int a = static_cast<int>(alpha * 255.0f);
-    const ImU32 white = IM_COL32(235, 240, 245, a);
     const ImU32 green = IM_COL32(120, 235, 140, a);
     const ImU32 red = IM_COL32(245, 105, 95, a);
     const ImU32 grey = IM_COL32(150, 155, 162, a);

@@ -7,6 +7,8 @@
 // final Publish (Done or Failed) is its release.
 
 #include "coop/bug_report/report_bundle.h"
+
+#include "l10n/mark.h"
 #include "report_stream.h"
 
 #include "coop/atomic_file/atomic_file.h"
@@ -331,9 +333,11 @@ std::wstring MoveToFreeName(const std::wstring& part, const std::wstring& base, 
 }
 
 Status Build(const Form& form, const Capture& cap) {
-    constexpr const char* kWriteFailed = "Could not write the report file.";
-    constexpr const char* kReadLog = "Could not read the log.";
-    constexpr const char* kClosing = "The game is closing.";
+    // The status sentences are marked for translation and drawn translated by the pane (l10n::T on
+    // Status::error); the log keeps them English.
+    constexpr const char* kWriteFailed = L10N_MARK("Could not write the report file.");
+    constexpr const char* kReadLog = L10N_MARK("Could not read the log.");
+    constexpr const char* kClosing = L10N_MARK("The game is closing.");
     const std::wstring exeDir = ue_wrap::paths::ExeDir();
     if (exeDir.empty()) return Fail(kWriteFailed, "the game folder's path is empty");
     const std::wstring reports = exeDir + L"\\multivoid_reports";
@@ -352,7 +356,7 @@ Status Build(const Form& form, const Capture& cap) {
     const bool iniOk = iniRead == coop::config::IniReport::Ok;
     std::vector<Entry> entries = ListEntries();
     if (!entries[0].leftOut.empty())
-        return Fail("Could not find the log.", "multivoid.log is " + entries[0].leftOut);
+        return Fail(L10N_MARK("Could not find the log."), "multivoid.log is " + entries[0].leftOut);
     Redactor redactor(std::move(ctx));
     const std::string reportText = ReportText(form);
 
@@ -447,7 +451,7 @@ Status Build(const Form& form, const Capture& cap) {
 }
 
 void FailToStart(const std::string& cause) {
-    Publish(Fail("Could not start the report.", cause));
+    Publish(Fail(L10N_MARK("Could not start the report."), cause));
 }
 
 // The worker thread's whole body. An exception escaping a detached thread is std::terminate, so
@@ -463,9 +467,9 @@ void WorkerMain(const Form& form, const Capture& cap) {
         try {
             result = Build(form, cap);
         } catch (const std::exception& e) {
-            result = Fail("The report could not be made.", std::string("exception: ") + e.what());
+            result = Fail(L10N_MARK("The report could not be made."), std::string("exception: ") + e.what());
         } catch (...) {
-            result = Fail("The report could not be made.", "a non-standard exception");
+            result = Fail(L10N_MARK("The report could not be made."), "a non-standard exception");
         }
         Publish(std::move(result));
     } catch (...) {

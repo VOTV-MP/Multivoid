@@ -377,9 +377,17 @@ void Sync(bool force) {
     if (now >= g_noticeUntilMs) g_notice.clear();
     g_sNotice.Set(g_notice);
 
-    bool outdated = false;
-    const std::string latest = sm::LatestVersionLine(&outdated);
-    g_sUpdate.Set(outdated ? latest : std::string());
+    // The pane shows the update line only when a newer build exists, composed here in the player's
+    // language; the stored line stays English for the menu's label and the log.
+    const std::string superseding = sm::LatestSuperseding();
+    std::string update;
+    if (!superseding.empty()) {
+        char line[256];
+        if (l10n::Fmt(line, sizeof(line), l10n::T("%1$s -- UPDATE AVAILABLE: %2$s"), sm::DisplayVersion().c_str(),
+                      superseding.c_str()) >= 0)
+            update = line;
+    }
+    g_sUpdate.Set(update);
 
     // The name everyone else will see, phrased as an answer rather than as a claim about what
     // the player is doing (see the status pane's note). The Change name button edits exactly

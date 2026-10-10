@@ -152,7 +152,7 @@ void RenderFontPref() {
         int cur = static_cast<int>(F::RoleFamily(role));
         ImGui::PushID(r);
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.f);
-        if (ImGui::Combo(F::RoleLabel(role), &cur, famItems, F::kFamilyCount))
+        if (ImGui::Combo(l10n::Label(F::RoleLabel(role), "font_role"), &cur, famItems, F::kFamilyCount))
             coop::config::SetValue(coop::config_registry::FontRoleRow(static_cast<size_t>(r)),
                                    F::FamilyToken(static_cast<F::Family>(cur)));
         ImGui::PopID();

@@ -209,6 +209,7 @@ namespace {
 std::mutex g_latestMu;
 std::string g_latestLine;          // empty until a check completes WITH a verdict
 bool g_latestOutdated = false;     // amber tint when true
+std::string g_latestSuperseding;   // the superseding build's name when outdated, else empty
 std::atomic<bool> g_latestInFlight{false};
 std::atomic<uint64_t> g_latestFetchMs{0};  // GetTickCount64() of the last fetch START (0 = none yet)
 constexpr uint64_t kLatestMinIntervalMs = 8000;  // no-DoS floor between /v1/latest fetches
@@ -231,6 +232,7 @@ void RefreshLatestVersion() {
             if (info.ok && info.proto > 0) {  // an unreachable master keeps the last known line
                 const int ours = static_cast<int>(net::kProtocolVersion);
                 std::string line;
+                std::string superseding;
                 bool outdated = false;
                 if (info.proto == ours) {
                     // The current build is the latest release: the compact "(latest)" tag.
@@ -240,8 +242,8 @@ void RefreshLatestVersion() {
                     // No URL: the label is a one-line UTextBlock, not a hyperlink, so an address
                     // would cost ~37 characters to deliver a string nobody can act on. What stays
                     // is which build supersedes yours.
-                    line = DisplayVersion() + " -- UPDATE AVAILABLE: " +
-                           (info.mod.empty() ? ("b" + std::to_string(info.proto)) : info.mod);
+                    superseding = info.mod.empty() ? ("b" + std::to_string(info.proto)) : info.mod;
+                    line = DisplayVersion() + " -- UPDATE AVAILABLE: " + superseding;
                 } else {
                     // We are newer than the master's latest (a dev build); informational.
                     line = DisplayVersion() + " (dev; latest released b" +
@@ -251,6 +253,7 @@ void RefreshLatestVersion() {
                 std::lock_guard<std::mutex> lk(g_latestMu);
                 g_latestLine = line;
                 g_latestOutdated = outdated;
+                g_latestSuperseding = superseding;
             }
         } catch (const std::exception& e) {
             UE_LOGW("session_manager: version check worker exception: %s", e.what());
@@ -263,6 +266,11 @@ std::string LatestVersionLine(bool* outdated) {
     std::lock_guard<std::mutex> lk(g_latestMu);
     if (outdated) *outdated = g_latestOutdated;
     return g_latestLine;
+}
+
+std::string LatestSuperseding() {
+    std::lock_guard<std::mutex> lk(g_latestMu);
+    return g_latestSuperseding;
 }
 
 void Refresh() {

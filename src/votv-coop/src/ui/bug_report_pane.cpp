@@ -114,7 +114,7 @@ void DrawStatus(const BR::Status& st) {
         }
         case BR::Phase::Failed:
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.45f, 0.42f, 1.0f));
-            ImGui::TextWrapped("%s", st.error.c_str());
+            ImGui::TextWrapped("%s", l10n::T(st.error.c_str()));   // marked where report_bundle defines it
             ImGui::PopStyleColor();
             break;
     }
