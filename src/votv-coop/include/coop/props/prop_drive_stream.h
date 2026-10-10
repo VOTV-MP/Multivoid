@@ -13,6 +13,10 @@
 
 #pragma once
 
+#include "ue_wrap/core/types.h"
+
+#include <cstdint>
+
 namespace coop::net {
 class Session;
 struct PropDriveEndPayload;
@@ -33,5 +37,9 @@ bool IsParked(void* actor);
 
 // Session end: every driven prop gets its physics back. Game thread.
 void OnDisconnect();
+
+// The last stream end applied here: its eid, the host's final pose and the tick it landed
+// (GetTickCount64). False before any. For the fall drill's verdict. Game thread.
+bool LastAppliedEnd(uint32_t* eid, ue_wrap::FVector* pose, uint64_t* atMs);
 
 }  // namespace coop::prop_drive_stream

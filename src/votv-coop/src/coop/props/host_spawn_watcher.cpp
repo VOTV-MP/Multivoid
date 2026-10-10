@@ -2,6 +2,8 @@
 
 #include "coop/props/host_spawn_watcher.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/element/element.h"
 #include "coop/element/registry.h"          // EidForActor (drain: tracked/mirror exclusion)
 #include "coop/net/protocol.h"
@@ -386,6 +388,9 @@ void CoastIfFalling(void* actor) {
         return;
     }
     if (PT::GetPropElementIdForActor(actor) == coop::element::kInvalidId) return;
+    // The fall drill's red: a falling birth is not streamed, so no copy gets the host's final pose.
+    static const bool s_noCoast = coop::config::ResolveFlag(coop::config_registry::rows::prop_fall_no_coast);
+    if (s_noCoast) return;
     // Simulating and awake, which also means neither frozen, static nor asleep: a body born resting,
     // or one that has landed by the drain, opens no row.
     if (!(coop::prop_wire_parity::PhysFlagsOf(actor) & pf::kSimulatePhysics)) return;

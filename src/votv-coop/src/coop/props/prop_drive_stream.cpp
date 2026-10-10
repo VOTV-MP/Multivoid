@@ -17,6 +17,8 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 
+#include <windows.h>
+
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -125,8 +127,17 @@ bool YieldedAtOrAfter(uint32_t eid, uint8_t gen) {
 // parity restore the join's converge applies after its teleport, then the velocity -- only into
 // a body this module parked and the flags leave simulating, and only when it is not zero, since
 // assigning a velocity wakes a body at rest.
+struct AppliedEnd {
+    bool have = false;
+    uint32_t eid = 0;
+    ue_wrap::FVector pose{};
+    uint64_t atMs = 0;
+};
+AppliedEnd g_lastEnd;
+
 void ApplyEnd(void* actor, const coop::net::PropDriveEndPayload& p, bool parkedHere) {
     E::SetActorLocation(actor, ue_wrap::FVector{p.x, p.y, p.z});
+    g_lastEnd = AppliedEnd{true, p.eid, ue_wrap::FVector{p.x, p.y, p.z}, ::GetTickCount64()};
     E::SetActorRotation(actor, ue_wrap::FRotator{p.pitch, p.yaw, p.roll});
     // The host's frozen and sleep at the end first: a hook that bites a frozen prop unfreezes it on
     // the host only (hook_C's attach_a runs setPropProps), so a copy still frozen here takes the
@@ -146,6 +157,14 @@ void ApplyEnd(void* actor, const coop::net::PropDriveEndPayload& p, bool parkedH
 }
 
 }  // namespace
+
+bool LastAppliedEnd(uint32_t* eid, ue_wrap::FVector* pose, uint64_t* atMs) {
+    if (!g_lastEnd.have) return false;
+    *eid = g_lastEnd.eid;
+    *pose = g_lastEnd.pose;
+    *atMs = g_lastEnd.atMs;
+    return true;
+}
 
 void TickApplyAndDrive(coop::net::Session& s) {
     UE_ASSERT_GAME_THREAD("prop_drive_stream::TickApplyAndDrive");

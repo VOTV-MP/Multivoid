@@ -469,6 +469,11 @@ CFG_FLAG(physmods_drill, "physmods_drill", "dev", false, "VOTVCOOP_PHYSMODS_DRIL
     "line says whether its array holds that one module alone. A joiner whose desk already holds modules at "
     "its world-ready (a rejoin into the drill's world) plugs nothing and says what it loaded. Lines tagged "
     "[PHYSMODS-DRILL].")
+CFG_STRING(fall_drill, "fall_drill", "dev", "", "VOTVCOOP_FALL_DRILL", false,
+    "Drill (BOTH peers): a host birth that falls lands on the client where it lands on the host. run -- the host "
+    "drops a drive from 4 m once the client's world is ready; the client's DONE line ends it.")
+CFG_FLAG(prop_fall_no_coast, "prop_fall_no_coast", "dev", false, "VOTVCOOP_PROP_FALL_NO_COAST",
+    "Developer: a falling host birth is not streamed to the clients (the fall drill's red).")
 CFG_STRING(sack_drill, "sack_drill", "dev", "", "VOTVCOOP_SACK_DRILL", false,
     "Drill (BOTH peers): a client's point sack is paid by the host, once. run -- the host spawns a sack before the "
     "client's puppet once its world is ready; the client aims and presses it; the host's DONE line ends it.")
