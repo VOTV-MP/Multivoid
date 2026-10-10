@@ -32,6 +32,7 @@ constexpr float  kTraceAheadCm  = 200.f;    // SteepAhead looks this far toward 
 constexpr float  kKneeCm        = -50.f;    // ...at knee height, under the walker's centre
 constexpr float  kWallNormalZ   = 0.3f;     // a hit flatter than a wall: a slope, not a door, box or fence
 constexpr size_t kMaxSpots      = 32;
+constexpr float  kFailedViaCm   = 300.f;    // a candidate this near a via point that did not hold is not one
 
 float Flat(const ue_wrap::FVector& a, const ue_wrap::FVector& b) { return std::hypot(a.X - b.X, a.Y - b.Y); }
 
@@ -106,7 +107,20 @@ void Search::Begin(const ue_wrap::FVector& from, const ue_wrap::FVector& goal, c
         spots_.push_back(steep);
         at = spots_.size() - 1;
     }
+    if (lastFound_ && Flat(spots_[at], lastRound_) <= kSpotClearCm &&
+        std::fabs(spots_[at].Z - lastRound_.Z) <= kSpotLevelCm) {
+        if (failedVias_.size() == kMaxSpots) failedVias_.erase(failedVias_.begin());
+        failedVias_.push_back(lastVia_);
+        UE_LOGI("director/detour: the way round by (%.0f,%.0f,%.0f) did not hold -- not offered again", lastVia_.X,
+                lastVia_.Y, lastVia_.Z);
+    }
     BeginRound(from, goal, at, floorZ);
+}
+
+bool Search::NearFailedVia(const ue_wrap::FVector& via) const {
+    for (const ue_wrap::FVector& f : failedVias_)
+        if (Flat(f, via) <= kFailedViaCm && std::fabs(f.Z - via.Z) <= kSpotLevelCm) return true;
+    return false;
 }
 
 void Search::BeginRound(const ue_wrap::FVector& from, const ue_wrap::FVector& goal, size_t spot, float floorZ) {
@@ -115,6 +129,7 @@ void Search::BeginRound(const ue_wrap::FVector& from, const ue_wrap::FVector& go
     round_ = spots_[spot];
     floorZ_ = floorZ;
     active_ = true;
+    lastFound_ = false;
     next_ = 0;
     best_.clear();
     bestScore_ = 0.f;
@@ -140,6 +155,7 @@ bool Search::Holds(void* player, const ue_wrap::FVector& via, std::vector<ue_wra
                    float* score) const {
     // The way there: floor the body stands on all along, clear of every remembered spot past the
     // stretch the walker stands in.
+    if (NearFailedVia(via)) return false;
     std::vector<ue_wrap::FVector> there;
     if (!E::FindNavPath(player, from_, via, there) || there.size() < 2 || Flat(there.back(), via) > kViaReachCm)
         return false;
@@ -174,11 +190,16 @@ Search::Step Search::Advance(void* player, std::vector<ue_wrap::FVector>* route)
             (best_.empty() || score < bestScore_)) {
             best_ = std::move(toVia);
             bestScore_ = score;
+            bestVia_ = {floor.X, floor.Y, floor.Z + kViaLiftCm};
         }
         if (dir == kDirections - 1 && !best_.empty()) {   // a ring done that held one: the nearest way round
             active_ = false;
-            UE_LOGI("director/detour: a via point %.0f cm round the spot holds (route %.0f cm, %.0f cm to the goal "
-                    "in all)", kRingsCm[ring], Length(best_), bestScore_);
+            lastFound_ = true;
+            lastVia_ = bestVia_;
+            lastRound_ = round_;
+            UE_LOGI("director/detour: a via point %.0f cm round the spot holds, at (%.0f,%.0f,%.0f) (route %.0f cm, "
+                    "%.0f cm to the goal in all)", kRingsCm[ring], bestVia_.X, bestVia_.Y, bestVia_.Z, Length(best_),
+                    bestScore_);
             *route = std::move(best_);
             best_.clear();
             return Step::Found;

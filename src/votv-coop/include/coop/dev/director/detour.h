@@ -29,7 +29,9 @@ bool SteepAhead(void* player, const ue_wrap::FVector& pos, const ue_wrap::FVecto
 
 class Search {
 public:
-    // Remembers the spot `steep` and starts a search round it, from `from` toward `goal`.
+    // Remembers the spot `steep` and starts a search round it, from `from` toward `goal`. Stopped at the
+    // same spot again after the last way round it was found, that way did not hold: its via point is
+    // never offered again, so each retry tries the next way round.
     void Begin(const ue_wrap::FVector& from, const ue_wrap::FVector& goal, const ue_wrap::FVector& steep,
                float floorZ);
     // Starts a search round a spot already remembered, the one `route` passes (PassedSpot).
@@ -50,13 +52,19 @@ private:
     bool Holds(void* player, const ue_wrap::FVector& via, std::vector<ue_wrap::FVector>* toVia,
                float* score) const;
 
+    bool NearFailedVia(const ue_wrap::FVector& via) const;
+
     std::vector<ue_wrap::FVector> spots_;
+    std::vector<ue_wrap::FVector> failedVias_;
     ue_wrap::FVector from_{}, goal_{}, round_{};
+    ue_wrap::FVector lastVia_{}, lastRound_{};
+    bool  lastFound_ = false;               // the last search found a way round lastRound_, by lastVia_
     float floorZ_ = 0.f;
     bool  active_ = false;
     int   next_ = 0;                        // the next candidate: ring * kDirections + direction
     float bestScore_ = 0.f;
     std::vector<ue_wrap::FVector> best_;    // the best held route of the ring under evaluation
+    ue_wrap::FVector bestVia_{};
 };
 
 }  // namespace coop::director::detour

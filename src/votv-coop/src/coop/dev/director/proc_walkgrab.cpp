@@ -57,7 +57,7 @@ constexpr float kDoorReachCm    = 320.f; // a closed door within this of the stu
 constexpr int   kMaxDoorOpens   = 20;    // grind: keep opening doors as needed (never-give-up rule)
 constexpr int   kUnstickTicks   = 70;    // ~0.28 s of sideways juke to slide off a box before re-checking
 constexpr int   kSettleTicks    = 12;    // ~0.25 s braking before the grab
-constexpr int   kMaxDetours     = 12;    // ways round a slope too steep for the body, per walk (detour.h)
+constexpr int   kMaxDetours     = 24;    // ways round a slope too steep for the body, per walk (detour.h)
 // A walk-to target is reached on its own level only: the walker's centre within this of the target's
 // height, less than a storey. A route whose end the navmesh put on the floor below counts as
 // horizontally there, 11 m under a door on the dish building's upper floor.
