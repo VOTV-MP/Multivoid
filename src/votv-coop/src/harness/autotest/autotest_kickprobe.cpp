@@ -16,7 +16,6 @@
 namespace harness::autotest {
 namespace {
 
-constexpr DWORD kPollMs = 500;
 constexpr DWORD kSeatWaitMs = 180'000;  // the client boots, joins, downloads and loads first
 constexpr DWORD kSettleMs = 10'000;     // seated, in the world, and playing before the kick
 
@@ -28,15 +27,10 @@ void RunKickProbe() {
         return;
     }
     auto& s = harness::session_runtime::Session();
-    DWORD waited = 0;
-    while (!(s.IsSlotReady(1) && s.IsSlotWorldReady(1))) {
-        if (waited >= kSeatWaitMs) {
-            UE_LOGW("kick_probe: INCONCLUSIVE -- no client was seated and world-ready in slot 1 "
-                    "within %lu s", static_cast<unsigned long>(kSeatWaitMs / 1000));
-            return;
-        }
-        ::Sleep(kPollMs);
-        waited += kPollMs;
+    if (!WaitPeerWorldReady(1, kSeatWaitMs)) {
+        UE_LOGW("kick_probe: INCONCLUSIVE -- no client was seated and world-ready in slot 1 "
+                "within %lu s", static_cast<unsigned long>(kSeatWaitMs / 1000));
+        return;
     }
     UE_LOGI("kick_probe: slot 1 seated and world-ready -- kicking in %lu s",
             static_cast<unsigned long>(kSettleMs / 1000));

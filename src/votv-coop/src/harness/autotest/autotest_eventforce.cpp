@@ -1,18 +1,13 @@
 // harness/autotest/autotest_eventforce.cpp -- event force-NOW smoke driver (coop/dev/event_force).
 //
-// HOST-ONLY (client observes via wire). Verifies the volume-gate feature end to end
-// on the canonical row (obelisk):
-//   1. PRE  -- badge snapshot path: RequestRefresh + StatusFor until the box resolves; a fresh
-//              save must read armed=0 shots=1 ([volume-gated] badge state).
-//   2. FORCE -- ForceNow("obelisk"): HostFire arm (the runEvent watch broadcasts -> the client
-//              log shows its NOT-replayed line; obelisk's prop spawns and player punch are
-//              host-only) + the posted overlap dispatch with the local pawn (event_force logs
-//              "'TB_event_obelisk' FORCED").
-//   3. POST -- snapshot again: shots must have dropped to 0 ([FIRED] badge state), proving the
-//              native class filter + N decrement + collision-off ran in game bytecode.
-// Greppable verdict: "eventforce_test: VERDICT PASS|FAIL".
-//
-// Gated by env VOTVCOOP_RUN_EVENTFORCE_TEST=1 (autonomous mp.py only; not an ini flag).
+// HOST-ONLY (client observes via wire). The volume-gate feature end to end on the canonical row
+// (obelisk), each phase ended by readiness, never a clock: slot 1 world-ready (WaitPeerWorldReady),
+// so the arm broadcast reaches a live peer; PRE, the badge snapshot until the box resolves (a fresh
+// save reads armed=0 shots=1, the [volume-gated] badge); FORCE, ForceNow("obelisk") -- the HostFire
+// arm (the client logs its NOT-replayed line; obelisk's prop spawns and punch are host-only) and the
+// posted overlap dispatch ("'TB_event_obelisk' FORCED"); POST, snapshots until the shots drop to 0
+// (the [FIRED] badge: the native class filter, N decrement and collision-off ran in game bytecode).
+// Greppable verdict: "eventforce_test: VERDICT PASS|FAIL". Env VOTVCOOP_RUN_EVENTFORCE_TEST=1.
 
 #include "harness/autotest.h"
 
@@ -29,12 +24,23 @@ namespace {
 
 namespace EF = coop::dev::event_force;
 
-// One refresh + settle + read. RequestRefresh is ~1 Hz-limited internally; the
-// 2.5 s gap keeps every call effective.
-EF::BoxStatus SnapshotOnce(const char* eventName) {
-    EF::RequestRefresh();
-    ::Sleep(2500);
-    return EF::StatusFor(eventName);
+constexpr DWORD kReadyBudgetMs = 180'000;   // the client boots, joins, downloads and loads first
+constexpr DWORD kPhaseBudgetMs = 60'000;    // a snapshot phase: the box resolves, the shots drop
+constexpr DWORD kPollMs        = 250;
+
+// Snapshots until `done` holds or the phase's budget runs out. RequestRefresh is about 1 Hz-limited
+// internally, so asking each poll costs nothing extra; the refresh lands on the game thread and
+// StatusFor reads what it last left.
+template <class Done>
+EF::BoxStatus SnapshotUntil(const char* eventName, Done done) {
+    EF::BoxStatus st{};
+    for (DWORD waited = 0; waited < kPhaseBudgetMs; waited += kPollMs) {
+        EF::RequestRefresh();
+        st = EF::StatusFor(eventName);
+        if (done(st)) return st;
+        ::Sleep(kPollMs);
+    }
+    return st;
 }
 
 }  // namespace
@@ -44,17 +50,15 @@ void RunAutonomousEventForceTest() {
         UE_LOGI("eventforce_test: not host -- this routine is host-only (client observes via wire)");
         return;
     }
-    // Same settle reasoning as eventfire_test: host bind + client transport connect, so the
-    // arm broadcast has a live peer to reach.
-    UE_LOGI("eventforce_test: starting on host (waiting 55 s for world + client transport)");
-    ::Sleep(55000);
-
-    // PRE: wait for the box snapshot to resolve (world actors up), <= 60 s.
-    EF::BoxStatus pre;
-    for (int i = 0; i < 24; ++i) {
-        pre = SnapshotOnce("obelisk");
-        if (pre.resolved) break;
+    UE_LOGI("eventforce_test: starting on host (waiting for slot 1 to be world-ready)");
+    if (!WaitPeerWorldReady(1, kReadyBudgetMs)) {
+        UE_LOGW("eventforce_test: VERDICT FAIL -- no client was seated and world-ready in slot 1 within %lu s",
+                static_cast<unsigned long>(kReadyBudgetMs / 1000));
+        return;
     }
+
+    // PRE: the box snapshot resolves (world actors up).
+    const EF::BoxStatus pre = SnapshotUntil("obelisk", [](const EF::BoxStatus& s) { return s.resolved; });
     UE_LOGI("eventforce_test: PRE %s resolved=%d armed=%d shots=%d",
             pre.boxName, pre.resolved ? 1 : 0, pre.armed ? 1 : 0, pre.shots);
     if (!pre.resolved) {
@@ -69,9 +73,9 @@ void RunAutonomousEventForceTest() {
         UE_LOGW("eventforce_test: VERDICT FAIL -- ForceNow refused (dev gate? row missing?)");
         return;
     }
-    ::Sleep(4000);  // arm + force GT tasks + the native chain
-
-    const EF::BoxStatus post = SnapshotOnce("obelisk");
+    // POST: the arm and force game-thread tasks and the native chain have run once the shots drop.
+    const EF::BoxStatus post =
+        SnapshotUntil("obelisk", [](const EF::BoxStatus& s) { return s.resolved && s.shots == 0; });
     UE_LOGI("eventforce_test: POST %s resolved=%d armed=%d shots=%d",
             post.boxName, post.resolved ? 1 : 0, post.armed ? 1 : 0, post.shots);
 
