@@ -267,6 +267,11 @@ def signature(fmt):
 # ---- the scan -------------------------------------------------------------------------------------------------
 
 def widget_names():
+    # The pinned header is the authority on which calls take a label; without it the gate cannot judge a call site,
+    # so it refuses rather than read none.
+    if not IMGUI_H.is_file():
+        sys.exit("l10n_pot: %s is absent -- run: git submodule update --init src/votv-coop/third_party/imgui"
+                 % IMGUI_H.relative_to(ROOT).as_posix())
     text = IMGUI_H.read_text(encoding="utf-8", errors="replace")
     return set(re.findall(r"IMGUI_API\s+[\w\s\*]*?\b(\w+)\s*\(\s*const\s+char\s*\*\s*(?:label|name|str_id)\b", text))
 
