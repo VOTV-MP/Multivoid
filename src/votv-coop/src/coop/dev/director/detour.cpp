@@ -32,6 +32,10 @@ constexpr float  kTraceAheadCm  = 200.f;    // SteepAhead looks this far toward 
 constexpr float  kKneeCm        = -50.f;    // ...at knee height, under the walker's centre
 constexpr float  kWallNormalZ   = 0.3f;     // a hit flatter than a wall: a slope, not a door, box or fence
 constexpr size_t kMaxSpots      = 32;
+constexpr float  kLookAheadCm   = 3000.f;   // the route is kept checked this far ahead of the walker
+constexpr int    kLookPerTick   = 8;        // floor samples per tick for it
+constexpr float  kSteepRunCm    = 200.f;    // a run this long too steep is a slope, not a bump or an edge
+constexpr float  kLookMinAheadCm = 300.f;   // a spot nearer than this is the stuck handler's (SteepAhead)
 constexpr float  kFailedViaCm   = 300.f;    // a candidate this near a via point that did not hold is not one
 
 float Flat(const ue_wrap::FVector& a, const ue_wrap::FVector& b) { return std::hypot(a.X - b.X, a.Y - b.Y); }
@@ -95,6 +99,39 @@ bool SteepAhead(void* player, const ue_wrap::FVector& pos, const ue_wrap::FVecto
     if (hit.normal.Z >= floorZ || hit.normal.Z <= kWallNormalZ) return false;
     *spot = hit.point;
     return true;
+}
+
+void Lookahead::Reset(const std::vector<ue_wrap::FVector>& route) {
+    route_ = route;
+    cum_.assign(route_.size(), 0.f);
+    for (size_t k = 1; k < route_.size(); ++k) cum_[k] = cum_[k - 1] + Flat(route_[k - 1], route_[k]);
+    scanned_ = 0.f;
+    steepRun_ = 0.f;
+}
+
+float Lookahead::Along(size_t toward, float toPoint) const {
+    if (toward >= cum_.size()) return cum_.empty() ? 0.f : cum_.back();
+    return (std::max)(0.f, cum_[toward] - toPoint);
+}
+
+bool Lookahead::Advance(void* player, float along, float floorZ, ue_wrap::FVector* spot) {
+    if (route_.size() < 2) return false;
+    size_t seg = 1;
+    for (int n = 0; n < kLookPerTick && scanned_ < cum_.back() && scanned_ < along + kLookAheadCm; ++n) {
+        while (seg + 1 < cum_.size() && cum_[seg] < scanned_) ++seg;
+        const float segLen = cum_[seg] - cum_[seg - 1];
+        const float t = segLen > 0.f ? (scanned_ - cum_[seg - 1]) / segLen : 1.f;
+        const ue_wrap::FVector a = route_[seg - 1], b = route_[seg];
+        const ue_wrap::FVector p{a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t, a.Z + (b.Z - a.Z) * t};
+        steepRun_ = FloorStandable(player, p, floorZ) ? 0.f : steepRun_ + kSampleCm;
+        scanned_ += kSampleCm;
+        if (steepRun_ >= kSteepRunCm && scanned_ - kSteepRunCm > along + kLookMinAheadCm) {
+            *spot = p;
+            steepRun_ = 0.f;
+            return true;
+        }
+    }
+    return false;
 }
 
 bool Search::Begin(const ue_wrap::FVector& from, const ue_wrap::FVector& goal, const ue_wrap::FVector& steep,

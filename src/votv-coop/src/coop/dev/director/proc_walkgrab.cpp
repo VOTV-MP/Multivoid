@@ -229,6 +229,7 @@ public:
                 partial_ = HorizDist(waypoints_.back(), goal_.targetPos) > goal_.reachCm;
                 legFrom_ = HorizDist(ctx.pos, goal_.targetPos);
                 goal_.route = std::move(route);
+                ahead_.Reset(goal_.route);
                 wp_ = 0; lastWp_ = 0; bestWp_ = 1e9f; bestPile_ = 1e9f; sinceProgress_ = 0;
                 pathed_ = true;
             } else {
@@ -251,6 +252,7 @@ public:
             // its end is a leg boundary, re-planned from there on arrival rather than by the stuck detector.
             partial_ = ok && HorizDist(waypoints_.back(), goal_.targetPos) > goal_.reachCm;
             legFrom_ = HorizDist(ctx.pos, goal_.targetPos);
+            ahead_.Reset(ok ? goal_.route : std::vector<ue_wrap::FVector>());
             UE_LOGI("director/Goto: route %zu waypoints (%s), dist=%.0fcm", waypoints_.size(),
                     ok ? "NavMesh route" : goal_.straight ? "straight line, as asked"
                        : midWalk ? "no route here, left to the stuck handler" : "straight-line fallback",
@@ -275,6 +277,17 @@ public:
         }
         while (wp_ + 1 < waypoints_.size() && HorizDist(ctx.pos, waypoints_[wp_]) < kAdvanceCm) ++wp_;
         const float toWp = HorizDist(ctx.pos, waypoints_[wp_]);
+        // The floor ahead, checked before the walker gets there: a slope too steep for the body found
+        // while it can still go round, not from the foot of it (detour::Lookahead).
+        ue_wrap::FVector steepAhead{};
+        if (floorZ_ > 0.f && detours_ < kMaxDetours &&
+            ahead_.Advance(ctx.player, ahead_.Along(wp_ + 1, toWp), floorZ_, &steepAhead) &&
+            detour_.Begin(ctx.pos, goal_.targetPos, steepAhead, floorZ_)) {
+            ++detours_;
+            UE_LOGI("director/Goto: a slope too steep for the body ahead at (%.0f,%.0f,%.0f) -- going round before it",
+                    steepAhead.X, steepAhead.Y, steepAhead.Z);
+            return ProcStatus::Working;
+        }
         if (partial_ && wp_ + 1 == waypoints_.size() && toWp < kAdvanceCm) {
             partial_ = false;
             if (toPile > legFrom_ - kMinLegCm) {   // no nearer: the route's end is no leg boundary, so no re-path loop
@@ -398,6 +411,7 @@ private:
     float  floorZ_ = -1.f;   // the body's lowest floor normal Z; -1 unread, 0 unreadable (no detours)
     int    detours_ = 0;
     detour::Search detour_;
+    detour::Lookahead ahead_;   // the floor ahead on the route followed
 };
 
 // ---- GrabProcess -----------------------------------------------------------------------

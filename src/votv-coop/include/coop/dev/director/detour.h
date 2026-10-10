@@ -27,6 +27,29 @@ bool FloorStandable(void* player, const ue_wrap::FVector& at, float floorZ);
 bool SteepAhead(void* player, const ue_wrap::FVector& pos, const ue_wrap::FVector& toward, float floorZ,
                 ue_wrap::FVector* spot);
 
+// The floor ahead on the route the walker follows, checked before it gets there: a walker that went down
+// into a gully stood at the foot of a wall too steep to climb, every way out of it climbing one, until the
+// game killed it (a fresh New Game, twice). Each tick a few floor samples, about a stride apart, keep the
+// next stretch of the route checked; a run of samples too steep for the body is the spot to go round,
+// found while the walker can still go round it.
+class Lookahead {
+public:
+    // A new route to check, from its first point.
+    void Reset(const std::vector<ue_wrap::FVector>& route);
+    // Checks up to a few samples, keeping the stretch ahead of `along` (the walker's distance along
+    // the route) checked. True with `spot` when a run too steep for the body lies ahead of the walker.
+    bool Advance(void* player, float along, float floorZ, ue_wrap::FVector* spot);
+    // The walker's distance along the route, given the route point it heads for and its flat distance
+    // to it.
+    float Along(size_t toward, float toPoint) const;
+
+private:
+    std::vector<ue_wrap::FVector> route_;
+    std::vector<float> cum_;   // the flat length to each route point
+    float scanned_ = 0.f;      // checked up to here
+    float steepRun_ = 0.f;     // the length of the run too steep so far, ending at scanned_
+};
+
 class Search {
 public:
     // Remembers the spot `steep` and starts a search round it, from `from` toward `goal`. False, and no
