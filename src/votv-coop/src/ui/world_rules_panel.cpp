@@ -43,7 +43,9 @@ struct ViewRow {
                                  // img_disabled (white) when it is merely switched off.
 };
 struct ViewCategory {
-    std::string          name;
+    std::string          name;   // what the header shows: the game's category name, or ours translated
+    std::string          id;     // the header's and the table's ImGui id: the name in English, so a
+                                 // translation never moves the header's open state or the table's columns
     std::vector<ViewRow> rows;
 };
 struct View {
@@ -147,7 +149,8 @@ void BuildAndPublish() {
         std::vector<bool> placed(snap.fields.size(), false);
         for (const GP::Category& cat : g_pane.categories) {
             ViewCategory vc;
-            vc.name = cat.name.empty() ? "Rules" : cat.name;
+            vc.id = cat.name.empty() ? std::string("Rules") : cat.name;
+            vc.name = cat.name.empty() ? std::string(l10n::T("Rules")) : cat.name;
             for (const GP::Row& row : cat.rows) {
                 const GR::RuleField* f = GR::NthOfKind(snap.fields, KindOf(row.control), row.index);
                 if (!f) continue;
@@ -164,7 +167,8 @@ void BuildAndPublish() {
         // Rules the game's pane does not place: all of them when its layout could not be read, and
         // any rule a game update adds before its pane does.
         ViewCategory other;
-        other.name = g_pane.valid ? "Other" : "Rules";
+        other.id = g_pane.valid ? "Other" : "Rules";
+        other.name = g_pane.valid ? l10n::T("Other") : l10n::T("Rules");
         for (size_t i = 0; i < snap.fields.size(); ++i) {
             if (!placed[i]) other.rows.push_back(MakeRow(snap.fields[i], nullptr, GP::LockInputs{}));
         }
@@ -240,8 +244,11 @@ void Render() {
     // its world was saved with, and saying so beats showing either copy as the truth.
     if (s_view.differFromSaved > 0) {
         char differ[256];
-        l10n::Fmt(differ, sizeof(differ), l10n::T("%d rule(s) in force differ from the rules saved with this world."),
-                  s_view.differFromSaved);
+        const auto n = static_cast<unsigned long long>(s_view.differFromSaved);
+        l10n::Fmt(differ, sizeof(differ),
+                  l10n::Tn("%llu rule in force differs from the rules saved with this world.",
+                           "%llu rules in force differ from the rules saved with this world.", n),
+                  n);
         ImGui::TextColored(ImVec4(1.f, 0.6f, 0.2f, 1.f), "%s", differ);
     }
     ImGui::Separator();
@@ -263,9 +270,10 @@ void Render() {
     const float paneHeight = S(96.f);
     ImGui::BeginChild("##world_rules_scroll", ImVec2(0, -paneHeight));
     for (const ViewCategory& cat : s_view.categories) {
-        if (!ImGui::CollapsingHeader(cat.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) continue;
+        if (!ImGui::CollapsingHeader(l10n::Label(cat.name.c_str(), cat.id.c_str()), ImGuiTreeNodeFlags_DefaultOpen))
+            continue;
         if (cat.rows.empty()) continue;  // a category the game shows with nothing in it: header only
-        if (!ImGui::BeginTable(cat.name.c_str(), 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_PadOuterX)) continue;
+        if (!ImGui::BeginTable(cat.id.c_str(), 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_PadOuterX)) continue;
         ImGui::TableSetupColumn(l10n::Label(l10n::T("Rule"), "rule"), ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn(l10n::Label(l10n::T("Value"), "value"), ImGuiTableColumnFlags_WidthFixed, S(96.f));
         for (const ViewRow& row : cat.rows) {

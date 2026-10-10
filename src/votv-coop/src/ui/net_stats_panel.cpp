@@ -254,10 +254,14 @@ void RenderMenuPref() {
     ImGui::SeparatorText(l10n::Label(l10n::T("Session"), "session"));
     if (!s.connected) ImGui::TextDisabled("%s", l10n::T("No active session."));
     char line[256];
-    l10n::Fmt(line, sizeof(line), l10n::T("Down:  %1$s now,  %2$s total,  %3$llu packets"),
+    l10n::Fmt(line, sizeof(line),
+              l10n::Tn("Down:  %1$s now,  %2$s total,  %3$llu packet", "Down:  %1$s now,  %2$s total,  %3$llu packets",
+                       s.packetsRecv),
               rateIn, totIn, static_cast<unsigned long long>(s.packetsRecv));
     ImGui::TextUnformatted(line);
-    l10n::Fmt(line, sizeof(line), l10n::T("Up:    %1$s now,  %2$s total,  %3$llu packets"),
+    l10n::Fmt(line, sizeof(line),
+              l10n::Tn("Up:    %1$s now,  %2$s total,  %3$llu packet", "Up:    %1$s now,  %2$s total,  %3$llu packets",
+                       s.packetsSent),
               rateOut, totOut, static_cast<unsigned long long>(s.packetsSent));
     ImGui::TextUnformatted(line);
     if (s.connected) {
