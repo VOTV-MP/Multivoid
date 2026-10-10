@@ -15,8 +15,6 @@
 
 #include "coop/interactables/atv_sync.h"
 #include "atv_spawn_park.h"
-#include "coop/config/config.h"
-#include "coop/config/config_registry.h"
 #include "coop/interactables/atv_corrector.h"
 #include "coop/dev/atv_eject_drill.h"
 #include "coop/interactables/atv_condition_sync.h"
@@ -28,7 +26,6 @@
 #include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
 #include "coop/player/players_registry.h"   // Registry::Local / LocalPeerId / kMaxPeers
 #include "coop/player/roster_ledger.h"      // SubscribeSlotReplaced: a departed author must not hold an ATV
-#include "coop/session/world_load_episode.h"
 
 #include "ue_wrap/devices/atv.h"
 #include "ue_wrap/engine/engine.h"          // ReadMainPlayerGrabState (grabber authority) + Get/SetActorRootPhysicsVelocity
@@ -109,13 +106,6 @@ void FillWireClassName(coop::net::WireClassName& out, const std::wstring& name) 
     out.len = 0;
     for (size_t i = 0; i < name.size() && i < sizeof(out.data); ++i)
         out.data[out.len++] = static_cast<char>(name[i]);
-}
-std::wstring WireClassNameToString(const coop::net::WireClassName& in) {
-    std::wstring s;
-    const uint8_t n = in.len <= sizeof(in.data) ? in.len : static_cast<uint8_t>(sizeof(in.data));
-    s.reserve(n);
-    for (uint8_t i = 0; i < n; ++i) s.push_back(static_cast<wchar_t>(static_cast<unsigned char>(in.data[i])));
-    return s;
 }
 
 // Host: announces a runtime ATV so clients fresh-spawn a native mirror; slot < 0 broadcasts (a
@@ -243,7 +233,6 @@ bool IdleWorthSending(AtvEntry& e) {
 // and an announce). A spawn landing inside the pass window at a join is announced on the next
 // pass, when the joiner is connected.
 uint32_t g_indexGen = 0;  // world gen of the last completed pass (stale-gen index = EMPTY)
-bool IndexCurrent() { return g_indexGen == ue_wrap::world_identity::Generation(); }
 struct ScanFound { std::wstring wireKey; void* obj; int32_t idx; std::wstring realKey; };
 std::vector<ScanFound> g_scanFound;   // pass scratch (GT-only)
 bool g_scanIsHost = false;            // pass context, captured at pass begin
@@ -385,6 +374,8 @@ void RegisterWithScanHub() {
 
 }  // namespace
 
+bool IndexCurrent() { return g_indexGen == ue_wrap::world_identity::Generation(); }
+
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     // Install is the per-tick ensure path (net_pump re-calls it until the class loads), latched so
@@ -501,66 +492,6 @@ void OnAtvRelease(const coop::net::AtvReleasePayload& payload, uint8_t senderPee
             key.c_str());
 }
 
-void OnAtvSpawn(const coop::net::AtvSpawnPayload& payload, uint8_t /*senderPeerSlot*/) {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;
-    std::wstring synthKey = StringFromWireKey(payload.synthKey);
-    if (synthKey.empty()) { UE_LOGW("atv: OnAtvSpawn empty synthKey -- dropping"); return; }
-    // The payload is checked before any wait: a malformed spawn is dropped, only a sound one is deferred.
-    if (!std::isfinite(payload.x) || !std::isfinite(payload.y) || !std::isfinite(payload.z) ||
-        !std::isfinite(payload.pitch) || !std::isfinite(payload.yaw) || !std::isfinite(payload.roll)) {
-        UE_LOGW("atv: OnAtvSpawn non-finite pose synthKey='%ls' -- dropping", synthKey.c_str());
-        spawn_park::Discard(synthKey);  // a malformed spawn is final
-        return;
-    }
-    std::wstring className = WireClassNameToString(payload.className);
-    if (className.empty()) {
-        UE_LOGW("atv: OnAtvSpawn empty className synthKey='%ls' -- dropping", synthKey.c_str());
-        spawn_park::Discard(synthKey);
-        return;
-    }
-    if (ue_wrap::world_identity::CurrentWorldKind() != ue_wrap::world_identity::WorldKind::Gameplay ||
-        !IndexCurrent() || !coop::world_load_episode::HasQuiesced()) {
-        spawn_park::Park(synthKey, payload, "the receiving world is not ready");
-        return;
-    }
-    // The ATV spawn drill's park arm: the first spawn is parked as if the world were not ready, so the park's
-    // hand-back is what spawns it.
-    static const bool s_parkFirst = coop::config::ResolveFlag(coop::config_registry::rows::atv_park_first_spawn);
-    static bool s_parkedFirst = false;
-    if (s_parkFirst && !s_parkedFirst) {
-        s_parkedFirst = true;
-        spawn_park::Park(synthKey, payload, "the drill parks the first spawn");
-        return;
-    }
-    if (!A::EnsureResolved()) { spawn_park::Park(synthKey, payload, "the ATV wrapper is not resolved"); return; }
-    auto known = g_atvs.find(synthKey);
-    if (known != g_atvs.end()) {
-        if (R::IsLiveByIndex(known->second.actor, known->second.idx)) { spawn_park::Discard(synthKey); return; }
-        if (known->second.actor) g_synthForActor.erase(known->second.actor);
-        g_atvs.erase(known);   // a dead row is not "already spawned"
-    }
-    const FVector loc{ payload.x, payload.y, payload.z };
-    const FRotator rot{ payload.pitch, payload.yaw, payload.roll };
-    void* spawned = A::SpawnMirror(className, loc, rot);  // physics LEFT ON -- a native idle grabbable ATV
-    if (!spawned) {
-        // In a world that reads ready, a refused spawn is the class or the engine saying no: final, not retried.
-        UE_LOGW("atv: OnAtvSpawn SpawnMirror failed synthKey='%ls' class='%ls' -- not retried", synthKey.c_str(),
-                className.c_str());
-        spawn_park::Discard(synthKey);
-        return;
-    }
-    spawn_park::Discard(synthKey);
-    AtvEntry e{};
-    e.actor = spawned;
-    e.idx = R::InternalIndexOf(spawned);
-    e.isClientSpawnedMirror = true;
-    g_atvs[synthKey] = std::move(e);
-    g_synthForActor[spawned] = synthKey;
-    UE_LOGI("atv: spawned runtime-ATV mirror synthKey='%ls' class='%ls' actor=%p loc=(%.0f, %.0f, %.0f)",
-            synthKey.c_str(), className.c_str(), spawned, loc.X, loc.Y, loc.Z);
-}
-
 uint32_t RuntimeAnnounced() { return g_synthCounter; }
 
 int RuntimeMirrors() {
@@ -570,25 +501,29 @@ int RuntimeMirrors() {
     return n;
 }
 
-uint32_t ParkedEver() { return spawn_park::ParkedEver(); }
-size_t ParkPending() { return spawn_park::Pending(); }
+// The runtime mirror's half (atv_runtime_mirror.cpp) reaches the map through these; every structural
+// change to it stays here (atv_sync_internal.h).
+coop::net::Session* LaneSession() { return g_session.load(std::memory_order_acquire); }
 
-void OnAtvDestroy(const coop::net::AtvDestroyPayload& payload, uint8_t /*senderPeerSlot*/) {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || s->role() == coop::net::Role::Host) return;  // client-only
-    std::wstring synthKey = StringFromWireKey(payload.synthKey);
-    if (synthKey.empty()) return;
-    spawn_park::Discard(synthKey);  // a destroy ends a spawn still waiting
-    if (!IndexCurrent()) return;  // the pass prunes a dead-world entry itself
-    auto it = g_atvs.find(synthKey);
+const AtvEntry* FindEntry(const std::wstring& key) {
+    auto it = g_atvs.find(key);
+    return it == g_atvs.end() ? nullptr : &it->second;
+}
+
+void AdoptClientMirror(const std::wstring& key, void* actor) {
+    AtvEntry e{};
+    e.actor = actor;
+    e.idx = R::InternalIndexOf(actor);
+    e.isClientSpawnedMirror = true;
+    g_atvs[key] = std::move(e);
+    g_synthForActor[actor] = key;
+}
+
+void EraseEntry(const std::wstring& key) {
+    auto it = g_atvs.find(key);
     if (it == g_atvs.end()) return;
-    void* actor = it->second.actor;
-    const bool destroyed = it->second.isClientSpawnedMirror && R::IsLiveByIndex(actor, it->second.idx) &&
-                           A::DestroyMirror(actor);  // our own fresh spawn
-    if (actor) g_synthForActor.erase(actor);
+    if (it->second.actor) g_synthForActor.erase(it->second.actor);
     g_atvs.erase(it);
-    UE_LOGI("atv: runtime-ATV mirror synthKey='%ls' %s", synthKey.c_str(),
-            destroyed ? "destroyed" : "dropped from the lane, not destroyed here");
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {

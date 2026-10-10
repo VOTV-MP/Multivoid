@@ -1,6 +1,7 @@
 // coop/interactables/atv_sync_internal.h -- the per-ATV record, shared by the ATV lane's
 // translation units. atv_sync.cpp owns the map of these and every structural change to it;
-// atv_corrector.cpp mutates the fields of ONE entry when a packet arrives. Nothing outside
+// atv_corrector.cpp mutates the fields of ONE entry when a packet arrives, and
+// atv_runtime_mirror.cpp asks for its two changes through the calls at the end. Nothing outside
 // coop/interactables/ includes this -- the lane's public surface is
 // coop/interactables/atv_sync.h.
 
@@ -12,6 +13,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <string>
+
+namespace coop::net { class Session; }
 
 namespace coop::atv_sync {
 
@@ -73,5 +77,14 @@ inline uint64_t NowMs() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
 }
+
+// atv_sync.cpp's surface for atv_runtime_mirror.cpp, a client receiving a runtime ATV: the lane's session,
+// whether the index belongs to this world, the row under a key, and that half's two structural changes -- a
+// fresh-spawned mirror adopted under the host's synthetic key, a row dropped with its actor's key. Game thread.
+coop::net::Session* LaneSession();
+bool IndexCurrent();
+const AtvEntry* FindEntry(const std::wstring& key);
+void AdoptClientMirror(const std::wstring& key, void* actor);
+void EraseEntry(const std::wstring& key);
 
 }  // namespace coop::atv_sync

@@ -224,6 +224,7 @@ set(VOTVCOOP_SOURCES
     src/coop/world/coord_tower_ops.cpp
     src/coop/world/coord_tower_rows.cpp
     src/coop/interactables/atv_sync.cpp
+    src/coop/interactables/atv_runtime_mirror.cpp
     src/coop/interactables/atv_spawn_park.cpp
     src/coop/interactables/atv_condition_sync.cpp
     src/coop/interactables/atv_corrector.cpp
