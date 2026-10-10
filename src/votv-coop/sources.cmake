@@ -544,6 +544,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/fall_drill.cpp
     src/coop/dev/atv_spawn_drill.cpp
     src/coop/dev/throw_drill.cpp
+    src/coop/dev/log_drill.cpp
     src/coop/dev/server_upgrade_drill.cpp
     src/coop/dev/server_drill.cpp
     src/coop/dev/sat_console_drill.cpp

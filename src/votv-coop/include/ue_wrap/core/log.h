@@ -53,6 +53,10 @@ void Flush();
 // `multivoid.log`: it asks here. Opens the log first, so the answer is the real one. Any thread.
 std::wstring CurrentPath();
 std::wstring PreviousPath();
+// The path a process of this install writes while no other holds it: the exe directory's
+// multivoid.log, or the VOTVCOOP_LOG name. The live log's third line names the process that writes
+// it ("process <PID>"), so an overlapped launch can tell whose file the usual name is. Any thread.
+std::wstring BasePath();
 
 // The address mark. A log line that prints a peer's address, a typed dial text, or an endpoint
 // that is not the project's own wraps the value in Addr(): it writes kAddrOpen + value +

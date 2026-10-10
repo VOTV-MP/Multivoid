@@ -469,6 +469,9 @@ CFG_FLAG(physmods_drill, "physmods_drill", "dev", false, "VOTVCOOP_PHYSMODS_DRIL
     "line says whether its array holds that one module alone. A joiner whose desk already holds modules at "
     "its world-ready (a rejoin into the drill's world) plugs nothing and says what it loaded. Lines tagged "
     "[PHYSMODS-DRILL].")
+CFG_FLAG(log_drill, "log_drill", "dev", false, "VOTVCOOP_LOG_DRILL",
+    "Drill (one install, two processes): at boot each process says whose log it writes; one that found the usual "
+    "log held passes when that log names another process. Run with mp.py twolog.")
 CFG_STRING(throw_drill, "throw_drill", "dev", "", "VOTVCOOP_THROW_DRILL", false,
     "Drill (BOTH peers): a container a client throws keeps its contents on the host. run -- the host fills a backpack "
     "before the client's puppet, the client throws it, the host's copy must match; red and gone -- with "

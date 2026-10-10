@@ -135,6 +135,7 @@ void EnsureOpen() {
         if (g_file) {
             std::fprintf(g_file, "==== Multivoid log ====\n");
             std::fprintf(g_file, "%s\n", kLogFormatLine);
+            std::fprintf(g_file, "process %lu\n", static_cast<unsigned long>(::GetCurrentProcessId()));
         }
         g_opened = true;
     }
@@ -171,6 +172,12 @@ std::wstring CurrentPath() {
     wcscpy_s(copy, g_livePath);
     ::LeaveCriticalSection(&g_lock);
     return copy;
+}
+
+std::wstring BasePath() {
+    wchar_t path[MAX_PATH] = {};
+    LogPath(path);
+    return path;
 }
 
 std::wstring PreviousPath() {

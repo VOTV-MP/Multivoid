@@ -19,6 +19,7 @@
 #include "harness/mod_environment.h"
 #include "harness/sdk_check.h"
 #include "coop/dev/freecam.h"
+#include "coop/dev/log_drill.h"  // [dev] the two-process log drill
 #include "coop/input/input_owner.h"
 #include "coop/dev/object_overlay.h"
 #include "coop/dev/ragdoll_bone_overlay.h"
@@ -171,6 +172,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // finds ready is: the master list, the nickname seed and the identity above.
     browser_click_arm::FireFromEnv();
 
+    // [dev] two processes of one install keep separate logs (log_drill=1): files only, on every boot path.
+    coop::dev::log_drill::RunOnce();
     const bool storyBoot = (scenario == "play");
     const bool menuMode  = (scenario == "menu");
     if (storyBoot) {
