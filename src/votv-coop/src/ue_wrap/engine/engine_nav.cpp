@@ -15,10 +15,13 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/types.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 
 namespace ue_wrap::engine {
 namespace {
@@ -87,6 +90,37 @@ void AddMovementInput(void* pawn, const FVector& worldDir, float scale, bool for
     pf.Set<float>(L"ScaleValue", scale);
     pf.Set<bool>(L"bForce", force);
     Call(pawn, pf);
+}
+
+namespace {
+
+// A float member read by its reflected name on the object's own class. False when it is not there.
+// The walk is linear; both readers below are one-shot diagnostics.
+bool ReadFloatMember(void* obj, const wchar_t* name, float* out) {
+    if (!obj) return false;
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(obj), name);
+    if (off < 0) return false;
+    std::memcpy(out, static_cast<const char*>(obj) + off, sizeof(float));
+    return true;
+}
+
+}  // namespace
+
+bool ReadWalkLimits(void* character, WalkLimits* out) {
+    if (!character || !out) return false;
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(character), L"CharacterMovement");
+    if (off < 0) return false;
+    void* cmc = nullptr;
+    std::memcpy(&cmc, static_cast<const char*>(character) + off, sizeof(cmc));
+    return cmc && R::IsLive(cmc) && ReadFloatMember(cmc, L"WalkableFloorZ", &out->floorZ) &&
+           ReadFloatMember(cmc, L"MaxStepHeight", &out->stepCm);
+}
+
+bool ReadNavLimits(NavLimits* out) {
+    void* nav = out ? world_singleton::Find(L"RecastNavMesh") : nullptr;
+    return nav && ReadFloatMember(nav, L"AgentMaxSlope", &out->maxSlopeDeg) &&
+           ReadFloatMember(nav, L"AgentMaxStepHeight", &out->stepCm) &&
+           ReadFloatMember(nav, L"AgentRadius", &out->radiusCm);
 }
 
 }  // namespace ue_wrap::engine

@@ -21,12 +21,15 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/core/trace.h"
 #include "ue_wrap/devices/door.h"
 #include "ue_wrap/engine/engine.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace coop::director {
@@ -141,6 +144,52 @@ private:
     bool measured_ = false;
 };
 
+// What stands between a stuck walker and its waypoint, named: a trace at knee and at chest height
+// toward the waypoint (2 m at most) and one down for the floor's slope. The NavMesh routes through
+// what the capsule cannot pass, and this line says what that is. On a persistent stuck only.
+void LogBlocker(const PlayerContext& ctx, const ue_wrap::FVector& wp) {
+    ue_wrap::FVector d{wp.X - ctx.pos.X, wp.Y - ctx.pos.Y, 0.f};
+    const float h = std::sqrt(d.X * d.X + d.Y * d.Y);
+    if (h < 1.f) return;
+    d.X /= h; d.Y /= h;
+    const float reach = (std::min)(h + 50.f, 200.f);
+    const auto describe = [&](const char* what, const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
+        ue_wrap::trace::Hit hit;
+        if (!ue_wrap::trace::LineHitStatDyn(ctx.player, a, b, &hit)) {
+            UE_LOGW("director/Goto:   %s trace unresolved", what);
+        } else if (!hit.blocked) {
+            UE_LOGW("director/Goto:   %s trace clear for %.0f cm", what, reach);
+        } else {
+            const std::wstring actor = hit.actor ? R::ToString(R::NameOf(hit.actor)) : L"?";
+            const std::wstring actorCls = hit.actor ? R::ClassNameOf(hit.actor) : L"?";
+            const std::wstring comp = hit.component ? R::ToString(R::NameOf(hit.component)) : L"?";
+            const std::wstring compCls = hit.component ? R::ClassNameOf(hit.component) : L"?";
+            UE_LOGW("director/Goto:   %s trace hits '%ls' (%ls) component '%ls' (%ls) at (%.0f,%.0f,%.0f), "
+                    "%.0f cm ahead, normal (%.2f,%.2f,%.2f)", what, actor.c_str(), actorCls.c_str(), comp.c_str(),
+                    compCls.c_str(), hit.point.X, hit.point.Y, hit.point.Z,
+                    std::hypot(hit.point.X - a.X, hit.point.Y - a.Y), hit.normal.X, hit.normal.Y, hit.normal.Z);
+        }
+    };
+    UE_LOGW("director/Goto: blocked at (%.0f,%.0f,%.0f) toward the waypoint (%.0f,%.0f,%.0f), %.0f cm away",
+            ctx.pos.X, ctx.pos.Y, ctx.pos.Z, wp.X, wp.Y, wp.Z, h);
+    static bool s_limitsSaid = false;   // both sets of limits, once: what a route may take against what the body can
+    if (!s_limitsSaid) {
+        s_limitsSaid = true;
+        E::WalkLimits w;
+        E::NavLimits n;
+        const bool wOk = E::ReadWalkLimits(ctx.player, &w), nOk = E::ReadNavLimits(&n);
+        UE_LOGW("director/Goto:   the walker: floor normal z >= %.3f (%.1f deg), steps %.0f cm%s; the NavMesh's build: "
+                "%.1f deg, steps %.0f cm, radius %.0f cm%s", w.floorZ,
+                std::acos((std::max)(-1.f, (std::min)(1.f, w.floorZ))) * (180.f / 3.14159265358979323846f), w.stepCm,
+                wOk ? "" : " (unread)", n.maxSlopeDeg, n.stepCm, n.radiusCm, nOk ? "" : " (unread)");
+    }
+    for (const float dz : {-50.f, 30.f}) {
+        const ue_wrap::FVector a{ctx.pos.X, ctx.pos.Y, ctx.pos.Z + dz};
+        describe(dz < 0.f ? "knee" : "chest", a, {a.X + d.X * reach, a.Y + d.Y * reach, a.Z});
+    }
+    describe("floor", ctx.pos, {ctx.pos.X, ctx.pos.Y, ctx.pos.Z - 300.f});
+}
+
 // ---- GotoProcess -----------------------------------------------------------------------
 class GotoProcess : public IProcess {
 public:
@@ -193,6 +242,7 @@ public:
             // DEADLINE (>= 30 s of grinding) are the terminators, not an early stuck-count.
             ++stuckEpisodes_;
             if (stuckEpisodes_ % 4 == 0) {   // periodic fresh route from where we actually are
+                LogBlocker(ctx, waypoints_[wp_]);
                 pathed_ = false; waypoints_.clear(); wp_ = 0; lastWp_ = 0; bestWp_ = 1e9f; bestPile_ = 1e9f;
                 UE_LOGW("director/Goto: persistent stuck (toPile=%.0f) -- RE-PATH (episode %d, never give up)", toPile, stuckEpisodes_);
                 return ProcStatus::Working;

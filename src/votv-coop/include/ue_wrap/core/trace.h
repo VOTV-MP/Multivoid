@@ -3,8 +3,8 @@
 // layer: wraps the KSL CDO/UFunction resolve + the ParamFrame plumbing of a world
 // line trace. NO network logic, NO gameplay state.
 //
-// One owner of the trace primitive, with two consumers: wisp.cpp's canReach parity
-// trace and nameplate occlusion.
+// One owner of the trace primitive, with three consumers: wisp.cpp's canReach parity
+// trace, nameplate occlusion, and the director's stuck line, which names what it hit.
 
 #pragma once
 
@@ -23,5 +23,18 @@ namespace ue_wrap::trace {
 //              -- the caller picks its own safe default.
 // Game thread only (dispatches a UFunction).
 int LineBlockedStatDyn(void* worldCtx, const FVector& start, const FVector& end);
+
+// What the same trace hits first: the hit's actor and component (live, or null), and its
+// impact point and normal, read from the call's FHitResult by the struct's reflected member
+// offsets. False when unresolvable (as -1 above); `out->blocked` false on a clear line.
+// Game thread only.
+struct Hit {
+    bool    blocked = false;
+    void*   actor = nullptr;
+    void*   component = nullptr;
+    FVector point{};
+    FVector normal{};
+};
+bool LineHitStatDyn(void* worldCtx, const FVector& start, const FVector& end, Hit* out);
 
 }  // namespace ue_wrap::trace

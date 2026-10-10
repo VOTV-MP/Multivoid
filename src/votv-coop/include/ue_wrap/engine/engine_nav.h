@@ -20,4 +20,22 @@ bool FindNavPath(void* worldContext, const FVector& start, const FVector& end,
 // consumes each tick, so re-issue it every frame.
 void AddMovementInput(void* pawn, const FVector& worldDir, float scale, bool force);
 
+// The limits a walking character moves under, from its CharacterMovement: the lowest floor normal
+// Z it stands on (WalkableFloorZ) and the highest step it climbs. False when a read fails.
+struct WalkLimits {
+    float floorZ = 0.f;
+    float stepCm = 0.f;
+};
+bool ReadWalkLimits(void* character, WalkLimits* out);
+
+// The limits the level's NavMesh was built with (its RecastNavMesh): the steepest slope in degrees
+// and the highest step a route may take, and the radius a route keeps from walls. False when none
+// is loaded.
+struct NavLimits {
+    float maxSlopeDeg = 0.f;
+    float stepCm = 0.f;
+    float radiusCm = 0.f;
+};
+bool ReadNavLimits(NavLimits* out);
+
 }  // namespace ue_wrap::engine
