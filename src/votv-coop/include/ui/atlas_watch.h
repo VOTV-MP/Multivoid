@@ -1,21 +1,35 @@
 // ui/atlas_watch.h -- what the font atlas is doing, asserted every frame.
 //
 // ImGui 1.92's atlas is LAZY: a codepoint is rasterised the first time something draws it, the
-// texture grows and repacks under pressure, and bakes are discarded when the packer needs room.
-// Nothing ever finishes it, so no single boot-time check can speak for it. Three things are watched
-// continuously, each with its OWN trigger, because they fail independently.
-//   1. THE SUPERSET INVARIANT -- every baked glyph must be in the repertoire. The mechanism is
-//      subtractive (GlyphExcludeRanges), so a config missing the field, or a Windows fallback face
-//      carrying scripts our embedded faces do not, bakes a SUPERSET; the fold table treats those
-//      codepoints as the sentinel, and two legible names collapse to one key. Triggered by a change
-//      in a baked's Glyphs.Size.
+// texture grows and repacks under pressure, and bakes are discarded when the packer needs room, so
+// no single boot-time check can speak for it. Three watches, each with its OWN trigger:
+//   1. THE SUPERSET INVARIANT -- every baked glyph must be in the repertoire, or in the script
+//      AllowScript names: the system face merged for the active language (ui/fonts.cpp) bakes that
+//      script on purpose, and nothing else. The mechanism is subtractive (GlyphExcludeRanges), so a
+//      config missing the field, or a Windows fallback face carrying scripts our embedded faces do
+//      not, bakes a SUPERSET; the fold table treats those codepoints as the sentinel, and two
+//      legible names collapse to one key. Triggered by a change in a baked's Glyphs.Size.
 //   2. PACK FAILURE -- a glyph that could not fit gets IndexLookup[cp] = NOT_FOUND and draws the
 //      fallback box for the LIFE of that baked, which never heals, because a baked drawn every
 //      frame is never discarded. Glyphs.Size does not move, so the trigger is an edge on the
 //      packer's discarded surface or on the texture's UniqueID.
 #pragma once
 
+#include "coop/text/repertoire.h"   // CodepointRange
+
+#include <cstddef>
+
 namespace ui::atlas_watch {
+
+// The ImFontConfig::Name of the system face ui/fonts.cpp merges for the active language's script, so
+// the exclude check holds that source to its own list and every other to the generated table.
+inline constexpr const char kSystemSourceName[] = "multivoid:system";
+
+// The script ranges that system face may bake: a baked glyph inside them is expected, not a superset
+// fault, and the exclude check holds the named source to the generated table united with their
+// complement. Called by ui/fonts.cpp each time it merges the face, before the next OnFrame; the
+// table is static and is kept across a context's destruction. Render thread.
+void AllowScript(const coop::text::CodepointRange* ranges, size_t count);
 
 // Call once per frame, INSIDE the frame (after ImGui::NewFrame). In-frame is required, not
 // incidental: the deliberate emoji bake the colour check performs must happen where baking is

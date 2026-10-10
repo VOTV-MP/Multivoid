@@ -9,6 +9,7 @@
 #include "coop/config/config_registry.h"
 #include "coop/text/repertoire.h"
 #include "l10n/l10n.h"
+#include "ui/atlas_watch.h"
 #include "ui/scale.h"
 #include "ue_wrap/core/log.h"
 
@@ -17,6 +18,8 @@
 
 #include <windows.h>
 
+#include <algorithm>
+#include <cstdio>
 #include <atomic>
 #include <cstdint>
 #include <string>
@@ -128,7 +131,9 @@ const void* ResourceTtf(int id, int* outSize) {
 
 // The exclude set (coop/text/repertoire.h) in ImGui's range form: a coarse cover of what
 // our faces carry, of the table the nickname arbiter folds against. One generator emits both,
-// so what is refused for baking and what folds to the sentinel cannot drift. Subtractive
+// so what is refused for baking and what folds to the sentinel cannot drift -- for every face but
+// the system face merged for the active language's script (MergeSystemFace below), which bakes that
+// script on purpose while the fold still reads it as the sentinel. Subtractive
 // because the lazy atlas ignores an inclusion list and bakes whatever is drawn; the only lever
 // is the per-source exclude list. The list is zero-terminated, so it may not begin with U+0000
 // (ImGui's walk would stop at index 0 and exclude nothing, with no symptom); the generator
@@ -156,6 +161,124 @@ const ImWchar* ExcludeList() {
         v.push_back(0);
     }
     return v.data();
+}
+
+// ---- the script a pack needs and our faces do not carry ---------------------------------------
+// The active language's script and the Windows face that draws it -- #41's merge, restricted. The
+// face is not ours, so it is held to its script: its own exclude list is the generated table united
+// with everything outside the script's ranges, and it is merged last, so it supplies only what every
+// embedded face lacked inside its script and Latin, Cyrillic and every symbol still come from ours.
+// The allowance leaves out what looks like a Latin character while folding apart from it (U+3007, the
+// fullwidth digits and letters), and the generated table keeps U+3000 and U+FFA0 refused here too.
+// Only Simplified Chinese has a row: the one pack that ships; another script is one row.
+struct ScriptDesc {
+    const char* id;
+    const coop::text::CodepointRange* ranges;   // sorted
+    size_t count;
+    const char* const* faces;                   // first found wins; null-terminated
+};
+constexpr coop::text::CodepointRange kHansRanges[] = {
+    {0x3001, 0x3006}, {0x3008, 0x303F}, {0x3400, 0x4DBF}, {0x4E00, 0x9FFF}, {0xF900, 0xFAFF},
+    {0xFF01, 0xFF0F}, {0xFF1A, 0xFF20}, {0xFF3B, 0xFF40}, {0xFF5B, 0xFF65},
+};
+constexpr const char* kHansFaces[] = {"msyh.ttc", "msyhl.ttc", "simhei.ttf", "simsun.ttc", nullptr};
+constexpr ScriptDesc kHans = {"Hans", kHansRanges, sizeof(kHansRanges) / sizeof(kHansRanges[0]), kHansFaces};
+
+// The script of the language whose catalogue loaded.
+const ScriptDesc* ActiveScript() {
+    const std::string loc = l10n::ActiveLocale();
+    if (loc == "zh" || loc == "zh_CN" || loc == "zh_SG") return &kHans;
+    return nullptr;
+}
+
+// The face's bytes, read once per process and held while it lives: every atlas rebuild adds it from
+// memory, not owned by the atlas, as the embedded faces are added; a file add would read and hold it
+// once per role on every rebuild. A missing face is said once and its script draws as boxes.
+struct SystemFace {
+    bool tried = false;
+    std::vector<char> bytes;
+    std::string name;
+};
+const SystemFace& LoadSystemFace(const ScriptDesc& script) {
+    static SystemFace face;
+    if (face.tried) return face;
+    face.tried = true;
+    char windir[MAX_PATH] = {};
+    ::GetWindowsDirectoryA(windir, sizeof(windir));
+    const std::string dir = windir[0] ? std::string(windir) + "\\Fonts\\" : std::string();
+    for (const char* const* f = script.faces; *f && !dir.empty(); ++f) {
+        HANDLE h = ::CreateFileA((dir + *f).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                                 FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) continue;
+        LARGE_INTEGER size{};
+        if (::GetFileSizeEx(h, &size) && size.QuadPart > 0 && size.QuadPart < (64LL << 20)) {
+            face.bytes.resize(static_cast<size_t>(size.QuadPart));
+            DWORD got = 0;
+            if (!::ReadFile(h, face.bytes.data(), static_cast<DWORD>(face.bytes.size()), &got, nullptr) ||
+                got != face.bytes.size())
+                face.bytes.clear();
+        }
+        ::CloseHandle(h);
+        if (!face.bytes.empty()) {
+            face.name = *f;
+            break;
+        }
+    }
+    if (face.bytes.empty())
+        UE_LOGW("fonts: the %s script needs a Windows face and none of its candidates is in '%s' -- its "
+                "characters draw as boxes", script.id, dir.c_str());
+    else
+        UE_LOGI("fonts: %s script -- the Windows face '%s' (%zu bytes) merged into every role, restricted "
+                "to the script", script.id, face.name.c_str(), face.bytes.size());
+    return face;
+}
+
+// The system face's exclude list: the generated table united with the complement of the script's
+// ranges over U+0001..U+10FFFF (never beginning at U+0000: the list is zero-terminated), merged and
+// sorted. Built once; under the no-exclude drill it is null, as every source's is.
+const ImWchar* SystemExcludeList(const ScriptDesc& script) {
+    if (!ExcludeList()) return nullptr;
+    static std::vector<ImWchar> v;
+    if (!v.empty()) return v.data();
+    size_t n = 0;
+    const coop::text::CodepointRange* gen = coop::text::ExcludeRanges(&n);
+    std::vector<coop::text::CodepointRange> all(gen, gen + n);
+    uint32_t next = 1;
+    for (size_t i = 0; i < script.count; ++i) {
+        if (script.ranges[i].begin > next) all.push_back({next, script.ranges[i].begin - 1});
+        next = script.ranges[i].end + 1;
+    }
+    if (next <= 0x10FFFF) all.push_back({next, 0x10FFFF});
+    std::sort(all.begin(), all.end(), [](const auto& x, const auto& y) { return x.begin < y.begin; });
+    std::vector<coop::text::CodepointRange> merged;
+    for (const auto& r : all) {
+        if (!merged.empty() && r.begin <= merged.back().end + 1) merged.back().end = (std::max)(merged.back().end, r.end);
+        else merged.push_back(r);
+    }
+    for (const auto& r : merged) {
+        v.push_back(static_cast<ImWchar>(r.begin));
+        v.push_back(static_cast<ImWchar>(r.end));
+    }
+    v.push_back(0);
+    return v.data();
+}
+
+// Merged into the face just added, after the colour donor, so ImGui's walk of the sources reaches it
+// only for what every embedded face lacked. Named, so the watcher's exclude check knows it, and the
+// watcher is told the script it may bake.
+void MergeSystemFace(float px) {
+    const ScriptDesc* script = ActiveScript();
+    if (!script) return;
+    const SystemFace& face = LoadSystemFace(*script);
+    if (face.bytes.empty()) return;
+    ImFontConfig cfg;
+    cfg.MergeMode = true;
+    cfg.FontDataOwnedByAtlas = false;
+    cfg.GlyphExcludeRanges = SystemExcludeList(*script);
+    std::snprintf(cfg.Name, sizeof(cfg.Name), "%s", ui::atlas_watch::kSystemSourceName);
+    ImGui::GetIO().Fonts->AddFontFromMemoryTTF(const_cast<char*>(face.bytes.data()),
+                                               static_cast<int>(face.bytes.size()), px, &cfg, nullptr);
+    ui::atlas_watch::AllowScript(script->ranges, script->count);
 }
 
 // Every add goes through this funnel or AddFromFile, and the exclude list is applied here
@@ -195,6 +318,7 @@ void MergeBackstops(int chosenFamily, bool bold, float px) {
     // The flag still does the job under per-size baking.
     donor.FontLoaderFlags |= ImGuiFreeTypeLoaderFlags_LoadColor;
     AddFromResource(IDR_FONT_EMOJI_DONOR, px, donor);
+    MergeSystemFace(px);
 }
 
 ImFont* AddFromFile(const std::string& path, float px, const ImFontConfig& baseCfg) {
