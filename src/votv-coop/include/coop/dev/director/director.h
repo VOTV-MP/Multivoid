@@ -83,6 +83,8 @@ public:
     virtual int         Priority() const = 0;
     virtual bool        IsActive(const PlayerContext& ctx) const = 0;
     virtual ProcStatus  OnTick(const PlayerContext& ctx) = 0;   // does its work (drives input at the seam)
+    // Control moved to another process, or the run ended (any way it ends): a key the process holds
+    // down is let go here. Game thread.
     virtual void        OnLostControl() {}
 };
 
@@ -96,6 +98,8 @@ public:
     // moves past the goal's. Returns true iff the goal was grabbed or reached.
     bool Run(DirectorGoal& goal, int maxSeconds);
 private:
+    bool Drive(DirectorGoal& goal, int maxSeconds);   // Run's loop; Run then lets the last driver go
+
     std::vector<std::unique_ptr<IProcess>> procs_;
     IProcess* inControl_ = nullptr;
 };

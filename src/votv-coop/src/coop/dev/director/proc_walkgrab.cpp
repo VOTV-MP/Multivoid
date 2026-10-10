@@ -60,6 +60,24 @@ constexpr int   kUnstickTicks   = 70;    // ~0.28 s of sideways juke to slide of
 constexpr int   kSettleTicks    = 12;    // ~0.25 s braking before the grab
 constexpr int   kMaxDetours     = 24;    // ways round a slope too steep for the body, per walk (detour.h)
 constexpr float kMinLegCm       = 100.f; // a leg that ends no nearer the goal than this is not a leg: the stuck handler's
+// A walk this far from its goal holds the run key (mainPlayer's InpActEvt_run, twice the walk speed),
+// as a person crossing the map does, and lets it go this near, so the last metres are walked.
+constexpr float kRunFromCm      = 3000.f;
+constexpr float kRunUntilCm     = 1500.f;
+
+// A key at the human-input seam: mainPlayer's input-action event stub, called with its zeroed frame
+// (the Key it is given is not read). False when the stub does not resolve.
+bool PressInputEvent(void* player, const wchar_t* stub) {
+    void* cls = R::FindClass(P::name::MainPlayerClass);
+    void* fn = cls ? R::FindFunction(cls, stub) : nullptr;
+    if (!fn || !player) return false;
+    const int32_t fs = R::FunctionFrameSize(fn);
+    std::vector<uint8_t> f(fs > 0 ? static_cast<size_t>(fs) : 0, 0u);
+    R::CallFunction(player, fn, f.empty() ? nullptr : f.data());
+    return true;
+}
+constexpr const wchar_t* kRunPress   = L"InpActEvt_run_K2Node_InputActionEvent_8";   // input_run = true
+constexpr const wchar_t* kRunRelease = L"InpActEvt_run_K2Node_InputActionEvent_9";   // input_run = false
 // A walk-to target is reached on its own level only: the walker's centre within this of the target's
 // height, less than a storey. A route whose end the navmesh put on the floor below counts as
 // horizontally there, 11 m under a door on the dish building's upper floor.
@@ -100,15 +118,9 @@ public:
     ProcStatus OnTick(const PlayerContext& ctx) override {
         ++ticks_;
         if (ticks_ == 1) {   // input seam ONLY -- the key a human presses to drop (measure it first)
-            void* cls = R::FindClass(P::name::MainPlayerClass);
-            void* dropFn = cls ? R::FindFunction(cls, L"InpActEvt_drop_K2Node_InputActionEvent_1") : nullptr;
-            if (dropFn) {
-                const int32_t fs = R::FunctionFrameSize(dropFn);
-                std::vector<uint8_t> f(fs > 0 ? static_cast<size_t>(fs) : 0, 0u);
-                R::CallFunction(ctx.player, dropFn, f.empty() ? nullptr : f.data());
-            }
+            const bool pressed = PressInputEvent(ctx.player, L"InpActEvt_drop_K2Node_InputActionEvent_1");
             UE_LOGI("director/ClearHand: hand full (grabbing=%p holding=%p place=%d) -- input-seam "
-                    "InpActEvt_drop fn=%p; MEASURING", ctx.held, ctx.holding, ctx.placeMode ? 1 : 0, dropFn);
+                    "InpActEvt_drop pressed=%d; MEASURING", ctx.held, ctx.holding, ctx.placeMode ? 1 : 0, pressed ? 1 : 0);
             return ProcStatus::Working;
         }
         if (ticks_ == kDropMeasureTicks && !measured_) {   // MEASURE the input-seam result, don't assume
@@ -254,6 +266,13 @@ public:
             }
         }
         const float toPile = HorizDist(ctx.pos, goal_.targetPos);
+        if (!runHeld_ && toPile > kRunFromCm && PressInputEvent(ctx.player, kRunPress)) {
+            runHeld_ = true;
+            runPlayer_ = ctx.player;
+            UE_LOGI("director/Goto: the run key held (toPile=%.0f)", toPile);
+        } else if (runHeld_ && toPile < kRunUntilCm) {
+            LetRunGo();
+        }
         while (wp_ + 1 < waypoints_.size() && HorizDist(ctx.pos, waypoints_[wp_]) < kAdvanceCm) ++wp_;
         const float toWp = HorizDist(ctx.pos, waypoints_[wp_]);
         if (partial_ && wp_ + 1 == waypoints_.size() && toWp < kAdvanceCm) {
@@ -323,7 +342,14 @@ public:
             UE_LOGI("director/Goto: toPile=%.0f toWp=%.0f wp=%zu/%zu ep=%d", toPile, toWp, wp_, waypoints_.size(), stuckEpisodes_);
         return ProcStatus::Working;
     }
+    void OnLostControl() override { LetRunGo(); }
 private:
+    void LetRunGo() {
+        if (!runHeld_) return;
+        runHeld_ = false;
+        if (R::IsLive(runPlayer_)) PressInputEvent(runPlayer_, kRunRelease);
+        UE_LOGI("director/Goto: the run key let go");
+    }
     // Find the nearest CLOSED door within reach of the stuck bot and press it as a player does: the door's
     // own press verb on this peer's copy. On a coop client the script gate turns it into a verb the host
     // runs (coop/interactables/door_verb_intent); as the host or in solo the door's own body decides it here.
@@ -361,6 +387,8 @@ private:
     int    legs_ = 0;
     float  legFrom_ = 0.f;     // the walker's distance to the goal where the current route began
     bool   routed_ = false;    // a NavMesh route was had: a later failed query is no reason to beeline
+    bool   runHeld_ = false;   // the run key is down (kRunFromCm), let go near the goal or on losing control
+    void*  runPlayer_ = nullptr;
     std::vector<ue_wrap::FVector> waypoints_;
     size_t wp_ = 0, lastWp_ = 0;
     float  bestWp_ = 1e9f, bestPile_ = 1e9f;

@@ -33,6 +33,18 @@ void EndWalks() { g_walkEpoch.fetch_add(1, std::memory_order_acq_rel); }
 void ControlManager::Add(std::unique_ptr<IProcess> proc) { procs_.push_back(std::move(proc)); }
 
 bool ControlManager::Run(DirectorGoal& goal, int maxSeconds) {
+    const bool done = Drive(goal, maxSeconds);
+    // However the run ended, the process that drove its last tick loses control: a key it holds is
+    // let go on the game thread, as a person lets go of it when the walk is over.
+    if (inControl_) {
+        IProcess* last = inControl_;
+        inControl_ = nullptr;
+        GT::RunAndWait([last](std::atomic<int>& d) { last->OnLostControl(); d.store(1); });
+    }
+    return done;
+}
+
+bool ControlManager::Drive(DirectorGoal& goal, int maxSeconds) {
     // The deadline is wall time, not a tick count. A tick is a game-thread round trip -- a Post,
     // then 5 ms polls until the closure has run -- plus the pace below, so it costs about ten
     // milliseconds and never the four the pace alone suggests. Counting `maxSeconds * 1000 /
