@@ -14,6 +14,7 @@
 // Every action is at the human-INPUT seam. All OnTick runs on the game thread
 // (inside the ControlManager's per-tick closure), so engine calls are direct.
 
+#include "coop/dev/director/detour.h"
 #include "coop/dev/director/director.h"
 
 #include "ue_wrap/actors/prop.h"
@@ -30,6 +31,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace coop::director {
@@ -55,6 +57,7 @@ constexpr float kDoorReachCm    = 320.f; // a closed door within this of the stu
 constexpr int   kMaxDoorOpens   = 20;    // grind: keep opening doors as needed (never-give-up rule)
 constexpr int   kUnstickTicks   = 70;    // ~0.28 s of sideways juke to slide off a box before re-checking
 constexpr int   kSettleTicks    = 12;    // ~0.25 s braking before the grab
+constexpr int   kMaxDetours     = 12;    // ways round a slope too steep for the body, per walk (detour.h)
 // A walk-to target is reached on its own level only: the walker's centre within this of the target's
 // height, less than a storey. A route whose end the navmesh put on the floor below counts as
 // horizontally there, 11 m under a door on the dish building's upper floor.
@@ -202,6 +205,21 @@ public:
         return onLevel_ ? !Arrived(ctx, goal_) : HorizDist(ctx.pos, goal_.targetPos) > goal_.reachCm;
     }
     ProcStatus OnTick(const PlayerContext& ctx) override {
+        if (detour_.Active()) {   // looking for a way round a slope the body cannot climb: stand while it does
+            std::vector<ue_wrap::FVector> route;
+            const detour::Search::Step step = detour_.Advance(ctx.player, &route);
+            if (step == detour::Search::Step::Working) return ProcStatus::Working;
+            if (step == detour::Search::Step::Found) {
+                // The via point is a leg boundary: from there the route to the goal is asked again.
+                waypoints_.assign(route.begin() + 1, route.end());
+                goal_.route = std::move(route);
+                wp_ = 0; lastWp_ = 0; bestWp_ = 1e9f; bestPile_ = 1e9f; sinceProgress_ = 0;
+                pathed_ = true; partial_ = true;
+            } else {
+                jukeSign_ = -jukeSign_;   // no way round held: back to grinding
+                unstickTicks_ = kUnstickTicks;
+            }
+        }
         if (!pathed_) {   // compute the route (after the hand is clear, so from the real start), again per leg
             pathed_ = true;
             std::vector<ue_wrap::FVector> path;
@@ -216,6 +234,16 @@ public:
             UE_LOGI("director/Goto: route %zu waypoints (%s), dist=%.0fcm", waypoints_.size(),
                     ok ? "NavMesh route" : goal_.straight ? "straight line, as asked" : "straight-line fallback",
                     HorizDist(ctx.pos, goal_.targetPos));
+            if (floorZ_ < 0.f) {   // the body's floor limit, read once: what the NavMesh's routes are held to
+                E::WalkLimits w;
+                floorZ_ = E::ReadWalkLimits(ctx.player, &w) ? w.floorZ : 0.f;
+            }
+            const int spot = ok && floorZ_ > 0.f && detours_ < kMaxDetours ? detour_.PassedSpot(goal_.route) : -1;
+            if (spot >= 0) {   // the route climbs a slope this walk already found too steep: round it at once
+                ++detours_;
+                detour_.BeginRound(ctx.pos, goal_.targetPos, static_cast<size_t>(spot), floorZ_);
+                return ProcStatus::Working;
+            }
         }
         const float toPile = HorizDist(ctx.pos, goal_.targetPos);
         while (wp_ + 1 < waypoints_.size() && HorizDist(ctx.pos, waypoints_[wp_]) < kAdvanceCm) ++wp_;
@@ -236,6 +264,14 @@ public:
             sinceProgress_ = 0;
             // FIRST: a CLOSED door? Open it as a player's press would and keep walking through.
             if (doorOpens_ < kMaxDoorOpens && TryOpenBlockingDoor(ctx)) { ++doorOpens_; return ProcStatus::Working; }
+            // THEN: a slope too steep for the body, which the NavMesh routes over (detour.h)? Go round it.
+            ue_wrap::FVector steep{};
+            if (detours_ < kMaxDetours && floorZ_ > 0.f &&
+                detour::SteepAhead(ctx.player, ctx.pos, waypoints_[wp_], floorZ_, &steep)) {
+                ++detours_;
+                detour_.Begin(ctx.pos, goal_.targetPos, steep, floorZ_);
+                return ProcStatus::Working;
+            }
             // NEVER GIVE UP: grind past physics boxes and clutter. Alternate a sideways JUKE to
             // slide off the obstacle, and RE-PATH periodically. Goto returns Failed ONLY on a hard
             // engine problem -- reaching the pile (IsActive->false, Grab takes over) or the run
@@ -314,6 +350,9 @@ private:
     int    sinceProgress_ = 0, logTick_ = 0, doorOpens_ = 0;
     int    stuckEpisodes_ = 0, unstickTicks_ = 0;
     float  jukeSign_ = 1.f;
+    float  floorZ_ = -1.f;   // the body's lowest floor normal Z; -1 unread, 0 unreadable (no detours)
+    int    detours_ = 0;
+    detour::Search detour_;
 };
 
 // ---- GrabProcess -----------------------------------------------------------------------
