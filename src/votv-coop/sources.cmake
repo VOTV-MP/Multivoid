@@ -7,7 +7,8 @@
 #
 # Order follows the principle-7 split -- bootstrap and loader, then src/ue_wrap/ (engine
 # wrapper), then src/coop/ (gameplay and network), then src/ui/ and src/harness/, with the
-# resource scripts last.
+# resource scripts last. The developer drills and probes of src/coop/dev/ are a list of their
+# own (sources_dev.cmake), appended at the end.
 
 set(VOTVCOOP_SOURCES
     src/bootstrap/dllmain.cpp
@@ -287,7 +288,6 @@ set(VOTVCOOP_SOURCES
     src/coop/props/snapshot_census.cpp
     src/coop/props/save_identity_map.cpp
     src/coop/props/save_identity_bind.cpp
-    src/coop/dev/force_overdestroy_test.cpp
     src/coop/props/prop_census.cpp
     src/coop/props/prop_element_tracker.cpp
     src/coop/props/prop_key_index.cpp
@@ -470,12 +470,6 @@ set(VOTVCOOP_SOURCES
     src/coop/props/container_slice_wire.cpp
     src/coop/props/container_view_close.cpp
     src/coop/props/container_write_policy.cpp
-    src/coop/dev/delivery_census_probe.cpp
-    src/coop/dev/store_table_probe.cpp
-    src/coop/dev/order_selftest.cpp
-    src/coop/dev/meadow_selftest.cpp
-    src/coop/dev/meadow_selftest_rows.cpp
-    src/coop/dev/order_probe.cpp
     src/ue_wrap/actors/inventory.cpp
     src/ue_wrap/hotbar/icons.cpp
     src/coop/items/hotbar_icon_edge.cpp
@@ -496,152 +490,9 @@ set(VOTVCOOP_SOURCES
     src/coop/net/session_voice.cpp
     src/ui/voice_icons.cpp
     src/ui/voice_panel.cpp
-    src/coop/dev/add_points.cpp
-    src/coop/dev/spawn_order_probe.cpp
-    src/coop/dev/prop_birth_key_probe.cpp
-    src/coop/dev/spawn_match_probe.cpp
-    src/coop/dev/native_text_probe.cpp
-    src/coop/dev/eid_lifetime_trace.cpp
-    src/coop/dev/join_window_pos_trace.cpp
-    src/coop/dev/rng_roll_census.cpp
-    src/coop/dev/death_write_diff.cpp
-    src/coop/dev/desk_diag.cpp
-    src/coop/dev/rollover_watch.cpp
-    src/coop/dev/midnight_drill.cpp
-    src/coop/dev/world_roll_drill.cpp
-    src/coop/dev/kerfur_menu_drill.cpp
-    src/coop/dev/kerfur_convert_drill.cpp
-    src/coop/dev/kerfus_drill.cpp
-    src/coop/dev/kerfus_throw_drill.cpp
-    src/coop/dev/desk_crossing_drill.cpp
-    src/coop/dev/desk_ping_drill.cpp
-    src/coop/dev/command_drill.cpp
-    src/coop/dev/mv_drill.cpp
-    src/coop/dev/stats_probe.cpp
-    src/coop/dev/stat_order_drill.cpp
-    src/coop/dev/chat_drill.cpp
-    src/coop/dev/l10n_drill.cpp
-    src/coop/dev/ban_drill.cpp
-    src/coop/dev/bug_report_drill.cpp
-    src/coop/dev/grants_drill.cpp
-    src/coop/dev/pause_quit_drill.cpp
-    src/coop/dev/game_window.cpp
-    src/coop/dev/desk_verb_drill.cpp
-    src/coop/dev/desk_verb_drill_desk.cpp
-    src/coop/dev/desk_verb_drill_refiner.cpp
-    src/coop/dev/kerfur_serve_drill.cpp
-    src/coop/dev/load_reroll_watch.cpp
-    src/coop/dev/container_selftest.cpp
-    src/coop/dev/drive_selftest.cpp
-    src/coop/dev/hand_drop_selftest.cpp
-    src/coop/dev/run_and_wait_selftest.cpp
-    src/coop/dev/world_singleton_parity.cpp
-    src/coop/dev/function_lookup_parity.cpp
-    src/coop/dev/container_opener_probe.cpp
-    src/coop/dev/container_view_drill.cpp
-    src/coop/dev/dev_lanes.cpp
-    src/coop/dev/physmods_drill.cpp
-    src/coop/dev/drone_call_drill.cpp
-    src/coop/dev/sack_drill.cpp
-    src/coop/dev/fall_drill.cpp
-    src/coop/dev/atv_spawn_drill.cpp
-    src/coop/dev/throw_drill.cpp
-    src/coop/dev/log_drill.cpp
-    src/coop/dev/server_upgrade_drill.cpp
-    src/coop/dev/server_drill.cpp
-    src/coop/dev/sat_console_drill.cpp
-    src/coop/dev/calib_drill.cpp
-    src/coop/dev/drive_drill.cpp
-    src/coop/dev/drive_drill_verbs.cpp
-    src/coop/dev/download_drill.cpp
-    src/coop/dev/laptop_drill.cpp
-    src/coop/dev/grid_drill.cpp
-    src/coop/dev/grid_drill_checks.cpp
-    src/coop/dev/grid_drill_upgrade.cpp
-    src/coop/dev/tower_drill.cpp
-    src/coop/dev/end_play_probe.cpp
-    src/coop/dev/death_seam_census.cpp
-    src/coop/dev/damage_probe.cpp
-    src/coop/dev/grime_drill.cpp
-    src/coop/dev/class_lifetime_probe.cpp
-    src/coop/dev/init_seam_probe.cpp
   src/coop/dev/floppy_selftest.cpp
-    src/coop/dev/floppy_selftest_world.cpp
-    src/coop/dev/hookdrag_selftest.cpp
-    src/coop/dev/roster_token_selftest.cpp
-    src/coop/dev/kerfur_census.cpp
-    src/coop/dev/food_clock_probe.cpp
-    src/coop/dev/lookat_churn_probe.cpp
-    src/coop/dev/door_drill.cpp
-    src/coop/dev/door_drill_aim.cpp
-    src/coop/dev/event_drill.cpp
-    src/coop/dev/settings_drill.cpp
-    src/coop/dev/mannequin_drill.cpp
-    src/coop/dev/toggle_drill.cpp
-    src/coop/dev/world_first_check.cpp
-    src/coop/dev/blackout_drill.cpp
-    src/coop/dev/lid_drill.cpp
-    src/coop/dev/subject_drill.cpp
-    src/coop/dev/light_drill.cpp
-    src/coop/dev/keypad_drill.cpp
-    src/coop/dev/lookat_aim_drill.cpp
-    src/coop/dev/fireext_drill.cpp
-    src/coop/dev/pry_drill.cpp
-    src/coop/dev/recycled_slot_drill.cpp
-    src/coop/dev/rehost_rejoin.cpp
-    src/coop/dev/puppet_head_probe.cpp
-    src/coop/dev/wire_census.cpp
     src/coop/input/input_owner.cpp
-    src/coop/dev/perf_probe.cpp
-    src/coop/dev/input_focus_probe.cpp
-    src/coop/dev/leak_probe.cpp
-    src/coop/dev/heap_probe.cpp
-    src/coop/dev/live_store_readout.cpp
-    src/coop/dev/hotbar_icon_probe.cpp
-    src/coop/dev/inventory_pickup_drill.cpp
-    src/coop/dev/drone_probe.cpp
-    src/coop/dev/native_pile_inert_probe.cpp
-    src/coop/dev/client_model_probe.cpp
-    src/coop/dev/atv_eject_drill.cpp
-    src/coop/dev/atv_probe.cpp
-    src/coop/dev/atv_tire_probe.cpp
-    src/coop/dev/pinecone_probe.cpp
-    src/coop/dev/sleep_probe.cpp
-    src/coop/dev/event_trigger.cpp
-    src/coop/dev/event_force.cpp
-    src/coop/dev/light_group_census.cpp
-    src/coop/dev/lightswitch_probe.cpp
-    src/coop/dev/keypad_probe.cpp
-    src/coop/dev/save_probe.cpp
-    src/coop/dev/native_ui_probe.cpp
-    src/coop/dev/worldless_frames.cpp
-    src/coop/dev/dev_gate.cpp
-    src/coop/dev/director/player_context.cpp
-    src/coop/dev/director/control_manager.cpp
-    src/coop/dev/director/detour.cpp
-    src/coop/dev/director/proc_walkgrab.cpp
-    src/coop/dev/director/director_run.cpp
-    src/coop/dev/director/container_take_probe.cpp
-    src/coop/dev/director/dup_verifier.cpp
-    src/coop/dev/director/door_approach.cpp
-    src/coop/dev/director/routes.cpp
-    src/coop/dev/director/aim_fan.cpp
-    src/coop/dev/director/background_walk.cpp
-    src/coop/dev/director/aimed_grab.cpp
-    src/coop/dev/force_weather.cpp
-    src/coop/dev/weather_probe.cpp
-    src/coop/dev/freecam.cpp
-    src/coop/dev/flashlight_setup.cpp
-    src/coop/dev/pos_hud.cpp
-    src/coop/dev/restore_vitals.cpp
-    src/coop/dev/vitals_keepalive.cpp
-    src/coop/dev/set_clock.cpp
-    src/coop/dev/spawn_menu_unlock.cpp
-    src/coop/dev/spawn_npc.cpp
     src/coop/session/teleport_client.cpp
-    src/coop/dev/menu_proceed.cpp
-    src/coop/dev/object_overlay.cpp
-    src/coop/dev/ragdoll_bone_overlay.cpp
     src/ui/imgui_overlay.cpp
     src/ui/overlay_diag.cpp
     src/ui/overlay_test_arm.cpp
@@ -804,3 +655,6 @@ set(VOTVCOOP_SOURCES
     src/l10n/l10n.cpp
     src/l10n/l10n_selftest.cpp
 )
+
+include(${CMAKE_CURRENT_LIST_DIR}/sources_dev.cmake)
+list(APPEND VOTVCOOP_SOURCES ${VOTVCOOP_DEV_SOURCES})
