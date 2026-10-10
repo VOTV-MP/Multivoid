@@ -126,10 +126,14 @@ function Invoke-Gate([hashtable]$mutate) {
 
     # --- 3. the atlas ceiling is EXPLICIT ------------------------------------
     # ImGui defaults TexMax to 8192. Inheriting it raises the worst DX12 upload
-    # behind an unbounded fence wait from 16.8 MB to 268 MB.
+    # behind an unbounded fence wait from 16.8 MB to 268 MB. Two ceilings are
+    # pinned: 2048, and 4096 under a script face, whose peer text accumulates
+    # (measured by the l10n drill's atlas arm); both are named
+    # constants and both sides of the texture take them.
     $f = $text['src\votv-coop\src\ui\fonts.cpp']
-    if ($f -notmatch 'TexMaxWidth\s*=\s*2048' -or $f -notmatch 'TexMaxHeight\s*=\s*2048') {
-        $fails += "fonts.cpp does not pin TexMaxWidth/TexMaxHeight to 2048 (the 8192 default would be inherited)"
+    if ($f -notmatch 'kAtlasMax\s*=\s*2048' -or $f -notmatch 'kAtlasMaxScript\s*=\s*4096' -or
+        $f -notmatch 'TexMaxWidth\s*=\s*io\.Fonts->TexMaxHeight\s*=\s*ActiveScript\(\)\s*\?\s*kAtlasMaxScript\s*:\s*kAtlasMax') {
+        $fails += "fonts.cpp does not pin TexMaxWidth/TexMaxHeight to 2048 and 4096 (the 8192 default would be inherited)"
     }
     if ($f -notmatch 'GlyphExcludeRanges') {
         $fails += "fonts.cpp no longer sets GlyphExcludeRanges -- every codepoint in every face would bake"
@@ -167,7 +171,7 @@ if ($Drill) {
            want = 'no longer asserts the regime' }
         @{ name = 'TexMax inherited'
            mut  = @{ 'src\votv-coop\src\ui\fonts.cpp' = {
-                        param($t) $t -replace 'TexMaxWidth\s*=\s*2048', 'TexMaxWidth  = 8192' } }
+                        param($t) $t -replace 'kAtlasMax\s*=\s*2048', 'kAtlasMax = 8192' } }
            want = 'does not pin TexMaxWidth' }
         @{ name = 'exclude list a no-op'
            mut  = @{ 'src\votv-coop\include\coop\text\exclude_ranges.inc' = {

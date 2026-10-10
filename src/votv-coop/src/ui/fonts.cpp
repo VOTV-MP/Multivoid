@@ -213,6 +213,16 @@ ScriptState g_hansState;
 constexpr ScriptDesc kHans = {"Hans", kHansRanges, sizeof(kHansRanges) / sizeof(kHansRanges[0]), kHansFaces,
                               &g_hansState};
 
+// The atlas ceilings (Load). A script face's text is not bounded as the repertoire is: it bakes each
+// ideograph the first time something draws it, and a baked drawn every frame (the chat) keeps every
+// glyph it took, so peer text accumulates. Measured by the l10n drill's atlas arm: the whole CJK block,
+// 20,992 ideographs, packs into 67% of 2048 squared at a 15 px chat, about 133 px squared each; by area
+// some 3,400 at 4K's 45 px and 1,400 at the scale cap's 72, against the few thousand everyday Chinese
+// uses. So under a script face the ceiling is 4096, reached only by a session that draws that many,
+// which alone pays the larger upload and repack peak. The pack-failure detector says when it fills.
+constexpr int kAtlasMax       = 2048;
+constexpr int kAtlasMaxScript = 4096;
+
 // The script of the language whose catalogue loaded.
 const ScriptDesc* ActiveScript() {
     const std::string loc = l10n::ActiveLocale();
@@ -431,17 +441,9 @@ void Load() {
     // is allowed. Two reasons for 2048: the DX12 backend uploads the dirty bounding box through a
     // staging buffer that only grows, behind an untimed wait, and at 2048 the worst upload is 16.8
     // MB (67 MB at 4096); and the atlas keeps the old and new texture across a repack, so the peak
-    // is two textures, 33.6 MB here against 134 MB. For the repertoire capacity is not the binding
-    // constraint: the pathological demand, every remote-text surface asking for the whole repertoire
-    // at its own size in one shared atlas, measures to about 86% of 2048 squared, which fits with 17%
-    // headroom. A pack's script is not bounded so: the system face bakes each ideograph the first time
-    // something draws it, and a baked drawn every frame (the chat) keeps every glyph it ever took, so
-    // peer text accumulates. The shipped pack's own lines fit in one baked at every scale (352
-    // ideographs, at most 45% of the atlas at the largest, so three such bakeds there would not); how
-    // much peer text fills it is not yet measured. That is why the pack-failure detector in
-    // ui/atlas_watch.cpp is load-bearing.
-    io.Fonts->TexMaxWidth  = 2048;
-    io.Fonts->TexMaxHeight = 2048;
+    // is two textures, 33.6 MB here against 134 MB. The repertoire's pathological demand, every
+    // remote-text surface asking for all of it at its own size, measures to about 86% of 2048 squared.
+    io.Fonts->TexMaxWidth = io.Fonts->TexMaxHeight = ActiveScript() ? kAtlasMaxScript : kAtlasMax;
     // The drill (dev.atlas_texmax_drill, 0 off): 256 starves the packer, which is how the
     // pack-failure detector is shown red.
     static const long s_texmaxDrill =
