@@ -3,6 +3,8 @@
 
 #include "ui/server_browser_rows.h"
 
+#include "l10n/l10n.h"
+
 #include "coop/net/protocol.h"          // kProtocolVersion -- the version-cell mismatch tint
 #include "coop/session/session_manager.h"
 #include "coop/text/utf8_codec.h"       // the one owner of text encoding
@@ -503,12 +505,16 @@ void Sync() {
         // yellows on hover nor fades on a stale row (four more dispatches per painted row is not
         // worth it). ESlateVisibility: Visible=0, Collapsed=1, Hidden=2.
         if (rp.lock) E::SetWidgetVisibility(rp.lock, r.locked ? 0 : 2);
-        SetRowText(rp.text[kCellName], isOwn ? r.name + "   (your server)" : r.name);
+        // The tag is its own msgid: a name has no place in a translator's sentence, and a long name
+        // must never cut the tag off.
+        std::string nameText = r.name;
+        if (isOwn) { nameText += "   "; nameText += l10n::T("(your server)"); }
+        SetRowText(rp.text[kCellName], nameText);
         SetRowText(rp.text[kCellFlag], MismatchMark(r));
         SetRowText(rp.text[kCellLink], ui::link_format::LobbyLinkLabel(r.link));
-        SetRowText(rp.text[kCellPlayers],
-                   "Players: " + std::to_string(r.playersCur) + "/" +
-                   std::to_string(r.playersMax));
+        char players[256];
+        l10n::Fmt(players, sizeof(players), l10n::T("Players: %d/%d"), r.playersCur, r.playersMax);
+        SetRowText(rp.text[kCellPlayers], players);
         // Selection is keyed on the lobby, not the row index: the set churns and one host leaving
         // shifts every row after it, so an index-keyed selection would move to whatever landed
         // there. Read from r.lobbyId, not RowIsSelected(i): the assign above cleared g_rowIds and

@@ -4,6 +4,8 @@
 
 #include "ui/browser_input_screens.h"
 
+#include "l10n/l10n.h"
+
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/session/session_manager.h"
@@ -22,10 +24,16 @@
 #include <windows.h>
 
 #include <atomic>
+#include <cstring>
 #include <string>
 
 namespace ui::browser_input_screens {
 namespace {
+
+// A looked-up label is UTF-8; the native widgets take wide text.
+std::wstring Wide(const char* utf8) {
+    return coop::text::FromUtf8Lossy(utf8, std::strlen(utf8));
+}
 
 namespace E  = ue_wrap::engine;
 namespace U  = ue_wrap::umg;
@@ -105,28 +113,33 @@ int Idx(Kind k) {
 }
 
 // What each screen says, in one table so the screens cannot drift into different idioms.
+// The texts are marked English (msgids), looked up where they are drawn; the confirm word is a
+// button's lone word and takes the surface's context.
 struct Spec {
-    const wchar_t* title;
-    const wchar_t* label;
-    const wchar_t* hint;
-    const wchar_t* confirm;
-    int32_t        maxLen;
+    const char* title;
+    const char* label;
+    const char* hint;
+    const char* confirm;
+    int32_t     maxLen;
     // An optional second field; a null label means one box, which is every window but Direct
     // connect. A Spec row rather than a Kind branch in the builder, so the two shapes differ in
     // data, not in construction.
-    const wchar_t* label2  = nullptr;
-    const wchar_t* hint2   = nullptr;
-    int32_t        maxLen2 = 0;
+    const char* label2  = nullptr;
+    const char* hint2   = nullptr;
+    int32_t     maxLen2 = 0;
 };
 const Spec kSpec[3] = {
     // Two boxes: the address, and a password left empty when the server has none. The password cap
     // matches the LobbyPassword window's.
-    {L"Multivoid  -  Direct connect", L"Server address", L"host or host:port", L"Connect", 64,
-     L"Password  (leave empty if the server has none)", L"password", 64},
-    {L"Multivoid  -  Change name",    L"Your name",      L"your name",         L"OK",      24},
+    {L10N_MARK("Multivoid  -  Direct connect"), L10N_MARK("Server address"),
+     L10N_MARK("host or host:port"), L10N_MARK_C("server_browser", "Connect"), 64,
+     L10N_MARK("Password  (leave empty if the server has none)"), L10N_MARK("password"), 64},
+    {L10N_MARK("Multivoid  -  Change name"), L10N_MARK("Your name"), L10N_MARK("your name"),
+     L10N_MARK_C("server_browser", "OK"), 24},
     // The cap is 64 codepoints, not the generated length: a host may replace the generated password
     // with anything they can say out loud.
-    {L"Multivoid  -  Password",       L"Server password", L"password",         L"Join",    64},
+    {L10N_MARK("Multivoid  -  Password"), L10N_MARK("Server password"), L10N_MARK("password"),
+     L10N_MARK_C("server_browser", "Join"), 64},
 };
 
 // Every field this screen owns, released together. Release is the only thing that clears the
@@ -153,15 +166,17 @@ bool BuildOne(void* switcher, Kind kind, void* backDonor) {
 
     NS::WindowShell shell;
     const float windowH = kWindowH + (spec.label2 ? kSecondFieldH : 0.f);
-    if (!NS::BuildWindowShell(switcher, kWindowW, windowH, spec.title, shell)) return false;
+    if (!NS::BuildWindowShell(switcher, kWindowW, windowH, Wide(l10n::T(spec.title)).c_str(),
+                              shell))
+        return false;
     void* col = shell.column;
 
-    NS::AddText(col, spec.label, 16, kAccent, NS::kJustLeft, 0.f);
-    s.field = TF::Create(col, spec.hint, spec.maxLen, kFieldW);
+    NS::AddText(col, Wide(l10n::T(spec.label)).c_str(), 16, kAccent, NS::kJustLeft, 0.f);
+    s.field = TF::Create(col, Wide(l10n::T(spec.hint)).c_str(), spec.maxLen, kFieldW);
     if (!s.field) return false;
     if (spec.label2) {
-        NS::AddText(col, spec.label2, 16, kAccent, NS::kJustLeft, 0.f);
-        s.field2 = TF::Create(col, spec.hint2, spec.maxLen2, kFieldW);
+        NS::AddText(col, Wide(l10n::T(spec.label2)).c_str(), 16, kAccent, NS::kJustLeft, 0.f);
+        s.field2 = TF::Create(col, Wide(l10n::T(spec.hint2)).c_str(), spec.maxLen2, kFieldW);
         // The first field is released on the way out: this builder is retried from the menu tick,
         // and a bare return past a successful Create would leak a Field per retry.
         if (!s.field2) { ReleaseFields(s); return false; }
@@ -178,10 +193,14 @@ bool BuildOne(void* switcher, Kind kind, void* backDonor) {
     // Footer: Back at the left, the confirm at the right, where every native VOTV window puts its
     // confirm.
     if (void* footRow = NS::Spawn(L"HorizontalBox", col)) {
-        s.backBtn = NS::BuildButton(footRow, backDonor, L"Back", NS::kBtnFontPx);
+        s.backBtn = NS::BuildButton(footRow, backDonor,
+                                    Wide(l10n::Tc("server_browser", "Back")).c_str(),
+                                    NS::kBtnFontPx);
         void* gap  = NS::Spawn(L"Spacer", footRow);
         if (gap) NS::AddHFill(footRow, gap, 1.f, NS::kFill, NS::kFill);
-        s.okBtn = NS::BuildButton(footRow, backDonor, spec.confirm, NS::kBtnFontPx);
+        s.okBtn = NS::BuildButton(footRow, backDonor,
+                                  Wide(l10n::Tc("server_browser", spec.confirm)).c_str(),
+                                  NS::kBtnFontPx);
         // Released here too: the next tick rebuilds and mints a second Field, stranding this one in
         // the module's live list.
         if (!s.backBtn || !s.okBtn) { ReleaseFields(s); return false; }
@@ -196,7 +215,7 @@ bool BuildOne(void* switcher, Kind kind, void* backDonor) {
     void* slot = U::AddChild(switcher, s.root);
     s.index = U::IndexOfChild(switcher, s.root);
     if (s.index < 0) {
-        UE_LOGE("browser_input_screens: built '%ls' but could NOT place it in the menu "
+        UE_LOGE("browser_input_screens: built '%s' but could NOT place it in the menu "
                 "switcher (AddChild slot=%p, GetChildIndex=-1) -- it cannot be shown this "
                 "menu", spec.title, slot);
         // The field goes with it: clearing the root alone leaves the heap Field alive and in the
@@ -218,7 +237,7 @@ void Confirm(Kind kind) {
     const std::string value = TF::Text(s.field);
     if (kind == Kind::LobbyPassword) {
         if (value.empty()) {
-            SetStatus(s, "Type the password this server was locked with.", kBad);
+            SetStatus(s, l10n::T("Type the password this server was locked with."), kBad);
             return;
         }
         // Handed over, never stored: SetJoinPassword holds it for one join attempt and nothing
@@ -229,8 +248,8 @@ void Confirm(Kind kind) {
                            g_pendingJoin.hostGame)) {
             // Dropped on a refusal, so it cannot ride into the next connection the player makes.
             sm::SetJoinPassword("");
-            SetStatus(s, "Could not start that connection -- another action is already "
-                         "in flight.", kBad);
+            SetStatus(s, l10n::T("Could not start that connection -- another action is already "
+                                 "in flight."), kBad);
             return;
         }
         UE_LOGI("browser_input_screens: join with a password accepted -- join_progress "
@@ -240,7 +259,7 @@ void Confirm(Kind kind) {
     }
     if (kind == Kind::ChangeName) {
         if (!sm::SetNickname(value)) {
-            SetStatus(s, "Type a name first.", kBad);
+            SetStatus(s, l10n::T("Type a name first."), kBad);
             return;
         }
         coop::config::SetValue(::coop::config_registry::rows::net_nick, sm::Nickname().c_str());
@@ -251,7 +270,7 @@ void Confirm(Kind kind) {
     }
 
     if (value.empty()) {
-        SetStatus(s, "Type an address first -- host or host:port.", kBad);
+        SetStatus(s, l10n::T("Type an address first -- host or host:port."), kBad);
         return;
     }
     // ConnectDirect owns the refusal: it parses the address and answers false for a bad one, so
@@ -262,8 +281,8 @@ void Confirm(Kind kind) {
     // password is non-empty, and its check sits inside that branch.
     sm::SetJoinPassword(s.field2 ? TF::Text(s.field2) : std::string());
     if (!sm::ConnectDirect(value)) {
-        SetStatus(s, "Could not connect to that address -- check it, or another action is "
-                     "already in flight.", kBad);
+        SetStatus(s, l10n::T("Could not connect to that address -- check it, or another action is "
+                             "already in flight."), kBad);
         return;
     }
     // Written only after the accept gate passed: the row means the last address actually tried and
@@ -305,7 +324,7 @@ void Show(Kind kind) {
     // Focused on open, on the box the player always fills in. Tab moves to the other; so does a
     // click, since the field hit-tests its own box by geometry.
     TF::Focus(s.field);
-    UE_LOGI("browser_input_screens: shown '%ls' (index %d -> %d)",
+    UE_LOGI("browser_input_screens: shown '%s' (index %d -> %d)",
             kSpec[Idx(kind)].title, g_priorIndex, s.index);
 }
 

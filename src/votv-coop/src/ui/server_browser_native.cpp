@@ -4,10 +4,13 @@
 
 #include "ui/server_browser_native.h"
 
+#include "l10n/l10n.h"
+
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/session/session_manager.h"
-#include "ui/boot_warning_dialog.h"     // the loud failure surface for a donor that never appears
+#include "coop/text/utf8_codec.h"       // a looked-up (UTF-8) label, widened for the native widgets
+#include "ui/boot_warning_dialog.h"    // the loud failure surface for a donor that never appears
 #include "ui/input_focus.h"            // a click only counts while OUR window is foreground
 #include "ui/native_screen.h"          // palette + widget primitives, shared with the host window
 #include "ui/server_browser_actions.h"   // CONNECT / HOST / REFRESH, its own TU
@@ -28,6 +31,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <cstring>
 #include <string>
 
 namespace ui::server_browser_native {
@@ -74,6 +78,11 @@ using NS::Spawn;
 using NS::AddText;
 using NS::AddFramedBox;
 using NS::BuildButton;
+
+// A looked-up label is UTF-8; the native widgets take wide text.
+std::wstring Wide(const char* utf8) {
+    return coop::text::FromUtf8Lossy(utf8, std::strlen(utf8));
+}
 
 // Only the window's colours; the row palette lives with the rows.
 const FLinearColor kPanel  = NS::Panel();   // window fill
@@ -196,7 +205,7 @@ bool BuildScreen(void* switcher) {
     // authors its own frame: it is the canary for a moved menu layout.
     NS::WindowShell shell;
     if (!NS::BuildWindowShell(switcher, kWindowW, kWindowH,
-                              L"Multivoid  -  Server Browser", shell))
+                              Wide(l10n::T("Multivoid  -  Server Browser")).c_str(), shell))
         return false;
     void* root = shell.root;
     void* col  = shell.column;
@@ -257,7 +266,8 @@ bool BuildScreen(void* switcher) {
     // runs all the way down with no dead band beside Back.
     if (void* footRow = Spawn(L"HorizontalBox", leftCol)) {
         // Sentence case: VOTV uppercases no button label anywhere.
-        g_backBtn = BuildButton(footRow, backDonor, L"Back", ui::native_screen::kBtnFontPx);
+        g_backBtn = BuildButton(footRow, backDonor, Wide(l10n::Tc("server_browser", "Back")).c_str(),
+                                ui::native_screen::kBtnFontPx);
         if (!g_backBtn) return false;
         NS::SetHSlot(NS::SlotOf(g_backBtn), 0.f, NS::kLeft, kCenter);
         if (void* s = NS::AddVFill(leftCol, footRow, 0.f, NS::kLeft, kBottom))
@@ -525,10 +535,10 @@ void OnMenuTick(void* menu, void* switcher) {
                     g_lastRefreshMs = ::GetTickCount64();
                     sm::Refresh();
                     SyncRows();
-                    const std::string notice =
-                        "Showing the " + coop::net::master_slots::Selected().label +
-                        " server list.";
-                    panels::SetNotice(notice.c_str());
+                    char notice[256];
+                    l10n::Fmt(notice, sizeof(notice), l10n::T("Showing the %s server list."),
+                              coop::net::master_slots::Selected().label.c_str());
+                    panels::SetNotice(notice);
                 }
                 return;
             }

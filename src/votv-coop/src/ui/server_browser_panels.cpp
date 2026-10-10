@@ -2,6 +2,8 @@
 
 #include "ui/server_browser_panels.h"
 
+#include "l10n/l10n.h"
+
 #include "coop/net/lobby_client.h"
 #include "coop/net/master_slots.h"      // the list the alarm names, and whether another exists
 #include "coop/net/protocol.h"            // kProtocolVersion -- which side must update
@@ -17,10 +19,16 @@
 
 #include <windows.h>
 
+#include <cstring>
 #include <string>
 
 namespace ui::server_browser_panels {
 namespace {
+
+// A looked-up label is UTF-8; the native widgets take wide text.
+std::wstring Wide(const char* utf8) {
+    return coop::text::FromUtf8Lossy(utf8, std::strlen(utf8));
+}
 
 namespace E  = ue_wrap::engine;
 namespace U  = ue_wrap::umg;
@@ -142,21 +150,29 @@ void* DetailLine(void* col, int32_t size, const FLinearColor& c, bool wrap = fal
     return t;
 }
 
-std::string Sec(int s) { return std::to_string(s) + "s ago"; }
-
 // How the host's players reach it, counted by the link the host measures on each: the counts behind the
 // row's word, as a tail on the connection line. None when the host reports no one, which says nothing about
-// who is in: a host or master older than the counts reports no one either.
+// who is in: a host or master older than the counts reports no one either. Each count is a phrase of its
+// own; the ", " between them and the " -- " before them are punctuation.
 std::string LinksTail(const coop::net::lobby::LobbyRow& r) {
     std::string parts;
-    const auto add = [&parts](int n, const char* what) {
-        if (n <= 0) return;
+    char one[256];
+    const auto join = [&parts](const char* piece) {
         if (!parts.empty()) parts += ", ";
-        parts += std::to_string(n) + " " + what;
+        parts += piece;
     };
-    add(r.links.relayed, "relayed");
-    add(r.links.direct, "direct");
-    add(r.links.lan, "LAN");
+    if (r.links.relayed > 0) {
+        l10n::Fmt(one, sizeof(one), l10n::T("%d relayed"), r.links.relayed);
+        join(one);
+    }
+    if (r.links.direct > 0) {
+        l10n::Fmt(one, sizeof(one), l10n::T("%d direct"), r.links.direct);
+        join(one);
+    }
+    if (r.links.lan > 0) {
+        l10n::Fmt(one, sizeof(one), l10n::T("%d LAN"), r.links.lan);
+        join(one);
+    }
     return parts.empty() ? std::string() : " -- " + parts;
 }
 
@@ -169,7 +185,7 @@ bool BuildDetails(void* parent) {
     // count changes with the selection and an auto-sized box would have slid the pane below it
     // on every click; a fill slot cannot do that, since its height comes from the column, not
     // its content.
-    void* col = SectionBody(parent, kPanel, L"Server info:", 1.f, 0.f);
+    void* col = SectionBody(parent, kPanel, Wide(l10n::T("Server info:")).c_str(), 1.f, 0.f);
     if (!col) return false;
     // The name is the panel's own subject and gets the emphasis the row gives it.
     g_dName    = Line{DetailLine(col, 20, kText), {}};
@@ -236,7 +252,7 @@ void Sync(bool force) {
         // Empty is a state with its own sentence, not five blank lines: a panel of empty labels
         // reads as a panel that failed to load.
         g_dName.SetColor(kDim);
-        g_dName.Set("Select a server");
+        g_dName.Set(l10n::T("Select a server"));
         g_dWorld.Set("");
         g_dVersion.Set("");
         g_dPlayers.Set("");
@@ -245,7 +261,10 @@ void Sync(bool force) {
     } else {
         g_dName.SetColor(kText);
         g_dName.Set(r.name);
-        g_dWorld.Set("World: " + (r.world.empty() ? std::string("(unnamed)") : r.world));
+        char world[256];
+        l10n::Fmt(world, sizeof(world), l10n::T("World: %s"),
+                  r.world.empty() ? l10n::T("(unnamed)") : r.world.c_str());
+        g_dWorld.Set(world);
 
         // The version line says which side must update, because a bare mismatch leaves the player
         // with nothing to do. The pair is compared exactly (the join gate is byte equality per
@@ -256,27 +275,47 @@ void Sync(bool force) {
         const bool gameBad = !r.game.empty() && r.game != sm::GameTarget();
         const int ourProto = static_cast<int>(coop::net::kProtocolVersion);
         const bool protoBad = r.proto > 0 && r.proto != ourProto;
-        std::string ver = "Version: ";
-        ver += r.game.empty() ? (r.version.empty() ? std::string("unknown") : r.version)
-                              : r.game;
-        if (r.proto > 0) ver += " b" + std::to_string(r.proto);
+        // The game target, build number and master's version are identifiers; the word "unknown" is not.
+        const std::string which =
+            r.game.empty() ? (r.version.empty() ? std::string(l10n::T("unknown")) : r.version)
+                           : r.game;
+        const std::string build = r.proto > 0 ? " b" + std::to_string(r.proto) : std::string();
+        // One msgid per verdict: the clause is a sentence's end and moves with the language.
+        char ver[256];
         if (gameBad) {
-            ver += "  -- built for a different game version";
+            l10n::Fmt(ver, sizeof(ver),
+                      l10n::T("Version: %1$s%2$s  -- built for a different game version"),
+                      which.c_str(), build.c_str());
+        } else if (protoBad && r.proto < ourProto) {
+            l10n::Fmt(ver, sizeof(ver), l10n::T("Version: %1$s%2$s  -- the host must update"),
+                      which.c_str(), build.c_str());
         } else if (protoBad) {
-            ver += r.proto < ourProto ? "  -- the host must update"
-                                      : "  -- you must update";
+            l10n::Fmt(ver, sizeof(ver), l10n::T("Version: %1$s%2$s  -- you must update"),
+                      which.c_str(), build.c_str());
+        } else {
+            l10n::Fmt(ver, sizeof(ver), l10n::T("Version: %1$s%2$s"), which.c_str(),
+                      build.c_str());
         }
         g_dVersion.SetColor(gameBad || protoBad ? kBad : kDim);
         g_dVersion.Set(ver);
 
-        g_dPlayers.Set("Players: " + std::to_string(r.playersCur) + "/" +
-                       std::to_string(r.playersMax));
+        char players[256];
+        l10n::Fmt(players, sizeof(players), l10n::T("Players: %d/%d"), r.playersCur,
+                  r.playersMax);
+        g_dPlayers.Set(players);
         // The direct flag is parsed off the wire and had no reader on this screen: a direct host is
         // port-forwarded UDP, an automatic host is brokered peer-to-peer, the difference between a
         // NAT that may need to cooperate and one that does not, worth one word.
-        g_dConn.Set(std::string("Connection: ") + (r.direct ? "direct" : "p2p") + LinksTail(r) +
-                    (r.locked ? "   (locked)" : ""));
-        g_dSeen.Set("Last seen: " + Sec(rows::AgeNowSec(r)));
+        char head[256];
+        l10n::Fmt(head, sizeof(head), l10n::T("Connection: %s"),
+                  r.direct ? l10n::T("direct") : l10n::T("p2p"));
+        std::string conn = head;
+        conn += LinksTail(r);
+        if (r.locked) { conn += "   "; conn += l10n::T("(locked)"); }
+        g_dConn.Set(conn);
+        char seen[256];
+        l10n::Fmt(seen, sizeof(seen), l10n::T("Last seen: %ds ago"), rows::AgeNowSec(r));
+        g_dSeen.Set(seen);
     }
 
     // The status.
@@ -285,18 +324,30 @@ void Sync(bool force) {
         // Nothing has answered for this list yet -- the browser just opened, or another master
         // was chosen -- so there is neither a count nor an age to state, and dating the empty
         // list would claim a fetch that never happened. The alarm below speaks if it stays silent.
-        g_sCount.Set("Waiting for the " + slots::Selected().label + " list...");
+        char waiting[256];
+        l10n::Fmt(waiting, sizeof(waiting), l10n::T("Waiting for the %s list..."),
+                  slots::Selected().label.c_str());
+        g_sCount.Set(waiting);
         g_sFresh.Set(std::string());
     } else {
         const int count = rows::Count();
         const uint64_t sinceMs = rows::MsSinceFetch();
-        g_sCount.Set(std::to_string(count) + (count == 1 ? " server" : " servers"));
+        char countLine[256];
+        l10n::Fmt(countLine, sizeof(countLine), l10n::Tn("%llu server", "%llu servers",
+                  static_cast<unsigned long long>(count)), static_cast<unsigned long long>(count));
+        g_sCount.Set(countLine);
         // Always say when, and say just now for the sub-second case rather than dropping the
         // clause: written only for a positive elapsed time, the line vanished on a capture taken
         // in the same millisecond as a fetch, and a clause that appears and disappears is a
         // worse instrument than one that is always there.
-        g_sFresh.Set(std::string("updated ") +
-                     (sinceMs < 1000 ? "just now" : Sec(static_cast<int>(sinceMs / 1000u))));
+        if (sinceMs < 1000) {
+            g_sFresh.Set(l10n::T("updated just now"));
+        } else {
+            char fresh[256];
+            l10n::Fmt(fresh, sizeof(fresh), l10n::T("updated %ds ago"),
+                      static_cast<int>(sinceMs / 1000u));
+            g_sFresh.Set(fresh);
+        }
     }
 
     // The alarm keys on consecutive failures, never on a clock: two failed attempts means the
@@ -307,11 +358,19 @@ void Sync(bool force) {
     // the answer when one master is unreachable from where the player sits, and they are the one
     // control on this screen a player in that state would not think to try.
     const int fails = sm::FetchFailures();
-    std::string alarm;
+    char alarm[320];
+    alarm[0] = '\0';
     if (fails >= 2) {
-        alarm = "Cannot reach the " + slots::Selected().label + " server list. " +
-                (slots::List().size() > 1 ? "Try another list above, or check your connection."
-                                          : "Check your connection.");
+        const std::string listName = slots::Selected().label;
+        if (slots::List().size() > 1) {
+            l10n::Fmt(alarm, sizeof(alarm),
+                      l10n::T("Cannot reach the %s server list. Try another list above, or check "
+                              "your connection."), listName.c_str());
+        } else {
+            l10n::Fmt(alarm, sizeof(alarm),
+                      l10n::T("Cannot reach the %s server list. Check your connection."),
+                      listName.c_str());
+        }
     }
     g_sAlarm.Set(alarm);
 
@@ -325,7 +384,9 @@ void Sync(bool force) {
     // The name everyone else will see, phrased as an answer rather than as a claim about what
     // the player is doing (see the status pane's note). The Change name button edits exactly
     // this value.
-    g_sNick.Set("Your name: " + sm::Nickname());
+    char nick[256];
+    l10n::Fmt(nick, sizeof(nick), l10n::T("Your name: %s"), sm::Nickname().c_str());
+    g_sNick.Set(nick);
 }
 
 }  // namespace ui::server_browser_panels

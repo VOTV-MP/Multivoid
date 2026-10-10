@@ -2,6 +2,8 @@
 
 #include "ui/server_browser_actions.h"
 
+#include "l10n/l10n.h"
+
 #include "ui/server_browser_native.h"   // the selection these act on, and the notice line
 #include "ui/browser_input_screens.h"   // where the two input doors lead
 #include "ui/host_window_native.h"      // what HOST opens
@@ -12,12 +14,14 @@
 
 #include "coop/net/lobby_client.h"
 #include "coop/session/session_manager.h"
+#include "coop/text/utf8_codec.h"          // a looked-up (UTF-8) label, widened for the native widgets
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/umg_build.h"
 
+#include <cstring>
 #include <string>
 
 namespace ui::server_browser_actions {
@@ -29,6 +33,11 @@ namespace P  = ue_wrap::profile;
 namespace NS = ui::native_screen;
 namespace sm = coop::session_manager;
 namespace SB = ui::server_browser_native;
+
+// A looked-up label is UTF-8; the native widgets take wide text.
+std::wstring Wide(const char* utf8) {
+    return coop::text::FromUtf8Lossy(utf8, std::strlen(utf8));
+}
 
 void* g_connect = nullptr;
 void* g_host    = nullptr;
@@ -48,14 +57,14 @@ void DoConnect() {
     std::string master;   // the master the row was listed on: the lobby id is its
     if (!SB::SelectedRow(row, &master)) {
         g_lastOutcome = "connect:none";
-        SB::SetNotice("Pick a server from the list first.");
+        SB::SetNotice(l10n::T("Pick a server from the list first."));
         return;
     }
     // A host cannot join itself. The join call refuses this too, so this is the message rather
     // than the guard; the guard lives at the one place that can enforce it.
     if (!row.lobbyId.empty() && row.lobbyId == sm::OwnLobbyId()) {
         g_lastOutcome = "connect:self";
-        SB::SetNotice("That's your own server -- you're already hosting it.");
+        SB::SetNotice(l10n::T("That's your own server -- you're already hosting it."));
         return;
     }
     // A locked row goes to the password prompt instead of straight at the host. The version is
@@ -82,8 +91,8 @@ void DoConnect() {
         SB::Close();   // accepted: the loading screen owns the player from here
     } else {
         g_lastOutcome = "connect:busy";
-        SB::SetNotice("Could not start that connection -- another action is already "
-                      "in flight.");
+        SB::SetNotice(l10n::T("Could not start that connection -- another action is already "
+                              "in flight."));
     }
 }
 
@@ -105,7 +114,7 @@ void DoHost() {
 void DoRefresh() {
     g_lastOutcome = "refresh";
     sm::Refresh();
-    SB::SetNotice("Refreshing the server list...");
+    SB::SetNotice(l10n::T("Refreshing the server list..."));
 }
 
 // The two input doors. They author nothing themselves: the sibling window owns the value,
@@ -134,7 +143,8 @@ bool BuildConnect(void* parent, void* donorBtn) {
     U::SetContent(rowBox, row);
     if (void* s = NS::AddVFill(parent, rowBox, 0.f, NS::kFill, NS::kTop))
         NS::SetSlotPadding(s, P::off::UVerticalBoxSlot_Padding, 0.f, 0.f, 0.f, 6.f);
-    g_connect = NS::BuildButton(row, donorBtn, L"Connect", NS::kBtnFontPx);
+    g_connect = NS::BuildButton(row, donorBtn, Wide(l10n::Tc("server_browser", "Connect")).c_str(),
+                                NS::kBtnFontPx);
     if (!g_connect) {
         UE_LOGE("server_browser_actions: could not build CONNECT -- the screen would have "
                 "no way to join the server it is describing");
@@ -152,12 +162,12 @@ bool Build(void* parent, void* donorBtn) {
     // address, host your own, rename yourself, refetch the list. Sentence case, never caps: the
     // game uppercases no button label anywhere, and shouting was the single loudest way our
     // chrome read as foreign.
-    struct Cell { const wchar_t* label; void** out; };
+    struct Cell { const char* label; void** out; };
     const Cell cells[] = {
-        {L"Direct connect", &g_direct},
-        {L"Host game",      &g_host},
-        {L"Change name",    &g_rename},
-        {L"Update list",    &g_refresh},
+        {L10N_MARK("Direct connect"), &g_direct},
+        {L10N_MARK("Host game"),      &g_host},
+        {L10N_MARK("Change name"),    &g_rename},
+        {L10N_MARK("Update list"),    &g_refresh},
     };
     const int cellCount = static_cast<int>(sizeof(cells) / sizeof(cells[0]));
 
@@ -183,9 +193,10 @@ bool Build(void* parent, void* donorBtn) {
             if (void* s = NS::AddVFill(parent, rowBox, 0.f, NS::kFill, NS::kTop))
                 NS::SetSlotPadding(s, P::off::UVerticalBoxSlot_Padding, 0.f, 0.f, 0.f, 4.f);
         }
-        void* btn = NS::BuildButton(row, donorBtn, cells[i].label, NS::kBtnFontPx);
+        void* btn = NS::BuildButton(row, donorBtn, Wide(l10n::T(cells[i].label)).c_str(),
+                                    NS::kBtnFontPx);
         if (!btn) {
-            UE_LOGE("server_browser_actions: could not build the '%ls' action -- the grid "
+            UE_LOGE("server_browser_actions: could not build the '%s' action -- the grid "
                     "would ship with a hole", cells[i].label);
             return false;
         }
