@@ -4,11 +4,13 @@
 
 #include "coop/text/repertoire.h"
 #include "ui/fonts.h"
+#include "ui/scale.h"
 #include "ue_wrap/core/log.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"   // ImFontAtlasBuilder: the packer counters + BakedPool
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <vector>
 
@@ -28,6 +30,12 @@ constexpr uint32_t kEmojiProbe = 0x1F600;  // GRINNING FACE -- the donor's, and 
 // The per-build memo. 0 means no build checked yet; texture ids count from 1, so 0 can never
 // be a real id.
 int g_checkedTexId = 0;
+
+// A drill's census (RequestCensus): the request number asked by the game thread, the one the render
+// thread last answered, and the answer, written before the answered number is published.
+std::atomic<uint32_t> g_censusAsked{0};
+std::atomic<uint32_t> g_censusAnswered{0};
+Census g_census;
 // Geometry as last logged, so the line appears on change instead of per frame.
 int      g_logW = 0, g_logH = 0;
 // The packer's discarded-surface counter as last seen; -1 means never sampled.
@@ -313,6 +321,16 @@ void RunSelftest(ImFontAtlas* atlas, ImTextureData* tex) {
 
 }  // namespace
 
+uint32_t RequestCensus() {
+    return g_censusAsked.fetch_add(1, std::memory_order_acq_rel) + 1;
+}
+
+bool CensusFor(uint32_t request, Census* out) {
+    if (g_censusAnswered.load(std::memory_order_acquire) < request) return false;
+    if (out) *out = g_census;
+    return true;
+}
+
 void AllowScript(const coop::text::CodepointRange* ranges, size_t count) {
     g_allowed = ranges;
     g_allowedCount = ranges ? count : 0;
@@ -408,6 +426,22 @@ void OnFrame() {
                     "delete. atlas %dx%d, packed %d px, discarded %d px (was %d).",
                     failures, firstFailure, tex ? tex->Width : 0, tex ? tex->Height : 0,
                     b->RectsPackedSurface, discarded, was);
+    }
+
+    // A drill's census, on request: the same scan, run for the answer whatever the edges say.
+    const uint32_t asked = g_censusAsked.load(std::memory_order_acquire);
+    if (b && asked != g_censusAnswered.load(std::memory_order_relaxed)) {
+        Census c;
+        c.texW = tex ? tex->Width : 0;
+        c.texH = tex ? tex->Height : 0;
+        c.maxW = atlas->TexMaxWidth;
+        c.maxH = atlas->TexMaxHeight;
+        c.packedPx = b->RectsPackedSurface;
+        c.chatPx = ui::fonts::PxFor(ui::fonts::Role::Chat);
+        c.uiScale = ui::scale::Ui();
+        for (int i = 0; i < b->BakedPool.Size; ++i) c.failures += ScanPackFailures(b->BakedPool[i], c.firstFailure);
+        g_census = c;
+        g_censusAnswered.store(asked, std::memory_order_release);
     }
 
     // The selftest, per build. Every repack mints a fresh texture with a new id, so this catches

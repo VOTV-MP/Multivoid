@@ -18,6 +18,7 @@
 #include "coop/text/repertoire.h"   // CodepointRange
 
 #include <cstddef>
+#include <cstdint>
 
 namespace ui::atlas_watch {
 
@@ -43,6 +44,21 @@ void AllowScript(const coop::text::CodepointRange* ranges, size_t count);
 // to a superset font is no font at all, so the OS-fallback path logs loudly rather than refusing a
 // source.
 void OnFrame();
+
+// The atlas's state for a drill on the game thread. RequestCensus asks, and the next frame the watcher
+// runs answers, running the pack-failure scan over every baked for it; CensusFor is true once that
+// frame ran and fills `out`. One request at a time: a drill asks again only after its answer.
+struct Census {
+    int      texW = 0, texH = 0;     // the texture now
+    int      maxW = 0, maxH = 0;     // the ceiling it may grow to
+    int      packedPx = 0;           // the packer's packed surface
+    int      failures = 0;           // codepoints a source has, that we did not exclude, that did not bake
+    uint32_t firstFailure = 0;
+    float    chatPx = 0.f;           // the chat role's baked size, and the UI scale it came from: what the
+    float    uiScale = 0.f;          // packed surface depends on, so a count measured here scales to another
+};
+uint32_t RequestCensus();
+bool CensusFor(uint32_t request, Census* out);
 
 // The context (and therefore the atlas) is gone. Clears the per-build memo --
 // ImFontAtlas::TexNextUniqueID restarts at 1 in the constructor, so a remembered

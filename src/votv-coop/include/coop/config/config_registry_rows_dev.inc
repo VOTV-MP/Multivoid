@@ -193,9 +193,10 @@ CFG_ENUM(chat_drill, "chat_drill", "dev", "off", "off|history|seed|i18n|span", "
     "Developer: chat checks judged in memory -- history (the host), seed (the second joiner), i18n "
     "(every peer), span (every peer: a mid-line nick's span through the feed); each prints "
     "[CHAT-DRILL] PASS, FAIL or ABORT.")
-CFG_ENUM(l10n_drill, "l10n_drill", "dev", "off", "off|translated|english", "VOTVCOOP_L10N_DRILL",
+CFG_ENUM(l10n_drill, "l10n_drill", "dev", "off", "off|translated|english|atlas", "VOTVCOOP_L10N_DRILL",
     "Developer: the interface-language drill on each peer -- opens two F1 panes, waits for the join line, "
-    "then expects them translated or English; prints [L10N-DRILL] DONE or FAIL.")
+    "then expects them translated or English; atlas floods the chat with ideographs under the Chinese pack "
+    "and measures the font atlas; prints [L10N-DRILL] DONE or FAIL.")
 CFG_FLAG(chat_span_prefix, "chat_span_prefix", "dev", false, "VOTVCOOP_CHAT_SPAN_PREFIX",
     "Developer: keep a peer action's nick as a prefix wherever its sentence put it (the chat drill's span red).")
 CFG_FLAG(chat_drill_bad_nick, "chat_drill_bad_nick", "dev", false, "VOTVCOOP_CHAT_DRILL_BAD_NICK",

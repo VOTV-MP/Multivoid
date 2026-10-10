@@ -1,16 +1,15 @@
 // coop/dev/l10n_drill.h -- drill: the interface's language, judged on each peer (ini l10n_drill=
-// off|translated|english / env VOTVCOOP_L10N_DRILL).
+// off|translated|english|atlas / env VOTVCOOP_L10N_DRILL).
 //
 // Once this peer's world is up (the host: the client's), it opens the F1 menu on World > Rules and then
-// Network > Stats, each time waiting until the render thread reports it DREW that pane, closes the menu,
-// and waits until the chat feed holds the join line naming the other peer, in English or translated.
-// Then it judges: the two subs' names as the tree draws them by whether their lookups found a
-// translation (l10n::WasFound), the join line by which of its two forms the feed holds. `translated`
-// passes when all three are translated; `english` when the interface is English and none is -- so the
-// per-peer arm (an English host, a translated client) has a pass on both peers, and `translated` under
-// an English language is the red. It prints a DONE or a FAIL line tagged [L10N-DRILL] naming the
-// expectation, the locale and what was found or missing. Readiness throughout, never a clock: a run
-// that never gets there ends on the rig's budget with no line.
+// Network > Stats, each time waiting until the render thread DREW that pane, closes the menu, and waits
+// until the chat feed holds the join line naming the other peer. It judges the two subs' names by
+// whether their lookups found a translation (l10n::WasFound) and the join line by which of its forms the
+// feed holds: `translated` passes when all three are translated, `english` when the interface is
+// English and none is (the per-peer arm has a pass on both peers; `translated` under English is the
+// red). `atlas` measures instead: under the Chinese pack it pushes the CJK block into the chat a line
+// at a time, with an atlas census after each, until a codepoint fails to pack or the block ends. Each
+// prints a DONE or FAIL line tagged [L10N-DRILL]. Readiness throughout, never a clock.
 
 #pragma once
 
