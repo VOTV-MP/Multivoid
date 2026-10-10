@@ -5,7 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/dev/director/director.h"
-#include "coop/dev/director/standpoints.h"
+#include "coop/dev/director/routes.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/roster.h"

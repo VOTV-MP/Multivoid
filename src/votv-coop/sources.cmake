@@ -617,7 +617,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/director/container_take_probe.cpp
     src/coop/dev/director/dup_verifier.cpp
     src/coop/dev/director/door_approach.cpp
-    src/coop/dev/director/standpoints.cpp
+    src/coop/dev/director/routes.cpp
     src/coop/dev/director/aim_fan.cpp
     src/coop/dev/director/background_walk.cpp
     src/coop/dev/director/aimed_grab.cpp

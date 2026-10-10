@@ -6,7 +6,7 @@
 
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
-#include "coop/dev/director/standpoints.h"
+#include "coop/dev/director/routes.h"
 #include "coop/element/registry.h"
 #include "coop/interactables/drive_payload_sync.h"
 #include "coop/interactables/drive_sync.h"

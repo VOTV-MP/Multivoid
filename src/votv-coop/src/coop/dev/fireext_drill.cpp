@@ -5,7 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/dev/director/aimed_grab.h"
 #include "coop/dev/director/director.h"
-#include "coop/dev/director/standpoints.h"
+#include "coop/dev/director/routes.h"
 #include "coop/net/session.h"
 #include "coop/player/local_streams.h"  // CurrentHoldGen: the hold the stale tail names
 #include "coop/player/players_registry.h"

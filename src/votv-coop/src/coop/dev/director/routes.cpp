@@ -1,6 +1,6 @@
-// coop/dev/director/standpoints.cpp -- see coop/dev/director/standpoints.h.
+// coop/dev/director/routes.cpp -- see coop/dev/director/routes.h.
 
-#include "coop/dev/director/standpoints.h"
+#include "coop/dev/director/routes.h"
 
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_nav.h"
@@ -18,6 +18,7 @@ namespace E = ue_wrap::engine;
 float Flat(const ue_wrap::FVector& a, const ue_wrap::FVector& b) { return std::hypot(a.X - b.X, a.Y - b.Y); }
 
 constexpr int   kMaxLegs         = 16;     // a walk across the map is a handful of partial routes
+constexpr float kProjectCm       = 400.f;  // RouteFrom looks this far each way for the NavMesh under an off-mesh start
 constexpr float kMinLegProgressCm = 100.f;  // a leg that ends no nearer than this has found the edge of the reachable
 
 // Legs from `from` toward `to` until one ends within `nearCm` of it. On true, `lastFrom` is where that
@@ -28,7 +29,7 @@ bool Legs(void* player, const ue_wrap::FVector& from, const ue_wrap::FVector& to
     float len = 0.f;
     for (int leg = 0; leg < kMaxLegs; ++leg) {
         std::vector<ue_wrap::FVector> route;
-        if (!E::FindNavPath(player, cur, to, route) || route.empty()) return false;
+        if (!RouteFrom(player, cur, to, &route)) return false;
         float legLen = 0.f;
         for (size_t k = 1; k < route.size(); ++k) legLen += Flat(route[k - 1], route[k]);
         const ue_wrap::FVector end = route.back();
@@ -46,6 +47,21 @@ bool Legs(void* player, const ue_wrap::FVector& from, const ue_wrap::FVector& to
 }
 
 }  // namespace
+
+bool RouteFrom(void* player, const ue_wrap::FVector& from, const ue_wrap::FVector& to,
+               std::vector<ue_wrap::FVector>* route) {
+    route->assign(1, from);
+    std::vector<ue_wrap::FVector> path;
+    if (!E::FindNavPath(player, from, to, path) || path.empty()) {
+        ue_wrap::FVector onMesh{};
+        if (!E::ProjectToNav(player, from, {kProjectCm, kProjectCm, kProjectCm}, &onMesh) ||
+            !E::FindNavPath(player, onMesh, to, path) || path.empty())
+            return false;
+        route->push_back(onMesh);
+    }
+    route->insert(route->end(), path.begin() + 1, path.end());   // the query's own first point is its start
+    return true;
+}
 
 bool RouteInLegs(void* player, const ue_wrap::FVector& from, const ue_wrap::FVector& to, float reachCm,
                  float* outLength) {
@@ -68,7 +84,7 @@ std::vector<ue_wrap::FVector> ReachableStandpoints(void* player, const ue_wrap::
         const float a = 6.2831853f * static_cast<float>(i) / static_cast<float>(count);
         const ue_wrap::FVector p{about.X + ringCm * std::cos(a), about.Y + ringCm * std::sin(a), from.Z};
         std::vector<ue_wrap::FVector> route;
-        if (!E::FindNavPath(player, start, p, route) || route.empty() || Flat(route.back(), p) > reachCm) continue;
+        if (!RouteFrom(player, start, p, &route) || Flat(route.back(), p) > reachCm) continue;
         float len = before;
         for (size_t k = 1; k < route.size(); ++k) len += Flat(route[k - 1], route[k]);
         found.emplace_back(len, p);

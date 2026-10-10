@@ -30,6 +30,7 @@ namespace R = reflection;
 
 void* g_navCdo    = nullptr;   // UNavigationSystemV1 CDO (static dispatch target)
 void* g_findPath  = nullptr;   // FindPathToLocationSynchronously
+void* g_project   = nullptr;   // K2_ProjectPointToNavigation
 void* g_pawnClass = nullptr;
 void* g_addMove   = nullptr;   // APawn::AddMovementInput
 void* g_navPathCls = nullptr;
@@ -37,8 +38,11 @@ int32_t g_pathPtsOff = -2;     // -2 = uncomputed, -1 = not found
 
 void EnsureNav() {
     if (!g_navCdo)  g_navCdo  = R::FindClassDefaultObject(L"NavigationSystemV1");
-    if (!g_findPath)
-        if (void* cls = R::FindClass(L"NavigationSystemV1")) g_findPath = R::FindFunction(cls, L"FindPathToLocationSynchronously");
+    if (g_findPath && g_project) return;
+    if (void* cls = R::FindClass(L"NavigationSystemV1")) {
+        if (!g_findPath) g_findPath = R::FindFunction(cls, L"FindPathToLocationSynchronously");
+        if (!g_project) g_project = R::FindFunction(cls, L"K2_ProjectPointToNavigation");
+    }
 }
 
 void EnsurePawn() {
@@ -47,6 +51,19 @@ void EnsurePawn() {
 }
 
 }  // namespace
+
+bool ProjectToNav(void* worldContext, const FVector& point, const FVector& extent, FVector* out) {
+    EnsureNav();
+    if (!g_navCdo || !g_project || !worldContext || !out) return false;
+    ParamFrame pf(g_project);
+    if (!pf.valid()) return false;
+    pf.Set<void*>(L"WorldContextObject", worldContext);
+    pf.Set<FVector>(L"Point", point);
+    pf.Set<FVector>(L"QueryExtent", extent);   // NavData and FilterClass stay null: the default NavMesh, no filter
+    if (!Call(g_navCdo, pf) || !pf.Get<bool>(L"ReturnValue")) return false;
+    *out = pf.Get<FVector>(L"ProjectedLocation");
+    return true;
+}
 
 bool FindNavPath(void* worldContext, const FVector& start, const FVector& end,
                  std::vector<FVector>& outPts) {

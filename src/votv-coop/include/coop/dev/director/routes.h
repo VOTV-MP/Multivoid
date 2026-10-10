@@ -1,5 +1,6 @@
-// coop/dev/director/standpoints.h -- where a drill's walker stands to act on something no route ends at, as a
-// desk's button: the points of a ring about it that a NavMesh route reaches. Dev only (the drills' walks); game thread.
+// coop/dev/director/routes.h -- the director's routes over the level's NavMesh: one route from wherever the walker
+// stands, reachability asked leg by leg, and the points of a ring about something no route ends at (a desk's button)
+// that a route reaches. Every walk and every drill's reachability question goes through here. Dev only; game thread.
 
 #pragma once
 
@@ -8,6 +9,13 @@
 #include <vector>
 
 namespace coop::director {
+
+// A NavMesh route from `from` to `to`, its first point `from`. Where the path query cannot place `from` on the
+// NavMesh -- a walker slid onto ground the NavMesh leaves out, where every query from it failed on a fresh New Game --
+// `from` is projected onto it within a few metres (the engine's ProjectPointToNavigation) and the route walks there
+// first. False when there is no route even so.
+bool RouteFrom(void* player, const ue_wrap::FVector& from, const ue_wrap::FVector& to,
+               std::vector<ue_wrap::FVector>* route);
 
 // Whether a NavMesh route from `from` reaches `to` (its end within `reachCm`, flat), asked in legs: the engine's path
 // query spends a bounded search and returns a PARTIAL route on a long walk -- measured on a fresh New Game, whose

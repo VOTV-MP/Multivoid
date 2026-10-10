@@ -16,6 +16,10 @@ namespace ue_wrap::engine {
 bool FindNavPath(void* worldContext, const FVector& start, const FVector& end,
                  std::vector<FVector>& outPts);
 
+// The NavMesh point nearest `point` within `extent` (K2_ProjectPointToNavigation on the CDO, the
+// default NavMesh, no filter); false when none lies within it.
+bool ProjectToNav(void* worldContext, const FVector& point, const FVector& extent, FVector* out);
+
 // APawn::AddMovementInput (resolved on Pawn): accumulates ControlInputVector, which the CMC
 // consumes each tick, so re-issue it every frame.
 void AddMovementInput(void* pawn, const FVector& worldDir, float scale, bool force);

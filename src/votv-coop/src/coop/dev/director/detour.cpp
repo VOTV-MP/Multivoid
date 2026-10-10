@@ -2,9 +2,10 @@
 
 #include "coop/dev/director/detour.h"
 
+#include "coop/dev/director/routes.h"
+
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/trace.h"
-#include "ue_wrap/engine/engine_nav.h"
 
 #include <algorithm>
 #include <cmath>
@@ -12,8 +13,6 @@
 
 namespace coop::director::detour {
 namespace {
-
-namespace E = ue_wrap::engine;
 
 constexpr float  kRingsCm[]     = {600.f, 1200.f, 2400.f, 4800.f};   // nearest first: the shortest way round
 constexpr int    kRings         = sizeof(kRingsCm) / sizeof(kRingsCm[0]);
@@ -169,14 +168,14 @@ bool Search::Holds(void* player, const ue_wrap::FVector& via, std::vector<ue_wra
     // The way there: floor the body stands on all along, clear of every remembered spot past the
     // stretch the walker stands in.
     std::vector<ue_wrap::FVector> there;
-    if (!E::FindNavPath(player, from_, via, there) || there.size() < 2 || Flat(there.back(), via) > kViaReachCm)
+    if (!RouteFrom(player, from_, via, &there) || there.size() < 2 || Flat(there.back(), via) > kViaReachCm)
         return false;
     if (PassedSpot(there) >= 0) return false;
     if (!Walk(there, [&](const ue_wrap::FVector& p, float) { return Standable(player, p); })) return false;
     // The way on: clear of every remembered spot, its floor sampled for its first stretch. The walker
     // follows this very route, not a fresh one asked where it stands at the via point.
     std::vector<ue_wrap::FVector> on;
-    if (!E::FindNavPath(player, via, goal_, on) || on.size() < 2) return false;
+    if (!RouteFrom(player, via, goal_, &on) || on.size() < 2) return false;
     if (PassedSpot(on) >= 0) return false;
     if (!Walk(on, [&](const ue_wrap::FVector& p, float along) { return along > kOnwardCheckCm || Standable(player, p); }))
         return false;

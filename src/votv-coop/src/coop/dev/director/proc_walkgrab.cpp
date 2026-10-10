@@ -16,6 +16,7 @@
 
 #include "coop/dev/director/detour.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/director/routes.h"
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/call.h"
@@ -226,7 +227,7 @@ public:
         if (!pathed_) {   // compute the route (after the hand is clear, so from the real start), again per leg
             pathed_ = true;
             std::vector<ue_wrap::FVector> path;
-            const bool ok = !goal_.straight && E::FindNavPath(ctx.player, ctx.pos, goal_.targetPos, path);
+            const bool ok = !goal_.straight && RouteFrom(ctx.player, ctx.pos, goal_.targetPos, &path);
             const bool midWalk = routed_ && !goal_.straight && !ok;
             if (ok && path.size() >= 2) for (size_t i = 1; i < path.size(); ++i) waypoints_.push_back(path[i]);
             else if (midWalk) waypoints_.push_back(ctx.pos);   // stand: the stuck handler asks again, no beeline

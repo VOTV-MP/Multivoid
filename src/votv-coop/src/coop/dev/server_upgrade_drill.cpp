@@ -5,7 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/dev/director/aim_fan.h"
 #include "coop/dev/director/director.h"
-#include "coop/dev/director/standpoints.h"
+#include "coop/dev/director/routes.h"
 #include "coop/interactables/server_upgrade_sync.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
