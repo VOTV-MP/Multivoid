@@ -62,29 +62,29 @@ void RenderNetStats() { ui::net_stats_panel::RenderMenuPref(); }
 // coop::peer_action_feed.
 void RenderChatPref() {
     bool on = coop::peer_action_feed::Enabled();
-    if (ImGui::Checkbox("Peer action notifications", &on))
+    if (ImGui::Checkbox(l10n::Label(l10n::T("Peer action notifications"), "peer_action_notifications"), &on))
         coop::config::SetValue(::coop::config_registry::rows::ui_chat_peer_actions,
                                on ? "1" : "0");
-    ImGui::TextDisabled("Show a chat line when another player does a shared action");
-    ImGui::TextDisabled("(e.g. deletes an email). Local preference; persists across");
-    ImGui::TextDisabled("sessions (ui.chat.peer_actions).");
+    ImGui::TextDisabled("%s", l10n::T("Show a chat line when another player does a shared action\n"
+                                      "(e.g. deletes an email). Local preference; persists across\n"
+                                      "sessions (ui.chat.peer_actions)."));
 }
 
 // The local player's plate-visibility preference. SYNCED (a live NameplateChange plus the
 // Join prefs byte for late joiners) and persisted (multivoid.ini nameplate=).
 void RenderNameplatePref() {
     bool on = coop::nameplate::LocalVisible();
-    if (ImGui::Checkbox("Show my nameplate to other players", &on))
+    if (ImGui::Checkbox(l10n::Label(l10n::T("Show my nameplate to other players"), "show_my_nameplate_to_other_players"), &on))
         coop::config::SetValue(::coop::config_registry::rows::nameplate, on ? "1" : "0");
-    ImGui::TextDisabled("Off = your floating name/health bar disappears on every peer's");
-    ImGui::TextDisabled("screen -- synced live and to late joiners; persists across sessions.");
+    ImGui::TextDisabled("%s", l10n::T("Off = your floating name/health bar disappears on every peer's\n"
+                                      "screen -- synced live and to late joiners; persists across sessions."));
 
     // The local player's nick COLOUR preference. SYNCED (a live NickColorChange plus the Join
     // colour field for late joiners) and persisted (multivoid.ini nick_color=). Committed on a
     // debounce after the last edit rather than per drag frame, since each commit persists and
     // announces over the wire; the debounce and its reason are at the picker below.
     ImGui::Spacing();
-    ImGui::SeparatorText("Nickname color");
+    ImGui::SeparatorText(l10n::Label(l10n::T("Nickname color"), "nickname_color"));
     const uint32_t cur = coop::nick_color::LocalPacked();
     bool custom = coop::nick_color::IsCustom(cur);
     // The picker's WORKING color: re-seeded only when the live pref changes
@@ -107,7 +107,7 @@ void RenderNameplatePref() {
                                       static_cast<uint8_t>(sCol[1] * 255.f + 0.5f),
                                       static_cast<uint8_t>(sCol[2] * 255.f + 0.5f));
     };
-    if (ImGui::Checkbox("Custom nickname color", &custom)) {
+    if (ImGui::Checkbox(l10n::Label(l10n::T("Custom nickname color"), "custom_nickname_color"), &custom)) {
         sDirty = false;  // the toggle IS the commit
         coop::config::SetValue(::coop::config_registry::rows::nick_color,
                                coop::nick_color::IniTextFor(custom ? packWorking() : 0u).c_str());
@@ -134,8 +134,8 @@ void RenderNameplatePref() {
                                    coop::nick_color::IniTextFor(packed).c_str());
         }
     }
-    ImGui::TextDisabled("Colors your nick everywhere it shows -- nameplate, chat, player list --");
-    ImGui::TextDisabled("on every peer's screen. Synced live and to late joiners; persists.");
+    ImGui::TextDisabled("%s", l10n::T("Colors your nick everywhere it shows -- nameplate, chat, player list --\n"
+                                      "on every peer's screen. Synced live and to late joiners; persists."));
 }
 
 // Overlay fonts -- GRANULAR per surface: chat, the net-stats widget, the nameplates
@@ -146,7 +146,7 @@ void RenderFontPref() {
     const char* famItems[F::kFamilyCount];
     for (int i = 0; i < F::kFamilyCount; ++i)
         famItems[i] = F::FamilyLabel(static_cast<F::Family>(i));
-    ImGui::TextUnformatted("Overlay fonts (per surface):");
+    ImGui::TextUnformatted(l10n::T("Overlay fonts (per surface):"));
     for (int r = 0; r < F::kRoleCount; ++r) {
         const auto role = static_cast<F::Role>(r);
         int cur = static_cast<int>(F::RoleFamily(role));
@@ -157,16 +157,16 @@ void RenderFontPref() {
                                    F::FamilyToken(static_cast<F::Family>(cur)));
         ImGui::PopID();
     }
-    ImGui::TextDisabled("Each surface picks its own family; applies on the next frame.");
-    ImGui::TextDisabled("Saved to multivoid.ini (ui.font.menu/chat/net/nameplate/toast,");
-    ImGui::TextDisabled("each with its own default). Fixedsys (VOTV) = game terminal pixel");
-    ImGui::TextDisabled("font; JetBrains/Cascadia monospace; Roboto proportional.");
+    ImGui::TextDisabled("%s", l10n::T("Each surface picks its own family; applies on the next frame."));
+    ImGui::TextDisabled("%s", l10n::T("Saved to multivoid.ini (ui.font.menu/chat/net/nameplate/toast,\n"
+                                      "each with its own default). Fixedsys (VOTV) = game terminal pixel\n"
+                                      "font; JetBrains/Cascadia monospace; Roboto proportional."));
 
     // UI size: a multiplier on top of the resolution factor. Applied on slider
     // RELEASE, not per drag frame -- each apply re-bakes the font atlas (a
     // one-frame ~100 ms hitch).
     ImGui::Spacing();
-    ImGui::SeparatorText("UI size");
+    ImGui::SeparatorText(l10n::Label(l10n::T("UI size"), "ui_size"));
     // sPending is the handle while it is dragged; sSeen is the applied value it last mirrored. The
     // render thread applies the row on its next frame, so the slider follows the applied value.
     static float sPending = ui::scale::UserScale();
@@ -187,10 +187,10 @@ void RenderFontPref() {
     ImGui::SameLine();
     ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Scales the WHOLE overlay (menus, chat, nameplates) on top of the\n"
-                          "automatic resolution scale. Applies when you release the slider\n"
-                          "(the fonts re-bake). Saved to multivoid.ini (ui.scale).");
-    ImGui::TextDisabled("Everything scales with the screen automatically; this is your extra zoom.");
+        ImGui::SetTooltip("%s", l10n::T("Scales the WHOLE overlay (menus, chat, nameplates) on top of the\n"
+                                        "automatic resolution scale. Applies when you release the slider\n"
+                                        "(the fonts re-bake). Saved to multivoid.ini (ui.scale)."));
+    ImGui::TextDisabled("%s", l10n::T("Everything scales with the screen automatically; this is your extra zoom."));
 }
 
 // F1 > Administration > Players (host-role-gated; ui/admin_panel owns the pane).

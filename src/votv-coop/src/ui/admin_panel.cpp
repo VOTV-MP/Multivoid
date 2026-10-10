@@ -2,6 +2,8 @@
 
 #include "ui/admin_panel.h"
 
+#include "l10n/l10n.h"
+
 #include "coop/commands/command_sync.h"
 #include "coop/player/roster.h"
 #include "coop/moderation/ban_list.h"
@@ -94,7 +96,10 @@ void OpenBanFor(bool online, const char* id, const char* nick) {
 // A player's id on hover over its nick: how the host finds the name a permission file is stored
 // under.
 void IdTooltip(const char* id) {
-    if (id[0] != '\0' && ImGui::IsItemHovered()) ImGui::SetTooltip("Player id %s", id);
+    if (id[0] == '\0' || !ImGui::IsItemHovered()) return;
+    char tip[256];
+    l10n::Fmt(tip, sizeof(tip), l10n::T("Player id %s"), id);
+    ImGui::SetTooltip("%s", tip);
 }
 
 // A small button that is off, with the reason on hover, while the person has no proved id yet.
@@ -103,19 +108,19 @@ bool IdButton(const char* label, bool hasId) {
     const bool clicked = ImGui::SmallButton(label);
     if (!hasId) ImGui::EndDisabled();
     if (!hasId && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("Their identity is not proved yet.");
+        ImGui::SetTooltip("%s", l10n::T("Their identity is not proved yet."));
     return clicked;
 }
 
 void RenderOnlineSection(const coop::roster::Snapshot& rs) {
-    SectionHeader("Online");
+    SectionHeader(l10n::T("Online"));
     int shown = 0;
     if (ImGui::BeginTable("##admin_online", 4,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_PadOuterX)) {
-        ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Link", ImGuiTableColumnFlags_WidthFixed, S(72.f));
-        ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, S(52.f));
-        ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, S(220.f));
+        ImGui::TableSetupColumn(l10n::Label(l10n::T("Player"), "player"), ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn(l10n::Label(l10n::T("Link"), "link"), ImGuiTableColumnFlags_WidthFixed, S(72.f));
+        ImGui::TableSetupColumn(l10n::Label(l10n::T("Ping"), "ping"), ImGuiTableColumnFlags_WidthFixed, S(52.f));
+        ImGui::TableSetupColumn(l10n::Label(l10n::T("Actions"), "actions"), ImGuiTableColumnFlags_WidthFixed, S(220.f));
         ImGui::TableHeadersRow();
         for (int i = 0; i < rs.count; ++i) {
             const coop::roster::Row& r = rs.rows[i];
@@ -125,11 +130,11 @@ void RenderOnlineSection(const coop::roster::Snapshot& rs) {
             ImGui::PushID(r.slot);
             ImGui::TableSetColumnIndex(0);
             ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(r.nick[0] ? r.nick : "Remote player");
+            ImGui::TextUnformatted(r.nick[0] ? r.nick : l10n::T("Remote player"));
             IdTooltip(r.playerId);
             if (r.otherBuild) {
                 ImGui::SameLine(0.0f, S(6.0f));
-                ImGui::TextColored(ImVec4(1.00f, 0.82f, 0.35f, 0.85f), "other build");
+                ImGui::TextColored(ImVec4(1.00f, 0.82f, 0.35f, 0.85f), "%s", l10n::T("other build"));
             }
             // Same renderer as the scoreboard (ui::link_format) -- this panel
             // used to carry its own copy of the cascade, so the vocabulary could
@@ -146,29 +151,29 @@ void RenderOnlineSection(const coop::roster::Snapshot& rs) {
             // Each button submits a command line for the person's proved id, not their slot --
             // see g_banId. Without a proved id the buttons are off.
             const bool hasId = r.playerId[0] != '\0';
-            if (IdButton("Teleport", hasId))
+            if (IdButton(l10n::Label(l10n::Tc("f1", "Teleport"), "teleport"), hasId))
                 coop::command_sync::Submit(std::string("tphere ") + r.playerId);
             ImGui::SameLine();
-            if (IdButton("Kick", hasId))
+            if (IdButton(l10n::Label(l10n::Tc("f1", "Kick"), "kick"), hasId))
                 coop::command_sync::Submit(std::string("kick ") + r.playerId);
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.45f, 0.42f, 1.0f));
-            if (IdButton("Ban...", hasId)) OpenBanFor(true, r.playerId, r.nick);
+            if (IdButton(l10n::Label(l10n::Tc("f1", "Ban..."), "ban_"), hasId)) OpenBanFor(true, r.playerId, r.nick);
             ImGui::PopStyleColor();
             ImGui::PopID();
         }
         ImGui::EndTable();
     }
-    if (shown == 0) ImGui::TextDisabled("No remote players connected.");
+    if (shown == 0) ImGui::TextDisabled("%s", l10n::T("No remote players connected."));
 }
 
 void RenderOfflineSection() {
-    SectionHeader("Offline (seen before)");
+    SectionHeader(l10n::T("Offline (seen before)"));
     if (ImGui::BeginTable("##admin_offline", 3,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_PadOuterX)) {
-        ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Last seen", ImGuiTableColumnFlags_WidthFixed, S(130.f));
-        ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, S(90.f));
+        ImGui::TableSetupColumn(l10n::Label(l10n::T("Player"), "player"), ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn(l10n::Label(l10n::T("Last seen"), "last_seen"), ImGuiTableColumnFlags_WidthFixed, S(130.f));
+        ImGui::TableSetupColumn(l10n::Label(l10n::T("Actions"), "actions"), ImGuiTableColumnFlags_WidthFixed, S(90.f));
         ImGui::TableHeadersRow();
         // Only the rows in view are drawn: the registry grows with every player who ever joined.
         ImGuiListClipper clipper;
@@ -180,7 +185,7 @@ void RenderOfflineSection() {
                 ImGui::PushID(e.guid);
                 ImGui::TableSetColumnIndex(0);
                 ImGui::AlignTextToFramePadding();
-                ImGui::TextUnformatted(e.nick[0] ? e.nick : "(no nick)");
+                ImGui::TextUnformatted(e.nick[0] ? e.nick : l10n::T("(no nick)"));
                 IdTooltip(e.guid);
                 ImGui::TableSetColumnIndex(1);
                 char when[24];
@@ -189,10 +194,10 @@ void RenderOfflineSection() {
                 ImGui::TableSetColumnIndex(2);
                 const bool alreadyBanned = g_banIds.count(std::string_view(e.guid)) != 0;
                 if (alreadyBanned) {
-                    ImGui::TextDisabled("banned");
+                    ImGui::TextDisabled("%s", l10n::T("banned"));
                 } else {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.45f, 0.42f, 1.0f));
-                    if (ImGui::SmallButton("Ban...")) OpenBanFor(false, e.guid, e.nick);
+                    if (ImGui::SmallButton(l10n::Label(l10n::Tc("f1", "Ban..."), "ban_"))) OpenBanFor(false, e.guid, e.nick);
                     ImGui::PopStyleColor();
                 }
                 ImGui::PopID();
@@ -200,21 +205,21 @@ void RenderOfflineSection() {
         }
         ImGui::EndTable();
     }
-    if (g_seen.empty()) ImGui::TextDisabled("Nobody in the registry yet (players are recorded when they join).");
-    else if (g_offline.empty()) ImGui::TextDisabled("Everyone in the registry is online.");
+    if (g_seen.empty()) ImGui::TextDisabled("%s", l10n::T("Nobody in the registry yet (players are recorded when they join)."));
+    else if (g_offline.empty()) ImGui::TextDisabled("%s", l10n::T("Everyone in the registry is online."));
 }
 
 void RenderBannedSection() {
-    SectionHeader("Banned");
+    SectionHeader(l10n::T("Banned"));
     if (coop::ban_list::IsReadOnly())
-        ImGui::TextDisabled("The ban file has entries this version cannot read, so bans made now last until the "
-                            "server stops. See the log.");
+        ImGui::TextDisabled("%s", l10n::T("The ban file has entries this version cannot read, so bans made now last until the "
+                                          "server stops. See the log."));
     if (ImGui::BeginTable("##admin_banned", 5,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_PadOuterX)) {
-        ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, S(110.f));
-        ImGui::TableSetupColumn("When", ImGuiTableColumnFlags_WidthFixed, S(130.f));
-        ImGui::TableSetupColumn("Reason", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn(l10n::Label(l10n::T("Player"), "player"), ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn(l10n::Label(l10n::T("ID"), "id"), ImGuiTableColumnFlags_WidthFixed, S(110.f));
+        ImGui::TableSetupColumn(l10n::Label(l10n::T("When"), "when"), ImGuiTableColumnFlags_WidthFixed, S(130.f));
+        ImGui::TableSetupColumn(l10n::Label(l10n::T("Reason"), "reason"), ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("##act", ImGuiTableColumnFlags_WidthFixed, S(70.f));
         ImGui::TableHeadersRow();
         // Only the rows in view are drawn: a client granted the offline ban can grow this list.
@@ -227,11 +232,15 @@ void RenderBannedSection() {
                 ImGui::PushID(b.id);
                 ImGui::TableSetColumnIndex(0);
                 ImGui::AlignTextToFramePadding();
-                ImGui::TextUnformatted(b.nick[0] ? b.nick : "(no nick)");
+                ImGui::TextUnformatted(b.nick[0] ? b.nick : l10n::T("(no nick)"));
                 ImGui::TableSetColumnIndex(1);
                 ImGui::TextDisabled("%.8s", b.id);
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Player id %s\nAddress %s", b.id, b.address[0] ? b.address : "not blocked");
+                if (ImGui::IsItemHovered()) {
+                    char tip[256];
+                    l10n::Fmt(tip, sizeof(tip), l10n::T("Player id %1$s\nAddress %2$s"), b.id,
+                              b.address[0] ? b.address : l10n::T("not blocked"));
+                    ImGui::SetTooltip("%s", tip);
+                }
                 ImGui::TableSetColumnIndex(2);
                 char when[24];
                 FormatUnix(b.bannedUnix, when, sizeof(when));
@@ -239,7 +248,7 @@ void RenderBannedSection() {
                 ImGui::TableSetColumnIndex(3);
                 ImGui::TextDisabled("%s", b.reason[0] ? b.reason : "--");
                 ImGui::TableSetColumnIndex(4);
-                if (ImGui::SmallButton("Unban")) {
+                if (ImGui::SmallButton(l10n::Label(l10n::Tc("f1", "Unban"), "unban"))) {
                     coop::command_sync::Submit(std::string("unban ") + b.id);
                     g_lastRefresh = -1.0;  // the row drops at the next refresh after the posted command ran
                 }
@@ -248,34 +257,40 @@ void RenderBannedSection() {
         }
         ImGui::EndTable();
     }
-    if (g_bans.empty()) ImGui::TextDisabled("No banned players.");
+    if (g_bans.empty()) ImGui::TextDisabled("%s", l10n::T("No banned players."));
 }
 
 void RenderBanModal() {
     const bool pending = g_banId[0] != '\0';
-    if (pending && !ImGui::IsPopupOpen("Ban player##admin"))
-        ImGui::OpenPopup("Ban player##admin");
+    // One title for the open, the test and the modal: the text is translated, the id never is.
+    const l10n::Label title(l10n::T("Ban player"), "admin");
+    if (pending && !ImGui::IsPopupOpen(title))
+        ImGui::OpenPopup(title);
     const ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    if (ImGui::BeginPopupModal("Ban player##admin", nullptr,
+    if (ImGui::BeginPopupModal(title, nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Permanently ban %s?", g_banNick[0] ? g_banNick : "this player");
-        ImGui::TextDisabled(g_banOnline
-                                ? "Disconnected now and refused whenever they rejoin."
-                                : "Refused whenever they rejoin.");
+        char heading[256];
+        l10n::Fmt(heading, sizeof(heading), l10n::T("Permanently ban %s?"),
+                  g_banNick[0] ? g_banNick : l10n::T("this player"));
+        ImGui::TextUnformatted(heading);
+        ImGui::TextDisabled("%s", g_banOnline
+                                      ? l10n::T("Disconnected now and refused whenever they rejoin.")
+                                      : l10n::T("Refused whenever they rejoin."));
         ImGui::Spacing();
         ImGui::SetNextItemWidth(S(320.f));
-        ImGui::InputTextWithHint("##banreason", "reason (shown in the Banned list)",
+        ImGui::InputTextWithHint("##banreason", l10n::T("reason (shown in the Banned list)"),
                                  g_banReason, sizeof(g_banReason));
-        ImGui::Checkbox("Also refuse their address", &g_banByAddress);
+        ImGui::Checkbox(l10n::Label(l10n::T("Also refuse their address"), "also_refuse_their_address"),
+                        &g_banByAddress);
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Also refuses anyone connecting from the same address -- people who share "
-                              "their router or their provider's address are refused too. It only works on "
-                              "a direct connection: a player who comes through a relay is refused by their "
-                              "identity alone.");
+            ImGui::SetTooltip("%s", l10n::T("Also refuses anyone connecting from the same address -- people who share "
+                                            "their router or their provider's address are refused too. It only works on "
+                                            "a direct connection: a player who comes through a relay is refused by their "
+                                            "identity alone."));
         ImGui::Spacing();
-        if (ImGui::Button("Ban", ImVec2(S(110.f), 0))) {
+        if (ImGui::Button(l10n::Label(l10n::Tc("f1", "Ban"), "ban"), ImVec2(S(110.f), 0))) {
             // The reason is the raw remainder of the line, never quoted; none typed, the ban
             // command stores "banned by host".
             std::string line = std::string(g_banByAddress ? "ban " : "banid ") + g_banId;
@@ -286,7 +301,7 @@ void RenderBanModal() {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(S(110.f), 0))) {
+        if (ImGui::Button(l10n::Label(l10n::Tc("f1", "Cancel"), "cancel"), ImVec2(S(110.f), 0))) {
             g_banId[0] = '\0';
             ImGui::CloseCurrentPopup();
         }
@@ -302,8 +317,8 @@ void Render() {
     coop::roster::Snapshot rs;
     coop::roster::GetSnapshot(rs);
 
-    ImGui::TextDisabled("Host administration. Bans follow the player and survive restarts;");
-    ImGui::TextDisabled("the registry remembers every player who ever joined this host.");
+    ImGui::TextDisabled("%s", l10n::T("Host administration. Bans follow the player and survive restarts;\n"
+                                      "the registry remembers every player who ever joined this host."));
 
     RenderOnlineSection(rs);
     RenderOfflineSection();

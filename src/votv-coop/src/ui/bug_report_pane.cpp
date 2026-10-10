@@ -8,6 +8,8 @@
 
 #include "ui/bug_report_pane.h"
 
+#include "l10n/l10n.h"
+
 #include "coop/bug_report/report_bundle.h"
 #include "coop/bug_report/report_core.h"
 #include "coop/text/utf8_codec.h"
@@ -53,20 +55,29 @@ void DrawField(const char* label, const char* id, char* buf, size_t size) {
 }
 
 void DrawFiles() {
-    ImGui::TextUnformatted("Files that will be included");
+    ImGui::TextUnformatted(l10n::T("Files that will be included"));
     ImGui::Indent(S(12.0f));
+    char line[256];
     for (const BR::Entry& e : g_entries) {
         if (!e.leftOut.empty()) {
-            ImGui::TextDisabled("%s -- left out: %s", e.name, e.leftOut.c_str());
+            l10n::Fmt(line, sizeof(line), l10n::T("%1$s -- left out: %2$s"), e.name, e.leftOut.c_str());
+            ImGui::TextDisabled("%s", line);
         } else if (e.tailOnly && e.bytesOnDisk > BR::kUe4ssTailBytes) {
-            ImGui::Text("%s (last %llu KB of %llu KB)", e.name, Kb(BR::kUe4ssTailBytes), Kb(e.bytesOnDisk));
+            l10n::Fmt(line, sizeof(line), l10n::T("%1$s (last %2$llu KB of %3$llu KB)"), e.name,
+                      Kb(BR::kUe4ssTailBytes), Kb(e.bytesOnDisk));
+            ImGui::TextUnformatted(line);
         } else {
-            ImGui::Text("%s (%llu KB)", e.name, Kb(e.bytesOnDisk));
+            l10n::Fmt(line, sizeof(line), l10n::T("%1$s (%2$llu KB)"), e.name, Kb(e.bytesOnDisk));
+            ImGui::TextUnformatted(line);
         }
     }
     for (const char* name : BR::kMadeEntries) {
-        if (std::strcmp(name, "multivoid.ini") == 0) ImGui::Text("%s (without passwords)", name);
-        else ImGui::TextUnformatted(name);
+        if (std::strcmp(name, "multivoid.ini") == 0) {
+            l10n::Fmt(line, sizeof(line), l10n::T("%s (without passwords)"), name);
+            ImGui::TextUnformatted(line);
+        } else {
+            ImGui::TextUnformatted(name);
+        }
     }
     ImGui::Unindent(S(12.0f));
 }
@@ -90,12 +101,14 @@ void DrawStatus(const BR::Status& st) {
         case BR::Phase::Idle:
             break;
         case BR::Phase::Building:
-            ImGui::TextUnformatted("Saving the report...");
+            ImGui::TextUnformatted(l10n::T("Saving the report..."));
             break;
         case BR::Phase::Done: {
             const std::string name = coop::text::ToUtf8(std::filesystem::path(st.zipPath).filename().wstring());
-            ImGui::TextWrapped("Saved: %s (%llu KB)", name.c_str(), Kb(st.zipBytes));
-            if (ImGui::Button("Show in folder")) ShowInFolder(st.zipPath);
+            char saved[256];
+            l10n::Fmt(saved, sizeof(saved), l10n::T("Saved: %1$s (%2$llu KB)"), name.c_str(), Kb(st.zipBytes));
+            ImGui::TextWrapped("%s", saved);
+            if (ImGui::Button(l10n::Label(l10n::T("Show in folder"), "show_in_folder"))) ShowInFolder(st.zipPath);
             break;
         }
         case BR::Phase::Failed:
@@ -113,11 +126,11 @@ void Render() {
     if (g_lastFrame != frame - 1) g_entries = BR::ListEntries();
     g_lastFrame = frame;
 
-    ImGui::TextWrapped("Saves a report file on this PC. Nothing is sent.");
+    ImGui::TextWrapped("%s", l10n::T("Saves a report file on this PC. Nothing is sent."));
     ImGui::Spacing();
-    DrawField("What happened", "##happened", g_happened, sizeof(g_happened));
-    DrawField("What you expected", "##expected", g_expected, sizeof(g_expected));
-    ImGui::TextUnformatted("Contact (optional, e.g. a Discord name)");
+    DrawField(l10n::T("What happened"), "##happened", g_happened, sizeof(g_happened));
+    DrawField(l10n::T("What you expected"), "##expected", g_expected, sizeof(g_expected));
+    ImGui::TextUnformatted(l10n::T("Contact (optional, e.g. a Discord name)"));
     ImGui::SetNextItemWidth(-FLT_MIN);
     ImGui::InputText("##contact", g_contact, sizeof(g_contact));
     ImGui::Spacing();
@@ -126,7 +139,7 @@ void Render() {
 
     const BR::Status st = BR::GetStatus();
     ImGui::BeginDisabled(st.phase == BR::Phase::Building);
-    if (ImGui::Button("Save report")) OnSavePressed();
+    if (ImGui::Button(l10n::Label(l10n::T("Save report"), "save_report"))) OnSavePressed();
     ImGui::EndDisabled();
     if (g_formError) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.45f, 0.42f, 1.0f));

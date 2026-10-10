@@ -2,6 +2,8 @@
 
 #include "ui/skins_panel.h"
 
+#include "l10n/l10n.h"
+
 #include "coop/player/local_body.h"
 #include "coop/player/skin_registry.h"
 #include "coop/player/skin_preview.h"  // the live in-world mannequin preview on hover
@@ -57,16 +59,16 @@ void Render() {
     const auto& entries = coop::skins::Entries();
     const std::string current = coop::local_body::LocalSkinNameCopy();
 
-    ImGui::TextWrapped("Your body skin -- what YOU see looking down and what OTHERS see. "
-                       "Saved to multivoid.ini; restored on rejoin.");
-    ImGui::TextDisabled("Skins come from converter .pak files under Content/Paks/LogicMods "
-                        "(any subfolder). One pak may carry several skins -- the four "
-                        "scientists ship together in scientists.pak.");
-    ImGui::TextDisabled("Preview tile = <skin name>.png/.bmp beside the pak.");
-    ImGui::TextDisabled("Peers WITHOUT that pak see the default kel body instead.");
-    ImGui::TextDisabled("A pak that carries no skin (another mod's) is dropped from this "
-                        "list once the game has been asked -- it is not a skin.");
-    if (ImGui::Button("Refresh list")) {
+    ImGui::TextWrapped("%s", l10n::T("Your body skin -- what YOU see looking down and what OTHERS see. "
+                                     "Saved to multivoid.ini; restored on rejoin."));
+    ImGui::TextDisabled("%s", l10n::T("Skins come from converter .pak files under Content/Paks/LogicMods "
+                                      "(any subfolder). One pak may carry several skins -- the four "
+                                      "scientists ship together in scientists.pak."));
+    ImGui::TextDisabled("%s", l10n::T("Preview tile = <skin name>.png/.bmp beside the pak."));
+    ImGui::TextDisabled("%s", l10n::T("Peers WITHOUT that pak see the default kel body instead."));
+    ImGui::TextDisabled("%s", l10n::T("A pak that carries no skin (another mod's) is dropped from this "
+                                      "list once the game has been asked -- it is not a skin."));
+    if (ImGui::Button(l10n::Label(l10n::T("Refresh list"), "refresh_list"))) {
         PublishNamesForResolve(coop::skins::Entries(true));
         // Release the cached preview textures before dropping the map -- clearing
         // alone leaks one texture+SRV per preview per refresh.
@@ -75,7 +77,9 @@ void Render() {
         g_previews.clear();
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("current: %s", current.c_str());
+    char currentLine[256];
+    l10n::Fmt(currentLine, sizeof(currentLine), l10n::T("current: %s"), current.c_str());
+    ImGui::TextDisabled("%s", currentLine);
     ImGui::Separator();
 
     // gmod-style tile grid: as many tiles per row as the pane fits.
@@ -122,8 +126,9 @@ void Render() {
                                          static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(pv.srv)),
                                          ImVec2(iw, ih));
         } else {
-            clicked = ImGui::Button(e.name == coop::skins::kNativeSkinName ? "Dr. Kel\n(default)"
-                                                                           : "(no preview)",
+            clicked = ImGui::Button(e.name == coop::skins::kNativeSkinName
+                                        ? l10n::Label(l10n::T("Dr. Kel\n(default)"), "dr_kel_default_")
+                                        : l10n::Label(l10n::T("(no preview)"), "_no_preview_"),
                                     ImVec2(tileW, tileImgH));
         }
         // Hover -> live mannequin preview of this skin.

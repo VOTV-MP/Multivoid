@@ -2,6 +2,8 @@
 
 #include "ui/world_rules_panel.h"
 
+#include "l10n/l10n.h"
+
 #include "ue_wrap/world/game_rules.h"
 #include "ue_wrap/world/game_rules_pane.h"
 #include "ue_wrap/core/game_thread.h"
@@ -76,7 +78,7 @@ ViewRow MakeRow(const GR::RuleField& f, const GP::Row* row, const GP::LockInputs
         case GR::Kind::Bool:
             out.isCheck = true;
             out.on = f.bval;
-            out.value = f.bval ? "On" : "Off";
+            out.value = f.bval ? l10n::Tc("f1", "On") : l10n::Tc("f1", "Off");
             break;
         case GR::Kind::Float:
             std::snprintf(buf, sizeof(buf), "%.*f", row ? row->sliderDecimals : 2, f.fval);
@@ -97,10 +99,13 @@ ViewRow MakeRow(const GR::RuleField& f, const GP::Row* row, const GP::LockInputs
         out.locked = true;
         out.greyed = true;
         if (row->unlockAchievements.empty()) {
-            std::snprintf(buf, sizeof(buf), "%d", row->unlockDay);
-            out.description = std::string("This rule is day-locked!\nUnlock this rule by playing past day ") + buf;
+            char line[256];
+            l10n::Fmt(line, sizeof(line),
+                      l10n::T("This rule is day-locked!\nUnlock this rule by playing past day %d"), row->unlockDay);
+            out.description = line;
         } else {
-            out.description = "This rule is achievement-locked!\nUnlock this rule by getting following achievements:";
+            out.description = l10n::T("This rule is achievement-locked!\n"
+                                      "Unlock this rule by getting following achievements:");
             for (const std::string& a : row->unlockAchievements) {
                 const bool held = std::find(lock.achievements.begin(), lock.achievements.end(), a) !=
                                   lock.achievements.end();
@@ -194,9 +199,9 @@ void Render() {
     g_lastFrame = frame;
     s_worldGen = worldGen;
 
-    if (ImGui::SmallButton("Refresh")) RequestSnapshot();
+    if (ImGui::SmallButton(l10n::Label(l10n::Tc("f1", "Refresh"), "refresh"))) RequestSnapshot();
     ImGui::SameLine();
-    ImGui::TextDisabled("Read-only. The host's save sets the rules for everyone.");
+    ImGui::TextDisabled("%s", l10n::T("Read-only. The host's save sets the rules for everyone."));
 
     static View s_view;       // render thread only
     static int  s_viewGen = 0;
@@ -222,19 +227,22 @@ void Render() {
     }
     if (!s_view.valid) {
         ImGui::Spacing();
-        ImGui::TextDisabled(gen == 0 ? "Reading rules..." : "World rules unavailable (still loading?).");
+        ImGui::TextDisabled("%s", gen == 0 ? l10n::T("Reading rules...")
+                                           : l10n::T("World rules unavailable (still loading?)."));
         return;
     }
 
     ImGui::Spacing();
-    ImGui::Text("Gamemode:");
+    ImGui::TextUnformatted(l10n::T("Gamemode:"));
     ImGui::SameLine();
     ImGui::TextColored(ImVec4(0.55f, 0.82f, 1.00f, 1.00f), "%s", s_view.gamemode.empty() ? "?" : s_view.gamemode.c_str());
     // The two copies the game keeps must agree; when they do not, this peer is not under the rules
     // its world was saved with, and saying so beats showing either copy as the truth.
     if (s_view.differFromSaved > 0) {
-        ImGui::TextColored(ImVec4(1.f, 0.6f, 0.2f, 1.f), "%d rule(s) in force differ from the rules saved with this world.",
-                           s_view.differFromSaved);
+        char differ[256];
+        l10n::Fmt(differ, sizeof(differ), l10n::T("%d rule(s) in force differ from the rules saved with this world."),
+                  s_view.differFromSaved);
+        ImGui::TextColored(ImVec4(1.f, 0.6f, 0.2f, 1.f), "%s", differ);
     }
     ImGui::Separator();
 
@@ -258,8 +266,8 @@ void Render() {
         if (!ImGui::CollapsingHeader(cat.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) continue;
         if (cat.rows.empty()) continue;  // a category the game shows with nothing in it: header only
         if (!ImGui::BeginTable(cat.name.c_str(), 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_PadOuterX)) continue;
-        ImGui::TableSetupColumn("Rule", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, S(96.f));
+        ImGui::TableSetupColumn(l10n::Label(l10n::T("Rule"), "rule"), ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn(l10n::Label(l10n::T("Value"), "value"), ImGuiTableColumnFlags_WidthFixed, S(96.f));
         for (const ViewRow& row : cat.rows) {
             ImGui::TableNextRow();
             // The game lays one overlay image over the row, and only one: img_locked's red when the
@@ -288,11 +296,11 @@ void Render() {
     ImGui::Separator();
     ImGui::BeginChild("##world_rules_desc", ImVec2(0, 0));
     if (!selected) {
-        ImGui::TextDisabled("Click on the name of the rule to see its description.");
+        ImGui::TextDisabled("%s", l10n::T("Click on the name of the rule to see its description."));
     } else {
         ImGui::TextUnformatted(selected->label.c_str());
         ImGui::PushTextWrapPos(0.f);
-        if (selected->description.empty()) ImGui::TextDisabled("(no description)");
+        if (selected->description.empty()) ImGui::TextDisabled("%s", l10n::T("(no description)"));
         else                               ImGui::TextUnformatted(selected->description.c_str());
         ImGui::PopTextWrapPos();
     }

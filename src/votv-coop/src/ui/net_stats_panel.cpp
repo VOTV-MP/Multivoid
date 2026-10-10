@@ -2,6 +2,8 @@
 
 #include "ui/net_stats_panel.h"
 
+#include "l10n/l10n.h"
+
 #include "coop/net/net_stats.h"
 #include "coop/config/config.h"
 #include "ui/fonts.h"
@@ -193,15 +195,15 @@ void Render() {
                                 s.connected ? IM_COL32(120, 230, 130, 255)
                                             : IM_COL32(120, 125, 135, 255));
             ImGui::SetCursorScreenPos(ImVec2(pos.x + S(16.f), pos.y));
-            char hdr[64];
+            char hdr[256];
+            const auto peers = static_cast<unsigned long long>(s.peers);
             if (!s.connected)
-                std::snprintf(hdr, sizeof(hdr), "NET  offline");
+                std::snprintf(hdr, sizeof(hdr), "%s", l10n::T("NET  offline"));
             else if (s.pingMaxMs >= 0)
-                std::snprintf(hdr, sizeof(hdr), "NET  %d peer%s  %d ms",
-                              s.peers, s.peers == 1 ? "" : "s", s.pingMaxMs);
+                l10n::Fmt(hdr, sizeof(hdr), l10n::Tn("NET  %1$llu peer  %2$d ms", "NET  %1$llu peers  %2$d ms", peers),
+                          peers, s.pingMaxMs);
             else
-                std::snprintf(hdr, sizeof(hdr), "NET  %d peer%s",
-                              s.peers, s.peers == 1 ? "" : "s");
+                l10n::Fmt(hdr, sizeof(hdr), l10n::Tn("NET  %llu peer", "NET  %llu peers", peers), peers);
             ImGui::PushStyleColor(ImGuiCol_Text, kBright);
             ImGui::TextUnformatted(hdr);
             ImGui::PopStyleColor();
@@ -215,8 +217,8 @@ void Render() {
         ImGui::Spacing();
         Sparkline(dl, rowW, S(30.f));
 
-        char pk[64];
-        std::snprintf(pk, sizeof(pk), "pkt/s  %.0f in   %.0f out", s.inPktps, s.outPktps);
+        char pk[256];
+        l10n::Fmt(pk, sizeof(pk), l10n::T("pkt/s  %1$.0f in   %2$.0f out"), s.inPktps, s.outPktps);
         ImGui::PushStyleColor(ImGuiCol_Text, kDim);
         ImGui::TextUnformatted(pk);
         ImGui::PopStyleColor();
@@ -229,16 +231,16 @@ void Render() {
 
 void RenderMenuPref() {
     bool on = Enabled();
-    if (ImGui::Checkbox("Show network stats overlay", &on))
+    if (ImGui::Checkbox(l10n::Label(l10n::T("Show network stats overlay"), "show_network_stats_overlay"), &on))
         coop::config::SetValue(::coop::config_registry::rows::ui_netstats, on ? "1" : "0");
     ImGui::SameLine();
     ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("A compact live panel in the top-right corner: receive/send rate right\n"
-                          "now (wire-level, includes protocol overhead), total downloaded/uploaded\n"
-                          "this session, packets/s, peers + ping, and a 60 s rate graph.\n"
-                          "Works for host and clients. Saved to multivoid.ini (ui.netstats).");
-    ImGui::TextDisabled("Off by default; persists across sessions.");
+        ImGui::SetTooltip("%s", l10n::T("A compact live panel in the top-right corner: receive/send rate right\n"
+                                        "now (wire-level, includes protocol overhead), total downloaded/uploaded\n"
+                                        "this session, packets/s, peers + ping, and a 60 s rate graph.\n"
+                                        "Works for host and clients. Saved to multivoid.ini (ui.netstats)."));
+    ImGui::TextDisabled("%s", l10n::T("Off by default; persists across sessions."));
 
     // Live readout -- doubles as a preview while the overlay itself is off.
     NS::Snapshot s;
@@ -249,15 +251,21 @@ void RenderMenuPref() {
     FmtBytes(s.bytesRecv, totIn, sizeof(totIn));
     FmtBytes(s.bytesSent, totOut, sizeof(totOut));
     ImGui::Spacing();
-    ImGui::SeparatorText("Session");
-    if (!s.connected) ImGui::TextDisabled("No active session.");
-    ImGui::Text("Down:  %s now,  %s total,  %llu packets",
-                rateIn, totIn, static_cast<unsigned long long>(s.packetsRecv));
-    ImGui::Text("Up:    %s now,  %s total,  %llu packets",
-                rateOut, totOut, static_cast<unsigned long long>(s.packetsSent));
+    ImGui::SeparatorText(l10n::Label(l10n::T("Session"), "session"));
+    if (!s.connected) ImGui::TextDisabled("%s", l10n::T("No active session."));
+    char line[256];
+    l10n::Fmt(line, sizeof(line), l10n::T("Down:  %1$s now,  %2$s total,  %3$llu packets"),
+              rateIn, totIn, static_cast<unsigned long long>(s.packetsRecv));
+    ImGui::TextUnformatted(line);
+    l10n::Fmt(line, sizeof(line), l10n::T("Up:    %1$s now,  %2$s total,  %3$llu packets"),
+              rateOut, totOut, static_cast<unsigned long long>(s.packetsSent));
+    ImGui::TextUnformatted(line);
     if (s.connected) {
-        if (s.pingMaxMs >= 0) ImGui::Text("Peers: %d,  worst ping %d ms", s.peers, s.pingMaxMs);
-        else                  ImGui::Text("Peers: %d", s.peers);
+        if (s.pingMaxMs >= 0)
+            l10n::Fmt(line, sizeof(line), l10n::T("Peers: %1$d,  worst ping %2$d ms"), s.peers, s.pingMaxMs);
+        else
+            l10n::Fmt(line, sizeof(line), l10n::T("Peers: %d"), s.peers);
+        ImGui::TextUnformatted(line);
     }
 }
 
