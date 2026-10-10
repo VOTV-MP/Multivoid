@@ -100,6 +100,10 @@ struct Snapshot {
 // interesting for a moment, then clutter. The wide string is UTF-8-encoded on the way in.
 void Push(const std::wstring& line, Keep keep);
 
+// The same line already in UTF-8: a composed, translated sentence arrives this way, its arguments
+// converted by the composer. Identical behaviour to the wide overload, which forwards here.
+void Push(const std::string& utf8Line, Keep keep);
+
 // Append a wire-authored chat line the host committed at `lineSeq`, the total order every peer
 // sorts by. The line starts with the speaker's nick; the byte length and the colour are
 // resolved by the receiver at apply time. Seeded rows are a joiner's history: they land
@@ -120,6 +124,9 @@ void PushAction(const std::string& utf8Line, uint8_t nickBegin, uint8_t nickByte
 // immediate line looks premature. The delay is wall clock: when the line appears, not how
 // long it lives. Game thread.
 void PushDelayed(const std::wstring& line, uint64_t delayMs, Keep keep);
+
+// The UTF-8 form of the delayed push; the wide overload forwards here.
+void PushDelayed(const std::string& utf8Line, uint64_t delayMs, Keep keep);
 
 // Drop expired lines, recompute the fade alphas by age, then republish the snapshot; a cheap
 // no-op when empty. From the periodic game-thread tick. Also advances the suspension

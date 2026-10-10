@@ -47,6 +47,7 @@
 #include "coop/moderation/seen_players.h"
 #include "coop/dev/restore_vitals.h"
 #include "coop/session/teleport_client.h"
+#include "l10n/l10n.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 
@@ -72,10 +73,12 @@ void OnSlotReplaced_LeaveLine(int slot, const coop::roster_ledger::Row& outgoing
     if (slot == 0) return;  // the host slot is not a "peer who left"
     // The flag suppresses the narration only; the last-seen stamp runs either way.
     if (!g_suppressLeaveLines) {
-        coop::chat_feed::Push(
-            (outgoing.nick.empty() ? std::wstring(L"Remote player") : outgoing.nick) +
-            L" left the game",
-            coop::chat_feed::Keep::History);  // a departure is part of the lobby's record
+        const std::string nickUtf8 = outgoing.nick.empty() ? std::string(l10n::T("Remote player"))
+                                                           : coop::chat_feed::ToUtf8(outgoing.nick);
+        char line[256];
+        if (l10n::Fmt(line, sizeof(line), l10n::T("%1$s left the game"), nickUtf8.c_str()) >= 0)
+            coop::chat_feed::Push(std::string(line),
+                                  coop::chat_feed::Keep::History);  // a departure is part of the lobby's record
     }
     coop::seen_players::OnSlotDisconnected(slot);  // stamp last-seen (host registry)
 }

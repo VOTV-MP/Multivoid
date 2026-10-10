@@ -32,6 +32,7 @@
 #include "ue_wrap/core/hot_path_guard.h"
 #include "coop/comms/chat_bubbles.h"
 #include "coop/comms/chat_feed.h"
+#include "l10n/l10n.h"
 #include "ue_wrap/core/log.h"
 
 #include <windows.h>
@@ -424,13 +425,13 @@ bool HandleJoinMessage(net::Session& session,
                 "repeat from a re-sent Join", senderSlot);
     } else {
         g_connectAnnounced[senderSlot] = true;
-        if (session.role() == net::Role::Client) {
-            coop::chat_feed::Push(L"Connecting to " + nick + L"'s game...",
-                                  coop::chat_feed::Keep::Transient);
-        } else {
-            coop::chat_feed::Push(nick + L" is connecting to the game...",
-                                  coop::chat_feed::Keep::Transient);
-        }
+        const std::string nickUtf8 = coop::chat_feed::ToUtf8(nick);
+        char line[256];
+        const int written =
+            session.role() == net::Role::Client
+                ? l10n::Fmt(line, sizeof(line), l10n::T("Connecting to %1$s's game..."), nickUtf8.c_str())
+                : l10n::Fmt(line, sizeof(line), l10n::T("%1$s is connecting..."), nickUtf8.c_str());
+        if (written >= 0) coop::chat_feed::Push(std::string(line), coop::chat_feed::Keep::Transient);
         UE_LOGI("player_handshake: slot %d connect line shown ('%ls')", senderSlot, nick.c_str());
     }
     // On the host this Join came from a client: the two-way roster broadcast (MTA's initial data
@@ -459,8 +460,10 @@ void AnnounceJoinerOnce(int slot) {
     if (slot < 1 || slot >= net::kMaxPeers) return;  // slot 0 = host self; never "joins"
     if (coop::roster_ledger::Get(slot).joinAnnounced) return;
     coop::roster_ledger::SetJoinAnnounced(slot, true);
-    coop::chat_feed::Push(NicknameForSlot(static_cast<uint8_t>(slot)) + L" joined the game",
-                          coop::chat_feed::Keep::History);
+    const std::string nickUtf8 = coop::chat_feed::ToUtf8(NicknameForSlot(static_cast<uint8_t>(slot)));
+    char line[256];
+    if (l10n::Fmt(line, sizeof(line), l10n::T("%1$s joined the game"), nickUtf8.c_str()) >= 0)
+        coop::chat_feed::Push(std::string(line), coop::chat_feed::Keep::History);
     UE_LOGI("player_handshake: slot %d joined the game (announced at puppet appearance)", slot);
 }
 
@@ -474,8 +477,10 @@ void AnnouncePeerSpawned(net::Role role, int slot) {
     if (role == net::Role::Client && slot == 0) {
         // The self-join line, delayed 5 s: our own loading screen still covers the world at the
         // spawn moment. Transient.
-        coop::chat_feed::PushDelayed(L"Joined " + NicknameForSlot(0) + L"'s game", 5000,
-                                     coop::chat_feed::Keep::Transient);
+        const std::string hostUtf8 = coop::chat_feed::ToUtf8(NicknameForSlot(0));
+        char line[256];
+        if (l10n::Fmt(line, sizeof(line), l10n::T("Joined %1$s's game"), hostUtf8.c_str()) >= 0)
+            coop::chat_feed::PushDelayed(std::string(line), 5000, coop::chat_feed::Keep::Transient);
         return;
     }
     AnnounceJoinerOnce(slot);

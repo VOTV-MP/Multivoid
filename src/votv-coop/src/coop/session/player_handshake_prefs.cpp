@@ -20,6 +20,7 @@
 #include "coop/player/nick_color.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/skin_registry.h"
+#include "l10n/l10n.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 
@@ -54,6 +55,16 @@ std::vector<uint8_t> BuildNickColorChangePayload(uint8_t slot, uint32_t packed) 
     return { slot, static_cast<uint8_t>(coop::nick_color::IsCustom(packed) ? 1 : 0),
              coop::nick_color::R(packed), coop::nick_color::G(packed),
              coop::nick_color::B(packed) };
+}
+
+// The "<nick> changed skin to <skin>" line, History: something a PEER did, the same family as a
+// peer-action line. The skin is its registry token, shown as the name it is.
+void PushSkinChangedLine(uint8_t describedSlot, const std::string& skin) {
+    const std::string nickUtf8 = coop::chat_feed::ToUtf8(NicknameForSlot(describedSlot));
+    char line[256];
+    if (l10n::Fmt(line, sizeof(line), l10n::T("%1$s changed skin to %2$s"), nickUtf8.c_str(),
+                  skin.c_str()) >= 0)
+        coop::chat_feed::Push(std::string(line), coop::chat_feed::Keep::History);
 }
 
 }  // namespace
@@ -104,10 +115,7 @@ bool HandleSkinChange(net::Session& session,
             return true;
         }
         StoreSkinForSlot(describedSlot, name);
-        // History: something a PEER did, the same family as a peer-action line.
-        coop::chat_feed::Push(NicknameForSlot(describedSlot) + L" changed skin to " +
-                              std::wstring(name.begin(), name.end()),
-                              coop::chat_feed::Keep::History);
+        PushSkinChangedLine(describedSlot, name);
         // Rebroadcast to every other ready client (originator excluded).
         const std::vector<uint8_t> p = BuildSkinChangePayload(describedSlot, name);
         for (int x = 1; x < net::kMaxPeers; ++x) {
@@ -127,9 +135,7 @@ bool HandleSkinChange(net::Session& session,
     }
     if (describedSlot == coop::players::Registry::Get().LocalPeerId()) return true;  // our own echo
     StoreSkinForSlot(describedSlot, name);
-    coop::chat_feed::Push(NicknameForSlot(describedSlot) + L" changed skin to " +
-                          std::wstring(name.begin(), name.end()),
-                          coop::chat_feed::Keep::History);
+    PushSkinChangedLine(describedSlot, name);
     return true;
 }
 

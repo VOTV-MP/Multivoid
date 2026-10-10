@@ -404,11 +404,13 @@ void Republish(uint64_t now) {
 // because the header exports it and the peer-action feed calls it.
 std::string ToUtf8(const std::wstring& w) { return coop::text::ToUtf8(w); }
 
-void Push(const std::wstring& line, Keep keep) {
+void Push(const std::wstring& line, Keep keep) { Push(ToUtf8(line), keep); }
+
+void Push(const std::string& utf8Line, Keep keep) {
     const uint64_t now = NowMs();
     AdvanceSuspension(now);
     Entry e;
-    SetText(e, ToUtf8(line));
+    SetText(e, utf8Line);
     e.key = NextKey();
     e.bornMs = now;
     e.bornSuspendedMs = g_suspendedMs;
@@ -462,8 +464,12 @@ void PushAction(const std::string& utf8Line, uint8_t nickBegin, uint8_t nickByte
 }
 
 void PushDelayed(const std::wstring& line, uint64_t delayMs, Keep keep) {
+    PushDelayed(ToUtf8(line), delayMs, keep);
+}
+
+void PushDelayed(const std::string& utf8Line, uint64_t delayMs, Keep keep) {
     Pending p;
-    p.text  = ToUtf8(line);
+    p.text  = utf8Line;
     p.dueMs = NowMs() + delayMs;
     p.keep  = keep;
     g_pending.push_back(std::move(p));
