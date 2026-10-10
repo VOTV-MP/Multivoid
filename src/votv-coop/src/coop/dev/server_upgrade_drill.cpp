@@ -5,6 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/dev/director/aim_fan.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/director/standpoints.h"
 #include "coop/interactables/server_upgrade_sync.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -19,7 +20,6 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_component.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
-#include "ue_wrap/engine/engine_nav.h"
 
 #include <windows.h>
 
@@ -129,12 +129,8 @@ bool PickBox(void* player, ue_wrap::FVector& bayOut) {
     if (cands.size() > kMaxCandidates) cands.resize(kMaxCandidates);
     float bestLen = 1e30f;
     for (const Cand& c : cands) {
-        std::vector<ue_wrap::FVector> route;
-        if (!E::FindNavPath(player, at, c.bay, route) || route.empty()) continue;
-        if (Flat(route.back(), c.bay) > kBayReachCm) continue;
         float len = 0.f;
-        for (size_t k = 1; k < route.size(); ++k) len += Flat(route[k - 1], route[k]);
-        if (len >= bestLen) continue;
+        if (!coop::director::RouteInLegs(player, at, c.bay, kBayReachCm, &len) || len >= bestLen) continue;
         bestLen = len;
         g_boxIdx = static_cast<int32_t>(c.idx);
         g_level0 = c.lvl;

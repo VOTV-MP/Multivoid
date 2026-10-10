@@ -5,6 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/director/standpoints.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/roster.h"
@@ -135,12 +136,8 @@ bool PickAtv(void* player, const FVector& at, DR::DirectorGoal& goal, float& len
     if (g.cands.size() > static_cast<size_t>(kCandidates)) g.cands.resize(kCandidates);
     float best = 1e30f;
     for (const Cand& c : g.cands) {
-        std::vector<FVector> path;
-        if (!E::FindNavPath(player, at, c.pos, path) || path.empty()) continue;
-        if (HorizDist(path.back(), c.pos) > kStandCm) continue;
         float len = 0.f;
-        for (size_t i = 1; i < path.size(); ++i) len += HorizDist(path[i - 1], path[i]);
-        if (len >= best) continue;
+        if (!coop::director::RouteInLegs(player, at, c.pos, kStandCm, &len) || len >= best) continue;
         best = len;
         goal.targetActor = c.atv;
         goal.targetPos = c.pos;

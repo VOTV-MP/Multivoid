@@ -4,6 +4,7 @@
 
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/director/standpoints.h"
 #include "coop/interactables/keypad_sync.h"  // the keypad lane's key
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -136,9 +137,8 @@ bool Typeable(const std::wstring& code) {
 
 // The keypad this peer's navmesh reaches by the shortest walk, among keypads the lane names that gate
 // a door: a route asked for the keypad itself ends on the floor below it, where a player stands to use
-// it. From far off every route stops short at the search's node limit, and then the nearest keypad a
-// route heads for is walked to anyway: the director re-paths on the way. The walk ends within
-// kStandCm of the keypad, on its level.
+// it. From far off a single route stops short at the search's node limit, so reachability is asked
+// leg by leg (the director's RouteInLegs). The walk ends within kStandCm of the keypad, on its level.
 bool PickReachableKeypad(void* player, const ue_wrap::FVector& at, DR::DirectorGoal& goal, float& lenOut) {
     struct Cand { void* lock; ue_wrap::FVector pos; float dist; };
     std::vector<Cand> cands;
@@ -156,29 +156,12 @@ bool PickReachableKeypad(void* player, const ue_wrap::FVector& at, DR::DirectorG
     std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.dist < b.dist; });
     if (cands.size() > static_cast<size_t>(kCandidates)) cands.resize(kCandidates);
     float best = 1e30f;
-    int noRoute = 0, endsFar = 0;
-    const Cand* nearestRouted = nullptr;
-    float nearestRoutedLen = 0.f;
     for (const Cand& c : cands) {
-        std::vector<ue_wrap::FVector> path;
-        if (!E::FindNavPath(player, at, c.pos, path) || path.empty()) { ++noRoute; continue; }
         float len = 0.f;
-        for (size_t i = 1; i < path.size(); ++i) len += HorizDist(path[i - 1], path[i]);
-        if (!nearestRouted) {  // candidates run nearest first
-            nearestRouted = &c;
-            nearestRoutedLen = len;
-        }
-        if (HorizDist(path.back(), c.pos) > kStandCm) { ++endsFar; continue; }
-        if (len >= best) continue;
+        if (!coop::director::RouteInLegs(player, at, c.pos, kStandCm, &len) || len >= best) continue;
         best = len;
         goal.targetActor = c.lock;
         lenOut = len;
-    }
-    if (!goal.targetActor && nearestRouted) {
-        goal.targetActor = nearestRouted->lock;
-        lenOut = nearestRouted->dist > nearestRoutedLen ? nearestRouted->dist : nearestRoutedLen;
-        UE_LOGI("[KEYPAD-DRILL] client: every route of %zu stops short of its keypad (%d with no route); walking "
-                "to the nearest, %.0fcm off, and re-pathing on the way", cands.size(), noRoute, nearestRouted->dist);
     }
     if (!goal.targetActor) {
         UE_LOGW("[KEYPAD-DRILL] client at (%.0f,%.0f,%.0f): %zu keypad(s) gate a door and are named, none with a "

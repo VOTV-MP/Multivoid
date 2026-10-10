@@ -5,6 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/dev/director/aimed_grab.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/director/standpoints.h"
 #include "coop/net/session.h"
 #include "coop/player/local_streams.h"  // CurrentHoldGen: the hold the stale tail names
 #include "coop/player/players_registry.h"
@@ -396,12 +397,8 @@ bool PickTarget(void* player, const char*& why) {
             ++unread;
             continue;
         }
-        std::vector<ue_wrap::FVector> route;
-        if (!E::FindNavPath(player, me, at, route) || route.empty()) continue;
-        const ue_wrap::FVector& end = route.back();
-        if (std::hypot(end.X - at.X, end.Y - at.Y) > kRouteEndReachCm) continue;
         float len = 0.f;
-        for (size_t i = 1; i < route.size(); ++i) len += Dist(route[i - 1], route[i]);
+        if (!coop::director::RouteInLegs(player, me, at, kRouteEndReachCm, &len)) continue;
         if (len < best) { best = len; g_target.Set(o); g_targetKey = w.key; bestAt = at; }
     }
     if (unread > 0)

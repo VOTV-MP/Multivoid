@@ -4,6 +4,7 @@
 
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/director/standpoints.h"
 #include "coop/interactables/serverbox_sync.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -16,11 +17,9 @@
 #include "ue_wrap/devices/serverbox.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_component.h"
-#include "ue_wrap/engine/engine_nav.h"
 
 #include <windows.h>
 
-#include <cmath>
 #include <memory>
 #include <string>
 #include <vector>
@@ -77,12 +76,8 @@ void CGo(CStep s) { g_client = s; g_stepMs = ::GetTickCount64(); }
 
 bool Resolved() { return SB::EnsureBreakResolved() && SB::EnsureRepairResolved(); }
 
-float Flat(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
-    const float dx = a.X - b.X, dy = a.Y - b.Y;
-    return std::sqrt(dx * dx + dy * dy);
-}
 
-// HOST: the first healthy box with no upgrades and a bay a player can walk to breaks on its own verb.
+// HOST: the first healthy box with no upgrades and a bay (its take-out component) breaks on its own verb.
 bool BreakOne() {
     std::vector<void*> servers;
     SB::ReadServers(servers);
@@ -217,13 +212,12 @@ void ClientTick(void* player) {
         }
         ue_wrap::FVector at{}, bay{};
         void* comp = SB::TakeOutComponent(g_box.Get());
-        std::vector<ue_wrap::FVector> route;
         if (!comp || !E::TryGetActorLocation(player, at)) {
             Abandon("the box's bay or the player's place is unread");
             return;
         }
         bay = E::GetComponentLocation(comp);
-        if (!E::FindNavPath(player, at, bay, route) || route.empty() || Flat(route.back(), bay) > kBayReachCm) {
+        if (!coop::director::RouteInLegs(player, at, bay, kBayReachCm)) {
             Abandon("no NavMesh route reaches the box's bay");
             return;
         }

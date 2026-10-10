@@ -21,11 +21,11 @@ constexpr float kMinLegProgressCm = 100.f;  // a leg that ends no nearer than th
 
 }  // namespace
 
-bool RouteInLegs(void* player, const ue_wrap::FVector& from, const ue_wrap::FVector& to, float reachCm, int maxLegs,
+bool RouteInLegs(void* player, const ue_wrap::FVector& from, const ue_wrap::FVector& to, float reachCm,
                  float* outLength) {
     ue_wrap::FVector cur = from;
     float len = 0.f;
-    for (int leg = 0; leg < maxLegs; ++leg) {
+    for (int leg = 0; leg < kMaxLegs; ++leg) {
         std::vector<ue_wrap::FVector> route;
         if (!E::FindNavPath(player, cur, to, route) || route.empty()) return false;
         for (size_t k = 1; k < route.size(); ++k) len += Flat(route[k - 1], route[k]);
@@ -51,7 +51,7 @@ std::vector<ue_wrap::FVector> ReachableStandpoints(void* player, const ue_wrap::
         p.X = about.X + ringCm * std::cos(a);
         p.Y = about.Y + ringCm * std::sin(a);
         float len = 0.f;
-        if (!RouteInLegs(player, from, p, reachCm, kMaxLegs, &len)) continue;
+        if (!RouteInLegs(player, from, p, reachCm, &len)) continue;
         found.emplace_back(len, p);
     }
     std::stable_sort(found.begin(), found.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
