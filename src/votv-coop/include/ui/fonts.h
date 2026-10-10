@@ -58,6 +58,11 @@ void Load();
 ImFont* FontFor(Role r);
 float   PxFor(Role r);
 
+// Whether the active language needs a script our faces lack, drawn by a Windows face (its catalogue
+// loaded and a script row names it). The one definition the atlas ceiling and the l10n drill share.
+// Any thread once l10n::Init has run: the locale is fixed for the process.
+bool    ScriptFaceActive();
+
 const char* FamilyLabel(Family f);   // "JetBrains Mono", ...
 const char* RoleLabel(Role r);       // the role's name in the player's language ("Menu / panels" in English)
 

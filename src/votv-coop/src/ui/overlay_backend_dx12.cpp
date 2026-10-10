@@ -216,7 +216,7 @@ bool InitImguiBackend() {
     // agree about who collided while disagreeing about what the names look like. The
     // DX12-specific cost is upload, not correctness: every growth goes through UpdateTexture's
     // unbounded fence wait, which the probe below measures, and which is why the atlas ceiling is
-    // pinned at 2048 in ui/fonts.cpp.
+    // pinned in ui/fonts.cpp: 2048, and 4096 only under a script face, whose session pays that wait.
     return true;
 }
 

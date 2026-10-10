@@ -11,6 +11,7 @@
 #include "coop/text/utf8_codec.h"
 #include "l10n/l10n.h"
 #include "ui/atlas_watch.h"
+#include "ui/fonts.h"
 #include "ui/dev_menu.h"
 #include "ui/imgui_overlay.h"
 
@@ -104,7 +105,7 @@ void Judge(Line join) {
 }
 
 // The atlas arm: the chat flooded with distinct ideographs, a line at a time, until a pack failure or
-// the end of the block -- how much peer text the 2048 atlas holds under a script face, since the chat
+// the end of the block -- how much peer text the atlas holds under a script face, since the chat
 // baked keeps every glyph it ever drew. After each line two censuses, so a frame has drawn the line
 // before the second answers; a progress line each kFloodReportEvery ideographs.
 constexpr uint32_t kFloodFirst = 0x4E00, kFloodLast = 0x9FFF;
@@ -141,7 +142,7 @@ void FloodStep() {
         return;
     }
     g_step = Step::Done;
-    UE_LOGI("[L10N-DRILL] DONE expect=atlas locale=%s ideographs=%u atlas=%dx%d packed=%d px (%.1f%% of %dx%d) "
+    UE_LOGI("[L10N-DRILL] DONE expect=atlas locale=%s pushed=%u atlas=%dx%d packed=%d px (%.1f%% of %dx%d) "
             "failures=%d first=U+%04X chat=%.1fpx scale=%.2f", l10n::ActiveLocale(), drawn, c.texW, c.texH, c.packedPx,
             full, c.maxW, c.maxH, c.failures, c.firstFailure, c.chatPx, c.uiScale);
 }
@@ -155,10 +156,10 @@ void Tick(coop::net::Session* session) {
     case Step::WaitWorld:
         if (isHost ? !session->IsSlotWorldReady(1) : !coop::net_pump::HasAnnouncedWorldReady()) return;
         if (ExpectNow() == Expect::Atlas) {
-            if (std::strncmp(l10n::ActiveLocale(), "zh", 2) != 0) {
+            if (!ui::fonts::ScriptFaceActive()) {
                 g_step = Step::Done;
-                UE_LOGW("[L10N-DRILL] FAIL expect=atlas locale=%s -- the arm floods ideographs and needs the "
-                        "Chinese pack active", l10n::ActiveLocale()[0] ? l10n::ActiveLocale() : "-");
+                UE_LOGW("[L10N-DRILL] FAIL expect=atlas locale=%s -- the arm floods ideographs and needs a "
+                        "language whose script a Windows face draws", l10n::ActiveLocale()[0] ? l10n::ActiveLocale() : "-");
                 return;
             }
             g_step = Step::Flood;

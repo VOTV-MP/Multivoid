@@ -715,7 +715,7 @@ CFG_FLAG(force_save_churn, "force_save_churn", "dev", false, nullptr,
 // that does not. Both default off; neither is reachable from any UI.
 CFG_INT(atlas_texmax_drill, "atlas_texmax_drill", "dev", 0, 0, 8192,
     "VOTVCOOP_ATLAS_TEXMAX",
-    "Override the font atlas size ceiling (0 = the shipped 2048). Set 256 to starve "
+    "Override the font atlas size ceiling (0 = the shipped one: 2048, 4096 under a script face). Set 256 to starve "
     "the packer and prove the pack-failure detector fires.")
 // The admission drill, client side only, and that is the whole design: the host's gate has no
 // knob, no dev branch and no env check anywhere, so the drill exercises the real refusal or

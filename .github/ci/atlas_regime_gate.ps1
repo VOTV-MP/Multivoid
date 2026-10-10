@@ -173,6 +173,14 @@ if ($Drill) {
            mut  = @{ 'src\votv-coop\src\ui\fonts.cpp' = {
                         param($t) $t -replace 'kAtlasMax\s*=\s*2048', 'kAtlasMax = 8192' } }
            want = 'does not pin TexMaxWidth' }
+        @{ name = 'script ceiling inherited'
+           mut  = @{ 'src\votv-coop\src\ui\fonts.cpp' = {
+                        param($t) $t -replace 'kAtlasMaxScript\s*=\s*4096', 'kAtlasMaxScript = 8192' } }
+           want = 'does not pin TexMaxWidth' }
+        @{ name = 'ceiling not chosen by the script'
+           mut  = @{ 'src\votv-coop\src\ui\fonts.cpp' = {
+                        param($t) $t -replace 'ActiveScript\(\)\s*\?\s*kAtlasMaxScript', 'false ? kAtlasMaxScript' } }
+           want = 'does not pin TexMaxWidth' }
         @{ name = 'exclude list a no-op'
            mut  = @{ 'src\votv-coop\include\coop\text\exclude_ranges.inc' = {
                         param($t) $t -replace '\{ 0x00001,', '{ 0x00000,' } }
