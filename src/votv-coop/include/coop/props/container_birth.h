@@ -38,6 +38,11 @@ void NoteHostBirth(void* actor);
 // HOST: the transfers this slot authored end with it.
 void OnPeerGone(uint8_t slot);
 
+// HOST: transfers ended this process because their author left, and because their slice never came
+// (the selftest's quiet runs not counted). For the throw drill. Game thread.
+uint32_t EndedGone();
+uint32_t EndedExpired();
+
 // HOST: whether `actor` is an awaited transfer, from this author or (authorSlot 0) from any.
 bool Awaited(void* actor, uint8_t authorSlot);
 // HOST: the author's slice landed; the transfer ends.

@@ -18,6 +18,7 @@
 #include "coop/dev/drive_selftest.h"  // [dev] rack-lane e2e circles
 #include "coop/dev/drone_call_drill.h"
 #include "coop/dev/atv_spawn_drill.h"  // [dev] a runtime ATV reaches each client once
+#include "coop/dev/throw_drill.h"  // [dev] a thrown container keeps its contents on the host
 #include "coop/dev/fall_drill.h"  // [dev] a falling host birth lands on the client where it lands on the host
 #include "coop/dev/sack_drill.h"  // [dev] a client's point sack is paid by the host, once  // [dev] a client's console press flies the host's drone
 #include "coop/dev/server_upgrade_drill.h"  // [dev] a client's install and take-out at a server box
@@ -140,6 +141,7 @@ void EndSession() {
     coop::dev::keypad_drill::OnDisconnect();  // [dev] the keypad and the legs belong to one world
     coop::dev::container_view_drill::OnDisconnect();  // [dev] the ATV, the view and the walks belong to one world
     coop::dev::physmods_drill::OnDisconnect();  // [dev] the client arms again, so a rejoin says its line
+    coop::dev::throw_drill::OnDisconnect();  // [dev] the backpack and its copy belong to one session
     coop::dev::atv_spawn_drill::OnDisconnect();  // [dev] the spawn belongs to one session
     coop::dev::fall_drill::OnDisconnect();  // [dev] the drop belongs to one session
     coop::dev::sack_drill::OnDisconnect();  // [dev] the sack and the counts belong to one session
@@ -225,6 +227,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::container_opener_probe::Tick(&session);  // [dev] far containers' openers and the reach to them (latched read when off)
     coop::dev::container_view_drill::Tick(&session);  // [dev] the view-close drill (a single bool read when off)
     coop::dev::physmods_drill::Tick(&session);  // [dev] the module-plug drill (a single bool read when off)
+    coop::dev::throw_drill::Tick(&session);  // [dev] the throw drill (a latched string compare when off)
     coop::dev::atv_spawn_drill::Tick(&session);  // [dev] the ATV spawn drill (a latched string compare when off)
     coop::dev::fall_drill::Tick(&session);  // [dev] the fall drill (a latched string compare when off)
     coop::dev::sack_drill::Tick(&session);  // [dev] the point sack drill (a latched string compare when off)

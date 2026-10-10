@@ -2,6 +2,9 @@
 
 #include "coop/props/container_birth.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
+
 #include "coop/element/registry.h"
 #include "coop/props/container_slice_wire.h"
 #include "coop/props/prop_element_tracker.h"   // SessionIsHost
@@ -69,8 +72,18 @@ void Push(std::vector<Birth>& births, void* actor, uint8_t authorSlot) {
 
 }  // namespace
 
+uint32_t g_endedGone = 0, g_endedExpired = 0;
+
 void NoteAuthoredBirth(void* actor) {
     if (IsHost() || !ci::IsContainer(actor)) return;
+    // The throw drill's red and gone: the slice is never sent, so the host's copy stays empty and its
+    // transfer waits for a slice that does not come.
+    static const bool s_skip = coop::config::ResolveFlag(coop::config_registry::rows::container_birth_skip_slice);
+    if (s_skip) {
+        UE_LOGW("container_birth: DRILL -- CLIENT threw container %p and sends no slice "
+                "(dev.container_birth_skip_slice)", actor);
+        return;
+    }
     void* inv = ci::InventoryOf(actor);
     if (!inv || !ci::IsWorldInventory(inv)) {
         UE_LOGW("container_birth: CLIENT threw container %p, but its inventory %s -- its contents stay on "
@@ -105,12 +118,17 @@ void OnPeerGone(uint8_t slot) {
     // A transfer is bound to the peer that threw: a later occupant of the slot does not complete it.
     for (size_t i = 0; i < g_awaited.size();) {
         if (g_awaited[i].authorSlot != slot) { ++i; continue; }
-        if (!g_quiet)
+        if (!g_quiet) {
+            ++g_endedGone;
             UE_LOGW("container_birth: slot %u left before the contents of a container it threw came",
                     static_cast<unsigned>(slot));
+        }
         g_awaited.erase(g_awaited.begin() + static_cast<std::ptrdiff_t>(i));
     }
 }
+
+uint32_t EndedGone() { return g_endedGone; }
+uint32_t EndedExpired() { return g_endedExpired; }
 
 // The host never publishes an awaited container, so nothing a slice could have been based on exists.
 bool Awaited(void* actor, uint8_t authorSlot) {
@@ -148,6 +166,7 @@ void Sweep(uint64_t nowMs, std::set<uint32_t>& dirty) {
         const Birth& b = g_awaited[i];
         const bool live = b.actor.Alive();
         if (live && nowMs < b.deadlineMs) { ++i; continue; }
+        if (live && !g_quiet) ++g_endedExpired;
         if (live && !g_quiet)
             UE_LOGW("container_birth: the contents of a container slot %u threw never came -- the host's "
                     "copy stays as it built it, and the thrower's own contents are refused from now on and "
