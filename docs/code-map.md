@@ -59,8 +59,9 @@ One folder, one concept, named after it. `src/votv-coop/src/` holds the implemen
 `po_reader` (a gettext `.po` file read, the only parser of a translator's text), `plural_expr` (a catalogue's
 plural rule, compiled once), `printf_check` (the conversions a message may carry), `fmt` (the positional
 formatter), `catalog` and `locale_choice` (private to the folder), `l10n_selftest`. The packs the mod ships
-are `src/votv-coop/locale/<ll_CC>.po`, embedded by name; `.github/ci/l10n_vectors.py` writes the selftest's
-plural vectors.
+are `src/votv-coop/locale/<ll_CC>.po`, embedded by name, beside the template `multivoid.pot` that
+`.github/ci/l10n_pot.py` extracts and gates (the files that may hold player text are its allowlist);
+`.github/ci/l10n_vectors.py` writes the selftest's plural vectors.
 
 ## `harness/` — boot glue and scripted tests
 

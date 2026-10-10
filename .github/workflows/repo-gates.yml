@@ -147,3 +147,6 @@ jobs:
 
       - name: Plural vectors gate (the l10n selftest's expected forms are the independent evaluator's)
         run: python3 .github/ci/l10n_vectors.py --check
+
+      - name: Translation template gate (the template is current; only allowlisted files extract; call sites follow the rules)
+        run: python3 .github/ci/l10n_pot.py --check
