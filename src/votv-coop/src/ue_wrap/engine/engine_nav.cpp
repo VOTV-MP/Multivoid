@@ -37,8 +37,8 @@ int32_t g_pathPtsOff = -2;     // -2 = uncomputed, -1 = not found
 
 void EnsureNav() {
     if (!g_navCdo)  g_navCdo  = R::FindClassDefaultObject(L"NavigationSystemV1");
-    void* cls = R::FindClass(L"NavigationSystemV1");
-    if (cls && !g_findPath)  g_findPath  = R::FindFunction(cls, L"FindPathToLocationSynchronously");
+    if (!g_findPath)
+        if (void* cls = R::FindClass(L"NavigationSystemV1")) g_findPath = R::FindFunction(cls, L"FindPathToLocationSynchronously");
 }
 
 void EnsurePawn() {
@@ -95,7 +95,7 @@ void AddMovementInput(void* pawn, const FVector& worldDir, float scale, bool for
 namespace {
 
 // A float member read by its reflected name on the object's own class. False when it is not there.
-// The walk is linear; both readers below are one-shot diagnostics.
+// The walk is linear; its readers below run once per walk or once per process.
 bool ReadFloatMember(void* obj, const wchar_t* name, float* out) {
     if (!obj) return false;
     const int32_t off = R::FindPropertyOffset(R::ClassOf(obj), name);

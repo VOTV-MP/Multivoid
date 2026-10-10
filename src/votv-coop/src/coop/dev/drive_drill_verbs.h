@@ -4,8 +4,6 @@
 
 #pragma once
 
-#include "ue_wrap/core/types.h"
-
 #include <string>
 
 namespace coop::dev::drive_drill_verbs {

@@ -1,13 +1,13 @@
 // coop/dev/director/proc_walkgrab.cpp -- the walked-grab process set (Baritone
-// IBaritoneProcess analogs). Three decision units the brain arbitrates by priority
-// and context-activation:
-//
+// IBaritoneProcess analogs), three units the brain arbitrates by priority:
 //   ClearHandProcess (prio 100), while the hand is FULL: drop the held prop at the
 //     input seam (InpActEvt_drop), effect-seam backstop if the stub is inert. It
 //     PREEMPTS the other two -- the bot cannot walk while holding a prop.
-//   GotoProcess (prio 50), while out of reach: FindPath over the baked NavMesh and
-//     per-tick AddMovementInput steering along the waypoints, with waypoint-progress
-//     stuck detection (distance-to-pile alone false-fails a winding route).
+//   GotoProcess (prio 50), while out of reach: FindPath over the baked NavMesh, a
+//     partial route walked as a leg and asked again from its end, and per-tick
+//     AddMovementInput steering along the waypoints, with waypoint-progress stuck
+//     detection (distance-to-pile alone false-fails a winding route); a slope too
+//     steep for the body is walked round (director/detour).
 //   GrabProcess (prio 40), while in reach and not yet grabbed: settle, aim, then the
 //     proven chippile grab (force lookAtActor + InpActEvt_use + playerGrabbed).
 //
@@ -58,6 +58,7 @@ constexpr int   kMaxDoorOpens   = 20;    // grind: keep opening doors as needed 
 constexpr int   kUnstickTicks   = 70;    // ~0.28 s of sideways juke to slide off a box before re-checking
 constexpr int   kSettleTicks    = 12;    // ~0.25 s braking before the grab
 constexpr int   kMaxDetours     = 24;    // ways round a slope too steep for the body, per walk (detour.h)
+constexpr float kMinLegCm       = 100.f; // a leg that ends no nearer the goal than this is not a leg: the stuck handler's
 // A walk-to target is reached on its own level only: the walker's centre within this of the target's
 // height, less than a storey. A route whose end the navmesh put on the floor below counts as
 // horizontally there, 11 m under a door on the dish building's upper floor.
@@ -210,11 +211,13 @@ public:
             const detour::Search::Step step = detour_.Advance(ctx.player, &route);
             if (step == detour::Search::Step::Working) return ProcStatus::Working;
             if (step == detour::Search::Step::Found) {
-                // The via point is a leg boundary: from there the route to the goal is asked again.
+                // The held way, to the via point and on: a leg like any route, re-pathed at its end when short.
                 waypoints_.assign(route.begin() + 1, route.end());
+                partial_ = HorizDist(waypoints_.back(), goal_.targetPos) > goal_.reachCm;
+                legFrom_ = HorizDist(ctx.pos, goal_.targetPos);
                 goal_.route = std::move(route);
                 wp_ = 0; lastWp_ = 0; bestWp_ = 1e9f; bestPile_ = 1e9f; sinceProgress_ = 0;
-                pathed_ = true; partial_ = true;
+                pathed_ = true;
             } else {
                 jukeSign_ = -jukeSign_;   // no way round held: back to grinding
                 unstickTicks_ = kUnstickTicks;
@@ -224,24 +227,28 @@ public:
             pathed_ = true;
             std::vector<ue_wrap::FVector> path;
             const bool ok = !goal_.straight && E::FindNavPath(ctx.player, ctx.pos, goal_.targetPos, path);
+            const bool midWalk = routed_ && !goal_.straight && !ok;
             if (ok && path.size() >= 2) for (size_t i = 1; i < path.size(); ++i) waypoints_.push_back(path[i]);
-            else waypoints_.push_back(goal_.targetPos);   // the straight line, asked for or the fallback
+            else if (midWalk) waypoints_.push_back(ctx.pos);   // stand: the stuck handler asks again, no beeline
+            else waypoints_.push_back(goal_.targetPos);   // the straight line, asked for or the first route's fallback
+            routed_ = routed_ || ok;
             goal_.route.assign(1, ok && !path.empty() ? path.front() : ctx.pos);
             goal_.route.insert(goal_.route.end(), waypoints_.begin(), waypoints_.end());
             // A route that stops short of the goal is PARTIAL (the path query's bounded search on a long walk):
             // its end is a leg boundary, re-planned from there on arrival rather than by the stuck detector.
             partial_ = ok && HorizDist(waypoints_.back(), goal_.targetPos) > goal_.reachCm;
+            legFrom_ = HorizDist(ctx.pos, goal_.targetPos);
             UE_LOGI("director/Goto: route %zu waypoints (%s), dist=%.0fcm", waypoints_.size(),
-                    ok ? "NavMesh route" : goal_.straight ? "straight line, as asked" : "straight-line fallback",
+                    ok ? "NavMesh route" : goal_.straight ? "straight line, as asked"
+                       : midWalk ? "no route here, left to the stuck handler" : "straight-line fallback",
                     HorizDist(ctx.pos, goal_.targetPos));
             if (floorZ_ < 0.f) {   // the body's floor limit, read once: what the NavMesh's routes are held to
                 E::WalkLimits w;
                 floorZ_ = E::ReadWalkLimits(ctx.player, &w) ? w.floorZ : 0.f;
             }
             const int spot = ok && floorZ_ > 0.f && detours_ < kMaxDetours ? detour_.PassedSpot(goal_.route) : -1;
-            if (spot >= 0) {   // the route climbs a slope this walk already found too steep: round it at once
-                ++detours_;
-                detour_.BeginRound(ctx.pos, goal_.targetPos, static_cast<size_t>(spot), floorZ_);
+            if (spot >= 0 && detour_.BeginRound(ctx.pos, goal_.targetPos, static_cast<size_t>(spot), floorZ_)) {
+                ++detours_;   // the route climbs a slope this walk already found too steep: round it at once
                 return ProcStatus::Working;
             }
         }
@@ -249,9 +256,15 @@ public:
         while (wp_ + 1 < waypoints_.size() && HorizDist(ctx.pos, waypoints_[wp_]) < kAdvanceCm) ++wp_;
         const float toWp = HorizDist(ctx.pos, waypoints_[wp_]);
         if (partial_ && wp_ + 1 == waypoints_.size() && toWp < kAdvanceCm) {
+            partial_ = false;
+            if (toPile > legFrom_ - kMinLegCm) {   // no nearer: the route's end is no leg boundary, so no re-path loop
+                UE_LOGW("director/Goto: a partial route ended no nearer the goal (toPile=%.0f) -- left to the stuck "
+                        "handler", toPile);
+                return ProcStatus::Working;
+            }
             ++legs_;
             UE_LOGI("director/Goto: leg %d reached (toPile=%.0f) -- the route was partial, re-path from here", legs_, toPile);
-            pathed_ = false; waypoints_.clear(); wp_ = 0; lastWp_ = 0; bestWp_ = 1e9f; bestPile_ = 1e9f; partial_ = false;
+            pathed_ = false; waypoints_.clear(); wp_ = 0; lastWp_ = 0; bestWp_ = 1e9f; bestPile_ = 1e9f;
             return ProcStatus::Working;
         }
         // Progress = advanced a waypoint OR closer to the current waypoint OR closer to the pile.
@@ -262,16 +275,17 @@ public:
         if (progressed) sinceProgress_ = 0;
         else if (++sinceProgress_ >= kStuckTicks) {
             sinceProgress_ = 0;
-            // FIRST: a CLOSED door? Open it as a player's press would and keep walking through.
-            if (doorOpens_ < kMaxDoorOpens && TryOpenBlockingDoor(ctx)) { ++doorOpens_; return ProcStatus::Working; }
-            // THEN: a slope too steep for the body, which the NavMesh routes over (detour.h)? Go round it.
+            // FIRST: a slope too steep for the body, which the NavMesh routes over (detour.h)? Go round it.
+            // One trace, so it goes before the door scan; a door is a wall, which this never takes.
             ue_wrap::FVector steep{};
             if (detours_ < kMaxDetours && floorZ_ > 0.f &&
-                detour::SteepAhead(ctx.player, ctx.pos, waypoints_[wp_], floorZ_, &steep)) {
+                detour::SteepAhead(ctx.player, ctx.pos, waypoints_[wp_], floorZ_, &steep) &&
+                detour_.Begin(ctx.pos, goal_.targetPos, steep, floorZ_)) {
                 ++detours_;
-                detour_.Begin(ctx.pos, goal_.targetPos, steep, floorZ_);
                 return ProcStatus::Working;
             }
+            // THEN: a CLOSED door? Open it as a player's press would and keep walking through.
+            if (doorOpens_ < kMaxDoorOpens && TryOpenBlockingDoor(ctx)) { ++doorOpens_; return ProcStatus::Working; }
             // NEVER GIVE UP: grind past physics boxes and clutter. Alternate a sideways JUKE to
             // slide off the obstacle, and RE-PATH periodically. Goto returns Failed ONLY on a hard
             // engine problem -- reaching the pile (IsActive->false, Grab takes over) or the run
@@ -344,6 +358,8 @@ private:
     bool   pathed_ = false;
     bool   partial_ = false;   // the current route stops short of the goal: its end is a leg boundary
     int    legs_ = 0;
+    float  legFrom_ = 0.f;     // the walker's distance to the goal where the current route began
+    bool   routed_ = false;    // a NavMesh route was had: a later failed query is no reason to beeline
     std::vector<ue_wrap::FVector> waypoints_;
     size_t wp_ = 0, lastWp_ = 0;
     float  bestWp_ = 1e9f, bestPile_ = 1e9f;

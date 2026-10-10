@@ -3,12 +3,12 @@
 #include "ue_wrap/core/trace.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 
 #include <cstdint>
 #include <cstring>
-#include <vector>
 
 namespace ue_wrap::trace {
 namespace {
@@ -53,7 +53,9 @@ bool Resolved() {
     return g_traceFn && g_kslCdo;
 }
 
-// FHitResult's members, by the engine struct's own reflection, resolved once.
+// FHitResult's members, by the engine struct's own reflection, resolved once. The struct is 0x88 bytes
+// in 4.27; the read buffer is on the stack, its size checked against the reflected one.
+constexpr int32_t kHitBytes = 256;
 struct HitLayout {
     bool    tried = false, ok = false;
     int32_t size = 0, point = -1, normal = -1, actor = -1, component = -1;
@@ -70,7 +72,10 @@ const HitLayout& Layout() {
     l.actor = R::FindPropertyOffset(hr, L"Actor");
     l.component = R::FindPropertyOffset(hr, L"Component");
     const auto fits = [&](int32_t off, int32_t n) { return off >= 0 && off + n <= l.size; };
-    l.ok = fits(l.point, 12) && fits(l.normal, 12) && fits(l.actor, 8) && fits(l.component, 8);
+    l.ok = l.size <= kHitBytes && fits(l.point, 12) && fits(l.normal, 12) && fits(l.actor, 8) && fits(l.component, 8);
+    if (!l.ok)
+        UE_LOGW("trace: FHitResult's members did not resolve (size %d, point %d, normal %d, actor %d, component %d) -- "
+                "LineHitStatDyn answers unresolved", l.size, l.point, l.normal, l.actor, l.component);
     return l;
 }
 
@@ -99,12 +104,12 @@ bool LineHitStatDyn(void* worldCtx, const FVector& start, const FVector& end, Hi
     *out = Hit{};
     out->blocked = f.Get<bool>(L"ReturnValue");
     if (!out->blocked) return true;
-    std::vector<unsigned char> hit(static_cast<size_t>(l.size));
-    if (!f.GetRaw(L"OutHit", hit.data(), l.size)) return false;
-    std::memcpy(&out->point, hit.data() + l.point, 12);
-    std::memcpy(&out->normal, hit.data() + l.normal, 12);
-    out->actor = Weak(hit.data() + l.actor);
-    out->component = Weak(hit.data() + l.component);
+    unsigned char hit[kHitBytes];
+    if (!f.GetRaw(L"OutHit", hit, l.size)) return false;
+    std::memcpy(&out->point, hit + l.point, 12);
+    std::memcpy(&out->normal, hit + l.normal, 12);
+    out->actor = Weak(hit + l.actor);
+    out->component = Weak(hit + l.component);
     return true;
 }
 

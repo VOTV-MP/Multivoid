@@ -5,7 +5,7 @@
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/types.h"
 #include "ue_wrap/world/world_singleton.h"
 
 #include <string>
@@ -13,7 +13,6 @@
 namespace coop::dev::drive_drill_verbs {
 namespace {
 
-namespace E = ue_wrap::engine;
 namespace R = ue_wrap::reflection;
 
 void* PlayerFn(void* player, const wchar_t* name) {

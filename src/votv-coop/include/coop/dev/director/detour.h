@@ -29,17 +29,19 @@ bool SteepAhead(void* player, const ue_wrap::FVector& pos, const ue_wrap::FVecto
 
 class Search {
 public:
-    // Remembers the spot `steep` and starts a search round it, from `from` toward `goal`. Stopped at the
-    // same spot again after the last way round it was found, that way did not hold: its via point is
-    // never offered again, so each retry tries the next way round.
-    void Begin(const ue_wrap::FVector& from, const ue_wrap::FVector& goal, const ue_wrap::FVector& steep,
+    // Remembers the spot `steep` and starts a search round it, from `from` toward `goal`. False, and no
+    // search, round a spot whose last search was exhausted: the stuck handler grinds there instead.
+    bool Begin(const ue_wrap::FVector& from, const ue_wrap::FVector& goal, const ue_wrap::FVector& steep,
                float floorZ);
-    // Starts a search round a spot already remembered, the one `route` passes (PassedSpot).
-    void BeginRound(const ue_wrap::FVector& from, const ue_wrap::FVector& goal, size_t spot, float floorZ);
+    // Starts a search round a spot already remembered, the one a route passes (PassedSpot). Either entry,
+    // round the spot the last way round was found for, says that way did not hold: its via point is
+    // never offered again, so each retry tries the next way round.
+    bool BeginRound(const ue_wrap::FVector& from, const ue_wrap::FVector& goal, size_t spot, float floorZ);
 
     enum class Step { Working, Found, Exhausted };
-    // A few candidates per call, each a route query and its floor samples. On Found, `route` is the
-    // way to the via point, its first point the walker's start. Exhausted: no candidate held.
+    // Candidates within a budget of floor samples per call, each a route query and its samples. On
+    // Found, `route` is the way the search held: to the via point and on from it as far as the onward
+    // route goes, its first point the walker's start. Exhausted: no candidate held.
     Step Advance(void* player, std::vector<ue_wrap::FVector>* route);
 
     // The remembered spot a route passes within clearance of, past its first stretch, or -1.
@@ -49,19 +51,22 @@ public:
     size_t Spots() const { return spots_.size(); }
 
 private:
-    bool Holds(void* player, const ue_wrap::FVector& via, std::vector<ue_wrap::FVector>* toVia,
-               float* score) const;
+    bool Holds(void* player, const ue_wrap::FVector& via, std::vector<ue_wrap::FVector>* walk, float* score);
+    bool Standable(void* player, const ue_wrap::FVector& at);
 
     bool NearFailedVia(const ue_wrap::FVector& via) const;
 
     std::vector<ue_wrap::FVector> spots_;
+    std::vector<bool> exhausted_;           // per spot: its last search held no way round
     std::vector<ue_wrap::FVector> failedVias_;
     ue_wrap::FVector from_{}, goal_{}, round_{};
+    size_t roundSpot_ = 0;
     ue_wrap::FVector lastVia_{}, lastRound_{};
     bool  lastFound_ = false;               // the last search found a way round lastRound_, by lastVia_
     float floorZ_ = 0.f;
     bool  active_ = false;
     int   next_ = 0;                        // the next candidate: ring * kDirections + direction
+    int   samples_ = 0;                     // floor samples taken in this Advance
     float bestScore_ = 0.f;
     std::vector<ue_wrap::FVector> best_;    // the best held route of the ring under evaluation
     ue_wrap::FVector bestVia_{};
