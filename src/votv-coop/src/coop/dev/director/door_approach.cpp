@@ -2,8 +2,9 @@
 
 #include "coop/dev/director/door_approach.h"
 
+#include "coop/dev/director/routes.h"
+
 #include "ue_wrap/engine/engine.h"
-#include "ue_wrap/engine/engine_nav.h"
 
 #include <cmath>
 #include <utility>
@@ -30,7 +31,7 @@ bool PickDoorApproach(void* player, const ue_wrap::FVector& at, void* door, bool
         const ue_wrap::FVector target{pos.X + fwd.X * kDoorApproachCm * side, pos.Y + fwd.Y * kDoorApproachCm * side,
                                       pos.Z};
         std::vector<ue_wrap::FVector> path;
-        if (!E::FindNavPath(player, at, target, path) || path.empty()) {
+        if (!RouteFrom(player, at, target, &path)) {
             ++best.noRoute;
             continue;
         }

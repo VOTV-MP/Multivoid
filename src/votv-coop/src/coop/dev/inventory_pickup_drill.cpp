@@ -4,6 +4,7 @@
 
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/director/routes.h"
 #include "record_digest.h"   // co-located private header (src tree, not include/)
 #include "coop/player/players_registry.h"
 #include "coop/net/session.h"
@@ -20,7 +21,6 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/desk/drive_chain.h"
 #include "ue_wrap/engine/engine.h"
-#include "ue_wrap/engine/engine_nav.h"
 
 #include <atomic>
 #include <cmath>
@@ -69,7 +69,7 @@ DWORD WINAPI WalkAwayThread(LPVOID /*arg*/) {
             const float a = static_cast<float>(k) * 0.785398f;
             const ue_wrap::FVector want{me.X + 1500.f * std::cos(a), me.Y + 1500.f * std::sin(a), me.Z};
             std::vector<ue_wrap::FVector> route;
-            if (!E::FindNavPath(player, me, want, route) || route.size() < 2) continue;
+            if (!coop::director::RouteFrom(player, me, want, &route) || route.size() < 2) continue;
             const ue_wrap::FVector end = route.back();
             const float dx = end.X - me.X, dy = end.Y - me.Y;
             if (dx * dx + dy * dy < 800.f * 800.f) continue;  // a route that ends at our feet

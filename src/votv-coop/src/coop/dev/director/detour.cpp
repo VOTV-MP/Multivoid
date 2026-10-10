@@ -14,10 +14,12 @@
 namespace coop::director::detour {
 namespace {
 
-constexpr float  kRingsCm[]     = {600.f, 1200.f, 2400.f, 4800.f};   // nearest first: the shortest way round
+constexpr float  kRingsCm[]     = {600.f, 1200.f, 2400.f, 4800.f};   // nearest first: a way round near the spot
 constexpr int    kRings         = sizeof(kRingsCm) / sizeof(kRingsCm[0]);
 constexpr int    kDirections    = 12;
-constexpr int    kSampleBudget  = 120;      // floor samples per call: a candidate past it waits for the next tick
+constexpr int    kSampleBudget  = 120;      // engine calls per call: a candidate past it waits for the next tick
+constexpr float  kMaxDetourRatio = 4.f;     // a way to the via point this many times its straight distance is no way round
+constexpr int    kRouteCost     = 4;        // a route query counts as this many samples
 constexpr float  kMinViaCm      = 300.f;    // a via point at the walker's feet is no way round
 constexpr float  kSampleCm      = 100.f;    // floor samples along a route, about a stride apart
 constexpr float  kSpotClearCm   = 300.f;    // a route keeps this far from a remembered spot
@@ -202,16 +204,18 @@ bool Search::Standable(void* player, const ue_wrap::FVector& at) {
 
 bool Search::Holds(void* player, const ue_wrap::FVector& via, std::vector<ue_wrap::FVector>* walk, float* score) {
     if (Flat(via, from_) < kMinViaCm || NearFailedVia(via)) return false;
+    samples_ += kRouteCost;
     // The way there: floor the body stands on all along, clear of every remembered spot past the
     // stretch the walker stands in.
     std::vector<ue_wrap::FVector> there;
     if (!RouteFrom(player, from_, via, &there) || there.size() < 2 || Flat(there.back(), via) > kViaReachCm)
         return false;
-    if (PassedSpot(there) >= 0) return false;
+    if (PassedSpot(there) >= 0 || Length(there) > kMaxDetourRatio * Flat(from_, via)) return false;
     if (!Walk(there, [&](const ue_wrap::FVector& p, float) { return Standable(player, p); })) return false;
     // The way on: clear of every remembered spot, its floor sampled for its first stretch. The walker
     // follows this very route, not a fresh one asked where it stands at the via point.
     std::vector<ue_wrap::FVector> on;
+    samples_ += kRouteCost;
     if (!RouteFrom(player, via, goal_, &on) || on.size() < 2) return false;
     if (PassedSpot(on) >= 0) return false;
     if (!Walk(on, [&](const ue_wrap::FVector& p, float along) { return along > kOnwardCheckCm || Standable(player, p); }))
@@ -233,6 +237,7 @@ Search::Step Search::Advance(void* player, std::vector<ue_wrap::FVector>* route)
         ue_wrap::FVector floor{};
         std::vector<ue_wrap::FVector> walk;
         float score = 0.f;
+        ++samples_;
         if (FloorUnder(player, c, &floor) &&
             Holds(player, {floor.X, floor.Y, floor.Z + kViaLiftCm}, &walk, &score) &&
             (best_.empty() || score < bestScore_)) {

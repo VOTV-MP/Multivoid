@@ -23,7 +23,6 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_attach.h"
-#include "ue_wrap/engine/engine_nav.h"
 #include "ue_wrap/engine/engine_pawn.h"
 
 #include <windows.h>
@@ -421,7 +420,7 @@ bool PickCarryEnd(void* player, ue_wrap::FVector& out, const char*& why) {
         const float a = static_cast<float>(k) * 0.785398f;
         const ue_wrap::FVector want{me.X + kCarryCm * std::cos(a), me.Y + kCarryCm * std::sin(a), me.Z};
         std::vector<ue_wrap::FVector> route;
-        if (!E::FindNavPath(player, me, want, route) || route.size() < 2) continue;
+        if (!coop::director::RouteFrom(player, me, want, &route) || route.size() < 2) continue;
         if (Dist(route.back(), g_mountPos) < kCarryCm * 0.6f) continue;
         out = route.back();
         return true;

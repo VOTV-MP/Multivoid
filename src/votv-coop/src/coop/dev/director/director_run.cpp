@@ -5,6 +5,7 @@
 // Greppable "director: VERDICT".
 
 #include "coop/dev/director/director.h"
+#include "coop/dev/director/routes.h"
 
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_element_tracker.h"
@@ -76,20 +77,16 @@ bool PickReachablePile(void* player, float minCm, float maxCm, DirectorGoal& goa
     // its straight distance, while a pile behind a wall winds far around (measured: a
     // 553cm-straight pile had a 24m NavMesh detour that straight-steer could not traverse). Prefer
     // the shortest actual walk, and REJECT a pile whose route detours > 3x its straight distance.
-    float bestLen = 1e30f; int bestPts = -1;
+    float bestLen = 1e30f;
     for (const Cand& c : cands) {
-        std::vector<ue_wrap::FVector> p;
-        if (!E::FindNavPath(player, at, c.pos, p)) continue;   // unreachable
         // GRAB-REACHABILITY: the route must END within grab distance of the pile. A pile up on a
         // desk/shelf sits far off the navmesh -- the bot reaches the route-end but never the pile
         // (measured: a pile 833cm out whose route ended 500cm short -> ungrabbable).
-        if (HorizDist(p.back(), c.pos) > 160.f) continue;
         float len = 0.f;
-        for (size_t i = 1; i < p.size(); ++i) len += HorizDist(p[i - 1], p[i]);
+        if (!RouteInLegs(player, at, c.pos, 160.f, &len)) continue;
         // Among grab-reachable piles, prefer the SHORTEST actual walk (doors are fine -- Goto opens
         // them + re-paths through).
-        if (len < bestLen) { bestLen = len; bestPts = static_cast<int>(p.size());
-                             goal.targetActor = c.pile; goal.targetPos = c.pos; }
+        if (len < bestLen) { bestLen = len; goal.targetActor = c.pile; goal.targetPos = c.pos; }
     }
     if (!goal.targetActor) {   // no grab-reachable pile -- honest: this save has none in the open
         UE_LOGW("director: NO grab-reachable chipPile (all sit off the navmesh / behind locked doors) "
@@ -99,9 +96,9 @@ bool PickReachablePile(void* player, float minCm, float maxCm, DirectorGoal& goa
                     "to keep away from", refused, awayMinCm);
         return false;
     }
-    UE_LOGI("director: goal pile=%p pos=(%.0f,%.0f,%.0f) straight=%.0fcm routeLen=%.0fcm routePts=%d",
+    UE_LOGI("director: goal pile=%p pos=(%.0f,%.0f,%.0f) straight=%.0fcm routeLen=%.0fcm",
             goal.targetActor, goal.targetPos.X, goal.targetPos.Y, goal.targetPos.Z,
-            HorizDist(goal.targetPos, at), bestLen >= 1e30f ? -1.f : bestLen, bestPts);
+            HorizDist(goal.targetPos, at), bestLen >= 1e30f ? -1.f : bestLen);
     if (awayFrom)
         UE_LOGI("director: the pick kept %.0fcm (flat) from (%.0f,%.0f,%.0f): %d pile(s) in the band refused",
                 awayMinCm, awayFrom->X, awayFrom->Y, awayFrom->Z, refused);

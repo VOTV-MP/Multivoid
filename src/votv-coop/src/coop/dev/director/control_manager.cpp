@@ -39,7 +39,8 @@ bool ControlManager::Run(DirectorGoal& goal, int maxSeconds) {
     if (inControl_) {
         IProcess* last = inControl_;
         inControl_ = nullptr;
-        GT::RunAndWait([last](std::atomic<int>& d) { last->OnLostControl(); d.store(1); });
+        if (GT::RunAndWait([last](std::atomic<int>& d) { last->OnLostControl(); d.store(1); }) == GT::kTaskFaulted)
+            UE_LOGW("director: the run's last driver faulted letting go of control -- a key it held may stay down");
     }
     return done;
 }

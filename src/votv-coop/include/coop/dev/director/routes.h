@@ -12,8 +12,8 @@ namespace coop::director {
 
 // A NavMesh route from `from` to `to`, its first point `from`. Where the path query cannot place `from` on the
 // NavMesh -- a walker slid onto ground the NavMesh leaves out, where every query from it failed on a fresh New Game --
-// `from` is projected onto it within a few metres (the engine's ProjectPointToNavigation) and the route walks there
-// first. False when there is no route even so.
+// `from` is projected onto it (the engine's ProjectPointToNavigation, in a 4 m box each way, then a 20 m one) and the
+// route walks there first. False when there is no route even so.
 bool RouteFrom(void* player, const ue_wrap::FVector& from, const ue_wrap::FVector& to,
                std::vector<ue_wrap::FVector>* route);
 
@@ -28,8 +28,9 @@ bool RouteInLegs(void* player, const ue_wrap::FVector& from, const ue_wrap::FVec
                  float* outLength = nullptr);
 
 // The `count` points of a ring of `ringCm` about `about`, at the height `player` stands at, that a route from `player`
-// reaches, shortest route first: the legs toward the ring's centre walked once (RouteInLegs' rule), each point asked
-// from the start of the leg that reaches the ring. Empty when `player` does not read or no route reaches one.
+// reaches, shortest route first: the legs toward the ring's centre walked once (RouteInLegs' rule; toward its points
+// when the centre ends no route), each point asked from the start of the leg that reaches the ring. Empty when
+// `player` does not read or no route reaches one.
 std::vector<ue_wrap::FVector> ReachableStandpoints(void* player, const ue_wrap::FVector& about, float ringCm, int count,
                                                    float reachCm);
 

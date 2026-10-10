@@ -71,6 +71,8 @@ public:
     int PassedSpot(const std::vector<ue_wrap::FVector>& route) const;
 
     bool Active() const { return active_; }
+    // The via point of the last way round found.
+    const ue_wrap::FVector& LastVia() const { return lastVia_; }
     size_t Spots() const { return spots_.size(); }
 
 private:
@@ -89,7 +91,7 @@ private:
     float floorZ_ = 0.f;
     bool  active_ = false;
     int   next_ = 0;                        // the next candidate: ring * kDirections + direction
-    int   samples_ = 0;                     // floor samples taken in this Advance
+    int   samples_ = 0;                     // engine calls (traces, route queries) spent in this Advance
     float bestScore_ = 0.f;
     std::vector<ue_wrap::FVector> best_;    // the best held route of the ring under evaluation
     ue_wrap::FVector bestVia_{};

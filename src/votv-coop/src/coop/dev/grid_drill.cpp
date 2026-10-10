@@ -8,6 +8,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/director/routes.h"
 #include "coop/interactables/device_occupancy.h"  // the panel's claim
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -26,7 +27,6 @@
 #include "ue_wrap/devices/power_control.h"
 #include "ue_wrap/engine/engine.h"            // TryGetActorLocation
 #include "ue_wrap/engine/engine_component.h"  // GetComponentLocation
-#include "ue_wrap/engine/engine_nav.h"        // FindNavPath
 
 #include <chrono>
 #include <cstdint>
@@ -117,7 +117,7 @@ void SayTarget(void* player, const ue_wrap::FVector& me, const char* what, bool 
         return;
     }
     std::vector<ue_wrap::FVector> route;
-    const bool routed = ue_wrap::engine::FindNavPath(player, me, at, route) && !route.empty();
+    const bool routed = coop::director::RouteFrom(player, me, at, &route);
     const ue_wrap::FVector end = routed ? route.back() : ue_wrap::FVector{};
     UE_LOGI("[GRID-DRILL] client census: %s at (%.0f, %.0f, %.0f), %.0f uu away; the route toward it %s "
             "(%.0f, %.0f, %.0f), %.0f uu short of it", what, at.X, at.Y, at.Z, Dist(me, at),

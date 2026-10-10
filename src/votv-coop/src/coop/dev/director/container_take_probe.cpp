@@ -8,7 +8,8 @@
 // only, env-gated (VOTVCOOP_RUN_CTAKE_PROBE=1); greppable "director/ctake: VERDICT".
 
 #include "coop/dev/director/director.h"
-#include "coop/dev/director/dup_verifier.h"   // the no-dup verifier + its positive control
+#include "coop/dev/director/dup_verifier.h"
+#include "coop/dev/director/routes.h"   // the no-dup verifier + its positive control
 
 #include "coop/config/config.h"               // ReadEnv
 #include "coop/player/players_registry.h"
@@ -278,11 +279,8 @@ void RunContainerTakeProbe() {
         if (cands.size() > static_cast<size_t>(kMaxCand)) cands.resize(kMaxCand);
         float bestLen = 1e30f;
         for (const Cand& c : cands) {
-            std::vector<ue_wrap::FVector> path;
-            if (!E::FindNavPath(rsv->player, at, c.pos, path)) continue;   // unreachable
-            if (HorizDist(path.back(), c.pos) > kReachCm) continue;         // route ends short of reach
             float len = 0.f;
-            for (size_t i = 1; i < path.size(); ++i) len += HorizDist(path[i - 1], path[i]);
+            if (!RouteInLegs(rsv->player, at, c.pos, kReachCm, &len)) continue;   // no route ends within reach
             if (len < bestLen) { bestLen = len; pb->container = c.c; pb->targetPos = c.pos; pb->countBefore = c.count; }
         }
         if (!pb->container) {
@@ -503,9 +501,7 @@ void* PickSharedContainer(void* player, int32_t& outCount, ue_wrap::FVector& out
     }
     std::sort(cs.begin(), cs.end(), [](const Cand& a, const Cand& b){ return a.key < b.key; });  // BY CONSTRUCTION
     for (const Cand& c : cs) {
-        std::vector<ue_wrap::FVector> path;
-        if (!E::FindNavPath(player, at, c.p, path)) continue;                  // feasibility: reachable
-        if (path.empty() || HorizDist(path.back(), c.p) > kReachCm) continue;
+        if (!RouteInLegs(player, at, c.p, kReachCm)) continue;                 // feasibility: reachable
         outCount = c.cnt; outPos = c.p; outKey = c.key; return c.o;            // smallest-key reachable
     }
     outCount = 0; outPos = {}; outKey.clear();

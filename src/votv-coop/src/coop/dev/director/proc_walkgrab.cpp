@@ -19,6 +19,7 @@
 #include "coop/dev/director/routes.h"
 
 #include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -59,25 +60,37 @@ constexpr int   kMaxDoorOpens   = 20;    // grind: keep opening doors as needed 
 constexpr int   kUnstickTicks   = 70;    // ~0.28 s of sideways juke to slide off a box before re-checking
 constexpr int   kSettleTicks    = 12;    // ~0.25 s braking before the grab
 constexpr int   kMaxDetours     = 24;    // ways round a slope too steep for the body, per walk (detour.h)
-constexpr float kMinLegCm       = 100.f; // a leg that ends no nearer the goal than this is not a leg: the stuck handler's
-// A walk this far from its goal holds the run key (mainPlayer's InpActEvt_run, twice the walk speed),
-// as a person crossing the map does, and lets it go this near, so the last metres are walked.
+constexpr float kMinLegCm       = 100.f; // a leg ending no nearer the goal than this is no leg: the stuck handler takes it
+constexpr int   kRouteRetryTicks = 50;   // a walker with no route here asks again this often while it stands
+// A walk this far from its goal holds the run key (mainPlayer's InpActEvt_run: at least twice the walk
+// speed, by the save's agility, and none on a hungry or tired save -- the game's updateSpeed), as a person
+// crossing the map does, and lets it go this near, so the last metres are walked.
 constexpr float kRunFromCm      = 3000.f;
 constexpr float kRunUntilCm     = 1500.f;
 
-// A key at the human-input seam: mainPlayer's input-action event stub, called with its zeroed frame
-// (the Key it is given is not read). False when the stub does not resolve.
-bool PressInputEvent(void* player, const wchar_t* stub) {
-    void* cls = R::FindClass(P::name::MainPlayerClass);
-    void* fn = cls ? R::FindFunction(cls, stub) : nullptr;
-    if (!fn || !player) return false;
-    const int32_t fs = R::FunctionFrameSize(fn);
+// A key at the human-input seam: mainPlayer's input-action event stub, resolved once by its generated
+// name (said once when it does not resolve: a game update renames the K2Node stubs) and called with
+// its zeroed frame (the Key it is given is not read). False when it did not resolve or the call failed.
+struct InputStub {
+    const wchar_t* name;
+    void* fn = nullptr;
+    bool  tried = false;
+};
+bool PressInputEvent(void* player, InputStub& stub) {
+    if (!stub.tried) {
+        stub.tried = true;
+        void* cls = R::FindClass(P::name::MainPlayerClass);
+        stub.fn = cls ? R::FindFunction(cls, stub.name) : nullptr;
+        if (!stub.fn) UE_LOGW("director: the input stub '%ls' does not resolve -- that key is never pressed", stub.name);
+    }
+    if (!stub.fn || !player) return false;
+    const int32_t fs = R::FunctionFrameSize(stub.fn);
     std::vector<uint8_t> f(fs > 0 ? static_cast<size_t>(fs) : 0, 0u);
-    R::CallFunction(player, fn, f.empty() ? nullptr : f.data());
-    return true;
+    return R::CallFunction(player, stub.fn, f.empty() ? nullptr : f.data());
 }
-constexpr const wchar_t* kRunPress   = L"InpActEvt_run_K2Node_InputActionEvent_8";   // input_run = true
-constexpr const wchar_t* kRunRelease = L"InpActEvt_run_K2Node_InputActionEvent_9";   // input_run = false
+InputStub g_drop{L"InpActEvt_drop_K2Node_InputActionEvent_1"};
+InputStub g_runPress{L"InpActEvt_run_K2Node_InputActionEvent_8"};     // input_run = true
+InputStub g_runRelease{L"InpActEvt_run_K2Node_InputActionEvent_9"};   // input_run = false
 // A walk-to target is reached on its own level only: the walker's centre within this of the target's
 // height, less than a storey. A route whose end the navmesh put on the floor below counts as
 // horizontally there, 11 m under a door on the dish building's upper floor.
@@ -118,7 +131,7 @@ public:
     ProcStatus OnTick(const PlayerContext& ctx) override {
         ++ticks_;
         if (ticks_ == 1) {   // input seam ONLY -- the key a human presses to drop (measure it first)
-            const bool pressed = PressInputEvent(ctx.player, L"InpActEvt_drop_K2Node_InputActionEvent_1");
+            const bool pressed = PressInputEvent(ctx.player, g_drop);
             UE_LOGI("director/ClearHand: hand full (grabbing=%p holding=%p place=%d) -- input-seam "
                     "InpActEvt_drop pressed=%d; MEASURING", ctx.held, ctx.holding, ctx.placeMode ? 1 : 0, pressed ? 1 : 0);
             return ProcStatus::Working;
@@ -146,12 +159,13 @@ public:
         if (ticks_ == kDropMeasureTicks * 2 && ctx.HandFull()) {   // still full -> honest failure, not a silent deadline
             UE_LOGW("director/ClearHand: STILL full after effect-seam clear (grabbing=%p holding=%p place=%d) "
                     "-- no known verb emptied the slot; failing the run", ctx.held, ctx.holding, ctx.placeMode ? 1 : 0);
+            failed_ = true;
             return ProcStatus::Failed;
         }
         return ProcStatus::Working;   // IsActive() flips false once the hand clears -> we yield
     }
     void OnLostControl() override {
-        if (ticks_ > 0)
+        if (ticks_ > 0 && !failed_)
             UE_LOGI("director/ClearHand: hand cleared after %d ticks (input-seam-faithful=%d) -- yielding",
                     ticks_, g_clearHandUsedEffectFallback ? 0 : 1);
     }
@@ -159,6 +173,7 @@ private:
     DirectorGoal& goal_;
     int  ticks_ = 0;
     bool measured_ = false;
+    bool failed_ = false;   // the run ends on this process's failure: the hand was not cleared
 };
 
 // What stands between a stuck walker and its waypoint, named: a trace at knee and at chest height
@@ -219,6 +234,7 @@ public:
         return onLevel_ ? !Arrived(ctx, goal_) : HorizDist(ctx.pos, goal_.targetPos) > goal_.reachCm;
     }
     ProcStatus OnTick(const PlayerContext& ctx) override {
+        ++tick_;
         if (detour_.Active()) {   // looking for a way round a slope the body cannot climb: stand while it does
             std::vector<ue_wrap::FVector> route;
             const detour::Search::Step step = detour_.Advance(ctx.player, &route);
@@ -227,7 +243,8 @@ public:
                 // The held way, to the via point and on: a leg like any route, re-pathed at its end when short.
                 waypoints_.assign(route.begin() + 1, route.end());
                 partial_ = HorizDist(waypoints_.back(), goal_.targetPos) > goal_.reachCm;
-                legFrom_ = HorizDist(ctx.pos, goal_.targetPos);
+                // The way round goes sideways first: its onward leg is measured from the via point.
+                legFrom_ = HorizDist(detour_.LastVia(), goal_.targetPos);
                 goal_.route = std::move(route);
                 ahead_.Reset(goal_.route);
                 wp_ = 0; lastWp_ = 0; bestWp_ = 1e9f; bestPile_ = 1e9f; sinceProgress_ = 0;
@@ -237,15 +254,19 @@ public:
                 unstickTicks_ = kUnstickTicks;
             }
         }
+        if (pathed_ && retryRouteAt_ >= 0 && tick_ >= retryRouteAt_) {   // standing with no route: ask again
+            pathed_ = false; waypoints_.clear(); wp_ = 0; lastWp_ = 0; bestWp_ = 1e9f; bestPile_ = 1e9f;
+        }
         if (!pathed_) {   // compute the route (after the hand is clear, so from the real start), again per leg
             pathed_ = true;
             std::vector<ue_wrap::FVector> path;
             const bool ok = !goal_.straight && RouteFrom(ctx.player, ctx.pos, goal_.targetPos, &path);
             const bool midWalk = routed_ && !goal_.straight && !ok;
             if (ok && path.size() >= 2) for (size_t i = 1; i < path.size(); ++i) waypoints_.push_back(path[i]);
-            else if (midWalk) waypoints_.push_back(ctx.pos);   // stand: the stuck handler asks again, no beeline
+            else if (midWalk) waypoints_.push_back(ctx.pos);   // stand and ask again shortly, no beeline
             else waypoints_.push_back(goal_.targetPos);   // the straight line, asked for or the first route's fallback
             routed_ = routed_ || ok;
+            retryRouteAt_ = midWalk ? tick_ + kRouteRetryTicks : -1;
             goal_.route.assign(1, ok && !path.empty() ? path.front() : ctx.pos);
             goal_.route.insert(goal_.route.end(), waypoints_.begin(), waypoints_.end());
             // A route that stops short of the goal is PARTIAL (the path query's bounded search on a long walk):
@@ -268,9 +289,10 @@ public:
             }
         }
         const float toPile = HorizDist(ctx.pos, goal_.targetPos);
-        if (!runHeld_ && toPile > kRunFromCm && PressInputEvent(ctx.player, kRunPress)) {
+        if (runHeld_ && runPlayer_.Get() != ctx.player) runHeld_ = false;   // a new pawn (a revive) holds no key
+        if (!runHeld_ && toPile > kRunFromCm && PressInputEvent(ctx.player, g_runPress)) {
             runHeld_ = true;
-            runPlayer_ = ctx.player;
+            runPlayer_.Set(ctx.player);
             UE_LOGI("director/Goto: the run key held (toPile=%.0f)", toPile);
         } else if (runHeld_ && toPile < kRunUntilCm) {
             LetRunGo();
@@ -360,8 +382,14 @@ private:
     void LetRunGo() {
         if (!runHeld_) return;
         runHeld_ = false;
-        if (R::IsLive(runPlayer_)) PressInputEvent(runPlayer_, kRunRelease);
-        UE_LOGI("director/Goto: the run key let go");
+        void* pawn = runPlayer_.Get();   // slot-validated: never the bare liveness probe on a cached pointer
+        runPlayer_.Reset();
+        if (!pawn) {
+            UE_LOGI("director/Goto: the run key's pawn is gone -- nothing to let go");
+            return;
+        }
+        if (PressInputEvent(pawn, g_runRelease)) UE_LOGI("director/Goto: the run key let go");
+        else UE_LOGW("director/Goto: the run key's release did not run -- the pawn may keep running");
     }
     // Find the nearest CLOSED door within reach of the stuck bot and press it as a player does: the door's
     // own press verb on this peer's copy. On a coop client the script gate turns it into a verb the host
@@ -401,7 +429,9 @@ private:
     float  legFrom_ = 0.f;     // the walker's distance to the goal where the current route began
     bool   routed_ = false;    // a NavMesh route was had: a later failed query is no reason to beeline
     bool   runHeld_ = false;   // the run key is down (kRunFromCm), let go near the goal or on losing control
-    void*  runPlayer_ = nullptr;
+    ue_wrap::CachedObjRef runPlayer_;   // the pawn it was pressed on
+    int    retryRouteAt_ = -1; // standing with no route: the tick to ask again at
+    int    tick_ = 0;          // this process's own tick count
     std::vector<ue_wrap::FVector> waypoints_;
     size_t wp_ = 0, lastWp_ = 0;
     float  bestWp_ = 1e9f, bestPile_ = 1e9f;

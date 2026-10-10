@@ -88,6 +88,7 @@ bool FindNavPath(void* worldContext, const FVector& start, const FVector& end,
     void* data = *reinterpret_cast<void**>(base);
     const int32_t num = *reinterpret_cast<int32_t*>(base + 8);
     if (!data || num <= 0 || num > 4096) return false;
+    outPts.reserve(static_cast<size_t>(num));
     constexpr float kBound = 1.0e7f;
     for (int32_t i = 0; i < num; ++i) {
         // TArray<FVector> stride = sizeof(FVector)=12 (FVector is align-4, not a 16-aligned BP
