@@ -289,6 +289,14 @@ bool CallMainPlayerUseSelectedAction(void* mainPlayer) {
     return f.valid() && Call(mainPlayer, f);
 }
 
+bool MainPlayerHasSelectedAction(void* mainPlayer) {
+    if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(mainPlayer), L"selectedAction");
+    if (!fn) return false;
+    ParamFrame f(fn);   // the FString out param is written empty on both paths, so nothing is owned
+    return f.valid() && Call(mainPlayer, f) && f.Get<bool>(L"return");
+}
+
 bool CallMainPlayerHoldObject(void* mainPlayer, void* target, bool& collected) {
     collected = false;
     if (!mainPlayer || !R::IsLive(mainPlayer) || !target) return false;

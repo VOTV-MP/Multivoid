@@ -31,4 +31,7 @@ void OnRedeem(coop::net::Session& session, const coop::net::PointSackRedeemPaylo
 
 void OnDisconnect();
 
+// HOST: the redemptions paid this session, for the sack drill. Game thread.
+uint64_t PaidCount();
+
 }  // namespace coop::point_sack_intent

@@ -16,7 +16,8 @@
 #include "coop/dev/desk_diag.h"  // [dev] desk/console divergence census
 #include "coop/dev/door_drill.h"  // [dev] whether a remote player counts in a door's own sensor
 #include "coop/dev/drive_selftest.h"  // [dev] rack-lane e2e circles
-#include "coop/dev/drone_call_drill.h"  // [dev] a client's console press flies the host's drone
+#include "coop/dev/drone_call_drill.h"
+#include "coop/dev/sack_drill.h"  // [dev] a client's point sack is paid by the host, once  // [dev] a client's console press flies the host's drone
 #include "coop/dev/server_upgrade_drill.h"  // [dev] a client's install and take-out at a server box
 #include "coop/dev/server_drill.h"  // [dev] a server box's break is the host's; a client's repair runs there
 #include "coop/dev/sat_console_drill.h"  // [dev] a client's SAT console commands run on the host
@@ -137,6 +138,7 @@ void EndSession() {
     coop::dev::keypad_drill::OnDisconnect();  // [dev] the keypad and the legs belong to one world
     coop::dev::container_view_drill::OnDisconnect();  // [dev] the ATV, the view and the walks belong to one world
     coop::dev::physmods_drill::OnDisconnect();  // [dev] the client arms again, so a rejoin says its line
+    coop::dev::sack_drill::OnDisconnect();  // [dev] the sack and the counts belong to one session
     coop::dev::drone_call_drill::OnDisconnect();  // [dev] the console, the legs and the host's watch belong to one world
     coop::dev::server_upgrade_drill::OnDisconnect();  // [dev] the box and the legs belong to one world
     coop::dev::server_drill::OnDisconnect();  // [dev] the same for the server break drill
@@ -219,6 +221,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::container_opener_probe::Tick(&session);  // [dev] far containers' openers and the reach to them (latched read when off)
     coop::dev::container_view_drill::Tick(&session);  // [dev] the view-close drill (a single bool read when off)
     coop::dev::physmods_drill::Tick(&session);  // [dev] the module-plug drill (a single bool read when off)
+    coop::dev::sack_drill::Tick(&session);  // [dev] the point sack drill (a latched string compare when off)
     coop::dev::drone_call_drill::Tick(&session);  // [dev] the drone console drill (a single bool read when off)
     coop::dev::server_upgrade_drill::Tick(&session);  // [dev] the server upgrade drill (a single bool read when off)
     coop::dev::server_drill::Tick(&session);  // [dev] the server break drill (two short string compares when off)

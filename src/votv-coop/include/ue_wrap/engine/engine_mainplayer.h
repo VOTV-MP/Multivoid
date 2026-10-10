@@ -72,6 +72,11 @@ bool CallMainPlayerUpdateHold(void* mainPlayer);
 // function does not resolve or the call fails. Game thread.
 bool CallMainPlayerUseSelectedAction(void* mainPlayer);
 
+// Whether useSelectedAction would act now: the player's own selectedAction, true once its look-at actor
+// answers lookAt and the action list built for it holds an action. The list is rebuilt after the look
+// changes, so a press on the tick the trace lands finds none and the game denies it. Game thread.
+bool MainPlayerHasSelectedAction(void* mainPlayer);
+
 // The player's own pickup of `target`: `Hold Object` with `manual` set, which it takes before whatever the
 // player looks at, ending in the hand slot's equip (addEquip writes hold[0], updateHold spawns the hand item
 // as holding_actor) with the world actor destroyed. `collected` is the verb's own answer, false on each of

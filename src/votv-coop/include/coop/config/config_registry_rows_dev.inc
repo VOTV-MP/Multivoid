@@ -469,6 +469,11 @@ CFG_FLAG(physmods_drill, "physmods_drill", "dev", false, "VOTVCOOP_PHYSMODS_DRIL
     "line says whether its array holds that one module alone. A joiner whose desk already holds modules at "
     "its world-ready (a rejoin into the drill's world) plugs nothing and says what it loaded. Lines tagged "
     "[PHYSMODS-DRILL].")
+CFG_STRING(sack_drill, "sack_drill", "dev", "", "VOTVCOOP_SACK_DRILL", false,
+    "Drill (BOTH peers): a client's point sack is paid by the host, once. run -- the host spawns a sack before the "
+    "client's puppet once its world is ready; the client aims and presses it; the host's DONE line ends it.")
+CFG_FLAG(point_sack_client_runs, "point_sack_client_runs", "dev", false, "VOTVCOOP_POINT_SACK_CLIENT_RUNS",
+    "Developer: a client's point sack runs the game's own body there instead of asking the host (the sack drill's red).")
 CFG_FLAG(drone_call_drill, "drone_call_drill", "dev", false, "VOTVCOOP_DRONE_CALL_DRILL",
     "Drill (BOTH peers): the client walks to the garage's drone console, opens its lid if it is shut, aims "
     "at its keyboard and presses it through the player's own E dispatch; the press goes to the host, which "

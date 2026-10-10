@@ -2,6 +2,9 @@
 
 #include "coop/items/point_sack_intent.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
+
 #include "coop/element/intent_authority.h"     // IntentTarget: the sender's reach to the sack
 #include "coop/element/registry.h"             // LivePropActor, the eid fallback
 #include "coop/net/protocol.h"
@@ -54,6 +57,10 @@ sg::Verdict OnActionPre(const sg::Call& c) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running() || s->role() != coop::net::Role::Client) return sg::Verdict::Run;
     if (!IsSack(c.object)) return sg::Verdict::Run;
+    // The sack drill's red: the client's own body runs, its credit landing in its mirror alone.
+    static const bool s_clientRuns =
+        coop::config::ResolveFlag(coop::config_registry::rows::point_sack_client_runs);
+    if (s_clientRuns) return sg::Verdict::Run;
     const std::wstring key = ue_wrap::prop::GetInteractableKeyString(c.object);
     // The registry's reverse names a mirror as well as a local: a sack loaded from the host's save or
     // received as a spawn is a mirror here, and a key-less one is named by this alone.
@@ -156,6 +163,8 @@ void OnRedeem(coop::net::Session& session, const coop::net::PointSackRedeemPaylo
     UE_LOGI("point_sack: HOST paid slot %u's sack key='%ls' eid=%u: %+d (%llu paid)", senderSlot, key.c_str(),
             p.elementId, points, static_cast<unsigned long long>(g_paid));
 }
+
+uint64_t PaidCount() { return g_paid; }
 
 void OnDisconnect() {
     if (g_sent || g_paid || g_refused)
