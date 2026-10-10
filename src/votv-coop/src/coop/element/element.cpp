@@ -53,7 +53,7 @@ void Element::SetActor(void* a, int32_t internalIdx) {
     m_internalIdx = internalIdx;
     if (m_id != kInvalidId && old != a &&
         !g_registryShuttingDown.load(std::memory_order_acquire)) {
-        Registry::Get().NoteActorRebind(m_id, old, a);
+        Registry::Get().NoteActorRebind(m_id, old, a, internalIdx);
     }
 }
 
@@ -63,7 +63,7 @@ Element::~Element() {
     // already been torn down. The OS reclaims memory on process exit.
     if (g_registryShuttingDown.load(std::memory_order_acquire)) return;
     // Drop our actor from the unified reverse before releasing the id.
-    if (m_actor) Registry::Get().NoteActorRebind(m_id, m_actor, nullptr);
+    if (m_actor) Registry::Get().NoteActorRebind(m_id, m_actor, nullptr, -1);
     // Mirrors borrowed the id from the host's allocation space; releasing the
     // id back to the local free stack would corrupt it with foreign entries
     // over a long session. UnregisterMirror just clears m_byId[id].

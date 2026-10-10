@@ -14,6 +14,24 @@
 namespace coop::element {
 
 namespace {
+
+// An actor's identity in the object array, taken outside the registry's lock when it is bound: the
+// slot the element recorded for it (Element::SetActor) and that slot's serial, allocated as the
+// engine's weak pointer allocates it, so a same-address successor never matches. Reads the object
+// array only, never the actor: an element may hold a sentinel address (the reaper's selftest).
+struct ActorIdent {
+    void*   actor = nullptr;
+    int32_t idx = -1;
+    int32_t serial = 0;
+};
+ActorIdent IdentOf(void* actor, int32_t idx) {
+    ActorIdent ai;
+    if (!actor) return ai;
+    ai.actor = actor;
+    ai.idx = idx;
+    ai.serial = idx >= 0 ? ue_wrap::reflection::AllocateSlotSerial(idx) : 0;
+    return ai;
+}
 // The peer range is split into one equal band per peer slot. Band 0 is the pre-slot band
 // used during the boot and seed window before a client knows its slot; bands 1 and up are
 // the per-client-slot exclusive bands. Slot 0 (the host) reuses band 0 as the pre-slot
@@ -101,6 +119,7 @@ void Registry::SetLocalPeerBand(uint8_t slot) {
 
 ElementId Registry::AllocHostId(Element* e) {
     if (!e) return kInvalidId;
+    const ActorIdent ai = IdentOf(e->GetActor(), e->GetInternalIdx());
     std::lock_guard<std::mutex> lk(m_mutex);
     if (m_hostFree.empty()) {
         UE_LOGW("element::Registry: host range exhausted (32768 active elements); "
@@ -122,12 +141,13 @@ ElementId Registry::AllocHostId(Element* e) {
     }
     m_byId[id] = e;
     e->SetId_(id);
-    if (void* a = e->GetActor()) m_byActor[a] = id;  // actor set before id -> reverse here
+    if (ai.actor) m_byActor[ai.actor] = {id, ai.idx, ai.serial};  // actor set before id -> reverse here
     return id;
 }
 
 ElementId Registry::AllocLocalId(Element* e) {
     if (!e) return kInvalidId;
+    const ActorIdent ai = IdentOf(e->GetActor(), e->GetInternalIdx());
     std::lock_guard<std::mutex> lk(m_mutex);
     if (m_localFree.empty()) {
         UE_LOGW("element::Registry: peer range exhausted (32768 active elements); "
@@ -145,7 +165,7 @@ ElementId Registry::AllocLocalId(Element* e) {
     }
     m_byId[id] = e;
     e->SetId_(id);
-    if (void* a = e->GetActor()) m_byActor[a] = id;  // actor set before id -> reverse here
+    if (ai.actor) m_byActor[ai.actor] = {id, ai.idx, ai.serial};  // actor set before id -> reverse here
     return id;
 }
 
@@ -182,6 +202,7 @@ bool Registry::RegisterMirror(ElementId id, Element* e) {
         UE_LOGW("element::Registry: RegisterMirror(id=%u, nullptr) -- rejecting", id);
         return false;
     }
+    const ActorIdent ai = IdentOf(e->GetActor(), e->GetInternalIdx());
     std::lock_guard<std::mutex> lk(m_mutex);
     if (m_byId[id]) {
         UE_LOGW("element::Registry: RegisterMirror(id=%u) -- slot already populated by existing element (duplicate spawn? wire id collision?)",
@@ -191,7 +212,7 @@ bool Registry::RegisterMirror(ElementId id, Element* e) {
     m_byId[id] = e;
     e->SetId_(id);
     e->SetMirror_(true);
-    if (void* a = e->GetActor()) m_byActor[a] = id;  // mirror actor often set before Install -> reverse here
+    if (ai.actor) m_byActor[ai.actor] = {id, ai.idx, ai.serial};  // mirror actor often set before Install
     return true;
 }
 
@@ -219,21 +240,31 @@ Element* Registry::Get(ElementId id) const {
 
 ElementId Registry::EidForActor(void* actor) const {
     if (!actor) return kInvalidId;
-    std::lock_guard<std::mutex> lk(m_mutex);
-    auto it = m_byActor.find(actor);
-    return (it == m_byActor.end()) ? kInvalidId : it->second;
+    ActorBinding b{};
+    {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        auto it = m_byActor.find(actor);
+        if (it == m_byActor.end()) return kInvalidId;
+        b = it->second;
+    }
+    // The slot still holds this pointer and its serial is the one taken at the bind: the bound actor,
+    // not a successor at its address. The engine resets a slot's serial once its object is destroyed.
+    namespace R = ue_wrap::reflection;
+    if (R::ObjectAt(b.idx) != actor || R::SlotSerial(b.idx) != b.serial) return kInvalidId;
+    return b.id;
 }
 
-void Registry::NoteActorRebind(ElementId id, void* oldActor, void* newActor) {
+void Registry::NoteActorRebind(ElementId id, void* oldActor, void* newActor, int32_t newIdx) {
     if (oldActor == newActor) return;
+    const ActorIdent ai = IdentOf(newActor, newIdx);
     std::lock_guard<std::mutex> lk(m_mutex);
     if (oldActor) {
         auto it = m_byActor.find(oldActor);
         // Only erase if it still points at us: a recycled address already re-pointed to a newer
         // element must not be clobbered by our teardown.
-        if (it != m_byActor.end() && it->second == id) m_byActor.erase(it);
+        if (it != m_byActor.end() && it->second.id == id) m_byActor.erase(it);
     }
-    if (newActor) m_byActor[newActor] = id;  // newest live binding wins
+    if (ai.actor) m_byActor[ai.actor] = {id, ai.idx, ai.serial};  // newest live binding wins
 }
 
 size_t Registry::HostCount() const {

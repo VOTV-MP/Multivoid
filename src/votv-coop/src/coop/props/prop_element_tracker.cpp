@@ -500,7 +500,9 @@ size_t ReapDeadLocalPropElements(size_t maxEvictions,
 
 bool DebugCheckPropElementReap() {
     // A sentinel actor address never dereferenced: IsLiveByIndex rejects it on the negative-index
-    // fast path, the maps key on the pointer value, and ~Prop does not own the actor.
+    // fast path, the processed-Init set keys on the pointer value, and ~Prop does not own the actor.
+    // The registry's actor reverse holds a slot and serial, so it never resolves this address: a
+    // purged actor's address is unbound by definition, and registration is asked of the element.
     void* deadActor = reinterpret_cast<void*>(static_cast<uintptr_t>(0xDEAD0001));
     auto* s = LoadSession();
     const bool isHost = (s != nullptr && s->role() == coop::net::Role::Host);
@@ -547,9 +549,8 @@ bool DebugCheckPropElementReap() {
         // AllocAndInstall wrote the reverse entry.
     }
 
-    const bool preRegistered = (coop::element::Registry::Get().Get(deadEid) != nullptr) &&
-                               (GetPropElementIdForActor(deadActor) == deadEid) &&
-                               HasProcessedInit(deadActor);
+    const coop::element::Element* deadNow = coop::element::Registry::Get().Get(deadEid);
+    const bool preRegistered = deadNow && deadNow->GetActor() == deadActor && HasProcessedInit(deadActor);
     if (!preRegistered) {
         UE_LOGW("propreap_test: FAIL -- synthetic dead Element not fully registered pre-reap");
         return false;
@@ -569,10 +570,8 @@ bool DebugCheckPropElementReap() {
     // The eid is freed only when the parked Element destructs: force the game-thread flush now (we
     // are on it) and re-check.
     coop::element::ElementDeleter::Get().Flush();
-    // After the flush the dead Element's destructor has run: the eid is freed and the reverse entry
-    // cleared.
-    const bool eidFreed = (coop::element::Registry::Get().Get(deadEid) == nullptr) &&
-                          (GetPropElementIdForActor(deadActor) == coop::element::kInvalidId);
+    // After the flush the dead Element's destructor has run: the eid is freed.
+    const bool eidFreed = coop::element::Registry::Get().Get(deadEid) == nullptr;
 
     // Clean up the live control so no synthetic Element stays bound to a random live UObject.
     if (liveEid != coop::element::kInvalidId) {

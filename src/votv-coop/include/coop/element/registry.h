@@ -68,14 +68,18 @@ public:
 
     // The one actor-to-eid reverse for the whole registry, locals and mirrors alike, maintained by
     // Element::SetActor and the destructor through NoteActorRebind, so it always matches the live
-    // binding. O(1); kInvalidId for a null or unbound actor. It does not validate engine liveness:
-    // a caller holding the pointer across ticks re-validates with reflection::IsLiveByIndex.
+    // binding. O(1); kInvalidId for a null or unbound actor, and for an address the engine reused:
+    // a binding holds its actor's object slot and that slot's serial, as the engine's weak pointer
+    // does, so a new actor at a destroyed one's address is not taken for it (a pocketed mirror,
+    // still bound until the host's destroy came back, once made the drive taken out of the
+    // inventory at its address read as already tracked). It does not test the kill flags: a
+    // destroy seam asks about an actor being destroyed. Object-array reads only, never the actor.
     ElementId EidForActor(void* actor) const;
 
     // Called by Element::SetActor and the destructor: drop the old actor's entry if it still maps
-    // to `id`, then point the new actor at `id`; the newest live binding wins on a recycled
-    // address. nullptr clears. Only Element calls it.
-    void NoteActorRebind(ElementId id, void* oldActor, void* newActor);
+    // to `id`, then point the new actor, at object slot `newIdx`, at `id`; the newest live binding
+    // wins on a recycled address. nullptr clears. Only Element calls it.
+    void NoteActorRebind(ElementId id, void* oldActor, void* newActor, int32_t newIdx);
 
     // Range checks; kInvalidId is false on both.
     static bool IsHostId(ElementId id)  { return id < kHostRangeSize; }
@@ -129,8 +133,14 @@ private:
     mutable std::mutex m_mutex;
     Element* m_byId[kMaxElements] = {};   // index = ElementId; nullptr = free
     // The actor-to-eid reverse, guarded by m_mutex with m_byId, since they mutate together; locals
-    // and mirrors.
-    std::unordered_map<void*, ElementId> m_byActor;
+    // and mirrors. Each binding holds the actor's object slot and its serial, taken outside the
+    // lock when the actor is bound (ActorIdent), so a reused address reads as unbound.
+    struct ActorBinding {
+        ElementId id;
+        int32_t   idx;
+        int32_t   serial;
+    };
+    std::unordered_map<void*, ActorBinding> m_byActor;
     // Free lists as deques: fresh ids pop from the back, and a freed id goes to the front, so it is
     // re-issued only after the never-allocated pool above it drains, by which time any in-flight
     // message naming the old id has landed. Both ends O(1).
