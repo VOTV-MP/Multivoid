@@ -4,7 +4,8 @@
 
 #include "coop/net/end_reason.h"
 #include "coop/session/join_progress.h"  // PeekNotice / ClearNotice (the notice owner)
-#include "ui/menu_sfx.h"                  // native VOTV button click + rollover sounds
+#include "l10n/l10n.h"
+#include "ui/menu_sfx.h"                 // native VOTV button click + rollover sounds
 #include "ui/scale.h"
 
 #include "imgui.h"
@@ -53,7 +54,7 @@ void Render() {
     if (ImGui::Begin("###coop_end_reason", nullptr, flags)) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.45f, 1.0f));
         // A join that never completed could not connect; a link that ended after it disconnected.
-        ImGui::TextUnformatted(notice.afterJoin ? "DISCONNECTED" : "COULD NOT CONNECT");
+        ImGui::TextUnformatted(notice.afterJoin ? l10n::T("DISCONNECTED") : l10n::T("COULD NOT CONNECT"));
         ImGui::PopStyleColor();
         ImGui::Spacing();
         ImGui::Separator();
@@ -69,8 +70,8 @@ void Render() {
         }
         ImGui::Spacing();
         // The stable code, so a report names the site without a log.
-        char code[96];
-        std::snprintf(code, sizeof(code), "Code %s -- include it in a bug report", info.id);
+        char code[256];
+        l10n::Fmt(code, sizeof(code), l10n::T("Code %s -- include it in a bug report"), info.id);
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.58f, 0.56f, 0.58f, 1.0f));
         ImGui::TextWrapped("%s", code);
         ImGui::PopStyleColor();
@@ -80,7 +81,8 @@ void Render() {
 
         const float bw = S(120.0f);
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - bw) * 0.5f);
-        if (ui::menu_sfx::Button("OK###coop_er_ok", ImVec2(bw, S(30.0f)))) {
+        if (ui::menu_sfx::Button(l10n::Label(l10n::Tc("hud", "OK"), "coop_er_ok"),
+                                 ImVec2(bw, S(30.0f)))) {
             coop::join_progress::ClearNotice();  // acknowledge -> hide next frame
         }
     }

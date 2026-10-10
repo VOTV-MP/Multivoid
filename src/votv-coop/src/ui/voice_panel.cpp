@@ -7,6 +7,7 @@
 #include "coop/voice/voice_playback.h"
 #include "coop/config/config.h"
 #include "coop/player/roster.h"
+#include "l10n/l10n.h"
 #include "ui/scale.h"
 #include "ui/voice_icons.h"
 
@@ -74,11 +75,11 @@ void RefreshDevices() {
 
 // A device combo: "(system default)" + the enumerated names. Sets the row on selection; the row's
 // subscriber reopens the devices.
-void DeviceCombo(const char* label, const coop::config_registry::StringRow& row, char* current,
-                 size_t currentCap, const std::vector<std::string>& names) {
-    const char* shown = current[0] ? current : "(system default)";
-    if (ImGui::BeginCombo(label, shown)) {
-        if (ImGui::Selectable("(system default)", !current[0])) {
+void DeviceCombo(const char* text, const char* id, const coop::config_registry::StringRow& row,
+                 char* current, size_t currentCap, const std::vector<std::string>& names) {
+    const char* shown = current[0] ? current : l10n::T("(system default)");
+    if (ImGui::BeginCombo(l10n::Label(text, id), shown)) {
+        if (ImGui::Selectable(l10n::Label(l10n::T("(system default)"), "system_default"), !current[0])) {
             current[0] = 0;
             coop::config::SetValue(row, "");
         }
@@ -145,23 +146,27 @@ void Render() {
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
                          ImGuiWindowFlags_NoSavedSettings)) {
         if (!s.enabled) {
-            ImGui::TextWrapped("Voice chat is turned off (voice.enabled=0 in multivoid.ini). "
-                               "Set it to 1 and restart the game to use voice.");
+            char off[512];
+            l10n::Fmt(off, sizeof(off),
+                      l10n::T("Voice chat is turned off (%s=0 in multivoid.ini). "
+                              "Set it to 1 and restart the game to use voice."),
+                      "voice.enabled");
+            ImGui::TextWrapped("%s", off);
             ImGui::End();
             return;  // closeOnX writes the X back on the way out
         }
         if (!s.captureOk)
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
-                               "No microphone -- voice is receive-only.");
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s",
+                               l10n::T("No microphone -- voice is receive-only."));
         if (!s.playbackOk)
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f),
-                               "No output device -- you can't hear voice.");
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f), "%s",
+                               l10n::T("No output device -- you can't hear voice."));
 
         // Mic meter row: live level bar + the local state icon.
         {
             const float frac = std::clamp((s.micLevelDb + 60.0f) / 60.0f, 0.0f, 1.0f);
             ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted("Mic");
+            ImGui::TextUnformatted(l10n::T("Mic"));
             ImGui::SameLine(S(60.0f));
             const ImVec4 barCol = s.transmitting ? ImVec4(0.30f, 0.80f, 0.40f, 1.0f)
                                                  : ImVec4(0.45f, 0.50f, 0.56f, 1.0f);
@@ -179,21 +184,27 @@ void Render() {
         }
 
         bool muted = s.muted != 0;
-        if (ImGui::Checkbox("Mute my microphone", &muted)) VC::SetMuted(muted);
+        if (ImGui::Checkbox(l10n::Label(l10n::T("Mute my microphone"), "mute_my_microphone"), &muted))
+            VC::SetMuted(muted);
 
         ImGui::Spacing();
-        ImGui::SeparatorText("Activation");
+        ImGui::SeparatorText(l10n::Label(l10n::T("Activation"), "activation"));
         int mode = s.activationMode ? 1 : 0;
-        char pttLabel[64];
-        std::snprintf(pttLabel, sizeof(pttLabel), "Push-to-talk (key: %s)", g_pttKey);
-        if (ImGui::RadioButton(pttLabel, &mode, 0))
+        char pttLabel[256];
+        l10n::Fmt(pttLabel, sizeof(pttLabel), l10n::T("Push-to-talk (key: %s)"), g_pttKey);
+        if (ImGui::RadioButton(l10n::Label(pttLabel, "push_to_talk"), &mode, 0))
             coop::config::SetValue(::coop::config_registry::rows::voice_mode, "ptt");
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Hold the key to talk. Change the key via voice.ptt_key\n"
-                              "in multivoid.ini (single letter or a virtual-key number).");
-        if (ImGui::RadioButton("Voice activation", &mode, 1))
+        if (ImGui::IsItemHovered()) {
+            char tip[512];
+            l10n::Fmt(tip, sizeof(tip),
+                      l10n::T("Hold the key to talk. Change the key via %s\n"
+                              "in multivoid.ini (single letter or a virtual-key number)."),
+                      "voice.ptt_key");
+            ImGui::SetTooltip("%s", tip);
+        }
+        if (ImGui::RadioButton(l10n::Label(l10n::T("Voice activation"), "voice_activation"), &mode, 1))
             coop::config::SetValue(::coop::config_registry::rows::voice_mode, "activation");
         // The three sliders: the drag previews live through the voice_chat setters, and the
         // release commits the row (CommitSlider), whose subscriber is the apply. The pending atomic
@@ -212,8 +223,8 @@ void Render() {
         // applies at once.
         if (mode == 1) {
             float thr = s.thresholdDb;
-            if (ImGui::SliderFloat("Threshold", &thr, -100.0f, 0.0f, "%.0f dB",
-                                   ImGuiSliderFlags_AlwaysClamp)) {
+            if (ImGui::SliderFloat(l10n::Label(l10n::T("Threshold"), "threshold"), &thr, -100.0f, 0.0f,
+                                   "%.0f dB", ImGuiSliderFlags_AlwaysClamp)) {
                 VC::SetThresholdDb(thr);
                 g_pendingThreshold.store(thr);
             }
@@ -231,21 +242,21 @@ void Render() {
             ImGui::SameLine();
             ImGui::TextDisabled("(?)");
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Speech louder than this transmits. Watch the mic\n"
-                                  "meter: set the slider just above your room's noise.");
+                ImGui::SetTooltip("%s", l10n::T("Speech louder than this transmits. Watch the mic\n"
+                                                "meter: set the slider just above your room's noise."));
             // 0 dB is full scale, so nothing would ever transmit: warn rather than let the panel
             // sit there silently never activating.
             if (thr > -5.0f)
-                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
-                                   "Threshold near 0 dB -- the mic will almost never "
-                                   "trigger. Try -50 dB.");
+                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s",
+                                   l10n::T("Threshold near 0 dB -- the mic will almost never "
+                                           "trigger. Try -50 dB."));
         }
 
         ImGui::Spacing();
-        ImGui::SeparatorText("Levels");
+        ImGui::SeparatorText(l10n::Label(l10n::T("Levels"), "levels"));
         float gain = s.gainDb;
-        if (ImGui::SliderFloat("Mic gain", &gain, -40.0f, 24.0f, "%+.0f dB",
-                               ImGuiSliderFlags_AlwaysClamp)) {
+        if (ImGui::SliderFloat(l10n::Label(l10n::T("Mic gain"), "mic_gain"), &gain, -40.0f, 24.0f,
+                               "%+.0f dB", ImGuiSliderFlags_AlwaysClamp)) {
             VC::SetGainDb(gain);
             g_pendingGain.store(gain);
         }
@@ -261,8 +272,8 @@ void Render() {
             g_draggingGain.exchange(false);
         }
         float vol = s.masterVolume;
-        if (ImGui::SliderFloat("Voice volume", &vol, 0.0f, 3.0f, "%.2fx",
-                               ImGuiSliderFlags_AlwaysClamp)) {
+        if (ImGui::SliderFloat(l10n::Label(l10n::T("Voice volume"), "voice_volume"), &vol, 0.0f, 3.0f,
+                               "%.2fx", ImGuiSliderFlags_AlwaysClamp)) {
             VC::SetMasterVolume(vol);
             g_pendingVolume.store(vol);
         }
@@ -282,29 +293,39 @@ void Render() {
         {
             coop::roster::Snapshot rs;
             coop::roster::GetSnapshot(rs);
-            const char* who = "";
-            if (rs.inSession)
-                who = coop::roster::LocalIsHost()
-                          ? " (your server's; multivoid.ini until the settings page)"
-                          : " (set by the host)";
+            // The range as a value, then the sentence that carries it: one msgid per whose
+            // range it is, so a translation orders the whole line.
+            char rangeBuf[256];
+            const char* range = rangeBuf;
             if (s.distanceCm > 0.0f)
-                ImGui::TextDisabled("Voice range: %.0f cm%s", s.distanceCm, who);
+                l10n::Fmt(rangeBuf, sizeof(rangeBuf), l10n::T("%.0f cm"), s.distanceCm);
             else
-                ImGui::TextDisabled("Voice range: unlimited%s", who);
+                range = l10n::T("unlimited");
+            char line[256];
+            if (!rs.inSession)
+                l10n::Fmt(line, sizeof(line), l10n::T("Voice range: %s"), range);
+            else if (coop::roster::LocalIsHost())
+                l10n::Fmt(line, sizeof(line),
+                          l10n::T("Voice range: %s (your server's; multivoid.ini until the settings page)"),
+                          range);
+            else
+                l10n::Fmt(line, sizeof(line), l10n::T("Voice range: %s (set by the host)"), range);
+            ImGui::TextDisabled("%s", line);
         }
 
         ImGui::Spacing();
-        ImGui::SeparatorText("Devices");
-        DeviceCombo("Microphone", coop::config_registry::rows::voice_mic_device, g_micCurrent,
-                    sizeof(g_micCurrent), g_micDevices);
-        DeviceCombo("Output", coop::config_registry::rows::voice_output_device, g_outCurrent,
-                    sizeof(g_outCurrent), g_outDevices);
-        if (ImGui::SmallButton("Rescan devices")) RefreshDevices();
+        ImGui::SeparatorText(l10n::Label(l10n::T("Devices"), "devices"));
+        DeviceCombo(l10n::T("Microphone"), "microphone", coop::config_registry::rows::voice_mic_device,
+                    g_micCurrent, sizeof(g_micCurrent), g_micDevices);
+        DeviceCombo(l10n::T("Output"), "output", coop::config_registry::rows::voice_output_device,
+                    g_outCurrent, sizeof(g_outCurrent), g_outDevices);
+        if (ImGui::SmallButton(l10n::Label(l10n::T("Rescan devices"), "rescan_devices")))
+            RefreshDevices();
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Device changes apply immediately (the voice engine\n"
-                              "reopens on the game's next tick).");
+            ImGui::SetTooltip("%s", l10n::T("Device changes apply immediately (the voice engine\n"
+                                            "reopens on the game's next tick)."));
     }
     ImGui::End();
 }

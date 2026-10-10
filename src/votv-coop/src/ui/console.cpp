@@ -3,6 +3,7 @@
 #include "ui/console.h"
 
 #include "coop/session/join_progress.h"
+#include "l10n/l10n.h"
 #include "ui/scale.h"
 #include "ue_wrap/core/log.h"
 
@@ -171,7 +172,8 @@ void Render() {
                 return 0;
             }
         };
-        if (ImGui::InputTextWithHint("##cmd", "type a command -- 'help'", g_input, sizeof(g_input),
+        if (ImGui::InputTextWithHint("##cmd", l10n::T("type a command -- 'help'"), g_input,
+                                     sizeof(g_input),
                                      ImGuiInputTextFlags_EnterReturnsTrue |
                                      ImGuiInputTextFlags_CallbackHistory, &Hist::Cb)) {
             if (g_input[0] != '\0' && (sHistory.empty() || sHistory.back() != g_input)) {

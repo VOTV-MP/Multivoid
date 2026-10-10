@@ -7,6 +7,7 @@
 #include "coop/player/nick_color.h"
 #include "coop/player/roster.h"
 #include "coop/voice/voice_chat.h"
+#include "l10n/l10n.h"
 #include "ui/link_format.h"
 #include "ui/scale.h"
 #include "ui/voice_icons.h"
@@ -50,16 +51,24 @@ void StatusDot(bool connected) {
 // On the host, a row's nick hovered shows the player id a permission file is named by.
 void IdTooltip(const coop::roster::Row& r, bool host) {
     if (!host || r.playerId[0] == '\0' || !ImGui::IsItemHovered()) return;
-    ImGui::SetTooltip("%s %s", r.isLocal ? "Your player id" : "Player id", r.playerId);
+    char tip[256];
+    l10n::Fmt(tip, sizeof(tip), r.isLocal ? l10n::T("Your player id %s") : l10n::T("Player id %s"),
+              r.playerId);
+    ImGui::SetTooltip("%s", tip);
 }
 
-// A menu item that is off, with the reason on hover, while the person has no proved id yet.
-bool IdMenuItem(const char* label, bool hasId) {
-    const bool clicked = ImGui::MenuItem(label, nullptr, false, hasId);
+// A menu item that is off, with the reason on hover, while the person has no proved id yet. The
+// text is already looked up; `id` is the widget's own, so a translation never moves it.
+bool IdMenuItem(const char* text, const char* id, bool hasId) {
+    const bool clicked = ImGui::MenuItem(l10n::Label(text, id), nullptr, false, hasId);
     if (!hasId && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("Their identity is not proved yet.");
+        ImGui::SetTooltip("%s", l10n::T("Their identity is not proved yet."));
     return clicked;
 }
+
+// The ban modal's popup id as OpenPopup and IsPopupOpen name it: the "###" form of the id the
+// modal's Label carries ("coop"), so a translated title still opens and begins one popup.
+constexpr const char* kBanModalId = "###coop";
 
 }  // namespace
 
@@ -97,15 +106,21 @@ void Render() {
         // The header: PLAYERS, the online count in the accent, and a dim key hint for the voice
         // settings, which live on their own surface.
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.98f, 1.00f, 1.0f));
-        ImGui::TextUnformatted("PLAYERS");
+        ImGui::TextUnformatted(l10n::T("PLAYERS"));
         ImGui::PopStyleColor();
         ImGui::SameLine(0.0f, S(8.0f));
-        if (s.inSession) ImGui::TextColored(ImVec4(0.45f, 0.78f, 1.00f, 1.0f), "%d online", s.count);
-        else             ImGui::TextDisabled("offline");
+        if (s.inSession) {
+            char online[256];
+            l10n::Fmt(online, sizeof(online), l10n::T("%d online"), s.count);
+            ImGui::TextColored(ImVec4(0.45f, 0.78f, 1.00f, 1.0f), "%s", online);
+        } else {
+            ImGui::TextDisabled("%s", l10n::T("offline"));
+        }
         if (vs.enabled != 0 && vs.started != 0) {
-            const float bw = ImGui::CalcTextSize("V: voice settings").x;
+            const char* voiceHint = l10n::T("V: voice settings");
+            const float bw = ImGui::CalcTextSize(voiceHint).x;
             ImGui::SameLine(ImGui::GetContentRegionMax().x - bw);
-            ImGui::TextDisabled("V: voice settings");
+            ImGui::TextDisabled("%s", voiceHint);
         }
         ImGui::Spacing();
         ImGui::Separator();
@@ -129,20 +144,28 @@ void Render() {
         // keeps each label off its neighbour's column edge.
         ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(S(8.0f), S(7.0f)));
         if (ImGui::BeginTable("##roster", voiceOn ? 5 : 4, tflags)) {
-            ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
+            // The column words are looked up once; the setup calls take them with the English
+            // word as the id, and the hand-drawn header row below draws the bare text.
+            const char* const wPlayer = l10n::T("Player");
+            const char* const wMic    = l10n::T("Mic");
+            const char* const wLink   = l10n::T("Link");
+            const char* const wPing   = l10n::T("Ping");
+            const char* const wId     = l10n::T("ID");
+            ImGui::TableSetupColumn(l10n::Label(wPlayer, "player"), ImGuiTableColumnFlags_WidthStretch);
             // The voice-state icon: a click on the self row toggles mute, on a remote row opens the
             // per-player volume popup.
-            if (voiceOn) ImGui::TableSetupColumn("Mic", ImGuiTableColumnFlags_WidthFixed, S(40.0f));
+            if (voiceOn)
+                ImGui::TableSetupColumn(l10n::Label(wMic, "mic"), ImGuiTableColumnFlags_WidthFixed, S(40.0f));
             // The connection: how this player reaches the session (LAN, direct, relay), or n/a on
             // the host row, whose traffic never crosses a socket. Host-measured and host-published,
             // so every board shows the same value for the same player.
-            ImGui::TableSetupColumn("Link", ImGuiTableColumnFlags_WidthFixed, S(84.0f));
-            ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, S(66.0f));
+            ImGui::TableSetupColumn(l10n::Label(wLink, "link"), ImGuiTableColumnFlags_WidthFixed, S(84.0f));
+            ImGui::TableSetupColumn(l10n::Label(wPing, "ping"), ImGuiTableColumnFlags_WidthFixed, S(66.0f));
             // The ID: the occupant's session number, host-issued and never reused within a session.
             // Not the slot, which names a seat rather than a person, and not shown on the
             // nameplate; the player list is where the full information lives. Far right, so the
             // name leads the row.
-            ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, S(44.0f));
+            ImGui::TableSetupColumn(l10n::Label(wId, "id"), ImGuiTableColumnFlags_WidthFixed, S(44.0f));
             // The headers are drawn by hand rather than with the table's helper, which left-aligns
             // every label, so the numeric labels sat on the left of their right-aligned values;
             // each header takes the alignment of the data below it. The headers row flag still
@@ -160,15 +183,15 @@ void Render() {
                     ImGui::TextColored(hdrCol, "%s", label);
                 };
                 ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
-                headerCell("Player", false);
-                if (voiceOn) headerCell("Mic", false);
-                headerCell("Link", false);
-                headerCell("Ping", true);
-                headerCell("ID", true);
+                headerCell(wPlayer, false);
+                if (voiceOn) headerCell(wMic, false);
+                headerCell(wLink, false);
+                headerCell(wPing, true);
+                headerCell(wId, true);
             }
             for (int i = 0; i < s.count; ++i) {
                 const coop::roster::Row& r = s.rows[i];
-                const char* nick = r.nick[0] ? r.nick : (r.isLocal ? "Player" : "Remote player");
+                const char* nick = r.nick[0] ? r.nick : (r.isLocal ? wPlayer : l10n::T("Remote player"));
                 // A custom nick colour (a synced preference) overrides the role colour; the role
                 // stays readable through the HOST tag. The local row resolves through the local
                 // preference, since our own slot never receives its colour over the wire.
@@ -213,12 +236,12 @@ void Render() {
                         // survives the seat changing hands; the command's permission check and
                         // its reply (in the host's chat) are the same as when it is typed.
                         const bool hasId = g_actId[0] != '\0';
-                        if (IdMenuItem("Teleport to me", hasId))
+                        if (IdMenuItem(l10n::T("Teleport to me"), "teleport_to_me", hasId))
                             coop::command_sync::Submit(std::string("tphere ") + g_actId);
-                        if (IdMenuItem("Kick", hasId))
+                        if (IdMenuItem(l10n::Tc("hud", "Kick"), "kick", hasId))
                             coop::command_sync::Submit(std::string("kick ") + g_actId);
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.45f, 0.42f, 1.0f));
-                        const bool banClicked = IdMenuItem("Ban (permanent)", hasId);
+                        const bool banClicked = IdMenuItem(l10n::T("Ban (permanent)"), "ban_permanent", hasId);
                         ImGui::PopStyleColor();
                         if (banClicked) {
                             // The confirm modal executes after an arbitrary typing delay, exactly
@@ -233,14 +256,14 @@ void Render() {
                 } else {
                     ImGui::TextColored(nickCol, "%s", nick);
                     IdTooltip(r, host);
-                    if (r.isLocal) { ImGui::SameLine(0.0f, S(6.0f)); ImGui::TextDisabled("(you)"); }
+                    if (r.isLocal) { ImGui::SameLine(0.0f, S(6.0f)); ImGui::TextDisabled("%s", l10n::T("(you)")); }
                     // HOST belongs on the name, not in the link column: it is a fact about who the
                     // player is, while the link column answers how their traffic reaches the
                     // session, and it explains why the host's link and ping cells read n/a. A host
                     // row is never actionable, so this is its only path.
                     if (r.isHost) {
                         ImGui::SameLine(0.0f, S(6.0f));
-                        ImGui::TextColored(ImVec4(1.00f, 0.82f, 0.35f, 0.85f), "HOST");
+                        ImGui::TextColored(ImVec4(1.00f, 0.82f, 0.35f, 0.85f), "%s", l10n::T("HOST"));
                     }
                 }
 
@@ -277,10 +300,10 @@ void Render() {
                                           ih * 0.95f, shown,
                                           localSilenced ? 0.55f : idle ? 0.30f : 1.0f);
                     if (ImGui::IsItemHovered()) {
-                        const char* lbl = localSilenced ? "Muted for you (click for volume)"
-                                          : self ? (vs.muted ? "Your mic is muted -- click to unmute"
-                                                             : "Click to mute your mic")
-                                          : idle ? "Voice connected (click for volume)"
+                        const char* lbl = localSilenced ? l10n::T("Muted for you (click for volume)")
+                                          : self ? (vs.muted ? l10n::T("Your mic is muted -- click to unmute")
+                                                             : l10n::T("Click to mute your mic"))
+                                          : idle ? l10n::T("Voice connected (click for volume)")
                                                  : ui::voice_icons::Label(shown);
                         if (lbl && lbl[0]) ImGui::SetTooltip("%s", lbl);
                     }
@@ -289,7 +312,7 @@ void Render() {
                         ImGui::Separator();
                         float v = vs.slotVolume[r.slot];
                         bool silenced = v <= 0.001f;
-                        if (ImGui::Checkbox("Mute for me", &silenced))
+                        if (ImGui::Checkbox(l10n::Label(l10n::T("Mute for me"), "mute_for_me"), &silenced))
                             coop::voice_chat::SetSlotVolume(r.slot, silenced ? 0.0f : 1.0f);
                         if (!silenced) {
                             if (ImGui::SliderFloat("##pvol", &v, 0.0f, 2.0f, "volume %.2fx"))
@@ -337,7 +360,7 @@ void Render() {
         }
         ImGui::PopStyleVar();     // CellPadding
         ImGui::PopStyleColor(2);  // TableRowBgAlt + TableBorderLight
-        if (s.count == 0) ImGui::TextDisabled("No players.");
+        if (s.count == 0) ImGui::TextDisabled("%s", l10n::T("No players."));
 
         // The host-only session block. A session is configured when it is created and not
         // afterwards: the password, the lock and the connection are settled in the hosting flow,
@@ -349,39 +372,43 @@ void Render() {
         if (host) {
             ImGui::Separator();
             bool listed = coop::session_manager::ListedState();
-            if (ImGui::Checkbox("Show in server browser", &listed))
+            if (ImGui::Checkbox(l10n::Label(l10n::T("Show in server browser"), "show_in_server_browser"),
+                                &listed))
                 coop::session_manager::SetListed(listed);
             ImGui::SameLine();
-            ImGui::TextDisabled(listed ? "(others can find your game)"
-                                       : "(hidden -- friends join by invite/IP)");
+            ImGui::TextDisabled("%s", listed ? l10n::T("(others can find your game)")
+                                             : l10n::T("(hidden -- friends join by invite/IP)"));
         }
 
         // The ban confirmation modal, shared across rows: a ban is destructive and irreversible
         // from the UI, so it gets an explicit confirm step. Opened once on the transition, closed
         // by either button.
-        if (g_banConfirmId[0] != '\0' && !ImGui::IsPopupOpen("Confirm ban##coop"))
-            ImGui::OpenPopup("Confirm ban##coop");
+        if (g_banConfirmId[0] != '\0' && !ImGui::IsPopupOpen(kBanModalId))
+            ImGui::OpenPopup(kBanModalId);
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-        if (ImGui::BeginPopupModal("Confirm ban##coop", nullptr,
+        if (ImGui::BeginPopupModal(l10n::Label(l10n::T("Confirm ban"), "coop"), nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("Permanently ban %s?", g_banConfirmNick);
-            ImGui::TextDisabled("Disconnected now and refused whenever they rejoin.");
-            ImGui::Checkbox("Also refuse their address", &g_banConfirmByAddress);
+            char prompt[256];
+            l10n::Fmt(prompt, sizeof(prompt), l10n::T("Permanently ban %s?"), g_banConfirmNick);
+            ImGui::TextUnformatted(prompt);
+            ImGui::TextDisabled("%s", l10n::T("Disconnected now and refused whenever they rejoin."));
+            ImGui::Checkbox(l10n::Label(l10n::T("Also refuse their address"), "also_refuse_their_address"),
+                            &g_banConfirmByAddress);
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Also refuses anyone connecting from the same address -- people who share "
-                                  "their router or their provider's address are refused too. It only works "
-                                  "on a direct connection: a player who comes through a relay is refused by "
-                                  "their identity alone.");
+                ImGui::SetTooltip("%s", l10n::T("Also refuses anyone connecting from the same address -- people who share "
+                                                "their router or their provider's address are refused too. It only works "
+                                                "on a direct connection: a player who comes through a relay is refused by "
+                                                "their identity alone."));
             ImGui::Spacing();
-            if (ImGui::Button("Ban", ImVec2(S(110.f), 0))) {
+            if (ImGui::Button(l10n::Label(l10n::Tc("hud", "Ban"), "ban"), ImVec2(S(110.f), 0))) {
                 coop::command_sync::Submit(std::string(g_banConfirmByAddress ? "ban " : "banid ") +
                                            g_banConfirmId);
                 g_banConfirmId[0] = '\0';
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(S(110.f), 0))) {
+            if (ImGui::Button(l10n::Label(l10n::Tc("hud", "Cancel"), "cancel"), ImVec2(S(110.f), 0))) {
                 g_banConfirmId[0] = '\0';
                 ImGui::CloseCurrentPopup();
             }

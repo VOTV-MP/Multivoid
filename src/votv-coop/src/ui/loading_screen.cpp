@@ -4,6 +4,7 @@
 
 #include "coop/net/protocol.h"  // HostJoinPhase -- the beacon's phase, as the View carries it
 #include "coop/session/join_progress.h"
+#include "l10n/l10n.h"
 #include "ui/scale.h"
 
 #include "imgui.h"
@@ -73,66 +74,73 @@ void Render() {
     if (ImGui::Begin("###coop_loading", nullptr, flags)) {
         ImGui::SetWindowFontScale(1.25f);
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.92f, 0.94f, 0.98f, 1.0f));
-        CenteredText("MULTIPLAYER");
+        CenteredText(l10n::T("MULTIPLAYER"));
         ImGui::PopStyleColor();
         ImGui::SetWindowFontScale(1.0f);
         ImGui::Dummy(ImVec2(0.0f, S(8.0f)));
 
         // Status line: the phase, and inside Connecting the stage, each with its own sentence, so
         // a joiner can tell which of the six steps before the first download byte it is waiting in.
-        char status[160];
+        // The sentence is looked up and formatted without the animated trailing dots, which are
+        // not language: they follow it, so a translation never carries or reorders them.
+        char body[256];
+        const char* text = body;
+        bool dotted = true;
         const int dots = static_cast<int>(ImGui::GetTime() * 2.0) % 4;
         char d[4] = {0};
         for (int i = 0; i < dots; ++i) d[i] = '.';
-        const char* host = v.host.empty() ? "the host" : v.host.c_str();
+        const char* host = v.host.empty() ? l10n::T("the host") : v.host.c_str();
         if (v.mode == jp::Mode::Host) {
             // HOST boot (the Host-Game flow): loading our OWN world before we host.
             if (!v.host.empty())
-                std::snprintf(status, sizeof(status), "Starting your server -- loading %s%s", v.host.c_str(), d);
+                l10n::Fmt(body, sizeof(body), l10n::T("Starting your server -- loading %s"), v.host.c_str());
             else
-                std::snprintf(status, sizeof(status), "Starting your server%s", d);
+                text = l10n::T("Starting your server");
         } else if (v.phase == jp::Phase::Connecting) {
             switch (v.stage) {
             case jp::Stage::FindingHost:
-                std::snprintf(status, sizeof(status), "Looking up %s%s", host, d);
+                l10n::Fmt(body, sizeof(body), l10n::T("Looking up %s"), host);
                 break;
             case jp::Stage::FindingRoute:
-                std::snprintf(status, sizeof(status), "Finding a route to %s%s", host, d);
+                l10n::Fmt(body, sizeof(body), l10n::T("Finding a route to %s"), host);
                 break;
             case jp::Stage::ProvingIdentity:
-                std::snprintf(status, sizeof(status), "Exchanging identities with the host%s", d);
+                text = l10n::T("Exchanging identities with the host");
                 break;
             case jp::Stage::Joining:
-                std::snprintf(status, sizeof(status), "Joining %s%s", host, d);
+                l10n::Fmt(body, sizeof(body), l10n::T("Joining %s"), host);
                 break;
             case jp::Stage::WaitingForWorld:
-                std::snprintf(status, sizeof(status), "Waiting for the host to capture its world%s", d);
+                text = l10n::T("Waiting for the host to capture its world");
                 break;
             default:  // Dialing, or no stage reported yet
-                std::snprintf(status, sizeof(status), "Connecting to %s%s", host, d);
+                l10n::Fmt(body, sizeof(body), l10n::T("Connecting to %s"), host);
                 break;
             }
         } else if (v.phase == jp::Phase::Downloading) {
             // Say what is happening AND that it is normal. On an internet link this
             // phase is ~17 s for a mature world and it used to read "Connecting...",
             // which is what a player interprets as "hung".
-            std::snprintf(status, sizeof(status), "Downloading the host's world%s", d);
+            text = l10n::T("Downloading the host's world");
         } else if (v.phase == jp::Phase::LoadingWorld) {
             // The longest stage of all (30-60 s, 120 s capped) and NOTHING reports
             // progress out of the engine's load -- so it gets the marquee, which at
             // least animates, and a label that is true.
-            std::snprintf(status, sizeof(status), "Loading the world%s", d);
+            text = l10n::T("Loading the world");
         } else if (v.phase == jp::Phase::AwaitingWorldStream) {
             // The world is up and the wait belongs to the host now. Say which side is working, and
             // say the one thing the host reports that the player cannot otherwise see: that it is
             // holding the stream until its own world settles.
             if (v.hostPhase == static_cast<uint8_t>(coop::net::HostJoinPhase::SnapshotDeferred))
-                std::snprintf(status, sizeof(status), "The host is settling its world%s", d);
+                text = l10n::T("The host is settling its world");
             else
-                std::snprintf(status, sizeof(status), "Waiting for the host's world%s", d);
+                text = l10n::T("Waiting for the host's world");
         } else {
-            std::snprintf(status, sizeof(status), "Receiving world from the host");
+            text = l10n::T("Receiving world from the host");
+            dotted = false;
         }
+        char status[256];
+        l10n::Fmt(status, sizeof(status), "%s%s", text, dotted ? d : "");
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.80f, 0.84f, 0.90f, 1.0f));
         CenteredText(status);
         ImGui::PopStyleColor();
@@ -141,9 +149,9 @@ void Render() {
         // laid out, so the panel does not jump when the number appears.
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.60f, 0.68f, 1.0f));
         if (v.stageMs >= 3000) {
-            char since[48];
-            std::snprintf(since, sizeof(since), "%llu s in this step",
-                          static_cast<unsigned long long>(v.stageMs / 1000));
+            char since[256];
+            l10n::Fmt(since, sizeof(since), l10n::T("%llu s in this step"),
+                      static_cast<unsigned long long>(v.stageMs / 1000));
             CenteredText(since);
         } else {
             ImGui::Dummy(ImVec2(0.0f, ImGui::GetTextLineHeight()));
@@ -154,20 +162,20 @@ void Render() {
         // Progress bar.
         if (v.phase == jp::Phase::Downloading && v.totalBytes > 0) {
             const float frac = static_cast<float>(v.doneBytes) / static_cast<float>(v.totalBytes);
-            char overlay[64];
+            char overlay[256];
             // MB, one decimal -- bytes are unreadable at this size and a percentage
             // alone does not tell the player the transfer is large by nature.
-            std::snprintf(overlay, sizeof(overlay), "%.1f / %.1f MB",
-                          static_cast<double>(v.doneBytes) / (1024.0 * 1024.0),
-                          static_cast<double>(v.totalBytes) / (1024.0 * 1024.0));
+            l10n::Fmt(overlay, sizeof(overlay), l10n::T("%.1f / %.1f MB"),
+                      static_cast<double>(v.doneBytes) / (1024.0 * 1024.0),
+                      static_cast<double>(v.totalBytes) / (1024.0 * 1024.0));
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.36f, 0.59f, 0.82f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.10f, 0.12f, 0.16f, 1.0f));
             ImGui::ProgressBar(frac > 1.0f ? 1.0f : frac, ImVec2(barW, 0.0f), overlay);
             ImGui::PopStyleColor(2);
         } else if (v.phase == jp::Phase::Receiving && v.total > 0) {
             const float frac = static_cast<float>(v.applied) / static_cast<float>(v.total);
-            char overlay[64];
-            std::snprintf(overlay, sizeof(overlay), "%u / %u objects", v.applied, v.total);
+            char overlay[256];
+            l10n::Fmt(overlay, sizeof(overlay), l10n::T("%u / %u objects"), v.applied, v.total);
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.36f, 0.59f, 0.82f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.10f, 0.12f, 0.16f, 1.0f));
             ImGui::ProgressBar(frac > 1.0f ? 1.0f : frac, ImVec2(barW, 0.0f), overlay);
@@ -182,14 +190,15 @@ void Render() {
             // a cancel here used to (via the client abort path) Stop the host session the
             // instant it started. The host just waits -- a new game can take a moment.
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.64f, 0.72f, 1.0f));
-            CenteredText("A new game can take a moment to load");
+            CenteredText(l10n::T("A new game can take a moment to load"));
             ImGui::PopStyleColor();
         } else {
             // Cancel: abort the CLIENT join (the harness drains the request -> Stop +
             // reopen browser; a session-death flee then lands us at the main menu).
             const float btnW = S(120.0f);
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (ImGui::GetContentRegionAvail().x - btnW) * 0.5f);
-            if (ImGui::Button("Cancel", ImVec2(btnW, 0.0f))) jp::RequestCancel();
+            if (ImGui::Button(l10n::Label(l10n::Tc("hud", "Cancel"), "cancel"), ImVec2(btnW, 0.0f)))
+                jp::RequestCancel();
         }
     }
     ImGui::End();
