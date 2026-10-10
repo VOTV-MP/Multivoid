@@ -156,6 +156,8 @@ CFG_FLAG(damage_probe, "damage_probe", "dev", false, "VOTVCOOP_DAMAGE_PROBE",
     "Probe (BOTH peers): every call of the player's damage verb, one [DMG] line each -- this machine's "
     "own player or a peer's puppet, the amount, the source's class and the calling Blueprint function. "
     "Read-only.")
+CFG_FLAG(player_damage_no_refusal, "player_damage_no_refusal", "dev", false, "VOTVCOOP_PLAYER_DAMAGE_NO_REFUSAL",
+    "Developer: never refuse damage or ignite on a peer's puppet (the dmghazard probe's red).")
 CFG_FLAG(event_drill, "event_drill", "dev", false, "VOTVCOOP_EVENT_DRILL",
     "Drill (BOTH peers): the host fires the meteor shower before the client's world is up (the join "
     "snapshot carries it) and then through the scheduler itself (the clock set to day 2 00:18), then "

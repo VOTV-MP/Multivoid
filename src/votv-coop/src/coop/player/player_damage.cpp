@@ -7,6 +7,8 @@
 
 #include "coop/player/player_damage.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/element/element.h"
 #include "coop/element/player.h"
 #include "coop/net/protocol.h"
@@ -92,7 +94,7 @@ bool OnImpactEntryPre(void* self, void* /*params*/) {
 constexpr const wchar_t* kDamageVerbName = L"Add Player Damage";
 constexpr int kDamageVerbTag = 0x504C4447;  // 'PLDG'
 bool g_damageWatchDone = false;
-uint32_t g_verbCanceled = 0;
+std::atomic<uint32_t> g_verbCanceled{0};
 
 ue_wrap::script_gate::Verdict OnDamageVerbPre(const ue_wrap::script_gate::Call& c) {
     // IsPuppet alone: no session or local-pawn early-out in front of it, since the local pawn reads
@@ -121,7 +123,7 @@ ue_wrap::script_gate::Verdict OnDamageVerbPre(const ue_wrap::script_gate::Call& 
 constexpr const wchar_t* kIgniteName = L"ignite";
 constexpr int kIgniteTag = 0x49474E54;  // 'IGNT'
 bool g_igniteWatchDone = false;
-uint32_t g_igniteCanceled = 0;
+std::atomic<uint32_t> g_igniteCanceled{0};
 
 ue_wrap::script_gate::Verdict OnIgnitePre(const ue_wrap::script_gate::Call& c) {
     // IsPuppet alone: no session or local-pawn early-out in front of it, since the local pawn reads
@@ -141,10 +143,21 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
 }
 
+uint32_t RefusedDamage() { return g_verbCanceled.load(std::memory_order_relaxed); }
+uint32_t RefusedIgnites() { return g_igniteCanceled.load(std::memory_order_relaxed); }
+
 void Tick() {
     // Publish the local pawn for the interceptor's any-thread compare (GT here;
     // Registry::Local() is GT-only and cached).
     g_localPawn.store(coop::players::Registry::Get().Local(), std::memory_order_release);
+    // The dmghazard probe's red: neither refusal is watched, so a puppet takes damage and fire here.
+    static const bool s_noRefusal =
+        coop::config::ResolveFlag(coop::config_registry::rows::player_damage_no_refusal);
+    if (s_noRefusal && (!g_damageWatchDone || !g_igniteWatchDone)) {
+        g_damageWatchDone = g_igniteWatchDone = true;
+        UE_LOGW("player_damage: DRILL -- the damage and ignite refusals on a peer's puppet are OFF "
+                "(dev.player_damage_no_refusal); a puppet takes them here");
+    }
     if (!g_damageWatchDone) {
         g_damageWatchDone = true;
         if (!ue_wrap::script_gate::WatchName(kDamageVerbName, kDamageVerbTag, &OnDamageVerbPre, nullptr))

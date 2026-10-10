@@ -10,6 +10,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace coop::net { class Session; struct PlayerDamagePayload; }
 
 namespace coop::player_damage {
@@ -21,6 +23,11 @@ void Install(coop::net::Session* session);
 // the non-local-body PRE cancel, settled on that first attempt; one latched read after. Called from
 // subsystems::TickGameplay.
 void Tick();
+
+// The refusals so far on this machine: the damage verb and ignite refused on a peer's puppet. What
+// the dmghazard probe judges by. Any thread.
+uint32_t RefusedDamage();
+uint32_t RefusedIgnites();
 
 // Owner side: validate the payload, verify on the game thread that it addresses this peer
 // (targetElementId is our Player Element id) and run "Add Player Damage" on our own possessed

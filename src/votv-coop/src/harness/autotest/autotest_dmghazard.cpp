@@ -1,10 +1,13 @@
-// The puppet-damage hazard probe (VOTVCOOP_RUN_DMGHAZARD_TEST): fire both of mainPlayer_C's damage
-// entries at the host's own slot-1 puppet and diff the HOST's saveSlot.health. Interfaces and
-// per-routine docs in harness/autotest.h.
+// The puppet-damage hazard probe (VOTVCOOP_RUN_DMGHAZARD_TEST): fire mainPlayer_C's two damage
+// entries and ignite at the host's own slot-1 puppet and judge by what coop::player_damage refused
+// and what the HOST's saveSlot.health did; the same damage on the host's own player is the control
+// that the calls land. Each phase ends on readiness, never a clock. Red:
+// dev.player_damage_no_refusal. Interfaces and per-routine docs in harness/autotest.h.
 
 #include "harness/autotest.h"
 
 #include "coop/config/config.h"
+#include "coop/player/player_damage.h"
 #include "coop/player/puppet_drive.h"
 #include "coop/player/remote_player.h"
 #include "coop/player/players_registry.h"
@@ -12,6 +15,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/actors/vitals.h"
 
 #include <atomic>
@@ -120,98 +124,137 @@ void RestoreHostHealth(float v) {
     WaitDone(done, 8000);
 }
 
-void ProbeDamageHazardOnHost() {
-    UE_LOGI("dmghazard[host]: probe armed -- fire BOTH damage entries (Add Player Damage + "
-            "addDamage) on the slot-1 puppet, diff host saveSlot.health");
+// Invoke AmainPlayer_C::ignite(fuel) on `target`. Game-thread only.
+bool InvokeIgnite(void* target, float fuel) {
+    if (!target || !R::IsLive(target)) return false;
+    void* cls = R::FindClass(L"mainPlayer_C");
+    void* fn = cls ? R::FindFunction(cls, L"ignite") : nullptr;
+    if (!fn) { UE_LOGW("dmghazard: 'ignite' UFunction did not resolve"); return false; }
+    ue_wrap::ParamFrame f(fn);
+    if (!f.valid()) return false;
+    f.Set<float>(L"fuel", fuel);
+    return ue_wrap::Call(target, f);
+}
 
-    // Wait for BOTH the slot-1 puppet (client connected) AND the host saveSlot.
-    auto puppet = std::make_shared<void*>(nullptr);
-    auto before = std::make_shared<float>(-1.f);
-    // 180 s: the window has to outlast a cold client boot and connect that only starts after the
-    // host's own boot armed this probe.
-    for (int attempt = 0; attempt < 180 && (!*puppet || *before < 0.f); ++attempt) {
-        auto done = std::make_shared<std::atomic<int>>(0);
-        GT::Post([puppet, before, done] {
-            void* p = coop::puppet_drive::Puppet(1).GetActor();
-            if (p && R::IsLive(p)) *puppet = p;
-            float v = -1.f; if (ue_wrap::vitals::Read(ue_wrap::vitals::Field::Health, &v)) *before = v;
-            done->store(1);
-        });
-        WaitDone(done, 8000);
-        if (!*puppet || *before < 0.f) ::Sleep(1000);
+// The puppet's own isBurning, by its reflected bool storage. -1 unread. Game-thread only.
+int ReadBurningGT(void* actor) {
+    auto done = std::make_shared<std::atomic<int>>(0);
+    auto out = std::make_shared<int>(-1);
+    GT::Post([actor, out, done] {
+        int32_t off = -1;
+        uint8_t mask = 0;
+        if (actor && R::IsLive(actor) && R::FindBoolProperty(R::ClassOf(actor), L"isBurning", off, mask))
+            *out = (static_cast<const uint8_t*>(actor)[off] & mask) ? 1 : 0;
+        done->store(1);
+    });
+    WaitDone(done, 8000);
+    return *out;
+}
+
+// What one call at a body came to: the refusal counted, the host's health dropped, or neither within
+// the phase -- read every 50 ms until one shows, since a refusal or a health write lands within the
+// call's own game-thread task or the next frame.
+enum class Outcome { Refused, Landed, Nothing };
+const char* Name(Outcome o) { return o == Outcome::Refused ? "REFUSED" : o == Outcome::Landed ? "LANDED" : "NOTHING"; }
+constexpr DWORD kPhaseMs = 3000;
+constexpr DWORD kPollMs  = 50;
+
+template <class Refused, class Landed>
+Outcome Await(Refused refused, Landed landed) {
+    for (DWORD waited = 0; waited < kPhaseMs; waited += kPollMs) {
+        if (refused()) return Outcome::Refused;
+        if (landed()) return Outcome::Landed;
+        ::Sleep(kPollMs);
     }
-    if (!*puppet) { UE_LOGW("dmghazard[host]: VERDICT INCONCLUSIVE -- slot-1 puppet never resolved (no client connected?)"); UE_LOGI("dmghazard[host]: DONE"); return; }
-    if (*before < 0.f) { UE_LOGW("dmghazard[host]: VERDICT INCONCLUSIVE -- host saveSlot.health never resolved"); UE_LOGI("dmghazard[host]: DONE"); return; }
-    UE_LOGI("dmghazard[host]: slot-1 puppet resolved; host saveSlot.health BEFORE=%.2f", *before);
+    return refused() ? Outcome::Refused : landed() ? Outcome::Landed : Outcome::Nothing;
+}
 
-    // --- Test 1: high-level entry "Add Player Damage" on the PUPPET ---
-    const float b1 = ReadHostHealthGT();
-    InvokeAddPlayerDamageGT(*puppet, 5.f, "PUPPET");
-    ::Sleep(300);
-    const float a1 = ReadHostHealthGT();
-    const float d1 = (b1 >= 0.f && a1 >= 0.f) ? (b1 - a1) : 0.f;
-    UE_LOGI("dmghazard[host]: 'Add Player Damage' on puppet: host health %.2f -> %.2f (delta=%.2f)", b1, a1, d1);
-
-    // --- Test 2: hit-actor entry "addDamage" on the PUPPET (the native-enemy-shaped call) ---
-    const float b2 = ReadHostHealthGT();
-    InvokeAddDamageGT(*puppet, *puppet, 5.f, "PUPPET");
-    ::Sleep(300);
-    const float a2 = ReadHostHealthGT();
-    const float d2 = (b2 >= 0.f && a2 >= 0.f) ? (b2 - a2) : 0.f;
-    UE_LOGI("dmghazard[host]: 'addDamage' on puppet: host health %.2f -> %.2f (delta=%.2f)", b2, a2, d2);
-
-    if (d1 > 0.01f || d2 > 0.01f) {
-        RestoreHostHealth(*before);
-        UE_LOGW("dmghazard[host]: VERDICT = SHARED-SAVESLOT CORRUPTION CONFIRMED -- invoking %s on a "
-                "host-side UNPOSSESSED puppet drained the HOST'S OWN saveSlot.health (Add Player Damage "
-                "delta=%.2f, addDamage delta=%.2f). Health is the per-machine shared saveSlot, so "
-                "native damage on a puppet has to be intercepted and routed to the owner as a "
-                "reliable PlayerDamage event, never run against the host's own store "
-                "(host health restored to %.2f).",
-                (d1 > 0.01f ? "Add Player Damage" : "addDamage"), d1, d2, *before);
+void ProbeDamageHazardOnHost() {
+    namespace PD = coop::player_damage;
+    UE_LOGI("dmghazard[host]: probe armed -- the damage verb, addDamage and ignite at the slot-1 puppet, "
+            "judged by the refusals and the host's own saveSlot.health");
+    constexpr DWORD kReadyMs = 180'000;   // the client boots, joins, downloads and loads first
+    if (!WaitPeerWorldReady(1, kReadyMs)) {
+        UE_LOGW("dmghazard[host]: VERDICT INCONCLUSIVE -- no client was seated and world-ready in slot 1");
         UE_LOGI("dmghazard[host]: DONE");
         return;
     }
-
-    // Neither puppet entry dropped host health -> control: the SAME Add Player Damage on the host's
-    // OWN possessed player. That separates "both entries early-out on the unpossessed puppet" (the
-    // writes work, guarded by possession, so they are safe) from "the calls never landed" (a param
-    // or resolution bug, which makes the verdict inconclusive).
-    UE_LOGI("dmghazard[host]: neither puppet entry changed host health -- running a LOCAL control "
-            "(Add Player Damage on the host's OWN player) to tell early-out from a non-landing call");
+    // The puppet is the host's own milestone after the slot's world-ready: it spawns once the peer's
+    // pose arrives. Read every 50 ms until it and this machine's player resolve, within a phase.
+    auto puppet = std::make_shared<void*>(nullptr);
     auto local = std::make_shared<void*>(nullptr);
-    const float bc = [&] {
+    constexpr DWORD kPuppetMs = 30'000;
+    for (DWORD waited = 0; (!*puppet || !*local) && waited < kPuppetMs; waited += kPollMs) {
         auto done = std::make_shared<std::atomic<int>>(0);
-        auto h = std::make_shared<float>(-1.f);
-        GT::Post([local, h, done] {
+        GT::Post([puppet, local, done] {
+            void* p = coop::puppet_drive::Puppet(1).GetActor();
+            if (p && R::IsLive(p)) *puppet = p;
             void* mp = coop::players::Registry::Get().Local();
             if (mp && R::IsLive(mp)) *local = mp;
-            float v = -1.f; if (ue_wrap::vitals::Read(ue_wrap::vitals::Field::Health, &v)) *h = v;
             done->store(1);
         });
         WaitDone(done, 8000);
-        return *h;
-    }();
-    if (!*local || bc < 0.f) { UE_LOGW("dmghazard[host]: VERDICT INCONCLUSIVE -- both puppet calls were no-ops AND no local player/health for the control"); UE_LOGI("dmghazard[host]: DONE"); return; }
+        if (!*puppet || !*local) ::Sleep(kPollMs);
+    }
+    const float before = ReadHostHealthGT();
+    if (!*puppet || !*local || before < 0.f) {
+        UE_LOGW("dmghazard[host]: VERDICT INCONCLUSIVE -- puppet=%p local=%p health=%.2f unread after world-ready",
+                *puppet, *local, before);
+        UE_LOGI("dmghazard[host]: DONE");
+        return;
+    }
+    const auto healthBelow = [](float h) { return [h] { const float n = ReadHostHealthGT(); return n >= 0.f && n < h - 0.01f; }; };
+
+    // 1. The damage verb at the puppet: refused, never written to this machine's health.
+    const uint32_t d1 = PD::RefusedDamage();
+    const float h1 = ReadHostHealthGT();
+    InvokeAddPlayerDamageGT(*puppet, 5.f, "PUPPET");
+    const Outcome o1 = Await([d1] { return PD::RefusedDamage() > d1; }, healthBelow(h1));
+    UE_LOGI("dmghazard[host]: 'Add Player Damage' at the puppet -> %s (health %.2f -> %.2f)", Name(o1), h1,
+            ReadHostHealthGT());
+
+    // 2. addDamage at the puppet, the entry a native hit forwards to: its nested verb is refused.
+    const uint32_t d2 = PD::RefusedDamage();
+    const float h2 = ReadHostHealthGT();
+    InvokeAddDamageGT(*puppet, *puppet, 5.f, "PUPPET");
+    const Outcome o2 = Await([d2] { return PD::RefusedDamage() > d2; }, healthBelow(h2));
+    UE_LOGI("dmghazard[host]: 'addDamage' at the puppet -> %s (health %.2f -> %.2f)", Name(o2), h2,
+            ReadHostHealthGT());
+
+    // 3. ignite at the puppet: refused, the puppet never burning here.
+    const uint32_t i3 = PD::RefusedIgnites();
+    {
+        auto d = std::make_shared<std::atomic<int>>(0);
+        void* target = *puppet;
+        GT::Post([target, d] { InvokeIgnite(target, 10.f); d->store(1); });
+        WaitDone(d, 8000);
+    }
+    void* pup = *puppet;
+    const Outcome o3 = Await([i3] { return PD::RefusedIgnites() > i3; }, [pup] { return ReadBurningGT(pup) == 1; });
+    UE_LOGI("dmghazard[host]: 'ignite' at the puppet -> %s (puppet isBurning=%d)", Name(o3), ReadBurningGT(pup));
+
+    // 4. The control: the same damage verb at the host's own player lands, so a REFUSED above is the
+    //    refusal and not a call that never reached the verb.
+    const float h4 = ReadHostHealthGT();
     InvokeAddPlayerDamageGT(*local, 5.f, "LOCAL player");
-    ::Sleep(300);
-    const float ac = ReadHostHealthGT();
-    const float dc = (bc >= 0.f && ac >= 0.f) ? (bc - ac) : 0.f;
-    UE_LOGI("dmghazard[host]: LOCAL control: host saveSlot.health %.2f -> %.2f (delta=%.2f)", bc, ac, dc);
-    if (dc > 0.01f) {
-        RestoreHostHealth(*before);
-        UE_LOGW("dmghazard[host]: VERDICT = PUPPET-ENTRIES-EARLY-OUT -- BOTH 'Add Player Damage' AND "
-                "'addDamage' are no-ops on the unpossessed puppet (zero host-health change), while the SAME "
-                "'Add Player Damage' on the host's OWN possessed player dropped %.2f -> the damage path "
-                "writes the shared saveSlot but GUARDS on possession (GetController()). So directly invoking "
-                "either entry on a puppet is SAFE. RESIDUAL: the native enemy attack reaches the pawn via "
-                "impactDamageCPP/overlap (a native hit-actor forward) -- if that bypasses the possession "
-                "guard it could still corrupt, which is why those entries are intercepted on puppets. "
-                "Host health restored to %.2f.", dc, *before);
+    const Outcome o4 = Await([] { return false; }, healthBelow(h4));
+    UE_LOGI("dmghazard[host]: control 'Add Player Damage' at this machine's player -> %s (health %.2f -> %.2f)",
+            Name(o4), h4, ReadHostHealthGT());
+    RestoreHostHealth(before);
+
+    const bool refusedAll = o1 == Outcome::Refused && o2 != Outcome::Landed && o3 == Outcome::Refused;
+    const bool controlLanded = o4 == Outcome::Landed;
+    if (o1 == Outcome::Landed || o2 == Outcome::Landed || o3 == Outcome::Landed) {
+        UE_LOGW("dmghazard[host]: VERDICT FAIL -- a peer's puppet took %s%s%s on this machine (health restored to "
+                "%.2f)", o1 == Outcome::Landed ? "the damage verb " : "", o2 == Outcome::Landed ? "addDamage " : "",
+                o3 == Outcome::Landed ? "fire" : "", before);
+    } else if (refusedAll && controlLanded) {
+        UE_LOGI("dmghazard[host]: VERDICT PASS -- the damage verb and ignite at a peer's puppet were refused, "
+                "addDamage wrote nothing, and the same verb at this machine's player landed (health restored to "
+                "%.2f)", before);
     } else {
-        UE_LOGW("dmghazard[host]: VERDICT INCONCLUSIVE -- no entry (puppet OR local control) changed host "
-                "health; the damage calls aren't landing (param/resolution). Revise the probe / verify the "
-                "UFunction names.");
+        UE_LOGW("dmghazard[host]: VERDICT INCONCLUSIVE -- verb=%s addDamage=%s ignite=%s control=%s: a call that "
+                "neither was refused nor landed did not reach its verb", Name(o1), Name(o2), Name(o3), Name(o4));
     }
     UE_LOGI("dmghazard[host]: DONE");
 }

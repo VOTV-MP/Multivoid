@@ -154,12 +154,12 @@ DWORD WINAPI PuppetFrameThread(LPVOID arg);
 void RunAutonomousDamageTest();
 DWORD WINAPI DamageTestThread(LPVOID arg);
 
-// The puppet-damage hazard probe (harness/autotest/autotest_dmghazard.cpp), host verdict: Add
-// Player Damage is invoked on the unpossessed slot-1 puppet and the host's own saveSlot.health
-// diffed; a drop means the saveSlot is shared per machine, so native damage on a puppet must be
-// intercepted, not merely relayed. A local-player control separates a BP early-out from a
-// non-landing call; health is restored after. The client only connects so the puppet exists.
-// Env VOTVCOOP_RUN_DMGHAZARD_TEST=1.
+// The puppet-damage hazard probe (harness/autotest/autotest_dmghazard.cpp), host verdict: once
+// slot 1 is world-ready, the damage verb, addDamage and ignite are invoked at the slot-1 puppet and
+// judged by coop::player_damage's refusal counts against the host's own saveSlot.health (shared per
+// machine, so a puppet's damage written here drains the host); the same verb at the host's own player
+// is the control that the calls land; health is restored after. PASS = refused; FAIL = landed. Red:
+// dev.player_damage_no_refusal. The client only connects. Env VOTVCOOP_RUN_DMGHAZARD_TEST=1.
 void RunAutonomousDmgHazardTest();
 DWORD WINAPI DmgHazardTestThread(LPVOID arg);
 
