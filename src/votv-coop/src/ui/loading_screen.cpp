@@ -165,7 +165,7 @@ void Render() {
             char overlay[256];
             // MB, one decimal -- bytes are unreadable at this size and a percentage
             // alone does not tell the player the transfer is large by nature.
-            l10n::Fmt(overlay, sizeof(overlay), l10n::T("%.1f / %.1f MB"),
+            l10n::Fmt(overlay, sizeof(overlay), l10n::T("%1$.1f / %2$.1f MB"),
                       static_cast<double>(v.doneBytes) / (1024.0 * 1024.0),
                       static_cast<double>(v.totalBytes) / (1024.0 * 1024.0));
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.36f, 0.59f, 0.82f, 1.0f));
@@ -175,7 +175,7 @@ void Render() {
         } else if (v.phase == jp::Phase::Receiving && v.total > 0) {
             const float frac = static_cast<float>(v.applied) / static_cast<float>(v.total);
             char overlay[256];
-            l10n::Fmt(overlay, sizeof(overlay), l10n::T("%u / %u objects"), v.applied, v.total);
+            l10n::Fmt(overlay, sizeof(overlay), l10n::T("%1$u / %2$u objects"), v.applied, v.total);
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.36f, 0.59f, 0.82f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.10f, 0.12f, 0.16f, 1.0f));
             ImGui::ProgressBar(frac > 1.0f ? 1.0f : frac, ImVec2(barW, 0.0f), overlay);

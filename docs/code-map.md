@@ -51,14 +51,15 @@ One folder, one concept, named after it. `src/votv-coop/src/` holds the implemen
 | the native UI kit | `native_screen`, `native_text_field`, `style`, `scale`, `link_format` |
 | in-game surfaces | `hud` (nameplates, chat, the event feed), `chat_input`, `chat_view`, `scoreboard`, `loading_screen`, `join_curtain`, `voice_icons` |
 | the F1 overlay | `imgui_overlay`, `overlay_backend` with `overlay_backend_dx11`, `overlay_backend_dx12`, `overlay_backend_dx12_capture`, `overlay_cursor`, `overlay_diag`, `overlay_test_arm`, `fonts`, `atlas_watch`, `input_focus` |
-| overlay panels | `dev_menu`, `admin_panel`, `skins_panel`, `voice_panel`, `world_rules_panel`, `server_settings_pane`, `bug_report_pane`, `config_review_panel`, `net_stats_panel`, `console` |
+| overlay panels | `dev_menu` (its developer panes in `dev_panes`), `admin_panel`, `skins_panel`, `voice_panel`, `world_rules_panel`, `server_settings_pane`, `bug_report_pane`, `config_review_panel`, `net_stats_panel`, `console` |
 
 ## `l10n/` — the player's language
 
-`l10n` (the lookups `T`, `Tc`, `Tn`, `Tcn`, `Label`, `Fmt`, and `Init`, which builds the one catalogue),
+`l10n` (the lookups `T`, `Tc`, `Tn`, `Label`, `Fmt`, and `Init`, which builds the one catalogue; the markers in `mark`),
 `po_reader` (a gettext `.po` file read, the only parser of a translator's text), `plural_expr` (a catalogue's
 plural rule, compiled once), `printf_check` (the conversions a message may carry), `fmt` (the positional
-formatter), `catalog` and `locale_choice` (private to the folder), `l10n_selftest`. The packs the mod ships
+formatter), `catalog`, `locale_choice` and `quiet` -- these and the three before them private to `src/l10n/` --
+`l10n_selftest`. The packs the mod ships
 are `src/votv-coop/locale/<ll_CC>.po`, embedded by name, beside the template `multivoid.pot` that
 `.github/ci/l10n_pot.py` extracts and gates (the files that may hold player text are its allowlist);
 `.github/ci/l10n_vectors.py` writes the selftest's plural vectors.

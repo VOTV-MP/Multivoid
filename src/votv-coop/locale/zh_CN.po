@@ -16,7 +16,7 @@ msgid "%.0f cm"
 msgstr ""
 
 #, c-format
-msgid "%.1f / %.1f MB"
+msgid "%1$.1f / %2$.1f MB"
 msgstr ""
 
 #, c-format
@@ -158,6 +158,10 @@ msgid "%1$s was turned away: unofficial build %2$s [%3$s]"
 msgstr ""
 
 #, c-format
+msgid "%1$u / %2$u objects"
+msgstr ""
+
+#, c-format
 msgid "%1$u/%2$u players sleeping"
 msgstr ""
 
@@ -193,10 +197,6 @@ msgstr[0] ""
 
 #, c-format
 msgid "%s (without passwords)"
-msgstr ""
-
-#, c-format
-msgid "%u / %u objects"
 msgstr ""
 
 msgid "(hidden -- friends join by invite/IP)"
@@ -436,6 +436,9 @@ msgstr ""
 msgid "Each surface picks its own family; applies on the next frame."
 msgstr ""
 
+msgid "Enter = send, Esc = close, Up/Down = history"
+msgstr ""
+
 msgid "Everyone in the registry is online."
 msgstr ""
 
@@ -497,7 +500,7 @@ msgid "Joining %s"
 msgstr ""
 
 #, c-format
-msgid "Keep line %d: %s"
+msgid "Keep line %1$d: %2$s"
 msgstr ""
 
 msgid "LAN"
@@ -714,7 +717,7 @@ msgid "Players"
 msgstr ""
 
 #, c-format
-msgid "Players: %d/%d"
+msgid "Players: %1$d/%2$d"
 msgstr ""
 
 msgid "Please describe what happened (at least 20 characters)."
@@ -1072,7 +1075,7 @@ msgid "Threshold near 0 dB -- the mic will almost never trigger. Try -50 dB."
 msgstr ""
 
 #, c-format
-msgid "Tidied: %d duplicate line(s) merged, %d setting(s) placed under their sections, %d unknown/invalid line(s) commented out. Anything still listed above needs a choice or can't be fixed from the file."
+msgid "Tidied: %1$d duplicate line(s) merged, %2$d setting(s) placed under their sections, %3$d unknown/invalid line(s) commented out. Anything still listed above needs a choice or can't be fixed from the file."
 msgstr "整理完成：合并 %d 条重复行，%d 个设置归位，%d 条未知或无效行已注释。上面还列着的，需要你选择，或无法从文件里修复。"
 
 msgid "Tidy up multivoid.ini"
@@ -1326,6 +1329,9 @@ msgstr ""
 
 msgid "reason (shown in the Banned list)"
 msgstr ""
+
+msgid "say:"
+msgstr "说："
 
 msgid "starting up"
 msgstr ""

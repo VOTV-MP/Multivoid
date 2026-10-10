@@ -307,6 +307,7 @@ void RequestSelect(const char* category, const char* sub) {
     if (!category || !sub || g_wantSelect.load(std::memory_order_acquire)) return;
     g_wantCat = category;
     g_wantSub = sub;
+    g_drawn.store(0, std::memory_order_release);   // DrawnSelection waits for a draw after this
     g_wantSelect.store(true, std::memory_order_release);
 }
 
@@ -401,7 +402,7 @@ void Render() {
         // different for me" without asking the user to dig through logs.
         {
             const char* rhi = ui::overlay_backend::Kind();
-            char line[128];
+            char line[256];
             l10n::Fmt(line, sizeof(line), l10n::T("Graphics API: %s"), rhi ? rhi : l10n::T("starting up"));
             ImGui::Spacing();
             ImGui::TextDisabled("%s", line);

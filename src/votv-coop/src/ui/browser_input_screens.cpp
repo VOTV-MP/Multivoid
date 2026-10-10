@@ -30,11 +30,6 @@
 namespace ui::browser_input_screens {
 namespace {
 
-// A looked-up label is UTF-8; the native widgets take wide text.
-std::wstring Wide(const char* utf8) {
-    return coop::text::FromUtf8Lossy(utf8, std::strlen(utf8));
-}
-
 namespace E  = ue_wrap::engine;
 namespace U  = ue_wrap::umg;
 namespace P  = ue_wrap::profile;
@@ -166,17 +161,17 @@ bool BuildOne(void* switcher, Kind kind, void* backDonor) {
 
     NS::WindowShell shell;
     const float windowH = kWindowH + (spec.label2 ? kSecondFieldH : 0.f);
-    if (!NS::BuildWindowShell(switcher, kWindowW, windowH, Wide(l10n::T(spec.title)).c_str(),
+    if (!NS::BuildWindowShell(switcher, kWindowW, windowH, coop::text::FromUtf8Lossy(l10n::T(spec.title)).c_str(),
                               shell))
         return false;
     void* col = shell.column;
 
-    NS::AddText(col, Wide(l10n::T(spec.label)).c_str(), 16, kAccent, NS::kJustLeft, 0.f);
-    s.field = TF::Create(col, Wide(l10n::T(spec.hint)).c_str(), spec.maxLen, kFieldW);
+    NS::AddText(col, coop::text::FromUtf8Lossy(l10n::T(spec.label)).c_str(), 16, kAccent, NS::kJustLeft, 0.f);
+    s.field = TF::Create(col, coop::text::FromUtf8Lossy(l10n::T(spec.hint)).c_str(), spec.maxLen, kFieldW);
     if (!s.field) return false;
     if (spec.label2) {
-        NS::AddText(col, Wide(l10n::T(spec.label2)).c_str(), 16, kAccent, NS::kJustLeft, 0.f);
-        s.field2 = TF::Create(col, Wide(l10n::T(spec.hint2)).c_str(), spec.maxLen2, kFieldW);
+        NS::AddText(col, coop::text::FromUtf8Lossy(l10n::T(spec.label2)).c_str(), 16, kAccent, NS::kJustLeft, 0.f);
+        s.field2 = TF::Create(col, coop::text::FromUtf8Lossy(l10n::T(spec.hint2)).c_str(), spec.maxLen2, kFieldW);
         // The first field is released on the way out: this builder is retried from the menu tick,
         // and a bare return past a successful Create would leak a Field per retry.
         if (!s.field2) { ReleaseFields(s); return false; }
@@ -194,12 +189,12 @@ bool BuildOne(void* switcher, Kind kind, void* backDonor) {
     // confirm.
     if (void* footRow = NS::Spawn(L"HorizontalBox", col)) {
         s.backBtn = NS::BuildButton(footRow, backDonor,
-                                    Wide(l10n::Tc("server_browser", "Back")).c_str(),
+                                    coop::text::FromUtf8Lossy(l10n::Tc("server_browser", "Back")).c_str(),
                                     NS::kBtnFontPx);
         void* gap  = NS::Spawn(L"Spacer", footRow);
         if (gap) NS::AddHFill(footRow, gap, 1.f, NS::kFill, NS::kFill);
         s.okBtn = NS::BuildButton(footRow, backDonor,
-                                  Wide(l10n::Tc("server_browser", spec.confirm)).c_str(),
+                                  coop::text::FromUtf8Lossy(l10n::Tc("server_browser", spec.confirm)).c_str(),
                                   NS::kBtnFontPx);
         // Released here too: the next tick rebuilds and mints a second Field, stranding this one in
         // the module's live list.

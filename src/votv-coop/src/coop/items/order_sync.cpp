@@ -394,8 +394,8 @@ void OnRefused(const void* payload, int len) {
     coop::peer_action_feed::AnnounceDirect(
         static_cast<uint8_t>(coop::players::Registry::Get().LocalPeerId()), action);
     const int32_t restored = OE::RestoreCartItems(rows);
-    UE_LOGW("order_sync: order id=%u REFUSED by the host ('%s'); %d of %zu item(s) restored to the "
-            "cart", p.orderId, coop::peer_action_feed::English(action), restored, rows.size());
+    UE_LOGW("order_sync: order id=%u REFUSED by the host (reason %u); %d of %zu item(s) restored to the "
+            "cart", p.orderId, static_cast<unsigned>(p.reason), restored, rows.size());
 }
 
 }  // namespace

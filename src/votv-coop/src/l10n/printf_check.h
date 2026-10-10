@@ -34,6 +34,7 @@ struct Parsed {
     std::array<Conv, kMaxConvs> convs{};   // in format order; `%%` is not one
     uint8_t count = 0;                     // conversions in the format
     uint8_t args = 0;                      // arguments they read (== count: each exactly once)
+    bool    numbered = false;              // the conversions carry argument numbers ("%1$s")
 };
 
 // Reads `fmt` with the grammar above. False with the reason in `why`; nothing allocates.
@@ -41,7 +42,9 @@ bool Parse(std::string_view fmt, Parsed* out, const char** why);
 
 // A translation's conversions against its msgid's: the same argument count, and for each
 // argument number the same type and length (`d` and `i` are one type); flags, width and precision
-// may differ. False with the reason.
+// may differ. A translation numbers its conversions only when the msgid does: an unnumbered msgid may
+// be handed to the CRT's own printf (an ImGui widget's value format), which has no argument numbers.
+// False with the reason.
 bool Matches(const Parsed& msgid, const Parsed& translation, const char** why);
 
 // The conversion that reads argument `arg`, or null.

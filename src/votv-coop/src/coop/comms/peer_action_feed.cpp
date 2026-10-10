@@ -176,9 +176,5 @@ void AnnounceDirectCount(uint8_t slot, Action action, long long n) {
     Say(slot, *row, std::wstring(), n);
 }
 
-const char* English(Action action) {
-    const Row* row = RowOf(action);
-    return row ? row->msgid : "?";
-}
 
 }  // namespace coop::peer_action_feed

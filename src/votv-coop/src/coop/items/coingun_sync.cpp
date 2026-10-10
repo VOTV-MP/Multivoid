@@ -488,8 +488,8 @@ void OnReliableResult(const uint8_t* payload, int len) {
     } else {
         const auto action = RefusalAction(code);
         coop::peer_action_feed::AnnounceDirect(local, action);
-        UE_LOGI("coingun[client]: CoinGunResult code=%u points=%d -- '%s'", static_cast<unsigned>(r.code),
-                r.points, coop::peer_action_feed::English(action));
+        UE_LOGI("coingun[client]: CoinGunResult code=%u points=%d -- refused", static_cast<unsigned>(r.code),
+                r.points);
     }
 }
 

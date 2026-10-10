@@ -79,11 +79,6 @@ using NS::AddText;
 using NS::AddFramedBox;
 using NS::BuildButton;
 
-// A looked-up label is UTF-8; the native widgets take wide text.
-std::wstring Wide(const char* utf8) {
-    return coop::text::FromUtf8Lossy(utf8, std::strlen(utf8));
-}
-
 // Only the window's colours; the row palette lives with the rows.
 const FLinearColor kPanel  = NS::Panel();   // window fill
 const FLinearColor kText   = NS::Text();    // the default: most text is white
@@ -205,7 +200,7 @@ bool BuildScreen(void* switcher) {
     // authors its own frame: it is the canary for a moved menu layout.
     NS::WindowShell shell;
     if (!NS::BuildWindowShell(switcher, kWindowW, kWindowH,
-                              Wide(l10n::T("Multivoid  -  Server Browser")).c_str(), shell))
+                              coop::text::FromUtf8Lossy(l10n::T("Multivoid  -  Server Browser")).c_str(), shell))
         return false;
     void* root = shell.root;
     void* col  = shell.column;
@@ -266,7 +261,7 @@ bool BuildScreen(void* switcher) {
     // runs all the way down with no dead band beside Back.
     if (void* footRow = Spawn(L"HorizontalBox", leftCol)) {
         // Sentence case: VOTV uppercases no button label anywhere.
-        g_backBtn = BuildButton(footRow, backDonor, Wide(l10n::Tc("server_browser", "Back")).c_str(),
+        g_backBtn = BuildButton(footRow, backDonor, coop::text::FromUtf8Lossy(l10n::Tc("server_browser", "Back")).c_str(),
                                 ui::native_screen::kBtnFontPx);
         if (!g_backBtn) return false;
         NS::SetHSlot(NS::SlotOf(g_backBtn), 0.f, NS::kLeft, kCenter);

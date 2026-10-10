@@ -38,6 +38,8 @@ bool FromUtf8Strict(const char* p, size_t n, std::wstring* out);
 // registries). Lossy where the source is not well-formed, which is acceptable
 // only because the source is ours; never use it on a peer's bytes.
 std::wstring FromUtf8Lossy(const char* p, size_t n);
+// The same for a NUL-terminated string of ours (a looked-up label a native widget takes wide).
+std::wstring FromUtf8Lossy(const char* nulTerminated);
 
 // Strip C0 control bytes (keeping TAB), DEL, and the three line separators U+0085, U+2028 and
 // U+2029 (each whole sequence) from a UTF-8 string. A DENYLIST: it removes what is dangerous at

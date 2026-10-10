@@ -25,11 +25,6 @@
 namespace ui::server_browser_panels {
 namespace {
 
-// A looked-up label is UTF-8; the native widgets take wide text.
-std::wstring Wide(const char* utf8) {
-    return coop::text::FromUtf8Lossy(utf8, std::strlen(utf8));
-}
-
 namespace E  = ue_wrap::engine;
 namespace U  = ue_wrap::umg;
 namespace P  = ue_wrap::profile;
@@ -185,7 +180,7 @@ bool BuildDetails(void* parent) {
     // count changes with the selection and an auto-sized box would have slid the pane below it
     // on every click; a fill slot cannot do that, since its height comes from the column, not
     // its content.
-    void* col = SectionBody(parent, kPanel, Wide(l10n::T("Server info:")).c_str(), 1.f, 0.f);
+    void* col = SectionBody(parent, kPanel, coop::text::FromUtf8Lossy(l10n::T("Server info:")).c_str(), 1.f, 0.f);
     if (!col) return false;
     // The name is the panel's own subject and gets the emphasis the row gives it.
     g_dName    = Line{DetailLine(col, 20, kText), {}};
@@ -300,7 +295,7 @@ void Sync(bool force) {
         g_dVersion.Set(ver);
 
         char players[256];
-        l10n::Fmt(players, sizeof(players), l10n::T("Players: %d/%d"), r.playersCur,
+        l10n::Fmt(players, sizeof(players), l10n::T("Players: %1$d/%2$d"), r.playersCur,
                   r.playersMax);
         g_dPlayers.Set(players);
         // The direct flag is parsed off the wire and had no reader on this screen: a direct host is

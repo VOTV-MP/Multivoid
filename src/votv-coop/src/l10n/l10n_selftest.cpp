@@ -97,10 +97,12 @@ void Conversions(Checks& c) {
     c.Ok(!Accepts("%.3s") && !Accepts("%05s") && !Accepts("%+u") && !Accepts("%#d"), "flags C leaves undefined are refused");
     c.Ok(!Accepts("%123d") && !Accepts("100% sure"), "a three-digit width and a bare '%' are refused");
     c.Ok(!Accepts("%--5d") && !Accepts("%00x") && Accepts("%-08.2f"), "a flag repeated is refused, distinct flags are not");
-    c.Ok(Match("%s took %d", "%2$d by %1$s"), "a reordered translation matches");
+    c.Ok(Match("%1$s took %2$d", "%2$d by %1$s"), "a reordered translation matches");
     c.Ok(Match("%d items", "%i items") && Match("%5.2f", "%.1f"), "d and i are one type; width and precision may differ");
     c.Ok(!Match("%s took %d", "%s took %s") && !Match("%d", "%ld"), "a type or length change is refused");
     c.Ok(!Match("%s and %s", "%s"), "a missing conversion is refused");
+    c.Ok(!Match("volume %.2fx", "volume %1$.2fx") && Match("%1$s took %2$d", "%s took %d"),
+         "a numbered translation of an unnumbered msgid is refused; the reverse is accepted");
 }
 
 void Formatter(Checks& c) {
@@ -163,7 +165,7 @@ void Reader(Checks& c) {
         "msgid \"%llu peer\"\nmsgid_plural \"%llu peers\"\nmsgstr[0] \"%llu a\"\nmsgstr[1] \"%llu b\"\n"
         "msgstr[2] \"%llu c\"\n\n"
         "msgid \"%llu x\"\nmsgid_plural \"%llu xs\"\nmsgstr[0] \"%llu\"\nmsgstr[1] \"\"\nmsgstr[2] \"%llu\"\n\n"   // half
-        "msgid \"%s took %d\"\nmsgstr \"%2$d by %1$s\"\n\n"
+        "msgid \"%1$s took %2$d\"\nmsgstr \"%2$d by %1$s\"\n\n"
         "msgid \"%s took\"\nmsgstr \"%d\"\n\n"                                // a type change: refused
         "msgid \"Plain\"\nmsgstr \"100%\"\n\n"                                // a '%' in a plain line: refused
         "msgid \"Nul\"\nmsgstr \"a\\0b\"\n\n"                                 // a NUL escape: refused
@@ -184,7 +186,7 @@ void Reader(Checks& c) {
     const po::Entry* pl = find("%llu peer", false);
     c.Ok(pl && pl->plural && pl->str.size() == 3, "a plural entry keeps its forms");
     c.Ok(!find("%llu x", false), "a half-filled plural is refused");
-    c.Ok(find("%s took %d", false) && !find("%s took", false), "conversions are checked against the msgid");
+    c.Ok(find("%1$s took %2$d", false) && !find("%s took", false), "conversions are checked against the msgid");
     c.Ok(!find("Plain", false) && !find("Nul", false), "a '%' in a plain line and a NUL escape are refused");
     c.Ok(f.refused.size() == 5, "each refused entry is reported once");
 
@@ -291,6 +293,13 @@ void Embedded(Checks& c) {
                              return TRUE;
                          },
                          reinterpret_cast<LONG_PTR>(&names));
+    // The packs this build must carry: a resource step that dropped one would otherwise pass in silence.
+    auto has = [&](const wchar_t* n) {
+        for (const std::wstring& x : names)
+            if (_wcsicmp(x.c_str(), n) == 0) return true;
+        return false;
+    };
+    c.Ok(has(L"L10N_ZH_CN") && has(L"L10N_EN_XA"), "the build embeds the zh_CN pack and the en_XA pseudo-locale");
     for (const std::wstring& name : names) {
         HRSRC res = ::FindResourceW(self, name.c_str(), reinterpret_cast<LPCWSTR>(RT_RCDATA));
         HGLOBAL glob = res ? ::LoadResource(self, res) : nullptr;

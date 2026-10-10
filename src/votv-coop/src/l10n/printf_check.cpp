@@ -105,6 +105,7 @@ bool Parse(std::string_view s, Parsed* out, const char** why) {
     }
     if (top != out->count) return fail("a gap in the argument numbers");
     out->args = out->count;
+    out->numbered = numbered == 1;
     return true;
 }
 
@@ -115,6 +116,10 @@ const Conv* ForArg(const Parsed& p, uint8_t arg) {
 }
 
 bool Matches(const Parsed& msgid, const Parsed& tr, const char** why) {
+    if (tr.numbered && !msgid.numbered) {
+        if (why) *why = "argument numbers in the translation of a msgid that has none";
+        return false;
+    }
     if (msgid.args != tr.args) {
         if (why) *why = "a different number of conversions than the msgid";
         return false;

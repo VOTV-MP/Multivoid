@@ -2,6 +2,8 @@
 
 #include "ui/chat_input.h"
 
+#include "l10n/l10n.h"
+
 #include "coop/comms/chat_feed.h"
 #include "coop/comms/chat_sync.h"
 #include "coop/commands/command_sync.h"
@@ -102,7 +104,7 @@ void Render() {
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
         ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoNav;
     if (ImGui::Begin("##coop_chat_input", nullptr, flags)) {
-        ImGui::TextDisabled("say:");
+        ImGui::TextDisabled("%s", l10n::T("say:"));
         ImGui::SameLine();
         // The chat COLUMN owns one width: the input bar matches the feed's word-wrap width (ui/hud.cpp
         // DrawChat wrapW) so the bar sits exactly under the messages instead of striping most of the
@@ -114,7 +116,7 @@ void Render() {
         // The key hints live in the field's PLACEHOLDER (visible while empty)
         // instead of a trailing label -- zero width cost, same discoverability.
         const bool submitted = ImGui::InputTextWithHint(
-            "##chatline", "Enter = send, Esc = close, Up/Down = history",
+            "##chatline", l10n::T("Enter = send, Esc = close, Up/Down = history"),
             g_buf, sizeof(g_buf),
             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackHistory,
             &HistoryCallback);

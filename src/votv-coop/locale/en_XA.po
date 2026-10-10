@@ -13,8 +13,8 @@ msgid "%.0f cm"
 msgstr "[[%.0f cm]]"
 
 #, c-format
-msgid "%.1f / %.1f MB"
-msgstr "[[%.1f / %.1f MB]]"
+msgid "%1$.1f / %2$.1f MB"
+msgstr "[[%1$.1f / %2$.1f MB]]"
 
 #, c-format
 msgid "%1$s (%2$llu KB)"
@@ -157,6 +157,10 @@ msgid "%1$s was turned away: unofficial build %2$s [%3$s]"
 msgstr "[[%1$s was turned away: unofficial build %2$s [%3$s]]]"
 
 #, c-format
+msgid "%1$u / %2$u objects"
+msgstr "[[%1$u / %2$u objects]]"
+
+#, c-format
 msgid "%1$u/%2$u players sleeping"
 msgstr "[[%1$u/%2$u players sleeping]]"
 
@@ -195,10 +199,6 @@ msgstr[1] "[[%llu servers]]"
 #, c-format
 msgid "%s (without passwords)"
 msgstr "[[%s (without passwords)]]"
-
-#, c-format
-msgid "%u / %u objects"
-msgstr "[[%u / %u objects]]"
 
 msgid "(hidden -- friends join by invite/IP)"
 msgstr "[[(hidden -- friends join by invite/IP)]]"
@@ -448,6 +448,9 @@ msgstr "[[Duplicate settings with different values]]"
 msgid "Each surface picks its own family; applies on the next frame."
 msgstr "[[Each surface picks its own family; applies on the next frame.]]"
 
+msgid "Enter = send, Esc = close, Up/Down = history"
+msgstr "[[Enter = send, Esc = close, Up/Down = history]]"
+
 msgid "Everyone in the registry is online."
 msgstr "[[Everyone in the registry is online.]]"
 
@@ -513,8 +516,8 @@ msgid "Joining %s"
 msgstr "[[Joining %s]]"
 
 #, c-format
-msgid "Keep line %d: %s"
-msgstr "[[Keep line %d: %s]]"
+msgid "Keep line %1$d: %2$s"
+msgstr "[[Keep line %1$d: %2$s]]"
 
 msgid "LAN"
 msgstr "[[LAN]]"
@@ -736,8 +739,8 @@ msgid "Players"
 msgstr "[[Players]]"
 
 #, c-format
-msgid "Players: %d/%d"
-msgstr "[[Players: %d/%d]]"
+msgid "Players: %1$d/%2$d"
+msgstr "[[Players: %1$d/%2$d]]"
 
 msgid "Please describe what happened (at least 20 characters)."
 msgstr "[[Please describe what happened (at least 20 characters).]]"
@@ -1117,8 +1120,8 @@ msgid "Threshold near 0 dB -- the mic will almost never trigger. Try -50 dB."
 msgstr "[[Threshold near 0 dB -- the mic will almost never trigger. Try -50 dB.]]"
 
 #, c-format
-msgid "Tidied: %d duplicate line(s) merged, %d setting(s) placed under their sections, %d unknown/invalid line(s) commented out. Anything still listed above needs a choice or can't be fixed from the file."
-msgstr "[[Tidied: %d duplicate line(s) merged, %d setting(s) placed under their sections, %d unknown/invalid line(s) commented out. Anything still listed above needs a choice or can't be fixed from the file.]]"
+msgid "Tidied: %1$d duplicate line(s) merged, %2$d setting(s) placed under their sections, %3$d unknown/invalid line(s) commented out. Anything still listed above needs a choice or can't be fixed from the file."
+msgstr "[[Tidied: %1$d duplicate line(s) merged, %2$d setting(s) placed under their sections, %3$d unknown/invalid line(s) commented out. Anything still listed above needs a choice or can't be fixed from the file.]]"
 
 msgid "Tidy up multivoid.ini"
 msgstr "[[Tidy up multivoid.ini]]"
@@ -1377,6 +1380,9 @@ msgstr "[[pkt/s  %1$.0f in   %2$.0f out]]"
 
 msgid "reason (shown in the Banned list)"
 msgstr "[[reason (shown in the Banned list)]]"
+
+msgid "say:"
+msgstr "[[say:]]"
 
 msgid "starting up"
 msgstr "[[starting up]]"

@@ -35,7 +35,7 @@ bool IsHost(coop::net::Session* s) { return s->role() == coop::net::Role::Host; 
 
 void PushCounterLine(uint8_t count, uint8_t total) {
     if (count == 0) return;
-    char buf[128];
+    char buf[256];
     if (l10n::Fmt(buf, sizeof(buf), l10n::T("%1$u/%2$u players sleeping"),
                   static_cast<unsigned>(count), static_cast<unsigned>(total)) < 0)
         return;

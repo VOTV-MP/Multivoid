@@ -122,7 +122,7 @@ void RenderRowsOfType(const std::vector<CR::Row>& rows, CR::Row::Type type) {
                     // The words are looked up; the id after "###" stays the runtime pair that names
                     // this key's line, so a translation never moves it.
                     char keep[256];
-                    l10n::Fmt(keep, sizeof(keep), l10n::T("Keep line %d: %s"), dl.lineNo, dl.value.c_str());
+                    l10n::Fmt(keep, sizeof(keep), l10n::T("Keep line %1$d: %2$s"), dl.lineNo, dl.value.c_str());
                     char btn[320];
                     std::snprintf(btn, sizeof(btn), "%s###cfgrev_%s_%d",
                                   keep, r.key.c_str(), dl.lineNo);
@@ -279,8 +279,8 @@ void Render() {
                 // Three counts in one sentence: Tn takes one, so the "(s)" forms stay.
                 char tidied[512];
                 l10n::Fmt(tidied, sizeof(tidied),
-                          l10n::T("Tidied: %d duplicate line(s) merged, %d setting(s) placed "
-                                  "under their sections, %d unknown/invalid line(s) commented "
+                          l10n::T("Tidied: %1$d duplicate line(s) merged, %2$d setting(s) placed "
+                                  "under their sections, %3$d unknown/invalid line(s) commented "
                                   "out. Anything still listed above needs a choice or can't "
                                   "be fixed from the file."),
                           g_tidyOutcome.collapsed, g_tidyOutcome.placed, g_tidyOutcome.retired);

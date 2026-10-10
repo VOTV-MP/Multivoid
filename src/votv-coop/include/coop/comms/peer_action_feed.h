@@ -59,8 +59,6 @@ void AnnounceDirect(uint8_t slot, Action action, const std::wstring& arg = {});
 // AnnounceDirect for an action that takes a count (SoldFor): the plural form follows `n`.
 void AnnounceDirectCount(uint8_t slot, Action action, long long n);
 
-// The action's English sentence, for a log line beside the feed's.
-const char* English(Action action);
 
 // The ui.chat.peer_actions toggle: Enabled reads the live value (lazy-loads the row's
 // resolved value on first call). A change is a config SetValue; the subscriber applies it.

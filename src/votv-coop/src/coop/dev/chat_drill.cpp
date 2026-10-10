@@ -317,7 +317,6 @@ void JudgeSeed() {
     Pass();
 }
 
-// The start of every arm, once this peer is ready. False while it is not.
 // The span arm, on every peer and in memory: a peer-action line whose nick a translated sentence put
 // mid-line keeps that span through the feed and reads back as it was pushed; a span the 255-byte cut
 // reaches is dropped, never kept as a coloured tail; a chat row's prefix reads as before. It tests the
@@ -343,6 +342,7 @@ void JudgeSpan() {
     else Pass();
 }
 
+// The start of every arm, once this peer is ready. False while it is not.
 bool Begin(coop::net::Session* session) {
     g_isHost = session->role() == coop::net::Role::Host;
     if (!g_isHost && !ClientReady(session)) return false;

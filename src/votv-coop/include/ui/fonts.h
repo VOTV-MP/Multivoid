@@ -59,7 +59,7 @@ ImFont* FontFor(Role r);
 float   PxFor(Role r);
 
 const char* FamilyLabel(Family f);   // "JetBrains Mono", ...
-const char* RoleLabel(Role r);       // "Menu / panels", "Chat", "Net stats", "Nameplates"
+const char* RoleLabel(Role r);       // the role's name in the player's language ("Menu / panels" in English)
 
 // The role's family. Render thread (F1 menu). A pane changes it by setting the ui.font.<role> row;
 // ApplyRowsIfChanged applies it.

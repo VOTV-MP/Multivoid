@@ -513,7 +513,7 @@ void Sync() {
         SetRowText(rp.text[kCellFlag], MismatchMark(r));
         SetRowText(rp.text[kCellLink], ui::link_format::LobbyLinkLabel(r.link));
         char players[256];
-        l10n::Fmt(players, sizeof(players), l10n::T("Players: %d/%d"), r.playersCur, r.playersMax);
+        l10n::Fmt(players, sizeof(players), l10n::T("Players: %1$d/%2$d"), r.playersCur, r.playersMax);
         SetRowText(rp.text[kCellPlayers], players);
         // Selection is keyed on the lobby, not the row index: the set churns and one host leaving
         // shifts every row after it, so an index-keyed selection would move to whatever landed

@@ -78,6 +78,10 @@ std::wstring FromUtf8Lossy(const char* p, size_t n) {
     return w;
 }
 
+std::wstring FromUtf8Lossy(const char* nulTerminated) {
+    return nulTerminated ? FromUtf8Lossy(nulTerminated, std::strlen(nulTerminated)) : std::wstring();
+}
+
 std::string SanitizeUtf8(const char* p, size_t n) {
     std::string out;
     out.reserve(n);

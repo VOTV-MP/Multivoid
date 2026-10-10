@@ -8,8 +8,8 @@
 // joiner's seed and the lines said while it loaded. i18n: all four, EVERY peer judges the others'
 // lines, in four scripts, and nicknames; its wait restarts its budget at each new line and its
 // ABORT names the lines still missing. span: every peer pushes a peer-action line with its nick
-// mid-line and one whose nick the 255-byte cut reaches, and judges what the feed hands back. Lines tagged [CHAT-DRILL]: "<role> PASS", "<role> FAIL:
-// <why>" (roles, indices, counts; never chat text), "<role> ABORT: <why>" (not a measurement: a
+// mid-line and one whose nick the 255-byte cut reaches, and judges what the feed hands back.
+// Lines tagged [CHAT-DRILL]: "<role> PASS", "<role> FAIL: <why>" (roles, indices, counts; never chat text), "<role> ABORT: <why>" (not a measurement: a
 // wait ran out or the case could not be exercised), and the seed arm's rig cue "host HAS c1 4".
 // Reds: chat_no_retain (history), chat_seed_suppress (seed), chat_drill_bad_nick (i18n, on c1),
 // chat_span_prefix (span).

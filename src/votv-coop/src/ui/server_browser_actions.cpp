@@ -34,11 +34,6 @@ namespace NS = ui::native_screen;
 namespace sm = coop::session_manager;
 namespace SB = ui::server_browser_native;
 
-// A looked-up label is UTF-8; the native widgets take wide text.
-std::wstring Wide(const char* utf8) {
-    return coop::text::FromUtf8Lossy(utf8, std::strlen(utf8));
-}
-
 void* g_connect = nullptr;
 void* g_host    = nullptr;
 void* g_refresh = nullptr;
@@ -143,7 +138,7 @@ bool BuildConnect(void* parent, void* donorBtn) {
     U::SetContent(rowBox, row);
     if (void* s = NS::AddVFill(parent, rowBox, 0.f, NS::kFill, NS::kTop))
         NS::SetSlotPadding(s, P::off::UVerticalBoxSlot_Padding, 0.f, 0.f, 0.f, 6.f);
-    g_connect = NS::BuildButton(row, donorBtn, Wide(l10n::Tc("server_browser", "Connect")).c_str(),
+    g_connect = NS::BuildButton(row, donorBtn, coop::text::FromUtf8Lossy(l10n::Tc("server_browser", "Connect")).c_str(),
                                 NS::kBtnFontPx);
     if (!g_connect) {
         UE_LOGE("server_browser_actions: could not build CONNECT -- the screen would have "
@@ -193,7 +188,7 @@ bool Build(void* parent, void* donorBtn) {
             if (void* s = NS::AddVFill(parent, rowBox, 0.f, NS::kFill, NS::kTop))
                 NS::SetSlotPadding(s, P::off::UVerticalBoxSlot_Padding, 0.f, 0.f, 0.f, 4.f);
         }
-        void* btn = NS::BuildButton(row, donorBtn, Wide(l10n::T(cells[i].label)).c_str(),
+        void* btn = NS::BuildButton(row, donorBtn, coop::text::FromUtf8Lossy(l10n::T(cells[i].label)).c_str(),
                                     NS::kBtnFontPx);
         if (!btn) {
             UE_LOGE("server_browser_actions: could not build the '%s' action -- the grid "

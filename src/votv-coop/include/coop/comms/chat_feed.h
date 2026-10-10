@@ -123,7 +123,6 @@ void PushAction(const std::string& utf8Line, uint8_t nickBegin, uint8_t nickByte
 // join announces, since a client reports world-ready before its loading screen clears and an
 // immediate line looks premature. The delay is wall clock: when the line appears, not how
 // long it lives. Game thread.
-void PushDelayed(const std::wstring& line, uint64_t delayMs, Keep keep);
 
 // The UTF-8 form of the delayed push; the wide overload forwards here.
 void PushDelayed(const std::string& utf8Line, uint64_t delayMs, Keep keep);

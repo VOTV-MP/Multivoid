@@ -409,8 +409,14 @@ void Push(const std::wstring& line, Keep keep) { Push(ToUtf8(line), keep); }
 void Push(const std::string& utf8Line, Keep keep) {
     const uint64_t now = NowMs();
     AdvanceSuspension(now);
+    // A composed line may hold a translator's text: control bytes are dropped (tab kept), as the wide
+    // path's conversion drops them, so a line never breaks the row model the wrap code expects.
+    std::string clean;
+    clean.reserve(utf8Line.size());
+    for (char ch : utf8Line)
+        if (static_cast<unsigned char>(ch) >= 0x20 || ch == '\t') clean.push_back(ch);
     Entry e;
-    SetText(e, utf8Line);
+    SetText(e, clean);
     e.key = NextKey();
     e.bornMs = now;
     e.bornSuspendedMs = g_suspendedMs;
@@ -461,10 +467,6 @@ void PushAction(const std::string& utf8Line, uint8_t nickBegin, uint8_t nickByte
     e.keep     = Keep::History;
     g_store.Birth(std::move(e), "action");
     Republish(now);
-}
-
-void PushDelayed(const std::wstring& line, uint64_t delayMs, Keep keep) {
-    PushDelayed(ToUtf8(line), delayMs, keep);
 }
 
 void PushDelayed(const std::string& utf8Line, uint64_t delayMs, Keep keep) {

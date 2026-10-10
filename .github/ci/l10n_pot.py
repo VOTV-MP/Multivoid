@@ -20,8 +20,8 @@ The gate's rules (the translation layer's design, WP-4):
   1. an extraction call or marker with a literal argument in a file outside the allowlist;
   2. an id-bearing ImGui widget (a function of imgui.h whose first parameter is label, name or str_id) whose first
      argument is an l10n::T family call rather than an l10n::Label;
-  3. an English msgid with a '%' that the conversion grammar refuses, or a plural pair whose msgids differ in their
-     conversions;
+  3. an English msgid with a '%' that the conversion grammar refuses, a msgid with two or more conversions that are
+     not numbered, or a plural pair whose msgids differ in their conversions;
   4. an l10n::Fmt or l10n::FmtSpan call whose format is an l10n::T family call on literals and whose argument count
      differs from that msgid's conversions;
   5. a shipped pack (locale/*.po) holding a msgid the template does not.
@@ -64,6 +64,7 @@ ALLOWLIST = [
     "src/ui/admin_panel.cpp",
     "src/ui/browser_input_screens.cpp",
     "src/ui/bug_report_pane.cpp",
+    "src/ui/chat_input.cpp",
     "src/ui/config_review_panel.cpp",
     "src/ui/console.cpp",
     "src/ui/dev_menu.cpp",
@@ -305,6 +306,11 @@ def scan():
                     a = signature(vals["id"])
                     if vals.get("plural") is not None and signature(vals["plural"]) != a:
                         problems.append("%s: a plural pair whose msgids differ in their conversions" % where)
+                    # A translation may number its conversions only if the msgid does; a msgid with two or
+                    # more is numbered, so a translator can always reorder them.
+                    for m in [vals["id"]] + ([vals["plural"]] if vals.get("plural") else []):
+                        if len(signature(m)) >= 2 and not re.search(r"%[0-9]+\$", m):
+                            problems.append("%s: msgid %r has two or more conversions and no argument numbers" % (where, m))
                 except ValueError as err:
                     problems.append("%s: msgid %r refused by the conversion grammar: %s" % (where, vals["id"], err))
             elif name.split("::")[-1] in widgets and name.startswith("ImGui::") and args:

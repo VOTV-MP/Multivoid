@@ -14,7 +14,7 @@ msgstr ""
 
 #: src/ui/loading_screen.cpp
 #, c-format
-msgid "%.1f / %.1f MB"
+msgid "%1$.1f / %2$.1f MB"
 msgstr ""
 
 #: src/ui/bug_report_pane.cpp
@@ -191,6 +191,11 @@ msgstr ""
 msgid "%1$s was turned away: unofficial build %2$s [%3$s]"
 msgstr ""
 
+#: src/ui/loading_screen.cpp
+#, c-format
+msgid "%1$u / %2$u objects"
+msgstr ""
+
 #: src/coop/player/sleep_sync.cpp
 #, c-format
 msgid "%1$u/%2$u players sleeping"
@@ -238,11 +243,6 @@ msgstr[1] ""
 #: src/ui/bug_report_pane.cpp
 #, c-format
 msgid "%s (without passwords)"
-msgstr ""
-
-#: src/ui/loading_screen.cpp
-#, c-format
-msgid "%u / %u objects"
 msgstr ""
 
 #: src/ui/scoreboard.cpp
@@ -556,6 +556,10 @@ msgstr ""
 msgid "Each surface picks its own family; applies on the next frame."
 msgstr ""
 
+#: src/ui/chat_input.cpp
+msgid "Enter = send, Esc = close, Up/Down = history"
+msgstr ""
+
 #: src/ui/admin_panel.cpp
 msgid "Everyone in the registry is online."
 msgstr ""
@@ -635,7 +639,7 @@ msgstr ""
 
 #: src/ui/config_review_panel.cpp
 #, c-format
-msgid "Keep line %d: %s"
+msgid "Keep line %1$d: %2$s"
 msgstr ""
 
 #: src/ui/link_format.cpp
@@ -921,7 +925,7 @@ msgstr ""
 
 #: src/ui/server_browser_panels.cpp src/ui/server_browser_rows.cpp
 #, c-format
-msgid "Players: %d/%d"
+msgid "Players: %1$d/%2$d"
 msgstr ""
 
 #: src/coop/bug_report/report_form.cpp
@@ -1387,7 +1391,7 @@ msgstr ""
 
 #: src/ui/config_review_panel.cpp
 #, c-format
-msgid "Tidied: %d duplicate line(s) merged, %d setting(s) placed under their sections, %d unknown/invalid line(s) commented out. Anything still listed above needs a choice or can't be fixed from the file."
+msgid "Tidied: %1$d duplicate line(s) merged, %2$d setting(s) placed under their sections, %3$d unknown/invalid line(s) commented out. Anything still listed above needs a choice or can't be fixed from the file."
 msgstr ""
 
 #: src/ui/config_review_panel.cpp
@@ -1717,6 +1721,10 @@ msgstr ""
 
 #: src/ui/admin_panel.cpp
 msgid "reason (shown in the Banned list)"
+msgstr ""
+
+#: src/ui/chat_input.cpp
+msgid "say:"
 msgstr ""
 
 #: src/ui/dev_menu.cpp
