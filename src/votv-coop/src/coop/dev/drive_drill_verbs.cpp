@@ -6,12 +6,9 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
-#include "ue_wrap/engine/engine_nav.h"  // FindNavPath
 #include "ue_wrap/world/world_singleton.h"
 
-#include <algorithm>
-#include <cmath>
-#include <utility>
+#include <string>
 
 namespace coop::dev::drive_drill_verbs {
 namespace {
@@ -19,34 +16,11 @@ namespace {
 namespace E = ue_wrap::engine;
 namespace R = ue_wrap::reflection;
 
-float Flat(const ue_wrap::FVector& a, const ue_wrap::FVector& b) { return std::hypot(a.X - b.X, a.Y - b.Y); }
-
 void* PlayerFn(void* player, const wchar_t* name) {
     return player ? R::FindDispatchFunctionCached(R::ClassOf(player), name) : nullptr;
 }
 
 }  // namespace
-
-std::vector<ue_wrap::FVector> ReachableRing(void* player, void* target, int points, float ringCm, float reachCm) {
-    ue_wrap::FVector from{}, at{};
-    if (!E::TryGetActorLocation(player, from) || !E::TryGetActorLocation(target, at)) return {};
-    std::vector<std::pair<float, ue_wrap::FVector>> found;
-    for (int i = 0; i < points; ++i) {
-        const float a = 6.2831853f * static_cast<float>(i) / static_cast<float>(points);
-        ue_wrap::FVector p = from;  // at the height the player stands at
-        p.X = at.X + ringCm * std::cos(a);
-        p.Y = at.Y + ringCm * std::sin(a);
-        std::vector<ue_wrap::FVector> route;
-        if (!E::FindNavPath(player, from, p, route) || route.empty() || Flat(route.back(), p) > reachCm) continue;
-        float len = 0.f;
-        for (size_t k = 1; k < route.size(); ++k) len += Flat(route[k - 1], route[k]);
-        found.emplace_back(len, p);
-    }
-    std::stable_sort(found.begin(), found.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
-    std::vector<ue_wrap::FVector> out;
-    for (const auto& f : found) out.push_back(f.second);
-    return out;
-}
 
 bool Pocket(void* player, void* prop) {
     void* fn = PlayerFn(player, L"putObjectInventory2");

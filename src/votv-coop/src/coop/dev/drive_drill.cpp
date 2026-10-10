@@ -6,6 +6,7 @@
 
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/director/standpoints.h"
 #include "coop/element/registry.h"
 #include "coop/interactables/drive_payload_sync.h"
 #include "coop/interactables/drive_sync.h"
@@ -267,7 +268,10 @@ void ClientTick() {
             Abandon("this client's world has no eraser, or no player, to walk with");
             return;
         }
-        g_ring = DV::ReachableRing(player, eraser, kStandpoints, kStandRingCm, kStandReachCm);
+        ue_wrap::FVector at{};
+        g_ring = E::TryGetActorLocation(eraser, at)
+                     ? coop::director::ReachableStandpoints(player, at, kStandRingCm, kStandpoints, kStandReachCm)
+                     : std::vector<ue_wrap::FVector>();
         UE_LOGI("[DRIVE-DRILL] client: a route reaches %zu of the %d standpoints about the eraser", g_ring.size(),
                 kStandpoints);
         if (g_ring.empty()) {

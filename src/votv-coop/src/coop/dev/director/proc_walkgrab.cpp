@@ -153,7 +153,7 @@ public:
         return onLevel_ ? !Arrived(ctx, goal_) : HorizDist(ctx.pos, goal_.targetPos) > goal_.reachCm;
     }
     ProcStatus OnTick(const PlayerContext& ctx) override {
-        if (!pathed_) {   // compute the route once (after the hand is clear, so from the real start)
+        if (!pathed_) {   // compute the route (after the hand is clear, so from the real start), again per leg
             pathed_ = true;
             std::vector<ue_wrap::FVector> path;
             const bool ok = !goal_.straight && E::FindNavPath(ctx.player, ctx.pos, goal_.targetPos, path);
@@ -161,6 +161,9 @@ public:
             else waypoints_.push_back(goal_.targetPos);   // the straight line, asked for or the fallback
             goal_.route.assign(1, ok && !path.empty() ? path.front() : ctx.pos);
             goal_.route.insert(goal_.route.end(), waypoints_.begin(), waypoints_.end());
+            // A route that stops short of the goal is PARTIAL (the path query's bounded search on a long walk):
+            // its end is a leg boundary, re-planned from there on arrival rather than by the stuck detector.
+            partial_ = ok && HorizDist(waypoints_.back(), goal_.targetPos) > goal_.reachCm;
             UE_LOGI("director/Goto: route %zu waypoints (%s), dist=%.0fcm", waypoints_.size(),
                     ok ? "NavMesh route" : goal_.straight ? "straight line, as asked" : "straight-line fallback",
                     HorizDist(ctx.pos, goal_.targetPos));
@@ -168,6 +171,12 @@ public:
         const float toPile = HorizDist(ctx.pos, goal_.targetPos);
         while (wp_ + 1 < waypoints_.size() && HorizDist(ctx.pos, waypoints_[wp_]) < kAdvanceCm) ++wp_;
         const float toWp = HorizDist(ctx.pos, waypoints_[wp_]);
+        if (partial_ && wp_ + 1 == waypoints_.size() && toWp < kAdvanceCm) {
+            ++legs_;
+            UE_LOGI("director/Goto: leg %d reached (toPile=%.0f) -- the route was partial, re-path from here", legs_, toPile);
+            pathed_ = false; waypoints_.clear(); wp_ = 0; lastWp_ = 0; bestWp_ = 1e9f; bestPile_ = 1e9f; partial_ = false;
+            return ProcStatus::Working;
+        }
         // Progress = advanced a waypoint OR closer to the current waypoint OR closer to the pile.
         bool progressed = false;
         if (wp_ > lastWp_) { progressed = true; lastWp_ = wp_; bestWp_ = 1e9f; }
@@ -247,6 +256,8 @@ private:
     DirectorGoal& goal_;
     const bool onLevel_;
     bool   pathed_ = false;
+    bool   partial_ = false;   // the current route stops short of the goal: its end is a leg boundary
+    int    legs_ = 0;
     std::vector<ue_wrap::FVector> waypoints_;
     size_t wp_ = 0, lastWp_ = 0;
     float  bestWp_ = 1e9f, bestPile_ = 1e9f;

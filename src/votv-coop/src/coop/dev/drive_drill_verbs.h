@@ -1,19 +1,14 @@
 // coop/dev/drive_drill_verbs.h -- the player's own verbs the drive drill drives, each the game's own, as a player's
-// input reaches it: the pocket, the take-out from the inventory, the hand's pickup and throw, and a walk target a
-// NavMesh route reaches. A private header of coop/dev/drive_drill.cpp (src tree, not include/).
+// input reaches it: the pocket, the take-out from the inventory, the hand's pickup and throw. A private header of
+// coop/dev/drive_drill.cpp (src tree, not include/).
 
 #pragma once
 
 #include "ue_wrap/core/types.h"
 
 #include <string>
-#include <vector>
 
 namespace coop::dev::drive_drill_verbs {
-
-// The ring's points about `target` that a NavMesh route from `player` reaches (the route's end within `reachCm` of
-// the point), shortest route first: the director's own test for a reachable pile.
-std::vector<ue_wrap::FVector> ReachableRing(void* player, void* target, int points, float ringCm, float reachCm);
 
 // mainPlayer.putObjectInventory2: `prop` into the player's inventory, the world actor gone. True when it was taken.
 bool Pocket(void* player, void* prop);
