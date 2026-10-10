@@ -31,4 +31,9 @@ bool DevMode();
 // harness, which cannot click: the next Render selects it, if this peer may see it. Any thread.
 void RequestSelect(const char* category, const char* sub);
 
+// Whether the pane the render thread last DREW is this one, named as the tree names it in English. The
+// readiness a drill waits on after RequestSelect: true once a frame drew that pane, its text looked up.
+// Any thread.
+bool DrawnSelection(const char* category, const char* sub);
+
 }  // namespace ui::dev_menu

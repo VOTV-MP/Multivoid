@@ -520,6 +520,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/stats_probe.cpp
     src/coop/dev/stat_order_drill.cpp
     src/coop/dev/chat_drill.cpp
+    src/coop/dev/l10n_drill.cpp
     src/coop/dev/ban_drill.cpp
     src/coop/dev/bug_report_drill.cpp
     src/coop/dev/grants_drill.cpp

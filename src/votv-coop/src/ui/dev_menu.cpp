@@ -3,6 +3,8 @@
 #include "ui/dev_menu.h"
 #include "ui/dev_panes.h"
 
+#include "l10n/l10n.h"
+
 #include "coop/dev/dev_gate.h"
 #include "coop/permissions/grants_core.h"
 #include "coop/session/local_grants.h"
@@ -199,6 +201,9 @@ void RenderAdminPlayers() { ui::admin_panel::Render(); }
 void RenderWorldRules() { ui::world_rules_panel::Render(); }
 
 // ---- the strict nested taxonomy (refined as features land) -------------------
+// A player entry's name is marked for translation and shown translated (the drawer's Name below); a
+// developer entry's name stays English. Either way the name itself is the selection key RequestSelect
+// compares and the widget's id, so neither ever depends on the language.
 // Organized by the GAME'S OWN DOMAINS: Player (the person) ; World (the simulation
 // state: rules/weather/clock/economy) ; Content (the game's spawnable/triggerable
 // content: entities + events) ; Network ; Administration ; Cosmetics ; Report a bug
@@ -211,11 +216,11 @@ const std::vector<Cat>& Tree() {
             { "Vitals",   { { &ui::dev_panes::RenderRestoreVitals, true } }, true },
             { "HUD",      { { &ui::dev_panes::RenderPosHud, true }, { &ui::dev_panes::RenderObjectOverlay, true }, { &ui::dev_panes::RenderRagdollBones, true } }, true },
         }, true },
-        { "World", {
+        { L10N_MARK("World"), {
             // Rules is for EVERYONE (host+clients+solo): a read-only view of the
             // world rules this peer runs under (mainGameInstance.gameRules) +
             // gamemode. Non-dev, non-host.
-            { "Rules",    { { &RenderWorldRules, false } }, false },
+            { L10N_MARK("Rules"),    { { &RenderWorldRules, false } }, false },
             { "Weather",  { { &ui::dev_panes::RenderSnow, true } }, true },
             { "Clock",    { { &ui::dev_panes::RenderSetClock, true } }, true },
             { "Economy",  { { &ui::dev_panes::RenderGivePoints, true } }, true },
@@ -229,25 +234,25 @@ const std::vector<Cat>& Tree() {
             { "Props",    { { &ui::dev_panes::RenderSpawnMenuUnlock, true } }, true },
             { "Events",   { { &ui::dev_panes::RenderEvents, true } }, true },
         }, true },
-        { "Network", {
+        { L10N_MARK("Network"), {
             // Stats is for EVERYONE (the overlay toggle + live session readout);
             // Session stays a dev placeholder, hidden for regular players.
-            { "Stats",    { { &RenderNetStats, false } }, false },
+            { L10N_MARK("Stats"),    { { &RenderNetStats, false } }, false },
             { "Session",  {}, true },
         }, false },
-        { "Administration", {
+        { L10N_MARK("Administration"), {
             // HOST-role-gated (not dev): online/offline/banned player admin.
-            { "Players", { { &RenderAdminPlayers, false } }, false, true },
-            { "Server settings", { { &ui::server_settings_pane::Render, false } }, false, true },
+            { L10N_MARK("Players"), { { &RenderAdminPlayers, false } }, false, true },
+            { L10N_MARK("Server settings"), { { &ui::server_settings_pane::Render, false } }, false, true },
         }, false, true },
-        { "Cosmetics", {
-            { "Skins",     { { &RenderSkins, false } }, false },
-            { "Nameplate", { { &RenderNameplatePref, false } }, false },
-            { "Chat",      { { &RenderChatPref, false } }, false },
-            { "Interface", { { &RenderFontPref, false } }, false },
+        { L10N_MARK("Cosmetics"), {
+            { L10N_MARK("Skins"),     { { &RenderSkins, false } }, false },
+            { L10N_MARK("Nameplate"), { { &RenderNameplatePref, false } }, false },
+            { L10N_MARK("Chat"),      { { &RenderChatPref, false } }, false },
+            { L10N_MARK("Interface"), { { &RenderFontPref, false } }, false },
         }, false },
-        { "Report a bug", {
-            { "Report", { { &ui::bug_report_pane::Render, false } }, false },
+        { L10N_MARK("Report a bug"), {
+            { L10N_MARK("Report"), { { &ui::bug_report_pane::Render, false } }, false },
         }, false },
     };
     return kTree;
@@ -260,6 +265,13 @@ const Sub* g_selSub = nullptr;
 // the flag, and read only after it is seen set.
 std::string       g_wantCat, g_wantSub;
 std::atomic<bool> g_wantSelect{false};
+// The pane the render thread last drew, as ONE value -- (category index + 1) << 16 | (sub index + 1),
+// 0 before any -- stored after the pane's draw, so a reader on another thread that sees it knows that
+// frame's text was looked up.
+std::atomic<uint32_t> g_drawn{0};
+
+// What the tree shows for an entry: a player entry translated, a developer entry as it is.
+const char* Name(const char* name, bool dev) { return dev ? name : l10n::T(name); }
 
 // Dev switch, read ONCE at boot by Init() (off the render thread). devMode=false
 // -> only non-dev (Cosmetics) shows; the menu itself is always available.
@@ -280,6 +292,15 @@ bool DevMode() {
     // from the host. Render-thread safe.
     return g_devMode &&
            (::coop::dev_gate::Allowed() || ::coop::session::local_grants::AnyDevLocal());
+}
+
+bool DrawnSelection(const char* category, const char* sub) {
+    const uint32_t v = g_drawn.load(std::memory_order_acquire);
+    if (v == 0 || !category || !sub) return false;
+    const auto& tree = Tree();
+    const uint32_t c = (v >> 16) - 1, s = (v & 0xFFFF) - 1;
+    return c < tree.size() && s < tree[c].subs.size() && std::strcmp(tree[c].name, category) == 0 &&
+           std::strcmp(tree[c].subs[s].name, sub) == 0;
 }
 
 void RequestSelect(const char* category, const char* sub) {
@@ -338,7 +359,7 @@ void Render() {
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.26f, 0.30f, 0.38f, 1.00f));
         ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0.30f, 0.35f, 0.45f, 1.00f));
         ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.55f, 0.82f, 1.00f, 1.00f));
-        const bool open = ImGui::TreeNodeEx(cat.name,
+        const bool open = ImGui::TreeNodeEx(l10n::Label(Name(cat.name, cat.dev), cat.name),
             ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_DefaultOpen |
             ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_NoTreePushOnOpen);
         ImGui::PopStyleColor(4);
@@ -348,7 +369,10 @@ void Render() {
             if (sub.dev && !devMode) continue;
             if (sub.host && !isHost) continue;
             const bool selected = (g_selSub == &sub);
-            if (ImGui::Selectable(sub.name, selected)) { g_selCat = &cat; g_selSub = &sub; }
+            if (ImGui::Selectable(l10n::Label(Name(sub.name, sub.dev), sub.name), selected)) {
+                g_selCat = &cat;
+                g_selSub = &sub;
+            }
         }
         ImGui::Unindent(S(14.0f));
     }
@@ -359,31 +383,36 @@ void Render() {
     // Right: the selected subcategory's controls.
     ImGui::BeginChild("##content", ImVec2(0, 0), ImGuiChildFlags_Borders);
     if (g_selCat && g_selSub) {
-        ImGui::TextDisabled("%s  >  %s", g_selCat->name, g_selSub->name);
+        ImGui::TextDisabled("%s  >  %s", Name(g_selCat->name, g_selCat->dev), Name(g_selSub->name, g_selSub->dev));
         ImGui::Separator();
         int shown = 0;
         for (const auto& it : g_selSub->items) {
             if (it.dev && !devMode) continue;
             if (it.render) { it.render(); ++shown; }
         }
-        if (shown == 0) ImGui::TextDisabled("No tools here yet -- coming soon.");
+        if (shown == 0) ImGui::TextDisabled("%s", l10n::T("No tools here yet -- coming soon."));
+        const uint32_t cat = static_cast<uint32_t>(g_selCat - tree.data());
+        const uint32_t sub = static_cast<uint32_t>(g_selSub - g_selCat->subs.data());
+        g_drawn.store(((cat + 1) << 16) | (sub + 1), std::memory_order_release);
     } else {
-        ImGui::TextDisabled("Select a category on the left.");
+        ImGui::TextDisabled("%s", l10n::T("Select a category on the left."));
         // Which graphics API this session is running on (the overlay knows
         // because it renders through it). Answers "why does X look/behave
         // different for me" without asking the user to dig through logs.
         {
             const char* rhi = ui::overlay_backend::Kind();
+            char line[128];
+            l10n::Fmt(line, sizeof(line), l10n::T("Graphics API: %s"), rhi ? rhi : l10n::T("starting up"));
             ImGui::Spacing();
-            ImGui::TextDisabled("Graphics API: %s", rhi ? rhi : "starting up");
+            ImGui::TextDisabled("%s", line);
         }
         if (!devMode) {
             ImGui::Spacing();
             if (g_devMode && !::coop::dev_gate::Allowed())
-                ImGui::TextWrapped("As a client you see only what the host allows you.");
+                ImGui::TextWrapped("%s", l10n::T("As a client you see only what the host allows you."));
             else
-                ImGui::TextWrapped("Developer tools are hidden. Set [dev] devkeys=1 in "
-                                   "multivoid.ini to show them.");
+                ImGui::TextWrapped("%s", l10n::T("Developer tools are hidden. Set [dev] devkeys=1 in "
+                                                  "multivoid.ini to show them."));
         }
     }
     ImGui::EndChild();

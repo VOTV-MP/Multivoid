@@ -43,6 +43,7 @@
 #include "coop/dev/stats_probe.h"  // [dev] every player stat read, written and restored in one frame, and the game's status effects added, listed and removed
 #include "coop/dev/stat_order_drill.h"  // [dev] the host orders and queries a client's stats and effects and checks every answer
 #include "coop/dev/chat_drill.h"  // [dev] the chat checks, judged in memory
+#include "coop/dev/l10n_drill.h"  // [dev] the interface language, judged on each peer
 #include "coop/dev/ban_drill.h"  // [dev] the host bans a joined client by the moderation verb
 #include "coop/dev/bug_report_drill.h"  // [dev] a bug report is saved and its zip judged in memory
 #include "coop/dev/grants_drill.h"  // [dev] this machine's local grants judged against an arm
@@ -165,6 +166,7 @@ void EndSession() {
     coop::dev::stats_probe::OnDisconnect();  // [dev] a rejoin's peers run the probe again
     coop::dev::stat_order_drill::OnDisconnect();  // [dev] the steps start over, an answer still in flight is ignored
     coop::dev::chat_drill::OnDisconnect();  // [dev] the drill starts over, a chat it opened is closed
+    coop::dev::l10n_drill::OnDisconnect();  // [dev] the drill starts over, a menu it opened is closed
     coop::dev::ban_drill::OnSessionEnd();  // [dev] empty by design: its one state, the step, stands
     coop::dev::pause_quit_drill::OnDisconnect();  // [dev] a pending wait for the pause menu is dropped; the per-process latch stands
     coop::dev::order_selftest::OnDisconnect();  // [dev] a rejoin's peers run their legs again
@@ -249,6 +251,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::stats_probe::Tick(&session);  // [dev] the player stats and status effects probe (a latched read when off)
     coop::dev::stat_order_drill::Tick(&session);  // [dev] the stat order drill's steps (a latched read when off)
     coop::dev::chat_drill::Tick(&session);  // [dev] the chat drill (a latched read when off)
+    coop::dev::l10n_drill::Tick(&session);  // [dev] the l10n drill (a latched read when off)
     coop::dev::ban_drill::Tick(&session);  // [dev] the host ban drill (a latched read when off)
     coop::dev::bug_report_drill::Tick(&session);  // [dev] the bug-report drill (a latched read when off)
     coop::dev::grants_drill::Tick(&session);  // [dev] the local grants drill (a latched read when off)
