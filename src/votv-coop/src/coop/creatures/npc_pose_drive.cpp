@@ -10,6 +10,7 @@
 // is authoritative -- no integration fight.
 
 #include "coop/element/npc.h"
+#include "coop/creatures/geom_octa_sync.h"
 
 #include "coop/net/protocol.h"
 #include "ue_wrap/engine/engine.h"
@@ -72,6 +73,19 @@ void Npc::SetTargetNpcPose(const coop::net::EntityPoseSnapshot& snap) {
     if (hasKerfState_) {
         kerfState_  = snap.kerfState;
         kerfSpooky_ = (snap.stateBits & coop::net::kEntityPoseBitKerfurSpooky) != 0;
+    }
+
+    // Geom Octa reuses the NPC pose's reserved state slots for its Blueprint animation scalars
+    // and montage clock. The bit makes the alias explicit, so other NPC families remain isolated.
+    hasGeomOctaState_ = (snap.stateBits & coop::net::kEntityPoseBitGeomOcta) != 0;
+    if (hasGeomOctaState_) {
+        geomOctaFlags_ = snap.kerfState;
+        geomOctaACh_ = snap.lookAtX;
+        geomOctaSpawnAlpha_ = snap.lookAtY;
+        geomOctaMontagePosition_ = snap.lookAtZ;
+        geomOctaMeshYaw_ = snap.bodyYaw;
+        geomOctaMeshPitch_ = snap.kerfFace;
+        geomOctaMeshRoll_ = snap._pad;
     }
 
     // First packet OR a teleport (error beyond the snap threshold) -> SNAP, no LERP across.
@@ -151,18 +165,27 @@ bool Npc::SameAsApplied(void* actor) const {
     if (a.actor != actor) return false;
     if (a.pos.X != curPos_.X || a.pos.Y != curPos_.Y || a.pos.Z != curPos_.Z) return false;
     if (a.yaw != curYaw_ || a.speed != curSpeed_ || a.stateBits != curStateBits_) return false;
-    if (a.hasLookAt != hasLookAt_ || a.hasBodyYaw != hasBodyYaw_ || a.hasKerfState != hasKerfState_)
+    if (a.hasLookAt != hasLookAt_ || a.hasBodyYaw != hasBodyYaw_ || a.hasKerfState != hasKerfState_ ||
+        a.hasGeomOctaState != hasGeomOctaState_)
         return false;
     if (hasLookAt_ && (a.lookAt.X != curLookAt_.X || a.lookAt.Y != curLookAt_.Y || a.lookAt.Z != curLookAt_.Z))
         return false;
     if (hasBodyYaw_ && a.bodyYaw != curBodyYaw_) return false;
     if (hasKerfState_ && (a.kerfState != kerfState_ || a.spooky != kerfSpooky_)) return false;
+    if (hasGeomOctaState_ &&
+        (a.geomOctaFlags != geomOctaFlags_ || a.geomOctaACh != geomOctaACh_ ||
+         a.geomOctaSpawnAlpha != geomOctaSpawnAlpha_ ||
+         a.geomOctaMontagePosition != geomOctaMontagePosition_ ||
+         a.geomOctaMeshYaw != geomOctaMeshYaw_ ||
+         a.geomOctaMeshPitch != geomOctaMeshPitch_ || a.geomOctaMeshRoll != geomOctaMeshRoll_)) return false;
     return true;
 }
 
 void Npc::RememberApplied(void* actor) {
     applied_ = Applied{actor, curPos_, curLookAt_, curYaw_, curSpeed_, curBodyYaw_, curStateBits_,
-                       kerfState_, hasLookAt_, hasBodyYaw_, hasKerfState_, kerfSpooky_};
+                       kerfState_, hasLookAt_, hasBodyYaw_, hasKerfState_, kerfSpooky_,
+                       hasGeomOctaState_, geomOctaFlags_, geomOctaMeshPitch_, geomOctaMeshRoll_,
+                       geomOctaACh_, geomOctaSpawnAlpha_, geomOctaMontagePosition_, geomOctaMeshYaw_};
 }
 
 bool Npc::ApplyToEngine() {
@@ -193,6 +216,18 @@ bool Npc::ApplyToEngine() {
     // state machine matches the host (the mirror runs no AI -> it can't pick its own). Class-gated
     // inside -> safe no-op on non-kerfur NPCs.
     if (hasKerfState_) ue_wrap::kerfur::DriveKerfurState(actor, kerfState_, kerfSpooky_);
+    if (hasGeomOctaState_) {
+        coop::net::EntityPoseSnapshot octa{};
+        octa.stateBits = coop::net::kEntityPoseBitGeomOcta;
+        octa.kerfState = geomOctaFlags_;
+        octa.lookAtX = geomOctaACh_;
+        octa.lookAtY = geomOctaSpawnAlpha_;
+        octa.lookAtZ = geomOctaMontagePosition_;
+        octa.bodyYaw = geomOctaMeshYaw_;
+        octa.kerfFace = geomOctaMeshPitch_;
+        octa._pad = geomOctaMeshRoll_;
+        coop::geom_octa_sync::Apply(actor, octa);
+    }
     return moved && turned;
 }
 

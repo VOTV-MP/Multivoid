@@ -18,6 +18,7 @@
 #include "coop/net/session.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_physics.h"  // StopActorSimulating
 #include "ue_wrap/core/log.h"
@@ -40,6 +41,18 @@ namespace E = ue_wrap::engine;
 namespace D = coop::world_actor_sync::detail;
 
 using coop::element::WaMirrors;
+
+void ActivateGeomOctaLaserFx(void* actor, const std::wstring& className) {
+    if (!actor || className != L"geomOctaLazer_C") return;
+    static void* cls = nullptr;
+    static int32_t particleOffset = -1;
+    if (!cls) cls = R::FindClass(L"geomOctaLazer_C");
+    if (cls && particleOffset < 0) particleOffset = R::FindPropertyOffset(cls, L"ParticleSystem");
+    if (particleOffset < 0 || !R::IsLive(actor)) return;
+    void* particle = *reinterpret_cast<void**>(static_cast<uint8_t*>(actor) + particleOffset);
+    if (particle && R::IsLive(particle))
+        ue_wrap::component_calls::SetActive(particle, true, true);
+}
 
 }  // namespace
 
@@ -239,11 +252,17 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
         if (sp.k2DestroyFn && R::IsLive(spawned)) R::CallFunction(spawned, sp.k2DestroyFn, nullptr);
         return;
     }
+    // This transient BP's beam is an auto-activation-sensitive particle component. Its mirror is
+    // created deferred like other world actors, so explicitly start the beam after BeginPlay has
+    // initialized the component templates.
+    ActivateGeomOctaLaserFx(spawned, classW);
     // Park the mirror so the streamed pose drive is authoritative: the generic actor tick off (no
     // movement-component read; a world actor is a plain actor). Any residual component tick is
     // overwritten each frame by the pose drive's location and rotation writes (the MTA
     // dead-reckoning model).
-    E::SetActorTickEnabled(spawned, false);
+    // geomOctaLazer_C is a short-lived visual BP whose beam/audio lifetime is driven by its own
+    // actor event flow; leave its actor tick live while its transform is still pose-driven.
+    if (classW != L"geomOctaLazer_C") E::SetActorTickEnabled(spawned, false);
     // A pose-driven mirror must not also simulate: the two fight and the mirror drifts off the
     // host's transform. The coin simulates with its sphere and the jellyfish with its capsule, each its
     // root; whatever component a mirrored class simulates with is stopped, found from its members.

@@ -280,6 +280,7 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/npc_mirror.cpp
     src/coop/creatures/npc_pose_drive.cpp
     src/coop/creatures/npc_pose_host.cpp
+    src/coop/creatures/geom_octa_sync.cpp
     src/coop/creatures/npc_sync.cpp
     src/coop/creatures/npc_sync_install.cpp
     src/coop/creatures/npc_world_enum.cpp

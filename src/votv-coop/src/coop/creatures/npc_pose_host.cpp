@@ -12,6 +12,7 @@
 // is npc_mirror.cpp; host PRE/POST/interceptor + lifecycle stay in npc_sync.cpp.
 
 #include "coop/creatures/npc_sync.h"
+#include "coop/creatures/geom_octa_sync.h"
 
 #include "coop/element/mirror_manager.h"
 #include "coop/element/mirror_managers.h"  // PropMirrors/NpcMirrors/WaMirrors
@@ -204,6 +205,9 @@ void TickPoseStream() {
             snap.stateBits |= coop::net::kEntityPoseBitHasKerfurState;
             if (kSpooky) snap.stateBits |= coop::net::kEntityPoseBitKerfurSpooky;
         }
+        // Geom Octa exposes its charge/attack state, spawn fade and current montage on the actor.
+        // Those fields share the otherwise-unused NPC pose payload only when its class bit is set.
+        coop::geom_octa_sync::Capture(actor, snap);
         batch.push_back(snap);
     }
     if (!connected) return;  // publish is peer-dependent
