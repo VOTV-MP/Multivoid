@@ -92,8 +92,8 @@ void CreateOrAdoptPropMirror(coop::element::ElementId eid, void* actor,
         // pile-B). HEAD keeps the existing live actor, a different live actor for the same eid
         // being a conflict to reject; the morph LEGITIMATELY swaps the actor, the old one being
         // destroyed right after. Route on the Element's AUTHORITATIVE m_mirror flag, never a
-        // caller's runtime guess: a MIRROR rebinds via SetActor here, while a LOCAL element -- a
-        // host applying a client's convert against its OWN pile -- MUST go through
+        // caller's runtime guess: a MIRROR rebinds via SetActor here, while a LOCAL element -- the
+        // host re-skinning its OWN pile -- MUST go through
         // RebindLocalElementActor so the unified actor-to-eid reverse (Registry::EidForActor,
         // maintained by NoteActorRebind) stays consistent. Only the morph callers pass true.
         if (morph) {

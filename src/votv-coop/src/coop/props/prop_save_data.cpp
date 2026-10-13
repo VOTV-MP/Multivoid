@@ -7,9 +7,11 @@
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
 #include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_key_index.h"
 #include "ue_wrap/actors/prop.h"          // GetInteractableKeyString (the host birth path)
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"    // ClassByName -- the host's O(1) class resolve for a client's record
 #include "ue_wrap/core/reflection.h"
 
 #include <algorithm>
@@ -298,7 +300,14 @@ bool AllowIntent(uint8_t senderSlot) {
 bool TryApply(void* actor, const std::wstring& key, const SR::SaveRecord& rec) {
     if (!actor) return false;
     if (!Covers(actor)) { coop::dev::food_clock_probe::NoteRefused(actor); return false; }
-    if (!SR::ApplyRecord(actor, rec)) return false;
+    // The HOST applies only a CLIENT's record here (its receive edge refuses a canonical from a
+    // client), with its world up and the object index current: it resolves the record's class names
+    // through object_index so an unknown name is an O(1) miss, not a whole-array walk. A CLIENT
+    // applies only the host's own record, possibly mid-load with the index trailing, so it keeps the
+    // authoritative FindClass walk.
+    const SR::ClassResolver resolve =
+        PT::SessionIsHost() ? &ue_wrap::object_index::ClassByName : nullptr;
+    if (!SR::ApplyRecord(actor, rec, resolve)) return false;
     ++g_appliedTotal;
     coop::dev::food_clock_probe::NoteApply(actor, key, rec);
     // The author's record has LANDED, so the host may publish this key again, and does so here, from
@@ -318,10 +327,9 @@ bool LandRecord(const std::wstring& key, SR::SaveRecord&& rec, uint8_t senderSlo
     // The predecessor goes BEFORE the apply, so a record parked under this Key while loadData runs
     // can only be a newer one, and nothing below removes it.
     DropParked(key);
-    // The index only, never ResolveLiveActorByKey: that one falls back to a cold GUObjectArray
-    // scan on a miss, and a join hands this lane hundreds of arrivals at once. A prop the index
-    // does not know yet is parked and retried at O(1) on the next frame instead.
-    void* actor = (!budgeted || g_applyBudget > 0) ? PT::FindLiveActorByKey(key) : nullptr;
+    // A join hands this lane hundreds of arrivals at once: a prop the index does not know yet is
+    // parked and retried at O(1) on the next frame, never searched for.
+    void* actor = (!budgeted || g_applyBudget > 0) ? coop::prop_key_index::Find(key) : nullptr;
     if (actor && TryApply(actor, key, rec)) {
         if (budgeted) --g_applyBudget;
         return true;
@@ -503,22 +511,11 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
              bool intent) {
     // An intent is a claim addressed to the authority; a client receiving one has nothing to do
     // with it, and honouring it would make every peer an author. A canonical is the other half of
-    // the same rule: only the host writes one, so the host refuses a client's and a client refuses
-    // anything not from slot 0. Both are format-level refusals of a message sent by the wrong
-    // role, not a gate on state -- the record itself is never second-guessed.
+    // the same rule: only the host writes one, and the host's receive edge refuses a client's
+    // (client_authorship.h). A refusal of a message sent by the wrong role, not a gate on state --
+    // the record itself is never second-guessed.
     const bool host = PT::SessionIsHost();
     if (intent && !host) return;
-    if (!intent && host) {
-        UE_LOGW("prop_save_data: canonical record from slot %u refused -- a client does not "
-                "publish canonicals; its own records arrive as intents",
-                static_cast<unsigned>(senderSlot));
-        return;
-    }
-    if (!intent && senderSlot != 0) {
-        UE_LOGW("prop_save_data: canonical record from slot %u refused -- only the host publishes "
-                "one", static_cast<unsigned>(senderSlot));
-        return;
-    }
     std::vector<uint8_t> body;
     if (!(intent ? g_asmIntent : g_asmCanonical).OnChunk(p, senderSlot, body)) return;
     // The same ceiling the sender enforces, applied on receive: a body between it and the
@@ -548,7 +545,7 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
     // same authority. A birth's record (a prop the host spawned from this author's intent) is
     // published by its land instead (TryApply), from what the host then holds.
     g_session = &s;
-    void* actor = PT::FindLiveActorByKey(key);
+    void* actor = coop::prop_key_index::Find(key);
     if (actor && !Covers(actor)) {
         // The claim names a class another lane owns, or one that carries no save state of its own.
         // Neither applying nor re-publishing it is this lane's business, and re-publishing would
@@ -593,8 +590,14 @@ void DriveRetries() {
     int sent = 0;
     for (auto it = g_retry.begin(); it != g_retry.end() && sent < kRetriesPerFrame;) {
         if (now < it->second.nextTryMs) { ++it; continue; }
-        void* actor = PT::FindLiveActorByKey(it->first);
-        if (!actor) { it = g_retry.erase(it); continue; }   // the prop is gone; nothing to re-send
+        void* actor = nullptr;
+        const auto read = coop::prop_key_index::Resolve(it->first, &actor);
+        if (read == coop::prop_key_index::Read::Pending) {  // cannot tell yet: ask again after the base wait
+            it->second.nextTryMs = now + kRetryBackoffMs;
+            ++it;
+            continue;
+        }
+        if (read == coop::prop_key_index::Read::Miss) { it = g_retry.erase(it); continue; }  // gone: nothing to re-send
         if (it->second.tries >= kMaxRetryTries) {
             UE_LOGW("prop_save_data: gave up re-sending the record for key '%ls' after %d "
                     "attempts -- that peer's copy of this prop stays divergent",
@@ -637,7 +640,7 @@ void Drive() {
         // replace the node this iterator names.
         const std::wstring key = it->first;
         void* actor = (it->second.failures < kMaxApplyFailures)
-                          ? PT::FindLiveActorByKey(key) : nullptr;
+                          ? coop::prop_key_index::Find(key) : nullptr;
         if (actor) {
             // The budget buys a DISPATCH, not a success: a row whose apply fails past the base
             // capture has already paid for one, and counting only successes let a handful of

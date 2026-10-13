@@ -51,7 +51,7 @@ ejected reached every client blank. The drain logs its traffic once a minute
 (`HOST BIRTH RECORDS`).
 
 Point-sack redemption is a client intent: the host authorizes reach, destroys its copy, and pays
-only after that incarnation is no longer live (`coop/items/point_sack_intent`). A successful dispatch with the sack still live pays
+only once that incarnation has stopped being live (`coop/items/point_sack_intent`). A successful dispatch with the sack still live pays
 nothing. A joining client's action is also intercepted: a refused send leaves the sack intact
 for another press after joining. `[?]` Concurrent redemption needs a two-peer test; a consumed sack whose payment fails
 has no automatic recovery.
@@ -268,8 +268,8 @@ is built; concrete and food are designed and not built.
 
 ## Late join
 
-The join page owns the mechanism: explicit deletes for the props the joiner's save had and the
-host's world no longer has, then the snapshot bracket with one spawn per live keyed prop (adopted by
+The join page owns the mechanism: explicit deletes for the props the joiner's save had that are
+gone from the host's world, then the snapshot bracket with one spawn per live keyed prop (adopted by
 key, created when missing, transform converged), then position corrections for what the host moved
 during the window, then the membership sweep that removes the locals the host never claimed. A keyed
 prop's frozen and sleep converge with its snapshot row and its correction, and a flag change without

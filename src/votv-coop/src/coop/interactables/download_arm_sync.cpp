@@ -273,8 +273,11 @@ void Install(coop::net::Session* session) {
 
 void Tick() { DriveWatches(); }
 
-void OnDishArm(const coop::net::DishArmPayload& p, uint8_t senderSlot) {
-    if (!ClientSession() || senderSlot != 0) return;
+void OnDishArm(const coop::net::DishArmPayload& p) {
+    // From the host alone: the host's receive edge refuses a client's copy (client_authorship.h). A session that is
+    // ending replays nothing.
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected()) return;
     if (!D::EnsureResolved() || !CD::EnsureResolved() || !CD::Instance()) {
         ++g_counts.dropped;
         UE_LOGW("download_arm: a DishArm row dropped -- the dish or desk surface is not resolved yet");

@@ -41,7 +41,7 @@ void Tick(coop::net::Session& session);
 void SendCurrentToSlot(int slot);
 
 // RECEIVER (client): take the host's absolute levels. The write is Tick's, which also repaints an
-// open panel; this stashes them. No-op on the host.
+// open panel; this stashes them. The host refuses a client's copy at its receive edge.
 void ApplyFromHost(const coop::net::UpgradeLevelsPayload& payload);
 
 // RECEIVER (host): a client asks to buy or sell one level. Queued; Tick performs it.

@@ -45,7 +45,7 @@ void Tick();
 void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot);
 
 // Client ingest of CoinGunResult: one feed line telling the seller the price the host used, or why
-// nothing was minted. A no-op on the host.
+// nothing was minted. From the host alone: the host's receive edge refuses a client's copy (client_authorship.h).
 void OnReliableResult(const uint8_t* payload, int len);
 
 // Host ingest of CoinCollect: a client collected a mirror of one of our coins, so the collect runs

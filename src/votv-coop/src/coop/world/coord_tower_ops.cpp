@@ -5,6 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/element/intent_authority.h"
+#include "coop/net/intent_bucket.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
@@ -48,8 +49,7 @@ static_assert(coop::net::kMaxPeers <= 4, "CoordTowerPayload's acknowledgements h
 constexpr uint64_t kWaitMs = 10000;
 constexpr size_t   kMaxQueued = 32;
 // A lights-out puzzle is pressed a few times a second; a sender's ops run at this rate, the rest waiting their turn.
-constexpr float kOpBurst = 8.0f;
-constexpr float kOpPerSecond = 8.0f;
+constexpr coop::net::IntentBudget kOpBudget{8.0f, 8.0f};
 // A spend waits for its insert's claim; a player's inserts come seconds apart, so a few a slot cover any that race.
 constexpr int kSpendsPerSlot = 4;
 
@@ -108,25 +108,11 @@ coop::roster_ledger::PerSlotState<uint16_t> g_ack;
 coop::roster_ledger::PerSlotState<uint16_t> g_refused;
 struct Waiting { CoordTowerPayload p; uint64_t arrivedMs; };
 std::deque<Waiting> g_waiting[coop::net::kMaxPeers];
-struct Bucket { float tokens = -1.0f; uint64_t lastMs = 0; };  // below zero: full, nothing spent yet
-Bucket g_rate[coop::net::kMaxPeers];
+coop::net::IntentBucket g_rate[coop::net::kMaxPeers];
 struct Spend { int32_t tower = -1; uint64_t ms = 0; };  // -1 an empty place
 struct Spends { Spend ring[kSpendsPerSlot]; uint8_t next = 0; };
 coop::roster_ledger::PerSlotState<Spends> g_spends;
 uint64_t g_taken = 0, g_refusedCount = 0, g_refunds = 0, g_queuesFull = 0, g_outOfReach = 0;
-
-bool TakeToken(Bucket& b) {
-    const uint64_t now = NowMs();
-    if (b.tokens < 0.0f) {
-        b.tokens = kOpBurst;
-    } else if (b.lastMs != 0 && now > b.lastMs) {
-        b.tokens = std::min(kOpBurst, b.tokens + kOpPerSecond * static_cast<float>(now - b.lastMs) / 1000.0f);
-    }
-    b.lastMs = now;
-    if (b.tokens < 1.0f) return false;
-    b.tokens -= 1.0f;
-    return true;
-}
 
 // A client's destroy this host applies: a good fuse its sender spent within reach of a tower's fuses is a spend
 // there, judged from the host's puppet of the sender with the lane's own reach.
@@ -281,9 +267,9 @@ void HostOffer(coop::net::Session* s, const CoordTowerPayload& p, uint8_t sender
         return;
     auto& q = g_waiting[sender];
     const Waiting w{p, NowMs()};
-    if (q.empty() && TakeToken(g_rate[sender])) {
+    if (q.empty() && g_rate[sender].Take(kOpBudget, NowMs())) {
         if (HostTakeOp(s, w, sender) == Take::Done) return;
-        g_rate[sender].tokens += 1.0f;  // a wait runs nothing
+        g_rate[sender].Refund(kOpBudget);  // a wait runs nothing
     }
     if (q.size() >= kMaxQueued) {
         // Every waiting op refused with the newest, in order, as a refusal of each would answer it: a claim's own
@@ -312,9 +298,9 @@ void HostOffer(coop::net::Session* s, const CoordTowerPayload& p, uint8_t sender
 void HostDrainWaiting(coop::net::Session* s) {
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         auto& q = g_waiting[slot];
-        while (!q.empty() && TakeToken(g_rate[slot])) {
+        while (!q.empty() && g_rate[slot].Take(kOpBudget, NowMs())) {
             if (HostTakeOp(s, q.front(), slot) == Take::Wait) {
-                g_rate[slot].tokens += 1.0f;
+                g_rate[slot].Refund(kOpBudget);
                 break;
             }
             q.pop_front();
@@ -568,7 +554,7 @@ void Overlay(coop::net::CoordTowerRow& row) {
 void OnPeerLeft(uint8_t slot) {
     if (slot == 0 || slot >= coop::net::kMaxPeers) return;
     g_waiting[slot].clear();
-    g_rate[slot] = Bucket{};
+    g_rate[slot].Reset();
 }
 
 uint64_t OpsSent() { return g_sent; }
@@ -595,7 +581,7 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(g_refunds), static_cast<unsigned long long>(g_reaped),
                 static_cast<unsigned long long>(g_rollsRefused));
     for (auto& q : g_waiting) q.clear();
-    for (auto& b : g_rate) b = Bucket{};
+    for (auto& b : g_rate) b.Reset();
     for (int slot = 0; slot < g_spends.size(); ++slot) g_spends[slot] = Spends{};
     g_claims.clear();
     g_seq = g_lastAck = 0;

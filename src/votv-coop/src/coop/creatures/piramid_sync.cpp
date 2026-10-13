@@ -571,12 +571,7 @@ void OnDisconnect() {
 }
 
 void OnPyramidGather(const coop::net::PyramidGatherPayload& payload) {
-    auto* s = LoadSession();
-    if (!s) return;
-    if (s->role() == coop::net::Role::Host) {
-        UE_LOGI("piramid-gather: received on host -- dropping (loopback bounce)");
-        return;
-    }
+    if (!LoadSession()) return;
     if (!coop::element::Registry::IsAllowedHostAllocatedEid(payload.pyramidEid) ||
         !coop::element::Registry::IsAllowedHostAllocatedEid(payload.wispEid)) {
         UE_LOGW("piramid-gather[client]: eid out of host range (pyramid=%u wisp=%u) -- dropping",

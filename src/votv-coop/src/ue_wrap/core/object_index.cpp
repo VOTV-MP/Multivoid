@@ -9,6 +9,7 @@
 #include "ue_wrap/core/uobject_listeners.h"
 
 #include <chrono>
+#include <cstdint>
 #include <cwctype>
 #include <string>
 #include <string_view>
@@ -43,11 +44,18 @@ bool                                     g_installed = false;
 bool                                     g_seeded = false;
 bool                                     g_draining = false;  // a drain's callbacks run inside it
 Observer                                 g_observer{};
+// The listeners: few, registered at boot, called in registration order. Game thread.
+constexpr size_t                         kMaxListeners = 4;
+Listener                                 g_listeners[kMaxListeners]{};
+size_t                                   g_listenerCount = 0;
 size_t                                   g_linked = 0;
 // The 60 s summary's counters. `recycled`: births whose slot and pointer a new object of another
 // class had taken by the drain; `refused`: entries ForEachInstance skipped, gone or recycled.
 uint64_t g_applied = 0, g_births = 0, g_deaths = 0, g_stale = 0, g_relinked = 0, g_seedOverlap = 0;
 uint64_t g_recycled = 0, g_refusedGone = 0, g_refusedRecycled = 0;
+// DrainAll's cost, for the summary: calls, events applied, the slowest call in microseconds.
+uint64_t g_drainAllCalls = 0, g_drainAllEvents = 0;
+long long g_drainAllMaxUs = 0;
 std::chrono::steady_clock::time_point g_summarySince{};
 
 // The loaded classes by name. A class object is an instance of a meta-class (Class,
@@ -214,6 +222,9 @@ void ApplyCreated(const Event& ev) {
         // clears the slot `s` refers to.
         ++g_relinked;
         void* const gone = s.cls;
+        void* const goneObj = s.obj;
+        for (size_t i = 0; i < g_listenerCount; ++i)
+            if (g_listeners[i].OnDeleted) g_listeners[i].OnDeleted(g_listeners[i].ctx, goneObj, gone, ev.index);
         if (Unlink(ev.index) && g_observer.OnClassGone) g_observer.OnClassGone(g_observer.ctx, gone);
     }
     Link(ev.index, ev.obj, ev.cls);
@@ -222,6 +233,8 @@ void ApplyCreated(const Event& ev) {
         g_observer.OnClassAppeared(g_observer.ctx, ev.cls, ev.obj);
     if (g_observer.OnObjectCreated)
         g_observer.OnObjectCreated(g_observer.ctx, ev.obj, ev.cls, ev.index);
+    for (size_t i = 0; i < g_listenerCount; ++i)
+        if (g_listeners[i].OnCreated) g_listeners[i].OnCreated(g_listeners[i].ctx, ev.obj, ev.cls, ev.index);
 }
 
 void ApplyDeleted(const Event& ev) {
@@ -230,6 +243,8 @@ void ApplyDeleted(const Event& ev) {
     if (s.obj != ev.obj) { ++g_stale; return; }   // never linked, or already replaced by the seed
     void* cls = s.cls;
     ++g_deaths;
+    for (size_t i = 0; i < g_listenerCount; ++i)
+        if (g_listeners[i].OnDeleted) g_listeners[i].OnDeleted(g_listeners[i].ctx, ev.obj, cls, ev.index);
     if (Unlink(ev.index) && g_observer.OnClassGone) g_observer.OnClassGone(g_observer.ctx, cls);
 }
 
@@ -282,15 +297,19 @@ void SummaryIfDue() {
     const auto st = uobject_listeners::GetStats();
     UE_LOGI("object_index: steady summary (60s): objects=%zu classes=%zu applied=%llu births=%llu "
             "deaths=%llu stale=%llu relinked=%llu backlog=%zu queue-high-water=%zu recycled=%llu "
-            "refused=%llu gone/%llu recycled",
+            "refused=%llu gone/%llu recycled drainall=%llu/%llu events, slowest %lld us",
             g_linked, g_classes.size(), static_cast<unsigned long long>(g_applied),
             static_cast<unsigned long long>(g_births), static_cast<unsigned long long>(g_deaths),
             static_cast<unsigned long long>(g_stale), static_cast<unsigned long long>(g_relinked),
             g_pending.size() - g_pendingHead, st.highWater, static_cast<unsigned long long>(g_recycled),
             static_cast<unsigned long long>(g_refusedGone),
-            static_cast<unsigned long long>(g_refusedRecycled));
+            static_cast<unsigned long long>(g_refusedRecycled),
+            static_cast<unsigned long long>(g_drainAllCalls), static_cast<unsigned long long>(g_drainAllEvents),
+            g_drainAllMaxUs);
     g_applied = g_births = g_deaths = g_stale = g_relinked = 0;
     g_recycled = g_refusedGone = g_refusedRecycled = 0;
+    g_drainAllCalls = g_drainAllEvents = 0;
+    g_drainAllMaxUs = 0;
 }
 
 }  // namespace
@@ -303,15 +322,17 @@ bool Install() {
     if (g_installed) return true;
     if (!uobject_listeners::Install()) return false;
     g_installed = true;
-    // The index's one driver: the dispatcher drains it before every batch of posted tasks, the boot's
-    // included. A drain only the play loop made left every boot task an unseeded index, and the boot's
-    // save load, which asks it for the game instance, retried for two minutes and gave up.
+    // The index's steady driver: the dispatcher drains it before every batch of posted tasks, the boot's
+    // included (DrainAll is the other, asked for by a reader that needs it current now). A drain only the
+    // play loop made left every boot task an unseeded index, and the boot's save load, which asks it for
+    // the game instance, retried for two minutes and gave up.
     game_thread::SetPumpPrologue(&DrainBeforeTasks);
     return true;
 }
 
-size_t Drain() {
-    UE_ASSERT_GAME_THREAD("object_index::Drain");
+namespace {
+// The drain with a budget: Drain's per-batch one, or none for DrainAll. The caller checked the thread.
+size_t DrainWith(size_t budget) {
     if (!g_installed || g_draining) return 0;
     struct Draining {
         Draining() { g_draining = true; }
@@ -323,7 +344,7 @@ size_t Drain() {
     }
     uobject_listeners::Drain(g_pending);
     size_t applied = 0;
-    while (g_pendingHead < g_pending.size() && applied < kMaxAppliedPerDrain) {
+    while (g_pendingHead < g_pending.size() && applied < budget) {
         const Event& ev = g_pending[g_pendingHead++];
         if (ev.created) ApplyCreated(ev);
         else            ApplyDeleted(ev);
@@ -339,6 +360,36 @@ size_t Drain() {
     g_applied += applied;
     SummaryIfDue();
     return applied;
+}
+}  // namespace
+
+size_t Drain() {
+    UE_ASSERT_GAME_THREAD("object_index::Drain");
+    return DrainWith(kMaxAppliedPerDrain);
+}
+
+size_t DrainAll() {
+    if (!game_thread::IsGameThread() || !g_installed || g_draining) return SIZE_MAX;
+    const auto t0 = std::chrono::steady_clock::now();
+    const size_t applied = DrainWith(SIZE_MAX);
+    const long long us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    ++g_drainAllCalls;
+    g_drainAllEvents += applied;
+    if (us > g_drainAllMaxUs) g_drainAllMaxUs = us;
+    return applied;
+}
+
+bool AddListener(const Listener& l) {
+    UE_ASSERT_GAME_THREAD("object_index::AddListener");
+    if (!l.OnCreated && !l.OnDeleted) return false;
+    for (size_t i = 0; i < g_listenerCount; ++i)
+        if (g_listeners[i].ctx == l.ctx && g_listeners[i].OnCreated == l.OnCreated &&
+            g_listeners[i].OnDeleted == l.OnDeleted)
+            return true;  // registered already
+    if (g_listenerCount >= kMaxListeners) return false;
+    g_listeners[g_listenerCount++] = l;
+    return true;
 }
 
 bool IsSeeded() { return g_seeded; }

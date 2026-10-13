@@ -95,9 +95,16 @@ constexpr int kMaxPosCorrectionPasses = 40;  // about 10 s at the 250 ms debounc
 struct PendingDestroy {
     coop::net::PropDestroyPayload payload;
     int failedApplies = 0;  // post-quiescence apply attempts that still found no target
+    int notYetPasses = 0;   // passes the prop key index could not answer for its key
 };
 std::vector<PendingDestroy> g_pendingDestroy;
 constexpr int kMaxDeferApplies = 8;  // about 2 s at the 250 ms debounce
+// A pass the key index cannot answer spends no attempt, up to this many: about 6 s at the debounce, past the
+// index's 5 s bound on a prop still loading. Beyond it every pass is an attempt, so the entry still leaves.
+// MTA has no deferred destroy to budget: its client drops a remove naming no element it holds
+// (reference/mtasa-blue/Client/mods/deathmatch/logic/CPacketHandler.cpp:4297-4306), since the server minted
+// the id and sent the element before it.
+constexpr int kMaxNotYetPasses = 24;
 
 // Trigger timing for the steady-state reconcile.
 
@@ -307,10 +314,13 @@ void ApplyPendingDestroys() {
     // resolve after a small grace never will, and is dropped: a deferred destroy kept forever pins
     // HasPendingWork and the full-array reconcile.
     for (auto it = g_pendingDestroy.begin(); it != g_pendingDestroy.end(); ) {
-        if (coop::remote_prop::TryApplyDestroy(it->payload)) {
+        const coop::remote_prop::DestroyApply r = coop::remote_prop::TryApplyDestroy(it->payload);
+        if (r == coop::remote_prop::DestroyApply::Applied) {
             UE_LOGI("[DESTROY-DEFER] CLIENT applied deferred destroy eid=%u -- target finally loaded -> destroyed "
                     "(out-of-order destroy reconciled; no dup)", it->payload.elementId);
             it = g_pendingDestroy.erase(it);
+        } else if (r == coop::remote_prop::DestroyApply::NotYet && ++it->notYetPasses <= kMaxNotYetPasses) {
+            ++it;  // the key index cannot answer yet: no attempt spent
         } else if (++it->failedApplies >= kMaxDeferApplies) {
             UE_LOGI("[DESTROY-DEFER] CLIENT dropping unresolvable deferred destroy eid=%u after %d post-quiescence "
                     "attempt(s) -- target never loaded here (host-only / already-gone); a load-tail bridge does "

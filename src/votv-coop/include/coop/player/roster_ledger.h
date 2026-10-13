@@ -157,8 +157,9 @@ void SubscribeSlotReplaced(SlotReplacedFn fn);
 // a Row holds a fact the wire row carries, that has a consumer only once an occupant is
 // identified, and whose write is re-issued if dropped (nick, skin, the link facts); a
 // PerSlotState holds a fact that exists before anyone is identified, or whose write is a
-// one-shot latch nothing retries (the Join-sent latch: a client sends its Join to slot 0 before
-// row 0 exists). The failure mode of a dropped write separates them: Row setters are
+// one-shot latch nothing retries (the host's Join-sent latch: the host's Join to a slot goes
+// before that slot's row is born, and clears when the occupant changes so a recycled slot
+// re-sends). The failure mode of a dropped write separates them: Row setters are
 // occupancy-gated, so a write for a slot connected but not yet rowed is silently discarded,
 // harmless for a value the next fill re-issues and fatal for a latch. T is reset to a
 // value-initialised T when the slot's occupant changes.

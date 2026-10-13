@@ -35,15 +35,12 @@ bool IsIncomingDestroy(void* actor);
 // transaction a client asked for. The client's own destroy for it is following behind me on the
 // same lane, and it is an ECHO."
 //
-// KEYED BY SAVE KEY, not by actor pointer, and that is the whole reason it exists: by the time the
-// echo arrives the actor is gone, so there is no pointer left to mark. Without it the echo reaches
-// the destroy receiver's key fallback, misses the index -- we evicted the key when we destroyed it
-// -- and pays a full ue_wrap::prop::FindByKeyString walk of GUObjectArray to discover what the host
-// already knew, turning an O(1) index hit into a guaranteed cold scan on EVERY arbiter-performed
-// transaction.
+// KEYED BY SAVE KEY, not by actor pointer: by the time the echo arrives the actor is gone, so there
+// is no pointer left to mark. Without it the echo reaches the destroy receiver's key fallback, which
+// finds any other live prop that shares the key (saves ship duplicate keys) and destroys it too.
 //
-// One-shot, and cleared whole at its cap of 256: an entry lost that way, or never consumed, costs one
-// missed short-circuit, never a wrong destroy. Game thread only.
+// One-shot, and cleared whole at its cap of 256: an entry lost that way, or never consumed, lets that
+// one echo resolve its key, which destroys nothing unless another prop shares it. Game thread only.
 void MarkArbiterConsumedKey(const std::wstring& key);
 bool ConsumeArbiterConsumedKey(const std::wstring& key);
 

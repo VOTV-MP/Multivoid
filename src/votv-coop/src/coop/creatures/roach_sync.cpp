@@ -1,6 +1,6 @@
 // coop/creatures/roach_sync.cpp -- see coop/creatures/roach_sync.h for the
 // design + the bytecode ground truth. Shapes reused: serverbox_sync (lazy
-// resolve + 1 Hz host poll + host-sender-checked client apply + connect
+// resolve + 1 Hz host poll + client apply of the host's row + connect
 // replay), prop lanes (IsLiveByIndex liveness on a tracked set).
 
 #include "coop/creatures/roach_sync.h"
@@ -389,18 +389,10 @@ void Tick() {
         UE_LOGI("roach_sync: host broadcast %zu roach(es) (seq=%u)", snap.size(), g_seq);
 }
 
-void OnState(const coop::net::RoachStatePayload& payload, int senderPeerSlot) {
+void OnState(const coop::net::RoachStatePayload& payload) {
     if (!GT::IsGameThread()) { UE_LOGW("roach_sync: OnState off-game-thread -- dropping"); return; }
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
-    if (s->role() == coop::net::Role::Host) {
-        UE_LOGW("roach_sync: RoachState received on the HOST -- dropping from slot=%d", senderPeerSlot);
-        return;
-    }
-    if (senderPeerSlot != 0) {
-        UE_LOGW("roach_sync: RoachState from non-host senderPeerSlot=%d -- dropping", senderPeerSlot);
-        return;
-    }
     ResolvePass();
     if (!Resolved()) return;  // the keepalive re-delivers post-resolve
     if (payload.pageCount == 0 || payload.page >= payload.pageCount ||

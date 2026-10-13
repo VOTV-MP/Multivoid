@@ -6,6 +6,7 @@
 #include "coop/config/config_registry.h"
 #include "coop/element/intent_authority.h"
 #include "coop/element/registry.h"
+#include "coop/net/intent_bucket.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -55,8 +56,7 @@ constexpr uint64_t kWaitMs = 10000;
 constexpr size_t   kMaxQueued = 32;
 // A player flips a lever or clicks the page a few times a second at most, and each press runs the panel's whole
 // apply; a sender's presses run at this rate, the rest waiting their turn (door_verb_intent's bound).
-constexpr float kPressBurst = 4.0f;
-constexpr float kPressPerSecond = 4.0f;
+constexpr coop::net::IntentBudget kPressBudget{4.0f, 4.0f};
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -91,8 +91,7 @@ uint8_t g_leverSlot = kNoSlot;    // and whose lever made them
 uint8_t g_takingFor = 0;          // the slot whose press the host's lever is running, 0 for its own
 struct Waiting { PowerPanelPayload p; uint64_t arrivedMs; };
 std::deque<Waiting> g_waiting[coop::net::kMaxPeers];
-struct Bucket { float tokens = kPressBurst; uint64_t lastMs = 0; };
-Bucket g_rate[coop::net::kMaxPeers];
+coop::net::IntentBucket g_rate[coop::net::kMaxPeers];
 uint8_t g_owed = 0;
 uint64_t g_pressesTaken = 0, g_pressesRefused = 0;
 
@@ -117,18 +116,7 @@ coop::net::Session* Connected() {
 
 uint8_t LocalSlot() { return coop::players::Registry::Get().LocalPeerId(); }
 
-bool TakeToken(uint8_t slot) {
-    Bucket& b = g_rate[slot];
-    const uint64_t now = NowMs();
-    if (b.lastMs != 0 && now > b.lastMs) {
-        b.tokens += kPressPerSecond * static_cast<float>(now - b.lastMs) / 1000.0f;
-        if (b.tokens > kPressBurst) b.tokens = kPressBurst;
-    }
-    b.lastMs = now;
-    if (b.tokens < 1.0f) return false;
-    b.tokens -= 1.0f;
-    return true;
-}
+bool TakeToken(uint8_t slot) { return g_rate[slot].Take(kPressBudget, NowMs()); }
 
 // ---- the host ------------------------------------------------------------------------------------------------
 
@@ -260,7 +248,7 @@ void HostOffer(coop::net::Session* s, const PowerPanelPayload& p, uint8_t sender
     const Waiting w{p, NowMs()};
     if (q.empty() && TakeToken(sender)) {
         if (HostTakePress(s, w, sender) == Take::Done) return;
-        g_rate[sender].tokens += 1.0f;  // a wait runs nothing, so it spends no token
+        g_rate[sender].Refund(kPressBudget);  // a wait runs nothing, so it spends no token
     }
     if (q.size() >= kMaxQueued) {
         HostRefuseQueue(s, sender, p.seq);
@@ -274,7 +262,7 @@ void HostDrainWaiting(coop::net::Session* s) {
         auto& q = g_waiting[slot];
         while (!q.empty() && TakeToken(slot)) {
             if (HostTakePress(s, q.front(), slot) == Take::Wait) {
-                g_rate[slot].tokens += 1.0f;
+                g_rate[slot].Refund(kPressBudget);
                 break;
             }
             q.pop_front();
@@ -508,7 +496,7 @@ void QueueConnectBroadcastForSlot(int slot) {
 void OnPeerLeft(uint8_t slot) {
     if (slot == 0 || slot >= coop::net::kMaxPeers) return;
     g_waiting[slot].clear();
-    g_rate[slot] = Bucket{};
+    g_rate[slot].Reset();
     g_owed = static_cast<uint8_t>(g_owed & ~(1u << slot));
 }
 
@@ -551,7 +539,7 @@ void OnDisconnect() {
     g_pageFn.Reset();
     for (int slot = 0; slot < coop::net::kMaxPeers; ++slot) {
         g_waiting[slot].clear();
-        g_rate[slot] = Bucket{};
+        g_rate[slot].Reset();
     }
     g_owed = 0;
     g_pressesSent = g_canonicalsApplied = g_refusedBlackouts = g_refusedLockouts = 0;

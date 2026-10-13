@@ -8,7 +8,8 @@
 #include "coop/net/wire_key_util.h"           // StringFromWireKey
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
-#include "coop/props/prop_element_tracker.h"  // FindLiveActorByKey: the tracked-prop index
+#include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_key_index.h"      // Find: every live keyed prop by key
 #include "coop/props/remote_prop.h"           // ResolveLiveActorByEid: the registry's O(1) row
 
 #include "ue_wrap/actors/hook.h"
@@ -233,7 +234,7 @@ BiteResult BiteMirror(void* mirror, uint8_t ownerSlot, const coop::net::HookStat
         how = "eid";
     }
     if (!actor && !key.empty()) {
-        actor = coop::prop_element_tracker::FindLiveActorByKey(key);
+        actor = coop::prop_key_index::Find(key);
         how = "key index";
     }
     if (!actor && !key.empty() && ue_wrap::keyed_objects::Available()) {

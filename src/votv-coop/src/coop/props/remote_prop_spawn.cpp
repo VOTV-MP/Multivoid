@@ -28,6 +28,8 @@
 #include "coop/props/snapshot_census.h"  // the per-class completeness floor for the claim sweep
 #include "coop/dev/force_overdestroy_test.h"  // dev-only: floor-disable toggle for the controlled proof
 #include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_key_index.h"  // a key on the wire to a live actor
+#include "ue_wrap/core/object_index.h"  // ClassByName -- the host's O(1) class resolve for a client's spawn
 #include "coop/props/prop_drive_stream.h"  // IsParked: a prop the host's driven stream owns
 #include "coop/props/prop_snapshot.h"      // ExpressIncrementalSpawn, the handback re-express
 #include "coop/props/prop_fresh_spawn.h"   // the deferred-spawn materialiser
@@ -131,6 +133,12 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     using ue_wrap::Call;
     const std::wstring classW = ClassNameToWString(payload.className);
     const std::wstring keyW   = coop::remote_prop::KeyToWString(payload.key);
+    // The HOST mirrors a CLIENT's spawn with its world up, so it resolves the wire class name through
+    // object_index (a sender's unknown class is an O(1) miss, not a whole-array walk per distinct
+    // name); a CLIENT mirrors the host's spawn and keeps FindClass, its index able to trail a load.
+    // One resolver for every class lookup this spawn makes, on the host game thread.
+    void* (*classResolve)(const wchar_t*) =
+        coop::prop_element_tracker::SessionIsHost() ? &ue_wrap::object_index::ClassByName : nullptr;
     // The Aprop_C identity row (empty for a non-Aprop_C sender), for the fuzzy identity gate and
     // the pre-Finish write.
     const std::wstring propNameW = coop::remote_prop::KeyToWString(payload.propName);
@@ -154,7 +162,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     // uses to author its own morph on a client. It branches before the Aprop_C dedupe, converge
     // and physics machinery, because a pile is keyless and carries its identity as an eid. With
     // skipBind, OnConvert binds the element itself.
-    if (ue_wrap::prop::IsTrashClassName(classW)) {
+    if (ue_wrap::prop::IsTrashClassName(classW, classResolve)) {
         // The sender's look of this pile, kept per eid: the bound actor takes it now, and an actor
         // bound later -- a pending own-save bind, a re-bind after GC churn -- takes it at the bind.
         coop::pile_look::OnHostLook(payload.elementId, payload.look, senderSlot);
@@ -170,7 +178,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
                 return;
             }
         }
-        const bool isClump = ue_wrap::prop::IsClumpClassName(classW);
+        const bool isClump = ue_wrap::prop::IsClumpClassName(classW, classResolve);
         const ue_wrap::FVector  loc{payload.locX, payload.locY, payload.locZ};
         const ue_wrap::FVector  scale{payload.scaleX, payload.scaleY, payload.scaleZ};
         const ue_wrap::FRotator rot{payload.rotPitch, payload.rotYaw, payload.rotRoll};
@@ -214,7 +222,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         // itself (unless skipBind, OnConvert's), and the bind gives the pile the look kept above.
         void* mirror = coop::trash_mirror::Materialize(payload.elementId, classW, payload.chipType,
                                                        loc, rot, scale, senderSlot, skipBind,
-                                                       /*rebindInPlace=*/false);
+                                                       /*rebindInPlace=*/false, classResolve);
         if (!mirror) {
             UE_LOGW("remote_prop::OnSpawn: trash mirror spawn FAILED for eid=%u class='%ls'",
                     payload.elementId, classW.c_str());
@@ -239,7 +247,6 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     // and re-expressed under the host identity; the sender adopts the host eid. A client-band
     // mirror prior falls through to the idempotent adopt; a kerfur is enrolled only (KerfurConvert
     // owns it).
-    bool dedupeFellBack = false;
     void* existing = nullptr;
     if (fromConvert) {
         // A convert re-skins an eid in place, and the old rendering is still at Registry::Get(E);
@@ -254,14 +261,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             if (a && R::IsLiveByIndex(a, e->GetInternalIdx())) existing = a;
         }
     } else {
-        existing = coop::prop_element_tracker::ResolveLiveActorByKey(keyW, &dedupeFellBack);
-        if (dedupeFellBack) {
-            // The key index was stale (a world change purged the indexed actors), so this dedupe
-            // paid an O(N) array scan; during the snapshot ~2,300 PropSpawns arrive in a burst, and
-            // each scanning balloons the client by gigabytes. Self-heal now (throttled to once per
-            // 200 ms) so the rest of the burst resolves O(1).
-            coop::prop_element_tracker::ReconcileIndexThrottled();
-        }
+        existing = coop::prop_key_index::Find(keyW);
     }
     if (existing) {
         // Host authority first, before the claim, the physics branches, the converge and the bind.
@@ -392,6 +392,10 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     void* handAxis[1 + coop::players::kMaxPeers];
     const ue_wrap::prop::NearbyExclusion notAdoptable{
         handAxis, coop::hand_item::CollectHandAxisActors(handAxis, 1 + coop::players::kMaxPeers)};
+    // The fuzzy query reads the object index as it stands. The exact-key read caught it up on its
+    // miss, unless it answered before reaching the catch-up (the key index not seeded, no world), so
+    // it is caught up here too; with nothing queued that costs a check.
+    if (!eidOnly) ue_wrap::object_index::DrainAll();
     void* fuzzy = eidOnly ? nullptr : ue_wrap::prop::FindNearbySameClass(
             classW,
             fuzzyAnchor,
@@ -501,10 +505,10 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         } else {
             UE_LOGW("remote_prop::OnSpawn: Gap-I-1 rekey skipped -- setKey UFunction unresolved");
         }
-        // Index the matched actor under the wire key unconditionally: resolution binds through our
-        // index, independent of the engine-level setKey, and a setKey failure once left a held prop
-        // on a per-packet array scan. keyW is validated at entry; the match is live.
-        coop::prop_element_tracker::IndexActorKey(fuzzy, keyW);
+        // Track the matched actor under the wire key, as the other peers count it. The key index follows
+        // the setKey above on its own; if setKey failed the actor does not carry the wire key and is
+        // found by the eid binding below instead.
+        coop::prop_element_tracker::TrackActorKey(fuzzy, keyW);
         // The collision restore, as on the exact-key path: the match came through the client's own
         // spawner with no collision, and the host's release would drop it through the floor.
         RestoreCollisionIfNeeded(L"fuzzy", classW, fuzzy);
@@ -524,7 +528,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     // No local match anywhere: materialise a fresh mirror (prop_fresh_spawn); with skipBind,
     // OnConvert binds the element itself.
     void* spawned = coop::prop_fresh_spawn::Materialize(payload, senderSlot, classW, keyW,
-                                                        propNameW, skipBind);
+                                                        propNameW, skipBind, classResolve);
     if (spawned && outSpawned) *outSpawned = spawned;
 }
 

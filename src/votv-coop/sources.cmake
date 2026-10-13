@@ -156,6 +156,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/world/store_catalog.cpp
     src/ue_wrap/world/weapon_catalog.cpp
     src/ue_wrap/actors/prop.cpp
+    src/ue_wrap/actors/prop_keys.cpp
     src/ue_wrap/actors/prop_flags.cpp
     src/ue_wrap/actors/prop_events.cpp
     src/ue_wrap/actors/garbage_bag.cpp
@@ -189,6 +190,7 @@ set(VOTVCOOP_SOURCES
     src/coop/player/nick_color.cpp
     src/coop/player/nickname_arbiter.cpp
     src/coop/player/hand_item.cpp
+    src/coop/player/hand_item_pose.cpp
     src/coop/comms/chat_feed.cpp
     src/coop/comms/chat_log.cpp
     src/coop/comms/chat_bubbles.cpp
@@ -200,6 +202,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dispatch/event_dispatch_state.cpp
     src/coop/dispatch/event_dispatch_world.cpp
     src/coop/comms/chat_sync.cpp
+    src/coop/comms/chat_rate.cpp
     src/coop/interactables/turbine_sync.cpp
     src/coop/interactables/upgrade_sync.cpp
     src/coop/interactables/interactable_sync.cpp
@@ -297,6 +300,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/save_identity_bind.cpp
     src/coop/props/prop_census.cpp
     src/coop/props/prop_element_tracker.cpp
+    src/coop/props/prop_tracked_keys.cpp
     src/coop/props/prop_key_index.cpp
     src/coop/props/prop_destroy_seam.cpp
     src/coop/props/prop_lifecycle.cpp
@@ -393,6 +397,10 @@ set(VOTVCOOP_SOURCES
     src/coop/net/origin_context.cpp
     src/coop/net/stream_refusals.cpp
     src/coop/net/stream_slot_selftest.cpp
+    src/coop/net/apply_pause_selftest.cpp
+    src/coop/net/latest_wins.cpp
+    src/coop/net/receive_budget.cpp
+    src/coop/net/refusal_tally.cpp
     src/coop/net/send_admission.cpp
     src/coop/net/send_backlog.cpp
     src/coop/net/send_rate_control.cpp
@@ -422,6 +430,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/registry_reaper.cpp
     src/coop/session/pause_guard.cpp
     src/coop/session/subsystems.cpp
+    src/coop/session/world_ready_answer.cpp
     src/coop/player/local_streams.cpp
     src/coop/interactables/device_occupancy.cpp
     src/coop/interactables/console_state_sync.cpp

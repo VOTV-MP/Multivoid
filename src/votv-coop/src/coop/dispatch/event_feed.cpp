@@ -28,12 +28,16 @@
 #include "coop/creatures/npc_adoption.h"
 #include "coop/creatures/kerfur_prop_adoption.h"  // OnSnapshotComplete
 #include "coop/player/hand_item.h"  // the hand-item handler
+#include "coop/interactables/laptop_sync.h"  // PayOwed: a client's laptop power at its pace
+#include "coop/player/sleep_sync.h"          // PayOwed: a client's bed flag at its pace
+#include "coop/world/alarm_sync.h"           // PayOwed: a client's alarm request at its pace
 #include "coop/player/player_damage.h"
 #include "coop/creatures/wisp_tear_mirror.h"  // WispGrab and WispTear receivers
 #include "coop/player/local_body.h"     // the host's own skin belongs in its own roster row
 #include "coop/player/nick_color.h"  // ResetSlots() at bringup -- a colour lands before its row
 #include "coop/player/nameplate.h"   // ResetSlots() at bringup -- so does a hidden-plate pref
 #include "coop/session/player_handshake.h"
+#include "coop/session/world_ready_answer.h"  // the host's answer to ClientWorldReady
 #include "coop/session/grants_sync.h"  // HostTick: the local dev grants to a proved slot
 #include "coop/session/server_settings_sync.h"  // HostTick: the snapshot to a ready slot
 #include "coop/player/players_registry.h"
@@ -87,6 +91,9 @@ void InstallLeaveLineSubscriber() {
     coop::roster_ledger::SubscribeSlotReplaced(&OnSlotReplaced_LeaveLine);
 }
 
+// The messages the drain handed to a handler, per sender slot and kind (DrainedFrom).
+coop::roster_ledger::PerSlotState<std::array<uint32_t, 256>> g_drained;
+
 }  // namespace
 
 void SetLocalNickname(const std::wstring& nick) {
@@ -127,6 +134,14 @@ void Update(net::Session& session, void* localPlayer) {
                                              coop::local_body::LocalSkinName());
     coop::roster_ledger::ReconcileFromSession(session);   // host: conform to the generations
     coop::player_handshake::PulseRosterRows(session);     // host: re-assert to clients
+    // Host: the newest client display changes that arrived past their budget, applied once it allows. Here, after the
+    // reconcile, so a debt whose occupant left was cleared with its row before it could be paid.
+    coop::player_handshake::TickPrefs(session);
+    coop::hand_item::PayOwed(session);
+    coop::chat_sync::Tick();  // the chat receipt's refusal window
+    coop::alarm_sync::PayOwed(session);   // a client's world levels owed by their pace
+    coop::sleep_sync::PayOwed(session);
+    coop::laptop_sync::PayOwed(session);
 
     // The per-slot Join send. The payload is built on first need: in steady state the vector is
     // never constructed, so the pump tick does not pay the UTF-8 conversion and allocation.
@@ -155,6 +170,8 @@ void Update(net::Session& session, void* localPlayer) {
     // is the single membership declaration).
     net::Session::ReliableMessage msg;
     while (session.TryGetReliable(msg)) {
+        if (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+            ++g_drained[msg.senderPeerSlot][static_cast<uint8_t>(msg.kind)];
         switch (msg.kind) {
         case net::ReliableKind::Join: {
             coop::player_handshake::HandleJoinMessage(session, msg);
@@ -174,39 +191,18 @@ void Update(net::Session& session, void* localPlayer) {
         // while the payload landed on the net thread let a hostile host accumulate bytes with no
         // announced size.
         case net::ReliableKind::ClientWorldReady: {
-            // The joiner's world is up and registry-coherent: the world-ready send gate opens and
-            // the connect replay runs.
-            if (session.role() == net::Role::Host &&
-                msg.senderPeerSlot >= 1 && msg.senderPeerSlot < net::kMaxPeers) {
-                // The join window closes for this joiner here: a host pile moved before this line
-                // reconciles by its save-time key; a move after it is a normal live edit.
-                UE_LOGI("[PILE-1C] slot %d world-ready -- JOIN-WINDOW CLOSED (in-window host pile moves are "
-                        "now save-time-key reconciled by the connect replay)", msg.senderPeerSlot);
-                static const bool s_pileProbe =
-                    coop::config::ResolveFlag(::coop::config_registry::rows::pile_delta_probe);
-                if (s_pileProbe)
-                    coop::chat_feed::Push(L"[1c-test] JOIN-WINDOW CLOSED -- joiner world-ready; drops from here are post-load (not in-window)",
-                                          coop::chat_feed::Keep::Transient);
-                session.MarkSlotWorldReady(msg.senderPeerSlot, true);
-                coop::subsystems::ConnectReplayForSlot(msg.senderPeerSlot);
-                // The joined-the-game line fires at the joiner's puppet appearance; this call
-                // announces only a puppet that spawned before world-ready (a pre-world menu pose),
-                // a no-op otherwise.
-                coop::player_handshake::OnClientWorldReady(msg.senderPeerSlot);
-            }
+            // The joiner's world is up and registry-coherent. The first announce completes the join
+            // (marks the slot world-ready and runs the connect replay); a later one runs under a
+            // per-slot replay bucket or ends the slot past it (MV-H34). world_ready_answer owns the
+            // host/range guard and the rate.
+            coop::world_ready_answer::OnAnnounce(session, msg.senderPeerSlot);
             break;
         }
 
         case net::ReliableKind::RestoreVitals: {
             // The dev refill of food, sleep and health (coffeePower is deliberately excluded). No
             // payload; idempotent, so an echo is harmless. Host-only origin, or any peer could
-            // nullify the survival tension.
-            if (msg.senderPeerSlot != 0) {
-                UE_LOGW("event_feed: RestoreVitals from non-host senderPeerSlot=%d "
-                        "-- dropping (host-only dev-key origin)",
-                        msg.senderPeerSlot);
-                break;
-            }
+            // nullify the survival tension: the host's receive edge refuses a client's copy.
             ue_wrap::game_thread::Post([] { ::coop::dev::restore_vitals::ApplyLocally(); });
             break;
         }
@@ -214,11 +210,6 @@ void Update(net::Session& session, void* localPlayer) {
             // The host detected an enemy hitting this peer's puppet and relays the damage for the
             // owner to apply. Host-only origin (only the host runs enemies); not in the relay
             // whitelist. The target id check and the apply live in player_damage.
-            if (msg.senderPeerSlot != 0) {
-                UE_LOGW("event_feed: PlayerDamage from non-host senderPeerSlot=%d "
-                        "-- dropping (host-only combat origin)", msg.senderPeerSlot);
-                break;
-            }
             if (msg.payloadLen < sizeof(net::PlayerDamagePayload)) {
                 UE_LOGW("event_feed: PlayerDamage payload too short (%zu < %zu)",
                         static_cast<size_t>(msg.payloadLen), sizeof(net::PlayerDamagePayload));
@@ -233,11 +224,6 @@ void Update(net::Session& session, void* localPlayer) {
             // The host's killer wisp grabbed this peer's puppet; the host neutralised its own death
             // and tells the owner to ragdoll-die after a fixed delay. Host-only origin;
             // wisp_tear_mirror verifies the addressed element id. Not relayed.
-            if (msg.senderPeerSlot != 0) {
-                UE_LOGW("event_feed: WispGrab from non-host senderPeerSlot=%d -- dropping "
-                        "(host-only wisp origin)", msg.senderPeerSlot);
-                break;
-            }
             if (msg.payloadLen < sizeof(net::WispGrabPayload)) {
                 UE_LOGW("event_feed: WispGrab payload too short (%zu < %zu)",
                         static_cast<size_t>(msg.payloadLen), sizeof(net::WispGrabPayload));
@@ -245,18 +231,12 @@ void Update(net::Session& session, void* localPlayer) {
             }
             net::WispGrabPayload p{};
             std::memcpy(&p, msg.payload, sizeof(p));
-            const uint8_t sender = static_cast<uint8_t>(msg.senderPeerSlot);
-            ue_wrap::game_thread::Post([p, sender] { coop::wisp_tear_mirror::OnWispGrab(p, sender); });
+            ue_wrap::game_thread::Post([p] { coop::wisp_tear_mirror::OnWispGrab(p); });
             break;
         }
         case net::ReliableKind::WispTear: {
             // The fatality tear on the local wisp mirror, then the deferred hold of the victim's
             // puppet. Host-only origin; the wisp is resolved by element id; not relayed.
-            if (msg.senderPeerSlot != 0) {
-                UE_LOGW("event_feed: WispTear from non-host senderPeerSlot=%d -- dropping "
-                        "(host-only wisp origin)", msg.senderPeerSlot);
-                break;
-            }
             if (msg.payloadLen < sizeof(net::WispTearPayload)) {
                 UE_LOGW("event_feed: WispTear payload too short (%zu < %zu)",
                         static_cast<size_t>(msg.payloadLen), sizeof(net::WispTearPayload));
@@ -264,18 +244,12 @@ void Update(net::Session& session, void* localPlayer) {
             }
             net::WispTearPayload p{};
             std::memcpy(&p, msg.payload, sizeof(p));
-            const uint8_t sender = static_cast<uint8_t>(msg.senderPeerSlot);
-            ue_wrap::game_thread::Post([p, sender] { coop::wisp_tear_mirror::OnWispTear(p, sender); });
+            ue_wrap::game_thread::Post([p] { coop::wisp_tear_mirror::OnWispTear(p); });
             break;
         }
         case net::ReliableKind::UpgradeLevels: {
             // The host's canonical upgrade levels, mirrored whole. Host-only origin, and it sits
             // beside the balance on purpose: the two are one purchase seen from either end.
-            if (msg.senderPeerSlot != 0) {
-                UE_LOGW("event_feed: UpgradeLevels from non-host senderPeerSlot=%d -- dropping",
-                        msg.senderPeerSlot);
-                break;
-            }
             if (msg.payloadLen < sizeof(net::UpgradeLevelsPayload)) {
                 UE_LOGW("event_feed: UpgradeLevels payload too short (%zu < %zu)",
                         static_cast<size_t>(msg.payloadLen), sizeof(net::UpgradeLevelsPayload));
@@ -283,16 +257,11 @@ void Update(net::Session& session, void* localPlayer) {
             }
             net::UpgradeLevelsPayload p{};
             std::memcpy(&p, msg.payload, sizeof(p));
-            coop::upgrade_sync::ApplyFromHost(p);  // no-op on the host (authoritative)
+            coop::upgrade_sync::ApplyFromHost(p);
             break;
         }
         case net::ReliableKind::BalanceSync: {
             // The host's canonical balance, mirrored. Host-only origin.
-            if (msg.senderPeerSlot != 0) {
-                UE_LOGW("event_feed: BalanceSync from non-host senderPeerSlot=%d -- dropping",
-                        msg.senderPeerSlot);
-                break;
-            }
             if (msg.payloadLen < sizeof(net::BalancePayload)) {
                 UE_LOGW("event_feed: BalanceSync payload too short (%zu < %zu)",
                         static_cast<size_t>(msg.payloadLen), sizeof(net::BalancePayload));
@@ -300,25 +269,17 @@ void Update(net::Session& session, void* localPlayer) {
             }
             net::BalancePayload p{};
             std::memcpy(&p, msg.payload, sizeof(p));
-            coop::balance_sync::ApplyFromHost(p.value);  // no-op on the host (authoritative)
+            coop::balance_sync::ApplyFromHost(p.value);
             break;
         }
         case net::ReliableKind::TeleportClient: {
             // The host's teleport-to-me dev action: its pose, applied to the client's local player.
-            // The host's own echo is a no-op below.
             if (msg.payloadLen < sizeof(net::TeleportClientPayload)) {
                 UE_LOGW("event_feed: TeleportClient payload too short (%zu < %zu)",
                         static_cast<size_t>(msg.payloadLen), sizeof(net::TeleportClientPayload));
                 break;
             }
-            // Host-only: without the sender gate one client could teleport another through the
-            // host's fan-out.
-            if (msg.senderPeerSlot != 0) {
-                UE_LOGW("event_feed: TeleportClient from non-host senderPeerSlot=%d "
-                        "-- dropping (host-only)",
-                        msg.senderPeerSlot);
-                break;
-            }
+            // Host-only: the host's receive edge refuses a client's copy (client_authorship.h).
             net::TeleportClientPayload p{};
             std::memcpy(&p, msg.payload, sizeof(p));
             // NaN and Inf rejected before the engine call: K2_TeleportTo with a NaN location
@@ -340,12 +301,6 @@ void Update(net::Session& session, void* localPlayer) {
                         p.locX, p.locY, p.locZ);
                 break;
             }
-            // The host's own broadcast bounces back; applying it would teleport the host to its own
-            // pose.
-            if (session.role() == net::Role::Host) {
-                UE_LOGI("event_feed: TeleportClient self-echo on host -- no-op");
-                break;
-            }
             ::coop::teleport_client::ApplyArgs args{
                 p.locX, p.locY, p.locZ,
                 p.rotPitch, p.rotYaw, p.rotRoll,
@@ -362,12 +317,6 @@ void Update(net::Session& session, void* localPlayer) {
                         static_cast<size_t>(msg.payloadLen), sizeof(net::JoinPhaseNotePayload));
                 break;
             }
-            if (msg.senderPeerSlot != 0) {
-                UE_LOGW("event_feed: JoinPhaseNote from non-host senderPeerSlot=%d -- dropping",
-                        msg.senderPeerSlot);
-                break;
-            }
-            if (session.role() == net::Role::Host) break;  // self-echo guard
             net::JoinPhaseNotePayload p{};
             std::memcpy(&p, msg.payload, sizeof(p));
             coop::join_progress::NoteHostBeacon(p.phase, p.done, p.total);
@@ -382,12 +331,6 @@ void Update(net::Session& session, void* localPlayer) {
                         static_cast<size_t>(msg.payloadLen), sizeof(net::SnapshotBeginPayload));
                 break;
             }
-            if (msg.senderPeerSlot != 0) {
-                UE_LOGW("event_feed: SnapshotBegin from non-host senderPeerSlot=%d -- dropping",
-                        msg.senderPeerSlot);
-                break;
-            }
-            if (session.role() == net::Role::Host) break;  // self-echo guard (host doesn't load-screen)
             net::SnapshotBeginPayload p{};
             std::memcpy(&p, msg.payload, sizeof(p));
             coop::join_progress::BeginSnapshot(p.propTotal);
@@ -454,12 +397,6 @@ void Update(net::Session& session, void* localPlayer) {
                         static_cast<size_t>(msg.payloadLen), sizeof(net::SnapshotEndPayload));
                 break;
             }
-            if (msg.senderPeerSlot != 0) {
-                UE_LOGW("event_feed: SnapshotComplete from non-host senderPeerSlot=%d -- dropping",
-                        msg.senderPeerSlot);
-                break;
-            }
-            if (session.role() == net::Role::Host) break;
             // The optional per-class completeness census appended after the payload; the deferred
             // claim sweep keeps any class the host did not express completely.
             if (msg.payloadLen > sizeof(net::SnapshotEndPayload)) {
@@ -508,25 +445,24 @@ void Update(net::Session& session, void* localPlayer) {
             break;
         }
         case net::ReliableKind::SkinChange: {
-            // Store and live re-skin the slot's puppet; the handler also does the host's
-            // rebroadcast.
+            // Store and live re-skin the slot's puppet; on the host the handler re-sends a change
+            // at the kind's pace (TickPrefs pays what is owed).
             coop::player_handshake::HandleSkinChange(session, msg);
             break;
         }
         case net::ReliableKind::NameplateChange: {
-            // The per-peer nameplate visibility preference; the handler also rebroadcasts on the
-            // host.
+            // The per-peer nameplate visibility preference; paced on the host as the skin.
             coop::player_handshake::HandleNameplateChange(session, msg);
             break;
         }
         case net::ReliableKind::NickColorChange: {
-            // The per-peer nick colour; the handler also rebroadcasts on the host.
+            // The per-peer nick colour; paced on the host as the skin.
             coop::player_handshake::HandleNickColorChange(session, msg);
             break;
         }
         case net::ReliableKind::HandItem: {
-            // The hotbar hand-item display state; the handler rebroadcasts on the host and
-            // TickMirrors applies.
+            // The hotbar hand-item display state; the host re-sends a change at the lane's pace
+            // (PayOwed pays what is owed) and TickMirrors applies.
             coop::hand_item::HandleHandItem(session, msg);
             break;
         }
@@ -537,9 +473,9 @@ void Update(net::Session& session, void* localPlayer) {
             // from every family.
             if (HandleEntityEvent(session, msg, localPlayer)) break;
             if (HandleStateEvent(session, msg, localPlayer)) break;
-            if (HandleSignalEvent(session, msg)) break;
+            if (HandleSignalEvent(msg)) break;
             if (HandleIntentEvent(session, msg, localPlayer)) break;
-            if (HandleWorldEvent(session, msg)) break;
+            if (HandleWorldEvent(msg)) break;
             // An unknown kind (a newer protocol) is logged, not silently discarded.
             UE_LOGW("event_feed: unknown ReliableKind %u -- dropping",
                     static_cast<unsigned>(msg.kind));
@@ -547,6 +483,10 @@ void Update(net::Session& session, void* localPlayer) {
         }
         }
     }
+}
+
+uint32_t DrainedFrom(int slot, net::ReliableKind kind) {
+    return (slot >= 0 && slot < net::kMaxPeers) ? g_drained[slot][static_cast<uint8_t>(kind)] : 0;
 }
 
 }  // namespace coop::event_feed

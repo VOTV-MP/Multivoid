@@ -12,13 +12,17 @@
 
 #include "coop/world/alarm_sync.h"
 
+#include "coop/net/latest_wins.h"
+#include "coop/net/net_clock.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"  // coop::players::kMaxPeers
+#include "coop/player/roster_ledger.h"     // PerSlotState
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"   // ForEachInstance -- only the trigger_alarm_C instances, not a walk
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/actors/save_record.h"  // ReadFNameAt
 
@@ -85,20 +89,46 @@ void ResolvePass() {
 // driving the wrong trigger is worse than driving none.
 void* g_trigger = nullptr;
 int32_t g_triggerIdx = -1;
+// A search that bound nothing is not repeated for a second (the poll's period): a client's requests while the trigger
+// is unbound cost a clock read each, not a search each.
+std::chrono::steady_clock::time_point g_nextTriggerSearch{};
+
+// The key the wired trigger keeps (also the class-default key the CDO carries -- see the callback).
+struct TriggerSearch { int32_t offKey; void* found; };
 
 void* Trigger() {
     if (!g_trigger || !R::IsLiveByIndex(g_trigger, g_triggerIdx)) {
         g_trigger = nullptr;
         g_triggerIdx = -1;
-        if (!g_cls) return nullptr;
         if (g_offKey < 0) return nullptr;  // unresolved layout -- cannot tell the two apart
-        for (void* obj : R::FindObjectsByClass(L"trigger_alarm_C")) {
-            if (!obj || !R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__"))
-                continue;
-            if (ue_wrap::save_record::ReadFNameAt(obj, g_offKey) != L"alarmTrigger") continue;
-            g_trigger = obj;
-            g_triggerIdx = R::InternalIndexOf(obj);
-            break;
+        const auto now = std::chrono::steady_clock::now();
+        if (now < g_nextTriggerSearch) return nullptr;
+        // Resolve the class fresh from the index for the instance search, not off a cached pointer,
+        // matching the old FindObjectsByClass(name) that re-resolved by name too (a cached UClass
+        // could in principle be unlisted and re-created at another address). O(1). The property
+        // offsets ResolvePass latches are a separate matter, left as they were.
+        void* cls = ue_wrap::object_index::ClassByName(L"trigger_alarm_C");
+        if (!cls) return nullptr;  // class not loaded/indexed yet -- keep trying
+        // Only the trigger_alarm_C instances, from the object index, not a whole-array
+        // FindObjectsByClass per call: an AlarmState flood in a world whose trigger is unbound no
+        // longer walks ~250k objects each message. The loop's own checks stay in the
+        // callback -- the index lists the class default object, which carries the default key
+        // 'alarmTrigger', and the index's tenant check is weaker than IsLive.
+        TriggerSearch srch{g_offKey, nullptr};
+        ue_wrap::object_index::ForEachInstance(cls, [](void* ctx, void* obj, int32_t index) {
+            auto& s = *static_cast<TriggerSearch*>(ctx);
+            if (s.found || !obj) return;                                      // keep the first
+            if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return;      // the CDO's default key
+            if (!R::IsLive(obj)) return;                                      // PendingKill/Dying
+            if (R::SlotFlags(index) & R::slot_flags::NotYetReadable) return;  // still loading
+            if (ue_wrap::save_record::ReadFNameAt(obj, s.offKey) != L"alarmTrigger") return;
+            s.found = obj;
+        }, &srch);
+        if (srch.found) {
+            g_trigger = srch.found;
+            g_triggerIdx = R::InternalIndexOf(srch.found);
+        } else {
+            g_nextTriggerSearch = now + std::chrono::seconds(1);
         }
     }
     return g_trigger;
@@ -155,6 +185,44 @@ void Apply(bool active, bool suppressDetection) {
         g_polledTrigger = trig;
         g_lastPolled = active ? 1 : 0;  // ProcessEvent is synchronous -- the field already flipped
     }
+}
+
+// The host's applications of a client's request, per sender (an instrument: the world_latest drill counts them).
+coop::roster_ledger::PerSlotState<uint32_t> g_clientApplies;
+
+// The host applies a client's request natively WITHOUT suppressing detection: its next poll sees the flip and
+// broadcasts to everyone, the originator included, whose re-apply is a native no-op while the host holds its newest
+// request; a sender with a request owed is shown the host's older state until it is paid. MTA leaves the source out of
+// its relay of a client's element data (CGame.cpp:2759-2771); this lane's one poll broadcast serves the host's own scan
+// and every client's request alike.
+void ApplyClientRequest(int slot, bool active) {
+    UE_LOGI("alarm_sync: client slot=%d requests active=%d", slot, active ? 1 : 0);
+    Apply(active, /*suppressDetection=*/false);
+    ++g_clientApplies[slot];
+}
+
+// The trigger's state, or false when the lane is unresolved or no trigger is bound.
+bool ReadCurrent(bool& out) {
+    if (!Resolved()) return false;
+    void* trig = Trigger();
+    return trig && ReadActive(trig, out);
+}
+
+// A client's requests, the newest kept at a pace (coop/net/latest_wins.h). Its sender is one edge per 1 Hz poll
+// (kPollIntervalMs), and a request that changes the trigger runs the alarm's whole fanout: two at once, then one a
+// second. An unchanged request costs the trigger's byte. MTA applies a client's element data at once (CGame.cpp:2757);
+// paced here for the fanout's cost.
+constexpr coop::net::IntentBudget kRequestBudget{2.0f, 1.0f};
+struct PendingAlarm {
+    bool active = false;
+    coop::net::LatestWins pace;
+};
+coop::roster_ledger::PerSlotState<PendingAlarm> g_pending;
+
+// True when the trigger reads `active` already; an unreadable trigger counts as changed.
+bool Holds(bool active) {
+    bool cur = false;
+    return ReadCurrent(cur) && cur == active;
 }
 
 }  // namespace
@@ -218,6 +286,7 @@ void QueueConnectBroadcastForSlot(int slot) {
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
     if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return;
     if (!Resolved()) return;  // no world yet -> nothing to snapshot; the first transition delivers
+    g_nextTriggerSearch = {};  // one-shot, no retry: a miss latched a moment ago must not skip a trigger now bound
     void* trig = Trigger();
     bool active = false;
     if (!trig || !ReadActive(trig, active)) return;
@@ -241,11 +310,15 @@ void OnReliable(const coop::net::AlarmStatePayload& payload, int senderPeerSlot)
     const bool active = payload.active != 0;
     ResolvePass();
     if (s->role() == coop::net::Role::Host) {
-        // A client's local transition. Apply natively WITHOUT suppressing detection -- the
-        // host's next poll sees the flip and broadcasts to everyone (incl. the originator,
-        // whose re-apply is a native no-op).
-        UE_LOGI("alarm_sync: client slot=%d requests active=%d", senderPeerSlot, active ? 1 : 0);
-        Apply(active, /*suppressDetection=*/false);
+        // A client's local transition, the newest kept at the request budget's pace.
+        if (senderPeerSlot < 1 || senderPeerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
+        PendingAlarm& pend = g_pending[senderPeerSlot];
+        if (Holds(active)) {
+            pend.pace.Withdraw();
+            return;
+        }
+        pend.active = active;
+        if (pend.pace.Offer(kRequestBudget, coop::net::NowMs())) ApplyClientRequest(senderPeerSlot, active);
     } else {
         if (senderPeerSlot != 0) {
             UE_LOGW("alarm_sync: AlarmState from non-host senderPeerSlot=%d -- dropping",
@@ -266,9 +339,29 @@ void DevForce(bool active) {
     });
 }
 
+void PayOwed(coop::net::Session& session) {
+    if (session.role() != coop::net::Role::Host) return;
+    uint64_t now = 0;  // read once, and only when a request is owed
+    for (int slot = 1; slot < static_cast<int>(coop::players::kMaxPeers); ++slot) {
+        PendingAlarm& pend = g_pending[slot];
+        if (!pend.pace.Owed()) continue;
+        if (Holds(pend.active)) {  // the host's own scan or another client got there first
+            pend.pace.Withdraw();
+            continue;
+        }
+        if (now == 0) now = coop::net::NowMs();
+        if (pend.pace.Due(kRequestBudget, now)) ApplyClientRequest(slot, pend.active);
+    }
+}
+
+uint32_t ClientApplies(int slot) { return g_clientApplies[slot]; }
+
+bool ReadLocalActive(bool& out) { return ReadCurrent(out); }
+
 void OnDisconnect() {
     g_trigger = nullptr;
     g_triggerIdx = -1;
+    g_nextTriggerSearch = {};
     g_polledTrigger = nullptr;
     g_lastPolled = -1;
     g_lastPollMs = 0;

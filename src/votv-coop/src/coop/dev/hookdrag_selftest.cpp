@@ -7,7 +7,8 @@
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"            // CollectHandAxisActors: the hand is not a world prop
 #include "coop/player/players_registry.h"
-#include "coop/props/prop_element_tracker.h"  // FindLiveActorByKey: the tracked world props
+#include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_key_index.h"  // Find: the world prop a key names
 #include "coop/props/remote_prop.h"           // ResolveMirrorEidByActor: the eid a client's copy carries
 #include "coop/player/remote_player.h"
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
@@ -131,7 +132,7 @@ void* PickTarget(const ue_wrap::FVector& anchor, std::wstring& keyOut, ue_wrap::
         if (PR::IsStatic(obj) || PR::IsFrozen(obj) || PR::IsHeavy(obj)) continue;
         const std::wstring key = PR::GetInteractableKeyString(obj);
         if (key.empty() || key == L"None") continue;
-        if (coop::prop_element_tracker::FindLiveActorByKey(key) != obj) continue;  // not a tracked world prop
+        if (coop::prop_key_index::Find(key) != obj) continue;  // not the world prop its key names
         ue_wrap::FVector loc{};
         if (!E::TryGetActorLocation(obj, loc)) continue;   // unreadable: never the target
         const float dx = loc.X - anchor.X, dy = loc.Y - anchor.Y, dz = loc.Z - anchor.Z;

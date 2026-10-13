@@ -81,9 +81,14 @@ void DoConnect() {
     // The version pair rides along so the equality gate can refuse here, with the connect-failed
     // popup, rather than letting the wire gate drop the player later (rows show normally and are
     // rejected on join).
-    if (sm::JoinLobby(master, row.lobbyId, row.name, row.proto, row.game, row.gameBuild)) {
+    coop::net::Refusal refused;
+    if (sm::JoinLobby(master, row.lobbyId, row.name, row.proto, row.game, row.gameBuild, &refused)) {
         g_lastOutcome = "connect:started";
         SB::Close();   // accepted: the loading screen owns the player from here
+    } else if (refused.code != coop::net::EndReason::None) {
+        // Refused before the start (the version gate, a build that starts no session): the
+        // connect-failed notice says it.
+        g_lastOutcome = "connect:refused";
     } else {
         g_lastOutcome = "connect:busy";
         SB::SetNotice(l10n::T("Could not start that connection -- another action is already "

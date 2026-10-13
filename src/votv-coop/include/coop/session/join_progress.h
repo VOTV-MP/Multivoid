@@ -67,8 +67,9 @@ enum class Stage : int {
 
 // Whether the cover represents a client join or a host boot. The two share the loading-screen
 // and menu-hide machinery but render different text and abort differently: a client join has
-// a cancel button (stop the session and reopen the browser); a host boot has no cancel (the
-// player waits for their own world) and never drives the session-stop abort path.
+// a cancel button (end the session and put the player at the menu with the browser); a host
+// boot has no cancel (the player waits for their own world) and never drives the session-stop
+// abort path.
 enum class Mode : int { Client = 0, Host = 1 };
 
 // An immutable copy for the renderer: one cheap struct, no locks held by the caller.
@@ -118,12 +119,13 @@ void NoteDownload(uint32_t doneBytes, uint32_t totalBytes);
 void BeginWorldLoad();
 
 // WHY THIS CLIENT HAS NOT ANNOUNCED WORLD-READY YET. Between the engine reaching gameplay and
-// the announce sit gates that are this machine's own, and four of the five carry no deadline of
-// their own: a local player that never resolves, and three registry-coherence reads. The fifth,
-// the load-tail quiescence probe, carries its own 120 s ceiling and always latches. Until B2 the
-// only thing standing behind any of them was the 240 s whole-join failsafe, which is deleted --
-// so the pump names the gate it is blocked on, once a tick, and the phase waits on THAT changing.
-// The same rule as the host's beacon, pointed at ourselves.
+// the announce sit gates that are this machine's own, and five of the six carry no deadline of
+// their own: a local player that never resolves, three registry-coherence reads, and the prop key
+// index (which clears once it has seeded and the object index has no backlog, and ends the join,
+// MV-J32, on an install that can never seed). The sixth, the load-tail quiescence probe, carries its
+// own 120 s ceiling and always latches. Until B2 the only thing standing behind any of them was the
+// 240 s whole-join failsafe, which is deleted -- so the pump names the gate it is blocked on, once a
+// tick, and the phase waits on THAT changing. The same rule as the host's beacon, pointed at ourselves.
 enum class WorldGate : uint8_t {
     None = 0,
     NoLocalPlayer,       // no possessed local player in a gameplay world yet
@@ -131,11 +133,15 @@ enum class WorldGate : uint8_t {
     RegistryOtherWorld,  // it is seeded, but for a world that is not the one we loaded
     RegistryPurging,     // it is draining a dead world
     WorldSettling,       // the load tail has not quiesced -- the ONE gate with its own bound
+    KeyIndexPending,     // the prop key index has not caught up with the loaded world
 };
 
 // The pump's per-tick report while the announce is pending. A gate that CHANGED is progress; the
 // same gate again is not, and is not logged either. Client, game thread.
 void NoteWorldReadyGate(WorldGate gate);
+
+// The sentence a gate is named by, for a waiter outside a join (a re-announce after a world change).
+const char* WorldGateText(WorldGate gate);
 
 // This client announced world-ready: the wait is the host's from here (its bracket, deferred or
 // streaming). Driven by the pump at the announce. Accepts LoadingWorld (a menu-mode join whose
@@ -160,10 +166,10 @@ void NotePropApplied();                            // ++applied (clamped); no-op
 void Complete();                                   // -> Idle (cover lifts)
 void Reset();                                       // -> Idle (force hide: disconnect/shutdown/abort)
 
-// Abort the in-flight join. Two sources, one harness reaction (stop the session, hide the
-// cover, reopen the browser), drained through TakeAbortRequest on the harness thread, since
-// the render and net threads must not stop the net session directly (that joins the net
-// thread): RequestCancel is the loading screen's cancel button, and Fail is a join that could
+// Abort the in-flight join. Two sources, one harness reaction (end the session, hide the
+// cover, put the player at the menu with the browser), drained through TakeAbortRequest on the
+// harness thread, since the render and net threads must not stop the net session directly (that
+// joins the net thread): RequestCancel is the loading screen's cancel button, and Fail is a join that could
 // not be established (a master or HTTP failure, a synchronous start failure, a transport
 // connect that never reached connected), its code and detail logged so they surface in the
 // console. Both are no-ops unless a join is active, and idempotent.

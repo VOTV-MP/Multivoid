@@ -227,13 +227,9 @@ void Tick() {
     }
 }
 
-void OnReliable(const void* payload, int len, uint8_t senderSlot) {
+void OnReliable(const void* payload, int len) {
     net::Session* s = g_session.load(std::memory_order_acquire);
-    if (!s || s->role() == net::Role::Host) return;  // host to clients only
-    if (senderSlot != 0) {
-        UE_LOGW("order_queue: OrderQueue from slot %u, not the host -- dropping", senderSlot);
-        return;
-    }
+    if (!s) return;  // host to clients only: the host's receive edge refuses a client's copy
     if (!payload || len < static_cast<int>(sizeof(net::OrderQueueHeader))) {
         UE_LOGW("order_queue: OrderQueue too short (%d) -- dropping", len);
         return;

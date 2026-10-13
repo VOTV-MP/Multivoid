@@ -447,9 +447,9 @@ bool CaptureRecord(void* hookActor, SR::SaveRecord& out) {
     return SR::CaptureRecordVia(hookActor, g_fnGetData, out);
 }
 
-bool AdoptRecord(void* hookActor, const SR::SaveRecord& r) {
+bool AdoptRecord(void* hookActor, const SR::SaveRecord& r, SR::ClassResolver resolve) {
     if (!hookActor || !g_resolved) return false;
-    if (!SR::ApplyRecordVia(hookActor, g_fnLoadData, r)) return false;
+    if (!SR::ApplyRecordVia(hookActor, g_fnLoadData, r, resolve)) return false;
 
     // processKeys is what turns the two saved attach KEYS into this world's two actors and
     // re-attaches; without it the record is a pose and nothing else.

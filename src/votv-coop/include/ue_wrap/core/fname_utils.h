@@ -22,4 +22,9 @@ namespace ue_wrap::fname_utils {
 // Game-thread only (ProcessEvent dispatch invariant).
 reflection::FName StringToFName(const std::wstring& s);
 
+// Whether the string library is found in this process, resolving it as StringToFName does. Until it
+// is, every StringToFName returns NAME_None whatever the string, so a caller that must tell "not
+// yet" from "this string failed" asks this first. Game thread.
+bool Resolved();
+
 }  // namespace ue_wrap::fname_utils

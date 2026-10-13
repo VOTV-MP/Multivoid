@@ -13,9 +13,11 @@
 #include "coop/net/master_slots.h"  // DefaultSignalingUrl -- a P2P connect's relay when none is named
 #include "coop/net/protocol.h"      // kProtocolVersion, kDefaultPort, kReleasesUrl
 #include "coop/session/join_progress.h"
+#include "coop/props/prop_key_index.h"  // Unavailable -- an install that cannot index starts no session
 #include "coop/session/shutdown.h"
 #include "coop/version.h"  // kGameTarget -- the game half of the pre-flight's pair
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/script_gate.h"   // IsInstalled -- a script loop that could not be hooked starts none
 
 #include <cstdint>
 #include <cstdlib>
@@ -120,9 +122,38 @@ void SetJoinPassword(const std::string& password) {
     g_joinPassword = password;
 }
 
+net::Refusal SubstrateRefusal() {
+    // MTA stops the whole process at load on a module it cannot use
+    // (reference/mtasa-blue/Client/core/CCore.cpp:1095-1107,
+    // reference/mtasa-blue/Server/core/CServerImpl.cpp:340-352); this mod augments a single-player game,
+    // which keeps running, so only the session is refused. The script gate arms at boot or never, and the key index
+    // installs on the first game-thread task after it (harness::Start), so both answers are in before any
+    // action here can run.
+    if (!ue_wrap::script_gate::IsInstalled())
+        return {net::EndReason::ScriptHooksUnavailable, "the script loop could not be hooked"};
+    if (coop::prop_key_index::Unavailable())
+        return {net::EndReason::ScriptHooksUnavailable, "the prop key watches were refused"};
+    return {};
+}
+
+namespace {
+// A join this build cannot start, refused before any cover or connect, as the version gate refuses one;
+// `out` (reset by the caller) gets the refusal.
+bool RefusedBySubstrate(const char* what, net::Refusal* out) {
+    const net::Refusal r = SubstrateRefusal();
+    if (r.code == net::EndReason::None) return false;
+    if (out) *out = r;
+    UE_LOGW("session_manager: %s refused -- [%s] %s (%s)", what, net::Describe(r.code).id,
+            net::Describe(r.code).text, r.detail.c_str());
+    coop::join_progress::RefuseJoin(r.code, r.detail);
+    return true;
+}
+}  // namespace
+
 bool JoinLobby(const std::string& masterUrl, const std::string& lobbyId,
                const std::string& displayName, int hostProto, const std::string& hostGame,
-               const std::string& hostGameBuild) {
+               const std::string& hostGameBuild, net::Refusal* refused) {
+    if (refused) *refused = net::Refusal{};
     // Never connect to our own lobby (the host clicking its own listed server); rejected before any
     // loading state is raised.
     if (!lobbyId.empty() && lobbyId == OwnLobbyId()) {
@@ -130,6 +161,7 @@ bool JoinLobby(const std::string& masterUrl, const std::string& lobbyId,
         SetHostStatus("That's your own server -- you're already hosting it.");
         return false;
     }
+    if (RefusedBySubstrate("JOIN", refused)) return false;
     // The version gate, pre-flight from the browser row ("show normally, reject on Join"); the Join
     // wire gate re-validates live and the header close is the final backstop. Rejected through the
     // connect-failed popup, not the footer.
@@ -141,6 +173,7 @@ bool JoinLobby(const std::string& masterUrl, const std::string& lobbyId,
                     hostProto, coop::version::kGameTarget,
                     static_cast<unsigned>(net::kProtocolVersion));
             coop::join_progress::RefuseJoin(verdict.code, verdict.text);
+            if (refused) *refused = net::Refusal{verdict.code, verdict.text};
             return false;
         }
     }
@@ -213,7 +246,9 @@ bool JoinLobby(const std::string& masterUrl, const std::string& lobbyId,
     return true;
 }
 
-bool ConnectDirect(const std::string& hostPort) {
+bool ConnectDirect(const std::string& hostPort, net::Refusal* refused) {
+    if (refused) *refused = net::Refusal{};
+    if (RefusedBySubstrate("direct connect", refused)) return false;
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- Direct ignored"); return false; }
     std::string host;
     uint16_t port = 0;
@@ -248,11 +283,13 @@ bool ConnectDirect(const std::string& hostPort) {
     return ok;
 }
 
-bool ConnectP2PDirect(const std::string& hostIdentity, const net::Config& p2pFields) {
+bool ConnectP2PDirect(const std::string& hostIdentity, const net::Config& p2pFields, net::Refusal* refused) {
     // The P2P twin of ConnectDirect: dial a host by identity through a signaling server with no
     // master in the loop, for the env test client and for a dev dialling a `gen:` line copied from
     // a log. The signaling and ICE half comes from the caller's already resolved config:
     // FillP2PFields is the one place those fields are assembled.
+    if (refused) *refused = net::Refusal{};
+    if (RefusedBySubstrate("P2P connect", refused)) return false;
     if (g_actionBusy.exchange(true)) {
         UE_LOGW("session_manager: action busy -- P2P connect ignored");
         return false;

@@ -392,10 +392,9 @@ void SettleForArm() {
         UE_LOGW("dish_sync: the arm settled %d mirrored mover(s) still moving -- a gate-bypass arm?", cleared);
 }
 
-void OnDishSnapshot(const coop::net::DishSnapshotPayload& p, uint8_t senderSlot) {
-    (void)senderSlot;
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || s->role() == coop::net::Role::Host) return;
+void OnDishSnapshot(const coop::net::DishSnapshotPayload& p) {
+    // From the host alone: the host's receive edge refuses a client's copy (client_authorship.h).
+    if (!g_session.load(std::memory_order_acquire)) return;
     if (!D::EnsureResolved()) {
         UE_LOGW("dish_sync: DishSnapshot dropped -- dish surface not yet resolved "
                 "(join-window ordering)");

@@ -35,6 +35,9 @@ void Install(coop::net::Session* session);
 void CaptureJoinSnapshot(int peerSlot);
 void CancelJoinSnapshot(int peerSlot);
 void QueueConnectBroadcastForSlot(int peerSlot);
+// Whether the lane has settled against a count-stable email array, so a row added now is a row of
+// this world and not one the load is still filling in. Game thread.
+bool Settled();
 
 // Slot teardown (roster row transition): drop the leaver's half-assemblies +
 // seed bracket so a recycled occupant can never inherit them.

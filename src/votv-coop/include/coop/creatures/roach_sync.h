@@ -49,7 +49,7 @@ void Tick();
 // deleteRoach(idx, crush=false) for every local roach and then addRoach(loc, size,
 // bypassCheck=true) per snapshot entry, so the array, its count and its collision stay consistent
 // with single-player.
-void OnState(const coop::net::RoachStatePayload& payload, int senderPeerSlot);
+void OnState(const coop::net::RoachStatePayload& payload);
 
 // HOST receive: a client consumed a roach locally, by eating or stomping it -- delete the nearest
 // live roach within the adjudication radius. The next snapshot converges everyone. Game thread.

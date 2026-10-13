@@ -149,11 +149,11 @@ For a full clean sweep, also delete the mod's runtime files next to the
 executable unless noted (all optional — they only store mod settings and logs):
 `multivoid.ini`, `multivoid.ini.example`, `multivoid.log`, `multivoid.prev.log`,
 `multivoid-loaded.txt`, `multivoid-compat-report.txt`, `multivoid-players.txt`,
-`multivoid-banlist.txt` (from builds before this one, no longer read), the folder
+`multivoid-banlist.txt` (from builds before this one; this build does not read it), the folder
 `multivoid_servers` (it holds your hosted server's folder), the folder `multivoid_reports`
 (your saved bug reports), the skin-pak folder
 `VotV\Content\Paks\LogicMods\multivoid` if you created one, and, from builds before this
-one, a folder `%LOCALAPPDATA%\Multivoid` (no longer read). Your identity is a separate
+one, a folder `%LOCALAPPDATA%\Multivoid` (this build does not read it). Your identity is a separate
 file beside the executable, `multivoid_identity.key`, which only your Windows account can
 read (another account on the same PC that cannot read it keeps its own key beside it
 (if it may write the game folder; otherwise each launch runs on a temporary identity and the

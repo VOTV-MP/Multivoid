@@ -3,7 +3,7 @@
 // world-lifecycle event.
 //
 // Owns the throttled dead-element reaper; purge-EPISODE detection (a mass GC purge is a
-// level/world transition) with the episode-end world-change re-seed, its post-purge key-index
+// level/world transition) with the episode-end world-change re-seed, its post-purge tracked-key
 // drain and its save-identity re-bind; the small-travel re-seed companion; the host's
 // death-watch PropDestroy broadcast; and the gameplay->menu TRANSITION DETECTION. The steady
 // re-seed is NOT here: prop_census.cpp runs it as a scan-hub consumer with a budgeted drain.

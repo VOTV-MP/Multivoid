@@ -19,6 +19,7 @@
 #include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"  // ClassByName -- the host's O(1) class resolve for a client's contents
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/facts/function_row.h"
@@ -316,9 +317,13 @@ Ingest ApplyContents(uint32_t eid, const std::vector<SR::SaveRecord>& recs, uint
         UE_LOGW("container_contents: eid=%u -- alloc of %d records failed; leaving contents", eid, n);
         return Ingest::Handled;
     }
+    // The HOST applies a CLIENT's contents with its world up, so it resolves each record's class
+    // names through object_index (an attacker's unknown name is an O(1) miss, not a whole-array walk);
+    // a CLIENT applying the host's broadcast may be mid-load, so it keeps FindClass (its index can trail).
+    const SR::ClassResolver resolve = IsHost() ? &ue_wrap::object_index::ClassByName : nullptr;
     for (int32_t i = 0; i < n; ++i)
         SR::WriteSaveRecord(reinterpret_cast<uint8_t*>(buf) + static_cast<size_t>(i) * SR::kSaveStride,
-                            recs[i]);
+                            recs[i], resolve);
     // The previous buffer is orphaned: freeing the nested sub-arrays, minted FStrings and signal
     // rows recursively is far more crash-prone than leaking them, and the engine never double-frees
     // a buffer it has lost. inventory::ApplyToSaveObject orphans the same way once per join; this

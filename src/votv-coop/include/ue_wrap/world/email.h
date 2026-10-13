@@ -15,6 +15,8 @@
 
 #pragma once
 
+#include "ue_wrap/core/row_apply.h"
+
 #include <cstdint>
 #include <string>
 
@@ -77,7 +79,9 @@ bool DelEmail(int32_t index);
 // addEmail re-stamps it from the synced clock, FTexts minted from strings,
 // pfp resolved by leaf name or null) and dispatch the reflected
 // gamemode.addEmail. Reproduces persistence + list + ding + tab highlight in
-// one call. Game thread.
-bool AddEmail(const Row& row);
+// one call. NotNow when the game cannot be asked (no gamemode, addEmail or the
+// text library unresolved); Refused when the row cannot be put to it; Applied when the call
+// ran to its end (ue_wrap/core/row_apply.h). Game thread.
+ue_wrap::RowApply AddEmail(const Row& row);
 
 }  // namespace ue_wrap::email

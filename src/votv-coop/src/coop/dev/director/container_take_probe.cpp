@@ -13,7 +13,7 @@
 
 #include "coop/config/config.h"               // ReadEnv
 #include "coop/player/players_registry.h"
-#include "coop/props/prop_element_tracker.h"  // CollectKeyIndexEntries -- the stable save-key index
+#include "coop/props/prop_element_tracker.h"  // CollectTrackedKeyEntries -- the tracked save keys
 #include "ue_wrap/actors/inventory.h"      // ResolveSaveSlot
 #include "ue_wrap/actors/prop.h"           // WalksToBase
 #include "ue_wrap/actors/save_record.h"    // ReadArr, kMxStride
@@ -476,8 +476,8 @@ void* PickSharedContainer(void* player, int32_t& outCount, ue_wrap::FVector& out
     // spawn order at load and diverges across peers. The lexicographically smallest key among
     // non-empty keyed containers wins; nav-reachability is a feasibility filter, not the identity,
     // and the orchestrator checks both peers picked the same key.
-    std::vector<PT::KeyIndexEntry> keyed;
-    PT::CollectKeyIndexEntries(keyed);
+    std::vector<PT::TrackedKeyEntry> keyed;
+    PT::CollectTrackedKeyEntries(keyed);
     struct Cand { void* o; ue_wrap::FVector p; int32_t cnt; std::wstring key; };
     std::vector<Cand> cs;
     for (const auto& ke : keyed) {

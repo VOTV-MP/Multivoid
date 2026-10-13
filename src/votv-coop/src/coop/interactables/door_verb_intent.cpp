@@ -4,6 +4,7 @@
 
 #include "coop/element/intent_authority.h"
 #include "coop/interactables/interactable_sync.h"  // the door lane's key for a door, and its resolve
+#include "coop/net/intent_bucket.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
@@ -57,8 +58,7 @@ constexpr float kDoorReachUU = 400.0f;
 
 // A sender's verbs run from a bounded queue at a bounded rate: a melee swing is a few hits a
 // second and a press is rarer, so the bound is only felt by a stalled or flooding client.
-constexpr float    kVerbBurst     = 4.0f;
-constexpr float    kVerbPerSecond = 4.0f;
+constexpr coop::net::IntentBudget kVerbBudget{4.0f, 4.0f};
 constexpr size_t   kMaxPending    = 8;
 constexpr uint64_t kRefusalSayMs  = 10000;
 
@@ -80,9 +80,8 @@ uint64_t NowMs() {
 }
 
 struct Bucket {
-    float    tokens = kVerbBurst;
-    uint64_t lastMs = 0;
-    uint64_t nextSayMs = 0;
+    coop::net::IntentBucket rate;
+    uint64_t                nextSayMs = 0;
 };
 Bucket g_rate[coop::net::kMaxPeers];
 std::deque<coop::net::DoorVerbIntentPayload> g_pending[coop::net::kMaxPeers];
@@ -90,18 +89,7 @@ bool g_waitSaid[coop::net::kMaxPeers] = {};  // a sender's wait for its body, sa
 bool g_cutSaid[coop::net::kMaxPeers]  = {};  // a sender's hit cut to its item's swing, said once
 uint64_t g_hitRefusals = 0;                  // hits refused as no swing: said for three, then every twentieth
 
-bool TakeToken(uint8_t slot) {
-    Bucket& b = g_rate[slot];
-    const uint64_t now = NowMs();
-    if (b.lastMs != 0 && now > b.lastMs) {
-        b.tokens += kVerbPerSecond * static_cast<float>(now - b.lastMs) / 1000.0f;
-        if (b.tokens > kVerbBurst) b.tokens = kVerbBurst;
-    }
-    b.lastMs = now;
-    if (b.tokens < 1.0f) return false;
-    b.tokens -= 1.0f;
-    return true;
-}
+bool TakeToken(uint8_t slot) { return g_rate[slot].rate.Take(kVerbBudget, NowMs()); }
 
 const char* VerbName(uint8_t verb) {
     for (const VerbWatch& w : kWatches)
@@ -333,7 +321,7 @@ void Tick(coop::net::Session& session) {
             g_pending[slot].pop_front();
             g_waitSaid[slot] = false;        // a consumed verb ends the wait's streak
         } else {
-            g_rate[slot].tokens += 1.0f;     // a wait runs nothing, so it spends no token
+            g_rate[slot].rate.Refund(kVerbBudget);  // a wait runs nothing, so it spends no token
         }
     }
 }

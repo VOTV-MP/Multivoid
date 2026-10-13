@@ -54,6 +54,8 @@ constexpr Row kRows[] = {
     {EndReason::IcePolicyUnreadable,   {"MV-J28", L10N_MARK("Your net.ice setting could not be read as all or relay. Set it to one of them in multivoid.ini, or make the file readable.")}},
     {EndReason::RelayWithoutServer,    {"MV-J29", L10N_MARK("Your net.ice=relay allows only a relayed connection, and this session has no relay server.")}},
     {EndReason::RelayRefusesDirect,    {"MV-J30", L10N_MARK("Your net.ice=relay keeps your address from other players, and a direct connection would show it to the host. Join a lobby that is not direct, or remove net.ice from multivoid.ini.")}},
+    {EndReason::WorldNotLeft,          {"MV-J31", L10N_MARK("Your game could not leave this world for the main menu.")}},
+    {EndReason::ScriptHooksUnavailable, {"MV-J32", L10N_MARK("Multivoid could not hook this game version where its scripts run, so it cannot match objects between players and no session can start. Check for a Multivoid update made for your game version.")}},
     // H -- the host decided
     {EndReason::WrongPassword,           {"MV-H01", L10N_MARK("Wrong password.")}},
     {EndReason::PasswordRequired,        {"MV-H02", L10N_MARK("This server needs a password.")}},
@@ -86,6 +88,9 @@ constexpr Row kRows[] = {
     {EndReason::ConnectFlood,            {"MV-H29", L10N_MARK("Too many connections from you in a short time. Try again shortly.")}},
     {EndReason::UnofficialClientRefused, {"MV-H30", L10N_MARK("This server admits only the official Multivoid build. Install the official release (the whole zip).")}},
     {EndReason::OfficialClientRefused,   {"MV-H31", L10N_MARK("This server runs a modified (unofficial) Multivoid build and admits only modified builds.")}},
+    {EndReason::ReliableFlood,           {"MV-H32", L10N_MARK("This machine sent the host more than a player can. Wait ten minutes before joining again.")}},
+    {EndReason::RepeatedRequest,         {"MV-H33", L10N_MARK("This machine asked the host for its world a second time in one visit, which this game never does.")}},
+    {EndReason::RepeatedWorldReady,      {"MV-H34", L10N_MARK("This machine told the host its world was ready far more often than a join does.")}},
     // T -- the transport decided
     {EndReason::Timeout,            {"MV-T01", L10N_MARK("No answer from the host.")}},
     {EndReason::NoRoute,            {"MV-T02", L10N_MARK("No route to the host through its firewall or router.")}},

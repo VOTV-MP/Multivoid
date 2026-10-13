@@ -3,6 +3,7 @@
 #include "coop/interactables/upgrade_sync.h"
 
 #include "coop/interactables/device_occupancy.h"
+#include "coop/net/intent_bucket.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 
@@ -44,9 +45,8 @@ const wchar_t* const kLaptopKey = L"laptop";
 
 // One purchase is one press. The bound is not about cost -- the host re-checks every condition --
 // but about a stalled client's backlog arriving as a burst of charges.
-constexpr float  kPressBurst     = 3.0f;
-constexpr float  kPressPerSecond = 2.0f;
-constexpr size_t kMaxPending     = 6;
+constexpr coop::net::IntentBudget kPressBudget{3.0f, 2.0f};
+constexpr size_t kMaxPending = 6;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_watchBuy = false, g_watchSell = false;
@@ -70,25 +70,10 @@ uint64_t NowMs() {
                                      .count());
 }
 
-struct Bucket {
-    float    tokens = kPressBurst;
-    uint64_t lastMs = 0;
-};
-Bucket g_rate[coop::net::kMaxPeers];
+coop::net::IntentBucket g_rate[coop::net::kMaxPeers];
 std::deque<coop::net::UpgradeIntentPayload> g_pending[coop::net::kMaxPeers];
 
-bool TakeToken(uint8_t slot) {
-    Bucket& b = g_rate[slot];
-    const uint64_t now = NowMs();
-    if (b.lastMs != 0 && now > b.lastMs) {
-        b.tokens += kPressPerSecond * static_cast<float>(now - b.lastMs) / 1000.0f;
-        if (b.tokens > kPressBurst) b.tokens = kPressBurst;
-    }
-    b.lastMs = now;
-    if (b.tokens < 1.0f) return false;
-    b.tokens -= 1.0f;
-    return true;
-}
+bool TakeToken(uint8_t slot) { return g_rate[slot].Take(kPressBudget, NowMs()); }
 
 // ---- host side -------------------------------------------------------------------------------
 
@@ -343,8 +328,7 @@ void SendCurrentToSlot(int slot) {
 }
 
 void ApplyFromHost(const coop::net::UpgradeLevelsPayload& payload) {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (s && s->role() == coop::net::Role::Host) return;  // authoritative
+    // From the host alone: the host's receive edge refuses a client's copy (client_authorship.h).
     g_pendingApply = payload;
     g_havePendingApply = true;
     g_pendingGen = ue_wrap::world_identity::Generation();  // the world it was sent for
@@ -365,7 +349,7 @@ void OnUpgradeIntent(coop::net::Session& session, const coop::net::UpgradeIntent
 void OnPeerLeft(uint8_t slot) {
     if (slot >= coop::net::kMaxPeers) return;
     g_pending[slot].clear();
-    g_rate[slot] = Bucket{};
+    g_rate[slot].Reset();
 }
 
 void OnDisconnect() {
@@ -378,7 +362,7 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(g_applied));
     for (uint8_t slot = 0; slot < coop::net::kMaxPeers; ++slot) {
         g_pending[slot].clear();
-        g_rate[slot] = Bucket{};
+        g_rate[slot].Reset();
     }
     g_havePublished = false;
     g_havePendingApply = false;

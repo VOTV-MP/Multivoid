@@ -35,19 +35,9 @@ CFG_INT(desk_diag_ms, "desk_diag_ms", "dev", 1000, 100, 60000, nullptr,
     "Interval in milliseconds for the desk_diag log.")
 CFG_INT(vitals_keepalive_sec, "vitals_keepalive_sec", "dev", 0, 0, 86400, nullptr,
     "Reset player vitals every N seconds (0 = off; long unattended test runs).")
-CFG_INT(hold_snapshot_sec, "hold_snapshot_sec", "dev", 0, 0, 600,
-    "VOTVCOOP_DEV_HOLD_SNAPSHOT_SEC",
-    "Host testing knob: defer each joiner's world bracket for N seconds before sending it "
-    "(0 = off). Reproduces the one host-side wait nothing else can stage -- a joiner with a "
-    "healthy link and a world, waiting on a bracket the host is holding. Under the joiner's "
-    "budget the join still completes; over it, it fails naming the host's phase.")
-CFG_INT(stall_world_stream_at_pct, "stall_world_stream_at_pct", "dev", 0, 0, 99,
-    "VOTVCOOP_DEV_STALL_WORLD_STREAM_AT_PCT",
-    "Host testing knob: stop feeding a joiner's world blob once N% of it has been handed to the "
-    "transport (0 = off). The connection stays healthy and the host keeps beaconing its phase, "
-    "so this is a download that STOPS rather than a link that dies -- the shape a fixed transfer "
-    "cap used to answer by booting a fresh world and finishing the join in it. The joiner's "
-    "download budget now names it instead.")
+// The drills of a session's join, rejoin and leave: their own file, one concept, included as
+// _dev_port.inc and _dev_boundary.inc are.
+#include "coop/config/config_registry_rows_dev_join.inc"
 CFG_INT(bulk_queue_cap_ms, "bulk_queue_cap_ms", "dev", 2000, 0, 600000,
     "VOTVCOOP_DEV_BULK_QUEUE_CAP_MS",
     "How deep a queue a world-blob stream may stand behind, in milliseconds of the delivery "
@@ -73,6 +63,8 @@ CFG_FLAG(meadow_selftest, "meadow_selftest", "dev", false, "VOTVCOOP_MEADOW_SELF
     "Autonomous selftest: the laptop signal database lane, every writer on the host and a client's row.")
 CFG_FLAG(lid_drill, "lid_drill", "dev", false, "VOTVCOOP_LID_DRILL",
     "Autonomous drill: the portable PC's lid, opened on the host and closed on the client.")
+CFG_FLAG(laptop_power_drill, "laptop_power_drill", "dev", false, "VOTVCOOP_LAPTOP_POWER_DRILL",
+    "Autonomous drill: the stationary laptop's power, pressed on each peer; a replay must not come back as an edge.")
 CFG_FLAG(selftest_break_runtime_layer, "selftest_break_runtime_layer", "dev", false, "VOTVCOOP_SELFTEST_BREAK_RUNTIME_LAYER",
     "Red arm of the runtime-layer selftest: its first SetValue is skipped, so every check that reads the value it would have set must fail.")
 CFG_FLAG(selftest_break_quoting, "selftest_break_quoting", "dev", false, "VOTVCOOP_SELFTEST_BREAK_QUOTING",
@@ -207,13 +199,6 @@ CFG_FLAG(chat_no_retain, "chat_no_retain", "dev", false, "VOTVCOOP_CHAT_NO_RETAI
     "Developer: never keep a chat line in history (the chat drill's history red).")
 CFG_FLAG(chat_seed_suppress, "chat_seed_suppress", "dev", false, "VOTVCOOP_CHAT_SEED_SUPPRESS",
     "Developer: send a joiner no chat history (the seed red).")
-CFG_ENUM(pause_quit_drill, "pause_quit_drill", "dev", "off", "off|client|host",
-    "VOTVCOOP_PAUSE_QUIT_DRILL",
-    "Developer: the named peer opens the pause menu and presses Main menu, as a player does, once it "
-    "is in the session; prints [PAUSE-QUIT] lines.")
-CFG_FLAG(quit_decision_red, "quit_decision_red", "dev", false, "VOTVCOOP_QUIT_DECISION_RED",
-    "Developer: the quit decision does NOT end the session (the pause-quit drill's red: the menu "
-    "world's destroys go out).")
 CFG_FLAG(wire_census, "wire_census", "dev", false, "VOTVCOOP_WIRE_CENSUS",
     "Developer: log the wire census every second (the wirewindow probe).")
 CFG_FLAG(ban_drill, "ban_drill", "dev", false, "VOTVCOOP_BAN_DRILL",
@@ -269,8 +254,6 @@ CFG_FLAG(roster_token_selftest, "roster_token_selftest", "dev", false, nullptr,
 CFG_FLAG(roster_drop_empty_rows, "roster_drop_empty_rows", "dev", false, nullptr,
     "Fault injection (CLIENT): discard every inbound roster row that says a slot is EMPTY, so a "
     "departure can only be learned from the successor's row. Proves absence is never needed.")
-CFG_FLAG(save_wait_probe, "save_wait_probe", "dev", false, "VOTVCOOP_SAVE_WAIT_PROBE",
-    "Probe: the host holds each save request as if its world were still loading, for a second after it is in.")
 CFG_FLAG(pile_delta_probe, "pile_delta_probe", "dev", false, nullptr,
     "Diagnostic probe: trash pile delta events.")
 CFG_FLAG(garbage_pickup_probe, "garbage_pickup_probe", "dev", false, nullptr,
@@ -310,8 +293,6 @@ CFG_FLAG(object_overlay, "object_overlay", "dev", false, nullptr,
     "Debug overlay: object/entity markers.")
 CFG_FLAG(ragdoll_bone_overlay, "ragdoll_bone_overlay", "dev", false, nullptr,
     "Debug overlay: ragdoll bone positions.")
-CFG_FLAG(join_window_pos_trace, "join_window_pos_trace", "dev", false, nullptr,
-    "Diagnostic trace: entity positions during the join window.")
 CFG_FLAG(puppet_head_probe, "puppet_head_probe", "dev", false, nullptr,
     "Diagnostic probe: puppet head/aim pose.")
 CFG_FLAG(atv_probe, "atv_probe", "dev", false, nullptr,
@@ -342,12 +323,6 @@ CFG_FLAG(rollover_watch, "rollover_watch", "dev", false, "VOTVCOOP_ROLLOVER_WATC
     "(the dish hash codes, the task shuffle, the Bad Sun), the minute and hour pulses and every "
     "Blueprint bound to them, and prints each peer's day number and a digest of the 24 hash codes "
     "whenever the day changes. Read-only; it never refuses a call.")
-CFG_FLAG(load_reroll_watch, "load_reroll_watch", "dev", false, "VOTVCOOP_LOAD_REROLL_WATCH",
-    "Diagnostic probe (BOTH peers): what a world load rolls again. Watches the server-upgrade "
-    "spawner and the coordinate towers' scramble from before a joining client's world exists, "
-    "since both run inside the load, and logs the first calls with their callers. It holds the "
-    "script gate on while set, with or without a session, so every lane's gate watch also runs "
-    "outside a session for that run; read-only otherwise.")
 CFG_ENUM(midnight_drill, "midnight_drill", "dev", "off", "off|awake|asleep|cheat|mode5|malformed|joinwindow",
     "VOTVCOOP_MIDNIGHT_DRILL",
     "Drill (BOTH peers, with rollover_watch), once a client's join is over. awake and asleep: the "
@@ -624,21 +599,6 @@ CFG_FLAG(lookat_aim_drill, "lookat_aim_drill", "dev", false, "VOTVCOOP_LOOKAT_AI
     "Drill (BOTH peers): walk to the nearest prop with the bot director, turn the camera onto it, "
     "and hold there without pressing anything, so the churn probe above has an aim to read. Says "
     "one readiness line once the game's own trace resolves the prop.")
-CFG_FLAG(client_world_first, "client_world_first", "dev", false, "VOTVCOOP_CLIENT_WORLD_FIRST",
-    "Rig (CLIENT): before it joins, the client boots a world of its own (a New Game: the rig starts every "
-    "client fresh) and stands in it, then joins from inside it: the host's save downloaded and its world "
-    "loaded once this one is left. A join that starts inside a world, which no menu-joining run exercises.")
-CFG_FLAG(join_at_host, "join_at_host", "dev", false, "VOTVCOOP_JOIN_AT_HOST",
-    "Drill (CLIENT): the join's first appearance keeps the transferred save's player transform, which "
-    "is where the host stood, instead of this player's profile pose or the start point; a respawn "
-    "still goes to the start point. For a drill that needs the client at the base: from the start "
-    "point, a 770 m route, the director does not finish the walk on the rig. Off, the client appears "
-    "at its profile's pose or at the start point.")
-CFG_FLAG(rehost_rejoin, "rehost_rejoin", "dev", false, "VOTVCOOP_REHOST_REJOIN",
-    "Drill (CLIENT): join the host again without restarting the game. At the main menu, with no "
-    "session and no join in flight, a file named multivoid-rejoin.trigger beside the game exe is "
-    "deleted and net.peer:net.port dialed through the direct connect, once per file. The rig's "
-    "host-restart arm drops it when the relaunched host is up.")
 CFG_FLAG(prop_birth_key_probe, "prop_birth_key_probe", "dev", false, "VOTVCOOP_PROP_BIRTH_KEY_PROBE",
     "Diagnostic probe (both roles): the place/birth seam -- how many drain ticks the save Key takes "
     "to restore after a spawn, and which of the seven drain exits each pending spawn leaves by; and "
@@ -719,18 +679,9 @@ CFG_INT(atlas_texmax_drill, "atlas_texmax_drill", "dev", 0, 0, 8192,
     "VOTVCOOP_ATLAS_TEXMAX",
     "Override the font atlas size ceiling (0 = the shipped one: 2048, 4096 under a script face). Set 256 to starve "
     "the packer and prove the pack-failure detector fires.")
-// The admission drill, client side only, and that is the whole design: the host's gate has no
-// knob, no dev branch and no env check anywhere, so the drill exercises the real refusal or
-// it proves nothing; a knob on the host would make the drill's own pass conditional on a
-// bypass existing in shipped code.
-CFG_ENUM(auth_drill, "auth_drill", "dev", "off", "off|corrupt|silent|mismatch",
-    "VOTVCOOP_AUTH_DRILL",
-    "Sabotage THIS CLIENT's identity proof, to prove the host refuses it. corrupt = "
-    "send a flipped signature; silent = open the exchange and never answer. Both must "
-    "leave this peer unseated and with no save. mismatch = pretend we were sent to a "
-    "DIFFERENT host than the one that answered, which THIS peer must refuse itself "
-    "-- it is the only arm whose refusal is ours, not the host's. "
-    "Drill only.")
+// The receive boundary's drills (admission forgery, the hostile-peer drill): their own file, one
+// concept, included as _dev_port.inc is above.
+#include "coop/config/config_registry_rows_dev_boundary.inc"
 CFG_FLAG(l10n_selftest_red, "l10n_selftest_red", "dev", false, "VOTVCOOP_L10N_SELFTEST_RED",
     "The l10n selftest's red arm: one expected plural form is made wrong, so the selftest says FAIL "
     "and the rig's verdict reads it. Changes nothing else.")
@@ -792,6 +743,15 @@ CFG_FLAG(init_seam_probe, "init_seam_probe", "dev", false, "VOTVCOOP_INIT_SEAM_P
     "Probe: a script-gate watch on every Init body of a keyed prop, counted by the body's owning "
     "class, its caller, whether it runs inside another Init of the same object and whether the key "
     "is still unset; logged every 30 s and at each world change. Holds the gate; read-only.")
+CFG_FLAG(key_parity_probe, "key_parity_probe", "dev", false, "VOTVCOOP_KEY_PARITY_PROBE",
+    "Probe: a shadow prop key index fed only by script-gate POST watches on init, setKey, getKey and "
+    "loadData, and the key index the mod keeps, each compared every 2 s against a walk of the live keyed "
+    "props; logs the props each lacks or holds under another key, with examples per world. Holds the "
+    "gate; read-only but for the slot serials it assigns.")
+CFG_FLAG(key_index_forget_one, "key_index_forget_one", "dev", false, "VOTVCOOP_KEY_INDEX_FORGET_ONE",
+    "Red arm of the prop key index's parity pass: once a session, after the seed, one filed prop of the "
+    "current world is dropped from the index. The pass must name it as a filing the feeds missed and file "
+    "it again within a full pass (about 20 s).")
 CFG_FLAG(selftest_break_permissions, "selftest_break_permissions", "dev", false, "VOTVCOOP_SELFTEST_BREAK_PERMISSIONS",
     "Red arm of the permissions selftest: its first case expects the opposite answer, so it must fail.")
 CFG_FLAG(selftest_break_action_log, "selftest_break_action_log", "dev", false, "VOTVCOOP_SELFTEST_BREAK_ACTION_LOG",

@@ -9,10 +9,9 @@
 // it glides on after Active drops -- and its state the moment it changes; a client suppresses
 // its own drone tick, so the drone there is ALWAYS a mirror rather than a second flier fighting the
 // stream, and drives the streamed transform kinematically through the interpolation window. Host to
-// client only, never relayed, honoured only from slot 0. Identity is the singleton found by class:
-// both peers load the same placed drone, and a joiner gets the current pose with adopt=1. The delivered
-// CARGO (orderbox, giftbox, crate, dronesack -- all Aprop_C) rides the prop pipeline, with no packet of
-// its own.
+// client only and never relayed; the host refuses a client's copy at its receive edge. Identity is the
+// singleton found by class: both peers load the same placed drone, and a joiner gets the current pose
+// with adopt=1. The CARGO (orderbox, giftbox, crate, dronesack, all Aprop_C) rides the prop pipeline.
 
 #pragma once
 
@@ -27,9 +26,9 @@ namespace coop::drone_sync {
 // class loads. Game thread.
 void Install(coop::net::Session* session);
 
-// Receiver entry: a DroneState packet arrived (payload memcpy'd + range-checked by event_feed,
-// trust-gated to the host). The CLIENT suppresses its drone tick + pushes the pose into the interp
-// window. The host defensively no-ops. Called from event_feed's reliable drain loop.
+// Receiver entry: a DroneState packet arrived (payload memcpy'd + range-checked by event_feed; from
+// the host alone, the host's receive edge refuses a client's copy (client_authorship.h)). The CLIENT suppresses its
+// drone tick + pushes the pose into the interp window. Called from event_feed's reliable drain loop.
 void OnReliable(const coop::net::DroneStatePayload& payload);
 
 // HOST-only: snapshot the drone's current pose (adopt=1) to a freshly connected client `peerSlot`

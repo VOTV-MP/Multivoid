@@ -10,9 +10,12 @@
 #include "coop/comms/chat_feed.h"
 #include "coop/comms/chat_log.h"
 #include "coop/comms/chat_nick_color.h"
+#include "coop/comms/chat_rate.h"
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/net/net_clock.h"
 #include "coop/net/protocol.h"
+#include "coop/net/refusal_tally.h"
 #include "coop/net/session.h"
 #include "coop/session/player_handshake.h"
 
@@ -66,6 +69,17 @@ Speaker g_speakers[kMaxSpeakers];
 // express the hole. Relying on the pre-world send gate for this would break the moment a
 // chat line became pre-world sendable.
 bool g_seeded[coop::net::kMaxPeers] = {};
+
+// The receipt's refusals before a line is read, the rate's two and a short payload on the host, a chat intent on a
+// client: said at the first after a quiet spell and summed per window (coop/net/refusal_tally.h), so a sender at the
+// edge's rate cannot make the log the cost.
+// Deliberate divergence: Source logs nothing when CanPlayerTalk refuses (client.cpp:843-862); a host owner reading the
+// log should see a flood was refused.
+coop::net::RefusalTally g_refusals{"chat_sync"};
+
+void Refuse(int slot, const char* why) {
+    g_refusals.Note(static_cast<uint8_t>(slot), why, coop::net::RefusalTally::Clock::now());
+}
 
 // Trim is the only genuinely local part; the sanitising and the byte cap are coop/text's.
 std::string TrimAndCap(const std::string& in) {
@@ -289,7 +303,10 @@ void QueueSend(const std::string& utf8Text) {
         if (s->role() == coop::net::Role::Host) {
             // The host is the authority and commits its own line immediately: a host alone in its
             // lobby has nobody to send to, and the line still belongs in the record so the next
-            // joiner is seeded with it. The line goes in raw; the commit point shapes it.
+            // joiner is seeded with it. The line goes in raw; the commit point shapes it. Deliberate
+            // divergence: Source's listen host types through the same say and meets the same
+            // CanPlayerTalk (client.cpp:843-851); ours is not counted, a bound being a client's, as
+            // Source's server console says with no rate (client.cpp:854-861).
             AuthorAndBroadcast(0, utf8Text);
             return;
         }
@@ -303,18 +320,6 @@ void QueueSend(const std::string& utf8Text) {
         coop::net::ChatMessagePayload p{};
         p.len = static_cast<uint8_t>(text.size());
         std::memcpy(p.text, text.data(), text.size());
-        // The dev injection, the must-fail control for the receive boundary: a validator only ever
-        // shown passing passes by construction, and the codec selftest proves the strict decode
-        // refuses, but nothing else proves chat calls it. A lone continuation byte is appended
-        // rather than overwriting one, since overwriting is not reliably corrupting (the last byte
-        // of a Cyrillic message is the tail of a two-byte sequence); a trailing continuation byte
-        // is ill-formed unconditionally.
-        if (p.len < sizeof(p.text) &&
-            coop::config::ReadEnv("VOTVCOOP_CHAT_CORRUPT_WIRE") == "1") {
-            p.text[p.len++] = static_cast<char>(0x80);
-            UE_LOGW("chat: [dev] appended a lone continuation byte to the intent "
-                    "(len %u)", static_cast<unsigned>(p.len));
-        }
         if (s->SendReliable(coop::net::ReliableKind::ChatMessage, &p, sizeof(p)))
             UE_LOGI("chat: sent intent, %u byte(s) -- awaiting the host's authored row",
                     static_cast<unsigned>(text.size()));
@@ -324,29 +329,48 @@ void QueueSend(const std::string& utf8Text) {
     });
 }
 
-void OnReliable(const coop::net::ChatMessagePayload& payload, uint8_t senderPeerSlot) {
+void OnReliable(const uint8_t* bytes, size_t len, int senderSlot) {
     if (!IsHost()) {
         // Nothing sends a chat message to a client; reaching here means a peer speaks a retired
-        // protocol.
-        UE_LOGW("chat: a ChatMessage arrived on a CLIENT from slot %u -- chat is "
-                "host-authored; dropping",
-                static_cast<unsigned>(senderPeerSlot));
+        // protocol. Said through the tally, so a host that sends them cannot make the log the cost.
+        Refuse(senderSlot, "a chat intent reached a client; chat is host-authored");
         return;
     }
+    // Source's chat flood guard, FIRST: every message is an attempt, judged before its length, its
+    // decode or its novelty charge, as Source's say meets CanPlayerTalk before Host_Say reads the text
+    // (client.cpp:847-851; a blank say spends too, :186-199). A refused message costs a few float
+    // operations and a tally note, and is dropped for good, with no answer.
+    using coop::chat_rate::TalkVerdict;
+    const TalkVerdict verdict =
+        coop::chat_rate::AttemptLine(static_cast<uint8_t>(senderSlot), coop::net::NowMs());
+    if (verdict != TalkVerdict::Talk) {
+        Refuse(senderSlot, verdict == TalkVerdict::Interval ? "inside 0.66 s of its last line"
+                                                            : "past the chat bucket");
+        return;
+    }
+    coop::net::ChatMessagePayload payload{};
+    if (len < sizeof(payload)) {
+        Refuse(senderSlot, "payload too short");
+        return;
+    }
+    std::memcpy(&payload, bytes, sizeof(payload));
     uint8_t n = payload.len;
     if (n == 0) return;
     if (n > sizeof(payload.text)) n = sizeof(payload.text);
     // Decoded before anything renders it or enters it into the lobby's permanent record: an
     // ill-formed field is refused whole (see Admissible). The gate matters more under host
     // authoring than under the relay, since an ill-formed line committed here would be re-emitted
-    // to every future joiner for the life of the lobby.
-    if (!Admissible(senderPeerSlot, payload.text, n)) {
-        UE_LOGW("chat: refused a message from slot %u (%u byte(s)) -- ill-formed UTF-8 "
-                "or past the novelty budget", static_cast<unsigned>(senderPeerSlot),
-                static_cast<unsigned>(n));
+    // to every future joiner for the life of the lobby. Its line is paced by the rate above.
+    if (!Admissible(static_cast<uint8_t>(senderSlot), payload.text, n)) {
+        UE_LOGW("chat: refused a message from slot %d (%u byte(s)) -- ill-formed UTF-8 "
+                "or past the novelty budget", senderSlot, static_cast<unsigned>(n));
         return;
     }
-    AuthorAndBroadcast(senderPeerSlot, std::string(payload.text, n));
+    AuthorAndBroadcast(static_cast<uint8_t>(senderSlot), std::string(payload.text, n));
+}
+
+void Tick() {
+    g_refusals.Flush(coop::net::RefusalTally::Clock::now());
 }
 
 void OnChatSpeaker(const coop::net::ChatSpeakerPayload& payload) {
@@ -488,6 +512,7 @@ void OnSlotDisconnected(int slot) {
 
 void Reset() {
     coop::chat_log::Reset();
+    g_refusals.Clear();
     for (bool& b : g_seeded) b = false;
     g_haveRange = false;
     g_rangeLo = g_rangeHi = 0;

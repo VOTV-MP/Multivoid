@@ -145,9 +145,8 @@ void SendPoseToSlotIfStillHeld(coop::net::Session* s, int slot, uint32_t generat
         UE_LOGW("teleport_client: per-slot send to slot %d skipped -- the seat changed hands", slot);
         return;
     }
-    // Single-target reliable (default senderSlot=0 -> the receiving client sees
-    // senderPeerSlot==0 == host, passing event_feed's host-only TeleportClient
-    // trust gate). Only this peer moves.
+    // Single-target reliable from the host; a client's copy is refused at the host's receive
+    // edge (client_authorship.h). Only this peer moves.
     const bool sent = s->SendReliableToSlot(slot, coop::net::ReliableKind::TeleportClient,
                                             &p, sizeof(p));
     if (!sent) UE_LOGW("teleport_client: per-slot send to slot %d failed (not connected?)", slot);

@@ -191,7 +191,7 @@ void OnPeerWorldReady(int slot) {
 
 void OnState(const coop::net::KerfusStatePayload& payload) {
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || s->role() != coop::net::Role::Client) return;
+    if (!s) return;  // from the host alone: its receive edge refuses a client's copy
     if (Apply(payload)) { g_waiting.erase(payload.elementId); return; }
     g_waiting[payload.elementId] = Waiting{payload, coop::active_drive::NowMs()};
 }

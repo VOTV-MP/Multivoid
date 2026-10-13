@@ -22,6 +22,7 @@
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"  // ClassByName -- the host's O(1) class resolve for a client's convert
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 
@@ -117,8 +118,12 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* /*localPlaye
     coop::pile_look::OnHostLook(E, payload.look, senderSlot);
     if (!wantClump)
         coop::trash_clump_pose_stream::ClearDriveForEid(E);  // the carry ends at the land
+    // Host mirrors a client's convert with its world up -> object_index; a client keeps FindClass.
+    void* (*classResolve)(const wchar_t*) =
+        coop::prop_element_tracker::SessionIsHost() ? &ue_wrap::object_index::ClassByName : nullptr;
     void* next = coop::trash_mirror::Materialize(E, cls, payload.chipType, loc, rot, scale,
-                                                 senderSlot, /*skipBind=*/false, /*rebindInPlace=*/true);
+                                                 senderSlot, /*skipBind=*/false, /*rebindInPlace=*/true,
+                                                 classResolve);
     if (!next) {
         UE_LOGW("[PILE] CLIENT convert %s eid=%u -- materialize of '%ls' FAILED, E left as the old actor (DESYNC)",
                 edge, E, cls.c_str());

@@ -605,6 +605,9 @@ msgstr "[[Multivoid  -  Password]]"
 msgid "Multivoid  -  Server Browser"
 msgstr "[[Multivoid  -  Server Browser]]"
 
+msgid "Multivoid could not hook this game version where its scripts run, so it cannot match objects between players and no session can start. Check for a Multivoid update made for your game version."
+msgstr "[[Multivoid could not hook this game version where its scripts run, so it cannot match objects between players and no session can start. Check for a Multivoid update made for your game version.]]"
+
 msgid "Mute for me"
 msgstr "[[Mute for me]]"
 
@@ -1113,8 +1116,17 @@ msgstr "[[This key holds your body skin -- if the winning value is not the one y
 msgid "This launch runs on environment overrides and built-in defaults; the settings that refuse instead of falling back (%s) refuse what they govern until the file can be read."
 msgstr "[[This launch runs on environment overrides and built-in defaults; the settings that refuse instead of falling back (%s) refuse what they govern until the file can be read.]]"
 
+msgid "This machine asked the host for its world a second time in one visit, which this game never does."
+msgstr "[[This machine asked the host for its world a second time in one visit, which this game never does.]]"
+
 msgid "This machine has no working connection to the signaling server, so the host could not be dialled."
 msgstr "[[This machine has no working connection to the signaling server, so the host could not be dialled.]]"
+
+msgid "This machine sent the host more than a player can. Wait ten minutes before joining again."
+msgstr "[[This machine sent the host more than a player can. Wait ten minutes before joining again.]]"
+
+msgid "This machine told the host its world was ready far more often than a join does."
+msgstr "[[This machine told the host its world was ready far more often than a join does.]]"
 
 msgid ""
 "This rule is achievement-locked!\n"
@@ -1319,6 +1331,9 @@ msgstr "[[Your body skin -- what YOU see looking down and what OTHERS see. Saved
 
 msgid "Your connection presented no key identity."
 msgstr "[[Your connection presented no key identity.]]"
+
+msgid "Your game could not leave this world for the main menu."
+msgstr "[[Your game could not leave this world for the main menu.]]"
 
 msgid "Your game loaded the world but never finished settling into it."
 msgstr "[[Your game loaded the world but never finished settling into it.]]"

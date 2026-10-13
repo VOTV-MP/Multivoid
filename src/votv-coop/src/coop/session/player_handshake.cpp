@@ -49,18 +49,37 @@ namespace coop::player_handshake {
 
 namespace {
 
-// Whether our Join has gone out over a link, per slot. Not a ledger row field: a client sends its
-// Join to slot 0 before row 0 exists (the row is born from the host's own Join), and a row setter
-// ignores an unoccupied slot, so the client would re-send every tick forever. PerSlotState clears
-// itself when the occupant changes. The person's own fields (nick, guid, skin, joinAnnounced)
-// live on the row and die with it.
+// Whether the HOST's Join to a given slot has gone out, per slot. Not a ledger row field: a row setter
+// ignores an unoccupied slot, so it would re-send every tick forever before the row is born. PerSlotState
+// clears itself when the occupant changes, so a recycled slot's new occupant gets a fresh Join. The
+// person's own fields (nick, guid, skin, joinAnnounced) live on the row and die with it. The CLIENT does
+// NOT use this -- its latch is g_cliJoinSent below, because row 0's birth (from the host's Join) would
+// clear a PerSlotState[0] mid-connection.
 coop::roster_ledger::PerSlotState<bool> g_joinSent;
 
-// The connect line already shown for this slot, a one-shot latch outside the row for the same
-// reason. The Join legitimately arrives twice (a joiner with no element yet sends the 0 sentinel
-// and retries with a real eid), and the roster relay skips the first arrival; without this latch
-// the line printed on both.
+// The client's own Join-sent latch: a plain bool, cleared only at session start (Reset), never at a row
+// transition. A rejoin is a new session, so Reset gives a fresh latch; within a connection the client
+// sends its Join exactly once, regardless of whether its Join or the host's arrives first (the fix for
+// the honest double-Join, field log b134; see MaybeSendJoinToSlot).
+bool g_cliJoinSent = false;
+
+// The connect line already shown for this slot, a one-shot latch outside the row. On the HOST a
+// repeat Join is now refused at the top of HandleJoinMessage (g_joinAnswered below), so the host
+// never reaches this latch's repeat branch. It stays for the CLIENT: it is the only guard against a
+// hostile HOST that sends two Joins (a cheating host), where the second would otherwise reprint the line.
 coop::roster_ledger::PerSlotState<bool> g_connectAnnounced;
+
+// Host: whether this occupancy has already sent a Join. A second Join from the same occupant is refused
+// and the link kept (MTA CPlayerManager.cpp:79-85); the ledger clears it when the occupant changes, so a
+// rejoin is answered again. Latched on ARRIVAL, as MTA (the socket already holds a player): nothing
+// retries a Join (the client sends exactly one per connection, g_cliJoinSent), so latching early refuses
+// no honest resend.
+coop::roster_ledger::PerSlotState<bool> g_joinAnswered;
+// The once-per-occupancy refusal line, a second latch so a flood of repeat Joins prints one line.
+coop::roster_ledger::PerSlotState<bool> g_joinRefuseLineSaid;
+
+// Host: the Joins from each slot's occupant that passed the version gate and were answered.
+coop::roster_ledger::PerSlotState<uint32_t> g_joinsAnswered;
 
 }  // namespace
 
@@ -93,7 +112,8 @@ void TickSkinConverge() {
 }
 
 // One [u8 len][ASCII] field; returns the bytes consumed (0 if malformed or absent), and writes
-// `out` only for a well-formed non-empty name that validates as a skin.
+// `out` only for a well-formed non-empty name that validates as a skin. Logs nothing: a caller
+// says an invalid name at the rate its own message comes.
 size_t ParseSkinField(const uint8_t* p, size_t remaining, std::string* out) {
     if (remaining < 1) return 0;
     const int len = p[0];
@@ -101,10 +121,7 @@ size_t ParseSkinField(const uint8_t* p, size_t remaining, std::string* out) {
     if (len > 0) {
         std::string name(reinterpret_cast<const char*>(p + 1), static_cast<size_t>(len));
         // The name becomes a LoadObject package path component.
-        if (coop::skins::IsValidSkinName(name))
-            *out = std::move(name);
-        else
-            UE_LOGW("handshake: peer sent an invalid skin name (%d bytes) -- ignored", len);
+        if (coop::skins::IsValidSkinName(name)) *out = std::move(name);
     }
     return 1 + static_cast<size_t>(len);
 }
@@ -170,6 +187,66 @@ void Reset() {
     // every registered teardown. The load-bearing clear is ClearAll at session stop.
     coop::roster_ledger::Reset();
     coop::hand_item::Reset();  // destroy the hand-item display mirrors and states
+    ClearPrefRefusals();
+    g_cliJoinSent = false;     // a new session (a rejoin included) re-sends the client's one Join
+}
+
+void BuildJoinPayload(uint32_t selfEid, std::vector<uint8_t>& joinPayload) {
+    // The prefix: [uint32 senderElementId], then [uint8 nicklen][nick UTF-8]. The receiver registers the id as a
+    // mirror in the sender's slot, so packets carrying it resolve through Registry::Get.
+    joinPayload.resize(4);  // not-name-text: a 4-byte wire field
+    std::memcpy(joinPayload.data(), &selfEid, 4);
+    // What the human typed, never a suffix the host handed us last time, or a reconnect would ratchet the number up.
+    // Capped on a character boundary: a raw resize manufactures the ill-formed tail the receive boundary refuses, and
+    // our own name would reach the host as the placeholder.
+    const std::string nickStr = coop::text::CapUtf8Bytes(
+        coop::text::ToUtf8(RequestedNickname()), coop::text::kNickMaxBytes);
+    joinPayload.push_back(static_cast<uint8_t>(nickStr.size()));
+    joinPayload.insert(joinPayload.end(), nickStr.begin(), nickStr.end());
+    // No guid on the wire: the host keyed a peer's inventory file by a guid the peer named itself, which the receive
+    // boundary could only check the shape of. The host derives it from the public key the peer proved at admission
+    // (Session::ProvedGuidForSlot); with no reader left the field cannot come back. The skin follows the nick as
+    // [uint8 skinlen][skin ASCII], the at-join announce of local_body's choice (48 chars at most).
+    const std::string& skin = coop::local_body::LocalSkinName();
+    const uint8_t skinLen = static_cast<uint8_t>(skin.size() > 48 ? 48 : skin.size());
+    joinPayload.push_back(skinLen);
+    joinPayload.insert(joinPayload.end(), skin.begin(), skin.begin() + skinLen);
+    // The prefs flags after the skin (bit 0 = nameplate visible), so a late joiner agrees with a peer that hid its
+    // plate before they arrived.
+    joinPayload.push_back(BuildLocalPrefsFlags());
+    // The nick colour after the flags byte.
+    AppendNickColorField(joinPayload, coop::nick_color::LocalPacked());
+    // The game target, [u8 gamelen][game ASCII] after the colour (the build claim follows it, below): the other half
+    // of the version pair (the build number rides the packet header as the protocol version). The receiver checks it
+    // by byte equality at the top of HandleJoinMessage, the wire-level gate that also covers direct connect and env
+    // boot, where no browser pre-flight ran. At most 23 chars.
+    {
+        const char* game = coop::version::kGameTarget;
+        const size_t gameLen = std::min<size_t>(std::strlen(game), 23);
+        joinPayload.push_back(static_cast<uint8_t>(gameLen));
+        joinPayload.insert(joinPayload.end(), game, game + gameLen);
+    }
+    // The build claim after the game target: [sha256 32 bytes][u8 flags], flags bit 0 = this build verified its own
+    // release signature. A host judges it at the Join seam (player_handshake_version.cpp); a client reads nothing of
+    // the host's. The hash and the flag are read when the payload is built. build_claim_foreign flips the hash's
+    // first byte so a host reads this peer as another build (the build-trust drill's arm).
+    {
+        uint8_t sha[coop::build_trust::kShaBytes];
+        std::memcpy(sha, coop::build_trust::Self().sha256, sizeof(sha));
+        if (coop::config::ResolveFlag(coop::config_registry::rows::build_claim_foreign))
+            sha[0] ^= 0xFF;
+        joinPayload.insert(joinPayload.end(), sha, sha + sizeof(sha));
+        joinPayload.push_back(coop::build_trust::SelfIsOfficial() ? 1 : 0);
+    }
+    // The game build this peer runs, after the build claim: [u8 len][key ASCII], the key coop/game_build compares.
+    // The receiver checks it after the game target: a 0.9.0n player and a 0.10.0 player with one Multivoid share a
+    // target and a build number, and only this tells them apart.
+    {
+        const char* key = coop::game_build::Running().id.key;
+        const size_t keyLen = std::strlen(key);
+        joinPayload.push_back(static_cast<uint8_t>(keyLen));
+        joinPayload.insert(joinPayload.end(), key, key + keyLen);
+    }
 }
 
 void MaybeSendJoinToSlot(net::Session& session, int slot,
@@ -179,7 +256,15 @@ void MaybeSendJoinToSlot(net::Session& session, int slot,
     // before the pump sends any Join.
     UE_ASSERT_GAME_THREAD("g_localNick/g_joinSent (MaybeSendJoinToSlot)");
     if (slot < 0 || slot >= net::kMaxPeers) return;
-    if (g_joinSent[slot]) return;
+    // The client's Join-sent latch is a plain connect-edge bool, cleared only at session start (Reset),
+    // NOT the per-slot ledger state: on a client row 0 is born from the HOST's own Join, which clears a
+    // PerSlotState[0] mid-connection, so a client whose Join went out first would re-send a second one
+    // (the honest double-Join, field log b134). The HOST keeps the per-slot PerSlotState, so a recycled
+    // slot's new occupant gets a fresh Join. A mismatched client still sends its Join either way, so the
+    // host's symmetric version gate still closes the wire.
+    const bool isClient = (session.role() == net::Role::Client);
+    bool& joinSent = isClient ? g_cliJoinSent : g_joinSent[slot];
+    if (joinSent) return;
     // The first Join waits for our own Player element: sent with senderElementId 0 the receiver
     // installs no mirror, and Registry::Get(senderElementId) would never resolve for the session. A
     // client allocates one pump tick after AssignPeerSlot; the host has its element at pump start.
@@ -189,77 +274,15 @@ void MaybeSendJoinToSlot(net::Session& session, int slot,
         return;  // retry next tick
     }
     if (!joinPayloadBuilt) {
-        // The prefix: [uint32 senderElementId], then [uint8 nicklen][nick UTF-8]. The receiver
-        // registers the id as a mirror in the sender's slot, so packets carrying it resolve through
-        // Registry::Get.
-        const uint32_t selfEidWire = selfEidProbe;
-        joinPayload.resize(4);  // not-name-text: a 4-byte wire field
-        std::memcpy(joinPayload.data(), &selfEidWire, 4);
-        // What the human typed, never a suffix the host handed us last time, or a reconnect would
-        // ratchet the number up. Capped on a character boundary: a raw resize manufactures the
-        // ill-formed tail the receive boundary refuses, and our own name would reach the host as
-        // the placeholder.
-        const std::string nickStr = coop::text::CapUtf8Bytes(
-            coop::text::ToUtf8(RequestedNickname()), coop::text::kNickMaxBytes);
-        std::vector<uint8_t> nickUtf8(nickStr.begin(), nickStr.end());
+        BuildJoinPayload(selfEidProbe, joinPayload);
         UE_LOGI("handshake: Join to slot %d asks for '%ls' (%zu bytes)",
-                slot, RequestedNickname().c_str(), nickUtf8.size());
-        joinPayload.push_back(static_cast<uint8_t>(nickUtf8.size()));
-        joinPayload.insert(joinPayload.end(), nickUtf8.begin(), nickUtf8.end());
-        // No guid on the wire: the host keyed a peer's inventory file by a guid the peer named
-        // itself, which the receive boundary could only check the shape of. The host derives it
-        // from the public key the peer proved at admission (Session::ProvedGuidForSlot); with no
-        // reader left the field cannot come back. The skin follows the nick as [uint8 skinlen][skin
-        // ASCII], the at-join announce of local_body's choice (48 chars at most).
-        const std::string& skin = coop::local_body::LocalSkinName();
-        const uint8_t skinLen = static_cast<uint8_t>(skin.size() > 48 ? 48 : skin.size());
-        joinPayload.push_back(skinLen);
-        joinPayload.insert(joinPayload.end(), skin.begin(), skin.begin() + skinLen);
-        // The prefs flags after the skin (bit 0 = nameplate visible), so a late joiner agrees with
-        // a peer that hid its plate before they arrived.
-        joinPayload.push_back(BuildLocalPrefsFlags());
-        // The nick colour after the flags byte.
-        AppendNickColorField(joinPayload, coop::nick_color::LocalPacked());
-        // The game target, [u8 gamelen][game ASCII] after the colour (the build claim follows it,
-        // below): the other half of the version pair (the build number rides the packet header
-        // as the protocol version). The receiver checks it by byte equality at the top of
-        // HandleJoinMessage, the wire-level gate that also covers direct connect and env boot,
-        // where no browser pre-flight ran. At most 23 chars.
-        {
-            const char* game = coop::version::kGameTarget;
-            const size_t gameLen = std::min<size_t>(std::strlen(game), 23);
-            joinPayload.push_back(static_cast<uint8_t>(gameLen));
-            joinPayload.insert(joinPayload.end(), game, game + gameLen);
-        }
-        // The build claim after the game target: [sha256 32 bytes][u8 flags], flags bit 0 = this
-        // build verified its own release signature. A host judges it at the Join seam
-        // (player_handshake_version.cpp); a client reads nothing of the host's. The hash and the
-        // flag are read when the payload is built: once per pump tick that sends a Join (the latch
-        // is the caller's per-tick local). build_claim_foreign flips the hash's first byte so a
-        // host reads this peer as another build (the build-trust drill's arm).
-        {
-            uint8_t sha[coop::build_trust::kShaBytes];
-            std::memcpy(sha, coop::build_trust::Self().sha256, sizeof(sha));
-            if (coop::config::ResolveFlag(coop::config_registry::rows::build_claim_foreign))
-                sha[0] ^= 0xFF;
-            joinPayload.insert(joinPayload.end(), sha, sha + sizeof(sha));
-            joinPayload.push_back(coop::build_trust::SelfIsOfficial() ? 1 : 0);
-        }
-        // The game build this peer runs, after the build claim: [u8 len][key ASCII], the key
-        // coop/game_build compares. The receiver checks it after the game target: a 0.9.0n player and a
-        // 0.10.0 player with one Multivoid share a target and a build number, and only this tells them apart.
-        {
-            const char* key = coop::game_build::Running().id.key;
-            const size_t keyLen = std::strlen(key);
-            joinPayload.push_back(static_cast<uint8_t>(keyLen));
-            joinPayload.insert(joinPayload.end(), key, key + keyLen);
-        }
+                slot, RequestedNickname().c_str(), static_cast<size_t>(joinPayload[4]));
         joinPayloadBuilt = true;
     }
     if (session.SendReliableToSlot(slot, net::ReliableKind::Join,
                                    joinPayload.data(),
                                    static_cast<int>(joinPayload.size()))) {
-        g_joinSent[slot] = true;
+        joinSent = true;
     }
     // A failed send is retried next tick.
 }
@@ -289,6 +312,10 @@ void InstallLedgerSubscribers() {
 }
 
 
+uint32_t JoinsAnswered(int slot) {
+    return (slot >= 0 && slot < net::kMaxPeers) ? g_joinsAnswered[slot] : 0;
+}
+
 bool IsValidGuid(const std::string& guid) {
     if (guid.size() != 32) return false;
     for (char c : guid) {
@@ -311,6 +338,25 @@ bool HandleJoinMessage(net::Session& session,
                 senderSlot);
         return true;
     }
+    // A joined peer that sends a second Join is a protocol error. The host refuses it and KEEPS the
+    // link, as MTA: CPlayerManager::Create returns no player on a known socket (CPlayerManager.cpp:79-85)
+    // and CGame::Packet_PlayerJoinData returns on that (CGame.cpp:1811-1814). Latched on arrival, as
+    // MTA's (the socket already holds a player), before the length and version work, so a repeat --
+    // well-formed, undersized or mismatched -- costs only this compare, refused once per occupancy (MTA
+    // logs each attempt). Nothing retries a Join: the client sends exactly one per connection, so
+    // latching early refuses no honest resend. A client reads nothing of this -- a host that double-Joins
+    // is out of scope here (a cheating host), guarded by g_connectAnnounced.
+    if (session.role() == net::Role::Host) {
+        if (g_joinAnswered[senderSlot]) {
+            if (!g_joinRefuseLineSaid[senderSlot]) {
+                g_joinRefuseLineSaid[senderSlot] = true;
+                UE_LOGI("player_handshake: slot %d sent a second Join in one occupancy; it and any later "
+                        "one are refused unanswered, the link kept", senderSlot);
+            }
+            return true;
+        }
+        g_joinAnswered[senderSlot] = true;  // latch on arrival (MTA); a later Join from this occupant is refused
+    }
     // An undersized Join is dropped rather than degraded to no-mirror routing, which would leave
     // the peer without the stale-generation defence for the session; the sender's retry produces a
     // well-formed one. The header's protocol version keeps an older layout from misaligning here.
@@ -328,6 +374,8 @@ bool HandleJoinMessage(net::Session& session,
     // This handler's own walk below stops after the colour and reads neither the game nor the claim.
     if (ValidateJoinVersionOrRefuse(session, senderSlot, msg.payload, msg.payloadLen))
         return true;
+    if (session.role() == net::Role::Host)
+        ++g_joinsAnswered[senderSlot];  // the hostile-drill instrument (counts Joins answered past the gate)
     // On a client this Join is the host introducing itself, and row 0 is born here: the host's
     // player number is a role constant, so no wire field and no dependence on the roster pulse. On
     // the host the sender's row was born by the reconcile.
@@ -375,6 +423,8 @@ bool HandleJoinMessage(net::Session& session,
                                       nickRemaining - nickFieldLen, &skin);
         if (skinFieldLen > 0 && !skin.empty()) {
             StoreSkinForSlot(senderSlot, std::move(skin));
+        } else if (skinFieldLen > 1) {
+            UE_LOGW("handshake: peer sent an invalid skin name (%zu bytes) -- ignored", skinFieldLen - 1);
         }
     }
     // The prefs flags follow the skin; absent, the defaults (visible) stand.
@@ -386,6 +436,7 @@ bool HandleJoinMessage(net::Session& session,
             ParseNickColorField(nickStart + colorOff, nickRemaining - colorOff,
                                 senderSlot);
     }
+    WithdrawOwedPrefs(senderSlot);  // the Join's values are the newest; an older owed change is not applied after them
     // A mirror Player element for this sender, so packets carrying its senderElementId resolve
     // here; 0 means no element yet, and routing falls back to the sender slot. Range-validated
     // against the sender's role first: a host must send a host-range eid and a client a peer-range
@@ -429,10 +480,11 @@ bool HandleJoinMessage(net::Session& session,
     // (AnnouncePeerSpawned); on the client the Join comes from the host, so "Connecting to <host>'s
     // game". Both transient: the joined line is the event history keeps. Once per join, latched
     // (g_connectAnnounced clears with the slot's occupant, so a peer that leaves and rejoins is
-    // announced again).
+    // announced again). On the host this branch is unreachable -- a repeat Join is refused at the top --
+    // so it fires only on a client whose HOST double-Joins (a cheating host).
     if (g_connectAnnounced[senderSlot]) {
         UE_LOGI("player_handshake: slot %d connect line already shown -- suppressing the "
-                "repeat from a re-sent Join", senderSlot);
+                "repeat (a double-Join host, client-side)", senderSlot);
     } else {
         g_connectAnnounced[senderSlot] = true;
         const std::string nickUtf8 = coop::chat_feed::ToUtf8(nick);
@@ -445,8 +497,9 @@ bool HandleJoinMessage(net::Session& session,
         UE_LOGI("player_handshake: slot %d connect line shown ('%ls')", senderSlot, nick.c_str());
     }
     // On the host this Join came from a client: the two-way roster broadcast (MTA's initial data
-    // stream) tells every client about the joiner and the joiner about every client. Skipped for
-    // the 0 sentinel; the retry Join with a real eid triggers it.
+    // stream) tells every client about the joiner and the joiner about every client. The eid guard is
+    // defensive -- a client now waits for its own element before sending its Join (MaybeSendJoinToSlot),
+    // so an eid of 0 or kInvalidId no longer reaches here, and a broadcast of one would bind no mirror.
     if (session.role() == net::Role::Host &&
         senderElementId != 0u &&
         senderElementId != coop::element::kInvalidId) {
@@ -516,19 +569,7 @@ bool HandleAssignPeerSlot(net::Session& session,
     }
     net::AssignPeerSlotPayload p{};
     std::memcpy(&p, msg.payload, sizeof(p));
-    // Only the host sends this; rejected on the host.
-    if (session.role() == net::Role::Host) {
-        UE_LOGW("player_handshake: AssignPeerSlot received on host -- dropping "
-                "(host self-assigns slot 0; no inbound from client)");
-        return true;
-    }
-    // The sender must be the host connection, independent of the relay topology.
-    if (msg.senderPeerSlot != 0) {
-        UE_LOGW("player_handshake: AssignPeerSlot from non-host "
-                "senderPeerSlot=%d -- dropping",
-                msg.senderPeerSlot);
-        return true;
-    }
+    // Only the host sends this: the host's receive edge refuses a client's copy (client_authorship.h).
     // A valid client slot; slot 0 is the host's own.
     if (p.slot < 1 || p.slot >= net::kMaxPeers) {
         UE_LOGW("player_handshake: AssignPeerSlot slot=%u out of range [1..%u) -- dropping",

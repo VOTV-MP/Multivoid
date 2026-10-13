@@ -38,6 +38,7 @@
 #include "coop/interactables/floppy_slot_sync.h"
 #include "coop/interactables/floppybox_sync.h"  // the disc crate LIFO lane
 #include "coop/props/container_birth.h"
+#include "coop/props/prop_key_index.h"  // Begin/End at the gate hold
 #include "coop/props/container_contents_sync.h"  // the world-container GObjStack slice
 #include "coop/props/container_view_close.h"  // a view into a container ends where the player's reach does
 #include "coop/props/prop_food_state.h"  // the food family's live state and who authors it
@@ -170,10 +171,14 @@ void HoldSessionGate() {
     ue_wrap::script_gate::Acquire("the coop session");
     coop::element::death_seam::Acquire("the coop session");
     g_sessionHoldsGate = true;
+    // The key index sees every key write from here on, so it seeds now (or on a later tick, once its watches
+    // are live).
+    coop::prop_key_index::Begin();
 }
 
 void ReleaseSessionGateHold() {
     if (!g_sessionHoldsGate) return;
+    coop::prop_key_index::End();  // a write with the gate let go goes unobserved: the next hold seeds again
     ue_wrap::script_gate::Release("the coop session");
     coop::element::death_seam::Release("the coop session");
     g_sessionHoldsGate = false;
@@ -501,9 +506,9 @@ DisconnectStats DisconnectAll() {
     coop::host_spawn_watcher::OnDisconnect();  // drop the ambient-prop death-watch list
     coop::kerfur_convert::OnDisconnect();  // clear the open conversion verbs
     coop::kerfur_form_assembler::OnDisconnect();  // dump the containment SUMMARY (always)
-    // The session's hold on the script gate ends with the session's state, released where the old
-    // switch turned the gate off, so the lanes below tear down as they always have; a session that
-    // lives on (a host whose last client left) takes it again on its next tick.
+    // The session's hold on the script gate ends with the session's state here -- the one release path,
+    // reached from net_pump::TearDownSession -- so the lanes below tear down as they always have; a
+    // session that lives on (a host whose last client left) takes it again on its next tick.
     ReleaseSessionGateHold();
     coop::kerfur_entity::OnDisconnect();  // clear the KerfurId table + free its reserved host ids
     coop::kerfur_command::OnDisconnect();  // drop pending and waiting menu commands

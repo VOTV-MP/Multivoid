@@ -5,9 +5,9 @@
 // The intent family is a distinct concept from keyed device-STATE mirrors. MOST cases are
 // CLIENT->HOST and gate on role()==Host plus a client sender slot (1..kMaxPeers-1) at the
 // trust boundary before handing the request to the authoritative module -- but not all of
-// them, so read the case: CoinGunResult and OrderRefused are HOST->CLIENT answers and drop
-// on the host instead, and OrderQueue, the host's delivery queue mirrored to clients, leaves
-// both checks to order_queue_sync; OrderRequest, CoinGunSell and CoinCollect check the sender slot here
+// them, so read the case: CoinGunResult and OrderRefused are HOST->CLIENT answers and OrderQueue is
+// the host's delivery queue mirrored to clients, all three refused from a client at the host's receive
+// edge (client_authorship.h); OrderRequest, CoinGunSell and CoinCollect check the sender slot here
 // and leave the role gate to the module they call, which drops off the host; and RoachConsumed
 // defers both to roach_sync::OnConsumedIntent. Family contract per coop/dispatch/event_dispatch.h:
 // returns true iff msg.kind is in this family.
@@ -110,19 +110,14 @@ bool HandleIntentEvent(net::Session& session,
         // renders as a silently vanished item -- the sentence is the point. A success carries the
         // price the HOST used, which can legitimately differ from the seller's own local toast
         // (`getPriceMultiplier` is per-instance and divergent).
-        if (session.role() == net::Role::Host) {
-            UE_LOGW("event_feed: CoinGunResult received on the HOST -- dropping");
-            break;
-        }
         coop::coingun_sync::OnReliableResult(msg.payload, static_cast<int>(msg.payloadLen));
         break;
     }
     case net::ReliableKind::OrderQueue: {
         // The host's delivery order queue, as each change ran (reset, append, pop); a client mirrors
-        // it and never writes its own. HOST->CLIENT, never relayed; order_queue_sync checks the
-        // sender is slot 0 and no-ops on the host.
-        coop::order_queue_sync::OnReliable(msg.payload, static_cast<int>(msg.payloadLen),
-                                           static_cast<uint8_t>(msg.senderPeerSlot));
+        // it and never writes its own. HOST->CLIENT, never relayed; a client's copy is refused at the
+        // host's receive edge (client_authorship.h).
+        coop::order_queue_sync::OnReliable(msg.payload, static_cast<int>(msg.payloadLen));
         break;
     }
     case net::ReliableKind::OrderRefused: {
@@ -133,10 +128,6 @@ bool HandleIntentEvent(net::Session& session,
         // EX_LocalVirtualFunction, so it cannot be suppressed) -- the correction rides a direct
         // BalanceSync the host sends alongside; this message carries the REASON and the orderId the
         // client needs to rebuild its cart.
-        if (session.role() == net::Role::Host) {
-            UE_LOGW("event_feed: OrderRefused received on the HOST -- dropping");
-            break;
-        }
         coop::order_sync::OnReliableRefused(msg.payload, static_cast<int>(msg.payloadLen));
         break;
     }
@@ -262,14 +253,6 @@ bool HandleIntentEvent(net::Session& session,
         // HOST->CLIENT, one recipient, never relayed: the answer to a GrabIntent the host did not
         // perform, or (reason HoldEnded) the notice that the host ended the recipient's carry.
         // coop::trash_channel::OnGrabRefused.
-        if (session.role() == net::Role::Host) {
-            UE_LOGW("event_feed: GrabRefused received on the HOST -- dropping");
-            break;
-        }
-        if (msg.senderPeerSlot != 0) {
-            UE_LOGW("event_feed: GrabRefused from senderPeerSlot=%d, not the host -- dropping", msg.senderPeerSlot);
-            break;
-        }
         if (msg.payloadLen < sizeof(net::GrabRefusedPayload)) {
             UE_LOGW("event_feed: GrabRefused payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::GrabRefusedPayload));
@@ -548,7 +531,8 @@ bool HandleIntentEvent(net::Session& session,
                                            static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
-    case net::ReliableKind::PileResyncRequest:  // STAGED -- ID reserved, no handler yet
+    case net::ReliableKind::PileResyncRequest:  // STAGED -- ID reserved, no sender or handler yet; the
+                                                // host's receive edge refuses it until one is built
         UE_LOGI("event_feed: STAGED ReliableKind=%u from slot=%d -- no handler yet",
                 static_cast<unsigned>(msg.kind), msg.senderPeerSlot);
         break;

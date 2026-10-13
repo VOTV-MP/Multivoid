@@ -19,8 +19,8 @@ namespace coop::sky_sync {
 // script gate to watch newsky_C.setEye for a client's own. Game thread.
 void Install(coop::net::Session* session);
 
-// CLIENT receiver: apply the host's sky orientation, moon phase and eye (host early-returns -- it
-// is authoritative). Called from event_feed's reliable drain.
+// CLIENT receiver: apply the host's sky orientation, moon phase and eye (from the host alone:
+// the host's receive edge refuses a client's copy (client_authorship.h)). Called from event_feed's reliable drain.
 void OnReliable(const coop::net::SkyStatePayload& payload);
 
 // HOST-only: send one sky snapshot to a client whose world just went ready (ConnectReplayForSlot), so it

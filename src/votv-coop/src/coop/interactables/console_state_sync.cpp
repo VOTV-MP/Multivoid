@@ -403,14 +403,9 @@ void Tick() {
     }
 }
 
-void OnSkySignalState(const coop::net::SkySignalStatePayload& p, uint8_t senderSlot) {
+void OnSkySignalState(const coop::net::SkySignalStatePayload& p) {
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || s->role() == coop::net::Role::Host) return;  // host-auth: host never applies
-    if (senderSlot != 0) {
-        UE_LOGW("console_state: SkySignalState from non-host slot %u -- dropping",
-                static_cast<unsigned>(senderSlot));
-        return;
-    }
+    if (!s) return;  // from the host alone: its receive edge refuses a client's copy
     if (p.parts == 0 || p.parts > 5 || p.part >= p.parts || p.count > 3) return;
     for (uint8_t i = 0; i < p.count; ++i)
         if (!WireRowFinite(p.rows[i])) {
@@ -452,13 +447,13 @@ void OnSkySignalState(const coop::net::SkySignalStatePayload& p, uint8_t senderS
     g_assembly = {};
 }
 
-void OnDeskState(const coop::net::DeskStatePayload& p, uint8_t senderSlot) {
+void OnDeskState(const coop::net::DeskStatePayload& p) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
+    // From the host alone: the host's receive edge refuses a client's copy (client_authorship.h).
     // Adopt-only: desk input rides DeskInput and the outputs ride DeskSimPose, so a live DeskState
     // does not exist on the wire and anything but an adopt is dropped.
     if (!p.adopt) return;
-    if (senderSlot != 0) return;  // adopt snapshots are host-only
     // Finite-validate before any engine write; a NaN filter offset or cooldown must never land in
     // blueprint floats.
     const float vals[] = { p.dlPoFilterOffset, p.dlFrFilterOffset, p.dlPoFilterSpeed,
@@ -469,8 +464,7 @@ void OnDeskState(const coop::net::DeskStatePayload& p, uint8_t senderSlot) {
     if (!CD::EnsureResolved() || !CD::Instance()) return;
 
     // Dev: capture the client's pre-adopt local scalars before the host seed overwrites them.
-    if (s->role() == coop::net::Role::Client)
-        coop::dev::desk_diag::NoteJoinAdopt();
+    coop::dev::desk_diag::NoteJoinAdopt();
 
     const CD::Scalars sc = PayloadToScalars(p);
     // A join adopt replaces the WHOLE scalar set, so every painter is owed. This is the one caller

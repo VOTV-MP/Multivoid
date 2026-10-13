@@ -49,14 +49,15 @@ void InstallInventory(coop::net::Session* session);
 // Host-authoritative intermediate-variant suppression predicate. Three
 // call sites (Init POST host-broadcast, snapshot enumerate, client local
 // spawn destroy) use this for symmetry. Public so prop_snapshot can
-// share it.
+// share it. The name compares without case, as the engine compares names.
 bool IsWireSuppressedPropClass(const std::wstring& cls);
 
 // PER-PLAYER state actors, NOT shared world props: each peer owns its own instance (per-save
 // key, can never claim-bind). Never snapshot-expressed, never live-broadcast, never swept --
 // but unlike IsWireSuppressedPropClass the LOCAL instance LIVES, because it is the player's
 // own state and sweeping it as unclaimed fatals that peer at the next GC purge. Call sites:
-// snapshot enumerate-skip, Init POST broadcast-skip, adoption-sweep universe-skip.
+// snapshot enumerate-skip, Init POST broadcast-skip, adoption-sweep universe-skip. The name
+// compares without case, as the engine compares names.
 bool IsPerPlayerPropClass(const std::wstring& cls);
 
 // Destroy a local prop via K2_DestroyActor, ECHO-SUPPRESSED: MarkIncomingDestroy

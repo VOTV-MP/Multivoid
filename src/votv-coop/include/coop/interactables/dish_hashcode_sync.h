@@ -30,7 +30,8 @@ void Install(coop::net::Session* session);
 // dish. Game thread, every pump tick; idle costs a few compares.
 void Tick();
 
-// A DishHashcodes chunk. A client takes the host's rows; a host drops every chunk. Game thread.
+// A DishHashcodes chunk: a client takes the host's rows. From the host alone: the host's receive
+// edge refuses a client's copy (client_authorship.h). Game thread.
 void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 
 // HOST: a joiner's world is up -- every dish's code to it, retried until it goes whole.

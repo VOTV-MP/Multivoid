@@ -11,7 +11,7 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/players_registry.h"      // kMaxPeers
-#include "coop/props/prop_element_tracker.h"   // FindLiveActorByKey
+#include "coop/props/prop_key_index.h"         // Find
 
 #include "ue_wrap/actors/prop.h"               // GetInteractableKeyString
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -131,7 +131,7 @@ void OnRedeem(coop::net::Session& session, const coop::net::PointSackRedeemPaylo
     // A named key that does not resolve is that sack gone; it never falls back to the eid, which may
     // name another prop by now. Only a keyless sack is named by its eid.
     void* sack = nullptr;
-    if (!key.empty()) sack = coop::prop_element_tracker::FindLiveActorByKey(key);
+    if (!key.empty()) sack = coop::prop_key_index::Find(key);
     else if (p.elementId != 0u) sack = EL::LivePropActor(static_cast<EL::ElementId>(p.elementId));
     // No sack is the ordinary end of a second request, or of two players opening one sack.
     if (!sack) { Refuse(senderSlot, key, p.elementId, "no such sack here -- already opened"); return; }

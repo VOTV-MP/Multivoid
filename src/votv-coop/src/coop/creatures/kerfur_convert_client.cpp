@@ -72,9 +72,8 @@ void MaterializeKerfurMirror(bool toNpc, coop::element::ElementId eid, const std
 void OnKerfurConvert(const coop::net::KerfurConvertBroadcastPayload& p, void* localPlayer) {
     auto* s = LoadSession();
     if (!s) return;
-    // Client-only: the host converged inline (a silent register and the send), so it never applies
-    // its own broadcast.
-    if (s->role() != coop::net::Role::Client) return;
+    // From the host alone: it converged inline (a silent register and the send), and its receive edge
+    // refuses a client's copy (client_authorship.h).
     const coop::element::ElementId oldEid = static_cast<coop::element::ElementId>(p.oldEid);
     const coop::element::ElementId newEid = static_cast<coop::element::ElementId>(p.newEid);
     const bool toNpc = (p.toForm == 0);  // toForm: 0 = NPC (turn-on), 1 = prop (turn_off)

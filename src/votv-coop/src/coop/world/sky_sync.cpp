@@ -99,8 +99,7 @@ void Install(coop::net::Session* session) {
 }
 
 void OnReliable(const coop::net::SkyStatePayload& payload) {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (s && s->role() == coop::net::Role::Host) return;  // host is authoritative -- never apply a received sky
+    // From the host alone: the host's receive edge refuses a client's copy (client_authorship.h).
     if (!Finite(payload)) { UE_LOGW("sky_sync: dropping non-finite payload"); return; }
     SKY::ApplySky(ue_wrap::FRotator{payload.skyPitch, payload.skyYaw, payload.skyRoll}, payload.moonPhase);
     // The eye through the sky's own setEye, which swaps the moon's texture; the gate lets this call run.

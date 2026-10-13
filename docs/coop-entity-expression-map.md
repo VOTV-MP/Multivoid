@@ -13,7 +13,7 @@ from the lower half and each client from the upper half for the elements it crea
 two trust gates check which range a sender may have allocated from. Every wire receiver is
 host-authoritative except the kinds either range may send, a destroy and a convert. `[V]`
 
-**No passive mint.** A client's census walk key-indexes a keyed prop but mints no element: keyed
+**No passive mint.** A client's census walk tracks a keyed prop by its key but mints no element: keyed
 identity is host-authored by construction, a save-loaded prop adopts the host's id by key, and a
 client-born prop is minted at its express seam, which broadcasts in the same breath. A passive
 census mint once produced about two thousand zombie double rows per join. The one bind owner
@@ -21,6 +21,14 @@ census mint once produced about two thousand zombie double rows per join. The on
 host-local actor, a client dissolves its provisional row on the host's word, and one actor is one
 row. On the host, a peer's spawn resolving onto a host-authoritative actor is handed back: the
 actor is enrolled if untracked and re-expressed under the host's id. `[V]`
+
+**A key on the wire resolves through `coop/props/prop_key_index`**, which holds every live keyed prop
+of the current world: membership from the engine's own birth and death notifications, the key from
+the four bodies that write it (`init`, `loadData`, the `setKey` event, and a `getKey` after another
+object wrote the key). A wire read that misses first catches the object index up, so its miss means
+no such prop here; a read that cannot answer yet (no session seed, no current world, a birth still
+loading) says so instead, and the host's uniqueness check at enrolment reads the index as it stands. The tracked set the census keeps by key is a different thing, what this peer has
+enrolled or tracked, and only the join sweep and the save-transfer key diff count it. `[V]`
 
 **Tracking is gated on hosting, never on a peer being connected.** Every catch and enrol below
 runs whenever a session exists with the host role: an event actor spawned while the host is alone

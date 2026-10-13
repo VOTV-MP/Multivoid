@@ -42,7 +42,7 @@ void OnReliable(const void* payload, int len, uint8_t senderSlot);
 // the base game's own affordability gate pops BEFORE it clears the cart -- a refused purchase
 // normally leaves the cart intact, while our refusal arrives after the local run has already
 // cleared it. The balance correction rides a direct BalanceSync from the host, not this
-// message. A host receiving this (it should not) no-ops. Game thread.
+// message. From the host alone: the host's receive edge refuses a client's copy (client_authorship.h). Game thread.
 void OnReliableRefused(const void* payload, int len);
 
 // Session teardown: drop the client's in-flight orders, the host's assemblies and commit queues,

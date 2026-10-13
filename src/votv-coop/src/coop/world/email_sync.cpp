@@ -5,6 +5,7 @@
 
 #include "coop/config/config.h"  // ReadEnv (drill mutate knob)
 #include "coop/net/blob_chunks.h"
+#include "coop/net/refusal_tally.h"
 #include "coop/net/session.h"
 
 #include "coop/comms/peer_action_feed.h"
@@ -93,20 +94,26 @@ std::vector<AppliedMark> g_applied;
 // misalignment), hash to arrival; retried each poll, swept by TTL.
 std::map<uint64_t, Clock::time_point> g_tombstones;
 
-// The receive-side apply park: FIFO once non-empty, drained each tick, anchored on the lane's
-// own settle rather than a wall-clock TTL; after kMaxApplyRetries with the engine resolved a
-// row is malformed for this world and dropped loudly. Reaching kParkCap escalates to the inbox
-// pause. signal_sync carries the same machinery.
+// The receive-side apply park, for the rows that arrive while the lane cannot ask the game at all
+// (unsettled, or no gamemode): FIFO once non-empty, drained each tick, anchored on the lane's own
+// settle rather than a wall-clock TTL. "Not yet" is the lane's state and never a row's, so a settled
+// lane tries each row once and it leaves, applied or refused. Reaching kParkCap raises the session's
+// receive pause. signal_sync carries the same machinery, and the reason MTA has none.
 struct ParkedRow {
     std::vector<uint8_t> blob;
     uint8_t senderSlot = 0;
-    int retries = 0;
-    Clock::time_point lastAttempt{};  // retries pace at 1 Hz real time
 };
 std::deque<ParkedRow> g_applyPark;
-bool g_parkBackpressure = false;
 constexpr size_t kParkCap = 256;
-constexpr int kMaxApplyRetries = 30;
+
+coop::net::RefusalTally g_refusals{"email_sync"};
+
+// Emails are host-authored: the host's receive edge refuses a client's append (client_authorship.h), so
+// every row this lane receives arrives on a client, from the host. Logged only: bounds are for clients,
+// never the host.
+void NoteRefusal(uint8_t slot, const char* why) {
+    g_refusals.Note(slot, why, Clock::now());
+}
 
 bool IsHostRole() {
     auto* s = g_session.load(std::memory_order_acquire);
@@ -219,10 +226,10 @@ bool ApplyDeleteByHash(uint64_t hash, std::wstring* outTopic = nullptr) {
     return false;
 }
 
-// The apply core, shared by the completion path and the park. A tombstone or a malformed blob
-// is terminal; an unresolved engine or a failed native add is not appliable, parked and
-// retried, since dropping it here was a measured silent loss.
-enum class ApplyVerdict { Applied, Terminal, NotAppliable };
+// The apply core, shared by the completion path and the park. Terminal: a tombstone won, the blob is
+// malformed, or the game was asked and the row could not be added -- each final, since the same row
+// would meet the same answer again. NotNow: the game cannot be asked yet, which the caller parks.
+enum class ApplyVerdict { Applied, Terminal, NotNow };
 
 ApplyVerdict ApplyRowBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
     const uint64_t hash = Fnv64(blob.data(), blob.size());
@@ -236,34 +243,45 @@ ApplyVerdict ApplyRowBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) 
     }
     UE::Row row;
     if (!DeserializeRow(blob, row)) {
-        UE_LOGW("email_sync: malformed email blob from slot %u -- dropped",
-                static_cast<unsigned>(senderSlot));
+        NoteRefusal(senderSlot, "the email blob is malformed");
         return ApplyVerdict::Terminal;
     }
-    if (!UE::EnsureResolved()) return ApplyVerdict::NotAppliable;
-    if (UE::AddEmail(row)) {
-        // Echo-proof by content hash: the next poll's append branch finds this freshly appended
-        // tail row by hash and marks it sent. The hash rather than the row key, since addEmail's
-        // laptop rebuild can drift the key before the poll.
-        g_applied.push_back({hash, Clock::now()});
-        UE_LOGI("email_sync: applied email from slot %u (topic '%ls')",
-                static_cast<unsigned>(senderSlot), row.topic.c_str());
-        return ApplyVerdict::Applied;
+    if (!UE::EnsureResolved()) return ApplyVerdict::NotNow;
+    const ue_wrap::RowApply r = UE::AddEmail(row);
+    if (r.result == ue_wrap::RowApplyResult::NotNow) return ApplyVerdict::NotNow;
+    if (r.result == ue_wrap::RowApplyResult::Refused) {
+        NoteRefusal(senderSlot, r.why);
+        return ApplyVerdict::Terminal;
     }
-    return ApplyVerdict::NotAppliable;
+    // Echo-proof by content hash: the next poll's append branch finds this freshly appended tail row
+    // by hash and marks it sent. The hash rather than the row key, since addEmail's laptop rebuild can
+    // drift the key before the poll.
+    g_applied.push_back({hash, Clock::now()});
+    UE_LOGI("email_sync: applied email from slot %u (topic '%ls')",
+            static_cast<unsigned>(senderSlot), row.topic.c_str());
+    return ApplyVerdict::Applied;
 }
 
-void SetParkBackpressure(bool on) {
-    if (on == g_parkBackpressure) return;
-    g_parkBackpressure = on;
-    if (auto* s = g_session.load(std::memory_order_acquire)) s->SetApplyBackpressure(on);
-    UE_LOGW("email_sync: apply park %s (depth %zu)", on ? "BACKPRESSURE ON" : "drained",
-            g_applyPark.size());
+// The session's receive pause for this lane: raised at the flood bound, lowered once the park is half
+// drained. The session holds the state (coop/net/apply_pause.h) and resets it when it starts, so no
+// copy here can outlive the session that raised it.
+void UpdateParkPause() {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s) return;
+    constexpr auto kKind = coop::net::ReliableKind::EmailAppend;
+    const size_t depth = g_applyPark.size();
+    if (depth >= kParkCap) {
+        if (s->SetApplyPause(kKind, true))
+            UE_LOGW("email_sync: apply park BACKPRESSURE ON (depth %zu)", depth);
+    } else if (depth < kParkCap / 2 && s->ApplyPausedBy(kKind)) {  // a load, not a write, each tick
+        if (s->SetApplyPause(kKind, false))
+            UE_LOGW("email_sync: apply park drained (depth %zu)", depth);
+    }
 }
 
 void ParkRow(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
-    g_applyPark.push_back({blob, senderSlot, 0});
-    if (g_applyPark.size() >= kParkCap) SetParkBackpressure(true);
+    g_applyPark.push_back({blob, senderSlot});
+    UpdateParkPause();
 }
 
 void CompleteAssembly(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
@@ -272,7 +290,7 @@ void CompleteAssembly(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
     // parks every arrival too, so the park is the one ordering point for the whole unsettled
     // window.
     if (!g_applyPark.empty() || !g_primed) { ParkRow(blob, senderSlot); return; }
-    if (ApplyRowBlob(blob, senderSlot) == ApplyVerdict::NotAppliable)
+    if (ApplyRowBlob(blob, senderSlot) == ApplyVerdict::NotNow)
         ParkRow(blob, senderSlot);
 }
 
@@ -280,25 +298,15 @@ void DrainApplyPark() {
     // The drain anchor is the lane's own settle predicate (primed encodes count stability), not
     // bare engine resolve: after a mid-session world travel the array resolves while still filling
     // asynchronously, and applying into that window loses rows. While unprimed the park only
-    // absorbs.
+    // absorbs. Settled, each row is tried once and leaves; the first that meets NotNow keeps its
+    // place and is tried again next tick (NotNow is decided before any call into the game).
     if (!g_primed) return;
-    const auto now = Clock::now();
     while (!g_applyPark.empty()) {
-        ParkedRow& front = g_applyPark.front();
-        // The stuck-front retry paces at 1 Hz real time; per-frame counting burned every retry in
-        // well under a second.
-        if (front.retries > 0 && now - front.lastAttempt < std::chrono::seconds(1)) break;
-        const ApplyVerdict v = ApplyRowBlob(front.blob, front.senderSlot);
-        if (v == ApplyVerdict::NotAppliable) {
-            front.lastAttempt = now;
-            if (++front.retries < kMaxApplyRetries) break;  // retry next second
-            UE_LOGE("email_sync: parked row from slot %u rejected %d times over ~%ds with "
-                    "the lane settled -- dropped as malformed-for-this-world",
-                    static_cast<unsigned>(front.senderSlot), front.retries, kMaxApplyRetries);
-        }
+        const ParkedRow& front = g_applyPark.front();
+        if (ApplyRowBlob(front.blob, front.senderSlot) == ApplyVerdict::NotNow) break;
         g_applyPark.pop_front();
     }
-    if (g_parkBackpressure && g_applyPark.size() < kParkCap / 2) SetParkBackpressure(false);
+    UpdateParkPause();
 }
 
 // The ready-edge join seed: the shared helper and this lane's adapter.
@@ -366,6 +374,8 @@ void CaptureJoinSnapshot(int peerSlot) {
 
 void CancelJoinSnapshot(int peerSlot) { g_seeder.Cancel(peerSlot); }
 
+bool Settled() { return g_primed; }
+
 void QueueConnectBroadcastForSlot(int peerSlot) {
     if (!IsHostRole()) return;
     g_seeder.SeedForSlot(g_session.load(std::memory_order_acquire), peerSlot);
@@ -374,8 +384,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 void OnDisconnectSlot(int peerSlot) {
     // Slot teardown is a row transition: the leaver's half assemblies and seed bracket must not
     // survive into a recycled occupant.
-    if (peerSlot >= 0 && peerSlot < 256)
-        g_assembler.ClearSlot(static_cast<uint8_t>(peerSlot));
+    if (peerSlot >= 0 && peerSlot < 256) g_assembler.ClearSlot(static_cast<uint8_t>(peerSlot));
     g_seeder.Cancel(peerSlot);
 }
 
@@ -390,6 +399,7 @@ void Tick() {
     // The apply park drains first, every tick, not at the poll rate.
     DrainApplyPark();
     const auto now = Clock::now();
+    g_refusals.Flush(now);  // a burst's summed line once its window has passed
     if (now < g_nextPoll) return;
     g_nextPoll = now + kPollInterval;
 
@@ -657,7 +667,8 @@ void OnDisconnect() {
     g_nextPoll = {};   // no residual throttle into the next session
     // The park and the seed brackets are session-scoped.
     g_applyPark.clear();
-    SetParkBackpressure(false);
+    UpdateParkPause();
+    g_refusals.Clear();
     g_seeder.Reset();
 }
 

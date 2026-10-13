@@ -33,8 +33,9 @@ void Tick();
 // HOST, game thread, at a joiner's ClientWorldReady edge: the current state row to this slot.
 void QueueConnectBroadcastForSlot(int slot);
 
-// Game thread (event_feed drain). CLIENT: the host's state row, applied; a non-host sender is dropped.
-void OnReliable(const coop::net::ServerStatePayload& payload, int senderPeerSlot);
+// Game thread (event_feed drain). CLIENT: the host's state row, applied; the host refuses a client's copy at
+// its receive edge (client_authorship.h).
+void OnReliable(const coop::net::ServerStatePayload& payload);
 
 // Game thread (event_feed drain). HOST: a client's finished repair of a box; run, or answered with the state row.
 void OnRepair(const coop::net::ServerRepairPayload& payload, int senderPeerSlot);

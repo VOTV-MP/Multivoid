@@ -235,22 +235,22 @@ static void RunDivergenceSweep_(void* localPlayer) {
         doomedClass.push_back(acls);
         ++doomedByClass[acls];
     }
-    // The index half: a client's save-loaded keyed props have no element row (the key index is
-    // their tracked membership), so the row walk cannot see them. They are adjudicated here under
+    // The index half: a client's save-loaded keyed props have no element row (the tracked keys are
+    // their membership), so the row walk cannot see them. They are adjudicated here under
     // the same rules: claimed survive, per-player skipped, keyed-churn re-binds spared, the rest
     // doomed under the same per-class accounting. An actor with an element row belongs to the row
     // walk, so the two halves partition and nothing is counted twice.
     {
-        std::vector<coop::prop_element_tracker::KeyIndexEntry> keyedIdx;
-        coop::prop_element_tracker::CollectKeyIndexEntries(keyedIdx);
+        std::vector<coop::prop_element_tracker::TrackedKeyEntry> keyedIdx;
+        coop::prop_element_tracker::CollectTrackedKeyEntries(keyedIdx);
         int idxUniverse = 0, idxClaimed = 0, idxEvicted = 0;
         for (const auto& ke : keyedIdx) {
             if (!ke.actor) continue;
             if (!R::IsLiveByIndex(ke.actor, ke.internalIdx)) {
                 // A dead entry is evicted now: an element-less keyed entry has no registry row, so
-                // the reaper never sees it; this sweep, the lookup's lazy evict and
-                // DrainDeadKeyIndexEntries are its only collectors.
-                coop::prop_element_tracker::EvictKeyIndexEntryIfStale(ke.actor, ke.key);
+                // the reaper never sees it; this sweep and DrainDeadTrackedKeys are its only
+                // collectors.
+                coop::prop_element_tracker::EvictTrackedKeyIfStale(ke.actor, ke.key);
                 continue;
             }
             if (coop::element::Registry::Get().EidForActor(ke.actor) !=
@@ -268,7 +268,7 @@ static void RunDivergenceSweep_(void* localPlayer) {
             // walk. Paid only for would-be-doomed entries.
             const std::wstring liveKey = ue_wrap::prop::GetInteractableKeyString(ke.actor);
             if (liveKey != ke.key) {
-                coop::prop_element_tracker::EvictKeyIndexEntryIfStale(ke.actor, ke.key);
+                coop::prop_element_tracker::EvictTrackedKeyIfStale(ke.actor, ke.key);
                 ++idxEvicted;
                 continue;
             }
@@ -524,7 +524,7 @@ void TickClientReconcile() {
     // A save-transfer join goes through two level loads, and a keyed prop re-created by the second
     // (or by GC churn) reuses a freed GUObjectArray slot: NumObjects stays flat and the steady
     // re-seed's grew-gate never indexes it, so it is invisible to the membership here and survives
-    // as a duplicate (the joining client's starting suitcase, twice). The key-index membership is
+    // as a duplicate (the joining client's starting suitcase, twice). The tracked-key membership is
     // refreshed at this one cold per-join point, so the re-create is either re-bind-spared or
     // doomed, leaving exactly one. One array walk per join.
     coop::prop_element_tracker::ReSeedKnownKeyedProps(nullptr);

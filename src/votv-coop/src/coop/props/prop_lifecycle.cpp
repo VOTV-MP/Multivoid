@@ -36,6 +36,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cwchar>
 #include <string>
 
 namespace coop::prop_lifecycle {
@@ -339,7 +340,9 @@ bool IsWireSuppressedPropClass(const std::wstring& cls) {
     // own convert-born piles at Init. Connect-time divergence is handled by claim tracking instead.
     // The adoption sweep does not consult this predicate: the growing mushroom is keyed but never
     // expressed and client-forbidden, so zero client instances is parity.
-    return cls == P::name::PropMushroomGrowingClass;
+    // Compared without case, as the engine compares names: a class name off the wire spelt in other
+    // letters still names this class, and must still be refused (prop_drop_intent, hand_item).
+    return ::_wcsicmp(cls.c_str(), P::name::PropMushroomGrowingClass) == 0;
 }
 
 bool IsPerPlayerPropClass(const std::wstring& cls) {
@@ -347,8 +350,9 @@ bool IsPerPlayerPropClass(const std::wstring& cls) {
     // save by design, so it can never claim-bind. The host must not snapshot-express it, no peer
     // broadcasts it, and the adoption sweep must never destroy the local one (a sweep of the
     // client's own inventory container fataled the client at the next GC purge). The opposite of
-    // IsWireSuppressedPropClass, whose client site destroys the local instance.
-    return cls == P::name::PropInventoryContainerPlayerClass;
+    // IsWireSuppressedPropClass, whose client site destroys the local instance. Compared without case,
+    // as IsWireSuppressedPropClass is and for its reason.
+    return ::_wcsicmp(cls.c_str(), P::name::PropInventoryContainerPlayerClass) == 0;
 }
 
 void Install(coop::net::Session* session) {

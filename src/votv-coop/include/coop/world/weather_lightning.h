@@ -6,9 +6,10 @@
 // crosses the wire.
 //
 // The host observes UGameplayStatics::BeginDeferredActorSpawnFromClass POST, filters by
-// ActorClass == lightningStrike_C and broadcasts the SpawnTransform translation. The world event
-// dispatcher checks the sender is the host, then posts Apply() to the game thread, which re-spawns
-// the actor at the received location through the BeginDeferred + FinishSpawn pair.
+// ActorClass == lightningStrike_C and broadcasts the SpawnTransform translation. The host's receive
+// edge refuses a client's copy; on a client the world event dispatcher posts Apply() to the game
+// thread, which re-spawns the actor at the received location through the BeginDeferred +
+// FinishSpawn pair.
 //
 // Depends only on the UGameplayStatics CDO, the lightning class and the spawn UFunctions' param
 // offsets; TryResolve is idempotent and may succeed before the cycle is live.

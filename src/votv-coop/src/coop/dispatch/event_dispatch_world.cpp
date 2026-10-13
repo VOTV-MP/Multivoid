@@ -65,8 +65,7 @@ bool VerifySenderEidRange(int senderPeerSlot,
     return true;
 }
 
-bool HandleWorldEvent(net::Session& session,
-                      const net::Session::ReliableMessage& msg) {
+bool HandleWorldEvent(const net::Session::ReliableMessage& msg) {
     switch (msg.kind) {
     case net::ReliableKind::FireflySpawn: {
         // The peer-symmetric ambient firefly: any peer may originate one (each runs its own spawner
@@ -101,20 +100,11 @@ bool HandleWorldEvent(net::Session& session,
     case net::ReliableKind::EventFire: {
         // The host-authoritative scheduled or story event fired: the client replays the native verb
         // per the replay policy (the level, save and cosmetic flips no lane carries; lane-covered
-        // rows are logged and skipped there). World-mutating, so host trust-bound like the weather;
-        // there is no eid in the payload, and the identity is the transport slot.
+        // rows are logged and skipped there). World-mutating and host-authored, like the weather:
+        // a client's copy is refused at the host's receive edge (client_authorship.h).
         if (msg.payloadLen < sizeof(net::EventFirePayload)) {
             UE_LOGW("event_feed: EventFire payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::EventFirePayload));
-            break;
-        }
-        if (session.role() == net::Role::Host) {
-            UE_LOGI("event_feed: EventFire received on host -- dropping (host is the authority)");
-            break;
-        }
-        if (msg.senderPeerSlot != 0) {
-            UE_LOGW("event_feed: EventFire from non-host senderPeerSlot=%d -- dropping",
-                    msg.senderPeerSlot);
             break;
         }
         net::EventFirePayload fp{};
@@ -128,15 +118,6 @@ bool HandleWorldEvent(net::Session& session,
         if (msg.payloadLen < sizeof(net::EventSnapshotPayload)) {
             UE_LOGW("event_feed: EventSnapshot payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::EventSnapshotPayload));
-            break;
-        }
-        if (session.role() == net::Role::Host) {
-            UE_LOGI("event_feed: EventSnapshot received on host -- dropping (host is the authority)");
-            break;
-        }
-        if (msg.senderPeerSlot != 0) {
-            UE_LOGW("event_feed: EventSnapshot from non-host senderPeerSlot=%d -- dropping",
-                    msg.senderPeerSlot);
             break;
         }
         net::EventSnapshotPayload sp{};
@@ -162,8 +143,8 @@ bool HandleWorldEvent(net::Session& session,
     }
     case net::ReliableKind::ServerState: {
         // The host-authoritative signal-server state, host to clients only; the client drives the
-        // real actor (a raw write of the broken flag and the reflected check). The module drops a
-        // non-host sender.
+        // real actor (a raw write of the broken flag and the reflected check). A client's copy is
+        // refused at the host's receive edge (client_authorship.h).
         if (msg.payloadLen < sizeof(net::ServerStatePayload)) {
             UE_LOGW("event_feed: ServerState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::ServerStatePayload));
@@ -171,7 +152,7 @@ bool HandleWorldEvent(net::Session& session,
         }
         net::ServerStatePayload sp{};
         std::memcpy(&sp, msg.payload, sizeof(sp));
-        coop::serverbox_sync::OnReliable(sp, msg.senderPeerSlot);
+        coop::serverbox_sync::OnReliable(sp);
         break;
     }
     case net::ReliableKind::ServerRepair: {
@@ -243,7 +224,7 @@ bool HandleWorldEvent(net::Session& session,
     case net::ReliableKind::RoachState: {
         // The host-authoritative roach-infestation snapshot, paged. The client assembles the pages
         // and applies by ordinal (driving location and scale, or rebuilding through the game's own
-        // add and delete). The module drops a non-host sender.
+        // add and delete). A client's copy is refused at the host's receive edge (client_authorship.h).
         if (msg.payloadLen < sizeof(net::RoachStatePayload)) {
             UE_LOGW("event_feed: RoachState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::RoachStatePayload));
@@ -251,7 +232,7 @@ bool HandleWorldEvent(net::Session& session,
         }
         net::RoachStatePayload rp{};
         std::memcpy(&rp, msg.payload, sizeof(rp));
-        coop::roach_sync::OnState(rp, msg.senderPeerSlot);
+        coop::roach_sync::OnState(rp);
         break;
     }
     case net::ReliableKind::InventoryPickup: {
@@ -270,21 +251,16 @@ bool HandleWorldEvent(net::Session& session,
     }
     case net::ReliableKind::ChatMessage: {
         // A client's chat intent, client to host only. Identity comes from the transport slot, so a
-        // peer cannot speak as someone else, and the payload is text only, decoded strictly at the
-        // boundary in chat_sync before it can enter the lobby's record or reach a screen.
-        if (msg.payloadLen < sizeof(net::ChatMessagePayload)) {
-            UE_LOGW("event_feed: ChatMessage payload too short (%zu < %zu)",
-                    static_cast<size_t>(msg.payloadLen), sizeof(net::ChatMessagePayload));
-            break;
-        }
+        // peer cannot speak as someone else. No length check or log line here: OnReliable takes the
+        // sender's chat rate first and then judges the length, so a flood of short messages is
+        // limited like any other; the text is decoded strictly there before it can enter the
+        // lobby's record or reach a screen.
         if (msg.senderPeerSlot < 0 || msg.senderPeerSlot >= net::kMaxPeers) {
             UE_LOGW("event_feed: ChatMessage invalid senderPeerSlot=%d -- dropping",
                     msg.senderPeerSlot);
             break;
         }
-        net::ChatMessagePayload cp{};
-        std::memcpy(&cp, msg.payload, sizeof(cp));
-        coop::chat_sync::OnReliable(cp, static_cast<uint8_t>(msg.senderPeerSlot));
+        coop::chat_sync::OnReliable(msg.payload, msg.payloadLen, msg.senderPeerSlot);
         break;
     }
     case net::ReliableKind::ChatSpeaker: {
@@ -307,13 +283,7 @@ bool HandleWorldEvent(net::Session& session,
                     static_cast<size_t>(msg.payloadLen), sizeof(net::ChatLinePayload));
             break;
         }
-        if (msg.senderPeerSlot != 0) {
-            // Only the host authors. A client claiming to is a protocol violation, and accepting it
-            // would let any peer write the lobby's permanent record.
-            UE_LOGW("event_feed: ChatLine from senderPeerSlot=%d -- only the host "
-                    "authors chat; dropping", msg.senderPeerSlot);
-            break;
-        }
+        // Only the host authors: the host's receive edge refuses a client's copy (client_authorship.h).
         net::ChatLinePayload lp{};
         std::memcpy(&lp, msg.payload, sizeof(lp));
         coop::chat_sync::OnChatLine(lp);
@@ -338,25 +308,16 @@ bool HandleWorldEvent(net::Session& session,
                     static_cast<size_t>(msg.payloadLen), sizeof(net::CommandReplyPayload));
             break;
         }
-        if (msg.senderPeerSlot != 0) {
-            // Only the host answers. A client claiming to would write lines into another peer's feed.
-            UE_LOGW("event_feed: CommandReply from senderPeerSlot=%d -- only the host "
-                    "answers; dropping", msg.senderPeerSlot);
-            break;
-        }
+        // Only the host answers: the host's receive edge refuses a client's copy (client_authorship.h).
         net::CommandReplyPayload rp{};
         std::memcpy(&rp, msg.payload, sizeof(rp));
         coop::command_sync::OnReply(rp);
         break;
     }
     case net::ReliableKind::SkyState: {
-        // The host-authoritative night-sky orientation, moon phase and eye, host to client, trust-gated
-        // to slot 0 like the clock. The client writes the sky mesh's world rotation and the moon
-        // phase and runs the sky's setEye for the eye (the module no-ops on the host).
-        if (msg.senderPeerSlot != 0) {
-            UE_LOGW("event_feed: SkyState from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
-            break;
-        }
+        // The host-authoritative night-sky orientation, moon phase and eye, host to client, refused from a client
+        // at the host's receive edge like the clock. The client writes the sky mesh's world rotation and the moon
+        // phase and runs the sky's setEye for the eye.
         if (msg.payloadLen < sizeof(net::SkyStatePayload)) {
             UE_LOGW("event_feed: SkyState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::SkyStatePayload));
@@ -386,19 +347,8 @@ bool HandleWorldEvent(net::Session& session,
         }
         net::RedSkyPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (session.role() == net::Role::Host) {
-            UE_LOGI("event_feed: RedSky received on host -- dropping");
-            break;
-        }
-        // Host trust-bound: the red sky is host-only, and a non-host sender is a protocol
-        // violation.
-        if (msg.senderPeerSlot != 0) {
-            UE_LOGW("event_feed: RedSky from non-host senderPeerSlot=%d "
-                    "(senderElementId=0x%08x) -- dropping",
-                    msg.senderPeerSlot, p.senderElementId);
-            break;
-        }
-        // The role-range trust on the sender element id.
+        // Host trust-bound: the red sky is host-only; a client's copy is refused at the host's receive edge
+        // (client_authorship.h). The role-range trust on the sender element id.
         if (!VerifySenderEidRange(msg.senderPeerSlot, p.senderElementId,
                                    "RedSky")) {
             break;
@@ -426,18 +376,8 @@ bool HandleWorldEvent(net::Session& session,
         }
         net::LightningStrikePayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (session.role() == net::Role::Host) {
-            UE_LOGI("event_feed: LightningStrike received on host -- dropping");
-            break;
-        }
-        // Host trust-bound: the strike is host-only, and a non-host sender is a protocol violation.
-        if (msg.senderPeerSlot != 0) {
-            UE_LOGW("event_feed: LightningStrike from non-host "
-                    "senderPeerSlot=%d (senderElementId=0x%08x) -- dropping",
-                    msg.senderPeerSlot, p.senderElementId);
-            break;
-        }
-        // The role-range trust on the sender element id.
+        // Host trust-bound: the strike is host-only; a client's copy is refused at the host's receive edge
+        // (client_authorship.h). The role-range trust on the sender element id.
         if (!VerifySenderEidRange(msg.senderPeerSlot, p.senderElementId,
                                    "LightningStrike")) {
             break;
@@ -467,22 +407,8 @@ bool HandleWorldEvent(net::Session& session,
         }
         net::WeatherStatePayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        // The self-echo guard: weather is host to client only, so a packet arriving on the host is
-        // a loopback bounce, dropped.
-        if (session.role() == net::Role::Host) {
-            UE_LOGI("event_feed: WeatherState received on host -- dropping "
-                    "(host is the authority; no inbound from client)");
-            break;
-        }
-        // Host trust-bound: the weather is host-only, and a non-host sender is a protocol
-        // violation.
-        if (msg.senderPeerSlot != 0) {
-            UE_LOGW("event_feed: WeatherState from non-host "
-                    "senderPeerSlot=%d (senderElementId=0x%08x) -- dropping",
-                    msg.senderPeerSlot, p.senderElementId);
-            break;
-        }
-        // The role-range trust on the sender element id.
+        // Host trust-bound: the weather is host-only; a client's copy is refused at the host's receive edge
+        // (client_authorship.h). The role-range trust on the sender element id.
         if (!VerifySenderEidRange(msg.senderPeerSlot, p.senderElementId,
                                    "WeatherState")) {
             break;

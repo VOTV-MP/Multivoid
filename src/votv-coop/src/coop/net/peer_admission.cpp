@@ -259,6 +259,25 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
             return r;
         }
 
+        const uint64_t nowMs = NowMs();
+        // The flood history first, by the identity just proved and by the route's address: a source the host ended for
+        // flooding stays refused for its window, whichever way it comes back, and is told so before any other count.
+        {
+            connect_history::Key key;
+            connect_history::Verdict f{};
+            if (connect_history::KeyFromProvedGuid(peer_identity::GuidForPublicKey(row.remotePub), key))
+                f = connect_history::Floods().Blocked(key, nowMs);
+            if (!f.refused && connect_history::KeyFromAddress(hConn, key))
+                f = connect_history::Floods().Blocked(key, nowMs);
+            if (f.refused) {
+                UE_LOGW("peer_admission: flood history -- this source was ended for flooding; refusing for %llu s "
+                        "[%s]", static_cast<unsigned long long>((f.retryMs + 999) / 1000),
+                        Describe(EndReason::ReliableFlood).id);
+                r.code = EndReason::ReliableFlood;
+                r.reason = "this machine sent the host more than a player can";
+                return r;
+            }
+        }
         // The connection cap, for an arrival the accept edge could not count. The edge counts
         // where the transport knows an address, and on the internet lane it knows none at that
         // edge: no route exists yet. By the proof a route is up, and the transport reports its
@@ -268,7 +287,6 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
         bool byAddress = false;
         const connect_history::Key source =
             SourceOfProved(hConn, row.remotePub, &byAddress);
-        const uint64_t nowMs = NowMs();
         if (!row.countedAtEdge) {
             const connect_history::Verdict v = connect_history::Connects().Note(source, nowMs);
             UE_LOGI("peer_admission: the connection cap counted this arrival at the proof, by "

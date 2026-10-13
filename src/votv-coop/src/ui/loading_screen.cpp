@@ -193,8 +193,9 @@ void Render() {
             CenteredText(l10n::T("A new game can take a moment to load"));
             ImGui::PopStyleColor();
         } else {
-            // Cancel: abort the CLIENT join (the harness drains the request -> Stop +
-            // reopen browser; a session-death flee then lands us at the main menu).
+            // Cancel: abort the CLIENT join (the harness drains the request ->
+            // EndClientSession: the session stops, its coop state is torn down, and the player is
+            // put at the menu, leaving the host's world first if they stand in it, with the browser).
             const float btnW = S(120.0f);
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (ImGui::GetContentRegionAvail().x - btnW) * 0.5f);
             if (ImGui::Button(l10n::Label(l10n::Tc("hud", "Cancel"), "cancel"), ImVec2(btnW, 0.0f)))

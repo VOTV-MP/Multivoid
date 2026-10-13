@@ -37,8 +37,9 @@ The build's own hash and whether it is the official build ride the same payload:
 official build refuses another build (MV-H30), and a host on a modified build refuses the official
 one (MV-H31), unless the host allows other builds.
 
-Before any of that, at the accept edge, the host applies one policy that costs no handshake and
-no seat: a per-address connection cap in the shape of MTA's join-flood
+Before any of that, at the accept edge, the host applies two policies that cost no handshake and
+no seat. First, an address the host ended for sending more than a player can is refused for ten minutes (`MV-H32`; the
+identity it proved is refused the same way at its proof). Then a per-address connection cap in the shape of MTA's join-flood
 protection, four connections per thirty seconds by default and then thirty seconds of refusal
 (`MV-H29`; the numbers are the `net.connect_cap` and `net.connect_window_s` settings, and 0
 turns the cap off). On the internet lane no address is known when a connection arrives, because
@@ -128,8 +129,12 @@ consecutive scans. Two deadlines bound a pathological load, one on no progress a
 past either the client announces anyway, logged loudly as degraded.
 
 The client announces ready once per world, when a gameplay world is up, the prop registry is
-seeded for that world, no purge is running, and the probe has settled (`coop/session/net_pump`).
-This is the join barrier: no authoritative state lands in a world that is still churning. On
+seeded for that world, no purge is running, the probe has settled, and the prop key index holds the
+world (`coop/session/net_pump`). This is the join barrier: no authoritative state lands in a world
+that is still churning. The key index term has no deadline and no degraded announce: an index that
+does not hold the world would duplicate it, so a build whose index cannot exist ends the join
+(`MV-J32`) instead, and on any other build the term clears once the index has seeded and the
+object index's last drain left no backlog, the session's first ticks. On
 every appearance in a co-op world the client is placed by the mod, never left at the host's saved
 position that the transferred save carries: at the last spot its profile says it was standing
 on, once, for a returning player, and at the base gate otherwise.
@@ -253,9 +258,21 @@ A join that cannot be established, and a session that ends after it, both close 
 COULD NOT CONNECT or DISCONNECTED, one sentence, the site's own words, and a stable code to paste
 into a report; a cancel is silent (`coop/net/end_reason`, `ui/end_reason_dialog`). The letter says
 who decided: `J` the joiner; `H` the host, whose refusal travels as the transport's application
-end reason, so both ends log one code; `T` the transport. `MV-J28` and `MV-J29` also refuse a
-host's own start: a host from the hosting window before its world loads, with the code and the
+end reason, so both ends log one code; `T` the transport. `MV-J28`, `MV-J29` and `MV-J32` also refuse
+a host's own start: a host from the hosting window before its world loads, with the code and the
 sentence on its status line.
+
+A join that ends before it completed, whatever ended it (a cancel, a connection that could not be
+made or was refused, the host closing the link before its world loads, a phase that timed out, a
+world that would not load or arrived damaged), puts the player at the main menu with the server
+browser, where a menu join starts (the one exception is a test scenario that joins from a world it
+booted into, which keeps that world when the join is refused): one already standing in the host's
+world, which the join loaded, is taken to the menu first by the travel the game's own quit runs
+(`harness/join_leave`, `harness/session_runtime`). MTA likewise forces its main menu back after
+every disconnect; the browser is this mod's. A session that ends another way (a death the revive
+gives up on, a quit, or the host closing the link once its world has started to load) travels to the
+menu from the session itself, without the browser (`coop/session/net_pump`). When the game will not
+travel, the player is told so (`MV-J31`), unless the reason the session ended is already on screen.
 
 | Code | Meaning |
 |---|---|
@@ -289,6 +306,8 @@ sentence on its status line.
 | `MV-J28` | The player's `net.ice` is neither `all` nor `relay`, or `multivoid.ini` could not be read whole: locked or failing, or holding a zero byte or a UTF-16 mark (a file saved as UTF-16), the detail saying which of the two; nothing the policy governs starts until it is fixed |
 | `MV-J29` | `net.ice=relay`, and the session has no TURN server to relay through |
 | `MV-J30` | `net.ice=relay`, and the join is a direct one, which would show the host the player's address |
+| `MV-J31` | The game would not travel to the main menu: from a world a join starts in, or after a session ended (its game mode refused the travel, or it never dispatched or arrived); the player is still in that world |
+| `MV-J32` | The game's script loop could not be hooked at boot, or the prop key watches were refused, so a prop's key is never seen written and props cannot be matched between players by key; no session starts, a join or a host's own, the host's before its world loads, and a join from a world before the world is left |
 | `MV-H01` | Wrong password |
 | `MV-H02` | This server needs a password |
 | `MV-H03` | Too many password attempts; try again in ten minutes |
@@ -320,6 +339,9 @@ sentence on its status line.
 | `MV-H29` | Too many connections in a short time from one address, or from one proved identity over a relayed internet route; the cap is a host setting |
 | `MV-H30` | The host runs the official build and this client another one (its build hash differs); the popup says to install the official release |
 | `MV-H31` | The host runs a modified build and this client the official one |
+| `MV-H32` | This client sent more messages than the host's bound allows (a host setting), or was refused for ten minutes after such a close |
+| `MV-H33` | This client asked the host for its world a second time in one visit, which the game never does |
+| `MV-H34` | This client announced its world ready far more often than a join does (a flood past the host's replay burst) |
 | `MV-T01` | No answer from the host, at the dial or later |
 | `MV-T02` | No route to the host through its firewall or router |
 | `MV-T03` | The signaling server could not reach the host |

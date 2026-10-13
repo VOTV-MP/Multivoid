@@ -191,6 +191,21 @@ void ConfigureConnects(long cap, long windowS) {
     }
 }
 
+void History::Ban(const Key& key, uint64_t nowMs) {
+    if (policy_.max <= 0) return;
+    Bucket* b = Find(key, nowMs);
+    if (!b) return;
+    Record(key, nowMs);
+    b->ignoreUntilMs = nowMs + policy_.ignoreMs;
+}
+
+// --- the flood history -------------------------------------------------------
+
+History& Floods() {
+    static History h{Policy{1, kFloodRefusalMs, kFloodRefusalMs}, "flood history"};
+    return h;
+}
+
 // --- the selftest ------------------------------------------------------------
 
 namespace {
@@ -351,6 +366,20 @@ bool RunSelftest() {
         check(KeyFromProvedGuid("0123456789abcdef0123456789abcdee", other) &&
                   std::memcmp(k.bytes, other.bytes, 16) != 0,
               "two guids differing in the last character are two sources");
+    }
+
+    // The flood history's use: a ban refuses from the moment it is made, not from the source's first return.
+    {
+        History h{Policy{1, kFloodRefusalMs, kFloodRefusalMs}};
+        const Key a = AddrKey(9);
+        const Key b = AddrKey(10);
+        check(!h.Blocked(a, 1000).refused, "a source never banned is not refused");
+        h.Ban(a, 1000);
+        const Verdict v = h.Blocked(a, 300'000);
+        check(v.refused && v.retryMs == 1000 + kFloodRefusalMs - 300'000,
+              "the refusal runs from the ban, not from the first return");
+        check(!h.Blocked(a, 1000 + kFloodRefusalMs).refused, "and lifts when its window has passed");
+        check(!h.Blocked(b, 300'000).refused, "a ban is the banned source's alone");
     }
 
     if (pass == total) {

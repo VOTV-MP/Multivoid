@@ -59,14 +59,9 @@ void ActivateGeomOctaLaserFx(void* actor, const std::wstring& className) {
 void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
     using ue_wrap::ParamFrame;
     using ue_wrap::Call;
-    auto* s = D::Session();
-    if (!s) return;
-    if (s->role() == coop::net::Role::Host) {
-        UE_LOGI("world-actor[client OnSpawn]: received on host -- dropping (loopback bounce)");
-        return;
-    }
-    // Host-authoritative: the eid must be in the host range (the entity dispatch already rejected
-    // non-host senders).
+    if (!D::Session()) return;
+    // Host-authoritative: the host's receive edge refuses a client's copy (client_authorship.h). The eid
+    // must be in the host range.
     if (!coop::element::Registry::IsAllowedHostAllocatedEid(payload.elementId)) {
         UE_LOGW("world-actor[client OnSpawn]: eid=%u out of host range [1, %u) -- dropping",
                 payload.elementId, coop::element::kHostRangeSize);
@@ -294,12 +289,7 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
 }
 
 void OnWorldActorDestroy(const coop::net::EntityDestroyPayload& payload) {
-    auto* s = D::Session();
-    if (!s) return;
-    if (s->role() == coop::net::Role::Host) {
-        UE_LOGI("world-actor[client OnDestroy]: received on host -- dropping (loopback bounce)");
-        return;
-    }
+    if (!D::Session()) return;
     if (!coop::element::Registry::IsAllowedHostAllocatedEid(payload.elementId)) {
         UE_LOGW("world-actor[client OnDestroy]: eid=%u out of host range -- dropping", payload.elementId);
         return;

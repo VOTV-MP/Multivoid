@@ -100,10 +100,13 @@ void DoHostExisting(const sb::SaveInfo& info) {
     // so the user can't wander into the browser and connect to their own lobby while the
     // world loads, and gives "Starting your server -- loading <world>" feedback.
     // DriveHostBootIfPending Reset()s it on session-start/failure; if HostWithSave is
-    // rejected (busy) there is no pending boot to Reset, so we must NOT raise it.
+    // rejected (busy, or this build starts no session) there is no pending boot to Reset, so we
+    // must NOT raise it.
+    coop::net::Refusal refused;
     if (!sm::HostWithSave(c, g_hostName, g_hostLocked, HostPassword(), g_hostMax,
-                          coop::net::master_slots::Selected().url, HostModeFromPicker())) {
-        UE_LOGW("host_save_picker: HOST existing '%s' rejected (busy) -- leaving picker open", c.slot.c_str());
+                          coop::net::master_slots::Selected().url, HostModeFromPicker(), &refused)) {
+        UE_LOGW("host_save_picker: HOST existing '%s' rejected (%s) -- leaving picker open", c.slot.c_str(),
+                refused.code != coop::net::EndReason::None ? coop::net::Describe(refused.code).id : "busy");
         return;
     }
     coop::join_progress::BeginHostBoot(label);
@@ -124,9 +127,11 @@ void DoHostNew() {
     // A brand-new game's load is the SLOWEST host boot (the save isn't loadable for tens
     // of seconds), so the no-feedback window was the worst here -- this is exactly where
     // the user self-joined. Cover the menu the instant the action is accepted.
+    coop::net::Refusal refused;
     if (!sm::HostWithSave(c, g_hostName, g_hostLocked, HostPassword(), g_hostMax,
-                          coop::net::master_slots::Selected().url, HostModeFromPicker())) {
-        UE_LOGW("host_save_picker: HOST NEW '%s' rejected (busy) -- leaving picker open", g_newName);
+                          coop::net::master_slots::Selected().url, HostModeFromPicker(), &refused)) {
+        UE_LOGW("host_save_picker: HOST NEW '%s' rejected (%s) -- leaving picker open", g_newName,
+                refused.code != coop::net::EndReason::None ? coop::net::Describe(refused.code).id : "busy");
         return;
     }
     coop::join_progress::BeginHostBoot(g_newName);

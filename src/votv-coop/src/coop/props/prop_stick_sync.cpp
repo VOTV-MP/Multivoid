@@ -9,6 +9,7 @@
 #include "coop/player/local_streams.h"  // CurrentHoldGen, the hold a stick ends
 #include "coop/props/prop_drive_stream.h"  // IsParked: the host's channel moves an unstuck copy
 #include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_key_index.h"  // a key on the wire to a live actor
 #include "coop/props/remote_prop.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_physics.h"
@@ -472,7 +473,7 @@ void OnStickState(const coop::net::PropStickStatePayload& payload, uint8_t sende
     const std::wstring keyW = coop::remote_prop::KeyToWString(payload.key);
     void* prop = nullptr;
     if (!keyW.empty() && keyW != L"None")
-        prop = PT::ResolveLiveActorByKey(keyW);
+        prop = coop::prop_key_index::Find(keyW);
     if (!prop && payload.elementId != 0) {
         auto* el = coop::element::MirrorManager<coop::element::Prop>::Instance().Get(
             static_cast<coop::element::ElementId>(payload.elementId));

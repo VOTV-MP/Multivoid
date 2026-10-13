@@ -221,14 +221,13 @@ inline Lane LaneForKind(ReliableKind k) {
 // gameplay only. A client's equipment toggle must show on its puppet everywhere; a client's drop, destroy
 // or throw must replicate; a symmetric interactable's edge must reach the other clients. Not relayed: the
 // host-authoritative kinds (weather, entity spawns and destroys, the dev keys, damage, the refiner's decode)
-// originate on the host and go direct, and the router trust-gates them on the host slot; the handshake kinds
-// are point-to-point or host-originated. PropPose rides the unreliable relay.
-inline bool IsClientRelayableReliableKind(ReliableKind k) {
+// originate on the host and go direct, and the receive edge refuses a client's copy (client_authorship.h);
+// the handshake kinds are point-to-point or host-originated. PropPose rides the unreliable relay.
+constexpr bool IsClientRelayableReliableKind(ReliableKind k) {
     switch (k) {
     case ReliableKind::ItemActivate:
     case ReliableKind::PropSpawn:
     case ReliableKind::PropDestroy:
-    case ReliableKind::PropConvert:       // a client's clump-to-pile convert
     case ReliableKind::PropRelease:
     case ReliableKind::PropStickState:    // a client's wall-attachable stick
     // DoorState is not relayable: the host authors it, and a client's own door verbs reach the host
@@ -267,12 +266,11 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     // and the host's own HookAnchored is what the other peers get. Relaying it would hand every
     // peer a record the arbiter has not validated yet, and two of them would build the hook.
     case ReliableKind::InventoryPickup:   // peer-symmetric
-    // ChatMessage is not relayable: chat is host-authored. A client's line reaches the host as an
-    // intent; the host commits it with a sequence number and broadcasts an authored line to
-    // everyone. The relay fires on the net thread at receive time, before a sequence number can
-    // exist, so a relayed copy would have no position in the order. EmailAppend is not relayable
-    // either: emails are host-authored, and a client's append is a protocol violation the handler
-    // drops. CommandRequest likewise: the host answers the sender alone.
+    // ChatMessage is not relayable: chat is host-authored. A client's line reaches the host as an intent; the host
+    // commits it with a sequence number and broadcasts an authored line to everyone. The relay fires on the net
+    // thread at receive time, before a sequence number can exist, so a relayed copy would have no position in the
+    // order. EmailAppend is not relayable either: emails are host-authored, and a client's append is refused at the
+    // host's receive edge (client_authorship.h). CommandRequest likewise: the host answers the sender alone.
     case ReliableKind::EmailDelete:       // player-symmetric
     case ReliableKind::SavedSignalAppend: // producer-symmetric
     case ReliableKind::SavedSignalDelete: // player-symmetric

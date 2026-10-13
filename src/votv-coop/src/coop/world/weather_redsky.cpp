@@ -116,7 +116,7 @@ void Apply(const coop::net::RedSkyPayload& payload) {
         UE_LOGW("weather: the host's red sky applied off the game thread -- dropping");
         return;
     }
-    // The sender is checked one level up: event_dispatch_world takes this kind from the host's slot only.
+    // From the host alone: the host's receive edge refuses a client's copy (client_authorship.h).
     const bool want = payload.state != 0;
     bool live = false;
     if (!RS::ReadLive(nullptr, live)) {

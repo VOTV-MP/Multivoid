@@ -19,6 +19,7 @@
 #include "coop/props/prop_park.h"  // Park / Unpark: a held prop, and a Character welded on it
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_key_index.h"  // a key on the wire to a live actor
 #include "coop/props/prop_stick_sync.h"  // the stuck wall-attachable gates
 #include "coop/props/prop_wire_parity.h"  // ConvergeFrozenSleep, the release's flags
 #include "coop/props/unresolved_pose_ledger.h"  // a pose-before-spawn race vs a sustained identity gap
@@ -187,7 +188,7 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     // Key first (an Aprop_C), then eid (the clump streams key None).
     void* prop = nullptr;
     if (!keyW.empty() && keyW != L"None")
-        prop = coop::prop_element_tracker::ResolveLiveActorByKey(keyW);
+        prop = coop::prop_key_index::Find(keyW);
     if (!prop && pose.elementId != 0)
         prop = ResolveLiveActorByEid(pose.elementId);
     if (!prop) {
@@ -461,8 +462,8 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         }
     }
     if (releasedSlot < 0) {
-        if (void* prop = coop::prop_element_tracker::ResolveLiveActorByKey(keyW)) {
-            // No drive entry: a keyed prop resolves from the live world.
+        if (void* prop = coop::prop_key_index::Find(keyW)) {
+            // No drive entry carries this key and eid: a keyed prop resolves from the live world.
             propActor = prop;
             meshToActOn = ue_wrap::prop::GetStaticMesh(prop);
         } else if (payload.elementId != 0) {

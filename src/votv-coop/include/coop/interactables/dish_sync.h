@@ -32,7 +32,7 @@ void Install(coop::net::Session* session);
 void Tick();
 
 // Reliable applier (event_dispatch_signal).
-void OnDishSnapshot(const coop::net::DishSnapshotPayload& p, uint8_t senderSlot);
+void OnDishSnapshot(const coop::net::DishSnapshotPayload& p);
 
 // CLIENT, from download_arm_sync's arm replay, before it runs the game's own arm: every dish inactive and every
 // mirrored mover settled, as the host's arm proves its dishes are.

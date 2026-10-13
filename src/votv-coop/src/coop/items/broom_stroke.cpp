@@ -4,6 +4,7 @@
 
 #include "coop/element/intent_authority.h"   // may this sender aim there
 #include "coop/items/broom_push.h"           // the dispense window a `broomed` body opens
+#include "coop/net/intent_bucket.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"           // the sender's broom, as this peer mirrors it
@@ -76,11 +77,10 @@ constexpr float kMaxHolderVelocityCmS = 4000.f;
 // frame, and refused past a burst, it drops strokes the client swung honestly. So a backlog waits,
 // ten strokes of it at most, and only a stroke past a full queue is refused, said at most every ten
 // seconds per slot.
-constexpr float    kStrokeBurst       = 3.f;
-constexpr float    kStrokesPerSecond  = 3.f;
+constexpr coop::net::IntentBudget kStrokeBudget{3.f, 3.f};
 constexpr size_t   kMaxPendingStrokes = 10;
 constexpr uint64_t kRefusalSayMs      = 10000;
-struct StrokeBucket { float tokens = kStrokeBurst; uint64_t lastMs = 0; uint64_t nextSayMs = 0; };
+struct StrokeBucket { coop::net::IntentBucket rate; uint64_t nextSayMs = 0; };
 StrokeBucket g_rate[coop::net::kMaxPeers];
 std::deque<coop::net::BroomStrokePayload> g_pending[coop::net::kMaxPeers];
 
@@ -255,18 +255,7 @@ void InstallReadSeams() {
 }
 
 // A token for `slot`'s next stroke, when its bucket holds one.
-bool TakeToken(uint8_t slot) {
-    StrokeBucket& b = g_rate[slot];
-    const uint64_t now = coop::active_drive::NowMs();
-    if (b.lastMs != 0) {
-        const float refill = static_cast<float>(now - b.lastMs) * kStrokesPerSecond / 1000.f;
-        b.tokens = b.tokens + refill < kStrokeBurst ? b.tokens + refill : kStrokeBurst;
-    }
-    b.lastMs = now;
-    if (b.tokens < 1.f) return false;
-    b.tokens -= 1.f;
-    return true;
-}
+bool TakeToken(uint8_t slot) { return g_rate[slot].rate.Take(kStrokeBudget, coop::active_drive::NowMs()); }
 
 float Length(const ue_wrap::FVector& v) { return std::sqrt(v.X * v.X + v.Y * v.Y + v.Z * v.Z); }
 
@@ -395,7 +384,7 @@ void OnBroomStroke(coop::net::Session& session, const coop::net::BroomStrokePayl
         b.nextSayMs = now + kRefusalSayMs;
         UE_LOGW("[BROOM-STROKE] slot %u is sending strokes faster than the host runs them, %.0f a second "
                 "-- refusing strokes past a queue of %zu", static_cast<unsigned>(senderSlot),
-                kStrokesPerSecond, kMaxPendingStrokes);
+                kStrokeBudget.perSecond, kMaxPendingStrokes);
     }
 }
 

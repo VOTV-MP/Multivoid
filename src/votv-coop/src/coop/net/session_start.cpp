@@ -120,6 +120,7 @@ void Session::OnConnStatusChanged(void* info) {
 }
 
 bool Session::Start(const Config& cfg, Refusal* why) {
+    std::lock_guard<std::mutex> lifecycle(lifecycleMutex_);
     if (why) *why = Refusal{EndReason::CouldNotStart, {}};
     if (running_.load()) {
         UE_LOGW("net: Session::Start ignored -- already running");
@@ -181,6 +182,9 @@ bool Session::Start(const Config& cfg, Refusal* why) {
     // occupied. The counter is not reset, so generations stay unique across cycles and a stale
     // captured token can never alias a fresh occupant.
     for (int i = 0; i < kMaxPeers; ++i) peerGenBySlot_[i].store(0, std::memory_order_relaxed);
+    // Nor with its receive loop paused: a lane's park belongs to the session that filled it, and one
+    // ended before its lane lowered the pause would hold this session's receive from its first pass.
+    applyPause_.Reset();
     // Everything this peer sends starts empty, whole and under the writers' locks (Start can run on
     // the harness's timeline thread, the game thread's release edges write the same state): a Session
     // reused after a Stop would otherwise fan out the prior session's last pose, pelvis, hand,
@@ -250,6 +254,11 @@ bool Session::Start(const Config& cfg, Refusal* why) {
         connect_history::ConfigureConnects(
             coop::config::ResolveInt(coop::config_registry::rows::net_connect_cap),
             coop::config::ResolveInt(coop::config_registry::rows::net_connect_window_s));
+        // The receive budget's rows likewise, before the net thread exists, its only thread after.
+        receiveBudget_.Configure(
+            coop::config::ResolveInt(coop::config_registry::rows::net_reliable_burst),
+            coop::config::ResolveInt(coop::config_registry::rows::net_reliable_rate));
+        receiveBudget_.ConfigureStreams(2 * cfg_.sendHz);
     }
 
     g_session.store(this, std::memory_order_release);
@@ -482,7 +491,22 @@ void Session::SetStopListener(void (*onStopped)()) {
 }
 
 void Session::Stop() {
-    if (!running_.exchange(false)) return;
+    std::lock_guard<std::mutex> lifecycle(lifecycleMutex_);
+    DoStop_();
+}
+
+// The stop body. The caller guarantees exclusive access to running_: Stop() via the lifecycle mutex,
+// ~Session via process-exit quiescence (the slot is cleared first, so no Start or Stop runs
+// concurrently). The destructor cannot take the mutex -- blocking there on a lock a dying thread may
+// still hold would hang the DLL unload -- so the body lives here, reachable both ways.
+void Session::DoStop_() {
+    // Exclusive access to running_ (above). Bump the count BEFORE clearing running_, so a lock-free
+    // reader (net_pump::EndOwed) that sees running()==false also sees the new StopCount -- an end in
+    // flight is visible from its first instruction, never "stopped, old count" (which would let a start
+    // begin over an owed end).
+    if (!running_.load(std::memory_order_acquire)) return;
+    stopCount_.fetch_add(1, std::memory_order_acq_rel);
+    running_.store(false, std::memory_order_release);
     // Told once per stopped session, after running() reads false and before the teardown below.
     if (void (*onStopped)() = stopListener_.load()) onStopped();
     // The linger flush needs RunCallbacks pumping, so connections are closed after the net thread
@@ -514,6 +538,12 @@ void Session::Stop() {
       for (int i = 0; i < kMaxPeers; ++i) ResetPeerRemoteState(i); }
     // And what the host said once of a client-sent host batch: the next session says it again.
     for (auto& said : saidClientBatch_) said.store(false, std::memory_order_relaxed);
+    // So too the receive edge's refusals of a host-authored kind, its open window said now.
+    saidHostKind_.fill(false);
+    hostKindRefusals_.Clear();
+    zeroEpochRefusals_.Clear();
+    staleEpochRefusals_.Clear();
+    streamRateRefusals_.Clear();
 
     auto* sockets = SteamNetworkingSockets();
     if (sockets) {

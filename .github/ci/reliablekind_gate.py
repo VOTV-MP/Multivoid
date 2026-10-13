@@ -39,12 +39,20 @@ WHAT IT HOLDS -- these FAIL the build:
      parser cannot read, or any file it cannot open. It fails CLOSED: a gate that cannot
      read its subject must not return PASS.
 
+  5. The receive edge no longer asking the authorship table, or no longer refusing Host and NotAKind with a
+     return before the save-transfer diversion and the inbox; or the table (`client_authorship.h`, which
+     the host's receive edge reads to refuse a kind a client may not author) out of step with the enum: an
+     enumerator with no row, a row named twice, a row that is not Client or Host, a row for a name that is
+     not a kind, or a relayable kind that is not Client (the edge would refuse what the relay forwards).
+
 WHAT IT DELIBERATELY DOES NOT HOLD. `session_lanes.h`'s three switches -- `LaneForKind`,
 `IsClientRelayableReliableKind`, `IsPreWorldSendableKind` -- all default safely (Normal /
 no-relay / hold-until-world-ready), and whether a given kind SHOULD relay is a design
 decision no text scan can make. Absence there is legitimate for every host-authored kind.
 So they are reported in `--table`, not gated: this file must not manufacture a failure it
-cannot justify, or the next author learns to route around it.
+cannot justify, or the next author learns to route around it. The authorship table is the
+exception, by design: it is total -- every kind decided, Client or Host -- and only its
+membership is checked here, never whether a decision is right.
 
 Note that membership in `session_lanes.h` is NOT receiver coverage. That is not a detail:
 the 2026-09-01 dead kind WAS in that header (79 case labels), so a gate written around
@@ -65,6 +73,14 @@ SRC = ROOT / "src" / "votv-coop"
 PROTO = "include/coop/net/protocol.h"
 LANES = "src/coop/net/session_lanes.h"
 SESSION = "src/coop/net/session_receive.cpp"   # the receive switch and the admission handler
+AUTH = "src/coop/net/client_authorship.h"       # which kinds a client may author (rule 5)
+# The receive edge's question, which is the only reason the table matters.
+EDGE_READS_TABLE = re.compile(r"AuthorshipOf\(\s*static_cast<ReliableKind>\(\s*rh\.kind\s*\)\s*\)")
+# What a kind's row may say; NotAKind is the fallback for a byte that names no kind, never a row.
+ROW_VALUES = ("Client", "Host")
+# The edge's frame: the host-only wrapper, the table's answer named, and the test that opens the refusal.
+EDGE_SHAPE = re.compile(r"if\s*\(\s*cfg_\.role\s*==\s*Role::Host\s*\)\s*\{\s*const\s+ClientAuthorship\s+(\w+)\s*=\s*"
+                        r"AuthorshipOf\(\s*static_cast<ReliableKind>\(\s*rh\.kind\s*\)\s*\)\s*;\s*if\s*\(")
 
 # The five family dispatchers. Each Handle*Event returns true iff msg.kind is in its
 # family, so its own switch IS the membership declaration (SyncRouter consolidation,
@@ -187,7 +203,7 @@ def strip_comments(text: str) -> str:
 
 def read_tree() -> dict:
     """Every file the gate reasons about, as text. One dict so --drill can mutate a copy."""
-    want = {PROTO, LANES, SESSION, FEED_FILE} | set(FAMILY_FILES)
+    want = {PROTO, LANES, SESSION, FEED_FILE, AUTH} | set(FAMILY_FILES)
     for spec in NET_THREAD_TERMINAL.values():
         want |= {f for f, _rx, _what in spec["must"]}
     tree = {}
@@ -198,6 +214,77 @@ def read_tree() -> dict:
         except OSError:
             tree[rel] = None       # a FAIL below, not a traceback and not a skip
     return tree
+
+
+def matching(src: str, i: int) -> int:
+    """src[i] opens a bracket: the index just past the bracket that closes it, or -1."""
+    pair = {"(": ")", "{": "}"}[src[i]]
+    depth = 0
+    for j in range(i, len(src)):
+        if src[j] == src[i]:
+            depth += 1
+        elif src[j] == pair:
+            depth -= 1
+            if depth == 0:
+                return j + 1
+    return -1
+
+
+def edge_findings(src: str) -> list:
+    """The receive edge, comment-stripped, read as code: on the host only, the table's answer is tested at once
+    for exactly Host or NotAKind, the block that test opens ends in a return, and all of it comes before the
+    save-transfer diversion and the inbox. Tokens alone are not enough: a removed Host test once left
+    `ClientAuthorship::Host` standing in the log line's ternary."""
+    m = EDGE_READS_TABLE.search(src)
+    if not m:
+        return [f"{SESSION} no longer asks AuthorshipOf about a received kind: the table below would "
+                f"refuse nothing, however complete it is."]
+    after = [src.find(tok, m.end()) for tok in ("ReliableKind::SaveTransferChunk", "reliableInbox_.emplace_back")]
+    if min(after) < 0:
+        return [f"{SESSION}: the AuthorshipOf check no longer precedes the save-transfer diversion and the "
+                f"inbox, so a refused kind would be acted on first."]
+    shape = EDGE_SHAPE.search(src)
+    if not shape or not shape.start() < m.start() < shape.end():
+        return [f"{SESSION}: the edge is no longer `if (cfg_.role == Role::Host) {{ const ClientAuthorship who = "
+                f"AuthorshipOf(...); if (...)`: only the host asks, and it tests the answer at once."]
+    who = shape.group(1)
+    cond_end = matching(src, shape.end() - 1)
+    cond = " ".join(src[shape.end():cond_end - 1].split())
+    want = f"{who} == ClientAuthorship::Host || {who} == ClientAuthorship::NotAKind"
+    out = []
+    if cond != want:
+        out.append(f"{SESSION}: the edge's test is `{cond}`, not `{want}`: a Host kind and a byte naming no "
+                   f"kind are refused, and nothing else is.")
+    body_start = cond_end + len(src[cond_end:]) - len(src[cond_end:].lstrip())
+    body_end = matching(src, body_start) if src[body_start:body_start + 1] == "{" else -1
+    if body_end < 0 or not re.search(r"\breturn\s*;\s*$", src[body_start + 1:body_end - 1]):
+        out.append(f"{SESSION}: the edge no longer returns on a refusal, so a refused kind goes on to the "
+                   f"inbox and the relay.")
+    elif body_end > min(after):
+        out.append(f"{SESSION}: the edge's refusal block runs past the save-transfer diversion or the inbox.")
+    elif not src[body_end:].lstrip().startswith("}"):
+        out.append(f"{SESSION}: the host-only block holds more than the table's question and its refusal, "
+                   f"so what follows the refusal there runs on every message a client sends.")
+    return out
+
+
+def parse_authorship(text: str):
+    """client_authorship.h's AuthorshipOf: [(kind, row)] in source order, one per case label."""
+    src = strip_comments(text)
+    i = src.find("AuthorshipOf(")
+    if i < 0:
+        return None
+    rows, pending = [], []
+    for line in src[i:].splitlines():
+        for k in CASE.findall(line):
+            pending.append(k)
+        r = re.search(r"return\s+ClientAuthorship::(\w+)\s*;", line)
+        if r and pending:
+            rows.extend((k, r.group(1)) for k in pending)
+            pending = []
+        if re.match(r"^\}", line):
+            break
+    return rows
 
 
 def parse_enum(text):
@@ -324,6 +411,33 @@ def check(tree: dict):
                              f"kind now reaches the inbox with no handler at all. Asking only "
                              f"whether the file still MENTIONS the kind is not enough -- both "
                              f"these files name these kinds in unrelated places.")
+
+    # --- check 5: the authorship table is total and in step ------------------------
+    fails.extend(edge_findings(strip_comments(tree[SESSION])))
+    rows = parse_authorship(tree[AUTH])
+    if rows is None:
+        fails.append(f"{AUTH}: no AuthorshipOf switch found -- the receive edge's table cannot be checked.")
+    else:
+        seen = {}
+        for k, row in rows:
+            seen.setdefault(k, []).append(row)
+        for k in sorted(set(seen) - set(enums)):
+            fails.append(f"{AUTH} has a row for '{k}', which is not a ReliableKind.")
+        for k in sorted(set(enums), key=lambda x: (enums.get(x) is None, enums.get(x) or 0)):
+            if k not in seen:
+                fails.append(f"{k} = {idof(k)} has no row in {AUTH}: decide whether a client may author it "
+                             f"(Client) or not (Host). A kind with no row is refused at the host's edge.")
+            elif len(seen[k]) > 1:
+                fails.append(f"{k} = {idof(k)} is named {len(seen[k])} times in {AUTH}.")
+        for k, rs in sorted(seen.items()):
+            if rs[0] not in ROW_VALUES:
+                fails.append(f"{k}'s row in {AUTH} is {rs[0]}; a kind's row is one of "
+                             f"{', '.join(ROW_VALUES)}.")
+        relay = parse_lane_switches(tree[LANES])["relay"]
+        for k in sorted(relay):
+            if k in seen and seen[k][0] != "Client":
+                fails.append(f"{k} is relayable but {seen[k][0]} in {AUTH}: the edge would refuse what the "
+                             f"relay forwards.")
 
     # --- check 4: two families claiming one kind -----------------------------------
     for name in sorted(set(enums), key=lambda k: (enums.get(k) is None, enums.get(k) or 0)):
@@ -462,7 +576,7 @@ def drill() -> int:
 
     # 3. a family stops being chained: every case label survives, the call does not.
     t = dict(base)
-    t[FEED_FILE] = t[FEED_FILE].replace("if (HandleWorldEvent(session, msg)) break;", "", 1)
+    t[FEED_FILE] = t[FEED_FILE].replace("if (HandleWorldEvent(msg)) break;", "", 1)
     controls.append(("a family dispatcher no longer chained", t,
                      "HandleWorldEvent is defined in"))
 
@@ -483,6 +597,50 @@ def drill() -> int:
     t = dict(base)
     t[PROTO] = "// the enum is gone"
     controls.append(("an unparseable enum", t, "expected >=100"))
+
+    # 7-10. the authorship table (rule 5).
+    row = lambda k: "    case ReliableKind::" + k + ":\n"
+    t = dict(base)
+    t[AUTH] = t[AUTH].replace(row("ChatMessage"), "", 1)
+    controls.append(("an authorship row removed", t, "ChatMessage = "))
+    t = dict(base)
+    t[AUTH] = t[AUTH].replace(row("ItemActivate"), "", 1).replace(
+        row("PropConvert"), row("PropConvert") + row("ItemActivate"), 1)
+    controls.append(("a relayable kind made Host", t, "ItemActivate is relayable but Host"))
+    t = dict(base)
+    t[SESSION] = t[SESSION].replace("AuthorshipOf(static_cast<ReliableKind>(rh.kind))", "ClientAuthorship::Client", 1)
+    controls.append(("the receive edge no longer reads the table", t, "no longer asks AuthorshipOf"))
+    t = dict(base)
+    t[SESSION] = t[SESSION].replace("RefusalTally::Clock::now());\n                }\n                return;\n",
+                                    "RefusalTally::Clock::now());\n                }\n", 1)
+    controls.append(("the receive edge no longer returns on a refusal", t, "no longer returns on a refusal"))
+    t = dict(base)
+    t[SESSION] = t[SESSION].replace("who == ClientAuthorship::NotAKind", "false", 1)
+    controls.append(("the receive edge accepts a byte naming no kind", t, "the edge's test is"))
+    t = dict(base)
+    t[SESSION] = t[SESSION].replace("who == ClientAuthorship::Host || who == ClientAuthorship::NotAKind",
+                                    "who == ClientAuthorship::NotAKind", 1)
+    controls.append(("the receive edge accepts a host-only kind", t, "the edge's test is"))
+    t = dict(base)
+    t[SESSION] = t[SESSION].replace("who == ClientAuthorship::NotAKind)",
+                                    "who == ClientAuthorship::NotAKind && false)", 1)
+    controls.append(("the receive edge's test can never be true", t, "the edge's test is"))
+    t = dict(base)
+    t[SESSION] = t[SESSION].replace("if (cfg_.role == Role::Host) {\n            const ClientAuthorship who",
+                                    "if (cfg_.role == Role::Client) {\n            const ClientAuthorship who", 1)
+    controls.append(("the receive edge asks on the wrong peer", t, "the edge is no longer"))
+    t = dict(base)
+    t[SESSION] = t[SESSION].replace(
+        "            }\n        }\n        // payloadLen is a uint16",
+        "            }\n            return;\n        }\n        // payloadLen is a uint16", 1)
+    controls.append(("a return after the refusal ends every message", t, "holds more than the table's"))
+    for value in ("NotAKind", "Unverified"):
+        t = dict(base)
+        t[AUTH] = t[AUTH].replace(row("ChatMessage"), "", 1).replace(
+            "        return ClientAuthorship::Host;\n    }\n",
+            "        return ClientAuthorship::Host;\n" + row("ChatMessage")
+            + "        return ClientAuthorship::" + value + ";\n    }\n", 1)
+        controls.append(("a kind's row is " + value, t, "ChatMessage's row in"))
 
     bad = 0
     for label, mutated, expect in controls:

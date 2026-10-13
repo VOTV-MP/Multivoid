@@ -74,8 +74,9 @@ void OnSlotDisconnected(uint8_t slot);
 // The session's end: every token answered Left; the kept session stays, as command_sync's.
 void OnDisconnect();
 
-// The state family's receivers (event_feed -> here). A client takes an order or a query only from
-// the host; the host takes an answer only from the slot its token went to.
+// The state family's receivers (event_feed -> here). An order or a query comes from the host alone
+// (the host's receive edge refuses a client's copy (client_authorship.h)); the host takes an answer only from
+// the slot its token went to.
 void HandleOrder(coop::net::Session& s, const coop::net::Session::ReliableMessage& m);       // client
 void HandleOrderReply(coop::net::Session& s, const coop::net::Session::ReliableMessage& m);  // host
 void HandleQuery(coop::net::Session& s, const coop::net::Session::ReliableMessage& m);       // client

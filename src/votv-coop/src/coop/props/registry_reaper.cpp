@@ -143,11 +143,11 @@ bool Tick(coop::net::Session& session) {
             UE_LOGW("net: gameplay->MENU while a session is live (VOTV quit-to-menu?) -- "
                     "ending the session + stopping the layer churn (RAM-balloon guard)");
             coop::prop_element_tracker::SetInPurgeEpisode(false);  // left gameplay
-            // The full teardown first: skipping the disconnect fan-out left stale weather, time and
-            // sky caches and pending applies armed over the teardown. The menu transition is
-            // already in flight here, and a second dispatch loaded the menu twice, so the flee does
-            // not travel. The world is already gone on this route; the decision's route ends the
-            // session while it is still live.
+            // FleeAfterNativeMenuTravel ends the session -- the stop, then the full coop teardown:
+            // skipping the disconnect fan-out left stale weather, time and sky caches and pending
+            // applies armed. The menu transition is already in flight here, and a second dispatch
+            // loaded the menu twice, so the flee does not travel. The world is already gone on this
+            // route; the decision's route ends the session while it is still live.
             coop::net_pump::FleeAfterNativeMenuTravel(session, "left gameplay to the menu (native quit)");
             return true;
         }
@@ -235,11 +235,11 @@ bool Tick(coop::net::Session& session) {
             // churned save-native bind into a tracked-but-unbound ghost. Force the settled state;
             // do not race it.
             coop::element::ElementDeleter::Get().Flush();
-            // The element-less keyed index entries (no registry row, so invisible to the element
-            // reaper) died en masse in the purge; drained before the walk re-indexes the new world.
-            const size_t keyDrained = coop::prop_element_tracker::DrainDeadKeyIndexEntries();
+            // The element-less tracked keys (no registry row, so invisible to the element reaper)
+            // died en masse in the purge; drained before the walk re-tracks the new world.
+            const size_t keyDrained = coop::prop_element_tracker::DrainDeadTrackedKeys();
             if (keyDrained > 0)
-                UE_LOGI("net_pump: post-purge key-index drain evicted %zu dead element-less keyed entr(ies)", keyDrained);
+                UE_LOGI("net_pump: post-purge tracked-key drain evicted %zu dead element-less keyed entr(ies)", keyDrained);
             const size_t added = coop::prop_element_tracker::ReSeedKnownKeyedProps();
             UE_LOGI("net_pump: world-change re-seed added %zu live keyed prop(s) (snapshot-completeness)", added);
             // A GC-churned save native re-creates unbound at its save position (its family cursor

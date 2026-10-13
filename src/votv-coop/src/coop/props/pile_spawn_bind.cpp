@@ -42,8 +42,8 @@ namespace R = ue_wrap::reflection;
 //
 // Bracket-scoped, built lazily ONCE per bracket on the first keyless-pile
 // expression (one GUObjectArray walk -- NOT one walk per pile; the ~870-
-// expression burst would otherwise rescan 870x, the exact storm the
-// dedupeFellBack self-heal guards against). Game-thread only (the
+// expression burst would otherwise rescan the object array 870 times).
+// Game-thread only (the
 // event_feed drain), like the claim set.
 struct PileBindCandidate {
     void*   actor;

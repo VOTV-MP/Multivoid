@@ -127,9 +127,11 @@ void AddDestroyListener(DestroyHeardFn fn);
 // The deferred re-apply of a destroy that arrived before its target loaded, the
 // destroy-before-load race. Called only by the drain-edge order owner at the quiescence sweep,
 // after the bind, so an out-of-order destroy reconciles instead of leaking a duplicate.
-// Resolves the local player itself. True if the now-loaded actor was destroyed (erase from
-// the pending queue); false means still not loaded, keep queued. Never re-arms. Game thread.
-bool TryApplyDestroy(const coop::net::PropDestroyPayload& payload);
+// Resolves the local player itself. Applied: the now-loaded actor was destroyed (erase from the
+// pending queue). NotFound: still not loaded (an attempt spent). NotYet: the prop key index cannot
+// answer yet, which spends no attempt within the queue's own bound for it. Never re-arms. Game thread.
+enum class DestroyApply : uint8_t { Applied, NotFound, NotYet };
+DestroyApply TryApplyDestroy(const coop::net::PropDestroyPayload& payload);
 
 // Clear every slot's kinematic-drive cache entry for `actor`, so nothing drives a destroyed
 // actor next tick. The adoption sweep destroys actors through the same teardown contract, one
@@ -149,8 +151,8 @@ void EndAnyHoldOn(void* actor);
 // echo-destroys the old rendering: spawn, rebind, then destroy, so E never resolves to a dead
 // actor. Idempotent: a convert whose target rendering already matches (an echo, or a
 // grab-race loser's convert) is a no-op. Returns the new rendering, or null on a spawn
-// failure. The host applies a client's convert against its own local element, host authority
-// through the host-minted eid, no request or relay. Game thread only.
+// failure. Only the host sends a convert, so only a client applies one: a client's copy is refused at the
+// host's receive edge (client_authorship.h). Game thread only.
 void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer, int senderSlot);
 
 // The echo-suppressed local destroy of an actor we own a copy of: the incoming-destroy mark

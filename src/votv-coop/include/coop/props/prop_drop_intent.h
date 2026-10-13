@@ -43,8 +43,9 @@ void NoteClientKeyedDestroy(const std::wstring& key);
 
 // HOST handler for a received PropDropIntent: spawn the authoritative Aprop_C by Key at the
 // transform, NOT echo-suppressed, so the host's own FinishSpawn watcher expresses it and broadcasts
-// PropSpawn to every peer. The placing client adopts its own untracked local rock by Key, through
-// ResolveLiveActorByKey's scan fallback. Dup-guarded: skipped if the host already has the Key live.
+// PropSpawn to every peer. The placing client adopts its own untracked local rock by Key, through the
+// prop key index, which holds every live keyed prop, tracked or not. Dup-guarded: skipped if the host
+// already has the Key live.
 // Game thread.
 void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropIntentPayload& p,
                       uint8_t senderSlot);

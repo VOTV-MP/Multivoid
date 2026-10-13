@@ -184,15 +184,6 @@ void AnswerLeft(Pending& p) {
     else Deliver(p.queryDone, Result::Left, TableView{});
 }
 
-// A client takes an order or a query only from the host; false (and one line per kind) otherwise.
-bool AcceptFromHost(const Session& s, const Session::ReliableMessage& m, Kind kind) {
-    if (s.role() == Role::Client && m.senderPeerSlot == 0) return true;
-    if (FirstTime(&g_saidRefused[static_cast<int>(kind)]))
-        UE_LOGW("[STAT-ORDER] %s refused: it came from slot %d to a %s", kind == Kind::Order ? "order" : "query",
-                m.senderPeerSlot, s.role() == Role::Host ? "host" : "client");
-    return false;
-}
-
 // The host takes an answer only from a client slot; false (and one line per kind) otherwise.
 bool AcceptFromClient(const Session& s, const Session::ReliableMessage& m, Kind kind) {
     if (s.role() == Role::Host && m.senderPeerSlot >= 1 && m.senderPeerSlot < coop::net::kMaxPeers) return true;
@@ -307,7 +298,7 @@ void OnDisconnect() {
 
 void HandleOrder(Session& s, const Session::ReliableMessage& m) {
     UE_ASSERT_GAME_THREAD("stat_orders::HandleOrder");
-    if (!AcceptFromHost(s, m, Kind::Order)) return;
+    // From the host alone: the host's receive edge refuses a client's copy (client_authorship.h).
     OrderWire w;
     if (!UnpackOrder(m.payload, m.payloadLen, &w)) {
         if (FirstTime(&g_saidBadBytes[static_cast<int>(Kind::Order)]))
@@ -332,7 +323,7 @@ void HandleOrder(Session& s, const Session::ReliableMessage& m) {
 
 void HandleQuery(Session& s, const Session::ReliableMessage& m) {
     UE_ASSERT_GAME_THREAD("stat_orders::HandleQuery");
-    if (!AcceptFromHost(s, m, Kind::Query)) return;
+    // From the host alone: the host's receive edge refuses a client's copy (client_authorship.h).
     uint32_t token = 0;
     if (!UnpackQuery(m.payload, m.payloadLen, &token)) {
         if (FirstTime(&g_saidBadBytes[static_cast<int>(Kind::Query)]))

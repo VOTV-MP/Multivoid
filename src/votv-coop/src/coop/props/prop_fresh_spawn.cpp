@@ -7,7 +7,7 @@
 #include "coop/element/mirror_defer.h"        // instant-world: hide the fresh mirror until reveal
 #include "coop/props/join_membership_sweep.h" // RecordClaimIfTracking (claim BEFORE any failure return)
 #include "coop/props/prop_echo_suppress.h"    // ScopedMirrorSpawn + MarkMirrorSpawn
-#include "coop/props/prop_element_tracker.h"  // IndexActorKey
+#include "coop/props/prop_element_tracker.h"  // TrackActorKey
 #include "coop/props/prop_wire_parity.h"      // RestoreCollisionIfNeeded / SpParitySimulate
 #include "coop/props/prop_save_data.h"
 #include "coop/props/remote_prop.h"           // RegisterPropMirror
@@ -76,16 +76,17 @@ void* PropSetKeyFn() {
 
 void* Materialize(const coop::net::PropSpawnPayload& payload, int senderSlot,
                   const std::wstring& classW, const std::wstring& keyW,
-                  const std::wstring& propNameW, bool skipBind) {
+                  const std::wstring& propNameW, bool skipBind,
+                  void* (*resolve)(const wchar_t*)) {
     using ue_wrap::ParamFrame;
     using ue_wrap::Call;
     if (!ResolveSpawnFns()) {
         UE_LOGW("remote_prop::OnSpawn: spawn UFunctions unresolved -- dropping");
         return nullptr;
     }
-    void* actorClass = R::FindClass(classW.c_str());
+    void* actorClass = resolve ? resolve(classW.c_str()) : R::FindClass(classW.c_str());
     if (!actorClass) {
-        UE_LOGW("remote_prop::OnSpawn: class '%ls' not found in GUObjectArray -- dropping (likely cooked-content class not loaded)",
+        UE_LOGW("remote_prop::OnSpawn: class '%ls' not found -- dropping (likely cooked-content class not loaded)",
                 classW.c_str());
         return nullptr;
     }
@@ -309,12 +310,10 @@ void* Materialize(const coop::net::PropSpawnPayload& payload, int senderSlot,
     // this peer resolves to it, and a destroy with the same eid drains the mirror and destroys the
     // actor.
     coop::remote_prop::RegisterPropMirror(payload.elementId, spawned, keyW, classW, senderSlot);
-    // Index the mirror's key so a pose drive resolves it in constant time. Essential for the
-    // non-prop mirrors (clumps and piles): the cold fallback walks prop descendants only, so an
-    // unindexed clump mirror would never resolve, the kinematic drive could never start, and the
-    // clump would appear but not follow the collector's hand. Harmless and faster for prop
-    // mirrors too.
-    coop::prop_element_tracker::IndexActorKey(spawned, keyW);
+    // Track the mirror under the sender's key, as the other peers count it. A pose resolves it through
+    // the key index, which holds every live keyed prop, the trashBitsPile mirrors included (their key is
+    // actor_save's own field); a chip pile or a clump carries no key and travels by its eid.
+    coop::prop_element_tracker::TrackActorKey(spawned, keyW);
     // Hide the freshly spawned and registered mirror until the reveal, after the bind so it is
     // always enumerable. A real prop: collision off too (hiding alone leaves collision on, and a
     // hidden mirror must not be grab-trace-hittable or physics-active). A matched position means

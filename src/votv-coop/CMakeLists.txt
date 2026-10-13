@@ -347,6 +347,10 @@ if (MSVC)
     # backslash in a path literal compiled to a folder beside AppData\Local instead of under
     # it, and the build stayed green.
     target_compile_options(votv-coop PRIVATE /W4 /permissive- /EHa /utf-8 /we4129)
+    # /MP: cl compiles a project's sources in parallel, one process per core. MSBuild's own
+    # parallelism (`cmake --build --parallel`) runs PROJECTS side by side, and this target is one
+    # project of ~800 sources, which without /MP compile one after another on a single core.
+    target_compile_options(votv-coop PRIVATE /MP)
     # /MAP emits main.map (symbol -> RVA) so a faulting IP captured by the
     # game_thread Pump firewall (absorbed-fault localization) maps to a function
     # name by grepping the linker map -- no IDA needed. The .map lands in

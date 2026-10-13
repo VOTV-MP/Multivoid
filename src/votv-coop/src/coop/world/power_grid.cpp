@@ -5,6 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/element/intent_authority.h"
+#include "coop/net/intent_bucket.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"         // what the sender's hand holds
@@ -60,8 +61,8 @@ constexpr size_t   kMaxQueued = 32;
 constexpr uint64_t kClaimWaitMs = 2000;
 // A player swings at a generator a few times a second at most; a sender's acts run at this rate, the rest waiting
 // their turn (door_verb_intent's bound). Its puzzle inputs run at their own (power_grid.h).
-constexpr float kOpBurst = 4.0f;
-constexpr float kOpPerSecond = 4.0f;
+constexpr coop::net::IntentBudget kOpBudget{4.0f, 4.0f};
+constexpr coop::net::IntentBudget kInputBudget{kInputBurst, kInputPerSecond};
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -87,9 +88,8 @@ coop::roster_ledger::PerSlotState<uint16_t> g_ack;
 bool g_ackDirty = false;
 struct Waiting { PowerGridPayload p; uint64_t arrivedMs; };
 std::deque<Waiting> g_waiting[coop::net::kMaxPeers];
-struct Bucket { float tokens = -1.0f; uint64_t lastMs = 0; };  // below zero: full, nothing spent yet
-Bucket g_rate[coop::net::kMaxPeers];       // a sender's acts
-Bucket g_inputRate[coop::net::kMaxPeers];  // a sender's puzzle inputs
+coop::net::IntentBucket g_rate[coop::net::kMaxPeers];       // a sender's acts
+coop::net::IntentBucket g_inputRate[coop::net::kMaxPeers];  // a sender's puzzle inputs
 uint8_t g_owed = 0;
 uint64_t g_opsTaken = 0, g_opsRefused = 0, g_noisyAnswered = 0, g_inputsTaken = 0, g_queuesFull = 0;
 uint64_t g_rowsBroadcast = 0;
@@ -145,20 +145,6 @@ bool g_devRefuseInstalls = false;
 bool SeqAfter(uint16_t a, uint16_t b) { return static_cast<int16_t>(static_cast<uint16_t>(a - b)) > 0; }
 
 uint8_t LocalSlot() { return coop::players::Registry::Get().LocalPeerId(); }
-
-bool TakeToken(Bucket& b, float burst, float perSecond) {
-    const uint64_t now = NowMs();
-    if (b.tokens < 0.0f) {
-        b.tokens = burst;
-    } else if (b.lastMs != 0 && now > b.lastMs) {
-        b.tokens += perSecond * static_cast<float>(now - b.lastMs) / 1000.0f;
-        if (b.tokens > burst) b.tokens = burst;
-    }
-    b.lastMs = now;
-    if (b.tokens < 1.0f) return false;
-    b.tokens -= 1.0f;
-    return true;
-}
 
 // An Activate press, an install and a puzzle input run on their client first, and the host's rows reconcile
 // them; a hit breaks a generator, which only the host's world does.
@@ -373,12 +359,14 @@ void HostRefuseQueue(coop::net::Session* s, uint8_t slot, const Waiting& newest)
 // A puzzle input is a value a drag writes several times a second, the rest a player's act: each spends its own
 // rate, and an input still waits its turn behind the acts.
 bool Spend(uint8_t slot, uint8_t op) {
-    return op == coop::net::kPowerGridOpPuzzle ? TakeToken(g_inputRate[slot], kInputBurst, kInputPerSecond)
-                                               : TakeToken(g_rate[slot], kOpBurst, kOpPerSecond);
+    return op == coop::net::kPowerGridOpPuzzle ? g_inputRate[slot].Take(kInputBudget, NowMs())
+                                               : g_rate[slot].Take(kOpBudget, NowMs());
 }
 
 void Refund(uint8_t slot, uint8_t op) {
-    (op == coop::net::kPowerGridOpPuzzle ? g_inputRate : g_rate)[slot].tokens += 1.0f;  // a wait runs nothing
+    // a wait runs nothing
+    if (op == coop::net::kPowerGridOpPuzzle) g_inputRate[slot].Refund(kInputBudget);
+    else g_rate[slot].Refund(kOpBudget);
 }
 
 // An op from the wire is taken at once when its slot has none waiting and, for an act, a token to spend.
@@ -727,8 +715,8 @@ void HostPuzzleChanged() { g_puzzleDirty = true; }
 void OnPeerLeft(uint8_t slot) {
     if (slot == 0 || slot >= coop::net::kMaxPeers) return;
     g_waiting[slot].clear();
-    g_rate[slot] = Bucket{};
-    g_inputRate[slot] = Bucket{};
+    g_rate[slot].Reset();
+    g_inputRate[slot].Reset();
     g_owed = static_cast<uint8_t>(g_owed & ~(1u << slot));
 }
 
@@ -772,8 +760,8 @@ void OnDisconnect() {
     g_lastRowsMs = 0;
     for (int slot = 0; slot < coop::net::kMaxPeers; ++slot) {
         g_waiting[slot].clear();
-        g_rate[slot] = Bucket{};
-        g_inputRate[slot] = Bucket{};
+        g_rate[slot].Reset();
+        g_inputRate[slot].Reset();
     }
     for (auto& ref : g_verbFn) ref.Reset();
     g_owed = 0;

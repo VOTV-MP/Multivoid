@@ -263,8 +263,8 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
         // The script-body gate beside it: the second detour, on the VM's own body loop, so a
         // Blueprint-internal call can be watched and refused per call.
         if (!ue_wrap::script_gate::Install())
-            UE_LOGE("boot: the script-body gate did not arm; Blueprint-internal calls are invisible "
-                    "and every watch will be refused");
+            UE_LOGE("boot: the script-body gate did not arm; Blueprint-internal calls are invisible, "
+                    "every watch will be refused, and no multiplayer session will start (MV-J32)");
         // Every actor's end of play, by any route, from one detour on the engine's own AActor::EndPlay.
         ue_wrap::actor_end_play::Install();  // logs its own failure
         // The entries UE4SS also patches still hold our jumps over the functions' own bytes.

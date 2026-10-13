@@ -239,13 +239,16 @@ void Confirm(Kind kind) {
         // Handed over, never stored: SetJoinPassword holds it for one join attempt and nothing
         // writes it to the ini, the file people paste into bug reports.
         sm::SetJoinPassword(value);
+        coop::net::Refusal refused;
         if (!sm::JoinLobby(g_pendingJoin.masterUrl, g_pendingJoin.lobbyId,
                            g_pendingJoin.displayName, g_pendingJoin.hostProto,
-                           g_pendingJoin.hostGame, g_pendingJoin.hostGameBuild)) {
+                           g_pendingJoin.hostGame, g_pendingJoin.hostGameBuild, &refused)) {
             // Dropped on a refusal, so it cannot ride into the next connection the player makes.
             sm::SetJoinPassword("");
-            SetStatus(s, l10n::T("Could not start that connection -- another action is already "
-                                 "in flight."), kBad);
+            // A refusal before the start is on screen as the connect-failed notice already.
+            if (refused.code == coop::net::EndReason::None)
+                SetStatus(s, l10n::T("Could not start that connection -- another action is already "
+                                     "in flight."), kBad);
             return;
         }
         UE_LOGI("browser_input_screens: join with a password accepted -- join_progress "
@@ -276,9 +279,12 @@ void Confirm(Kind kind) {
     // ignores whatever is typed: the host sets the password-required flag only when its own lobby
     // password is non-empty, and its check sits inside that branch.
     sm::SetJoinPassword(s.field2 ? TF::Text(s.field2) : std::string());
-    if (!sm::ConnectDirect(value)) {
-        SetStatus(s, l10n::T("Could not connect to that address -- check it, or another action is "
-                             "already in flight."), kBad);
+    coop::net::Refusal refused;
+    if (!sm::ConnectDirect(value, &refused)) {
+        // A refusal before the start is on screen as the connect-failed notice already.
+        if (refused.code == coop::net::EndReason::None)
+            SetStatus(s, l10n::T("Could not connect to that address -- check it, or another action is "
+                                 "already in flight."), kBad);
         return;
     }
     // Written only after the accept gate passed: the row means the last address actually tried and

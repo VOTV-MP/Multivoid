@@ -40,12 +40,25 @@ uint64_t TickSerial();
 // the new session. Mirrors event_feed::OnSessionStart's contract.
 void OnSessionStart();
 
-// Route a dead session back to the main menu (the user must always know the session
-// ended). Used by the harness on the session running->stopped edge -- covers a HOST
-// session death, which net_pump's own client-side flees don't. Idempotent (one travel
-// per session); reuses the validated transparent-bypass + transition("/Game/menu")
-// path. Game thread only.
+// The public entry for a death the revive watchdog gave up on (the user must always know the session
+// ended): it ends the session -- the stop, then the full coop teardown -- and travels to the menu.
+// Idempotent (one travel per session, through the flee latch); reuses the validated
+// transparent-bypass + transition("/Game/menu") path. Game thread only.
 void FleeToMainMenuOnDeath(coop::net::Session& session, const char* why);
+
+// The session's whole coop-state teardown, run once per end on the game thread whatever stopped the
+// session: every slot's puppet and DisconnectSlot, DisconnectAll (which ends the script-gate hold),
+// the session-scoped overlays, the peer-leave edges, the roster ledger and the final element flush.
+// A no-op unless the session is stopped AND this stop has not been torn down yet (Session::StopCount
+// against the last torn-down count), so a call after a new session started finds it running and does
+// nothing, and a session that never ran is never torn down. Never stops anything itself; the stop is
+// the caller's, on the thread the net-thread join belongs to. Game thread only.
+void TearDownSession(coop::net::Session& session, const char* why);
+
+// True when the session is stopped and its last stop has not yet been torn down. A start RunAndWaits
+// TearDownSession when this is true before it begins, as MTA's Start unloads a mod still loaded
+// (CModManager.cpp:134-135), so no session starts over an owed end. Reads the count with acquire.
+bool EndOwed(const coop::net::Session& session);
 
 // True while this session is already travelling to the main menu (the one-shot
 // flee latch). registry_reaper's gameplay->menu guard reads it so its branch
@@ -58,12 +71,12 @@ bool IsFleeing();
 // Game thread.
 void MaybeRequestReAnnounce(coop::net::Session& session, void* reapWorld);
 
-// The session's end for a quit to the menu whose travel the game itself runs: the teardown (it
-// stops the session first, then destroys), then the no-travel flee (VOTV's own menu transition is
-// in flight or about to be). Reached from the quit decision (run_end_travel posts it as its own
-// task, before the travel runs) and from registry_reaper's world scan, which is the fallback for a
-// menu arrival that did not pass the decision. `why` names the route in the log. Idempotent via the
-// flee latch. Game thread.
+// The session's end for a quit to the menu whose travel the game itself runs: the session ends (the
+// stop, then TearDownSession), then the no-travel flee (VOTV's own menu transition is in flight or
+// about to be). Reached from the quit decision (run_end_travel posts it as its own task, before the
+// travel runs) and from registry_reaper's world scan, which is the fallback for a menu arrival that
+// did not pass the decision. `why` names the route in the log. Idempotent via the flee latch. Game
+// thread.
 void FleeAfterNativeMenuTravel(coop::net::Session& session, const char* why);
 
 // True once THIS client has announced ClientWorldReady for the current connection (false on the

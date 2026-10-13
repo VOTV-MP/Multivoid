@@ -72,16 +72,10 @@ void SetClientRefs(const ClientRefs& refs) {
 void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
     using ue_wrap::ParamFrame;
     using ue_wrap::Call;
-    auto* s = coop::npc_sync::GetSession();
-    if (!s) return;
-    // The host never receives its own broadcasts (the fan-out is to peer slots only); should it,
-    // materialising would duplicate the actor.
-    if (s->role() == coop::net::Role::Host) {
-        UE_LOGI("npc-sync[client OnSpawn]: received on host -- dropping (loopback bounce)");
-        return;
-    }
-    // EntitySpawn is host-authoritative (the router already rejected non-host senders); the eid
-    // must be in the host range.
+    if (!coop::npc_sync::GetSession()) return;
+    // EntitySpawn is host-authoritative: the host's receive edge refuses a client's copy
+    // (client_authorship.h), and the host never receives its own broadcasts. The eid must be in the
+    // host range.
     if (!coop::element::Registry::IsAllowedHostAllocatedEid(payload.elementId)) {
         UE_LOGW("npc-sync[client OnSpawn]: elementId=%u out of allowed host range "
                 "[1, %u) -- dropping",
@@ -321,12 +315,7 @@ bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t 
 }
 
 void OnEntityDestroy(const coop::net::EntityDestroyPayload& payload) {
-    auto* s = coop::npc_sync::GetSession();
-    if (!s) return;
-    if (s->role() == coop::net::Role::Host) {
-        UE_LOGI("npc-sync[client OnDestroy]: received on host -- dropping (loopback bounce)");
-        return;
-    }
+    if (!coop::npc_sync::GetSession()) return;
     // The host-range gate.
     if (!coop::element::Registry::IsAllowedHostAllocatedEid(payload.elementId)) {
         UE_LOGW("npc-sync[client OnDestroy]: elementId=%u out of allowed host range "

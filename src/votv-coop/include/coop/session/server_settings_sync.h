@@ -30,7 +30,6 @@ void OnSessionEnd();
 void HostTick(coop::net::Session& session);
 
 // Game thread, the state family's receiver: a client takes one row of the host's session values.
-void HandleServerSetting(coop::net::Session& session,
-                         const coop::net::Session::ReliableMessage& msg);
+void HandleServerSetting(const coop::net::Session::ReliableMessage& msg);
 
 }  // namespace coop::server_settings_sync

@@ -6,6 +6,7 @@
 #include "coop/comms/chat_sync.h"
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/dev/drill_chat_pace.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/roster_ledger.h"
@@ -24,6 +25,8 @@
 #include <functional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace coop::dev::chat_drill {
 namespace {
@@ -99,6 +102,10 @@ uint64_t g_holdStartMs = 0;
 int g_windowN = 0;
 unsigned g_appeared = 0;  // history: bit n set once `host n` has been seen in the feed
 int g_i18nHeld = 0;       // i18n: the most expected lines held at once; a rise restarts the budget
+// A client role's lines, sent one per kTalkEveryMs by PumpOutbox whatever the role's phase, the first at once.
+std::vector<std::string> g_outbox;
+size_t g_outNext = 0;
+uint64_t g_nextSayMs = 0;
 
 uint64_t NowMs() {
     using namespace std::chrono;
@@ -224,9 +231,22 @@ void AbortCase(const char* why) {
     Finish();
 }
 
-// A line through the chat's own submit call, with this peer's role in it.
+// A line through the chat's own submit call, with this peer's role in it. The host's go at once; a client's go to the
+// outbox, since the host admits a client's chat at Source's rate and a burst would be refused past its first line.
 void Say(const std::string& rest) {
-    coop::chat_sync::QueueSend(std::string(kTag) + Me() + " " + rest);
+    std::string line = std::string(kTag) + Me() + " " + rest;
+    if (g_isHost) coop::chat_sync::QueueSend(line);
+    else g_outbox.push_back(std::move(line));
+}
+
+void PumpOutbox(uint64_t now) {
+    if (g_outNext >= g_outbox.size() || now < g_nextSayMs) return;
+    coop::chat_sync::QueueSend(g_outbox[g_outNext++]);
+    g_nextSayMs = now + coop::dev::kTalkEveryMs;
+    if (g_outNext == g_outbox.size()) {
+        g_outbox.clear();
+        g_outNext = 0;
+    }
 }
 
 void SayNumbered(int n) {
@@ -451,9 +471,13 @@ void StepHistoryHost() {
 }  // namespace
 
 void Tick(coop::net::Session* session) {
-    if (ArmNow() == Arm::Off || !session || !session->running() || g_phase == Phase::Done) return;
+    if (ArmNow() == Arm::Off || !session || !session->running()) return;
     if (g_phase == Phase::Ready && !Begin(session)) return;
     const uint64_t now = NowMs();
+    // Before the Done return and the scan throttle: a role that has judged and finished still sends every line it
+    // queued (i18n's last-launched role can pass on the seeded rows of the others' lines before its own are out).
+    PumpOutbox(now);
+    if (g_phase == Phase::Done) return;
     if (NeedsScan(g_phase)) {
         if (now - g_lastScanMs < kPollMs) return;
         g_lastScanMs = now;
@@ -549,6 +573,9 @@ void OnDisconnect() {
     g_windowN = 0;
     g_appeared = 0;
     g_i18nHeld = 0;
+    g_outbox.clear();
+    g_outNext = 0;
+    g_nextSayMs = 0;
 }
 
 }  // namespace coop::dev::chat_drill

@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "coop/net/apply_pause.h"          // which receive lanes hold the receive loop paused
 #include "coop/net/eid_pose_lane.h"        // the trash-carry and driven-prop pose lanes
 #include "coop/net/end_reason.h"           // the code a close carries to the peer
 #include "coop/net/link_kind.h"            // how a player's traffic reaches the session
@@ -13,10 +14,13 @@
 #include "coop/net/origin_context.h"       // which occupancy a relayed stream packet belongs to
 #include "coop/net/outbound_streams.h"     // what this peer sends on its streams
 #include "coop/net/protocol.h"
+#include "coop/net/receive_budget.h"       // the receive edge's bound on each client's messages
+#include "coop/net/refusal_tally.h"        // the receive edge's refusals, folded
 #include "coop/net/remote_streams.h"       // what a receiver keeps of each stream, by owner
 #include "coop/net/send_admission.h"       // the send buffer's headroom rule
 #include "coop/net/send_backlog.h"         // the reliable-send delivery guarantee
 #include "coop/net/send_rate_control.h"    // what each peer's link measures out at
+#include "coop/net/session_config.h"      // Role, Topology, Config: what a session starts with
 #include "coop/net/stream_refusals.h"      // refused pose packets, said once per streak
 #include "coop/player/players_registry.h"  // kMaxPeers (host + 3 clients = 4)
 
@@ -37,8 +41,6 @@ namespace coop::net {
 // arrays.
 inline constexpr uint8_t kMaxPeers = coop::players::kMaxPeers;
 
-enum class Role : uint8_t { Host, Client };
-
 enum class ConnState : uint8_t { Disconnected, Handshaking, Connected };
 
 // Where a client's host link stands, published by the net thread at its own callback edges so the
@@ -51,56 +53,6 @@ enum class LinkStage : uint8_t { Idle, Dialing, FindingRoute, SocketUp, Admitted
 struct HostClose {
     EndReason   code = EndReason::None;
     std::string text;
-};
-
-// Transport topology; only Session::Start branches on it.
-enum class Topology : uint8_t {
-    LanDirect,  // CreateListenSocketIP / ConnectByIPAddress: a port-forwarded host or
-                // one LAN; no signaling.
-    P2P,        // CreateListenSocketP2P / ConnectP2PCustomSignaling + ICE through the
-                // signaling server: a STUN hole-punch or a TURN relay.
-};
-
-struct Config {
-    Role role = Role::Host;
-    Topology topology = Topology::LanDirect;
-
-    // --- LanDirect ---
-    std::string peerIp = "127.0.0.1";   // client: the host's address
-    uint16_t port = kDefaultPort;
-
-    // --- P2P ---
-    // signalingUrl: "host:port" of the signaling server; both peers connect outbound.
-    std::string signalingUrl;
-    // The bearer token the signaling server requires in the greeting; a client gets it with the
-    // lobby's master entry, the host from its config.
-    std::string signalingToken;
-    // The host identity the client dials (`gen:<64 hex>`), as the host published it to the master;
-    // it must equal the host's peer_identity::LocalIdentityString(). Client-only. This peer's own
-    // identity is not a config field: peer_identity::InstallInto sets it process-wide before any
-    // socket exists.
-    std::string hostIdentity;
-    // The lobby password: on a host the secret required (empty = open), on a client the one to
-    // present. Never on the wire or in a log; a tag derived from it travels
-    // (coop/net/lobby_password.h), and only to a host the client has bound to the identity it was
-    // sent to.
-    std::string lobbyPassword;
-    // ICE candidate sources: STUN (hole-punch) and TURN (a coturn relay with short-lived REST
-    // credentials); an empty string disables that path.
-    std::string stunList;    // "host:port,host2:port"
-    std::string turnList;    // "turn:host:port,..."
-    std::string turnUser;    // parallel to turnList
-    std::string turnPass;    // parallel to turnList
-    int         turnTtlS = 0;  // the TURN credential's lifetime a master stated; 0 when none was
-    // No candidate policy here: it is the player's net.ice setting, which Start reads for every
-    // session whichever door it came through (coop/net/ice_policy.h).
-
-    // True when the destination was named locally (a typed address, an ini, an autotest) rather
-    // than advertised by the network. peer_admission tells "the player chose this address" from
-    // "nobody advertised an identity" by it instead of inferring one from the other.
-    bool selfAddressed = false;
-
-    int sendHz = 60;
 };
 
 // SignalingClient (coop/net/signaling_client.h) pulls in the GNS API, so it stays a forward
@@ -126,10 +78,17 @@ public:
     // False when the session did not start; `why` then holds the reason a player can read, which
     // is CouldNotStart with no detail when the failing site names nothing of its own.
     bool Start(const Config& cfg, Refusal* why = nullptr);
+    // Returns once the session is stopped: a second caller, on any thread, waits for the first stop
+    // to finish rather than returning while it still lingers. Start and Stop share one lock, which no
+    // holder keeps while it waits on another thread that would need it.
     void Stop();
-    // One function, set once at boot, called from inside Stop() the first time it stops a running
-    // session -- whoever stops it, on whatever thread. Not called from the destructor, which
-    // clears the slot before its own Stop(): at process end no other file's statics are reached.
+    // How many times Stop has stopped a running session, counted as the stop begins, so an end in
+    // flight is visible to every thread before its teardown runs (coop/session/net_pump's
+    // TearDownSession latches on it). Thread-safe.
+    uint64_t StopCount() const { return stopCount_.load(std::memory_order_acquire); }
+    // One function, set once at boot, called from inside the stop body the first time it stops a
+    // running session -- whoever stops it, on whatever thread. Not called from the destructor, which
+    // clears the slot before its own DoStop_(): at process end no other file's statics are reached.
     // A second, different listener is refused with an error line: one owner, by design.
     void SetStopListener(void (*onStopped)());
 
@@ -248,7 +207,7 @@ public:
     // The bulk sink: SaveTransferChunk payloads (~56 KB, over the inbox slot) go to this callback
     // on the net thread instead of the inbox. coop/save registers its assembler at install; the
     // sink is thread-safe and never touches the engine.
-    using BulkSinkFn = void (*)(int senderPeerSlot, const uint8_t* data, int len);
+    using BulkSinkFn = void (*)(const uint8_t* data, int len);
     void SetBulkSink(BulkSinkFn sink) { bulkSink_.store(sink, std::memory_order_release); }
 
     // SaveTransferBegin goes to the same net-thread lane as the chunks, so Begin is always
@@ -289,12 +248,12 @@ public:
         return false;
     }
 
-    // A receive lane parked at its flood bound pauses the client's inbox drain (pause, not drop).
-    // Refcounted: each lane contributes +1/-1 on its own edge, so one lane draining cannot cancel
-    // another's standing escalation.
-    void SetApplyBackpressure(bool on) {
-        applyBackpressureCount_.fetch_add(on ? 1 : -1, std::memory_order_acq_rel);
-    }
+    // A receive lane parked at its flood bound pauses this session's receive loop, keyed by the kind it
+    // parks (coop/net/apply_pause.h); true when the call changed it. Set on the game thread.
+    bool SetApplyPause(ReliableKind kind, bool on) { return applyPause_.Set(kind, on); }
+    bool ApplyPausedBy(ReliableKind kind) const { return applyPause_.Has(kind); }
+    bool ApplyPaused() const { return applyPause_.Any(); }
+    uint64_t ApplyPauseRaises() const { return applyPause_.Raises(); }
 
     // Game thread: pop one delivered reliable message (a FIFO of arrivals across peers).
     bool TryGetReliable(ReliableMessage& out);
@@ -527,9 +486,18 @@ private:
     void RelayReliableToOtherClients(int originSlot, ReliableKind kind,
                                      const void* data, int len);
 
+    // The stop body, without the lifecycle mutex. Stop() takes the mutex then calls this; the
+    // destructor calls it directly, because at process exit no Start or Stop runs concurrently (the
+    // slot is cleared first) and blocking there on a mutex a dying thread may hold would hang the
+    // DLL unload. The caller guarantees exclusive access to running_, either way.
+    void DoStop_();
+
     Config cfg_;
     std::thread thread_;
     std::atomic<bool> running_{false};
+    // Start's and Stop's lock (Stop above), and the count of the stops of a running session.
+    std::mutex lifecycleMutex_;
+    std::atomic<uint64_t> stopCount_{0};
     // SetStopListener's one slot; a plain function pointer, the transport knows nothing of its owner.
     std::atomic<void (*)()> stopListener_{nullptr};
     std::atomic<ConnState> state_{ConnState::Disconnected};
@@ -746,8 +714,26 @@ private:
 
     // Per-slot world-ready flags (see MarkSlotWorldReady).
     std::array<std::atomic<bool>, kMaxPeers> slotWorldReady_{};
-    // The receive-side apply-backpressure refcount (see SetApplyBackpressure).
-    std::atomic<int> applyBackpressureCount_{0};
+    // The receive lanes holding the receive loop paused (see SetApplyPause); reset by Start.
+    ApplyPauseSet applyPause_;
+    // The receive edge's refusals of a kind no client may author (client_authorship.h): the first of each value
+    // in a session said with its number, the rest summed. Net thread; reset by the stop, after the join.
+    std::array<bool, 256> saidHostKind_{};
+    RefusalTally hostKindRefusals_{"net"};
+    // The epoch latch's drops (HandleMessage), each cause folded on its own: a zero epoch is a sender's bug, an
+    // earlier connection's epoch a benign reconnect race. Net thread; cleared with the one above.
+    RefusalTally zeroEpochRefusals_{"net"};
+    RefusalTally staleEpochRefusals_{"net"};
+    // The receive budget's stream drops, folded the same way. Net thread; cleared with the two above.
+    RefusalTally streamRateRefusals_{"net"};
+    // The host's bound on what each client sends, every packet (receive_budget.h). Net thread only.
+    ReceiveBudget receiveBudget_;
+    // The receive budget's answer to one packet (receive_budget.h): true to go on. A stream past its rate is dropped;
+    // a client that empties its message bucket is recorded in the flood history and its link ended. Net thread.
+    bool TakeBudget(int peerSlot, uint32_t hConn, MsgType type, const void* data, int len);
+    // The flood history's record of a slot's occupant before its link is ended for flooding: its proved identity and
+    // its address where the transport has one, refused from now (connect_history::Floods). Net thread.
+    void RecordFlood(int slot, uint32_t hConn);
     // Per-slot relay eligibility: the hConn that announced ClientWorldReady, stamped on the net
     // thread at receipt. The game-thread world-ready flag lags by one drain, and the relay consults
     // this so a reliable received in that gap is neither lost nor doubled; hConn-stamped so a

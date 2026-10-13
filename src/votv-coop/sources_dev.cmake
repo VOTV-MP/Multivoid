@@ -24,6 +24,12 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/desk_diag.cpp
     src/coop/dev/rollover_watch.cpp
     src/coop/dev/midnight_drill.cpp
+    src/coop/dev/hostile_drill.cpp
+    src/coop/dev/hostile_drill_chat.cpp
+    src/coop/dev/hostile_drill_hand.cpp
+    src/coop/dev/hostile_drill_latest.cpp
+    src/coop/dev/hostile_drill_world.cpp
+    src/coop/dev/hostile_drill_walk.cpp
     src/coop/dev/world_roll_drill.cpp
     src/coop/dev/kerfur_menu_drill.cpp
     src/coop/dev/kerfur_convert_drill.cpp
@@ -71,6 +77,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/drive_drill_verbs.cpp
     src/coop/dev/download_drill.cpp
     src/coop/dev/laptop_drill.cpp
+    src/coop/dev/laptop_power_drill.cpp
     src/coop/dev/grid_drill.cpp
     src/coop/dev/grid_drill_checks.cpp
     src/coop/dev/grid_drill_upgrade.cpp
@@ -83,6 +90,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/grime_drill.cpp
     src/coop/dev/class_lifetime_probe.cpp
     src/coop/dev/init_seam_probe.cpp
+    src/coop/dev/key_parity_probe.cpp
     src/coop/dev/floppy_selftest_world.cpp
     src/coop/dev/hookdrag_selftest.cpp
     src/coop/dev/roster_token_selftest.cpp
@@ -106,6 +114,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/pry_drill.cpp
     src/coop/dev/recycled_slot_drill.cpp
     src/coop/dev/rehost_rejoin.cpp
+    src/coop/dev/join_abort_drill.cpp
     src/coop/dev/puppet_head_probe.cpp
     src/coop/dev/wire_census.cpp
     src/coop/dev/perf_probe.cpp

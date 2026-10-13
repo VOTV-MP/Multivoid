@@ -32,11 +32,6 @@ int32_t g_lastSent = 0;
 std::atomic<int32_t> g_pendingTotal{0};
 std::atomic<bool>    g_havePending{false};
 
-bool IsHost() {
-    auto* s = g_session.load(std::memory_order_acquire);
-    return s && s->role() == coop::net::Role::Host;
-}
-
 }  // namespace
 
 void SetSession(coop::net::Session* session) {
@@ -87,7 +82,7 @@ void SendCurrentToSlot(int slot) {
 }
 
 void ApplyFromHost(int32_t total) {
-    if (IsHost()) return;  // the host is authoritative -- never mirror our own broadcast
+    // From the host alone: the host's receive edge refuses a client's copy (client_authorship.h).
     // Stash the latest; Tick (game thread) writes it + RETRIES until the saveSlot
     // resolves (a connect-edge BalanceSync can arrive before the gamemode is ready).
     g_pendingTotal.store(total, std::memory_order_release);

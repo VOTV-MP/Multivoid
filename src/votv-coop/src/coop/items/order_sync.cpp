@@ -497,7 +497,7 @@ void OnReliable(const void* payload, int len, uint8_t senderSlot) {
 
 void OnReliableRefused(const void* payload, int len) {
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || s->role() == net::Role::Host) return;  // host->client only
+    if (!s) return;  // host->client only: the host's receive edge refuses a client's copy
     OnRefused(payload, len);
 }
 

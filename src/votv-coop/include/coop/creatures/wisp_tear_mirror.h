@@ -28,12 +28,12 @@ namespace coop::wisp_tear_mirror {
 // VICTIM receiver (host to the victim's slot). Verifies the packet addresses our own Player
 // Element id, engages the local grab hold for the window, and arms the ragdoll death at the
 // host's delay, clamped to a sane range. Game thread.
-void OnWispGrab(const coop::net::WispGrabPayload& p, uint8_t senderPeerSlot);
+void OnWispGrab(const coop::net::WispGrabPayload& p);
 
 // ALL-peers receiver (host to all). Resolves the local wisp mirror by wispElementId, plays the
 // tear on it, and holds the victim's puppet at its socket on every peer but the victim's own.
 // Game thread.
-void OnWispTear(const coop::net::WispTearPayload& p, uint8_t senderPeerSlot);
+void OnWispTear(const coop::net::WispTearPayload& p);
 
 // Shared tear core: force the wisp mesh to tick, then play the fatality montage on it. Used by
 // OnWispTear on the resolved mirror AND by the host's wisp_attack_sync directly on its own wisp.

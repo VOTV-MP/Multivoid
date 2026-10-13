@@ -44,9 +44,11 @@ static_assert(static_cast<int>(Lane::Count) == 3,
 
 Session::~Session() {
     // The listener's owner may be gone at process end, and the game's own quit runs no orderly
-    // shutdown: clear the slot first, so this Stop() reaches no other file's statics.
+    // shutdown: clear the slot first, so this stop reaches no other file's statics. DoStop_ runs the
+    // body WITHOUT the lifecycle mutex -- taking it here could hang the DLL unload on a lock a dying
+    // Start/Stop thread still holds, and at process exit nothing runs concurrently to need it.
     stopListener_.store(nullptr);
-    Stop();
+    DoStop_();
 }
 
 bool Session::TryGetReliable(ReliableMessage& out) {
@@ -391,6 +393,11 @@ void Session::NetThread() {
         // The dev wire census flushes its counters at 1 Hz from the loop, not from arrivals, so the
         // final second before a disconnect still lands in the log.
         if (dev::wire_census::Enabled()) dev::wire_census::Tick();
+        // The receive edge's folded refusal lines close their windows here, when a window has run.
+        hostKindRefusals_.Flush(RefusalTally::Clock::now());
+        zeroEpochRefusals_.Flush(RefusalTally::Clock::now());
+        staleEpochRefusals_.Flush(RefusalTally::Clock::now());
+        streamRateRefusals_.Flush(RefusalTally::Clock::now());
 
         // 1) Pump GNS's timers and dispatch pending status callbacks (the trampoline runs inline on
         // this thread).
@@ -422,7 +429,7 @@ void Session::NetThread() {
                 inboxDepth = reliableInbox_.size();
             }
             const bool inboxFull = inboxDepth >= kReliableInboxSoftPause;
-            const bool parked    = applyBackpressureCount_.load(std::memory_order_acquire) > 0;
+            const bool parked    = applyPause_.Any();
             if (inboxFull || parked) {
                 // Attribute the pause to one trigger, depth first, so an apply park cannot read as
                 // a depth pause.

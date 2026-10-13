@@ -69,7 +69,8 @@ void* RefreshButton();
 // button did nothing" produce identical evidence.
 //
 // Tokens: "connect:none" (nothing selected) / "connect:self" (your own server) /
-// "connect:started" / "connect:busy" / "host" / "refresh". They are TOKENS, not the player-facing
+// "connect:started" / "connect:refused" (refused before it started; the connect-failed notice is up)
+// / "connect:busy" / "host" / "refresh". They are TOKENS, not the player-facing
 // text: the sentences are free to be reworded and translated, and an assertion must not break when
 // they are.
 const char* LastOutcome();

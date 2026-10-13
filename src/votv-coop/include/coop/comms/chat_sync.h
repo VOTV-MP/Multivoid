@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -55,10 +56,14 @@ bool RunChatLineSelftest();
 // Every OnReliable below runs on the game thread, in the event_feed drain.
 void QueueSend(const std::string& utf8Text);
 
-// HOST receiver: a client's chat INTENT. Validates, commits, broadcasts. A client that
-// somehow receives one drops it -- nothing sends ChatMessage to a client any more.
-// Game thread.
-void OnReliable(const coop::net::ChatMessagePayload& payload, uint8_t senderPeerSlot);
+// HOST receiver: a client's chat INTENT, its raw bytes and the transport's slot. Judged first by the
+// sender's chat rate (coop/comms/chat_rate.h: a refused line is dropped for good, with no answer), then
+// its length, then validated, committed and broadcast. A client that somehow receives one drops it --
+// nothing sends ChatMessage to a client any more. Game thread.
+void OnReliable(const uint8_t* bytes, size_t len, int senderSlot);
+
+// Each tick, both roles: closes the receipt's refusal window when it has run its span. Game thread.
+void Tick();
 
 // CLIENT receivers: the host's authored row, and the speaker binding that precedes it.
 // Game thread.

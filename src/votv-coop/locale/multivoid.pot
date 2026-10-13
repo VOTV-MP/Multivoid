@@ -755,6 +755,10 @@ msgstr ""
 msgid "Multivoid  -  Server Browser"
 msgstr ""
 
+#: src/coop/net/end_reason.cpp
+msgid "Multivoid could not hook this game version where its scripts run, so it cannot match objects between players and no session can start. Check for a Multivoid update made for your game version."
+msgstr ""
+
 #: src/ui/scoreboard.cpp
 msgid "Mute for me"
 msgstr ""
@@ -1387,7 +1391,19 @@ msgid "This launch runs on environment overrides and built-in defaults; the sett
 msgstr ""
 
 #: src/coop/net/end_reason.cpp
+msgid "This machine asked the host for its world a second time in one visit, which this game never does."
+msgstr ""
+
+#: src/coop/net/end_reason.cpp
 msgid "This machine has no working connection to the signaling server, so the host could not be dialled."
+msgstr ""
+
+#: src/coop/net/end_reason.cpp
+msgid "This machine sent the host more than a player can. Wait ten minutes before joining again."
+msgstr ""
+
+#: src/coop/net/end_reason.cpp
+msgid "This machine told the host its world was ready far more often than a join does."
 msgstr ""
 
 #: src/ui/world_rules_panel.cpp
@@ -1647,6 +1663,10 @@ msgstr ""
 
 #: src/coop/net/end_reason.cpp
 msgid "Your connection presented no key identity."
+msgstr ""
+
+#: src/coop/net/end_reason.cpp
+msgid "Your game could not leave this world for the main menu."
 msgstr ""
 
 #: src/coop/net/end_reason.cpp

@@ -71,6 +71,12 @@ enum class EndReason : uint8_t {
     IcePolicyUnreadable,    // net.ice is neither all nor relay, or multivoid.ini could not be read
     RelayWithoutServer,     // net.ice=relay and the session has no TURN server
     RelayRefusesDirect,     // net.ice=relay and the session is a direct dial
+    // LOCAL, after a session ended or before a join from a world: the game would not travel to the menu.
+    WorldNotLeft,           // the game mode refused the travel to the menu, or it never dispatched or arrived
+    // LOCAL, before a session starts (a join or a host's own) or while a join waits to announce: the game's
+    // script loop could not be hooked at boot, or the prop key watches were refused, so a prop's key writes go
+    // unseen and props cannot be matched between players by key.
+    ScriptHooksUnavailable,
 
     // H -- the host decided; rides the transport's application end reason. Values 40..89.
     WrongPassword = 40,
@@ -104,6 +110,9 @@ enum class EndReason : uint8_t {
     ConnectFlood,           // over the per-source connection cap; refused before any handshake
     UnofficialClientRefused, // an official host, a client of another build, and the host's setting off
     OfficialClientRefused,   // a modified host, an official client of another build, and the setting off
+    ReliableFlood,           // past the host's bound on a client's messages, or refused for a while after
+    RepeatedRequest,         // asked the host for its world save a second time in one visit (no join does)
+    RepeatedWorldReady,      // said its world was ready more times than any join does (a flood past the burst)
 
     // T -- the transport decided. Values 90..127.
     Timeout = 90,           // no answer from the host, at the dial or later
@@ -115,9 +124,9 @@ enum class EndReason : uint8_t {
     // Each family's bounds, for the table's completeness check: a family is contiguous from its
     // first enumerator, so the row count must equal the sum of the three spans.
     kJoinerFirst = MasterUnreachable,
-    kJoinerLast = RelayRefusesDirect,
+    kJoinerLast = ScriptHooksUnavailable,
     kHostFirst = WrongPassword,
-    kHostLast = OfficialClientRefused,
+    kHostLast = RepeatedWorldReady,
     kTransportFirst = Timeout,
     kTransportLast = LinkLost,
 };

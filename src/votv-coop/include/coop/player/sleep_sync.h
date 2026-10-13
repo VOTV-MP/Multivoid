@@ -52,6 +52,10 @@ void Tick();
 //   them all: the host broadcasts End{natural} and receivers reflect wakeup().
 void OnReliable(const coop::net::SleepStatePayload& p, uint8_t senderSlot);
 
+// HOST, game thread, each event_feed update after the reconcile: a client's bed flag owed by its pace (the host keeps
+// each client's newest and applies a changed one at a pace) is applied once a token refills, unless already held.
+void PayOwed(coop::net::Session& session);
+
 // HOST: a joiner arrived (world-ready) -- ends a running accelerate phase
 // (someone is now awake in the world) and re-tallies.
 void QueueConnectBroadcastForSlot(int peerSlot);
@@ -64,6 +68,12 @@ void OnDisconnectForSlot(int slot);
 // as isSleep with dilation 20, which the native sleep entry sets by itself for the one tick before
 // the WAITING enforcement undoes it. Read-only, for instruments. Game thread.
 bool InAcceleratePhase();
+
+// Instruments (the world_latest drill, coop/dev/hostile_drill_world), game thread: how many of a client's bed
+// reports the host applied from `slot`; the host's bed flag for `slot`; this peer's own last polled bed edge.
+uint32_t ReportsApplied(int slot);
+bool InBed(int slot);
+bool LocalInBed();
 
 void OnDisconnect();
 

@@ -4,6 +4,7 @@
 
 #include "coop/element/element.h"
 #include "coop/element/intent_authority.h"
+#include "coop/net/intent_bucket.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/props/active_drive.h"
@@ -43,8 +44,7 @@ constexpr float kConsoleReachUU = 400.0f;
 // One press is one call. The drone's own body ignores a press it cannot honour, so a burst costs
 // nothing but the dispatch; the bound is here so a stalled client's backlog neither stalls a frame
 // nor arrives refused.
-constexpr float    kPressBurst     = 2.0f;
-constexpr float    kPressPerSecond = 1.0f;
+constexpr coop::net::IntentBudget kPressBudget{2.0f, 1.0f};
 constexpr size_t   kMaxPending     = 4;
 constexpr uint64_t kRefusalSayMs   = 10000;
 
@@ -56,25 +56,13 @@ uint64_t g_sent = 0, g_flown = 0, g_denied = 0;
 bool g_waitSaid[coop::net::kMaxPeers] = {};  // a sender's wait for its body, said once a streak
 
 struct Bucket {
-    float    tokens = kPressBurst;
-    uint64_t lastMs = 0;
-    uint64_t nextSayMs = 0;
+    coop::net::IntentBucket rate;
+    uint64_t                nextSayMs = 0;
 };
 Bucket g_rate[coop::net::kMaxPeers];
 std::deque<coop::net::DroneFlyIntentPayload> g_pending[coop::net::kMaxPeers];
 
-bool TakeToken(uint8_t slot) {
-    Bucket& b = g_rate[slot];
-    const uint64_t now = coop::active_drive::NowMs();
-    if (b.lastMs != 0 && now > b.lastMs) {
-        b.tokens += kPressPerSecond * static_cast<float>(now - b.lastMs) / 1000.0f;
-        if (b.tokens > kPressBurst) b.tokens = kPressBurst;
-    }
-    b.lastMs = now;
-    if (b.tokens < 1.0f) return false;
-    b.tokens -= 1.0f;
-    return true;
-}
+bool TakeToken(uint8_t slot) { return g_rate[slot].rate.Take(kPressBudget, coop::active_drive::NowMs()); }
 
 // ---- host side -------------------------------------------------------------------------------
 // One press, run or refused and then consumed, or left at the head of its queue: false while the host
@@ -189,7 +177,7 @@ void Tick(coop::net::Session& session) {
             g_pending[slot].pop_front();
             g_waitSaid[slot] = false;        // a consumed press ends the wait's streak
         } else {
-            g_rate[slot].tokens += 1.0f;     // a wait runs nothing, so it spends no token
+            g_rate[slot].rate.Refund(kPressBudget);  // a wait runs nothing, so it spends no token
         }
     }
 }

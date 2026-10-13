@@ -2,7 +2,7 @@
 // dedupe set, the known-keyed set, MarkPropElement (the one place a local Prop Element is minted,
 // with the host's key-uniqueness authority), the actor-to-eid reads, the save-time transform
 // captures, the dead-Element reaper and its self-test. The census walk lives in prop_census.cpp and
-// the key index in prop_key_index.cpp.
+// the tracked keys in prop_tracked_keys.cpp.
 
 #include "coop/props/prop_element_tracker.h"
 
@@ -18,6 +18,7 @@
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"  // hand-axis boundary: CollectHandAxisActors (SeedWalk_ skip; local hand + remote mirrors)
 #include "coop/props/prop_synth_key.h"  // MintFreshKeyForDuplicate, the host's re-key of a clone
+#include "coop/props/prop_key_index.h"  // AnotherHolder, the host's uniqueness check
 #include "coop/interactables/drive_payload_sync.h"
 #include "ue_wrap/engine/engine.h"  // TryGetActorLocation
 #include "ue_wrap/core/game_thread.h"  // IsGameThread; setKey is a dispatch, so the re-key is game-thread gated
@@ -80,8 +81,8 @@ using coop::element::PropMirrors;   // canonical accessor (coop/element/mirror_m
 // Whether an actor is a save-loaded native is an Element field (IsSaveNative, set by
 // save_identity_bind); an actor-keyed set could read stale relative to the binding.
 
-// The key-to-actor index lives in prop_key_index.cpp; this file reaches it through
-// IndexKeyForActor_ and EraseKeyIndexForActor_.
+// The key-to-actor map lives in prop_tracked_keys.cpp; this file reaches it through
+// TrackKeyForActor_ and EraseTrackedKeyForActor_.
 
 }  // namespace
 
@@ -161,9 +162,9 @@ void UnmarkKnownKeyedProp(void* actor) {
         std::lock_guard<std::mutex> lk(g_knownKeyedPropsMutex);
         g_knownKeyedProps.erase(actor);
     }
-    // Evict the key index entry first, under its own leaf mutex, only if it still points at this
-    // actor (an address recycle that re-indexed a newer prop is left intact).
-    EraseKeyIndexForActor_(actor);
+    // Drop the tracked key first, under its own leaf mutex, only if it still points at this actor
+    // (an address recycle that re-tracked a newer prop is left intact).
+    EraseTrackedKeyForActor_(actor);
     // Resolve the local eid through the Registry reverse (locals only: a mirror actor is not ours
     // to drain), then Take the Element and route it through the ElementDeleter: this observer can
     // fire on a parallel-anim worker, and a worker-instant ~Prop and FreeId would race any
@@ -234,11 +235,12 @@ std::wstring MarkPropElement(void* actor, const std::wstring& key, const std::ws
     // prop, since keyed identity is host-authored (a save-loaded prop adopts the host eid by key; a
     // client-born prop mints at its express seam, which broadcasts the identity in the same
     // breath). A silent census mint produced ~2,200 zombie double rows per join. The actor is
-    // key-indexed instead (the adopt burst resolves through the index; the sweep's universe reads
-    // it). Keyless (chipPile) census mints are untouched; no session keeps minting.
+    // tracked by key instead (the sweep's universe reads it; the adopt burst resolves through the key
+    // index, which holds it anyway). Keyless (chipPile) census mints are untouched; no session keeps
+    // minting.
     if (src == EnrollSource::kPassiveCensus && s != nullptr &&
         s->role() == coop::net::Role::Client && !key.empty() && key != L"None") {
-        IndexKeyForActor_(actor, key, R::InternalIndexOf(actor));
+        TrackKeyForActor_(actor, key, R::InternalIndexOf(actor));
         return key;
     }
     // The host is the key-uniqueness authority (MTA: the server owns element-id uniqueness). VOTV's
@@ -247,33 +249,39 @@ std::wstring MarkPropElement(void* actor, const std::wstring& key, const std::ws
     // onto one actor and the join reconcile re-expresses the rest into occupied positions. A keyed
     // actor enrolling while a different live actor carries its Key is re-keyed before anything sees
     // it; the game re-saves the live Key, so the fix persists. A dead incumbent is a loadObjects
-    // re-create inheriting its identity, spared by the liveness check. A client never re-keys, and
-    // setKey is a dispatch, so off the game thread the duplicate enrols loudly instead.
+    // re-create inheriting its identity, spared by the liveness check. A client never re-keys. The key
+    // index answers whether another live actor holds the key; when it cannot answer (off the game thread,
+    // where setKey could not run anyway; before its session seed; with no current world; while a birth is
+    // still loading), the actor enrols under its key and such enrolments are counted, the first and each
+    // power of two said.
     std::wstring enrollKey = key;
     if (isHost && !enrollKey.empty() && enrollKey != L"None") {
-        void* incumbent = FindLiveActorByKey(enrollKey);
-        if (incumbent && incumbent != actor) {
-            if (!ue_wrap::game_thread::IsGameThread()) {
-                UE_LOGW("prop_element_tracker: KEY-UNIQUENESS tripwire -- duplicate Key '%ls' on '%ls' "
-                        "enrolling OFF the game thread (actor=%p incumbent=%p); cannot setKey here -- "
-                        "enrolling under the duplicate", enrollKey.c_str(), cls.c_str(), actor, incumbent);
+        const auto held = coop::prop_key_index::AnotherHolder(enrollKey, actor);
+        if (held == coop::prop_key_index::Read::Pending) {
+            // Counted, and said at the first and at each power of two, so a later skip is never silent.
+            static std::atomic<uint64_t> sUnchecked{0};
+            const uint64_t n = sUnchecked.fetch_add(1, std::memory_order_relaxed) + 1;
+            if ((n & (n - 1)) == 0)
+                UE_LOGW("prop_element_tracker: KEY-UNIQUENESS unchecked -- the key index could not answer for '%ls' "
+                        "on '%ls' (%s); enrolling under its key (%llu unchecked this run)", enrollKey.c_str(),
+                        cls.c_str(), ue_wrap::game_thread::IsGameThread() ? "not ready" : "off the game thread",
+                        static_cast<unsigned long long>(n));
+        } else if (held == coop::prop_key_index::Read::Hit) {
+            ue_wrap::FVector dupLoc{};
+            const char* const dupUnread =
+                ue_wrap::engine::TryGetActorLocation(actor, dupLoc) ? "" : " (unread)";
+            const std::wstring fresh = coop::prop_synth_key::MintFreshKeyForDuplicate(actor);
+            if (!fresh.empty() && fresh != enrollKey) {
+                UE_LOGW("prop_element_tracker: KEY-UNIQUENESS -- second live actor carried Key '%ls': "
+                        "'%ls' loc=(%.1f,%.1f,%.1f)%s re-keyed -> '%ls' (save-born clone family; host key "
+                        "authority -- the new key persists via the game's own save)",
+                        enrollKey.c_str(), cls.c_str(), dupLoc.X, dupLoc.Y, dupLoc.Z, dupUnread,
+                        fresh.c_str());
+                enrollKey = fresh;
             } else {
-                ue_wrap::FVector dupLoc{};
-                const char* const dupUnread =
-                    ue_wrap::engine::TryGetActorLocation(actor, dupLoc) ? "" : " (unread)";
-                const std::wstring fresh = coop::prop_synth_key::MintFreshKeyForDuplicate(actor);
-                if (!fresh.empty() && fresh != enrollKey) {
-                    UE_LOGW("prop_element_tracker: KEY-UNIQUENESS -- second live actor carried Key '%ls': "
-                            "'%ls' loc=(%.1f,%.1f,%.1f)%s re-keyed -> '%ls' (save-born clone family; host key "
-                            "authority -- the new key persists via the game's own save)",
-                            enrollKey.c_str(), cls.c_str(), dupLoc.X, dupLoc.Y, dupLoc.Z, dupUnread,
-                            fresh.c_str());
-                    enrollKey = fresh;
-                } else {
-                    UE_LOGW("prop_element_tracker: KEY-UNIQUENESS -- re-key FAILED for duplicate '%ls' "
-                            "key='%ls' loc=(%.1f,%.1f,%.1f)%s -- enrolling under the duplicate (pre-fix behavior)",
-                            cls.c_str(), enrollKey.c_str(), dupLoc.X, dupLoc.Y, dupLoc.Z, dupUnread);
-                }
+                UE_LOGW("prop_element_tracker: KEY-UNIQUENESS -- re-key FAILED for duplicate '%ls' "
+                        "key='%ls' loc=(%.1f,%.1f,%.1f)%s -- enrolling under the duplicate (pre-fix behavior)",
+                        cls.c_str(), enrollKey.c_str(), dupLoc.X, dupLoc.Y, dupLoc.Z, dupUnread);
             }
         }
     }
@@ -286,8 +294,8 @@ std::wstring MarkPropElement(void* actor, const std::wstring& key, const std::ws
     if (!enrollKey.empty()) el->SetName(toStr(enrollKey));
     if (!cls.empty()) el->SetTypeName(toStr(cls));
     // Capture the GUObjectArray index while the actor is live, so the late-joiner snapshot can
-    // validate the pointer with IsLiveByIndex without dereferencing it after a purge; reused to
-    // seed the key index.
+    // validate the pointer with IsLiveByIndex without dereferencing it after a purge; reused for
+    // the tracked keys.
     const int32_t internalIdx = R::InternalIndexOf(actor);
     el->SetActor(actor, internalIdx);
     // AllocAndInstall into the one manager (the host range when host, the peer range when client;
@@ -310,9 +318,9 @@ std::wstring MarkPropElement(void* actor, const std::wstring& key, const std::ws
             coop::element::ElementDeleter::Get().Enqueue(std::move(taken));
         return enrollKey;
     }
-    // Index key to actor for the connect re-snapshot's O(1) wire-key de-dupe, after the commit and
-    // only on the winning path, so the index and the reverse stay consistent.
-    IndexKeyForActor_(actor, enrollKey, internalIdx);
+    // Track the actor by key, after the commit and only on the winning path, so the tracked keys and
+    // the reverse stay consistent.
+    TrackKeyForActor_(actor, enrollKey, internalIdx);
     // A data drive's row travels with its enrolment (drive_payload_sync): the host's, and a client's own.
     coop::drive_payload_sync::OnEnrolled(actor, static_cast<uint32_t>(eid));
     return enrollKey;
@@ -467,10 +475,10 @@ size_t ReapDeadLocalPropElements(size_t maxEvictions,
                 g_knownKeyedProps.erase(pr.actor);
             }
             UnmarkProcessedInit(pr.actor);
-            // Evict the key index entry too, under the same ownership gate; a rare stale entry
-            // under an unused key is harmless (IsLiveByIndex rejects it, and the by-key resolve
-            // evicts it lazily).
-            EraseKeyIndexForActor_(pr.actor);
+            // Drop the tracked key too, under the same ownership gate; a rare stale entry under an
+            // unused key is harmless (a reader that resolves its actor validates it by index, the key
+            // diff only counts keys, and the dead-entry drain at the purge edge collects it).
+            EraseTrackedKeyForActor_(pr.actor);
         }
         // Take the dead Element out of the manager by eid and defer its destruction to the
         // game-thread flush, UnmarkKnownKeyedProp's drain minus the broadcast; Take returns null if

@@ -24,7 +24,7 @@ void Install(coop::net::Session* session);
 void Tick();
 
 // CLIENT: the host's arm or reset, replayed through the game's own verb. From the host alone.
-void OnDishArm(const coop::net::DishArmPayload& p, uint8_t senderSlot);
+void OnDishArm(const coop::net::DishArmPayload& p);
 
 // HOST: the resets made before the capture of a joiner's world (save_transfer's capture instant); at its world-ready,
 // the reset row ahead of the desk's seed, and the arm row after the catch's seed and the dishes'.

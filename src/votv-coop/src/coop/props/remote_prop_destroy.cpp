@@ -19,7 +19,8 @@
 #include "coop/creatures/kerfur_entity.h"     // ForgetKerfurPropMirror (mirror-teardown choke-point)
 #include "coop/player/players_registry.h"     // players::Registry::Get().Local() (TryApplyDestroy)
 #include "coop/props/prop_echo_suppress.h"    // MarkIncomingDestroy
-#include "coop/props/prop_element_tracker.h"  // ResolveLiveActorByKey
+#include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_key_index.h"  // the key branch
 #include "coop/props/trash_channel.h"         // ClearClientCarry (a destroyed carried clump)
 #include "coop/props/trash_mirror.h"          // Retire (the trash teardown path)
 #include "ue_wrap/engine/engine.h"                   // ReleaseMainPlayerGrabIfHolding
@@ -115,10 +116,10 @@ void DestroyResolvedLocalActor_(void* actor, const std::wstring& keyW,
 // raced ahead), the destroy is queued on the drain-edge order owner and re-applied after the
 // bind at the quiescence sweep, never dropped, since a destroy dropped before the load left
 // the prop to load unopposed, a duplicate. Without it, the deferred re-apply: a still-missing
-// actor returns false to stay queued. True iff a local actor was destroyed or a mirror
-// retired. Game thread.
-bool OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* localPlayer, int senderSlot,
-                    bool allowDefer) {
+// actor answers NotFound and a key the index cannot answer yet NotYet, both staying queued.
+// Applied iff a local actor was destroyed or a mirror retired. Game thread.
+DestroyApply OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* localPlayer, int senderSlot,
+                            bool allowDefer) {
     // Dispatched from the event drain on the game thread.
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::OnDestroy)");
     // A trash mirror is retired through its own teardown, which releases the GC pin it owns;
@@ -130,7 +131,7 @@ bool OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* localPla
         // carry), else the next use press throws a dead eid forever. The retire clears the drive.
         coop::trash_channel::ClearClientCarry(payload.elementId);
         coop::trash_mirror::Retire(payload.elementId, /*authoritative=*/true);
-        return true;
+        return DestroyApply::Applied;
     }
     const std::wstring keyW = KeyToWString(payload.key);
     // Resolve the doomed actor before draining the mirror, and eid first: the eid rides the wire
@@ -147,19 +148,25 @@ bool OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* localPla
     }
     if (!actor && !keyW.empty()) {
         // The arbiter echo short-circuit: if we destroyed this key ourselves as the authority's
-        // half of a transaction a client asked for, the client's own destroy behind it is an echo
-        // with nothing left to find; our destroy evicted the key from the index, so the resolve
-        // below would miss and pay a full object-array walk to rediscover what we know. One-shot,
-        // so only the echo is short-circuited and a later destroy of a re-placed prop under the
-        // same key resolves normally.
+        // half of a transaction a client asked for, the client's own destroy behind it is the echo of
+        // one already done, and resolving its key would find any other prop that shares it (saves
+        // ship duplicate keys) and destroy that too. One-shot, so only the echo is short-circuited
+        // and a later destroy of a re-placed prop under the same key resolves normally.
         if (coop::prop_echo_suppress::ConsumeArbiterConsumedKey(keyW)) {
             UnregisterPropMirror(payload.elementId);
             UE_LOGI("remote_prop::OnDestroy: key '%ls' eid=%u -- ECHO of a destroy this host already "
-                    "performed as the arbiter; nothing to resolve, no scan paid",
+                    "performed as the arbiter; the key is not resolved, so no prop sharing it is destroyed",
                     keyW.c_str(), payload.elementId);
-            return false;
+            return DestroyApply::NotFound;
         }
-        actor = coop::prop_element_tracker::ResolveLiveActorByKey(keyW);
+        // The re-apply keeps its attempt while the key index cannot answer yet (a prop still loading
+        // may hold the key, for at most the index's 5 s bound per birth), within the queue's own bound
+        // for that; the wire path takes it as no holder, which Find counts.
+        if (allowDefer) {
+            actor = coop::prop_key_index::Find(keyW);
+        } else if (coop::prop_key_index::Resolve(keyW, &actor) == coop::prop_key_index::Read::Pending) {
+            return DestroyApply::NotYet;
+        }
     }
     // Now drain the wire-received mirror element. It must vacate the registry whether or not the
     // local actor still exists (an echo bounce where we initiated the destroy and the actor is
@@ -170,7 +177,7 @@ bool OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* localPla
         if (keyW.empty() &&
             (payload.elementId == 0 || payload.elementId == coop::element::kInvalidId)) {
             UE_LOGW("remote_prop::OnDestroy: empty key AND no eid -- dropping");
-            return false;
+            return DestroyApply::NotFound;
         }
         if (allowDefer) {
             // Destroy-before-load is a load-tail bridge: defer only while the world is still
@@ -186,7 +193,7 @@ bool OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* localPla
                 UE_LOGI("remote_prop::OnDestroy: key '%ls' eid=%u no local actor in STEADY state (the host, or load tail "
                         "quiesced) -- no-op drop (nothing to destroy; not a before-load race; no perpetual defer)",
                         keyW.c_str(), payload.elementId);
-                return false;
+                return DestroyApply::NotFound;
             }
             // Pre-quiescence, a genuine before-load race: hand the destroy to the drain-edge order
             // owner instead of dropping it; it re-applies at the quiescence sweep, after the bind,
@@ -200,12 +207,12 @@ bool OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* localPla
             UE_LOGI("remote_prop::OnDestroy: key '%ls' eid=%u still has no local actor -- keep pending",
                     keyW.c_str(), payload.elementId);
         }
-        return false;
+        return DestroyApply::NotFound;
     }
     if (senderSlot >= 0)
         for (DestroyHeardFn fn : g_destroyHeard) fn(senderSlot, actor);
     DestroyResolvedLocalActor_(actor, keyW, payload, localPlayer);
-    return true;
+    return DestroyApply::Applied;
 }
 
 }  // namespace
@@ -220,10 +227,10 @@ void AddDestroyListener(DestroyHeardFn fn) {
 }
 
 // The deferred re-apply, called by the drain-edge order owner at the quiescence sweep.
-// Resolves the local player itself (the sweep has no caller-passed pawn). True iff the doomed
+// Resolves the local player itself (the sweep has no caller-passed pawn). Applied iff the doomed
 // actor has now loaded and was destroyed, so the owner erases it from the pending queue;
-// false keeps it queued. Never re-arms.
-bool TryApplyDestroy(const coop::net::PropDestroyPayload& payload) {
+// NotFound and NotYet keep it queued. Never re-arms.
+DestroyApply TryApplyDestroy(const coop::net::PropDestroyPayload& payload) {
     void* localPlayer = coop::players::Registry::Get().Local();
     return OnDestroyImpl_(payload, localPlayer, /*senderSlot=*/-1, /*allowDefer=*/false);
 }

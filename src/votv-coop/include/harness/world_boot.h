@@ -20,9 +20,9 @@ bool BootStorySaveBlocking(bool forceFresh = false, const wchar_t* slotOverride 
 
 // The menu-mode join's world boot: wait for the save transfer (the session is already connecting
 // at the menu), then load the downloaded slot. A failure at any step ends the join with a named
-// reason and reopens the browser -- it does not fall back to a world of its own. It blocks the
-// TimelineThread, so the play loop's abort branch cannot run meanwhile and the Cancel, the phase
-// watchdog's abort and a dead session are drained here.
+// reason and puts the player at the menu with the browser -- it does not fall back to a world of
+// its own. It blocks the TimelineThread, so the play loop's abort branch cannot run meanwhile and
+// the Cancel, the phase watchdog's abort and a dead session are drained here.
 void DriveMenuModeJoinWorldBoot();
 
 // The host-with-save orchestration: if one was queued (the picker's "Host selected save" or

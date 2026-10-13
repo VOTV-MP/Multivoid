@@ -1,6 +1,7 @@
 // coop/net/intent_bucket.h -- a client's budget of intents on the host: a token bucket per sender slot, the bound the
 // lanes that take a client's presses and verbs put on it, so a client past its budget costs the host no work, no log
-// line and no answer per message. Game thread.
+// line and no answer per message; the receive edge's bound on every message holds one too (receive_budget.h). One
+// thread per instance: the lanes' on the game thread, the edge's on the net thread.
 
 #pragma once
 

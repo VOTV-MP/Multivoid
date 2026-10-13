@@ -5,6 +5,7 @@
 #include "coop/element/intent_authority.h"
 #include "coop/element/registry.h"
 #include "coop/interactables/drive_sync.h"  // HasPendingLine: an insert still waiting here for its drive
+#include "coop/net/intent_bucket.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -40,8 +41,7 @@ constexpr int kTagResume = 0x45524152;  // 'ERAR'
 constexpr float kEraserReachUU = 400.0f;
 
 // A press is one wipe.
-constexpr float    kPressBurst     = 2.0f;
-constexpr float    kPressPerSecond = 1.0f;
+constexpr coop::net::IntentBudget kPressBudget{2.0f, 1.0f};
 constexpr size_t   kMaxPending     = 4;
 constexpr uint64_t kSayEveryMs     = 10000;
 
@@ -60,9 +60,8 @@ uint64_t g_nextUnboundSayMs = 0;
 bool g_pressWasBusy = false;
 
 struct Bucket {
-    float    tokens = kPressBurst;
-    uint64_t lastMs = 0;
-    uint64_t nextSayMs = 0;
+    coop::net::IntentBucket rate;
+    uint64_t                nextSayMs = 0;
 };
 Bucket g_rate[coop::net::kMaxPeers];
 std::deque<uint32_t> g_pending[coop::net::kMaxPeers];  // HOST: the drive eids a client's presses named
@@ -76,18 +75,7 @@ coop::net::Session* ClientSession() {
     return s && s->connected() && s->role() == coop::net::Role::Client ? s : nullptr;
 }
 
-bool TakeToken(uint8_t slot) {
-    Bucket& b = g_rate[slot];
-    const uint64_t now = coop::active_drive::NowMs();
-    if (b.lastMs != 0 && now > b.lastMs) {
-        b.tokens += kPressPerSecond * static_cast<float>(now - b.lastMs) / 1000.0f;
-        if (b.tokens > kPressBurst) b.tokens = kPressBurst;
-    }
-    b.lastMs = now;
-    if (b.tokens < 1.0f) return false;
-    b.tokens -= 1.0f;
-    return true;
-}
+bool TakeToken(uint8_t slot) { return g_rate[slot].rate.Take(kPressBudget, coop::active_drive::NowMs()); }
 
 void* SeatedDrive() {
     void* slot = DC::SlotActor(DC::kRoleEraser);
@@ -268,7 +256,7 @@ void Tick(coop::net::Session& session) {
             g_pending[slot].pop_front();
             g_waitSaid[slot] = false;
         } else {
-            g_rate[slot].tokens += 1.0f;  // a wait runs nothing, so it spends no token
+            g_rate[slot].rate.Refund(kPressBudget);  // a wait runs nothing, so it spends no token
         }
     }
 }

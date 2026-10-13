@@ -18,6 +18,7 @@
 #include "coop/player/remote_player.h"   // the sender's puppet body, its reach
 #include "coop/props/prop_echo_suppress.h"   // MarkArbiterConsumedKey
 #include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_key_index.h"
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -79,8 +80,8 @@ constexpr float kGunReachUU = 1000.0f;
 
 void* FindLiveGun() {
     // `sell` reads no gun state and positions the coins from the sold prop's component, so any
-    // live instance behaves identically. Cached and walked only on a miss: the sale rate is
-    // attacker-controlled, and FindObjectByClass is a full walk.
+    // live instance behaves identically. Cached and walked only on a miss: the sale rate is the
+    // sender's, and FindObjectByClass is a full walk.
     if (void* cached = g_gunRef.Get()) return cached;
     // The miss is throttled too: a world with no gun (the ordinary world; the gun is placed in
     // three maps) would otherwise re-walk on every packet. 250 ms collapses a burst to one walk and
@@ -142,7 +143,7 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     std::memcpy(&p, payload, sizeof(p));
 
     // The artifact's name off the wire. WireKey's contract says the bytes beyond `len` are zero,
-    // and a hostile sender is not bound by it: clamp the length and stop at the first NUL.
+    // and nothing on the wire enforces it: clamp the length and stop at the first NUL.
     std::wstring keyStr;
     {
         const uint8_t klen = (p.key.len <= sizeof(p.key.data))
@@ -175,13 +176,11 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     // Resolve the artifact against our own world, key first: a client mints no Element row for its
     // own save-loaded keyed prop, so the eid it sends is 0 for exactly the props a player shoots,
     // and the key is the identity that survives; the eid stays as the keyless fallback. Index only,
-    // no walk: a key not in the maintained index is not a prop this peer can have shot, since the
-    // client knows the key only because it mirrored the prop from us, which put it in the index. A
-    // cold walk on an attacker-chosen key would be a guaranteed miss at whatever rate the sender
-    // likes.
+    // no walk: the key index holds every live keyed prop of this world, so a key it does not hold
+    // names no prop here (or the index could not answer yet, a refusal all the same).
     void* prop = nullptr;
     const wchar_t* how = L"key";
-    if (!keyStr.empty()) prop = coop::prop_element_tracker::FindLiveActorByKey(keyStr);
+    if (!keyStr.empty()) prop = coop::prop_key_index::Find(keyStr);
     if (!prop && p.elementId != 0u) {
         // The keyless fallback, for a prop whose Key reads None: an O(1) registry lookup. Reachable
         // through the gun: its gate is an interface check, not class descent, and the keyless pile
@@ -192,19 +191,18 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     if (!prop) {
         const bool logIt = Refuse(s, senderSlot, coop::net::CoinGunResultCode::NoSuchProp);
         if (logIt) UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' (key='%ls' eid=%u) -- "
-                "REASON=no-such-prop. NEITHER name resolves to a live prop in our world. The usual "
-                "cause is on this side: a key index holding a few dozen props against a world of "
-                "thousands sends every sale of an ordinary save-loaded prop here. That root "
-                "is fixed (registry_reaper publishes it now); reaching this line again means a "
-                "genuinely unknown key. The client's own destroy still lands, so it costs the "
-                "ITEM -- the lane's header names that invariant and does not yet hold it.",
+                "REASON=no-such-prop. NEITHER name resolves to a live prop in our world: the key "
+                "index holds every live keyed prop, so the key names none here (one already sold "
+                "or destroyed, or a key that never existed), or the index could not answer yet. "
+                "The client's own destroy still lands, so it costs the ITEM -- the lane's header "
+                "names that invariant and does not yet hold it.",
                 senderSlot, artifact.c_str(), keyStr.empty() ? L"None" : keyStr.c_str(),
                 p.elementId);
         return;
     }
 
     // The authorisation gate, the first question about the actor, before every remaining question
-    // about the artifact, so a peer probing keys learns nothing it did not have. The shared
+    // about the artifact. The shared
     // IntentTarget owns the question: the same producer-derived reach, the measured-bounds
     // expansion, the staleness budget, and a fail-closed answer when the sender has no live puppet.
     // Authorize rather than Resolve, since identity was answered by key above.
@@ -330,14 +328,14 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     // The arbiter consumes what it paid for. The sold prop's destroy lives in the gun's ubergraph
     // right after the sell call, not inside sell, so sell alone mints coins and leaves the prop
     // standing; delegated to the client's own PropDestroy it was a cost paid on the counterparty's
-    // honour, and an attacker simply omitted it. It runs here in the native order on the host's own
+    // honour, and a sender could simply omit it. It runs here in the native order on the host's own
     // copy, and needs no broadcast of its own: DestroyActor dispatches K2_DestroyActor, the
     // UFunction the destroy seam patches, so the ordinary PropDestroy goes to every peer, and the
     // seller's own PropDestroy then lands as an echo no-op. What the guard covers now is not a
     // same-frame replay (both resolvers reject a PendingKill actor before the guard is consulted)
     // but the failed-destroy case: minted, and still resolvable. The key is marked before the
-    // destroy: our destroy evicts it from the index, and the seller's PropDestroy arriving behind
-    // us would otherwise pay a full cold walk to rediscover a prop that is gone.
+    // destroy, so the seller's PropDestroy arriving behind us is not resolved by its key, which
+    // would find any other prop that shares it.
     if (!keyStr.empty()) coop::prop_echo_suppress::MarkArbiterConsumedKey(keyStr);
     E::DestroyActor(prop);
 

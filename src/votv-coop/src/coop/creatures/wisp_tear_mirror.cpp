@@ -33,14 +33,10 @@ uint32_t g_killWispEid = 0;  // for logging only
 
 }  // namespace
 
-void OnWispGrab(const coop::net::WispGrabPayload& p, uint8_t senderPeerSlot) {
+void OnWispGrab(const coop::net::WispGrabPayload& p) {
     // Host-only origin (the host detected its wisp false-grabbing OUR puppet). Belt-and-
     // suspenders self-verify: the host directs this to our slot, but also confirm the
     // addressed Player Element id is OURS before we schedule our own death.
-    if (senderPeerSlot != 0) {
-        UE_LOGW("wisp_tear: WispGrab from non-host slot=%u -- dropping", senderPeerSlot);
-        return;
-    }
     const coop::element::ElementId localEid = coop::players::Registry::Get().LocalPlayerElementId();
     if (p.victimElementId != static_cast<uint32_t>(localEid)) {
         UE_LOGW("wisp_tear: WispGrab victimElementId=%u != our localPlayerElementId=%u -- dropping "
@@ -75,11 +71,7 @@ void PlayTearOnWisp(void* wispActor, uint32_t victimSlot) {
             wispActor, victimSlot, montage ? 1 : 0);
 }
 
-void OnWispTear(const coop::net::WispTearPayload& p, uint8_t senderPeerSlot) {
-    if (senderPeerSlot != 0) {
-        UE_LOGW("wisp_tear: WispTear from non-host slot=%u -- dropping", senderPeerSlot);
-        return;
-    }
+void OnWispTear(const coop::net::WispTearPayload& p) {
     // Resolve the LOCAL wisp actor by its cross-peer Element id (a client mirror in
     // NpcMirrors, registered into the unified element Registry). null if the wisp already
     // despawned (race) -- then the tear is a no-op, which is fine.

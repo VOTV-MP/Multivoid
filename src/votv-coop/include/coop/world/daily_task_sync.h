@@ -31,8 +31,9 @@ void SendCurrentToSlot(int slot);
 
 // Wire handler (CLIENT): one GT task applying scalars + the three int32 arrays
 // (in-place or engine-realloc rebuild). A task that does not apply whole is kept and retried
-// by Tick until it does; a newer one replaces it. Trust-gated to the host sender.
-void OnTaskNewState(const coop::net::TaskNewStatePayload& p, uint8_t senderSlot);
+// by Tick until it does; a newer one replaces it. From the host alone: the host's receive edge
+// refuses a client's copy (client_authorship.h).
+void OnTaskNewState(const coop::net::TaskNewStatePayload& p);
 
 // CLIENT, at this client's ClientWorldReady announce (net_pump): a task still pending was sent for
 // the world it left, and the host's connect replay for this one follows the announce. Game thread.

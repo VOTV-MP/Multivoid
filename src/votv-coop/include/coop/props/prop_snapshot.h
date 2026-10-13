@@ -2,10 +2,10 @@
 //
 // When the session reaches Connected the host enumerates every live Aprop_C derivative and
 // broadcasts a PropSpawn for each, so a joiner's world converges on the host's. The client's
-// OnSpawn de-dupes on FindByKeyString: an existing actor is skipped, a missing one is created,
-// and a transform mismatch converges to the host's truth. The work is two-phase, one phase per
-// declaration below -- an enumerate on the connected edge, then a bounded drain per net-pump
-// tick.
+// OnSpawn de-dupes by key through the prop key index: an existing actor is skipped, a missing one
+// is created, and a transform mismatch converges to the host's truth. The work is two-phase, one
+// phase per declaration below -- an enumerate on the connected edge, then a bounded drain per
+// net-pump tick.
 
 #pragma once
 

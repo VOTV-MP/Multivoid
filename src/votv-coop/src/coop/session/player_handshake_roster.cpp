@@ -352,6 +352,8 @@ bool ApplyRosterRow(net::Session& session, const uint8_t* payload, size_t payloa
                                           nickRemaining - nickFieldLen, &skin);
             if (skinFieldLen > 0 && !skin.empty())
                 StoreSkinForSlot(describedSlot, std::move(skin));  // itself change-gated
+            else if (skinFieldLen > 1)
+                UE_LOGW("handshake: peer sent an invalid skin name (%zu bytes) -- ignored", skinFieldLen - 1);
         }
         if (skinFieldLen > 0 && nickFieldLen + skinFieldLen < nickRemaining) {
             StorePrefsFlagsForSlot(describedSlot, nickStart[nickFieldLen + skinFieldLen]);
@@ -370,17 +372,8 @@ bool ApplyRosterRow(net::Session& session, const uint8_t* payload, size_t payloa
 bool HandleRosterRow(net::Session& session,
                         const net::Session::ReliableMessage& msg) {
     UE_ASSERT_GAME_THREAD("ledger row (HandleRosterRow)");
-    // The host asserts rows and must never receive one; on a client the sender must be the host,
-    // or a client peer could inject a forged occupant or evict a real one by asserting playerNo 0.
-    if (session.role() == net::Role::Host) {
-        UE_LOGW("roster: row received on host -- dropping");
-        return true;
-    }
-    if (msg.senderPeerSlot != 0) {
-        UE_LOGW("roster: row from non-host senderPeerSlot=%d -- dropping",
-                msg.senderPeerSlot);
-        return true;
-    }
+    // The host asserts rows and never receives one: the host's receive edge refuses a client's copy
+    // (client_authorship.h).
     // The park gate: until AssignPeerSlot stamps our slot we cannot tell a row about us from a row
     // about a remote peer, and misfiling it would apply the host's relayed copy of our own skin
     // and colour back onto us.

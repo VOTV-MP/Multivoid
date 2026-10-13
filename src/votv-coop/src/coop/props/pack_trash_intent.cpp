@@ -5,6 +5,7 @@
 #include "coop/element/element.h"
 #include "coop/element/intent_authority.h"
 #include "coop/element/registry.h"
+#include "coop/net/intent_bucket.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"
@@ -52,8 +53,7 @@ constexpr float kPackReachUU = 400.0f;
 
 // One press is one bag, and a stalled client's backlog must neither stall a frame nor be refused
 // on arrival: queue per peer, spend a token a tick (the broom stroke's convention).
-constexpr float    kPackBurst      = 3.0f;
-constexpr float    kPacksPerSecond = 3.0f;
+constexpr coop::net::IntentBudget kPackBudget{3.0f, 3.0f};
 constexpr size_t   kMaxPending     = 8;
 constexpr uint64_t kRefusalSayMs   = 10000;
 
@@ -83,27 +83,15 @@ uint64_t g_sent = 0, g_refusedGhost = 0;
 
 // ---- host side -------------------------------------------------------------------------------
 struct Bucket {
-    float    tokens = kPackBurst;
-    uint64_t lastMs = 0;
-    uint64_t nextSayMs = 0;
+    coop::net::IntentBucket rate;
+    uint64_t                nextSayMs = 0;
 };
 Bucket g_rate[coop::net::kMaxPeers];
 std::deque<coop::net::PackTrashIntentPayload> g_pending[coop::net::kMaxPeers];
 std::unordered_map<uint32_t, uint64_t> g_remedyAtMs;
 uint64_t g_packed = 0, g_denied = 0;
 
-bool TakeToken(uint8_t slot) {
-    Bucket& b = g_rate[slot];
-    const uint64_t now = coop::active_drive::NowMs();
-    if (b.lastMs != 0 && now > b.lastMs) {
-        b.tokens += kPacksPerSecond * static_cast<float>(now - b.lastMs) / 1000.0f;
-        if (b.tokens > kPackBurst) b.tokens = kPackBurst;
-    }
-    b.lastMs = now;
-    if (b.tokens < 1.0f) return false;
-    b.tokens -= 1.0f;
-    return true;
-}
+bool TakeToken(uint8_t slot) { return g_rate[slot].rate.Take(kPackBudget, coop::active_drive::NowMs()); }
 
 // The truth about a target that is not what the sender named, at most once per element per window.
 void RemedyOnce(void* actor, coop::element::ElementId eid) {

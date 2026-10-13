@@ -3,12 +3,15 @@
 #include "harness/pump.h"
 
 #include "coop/comms/chat_feed.h"
+#include "coop/props/prop_key_index.h"
 #include "coop/dev/class_lifetime_probe.h"
 #include "coop/dev/init_seam_probe.h"
+#include "coop/dev/key_parity_probe.h"
 #include "coop/dev/mannequin_drill.h"
 #include "coop/dev/object_overlay.h"
 #include "coop/dev/ragdoll_bone_overlay.h"
 #include "coop/dev/function_lookup_parity.h"
+#include "coop/dev/join_abort_drill.h"
 #include "coop/dev/world_singleton_parity.h"
 #include "coop/player/death_revive.h"
 #include "coop/player/nameplate.h"
@@ -82,6 +85,9 @@ void TickFrameTail() {
     coop::nameplate::Update();
     coop::dev::object_overlay::Update(); coop::dev::ragdoll_bone_overlay::Update();
     coop::chat_feed::Tick();
+    // The prop key index's watches' names, driven to resolve (the install itself is harness::Start's first
+    // game-thread task); a latched read after that.
+    coop::prop_key_index::Install();
     // [dev] The lookup parity probes, once per world, the menu's included: the singleton probe, since a
     // lookup that outlived the world it came from would show there, and the function-list probe, since
     // a class the menu loads is judged too; each a latched read when off.
@@ -91,8 +97,15 @@ void TickFrameTail() {
     coop::dev::class_lifetime_probe::Tick();
     // [dev] Every keyed Init body the script gate sees; a latched read when off.
     coop::dev::init_seam_probe::Tick();
+    // [dev] A key index fed only at the key writes, and the one we keep, against the world; a latched read
+    // when off.
+    coop::dev::key_parity_probe::Tick();
     // [dev] The walking mannequin's spawn sequence, in session or not; a single atomic read when idle.
     coop::dev::mannequin_drill::TickFrame();
+    // [dev] The join-abort proof presses Cancel mid-join here (this tail runs in the transfer wait and
+    // the play loop alike, so it catches either abort window) and notes the rejoin's world-ready; a
+    // single enum read when off.
+    coop::dev::join_abort_drill::OnFrameTail();
     TickShutdownHooks();
 }
 

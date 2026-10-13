@@ -196,7 +196,7 @@ void HostTick(Session& session) {
     }
 }
 
-void HandleServerSetting(Session& session, const Session::ReliableMessage& msg) {
+void HandleServerSetting(const Session::ReliableMessage& msg) {
     UE_ASSERT_GAME_THREAD("server_settings::HandleServerSetting");
     if (msg.payloadLen < 3) {
         DropMalformed(msg.payloadLen);
@@ -208,17 +208,7 @@ void HandleServerSetting(Session& session, const Session::ReliableMessage& msg) 
         DropMalformed(msg.payloadLen);
         return;
     }
-    // Host to client only: a host never takes it, and a client takes it from the host alone.
-    if (session.role() == Role::Host) {
-        UE_LOGW("server_settings: ServerSetting dropped -- a client never sends it (slot %d)",
-                msg.senderPeerSlot);
-        return;
-    }
-    if (msg.senderPeerSlot != 0) {
-        UE_LOGW("server_settings: ServerSetting dropped -- sender is not the host (slot %d)",
-                msg.senderPeerSlot);
-        return;
-    }
+    // Host to client only: the host's receive edge refuses a client's copy (client_authorship.h).
     // A row named on the wire by its key is found by its key, as Source finds a cvar by name; one
     // walk per received message, which is a person's act.
     char key[net::kServerSettingKeyMax + 1];

@@ -32,11 +32,13 @@ void Install(coop::net::Session* session);
 // detectors and clears a client's latch from before its session; its down edge resets the mirror's trackers.
 void Tick();
 
-// CLIENT: the host's scalar state, applied as a mirror (writes, paints, cue edges). Any other sender's is dropped.
-void OnState(const coop::net::CompStatePayload& p, uint8_t senderSlot);
+// CLIENT: the host's scalar state, applied as a mirror (writes, paints, cue edges). The host refuses a client's
+// copy at its receive edge (client_authorship.h).
+void OnState(const coop::net::CompStatePayload& p);
 
 // CLIENT: one chunk of the host's comp_data_0 blob, the refiner's row, sent on its change edges (an upload, an
-// eject, a completion's level) and to a joiner. The row crosses without its photo. Any other sender's is dropped.
+// eject, a completion's level) and to a joiner. The row crosses without its photo. The host refuses a client's
+// copy at its receive edge.
 void OnDataChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 
 // HOST: queue a joiner's seed (CompState + CompData), once its world is up.

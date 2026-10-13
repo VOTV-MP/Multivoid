@@ -6,7 +6,7 @@
 //                                 per-slot identity fields themselves live in the roster ledger's
 //                                 Row.
 //   player_handshake_prefs.cpp    the live display-pref change family -- skin, nameplate and nick
-//                                 colour: announce, forgery-guarded handle, rebroadcast.
+//                                 colour: announce, forgery-guarded handle, a paced re-send.
 //   player_handshake_version.cpp  the wire version gate: byte-equality on the version pair at the
 //                                 top of the Join handler, plus the refuse close, the popup and the
 //                                 feed line.
@@ -33,8 +33,16 @@ void StoreSkinForSlot(int slot, std::string name);
 // Parse one [u8 len][ASCII] skin field. Returns bytes consumed (0 =
 // malformed/absent); `out` untouched unless a well-formed non-empty field
 // validated as a skin name (IsValidSkinName -- it becomes a LoadObject
-// package path component).
+// package path component). Logs nothing; the caller says an invalid name.
 size_t ParseSkinField(const uint8_t* p, size_t remaining, std::string* out);
+
+// The display prefs' refusal log closed at a session's reset, its open window's sum said (defined in
+// player_handshake_prefs.cpp).
+void ClearPrefRefusals();
+
+// A slot's Join carries its newest prefs: any change owed from before it is withdrawn, not applied after it
+// (defined in player_handshake_prefs.cpp).
+void WithdrawOwedPrefs(int slot);
 
 // UTF-8 -> wide (defined in player_handshake.cpp; shared with the version
 // gate's nick extraction).

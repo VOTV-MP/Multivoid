@@ -74,7 +74,7 @@ void DrainReady() {
         ready.push_back(it->second.payload);
         ++it;
     }
-    for (const auto& p : ready) OnAtvSpawn(p, 0);
+    for (const auto& p : ready) OnAtvSpawn(p);
 }
 
 void Clear() {

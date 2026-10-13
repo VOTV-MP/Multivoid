@@ -22,6 +22,9 @@ void* g_convStrToNameFn = nullptr;
 // both via FindParamOffset, which does not log on a miss.
 const wchar_t* g_convStrToNameInputParam = nullptr;
 
+// The missing-parameter warning is said once (ftext_utils' Resolve).
+bool g_warnedParam = false;
+
 bool Resolve() {
     if (g_kslCdo && g_convStrToNameFn && g_convStrToNameInputParam) return true;
     if (!g_kslCdo) g_kslCdo = R::FindClassDefaultObject(P::name::KismetStringLibraryClass);
@@ -35,7 +38,8 @@ bool Resolve() {
         // is tested is whether the parameter exists.
         if (R::FindParamOffset(g_convStrToNameFn, L"InString") >= 0) {
             g_convStrToNameInputParam = L"InString";
-        } else {
+        } else if (!g_warnedParam) {
+            g_warnedParam = true;
             UE_LOGW("fname_utils: Conv_StringToName has no 'InString' parameter -- StringToFName "
                     "will fail every call");
         }
@@ -66,5 +70,7 @@ R::FName StringToFName(const std::wstring& s) {
     }
     return f.Get<R::FName>(L"ReturnValue");
 }
+
+bool Resolved() { return Resolve(); }
 
 }  // namespace ue_wrap::fname_utils

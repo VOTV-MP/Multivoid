@@ -6,10 +6,10 @@
 
 #include "coop/config/config.h"
 #include "coop/net/session.h"
+#include "coop/props/prop_key_index.h"  // the discs by key
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
 
 #include "ue_wrap/actors/floppy_disc.h"
-#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -26,7 +26,6 @@ namespace coop::dev::floppy_selftest {
 namespace {
 
 namespace R  = ue_wrap::reflection;
-namespace PR = ue_wrap::prop;
 namespace SB = ue_wrap::serverbox;
 
 namespace FD = ue_wrap::floppy_disc;  // the disc prop's own content fields
@@ -40,6 +39,22 @@ using W::kMarker;
 using W::kMarkerReadWrites;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
+
+// A disc by its key, through the prop key index. A read the index cannot answer yet is "not here", said once:
+// in the steady state these episodes run in, a run that never says it is the evidence it did not happen.
+void* DiscByKey(const std::wstring& key) {
+    void* disc = nullptr;
+    if (coop::prop_key_index::Resolve(key, &disc) == coop::prop_key_index::Read::Pending) {
+        static bool sSaid = false;
+        if (!sSaid) {
+            sSaid = true;
+            UE_LOGW("floppy_selftest: the prop key index could not answer for key='%ls' -- read as not here",
+                    key.c_str());
+        }
+        return nullptr;
+    }
+    return disc;
+}
 
 bool Enabled() {
     static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::floppy_selftest);
@@ -204,7 +219,7 @@ void PreSight(size_t i, bool isHost) {
     const Step& s = kSteps[i];
     if (s.verb != Verb::Eject) return;
     if (s.disc < 0 || s.disc >= kDiscs || W::DiscKey(s.disc).empty()) return;
-    void* already = PR::FindByKeyString(W::DiscKey(s.disc));
+    void* already = DiscByKey(W::DiscKey(s.disc));
     g_outcome[i].preLive = (already && R::IsLive(already)) ? 1 : 0;
     if (g_outcome[i].preLive == 1)
         UE_LOGW("floppy_selftest: %s PRE-SIGHTED role=%s box=%d -- the disc key='%ls' this episode "
@@ -249,7 +264,7 @@ void Fire(size_t i) {
             UE_LOGW("floppy_selftest: %s NOT FIRED -- %s", s.id, o.note.c_str());
             return;
         }
-        void* disc = PR::FindByKeyString(W::DiscKey(s.disc));
+        void* disc = DiscByKey(W::DiscKey(s.disc));
         if (!disc) {
             o.note = "the named disc is not in this peer's world";
             UE_LOGW("floppy_selftest: %s NOT FIRED -- %s (key='%ls')", s.id, o.note.c_str(),
@@ -335,7 +350,7 @@ void ReportContent(size_t stepIdx, bool isHost, const char* when, bool isLate) {
     if (key.empty()) return;
     const char* role = isHost ? "HOST" : "CLIENT";
 
-    void* actor = PR::FindByKeyString(key);
+    void* actor = DiscByKey(key);
     const bool live = actor && R::IsLive(actor);
     const bool judged = isLate && s.verb == Verb::Eject;
     if (judged) {
@@ -405,7 +420,7 @@ bool Ready(const Step& s, const char*& why) {
         return false;
     }
     if (s.verb == Verb::Insert) {
-        void* disc = key.empty() ? nullptr : PR::FindByKeyString(key);
+        void* disc = key.empty() ? nullptr : DiscByKey(key);
         if (!disc || !R::IsLive(disc)) { why = "the named disc is not in this peer's world"; return false; }
         if (!SlotEmpty(s)) { why = "the slot is not empty"; return false; }
         return true;
@@ -434,7 +449,7 @@ bool EffectSeen(size_t i, bool mine, const char*& why) {
     const Step& s = kSteps[i];
     if (s.verb == Verb::Insert) {
         if (SlotKeyOf(s) == W::DiscKey(s.disc)) return true;
-        void* disc = mine ? nullptr : PR::FindByKeyString(W::DiscKey(s.disc));
+        void* disc = mine ? nullptr : DiscByKey(W::DiscKey(s.disc));
         if (!mine && !(disc && R::IsLive(disc))) return true;
         why = "the slot never held the inserted disc";
         return false;
@@ -455,7 +470,7 @@ void WatchFastDestroy(bool isHost, uint64_t now) {
     if (!g_fastWatch.seenAtMs) {
         if (now < g_fastWatch.nextFind) return;
         g_fastWatch.nextFind = now + kFastFindMs;
-        void* a = g_fastWatch.key.empty() ? nullptr : PR::FindByKeyString(g_fastWatch.key);
+        void* a = g_fastWatch.key.empty() ? nullptr : DiscByKey(g_fastWatch.key);
         if (!a || !R::IsLive(a)) return;
         g_fastWatch.seenAtMs = now;
         g_fastWatch.actor.Set(a);

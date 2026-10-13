@@ -1,6 +1,7 @@
 // ue_wrap/actors/prop.cpp -- the prop accessors: class tests for the prop and pile lineages,
-// keys, the save-parity fields, the chip type, mesh and physics reads, and the GUObjectArray
-// finders. See ue_wrap/actors/prop.h; the physics-state flags are ue_wrap/actors/prop_flags.
+// the save-parity fields, the chip type, mesh and physics reads, and the GUObjectArray finders.
+// See ue_wrap/actors/prop.h; the keys are ue_wrap/actors/prop_keys.cpp, the physics-state flags
+// ue_wrap/actors/prop_flags.
 
 #include "ue_wrap/actors/prop.h"
 
@@ -8,10 +9,12 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/object_index.h"  // the fuzzy dedupe: one class and its instances
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/desk/tape_caddy.h"  // the reel Progress reader and writer
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -104,18 +107,6 @@ void ResolveExtraBases() {
     }
 }
 
-// The actor_save base that owns the key field GetActorSaveKeyString reads, resolved on demand
-// and cached; null means not resolvable yet, never no key.
-std::atomic<void*> g_actorSaveCls{nullptr};
-inline void* ActorSaveCls() {
-    void* c = g_actorSaveCls.load(std::memory_order_acquire);
-    if (!c) {
-        c = R::FindClass(L"actor_save_C");
-        if (c) g_actorSaveCls.store(c, std::memory_order_release);
-    }
-    return c;
-}
-
 inline void* TrashBitsPileCls() { return g_trashBitsPileCls.load(std::memory_order_acquire); }
 inline void* GarbageClumpCls()  { return g_garbageClumpCls.load(std::memory_order_acquire); }
 inline void* ActorChipPileCls() { return g_actorChipPileCls.load(std::memory_order_acquire); }
@@ -126,12 +117,14 @@ inline void* ActorChipPileCls() { return g_actorChipPileCls.load(std::memory_ord
 struct TrashClassKind { bool isTrash = false; bool isClump = false; };
 std::unordered_map<std::wstring, TrashClassKind> g_trashClassKind;
 
-TrashClassKind ResolveTrashClassKind(const std::wstring& className) {
+TrashClassKind ResolveTrashClassKind(const std::wstring& className, void* (*resolve)(const wchar_t*)) {
     if (className.empty()) return {};
     if (auto it = g_trashClassKind.find(className); it != g_trashClassKind.end()) return it->second;
-    ResolveExtraBases();
-    void* cls = R::FindClass(className.c_str());
+    void* cls = resolve ? resolve(className.c_str()) : R::FindClass(className.c_str());
     if (!cls) return {};  // class not loaded yet -- do NOT memoise (it could load later)
+    // Only after the name resolves: an unknown name (an attacker's, say) returns above without paying
+    // the base resolves, which are their own object-array lookups while a trash base is unloaded.
+    ResolveExtraBases();
     TrashClassKind k;
     k.isClump = WalksToBase(cls, GarbageClumpCls());
     k.isTrash = k.isClump || WalksToBase(cls, ActorChipPileCls());
@@ -154,8 +147,12 @@ bool WalksToBase(void* cls, void* base) {
     return false;
 }
 
-bool IsTrashClassName(const std::wstring& className) { return ResolveTrashClassKind(className).isTrash; }
-bool IsClumpClassName(const std::wstring& className)  { return ResolveTrashClassKind(className).isClump; }
+bool IsTrashClassName(const std::wstring& className, void* (*resolve)(const wchar_t*)) {
+    return ResolveTrashClassKind(className, resolve).isTrash;
+}
+bool IsClumpClassName(const std::wstring& className, void* (*resolve)(const wchar_t*)) {
+    return ResolveTrashClassKind(className, resolve).isClump;
+}
 
 void* ChipPileClass() {
     ResolveExtraBases();
@@ -235,81 +232,6 @@ bool WriteTrashPileAmounts(void* actor, int32_t a, int32_t b) {
     *reinterpret_cast<int32_t*>(base + 0x0260) = a;
     *reinterpret_cast<int32_t*>(base + 0x0264) = b;
     return true;
-}
-
-// GetInteractableKey: a prop's key is a direct field, a trash pile's is the actor_save key
-// field, and a chip pile's or clump's comes from the GetKey blueprint function through
-// ProcessEvent, cached per class.
-
-namespace {
-constexpr size_t kAactorSaveKeyOff = 0x0230;
-
-// The per-class GetKey cache, under a mutex: observers on a parallel-anim worker would race the
-// game thread, and lookups are per spawn or destroy.
-std::mutex g_getKeyFnMutex;
-std::unordered_map<void*, void*> g_getKeyFnByClass;  // UClass* -> UFunction*
-
-void* ResolveGetKeyFn(void* cls) {
-    if (!cls) return nullptr;
-    std::lock_guard<std::mutex> lk(g_getKeyFnMutex);
-    auto it = g_getKeyFnByClass.find(cls);
-    if (it != g_getKeyFnByClass.end()) return it->second;
-    void* fn = R::FindFunction(cls, L"GetKey");
-    g_getKeyFnByClass[cls] = fn;  // cache even null so we don't re-walk
-    return fn;
-}
-
-R::FName CallGetKeyUFunction(void* obj) {
-    void* cls = R::ClassOf(obj);
-    void* fn = ResolveGetKeyFn(cls);
-    if (!fn) return R::FName{0, 0};
-    ue_wrap::ParamFrame f(fn);
-    if (!ue_wrap::Call(obj, f)) return R::FName{0, 0};
-    return f.Get<R::FName>(L"Key");
-}
-}  // namespace
-
-R::FName GetInteractableKey(void* obj) {
-    if (!obj) return R::FName{0, 0};
-    if (IsDescendantOfProp(obj)) {
-        return ReadField<R::FName>(obj, P::off::Aprop_Key);
-    }
-    // The trash pile: a direct field.
-    ResolveExtraBases();
-    void* cls = R::ClassOf(obj);
-    if (WalksToBase(cls, TrashBitsPileCls())) {
-        return ReadField<R::FName>(obj, kAactorSaveKeyOff);
-    }
-    // The chip pile and the clump: the blueprint function.
-    if (WalksToBase(cls, GarbageClumpCls()) || WalksToBase(cls, ActorChipPileCls())) {
-        return CallGetKeyUFunction(obj);
-    }
-    return R::FName{0, 0};
-}
-
-std::wstring GetActorSaveKeyString(void* obj) {
-    if (!obj) return {};
-    void* base = ActorSaveCls();
-    if (!base) return {};
-    if (!WalksToBase(R::ClassOf(obj), base)) return {};   // NOT an actor_save: the offset is not its key
-    return R::ToString(ReadField<R::FName>(obj, kAactorSaveKeyOff));
-}
-
-std::wstring GetInteractableKeyString(void* obj) {
-    if (!obj) return {};
-    const R::FName key = GetInteractableKey(obj);
-    return R::ToString(key);
-}
-
-R::FName GetKey(void* prop) {
-    if (!prop) return R::FName{0, 0};
-    return ReadField<R::FName>(prop, P::off::Aprop_Key);
-}
-
-std::wstring GetKeyString(void* prop) {
-    if (!prop) return {};
-    const R::FName key = GetKey(prop);
-    return R::ToString(key);
 }
 
 R::FName GetPropName(void* prop) {
@@ -600,34 +522,41 @@ void* FindNearbySameClass(const std::wstring& className,
                           const NearbyExclusion& excluded,
                           NearbyTrace* outTrace) {
     if (className.empty() || radiusCm <= 0.f) return nullptr;
-    void* base = PropBaseClass();
-    if (!base) return nullptr;
+    // The one loaded class of that name, and a prop's, or nothing: the name comes off the wire, and only a
+    // prop's class may be adopted.
+    void* const cls = object_index::ClassByName(className.c_str());
+    if (!cls || !IsClassDescendantOfProp(cls)) return nullptr;
+    // Its instances, collected before any engine call (the hand-out must not create or destroy), then in
+    // slot order: the first accepted is the one in the lowest slot, what the old walk of the array met
+    // first. The buffer is reused; nothing called below re-enters this query. Game thread.
+    static std::vector<std::pair<int32_t, void*>> sInst;
+    sInst.clear();
+    object_index::ForEachInstance(
+        cls,
+        [](void* ctx, void* obj, int32_t idx) {
+            static_cast<std::vector<std::pair<int32_t, void*>>*>(ctx)->emplace_back(idx, obj);
+        },
+        &sInst);
+    std::sort(sInst.begin(), sInst.end());
     const float r2 = radiusCm * radiusCm;
-    const int32_t n = R::NumObjects();
-    // The first accepted candidate, which is the result whether or not the walk runs to the end.
-    void* first = nullptr;
-    for (int32_t i = 0; i < n; ++i) {
-        void* obj = R::ObjectAt(i);
-        if (!obj) continue;
-        if (!IsDescendantOfProp(obj)) continue;
-        // Cheapest checks first: IsLive is a flag read, cheaper than the class name, which
-        // allocates a string. So descendant, live, CDO name, class name. FindByKeyString orders
-        // differently because it needs the name first, to skip stale dying same-key matches.
-        if (!R::IsLive(obj)) continue;
+    for (const auto& [idx, obj] : sInst) {
+        // Cheapest first: the slot's flags, the child-actor read, the CDO's name. No string is built per
+        // instance (the name compares render into the engine's scratch); the location read below is a
+        // reflected call, made only for an instance of the right row.
+        if (!R::IsLiveByIndex(obj, idx) || (R::SlotFlags(idx) & R::slot_flags::NotYetReadable)) continue;
         // A child-actor component's child (a kerfur's eye camera) never has independent cross-peer
         // identity, so a wire spawn of a standalone same-class prop near a kerfur must not
-        // fuzzy-steal its eye. A cheap read, placed before the string allocations.
+        // fuzzy-steal its eye.
         if (engine::IsChildActor(obj)) continue;
-        const std::wstring nm = R::ToString(R::NameOf(obj));
-        if (nm.rfind(L"Default__", 0) == 0) continue;
-        // Class match on the leaf name.
-        if (R::ClassNameOf(obj) != className) continue;
+        if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;
         if (outTrace) ++outTrace->classMatches;
         // Same class is not the same prop for a generic prop: the list-props row name is the
         // identity (a cube and a wall panel are both prop_C). When the wire carries a row it must
         // match, or two co-located different props would fuzzy-merge and the rekey would bind the
         // wrong object; an empty expected name is a class-only match.
-        if (!expectedPropName.empty() && GetPropNameString(obj) != expectedPropName) {
+        // The row field read straight: the class is a prop's, proven once above.
+        if (!expectedPropName.empty() &&
+            !R::NameEquals(ReadField<R::FName>(obj, P::off::Aprop_Name), expectedPropName.c_str())) {
             if (outTrace) ++outTrace->rowNameRejects;
             continue;
         }
@@ -648,18 +577,16 @@ void* FindNearbySameClass(const std::wstring& className,
             }
             continue;
         }
-        // Last, because it is the caller's knowledge rather than the scan's: an actor inside the
-        // radius that the caller has named is not a candidate at all. Tested here, on the handful
-        // that reach it, rather than at the top of a walk over every object.
+        // Last, because it is the caller's knowledge rather than the query's: an actor inside the
+        // radius that the caller has named is not a candidate at all.
         if (excluded.Holds(obj)) {
             if (outTrace) ++outTrace->excludedRejects;
             continue;
         }
-        if (!first) first = obj;
-        if (!outTrace) return first;   // untraced: the walk stops at the result, as before
-        outTrace->candidates.push_back(NearbyCandidate{obj, i, std::sqrt(d2)});
+        if (!outTrace) return obj;  // untraced: the first accepted is the answer
+        outTrace->candidates.push_back(NearbyCandidate{obj, idx, std::sqrt(d2)});
     }
-    return first;
+    return (outTrace && !outTrace->candidates.empty()) ? outTrace->candidates[0].actor : nullptr;
 }
 
 void* FindNearestChipPile(const FVector& anchor, float radiusCm, float* outDist) {
@@ -693,28 +620,6 @@ void* FindNearestChipPile(const FVector& anchor, float radiusCm, float* outDist)
     }
     if (best && outDist) *outDist = std::sqrt(bestD2);
     return best;
-}
-
-void* FindByKeyString(const std::wstring& keyString) {
-    if (keyString.empty()) return nullptr;
-    void* base = PropBaseClass();
-    if (!base) return nullptr;
-    const int32_t n = R::NumObjects();
-    for (int32_t i = 0; i < n; ++i) {
-        void* obj = R::ObjectAt(i);
-        if (!obj) continue;
-        // The descendant check before the string compare.
-        if (!IsDescendantOfProp(obj)) continue;
-        const std::wstring nm = R::ToString(R::NameOf(obj));
-        if (nm.rfind(L"Default__", 0) == 0) continue;
-        if (GetKeyString(obj) != keyString) continue;
-        // The liveness gate: the engine keeps a dying actor in its array slot until the purge, so
-        // without it the old instance could be returned after a level reload, when the same key is
-        // re-spawned on a fresh actor.
-        if (!R::IsLive(obj)) continue;
-        return obj;
-    }
-    return nullptr;
 }
 
 namespace {

@@ -193,13 +193,9 @@ void SendCurrentToSlot(int slot) {
             slot, p.active, p.sigRequiredCount, p.sigCompletedCount, p.requiredDishesCount);
 }
 
-void OnTaskNewState(const coop::net::TaskNewStatePayload& p, uint8_t senderSlot) {
-    coop::net::Session* s = g_session.load(std::memory_order_acquire);
-    if (!s) return;
-    if (s->role() == coop::net::Role::Host || senderSlot != 0) {
-        UE_LOGW("[task] TaskNewState from slot=%u dropped (host-authored kind)", senderSlot);
-        return;
-    }
+void OnTaskNewState(const coop::net::TaskNewStatePayload& p) {
+    if (!g_session.load(std::memory_order_acquire)) return;
+    // From the host alone: the host's receive edge refuses a client's copy (client_authorship.h).
     if (p.sigRequiredCount > coop::net::kTaskSigCap ||
         p.sigCompletedCount > coop::net::kTaskSigCap ||
         p.requiredDishesCount > coop::net::kTaskDishCap) {

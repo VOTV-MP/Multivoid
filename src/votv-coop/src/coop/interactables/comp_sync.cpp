@@ -44,7 +44,6 @@ struct Counts {
     unsigned long long clientDecodes = 0;   // HOST: decodes a client's start began
     unsigned long long completions = 0;     // HOST: completions told to the mirrors
     unsigned long long processedSent = 0;   // HOST: signals_processed points put back and sent to their owner
-    unsigned long long foreignDropped = 0;  // a refiner stream from any sender but the host
 };
 Counts g_counts;
 
@@ -391,11 +390,7 @@ void Tick() {
     }
 }
 
-void OnState(const coop::net::CompStatePayload& p, uint8_t senderSlot) {
-    if (senderSlot != 0) {  // the host's stream alone: no peer of this build sends another
-        ++g_counts.foreignDropped;
-        return;
-    }
+void OnState(const coop::net::CompStatePayload& p) {
     if (!CD::EnsureResolved() || !CMP::WriteCompScalars(p.progress, p.downloading)) return;
     const bool active = p.decodeActive != 0;
     g_wireProgress = p.progress;
@@ -408,10 +403,6 @@ void OnState(const coop::net::CompStatePayload& p, uint8_t senderSlot) {
 }
 
 void OnDataChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
-    if (senderSlot != 0) {
-        ++g_counts.foreignDropped;
-        return;
-    }
     std::vector<uint8_t> blob;
     if (g_assembler.OnChunk(p, senderSlot, blob)) ApplyData(blob);
 }
@@ -437,10 +428,9 @@ void OnPeerLeft(uint8_t slot) {
 
 void OnDisconnect() {
     const Counts& c = g_counts;
-    if (c.startsRefused || c.clientDecodes || c.completions || c.processedSent || c.foreignDropped)
+    if (c.startsRefused || c.clientDecodes || c.completions || c.processedSent)
         UE_LOGI("comp_sync: session end -- starts refused=%llu, client decodes=%llu, completions=%llu, processed "
-                "sent=%llu, foreign dropped=%llu", c.startsRefused, c.clientDecodes, c.completions, c.processedSent,
-                c.foreignDropped);
+                "sent=%llu", c.startsRefused, c.clientDecodes, c.completions, c.processedSent);
     g_counts = Counts{};
     g_assembler.Clear();
     if (g_wireActive) {

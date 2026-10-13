@@ -10,7 +10,7 @@
 
 #include "coop/comms/peer_action_feed.h"
 #include "coop/element/registry.h"
-#include "coop/props/prop_element_tracker.h"  // the host key index, for the NoSuchProp diagnosis
+#include "coop/props/prop_key_index.h"  // the key index, for the NoSuchProp diagnosis
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -395,7 +395,7 @@ void SendSaleForDyingProp(const std::wstring& key, uint32_t elementId) {
 
 void Tick() {
     // The host's key index, periodically: every NoSuchProp refusal is a lookup into it, and the
-    // refusal alone cannot say whether the key was wrong or the index empty. On the tick rather
+    // refusal alone cannot say whether the key was wrong or the index not seeded. On the tick rather
     // than the teardown summary, since a killed process never reaches a teardown.
     {
         // Periodic: a one-shot fired on the first connected tick and read the index while the world
@@ -407,9 +407,9 @@ void Tick() {
         auto* ls = LoadSession();
         if (nowMs >= sNextMs && ls && ls->connected() && ls->role() == coop::net::Role::Host) {
             sNextMs = nowMs + 30000;
-            UE_LOGI("coingun[arbiter]: host key index holds %zu keyed prop(s) -- a NoSuchProp "
-                    "refusal against a NEAR-ZERO index is an enrollment gap, not a bad key",
-                    coop::prop_element_tracker::KeyIndexSize());
+            UE_LOGI("coingun[arbiter]: host key index holds %zu keyed prop(s), every live one of this "
+                    "world -- a NoSuchProp refusal against a ZERO index is an unseeded index, not a bad key",
+                    coop::prop_key_index::Size());
         }
     }
     // The host half: consumed artifacts whose prop has died are erased, the consumption guard's
@@ -464,11 +464,9 @@ void Tick() {
 
 
 void OnReliableResult(const uint8_t* payload, int len) {
-    auto* s = LoadSession();
-    if (!s || s->role() == coop::net::Role::Host) {
-        UE_LOGW("coingun[client]: CoinGunResult received on the HOST -- dropping");
-        return;
-    }
+    // From the host alone: the host's receive edge refuses a client's copy (client_authorship.h). With the lane not
+    // installed there is nothing to apply.
+    if (!LoadSession()) return;
     if (!payload || len < static_cast<int>(sizeof(coop::net::CoinGunResultPayload))) {
         UE_LOGW("coingun[client]: CoinGunResult payload too small (len=%d) -- dropping", len);
         return;

@@ -17,6 +17,7 @@
 #include "coop/interactables/signal_sync.h"  // the seed snapshot capture and cancel
 #include "coop/world/email_sync.h"           // the seed snapshot capture and cancel
 #include "coop/net/session.h"
+#include "coop/player/roster_ledger.h"  // PerSlotState: g_asked, the once-per-occupancy request latch
 #include "coop/props/prop_element_tracker.h"  // the blob-versus-live key diff
 #include "coop/props/save_identity_bind.h"  // the client's eid-range bind
 #include "coop/props/save_identity_map.h"  // the host's keyless index-to-eid map
@@ -79,6 +80,11 @@ struct HostStream {
                                    // freed on completion -- joins are rare)
 };
 HostStream g_host[coop::net::kMaxPeers];
+// Whether this occupancy already asked for the world save. A second request in one visit is a protocol
+// error and the host ends the client (MV-H33). A PerSlotState, so the ledger clears it at the successor's
+// row birth -- a raw array cleared only at CancelForSlot would miss a slot whose occupant left before its
+// row was born (net_pump.cpp:178) and then wrongly end the successor's first request.
+coop::roster_ledger::PerSlotState<bool> g_asked;
 // Per slot, whether its world was taken for this connection's join (WorldTakenFor).
 bool g_worldTaken[coop::net::kMaxPeers] = {};
 
@@ -250,8 +256,8 @@ void MaybeFinishLocked_() {
 
 // Net thread, the session's bulk sink. A chunk is a u32 index plus raw bytes; one stream's chunks
 // arrive in lane order through the single net thread, so a sequential index check suffices.
-void BulkSink_(int senderPeerSlot, const uint8_t* data, int len) {
-    if (senderPeerSlot != 0) return;  // host-originated only
+void BulkSink_(const uint8_t* data, int len) {
+    // Host-originated only: the host's receive edge refuses a client's copy (client_authorship.h).
     if (len < 4) return;
     // A chunk can never legitimately exceed the sender's own chunk size; the receive path bounds it
     // only by the u16 payload length otherwise.
@@ -284,8 +290,8 @@ void BulkSink_(int senderPeerSlot, const uint8_t* data, int len) {
 
 // Net thread, the session's SaveTransferBegin sink: the same thread as the bulk sink by design.
 // The length is validated here, since the sink contract hands over raw bytes.
-void BeginSink_(int senderPeerSlot, const uint8_t* data, int len) {
-    if (senderPeerSlot != 0) return;  // host-originated only
+void BeginSink_(const uint8_t* data, int len) {
+    // Host-originated only: the host's receive edge refuses a client's copy (client_authorship.h).
     if (len < static_cast<int>(sizeof(coop::net::SaveTransferBeginPayload))) return;
     coop::net::SaveTransferBeginPayload p{};
     std::memcpy(&p, data, sizeof(p));
@@ -436,8 +442,22 @@ void CaptureAndBegin_(int peerSlot, HostStream& hs) {
 
 void OnRequest(int peerSlot) {
     if (!g_session || peerSlot < 1 || peerSlot >= coop::net::kMaxPeers) return;
+    // A joined peer asks for the world save exactly once (ClientNoteConnected, behind g_cliRequested).
+    // A second request in one visit is a protocol error: end the client (MV-H33), from the game thread
+    // as the version gate kicks (Kick is thread-safe). MTA ends a repeated initial-data-stream request
+    // the same way (CRPCFunctions.cpp:110-124, InitialDataStream, IsJoined-guarded); no flood history,
+    // MTA's protocol-error disconnect bans nothing.
+    if (g_asked[peerSlot]) {
+        UE_LOGI("save_transfer: slot %d asked for the world save twice in one visit -- ending it (MV-H33)",
+                peerSlot);
+        g_session->Kick(peerSlot, coop::net::EndReason::RepeatedRequest, "repeated world-save request");
+        return;
+    }
+    g_asked[peerSlot] = true;
     HostStream& hs = g_host[peerSlot];
-    hs = HostStream{};  // reset any prior stream for this slot (rejoin)
+    // Reset any prior stream state for this slot. A rejoin is a new occupancy (g_asked cleared by the
+    // ledger), but a stream can also outlive an occupant that left before its row was born, so reset here.
+    hs = HostStream{};
 
     // The join-window cue, behind the pile_delta_probe flag: the joiner requested the save, so a
     // pile moved from here until the joiner's world-ready is in-window and reconciles by its

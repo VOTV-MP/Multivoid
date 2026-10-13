@@ -26,6 +26,10 @@ const wchar_t* g_inputParam = nullptr;
 bool g_cached = false;
 uint8_t g_emptyBytes[kFTextSize] = {0};
 
+// The missing-parameter warning is said once: every call retries the resolve, and a caller that asks
+// each tick would otherwise say it each tick.
+bool g_warnedParam = false;
+
 bool Resolve() {
     if (g_ktlCdo && g_convStrToTextFn && g_inputParam) return true;
     if (!g_ktlCdo) g_ktlCdo = R::FindClassDefaultObject(P::name::KismetTextLibraryClass);
@@ -38,7 +42,8 @@ bool Resolve() {
         // Insensitive lookup: the test is existence, not spelling.
         if (R::FindParamOffset(g_convStrToTextFn, L"InString") >= 0) {
             g_inputParam = L"InString";
-        } else {
+        } else if (!g_warnedParam) {
+            g_warnedParam = true;
             UE_LOGW("ftext_utils: Conv_StringToText has no 'InString' parameter -- EmptyFText "
                     "will fail every call");
         }
@@ -103,6 +108,8 @@ bool MintFText(const wchar_t* s, void* out) {
     // the consumer's deep-copy (Array_Add in ui_laptop.addEmail) adds its own refs.
     return f.GetRaw(L"ReturnValue", out, kFTextSize);
 }
+
+bool Resolved() { return Resolve(); }
 
 std::wstring FTextToString(const void* ftext) {
     if (!ftext || !Resolve()) return {};

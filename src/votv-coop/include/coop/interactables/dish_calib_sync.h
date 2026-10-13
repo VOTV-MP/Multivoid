@@ -35,7 +35,7 @@ void Poll(coop::net::Session* session);
 void QueueConnectBroadcastForSlot(int peerSlot);
 
 // Reliable appliers (event_dispatch_signal): a client holds the host's batch; the host performs a client's intent.
-void OnDishCalib(const coop::net::DishCalibPayload& p, uint8_t senderSlot);
+void OnDishCalib(const coop::net::DishCalibPayload& p);
 void OnDishCalibIntent(const coop::net::DishCalibPayload& p, uint8_t senderSlot);
 
 // HOST: a peer left; its slot's intent budget starts full for whoever takes the slot next.

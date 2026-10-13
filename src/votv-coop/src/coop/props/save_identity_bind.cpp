@@ -128,7 +128,7 @@ void BindLocalNativeToHostEid_(void* native, coop::element::ElementId E, MAP::Fa
     }
 
     // Free the native's local element (a no-op before the post-load seed minted one): the local
-    // Prop Element, the reverse map and the key index go, and the actor stays alive as the mirror's
+    // Prop Element, the reverse map and the tracked key go, and the actor stays alive as the mirror's
     // rendering.
     PT::UnmarkKnownKeyedProp(native);
     // The host-range mirror at E onto the native; rebindInPlace re-points an already-bound E rather

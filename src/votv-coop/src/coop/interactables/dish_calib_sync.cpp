@@ -2,6 +2,7 @@
 
 #include "coop/interactables/dish_calib_sync.h"
 
+#include "coop/net/intent_bucket.h"
 #include "coop/net/session.h"
 #include "coop/session/net_pump.h"  // IsInAnnouncedWorld
 
@@ -34,8 +35,7 @@ constexpr int kTagUncalibrator = 0x44435755;  // 'DCWU'
 constexpr int kTagSetPrec = 0x44435350;       // 'DCSP'
 
 // A client's intents, per peer: a player's verbs come a few a second at most.
-constexpr float    kIntentBurst = 8.f;
-constexpr float    kIntentsPerSecond = 4.f;
+constexpr coop::net::IntentBudget kIntentBudget{8.f, 4.f};
 constexpr uint64_t kRefusalSayMs = 10000;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -47,14 +47,12 @@ bool  g_haveSent = false;
 // session.
 float g_host[kMaxDishes] = {};
 bool  g_held[kMaxDishes] = {};
-bool  g_saidRefusedBatch = false;  // a batch not the host's to be sent, said once a session
 Counts g_counts;
 
 struct Bucket {
-    float    tokens = kIntentBurst;
-    uint64_t lastMs = 0;
-    uint64_t nextSayMs = 0;
-    int      overBudget = 0, notFinite = 0, noDish = 0;  // refused since the last line said so
+    coop::net::IntentBucket rate;
+    uint64_t                nextSayMs = 0;
+    int                     overBudget = 0, notFinite = 0, noDish = 0;  // refused since the last line said so
 };
 Bucket g_budget[coop::net::kMaxPeers];
 
@@ -84,18 +82,7 @@ void SayRefusals(uint8_t slot, uint64_t now, bool force) {
     b.overBudget = b.notFinite = b.noDish = 0;
 }
 
-bool TakeToken(uint8_t slot) {
-    Bucket& b = g_budget[slot];
-    const uint64_t now = ::GetTickCount64();
-    if (b.lastMs != 0 && now > b.lastMs) {
-        b.tokens += kIntentsPerSecond * static_cast<float>(now - b.lastMs) / 1000.0f;
-        if (b.tokens > kIntentBurst) b.tokens = kIntentBurst;
-    }
-    b.lastMs = now;
-    if (b.tokens < 1.0f) return false;
-    b.tokens -= 1.0f;
-    return true;
-}
+bool TakeToken(uint8_t slot) { return g_budget[slot].rate.Take(kIntentBudget, ::GetTickCount64()); }
 
 void SendAll(coop::net::Session* s, const D::DishCalibration* rows, int32_t n, int toSlot) {
     coop::net::DishCalibPayload p{};
@@ -312,18 +299,9 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     SendAll(s, rows, D::ReadCalibrations(rows, kMaxDishes), peerSlot);
 }
 
-void OnDishCalib(const coop::net::DishCalibPayload& p, uint8_t senderSlot) {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s) return;
-    // The host authors every dish's precision; a batch from anyone else is not theirs to send.
-    if (s->role() == coop::net::Role::Host || senderSlot != 0) {
-        if (!g_saidRefusedBatch) {
-            g_saidRefusedBatch = true;
-            UE_LOGW("dish_calib_sync: a precision batch from slot %u refused -- the host authors the precision",
-                    static_cast<unsigned>(senderSlot));
-        }
-        return;
-    }
+void OnDishCalib(const coop::net::DishCalibPayload& p) {
+    if (!g_session.load(std::memory_order_acquire)) return;
+    // The host authors every dish's precision, and its receive edge refuses a client's batch (client_authorship.h).
     // Held as the host's values even before this copy's dishes resolve; the poll puts them in once they do.
     const bool resolved = D::EnsureResolved();
     const int32_t n = p.count <= kMaxDishes ? p.count : kMaxDishes;
@@ -425,7 +403,6 @@ void OnDeskReplaced() {
 void OnSessionEnd() {
     g_haveSent = false;
     for (bool& h : g_held) h = false;
-    g_saidRefusedBatch = false;
     g_inFlight.clear();
     g_counts = Counts{};
     for (Bucket& b : g_budget) b = Bucket{};

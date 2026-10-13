@@ -51,7 +51,7 @@ std::atomic<int64_t>  g_hostBeaconMs{0};
 // Which of the announce gates this client is held on, and what it was when last reported. The
 // watchdog reads the phase token; this only names the gate in the failure sentence.
 std::atomic<uint8_t>  g_worldGate{0};
-std::atomic<bool>     g_abortReq{false};  // Cancel button OR a connect failure -> harness drains (Stop + reopen browser)
+std::atomic<bool>     g_abortReq{false};  // Cancel button OR a connect failure -> harness drains (end + the menu)
 
 std::mutex  g_hostMu;
 std::string g_host;  // guarded by g_hostMu
@@ -142,6 +142,7 @@ const char* WorldGateName(uint8_t g) {
     case WorldGate::RegistryOtherWorld: return "the prop registry expresses a different world";
     case WorldGate::RegistryPurging:    return "the prop registry is still draining a dead world";
     case WorldGate::WorldSettling:      return "the load tail has not settled";
+    case WorldGate::KeyIndexPending:    return "the prop key index has not caught up with the loaded world";
     case WorldGate::None:               return "nothing -- every gate is clear";
     default:                            return "a gate this build does not name";
     }
@@ -363,6 +364,8 @@ void NoteWorldReadyGate(WorldGate gate) {
     UE_LOGI("join_progress: waiting on this machine -- %s", WorldGateName(g));
 }
 
+const char* WorldGateText(WorldGate gate) { return WorldGateName(static_cast<uint8_t>(gate)); }
+
 void NoteHostBeacon(uint8_t phase, uint32_t done, uint32_t total) {
     if (!Active()) return;
     if (g_mode.load(std::memory_order_relaxed) != static_cast<int>(Mode::Client)) return;
@@ -459,7 +462,7 @@ void Fail(EndReason code, const std::string& detail) {
         }
     }
     const coop::net::EndReasonInfo& info = Describe(code);
-    UE_LOGW("join_progress: join FAILED [%s] %s%s%s -- aborting + reopening the browser%s",
+    UE_LOGW("join_progress: join FAILED [%s] %s%s%s -- aborting the join%s",
             info.id, info.text, detail.empty() ? "" : " -- ", detail.c_str(),
             kept ? "" : " [notice NOT shown -- an earlier one stands]");
 }

@@ -5,8 +5,8 @@
 // own ReceiveTick (so it is purely a mirror) and drives the streamed transform kinematically with a
 // LerpWindow interp.
 //
-// Singleton (no key) -> the sky_sync host-auth push shape (host streams; client applies; host
-// early-returns) + the atv_sync LerpWindow interp. No index (one drone).
+// Singleton (no key) -> the sky_sync host-auth push shape (host streams; client applies) + the
+// atv_sync LerpWindow interp. No index (one drone).
 
 #include "coop/interactables/drone_sync.h"
 
@@ -223,7 +223,7 @@ void ApplyState(void* drone, const coop::net::DroneStatePayload& payload) {
 
 void OnReliable(const coop::net::DroneStatePayload& payload) {
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || s->role() == coop::net::Role::Host) return;  // host is the authority -- never applies
+    if (!s) return;  // from the host alone: its receive edge refuses a client's copy
     if (!std::isfinite(payload.x) || !std::isfinite(payload.y) || !std::isfinite(payload.z) ||
         !std::isfinite(payload.pitch) || !std::isfinite(payload.yaw) || !std::isfinite(payload.roll) ||
         !std::isfinite(payload.dustX) || !std::isfinite(payload.dustY) || !std::isfinite(payload.dustZ)) {

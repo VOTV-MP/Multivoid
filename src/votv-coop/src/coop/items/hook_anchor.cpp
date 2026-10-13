@@ -9,10 +9,12 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_key_index.h"
 
 #include "ue_wrap/actors/hook.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"  // ClassByName -- the host's O(1) class resolve for a client's record
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/world/keyed_objects.h"
@@ -178,7 +180,7 @@ SaveRecord Arbitrate(const SaveRecord& sent, uint8_t ownerSlot, uint16_t seq, H:
         for (size_t i = 0; i < 2 && i < out.names[kNameSlot].size(); ++i) {
             const std::wstring& k = out.names[kNameSlot][i];
             if (k.empty() || k == L"None") continue;
-            void* anchor = coop::prop_element_tracker::FindLiveActorByKey(k);
+            void* anchor = coop::prop_key_index::Find(k);
             if (!anchor) anchor = ue_wrap::keyed_objects::Resolve(k.c_str());
             if (!anchor) continue;          // not ours to judge; the game resolves it or does not
             if (!clientSender) continue;    // the host's own anchors: it may cheat, by definition
@@ -261,7 +263,7 @@ CommitResult SendCommit(uint16_t seq, H::Kind kind, void* hookActor) {
         // The host's hook IS the canonical one already -- it is not respawned, only named. The
         // record carries the minted key into it, and the two attached flags are re-asserted for
         // the same reason a client's adoption needs them.
-        if (!H::AdoptRecord(hookActor, applied)) {
+        if (!H::AdoptRecord(hookActor, applied, &ue_wrap::object_index::ClassByName)) {
             UE_LOGW("hook_anchor: loadData refused on the host's own hook seq %u", (unsigned)seq);
             return CommitResult::Failed;
         }
@@ -332,7 +334,7 @@ void OnCommitChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
         return;
     }
     const SaveRecord applied = Arbitrate(rec, senderSlot, seq, kind, H::MaxDistOf(actor));
-    if (!H::AdoptRecord(actor, applied)) {
+    if (!H::AdoptRecord(actor, applied, &ue_wrap::object_index::ClassByName)) {
         UE_LOGW("hook_anchor: loadData refused on the canonical hook for slot %u seq %u",
                 (unsigned)senderSlot, (unsigned)seq);
         E::DestroyActor(actor);
@@ -357,11 +359,8 @@ void OnCommitChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
 
 void OnAnchoredChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     if (!GT::IsGameThread()) return;
-    // The host built it; its own broadcast never comes back, and a client forging this kind must
-    // not be able to occupy an assembly slot on the host either -- so the role gate comes BEFORE
-    // the assembler, not after it.
-    if (IsHost()) return;
-    if (senderSlot != 0) return;  // host-authored only
+    // From the host alone: the host's receive edge refuses a client's copy (client_authorship.h), so no client
+    // occupies an assembly slot on the host. The slot keys the assembler.
 
     std::vector<uint8_t> blob;
     if (!g_asmAnchored.OnChunk(p, senderSlot, blob)) return;

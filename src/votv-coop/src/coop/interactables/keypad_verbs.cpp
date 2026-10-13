@@ -4,6 +4,7 @@
 
 #include "coop/element/intent_authority.h"
 #include "coop/interactables/keypad_sync.h"
+#include "coop/net/intent_bucket.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
@@ -63,8 +64,7 @@ constexpr float kKeypadReachUU = 400.0f;
 
 // Typing is several digits a second, so a sender's intents run at a rate a fast typist does not
 // feel and a flooding client does.
-constexpr float    kIntentBurst     = 8.0f;
-constexpr float    kIntentPerSecond = 10.0f;
+constexpr coop::net::IntentBudget kIntentBudget{8.0f, 10.0f};
 constexpr size_t   kMaxPending      = 16;
 constexpr uint64_t kRefusalSayMs    = 10000;
 
@@ -82,9 +82,8 @@ uint64_t NowMs() {
 }
 
 struct Bucket {
-    float    tokens = kIntentBurst;
-    uint64_t lastMs = 0;
-    uint64_t nextSayMs = 0;
+    coop::net::IntentBucket rate;
+    uint64_t                nextSayMs = 0;
 };
 Bucket g_rate[coop::net::kMaxPeers];
 std::deque<coop::net::KeypadIntentPayload> g_pending[coop::net::kMaxPeers];
@@ -92,18 +91,7 @@ std::deque<coop::net::KeypadIntentPayload> g_pending[coop::net::kMaxPeers];
 constexpr uint8_t kWaitBody = 1, kWaitTail = 2;
 uint8_t g_waitSaid[coop::net::kMaxPeers] = {};
 
-bool TakeToken(uint8_t slot) {
-    Bucket& b = g_rate[slot];
-    const uint64_t now = NowMs();
-    if (b.lastMs != 0 && now > b.lastMs) {
-        b.tokens += kIntentPerSecond * static_cast<float>(now - b.lastMs) / 1000.0f;
-        if (b.tokens > kIntentBurst) b.tokens = kIntentBurst;
-    }
-    b.lastMs = now;
-    if (b.tokens < 1.0f) return false;
-    b.tokens -= 1.0f;
-    return true;
-}
+bool TakeToken(uint8_t slot) { return g_rate[slot].rate.Take(kIntentBudget, NowMs()); }
 
 const char* IntentName(uint8_t verb) {
     switch (verb) {
@@ -426,7 +414,7 @@ void Tick(coop::net::Session& session) {
             g_pending[slot].pop_front();
             g_waitSaid[slot] = 0;            // a consumed intent ends the wait's streak
         } else {
-            g_rate[slot].tokens += 1.0f;     // a wait runs nothing, so it spends no token
+            g_rate[slot].rate.Refund(kIntentBudget);  // a wait runs nothing, so it spends no token
         }
     }
 }

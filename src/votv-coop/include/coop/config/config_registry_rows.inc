@@ -158,6 +158,16 @@ CFG_INT(net_connect_cap, "net.connect_cap", "net", 4, 0,
 CFG_INT(net_connect_window_s, "net.connect_window_s", "net", 30, 1, 3600,
     "VOTVCOOP_NET_CONNECT_WINDOW_S",
     "Host: length of the connection-cap window, in seconds; the refusal lasts as long.")
+// The host's bound on the messages each client sends (coop/net/receive_budget.h): a token bucket per seated client
+// over every packet it sends but its streams, which have buckets of their own. The numbers sit far above what a
+// client of this build sends (its tickers and pollers allow a few hundred a second together; measured runs peaked
+// at 21) and below the rates that cost the host. Filed under [net] as a host policy on inbound traffic; a client
+// past it is closed with MV-H32.
+CFG_INT(net_reliable_burst, "net.reliable_burst", "net", 65536, 1024, 1048576, nullptr,
+    "Host: messages one client may send at once before the rate below applies.")
+CFG_INT(net_reliable_rate, "net.reliable_rate", "net", 8000, 0, 1000000, nullptr,
+    "Host: messages a second one client may send over time (0 = no bound). A client past both is "
+    "disconnected with code MV-H32.")
 
 // The [player] section.
 CFG_IDENTITY(player_skin, "player_skin", "player",

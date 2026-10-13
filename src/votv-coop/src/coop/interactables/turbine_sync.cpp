@@ -246,8 +246,7 @@ void Tick() {
 }
 
 void OnReliable(const coop::net::TurbineStatePayload& payload) {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (s && s->role() == coop::net::Role::Host) return;  // host-auth: never applied on the host
+    // From the host alone: the host's receive edge refuses a client's copy (client_authorship.h).
     if (!PayloadFinite(payload)) {
         UE_LOGW("turbine: non-finite payload -- dropping");
         return;

@@ -3,9 +3,10 @@
 // the AssignPeerSlot it issues, each peer's Join carries its own element id, and the receiver
 // binds a mirror for the sender's slot, so every peer's element registry agrees on the id of
 // each Player Element. Per-slot identity state (nickname, guid, skin, the join-announced latch)
-// lives in the roster ledger; this module owns only the local nickname and the per-slot
-// Join-sent latch, a property of the link rather than of the person. Teardown is a ledger row
-// transition, which fires on a replacement as well as a departure. Game thread only.
+// lives in the roster ledger; this module owns the local nickname, the host's per-slot Join-sent
+// latch and the client's own connect-edge Join latch -- properties of the link rather than of the
+// person. Teardown is a ledger row transition, which fires on a replacement as well as a departure.
+// Game thread only.
 
 #pragma once
 
@@ -69,8 +70,9 @@ const std::string& SkinForSlot(int slot);
 void AnnounceLocalSkin(coop::net::Session& session, const std::string& name);
 
 // Handle a delivered SkinChange ([u8 slot][u8 len][name]). Host: the sender must match the
-// slot, then stored, applied to the slot's puppet and rebroadcast to the other clients. Client:
-// host-only sender, stored, applied. True when recognised.
+// slot; an unchanged name costs a compare, and a changed one is stored, applied to the slot's
+// puppet and re-sent to the other clients at the kind's pace, the newest kept past it (TickPrefs).
+// Client: host-only sender, stored, applied. True when recognised.
 bool HandleSkinChange(coop::net::Session& session,
                       const coop::net::Session::ReliableMessage& msg);
 
@@ -78,8 +80,9 @@ bool HandleSkinChange(coop::net::Session& session,
 // skin. The at-join state rides the prefs flags byte of the Join. Game thread only.
 void AnnounceLocalNameplate(coop::net::Session& session, bool visible);
 
-// Handle a delivered NameplateChange ([u8 slot][u8 visible]). Host: sender-checked, stored,
-// rebroadcast; client: host-only sender, stored. True when recognised.
+// Handle a delivered NameplateChange ([u8 slot][u8 visible]). Host: sender-checked, then as the
+// skin: a changed value stored and re-sent at the kind's pace; client: host-only sender, stored.
+// True when recognised.
 bool HandleNameplateChange(coop::net::Session& session,
                            const coop::net::Session::ReliableMessage& msg);
 
@@ -104,6 +107,23 @@ void Reset();
 void MaybeSendJoinToSlot(coop::net::Session& session, int slot,
                           std::vector<uint8_t>& joinPayload,
                           bool& joinPayloadBuilt);
+
+// The Join this peer sends about itself, for its element `selfEid`: [u32 eid][nick][skin][flags][colour][game]
+// [build claim][game build]. MaybeSendJoinToSlot's payload, and the hostile drill's repeated Join. Game thread.
+void BuildJoinPayload(uint32_t selfEid, std::vector<uint8_t>& out);
+
+// Host: the Joins from `slot`'s occupant that passed the version gate and were answered; cleared with the
+// occupant. The hostile drill's repeat_join arm reads it. Game thread.
+uint32_t JoinsAnswered(int slot);
+
+// Host: the SkinChange, NameplateChange or NickColorChange values applied for `slot`'s occupant (stored and
+// re-sent); cleared with the occupant. The hostile drill's keep_latest arm reads it. Game thread.
+uint32_t PrefApplies(int slot, net::ReliableKind kind);
+
+// Each tick after the roster reconcile and before the drain (event_feed::Update): the display prefs' refusal log
+// is flushed, and on the host a client's newest skin, nameplate or nick colour change that arrived past its budget
+// is applied once the budget allows it. Game thread.
+void TickPrefs(net::Session& session);
 
 // Person-state teardown is driven by the roster ledger's row transition, which fires on a
 // replacement as well as a departure; a disconnect callback cannot see a slot recycled between
@@ -148,8 +168,9 @@ bool HandleJoinMessage(coop::net::Session& session,
                        const coop::net::Session::ReliableMessage& msg);
 
 // Handle a delivered AssignPeerSlot: stamps the client's slot and binds the host's mirror
-// Player Element when the host element id is present and valid. Dropped on the host, which
-// self-assigns. True when recognised; false on a short payload.
+// Player Element when the host element id is present and valid. The host self-assigns and refuses a
+// client's copy at its receive edge (client_authorship.h). True when recognised; false on a short
+// payload.
 bool HandleAssignPeerSlot(coop::net::Session& session,
                           const coop::net::Session::ReliableMessage& msg);
 
@@ -164,7 +185,8 @@ void BroadcastRosterFromHost(coop::net::Session& session,
 
 // Client-side handling of a PlayerJoined describing a third peer: range-validates the eid,
 // binds the peer's mirror Player Element and caches its nickname, so the puppet spawned later
-// on the first relayed pose is born identified. Dropped on the host, which originates these.
+// on the first relayed pose is born identified. The host originates these and refuses a client's copy at
+// its receive edge (client_authorship.h).
 // True when recognised; false on a short payload.
 bool HandleRosterRow(coop::net::Session& session,
                         const coop::net::Session::ReliableMessage& msg);

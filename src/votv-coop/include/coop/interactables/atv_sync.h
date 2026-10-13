@@ -52,11 +52,11 @@ void OnAtvRelease(const coop::net::AtvReleasePayload& payload, uint8_t senderPee
 // host pose and registers it under the host's synthetic wire key, so the existing
 // AtvState/AtvRelease key-stream drives it. Idempotent on the synthetic key (re-announce / connect
 // dup -> no-op). From event_feed.
-void OnAtvSpawn(const coop::net::AtvSpawnPayload& payload, uint8_t senderPeerSlot);
+void OnAtvSpawn(const coop::net::AtvSpawnPayload& payload);
 
 // Receiver entry (CLIENT-only): an AtvDestroy arrived. The host's synthetic-keyed (runtime) ATV is
 // gone -> K2_DestroyActor the fresh-spawned mirror + drop the index entry. From event_feed.
-void OnAtvDestroy(const coop::net::AtvDestroyPayload& payload, uint8_t senderPeerSlot);
+void OnAtvDestroy(const coop::net::AtvDestroyPayload& payload);
 
 // HOST-only: snapshot every indexed ATV's pose, VELOCITY and holder to a freshly connected client
 // `peerSlot` (adopt=1 -> the joiner warps to it). Carrying the velocity is what lets an ATV that is

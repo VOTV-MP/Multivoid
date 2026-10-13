@@ -58,8 +58,12 @@ bool IsTrashActor(void* obj);
 // descendant test against the two bases rather than a string match, memoised per name so a spawn
 // burst walks the object array once per distinct class. An unloaded class answers false and is
 // not memoised. Game thread.
-bool IsTrashClassName(const std::wstring& className);
-bool IsClumpClassName(const std::wstring& className);
+// `resolve` governs how an unmemoised name resolves: null = reflection::FindClass (a whole-array
+// walk on a miss). The host resolving a CLIENT's PropSpawn class passes object_index::ClassByName,
+// so an attacker's distinct unknown names cost a lookup each, not a walk each; a client keeps
+// the default, since its index can trail a load. Type is save_record::ClassResolver.
+bool IsTrashClassName(const std::wstring& className, void* (*resolve)(const wchar_t*) = nullptr);
+bool IsClumpClassName(const std::wstring& className, void* (*resolve)(const wchar_t*) = nullptr);
 
 // The two trash base UClasses themselves, from the same cache the tests above use; null until
 // the class is loaded. A caller that needs the class rather than the test -- a hook resolving a
@@ -103,6 +107,19 @@ std::wstring GetInteractableKeyString(void* obj);
 // its key at another offset. "" when `obj` is not an actor_save descendant; a field read, any
 // thread.
 std::wstring GetActorSaveKeyString(void* obj);
+
+// Where a class keeps its key FIELD: prop_C's lineage its own `key`, trashBitsPile_C's lineage
+// actor_save_C's. None for every other class, the chip pile and the garbage clump included: they have
+// no key field and answer only through their blueprint getKey. Class-pure, so a caller may memoise
+// it per class pointer. The trash base resolves through the object index, one lookup whether or not
+// it is loaded. Game thread.
+enum class KeyField : uint8_t { None, Prop, ActorSave };
+KeyField KeyFieldOf(void* cls);
+
+// The key in that field, {0,0} (None) for KeyField::None. A field read that never dispatches, so a
+// script-gate callback on getKey may call it. The caller has established that `obj` is live and of a
+// class with that field.
+reflection::FName ReadKeyField(void* obj, KeyField where);
 
 // Aprop_C.Key; {0,0} for null. The caller has established a live Aprop_C.
 reflection::FName GetKey(void* prop);
@@ -207,10 +224,6 @@ NearestResult FindNearest(const FVector& anchor, bool wantHeavy = false,
                           const wchar_t* lineage = nullptr,
                           const NearbyExclusion& excluded = {});
 
-// A prop by key string: one GUObjectArray walk, the first live Aprop_C whose key matches, or
-// null. The cold fallback behind the key index (prop_key_index), not a per-packet path.
-void* FindByKeyString(const std::wstring& keyString);
-
 // The body's velocity at this instant, through UPrimitiveComponent UFunctions on the StaticMesh;
 // the host's release edge captures the inherited tracking velocity, the launch energy of a
 // flick. Linear in cm/s, angular in deg/s; ok is false when the prop, mesh or UFunctions do not
@@ -233,7 +246,7 @@ struct NearbyCandidate {
 // Everything the scan saw, filled only for a caller that asks. `candidates[0]` is what the scan
 // returns, so a trace records the choice without changing it.
 struct NearbyTrace {
-    std::vector<NearbyCandidate> candidates;        // accepted, in scan order
+    std::vector<NearbyCandidate> candidates;        // accepted, in slot order
     int32_t classMatches       = 0;                 // live, non-CDO actors of the class, any distance
     int32_t rowNameRejects     = 0;                 // ... rejected because the list_props row differed
     int32_t unreadRejects      = 0;                 // ... skipped because its location could not be read
@@ -243,12 +256,14 @@ struct NearbyTrace {
 
 // The fuzzy dedupe for divergent-key spawns: the per-peer natural spawners (mushrooms,
 // underground garbage) place the same logical entity with a different Key at a slightly different
-// position, so the exact-key resolve fails and a duplicate follows. The first same-class Aprop
-// within `radiusCm` of `anchor` in GUObjectArray order, or null; class by leaf name.
-// `expectedPropName`, when non-empty, must also match the list_props row (cube and cubicleP_1 are
-// both class prop_C; merging them rekeys the wrong object). One array walk per call; for spawn
-// events, not hot paths. Passing `outTrace` walks the whole array instead of stopping at the
-// first hit, which costs the rest of the walk and returns the same actor.
+// position, so the exact-key resolve fails and a duplicate follows. The instance in the lowest slot
+// of the one loaded class named `className` (object_index::ClassByName, compared without case)
+// within `radiusCm` of `anchor`, or null; null too when that class is not a prop's. Exactly that
+// class, not its subclasses. `expectedPropName`, when non-empty, must also match the list_props row
+// (cube and cubicleP_1 are both class prop_C; merging them rekeys the wrong object). Reads the
+// object index as it stands, so a caller wanting the births up to now catches it up first. Its
+// cost is that class's instances, never the object array. Passing `outTrace` checks every instance
+// instead of stopping at the first accepted, and returns the same actor.
 void* FindNearbySameClass(const std::wstring& className,
                           const FVector& anchor,
                           float radiusCm,

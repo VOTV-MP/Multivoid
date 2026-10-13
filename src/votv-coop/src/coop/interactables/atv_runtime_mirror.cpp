@@ -41,9 +41,10 @@ std::wstring WireClassNameToString(const coop::net::WireClassName& in) {
 
 }  // namespace
 
-void OnAtvSpawn(const coop::net::AtvSpawnPayload& payload, uint8_t /*senderPeerSlot*/) {
+void OnAtvSpawn(const coop::net::AtvSpawnPayload& payload) {
+    // From the host alone: the host's receive edge refuses a client's copy (client_authorship.h).
     auto* s = LaneSession();
-    if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;
+    if (!s || !s->connected()) return;
     std::wstring synthKey = StringFromWireKey(payload.synthKey);
     if (synthKey.empty()) { UE_LOGW("atv: OnAtvSpawn empty synthKey -- dropping"); return; }
     // The payload is checked before any wait: a malformed spawn is dropped, only a sound one is deferred.
@@ -97,9 +98,8 @@ void OnAtvSpawn(const coop::net::AtvSpawnPayload& payload, uint8_t /*senderPeerS
 uint32_t ParkedEver() { return spawn_park::ParkedEver(); }
 size_t ParkPending() { return spawn_park::Pending(); }
 
-void OnAtvDestroy(const coop::net::AtvDestroyPayload& payload, uint8_t /*senderPeerSlot*/) {
-    auto* s = LaneSession();
-    if (!s || s->role() == coop::net::Role::Host) return;  // client-only
+void OnAtvDestroy(const coop::net::AtvDestroyPayload& payload) {
+    if (!LaneSession()) return;  // from the host alone: its receive edge refuses a client's copy
     std::wstring synthKey = StringFromWireKey(payload.synthKey);
     if (synthKey.empty()) return;
     spawn_park::Discard(synthKey);  // a destroy ends a spawn still waiting

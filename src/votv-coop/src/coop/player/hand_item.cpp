@@ -2,14 +2,18 @@
 
 #include "coop/player/hand_item.h"
 
+#include "coop/net/latest_wins.h"
+#include "coop/net/net_clock.h"
 #include "coop/net/protocol.h"
+#include "coop/player/hand_item_pose.h"  // where the mirror sits: the owner's measure, the per-tick drive
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/player/roster_ledger.h"
 #include "coop/props/prop_echo_suppress.h"
+#include "coop/props/prop_lifecycle.h"  // the two prop families never on the wire (ResolveHandClass)
 #include "coop/props/trash_collect_sync.h"  // EnsureHeldItemBroadcast (hand-edge world release)
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/actors/prop.h"
-#include "ue_wrap/actors/puppet.h"  // GetSkeletalMeshComponent (owner head-bone anchor for the hold measure)
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
@@ -17,6 +21,7 @@
 #include "ue_wrap/actors/inventory.h"   // the hold slot's item name
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"  // the prop base's class name (ResolveHandClass)
 #include "ue_wrap/core/types.h"
 
 #include <cmath>
@@ -37,19 +42,8 @@ constexpr size_t kMaxStr = 63;
 static_assert(2 + 3 * (1 + kMaxStr) + 6 * sizeof(float) <= static_cast<size_t>(coop::net::kMaxReliablePayload),
               "a HandItem at its string caps must fit one reliable datagram");
 
-// Display placement: the held item appears in front of the camera, as in the single-player
-// view, seen in third person on the puppet. Natively the held item is welded into the
-// first-person arms viewmodel chain, which is drawn camera-relative; that chain is hidden and
-// never ticks on a puppet, and the puppet's camera never pitches, so the look is reproduced
-// by a per-tick drive from the eye anchor and the synced look basis, following yaw and
-// pitch. Measured, not tuned: the item's pose relative to the camera is item-specific (the
-// weapon socket basis plus per-item offsets), so the owner measures its held actor's
-// transform in its own view space and ships it with the announce, and the mirror re-composes
-// it onto the puppet's synced view basis. The two view spaces match by construction: the
-// origin is the head bone plus the same lift on both sides, and the basis is control yaw and
-// pitch with roll 0.
-constexpr float kHeadAnchorLiftCm = 33.f;  // the same lift as the puppet's head position
-// The fallback placement until the owner's first measure lands: camera-front constants.
+// The fallback placement until the owner's first measure lands (coop/player/hand_item_pose measures
+// and drives the view-space hold): camera-front constants.
 constexpr float kFallbackRelPos[3] = {45.f, 10.f, -40.f};  // fwd/right/up cm
 
 // Per-slot wire state: what each peer's hand holds.
@@ -128,71 +122,6 @@ void ExpressReleasedHandActor(coop::net::Session& session, void* prev, int32_t p
     }
 }
 
-// View-space rotation math, in the engine's rotation-matrix conventions.
-constexpr float kDeg2Rad  = 0.01745329252f;
-constexpr float kRadToDeg = 57.2957795f;
-
-// The engine's rotation matrix: rows are the rotation's world-space forward, right and up
-// axes. A roll-0 call yields the view basis directly.
-void RotMatrixRows(float pitchDeg, float yawDeg, float rollDeg, float M[3][3]) {
-    const float SP = std::sin(pitchDeg * kDeg2Rad), CP = std::cos(pitchDeg * kDeg2Rad);
-    const float SY = std::sin(yawDeg * kDeg2Rad),   CY = std::cos(yawDeg * kDeg2Rad);
-    const float SR = std::sin(rollDeg * kDeg2Rad),  CR = std::cos(rollDeg * kDeg2Rad);
-    M[0][0] = CP * CY;                   M[0][1] = CP * SY;                   M[0][2] = SP;
-    M[1][0] = SR * SP * CY - CR * SY;    M[1][1] = SR * SP * SY + CR * CY;    M[1][2] = -SR * CP;
-    M[2][0] = -(CR * SP * CY + SR * SY); M[2][1] = CY * SR - CR * SP * SY;    M[2][2] = CR * CP;
-}
-
-// The inverse: axis rows to pitch, yaw and roll.
-ue_wrap::FRotator RotatorFromRows(const float M[3][3]) {
-    ue_wrap::FRotator r{};
-    r.Pitch = std::atan2(M[0][2], std::sqrt(M[0][0] * M[0][0] + M[0][1] * M[0][1])) * kRadToDeg;
-    r.Yaw   = std::atan2(M[0][1], M[0][0]) * kRadToDeg;
-    float S[3][3];
-    RotMatrixRows(r.Pitch, r.Yaw, 0.f, S);  // roll-0 frame; roll = Z/Y vs its right axis
-    const float zy = M[2][0] * S[1][0] + M[2][1] * S[1][1] + M[2][2] * S[1][2];
-    const float yy = M[1][0] * S[1][0] + M[1][1] * S[1][1] + M[1][2] * S[1][2];
-    r.Roll = std::atan2(zy, yy) * kRadToDeg;
-    return r;
-}
-
-// Measure the owner's natively welded held actor in its own view space. False means do not
-// ship (the mesh or bone not readable yet, or a wild pre-weld transform); the periodic
-// re-check retries.
-bool MeasureLocalHoldRelative(void* local, void* held, float outPos[3], float outRot[3]) {
-    void* mesh = ue_wrap::puppet::GetSkeletalMeshComponent(local);
-    ue_wrap::FVector head{};
-    if (!mesh || !R::IsLive(mesh) ||
-        !E::GetBoneWorldLocationByName(mesh, L"head", head))
-        return false;
-    head.Z += kHeadAnchorLiftCm;
-    void* ctl = E::GetController(local);
-    ue_wrap::FRotator view{};
-    if (ctl) view = E::GetControlRotation(ctl);
-    else if (!E::TryGetActorRotation(local, view)) return false;
-    float V[3][3];
-    RotMatrixRows(ue_wrap::NormalizeAxis(view.Pitch), ue_wrap::NormalizeAxis(view.Yaw), 0.f, V);
-    ue_wrap::FVector iloc{};
-    if (!E::TryGetActorLocation(held, iloc)) return false;
-    const float d[3] = {iloc.X - head.X, iloc.Y - head.Y, iloc.Z - head.Z};
-    for (int i = 0; i < 3; ++i) {
-        outPos[i] = d[0] * V[i][0] + d[1] * V[i][1] + d[2] * V[i][2];
-        // A held item sits within arm's reach of the head; a wild read (the pre-weld spawn frame, a
-        // dying component) must never ship.
-        if (!(outPos[i] > -300.f && outPos[i] < 300.f)) return false;
-    }
-    float I[3][3], Q[3][3];
-    ue_wrap::FRotator irot{};
-    if (!E::TryGetActorRotation(held, irot)) return false;
-    RotMatrixRows(irot.Pitch, irot.Yaw, irot.Roll, I);
-    for (int r = 0; r < 3; ++r)      // item axis r expressed in the view frame
-        for (int c = 0; c < 3; ++c)
-            Q[r][c] = I[r][0] * V[c][0] + I[r][1] * V[c][1] + I[r][2] * V[c][2];
-    const ue_wrap::FRotator rel = RotatorFromRows(Q);
-    outRot[0] = rel.Pitch; outRot[1] = rel.Yaw; outRot[2] = rel.Roll;
-    return true;
-}
-
 // The prop name field's offset, resolved once; the field lives on the prop base class, and
 // every hotbar item is a descendant.
 int32_t PropNameOffset() {
@@ -202,6 +131,43 @@ int32_t PropNameOffset() {
         s_off = R::FindPropertyOffset(propCls, L"name");
     return s_off;
 }
+
+// What a class name off the wire is to this lane. The owner announces its holding actor only when it
+// is a prop descendant (local_streams), so a hand item is a prop; and not of the two prop families the
+// coop layer never puts on the wire (prop_lifecycle): a per-player state actor, of which each peer owns
+// exactly one, and a wire-suppressed variant, which a client's own Init destroys. The receipt and the
+// spawn both ask it, so the two cannot drift. The index finds a class whatever the letter case of the
+// name, and the family predicates compare without case too. Without the prop base this peer cannot
+// judge, and says so rather than refusing. `outOwn`, when asked, gets a hand item's class as the engine
+// spells it.
+enum class HandClass { Hand, NotHand, Unresolved };
+HandClass ResolveHandClass(const std::wstring& name, void** outCls, std::wstring* outOwn) {
+    if (outCls) *outCls = nullptr;
+    // The two families are named classes: refused by name, loaded or not.
+    if (coop::prop_lifecycle::IsPerPlayerPropClass(name) || coop::prop_lifecycle::IsWireSuppressedPropClass(name))
+        return HandClass::NotHand;
+    void* cls = ue_wrap::object_index::ClassByName(name.c_str());
+    if (outCls) *outCls = cls;
+    if (!cls) return HandClass::Unresolved;
+    void* base = ue_wrap::object_index::ClassByName(ue_wrap::profile::name::PropClass);
+    if (!base) return HandClass::Unresolved;
+    if (!ue_wrap::prop::WalksToBase(cls, base)) return HandClass::NotHand;
+    if (outOwn) *outOwn = R::ToString(R::NameOf(cls));
+    return HandClass::Hand;
+}
+
+// HandItems this peer dropped or refused, per sender, for the log: the first and then each power of two,
+// so a sender at the edge budget's rate cannot flood it. The count when this drop is one to log, else 0.
+uint32_t g_droppedBySender[coop::players::kMaxPeers] = {};
+uint32_t DropToLog(int sender) {
+    if (sender < 0 || sender >= static_cast<int>(coop::players::kMaxPeers)) return 1;
+    const uint32_t n = ++g_droppedBySender[sender];
+    return (n & (n - 1)) == 0 ? n : 0;
+}
+// The class each slot's mirror last waited on unresolved, and how many such classes it has waited on,
+// warned at the first and each power of two, so a slot whose class keeps changing cannot flood the log.
+std::wstring g_unresolvedWarned[coop::players::kMaxPeers];
+uint32_t     g_unresolvedBySlot[coop::players::kMaxPeers] = {};
 
 std::wstring ReadItemName(void* actor) {
     const int32_t off = PropNameOffset();
@@ -254,6 +220,40 @@ void SendState(coop::net::Session& session, uint8_t slot, const SlotHand& h) {
     }
 }
 
+// Host: the hand states applied for a slot's occupant (StatesApplied).
+coop::roster_ledger::PerSlotState<uint32_t> g_statesApplied;
+
+// Host: one client's hand state applied, field by field: `lastCls` moves only while the hand holds
+// something, since the pry gate reads it once the hand is empty (LastHeldClassIs). Then re-sent to
+// every other ready client.
+void ApplyHandState(coop::net::Session& session, uint8_t slot, const SlotHand& in) {
+    SlotHand& h = g_hands[slot];
+    h.has = in.has; h.cls = in.cls; h.name = in.name; h.item = in.item;
+    if (in.has) h.lastCls = in.cls;
+    std::memcpy(h.relPos, in.relPos, sizeof(h.relPos));
+    std::memcpy(h.relRot, in.relRot, sizeof(h.relRot));
+    h.haveRel = in.has;
+    SendState(session, slot, h);
+    ++g_statesApplied[slot];
+}
+
+// The hand's budget: an application is a mirror destroyed and spawned on every
+// peer and two sends. Twelve at once and four a second sit above the most an honest player sent in the archived logs
+// (9 in a second, 32 in ten); past them the newest state lands within a quarter second.
+constexpr coop::net::IntentBudget kHandBudget{12.0f, 4.0f};
+
+// Host: per slot, the newest changed hand state and its pace (coop/net/latest_wins.h); one struct, so both clear with the
+// occupant.
+struct PendingHand { SlotHand value; coop::net::LatestWins pace; };
+coop::roster_ledger::PerSlotState<PendingHand> g_pendingHand;
+
+// Whether two states hold the same thing: emptiness, the class without case, the name and the item. The hold
+// transform is not compared: the pose stream overwrites the applied one each sample.
+bool SameHeld(const SlotHand& a, const SlotHand& b) {
+    if (a.has != b.has) return false;
+    return !a.has || (::_wcsicmp(a.cls.c_str(), b.cls.c_str()) == 0 && a.name == b.name && a.item == b.item);
+}
+
 void DestroyMirror(uint8_t slot, const char* why) {
     Mirror& m = g_mirrors[slot];
     if (m.actor && R::IsLiveByIndex(m.actor, m.idx)) {
@@ -278,15 +278,31 @@ void NoteSpawnFailed(uint8_t slot, const SlotHand& want, void* puppetActor) {
 
 void SpawnMirror(uint8_t slot, void* puppetActor) {
     const SlotHand& want = g_hands[slot];
-    // One index lookup a tick: Blueprint classes load on demand, and one this peer has not loaded, or is
-    // still loading, answers null and is asked for again next tick, warned once per class.
-    void* cls = ue_wrap::object_index::ClassByName(want.cls.c_str());
-    if (!cls) {
-        static std::wstring sWarned;
-        if (sWarned != want.cls) {
-            sWarned = want.cls;
-            UE_LOGW("hand_item: class '%ls' not found (unloaded?) -- will retry", want.cls.c_str());
+    // Two index lookups a tick, the class and the prop base: Blueprint classes load on demand, and one
+    // this peer has not loaded, or is still loading, answers null and is asked for again next tick; the
+    // classes a slot waits on are warned at the first and each power of two.
+    void* cls = nullptr;
+    const HandClass kind = ResolveHandClass(want.cls, &cls, nullptr);
+    if (kind == HandClass::Unresolved) {
+        if (::_wcsicmp(g_unresolvedWarned[slot].c_str(), want.cls.c_str()) != 0) {
+            g_unresolvedWarned[slot] = want.cls;
+            const uint32_t n = ++g_unresolvedBySlot[slot];
+            if ((n & (n - 1)) == 0)
+                UE_LOGW("hand_item: slot %u class '%ls' or the prop base not loaded yet -- will retry (%u class(es) "
+                        "waited on for this slot)", static_cast<unsigned>(slot), want.cls.c_str(), n);
         }
+        return;
+    }
+    // A mirror is built only from a hand item's class, whoever authored the state: the name stamp below
+    // writes at the prop name field's offset, which only a prop has. This is also where a class judged
+    // nowhere else is judged: one the host could not resolve when it relayed it, and, on a client, the
+    // host's own hand, which no receipt checks. MTA's receiving client builds a vehicle from a model id off
+    // the wire only once its own table accepts it
+    // (reference/mtasa-blue/Client/mods/deathmatch/logic/CPacketHandler.cpp:3278-3282).
+    if (kind == HandClass::NotHand) {
+        UE_LOGW("hand_item: slot %u class '%ls' is not a hand item -- no mirror, not tried again until the "
+                "item or the puppet changes", static_cast<unsigned>(slot), want.cls.c_str());
+        NoteSpawnFailed(slot, want, puppetActor);
         return;
     }
     ue_wrap::FVector loc{};
@@ -342,36 +358,6 @@ void SpawnMirror(uint8_t slot, void* puppetActor) {
             static_cast<unsigned>(slot), want.cls.c_str(), want.name.c_str());
 }
 
-// Re-command the mirror to the puppet's view-space hold point every tick: rebuild the roll-0
-// view basis from the synced aim and re-compose the owner-measured transform onto it. With
-// the fallback this degrades to the camera-front placement, facing along the look.
-void DriveMirror(void* mirrorActor, coop::RemotePlayer* pup, const SlotHand& hand) {
-    ue_wrap::FVector eye{};
-    if (!pup->TryGetHeadPosition(eye)) return;   // no anchor this tick: the last placement stays
-    const ue_wrap::FVector fwd = pup->GetSyncedAimDirection();
-    // A degenerate near-vertical aim keeps the last tick's placement.
-    const float rl = std::sqrt(fwd.X * fwd.X + fwd.Y * fwd.Y);
-    if (rl < 1e-3f) return;
-    const float yawDeg   = std::atan2(fwd.Y, fwd.X) * kRadToDeg;
-    const float pitchDeg = std::atan2(fwd.Z, rl) * kRadToDeg;
-    float V[3][3];
-    RotMatrixRows(pitchDeg, yawDeg, 0.f, V);  // rows: fwd / right / up
-    const float* rp = hand.relPos;
-    const ue_wrap::FVector pos{
-        eye.X + V[0][0] * rp[0] + V[1][0] * rp[1] + V[2][0] * rp[2],
-        eye.Y + V[0][1] * rp[0] + V[1][1] * rp[1] + V[2][1] * rp[2],
-        eye.Z + V[0][2] * rp[0] + V[1][2] * rp[1] + V[2][2] * rp[2],
-    };
-    // The world item axes: row i of the composed matrix is the sum over c of Q[i][c] times V[c].
-    float Q[3][3], W[3][3];
-    RotMatrixRows(hand.relRot[0], hand.relRot[1], hand.relRot[2], Q);
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j)
-            W[i][j] = Q[i][0] * V[0][j] + Q[i][1] * V[1][j] + Q[i][2] * V[2][j];
-    E::SetActorLocation(mirrorActor, pos);
-    E::SetActorRotation(mirrorActor, RotatorFromRows(W));
-}
-
 }  // namespace
 
 void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
@@ -391,7 +377,7 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
         // unchanged.
         {
             float sp[3], sr[3];
-            if (MeasureLocalHoldRelative(local, holdingProp, sp, sr)) {
+            if (coop::hand_item_pose::MeasureLocalHoldRelative(local, holdingProp, sp, sr)) {
                 coop::net::HandPoseSnapshot hp{};
                 std::memcpy(hp.relPos, sp, sizeof(sp));
                 std::memcpy(hp.relRot, sr, sizeof(sr));
@@ -429,7 +415,7 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
             // quick-slot switch a failed measure would otherwise ship the previous item's transform
             // under the new item's name, plausible values the receiver cannot reject.
             float p[3], rr[3];
-            if (MeasureLocalHoldRelative(local, holdingProp, p, rr)) {
+            if (coop::hand_item_pose::MeasureLocalHoldRelative(local, holdingProp, p, rr)) {
                 std::memcpy(h.relPos, p, sizeof(p));
                 std::memcpy(h.relRot, rr, sizeof(rr));
                 h.haveRel = true;
@@ -549,17 +535,18 @@ void TickMirrors() {
             }
         }
         const int32_t pupIdx = R::InternalIndexOf(puppetActor);
-        const bool sameWant = m.cls == want.cls && m.name == want.name && m.puppetIdx == pupIdx &&
+        const bool sameWant = ::_wcsicmp(m.cls.c_str(), want.cls.c_str()) == 0 && m.name == want.name &&
+                              m.puppetIdx == pupIdx &&
                               R::SlotSerial(pupIdx) == m.puppetSerial;
         if (mirrorLive && sameWant) {
-            DriveMirror(m.actor, pup, want);  // steady state: re-command the view hold
+            coop::hand_item_pose::DriveMirror(m.actor, pup, want.relPos, want.relRot);  // steady state: re-command the view hold
             continue;
         }
         if (m.failed && sameWant) continue;  // this item failed to spawn on this puppet (see Mirror)
         if (mirrorLive || m.actor) DestroyMirror(slot, "state/puppet changed");
         SpawnMirror(slot, puppetActor);
         Mirror& nm = g_mirrors[slot];
-        if (nm.actor) DriveMirror(nm.actor, pup, want);  // no first-frame pop at spawn pos
+        if (nm.actor) coop::hand_item_pose::DriveMirror(nm.actor, pup, want.relPos, want.relRot);  // no first-frame pop at spawn pos
     }
 }
 
@@ -567,47 +554,52 @@ bool HandleHandItem(coop::net::Session& session,
                     const coop::net::Session::ReliableMessage& msg) {
     UE_ASSERT_GAME_THREAD("HandleHandItem");
     if (msg.payloadLen < 4) {
-        UE_LOGW("hand_item: payload %zu B too short -- dropping",
-                static_cast<size_t>(msg.payloadLen));
+        if (const uint32_t n = DropToLog(msg.senderPeerSlot))
+            UE_LOGW("hand_item: payload %zu B too short -- dropping (%u from slot %d)",
+                    static_cast<size_t>(msg.payloadLen), n, msg.senderPeerSlot);
         return true;
     }
     const uint8_t* p = msg.payload;
+    const size_t len = static_cast<size_t>(msg.payloadLen);
     size_t off = 0;
     const uint8_t describedSlot = p[off++];
     const bool has = p[off++] != 0;
-    const uint8_t clsLen = p[off++];
-    if (off + clsLen + 1 > static_cast<size_t>(msg.payloadLen)) {
-        UE_LOGW("hand_item: truncated class field -- dropping");
+    // Each string: within the cap BuildPayload writes to, so what the host keeps is what it relays, and
+    // with no control character -- a NUL would end the name the class index reads before the string
+    // does, and a line break would split the log lines that quote it.
+    auto readStr = [&](const char* field, std::wstring& out) -> bool {
+        if (off + 1 > len) {
+            if (const uint32_t c = DropToLog(msg.senderPeerSlot))
+                UE_LOGW("hand_item: no %s field -- dropping (%u from slot %d)", field, c, msg.senderPeerSlot);
+            return false;
+        }
+        const uint8_t n = p[off++];
+        bool control = false;
+        for (size_t i = off; i < off + n && i < len; ++i) control = control || p[i] < 0x20 || p[i] == 0x7F;
+        const char* why = off + n > len ? "truncated"
+                        : n > kMaxStr   ? "over the cap"
+                        : control       ? "with a control character"
+                                        : nullptr;
+        if (why) {
+            if (const uint32_t c = DropToLog(msg.senderPeerSlot))
+                UE_LOGW("hand_item: %s field %s -- dropping (%u from slot %d)", field, why, c, msg.senderPeerSlot);
+            return false;
+        }
+        for (uint8_t i = 0; i < n; ++i) out.push_back(static_cast<wchar_t>(p[off++]));
         return true;
-    }
-    std::wstring cls;
-    for (uint8_t i = 0; i < clsLen; ++i) cls.push_back(static_cast<wchar_t>(p[off++]));
-    const uint8_t nameLen = p[off++];
-    if (off + nameLen > static_cast<size_t>(msg.payloadLen)) {
-        UE_LOGW("hand_item: truncated name field -- dropping");
-        return true;
-    }
-    std::wstring name;
-    for (uint8_t i = 0; i < nameLen; ++i) name.push_back(static_cast<wchar_t>(p[off++]));
-    if (off + 1 > static_cast<size_t>(msg.payloadLen)) {
-        UE_LOGW("hand_item: no item field -- dropping");
-        return true;
-    }
-    const uint8_t itemLen = p[off++];
-    if (off + itemLen > static_cast<size_t>(msg.payloadLen)) {
-        UE_LOGW("hand_item: truncated item field -- dropping");
-        return true;
-    }
-    std::wstring item;
-    for (uint8_t i = 0; i < itemLen; ++i) item.push_back(static_cast<wchar_t>(p[off++]));
+    };
+    std::wstring cls, name, item;
+    if (!readStr("class", cls) || !readStr("name", name) || !readStr("item", item)) return true;
 
     // The measured view-relative hold transform, present whenever held. Insane values (non-finite,
     // out of arm's reach) keep the fallback placement.
     float relPos[3] = {kFallbackRelPos[0], kFallbackRelPos[1], kFallbackRelPos[2]};
     float relRot[3] = {0.f, 0.f, 0.f};
     if (has) {
-        if (off + 24 > static_cast<size_t>(msg.payloadLen)) {
-            UE_LOGW("hand_item: missing hold-transform field -- dropping");
+        if (off + 24 > len) {
+            if (const uint32_t n = DropToLog(msg.senderPeerSlot))
+                UE_LOGW("hand_item: missing hold-transform field -- dropping (%u from slot %d)", n,
+                        msg.senderPeerSlot);
             return true;
         }
         float rel[6];
@@ -622,37 +614,65 @@ bool HandleHandItem(coop::net::Session& session,
         }
     }
 
-    if (describedSlot >= coop::net::kMaxPeers) return true;
-    if (has && cls.empty()) return true;  // malformed: "has item" with no class
+    const char* malformed = describedSlot >= coop::net::kMaxPeers ? "a slot out of range"
+                          : has && cls.empty()                   ? "an item with no class"
+                                                                 : nullptr;
+    if (malformed) {
+        if (const uint32_t n = DropToLog(msg.senderPeerSlot))
+            UE_LOGW("hand_item: %s -- dropping (%u from slot %d)", malformed, n, msg.senderPeerSlot);
+        return true;
+    }
 
     if (session.role() == coop::net::Role::Host) {
         // The forgery guard: a client may only describe its own hand.
         if (msg.senderPeerSlot != describedSlot || describedSlot == 0) {
-            UE_LOGW("hand_item: slot=%u from senderSlot=%d -- forged, dropping",
-                    static_cast<unsigned>(describedSlot), msg.senderPeerSlot);
+            if (const uint32_t n = DropToLog(msg.senderPeerSlot))
+                UE_LOGW("hand_item: slot=%u from senderSlot=%d -- forged, dropping (%u from that slot)",
+                        static_cast<unsigned>(describedSlot), msg.senderPeerSlot, n);
             return true;
         }
-        SlotHand& h = g_hands[describedSlot];
-        h.has = has; h.cls = cls; h.name = name; h.item = item;
-        if (has) h.lastCls = cls;
-        std::memcpy(h.relPos, relPos, sizeof(relPos));
-        std::memcpy(h.relRot, relRot, sizeof(relRot));
-        h.haveRel = has;
-        // Rebroadcast to every other ready client, the originator excluded.
-        const std::vector<uint8_t> out = BuildPayload(describedSlot, h);
-        for (int x = 1; x < coop::net::kMaxPeers; ++x) {
-            if (x == describedSlot) continue;
-            if (!session.IsSlotReady(x)) continue;
-            session.SendReliableToSlot(x, coop::net::ReliableKind::HandItem,
-                                       out.data(), static_cast<int>(out.size()));
+        // A class that is not a hand item -- one of the two families by name, or a class this host resolves
+        // to something else -- is not kept and not relayed, and the slot keeps the state it had; the link
+        // stays. Any other class this host cannot resolve yet is kept and relayed, and
+        // judged where it would be built (SpawnMirror): the owner announces only on a change, so an
+        // honest state refused here would never come again. MTA's server drops a weapon id outside the
+        // set it knows and keeps the link
+        // (reference/mtasa-blue/Server/mods/deathmatch/logic/packets/CBulletsyncPacket.cpp:78-82). It
+        // can also hold a weapon against its own record of the player; this host's only copy of a
+        // client's hold slot is the profile that client streams itself, so it checks the lane's type. A
+        // hand item is kept and relayed under its class's own spelling, and every peer compares the class
+        // without case.
+        SlotHand in;
+        in.has = has; in.cls = std::move(cls); in.name = std::move(name); in.item = std::move(item);
+        std::memcpy(in.relPos, relPos, sizeof(relPos));
+        std::memcpy(in.relRot, relRot, sizeof(relRot));
+        // The newest state kept, applied at the budget's pace (coop/net/latest_wins.h). An unchanged one costs the
+        // parse and a compare, ahead of the class gate: the applied state passed it, and the compare reads the
+        // class without case. The host's verbs and its mirror read the applied state, at most a refill behind.
+        PendingHand& pend = g_pendingHand[describedSlot];
+        if (SameHeld(in, g_hands[describedSlot])) {
+            pend.pace.Withdraw();
+            return true;
         }
+        std::wstring own;
+        const HandClass kind = in.has ? ResolveHandClass(in.cls, nullptr, &own) : HandClass::Unresolved;
+        if (kind == HandClass::NotHand) {
+            if (const uint32_t n = DropToLog(msg.senderPeerSlot))
+                UE_LOGW("hand_item: slot %u names class '%ls', which is not a hand item -- not kept or relayed "
+                        "(%u from this slot)", static_cast<unsigned>(describedSlot), in.cls.c_str(), n);
+            return true;
+        }
+        if (kind == HandClass::Hand) in.cls = own;
+        pend.value = in;
+        if (pend.pace.Offer(kHandBudget, coop::net::NowMs())) ApplyHandState(session, describedSlot, in);
         return true;
     }
 
     // Client: only the host relays hand states.
     if (msg.senderPeerSlot != 0) {
-        UE_LOGW("hand_item: HandItem from non-host senderPeerSlot=%d -- dropping",
-                msg.senderPeerSlot);
+        if (const uint32_t n = DropToLog(msg.senderPeerSlot))
+            UE_LOGW("hand_item: HandItem from non-host senderPeerSlot=%d -- dropping (%u from that slot)",
+                    msg.senderPeerSlot, n);
         return true;
     }
     if (describedSlot == coop::players::Registry::Get().LocalPeerId()) return true;  // own echo
@@ -687,6 +707,9 @@ void Reset() {
     for (uint8_t s = 0; s < coop::players::kMaxPeers; ++s) {
         DestroyMirror(s, "session reset");
         g_hands[s] = SlotHand{};
+        g_droppedBySender[s] = 0;
+        g_unresolvedWarned[s].clear();
+        g_unresolvedBySlot[s] = 0;
     }
     g_ownHas = false;
     g_ownCls.clear();
@@ -713,6 +736,23 @@ bool LastHeldClassIs(uint8_t slot, const wchar_t* cls) {
     return !h.lastCls.empty() && ::_wcsicmp(h.lastCls.c_str(), cls) == 0;
 }
 
+void PayOwed(coop::net::Session& session) {
+    if (session.role() != coop::net::Role::Host) return;
+    for (int slot = 1; slot < static_cast<int>(coop::players::kMaxPeers); ++slot) {
+        PendingHand& pend = g_pendingHand[slot];
+        if (pend.pace.Owed() && pend.pace.Due(kHandBudget, coop::net::NowMs()))
+            ApplyHandState(session, static_cast<uint8_t>(slot), pend.value);
+    }
+}
+
+bool HoldsItem(uint8_t slot) {
+    return slot < coop::players::kMaxPeers && g_hands[slot].has;
+}
+
+uint32_t StatesApplied(int slot) {
+    return (slot >= 0 && slot < static_cast<int>(coop::players::kMaxPeers)) ? g_statesApplied[slot] : 0;
+}
+
 std::wstring HeldItem(uint8_t slot) {
     if (slot >= coop::players::kMaxPeers) return {};
     const SlotHand& h = g_hands[slot];
@@ -723,6 +763,9 @@ void OnSlotDisconnected(uint8_t slot) {
     if (slot >= coop::players::kMaxPeers) return;
     DestroyMirror(slot, "peer disconnected");
     g_hands[slot] = SlotHand{};
+    g_droppedBySender[slot] = 0;
+    g_unresolvedWarned[slot].clear();
+    g_unresolvedBySlot[slot] = 0;
 }
 
 }  // namespace coop::hand_item

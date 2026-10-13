@@ -233,12 +233,9 @@ void Tick() {
 }
 
 void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
-    if (!GT::IsGameThread() || !SessionIf(coop::net::Role::Client)) return;
-    if (senderSlot != 0) {
-        UE_LOGW("dish_hashcode_sync: rows from slot %u, which is not the host -- dropped",
-                static_cast<unsigned>(senderSlot));
-        return;
-    }
+    // From the host alone: the host's receive edge refuses a client's copy (client_authorship.h).
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!GT::IsGameThread() || !s || !s->running()) return;
     std::vector<uint8_t> blob;
     if (!g_asm.OnChunk(p, senderSlot, blob)) return;
     size_t o = 0;

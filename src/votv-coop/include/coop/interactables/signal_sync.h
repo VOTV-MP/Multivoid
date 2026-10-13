@@ -38,6 +38,9 @@ void CancelJoinSnapshot(int peerSlot);
 void QueueConnectBroadcastForSlot(int peerSlot);
 // HOST: `peerSlot`'s snapshot is taken and its seed still to come, so a row appended now rides the seed.
 bool JoinSnapshotCaptured(int peerSlot);
+// Whether the lane has settled against its saved-signal array: rows that arrive now are tried at once,
+// not parked for the settle. Game thread.
+bool Settled();
 
 // Slot teardown (roster row transition): drop the leaver's half-assemblies +
 // seed bracket so a recycled occupant can never inherit them.

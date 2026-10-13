@@ -6,9 +6,11 @@
 #include "coop/net/session.h"
 
 #include "coop/dev/wire_census.h"
+#include "coop/net/connect_history.h"  // Floods -- the source a flood ended stays refused
 #include "coop/net/net_clock.h"        // NowMs -- the probe's echo is timed on the net layer's clock
 #include "coop/net/peer_admission.h"   // the identity challenge every peer passes
 #include "coop/net/peer_identity.h"    // GuidForPublicKey -- the proved storage name
+#include "client_authorship.h"  // co-located private header: which kinds a client may author
 #include "session_lanes.h"      // co-located private header: the admission and relayable kind lists
 #include "ue_wrap/core/log.h"
 
@@ -20,6 +22,20 @@
 #include <cstring>
 
 namespace coop::net {
+
+namespace {
+// A kind the host relays from one client to the others must be one a client may author: the edge below would
+// otherwise refuse what the relay table forwards. Every byte value is checked, so a kind added to the relay
+// table without its authorship row fails the build here.
+constexpr bool RelayedKindsAreClientAuthored() {
+    for (int v = 0; v < 256; ++v) {
+        const auto k = static_cast<ReliableKind>(v);
+        if (IsClientRelayableReliableKind(k) && AuthorshipOf(k) != ClientAuthorship::Client) return false;
+    }
+    return true;
+}
+static_assert(RelayedKindsAreClientAuthored(), "a relayable kind that is not Client in client_authorship.h");
+}  // namespace
 
 // ---- admission: what an unadmitted connection may do ----
 // A parked connection holds no seat, so it cannot reach any handler that takes a senderSlot,
@@ -142,6 +158,10 @@ void Session::HandleMessage(int peerSlot, uint32_t hConn, const void* data, int 
     uint32_t senderEpoch;
     uint8_t headerSenderSlot;
     if (!ParseHeader(data, len, type, seq, senderEpoch, headerSenderSlot)) {
+        // Counted by the host's budget like any packet a seated connection sends (TakeBudget below), as a message.
+        if (cfg_.role == Role::Host && peerSlot >= 1 && peerSlot < kMaxPeers &&
+            !TakeBudget(peerSlot, hConn, MsgType{}, data, len))
+            return;
         // Distinguish garbage (a silent drop) from a peer on another protocol version (a clean
         // close with a readable reason, so both ends see why): the silent alternative is a
         // connection that stays "Connected" with every packet dropped.
@@ -172,16 +192,23 @@ void Session::HandleMessage(int peerSlot, uint32_t hConn, const void* data, int 
     if (peerSlot < 0 || peerSlot >= kMaxPeers) return;
     net_stats::AddRecv(static_cast<uint32_t>(len));
 
+    // The host's bound on what one client sends (receive_budget.h, TakeBudget below), counted on every packet a seated
+    // connection sends, one whose header does not parse included (above), ahead of the epoch latch and every check
+    // after it, so a packet any of them drops costs the sender as much as one they pass.
+    if (cfg_.role == Role::Host && !TakeBudget(peerSlot, hConn, type, data, len)) return;
+
     // The per-peer epoch latch: the slot's first packet sets the expected senderEpoch, later
     // packets must match or are dropped; ResetPeerRemoteState clears it on disconnect so the next
     // occupant re-latches. senderEpoch 0 is never latched (a sender that forgot to mint). Checked
     // under remoteMutex_, the lock every per-peer store below takes, so the latch is atomic with
-    // the reset's clear.
+    // the reset's clear. A packet it drops is said once and the rest summed per window
+    // (a tally per cause): a sender could otherwise make the log the cost, one line per packet.
     {
         std::lock_guard<std::mutex> lk(remoteMutex_);
         if (senderEpoch == 0) {
-            UE_LOGW("net: dropping packet from slot %d with senderEpoch=0 (malformed sender)",
-                    peerSlot);
+            zeroEpochRefusals_.Note(static_cast<std::uint8_t>(peerSlot),
+                                    "its senderEpoch is 0, a sender that never minted one",
+                                    RefusalTally::Clock::now());
             return;
         }
         const uint32_t expected = expectedEpoch_[peerSlot];
@@ -190,13 +217,11 @@ void Session::HandleMessage(int peerSlot, uint32_t hConn, const void* data, int 
             UE_LOGI("net: latched senderEpoch=0x%08x for peer slot %d",
                     static_cast<unsigned>(senderEpoch), peerSlot);
         } else if (expected != senderEpoch) {
-            // INFO, not WARN: the common cause is a reconnect race (in-flight packets from the old
-            // connection arriving after the new one re-latched), benign and self-correcting.
-            UE_LOGI("net: stale-gen drop slot=%d expected=0x%08x got=0x%08x kind=%u",
-                    peerSlot,
-                    static_cast<unsigned>(expected),
-                    static_cast<unsigned>(senderEpoch),
-                    static_cast<unsigned>(type));
+            // The common cause is a reconnect race (in-flight packets from the old connection arriving
+            // after the new one re-latched), benign and self-correcting.
+            staleEpochRefusals_.Note(static_cast<std::uint8_t>(peerSlot),
+                                     "its senderEpoch is not the one this slot latched (an earlier connection's)",
+                                     RefusalTally::Clock::now());
             return;
         }
     }
@@ -265,6 +290,27 @@ void Session::HandleMessage(int peerSlot, uint32_t hConn, const void* data, int 
             rateControl_.NoteReliableReceived(peerSlot, len);
         if (dev::wire_census::Enabled())
             dev::wire_census::NoteReliable(routeSlot, static_cast<unsigned>(rh.kind));
+        // Default deny at the edge (client_authorship.h): a kind no client may author, or a byte that names no
+        // kind, is dropped here, counted by the budget ahead of the epoch latch and acted on by nothing below --
+        // not diverted, echoed, inboxed or relayed. The first of each value in a session is said with its number,
+        // the rest summed per window: MTA logs each refused event, and rate-limits only an unknown one, one line
+        // per gap for the whole server (CGame.cpp:2683-2707); the fold here is ours, the net thread's log being one
+        // a client could fill.
+        if (cfg_.role == Role::Host) {
+            const ClientAuthorship who = AuthorshipOf(static_cast<ReliableKind>(rh.kind));
+            if (who == ClientAuthorship::Host || who == ClientAuthorship::NotAKind) {
+                const char* why = who == ClientAuthorship::Host ? "only the host authors it" : "it names no kind";
+                if (!saidHostKind_[rh.kind]) {
+                    saidHostKind_[rh.kind] = true;
+                    UE_LOGW("net: refused kind %u from slot %d -- %s (client_authorship.h); later ones are "
+                            "summed", static_cast<unsigned>(rh.kind), peerSlot, why);
+                } else {
+                    hostKindRefusals_.Note(static_cast<std::uint8_t>(peerSlot), why,
+                                           RefusalTally::Clock::now());
+                }
+                return;
+            }
+        }
         // payloadLen is a uint16, so only the upper bound is a real guard.
         const int payloadLen = static_cast<int>(rh.payloadLen);
         // The save-blob chunk exceeds the inbox payload by design: diverted whole to the bulk sink
@@ -273,8 +319,7 @@ void Session::HandleMessage(int peerSlot, uint32_t hConn, const void* data, int 
         if (static_cast<ReliableKind>(rh.kind) == ReliableKind::SaveTransferChunk) {
             if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + payloadLen) return;
             if (BulkSinkFn sink = bulkSink_.load(std::memory_order_acquire)) {
-                sink(peerSlot,
-                     static_cast<const uint8_t*>(data) + sizeof(PacketHeader) + sizeof(ReliableHeader),
+                sink(static_cast<const uint8_t*>(data) + sizeof(PacketHeader) + sizeof(ReliableHeader),
                      payloadLen);
             }
             return;
@@ -351,8 +396,7 @@ void Session::HandleMessage(int peerSlot, uint32_t hConn, const void* data, int 
         // Begin path (two paths for one message is what created the window).
         if (static_cast<ReliableKind>(rh.kind) == ReliableKind::SaveTransferBegin) {
             if (BulkSinkFn sink = saveBeginSink_.load(std::memory_order_acquire)) {
-                sink(peerSlot,
-                     static_cast<const uint8_t*>(data) + sizeof(PacketHeader) + sizeof(ReliableHeader),
+                sink(static_cast<const uint8_t*>(data) + sizeof(PacketHeader) + sizeof(ReliableHeader),
                      payloadLen);
             }
             return;
@@ -411,6 +455,44 @@ void Session::HandleMessage(int peerSlot, uint32_t hConn, const void* data, int 
     default:
         break;
     }
+}
+
+// The edge's answer to one packet. The kick tears the slot down here, on the net thread; the receive loop's connection
+// check then drops the rest of that connection's batch.
+bool Session::TakeBudget(int peerSlot, uint32_t hConn, MsgType type, const void* data, int len) {
+    switch (receiveBudget_.TakePacket(peerSlot, hConn, type, NowMs())) {
+    case ReceiveBudget::Take::Ok:
+        return true;
+    case ReceiveBudget::Take::StreamOver:
+        streamRateRefusals_.Note(static_cast<std::uint8_t>(peerSlot), "a stream sent faster than twice the send rate",
+                                 RefusalTally::Clock::now());
+        return false;
+    case ReceiveBudget::Take::Emptied: {
+        // The kind of the message that emptied it, for the log, when it is a reliable long enough to name one.
+        int kind = -1;
+        if (type == MsgType::Reliable && len >= static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader))) {
+            ReliableHeader rh;
+            std::memcpy(&rh, static_cast<const uint8_t*>(data) + sizeof(PacketHeader), sizeof(rh));
+            kind = rh.kind;
+        }
+        UE_LOGW("net: slot %d sent more than %.0f messages at once and %.0f a second, the last of type %u kind %d -- "
+                "ending its link [%s]", peerSlot, receiveBudget_.Budget().burst, receiveBudget_.Budget().perSecond,
+                static_cast<unsigned>(type), kind, Describe(EndReason::ReliableFlood).id);
+        RecordFlood(peerSlot, hConn);
+        Kick(peerSlot, EndReason::ReliableFlood, "this machine sent more than a player can");
+        return false;
+    }
+    case ReceiveBudget::Take::Spent:
+        return false;
+    }
+    return false;
+}
+
+void Session::RecordFlood(int slot, uint32_t hConn) {
+    const uint64_t nowMs = NowMs();
+    connect_history::Key key;
+    if (connect_history::KeyFromAddress(hConn, key)) connect_history::Floods().Ban(key, nowMs);
+    if (connect_history::KeyFromProvedGuid(ProvedGuidForSlot(slot), key)) connect_history::Floods().Ban(key, nowMs);
 }
 
 }  // namespace coop::net

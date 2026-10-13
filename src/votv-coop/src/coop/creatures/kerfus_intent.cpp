@@ -6,6 +6,7 @@
 #include "coop/element/element.h"
 #include "coop/element/intent_authority.h"
 #include "coop/element/registry.h"
+#include "coop/net/intent_bucket.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -46,8 +47,7 @@ constexpr float kKerfusReachUU = 400.0f;
 
 // The game counts pats only while they come within 0.25 s of each other, so the bucket lets a client
 // pat as fast as a player can; the bound is for a stalled client's backlog, not for a player.
-constexpr float    kBurst      = 10.0f;
-constexpr float    kPerSecond  = 10.0f;
+constexpr coop::net::IntentBudget kBudget{10.0f, 10.0f};
 constexpr size_t   kMaxPending = 16;
 constexpr uint64_t kSayEveryMs = 10000;
 
@@ -67,27 +67,15 @@ bool g_saidNoEid = false;
 bool g_waitSaid[coop::net::kMaxPeers] = {};
 
 struct Bucket {
-    float    tokens = kBurst;
-    uint64_t lastMs = 0;
-    uint64_t nextSayMs = 0;
+    coop::net::IntentBucket rate;
+    uint64_t                nextSayMs = 0;
 };
 Bucket g_rate[coop::net::kMaxPeers];
 std::deque<coop::net::KerfusIntentPayload> g_pending[coop::net::kMaxPeers];
 
 bool IsVerb(uint8_t a) { return a == kActionUse || a == kActionPat || a == kActionToggle; }
 
-bool TakeToken(uint8_t slot) {
-    Bucket& b = g_rate[slot];
-    const uint64_t now = coop::active_drive::NowMs();
-    if (b.lastMs != 0 && now > b.lastMs) {
-        b.tokens += kPerSecond * static_cast<float>(now - b.lastMs) / 1000.0f;
-        if (b.tokens > kBurst) b.tokens = kBurst;
-    }
-    b.lastMs = now;
-    if (b.tokens < 1.0f) return false;
-    b.tokens -= 1.0f;
-    return true;
-}
+bool TakeToken(uint8_t slot) { return g_rate[slot].rate.Take(kBudget, coop::active_drive::NowMs()); }
 
 // ---- the client's gate ---------------------------------------------------------------------------
 
@@ -255,7 +243,7 @@ void Tick(coop::net::Session& session) {
             g_pending[slot].pop_front();
             g_waitSaid[slot] = false;      // a consumed intent ends the wait's streak
         } else {
-            g_rate[slot].tokens += 1.0f;   // a wait runs nothing, so it spends no token
+            g_rate[slot].rate.Refund(kBudget);  // a wait runs nothing, so it spends no token
         }
     }
 }

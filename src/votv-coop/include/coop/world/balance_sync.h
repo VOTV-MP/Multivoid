@@ -44,9 +44,9 @@ void Tick();
 // path came to be designed around a second function that did the same thing.
 void SendCurrentToSlot(int slot);
 
-// RECEIVER (client): take the host's ABSOLUTE balance for saveSlot.Points. No-op on the host
-// (authoritative). The write itself is Tick's, on the game thread: this stashes the value, and Tick
-// retries the write until the saveSlot resolves.
+// RECEIVER (client): take the host's ABSOLUTE balance for saveSlot.Points; the host refuses a
+// client's copy at its receive edge. The write itself is Tick's, on the game thread: this stashes
+// the value, and Tick retries the write until the saveSlot resolves.
 void ApplyFromHost(int32_t total);
 
 // Apply a LOCAL credit (the +1000 dev button) on the host or solo, through AddPoints. On a

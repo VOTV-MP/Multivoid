@@ -43,7 +43,13 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp);
 // not tick on a puppet, so the look has to be reproduced rather than inherited.
 void TickMirrors();
 
-// event_feed router entry. Parses, forgery-guards, stores, host-rebroadcasts.
+// event_feed router entry. Parses (each string within the cap the sender writes to, with no control
+// character), forgery-guards, and on the host applies a changed state (kept and re-sent) at the lane's
+// pace, the newest kept past it (PayOwed); an unchanged state costs the parse and a compare. A hand
+// item's class is a prop's, outside the two prop families the coop layer never puts on the wire, names
+// compared without case: the host keeps and relays no class it resolves to anything else, and keeps a
+// hand item under the engine's spelling; TickMirrors builds no mirror of one, which also judges a class
+// the host could not resolve. Drops and refusals are logged at the first and each power of two per sender.
 bool HandleHandItem(coop::net::Session& session,
                     const coop::net::Session::ReliableMessage& msg);
 
@@ -88,6 +94,17 @@ bool LastHeldClassIs(uint8_t slot, const wchar_t* cls);
 // the key the player's updateHold looks the game's item tables up by, or empty when it holds
 // nothing. Game thread only.
 std::wstring HeldItem(uint8_t slot);
+
+// Host, each tick after the roster reconcile and before the drain (event_feed::Update): a client's newest hand state
+// that arrived past its budget is applied once the budget allows it. Game thread only.
+void PayOwed(coop::net::Session& session);
+
+// Whether `slot`'s hand holds anything, as the lane holds it. Game thread only.
+bool HoldsItem(uint8_t slot);
+
+// Host: the hand states applied for `slot`'s occupant (kept and re-sent); cleared with the occupant.
+// The hostile drill's keep_latest arm reads it. Game thread only.
+uint32_t StatesApplied(int slot);
 
 // Snapshot the current hand-axis actors (local hand + live remote mirrors)
 // into out[]; returns the count (<= 1 + kMaxPeers). For per-walk hoisting.

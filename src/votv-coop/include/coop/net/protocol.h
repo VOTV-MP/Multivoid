@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 223;
+inline constexpr uint16_t kProtocolVersion = 225;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -450,7 +450,8 @@ enum class ReliableKind : uint8_t {
     // ThrowIntentPayload.
     ThrowIntent = 79,
 
-    // Client to host: reserved for a drain-survive resync. The id is taken; no handler exists yet.
+    // Client to host: reserved for a drain-survive resync. The id is taken; no sender or handler exists
+    // yet, so the host refuses it at receipt until one is built (client_authorship.h).
     PileResyncRequest = 80,
 
     // Host to one joiner: a save-authoritative pile the host moved during your join window is here
@@ -2823,9 +2824,9 @@ inline constexpr uint8_t kToPile  = 1;  // clump -> pile-B (land): spawn a settl
 
 // A trash re-skin (PropConvert): both peers own the same entity bound to the shared host-minted
 // eid, and the morph re-skins it across pile, clump and pile; oldEid == newEid on every edge, so
-// the receiver re-points its single rendering instead of creating a second entity. The owner
-// emits it from the held-object channel; the host applies a client's convert against its own
-// element.
+// the receiver re-points its single rendering instead of creating a second entity. The host alone
+// emits it, from its trash channel; a client's copy is refused at the host's receive edge
+// (client_authorship.h).
 struct PropConvertPayload {
     uint32_t      oldEid;                 // == E (the bound pile/clump being re-skinned)
     uint32_t      newEid;                 // == E (SAME id on the bind model; identity is preserved)

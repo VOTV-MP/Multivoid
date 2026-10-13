@@ -20,6 +20,7 @@
 #include "coop/dev/freecam.h"
 #include "coop/dev/log_drill.h"  // [dev] the two-process log drill
 #include "coop/input/input_owner.h"
+#include "coop/props/prop_key_index.h"  // Install, posted at boot
 #include "coop/dev/object_overlay.h"
 #include "coop/dev/ragdoll_bone_overlay.h"
 #include "coop/save/join_window_baseline.h"
@@ -513,6 +514,10 @@ void Start() {
     // And the per-tick pump, for the same reason and in the same place: it is handed the session
     // rather than reaching back into the lifecycle driver that drives it.
     pump::SetSession(&session_runtime::Session());
+    // The prop key index's watches and object-index listener, on the first game-thread task, so whether they
+    // were taken is known before any session can start (coop::session_manager::SubstrateRefusal reads it);
+    // the frame tail drives their names on after.
+    GT::Post([] { coop::prop_key_index::Install(); });
     // A config change's subscribers run on the game thread.
     cfg::SetNotifier([](std::function<void()> task) { GT::Post(std::move(task)); });
     // The persisted nameplate pref (absent = visible), read by the Join's prefs byte.

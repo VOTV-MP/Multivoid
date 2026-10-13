@@ -37,6 +37,11 @@ bool EmptyFText(void* out);
 // these. Game thread.
 bool MintFText(const wchar_t* s, void* out);
 
+// Whether the text library is found in this process, resolving it as MintFText does. Until it is,
+// every MintFText fails whatever the string, so a caller that must tell "not yet" from "this string
+// failed" asks this first. Game thread.
+bool Resolved();
+
 // The inverse: read an engine FText's display string via
 // UKismetTextLibrary::Conv_TextToString. `ftext` points at 0x18 FText bytes (e.g. a
 // struct member on a live object). Empty on failure / unresolved. Game thread.

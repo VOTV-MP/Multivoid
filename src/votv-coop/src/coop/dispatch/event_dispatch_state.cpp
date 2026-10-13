@@ -51,17 +51,8 @@ bool HandleStateEvent(net::Session& session,
         // DoorState and LightGroupState are the host-authored kinds in this otherwise symmetric
         // family, so they do not get the family's any-peer-may-send treatment: a client that
         // authored one would drive the host's and every other client's doors or lights, the
-        // pollution host authority prevents. The channel's receive performs no role or sender check
-        // of its own, so the drop is here, at the family boundary; refused on a receiving client
-        // too, since the host relays neither kind, so a packet from a non-host slot is not ours
-        // either way.
-        if ((msg.kind == net::ReliableKind::DoorState || msg.kind == net::ReliableKind::LightGroupState) &&
-            msg.senderPeerSlot != 0) {
-            UE_LOGW("event_feed: %s from slot %d refused -- this kind is host-authored",
-                    msg.kind == net::ReliableKind::DoorState ? "DoorState" : "LightGroupState",
-                    msg.senderPeerSlot);
-            return true;  // claimed by this family, deliberately not applied
-        }
+        // pollution host authority prevents. The host's receive edge refuses a client's copy
+        // (client_authorship.h), and the host relays neither kind, so here they come from the host.
         // A peer toggled a keyed interactable (a light switch, a container lid, a garage, an
         // appliance, a locker) or repaired an oven, or the host moved a door or a light group. On a symmetric kind any
         // peer can send, and the host relays a client-originated edge to the other clients before
@@ -94,14 +85,6 @@ bool HandleStateEvent(net::Session& session,
         // HOST->CLIENTS: what a keypad did on the host's copy -- a verb every client replays, or the
         // state a chain settled on. Only the host authors it; a client's own entries go up as
         // KeypadIntent. coop::keypad_sync::OnReliable.
-        if (session.role() == net::Role::Host) {
-            UE_LOGW("event_feed: KeypadState received on the HOST -- dropping");
-            break;
-        }
-        if (msg.senderPeerSlot != 0) {
-            UE_LOGW("event_feed: KeypadState from slot %d, not the host -- dropping", msg.senderPeerSlot);
-            break;
-        }
         if (msg.payloadLen < sizeof(net::KeypadSyncPayload)) {
             UE_LOGW("event_feed: KeypadState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::KeypadSyncPayload));
@@ -194,11 +177,7 @@ bool HandleStateEvent(net::Session& session,
     case net::ReliableKind::AtvSpawn: {
         // The host-to-client runtime-ATV announce: the client fresh-spawns a native ATV it has no
         // save twin of (spawned at runtime from the props table; nothing sells an ATV).
-        // Host-authoritative, slot 0 only.
-        if (msg.senderPeerSlot != 0) {
-            UE_LOGW("event_feed: AtvSpawn from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
-            break;
-        }
+        // Host-authoritative; a client's copy is refused at the host's receive edge (client_authorship.h).
         if (msg.payloadLen < sizeof(net::AtvSpawnPayload)) {
             UE_LOGW("event_feed: AtvSpawn payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::AtvSpawnPayload));
@@ -206,15 +185,12 @@ bool HandleStateEvent(net::Session& session,
         }
         net::AtvSpawnPayload asp{};
         std::memcpy(&asp, msg.payload, sizeof(asp));
-        coop::atv_sync::OnAtvSpawn(asp, 0);
+        coop::atv_sync::OnAtvSpawn(asp);
         break;
     }
     case net::ReliableKind::AtvDestroy: {
-        // The host-to-client runtime-ATV teardown. Host-authoritative, slot 0 only.
-        if (msg.senderPeerSlot != 0) {
-            UE_LOGW("event_feed: AtvDestroy from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
-            break;
-        }
+        // The host-to-client runtime-ATV teardown. Host-authoritative; a client's copy is refused at the host's
+        // receive edge (client_authorship.h).
         if (msg.payloadLen < sizeof(net::AtvDestroyPayload)) {
             UE_LOGW("event_feed: AtvDestroy payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::AtvDestroyPayload));
@@ -222,17 +198,12 @@ bool HandleStateEvent(net::Session& session,
         }
         net::AtvDestroyPayload adp{};
         std::memcpy(&adp, msg.payload, sizeof(adp));
-        coop::atv_sync::OnAtvDestroy(adp, 0);
+        coop::atv_sync::OnAtvDestroy(adp);
         break;
     }
     case net::ReliableKind::DroneState: {
-        // The delivery drone body pose, a host-authoritative singleton: host to client only,
-        // trust-gated to slot 0. The client suppresses its own drone tick and mirrors the streamed
-        // transform.
-        if (msg.senderPeerSlot != 0) {
-            UE_LOGW("event_feed: DroneState from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
-            break;
-        }
+        // The delivery drone body pose, a host-authoritative singleton: host to client only, refused from a client
+        // at the host's receive edge. The client suppresses its own drone tick and mirrors the streamed transform.
         if (msg.payloadLen < sizeof(net::DroneStatePayload)) {
             UE_LOGW("event_feed: DroneState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::DroneStatePayload));
@@ -365,14 +336,9 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::TurbineState: {
-        // The wind-turbine driver floats. Host-authoritative at about 1 Hz, trust-gated to slot 0
-        // like the drone (a client never legitimately sends it, and it is not relayed). The finite
+        // The wind-turbine driver floats. Host-authoritative at about 1 Hz, refused from a client at the
+        // host's receive edge like the drone (a client never legitimately sends it, and it is not relayed). The finite
         // validation and the client-only apply live in the module.
-        if (msg.senderPeerSlot != 0) {
-            UE_LOGW("event_feed: TurbineState from non-host senderPeerSlot=%d -- dropping",
-                    msg.senderPeerSlot);
-            break;
-        }
         if (msg.payloadLen < sizeof(net::TurbineStatePayload)) {
             UE_LOGW("event_feed: TurbineState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::TurbineStatePayload));
@@ -429,14 +395,8 @@ bool HandleStateEvent(net::Session& session,
                     static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
             break;
         }
-        // The authority-boundary drop: a client append reaching the host is a protocol violation,
-        // dropped so one client-side regression cannot re-pollute the shared inbox; the kind is not
-        // relayed either.
-        if (session.role() == net::Role::Host && msg.senderPeerSlot != 0) {
-            UE_LOGW("event_feed: EmailAppend from client slot=%d on the HOST "
-                    "(emails are host-authored) -- dropping", msg.senderPeerSlot);
-            break;
-        }
+        // Emails are host-authored: a client's append is refused at the host's receive edge
+        // (client_authorship.h), and the kind is not relayed.
         net::BlobChunkPayload ep{};
         std::memcpy(&ep, msg.payload, sizeof(ep));
         const uint8_t eslot =
@@ -518,19 +478,13 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     // The client-to-host requests (the door open, the kerfur convert and command, the grab and
-    // throw intents, the pile resync, the prop drop) are in event_dispatch_intent.cpp.
+    // throw intents, the prop drop, and the pile resync kept for its planned sender) are in
+    // event_dispatch_intent.cpp.
     case net::ReliableKind::KerfurConvert: {
-        // The host-to-all kerfur form-transition broadcast, the sole conversion-transition signal.
-        // Client-only apply: the host converged its own conversion inline through the silent
-        // element ops, so it never applies its own broadcast. Host-authoritative: slot 0 only.
-        if (session.role() != net::Role::Client) {
-            break;
-        }
-        if (msg.senderPeerSlot != 0) {
-            UE_LOGW("event_feed: KerfurConvert from non-host senderPeerSlot=%d -- dropping",
-                    msg.senderPeerSlot);
-            break;
-        }
+        // The host-to-all kerfur form-transition broadcast, the sole conversion-transition signal. Client-only
+        // apply: the host converged its own conversion inline through the silent element ops, so it never applies
+        // its own broadcast. Host-authoritative: a client's copy is refused at the host's receive edge
+        // (client_authorship.h).
         if (msg.payloadLen < sizeof(net::KerfurConvertBroadcastPayload)) {
             UE_LOGW("event_feed: KerfurConvert payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::KerfurConvertBroadcastPayload));
@@ -542,15 +496,9 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::KerfusState: {
-        // The host's state for one Kerfus: on, charging, energy. Client-only apply (a client runs none
-        // of the Kerfus's brain); host-authoritative, slot 0 only. coop::kerfus_state.
-        if (session.role() != net::Role::Client) {
-            break;
-        }
-        if (msg.senderPeerSlot != 0) {
-            UE_LOGW("event_feed: KerfusState from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
-            break;
-        }
+        // The host's state for one Kerfus: on, charging, energy. Client-only apply (a client runs none of the
+        // Kerfus's brain); host-authoritative, a client's copy is refused at the host's receive edge
+        // (client_authorship.h). coop::kerfus_state.
         if (msg.payloadLen < sizeof(net::KerfusStatePayload)) {
             UE_LOGW("event_feed: KerfusState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::KerfusStatePayload));
@@ -566,18 +514,18 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::ServerSetting:
-        // The host's session value of one server-scope row; the module checks length, role, sender
-        // and row. coop::server_settings_sync.
-        coop::server_settings_sync::HandleServerSetting(session, msg);
+        // The host's session value of one server-scope row; the module checks length and row, and
+        // a client's copy is refused at the host's receive edge. coop::server_settings_sync.
+        coop::server_settings_sync::HandleServerSetting(msg);
         break;
     case net::ReliableKind::PermissionGrants:
-        // This machine's own local dev grants, from the host; the module checks length, sender,
-        // role and count. coop::session::grants_sync.
+        // This machine's own local dev grants, from the host; the module checks length and count,
+        // and a client's copy is refused at the host's receive edge. coop::session::grants_sync.
         coop::session::grants_sync::HandleGrants(session, msg);
         break;
     case net::ReliableKind::StatOrder:
-        // The host's order to this player's stats or effects; the module checks sender, role and
-        // bytes. coop::stat_orders.
+        // The host's order to this player's stats or effects; the module checks the bytes, and a
+        // client's copy is refused at the host's receive edge. coop::stat_orders.
         coop::stat_orders::HandleOrder(session, msg);
         break;
     case net::ReliableKind::StatOrderReply:

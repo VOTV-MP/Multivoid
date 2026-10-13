@@ -29,9 +29,13 @@ namespace coop::trash_mirror {
 // `rebindInPlace`) and mark it save-native. The turn a player sees on a pile is not `rot`: it is
 // the child mesh's random draw, which arrives as the pile's look and is applied at the bind
 // (coop/props/pile_look.h). Returns the actor, or nullptr on failure. Game thread.
+// `resolve` governs the class-name lookup: null = reflection::FindClass (a whole-array walk on a
+// miss); the host receiving a CLIENT's spawn/convert passes object_index::ClassByName so an
+// attacker's unknown class costs a lookup, not a walk. A client keeps the default.
 void* Materialize(coop::element::ElementId eid, const std::wstring& className, uint8_t chipType,
                   const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot,
-                  const ue_wrap::FVector& scale, int senderSlot, bool skipBind, bool rebindInPlace);
+                  const ue_wrap::FVector& scale, int senderSlot, bool skipBind, bool rebindInPlace,
+                  void* (*resolve)(const wchar_t*) = nullptr);
 
 // CLAIM an already-bound native pile as the LAND mirror: reposition and re-skin it to the host's
 // landed transform (loc + chipType + the host actor's rotation `rot` + scale). NO spawn, NO

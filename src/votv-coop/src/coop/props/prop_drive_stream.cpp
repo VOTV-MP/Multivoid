@@ -5,7 +5,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/props/active_drive.h"
-#include "coop/props/prop_element_tracker.h"  // FindLiveActorByKey: the index only, never the cold walk
+#include "coop/props/prop_key_index.h"  // Find: the index only, never the cold walk
 #include "coop/props/prop_park.h"             // Park / Unpark: the parked prop, and a Character welded on it
 #include "coop/props/prop_wire_parity.h"      // the join converge's own physics restore
 #include "coop/player/local_streams.h"
@@ -88,7 +88,7 @@ bool PhysicsStaysOff(void* actor) { return PR::IsFrozen(actor) || PR::IsStatic(a
 void* Resolve(uint32_t eid, const coop::net::WireKey& key) {
     if (void* a = coop::remote_prop::ResolveLiveActorByEid(eid)) return a;
     if (key.len == 0) return nullptr;
-    return coop::prop_element_tracker::FindLiveActorByKey(coop::remote_prop::KeyToWString(key));
+    return coop::prop_key_index::Find(coop::remote_prop::KeyToWString(key));
 }
 
 void GiveBackPhysics(Drive& dr, void* actor) {

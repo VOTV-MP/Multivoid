@@ -38,7 +38,7 @@ void SetClientRefs(const ClientRefs& refs);
 // joining client also loaded from the transferred save) is handed to npc_adoption for a
 // deferred class-match adoption of its local twin, whose save key is random per peer, so only
 // class plus untracked-local is portable. A retire tag arms the teardown of a stale off-prop
-// mirror. A no-op on the host.
+// mirror. From the host alone: the host's receive edge refuses a client's copy (client_authorship.h).
 void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload);
 
 // Fresh-spawn a host NPC mirror: a deferred spawn and finish of a new actor of `actorClass`,

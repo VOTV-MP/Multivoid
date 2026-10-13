@@ -43,15 +43,14 @@ coop::net::Session& S() { return harness::session_runtime::Session(); }
 
 // A join that reached this machine's own world load and could not finish it. Every exit from the
 // boot below either has the host's world or has come through here: the reason is stashed for the
-// modal, the cover comes down, the session stops so the pump is not left running the full gameplay
-// tick at the menu, and the browser reopens. The shape is the abort branch's, deliberately -- the
-// difference between a player cancelling and a world refusing to load is what the dialog says, not
-// what the harness does.
+// modal, the cover comes down, the client session ends -- EndClientSession stops it, tears its coop
+// state down and puts the player at the menu with the browser -- so the pump is not left running the
+// full gameplay tick. The shape is the abort branch's, deliberately -- the difference between a player
+// cancelling and a world refusing to load is what the dialog says, not what the harness does.
 void FailJoinNoWorld_(coop::net::EndReason code, const char* detail) {
     coop::join_progress::Fail(code, detail);  // stash the notice and win the abort
     coop::join_progress::Reset();             // cover down; this drains the abort flag too
-    if (S().running() && S().role() == coop::net::Role::Client) S().Stop();
-    ui::server_browser_surface::Open();
+    harness::session_runtime::EndClientSession("join could not load the host's world");
     ue_wrap::log::Flush();
 }
 
@@ -197,10 +196,10 @@ void DriveMenuModeJoinWorldBoot() {
     if (aborted) {
         UE_LOGI("harness: menu-mode join aborted during the save transfer");
         // The cover first: a tick posted before this drain must not find the join active over
-        // a session the stop below has already driven to Disconnected, and fail it.
+        // a session the stop below has already driven to Disconnected, and fail it. The player is
+        // still at the menu here, so the end opens the browser at once.
         coop::join_progress::Reset();
-        if (S().running() && S().role() == coop::net::Role::Client) S().Stop();
-        ui::server_browser_surface::Open();
+        harness::session_runtime::EndClientSession("menu-mode join aborted during the save transfer");
         ue_wrap::log::Flush();
         return;
     }

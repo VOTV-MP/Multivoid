@@ -71,15 +71,14 @@ void ReadGroups(const void* save, int32_t off, int32_t elemSize, std::vector<V>&
     }
 }
 
-void WriteClassField(void* dst, const std::wstring& leaf) {
-    void* cls = leaf.empty() ? nullptr : R::FindClass(leaf.c_str());
-    // A class travels as its leaf name, which resolves only while the class is loaded. A miss
-    // writes null, and a record with a null class is an item the game cannot materialise, so it
-    // is said out loud rather than lost in silence.
-    if (!cls && !leaf.empty())
-        UE_LOGE("save_record: class '%ls' is not loaded -- the record is written WITHOUT its class",
-                leaf.c_str());
+// Resolve `leaf` through `resolve` (null = FindClass) and write the UClass (or null) at `dst`.
+// Returns false ONLY when a non-empty name did not resolve, so WriteSaveRecord can count the misses
+// and say them once per record rather than once per leaf: a crafted record's `classes` group is
+// thousands of unknown names, and a line each turned the write into its own flood.
+bool WriteClassField(void* dst, const std::wstring& leaf, ClassResolver resolve) {
+    void* cls = leaf.empty() ? nullptr : (resolve ? resolve(leaf.c_str()) : R::FindClass(leaf.c_str()));
     std::memcpy(dst, &cls, sizeof(void*));
+    return cls || leaf.empty();
 }
 
 // Build the outer TArray<Fstruct_mX> for a value group (vector<vector<X>>): each Fstruct_mX
@@ -179,8 +178,11 @@ void ReadSaveRecord(const void* base, SaveRecord& rec) {
     }
 }
 
-void WriteSaveRecord(uint8_t* base, const SaveRecord& r) {
-    WriteClassField(base + kSave_class, r.className);
+void WriteSaveRecord(uint8_t* base, const SaveRecord& r, ClassResolver resolve) {
+    int classMiss = 0;          // non-empty class leaves that did not resolve, said once below
+    std::wstring firstMiss;     // the first one's name, so an honest single miss is still debuggable
+    auto noteMiss = [&](const std::wstring& leaf) { if (firstMiss.empty()) firstMiss = leaf; ++classMiss; };
+    if (!WriteClassField(base + kSave_class, r.className, resolve)) noteMiss(r.className);
     ue_wrap::FTransform t;  // identity defaults; we set all 10 packed floats
     t.RotX = r.xform[0]; t.RotY = r.xform[1]; t.RotZ = r.xform[2]; t.RotW = r.xform[3];
     t.TX = r.xform[4]; t.TY = r.xform[5]; t.TZ = r.xform[6];
@@ -196,7 +198,16 @@ void WriteSaveRecord(uint8_t* base, const SaveRecord& r) {
     WriteGroups(base, kSave_strings, 16, r.strings,
                 [](uint8_t* e, const std::wstring& v) { ue_wrap::fstring_utils::MintFString(v, e); });
     WriteGroups(base, kSave_classes, 8, r.classes,
-                [](uint8_t* e, const std::wstring& v) { WriteClassField(e, v); });
+                [&](uint8_t* e, const std::wstring& v) { if (!WriteClassField(e, v, resolve)) noteMiss(v); });
+    // One line per record, not per leaf. A record with a null class is an item the game cannot
+    // materialise, said out loud rather than lost -- but a crafted `classes` group is thousands of
+    // unknown names, and the old per-leaf line was its own flood on exactly that input. The first
+    // missing name is kept so an honest single miss can still be chased.
+    if (classMiss > 0)
+        // %.64ls, never %ls: the name is attacker-chosen and the wire admits up to 262144 chars, so
+        // an unbounded print would be a 256 KB log line per crafted record.
+        UE_LOGE("save_record: %d class name(s) in this record are not loaded (first: '%.64ls') -- "
+                "written WITHOUT their class", classMiss, firstMiss.c_str());
     WriteGroups(base, kSave_vectors, 12, r.vectors,
                 [](uint8_t* e, const std::array<float, 3>& v) { std::memcpy(e, v.data(), 12); });
     WriteGroups(base, kSave_rotators, 12, r.rotators,
@@ -402,7 +413,7 @@ bool CaptureRecord(void* actor, SaveRecord& out) {
     return CallForRecord(actor, v->getData, out);
 }
 
-bool ApplyRecord(void* actor, const SaveRecord& r) {
+bool ApplyRecord(void* actor, const SaveRecord& r, ClassResolver resolve) {
     if (!actor || !EnsurePropClass() || !g_baseGetData) return false;
     const ClassVerbs* v = VerbsFor(R::ClassOf(actor));
     // `overrides` and not merely "a loadData exists somewhere": this function dispatches
@@ -444,7 +455,7 @@ bool ApplyRecord(void* actor, const SaveRecord& r) {
     const int32_t off = f.ParamOffset(L"data");
     if (!f.valid() || off < 0 || off + kSaveRecordBytes > f.FrameSize()) return false;
     // The frame arrives zeroed, which is WriteSaveRecord's stated precondition.
-    WriteSaveRecord(static_cast<uint8_t*>(f.data()) + off, merged);
+    WriteSaveRecord(static_cast<uint8_t*>(f.data()) + off, merged, resolve);
     return Call(actor, f);
 }
 
@@ -453,7 +464,7 @@ bool CaptureRecordVia(void* actor, void* recordFn, SaveRecord& out) {
     return CallForRecord(actor, recordFn, out);
 }
 
-bool ApplyRecordVia(void* actor, void* loadFn, const SaveRecord& r) {
+bool ApplyRecordVia(void* actor, void* loadFn, const SaveRecord& r, ClassResolver resolve) {
     if (!actor || !loadFn) return false;
     ParamFrame f(loadFn);
     const int32_t off = f.ParamOffset(L"data");
@@ -461,7 +472,7 @@ bool ApplyRecordVia(void* actor, void* loadFn, const SaveRecord& r) {
     // The slot must be zeroed before WriteSaveRecord: it constructs engine-owned TArrays in place
     // and reads nothing, so a dirty slot would leave the engine dereferencing whatever was there.
     std::memset(static_cast<uint8_t*>(f.data()) + off, 0, static_cast<size_t>(kSaveRecordBytes));
-    WriteSaveRecord(static_cast<uint8_t*>(f.data()) + off, r);
+    WriteSaveRecord(static_cast<uint8_t*>(f.data()) + off, r, resolve);
     return Call(actor, f);
 }
 

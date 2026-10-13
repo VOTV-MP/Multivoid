@@ -88,6 +88,29 @@ struct Observer {
 };
 void SetObserver(const Observer& o);
 
+// Every birth and death of a listed object, at the drain that applies it, for a consumer that keeps its own
+// index of a few classes as current as this one: after the observer's callbacks for a birth, before the
+// unlink for a death, which carries the class the slot was listed under (a tenant replaced before its own
+// death drained is reported dead too). Seeded objects are not reported, so a listener enumerates what it
+// needs with ForEachInstance when it starts. A death's object may already be freed: compare its pointer,
+// never read through it. A callback must not create or destroy objects. At most four, a second add of the
+// same callbacks a no-op; false when full. Game thread. Source keeps entity listeners the same way
+// (reference/source-sdk-2013/src/game/server/entitylist.h:343, IEntityListener).
+struct Listener {
+    void* ctx;
+    void (*OnCreated)(void* ctx, void* obj, void* cls, int32_t index);
+    void (*OnDeleted)(void* ctx, void* obj, void* cls, int32_t index);
+};
+bool AddListener(const Listener& l);
+
+// Apply every event the engine has announced, past the per-drain budget: after it the index holds every birth
+// and death up to this call, so a reader whose "not there" must be true at this instant asks for it. It lands
+// a level load's backlog on one task, which the budget exists to spread, so it answers a miss, never a tick.
+// Returns the events applied, or SIZE_MAX when it could not run: off the game thread, before Install, or
+// inside a drain (an observer's or a listener's callback). Its calls, events and slowest call are in the
+// 60 s summary.
+size_t DrainAll();
+
 // The parity instrument: the live array against the index, inside one game-thread call. Live
 // objects the index lacks are re-checked after a second drain, so a birth in flight during the
 // walk does not count; entries the array no longer confirms count as they are.

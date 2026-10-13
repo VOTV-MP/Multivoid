@@ -462,12 +462,15 @@ void DoHost() {
         g_connMode == 1 ? coop::session::Reachability::Direct
                         : coop::session::Reachability::Brokered,
         !hideFromBrowser};
+    coop::net::Refusal refused;
     const bool accepted = sm::HostWithSave(g_choice, serverName, IsLocked(), pw, /*playersMax=*/4,
-                                           g_shownMasterUrl, mode);
+                                           g_shownMasterUrl, mode, &refused);
     // The password is never logged: a log line is the easiest place for it to end up in a
     // screenshot.
     UE_LOGI("host_session_settings: HOST %s -- world=%s conn=%d listed=%d locked=%d name='%s'",
-            accepted ? "accepted" : "REFUSED (another action in flight)",
+            accepted ? "accepted"
+                     : refused.code != coop::net::EndReason::None ? "REFUSED (this build starts no session)"
+                                                                  : "REFUSED (another action in flight)",
             g_choice.newGame ? "<new game>" : g_choice.slot.c_str(), g_connMode,
             // !hideFromBrowser is the listing: AUTOMATIC never hides, DIRECT hides only by this
             // flag.
@@ -476,7 +479,15 @@ void DoHost() {
     if (!accepted) {
         // The window stays open on a refusal: a screen that closes on failure loses the reason with
         // it.
-        SetStatus(L"Busy -- another host or join is already starting.", kBad);
+        if (refused.code != coop::net::EndReason::None) {
+            const auto& info = coop::net::Describe(refused.code);
+            SetStatus(Widen(std::string("Host failed [") + info.id + "]: " + info.text), kBad);
+            // The same line is on the host status the poll below repaints from; taken as seen, so the
+            // poll does not paint it again in the plain colour a frame later.
+            g_lastHostStatus = sm::HostStatus();
+        } else {
+            SetStatus(L"Busy -- another host or join is already starting.", kBad);
+        }
         return;
     }
     SetStatus(L"Starting...", kText);

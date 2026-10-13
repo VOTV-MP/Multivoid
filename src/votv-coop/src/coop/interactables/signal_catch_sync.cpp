@@ -194,21 +194,6 @@ constexpr uint8_t kNoAuthor = 0xFE;
 uint8_t  g_catchAuthor = 0xFF;
 Identity g_authorId{};
 
-// HOST: catches a client sent, which only the host authors, dropped unanswered and said at most every kSayDropsMs.
-constexpr auto kSayDrops = std::chrono::seconds(10);
-uint64_t g_droppedFromClients = 0;
-Clock::time_point g_nextSayDrops{};
-
-void SayDropped(uint8_t senderSlot, uint8_t kind) {
-    ++g_droppedFromClients;
-    const auto now = Clock::now();
-    if (now < g_nextSayDrops) return;
-    g_nextSayDrops = now + kSayDrops;
-    UE_LOGW("signal_catch: kind=%u arrived AT the host from slot %u -- the host's to author, dropped (%llu so far)",
-            static_cast<unsigned>(kind), static_cast<unsigned>(senderSlot),
-            static_cast<unsigned long long>(g_droppedFromClients));
-}
-
 // HOST: a catch made for `author` goes to every ready client, the author's own included, stamped as the author's.
 void SendAs(coop::net::Session* s, const coop::net::SkySignalCatchPayload& p, uint8_t author) {
     for (int slot = 1; slot < static_cast<int>(coop::net::kMaxPeers); ++slot) {
@@ -360,14 +345,8 @@ void OnReliable(const coop::net::SkySignalCatchPayload& p, uint8_t senderSlot) {
     if (!CD::EnsureResolved() || !CD::Instance()) return;
 
     const Identity id{ p.row.x, p.row.y, p.row.z, p.row.frequency };
-    if (s->role() == coop::net::Role::Host) {
-        // Both kinds are the host's to author: kind 2 is its connect seed or a catch whose pinger left, and a
-        // client rolls no verdict (desk_ping_sync), so it never catches. A reset rides download_arm_sync.
-        SayDropped(senderSlot, p.kind);
-        return;
-    }
-    // A client is transport-trusted (we only receive from the host; the sender slot carries the
-    // logical catcher via the relay stamp).
+    // From the host alone: the host's receive edge refuses a client's copy (client_authorship.h). The sender slot
+    // carries the catcher, the host stamping a catch its desk rolled for a client as that client's.
     RegisterRecent(id);
     ApplyReplay(p);
     // kind 2, a connect seed or a catch whose pinger left, is announced by nobody: no feed line.
