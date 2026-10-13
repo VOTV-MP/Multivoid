@@ -69,6 +69,11 @@ private:
     uint8_t          kerfState_      = 0;     // streamed kerfur command (enum_kerfurCommand) -- snapped, drives the
     bool             kerfSpooky_     = false; //   AnimBP state machine on the parked mirror; spooky = the kill/spooky flag
     bool             hasKerfState_   = false; //   valid iff the host sent it (kerfur-family only)
+    bool             hasGeomOctaState_ = false;
+    uint8_t          geomOctaFlags_ = 0;
+    uint8_t          geomOctaMeshPitch_ = 128, geomOctaMeshRoll_ = 128;
+    float            geomOctaACh_ = 0.f, geomOctaSpawnAlpha_ = 0.f;
+    float            geomOctaMontagePosition_ = 0.f, geomOctaMeshYaw_ = 0.f;
     bool             hasPose_        = false;  // first packet snaps
     bool             dirty_          = true;   // unapplied change to push to the engine
     bool             isWispMirror_   = false;  // wisp_C mirror: replay the landing edge (fade-in)
@@ -85,6 +90,11 @@ private:
         float            yaw = 0.f, speed = 0.f, bodyYaw = 0.f;
         uint8_t          stateBits = 0, kerfState = 0;
         bool             hasLookAt = false, hasBodyYaw = false, hasKerfState = false, spooky = false;
+        bool             hasGeomOctaState = false;
+        uint8_t          geomOctaFlags = 0;
+        uint8_t          geomOctaMeshPitch = 128, geomOctaMeshRoll = 128;
+        float            geomOctaACh = 0.f, geomOctaSpawnAlpha = 0.f;
+        float            geomOctaMontagePosition = 0.f, geomOctaMeshYaw = 0.f;
     } applied_;
     bool SameAsApplied(void* actor) const;
     void RememberApplied(void* actor);

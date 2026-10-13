@@ -1161,14 +1161,13 @@ struct EntityPoseSnapshot {
     float    x, y, z;     // 12 -- world cm (actor location = ACharacter capsule centre = pivot)
     float    yaw;         // 4  -- actor yaw deg (NormalizeAxis'd)
     float    speed;       // 4  -- horizontal velocity magnitude cm/s (drives the locomotion blend)
-    float    lookAtX, lookAtY, lookAtZ;  // 12 -- the kerfur's head look target in world space, valid iff
-                                         // stateBits has kEntityPoseBitHasLookAt. Only kerfur-family
-                                         // NPCs carry it; the rest leave it zero with the bit clear.
-    float    bodyYaw;     // 4  -- the kerfur's visible body yaw, decoupled from the actor root; valid iff kEntityPoseBitHasBodyYaw
+    float    lookAtX, lookAtY, lookAtZ;  // 12 -- kerfur look target iff HasLookAt; Geom Octa carries
+                                         // aCh, spwnAlpha and montage position iff HasGeomOcta.
+    float    bodyYaw;     // 4  -- kerfur visible-body yaw iff HasBodyYaw; Geom Octa mesh world yaw iff HasGeomOcta
     uint8_t  stateBits;   // 1  -- bit0=inAir, bit1=hasLookAt, bit2=hasBodyYaw, bit3=hasKerfurState, bit4=kerfurSpooky
-    uint8_t  kerfState;   // 1  -- the kerfur's command state; valid iff bit 3. Drives the parked mirror's state machine.
-    uint8_t  kerfFace;    // 1  -- the kerfur's face material index; valid iff bit 3.
-    uint8_t  _pad;        // 1  -- 4-byte alignment
+    uint8_t  kerfState;   // 1  -- kerfur command state iff bit 3; Geom Octa animation flags iff bit 5.
+    uint8_t  kerfFace;    // 1  -- kerfur face index iff bit 3; Geom Octa mesh pitch (0..255) iff bit 5.
+    uint8_t  _pad;        // 1  -- 4-byte alignment; Geom Octa mesh roll (0..255) iff bit 5.
 };
 static_assert(sizeof(EntityPoseSnapshot) == 44, "EntityPoseSnapshot must be 44 bytes");
 
@@ -1177,6 +1176,12 @@ inline constexpr uint8_t kEntityPoseBitHasLookAt = 0x02;  // lookAt{X,Y,Z} carri
 inline constexpr uint8_t kEntityPoseBitHasBodyYaw = 0x04;  // bodyYaw carries a valid visible-body world yaw
 inline constexpr uint8_t kEntityPoseBitHasKerfurState = 0x08;  // kerfState + kerfFace carry valid kerfur command/face
 inline constexpr uint8_t kEntityPoseBitKerfurSpooky   = 0x10;  // the kerfur is in its spooky/kill state
+inline constexpr uint8_t kEntityPoseBitGeomOcta       = 0x20;  // Octa fields alias lookAt/bodyYaw + kerfState/face/pad
+inline constexpr uint8_t kEntityPoseGeomOctaIsAnim    = 0x01;  // montage/attack animation state
+inline constexpr uint8_t kEntityPoseGeomOctaIsCharge  = 0x02;  // charging phase
+inline constexpr uint8_t kEntityPoseGeomOctaDespawn   = 0x04;  // despawn sequence is active
+inline constexpr uint8_t kEntityPoseGeomOctaMontage   = 0x08;  // known Octa montage is playing
+inline constexpr uint8_t kEntityPoseGeomOctaBeamLoop  = 0x10;  // octBeamLoop audio component is playing
 
 // The header of a pose batch datagram; N entries follow.
 struct EntityPoseBatchHeader {
