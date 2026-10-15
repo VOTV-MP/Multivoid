@@ -75,6 +75,18 @@ void Send(coop::net::Session* s, int slot, uint8_t op, uint32_t seq, uint8_t rea
     s->SendReliableToSlot(slot, coop::net::ReliableKind::DeskPingVerdict, &p, static_cast<int>(sizeof(p)));
 }
 
+void BroadcastProgress(coop::net::Session* s, const coop::net::DeskPingVerdictPayload& p, int excludeSlot = -1) {
+    if (!s) return;
+    if (s->role() == Role::Client) {
+        s->SendReliableToSlot(0, coop::net::ReliableKind::DeskPingVerdict, &p, static_cast<int>(sizeof(p)));
+    } else if (s->role() == Role::Host) {
+        for (int slot = 1; slot < static_cast<int>(coop::net::kMaxPeers); ++slot) {
+            if (slot == excludeSlot) continue;
+            s->SendReliableToSlot(slot, coop::net::ReliableKind::DeskPingVerdict, &p, static_cast<int>(sizeof(p)));
+        }
+    }
+}
+
 // The watches, by what each serves (Register): the verdict's is the gate itself and the host's roll, the coordinate
 // process's the host's priming and the scope of a client's hold.
 enum Watch { kWatchVerdict, kWatchProcess, kWatchLogLine, kWatchSound, kWatchInsta, kWatchCount };
@@ -422,10 +434,13 @@ void Install(coop::net::Session* session) { g_session.store(session, std::memory
 
 void Tick() {
     Register();
-    auto* s = SessionAs(Role::Client);
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->running() || !s->connected()) return;
+
     void* desk = CD::Instance();
     bool pinging = false;
-    const bool reading = s && desk && DP::ReadPinging(desk, pinging);
+    // When mirroring someone else's ping, do not treat the desk state as a locally-initiated ping.
+    const bool reading = desk && !g_mirrorActive && DP::ReadPinging(desk, pinging);
     const uint64_t now = NowMs();
     if (reading && pinging) {
         if (!g_publishingProgress) {
@@ -444,20 +459,16 @@ void Tick() {
                 p.progressOuter = state.outer;
                 p.progressInner = state.inner;
                 p.progressPing = state.ping;
-                s->SendReliableToSlot(0, coop::net::ReliableKind::DeskPingVerdict, &p,
-                                      static_cast<int>(sizeof(p)));
+                BroadcastProgress(s, p);
                 g_nextProgressMs = now + kProgressIntervalMs;
             }
         }
     } else if (g_publishingProgress) {
         // A reliable terminal edge prevents the last progress bar from remaining frozen on observers.
-        if (s) {
-            coop::net::DeskPingVerdictPayload p{};
-            p.op = PV::kOpProgress;
-            p.seq = g_progressSeq;
-            s->SendReliableToSlot(0, coop::net::ReliableKind::DeskPingVerdict, &p,
-                                  static_cast<int>(sizeof(p)));
-        }
+        coop::net::DeskPingVerdictPayload p{};
+        p.op = PV::kOpProgress;
+        p.seq = g_progressSeq;
+        BroadcastProgress(s, p);
         g_publishingProgress = false;
         g_nextProgressMs = 0;
     }
@@ -480,6 +491,13 @@ void OnMessage(coop::net::Session& session, const coop::net::DeskPingVerdictPayl
                 g_mirrorActive = active;
                 if (active) g_mirrorProgress = {p.progressStage, p.progressOuter, p.progressInner, p.progressPing};
                 else DP::WriteProgress(CD::Instance(), DP::Progress{});
+
+                // Relay the visual scan progress to all other clients.
+                for (int otherSlot = 1; otherSlot < static_cast<int>(coop::net::kMaxPeers); ++otherSlot) {
+                    if (otherSlot == senderSlot) continue;
+                    session.SendReliableToSlot(otherSlot, coop::net::ReliableKind::DeskPingVerdict, &p,
+                                               static_cast<int>(sizeof(p)));
+                }
             }
         } else if ((p.op == PV::kOpIntent || p.op == PV::kOpInsta) && senderSlot > 0 &&
                    senderSlot < static_cast<int>(coop::net::kMaxPeers)) {
@@ -487,7 +505,8 @@ void OnMessage(coop::net::Session& session, const coop::net::DeskPingVerdictPayl
         }
         return;
     }
-    if (p.op == PV::kOpProgress && senderSlot > 0 && senderSlot < static_cast<int>(coop::net::kMaxPeers)) {
+    // Clients accept progress updates from the host (slot 0) or relayed from other peers.
+    if (p.op == PV::kOpProgress && senderSlot >= 0 && senderSlot < static_cast<int>(coop::net::kMaxPeers)) {
         const bool active = p.reason == 1;
         if (active && (p.progressStage < 0 || p.progressStage > 3 || !std::isfinite(p.progressOuter) ||
             !std::isfinite(p.progressInner) || !std::isfinite(p.progressPing))) return;

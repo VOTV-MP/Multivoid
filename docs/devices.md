@@ -253,9 +253,9 @@ judged within reach of the part it acts on, in the player's order, at a few a se
 
 The delivery drone is one host-simulated actor: its flight is a fragile per-tick integrator not
 worth reproducing, so the host streams its transform while it moves (it glides on after its active
-flag drops) and its state the moment it changes, the client suppresses
-the drone's own tick and drives the streamed transform through an interpolation window, and the
-cargo it drops rides the ordinary prop lanes (`coop/interactables/drone_sync`). The drone's sale
+flag drops) and streams its state at change edges, including the five-minute or indefinite leave
+mode. The client suppresses its own drone tick and drives the streamed transform through an
+interpolation window; dropped cargo rides the ordinary prop lanes (`coop/interactables/drone_sync`). The drone's sale
 runs on the host only, which is what makes selling into it the one economy path that credits the
 group correctly.
 
@@ -270,7 +270,9 @@ stands at, re-tests its own copy of the lid, then runs the same verb, so the fli
 machine that owns it and arrives on the stream that already carries it
 (`coop/interactables/drone_call_intent`). A press that reaches the host before it holds the sender's
 body, from a joiner who presses at once, waits for the body rather than being refused, as the
-door-verb, keypad and container lanes wait. The leave-timer face has no lane and stays local.
+door-verb, keypad and container lanes wait. A client toggles the leave-time face through the same
+intent lane; the host applies the toggle to its current setting and the next state update carries it
+back (`coop/interactables/drone_sync`, `coop/interactables/drone_call_intent`).
 
 ### The balance
 
@@ -475,7 +477,7 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | the coordinate towers | the host | a row per tower whenever one changes; a client's presses are intents the host runs, its fuse pulls and inserts claims the host takes or refuses |
 | the turbine | the host | six floats a second |
 | a window, the grime | any peer, minimum wins | monotone decreases |
-| the drone | the host | a transform stream; the client's tick suppressed |
+| the drone | the host | a transform stream and canonical flight/leave flags; the client's tick suppressed |
 | the balance | the host | one-way, absolute, on change |
 | the upgrade levels | the host | the struct whole, on change; a purchase is an intent |
 | an order | the client names the row; the host performs and prices | an intent |
@@ -495,8 +497,8 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | `PowerGridState` | the host to all; a client to the host | every generator's row and each slot's last op taken; a repair, a service, an upgrade install or a hit |
 | `CoordTowerState` | the host to all; a client to the host | every tower's row (broken, fuses, puzzle, panel, lever), each slot's last op taken and last claim refused; a press of a puzzle button, the lever or the retract, a fuse pulled or inserted |
 | `TurbineState`, `WindowCleanState`, `GrimeState` | each peer or the host | the driver floats; a decrease |
-| `DroneState` | the host to all | the drone's transform and flags |
-| `DroneFlyIntent` | a client to the host | the face pressed, the keyboard; the host finds the console by the sender's reach |
+| `DroneState` | the host to all | the drone's transform, flight flags and leave mode |
+| `DroneFlyIntent` | a client to the host | keyboard call/send or leave-mode toggle; the host finds the console by the sender's reach |
 | `BalanceSync` | the host to all | the absolute balance |
 | `UpgradeLevels` | the host to all | the eighteen levels, whole |
 | `UpgradeIntent` | a client to the host | the panel row's index and whether it is a buy or a sell |

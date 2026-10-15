@@ -246,6 +246,7 @@ std::wstring ClassifyWidgetClaimKey(void* widget) {
     if (!widget || !R::IsLive(widget)) return {};
     void* cls = R::ClassOf(widget);
     if (!cls) return {};
+    // These editors claim their backing prop, not a shared widget class, so two props stay independent.
     if (R::ToString(R::NameOf(cls)) == L"ui_notebook_C") {
         const int32_t off = R::FindPropertyOffset(cls, L"clipboard");
         if (off < 0) return {};

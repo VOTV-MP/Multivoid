@@ -68,6 +68,7 @@ bool Get32(const std::vector<uint8_t>& b, size_t& p, uint32_t& v) {
         (uint32_t(b[p + 3]) << 24); p += 4; return true;
 }
 
+// The blob is a prop key followed by a UTF-16LE page count and length-prefixed UTF-16LE pages.
 bool Encode(const std::wstring& key, const std::vector<std::wstring>& pages, std::vector<uint8_t>& out) {
     if (key.empty() || key.size() > 128 || pages.size() > 256) return false;
     out.clear(); Put16(out, static_cast<uint16_t>(key.size()));
@@ -148,6 +149,8 @@ void OnNotebookGraphPost(const sg::Call& c) {
     auto pages = ue_wrap::field_io::ReadFStringArrayField(prop, g_propTextOff);
     const int32_t page = *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(prop) + g_propPageOff);
     if (page < 0 || static_cast<size_t>(page) >= pages.size()) return;
+    // The widget text is newer than clipboard.Text until quit(), so fold the open page into the
+    // backing array before publishing the full canonical snapshot.
     pages[static_cast<size_t>(page)] = currentPage;
     if (g_propTextOff < 0) g_propTextOff = R::FindPropertyOffset(R::ClassOf(prop), L"Text");
     if (g_propTextOff < 0 || !ue_wrap::field_io::WriteFStringArrayField(prop, g_propTextOff, pages)) return;
