@@ -69,9 +69,11 @@ rolls both random terms and streams the output vector (decoded, the needle, the 
 frequency and polarity data and offsets, the cooldown) unreliable, about ten times a second, and
 the client interpolates it and overwrites its own accrual, whose garbage the overwrite hides. The
 triangulation ping is a latent state machine gated on a flag; it runs on one machine, the
-presser's, and receivers treat the flag as bookkeeping and never write it, because writing it
-woke a phantom parallel machine on every observer. A desk hold covers the pinger's run so nobody
-else can claim the desk mid-ping. The run is the pinger's presentation, and its verdict is the
+presser's. Receivers keep the flag clear (setting it woke a phantom parallel machine), while the
+presser streams the stage and three accumulator values at 10 Hz. The host validates the desk
+holder and ping owner, then relays these visual-only values; mirrors reapply them after their idle
+local process tick. A desk hold covers the pinger's run so nobody else can claim the desk mid-ping.
+The run is the pinger's presentation, and its verdict is the
 host's (`coop/interactables/desk_ping_sync`): at stage 3 a client's gate refuses the verdict and
 sends its view and triangle, the host checks the claim, the running ping and the triangle and
 primes its own machine, whose next coordinate process rolls the verdict, and the outcome reaches
@@ -198,7 +200,7 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 | a screen's occupancy | the host arbitrates | first claim wins; a client claims optimistically |
 | desk input scalars | the last presser | polled deltas, relayed except to the originator |
 | the download simulation, the needle, the rate | the host | a streamed output vector; the client overwrites its own |
-| the ping | the presser's machine; its verdict the host | the verdict as an intent; observers keep the flag as bookkeeping |
+| the ping | the presser's machine; its verdict the host | 10 Hz visual progress snapshots relayed by the host; observers keep the run flag clear |
 | the cursor | whoever moves it | a sixty-hertz stream |
 | the desk's sounds | the presser | effect events at the audio seam |
 | the sky-signal set, the catch, the dishes | the host | roller, the host's event, parked client sim |
@@ -223,7 +225,7 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 | `DeskSimPose` (stream), `DeskCursorPose` (stream) | the host to all; the mover to all | the simulation outputs; the cursor |
 | `DeskSndFx` | the presser, relayed | an audio effect event |
 | `SkySignalState`, `SkySignalCatch`, `DishAimState` | the host; the host; the occupant | the signal set; a catch; committed coordinates |
-| `DeskPingVerdict` | a client to the host; the host to that client | a ping's or a cheat insta-catch's verdict to roll, the view and triangle it rolls from; its refusal, or the pinger's find |
+| `DeskPingVerdict` | the pinger to the host and the host to observers; host to pinger for verdict | visual progress snapshots; a ping's or cheat insta-catch's verdict and aim; a refusal or the pinger's find |
 | `DishArm`, `DishSnapshot`, `DishCalib`, `DishPose` (stream) | the host; the host to a joiner; the host, to all, to an intent's author and to a joiner; the host | the download's arm and reset, with the host's decoded and polarity; every dish's pose for a joiner; the changed dishes' precision, the live dishes an intent named (to all once the host performed any of it, to its author alone when it performed none), and every dish's for a joiner; dish poses |
 | `DishCalibIntent` | a client to the host | the dishes whose precision the client's player just set with the toolgun's calibration tool or the uncalibrator |
 | `SavedSignalAppend`, `SavedSignalDelete`, `MeadowAppend`, `MeadowDelete`, `MeadowOrder` | any peer, relayed; order from the host | list rows by content hash; the database's order |

@@ -307,6 +307,8 @@ inline constexpr RefFn kRefFns[] = {
     {L"ui_laptop_c", L"sortsignal", L"ui_laptop_c.sortsignal", 0xfca6e6749b3d1afeull, 0x68e3524b07922267ull},
     {L"ui_menu_c", L"tick", L"ui_menu_c.tick", 0xc5b14e95b814ffecull, 0xb8af03a343ee127full},
     {L"ui_signalname_c", L"executeubergraph_ui_signalname", L"ui_signalname_c.executeubergraph_ui_signalname", 0xd3c93c9d2749b427ull, 0xd56f30313cc94b71ull},
+    {L"ui_notebook_c", L"executeubergraph_ui_notebook", L"ui_notebook_c.executeubergraph_ui_notebook", 0xd3c93c9d2749b427ull, 0xc2172d8a2211fb72ull},
+    {L"ui_notebook_c", L"quit", L"ui_notebook_c.quit", 0x6a2d5d90ab51fa2dull, 0x4470c9673fcc4079ull},
     {L"ventcrawler_c", L"bndevt__ventcrawler_box_k2node_componentboundevent_0_componentbeginoverlapsignature__delegatesignature", L"ventcrawler_c.bndevt__ventcrawler_box_k2node_componentboundevent_0_componentbeginoverlapsignature__delegatesignature", 0x068571522f5f0453ull, 0x4923ec40ff2231e2ull},
     {L"ventcrawler_c", L"receivebeginplay", L"ventcrawler_c.receivebeginplay", 0x6a2d5d90ab51fa2dull, 0x5347ae670c604154ull},
     {L"wallunit_tapes_c", L"bndevt__wallunit_tapes_reelbox_big_k2node_componentboundevent_0_componentbeginoverlapsignature__delegatesignature", L"wallunit_tapes_c.bndevt__wallunit_tapes_reelbox_big_k2node_componentboundevent_0_componentbeginoverlapsignature__delegatesignature", 0x068571522f5f0453ull, 0x71316b92aad6ed7eull},

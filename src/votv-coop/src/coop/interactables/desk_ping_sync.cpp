@@ -48,6 +48,14 @@ uint64_t g_nextSayMs[coop::net::kMaxPeers] = {};
 // A refusal is answered every time and said at most every kSayEveryMs a sender, the ones between counted.
 uint64_t g_nextRefuseSayMs[coop::net::kMaxPeers] = {};
 uint32_t g_refusedQuiet[coop::net::kMaxPeers] = {};
+constexpr uint64_t kProgressIntervalMs = 100;
+bool g_publishingProgress = false;
+uint32_t g_progressSeq = 0;
+uint64_t g_nextProgressMs = 0;
+int g_mirrorSlot = -1;
+uint32_t g_mirrorSeq = 0;
+bool g_mirrorActive = false;
+DP::Progress g_mirrorProgress{};
 
 uint64_t NowMs() {
     using namespace std::chrono;
@@ -65,6 +73,18 @@ void Send(coop::net::Session* s, int slot, uint8_t op, uint32_t seq, uint8_t rea
     p.reason = reason;
     p.seq = seq;
     s->SendReliableToSlot(slot, coop::net::ReliableKind::DeskPingVerdict, &p, static_cast<int>(sizeof(p)));
+}
+
+void BroadcastProgress(coop::net::Session* s, const coop::net::DeskPingVerdictPayload& p, int excludeSlot = -1) {
+    if (!s) return;
+    if (s->role() == Role::Client) {
+        s->SendReliableToSlot(0, coop::net::ReliableKind::DeskPingVerdict, &p, static_cast<int>(sizeof(p)));
+    } else if (s->role() == Role::Host) {
+        for (int slot = 1; slot < static_cast<int>(coop::net::kMaxPeers); ++slot) {
+            if (slot == excludeSlot) continue;
+            s->SendReliableToSlot(slot, coop::net::ReliableKind::DeskPingVerdict, &p, static_cast<int>(sizeof(p)));
+        }
+    }
 }
 
 // The watches, by what each serves (Register): the verdict's is the gate itself and the host's roll, the coordinate
@@ -216,6 +236,12 @@ void HostProcessPre(const sg::Call& c) {
             static_cast<unsigned>(g_run.slot), g_run.seq);
 }
 
+void OnProcessPost(const sg::Call& c) {
+    // Reapply only the renderer-facing values after this peer's idle local machine tick. The run flag stays clear;
+    // otherwise every observer would start an independent Blueprint scan.
+    if (g_mirrorActive && c.object == CD::Instance()) DP::WriteProgress(c.object, g_mirrorProgress);
+}
+
 sg::Verdict OnProcessPre(const sg::Call& c) {
     g_processFn = c.function;
     g_verdictRefused = false;
@@ -360,7 +386,7 @@ struct PingWatch {
 PingWatch g_watches[kWatchCount] = {
     {&kRowGatherSignal, 0x44504730, &OnVerdictPre, &OnVerdictPost,
      "a client's pings roll on its own desk, and a host refuses clients' verdicts", false, false},  // 'DPG0'
-    {&kRowProcessCoords, 0x44504731, &OnProcessPre, nullptr,
+    {&kRowProcessCoords, 0x44504731, &OnProcessPre, &OnProcessPost,
      "a host refuses clients' pings, and a client's shows its own failure beside the host's", false, false},  // 'DPG1'
     {&kRowWriteToCoordLog2, 0x44504732, &OnLogLinePre, nullptr,
      "a client's refused verdict shows its own failure line", false, false},  // 'DPG2'
@@ -406,13 +432,91 @@ void Register() {
 
 void Install(coop::net::Session* session) { g_session.store(session, std::memory_order_release); }
 
-void Tick() { Register(); }
+void Tick() {
+    Register();
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->running() || !s->connected()) return;
+
+    void* desk = CD::Instance();
+    bool pinging = false;
+    // When mirroring someone else's ping, do not treat the desk state as a locally-initiated ping.
+    const bool reading = desk && !g_mirrorActive && DP::ReadPinging(desk, pinging);
+    const uint64_t now = NowMs();
+    if (reading && pinging) {
+        if (!g_publishingProgress) {
+            g_publishingProgress = true;
+            if (++g_progressSeq == 0) ++g_progressSeq;
+            g_nextProgressMs = 0;
+        }
+        if (now >= g_nextProgressMs) {
+            DP::Progress state;
+            if (DP::ReadProgress(desk, state)) {
+                coop::net::DeskPingVerdictPayload p{};
+                p.op = PV::kOpProgress;
+                p.reason = 1;
+                p.seq = g_progressSeq;
+                p.progressStage = state.stage;
+                p.progressOuter = state.outer;
+                p.progressInner = state.inner;
+                p.progressPing = state.ping;
+                BroadcastProgress(s, p);
+                g_nextProgressMs = now + kProgressIntervalMs;
+            }
+        }
+    } else if (g_publishingProgress) {
+        // A reliable terminal edge prevents the last progress bar from remaining frozen on observers.
+        coop::net::DeskPingVerdictPayload p{};
+        p.op = PV::kOpProgress;
+        p.seq = g_progressSeq;
+        BroadcastProgress(s, p);
+        g_publishingProgress = false;
+        g_nextProgressMs = 0;
+    }
+}
 
 void OnMessage(coop::net::Session& session, const coop::net::DeskPingVerdictPayload& p, int senderSlot) {
     if (session.role() == Role::Host) {
-        if ((p.op == PV::kOpIntent || p.op == PV::kOpInsta) && senderSlot > 0 &&
-            senderSlot < static_cast<int>(coop::net::kMaxPeers))
+        if (senderSlot > 0 && senderSlot < static_cast<int>(coop::net::kMaxPeers) && p.op == PV::kOpProgress) {
+            const uint8_t slot = static_cast<uint8_t>(senderSlot);
+            const bool active = p.reason == 1;
+            const bool ownsRun = coop::device_occupancy::HolderOf(L"desk") == slot &&
+                                 coop::desk_input_sync::PingActiveSlot() == slot;
+            const bool valid = !active || (ownsRun && p.progressStage >= 0 && p.progressStage <= 3 &&
+                std::isfinite(p.progressOuter) && std::isfinite(p.progressInner) && std::isfinite(p.progressPing) &&
+                p.progressOuter >= 0.f && p.progressOuter <= 1.f && p.progressInner >= 0.f && p.progressInner <= 1.f &&
+                p.progressPing >= 0.f && p.progressPing <= 1.f);
+            if (valid && (active ? ownsRun : (g_mirrorSlot == senderSlot && g_mirrorSeq == p.seq))) {
+                g_mirrorSlot = active ? senderSlot : -1;
+                g_mirrorSeq = p.seq;
+                g_mirrorActive = active;
+                if (active) g_mirrorProgress = {p.progressStage, p.progressOuter, p.progressInner, p.progressPing};
+                else DP::WriteProgress(CD::Instance(), DP::Progress{});
+
+                // Relay the visual scan progress to all other clients.
+                for (int otherSlot = 1; otherSlot < static_cast<int>(coop::net::kMaxPeers); ++otherSlot) {
+                    if (otherSlot == senderSlot) continue;
+                    session.SendReliableToSlot(otherSlot, coop::net::ReliableKind::DeskPingVerdict, &p,
+                                               static_cast<int>(sizeof(p)));
+                }
+            }
+        } else if ((p.op == PV::kOpIntent || p.op == PV::kOpInsta) && senderSlot > 0 &&
+                   senderSlot < static_cast<int>(coop::net::kMaxPeers)) {
             OnIntent(session, p, static_cast<uint8_t>(senderSlot));
+        }
+        return;
+    }
+    // Clients accept progress updates from the host (slot 0) or relayed from other peers.
+    if (p.op == PV::kOpProgress && senderSlot >= 0 && senderSlot < static_cast<int>(coop::net::kMaxPeers)) {
+        const bool active = p.reason == 1;
+        if (active && (p.progressStage < 0 || p.progressStage > 3 || !std::isfinite(p.progressOuter) ||
+            !std::isfinite(p.progressInner) || !std::isfinite(p.progressPing))) return;
+        if (!active && (g_mirrorSlot != senderSlot || g_mirrorSeq != p.seq)) return;
+        if (active && g_mirrorSlot != -1 && g_mirrorSlot != senderSlot) return;
+        g_mirrorSlot = active ? senderSlot : -1;
+        g_mirrorSeq = p.seq;
+        g_mirrorActive = active;
+        if (active) g_mirrorProgress = {p.progressStage, p.progressOuter, p.progressInner, p.progressPing};
+        else DP::WriteProgress(CD::Instance(), DP::Progress{});
         return;
     }
     if (senderSlot != 0) return;
@@ -443,12 +547,23 @@ void OnPeerLeft(uint8_t slot) {
                 g_run.seq);
         g_run = HostRun{};
     }
+    if (g_mirrorSlot == slot) {
+        g_mirrorSlot = -1;
+        g_mirrorActive = false;
+        DP::WriteProgress(CD::Instance(), DP::Progress{});
+    }
 }
 
 void OnDisconnect() {
     g_verdictRefused = false;
     g_refusedFn = nullptr;
     g_run = HostRun{};
+    g_publishingProgress = false;
+    g_nextProgressMs = 0;
+    g_mirrorSlot = -1;
+    g_mirrorSeq = 0;
+    g_mirrorActive = false;
+    DP::WriteProgress(CD::Instance(), DP::Progress{});
     for (uint8_t slot = 0; slot < coop::net::kMaxPeers; ++slot) {
         g_budget[slot].Reset();
         g_instaBudget[slot].Reset();

@@ -1,6 +1,7 @@
 // coop/interactables/desk_ping_sync.h -- the ping's verdict on the main desk is the host's. A client's own ping runs
-// whole as its presentation and its clock: its start, loop, bars and stage sounds reach everyone through the desk log
-// and sound lanes, as a ping does in single player. At its stage 3 its gate refuses the renderer's gatherSignal, with
+// as its clock; its stage and three accumulators stream as visual-only snapshots, while observers keep coord_isPing
+// clear so their local Blueprint does not start a second machine. Start, loop and stage sounds reach everyone through
+// the desk sound lane. At its stage 3 its gate refuses the renderer's gatherSignal, with
 // the out parameters written false, and so the failure line and sound that follow in that process_coords body; the
 // verdict intent carries its view and aim to the host. The host writes them and primes its own machine to stage 2
 // complete from the pre of its next process_coords, so that very body rolls the verdict against the sky of that moment

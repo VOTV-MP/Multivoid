@@ -6,7 +6,8 @@
 // The drone is a host-simulated singleton, MTA's server-simulated entity: its blueprint ReceiveTick
 // is a fragile per-tick float flight integrator, not worth reproducing bit-exact on a remote. The
 // host streams the resolved transform, at most about 20 Hz, while the drone moves -- Active or not, since
-// it glides on after Active drops -- and its state the moment it changes; a client suppresses
+// it glides on after Active drops -- and its state, including the five-minute/indefinite leave mode,
+// the moment it changes; a client suppresses
 // its own drone tick, so the drone there is ALWAYS a mirror rather than a second flier fighting the
 // stream, and drives the streamed transform kinematically through the interpolation window. Host to
 // client only and never relayed; the host refuses a client's copy at its receive edge. Identity is the

@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 225;
+inline constexpr uint16_t kProtocolVersion = 227;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -764,8 +764,8 @@ enum class ReliableKind : uint8_t {
     // PackTrashIntentPayload.
     PackTrashIntent = 144,
 
-    // Client to host: press the garage console's keyboard, the call-or-send button behind the
-    // "drone is active" line. Every peer's console holds its own drone as a level reference, so a
+    // Client to host: press the garage console's keyboard (call/send) or set its leave timer mode.
+    // Every peer's console holds its own drone as a level reference, so a
     // client's press reached only its own suppressed mirror and the drone never moved; the client
     // refuses its own body at the script-body gate and asks here instead. The console is NOT named
     // here: it is baked into the level and no lane keys it, so it has neither a save key nor an
@@ -984,6 +984,11 @@ enum class ReliableKind : uint8_t {
     // record, gone once opened. Trust: the amount is the host's copy's and the reach the host's pose of the
     // sender; the client names the sack and nothing else. PointSackRedeemPayload.
     PointSackRedeem = 173,
+
+    // A closed notebook editor's final page text. Clients send it to the host, which accepts it
+    // only from the peer holding that notebook's occupancy claim and broadcasts the canonical
+    // text. Chunked NotebookTextBlob; never relayed.
+    NotebookText = 174,
 };
 
 #pragma pack(push, 1)
@@ -2019,6 +2024,7 @@ inline constexpr uint8_t kOpIntent = 0;   // client to host: roll the verdict of
 inline constexpr uint8_t kOpRefused = 1;  // host to the pinger: the verdict is not rolled, for `reason`
 inline constexpr uint8_t kOpFound = 2;    // host to the pinger: the verdict caught a signal; the find is its own
 inline constexpr uint8_t kOpInsta = 3;    // client to host: roll the verdict of this cheat-menu insta-catch
+inline constexpr uint8_t kOpProgress = 4; // ping owner -> host -> clients: visual scan progress snapshot
 inline constexpr uint8_t kRefusedBusy = 0;  // the host's desk was pinging, or held another verdict
 inline constexpr uint8_t kRefusedLost = 1;  // any other: no claim, no ping running, an aim not finite or not pingable,
                                             // cheats the host's game does not allow, or a desk that did not roll it
@@ -2033,8 +2039,12 @@ struct DeskPingVerdictPayload {
     float    viewX;      // ops 0 and 3: the coords panel's viewCoordinate, the dishes' target
     float    viewY;
     DishAimStatePayload aim;  // ops 0 and 3: the committed triangle the verdict's circle comes from
+    int32_t progressStage;    // op 4: visual-only scan state; receivers never set coord_isPing
+    float progressOuter;
+    float progressInner;
+    float progressPing;
 };
-static_assert(sizeof(DeskPingVerdictPayload) == 48, "DeskPingVerdictPayload must be 48 bytes");
+static_assert(sizeof(DeskPingVerdictPayload) == 64, "DeskPingVerdictPayload must be 64 bytes");
 static_assert(sizeof(DeskPingVerdictPayload) <= 228, "DeskPingVerdictPayload must fit the inline reliable buffer");
 
 // A server-scope setting's session value (ServerSetting): a flags byte, then the row's key and its
@@ -2335,8 +2345,7 @@ struct DroneStatePayload {
     float   x, y, z;           // 12 -- root actor world location (cm)
     float   pitch, yaw, roll;  // 12 -- full rotation (the drone leans/pitches in flight)
     uint8_t active;            // 1  -- Adrone_C::Active (dormant<->flying); a change is sent at once
-    uint8_t stateBits;         // 1  -- bit 0 rotor dust active, bit 1 can take off (arrived: the alarm cue and the
-                               //        interaction gate), bit 2 has sack (cargo aboard)
+    uint8_t stateBits;         // 1  -- bit 0 rotor dust, bit 1 arrived, bit 2 has sack, bit 3 leaveAfter5min
     uint8_t adopt;             // 1  -- 1 = host connect-snapshot (snap as is), 0 = live stream
     uint8_t _pad;              // 1
     float   dustX, dustY, dustZ;  // 12 -- the dust emitter's world location, which the host's tick pins to its ground
@@ -2916,8 +2925,8 @@ static_assert(sizeof(GrabRefusedPayload) == 8, "GrabRefusedPayload must be 8 byt
 // console carries no identity to name (see the kind's comment), so the host resolves the console
 // the sender stands at and re-tests the lid there.
 struct DroneFlyIntentPayload {
-    uint8_t verb;        // 0 = the keyboard's call-or-send; the leave-timer face has no lane yet
-    uint8_t _pad[7];     // 8-byte alignment; bytes beyond the verb zero
+    uint8_t verb;        // 0 = keyboard call/send, 1 = set the leave timer mode
+    uint8_t _pad[7];     // 8-byte alignment; zero
 };
 static_assert(sizeof(DroneFlyIntentPayload) == 8, "DroneFlyIntentPayload must be 8 bytes");
 static_assert(sizeof(DroneFlyIntentPayload) <= 256 - 20 - 8,

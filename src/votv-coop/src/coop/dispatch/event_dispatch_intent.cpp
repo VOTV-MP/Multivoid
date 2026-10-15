@@ -392,7 +392,7 @@ bool HandleIntentEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::DroneFlyIntent: {
-        // CLIENT->HOST drone call REQUEST: a client pressed the garage console's keyboard. The
+        // CLIENT->HOST drone request: a client pressed the keyboard or leave-timer face. The
         // console is not named -- it is baked into the level and no lane keys it -- so the host
         // resolves the one the sender stands at from its own world and re-tests the lid there,
         // then runs the button's own verb. That resolve, the lid and the rate live in the module;
@@ -414,7 +414,7 @@ bool HandleIntentEvent(net::Session& session,
         }
         net::DroneFlyIntentPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (p.verb != 0) {
+        if (p.verb > 1) {
             UE_LOGW("event_feed: DroneFlyIntent verb=%u has no lane -- dropping",
                     static_cast<unsigned>(p.verb));
             break;

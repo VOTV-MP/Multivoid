@@ -10,10 +10,12 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
+#include "ue_wrap/actors/prop.h"
 
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cwchar>
 
 namespace ue_wrap::device_screen {
 namespace {
@@ -244,6 +246,31 @@ std::wstring ClassifyWidgetClaimKey(void* widget) {
     if (!widget || !R::IsLive(widget)) return {};
     void* cls = R::ClassOf(widget);
     if (!cls) return {};
+    // These editors claim their backing prop, not a shared widget class, so two props stay independent.
+    if (R::ToString(R::NameOf(cls)) == L"ui_notebook_C") {
+        const int32_t off = R::FindPropertyOffset(cls, L"clipboard");
+        if (off < 0) return {};
+        void* prop = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(widget) + off);
+        const std::wstring propKey = ue_wrap::prop::GetKeyString(prop);
+        if (propKey.empty()) return {};
+        uint64_t h = 1469598103934665603ull;
+        for (wchar_t ch : propKey) { h ^= static_cast<uint16_t>(ch); h *= 1099511628211ull; }
+        wchar_t key[22]{};
+        swprintf_s(key, L"note_%016llx", static_cast<unsigned long long>(h));
+        return key;
+    }
+    if (R::ToString(R::NameOf(cls)) == L"ui_paperDraw_C") {
+        const int32_t off = R::FindPropertyOffset(cls, L"paperDraw");
+        if (off < 0) return {};
+        void* paper = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(widget) + off);
+        const std::wstring propKey = ue_wrap::prop::GetKeyString(paper);
+        if (propKey.empty()) return {};
+        uint64_t h = 1469598103934665603ull;
+        for (wchar_t ch : propKey) { h ^= static_cast<uint16_t>(ch); h *= 1099511628211ull; }
+        wchar_t key[22]{};
+        swprintf_s(key, L"draw_%016llx", static_cast<unsigned long long>(h));
+        return key;
+    }
     FillWidgetSlotFromClass(cls);  // beta: resolve this widget's class from its own ClassOf (late-buy safe), inline before the match
     for (size_t i = 0; i < 5; ++i)
         if (g_widgets[i].cls && cls == g_widgets[i].cls) return g_widgetKeys[i];
@@ -263,13 +290,35 @@ std::wstring ClassifyWidgetClaimKey(void* widget) {
         UE_LOGW("device_screen: arcade widget %p has no owning cabinet (scrWidge miss)", widget);
         return {};
     }
-    return {};  // clipboard / prop inventory / paper / picker -- not devices
+    return {};  // Non-device widgets. Notebook editors are handled above by their owning prop.
 }
 
 std::wstring ClassifyDeviceActorClaimKey(void* actor) {
     if (!actor) return {};
     void* cls = R::ClassOf(actor);
     if (!cls) return {};
+    static void* notebookBase = nullptr;
+    if (!notebookBase) notebookBase = R::FindClass(L"prop_notebook_C");
+    if (notebookBase && R::IsDescendantOfAny(cls, &notebookBase, 1)) {
+        const std::wstring propKey = ue_wrap::prop::GetKeyString(actor);
+        if (propKey.empty()) return {};
+        uint64_t h = 1469598103934665603ull;
+        for (wchar_t ch : propKey) { h ^= static_cast<uint16_t>(ch); h *= 1099511628211ull; }
+        wchar_t key[22]{};
+        swprintf_s(key, L"note_%016llx", static_cast<unsigned long long>(h));
+        return key;
+    }
+    static void* paperBase = nullptr;
+    if (!paperBase) paperBase = R::FindClass(L"prop_paper_drawable_C");
+    if (paperBase && R::IsDescendantOfAny(cls, &paperBase, 1)) {
+        const std::wstring propKey = ue_wrap::prop::GetKeyString(actor);
+        if (propKey.empty()) return {};
+        uint64_t h = 1469598103934665603ull;
+        for (wchar_t ch : propKey) { h ^= static_cast<uint16_t>(ch); h *= 1099511628211ull; }
+        wchar_t key[22]{};
+        swprintf_s(key, L"draw_%016llx", static_cast<unsigned long long>(h));
+        return key;
+    }
     FillDeviceSlotFromClass(cls);  // beta: resolve this device's class from its own ClassOf (late-buy safe), inline before the match
     for (size_t i = 0; i < 6; ++i)
         if (g_devices[i].cls && cls == g_devices[i].cls) return g_deviceKeys[i];

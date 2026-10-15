@@ -11,8 +11,8 @@
 // This lane refuses the client's own body at the script-body gate and sends the press. The
 // console is not named: level-baked and keyed by no lane, it has neither a save key nor an
 // element id, so the host resolves the one the sender stands at -- that resolve IS the reach
-// test -- re-tests the lid, and runs the same verb. Nothing to replay on a late join: a press
-// the host has not run changed nothing.
+// test -- re-tests the lid, and runs the call/send verb or applies the requested leave timer mode.
+// Nothing to replay on a late join: a press the host has not run changed nothing.
 
 #pragma once
 

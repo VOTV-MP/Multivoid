@@ -62,14 +62,20 @@ void RestoreTick(void* drone);
 // alarm cue fires on the canTakeOff false->true edge (drone within 25cm of its drop).
 
 // stateBits packing (DroneStatePayload.stateBits): bit0 = dust active, bit1 = canTakeOff (arrived /
-// the interaction gate), bit2 = hasSack (cargo aboard / the action-option prerequisite).
+// the interaction gate), bit2 = hasSack (cargo aboard / the action-option prerequisite), bit3 =
+// leaveAfter5min (the delivery drone's five-minute departure setting).
 inline constexpr uint8_t kFxDust     = 0x01;
 inline constexpr uint8_t kFxArrived  = 0x02;
 inline constexpr uint8_t kFxHasSack  = 0x04;
+inline constexpr uint8_t kFxLeaveAfter5min = 0x08;
 
-// HOST: read the synced drone state into the packed stateBits byte (kFxDust|kFxArrived|kFxHasSack):
-// eff_droneDust's bIsActive bit (what its IsActive returns), canTakeOff and hasSack, all from memory
-// with no engine call. Game thread.
+// Drone's leave mode: true means leave after five minutes, false means wait indefinitely.
+bool ReadLeaveAfter5min(void* drone, bool& out);
+bool WriteLeaveAfter5min(void* drone, bool value);
+
+// HOST: read the synced drone state into the packed stateBits byte:
+// eff_droneDust's bIsActive bit (what its IsActive returns), canTakeOff, hasSack and leaveAfter5min,
+// all from memory with no engine call. Game thread.
 uint8_t ReadFxBits(void* drone);
 
 // HOST: read eff_droneDust's world location (the BP pins it to its ground-trace hit per tick) for

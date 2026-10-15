@@ -28,6 +28,11 @@ inline constexpr const wchar_t* kPingFailedSound =
 // coord_isPing: a ping runs on `desk`.
 bool ReadPinging(void* desk, bool& out);
 
+// Progress fields only. Mirrors keep coord_isPing clear so their local Blueprint tick cannot start a second scan.
+struct Progress { int32_t stage = 0; float outer = 0.f, inner = 0.f, ping = 0.f; };
+bool ReadProgress(void* desk, Progress& out);
+bool WriteProgress(void* desk, const Progress& value);
+
 // The machine at stage 2 complete -- coord_isPing set, coord_pingStage 2, the three accumulators at 1 -- so the
 // process_coords body that reads it next takes it to stage 3 and rolls the verdict (@80250, @79979, @79837, @79809).
 bool PrimeVerdict(void* desk);
