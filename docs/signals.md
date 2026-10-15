@@ -69,9 +69,11 @@ rolls both random terms and streams the output vector (decoded, the needle, the 
 frequency and polarity data and offsets, the cooldown) unreliable, about ten times a second, and
 the client interpolates it and overwrites its own accrual, whose garbage the overwrite hides. The
 triangulation ping is a latent state machine gated on a flag; it runs on one machine, the
-presser's, and receivers treat the flag as bookkeeping and never write it, because writing it
-woke a phantom parallel machine on every observer. A desk hold covers the pinger's run so nobody
-else can claim the desk mid-ping. The run is the pinger's presentation, and its verdict is the
+presser's. Receivers keep the flag clear (setting it woke a phantom parallel machine), while the
+presser streams the stage and three accumulator values at 10 Hz. The host validates the desk
+holder and ping owner, then relays these visual-only values; mirrors reapply them after their idle
+local process tick. A desk hold covers the pinger's run so nobody else can claim the desk mid-ping.
+The run is the pinger's presentation, and its verdict is the
 host's (`coop/interactables/desk_ping_sync`): at stage 3 a client's gate refuses the verdict and
 sends its view and triangle, the host checks the claim, the running ping and the triangle and
 primes its own machine, whose next coordinate process rolls the verdict, and the outcome reaches
@@ -198,7 +200,7 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 | a screen's occupancy | the host arbitrates | first claim wins; a client claims optimistically |
 | desk input scalars | the last presser | polled deltas, relayed except to the originator |
 | the download simulation, the needle, the rate | the host | a streamed output vector; the client overwrites its own |
-| the ping | the presser's machine; its verdict the host | the verdict as an intent; observers keep the flag as bookkeeping |
+| the ping | the presser's machine; its verdict the host | 10 Hz visual progress snapshots; observers keep the run flag clear |
 | the cursor | whoever moves it | a sixty-hertz stream |
 | the desk's sounds | the presser | effect events at the audio seam |
 | the sky-signal set, the catch, the dishes | the host | roller, the host's event, parked client sim |

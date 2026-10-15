@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 226;
+inline constexpr uint16_t kProtocolVersion = 227;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -2024,6 +2024,7 @@ inline constexpr uint8_t kOpIntent = 0;   // client to host: roll the verdict of
 inline constexpr uint8_t kOpRefused = 1;  // host to the pinger: the verdict is not rolled, for `reason`
 inline constexpr uint8_t kOpFound = 2;    // host to the pinger: the verdict caught a signal; the find is its own
 inline constexpr uint8_t kOpInsta = 3;    // client to host: roll the verdict of this cheat-menu insta-catch
+inline constexpr uint8_t kOpProgress = 4; // ping owner -> host -> clients: visual scan progress snapshot
 inline constexpr uint8_t kRefusedBusy = 0;  // the host's desk was pinging, or held another verdict
 inline constexpr uint8_t kRefusedLost = 1;  // any other: no claim, no ping running, an aim not finite or not pingable,
                                             // cheats the host's game does not allow, or a desk that did not roll it
@@ -2038,8 +2039,12 @@ struct DeskPingVerdictPayload {
     float    viewX;      // ops 0 and 3: the coords panel's viewCoordinate, the dishes' target
     float    viewY;
     DishAimStatePayload aim;  // ops 0 and 3: the committed triangle the verdict's circle comes from
+    int32_t progressStage;    // op 4: visual-only scan state; receivers never set coord_isPing
+    float progressOuter;
+    float progressInner;
+    float progressPing;
 };
-static_assert(sizeof(DeskPingVerdictPayload) == 48, "DeskPingVerdictPayload must be 48 bytes");
+static_assert(sizeof(DeskPingVerdictPayload) == 64, "DeskPingVerdictPayload must be 64 bytes");
 static_assert(sizeof(DeskPingVerdictPayload) <= 228, "DeskPingVerdictPayload must fit the inline reliable buffer");
 
 // A server-scope setting's session value (ServerSetting): a flags byte, then the row's key and its

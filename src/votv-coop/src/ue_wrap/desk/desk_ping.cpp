@@ -84,6 +84,29 @@ bool ReadPinging(void* desk, bool& out) {
     return true;
 }
 
+bool ReadProgress(void* desk, Progress& out) {
+    int32_t* stage = Field<int32_t>(desk, g_stage);
+    float* outer = Field<float>(desk, g_outer);
+    float* inner = Field<float>(desk, g_inner);
+    float* ping = Field<float>(desk, g_ping);
+    if (!stage || !outer || !inner || !ping) return false;
+    out = {*stage, *outer, *inner, *ping};
+    return true;
+}
+
+bool WriteProgress(void* desk, const Progress& value) {
+    int32_t* stage = Field<int32_t>(desk, g_stage);
+    float* outer = Field<float>(desk, g_outer);
+    float* inner = Field<float>(desk, g_inner);
+    float* ping = Field<float>(desk, g_ping);
+    if (!stage || !outer || !inner || !ping) return false;
+    *stage = value.stage;
+    *outer = value.outer;
+    *inner = value.inner;
+    *ping = value.ping;
+    return true;
+}
+
 bool PrimeVerdict(void* desk) { return WriteMachine(desk, true, 2, 1.f); }
 
 bool ResetMachine(void* desk) { return WriteMachine(desk, false, 0, 0.f); }
