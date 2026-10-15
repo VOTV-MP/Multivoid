@@ -432,6 +432,7 @@ set(VOTVCOOP_SOURCES
     src/coop/session/world_ready_answer.cpp
     src/coop/player/local_streams.cpp
     src/coop/interactables/device_occupancy.cpp
+    src/coop/interactables/notebook_sync.cpp
     src/coop/interactables/console_state_sync.cpp
     src/coop/interactables/desk_cursor_sync.cpp
     src/coop/interactables/desk_input_sync.cpp

@@ -10,6 +10,7 @@
 #include "coop/interactables/atv_sync.h"
 #include "coop/player/sleep_sync.h"
 #include "coop/interactables/device_occupancy.h"
+#include "coop/interactables/notebook_sync.h"
 #include "coop/world/email_sync.h"
 #include "coop/items/player_inventory_sync.h"  // the inventory blob receiver
 #include "coop/voice/voice_chat.h"
@@ -366,6 +367,15 @@ bool HandleStateEvent(net::Session& session,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::device_occupancy::OnReliable(dcp, senderSlot);
+        break;
+    }
+    case net::ReliableKind::NotebookText: {
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) break;
+        net::BlobChunkPayload chunk{};
+        std::memcpy(&chunk, msg.payload, sizeof(chunk));
+        const uint8_t slot = (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+            ? static_cast<uint8_t>(msg.senderPeerSlot) : static_cast<uint8_t>(0xFF);
+        coop::notebook_sync::OnReliable(chunk, slot);
         break;
     }
     // The signal-pipeline kinds (the sky signals, the desk, the dish, the laptop, the saved

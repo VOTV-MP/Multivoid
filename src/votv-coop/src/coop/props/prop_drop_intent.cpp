@@ -58,6 +58,14 @@ namespace PT = coop::prop_element_tracker;
 
 UE_FACT_FN(kRowFinishSpawningActor, "prop_drop_intent", L"GameplayStatics", L"FinishSpawningActor", Declared);
 
+bool IsNotebookSheet(void* actor) {
+    if (!actor || !R::IsLive(actor)) return false;
+    static void* s_sheetClass = nullptr;
+    if (!s_sheetClass) s_sheetClass = R::FindClass(L"prop_notebook_paper_C");
+    void* cls = R::ClassOf(actor);
+    return s_sheetClass && cls && R::IsDescendantOfAny(cls, &s_sheetClass, 1);
+}
+
 std::atomic<coop::net::Session*> g_session{nullptr};
 inline coop::net::Session* LoadSession() { return g_session.load(std::memory_order_acquire); }
 
@@ -425,6 +433,10 @@ void Tick(coop::net::Session* session) {
         // An upgrade's birth that reaches here is a world birth too: one the take-out hands over dies inside the
         // pickup, so what comes is the one a full hand left at the player, and it falls where it is.
         const bool isUpgradeBirth = ue_wrap::serverbox::IsUpgradeClass(R::ClassOf(e.actor));
+        // A torn notebook page is spawned by ui_notebook's graph, not by a player drop verb.
+        // It still needs the host-authoritative keyed-prop birth route or it exists only for
+        // the client that tore it out.
+        const bool isNotebookSheet = IsNotebookSheet(e.actor);
         const bool freshBirth = !parked &&
             (isDiscBirth ||
              (ue_wrap::tape_caddy::EnsureResolved() &&
@@ -446,7 +458,7 @@ void Tick(coop::net::Session* session) {
         // NOT a freshBirth: that kind means a device put an item in a hand and sleeps the host's
         // copy, while a menu prop is dropped in the world at the player's aim and must fall on the
         // host exactly as it falls here -- the transform block below sends its real physics state.
-        if (!parked && !freshBirth && !e.containerExtract && !e.playerSpawn) {
+        if (!parked && !freshBirth && !e.containerExtract && !e.playerSpawn && !isNotebookSheet) {
             probe::NoteDrainExit(e.actor, "not-a-place-nor-whitelisted-birth", e.tries, key);
             continue;
         }

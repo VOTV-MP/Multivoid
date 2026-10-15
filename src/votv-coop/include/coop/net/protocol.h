@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 225;
+inline constexpr uint16_t kProtocolVersion = 226;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -984,6 +984,11 @@ enum class ReliableKind : uint8_t {
     // record, gone once opened. Trust: the amount is the host's copy's and the reach the host's pose of the
     // sender; the client names the sack and nothing else. PointSackRedeemPayload.
     PointSackRedeem = 173,
+
+    // A closed notebook editor's final page text. Clients send it to the host, which accepts it
+    // only from the peer holding that notebook's occupancy claim and broadcasts the canonical
+    // text. Chunked NotebookTextBlob; never relayed.
+    NotebookText = 174,
 };
 
 #pragma pack(push, 1)
