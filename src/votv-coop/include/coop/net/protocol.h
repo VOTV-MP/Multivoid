@@ -764,8 +764,8 @@ enum class ReliableKind : uint8_t {
     // PackTrashIntentPayload.
     PackTrashIntent = 144,
 
-    // Client to host: press the garage console's keyboard, the call-or-send button behind the
-    // "drone is active" line. Every peer's console holds its own drone as a level reference, so a
+    // Client to host: press the garage console's keyboard (call/send) or set its leave timer mode.
+    // Every peer's console holds its own drone as a level reference, so a
     // client's press reached only its own suppressed mirror and the drone never moved; the client
     // refuses its own body at the script-body gate and asks here instead. The console is NOT named
     // here: it is baked into the level and no lane keys it, so it has neither a save key nor an
@@ -2335,8 +2335,7 @@ struct DroneStatePayload {
     float   x, y, z;           // 12 -- root actor world location (cm)
     float   pitch, yaw, roll;  // 12 -- full rotation (the drone leans/pitches in flight)
     uint8_t active;            // 1  -- Adrone_C::Active (dormant<->flying); a change is sent at once
-    uint8_t stateBits;         // 1  -- bit 0 rotor dust active, bit 1 can take off (arrived: the alarm cue and the
-                               //        interaction gate), bit 2 has sack (cargo aboard)
+    uint8_t stateBits;         // 1  -- bit 0 rotor dust, bit 1 arrived, bit 2 has sack, bit 3 leaveAfter5min
     uint8_t adopt;             // 1  -- 1 = host connect-snapshot (snap as is), 0 = live stream
     uint8_t _pad;              // 1
     float   dustX, dustY, dustZ;  // 12 -- the dust emitter's world location, which the host's tick pins to its ground
@@ -2916,8 +2915,8 @@ static_assert(sizeof(GrabRefusedPayload) == 8, "GrabRefusedPayload must be 8 byt
 // console carries no identity to name (see the kind's comment), so the host resolves the console
 // the sender stands at and re-tests the lid there.
 struct DroneFlyIntentPayload {
-    uint8_t verb;        // 0 = the keyboard's call-or-send; the leave-timer face has no lane yet
-    uint8_t _pad[7];     // 8-byte alignment; bytes beyond the verb zero
+    uint8_t verb;        // 0 = keyboard call/send, 1 = set the leave timer mode
+    uint8_t _pad[7];     // 8-byte alignment; zero
 };
 static_assert(sizeof(DroneFlyIntentPayload) == 8, "DroneFlyIntentPayload must be 8 bytes");
 static_assert(sizeof(DroneFlyIntentPayload) <= 256 - 20 - 8,

@@ -35,6 +35,9 @@ bool IsLidOpen(void* console);
 // the game itself uses to pick the verb, and it is LOCAL to whoever is looking.
 bool IsCursorOnKeyboard(void* console);
 
+// The presser's cursor is on the leave-time selector, local to the console user.
+bool IsCursorOnLeaveTimer(void* console);
+
 // The presser's cursor is on the lid's latch, whose press toggles the lid. Local, like the keyboard's.
 // Both flags are written when the console builds a presser's action options, not cleared when the
 // presser looks away, so a reader that needs the trace's present answer asks the trace too.

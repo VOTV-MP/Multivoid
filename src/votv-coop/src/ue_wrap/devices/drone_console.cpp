@@ -22,6 +22,7 @@ const wchar_t* const kConsoleClass = L"droneConsole_C";
 int32_t g_conOpenedOff   = -1;  // droneConsole_C::opened          (the lid)
 int32_t g_conKeyboardOff = -1;  // droneConsole_C::lookatKeyboard  (the presser's own cursor)
 int32_t g_conLidOff      = -1;  // droneConsole_C::lookatDoor      (the same, on the lid's latch)
+int32_t g_conLeaveOff    = -1;  // droneConsole_C::lookat_changeTime (the leave timer selector)
 int32_t g_conDroneOff    = -1;  // droneConsole_C::drone           (a level reference)
 
 // A console field by name, resolved once off the live instance's own class.
@@ -53,6 +54,11 @@ bool IsLidOpen(void* console) {
 bool IsCursorOnKeyboard(void* console) {
     bool on = false;
     return ConsoleBool(console, g_conKeyboardOff, L"lookatKeyboard", on) && on;
+}
+
+bool IsCursorOnLeaveTimer(void* console) {
+    bool on = false;
+    return ConsoleBool(console, g_conLeaveOff, L"lookat_changeTime", on) && on;
 }
 
 bool IsCursorOnLid(void* console) {

@@ -31,6 +31,7 @@ namespace E = engine;
 std::atomic<bool> g_resolved{false};
 void*   g_cls       = nullptr;  // drone_C UClass
 int32_t g_activeOff = -1;       // Adrone_C::Active (Alpha 0.9.0-n: 0x0370, bool)
+int32_t g_leaveAfter5minOff = -1; // Adrone_C::leaveAfter5min
 
 constexpr int32_t kActiveOffFallback = 0x0370;
 
@@ -192,6 +193,7 @@ bool EnsureResolved() {
 
     g_cls = cls;
     g_activeOff = activeOff;
+    g_leaveAfter5minOff = R::FindPropertyOffset(cls, L"leaveAfter5min");
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("drone: resolved drone_C=%p Active@0x%04X", cls, activeOff);
     return true;
@@ -205,6 +207,18 @@ void* Find() {
 bool IsActive(void* drone) {
     if (!drone || g_activeOff < 0) return false;
     return *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(drone) + g_activeOff);
+}
+
+bool ReadLeaveAfter5min(void* drone, bool& out) {
+    if (!drone || !EnsureResolved() || g_leaveAfter5minOff < 0) return false;
+    out = *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(drone) + g_leaveAfter5minOff);
+    return true;
+}
+
+bool WriteLeaveAfter5min(void* drone, bool value) {
+    if (!drone || !EnsureResolved() || g_leaveAfter5minOff < 0) return false;
+    *reinterpret_cast<bool*>(reinterpret_cast<char*>(drone) + g_leaveAfter5minOff) = value;
+    return true;
 }
 
 bool ReadPose(void* drone, FVector& loc, FRotator& rot) {
@@ -242,8 +256,11 @@ void RestoreTick(void* drone) {
 }
 
 uint8_t ReadFxBits(void* drone) {
-    if (!drone || !EnsureFxResolved()) return 0;
+    if (!drone) return 0;
     uint8_t bits = 0;
+    bool leaveAfter5min = false;
+    if (ReadLeaveAfter5min(drone, leaveAfter5min) && leaveAfter5min) bits |= kFxLeaveAfter5min;
+    if (!EnsureFxResolved()) return bits;
     if (void* dust = ReadComp(drone, g_dustOff))
         if (ComponentIsActive(dust)) bits |= kFxDust;
     auto rb = [drone](int32_t off) -> bool {

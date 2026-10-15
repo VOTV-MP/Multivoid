@@ -180,10 +180,12 @@ void ApplyState(void* drone, const coop::net::DroneStatePayload& payload) {
     const uint8_t ob = g_m.haveStateBits ? g_m.lastStateBits : 0;
     const bool canTakeOff = (nb & D::kFxArrived) != 0;
     const bool hasSack    = (nb & D::kFxHasSack) != 0;
+    const bool leaveAfter5min = (nb & D::kFxLeaveAfter5min) != 0;
 
     // Interaction gate: write canTakeOff (THE gate) + hasSack (option prerequisite) onto the mirror so
     // a parked drone is interactable instead of "in motion" (the suppressed tick never sets them).
     D::WriteGateFields(drone, canTakeOff, hasSack);
+    D::WriteLeaveAfter5min(drone, leaveAfter5min);
     if (hasSack)
         D::RepointContainer(drone);  // cargo aboard -> point the mirror at the prop-mirrored container.
                                      // EVERY hasSack packet (not just the rising edge): the container
