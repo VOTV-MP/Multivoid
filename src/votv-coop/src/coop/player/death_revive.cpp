@@ -376,6 +376,10 @@ bool RunRevive(coop::net::Session& session, void* pawn) {
     float bloodTimeBefore = 0.f;
     const float bloodActors = ExpireBloodLoss(&bloodTimeBefore);
 
+    // The native reload used to reset the pawn's fire. This revive keeps the same pawn alive,
+    // so clear its burn timer explicitly; mainPlayer's tick turns off the flame when it reaches 0.
+    const bool fireCleared = V::Write(V::Field::BurningTime, 0.f);
+
     // 2. Health, before dead is cleared: while dead the player takes no damage, so the restore
     //    cannot race a hit. Full maxHealth, since a native death would have reloaded the save and
     //    there is no prior value to inherit; the game's own regen resumes from here.
@@ -415,18 +419,22 @@ bool RunRevive(coop::net::Session& session, void* pawn) {
     // four saw the same-frame IsInViewport read after RemoveFromParent still true, and a living
     // player was thrown to the main menu over a widget that had not detached yet. The screen
     // artifacts are retried on the following pump ticks instead.
-    const bool ok = vitalsOk && wokeUp && teleReported &&
+    float burnTime = -1.f;
+    const bool haveBurnTime = V::Read(V::Field::BurningTime, &burnTime);
+    const bool ok = vitalsOk && fireCleared && haveBurnTime && burnTime <= 0.f &&
+                    wokeUp && teleReported &&
                     deadCleared && haveState && !isRagdoll && !deadNow && haveHp && hp > 0.f &&
                     atKpp;
 
     UE_LOGI("death_revive: REVIVE %s after a run-ending authored by %ls -- vitals=%d wake=%d "
-            "tele=%d deadClr=%d "
+            "tele=%d deadClr=%d fireClr=%d burn=%.1f "
             "| screen (retried, NOT a gate): black=%d dmgRed=%.2f bloodLoss=%.0f actor(s) @%.1fs "
             "| readback: ragdoll=%d dead=%d hp=%.1f distKPP=%.0f cm (tol %.0f)",
             ok ? "OK" : "FAILED",
             g_pendingAuthorClass.empty() ? L"(unrecorded)" : g_pendingAuthorClass.c_str(),
             vitalsOk ? 1 : 0, wokeUp ? 1 : 0,
-            teleReported ? 1 : 0, deadCleared ? 1 : 0, blackCleared ? 1 : 0, redBefore, bloodActors, bloodTimeBefore,
+            teleReported ? 1 : 0, deadCleared ? 1 : 0, fireCleared ? 1 : 0,
+            haveBurnTime ? burnTime : -1.f, blackCleared ? 1 : 0, redBefore, bloodActors, bloodTimeBefore,
             haveState ? (isRagdoll ? 1 : 0) : -1, haveState ? (deadNow ? 1 : 0) : -1,
             haveHp ? hp : -1.f, dist, kAtKppToleranceCm);
     (void)session;
