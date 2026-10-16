@@ -3,11 +3,14 @@
 #include "coop/world/explosion_parking.h"
 
 #include "coop/net/session.h"
+#include "coop/player/players_registry.h"
 #include "coop/world/spawn_authority.h"
 
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/facts/function_row.h"
+#include "ue_wrap/world/explosion.h"
 
 #include <atomic>
 #include <chrono>
@@ -17,6 +20,7 @@ namespace coop::explosion_parking {
 namespace {
 
 namespace SG = ue_wrap::script_gate;
+namespace R  = ue_wrap::reflection;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -66,16 +70,92 @@ bool              g_liveLogged = false;
 
 Counters g_counters{};
 
+constexpr const char* kVerbNames[kVerbs] = {"addDamage", "exploded", "reachedByExplosion", "ignite"};
+
+// One explosion instance, named by its address and its slot's serial so a new explosion at an old one's address is
+// another instance. Called only for a live object.
+struct Instance {
+    void*   obj = nullptr;
+    int32_t serial = 0;
+};
+Instance InstanceOf(void* obj) { return {obj, R::AllocateSlotSerial(R::InternalIndexOf(obj))}; }
+bool     Same(const Instance& a, const Instance& b) { return a.obj == b.obj && a.serial == b.serial; }
+
+// The refusals already logged for the current explosion: (verb, target class) pairs, 16 deep, forgotten when the
+// calling explosion is another instance. True when the pair is new, so the refusal logs once and not per call.
+struct Seen {
+    uint8_t verb;
+    void*   cls;
+};
+constexpr int kRing = 16;
+Seen     g_ring[kRing] = {};
+int      g_ringCount = 0;
+int      g_ringNext = 0;
+Instance g_ringOwner;
+
+bool FirstRefusal(void* explosion, int verb, void* cls) {
+    const Instance inst = InstanceOf(explosion);
+    if (!Same(inst, g_ringOwner)) {
+        g_ringOwner = inst;
+        g_ringCount = g_ringNext = 0;
+    }
+    for (int i = 0; i < g_ringCount; ++i)
+        if (g_ring[i].verb == verb && g_ring[i].cls == cls) return false;
+    g_ring[g_ringNext] = {static_cast<uint8_t>(verb), cls};
+    g_ringNext = (g_ringNext + 1) % kRing;
+    if (g_ringCount < kRing) ++g_ringCount;
+    return true;
+}
+
+Instance g_runeLogged;
+
+// This machine's own player: a mainPlayer_C that is not a peer's puppet. The puppet test is the one the damage
+// refusal makes, since a stale local pawn must never make this machine's player immune.
+bool IsOwnPlayer(void* obj) {
+    return obj && R::NameEquals(R::NameOf(R::ClassOf(obj)), L"mainPlayer_C") &&
+           !coop::players::Registry::Get().IsPuppet(obj);
+}
+
 SG::Verdict OnVerbPre(const SG::Call& c) {
     const int verb = c.tag - kTagVerb0;
     if (verb < 0 || verb >= kVerbs || !coop::spawn_authority::IsActiveClientSession()) return SG::Verdict::Run;
     ++g_counters.verbCalls[verb];
-    return SG::Verdict::Run;
+    // A ProcessEvent-routed call has no caller frame, and melee and guns call these names too: only a verb the
+    // explosion's own graph calls is judged.
+    if (!c.callerFunction || !R::NameEquals(R::NameOf(c.callerFunction), L"ExecuteUbergraph_explosion"))
+        return SG::Verdict::Run;
+    if (IsOwnPlayer(c.object)) return SG::Verdict::Run;
+    ++g_counters.verbRefused[verb];
+    void* cls = c.object ? R::ClassOf(c.object) : nullptr;
+    if (c.callerObject && FirstRefusal(c.callerObject, verb, cls))
+        UE_LOGI("[EXPLOSION] refused verb=%s target=%ls", kVerbNames[verb], R::ClassNameOf(c.object).c_str());
+    return SG::Verdict::Cancel;
 }
 
-SG::Verdict OnRunePre(const SG::Call&) { return SG::Verdict::Run; }
+// The explosion's rune check writes the world; a client's copy does not run it.
+SG::Verdict OnRunePre(const SG::Call& c) {
+    if (!coop::spawn_authority::IsActiveClientSession()) return SG::Verdict::Run;
+    ++g_counters.runeRefused;
+    if (c.object) {
+        const Instance inst = InstanceOf(c.object);
+        if (!Same(inst, g_runeLogged)) {
+            g_runeLogged = inst;
+            UE_LOGI("[EXPLOSION] refused runeCheck");
+        }
+    }
+    return SG::Verdict::Cancel;
+}
 
-void OnNarrowPost(const SG::Call&) {}
+// After the Blueprint's own begin-play writes, before the force fires: the force reaches pawns only.
+void OnNarrowPost(const SG::Call& c) {
+    if (!c.object || !coop::spawn_authority::IsActiveClientSession()) return;
+    if (ue_wrap::explosion::NarrowForceToPawn(c.object)) {
+        ++g_counters.narrowed;
+        UE_LOGI("[EXPLOSION] narrowed");
+    } else {
+        UE_LOGE("[EXPLOSION] the force of an explosion copy could not be narrowed to pawns; it pushes props here");
+    }
+}
 
 }  // namespace
 
