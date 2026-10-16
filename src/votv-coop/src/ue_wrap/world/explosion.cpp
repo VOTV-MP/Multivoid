@@ -59,7 +59,9 @@ void* LoadOnce(int i) {
     if (g_loadTried[i]) return nullptr;
     g_loadTried[i] = true;
     void* cls = asset_load::LoadObjectByPath(kPaths[i]);
-    if (!cls) UE_LOGW("[EXPLOSION] class %ls did not load from %ls; not asked again this world", ClassName(At(i)), kPaths[i]);
+    if (!cls)
+        UE_LOGW("[EXPLOSION] class %ls did not load from %ls; not asked again until the world changes or the index "
+                "unlists a class", ClassName(At(i)), kPaths[i]);
     return cls;
 }
 

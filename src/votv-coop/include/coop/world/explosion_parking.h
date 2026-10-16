@@ -33,8 +33,9 @@ void OnDisconnect();
 
 // Per verb (addDamage, exploded, reachedByExplosion, ignite): the calls the watch saw on a client session and the
 // ones it refused. runeRefused: the rune checks refused. narrowed: the explosion instances whose force was narrowed.
+// narrowFailed: those whose narrowing failed, so the copy was destroyed.
 struct Counters {
-    uint32_t verbCalls[4], verbRefused[4], runeRefused, narrowed;
+    uint32_t verbCalls[4], verbRefused[4], runeRefused, narrowed, narrowFailed;
 };
 Counters GetCounters();
 

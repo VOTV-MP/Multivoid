@@ -170,6 +170,7 @@ void OnNarrowPost(const SG::Call& c) {
     } else {
         // Fail closed: an un-narrowed force would push this client's props. The copy is a cue, so it is destroyed
         // by a posted task (the begin-play is still on the stack), before its force fires.
+        ++g_counters.narrowFailed;
         UE_LOGE("[EXPLOSION] the force of an explosion copy could not be narrowed to pawns; the copy is destroyed");
         void* copy = c.object;
         const int32_t index = R::InternalIndexOf(copy);
@@ -220,6 +221,11 @@ void OnFireImpulsePost(void* component, void* /*sourceObject*/, void* /*result*/
     g_fired.push_back(Fired{owner, R::InternalIndexOf(owner)});
 }
 
+// What a dead parking watch costs, said only where it applies: a client in a session drops the host's copies.
+const char* kNotApplied() {
+    return coop::spawn_authority::IsActiveClientSession() ? "; the host's explosions are not applied here" : "";
+}
+
 // Install under the same policy as the watches: a refused install is retried each second, 30 times, then said once.
 void InstallFireImpulse() {
     if (g_fireInstalled || g_fireGaveUp || Clock::now() < g_fireNextTry) return;
@@ -238,6 +244,7 @@ void InstallFireImpulse() {
 }
 
 }  // namespace
+
 void Install(coop::net::Session* s) {
     g_session.store(s, std::memory_order_release);
     InstallFireImpulse();
@@ -251,8 +258,7 @@ void Install(coop::net::Session* s) {
                 g_done[i] = true;
             } else if (++g_tries[i] >= kMaxTries) {
                 g_dead[i] = true;
-                UE_LOGE("[EXPLOSION] the %s watch was refused %d times; the host's explosions are not applied here",
-                        kTable[i].name, kMaxTries);
+                UE_LOGE("[EXPLOSION] the %s watch was refused %d times%s", kTable[i].name, kMaxTries, kNotApplied());
             }
         }
     }
@@ -272,8 +278,7 @@ void Install(coop::net::Session* s) {
         if (!SG::NameWatchSettled(*kTable[i].row, kTable[i].tag) || SG::NameWatchLive(*kTable[i].row, kTable[i].tag))
             continue;
         g_settledDead = true;
-        UE_LOGE("[EXPLOSION] the %s watch settled dead in the script gate; the host's explosions are not applied here",
-                kTable[i].name);
+        UE_LOGE("[EXPLOSION] the %s watch settled dead in the script gate%s", kTable[i].name, kNotApplied());
     }
 }
 
@@ -332,9 +337,10 @@ void OnDisconnect() {
     g_fired.clear();
     const Counters c = GetCounters();
     if (c.verbCalls[0] || c.verbCalls[1] || c.verbCalls[2] || c.verbCalls[3])
-        UE_LOGI("[EXPLOSION] parking end: verbCalls=%u/%u/%u/%u refused=%u/%u/%u/%u runeRefused=%u narrowed=%u",
+        UE_LOGI("[EXPLOSION] parking end: verbCalls=%u/%u/%u/%u refused=%u/%u/%u/%u runeRefused=%u narrowed=%u "
+                "narrowFailed=%u",
                 c.verbCalls[0], c.verbCalls[1], c.verbCalls[2], c.verbCalls[3], c.verbRefused[0], c.verbRefused[1],
-                c.verbRefused[2], c.verbRefused[3], c.runeRefused, c.narrowed);
+                c.verbRefused[2], c.verbRefused[3], c.runeRefused, c.narrowed, c.narrowFailed);
     g_counters = Counters{};
 }
 
