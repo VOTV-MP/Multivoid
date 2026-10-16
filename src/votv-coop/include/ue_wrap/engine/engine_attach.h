@@ -37,6 +37,11 @@ int AttachedCharactersOf(void* actor, AttachedCharacter* out, int max);
 // `actor`'s root component (a USceneComponent*) through AActor::K2_GetRootComponent; null for a dead actor, a call
 // that did not run or a dead root. Game thread.
 void* RootComponentOf(void* actor);
+// The actor's root pose read from memory (AActor::RootComponent, then the root's RelativeLocation and
+// RelativeRotation), with no UFunction call. True only when the root resolves and its AttachParent is null,
+// where the relative pose is the world pose; false otherwise (the caller reads through the engine). The offsets
+// are resolved once and cached; one that does not resolve is logged once and makes every call false. Game thread.
+bool TryGetRootPoseRaw(void* actor, FVector& loc, FRotator& rot);
 
 // ---- Generic actor root-physics substrate ----
 // The root component through K2_GetRootComponent, never the Aprop_C mesh offset, so they work on the

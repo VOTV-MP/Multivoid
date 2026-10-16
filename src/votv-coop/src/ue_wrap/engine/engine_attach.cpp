@@ -19,6 +19,7 @@
 #include "ue_wrap/core/sdk_profile.h"
 
 #include <cstdint>
+#include <cstring>
 
 namespace ue_wrap::engine {
 namespace {
@@ -294,6 +295,48 @@ int AttachedCharactersOf(void* actor, AttachedCharacter* out, int max) {
         }
     }
     return n;
+}
+
+// ---- The root's pose, read from memory (AActor::RootComponent, then the root's relative transform) ----
+// RelativeLocation and RelativeRotation are the world pose only while the root has no AttachParent.
+namespace {
+
+bool    g_poseTried       = false;
+bool    g_poseResolved    = false;
+int32_t g_rootOff         = -1;  // AActor::RootComponent
+int32_t g_relLocOff       = -1;  // USceneComponent::RelativeLocation
+int32_t g_relRotOff       = -1;  // USceneComponent::RelativeRotation
+int32_t g_attachParentOff = -1;  // USceneComponent::AttachParent
+
+bool EnsurePoseResolved() {
+    if (g_poseResolved) return true;
+    if (g_poseTried) return false;
+    g_poseTried = true;
+    if (void* actorCls = R::FindClass(L"Actor")) g_rootOff = R::FindPropertyOffset(actorCls, L"RootComponent");
+    if (void* sceneCls = R::FindClass(P::name::SceneComponentClass)) {
+        g_relLocOff = R::FindPropertyOffset(sceneCls, L"RelativeLocation");
+        g_relRotOff = R::FindPropertyOffset(sceneCls, P::name::RelativeRotationProp);
+        g_attachParentOff = R::FindPropertyOffset(sceneCls, L"AttachParent");
+    }
+    g_poseResolved = g_rootOff >= 0 && g_relLocOff >= 0 && g_relRotOff >= 0 && g_attachParentOff >= 0;
+    if (!g_poseResolved)
+        UE_LOGW("engine: the root's pose members did not resolve (RootComponent@%d RelativeLocation@%d "
+                "RelativeRotation@%d AttachParent@%d) -- the pose is read through the engine",
+                g_rootOff, g_relLocOff, g_relRotOff, g_attachParentOff);
+    return g_poseResolved;
+}
+
+}  // namespace
+
+bool TryGetRootPoseRaw(void* actor, FVector& loc, FRotator& rot) {
+    if (!actor || !EnsurePoseResolved()) return false;
+    void* root = *reinterpret_cast<void* const*>(static_cast<const char*>(actor) + g_rootOff);
+    if (!root || !R::IsLive(root)) return false;
+    const char* r = static_cast<const char*>(root);
+    if (*reinterpret_cast<void* const*>(r + g_attachParentOff) != nullptr) return false;
+    std::memcpy(&loc, r + g_relLocOff, sizeof(loc));
+    std::memcpy(&rot, r + g_relRotOff, sizeof(rot));
+    return true;
 }
 
 }  // namespace ue_wrap::engine

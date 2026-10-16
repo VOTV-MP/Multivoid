@@ -20,7 +20,6 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
-#include <cstring>
 
 namespace ue_wrap::drone {
 namespace {
@@ -35,14 +34,6 @@ int32_t g_activeOff = -1;       // Adrone_C::Active (Alpha 0.9.0-n: 0x0370, bool
 constexpr int32_t kActiveOffFallback = 0x0370;
 
                                // (the project rule; IsLive(ptr) derefs the maybe-freed object itself)
-
-// ---- The pose, read from memory (AActor::RootComponent, then the root's relative transform) ----
-bool    g_poseTried       = false;
-bool    g_poseResolved    = false;
-int32_t g_rootOff         = -1;  // AActor::RootComponent
-int32_t g_relLocOff       = -1;  // USceneComponent::RelativeLocation
-int32_t g_relRotOff       = -1;  // USceneComponent::RelativeRotation
-int32_t g_attachParentOff = -1;  // USceneComponent::AttachParent
 
 // ---- FX mirroring -- resolved lazily (separate from the pose path) ----
 bool    g_fxResolved   = false;
@@ -142,24 +133,6 @@ bool ComponentIsActive(void* comp) {
     return (*(reinterpret_cast<const uint8_t*>(comp) + g_activeByteOff) & g_activeMask) != 0;
 }
 
-bool EnsurePoseResolved() {
-    if (g_poseResolved) return true;
-    if (g_poseTried) return false;
-    g_poseTried = true;
-    if (void* actorCls = R::FindClass(L"Actor")) g_rootOff = R::FindPropertyOffset(actorCls, L"RootComponent");
-    if (void* sceneCls = R::FindClass(profile::name::SceneComponentClass)) {
-        g_relLocOff = R::FindPropertyOffset(sceneCls, L"RelativeLocation");
-        g_relRotOff = R::FindPropertyOffset(sceneCls, profile::name::RelativeRotationProp);
-        g_attachParentOff = R::FindPropertyOffset(sceneCls, L"AttachParent");
-    }
-    g_poseResolved = g_rootOff >= 0 && g_relLocOff >= 0 && g_relRotOff >= 0 && g_attachParentOff >= 0;
-    if (!g_poseResolved)
-        UE_LOGW("drone: the root's pose members did not resolve (RootComponent@%d RelativeLocation@%d "
-                "RelativeRotation@%d AttachParent@%d) -- the pose is read through the engine",
-                g_rootOff, g_relLocOff, g_relRotOff, g_attachParentOff);
-    return g_poseResolved;
-}
-
 void SetComponentActive(void* comp, bool on) {
     if (!comp || !g_setActiveFn) return;
     ParamFrame f(g_setActiveFn);
@@ -209,18 +182,7 @@ bool IsActive(void* drone) {
 
 bool ReadPose(void* drone, FVector& loc, FRotator& rot) {
     if (!drone) return false;
-    if (EnsurePoseResolved()) {
-        const char* d = static_cast<const char*>(drone);
-        void* root = *reinterpret_cast<void* const*>(d + g_rootOff);
-        if (root && R::IsLive(root)) {
-            const char* r = static_cast<const char*>(root);
-            if (*reinterpret_cast<void* const*>(r + g_attachParentOff) == nullptr) {
-                std::memcpy(&loc, r + g_relLocOff, sizeof(loc));
-                std::memcpy(&rot, r + g_relRotOff, sizeof(rot));
-                return true;
-            }
-        }
-    }
+    if (E::TryGetRootPoseRaw(drone, loc, rot)) return true;
     return E::TryGetActorLocation(drone, loc) && E::TryGetActorRotation(drone, rot);
 }
 
