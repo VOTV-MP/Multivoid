@@ -53,6 +53,7 @@ bool     g_captureInstalled = false;
 bool     g_captureGaveUp    = false;
 int      g_captureTries     = 0;
 bool     g_captureReadLogged = false;
+bool     g_sendFailLogged    = false;
 uint64_t g_nextTryMs     = 0;
 int      g_tries         = 0;
 
@@ -166,6 +167,17 @@ SG::Verdict OnCapturePre(const SG::Call& c) {
         }
     }
     ++g_counters.captured;
+    // Declared divergence from MTA, which relays an explosion only to the players within MAX_EXPLOSION_SYNC_DISTANCE
+    // (CGame.cpp:2932-2943): here every client gets it, as explosions broadcast unconditionally in this mod; the
+    // session leaves out a peer whose world is not ready. A send that fails is a one-shot cue lost, never retried.
+    if (!s->SendReliable(coop::net::ReliableKind::ExplosionSpawn, &p, sizeof(p))) {
+        ++g_counters.sendFailed;
+        if (!g_sendFailLogged) {
+            g_sendFailLogged = true;
+            UE_LOGW("[EXPLOSION] host capture send failed class=%d (channel busy); not retried", classId);
+        }
+    }
+    UE_LOGI("[EXPLOSION] host capture class=%d", classId);
     return SG::Verdict::Run;
 }
 
@@ -213,14 +225,16 @@ void Tick() {
 
 void OnDisconnect() {
     const Counters c = GetCounters();
-    if (c.dissolved)
-        UE_LOGI("[EXPLOSION] session end: dissolved=%u byName=%u destroyedByTask=%u", c.dissolved,
-                c.dissolvedByName, c.destroyedByTask);
+    if (c.dissolved || c.captured || c.applied[0] || c.applied[1] || c.applied[2])
+        UE_LOGI("[EXPLOSION] session end: dissolved=%u byName=%u destroyedByTask=%u captured=%u sendFailed=%u "
+                "applied=%u/%u/%u", c.dissolved, c.dissolvedByName, c.destroyedByTask, c.captured, c.sendFailed,
+                c.applied[0], c.applied[1], c.applied[2]);
     X::Reset();
     g_lastWorld = nullptr;
     g_counters  = Counters{};
     std::memset(g_dropLogged, 0, sizeof(g_dropLogged));
     g_captureReadLogged = false;
+    g_sendFailLogged = false;
 }
 
 LaneSpawnScope::LaneSpawnScope() { ++t_laneScopeDepth; }
