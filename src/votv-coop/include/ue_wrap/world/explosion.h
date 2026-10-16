@@ -21,7 +21,9 @@ bool Resolve();
 // resolve that loads: the apply's path.
 void* ResolveNow(Cls c);
 
-// Forget the pointers and the load attempts: a new world resolves again.
+// Forget the pointers and the load attempts: a new world resolves again. The same happens, inside Resolve,
+// ResolveNow, ClassPtr, Resolved and ClassIdOf, whenever the index has unlisted a class since the last call
+// (a pointer may then name a freed class).
 void Reset();
 
 bool Resolved(Cls c);
@@ -29,10 +31,9 @@ bool Resolved(Cls c);
 // The class object, null while unresolved.
 void* ClassPtr(Cls c);
 
-// Which of the three `cls` is, or -1. If the index unlisted a class since the last call, the pointers are
-// cleared first. Then each resolved class is compared by pointer and each unresolved one by name; only without
-// an exact match, `cls`'s super chain is compared by pointer for two steps. `byName` is set when a name
-// matched.
+// Which of the three `cls` is, or -1. Each resolved class is compared by pointer and each unresolved one by
+// name; only without an exact match, `cls`'s super chain is compared by pointer for two steps. `byName` is set
+// when a name matched.
 int ClassIdOf(void* cls, bool& byName);
 
 // The class's short name, as the game spells it.

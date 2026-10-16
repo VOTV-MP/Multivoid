@@ -101,17 +101,16 @@ uint64_t NowMs() {
         std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
-// Every Blueprint deferred spawn passes here: a null test, up to three pointer or name tests and a two-step
-// super walk on a miss.
+// Every Blueprint deferred spawn passes here: a null test and one client-session test (a host or single player
+// stops there), then up to three pointer or name tests and a two-step super walk on a miss.
 //
 // A match is dissolved: the Blueprint's result is nulled, so what it does with the spawn reads nothing, and the
 // unfinished actor is destroyed by a posted task, never inside the callback (the native call is still on the
 // stack). The task validates by the slot, since an unfinished deferred actor can fail a serial test.
 void OnBirth(void* /*context*/, void* sourceObject, void* result) {
-    if (!result) return;
+    if (!result || !coop::spawn_authority::IsActiveClientSession()) return;
     bool byName = false;
     if (X::ClassIdOf(R::ClassOf(result), byName) < 0) return;
-    if (!coop::spawn_authority::IsActiveClientSession()) return;
     if (InLaneSpawnScope()) return;
     const int32_t index = R::InternalIndexOf(result);
     if (void** r = static_cast<void**>(UH::CurrentResult())) *r = nullptr;

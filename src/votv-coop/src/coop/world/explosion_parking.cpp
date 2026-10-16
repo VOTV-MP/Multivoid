@@ -76,6 +76,7 @@ bool              g_dead[kHooks] = {};
 int               g_tries[kHooks] = {};
 Clock::time_point g_nextTry{};
 bool              g_liveLogged = false;
+bool              g_settledDead = false;  // a watch settled dead in the gate: Live() can never hold
 
 Counters g_counters{};
 
@@ -225,11 +226,10 @@ void InstallFireImpulse() {
 }
 
 }  // namespace
-
 void Install(coop::net::Session* s) {
     g_session.store(s, std::memory_order_release);
     InstallFireImpulse();
-    if (g_liveLogged) return;
+    if (g_liveLogged || g_settledDead) return;
     bool pending = false, dead = false;
     if (Clock::now() >= g_nextTry) {
         g_nextTry = Clock::now() + kRetry;
@@ -239,8 +239,8 @@ void Install(coop::net::Session* s) {
                 g_done[i] = true;
             } else if (++g_tries[i] >= kMaxTries) {
                 g_dead[i] = true;
-                UE_LOGE("[EXPLOSION] the %s watch was refused %d times; a client's explosion copy keeps that part "
-                        "of its write", kTable[i].name, kMaxTries);
+                UE_LOGE("[EXPLOSION] the %s watch was refused %d times; the host's explosions are not applied here",
+                        kTable[i].name, kMaxTries);
             }
         }
     }
@@ -252,6 +252,16 @@ void Install(coop::net::Session* s) {
     if (Live()) {
         g_liveLogged = true;
         UE_LOGI("[EXPLOSION] the explosion copy's parking watches are live");
+        return;
+    }
+    // A watch the gate settled dead (its class declares no such body, or declares it native) never goes live:
+    // said once per row, and the per-tick scans stop.
+    for (int i = 0; i < kHooks; ++i) {
+        if (!SG::NameWatchSettled(*kTable[i].row, kTable[i].tag) || SG::NameWatchLive(*kTable[i].row, kTable[i].tag))
+            continue;
+        g_settledDead = true;
+        UE_LOGE("[EXPLOSION] the %s watch settled dead in the script gate; the host's explosions are not applied here",
+                kTable[i].name);
     }
 }
 

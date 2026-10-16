@@ -5,6 +5,7 @@
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/field_io.h"
+#include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -35,6 +36,19 @@ uint64_t g_unlistVersion     = ~0ull;
 
 Cls At(int i) { return static_cast<Cls>(i); }
 
+// The index unlisted a class since the last call, so a pointer here may name a freed UClass: the pointers are
+// cleared, and the load attempts with them, since a class that is gone may be loaded again. Every reader of
+// g_cls from outside this file's own walks starts here.
+void Sync() {
+    const uint64_t version = object_index::ClassUnlistVersion();
+    if (version == g_unlistVersion) return;
+    g_unlistVersion = version;
+    for (int i = 0; i < kCount; ++i) {
+        g_cls[i]       = nullptr;
+        g_loadTried[i] = false;
+    }
+}
+
 void Store(int i, void* cls) {
     g_cls[i] = cls;
     UE_LOGI("[EXPLOSION] class %ls resolved", ClassName(At(i)));
@@ -51,7 +65,7 @@ void* LoadOnce(int i) {
 
 bool AllResolved() {
     for (int i = 0; i < kCount; ++i)
-        if (!Resolved(At(i))) return false;
+        if (!g_cls[i]) return false;
     return true;
 }
 
@@ -129,18 +143,22 @@ void PutBool(uint8_t* base, int32_t off, uint8_t mask, bool v) {
 }  // namespace
 
 bool Resolve() {
+    UE_ASSERT_GAME_THREAD("explosion::Resolve");
+    Sync();
     if (AllResolved()) return true;
     if (object_index::Backlog() != 0) return false;
     for (int i = 0; i < kCount; ++i) {
-        if (Resolved(At(i))) continue;
+        if (g_cls[i]) continue;
         if (void* cls = object_index::ClassByName(ClassName(At(i)))) Store(i, cls);
     }
     return AllResolved();
 }
 
 void* ResolveNow(Cls c) {
+    UE_ASSERT_GAME_THREAD("explosion::ResolveNow");
     const int i = static_cast<int>(c);
     if (i < 0 || i >= kCount) return nullptr;
+    Sync();
     if (g_cls[i]) return g_cls[i];
     void* cls = object_index::ClassByName(kNames[i]);
     if (!cls) cls = LoadOnce(i);
@@ -149,6 +167,7 @@ void* ResolveNow(Cls c) {
 }
 
 void Reset() {
+    UE_ASSERT_GAME_THREAD("explosion::Reset");
     for (int i = 0; i < kCount; ++i) {
         g_cls[i]       = nullptr;
         g_loadTried[i] = false;
@@ -158,20 +177,20 @@ void Reset() {
 bool Resolved(Cls c) { return ClassPtr(c) != nullptr; }
 
 void* ClassPtr(Cls c) {
+    UE_ASSERT_GAME_THREAD("explosion::ClassPtr");
     const int i = static_cast<int>(c);
-    return (i >= 0 && i < kCount) ? g_cls[i] : nullptr;
+    if (i < 0 || i >= kCount) return nullptr;
+    Sync();
+    return g_cls[i];
 }
 
 int ClassIdOf(void* cls, bool& byName) {
+    UE_ASSERT_GAME_THREAD("explosion::ClassIdOf");
     byName = false;
     if (!cls) return -1;
-    const uint64_t version = object_index::ClassUnlistVersion();
-    if (version != g_unlistVersion) {
-        g_unlistVersion = version;
-        for (int i = 0; i < kCount; ++i) g_cls[i] = nullptr;
-    }
+    Sync();
     for (int i = 0; i < kCount; ++i) {
-        if (void* known = ClassPtr(At(i))) {
+        if (void* known = g_cls[i]) {
             if (known == cls) return i;
         } else if (R::NameEquals(R::NameOf(cls), ClassName(At(i)))) {
             byName = true;
@@ -183,7 +202,7 @@ int ClassIdOf(void* cls, bool& byName) {
         up = R::SuperStructOf(up);
         if (!up) break;
         for (int i = 0; i < kCount; ++i)
-            if (ClassPtr(At(i)) == up) return i;
+            if (g_cls[i] == up) return i;
     }
     return -1;
 }
@@ -208,6 +227,7 @@ void* RadialForceOf(void* explosion) {
 }  // namespace
 
 bool ReadForceRadius(void* explosion, float& out) {
+    UE_ASSERT_GAME_THREAD("explosion::ReadForceRadius");
     void* comp = RadialForceOf(explosion);
     if (!comp) return false;
     static R::InstanceOffset sRadius{L"Radius"};
@@ -218,6 +238,7 @@ bool ReadForceRadius(void* explosion, float& out) {
 }
 
 bool NarrowForceToPawn(void* explosion) {
+    UE_ASSERT_GAME_THREAD("explosion::NarrowForceToPawn");
     void* comp = RadialForceOf(explosion);
     if (!comp) return false;
     void* fn = R::FindDispatchFunctionCached(R::ClassOf(comp), L"RemoveObjectTypeToAffect");
@@ -231,6 +252,7 @@ bool NarrowForceToPawn(void* explosion) {
 
 void* SpawnDeferred(Cls c, const float loc[3], const float rot[3], const float scale[3], const Params& p,
                     void* ignoreActor) {
+    UE_ASSERT_GAME_THREAD("explosion::SpawnDeferred");
     const int i = static_cast<int>(c);
     void* cls = ClassPtr(c);
     if (!cls || !loc || !rot || !scale) return nullptr;
