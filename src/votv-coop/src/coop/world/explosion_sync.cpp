@@ -298,6 +298,8 @@ bool OnSpawnReceived(const uint8_t* data, size_t len) {
 
 void Apply(const coop::net::ExplosionSpawnPayload& p) {
     if (!coop::spawn_authority::IsActiveClientSession() || InLaneSpawnScope()) return;
+    // Without the birth seam this client's own game runs its explosions too, so the host's copy would be a second.
+    if (!g_hookInstalled) return Drop(DropReason::Parking, "apply (the birth seam is not installed)");
     if (!coop::explosion_parking::Live()) return Drop(DropReason::Parking, "apply");
     const X::Cls cls = static_cast<X::Cls>(p.classId);
     if (!X::ResolveNow(cls)) return Drop(DropReason::Class, "apply");

@@ -10,11 +10,13 @@
 #include "coop/props/prop_wire_parity.h"
 #include "coop/world/spawn_authority.h"
 
+#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/ufunction_hook.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_pawn.h"
 #include "ue_wrap/facts/function_row.h"
 #include "ue_wrap/world/explosion.h"
 
@@ -30,6 +32,7 @@ namespace {
 namespace SG = ue_wrap::script_gate;
 namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
+namespace GT = ue_wrap::game_thread;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -163,7 +166,14 @@ void OnNarrowPost(const SG::Call& c) {
         ++g_counters.narrowed;
         UE_LOGI("[EXPLOSION] narrowed");
     } else {
-        UE_LOGE("[EXPLOSION] the force of an explosion copy could not be narrowed to pawns; it pushes props here");
+        // Fail closed: an un-narrowed force would push this client's props. The copy is a cue, so it is destroyed
+        // by a posted task (the begin-play is still on the stack), before its force fires.
+        UE_LOGE("[EXPLOSION] the force of an explosion copy could not be narrowed to pawns; the copy is destroyed");
+        void* copy = c.object;
+        const int32_t index = R::InternalIndexOf(copy);
+        GT::Post([copy, index] {
+            if (R::IsLiveByIndex(copy, index)) E::DestroyActor(copy);
+        });
     }
 }
 
