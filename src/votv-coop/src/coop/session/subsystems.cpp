@@ -90,6 +90,7 @@
 #include "coop/items/coingun_sync.h"
 #include "coop/items/order_sync.h"
 #include "coop/world/event_cue_sync.h"
+#include "coop/world/explosion_sync.h"
 #include "coop/world/event_fire_sync.h"
 #include "coop/world/firefly_sync.h"
 #include "coop/items/inventory_pickup_sync.h"
@@ -197,6 +198,7 @@ void ReleaseSessionGateHold() {
 void InstallLoadWatchers(coop::net::Session& session) {
     coop::comp_sync::Install(&session);  // the refiner's decode: the host's machine alone, a joiner's restore refused
     coop::player_hit::Install(&session);  // the session the host's hit deliveries send through
+    coop::explosion_sync::Install(&session);  // the birth seam on every Blueprint deferred spawn: a client's own explosions dissolve, from the load window on
 }
 
 void Install(coop::net::Session& session) {
@@ -539,6 +541,7 @@ DisconnectStats DisconnectAll() {
     coop::prop_stick_sync::OnDisconnect();  // drop commit-pending stick records
     coop::item_activate::OnDisconnect();
     coop::weather_sync::OnDisconnect();
+    coop::explosion_sync::OnDisconnect();  // the class table and the counters
     coop::interactable_sync::OnDisconnect();
     coop::keypad_sync::OnDisconnect();
     coop::time_sync::OnDisconnect();
@@ -654,6 +657,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     // A cheap early return when nothing is pending.
     { PP::Scope _s{PP::Bucket::ItemConnect};   coop::item_activate::TickConnect(); }
     { PP::Scope _s{PP::Bucket::WeatherConnect}; coop::weather_sync::TickConnect(); }
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:explosion"}; coop::explosion_sync::Tick(); }  // the explosion classes: reset at a world change, resolved until all three are
     // The ends of play the engine announced since the last tick, handed to the lanes that subscribed
     // before the hub's pass can complete: a pass prunes what has died from its consumers' indexes, and a
     // lane names an ended actor by its index (grime's position key).

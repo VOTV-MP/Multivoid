@@ -1,0 +1,106 @@
+// coop/world/explosion_sync.cpp -- see coop/world/explosion_sync.h.
+
+#include "coop/world/explosion_sync.h"
+
+#include "coop/net/session.h"
+#include "coop/world/spawn_authority.h"
+
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/ufunction_hook.h"
+#include "ue_wrap/engine/world_identity.h"
+#include "ue_wrap/facts/function_row.h"
+#include "ue_wrap/world/explosion.h"
+
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+
+namespace coop::explosion_sync {
+namespace {
+
+namespace R  = ue_wrap::reflection;
+namespace UH = ue_wrap::ufunction_hook;
+namespace X  = ue_wrap::explosion;
+
+std::atomic<coop::net::Session*> g_session{nullptr};
+
+UE_FACT_FN(kRowBeginDeferred, "explosion", L"GameplayStatics", L"BeginDeferredActorSpawnFromClass", Declared);
+
+// The install runs off the pump every tick, so a resolve that fails is retried on a one-second throttle, at
+// most 30 tries, then said once; never a per-tick retry.
+constexpr uint64_t kResolveRetryMs  = 1000;
+constexpr int      kMaxResolveTries = 30;
+bool     g_hookInstalled = false;
+bool     g_gaveUp        = false;
+uint64_t g_nextTryMs     = 0;
+int      g_tries         = 0;
+
+Counters g_counters{};
+void*    g_lastWorld = nullptr;
+
+thread_local int t_laneScopeDepth = 0;
+
+uint64_t NowMs() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+// Every Blueprint deferred spawn passes here: a null test, up to three pointer or name tests and a two-step
+// super walk on a miss.
+void OnBirth(void* /*context*/, void* /*sourceObject*/, void* result) {
+    if (!result) return;
+    bool byName = false;
+    if (X::ClassIdOf(R::ClassOf(result), byName) < 0) return;
+    if (!coop::spawn_authority::IsActiveClientSession()) return;
+    if (InLaneSpawnScope()) return;
+    ++g_counters.dissolved;
+    if (byName) ++g_counters.dissolvedByName;
+}
+
+}  // namespace
+
+void Install(coop::net::Session* s) {
+    g_session.store(s, std::memory_order_release);
+    if (g_hookInstalled || g_gaveUp) return;
+    const uint64_t now = NowMs();
+    if (now < g_nextTryMs) return;
+    g_nextTryMs = now + kResolveRetryMs;
+    const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowBeginDeferred);
+    if (fn && UH::InstallPostHook(fn, &OnBirth)) {
+        g_hookInstalled = true;
+        UE_LOGI("[EXPLOSION] birth seam installed on BeginDeferredActorSpawnFromClass");
+    } else if (++g_tries >= kMaxResolveTries) {
+        g_gaveUp = true;
+        UE_LOGE("[EXPLOSION] BeginDeferredActorSpawnFromClass did not resolve or would not take a post hook in "
+                "%d tries; a client's own explosions are not dissolved", kMaxResolveTries);
+    }
+}
+
+void Tick() {
+    void* world = ue_wrap::world_identity::CurrentWorld();
+    if (world != g_lastWorld) {
+        g_lastWorld = world;
+        X::Reset();
+    }
+    X::Resolve();
+}
+
+void OnDisconnect() {
+    const Counters c = GetCounters();
+    if (c.dissolved)
+        UE_LOGI("[EXPLOSION] session end: dissolved=%u byName=%u destroyedByTask=%u", c.dissolved,
+                c.dissolvedByName, c.destroyedByTask);
+    X::Reset();
+    g_lastWorld = nullptr;
+    g_counters  = Counters{};
+}
+
+LaneSpawnScope::LaneSpawnScope() { ++t_laneScopeDepth; }
+LaneSpawnScope::~LaneSpawnScope() { --t_laneScopeDepth; }
+
+bool InLaneSpawnScope() { return t_laneScopeDepth > 0; }
+
+Counters GetCounters() { return g_counters; }
+
+}  // namespace coop::explosion_sync

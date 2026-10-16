@@ -1,0 +1,51 @@
+// coop/world/explosion_sync.h -- the explosions of the game, as a co-op peer sees them: a client's own game
+// makes none (the host's are the shared world's), so the seam on every Blueprint deferred spawn dissolves the
+// explosion a client's own game spawns. The host and single player are untouched.
+#pragma once
+
+#include <cstdint>
+
+namespace coop::net {
+class Session;
+}  // namespace coop::net
+
+namespace coop::explosion_sync {
+
+// Store the session and install the spawn seam. Idempotent, any number of times; called from the load
+// watchers, before the world is ready. An install that cannot complete is retried on a one-second throttle,
+// at most 30 tries, then said once and left inert for the process. Game thread.
+void Install(coop::net::Session* s);
+
+// Game thread, from TickGameplay: when the current world differs from the one last seen, the class table is
+// reset; then the classes are resolved while any is unresolved (a lookup per unresolved class).
+void Tick();
+
+// The class table and the counters are cleared.
+void OnDisconnect();
+
+// While one is open on this thread, a spawn of an explosion class is the lane's own and is not dissolved.
+struct LaneSpawnScope {
+    LaneSpawnScope();
+    ~LaneSpawnScope();
+    LaneSpawnScope(const LaneSpawnScope&)            = delete;
+    LaneSpawnScope& operator=(const LaneSpawnScope&) = delete;
+};
+bool InLaneSpawnScope();
+
+// Why a received explosion was dropped, one counter each.
+enum class DropReason : uint8_t { Length, Class, IgnoreKind, NonFinite, Coord, Scale, Parking, Count };
+
+// Game-thread counters. `dissolved` counts the births the seam matched on a client; `dissolvedByName` those
+// matched by class name before the table held the class. `lastDissolved` is the latest such actor and
+// `lastDissolvedIndex` its object index: the pointer is only ever passed to reflection::IsLiveByIndex with
+// that index. `destroyedByTask` counts the posted destroys that ran.
+struct Counters {
+    uint32_t dissolved, dissolvedByName, destroyedByTask, captured, sendFailed;
+    uint32_t applied[3];
+    uint32_t dropped[static_cast<int>(DropReason::Count)];
+    void*    lastDissolved;
+    int32_t  lastDissolvedIndex;
+};
+Counters GetCounters();
+
+}  // namespace coop::explosion_sync
