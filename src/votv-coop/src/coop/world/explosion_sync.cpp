@@ -117,6 +117,9 @@ uint64_t NowMs() {
 // A match is dissolved: the Blueprint's result is nulled, so what it does with the spawn reads nothing, and the
 // unfinished actor is destroyed by a posted task, never inside the callback (the native call is still on the
 // stack). The task validates by the slot, since an unfinished deferred actor can fail a serial test.
+//
+// MTA cancels the same way and then requests the explosion its own player owns (CClientExplosionManager.cpp:148,188);
+// that request half is EX-2's, and until it lands a client's own explosion exists on no peer.
 void OnBirth(void* /*context*/, void* sourceObject, void* result) {
     if (!result || !coop::spawn_authority::IsActiveClientSession()) return;
     bool byName = false;
@@ -177,9 +180,11 @@ SG::Verdict OnCapturePre(const SG::Call& c) {
     }
     ++g_counters.captured;
     // Declared divergence from MTA, which relays an explosion only to the players within MAX_EXPLOSION_SYNC_DISTANCE
-    // (CGame.cpp:2932-2943): here every client gets it, as explosions broadcast unconditionally in this mod; the
-    // session leaves out a peer whose world is not ready, and the capture does not run without a ready peer, so a
-    // false return is a real refusal. A send that fails is a one-shot cue lost, never retried.
+    // (CGame.cpp:2932-2943): here every client gets it. The victim computes its own damage on its own copy and the
+    // host has no camera to cull by, and COOP_scope syncs the whole map with events broadcast unconditionally (Source
+    // culls its explosion effect by PAS too). The session leaves out a peer whose world is not ready, and the
+    // capture does not run without a ready peer, so a false return is a real refusal. A send that fails is a
+    // one-shot cue lost, never retried.
     if (!s->SendReliable(coop::net::ReliableKind::ExplosionSpawn, &p, sizeof(p))) {
         ++g_counters.sendFailed;
         if (!g_sendFailLogged) {
@@ -316,6 +321,8 @@ bool OnSpawnReceived(const uint8_t* data, size_t len) {
     return true;
 }
 
+// MTA resolves the position against the client's copy of the origin and warps the victim back by the latency when
+// there is none (CPacketHandler.cpp:4620-4670); here the position is the host's, absolute, with no compensation.
 void Apply(const coop::net::ExplosionSpawnPayload& p) {
     if (!coop::spawn_authority::IsActiveClientSession() || InLaneSpawnScope()) return;
     // Without the birth seam this client's own game runs its explosions too, so the host's copy would be a second.

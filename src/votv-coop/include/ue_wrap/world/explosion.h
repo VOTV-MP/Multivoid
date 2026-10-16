@@ -1,7 +1,8 @@
 // ue_wrap/world/explosion.h -- the explosion classes of the game: explosion_C (an AActor; the blast, its
 // radial force and its damage verbs), and its two Blueprint children explosion_pc_C and
-// explosion_saltrocket_C. A class table: which UClass each is, resolved by name, and which of the three a
-// class is. Engine access only. Game thread.
+// explosion_saltrocket_C. A class table (which UClass each is, resolved by name, and which of the three a
+// class is) and the engine access to an explosion: spawning a copy with its parameters, reading its
+// parameters, transform and ignored actor, and narrowing its radial force. Game thread.
 #pragma once
 
 #include <cstdint>

@@ -129,6 +129,8 @@ bool IsOwnPlayer(void* obj) {
            !coop::players::Registry::Get().IsPuppet(obj);
 }
 
+// MTA lets the game damage a remote copy and then restores the owner's state (CClientGame.cpp:4509, CNetAPI.cpp:895);
+// VOTV has no owner-state restore, so this lane refuses the write at the verb instead.
 SG::Verdict OnVerbPre(const SG::Call& c) {
     const int verb = c.tag - kTagVerb0;
     if (verb < 0 || verb >= kVerbs || !coop::spawn_authority::IsActiveClientSession()) return SG::Verdict::Run;

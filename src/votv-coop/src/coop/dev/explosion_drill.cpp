@@ -193,6 +193,8 @@ void WorldJudge(Run& r) {
     const uint32_t dissolved = c.dissolved - r.base.dissolved;
     if (g_beginPlay != r.beginPlay0) return Fail(r, "world", "leak: the explosion entered begin-play");
     if (dissolved > 1) return Fail(r, "world", "more than one dissolve for the one barrel");
+    if (c.dissolvedByName != r.base.dissolvedByName)
+        return Fail(r, "world", "the dissolve came by name, where a loaded world has the class table");
     const bool destroyed = dissolved == 1 && c.destroyedByTask > r.base.destroyedByTask;
     if (destroyed && !R::IsLiveByIndex(c.lastDissolved, c.lastDissolvedIndex)) {
         UE_LOGI("[EXPLOSION-DRILL] client: dissolved actor gone live=0");

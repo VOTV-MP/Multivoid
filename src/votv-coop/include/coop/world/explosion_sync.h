@@ -1,6 +1,7 @@
-// coop/world/explosion_sync.h -- the explosions of the game, as a co-op peer sees them: a client's own game
-// makes none (the host's are the shared world's), so the seam on every Blueprint deferred spawn dissolves the
-// explosion a client's own game spawns. The host and single player are untouched.
+// coop/world/explosion_sync.h -- the explosions of the game, as a co-op peer sees them: a client's own game makes
+// none (the host's are the shared world's), so the seam on every Blueprint deferred spawn dissolves the explosion a
+// client's own game spawns. The host captures each explosion its game runs and sends it as an ExplosionSpawn; a
+// client checks what it receives and spawns the copy in the lane's scope. Single player is untouched.
 #pragma once
 
 #include <cstddef>
@@ -13,9 +14,10 @@ struct ExplosionSpawnPayload;
 
 namespace coop::explosion_sync {
 
-// Store the session and install the spawn seam. Idempotent, any number of times; called from the load
-// watchers, before the world is ready. An install that cannot complete is retried on a one-second throttle,
-// at most 30 tries, then said once and left inert for the process. Game thread.
+// Store the session and install the spawn seam (the client's dissolve) and the capture watch on explosion_C's
+// begin-play (the host's send). Idempotent, any number of times; called from the load watchers, before the world is
+// ready. An install that cannot complete is retried on a one-second throttle, at most 30 tries, then said once and
+// left inert for the process; so is a capture watch the gate settles dead, said when it settles. Game thread.
 void Install(coop::net::Session* s);
 
 // Game thread, from TickGameplay: when the current world differs from the one last seen, the class table is
