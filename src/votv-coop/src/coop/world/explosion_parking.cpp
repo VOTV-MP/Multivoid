@@ -6,6 +6,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/props/prop_drive_host.h"
 #include "coop/props/prop_wire_parity.h"
 #include "coop/world/spawn_authority.h"
 
@@ -20,6 +21,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <vector>
 
 namespace coop::explosion_parking {
@@ -259,6 +261,8 @@ void Tick(coop::net::Session* s) {
             continue;
         const float reach2 = radius * radius;
         uint32_t flung = 0;
+        char eids[96] = {};  // the first eight ids, for the log
+        size_t used = 0;
         coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, g_props);
         for (const auto& prop : g_props) {
             if (!prop.actor || !R::IsLiveByIndex(prop.actor, prop.internalIdx)) continue;
@@ -268,9 +272,14 @@ void Tick(coop::net::Session* s) {
             if (dx * dx + dy * dy + dz * dz > reach2) continue;
             if (!(coop::prop_wire_parity::PhysFlagsOf(prop.actor) & coop::net::propspawn_flags::kSimulatePhysics))
                 continue;
+            // One tick after the impulse the prop already carries the blast's velocity, which the channel streams.
+            coop::prop_drive_host::Coast(prop.actor, "explosion");
+            if (flung < 8 && used < sizeof(eids))
+                used += static_cast<size_t>(std::snprintf(eids + used, sizeof(eids) - used, "%s%u", flung ? "," : "",
+                                                          static_cast<unsigned>(prop.id)));
             ++flung;
         }
-        UE_LOGI("[EXPLOSION] coast would n=%u", flung);
+        UE_LOGI("[EXPLOSION] coast n=%u eids=%s", flung, eids);
     }
     g_fired.clear();
 }
