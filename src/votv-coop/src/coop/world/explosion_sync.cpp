@@ -49,6 +49,7 @@ constexpr uint64_t kResolveRetryMs  = 1000;
 constexpr int      kMaxResolveTries = 30;
 bool     g_hookInstalled = false;
 bool     g_gaveUp        = false;
+bool     g_captureRegistered = false;
 bool     g_captureInstalled = false;
 bool     g_captureGaveUp    = false;
 int      g_captureTries     = 0;
@@ -130,7 +131,7 @@ void OnBirth(void* /*context*/, void* sourceObject, void* result) {
 // and parameters are built into an ExplosionSpawn. Always Run: the host's explosion is the game's own.
 SG::Verdict OnCapturePre(const SG::Call& c) {
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!c.object || !s || !s->connected() || s->role() != coop::net::Role::Host || s->connectedPeerCount() <= 0)
+    if (!c.object || !s || !s->connected() || s->role() != coop::net::Role::Host || !s->AnyWorldReadyPeer())
         return SG::Verdict::Run;
     bool byName = false;
     const int classId = X::ClassIdOf(R::ClassOf(c.object), byName);
@@ -168,12 +169,13 @@ SG::Verdict OnCapturePre(const SG::Call& c) {
     ++g_counters.captured;
     // Declared divergence from MTA, which relays an explosion only to the players within MAX_EXPLOSION_SYNC_DISTANCE
     // (CGame.cpp:2932-2943): here every client gets it, as explosions broadcast unconditionally in this mod; the
-    // session leaves out a peer whose world is not ready. A send that fails is a one-shot cue lost, never retried.
+    // session leaves out a peer whose world is not ready, and the capture does not run without a ready peer, so a
+    // false return is a real refusal. A send that fails is a one-shot cue lost, never retried.
     if (!s->SendReliable(coop::net::ReliableKind::ExplosionSpawn, &p, sizeof(p))) {
         ++g_counters.sendFailed;
         if (!g_sendFailLogged) {
             g_sendFailLogged = true;
-            UE_LOGW("[EXPLOSION] host capture send failed class=%d (channel busy); not retried", classId);
+            UE_LOGW("[EXPLOSION] host capture send class=%d failed to every world-ready peer; not retried", classId);
         }
     }
     UE_LOGI("[EXPLOSION] host capture class=%d", classId);
@@ -202,13 +204,26 @@ void Install(coop::net::Session* s) {
         }
     }
     if (!captureSettled) {
-        if (SG::WatchName(kRowCaptureBeginPlay, kTagCapture, &OnCapturePre, nullptr)) {
-            g_captureInstalled = true;
-            UE_LOGI("[EXPLOSION] capture watch installed on explosion_C::ReceiveBeginPlay");
-        } else if (++g_captureTries >= kMaxResolveTries) {
-            g_captureGaveUp = true;
-            UE_LOGE("[EXPLOSION] the capture watch was refused %d times; the host's explosions are not sent",
-                    kMaxResolveTries);
+        if (!g_captureRegistered) {
+            if (SG::WatchName(kRowCaptureBeginPlay, kTagCapture, &OnCapturePre, nullptr)) {
+                g_captureRegistered = true;
+            } else if (++g_captureTries >= kMaxResolveTries) {
+                g_captureGaveUp = true;
+                UE_LOGE("[EXPLOSION] the capture watch was refused %d times; the host's explosions are not sent",
+                        kMaxResolveTries);
+            }
+        }
+        // WatchName returns at registration; the watch intercepts only once its name resolved.
+        if (g_captureRegistered) {
+            SG::ResolvePendingNames();
+            if (SG::NameWatchLive(kRowCaptureBeginPlay, kTagCapture)) {
+                g_captureInstalled = true;
+                UE_LOGI("[EXPLOSION] capture watch installed on explosion_C::ReceiveBeginPlay");
+            } else if (SG::NameWatchSettled(kRowCaptureBeginPlay, kTagCapture)) {
+                g_captureGaveUp = true;
+                UE_LOGE("[EXPLOSION] the capture watch settled dead in the script gate; the host's explosions are "
+                        "not sent");
+            }
         }
     }
 }
