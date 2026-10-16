@@ -2,13 +2,18 @@
 
 #include "coop/world/explosion_sync.h"
 
+#include "coop/element/element.h"
+#include "coop/element/registry.h"
+#include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/world/explosion_parking.h"
 #include "coop/world/spawn_authority.h"
 
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/ufunction_hook.h"
+#include "ue_wrap/devices/serverbox.h"
 #include "ue_wrap/engine/engine_pawn.h"
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/facts/function_row.h"
@@ -16,7 +21,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
+#include <cstring>
+#include <vector>
 
 namespace coop::explosion_sync {
 namespace {
@@ -44,6 +52,40 @@ Counters g_counters{};
 void*    g_lastWorld = nullptr;
 
 thread_local int t_laneScopeDepth = 0;
+
+constexpr const char* kDropNames[static_cast<int>(DropReason::Count)] = {
+    "length", "class", "ignoreKind", "nonfinite", "coord", "scale", "parking"};
+bool g_dropLogged[static_cast<int>(DropReason::Count)] = {};
+
+// Count a drop under its reason and say it once per reason and session. `at` is where it was found.
+void Drop(DropReason reason, const char* at) {
+    const int i = static_cast<int>(reason);
+    ++g_counters.dropped[i];
+    if (g_dropLogged[i]) return;
+    g_dropLogged[i] = true;
+    UE_LOGW("[EXPLOSION] spawn dropped reason=%s at=%s", kDropNames[i], at);
+}
+
+bool AllFinite(const float* v, int n) {
+    for (int i = 0; i < n; ++i)
+        if (!std::isfinite(v[i])) return false;
+    return true;
+}
+
+// The actor the explosion must not hurt, as its kind names it: an element's live actor, or a server box by its
+// index in the gamemode's list. Null for none or for one that is not there.
+void* IgnoreActorOf(const coop::net::ExplosionSpawnPayload& p) {
+    if (p.ignoreKind == 1) {
+        const coop::element::Element* e = coop::element::Registry::Get().Get(p.ignoreId);
+        return e ? e->LiveActor() : nullptr;
+    }
+    if (p.ignoreKind == 2) {
+        std::vector<void*> servers;
+        ue_wrap::serverbox::ReadServers(servers);
+        return p.ignoreId < servers.size() ? servers[p.ignoreId] : nullptr;
+    }
+    return nullptr;
+}
 
 uint64_t NowMs() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -112,6 +154,7 @@ void OnDisconnect() {
     X::Reset();
     g_lastWorld = nullptr;
     g_counters  = Counters{};
+    std::memset(g_dropLogged, 0, sizeof(g_dropLogged));
 }
 
 LaneSpawnScope::LaneSpawnScope() { ++t_laneScopeDepth; }
@@ -120,5 +163,52 @@ LaneSpawnScope::~LaneSpawnScope() { --t_laneScopeDepth; }
 bool InLaneSpawnScope() { return t_laneScopeDepth > 0; }
 
 Counters GetCounters() { return g_counters; }
+
+bool OnSpawnReceived(const uint8_t* data, size_t len) {
+    coop::net::ExplosionSpawnPayload p{};
+    if (!data || len != sizeof(p)) {
+        Drop(DropReason::Length, "receive");
+        return false;
+    }
+    std::memcpy(&p, data, sizeof(p));
+    if (p.classId >= static_cast<uint8_t>(X::Cls::Count)) {
+        Drop(DropReason::Class, "receive");
+        return false;
+    }
+    if (p.ignoreKind > 2) {
+        Drop(DropReason::IgnoreKind, "receive");
+        return false;
+    }
+    if (!AllFinite(p.loc, 3) || !AllFinite(p.rot, 3) || !AllFinite(p.scale, 3) || !std::isfinite(p.damage) ||
+        !std::isfinite(p.radius) || !std::isfinite(p.force) || !std::isfinite(p.fireStrength) ||
+        !std::isfinite(p.fireFuel) || !std::isfinite(p.innerShake) || !std::isfinite(p.outerShake)) {
+        Drop(DropReason::NonFinite, "receive");
+        return false;
+    }
+    for (const float c : p.loc) {
+        if (std::fabs(c) > coop::net::kMaxCoord) {
+            Drop(DropReason::Coord, "receive");
+            return false;
+        }
+    }
+    // The open bound of SanitizeWireScaleAxis, but a drop and not its fallback to 1.
+    for (const float s : p.scale) {
+        if (!(s > 0.01f && s < 100.f)) {
+            Drop(DropReason::Scale, "receive");
+            return false;
+        }
+    }
+    GT::Post([p] { Apply(p); });
+    return true;
+}
+
+void Apply(const coop::net::ExplosionSpawnPayload& p) {
+    if (!coop::spawn_authority::IsActiveClientSession() || InLaneSpawnScope()) return;
+    if (!coop::explosion_parking::Live()) return Drop(DropReason::Parking, "apply");
+    const X::Cls cls = static_cast<X::Cls>(p.classId);
+    if (!X::ResolveNow(cls)) return Drop(DropReason::Class, "apply");
+    [[maybe_unused]] void* ignore = IgnoreActorOf(p);
+    UE_LOGI("[EXPLOSION] apply class=%u (spawn pending)", static_cast<unsigned>(p.classId));
+}
 
 }  // namespace coop::explosion_sync

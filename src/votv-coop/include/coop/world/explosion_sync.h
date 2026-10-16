@@ -3,10 +3,12 @@
 // explosion a client's own game spawns. The host and single player are untouched.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace coop::net {
 class Session;
+struct ExplosionSpawnPayload;
 }  // namespace coop::net
 
 namespace coop::explosion_sync {
@@ -47,5 +49,15 @@ struct Counters {
     int32_t  lastDissolvedIndex;
 };
 Counters GetCounters();
+
+// A host's ExplosionSpawn, as the dispatch hands it: checked in order (length, class, ignore kind, every float
+// finite, location in bounds, every scale strictly inside (0.01, 100)); a failure is counted under its reason, logged
+// once per reason, and the message dropped, never clamped. A good one posts Apply. Game thread. False = dropped.
+bool OnSpawnReceived(const uint8_t* data, size_t len);
+
+// Re-spawn the received explosion on this client, in the lane's scope. Runs only on a client in a session, never
+// nested in another apply, and only once every parking watch is live (without its parkings a copy would write the
+// host's world, so the apply fails closed). Game thread.
+void Apply(const coop::net::ExplosionSpawnPayload& p);
 
 }  // namespace coop::explosion_sync

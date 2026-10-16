@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 236;
+inline constexpr uint16_t kProtocolVersion = 237;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1069,6 +1069,11 @@ enum class ReliableKind : uint8_t {
     // the id must name a live host creature of a parked family, the damage is clamped to the held item's, and
     // intents run from a bounded queue at a bounded rate. CreatureHitIntentPayload.
     CreatureHitIntent = 187,
+    // Host to client: an explosion the host's game ran, with its class, transform and parameters; the client
+    // spawns its own copy there in the lane's scope (its own game's explosions are dissolved at birth). Never
+    // relayed. Late join: none -- a one-shot cue. Trust: host-authored only (a client's copy is refused at the
+    // host's receive edge); the receiver drops a malformed one and counts it. ExplosionSpawnPayload.
+    ExplosionSpawn = 177,
 };
 
 #pragma pack(push, 1)
@@ -3552,6 +3557,21 @@ struct LightningStrikePayload {
 static_assert(sizeof(LightningStrikePayload) == 16, "LightningStrikePayload must be 16 bytes");
 static_assert(sizeof(LightningStrikePayload) <= 256 - 20 - 8,
               "LightningStrikePayload must fit in one reliable datagram");
+
+// An explosion (ExplosionSpawn): where it went off and the parameters its blast reads; the receiver spawns
+// its own copy of the class there. Not sent: debris, impact, shake, tag and the event flags.
+struct ExplosionSpawnPayload {
+    uint8_t  classId;                    // ue_wrap::explosion::Cls
+    uint8_t  flags;                      // bit0 ignoreWalls, bit1 Skip Setting
+    uint8_t  objType;                    // explosion_C.objType, 0..255
+    uint8_t  ignoreKind;                 // 0 none, 1 an element id, 2 a server box's index in the gamemode's list
+    float    loc[3], rot[3], scale[3];   // rot = pitch, yaw, roll
+    float    damage, radius, force, fireStrength, fireFuel, innerShake, outerShake;
+    uint32_t ignoreId;                   // per ignoreKind; 0 when none
+};
+static_assert(sizeof(ExplosionSpawnPayload) == 72, "ExplosionSpawnPayload must be 72 bytes");
+static_assert(sizeof(ExplosionSpawnPayload) <= 256 - 20 - 8,
+              "ExplosionSpawnPayload must fit in one reliable datagram");
 
 // The loading-screen brackets: SnapshotBegin carries the candidate count (the denominator),
 // SnapshotComplete the count actually sent.

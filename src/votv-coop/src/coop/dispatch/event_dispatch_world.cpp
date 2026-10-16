@@ -16,6 +16,7 @@
 #include "coop/world/event_active_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/world/event_fire_sync.h"
+#include "coop/world/explosion_sync.h"
 #include "coop/world/coord_tower_ops.h"
 #include "coop/world/coord_tower_rows.h"
 #include "coop/world/firefly_sync.h"
@@ -453,6 +454,11 @@ bool HandleWorldEvent(const net::Session::ReliableMessage& msg) {
         });
         break;
     }
+    case net::ReliableKind::ExplosionSpawn:
+        // A host explosion for this client to re-spawn. The host is the only author (client_authorship.h
+        // refuses a client's copy at the host's receive edge); the receive validates the bytes itself.
+        ::coop::explosion_sync::OnSpawnReceived(msg.payload, msg.payloadLen);
+        break;
     case net::ReliableKind::WeatherState: {
         // The host-authoritative weather state. The receiver looks up its local day-night cycle and
         // invokes the cycle's mutator UFunctions to apply each delta; see the weather sync's apply.
