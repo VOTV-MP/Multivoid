@@ -178,7 +178,17 @@ struct Fired {
     int32_t index;
 };
 std::vector<Fired> g_fired;
-std::vector<coop::element::Registry::ActorIdPair> g_props;  // reused by every explosion's walk
+std::vector<coop::element::Registry::ActorIdPair> g_props;  // reused by every Tick's walk
+
+// One queued explosion read for a Tick: where it went off, its squared reach, and the props it flung.
+struct Blast {
+    ue_wrap::FVector at;
+    float            reach2;
+    uint32_t         flung;
+    char             eids[96];  // the first eight ids, for the log
+    size_t           used;
+};
+std::vector<Blast> g_blasts;  // reused by every Tick
 
 bool     g_fireInstalled = false;
 bool     g_fireGaveUp = false;
@@ -205,6 +215,7 @@ void InstallFireImpulse() {
     if (fn && ue_wrap::ufunction_hook::InstallPostHook(fn, &OnFireImpulsePost)) {
         g_fireInstalled = true;
         g_fired.reserve(16);
+        g_blasts.reserve(16);
         UE_LOGI("[EXPLOSION] coast seam installed on RadialForceComponent::FireImpulse");
     } else if (++g_fireTries >= kMaxTries) {
         g_fireGaveUp = true;
@@ -253,35 +264,44 @@ bool Live() {
 void Tick(coop::net::Session* s) {
     if (g_fired.empty()) return;
     const bool hosting = s && s->connected() && s->role() == coop::net::Role::Host;
+    g_blasts.clear();
     for (const Fired& f : g_fired) {
         if (!hosting || !R::IsLiveByIndex(f.explosion, f.index)) continue;
-        ue_wrap::FVector at{};
+        Blast b{};
         float radius = 0.f;
-        if (!E::TryGetActorLocation(f.explosion, at) || !ue_wrap::explosion::ReadForceRadius(f.explosion, radius))
+        if (!E::TryGetActorLocation(f.explosion, b.at) || !ue_wrap::explosion::ReadForceRadius(f.explosion, radius))
             continue;
-        const float reach2 = radius * radius;
-        uint32_t flung = 0;
-        char eids[96] = {};  // the first eight ids, for the log
-        size_t used = 0;
-        coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, g_props);
-        for (const auto& prop : g_props) {
-            if (!prop.actor || !R::IsLiveByIndex(prop.actor, prop.internalIdx)) continue;
-            ue_wrap::FVector pos{};
-            if (!E::TryGetActorLocation(prop.actor, pos)) continue;
-            const float dx = pos.X - at.X, dy = pos.Y - at.Y, dz = pos.Z - at.Z;
-            if (dx * dx + dy * dy + dz * dz > reach2) continue;
-            if (!(coop::prop_wire_parity::PhysFlagsOf(prop.actor) & coop::net::propspawn_flags::kSimulatePhysics))
-                continue;
-            // One tick after the impulse the prop already carries the blast's velocity, which the channel streams.
-            coop::prop_drive_host::Coast(prop.actor, "explosion");
-            if (flung < 8 && used < sizeof(eids))
-                used += static_cast<size_t>(std::snprintf(eids + used, sizeof(eids) - used, "%s%u", flung ? "," : "",
-                                                          static_cast<unsigned>(prop.id)));
-            ++flung;
-        }
-        UE_LOGI("[EXPLOSION] coast n=%u eids=%s", flung, eids);
+        b.reach2 = radius * radius;
+        g_blasts.push_back(b);
     }
     g_fired.clear();
+    if (g_blasts.empty()) return;
+    // One registry snapshot and one position read per prop for every explosion of this tick; a prop's physics flags
+    // are read only when it lies inside some blast's radius.
+    coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, g_props);
+    for (const auto& prop : g_props) {
+        if (!prop.actor || !R::IsLiveByIndex(prop.actor, prop.internalIdx)) continue;
+        ue_wrap::FVector pos{};
+        if (!E::TryGetActorLocation(prop.actor, pos)) continue;
+        int simulating = -1;  // unknown until a blast reaches the prop
+        for (Blast& b : g_blasts) {
+            const float dx = pos.X - b.at.X, dy = pos.Y - b.at.Y, dz = pos.Z - b.at.Z;
+            if (dx * dx + dy * dy + dz * dz > b.reach2) continue;
+            if (simulating < 0) {
+                simulating = (coop::prop_wire_parity::PhysFlagsOf(prop.actor) &
+                              coop::net::propspawn_flags::kSimulatePhysics) ? 1 : 0;
+                // One tick after the impulse the prop already carries the blast's velocity, which the channel
+                // streams.
+                if (simulating) coop::prop_drive_host::Coast(prop.actor, "explosion");
+            }
+            if (!simulating) break;
+            if (b.flung < 8 && b.used < sizeof(b.eids))
+                b.used += static_cast<size_t>(std::snprintf(b.eids + b.used, sizeof(b.eids) - b.used, "%s%u",
+                                                            b.flung ? "," : "", static_cast<unsigned>(prop.id)));
+            ++b.flung;
+        }
+    }
+    for (const Blast& b : g_blasts) UE_LOGI("[EXPLOSION] coast n=%u eids=%s", b.flung, b.eids);
 }
 
 void OnDisconnect() {

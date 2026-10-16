@@ -11,7 +11,6 @@
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/sdk_profile_names.h"
 #include "ue_wrap/engine/engine.h"
-#include "ue_wrap/engine/world_identity.h"
 
 #include <cmath>
 
@@ -132,14 +131,9 @@ void PutBool(uint8_t* base, int32_t off, uint8_t mask, bool v) {
 bool Resolve() {
     if (AllResolved()) return true;
     if (object_index::Backlog() != 0) return false;
-    const bool gameplay = world_identity::CurrentWorldKind() == world_identity::WorldKind::Gameplay;
     for (int i = 0; i < kCount; ++i) {
         if (Resolved(At(i))) continue;
-        if (gameplay) {
-            ResolveNow(At(i));
-        } else if (void* cls = object_index::ClassByName(ClassName(At(i)))) {
-            Store(i, cls);
-        }
+        if (void* cls = object_index::ClassByName(ClassName(At(i)))) Store(i, cls);
     }
     return AllResolved();
 }

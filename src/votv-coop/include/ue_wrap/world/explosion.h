@@ -11,13 +11,14 @@ namespace ue_wrap::explosion {
 // The three classes, in the order a wire's classId numbers them.
 enum class Cls : uint8_t { Explosion = 0, Pc = 1, SaltRocket = 2, Count = 3 };
 
-// Resolve each unresolved class, when the object index has no backlog: by name from the index, else (in the
-// gameplay world only) ONE load by its asset path per class per world. A failed load is logged once and not
-// repeated until Reset(). Each class logs once when it resolves. True when all three are resolved.
+// Resolve each unresolved class from the object index by name, when the index has no backlog; it never loads
+// by path (a class the index lacks cannot have been spawned by the game). Each class logs once when it
+// resolves. True when all three are resolved.
 bool Resolve();
 
-// The class at once: from the index, else the one load by path this world allows (no backlog gate). Null when
-// neither answers. Counts as that class's one load attempt for this world.
+// The class at once: from the index, else ONE load by its asset path per class per world (a failed load is
+// logged once and not repeated until Reset()), with no backlog gate. Null when neither answers. The only
+// resolve that loads: the apply's path.
 void* ResolveNow(Cls c);
 
 // Forget the pointers and the load attempts: a new world resolves again.
