@@ -39,6 +39,7 @@
 #include "coop/dev/laptop_drill.h"  // [dev] the laptop's slot is the host's; a file edit lands on its own disc
 #include "coop/dev/laptop_power_drill.h"  // [dev] the laptop's power pressed on each peer, its replay silent
 #include "coop/dev/laptop_tab_drill.h"  // [dev] everyone sees the tab the PC's user is on, judged on the viewing peer
+#include "coop/dev/explosion_drill.h"  // [dev] the explosion lane's drill: a barrel's explosion dissolved on a client
 #include "coop/dev/grid_drill.h"  // [dev] the power grid: a client's presses and repair, the host's break and lockout
 #include "coop/dev/tower_drill.h"  // [dev] the coordinate towers: the host's break, a client's repair, a joiner's copy
 #include "coop/dev/drone_probe.h"
@@ -193,6 +194,7 @@ void EndSession() {
     coop::dev::laptop_drill::OnDisconnect();  // [dev] a rejoin's peers run their legs again
     coop::dev::laptop_power_drill::OnDisconnect();  // [dev] a rejoin's peers press again
     coop::dev::laptop_tab_drill::OnDisconnect();  // [dev] a rejoin's peers run their legs again
+    coop::dev::explosion_drill::OnDisconnect();  // [dev] a rejoin's client runs both halves again
     coop::dev::grid_drill::OnDisconnect();  // [dev] the panel and the legs belong to one world
     coop::dev::tower_drill::OnDisconnect();  // [dev] the tower and the legs belong to one world
     coop::dev::desk_verb_drill::OnDisconnect();  // [dev] the legs start over
@@ -232,6 +234,7 @@ void TickLoadWindow(coop::net::Session& session) {
     coop::dev::hotbar_icon_probe::Tick();  // [dev] the quick-slot bar's icons, decided during the load
     coop::dev::load_reroll_watch::Tick(session);  // [dev] what it watches runs inside the world load
     coop::dev::desk_verb_drill::TickLoad(&session);  // [dev] the join's census, armed ahead of the load it counts
+    coop::dev::explosion_drill::TickLoad(&session);  // [dev] the explosion drill's load half, inside the world load
 }
 
 void TickDrills(coop::net::Session& session) {
@@ -292,6 +295,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::laptop_drill::Tick(&session);  // [dev] the laptop drill (a latched read when off)
     coop::dev::laptop_power_drill::Tick(&session);  // [dev] the laptop power drill (a bool read when off)
     coop::dev::laptop_tab_drill::Tick(&session);  // [dev] the PC tab drill (a latched string compare when off)
+    coop::dev::explosion_drill::Tick(&session);  // [dev] the explosion lane's drill, world half (a latched string compare when off)
     coop::dev::grid_drill::Tick(&session);  // [dev] the power grid drill (a latched read when off)
     coop::dev::tower_drill::Tick(&session);  // [dev] the coordinate towers drill (a latched read when off)
     coop::dev::desk_verb_drill::Tick(&session);  // [dev] the desk's save family drill (a latched read when off)

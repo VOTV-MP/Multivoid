@@ -783,6 +783,12 @@ CFG_FLAG(selftest_break_permissions, "selftest_break_permissions", "dev", false,
 CFG_FLAG(selftest_break_action_log, "selftest_break_action_log", "dev", false, "VOTVCOOP_SELFTEST_BREAK_ACTION_LOG",
     "Red arm of the commands selftest's action-log cases: the first acting case of each cases file expects "
     "no record, so it must fail.")
+CFG_ENUM(explosion_drill, "explosion_drill", "dev", "off", "off|dissolve", "VOTVCOOP_EXPLOSION_DRILL",
+    "Drill (the CLIENT acts, the host only hosts), the explosion lane's drill arm. dissolve: a bomb barrel is "
+    "spawned and broken once while the client's world loads and once in the loaded world; its explosion must be "
+    "dissolved at its birth (matched by class name while the class table is unresolved in the load, by class in "
+    "the world), must never run its begin-play, and its unfinished actor must be gone. Run it on a fresh host "
+    "world.")
 // The puppet-identity arc's selftests and drill (PI-1, PI-2, PI-3): their own file, one concept, included as
 // _dev_port.inc is above.
 #include "coop/config/config_registry_rows_dev_pi.inc"
