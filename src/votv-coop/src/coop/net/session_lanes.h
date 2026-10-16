@@ -58,6 +58,7 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::RestoreVitals:  return Lane::High;
     case ReliableKind::ItemActivate:   return Lane::High;
     case ReliableKind::PlayerHit:      return Lane::High;  // combat event -- prioritize
+    case ReliableKind::ExplosionSpawn: return Lane::High;  // carries a victim's damage; MTA's packet is high priority
     // Spawn and Destroy share a lane: GNS orders delivery within a lane, not across lanes, and a
     // destroy overtaking its spawn under backpressure leaves a phantom actor.
     case ReliableKind::PropSpawn:      return Lane::Bulk;
