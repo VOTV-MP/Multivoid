@@ -42,4 +42,18 @@ const wchar_t* ClassName(Cls c);
 // raw: that does not narrow. False when the member or the function does not resolve, or a call fails.
 bool NarrowForceToPawn(void* explosion);
 
+// The parameters a blast reads, as the host captured them. objType is explosion_C's Int.
+struct Params {
+    float   damage, radius, force, fireStrength, fireFuel, innerShake, outerShake;
+    int32_t objType;
+    bool    ignoreWalls, skipSetting;
+};
+
+// A new explosion of class `c` at a full transform (rotation = pitch, yaw, roll in degrees; the scale included, which
+// engine::BeginDeferredSpawn takes no argument for), its parameters written between the deferred spawn and its finish,
+// and, when `ignoreActor` is non-null, its `ignores` set to that one actor. The class must be resolved. Game thread.
+// Null on failure: a property that does not resolve is said once per class, before anything is spawned.
+void* SpawnDeferred(Cls c, const float loc[3], const float rot[3], const float scale[3], const Params& p,
+                    void* ignoreActor);
+
 }  // namespace ue_wrap::explosion

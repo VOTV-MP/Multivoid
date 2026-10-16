@@ -4,16 +4,20 @@
 
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/field_io.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
+#include "ue_wrap/core/sdk_profile_names.h"
+#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/world_identity.h"
 
 namespace ue_wrap::explosion {
 namespace {
 
 namespace R = reflection;
+namespace P = profile;
 
 constexpr int kCount = static_cast<int>(Cls::Count);
 
@@ -48,6 +52,66 @@ bool AllResolved() {
     for (int i = 0; i < kCount; ++i)
         if (!Resolved(At(i))) return false;
     return true;
+}
+
+// Where each written property sits in an explosion of one class: found once per class object, before anything is
+// spawned, so a property that does not resolve fails the spawn whole.
+struct Layout {
+    void*   cls = nullptr;
+    bool    ok = false;
+    int32_t damage = -1, radius = -1, force = -1, fireStrength = -1, fireFuel = -1, innerShake = -1, outerShake = -1;
+    int32_t objType = -1, ignores = -1;
+    int32_t ignoreWallsOff = -1, skipSettingOff = -1;
+    uint8_t ignoreWallsMask = 0, skipSettingMask = 0;
+};
+Layout g_layout[kCount];
+
+const Layout* LayoutFor(int i, void* cls) {
+    Layout& l = g_layout[i];
+    if (l.cls == cls) return l.ok ? &l : nullptr;
+    l = Layout{};
+    l.cls = cls;
+    l.damage = R::FindPropertyOffset(cls, L"damage");
+    l.radius = R::FindPropertyOffset(cls, L"radius");
+    l.force = R::FindPropertyOffset(cls, L"force");
+    l.fireStrength = R::FindPropertyOffset(cls, L"fireStrength");
+    l.fireFuel = R::FindPropertyOffset(cls, L"fireFuel");
+    l.innerShake = R::FindPropertyOffset(cls, L"innerShake");
+    l.outerShake = R::FindPropertyOffset(cls, L"outerShake");
+    l.objType = R::FindPropertyOffset(cls, L"objType");
+    l.ignores = R::FindPropertyOffset(cls, L"ignores");
+    const bool bools = R::FindBoolProperty(cls, L"ignoreWalls", l.ignoreWallsOff, l.ignoreWallsMask) &&
+                       R::FindBoolProperty(cls, L"Skip Setting", l.skipSettingOff, l.skipSettingMask);
+    l.ok = bools && l.damage >= 0 && l.radius >= 0 && l.force >= 0 && l.fireStrength >= 0 && l.fireFuel >= 0 &&
+           l.innerShake >= 0 && l.outerShake >= 0 && l.objType >= 0 && l.ignores >= 0;
+    if (!l.ok)
+        UE_LOGE("[EXPLOSION] class %ls: a property to write did not resolve (damage=%d radius=%d force=%d fire=%d/%d "
+                "shake=%d/%d objType=%d ignores=%d bools=%d); no copy of it is spawned",
+                ClassName(At(i)), l.damage, l.radius, l.force, l.fireStrength, l.fireFuel, l.innerShake,
+                l.outerShake, l.objType, l.ignores, bools ? 1 : 0);
+    return l.ok ? &l : nullptr;
+}
+
+// GameplayStatics and the two spawn functions, resolved once.
+void* g_gsCdo = nullptr;
+void* g_beginFn = nullptr;
+void* g_finishFn = nullptr;
+
+bool ResolveSpawnFns() {
+    if (!g_gsCdo) g_gsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
+    if (g_gsCdo) {
+        void* gs = R::ClassOf(g_gsCdo);
+        if (gs && !g_beginFn) g_beginFn = R::FindFunction(gs, P::name::BeginDeferredSpawnFn);
+        if (gs && !g_finishFn) g_finishFn = R::FindFunction(gs, P::name::FinishSpawningActorFn);
+    }
+    return g_gsCdo && g_beginFn && g_finishFn;
+}
+
+void PutFloat(uint8_t* base, int32_t off, float v) { *reinterpret_cast<float*>(base + off) = v; }
+
+void PutBool(uint8_t* base, int32_t off, uint8_t mask, bool v) {
+    if (v) base[off] |= mask;
+    else base[off] &= static_cast<uint8_t>(~mask);
 }
 
 }  // namespace
@@ -136,6 +200,76 @@ bool NarrowForceToPawn(void* explosion) {
         if (!f.Set<uint8_t>(L"ObjectType", type) || !Call(comp, f)) return false;
     }
     return true;
+}
+
+void* SpawnDeferred(Cls c, const float loc[3], const float rot[3], const float scale[3], const Params& p,
+                    void* ignoreActor) {
+    const int i = static_cast<int>(c);
+    void* cls = ClassPtr(c);
+    if (!cls || !loc || !rot || !scale) return nullptr;
+    const Layout* l = LayoutFor(i, cls);
+    if (!l) return nullptr;
+    if (!ResolveSpawnFns()) {
+        UE_LOGE("[EXPLOSION] the spawn path on GameplayStatics did not resolve (cdo=%p begin=%p finish=%p)", g_gsCdo,
+                g_beginFn, g_finishFn);
+        return nullptr;
+    }
+    FTransform xform{};
+    engine::RotatorToQuat(rot[0], rot[1], rot[2], xform.RotX, xform.RotY, xform.RotZ, xform.RotW);
+    xform.TX = loc[0]; xform.TY = loc[1]; xform.TZ = loc[2];
+    xform.SX = scale[0]; xform.SY = scale[1]; xform.SZ = scale[2];
+
+    ParamFrame begin(g_beginFn);
+    begin.Set<void*>(L"WorldContextObject", engine::GetWorldContext());
+    begin.Set<void*>(L"ActorClass", cls);
+    begin.SetRaw(L"SpawnTransform", &xform, sizeof(xform));
+    begin.Set<uint8_t>(L"CollisionHandlingOverride", 1);  // AlwaysSpawn
+    begin.Set<void*>(L"Owner", nullptr);
+    if (!Call(g_gsCdo, begin)) {
+        UE_LOGE("[EXPLOSION] BeginDeferredActorSpawnFromClass call failed");
+        return nullptr;
+    }
+    void* actor = begin.Get<void*>(L"ReturnValue");
+    if (!actor) {
+        UE_LOGW("[EXPLOSION] BeginDeferredActorSpawnFromClass returned null for class %ls", ClassName(c));
+        return nullptr;
+    }
+
+    uint8_t* base = static_cast<uint8_t*>(actor);
+    PutFloat(base, l->damage, p.damage);
+    PutFloat(base, l->radius, p.radius);
+    PutFloat(base, l->force, p.force);
+    PutFloat(base, l->fireStrength, p.fireStrength);
+    PutFloat(base, l->fireFuel, p.fireFuel);
+    PutFloat(base, l->innerShake, p.innerShake);
+    PutFloat(base, l->outerShake, p.outerShake);
+    *reinterpret_cast<int32_t*>(base + l->objType) = p.objType;
+    PutBool(base, l->ignoreWallsOff, l->ignoreWallsMask, p.ignoreWalls);
+    PutBool(base, l->skipSettingOff, l->skipSettingMask, p.skipSetting);
+    if (ignoreActor) {
+        void** one = static_cast<void**>(R::EngineAlloc(sizeof(void*)));
+        if (!one) {
+            UE_LOGE("[EXPLOSION] the engine allocator gave no buffer for the ignores array; the copy is dropped");
+            engine::DestroyActor(actor);
+            return nullptr;
+        }
+        *one = ignoreActor;
+        auto* view = reinterpret_cast<field_io::TArrayView*>(base + l->ignores);
+        if (view->data) R::EngineFree(view->data);
+        view->data = reinterpret_cast<uint8_t*>(one);
+        view->num = 1;
+        view->max = 1;
+    }
+
+    ParamFrame finish(g_finishFn);
+    finish.Set<void*>(L"Actor", actor);
+    finish.SetRaw(L"SpawnTransform", &xform, sizeof(xform));
+    if (!Call(g_gsCdo, finish)) {
+        UE_LOGE("[EXPLOSION] FinishSpawningActor call failed");
+        return nullptr;
+    }
+    void* finished = finish.Get<void*>(L"ReturnValue");
+    return finished ? finished : actor;
 }
 
 }  // namespace ue_wrap::explosion

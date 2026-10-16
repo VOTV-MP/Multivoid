@@ -207,8 +207,19 @@ void Apply(const coop::net::ExplosionSpawnPayload& p) {
     if (!coop::explosion_parking::Live()) return Drop(DropReason::Parking, "apply");
     const X::Cls cls = static_cast<X::Cls>(p.classId);
     if (!X::ResolveNow(cls)) return Drop(DropReason::Class, "apply");
-    [[maybe_unused]] void* ignore = IgnoreActorOf(p);
-    UE_LOGI("[EXPLOSION] apply class=%u (spawn pending)", static_cast<unsigned>(p.classId));
+    const X::Params params{p.damage, p.radius, p.force, p.fireStrength, p.fireFuel, p.innerShake, p.outerShake,
+                           static_cast<int32_t>(p.objType), (p.flags & 1u) != 0, (p.flags & 2u) != 0};
+    void* actor = nullptr;
+    {
+        LaneSpawnScope scope;  // the birth seam leaves the lane's own spawn alone
+        actor = X::SpawnDeferred(cls, p.loc, p.rot, p.scale, params, IgnoreActorOf(p));
+    }
+    if (!actor) {
+        UE_LOGW("[EXPLOSION] apply class=%u spawned nothing", static_cast<unsigned>(p.classId));
+        return;
+    }
+    ++g_counters.applied[p.classId];
+    UE_LOGI("[EXPLOSION] apply class=%u", static_cast<unsigned>(p.classId));
 }
 
 }  // namespace coop::explosion_sync
