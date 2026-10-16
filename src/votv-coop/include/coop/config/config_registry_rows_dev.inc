@@ -783,12 +783,17 @@ CFG_FLAG(selftest_break_permissions, "selftest_break_permissions", "dev", false,
 CFG_FLAG(selftest_break_action_log, "selftest_break_action_log", "dev", false, "VOTVCOOP_SELFTEST_BREAK_ACTION_LOG",
     "Red arm of the commands selftest's action-log cases: the first acting case of each cases file expects "
     "no record, so it must fail.")
-CFG_ENUM(explosion_drill, "explosion_drill", "dev", "off", "off|dissolve", "VOTVCOOP_EXPLOSION_DRILL",
-    "Drill (the CLIENT acts, the host only hosts), the explosion lane's drill arm. dissolve: a bomb barrel is "
-    "spawned and broken once while the client's world loads and once in the loaded world; its explosion must be "
-    "dissolved at its birth (matched by class name while the class table is unresolved in the load, by class in "
-    "the world), must never run its begin-play, and its unfinished actor must be gone. Run it on a fresh host "
-    "world.")
+CFG_ENUM(explosion_drill, "explosion_drill", "dev", "off", "off|dissolve|apply|coast|spawn_malformed",
+    "VOTVCOOP_EXPLOSION_DRILL",
+    "Drill, the explosion lane's arms; each runs the roles it names. dissolve (the CLIENT acts, the host only "
+    "hosts): a bomb barrel is spawned and broken once while the client's world loads and once in the loaded world; "
+    "its explosion must be dissolved at its birth (matched by class name while the class table is unresolved in "
+    "the load, by class in the world), must never run its begin-play, and its unfinished actor must be gone. apply "
+    "(HOST and CLIENT): the host blasts the three explosion classes ahead of the client; the client must apply "
+    "each once, narrow its force, refuse its rune check and drop nothing. coast (HOST and CLIENT): four papers lie "
+    "around the blast and each client copy must fly and rest again. spawn_malformed (HOST and CLIENT): the host "
+    "sends one valid explosion and four with a broken field; the client must drop each by its reason. Run it on a "
+    "fresh host world.")
 // The puppet-identity arc's selftests and drill (PI-1, PI-2, PI-3): their own file, one concept, included as
 // _dev_port.inc is above.
 #include "coop/config/config_registry_rows_dev_pi.inc"
