@@ -2,25 +2,32 @@
 
 #include "coop/world/explosion_parking.h"
 
+#include "coop/element/registry.h"
+#include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/props/prop_wire_parity.h"
 #include "coop/world/spawn_authority.h"
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/core/ufunction_hook.h"
+#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/facts/function_row.h"
 #include "ue_wrap/world/explosion.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <vector>
 
 namespace coop::explosion_parking {
 namespace {
 
 namespace SG = ue_wrap::script_gate;
 namespace R  = ue_wrap::reflection;
+namespace E  = ue_wrap::engine;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -157,10 +164,58 @@ void OnNarrowPost(const SG::Call& c) {
     }
 }
 
+// ---- the coast of flung props ---------------------------------------------------------------------------------------
+
+UE_FACT_FN(kRowFireImpulse, "explosion", L"RadialForceComponent", L"FireImpulse", Declared);
+
+// An explosion whose radial force fired, by pointer and the object index it had. The hook fires inside the
+// explosion's own body; the props are read and handed on in Tick, outside it. No cap: every flung prop coasts, and a
+// chain blast queues each of its explosions.
+struct Fired {
+    void*   explosion;
+    int32_t index;
+};
+std::vector<Fired> g_fired;
+std::vector<coop::element::Registry::ActorIdPair> g_props;  // reused by every explosion's walk
+
+bool     g_fireInstalled = false;
+bool     g_fireGaveUp = false;
+int      g_fireTries = 0;
+Clock::time_point g_fireNextTry{};
+
+// Every Blueprint call of FireImpulse arrives here; an explosion's is the one whose component's owner is one of
+// ours. A component's outer is the actor that owns it.
+void OnFireImpulsePost(void* component, void* /*sourceObject*/, void* /*result*/) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!component || !s || !s->connected() || s->role() != coop::net::Role::Host || s->connectedPeerCount() <= 0)
+        return;
+    void* owner = R::OuterOf(component);
+    bool byName = false;
+    if (!owner || ue_wrap::explosion::ClassIdOf(R::ClassOf(owner), byName) < 0) return;
+    g_fired.push_back(Fired{owner, R::InternalIndexOf(owner)});
+}
+
+// Install under the same policy as the watches: a refused install is retried each second, 30 times, then said once.
+void InstallFireImpulse() {
+    if (g_fireInstalled || g_fireGaveUp || Clock::now() < g_fireNextTry) return;
+    g_fireNextTry = Clock::now() + kRetry;
+    const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowFireImpulse);
+    if (fn && ue_wrap::ufunction_hook::InstallPostHook(fn, &OnFireImpulsePost)) {
+        g_fireInstalled = true;
+        g_fired.reserve(16);
+        UE_LOGI("[EXPLOSION] coast seam installed on RadialForceComponent::FireImpulse");
+    } else if (++g_fireTries >= kMaxTries) {
+        g_fireGaveUp = true;
+        UE_LOGE("[EXPLOSION] the FireImpulse hook did not install in %d tries; the props a host explosion flings are "
+                "not driven to clients", kMaxTries);
+    }
+}
+
 }  // namespace
 
 void Install(coop::net::Session* s) {
     g_session.store(s, std::memory_order_release);
+    InstallFireImpulse();
     if (g_liveLogged) return;
     bool pending = false, dead = false;
     if (Clock::now() >= g_nextTry) {
@@ -193,7 +248,35 @@ bool Live() {
     return true;
 }
 
+void Tick(coop::net::Session* s) {
+    if (g_fired.empty()) return;
+    const bool hosting = s && s->connected() && s->role() == coop::net::Role::Host;
+    for (const Fired& f : g_fired) {
+        if (!hosting || !R::IsLiveByIndex(f.explosion, f.index)) continue;
+        ue_wrap::FVector at{};
+        float radius = 0.f;
+        if (!E::TryGetActorLocation(f.explosion, at) || !ue_wrap::explosion::ReadForceRadius(f.explosion, radius))
+            continue;
+        const float reach2 = radius * radius;
+        uint32_t flung = 0;
+        coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, g_props);
+        for (const auto& prop : g_props) {
+            if (!prop.actor || !R::IsLiveByIndex(prop.actor, prop.internalIdx)) continue;
+            ue_wrap::FVector pos{};
+            if (!E::TryGetActorLocation(prop.actor, pos)) continue;
+            const float dx = pos.X - at.X, dy = pos.Y - at.Y, dz = pos.Z - at.Z;
+            if (dx * dx + dy * dy + dz * dz > reach2) continue;
+            if (!(coop::prop_wire_parity::PhysFlagsOf(prop.actor) & coop::net::propspawn_flags::kSimulatePhysics))
+                continue;
+            ++flung;
+        }
+        UE_LOGI("[EXPLOSION] coast would n=%u", flung);
+    }
+    g_fired.clear();
+}
+
 void OnDisconnect() {
+    g_fired.clear();
     const Counters c = GetCounters();
     if (c.verbCalls[0] || c.verbCalls[1] || c.verbCalls[2] || c.verbCalls[3])
         UE_LOGI("[EXPLOSION] parking end: verbCalls=%u/%u/%u/%u refused=%u/%u/%u/%u runeRefused=%u narrowed=%u",

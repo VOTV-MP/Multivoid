@@ -13,6 +13,8 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/world_identity.h"
 
+#include <cmath>
+
 namespace ue_wrap::explosion {
 namespace {
 
@@ -197,13 +199,33 @@ const wchar_t* ClassName(Cls c) {
     return (i >= 0 && i < kCount) ? kNames[i] : L"";
 }
 
-bool NarrowForceToPawn(void* explosion) {
-    if (!explosion) return false;
+namespace {
+
+// The explosion's RadialForce member when it is a live component, else null.
+void* RadialForceOf(void* explosion) {
+    if (!explosion) return nullptr;
     static R::InstanceOffset sForce{L"RadialForce"};
     const int32_t off = sForce.Of(explosion);
-    if (off < 0) return false;
+    if (off < 0) return nullptr;
     void* comp = *reinterpret_cast<void**>(static_cast<uint8_t*>(explosion) + off);
-    if (!comp || !R::IsLive(comp)) return false;
+    return (comp && R::IsLive(comp)) ? comp : nullptr;
+}
+
+}  // namespace
+
+bool ReadForceRadius(void* explosion, float& out) {
+    void* comp = RadialForceOf(explosion);
+    if (!comp) return false;
+    static R::InstanceOffset sRadius{L"Radius"};
+    const int32_t off = sRadius.Of(comp);
+    if (off < 0) return false;
+    out = *reinterpret_cast<const float*>(static_cast<const uint8_t*>(comp) + off);
+    return std::isfinite(out) && out >= 0.f;
+}
+
+bool NarrowForceToPawn(void* explosion) {
+    void* comp = RadialForceOf(explosion);
+    if (!comp) return false;
     void* fn = R::FindDispatchFunctionCached(R::ClassOf(comp), L"RemoveObjectTypeToAffect");
     if (!fn) return false;
     for (const uint8_t type : {uint8_t{1}, uint8_t{3}}) {

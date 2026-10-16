@@ -67,4 +67,8 @@ bool ReadTransform(void* explosion, float loc[3], float rot[3], float scale[3]);
 // The first actor in the explosion's `ignores` array, or null when it is empty or the property does not resolve.
 void* FirstIgnore(void* explosion);
 
+// The live radius of the explosion's RadialForce member, cm: what its begin-play wrote there (radius times scale).
+// False when the member or the property does not resolve. Game thread.
+bool ReadForceRadius(void* explosion, float& out);
+
 }  // namespace ue_wrap::explosion

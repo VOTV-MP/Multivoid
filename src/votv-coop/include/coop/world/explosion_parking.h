@@ -12,8 +12,8 @@ class Session;
 
 namespace coop::explosion_parking {
 
-// Store the session and install the six watches (the four verbs, the rune check, the begin-play narrowing).
-// Idempotent. A watch that is refused is retried on a one-second throttle, at most 30 tries each, then said once
+// Store the session and install the six watches (the four verbs, the rune check, the begin-play narrowing) and the
+// FireImpulse post-hook. Idempotent. A watch that is refused is retried on a one-second throttle, at most 30 tries each, then said once
 // and left out for the process. Game thread, every pump tick.
 void Install(coop::net::Session* s);
 
@@ -21,7 +21,14 @@ void Install(coop::net::Session* s);
 // must not begin before this holds.
 bool Live();
 
-// The counters are cleared; a summary line first when anything was counted.
+// Host, game thread, every gameplay tick: for each explosion whose radial force fired since the last tick, the
+// simulating, enrolled props within its radius are handed to the driven-prop channel to coast, so every client
+// sees them fly. A cheap return when nothing fired. The FireImpulse hook this reads is not part of Live(): a
+// missing coast costs smoothness and never writes a client's world.
+void Tick(coop::net::Session* s);
+
+// The counters are cleared, and so are the explosions waiting for Tick; a summary line first when anything was
+// counted.
 void OnDisconnect();
 
 // Per verb (addDamage, exploded, reachedByExplosion, ignite): the calls the watch saw on a client session and the
