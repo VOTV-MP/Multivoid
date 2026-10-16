@@ -12,7 +12,6 @@
 #include "coop/world/explosion_sync.h"
 
 #include "ue_wrap/core/cached_obj_ref.h"
-#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/world/explosion.h"
 
@@ -43,13 +42,25 @@ struct Host {
     bool              awaitCapture = false;
     uint32_t          capturedBefore = 0;
     size_t            coastNoted = 0;
-    ue_wrap::CachedObjRef paper[kPapers];
     uint32_t          eid[kPapers] = {};
     Rest              rest[kPapers];
     Vec               pre[kPapers];
     bool              flew[kPapers] = {};
 };
 Host g_hostRun;
+
+// The papers are the drill's own props. They outlive Done, because the host's papers rest before the client's copies
+// do and a destroy then reaches a client still judging; they leave the world when the drill is abandoned or its
+// state is reset (the session ended), so a rejoin's run finds no old papers near its blast point.
+ue_wrap::CachedObjRef g_papers[kPapers];
+
+// A paper the world already removed is skipped: Get() is null for a dead actor.
+void DestroyPapers() {
+    for (ue_wrap::CachedObjRef& p : g_papers) {
+        if (void* a = p.Get()) E::DestroyActor(a);
+        p.Reset();
+    }
+}
 
 void HostEnter(HPhase p) {
     g_hostRun.phase = p;
@@ -58,6 +69,7 @@ void HostEnter(HPhase p) {
 bool HostLate() { return Past(g_hostRun.at, kBound); }
 void HostAbandon(const char* what) {
     Warn("ABANDONED %s", what);
+    DestroyPapers();
     HostEnter(HPhase::Done);
 }
 
@@ -140,18 +152,15 @@ void HostApply() {
 
 void HostPapersSpawn() {
     Host& h = g_hostRun;
-    void* cls = ue_wrap::object_index::ClassByName(L"prop_paper_C");
-    if (!cls) {
-        if (HostLate()) HostAbandon("class prop_paper_C");
-        return;
-    }
+    void* cls = ResolveClass(L"prop_paper_C", L"/Game/objects/prop_paper.prop_paper_C");
+    if (!cls) return HostAbandon("prop_paper_C is neither loaded nor loadable by path");
     h.coastNoted = coop::prop_drive_host::CoastingCount();
     const float off[kPapers][2] = {{kPaperSpread, 0.f}, {-kPaperSpread, 0.f}, {0.f, kPaperSpread},
                                    {0.f, -kPaperSpread}};
     for (int i = 0; i < kPapers; ++i) {
         void* a = E::SpawnActor(cls, {h.B.X + off[i][0], h.B.Y + off[i][1], h.B.Z + kPaperLift});
         if (!a) return HostAbandon("a paper did not spawn");
-        h.paper[i].Set(a);
+        g_papers[i].Set(a);
         h.rest[i] = Rest{};
     }
     HostEnter(HPhase::PapersEnrol);
@@ -161,7 +170,7 @@ void HostPapersEnrol() {
     Host& h = g_hostRun;
     int enrolled = 0;
     for (int i = 0; i < kPapers; ++i) {
-        void* a = h.paper[i].Get();
+        void* a = g_papers[i].Get();
         if (!a) return HostAbandon("a paper is gone before it was enrolled");
         h.eid[i] = coop::element::Registry::Get().EidForActor(a);
         if (h.eid[i] != coop::element::kInvalidId) ++enrolled;
@@ -175,7 +184,7 @@ void HostPapersRest() {
     Host& h = g_hostRun;
     bool all = true;
     for (int i = 0; i < kPapers; ++i) {
-        void* a = h.paper[i].Get();
+        void* a = g_papers[i].Get();
         if (!a) return HostAbandon("a paper is gone before it rested");
         NotePhysics(h.rest[i], a);
         all = all && AtRest(h.rest[i]);
@@ -185,7 +194,7 @@ void HostPapersRest() {
         return;
     }
     for (int i = 0; i < kPapers; ++i)
-        if (!E::TryGetActorLocation(h.paper[i].Get(), h.pre[i])) return HostAbandon("a paper's location is unreadable");
+        if (!E::TryGetActorLocation(g_papers[i].Get(), h.pre[i])) return HostAbandon("a paper's location is unreadable");
     Info("host papers eids=%u,%u,%u,%u", static_cast<unsigned>(h.eid[0]), static_cast<unsigned>(h.eid[1]),
          static_cast<unsigned>(h.eid[2]), static_cast<unsigned>(h.eid[3]));
     if (!HostBlast(X::Cls::Explosion, h.B, 0.f)) return;
@@ -198,7 +207,7 @@ void HostPapersFly() {
     Host& h = g_hostRun;
     bool all = true;
     for (int i = 0; i < kPapers; ++i) {
-        void* a = h.paper[i].Get();
+        void* a = g_papers[i].Get();
         Vec at{};
         if (!a || !E::TryGetActorLocation(a, at)) return HostAbandon("a paper is gone after the blast");
         NotePhysics(h.rest[i], a);
@@ -209,11 +218,14 @@ void HostPapersFly() {
         all = all && h.flew[i] && AtRest(h.rest[i]);
     }
     if (all) {
+        Vec rest[kPapers] = {};
         for (int i = 0; i < kPapers; ++i) {
-            Vec at{};
-            E::TryGetActorLocation(h.paper[i].Get(), at);
-            RestLine(h.eid[i], at);
+            if (E::TryGetActorLocation(g_papers[i].Get(), rest[i])) continue;
+            char what[64];
+            std::snprintf(what, sizeof(what), "rest location unreadable eid=%u", static_cast<unsigned>(h.eid[i]));
+            return HostAbandon(what);
         }
+        for (int i = 0; i < kPapers; ++i) RestLine(h.eid[i], rest[i]);
         Info("host DONE arm=coast");
         return HostEnter(HPhase::Done);
     }
@@ -232,12 +244,14 @@ void HostTick(coop::net::Session& s, Arm arm) {
     Host& h = g_hostRun;
     switch (h.phase) {
     case HPhase::WaitSlot:
-        if (s.IsSlotWorldReady(1)) HostEnter(HPhase::Rest);
+        if (h.at == Clock::time_point{}) h.at = Clock::now();
+        if (s.IsSlotWorldReady(1)) return HostEnter(HPhase::Rest);
+        if (HostLate()) HostAbandon("the client never became world-ready");
         return;
     case HPhase::Rest: {
         void* me = coop::players::Registry::Get().Local();
         coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(1);
-        void* pup = rp ? rp->GetActor() : nullptr;
+        void* pup = rp && rp->valid() ? rp->GetActor() : nullptr;
         Vec at{};
         if (!me || !pup || !E::TryGetActorLocation(pup, at)) {
             h.body = Rest{};
@@ -252,7 +266,7 @@ void HostTick(coop::net::Session& s, Arm arm) {
     }
     case HPhase::Fixture: {
         coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(1);
-        const Fix f = ComputeB(rp ? rp->GetActor() : nullptr, coop::players::Registry::Get().Local(), h.B);
+        const Fix f = ComputeB(rp && rp->valid() ? rp->GetActor() : nullptr,coop::players::Registry::Get().Local(), h.B);
         if (f == Fix::Wait) {
             if (HostLate()) HostAbandon("fixture unreadable");
             return;
@@ -273,6 +287,9 @@ void HostTick(coop::net::Session& s, Arm arm) {
     }
 }
 
-void HostReset() { g_hostRun = Host{}; }
+void HostReset() {
+    DestroyPapers();
+    g_hostRun = Host{};
+}
 
 }  // namespace coop::dev::explosion_drill::detail

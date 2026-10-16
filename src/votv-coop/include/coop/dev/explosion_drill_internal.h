@@ -28,6 +28,10 @@ float Dist(const Vec& a, const Vec& b);
 float Len(const Vec& v);
 bool Past(Clock::time_point t, std::chrono::seconds bound);
 
+// A class from the object index or else the load by path (a class nobody loaded is not in the index); null when
+// neither has it.
+void* ResolveClass(const wchar_t* name, const wchar_t* path);
+
 void Info(const char* fmt, ...);
 void Warn(const char* fmt, ...);
 

@@ -11,10 +11,8 @@
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
 #include "coop/world/explosion_sync.h"
 
-#include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/engine/engine.h"
@@ -127,8 +125,7 @@ void Abandon(Run& r, const char* why) {
 
 // The barrel's class, from the index or else the load by path; null when neither has it.
 void* BarrelClass() {
-    if (void* c = ue_wrap::object_index::ClassByName(L"prop_bombBarrel_C")) return c;
-    return ue_wrap::asset_load::LoadObjectByPath(L"/Game/objects/prop_bombBarrel.prop_bombBarrel_C");
+    return detail::ResolveClass(L"prop_bombBarrel_C", L"/Game/objects/prop_bombBarrel.prop_bombBarrel_C");
 }
 
 // The barrel's own broken(): its Blueprint spawns the explosion.

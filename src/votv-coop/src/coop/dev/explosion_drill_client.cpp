@@ -119,8 +119,9 @@ int FindPapers(const Vec& b, void* out[kPapers], uint32_t eid[kPapers]) {
     int n = 0;
     for (const auto& p : g_snap) {
         Vec at{};
-        if (!p.actor || !R::IsLiveByIndex(p.actor, p.internalIdx) || !E::TryGetActorLocation(p.actor, at) ||
-            Dist(at, b) > kFindRadius || !R::NameEquals(R::NameOf(R::ClassOf(p.actor)), L"prop_paper_C"))
+        if (!p.actor || !R::IsLiveByIndex(p.actor, p.internalIdx) ||
+            !R::NameEquals(R::NameOf(R::ClassOf(p.actor)), L"prop_paper_C") || !E::TryGetActorLocation(p.actor, at) ||
+            Dist(at, b) > kFindRadius)
             continue;
         if (n < kPapers) {
             out[n] = p.actor;
@@ -156,6 +157,8 @@ void ClientCoast() {
     Vec at[kPapers] = {};
     switch (c.phase) {
     case CPhase::Find: {
+        if (ES::GetCounters().applied[0] != c.sync.applied[0])
+            return ClientAbandon("the blast arrived before the paper copies were found");
         void* found[kPapers];
         uint32_t ids[kPapers];
         const int n = FindPapers(c.B, found, ids);
@@ -174,11 +177,11 @@ void ClientCoast() {
         return;
     }
     case CPhase::Settle:
+        if (ES::GetCounters().applied[0] != c.sync.applied[0])
+            return ClientAbandon("the blast arrived before the paper copies rested");
         if (!TrackCopies(c, at)) return;
         if (AllRest(c)) {
             c.phase = CPhase::Blast;
-        } else if (ES::GetCounters().applied[0] != c.sync.applied[0]) {
-            ClientAbandon("the blast arrived before the paper copies rested");
         } else if (Past(c.foundAt, kBound)) {
             ClientAbandon("the paper copies never came to rest");
         }
@@ -208,6 +211,7 @@ void ClientCoast() {
             }
         }
         if (!Past(c.foundAt, kBound) && !EdgeLate()) return;
+        if (c.phase == CPhase::Blast) return ClientFail("coast", "blast did not arrive");
         char what[64];
         for (int i = 0; i < kPapers; ++i)
             if (!c.moved[i]) {
@@ -239,7 +243,8 @@ void ClientTick(Arm arm) {
         ClientEnter(CPhase::Join);
         return;
     case CPhase::Join:
-        if (JP::CurrentPhase() == JP::Phase::Idle) ClientEnter(CPhase::Rest);
+        if (JP::CurrentPhase() == JP::Phase::Idle) return ClientEnter(CPhase::Rest);
+        if (EdgeLate()) ClientAbandon("the join never reached idle");
         return;
     case CPhase::Rest: {
         void* pawn = coop::players::Registry::Get().Local();

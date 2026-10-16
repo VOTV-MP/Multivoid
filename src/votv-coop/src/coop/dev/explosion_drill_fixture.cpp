@@ -2,7 +2,9 @@
 
 #include "coop/dev/explosion_drill_internal.h"
 
+#include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/trace.h"
 #include "ue_wrap/engine/engine.h"
 
@@ -30,6 +32,11 @@ float Dist(const Vec& a, const Vec& b) {
 }
 float Len(const Vec& v) { return std::sqrt(v.X * v.X + v.Y * v.Y + v.Z * v.Z); }
 bool Past(Clock::time_point t, std::chrono::seconds bound) { return Clock::now() - t >= bound; }
+
+void* ResolveClass(const wchar_t* name, const wchar_t* path) {
+    if (void* c = ue_wrap::object_index::ClassByName(name)) return c;
+    return ue_wrap::asset_load::LoadObjectByPath(path);
+}
 
 void Info(const char* fmt, ...) {
     char buf[320];
