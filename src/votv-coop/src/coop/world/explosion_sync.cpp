@@ -5,9 +5,11 @@
 #include "coop/net/session.h"
 #include "coop/world/spawn_authority.h"
 
+#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/ufunction_hook.h"
+#include "ue_wrap/engine/engine_pawn.h"
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/facts/function_row.h"
 #include "ue_wrap/world/explosion.h"
@@ -22,6 +24,8 @@ namespace {
 namespace R  = ue_wrap::reflection;
 namespace UH = ue_wrap::ufunction_hook;
 namespace X  = ue_wrap::explosion;
+namespace GT = ue_wrap::game_thread;
+namespace E  = ue_wrap::engine;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -48,14 +52,28 @@ uint64_t NowMs() {
 
 // Every Blueprint deferred spawn passes here: a null test, up to three pointer or name tests and a two-step
 // super walk on a miss.
-void OnBirth(void* /*context*/, void* /*sourceObject*/, void* result) {
+//
+// A match is dissolved: the Blueprint's result is nulled, so what it does with the spawn reads nothing, and the
+// unfinished actor is destroyed by a posted task, never inside the callback (the native call is still on the
+// stack). The task validates by the slot, since an unfinished deferred actor can fail a serial test.
+void OnBirth(void* /*context*/, void* sourceObject, void* result) {
     if (!result) return;
     bool byName = false;
     if (X::ClassIdOf(R::ClassOf(result), byName) < 0) return;
     if (!coop::spawn_authority::IsActiveClientSession()) return;
     if (InLaneSpawnScope()) return;
+    const int32_t index = R::InternalIndexOf(result);
+    if (void** r = static_cast<void**>(UH::CurrentResult())) *r = nullptr;
+    GT::Post([result, index] {
+        if (!R::IsLiveByIndex(result, index)) return;
+        if (E::DestroyActor(result)) ++g_counters.destroyedByTask;
+    });
     ++g_counters.dissolved;
     if (byName) ++g_counters.dissolvedByName;
+    g_counters.lastDissolved      = result;
+    g_counters.lastDissolvedIndex = index;
+    UE_LOGI("[EXPLOSION] dissolved role=client src=%ls by=%s",
+            sourceObject ? R::ClassNameOf(sourceObject).c_str() : L"?", byName ? "name" : "class");
 }
 
 }  // namespace
