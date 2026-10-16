@@ -91,6 +91,7 @@
 #include "coop/items/order_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/world/explosion_sync.h"
+#include "coop/world/explosion_parking.h"
 #include "coop/world/event_fire_sync.h"
 #include "coop/world/firefly_sync.h"
 #include "coop/items/inventory_pickup_sync.h"
@@ -199,6 +200,7 @@ void InstallLoadWatchers(coop::net::Session& session) {
     coop::comp_sync::Install(&session);  // the refiner's decode: the host's machine alone, a joiner's restore refused
     coop::player_hit::Install(&session);  // the session the host's hit deliveries send through
     coop::explosion_sync::Install(&session);  // the birth seam on every Blueprint deferred spawn: a client's own explosions dissolve, from the load window on
+    coop::explosion_parking::Install(&session);  // the explosion copy's parking watches: the four verbs, the rune check, the force narrowing (client session only)
 }
 
 void Install(coop::net::Session& session) {
@@ -542,6 +544,7 @@ DisconnectStats DisconnectAll() {
     coop::item_activate::OnDisconnect();
     coop::weather_sync::OnDisconnect();
     coop::explosion_sync::OnDisconnect();  // the class table and the counters
+    coop::explosion_parking::OnDisconnect();  // the counters, after a summary
     coop::interactable_sync::OnDisconnect();
     coop::keypad_sync::OnDisconnect();
     coop::time_sync::OnDisconnect();
