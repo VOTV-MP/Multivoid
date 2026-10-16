@@ -339,4 +339,9 @@ bool TryGetRootPoseRaw(void* actor, FVector& loc, FRotator& rot) {
     return true;
 }
 
+bool TryGetRootLocationRaw(void* actor, FVector& loc) {
+    FRotator rot{};
+    return TryGetRootPoseRaw(actor, loc, rot);
+}
+
 }  // namespace ue_wrap::engine

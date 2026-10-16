@@ -43,6 +43,9 @@ void* RootComponentOf(void* actor);
 // are resolved once and cached; one that does not resolve is logged once and makes every call false. Game thread.
 bool TryGetRootPoseRaw(void* actor, FVector& loc, FRotator& rot);
 
+// The location form of TryGetRootPoseRaw, over the same members and the same conditions. Game thread.
+bool TryGetRootLocationRaw(void* actor, FVector& loc);
+
 // ---- Generic actor root-physics substrate ----
 // The root component through K2_GetRootComponent, never the Aprop_C mesh offset, so they work on the
 // non-Aprop_C trash clump. Each body call answers only a live primitive root and refuses any other (false,

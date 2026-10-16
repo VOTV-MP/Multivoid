@@ -304,7 +304,9 @@ void Tick(coop::net::Session* s) {
     for (const auto& prop : g_props) {
         if (!prop.actor || !R::IsLiveByIndex(prop.actor, prop.internalIdx)) continue;
         ue_wrap::FVector pos{};
-        if (!E::TryGetActorLocation(prop.actor, pos)) continue;
+        // A simulating prop is unattached, so its root's location is read from memory; an attached root (rare)
+        // is read through the engine.
+        if (!E::TryGetRootLocationRaw(prop.actor, pos) && !E::TryGetActorLocation(prop.actor, pos)) continue;
         int simulating = -1;  // unknown until a blast reaches the prop
         for (Blast& b : g_blasts) {
             const float dx = pos.X - b.at.X, dy = pos.Y - b.at.Y, dz = pos.Z - b.at.Z;
