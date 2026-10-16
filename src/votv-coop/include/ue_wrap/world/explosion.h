@@ -56,4 +56,15 @@ struct Params {
 void* SpawnDeferred(Cls c, const float loc[3], const float rot[3], const float scale[3], const Params& p,
                     void* ignoreActor);
 
+// An explosion actor's parameters, as its Blueprint left them. False when its class is not one of the three or a
+// property does not resolve (said once per class). Game thread.
+bool ReadParams(void* explosion, Params& out);
+
+// Where an explosion went off: location, rotation (pitch, yaw, roll in degrees) and scale. A failed scale read is the
+// unit scale; false when the location or the rotation could not be read. Game thread.
+bool ReadTransform(void* explosion, float loc[3], float rot[3], float scale[3]);
+
+// The first actor in the explosion's `ignores` array, or null when it is empty or the property does not resolve.
+void* FirstIgnore(void* explosion);
+
 }  // namespace ue_wrap::explosion

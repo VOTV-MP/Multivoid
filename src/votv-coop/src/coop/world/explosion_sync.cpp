@@ -12,6 +12,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/ufunction_hook.h"
 #include "ue_wrap/devices/serverbox.h"
 #include "ue_wrap/engine/engine_pawn.h"
@@ -34,10 +35,13 @@ namespace UH = ue_wrap::ufunction_hook;
 namespace X  = ue_wrap::explosion;
 namespace GT = ue_wrap::game_thread;
 namespace E  = ue_wrap::engine;
+namespace SG = ue_wrap::script_gate;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
 UE_FACT_FN(kRowBeginDeferred, "explosion", L"GameplayStatics", L"BeginDeferredActorSpawnFromClass", Declared);
+UE_FACT_FN(kRowCaptureBeginPlay, "explosion", L"explosion_C", L"ReceiveBeginPlay", Declared);
+constexpr int kTagCapture = 0x45584350;  // 'EXCP'
 
 // The install runs off the pump every tick, so a resolve that fails is retried on a one-second throttle, at
 // most 30 tries, then said once; never a per-tick retry.
@@ -45,6 +49,10 @@ constexpr uint64_t kResolveRetryMs  = 1000;
 constexpr int      kMaxResolveTries = 30;
 bool     g_hookInstalled = false;
 bool     g_gaveUp        = false;
+bool     g_captureInstalled = false;
+bool     g_captureGaveUp    = false;
+int      g_captureTries     = 0;
+bool     g_captureReadLogged = false;
 uint64_t g_nextTryMs     = 0;
 int      g_tries         = 0;
 
@@ -118,22 +126,79 @@ void OnBirth(void* /*context*/, void* sourceObject, void* result) {
             sourceObject ? R::ClassNameOf(sourceObject).c_str() : L"?", byName ? "name" : "class");
 }
 
+// The host's capture: at an explosion's begin-play, where the Blueprint's own writes are done, its class, transform
+// and parameters are built into an ExplosionSpawn. Always Run: the host's explosion is the game's own.
+SG::Verdict OnCapturePre(const SG::Call& c) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!c.object || !s || !s->connected() || s->role() != coop::net::Role::Host || s->connectedPeerCount() <= 0)
+        return SG::Verdict::Run;
+    bool byName = false;
+    const int classId = X::ClassIdOf(R::ClassOf(c.object), byName);
+    if (classId < 0) return SG::Verdict::Run;
+    coop::net::ExplosionSpawnPayload p{};
+    X::Params params{};
+    if (!X::ReadParams(c.object, params) || !X::ReadTransform(c.object, p.loc, p.rot, p.scale)) {
+        if (!g_captureReadLogged) {
+            g_captureReadLogged = true;
+            UE_LOGE("[EXPLOSION] host capture could not read an explosion's parameters or transform; it is not sent");
+        }
+        return SG::Verdict::Run;
+    }
+    p.classId = static_cast<uint8_t>(classId);
+    p.flags = static_cast<uint8_t>((params.ignoreWalls ? 1u : 0u) | (params.skipSetting ? 2u : 0u));
+    p.objType = static_cast<uint8_t>(params.objType < 0 ? 0 : (params.objType > 255 ? 255 : params.objType));
+    p.damage = params.damage;
+    p.radius = params.radius;
+    p.force = params.force;
+    p.fireStrength = params.fireStrength;
+    p.fireFuel = params.fireFuel;
+    p.innerShake = params.innerShake;
+    p.outerShake = params.outerShake;
+    // The actor the blast must not hurt: an element by its id, else a server box by its list index.
+    if (void* ignore = X::FirstIgnore(c.object)) {
+        const coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(ignore);
+        if (eid != coop::element::kInvalidId) {
+            p.ignoreKind = 1;
+            p.ignoreId = eid;
+        } else if (const int32_t box = ue_wrap::serverbox::IndexOf(ignore); box >= 0) {
+            p.ignoreKind = 2;
+            p.ignoreId = static_cast<uint32_t>(box);
+        }
+    }
+    ++g_counters.captured;
+    return SG::Verdict::Run;
+}
+
 }  // namespace
 
 void Install(coop::net::Session* s) {
     g_session.store(s, std::memory_order_release);
-    if (g_hookInstalled || g_gaveUp) return;
+    const bool birthSettled = g_hookInstalled || g_gaveUp;
+    const bool captureSettled = g_captureInstalled || g_captureGaveUp;
+    if (birthSettled && captureSettled) return;
     const uint64_t now = NowMs();
     if (now < g_nextTryMs) return;
     g_nextTryMs = now + kResolveRetryMs;
-    const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowBeginDeferred);
-    if (fn && UH::InstallPostHook(fn, &OnBirth)) {
-        g_hookInstalled = true;
-        UE_LOGI("[EXPLOSION] birth seam installed on BeginDeferredActorSpawnFromClass");
-    } else if (++g_tries >= kMaxResolveTries) {
-        g_gaveUp = true;
-        UE_LOGE("[EXPLOSION] BeginDeferredActorSpawnFromClass did not resolve or would not take a post hook in "
-                "%d tries; a client's own explosions are not dissolved", kMaxResolveTries);
+    if (!birthSettled) {
+        const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowBeginDeferred);
+        if (fn && UH::InstallPostHook(fn, &OnBirth)) {
+            g_hookInstalled = true;
+            UE_LOGI("[EXPLOSION] birth seam installed on BeginDeferredActorSpawnFromClass");
+        } else if (++g_tries >= kMaxResolveTries) {
+            g_gaveUp = true;
+            UE_LOGE("[EXPLOSION] BeginDeferredActorSpawnFromClass did not resolve or would not take a post hook in "
+                    "%d tries; a client's own explosions are not dissolved", kMaxResolveTries);
+        }
+    }
+    if (!captureSettled) {
+        if (SG::WatchName(kRowCaptureBeginPlay, kTagCapture, &OnCapturePre, nullptr)) {
+            g_captureInstalled = true;
+            UE_LOGI("[EXPLOSION] capture watch installed on explosion_C::ReceiveBeginPlay");
+        } else if (++g_captureTries >= kMaxResolveTries) {
+            g_captureGaveUp = true;
+            UE_LOGE("[EXPLOSION] the capture watch was refused %d times; the host's explosions are not sent",
+                    kMaxResolveTries);
+        }
     }
 }
 
@@ -155,6 +220,7 @@ void OnDisconnect() {
     g_lastWorld = nullptr;
     g_counters  = Counters{};
     std::memset(g_dropLogged, 0, sizeof(g_dropLogged));
+    g_captureReadLogged = false;
 }
 
 LaneSpawnScope::LaneSpawnScope() { ++t_laneScopeDepth; }

@@ -107,6 +107,17 @@ bool ResolveSpawnFns() {
     return g_gsCdo && g_beginFn && g_finishFn;
 }
 
+// The layout for an explosion actor of one of the three classes (a child of one included); null otherwise.
+const Layout* LayoutOf(void* explosion) {
+    if (!explosion) return nullptr;
+    void* cls = R::ClassOf(explosion);
+    bool byName = false;
+    const int i = ClassIdOf(cls, byName);
+    return i < 0 ? nullptr : LayoutFor(i, cls);
+}
+
+float GetFloat(const uint8_t* base, int32_t off) { return *reinterpret_cast<const float*>(base + off); }
+
 void PutFloat(uint8_t* base, int32_t off, float v) { *reinterpret_cast<float*>(base + off) = v; }
 
 void PutBool(uint8_t* base, int32_t off, uint8_t mask, bool v) {
@@ -270,6 +281,42 @@ void* SpawnDeferred(Cls c, const float loc[3], const float rot[3], const float s
     }
     void* finished = finish.Get<void*>(L"ReturnValue");
     return finished ? finished : actor;
+}
+
+bool ReadParams(void* explosion, Params& out) {
+    const Layout* l = LayoutOf(explosion);
+    if (!l) return false;
+    const uint8_t* base = static_cast<const uint8_t*>(explosion);
+    out.damage = GetFloat(base, l->damage);
+    out.radius = GetFloat(base, l->radius);
+    out.force = GetFloat(base, l->force);
+    out.fireStrength = GetFloat(base, l->fireStrength);
+    out.fireFuel = GetFloat(base, l->fireFuel);
+    out.innerShake = GetFloat(base, l->innerShake);
+    out.outerShake = GetFloat(base, l->outerShake);
+    out.objType = *reinterpret_cast<const int32_t*>(base + l->objType);
+    out.ignoreWalls = (base[l->ignoreWallsOff] & l->ignoreWallsMask) != 0;
+    out.skipSetting = (base[l->skipSettingOff] & l->skipSettingMask) != 0;
+    return true;
+}
+
+bool ReadTransform(void* explosion, float loc[3], float rot[3], float scale[3]) {
+    if (!explosion || !loc || !rot || !scale) return false;
+    FVector at{};
+    FRotator facing{};
+    if (!engine::TryGetActorLocation(explosion, at) || !engine::TryGetActorRotation(explosion, facing)) return false;
+    const FVector s = engine::GetActorScale3D(explosion);
+    loc[0] = at.X; loc[1] = at.Y; loc[2] = at.Z;
+    rot[0] = facing.Pitch; rot[1] = facing.Yaw; rot[2] = facing.Roll;
+    scale[0] = s.X; scale[1] = s.Y; scale[2] = s.Z;
+    return true;
+}
+
+void* FirstIgnore(void* explosion) {
+    const Layout* l = LayoutOf(explosion);
+    if (!l) return nullptr;
+    const auto* view = reinterpret_cast<const field_io::TArrayView*>(static_cast<const uint8_t*>(explosion) + l->ignores);
+    return (view->data && view->num > 0) ? *reinterpret_cast<void* const*>(view->data) : nullptr;
 }
 
 }  // namespace ue_wrap::explosion
