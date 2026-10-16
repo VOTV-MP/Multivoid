@@ -64,7 +64,7 @@ void*    g_lastWorld = nullptr;
 thread_local int t_laneScopeDepth = 0;
 
 constexpr const char* kDropNames[static_cast<int>(DropReason::Count)] = {
-    "length", "class", "ignoreKind", "nonfinite", "coord", "scale", "parking"};
+    "length", "class", "ignoreKind", "nonfinite", "coord", "scale", "parking", "range", "flags"};
 bool g_dropLogged[static_cast<int>(DropReason::Count)] = {};
 
 // Count a drop under its reason and say it once per reason and session. `at` is where it was found.
@@ -81,6 +81,15 @@ bool AllFinite(const float* v, int n) {
         if (!std::isfinite(v[i])) return false;
     return true;
 }
+
+// A finite value can still overflow in the Blueprint's own scale multiply; the bounds keep the product finite.
+bool InRange(float v, float lo, float hi) { return v >= lo && v <= hi; }
+
+constexpr float kMaxRadius = 100000.f;
+constexpr float kMaxShake  = 1.0e6f;
+constexpr float kMaxForce  = 1.0e8f;
+constexpr float kMaxDamage = 1.0e30f;
+constexpr float kMaxFire   = 1.0e6f;
 
 // The actor the explosion must not hurt, as its kind names it: an element's live actor, or a server box by its
 // index in the gamemode's list. Null for none or for one that is not there.
@@ -273,6 +282,10 @@ bool OnSpawnReceived(const uint8_t* data, size_t len) {
         Drop(DropReason::IgnoreKind, "receive");
         return false;
     }
+    if ((p.flags & ~3u) != 0) {
+        Drop(DropReason::Flags, "receive");
+        return false;
+    }
     if (!AllFinite(p.loc, 3) || !AllFinite(p.rot, 3) || !AllFinite(p.scale, 3) || !std::isfinite(p.damage) ||
         !std::isfinite(p.radius) || !std::isfinite(p.force) || !std::isfinite(p.fireStrength) ||
         !std::isfinite(p.fireFuel) || !std::isfinite(p.innerShake) || !std::isfinite(p.outerShake)) {
@@ -291,6 +304,13 @@ bool OnSpawnReceived(const uint8_t* data, size_t len) {
             Drop(DropReason::Scale, "receive");
             return false;
         }
+    }
+    if (!InRange(p.radius, 0.f, kMaxRadius) || !InRange(p.innerShake, 0.f, kMaxShake) ||
+        !InRange(p.outerShake, 0.f, kMaxShake) || !InRange(p.force, -kMaxForce, kMaxForce) ||
+        !InRange(p.damage, 0.f, kMaxDamage) || !InRange(p.fireStrength, 0.f, kMaxFire) ||
+        !InRange(p.fireFuel, 0.f, kMaxFire)) {
+        Drop(DropReason::Range, "receive");
+        return false;
     }
     GT::Post([p] { Apply(p); });
     return true;

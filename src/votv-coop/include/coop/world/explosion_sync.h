@@ -35,7 +35,7 @@ struct LaneSpawnScope {
 bool InLaneSpawnScope();
 
 // Why a received explosion was dropped, one counter each.
-enum class DropReason : uint8_t { Length, Class, IgnoreKind, NonFinite, Coord, Scale, Parking, Count };
+enum class DropReason : uint8_t { Length, Class, IgnoreKind, NonFinite, Coord, Scale, Parking, Range, Flags, Count };
 
 // Game-thread counters. `dissolved` counts the births the seam matched on a client; `dissolvedByName` those
 // matched by class name before the table held the class. `lastDissolved` is the latest such actor and
@@ -50,9 +50,11 @@ struct Counters {
 };
 Counters GetCounters();
 
-// A host's ExplosionSpawn, as the dispatch hands it: checked in order (length, class, ignore kind, every float
-// finite, location in bounds, every scale strictly inside (0.01, 100)); a failure is counted under its reason, logged
-// once per reason, and the message dropped, never clamped. A good one posts Apply. Game thread. False = dropped.
+// A host's ExplosionSpawn, as the dispatch hands it: checked in order (length, class, ignore kind, no flag bit past
+// the two defined, every float finite, location in bounds, every scale strictly inside (0.01, 100), radius in
+// [0, 1e5], shakes and fire values in [0, 1e6], force in [-1e8, 1e8], damage in [0, 1e30]); a failure is counted under
+// its reason, logged once per reason, and the message dropped, never clamped. A good one posts Apply. Game thread.
+// False = dropped.
 bool OnSpawnReceived(const uint8_t* data, size_t len);
 
 // Re-spawn the received explosion on this client, in the lane's scope. Runs only on a client in a session, never
