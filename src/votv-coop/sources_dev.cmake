@@ -75,6 +75,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/physmods_drill.cpp
     src/coop/dev/drone_call_drill.cpp
     src/coop/dev/remover_drill.cpp
+    src/coop/dev/remover_drill_host.cpp
     src/coop/dev/remover_drill_layout.cpp
     src/coop/dev/sack_drill.cpp
     src/coop/dev/fall_drill.cpp
