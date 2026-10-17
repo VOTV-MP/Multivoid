@@ -4,16 +4,24 @@
 
 #include "coop/dev/prop_act_drill.h"
 
+#include "coop/creatures/kerfur_entity.h"
 #include "coop/dispatch/event_feed.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/props/prop_act_host.h"
 #include "coop/props/prop_act_request.h"
 
+#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/asset_load.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/core/ftext_utils.h"
+#include "ue_wrap/core/object_index.h"
+#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
+#include "ue_wrap/facts/function_row.h"
 
 #include <cstdint>
 #include <cstring>
@@ -25,6 +33,8 @@ namespace {
 namespace E   = ue_wrap::engine;
 namespace R   = ue_wrap::reflection;
 namespace PAH = coop::prop_act_host;
+namespace EL  = coop::element;
+namespace sg  = ue_wrap::script_gate;
 using ue_wrap::FVector;
 
 constexpr const wchar_t* kCrowbar = L"/Game/objects/prop_crowbar.prop_crowbar_C";
@@ -34,6 +44,29 @@ constexpr const wchar_t* kPills   = L"/Game/objects/prop_sleeppills.prop_sleeppi
 constexpr const wchar_t* kSoap    = L"/Game/objects/prop_food_soap.prop_food_soap_C";
 constexpr const wchar_t* kPlush   = L"/Game/objects/prop_eriePlush.prop_eriePlush_C";
 constexpr const wchar_t* kSponge  = L"/Game/objects/prop_sponge.prop_sponge_C";
+constexpr const wchar_t* kShrimp  = L"/Game/objects/prop_food_shrimp.prop_food_shrimp_C";
+constexpr const wchar_t* kChipPile = L"/Game/objects/actorChipPile.actorChipPile_C";
+constexpr const wchar_t* kKerfurProp = L"prop_kerfurOmega_C";   // dropKerfurProp's prop class
+constexpr const wchar_t* kNoSpace = L"Not enough space";        // the hint a bailed pocket shows
+constexpr float kOwnLiftCm = 60.f;                              // a client's own spawn, above its player's origin
+
+// Every Blueprint addHint, read to tell the full inventory's refusal from any other hint.
+UE_FACT_FN(kRowHint, "dev.prop_act_drill", nullptr, L"addHint", AnyClass);
+constexpr int kTagHint = 0x41434448;   // "ACDH"
+bool g_hintSeen = false;
+bool g_hintWatch = false;
+
+sg::Verdict OnHintPre(const sg::Call& c) {
+    static R::ParamOffset sText{L"InText"};
+    const int32_t o = sText.Of(c.function);
+    if (o >= 0 && c.locals && ue_wrap::ftext_utils::FTextToString(c.locals + o) == kNoSpace) g_hintSeen = true;
+    return sg::Verdict::Run;
+}
+
+struct FindCtx {
+    EL::ElementId kerfurId;
+    void* found;
+};
 
 template <class T>
 bool WriteField(R::InstanceOffset& field, void* obj, T value) {
@@ -47,6 +80,12 @@ bool WriteField(R::InstanceOffset& field, void* obj, T value) {
 const char* SetLastUse(void*, void* mirror) {
     static R::InstanceOffset sUses{L"uses"};
     return WriteField<int32_t>(sUses, mirror, 1) ? nullptr : "the copy's uses could not be written";
+}
+
+// The client's copy has a use to spare, so an eat of it destroys nothing and runs natively.
+const char* SetTwoUses(void*, void* mirror) {
+    static R::InstanceOffset sUses{L"uses"};
+    return WriteField<int32_t>(sUses, mirror, 2) ? nullptr : "the copy's uses could not be written";
 }
 
 // The soap's last use on a dry sponge in the hand: this client spawns its own sponge and holds it natively (no request,
@@ -68,6 +107,33 @@ const char* SetUpSoap(void* player, void* mirror) {
     return WriteField<int32_t>(sSoapAmount, mirror, 1) ? nullptr : "the soap copy's soapAmount could not be written";
 }
 
+// The client's own crowbar, spawned above its player: keyed (its init mints the key) and without a row, which the gate
+// reads as the client's own. The cell is read back first, else the row proves nothing.
+const char* MakeOwnCrowbar(void* player, void** out) {
+    void* const cls = ue_wrap::asset_load::LoadObjectByPath(kCrowbar);
+    FVector at{};
+    if (!cls || !E::TryGetActorLocation(player, at)) return "the class did not load or the player's place is unread";
+    void* const own = E::SpawnActor(cls, {at.X, at.Y, at.Z + kOwnLiftCm});
+    if (!own) return "this client's own prop did not spawn";
+    const std::wstring key = ue_wrap::prop::GetInteractableKeyString(own);
+    if (key.empty() || key == L"None") return "cell not reached: the spawn has no key";
+    if (EL::Registry::Get().EidForActor(own) != EL::kInvalidId) return "cell not reached: the spawn already has a row";
+    *out = own;
+    return nullptr;
+}
+
+// One own crowbar pocketed with no notice (its refusal is the step's, not the fill's); false from the native call ends it.
+const char* FillStep(void* player, bool* full) {
+    void* const cls = ue_wrap::asset_load::LoadObjectByPath(kCrowbar);
+    FVector at{};
+    if (!cls || !E::TryGetActorLocation(player, at)) return "the class did not load or the player's place is unread";
+    void* const own = E::SpawnActor(cls, {at.X, at.Y, at.Z + kOwnLiftCm});
+    bool taken = false;
+    if (!own || !E::CallPutObjectInventory2(player, own, true, taken)) return "an own spawn could not be spawned or pocketed";
+    *full = !taken;
+    return nullptr;
+}
+
 constexpr Row kRows[] = {
     {"pocket",       kCrowbar, L"prop_crowbar_C",     Verb::Pocket, Ends::Inventory, nullptr},
     {"hold crowbar", kCrowbar, L"prop_crowbar_C",     Verb::Hold,   Ends::Hand,      nullptr},
@@ -78,12 +144,62 @@ constexpr Row kRows[] = {
     {"soap",         kSoap,    L"prop_food_soap_C",   Verb::Soap,   Ends::Gone,      &SetUpSoap},
     {"pills",        kPills,   L"prop_sleeppills_C",  Verb::Use,    Ends::Gone,      nullptr},
     {"erie plush",   kPlush,   L"prop_eriePlush_C",   Verb::Use,    Ends::Gone,      &SetLastUse},
+    // The calls that are the client's own (no request), the take of a kerfur's prop, a use that also destroys a second
+    // prop inside the latch, and last the full inventory, which stays full for whatever would follow it.
+    {"own spawn",       kCrowbar,  L"prop_crowbar_C",     Verb::Pocket, Ends::Inventory, nullptr, Target::Client, false, false, &MakeOwnCrowbar},
+    {"native subclass", kShrimp,   L"prop_food_shrimp_C", Verb::Use,    Ends::Unchecked, nullptr, Target::Host, false},
+    {"non-last use",    kFood,     L"prop_food_C",        Verb::Use,    Ends::Unchecked, &SetTwoUses, Target::Host, false, true},
+    {"trash native",    kChipPile, L"actorChipPile_C",    Verb::Hold,   Ends::Unchecked, nullptr, Target::Host, false},
+    {"kerfur take",     nullptr,   L"prop_kerfurOmega_C", Verb::Pocket, Ends::Inventory, nullptr, Target::HostKerfur},
+    {"second destroy",  kCrowbar,  L"prop_crowbar_C",     Verb::Pocket, Ends::Inventory, nullptr, Target::HostTwo},
+    {"full",            kCrowbar,  L"prop_crowbar_C",     Verb::Pocket, Ends::Stays,     nullptr, Target::Host, true, false, nullptr, &FillStep},
 };
 
-// The host's side of every step here: the client's take was its own commit (one destroy commit, the eid dead) and
-// no raw destroy of the client's came through the seam.
-Judged Judge(const Row&, coop::element::ElementId eid, const Baseline& base, std::string* why) {
-    const uint32_t commits = PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Destroy) - base.destroys;
+uint32_t Since(uint32_t now, uint32_t then) { return now - then; }
+
+// A call that runs natively: the host answered nothing and took no commit.
+Judged JudgeNative(const Row& row, coop::element::ElementId eid, const Baseline& base, std::string* why) {
+    const uint32_t answered = Since(PAH::AnsweredTotal(kClientSlot), base.answered);
+    const uint32_t commits = Since(PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Destroy), base.destroys) +
+                             Since(PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Abort), base.aborts);
+    if (answered != 0 || commits != 0) {
+        *why = std::to_string(answered) + " replies and " + std::to_string(commits) + " commits for a native call";
+        return Judged::Fail;
+    }
+    if (row.hostKeeps && !coop::element::LivePropActor(eid)) {
+        *why = "the host's prop is gone after a use that destroys nothing";
+        return Judged::Fail;
+    }
+    *why = row.hostKeeps ? "the answered total unchanged, no commit, the eid alive" : "the answered total unchanged, no commit";
+    return Judged::Pass;
+}
+
+// The take that bailed on the client (a full inventory): one abort, no destroy, the prop alive.
+Judged JudgeAborted(const Row&, coop::element::ElementId eid, const Baseline& base, std::string* why) {
+    const uint32_t aborts = Since(PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Abort), base.aborts);
+    if (aborts == 0) {
+        *why = "no abort commit from the client yet";
+        return Judged::Wait;
+    }
+    const uint32_t destroys = Since(PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Destroy), base.destroys);
+    const uint32_t raw = Since(coop::event_feed::DrainedFrom(kClientSlot, coop::net::ReliableKind::PropDestroy), base.rawDestroys);
+    if (aborts != 1 || destroys != 0 || raw != 0) {
+        *why = std::to_string(aborts) + " aborts, " + std::to_string(destroys) + " destroy commits, " + std::to_string(raw) +
+               " raw PropDestroy";
+        return Judged::Fail;
+    }
+    if (!coop::element::LivePropActor(eid)) {
+        *why = "the eid is gone on the host after an abort";
+        return Judged::Fail;
+    }
+    *why = "one abort commit, no destroy, the eid alive";
+    return Judged::Pass;
+}
+
+// The client's take was its own commit (one destroy commit, the eid dead) and no raw destroy of the client's came
+// through the seam, except the one a second prop destroyed inside the replay makes.
+Judged JudgeTaken(const Row& row, coop::element::ElementId eid, const Baseline& base, std::string* why) {
+    const uint32_t commits = Since(PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Destroy), base.destroys);
     if (commits == 0) {
         *why = "no destroy commit from the client yet";
         return Judged::Wait;
@@ -96,16 +212,74 @@ Judged Judge(const Row&, coop::element::ElementId eid, const Baseline& base, std
         *why = "the eid is still live on the host after the commit";
         return Judged::Fail;
     }
-    const uint32_t raw = coop::event_feed::DrainedFrom(kClientSlot, coop::net::ReliableKind::PropDestroy) - base.rawDestroys;
-    if (raw != 0) {
-        *why = std::to_string(raw) + " raw PropDestroy from the client";
+    if (row.target == Target::HostKerfur) {
+        if (!base.kerfurBound) {
+            *why = "the prop's eid named no kerfur record when the step began";
+            return Judged::Fail;
+        }
+        if (coop::kerfur_entity::GetKerfurIdForEid(eid) != coop::element::kInvalidId) {
+            *why = "the kerfur record still names the eid after the commit";
+            return Judged::Fail;
+        }
+    }
+    const uint32_t wantRaw = row.target == Target::HostTwo ? 1 : 0;
+    const uint32_t raw = Since(coop::event_feed::DrainedFrom(kClientSlot, coop::net::ReliableKind::PropDestroy), base.rawDestroys);
+    if (raw < wantRaw) {
+        *why = "the second prop's destroy has not come through the seam: " + std::to_string(raw) + " raw PropDestroy";
+        return Judged::Wait;
+    }
+    if (raw != wantRaw) {
+        *why = std::to_string(raw) + " raw PropDestroy from the client, " + std::to_string(wantRaw) + " expected";
         return Judged::Fail;
     }
-    *why = "one destroy commit, the eid dead, no raw PropDestroy from the client";
+    *why = wantRaw ? "one destroy commit, the eid dead, the second prop's destroy through the seam"
+                   : row.target == Target::HostKerfur
+                         ? "one destroy commit, the eid dead, the kerfur record released, no raw PropDestroy"
+                         : "one destroy commit, the eid dead, no raw PropDestroy from the client";
     return Judged::Pass;
 }
 
+// The host's side of every step here.
+Judged Judge(const Row& row, coop::element::ElementId eid, const Baseline& base, std::string* why) {
+    if (!row.asks) return JudgeNative(row, eid, base, why);
+    if (row.ends == Ends::Stays) return JudgeAborted(row, eid, base, why);
+    return JudgeTaken(row, eid, base, why);
+}
+
 }  // namespace
+
+bool HintWatchLive() {
+    if (!g_hintWatch) g_hintWatch = sg::WatchName(kRowHint, kTagHint, &OnHintPre, nullptr);
+    if (!g_hintWatch) return false;
+    sg::ResolvePendingNames();
+    return sg::NameWatchLive(kRowHint, kTagHint);
+}
+
+void ClearHint() { g_hintSeen = false; }
+bool HintSeen() { return g_hintSeen; }
+
+bool TurnOffKerfur(void* npc) {
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(npc), L"dropKerfurProp");
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    return f.valid() && ue_wrap::Call(npc, f);
+}
+
+void* FindKerfurProp(EL::ElementId kerfurId) {
+    void* const cls = ue_wrap::object_index::ClassByName(kKerfurProp);
+    if (!cls) return nullptr;
+    FindCtx ctx{kerfurId, nullptr};
+    ue_wrap::object_index::ForEachInstance(
+        cls,
+        [](void* p, void* obj, int32_t) {
+            auto* c = static_cast<FindCtx*>(p);
+            const EL::ElementId eid = EL::Registry::Get().EidForActor(obj);
+            if (!c->found && eid != EL::kInvalidId && coop::kerfur_entity::GetKerfurIdForEid(eid) == c->kerfurId)
+                c->found = obj;
+        },
+        &ctx);
+    return ctx.found;
+}
 
 const Phase& Honest() {
     static const Phase p{"honest", kRows, sizeof(kRows) / sizeof(kRows[0]), &Judge};

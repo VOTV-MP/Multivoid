@@ -40,8 +40,13 @@ inline constexpr int kClientSlot = 1;   // the client a single-client phase driv
 enum class Verb : uint8_t { Pocket, Hold, Use, Soap };   // putObjectInventory2, Hold Object, actionOptionIndex 4, playerUsedOn
 
 // Where a consumed target ends, on the client's own copies: the inventory gains one of its class, the hand holds one
-// of its class, or nowhere (an eaten or used-up prop).
-enum class Ends : uint8_t { Inventory, Hand, Gone };
+// of its class, or nowhere (an eaten or used-up prop). Stays: the take bails (a full inventory) and the mirror and the
+// inventory are as they were. Unchecked: the call runs natively and only the absence of a request is judged.
+enum class Ends : uint8_t { Inventory, Hand, Gone, Stays, Unchecked };
+
+// Who makes a step's target: the host, on the floor in front of its player (HostTwo: a second one beside it;
+// HostKerfur: a kerfur NPC the host turns off into its prop), or the client itself (the host spawns nothing).
+enum class Target : uint8_t { Host, HostTwo, HostKerfur, Client };
 
 struct Row {
     const char* name;           // the step's name in every line
@@ -50,12 +55,23 @@ struct Row {
     Verb verb;
     Ends ends;
     const char* (*setup)(void* player, void* mirror);   // client, before the act: null when done, else why not; or null
+    Target target = Target::Host;
+    bool asks = true;         // the call opens a request; false: it runs natively and none is open
+    bool hostKeeps = false;   // !asks: the host's prop is still live after the step
+    // Target::Client: the client's own target, spawned and its cell read back; null when made, else why not.
+    const char* (*make)(void* player, void** out) = nullptr;
+    // One own spawn pocketed natively per tick, `*full` set once the native return is false (the take then bails);
+    // null when done, else why not. The step starts only once the addHint watch is live.
+    const char* (*fillStep)(void* player, bool* full) = nullptr;
 };
 
 // The host's counters for the client's slot when it said the step was ready.
 struct Baseline {
     uint32_t destroys = 0;      // CommitsOf(slot, Destroy)
+    uint32_t aborts = 0;        // CommitsOf(slot, Abort)
     uint32_t rawDestroys = 0;   // DrainedFrom(slot, PropDestroy)
+    uint32_t answered = 0;      // AnsweredTotal(slot)
+    bool kerfurBound = false;   // GetKerfurIdForEid(eid) named a kerfur record
 };
 
 enum class Judged : uint8_t { Wait, Pass, Fail };
@@ -72,6 +88,14 @@ struct Phase {
 };
 
 const Phase& Honest();   // prop_act_drill_honest.cpp
+
+// What the honest rows need of the engine (prop_act_drill_honest.cpp). The hint watch tells a full inventory's refusal
+// ("Not enough space") from any other game hint.
+bool HintWatchLive();   // registered and its names resolved; a tick drives the resolve
+void ClearHint();
+bool HintSeen();        // the hint was shown since ClearHint
+bool TurnOffKerfur(void* npc);                                  // dropKerfurProp on the NPC, as the conversion drill calls it
+void* FindKerfurProp(coop::element::ElementId kerfurId);        // the live prop whose eid names that kerfur record
 
 }  // namespace detail
 }  // namespace coop::dev::prop_act_drill

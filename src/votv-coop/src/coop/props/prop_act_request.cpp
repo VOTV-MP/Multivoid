@@ -83,6 +83,9 @@ std::vector<Expired> g_expired;
 dev::LastReply g_lastStale;
 uint32_t g_lateGrantsAborted = 0;
 
+// The drill hook (dev:: below): inert until a drill calls it.
+ue_wrap::CachedObjRef g_destroyInReplay;   // destroyed inside the next replay, after its verb
+
 // ---- the lines ------------------------------------------------------------------------------------------------
 
 // A line is shown at most once per kind per window (D1's shape, remover_request.cpp).
@@ -210,6 +213,9 @@ void Replay() {
     {
         Latched scope(target);
         ran = RunVerb(target, local);
+        // A drill's second destroy, inside the latch: it is not the target, so the seam treats it as any destroy.
+        if (void* const extra = g_destroyInReplay.Get()) E::DestroyActor(extra);
+        g_destroyInReplay.Reset();
         destroyed = g_latch.destroyed;
     }
     // The destroy decides, not the verb's return: a verb that destroyed its target and then failed still commits, since
@@ -643,12 +649,14 @@ void OnDisconnect() {
     g_expired.clear();
     g_lastStale = dev::LastReply{};
     g_lateGrantsAborted = 0;
+    g_destroyInReplay.Reset();
     for (size_t i = 0; i < kLineCount; ++i) g_shown[i] = false;
 }
 
 namespace dev {
 
 LastReply LastStaleReply() { return g_lastStale; }
+void DestroyInsideNextReplay(void* actor) { g_destroyInReplay.Set(actor); }
 uint16_t PendingId() { return g_rec.open ? g_rec.id : 0; }
 
 }  // namespace dev
