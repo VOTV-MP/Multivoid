@@ -351,6 +351,10 @@ msgstr ""
 msgid "Also refuses anyone connecting from the same address -- people who share their router or their provider's address are refused too. It only works on a direct connection: a player who comes through a relay is refused by their identity alone."
 msgstr ""
 
+#: src/coop/props/prop_act_request.cpp
+msgid "Another player is using that item."
+msgstr ""
+
 #: src/ui/dev_menu.cpp
 msgid "As a client you see only what the host allows you."
 msgstr ""
@@ -855,6 +859,10 @@ msgstr ""
 
 #: src/ui/admin_panel.cpp
 msgid "Nobody in the registry yet (players are recorded when they join)."
+msgstr ""
+
+#: src/coop/props/prop_act_request.cpp
+msgid "Not ready yet, try again in a moment."
 msgstr ""
 
 #: src/coop/props/remover_request.cpp

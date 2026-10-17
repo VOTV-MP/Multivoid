@@ -285,6 +285,9 @@ msgstr "[[Also refuse their address]]"
 msgid "Also refuses anyone connecting from the same address -- people who share their router or their provider's address are refused too. It only works on a direct connection: a player who comes through a relay is refused by their identity alone."
 msgstr "[[Also refuses anyone connecting from the same address -- people who share their router or their provider's address are refused too. It only works on a direct connection: a player who comes through a relay is refused by their identity alone.]]"
 
+msgid "Another player is using that item."
+msgstr "[[Another player is using that item.]]"
+
 msgid "As a client you see only what the host allows you."
 msgstr "[[As a client you see only what the host allows you.]]"
 
@@ -682,6 +685,9 @@ msgstr "[[No tools here yet -- coming soon.]]"
 
 msgid "Nobody in the registry yet (players are recorded when they join)."
 msgstr "[[Nobody in the registry yet (players are recorded when they join).]]"
+
+msgid "Not ready yet, try again in a moment."
+msgstr "[[Not ready yet, try again in a moment.]]"
 
 msgid "Not removable right now"
 msgstr "[[Not removable right now]]"
