@@ -41,7 +41,8 @@ using coop::net::ReliableKind;
 // the request is only counted: nothing is sent to a link that cannot take it.
 constexpr size_t kCap = 2;
 constexpr coop::net::IntentBudget kBudget{4.0f, 2.0f};
-// The reach a take or use is allowed beyond the target's bounds and the pose-staleness ball.
+// The reach a take or use is allowed beyond the target's bounds and the pose-staleness ball. A lenient bound on the
+// sender's last-synced place, not its exact range: the shape of MTA's server cutoff (CGame.cpp:3113).
 constexpr float kActReachUU = 200.0f;
 
 struct Queued {
@@ -96,38 +97,48 @@ bool FamilyFits(void* actor, uint8_t family) {
     return false;
 }
 
+// The reply goes to the sender alone: MTA broadcasts its entry confirm because every peer animates the entry
+// (CGame.cpp:3196-3197), while here nobody else shows anything before the destroy.
 bool Answer(uint8_t slot, const coop::net::PropActReplyPayload& reply) {
     const size_t i = reply.granted ? 0 : reply.reason;
     if (i < coop::net::kPropActReasons) ++g_slots[slot].answered[i];
     return g_session->SendReliableToSlot(slot, ReliableKind::PropActReply, &reply, sizeof(reply));
 }
 
-// One queued request, judged. Each input is read only when the ones before it passed, in Decide's order.
+// Reads Decide's inputs in Decide's order and stops at the first that decides, so a request that must wait reads only
+// what the wait needs.
+void ReadInputs(uint8_t slot, const Queued& q, internal::ActInputs& in, void*& actor, float& dist, float& allowed) {
+    in.worldReady = g_session->IsSlotWorldReady(slot);
+    if (!in.worldReady) return;
+    in.holdsReservation = coop::prop_hold::HoldsReservation(slot);
+    if (in.holdsReservation) return;
+    const auto tok = EL::IntentTarget::ForClientIntent(*g_session, slot, kActReachUU);
+    in.hasBody = tok.HasBody();
+    if (!in.hasBody) return;
+    actor = coop::element::LivePropActor(q.req.eid);
+    in.live = actor != nullptr;
+    if (!in.live) return;
+    in.familyFits = FamilyFits(actor, q.req.family);
+    if (!in.familyFits) return;
+    in.heldByOther = coop::prop_hold::HeldByOther(actor, slot);
+    if (in.heldByOther) return;
+    const EL::IntentSubject sub = tok.Authorize(actor);
+    in.reach = sub.outcome;
+    dist = sub.distUU;
+    allowed = sub.reachUU;
+}
+
+// One queued request, judged.
 coop::net::Served ServeHead(uint8_t slot, const Queued& q) {
     internal::ActInputs in;
     void* actor = nullptr;
     float dist = -1.f, allowed = -1.f;
-    in.worldReady = g_session->IsSlotWorldReady(slot);
-    if (in.worldReady) in.holdsReservation = coop::prop_hold::HoldsReservation(slot);
-    if (in.worldReady && !in.holdsReservation) {
-        actor = coop::element::LivePropActor(q.req.eid);
-        in.live = actor != nullptr;
-    }
-    if (in.live) in.familyFits = FamilyFits(actor, q.req.family);
-    if (in.live && in.familyFits) in.heldByOther = coop::prop_hold::HeldByOther(actor, slot);
-    if (in.live && in.familyFits && !in.heldByOther) {
-        const auto tok = EL::IntentTarget::ForClientIntent(*g_session, slot, kActReachUU);
-        in.hasBody = tok.HasBody();
-        if (in.hasBody) {
-            const EL::IntentSubject sub = tok.Authorize(actor);
-            in.reach = sub.outcome;
-            dist = sub.distUU;
-            allowed = sub.reachUU;
-        }
-    }
+    ReadInputs(slot, q, in, actor, dist, allowed);
 
     const internal::ActVerdict v = internal::Decide(in);
     if (v == internal::ActVerdict::Wait) {
+        // A request waits where MTA answers or drops at once (a sender not joined, CGame.cpp:3025; one with an action in
+        // flight, FAIL_ACTION at :3350): a peer joining mid-activity is never refused for it.
         const WaitCause cause = !in.worldReady ? WaitCause::NotReady
                                 : in.holdsReservation ? WaitCause::Reservation : WaitCause::NoBody;
         ++g_slots[slot].waits[static_cast<int>(cause)];
@@ -139,6 +150,8 @@ coop::net::Served ServeHead(uint8_t slot, const Queued& q) {
         if (!sent) {
             coop::prop_hold::Release(slot);
             ++g_tally[static_cast<int>(Tally::GrantUnsent)];
+            UE_LOGW("prop_act: the grant for slot %u id %u was not sent -- released", static_cast<unsigned>(slot),
+                    static_cast<unsigned>(q.req.id));
         }
     } else {
         g_refusals.Note(slot, internal::VerdictName(v), Now());
@@ -149,6 +162,11 @@ coop::net::Served ServeHead(uint8_t slot, const Queued& q) {
     return coop::net::Served::Done;
 }
 
+void LogCommit(uint8_t slot, const coop::net::PropActCommitPayload& p, internal::CommitStep step) {
+    UE_LOGI("prop_act: commit slot %u id %u eid %u -> %s", static_cast<unsigned>(slot), static_cast<unsigned>(p.id),
+            static_cast<unsigned>(p.eid), internal::CommitName(step));
+}
+
 }  // namespace
 
 namespace internal {
@@ -156,10 +174,10 @@ namespace internal {
 ActVerdict Decide(const ActInputs& in) {
     if (!in.worldReady) return ActVerdict::Wait;
     if (in.holdsReservation) return ActVerdict::Wait;
+    if (!in.hasBody) return ActVerdict::Wait;
     if (!in.live) return ActVerdict::Gone;
     if (!in.familyFits) return ActVerdict::WrongFamily;
     if (in.heldByOther) return ActVerdict::Held;
-    if (!in.hasBody) return ActVerdict::Wait;
     if (in.reach == coop::element::IntentOutcome::Ok) return ActVerdict::Grant;
     // Authorize answers NoBody for the state HasBody reads, so this is the defence for a body lost between the two.
     if (in.reach == coop::element::IntentOutcome::NoBody) return ActVerdict::Wait;
@@ -235,6 +253,7 @@ void OnRequest(const coop::net::PropActRequestPayload& p, uint8_t senderSlot) {
             return;
         }
         Answer(senderSlot, coop::net::PropActReplyPayload{p.id, 0, static_cast<uint8_t>(PropActReason::QueueFull)});
+        g_refusals.Note(senderSlot, "queue full", Now());
         return;
     }
     Queued q;
@@ -258,17 +277,17 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
         g_refusals.Note(senderSlot, "bad commit", Now());
         return;
     }
-    UE_LOGI("prop_act: commit slot %u id %u eid %u -> %s", static_cast<unsigned>(senderSlot),
-            static_cast<unsigned>(p.id), static_cast<unsigned>(p.eid), internal::CommitName(step));
     switch (step) {
     case internal::CommitStep::BadCommit:
         return;
     case internal::CommitStep::Abort:
         coop::prop_hold::Release(senderSlot);
+        LogCommit(senderSlot, p, step);
         return;
     case internal::CommitStep::TargetGone:
         ++g_tally[static_cast<int>(Tally::TargetGone)];
         coop::prop_hold::Release(senderSlot);
+        LogCommit(senderSlot, p, step);
         return;
     case internal::CommitStep::Destroy:
         break;
@@ -285,10 +304,15 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
         g_session->SendReliable(ReliableKind::PropDestroy, &dp, sizeof(dp), senderSlot);
     } else {
         ++g_tally[static_cast<int>(Tally::DestroyFailed)];
+        UE_LOGE("prop_act: the host could not destroy eid %u for slot %u -- the client holds the item and the prop "
+                "stands on every peer", static_cast<unsigned>(p.eid), static_cast<unsigned>(senderSlot));
     }
     coop::prop_hold::Release(senderSlot);
+    LogCommit(senderSlot, p, step);
 }
 
+// MTA releases a departed ped's vehicle in the element's destructor (CPed.cpp:92-125); the roster's departure is the
+// destructor here.
 void OnPeerGone(uint8_t slot) {
     if (!IsHost() || !InRoster(slot)) return;
     if (!coop::prop_hold::ReservationCount(slot)) return;

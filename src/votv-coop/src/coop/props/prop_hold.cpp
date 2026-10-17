@@ -52,7 +52,7 @@ Holder WhoHolds(void* actor, int requester) {
     UE_ASSERT_GAME_THREAD("prop_hold::WhoHolds");
     if (!actor) return Holder::None;
     // The requester's own drag never counts, and a drag is not refused by a reservation: the later claimant ends the
-    // first's hold, as MTA's jack (CGame.cpp:3128-3150) and Source's force-drop (basecombatcharacter.cpp:1188).
+    // first's hold, as MTA's jack (CGame.cpp:3215-3260) and Source's force-drop (basecombatcharacter.cpp:1188).
     if (coop::remote_prop::IsActorDrivenByOtherThan(actor, requester)) return Holder::Drive;
     // The claim pass's reading, at most one 20 Hz pass (50 ms) old; MTA sets occupancy in the judging call
     // (CGame.cpp:3152).
