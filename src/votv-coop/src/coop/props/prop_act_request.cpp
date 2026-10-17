@@ -17,6 +17,7 @@
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/prop_use.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -80,7 +81,6 @@ std::vector<Expired> g_expired;
 
 // The last reply that matched no record, and how many there have been.
 dev::LastReply g_lastStale;
-uint32_t g_badReasons = 0;
 uint32_t g_lateGrantsAborted = 0;
 
 // ---- the lines ------------------------------------------------------------------------------------------------
@@ -356,10 +356,11 @@ Gate ClientGate(const sg::Call& c, void* target, bool (*destroys)(const sg::Call
     return Gate::Run;
 }
 
-// The hit parameter of one use function: its offset in the offset cache, its size read once per function.
+// The hit parameter of one use function: its offset in the offset cache, its size read once per function. The
+// function is held by slot and serial, as the offset cache holds it, so a freed function's size is never reused.
 struct HitParam {
     R::ParamOffset offset{L"hit"};
-    void* sizeFn = nullptr;
+    ue_wrap::CachedObjRef sizeFn;
     int32_t size = -1;
 };
 HitParam g_foodHit, g_mreHit, g_pillsHit, g_soapHit;
@@ -368,13 +369,13 @@ HitParam g_foodHit, g_mreHit, g_pillsHit, g_soapHit;
 void CaptureHit(const sg::Call& c, HitParam& param, Pending& p) {
     const int32_t off = param.offset.Of(c.function);
     if (off < 0) return;
-    if (param.sizeFn != c.function || param.size <= 0) {
-        param.sizeFn = c.function;
+    if (!param.sizeFn.Alive() || param.sizeFn.Raw() != c.function || param.size <= 0) {
+        param.sizeFn.Set(c.function);
         param.size = R::FindParamSize(c.function, L"hit");
     }
     const int32_t size = param.size;
     ue_wrap::hit_result::Hit hit;
-    if (off < 0 || size <= 0 || !c.locals || !ue_wrap::hit_result::Parse(c.locals + off, size, &hit)) return;
+    if (size <= 0 || !c.locals || !ue_wrap::hit_result::Parse(c.locals + off, size, &hit)) return;
     p.hitComponent.Set(hit.component);
     p.hitLocation = hit.location;
 }
@@ -615,7 +616,6 @@ void OnReply(const coop::net::PropActReplyPayload& p) {
         NoteStale(p);
         return;
     case internal::ReplyAction::BadReason:
-        ++g_badReasons;
         ShowBadReason();
         Close();
         return;
@@ -642,7 +642,6 @@ void OnDisconnect() {
     g_latch = Latch{};
     g_expired.clear();
     g_lastStale = dev::LastReply{};
-    g_badReasons = 0;
     g_lateGrantsAborted = 0;
     for (size_t i = 0; i < kLineCount; ++i) g_shown[i] = false;
 }

@@ -40,9 +40,9 @@ void DestroySeamBody(void* self) {
     auto* s = LoadSession();
     if (!self || !s) return;
     // The destroy seam fires for every actor destroy in the world, so the keyed-interactable test
-    // cannot be promoted to a fast-path gate: it resolves the extra pile classes with object-array
-    // walks until all three resolve, and during that window (early boot, UI teardown) every
-    // non-prop destroy would burn walks with string allocations. The session-null and
+    // cannot be promoted to a fast-path gate: it resolves the extra pile classes with class index
+    // lookups until all three resolve, and during that window (early boot, UI teardown) every
+    // non-prop destroy would burn those lookups. The session-null and
     // not-connected gates stay first. The Element id is captured before the keyed-prop unmark
     // drains the shadow, or every destroy broadcast would carry an invalid id.
     const coop::element::ElementId destroyEid = PT::GetPropElementIdForActor(self);

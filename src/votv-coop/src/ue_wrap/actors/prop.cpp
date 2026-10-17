@@ -73,9 +73,9 @@ bool IsClassDescendantOfProp(void* cls) {
 
 namespace {
 // Per-class sticky resolution: each pointer is set once on the first successful lookup and
-// never asked again. Atomics, since observers on parallel-anim worker threads call
-// IsKeyedInteractable concurrently with the pump. A class not loaded yet is asked again on the next
-// call, at one class-index lookup.
+// never asked again. A class not loaded yet is asked again on the next call, at one class-index
+// lookup; the index can trail the object array while a world loads. Every reader is the game
+// thread.
 std::atomic<void*> g_trashBitsPileCls{nullptr};
 std::atomic<void*> g_garbageClumpCls{nullptr};
 std::atomic<void*> g_actorChipPileCls{nullptr};
@@ -114,7 +114,8 @@ inline void* ActorChipPileCls() { return g_actorChipPileCls.load(std::memory_ord
 
 // The per-class-name trash kind: a spawn burst asks this once per prop and FindClass is a full
 // object-array walk on a miss, so only the dozen distinct class names ever walk. Game-thread
-// serial, so no mutex.
+// serial, so no mutex. A verdict is kept only when it can no longer change: a clump match, or
+// both bases resolved. While a base is unresolved the verdict is returned and asked again.
 struct TrashClassKind { bool isTrash = false; bool isClump = false; };
 std::unordered_map<std::wstring, TrashClassKind> g_trashClassKind;
 
@@ -129,7 +130,9 @@ TrashClassKind ResolveTrashClassKind(const std::wstring& className, void* (*reso
     TrashClassKind k;
     k.isClump = WalksToBase(cls, GarbageClumpCls());
     k.isTrash = k.isClump || WalksToBase(cls, ActorChipPileCls());
-    g_trashClassKind[className] = k;
+    // A clump match cannot turn false; any other verdict stands only when both bases it was judged
+    // against are known, since the class index can trail FindClass during a world load.
+    if (k.isClump || (GarbageClumpCls() && ActorChipPileCls())) g_trashClassKind[className] = k;
     return k;
 }
 

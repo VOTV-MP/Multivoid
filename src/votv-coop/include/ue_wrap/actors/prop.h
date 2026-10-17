@@ -30,6 +30,7 @@ bool IsClassDescendantOfProp(void* cls);
 // UClass pointers; false for either null.
 bool WalksToBase(void* cls, void* base);
 
+// The Is* tests below: game thread.
 // True if `obj`'s class is a prop-shaped interactable lineage: Aprop_C, or one of the trash
 // families with the same BP interaction protocol (GetKey, canBeUsedHold, playerTryToHold):
 // AactorChipPile_C, Aprop_garbageClump_C, AtrashBitsPile_C and their _erie, _leaves and
@@ -57,7 +58,7 @@ bool IsTrashActor(void* obj);
 // names its class before any actor exists: true for the chip-pile and garbage-clump families, a
 // descendant test against the two bases rather than a string match, memoised per name so a spawn
 // burst walks the object array once per distinct class. An unloaded class answers false and is
-// not memoised. Game thread.
+// not memoised, nor is a verdict taken while one of the two bases is still unresolved. Game thread.
 // `resolve` governs how an unmemoised name resolves: null = reflection::FindClass (a whole-array
 // walk on a miss). The host resolving a CLIENT's PropSpawn class passes object_index::ClassByName,
 // so an attacker's distinct unknown names cost a lookup each, not a walk each; a client keeps
