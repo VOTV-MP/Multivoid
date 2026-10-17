@@ -17,6 +17,7 @@
 #include "ue_wrap/engine/engine.h"
 
 #include <cstdint>
+#include <deque>
 #include <string>
 
 namespace coop::prop_act_request {
@@ -114,9 +115,37 @@ void ShowNotAsked() { Show(kLineNotAsked, std::string(l10n::T("The host could no
 
 void Close() { g_rec = Pending{}; }
 
+// A commit the transport refused stays at the head and is sent again, so the host's reservation is always ended. The
+// order of the queue is the order the host must see (the Bulk lane pairs by it).
+struct QueuedCommit {
+    coop::net::PropActCommitPayload payload;
+    bool refusedLogged = false;
+};
+std::deque<QueuedCommit> g_commits;
+
+void DrainCommits() {
+    if (!g_session) return;
+    while (!g_commits.empty()) {
+        QueuedCommit& head = g_commits.front();
+        if (!g_session->SendReliableToSlot(0, ReliableKind::PropActCommit, &head.payload, sizeof(head.payload))) {
+            if (!head.refusedLogged) {
+                head.refusedLogged = true;
+                UE_LOGW("prop_act: commit id %u refused by the transport -- kept, sent again",
+                        static_cast<unsigned>(head.payload.id));
+            }
+            return;
+        }
+        g_commits.pop_front();
+    }
+}
+
+void QueueCommit(const coop::net::PropActCommitPayload& c) {
+    g_commits.push_back(QueuedCommit{c, false});
+    DrainCommits();
+}
+
 void SendCommit(uint8_t committed) {
-    const coop::net::PropActCommitPayload c{g_rec.id, committed, 0, g_rec.eid};
-    g_session->SendReliableToSlot(0, ReliableKind::PropActCommit, &c, sizeof(c));
+    QueueCommit(coop::net::PropActCommitPayload{g_rec.id, committed, 0, g_rec.eid});
     UE_LOGI("prop_act: commit id %u eid %u -> %s", static_cast<unsigned>(g_rec.id), static_cast<unsigned>(g_rec.eid),
             committed ? "committed" : "aborted");
 }
@@ -183,8 +212,7 @@ void NoteStale(const coop::net::PropActReplyPayload& p) {
     if (p.granted != 1 || p.reason != 0) return;
     for (Expired& e : g_expired) {
         if (e.id == 0 || e.id != p.id) continue;
-        const coop::net::PropActCommitPayload late{e.id, 0, 0, e.eid};
-        g_session->SendReliableToSlot(0, ReliableKind::PropActCommit, &late, sizeof(late));
+        QueueCommit(coop::net::PropActCommitPayload{e.id, 0, 0, e.eid});
         e = Expired{};
         ++g_lateGrantsAborted;
         return;
@@ -217,8 +245,10 @@ const char* ReplyActionName(ReplyAction a) {
 void Install(coop::net::Session* session) { g_session = session; }
 
 void Tick() {
-    if (!g_rec.open) return;
+    if (!g_rec.open && g_commits.empty()) return;
     UE_ASSERT_GAME_THREAD("prop_act_request::Tick");
+    DrainCommits();
+    if (!g_rec.open) return;
     const uint64_t waited = coop::net::NowMs() - g_rec.sentMs;
     if (waited < kReplyWaitMs) return;
     UE_LOGI("prop_act: request id %u eid %u expired after %llu ms", static_cast<unsigned>(g_rec.id),
@@ -263,6 +293,7 @@ bool NoteSeamDestroy(void* actor) {
 
 void OnDisconnect() {
     Close();
+    g_commits.clear();
     g_latch = Latch{};
     for (Expired& e : g_expired) e = Expired{};
     g_expiredNext = 0;

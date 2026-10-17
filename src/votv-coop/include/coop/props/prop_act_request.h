@@ -21,9 +21,10 @@ namespace coop::net { class Session; }
 namespace coop::prop_act_request {
 
 void Install(coop::net::Session* session);
-void Tick();                                     // the 10 s expiry of an open record
-void OnDisconnect();                             // the pending record, the latch, the expired ring, the last stale
-                                                 // reply and the counters cleared
+void Tick();                                     // sends the commits the transport refused again; the 10 s expiry of an
+                                                 // open record
+void OnDisconnect();                             // the pending record, the unsent commits, the latch, the expired ring,
+                                                 // the last stale reply and the counters cleared
 void OnReply(const coop::net::PropActReplyPayload& p);
 
 // The destroy seam asks, before its keyed-interactable gate: is `actor` the target of the replay running now? Sets the
