@@ -50,8 +50,8 @@ void NoteMoved(Rest& r, const Vec& p);
 // A simulating prop's speed is its root's physics velocity; an unreadable body is not at rest.
 void NotePhysics(Rest& r, void* actor);
 
-// The blast point B: ahead of `body` along its yaw-forward at its Z, short of whatever the line to it hits (the trace
-// is the static and dynamic one, pawns are not in its set).
+// The blast point B: at `body`'s Z along the clearest of eight directions from its yaw-forward, up to 600 cm and short
+// of whatever the line hits (the trace is the static and dynamic one, pawns are not in its set).
 enum class Fix : uint8_t { Wait, Ok, Blocked, NoTrace };
 Fix ComputeB(void* body, void* ctx, Vec& out);
 

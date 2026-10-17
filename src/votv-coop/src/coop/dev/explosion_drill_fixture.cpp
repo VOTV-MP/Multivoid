@@ -21,7 +21,7 @@ namespace E = ue_wrap::engine;
 namespace {
 constexpr float kRestSpeed = 5.f;   // cm/s: a body is at rest under this (the probe's rule)
 constexpr int   kRestTicks = 10;    // consecutive Ticks under kRestSpeed
-constexpr float kAhead = 600.f;     // the blast point, along the puppet's yaw-forward
+constexpr float kAhead = 600.f;     // the blast point's distance, along the clearest of eight directions
 constexpr float kClearance = 100.f; // short of whatever the line to the point hits
 constexpr float kMinAhead = 300.f;  // nearer than this the fixture is blocked
 }  // namespace
@@ -79,14 +79,26 @@ Fix ComputeB(void* body, void* ctx, Vec& out) {
     const Vec f = E::GetActorForwardVector(body);
     const float flat = std::sqrt(f.X * f.X + f.Y * f.Y);
     if (flat < 0.001f) return Fix::Wait;
-    const Vec dir{f.X / flat, f.Y / flat, 0.f};
-    float ahead = kAhead;
-    ue_wrap::trace::Hit hit;
-    if (!ue_wrap::trace::LineHitStatDyn(ctx, at, {at.X + dir.X * kAhead, at.Y + dir.Y * kAhead, at.Z}, &hit))
-        return Fix::NoTrace;
-    if (hit.blocked) ahead = Dist(at, hit.point) - kClearance;
-    if (ahead < kMinAhead) return Fix::Blocked;
-    out = {at.X + dir.X * ahead, at.Y + dir.Y * ahead, at.Z};
+    // Eight directions in a fixed order from the body's yaw-forward, the clearest one taken (the first among equals):
+    // both peers run the same search from bodies that agree within the pose error, so they pick the same direction
+    // unless two are within that error of each other, which their logged B lines show.
+    const float c0 = f.X / flat, s0 = f.Y / flat;
+    float best = -1.f;
+    Vec bestDir{};
+    for (int k = 0; k < 8; ++k) {
+        const float a = static_cast<float>(k) * 0.78539816f;
+        const Vec dir{c0 * std::cos(a) - s0 * std::sin(a), s0 * std::cos(a) + c0 * std::sin(a), 0.f};
+        ue_wrap::trace::Hit hit;
+        if (!ue_wrap::trace::LineHitStatDyn(ctx, at, {at.X + dir.X * kAhead, at.Y + dir.Y * kAhead, at.Z}, &hit))
+            return Fix::NoTrace;
+        const float ahead = hit.blocked ? Dist(at, hit.point) - kClearance : kAhead;
+        if (ahead > best + 1.f) {
+            best = ahead;
+            bestDir = dir;
+        }
+    }
+    if (best < kMinAhead) return Fix::Blocked;
+    out = {at.X + bestDir.X * best, at.Y + bestDir.Y * best, at.Z};
     return Fix::Ok;
 }
 

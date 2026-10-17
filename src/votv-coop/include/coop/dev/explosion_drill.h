@@ -3,7 +3,7 @@
 // dissolve (CLIENT acts): a bomb barrel is spawned and broken in the world load (the dissolve comes by class name)
 // and in the loaded world (by class); its explosion must never reach begin-play, and the world half also that the
 // dissolved actor is gone. apply, coast, spawn_malformed (HOST and CLIENT; nobody walks or is teleported): at a blast
-// point B ahead of the client, apply blasts the three classes (each applied once, narrowed, rune check refused,
+// point B near the client, apply blasts the three classes (each applied once, narrowed, rune check refused,
 // nothing dropped), coast blasts among four papers (each client copy flies over 100 cm and rests again) and
 // spawn_malformed sends one valid ExplosionSpawn and four with one broken field (each dropped by its reason).
 // Every wait is a counter's rise, a rest (under 5 cm/s for 10 Ticks) or a registry state, and has a failure bound:
