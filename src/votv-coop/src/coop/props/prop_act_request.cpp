@@ -97,40 +97,40 @@ constexpr uint64_t kShowEveryMs = 5000;
 uint64_t g_shownAt[kLineCount] = {};
 bool g_shown[kLineCount] = {};
 
-void Show(Line which, const std::string& line) {
+void Show(Line which, const char* line) {
     const uint64_t now = coop::net::NowMs();
     if (g_shown[which] && now - g_shownAt[which] < kShowEveryMs) return;
     g_shown[which] = true;
     g_shownAt[which] = now;
-    coop::chat_feed::Push(line, coop::chat_feed::Keep::Transient);
+    coop::chat_feed::Push(std::string(line), coop::chat_feed::Keep::Transient);
 }
 
 void ShowRefusal(uint8_t reason) {
     switch (static_cast<coop::net::PropActReason>(reason)) {
     case coop::net::PropActReason::Gone:
-        Show(kLineGone, std::string(l10n::T("That item is gone.")));
+        Show(kLineGone, l10n::T("That item is gone."));
         return;
     case coop::net::PropActReason::WrongFamily:
-        Show(kLineWrongFamily, std::string(l10n::T("You can't do that with this item.")));
+        Show(kLineWrongFamily, l10n::T("You can't do that with this item."));
         return;
     case coop::net::PropActReason::Held:
-        Show(kLineHeld, std::string(l10n::T("Someone else has that item.")));
+        Show(kLineHeld, l10n::T("Someone else has that item."));
         return;
     case coop::net::PropActReason::Reach:
-        Show(kLineReach, std::string(l10n::T("That item is too far away.")));
+        Show(kLineReach, l10n::T("That item is too far away."));
         return;
     case coop::net::PropActReason::QueueFull:
-        Show(kLineQueueFull, std::string(l10n::T("Too many actions at once, try again.")));
+        Show(kLineQueueFull, l10n::T("Too many actions at once, try again."));
         return;
     default:
         return;
     }
 }
 
-void ShowBadReason() { Show(kLineBadReason, std::string(l10n::T("That can't be done right now."))); }
-void ShowNotAsked() { Show(kLineNotAsked, std::string(l10n::T("The host could not be asked; try again."))); }
-void ShowNotReady() { Show(kLineNotReady, std::string(l10n::T("Not ready yet, try again in a moment."))); }
-void ShowBusy() { Show(kLineBusy, std::string(l10n::T("Another player is using that item."))); }
+void ShowBadReason() { Show(kLineBadReason, l10n::T("That can't be done right now.")); }
+void ShowNotAsked() { Show(kLineNotAsked, l10n::T("The host could not be asked; try again.")); }
+void ShowNotReady() { Show(kLineNotReady, l10n::T("Not ready yet, try again in a moment.")); }
+void ShowBusy() { Show(kLineBusy, l10n::T("Another player is using that item.")); }
 
 // ---- the record -----------------------------------------------------------------------------------------------
 
@@ -351,7 +351,7 @@ Gate ClientGate(const sg::Call& c, void* target, bool (*destroys)(const sg::Call
     eid = EL::Registry::Get().EidForActor(target);
     const EL::Element* el = eid != EL::kInvalidId ? EL::Registry::Get().Get(eid) : nullptr;
     // The row decides, never the key: a client-born spawn is keyed and rowless and is the client's own.
-    if (el && el->IsMirror()) return Gate::Ask;
+    if (el && el->IsMirror() && el->GetType() == EL::ElementType::Prop) return Gate::Ask;
     // Before its world is announced a keyed prop with no row may be a shared one not bound yet, and a native take of
     // it would duplicate it.
     if (!el && !coop::net_pump::IsInAnnouncedWorld(c.object) && HasKey(target)) {
@@ -361,14 +361,37 @@ Gate ClientGate(const sg::Call& c, void* target, bool (*destroys)(const sg::Call
     return Gate::Run;
 }
 
+// The hit parameter of one use function: its offset in the offset cache, its size read once per function.
+struct HitParam {
+    R::ParamOffset offset{L"hit"};
+    void* sizeFn = nullptr;
+    int32_t size = -1;
+};
+HitParam g_foodHit, g_mreHit, g_pillsHit, g_soapHit;
+
 // The hit of a use, as the replay writes it back: only its component and place matter.
-void CaptureHit(const sg::Call& c, Pending& p) {
-    const int32_t off = R::FindParamOffset(c.function, L"hit");
-    const int32_t size = R::FindParamSize(c.function, L"hit");
+void CaptureHit(const sg::Call& c, HitParam& param, Pending& p) {
+    const int32_t off = param.offset.Of(c.function);
+    if (off < 0) return;
+    if (param.sizeFn != c.function || param.size <= 0) {
+        param.sizeFn = c.function;
+        param.size = R::FindParamSize(c.function, L"hit");
+    }
+    const int32_t size = param.size;
     ue_wrap::hit_result::Hit hit;
     if (off < 0 || size <= 0 || !c.locals || !ue_wrap::hit_result::Parse(c.locals + off, size, &hit)) return;
     p.hitComponent.Set(hit.component);
     p.hitLocation = hit.location;
+}
+
+// A target parameter the call's frame does not carry leaves nothing to ask about: said once per row, then the call
+// runs natively.
+sg::Verdict RunUnreadable(const ue_wrap::facts::Function& row, bool& said) {
+    if (!said) {
+        said = true;
+        UE_LOGW("prop_act: %ls.%ls's target parameter is unreadable -- the call runs natively", row.Class(), row.Name());
+    }
+    return sg::Verdict::Run;
 }
 
 // A take by the player's own hands or pocket: a puppet's body, a robot served for a client, runs untouched.
@@ -377,9 +400,11 @@ sg::Verdict PrePocket(const sg::Call& c) {
     if (!s || !coop::players::Registry::Get().IsLocal(c.object)) return sg::Verdict::Run;
     static R::ParamOffset sTarget{L"InputPin"};
     static R::ParamOffset sNoNotify{L"noNotify"};
+    static bool sSaid = false;
     void* target = nullptr;
-    ReadParam(sTarget, c, target);
+    const bool readable = ReadParam(sTarget, c, target);
     if (s->role() == coop::net::Role::Host) return HostPre(target);
+    if (!readable) return RunUnreadable(kRowPocket, sSaid);
     EL::ElementId eid = EL::kInvalidId;
     const Gate g = ClientGate(c, target, nullptr, eid);
     if (g != Gate::Ask) return ToVerdict(g);
@@ -395,15 +420,15 @@ sg::Verdict PrePocket(const sg::Call& c) {
 }
 
 // The target Hold Object takes, by the body's own rule: `manual`, else the grabbed actor when `useHold`, else the one
-// looked at.
-void* HoldTarget(const sg::Call& c) {
+// looked at. `readable` is false when the frame lacks a parameter that decides it.
+void* HoldTarget(const sg::Call& c, bool& readable) {
     static R::ParamOffset sManual{L"manual"};
     static R::ParamOffset sUseHold{L"useHold"};
     void* manual = nullptr;
-    ReadParam(sManual, c, manual);
+    readable = ReadParam(sManual, c, manual);
     if (manual) return manual;
     uint8_t useHold = 0;
-    ReadParam(sUseHold, c, useHold);
+    readable = ReadParam(sUseHold, c, useHold) && readable;
     if (!useHold) return E::ReadMainPlayerLookAtActor(c.object);
     E::MainPlayerGrabState grab{};
     return E::ReadMainPlayerGrabState(c.object, grab) ? grab.grabbingActor : nullptr;
@@ -412,8 +437,11 @@ void* HoldTarget(const sg::Call& c) {
 sg::Verdict PreHold(const sg::Call& c) {
     coop::net::Session* const s = LinkedSession();
     if (!s || !coop::players::Registry::Get().IsLocal(c.object)) return sg::Verdict::Run;
-    void* const target = HoldTarget(c);
+    static bool sSaid = false;
+    bool readable = true;
+    void* const target = HoldTarget(c, readable);
     if (s->role() == coop::net::Role::Host) return HostPre(target);
+    if (!readable) return RunUnreadable(kRowHold, sSaid);
     EL::ElementId eid = EL::kInvalidId;
     const Gate g = ClientGate(c, target, nullptr, eid);
     if (g != Gate::Ask) return ToVerdict(g);
@@ -427,7 +455,8 @@ sg::Verdict PreHold(const sg::Call& c) {
 
 // A use of the prop the body runs on: `c.object` is the prop, and on a client every such call is the local player's
 // press or the replay's own.
-sg::Verdict PreAction(const sg::Call& c, uint8_t row, ActionParams& params, bool (*destroys)(const sg::Call&)) {
+sg::Verdict PreAction(const sg::Call& c, uint8_t row, ActionParams& params, HitParam& hitParam,
+                      bool (*destroys)(const sg::Call&)) {
     coop::net::Session* const s = LinkedSession();
     if (!s) return sg::Verdict::Run;
     if (s->role() == coop::net::Role::Host) return HostPre(c.object);
@@ -442,14 +471,14 @@ sg::Verdict PreAction(const sg::Call& c, uint8_t row, ActionParams& params, bool
     void* lookAt = nullptr;
     ReadParam(params.lookAt, c, lookAt);
     p.lookAt.Set(lookAt);
-    CaptureHit(c, p);
+    CaptureHit(c, hitParam, p);
     Ask(p, PropActFamily::Use);
     return sg::Verdict::Cancel;
 }
 
-sg::Verdict PreFood(const sg::Call& c) { return PreAction(c, kFood, g_foodParams, &FoodDestroys); }
-sg::Verdict PreMre(const sg::Call& c) { return PreAction(c, kMre, g_mreParams, &MreDestroys); }
-sg::Verdict PrePills(const sg::Call& c) { return PreAction(c, kPills, g_pillsParams, &PillsDestroys); }
+sg::Verdict PreFood(const sg::Call& c) { return PreAction(c, kFood, g_foodParams, g_foodHit, &FoodDestroys); }
+sg::Verdict PreMre(const sg::Call& c) { return PreAction(c, kMre, g_mreParams, g_mreHit, &MreDestroys); }
+sg::Verdict PrePills(const sg::Call& c) { return PreAction(c, kPills, g_pillsParams, g_pillsHit, &PillsDestroys); }
 
 // The replay passes the hand it finds then, not the one captured here: only the hit and the hand item's name travel.
 sg::Verdict PreSoap(const sg::Call& c) {
@@ -467,7 +496,7 @@ sg::Verdict PreSoap(const sg::Call& c) {
     ReadParam(g_soapParams.lookAt, c, lookAt);
     p.lookAt.Set(lookAt);
     ReadParam(g_soapParams.holdPropName, c, p.holdPropName);
-    CaptureHit(c, p);
+    CaptureHit(c, g_soapHit, p);
     Ask(p, PropActFamily::Use);
     return sg::Verdict::Cancel;
 }

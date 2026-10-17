@@ -1,7 +1,8 @@
 // coop/props/prop_act_request.h -- the client's half of a take or use of a shared prop: a watch on each verb cancels
-// a client's call on a mirror and asks the host, the host's reply is taken (a refusal shows a line, a grant replays the
-// verb under a latch and sends the commit) and the destroy seam is told which destroy is the replay's. The same watches
-// cancel the host's own take or use of a prop a client has reserved. Gameplay layer (principle 7). Game thread.
+// a client's call on a shared prop and asks the host (a use row asks only for a call the client's copy predicts will
+// destroy the prop), the host's reply is taken (a refusal shows a line, a grant replays the verb under a latch and
+// sends the commit) and the destroy seam is told which destroy is the replay's. The same watches cancel the host's own
+// take or use of a prop a client has reserved. Gameplay layer (principle 7). Game thread.
 //
 // One act is pending at a time. An honest wait ends in milliseconds, since every host Wait ends on the client's own
 // event; the 10 s bound covers a transport that refused the reply. Every request whose wait ran out is kept until the
@@ -54,7 +55,7 @@ struct Pending {
     ue_wrap::CachedObjRef hitComponent;            // the use rows and kSoap
     ue_wrap::FVector hitLocation{};
     uint8_t action = 0;
-    ue_wrap::CachedObjRef lookAt;                  // kSoap
+    ue_wrap::CachedObjRef lookAt;                  // the three action rows and kSoap
     ue_wrap::reflection::FName holdPropName{};     // kSoap
 };
 
