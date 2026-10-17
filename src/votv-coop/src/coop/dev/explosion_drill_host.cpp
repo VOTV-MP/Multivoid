@@ -73,8 +73,14 @@ void HostAbandon(const char* what) {
     HostEnter(HPhase::Done);
 }
 
+// The blast's force: 10000 reaches the client 600 cm away for apply, but flung the coast's papers 200 cm from B up to
+// 240 m, one onto water where it never rested; a twentieth of it moves them a few metres, past the 100 cm the client
+// reads.
+constexpr float kApplyForce = 10000.f;
+constexpr float kCoastForce = 500.f;
+
 // A native-shaped host birth: no lane scope, so the capture sees it as the game's own. False (said) on failure.
-bool HostBlast(X::Cls c, const Vec& b, float damage) {
+bool HostBlast(X::Cls c, const Vec& b, float damage, float force) {
     if (!X::ResolveNow(c)) {
         char what[32];
         std::snprintf(what, sizeof(what), "class %d", static_cast<int>(c));
@@ -82,7 +88,7 @@ bool HostBlast(X::Cls c, const Vec& b, float damage) {
         return false;
     }
     const float loc[3] = {b.X, b.Y, b.Z}, rot[3] = {0.f, 0.f, 0.f}, scale[3] = {1.f, 1.f, 1.f};
-    const X::Params p{damage, 1000.f, 10000.f, 0.f, 0.f, 0.f, 0.f, 0, true, false};
+    const X::Params p{damage, 1000.f, force, 0.f, 0.f, 0.f, 0.f, 0, true, false};
     if (!X::SpawnDeferred(c, loc, rot, scale, p, nullptr)) {
         char what[48];
         std::snprintf(what, sizeof(what), "blast class %d did not spawn", static_cast<int>(c));
@@ -108,7 +114,7 @@ void HostMalformed(coop::net::Session& s) {
     good.loc[2] = g_hostRun.B.Z;
     good.scale[0] = good.scale[1] = good.scale[2] = 1.f;
     good.radius = 1000.f;
-    good.force = 10000.f;
+    good.force = kApplyForce;
     bool ok = SendOne(s, good);
     coop::net::ExplosionSpawnPayload bad = good;
     bad.loc[0] = std::numeric_limits<float>::quiet_NaN();
@@ -131,7 +137,7 @@ void HostApply() {
     Host& h = g_hostRun;
     if (!h.awaitCapture) {
         h.capturedBefore = ES::GetCounters().captured;
-        if (!HostBlast(static_cast<X::Cls>(h.blast), h.B, 10.f)) return;
+        if (!HostBlast(static_cast<X::Cls>(h.blast), h.B, 10.f, kApplyForce)) return;
         h.awaitCapture = true;
         h.at = Clock::now();
         return;
@@ -197,7 +203,7 @@ void HostPapersRest() {
         if (!E::TryGetActorLocation(g_papers[i].Get(), h.pre[i])) return HostAbandon("a paper's location is unreadable");
     Info("host papers eids=%u,%u,%u,%u", static_cast<unsigned>(h.eid[0]), static_cast<unsigned>(h.eid[1]),
          static_cast<unsigned>(h.eid[2]), static_cast<unsigned>(h.eid[3]));
-    if (!HostBlast(X::Cls::Explosion, h.B, 0.f)) return;
+    if (!HostBlast(X::Cls::Explosion, h.B, 0.f, kCoastForce)) return;
     for (int i = 0; i < kPapers; ++i) h.rest[i] = Rest{};
     HostEnter(HPhase::PapersFly);
 }
