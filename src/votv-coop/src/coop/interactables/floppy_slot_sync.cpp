@@ -65,6 +65,18 @@ std::wstring FromUtf8(const std::string& s) {
     return w;
 }
 
+// The wire's string encoder: UTF-8 of every code unit, control characters included. coop::chat_feed::ToUtf8 is a chat
+// sanitiser and drops CR and LF, which a disc's rows are made of ("$t", "Server data: ...", "/n kilo", "/d " are
+// separate lines). A row sent through it arrived with its line breaks gone, so the laptop could not parse it.
+std::string ToUtf8Exact(const std::wstring& w) {
+    if (w.empty()) return std::string();
+    const int n = ::WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
+    if (n <= 0) return std::string();
+    std::string s(static_cast<size_t>(n), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), s.data(), n, nullptr, nullptr);
+    return s;
+}
+
 // ---- wire ----
 // head [u8 op][u8 deviceKind]; op 0=claim{[u8 index][slot]}, 1=canonical{[u32 generation][u16 n]{[u8 index][slot]}}
 // The generation counts the host's changes of the laptop's occupancy (0 for the boxes): the laptop's file quad carries
@@ -87,7 +99,7 @@ void PutU32(std::vector<uint8_t>& b, uint32_t v) {
 // A row or a JSON can be long, so both take a 32-bit length; the reader bounds them against the
 // blob it is reading out of.
 void PutStr32(std::vector<uint8_t>& b, const std::wstring& w) {
-    const std::string u = coop::chat_feed::ToUtf8(w);
+    const std::string u = ToUtf8Exact(w);
     PutU32(b, static_cast<uint32_t>(u.size()));
     b.insert(b.end(), u.begin(), u.end());
 }
