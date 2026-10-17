@@ -30,7 +30,9 @@ bool IsClassDescendantOfProp(void* cls);
 // UClass pointers; false for either null.
 bool WalksToBase(void* cls, void* base);
 
-// The Is* tests below: game thread.
+
+// The Is* tests below: a missing trash base is resolved on the game thread; another thread (a
+// ProcessEvent observer on an animation worker) reads the published pointers only.
 // True if `obj`'s class is a prop-shaped interactable lineage: Aprop_C, or one of the trash
 // families with the same BP interaction protocol (GetKey, canBeUsedHold, playerTryToHold):
 // AactorChipPile_C, Aprop_garbageClump_C, AtrashBitsPile_C and their _erie, _leaves and

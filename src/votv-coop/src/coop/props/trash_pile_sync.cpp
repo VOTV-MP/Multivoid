@@ -145,8 +145,8 @@ size_t HubPassComplete(void*, bool /*isFull*/, uint32_t worldGen) {
 
 bool HubEnsureResolved() {
     // Report readiness HONESTLY, so the hub benches this consumer while the class is unresolved.
-    // IsTrashBitsPile calls ResolveExtraBases, which re-runs FindClass -- a full array walk -- for
-    // each base not yet found, on every call until all three are; and the hub asks IsInstance once
+    // IsTrashBitsPile calls ResolveExtraBases, which asks the class index (one lookup) for each base
+    // not yet found, on every call until all three are; and the hub asks IsInstance once
     // per memo-missed class per pass. A stub `return true` would discard exactly the protection
     // EnsureResolved exists to give. One resolve attempt per pass.
     return UP::EnsureTrashBitsPileResolved();

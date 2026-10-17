@@ -6,6 +6,7 @@
 #include "ue_wrap/actors/prop.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/game_thread.h"  // IsDefinitelyOffGameThread: where a base may resolve
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -74,8 +75,9 @@ bool IsClassDescendantOfProp(void* cls) {
 namespace {
 // Per-class sticky resolution: each pointer is set once on the first successful lookup and
 // never asked again. A class not loaded yet is asked again on the next call, at one class-index
-// lookup; the index can trail the object array while a world loads. Every reader is the game
-// thread.
+// lookup; the index can trail the object array while a world loads. A base is resolved on the
+// game thread; another thread (a ProcessEvent observer on an animation worker) reads the
+// published pointers only.
 std::atomic<void*> g_trashBitsPileCls{nullptr};
 std::atomic<void*> g_garbageClumpCls{nullptr};
 std::atomic<void*> g_actorChipPileCls{nullptr};
@@ -85,6 +87,9 @@ std::atomic<bool> g_extrasAllResolved{false};
 
 void ResolveExtraBases() {
     if (g_extrasAllResolved.load(std::memory_order_acquire)) return;
+    // The class index is read by the game thread alone: another thread leaves the bases as
+    // published and the next game-thread call resolves them.
+    if (game_thread::IsDefinitelyOffGameThread()) return;
     void* trash = g_trashBitsPileCls.load(std::memory_order_acquire);
     void* clump = g_garbageClumpCls.load(std::memory_order_acquire);
     void* chip  = g_actorChipPileCls.load(std::memory_order_acquire);
@@ -112,15 +117,21 @@ inline void* TrashBitsPileCls() { return g_trashBitsPileCls.load(std::memory_ord
 inline void* GarbageClumpCls()  { return g_garbageClumpCls.load(std::memory_order_acquire); }
 inline void* ActorChipPileCls() { return g_actorChipPileCls.load(std::memory_order_acquire); }
 
-// The per-class-name trash kind: a spawn burst asks this once per prop and FindClass is a full
-// object-array walk on a miss, so only the dozen distinct class names ever walk. Game-thread
-// serial, so no mutex. A verdict is kept only when it can no longer change: a clump match, or
-// both bases resolved. While a base is unresolved the verdict is returned and asked again.
+// The per-class-name trash kind: a spawn burst asks this once per prop, so each distinct class
+// name resolves once the verdict is kept; a name the index does not hold is asked again, at one
+// lookup. Game-thread serial, so no mutex. A verdict is kept only when it can no longer change: a
+// clump match, or both bases resolved. While a base is unresolved the verdict is returned and
+// asked again.
 struct TrashClassKind { bool isTrash = false; bool isClump = false; };
 std::unordered_map<std::wstring, TrashClassKind> g_trashClassKind;
 
 TrashClassKind ResolveTrashClassKind(const std::wstring& className, void* (*resolve)(const wchar_t*)) {
     if (className.empty()) return {};
+    // The map and the class lookup are game-thread state: another thread gets the answer of a
+    // class not loaded yet (no verdict), and neither reads, resolves nor stores. The callers today
+    // (the PropSpawn dispatch, the kerfur adoption tick, the own-save pile bind) all run on the game
+    // thread.
+    if (game_thread::IsDefinitelyOffGameThread()) return {};
     if (auto it = g_trashClassKind.find(className); it != g_trashClassKind.end()) return it->second;
     void* cls = resolve ? resolve(className.c_str()) : R::FindClass(className.c_str());
     if (!cls) return {};  // class not loaded yet -- do NOT memoise (it could load later)
