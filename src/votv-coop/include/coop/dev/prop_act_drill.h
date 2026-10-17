@@ -8,9 +8,11 @@
 //             reflection as a press would (the watch catches it), waits until no request is pending, judges what its
 //             own copies show, and says its done line.
 // honest: one client takes and uses each family of shared prop. race: two clients and the host contend for one prop
-// (with --observer); its steps are in prop_act_drill_race.cpp, which runs all three peers. A FAIL is the lane failing;
-// every wait on the other peer ends on a chat line or a counter, and its bound is a bound that FAILs the step, never
-// a wait.
+// (with --observer); its steps are in prop_act_drill_race.cpp, which runs all three peers. depart: a client leaves
+// holding a reservation and a newcomer takes its slot (with --rejoin; prop_act_drill_depart.cpp). edge: the windows
+// of the ask (prop_act_drill_edge.cpp, with its client half in prop_act_drill_edge_client.cpp). A FAIL is the lane
+// failing; every wait on the other peer ends on a chat line or a counter, and its bound is a bound that FAILs the
+// step, never a wait.
 
 #pragma once
 
@@ -44,6 +46,7 @@ inline constexpr uint64_t kPollEveryMs = 200;   // a chat walk, a few times a se
 
 inline constexpr float kReachCm = 120.f;       // the client's stop beside the mirror
 inline constexpr int kWalkDeadlineS = 60;      // the director's own bound on the walk
+inline constexpr float kPairGapCm = 60.f;      // a pair's second prop, further along the host's line
 
 // Bounds: each ends a step that did not get its line or its count, and FAILs it.
 inline constexpr uint64_t kReadyBoundMs = 120000;   // CLIENT: a step's start to the host's ready line
@@ -115,6 +118,16 @@ void RaceHostTick(coop::net::Session* s);
 void RaceClientTick(coop::net::Session* s);
 void RaceReset();
 
+// The depart and edge phases run their peers by themselves too, each routed by role as race is. The edge client half
+// also holds this client's announce from the session's start (EdgeInstall).
+void DepartHostTick(coop::net::Session* s);
+void DepartClientTick(coop::net::Session* s);
+void DepartReset();
+void EdgeInstall(coop::net::Session* s);
+void EdgeHostTick(coop::net::Session* s);
+void EdgeClientTick(coop::net::Session* s);
+void EdgeReset();
+
 // The core's, which the client half uses: the clock, the armed phase's name, the two lines the peers say to each other
 // in the lobby chat (the host's ready head and the client's done head) and the chat send.
 uint64_t NowMs();
@@ -134,6 +147,8 @@ const char* SpawnTarget(const Row& row, float extraCm, void** out);
 // client's feed that carries it. RunVerb is the row's verb on this player and the mirror, the call a press makes: null
 // on success, else why it could not run. InventoryCount is -1 when the store cannot be read.
 bool HostSaid(const std::string& head, std::string* rest);
+// The same, but only a row that arrived live: a row the join seeded from the host's record is history.
+bool HostSaidLive(const std::string& head, std::string* rest);
 bool OwnJoinOver();
 int InventoryCount(const wchar_t* leaf);
 void* RootOf(void* actor);

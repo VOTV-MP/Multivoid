@@ -263,17 +263,22 @@ void ClientFill(const Row& row, void* player) {
 
 namespace detail {
 
-// The text after `head` in the first row of this client's feed that carries it.
-bool HostSaid(const std::string& head, std::string* rest) {
+// The text after `head` in the first row of this client's feed that carries it, a retained row counted only when
+// `liveOnly` is false.
+static bool FeedSaid(const std::string& head, std::string* rest, bool liveOnly) {
     bool found = false;
     coop::chat_feed::ForEachRow([&](const coop::chat_feed::RowView& r) {
-        const size_t at = found ? std::string_view::npos : r.line.find(head);
+        const size_t at = found || (liveOnly && r.retained) ? std::string_view::npos : r.line.find(head);
         if (at == std::string_view::npos) return;
         found = true;
         if (rest) *rest = std::string(r.line.substr(at + head.size()));
     });
     return found;
 }
+
+bool HostSaid(const std::string& head, std::string* rest) { return FeedSaid(head, rest, false); }
+
+bool HostSaidLive(const std::string& head, std::string* rest) { return FeedSaid(head, rest, true); }
 
 bool OwnJoinOver() {
     return coop::net_pump::HasAnnouncedWorldReady() &&

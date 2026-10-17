@@ -17,6 +17,7 @@
 #include "ue_wrap/core/reflection.h"   // FName
 #include "ue_wrap/core/types.h"        // FVector
 
+#include <cstddef>
 #include <cstdint>
 
 namespace coop::net { class Session; }
@@ -25,7 +26,7 @@ namespace coop::prop_act_request {
 
 void Install(coop::net::Session* session);      // registers the six watches on a take or use, on either role
 void Tick();                                     // settles the watches; sends the commits the transport refused again;
-                                                 // the 10 s expiry of an open record
+                                                 // the 10 s expiry of an open record; a parked replay (dev)
 void OnDisconnect();                             // the pending record, the next id, the unsent commits, the latch, the
                                                  // expired requests, the last stale reply and the counters cleared
 void OnReply(const coop::net::PropActReplyPayload& p);
@@ -57,6 +58,7 @@ struct Pending {
     uint8_t action = 0;
     ue_wrap::CachedObjRef lookAt;                  // the three action rows and kSoap
     ue_wrap::reflection::FName holdPropName{};     // kSoap
+    bool replayHeld = false;                       // dev: HoldReplayUntilGone parked the replay of a grant
 };
 
 // Opens the record and sends the request (the watches call it). False when a record is open already, a double press
@@ -72,8 +74,12 @@ uint16_t PendingId();                // the open record's id, 0 when none (ids s
 void HoldCommits(bool on);           // while on, a commit is queued in send order instead of sent; ReleaseHeldCommits
                                      // sends the queue and the hold stays on until HoldCommits(false)
 void ReleaseHeldCommits();
+void HoldReplayUntilGone(bool on);   // a grant parks the replay; Tick aborts it once the target's mirror is gone
 uint32_t RefusedCount(coop::net::PropActReason reason);   // replies this client took as refused, per reason
 uint32_t HostCancels();              // the host's own takes and uses cancelled for a client's reservation
+uint32_t LateGrantsAborted();        // grants for an expired request, answered with an abort
+size_t ExpiredPending();             // requests whose wait ran out and whose reply has not come in
+bool NotReadyShown();                // the "Not ready yet" line has shown this session (its first show is never limited)
 }  // namespace dev
 
 }  // namespace coop::prop_act_request

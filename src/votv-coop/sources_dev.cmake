@@ -81,6 +81,9 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/remover_drill_layout.cpp
     src/coop/dev/prop_act_drill.cpp
     src/coop/dev/prop_act_drill_client.cpp
+    src/coop/dev/prop_act_drill_depart.cpp
+    src/coop/dev/prop_act_drill_edge.cpp
+    src/coop/dev/prop_act_drill_edge_client.cpp
     src/coop/dev/prop_act_drill_honest.cpp
     src/coop/dev/prop_act_drill_race.cpp
     src/coop/dev/prop_act_drill_race_client.cpp

@@ -86,6 +86,7 @@ uint32_t g_lateGrantsAborted = 0;
 // The drill hooks (dev:: below): inert until a drill calls one.
 ue_wrap::CachedObjRef g_destroyInReplay;   // destroyed inside the next replay, after its verb
 bool g_holdCommits = false;                // a commit is queued, not sent, until ReleaseHeldCommits
+bool g_holdReplay = false;                 // a grant parks its replay
 uint32_t g_refused[coop::net::kPropActReasons] = {};   // replies taken as refused, per reason
 uint32_t g_hostCancels = 0;                // the host's own calls cancelled for a reservation
 
@@ -607,6 +608,15 @@ void Tick() {
     UE_ASSERT_GAME_THREAD("prop_act_request::Tick");
     DrainCommits();
     if (!g_rec.open) return;
+    if (g_rec.replayHeld) {
+        // A drill parked this replay until the host's destroy reaches the mirror: the host then holds a reservation
+        // for a prop that is gone, and the abort ends it.
+        if (!g_rec.target.Get()) {
+            SendCommit(0);
+            Close();
+        }
+        return;
+    }
     const uint64_t waited = coop::net::NowMs() - g_rec.sentMs;
     if (waited < kReplyWaitMs) return;
     UE_LOGI("prop_act: request id %u eid %u expired after %llu ms", static_cast<unsigned>(g_rec.id),
@@ -636,6 +646,10 @@ void OnReply(const coop::net::PropActReplyPayload& p) {
         Close();
         return;
     case internal::ReplyAction::Granted:
+        if (g_holdReplay) {
+            g_rec.replayHeld = true;
+            return;
+        }
         Replay();
         return;
     }
@@ -657,6 +671,7 @@ void OnDisconnect() {
     g_lateGrantsAborted = 0;
     g_destroyInReplay.Reset();
     g_holdCommits = false;
+    g_holdReplay = false;
     std::fill(std::begin(g_refused), std::end(g_refused), 0u);
     g_hostCancels = 0;
     for (size_t i = 0; i < kLineCount; ++i) g_shown[i] = false;
@@ -669,11 +684,15 @@ void DestroyInsideNextReplay(void* actor) { g_destroyInReplay.Set(actor); }
 uint16_t PendingId() { return g_rec.open ? g_rec.id : 0; }
 void HoldCommits(bool on) { g_holdCommits = on; }
 void ReleaseHeldCommits() { DrainCommits(true); }
+void HoldReplayUntilGone(bool on) { g_holdReplay = on; }
 uint32_t RefusedCount(coop::net::PropActReason reason) {
     const size_t i = static_cast<size_t>(reason);
     return i < coop::net::kPropActReasons ? g_refused[i] : 0u;
 }
 uint32_t HostCancels() { return g_hostCancels; }
+uint32_t LateGrantsAborted() { return g_lateGrantsAborted; }
+size_t ExpiredPending() { return g_expired.size(); }
+bool NotReadyShown() { return g_shown[kLineNotReady]; }
 
 }  // namespace dev
 

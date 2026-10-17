@@ -65,7 +65,6 @@ constexpr float kAheadCm[] = {200.f, 150.f, 250.f};
 constexpr float kDropCm = 40.f;          // above the floor, so the prop settles
 constexpr float kFloorDownCm = 400.f;    // how far under the player's middle the floor is looked for
 constexpr float kMinColumnCm = 20.f;     // a column whose floor is nearer than this to its start began inside geometry
-constexpr float kPairGapCm = 60.f;       // the second prop of a pair, further along the same line
 constexpr float kNpcLiftCm = 60.f;       // a kerfur NPC is placed above the floor so its capsule clears it
 
 const Phase* ActivePhase() {
@@ -73,9 +72,17 @@ const Phase* ActivePhase() {
     return p;
 }
 
-// The race phase has no row table: it runs the three peers by itself.
+// The race, depart and edge phases have no row table for the core: each runs its peers by itself.
 bool RaceArmed() {
     static const bool v = PhaseName() == "race";
+    return v;
+}
+bool DepartArmed() {
+    static const bool v = PhaseName() == "depart";
+    return v;
+}
+bool EdgeArmed() {
+    static const bool v = PhaseName() == "edge";
     return v;
 }
 
@@ -328,12 +335,13 @@ const char* SpawnTarget(const Row& row, float extraCm, void** out) {
 
 void Install(coop::net::Session* s) {
     if (!s || PhaseName() == "off") return;
-    if (!ActivePhase() && !RaceArmed()) {
+    if (!ActivePhase() && !RaceArmed() && !DepartArmed() && !EdgeArmed()) {
         UE_LOGW("%s phase %s has no steps in this build -- nothing will run", kTag, PhaseName().c_str());
         return;
     }
     UE_LOGI("%s armed: phase %s on the %s", kTag, PhaseName().c_str(),
             s->role() == coop::net::Role::Host ? "host" : "client");
+    if (EdgeArmed()) EdgeInstall(s);
 }
 
 void Tick(coop::net::Session* s) {
@@ -341,6 +349,18 @@ void Tick(coop::net::Session* s) {
         if (!s) return;
         if (s->role() == coop::net::Role::Host) RaceHostTick(s);
         else if (s->connected()) RaceClientTick(s);
+        return;
+    }
+    if (DepartArmed()) {
+        if (!s) return;
+        if (s->role() == coop::net::Role::Host) DepartHostTick(s);
+        else if (s->connected()) DepartClientTick(s);
+        return;
+    }
+    if (EdgeArmed()) {
+        if (!s) return;
+        if (s->role() == coop::net::Role::Host) EdgeHostTick(s);
+        else EdgeClientTick(s);   // the window row runs before the link is announced
         return;
     }
     const Phase* const ph = ActivePhase();
@@ -357,6 +377,8 @@ void OnDisconnect() {
     g_base = Baseline{};
     ClientReset();
     RaceReset();
+    DepartReset();
+    EdgeReset();
 }
 
 }  // namespace coop::dev::prop_act_drill
