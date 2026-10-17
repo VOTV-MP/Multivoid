@@ -27,6 +27,7 @@ void OnRequest(const coop::net::PropActRequestPayload& p, uint8_t senderSlot);
 void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot);
 void NoteBadSender();                             // the dispatcher saw a sender outside 1..kMaxPeers-1
 void NoteShortPayload(uint8_t senderSlot);        // the dispatcher saw a short payload
+void RunSelftest();                               // the pure decisions, once per start; NOT the game thread
 
 namespace internal {   // pure, no engine call: prop_act_selftest drives these (NOT the game thread)
 enum class ActVerdict : uint8_t { Wait, Gone, WrongFamily, Held, Reach, Grant };

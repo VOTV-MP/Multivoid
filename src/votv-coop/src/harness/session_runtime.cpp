@@ -58,6 +58,7 @@
 #include "coop/props/container_birth.h"
 #include "coop/props/container_park.h"
 #include "coop/props/container_write_policy.h"
+#include "coop/props/prop_act_host.h"
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/prop_snapshot.h"
 #include "coop/save/save_guard.h"
@@ -240,6 +241,9 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     // And a client's queued intents: the cap's refusal, no token serving nothing, a Done leaving and a Wait keeping its
     // head with the token back, a value-initialised instance.
     coop::net::RunIntentQueueSelftest();
+    // And a take or use of a shared prop: the host's judge and the order it reads in, the reply a verdict sends, the
+    // commit's rows and the client's reply decision, each from a stated input.
+    coop::prop_act_host::RunSelftest();
     // And a client's chat rate, Source's two tiers: the interval, a burst's debt, the slowed refill, tier 2's long run
     // and both floors, each row from a stated state -- arithmetic no honest run reaches.
     coop::chat_rate::RunChatRateSelftest();
