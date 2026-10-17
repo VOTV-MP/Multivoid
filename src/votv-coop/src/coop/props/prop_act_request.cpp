@@ -649,6 +649,7 @@ void OnDisconnect() {
 namespace dev {
 
 LastReply LastStaleReply() { return g_lastStale; }
+uint16_t PendingId() { return g_rec.open ? g_rec.id : 0; }
 
 }  // namespace dev
 

@@ -75,3 +75,12 @@ CFG_ENUM(hostile_drill, "hostile_drill", "dev", "off",
     "requests each naming an unused host-range id; the host must serve them at the lane's pace and no more than its "
     "cap, judged by its own per-sender counts. act_*: A3-D2a's take-or-use requests forged against the host. "
     "Drill only.")
+
+// The act drill: an honest client takes and uses shared props through the real verbs, and the host judges what it
+// answered and committed. Set on BOTH peers (the host spawns and judges, the client acts); it arms the sending side
+// only, like the rows above.
+CFG_ENUM(prop_act_drill, "prop_act_drill", "dev", "off", "off|honest|race|depart|edge", "VOTVCOOP_PROP_ACT_DRILL",
+    "Drill (host and clients): A3-D2a -- a client's take or use of a shared prop asks the host first. honest: one client "
+    "takes and uses each family; race: two clients and the host contend for one prop (with --observer); depart: a "
+    "client leaves holding a reservation and a newcomer takes its slot (with --rejoin); edge: the windows. Lines "
+    "tagged [ACT-DRILL]; the host's PASS line ends a phase.")
