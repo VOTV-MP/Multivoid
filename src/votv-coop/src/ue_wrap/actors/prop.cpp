@@ -72,10 +72,10 @@ bool IsClassDescendantOfProp(void* cls) {
 // subclass variants.
 
 namespace {
-// Per-class sticky resolution: each pointer is set once on the first successful FindClass and
-// never re-walked. Atomics, since observers on parallel-anim worker threads call
-// IsKeyedInteractable concurrently with the pump. Without stickiness a class that fails to load
-// would make every call on the pose-emit hot path re-walk the GUObjectArray.
+// Per-class sticky resolution: each pointer is set once on the first successful lookup and
+// never asked again. Atomics, since observers on parallel-anim worker threads call
+// IsKeyedInteractable concurrently with the pump. A class not loaded yet is asked again on the next
+// call, at one class-index lookup.
 std::atomic<void*> g_trashBitsPileCls{nullptr};
 std::atomic<void*> g_garbageClumpCls{nullptr};
 std::atomic<void*> g_actorChipPileCls{nullptr};
@@ -88,18 +88,19 @@ void ResolveExtraBases() {
     void* trash = g_trashBitsPileCls.load(std::memory_order_acquire);
     void* clump = g_garbageClumpCls.load(std::memory_order_acquire);
     void* chip  = g_actorChipPileCls.load(std::memory_order_acquire);
-    // Only the classes not yet found are walked for. A stored pointer is never re-walked even if
-    // liveness later says otherwise; no level reload covers these classes.
+    // Only the classes not yet found are asked for. A stored pointer is never asked again even if
+    // liveness later says otherwise; no level reload covers these classes. The class index answers a
+    // class that is not loaded in one lookup, where FindClass would walk the object array.
     if (!trash) {
-        trash = R::FindClass(L"trashBitsPile_C");
+        trash = object_index::ClassByName(L"trashBitsPile_C");
         if (trash) g_trashBitsPileCls.store(trash, std::memory_order_release);
     }
     if (!clump) {
-        clump = R::FindClass(L"prop_garbageClump_C");
+        clump = object_index::ClassByName(L"prop_garbageClump_C");
         if (clump) g_garbageClumpCls.store(clump, std::memory_order_release);
     }
     if (!chip) {
-        chip = R::FindClass(L"actorChipPile_C");
+        chip = object_index::ClassByName(L"actorChipPile_C");
         if (chip) g_actorChipPileCls.store(chip, std::memory_order_release);
     }
     if (trash && clump && chip) {
@@ -123,7 +124,7 @@ TrashClassKind ResolveTrashClassKind(const std::wstring& className, void* (*reso
     void* cls = resolve ? resolve(className.c_str()) : R::FindClass(className.c_str());
     if (!cls) return {};  // class not loaded yet -- do NOT memoise (it could load later)
     // Only after the name resolves: an unknown name (an attacker's, say) returns above without paying
-    // the base resolves, which are their own object-array lookups while a trash base is unloaded.
+    // the base resolves, which are their own class-index lookups while a trash base is unloaded.
     ResolveExtraBases();
     TrashClassKind k;
     k.isClump = WalksToBase(cls, GarbageClumpCls());
