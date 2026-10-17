@@ -28,7 +28,10 @@ struct Reservation {
 };
 
 // A plain slot-indexed array, released by the commit, the abort or the slot's departure and by nothing that resets
-// on its own: the release has to be load-bearing.
+// on its own: the release has to be load-bearing. The shape is MTA's vehicle entry (reserve CGame.cpp:3152, confirm
+// :3196-3197), held in a per-slot table beside the other sources of "held" instead of a two-way link on the element.
+// A reservation outlives a destroyed target until the commit or abort releases it; MTA unlinks at destroy
+// (CVehicle.cpp:166-172).
 std::array<Reservation, kSlots> g_reservations;
 
 bool InTable(int slot) { return slot >= 1 && slot < kSlots; }
@@ -48,7 +51,11 @@ bool HostHolds(void* actor) {
 Holder WhoHolds(void* actor, int requester) {
     UE_ASSERT_GAME_THREAD("prop_hold::WhoHolds");
     if (!actor) return Holder::None;
+    // The requester's own drag never counts, and a drag is not refused by a reservation: the later claimant ends the
+    // first's hold, as MTA's jack (CGame.cpp:3128-3150) and Source's force-drop (basecombatcharacter.cpp:1188).
     if (coop::remote_prop::IsActorDrivenByOtherThan(actor, requester)) return Holder::Drive;
+    // The claim pass's reading, at most one 20 Hz pass (50 ms) old; MTA sets occupancy in the judging call
+    // (CGame.cpp:3152).
     if (coop::hook_sync::PlayerHookHolders(actor) & ~OwnBit(requester)) return Holder::Hook;
     if (requester != 0 && (HostHolds(actor) || actor == coop::local_streams::LastHeldActor()))
         return Holder::HostHand;

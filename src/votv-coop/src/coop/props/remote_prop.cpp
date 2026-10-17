@@ -96,6 +96,7 @@ constexpr uint32_t kRelatchLoud = 60;
 
 // A drive on `actor` belonging to a slot other than `slot` (-1 excludes none).
 bool IsActorDrivenByOtherThan(void* actor, int slot) {
+    UE_ASSERT_GAME_THREAD("remote_prop::IsActorDrivenByOtherThan");
     if (!actor) return false;
     for (int s = 0; s < static_cast<int>(coop::players::kMaxPeers); ++s)
         if (s != slot && g_drives[s].actor == actor) return true;
@@ -131,7 +132,7 @@ std::wstring KeyToWString(const coop::net::WireKey& k) {
     return s;
 }
 
-namespace {  // [drive helpers part 3]
+namespace {  // [drive helpers part 2]
 
 // The WireKey against the drive's cached key; keys are ASCII, so a byte compare is exact.
 bool KeyMatchesCache(int slot, const coop::net::WireKey& k) {

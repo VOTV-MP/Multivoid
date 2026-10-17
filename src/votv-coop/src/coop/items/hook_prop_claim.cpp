@@ -17,6 +17,7 @@
 #include "ue_wrap/actors/hook.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/world_identity.h"  // Generation: the scan's stamp
 
@@ -173,6 +174,7 @@ void RegisterWorldHooksScan() {
 namespace coop::hook_sync {
 
 uint8_t PlayerHookHolders(void* actor) {
+    UE_ASSERT_GAME_THREAD("hook_sync::PlayerHookHolders");
     if (!actor) return 0;
     for (size_t i = 0; i < detail::g_tied.size(); ++i)
         if (detail::g_tied[i].Is(actor)) return detail::g_tiedHolders[i];
