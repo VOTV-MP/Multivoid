@@ -44,26 +44,6 @@ constexpr uint8_t kEatAction = 4;   // actionOptionIndex's eat, as the watch rea
 constexpr const char* kSecondTag = " eid2=";   // after the first eid in a pair's ready line
 constexpr int kFillMax = 400;            // CLIENT: own spawns pocketed before the inventory is called never full
 
-constexpr float kReachCm = 120.f;        // the client's stop beside the mirror
-constexpr int kWalkDeadlineS = 60;       // the director's own bound on the walk
-
-// Bounds: each ends a step that did not get its line or its count, and FAILs it.
-constexpr uint64_t kReadyBoundMs = 120000;   // CLIENT: a step's start to the host's ready line
-constexpr uint64_t kMirrorBoundMs = 60000;   // CLIENT: the ready line to the mirror being here
-constexpr uint64_t kReplyBoundMs = 30000;    // CLIENT: the call to no request pending
-
-// The text after `head` in the first row of this client's feed that carries it.
-bool HostSaid(const std::string& head, std::string* rest) {
-    bool found = false;
-    coop::chat_feed::ForEachRow([&](const coop::chat_feed::RowView& r) {
-        const size_t at = found ? std::string_view::npos : r.line.find(head);
-        if (at == std::string_view::npos) return;
-        found = true;
-        if (rest) *rest = std::string(r.line.substr(at + head.size()));
-    });
-    return found;
-}
-
 // ---- client (taker) ----------------------------------------------------------------------------------------------
 
 enum class CStep : uint8_t { Arm, AwaitReady, Resolve, Fill, Walk, AwaitReply, Say, Done };
@@ -100,27 +80,6 @@ void ClientPass(const Row& row, const char* what) {
     CEnter(CStep::Say);
 }
 
-bool OwnJoinOver() {
-    return coop::net_pump::HasAnnouncedWorldReady() &&
-           coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle;
-}
-
-int InventoryCount(const wchar_t* leaf) {
-    ue_wrap::inventory::LivePersonalStore store;
-    if (!ue_wrap::inventory::ReadLivePersonalStore(store)) return -1;
-    int n = 0;
-    for (const auto& rec : store.records)
-        if (rec.className == leaf) ++n;
-    return n;
-}
-
-void* RootOf(void* actor) {
-    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(actor), L"K2_GetRootComponent");
-    ue_wrap::ParamFrame f(fn);
-    if (!fn || !f.valid() || !ue_wrap::Call(actor, f)) return nullptr;
-    return f.Get<void*>(L"ReturnValue");
-}
-
 // The player's hand item name, as the game passes it to a use (holding_name).
 bool ReadHoldName(void* player, R::FName* out) {
     static R::InstanceOffset sOff{L"holding_name"};
@@ -128,26 +87,6 @@ bool ReadHoldName(void* player, R::FName* out) {
     if (o < 0) return false;
     std::memcpy(out, static_cast<const uint8_t*>(player) + o, sizeof(*out));
     return true;
-}
-
-// The row's verb on this player and the mirror, the call a press makes. Null on success, else why the call could not run.
-const char* RunVerb(const Row& row, void* player, void* mirror) {
-    bool flag = false;
-    if (row.verb == Verb::Pocket)
-        return E::CallPutObjectInventory2(player, mirror, false, flag) ? nullptr : "putObjectInventory2 could not run";
-    if (row.verb == Verb::Hold)
-        return E::CallMainPlayerHoldObject(player, mirror, flag) ? nullptr : "Hold Object could not run";
-    void* const root = RootOf(mirror);
-    FVector at{};
-    if (!root || !E::TryGetActorLocation(mirror, at)) return "the mirror's root or place could not be read";
-    if (row.verb == Verb::Use)
-        return PU::CallActionOptionIndex(mirror, player, root, at, kEatAction, root) ? nullptr
-                                                                                  : "actionOptionIndex could not run";
-    E::MainPlayerGrabState hand{};
-    R::FName name{};
-    if (!E::ReadMainPlayerGrabState(player, hand) || !ReadHoldName(player, &name)) return "the hand could not be read";
-    return PU::CallPlayerUsedOn(mirror, player, root, at, root, hand.holdingActor, name) ? nullptr
-                                                                                       : "playerUsedOn could not run";
 }
 
 void ClientRead(const Row& row, void* player);
@@ -323,6 +262,59 @@ void ClientFill(const Row& row, void* player) {
 }  // namespace
 
 namespace detail {
+
+// The text after `head` in the first row of this client's feed that carries it.
+bool HostSaid(const std::string& head, std::string* rest) {
+    bool found = false;
+    coop::chat_feed::ForEachRow([&](const coop::chat_feed::RowView& r) {
+        const size_t at = found ? std::string_view::npos : r.line.find(head);
+        if (at == std::string_view::npos) return;
+        found = true;
+        if (rest) *rest = std::string(r.line.substr(at + head.size()));
+    });
+    return found;
+}
+
+bool OwnJoinOver() {
+    return coop::net_pump::HasAnnouncedWorldReady() &&
+           coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle;
+}
+
+int InventoryCount(const wchar_t* leaf) {
+    ue_wrap::inventory::LivePersonalStore store;
+    if (!ue_wrap::inventory::ReadLivePersonalStore(store)) return -1;
+    int n = 0;
+    for (const auto& rec : store.records)
+        if (rec.className == leaf) ++n;
+    return n;
+}
+
+void* RootOf(void* actor) {
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(actor), L"K2_GetRootComponent");
+    ue_wrap::ParamFrame f(fn);
+    if (!fn || !f.valid() || !ue_wrap::Call(actor, f)) return nullptr;
+    return f.Get<void*>(L"ReturnValue");
+}
+
+// The row's verb on this player and the mirror, the call a press makes. Null on success, else why the call could not run.
+const char* RunVerb(const Row& row, void* player, void* mirror) {
+    bool flag = false;
+    if (row.verb == Verb::Pocket)
+        return E::CallPutObjectInventory2(player, mirror, false, flag) ? nullptr : "putObjectInventory2 could not run";
+    if (row.verb == Verb::Hold)
+        return E::CallMainPlayerHoldObject(player, mirror, flag) ? nullptr : "Hold Object could not run";
+    void* const root = RootOf(mirror);
+    FVector at{};
+    if (!root || !E::TryGetActorLocation(mirror, at)) return "the mirror's root or place could not be read";
+    if (row.verb == Verb::Use)
+        return PU::CallActionOptionIndex(mirror, player, root, at, kEatAction, root) ? nullptr
+                                                                                  : "actionOptionIndex could not run";
+    E::MainPlayerGrabState hand{};
+    R::FName name{};
+    if (!E::ReadMainPlayerGrabState(player, hand) || !ReadHoldName(player, &name)) return "the hand could not be read";
+    return PU::CallPlayerUsedOn(mirror, player, root, at, root, hand.holdingActor, name) ? nullptr
+                                                                                       : "playerUsedOn could not run";
+}
 
 void ClientTick(coop::net::Session* s, const Phase& ph) {
     if (g_cstep == CStep::Done) return;

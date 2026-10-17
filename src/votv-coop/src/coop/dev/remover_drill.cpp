@@ -15,7 +15,6 @@
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
 
-#include "ue_wrap/actors/hook.h"
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
@@ -44,7 +43,6 @@ namespace {
 
 namespace E  = ue_wrap::engine;
 namespace R  = ue_wrap::reflection;
-namespace H  = ue_wrap::hook;
 namespace DW = ue_wrap::dish_writers;
 namespace EL = coop::element;
 using ue_wrap::FVector;
@@ -609,8 +607,7 @@ std::string HookedLine(const char* said, int relays) {
 // The item's cancel for a hook this drill planted: the field the plant wrote is cleared whether or not the hook still
 // stands, then the actor goes.
 void ReleaseHook(ue_wrap::CachedObjRef& hook) {
-    if (void* player = coop::players::Registry::Get().Local()) H::WriteActiveHook(player, nullptr);
-    if (void* h = hook.Get()) E::DestroyActor(h);
+    coop::dev::hook_plant::Release(coop::players::Registry::Get().Local(), hook.Get());
     hook.Reset();
 }
 

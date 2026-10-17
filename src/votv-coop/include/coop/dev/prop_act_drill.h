@@ -7,8 +7,10 @@
 //   CLIENT -- reads the line, resolves the mirror by eid, walks within reach with the director, runs the verb by
 //             reflection as a press would (the watch catches it), waits until no request is pending, judges what its
 //             own copies show, and says its done line.
-// honest: one client takes and uses each family of shared prop. A FAIL is the lane failing; every wait on the other
-// peer ends on a chat line or a counter, and its bound is a bound that FAILs the step, never a wait.
+// honest: one client takes and uses each family of shared prop. race: two clients and the host contend for one prop
+// (with --observer); its steps are in prop_act_drill_race.cpp, which runs all three peers. A FAIL is the lane failing;
+// every wait on the other peer ends on a chat line or a counter, and its bound is a bound that FAILs the step, never
+// a wait.
 
 #pragma once
 
@@ -39,6 +41,21 @@ namespace detail {
 inline constexpr int kClientSlot = 1;   // the client a single-client phase drives
 inline constexpr const char* kTag = "[ACT-DRILL]";
 inline constexpr uint64_t kPollEveryMs = 200;   // a chat walk, a few times a second
+
+inline constexpr float kReachCm = 120.f;       // the client's stop beside the mirror
+inline constexpr int kWalkDeadlineS = 60;      // the director's own bound on the walk
+
+// Bounds: each ends a step that did not get its line or its count, and FAILs it.
+inline constexpr uint64_t kReadyBoundMs = 120000;   // CLIENT: a step's start to the host's ready line
+inline constexpr uint64_t kMirrorBoundMs = 60000;   // CLIENT: the ready line to the mirror being here
+inline constexpr uint64_t kReplyBoundMs = 30000;    // CLIENT: the call to no request pending
+inline constexpr uint64_t kAnnounceBoundMs = 60000; // HOST: the spawn to the target having a row
+inline constexpr uint64_t kDoneBoundMs = 180000;    // HOST: the ready line to the client's done line
+inline constexpr uint64_t kJudgeBoundMs = 30000;    // HOST: the done line to the counters it must show
+
+// The targets two phases share.
+inline constexpr const wchar_t* kCrowbar = L"/Game/objects/prop_crowbar.prop_crowbar_C";
+inline constexpr const wchar_t* kFood    = L"/Game/objects/prop_food.prop_food_C";
 
 enum class Verb : uint8_t { Pocket, Hold, Use, Soap };   // putObjectInventory2, Hold Object, actionOptionIndex 4, playerUsedOn
 
@@ -92,13 +109,38 @@ struct Phase {
 
 const Phase& Honest();   // prop_act_drill_honest.cpp
 
+// The race phase runs all three peers by itself (prop_act_drill_race.cpp): the host's steps, then a client's by its
+// slot, 1 or 2. The core routes to them.
+void RaceHostTick(coop::net::Session* s);
+void RaceClientTick(coop::net::Session* s);
+void RaceReset();
+
 // The core's, which the client half uses: the clock, the armed phase's name, the two lines the peers say to each other
 // in the lobby chat (the host's ready head and the client's done head) and the chat send.
 uint64_t NowMs();
 const std::string& PhaseName();
 std::string ReadyHead(const Row& r);
-std::string DoneHead(const Row& r);
+std::string DoneHead(const Row& r, int slot = kClientSlot);
 void Say(const std::string& line);
+
+// The text after `head` in the first row of the lobby record that `slot` said; false when none yet. HOST.
+bool ClientSaid(int slot, const std::string& head, std::string* rest);
+
+// Spawns the row's class on the floor in front of the host's player, `extraCm` further along when it is a pair's
+// second. Null on success, else why not. HOST.
+const char* SpawnTarget(const Row& row, float extraCm, void** out);
+
+// What a client's steps use (prop_act_drill_client.cpp). HostSaid reads the text after `head` in the first row of this
+// client's feed that carries it. RunVerb is the row's verb on this player and the mirror, the call a press makes: null
+// on success, else why it could not run. InventoryCount is -1 when the store cannot be read.
+bool HostSaid(const std::string& head, std::string* rest);
+bool OwnJoinOver();
+int InventoryCount(const wchar_t* leaf);
+void* RootOf(void* actor);
+const char* RunVerb(const Row& row, void* player, void* mirror);
+
+// A client's copy on its last use, so an eat of it is a destroy the watch asks the host about (prop_act_drill_honest.cpp).
+const char* SetLastUse(void* player, void* mirror);
 
 // The client half: one check of its steps, and its state back to the start.
 void ClientTick(coop::net::Session* s, const Phase& ph);

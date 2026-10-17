@@ -44,7 +44,7 @@ const std::string& PhaseName() {
 
 // The lines the two peers say to each other in the lobby chat.
 std::string ReadyHead(const Row& r) { return std::string(kTag) + " host " + r.name + " ready eid="; }
-std::string DoneHead(const Row& r) { return std::string(kTag) + " c" + std::to_string(kClientSlot) + " " + r.name + " done "; }
+std::string DoneHead(const Row& r, int slot) { return std::string(kTag) + " c" + std::to_string(slot) + " " + r.name + " done "; }
 
 void Say(const std::string& line) { coop::chat_sync::QueueSend(line); }
 
@@ -68,25 +68,15 @@ constexpr float kMinColumnCm = 20.f;     // a column whose floor is nearer than 
 constexpr float kPairGapCm = 60.f;       // the second prop of a pair, further along the same line
 constexpr float kNpcLiftCm = 60.f;       // a kerfur NPC is placed above the floor so its capsule clears it
 
-// Bounds: each ends a step that did not get its line or its count, and FAILs it.
-constexpr uint64_t kAnnounceBoundMs = 60000; // HOST: the spawn to the target having a row
-constexpr uint64_t kDoneBoundMs = 180000;    // HOST: the ready line to the client's done line
-constexpr uint64_t kJudgeBoundMs = 30000;    // HOST: the done line to the counters it must show
-
 const Phase* ActivePhase() {
     static const Phase* const p = PhaseName() == "honest" ? &Honest() : nullptr;
     return p;
 }
 
-// The text after `head` in the first row of the lobby record that the client's slot said.
-bool ClientSaid(const std::string& head, std::string* rest) {
-    bool found = false;
-    coop::chat_log::ForEach([&](const coop::chat_log::Row& r) {
-        if (found || r.slot != kClientSlot || r.text.compare(0, head.size(), head) != 0) return;
-        found = true;
-        if (rest) *rest = r.text.substr(head.size());
-    });
-    return found;
+// The race phase has no row table: it runs the three peers by itself.
+bool RaceArmed() {
+    static const bool v = PhaseName() == "race";
+    return v;
 }
 
 // ---- host (judge) ------------------------------------------------------------------------------------------------
@@ -126,34 +116,6 @@ bool FloorAt(void* ctx, float x, float y, float fromZ, float* floorZ) {
         return false;
     *floorZ = hit.point.Z;
     return true;
-}
-
-// Spawns the row's class on the floor in front of the host's player, `extraCm` further along when it is a pair's
-// second. A kerfur row spawns the NPC. Null on success, else why not.
-const char* SpawnTarget(const Row& row, float extraCm, void** out) {
-    void* const player = coop::players::Registry::Get().Local();
-    FVector at{};
-    if (!player || !E::TryGetActorLocation(player, at)) return "the host's player place could not be read";
-    FVector fwd = E::GetActorForwardVector(player);
-    const float len = std::sqrt(fwd.X * fwd.X + fwd.Y * fwd.Y);
-    if (len < 0.1f) return "the host's player facing could not be read";
-    const bool npc = row.target == Target::HostKerfur;
-    void* const cls = npc ? nullptr : ue_wrap::asset_load::LoadObjectByPath(row.path);
-    if (!npc && !cls) return "the target's class did not load";
-    for (const float base : kAheadCm) {
-        const float ahead = base + extraCm;
-        const float x = at.X + fwd.X / len * ahead, y = at.Y + fwd.Y / len * ahead;
-        float floorZ = 0.f;
-        if (!FloorAt(player, x, y, at.Z, &floorZ)) continue;
-        void* const p = npc ? coop::dev::spawn_npc::SpawnAt(kKerfurNpc, {x, y, floorZ + kDropCm + kNpcLiftCm})
-                            : E::SpawnActor(cls, {x, y, floorZ + kDropCm});
-        if (!p) return "the target did not spawn";
-        UE_LOGI("%s host %s spawned %ls at (%.0f, %.0f, %.0f), %.0f uu ahead of its player", kTag, row.name,
-                npc ? kKerfurNpc : row.leaf, x, y, floorZ + kDropCm, ahead);
-        *out = p;
-        return nullptr;
-    }
-    return "no floor was found in front of the host's player";
 }
 
 // The counters of the client's slot as the step begins.
@@ -281,7 +243,7 @@ void HostTick(coop::net::Session* s, const Phase& ph) {
         return;
     case HStep::AwaitDone: {
         std::string rest;
-        if (!ClientSaid(DoneHead(row), &rest)) {
+        if (!ClientSaid(kClientSlot, DoneHead(row), &rest)) {
             if (HExpired(kDoneBoundMs)) HostFail(&row, "the client never said it was done");
             return;
         }
@@ -321,9 +283,52 @@ void HostTick(coop::net::Session* s, const Phase& ph) {
 
 }  // namespace
 
+namespace detail {
+
+// The text after `head` in the first row of the lobby record that `slot` said.
+bool ClientSaid(int slot, const std::string& head, std::string* rest) {
+    bool found = false;
+    coop::chat_log::ForEach([&](const coop::chat_log::Row& r) {
+        if (found || r.slot != slot || r.text.compare(0, head.size(), head) != 0) return;
+        found = true;
+        if (rest) *rest = r.text.substr(head.size());
+    });
+    return found;
+}
+
+// Spawns the row's class on the floor in front of the host's player, `extraCm` further along when it is a pair's
+// second. A kerfur row spawns the NPC. Null on success, else why not.
+const char* SpawnTarget(const Row& row, float extraCm, void** out) {
+    void* const player = coop::players::Registry::Get().Local();
+    FVector at{};
+    if (!player || !E::TryGetActorLocation(player, at)) return "the host's player place could not be read";
+    FVector fwd = E::GetActorForwardVector(player);
+    const float len = std::sqrt(fwd.X * fwd.X + fwd.Y * fwd.Y);
+    if (len < 0.1f) return "the host's player facing could not be read";
+    const bool npc = row.target == Target::HostKerfur;
+    void* const cls = npc ? nullptr : ue_wrap::asset_load::LoadObjectByPath(row.path);
+    if (!npc && !cls) return "the target's class did not load";
+    for (const float base : kAheadCm) {
+        const float ahead = base + extraCm;
+        const float x = at.X + fwd.X / len * ahead, y = at.Y + fwd.Y / len * ahead;
+        float floorZ = 0.f;
+        if (!FloorAt(player, x, y, at.Z, &floorZ)) continue;
+        void* const p = npc ? coop::dev::spawn_npc::SpawnAt(kKerfurNpc, {x, y, floorZ + kDropCm + kNpcLiftCm})
+                            : E::SpawnActor(cls, {x, y, floorZ + kDropCm});
+        if (!p) return "the target did not spawn";
+        UE_LOGI("%s host %s spawned %ls at (%.0f, %.0f, %.0f), %.0f uu ahead of its player", kTag, row.name,
+                npc ? kKerfurNpc : row.leaf, x, y, floorZ + kDropCm, ahead);
+        *out = p;
+        return nullptr;
+    }
+    return "no floor was found in front of the host's player";
+}
+
+}  // namespace detail
+
 void Install(coop::net::Session* s) {
     if (!s || PhaseName() == "off") return;
-    if (!ActivePhase()) {
+    if (!ActivePhase() && !RaceArmed()) {
         UE_LOGW("%s phase %s has no steps in this build -- nothing will run", kTag, PhaseName().c_str());
         return;
     }
@@ -332,6 +337,12 @@ void Install(coop::net::Session* s) {
 }
 
 void Tick(coop::net::Session* s) {
+    if (RaceArmed()) {
+        if (!s) return;
+        if (s->role() == coop::net::Role::Host) RaceHostTick(s);
+        else if (s->connected()) RaceClientTick(s);
+        return;
+    }
     const Phase* const ph = ActivePhase();
     if (!ph || !s) return;
     if (s->role() == coop::net::Role::Host) HostTick(s, *ph);
@@ -345,6 +356,7 @@ void OnDisconnect() {
     ResetStep();
     g_base = Baseline{};
     ClientReset();
+    RaceReset();
 }
 
 }  // namespace coop::dev::prop_act_drill

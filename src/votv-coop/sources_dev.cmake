@@ -82,6 +82,8 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/prop_act_drill.cpp
     src/coop/dev/prop_act_drill_client.cpp
     src/coop/dev/prop_act_drill_honest.cpp
+    src/coop/dev/prop_act_drill_race.cpp
+    src/coop/dev/prop_act_drill_race_client.cpp
     src/coop/dev/sack_drill.cpp
     src/coop/dev/fall_drill.cpp
     src/coop/dev/atv_spawn_drill.cpp

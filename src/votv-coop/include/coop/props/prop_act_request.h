@@ -69,6 +69,11 @@ struct LastReply { uint16_t id = 0; uint8_t granted = 0, reason = 0; uint32_t co
 LastReply LastStaleReply();          // the last reply that matched no record (a forged request's answer), and how many
 void DestroyInsideNextReplay(void* actor);   // held as a CachedObjRef; destroyed after the verb, inside the latch
 uint16_t PendingId();                // the open record's id, 0 when none (ids skip 0)
+void HoldCommits(bool on);           // while on, a commit is queued in send order instead of sent; ReleaseHeldCommits
+                                     // sends the queue and the hold stays on until HoldCommits(false)
+void ReleaseHeldCommits();
+uint32_t RefusedCount(coop::net::PropActReason reason);   // replies this client took as refused, per reason
+uint32_t HostCancels();              // the host's own takes and uses cancelled for a client's reservation
 }  // namespace dev
 
 }  // namespace coop::prop_act_request

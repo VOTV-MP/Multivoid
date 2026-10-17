@@ -40,4 +40,9 @@ void* Plant(void* player, void* target, const char** note) {
     return hook;
 }
 
+void Release(void* player, void* hook) {
+    if (player) H::WriteActiveHook(player, nullptr);
+    if (hook) E::DestroyActor(hook);
+}
+
 }  // namespace coop::dev::hook_plant

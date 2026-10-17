@@ -37,8 +37,6 @@ namespace EL  = coop::element;
 namespace sg  = ue_wrap::script_gate;
 using ue_wrap::FVector;
 
-constexpr const wchar_t* kCrowbar = L"/Game/objects/prop_crowbar.prop_crowbar_C";
-constexpr const wchar_t* kFood    = L"/Game/objects/prop_food.prop_food_C";
 constexpr const wchar_t* kMre     = L"/Game/objects/prop_food_mre.prop_food_mre_C";
 constexpr const wchar_t* kPills   = L"/Game/objects/prop_sleeppills.prop_sleeppills_C";
 constexpr const wchar_t* kSoap    = L"/Game/objects/prop_food_soap.prop_food_soap_C";
@@ -74,12 +72,6 @@ bool WriteField(R::InstanceOffset& field, void* obj, T value) {
     if (o < 0) return false;
     std::memcpy(static_cast<uint8_t*>(obj) + o, &value, sizeof(value));
     return true;
-}
-
-// The client's copy is on its last use, so an eat of it is a destroy the watch asks the host about.
-const char* SetLastUse(void*, void* mirror) {
-    static R::InstanceOffset sUses{L"uses"};
-    return WriteField<int32_t>(sUses, mirror, 1) ? nullptr : "the copy's uses could not be written";
 }
 
 // The client's copy has a use to spare, so an eat of it destroys nothing and runs natively.
@@ -247,6 +239,11 @@ Judged Judge(const Row& row, coop::element::ElementId eid, const Baseline& base,
 }
 
 }  // namespace
+
+const char* SetLastUse(void*, void* mirror) {
+    static R::InstanceOffset sUses{L"uses"};
+    return WriteField<int32_t>(sUses, mirror, 1) ? nullptr : "the copy's uses could not be written";
+}
 
 bool HintWatchLive() {
     if (!g_hintWatch) g_hintWatch = sg::WatchName(kRowHint, kTagHint, &OnHintPre, nullptr);

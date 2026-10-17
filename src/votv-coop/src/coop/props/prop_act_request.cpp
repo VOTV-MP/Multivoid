@@ -83,8 +83,11 @@ std::vector<Expired> g_expired;
 dev::LastReply g_lastStale;
 uint32_t g_lateGrantsAborted = 0;
 
-// The drill hook (dev:: below): inert until a drill calls it.
+// The drill hooks (dev:: below): inert until a drill calls one.
 ue_wrap::CachedObjRef g_destroyInReplay;   // destroyed inside the next replay, after its verb
+bool g_holdCommits = false;                // a commit is queued, not sent, until ReleaseHeldCommits
+uint32_t g_refused[coop::net::kPropActReasons] = {};   // replies taken as refused, per reason
+uint32_t g_hostCancels = 0;                // the host's own calls cancelled for a reservation
 
 // ---- the lines ------------------------------------------------------------------------------------------------
 
@@ -142,8 +145,9 @@ struct QueuedCommit {
 };
 std::deque<QueuedCommit> g_commits;
 
-void DrainCommits() {
-    if (!g_session) return;
+// `released` sends a queue the drill is holding (dev::ReleaseHeldCommits).
+void DrainCommits(bool released = false) {
+    if (!g_session || (g_holdCommits && !released)) return;
     while (!g_commits.empty()) {
         QueuedCommit& head = g_commits.front();
         if (!g_session->SendReliableToSlot(0, ReliableKind::PropActCommit, &head.payload, sizeof(head.payload))) {
@@ -336,6 +340,7 @@ coop::net::Session* LinkedSession() { return g_session && g_session->connected()
 
 sg::Verdict HostPre(void* target) {
     if (!target || !coop::prop_hold::ReservedByOther(target, 0)) return sg::Verdict::Run;
+    ++g_hostCancels;
     ShowBusy();
     return sg::Verdict::Cancel;
 }
@@ -626,6 +631,7 @@ void OnReply(const coop::net::PropActReplyPayload& p) {
         Close();
         return;
     case internal::ReplyAction::Refused:
+        if (p.reason < coop::net::kPropActReasons) ++g_refused[p.reason];
         ShowRefusal(p.reason);
         Close();
         return;
@@ -650,6 +656,9 @@ void OnDisconnect() {
     g_lastStale = dev::LastReply{};
     g_lateGrantsAborted = 0;
     g_destroyInReplay.Reset();
+    g_holdCommits = false;
+    std::fill(std::begin(g_refused), std::end(g_refused), 0u);
+    g_hostCancels = 0;
     for (size_t i = 0; i < kLineCount; ++i) g_shown[i] = false;
 }
 
@@ -658,6 +667,13 @@ namespace dev {
 LastReply LastStaleReply() { return g_lastStale; }
 void DestroyInsideNextReplay(void* actor) { g_destroyInReplay.Set(actor); }
 uint16_t PendingId() { return g_rec.open ? g_rec.id : 0; }
+void HoldCommits(bool on) { g_holdCommits = on; }
+void ReleaseHeldCommits() { DrainCommits(true); }
+uint32_t RefusedCount(coop::net::PropActReason reason) {
+    const size_t i = static_cast<size_t>(reason);
+    return i < coop::net::kPropActReasons ? g_refused[i] : 0u;
+}
+uint32_t HostCancels() { return g_hostCancels; }
 
 }  // namespace dev
 

@@ -324,9 +324,8 @@ bool BeginWalkOut(void* player, void* target, const char*& why) {
 // The item's cancel: the field this driver wrote is cleared whether or not the hook still stands,
 // then the actor goes. True when the hook still stood.
 bool ReleaseHook() {
-    if (void* p = LocalPlayer()) H::WriteActiveHook(p, nullptr);
     void* h = g_hook.Get();
-    if (h) E::DestroyActor(h);
+    coop::dev::hook_plant::Release(LocalPlayer(), h);
     g_hook.Reset();
     return h != nullptr;
 }
