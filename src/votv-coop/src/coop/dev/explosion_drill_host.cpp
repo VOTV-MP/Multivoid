@@ -27,7 +27,9 @@ namespace X  = ue_wrap::explosion;
 
 namespace {
 
-constexpr float kPaperSpread = 200.f;
+// The papers lie on the line from B back to the puppet, at these fractions of the way: ground a player stands on, which
+// the blast pushes them across (four sides of B put one off a ledge into water, where it never rested).
+constexpr float kPaperAt[] = {0.25f, 0.4f, 0.55f, 0.7f};
 constexpr float kPaperLift = 50.f;
 
 enum class HPhase : uint8_t { WaitSlot, Rest, Fixture, Apply, Malformed, PapersSpawn, PapersEnrol, PapersRest,
@@ -37,7 +39,7 @@ struct Host {
     HPhase            phase = HPhase::WaitSlot;
     Clock::time_point at{};
     Rest              body, puppet;
-    Vec               B{};
+    Vec               B{}, P{};  // the blast point, the puppet at the fixture
     int               blast = 0;  // apply: the class due next
     bool              awaitCapture = false;
     uint32_t          capturedBefore = 0;
@@ -161,10 +163,10 @@ void HostPapersSpawn() {
     void* cls = ResolveClass(L"prop_paper_C", L"/Game/objects/prop_paper.prop_paper_C");
     if (!cls) return HostAbandon("prop_paper_C is neither loaded nor loadable by path");
     h.coastNoted = coop::prop_drive_host::CoastingCount();
-    const float off[kPapers][2] = {{kPaperSpread, 0.f}, {-kPaperSpread, 0.f}, {0.f, kPaperSpread},
-                                   {0.f, -kPaperSpread}};
+    static_assert(sizeof(kPaperAt) / sizeof(kPaperAt[0]) == kPapers, "one fraction per paper");
     for (int i = 0; i < kPapers; ++i) {
-        void* a = E::SpawnActor(cls, {h.B.X + off[i][0], h.B.Y + off[i][1], h.B.Z + kPaperLift});
+        const float t = kPaperAt[i];
+        void* a = E::SpawnActor(cls, {h.B.X + (h.P.X - h.B.X) * t, h.B.Y + (h.P.Y - h.B.Y) * t, h.B.Z + kPaperLift});
         if (!a) return HostAbandon("a paper did not spawn");
         g_papers[i].Set(a);
         h.rest[i] = Rest{};
@@ -279,14 +281,15 @@ void HostTick(coop::net::Session& s, Arm arm) {
     }
     case HPhase::Fixture: {
         coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(1);
-        const Fix f = ComputeB(rp && rp->valid() ? rp->GetActor() : nullptr,
-                               coop::players::Registry::Get().Local(), h.B);
+        void* puppet = rp && rp->valid() ? rp->GetActor() : nullptr;
+        const Fix f = ComputeB(puppet, coop::players::Registry::Get().Local(), h.B);
         if (f == Fix::Wait) {
             if (HostLate()) HostAbandon("fixture unreadable");
             return;
         }
         if (f == Fix::Blocked) return HostAbandon("fixture blocked");
         if (f == Fix::NoTrace) return HostAbandon("fixture trace unresolvable");
+        if (!E::TryGetActorLocation(puppet, h.P)) return HostAbandon("fixture unreadable");
         Info("host fixture B=(%.0f,%.0f,%.0f)", h.B.X, h.B.Y, h.B.Z);
         HostEnter(arm == Arm::Apply ? HPhase::Apply : arm == Arm::Coast ? HPhase::PapersSpawn : HPhase::Malformed);
         return;

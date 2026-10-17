@@ -14,6 +14,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <vector>
@@ -28,7 +29,6 @@ namespace ES = coop::explosion_sync;
 namespace {
 
 constexpr auto  kClientBound = std::chrono::seconds(120);  // from the client's world-ready edge
-constexpr float kFindRadius = 300.f;  // the client's copies lie this close to its own blast point
 
 enum class CPhase : uint8_t { Edge, Join, Rest, Fixture, Apply, Malformed, Find, Settle, Blast, Fly, Done };
 
@@ -44,6 +44,7 @@ struct Client {
     Rest              rest[kPapers];
     Vec               base[kPapers];
     bool              moved[kPapers] = {};
+    std::vector<uint32_t> prePapers;  // the paper elements already here at the world-ready edge
 };
 Client g_clientRun;
 std::vector<coop::element::Registry::ActorIdPair> g_snap;  // reused by every find
@@ -113,15 +114,24 @@ void ClientMalformed() {
                                 : flags != 1 ? "flags" : "applied");
 }
 
-// The prop_paper_C elements within kFindRadius of B: how many there are, and the first four.
-int FindPapers(const Vec& b, void* out[kPapers], uint32_t eid[kPapers]) {
+// The prop_paper_C elements this client has, by element id; the class test before any reflected read.
+void PaperIds(std::vector<uint32_t>& out) {
+    out.clear();
+    coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, g_snap);
+    for (const auto& p : g_snap)
+        if (p.actor && R::IsLiveByIndex(p.actor, p.internalIdx) &&
+            R::NameEquals(R::NameOf(R::ClassOf(p.actor)), L"prop_paper_C"))
+            out.push_back(p.id);
+}
+
+// The prop_paper_C elements that arrived after the world-ready edge -- the host's four: how many, and the first four.
+int FindPapers(const std::vector<uint32_t>& pre, void* out[kPapers], uint32_t eid[kPapers]) {
     coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, g_snap);
     int n = 0;
     for (const auto& p : g_snap) {
-        Vec at{};
         if (!p.actor || !R::IsLiveByIndex(p.actor, p.internalIdx) ||
-            !R::NameEquals(R::NameOf(R::ClassOf(p.actor)), L"prop_paper_C") || !E::TryGetActorLocation(p.actor, at) ||
-            Dist(at, b) > kFindRadius)
+            !R::NameEquals(R::NameOf(R::ClassOf(p.actor)), L"prop_paper_C") ||
+            std::find(pre.begin(), pre.end(), p.id) != pre.end())
             continue;
         if (n < kPapers) {
             out[n] = p.actor;
@@ -161,8 +171,8 @@ void ClientCoast() {
             return ClientAbandon("the blast arrived before the paper copies were found");
         void* found[kPapers];
         uint32_t ids[kPapers];
-        const int n = FindPapers(c.B, found, ids);
-        if (n > kPapers) return ClientAbandon("more than four papers near B");
+        const int n = FindPapers(c.prePapers, found, ids);
+        if (n > kPapers) return ClientAbandon("more than four new papers");
         if (n < kPapers) {
             if (Past(c.at, kBound)) ClientAbandon("the four paper copies were not found");
             return;
@@ -244,6 +254,7 @@ void ClientTick(Arm arm) {
         if (!coop::net_pump::HasAnnouncedWorldReady()) return;
         c.sync = ES::GetCounters();  // before the host's fixture can blast
         c.park = coop::explosion_parking::GetCounters();
+        PaperIds(c.prePapers);
         c.edgeAt = Clock::now();
         ClientEnter(CPhase::Join);
         return;
