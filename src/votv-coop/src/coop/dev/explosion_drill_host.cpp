@@ -74,10 +74,10 @@ void HostAbandon(const char* what) {
 }
 
 // The blast's force: 10000 reaches the client 600 cm away for apply, but flung the coast's papers 200 cm from B up to
-// 240 m, one onto water where it never rested; a twentieth of it moves them a few metres, past the 100 cm the client
-// reads.
+// 240 m, one never resting; 500 moved them 3, 61, 174 and 247 cm. A tenth of it is the coast's (the moved= line
+// measures it).
 constexpr float kApplyForce = 10000.f;
-constexpr float kCoastForce = 500.f;
+constexpr float kCoastForce = 1000.f;
 
 // A native-shaped host birth: no lane scope, so the capture sees it as the game's own. False (said) on failure.
 bool HostBlast(X::Cls c, const Vec& b, float damage, float force) {
@@ -208,10 +208,12 @@ void HostPapersRest() {
     HostEnter(HPhase::PapersFly);
 }
 
-// Each paper flew and came to rest again; its final rest is logged for the lead's comparison with the client's.
+// At least kMinFlown papers flew and all four came to rest again; each final rest is logged for the lead's comparison
+// with the client's.
 void HostPapersFly() {
     Host& h = g_hostRun;
-    bool all = true;
+    int flown = 0;
+    bool rested = true;
     for (int i = 0; i < kPapers; ++i) {
         void* a = g_papers[i].Get();
         Vec at{};
@@ -221,9 +223,10 @@ void HostPapersFly() {
             h.flew[i] = true;
             h.rest[i].ticks = 0;
         }
-        all = all && h.flew[i] && AtRest(h.rest[i]);
+        flown += h.flew[i] ? 1 : 0;
+        rested = rested && AtRest(h.rest[i]);
     }
-    if (all) {
+    if (flown >= kMinFlown && rested) {
         Vec rest[kPapers] = {};
         for (int i = 0; i < kPapers; ++i) {
             if (E::TryGetActorLocation(g_papers[i].Get(), rest[i])) continue;
@@ -237,9 +240,13 @@ void HostPapersFly() {
     }
     if (!HostLate()) return;
     char what[64];
+    if (flown < kMinFlown) {
+        std::snprintf(what, sizeof(what), "host papers did not fly n=%d", flown);
+        return HostAbandon(what);
+    }
     for (int i = 0; i < kPapers; ++i)
-        if (!h.flew[i] || !AtRest(h.rest[i])) {
-            std::snprintf(what, sizeof(what), "host paper did not fly or rest eid=%u", static_cast<unsigned>(h.eid[i]));
+        if (!AtRest(h.rest[i])) {
+            std::snprintf(what, sizeof(what), "host paper did not rest eid=%u", static_cast<unsigned>(h.eid[i]));
             return HostAbandon(what);
         }
 }

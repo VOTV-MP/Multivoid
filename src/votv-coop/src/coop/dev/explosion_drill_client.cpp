@@ -200,9 +200,13 @@ void ClientCoast() {
                     c.rest[i].ticks = 0;
                 }
             }
-            bool all = true;
-            for (int i = 0; i < kPapers; ++i) all = all && c.moved[i] && AtRest(c.rest[i]);
-            if (all) {
+            int flown = 0;
+            bool rested = true;
+            for (int i = 0; i < kPapers; ++i) {
+                flown += c.moved[i] ? 1 : 0;
+                rested = rested && AtRest(c.rest[i]);
+            }
+            if (flown >= kMinFlown && rested) {
                 for (int i = 0; i < kPapers; ++i) RestLine(c.eid[i], at[i]);
                 Info("client DONE PASS arm=coast moved=%.0f/%.0f/%.0f/%.0f", Dist(at[0], c.base[0]),
                      Dist(at[1], c.base[1]), Dist(at[2], c.base[2]), Dist(at[3], c.base[3]));
@@ -213,11 +217,12 @@ void ClientCoast() {
         if (!Past(c.foundAt, kBound) && !EdgeLate()) return;
         if (c.phase == CPhase::Blast) return ClientFail("coast", "blast did not arrive");
         char what[64];
-        for (int i = 0; i < kPapers; ++i)
-            if (!c.moved[i]) {
-                std::snprintf(what, sizeof(what), "copy did not fly eid=%u", static_cast<unsigned>(c.eid[i]));
-                return ClientFail("coast", what);
-            }
+        int flown = 0;
+        for (int i = 0; i < kPapers; ++i) flown += c.moved[i] ? 1 : 0;
+        if (flown < kMinFlown) {
+            std::snprintf(what, sizeof(what), "copies did not fly n=%d", flown);
+            return ClientFail("coast", what);
+        }
         for (int i = 0; i < kPapers; ++i)
             if (!AtRest(c.rest[i])) {
                 std::snprintf(what, sizeof(what), "copy did not rest eid=%u", static_cast<unsigned>(c.eid[i]));

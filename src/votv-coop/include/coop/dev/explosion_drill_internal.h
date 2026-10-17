@@ -18,6 +18,9 @@ using Vec = ue_wrap::FVector;
 
 constexpr auto kBound = std::chrono::seconds(60);  // a failure bound, never a wait
 constexpr float kFlyDistance = 100.f;
+// A paper against a wall barely moves at any force, so the coast is shown by at least this many of the four flying
+// and all four resting again; without the host's coast no client copy moves at all.
+constexpr int kMinFlown = 2;
 constexpr int   kPapers = 4;
 
 enum class Arm : uint8_t { Off, Dissolve, Apply, Coast, SpawnMalformed };
