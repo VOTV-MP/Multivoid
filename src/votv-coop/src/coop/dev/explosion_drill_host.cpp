@@ -42,7 +42,6 @@ struct Host {
     int               blast = 0;  // apply: the class due next
     bool              awaitCapture = false;
     uint32_t          capturedBefore = 0;
-    size_t            coastNoted = 0;
     uint32_t          eid[kPapers] = {};
     Rest              rest[kPapers];
     Vec               pre[kPapers];
@@ -156,11 +155,18 @@ void HostApply() {
     }
 }
 
+// Whether any of the four papers still has an open row in the host's drive stream; the drill never claims them, so an
+// open row is a coast.
+bool AnyPaperCoasting() {
+    for (int i = 0; i < kPapers; ++i)
+        if (coop::prop_drive_host::ContextOf(g_papers[i].Get(), g_hostRun.eid[i]).open) return true;
+    return false;
+}
+
 void HostPapersSpawn() {
     Host& h = g_hostRun;
     void* cls = ResolveClass(L"prop_paper_C", L"/Game/objects/prop_paper.prop_paper_C");
     if (!cls) return HostAbandon("prop_paper_C is neither loaded nor loadable by path");
-    h.coastNoted = coop::prop_drive_host::CoastingCount();
     static_assert(sizeof(kPaperAt) / sizeof(kPaperAt[0]) == kPapers, "one fraction per paper");
     for (int i = 0; i < kPapers; ++i) {
         const float t = kPaperAt[i];
@@ -195,7 +201,7 @@ void HostPapersRest() {
         NotePhysics(h.rest[i], a);
         all = all && AtRest(h.rest[i]);
     }
-    if (!all || coop::prop_drive_host::CoastingCount() > h.coastNoted) {
+    if (!all || AnyPaperCoasting()) {
         if (HostLate()) HostAbandon("the papers never rested or their streams never ended");
         return;
     }
@@ -210,7 +216,7 @@ void HostPapersRest() {
     HostEnter(HPhase::PapersFly);
 }
 
-// At least kMinFlown papers flew, all four came to rest again and none is still in the coast stream; each final rest
+// At least kMinFlown papers flew, all four came to rest again and none of the four still has a row in the coast stream; each final rest
 // is logged for the lead's comparison with the client's.
 void HostPapersFly() {
     Host& h = g_hostRun;
@@ -228,7 +234,7 @@ void HostPapersFly() {
         flown += h.flew[i] ? 1 : 0;
         rested = rested && AtRest(h.rest[i]);
     }
-    const bool streamed = coop::prop_drive_host::CoastingCount() > h.coastNoted;
+    const bool streamed = AnyPaperCoasting();
     if (flown >= kMinFlown && rested && !streamed) {
         Vec rest[kPapers] = {};
         for (int i = 0; i < kPapers; ++i) {

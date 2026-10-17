@@ -82,7 +82,8 @@ Fix ComputeB(void* body, void* ctx, Vec& out) {
     // Eight directions in a fixed order from the body's yaw-forward, the clearest one taken (the first among equals):
     // both peers run the same search from bodies that agree within the pose error, so they pick the same direction
     // unless two are within that error of each other or a ray grazes an edge on one peer only; the logged B lines
-    // show it (the client's B feeds only its log line in the coast arm).
+    // show it (in the coast arm the client's B feeds only its log line and the arm's fixture checks, which can still
+    // abandon the arm).
     const float c0 = f.X / flat, s0 = f.Y / flat;
     float best = -1.f;
     Vec bestDir{};

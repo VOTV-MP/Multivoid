@@ -12,6 +12,7 @@
 #include "coop/world/explosion_sync.h"
 
 #include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 
@@ -33,13 +34,6 @@ constexpr auto  kClientBound = std::chrono::seconds(120);  // from the client's 
 
 enum class CPhase : uint8_t { Edge, Join, Rest, Fixture, Apply, Malformed, Find, Settle, Blast, Fly, Done };
 
-// An actor by identity, as R::IsLiveByIndex reads it: the join snapshot re-keys a pre-existing actor's element id, never
-// its pointer and slot.
-struct PaperActor {
-    void*   actor;
-    int32_t internalIdx;
-};
-
 struct Client {
     CPhase            phase = CPhase::Edge;
     Clock::time_point edgeAt{}, at{}, foundAt{};
@@ -52,7 +46,9 @@ struct Client {
     Rest              rest[kPapers];
     Vec               base[kPapers];
     bool              moved[kPapers] = {};
-    std::vector<PaperActor> prePapers;  // the paper actors already here at the world-ready edge
+    // Every paper actor already here at the world-ready edge, saved ones included: a client's saved keyed prop has no
+    // element row until the join snapshot first binds one, so the registry cannot list it.
+    std::vector<ue_wrap::CachedObjRef> prePapers;
 };
 Client g_clientRun;
 std::vector<coop::element::Registry::ActorIdPair> g_snap;  // reused by every find
@@ -122,24 +118,30 @@ void ClientMalformed() {
                                 : flags != 1 ? "flags" : "applied");
 }
 
-// The prop_paper_C actors this client has; the class test before any reflected read.
-void PaperActors(std::vector<PaperActor>& out) {
+// Every live prop_paper_C actor this client has, from the object index (the class's own instances, its default object
+// left out), whether or not it holds an element row yet.
+void PaperActors(std::vector<ue_wrap::CachedObjRef>& out) {
     out.clear();
-    coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, g_snap);
-    for (const auto& p : g_snap)
-        if (p.actor && R::IsLiveByIndex(p.actor, p.internalIdx) &&
-            R::NameEquals(R::NameOf(R::ClassOf(p.actor)), L"prop_paper_C"))
-            out.push_back({p.actor, p.internalIdx});
+    void* cls = ue_wrap::object_index::ClassByName(L"prop_paper_C");
+    if (!cls) return;
+    ue_wrap::object_index::ForEachInstance(
+        cls,
+        [](void* ctx, void* obj, int32_t) {
+            if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+            ue_wrap::CachedObjRef ref;
+            ref.Set(obj);
+            static_cast<std::vector<ue_wrap::CachedObjRef>*>(ctx)->push_back(ref);
+        },
+        &out);
 }
 
-bool IsPre(const std::vector<PaperActor>& pre, const coop::element::Registry::ActorIdPair& p) {
-    return std::any_of(pre.begin(), pre.end(),
-                       [&](const PaperActor& q) { return q.actor == p.actor && q.internalIdx == p.internalIdx; });
+bool IsPre(const std::vector<ue_wrap::CachedObjRef>& pre, const coop::element::Registry::ActorIdPair& p) {
+    return std::any_of(pre.begin(), pre.end(), [&](const ue_wrap::CachedObjRef& q) { return q.Is(p.actor); });
 }
 
 // The prop_paper_C elements whose actor is not among those at the world-ready edge -- the host's four: how many, and
 // the first four.
-int FindPapers(const std::vector<PaperActor>& pre, void* out[kPapers], uint32_t eid[kPapers]) {
+int FindPapers(const std::vector<ue_wrap::CachedObjRef>& pre, void* out[kPapers], uint32_t eid[kPapers]) {
     coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, g_snap);
     int n = 0;
     for (const auto& p : g_snap) {
@@ -229,7 +231,7 @@ void ClientCoast() {
             for (int i = 0; i < kPapers; ++i) {
                 flown += c.moved[i] ? 1 : 0;
                 rested = rested && AtRest(c.rest[i]);
-                driven = driven || (c.moved[i] && coop::prop_drive_stream::IsParked(c.copy[i].Get()));
+                driven = driven || coop::prop_drive_stream::IsParked(c.copy[i].Get());
             }
             if (flown >= kMinFlown && rested && !driven) {
                 for (int i = 0; i < kPapers; ++i) RestLine(c.eid[i], at[i]);
@@ -254,7 +256,7 @@ void ClientCoast() {
                 return ClientFail("coast", what);
             }
         for (int i = 0; i < kPapers; ++i)
-            if (c.moved[i] && coop::prop_drive_stream::IsParked(c.copy[i].Get())) {
+            if (coop::prop_drive_stream::IsParked(c.copy[i].Get())) {
                 std::snprintf(what, sizeof(what), "copy still driven eid=%u", static_cast<unsigned>(c.eid[i]));
                 return ClientFail("coast", what);
             }
