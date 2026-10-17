@@ -63,6 +63,9 @@ bool IsActorUnderAnyDrive(void* actor);
 // Game thread.
 bool IsOwnedHere(void* actor);
 
+// A drive on `actor` belonging to a slot other than `slot` (-1 excludes none). Game thread.
+bool IsActorDrivenByOtherThan(void* actor, int slot);
+
 // Register a wire-received prop mirror Element at `eid` bound to `actor`. Idempotent for
 // duplicate eids (a silent no-op); skips an eid of 0 (an unminted sender) and the invalid id.
 // The register-mirror pattern: allocate, insert under the manager mutex, register, roll back

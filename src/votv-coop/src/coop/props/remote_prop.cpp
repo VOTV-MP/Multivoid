@@ -94,8 +94,6 @@ constexpr uint32_t kRelatchLoud = 60;
 
 }  // namespace [drive helpers part 1]
 
-namespace {  // [drive helpers part 2]
-
 // A drive on `actor` belonging to a slot other than `slot` (-1 excludes none).
 bool IsActorDrivenByOtherThan(void* actor, int slot) {
     if (!actor) return false;
@@ -103,8 +101,6 @@ bool IsActorDrivenByOtherThan(void* actor, int slot) {
         if (s != slot && g_drives[s].actor == actor) return true;
     return false;
 }
-
-}  // namespace [drive helpers part 2]
 
 // True when some slot's drive targets `actor`; the spawn receiver skips the transform converge
 // for a driven prop (PropPose owns its position).

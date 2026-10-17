@@ -18,8 +18,7 @@
 #include "coop/player/puppet_drive.h"
 #include "coop/player/remote_player.h"
 #include "coop/player/roster_ledger.h"
-#include "coop/props/prop_drive_host.h"
-#include "coop/props/remote_prop.h"
+#include "coop/props/prop_hold.h"
 #include "coop/session/net_pump.h"
 
 #include "l10n/l10n.h"
@@ -270,13 +269,6 @@ Verdict JudgeSight(void* puppet, void* actor, const Queued& q) {
     return Decided(RemoverReason::Removed, "");
 }
 
-// The host's own hand holds `actor`.
-bool HostHolds(void* actor) {
-    void* local = coop::players::Registry::Get().Local();
-    E::MainPlayerGrabState g{};
-    return local && E::ReadMainPlayerGrabState(local, g) && (g.grabbingActor == actor || g.holdingActor == actor);
-}
-
 // Judges one request in the lane's order; on Removed `*out` is the prop to remove.
 Verdict Judge(coop::net::Session& s, uint8_t slot, const Queued& q, void** out) {
     const coop::net::RemoverRequestPayload& p = q.req;
@@ -307,9 +299,8 @@ Verdict Judge(coop::net::Session& s, uint8_t slot, const Queued& q, void** out) 
     if (!coop::permissions::host::Allows(guid, GN::kToolgunRemove.node, GN::kToolgunRemove.defaultGranted, false))
         return Decided(RemoverReason::NoRight, "the remover node is withheld from the sender");
 
-    if (coop::remote_prop::IsActorUnderAnyDrive(actor)) return Decided(RemoverReason::Held, "held by a peer's drive");
-    if (coop::prop_drive_host::InAHand(actor)) return Decided(RemoverReason::Held, "held in a hand");
-    if (HostHolds(actor)) return Decided(RemoverReason::Held, "held by the host's own grab");
+    if (const coop::prop_hold::Holder h = coop::prop_hold::WhoHolds(actor, slot); h != coop::prop_hold::Holder::None)
+        return Decided(RemoverReason::Held, coop::prop_hold::HolderWhy(h));
 
     const Verdict sight = JudgeSight(puppet, actor, q);
     if (sight.reason == RemoverReason::Removed) *out = actor;
