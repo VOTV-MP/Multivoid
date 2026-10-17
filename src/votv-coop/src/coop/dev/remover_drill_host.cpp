@@ -127,7 +127,7 @@ void HostHookTick() {
     case HookStep::Pulling:
         if (!first || !(coop::hook_sync::PlayerHookHolders(first) & kHostBit)) return;
         g_heldBase = Answered(coop::net::RemoverReason::Held);
-        coop::chat_sync::QueueSend(kHostHookedSaid);
+        coop::chat_sync::QueueSend(HookedLine(kHostHookedSaid, layout::RelaysDone()));
         UE_LOGI("[REMOVER-DRILL] host: the claim pass reads its hook on the first crowbar; host-hooked said");
         g_hookStep = HookStep::Answering;
         return;
@@ -139,7 +139,7 @@ void HostHookTick() {
         return;
     case HookStep::AwaitClient:
         if (!second || !(coop::hook_sync::PlayerHookHolders(second) & kClientBit)) return;
-        coop::chat_sync::QueueSend(kSelfHookedSaid);
+        coop::chat_sync::QueueSend(HookedLine(kSelfHookedSaid, layout::RelaysDone()));
         UE_LOGI("[REMOVER-DRILL] host: the claim pass reads the client's hook on the second crowbar; self-hooked said");
         g_hookStep = HookStep::Done;
         return;
@@ -194,7 +194,7 @@ void HostReset() {
     g_hostStep = HostStep::Arm;
     g_hookStep = HookStep::Plant;
     g_heldBase = 0;
-    g_hostHook.Reset();
+    if (g_hostHook.Raw()) ReleaseHook(g_hostHook);
 }
 
 }  // namespace coop::dev::remover_drill::detail

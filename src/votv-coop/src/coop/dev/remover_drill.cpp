@@ -526,7 +526,7 @@ void ClientTick(coop::net::Session* s) {
         return;
     case Step::HostHooked:
         // The host's own hook must pull the first crowbar before the press; its line says the claim pass reads it.
-        if (NoticeCount(kHostHookedSaid) == 0) {
+        if (NoticeCount(HookedLine(kHostHookedSaid, g_relay).c_str()) == 0) {
             if (Expired(kFindBoundMs)) Fail("the host never said its hook pulls the first crowbar within 60 s");
             return;
         }
@@ -554,7 +554,7 @@ void ClientTick(coop::net::Session* s) {
             UE_LOGI("[REMOVER-DRILL] client: its own hook is planted on the second crowbar (hook %p)", hook);
             return;
         }
-        if (NoticeCount(kSelfHookedSaid) == 0) {
+        if (NoticeCount(HookedLine(kSelfHookedSaid, g_relay).c_str()) == 0) {
             if (Expired(kFindBoundMs)) Fail("the host never said this client's hook pulls the second crowbar within 60 s");
             return;
         }
@@ -602,6 +602,10 @@ void End(const char* role, const char* word, const char* what, bool warn) {
     g_done = true;
 }
 
+std::string HookedLine(const char* said, int relays) {
+    return std::string(said) + " n=" + std::to_string(relays) + ";";
+}
+
 // The item's cancel for a hook this drill planted: the field the plant wrote is cleared whether or not the hook still
 // stands, then the actor goes.
 void ReleaseHook(ue_wrap::CachedObjRef& hook) {
@@ -626,7 +630,7 @@ void OnDisconnect() {
     g_step = Step::Arm;
     g_stepMs = g_nextCheckMs = 0;
     layout::Reset();
-    g_selfHook.Reset();
+    if (g_selfHook.Raw()) ReleaseHook(g_selfHook);
     g_toolgun.Reset();
     g_single.Reset();
     g_mash.Reset();

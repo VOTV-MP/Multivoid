@@ -20,8 +20,11 @@ const char* PhaseName();
 std::string EndLine();
 
 // The host's two lines of the hook steps: its own hook pulls the first crowbar; the client's hook pulls the second.
+// HookedLine adds the layout's relay count ("<said> n=<relays>;"), so a line of an earlier layout never satisfies the
+// client's wait on its current one.
 inline constexpr const char* kHostHookedSaid = "remover-drill host-hooked";
 inline constexpr const char* kSelfHookedSaid = "remover-drill self-hooked";
+std::string HookedLine(const char* said, int relays);
 
 inline constexpr int      kSweepFloor   = 10;   // the fewest ring props in sight that make the sweep a measurement
 inline constexpr uint64_t kCheckEveryMs = 250;

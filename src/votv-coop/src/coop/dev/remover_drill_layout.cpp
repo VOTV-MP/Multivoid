@@ -139,8 +139,8 @@ const char* SpawnLayout(coop::RemotePlayer& rp, const FVector& at, bool granted,
     void* singleCls = ue_wrap::asset_load::LoadObjectByPath(kSinglePath);
     void* mashCls = ue_wrap::asset_load::LoadObjectByPath(kMashPath);
     void* ringCls = ue_wrap::asset_load::LoadObjectByPath(kSackPath);
-    void* hookedCls = ue_wrap::asset_load::LoadObjectByPath(kHookedPath);
-    if (!singleCls || !mashCls || !ringCls || !hookedCls) return "a prop class of the layout did not load";
+    void* hookedCls = granted ? ue_wrap::asset_load::LoadObjectByPath(kHookedPath) : nullptr;
+    if (!singleCls || !mashCls || !ringCls || (granted && !hookedCls)) return "a prop class of the layout did not load";
     FVector eye{};
     if (!rp.TryGetEyePosition(eye)) return "the sender's eye did not read on the host";
     FVector fwd0 = E::GetActorForwardVector(puppet);
@@ -307,6 +307,8 @@ Relayed HandleRelay(bool granted) {
 }
 
 Laid& Targets() { return g_laid; }
+
+int RelaysDone() { return g_relaysDone; }
 
 const char* Lay(coop::RemotePlayer& rp, const FVector& at, bool granted) {
     return SpawnLayout(rp, at, granted, 0, &g_fanIdx);

@@ -52,6 +52,9 @@ enum class Relayed { None, Laid, Failed, NoEye };
 // Game thread, the host.
 Relayed HandleRelay(bool granted);
 
+// The relay lines HandleRelay has taken: the number of the layout that stands now.
+int RelaysDone();
+
 // Back to the first fan step, nothing laid and no relay answered. A session's end.
 void Reset();
 
