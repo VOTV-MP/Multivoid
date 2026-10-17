@@ -59,7 +59,8 @@ void RestLine(uint32_t eid, const Vec& at);
 
 // ---- the two roles ----
 
-// The host's half: one Tick of its phases, and back to the start.
+// The host's half: one Tick of its phases, and back to the start (destroying the papers its coast spawned, which
+// outlive its Done so the client can still judge its copies).
 void HostTick(coop::net::Session& s, Arm arm);
 void HostReset();
 

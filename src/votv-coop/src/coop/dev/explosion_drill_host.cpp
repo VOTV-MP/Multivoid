@@ -266,7 +266,8 @@ void HostTick(coop::net::Session& s, Arm arm) {
     }
     case HPhase::Fixture: {
         coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(1);
-        const Fix f = ComputeB(rp && rp->valid() ? rp->GetActor() : nullptr,coop::players::Registry::Get().Local(), h.B);
+        const Fix f = ComputeB(rp && rp->valid() ? rp->GetActor() : nullptr,
+                               coop::players::Registry::Get().Local(), h.B);
         if (f == Fix::Wait) {
             if (HostLate()) HostAbandon("fixture unreadable");
             return;

@@ -7,7 +7,8 @@
 // nothing dropped), coast blasts among four papers (each client copy flies over 100 cm and rests again) and
 // spawn_malformed sends one valid ExplosionSpawn and four with one broken field (each dropped by its reason).
 // Every wait is a counter's rise, a rest (under 5 cm/s for 10 Ticks) or a registry state, and has a failure bound:
-// 60 s per host phase, and on the client 120 s from its own world-ready edge (the wait for that edge is the rig's).
+// 60 s per phase on either role, the client's join and its verdicts 120 s from its own world-ready edge (the wait
+// for that edge is the rig's).
 // "[EXPLOSION-DRILL] FAIL" is a step failing (--fail-marker), "[EXPLOSION-DRILL] ABANDONED" the drill unable to do
 // its part (--dead-marker), "[EXPLOSION-DRILL] client load PASS by=name" the dissolve's load half and
 // "[EXPLOSION-DRILL] client DONE PASS arm=dissolve", and the same for each arm, the run's end (--done-marker).
@@ -25,7 +26,7 @@ void Tick(coop::net::Session* s);
 // The load half of dissolve. Game thread, once per pump tick, the world load included.
 void TickLoad(coop::net::Session* s);
 
-// Back to the start: a rejoin's peers run their halves again.
+// Back to the start: a rejoin's peers run their halves again; the host first destroys the papers its coast spawned.
 void OnDisconnect();
 
 }  // namespace coop::dev::explosion_drill
