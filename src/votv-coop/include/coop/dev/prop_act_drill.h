@@ -31,11 +31,14 @@ void Tick(coop::net::Session* s);
 // The session ended: the drill starts over.
 void OnDisconnect();
 
-// What the core (prop_act_drill.cpp) and a phase's steps (prop_act_drill_<phase>.cpp) share: the core runs the
-// step machine of both peers over a phase's table, and the phase says what each step is and how the host judges it.
+// What the core (prop_act_drill.cpp), the client half (prop_act_drill_client.cpp) and a phase's steps
+// (prop_act_drill_<phase>.cpp) share: the core runs the host's step machine and the client half the client's, over a
+// phase's table, and the phase says what each step is and how the host judges it.
 namespace detail {
 
 inline constexpr int kClientSlot = 1;   // the client a single-client phase drives
+inline constexpr const char* kTag = "[ACT-DRILL]";
+inline constexpr uint64_t kPollEveryMs = 200;   // a chat walk, a few times a second
 
 enum class Verb : uint8_t { Pocket, Hold, Use, Soap };   // putObjectInventory2, Hold Object, actionOptionIndex 4, playerUsedOn
 
@@ -88,6 +91,18 @@ struct Phase {
 };
 
 const Phase& Honest();   // prop_act_drill_honest.cpp
+
+// The core's, which the client half uses: the clock, the armed phase's name, the two lines the peers say to each other
+// in the lobby chat (the host's ready head and the client's done head) and the chat send.
+uint64_t NowMs();
+const std::string& PhaseName();
+std::string ReadyHead(const Row& r);
+std::string DoneHead(const Row& r);
+void Say(const std::string& line);
+
+// The client half: one check of its steps, and its state back to the start.
+void ClientTick(coop::net::Session* s, const Phase& ph);
+void ClientReset();
 
 // What the honest rows need of the engine (prop_act_drill_honest.cpp). The hint watch tells a full inventory's refusal
 // ("Not enough space") from any other game hint.
