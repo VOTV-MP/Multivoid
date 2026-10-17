@@ -240,6 +240,11 @@ DestroyApply TryApplyDestroy(const coop::net::PropDestroyPayload& payload) {
     return OnDestroyImpl_(payload, localPlayer, /*senderSlot=*/-1, /*allowDefer=*/false);
 }
 
+DestroyApply DestroyJudged(const coop::net::PropDestroyPayload& payload, int senderSlot) {
+    void* localPlayer = coop::players::Registry::Get().Local();
+    return OnDestroyImpl_(payload, localPlayer, senderSlot, /*allowDefer=*/false);
+}
+
 void ConsumeLocalActor(void* actor) {
     // An echo-suppressed local destroy, used by the spawn receiver to consume this peer's own copy
     // of a shared world chipPile when the other peer grabbed theirs (the pile is a separate local

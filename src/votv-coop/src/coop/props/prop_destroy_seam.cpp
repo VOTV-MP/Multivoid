@@ -14,6 +14,7 @@
 #include "coop/net/session.h"
 #include "coop/props/prop_drop_intent.h"
 #include "coop/items/coingun_sync.h"
+#include "coop/props/prop_act_request.h"
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/session/world_load_episode.h"
@@ -58,6 +59,9 @@ void DestroySeamBody(void* self) {
                 self);
         return;
     }
+    // The replay of a granted take or use destroys its target here; the host destroys it and tells the other
+    // peers on the commit, so this peer sends nothing for it. Every other gate below still runs.
+    const bool actLatched = coop::prop_act_request::NoteSeamDestroy(self);
     if (!ue_wrap::prop::IsKeyedInteractable(self)) return;
     // A dying parent-owned sub-actor (a kerfur's eye camera on every toggle) is destroyed by its
     // parent's engine cascade on every peer, so broadcasting its keyed destroy is at best wire
@@ -135,9 +139,12 @@ void DestroySeamBody(void* self) {
     dp.key = wk;
     // The invalid id becomes 0 on the wire, the protocol's sender-had-no-Element sentinel.
     dp.elementId = (destroyEid == coop::element::kInvalidId) ? 0u : destroyEid;
-    UE_LOGI("grab_hook[destroy-seam]: %s broadcasting DESTROY actor=%p key='%ls' eid=%u%s",
-            roleStr, self, keyless ? L"None" : keyStr.c_str(), dp.elementId,
-            keyless ? " (eid-only: trash clump)" : "");
+    if (!actLatched)
+        UE_LOGI("grab_hook[destroy-seam]: %s broadcasting DESTROY actor=%p key='%ls' eid=%u%s",
+                roleStr, self, keyless ? L"None" : keyStr.c_str(), dp.elementId,
+                keyless ? " (eid-only: trash clump)" : "");
+    else
+        UE_LOGI("prop_destroy_seam: %p destroyed by a granted take or use -- the host sends its destroy", self);
     // If this prop is dying inside the coin gun's verb bracket, the sale is authored first, on
     // this same lane, so FIFO delivers it while the host's copy is still alive, which the mint
     // requires: the sale positions its coins from the sold prop's component. After every gate
@@ -152,8 +159,8 @@ void DestroySeamBody(void* self) {
     if (coop::coingun_sync::IsInCoinGunVerb())
         coop::coingun_sync::SendSaleForDyingProp(keyless ? std::wstring() : keyStr, dp.elementId);
 
-    s->SendPropDestroy(dp);  // channel queues internally; always accepted
-    // A client that just broadcast a keyed destroy may be about to re-place the same prop (a
+    if (!actLatched) s->SendPropDestroy(dp);  // channel queues internally; always accepted
+    // A client that just destroyed a keyed prop may be about to re-place the same prop (a
     // pickup, then a place). The key is parked so the place authors a host-authoritative drop
     // intent, and only for a key whose destroy we just propagated, so the host re-spawn makes
     // exactly one prop. Never reached inside the world-load episode, so join churn never parks.

@@ -145,6 +145,12 @@ void AddDestroyListener(DestroyHeardFn fn);
 enum class DestroyApply : uint8_t { Applied, NotFound, NotYet };
 DestroyApply TryApplyDestroy(const coop::net::PropDestroyPayload& payload);
 
+// The host's destroy of a prop it judged for `senderSlot` (a granted take or use): no defer, the sender's slot to the
+// destroy listeners. Applied when the eid resolved and the destroy was dispatched; it does not prove the actor died
+// (a failed K2_DestroyActor still answers Applied), so the caller holds a CachedObjRef taken before and tests it
+// after, as the remover's judge does. Game thread.
+DestroyApply DestroyJudged(const coop::net::PropDestroyPayload& payload, int senderSlot);
+
 // Clear every slot's kinematic-drive cache entry for `actor`, so nothing drives a destroyed
 // actor next tick. The adoption sweep destroys actors through the same teardown contract, one
 // implementation. Game thread only; a no-op for null.

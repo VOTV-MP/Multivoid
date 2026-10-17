@@ -314,6 +314,18 @@ bool CallMainPlayerHoldObject(void* mainPlayer, void* target, bool& collected) {
     return true;
 }
 
+bool CallPutObjectInventory2(void* mainPlayer, void* target, bool noNotify, bool& taken) {
+    taken = false;
+    if (!mainPlayer || !R::IsLive(mainPlayer) || !target) return false;
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(mainPlayer), L"putObjectInventory2");
+    if (!fn) return false;
+    ParamFrame f(fn);
+    if (!f.valid() || !f.Set<void*>(L"InputPin", target) || !f.Set<bool>(L"noNotify", noNotify) || !Call(mainPlayer, f))
+        return false;
+    taken = f.Get<bool>(L"return");
+    return true;
+}
+
 bool ReadMainPlayerGrabState(void* mainPlayer, MainPlayerGrabState& out) {
     out = {};
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;

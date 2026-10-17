@@ -1006,6 +1006,19 @@ enum class ReliableKind : uint8_t {
     // absolute. BadSunPayload.
     BadSun = 176,
 
+    // CLIENT->HOST: a client asks to take or use a shared prop before its verb runs (coop::prop_act_host).
+    // Never relayed. Late join: not pre-world; a request before the sender's world is ready waits in the host's queue.
+    // Trust: the host judges the prop, its family, who holds or reserves it, and the reach.
+    PropActRequest = 178,
+
+    // HOST->CLIENT: the host's answer to one PropActRequest: granted (the prop is reserved for the sender) or refused
+    // with a reason. Never relayed.
+    PropActReply = 179,
+
+    // CLIENT->HOST: the client's verb ran (committed: the prop is gone on the client) or did not (aborted). Rides Bulk
+    // with PropDestroy and PropDropIntent, so a later drop of the item cannot overtake it. Never relayed.
+    PropActCommit = 180,
+
     // Host to all: a security camera's `active` bit (the LED, the click, the laptop's camera list), by the camera
     // lane's key, absolute, whoever wrote it -- a player's use, a wisp, the gray events, the cursed camera's night roll.
     // A client renders it and never authors it; a client's own copy is refused at the host's receive edge. Never
@@ -1980,6 +1993,36 @@ struct RemoverResultPayload {
     uint8_t  _pad[3];    // 3 -- zeroed
 };
 static_assert(sizeof(RemoverResultPayload) == 8, "RemoverResultPayload must be 8 bytes");
+
+// A client's ask to take or use a world prop (PropActRequest), the host's answer (PropActReply) and the client's
+// closing word (PropActCommit). `id` is the client's own, nonzero, and pairs the three; `eid` is the prop's element
+// id on the sender.
+enum class PropActFamily : uint8_t { Take = 1, Use = 2 };
+enum class PropActReason : uint8_t { Granted = 0, Gone = 1, WrongFamily = 2, Held = 3, Reach = 4, QueueFull = 5 };
+inline constexpr uint8_t kPropActReasons = 6;   // Granted..QueueFull: the per-reason counter width
+
+struct PropActRequestPayload {
+    uint16_t id;      // 2 -- the sender's request id
+    uint8_t  family;  // 1 -- PropActFamily
+    uint8_t  pad;     // 1 -- zeroed
+    uint32_t eid;     // 4 -- the prop's Element id
+};
+static_assert(sizeof(PropActRequestPayload) == 8, "PropActRequestPayload must be 8 bytes");
+
+struct PropActReplyPayload {
+    uint16_t id;       // 2 -- the request's id
+    uint8_t  granted;  // 1 -- 1 with reason 0, or 0 with reason 1..5
+    uint8_t  reason;   // 1 -- PropActReason
+};
+static_assert(sizeof(PropActReplyPayload) == 4, "PropActReplyPayload must be 4 bytes");
+
+struct PropActCommitPayload {
+    uint16_t id;         // 2 -- the granted request's id
+    uint8_t  committed;  // 1 -- 1 the verb ran and the prop is gone on the client, 0 aborted
+    uint8_t  pad;        // 1 -- zeroed
+    uint32_t eid;        // 4 -- the prop's Element id
+};
+static_assert(sizeof(PropActCommitPayload) == 8, "PropActCommitPayload must be 8 bytes");
 
 // The server upgrades lane (ServerUpgradeState). Ops 0 (install) and 1 (take-out) name a box by its
 // servers[] index; op 2, the canonical, carries every box's level in servers[] order (a farm past 64

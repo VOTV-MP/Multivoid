@@ -1155,6 +1155,10 @@ msgstr ""
 msgid "Skins come from converter .pak files under Content/Paks/LogicMods (any subfolder). One pak may carry several skins -- the four scientists ship together in scientists.pak."
 msgstr ""
 
+#: src/coop/props/prop_act_request.cpp
+msgid "Someone else has that item."
+msgstr ""
+
 #: src/coop/net/end_reason.cpp
 msgid "Something was sent before the identity was proved."
 msgstr ""
@@ -1190,8 +1194,20 @@ msgstr ""
 msgid "Teleport to me"
 msgstr ""
 
+#: src/coop/props/prop_act_request.cpp
+msgid "That can't be done right now."
+msgstr ""
+
 #: src/coop/props/remover_request.cpp
 msgid "That is being held"
+msgstr ""
+
+#: src/coop/props/prop_act_request.cpp
+msgid "That item is gone."
+msgstr ""
+
+#: src/coop/props/prop_act_request.cpp
+msgid "That item is too far away."
 msgstr ""
 
 #: src/coop/commands/command_sync.cpp
@@ -1244,6 +1260,10 @@ msgstr ""
 
 #: src/coop/net/end_reason.cpp
 msgid "The host could not accept the connection."
+msgstr ""
+
+#: src/coop/props/prop_act_request.cpp
+msgid "The host could not be asked; try again."
 msgstr ""
 
 #: src/coop/net/end_reason.cpp
@@ -1460,6 +1480,10 @@ msgstr ""
 msgid "Tidy up multivoid.ini"
 msgstr ""
 
+#: src/coop/props/prop_act_request.cpp
+msgid "Too many actions at once, try again."
+msgstr ""
+
 #: src/coop/net/end_reason.cpp
 msgid "Too many connections from you in a short time. Try again shortly."
 msgstr ""
@@ -1654,6 +1678,10 @@ msgstr ""
 
 #: src/ui/game_build_dialog.cpp
 msgid "You can play anyway. This message will not show again for this game version."
+msgstr ""
+
+#: src/coop/props/prop_act_request.cpp
+msgid "You can't do that with this item."
 msgstr ""
 
 #: src/coop/props/remover_request.cpp

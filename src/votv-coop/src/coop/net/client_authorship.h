@@ -132,6 +132,8 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::PointSackRedeem:
     case ReliableKind::RemoverRequest:
     case ReliableKind::CreatureHitIntent:
+    case ReliableKind::PropActRequest:
+    case ReliableKind::PropActCommit:
     case ReliableKind::CameraToggleIntent:
     case ReliableKind::LaptopTabReport:
         return ClientAuthorship::Client;
@@ -206,6 +208,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::TaskNewState:
     case ReliableKind::HookAnchored:
     case ReliableKind::RemoverResult:
+    case ReliableKind::PropActReply:
     case ReliableKind::CameraActiveState:
     case ReliableKind::CameraLightState:
     case ReliableKind::LaptopTabState:

@@ -33,6 +33,8 @@
 #include "coop/items/order_queue_sync.h"  // HOST->CLIENT the delivery order queue
 #include "coop/items/order_sync.h"
 #include "coop/props/pack_trash_intent.h"  // CLIENT->HOST bagging of a pile or clump
+#include "coop/props/prop_act_host.h"  // CLIENT->HOST a take or use of a shared prop, and its commit
+#include "coop/props/prop_act_request.h"  // HOST->CLIENT its answer
 #include "coop/props/prop_drop_intent.h"  // CLIENT->HOST client-placed keyed prop
 #include "coop/props/remover_request.h"  // CLIENT->HOST the tool gun's remover; HOST->CLIENT its answer
 #include "coop/items/broom_stroke.h"
@@ -498,6 +500,67 @@ bool HandleIntentEvent(net::Session& session,
             break;
         }
         coop::creature_hit_intent::OnIntent(static_cast<int>(msg.senderPeerSlot), p);
+        break;
+    }
+    case net::ReliableKind::PropActRequest: {
+        // CLIENT->HOST: a client asks to take or use a shared prop before its verb runs. The host judges it, and
+        // answers a grant or a refusal (coop::prop_act_host). Never relayed.
+        if (session.role() != net::Role::Host) {
+            UE_LOGW("event_feed: PropActRequest received on a client -- dropping");
+            break;
+        }
+        const uint8_t senderSlot = (msg.senderPeerSlot >= 1 && msg.senderPeerSlot < net::kMaxPeers)
+                                       ? static_cast<uint8_t>(msg.senderPeerSlot)
+                                       : static_cast<uint8_t>(0xFF);
+        // The refusal is the lane's to say, in its tally: a sender cannot make the router's log the cost.
+        if (senderSlot == 0xFF) {
+            coop::prop_act_host::NoteBadSender();
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::PropActRequestPayload)) {
+            coop::prop_act_host::NoteShortPayload(senderSlot);
+            break;
+        }
+        net::PropActRequestPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::prop_act_host::OnRequest(p, senderSlot);
+        break;
+    }
+    case net::ReliableKind::PropActCommit: {
+        // CLIENT->HOST: the client's verb on a granted prop ran or did not. On a commit the host destroys the prop
+        // itself and tells the other peers (coop::prop_act_host). Never relayed.
+        if (session.role() != net::Role::Host) {
+            UE_LOGW("event_feed: PropActCommit received on a client -- dropping");
+            break;
+        }
+        const uint8_t senderSlot = (msg.senderPeerSlot >= 1 && msg.senderPeerSlot < net::kMaxPeers)
+                                       ? static_cast<uint8_t>(msg.senderPeerSlot)
+                                       : static_cast<uint8_t>(0xFF);
+        if (senderSlot == 0xFF) {
+            coop::prop_act_host::NoteBadSender();
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::PropActCommitPayload)) {
+            coop::prop_act_host::NoteShortPayload(senderSlot);
+            break;
+        }
+        net::PropActCommitPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::prop_act_host::OnCommit(p, senderSlot);
+        break;
+    }
+    case net::ReliableKind::PropActReply: {
+        // HOST->CLIENT: the host's answer to this client's take or use of a shared prop: a grant replays the verb, a
+        // refusal shows a line (coop::prop_act_request). Never relayed.
+        if (session.role() != net::Role::Client || msg.senderPeerSlot != 0 ||
+            msg.payloadLen < sizeof(net::PropActReplyPayload)) {
+            UE_LOGW("event_feed: PropActReply dropped (role, sender slot %d or length %zu)", msg.senderPeerSlot,
+                    static_cast<size_t>(msg.payloadLen));
+            break;
+        }
+        net::PropActReplyPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::prop_act_request::OnReply(p);
         break;
     }
     case net::ReliableKind::EraserPressIntent: {

@@ -84,6 +84,10 @@ bool MainPlayerHasSelectedAction(void* mainPlayer);
 // its refusals. False when the function does not resolve or the call fails. Game thread.
 bool CallMainPlayerHoldObject(void* mainPlayer, void* target, bool& collected);
 
+// mainPlayer_C's putObjectInventory2(InputPin, noNotify) on `target`; `taken` is its return. False when the call could
+// not run (the player not live, the function unresolved). Game thread.
+bool CallPutObjectInventory2(void* mainPlayer, void* target, bool noNotify, bool& taken);
+
 // AmainPlayer_C::hitResult's actor -- the RAW interaction trace, the field the game's own tool
 // bodies break when they decide what a press is on. It is not the same answer as lookAtActor
 // below: that one is derived from this trace later in the tick and is skipped while a grab is

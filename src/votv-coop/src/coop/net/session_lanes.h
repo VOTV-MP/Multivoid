@@ -222,6 +222,13 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::RemoverRequest:    return Lane::Normal;
     case ReliableKind::RemoverResult:     return Lane::Normal;
     case ReliableKind::CreatureHitIntent: return Lane::Normal;
+    // A take or use: the request and its reply ride Normal; the commit is pinned to PropDestroy's lane, because it ends a take
+    // whose item the client may drop at once, and PropDropIntent is order-paired with PropDestroy on Bulk (above): on
+    // another lane the drop could overtake the commit.
+    case ReliableKind::PropActRequest:    return Lane::Normal;
+    case ReliableKind::PropActReply:      return Lane::Normal;
+    case ReliableKind::PropActCommit:     return Lane::Bulk;
+
     // The camera kinds are ordered against nothing else and not relayable. The default, by decision.
     case ReliableKind::CameraActiveState:  return Lane::Normal;
     case ReliableKind::CameraLightState:   return Lane::Normal;

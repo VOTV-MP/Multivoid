@@ -168,6 +168,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/actors/prop_flags.cpp
     src/ue_wrap/actors/spawner_stamp.cpp
     src/ue_wrap/actors/prop_events.cpp
+    src/ue_wrap/actors/prop_use.cpp
     src/ue_wrap/actors/garbage_bag.cpp
     src/ue_wrap/actors/vitals.cpp
     src/ue_wrap/actors/effects.cpp
@@ -185,6 +186,8 @@ set(VOTVCOOP_SOURCES
     src/coop/player/skin_effects.cpp
     src/coop/player/skin_registry.cpp
     src/coop/player/local_body.cpp
+    src/coop/props/prop_act_host.cpp
+    src/coop/props/prop_act_request.cpp
     src/coop/props/prop_hold.cpp
     src/coop/props/remover_request.cpp
     src/coop/props/remote_prop.cpp

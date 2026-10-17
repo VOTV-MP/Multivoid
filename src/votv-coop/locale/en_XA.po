@@ -936,6 +936,9 @@ msgstr "[[Skins]]"
 msgid "Skins come from converter .pak files under Content/Paks/LogicMods (any subfolder). One pak may carry several skins -- the four scientists ship together in scientists.pak."
 msgstr "[[Skins come from converter .pak files under Content/Paks/LogicMods (any subfolder). One pak may carry several skins -- the four scientists ship together in scientists.pak.]]"
 
+msgid "Someone else has that item."
+msgstr "[[Someone else has that item.]]"
+
 msgid "Something was sent before the identity was proved."
 msgstr "[[Something was sent before the identity was proved.]]"
 
@@ -965,8 +968,17 @@ msgstr "[[Talking]]"
 msgid "Teleport to me"
 msgstr "[[Teleport to me]]"
 
+msgid "That can't be done right now."
+msgstr "[[That can't be done right now.]]"
+
 msgid "That is being held"
 msgstr "[[That is being held]]"
+
+msgid "That item is gone."
+msgstr "[[That item is gone.]]"
+
+msgid "That item is too far away."
+msgstr "[[That item is too far away.]]"
 
 msgid "That line is too long."
 msgstr "[[That line is too long.]]"
@@ -1006,6 +1018,9 @@ msgstr "[[The host closed the connection: it fell too far behind.]]"
 
 msgid "The host could not accept the connection."
 msgstr "[[The host could not accept the connection.]]"
+
+msgid "The host could not be asked; try again."
+msgstr "[[The host could not be asked; try again.]]"
 
 msgid "The host could not check the password."
 msgstr "[[The host could not check the password.]]"
@@ -1174,6 +1189,9 @@ msgstr "[[Tidied: %1$d duplicate line(s) merged, %2$d setting(s) placed under th
 msgid "Tidy up multivoid.ini"
 msgstr "[[Tidy up multivoid.ini]]"
 
+msgid "Too many actions at once, try again."
+msgstr "[[Too many actions at once, try again.]]"
+
 msgid "Too many connections from you in a short time. Try again shortly."
 msgstr "[[Too many connections from you in a short time. Try again shortly.]]"
 
@@ -1324,6 +1342,9 @@ msgstr "[[You are banned from this server.]]"
 
 msgid "You can play anyway. This message will not show again for this game version."
 msgstr "[[You can play anyway. This message will not show again for this game version.]]"
+
+msgid "You can't do that with this item."
+msgstr "[[You can't do that with this item.]]"
 
 msgid "You can't see that from there"
 msgstr "[[You can't see that from there]]"
