@@ -84,6 +84,9 @@ void RegisterPropMirror(coop::element::ElementId eid,
                         int senderSlot,
                         bool rebindInPlace = false);
 
+// Drops the mirror row of `eid` (no-op for 0 or an unknown eid) and forgets a kerfur prop mirror. Game thread.
+void UnregisterPropMirror(coop::element::ElementId eid);
+
 // The reverse lookup of the wire eid bound to `actor` in the prop mirror manager, or the
 // invalid id. The element tracker's forward map is the constant-time path for owned props;
 // this is the mirror-side resolver (a client grabbing a host-owned chipPile), a linear

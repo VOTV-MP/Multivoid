@@ -65,6 +65,8 @@ bool ResolveDestroyFn() {
     return g_destroyActorFn != nullptr;
 }
 
+}  // namespace
+
 // Drop a Prop mirror by the sender's eid. The drain pattern lives inside the manager's Take
 // (extract under lock, destruct outside). Idempotent; Take rather than Drop, so the drained
 // log line fires only when a mirror was present.
@@ -79,6 +81,8 @@ void UnregisterPropMirror(coop::element::ElementId eid) {
     UE_LOGI("remote_prop::UnregisterPropMirror: eid=%u drained", eid);
     // drained falls out of scope here; the element destructor unregisters the mirror.
 }
+
+namespace {
 
 // The terminal local teardown of a resolved doomed actor, shared by the in-time destroy and
 // the deferred re-apply: clear any drive, release a local grab, echo-suppress, then destroy.
