@@ -20,8 +20,9 @@ namespace coop::net { class Session; }
 
 namespace coop::dev::inventory_pickup_drill {
 
-// Fire once with the env set, on readiness: the host seeds once its player stands, a client
-// pockets once its join is over. Game thread.
+// Fire once with the env set, on readiness: the host seeds once its player stands and its object
+// index holds the world, then says so in the lobby chat; a client pockets once its join is over and
+// that line is in its feed. Game thread.
 void Tick(coop::net::Session* session);
 
 }  // namespace coop::dev::inventory_pickup_drill

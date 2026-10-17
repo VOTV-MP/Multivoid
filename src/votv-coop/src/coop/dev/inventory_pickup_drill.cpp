@@ -2,16 +2,18 @@
 
 #include "coop/dev/inventory_pickup_drill.h"
 
+#include "coop/comms/chat_sync.h"
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/director/routes.h"
+#include "coop/dev/prop_act_drill.h"   // the act drill's handshake reads: the host's line, OwnJoinOver, NowMs
 #include "record_digest.h"   // co-located private header (src tree, not include/)
+#include "coop/items/player_inventory_sync.h"
 #include "coop/player/players_registry.h"
 #include "coop/net/session.h"
 #include "coop/player/roster.h"
 #include "coop/props/prop_act_request.h"
-#include "coop/session/join_progress.h"
-#include "coop/session/net_pump.h"
+#include "coop/props/prop_key_index.h"
 #include "ue_wrap/actors/floppy_disc.h"
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/actors/prop.h"
@@ -37,14 +39,17 @@ namespace {
 
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
+namespace PAD = coop::dev::prop_act_drill::detail;
 
-// The drill waits on readiness, not on a clock. A CLIENT acts once its join is over: it has announced
-// world-ready and the join cover is down, which is when the host's snapshot has been applied (a
-// measured run sat 39 s past that point on the old fixed wait). The HOST seeds once its own player
-// stands and the save's objects have had time to spawn; in a rig run that is before the client's
-// join capture, so the seeded drive and disc are in the world the joiner is handed.
-constexpr int kClientSettleTicks = 120;  // ~2 s past the join's end, at the pump's ~60 Hz
-constexpr int kHostSettleTicks   = 600;  // ~10 s past the host's player standing
+// The drill waits on readiness, not on a clock. The HOST seeds once its own player stands and the
+// object index holds the world (prop_key_index::CanAnswer: seeded, no backlog), so the loaded save's
+// drive and disc are found and not spawned twice; in a rig run that is before the client's join
+// capture, so the seeded drive and disc are in the world the joiner is handed. It then says
+// kHostSeeded in the lobby chat. A CLIENT acts once its join is over (it has announced world-ready and
+// the join cover is down) AND the host has said so; the host's record is seeded to a rejoiner, so the
+// line is there for a second life too. A wait that runs past kBoundMs FAILs, and the drill stops.
+const std::string kHostSeeded = "inv-pickup host seeded";
+constexpr uint64_t kBoundMs = 60000;   // a failure bound for each wait, never a delay
 constexpr float kDrillFood = 37.f, kDrillSleep = 61.f;
 constexpr int kMaxTries    = 8;     // per wanted kind: a full inventory refuses everything, so never one dispatch per prop in the world
 
@@ -128,22 +133,38 @@ void Tick(coop::net::Session* session) {
     static bool s_done = false;
     if (s_done) { PocketTick(); KeyCensus(false); HostSaveTick(*session); return; }
 
+    static bool s_failed = false;
+    if (s_failed) return;
     void* player = coop::players::Registry::Get().Local();
     if (!player || !R::IsLive(player) || !E::GetController(player)) return;
-    static int s_ticks = 0;
+    static uint64_t s_armAt = 0;   // when the wait on the other state began: the host's player stands, the client's join is over
     const bool host = coop::roster::LocalIsHost();
-    if (!host && (!coop::net_pump::HasAnnouncedWorldReady() ||
-                  coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle)) {
-        s_ticks = 0;  // the join is not over: the settle counts from its end
+    if (!host && !PAD::OwnJoinOver()) {
+        s_armAt = 0;  // the join is not over: the wait counts from its end
         return;
     }
-    if (++s_ticks < (host ? kHostSettleTicks : kClientSettleTicks)) return;
+    const uint64_t now = PAD::NowMs();
+    if (!s_armAt) s_armAt = now;
+    const bool settled = host ? coop::prop_key_index::CanAnswer() : PAD::HostSaid(kHostSeeded, nullptr);
+    if (!settled) {
+        if (now - s_armAt > kBoundMs) {
+            UE_LOGE("[INV-PICKUP-DRILL] FAIL %s within %d s", host ? "the object index never held the world"
+                                                                    : "the host never said it had seeded",
+                    static_cast<int>(kBoundMs / 1000));
+            s_failed = true;
+        }
+        return;
+    }
     s_done = true;
     KeyCensus(true);  // what stands in the world BEFORE this peer acts
 
     // The host only makes sure the world HOLDS a drive with a signal and a disc with data; the
-    // client's items are the ones under test.
-    if (coop::roster::LocalIsHost()) { HostSeedTheWants(player); return; }
+    // client's items are the ones under test. It tells the client when that is done.
+    if (host) {
+        HostSeedTheWants(player);
+        coop::chat_sync::QueueSend(kHostSeeded);
+        return;
+    }
 
     // The rest of the client's life (the probe, the vitals, the walk) follows the pocketing, from PocketTick.
     PocketBegin(player);
@@ -463,32 +484,48 @@ void PocketBegin(void* player) {
 // HOST, with VOTVCOOP_INV_PICKUP_DRILL_SAVE set: save the world through the game's own
 // saveSlot_C::save, when a joiner's world comes up. The host writes each player's profile to disk
 // only with its own world save, and a rig host never saves by itself, so without this the cut is
-// never exercised. The moment is a joiner's arrival and not a minute counter, because that is when
-// there is something to see: the join capture just gathered the world and set the profiles aside,
-// so the save after a REJOIN is the one that cuts what the first life left. `1` writes the slot the
-// host loaded, once per arrival. `quick` writes twice per arrival: the player's quicksave, which
-// puts the live world in a NEW <slot>_SUB_<n> file, then the pause menu's plain save, which writes
-// the main slot -- two files from one world, which is what a profile set that follows the written
-// slot has to be seen doing. The test rig puts the loaded slot and its profile files back after the
-// run and reports the subsaves a run made. The arrival is read off the session as a whole, which is
-// enough for the two peers this drill is written for: a SECOND client arriving while the first is
-// still there is no edge, and a three-peer drill would need the edge per slot.
-constexpr int kSaveGapTicks = 300;  // ~5 s at the pump's ~60 Hz: after the arrival, and between the two
-constexpr int kSaveRuns     = 6;
+// never exercised. The moment is a joiner's arrival: the save after a REJOIN is the one that cuts
+// what the first life left. `1` writes the slot the host loaded, once per arrival. `quick` writes
+// twice: the player's quicksave (a NEW <slot>_SUB_<n> file), then the pause menu's plain save of
+// the main slot -- two files from one world. The test rig puts the loaded slot and its profile
+// files back after the run. The arrival is read off the session as a whole (two peers; a third
+// would need the edge per slot). The first save waits for a joiner's profile to reach the host
+// after the edge (ProfilesReceived rising); the second for the first's write to be cut
+// (WorldSavesWritten rising); either past kBoundMs FAILs the arrival.
+constexpr int kSaveRuns = 6;
 
 void HostSaveTick(coop::net::Session& session) {
+    namespace PIS = coop::player_inventory_sync;
     static const std::string s_mode = ::coop::config::ReadEnv("VOTVCOOP_INV_PICKUP_DRILL_SAVE");
     static const bool s_on = s_mode == "1" || s_mode == "quick";
     if (!s_on || !coop::roster::LocalIsHost()) return;
     static bool s_wasReady = false;
-    static int s_left = 0, s_due = 0, s_runs = 0;
+    static int s_left = 0, s_runs = 0;
+    static uint32_t s_profilesAt = 0, s_writesAt = 0;   // the counts to see rise
+    static uint64_t s_waitSince = 0;
     const bool ready = session.AnyWorldReadyPeer();
-    if (ready && !s_wasReady) { s_left = s_mode == "quick" ? 2 : 1; s_due = kSaveGapTicks; }
+    if (ready && !s_wasReady) {
+        s_left = s_mode == "quick" ? 2 : 1;
+        s_profilesAt = PIS::ProfilesReceived();
+        s_waitSince = PAD::NowMs();
+    }
     s_wasReady = ready;
-    if (s_left == 0 || s_runs >= kSaveRuns || --s_due > 0) return;
-    s_due = kSaveGapTicks;
-    const bool firstOfArrival = s_left == 2;
+    if (s_left == 0 || s_runs >= kSaveRuns) return;
+    const bool firstOfArrival = s_left == (s_mode == "quick" ? 2 : 1);
+    if (firstOfArrival ? PIS::ProfilesReceived() == s_profilesAt : PIS::WorldSavesWritten() == s_writesAt) {
+        if (PAD::NowMs() - s_waitSince > kBoundMs) {
+            UE_LOGE("[INV-PICKUP-DRILL] FAIL HOST save #%d: %s within %d s", s_runs + 1,
+                    firstOfArrival ? "no profile reached the host after the arrival"
+                                   : "the first save's write was never cut",
+                    static_cast<int>(kBoundMs / 1000));
+            s_left = 0;
+        }
+        return;
+    }
+    const bool firstSaveOfTheTwo = s_mode == "quick" && firstOfArrival;
+    if (firstSaveOfTheTwo) s_writesAt = PIS::WorldSavesWritten();   // before the call: the write is inside it
     --s_left;
+    s_waitSince = PAD::NowMs();   // the second save's wait counts from this one
     ++s_runs;
     void* slot = ue_wrap::inventory::ResolveSaveSlot();
     void* fn = slot ? R::FindFunction(R::ClassOf(slot), L"save") : nullptr;
@@ -498,7 +535,7 @@ void HostSaveTick(coop::net::Session& session) {
     }
     // saveToSlot, quicksave first: (true, *) -> a new subsave; (false, true) -> the loaded slot as
     // named; (false, false) -> the main slot, also when a subsave is what was loaded.
-    const bool quick = s_mode == "quick" && firstOfArrival;
+    const bool quick = firstSaveOfTheTwo;
     const bool plain = s_mode == "quick" && !quick;
     ue_wrap::ParamFrame f(fn);
     f.Set(L"quicksave", quick);
