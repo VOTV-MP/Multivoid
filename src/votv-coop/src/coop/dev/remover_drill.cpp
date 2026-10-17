@@ -4,9 +4,12 @@
 
 #include "coop/comms/chat_feed.h"
 #include "coop/comms/chat_log.h"
+#include "coop/comms/chat_sync.h"
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/dev/hook_plant.h"
 #include "coop/dev/remover_drill_layout.h"
+#include "coop/items/hook_sync.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/element/registry.h"
@@ -19,6 +22,7 @@
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
 
+#include "ue_wrap/actors/hook.h"
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
@@ -46,6 +50,7 @@ namespace {
 
 namespace E  = ue_wrap::engine;
 namespace R  = ue_wrap::reflection;
+namespace H  = ue_wrap::hook;
 namespace DW = ue_wrap::dish_writers;
 namespace EL = coop::element;
 using ue_wrap::FVector;
@@ -56,6 +61,7 @@ using layout::kSingleClass;
 using layout::kMashClass;
 using layout::kSackClass;
 using layout::kNpcClass;
+using layout::kHookedClass;
 
 enum class Phase : uint8_t { Off, Granted, Withheld };
 
@@ -79,6 +85,11 @@ constexpr const wchar_t* kToolgunPath = L"/Game/objects/prop_toolgun.prop_toolgu
 constexpr const char* kNoRight     = "The host does not allow the remover";
 constexpr const char* kOutOfSight  = "You can't see that from there";
 constexpr const char* kUnsupported = "The remover cannot remove that in multiplayer";
+constexpr const char* kHeldNotice  = "That is being held";
+
+// The host's two lines of the hook steps: its own hook pulls the first crowbar; the client's hook pulls the second.
+constexpr const char* kHostHookedSaid = "remover-drill host-hooked";
+constexpr const char* kSelfHookedSaid = "remover-drill self-hooked";
 
 // The host's layout about its client's puppet, in centimetres along its facing: the single and the mashed props side by
 // side ahead of it, the creature straight ahead beyond them, a ring of kRing about it clear of the cone it faces. The
@@ -110,11 +121,25 @@ void End(const char* role, const char* word, const char* what, bool warn) {
     g_done = true;
 }
 
+// The item's cancel for a hook this drill planted: the field the plant wrote is cleared whether or not the hook still
+// stands, then the actor goes.
+void ReleaseHook(ue_wrap::CachedObjRef& hook) {
+    if (void* player = coop::players::Registry::Get().Local()) H::WriteActiveHook(player, nullptr);
+    if (void* h = hook.Get()) E::DestroyActor(h);
+    hook.Reset();
+}
 
 // ---- host -------------------------------------------------------------------------------------------------------
 
 enum class HostStep : uint8_t { Arm, Await };
 HostStep g_hostStep = HostStep::Arm;
+
+// The host's half of the hook steps, in order: its hook planted on the first crowbar, the line said once the claim pass
+// reads that hook, its hook released once the host has answered Held, then the wait for the client's hook on the second.
+enum class HookStep : uint8_t { Plant, Pulling, Answering, AwaitClient, Done };
+HookStep g_hookStep = HookStep::Plant;
+ue_wrap::CachedObjRef g_hostHook;
+uint32_t g_heldBase = 0;   // the host's Held answers when it said host-hooked
 
 bool ClientEnded() {
     const std::string end = EndLine();
@@ -136,8 +161,9 @@ void HostJudge() {
     char why[240];
     const uint32_t removed = Answered(RR::Removed);
     const uint32_t noRight = Answered(RR::NoRight);
-    const uint32_t other = Answered(RR::NotReady) + Answered(RR::Unsupported) + Answered(RR::Held) +
-                           Answered(RR::OutOfSight) + Answered(RR::Failed);
+    const uint32_t held = Answered(RR::Held);
+    const uint32_t other = Answered(RR::NotReady) + Answered(RR::Unsupported) + Answered(RR::OutOfSight) +
+                           Answered(RR::Failed);
     if (PhaseOf() == Phase::Withheld) {
         if (laid.single.Get() && removed == 0 && noRight >= 1)
             End("host", "PASS", "the prop the host's permissions refuse stands here; NoRight was answered", false);
@@ -153,12 +179,13 @@ void HostJudge() {
         if (!r.Get()) ++ringGone;
     const bool single = !laid.single.Get(), mash = !laid.mash.Get(), npc = laid.npc.Get() != nullptr;
     // One Removed for the single prop, one for the mashed one (the rest of its presses were answered Gone), one per ring
-    // prop; the sweep's presses were each judged in sight, and the creature was answered Unsupported.
-    const uint32_t wantRemoved = 2u + static_cast<uint32_t>(ringGone);
-    if (single && mash && ringGone >= kSweepFloor && npc && removed == wantRemoved && other == Answered(RR::Unsupported) &&
-        Answered(RR::Unsupported) >= 1) {
+    // prop, one for the crowbar the client's own hook pulls; the sweep's presses were each judged in sight, the creature
+    // was answered Unsupported, and the crowbar the host's hook pulls was answered Held once.
+    const uint32_t wantRemoved = 3u + static_cast<uint32_t>(ringGone);
+    if (single && mash && ringGone >= kSweepFloor && npc && removed == wantRemoved && held == 1 &&
+        other == Answered(RR::Unsupported) && Answered(RR::Unsupported) >= 1) {
         std::snprintf(why, sizeof(why), "the single prop, the mashed one and %d of %d ring props are gone here; the "
-                      "host answered Removed %u times; the creature stands", ringGone, kRing, removed);
+                      "host answered Removed %u times and Held once; the creature stands", ringGone, kRing, removed);
         End("host", "PASS", why, false);
         return;
     }
@@ -166,9 +193,51 @@ void HostJudge() {
                   "single gone=%d mash gone=%d ring gone=%d (want at least %d) creature standing=%d; answered Removed %u "
                   "(want %u), OutOfSight %u, Failed %u, NotReady %u, Held %u, Unsupported %u",
                   single ? 1 : 0, mash ? 1 : 0, ringGone, kSweepFloor, npc ? 1 : 0, removed, wantRemoved,
-                  Answered(RR::OutOfSight), Answered(RR::Failed), Answered(RR::NotReady), Answered(RR::Held),
-                  Answered(RR::Unsupported));
+                  Answered(RR::OutOfSight), Answered(RR::Failed), Answered(RR::NotReady), held, Answered(RR::Unsupported));
     End("host", "FAIL", why, true);
+}
+
+// The host's side of the two hook steps, once per check, after the layout stands. A relay re-lay has destroyed the
+// crowbars, so a hook planted on the old ones is released and the steps start over on the new ones.
+void HostHookTick() {
+    const layout::Laid& laid = layout::Targets();
+    void* player = coop::players::Registry::Get().Local();
+    void* first = laid.hostHooked.Get();
+    void* second = laid.selfHooked.Get();
+    constexpr uint8_t kHostBit = 1u << 0, kClientBit = 1u << 1;
+    switch (g_hookStep) {
+    case HookStep::Plant: {
+        if (!player || !first) return;
+        const char* note = "";
+        void* hook = coop::dev::hook_plant::Plant(player, first, &note);
+        if (!hook) { End("host", "FAIL", note, true); return; }
+        g_hostHook.Set(hook);
+        UE_LOGI("[REMOVER-DRILL] host: its own hook is planted on the first crowbar (hook %p)", hook);
+        g_hookStep = HookStep::Pulling;
+        return;
+    }
+    case HookStep::Pulling:
+        if (!first || !(coop::hook_sync::PlayerHookHolders(first) & kHostBit)) return;
+        g_heldBase = Answered(coop::net::RemoverReason::Held);
+        coop::chat_sync::QueueSend(kHostHookedSaid);
+        UE_LOGI("[REMOVER-DRILL] host: the claim pass reads its hook on the first crowbar; host-hooked said");
+        g_hookStep = HookStep::Answering;
+        return;
+    case HookStep::Answering:
+        if (Answered(coop::net::RemoverReason::Held) < g_heldBase + 1) return;
+        ReleaseHook(g_hostHook);
+        UE_LOGI("[REMOVER-DRILL] host: the first crowbar was answered Held; its hook is released");
+        g_hookStep = HookStep::AwaitClient;
+        return;
+    case HookStep::AwaitClient:
+        if (!second || !(coop::hook_sync::PlayerHookHolders(second) & kClientBit)) return;
+        coop::chat_sync::QueueSend(kSelfHookedSaid);
+        UE_LOGI("[REMOVER-DRILL] host: the claim pass reads the client's hook on the second crowbar; self-hooked said");
+        g_hookStep = HookStep::Done;
+        return;
+    case HookStep::Done:
+        return;
+    }
 }
 
 void HostTick(coop::net::Session* s) {
@@ -194,21 +263,33 @@ void HostTick(coop::net::Session* s) {
         g_stepMs = now;
         return;
     }
-    if (layout::HandleRelay(PhaseOf() == Phase::Granted) == layout::Relayed::NoEye) {
+    const layout::Relayed relayed = layout::HandleRelay(PhaseOf() == Phase::Granted);
+    if (relayed == layout::Relayed::NoEye) {
         End("host", "ABANDONED", "the sender's eye did not read for a relay", true);
         return;
     }
+    if (relayed != layout::Relayed::None) {
+        ReleaseHook(g_hostHook);
+        g_hookStep = HookStep::Plant;
+    }
     if (ClientEnded()) { HostJudge(); return; }
+    if (PhaseOf() == Phase::Granted) {
+        HostHookTick();
+        if (g_done) return;
+    }
     if (Expired(kAwaitBoundMs)) End("host", "ABANDONED", "the client's closing line never came", true);
 }
 
 // ---- client -----------------------------------------------------------------------------------------------------
 
 enum class Step : uint8_t {
-    Arm, Find, Settle, Relay, Cleared, Single, SingleWait, Mash, MashWait, Sweep, SweepWait, Npc, NpcWait, Finish
+    Arm, Find, Settle, Relay, Cleared, Single, SingleWait, Mash, MashWait, Sweep, SweepWait, Npc, NpcWait,
+    HostHooked, HostHookedWait, SelfHooked, SelfHookedWait, Finish
 };
 Step g_step = Step::Arm;
 ue_wrap::CachedObjRef g_toolgun, g_single, g_mash, g_npc;
+ue_wrap::CachedObjRef g_hostHooked, g_selfHooked;   // the crowbars: the host's hook pulls the first, this client's the second
+ue_wrap::CachedObjRef g_selfHook;                   // the hook this client planted on the second
 ue_wrap::CachedObjRef g_ring[kRing];    // every ring prop the host laid
 int g_ringN = 0;
 ue_wrap::CachedObjRef g_sweep[kRing];   // the ring props the camera's trace meets first: the shots of the sweep
@@ -359,8 +440,9 @@ void* NearestNpc(const FVector& from) {
 }
 
 // The host's roles, each a class of its own (the single prop a medium sack, the mashed one a small sack, the ring plain
-// sacks, the creature a kerfurOmega), so a role is found by what it is and not by where physics left it. Fills the client's
-// roles; false while the host's props are not all here. Whether the camera can press each is Choose's, once they rest.
+// sacks, the creature a kerfurOmega, the two crowbars the nearer and the farther of their class), so a role is found by
+// what it is and not by where physics left it. Fills the client's roles; false while the host's props are not all here.
+// Whether the camera can press each is Choose's, once they rest.
 bool Find(void* player) {
     FVector me{};
     if (!E::TryGetActorLocation(player, me)) return false;
@@ -373,10 +455,13 @@ bool Find(void* player) {
     }
     const std::vector<Seen> mash = PropsAbout(kMashClass, me);
     const std::vector<Seen> ring = PropsAbout(kSackClass, me);
+    const std::vector<Seen> hooked = PropsAbout(kHookedClass, me);
     void* npc = NearestNpc(me);
-    if (mash.empty() || ring.size() < static_cast<size_t>(kRing) || !npc) return false;
+    if (mash.empty() || ring.size() < static_cast<size_t>(kRing) || hooked.size() < 2 || !npc) return false;
     g_single.Set(single[0].actor);
     g_mash.Set(mash[0].actor);
+    g_hostHooked.Set(hooked[0].actor);
+    g_selfHooked.Set(hooked[1].actor);
     g_npc.Set(npc);
     g_ringN = kRing;
     for (int i = 0; i < kRing; ++i) g_ring[i].Set(ring[static_cast<size_t>(i)].actor);
@@ -476,6 +561,21 @@ bool Fire(void* player, const ue_wrap::CachedObjRef& ref, const char* notice) {
     return true;
 }
 
+// Fire for the hook steps: a press that cannot be made there is the lane's failure (a hook has pulled the crowbar out of
+// this camera's sight), never an abandoned drill.
+bool FireOrFail(void* player, const ue_wrap::CachedObjRef& ref, const char* notice) {
+    void* target = ref.Get();
+    if (!target) { Fail("the crowbar is gone before its press"); return false; }
+    g_noticeBase = NoticeCount(notice);
+    if (!Press(player, target)) {
+        char why[560];
+        std::snprintf(why, sizeof(why), "the press on the hooked crowbar did not run: %s", g_aimWhy);
+        Fail(why);
+        return false;
+    }
+    return true;
+}
+
 // Is the leg's target gone from this copy. Fails the drill on a refusal the leg did not expect.
 bool GoneOrFail(const ue_wrap::CachedObjRef& ref, const char* unexpected, const char* failWhy) {
     if (!ref.Alive()) return true;
@@ -545,7 +645,7 @@ void ClientTick(coop::net::Session* s) {
     case Step::Cleared: {
         // The old layout's mirrors go with the host's destroys; the roles are found again only once every one has gone, or
         // the find would take an old prop for a new one.
-        bool gone = !g_single.Alive() && !g_mash.Alive() && !g_npc.Alive();
+        bool gone = !g_single.Alive() && !g_mash.Alive() && !g_npc.Alive() && !g_hostHooked.Alive() && !g_selfHooked.Alive();
         for (int i = 0; i < g_ringN; ++i) gone = gone && !g_ring[i].Alive();
         if (!gone) {
             if (Expired(kFindBoundMs)) Abandon("the old layout's mirrors did not go within 60 s of the re-lay");
@@ -554,6 +654,8 @@ void ClientTick(coop::net::Session* s) {
         g_single.Reset();
         g_mash.Reset();
         g_npc.Reset();
+        g_hostHooked.Reset();
+        g_selfHooked.Reset();
         for (auto& r : g_ring) r.Reset();
         for (auto& r : g_sweep) r.Reset();
         for (auto& p : g_restAt) p = {};
@@ -617,8 +719,52 @@ void ClientTick(coop::net::Session* s) {
         return;
     case Step::NpcWait:
         if (!g_npc.Alive()) { Fail("the creature was removed on this client"); return; }
-        if (NoticeCount(kUnsupported) > g_noticeBase) { LegPass("unsupported", Step::Finish); return; }
+        if (NoticeCount(kUnsupported) > g_noticeBase) { LegPass("unsupported", Step::HostHooked); return; }
         if (Expired(kLegBoundMs)) Fail("the remover's refusal of the creature was not shown within 30 s");
+        return;
+    case Step::HostHooked:
+        // The host's own hook must pull the first crowbar before the press; its line says the claim pass reads it.
+        if (NoticeCount(kHostHookedSaid) == 0) {
+            if (Expired(kFindBoundMs)) Fail("the host never said its hook pulls the first crowbar within 60 s");
+            return;
+        }
+        if (FireOrFail(player, g_hostHooked, kHeldNotice)) Next(Step::HostHookedWait);
+        return;
+    case Step::HostHookedWait:
+        if (!g_hostHooked.Alive()) { Fail("the crowbar the host's hook pulls was removed on this client"); return; }
+        if (NoticeCount(kHeldNotice) > g_noticeBase) { LegPass("host-hooked", Step::SelfHooked); return; }
+        if (Expired(kLegBoundMs)) Fail("the host's refusal of the host-hooked crowbar was not shown within 30 s");
+        return;
+    case Step::SelfHooked: {
+        // This client's own hook on the second crowbar first, then the host's line that its claim pass reads that hook.
+        if (!g_selfHook.Raw()) {
+            void* target = g_selfHooked.Get();
+            if (!target) { Fail("the second crowbar is gone before this client's hook"); return; }
+            const char* note = "";
+            void* hook = coop::dev::hook_plant::Plant(player, target, &note);
+            if (!hook) {
+                char why[120];
+                std::snprintf(why, sizeof(why), "this client's hook could not be planted: %s", note);
+                Fail(why);
+                return;
+            }
+            g_selfHook.Set(hook);
+            UE_LOGI("[REMOVER-DRILL] client: its own hook is planted on the second crowbar (hook %p)", hook);
+            return;
+        }
+        if (NoticeCount(kSelfHookedSaid) == 0) {
+            if (Expired(kFindBoundMs)) Fail("the host never said this client's hook pulls the second crowbar within 60 s");
+            return;
+        }
+        if (FireOrFail(player, g_selfHooked, kHeldNotice)) Next(Step::SelfHookedWait);
+        return;
+    }
+    case Step::SelfHookedWait:
+        // A client may remove what its own hook pulls, as what it drags: the copy goes, and the refusal never shows.
+        if (GoneOrFail(g_selfHooked, kHeldNotice, "the crowbar this client's own hook pulls was refused as held")) {
+            ReleaseHook(g_selfHook);
+            LegPass("self-hooked", Step::Finish);
+        }
         return;
     case Step::Finish:
         Finish(s);
@@ -639,13 +785,19 @@ void OnDisconnect() {
     ++g_session;
     g_done = false;
     g_hostStep = HostStep::Arm;
+    g_hookStep = HookStep::Plant;
+    g_heldBase = 0;
     g_step = Step::Arm;
     g_stepMs = g_nextCheckMs = 0;
     layout::Reset();
+    g_hostHook.Reset();
+    g_selfHook.Reset();
     g_toolgun.Reset();
     g_single.Reset();
     g_mash.Reset();
     g_npc.Reset();
+    g_hostHooked.Reset();
+    g_selfHooked.Reset();
     for (auto& r : g_sweep) r.Reset();
     g_sweepAt = 0;
     g_sweepN = 0;
