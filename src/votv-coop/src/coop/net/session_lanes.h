@@ -224,7 +224,7 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::CreatureHitIntent: return Lane::Normal;
     // A take or use: the request and its reply ride Normal; the commit rides PropDestroy's lane (Bulk), where PropDropIntent
     // is order-paired with it, so the item's drop cannot overtake it. The next request (Normal) can reach the host before this
-    // commit, so the host waits on the slot's own reservation; MTA keeps both on one channel (CVehicleInOutPacket.h:27).
+    // commit, so the host waits on the slot's own reservation; MTA sends both as one packet id (CVehicleInOutPacket.h:27).
     case ReliableKind::PropActRequest:    return Lane::Normal;
     case ReliableKind::PropActReply:      return Lane::Normal;
     case ReliableKind::PropActCommit:     return Lane::Bulk;

@@ -198,13 +198,13 @@ void Replay() {
         ran = RunVerb(target, local);
         destroyed = g_latch.destroyed;
     }
-    if (!ran) {
-        UE_LOGW("prop_act: the replay of row %u could not run -- aborted", static_cast<unsigned>(g_rec.row));
-        SendCommit(0);
-    } else if (destroyed) {
+    // The destroy decides, not the verb's return: a verb that destroyed its target and then failed still commits, since
+    // this copy is gone and its key parked.
+    if (destroyed) {
         SendCommit(1);
         coop::remote_prop::UnregisterPropMirror(g_rec.eid);
     } else {
+        if (!ran) UE_LOGW("prop_act: the replay of row %u could not run -- aborted", static_cast<unsigned>(g_rec.row));
         SendCommit(0);
     }
     Close();

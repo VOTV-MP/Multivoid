@@ -157,14 +157,15 @@ coop::net::Served ServeHead(uint8_t slot, const Queued& q) {
         g_refusals.Note(slot, internal::VerdictName(v), Now());
     }
     UE_LOGI("prop_act: slot %u family %u eid %u -> %s (dist %.0f of %.0f uu)", static_cast<unsigned>(slot),
-            static_cast<unsigned>(q.req.family), static_cast<unsigned>(q.req.eid), internal::VerdictName(v), dist,
+            static_cast<unsigned>(q.req.family), static_cast<unsigned>(q.req.eid),
+            v == internal::ActVerdict::Grant && !sent ? "grant-unsent" : internal::VerdictName(v), dist,
             allowed);
     return coop::net::Served::Done;
 }
 
-void LogCommit(uint8_t slot, const coop::net::PropActCommitPayload& p, internal::CommitStep step) {
+void LogCommit(uint8_t slot, const coop::net::PropActCommitPayload& p, const char* outcome) {
     UE_LOGI("prop_act: commit slot %u id %u eid %u -> %s", static_cast<unsigned>(slot), static_cast<unsigned>(p.id),
-            static_cast<unsigned>(p.eid), internal::CommitName(step));
+            static_cast<unsigned>(p.eid), outcome);
 }
 
 }  // namespace
@@ -282,12 +283,12 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
         return;
     case internal::CommitStep::Abort:
         coop::prop_hold::Release(senderSlot);
-        LogCommit(senderSlot, p, step);
+        LogCommit(senderSlot, p, internal::CommitName(step));
         return;
     case internal::CommitStep::TargetGone:
         ++g_tally[static_cast<int>(Tally::TargetGone)];
         coop::prop_hold::Release(senderSlot);
-        LogCommit(senderSlot, p, step);
+        LogCommit(senderSlot, p, internal::CommitName(step));
         return;
     case internal::CommitStep::Destroy:
         break;
@@ -308,10 +309,10 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
                 "stands on every peer", static_cast<unsigned>(p.eid), static_cast<unsigned>(senderSlot));
     }
     coop::prop_hold::Release(senderSlot);
-    LogCommit(senderSlot, p, step);
+    LogCommit(senderSlot, p, destroyed ? "destroy" : "destroy-failed");
 }
 
-// MTA releases a departed ped's vehicle in the element's destructor (CPed.cpp:92-125); the roster's departure is the
+// MTA releases a departed ped's vehicle in the element's destructor (CPed.cpp:92-127); the roster's departure is the
 // destructor here.
 void OnPeerGone(uint8_t slot) {
     if (!IsHost() || !InRoster(slot)) return;
