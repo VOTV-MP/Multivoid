@@ -791,7 +791,8 @@ CFG_ENUM(explosion_drill, "explosion_drill", "dev", "off", "off|dissolve|apply|c
     "the load, by class in the world), must never run its begin-play, and its unfinished actor must be gone. apply "
     "(HOST and CLIENT): the host blasts the three explosion classes ahead of the client; the client must apply "
     "each once, narrow its force, refuse its rune check and drop nothing. coast (HOST and CLIENT): four papers lie "
-    "around the blast and each client copy must fly and rest again. spawn_malformed (HOST and CLIENT): the host "
+    "between the blast and the client's puppet; at least two client copies must fly, all four must rest again "
+    "and none may still be driven. spawn_malformed (HOST and CLIENT): the host "
     "sends one valid explosion and four with a broken field; the client must drop each by its reason. Run it on a "
     "fresh host world.")
 // The puppet-identity arc's selftests and drill (PI-1, PI-2, PI-3): their own file, one concept, included as

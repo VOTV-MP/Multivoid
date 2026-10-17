@@ -8,6 +8,7 @@
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
 #include "coop/world/explosion_parking.h"
+#include "coop/props/prop_drive_stream.h"  // IsParked: a copy the host's coast stream still drives
 #include "coop/world/explosion_sync.h"
 
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -32,6 +33,13 @@ constexpr auto  kClientBound = std::chrono::seconds(120);  // from the client's 
 
 enum class CPhase : uint8_t { Edge, Join, Rest, Fixture, Apply, Malformed, Find, Settle, Blast, Fly, Done };
 
+// An actor by identity, as R::IsLiveByIndex reads it: the join snapshot re-keys a pre-existing actor's element id, never
+// its pointer and slot.
+struct PaperActor {
+    void*   actor;
+    int32_t internalIdx;
+};
+
 struct Client {
     CPhase            phase = CPhase::Edge;
     Clock::time_point edgeAt{}, at{}, foundAt{};
@@ -44,7 +52,7 @@ struct Client {
     Rest              rest[kPapers];
     Vec               base[kPapers];
     bool              moved[kPapers] = {};
-    std::vector<uint32_t> prePapers;  // the paper elements already here at the world-ready edge
+    std::vector<PaperActor> prePapers;  // the paper actors already here at the world-ready edge
 };
 Client g_clientRun;
 std::vector<coop::element::Registry::ActorIdPair> g_snap;  // reused by every find
@@ -114,24 +122,30 @@ void ClientMalformed() {
                                 : flags != 1 ? "flags" : "applied");
 }
 
-// The prop_paper_C elements this client has, by element id; the class test before any reflected read.
-void PaperIds(std::vector<uint32_t>& out) {
+// The prop_paper_C actors this client has; the class test before any reflected read.
+void PaperActors(std::vector<PaperActor>& out) {
     out.clear();
     coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, g_snap);
     for (const auto& p : g_snap)
         if (p.actor && R::IsLiveByIndex(p.actor, p.internalIdx) &&
             R::NameEquals(R::NameOf(R::ClassOf(p.actor)), L"prop_paper_C"))
-            out.push_back(p.id);
+            out.push_back({p.actor, p.internalIdx});
 }
 
-// The prop_paper_C elements that arrived after the world-ready edge -- the host's four: how many, and the first four.
-int FindPapers(const std::vector<uint32_t>& pre, void* out[kPapers], uint32_t eid[kPapers]) {
+bool IsPre(const std::vector<PaperActor>& pre, const coop::element::Registry::ActorIdPair& p) {
+    return std::any_of(pre.begin(), pre.end(),
+                       [&](const PaperActor& q) { return q.actor == p.actor && q.internalIdx == p.internalIdx; });
+}
+
+// The prop_paper_C elements whose actor is not among those at the world-ready edge -- the host's four: how many, and
+// the first four.
+int FindPapers(const std::vector<PaperActor>& pre, void* out[kPapers], uint32_t eid[kPapers]) {
     coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, g_snap);
     int n = 0;
     for (const auto& p : g_snap) {
         if (!p.actor || !R::IsLiveByIndex(p.actor, p.internalIdx) ||
             !R::NameEquals(R::NameOf(R::ClassOf(p.actor)), L"prop_paper_C") ||
-            std::find(pre.begin(), pre.end(), p.id) != pre.end())
+            IsPre(pre, p))
             continue;
         if (n < kPapers) {
             out[n] = p.actor;
@@ -211,12 +225,13 @@ void ClientCoast() {
                 }
             }
             int flown = 0;
-            bool rested = true;
+            bool rested = true, driven = false;
             for (int i = 0; i < kPapers; ++i) {
                 flown += c.moved[i] ? 1 : 0;
                 rested = rested && AtRest(c.rest[i]);
+                driven = driven || (c.moved[i] && coop::prop_drive_stream::IsParked(c.copy[i].Get()));
             }
-            if (flown >= kMinFlown && rested) {
+            if (flown >= kMinFlown && rested && !driven) {
                 for (int i = 0; i < kPapers; ++i) RestLine(c.eid[i], at[i]);
                 Info("client DONE PASS arm=coast moved=%.0f/%.0f/%.0f/%.0f", Dist(at[0], c.base[0]),
                      Dist(at[1], c.base[1]), Dist(at[2], c.base[2]), Dist(at[3], c.base[3]));
@@ -238,6 +253,11 @@ void ClientCoast() {
                 std::snprintf(what, sizeof(what), "copy did not rest eid=%u", static_cast<unsigned>(c.eid[i]));
                 return ClientFail("coast", what);
             }
+        for (int i = 0; i < kPapers; ++i)
+            if (c.moved[i] && coop::prop_drive_stream::IsParked(c.copy[i].Get())) {
+                std::snprintf(what, sizeof(what), "copy still driven eid=%u", static_cast<unsigned>(c.eid[i]));
+                return ClientFail("coast", what);
+            }
         return;
     }
     default:
@@ -254,7 +274,7 @@ void ClientTick(Arm arm) {
         if (!coop::net_pump::HasAnnouncedWorldReady()) return;
         c.sync = ES::GetCounters();  // before the host's fixture can blast
         c.park = coop::explosion_parking::GetCounters();
-        PaperIds(c.prePapers);
+        PaperActors(c.prePapers);
         c.edgeAt = Clock::now();
         ClientEnter(CPhase::Join);
         return;

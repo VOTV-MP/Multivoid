@@ -27,8 +27,7 @@ namespace X  = ue_wrap::explosion;
 
 namespace {
 
-// The papers lie on the line from B back to the puppet, at these fractions of the way: ground a player stands on, which
-// the blast pushes them across (four sides of B put one off a ledge into water, where it never rested).
+// The papers lie on the line from B to the puppet, at these fractions of the way from B, lifted by kPaperLift.
 constexpr float kPaperAt[] = {0.25f, 0.4f, 0.55f, 0.7f};
 constexpr float kPaperLift = 50.f;
 
@@ -53,7 +52,7 @@ Host g_hostRun;
 
 // The papers are the drill's own props. They outlive Done, because the host's papers rest before the client's copies
 // do and a destroy then reaches a client still judging; they leave the world when the drill is abandoned or its
-// state is reset (the session ended), so a rejoin's run finds no old papers near its blast point.
+// state is reset (the session ended), so a rejoin's run starts with none of them left.
 ue_wrap::CachedObjRef g_papers[kPapers];
 
 // A paper the world already removed is skipped: Get() is null for a dead actor.
@@ -75,9 +74,8 @@ void HostAbandon(const char* what) {
     HostEnter(HPhase::Done);
 }
 
-// The blast's force: 10000 reaches the client 600 cm away for apply, but flung the coast's papers 200 cm from B up to
-// 240 m, one never resting; 500 moved them 3, 61, 174 and 247 cm. A tenth of it is the coast's (the moved= line
-// measures it).
+// The blast's force: 10000 reaches the client 600 cm away for apply; the coast's is a tenth of it, which moves its
+// papers metres (the moved= line measures it).
 constexpr float kApplyForce = 10000.f;
 constexpr float kCoastForce = 1000.f;
 
@@ -203,15 +201,17 @@ void HostPapersRest() {
     }
     for (int i = 0; i < kPapers; ++i)
         if (!E::TryGetActorLocation(g_papers[i].Get(), h.pre[i])) return HostAbandon("a paper's location is unreadable");
-    Info("host papers eids=%u,%u,%u,%u", static_cast<unsigned>(h.eid[0]), static_cast<unsigned>(h.eid[1]),
-         static_cast<unsigned>(h.eid[2]), static_cast<unsigned>(h.eid[3]));
+    Info("host papers eids=%u,%u,%u,%u at=(%.0f,%.0f,%.0f);(%.0f,%.0f,%.0f);(%.0f,%.0f,%.0f);(%.0f,%.0f,%.0f)",
+         static_cast<unsigned>(h.eid[0]), static_cast<unsigned>(h.eid[1]), static_cast<unsigned>(h.eid[2]),
+         static_cast<unsigned>(h.eid[3]), h.pre[0].X, h.pre[0].Y, h.pre[0].Z, h.pre[1].X, h.pre[1].Y, h.pre[1].Z,
+         h.pre[2].X, h.pre[2].Y, h.pre[2].Z, h.pre[3].X, h.pre[3].Y, h.pre[3].Z);
     if (!HostBlast(X::Cls::Explosion, h.B, 0.f, kCoastForce)) return;
     for (int i = 0; i < kPapers; ++i) h.rest[i] = Rest{};
     HostEnter(HPhase::PapersFly);
 }
 
-// At least kMinFlown papers flew and all four came to rest again; each final rest is logged for the lead's comparison
-// with the client's.
+// At least kMinFlown papers flew, all four came to rest again and none is still in the coast stream; each final rest
+// is logged for the lead's comparison with the client's.
 void HostPapersFly() {
     Host& h = g_hostRun;
     int flown = 0;
@@ -228,7 +228,8 @@ void HostPapersFly() {
         flown += h.flew[i] ? 1 : 0;
         rested = rested && AtRest(h.rest[i]);
     }
-    if (flown >= kMinFlown && rested) {
+    const bool streamed = coop::prop_drive_host::CoastingCount() > h.coastNoted;
+    if (flown >= kMinFlown && rested && !streamed) {
         Vec rest[kPapers] = {};
         for (int i = 0; i < kPapers; ++i) {
             if (E::TryGetActorLocation(g_papers[i].Get(), rest[i])) continue;
@@ -251,6 +252,7 @@ void HostPapersFly() {
             std::snprintf(what, sizeof(what), "host paper did not rest eid=%u", static_cast<unsigned>(h.eid[i]));
             return HostAbandon(what);
         }
+    HostAbandon("host papers still coasting");
 }
 
 }  // namespace
@@ -289,8 +291,8 @@ void HostTick(coop::net::Session& s, Arm arm) {
         }
         if (f == Fix::Blocked) return HostAbandon("fixture blocked");
         if (f == Fix::NoTrace) return HostAbandon("fixture trace unresolvable");
-        if (!E::TryGetActorLocation(puppet, h.P)) return HostAbandon("fixture unreadable");
-        Info("host fixture B=(%.0f,%.0f,%.0f)", h.B.X, h.B.Y, h.B.Z);
+        if (!E::TryGetActorLocation(puppet, h.P)) return HostAbandon("fixture puppet unreadable");
+        Info("host fixture B=(%.0f,%.0f,%.0f) P=(%.0f,%.0f,%.0f)", h.B.X, h.B.Y, h.B.Z, h.P.X, h.P.Y, h.P.Z);
         HostEnter(arm == Arm::Apply ? HPhase::Apply : arm == Arm::Coast ? HPhase::PapersSpawn : HPhase::Malformed);
         return;
     }
