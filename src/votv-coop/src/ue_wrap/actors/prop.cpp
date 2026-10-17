@@ -29,31 +29,45 @@ namespace P = profile;
 namespace R = reflection;
 
 // One class test asked off the game thread while its class is unresolved says so once per lookup,
-// so the rig learns whether a worker ever reaches the path. The answer is the published one.
-void SayAskedOffThread(std::atomic<bool>& said, const char* which) {
+// so the rig learns whether a worker ever reaches the path. `tail` says what the answer was built
+// from: a base is answered from what is published, a verdict is never read off the game thread.
+void SayAskedOffThread(std::atomic<bool>& said, const char* tail) {
+    if (said.load(std::memory_order_relaxed)) return;
     if (said.exchange(true, std::memory_order_relaxed)) return;
-    UE_LOGE("prop: a class test was asked off the game thread before its class resolved -- "
-            "answered from what is published (%s)", which);
+    UE_LOGE("prop: a class test was asked off the game thread before its class resolved -- %s", tail);
 }
 
 // The prop base UClass, resolved once and re-validated through the cached reference on each
 // call: a level reload can keep the class, destroy and re-create it elsewhere, or reuse the
 // address, and the liveness check covers the last two. The reference is read and written only
-// on the game thread, by PropBaseClass itself; it publishes each resolve to g_propBasePublished,
-// the one pointer another thread reads (a comparison token, never dereferenced).
+// on the game thread (or before the game thread's id is known, when every thread passes), by
+// PropBaseClass itself; it publishes each resolve to g_propBasePublished, the one pointer
+// another thread reads (a comparison token, never dereferenced).
+// The class comes from the class index, which answers a class that is not loaded in one lookup. A
+// miss is asked again only once the index's class set has moved (ClassSetVersion), so a walk over
+// the object array does not repeat a known miss per object.
 ue_wrap::CachedObjRef g_propBaseCls;
 std::atomic<void*> g_propBasePublished{nullptr};
 std::atomic<bool> g_propBaseOffThreadSaid{false};
+bool g_propBaseMissed = false;
+uint64_t g_propBaseMissVersion = 0;
 
 void* PropBaseClass() {
     if (game_thread::IsDefinitelyOffGameThread()) {
         void* published = g_propBasePublished.load(std::memory_order_acquire);
-        if (!published) SayAskedOffThread(g_propBaseOffThreadSaid, "prop base");
+        if (!published) {
+            SayAskedOffThread(g_propBaseOffThreadSaid,
+                              "answered from what is published (prop base)");
+        }
         return published;
     }
     if (g_propBaseCls.Alive()) return g_propBaseCls.Raw();
-    g_propBaseCls.Set(R::FindClass(P::name::PropClass));
+    const uint64_t version = object_index::ClassSetVersion();
+    if (g_propBaseMissed && version == g_propBaseMissVersion) return nullptr;
+    g_propBaseCls.Set(object_index::ClassByName(P::name::PropClass));
     g_propBasePublished.store(g_propBaseCls.Raw(), std::memory_order_release);
+    g_propBaseMissed = g_propBaseCls.Raw() == nullptr;
+    g_propBaseMissVersion = version;
     return g_propBaseCls.Raw();
 }
 
@@ -91,10 +105,11 @@ bool IsClassDescendantOfProp(void* cls) {
 
 namespace {
 // Per-class sticky resolution: each pointer is set once on the first successful lookup and
-// never asked again. A class not loaded yet is asked again on the next call, at one class-index
-// lookup; the index can trail the object array while a world loads. A base is resolved on the
-// game thread; another thread (a ProcessEvent observer on an animation worker) reads the
-// published pointers only, and says so once while a base is still missing.
+// never asked again. A class not loaded yet is asked again once the index's class set has moved
+// (ClassSetVersion), at one class-index lookup per base; the index can trail the object array
+// while a world loads. A base is resolved on the game thread (or before the game thread's id is
+// known); another thread (a ProcessEvent observer on an animation worker) reads the published
+// pointers only, and says so once while a base is still missing.
 std::atomic<void*> g_trashBitsPileCls{nullptr};
 std::atomic<void*> g_garbageClumpCls{nullptr};
 std::atomic<void*> g_actorChipPileCls{nullptr};
@@ -103,15 +118,20 @@ std::atomic<void*> g_actorChipPileCls{nullptr};
 std::atomic<bool> g_extrasAllResolved{false};
 std::atomic<bool> g_extrasOffThreadSaid{false};
 std::atomic<bool> g_verdictOffThreadSaid{false};
+// The class-set version seen when a lookup last left a base missing; game-thread state.
+bool g_extrasMissed = false;
+uint64_t g_extrasMissVersion = 0;
 
 void ResolveExtraBases() {
     if (g_extrasAllResolved.load(std::memory_order_acquire)) return;
     // The class index is read by the game thread alone: another thread leaves the bases as
     // published and the next game-thread call resolves them.
     if (game_thread::IsDefinitelyOffGameThread()) {
-        SayAskedOffThread(g_extrasOffThreadSaid, "trash bases");
+        SayAskedOffThread(g_extrasOffThreadSaid, "answered from what is published (trash bases)");
         return;
     }
+    const uint64_t version = object_index::ClassSetVersion();
+    if (g_extrasMissed && version == g_extrasMissVersion) return;
     void* trash = g_trashBitsPileCls.load(std::memory_order_acquire);
     void* clump = g_garbageClumpCls.load(std::memory_order_acquire);
     void* chip  = g_actorChipPileCls.load(std::memory_order_acquire);
@@ -132,7 +152,10 @@ void ResolveExtraBases() {
     }
     if (trash && clump && chip) {
         g_extrasAllResolved.store(true, std::memory_order_release);
+        return;
     }
+    g_extrasMissed = true;
+    g_extrasMissVersion = version;
 }
 
 inline void* TrashBitsPileCls() { return g_trashBitsPileCls.load(std::memory_order_acquire); }
@@ -142,7 +165,8 @@ inline void* ActorChipPileCls() { return g_actorChipPileCls.load(std::memory_ord
 // The per-class-name trash kind: a spawn burst asks this once per prop, so each distinct class
 // name resolves once the verdict is kept; a name the resolver does not hold is asked again: one
 // lookup through ClassByName, a whole-array walk through the FindClass default. Game-thread
-// serial, so no mutex. A verdict is kept only when it can no longer change: a
+// serial (unless provably off the game thread; before its id is known every thread passes), so no
+// mutex. A verdict is kept only when it can no longer change: a
 // clump match, or both bases resolved. While a base is unresolved the verdict is returned and
 // asked again.
 struct TrashClassKind { bool isTrash = false; bool isClump = false; };
@@ -150,12 +174,14 @@ std::unordered_map<std::wstring, TrashClassKind> g_trashClassKind;
 
 TrashClassKind ResolveTrashClassKind(const std::wstring& className, void* (*resolve)(const wchar_t*)) {
     if (className.empty()) return {};
-    // The map and the class lookup are game-thread state: another thread gets the answer of a
-    // class not loaded yet (no verdict), and neither reads, resolves nor stores. The callers today
+    // The map and the class lookup are game-thread state: a thread provably off the game thread
+    // never reads the verdict map, so it is answered "not trash" whatever the game thread has
+    // memoised, and it neither resolves nor stores. The callers today
     // (the PropSpawn dispatch, the kerfur adoption tick, the own-save pile bind) all run on the game
     // thread.
     if (game_thread::IsDefinitelyOffGameThread()) {
-        SayAskedOffThread(g_verdictOffThreadSaid, "trash verdict");
+        SayAskedOffThread(g_verdictOffThreadSaid,
+                          "answered \"not trash\" without reading the verdicts (trash verdict)");
         return {};
     }
     if (auto it = g_trashClassKind.find(className); it != g_trashClassKind.end()) return it->second;
