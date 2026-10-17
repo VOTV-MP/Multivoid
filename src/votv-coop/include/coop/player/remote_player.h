@@ -147,6 +147,7 @@ private:
     static constexpr float kSnapPerSpeedSec = 0.5f;
 
     void* actor_ = nullptr;  // the engine puppet actor, a mainPlayer_C orphan; owned by the engine
+    void* radarComp_ = nullptr;  // the comp_radarPoint_C component attached to actor_ for base radar display
 
     // The GUObjectArray InternalIndex of actor_, captured at Spawn while the puppet was known live;
     // valid() checks IsLiveByIndex, never plain IsLive. A mass GC purge can free the puppet without
