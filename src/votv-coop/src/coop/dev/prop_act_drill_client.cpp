@@ -166,6 +166,15 @@ void ClientRead(const Row& row, void* player) {
         ClientPass(row, "the call ran natively and opened no request");
         return;
     }
+    if (row.ends == Ends::NativeGone) {
+        // The eat ran: a request would have been caught at the call, so the copy is gone only if the game ate it.
+        if (g_mirror.Alive() || (g_ceid != EL::kInvalidId && EL::LivePropActor(g_ceid))) {
+            ClientFail(row, "the native eat did not consume this client's copy");
+            return;
+        }
+        ClientPass(row, "the call ran natively, opened no request and ate the copy");
+        return;
+    }
     if (row.ends == Ends::Stays) {
         ClientReadStays(row);
         return;

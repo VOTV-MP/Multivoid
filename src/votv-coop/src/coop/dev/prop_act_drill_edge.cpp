@@ -64,6 +64,8 @@ size_t g_hrow = 0;
 ue_wrap::CachedObjRef g_target, g_target2;
 EL::ElementId g_eid = EL::kInvalidId, g_eid2 = EL::kInvalidId;
 EBase g_base;
+bool g_baseTaken = false;       // the window row's counters were taken (see HStage::Arm)
+uint32_t g_phaseAnswered = 0;   // the host's answered total for the slot at that moment: the whole phase's baseline
 
 void HEnter(HStage s) {
     g_hs = s;
@@ -86,6 +88,26 @@ EBase TakeBase() {
     b.targetGone = PAH::TallyOf(Tally::TargetGone);
     b.destroyFailed = PAH::TallyOf(Tally::DestroyFailed);
     return b;
+}
+
+// What a step's requests are answered with, as its judge asserts: the window none, a request before the commit two, a
+// dead target's grant one, a gone target's grant one, the second act one, a late grant two.
+uint32_t AnswersOf(Kind k) {
+    switch (k) {
+    case Kind::Window: return 0;
+    case Kind::Before: return 2;
+    case Kind::Dead:   return 1;
+    case Kind::Gone:   return 1;
+    case Kind::Second: return 1;
+    case Kind::Late:   return 2;
+    }
+    return 0;
+}
+
+uint32_t ExpectedAnswers() {
+    uint32_t sum = 0;
+    for (size_t i = 0; i < kEdgeRowCount; ++i) sum += AnswersOf(kEdgeRows[i].kind);
+    return sum;
 }
 
 void ResetStep() {
@@ -265,13 +287,24 @@ void HostStep(coop::net::Session* s) {
     const EdgeRow& r = kEdgeRows[g_hrow < kEdgeRowCount ? g_hrow : 0];
     switch (g_hs) {
     case HStage::Arm:
+        // The window row's baseline is the counters at the first tick the host sees the slot joined and not yet
+        // world-ready, as the hostile not-yet arm takes it: an answer to a request sent in the window is then counted.
+        if (!g_baseTaken) {
+            if (!s->HasPeerConn(kSlot)) return;
+            if (s->IsSlotWorldReady(kSlot)) {
+                HostFail(nullptr, "the slot was world-ready before the host saw it joined");
+                return;
+            }
+            g_base = TakeBase();
+            g_phaseAnswered = g_base.answered;
+            g_baseTaken = true;
+        }
         // c1's announce is held by its window row, so this waits for the window row's end: the join and its late
         // window are then over, and what is spawned reaches the client as a live spawn.
         if (!s->IsSlotWorldReady(kSlot) || !coop::prop_snapshot::IsBracketClosed(kSlot) ||
             coop::join_window_baseline::IsLateWindowOpen(kSlot) || !coop::players::Registry::Get().Local())
             return;
         UE_LOGI("%s host edge armed on slot %d", kTag, kSlot);
-        g_base = TakeBase();   // the window row's counters: c1 asked nothing while its announce was held
         HEnter(HStage::AwaitDone);
         return;
     case HStage::Spawn: {
@@ -329,6 +362,14 @@ void HostStep(coop::net::Session* s) {
                 HEnter(HStage::Spawn);
                 return;
             }
+            // The whole phase's answers, from the first sight of the join: a request answered that no step sent (the
+            // second act's red) is a FAIL. No settle poll: the late-grant step spans more than the client's 10 s
+            // expiry, so it outlasts any answer the second act's red could draw.
+            if (const uint32_t sum = ExpectedAnswers(), got = Since(PAH::AnsweredTotal(kSlot), g_phaseAnswered); got != sum) {
+                HostFail(nullptr, "the host answered " + std::to_string(got) + " requests over the phase, its steps expect " +
+                                      std::to_string(sum));
+                return;
+            }
             UE_LOGI("%s host edge PASS -- all %u steps held", kTag, static_cast<unsigned>(kEdgeRowCount));
             g_hs = HStage::Done;
             return;
@@ -360,6 +401,8 @@ void EdgeReset() {
     g_hrow = 0;
     ResetStep();
     g_base = EBase{};
+    g_baseTaken = false;
+    g_phaseAnswered = 0;
     EdgeClientReset();
 }
 

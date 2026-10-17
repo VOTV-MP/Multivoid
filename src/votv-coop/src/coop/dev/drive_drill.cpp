@@ -446,7 +446,8 @@ void ClientTick() {
         // A hold of a shared prop ends a round trip after the call; the hand says whether it was taken.
         if (coop::prop_act_request::dev::PendingId() != 0) return;
         E::MainPlayerGrabState hand{};
-        if (!E::ReadMainPlayerGrabState(player, hand) || !hand.holdingActor) {
+        if (!E::ReadMainPlayerGrabState(player, hand) || !hand.holdingActor ||
+            ue_wrap::prop::GetInteractableKeyString(hand.holdingActor) != g_ownKey) {
             Abandon("the taken-out drive could not be taken into the hand");
             return;
         }

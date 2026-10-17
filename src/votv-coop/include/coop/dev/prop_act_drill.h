@@ -8,11 +8,11 @@
 //             reflection as a press would (the watch catches it), waits until no request is pending, judges what its
 //             own copies show, and says its done line.
 // honest: one client takes and uses each family of shared prop. race: two clients and the host contend for one prop
-// (with --observer); its steps are in prop_act_drill_race.cpp, which runs all three peers. depart: a client leaves
-// holding a reservation and a newcomer takes its slot (with --rejoin; prop_act_drill_depart.cpp). edge: the windows
-// of the ask (prop_act_drill_edge.cpp, with its client half in prop_act_drill_edge_client.cpp). A FAIL is the lane
-// failing; every wait on the other peer ends on a chat line or a counter, and its bound is a bound that FAILs the
-// step, never a wait.
+// (with --observer); its host half is in prop_act_drill_race.cpp and its clients' in prop_act_drill_race_client.cpp.
+// depart: a client leaves holding a reservation and a newcomer takes its slot (with --rejoin;
+// prop_act_drill_depart.cpp). edge: the windows of the ask (prop_act_drill_edge.cpp, its client half in
+// prop_act_drill_edge_client.cpp). A FAIL is the lane failing; every wait on the other peer ends on a chat line or a
+// counter, and its bound is a bound that FAILs the step, never a wait.
 
 #pragma once
 
@@ -64,8 +64,9 @@ enum class Verb : uint8_t { Pocket, Hold, Use, Soap };   // putObjectInventory2,
 
 // Where a consumed target ends, on the client's own copies: the inventory gains one of its class, the hand holds one
 // of its class, or nowhere (an eaten or used-up prop). Stays: the take bails (a full inventory) and the mirror and the
-// inventory are as they were. Unchecked: the call runs natively and only the absence of a request is judged.
-enum class Ends : uint8_t { Inventory, Hand, Gone, Stays, Unchecked };
+// inventory are as they were. Unchecked: the call runs natively and only the absence of a request is judged. NativeGone:
+// the same, and the eaten copy is gone from this client afterwards.
+enum class Ends : uint8_t { Inventory, Hand, Gone, Stays, Unchecked, NativeGone };
 
 // Who makes a step's target: the host, on the floor in front of its player (HostTwo: a second one beside it;
 // HostKerfur: a kerfur NPC the host turns off into its prop), or the client itself (the host spawns nothing).
@@ -112,8 +113,9 @@ struct Phase {
 
 const Phase& Honest();   // prop_act_drill_honest.cpp
 
-// The race phase runs all three peers by itself (prop_act_drill_race.cpp): the host's steps, then a client's by its
-// slot, 1 or 2. The core routes to them.
+// The race phase runs all three peers by itself (prop_act_drill_race.cpp is the host's half,
+// prop_act_drill_race_client.cpp the clients'): the host's steps, then a client's by its slot, 1 or 2. The core routes
+// to them.
 void RaceHostTick(coop::net::Session* s);
 void RaceClientTick(coop::net::Session* s);
 void RaceReset();

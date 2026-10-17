@@ -172,7 +172,7 @@ void ReadJudged(Arm a, uint32_t want) {
     if (!OwnJoinOver()) return;
     if (!PollDue()) return;
     if (!ChatLine(JudgedLine(a), nullptr)) {
-        if (ClientWaitedTooLong()) ClientEnd(a, "INCONCLUSIVE", "the host never said it judged");
+        if (ClientWaitedTooLong()) ClientEnd(a, "FAIL", "the host never said it judged");
         return;
     }
     const uint32_t n = StaleReplies();
@@ -225,7 +225,7 @@ void ClientTarget(coop::net::Session* s, Arm a) {
     if (g_cstep == CStep::AwaitReply) {
         const PAR::dev::LastReply last = PAR::dev::LastStaleReply();
         if (last.count == g_staleBase) {
-            if (ClientWaitedTooLong()) ClientEnd(a, "INCONCLUSIVE", "the host never answered the take");
+            if (ClientWaitedTooLong()) ClientEnd(a, "FAIL", "the host never answered the take");
             return;
         }
         if (last.id != kRequestId || last.granted != 1 || last.reason != 0) {
@@ -244,7 +244,7 @@ void ClientTarget(coop::net::Session* s, Arm a) {
     if (g_cstep == CStep::AwaitAborted) {
         if (!PollDue()) return;
         if (!ChatLine(kAbortedLine, nullptr)) {
-            if (ClientWaitedTooLong()) ClientEnd(a, "INCONCLUSIVE", "the host never said the abort was taken");
+            if (ClientWaitedTooLong()) ClientEnd(a, "FAIL", "the host never said the abort was taken");
             return;
         }
         if (!SendCommit(s, kRequestId, 0, g_ceid)) {
@@ -258,7 +258,7 @@ void ClientTarget(coop::net::Session* s, Arm a) {
     // Idle: the join over, then the host's line.
     if (!OwnJoinOver() || !PollDue()) return;
     if (!HostSaidReady(a, &g_ceid)) {
-        if (ClientWaitedTooLong()) ClientEnd(a, "INCONCLUSIVE", "the host never said it was ready");
+        if (ClientWaitedTooLong()) ClientEnd(a, "FAIL", "the host never said it was ready");
         return;
     }
     g_cwait = {};
@@ -319,7 +319,7 @@ void Finish(Arm a, const char* what, const std::string& why) {
 
 bool Bounded(Arm a, const Clock::time_point& since, const char* what) {
     if (Clock::now() - since <= kFailBound) return false;
-    Finish(a, "INCONCLUSIVE", what);
+    Finish(a, "FAIL", what);
     return true;
 }
 

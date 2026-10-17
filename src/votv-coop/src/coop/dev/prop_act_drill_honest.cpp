@@ -13,6 +13,7 @@
 #include "coop/props/prop_act_request.h"
 
 #include "ue_wrap/core/asset_load.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/ftext_utils.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -115,7 +116,13 @@ const char* MakeOwnCrowbar(void* player, void** out) {
 
 // One own crowbar pocketed with no notice (its refusal is the step's, not the fill's); false from the native call ends it.
 const char* FillStep(void* player, bool* full) {
-    void* const cls = ue_wrap::asset_load::LoadObjectByPath(kCrowbar);
+    // The class is loaded once and held: a load per tick is a reflected call the fill need not make.
+    static ue_wrap::CachedObjRef sCrowbar;
+    void* cls = sCrowbar.Get();
+    if (!cls) {
+        cls = ue_wrap::asset_load::LoadObjectByPath(kCrowbar);
+        sCrowbar.Set(cls);
+    }
     FVector at{};
     if (!cls || !E::TryGetActorLocation(player, at)) return "the class did not load or the player's place is unread";
     void* const own = E::SpawnActor(cls, {at.X, at.Y, at.Z + kOwnLiftCm});
@@ -138,7 +145,7 @@ constexpr Row kRows[] = {
     // The calls that are the client's own (no request), the take of a kerfur's prop, a use that also destroys a second
     // prop inside the latch, and last the full inventory, which stays full for whatever would follow it.
     {"own spawn",       kCrowbar,  L"prop_crowbar_C",     Verb::Pocket, Ends::Inventory, nullptr, Target::Client, false, false, &MakeOwnCrowbar},
-    {"native subclass", kShrimp,   L"prop_food_shrimp_C", Verb::Use,    Ends::Unchecked, nullptr, Target::Host, false},
+    {"native subclass", kShrimp,   L"prop_food_shrimp_C", Verb::Use,    Ends::NativeGone, &SetLastUse, Target::Host, false},
     {"non-last use",    kFood,     L"prop_food_C",        Verb::Use,    Ends::Unchecked, &SetTwoUses, Target::Host, false, true},
     {"trash native",    kChipPile, L"actorChipPile_C",    Verb::Hold,   Ends::Unchecked, nullptr, Target::Host, false},
     {"kerfur take",     nullptr,   L"prop_kerfurOmega_C", Verb::Pocket, Ends::Inventory, nullptr, Target::HostKerfur},

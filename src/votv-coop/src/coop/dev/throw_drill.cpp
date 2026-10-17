@@ -324,7 +324,7 @@ void ClientTick() {
     case Step::HoldWait: {
         if (coop::prop_act_request::dev::PendingId() != 0) return;
         E::MainPlayerGrabState hand{};
-        if (!E::ReadMainPlayerGrabState(player, hand) || !hand.holdingActor) {
+        if (!E::ReadMainPlayerGrabState(player, hand) || !hand.holdingActor || hand.holdingActor != g_fixture.Get()) {
             Abandon("the backpack could not be taken into the hand");
             return;
         }
