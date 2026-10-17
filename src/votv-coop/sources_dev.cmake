@@ -109,6 +109,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/key_parity_probe.cpp
     src/coop/dev/floppy_selftest_world.cpp
     src/coop/dev/hookdrag_selftest.cpp
+    src/coop/dev/hook_plant.cpp
     src/coop/dev/roster_token_selftest.cpp
     src/coop/dev/kerfur_census.cpp
     src/coop/dev/food_clock_probe.cpp
