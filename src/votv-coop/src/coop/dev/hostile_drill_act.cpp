@@ -5,6 +5,7 @@
 #include "coop/comms/chat_feed.h"
 #include "coop/comms/chat_sync.h"
 #include "coop/dev/announce_hold.h"
+#include "coop/dev/drill_props.h"
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
@@ -24,7 +25,6 @@
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/trace.h"
 #include "ue_wrap/engine/engine.h"
 
 #include <chrono>
@@ -47,6 +47,7 @@ namespace EL  = coop::element;
 namespace E   = ue_wrap::engine;
 namespace PAH = coop::prop_act_host;
 namespace PAR = coop::prop_act_request;
+namespace DP  = coop::dev::drill_props;
 
 constexpr const wchar_t* kCrowbarPath = L"/Game/objects/prop_crowbar.prop_crowbar_C";
 
@@ -338,20 +339,6 @@ bool TargetAlive() {
     return t && EL::LivePropActor(g_eid) == t;
 }
 
-// The floor under the column at (x, y): the first static or dynamic thing a trace meets going down, every player body
-// ignored. False when none is met or the column began inside geometry.
-bool FloorAt(void* ctx, float x, float y, float fromZ, float downCm, float* floorZ) {
-    const uint8_t types[2] = {0, 1};
-    void* ignore[coop::players::kMaxPeers];
-    const int nIgnore = coop::players::Registry::Get().LiveBodies(ignore, coop::players::kMaxPeers);
-    ue_wrap::trace::Hit hit;
-    if (!ue_wrap::trace::LineHitForObjects(ctx, {x, y, fromZ}, {x, y, fromZ - downCm}, types, 2, ignore, nIgnore, &hit) ||
-        !hit.blocked || fromZ - hit.point.Z < kMinColumnCm)
-        return false;
-    *floorZ = hit.point.Z;
-    return true;
-}
-
 // Spawns the arm's crowbar beside (or 3000 uu from) the client's puppet. Null on success, else why not.
 const char* SpawnTarget(Arm a, coop::RemotePlayer& rp) {
     FVector at{};
@@ -363,11 +350,11 @@ const char* SpawnTarget(Arm a, coop::RemotePlayer& rp) {
         const float yaw = 6.2831853f * static_cast<float>(i) / static_cast<float>(kFan);
         const float x = at.X + std::cos(yaw) * (far ? kFarCm : kNearCm);
         const float y = at.Y + std::sin(yaw) * (far ? kFarCm : kNearCm);
-        float floorZ = 0.f;
-        if (!FloorAt(rp.GetActor(), x, y, at.Z + (far ? kFarUpCm : kNearUpCm), far ? kFarDownCm : kNearDownCm, &floorZ))
-            continue;
-        void* const p = E::SpawnActor(cls, {x, y, floorZ + kDropCm});
-        if (!p) return "the crowbar did not spawn";
+        void* p = nullptr;
+        const DP::Drop d = DP::DropOnFloor(rp.GetActor(), cls, nullptr, x, y, at.Z + (far ? kFarUpCm : kNearUpCm),
+                                           far ? kFarDownCm : kNearDownCm, kMinColumnCm, kDropCm, &p);
+        if (d == DP::Drop::NoFloor) continue;
+        if (d == DP::Drop::SpawnFailed) return "the crowbar did not spawn";
         g_target.Set(p);
         return nullptr;
     }

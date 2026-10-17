@@ -7,7 +7,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/creatures/kerfur_entity.h"
-#include "coop/dev/spawn_npc.h"
+#include "coop/dev/drill_props.h"
 #include "coop/dispatch/event_feed.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
@@ -20,7 +20,6 @@
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/trace.h"
 #include "ue_wrap/engine/engine.h"
 
 #include <windows.h>
@@ -56,6 +55,7 @@ namespace E   = ue_wrap::engine;
 namespace EL  = coop::element;
 namespace PAH = coop::prop_act_host;
 namespace KE  = coop::kerfur_entity;
+namespace DP  = coop::dev::drill_props;
 using ue_wrap::FVector;
 
 constexpr const wchar_t* kKerfurNpc = L"kerfurOmega_C";
@@ -110,21 +110,6 @@ void HostFail(const Row* row, const std::string& why) {
     g_hstep = HStep::Done;
 }
 
-// The floor under the column at (x, y): the first static or dynamic thing a trace meets going down, every player body
-// ignored. False when none is met or the column began inside geometry.
-bool FloorAt(void* ctx, float x, float y, float fromZ, float* floorZ) {
-    const uint8_t types[2] = {0, 1};
-    void* ignore[coop::players::kMaxPeers];
-    const int nIgnore = coop::players::Registry::Get().LiveBodies(ignore, coop::players::kMaxPeers);
-    ue_wrap::trace::Hit hit;
-    if (!ue_wrap::trace::LineHitForObjects(ctx, {x, y, fromZ}, {x, y, fromZ - kFloorDownCm}, types, 2, ignore, nIgnore,
-                                           &hit) ||
-        !hit.blocked || fromZ - hit.point.Z < kMinColumnCm)
-        return false;
-    *floorZ = hit.point.Z;
-    return true;
-}
-
 // The counters of the client's slot as the step begins.
 Baseline TakeBaseline(EL::ElementId eid) {
     Baseline b;
@@ -166,7 +151,7 @@ bool KerfurPropReady(const Row& row) {
             if (HExpired(kAnnounceBoundMs)) HostFail(&row, "the kerfur NPC never got a kerfur record");
             return false;
         }
-        if (!TurnOffKerfur(npc)) {
+        if (!DP::TurnOffKerfur(npc)) {
             HostFail(&row, "dropKerfurProp could not be called on the kerfur NPC");
             return false;
         }
@@ -319,10 +304,11 @@ const char* SpawnTarget(const Row& row, float extraCm, void** out) {
         const float ahead = base + extraCm;
         const float x = at.X + fwd.X / len * ahead, y = at.Y + fwd.Y / len * ahead;
         float floorZ = 0.f;
-        if (!FloorAt(player, x, y, at.Z, &floorZ)) continue;
-        void* const p = npc ? coop::dev::spawn_npc::SpawnAt(kKerfurNpc, {x, y, floorZ + kDropCm + kNpcLiftCm})
-                            : E::SpawnActor(cls, {x, y, floorZ + kDropCm});
-        if (!p) return "the target did not spawn";
+        void* p = nullptr;
+        const DP::Drop d = DP::DropOnFloor(player, cls, kKerfurNpc, x, y, at.Z, kFloorDownCm, kMinColumnCm,
+                                           npc ? kDropCm + kNpcLiftCm : kDropCm, &p, &floorZ);
+        if (d == DP::Drop::NoFloor) continue;
+        if (d == DP::Drop::SpawnFailed) return "the target did not spawn";
         UE_LOGI("%s host %s spawned %ls at (%.0f, %.0f, %.0f), %.0f uu ahead of its player", kTag, row.name,
                 npc ? kKerfurNpc : row.leaf, x, y, floorZ + kDropCm, ahead);
         *out = p;

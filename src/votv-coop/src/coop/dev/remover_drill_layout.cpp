@@ -4,6 +4,7 @@
 
 #include "coop/comms/chat_log.h"
 #include "coop/comms/chat_sync.h"
+#include "coop/dev/drill_props.h"
 #include "coop/dev/spawn_npc.h"
 #include "coop/element/registry.h"
 #include "coop/player/players_registry.h"
@@ -66,22 +67,18 @@ struct Spot {
 // How far under the eye a spot's floor is looked for.
 constexpr float kFloorSearchCm = 500.f;
 
-// The floor under the column at (x, y): the first WorldStatic or WorldDynamic thing a trace meets going down from `fromZ`,
-// every player body ignored. False when none is met, or when the column starts inside geometry.
+// How near its start a column may find its floor before it began inside geometry.
+constexpr float kMinColumnCm = 5.f;
+
+// The spot's floor by the shared trace; on a miss, which branch it was, in words.
 bool FloorAt(void* puppet, float x, float y, float fromZ, float* floorZ, const char** why) {
-    const uint8_t types[2] = {0, 1};
-    void* ignore[coop::players::kMaxPeers];
-    const int nIgnore = coop::players::Registry::Get().LiveBodies(ignore, coop::players::kMaxPeers);
-    ue_wrap::trace::Hit hit;
-    if (!ue_wrap::trace::LineHitForObjects(puppet, {x, y, fromZ}, {x, y, fromZ - kFloorSearchCm}, types, 2, ignore,
-                                           nIgnore, &hit)) {
-        *why = "the floor trace did not run";
-        return false;
-    }
-    if (!hit.blocked) { *why = "no floor within 500 cm under the spot"; return false; }
-    if (Dist({x, y, fromZ}, hit.point) < 5.f) { *why = "the spot's column starts inside geometry"; return false; }
-    *floorZ = hit.point.Z;
-    return true;
+    namespace DP = coop::dev::drill_props;
+    DP::FloorMiss miss = DP::FloorMiss::None;
+    if (DP::FloorAt(puppet, x, y, fromZ, kFloorSearchCm, kMinColumnCm, floorZ, &miss)) return true;
+    *why = miss == DP::FloorMiss::TraceFailed ? "the floor trace did not run"
+         : miss == DP::FloorMiss::NoFloor     ? "no floor within 500 cm under the spot"
+                                              : "the spot's column starts inside geometry";
+    return false;
 }
 
 // Can a prop stand at (x, y), `up` cm above the floor found there, and be seen from `eye`? The floor is found by a trace

@@ -12,6 +12,7 @@
 
 #include "coop/dev/announce_hold.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/drill_props.h"
 #include "coop/dev/drill_chat_pace.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
@@ -39,6 +40,7 @@ namespace R   = ue_wrap::reflection;
 namespace EL  = coop::element;
 namespace OI  = ue_wrap::object_index;
 namespace PAR = coop::prop_act_request;
+namespace DP  = coop::dev::drill_props;
 using ue_wrap::FVector;
 
 constexpr int kSlot = kClientSlot;
@@ -125,11 +127,6 @@ struct WindowScan {
     void* found = nullptr;
 };
 
-bool HasKey(void* actor) {
-    const std::wstring key = ue_wrap::prop::GetInteractableKeyString(actor);
-    return !key.empty() && key != L"None";
-}
-
 // The first keyed prop of the loaded save that has no row, outside the trash lanes: what a take is cancelled on while
 // the announce is held. Null when there is none.
 void* FindWindowProp() {
@@ -146,7 +143,7 @@ void* FindWindowProp() {
             classes.cls[i],
             [](void* ctx, void* obj, int32_t) {
                 auto* sc = static_cast<WindowScan*>(ctx);
-                if (sc->found || ue_wrap::prop::IsTrashActor(obj) || ue_wrap::prop::IsTrashBitsPile(obj) || !HasKey(obj) ||
+                if (sc->found || ue_wrap::prop::IsTrashActor(obj) || ue_wrap::prop::IsTrashBitsPile(obj) || !DP::HasKey(obj) ||
                     EL::Registry::Get().EidForActor(obj) != EL::kInvalidId)
                     return;
                 sc->found = obj;

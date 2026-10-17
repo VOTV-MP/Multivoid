@@ -79,6 +79,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/remover_drill.cpp
     src/coop/dev/remover_drill_host.cpp
     src/coop/dev/remover_drill_layout.cpp
+    src/coop/dev/drill_props.cpp
     src/coop/dev/prop_act_drill.cpp
     src/coop/dev/prop_act_drill_client.cpp
     src/coop/dev/prop_act_drill_depart.cpp

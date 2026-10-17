@@ -10,6 +10,7 @@
 #include "prop_act_drill_race.h"
 
 #include "coop/dev/prop_act_drill.h"
+#include "coop/dev/drill_props.h"
 
 #include "coop/element/registry.h"
 #include "coop/items/hook_sync.h"
@@ -44,6 +45,7 @@ namespace EL  = coop::element;
 namespace PAH = coop::prop_act_host;
 namespace PAR = coop::prop_act_request;
 namespace RR  = coop::remover_request;
+namespace DP  = coop::dev::drill_props;
 using ue_wrap::FVector;
 using Reason = coop::net::PropActReason;
 
@@ -61,8 +63,7 @@ const char* MakeOwnDisc(void* player, void** out) {
     if (!E::TryGetActorLocation(player, at)) return "the player's place is unread";
     void* const own = E::SpawnActor(cls, {at.X, at.Y, at.Z + kOwnLiftCm});
     if (!own) return "this client's own disc did not spawn";
-    const std::wstring key = ue_wrap::prop::GetInteractableKeyString(own);
-    if (key.empty() || key == L"None") return "cell not reached: the spawn has no key";
+    if (!DP::HasKey(own)) return "cell not reached: the spawn has no key";
     if (EL::Registry::Get().EidForActor(own) != EL::kInvalidId) return "cell not reached: the spawn already has a row";
     *out = own;
     return nullptr;

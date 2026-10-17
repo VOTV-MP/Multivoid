@@ -166,7 +166,6 @@ void ClientReset();
 bool HintWatchLive();   // registered and its names resolved; a tick drives the resolve
 void ClearHint();
 bool HintSeen();        // the hint was shown since ClearHint
-bool TurnOffKerfur(void* npc);                                  // dropKerfurProp on the NPC, as the conversion drill calls it
 void* FindKerfurProp(coop::element::ElementId kerfurId);        // the live prop whose eid names that kerfur record
 
 }  // namespace detail

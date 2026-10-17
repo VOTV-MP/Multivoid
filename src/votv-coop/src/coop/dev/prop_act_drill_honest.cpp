@@ -5,15 +5,14 @@
 #include "coop/dev/prop_act_drill.h"
 
 #include "coop/creatures/kerfur_entity.h"
+#include "coop/dev/drill_props.h"
 #include "coop/dispatch/event_feed.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/props/prop_act_host.h"
 #include "coop/props/prop_act_request.h"
 
-#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/asset_load.h"
-#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/ftext_utils.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -35,6 +34,7 @@ namespace R   = ue_wrap::reflection;
 namespace PAH = coop::prop_act_host;
 namespace EL  = coop::element;
 namespace sg  = ue_wrap::script_gate;
+namespace DP  = coop::dev::drill_props;
 using ue_wrap::FVector;
 
 constexpr const wchar_t* kMre     = L"/Game/objects/prop_food_mre.prop_food_mre_C";
@@ -107,8 +107,7 @@ const char* MakeOwnCrowbar(void* player, void** out) {
     if (!cls || !E::TryGetActorLocation(player, at)) return "the class did not load or the player's place is unread";
     void* const own = E::SpawnActor(cls, {at.X, at.Y, at.Z + kOwnLiftCm});
     if (!own) return "this client's own prop did not spawn";
-    const std::wstring key = ue_wrap::prop::GetInteractableKeyString(own);
-    if (key.empty() || key == L"None") return "cell not reached: the spawn has no key";
+    if (!DP::HasKey(own)) return "cell not reached: the spawn has no key";
     if (EL::Registry::Get().EidForActor(own) != EL::kInvalidId) return "cell not reached: the spawn already has a row";
     *out = own;
     return nullptr;
@@ -254,13 +253,6 @@ bool HintWatchLive() {
 
 void ClearHint() { g_hintSeen = false; }
 bool HintSeen() { return g_hintSeen; }
-
-bool TurnOffKerfur(void* npc) {
-    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(npc), L"dropKerfurProp");
-    if (!fn) return false;
-    ue_wrap::ParamFrame f(fn);
-    return f.valid() && ue_wrap::Call(npc, f);
-}
 
 void* FindKerfurProp(EL::ElementId kerfurId) {
     void* const cls = ue_wrap::object_index::ClassByName(kKerfurProp);
