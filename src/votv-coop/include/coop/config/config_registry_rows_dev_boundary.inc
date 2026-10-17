@@ -26,7 +26,8 @@ CFG_ENUM(auth_drill, "auth_drill", "dev", "off", "off|corrupt|silent|mismatch",
 CFG_ENUM(hostile_drill, "hostile_drill", "dev", "off",
     "off|signal_park|chat_ill_formed|prop_convert|reliable_flood|repeat_join|repeat_world_ready|"
     "repeat_save_request|record_bad_classes|bad_alarm|bad_prop_key|bad_prop_spawn|bad_hand_class|"
-    "bad_hand_family|keep_latest|chat_flood|world_latest|kerfur_flood|remover_far|remover_hidden|remover_flood",
+    "bad_hand_family|keep_latest|chat_flood|world_latest|kerfur_flood|remover_far|remover_hidden|remover_flood|"
+    "act_far|act_gone|act_wrongfamily|act_bad_commit|act_notyet|act_flood|act_flood_early",
     "VOTVCOOP_HOSTILE_DRILL",
     "Receive-boundary drill (BOTH peers). signal_park: a client floods refused saved-signal rows "
     "(size 0, so the game's own gate rejects each) and the host must keep them from filling the apply "
@@ -72,4 +73,5 @@ CFG_ENUM(hostile_drill, "hostile_drill", "dev", "off",
     "OutOfSight and nothing else. remover_hidden: a joined client asks for a host prop its camera cannot see, from its "
     "real camera; the host must answer OutOfSight. remover_flood: a joined client sends, in one tick, 121 remover "
     "requests each naming an unused host-range id; the host must serve them at the lane's pace and no more than its "
-    "cap, judged by its own per-sender counts. Drill only.")
+    "cap, judged by its own per-sender counts. act_*: A3-D2a's take-or-use requests forged against the host. "
+    "Drill only.")

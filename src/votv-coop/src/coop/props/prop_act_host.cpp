@@ -334,4 +334,29 @@ void NoteBadSender() { ++g_tally[static_cast<int>(Tally::BadSender)]; }
 
 void NoteShortPayload(uint8_t senderSlot) { g_refusals.Note(senderSlot, "payload too short", Now()); }
 
+uint32_t AnsweredFor(int slot, PropActReason reason) {
+    const size_t i = static_cast<size_t>(reason);
+    return InRoster(slot) && i < coop::net::kPropActReasons ? g_slots[slot].answered[i] : 0;
+}
+
+uint32_t TallyOf(Tally t) { return t < Tally::kCount ? g_tally[static_cast<int>(t)] : 0; }
+
+uint32_t WaitsOf(int slot, WaitCause c) {
+    return InRoster(slot) && c < WaitCause::kCount ? g_slots[slot].waits[static_cast<int>(c)] : 0;
+}
+
+uint32_t MaxDepthOf(int slot) { return InRoster(slot) ? g_slots[slot].maxDepth : 0; }
+
+uint32_t AnsweredTotal(int slot) {
+    uint32_t total = 0;
+    if (!InRoster(slot)) return 0;
+    for (const uint32_t n : g_slots[slot].answered) total += n;
+    return total;
+}
+
+uint32_t CommitsOf(int slot, internal::CommitStep s) {
+    const int i = static_cast<int>(s);
+    return InRoster(slot) && i >= 0 && i < kCommitSteps ? g_slots[slot].commits[i] : 0;
+}
+
 }  // namespace coop::prop_act_host

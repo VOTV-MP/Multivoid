@@ -50,4 +50,12 @@ enum class Tally : uint8_t { TargetGone, BadCommit, HeldAtDisconnect, DestroyFai
                              GrantUnsent, kCount };
 enum class WaitCause : uint8_t { NotReady, Reservation, NoBody, kCount };
 
+// The counters the drills judge by. A slot outside 1..kMaxPeers-1 reads 0.
+uint32_t AnsweredFor(int slot, coop::net::PropActReason reason);   // replies sent per reason (Granted = grants)
+uint32_t TallyOf(Tally t);
+uint32_t WaitsOf(int slot, WaitCause c);                          // served Waits by cause (a counter, never a log)
+uint32_t MaxDepthOf(int slot);                                    // the deepest the slot's queue has been this session
+uint32_t AnsweredTotal(int slot);                                 // the sum of AnsweredFor over every reason
+uint32_t CommitsOf(int slot, internal::CommitStep s);             // commits taken per step
+
 }  // namespace coop::prop_act_host

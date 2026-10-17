@@ -79,12 +79,7 @@ struct Expired {
 std::vector<Expired> g_expired;
 
 // The last reply that matched no record, and how many there have been.
-struct StaleReply {
-    uint16_t id = 0;
-    uint8_t granted = 0, reason = 0;
-    uint32_t count = 0;
-};
-StaleReply g_lastStale;
+dev::LastReply g_lastStale;
 uint32_t g_badReasons = 0;
 uint32_t g_lateGrantsAborted = 0;
 
@@ -230,7 +225,7 @@ void Replay() {
 }
 
 void NoteStale(const coop::net::PropActReplyPayload& p) {
-    g_lastStale = StaleReply{p.id, p.granted, p.reason, g_lastStale.count + 1};
+    g_lastStale = dev::LastReply{p.id, p.granted, p.reason, g_lastStale.count + 1};
     const auto it = std::find_if(g_expired.begin(), g_expired.end(), [&](const Expired& e) { return e.id == p.id; });
     if (it == g_expired.end()) return;
     // The host answered this request after the wait ran out. A grant has reserved the prop, so it is ended with an
@@ -646,10 +641,16 @@ void OnDisconnect() {
     g_commits.clear();
     g_latch = Latch{};
     g_expired.clear();
-    g_lastStale = StaleReply{};
+    g_lastStale = dev::LastReply{};
     g_badReasons = 0;
     g_lateGrantsAborted = 0;
     for (size_t i = 0; i < kLineCount; ++i) g_shown[i] = false;
 }
+
+namespace dev {
+
+LastReply LastStaleReply() { return g_lastStale; }
+
+}  // namespace dev
 
 }  // namespace coop::prop_act_request

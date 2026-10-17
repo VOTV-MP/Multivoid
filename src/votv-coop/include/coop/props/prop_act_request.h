@@ -64,4 +64,9 @@ struct Pending {
 // try again." shows. Ids skip 0. Game thread.
 bool Ask(const Pending& filled, coop::net::PropActFamily family);
 
+namespace dev {   // called only from src/coop/dev/ (the act drills); compiled always, inert unless called
+struct LastReply { uint16_t id = 0; uint8_t granted = 0, reason = 0; uint32_t count = 0; };
+LastReply LastStaleReply();          // the last reply that matched no record (a forged request's answer), and how many
+}  // namespace dev
+
 }  // namespace coop::prop_act_request
