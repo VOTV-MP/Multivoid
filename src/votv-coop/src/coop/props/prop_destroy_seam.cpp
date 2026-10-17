@@ -162,8 +162,9 @@ void DestroySeamBody(void* self) {
     if (!actLatched) s->SendPropDestroy(dp);  // channel queues internally; always accepted
     // A client that just destroyed a keyed prop may be about to re-place the same prop (a
     // pickup, then a place). The key is parked so the place authors a host-authoritative drop
-    // intent, and only for a key whose destroy we just propagated, so the host re-spawn makes
-    // exactly one prop. Never reached inside the world-load episode, so join churn never parks.
+    // intent, and only for a key whose destroy we just broadcast or whose granted take's commit
+    // is on its way, so the host re-spawn makes exactly one prop. Never reached inside the
+    // world-load episode, so join churn never parks.
     if (!keyless && s->role() == coop::net::Role::Client) {
         coop::prop_drop_intent::NoteClientKeyedDestroy(keyStr);
     }

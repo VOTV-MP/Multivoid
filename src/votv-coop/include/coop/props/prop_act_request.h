@@ -3,8 +3,9 @@
 // which destroy is the replay's. Gameplay layer (principle 7). Game thread.
 //
 // One act is pending at a time. An honest wait ends in milliseconds, since every host Wait ends on the client's own
-// event; the 10 s bound covers a transport that refused the reply, and a grant that comes after it is answered with an
-// abort so the host's reservation never outlives the client's wait.
+// event; the 10 s bound covers a transport that refused the reply. Every request whose wait ran out is kept until the
+// host answers it, and a grant that comes after the bound is answered with an abort, so the host's reservation never
+// outlives the client's wait.
 
 #pragma once
 
@@ -23,8 +24,8 @@ namespace coop::prop_act_request {
 void Install(coop::net::Session* session);
 void Tick();                                     // sends the commits the transport refused again; the 10 s expiry of an
                                                  // open record
-void OnDisconnect();                             // the pending record, the unsent commits, the latch, the expired ring,
-                                                 // the last stale reply and the counters cleared
+void OnDisconnect();                             // the pending record, the unsent commits, the latch, the expired
+                                                 // requests, the last stale reply and the counters cleared
 void OnReply(const coop::net::PropActReplyPayload& p);
 
 // The destroy seam asks, before its keyed-interactable gate: is `actor` the target of the replay running now? Sets the

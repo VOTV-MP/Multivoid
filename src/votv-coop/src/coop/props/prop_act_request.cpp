@@ -16,9 +16,11 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/engine/engine.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <deque>
 #include <string>
+#include <vector>
 
 namespace coop::prop_act_request {
 namespace {
@@ -28,7 +30,8 @@ namespace PU = ue_wrap::prop_use;
 using coop::net::ReliableKind;
 
 // A reply that has not come in this long closes the record: an honest wait ends in milliseconds, so the bound covers
-// only a transport that refused the reply.
+// only a transport that refused the reply. MTA's client has no timer: it refuses a new entry until the server's word
+// arrives (CClientPed.cpp:6558, cleared at CPacketHandler.cpp:1796).
 constexpr uint64_t kReplyWaitMs = 10000;
 
 coop::net::Session* g_session = nullptr;
@@ -50,14 +53,13 @@ struct Latched {
     Latched& operator=(const Latched&) = delete;
 };
 
-// A request whose wait ran out, remembered so a grant that still arrives is answered with an abort.
+// A request whose wait ran out, kept until the host answers it, so a grant that still arrives is answered with an abort
+// and the host's reservation is always ended.
 struct Expired {
-    uint16_t id = 0;   // 0: empty (ids skip 0)
+    uint16_t id = 0;
     uint32_t eid = 0;
 };
-constexpr size_t kExpiredRing = 4;
-Expired g_expired[kExpiredRing];
-size_t g_expiredNext = 0;
+std::vector<Expired> g_expired;
 
 // The last reply that matched no record, and how many there have been.
 struct StaleReply {
@@ -150,35 +152,32 @@ void SendCommit(uint8_t committed) {
             committed ? "committed" : "aborted");
 }
 
-// The record's verb, as the player's press runs it, on the target.
-void RunVerb(void* target, void* local) {
+// The record's verb, as the player's press runs it, on the target. False when the verb could not run at all (a
+// function that does not resolve, a player or target that is not live), as distinct from a verb that ran and bailed.
+bool RunVerb(void* target, void* local) {
     switch (g_rec.row) {
     case kPocket: {
         bool taken = false;
-        E::CallPutObjectInventory2(local, target, g_rec.noNotify, taken);
-        return;
+        return E::CallPutObjectInventory2(local, target, g_rec.noNotify, taken);
     }
     case kHold: {
         bool collected = false;
-        E::CallMainPlayerHoldObject(local, target, collected);
-        return;
+        return E::CallMainPlayerHoldObject(local, target, collected);
     }
     case kFood:
     case kMre:
     case kPills:
-        PU::CallActionOptionIndex(target, local, g_rec.hitComponent.Get(), g_rec.hitLocation, g_rec.action,
-                                  g_rec.lookAt.Get());
-        return;
+        return PU::CallActionOptionIndex(target, local, g_rec.hitComponent.Get(), g_rec.hitLocation, g_rec.action,
+                                         g_rec.lookAt.Get());
     case kSoap: {
         // The CURRENT hand view: the sponge the player holds now, not the one it held when it pressed.
         E::MainPlayerGrabState g{};
-        E::ReadMainPlayerGrabState(local, g);
-        PU::CallPlayerUsedOn(target, local, g_rec.hitComponent.Get(), g_rec.hitLocation, g_rec.lookAt.Get(),
-                             g.holdingActor, g_rec.holdPropName);
-        return;
+        if (!E::ReadMainPlayerGrabState(local, g)) return false;
+        return PU::CallPlayerUsedOn(target, local, g_rec.hitComponent.Get(), g_rec.hitLocation, g_rec.lookAt.Get(),
+                                    g.holdingActor, g_rec.holdPropName);
     }
     default:
-        return;
+        return false;
     }
 }
 
@@ -193,12 +192,16 @@ void Replay() {
     }
     void* const local = coop::players::Registry::Get().Local();
     bool destroyed = false;
+    bool ran = false;
     {
         Latched scope(target);
-        RunVerb(target, local);
+        ran = RunVerb(target, local);
         destroyed = g_latch.destroyed;
     }
-    if (destroyed) {
+    if (!ran) {
+        UE_LOGW("prop_act: the replay of row %u could not run -- aborted", static_cast<unsigned>(g_rec.row));
+        SendCommit(0);
+    } else if (destroyed) {
         SendCommit(1);
         coop::remote_prop::UnregisterPropMirror(g_rec.eid);
     } else {
@@ -209,14 +212,15 @@ void Replay() {
 
 void NoteStale(const coop::net::PropActReplyPayload& p) {
     g_lastStale = StaleReply{p.id, p.granted, p.reason, g_lastStale.count + 1};
-    if (p.granted != 1 || p.reason != 0) return;
-    for (Expired& e : g_expired) {
-        if (e.id == 0 || e.id != p.id) continue;
-        QueueCommit(coop::net::PropActCommitPayload{e.id, 0, 0, e.eid});
-        e = Expired{};
+    const auto it = std::find_if(g_expired.begin(), g_expired.end(), [&](const Expired& e) { return e.id == p.id; });
+    if (it == g_expired.end()) return;
+    // The host answered this request after the wait ran out. A grant has reserved the prop, so it is ended with an
+    // abort (MTA's client has no late reply to answer: its entry waits for the server's word); a refusal reserved nothing.
+    if (p.granted == 1 && p.reason == 0) {
+        QueueCommit(coop::net::PropActCommitPayload{it->id, 0, 0, it->eid});
         ++g_lateGrantsAborted;
-        return;
     }
+    g_expired.erase(it);
 }
 
 }  // namespace
@@ -253,14 +257,12 @@ void Tick() {
     if (waited < kReplyWaitMs) return;
     UE_LOGI("prop_act: request id %u eid %u expired after %llu ms", static_cast<unsigned>(g_rec.id),
             static_cast<unsigned>(g_rec.eid), static_cast<unsigned long long>(waited));
-    g_expired[g_expiredNext] = Expired{g_rec.id, g_rec.eid};
-    g_expiredNext = (g_expiredNext + 1) % kExpiredRing;
+    g_expired.push_back(Expired{g_rec.id, g_rec.eid});
     ShowNotAsked();
     Close();
 }
 
 void OnReply(const coop::net::PropActReplyPayload& p) {
-    if (!g_session) return;
     UE_ASSERT_GAME_THREAD("prop_act_request::OnReply");
     const internal::ReplyAction action = internal::DecideReply(g_rec.open, g_rec.id, p);
     const uint64_t after = g_rec.open ? coop::net::NowMs() - g_rec.sentMs : 0;
@@ -295,8 +297,7 @@ void OnDisconnect() {
     Close();
     g_commits.clear();
     g_latch = Latch{};
-    for (Expired& e : g_expired) e = Expired{};
-    g_expiredNext = 0;
+    g_expired.clear();
     g_lastStale = StaleReply{};
     g_badReasons = 0;
     g_lateGrantsAborted = 0;
