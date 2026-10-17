@@ -13,6 +13,7 @@
 #include "coop/player/remote_player.h"
 #include "coop/props/container_birth.h"
 #include "coop/props/container_slice_wire.h"
+#include "coop/props/prop_act_request.h"
 #include "coop/props/prop_drive_stream.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
@@ -58,7 +59,7 @@ constexpr uint64_t kSettleBoundMs = 10000;
 constexpr uint64_t kCheckEveryMs  = 250;
 constexpr int      kRestChecks    = 4;
 
-enum class Step : uint8_t { Arm, Fill, Copy, Slice, Gone, Find, Settle, Throw, Done };
+enum class Step : uint8_t { Arm, Fill, Copy, Slice, Gone, Find, Settle, Throw, HoldWait, Done };
 Step     g_step = Step::Arm;
 uint64_t g_stepMs = 0;
 uint64_t g_nextCheckMs = 0;
@@ -262,6 +263,13 @@ void HostTick(coop::net::Session* s) {
     }
 }
 
+// CLIENT: the backpack is in the hand; throw it, which births its copy on the host.
+void ThrowTheHeld(void* player) {
+    if (!coop::dev::drive_drill_verbs::Throw(player)) { Abandon("the hand's backpack could not be thrown"); return; }
+    UE_LOGI("[THROW-DRILL] client (%s): the backpack taken into the hand and thrown, a new actor's birth", Mode().c_str());
+    g_step = Step::Done;
+}
+
 void ClientTick() {
     if (g_step == Step::Done) return;
     // The first client throws; a second, the rig's observer, keeps the host's session alive when gone kicks the
@@ -307,10 +315,20 @@ void ClientTick() {
     case Step::Throw: {
         void* pack = g_fixture.Get();
         if (!pack) { Abandon("the backpack's mirror died"); return; }
-        if (!coop::dev::drive_drill_verbs::Hold(player, pack)) { Abandon("the backpack could not be taken into the hand"); return; }
-        if (!coop::dev::drive_drill_verbs::Throw(player)) { Abandon("the hand's backpack could not be thrown"); return; }
-        UE_LOGI("[THROW-DRILL] client (%s): the backpack taken into the hand and thrown, a new actor's birth", Mode().c_str());
-        g_step = Step::Done;
+        if (coop::dev::drive_drill_verbs::Hold(player, pack)) { ThrowTheHeld(player); return; }
+        // The mirror's hold is asked of the host and ends a round trip after the call.
+        if (coop::prop_act_request::dev::PendingId() == 0) { Abandon("the backpack could not be taken into the hand"); return; }
+        Next(Step::HoldWait);
+        return;
+    }
+    case Step::HoldWait: {
+        if (coop::prop_act_request::dev::PendingId() != 0) return;
+        E::MainPlayerGrabState hand{};
+        if (!E::ReadMainPlayerGrabState(player, hand) || !hand.holdingActor) {
+            Abandon("the backpack could not be taken into the hand");
+            return;
+        }
+        ThrowTheHeld(player);
         return;
     }
     default:

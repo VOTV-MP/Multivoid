@@ -7,6 +7,7 @@
 #include "coop/player/hand_item.h"        // the hand axis a census must not count
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"    // the holder's puppet, for the watcher's census centre
+#include "coop/props/prop_act_request.h"  // dev::PendingId: a client's pickup of a shared prop is asked of the host
 #include "coop/session/net_pump.h"        // HasAnnouncedWorldReady
 
 #include "ue_wrap/actors/prop.h"
@@ -235,36 +236,32 @@ void* HoldingActor(void* player) {
     return gs.holdingActor;
 }
 
-// The game's own pickup, with the target handed in directly: `Hold Object` reads `manual` when it
-// is valid and only falls back to whatever the player is looking at when it is not, so a driver
-// needs no aim and no hit result. The name carries a space, which is a legal FName. It ends in
-// addEquip, which writes the hold slot and calls updateHold, so a collected prop IS a hand item --
-// and it destroys the world actor on the way, which is why a census taken while it is held reads
-// one row shorter on BOTH peers.
+// The pickup in progress on the holder, one candidate per act. The game's own pickup is E::CallMainPlayerHoldObject
+// with the target handed in directly: `Hold Object` reads `manual` when it is valid and only falls back to whatever
+// the player is looking at when it is not, so a driver needs no aim and no hit result. It ends in addEquip, which
+// writes the hold slot and calls updateHold, so a collected prop IS a hand item -- and it destroys the world actor on
+// the way, which is why a census taken while it is held reads one row shorter on BOTH peers.
 //
-// `collected` is the verb's own answer and the only honest one: the call returning says the frame
-// dispatched, while every refusal inside -- not simulating physics, too heavy, cannot be held --
-// leaves collected false and the hand empty. Whether a called verb's body ran is never inferred
-// from callability.
-bool CallHoldObject(void* player, void* target, bool& collectedOut) {
-    collectedOut = false;
-    void* cls = R::FindClass(P::name::MainPlayerClass);
-    void* fn  = cls ? R::FindFunction(cls, L"Hold Object") : nullptr;
-    if (!fn) {
-        UE_LOGW("hand_drop_selftest: 'Hold Object' unresolved on %ls -- cannot drive a pickup",
-                P::name::MainPlayerClass);
-        return false;
-    }
-    ue_wrap::ParamFrame f(fn);
-    if (!f.valid()) return false;
-    const uint32_t useHold = 0;   // false: take `manual`, not the grab slot
-    f.Set(L"useHold", useHold);
-    f.Set(L"manual", target);
-    if (!ue_wrap::Call(player, f)) return false;
-    collectedOut = f.Get<uint32_t>(L"collected") != 0;
-    return true;
-}
+// `collected` is the verb's own answer and the only honest one for a call that ran: the call returning says the frame
+// dispatched, while every refusal inside -- not simulating physics, too heavy, cannot be held -- leaves collected
+// false and the hand empty. A client's pickup of a shared prop does not run at the call: it is cancelled and asked
+// of the host, and the hand says what the act came to once no request is open.
+struct PickCandidate {
+    ue_wrap::CachedObjRef actor;
+    std::wstring          key;
+    std::wstring          cls;
+    float                 distCm = 0.f;
+};
+struct PickupRun {
+    bool                       active = false;
+    int                        episode = 0;
+    std::vector<PickCandidate> list;      // nearest first, at most kMaxPickupAttempts
+    size_t                     next = 0;  // the candidate the next act tries
+    bool                       asked = false;   // the act of list[next - 1] is open at the host
+};
+PickupRun g_pick;
 
+// ---- where each role censuses ------------------------------------------------------------------
 // The game's own release. Three were measured before this one was settled on, and what each does
 // is worth keeping, because the choice decides WHERE the released prop is when the peers exchange
 // it:
@@ -286,8 +283,6 @@ bool CallDropHolding(void* player) {
     if (!f.valid()) return false;
     return ue_wrap::Call(player, f);
 }
-
-// ---- where each role censuses ------------------------------------------------------------------
 
 // The holder censuses around itself; the watcher censuses around the holder's puppet, so both
 // peers measure the same region of the same world. Returns false when the watcher has no puppet
@@ -466,29 +461,19 @@ void RunStep(const Step& st, bool iAmHolder, uint64_t since) {
                     "episode cannot fire", st.episode, kTargetRadiusCm);
             return;
         }
-        int tried = 0;
+        // The acts run from PickupTick, one candidate each.
+        g_pick = PickupRun{};
+        g_pick.active  = true;
+        g_pick.episode = st.episode;
         for (const PropRow* r : byDistance) {
-            if (tried >= kMaxPickupAttempts) break;
-            ++tried;
-            if (!R::IsLive(r->actor)) continue;
-            bool collected = false;
-            const bool called = CallHoldObject(player, r->actor, collected);
-            void* nowHolding = HoldingActor(player);
-            UE_LOGI("hand_drop_selftest: ep%d PICKUP try %d key='%ls' cls='%ls' d=%.0fcm -- call=%d "
-                    "collected=%d holding=%p", st.episode, tried, r->key.c_str(), r->cls.c_str(),
-                    r->distCm, called ? 1 : 0, collected ? 1 : 0, nowHolding);
-            if (nowHolding) {
-                ep.targetKey   = r->key;
-                ep.pickupFired = called;
-                ep.pickupHeld  = true;
-                UE_LOGI("hand_drop_selftest: ep%d PICKUP OK after %d attempt(s) -- key='%ls' is in "
-                        "the hand as actor %p (the world copy is destroyed; a census here reads one "
-                        "row shorter until the drop)", st.episode, tried, r->key.c_str(), nowHolding);
-                return;
-            }
+            if (g_pick.list.size() >= static_cast<size_t>(kMaxPickupAttempts)) break;
+            g_pick.list.emplace_back();
+            PickCandidate& c = g_pick.list.back();
+            c.actor.Set(r->actor);
+            c.key    = r->key;
+            c.cls    = r->cls;
+            c.distCm = r->distCm;
         }
-        UE_LOGW("hand_drop_selftest: ep%d PICKUP -- %d candidate(s) tried, the game refused every "
-                "one; episode cannot fire", st.episode, tried);
         return;
     }
 
@@ -500,6 +485,55 @@ void RunStep(const Step& st, bool iAmHolder, uint64_t since) {
                 st.episode, ep.targetKey.c_str(), wasHolding, ep.dropFired ? 1 : 0,
                 ep.dropCleared ? 1 : 0);
     }
+}
+
+// The act of the candidate just tried has ended (it ran at the call, or the host's answer is in): the hand says
+// whether it was taken. A refusal leaves the run for the next candidate.
+void PickupSettle(void* player, bool called, bool collected) {
+    EpisodeResult& ep = g_ep[g_pick.episode];
+    const size_t tried = g_pick.next;
+    const PickCandidate& c = g_pick.list[tried - 1];
+    void* nowHolding = HoldingActor(player);
+    UE_LOGI("hand_drop_selftest: ep%d PICKUP try %zu key='%ls' cls='%ls' d=%.0fcm -- call=%d "
+            "collected=%d holding=%p", g_pick.episode, tried, c.key.c_str(), c.cls.c_str(),
+            c.distCm, called ? 1 : 0, collected ? 1 : 0, nowHolding);
+    if (!nowHolding) return;
+    ep.targetKey   = c.key;
+    ep.pickupFired = called;
+    ep.pickupHeld  = true;
+    UE_LOGI("hand_drop_selftest: ep%d PICKUP OK after %zu attempt(s) -- key='%ls' is in "
+            "the hand as actor %p (the world copy is destroyed; a census here reads one "
+            "row shorter until the drop)", g_pick.episode, tried, c.key.c_str(), nowHolding);
+    g_pick.active = false;
+}
+
+// One act of the pickup in progress per tick: while a request is open nothing else is called; when it ends, or when
+// the call ran at once, the hand is read and a refusal moves to the next candidate. The list is the attempt bound.
+void PickupTick() {
+    if (!g_pick.active) return;
+    void* player = MainPlayer();
+    if (!player) return;
+    if (g_pick.asked) {
+        if (coop::prop_act_request::dev::PendingId() != 0) return;
+        g_pick.asked = false;
+        PickupSettle(player, true, false);
+        return;
+    }
+    if (g_pick.next >= g_pick.list.size()) {
+        UE_LOGW("hand_drop_selftest: ep%d PICKUP -- %zu candidate(s) tried, the game refused every "
+                "one; episode cannot fire", g_pick.episode, g_pick.next);
+        g_pick.active = false;
+        return;
+    }
+    void* target = g_pick.list[g_pick.next++].actor.Get();
+    if (!target) return;   // died since the census: the try is spent
+    bool collected = false;
+    const bool called = E::CallMainPlayerHoldObject(player, target, collected);
+    if (called && !collected && coop::prop_act_request::dev::PendingId() != 0) {
+        g_pick.asked = true;
+        return;
+    }
+    PickupSettle(player, called, collected);
 }
 
 }  // namespace
@@ -532,6 +566,7 @@ void Tick() {
         ++g_next;
         RunStep(st, isHost == st.holderIsHost, since);
     }
+    PickupTick();
     if (!g_verdictPrinted && since >= kVerdictMs) {
         g_verdictPrinted = true;
         EmitVerdict();
@@ -554,6 +589,7 @@ void OnDisconnect() {
     g_next = 0;
     g_verdictPrinted = false;
     for (auto& ep : g_ep) ep = EpisodeResult{};
+    g_pick = PickupRun{};
     g_unreadable.clear();
     g_session.store(nullptr, std::memory_order_release);
 }

@@ -6,6 +6,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
+#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/world/world_singleton.h"
 
 #include <string>
@@ -22,11 +23,8 @@ void* PlayerFn(void* player, const wchar_t* name) {
 }  // namespace
 
 bool Pocket(void* player, void* prop) {
-    void* fn = PlayerFn(player, L"putObjectInventory2");
-    ue_wrap::ParamFrame f(fn);
-    if (!fn || !f.valid() || !f.Set(L"InputPin", prop) || !f.Set(L"noNotify", true) || !ue_wrap::Call(player, f))
-        return false;
-    return f.Get<bool>(L"return");
+    bool taken = false;
+    return ue_wrap::engine::CallPutObjectInventory2(player, prop, true, taken) && taken;
 }
 
 void* TakeOut(const std::wstring& cls, const std::wstring& key) {
@@ -50,12 +48,8 @@ void* TakeOut(const std::wstring& cls, const std::wstring& key) {
 }
 
 bool Hold(void* player, void* prop) {
-    void* fn = PlayerFn(player, L"Hold Object");
-    ue_wrap::ParamFrame f(fn);
-    const uint32_t useHold = 0;  // take `manual`, not the grab slot
-    if (!fn || !f.valid() || !f.Set(L"useHold", useHold) || !f.Set(L"manual", prop) || !ue_wrap::Call(player, f))
-        return false;
-    return f.Get<uint32_t>(L"collected") != 0;
+    bool collected = false;
+    return ue_wrap::engine::CallMainPlayerHoldObject(player, prop, collected) && collected;
 }
 
 bool Throw(void* player) {

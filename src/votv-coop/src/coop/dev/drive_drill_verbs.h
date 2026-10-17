@@ -9,6 +9,9 @@
 namespace coop::dev::drive_drill_verbs {
 
 // mainPlayer.putObjectInventory2: `prop` into the player's inventory, the world actor gone. True when it was taken.
+// A client's call on a mirror of a shared prop is cancelled and asked of the host: false at once, with
+// prop_act_request::dev::PendingId() != 0, and the act ends a round trip later (the caller waits on that, then reads
+// the inventory).
 bool Pocket(void* player, void* prop);
 
 // The player container's getObject for the carried record of class `cls` and key `key`: the inventory screen's take-out,
@@ -16,7 +19,8 @@ bool Pocket(void* player, void* prop);
 void* TakeOut(const std::wstring& cls, const std::wstring& key);
 
 // mainPlayer's "Hold Object" with `prop` as its target: the hand's pickup, the world actor gone and the item in hand.
-// True when it was collected.
+// True when it was collected. A client's call on a mirror of a shared prop is asked of the host as Pocket's is; the
+// caller then reads the hand once PendingId() is 0.
 bool Hold(void* player, void* prop);
 
 // mainPlayer.throwHoldingProp: its simulateDrop destroys the hand's item and spawns a new world actor of the hold
