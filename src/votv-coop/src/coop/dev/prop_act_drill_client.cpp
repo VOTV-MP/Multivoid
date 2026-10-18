@@ -106,8 +106,8 @@ void ClientAct(const Row& row, void* player) {
         }
     }
     if (row.verb == Verb::Use && !ue_wrap::vitals::Write(ue_wrap::vitals::Field::Food, 0.f)) {
-        // An eat goes through mainPlayer.addFood, which eats nothing once the save slot's food is at 100 ("Im not
-        // hungry", mainPlayer_C's addFood); the rows before have fed this player.
+        // An eat goes through mainPlayer's addFood, which eats nothing once the save slot's food is at 100 ("Im not
+        // hungry"; at health 80 or less a food that heals is still eaten): the rows before have fed this player full.
         ClientFail(row, "the player's hunger could not be emptied before the eat");
         return;
     }

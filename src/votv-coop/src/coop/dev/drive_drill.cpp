@@ -376,7 +376,11 @@ void ClientTick() {
         return;
     case Step::Pocket: {
         // The game gathers only a drive frozen or simulating: the born drive is pocketed once it rests gatherable.
-        if (!g_own.Alive() || !Gatherable(g_own.Get())) {
+        if (!g_own.Alive()) {
+            Fail("the born drive was gone before its pocket");
+            return;
+        }
+        if (!Gatherable(g_own.Get())) {
             if (Expired(kLegBoundMs)) Fail("the born drive never came to rest gatherable");
             return;
         }

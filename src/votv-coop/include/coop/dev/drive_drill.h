@@ -8,7 +8,8 @@
 //   CLIENT -- the put-back ("drill-deviation" written and upd() run must read "drill-fixture" at once); a director walk
 //             to a standpoint beside the eraser, the fixture seated, its slot line out, the delete pressed: the wipe
 //             within 10 s, the host's start and done shown by its eraser; a drive spawned with "drill-newborn"; a
-//             world drive with a row pocketed, taken back out, held and thrown; the wiped fixture forged and claimed.
+//             born drive pocketed once it rests gatherable, taken back out, held and thrown; the wiped fixture forged
+//             and claimed.
 // "[DRIVE-DRILL] FAIL" is the lane failing a step (--fail-marker), "[DRIVE-DRILL] ABANDONED" the drill unable to do
 // its part (--dead-marker). Run with drive_drill=run|join and --done-marker "[DRIVE-DRILL] host DONE".
 
