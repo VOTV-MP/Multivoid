@@ -123,7 +123,7 @@ struct RestWatch {
     }
 };
 RestWatch             g_rest;
-ue_wrap::CachedObjRef g_dropped;   // the ex-hand actor a drop released
+ue_wrap::CachedObjRef g_dropped;   // the world actor a throw spawned, which the player holds as its droppedItem
 
 struct EpisodeResult {
     bool         pickupFired = false;
@@ -581,15 +581,21 @@ void Advance(bool isHost, uint64_t now) {
             Fail(n, "drop", "the hand did not empty (call=" + std::to_string(ep.dropFired ? 1 : 0) + ")", false);
             return;
         }
-        g_dropped.Set(wasHolding);
+        // The throw destroys the hand item and spawns a new world actor, which the player keeps as its
+        // droppedItem: that one is the prop to settle, never the dead hand actor.
+        void* thrown = E::ReadMainPlayerDroppedItem(player);
+        if (!thrown || !R::IsLive(thrown)) {
+            Fail(n, "drop", "the throw left no dropped prop to wait on", false);
+            return;
+        }
+        g_dropped.Set(thrown);
         Enter(Stage::DropRest, now);
         return;
     }
     case Stage::DropRest: {
-        // The released actor itself; when the game released a different one, the world prop the key names.
         void* a = g_dropped.Get();
-        if (!a) a = coop::prop_key_index::Find(ep.targetKey);
-        if (!a || !g_rest.Step(a)) { waitOn("drop", "the dropped prop at rest"); return; }
+        if (!a) { Fail(n, "drop", "the thrown prop was destroyed before it came to rest", false); return; }
+        if (!g_rest.Step(a)) { waitOn("drop", "the dropped prop at rest"); return; }
         Say(head + "dropped key=" + coop::text::ToUtf8(ep.targetKey));
         if (!RunCensus(Act::CensusAfter, n, holderIsHost, iAmHolder, since)) {
             Fail(n, "after", "no census centre on the holder", false);
@@ -615,8 +621,13 @@ void Advance(bool isHost, uint64_t now) {
             return;
         }
         // The verdict is about the key the watcher inferred; the key the holder said it picked must be that
-        // one, or the chain waited on one prop and judged another.
-        if (!ep.targetKey.empty() && ep.targetKey != wkey) {
+        // one, or the chain waited on one prop and judged another. An empty inference is the same failure:
+        // the watcher could not name the subject.
+        if (ep.targetKey.empty()) {
+            Fail(n, "held", "the watcher could not name the subject the holder picked (" + key + ")", false);
+            return;
+        }
+        if (ep.targetKey != wkey) {
             Fail(n, "held", "the key this peer saw leave ('" + coop::text::ToUtf8(ep.targetKey) +
                             "') is not the one the holder picked ('" + key + "')", false);
             return;

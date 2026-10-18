@@ -21,15 +21,15 @@ namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
 namespace PR = ue_wrap::prop;
 
+// Keyed props whose location could not be read: each read once, since a failed read of a live actor faults
+// again, and reported by every census while it lives.
+std::vector<ue_wrap::CachedObjRef> g_unreadable;
+
 // Every live keyed prop within `radiusCm` of `centre`, sorted by key so both peers print the same
 // list in the same order. The hand axis is excluded on both roles: a peer's display mirror is a
 // real actor of the held item's class sitting at that peer's hands, so counting it would hide
 // exactly the loss this driver measures -- the census would read "still one prop here" while the
 // only thing there is the mirror that is about to be destroyed.
-// Keyed props whose location could not be read: each read once, since a failed read of a live actor faults
-// again, and reported by every census while it lives.
-std::vector<ue_wrap::CachedObjRef> g_unreadable;
-
 // `unread`: keyed props whose location could not be read -- anywhere, since an unread prop has no distance.
 std::vector<PropRow> Census(const ue_wrap::FVector& centre, float radiusCm, std::vector<PropRow>& unread) {
     std::vector<PropRow> out;

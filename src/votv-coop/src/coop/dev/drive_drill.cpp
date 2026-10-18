@@ -21,6 +21,7 @@
 
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/desk/drive_chain.h"
@@ -78,7 +79,7 @@ int      g_session = 1;
 bool     g_hostArmed = false;
 bool     g_hostDone = false;
 void*    g_fixture = nullptr;   // this peer's copy of the fixture
-void*    g_own = nullptr;       // CLIENT: the drive of its current leg
+ue_wrap::CachedObjRef g_own;   // CLIENT: the drive of its current leg
 std::wstring g_ownKey;          // CLIENT: the carried drive's key, its inventory record's
 std::wstring g_ownName;         // CLIENT: the carried drive's row name
 uint64_t g_mark = 0;            // CLIENT: a counter's value when the step began
@@ -203,7 +204,7 @@ PocketTry PocketNextWorldDrive(void* player) {
     std::vector<coop::element::Registry::ActorIdPair> pairs;
     coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, pairs);
     for (const auto& p : pairs) {
-        if (!p.actor || p.actor == g_fixture || p.actor == g_own || !R::IsLiveByIndex(p.actor, p.internalIdx) ||
+        if (!p.actor || p.actor == g_fixture || g_own.Is(p.actor) || !R::IsLiveByIndex(p.actor, p.internalIdx) ||
             !DC::IsDriveClass(R::ClassOf(p.actor)) ||
             std::find(g_pocketTried.begin(), g_pocketTried.end(), p.id) != g_pocketTried.end())
             continue;
@@ -382,8 +383,8 @@ void ClientTick() {
             return;
         }
         g_mark = DP::LaneCounts().ownSent;
-        g_own = SpawnDrive(90.f, kBorn, 5.f);
-        if (!g_own) {
+        g_own.Set(SpawnDrive(90.f, kBorn, 5.f));
+        if (!g_own.Alive()) {
             Abandon("a drive could not be spawned at this client's player");
             return;
         }
@@ -418,8 +419,8 @@ void ClientTick() {
         return;
     case Step::TakeOut:
         g_mark = DP::LaneCounts().ownSent;
-        g_own = DV::TakeOut(kDriveCls, g_ownKey);
-        if (!g_own || NameOf(g_own) != g_ownName) {
+        g_own.Set(DV::TakeOut(kDriveCls, g_ownKey));
+        if (!g_own.Alive() || NameOf(g_own.Get()) != g_ownName) {
             Abandon("the pocketed drive did not come back out of the inventory with its row");
             return;
         }
@@ -432,7 +433,7 @@ void ClientTick() {
             if (Expired(kLegBoundMs)) Fail("the taken-out drive's row never went to the host");
             return;
         }
-        if (DV::Hold(player, g_own)) {
+        if (DV::Hold(player, g_own.Get())) {
             ThrowTheHeldDrive(player);
             return;
         }
@@ -448,7 +449,7 @@ void ClientTick() {
         E::MainPlayerGrabState hand{};
         // A hold destroys the world drive and spawns a hand item of its class: the hold is taken when the
         // drive is gone and the hand has a drive.
-        if (!E::ReadMainPlayerGrabState(player, hand) || !hand.holdingActor || R::IsLive(g_own) ||
+        if (!E::ReadMainPlayerGrabState(player, hand) || !hand.holdingActor || g_own.Alive() ||
             R::ClassNameOf(hand.holdingActor) != kDriveCls) {
             Abandon("the taken-out drive could not be taken into the hand");
             return;
@@ -583,7 +584,8 @@ void OnDisconnect() {
     g_step = Step::Arm;
     g_stepMs = g_nextCheckMs = 0;
     g_hostArmed = g_hostDone = false;
-    g_fixture = g_own = nullptr;
+    g_fixture = nullptr;
+    g_own.Reset();
     g_ownKey.clear();
     g_ownName.clear();
     g_mark = 0;
