@@ -5,9 +5,9 @@ row is. This is a count view, never a percentage: the number of facets a system 
 is not enumerable, so a single "N% done" would hide which systems are solid and which are untouched.
 
 **State** says how far the row is: `works` (established in play), `tested` (exercised by a scripted
-run), `built` (the lane exists and has not been exercised), with the known breaks counted where
-there are any; the breaks themselves are on the system's page. Most mechanic-level facets sit at
-`built`; that majority is the honest state. **Owner**: `host` (the host writes, clients mirror), `peer` (each peer authors its own slice
+run), `built` (the lane exists and has not been exercised); known breaks are counted where there are any,
+and the breaks themselves are on the system's page. Most mechanic-level facets sit at `built`; that
+majority is the honest state. **Owner**: `host` (the host writes, clients mirror), `peer` (each peer authors its own slice
 and streams it), `presser` (whoever performs the action authors it, the host relays), `arbiter` (the
 host validates and commits contested writes), `local` (never shared).
 
@@ -30,6 +30,7 @@ host validates and commits contested writes), `local` (never shared).
 | System | Synced | Owner | Late join | State |
 |---|---|---|---|---|
 | Physics props | spawn, pose, grab, carry, throw, drop, destroy, a hook's drag and a broom's push (built); identity across saves and rejoins; each prop's own save record, for the classes that keep one; client-born props, including what a player spawns from the sandbox menu | presser while held, host at rest and under a hook | snapshot; a player-authored birth is claimed at its seam and re-claimed by the host's echo, so a pending sweep cannot doom it | works |
+| Sleeping bags and mattresses | a client interaction action sent to the host; the host runs the Blueprint that replaces the packed bag or mattress with its deployed form, or folds it back | host | host save and prop snapshot contain the currently live form | built (see [props.md](props.md)) |
 | Chip piles and clumps | the grab, carry, throw and re-pile cycle, and a broom's sweep | host with client intents | snapshot, a spawn-time bind, and a bounded hold for a pile the save load has not reached; a clump rolling at the join arrives as the pile it lands as | works |
 | Trash-bits piles | the counter pair | presser and host | snapshot | built |
 | Containers | open and close, mouse-driven torque samples for physical swinger hinges, contents (a slice of the host's object stack) | presser; host for contents | saved open/closed state; active hinge motion is not replayed | built, two known breaks; hinge motion needs a two-peer physics check |

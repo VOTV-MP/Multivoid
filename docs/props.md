@@ -232,6 +232,36 @@ publishes the notebook's updated prop save record (`coop/interactables/notebook_
 `coop/props/prop_save_data`). A joiner receives the notebook state from the loaded save; later
 in-session edits have no notebook-specific join replay. `[?]`
 
+### Sleeping bags and mattresses
+
+`prop_sleepingbag_C` exposes `actionOptionIndex` and has an `unwrapOnBed` field. Its generated
+Blueprint graph carries a `FinishSpawningActor` result typed as `sleepingbagWrap_C`. The wrapped
+form derives from `bed_C`, which derives from `Aprop_C`; it exposes `fold()`, whose graph carries a
+`FinishSpawningActor` result typed as `prop_sleepingbag_C`. The blue, brown, Stolas and mattress
+forms are subclasses of these two base classes. `[RD]`
+
+The deployed Blueprint form finishes with `Key=None`; after `FinishSpawningActor` the host assigns
+it a synthetic prop key and retries the ordinary lifecycle express. The client gates the packed
+bag's `actionOptionIndex` and the deployed bag's `fold()` call, sends the
+source prop's host element id and the action byte when unfolding, and cancels its local Blueprint
+verb. The host checks that the sender is in reach and that the named prop is still in the expected
+form, then invokes that same Blueprint verb on its copy. The Blueprint owns the replacement birth
+and source destruction; the host spawn watcher and prop lifecycle carry those edges to every peer.
+The joiner's host save and ordinary prop snapshot seed whichever form is live. The client does not
+choose the replacement class or transform. `[V]` `coop/interactables/sleepingbag_sync`,
+`ue_wrap/actors/sleepingbag`, `coop/props/host_spawn_watcher`, `coop/props/prop_lifecycle`.
+The receiver also handles a host replacement that reuses a save key with a different actor class:
+it retires the old local rendering before materialising the successor and consumes the source's
+following destroy, so that edge cannot remove the new form. `[V]` `coop/props/remote_prop_spawn`,
+`coop/props/remote_prop_destroy`.
+
+Unfolding is relayed as the interaction action byte so the Blueprint retains its own placement and
+mattress branches. The host runs it with the sender's remote-player puppet, preserving the game's
+player-relative checks. The intent is refused if the source lacks a host prop id, is out of reach,
+or has already changed form. `[RD]` the packed Blueprint graph uses two sphere traces, checks the
+target bed, spawns the wrapped actor and destroys its source; the wrapped graph's `fold()` spawns a
+packed actor and destroys its source. `[V]` sleepingbag CFG and generated SDK parameters.
+
 ### Props that change on their own
 
 A joiner loads the host's save, so every keyed world prop is a real save-loaded actor with its
@@ -318,6 +348,7 @@ prop resolves.
 
 | Concept | Files |
 |---|---|
+| sleeping bag and mattress replacement | `coop/interactables/sleepingbag_sync`, `ue_wrap/actors/sleepingbag`, `coop/props/host_spawn_watcher`, `coop/props/prop_lifecycle` |
 | the birth and death seams | `coop/props/prop_lifecycle`, `coop/props/host_spawn_watcher`, `coop/props/prop_element_tracker`, `coop/props/prop_synth_key`, `coop/props/registry_reaper`, `coop/props/prop_echo_suppress` |
 | the receivers | `coop/props/remote_prop` (held), `coop/props/remote_prop_spawn` (birth: adopt, converge, create), `coop/props/prop_fresh_spawn` (the materialiser), `coop/props/prop_wire_parity`, `coop/props/active_drive`, `coop/props/prop_sound` |
 | a client's intents | `coop/props/prop_drop_intent` |

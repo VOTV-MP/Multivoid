@@ -34,6 +34,7 @@
 #include "coop/props/prop_snapshot.h"      // ExpressIncrementalSpawn, the handback re-express
 #include "coop/props/prop_fresh_spawn.h"   // the deferred-spawn materialiser
 #include "coop/props/prop_lifecycle.h"
+#include "coop/props/prop_echo_suppress.h"  // replacement retires the old same-key form before its destroy edge arrives
 #include "coop/props/prop_stick_sync.h"    // ConvergeStuck, a wall-attach copy's stuck state
 #include "coop/props/prop_wire_parity.h"   // the shared physics and collision helpers
 #include "coop/props/remote_prop.h"
@@ -262,6 +263,23 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         }
     } else {
         existing = coop::prop_key_index::Find(keyW);
+    }
+    // A host-authored Blueprint replacement can reuse the source prop's save Key while changing
+    // its class (sleepingbag <-> sleepingbagWrap is one such transition). Treating every exact-key
+    // match as the same actor would bind the successor's eid to the old form; the following
+    // PropDestroy for the source would then resolve that key and erase the successor on this peer.
+    // Retire the old rendering here and let the ordinary materialiser create the host's new form.
+    // The host sends spawn before destroy on the shared Bulk lane, so the one-shot key mark below
+    // consumes only the old form's trailing destroy if its old eid no longer resolves.
+    if (existing && senderSlot == 0 && !fromConvert && !eidOnly && !keyW.empty() && keyW != L"None" &&
+        R::ClassNameOf(existing) != classW) {
+        const std::wstring oldClass = R::ClassNameOf(existing);
+        coop::prop_echo_suppress::MarkArbiterConsumedKey(keyW);
+        coop::remote_prop::ConsumeLocalActor(existing);
+        UE_LOGI("remote_prop::OnSpawn: host replacement for key '%ls' changes class '%ls' -> '%ls' -- "
+                "retired old rendering; materialising successor and consuming its trailing destroy",
+                keyW.c_str(), oldClass.c_str(), classW.c_str());
+        existing = nullptr;
     }
     if (existing) {
         // Host authority first, before the claim, the physics branches, the converge and the bind.

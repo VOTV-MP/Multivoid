@@ -14,6 +14,7 @@ the commit that ships the change.
 | Voice | 3D positional voice | each peer |
 | Master server and browser | an opt-in listing of the host's game, the update check, signaling for NAT traversal | the host opts in per session; the master is external infrastructure |
 | Physics props | pickup, drag, throw and drop; per-grab authority; an identity that survives saves and rejoins; world-to-inventory and inventory-to-world transitions | the holder while held; the host owns everything at rest |
+| Sleeping bags and mattresses | folded/deployed actor replacement; clients send the source id and interaction action, the host runs the Blueprint transition and authors the replacement | host ([props.md](props.md)) |
 | Piles and trash | the whole collection loop: piles, clumps, carrying, depositing | the host |
 | NPCs and creatures | pose, spawn and despawn, the kerfur prop-to-NPC cycle; enemies target every peer and a pursuit can switch targets between peers; creatures whose AI reads the local player are owned per peer and visible to all | the host, except the per-peer owned creatures |
 | Doors, lights and devices | doors, light switches and light groups, keypads, power panels, the garage, appliances, locker lids, windows, grime, the wind turbine, containers and their contents, the delivery drone, shop orders, the coin gun and the shared balance | the host holds the state; a client sends an intent that the host performs |

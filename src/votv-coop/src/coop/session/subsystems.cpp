@@ -35,6 +35,7 @@
 #include "coop/interactables/laptop_tab.h"  // the tab the PC's user is on
 #include "coop/interactables/laptop_buffer_sync.h"  // the PC buffer quad lane
 #include "coop/interactables/portable_pc_lid.h"  // the portable PC's lid lane
+#include "coop/interactables/sleepingbag_sync.h"  // client fold/unfold verbs run on the host's source prop
 #include "coop/interactables/floppy_slot_entry.h"
 #include "coop/interactables/mirror_slot_entry.h"
 #include "coop/interactables/floppy_slot_sync.h"
@@ -248,6 +249,7 @@ void Install(coop::net::Session& session) {
     coop::laptop_sync::Install(&session);  // the stationary PC's power and the portable PC lid's wire
     coop::laptop_tab::Install(&session);  // the PC user's tab: the three tab watches, and the receive paths' session
     coop::portable_pc_lid::Install(&session);  // the portable PC's lid, on its own verb
+    coop::sleepingbag_sync::Install(&session);  // sleepingbag transitions use host-authored prop births
     coop::laptop_buffer_sync::Install(&session);  // the PC buffer quad
     coop::floppybox_sync::Install(&session);  // the disc crate stack
     coop::props::container_contents_sync::Install(&session);  // container contents
@@ -526,6 +528,7 @@ DisconnectStats DisconnectAll() {
     coop::remover_request::OnDisconnect();  // drop the remover queues and the shown notices
     coop::kerfur_menu_input::OnDisconnect();  // drop the cached session (the InpActEvt_use observer stays registered)
     coop::prop_stick_sync::OnDisconnect();  // drop commit-pending stick records
+    coop::sleepingbag_sync::OnDisconnect();
     coop::item_activate::OnDisconnect();
     coop::weather_sync::OnDisconnect();
     coop::interactable_sync::OnDisconnect();
@@ -759,6 +762,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; coop::broom_stroke::Tick(session); }  // HOST: run the clients' queued broom strokes, one a tick a client (last: what a stroke spawns, sweeps and pushes is picked up next tick, as for the host's own)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:pack_trash"}; coop::pack_trash_intent::Tick(session); }  // client: spend the tools its presses sent; HOST: run one queued pack a tick a client
     { PP::Scope _s{PP::Bucket::Interactable}; coop::verb_lanes::Tick(session); }  // settle each verb lane's watches; HOST: run their queued intents
+    { PP::Scope _s{PP::Bucket::Interactable}; coop::sleepingbag_sync::Tick(session); }  // settle the gates and serve bounded fold/unfold intents
     { PP::Scope _s{PP::Bucket::Interactable}; coop::kerfus_lanes::Tick(session); }  // the Kerfus lanes' watches; CLIENT: waiting states; HOST: queued verbs
     { PP::Scope _s{PP::Bucket::Interactable}; coop::served_player::Tick(); }  // HOST: the served robots' seams
     { PP::Scope _s{PP::Bucket::Balance};       coop::balance_sync::Tick(); }  // host polls saveSlot.Points + broadcasts on change; client retries the pending mirror apply

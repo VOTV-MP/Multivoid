@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 235;
+inline constexpr uint16_t kProtocolVersion = 236;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1055,6 +1055,11 @@ enum class ReliableKind : uint8_t {
     // only from the peer holding that notebook's occupancy claim and broadcasts the canonical
     // text. Chunked NotebookTextBlob; never relayed.
     NotebookText = 187,
+
+    // Client to host: unfold a packed sleepingbag or fold its deployed bed. The host runs the
+    // source actor's own Blueprint; host_spawn_watcher and prop_lifecycle carry the replacement
+    // birth and source death. Late join: host save plus the ordinary prop snapshot. Never relayed.
+    SleepingbagIntent = 188,
 };
 
 #pragma pack(push, 1)
@@ -1742,6 +1747,23 @@ struct DoorVerbIntentPayload {
 static_assert(sizeof(DoorVerbIntentPayload) == 40, "DoorVerbIntentPayload must be 40 bytes");
 static_assert(sizeof(DoorVerbIntentPayload) <= 256 - 20 - 8,
               "DoorVerbIntentPayload must fit one datagram");
+
+namespace sleepingbag_intent {
+constexpr uint8_t kUnwrap = 1;
+constexpr uint8_t kFold = 2;
+}  // namespace sleepingbag_intent
+
+// The folded or deployed source prop by host eid, the verb, and the selected action byte for
+// actionOptionIndex (zero for fold). No transform or spawned class comes from the client.
+struct SleepingbagIntentPayload {
+    uint32_t elementId;
+    uint8_t  verb;
+    uint8_t  action;
+    uint8_t  reserved[2];
+};
+static_assert(sizeof(SleepingbagIntentPayload) == 8, "SleepingbagIntentPayload must be 8 bytes");
+static_assert(sizeof(SleepingbagIntentPayload) <= 256 - 20 - 8,
+              "SleepingbagIntentPayload must fit one datagram");
 
 // A camera toggle intent (CameraToggleIntent): the camera by the lane's key, which of its two bits, and the value
 // the sender's press wants it to have (the sender's own copy negated). The use of the camera is the active bit; the

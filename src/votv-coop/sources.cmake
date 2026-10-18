@@ -56,6 +56,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/actors/container_openers.cpp
     src/ue_wrap/actors/container_view.cpp
     src/ue_wrap/actors/floppy_disc.cpp
+    src/ue_wrap/actors/sleepingbag.cpp
     src/ue_wrap/actors/hook.cpp
     src/ue_wrap/world/keyed_objects.cpp
     src/coop/items/hook_sync.cpp
@@ -229,6 +230,7 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/served_player.cpp
     src/coop/interactables/keypad_sync.cpp
     src/coop/interactables/keypad_verbs.cpp
+    src/coop/interactables/sleepingbag_sync.cpp
     src/coop/world/time_sync.cpp
     src/coop/world/day_edge.cpp
     src/coop/world/sky_sync.cpp
