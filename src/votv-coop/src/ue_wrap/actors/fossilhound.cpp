@@ -104,7 +104,9 @@ void* HoundMesh(void* actor) {
     static bool sResolved = false;
     if (!sResolved) {
         if (!fname_utils::Resolved()) return nullptr;
-        sName = fname_utils::StringToFName(P::name::NpcClass_Fossilhound);
+        const R::FName name = fname_utils::StringToFName(P::name::NpcClass_Fossilhound);
+        if (name.ComparisonIndex == 0 && name.Number == 0) return nullptr;  // NAME_None: not latched, asked again
+        sName = name;
         sResolved = true;
     }
     int hops = 0;
