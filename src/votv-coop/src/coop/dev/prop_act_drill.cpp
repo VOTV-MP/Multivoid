@@ -69,8 +69,12 @@ constexpr const wchar_t* kKerfurNpc = L"kerfurOmega_C";
 // Once a session: the session start calls Install many times, and EdgeInstall sets the client's announce hold.
 bool g_installed = false;
 
-// The host's spawn: along slot 1's puppet's facing, the first distance whose column has a floor (found by a trace).
+// The host's spawn: the puppet's facing, then the rest of a fan round it, the first direction and distance whose
+// column has a floor (found by a trace).
 constexpr float kAheadCm[] = {200.f, 150.f, 250.f};
+constexpr float kFanDeg[] = {0.f, 45.f, -45.f, 90.f, -90.f, 135.f, -135.f, 180.f};
+constexpr int kFanCount = static_cast<int>(sizeof(kFanDeg) / sizeof(kFanDeg[0]));
+int g_fanDir = -1;                       // the fan index a step's first target took; its pair's second reads it
 constexpr float kDropCm = 40.f;          // above the floor, so the prop settles
 constexpr float kFloorDownCm = 400.f;    // how far under the puppet's middle the floor is looked for
 constexpr float kMinColumnCm = 20.f;     // a column whose floor is nearer than this to its start began inside geometry
@@ -320,8 +324,9 @@ std::string MirrorState(void* mirror) {
     return buf;
 }
 
-// Spawns the row's class on the floor in front of slot 1's puppet, `extraCm` further along when it is a pair's
-// second, so the client's walk to the mirror is short. A kerfur row spawns the NPC. Null on success, else why not.
+// Spawns the row's class on the first floor found round slot 1's puppet, its facing first, then the rest of the fan;
+// `extraCm` further along that direction when it is a pair's second, so the client's walk to the mirror is short. A
+// kerfur row spawns the NPC. Null on success, else why not.
 const char* SpawnTarget(const Row& row, float extraCm, void** out) {
     void* const player = coop::players::Registry::Get().Local();   // the floor trace's world context
     coop::RemotePlayer& rp = coop::puppet_drive::Puppet(kClientSlot);
@@ -335,21 +340,30 @@ const char* SpawnTarget(const Row& row, float extraCm, void** out) {
     const bool npc = row.target == Target::HostKerfur;
     void* const cls = npc ? nullptr : ue_wrap::asset_load::LoadObjectByPath(row.path);
     if (!npc && !cls) return "the target's class did not load";
-    for (const float base : kAheadCm) {
-        const float ahead = base + extraCm;
-        const float x = at.X + fwd.X / len * ahead, y = at.Y + fwd.Y / len * ahead;
-        float floorZ = 0.f;
-        void* p = nullptr;
-        const DP::Drop d = DP::DropOnFloor(player, cls, kKerfurNpc, x, y, at.Z, kFloorDownCm, kMinColumnCm,
-                                           npc ? kDropCm + kNpcLiftCm : kDropCm, &p, &floorZ);
-        if (d == DP::Drop::NoFloor) continue;
-        if (d == DP::Drop::SpawnFailed) return "the target did not spawn";
-        UE_LOGI("%s host %s spawned %ls at (%.0f, %.0f, %.0f), %.0f uu ahead of slot 1's puppet", kTag, row.name,
-                npc ? kKerfurNpc : row.leaf, x, y, floorZ + kDropCm, ahead);
-        *out = p;
-        return nullptr;
+    // A step's first target (extraCm 0) searches the whole fan and keeps its direction; the pair's second reads it.
+    const bool second = extraCm > 0.f && g_fanDir >= 0;
+    for (int i = second ? g_fanDir : 0; i < (second ? g_fanDir + 1 : kFanCount); ++i) {
+        const float rad = kFanDeg[i] * (3.14159265f / 180.f);
+        const float dx = (fwd.X * std::cos(rad) - fwd.Y * std::sin(rad)) / len;
+        const float dy = (fwd.X * std::sin(rad) + fwd.Y * std::cos(rad)) / len;
+        for (const float base : kAheadCm) {
+            const float ahead = base + extraCm;
+            const float x = at.X + dx * ahead, y = at.Y + dy * ahead;
+            float floorZ = 0.f;
+            void* p = nullptr;
+            const DP::Drop d = DP::DropOnFloor(player, cls, kKerfurNpc, x, y, at.Z, kFloorDownCm, kMinColumnCm,
+                                               npc ? kDropCm + kNpcLiftCm : kDropCm, &p, &floorZ);
+            if (d == DP::Drop::NoFloor) continue;
+            if (d == DP::Drop::SpawnFailed) return "the target did not spawn";
+            UE_LOGI("%s host %s spawned %ls at (%.0f, %.0f, %.0f), %.0f uu away at %.0f deg from slot 1's puppet's "
+                    "facing", kTag, row.name, npc ? kKerfurNpc : row.leaf, x, y, floorZ + kDropCm, ahead, kFanDeg[i]);
+            if (!second) g_fanDir = i;
+            *out = p;
+            return nullptr;
+        }
     }
-    return "no floor was found in front of slot 1's puppet";
+    if (!second) g_fanDir = -1;
+    return "no floor was found round slot 1's puppet";
 }
 
 }  // namespace detail
