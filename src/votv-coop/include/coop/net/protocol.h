@@ -1157,11 +1157,14 @@ inline constexpr uint8_t kStateBitBurning = 0x04;  // the source's body is on fi
 inline constexpr float kVitalScalarMax = 100.0f;
 
 // Encode a [0,1] fraction as a byte (round-to-nearest, clamped). The exact
-// inverse pair lives here so sender + receiver can never drift.
+// inverse pair lives here so sender + receiver can never drift. Only zero encodes as 0: a
+// positive fraction below half a step rounds up to 1, so a living player's health (the host's
+// hit judge refuses a swinger whose streamed health is 0) never reads as dead.
 inline uint8_t QuantizeUnitFraction(float f01) {
     if (f01 <= 0.f) return 0;
     if (f01 >= 1.f) return 255;
-    return static_cast<uint8_t>(f01 * 255.f + 0.5f);
+    const uint8_t b = static_cast<uint8_t>(f01 * 255.f + 0.5f);
+    return b == 0 ? 1 : b;
 }
 inline float DequantizeUnitFraction(uint8_t b) {
     return static_cast<float>(b) * (1.f / 255.f);
