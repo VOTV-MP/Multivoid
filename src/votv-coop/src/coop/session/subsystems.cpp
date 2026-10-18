@@ -128,6 +128,7 @@
 #include "coop/props/grab_observer.h"
 #include "coop/player/item_activate.h"
 #include "coop/player/player_damage.h"
+#include "coop/player/player_hit.h"
 #include "coop/session/player_handshake.h"  // TickSkinConverge
 #include "coop/player/skin_preview.h"
 #include "coop/net/session.h"
@@ -192,6 +193,7 @@ void ReleaseSessionGateHold() {
 
 void InstallLoadWatchers(coop::net::Session& session) {
     coop::comp_sync::Install(&session);  // the refiner's decode: the host's machine alone, a joiner's restore refused
+    coop::player_hit::Install(&session);  // the session the host's hit deliveries send through
 }
 
 void Install(coop::net::Session& session) {
@@ -202,7 +204,7 @@ void Install(coop::net::Session& session) {
     coop::world_actor_sync::Install(&session);  // non-Character event-actor mirror (2nd BeginDeferred interceptor, disjoint allowlist)
     coop::piramid_sync::Install(&session);  // piramid event choreography lane (hooks arm lazily on the first piramid element)
     coop::item_activate::Install(&session);  // flashlight
-    coop::player_damage::Install(&session);  // vitals damage relay (send + owner-apply)
+    coop::player_damage::Install(&session);  // the refusals on a peer's puppet: its impacts, damage, fire and hit verbs
     coop::weather_sync::Install(&session);  // weather
     coop::interactable_sync::Install(&session);  // doors + lights + container lids
     coop::keypad_sync::Install(&session);  // the password keypads' index and wire (its own module)

@@ -1,5 +1,5 @@
-// harness/autotest/autotest_playerdmg.cpp -- the PlayerDamage relay end-to-end autotest
-// (VOTVCOOP_RUN_PLAYERDMG_TEST): the HOST sends synthetic PlayerDamage to slot 1 and observes its
+// harness/autotest/autotest_playerdmg.cpp -- the PlayerHit delivery end-to-end autotest
+// (VOTVCOOP_RUN_PLAYERDMG_TEST): the HOST delivers a synthetic PlayerHit to slot 1 and observes its
 // puppet flash via the round-trip streamed health drop; the CLIENT is passive. Interfaces and
 // per-routine docs in harness/autotest.h.
 
@@ -33,18 +33,18 @@ bool WaitDone(const std::shared_ptr<std::atomic<int>>& d, int timeoutMs) {
     return d->load() != 0;
 }
 
-// Proves the WHOLE host->owner damage relay with NO real enemy. The HOST both DRIVES and OBSERVES:
-// it sends synthetic PlayerDamage to slot 1 (player_damage::DebugForceHitPuppet); the CLIENT
-// receives it (event_feed) and runs Add Player Damage on its OWN possessed player
-// (player_damage::OnWireDamage); the client's saveSlot.health drops; the pose stream carries the
+// Proves the WHOLE host->owner hit delivery with NO real creature. The HOST both DRIVES and OBSERVES:
+// it delivers a synthetic PlayerHit to slot 1 (player_damage::DebugForceHitPuppet); the CLIENT
+// receives it (event_feed) and runs addDamage on its OWN possessed player
+// (player_hit::OnReceived); the client's saveSlot.health drops; the pose stream carries the
 // lower fraction; and the host's slot-1 puppet SetVitals detects the drop and flashes. The CLIENT
 // is passive -- it receives and applies automatically. Gated by env VOTVCOOP_RUN_PLAYERDMG_TEST=1.
 
 void DrivePlayerDamageOnHost() {
-    UE_LOGI("playerdmg_test[host]: driver+observer armed -- send synthetic PlayerDamage to slot 1, "
+    UE_LOGI("playerdmg_test[host]: driver+observer armed -- deliver a synthetic PlayerHit to slot 1, "
             "confirm its puppet flashes via the round-trip streamed health drop");
 
-    // Wait for the slot-1 puppet AND the client's Player Element (so SendPlayerDamage
+    // Wait for the slot-1 puppet AND the client's Player Element (so Deliver
     // can stamp targetElementId). Both resolve a few seconds after the client connects.
     bool ready = false;
     for (int attempt = 0; attempt < 60 && !ready; ++attempt) {
@@ -65,7 +65,7 @@ void DrivePlayerDamageOnHost() {
         UE_LOGI("playerdmg_test[host]: DONE");
         return;
     }
-    UE_LOGI("playerdmg_test[host]: slot-1 ready -- interleaving PlayerDamage hits with flash observation");
+    UE_LOGI("playerdmg_test[host]: slot-1 ready -- interleaving PlayerHit deliveries with flash observation");
 
     // INTERLEAVE send and observe: the hurt-flash is a transient 500 ms window and the host both
     // drives AND observes, so it must poll WHILE the flash is open. Each iteration sends ONE hit,
@@ -115,19 +115,19 @@ void DrivePlayerDamageOnHost() {
             hits, minHealthSeen, sawFlash ? 1 : 0);
 
     if (sawFlash)
-        UE_LOGI("playerdmg_test[host]: VERDICT PlayerDamage relay PASS -- a host-sent PlayerDamage made the "
+        UE_LOGI("playerdmg_test[host]: VERDICT PlayerHit delivery PASS -- a host-delivered PlayerHit made the "
                 "client apply damage to its OWN player; the streamed health drop flashed the host's slot-1 "
-                "puppet (full reliable host->owner relay, no real enemy)");
+                "puppet (full reliable host->owner delivery, no real creature)");
     else
-        UE_LOGW("playerdmg_test[host]: VERDICT FAIL -- sent PlayerDamage but never saw the slot-1 puppet "
-                "flash. Check the CLIENT log for 'player_damage: applied' (apply) + a health-frac stream.");
+        UE_LOGW("playerdmg_test[host]: VERDICT FAIL -- delivered a PlayerHit but never saw the slot-1 puppet "
+                "flash. Check the CLIENT log for '[HIT] applied' (apply) + a health-frac stream.");
     UE_LOGI("playerdmg_test[host]: DONE");
 }
 
-// CLIENT side: passive. It receives PlayerDamage + applies it via the event_feed ->
-// player_damage::OnWireDamage path with no driving needed; just stay connected.
+// CLIENT side: passive. It receives PlayerHit + applies it via the event_feed ->
+// player_hit::OnReceived path with no driving needed; just stay connected.
 void IdlePlayerDamageOnClient() {
-    UE_LOGI("playerdmg_test[client]: connected -- idling; will receive + apply host PlayerDamage automatically");
+    UE_LOGI("playerdmg_test[client]: connected -- idling; will receive + apply the host's PlayerHit automatically");
 }
 
 }  // namespace

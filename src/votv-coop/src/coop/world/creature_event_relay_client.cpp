@@ -43,6 +43,22 @@ std::unordered_map<EL::ElementId, Entry> g_entries;
 std::unordered_set<EL::ElementId> g_refusalLogged;  // creatures whose refused call was said once; at most kMaxEntries
 uint32_t g_sweptGeneration = 0;
 
+// The setEvent calls a per-viewer mirror made itself and ran, by eid; at most kMaxEntries creatures. They outlive
+// the mirror, so a count read after its destroy still pairs; the disconnect drops them.
+struct ViewerCalls {
+    uint32_t trues  = 0;
+    uint32_t falses = 0;
+};
+std::unordered_map<EL::ElementId, ViewerCalls> g_viewerCalls;
+
+void CountViewerCall(void* ctx, bool active) {
+    const EL::ElementId eid = NpcEidOf(ctx, /*mirror=*/true);
+    if (eid == EL::kInvalidId) return;
+    if (g_viewerCalls.size() >= kMaxEntries && g_viewerCalls.find(eid) == g_viewerCalls.end()) return;
+    ViewerCalls& v = g_viewerCalls[eid];
+    ++(active ? v.trues : v.falses);
+}
+
 bool Bound(const Entry& e) { return e.actor != nullptr; }
 
 bool ActorLive(const Entry& e) {
@@ -123,16 +139,21 @@ void Reconcile(EL::ElementId eid) {
 }  // namespace
 
 // A call is cancelled only when the relay holds a bound entry for this very actor: a mirror the relay never bound
-// (no event registry yet, a full table, a per-viewer class) counts its own, and runs natively. The PRE is the
-// suppression at the source, as MTA disables a local writer where it writes
-// (reference/mtasa-blue/Client/multiplayer_sa/CMultiplayerSA.cpp:854-858).
+// (no event registry yet, a full table, a per-viewer class) counts its own, and runs natively; a per-viewer
+// mirror's own calls are counted for the drill. The PRE is the suppression at the source, as MTA disables a local
+// writer where it writes (reference/mtasa-blue/Client/multiplayer_sa/CMultiplayerSA.cpp:854-858).
 bool ClientPre(void* ctx, bool active) {
-    if (!ctx || ctx == g_applyingCtx || g_entries.empty()) return false;
+    if (!ctx || ctx == g_applyingCtx) return false;
+    if (IsPerViewer(ctx)) {
+        CountViewerCall(ctx, active);
+        return false;
+    }
+    if (g_entries.empty()) return false;
     const EL::ElementId eid = NpcEidOf(ctx, /*mirror=*/true);
     if (eid == EL::kInvalidId) return false;
     const auto it = g_entries.find(eid);
     if (it == g_entries.end() || !Bound(it->second) || it->second.actor != ctx ||
-        it->second.generation != WI::Generation() || IsPerViewer(ctx))
+        it->second.generation != WI::Generation())
         return false;
     if (g_refusalLogged.size() < kMaxEntries && g_refusalLogged.insert(eid).second)
         UE_LOGI("creature_event_relay: mirror eid=%u's own setEvent(%d) refused (the host's count is relayed)", eid,
@@ -235,6 +256,7 @@ void ClientOnDisconnect() {
     for (const EL::ElementId id : ids) EndEntry(id);
     g_entries.clear();
     g_refusalLogged.clear();
+    g_viewerCalls.clear();
     g_sweptGeneration = 0;
 }
 
@@ -246,6 +268,16 @@ int ClientTargetFor(EL::ElementId eid) {
 int ClientAppliedFor(EL::ElementId eid) {
     const auto it = g_entries.find(eid);
     return it == g_entries.end() ? -1 : it->second.applied;
+}
+
+uint32_t ClientViewerTrues(EL::ElementId eid) {
+    const auto it = g_viewerCalls.find(eid);
+    return it == g_viewerCalls.end() ? 0 : it->second.trues;
+}
+
+uint32_t ClientViewerFalses(EL::ElementId eid) {
+    const auto it = g_viewerCalls.find(eid);
+    return it == g_viewerCalls.end() ? 0 : it->second.falses;
 }
 
 }  // namespace coop::creature_event_relay::detail

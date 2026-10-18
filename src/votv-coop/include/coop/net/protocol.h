@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 234;
+inline constexpr uint16_t kProtocolVersion = 235;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -211,10 +211,10 @@ enum class ReliableKind : uint8_t {
     // is a replacement, and the receiver drains the outgoing occupant first.
     RosterRow = 19,
 
-    // Host to one client: an enemy on the host hit your puppet; apply this damage to your own
-    // player, whose own armor mitigates it. Never relayed; the receiver requires slot 0 as sender.
-    // PlayerDamagePayload.
-    PlayerDamage = 20,
+    // Host to one client: a parked creature's hit on your puppet; run the same verb (addDamage or
+    // punch) on your own player, whose own armor mitigates it. Never relayed; the receiver requires
+    // slot 0 as sender. PlayerHitPayload.
+    PlayerHit = 20,
 
     // Host to all: the shared balance, absolute. The host polls its own points and sends on change
     // and on a connect edge; a client writes the value directly. BalancePayload. Value 24 was the
@@ -2703,16 +2703,30 @@ static_assert(sizeof(ItemActivatePayload) <= 256 - 20 - 8,
 // flags bits for ItemActivatePayload.flags
 inline constexpr uint8_t kItemActivateFlag_HasActorKey = 0x01;
 
-// A damage relay (PlayerDamage): the owner peer's Player element id, so the receiver verifies it is
-// the addressed peer, and the raw hit amount its own armor mitigates.
-struct PlayerDamagePayload {
-    uint32_t targetElementId;  // the OWNER peer's Player Element id (host-stamped)
-    float    damage;           // raw hit amount; owner BP mitigates per its inventory
+// A hit on a player (PlayerHit), host to the victim: the verb the host's copy of the hit ran on the
+// victim's puppet, rebuilt on the victim's own player with only the arguments the Blueprint reads.
+// `hit` of addDamage travels as a default hit result and `skipSetting` as false. Host-authored, so
+// the receiver checks the format only: a zero-damage knock-down and a lethal 1E+27 are both real.
+inline constexpr uint8_t kPlayerHitVerbAddDamage = 0;  // v0 = impact
+inline constexpr uint8_t kPlayerHitVerbPunch     = 1;  // v0 = fullBody, v1 = boneImp, v2 = damageLocation
+inline constexpr uint8_t kPlayerHitBoneCount     = 6;  // bone: None, chest, head, pelvis, torso, lowlegs
+
+struct PlayerHitPayload {
+    uint32_t targetElementId;  // the VICTIM's Player Element id (host-stamped)
+    uint8_t  verb;             // kPlayerHitVerb*
+    uint8_t  bone;             // punch's bn1 as an index into the six names; 0 (None) for addDamage
+    uint16_t pad;              // 0, ignored
+    uint32_t sourceEid;        // the creature's Npc element, which addDamage's `actor` becomes on the victim's
+                               // machine; 0 = a null actor
+    float    damage;           // raw amount; the victim's armor and branches act on it
+    float    v0[3];
+    float    v1[3];
+    float    v2[3];
 };
-static_assert(sizeof(PlayerDamagePayload) == 8,
-              "PlayerDamagePayload must be exactly 8 bytes");
-static_assert(sizeof(PlayerDamagePayload) <= 256 - 20 - 8,
-              "PlayerDamagePayload must fit in one reliable datagram");
+static_assert(sizeof(PlayerHitPayload) == 52,
+              "PlayerHitPayload must be exactly 52 bytes");
+static_assert(sizeof(PlayerHitPayload) <= 256 - 20 - 8,
+              "PlayerHitPayload must fit in one reliable datagram");
 
 // WispGrab, host to one victim: the host's wisp is grabbing this client's puppet; the host
 // neutralized its own false grab and tells the victim to ragdoll-die after a fixed delay. The

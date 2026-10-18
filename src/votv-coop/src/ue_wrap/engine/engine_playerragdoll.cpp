@@ -4,8 +4,8 @@
 // visible flopping kel body, whose SkeletalMesh self-configures to `kel_lmao` / `inst_kel_body` and
 // is natively rigged to the six-bone chain lowlegs-thighs-pelvis-chest-head-head_end. We spawn it
 // OURSELVES on a puppet (coop/remote_player) as the visible flop display, and the caller hides the
-// puppet's own kel meshes for it. We never call ragdollMode: it is globally scoped and kills the
-// host, firing the death event whatever its params say.
+// puppet's own kel meshes for it. A rig probe measured ragdollMode(true, false, false) and punch on a controller-less
+// puppet neither killing the host nor leaking over five minutes; the earlier note came from a reading of the bytecode.
 //
 // The recipe, from an SP-solo probe (harness/autotest/autotest_ragdoll_spawn_probe.cpp):
 // BeginDeferredSpawn(playerRagdoll_C); write Player, an Expose-On-Spawn field that must land

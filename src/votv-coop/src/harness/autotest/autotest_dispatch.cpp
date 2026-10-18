@@ -122,9 +122,9 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // The puppet-damage hazard probe: the host applies Add Player Damage to the slot-1 puppet and
     // diffs its own health, confirming player health is the shared per-machine save slot.
     SpawnIf("VOTVCOOP_RUN_DMGHAZARD_TEST", "damage-hazard #6 probe", &DmgHazardTestThread, role);
-    // The PlayerDamage relay test: the host sends a synthetic PlayerDamage to slot 1, the client
-    // applies it, and the streamed health drop flashes the host's puppet.
-    SpawnIf("VOTVCOOP_RUN_PLAYERDMG_TEST", "PlayerDamage relay e2e", &PlayerDamageTestThread, role);
+    // The hit delivery test: the host delivers a synthetic PlayerHit to slot 1, the client applies it,
+    // and the streamed health drop flashes the host's puppet.
+    SpawnIf("VOTVCOOP_RUN_PLAYERDMG_TEST", "PlayerHit delivery e2e", &PlayerDamageTestThread, role);
     // The native death chain, solo and sessionless: a lethal Add Player Damage, the whole native
     // death, its timeline and the dead-window memory differential.
     SpawnIf("VOTVCOOP_RUN_DEATH_TEST", "native death chain", &DeathTestThread, role);

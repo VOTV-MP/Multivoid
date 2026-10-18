@@ -31,7 +31,7 @@
 #include "coop/interactables/laptop_sync.h"  // PayOwed: a client's laptop power at its pace
 #include "coop/player/sleep_sync.h"          // PayOwed: a client's rest state at its pace
 #include "coop/world/alarm_sync.h"           // PayOwed: a client's alarm request at its pace
-#include "coop/player/player_damage.h"
+#include "coop/player/player_hit.h"
 #include "coop/creatures/wisp_tear_mirror.h"  // WispGrab and WispTear receivers
 #include "coop/player/local_body.h"     // the host's own skin belongs in its own roster row
 #include "coop/player/nick_color.h"  // ResetSlots() at bringup -- a colour lands before its row
@@ -206,18 +206,11 @@ void Update(net::Session& session, void* localPlayer) {
             ue_wrap::game_thread::Post([] { ::coop::dev::restore_vitals::ApplyLocally(); });
             break;
         }
-        case net::ReliableKind::PlayerDamage: {
-            // The host detected an enemy hitting this peer's puppet and relays the damage for the
-            // owner to apply. Host-only origin (only the host runs enemies); not in the relay
-            // whitelist. The target id check and the apply live in player_damage.
-            if (msg.payloadLen < sizeof(net::PlayerDamagePayload)) {
-                UE_LOGW("event_feed: PlayerDamage payload too short (%zu < %zu)",
-                        static_cast<size_t>(msg.payloadLen), sizeof(net::PlayerDamagePayload));
-                break;
-            }
-            net::PlayerDamagePayload p{};
-            std::memcpy(&p, msg.payload, sizeof(p));
-            coop::player_damage::OnWireDamage(p);
+        case net::ReliableKind::PlayerHit: {
+            // The host's copy of a creature's hit landed on this peer's puppet and is relayed for the
+            // owner to apply to its own player. Host-only origin (only the host runs creatures); not in
+            // the relay whitelist. The bounds, the target id check and the apply live in player_hit.
+            coop::player_hit::OnReceived(msg.payload, msg.payloadLen);
             break;
         }
         case net::ReliableKind::WispGrab: {

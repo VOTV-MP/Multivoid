@@ -148,7 +148,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::LightningStrike:
     case ReliableKind::AssignPeerSlot:
     case ReliableKind::RosterRow:
-    case ReliableKind::PlayerDamage:
+    case ReliableKind::PlayerHit:
     case ReliableKind::BalanceSync:
     case ReliableKind::KeypadState:
     case ReliableKind::SnapshotBegin:

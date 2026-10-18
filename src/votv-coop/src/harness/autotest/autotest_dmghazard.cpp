@@ -40,8 +40,8 @@ bool WaitDone(const std::shared_ptr<std::atomic<int>>& d, int timeoutMs) {
 // ===================== puppet-damage hazard PROBE =====================
 // mainPlayer_C carries no per-actor health: it lives on UsaveSlot_C, one store per machine, so a damage
 // or fire entry run on an UNPOSSESSED host-side puppet (a second mainPlayer_C) could drain or burn the
-// HOST. coop/player/player_damage refuses the damage verb and ignite on a puppet; this probe fires both
-// and addDamage at the slot-1 puppet and judges by those refusals and the host's own health, the same
+// HOST. coop/player/player_damage refuses the damage verb, addDamage and ignite on a puppet; this probe fires all
+// three at the slot-1 puppet and judges by those refusals and the host's own health, the same
 // verb at the host's own player the control that the calls land. Health is restored after; the hit is
 // 5 of ~100. The client only connects, so the puppet exists. Host-only verdict.
 
@@ -209,7 +209,8 @@ void ProbeDamageHazardOnHost() {
     UE_LOGI("dmghazard[host]: 'Add Player Damage' at the puppet -> %s (health %.2f -> %.2f)", Name(o1), h1,
             ReadHostHealthGT());
 
-    // 2. addDamage at the puppet, the entry a native hit forwards to: its nested verb is refused.
+    // 2. addDamage at the puppet, the entry a native hit forwards to: cancelled itself, counted in
+    //    RefusedDamage. The call has no caller object, so nothing is delivered to the peer.
     const uint32_t d2 = PD::RefusedDamage();
     const float h2 = ReadHostHealthGT();
     InvokeAddDamageGT(*puppet, 5.f, "PUPPET");

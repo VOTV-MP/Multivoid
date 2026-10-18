@@ -138,9 +138,12 @@ is host-authored world state. A burning owner's flame is shown: its burning time
 stream as a display bit, and the puppet switches the body's own flame on and off, nothing else. A
 peer that joins sees it from the next pose, since the bit is level, not an edge.
 
-Enemy hits are the one relay: the host runs the enemies, and when one hits a peer's puppet the host sends that peer a reliable damage event,
-which the peer applies on its own pawn, armour and inventory mitigation included, so its health
-stream and hurt flash follow.
+The hit verbs (`addDamage`, `punch`, `ragdollMode`) are refused on a puppet the same way, whoever calls them.
+Creature hits are the one relay: the host runs the creatures. A creature of a parked family (the zombies, the
+fossil hound) hits through those verbs, and its copy on a client makes no hit of its own, so when the host's
+creature hits a peer's puppet the host sends that peer a reliable `PlayerHit`, which runs the same verb on the
+peer's own player (`coop/player/player_hit`), armour and inventory mitigation included, so its health stream
+and hurt flash follow.
 
 Death is per peer and runs natively to its end: the sound, the dead flag, the black screen. The
 cut is the last stage, the travel that would unload the world.
@@ -285,7 +288,7 @@ host. A setting that holds a password is never set or shown by command.
 | `Join`, `RosterRow` | each peer; the host | identity, nickname, skin, preferences; who occupies each slot |
 | `SkinChange`, `NameplateChange`, `NickColorChange` | each peer, relayed | the three preferences |
 | `HandItem`, `ItemActivate` | each peer, relayed | the held item's class, its actor's name and its hold slot's item name (the key of the game's item tables); the flashlight state |
-| `PlayerDamage` | host to the hit peer | an enemy hit to apply |
+| `PlayerHit` | host to the hit peer | a parked creature's hit on the peer's puppet: the verb (addDamage or punch) to run on its own player |
 | `SleepState` | a client to the host; the host to all | a rest state with its bed (awake, resting, dreaming); the host's sleeping flag; one peer's rest state relayed |
 | `PlayerInventoryBlob` | both | the per-player profile (items, vitals, standing spot), pre-world |
 | `TeleportClient` | host to one peer | a placement; the administration action, not the join |

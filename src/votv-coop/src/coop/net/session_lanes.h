@@ -57,7 +57,7 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::TeleportClient: return Lane::High;
     case ReliableKind::RestoreVitals:  return Lane::High;
     case ReliableKind::ItemActivate:   return Lane::High;
-    case ReliableKind::PlayerDamage:   return Lane::High;  // combat event -- prioritize
+    case ReliableKind::PlayerHit:      return Lane::High;  // combat event -- prioritize
     // Spawn and Destroy share a lane: GNS orders delivery within a lane, not across lanes, and a
     // destroy overtaking its spawn under backpressure leaves a phantom actor.
     case ReliableKind::PropSpawn:      return Lane::Bulk;
