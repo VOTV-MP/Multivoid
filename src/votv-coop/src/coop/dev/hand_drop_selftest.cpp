@@ -502,7 +502,8 @@ void Advance(bool isHost, uint64_t now) {
         }
         // The game writes droppedItem only on the throw's spawn path and never clears it, so a throw
         // that spawned nothing would read the previous throw's prop.
-        void* const before = E::ReadMainPlayerDroppedItem(player);
+        void* const lastDrop = E::ReadMainPlayerDroppedItem(player);
+        void* const before = (lastDrop && R::IsLive(lastDrop)) ? lastDrop : nullptr;   // a dead one's address can be reused
         const bool called = CallDropHolding(player);
         UE_LOGI("hand_drop_selftest: CLEARHAND (+%llus) -- dropped the starting hand item %p "
                 "(call=%d, now holding=%p)", static_cast<unsigned long long>(since / 1000),
@@ -580,15 +581,16 @@ void Advance(bool isHost, uint64_t now) {
         void* player = MainPlayer();
         if (!player) { Fail(n, "drop", "the local player is gone", false); return; }
         void* wasHolding = HoldingActor(player);
-        void* const before = E::ReadMainPlayerDroppedItem(player);
-        ep.dropFired   = CallDropHolding(player);
-        ep.dropCleared = (HoldingActor(player) == nullptr);
-        UE_LOGI("hand_drop_selftest: ep%d DROP key='%ls' -- was holding=%p call=%d cleared=%d",
-                n, ep.targetKey.c_str(), wasHolding, ep.dropFired ? 1 : 0, ep.dropCleared ? 1 : 0);
         if (!wasHolding) {
             Fail(n, "drop", "the hand was empty before the throw", false);
             return;
         }
+        void* const lastDrop = E::ReadMainPlayerDroppedItem(player);
+        void* const before = (lastDrop && R::IsLive(lastDrop)) ? lastDrop : nullptr;   // a dead one's address can be reused
+        ep.dropFired   = CallDropHolding(player);
+        ep.dropCleared = (HoldingActor(player) == nullptr);
+        UE_LOGI("hand_drop_selftest: ep%d DROP key='%ls' -- was holding=%p call=%d cleared=%d",
+                n, ep.targetKey.c_str(), wasHolding, ep.dropFired ? 1 : 0, ep.dropCleared ? 1 : 0);
         if (!ep.dropFired) {
             Fail(n, "drop", "the drop hook did not fire", false);
             return;
