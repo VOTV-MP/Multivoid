@@ -7,8 +7,9 @@
 // the client (three applied, and none made by the mirror's own copy of the hit). OUTBOUND: with an empty hand the
 // client's call of the mirror's addDamage is refused by the host; with an axe in its hand the client calls it every
 // 600 ms, as a player's swings, until the mirror is destroyed, and the host's creature must have died of judged
-// hits. The fossilhound arm adds its per-viewer perception. Every verdict line carries the tag CHD in brackets, then
-// PASS or FAIL, the step and the role, and a FAIL names its reason; a step's expiry is a FAIL line, never a silence.
+// hits. The fossilhound arm adds its per-viewer perception and its mirror's body facing. Every verdict line carries
+// the tag CHD in brackets, then PASS or FAIL, the step and the role, and a FAIL names its reason; a step's expiry is a
+// FAIL line, never a silence.
 // The step list is in coop/dev/creature_hit_drill.cpp. Run: the rig's smoke with the row set on both peers,
 // --host-fresh, the client's DONE line as the done marker and the FAIL lines as the fail marker.
 #pragma once

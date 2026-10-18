@@ -13,7 +13,7 @@
 //      mirror (the control rotation only; the player does not move) before each swing, so the host's facing bound
 //      sees it face the creature. The host passes when its creature died of judged hits and posts "host done"; the
 //      client passes on the destroy.
-//   4. DONE: the client's after its outbound PASS and the host's line, the host's after its own.
+//   4. DONE: the client's after its outbound PASS and the host's line (the hound's FACING judged first), the host's.
 
 #include "coop/dev/creature_hit_drill.h"
 
@@ -75,8 +75,8 @@ namespace P  = ue_wrap::profile;
 namespace EL = coop::element;
 
 // An arm: the config value, the creature's class (the NPC allowlist's own spelling), the asset path it is loaded from
-// when the object index does not hold the class yet, whether its event is computed per viewer, and whether the
-// zombie's stuck-count timer must be held off.
+// when the object index does not hold the class yet, whether its event is computed per viewer, whether the
+// zombie's stuck-count timer must be held off, and whether its body turns apart from its root (the facing verdict).
 struct Arm {
     const char*    name;
     const wchar_t *cls, *path;
@@ -341,12 +341,13 @@ struct ClientState {
 std::vector<EL::Npc*> g_scratch;
 
 // The client's verdict on a creature whose body turns apart from its root (the hound): its mirror's mesh world yaw
-// must leave the first sample's by more than kTurnDeg in kTurnsNeeded samples, or the body never turned.
-constexpr float kTurnDeg = 30.f;
+// must change by more than kTurnDeg between two consecutive samples kTurnsNeeded times. Measured against the previous
+// sample, not the first, so a body driven to one constant yaw fails as a frozen one does.
+constexpr float kTurnDeg = 15.f;
 constexpr int kTurnsNeeded = 3;
 struct FacingState {
     bool  have = false, passed = false;
-    float firstYaw = 0.f;
+    float prevYaw = 0.f;
     int   turned = 0;
 } g_face;
 
@@ -534,7 +535,8 @@ void ClientTick(const Arm& arm) {
     case ClientStep::AwaitHostDone:
         if (HasRow(kHostDone)) {
             if (arm.bodyFacing && !g_face.passed)
-                Verdict(false, "facing", false, "turned=%d reason=the mirror's body never turned", g_face.turned);
+                Verdict(false, "facing", false, "turned=%d of %d reason=the mirror's body did not turn", g_face.turned,
+                        kTurnsNeeded);
             UE_LOGI("[CHD] DONE role=client adopted_kick_skips=%u", coop::npc_mirror_brain::AdoptedKickSkips());
             ClientStop();
         } else if (Expired(g_c.stepMs)) {
@@ -579,14 +581,14 @@ void FacingProbe(bool host) {
             "meshPitch=%.1f meshYaw=%.1f meshRoll=%.1f", host ? "host" : "client", rot.Yaw, speed, velYaw, v.Z, arm ? 1 : 0,
             armRot.Pitch, armRot.Yaw, meshRot.Pitch, meshRot.Yaw, meshRot.Roll);
     if (host || !mesh || !R::IsLive(mesh) || g_face.passed) return;
-    if (!g_face.have) {
-        g_face = FacingState{true, false, meshRot.Yaw, 0};
-        return;
-    }
-    const float d = std::remainder(meshRot.Yaw - g_face.firstYaw, 360.f);
-    if (std::fabs(d) > kTurnDeg && ++g_face.turned >= kTurnsNeeded) {
+    const float prev = g_face.prevYaw;
+    const bool had = g_face.have;
+    g_face.have = true;
+    g_face.prevYaw = meshRot.Yaw;
+    if (!had) return;
+    if (std::fabs(std::remainder(meshRot.Yaw - prev, 360.f)) > kTurnDeg && ++g_face.turned >= kTurnsNeeded) {
         g_face.passed = true;
-        Verdict(true, "facing", false, "turned=%d last=%.1f first=%.1f", g_face.turned, meshRot.Yaw, g_face.firstYaw);
+        Verdict(true, "facing", false, "turned=%d last=%.1f prev=%.1f", g_face.turned, meshRot.Yaw, prev);
     }
 }
 
