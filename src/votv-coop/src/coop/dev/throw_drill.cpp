@@ -51,7 +51,8 @@ constexpr float    kAheadCm       = 100.f;
 constexpr float    kDropCm        = 30.f;
 constexpr float    kNearCm        = 400.f;    // CLIENT: the fixture's mirror is this near its player
 constexpr uint64_t kFillBoundMs   = 5000;     // HOST: the spawn to the backpack's own inventory binding its slot
-constexpr uint64_t kCopyBoundMs   = 90000;    // HOST: the fixture to its copy (the client's find, hold and throw)
+// HOST: the fixture to its copy: the client's find 60 s and settle 30 s, plus a 30 s margin for the throw
+constexpr uint64_t kCopyBoundMs   = 120000;
 constexpr uint64_t kSliceBoundMs  = 35000;    // HOST: the copy to its contents, past the transfer's 30 s
 constexpr uint64_t kGoneBoundMs   = 15000;    // HOST: the kick to the transfer ending with its author
 constexpr uint64_t kFindBoundMs   = 60000;    // CLIENT: world-ready to the fixture holding its records
@@ -213,7 +214,7 @@ void HostTick(coop::net::Session* s) {
     case Step::Copy: {   // the throw births a new backpack here, from the client's intent
         void* copy = NewCopy(ue_wrap::object_index::ClassByName(kPackClass));
         if (!copy) {
-            if (Expired(kCopyBoundMs)) Fail("no copy of the thrown backpack was born on the host within 90 s");
+            if (Expired(kCopyBoundMs)) Fail("no copy of the thrown backpack was born on the host within 120 s");
             return;
         }
         g_copy.Set(copy);

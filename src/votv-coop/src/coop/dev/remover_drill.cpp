@@ -78,6 +78,8 @@ constexpr float kRestMoveCm   = 1.f;    // a prop that moved less than this betw
 constexpr int   kRestChecks   = 4;      // ...that many reads in a row, a check apart
 
 constexpr uint64_t kFindBoundMs  = 60000;   // CLIENT: the join's end to every prop the host spawned being here
+// CLIENT: the host's walk plus 60 s for its plant and its line.
+constexpr uint64_t kHostHookBoundMs = (uint64_t(kHostHookWalkDeadlineS) + 60) * 1000;
 constexpr uint64_t kLegBoundMs   = 30000;   // CLIENT: a shot to what it must show (a failure bound, never a wait)
 
 // ---- client -----------------------------------------------------------------------------------------------------
@@ -529,7 +531,12 @@ void ClientTick(coop::net::Session* s) {
     case Step::HostHooked:
         // The host's own hook must pull the first crowbar before the press; its line says the claim pass reads it.
         if (NoticeCount(HookedLine(kHostHookedSaid, g_relay).c_str()) == 0) {
-            if (Expired(kFindBoundMs)) Fail("the host never said its hook pulls the first crowbar within 60 s");
+            if (Expired(kHostHookBoundMs)) {
+                char why[120];
+                std::snprintf(why, sizeof(why), "the host never said its hook pulls the first crowbar within %u s",
+                              static_cast<unsigned>(kHostHookBoundMs / 1000));
+                Fail(why);
+            }
             return;
         }
         if (FireOrFail(player, g_hostHooked, kHeldNotice)) Next(Step::HostHookedWait);

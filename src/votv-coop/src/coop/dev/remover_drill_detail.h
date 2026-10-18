@@ -29,6 +29,9 @@ std::string HookedLine(const char* said, int relays);
 inline constexpr int      kSweepFloor   = 10;   // the fewest ring props in sight that make the sweep a measurement
 inline constexpr uint64_t kCheckEveryMs = 250;
 
+// HOST: the director's walk to the first crowbar, from its start; the client's wait for the host's line is bounded by it.
+inline constexpr int      kHostHookWalkDeadlineS = 240;
+
 // The session counter, the verdict latch and the step clocks of whichever half this peer runs.
 extern int      g_session;
 extern bool     g_done;

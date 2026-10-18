@@ -41,7 +41,6 @@ using layout::kRing;
 
 constexpr uint64_t kAwaitBoundMs = 900000;  // HOST: the spawn to the client's closing line
 constexpr float kHostHookReachCm = 300.f;   // HOST: how near the first crowbar its hook is planted from
-constexpr int kHostHookWalkDeadlineS = 240; // HOST: the director's walk to that crowbar, from its start
 
 enum class HostStep : uint8_t { Arm, Await };
 HostStep g_hostStep = HostStep::Arm;
@@ -60,6 +59,12 @@ std::shared_ptr<coop::director::BackgroundWalk> g_hostWalk;
 void DropHostWalk() {
     if (g_hostWalk && g_hostWalk->state.load() == 0) coop::director::CancelBackgroundWalk(*g_hostWalk);
     g_hostWalk.reset();
+}
+
+// The host's verdict or abandon: the walk is dropped with it, so the host's player is never driven past the drill's end.
+void HostEnd(const char* word, const char* what, bool warn) {
+    DropHostWalk();
+    End("host", word, what, warn);
 }
 
 bool ClientEnded() {
@@ -87,11 +92,11 @@ void HostJudge() {
                            Answered(RR::Failed);
     if (PhaseOf() == Phase::Withheld) {
         if (laid.single.Get() && removed == 0 && noRight >= 1)
-            End("host", "PASS", "the prop the host's permissions refuse stands here; NoRight was answered", false);
+            HostEnd("PASS", "the prop the host's permissions refuse stands here; NoRight was answered", false);
         else {
             std::snprintf(why, sizeof(why), "refused prop standing=%d, Removed answered %u, NoRight answered %u",
                           laid.single.Get() ? 1 : 0, removed, noRight);
-            End("host", "FAIL", why, true);
+            HostEnd("FAIL", why, true);
         }
         return;
     }
@@ -107,7 +112,7 @@ void HostJudge() {
         other == Answered(RR::Unsupported) && Answered(RR::Unsupported) >= 1) {
         std::snprintf(why, sizeof(why), "the single prop, the mashed one and %d of %d ring props are gone here; the "
                       "host answered Removed %u times and Held once; the creature stands", ringGone, kRing, removed);
-        End("host", "PASS", why, false);
+        HostEnd("PASS", why, false);
         return;
     }
     std::snprintf(why, sizeof(why),
@@ -115,7 +120,7 @@ void HostJudge() {
                   "(want %u), OutOfSight %u, Failed %u, NotReady %u, Held %u, Unsupported %u",
                   single ? 1 : 0, mash ? 1 : 0, ringGone, kSweepFloor, npc ? 1 : 0, removed, wantRemoved,
                   Answered(RR::OutOfSight), Answered(RR::Failed), Answered(RR::NotReady), held, Answered(RR::Unsupported));
-    End("host", "FAIL", why, true);
+    HostEnd("FAIL", why, true);
 }
 
 // The host's side of the two hook steps, once per check, after the layout stands. A relay re-lay has destroyed the
@@ -138,11 +143,11 @@ void HostHookTick() {
         }
         const int walked = g_hostWalk->state.load();
         if (walked == 0) return;
-        if (walked == 2) { End("host", "FAIL", "the host never reached the crowbar it hooks", true); return; }
+        if (walked == 2) { HostEnd("FAIL", "the host never reached the crowbar it hooks", true); return; }
         g_hostWalk.reset();
         const char* note = "";
         void* hook = coop::dev::hook_plant::Plant(player, first, &note);
-        if (!hook) { End("host", "FAIL", note, true); return; }
+        if (!hook) { HostEnd("FAIL", note, true); return; }
         g_hostHook.Set(hook);
         UE_LOGI("[REMOVER-DRILL] host: its own hook is planted on the first crowbar (hook %p)", hook);
         g_hookStep = HookStep::Pulling;
@@ -191,7 +196,7 @@ void HostTick(coop::net::Session* s) {
         void* puppet = rp.valid() && rp.HasPose() ? rp.GetActor() : nullptr;
         FVector at{};
         if (!puppet || !R::IsLive(puppet) || !E::TryGetActorLocation(puppet, at)) return;
-        if (const char* why = layout::Lay(rp, at, PhaseOf() == Phase::Granted)) { End("host", "ABANDONED", why, true); return; }
+        if (const char* why = layout::Lay(rp, at, PhaseOf() == Phase::Granted)) { HostEnd("ABANDONED", why, true); return; }
         UE_LOGI("[REMOVER-DRILL] host: the layout is spawned about the client's puppet (%s)", PhaseName());
         g_hostStep = HostStep::Await;
         g_stepMs = now;
@@ -199,7 +204,7 @@ void HostTick(coop::net::Session* s) {
     }
     const layout::Relayed relayed = layout::HandleRelay(PhaseOf() == Phase::Granted);
     if (relayed == layout::Relayed::NoEye) {
-        End("host", "ABANDONED", "the sender's eye did not read for a relay", true);
+        HostEnd("ABANDONED", "the sender's eye did not read for a relay", true);
         return;
     }
     if (relayed != layout::Relayed::None) {
@@ -212,7 +217,7 @@ void HostTick(coop::net::Session* s) {
         HostHookTick();
         if (g_done) return;
     }
-    if (Expired(kAwaitBoundMs)) End("host", "ABANDONED", "the client's closing line never came", true);
+    if (Expired(kAwaitBoundMs)) HostEnd("ABANDONED", "the client's closing line never came", true);
 }
 
 void HostReset() {
