@@ -104,6 +104,12 @@ void* ReadMainPlayerHitComponent(void* mainPlayer);
 // nothing is aimed at. Reflection-resolved. Game thread.
 void* ReadMainPlayerLookAtActor(void* mainPlayer);
 
+// AmainPlayer_C::droppedItem, the actor the player's last release put into the world (after
+// throwHoldingProp, the thrown prop). Null on a dead pawn, an unresolved field or an empty slot;
+// the pointer is not validated, so a caller holding it across ticks keeps it in a CachedObjRef.
+// Reflection-resolved. Game thread.
+void* ReadMainPlayerDroppedItem(void* mainPlayer);
+
 // Direct write of lookAtActor, the interaction-trace result the BP re-derives each tick; lets a
 // test aim the next InpActEvt_use dispatch at a chosen actor. Game thread.
 bool WriteMainPlayerLookAtActor(void* mainPlayer, void* actor);

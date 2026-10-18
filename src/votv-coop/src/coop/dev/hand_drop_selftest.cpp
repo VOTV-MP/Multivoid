@@ -504,14 +504,21 @@ void Advance(bool isHost, uint64_t now) {
         UE_LOGI("hand_drop_selftest: CLEARHAND (+%llus) -- dropped the starting hand item %p "
                 "(call=%d, now holding=%p)", static_cast<unsigned long long>(since / 1000),
                 holding, called ? 1 : 0, HoldingActor(player));
-        g_dropped.Set(holding);
+        // The throw destroys the hand item and spawns a new world actor, which the player keeps as its
+        // droppedItem: that one is the prop to settle, never the dead hand actor.
+        void* thrown = E::ReadMainPlayerDroppedItem(player);
+        if (!called || !thrown || !R::IsLive(thrown)) {
+            Fail(n, "clear", "the throw left no dropped prop to wait on", false);
+            return;
+        }
+        g_dropped.Set(thrown);
         Enter(Stage::ClearRest, now);
         return;
     }
     case Stage::ClearRest: {
-        // A prop that is gone has nothing left to settle.
         void* a = g_dropped.Get();
-        if (a && !g_rest.Step(a)) { waitOn("clear", "the dropped prop at rest"); return; }
+        if (!a) { Fail(n, "clear", "the thrown prop was destroyed before it came to rest", false); return; }
+        if (!g_rest.Step(a)) { waitOn("clear", "the thrown prop at rest"); return; }
         Say("hand-drop clear " + me + " done");
         Enter(Stage::ClearPeer, now);
         return;
@@ -605,6 +612,13 @@ void Advance(bool isHost, uint64_t now) {
             if (b.first == wkey && b.second.Alive()) { waitOn("held", "the world copy of the key leaving"); return; }
         if (!RunCensus(Act::CensusHeld, n, holderIsHost, iAmHolder, since)) {
             waitOn("held", "this peer's census centre (the holder's puppet)");
+            return;
+        }
+        // The verdict is about the key the watcher inferred; the key the holder said it picked must be that
+        // one, or the chain waited on one prop and judged another.
+        if (!ep.targetKey.empty() && ep.targetKey != wkey) {
+            Fail(n, "held", "the key this peer saw leave ('" + coop::text::ToUtf8(ep.targetKey) +
+                            "') is not the one the holder picked ('" + key + "')", false);
             return;
         }
         Say(head + "held " + me);

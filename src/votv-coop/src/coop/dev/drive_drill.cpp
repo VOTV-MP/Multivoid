@@ -446,8 +446,10 @@ void ClientTick() {
         // A hold of a shared prop ends a round trip after the call; the hand says whether it was taken.
         if (coop::prop_act_request::dev::PendingId() != 0) return;
         E::MainPlayerGrabState hand{};
-        if (!E::ReadMainPlayerGrabState(player, hand) || !hand.holdingActor ||
-            ue_wrap::prop::GetInteractableKeyString(hand.holdingActor) != g_ownKey) {
+        // A hold destroys the world drive and spawns a hand item of its class: the hold is taken when the
+        // drive is gone and the hand has a drive.
+        if (!E::ReadMainPlayerGrabState(player, hand) || !hand.holdingActor || R::IsLive(g_own) ||
+            R::ClassNameOf(hand.holdingActor) != kDriveCls) {
             Abandon("the taken-out drive could not be taken into the hand");
             return;
         }

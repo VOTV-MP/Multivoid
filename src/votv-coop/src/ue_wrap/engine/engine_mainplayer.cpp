@@ -391,6 +391,13 @@ void* ReadMainPlayerLookAtActor(void* mainPlayer) {
     return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(mainPlayer) + off);
 }
 
+void* ReadMainPlayerDroppedItem(void* mainPlayer) {
+    if (!mainPlayer || !R::IsLive(mainPlayer)) return nullptr;
+    const int32_t off = ue_wrap::reflected_offset::MainPlayer_droppedItem();
+    if (off < 0) return nullptr;
+    return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(mainPlayer) + off);
+}
+
 bool WriteMainPlayerHitResult(void* mainPlayer, void* actor, void* component, const FVector& location) {
     return hit_result::WriteField(mainPlayer, L"hitResult", actor, component, location);
 }

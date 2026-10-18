@@ -82,7 +82,8 @@ void OnDisconnect();
 // items do not read, or when the transport refused or the profile is too large. Game thread.
 bool SendProfileNow(coop::net::Session* s);
 
-// HOST: how many client profile blobs have been assembled so far, one per complete stream, an identical one
+// HOST: how many client profile blobs have been assembled and handed to the store so far: one per complete stream
+// that came from a sender with a GUID (a complete stream dropped for want of one is not counted), an identical blob
 // included (the store skips those, so its own state does not move). A reader waits on the count rising. Game thread.
 uint32_t ProfilesReceived();
 

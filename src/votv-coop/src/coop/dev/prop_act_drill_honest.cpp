@@ -132,6 +132,15 @@ const char* FillStep(void* player, bool* full) {
     return nullptr;
 }
 
+// The shrimp eats by its own counter: its eat takes one `shrimps` and destroys the actor at 0, and never touches
+// `uses`. One `shrimps` makes the first eat consume the copy; `uses` is set as well, so the food predicate asks of the
+// red arm's AnyClass food row.
+const char* SetShrimpLastEat(void* player, void* mirror) {
+    static R::InstanceOffset sShrimps{L"shrimps"};
+    if (!WriteField<int32_t>(sShrimps, mirror, 1)) return "the shrimp copy's shrimps could not be written";
+    return SetLastUse(player, mirror);
+}
+
 constexpr Row kRows[] = {
     {"pocket",       kCrowbar, L"prop_crowbar_C",     Verb::Pocket, Ends::Inventory, nullptr},
     {"hold crowbar", kCrowbar, L"prop_crowbar_C",     Verb::Hold,   Ends::Hand,      nullptr},
@@ -145,7 +154,7 @@ constexpr Row kRows[] = {
     // The calls that are the client's own (no request), the take of a kerfur's prop, a use that also destroys a second
     // prop inside the latch, and last the full inventory, which stays full for whatever would follow it.
     {"own spawn",       kCrowbar,  L"prop_crowbar_C",     Verb::Pocket, Ends::Inventory, nullptr, Target::Client, false, false, &MakeOwnCrowbar},
-    {"native subclass", kShrimp,   L"prop_food_shrimp_C", Verb::Use,    Ends::NativeGone, &SetLastUse, Target::Host, false},
+    {"native subclass", kShrimp,   L"prop_food_shrimp_C", Verb::Use,    Ends::NativeGone, &SetShrimpLastEat, Target::Host, false},
     {"non-last use",    kFood,     L"prop_food_C",        Verb::Use,    Ends::Unchecked, &SetTwoUses, Target::Host, false, true},
     {"trash native",    kChipPile, L"actorChipPile_C",    Verb::Hold,   Ends::Unchecked, nullptr, Target::Host, false},
     {"kerfur take",     nullptr,   L"prop_kerfurOmega_C", Verb::Pocket, Ends::Inventory, nullptr, Target::HostKerfur},

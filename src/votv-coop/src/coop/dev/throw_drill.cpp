@@ -324,7 +324,10 @@ void ClientTick() {
     case Step::HoldWait: {
         if (coop::prop_act_request::dev::PendingId() != 0) return;
         E::MainPlayerGrabState hand{};
-        if (!E::ReadMainPlayerGrabState(player, hand) || !hand.holdingActor || hand.holdingActor != g_fixture.Get()) {
+        // A hold destroys the world mirror and spawns a hand item of its class, so the asked actor is
+        // never the one in the hand: the hold is taken when the mirror is gone and the hand has a backpack.
+        if (!E::ReadMainPlayerGrabState(player, hand) || !hand.holdingActor || g_fixture.Get() ||
+            R::ClassNameOf(hand.holdingActor) != kPackClass) {
             Abandon("the backpack could not be taken into the hand");
             return;
         }
