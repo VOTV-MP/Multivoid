@@ -133,39 +133,61 @@ int NoticeCount(const char* text) {
     return n;
 }
 
-// The element id the host's host-hooked line of this layout names, read from this client's feed; false while none stands.
-bool ReadHostHookedEid(uint32_t& eid) {
+// What this client's feed holds of the host's host-hooked line for this layout.
+enum class HostLine : uint8_t { None, Read, Malformed };
+
+// Reads the host's host-hooked line of this layout ("... eid=<E> self=<F>;") from this client's feed. A row that carries
+// the layout's prefix and does not parse is Malformed, with its text cut to 80 characters in `bad`.
+HostLine ReadHostHookedLine(uint32_t& hostEid, uint32_t& selfEid, std::string& bad) {
     const std::string prefix = HostHookedPrefix(g_relay);
-    bool found = false;
+    HostLine seen = HostLine::None;
     coop::chat_feed::ForEachRow([&](const coop::chat_feed::RowView& r) {
         const size_t at = r.line.find(prefix);
-        if (at == std::string_view::npos) return;
+        if (at == std::string_view::npos || seen == HostLine::Malformed) return;
         const std::string tail(r.line.substr(at + prefix.size()));
         char* end = nullptr;
-        const unsigned long v = std::strtoul(tail.c_str(), &end, 10);
-        if (end == tail.c_str() || *end != ';') return;
-        eid = static_cast<uint32_t>(v);
-        found = true;
+        const unsigned long e = std::strtoul(tail.c_str(), &end, 10);
+        const bool eidOk = end != tail.c_str() && e != 0;
+        const char* selfAt = eidOk ? end : nullptr;
+        constexpr char kSelf[] = " self=";
+        unsigned long f = 0;
+        bool ok = false;
+        if (selfAt && std::strncmp(selfAt, kSelf, sizeof(kSelf) - 1) == 0) {
+            const char* fromF = selfAt + sizeof(kSelf) - 1;
+            char* endF = nullptr;
+            f = std::strtoul(fromF, &endF, 10);
+            ok = endF != fromF && f != 0 && *endF == ';';
+        }
+        if (!ok) {
+            seen = HostLine::Malformed;
+            bad = std::string(r.line.substr(0, 80));
+            return;
+        }
+        hostEid = static_cast<uint32_t>(e);
+        selfEid = static_cast<uint32_t>(f);
+        seen = HostLine::Read;
     });
-    return found;
+    return seen;
 }
 
-// Binds the crowbars' roles to what the host named: the crowbar its hook holds is g_hostHooked, the other g_selfHooked.
-// Fails the drill (false) when the host's crowbar is neither of this client's two.
-bool BindHookedRoles(uint32_t hostEid) {
-    void* named = coop::remote_prop::ResolveLiveActorByEid(hostEid);
-    if (named && named == g_selfHooked.Get()) {
-        void* was = g_hostHooked.Get();
-        g_hostHooked.Set(named);
-        g_selfHooked.Set(was);
-    } else if (!named || named != g_hostHooked.Get()) {
+// Binds the crowbars' roles to what the host named: the mirror of its eid E is g_hostHooked, the mirror of F g_selfHooked.
+// Fails the drill (false) unless E and F are the two different crowbars Find bound.
+bool BindHookedRoles(uint32_t hostEid, uint32_t selfEid) {
+    void* const pair[2] = {g_hostHooked.Get(), g_selfHooked.Get()};
+    void* const host = coop::remote_prop::ResolveLiveActorByEid(hostEid);
+    void* const self = coop::remote_prop::ResolveLiveActorByEid(selfEid);
+    const auto isOne = [&](void* a) { return a && (a == pair[0] || a == pair[1]); };
+    if (!isOne(host) || !isOne(self) || host == self) {
         char why[140];
-        std::snprintf(why, sizeof(why), "the host's hooked crowbar, eid %u, is neither of this client's crowbars", hostEid);
+        std::snprintf(why, sizeof(why), "the host's crowbars, eids %u and %u, are not this client's two crowbars", hostEid,
+                      selfEid);
         Fail(why);
         return false;
     }
-    UE_LOGI("[REMOVER-DRILL] client: crowbar roles bound by the host's eid -- host-hooked eid %u, self-hooked eid %u",
-            hostEid, static_cast<unsigned>(EL::Registry::Get().EidForActor(g_selfHooked.Get())));
+    g_hostHooked.Set(host);
+    g_selfHooked.Set(self);
+    UE_LOGI("[REMOVER-DRILL] client: crowbar roles bound by the host's eids -- host-hooked eid %u, self-hooked eid %u",
+            hostEid, selfEid);
     return true;
 }
 
@@ -280,9 +302,9 @@ void* NearestNpc(const FVector& from) {
 }
 
 // The host's roles, each a class of its own (the single prop a medium sack, the mashed one a small sack, the ring plain
-// sacks, the creature a kerfurOmega, the two crowbars the nearer and the farther of their class until the host's
-// host-hooked line rebinds them by its eid at the hook step), so a role is found by what it is and not by where physics
-// left it. Fills the client's roles; false while the host's props are not all here.
+// sacks, the creature a kerfurOmega, the two crowbars the nearer and the farther of their class, bound as the pair until
+// the host's host-hooked line names each by its eid at the hook step), so a role is found by what it is and not by where
+// physics left it. Fills the client's roles; false while the host's props are not all here.
 // Whether the camera can press each is Choose's, once they rest.
 bool Find(void* player) {
     FVector me{};
@@ -370,8 +392,8 @@ bool Choose(void* player, coop::net::Session* s) {
     if (PhaseOf() != Phase::Granted) return true;
     if (!AimedHit(player, g_mash.Get(), &probe)) return Blocked(s, "the mashed prop");
     if (!AimedHit(player, g_npc.Get(), &probe)) return Blocked(s, "the creature");
-    if (!AimedHit(player, g_hostHooked.Get(), &probe)) return Blocked(s, "the host-hooked crowbar");
-    if (!AimedHit(player, g_selfHooked.Get(), &probe)) return Blocked(s, "the self-hooked crowbar");
+    if (!AimedHit(player, g_hostHooked.Get(), &probe)) return Blocked(s, "the nearer crowbar");
+    if (!AimedHit(player, g_selfHooked.Get(), &probe)) return Blocked(s, "the farther crowbar");
     int n = 0;
     for (int i = 0; i < g_ringN; ++i) {
         void* r = g_ring[i].Get();
@@ -569,8 +591,16 @@ void ClientTick(coop::net::Session* s) {
         return;
     case Step::HostHooked: {
         // The host's own hook must pull the first crowbar before the press; its line says the claim pass reads it.
-        uint32_t hostEid = 0;
-        if (!ReadHostHookedEid(hostEid)) {
+        uint32_t hostEid = 0, selfEid = 0;
+        std::string bad;
+        const HostLine line = ReadHostHookedLine(hostEid, selfEid, bad);
+        if (line == HostLine::Malformed) {
+            char why[200];
+            std::snprintf(why, sizeof(why), "the host's host-hooked line does not parse: %s", bad.c_str());
+            Fail(why);
+            return;
+        }
+        if (line == HostLine::None) {
             if (Expired(kHostHookBoundMs)) {
                 char why[120];
                 std::snprintf(why, sizeof(why), "the host never said its hook pulls the first crowbar within %u s",
@@ -579,7 +609,7 @@ void ClientTick(coop::net::Session* s) {
             }
             return;
         }
-        if (!BindHookedRoles(hostEid)) return;
+        if (!BindHookedRoles(hostEid, selfEid)) return;
         if (FireOrFail(player, g_hostHooked, kHeldNotice)) Next(Step::HostHookedWait);
         return;
     }
@@ -661,8 +691,8 @@ std::string HostHookedPrefix(int relays) {
     return std::string(kHostHookedSaid) + " n=" + std::to_string(relays) + " eid=";
 }
 
-std::string HostHookedLine(int relays, uint32_t eid) {
-    return HostHookedPrefix(relays) + std::to_string(eid) + ";";
+std::string HostHookedLine(int relays, uint32_t hostEid, uint32_t selfEid) {
+    return HostHookedPrefix(relays) + std::to_string(hostEid) + " self=" + std::to_string(selfEid) + ";";
 }
 
 // The item's cancel for a hook this drill planted: the field the plant wrote is cleared whether or not the hook still

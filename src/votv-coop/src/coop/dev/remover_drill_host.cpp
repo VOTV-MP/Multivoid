@@ -53,6 +53,7 @@ enum class HookStep : uint8_t { Plant, Pulling, Answering, AwaitClient, Done };
 HookStep g_hookStep = HookStep::Plant;
 ue_wrap::CachedObjRef g_hostHook;
 uint32_t g_heldBase = 0;   // the host's Held answers when it said host-hooked
+bool g_noEidWarned = false;   // the Pulling step's "no eid yet" warning, once per layout
 // The host's walk to the first crowbar: the hook's tail sits on the host's player, so a player far off reels the
 // crowbar across the map before the client presses. Started by the Plant step, dropped once it ends or restarts.
 std::shared_ptr<coop::director::BackgroundWalk> g_hostWalk;
@@ -156,11 +157,18 @@ void HostHookTick() {
     }
     case HookStep::Pulling: {
         if (!first || !(coop::hook_sync::PlayerHookHolders(first) & kHostBit)) return;
-        // The element the host's registry holds for the crowbar its hook pulls: the client binds its roles by it.
+        // The elements the host's registry holds for both crowbars: the client binds its roles by them.
         const coop::element::ElementId firstEid = coop::element::Registry::Get().EidForActor(first);
-        if (firstEid == coop::element::kInvalidId) return;
+        const coop::element::ElementId secondEid = coop::element::Registry::Get().EidForActor(second);
+        if (firstEid == coop::element::kInvalidId || secondEid == coop::element::kInvalidId) {
+            if (!g_noEidWarned) {
+                g_noEidWarned = true;
+                UE_LOGW("[REMOVER-DRILL] host: the host's crowbar has no eid yet; host-hooked waits");
+            }
+            return;
+        }
         g_heldBase = Answered(coop::net::RemoverReason::Held);
-        coop::chat_sync::QueueSend(HostHookedLine(layout::RelaysDone(), firstEid));
+        coop::chat_sync::QueueSend(HostHookedLine(layout::RelaysDone(), firstEid, secondEid));
         UE_LOGI("[REMOVER-DRILL] host: the claim pass reads its hook on the first crowbar; host-hooked said");
         g_hookStep = HookStep::Answering;
         return;
@@ -215,6 +223,7 @@ void HostTick(coop::net::Session* s) {
     if (relayed != layout::Relayed::None) {
         ReleaseHook(g_hostHook);
         DropHostWalk();
+        g_noEidWarned = false;
         g_hookStep = HookStep::Plant;
     }
     if (ClientEnded()) { HostJudge(); return; }
@@ -229,6 +238,7 @@ void HostReset() {
     g_hostStep = HostStep::Arm;
     g_hookStep = HookStep::Plant;
     g_heldBase = 0;
+    g_noEidWarned = false;
     DropHostWalk();
     if (g_hostHook.Raw()) ReleaseHook(g_hostHook);
 }
