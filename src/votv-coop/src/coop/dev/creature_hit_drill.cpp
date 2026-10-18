@@ -40,6 +40,7 @@
 #include "coop/session/net_pump.h"
 #include "coop/world/creature_event_relay.h"
 
+#include "ue_wrap/actors/fossilhound.h"
 #include "ue_wrap/actors/int_objects.h"
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -47,6 +48,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/sdk_profile_names.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_pawn.h"
@@ -542,13 +544,39 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
 }
 
+// PROBE (measurement, not a verdict): the hound's facing on each peer every 500 ms -- the actor's yaw, its velocity,
+// the SpringArm's world rotation (the graph's tick turns it toward the velocity, and it carries the mesh) and the
+// mesh's world yaw -- so the host's body facing and the mirror's can be compared line by line.
+void FacingProbe(bool host) {
+    static long long lastMs = 0;
+    const long long now = NowMs();
+    if (now - lastMs < 500) return;
+    lastMs = now;
+    void* hound = host ? g_h.creature.Get() : g_c.mirror.Get();
+    if (!hound || !R::IsLive(hound)) return;
+    ue_wrap::FRotator rot{};
+    E::TryGetActorRotation(hound, rot);
+    const ue_wrap::FVector v = E::GetActorVelocity(hound);
+    const float speed = std::sqrt(v.X * v.X + v.Y * v.Y + v.Z * v.Z);
+    const float velYaw = std::atan2(v.Y, v.X) * 57.2957795f;
+    void* arm = ue_wrap::fossilhound::SpringArm(hound);
+    const ue_wrap::FRotator armRot = arm ? E::GetComponentWorldRotation(arm) : ue_wrap::FRotator{};
+    void* mesh = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(hound) + P::off::ACharacter_Mesh);
+    const float meshYaw = (mesh && R::IsLive(mesh)) ? E::GetComponentWorldRotation(mesh).Yaw : 0.f;
+    UE_LOGI("[CHD] facing role=%s actorYaw=%.1f speed=%.0f velYaw=%.1f velZ=%.0f arm=%d armPitch=%.1f armYaw=%.1f "
+            "meshYaw=%.1f", host ? "host" : "client", rot.Yaw, speed, velYaw, v.Z, arm ? 1 : 0, armRot.Pitch,
+            armRot.Yaw, meshYaw);
+}
+
 void Tick() {
     const Arm* arm = ArmOf();
     if (!arm) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return;
-    if (s->role() == coop::net::Role::Host) HostTick(s, *arm);
+    const bool host = s->role() == coop::net::Role::Host;
+    if (host) HostTick(s, *arm);
     else ClientTick(*arm);
+    if (arm->perViewer) FacingProbe(host);
 }
 
 void OnDisconnect() { g_c = ClientState{}; }

@@ -95,6 +95,12 @@ bool EnterPerViewerLoop(void* hound) {
 
 }  // namespace
 
+void* SpringArm(void* hound) {
+    if (!hound || !R::IsLive(hound)) return nullptr;
+    const int32_t off = g_springArm.Of(hound);
+    return off >= 0 ? LiveAt(hound, static_cast<size_t>(off)) : nullptr;
+}
+
 bool ApplyBeginPlayPresentation(void* hound, bool ownBeginPlayRan) {
     if (!hound || !R::IsLive(hound)) return false;
     bool ok = true;

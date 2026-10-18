@@ -23,4 +23,8 @@ inline constexpr int32_t kPerViewerEntry = 2723;
 // Game thread.
 bool ApplyBeginPlayPresentation(void* hound, bool ownBeginPlayRan);
 
+// The hound's SpringArm component, which carries its mesh (BeginPlay attaches the mesh to it, and the graph's tick
+// turns it toward the velocity), or null. Game thread.
+void* SpringArm(void* hound);
+
 }  // namespace ue_wrap::fossilhound
