@@ -12,7 +12,6 @@
 #include "ue_wrap/core/field_io.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/data_table.h"
@@ -53,7 +52,6 @@ constexpr int32_t  kMaxEquipment = 1024;
 // default struct is assigned), so the game refuses to save, and so to pocket or hold, them.
 constexpr const wchar_t* kEmptySaveClasses[] = {L"prop_burgerHallucinate_C", L"prop_inventoryContainer_player_C",
                                                 L"prop_rock_C", L"prop_drive_ae_C"};
-ue_wrap::CachedObjRef g_emptySaveClasses[std::size(kEmptySaveClasses)];
 
 uint64_t NowMs() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -148,14 +146,13 @@ void* TableObject(Table& t) {
     return t.ref.Get();
 }
 
-// A bool column cell as the engine renders it; false when it is neither spelling.
-bool ParseBoolCell(const std::wstring& cell, bool& out) {
-    const std::wstring c = Lower(cell);
-    if (c == L"true" || c == L"1") out = true;
-    else if (c == L"false" || c == L"0") out = false;
-    else return false;
-    return true;
-}
+// Rows whose heavy flag is known from the data table's own content (lowercased names): the layout check reads them
+// through the same raw member reads the judge uses.
+struct LayoutRow {
+    const wchar_t* name;
+    bool           heavy;
+};
+constexpr LayoutRow kLayoutRows[] = {{L"heater", true}, {L"crowbar", false}};
 
 Outcome BuildProps(Table& t) {
     void* table = TableObject(t);
@@ -178,15 +175,12 @@ Outcome BuildProps(Table& t) {
     if (!DT::Rows(table, refs, "prop_gather")) return Outcome::Soft;
     std::unordered_map<std::wstring, PropRow> rows;
     rows.reserve(refs.size());
-    std::vector<uint8_t> walkHeavy;
-    walkHeavy.reserve(refs.size());
     for (const DT::RowRef& ref : refs) {
         PropRow r;
         r.flags.canCollect = ref.row[offCollect] != 0;
         r.flags.canHold = ref.row[offHold] != 0;
         r.flags.heavy = ref.row[offHeavy] != 0;
         r.mesh = *reinterpret_cast<void* const*>(ref.row + offMesh);
-        walkHeavy.push_back(r.flags.heavy ? 1 : 0);
         rows.emplace(Lower(R::ToString(ref.key)), r);
     }
     if (rows.size() != refs.size()) {
@@ -194,30 +188,22 @@ Outcome BuildProps(Table& t) {
                 refs.size(), rows.size());
         return Outcome::Hard;
     }
-    // The gate: the same heavy flags, read by the engine through reflection alone.
-    std::vector<std::wstring> column;
-    const std::wstring mangled = DT::MemberName(rowStruct, L"heavy_");
-    if ((mangled.empty() || !DT::ColumnAsStrings(table, mangled, column)) &&
-        !DT::ColumnAsStrings(table, L"heavy", column)) {
-        UE_LOGE("prop_gather: list_props' heavy column could not be read, so the walk cannot be verified");
-        return Outcome::Soft;
-    }
-    if (column.size() != walkHeavy.size()) {
-        UE_LOGE("prop_gather: list_props gate length mismatch -- walk=%zu column=%zu -- the set is INVALID",
-                walkHeavy.size(), column.size());
-        return Outcome::Hard;
-    }
-    for (size_t i = 0; i < column.size(); ++i) {
-        bool cell = false;
-        if (!ParseBoolCell(column[i], cell) || cell != (walkHeavy[i] != 0)) {
-            UE_LOGE("prop_gather: list_props gate DISAGREES at row %zu (walk=%d column=%ls) -- the RowMap layout "
-                    "assumption is wrong on this build; the set is INVALID", i, walkHeavy[i] != 0 ? 1 : 0,
-                    column[i].c_str());
+    // The layout gate: a Hard verdict is final, so each line below is said once.
+    for (const LayoutRow& lr : kLayoutRows) {
+        const auto it = rows.find(lr.name);
+        if (it == rows.end()) {
+            UE_LOGE("prop_gather: list_props has no row '%ls' to check the layout against -- the set is INVALID",
+                    lr.name);
+            return Outcome::Hard;
+        }
+        if (it->second.flags.heavy != lr.heavy) {
+            UE_LOGE("prop_gather: list_props row '%ls' reads heavy=%d, expected %d -- the RowMap layout assumption is "
+                    "wrong on this build; the set is INVALID", lr.name, it->second.flags.heavy ? 1 : 0, lr.heavy ? 1 : 0);
             return Outcome::Hard;
         }
     }
     g_propRows = std::move(rows);
-    UE_LOGI("prop_gather: list_props read, %zu rows, verified against the reflected heavy column", g_propRows.size());
+    UE_LOGI("prop_gather: list_props read, %zu rows, layout checked on rows heater and crowbar", g_propRows.size());
     return Outcome::Valid;
 }
 
@@ -386,37 +372,55 @@ bool FlagsAndMesh(void* prop, bool frozen, void* root, const std::wstring& lower
     return true;
 }
 
-bool IsEmptySaveClass(void* prop) {
-    void* cls = R::ClassOf(prop);
-    for (size_t i = 0; i < std::size(kEmptySaveClasses); ++i) {
-        ue_wrap::CachedObjRef& ref = g_emptySaveClasses[i];
-        if (!ref.Alive()) ref.Set(object_index::ClassByName(kEmptySaveClasses[i]));
-        if (ref.Raw() && prop::WalksToBase(cls, ref.Raw())) return true;
-    }
+// Whether `cls` or one of its supers is named one of `names` (an FName compares without case). The prop's own class
+// chain is compared by name, so no class is looked up: one that is not loaded has no instance to judge. The hop
+// bound is the tree's SuperStruct walk's.
+bool ClassChainNamed(void* cls, const wchar_t* const* names, size_t count) {
+    for (int hops = 0; hops < 16 && cls; ++hops, cls = R::SuperStructOf(cls))
+        for (size_t i = 0; i < count; ++i)
+            if (R::NameEquals(R::NameOf(cls), names[i])) return true;
     return false;
 }
 
+bool IsEmptySaveClass(void* prop) {
+    return ClassChainNamed(R::ClassOf(prop), kEmptySaveClasses, std::size(kEmptySaveClasses));
+}
+
 // A hose's getData writes nothing while its `placing` flag is true, so the game refuses to save, pocket or hold one
-// being placed; a hose whose flag cannot be read counts as placing (fail closed).
-ue_wrap::CachedObjRef g_hoseClass;
+// being placed; a hose whose flag cannot be read counts as placing (fail closed), and is read again no sooner than
+// the throttle. `placing` is read on the host's copy, the authority for the placement it judges.
+constexpr const wchar_t* kHoseClass = L"prop_hose_C";
 struct PlacingField {
     ue_wrap::CachedObjRef cls;
     int32_t               off = -1;
     uint8_t               mask = 0;
     bool                  ok = false;
+    FailLatch             fail;
 };
-PlacingField g_placing;
+// One entry per hose class (prop_hose_C and prop_hose_grab_C), side by side; a further class replaces the oldest.
+PlacingField g_placing[2];
+size_t       g_placingNext = 0;
+
+PlacingField& PlacingOf(void* cls) {
+    for (PlacingField& e : g_placing)
+        if (e.cls.Is(cls)) return e;
+    PlacingField& e = g_placing[g_placingNext++ % std::size(g_placing)];
+    e.cls.Set(cls);
+    e.ok = false;
+    e.fail = FailLatch{};
+    return e;
+}
 
 bool IsHosePlacing(void* prop) {
     void* const cls = R::ClassOf(prop);
-    if (!g_hoseClass.Alive()) g_hoseClass.Set(object_index::ClassByName(L"prop_hose_C"));
-    if (!g_hoseClass.Raw() || !prop::WalksToBase(cls, g_hoseClass.Raw())) return false;
-    if (!g_placing.cls.Is(cls)) {
-        g_placing.cls.Set(cls);
-        g_placing.ok = R::FindBoolProperty(cls, L"placing", g_placing.off, g_placing.mask);
+    if (!ClassChainNamed(cls, &kHoseClass, 1)) return false;
+    PlacingField& e = PlacingOf(cls);
+    if (!e.ok && !e.fail.Blocked()) {
+        e.ok = R::FindBoolProperty(cls, L"placing", e.off, e.mask);
+        if (e.ok) e.fail.Clear();
+        else e.fail.Fail();
     }
-    if (!g_placing.ok) return true;
-    return (*(static_cast<const uint8_t*>(prop) + g_placing.off) & g_placing.mask) != 0;
+    return !e.ok || (*(static_cast<const uint8_t*>(prop) + e.off) & e.mask) != 0;
 }
 
 bool LiveProp(void* prop) { return prop && R::IsLive(prop); }

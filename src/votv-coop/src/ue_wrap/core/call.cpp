@@ -7,7 +7,9 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace ue_wrap {
@@ -122,6 +124,16 @@ void NoteFrame(int32_t frameSize) {
     }
 }
 
+// A read of a parameter the function does not have is said once per function name, not once per call: a caller
+// that asks every request would otherwise fill the log with one drift. The set grows only on this error path.
+bool FirstMissingRead(void* fn) {
+    static std::mutex s_mutex;
+    static std::unordered_set<std::wstring> s_said;
+    const std::wstring key = reflection::ToString(reflection::NameOf(fn));
+    std::lock_guard<std::mutex> lk(s_mutex);
+    return s_said.insert(key).second;
+}
+
 }  // namespace
 
 FrameStats GetFrameStats() {
@@ -188,7 +200,7 @@ bool ParamFrame::GetRaw(const wchar_t* name, void* dst, int32_t size) const {
     if (fn_ == nullptr || buf_.empty()) return false;
     const int32_t off = OffsetOf(name);
     if (off < 0) {
-        UE_LOGE("ParamFrame::Get: unknown param '%ls'", name);
+        if (FirstMissingRead(fn_)) UE_LOGE("ParamFrame::Get: unknown param '%ls' (said once per function)", name);
         return false;
     }
     if (off + size > static_cast<int32_t>(buf_.size())) {
