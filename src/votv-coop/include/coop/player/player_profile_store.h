@@ -9,7 +9,7 @@
 // and the profiles revert with it. docs/players.md has the whole account.
 // MTA saves an account when it changed and 15 s have passed, and at quit (CAccountManager.cpp):
 // its world is not persisted, so its accounts have nothing to stay consistent WITH; ours has.
-// The file is <game dir>/coop_players/<save slot>/<guid>.json, keyed per save slot. The blob is
+// The file is <mod data dir>/coop_players/<save slot>/<guid>.json, keyed per save slot. The blob is
 // opaque here (coop/items/inventory_wire owns its layout); the file wraps it in a magic, an FNV
 // hash, a nick and a last-seen time. A GUID that is not exactly 32 hex characters never becomes a
 // path component. Game thread: the memory half has no lock.
@@ -45,6 +45,11 @@ Found Get(const std::string& guid, std::vector<uint8_t>& outBlob);
 // Nothing of theirs is held or written for the rest of this hosted world, so the files stay as
 // they are for recovery: a starter kit streamed back must not overwrite them.
 void Quarantine(const std::string& guid);
+
+// At a host session start: notes once (coop/mod_data/legacy_note) that a `coop_players` folder an
+// older build left beside the exe is read by nothing now. The store's own first path comes only at
+// a new-game ForgetSlot, a world save or a join, so the notice cannot wait for it. Any thread.
+void NoteLegacyFolder();
 
 // A save was just CREATED under `slot`. Its name was free, which the name of a deleted save is as
 // well, and the profile files such a save left behind belong to no world: they are removed, so a

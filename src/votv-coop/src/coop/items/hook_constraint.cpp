@@ -18,7 +18,7 @@
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/ufunction_hook.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_component.h"
 #include "ue_wrap/facts/function_row.h"
@@ -29,7 +29,6 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
-#include <vector>
 
 namespace coop::hook_constraint {
 namespace {
@@ -39,38 +38,22 @@ namespace GT = ue_wrap::game_thread;
 namespace H  = ue_wrap::hook;
 namespace PR = ue_wrap::prop;
 namespace R  = ue_wrap::reflection;
+namespace sg = ue_wrap::script_gate;
 
-UE_FACT_FN(kRowSetConstrainedComponents, "hook_constraint", L"PhysicsConstraintComponent",
-           L"SetConstrainedComponents", Declared);
+// makeAttachments is the one body that builds a hook's A-to-B tie: attach_a calls it after a
+// SetConstrainedComponents of its own that the call rebuilds (seven more statements follow it: the
+// reference position, the distance and length, the audio, the owner's hooked callback and the
+// broadcast; none builds a tie), and the ubergraph calls it for a hook that loads or adopts an anchored tie. All three of PhysicsConstraint's SetConstrainedComponents
+// outside attach_a are inside it, and the flight tether, throwConstraint, is built in the throw's
+// ubergraph and never here (hook_C's decompiled body).
+constexpr int kTagMakeAttachments = 0x484B4D41;  // 'HKMA'
+UE_FACT_FN(kRowMakeAttachments, "hook_constraint", L"hook_C", L"makeAttachments", Declared);
 
 std::atomic<coop::net::Session*> g_session{nullptr};
-// Read in the seam callback, written on the game thread at Install and OnDisconnect: true while this
-// peer is connected as a client, the same test Tick judges by, so the seam queues nothing no judge
-// will read -- a session's role outlives the session. The callback's whole gate, so the host and
-// single player pay one relaxed load per constraint build.
-std::atomic<bool> g_breakHere{false};
-bool g_seamInstalled = false;
-bool g_seamRefused   = false;
-
-// A tie a hook of the lane's classes built, waiting for the game thread to judge it. The index is
-// captured at the seam, while the actor is known live, so the judgement never probes a bare pointer.
-struct PendingBreak {
-    void*    actor;
-    int32_t  idx;
-    void*    comp;
-    H::Kind  kind;
-    uint64_t expiresMs;
-};
-// Game thread only. Unbounded on purpose: the seam lets through only the ties a hook of the lane's
-// classes builds -- its throw tether, and its A-to-B tie as it attaches or loads -- and each tick
-// empties what it can judge.
-std::vector<PendingBreak> g_pending;
-size_t g_pendingMost = 0;   // the most that waited at once this session, for the tally
-// The member table resolves on the lane's first tick after hook_C loads; a tie built before that
-// waits here for it. Five seconds is many times that, and wall time is right for it: the first tick
-// after any script body resolves a table that can resolve, so only one that never will lets a tie
-// run out.
-constexpr uint64_t kPendingMs = 5000;
+bool     g_watchRegistered = false;
+bool     g_watchSettled    = false;
+bool     g_saidWatchFail   = false;
+uint64_t g_nextWatchMs     = 0;   // the watch is asked about at most once a second
 
 // The reach a bite is allowed from the sender's body: the anchor arbiter's number, generous on
 // purpose -- a thrown hook is a ballistic arc and the flesh variant's cable is a hundred metres
@@ -107,27 +90,75 @@ ue_wrap::FVector RotateByRotator(const ue_wrap::FRotator& r, const ue_wrap::FVec
                             v.Z + qw * tz + (qx * ty - qy * tx)};
 }
 
-// The native seam on UPhysicsConstraintComponent::SetConstrainedComponents. `context` is the
-// constraint component the call ran on; `sourceObject` is the actor whose bytecode issued it --
-// the hook, for a tie its own graph builds. Deep inside the engine's dispatch: no engine call, no
-// allocation past the post, and the reads are of the object the engine holds live for the call and
-// of its class.
-void OnSetConstrainedPost(void* context, void* sourceObject, void* /*result*/) {
-    if (!g_breakHere.load(std::memory_order_relaxed)) return;
-    if (!context || !sourceObject) return;
-    // The lane's classes only, judged here by the class's name, so a tie of anything else never
-    // waits on the game thread. hook_Child_C, the level-placed variant, is left alone on purpose:
-    // it is the level's own furniture, identical on every peer, and what it ties may be a body that
-    // is not a prop, which no stream would carry if this side let go of it. A prop it ties is
-    // claimed on the host from the world set and parked here, where a client's constraint on a
-    // parked body pulls nothing.
-    const H::Kind kind = H::KindOf(sourceObject);
+// The call has run: the tie stands and no physics step has run with it. A CLIENT breaks it here, in
+// the frame that built it, so no client copy of a prop is ever pulled. Broken a frame later, as a
+// deferred pass did, the tie ran physics steps first: a client's tie to its own pawn 380 m from the
+// prop flung the prop's mirror about 11000 cm per 0.26 s for two seconds, until the host's drive
+// parked it back (the hook drill's client-role run). Only the lane's classes: hook_Child_C, the
+// level-placed variant that inherits this body, is the level's own furniture, identical on every
+// peer, and what it ties may be a body that is not a prop, which no stream would carry if this side
+// let go of it. A prop it ties is claimed on the host from the world set and parked here, where a
+// client's constraint on a parked body pulls nothing. The body touches PhysicsConstraint, the A-to-B
+// tie, and never throwConstraint. Game thread, inside the VM, where engine calls are allowed.
+void OnMakeAttachmentsPost(const sg::Call& c) {
+    auto* s = Session();
+    if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;
+    const H::Kind kind = H::KindOf(c.object);
     if (kind == H::Kind::Count) return;
-    const int32_t idx = R::InternalIndexOf(sourceObject);
-    GT::Post([sourceObject, idx, context, kind] {
-        g_pending.push_back(PendingBreak{sourceObject, idx, context, kind, NowMs() + kPendingMs});
-        if (g_pending.size() > g_pendingMost) g_pendingMost = g_pending.size();
-    });
+    const unsigned k = static_cast<unsigned>(kind);
+    // Unpaced: the hook body that just ran is the proof the class is loaded, and a tie left standing
+    // for want of a resolve is the divergence this watch exists to prevent.
+    if (!H::ResolveNow()) {
+        UE_LOGW("hook_constraint: a tie on %p was built before the hook members resolved -- left "
+                "standing", c.object);
+        return;
+    }
+    if (H::BreakConstraint(c.object)) {
+        UE_LOGI("hook_constraint: CLIENT released the tie on hook %p kind=%u -- the constraint "
+                "lives on the host", c.object, k);
+    } else {
+        UE_LOGW("hook_constraint: BreakConstraint did not dispatch on hook %p kind=%u -- its "
+                "tie stands on this client", c.object, k);
+    }
+}
+
+// Register the watch, then ask the gate to resolve its name until it is live or settled dead. At most
+// once a second: a registration the gate refuses is said once, and asked again at that pace.
+void EnsureWatch() {
+    if (g_watchSettled) return;
+    // The gate arms at boot or never: asked again, a gate that is not installed refuses the same way
+    // for the life of the process.
+    if (!sg::IsInstalled()) {
+        g_watchSettled = true;
+        UE_LOGE("hook_constraint: the script gate is not installed -- no makeAttachments watch this "
+                "process, so a client's hook keeps its own constraint and a prop it hooks diverges");
+        return;
+    }
+    const uint64_t now = NowMs();
+    if (now < g_nextWatchMs) return;
+    g_nextWatchMs = now + 1000;
+    // The post judges a hook by its class's name, which is minted before any hook class has loaded.
+    if (!H::ResolveNames()) return;
+    if (!g_watchRegistered)
+        g_watchRegistered = sg::WatchName(kRowMakeAttachments, kTagMakeAttachments, nullptr, &OnMakeAttachmentsPost);
+    if (!g_watchRegistered) {
+        if (!g_saidWatchFail) {
+            g_saidWatchFail = true;
+            UE_LOGW("hook_constraint: the gate did not take the makeAttachments watch -- asked again each second");
+        }
+        return;
+    }
+    sg::ResolvePendingNames();
+    if (sg::NameWatchLive(kRowMakeAttachments, kTagMakeAttachments)) {
+        g_watchSettled = true;
+        UE_LOGI("hook_constraint: installed -- a script-gate watch on hook_C::makeAttachments (a client "
+                "breaks every hook tie in the frame that builds it; the host builds a client's tie on "
+                "its mirror)");
+    } else if (sg::NameWatchSettled(kRowMakeAttachments, kTagMakeAttachments)) {
+        g_watchSettled = true;
+        UE_LOGE("hook_constraint: the makeAttachments watch is dead -- a client's hook keeps its own "
+                "constraint this session, so a prop it hooks is pulled on that client alone and diverges");
+    }
 }
 
 }  // namespace
@@ -135,60 +166,12 @@ void OnSetConstrainedPost(void* context, void* sourceObject, void* /*result*/) {
 void Install(coop::net::Session* session) {
     if (!GT::IsGameThread()) return;
     g_session.store(session, std::memory_order_release);
-    g_breakHere.store(session && session->connected() && session->role() == coop::net::Role::Client,
-                      std::memory_order_release);
-    if (g_seamInstalled || g_seamRefused) return;
-    // The seam judges a hook by its class's name before any hook class has loaded.
-    if (!H::ResolveNames()) return;   // retried from Tick
-    const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowSetConstrainedComponents);
-    if (!fn) return;   // retried from Tick
-    if (!ue_wrap::ufunction_hook::InstallPostHook(fn, &OnSetConstrainedPost)) {
-        g_seamRefused = true;
-        UE_LOGE("hook_constraint: the SetConstrainedComponents seam did NOT install (native hook "
-                "table full) -- a client's hook keeps its own constraint this session, so a prop it "
-                "hooks is pulled on that client alone and diverges");
-        return;
-    }
-    g_seamInstalled = true;
-    UE_LOGI("hook_constraint: installed -- UPhysicsConstraintComponent::SetConstrainedComponents "
-            "post-seam (a client breaks every hook tie it builds; the host builds a client's tie "
-            "on its mirror)");
+    EnsureWatch();
 }
 
 void Tick() {
     if (!GT::IsGameThread()) return;
-    if (!g_seamInstalled && !g_seamRefused) Install(Session());
-    if (g_pending.empty()) return;
-    auto* s = Session();
-    const bool client = s && s->connected() && s->role() == coop::net::Role::Client;
-    const uint64_t now = NowMs();
-    const bool resolved = H::EnsureResolved();
-    // One pass, compacting in place: what still waits for the member table keeps its order at the
-    // front. A break dispatches, and a tie it makes the game build again is posted, not pushed here.
-    size_t kept = 0;
-    for (size_t i = 0; i < g_pending.size(); ++i) {
-        const PendingBreak pb = g_pending[i];
-        if (!client || !R::IsLiveByIndex(pb.actor, pb.idx)) continue;
-        if (!resolved) {
-            if (now < pb.expiresMs) { g_pending[kept++] = pb; continue; }
-            UE_LOGW("hook_constraint: a tie on %p was built before the hook members resolved and "
-                    "waited %llu ms -- left standing", pb.actor,
-                    static_cast<unsigned long long>(kPendingMs));
-            continue;
-        }
-        const unsigned kind = static_cast<unsigned>(pb.kind);
-        // The A-to-B tie only, not the flight tether: throwConstraint holds the thrower's own
-        // body to the sphere that flies, which is the thrower's own expression.
-        if (H::PhysicsConstraintOf(pb.actor) != pb.comp) continue;
-        if (H::BreakConstraint(pb.actor)) {
-            UE_LOGI("hook_constraint: CLIENT released the tie on hook %p kind=%u -- the constraint "
-                    "lives on the host", pb.actor, kind);
-        } else {
-            UE_LOGW("hook_constraint: BreakConstraint did not dispatch on hook %p kind=%u -- its "
-                    "tie stands on this client", pb.actor, kind);
-        }
-    }
-    g_pending.resize(kept);
+    EnsureWatch();
 }
 
 BiteResult BiteMirror(void* mirror, uint8_t ownerSlot, const coop::net::HookStatePayload& p) {
@@ -296,12 +279,6 @@ BiteResult BiteMirror(void* mirror, uint8_t ownerSlot, const coop::net::HookStat
 }
 
 void OnDisconnect() {
-    g_breakHere.store(false, std::memory_order_release);
-    if (g_pendingMost > 0)
-        UE_LOGI("hook_constraint: session tally -- at most %zu hook tie(s) waited at once for their judge",
-                g_pendingMost);
-    g_pending.clear();
-    g_pendingMost = 0;
     g_session.store(nullptr, std::memory_order_release);
 }
 

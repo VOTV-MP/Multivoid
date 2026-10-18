@@ -15,6 +15,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 namespace coop::net { class Session; }
 
@@ -29,6 +30,15 @@ void Claim(void* actor, const char* reason);
 
 // How many props coast with no verb's claim. Game thread.
 size_t CoastingCount();
+
+// The drive context of `actor` (eid `eid`) for a message that reads its pose now: the claim
+// generation last opened for the eid (0 if none this session) and whether that drive is open.
+struct DriveContext { uint8_t gen = 0; bool open = false; };
+DriveContext ContextOf(void* actor, uint32_t eid);
+
+// A hand holds `actor`: this player's grab slot, a peer's held-prop stream, or the hotbar hand axis.
+// Game thread.
+bool InAHand(void* actor);
 
 // The verb let go of `actor`: the prop coasts under the stream until it rests, then the end edge
 // fires. A no-op for an unclaimed actor. Game thread.

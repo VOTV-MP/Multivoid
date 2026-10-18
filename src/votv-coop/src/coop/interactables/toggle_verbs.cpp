@@ -13,6 +13,7 @@
 #include "ue_wrap/devices/door_box.h"
 #include "ue_wrap/devices/garage.h"
 #include "ue_wrap/devices/lightswitch.h"
+#include "ue_wrap/devices/security_camera.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
@@ -32,6 +33,13 @@ UE_FACT_FN(kRowVisual, "toggle_verbs", nullptr, L"visual", AnyClass);
 UE_FACT_FN(kRowOpen, "toggle_verbs", nullptr, L"open", AnyClass);
 UE_FACT_FN(kRowClose, "toggle_verbs", nullptr, L"close", AnyClass);
 UE_FACT_FN(kRowFix, "toggle_verbs", nullptr, L"fix", AnyClass);
+// A security camera's writers all end in one of these (the player's use ends in updState; the wisp's
+// and the gray events' writes in upd or updState), except the cursed camera's night roll, which calls
+// neither. Declared on the camera class, so another class's function of the name is not asked.
+UE_FACT_FN(kRowCameraActionOptionIndex, "toggle_verbs", L"prop_camera_bad_C", L"actionOptionIndex", Declared);
+UE_FACT_FN(kRowCameraUpd, "toggle_verbs", L"prop_camera_bad_C", L"upd", Declared);
+UE_FACT_FN(kRowCameraUpdState, "toggle_verbs", L"prop_camera_bad_C", L"updState", Declared);
+UE_FACT_FN(kRowCursedReceiveTick, "toggle_verbs", L"prop_camera_cursed_C", L"ReceiveTick", Declared);
 
 struct Row {
     const ue_wrap::facts::Function* verb;
@@ -59,6 +67,15 @@ const Row kRows[] = {
       &coop::interactable_sync::OnContainerVerb },
     { &kRowFix, 0x4F564658 /*'OVFX'*/, "an oven's repair", &ue_wrap::appliance::IsOven,
       &coop::interactable_sync::OnOvenVerb },
+    // The camera lanes are the host's (HostAuth): the host's edge sends, a client's does nothing here.
+    { &kRowCameraActionOptionIndex, 0x43414149 /*'CAAI'*/, "a camera's action", &ue_wrap::security_camera::IsCameraClass,
+      &coop::interactable_sync::OnCameraVerb },
+    { &kRowCameraUpd, 0x43415550 /*'CAUP'*/, "a camera's upd", &ue_wrap::security_camera::IsCameraClass,
+      &coop::interactable_sync::OnCameraVerb },
+    { &kRowCameraUpdState, 0x43415553 /*'CAUS'*/, "a camera's updState", &ue_wrap::security_camera::IsCameraClass,
+      &coop::interactable_sync::OnCameraVerb },
+    { &kRowCursedReceiveTick, 0x43435254 /*'CCRT'*/, "the cursed camera's tick", &ue_wrap::security_camera::IsCameraClass,
+      &coop::interactable_sync::OnCameraVerb },
 };
 constexpr int kRowCount = static_cast<int>(sizeof(kRows) / sizeof(kRows[0]));
 

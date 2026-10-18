@@ -1,5 +1,4 @@
-// coop/world/event_active_sync.h -- the native ACTIVE-EVENT registry mirror, so a peer can join
-// during an event.
+// coop/world/event_active_sync.h -- the native ACTIVE-EVENT registry mirror, so a peer can join during an event.
 //
 // The game keeps its own in-flight event registry on mainGamemode_C: `activeEvents`, an int
 // refcount, and `activeEvents_senders`, a TArray<UObject*> of the live event actors. The single
@@ -9,7 +8,8 @@
 //     `event_active: BEGIN/END class=<sender class> n=<refcount>`, with the event's elapsed time.
 //   - HOST, at a joiner's world-ready edge: the game's own registry read there, one
 //     ReliableKind::EventSnapshot per in-flight entry, carrying {className, mapped list_events row,
-//     elapsedSec}; elapsed is 0 for an event that began before this host watched.
+//     elapsedSec}; elapsed is 0 for an event that began before this host watched. A lane-owned entry and a
+//     creature with no row (its count rides coop/world/creature_event_relay) are skipped, not shipped.
 //   - CLIENT: receive EventSnapshot and hand mapped replay-safe rows to event_fire_sync's
 //     active-override replay, where an in-flight row bypasses the InClientPassEvents dedupe --
 //     the joiner's blob already carries it as history. An unmapped class logs LOUD and skips.
@@ -29,7 +29,8 @@ namespace coop::event_active_sync {
 void Install(coop::net::Session* session);
 
 // HOST, game thread, at a joiner's ClientWorldReady edge (subsystems::ConnectReplayForSlot):
-// send one EventSnapshot per in-flight registry entry to this slot.
+// send one EventSnapshot per in-flight registry entry to this slot, except a lane-owned entry and a creature
+// with no row.
 void SendJoinSnapshotForSlot(int slot);
 
 // CLIENT, game thread (event_feed drain): one in-flight event entry from the host. Logs it;

@@ -1,6 +1,7 @@
-// coop/server_profile/server_profile.h -- the server a host runs, as a folder beside the game.
+// coop/server_profile/server_profile.h -- the server a host runs, as a folder in the mod's own
+// data folder.
 //
-// A server is one folder, `<exe dir>\multivoid_servers\<server id>\`, owned by the host: the stores
+// A server is one folder, `<mod data dir>\multivoid_servers\<server id>\`, owned by the host: the stores
 // a server owns (its settings, permissions, bans, players' profiles) will live under it. MTA's
 // precedent is the one-folder layout of a server's files (mtaserver.conf beside acl.xml and
 // banlist.xml); keeping each server's stores in its own folder inside one install is our choice,
@@ -17,8 +18,8 @@
 
 namespace coop::server_profile {
 
-// `<exe dir>\multivoid_servers`; empty when the exe directory is unknown. Creates nothing. Any
-// thread.
+// `<mod data dir>\multivoid_servers` (ue_wrap::paths::ModDataDir); empty when the mod has no data
+// folder. Creates nothing. Any thread.
 std::wstring ServersDir();
 
 // True iff `id` is a usable folder name: 1..24 bytes of [a-z0-9-], not starting or ending with

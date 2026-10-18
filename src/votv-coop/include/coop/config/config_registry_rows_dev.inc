@@ -142,6 +142,12 @@ CFG_FLAG(end_play_probe, "end_play_probe", "dev", false, "VOTVCOOP_END_PLAY_PROB
     "Probe: every actor's end of play counted by reason, and each destroyed one matched to the "
     "K2_DestroyActor call it ran inside; the ends with no such call, and the calls with no end, named "
     "by class every 30 s. Read-only.")
+CFG_FLAG(puppet_reg_probe, "puppet_reg_probe", "dev", false, "VOTVCOOP_PUPPET_REG_PROBE",
+    "Probe (BOTH peers): each remote player's puppet judged at its begin-play and at its end of play -- "
+    "registered in the player registry or not -- one [PI-0] line per puppet life. Read-only.")
+CFG_FLAG(pi0_selftest, "pi0_selftest", "dev", false, "VOTVCOOP_PI0_SELFTEST",
+    "Autonomous selftest (HOST): a Player Element whose puppet was cleared keeps its id when the retry's "
+    "puppet is registered -- one [PI-0-SELFTEST] line, on a spare peer slot, the registry left as found.")
 CFG_FLAG(death_seam_census, "death_seam_census", "dev", false, "VOTVCOOP_DEATH_SEAM_CENSUS",
     "Probe: every element end the death seam announces, one [DEATH] line each -- the element's type "
     "and id, mirror or local, destroyed or streamed out, and its class -- to pair with the lanes' own "
@@ -183,6 +189,12 @@ CFG_ENUM(grants_drill, "grants_drill", "dev", "off", "off|grant|none|hostdeny", 
     "The local grants drill: checks this machine's dev grants against an arm's expectation.")
 CFG_ENUM(grants_drill_expect, "grants_drill_expect", "dev", "same", "same|grant|none|hostdeny",
     "VOTVCOOP_GRANTS_DRILL_EXPECT", "Judges the grants drill against another arm's expectation (a red arm).")
+CFG_ENUM(remover_drill, "remover_drill", "dev", "off", "off|granted|withheld", "VOTVCOOP_REMOVER_DRILL",
+    "Drill (BOTH peers): the tool gun's remover pressed by a client at props the host spawned about its puppet, "
+    "each peer judging its own copies. granted: one prop, six presses at once on another, every distinct ring prop in "
+    "sight one after another, then a creature the remover cannot remove -- the props must go on both peers and the "
+    "creature stay. withheld: one prop, which the host's permissions refuse to this client and which must stay on "
+    "both peers. The client ends with a chat line the host judges at.")
 CFG_ENUM(chat_drill, "chat_drill", "dev", "off", "off|history|seed|i18n|span", "VOTVCOOP_CHAT_DRILL",
     "Developer: chat checks judged in memory -- history (the host), seed (the second joiner), i18n "
     "(every peer), span (every peer: a mid-line nick's span through the feed); each prints "
@@ -235,13 +247,15 @@ CFG_FLAG(floppy_selftest, "floppy_selftest", "dev", false, "VOTVCOOP_FLOPPY_SELF
     "for one run rather than leaving it here. Set it on BOTH peers; each drives its own role.")
 CFG_FLAG(hookdrag_selftest, "hookdrag_selftest", "dev", false, "VOTVCOOP_HOOKDRAG_SELFTEST",
     "Autonomous selftest: a prop dragged by a hook. The planting peer plants a hook into the "
-    "nearest keyed physics prop, walks out and back so the constraint drags it, then drops the "
-    "hook; both peers log the prop's position on one clock. It MUTATES the world, so arm it from "
-    "the environment for one run, on BOTH peers.")
+    "nearest keyed physics prop to itself, walks out and back with the bot director so the "
+    "constraint drags it, then drops the hook; the other peer takes the prop that hook bites, "
+    "and both log its position on one clock. It MUTATES the world, so arm it from the "
+    "environment for one run, on BOTH peers.")
 CFG_ENUM(hookdrag_role, "hookdrag_role", "dev", "host", "host|client|both", "VOTVCOOP_HOOKDRAG_ROLE",
     "Which peer plants the hook in the hookdrag selftest: the host (the driven-prop channel alone), "
-    "the client (the host ties the client's hook on its mirror), or both into the same prop (two "
-    "host constraints on one body). Set the same value on BOTH peers.")
+    "the client (the host ties the client's hook on its mirror), or both (each into the nearest "
+    "prop to itself: two host constraints on one body when they stand together). Set the same "
+    "value on BOTH peers.")
 CFG_FLAG(inventory_selftest, "inventory_selftest", "dev", false, nullptr,
     "Autonomous selftest: player inventory sync.")
 CFG_FLAG(starterkit_test, "starterkit_test", "dev", false, nullptr,
@@ -326,8 +340,9 @@ CFG_FLAG(rollover_watch, "rollover_watch", "dev", false, "VOTVCOOP_ROLLOVER_WATC
 CFG_ENUM(midnight_drill, "midnight_drill", "dev", "off", "off|awake|asleep|cheat|mode5|malformed|joinwindow",
     "VOTVCOOP_MIDNIGHT_DRILL",
     "Drill (BOTH peers, with rollover_watch), once a client's join is over. awake and asleep: the "
-    "host sets its clock just short of midnight; awake: both peers stay up; asleep: both go to bed "
-    "first, so the midnight falls inside the shared sleep's fast-forward. cheat: the host leaves its "
+    "host sets its clock just short of midnight; awake: both peers stay up; asleep: the host goes to "
+    "bed and the client follows once it sees the host asleep, so the midnight falls inside the host's "
+    "own fast-forward (each peer sleeps on its own). cheat: the host leaves its "
     "clock alone and the client writes a day onto its own, three times, as the cheat menu's day "
     "button does. mode5: each peer spawns game mode 5's master, which resets the day every second, "
     "and the client says whether its own reset kept running. malformed: the host puts three clock "
@@ -335,6 +350,37 @@ CFG_ENUM(midnight_drill, "midnight_drill", "dev", "off", "off|awake|asleep|cheat
     "the host sets its clock just short of midnight once it has taken a joiner's world, so the midnight "
     "falls inside the join, and both peers print their dishes' hash digest; equal is a pass. Run it on a "
     "fresh host world; every refused step is logged and ends the arm as invalid.")
+CFG_ENUM(sleep_drill, "sleep_drill", "dev", "off", "off|host_asleep|client_rest|beside", "VOTVCOOP_SLEEP_DRILL",
+    "Drill (BOTH peers), once a client's join is over: what a host's sleep and a client's rest do. "
+    "host_asleep: the host sets its need to 80 and sleeps natively and says the world's dilation it "
+    "reads (20); the client reads its own world's dilation (1) and its clock for 10 s, and the clock "
+    "must run at 0.9 of the native rate. client_rest: the host sleeps and prints its real seconds; "
+    "when it wakes the client reads its food for 10 s, sleeps from a need of 80 in the nearest bed "
+    "and prints its real seconds, its world's dilation, and its food and need at both ends. The host "
+    "holds its nightmare chance at 0 for the arm. beside: the host sleeps and is held asleep (its need is "
+    "written to 50 every tick) until the hook drag selftest has ended on it, then wakes; run it with "
+    "hookdrag_selftest=1 and hookdrag_role=client on both peers. The client prints its armed line only. "
+    "Every phase ends on a verdict line "
+    "([SLEEP-DRILL] <arm> <role> PASS|FAIL), and a phase that does not come is a FAIL after a bound.")
+CFG_ENUM(badsun_drill, "badsun_drill", "dev", "off", "off|clock|midnight|spawn|cheat|join|end|absent_stale", "VOTVCOOP_BADSUN_DRILL",
+    "Drill (BOTH peers), the Bad Sun: does a peer's own loaded copy go "
+    "active by its own clock. clock, join and end need the save that holds one saved Bad Sun; the others a fresh host world. clock: the host parks the clock at 05:00 at hosting and sets 06:30 once a "
+    "client's join is over; each peer reads its count of live copies (it must be 1), its copy's widget "
+    "and its place in the active events' senders, and its own clock every second, from before 07:00; "
+    "the copy must stay inactive until the clock reads 07:00 and be active by both tests within 15 s "
+    "after it. Each peer ends on a verdict line ([BADSUN-DRILL] clock <role> PASS|FAIL|INCONCLUSIVE; "
+    "INCONCLUSIVE: the save's copy was active at hosting, or the peer did not see its clock cross 07:00). "
+    "midnight, spawn, cheat, join, end and absent_stale: whether the host's existence of a Bad Sun reaches "
+    "each peer's own copies through the lane (the day edge's in-graph spawn, the host's call, a client's own refused "
+    "call, a joiner's seed, the end by the host's clock, a stale copy in a joiner's blob); each arm's set-up "
+    "and verdicts are in src/coop/dev/badsun_drill_shared.h, and each ends on its verdict line.")
+CFG_ENUM(event_relay_drill, "event_relay_drill", "dev", "off", "off|on", "VOTVCOOP_EVENT_RELAY_DRILL",
+    "Drill (BOTH peers, one run, one rejoin), the host's creature events in a client's event count: the host "
+    "spawns an inert krampus 15 m above itself once the client's join is over; the client reads its mirror's "
+    "copies in the gamemode's event senders (it must be 1, the relay's one), its count and the game's getEvent, "
+    "tells the host by chat, and rejoins and reads the same; the host then destroys the krampus and the client's "
+    "count must fall by one while the host's returns to where it began. Each step ends on a [EVR] PASS or "
+    "[EVR] FAIL line (src/coop/dev/event_relay_drill.cpp); a step that does not come is a FAIL after 60 s.")
 CFG_ENUM(world_roll_drill, "world_roll_drill", "dev", "off",
     "off|eye_host|eye_client|eye_join|jelly_host|jelly_client|jelly_join|redsky_host|redsky_client|redsky_join",
     "VOTVCOOP_WORLD_ROLL_DRILL",
@@ -507,6 +553,29 @@ CFG_STRING(server_drill, "server_drill", "dev", "", "VOTVCOOP_SERVER_DRILL", fal
     "it broken with that type, its own breakServer on a healthy box is refused, it walks to the box and runs the "
     "repair widget's end(true), and the host's box ends fixed; join -- the break in the joiner's window, found after "
     "its world is ready. Lines tagged [SERVER-DRILL]; the client's DONE line ends it.")
+CFG_STRING(camera_drill, "camera_drill", "dev", "", "VOTVCOOP_CAMERA_DRILL", false,
+    "Drill (BOTH peers): does a picked-up camera stick to its wall again, and by whose hand. grab -- the host hangs "
+    "a camera on a wall a walker reaches (before any client joins); the client finds it stuck, walks to it, grabs "
+    "it, holds 3 s of world time, lets go and watches 2.5 s more; the prop-stick lines of both peers carry the "
+    "cause. grab_near -- the same, the walk ending as close to the wall as the director allows. host_grab_near -- "
+    "the host does the near grab on its own camera (the control; no client needed). Lines tagged [CAMERA-DRILL]; "
+    "the grabber's DONE line ends it. The state arms, each ended by the client's \"[CAMERA-DRILL] <arm> PASS|FAIL\" "
+    "line: host-toggle -- the host switches a camera on, the client reads it on; client-toggle -- the client's press "
+    "is refused here and performed by the host; light -- the same for the laptop's camera-light button, after a walk "
+    "to the laptop; host-event -- the host fires the gray event beside a switched-on camera, the client reads it on "
+    "and then off; join -- the host switches both bits on before any client joins, every session reads both.")
+CFG_STRING(laptop_tab_drill, "laptop_tab_drill", "dev", "", "VOTVCOOP_LAPTOP_TAB_DRILL", false,
+    "Drill (BOTH peers): everyone sees the tab the base computer's user is on. The user walks to the PC with the "
+    "director, enters it and switches tabs; the other peer judges the LAST tab on arrival of a state carrying it. tab "
+    "-- the client holds, the host reads tab 10; tab-host -- the host holds, the client reads; tab-handover -- the "
+    "client holds and leaves, the host enters on the shared tab and switches, the client reads it; tab-norc -- a "
+    "viewer reads the cameras tab with its createRC run 0 times; tab-subgame -- the sub-game button's tab reaches the "
+    "host; tab-range -- a holding client sends a raw index past the switcher's last, the host drops and counts it as "
+    "a bad index; tab-forged -- a client holding nothing sends a report, the host drops and counts it as not the "
+    "holder's; tab-slot -- the host hands the client a state stamped with another sender's slot, which it drops and "
+    "counts as a bad slot; tab-join -- the host switches to tab 4 before any client connects, and every joiner reads "
+    "it; tab-relay (needs --observer) -- the first client holds, the second reads, and the first is sent no state. "
+    "Lines tagged [LAPTOP-TAB-DRILL]; the judging peer's PASS or FAIL line ends the arm.")
 CFG_STRING(server_upgrade_drill, "server_upgrade_drill", "dev", "", "VOTVCOOP_SERVER_UPGRADE_DRILL", false,
     "Drill (BOTH peers): a client installs an upgrade into a server box and takes one out. apply: the host "
     "applies both; refuse: the host refuses both, as if each had lost its race, and the client sees its install "
@@ -599,60 +668,9 @@ CFG_FLAG(lookat_aim_drill, "lookat_aim_drill", "dev", false, "VOTVCOOP_LOOKAT_AI
     "Drill (BOTH peers): walk to the nearest prop with the bot director, turn the camera onto it, "
     "and hold there without pressing anything, so the churn probe above has an aim to read. Says "
     "one readiness line once the game's own trace resolves the prop.")
-CFG_FLAG(prop_birth_key_probe, "prop_birth_key_probe", "dev", false, "VOTVCOOP_PROP_BIRTH_KEY_PROBE",
-    "Diagnostic probe (both roles): the place/birth seam -- how many drain ticks the save Key takes "
-    "to restore after a spawn, and which of the seven drain exits each pending spawn leaves by; and "
-    "every keyed prop it saw born that a script then destroys, with the session's state at the "
-    "destroy, even with no session. The drain exits are the client's; the host places through a "
-    "different path.")
-CFG_FLAG(spawn_match_probe, "spawn_match_probe", "dev", false, nullptr,
-    "Diagnostic probe: the OnSpawn fuzzy-match candidate set -- every same-class prop inside the "
-    "30 cm radius with its slot, distance, own key and mirror binding, plus a watch that reports a "
-    "destroy landing on an adopted actor. Walks the whole object array per fuzzy spawn while on.")
-CFG_FLAG(eid_lifetime_trace, "eid_lifetime_trace", "dev", false, nullptr,
-    "Diagnostic trace: entity-id lifetimes (mint/adopt/destroy).")
-CFG_FLAG(pinecone_probe, "pinecone_probe", "dev", false, nullptr,
-    "Diagnostic probe: pinecone prop behavior.")
-CFG_FLAG(live_store_readout, "live_store_readout", "dev", false, nullptr,
-    "Diagnostic readout: the live GObjStack container store.")
-CFG_FLAG(hotbar_icon_probe, "hotbar_icon_probe", "dev", false, "VOTVCOOP_HOTBAR_ICON_PROBE",
-    "Diagnostic readout: the quick-slot bar at world load -- the slot widget arrays, the "
-    "prop-icon name table and texture cache, the carried count, and per slot which texture is bound "
-    "to its `tex` parameter. Logs on change, so a settled bar is silent. The env twin exists because "
-    "the question is whether the bar loses the race on ONE peer or both, which an ini-only row "
-    "cannot arm in a single run.")
-CFG_FLAG(heap_probe, "heap_probe", "dev", false, nullptr,
-    "Diagnostic probe: process heap usage.")
-CFG_FLAG(drone_probe, "drone_probe", "dev", false, nullptr,
-    "Diagnostic probe: delivery drone state.")
-CFG_FLAG(drone_probe_drive, "drone_probe_drive", "dev", false, nullptr,
-    "Diagnostic probe: drive the delivery drone (test driver).")
-CFG_FLAG(pile_dup_probe, "pile_dup_probe", "dev", false, nullptr,
-    "Diagnostic probe: pile duplicate/identity mismatches.")
-CFG_FLAG(perf_probe, "perf_probe", "dev", false, "VOTVCOOP_PERF_PROBE",
-    "Performance probe: per-frame subsystem timing lines, the reflected-call rate and the ParamFrame allocation rate. The env twin exists so a launcher can arm BOTH peers for one run: an ini-only dev row has to be edited per install, which is how a perf number ends up measured on one peer and assumed on the other.")
-CFG_FLAG(perf_probe_selftime, "perf_probe_selftime", "dev", false, nullptr,
-    "Performance probe: self-time breakdown variant.")
-CFG_FLAG(perf_probe_dispatch, "perf_probe_dispatch", "dev", false, "VOTVCOOP_PERF_PROBE_DISPATCH",
-    "Performance probe: count every ProcessEvent dispatch (PE/s, game-thread share, our share). OFF by default -- gameplay dispatches ~170k/s across several threads, so this is a shared-atomic RMW on a contended cache line at that rate. Leave it off whenever the number being measured is what the mod itself costs; the 1 Hz fps line does not need it.")
-CFG_INT(perf_probe_resdrop, "perf_probe_resdrop", "dev", 0, 0, 3600, nullptr,
-    "Performance probe: after N 1 Hz samples, collapse render resolution (r.ScreenPercentage 25) to separate a GPU-bound frame from a CPU-bound one.")
-CFG_INT(perf_probe_bypass, "perf_probe_bypass", "dev", 0, 0, 3600, nullptr,
-    "Performance probe: after N samples, arm the transparent ProcessEvent bypass for 5 s (separates our dispatch-path cost from everything else about our presence).")
-CFG_INT(perf_probe_statunit, "perf_probe_statunit", "dev", 0, 0, 3600, nullptr,
-    "Performance probe: after N samples, issue `stat unit` + r.VSync 0 + t.MaxFPS 0. OFF by default because enabling any UE4 stat turns on FThreadStats collection engine-wide -- an instrument that changes the frame it measures. The delay exists so the samples before it are the uninstrumented baseline and the step across this line IS the instrument's own cost.")
-CFG_FLAG(lightswitch_probe, "lightswitch_probe", "dev", false, "VOTVCOOP_LIGHTSWITCH_PROBE",
-    "Diagnostic probe: light switch interactions + the light-group apply selftest. MUTATES the world (one-shot synthetic use()) -- never enable it on two peers at once. The env var exists so `mp.py lightgroup` can arm it: an ini-only dev row is unreachable to every launcher, which is how this selftest went unrun after a refactor.")
-CFG_FLAG(lightgroup_census, "lightgroup_census", "dev", false, "VOTVCOOP_LIGHTGROUP_CENSUS",
-    "Diagnostic census: per-key light GROUP state (isActive / active gate / buffIsActive) + switch A. Read-only; enable on BOTH peers and diff by key. It has an environment twin so a run can turn it OFF as its named variable: it dumps a line per group on a period, and any measurement of a per-frame or per-second effect has to be able to rule that out.")
-CFG_FLAG(sleep_probe, "sleep_probe", "dev", false, nullptr,
-    "Diagnostic probe: sleep/wake cycle.")
-CFG_FLAG(script_gate_log, "script_gate_log", "dev", false, nullptr,
-    "Diagnostic logging for the script-body gate's consumers (the kerfur form assembler's per-verb lines).")
-CFG_FLAG(rng_roll_census, "rng_roll_census", "dev", false, nullptr,
-    "Diagnostic census: RNG roll sites.")
-CFG_FLAG(leak_probe, "leak_probe", "dev", false, nullptr,
-    "Diagnostic probe: object/memory leak counters.")
+// The diagnostic probes and censuses of the entity and prop seams: their own file, one concept, included as
+// _dev_port.inc is above.
+#include "coop/config/config_registry_rows_dev_probes.inc"
 CFG_FLAG(force_chippile_unclaim, "force_chippile_unclaim", "dev", false, nullptr,
     "Test driver: force chip-pile unclaim paths.")
 CFG_FLAG(disable_completeness_floor, "disable_completeness_floor", "dev", false, nullptr,
@@ -757,3 +775,8 @@ CFG_FLAG(selftest_break_permissions, "selftest_break_permissions", "dev", false,
 CFG_FLAG(selftest_break_action_log, "selftest_break_action_log", "dev", false, "VOTVCOOP_SELFTEST_BREAK_ACTION_LOG",
     "Red arm of the commands selftest's action-log cases: the first acting case of each cases file expects "
     "no record, so it must fail.")
+// The puppet-identity arc's selftests and drill (PI-1, PI-2, PI-3): their own file, one concept, included as
+// _dev_port.inc is above.
+#include "coop/config/config_registry_rows_dev_pi.inc"
+// The NPC-spawner arc's native-spawn probe (NB): the same shape, the last rows of the list.
+#include "coop/config/config_registry_rows_dev_nb.inc"

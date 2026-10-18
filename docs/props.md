@@ -262,7 +262,7 @@ is built; concrete and food are designed and not built.
 | `PropDriveEnd` | the host to all | the final pose and velocity of a driven prop that rested or that a hand took; closes its generation |
 | `PropDropIntent`, `ReelEjectIntent` | a client to the host | a place, or an unavoidable birth, for the host to author |
 | `PropStickState` | the peer that sticks or frees it, to all | frozen or static, the commit pose and the hold the stick ended; or an unstick, with the pose and velocity |
-| `PropSnapPos` | the host to one joiner | a position correction for a save-authoritative prop moved in the join window, with a keyed prop's frozen and sleep |
+| `PropSnapPos` | the host to one joiner | a position correction for a save-authoritative prop moved in the join window, with a keyed prop's frozen and sleep; it carries the host's drive context for the prop (claim generation and open), the client drops one older than a drive END still on its copy, and a prop a hand held after its correction went out gets a follow-up after the release `[?]` |
 | `ContainerState`, `ContainerContents` | the presser; the host | open or closed; one slice of the host's object array |
 | `InventoryPickup` | each peer, relayed | the pocket blip, so others hear a pickup |
 

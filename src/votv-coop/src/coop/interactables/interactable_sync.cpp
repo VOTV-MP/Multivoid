@@ -13,6 +13,7 @@
 #include "ue_wrap/devices/door_box.h"      // lockers and the drone-console box
 #include "ue_wrap/devices/garage.h"
 #include "ue_wrap/devices/lightswitch.h"
+#include "ue_wrap/devices/security_camera.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"          // GetKeyString for swinger (it is an Aprop_C)
 #include "ue_wrap/core/reflection.h"
@@ -179,6 +180,52 @@ const Adapter g_doorBoxAdapter = {
     nullptr,
     &ue_wrap::door_box::ResolvedFamilyCount,
 };
+// A security camera's two saved bits, one adapter each because the channel carries a bool. Host-authoritative:
+// four writers beside the player's use move `active` (a wisp, the gray events, the cursed camera's night roll,
+// a save's load) and most are host-owned world systems, so a symmetric lane would let a client's copy of one
+// author the host's camera. MTA takes an unoccupied vehicle's engine bit from its client sync owner, which is
+// not taken here (reference/mtasa-blue/Server/mods/deathmatch/logic/CUnoccupiedVehicleSync.cpp:442-447); the
+// shape taken is a server-held bit carried to joiners in the add packet
+// (reference/mtasa-blue/Server/mods/deathmatch/logic/CStaticFunctionDefinitions.cpp:7260-7274 and
+// reference/mtasa-blue/Server/mods/deathmatch/logic/packets/CEntityAddPacket.cpp:571). The client renders the
+// host's bit and asks for a change as a CameraToggleIntent (coop/interactables/camera_toggle_intent). Keyed by the
+// lane's key for the camera (its portable identity, else its prop key), which ue_wrap::security_camera withholds
+// from a camera that carries its class's default. The `active` apply writes the bit, then updState() when the
+// write turns the camera on (the click the toggling peer heard), else upd(); a cursed camera's tick never clicks.
+// Either apply ends by repainting a laptop camera panel that has the camera selected.
+bool ApplyCameraActive(void* cam, bool on) {
+    namespace sc = ue_wrap::security_camera;
+    bool cur = false;
+    if (!sc::ReadActive(cam, cur) || !sc::WriteActive(cam, on)) return false;
+    const bool ok = (!cur && on && !sc::IsCursed(cam)) ? sc::CallUpdState(cam) : sc::CallUpd(cam);
+    sc::RefreshLaptopsShowing(cam);
+    return ok;
+}
+
+bool ApplyCameraLight(void* cam, bool on) {
+    namespace sc = ue_wrap::security_camera;
+    if (!sc::WriteLight(cam, on)) return false;
+    const bool ok = sc::CallUpd(cam);
+    sc::RefreshLaptopsShowing(cam);
+    return ok;
+}
+
+const Adapter g_cameraActiveAdapter = {
+    "camera_active", coop::net::ReliableKind::CameraActiveState,
+    &ue_wrap::security_camera::EnsureResolved,
+    &ue_wrap::security_camera::IsCameraClass,
+    &ue_wrap::security_camera::KeyOf,
+    &ue_wrap::security_camera::ReadActive,
+    &ApplyCameraActive,
+};
+const Adapter g_cameraLightAdapter = {
+    "camera_light", coop::net::ReliableKind::CameraLightState,
+    &ue_wrap::security_camera::EnsureResolved,
+    &ue_wrap::security_camera::IsCameraClass,
+    &ue_wrap::security_camera::KeyOf,
+    &ue_wrap::security_camera::ReadLight,
+    &ApplyCameraLight,
+};
 Channel g_door{g_doorAdapter, Channel::Mode::HostAuth};  // doors auto-revert: host-authoritative
 Channel g_light{g_lightAdapter};
 // Host-authoritative: the client neither polls nor requests on this kind.
@@ -188,13 +235,15 @@ Channel g_garage{g_garageAdapter};  // no auto-revert: symmetric
 Channel g_appliance{g_applianceAdapter};  // no auto-revert: symmetric
 Channel g_doorBox{g_doorBoxAdapter};  // no auto-revert: symmetric
 Channel g_oven{g_ovenAdapter};  // one way: whoever repairs it
+Channel g_cameraActive{g_cameraActiveAdapter, Channel::Mode::HostAuth};
+Channel g_cameraLight{g_cameraLightAdapter, Channel::Mode::HostAuth};
 // Keypads (ApasswordLock_C) are not a toggle (a typed buffer and three state bools, with an
 // accept verb this engine cannot reach) and live in coop::keypad_sync; KeypadState routes there
 // from event_feed, not through ChannelForKind.
 
 // Every channel, once: each list below walks this one, in this order.
 Channel* const kChannels[] = {&g_door, &g_light, &g_lightGroup, &g_container, &g_garage, &g_appliance, &g_doorBox,
-                              &g_oven};
+                              &g_oven, &g_cameraActive, &g_cameraLight};
 
 Channel* ChannelForKind(coop::net::ReliableKind k) {
     for (Channel* ch : kChannels)
@@ -248,6 +297,18 @@ void OnDoorBoxVerb(void* box) { g_doorBox.OnLocalEdge(box); }
 void OnContainerVerb(void* swinger) { g_container.OnLocalEdge(swinger); }
 
 void OnOvenVerb(void* oven) { g_oven.OnLocalEdge(oven); }
+
+void OnCameraVerb(void* cam) {
+    g_cameraActive.OnLocalEdge(cam);
+    g_cameraLight.OnLocalEdge(cam);
+}
+
+std::wstring CameraKey(void* cam) { return g_cameraActive.KeyForActor(cam); }
+
+void* ResolveCamera(const std::wstring& key) {
+    if (key.empty() || !ue_wrap::security_camera::EnsureResolved()) return nullptr;
+    return g_cameraActive.ActorForKey(key);
+}
 
 bool ApplyingLightGroup(void* root) { return root && root == g_applyingGroup; }
 

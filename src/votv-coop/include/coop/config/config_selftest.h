@@ -54,12 +54,12 @@ int SelftestScanWithFailure(int failAfterLines);
 bool SelftestWriteValue(const std::wstring& path, const char* key, const char* value);
 bool SelftestRemoveDuplicates(const std::wstring& path, const char* key, const char* keepValue);
 bool SelftestReformat(const std::wstring& path, ReformatStats& stats);
-// The runtime layer's selftest: drives SetValue's own code against a scratch ini beside the exe
+// The runtime layer's selftest: drives SetValue's own code against a scratch ini in the mod's folder
 // (never the live ini). `drain` returns once every notification posted so far has run;
 // `onNotifyThread` says whether the caller is on the thread notifications run on. Returns the
 // failure count; each check logs one config-selftest line. Not on the game thread.
 int SelftestRuntimeLayer(void (*drain)(), bool (*onNotifyThread)());
-// The quoted-value grammar's selftest on a scratch ini beside the exe: what the writer quotes, the
+// The quoted-value grammar's selftest on a scratch ini in the mod's folder: what the writer quotes, the
 // reader returns whole. Returns the failure count; each check logs one config-selftest line.
 int SelftestQuotedValues();
 // ShouldAnnounce on pure inputs; returns the failure count, one config-selftest line per check.

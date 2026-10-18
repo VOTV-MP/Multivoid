@@ -29,7 +29,7 @@
 #include "coop/creatures/kerfur_prop_adoption.h"  // OnSnapshotComplete
 #include "coop/player/hand_item.h"  // the hand-item handler
 #include "coop/interactables/laptop_sync.h"  // PayOwed: a client's laptop power at its pace
-#include "coop/player/sleep_sync.h"          // PayOwed: a client's bed flag at its pace
+#include "coop/player/sleep_sync.h"          // PayOwed: a client's rest state at its pace
 #include "coop/world/alarm_sync.h"           // PayOwed: a client's alarm request at its pace
 #include "coop/player/player_damage.h"
 #include "coop/creatures/wisp_tear_mirror.h"  // WispGrab and WispTear receivers
@@ -310,8 +310,8 @@ void Update(net::Session& session, void* localPlayer) {
         }
         case net::ReliableKind::JoinPhaseNote: {
             // The host's once-a-second word on the phase of this join it is working. Host-only: a
-            // client must not be able to hold another client's join open. The value is renewed by
-            // the ARRIVAL, so a note whose phase byte this build does not know still counts.
+            // client must not be able to hold another client's join open. A phase change or a rise
+            // of `done` renews the wait; a phase byte this build does not know is a change.
             if (msg.payloadLen < sizeof(net::JoinPhaseNotePayload)) {
                 UE_LOGW("event_feed: JoinPhaseNote payload too short (%zu < %zu)",
                         static_cast<size_t>(msg.payloadLen), sizeof(net::JoinPhaseNotePayload));

@@ -40,7 +40,7 @@ bool g_resetWatched = false;  // game mode 5's reset is watched (once per proces
 
 // HOST: when a sample is due. One is sent when the clock has moved half a game minute since the last
 // one sent, so consecutive samples cross at most one minute boundary -- a lost or merged sample, or a
-// host frame longer than about 78 ms in the shared sleep, can skip one -- and at the latest after the
+// host frame longer than about 78 ms in the host's sleep, can skip one -- and at the latest after the
 // resting interval. Measured on the clock itself (the
 // day number times maxTime, plus `day`), whatever moved it: the sleep's time dilation, the difficulty,
 // the day-length rule, a rewind or a set clock, which is sent at once.

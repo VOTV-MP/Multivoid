@@ -1,9 +1,9 @@
-// coop/config/config.h -- the env and ini configuration readers. multivoid.ini lives next to the
-// mod DLL; the LAN test framework overrides through environment variables, since one DLL location
-// serves two instances and per-file configs would alias. Precedence: the session's value of a
-// server-scope row while a session runs (the session layer), then a value set while the game runs
-// (the runtime layer), then the environment variable (set by the test launcher), then the ini
-// value, then the row default.
+// coop/config/config.h -- the env and ini configuration readers. multivoid.ini lives in the mod's
+// data folder (ue_wrap::paths::ModDataDir); the LAN test framework overrides through environment
+// variables, since one DLL location serves two instances and per-file configs would alias.
+// Precedence: the session's value of a server-scope row while a session runs (the session layer),
+// then a value set while the game runs (the runtime layer), then the environment variable (set by
+// the test launcher), then the ini value, then the row default.
 
 #pragma once
 
@@ -257,7 +257,7 @@ enum class ExampleGen : unsigned char {
     SkippedUnreadable,  // existing file present but unreadable -- no doomed swap
 };
 
-// Generate multivoid.ini.example beside the DLL: every registry row as wrapped description
+// Generate multivoid.ini.example in the mod's data folder: every registry row as wrapped description
 // prose, the generator-emitted allowed tokens, range and env twin, and a copyable commented
 // key=default line, under bare section headers. Deterministic bytes (no timestamp; numeric
 // emission in the C locale); compare first; the one atomic-swap primitive; fail-soft, since the

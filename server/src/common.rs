@@ -125,9 +125,10 @@ fn is_display_safe(c: char) -> bool {
 
 /// A peer identity as GNS renders a 32-byte `GenericBytes` one: `gen:` + 64
 /// lowercase hex. Since b144 a host publishes its durable PUBLIC KEY here and
-/// joiners dial exactly this string, so the master's job is to store it verbatim
-/// -- it neither mints it nor can verify it, and it must not silently accept a
-/// shape that would dial nobody. Lowercase is required, not merely preferred:
+/// joiners dial exactly this string. The master stores it verbatim and never mints it; this
+/// shape check cannot tell whether the sender holds the key (the announce proof in
+/// `lobby_proof` does that), but it must not accept a shape that would dial nobody.
+/// Lowercase is required, not merely preferred:
 /// `[V]` GNS hashes and byte-compares identity strings and its own parser rejects
 /// uppercase prefixes for that reason, so `GEN:AB..` would register under one
 /// spelling and be dialled under another.
@@ -155,6 +156,36 @@ pub fn build_claim_shape_ok(sha: &str, key: i64, sig: &str) -> bool {
         0 => sig.is_empty(),
         1..=255 => hex_to_bytes::<64>(sig).is_some(),
         _ => false,
+    }
+}
+
+/// A host name as the master compares it with the name a lobby proof was signed for: trimmed,
+/// lower-case, any login (`name@`) stripped, a trailing `:port` stripped, an IPv6 literal kept with its
+/// brackets, one trailing dot stripped. A name with a non-ASCII byte is empty (no master the
+/// client can dial has one). The client derives the name it signs from the URL it dialled by the
+/// same rule (`server/tests/vectors/master_names.json` holds the shared cases).
+pub fn canon_host_name(s: &str) -> String {
+    let s = s.trim();
+    if !s.is_ascii() {
+        return String::new();
+    }
+    let s = s.rsplit_once('@').map_or(s, |(_, host)| host).to_ascii_lowercase();
+    let host = if s.starts_with('[') {
+        match s.find(']') {
+            Some(end) => s[..=end].to_string(),
+            None => s,
+        }
+    } else {
+        match s.rsplit_once(':') {
+            Some((host, port)) if !host.contains(':') && !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => {
+                host.to_string()
+            }
+            _ => s,
+        }
+    };
+    match host.strip_suffix('.') {
+        Some(bare) => bare.to_string(),
+        None => host,
     }
 }
 
@@ -228,6 +259,38 @@ mod tests {
         assert_eq!(ip_bucket("::ffff:203.0.113.7"), "203.0.113.7");
         assert_ne!(ip_bucket("::ffff:203.0.113.7"), ip_bucket("::ffff:198.51.100.1"));
         assert_eq!(ip_bucket("2001:db8:1:2::1"), "2001:db8:1:2::/64");
+    }
+
+    #[test]
+    fn a_host_name_is_compared_lower_case_without_its_port() {
+        assert_eq!(canon_host_name(" Master.Multivoid.DEV "), "master.multivoid.dev");
+        assert_eq!(canon_host_name("master.multivoid.dev:10443"), "master.multivoid.dev");
+        assert_eq!(canon_host_name("203.0.113.7:10443"), "203.0.113.7");
+        assert_eq!(canon_host_name("[2001:DB8::1]:10443"), "[2001:db8::1]");
+        assert_eq!(canon_host_name("[2001:db8::1]"), "[2001:db8::1]");
+        assert_eq!(canon_host_name("2001:db8::1"), "2001:db8::1", "a bare v6 literal has no port to strip");
+        assert_eq!(canon_host_name("host:"), "host:", "an empty port is not stripped");
+        assert_eq!(canon_host_name("host:80x"), "host:80x");
+        assert_eq!(canon_host_name("alice:pw@master.multivoid.dev:10443"), "master.multivoid.dev");
+        assert_eq!(canon_host_name("master.multivoid.dev."), "master.multivoid.dev");
+        assert_eq!(canon_host_name("master.multivoid.dev.:10443"), "master.multivoid.dev");
+        assert_eq!(canon_host_name("b\u{fc}cher.example:10443"), "", "a non-ASCII host has no name");
+        assert_eq!(canon_host_name("user@b\u{fc}cher.example"), "");
+    }
+
+    // The case table the client's selftest checks as well (`HostName` in http_client.cpp): a URL as
+    // a player writes it, and the name the master compares. The master receives the host part.
+    #[test]
+    fn the_shared_url_to_name_table_holds() {
+        const TABLE: &str = include_str!("../tests/vectors/master_names.json");
+        let rows: Vec<serde_json::Value> = serde_json::from_str(TABLE).unwrap();
+        assert!(rows.len() >= 10, "the table lost rows");
+        for row in rows {
+            let url = row["url"].as_str().expect("url");
+            let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
+            let authority = after_scheme.split('/').next().unwrap();
+            assert_eq!(canon_host_name(authority), row["name"].as_str().expect("name"), "{url}");
+        }
     }
 
     #[test]

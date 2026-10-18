@@ -44,15 +44,19 @@ Each slot is measured on two quantities, both byte counters:
   acknowledged at. Little's law read backwards: the milliseconds of delivery standing on the wire.
   Both terms are reliable-only, which is the only way the division means anything.
 
-A round trip is timed as well, on the high lane the pose stream rides, and is kept as a diagnostic
-rather than as a control input. A busy link is probed ten times a second and reports once; an idle
-one is probed once a second with the same 32-byte datagram, so a baseline is never taken only under
-load.
+A round trip is timed as well, on the high lane the pose stream rides. A busy link is probed ten
+times a second and reports once; an idle one is probed once a second with the same 32-byte
+datagram, so a baseline is never taken only under load. A probe sent while at most one packet of
+ours was on the wire is admitted to the link's **base** round trip, the minimum over the last ten
+one-minute minima (the per-minute history of RFC 6817 section 2.5). The **queue** the law reads is
+the inflight time above that base: at a relay's 190-420 ms the raw inflight would read as queue
+where there is none.
 
-Neither term is compared against a reference derived from its own past, and that is the whole
-design. Two laws built before this one were, and both were refuted on the same property: a
-delay-versus-baseline rule of the LEDBAT family, and a port of ENet's peer throttle, which judges
-against the previous interval's lowest smoothed round trip
+What the law compares inflight against is a reference a queue of ours cannot enter: a probe sent
+under load is not admitted, so the base never learns a standing queue. Two laws built before this
+one compared against a reference derived from their own loaded past, and both were refuted on that
+property: a delay-versus-baseline rule of the LEDBAT family, and a port of ENet's peer throttle,
+which judges against the previous interval's lowest smoothed round trip
 (`reference/enet/protocol.c:908-911`). A standing queue moves that reference,
 so "better than baseline" stops meaning anything exactly when it starts to matter. The ENet port
 was measured doing it: the baseline rose from 18 ms to a median of 1,545 ms, its accelerate branch
@@ -68,13 +72,15 @@ One decision per sample, ten times a second, so a join can climb inside its own 
 | Branch | When | What it does |
 |---|---|---|
 | hold | nothing queued, or delivery not measured yet | leaves the rate alone |
-| brake | inflight above 400 ms, which includes a wire holding reliable bytes while nothing at all is being acknowledged | drops straight to the measured delivery |
-| climb | inflight at or under 150 ms | 5/4 of the rate plus 8 KB/s |
+| brake | queue above 400 ms (inflight above the base), or a wire holding reliable bytes while nothing at all is being acknowledged, whatever the base | drops straight to the measured delivery |
+| climb | queue at or under 150 ms | 5/4 of the rate plus 8 KB/s |
 | dead band | between the two | leaves the rate alone, because a controller with no dead band hunts |
 | anchor | after the above, whenever there is delivery to measure | a rate may not stand above 5/4 of the largest recent delivery reading |
 | envelope | last, and unconditionally | clamps the result into the floor and ceiling below, so on a link under about 26 KB/s the floor stands above what the anchor just allowed |
 
-The thresholds are the regimes above: the climb stops where health stopped (p90 163 ms) and the
+The thresholds are the regimes above, measured as inflight on 5-17 ms links where all of it was
+queue, and read as queue (inflight above the base) so they mean the same on a slow path: the climb
+stops where health stopped (p90 163 ms) and the
 brake fires an order of magnitude under the collapse (p10 1,458 ms), so a threshold between them
 flags 93.4% of the collapse and none of the health. The brake goes to the measurement rather than
 to a fraction of the current rate, because a multiplicative back-off from a rate hundreds of times
@@ -186,7 +192,7 @@ counters restart with the connection in the same way.
 | The time bound prices bytes against the delivery measured at the moment they are committed, and cannot retract them; a rate that collapses inside a second leaves a tail | `[V]` `coop/net/send_admission` |
 | The occupancy compared is an estimate. It reads high when a drain went unseen, which is the safe direction, and low by a bounded amount -- the stream header the transport adds after its own check, and the skew between two loads -- until the next anchor corrects both | `[V]` `coop/net/send_admission` |
 | A link that genuinely is slow is still a long download; the mod can only decline to make it worse | `[V]` `coop/net/send_rate_control` |
-| The round trip is a diagnostic, not an input. It rides the high lane, which the scheduler serves ahead of the bulk queue a transfer stands in, so it under-reports what that transfer is waiting behind | `[V]` `coop/net/send_rate_control` |
+| The round trip enters the law only as the base that inflight is read above. It rides the high lane, which the scheduler serves ahead of the bulk queue a transfer stands in, so a probe under-reports what that transfer is waiting behind; that is why only probes sent with the wire nearly empty count toward the base | `[V]` `coop/net/send_rate_control` |
 
 ## Code map
 

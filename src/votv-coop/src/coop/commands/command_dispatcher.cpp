@@ -12,6 +12,7 @@
 
 #include "coop/commands/command_args.h"
 #include "coop/commands/command_line.h"
+#include "coop/permissions/gameplay_nodes.h"
 #include "coop/permissions/grants_core.h"
 
 #include <algorithm>
@@ -402,6 +403,8 @@ bool RegisterBuiltins(Registry& reg) {
         if (!reg.DeclareNode({entry.node, entry.defaultGranted, entry.description}, nullptr))
             return false;
     }
+    // The nodes a player's acts in the shared world answer to: the gameplay domain's own table.
+    if (!coop::permissions::gameplay_nodes::Install(reg)) return false;
     // The node a permission change's Notify qualifier names: told of every change.
     if (!reg.DeclareNode({kAdminLogNode, false, "Told of every permission change."}, nullptr))
         return false;

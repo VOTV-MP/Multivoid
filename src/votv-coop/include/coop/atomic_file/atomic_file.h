@@ -41,6 +41,7 @@ std::filesystem::path TempPathFor(const std::filesystem::path& target);
 // fails with ERROR_INVALID_PARAMETER; a process this one may not open is running.
 bool ProcessRunning(unsigned long pid);
 
+// An empty target is refused first (failedAt == Step::Open, ERROR_PATH_NOT_FOUND), touching nothing.
 // Deletes the target's leftovers (RemoveLeftovers over its folder and its own file name), then
 // writes `bytes` to TempPathFor(target) (CreateFileW CREATE_ALWAYS, GENERIC_WRITE, no sharing,
 // `security` as given), WriteFile in chunks of at most 1 MiB, FlushFileBuffers when ToDisk,

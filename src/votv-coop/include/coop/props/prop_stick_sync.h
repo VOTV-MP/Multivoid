@@ -48,10 +48,9 @@ void Install(coop::net::Session* session);
 void Tick();
 
 // Receiver for PropStickState (wired in event_dispatch_entity): a stick, or an unstick when the
-// flags are 0. `localPlayer` is this peer's player, whose own grab an unstick leaves alone. Game
-// thread.
-void OnStickState(const coop::net::PropStickStatePayload& payload, uint8_t senderPeerSlot,
-                  void* localPlayer);
+// flags are 0. An unstick leaves a copy this peer's own grab or a drive owns where it is
+// (remote_prop::IsOwnedHere). Game thread.
+void OnStickState(const coop::net::PropStickStatePayload& payload, uint8_t senderPeerSlot);
 
 // A join's snapshot row or window correction makes this copy's stuck state the host's
 // (`physFlags`, read off the host's live prop): a copy stuck here that is free on the host gets the

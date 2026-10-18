@@ -19,6 +19,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/core/log.cpp
     src/ue_wrap/core/paths.cpp
     src/ue_wrap/core/game_build.cpp
+    src/ue_wrap/core/caller_locals.cpp
     src/ue_wrap/core/scan_ledger.cpp
     src/ue_wrap/core/sig_scan.cpp
     src/ue_wrap/core/gc_pin.cpp
@@ -80,6 +81,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/world/daynightcycle.cpp
     src/ue_wrap/world/active_events.cpp
     src/ue_wrap/world/jellyfish_path.cpp
+    src/ue_wrap/world/bad_sun.cpp
     src/ue_wrap/world/red_sky.cpp
     src/ue_wrap/world/skysphere.cpp
     src/ue_wrap/world/directionalwind.cpp
@@ -110,6 +112,8 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/devices/portable_pc.cpp
     src/ue_wrap/devices/floppybox.cpp
     src/ue_wrap/devices/serverbox.cpp
+    src/ue_wrap/devices/security_camera.cpp
+    src/ue_wrap/devices/laptop_widget.cpp
     src/ue_wrap/desk/desk_audio.cpp
     src/ue_wrap/desk/phys_mods.cpp
     src/ue_wrap/desk/desk_press.cpp
@@ -158,6 +162,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/actors/prop.cpp
     src/ue_wrap/actors/prop_keys.cpp
     src/ue_wrap/actors/prop_flags.cpp
+    src/ue_wrap/actors/spawner_stamp.cpp
     src/ue_wrap/actors/prop_events.cpp
     src/ue_wrap/actors/garbage_bag.cpp
     src/ue_wrap/actors/vitals.cpp
@@ -176,6 +181,7 @@ set(VOTVCOOP_SOURCES
     src/coop/player/skin_effects.cpp
     src/coop/player/skin_registry.cpp
     src/coop/player/local_body.cpp
+    src/coop/props/remover_request.cpp
     src/coop/props/remote_prop.cpp
     src/coop/props/unresolved_pose_ledger.cpp
     src/coop/props/remote_prop_convert.cpp
@@ -252,6 +258,9 @@ set(VOTVCOOP_SOURCES
     src/coop/world/event_fire_policy.cpp
     src/coop/world/event_fire_sync.cpp
     src/coop/world/event_active_sync.cpp
+    src/coop/world/creature_event_relay.cpp
+    src/coop/world/creature_event_relay_host.cpp
+    src/coop/world/creature_event_relay_client.cpp
     src/coop/world/alarm_sync.cpp
     src/coop/interactables/serverbox_sync.cpp
     src/coop/interactables/server_upgrade_sync.cpp
@@ -277,6 +286,8 @@ set(VOTVCOOP_SOURCES
     src/coop/items/inventory_pickup_sync.cpp
     src/coop/session/shutdown.cpp
     src/coop/player/players_registry.cpp
+    src/coop/player/puppet_identity.cpp
+    src/coop/player/puppet_identity_scan.cpp
     src/coop/element/mirror_defer.cpp
     src/ui/join_curtain.cpp
     src/coop/creatures/npc_adoption.cpp
@@ -341,12 +352,14 @@ set(VOTVCOOP_SOURCES
     src/coop/world/weather_rain.cpp
     src/coop/world/weather_event_births.cpp
     src/coop/world/weather_redsky.cpp
+    src/coop/world/weather_badsun.cpp
     src/coop/config/config.cpp
     src/coop/text/utf8_codec.cpp
     src/coop/text/case_fold.cpp
     src/coop/text/repertoire.cpp
     src/coop/text/name_filter.cpp
     src/coop/config/config_census.cpp
+    src/coop/config/config_ini_read.cpp
     src/coop/config/config_example.cpp
     src/coop/config/config_ini_write.cpp
     src/coop/config/config_registry.cpp
@@ -354,6 +367,7 @@ set(VOTVCOOP_SOURCES
     src/coop/config/config_session.cpp
     src/coop/config/config_selftest.cpp
     src/coop/config/config_review.cpp
+    src/coop/mod_data/legacy_note.cpp
     src/coop/atomic_file/atomic_file.cpp
     src/coop/atomic_file/atomic_file_selftest.cpp
     src/coop/bug_report/report_redact.cpp
@@ -379,6 +393,8 @@ set(VOTVCOOP_SOURCES
     src/coop/net/connect_history.cpp
     src/coop/net/connection_tuning.cpp
     src/coop/net/lobby_password.cpp
+    src/coop/net/identity_crypto.cpp
+    src/coop/net/identity_key_file.cpp
     src/coop/net/peer_identity.cpp
     src/coop/net/session.cpp
     src/coop/net/session_receive.cpp
@@ -398,16 +414,19 @@ set(VOTVCOOP_SOURCES
     src/coop/net/stream_refusals.cpp
     src/coop/net/stream_slot_selftest.cpp
     src/coop/net/apply_pause_selftest.cpp
+    src/coop/net/intent_queue_selftest.cpp
     src/coop/net/latest_wins.cpp
     src/coop/net/receive_budget.cpp
     src/coop/net/refusal_tally.cpp
     src/coop/net/send_admission.cpp
     src/coop/net/send_backlog.cpp
     src/coop/net/send_rate_control.cpp
+    src/coop/net/fake_link_steps.cpp
     src/coop/net/ice_config.cpp
     src/coop/net/ice_policy.cpp
     src/coop/net/signaling_client.cpp
     src/coop/net/signaling_proof.cpp
+    src/coop/net/lobby_proof.cpp
     src/coop/net/http_client.cpp
     src/coop/net/lobby_client.cpp
     src/coop/net/lobby_announcer.cpp
@@ -443,6 +462,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/eraser_press_intent.cpp
     src/coop/interactables/drone_call_intent.cpp
     src/coop/interactables/door_verb_intent.cpp
+    src/coop/interactables/camera_toggle_intent.cpp
     src/coop/interactables/door_state_verbs.cpp
     src/coop/interactables/lightgroup_verbs.cpp
     src/coop/interactables/verb_lanes.cpp
@@ -459,6 +479,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/download_arm_sync.cpp
     src/coop/interactables/tape_caddy_sync.cpp
     src/coop/interactables/laptop_sync.cpp
+    src/coop/interactables/laptop_tab.cpp
     src/coop/interactables/portable_pc_lid.cpp
     src/coop/interactables/laptop_buffer_sync.cpp
     src/coop/interactables/floppy_slot_entry.cpp
@@ -466,6 +487,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/floppy_slot_sync.cpp
     src/coop/interactables/floppybox_sync.cpp
     src/coop/interactables/signal_catch_sync.cpp
+    src/coop/player/sleep_rest.cpp
     src/coop/player/sleep_sync.cpp
     src/coop/creatures/wisp_attack_sync.cpp
     src/coop/creatures/wisp_grab_hold.cpp
@@ -592,6 +614,7 @@ set(VOTVCOOP_SOURCES
     src/coop/permissions/inheritance.cpp
     src/coop/permissions/resolution.cpp
     src/coop/permissions/grants_core.cpp
+    src/coop/permissions/gameplay_nodes.cpp
     src/coop/permissions/permission_files.cpp
     src/coop/permissions/action_log.cpp
     src/coop/permissions/permission_edit.cpp

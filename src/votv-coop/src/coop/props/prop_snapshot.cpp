@@ -99,11 +99,27 @@ int64_t NowMsSteady_() {
         .count();
 }
 
+// The bracket of `peerSlot` closed: its SnapshotComplete is in the transport or the backlog.
+// The close time goes to join_beacon, which keeps the joiner's wait alive while it drains.
+void CloseBracket_(int peerSlot) {
+    const int64_t now = NowMsSteady_();
+    g_bracketClosed[peerSlot] = true;
+    // The close time is join_beacon's to keep (its Draining owner accepts only link samples taken
+    // after it); nothing here reads it, so it is pushed, not stored.
+    coop::join_beacon::NoteBracketClosed(peerSlot, now);
+}
+
+// The bracket of `peerSlot` is open, abandoned or never was: the one clear of the closed state.
+void OpenBracket_(int peerSlot) {
+    g_bracketClosed[peerSlot] = false;
+    coop::join_beacon::NoteBracketReset(peerSlot);
+}
+
 // The one defer: raise the flag, arm the next retry, and speak only when this slot's reason is
 // new. Every site that refuses to bracket a slot goes through here.
 void DeferSlot_(int peerSlot, DeferReason why, const char* what) {
     g_deferredSlots[peerSlot] = true;
-    g_bracketClosed[peerSlot] = false;
+    OpenBracket_(peerSlot);
     g_deferRetryAtMs[peerSlot] = NowMsSteady_() + kDeferRetryMs;
     if (g_deferLogged[peerSlot] == why) return;
     g_deferLogged[peerSlot] = why;
@@ -249,7 +265,7 @@ void CompleteDrainForCurrentSlot(coop::net::Session* s) {
         buf.insert(buf.end(), tail.begin(), tail.end());
         if (s->SendReliableToSlot(g_currentTargetSlot, coop::net::ReliableKind::SnapshotComplete,
                                   buf.data(), static_cast<int>(buf.size())))
-            g_bracketClosed[g_currentTargetSlot] = true;
+            CloseBracket_(g_currentTargetSlot);
     }
     UE_LOGI("snapshot: drain complete for slot %d (%zu candidates, %u sent, %u left out unread)",
             g_currentTargetSlot, g_snapshotCandidates.size(), g_snapshotSentTotal, g_snapshotUnreadTotal);
@@ -384,7 +400,7 @@ void TriggerForSlot(int peerSlot) {
     // The deferred flag is consumed here; the gates below re-set it through DeferSlot_, which
     // re-arms the retry and decides whether the reason is worth printing again.
     g_deferredSlots[peerSlot] = false;
-    g_bracketClosed[peerSlot] = false;
+    OpenBracket_(peerSlot);
     // IsSlotReady, not IsSlotConnected: the connection handle exists a few ms before the lanes are
     // configured, and a drain triggered in that window queues ~1,700 PropSpawns on the
     // high-priority lane instead of the bulk lane.
@@ -634,7 +650,7 @@ void CancelForSlot(int peerSlot) {
     // A slot that disconnects while deferred is not retried; cleared before the in-progress check.
     if (peerSlot >= 1 && peerSlot < coop::players::kMaxPeers) {
         g_deferredSlots[peerSlot] = false;
-        g_bracketClosed[peerSlot] = false;
+        OpenBracket_(peerSlot);
         g_deferRetryAtMs[peerSlot] = 0;
         g_deferLogged[peerSlot] = DeferReason::None;
         g_drillHoldUntilMs[peerSlot] = 0;  // a recycled slot is not still being held
@@ -659,8 +675,8 @@ size_t OnDisconnect() {
     g_pendingSlots.shrink_to_fit();
     // No deferred slot survives into the next session, and no closed bracket either.
     g_deferredSlots.fill(false);
-    g_bracketClosed.fill(false);
     for (int slot = 0; slot < coop::players::kMaxPeers; ++slot) {
+        OpenBracket_(slot);
         g_deferRetryAtMs[slot] = 0;
         g_deferLogged[slot] = DeferReason::None;
         g_drillHoldUntilMs[slot] = 0;  // no session inherits the previous one's hold deadline

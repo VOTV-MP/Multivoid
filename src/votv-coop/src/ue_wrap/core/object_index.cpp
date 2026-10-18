@@ -112,17 +112,26 @@ std::vector<ListedClass> g_classLog;
 // A listed slot's position in the log, so unlisting marks the entry gone: a new class put in the same slot at
 // the same address is then met through its own entry alone.
 std::unordered_map<int32_t, size_t> g_classLogPosBySlot;
+// The same position by the class object's address, so ClassListingId answers for a pointer without reading
+// through it: the pointer a caller holds may be a class unloaded since.
+std::unordered_map<void*, size_t> g_classLogPosByObj;
 // Moves whenever a class object is unlisted: ClassUnlistVersion.
 uint64_t g_classUnlistVersion = 0;
 
-void ListClassName(int32_t index, void* classObj) {
+// List the class object `classObj` in `index` under `key`: the engine-free half of ListClassName.
+void ListClassNamed(int32_t index, void* classObj, std::wstring key) {
     if (g_classNameBySlot.count(index)) return;   // listed already
-    std::wstring key = R::ToString(R::NameOf(classObj));
     if (key.empty()) return;
     g_classSlotsByName[key].push_back(index);
     g_classNameBySlot.emplace(index, std::move(key));
     g_classLogPosBySlot[index] = g_classLog.size();
+    g_classLogPosByObj[classObj] = g_classLog.size();
     g_classLog.push_back(ListedClass{index, classObj});
+}
+
+void ListClassName(int32_t index, void* classObj) {
+    if (g_classNameBySlot.count(index)) return;   // listed already
+    ListClassNamed(index, classObj, R::ToString(R::NameOf(classObj)));
 }
 
 void UnlistClassName(int32_t index) {
@@ -131,6 +140,10 @@ void UnlistClassName(int32_t index) {
     ++g_classUnlistVersion;
     const auto pos = g_classLogPosBySlot.find(index);
     if (pos != g_classLogPosBySlot.end()) {
+        // The by-address entry goes only while it is still this listing's: a later listing of the same address
+        // owns it.
+        const auto byObj = g_classLogPosByObj.find(g_classLog[pos->second].obj);
+        if (byObj != g_classLogPosByObj.end() && byObj->second == pos->second) g_classLogPosByObj.erase(byObj);
         g_classLog[pos->second].obj = nullptr;
         g_classLogPosBySlot.erase(pos);
     }
@@ -447,6 +460,12 @@ void* ClassLogAt(size_t position, bool* loaded) {
 
 uint64_t ClassUnlistVersion() { return g_classUnlistVersion; }
 
+uint64_t ClassListingId(void* cls) {
+    UE_ASSERT_GAME_THREAD("object_index::ClassListingId");
+    const auto it = g_classLogPosByObj.find(cls);
+    return it == g_classLogPosByObj.end() ? 0 : static_cast<uint64_t>(it->second) + 1;
+}
+
 void* ClassByName(const wchar_t* name) {
     UE_ASSERT_GAME_THREAD("object_index::ClassByName");
     if (!name || !*name) return nullptr;
@@ -521,6 +540,71 @@ void DebugListUnchecked(void* obj, void* cls, int32_t index) {
     UE_ASSERT_GAME_THREAD("object_index::DebugListUnchecked");
     DebugUnlinkSlot(index);
     Link(index, obj, cls);
+}
+
+bool RunSelftest() {
+    int checks = 0, failed = 0;
+    auto ok = [&](bool cond, const char* what) {
+        ++checks;
+        if (!cond) {
+            ++failed;
+            UE_LOGE("object_index selftest FAIL: %s", what);
+        }
+    };
+
+    // Two fake class objects, never read through, in slots far past the object array and under one fake name.
+    static char fakeA, fakeB;
+    void* const a = &fakeA;
+    void* const b = &fakeB;
+    constexpr int32_t kSlotA = 0x7FFF0001, kSlotA2 = 0x7FFF0002, kSlotB = 0x7FFF0003;
+    const std::wstring name = L"__object_index_selftest_class";
+    const size_t logBefore = g_classLog.size();
+
+    ok(ClassListingId(a) == 0 && ClassListingId(b) == 0 && ClassListingId(nullptr) == 0, "unlisted answers 0");
+    ListClassNamed(kSlotA, a, name);
+    const uint64_t first = ClassListingId(a);
+    ok(first != 0, "a listed class answers a non-zero id");
+    ok(ClassListingId(b) == 0, "another address still answers 0");
+
+    const uint64_t unlistedAt = ClassUnlistVersion();
+    UnlistClassName(kSlotA);
+    ok(ClassListingId(a) == 0, "an unlisted class answers 0");
+    ok(ClassUnlistVersion() == unlistedAt + 1, "an unlisting moves the unlist number once");
+
+    ListClassNamed(kSlotA, a, name);
+    const uint64_t second = ClassListingId(a);
+    ok(second != 0 && second != first, "listed again at the same address answers a new non-zero id");
+
+    ListClassNamed(kSlotB, b, name);
+    const uint64_t other = ClassListingId(b);
+    ok(other != 0 && other != second, "a second class answers an id of its own");
+    UnlistClassName(kSlotB);
+    ok(ClassListingId(b) == 0 && ClassListingId(a) == second, "another class unlisting leaves the first's id");
+
+    // An address listed under a second slot before the first slot's unlisting (a lost death event): the first
+    // slot's unlisting leaves the newer listing's by-address entry alone.
+    ListClassNamed(kSlotA2, a, name);
+    const uint64_t newer = ClassListingId(a);
+    ok(newer != 0 && newer != second, "the same address listed under a second slot answers its newer id");
+    UnlistClassName(kSlotA);
+    ok(ClassListingId(a) == newer, "unlisting the older slot leaves the newer listing's id");
+    UnlistClassName(kSlotA2);
+    ok(ClassListingId(a) == 0, "unlisting the newer slot leaves the address unlisted");
+
+    // Nothing of the fakes stays: the log is append-only for every other reader, and nothing has read the
+    // entries added here, so they are cut off again. The unlist number stays moved, as after any unlisting.
+    g_classLog.resize(logBefore);
+    ok(g_classSlotsByName.find(std::wstring_view(name)) == g_classSlotsByName.end() &&
+           g_classNameBySlot.count(kSlotA) == 0 && g_classNameBySlot.count(kSlotA2) == 0 &&
+           g_classNameBySlot.count(kSlotB) == 0 && g_classLogPosBySlot.count(kSlotA) == 0 &&
+           g_classLogPosBySlot.count(kSlotA2) == 0 && g_classLogPosBySlot.count(kSlotB) == 0 &&
+           g_classLogPosByObj.count(a) == 0 && g_classLogPosByObj.count(b) == 0 &&
+           g_classLog.size() == logBefore,
+       "the test leaves no fake entry behind");
+
+    if (failed == 0) UE_LOGI("object_index selftest ALL PASS (%d checks)", checks);
+    else             UE_LOGE("object_index selftest: %d/%d FAILED", failed, checks);
+    return failed == 0;
 }
 
 }  // namespace ue_wrap::object_index

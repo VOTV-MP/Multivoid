@@ -104,7 +104,7 @@ void SweepInto(std::vector<Row>& rows) {
                     r.key = key;
                     r.dupLines = g.second.lines;
                     // player_guid is gone from this list with its row: the durable identity is a
-                    // keypair in multivoid_identity.key now, so a leftover `player_guid=` line in
+                    // keypair in the mod folder's multivoid_identity.key now, so a leftover `player_guid=` line in
                     // an existing ini is simply DEAD -- and the sweep already has the right word
                     // for that, reporting it as an Unknown key one branch above.
                     r.identityKey = _stricmp(key.c_str(), "player_skin") == 0;

@@ -3,7 +3,8 @@
 ## Purpose
 
 The keyed things around the base that are not the workstation: doors and their keypads, the
-light switches and the light groups, the garage, the appliances, the lockers, the power panel,
+light switches and the light groups, the garage, the appliances, the lockers, the security cameras,
+the power panel,
 the wind turbine, the windows and the grime, the delivery drone, and the economy the drone
 serves: the shared balance, the shop orders, and the coin gun. Who owns each, how a peer's press
 reaches the others, and where the group's money can still be lost.
@@ -17,7 +18,8 @@ Every open-or-closed, on-or-off device rides one replication engine
 a key-to-actor index that heals itself, per-key dedup, a deferred apply with a throttled retry for
 an instance that has not streamed in yet, echo suppression, and the connect snapshot. A device
 family is an adapter over its engine wrapper (`ue_wrap/devices/`), a few lines each: doors, light
-switches, light groups, container lids, the garage, the appliances, the lockers, the oven's repair.
+switches, light groups, container lids, the garage, the appliances, the lockers, the oven's repair,
+the security cameras.
 
 Each channel is sent at the verbs that write its state, which the script-body gate watches: every
 live writer of a door's open state goes through `doorOpen` or `doorClose`, and of a light group's
@@ -73,6 +75,32 @@ autoclose, at the first of its five-second checks that finds its sensor list emp
 puppet counts in that list exactly when the client's own player counts in the client's own copy of
 it. A device with no auto-revert (the garage, an appliance, an oven's repair, a locker, a lid) is
 symmetric: any peer's edge is the state.
+
+### Security cameras
+
+A camera has two saved bits, each its own lane keyed by the lane's key for the camera (its portable
+identity where it has one, else its prop key): `active` (the LED, the click, the laptop's camera
+list and capture gate) and `isLight` (the spotlight, flipped from the laptop's camera panel). Both
+are the host's. Besides a player's use, a wisp, the gray events, the cursed camera's night roll and
+a save's load write `active`, and most of those are host-owned world systems, so the host's lanes
+read both bits after a camera's `actionOptionIndex`, `upd` and `updState` and after the cursed
+camera's tick, and send a change to every peer. A client renders what it is sent: the apply writes
+the bit, then runs `updState` when the write turns a camera other than the cursed one on, which
+plays the click, else `upd`, then repaints a laptop camera panel that has the camera selected. A
+joiner hears one click for a camera the host has on that its save had off, and none for one that is
+already on.
+
+A client's own use of a camera and its press of the laptop's camera-light button are refused at
+their bodies and sent to the host (`coop/interactables/camera_toggle_intent`). The host checks the
+sender's reach, of the camera for the use and of any device showing the laptop interface (the base
+laptop or a portable PC) for the light, and sets the bit to the value the sender wanted, so two
+presses that race collapse to one change. A bit already at that value changes nothing and is sent
+again to that sender alone, so a client whose copy diverged converges and its button is never dead.
+The host's own open laptop panel is repainted after it performs a request. The cursed camera's tick
+is refused on a client: the host rolls it. A camera whose key is empty, or the key its class carries
+by default, is addressed by no lane: a client's press on it is refused and sends nothing, and a
+cursed one's tick stays that peer's own. A client's copy of a wisp still switches that client's own
+cameras off until the creature mirror stops running the wisp's world writes `[?]`.
 
 ### What is inside a container
 
@@ -295,6 +323,14 @@ holding the laptop claim is the sender's reach, and the index must be one of the
 buy a level. The host asks exactly what the button asks, including the game's own asymmetry: the
 balance is tested against the row's unaccumulated price and charged the accumulated one.
 
+### The laptop's tab
+
+The base laptop and every portable PC show one widget whose tabs are a switcher. The peer holding the
+laptop claim reports its index after each tab change (`coop/interactables/laptop_tab`); the host checks
+that the sender holds the claim and the index is one of its own tabs, writes it to its widget and sends
+it on. A peer that does not hold the claim writes the switcher's index and nothing else: the game's own
+tab call also binds that peer's keys to a remote drone. A joiner gets the host's index at its world-ready.
+
 ### The laptop's inbox
 
 The laptop's messages -- the hash-collection task mails, the scientist and alien replies, the
@@ -469,6 +505,7 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | State | Owner | Shape |
 |---|---|---|
 | a door, a light group | the host | each is sent at its own verbs; a client's own door verb is an intent the host runs, and its own group writes are refused |
+| a security camera's `active` and `isLight` | the host | each is sent after the camera's use, `upd` and `updState` and the cursed camera's tick; a client's use and light button are intents the host runs |
 | a light switch, a lid, the garage, an appliance, an oven's repair, a locker | any peer | symmetric state edges, relayed |
 | the power panel, the generators | the host | a client's press, repair, service, upgrade install and hit are ops the host takes from a player within reach; the host sends the breakers after its panel's apply and every generator's row after its verbs |
 | a keypad | the host | its verbs replayed on every client and its settled state after each chain; a client's own entries are an intent the host runs |
@@ -489,6 +526,9 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | `DoorState`, `LightGroupState` | the host to all | a key and a state |
 | `LightState`, `ContainerState`, `GarageDoorState`, `ApplianceState`, `LockerDoorState` | each peer, relayed | a key and a state |
 | `DoorVerbIntent` | a client to the host | a door's key, the verb, a hit's damage |
+| `CameraActiveState`, `CameraLightState` | the host to all | a camera's key and one bit |
+| `CameraToggleIntent` | a client to the host | a camera's key, which bit, the value wanted |
+| `LaptopTabReport`, `LaptopTabState` | the claim holder to the host; the host to the other clients | the switcher's index |
 | `KeypadState` | the host to all | a verb the host's keypad ran, or the state a chain settled on: the buffer, the verdict, the set-new-code mode, the password, and whether the chain handed the verdict on |
 | `KeypadIntent` | a client to the host | a keypad's key and the entry: a digit, a submit, a cancel, a keycard's verdict, a reset |
 | `PowerControlState` | a client to the host; the host to all | the breakers a press flipped; the breakers, the lockout, a lever's click and each slot's last press taken |
@@ -548,6 +588,7 @@ an error line.
 | Concept | Files |
 |---|---|
 | the engine and the adapters | `coop/interactables/interactable_channel.h`, `coop/interactables/interactable_sync`, `coop/interactables/door_verb_intent`, `coop/interactables/door_state_verbs`, `coop/interactables/toggle_verbs`, `coop/interactables/verb_lanes`, `ue_wrap/devices/door`, `ue_wrap/devices/door_box`, `ue_wrap/devices/lightswitch`, `ue_wrap/devices/garage`, `ue_wrap/devices/appliance` |
+| security cameras | `coop/interactables/camera_toggle_intent`, `coop/interactables/toggle_verbs`, `coop/interactables/interactable_sync`, `ue_wrap/devices/security_camera` |
 | keypads | `coop/interactables/keypad_sync`, `ue_wrap/devices/passwordlock` |
 | power, turbine, windows, grime | `coop/world/power_panel`, `coop/world/power_grid`, `ue_wrap/devices/generator`, `coop/interactables/turbine_sync`, `coop/interactables/window_sync`, `coop/interactables/grime_sync`, `ue_wrap/devices/power_control`, `ue_wrap/devices/windturbine`, `ue_wrap/devices/base_window`, `ue_wrap/devices/grime` |
 | the coordinate towers | `coop/world/coord_tower_rows`, `coop/world/coord_tower_ops`, `ue_wrap/desk/coord_tower` |

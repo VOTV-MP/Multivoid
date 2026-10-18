@@ -30,22 +30,32 @@ public:
     // nothing, and a rate is a ceiling, so with nothing queued it costs nothing to leave alone.
     static constexpr int64_t kIdleDemandBytes = 8 * 1024;
 
-    // Probe cadence, busy and idle. The idle one is what makes `rttMin` a BASELINE rather than a
-    // reading of the bottleneck queue. 1 Hz of a 32-byte datagram is 32 B/s per peer, so an idle
-    // link is measured for free.
+    // Probe cadence, busy and idle. The idle one keeps `rttMin` a BASELINE, not a reading of the
+    // bottleneck queue, and costs 32 B/s per peer (1 Hz of a 32-byte datagram).
     static constexpr uint64_t kProbeIntervalMs     = 100;
     static constexpr uint64_t kIdleProbeIntervalMs = 1'000;
-    // How many probes may be outstanding at once. A ninth would ask nothing the eight unanswered
-    // ones have not, so the mint is skipped and counted; retirement is kProbeLostMs, not this.
+    // Probes outstanding at once: a ninth asks nothing the eight unanswered do not, so it is skipped.
     static constexpr int      kMaxOutstanding  = 8;
     // When an unanswered probe stops being a slow reading and becomes a lost one. Our policy, not
     // the transport's, whose connected-timeout is twice it -- so the link is still live when we
     // retire a probe, and an echo that arrives later lands in `stray`.
     static constexpr uint64_t kProbeLostMs = 5'000;
 
-    // The window rttMin is taken over, in one-second buckets: long enough that a queue filling for
-    // a few seconds cannot drag the baseline up behind it.
+    // The rttMin window in one-second buckets: a queue filling for seconds cannot drag it up.
     static constexpr int kRttMinBuckets = 10;
+
+    // The BASE delay: the smallest round trip a probe measured while the wire held at most one
+    // packet of ours, kept as the minimum of the last kBaseHistMinutes one-minute minima (RFC 6817
+    // section 2.5 keeps ten; libutp's base-delay history keeps thirteen). A minute is the unit so a
+    // route change ages out after ten minutes that each had an admitted probe (a saturated link
+    // pushes none, so it ages nothing), and a queue cannot become the baseline: a probe under load
+    // is not admitted.
+    static constexpr int kBaseHistMinutes = 10;
+    static constexpr uint64_t kBaseMinuteMs = 60'000;
+    // A probe is ADMITTED to the base when the reliable bytes on the wire and unacknowledged at the
+    // moment it went out were no more than this: one packet, so the probe did not wait behind a
+    // queue of our own making. It is the reading `queue = inflight - base` is measured from.
+    static constexpr int kBaseAdmitUnackedBytes = 1200;
 
     // ---- The control law's constants ----
 
@@ -68,9 +78,11 @@ public:
     // retry outranks the lane-0 pose datagram, so it is the probe margin BBR uses and no more.
     static constexpr int kOverdriveNum = 5, kOverdriveDen = 4;
 
-    // THE BRAKE and its dead band, in milliseconds of delivery standing on the wire. The climb
-    // stops where health stopped and the brake fires an order of magnitude under the collapse;
-    // between them the rate is left alone, because a controller with no dead band hunts.
+    // THE BRAKE and its dead band, in milliseconds of QUEUE: delivery standing on the wire above the
+    // link's base round trip (Steer_). They were measured on 5-17 ms links, where all in-flight time
+    // above 150 was queue; above a base they mean the same thing on a slow path. The climb stops
+    // where health stopped and the brake fires an order of magnitude under the collapse; between
+    // them the rate is left alone, because a controller with no dead band hunts.
     static constexpr int64_t kQueueClimbMs = 150;
     static constexpr int64_t kQueueBrakeMs = 400;
 
@@ -152,30 +164,40 @@ public:
     // Fold one sample for a slot (net thread, ~10 Hz) and emit that slot's line at 1 Hz.
     void Sample(int slot, const LinkSample& in, uint64_t nowMs);
 
+    // The last sample's published view, the one read the game thread may make. `sampleMs` is that
+    // sample's `nowMs` (0 = none since the slot reset), `deliveredBytes` the delivered reliable
+    // bytes (never below an earlier value), `queueBytes` the reliable bytes still owed (pending,
+    // unacknowledged, in our backlog). The stamp loads first, so the values are its sample's or a
+    // LATER one's, never older. Any thread.
+    struct Published {
+        int64_t sampleMs       = 0;
+        int64_t deliveredBytes = 0;
+        int64_t queueBytes     = 0;
+    };
+    Published PublishedFor(int slot) const;
+
     // The probe this slot owes, if one is due; false when the link is idle or a probe went out
     // within the cadence. Net thread. The caller sends `out` and, if the send fails, says so.
     bool NextProbe(int slot, uint64_t nowMs, LinkProbePayload& out);
-    // The send of a minted probe failed. Expected, not exceptional: with the send buffer at the
-    // brim -- the state a bulk transfer creates -- every new message is refused, probes included.
+    // The send of a minted probe failed: expected at the brim, where a bulk transfer refuses all.
     void NoteProbeRefused(int slot, uint32_t token);
-    // An echo came back. The round trip is measured against OUR record of when that token went out;
-    // the payload is the token alone and carries no time, so an echo has none to invent one from.
+    // An echo came back, timed against OUR record of when that token went out (it carries no time).
     void NoteProbeReply(int slot, const LinkProbePayload& reply, uint64_t nowMs);
 
     // The rate this slot's link should now be paced at, or -1 when there is nothing to write --
     // control disabled, or the law left the rate where the connection already has it. Net thread,
-    // and a PEEK: the decision is not spent until `NoteRateWritten` says it reached the transport.
-    // Latching here would retire a decision a failed write never delivered, and the dead band can
-    // leave the rate still for a long time, so one missed write would strand the link.
+    // and a PEEK: the decision is spent only when `NoteRateWritten` says it reached the transport,
+    // so a failed write cannot strand the link at a stale rate through the dead band.
     int64_t PendingRateWrite(int slot);
-    // The write landed. `us` is what it cost, folded into the per-second cost line beside the
-    // status read's, because a config write per decision is a claim of its own. Net thread.
+    // The write landed. `us` is what it cost, folded into the per-second cost line. Net thread.
     void NoteRateWritten(int slot, int64_t bps, uint64_t us);
 
-    // What the status reads themselves cost, per net-thread pass; reported once a second while any
-    // link is busy. `links` is how many connections that pass read, which is why the line reports
-    // passes and link samples as two numbers -- on a three-client host they differ by 3x.
+    // What the status reads cost per net-thread pass, reported once a second while any link is
+    // busy. `links` is how many connections the pass read: on a three-client host they differ 3x.
     void NoteSampleCost(uint64_t us, int links, uint64_t nowMs);
+
+    // The base history's pure cases, run once per process at the first Session::Start.
+    static bool RunSelftest();
 
 private:
     static constexpr int kSlots = static_cast<int>(coop::players::kMaxPeers);
@@ -183,6 +205,22 @@ private:
     struct Outstanding {
         uint32_t token  = 0;   // 0 = the entry is free
         uint64_t sentMs = 0;
+        bool     admitted = false;  // minted with <= kBaseAdmitUnackedBytes on the wire: base material
+    };
+
+    // What one run of the law decided; an edge into or out of Brake or Hold is logged, the rest counted.
+    enum class LawKind : uint8_t { Hold = 0, Brake, Climb, Dead };
+
+    // The base delay's history, a pure value so its cases run without a link: the finished
+    // minutes' minima (a ring, the oldest overwritten), the minute being filled, and when it began.
+    struct BaseHistory {
+        int      hist[kBaseHistMinutes]{};
+        int      count = 0, next = 0;
+        int      curMin = -1;
+        uint64_t minuteStartMs = 0;
+        void Note(int rttMs);       // an admitted round trip: the minute keeps its smallest
+        int Min() const;            // over the finished minutes and this one; -1 with none
+        void Roll(uint64_t nowMs);  // closes a minute that ran 60 s; one with no sample pushes nothing
     };
 
     // Everything the net thread alone owns, in one struct so an armed teardown is one assignment
@@ -218,6 +256,7 @@ private:
         int         echoesRefused = 0;  // OUR answers the send buffer would not take
         int         rttBucketMin[kRttMinBuckets]{};
         uint64_t    rttBucketSec[kRttMinBuckets]{};
+        BaseHistory base;
 
         // ---- The law's state: two smoothed byte rates and what they decided ----
         // Acknowledged delivery, smoothed. The term `inflight` is divided by, so RELIABLE-ONLY:
@@ -232,9 +271,14 @@ private:
         int64_t  servedRing[kServedPeakSamples]{};
         int      servedRingIdx = 0;
         int64_t  prevUnrel  = 0;       // the unreliable counter at the previous sample
-        // The last decision's inputs, kept for the reported line: a field log that cannot show why
-        // the rate moved is the state this whole arc started in.
+        // The last decision's inputs, kept for the reported line, so a log can show why a rate moved.
         int64_t  inflightMs = 0;
+        // inflight less the base delay (all of it while no base exists): both thresholds read it.
+        int64_t  queueMs = 0;
+        bool     stalled = false;      // the last measuring decision was a stall; held through Hold
+        // The kind of the previous decision, so a change of it is one log line.
+        LawKind  lastKind = LawKind::Hold;
+        int      flipCount = 0;        // Climb <-> Dead changes this window: counted, not logged
         // What the law wants, and what the connection was last told, so a write costs one per move.
         // Both open at the rate `TuneConnection` already wrote, NOT at zero: a link whose demand
         // never reaches kIdleDemandBytes decides nothing, and zeroes here would report a rate of 0
@@ -254,6 +298,15 @@ private:
         std::atomic<uint64_t> recvBytes{0};
         // Set by FreeSlot from whichever thread tore the slot down; consumed by the net thread.
         std::atomic<bool> resetArmed{false};
+        // The published view: Sample stores the values, then the stamp (release).
+        std::atomic<int64_t> pubDelivered{0};
+        std::atomic<int64_t> pubQueue{0};
+        std::atomic<int64_t> pubSampleMs{0};
+        void ClearPublished() {
+            pubSampleMs.store(0, std::memory_order_relaxed);
+            pubDelivered.store(0, std::memory_order_relaxed);
+            pubQueue.store(0, std::memory_order_relaxed);
+        }
         Measured m;
     };
 
@@ -263,6 +316,9 @@ private:
 
     // The smallest round trip in the rttMin window, or -1 with nothing measured yet.
     static int RttMinFor_(const Measured& m, uint64_t nowMs);
+    static const char* LawName_(LawKind kind);
+    // "<n> ms", or "-" while there is no base: the text both log lines print after `base=`.
+    static void FormatBase_(const Measured& m, char* buf, size_t cap);
     // Retire outstanding probes older than kProbeLostMs, counting them lost.
     static void ExpireOutstanding_(Measured& m, uint64_t nowMs);
     // The anchor's bound: the largest raw `served` reading in the window. Separate from the EWMA
@@ -273,8 +329,9 @@ private:
     static void OpenWindow_(Measured& m, uint64_t nowMs, int64_t delivered, uint64_t recv);
 
     // The law, run once per 10 Hz sample against the two smoothed rates -- on the SAMPLE cadence,
-    // not the reported second, because a join has to climb inside its own download.
-    static void Steer_(Measured& m);
+    // not the reported second, because a join has to climb inside its own download. Returns what it
+    // decided; the caller prints the change.
+    static LawKind Steer_(Measured& m);
 
     Slot slots_[kSlots];
     // Whether the law's decisions are handed to the transport at all.

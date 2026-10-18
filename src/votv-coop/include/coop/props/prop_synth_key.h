@@ -37,12 +37,13 @@ std::wstring EnsureKeyForBroadcast(void* self, const std::wstring& currentKey,
 
 // KEY-UNIQUENESS AUTHORITY mint: force-mint a fresh unique Key onto `self` REGARDLESS of its
 // current Key. The host census calls it when a second live actor is found carrying an
-// already-indexed Key, which the game's own save data produces -- it ships clone families
-// sharing one GUID, and the identity layer assumes uniqueness. Resolves setKey by climbing from
-// the actual class to the nearest ancestor that declares it, since FindFunction matches the
-// exact owner: actorChipPile and prop_garbageClump declare their own, trashBitsPile takes
-// actor_save's, the prop lineage Aprop_C's. Returns the CONFIRMED re-read key, or an empty
-// string on any failure, where the caller keeps the old key and logs. Game thread only.
+// already-indexed Key, which the level's content produces -- its clone families share one GUID,
+// and a New Game saves them as they are, and the identity layer assumes uniqueness. Resolves
+// setKey by climbing from the actual class to the nearest ancestor that declares it, since
+// FindFunction matches the exact owner: actorChipPile and prop_garbageClump declare their own,
+// trashBitsPile takes actor_save's, the prop lineage Aprop_C's. Returns the CONFIRMED re-read key,
+// or an empty string on any failure, where the caller keeps the old key and logs. Game thread
+// only.
 std::wstring MintFreshKeyForDuplicate(void* self);
 
 // The key format that mint uses, on its own: `rk_<64-bit-random-hex>`, 19 characters, inside the

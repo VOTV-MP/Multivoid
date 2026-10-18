@@ -6,10 +6,9 @@
 // adopts. A prop is host-authoritative, so a constraint pulling a prop on a client is that client
 // writing shared-world motion the host never sees, and the copies diverge. Two peers hooking one
 // prop is the same defect twice over. One authority per force, the doctrine's rule, applied to
-// the tie itself: a CLIENT breaks every constraint a hook builds on it, at the native seam that
-// builds it, and the HOST builds a client's hook its real constraint on the mirror it holds of
-// that hook. Game thread throughout, except the seam callback, which only judges the builder's
-// class and posts.
+// the tie itself: a CLIENT breaks every constraint a hook builds on it, in the frame that builds it
+// (a script-gate watch on the body that builds it), and the HOST builds a client's hook its real
+// constraint on the mirror it holds of that hook. Game thread throughout.
 
 #pragma once
 
@@ -40,15 +39,13 @@ namespace coop::hook_constraint {
 // on purpose: two hooks on one prop are two forces, and only a machine holding both constraints
 // can simulate them, so the prop's syncer stays the host and the LINKS move to it instead.
 //
-// Cache the session and patch the seam, once per process: a native Func patch has no unpatch, so
-// the callback reads the session's role per call and is inert in single player. Idempotent;
-// retried from Tick until the engine class resolves. Game thread.
+// Cache the session and register the script-gate watch on hook_C::makeAttachments, once per process:
+// the post reads the session's role per call and is inert on the host and in single player. The
+// watch is asked about from Tick until the gate has resolved its name. Idempotent. Game thread.
 void Install(coop::net::Session* session);
 
-// Drain the ties the seam queued, each built by a hook of this lane's classes: break the ones that are
-// the hook's own tie and not the flight tether, and hold the ones the member table cannot judge yet
-// for a bounded window. A no-op on the host, whose seam queues nothing. Game thread, from the lane's
-// tick.
+// Ask the gate to resolve the watch's name until it is live or dead. A no-op once it has settled.
+// Game thread, from the lane's tick.
 void Tick();
 
 // What became of a bite the host tried to reproduce.
@@ -68,7 +65,7 @@ enum class BiteResult {
 // would the real hook; the caller reads the mirror's liveness after a Refused. Game thread.
 BiteResult BiteMirror(void* mirror, uint8_t ownerSlot, const coop::net::HookStatePayload& p);
 
-// Session end: drop the queue and the session pointer; the seam stays patched and inert.
+// Session end: drop the session pointer; the watch stays registered and inert.
 void OnDisconnect();
 
 }  // namespace coop::hook_constraint

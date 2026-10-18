@@ -6,11 +6,13 @@
 #include "coop/element/intent_authority.h"
 #include "coop/element/registry.h"
 #include "coop/net/intent_bucket.h"
+#include "coop/net/intent_queue.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/player/roster_ledger.h"  // PerSlotState
 #include "coop/props/active_drive.h"
 #include "coop/props/prop_snapshot.h"
 #include "coop/props/remote_prop.h"
@@ -30,7 +32,6 @@
 
 #include <atomic>
 #include <cstdint>
-#include <deque>
 #include <iterator>
 #include <unordered_map>
 #include <vector>
@@ -82,16 +83,14 @@ std::vector<SpentTool> g_spent;
 uint64_t g_sent = 0, g_refusedGhost = 0;
 
 // ---- host side -------------------------------------------------------------------------------
-struct Bucket {
-    coop::net::IntentBucket rate;
-    uint64_t                nextSayMs = 0;
+// One sender: its queued presses with their bucket, and the full queue's refusal clock; cleared with its occupant.
+struct Slot {
+    coop::net::IntentQueue<coop::net::PackTrashIntentPayload> queue;
+    uint64_t nextSayMs = 0;  // said once in kRefusalSayMs
 };
-Bucket g_rate[coop::net::kMaxPeers];
-std::deque<coop::net::PackTrashIntentPayload> g_pending[coop::net::kMaxPeers];
+coop::roster_ledger::PerSlotState<Slot> g_slots;
 std::unordered_map<uint32_t, uint64_t> g_remedyAtMs;
 uint64_t g_packed = 0, g_denied = 0;
-
-bool TakeToken(uint8_t slot) { return g_rate[slot].rate.Take(kPackBudget, coop::active_drive::NowMs()); }
 
 // The truth about a target that is not what the sender named, at most once per element per window.
 void RemedyOnce(void* actor, coop::element::ElementId eid) {
@@ -338,11 +337,11 @@ void Tick(coop::net::Session& session) {
     if (!g_spent.empty()) ConsumeSpentTools();
     if (session.role() != coop::net::Role::Host) return;
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
-        if (g_pending[slot].empty()) continue;
-        if (!TakeToken(slot)) continue;
-        const coop::net::PackTrashIntentPayload p = g_pending[slot].front();
-        g_pending[slot].pop_front();
-        Execute(session, p, slot);
+        g_slots[slot].queue.Serve(kPackBudget, coop::active_drive::NowMs,
+                                  [&](const coop::net::PackTrashIntentPayload& p) {
+            Execute(session, p, slot);
+            return coop::net::Served::Done;
+        });
     }
 }
 
@@ -350,25 +349,17 @@ void OnPackTrashIntent(coop::net::Session& session,
                        const coop::net::PackTrashIntentPayload& payload, uint8_t senderSlot) {
     if (session.role() != coop::net::Role::Host) return;
     if (senderSlot < 1 || senderSlot >= coop::net::kMaxPeers) return;
-    auto& q = g_pending[senderSlot];
-    if (q.size() >= kMaxPending) {
-        Bucket& b = g_rate[senderSlot];
+    Slot& sl = g_slots[senderSlot];
+    coop::net::PackTrashIntentPayload copy = payload;
+    if (!sl.queue.Push(std::move(copy), kMaxPending)) {
         const uint64_t now = coop::active_drive::NowMs();
-        if (now >= b.nextSayMs) {
-            b.nextSayMs = now + kRefusalSayMs;
+        if (now >= sl.nextSayMs) {
+            sl.nextSayMs = now + kRefusalSayMs;
             UE_LOGW("[PACK-TRASH] slot %u queue full (%zu) -- refusing presses until it drains",
-                    static_cast<unsigned>(senderSlot), q.size());
+                    static_cast<unsigned>(senderSlot), sl.queue.size());
         }
         ++g_denied;
-        return;
     }
-    q.push_back(payload);
-}
-
-void OnPeerLeft(uint8_t slot) {
-    if (slot >= coop::net::kMaxPeers) return;
-    g_pending[slot].clear();
-    g_rate[slot] = Bucket{};
 }
 
 void OnDisconnect() {
@@ -377,10 +368,6 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(g_sent), static_cast<unsigned long long>(g_packed),
                 static_cast<unsigned long long>(g_denied),
                 static_cast<unsigned long long>(g_refusedGhost));
-    for (uint8_t slot = 0; slot < coop::net::kMaxPeers; ++slot) {
-        g_pending[slot].clear();
-        g_rate[slot] = Bucket{};
-    }
     g_spent.clear();
     g_remedyAtMs.clear();
     g_sent = g_packed = g_denied = g_refusedGhost = 0;

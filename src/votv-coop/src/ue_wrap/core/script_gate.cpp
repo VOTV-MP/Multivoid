@@ -10,6 +10,7 @@
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hook.h"
+#include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -97,9 +98,11 @@ struct ActiveScope {
     void* self;     // the body THIS node published, so a walk reads each node without re-deriving
     void* caller;   // PreviousFrame->Node: WHO called this body, which a verb shared by several
                     // callers needs to tell a player's route from the world's own
-    ActiveScope(int tag, void* object, void* function, const wchar_t* name, void* callerFunction)
+    uintptr_t bits; // the scope mark the PREs of this call put on it (MarkScope)
+    ActiveScope(int tag, void* object, void* function, const wchar_t* name, void* callerFunction,
+                uintptr_t markBits)
         : prev(t_activeHead), prevTag(t_tag), prevObject(t_object), prevFunction(t_function),
-          prevName(t_name), self(function), caller(callerFunction) {
+          prevName(t_name), self(function), caller(callerFunction), bits(markBits) {
         ++t_depth; t_tag = tag; t_object = object; t_function = function; t_name = name;
         t_activeHead = this;
     }
@@ -220,6 +223,9 @@ __declspec(noinline) std::uintptr_t __fastcall LoopDetour(void* ctx, void* stack
     call.stack = stack;
     call.depth = t_depth + 1;
     call.fromOurCode = R::InCoopDispatch();
+    // The scope word: local to this dispatch and zero here, so only a matched call pays for it.
+    std::uintptr_t scopeWord = 0;
+    call.scopeMark = &scopeWord;
 
     bool cancel = FireTable(g_fnTable, fnKey, call, /*post=*/false);
     if (nameKey) cancel = FireTable(g_nameTable, nameKey, call, /*post=*/false) || cancel;
@@ -229,9 +235,10 @@ __declspec(noinline) std::uintptr_t __fastcall LoopDetour(void* ctx, void* stack
     }
     std::uintptr_t rv;
     {
-        ActiveScope scope(hit->tag, call.object, fn, hit->name, call.callerFunction);
+        ActiveScope scope(hit->tag, call.object, fn, hit->name, call.callerFunction, scopeWord);
         rv = g_trampoline(ctx, stack, result);
     }
+    call.scopeMark = nullptr;   // the posts run after the scope ended: a mark from one is a no-op
     FireTable(g_fnTable, fnKey, call, /*post=*/true);
     if (nameKey) FireTable(g_nameTable, nameKey, call, /*post=*/true);
     return rv;
@@ -457,6 +464,37 @@ bool IsBodyActive(void* function, void* callerFunction) {
     for (const ActiveScope* s = t_activeHead; s; s = s->prev)
         if (s->self == function && (!callerFunction || s->caller == callerFunction)) return true;
     return false;
+}
+
+void MarkScope(const Call& call, uintptr_t bits) {
+    if (call.scopeMark) *call.scopeMark |= bits;
+}
+
+uintptr_t ScopeBits(void* function) {
+    if (!function) return 0;
+    for (const ActiveScope* s = t_activeHead; s; s = s->prev)
+        if (s->self == function) return s->bits;
+    return 0;
+}
+
+uintptr_t ScopeBitFor(const void* owner) {
+    UE_ASSERT_GAME_THREAD("script_gate::ScopeBitFor");
+    constexpr int kBits = 64;
+    static const void* s_owners[kBits] = {};
+    static int s_count = 0;
+    if (!owner) return 0;
+    for (int i = 0; i < s_count; ++i)
+        if (s_owners[i] == owner) return static_cast<uintptr_t>(1) << i;
+    if (s_count >= kBits) {
+        static bool s_said = false;
+        if (!s_said) {
+            s_said = true;
+            UE_LOGE("script_gate: scope bits exhausted (%d owners) -- a consumer asking for another gets 0", kBits);
+        }
+        return 0;
+    }
+    s_owners[s_count] = owner;
+    return static_cast<uintptr_t>(1) << s_count++;
 }
 
 std::uint8_t* OutParamPtr(const Call& call, int32_t paramOffset) {

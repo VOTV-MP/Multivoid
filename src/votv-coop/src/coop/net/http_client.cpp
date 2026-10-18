@@ -74,8 +74,27 @@ bool SplitHostPort(const std::string& in, std::string& host, uint16_t& port, boo
 
 }  // namespace
 
+// The name a lobby proof is signed for, by the rules of the master's canon_host_name
+// (server/src/common.rs), whose cases server/tests/vectors/master_names.json holds for both sides:
+// the host Request dials, a login ("name@") dropped, one trailing dot dropped, ASCII lower-cased.
+// A host holding a non-ASCII byte has no name: the master compares ASCII only, so the proof for it
+// could never match.
+std::string HostName(const std::string& hostPort) {
+    std::string host;
+    uint16_t port = 0;
+    bool secure = true;
+    if (!SplitHostPort(hostPort, host, port, secure)) return std::string();
+    for (char c : host)
+        if (static_cast<unsigned char>(c) >= 0x80) return std::string();
+    const size_t at = host.rfind('@');
+    if (at != std::string::npos) host.erase(0, at + 1);
+    if (!host.empty() && host.back() == '.') host.pop_back();
+    for (char& c : host) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    return host;
+}
+
 Response Request(const std::string& hostPort, const std::string& path,
-                 const char* method, const std::string& body, int timeoutMs) {
+                 const char* method, const std::string& body, int timeoutMs, size_t bodyCap) {
     Response out;
 
     std::string host;
@@ -149,16 +168,18 @@ Response Request(const std::string& hostPort, const std::string& path,
     }
     out.status = static_cast<int>(status);
 
-    // Body (bounded read loop). A master response is small; cap at 1 MiB so a rogue
-    // endpoint can't grow our buffer without bound.
-    constexpr size_t kBodyCap = 1u << 20;
+    // Body (bounded read loop), capped at the caller's `bodyCap` so a rogue endpoint can't grow
+    // our buffer without bound.
     for (;;) {
         DWORD avail = 0;
         if (!::WinHttpQueryDataAvailable(req.h, &avail)) return out;  // partial -> !ok
         if (avail == 0) break;
         size_t chunk = avail;
-        if (out.body.size() + chunk > kBodyCap) chunk = kBodyCap - out.body.size();
-        if (chunk == 0) { UE_LOGW("http: response body exceeded 1 MiB cap"); break; }
+        if (out.body.size() + chunk > bodyCap) chunk = bodyCap - out.body.size();
+        if (chunk == 0) {
+            UE_LOGW("http: response body exceeded the %zu-byte cap", bodyCap);
+            break;
+        }
         const size_t base = out.body.size();
         out.body.resize(base + chunk);
         DWORD read = 0;

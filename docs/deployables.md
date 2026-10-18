@@ -38,7 +38,7 @@ the hook lane did not have in front of it:
 - **The physics constraint exists on the host and nowhere else.** The deployed hook's tie is a
   PhysX constraint the game builds on whichever machine runs its attach verbs, and a constraint
   pulling a host-owned prop on a client is that client moving shared state the host never sees.
-  So a client breaks every tie a hook builds on it, at the native seam the build funnels through,
+  So a client breaks every tie a hook builds on it, in the frame that built it (a post watch on `makeAttachments`, `[V]` on the rig: `hookdrag` on `72742a09`, every role),
   and the host builds a client's hook its real tie on the mirror it holds of that hook, against
   that client's puppet, from the bite the owner's state names. The client's own hook keeps its
   pull on the client's own player, which is a velocity write in the tick and not the constraint;

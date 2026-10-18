@@ -65,6 +65,9 @@ struct DirectorGoal {
     // it, inside its session. A run whose epoch EndWalks has moved past fails at its next tick. Unset,
     // the run takes the epoch it starts in.
     std::optional<uint32_t> epoch;
+    // Set by the owner of a background walk to end it at the run's next tick (CancelBackgroundWalk); the
+    // flag lives in that walk. Unset for a run nobody cancels.
+    const std::atomic<bool>* cancel = nullptr;
     // The route the Goto last walked, its start first, refilled on each path it takes: ground the
     // walker has crossed, for a scenario that needs a point it can surely stand on again.
     std::vector<ue_wrap::FVector> route;
@@ -149,9 +152,14 @@ struct BackgroundWalk {
     DirectorGoal     goal;
     bool             carry = false;
     std::atomic<int> state{0};
+    std::atomic<bool> cancelled{false};
 };
 std::shared_ptr<BackgroundWalk> StartBackgroundWalk(const ue_wrap::FVector& to, float reachCm, int deadlineS,
                                                     bool carry = false);
+
+// End a background walk at its next tick: the worker lets go of the keys it holds and `state` reads 2.
+// For a drill that failed while its walker was still walking. Any thread.
+void CancelBackgroundWalk(BackgroundWalk& walk);
 
 // The scenario entry (director_run.cpp): resolve the player, pick an OPEN chipPile via the
 // NavMesh, run the brain to grab it. Env-gated (VOTVCOOP_RUN_DIRECTOR_WALKGRAB=1).

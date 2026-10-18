@@ -5,6 +5,7 @@
 #include "coop/element/element.h"    // Element::LiveActor
 #include "coop/element/registry.h"   // the host's eid-to-actor lookup
 #include "coop/net/session.h"
+#include "coop/props/prop_drive_host.h"       // ContextOf: the drive context a correction carries
 #include "coop/props/prop_element_tracker.h"  // the capture-instant collectors
 #include "coop/props/prop_wire_parity.h"      // PhysFlagsOf, the state a correction carries
 #include "ue_wrap/actors/prop.h"     // IsChipPile: a grabbed clump belongs to the convert stream
@@ -16,6 +17,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace coop::join_window_baseline {
 namespace {
@@ -52,8 +54,8 @@ std::unordered_map<coop::element::ElementId, ue_wrap::FVector>
 // The save-time position of every live keyed prop at the capture instant, by host eid. A keyed
 // prop rides the connect snapshot at the host's current position, but the joiner's own loadObjects
 // re-creates it at the save position afterwards and clobbers that; the diverged flush re-asserts
-// the host's live position at quiescence, past the clobber. Same lifetime and clears as the pile
-// map.
+// the host's live position at quiescence, past the clobber. Unlike the pile map, it lives on through
+// a settle phase (<= 30 s) after the window closes, and clears when the settle ends.
 std::unordered_map<coop::element::ElementId, ue_wrap::FVector>
     g_blobKeyedXforms[coop::net::kMaxPeers];
 // Each of those keyed props' frozen and sleep bits at the same instant: the state the joiner's blob
@@ -83,6 +85,119 @@ std::chrono::steady_clock::time_point g_flushArmUntil[coop::net::kMaxPeers]{};
 std::chrono::steady_clock::time_point g_flushLastRun[coop::net::kMaxPeers]{};
 constexpr auto kFlushLateWindow = std::chrono::seconds(25);       // cover a long load tail + late clusters
 constexpr auto kFlushCadence    = std::chrono::milliseconds(500); // 2 Hz re-flush (cold; deduped to changes)
+// The keyed props a hand held after their correction had gone out: the first correction rides Bulk
+// and can land after the hand's release (Normal), so each is sent a follow-up once it is out of the
+// hand and at rest. After the late window only these stay watched, until the set empties or
+// g_settleUntil passes.
+std::unordered_set<coop::element::ElementId> g_handSinceSent[coop::net::kMaxPeers];
+std::chrono::steady_clock::time_point g_settleUntil[coop::net::kMaxPeers]{};
+constexpr auto kHandSettleWindow = std::chrono::seconds(30);
+// A world-ready re-announce during a slot's settle is said once; cleared when the settle ends.
+bool g_settleReannounceSaid[coop::net::kMaxPeers]{};
+
+// The shared sender: a PropSnapPos at the actor's current transform and physics state, deduped per
+// (slot, eid); true when a correction went out. Once one went out, a prop back at its save position
+// is a move too: an extinguisher taken off its mount and put back. `kind` is a log tag, `phase` names
+// the pass that sent it.
+bool SendCorrection_(int peerSlot, const char* phase, coop::element::ElementId eid,
+                     const ue_wrap::FVector& savePos, void* actor,
+                     std::unordered_map<coop::element::ElementId, FlushedAt>& lastSent,
+                     const char* kind, int capturedBits) {
+    namespace pf = coop::net::propspawn_flags;
+    constexpr float kDivergeCm2 = 4.0f * 4.0f;  // >4cm moved (above settle jitter) = a real in-window move
+    constexpr float kResendCm2  = 4.0f * 4.0f;  // only re-send when the pos moved >4cm from what we last sent
+    ue_wrap::FVector cur{};
+    if (!ue_wrap::engine::TryGetActorLocation(actor, cur)) return false;   // no read, no correction
+    const float dx = cur.X - savePos.X, dy = cur.Y - savePos.Y, dz = cur.Z - savePos.Z;
+    // The full state is read only for a prop that moved, changed its frozen or sleep bits (two raw
+    // reads, `capturedBits` -1 for a pile) or was corrected already, never across the whole keyed
+    // scan: PhysFlagsOf costs two engine calls. 0 for a pile.
+    uint8_t flags = 0;
+    const auto it = lastSent.find(eid);
+    if (it == lastSent.end()) {
+        const bool moved = dx * dx + dy * dy + dz * dz > kDivergeCm2;
+        const bool restated = capturedBits >= 0 &&
+                              coop::prop_wire_parity::FrozenSleepBitsOf(actor) != static_cast<uint8_t>(capturedBits);
+        if (!moved && !restated) return false;  // unmoved and unchanged (save IS current)
+        flags = coop::prop_wire_parity::PhysFlagsOf(actor);
+    } else {
+        flags = coop::prop_wire_parity::PhysFlagsOf(actor);
+        const float sx = cur.X - it->second.pos.X, sy = cur.Y - it->second.pos.Y, sz = cur.Z - it->second.pos.Z;
+        const bool sameState = ((flags ^ it->second.flags) & (pf::kFrozen | pf::kSleep)) == 0;
+        if (sx * sx + sy * sy + sz * sz <= kResendCm2 && sameState)
+            return false;  // already delivered at this position and state
+    }
+    ue_wrap::FRotator rot{};
+    if (!ue_wrap::engine::TryGetActorRotation(actor, rot)) return false;   // no read, no correction
+    coop::net::PropSnapPosPayload p{};
+    p.eid = static_cast<uint32_t>(eid);
+    p.locX = cur.X; p.locY = cur.Y; p.locZ = cur.Z;
+    p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
+    p.physFlags = flags;
+    const coop::prop_drive_host::DriveContext ctx =
+        coop::prop_drive_host::ContextOf(actor, static_cast<uint32_t>(eid));
+    p.driveGen  = ctx.gen;
+    p.driveOpen = ctx.open ? 1 : 0;
+    g_session->SendReliableToSlot(peerSlot, coop::net::ReliableKind::PropSnapPos, &p, sizeof(p));
+    lastSent[eid] = FlushedAt{cur, flags};
+    UE_LOGI("[PILE-B3] HOST slot %d %s pos-correction eid=%u save=(%.1f,%.1f,%.1f) -> current=(%.1f,%.1f,%.1f) "
+            "drift=%.1fcm flags=0x%02x gen=%u open=%u (%s in-window move -> deliver the authoritative position)",
+            peerSlot, kind, static_cast<unsigned>(eid), savePos.X, savePos.Y, savePos.Z,
+            cur.X, cur.Y, cur.Z, std::sqrt(dx * dx + dy * dy + dz * dz), static_cast<unsigned>(flags),
+            static_cast<unsigned>(p.driveGen), static_cast<unsigned>(p.driveOpen), phase);
+    return true;
+}
+
+// Resting as prop_drive_host reads it (its kRestVelCmS): an unreadable body counts as rest, since
+// there is nothing to wait on.
+bool AtRest_(void* actor) {
+    constexpr float kRestVelCmS = 1.0f;
+    const ue_wrap::prop::VelocityState v = ue_wrap::prop::GetPhysicsVelocity(actor, /*linearOnly=*/true);
+    if (!v.ok) return true;
+    const float lin2 = v.linearCmS.X * v.linearCmS.X + v.linearCmS.Y * v.linearCmS.Y +
+                       v.linearCmS.Z * v.linearCmS.Z;
+    return lin2 < kRestVelCmS * kRestVelCmS;
+}
+
+// One keyed prop of the diverged flush, for the keyed scan and for the settle phase alike; true when
+// a correction went out. A prop in a hand is the hand's: its stream is continuous and its release
+// carries the pose, so no correction is read for it now. When a correction for it had already gone
+// out, the prop is noted in g_handSinceSent: a read taken before the grab rides Bulk behind the
+// snapshot and can land after the release, which rides Normal, and nothing is armed for the release
+// to erase. A read taken after the release rides the same Bulk lane, so it lands after that one:
+// the prop stays noted until it is out of the hand and at rest, and every pass sends it its follow-up
+// (deduped to a move past 4 cm of what was last delivered). A driven prop is sent as any other,
+// stamped with its drive context, and the client orders it.
+// Divergence from MTA, which stamps a detach with a fresh element context
+// (reference/mtasa-blue/Server/mods/deathmatch/logic/CStaticFunctionDefinitions.cpp:1689-1700, client
+// reference/mtasa-blue/Client/mods/deathmatch/logic/rpc/CElementRPCs.cpp:389) because its server
+// authors the detach: a keyed prop's release here is authored by its holder, which holds no host-side
+// per-eid context to stamp, so the order comes from the Bulk lane (the follow-up lands behind any
+// stale sample).
+bool FlushKeyedProp_(int peerSlot, const char* phase, coop::element::ElementId eid,
+                     const ue_wrap::FVector& savePos) {
+    coop::element::Element* el = coop::element::Registry::Get().Get(eid);
+    void* actor = el ? el->LiveActor() : nullptr;  // slot-validated
+    auto& handSince = g_handSinceSent[peerSlot];
+    // Dead (e.g. a hold-R pickup destroyed it): nothing left to correct, and no follow-up owed.
+    if (!actor) { handSince.erase(eid); return false; }
+    // The keyed path arms only the generic correction (the receiver's pile matcher matches
+    // nothing for a keyed eid, so no twin and no dupe risk). A keyed eid resolving to a pile
+    // is the pile map's row.
+    if (ue_wrap::prop::IsChipPile(actor)) { handSince.erase(eid); return false; }
+    auto& lastSent = g_lastFlushedKeyedPos[peerSlot];
+    if (coop::prop_drive_host::InAHand(actor)) {
+        if (lastSent.count(eid)) handSince.insert(eid);
+        return false;
+    }
+    const auto st = g_blobKeyedState[peerSlot].find(eid);
+    const int captured = (st == g_blobKeyedState[peerSlot].end()) ? -1 : st->second;
+    const bool sent = SendCorrection_(peerSlot, phase, eid, savePos, actor, lastSent, "keyed", captured);
+    // Unsent means it sits within 4 cm of what was last delivered; either way a prop at rest has had
+    // its last word.
+    if (handSince.count(eid) && AtRest_(actor)) handSince.erase(eid);
+    return sent;
+}
 
 // The diverged-position flush, one reconcile for every save-authoritative entity: a pile has no
 // wire-position channel (both peers load it from the identical save), and a keyed prop rides the
@@ -100,56 +215,11 @@ void FlushDivergedPositions_(int peerSlot, bool firstRun) {
     if (firstRun) {
         g_lastFlushedPilePos[peerSlot].clear();
         g_lastFlushedKeyedPos[peerSlot].clear();
+        g_handSinceSent[peerSlot].clear();
         g_keyedLateArmTick[peerSlot] = 0;
         g_flushArmUntil[peerSlot] = std::chrono::steady_clock::now() + kFlushLateWindow;
     }
-    constexpr float kDivergeCm2 = 4.0f * 4.0f;  // >4cm moved (above settle jitter) = a real in-window move
-    constexpr float kResendCm2  = 4.0f * 4.0f;  // only re-send when the pos moved >4cm from what we last sent
-
-    // The shared sender: a PropSnapPos at the actor's current transform and physics state, deduped
-    // per (slot, eid); true when a correction went out. Once one went out, a prop back at its save
-    // position is a move too: an extinguisher taken off its mount and put back. `kind` is a log tag.
-    auto sendCorrection = [&](coop::element::ElementId eid, const ue_wrap::FVector& savePos, void* actor,
-                              std::unordered_map<coop::element::ElementId, FlushedAt>& lastSent,
-                              const char* kind, int capturedBits) -> bool {
-        namespace pf = coop::net::propspawn_flags;
-        ue_wrap::FVector cur{};
-        if (!ue_wrap::engine::TryGetActorLocation(actor, cur)) return false;   // no read, no correction
-        const float dx = cur.X - savePos.X, dy = cur.Y - savePos.Y, dz = cur.Z - savePos.Z;
-        // The full state is read only for a prop that moved, changed its frozen or sleep bits (two raw
-        // reads, `capturedBits` -1 for a pile) or was corrected already, never across the whole keyed
-        // scan: PhysFlagsOf costs two engine calls. 0 for a pile.
-        uint8_t flags = 0;
-        const auto it = lastSent.find(eid);
-        if (it == lastSent.end()) {
-            const bool moved = dx * dx + dy * dy + dz * dz > kDivergeCm2;
-            const bool restated = capturedBits >= 0 &&
-                                  coop::prop_wire_parity::FrozenSleepBitsOf(actor) != static_cast<uint8_t>(capturedBits);
-            if (!moved && !restated) return false;  // unmoved and unchanged (save IS current)
-            flags = coop::prop_wire_parity::PhysFlagsOf(actor);
-        } else {
-            flags = coop::prop_wire_parity::PhysFlagsOf(actor);
-            const float sx = cur.X - it->second.pos.X, sy = cur.Y - it->second.pos.Y, sz = cur.Z - it->second.pos.Z;
-            const bool sameState = ((flags ^ it->second.flags) & (pf::kFrozen | pf::kSleep)) == 0;
-            if (sx * sx + sy * sy + sz * sz <= kResendCm2 && sameState)
-                return false;  // already delivered at this position and state
-        }
-        ue_wrap::FRotator rot{};
-        if (!ue_wrap::engine::TryGetActorRotation(actor, rot)) return false;   // no read, no correction
-        coop::net::PropSnapPosPayload p{};
-        p.eid = static_cast<uint32_t>(eid);
-        p.locX = cur.X; p.locY = cur.Y; p.locZ = cur.Z;
-        p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
-        p.physFlags = flags;
-        g_session->SendReliableToSlot(peerSlot, coop::net::ReliableKind::PropSnapPos, &p, sizeof(p));
-        lastSent[eid] = FlushedAt{cur, flags};
-        UE_LOGI("[PILE-B3] HOST slot %d %s pos-correction eid=%u save=(%.1f,%.1f,%.1f) -> current=(%.1f,%.1f,%.1f) "
-                "drift=%.1fcm flags=0x%02x (%s in-window move -> deliver the authoritative position)",
-                peerSlot, kind, static_cast<unsigned>(eid), savePos.X, savePos.Y, savePos.Z,
-                cur.X, cur.Y, cur.Z, std::sqrt(dx * dx + dy * dy + dz * dz), static_cast<unsigned>(flags),
-                firstRun ? "one-shot" : "late-arm");
-        return true;
-    };
+    const char* phase = firstRun ? "one-shot" : "late-arm";
 
     int sentPile = 0, checkedPile = 0;
     for (const auto& [eid, savePos] : pileM) {
@@ -161,7 +231,8 @@ void FlushDivergedPositions_(int peerSlot, bool firstRun) {
         // is a clump on an arc, which the convert stream owns, and chasing its waypoints armed
         // twins at airborne spots and doubled the pile.
         if (!ue_wrap::prop::IsChipPile(actor)) continue;  // grabbed clump / proxy -> the convert stream owns it
-        if (sendCorrection(eid, savePos, actor, g_lastFlushedPilePos[peerSlot], "pile", -1)) ++sentPile;
+        if (SendCorrection_(peerSlot, phase, eid, savePos, actor, g_lastFlushedPilePos[peerSlot], "pile", -1))
+            ++sentPile;
     }
 
     // The keyed scan runs on the first run, then every Nth late-arm tick.
@@ -172,20 +243,8 @@ void FlushDivergedPositions_(int peerSlot, bool firstRun) {
     }
     int sentKeyed = 0, checkedKeyed = 0;
     for (auto kit = keyedM.begin(); doKeyed && kit != keyedM.end(); ++kit) {
-        const auto& eid = kit->first;
-        const auto& savePos = kit->second;
         ++checkedKeyed;
-        coop::element::Element* el = coop::element::Registry::Get().Get(eid);
-        void* actor = el ? el->LiveActor() : nullptr;  // slot-validated
-        if (!actor) continue;  // dead (e.g. hold-R pickup destroyed it) -> skip
-        // The keyed path arms only the generic correction (the receiver's pile matcher matches
-        // nothing for a keyed eid, so no twin and no dupe risk), and a host carrying the prop
-        // mid-join sends transient positions that the late arm corrects, so no resting gate. A
-        // keyed eid resolving to a pile is the pile map's row.
-        if (ue_wrap::prop::IsChipPile(actor)) continue;
-        const auto st = g_blobKeyedState[peerSlot].find(eid);
-        const int captured = (st == g_blobKeyedState[peerSlot].end()) ? -1 : st->second;
-        if (sendCorrection(eid, savePos, actor, g_lastFlushedKeyedPos[peerSlot], "keyed", captured)) ++sentKeyed;
+        if (FlushKeyedProp_(peerSlot, phase, kit->first, kit->second)) ++sentKeyed;
     }
 
     if (sentPile > 0 || sentKeyed > 0 || firstRun)
@@ -194,6 +253,45 @@ void FlushDivergedPositions_(int peerSlot, bool firstRun) {
                 "props; late-armed through the join tail)",
                 peerSlot, firstRun ? "one-shot arm" : "late-arm tick",
                 sentPile, checkedPile, sentKeyed, checkedKeyed);
+}
+
+// After the late window: only the props a hand held once their correction had gone out are still
+// watched, each sent its follow-up and dropped from the set at rest.
+void SettleHandHeld_(int peerSlot) {
+    const auto& keyedM = g_blobKeyedXforms[peerSlot];
+    auto& handSince = g_handSinceSent[peerSlot];
+    // The set shrinks inside FlushKeyedProp_: walk a copy. Cold: a few props, 2 Hz, 30 s at most.
+    const std::vector<coop::element::ElementId> watched(handSince.begin(), handSince.end());
+    for (const coop::element::ElementId eid : watched) {
+        const auto kit = keyedM.find(eid);
+        if (kit != keyedM.end()) FlushKeyedProp_(peerSlot, "settle", eid, kit->second);
+    }
+}
+
+// One cadence tick of a slot's settle phase; ends it when the set is empty or its window is over,
+// retiring the keyed half of the join window's structures.
+void SettleTick_(int peerSlot, std::chrono::steady_clock::time_point now) {
+    auto& handSince = g_handSinceSent[peerSlot];
+    const bool inWindow = now < g_settleUntil[peerSlot];
+    if (inWindow && now - g_flushLastRun[peerSlot] >= kFlushCadence) {
+        g_flushLastRun[peerSlot] = now;
+        SettleHandHeld_(peerSlot);
+    }
+    if (inWindow && !handSince.empty()) return;
+    const size_t unsettled = handSince.size();
+    handSince.clear();
+    g_settleUntil[peerSlot] = {};
+    g_settleReannounceSaid[peerSlot] = false;
+    g_flushArmUntil[peerSlot] = {};
+    g_lastFlushedKeyedPos[peerSlot].clear();
+    g_blobKeyedXforms[peerSlot].clear();
+    g_blobKeyedState[peerSlot].clear();
+    if (unsettled == 0)
+        UE_LOGI("[PILE-09] slot %d hand-held settle ended -- the watched set emptied (each followed up at "
+                "rest, dead, a pile, or unmoved); keyed save-time map retired", peerSlot);
+    else
+        UE_LOGW("[PILE-09] slot %d hand-held settle ended with %zu prop(s) unsettled (still in a hand or "
+                "moving when its window ended); keyed save-time map retired", peerSlot, unsettled);
 }
 
 }  // namespace
@@ -263,20 +361,54 @@ void SendDivergenceDeletes(int peerSlot) {
 }
 
 void FlushDivergedPositions(int peerSlot) {
+    // A settling slot's join window is over and its keyed map is the first world's save-time one:
+    // a re-announce now must not re-open a full flush over it.
+    if (peerSlot >= 1 && peerSlot < coop::net::kMaxPeers &&
+        g_settleUntil[peerSlot].time_since_epoch().count() != 0) {
+        if (!g_settleReannounceSaid[peerSlot]) {
+            g_settleReannounceSaid[peerSlot] = true;
+            UE_LOGI("[PILE-B3] HOST slot %d world-ready re-announced during the hand settle -- the join "
+                    "window is over; not re-opened", peerSlot);
+        }
+        return;
+    }
     FlushDivergedPositions_(peerSlot, /*firstRun=*/true);
 }
 
 // The host cadence: each armed joiner's authoritative positions keep flushing for the late window
-// past its one-shot, so a move after the one-shot still arrives.
+// past its one-shot, so a move after the one-shot still arrives. A prop a hand held after its
+// correction went out keeps a slot watched for a follow-up past the window (SettleTick_).
 void TickLateArm() {
     if (!g_session) return;
     const auto now = std::chrono::steady_clock::now();
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
+        // Settling: only the props a hand held after their correction went out.
+        if (g_settleUntil[slot].time_since_epoch().count() != 0) {
+            SettleTick_(slot, now);
+            continue;
+        }
         if (g_flushArmUntil[slot].time_since_epoch().count() == 0) continue;  // never armed
-        if (now >= g_flushArmUntil[slot]) {                                    // window expired -> disarm + free dedup
-            g_flushArmUntil[slot] = {};
+        if (now >= g_flushArmUntil[slot]) {                                    // window expired -> free dedup
             g_lastFlushedPilePos[slot].clear();
-            g_lastFlushedKeyedPos[slot].clear();
+            // A prop a hand held after its correction went out may still owe a follow-up: the slot
+            // then stays armed through a settle phase, with its keyed map, state and dedupe, until
+            // SettleTick_ retires them. Otherwise the keyed half retires here with the rest.
+            // A last word for every prop corrected this join, read now: one moved since its last
+            // delivery (a grab and release inside the last scan interval among them) is sent its
+            // follow-up on the same Bulk lane, behind anything still queued; one in a hand now is
+            // watched. Cold: the dedupe holds only the props corrected this join.
+            std::vector<coop::element::ElementId> corrected;
+            corrected.reserve(g_lastFlushedKeyedPos[slot].size());
+            for (const auto& sent : g_lastFlushedKeyedPos[slot]) corrected.push_back(sent.first);
+            for (const coop::element::ElementId eid : corrected) {
+                const auto kit = g_blobKeyedXforms[slot].find(eid);
+                if (kit != g_blobKeyedXforms[slot].end()) FlushKeyedProp_(slot, "expiry", eid, kit->second);
+            }
+            const size_t held = g_handSinceSent[slot].size();
+            if (held == 0) {
+                g_flushArmUntil[slot] = {};
+                g_lastFlushedKeyedPos[slot].clear();
+            }
             // The join window closes here for the slot. The save-time maps are join-window
             // structures, and with "active join" defined as a non-empty map that nothing emptied,
             // every steady-state host pile grab kept stamping its pre-grab key and every landing
@@ -285,8 +417,15 @@ void TickLateArm() {
             // full-array sweeps, a hitch storm during pile play. The late flush is the maps' last
             // consumer: at its expiry the joiner has quiesced and reconciled, and a late kerfur
             // turn-on resolves by eid.
-            if (!g_blobPileXforms[slot].empty() || !g_blobClumpXforms[slot].empty() ||
-                !g_blobKerfurXforms[slot].empty() || !g_blobKeyedXforms[slot].empty()) {
+            if (held > 0) {
+                g_settleUntil[slot] = now + kHandSettleWindow;
+                UE_LOGI("[PILE-09] slot %d join window CLOSED -- %zu prop(s) a hand held after their "
+                        "correction went out stay watched for a follow-up (<= 30 s)", slot, held);
+                g_blobPileXforms[slot].clear();
+                g_blobClumpXforms[slot].clear();
+                g_blobKerfurXforms[slot].clear();
+            } else if (!g_blobPileXforms[slot].empty() || !g_blobClumpXforms[slot].empty() ||
+                       !g_blobKerfurXforms[slot].empty() || !g_blobKeyedXforms[slot].empty()) {
                 UE_LOGI("[PILE-09] slot %d join window CLOSED (b3 late-flush expiry) -- retiring "
                         "save-time maps (%zu pile + %zu clump + %zu kerfur + %zu keyed xform(s)); steady-state "
                         "grabs no longer stamp save-time keys for this joiner",
@@ -369,16 +508,23 @@ void ClearForSlot(int peerSlot) {
     g_flushArmUntil[peerSlot] = {};        // disarm the late flush and drop its dedupe baselines
     g_lastFlushedPilePos[peerSlot].clear();
     g_lastFlushedKeyedPos[peerSlot].clear();
+    g_handSinceSent[peerSlot].clear();     // and the settle phase it kept the late flush watching
+    g_settleUntil[peerSlot] = {};
+    g_settleReannounceSaid[peerSlot] = false;
 }
 
 bool HasCapture(int peerSlot) {
     if (peerSlot < 1 || peerSlot >= coop::net::kMaxPeers) return false;
-    return !g_blobKeyedXforms[peerSlot].empty();  // filled at the capture, retired when the window closes
+    // Filled at the capture; retired at the window's close or, after a settle phase, at its end.
+    return !g_blobKeyedXforms[peerSlot].empty();
 }
 
 bool IsLateWindowOpen(int peerSlot) {
     if (peerSlot < 1 || peerSlot >= coop::net::kMaxPeers) return false;
-    return g_flushArmUntil[peerSlot].time_since_epoch().count() != 0;  // disarmed at expiry and at ClearForSlot
+    // Disarmed at expiry and at ClearForSlot. A settle phase is past the window: only the props a hand
+    // held are still watched, and a host move of any other prop no longer reaches the joiner this way.
+    return g_flushArmUntil[peerSlot].time_since_epoch().count() != 0 &&
+           g_settleUntil[peerSlot].time_since_epoch().count() == 0;
 }
 
 }  // namespace coop::join_window_baseline

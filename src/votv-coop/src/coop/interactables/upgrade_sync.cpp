@@ -4,8 +4,10 @@
 
 #include "coop/interactables/device_occupancy.h"
 #include "coop/net/intent_bucket.h"
+#include "coop/net/intent_queue.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/player/roster_ledger.h"  // PerSlotState
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -18,7 +20,6 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
-#include <deque>
 
 namespace coop::upgrade_sync {
 namespace {
@@ -70,10 +71,11 @@ uint64_t NowMs() {
                                      .count());
 }
 
-coop::net::IntentBucket g_rate[coop::net::kMaxPeers];
-std::deque<coop::net::UpgradeIntentPayload> g_pending[coop::net::kMaxPeers];
-
-bool TakeToken(uint8_t slot) { return g_rate[slot].Take(kPressBudget, NowMs()); }
+// One sender: its queued purchases with their bucket, cleared with its occupant.
+struct Slot {
+    coop::net::IntentQueue<coop::net::UpgradeIntentPayload> queue;
+};
+coop::roster_ledger::PerSlotState<Slot> g_slots;
 
 // ---- host side -------------------------------------------------------------------------------
 
@@ -310,11 +312,10 @@ void Tick(coop::net::Session& session) {
 
     Publish(session, "polled");
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
-        if (g_pending[slot].empty()) continue;
-        if (!TakeToken(slot)) continue;
-        const coop::net::UpgradeIntentPayload p = g_pending[slot].front();
-        g_pending[slot].pop_front();
-        Execute(session, p, slot);
+        g_slots[slot].queue.Serve(kPressBudget, NowMs, [&](const coop::net::UpgradeIntentPayload& p) {
+            Execute(session, p, slot);
+            return coop::net::Served::Done;
+        });
     }
 }
 
@@ -338,18 +339,8 @@ void OnUpgradeIntent(coop::net::Session& session, const coop::net::UpgradeIntent
                      uint8_t senderSlot) {
     if (session.role() != coop::net::Role::Host) return;
     if (senderSlot < 1 || senderSlot >= coop::net::kMaxPeers) return;
-    auto& q = g_pending[senderSlot];
-    if (q.size() >= kMaxPending) {
-        ++g_denied;
-        return;
-    }
-    q.push_back(payload);
-}
-
-void OnPeerLeft(uint8_t slot) {
-    if (slot >= coop::net::kMaxPeers) return;
-    g_pending[slot].clear();
-    g_rate[slot].Reset();
+    coop::net::UpgradeIntentPayload copy = payload;
+    if (!g_slots[senderSlot].queue.Push(std::move(copy), kMaxPending)) ++g_denied;
 }
 
 void OnDisconnect() {
@@ -360,10 +351,6 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(g_sold), static_cast<unsigned long long>(g_denied),
                 static_cast<unsigned long long>(g_broadcast),
                 static_cast<unsigned long long>(g_applied));
-    for (uint8_t slot = 0; slot < coop::net::kMaxPeers; ++slot) {
-        g_pending[slot].clear();
-        g_rate[slot].Reset();
-    }
     g_havePublished = false;
     g_havePendingApply = false;
     g_sent = g_bought = g_sold = g_denied = g_broadcast = g_applied = 0;

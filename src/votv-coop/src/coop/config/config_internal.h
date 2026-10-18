@@ -2,8 +2,9 @@
 // the ini mutation engine (config_ini_write.cpp), the runtime layer (config_runtime.cpp), the
 // session layer (config_session.cpp) and the selftest TU.
 //
-// The internal-header pattern: shared primitives are declared here and defined in config.cpp,
-// and never exported to include/ -- product code uses the public coop/config/config.h API only.
+// The internal-header pattern: shared primitives are declared here and defined in config.cpp or
+// config_ini_read.cpp, and never exported to include/ -- product code uses the public
+// coop/config/config.h API only.
 
 #pragma once
 
@@ -29,7 +30,7 @@ enum class IniScan { Ok = 0, Absent = 1, Unreadable = 2 };
 // The one process-wide multivoid.ini lock (readers + writers + rebuilds).
 std::mutex& IniMutex();
 
-// <exe dir>\multivoid.ini (ue_wrap::paths::ExeDir, the install-dir anchor).
+// <mod data dir>\multivoid.ini (ue_wrap::paths::ModDataDir); empty when the mod has no data folder.
 std::wstring LiveIniPath();
 
 // Deliver every line of `path` to `cb` -- unbounded, trailing newline kept, a CRLF ending as LF --

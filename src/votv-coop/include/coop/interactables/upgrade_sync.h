@@ -48,10 +48,8 @@ void ApplyFromHost(const coop::net::UpgradeLevelsPayload& payload);
 void OnUpgradeIntent(coop::net::Session& session, const coop::net::UpgradeIntentPayload& payload,
                      uint8_t senderSlot);
 
-// A peer left: drop its queue and its rate bucket.
-void OnPeerLeft(uint8_t slot);
-
-// Session teardown: drop the queues and the broadcast dedup, so a reconnect re-publishes.
+// Session teardown: drop the broadcast dedup, so a reconnect re-publishes. A sender's queue and its bucket live in
+// its per-slot state and go with its occupant.
 void OnDisconnect();
 
 }  // namespace coop::upgrade_sync

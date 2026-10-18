@@ -46,6 +46,11 @@ void ApplySky(const FRotator& skyWorldRot, float moonPhase);
 // eye's. False if not resolved or not streamed in. Game thread.
 bool ReadEye(bool& eye);
 
+// The sun's intensity multiplier, Anewsky_C::sunIntensityMult: the class default is 4, a Bad Sun's widget tints it
+// while it holds the sky, and that widget's fade writes 1 before its copy ends. False if not resolved or not streamed
+// in. Game thread.
+bool ReadSunIntensityMult(float& mult);
+
 // The sky's own setEye(eye), the verb the noon roll calls. False if not streamed in or the verb did not
 // resolve. Game thread.
 bool CallSetEye(bool eye);

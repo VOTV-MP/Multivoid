@@ -15,6 +15,7 @@
 
 #include "coop/world/event_active_sync.h"
 
+#include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/world/event_fire_sync.h"
@@ -116,11 +117,19 @@ const char* RowForClass(const std::string& className) {
 struct LaneOwned { const char* className; const char* lane; };
 const LaneOwned kLaneOwnedClasses[] = {
     { "trigger_alarm_C", "alarm_sync" },
+    { "badSun_C", "weather_badsun" },
 };
 const char* LaneFor(const std::string& className) {
     for (const auto& e : kLaneOwnedClasses)
         if (className == e.className) return e.lane;
     return nullptr;
+}
+
+// Does the registry name `actor` an Npc element: a creature, whose count rides coop/world/creature_event_relay?
+bool IsCreature(void* actor) {
+    const coop::element::Registry& reg = coop::element::Registry::Get();
+    const coop::element::Element* e = reg.Get(reg.EidForActor(actor));
+    return e && e->GetType() == coop::element::ElementType::Npc;
 }
 
 std::string Narrow(const std::wstring& w) {
@@ -240,6 +249,13 @@ void SendJoinSnapshotForSlot(int slot) {
             continue;
         }
         const char* row = RowForClass(className);
+        // A creature with no row has no replay to ship: its count rides CreatureEventActive, or stays each
+        // viewer's own (coop/world/creature_event_relay). The WARN below stays for classes nothing covers.
+        if (!row && IsCreature(obj)) {
+            UE_LOGI("event_active: join-edge slot=%d class=%s is a creature -- its count rides CreatureEventActive "
+                    "(or stays per viewer), no EventSnapshot", slot, className.c_str());
+            continue;
+        }
         const auto b = g_began.find(obj);
         const bool known = b != g_began.end() && R::IsLiveByIndex(obj, b->second.objIdx);
         const long long elapsed = known ? (now - b->second.ms) / 1000 : 0;

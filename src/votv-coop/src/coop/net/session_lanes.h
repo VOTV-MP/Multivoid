@@ -88,6 +88,10 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::ReelEjectIntent: return Lane::Bulk;
     case ReliableKind::EntitySpawn:    return Lane::Bulk;
     case ReliableKind::EntityDestroy:  return Lane::Bulk;
+    // A creature's event count rides its lifecycle lane, so a count is ordered after its spawn and before its
+    // destroy. Host-authoritative: not relayable, not pre-world (the snapshot at world-ready carries it).
+    // Matches MTA's one ordered channel (reference/mtasa-blue/Server/mods/deathmatch/logic/packets/CPacket.h:43).
+    case ReliableKind::CreatureEventActive: return Lane::Bulk;
     // The world-actor pair shares the spawn lane for the same reason. Host-authoritative: not
     // relayable, not pre-world.
     case ReliableKind::WorldActorSpawn:   return Lane::Bulk;
@@ -195,9 +199,9 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::HookDestroy:       return Lane::Normal;
     case ReliableKind::HookAnchorCommit:  return Lane::Normal;
     case ReliableKind::HookAnchored:      return Lane::Normal;
-    // PropDriveEnd is host-to-all and ordered against nothing: its stream is unreliable on its own
-    // datagram kind, and a receiver that never parked the prop treats the end as a closed
-    // generation and no more. The default, by decision.
+    // PropDriveEnd is host-to-all, with no lane order against other kinds: its stream is unreliable on
+    // its own datagram kind, and a never-parked receiver closes the generation and no more. A
+    // join-window PropSnapPos (Bulk) is ordered against it by its drive context. The default.
     case ReliableKind::PropDriveEnd:      return Lane::Normal;
     // The Kerfus pair is ordered against nothing: a state for a Kerfus whose mirror has not bound
     // waits for the bind, and the host resolves an intent by eid. The default, by decision.
@@ -213,6 +217,18 @@ inline Lane LaneForKind(ReliableKind k) {
     // A desk press names what it acts on by content; its answers go to the presser alone. The default, by decision.
     case ReliableKind::DeskVerb:          return Lane::Normal;
     case ReliableKind::DeskPingVerdict:   return Lane::Normal;
+    // A remover press reaches the host in the order its client made it, and the answer follows the host's serve of it.
+    // Not relayable: the request goes to the host alone and the answer to its sender alone. The default, by decision.
+    case ReliableKind::RemoverRequest:    return Lane::Normal;
+    case ReliableKind::RemoverResult:     return Lane::Normal;
+    // The camera kinds are ordered against nothing else and not relayable. The default, by decision.
+    case ReliableKind::CameraActiveState:  return Lane::Normal;
+    case ReliableKind::CameraLightState:   return Lane::Normal;
+    case ReliableKind::CameraToggleIntent: return Lane::Normal;
+    // DeviceClaim's lane (Normal, the default) by an explicit case: a tab never overtakes its claim, nor the release
+    // a leaving holder's last tab.
+    case ReliableKind::LaptopTabReport: return Lane::Normal;
+    case ReliableKind::LaptopTabState:  return Lane::Normal;
     default:                           return Lane::Normal;
     }
 }

@@ -244,12 +244,16 @@ std::wstring MarkPropElement(void* actor, const std::wstring& key, const std::ws
         return key;
     }
     // The host is the key-uniqueness authority (MTA: the server owns element-id uniqueness). VOTV's
-    // own saves ship duplicate interactable Keys (one host save carried 85 trashBitsPile_C across
-    // four keys), and every identity layer assumes uniqueness: a clone family funnels its wire rows
-    // onto one actor and the join reconcile re-expresses the rest into occupied positions. A keyed
-    // actor enrolling while a different live actor carries its Key is re-keyed before anything sees
-    // it; the game re-saves the live Key, so the fix persists. A dead incumbent is a loadObjects
-    // re-create inheriting its identity, spared by the liveness check. A client never re-keys. The key
+    // level content carries duplicate interactable Keys, present before any save record loads (85
+    // trashBitsPile_C in untitled_1 share four baked keys), the game keeps any non-None key
+    // unchecked, and a New Game saves them all; every identity
+    // layer assumes uniqueness: a clone family funnels its wire rows onto one actor and the join
+    // reconcile re-expresses the rest into occupied positions. A keyed actor enrolling while a
+    // different live actor carries its Key is re-keyed before anything sees it. The new key persists
+    // for an actor that lives to a save; an actor that a save's load then destroys (loadObjects
+    // re-creates every actor_save from its records) takes its throwaway key with it, at no cost
+    // beyond the mint. A dead incumbent is a loadObjects re-create inheriting its identity, spared by
+    // the liveness check. A client never re-keys. The key
     // index answers whether another live actor holds the key; when it cannot answer (off the game thread,
     // where setKey could not run anyway; before its session seed; with no current world; while a birth is
     // still loading), the actor enrols under its key and such enrolments are counted, the first and each
@@ -272,11 +276,18 @@ std::wstring MarkPropElement(void* actor, const std::wstring& key, const std::ws
                 ue_wrap::engine::TryGetActorLocation(actor, dupLoc) ? "" : " (unread)";
             const std::wstring fresh = coop::prop_synth_key::MintFreshKeyForDuplicate(actor);
             if (!fresh.empty() && fresh != enrollKey) {
-                UE_LOGW("prop_element_tracker: KEY-UNIQUENESS -- second live actor carried Key '%ls': "
-                        "'%ls' loc=(%.1f,%.1f,%.1f)%s re-keyed -> '%ls' (save-born clone family; host key "
-                        "authority -- the new key persists via the game's own save)",
+                // By `src`: the passive census walks the world, at the session seed (the world as
+                // loaded, where the level's clone families sit, re-keyed on every load) and at its
+                // re-seeds, so a duplicate it finds is reported plainly: INFO. Any other source is a
+                // live birth carrying a key a live actor already holds, a runtime clone worth a look:
+                // WARN. The FAILED branch below stays a warning.
+                const bool content = src == EnrollSource::kPassiveCensus;
+                ue_wrap::log::Write(content ? ue_wrap::log::Level::Info : ue_wrap::log::Level::Warn,
+                        "prop_element_tracker: KEY-UNIQUENESS -- second live actor carried Key '%ls': "
+                        "'%ls' loc=(%.1f,%.1f,%.1f)%s re-keyed -> '%ls' (%s; host key "
+                        "authority -- the new key persists if the actor lives to a save)",
                         enrollKey.c_str(), cls.c_str(), dupLoc.X, dupLoc.Y, dupLoc.Z, dupUnread,
-                        fresh.c_str());
+                        fresh.c_str(), content ? "found by the census" : "a live birth carrying it");
                 enrollKey = fresh;
             } else {
                 UE_LOGW("prop_element_tracker: KEY-UNIQUENESS -- re-key FAILED for duplicate '%ls' "

@@ -44,7 +44,10 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload);
 // Fresh-spawn a host NPC mirror: a deferred spawn and finish of a new actor of `actorClass`,
 // parked (character ticks off, the kerfur AI timers neutralised) and installed as mirror
 // `elementId`. The class must already be resolved and allowlist-validated. Also npc_adoption's
-// timeout fallback when a save-persisted NPC's local twin never materialised. Game thread;
+// timeout fallback when a save-persisted NPC's local twin never materialised. The begun actor is
+// stamped as the class's native spawner stamps it (ue_wrap/actors/spawner_stamp.h) before it is
+// finished; a stamp that cannot be written destroys the begun actor and returns false, as every
+// other failure does: a mirror that would end this machine's game is never finished. Game thread;
 // requires SetClientRefs to have run.
 bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t elementId,
                          float locX, float locY, float locZ,

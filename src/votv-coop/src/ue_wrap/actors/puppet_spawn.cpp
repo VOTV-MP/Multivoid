@@ -95,7 +95,9 @@ void InstallHeadGateHook(void* animClass) {
 // player's current mesh asset and AnimClass.
 static void* SpawnPuppetMainPlayer(const FVector& loc,
                                    void* skeletalMeshAsset,
-                                   void* animClass) {
+                                   void* animClass,
+                                   E::BeforeFinishFn beforeFinish,
+                                   void* ctx) {
     void* cls = R::FindClass(P::name::MainPlayerClass);
     if (!cls) {
         UE_LOGE("puppet[MainPlayer]: mainPlayer_C class not found");
@@ -113,14 +115,12 @@ static void* SpawnPuppetMainPlayer(const FVector& loc,
     }
     // inertPawn zeros AutoPossessPlayer, AutoPossessAI and AutoReceiveInput and sets bBlockInput in
     // the deferred-spawn window before BeginPlay, so no second PlayerController auto-possesses and
-    // no local input is hijacked.
-    void* actor = E::SpawnActor(cls, loc, /*inertPawn=*/true);
-    if (!actor) {
-        UE_LOGE("puppet[MainPlayer]: SpawnActor(mainPlayer_C) failed");
-        return nullptr;
-    }
+    // no local input is hijacked. The caller's callback runs in the same window, so the body is
+    // already known to its owner when its BeginPlay and its colliders' first overlaps run.
+    void* actor = E::SpawnActor(cls, loc, /*inertPawn=*/true, beforeFinish, ctx);
     // gamemode.mainPlayer restored if the orphan's BeginPlay overwrote it: the autosave timer would
-    // otherwise serialise the orphan's position as the save's player transform.
+    // otherwise serialise the orphan's position as the save's player transform. A failed finish
+    // restores it too, since the begun orphan may have written it before it was destroyed.
     if (gamemode) {
         void* gmMainPlayerAfter = ReadPtr(gamemode, P::off::mainGamemode_mainPlayer);
         if (gmMainPlayerAfter != gmMainPlayerBefore) {
@@ -128,6 +128,10 @@ static void* SpawnPuppetMainPlayer(const FVector& loc,
             UE_LOGI("puppet[MainPlayer]: gamemode.mainPlayer was overwritten by orphan (%p -> %p); restored to %p",
                     gmMainPlayerBefore, gmMainPlayerAfter, gmMainPlayerBefore);
         }
+    }
+    if (!actor) {
+        UE_LOGE("puppet[MainPlayer]: SpawnActor(mainPlayer_C) failed");
+        return nullptr;
     }
     // The orphan's cached GameMode pointer nulled, so its ReceiveTick graphs (which null-check it
     // and return) neither re-overwrite gamemode.mainPlayer nor invoke gamemode methods.
@@ -325,9 +329,10 @@ static void* SpawnPuppetMainPlayer(const FVector& loc,
     return actor;
 }
 
-void* SpawnPuppet(const FVector& loc, void* skeletalMeshAsset, void* animClass) {
+void* SpawnPuppet(const FVector& loc, void* skeletalMeshAsset, void* animClass,
+                  engine::BeforeFinishFn beforeFinish, void* ctx) {
     // mainPlayer_C is the only puppet kind.
-    return SpawnPuppetMainPlayer(loc, skeletalMeshAsset, animClass);
+    return SpawnPuppetMainPlayer(loc, skeletalMeshAsset, animClass, beforeFinish, ctx);
 }
 
 }  // namespace ue_wrap::puppet

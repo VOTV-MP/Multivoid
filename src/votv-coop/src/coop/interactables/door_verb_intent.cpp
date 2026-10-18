@@ -5,12 +5,14 @@
 #include "coop/element/intent_authority.h"
 #include "coop/interactables/interactable_sync.h"  // the door lane's key for a door, and its resolve
 #include "coop/net/intent_bucket.h"
+#include "coop/net/intent_queue.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/hand_item.h"         // what the sender's hand holds, and held last
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/player/roster_ledger.h"  // PerSlotState
 #include "coop/session/net_pump.h"  // IsInAnnouncedWorld: a client's own world load runs natively
 
 #include "ue_wrap/core/log.h"
@@ -23,7 +25,6 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
-#include <deque>
 #include <string>
 
 namespace coop::door_verb_intent {
@@ -79,17 +80,15 @@ uint64_t NowMs() {
         std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
-struct Bucket {
-    coop::net::IntentBucket rate;
-    uint64_t                nextSayMs = 0;
+// One sender: its queued verbs with their bucket, and the latches that clear with its occupant.
+struct Slot {
+    coop::net::IntentQueue<coop::net::DoorVerbIntentPayload> queue;
+    uint64_t nextSayMs = 0;      // the full queue's refusal, said once in kRefusalSayMs
+    bool     waitSaid  = false;  // a wait for the body, said once a streak
+    bool     cutSaid   = false;  // a hit cut to its item's swing, said once
 };
-Bucket g_rate[coop::net::kMaxPeers];
-std::deque<coop::net::DoorVerbIntentPayload> g_pending[coop::net::kMaxPeers];
-bool g_waitSaid[coop::net::kMaxPeers] = {};  // a sender's wait for its body, said once a streak
-bool g_cutSaid[coop::net::kMaxPeers]  = {};  // a sender's hit cut to its item's swing, said once
+coop::roster_ledger::PerSlotState<Slot> g_slots;
 uint64_t g_hitRefusals = 0;                  // hits refused as no swing: said for three, then every twentieth
-
-bool TakeToken(uint8_t slot) { return g_rate[slot].rate.Take(kVerbBudget, NowMs()); }
 
 const char* VerbName(uint8_t verb) {
     for (const VerbWatch& w : kWatches)
@@ -113,8 +112,8 @@ bool Execute(coop::net::Session& s, const coop::net::DoorVerbIntentPayload& p, u
     const coop::element::IntentSubject subject =
         coop::element::IntentTarget::ForClientIntent(s, slot, kDoorReachUU).Authorize(door);
     if (subject.outcome == coop::element::IntentOutcome::NoBody) {
-        if (!g_waitSaid[slot]) {
-            g_waitSaid[slot] = true;
+        if (!g_slots[slot].waitSaid) {
+            g_slots[slot].waitSaid = true;
             UE_LOGI("[DOOR-VERB] slot %u's door verbs wait: the host has no body for it yet", static_cast<unsigned>(slot));
         }
         return false;
@@ -152,8 +151,8 @@ bool Execute(coop::net::Session& s, const coop::net::DoorVerbIntentPayload& p, u
             return true;
         }
         const float bounded = (damage >= 0.f) ? (damage < swing.maxDamage ? damage : swing.maxDamage) : 0.f;
-        if (bounded != damage && !g_cutSaid[slot]) {
-            g_cutSaid[slot] = true;
+        if (bounded != damage && !g_slots[slot].cutSaid) {
+            g_slots[slot].cutSaid = true;
             UE_LOGW("[DOOR-VERB] slot %u's hit of %.1f with '%ls' is cut to %.1f, the most its swing deals "
                     "(said once a session)", static_cast<unsigned>(slot), damage, item.c_str(), bounded);
         }
@@ -315,14 +314,12 @@ void Tick(coop::net::Session& session) {
     static bool s_weaponsReady = false;
     if (!s_weaponsReady) s_weaponsReady = ue_wrap::weapon_catalog::Ready();
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
-        if (g_pending[slot].empty() || !TakeToken(slot)) continue;
-        const coop::net::DoorVerbIntentPayload p = g_pending[slot].front();
-        if (Execute(session, p, slot)) {
-            g_pending[slot].pop_front();
-            g_waitSaid[slot] = false;        // a consumed verb ends the wait's streak
-        } else {
-            g_rate[slot].rate.Refund(kVerbBudget);  // a wait runs nothing, so it spends no token
-        }
+        Slot& sl = g_slots[slot];
+        sl.queue.Serve(kVerbBudget, NowMs, [&](const coop::net::DoorVerbIntentPayload& p) {
+            if (!Execute(session, p, slot)) return coop::net::Served::Wait;  // a wait runs nothing: no token spent
+            sl.waitSaid = false;  // a consumed verb ends the wait's streak
+            return coop::net::Served::Done;
+        });
     }
 }
 
@@ -330,27 +327,17 @@ void OnDoorVerbIntent(coop::net::Session& session, const coop::net::DoorVerbInte
                       uint8_t senderSlot) {
     if (session.role() != coop::net::Role::Host) return;
     if (senderSlot < 1 || senderSlot >= coop::net::kMaxPeers) return;
-    auto& q = g_pending[senderSlot];
-    if (q.size() >= kMaxPending) {
-        Bucket& b = g_rate[senderSlot];
+    Slot& sl = g_slots[senderSlot];
+    auto payloadCopy = payload;
+    if (!sl.queue.Push(std::move(payloadCopy), kMaxPending)) {
         const uint64_t now = NowMs();
-        if (now >= b.nextSayMs) {
-            b.nextSayMs = now + kRefusalSayMs;
+        if (now >= sl.nextSayMs) {
+            sl.nextSayMs = now + kRefusalSayMs;
             UE_LOGW("[DOOR-VERB] slot %u queue full (%zu) -- refusing its door verbs until it drains",
-                    static_cast<unsigned>(senderSlot), q.size());
+                    static_cast<unsigned>(senderSlot), sl.queue.size());
         }
         ++g_denied;
-        return;
     }
-    q.push_back(payload);
-}
-
-void OnPeerLeft(uint8_t slot) {
-    if (slot >= coop::net::kMaxPeers) return;
-    g_pending[slot].clear();
-    g_rate[slot] = Bucket{};
-    g_waitSaid[slot] = false;
-    g_cutSaid[slot] = false;
 }
 
 uint64_t SentPressCount() { return g_sentPress; }
@@ -362,12 +349,6 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(g_sent), static_cast<unsigned long long>(g_ran),
                 static_cast<unsigned long long>(g_denied), static_cast<unsigned long long>(g_worldRefused),
                 static_cast<unsigned long long>(g_loadNative));
-    for (uint8_t slot = 0; slot < coop::net::kMaxPeers; ++slot) {
-        g_pending[slot].clear();
-        g_rate[slot] = Bucket{};
-        g_waitSaid[slot] = false;
-        g_cutSaid[slot] = false;
-    }
     g_sent = g_ran = g_denied = g_worldRefused = g_loadNative = 0;
     g_sentPress = 0;
     g_quietHits = 0;

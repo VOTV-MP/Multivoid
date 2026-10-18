@@ -127,6 +127,10 @@ msgid "%1$s deleted an email: %2$s"
 msgstr "[[%1$s deleted an email: %2$s]]"
 
 #, c-format
+msgid "%1$s is asleep -- the world runs faster"
+msgstr "[[%1$s is asleep -- the world runs faster]]"
+
+#, c-format
 msgid "%1$s is connecting to the game..."
 msgstr "[[%1$s is connecting to the game...]]"
 
@@ -167,10 +171,6 @@ msgstr "[[%1$s was turned away: unofficial build %2$s [%3$s]]]"
 #, c-format
 msgid "%1$u / %2$u objects"
 msgstr "[[%1$u / %2$u objects]]"
-
-#, c-format
-msgid "%1$u/%2$u players sleeping"
-msgstr "[[%1$u/%2$u players sleeping]]"
 
 #, c-format
 msgid "%d LAN"
@@ -468,9 +468,6 @@ msgstr "[[Enter = send, Esc = close, Up/Down = history]]"
 msgid "Everyone in the registry is online."
 msgstr "[[Everyone in the registry is online.]]"
 
-msgid "Everyone is asleep -- the night passes..."
-msgstr "[[Everyone is asleep -- the night passes...]]"
-
 msgid "Everything scales with the screen automatically; this is your extra zoom."
 msgstr "[[Everything scales with the screen automatically; this is your extra zoom.]]"
 
@@ -486,9 +483,6 @@ msgstr "[[Finding a route to %s]]"
 
 msgid "Gamemode:"
 msgstr "[[Gamemode:]]"
-
-msgid "Good morning -- everyone is rested."
-msgstr "[[Good morning -- everyone is rested.]]"
 
 #, c-format
 msgid "Graphics API: %s"
@@ -688,6 +682,9 @@ msgstr "[[No tools here yet -- coming soon.]]"
 
 msgid "Nobody in the registry yet (players are recorded when they join)."
 msgstr "[[Nobody in the registry yet (players are recorded when they join).]]"
+
+msgid "Not removable right now"
+msgstr "[[Not removable right now]]"
 
 msgid ""
 "Off = your floating name/health bar disappears on every peer's\n"
@@ -939,9 +936,6 @@ msgstr "[[Skins]]"
 msgid "Skins come from converter .pak files under Content/Paks/LogicMods (any subfolder). One pak may carry several skins -- the four scientists ship together in scientists.pak."
 msgstr "[[Skins come from converter .pak files under Content/Paks/LogicMods (any subfolder). One pak may carry several skins -- the four scientists ship together in scientists.pak.]]"
 
-msgid "Sleep interrupted -- everyone wakes up."
-msgstr "[[Sleep interrupted -- everyone wakes up.]]"
-
 msgid "Something was sent before the identity was proved."
 msgstr "[[Something was sent before the identity was proved.]]"
 
@@ -970,6 +964,9 @@ msgstr "[[Talking]]"
 
 msgid "Teleport to me"
 msgstr "[[Teleport to me]]"
+
+msgid "That is being held"
+msgstr "[[That is being held]]"
 
 msgid "That line is too long."
 msgstr "[[That line is too long.]]"
@@ -1028,6 +1025,9 @@ msgstr "[[The host could not send its challenge.]]"
 msgid "The host did not answer through the signaling server. It may be offline, or reconnecting -- try again in a minute."
 msgstr "[[The host did not answer through the signaling server. It may be offline, or reconnecting -- try again in a minute.]]"
 
+msgid "The host does not allow the remover"
+msgstr "[[The host does not allow the remover]]"
+
 msgid "The host ended the session."
 msgstr "[[The host ended the session.]]"
 
@@ -1042,9 +1042,6 @@ msgstr "[[The host kicked you.]]"
 
 msgid "The host never finished preparing its world for you."
 msgstr "[[The host never finished preparing its world for you.]]"
-
-msgid "The host never sent you the world it owed."
-msgstr "[[The host never sent you the world it owed.]]"
 
 msgid "The host never sent your inventory."
 msgstr "[[The host never sent your inventory.]]"
@@ -1064,6 +1061,9 @@ msgstr "[[The host runs an older build of the mod. They need to update.]]"
 msgid "The host sent an identity challenge this build cannot read."
 msgstr "[[The host sent an identity challenge this build cannot read.]]"
 
+msgid "The host stopped sending the world it owed, or the connection stopped delivering it."
+msgstr "[[The host stopped sending the world it owed, or the connection stopped delivering it.]]"
+
 msgid "The host was busy, and this connection was the slowest to prove itself."
 msgstr "[[The host was busy, and this connection was the slowest to prove itself.]]"
 
@@ -1078,6 +1078,9 @@ msgstr "[[The identity proof did not arrive in time.]]"
 
 msgid "The join failed before it started. The log has the error."
 msgstr "[[The join failed before it started. The log has the error.]]"
+
+msgid "The remover cannot remove that in multiplayer"
+msgstr "[[The remover cannot remove that in multiplayer]]"
 
 msgid "The report could not be made."
 msgstr "[[The report could not be made.]]"
@@ -1321,6 +1324,9 @@ msgstr "[[You are banned from this server.]]"
 
 msgid "You can play anyway. This message will not show again for this game version."
 msgstr "[[You can play anyway. This message will not show again for this game version.]]"
+
+msgid "You can't see that from there"
+msgstr "[[You can't see that from there]]"
 
 #, c-format
 msgid "Your body skin (%s) could not be saved to multivoid.ini this launch -- it is temporary for this session. Fix whatever keeps the file from being read or saved (a lock from an editor or antivirus, permissions, or a file saved as UTF-16); nothing is lost once a launch can save again."

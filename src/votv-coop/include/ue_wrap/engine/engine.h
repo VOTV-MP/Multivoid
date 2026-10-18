@@ -41,11 +41,23 @@ bool IsGamePaused();
 
 bool SetGamePaused(bool paused);
 
+// UGameplayStatics::GetTimeSeconds on the cached world context: the world's own clock in seconds, which
+// stops while the game is paused and runs at the world's time dilation. False on a resolution miss or a
+// failed call. Game thread.
+bool TryGetWorldTimeSeconds(float& seconds);
+
 // Spawn `actorClass` at `location` through the deferred GameplayStatics pair (AlwaysSpawn); the
 // AActor* or nullptr. `inertPawn` zeroes AutoPossessPlayer, AutoPossessAI and AutoReceiveInput and
 // sets bBlockInput in the deferred window, so the pawn never takes a PlayerController or the local
-// input. Game thread.
-void* SpawnActor(void* actorClass, const FVector& location, bool inertPawn = false);
+// input. `beforeFinish`, when set, runs once on the deferred actor after those writes and before
+// FinishSpawning, so its BeginPlay and the overlaps its colliders report as they register already see
+// what the callback set; it is not called on a path that returns null before the actor exists. `ctx` is
+// the caller's and need live only for the call; the callback runs on the game thread inside
+// SpawnActor and must not re-enter it. A failed FinishSpawning call destroys the begun actor and
+// returns nullptr (the callback has run by then). Game thread.
+using BeforeFinishFn = void (*)(void* ctx, void* actor);
+void* SpawnActor(void* actorClass, const FVector& location, bool inertPawn = false,
+                 BeforeFinishFn beforeFinish = nullptr, void* ctx = nullptr);
 
 // The split form: BeginDeferredSpawn, write class-specific fields before Init and BeginPlay,
 // FinishDeferredSpawn with the same transform (the engine re-applies it). A wire-spawned entity
@@ -123,6 +135,12 @@ bool SetActorHiddenInGame(void* actor, bool hidden);
 // AActor::SetActorEnableCollision; pair it with a hide so an invisible mirror is neither grabbable
 // nor physics-active. Game thread.
 bool SetActorEnableCollision(void* actor, bool enabled);
+
+// AActor::CustomTimeDilation, the actor's own multiplier on its tick delta (the world's global dilation
+// still applies on top). A native property with no setter function: the offset is resolved from the
+// actor's class and kept per class, and the float is stored raw. False, and one warning per class,
+// when the property does not resolve. `actor` is live in this game-thread task. Game thread.
+bool SetCustomTimeDilation(void* actor, float value);
 
 // K2_TeleportTo: the engine's own long-range teleport; K2_SetActorLocation can be silently reverted
 // by Character constraints when the move is far. Game thread.

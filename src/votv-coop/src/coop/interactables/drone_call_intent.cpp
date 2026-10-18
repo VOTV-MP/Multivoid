@@ -5,8 +5,10 @@
 #include "coop/element/element.h"
 #include "coop/element/intent_authority.h"
 #include "coop/net/intent_bucket.h"
+#include "coop/net/intent_queue.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/player/roster_ledger.h"  // PerSlotState
 #include "coop/props/active_drive.h"
 
 #include "ue_wrap/core/log.h"
@@ -17,7 +19,6 @@
 
 #include <atomic>
 #include <cstdint>
-#include <deque>
 #include <iterator>
 
 namespace coop::drone_call_intent {
@@ -53,16 +54,14 @@ bool g_watchInstalled = false;
 bool g_watchLive = false;
 
 uint64_t g_sent = 0, g_flown = 0, g_denied = 0;
-bool g_waitSaid[coop::net::kMaxPeers] = {};  // a sender's wait for its body, said once a streak
 
-struct Bucket {
-    coop::net::IntentBucket rate;
-    uint64_t                nextSayMs = 0;
+// One sender: its queued presses with their bucket, and the latches that clear with its occupant.
+struct Slot {
+    coop::net::IntentQueue<coop::net::DroneFlyIntentPayload> queue;
+    uint64_t nextSayMs = 0;      // the full queue's refusal, said once in kRefusalSayMs
+    bool     waitSaid  = false;  // a wait for the body, said once a streak
 };
-Bucket g_rate[coop::net::kMaxPeers];
-std::deque<coop::net::DroneFlyIntentPayload> g_pending[coop::net::kMaxPeers];
-
-bool TakeToken(uint8_t slot) { return g_rate[slot].rate.Take(kPressBudget, coop::active_drive::NowMs()); }
+coop::roster_ledger::PerSlotState<Slot> g_slots;
 
 // ---- host side -------------------------------------------------------------------------------
 // One press, run or refused and then consumed, or left at the head of its queue: false while the host
@@ -76,8 +75,8 @@ bool Execute(coop::net::Session& s, const coop::net::DroneFlyIntentPayload& p, u
     // the first within reach is the press.
     const auto token = coop::element::IntentTarget::ForClientIntent(s, slot, kConsoleReachUU);
     if (!token.HasBody()) {
-        if (!g_waitSaid[slot]) {
-            g_waitSaid[slot] = true;
+        if (!g_slots[slot].waitSaid) {
+            g_slots[slot].waitSaid = true;
             UE_LOGI("[DRONE-CALL] slot %u's presses wait: the host has no body for it yet",
                     static_cast<unsigned>(slot));
         }
@@ -171,14 +170,12 @@ void Tick(coop::net::Session& session) {
 
     if (session.role() != coop::net::Role::Host) return;
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
-        if (g_pending[slot].empty() || !TakeToken(slot)) continue;
-        const coop::net::DroneFlyIntentPayload p = g_pending[slot].front();
-        if (Execute(session, p, slot)) {
-            g_pending[slot].pop_front();
-            g_waitSaid[slot] = false;        // a consumed press ends the wait's streak
-        } else {
-            g_rate[slot].rate.Refund(kPressBudget);  // a wait runs nothing, so it spends no token
-        }
+        Slot& sl = g_slots[slot];
+        sl.queue.Serve(kPressBudget, coop::active_drive::NowMs, [&](const coop::net::DroneFlyIntentPayload& p) {
+            if (!Execute(session, p, slot)) return coop::net::Served::Wait;  // a wait runs nothing: no token spent
+            sl.waitSaid = false;  // a consumed press ends the wait's streak
+            return coop::net::Served::Done;
+        });
     }
 }
 
@@ -186,26 +183,17 @@ void OnDroneFlyIntent(coop::net::Session& session, const coop::net::DroneFlyInte
                       uint8_t senderSlot) {
     if (session.role() != coop::net::Role::Host) return;
     if (senderSlot < 1 || senderSlot >= coop::net::kMaxPeers) return;
-    auto& q = g_pending[senderSlot];
-    if (q.size() >= kMaxPending) {
-        Bucket& b = g_rate[senderSlot];
+    Slot& sl = g_slots[senderSlot];
+    coop::net::DroneFlyIntentPayload copy = payload;
+    if (!sl.queue.Push(std::move(copy), kMaxPending)) {
         const uint64_t now = coop::active_drive::NowMs();
-        if (now >= b.nextSayMs) {
-            b.nextSayMs = now + kRefusalSayMs;
+        if (now >= sl.nextSayMs) {
+            sl.nextSayMs = now + kRefusalSayMs;
             UE_LOGW("[DRONE-CALL] slot %u queue full (%zu) -- refusing presses until it drains",
-                    static_cast<unsigned>(senderSlot), q.size());
+                    static_cast<unsigned>(senderSlot), sl.queue.size());
         }
         ++g_denied;
-        return;
     }
-    q.push_back(payload);
-}
-
-void OnPeerLeft(uint8_t slot) {
-    if (slot >= coop::net::kMaxPeers) return;
-    g_pending[slot].clear();
-    g_rate[slot] = Bucket{};
-    g_waitSaid[slot] = false;
 }
 
 uint64_t SentCount() { return g_sent; }
@@ -215,11 +203,6 @@ void OnDisconnect() {
         UE_LOGI("[DRONE-CALL] session end -- sent=%llu pressed=%llu denied=%llu",
                 static_cast<unsigned long long>(g_sent), static_cast<unsigned long long>(g_flown),
                 static_cast<unsigned long long>(g_denied));
-    for (uint8_t slot = 0; slot < coop::net::kMaxPeers; ++slot) {
-        g_pending[slot].clear();
-        g_rate[slot] = Bucket{};
-        g_waitSaid[slot] = false;
-    }
     g_sent = g_flown = g_denied = 0;
 }
 

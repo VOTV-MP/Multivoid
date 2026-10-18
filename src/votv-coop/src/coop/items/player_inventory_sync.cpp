@@ -60,9 +60,9 @@ constexpr auto kVitalsCadence = std::chrono::seconds(30);
 constexpr auto kAsmTtl      = std::chrono::seconds(30);
 
 // The live per-player apply on join. The host pushes each joiner its profile (the one the store
-// holds, else coop_players/<slot>/<guid>.json); the client buffers it and the pre-materialise save-object
-// hook substitutes it into the freshly loaded save object before the native load builds the
-// live world from it, so the joiner gets their own items, not the host's. The loaded save object
+// holds, else <mod data dir>/coop_players/<slot>/<guid>.json); the client buffers it and the
+// pre-materialise save-object hook substitutes it into the freshly loaded save object before the
+// native load builds the live world from it, so the joiner gets their own items, not the host's. The loaded save object
 // is a capture of the HOST's, so what it carries is never this player's: with no blob the hook
 // empties it rather than keep it.
 

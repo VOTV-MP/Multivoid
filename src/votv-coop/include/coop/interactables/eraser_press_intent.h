@@ -32,7 +32,8 @@ void Tick(coop::net::Session& session);
 void OnEraserPressIntent(coop::net::Session& session, const coop::net::EraserPressIntentPayload& payload,
                          uint8_t senderSlot);
 
-void OnPeerLeft(uint8_t slot);
+// Session end: the counters go, said. A sender's queue, its bucket and its said-once latch live in its per-slot
+// state and go with its occupant.
 void OnDisconnect();
 
 // For a drill: presses this client sent, presses the host ran, and host events this client showed.

@@ -8,6 +8,7 @@
 #include "coop/net/session.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_key_index.h"
+#include "coop/props/remote_prop.h"       // IsOwnedHere: a held prop takes no record
 #include "ue_wrap/actors/prop.h"          // GetInteractableKeyString (the host birth path)
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/log.h"
@@ -330,6 +331,14 @@ bool LandRecord(const std::wstring& key, SR::SaveRecord&& rec, uint8_t senderSlo
     // A join hands this lane hundreds of arrivals at once: a prop the index does not know yet is
     // parked and retried at O(1) on the next frame, never searched for.
     void* actor = (!budgeted || g_applyBudget > 0) ? coop::prop_key_index::Find(key) : nullptr;
+    // A prop in this player's hands (or under a drive) takes no record: loadData restores a wall
+    // attachable's stuck state, and a held camera re-stuck ~0.45 s after the grab that way (measured,
+    // join tail). The holder is the authority while it holds, so the record waits in the park and
+    // the drain applies it once the prop is let go.
+    if (actor && coop::remote_prop::IsOwnedHere(actor)) {
+        UE_LOGI("prop_save_data: record for key '%ls' waits -- the prop is held here", key.c_str());
+        actor = nullptr;
+    }
     if (actor && TryApply(actor, key, rec)) {
         if (budgeted) --g_applyBudget;
         return true;
@@ -641,6 +650,9 @@ void Drive() {
         const std::wstring key = it->first;
         void* actor = (it->second.failures < kMaxApplyFailures)
                           ? coop::prop_key_index::Find(key) : nullptr;
+        // A held prop's record waits for its release (LandRecord's reason). It is skipped before the
+        // budget is spent and is no failure: the row stays, and a later frame's scan applies it.
+        if (actor && coop::remote_prop::IsOwnedHere(actor)) actor = nullptr;
         if (actor) {
             // The budget buys a DISPATCH, not a success: a row whose apply fails past the base
             // capture has already paid for one, and counting only successes let a handful of

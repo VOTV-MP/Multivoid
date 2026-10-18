@@ -18,7 +18,7 @@
 #include "coop/creatures/npc_sync.h"
 #include "coop/world/world_actor_sync.h"  // HostEnrollExSpawn -- the WA branch of the EX-catch drain
 #include "ue_wrap/engine/engine.h"   // TryGetActorLocation / TryGetActorRotation
-#include "ue_wrap/actors/kerfur.h"   // HasSaveKey -- the ConnectEdge savePersisted gate
+#include "ue_wrap/actors/kerfur.h"   // HasSaveKey -- the walk's savePersisted gate
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"      // NpcClass_Wisp (the ambient-wisp walk skip)
@@ -45,10 +45,13 @@ using coop::element::NpcMirrors;   // canonical accessor (coop/element/mirror_ma
 
 // The one enrol body: allocate, bind, reverse-map, reserve a kerfur id where applicable, and
 // broadcast the spawn when connected, for an untracked live NPC actor; the same end state the
-// interceptor and POST reach for a fresh spawn. Returns the eid, or the invalid id on failure
-// (logged). The caller has verified live, allowlisted and untracked. Game thread.
+// interceptor and POST reach for a fresh spawn. `skipSlot` is the peer slot the broadcast leaves
+// out (the joiner whose connect broadcast carries the spawn), -1 for none. Returns the eid, or
+// the invalid id on failure (logged). The caller has verified live, allowlisted and untracked.
+// Game thread.
 coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& clsName,
                                                  bool savePersisted, const char* logTag,
+                                                 int skipSlot,
                                                  ue_wrap::FVector* outLoc = nullptr) {
     auto* s = coop::npc_sync::GetSession();
     if (!s) return coop::element::kInvalidId;
@@ -94,11 +97,16 @@ coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& 
     if (clsName.find(L"kerfurOmega") != std::wstring::npos) {
         coop::kerfur_entity::AllocKerfurId(obj, eid, coop::kerfur_entity::Form::Npc, clsName);
     }
-    // Make the registration visible now: broadcast the spawn for the newly registered NPC to
-    // connected peers. At the connect edge itself this duplicates the connect broadcast's send
-    // for freshly found NPCs, harmlessly: the receiver drops a duplicate eid early, a logged skip
-    // rather than a re-install.
-    if (s->connected()) {
+    // Make the registration visible now: broadcast the spawn for the newly registered NPC to the
+    // peers already connected. A joiner (skipSlot) gets it in its connect broadcast, which sends
+    // every tracked NPC: MTA's join, the joiner announced to the joined players with it skipped,
+    // then the others' elements to the joiner alone
+    // (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:1426, :1459).
+    // Nothing is sent, and nothing logged, when no other peer is world-ready: the sender asks the
+    // fan-out's own gate first, where MTA filters inside its fan-out (CPlayerManager.cpp:162-170).
+    // MTA registers an element at its creation (reference/mtasa-blue/Server/mods/deathmatch/logic/CElement.cpp:39);
+    // a creature that loaded with the level, or that no watched spawn source made, is enrolled here.
+    if (s->connected() && s->AnyWorldReadyPeer(skipSlot)) {
         coop::net::EntitySpawnPayload p{};
         const std::string& tn = el->GetTypeName();
         p.className.len = 0;
@@ -111,11 +119,11 @@ coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& 
         p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
         p.savePersisted = savePersisted ? 1 : 0;
         // Carry the off-to-active dupe retire key for a window-turned-on kerfur (see
-        // npc_pose_host.cpp). Stamped for any origin, harmless when no off-prop mirror is bound at
+        // npc_pose_host.cpp). Stamped for every enrolment, harmless when no off-prop mirror is bound at
         // that eid, since the eid-keyed sweep finds nothing.
         const coop::element::ElementId offEid = coop::kerfur_entity::GetOriginOffEidForEid(eid);
         p.retireOffEid = (offEid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(offEid);
-        if (!s->SendEntitySpawn(p)) {
+        if (!s->SendEntitySpawn(p, skipSlot)) {
             UE_LOGW("npc-sync[%s]: SendEntitySpawn failed for newly-registered eid=%u",
                     logTag, p.elementId);
         }
@@ -288,7 +296,7 @@ void DrainPendingExSpawns() {
         // twin.
         ue_wrap::FVector loc{};
         const coop::element::ElementId eid =
-            EnrollUntrackedNpcActor(obj, clsName, /*savePersisted=*/false, "ex-spawn", &loc);
+            EnrollUntrackedNpcActor(obj, clsName, /*savePersisted=*/false, "ex-spawn", /*skipSlot=*/-1, &loc);
         if (eid != coop::element::kInvalidId) {
             UE_LOGI("npc-sync[ex-spawn]: enrolled '%ls' eid=%u at (%.0f, %.0f, %.0f) "
                     "(EX_CallMath BeginDeferred, source-gated catch)",
@@ -305,7 +313,7 @@ void ClearPendingExSpawns() {
     g_pendingExSpawns.clear();
 }
 
-int RegisterExistingWorldNpcs(NpcEnumOrigin origin) {
+int RegisterExistingWorldNpcs(int joiningSlot) {
     // Host only: register the pre-existing and level-load NPC actors so the connect snapshot
     // mirrors them. See the header. The same end state as the interceptor and POST for a fresh
     // spawn (the Element allocated, the live actor bound, the reverse-map entry), for an actor
@@ -348,12 +356,10 @@ int RegisterExistingWorldNpcs(NpcEnumOrigin origin) {
         if (clsName == P::name::NpcClass_Wisp) continue;
         const coop::element::ElementId eid = EnrollUntrackedNpcActor(
             obj, clsName,
-            // The save-persisted policy by origin (see the header): at the connect edge a joiner
-            // may have loaded this keyed save object itself, so adopt when it has a save key; a
-            // mid-session converge means already-connected peers have no twin, so always
-            // fresh-spawn.
-            origin == NpcEnumOrigin::ConnectEdge && ue_wrap::kerfur::HasSaveKey(obj),
-            "world-enum");
+            // A save-keyed creature is one the joiner may have loaded itself, so its spawn (the
+            // connect broadcast's, which builds the same flag) lets the joiner adopt its twin.
+            ue_wrap::kerfur::HasSaveKey(obj),
+            "world-enum", joiningSlot);
         if (eid == coop::element::kInvalidId) continue;
         ++registered;
     }

@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include "ue_wrap/core/types.h"
+
 namespace coop::dev::spawn_npc {
 
 // Start the trigger-FILE watcher thread, IF env VOTVCOOP_SPAWN_TRIGGER is set
@@ -22,6 +24,11 @@ void Init();
 // player (host-side sync path). Safe to call off the game thread (the spawn is
 // posted to it).
 void SpawnKerfurOmega();
+
+// Spawn `className` (an allowlisted NPC) at `at`, unrotated, through the same deferred pair, so the host's lane
+// announces it; the actor, or null when the refs, the class or the spawn fail. A drill's entry: the caller is on
+// the game thread, and on the host. Game thread.
+void* SpawnAt(const wchar_t* className, const ue_wrap::FVector& at);
 
 // Test-spawn the classes the npc_sync allowlist added, in front of the host -- THE reliable mirror
 // test. The F1 wisps and ventCrawler events do not reliably produce a creature in front of the

@@ -6,6 +6,8 @@
 
 #include "coop/dev/perf_probe.h"
 #include "coop/element/element.h"
+#include "coop/element/quiescence_drain.h"  // SupersedePosCorrection: the own release is the newest pose
+#include "coop/element/registry.h"          // EidForActor: the keyed eid of the released prop
 #include "coop/config/config.h"
 #include "coop/creatures/kerfur_entity.h"  // GetKerfurMirrorEidForActor, the held kerfur prop's eid
 #include "coop/net/protocol.h"
@@ -556,6 +558,14 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                 }
             }
             session.SendPropRelease(rel);
+            // This peer's own release: a join-window correction armed before the hold is older than
+            // where the prop was put down, and would snap it back once the drain's grab deferral ends.
+            if (session.role() == coop::net::Role::Client && g_lastHeldProp.Alive()) {
+                const coop::element::ElementId heldEid =
+                    coop::element::Registry::Get().EidForActor(g_lastHeldProp.Raw());
+                if (heldEid != coop::element::kInvalidId && heldEid != 0u)
+                    coop::element::quiescence_drain::SupersedePosCorrection(heldEid, "own release");
+            }
         }
         g_lastHeldProp.Reset();
         g_lastHeldKey = {};

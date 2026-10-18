@@ -209,6 +209,20 @@ void* PropertyInnerStruct(void* owningClass, const wchar_t* propName) {
     return nullptr;
 }
 
+bool PropertyOffsetAndClass(void* owningStruct, const wchar_t* propName, int32_t& outOffset,
+                            std::wstring& outClassName) {
+    outOffset = -1;
+    outClassName.clear();
+    const uint8_t* field = FindPropertyField(owningStruct, propName);
+    if (!field) return false;
+    outOffset = *reinterpret_cast<const int32_t*>(field + O::FProperty_Offset_Internal);
+    // FField::ClassPrivate (an FFieldClass*, its Name first): RE-UE4SS MemberVariableLayout_4_27_Template.ini
+    // [FField] [FFieldClass], the read script_fingerprint makes for a property's type.
+    const uint8_t* const fieldClass = *reinterpret_cast<const uint8_t* const*>(field + O::FField_ClassPrivate);
+    if (fieldClass) outClassName = ToString(*reinterpret_cast<const FName*>(fieldClass + O::FFieldClass_Name));
+    return true;
+}
+
 void* PropertyEnum(void* owningStruct, const wchar_t* propName) {
     uint8_t* field = FindPropertyField(owningStruct, propName);
     if (!field) return nullptr;

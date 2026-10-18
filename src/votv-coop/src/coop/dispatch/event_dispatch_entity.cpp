@@ -80,7 +80,7 @@ bool HandleEntityEvent(net::Session& session,
             (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
-        coop::prop_stick_sync::OnStickState(p, senderSlot, localPlayer);
+        coop::prop_stick_sync::OnStickState(p, senderSlot);
         break;
     }
     case net::ReliableKind::PropRelease: {
@@ -357,9 +357,28 @@ bool HandleEntityEvent(net::Session& session,
             UE_LOGW("event_feed: PropSnapPos eid=0x%08x not a valid host-allocated id -- dropping", p.eid);
             break;
         }
+        // An open drive always has a generation: the host mints one before a drive row exists.
+        if (p.driveOpen > 1u || (p.driveOpen == 1u && p.driveGen == 0u)) {
+            UE_LOGW("event_feed: PropSnapPos eid=%u driveOpen=%u driveGen=%u is impossible (open is 0 or 1, "
+                    "and 1 needs a generation) -- dropping", p.eid, static_cast<unsigned>(p.driveOpen),
+                    static_cast<unsigned>(p.driveGen));
+            break;
+        }
+        // The correction carries the host's drive context for the prop at the instant it read the
+        // pose (MTA: the context is
+        // reference/mtasa-blue/Server/mods/deathmatch/logic/CElement.h:220-221, and the check is
+        // CanUpdateSync at reference/mtasa-blue/Server/mods/deathmatch/logic/CElement.cpp:1300), so a
+        // sample that crossed a drive's end edge on another lane is judged by what it read, never by
+        // when it arrived.
+        if (coop::prop_drive_stream::IsCorrectionStale(p.eid, p.driveGen, p.driveOpen != 0)) {
+            UE_LOGI("[PILE-B3] CLIENT pos-correction eid=%u gen=%u open=%u dropped on arrival -- older than a "
+                    "drive end this copy applied",
+                    p.eid, static_cast<unsigned>(p.driveGen), static_cast<unsigned>(p.driveOpen));
+            break;
+        }
         coop::element::quiescence_drain::ArmPendingPosCorrection(
             p.eid, ue_wrap::FVector{p.locX, p.locY, p.locZ},
-            ue_wrap::FRotator{p.rotPitch, p.rotYaw, p.rotRoll}, p.physFlags);
+            ue_wrap::FRotator{p.rotPitch, p.rotYaw, p.rotRoll}, p.physFlags, p.driveGen, p.driveOpen != 0);
         // The correction is also identity: the new position is recorded as the entry's
         // host-position overlay (the save position stays immutable, since a purge re-create spawns
         // there), so a re-bind prefers the surviving actor at the new position; and if the entity

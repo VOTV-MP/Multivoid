@@ -36,11 +36,8 @@ void Tick(coop::net::Session& session);
 void OnPackTrashIntent(coop::net::Session& session, const coop::net::PackTrashIntentPayload& payload,
                        uint8_t senderSlot);
 
-// A peer left: its queue and its rate bucket go with it, so the next occupant of the slot starts
-// clean.
-void OnPeerLeft(uint8_t slot);
-
-// Session teardown: queues, buckets and the pending tool consumptions are dropped.
+// Session teardown: the pending tool consumptions are dropped. A sender's queue and its bucket live in its
+// per-slot state and go with its occupant, so the next occupant of the slot starts clean.
 void OnDisconnect();
 
 }  // namespace coop::pack_trash_intent

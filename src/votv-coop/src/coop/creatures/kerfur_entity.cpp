@@ -100,6 +100,8 @@ bool IsKerfurPropClass(void* cls) {
     return R::IsDescendantOfAny(cls, &prop, 1);
 }
 
+bool KerfurPropBound() { return g_kerfurPropClass.load(std::memory_order_acquire) != nullptr; }
+
 coop::element::ElementId AllocKerfurId(void* actor, coop::element::ElementId currentEid,
                                        Form form, const std::wstring& className) {
     if (!actor) return coop::element::kInvalidId;

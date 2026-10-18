@@ -7,7 +7,6 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/local_streams.h"  // CurrentHoldGen, the hold a stick ends
-#include "coop/props/prop_drive_stream.h"  // IsParked: the host's channel moves an unstuck copy
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_key_index.h"  // a key on the wire to a live actor
 #include "coop/props/remote_prop.h"
@@ -392,7 +391,7 @@ void BroadcastUnstick(coop::net::Session* s, void* prop) {
 // hold, the host's driven-prop channel, this peer's own grab -- it lets go from the unsticking
 // peer's pose with that peer's velocity, a pry's kick included.
 void ApplyUnstick(void* prop, const coop::net::PropStickStatePayload& p, const std::wstring& keyW,
-                  uint8_t senderPeerSlot, void* localPlayer) {
+                  uint8_t senderPeerSlot) {
     // A copy already free -- the hold's first pose ran the unstick before this message came -- gets no
     // second one: its init() would switch the copy's simulation on under the drive that owns it.
     const bool wasStuck = ue_wrap::prop::IsFrozen(prop) || ue_wrap::prop::IsStatic(prop);
@@ -401,8 +400,7 @@ void ApplyUnstick(void* prop, const coop::net::PropStickStatePayload& p, const s
                 "stays as it is", keyW.c_str(), p.elementId);
         return;
     }
-    const bool owned = coop::remote_prop::IsActorUnderAnyDrive(prop) || coop::prop_drive_stream::IsParked(prop) ||
-                       (localPlayer && E::IsMainPlayerGrabbing(localPlayer, prop));
+    const bool owned = coop::remote_prop::IsOwnedHere(prop);
     if (!owned) {
         E::SetActorLocation(prop, ue_wrap::FVector{p.locX, p.locY, p.locZ});
         E::SetActorRotation(prop, ue_wrap::FRotator{p.rotPitch, p.rotYaw, p.rotRoll});
@@ -460,8 +458,7 @@ void Tick() {
     }
 }
 
-void OnStickState(const coop::net::PropStickStatePayload& payload, uint8_t senderPeerSlot,
-                  void* localPlayer) {
+void OnStickState(const coop::net::PropStickStatePayload& payload, uint8_t senderPeerSlot) {
     // Game thread (event_feed drain). Resolve key-first, eid fallback (the
     // PropDestroy shape). A stick ends the sticking peer's hold whatever this peer makes of the
     // stick itself -- a copy it cannot resolve, a half that did not install -- so the hold closes
@@ -515,7 +512,7 @@ void OnStickState(const coop::net::PropStickStatePayload& payload, uint8_t sende
         return;
     }
     if (unstick) {
-        ApplyUnstick(prop, payload, keyW, senderPeerSlot, localPlayer);
+        ApplyUnstick(prop, payload, keyW, senderPeerSlot);
         return;
     }
     // 1. Stop any kinematic drive on it (the sticking peer was holding it, so its PropPose stream

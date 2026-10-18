@@ -21,6 +21,7 @@
 #include "coop/creatures/npc_mirror.h"
 #include "coop/creatures/npc_world_enum.h"  // ClearPendingExSpawns at disconnect
 #include "coop/props/prop_echo_suppress.h"  // InMirrorSpawnScope, the census's mirror exclusion
+#include "coop/world/creature_event_relay.h"  // OnNpcEnrolled: a creature enrolled after its own setEvent(true)
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -293,8 +294,10 @@ bool NpcSuppress_Interceptor(void* self, void* params) {
         UE_LOGI("npc-sync[host]: tracked EntitySpawn class='%ls' elementId=%u loc=(%.0f, %.0f, %.0f) rot=(p=%.1f y=%.1f r=%.1f)",
                 cls.c_str(), p.elementId, p.locX, p.locY, p.locZ,
                 p.rotPitch, p.rotYaw, p.rotRoll);
-        // An alone host's spawns are delivered by the join snapshot instead.
-        if (s->connected() && !s->SendEntitySpawn(p)) {
+        // An alone host's spawns, and those made while every client is still loading, are
+        // delivered by the join snapshot (the connect broadcast) instead: MTA's broadcast skips a
+        // player not yet joined (reference/mtasa-blue/Server/mods/deathmatch/logic/CPlayerManager.cpp:167).
+        if (s->connected() && s->AnyWorldReadyPeer() && !s->SendEntitySpawn(p)) {
             UE_LOGW("npc-sync[host]: SendEntitySpawn failed (reliable channel busy?) -- NPC elementId=%u not broadcast",
                     p.elementId);
         }
@@ -493,8 +496,13 @@ void MapActorToNpcId(void* actor, coop::element::ElementId eid) {
     // NPC after binding its Element, the POST observer's end state. The leaf lock never nests under
     // the Registry or type mutex.
     if (!actor) return;
-    std::lock_guard<std::mutex> lk(g_actorToNpcIdMutex);
-    g_actorToNpcId[actor] = eid;
+    {
+        std::lock_guard<std::mutex> lk(g_actorToNpcIdMutex);
+        g_actorToNpcId[actor] = eid;
+    }
+    // Both callers enrol a creature after its BeginPlay ran, so its own setEvent(true) was not counted by the
+    // relay's watch; the lock is released first, since the relay reads the registry.
+    coop::creature_event_relay::OnNpcEnrolled(eid, actor);
 }
 
 }  // namespace coop::npc_sync

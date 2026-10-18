@@ -3,8 +3,8 @@
 #include "coop/moderation/ban_list.h"
 
 #include "coop/atomic_file/atomic_file.h"
+#include "coop/mod_data/legacy_note.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/paths.h"
 
 #include <nlohmann/json.hpp>
 
@@ -200,13 +200,7 @@ void Load(const std::wstring& serverDir) {
     g_serverDir = serverDir;
     g_readOnly.store(false, std::memory_order_release);
 
-    const std::wstring exeDir = ue_wrap::paths::ExeDir();
-    if (!exeDir.empty()) {
-        const fs::path legacy = fs::path(exeDir) / L"multivoid-banlist.txt";
-        std::error_code ec;
-        if (fs::exists(legacy, ec))
-            UE_LOGI("ban_list: legacy path detected -- ignoring %ls", legacy.c_str());
-    }
+    coop::legacy_note::Once(coop::legacy_note::LegacyFile::BanList, L"multivoid-banlist.txt");
 
     std::vector<Entry> loaded;
     if (!serverDir.empty()) {

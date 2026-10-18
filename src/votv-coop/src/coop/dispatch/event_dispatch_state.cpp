@@ -1,6 +1,6 @@
 // coop/dispatch/event_dispatch_state.cpp -- the keyed device-state reliable-kind case bodies:
 // the keyed toggle family, the keypad, the power panel, the ATV, the drone, the window and
-// grime scalars, the trash pile counters, the kerfur convert, the device claim, sleep, email,
+// grime scalars, the trash pile counters, the kerfur convert, the device claim, the PC user's tab, sleep, email,
 // inventory, voice, the host's server-scope settings, a machine's local dev grants, and an admin's stat orders and queries. The client-to-host intent cases live in
 // event_dispatch_intent.cpp and the signal-pipeline cases in event_dispatch_signal.cpp; see
 // coop/dispatch/event_dispatch.h.
@@ -19,6 +19,7 @@
 #include "coop/creatures/kerfur_convert_client.h"
 #include "coop/creatures/kerfus_state.h"  // HOST->CLIENT a Kerfus's on, charging and energy
 #include "coop/interactables/keypad_sync.h"
+#include "coop/interactables/laptop_tab.h"  // HOST->CLIENT the PC user's tab
 #include "coop/world/power_panel.h"
 #include "coop/session/grants_sync.h"  // this machine's local dev grants, from the host
 #include "coop/player/stat_orders.h"  // an admin's orders to a player's stats and effects, and their answers
@@ -47,12 +48,14 @@ bool HandleStateEvent(net::Session& session,
     case net::ReliableKind::ApplianceState:
     case net::ReliableKind::OvenRepairState:    // the oven's repair, one way
     case net::ReliableKind::LightGroupState:    // the light group's active flag, host-authored
+    case net::ReliableKind::CameraActiveState:  // a security camera's active bit, host-authored
+    case net::ReliableKind::CameraLightState:   // a security camera's spotlight bit, host-authored
     case net::ReliableKind::LockerDoorState: {  // lockers and the drone-console doors, the same shape
-        // DoorState and LightGroupState are the host-authored kinds in this otherwise symmetric
-        // family, so they do not get the family's any-peer-may-send treatment: a client that
-        // authored one would drive the host's and every other client's doors or lights, the
-        // pollution host authority prevents. The host's receive edge refuses a client's copy
-        // (client_authorship.h), and the host relays neither kind, so here they come from the host.
+        // DoorState, LightGroupState and the two camera kinds are the host-authored kinds in this
+        // otherwise symmetric family, so they do not get the family's any-peer-may-send treatment: a
+        // client that authored one would drive the host's and every other client's doors, lights or
+        // cameras, the pollution host authority prevents. The host's receive edge refuses a client's
+        // copy (client_authorship.h), and the host relays none of them, so here they come from the host.
         // A peer toggled a keyed interactable (a light switch, a container lid, a garage, an
         // appliance, a locker) or repaired an oven, or the host moved a door or a light group. On a symmetric kind any
         // peer can send, and the host relays a client-originated edge to the other clients before
@@ -368,23 +371,37 @@ bool HandleStateEvent(net::Session& session,
         coop::device_occupancy::OnReliable(dcp, senderSlot);
         break;
     }
+    case net::ReliableKind::LaptopTabState: {
+        // HOST->CLIENT: the tab the PC's user is on, shown by writing the switcher's index. Host-authored: the
+        // host's receive edge refuses a client's copy (client_authorship.h) and the host relays none. The slot, the
+        // holder, the index and the write live in the module; the format lives here. coop::laptop_tab::OnState.
+        if (session.role() != net::Role::Client) {
+            UE_LOGW("event_feed: LaptopTabState received on the host -- dropping");
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::LaptopTabPayload)) {
+            UE_LOGW("event_feed: LaptopTabState payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::LaptopTabPayload));
+            break;
+        }
+        net::LaptopTabPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        const uint8_t tslot = (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                                  ? static_cast<uint8_t>(msg.senderPeerSlot)
+                                  : static_cast<uint8_t>(0xFF);
+        coop::laptop_tab::OnState(session, p, tslot);
+        break;
+    }
     // The signal-pipeline kinds (the sky signals, the desk, the dish, the laptop, the saved
     // signals, the refiner) are in event_dispatch_signal.cpp.
     case net::ReliableKind::SleepState: {
-        // The sleep gate: a peer's report to the host, and the host's tally, accelerate and end to
-        // all; the role and slot trust gates live in the module.
-        if (msg.payloadLen < sizeof(net::SleepStatePayload)) {
-            UE_LOGW("event_feed: SleepState payload too short (%zu < %zu)",
-                    static_cast<size_t>(msg.payloadLen), sizeof(net::SleepStatePayload));
-            break;
-        }
-        net::SleepStatePayload sp{};
-        std::memcpy(&sp, msg.payload, sizeof(sp));
+        // A client's rest state to the host, the host's sleeping flag and one peer's rest state to
+        // the clients; the length, role, slot and field checks live in the module.
         const uint8_t sslot =
             (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
-        coop::sleep_sync::OnReliable(sp, sslot);
+        coop::sleep_sync::OnReliable(msg.payload, msg.payloadLen, sslot);
         break;
     }
     case net::ReliableKind::EmailAppend: {

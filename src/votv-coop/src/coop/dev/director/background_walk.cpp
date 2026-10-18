@@ -30,6 +30,7 @@ std::shared_ptr<BackgroundWalk> StartBackgroundWalk(const ue_wrap::FVector& to, 
     walk->goal.reachCm = reachCm;
     walk->carry = carry;
     walk->goal.epoch = WalkEpoch();
+    walk->goal.cancel = &walk->cancelled;
     auto* start = new Start{walk, deadlineS};
     if (HANDLE t = ::CreateThread(nullptr, 0, &WalkThread, start, 0, nullptr)) {
         ::CloseHandle(t);
@@ -38,6 +39,10 @@ std::shared_ptr<BackgroundWalk> StartBackgroundWalk(const ue_wrap::FVector& to, 
         walk->state.store(2);
     }
     return walk;
+}
+
+void CancelBackgroundWalk(BackgroundWalk& walk) {
+    walk.cancelled.store(true, std::memory_order_release);
 }
 
 }  // namespace coop::director

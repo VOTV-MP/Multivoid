@@ -6,6 +6,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/net/end_reason.h"
+#include "coop/net/fake_link_steps.h"  // the `wr` origin of net.fakelink_steps
 #include "coop/net/intent_bucket.h"
 #include "coop/net/protocol.h"  // kMaxPeers, Role
 #include "coop/net/session.h"
@@ -58,6 +59,7 @@ void OnAnnounce(coop::net::Session& session, int slot) {
                 L"[1c-test] JOIN-WINDOW CLOSED -- joiner world-ready; drops from here are post-load (not in-window)",
                 coop::chat_feed::Keep::Transient);
         session.MarkSlotWorldReady(slot, true);
+        coop::net::fake_link_steps::NoteOrigin(coop::net::fake_link_steps::Origin::WorldReady);
         coop::subsystems::ConnectReplayForSlot(slot);
         // The joined-the-game line fires at the joiner's puppet appearance; this call announces only a
         // puppet that spawned before world-ready (a pre-world menu pose), a no-op otherwise.

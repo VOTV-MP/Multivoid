@@ -53,12 +53,12 @@ void UnmarkKnownKeyedProp(void* actor);
 
 // The Prop element shadow: a Prop element for `actor`, idempotent, allocated in the host or peer
 // range by the role read inside the lock; name and class optional. Returns the key the actor is
-// actually enrolled under: the game's own save ships duplicate keys (65 trashBitsPile_C on one
-// GUID), and the host re-keys a true duplicate (a different live actor already carries the key)
-// before enrolling, so a broadcast builds its payload from the return, never the input. Every
-// caller names its enrolment source: an explicit express seam (the Init broadcast, a container
-// extract, a held-item express, a pile self-seed) mints and announces on any peer, while the
-// passive census walk on a client mints nothing for a keyed prop (keyed identity is
+// actually enrolled under: the level's clone families share a key (85 trashBitsPile_C on four
+// keys, 65 on one GUID), and the host re-keys a true duplicate (a different live actor already
+// carries the key) before enrolling, so a broadcast builds its payload from the return, never the
+// input. Every caller names its enrolment source: an explicit express seam (the Init broadcast, a
+// container extract, a held-item express, a pile self-seed) mints and announces on any peer, while
+// the passive census walk on a client mints nothing for a keyed prop (keyed identity is
 // host-authored: a save-loaded prop adopts the host eid by key, a client-born prop mints at its
 // express seam) and only tracks it by key; a silent local eid nobody was told about was a
 // zombie double-row factory, thousands per join.

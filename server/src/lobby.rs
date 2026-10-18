@@ -1,16 +1,20 @@
 //! The lobby domain: what a lobby is, the state every request mutates, and the handlers behind
-//! `/v1/host`, `/v1/heartbeat`, `/v1/leave`, `/v1/visibility` and `/v1/join`, plus the browse
-//! snapshot and the sweeper that reaps what stopped heartbeating.
+//! `/v1/heartbeat`, `/v1/leave`, `/v1/visibility` and `/v1/join`, plus the browse snapshot and the
+//! sweeper that reaps what stopped heartbeating. The create (`/v1/host/challenge`, `/v1/host`) is in `host`.
 
-use crate::common::{build_claim_shape_ok, clamp_str, ct_eq, identity_shape_ok, ip_bucket, log, token_hex, token_urlsafe};
-use crate::version_gate::version_gate_env;
+use crate::common::{build_claim_shape_ok, clamp_str, ct_eq, ip_bucket, log, token_hex, token_urlsafe};
 use crate::ice::{heartbeat_turn, ice_block, turn_creds, HostTurn, TURN_TTL_HOST, TURN_TTL_JOIN};
+use crate::lobby_proof::Nonces;
 use crate::master_config::CFG;
+use crate::rate_table::RateTable;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::{LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
+
+pub mod host;
+use host::{h_challenge, h_host, HostCtx};
 
 // 90s = 3 missed 30s heartbeats before a lobby is reaped. Was 300s (ghost-lobby bug:
 // a TASK-KILLED host sends no /v1/leave, so its dead entry lingered up to the TTL; a
@@ -20,17 +24,23 @@ pub const LOBBIES_CACHE_TTL: Duration = Duration::from_secs(5);
 
 pub const MAX_LOBBIES_PER_IP: usize = 8;
 pub const MAX_LOBBIES_GLOBAL: usize = 1000;
-// Hard cap on distinct rate-limit buckets, so a source-diverse flood can't grow the
-// `rate` map toward MemoryMax between the 30s sweeps (security audit 2026-07-16, M3).
-// With /64 IPv6 coarsening a flood needs distinct routable prefixes to add keys, so
-// this is a belt-and-suspenders ceiling; when hit, new buckets are refused (the
-// flooding prefixes are simply treated as rate-limited).
+// Hard cap on distinct rate-limit keys, so a source-diverse flood can't grow the `rate`
+// table toward MemoryMax between the 30s sweeps (security audit 2026-07-16, M3). At the cap
+// a NEW key is admitted and the least recently seen one forgotten (`rate_table`): the table
+// degrades to forgetting old flooders and never refuses an address it does not hold. MTA bounds
+// its mitigation otherwise: once its own table holds 100 flooding entries it stops counting
+// queries per address and answers the rest (reference/mtasa-blue/Server/mods/deathmatch/logic/
+// ASE.cpp:183); this table keeps counting every key it holds.
 pub const MAX_RATE_KEYS: usize = 50_000;
 
 // per-(IP, class) sliding-window rate limits: (window, max events).
+pub const RL_CHALLENGE: (Duration, usize) = (Duration::from_secs(60), 10);
 pub const RL_CREATE: (Duration, usize) = (Duration::from_secs(60), 10);
 pub const RL_JOIN: (Duration, usize) = (Duration::from_secs(60), 20);
 pub const RL_MUTATE: (Duration, usize) = (Duration::from_secs(60), 240);
+// GET /v1/lobbies: the 5 s snapshot cache bounds the work, this bounds the bytes an address can pull.
+// An open browser fetches every 5 s (12 a minute), so 120 leaves room for ten players behind one address.
+pub const RL_BROWSE: (Duration, usize) = (Duration::from_secs(60), 120);
 
 pub const MAX_NAME: usize = 63;
 pub const MAX_WORLD: usize = 39;
@@ -124,6 +134,7 @@ pub struct Lobby {
     pub lobby_id: String,
     pub token: String,
     pub host_identity: String,
+    pub proved: bool, // the create proved its host holds the key `host_identity` names
     pub name: String,
     pub version: String,
     pub game: String, // v122: host's VOTV game target ("" = pre-field host)
@@ -190,16 +201,34 @@ impl LobbyLinks {
 }
 
 impl Lobby {
+    /// A row with its ids drawn (the tests' way to put a row in a table).
+    #[cfg(test)]
     fn new(ip: &str) -> Lobby {
+        let mut lo = Lobby::draft(ip);
+        lo.draw_ids();
+        lo
+    }
+
+    /// The three random ids: session, public lobby id, host token.
+    fn draw_ids(&mut self) {
+        self.session_id = token_hex(16);
+        self.lobby_id = token_hex(8);
+        self.token = token_urlsafe(24);
+    }
+
+    /// A row with no ids yet. `h_host` fills it from the body and draws the ids only after
+    /// every refusal has passed, so a refused create pays for no randomness.
+    fn draft(ip: &str) -> Lobby {
         Lobby {
-            session_id: token_hex(16),
-            lobby_id: token_hex(8),
-            token: token_urlsafe(24),
+            session_id: String::new(),
+            lobby_id: String::new(),
+            token: String::new(),
             // Empty until `/v1/host` supplies the host's own public key, which it
             // must (see h_host). The master no longer mints a routing name: a name
             // it asserts on a host's behalf is one nobody can prove, and since
             // 2026-08-29 the relay registers only proved keys.
             host_identity: String::new(),
+            proved: false,
             name: String::new(),
             version: String::new(),
             game: String::new(),
@@ -226,12 +255,13 @@ impl Lobby {
 pub struct MasterState {
     pub lobbies: HashMap<String, Lobby>,      // sessionId -> Lobby
     pub lobby_by_public: HashMap<String, String>, // lobbyId -> sessionId
-    pub rate: HashMap<String, Vec<Instant>>,  // "ipbucket|class" -> recent timestamps
+    pub rate: RateTable, // "ipbucket|class" -> recent timestamps, capped at MAX_RATE_KEYS
     pub cache_t: Option<Instant>,
     // Arc so /v1/lobbies can clone the cached body cheaply under the lock and write the
     // response OUTSIDE it (audit L5: serializing a ~200 KB body under the global lock
     // serialized it against all host/join/heartbeat processing).
     pub cache_all_body: Arc<Vec<u8>>,
+    pub nonces: Nonces, // minted by /v1/host/challenge, spent by /v1/host
 }
 
 impl MasterState {
@@ -239,7 +269,8 @@ impl MasterState {
         MasterState {
             lobbies: HashMap::new(),
             lobby_by_public: HashMap::new(),
-            rate: HashMap::new(),
+            rate: RateTable::new(MAX_RATE_KEYS),
+            nonces: Nonces::new(),
             cache_t: None,
             cache_all_body: Arc::new(Vec::new()),
         }
@@ -340,50 +371,22 @@ pub fn resolve_client_ip(peer_ip: &str, x_real_ip: Option<&str>, x_forwarded_for
 
 pub fn rate_ok(state: &mut MasterState, ip: &str, cls: &str, window: Duration, limit: usize) -> bool {
     let key = format!("{}|{}", ip_bucket(ip), cls);
-    let now = Instant::now();
-    // Bound the map: refuse a brand-new bucket once at the ceiling (audit M3) so a
-    // source-diverse flood can't outgrow the 30s sweeper. Existing buckets still work.
-    if !state.rate.contains_key(&key) && state.rate.len() >= MAX_RATE_KEYS {
-        return false;
+    state.rate.hit(&key, Instant::now(), window, limit)
+}
+
+/// `GET /v1/lobbies`: the cached list body for an address within its read rate, else None (the
+/// caller answers `429`).
+pub fn h_browse(state: &mut MasterState, ip: &str) -> Option<Arc<Vec<u8>>> {
+    if !rate_ok(state, ip, "browse", RL_BROWSE.0, RL_BROWSE.1) {
+        return None;
     }
-    let bucket = state.rate.entry(key).or_default();
-    bucket.retain(|ts| now.duration_since(*ts) < window);
-    if bucket.len() >= limit {
-        return false;
-    }
-    bucket.push(now);
-    true
+    Some(lobbies_snapshot(state))
 }
 
 
 pub fn drop_lobby(state: &mut MasterState, session_id: &str, lobby_id: &str) {
     state.lobbies.remove(session_id);
     state.lobby_by_public.remove(lobby_id);
-}
-
-pub fn evict_if_full(state: &mut MasterState) {
-    while state.lobbies.len() >= MAX_LOBBIES_GLOBAL {
-        // drop the stalest last_seen
-        let stalest = state
-            .lobbies
-            .values()
-            .min_by_key(|lo| lo.last_seen)
-            .map(|lo| (lo.session_id.clone(), lo.lobby_id.clone()));
-        match stalest {
-            Some((sid, pub_id)) => {
-                drop_lobby(state, &sid, &pub_id);
-                log(&format!("evicted stalest lobby {pub_id} (global cap)"));
-            }
-            None => break,
-        }
-    }
-}
-
-pub fn lobbies_per_ip(state: &MasterState, ip: &str) -> usize {
-    // Count by the coarse bucket (audit M3), not the exact address, so an IPv6 /64
-    // can't mint MAX_LOBBIES_PER_IP lobbies per /128.
-    let bucket = ip_bucket(ip);
-    state.lobbies.values().filter(|lo| ip_bucket(&lo.ip) == bucket).count()
 }
 
 pub fn auth_by_session<'a>(state: &'a MasterState, body: &Value) -> Option<&'a Lobby> {
@@ -398,109 +401,6 @@ pub fn auth_by_session<'a>(state: &'a MasterState, body: &Value) -> Option<&'a L
 }
 
 // ---- endpoint handlers : return (status, body) ------------------------------
-
-pub fn h_host(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) {
-    if !rate_ok(state, ip, "create", RL_CREATE.0, RL_CREATE.1) {
-        return (429, json!({"error": "rate"}));
-    }
-    if lobbies_per_ip(state, ip) >= MAX_LOBBIES_PER_IP {
-        return (429, json!({"error": "too many lobbies for this address"}));
-    }
-
-    let mut lo = Lobby::new(ip);
-    let name = clamp_field(body, "name", MAX_NAME);
-    lo.name = if name.is_empty() { "VOTV Coop".into() } else { name };
-    // v122 Paper-pair identity: game + proto. `version` is the LEGACY pre-v122
-    // display tag (old hosts sent their game version here) -- pass-through, no
-    // fabricated default.
-    lo.version = clamp_field(body, "version", MAX_VERSION);
-    lo.game = clamp_field(body, "game", MAX_GAME);
-    lo.game_build = clamp_field(body, "game_build", MAX_GAME_BUILD);
-    lo.proto = as_int(body, "proto", 0).clamp(0, 65535);
-    // Version-pair gate (2026-08-29): shape-invalid game / impossible build
-    // numbers are refused BEFORE the lobby exists -- see version_gate.rs.
-    if let Err(reason) = version_gate_env(&lo.game, lo.proto, &lo.game_build) {
-        log(&format!("host REFUSED from {}: {} (name='{}')", ip, reason, lo.name));
-        return (400, json!({"error": reason}));
-    }
-    // The identity joiners dial: the host's own durable public key, `gen:<64 hex>`.
-    // REQUIRED since 2026-08-29. It used to be optional, with a minted `h<16hex>`
-    // fallback for an already-released host that sent none -- that fallback is
-    // retired with the b<=133 cohort (user decision), and its retirement is not
-    // cosmetic: a minted name is one the master ASSERTS on a host's behalf, and
-    // the signaling relay now registers nothing that its holder did not sign for.
-    // Advertising a name no peer can be registered under would list a lobby that
-    // is unjoinable, which is the exact failure this endpoint exists to prevent.
-    //
-    // A pre-b145 host therefore gets a 400 here and never reaches the relay, so
-    // its deprecation is a NAMED refusal at the first call rather than a silent
-    // rendezvous failure two hops later.
-    match as_str(body, "identity") {
-        Some(id) if identity_shape_ok(id) => lo.host_identity = id.to_string(),
-        _ => {
-            log(&format!("host REFUSED from {}: missing/bad identity", ip));
-            return (400, json!({"error": "this build is too old to host -- update Multivoid"}));
-        }
-    }
-    lo.world = clamp_field(body, "world", MAX_WORLD);
-    lo.locked = as_bool(body, "locked", false);
-    lo.players_max = as_int(body, "players_max", 4).clamp(1, 4);
-    (lo.build_sha, lo.build_key, lo.build_sig) = build_claim_from_body(body);
-    lo.listed = host_listed(body);
-
-    if as_str(body, "conn") == Some("direct") {
-        let dp = as_int(body, "direct_port", -1);
-        if !(1024..=65535).contains(&dp) {
-            // REJECT loudly BEFORE registering (audit R1): a silent p2p downgrade
-            // would hand joiners ICE creds a LanDirect host can't speak.
-            return (400, json!({"error": "direct_port out of range (1024-65535)"}));
-        }
-        lo.conn = "direct".into();
-        lo.direct_port = dp;
-    }
-    lo.players_cur = 1;
-    lo.last_seen = Instant::now();
-
-    let session_id = lo.session_id.clone();
-    let lobby_id = lo.lobby_id.clone();
-    let host_identity = lo.host_identity.clone();
-    let token = lo.token.clone();
-    let conn = lo.conn.clone();
-    let is_direct = conn == "direct";
-
-    // Room is made only for a create that passed every check above: a refused one must cost
-    // nobody else their lobby.
-    evict_if_full(state);
-    state.lobby_by_public.insert(lobby_id.clone(), session_id.clone());
-    state.lobbies.insert(session_id.clone(), lo);
-    log(&format!(
-        "host {} '{}' game={} ({}) b{} from {} ({} live)",
-        lobby_id,
-        state.lobbies[&session_id].name,
-        state.lobbies[&session_id].game,
-        state.lobbies[&session_id].game_build,
-        state.lobbies[&session_id].proto,
-        ip,
-        state.lobbies.len()
-    ));
-
-    let mut resp = serde_json::Map::new();
-    resp.insert("sessionId".into(), json!(session_id));
-    resp.insert("lobbyId".into(), json!(lobby_id));
-    resp.insert("hostIdentity".into(), json!(host_identity));
-    resp.insert("token".into(), json!(token));
-    resp.insert("conn".into(), json!(conn));
-    // A DIRECT host never touches signaling/ICE -> no creds. P2P hosts get the block.
-    // TURN cred is bound to the client's IP bucket (audit M2), not the host identity.
-    if !is_direct {
-        let block = ice_block(&ip_bucket(ip), TURN_TTL_HOST);
-        if let (Some(turn), Some(lo)) = (block.get("turn"), state.lobbies.get_mut(&session_id)) {
-            lo.turn = HostTurn::minted_now(turn, Instant::now());
-        }
-        resp.extend(block);
-    }
-    (200, Value::Object(resp))
-}
 
 pub fn h_heartbeat(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) {
     if !rate_ok(state, ip, "mutate", RL_MUTATE.0, RL_MUTATE.1) {
@@ -659,6 +559,8 @@ pub fn build_rows(state: &MasterState) -> Vec<Value> {
         }
         rows.push(json!({
             "lobbyId": lo.lobby_id,
+            "identity": lo.host_identity, // the host's key; `proved` says it signed for it
+            "proved": lo.proved,
             "name": lo.name,
             "version": lo.version,
             "game": lo.game,    // v122: the host's VOTV game target (gate tier 1)
@@ -701,7 +603,8 @@ pub fn lobbies_snapshot(state: &mut MasterState) -> Arc<Vec<u8>> {
 pub fn dispatch_post(path: &str, ip: &str, body: &Value) -> Option<(u16, Value)> {
     let mut state = lock_state();
     let r = match path {
-        "/v1/host" => h_host(&mut state, ip, body),
+        "/v1/host" => h_host(&mut state, &HostCtx::live(), ip, body),
+        "/v1/host/challenge" => h_challenge(&mut state, Instant::now(), ip),
         "/v1/heartbeat" => h_heartbeat(&mut state, ip, body),
         "/v1/leave" => h_leave(&mut state, ip, body),
         "/v1/visibility" => h_visibility(&mut state, ip, body),
@@ -712,7 +615,7 @@ pub fn dispatch_post(path: &str, ip: &str, body: &Value) -> Option<(u16, Value)>
 }
 
 pub async fn sweeper() {
-    let max_window = [RL_CREATE.0, RL_JOIN.0, RL_MUTATE.0].into_iter().max().unwrap();
+    let max_window = [RL_CHALLENGE.0, RL_CREATE.0, RL_JOIN.0, RL_MUTATE.0, RL_BROWSE.0].into_iter().max().unwrap();
     loop {
         tokio::time::sleep(Duration::from_secs(30)).await;
         let now = Instant::now();
@@ -728,10 +631,12 @@ pub async fn sweeper() {
             drop_lobby(&mut state, &sid, &pub_id);
             log(&format!("expired {pub_id} (stale {stale}s)"));
         }
-        // prune fully-stale rate buckets (else `rate` leaks one entry per distinct IP)
-        state
-            .rate
-            .retain(|_, v| v.last().map(|last| now.duration_since(*last) < max_window).unwrap_or(false));
+        // prune fully-stale rate keys (else `rate` holds one entry per distinct IP until the cap)
+        state.rate.prune(now, max_window);
+        let forgotten = state.rate.take_forgotten();
+        if forgotten > 0 {
+            log(&format!("rate table at its cap: forgot {forgotten} least-recently-seen keys to admit new ones"));
+        }
     }
 }
 

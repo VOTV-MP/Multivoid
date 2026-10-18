@@ -1,21 +1,25 @@
-// coop/player/sleep_sync.h -- the Minecraft-style SLEEP GATE: the night passes only once every peer
-// is in bed. Game thread throughout.
+// coop/player/sleep_sync.h -- who rests: each peer's sleep state, known to the host and to the other clients.
+// Game thread throughout.
 //
-// Single-player sleep is one engine call (SetGlobalTimeDilation(20)), one per-process world flag
-// (mainGamemode.isSleep) and a pawn and camera swap that also drops whatever was held; the need
-// refills at the dilated rate read off the LOCAL flag, and the natural wake fires at need >= 100.
-// All of it is per-process, so a lone coop sleeper would run its whole local world at 20x while the
-// shared, host-authored clock stood still, and awake peers near a shared flag would drain vitals at
-// 20x. MTA's precedent for the answer: server-authoritative game speed (CGame::SetGameSpeed) and a
-// server-owned clock (CClock), with a host tally-and-broadcast ready gate over them.
+// Every peer sleeps NATIVELY on its own machine: the game's own sleep entry, view, restore and wake
+// (a client's world is held at the normal rate by coop/player/sleep_rest). Nothing here holds a peer's
+// dilation, camera or wake, and nothing waits for anyone. What crosses the wire is the fact of rest:
+//   - each peer's state (awake, resting in a bed or fainted, dreaming in a nightmare) with the bed's
+//     class name, sent by a client to the host on a change and relayed by the host to every other client;
+//   - the host's own sleeping flag, which a client shows as one chat line when it rises (the world is
+//     about to run faster: the host's machine runs the game's native speed-up, and a client sees it
+//     through the host's clock and streams).
+// Late join: a joiner gets the host's flag and every non-awake state; a client repeats a non-awake state on each flag it gets.
 //
-// Only a NATURAL end -- the host slept to need >= 100 -- grants every peer sleep=100, and strictly
-// wakeup() FIRST, need-write AFTER: wakeup rolls a 10% gearer gift when the need is >= 99 and the
-// bed is the plain bed_C, so writing the need first would gift every mirror nightly.
+// A client holds dreamProbability at 0 for the session: a nightmare is a roll of the host's machine
+// alone. The host's own roll is never written (the game's native -1).
 
 #pragma once
 
 #include "coop/net/protocol.h"
+
+#include <cstddef>
+#include <cstdint>
 
 namespace coop::net { class Session; }
 
@@ -23,57 +27,46 @@ namespace coop::sleep_sync {
 
 void Install(coop::net::Session* session);
 
-// Per-tick: resolve (throttled), poll the local isSleep edge and report it, enforce the WAITING
-// dilation undo, clamp the client need during the phase, and manage the dreamProbability policy.
-// Cheap when idle -- a couple of cached field reads.
-//
-// The authority rules it enforces. CLIENTS clamp their need at 99 for the phase, so only the HOST
-// can end the night naturally and a first-to-fill race becomes one authority; and they run
-// dreamProbability=0 all session, nightmares being host-only by design. The host's own roll is
-// restored to the -1 sentinel, which is the blueprint's "use the default", only DURING the
-// accelerate phase. A host nightmare wakes the house structurally, because the roll that picks
-// it calls wakeup() immediately before createDream, so the falling edge IS the End.
+// Per-tick: poll this peer's own rest state (the gamemode's isSleep, dreaming and bed), and on a
+// change send it (a client to the host) or broadcast it (the host); hold a client's dreamProbability.
+// Cheap when idle: three cached field reads.
 void Tick();
 
-// Wire ingest (both roles; see SleepStatePayload op semantics). The gate has four phases.
-//
-// WAITING -- a peer entering a bed keeps the native cosmetic half, but this module's per-tick
-//   enforcement undoes the dilation to 1.0 until everyone sleeps. Polling the isSleep edge rather
-//   than detouring sleep() covers EVERY entry path -- interaction, a probe, a host already asleep
-//   when a client connects -- with no new hook surface and at most a tick of lag.
-// TALLY -- each peer's isSleep edge reports inBed (op=Report); the host counts world-ready peers
-//   and broadcasts "N/M sleeping" as a chat feed line.
-// ACCELERATE -- everyone in bed: the host broadcasts, each sleeping peer sets its own dilation to
-//   20 so vitals refill natively; the host's clock runs 20x and its stream with it (time_sync),
-//   so a client's parked clock follows the night, though a slow client frame can skip a minute.
-// END -- ANY peer's isSleep falling edge ends the night for everyone. EVERY wake cause funnels
-//   through gamemode.wakeup -- the natural fill, a manual exit, hunger at food <= 20, an active
-//   event, a nightmare, the ariral chains, the delivery drone's own ubergraph -- so one edge catches
-//   them all: the host broadcasts End{natural} and receivers reflect wakeup().
-void OnReliable(const coop::net::SleepStatePayload& p, uint8_t senderSlot);
+// Wire ingest (both roles; see SleepStatePayload). Every field is checked against the sender's role
+// and slot here, and a refusal is one rate-limited warning naming the field. `len` is the message's
+// payload length, which must be exactly the payload's size.
+void OnReliable(const uint8_t* payload, size_t len, uint8_t senderSlot);
 
-// HOST, game thread, each event_feed update after the reconcile: a client's bed flag owed by its pace (the host keeps
-// each client's newest and applies a changed one at a pace) is applied once a token refills, unless already held.
+// HOST, game thread, each event_feed update after the reconcile: a client's rest state owed by its pace
+// (the host keeps each client's newest and applies a changed one at a pace) is applied once a token
+// refills, unless already held.
 void PayOwed(coop::net::Session& session);
 
-// HOST: a joiner arrived (world-ready) -- ends a running accelerate phase
-// (someone is now awake in the world) and re-tallies.
+// HOST: a joiner arrived (world-ready) or re-announced: send it the host's sleeping flag and one rest
+// state per slot that is not awake, the host's included. Idempotent.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
-// HOST: a leaver's inBed flag drops from the tally (their claim on the gate
-// must not block the remaining sleepers).
+// HOST: a leaver's state goes back to awake and every client is told.
 void OnDisconnectForSlot(int slot);
 
-// Is the ACCELERATE phase on here: the host decided it, or this client received it? Not the same
-// as isSleep with dilation 20, which the native sleep entry sets by itself for the one tick before
-// the WAITING enforcement undoes it. Read-only, for instruments. Game thread.
-bool InAcceleratePhase();
+// The rest state of `slot` as this peer knows it: on the host, from the clients' reports and its own
+// polls; on a client, from the host's relays (slot 0 the host). Awake for a slot out of range.
+coop::net::SleepPeerState PeerState(int slot);
 
-// Instruments (the world_latest drill, coop/dev/hostile_drill_world), game thread: how many of a client's bed
-// reports the host applied from `slot`; the host's bed flag for `slot`; this peer's own last polled bed edge.
+// Is the host asleep: on the host its own isSleep, on a client the last flag the host sent. For
+// instruments. Game thread.
+bool HostAsleepNow();
+
+// Instruments (the world_latest drill, coop/dev/hostile_drill_world), game thread: how many of a
+// client's rest reports the host applied from `slot`; whether this peer's own polled state is not awake.
 uint32_t ReportsApplied(int slot);
-bool InBed(int slot);
 bool LocalInBed();
+
+// Why a bed was refused at the door: a length past the name's room, a character outside an identifier, a nonzero
+// byte past the length, or an Awake report that carries a bed.
+enum class BedRefusal : uint8_t { Length = 0, Charset = 1, Tail = 2, AwakeWithBed = 3 };
+// How many reports `slot` sent that were refused for `why` (an instrument: the hostile drill's bed judge).
+uint32_t BedRefusalsFrom(int slot, BedRefusal why);
 
 void OnDisconnect();
 

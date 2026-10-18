@@ -33,10 +33,8 @@ void Tick(coop::net::Session& session);
 // HOST: a client asks for a Kerfus verb. Queued here, run from Tick under the rate limit.
 void OnIntent(coop::net::Session& session, const coop::net::KerfusIntentPayload& payload, uint8_t senderSlot);
 
-// A peer left: its queue and its rate bucket go.
-void OnPeerLeft(uint8_t slot);
-
-// Session end: the queues, the buckets and the counters go.
+// Session end: the counters go. A sender's queue, its bucket and its said-once latch live in its per-slot state
+// and go with its occupant.
 void OnDisconnect();
 
 }  // namespace coop::kerfus_intent

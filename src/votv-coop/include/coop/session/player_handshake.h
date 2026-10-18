@@ -54,8 +54,8 @@ const std::wstring& RequestedNickname();
 const std::string& GuidForSlot(int slot);
 
 // True iff `guid` is exactly 32 hex characters. The GUID becomes a host filesystem path
-// component (coop_players/<guid>.json), so a remote-supplied one is validated to this charset
-// before use, which is what keeps a hostile Join from steering a file write outside that
+// component (<mod data dir>/coop_players/<guid>.json), so a remote-supplied one is validated to
+// this charset before use, which is what keeps a hostile Join from steering a file write outside that
 // directory. Used at the wire boundary and in the path builder. Pure; any thread.
 bool IsValidGuid(const std::string& guid);
 

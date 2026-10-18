@@ -10,6 +10,12 @@ CFG_INT(hold_snapshot_sec, "hold_snapshot_sec", "dev", 0, 0, 600,
     "(0 = off). Reproduces the one host-side wait nothing else can stage -- a joiner with a "
     "healthy link and a world, waiting on a bracket the host is holding. Under the joiner's "
     "budget the join still completes; over it, it fails naming the host's phase.")
+CFG_FLAG(join_draining_freeze, "join_draining_freeze", "dev", false,
+    "VOTVCOOP_JOIN_DRAINING_FREEZE",
+    "Host testing knob: while a joiner's bracket drains, the host keeps beaconing its Draining phase "
+    "but with the first delivered-KiB value it sent, frozen for the rest of that drain. The joiner "
+    "then sees a flat number and must end the wait at its 30 s budget, as it would for a link that "
+    "stopped delivering. Off, the beacon carries the live count.")
 CFG_INT(key_index_seed_hold_sec, "key_index_seed_hold_sec", "dev", 0, 0, 600,
     "VOTVCOOP_DEV_KEY_INDEX_SEED_HOLD_SEC",
     "Client testing knob: the prop key index seeds N seconds after the session starts (0 = off), so the "

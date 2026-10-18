@@ -20,9 +20,12 @@
 #include "coop/dev/atv_spawn_drill.h"  // [dev] a runtime ATV reaches each client once
 #include "coop/dev/throw_drill.h"  // [dev] a thrown container keeps its contents on the host
 #include "coop/dev/fall_drill.h"  // [dev] a falling host birth lands on the client where it lands on the host
+#include "coop/dev/remover_drill.h"  // [dev] the tool gun's remover pressed by a client
 #include "coop/dev/sack_drill.h"  // [dev] a client's point sack is paid by the host, once
 #include "coop/dev/server_upgrade_drill.h"  // [dev] a client's install and take-out at a server box
 #include "coop/dev/server_drill.h"  // [dev] a server box's break is the host's; a client's repair runs there
+#include "coop/dev/camera_drill.h"  // [dev] a picked-up camera: does it stick to its wall again, and by whose hand
+#include "coop/dev/camera_state_drill.h"  // [dev] a security camera's two bits are the host's: the camera drill's acceptance arms
 #include "coop/dev/sat_console_drill.h"  // [dev] a client's SAT console commands run on the host
 #include "coop/dev/calib_drill.h"  // [dev] a dish's precision is the host's; a player's verb reaches it
 #include "coop/dev/desk_crossing_drill.h"  // [dev] the desk's detection needle crosses on the host alone
@@ -34,10 +37,16 @@
 #include "coop/dev/download_drill.h"  // [dev] the download machine's arm and reset are the host's
 #include "coop/dev/laptop_drill.h"  // [dev] the laptop's slot is the host's; a file edit lands on its own disc
 #include "coop/dev/laptop_power_drill.h"  // [dev] the laptop's power pressed on each peer, its replay silent
+#include "coop/dev/laptop_tab_drill.h"  // [dev] everyone sees the tab the PC's user is on, judged on the viewing peer
 #include "coop/dev/grid_drill.h"  // [dev] the power grid: a client's presses and repair, the host's break and lockout
 #include "coop/dev/tower_drill.h"  // [dev] the coordinate towers: the host's break, a client's repair, a joiner's copy
 #include "coop/dev/drone_probe.h"
 #include "coop/dev/end_play_probe.h"  // [dev] every end of play against the K2_DestroyActor seam
+#include "coop/dev/puppet_reg_probe.h"  // [dev] a remote player's puppet is registered at its begin-play
+#include "coop/dev/pi0_selftest.h"  // [dev] a cleared Player Element keeps its id
+#include "coop/dev/pi1_selftest.h"  // [dev] the scope mark, the call site, the const-reference hook and the caller's locals
+#include "coop/dev/pi2_selftest.h"  // [dev] the call locals, the puppet-count listener, the puppet-body query
+#include "coop/dev/pi3_drill.h"  // [dev] a creature spawned at a still peer's puppet is not served as this machine's player
 #include "coop/dev/event_drill.h"  // [dev] the event lanes: a scheduler fire, a dev fire, the join snapshot
 #include "coop/dev/command_drill.h"  // [dev] a typed command is run by the host and answered privately
 #include "coop/dev/mv_drill.h"  // [dev] the /mv commands end to end against a seeded permission store
@@ -74,9 +83,13 @@
 #include "coop/dev/lookat_aim_drill.h"  // hold a peer's aim on a resting prop, so the churn probe has a reading
 #include "coop/dev/lookat_churn_probe.h"  // how often the interaction UI's look-at set is rebuilt under a held aim
 #include "coop/dev/meadow_selftest.h"  // [dev] a row into the host's signal database and out, the client's copy following
-#include "coop/dev/midnight_drill.h"  // [dev] the host's midnight on demand, awake or inside the shared sleep
+#include "coop/dev/midnight_drill.h"  // [dev] the host's midnight on demand, awake or inside the host's own sleep
+#include "coop/dev/sleep_drill.h"  // [dev] a host's native sleep and a client's rest at the native rate, measured
+#include "coop/dev/badsun_drill.h"  // [dev] a peer's own Bad Sun copy against its own clock, measured
+#include "coop/dev/event_relay_drill.h"  // [dev] the host's creature event in a client's count, read through the relay
 #include "coop/dev/hostile_drill.h"  // [dev] the receive boundary: a client forges malformed packets, the host judges
 #include "coop/dev/native_pile_inert_probe.h"
+#include "coop/dev/native_spawn_probe.h"  // [dev] every allowlisted creature a Blueprint graph spawns here, and the client orb question
 #include "coop/dev/order_probe.h"  // who writes the order queue, and what the drone delivers, per peer
 #include "coop/dev/order_selftest.h"  // exercise host-side order pricing end to end
 #include "coop/dev/physmods_drill.h"  // [dev] a module plug and unplug are sent at their verbs, and a rejoin's load sends none
@@ -85,10 +98,10 @@
 #include "coop/dev/pry_drill.h"  // [dev] a stuck pryable pried off its wall, watched on both peers
 #include "coop/dev/recycled_slot_drill.h"  // [dev] a recycled object slot, staged on the local pawn
 #include "coop/dev/rng_roll_census.h"  // the dev roll census
+#include "coop/dev/server_breaker_census.h"  // [dev] the server breaker's inputs, every 30 s
 #include "coop/dev/rollover_watch.h"  // [dev] the day rollover: its verbs, the pulses' consumers, the day numbers and the hash digest
 #include "coop/dev/roster_token_selftest.h"  // [dev] successor-ban drill (moderation token vs a recycled slot)
 #include "coop/dev/run_and_wait_selftest.h"  // [dev] the one game-thread wait's five endings, provoked
-#include "coop/dev/sleep_probe.h"
 #include "coop/dev/spawn_match_probe.h"  // the fuzzy-match candidate set and adoption watch
 #include "coop/dev/store_table_probe.h"  // which mechanism can read a list_store row
 #include "coop/dev/toggle_drill.h"  // [dev] whether a toggle device's state crosses both ways
@@ -104,9 +117,13 @@ namespace coop::dev::dev_lanes {
 
 void Install(coop::net::Session& session) {
     coop::dev::rng_roll_census::Install(&session);  // [dev] driver/QuitGame interceptors (no-op unless rng_roll_census=1)
+    coop::dev::server_breaker_census::Install(&session);  // [dev] the server breaker census (no-op unless server_breaker_census=1)
     coop::dev::desk_diag::Install(&session);  // [dev] desk divergence census: per-peer desk/comp/dish/coordLog snapshot (no-op unless desk_diag=1)
     coop::dev::rollover_watch::Install(&session);  // [dev] the day rollover instrument (no-op unless rollover_watch=1)
     coop::dev::midnight_drill::Install(&session);  // [dev] the midnight drill (no-op unless midnight_drill is set)
+    coop::dev::sleep_drill::Install(&session);  // [dev] the sleep drill (no-op unless sleep_drill is set)
+    coop::dev::badsun_drill::Install(&session);  // [dev] the Bad Sun drill (no-op unless badsun_drill is set)
+    coop::dev::event_relay_drill::Install(&session);  // [dev] the creature event relay drill (no-op unless event_relay_drill is on)
     coop::dev::hostile_drill::Install(&session);  // [dev] the receive-boundary drill (no-op unless hostile_drill is set)
     coop::dev::world_roll_drill::Install(&session);  // [dev] the world roll drill (no-op unless world_roll_drill is set)
     coop::dev::kerfur_menu_drill::Install(&session);  // [dev] the kerfur menu drill (no-op unless kerfur_menu_drill=1)
@@ -120,6 +137,8 @@ void Install(coop::net::Session& session) {
     coop::dev::floppy_selftest::Install(&session);  // [dev] disc/server insert+eject episodes (no-op unless floppy_selftest=1)
     coop::dev::hookdrag_selftest::Install(&session);  // [dev] a hook-dragged prop, both peers logging its position (no-op unless hookdrag_selftest=1)
     coop::dev::roster_token_selftest::Install(&session);  // [dev] successor-ban drill: a token captured from the previous occupant must be refused (no-op unless roster_token_selftest=1)
+    coop::dev::pi3_drill::Install(&session);  // [dev] the PI-3 drill's observer (no-op unless pi3_drill is set)
+    coop::dev::native_spawn_probe::Install(&session);  // [dev] the native-spawn record (no-op unless native_spawn_probe is set; installed once)
 }
 
 void EndSession() {
@@ -132,6 +151,9 @@ void EndSession() {
     coop::dev::lookat_churn_probe::OnDisconnect();  // [dev] the aim episodes, after the run's last reading
     coop::dev::rollover_watch::OnDisconnect();  // [dev] the per-world arm and the session's watch totals
     coop::dev::midnight_drill::OnDisconnect();  // [dev] back to the first phase
+    coop::dev::sleep_drill::OnDisconnect();  // [dev] back to the first phase, the host's nightmare chance restored
+    coop::dev::badsun_drill::OnDisconnect();  // [dev] back to the first phase
+    coop::dev::event_relay_drill::OnDisconnect();  // [dev] the client's steps back to the first; the host keeps its krampus
     coop::dev::hostile_drill::OnDisconnect();  // [dev] back to WaitArm; a rejoin re-arms
     coop::dev::world_roll_drill::OnDisconnect();  // [dev] back to the first phase
     coop::dev::kerfur_menu_drill::OnDisconnect();  // [dev] back to the first phase
@@ -149,10 +171,13 @@ void EndSession() {
     coop::dev::throw_drill::OnDisconnect();  // [dev] the backpack and its copy belong to one session
     coop::dev::atv_spawn_drill::OnDisconnect();  // [dev] the spawn belongs to one session
     coop::dev::fall_drill::OnDisconnect();  // [dev] the drop belongs to one session
+    coop::dev::remover_drill::OnDisconnect();  // [dev] the props and the toolgun belong to one session
     coop::dev::sack_drill::OnDisconnect();  // [dev] the sack and the counts belong to one session
     coop::dev::drone_call_drill::OnDisconnect();  // [dev] the console, the legs and the host's watch belong to one world
     coop::dev::server_upgrade_drill::OnDisconnect();  // [dev] the box and the legs belong to one world
     coop::dev::server_drill::OnDisconnect();  // [dev] the same for the server break drill
+    coop::dev::camera_drill::OnDisconnect();  // [dev] a rejoin's client walks to the camera again
+    coop::dev::camera_state_drill::OnDisconnect();  // [dev] a rejoin's client reads the camera again
     coop::dev::sat_console_drill::OnDisconnect();  // [dev] the steps and the host's counts belong to one session
     coop::dev::calib_drill::OnDisconnect();  // [dev] a rejoin's peers run their legs again
     coop::dev::drive_drill::OnDisconnect();  // [dev] the same for the drive drill
@@ -161,6 +186,7 @@ void EndSession() {
     coop::dev::mannequin_drill::OnDisconnect();  // [dev] the client's samples belong to one session
     coop::dev::laptop_drill::OnDisconnect();  // [dev] a rejoin's peers run their legs again
     coop::dev::laptop_power_drill::OnDisconnect();  // [dev] a rejoin's peers press again
+    coop::dev::laptop_tab_drill::OnDisconnect();  // [dev] a rejoin's peers run their legs again
     coop::dev::grid_drill::OnDisconnect();  // [dev] the panel and the legs belong to one world
     coop::dev::tower_drill::OnDisconnect();  // [dev] the tower and the legs belong to one world
     coop::dev::desk_verb_drill::OnDisconnect();  // [dev] the legs start over
@@ -182,6 +208,8 @@ void EndSession() {
     coop::dev::lookat_aim_drill::OnDisconnect();  // [dev] the held target, which the next world does not have
     coop::dev::fireext_drill::OnDisconnect();  // [dev] back to the first step, the watch emptied
     coop::dev::pry_drill::OnDisconnect();  // [dev] back to the first step, the watch emptied
+    coop::dev::pi3_drill::OnDisconnect();  // [dev] a spawner mid-arm is abandoned, a still peer lets go
+    coop::dev::native_spawn_probe::OnDisconnect();  // [dev] the per-source counts are said and the records cleared
     coop::dev::floppy_selftest::EmitVerdict();  // [dev] which disc episodes fired, and which never did
     coop::dev::hookdrag_selftest::EmitVerdict();  // [dev] how far the dragged prop moved here
     coop::dev::hand_drop_selftest::EmitVerdict();  // [dev] which hand episodes fired, and what each peer counted
@@ -202,9 +230,13 @@ void TickLoadWindow(coop::net::Session& session) {
 
 void TickDrills(coop::net::Session& session) {
     coop::dev::rng_roll_census::Tick();  // [dev] the roll censuses (a single bool read when off)
+    coop::dev::server_breaker_census::Tick();  // [dev] the server breaker census (a single bool read when off)
     coop::dev::desk_diag::Tick();  // [dev] desk divergence census (single bool read when off; self-throttled)
     coop::dev::rollover_watch::Tick();  // [dev] the day rollover (a single bool read when off)
     coop::dev::midnight_drill::Tick();  // [dev] the midnight drill's phases (a single enum read when off)
+    coop::dev::sleep_drill::Tick();  // [dev] the sleep drill's phases (a single enum read when off)
+    coop::dev::badsun_drill::Tick();  // [dev] the Bad Sun drill's phases (a single enum read when off)
+    coop::dev::event_relay_drill::Tick();  // [dev] the creature event relay drill's steps (a single bool read when off)
     coop::dev::hostile_drill::Tick();  // [dev] the receive-boundary drill's arm/judge (a single enum read when off)
     coop::dev::world_roll_drill::Tick();  // [dev] the world roll drill's arms (a single enum read when off)
     coop::dev::kerfur_menu_drill::Tick();  // [dev] the kerfur menu drill's phases (a single bool read when off)
@@ -238,16 +270,20 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::throw_drill::Tick(&session);  // [dev] the throw drill (latched string compares when off)
     coop::dev::atv_spawn_drill::Tick(&session);  // [dev] the ATV spawn drill (latched string compares when off)
     coop::dev::fall_drill::Tick(&session);  // [dev] the fall drill (a latched bool read when off)
+    coop::dev::remover_drill::Tick(&session);  // [dev] the remover drill (a latched enum read when off)
     coop::dev::sack_drill::Tick(&session);  // [dev] the point sack drill (a latched bool read when off)
     coop::dev::drone_call_drill::Tick(&session);  // [dev] the drone console drill (a single bool read when off)
     coop::dev::server_upgrade_drill::Tick(&session);  // [dev] the server upgrade drill (a single bool read when off)
     coop::dev::server_drill::Tick(&session);  // [dev] the server break drill (two short string compares when off)
+    coop::dev::camera_drill::Tick(&session);  // [dev] the camera re-stick drill (a latched bool read when off)
+    coop::dev::camera_state_drill::Tick(&session);  // [dev] the camera state arms (a latched string compare when off)
     coop::dev::sat_console_drill::Tick(&session);  // [dev] the SAT console drill (two short string compares when off)
     coop::dev::calib_drill::Tick(&session);  // [dev] the precision drill (two short string compares when off)
     coop::dev::drive_drill::Tick(&session);  // [dev] the drive drill (two short string compares when off)
     coop::dev::download_drill::Tick(&session);  // [dev] the download drill (two short string compares when off)
     coop::dev::laptop_drill::Tick(&session);  // [dev] the laptop drill (a latched read when off)
     coop::dev::laptop_power_drill::Tick(&session);  // [dev] the laptop power drill (a bool read when off)
+    coop::dev::laptop_tab_drill::Tick(&session);  // [dev] the PC tab drill (a latched string compare when off)
     coop::dev::grid_drill::Tick(&session);  // [dev] the power grid drill (a latched read when off)
     coop::dev::tower_drill::Tick(&session);  // [dev] the coordinate towers drill (a latched read when off)
     coop::dev::desk_verb_drill::Tick(&session);  // [dev] the desk's save family drill (a latched read when off)
@@ -269,6 +305,12 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::hand_drop_selftest::Tick();  // [dev] hand pickup+drop episodes (single bool read when off)
     coop::dev::run_and_wait_selftest::Tick();  // [dev] the wait's endings, once (single latched read when off)
     coop::dev::end_play_probe::Tick();  // [dev] the end-of-play seam against the K2 seam (single latched read when off)
+    coop::dev::puppet_reg_probe::Tick();  // [dev] each puppet judged at its begin-play and end of play (latched read when off)
+    coop::dev::pi0_selftest::Tick(&session);  // [dev] a cleared Player Element keeps its id, once (latched read when off)
+    coop::dev::pi1_selftest::Tick(&session);  // [dev] the substrate primitives' selftest, once (latched read when off)
+    coop::dev::pi2_selftest::Tick(&session);  // [dev] the puppet-identity substrate's selftest, once (latched read when off)
+    coop::dev::pi3_drill::Tick(&session);  // [dev] the puppet-identity verb drill (a latched read when off)
+    coop::dev::native_spawn_probe::Tick(&session);  // [dev] the client orb drive (a latched read when off)
     coop::dev::death_seam_census::Tick();  // [dev] every element end the death seam announces (latched read when off)
     coop::dev::damage_probe::Tick();  // [dev] every player damage verb call: whose body, source, caller (latched read when off)
     coop::dev::grime_drill::Tick(&session);  // [dev] the grime drill's legs (a latched read when off)
@@ -297,8 +339,6 @@ void TickProbes(coop::net::Session& session, bool isConnected, bool isHost) {
     coop::dev::atv_probe::Tick(session, isHost);  // samples vehicleGetParts + vitals every 500 ms when on
     coop::dev::pinecone_probe::Install();  // dev-only pinecone-scare sync verification (ini pinecone_probe=1)
     coop::dev::pinecone_probe::Tick(isConnected, isHost);  // host force-spawns one pinecone ~5s after a client connects -> confirm it mirrors
-    coop::dev::sleep_probe::Install();  // dev-only sleep-gate exerciser (ini sleep_probe=1)
-    coop::dev::sleep_probe::Tick(isConnected, isHost);  // client sleeps T+15, host T+25 (ACCELERATE), host wakes T+40 (END)
     coop::dev::lightswitch_probe::Install();  // dev-only light-switch sync RE probe (ini lightswitch_probe=1)
     coop::dev::lightswitch_probe::Tick();  // one-shot synthetic flip: is SetActive blueprint-internal, and does the use verb flip both the switch and the lights
     coop::dev::light_group_census::Tick();  // dev-only READ-ONLY light-GROUP census (ini lightgroup_census=1); self-installs

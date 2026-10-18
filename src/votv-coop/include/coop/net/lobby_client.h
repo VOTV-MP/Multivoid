@@ -28,6 +28,11 @@ struct LobbyRow {
     std::string game;       // the host's game target, e.g. "0.9.0n" (empty: a host that predates the field)
     std::string gameBuild;  // the game build the host runs (coop/game_build's key); empty: an older host or master
     std::string world;
+    // The key the host advertises (`gen:` plus 64 hex), empty unless it has that shape, and whether
+    // the MASTER checked the host's signature over it (`proved`). A row that is not proved is a
+    // host's word about its key (a build that cannot sign); the list sorts proved rows first.
+    std::string identity;
+    bool proved = false;
     int  playersCur = 0;
     int  playersMax = 0;
     int  ageSec = 0;        // seconds since the host's last heartbeat

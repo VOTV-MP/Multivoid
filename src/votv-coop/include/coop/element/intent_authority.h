@@ -25,6 +25,18 @@ namespace coop::net { class Session; }
 
 namespace coop::element {
 
+// The pose-staleness budget, and the only copy of it. The host copy of a client body trails
+// reality by the one-way
+// latency + `RemotePlayer::kInterpWindowMs` (75 ms) + one send interval, and the game own reach
+// traces start at the player CAMERA, at eye height, not at the actor root that `TryGetActorLocation`
+// reports. 600 uu covers roughly half a second at a sprint plus that eye-height offset.
+//
+// Deliberately generous, and the reason is asymmetric cost: this bound exists to stop WORLD-WIDE
+// enumeration, not to adjudicate centimetres, and a false refusal costs a real player a real
+// action. Widening it does not re-open A50 -- the arbiter own destroy does that work.
+inline constexpr float kPoseStalenessUU = 600.0f;
+
+
 // WHY the resolve did not produce a usable actor. This is an OUTCOME, not a bool, and that is
 // the whole point of the type: trash_grab_intent branches three ways with OPPOSITE remedies on
 // what a pointer-returning resolver collapses into one `nullptr`. An absent row and a

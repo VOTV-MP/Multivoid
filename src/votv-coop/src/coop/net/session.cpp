@@ -215,7 +215,7 @@ void Session::FinishClientLink(uint32_t hConn) {
     linkStage_.store(static_cast<uint8_t>(LinkStage::Admitted), std::memory_order_release);
 }
 
-bool Session::SendReliable(ReliableKind kind, const void* payload, int len) {
+bool Session::SendReliable(ReliableKind kind, const void* payload, int len, int skipSlot) {
     if (len < 0 || len > kMaxReliablePayload) {
         UE_LOGW("net: SendReliable rejected (len=%d > %d)", len, kMaxReliablePayload);
         return false;
@@ -228,6 +228,8 @@ bool Session::SendReliable(ReliableKind kind, const void* payload, int len) {
 
     bool anySuccess = false;
     for (int i = 0; i < kMaxPeers; ++i) {
+        // The skipped slot, MTA's pSkip (reference/mtasa-blue/Server/mods/deathmatch/logic/CPlayerManager.cpp:159-175).
+        if (i == skipSlot) continue;
         const uint32_t hConn = peerConns_[i].load();
         if (hConn == 0) continue;
         // The pre-world gate, per slot (SendReliableToSlot's rule).
@@ -252,8 +254,8 @@ bool Session::SendPropDestroy(const PropDestroyPayload& payload) {
     return SendReliable(ReliableKind::PropDestroy, &payload, sizeof(payload));
 }
 
-bool Session::SendEntitySpawn(const EntitySpawnPayload& payload) {
-    return SendReliable(ReliableKind::EntitySpawn, &payload, sizeof(payload));
+bool Session::SendEntitySpawn(const EntitySpawnPayload& payload, int skipSlot) {
+    return SendReliable(ReliableKind::EntitySpawn, &payload, sizeof(payload), skipSlot);
 }
 
 bool Session::SendEntityDestroy(uint32_t elementId) {

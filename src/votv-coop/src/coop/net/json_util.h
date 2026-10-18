@@ -37,10 +37,17 @@ inline bool Bool(const Json& j, const char* key) {
 
 // Length-capped string: a hostile master must not hand back a multi-MB `name` the browser
 // re-renders every frame, nor an oversized identity/token flowing into GNS config. Truncates to
-// maxlen bytes.
+// maxlen bytes, backing off to the start of a UTF-8 codepoint so a long non-ASCII text is cut, not
+// left with a broken tail (which would fail the strict decode the name filter needs and empty it).
 inline std::string StrN(const Json& j, const char* key, size_t maxlen) {
     std::string s = Str(j, key);
-    if (s.size() > maxlen) s.resize(maxlen);
+    if (s.size() > maxlen) {
+        size_t cut = maxlen;
+        // A codepoint has at most three continuation bytes (10xxxxxx) after its lead byte.
+        for (int i = 0; i < 3 && cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80; ++i)
+            --cut;
+        s.resize(cut);
+    }
     return s;
 }
 

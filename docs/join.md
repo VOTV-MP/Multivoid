@@ -153,6 +153,9 @@ On the ready announce the host runs the replay for that slot, in this order
    sent behind its own spawn, in the same drain, so the joiner takes the host's copy of state its
    transferred save may predate; the drain's own pacing is what keeps that off the wire in a burst.
 3. **Position corrections** for the save-authoritative objects the host moved during the window.
+   Each carries the host's drive context for the prop (claim generation and open), and the client
+   drops one older than a drive END still on its copy; a prop a hand held after its correction went
+   out gets a follow-up after the release `[?]`.
 4. **Every state lane's current state**, each in its own kind: held items, weather, doors, lights
    and containers, keypads, the sky, power, the ATV, the drone, the turbine, device
    occupancy, the console and desk, physical modules, drives and racks, the laptop and its
@@ -241,7 +244,8 @@ session kept, and re-hosting is not the remedy.
 Each phase of a join waits on a token that has to keep advancing, and fails naming that phase when
 it stops: a byte of the download, a prop of the bracket, or the host's own once-a-second
 `JoinPhaseNote` saying which phase it is working and how far in. The host beacons while it captures
-its world, while it streams it, while it drains the bracket, and -- the case nothing else covers --
+its world, while it streams it, while it enqueues the bracket, while the link drains it (the
+Draining phase, whose numerator is the KiB delivered), and -- the case nothing else covers --
 while it is HOLDING the bracket because its own registry does not yet express its world. The
 joiner's screen names the side that is working, and a failure names the phase, whether the host went
 quiet or answered every second and got nowhere.
@@ -249,8 +253,12 @@ quiet or answered every second and got nowhere.
 A beacon on its own is liveness, not progress. A host repeating one phase with the same numerator is
 alive and stuck, and the wait ends on its budget all the same: measured, a host holding its bracket
 kept a joiner waiting through 125 beacons and two minutes before this rule, and ends it at thirty
-seconds after. The engine's own world load is deliberately unwatched from here -- it is local and
-opaque, and the boot loop owns its cap.
+seconds after. Once the host has enqueued the whole bracket, nothing on its side can stall, so the
+Draining beacon carries the delivered KiB and renews the joiner's wait only while that number rises:
+a slow link joins slowly, and a link that stops delivering ends the wait at thirty seconds like any
+other. The beacon stops when a link sample taken after the close finds at most one packet owed. The
+engine's own world load is deliberately unwatched from here -- it is local and opaque, and the boot
+loop owns its cap.
 
 ### When a join ends early
 
@@ -298,7 +306,7 @@ travel, the player is told so (`MV-J31`), unless the reason the session ended is
 | `MV-J20` | The relay answered this machine's own name within one probe interval, and the host never answered at all |
 | `MV-J21` | The host never finished preparing its world; it went quiet, or kept saying it was capturing and got nowhere |
 | `MV-J22` | No byte of the world blob arrived for twenty seconds |
-| `MV-J23` | The world bracket never came: the host held it, or stopped answering |
+| `MV-J23` | The world bracket stopped coming: the host held it or stopped sending it, or the connection stopped delivering it |
 | `MV-J24` | The engine never reached gameplay with the world the host sent |
 | `MV-J25` | The world arrived damaged: its CRC failed, or the slot could not be written |
 | `MV-J26` | The host never sent this player's inventory |
@@ -409,8 +417,8 @@ and it is the reason the relay's own silence stays.
 | `SaveTransferRequest`, `SaveTransferBegin`, `SaveTransferChunk` | client, then host | the request; total bytes, sidecar bytes, checksum, game mode; the chunks |
 | `PlayerInventoryBlob` | both | the per-player profile, pre-world |
 | `ClientWorldReady` | client to host | once per world, at quiescence |
-| `JoinPhaseNote` | host to one client | once a second while the host is working a phase of this join: which phase, and how far in |
-| `SnapshotBegin`, `PropSpawn`, `PropSnapPos`, `PropDestroy`, `SnapshotComplete` | host to one client | the bracket |
+| `JoinPhaseNote` | host to one client | once a second while the host is working a phase of this join, or its link is delivering the bracket (`Draining`, `done` = KiB delivered): which phase, and how far in |
+| `SnapshotBegin`, `PropSpawn`, `PropSnapPos`, `PropDestroy`, `SnapshotComplete` | host to one client | the bracket; a `PropSnapPos` carries the host's drive context for its prop, and the client drops one older than a drive END still on its copy `[?]` |
 | `EventSnapshot` | host to one client | one per in-flight event |
 | `ChatLine` | host to one client | the retained chat record, one line each |
 

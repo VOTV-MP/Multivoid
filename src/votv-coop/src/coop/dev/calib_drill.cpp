@@ -10,6 +10,7 @@
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
 
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/desk/console_desk.h"
 #include "ue_wrap/desk/dish.h"
@@ -174,7 +175,7 @@ bool RunTool(void* player, int32_t dish, float value) {
     ue_wrap::FVector at{};
     if (!E::TryGetActorLocation(player, at)) return false;
     void* toolgun = DW::SpawnToolgun({at.X, at.Y, at.Z + 60.f});
-    void* tool = DW::SpawnTool({at.X, at.Y, at.Z + 90.f});
+    void* tool = DW::SpawnTool(ue_wrap::object_index::ClassByName(DW::kToolClass), {at.X, at.Y, at.Z + 90.f});
     const bool ran = toolgun && tool && DW::CallToolInitByIndex(tool, toolgun, dish, value);
     DestroyIfLive(toolgun);
     DestroyIfLive(tool);

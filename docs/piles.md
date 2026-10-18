@@ -216,7 +216,7 @@ replacement for the position key.
 | `PropConvert` | the host to all | the atomic pile-clump convert: id, form, pose, scale, chip type, context |
 | `TrashCarryPose` (stream) | the host to all | per-id poses for client-grabbed clumps and the clumps a broom sets rolling |
 | `PropPose` (stream) | the host to all | the host's own held clump and its flight |
-| `PropSnapPos` | the host to one joiner | a position correction for a pile moved in the window |
+| `PropSnapPos` | the host to one joiner | a position correction for a pile moved in the window; it carries the host's drive context for the prop (claim generation and open), and the client drops one older than a drive END still on its copy `[?]` |
 | `TrashPileState` | each peer, relayed | a dispenser's counter pair |
 | `PropDestroy` | either role | a depleted dispenser |
 

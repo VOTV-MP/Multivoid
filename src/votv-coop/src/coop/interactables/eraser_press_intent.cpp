@@ -6,9 +6,11 @@
 #include "coop/element/registry.h"
 #include "coop/interactables/drive_sync.h"  // HasPendingLine: an insert still waiting here for its drive
 #include "coop/net/intent_bucket.h"
+#include "coop/net/intent_queue.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/roster_ledger.h"  // PerSlotState
 #include "coop/props/active_drive.h"
 
 #include "ue_wrap/core/log.h"
@@ -21,7 +23,6 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
-#include <deque>
 
 namespace coop::eraser_press_intent {
 namespace {
@@ -53,18 +54,19 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_actionWatched = false, g_resumeWatched = false;
 bool g_settled = false;
 uint64_t g_sent = 0, g_pressed = 0, g_denied = 0, g_shown = 0;
-bool g_waitSaid[coop::net::kMaxPeers] = {};
 uint64_t g_nextUnboundSayMs = 0;
 
 // HOST: whether the eraser was busy as the running delete press entered, for its POST to tell a start from a click.
 bool g_pressWasBusy = false;
 
-struct Bucket {
-    coop::net::IntentBucket rate;
-    uint64_t                nextSayMs = 0;
+// HOST, one sender: the drive eids its presses named, queued with their bucket, and the latches that clear with its
+// occupant.
+struct Slot {
+    coop::net::IntentQueue<uint32_t> queue;
+    uint64_t nextSayMs = 0;      // the full queue's refusal, said once in kSayEveryMs
+    bool     waitSaid  = false;  // a wait for the body, said once a streak
 };
-Bucket g_rate[coop::net::kMaxPeers];
-std::deque<uint32_t> g_pending[coop::net::kMaxPeers];  // HOST: the drive eids a client's presses named
+coop::roster_ledger::PerSlotState<Slot> g_slots;
 
 coop::net::Session* HostSession() {
     auto* s = g_session.load(std::memory_order_acquire);
@@ -74,8 +76,6 @@ coop::net::Session* ClientSession() {
     auto* s = g_session.load(std::memory_order_acquire);
     return s && s->connected() && s->role() == coop::net::Role::Client ? s : nullptr;
 }
-
-bool TakeToken(uint8_t slot) { return g_rate[slot].rate.Take(kPressBudget, coop::active_drive::NowMs()); }
 
 void* SeatedDrive() {
     void* slot = DC::SlotActor(DC::kRoleEraser);
@@ -114,8 +114,8 @@ bool Execute(coop::net::Session& s, uint32_t driveEid, uint8_t slot) {
     }
     const auto token = coop::element::IntentTarget::ForClientIntent(s, slot, kEraserReachUU);
     if (!token.HasBody()) {
-        if (!g_waitSaid[slot]) {
-            g_waitSaid[slot] = true;
+        if (!g_slots[slot].waitSaid) {
+            g_slots[slot].waitSaid = true;
             UE_LOGI("[ERASER] slot %u's presses wait: the host has no body for it yet", static_cast<unsigned>(slot));
         }
         return false;
@@ -251,13 +251,12 @@ void Tick(coop::net::Session& session) {
     }
     if (!session.running() || session.role() != coop::net::Role::Host) return;
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
-        if (g_pending[slot].empty() || !TakeToken(slot)) continue;
-        if (Execute(session, g_pending[slot].front(), slot)) {
-            g_pending[slot].pop_front();
-            g_waitSaid[slot] = false;
-        } else {
-            g_rate[slot].rate.Refund(kPressBudget);  // a wait runs nothing, so it spends no token
-        }
+        Slot& sl = g_slots[slot];
+        sl.queue.Serve(kPressBudget, coop::active_drive::NowMs, [&](const uint32_t& driveEid) {
+            if (!Execute(session, driveEid, slot)) return coop::net::Served::Wait;  // a wait runs nothing: no token spent
+            sl.waitSaid = false;
+            return coop::net::Served::Done;
+        });
     }
 }
 
@@ -276,26 +275,17 @@ void OnEraserPressIntent(coop::net::Session& session, const coop::net::EraserPre
         return;
     }
     if (payload.event != kEvIntent || senderSlot < 1 || senderSlot >= coop::net::kMaxPeers) return;
-    auto& q = g_pending[senderSlot];
-    if (q.size() >= kMaxPending) {
-        Bucket& b = g_rate[senderSlot];
+    Slot& sl = g_slots[senderSlot];
+    uint32_t driveEid = payload.driveEid;
+    if (!sl.queue.Push(std::move(driveEid), kMaxPending)) {
         const uint64_t now = coop::active_drive::NowMs();
-        if (now >= b.nextSayMs) {
-            b.nextSayMs = now + kSayEveryMs;
+        if (now >= sl.nextSayMs) {
+            sl.nextSayMs = now + kSayEveryMs;
             UE_LOGW("[ERASER] slot %u queue full (%zu) -- refusing presses until it drains",
-                    static_cast<unsigned>(senderSlot), q.size());
+                    static_cast<unsigned>(senderSlot), sl.queue.size());
         }
         ++g_denied;
-        return;
     }
-    q.push_back(payload.driveEid);
-}
-
-void OnPeerLeft(uint8_t slot) {
-    if (slot >= coop::net::kMaxPeers) return;
-    g_pending[slot].clear();
-    g_rate[slot] = Bucket{};
-    g_waitSaid[slot] = false;
 }
 
 void OnDisconnect() {
@@ -303,7 +293,6 @@ void OnDisconnect() {
         UE_LOGI("[ERASER] session end -- sent=%llu pressed=%llu denied=%llu shown=%llu",
                 static_cast<unsigned long long>(g_sent), static_cast<unsigned long long>(g_pressed),
                 static_cast<unsigned long long>(g_denied), static_cast<unsigned long long>(g_shown));
-    for (uint8_t slot = 0; slot < coop::net::kMaxPeers; ++slot) OnPeerLeft(slot);
     g_sent = g_pressed = g_denied = g_shown = 0;
     g_pressWasBusy = false;
 }

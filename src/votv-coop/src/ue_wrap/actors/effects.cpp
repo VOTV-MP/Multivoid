@@ -214,6 +214,24 @@ bool List(std::vector<Entry>* out) {
     return true;
 }
 
+size_t ForEachWorldEffect(void (*fn)(void* effect, void* ctx), void* ctx) {
+    if (!fn) return 0;
+    void* const gm = GamemodeObject();
+    if (!gm || g_gm.effects < 0) return 0;
+    int32_t length = 0;
+    if (!ArrayLength(gm, g_gm.effects, &length)) return 0;
+    const SR::Arr actors = SR::ReadArr(gm, g_gm.effects);
+    size_t visited = 0;
+    for (int32_t i = 0; i < actors.num; ++i) {
+        void* a = nullptr;
+        std::memcpy(&a, actors.data + static_cast<size_t>(i) * sizeof(void*), sizeof(a));
+        if (!SR::PlausibleObjPtr(a) || !R::IsLive(a)) continue;
+        fn(a, ctx);
+        ++visited;
+    }
+    return visited;
+}
+
 bool Add(const std::wstring& name, float strength, float seconds) {
     if (!std::isfinite(strength) || !std::isfinite(seconds)) return false;
     std::wstring spelled;

@@ -57,7 +57,7 @@ enum class EndReason : uint8_t {
     // never reissued -- a code in a field report must keep meaning what it meant.
     HostWorldNotPrepared,   // the host never finished capturing the world it owed this joiner
     WorldDownloadStalled,   // no byte of the world blob arrived for the download's budget
-    HostWorldNotSent,       // the world bracket never came: the host held it, or stopped answering
+    HostWorldNotSent,       // the host held or stopped sending the bracket, or the link stopped delivering it
     // These four are LOCAL: the host did what it owed and this machine could not use it. The
     // first two used to boot a fresh world instead and finish the join in it, telling the player
     // nothing -- a joiner standing in a world that is not the host's; the third loaded anyway with

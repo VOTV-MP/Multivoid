@@ -12,8 +12,12 @@
 #include "coop/element/npc.h"
 #include "coop/element/prop.h"
 #include "coop/element/registry.h"
+#include "coop/net/intent_queue.h"
+#include "coop/net/net_clock.h"
 #include "coop/net/protocol.h"
+#include "coop/net/refusal_tally.h"
 #include "coop/net/session.h"
+#include "coop/player/roster_ledger.h"  // PerSlotState
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_lifecycle.h"
 #include "ue_wrap/engine/engine.h"
@@ -47,6 +51,22 @@ std::atomic<bool> g_ready{false};  // the request latch
 // at the verb's entry (RequestSlotFor). Verbs are synchronous on the game thread, so one pair does.
 void* g_runningObject = nullptr;
 int   g_runningSlot   = -1;
+
+// A sender's requests wait in a bounded queue and run one head a tick at a bounded rate: a conversion spawns and
+// destroys actors. A request that can never run is refused into the tally, and so is one past the cap. Per-slot
+// state: a leaver's queue goes with its occupant.
+constexpr coop::net::IntentBudget kBudget{2.0f, 1.0f};
+constexpr size_t kMaxPending = 4;
+
+struct Slot {
+    coop::net::IntentQueue<coop::net::KerfurConvertPayload> queue;
+};
+coop::roster_ledger::PerSlotState<Slot> g_slots;
+coop::net::RefusalTally g_tally{"kerfur_convert"};
+
+// Instruments (the kerfur_flood drill reads them against a baseline), per sender.
+coop::roster_ledger::PerSlotState<uint32_t> g_runs;
+coop::roster_ledger::PerSlotState<uint32_t> g_refused;
 
 // The pose the converge binds the new form at: its own, read whole. No pose of the old form's stands
 // in for it, since the verb places the new form itself: the turn-on stands the NPC upright 50 cm above
@@ -174,20 +194,18 @@ void ConvergeAtReturn(void* oldActor, int32_t oldIdx, EL::ElementId oldEid, bool
     else ConvergeTurnOn(oldActor, oldEid, cap.actor, who);
 }
 
-void OnConvertRequest(const coop::net::KerfurConvertPayload& payload, uint8_t senderPeerSlot) {
-    // Host-only (gated by the event_dispatch_intent router). Game thread (the event_feed drain): the
-    // verb's dispatches, its gate watch's return included, run inside this call.
-    if (!g_ready.load(std::memory_order_acquire)) {
-        UE_LOGW("kerfur_convert: request before install resolved -- dropped");
-        return;
-    }
-    // Every legitimate target is a host-range element (host props and NPCs are AllocHostId'd); an
-    // out-of-range id is a spoof or a bug.
-    if (!EL::Registry::IsAllowedHostAllocatedEid(static_cast<EL::ElementId>(payload.elementId))) {
-        UE_LOGW("kerfur_convert: request eid=%u outside the host range -- dropped (slot %u)",
-                payload.elementId, senderPeerSlot);
-        return;
-    }
+namespace {
+
+// A refusal at the serve, said through the tally. It is not in RefusedFor: the request entered RunRequest, so it is
+// a run, and each request is a run or a refusal, never both, which is what the drill's accounting holds.
+void RefuseAtServe(uint8_t slot, const char* why) {
+    g_tally.Note(slot, why, coop::net::RefusalTally::Clock::now());
+}
+
+// One queued request, at its serve: the checks of the world as it is now, then the real verb on the host's copy.
+// Game thread: the verb's dispatches, its gate watch's return included, run inside this call.
+void RunRequest(const coop::net::KerfurConvertPayload& payload, uint8_t senderPeerSlot) {
+    ++g_runs[senderPeerSlot];
     const auto eid = static_cast<EL::ElementId>(payload.elementId);
     const char* what = payload.toProp ? "turn_off" : "turn-on";
     EL::Element* el = payload.toProp
@@ -195,21 +213,20 @@ void OnConvertRequest(const coop::net::KerfurConvertPayload& payload, uint8_t se
         : static_cast<EL::Element*>(EL::MirrorManager<EL::Prop>::Instance().Get(eid));
     void* actor = el ? el->GetActor() : nullptr;
     if (!actor || !R::IsLiveByIndex(actor, el->GetInternalIdx())) {
-        UE_LOGW("kerfur_convert: %s request eid=%u from slot %u -- no live kerfur of that form (already converted "
-                "or stale) -- dropped", what, payload.elementId, senderPeerSlot);
+        RefuseAtServe(senderPeerSlot, "no live kerfur of that form (converted or stale)");
         return;
     }
     void* cls = R::ClassOf(actor);
     void* base = payload.toProp ? g_kerfurNpcClass : g_kerfurPropClass;
     if (!cls || !R::IsDescendantOfAny(cls, &base, 1)) {
-        UE_LOGW("kerfur_convert: %s request eid=%u targets no kerfur of that form -- dropped", what, payload.elementId);
+        RefuseAtServe(senderPeerSlot, "targets no kerfur of that form");
         return;
     }
     // The BP's own guard before dropKerfurProp (actionName: `if (kill) return;`), replicated byte-exactly
     // from the disassembly, since the request calls the verb directly.
     if (payload.toProp && g_killOff >= 0 &&
         *(reinterpret_cast<const bool*>(reinterpret_cast<const uint8_t*>(actor) + g_killOff))) {
-        UE_LOGI("kerfur_convert: turn_off eid=%u denied -- the kerfur is in kill mode (SP parity)", payload.elementId);
+        RefuseAtServe(senderPeerSlot, "kill mode (SP parity)");
         return;
     }
     UE_LOGI("kerfur_convert: HOST running %s eid=%u for slot %u's request", what, payload.elementId, senderPeerSlot);
@@ -220,6 +237,53 @@ void OnConvertRequest(const coop::net::KerfurConvertPayload& payload, uint8_t se
     g_runningObject = nullptr;
     g_runningSlot = -1;
 }
+
+// One refusal into the tally, and into the sender's count when the slot is a client's (1 and up).
+void Refuse(uint8_t slot, const char* why) {
+    if (slot >= 1 && slot < coop::net::kMaxPeers) ++g_refused[slot];
+    g_tally.Note(slot, why, coop::net::RefusalTally::Clock::now());
+}
+
+}  // namespace
+
+void OnConvertRequest(const coop::net::KerfurConvertPayload& payload, uint8_t senderPeerSlot) {
+    // Host-only (gated by the event_dispatch_intent router). Game thread (the event_feed drain). The request is
+    // checked for what cannot change while it waits, then queued; Tick serves it.
+    // Slot 0 is the host, whose own requests never arrive over the wire.
+    if (senderPeerSlot == 0 || senderPeerSlot >= coop::net::kMaxPeers) {
+        Refuse(senderPeerSlot, "unknown sender");
+        return;
+    }
+    if (!g_ready.load(std::memory_order_acquire)) {
+        Refuse(senderPeerSlot, "before install resolved");
+        return;
+    }
+    // Every legitimate target is a host-range element (host props and NPCs are AllocHostId'd); an
+    // out-of-range id is a spoof or a bug.
+    if (!EL::Registry::IsAllowedHostAllocatedEid(static_cast<EL::ElementId>(payload.elementId))) {
+        Refuse(senderPeerSlot, "outside the host range");
+        return;
+    }
+    coop::net::KerfurConvertPayload copy = payload;
+    if (!g_slots[senderPeerSlot].queue.Push(std::move(copy), kMaxPending)) Refuse(senderPeerSlot, "queue full");
+}
+
+void NoteRefused(uint8_t senderPeerSlot, const char* why) { Refuse(senderPeerSlot, why); }
+
+void Tick() {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->running() || s->role() != coop::net::Role::Host) return;
+    for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
+        g_slots[slot].queue.Serve(kBudget, coop::net::NowMs, [&](const coop::net::KerfurConvertPayload& p) {
+            RunRequest(p, slot);
+            return coop::net::Served::Done;
+        });
+    }
+    g_tally.Flush(coop::net::RefusalTally::Clock::now());
+}
+
+uint32_t RunsFor(int slot) { return slot >= 1 && slot < coop::net::kMaxPeers ? g_runs[slot] : 0; }
+uint32_t RefusedFor(int slot) { return slot >= 1 && slot < coop::net::kMaxPeers ? g_refused[slot] : 0; }
 
 void SetSession(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
@@ -239,6 +303,7 @@ void SetVerbs(void* spawnKerfuroFn, int32_t killOff) {
 void OnDisconnect() {
     g_runningObject = nullptr;
     g_runningSlot = -1;
+    g_tally.Clear();
 }
 
 }  // namespace coop::kerfur_convert_host

@@ -17,6 +17,10 @@ bool AttachActorToComponentSocket(void* actor, void* component, const wchar_t* s
 
 bool DetachActorFromParent(void* actor);
 
+// AActor::GetAttachParentActor: the actor `actor`'s root is attached to, or null in `parent` when it is attached to
+// none. False when the read did not run (`parent` is null then too). Game thread.
+bool GetAttachParentActor(void* actor, void*& parent);
+
 // A Character attached to an actor: the Character, its CharacterMovementComponent, and the component that
 // movement moves (UpdatedComponent, its capsule). A field that does not read is null.
 struct AttachedCharacter {

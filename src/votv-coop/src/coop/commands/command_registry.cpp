@@ -28,9 +28,9 @@ bool ValidName(std::string_view s) {
 }
 
 // Words that name nodes which are not commands (`multivoid.printer.*`, `multivoid.admin.menu`,
-// `multivoid.command.selector`, `multivoid.dev.*`): no command may take them.
+// `multivoid.command.selector`, `multivoid.gameplay.*`, `multivoid.dev.*`): no command may take them.
 bool Reserved(std::string_view name) {
-    return name == "printer" || name == "content" || name == "admin" || name == "command" ||
+    return name == "printer" || name == "content" || name == "admin" || name == "command" || name == "gameplay" ||
            name == "dev";
 }
 

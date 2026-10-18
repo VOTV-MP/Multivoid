@@ -20,6 +20,7 @@
 #include "coop/session/join_progress.h"
 #include "coop/player/local_streams.h"
 #include "ui/multiplayer_menu.h"  // MenuTickFn(): the death-flee bypass release condition
+#include "coop/net/fake_link_steps.h"  // Tick, and the joiner's `wr` origin
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/creatures/npc_adoption.h"
@@ -273,7 +274,7 @@ void TearDownSession(coop::net::Session& session, const char* why) {
     g_wasConnectedBySlot.fill(false);
     ForgetWorldReadyAnnounce();
     for (int slot = 0; slot < coop::players::kMaxPeers; ++slot) {
-        // DestroySlot is UnregisterPuppet plus destroy-if-live; its interleave with DisconnectSlot
+        // DestroySlot is destroy-if-live plus UnregisterPuppet; its interleave with DisconnectSlot
         // is composed here only.
         coop::puppet_drive::DestroySlot(slot);
         coop::subsystems::DisconnectSlot(session, slot);
@@ -402,6 +403,7 @@ void Tick(coop::net::Session& session) {
 
     // The host's pending save-transfer chunk sends; a no-op without an active stream.
     if (session.role() == coop::net::Role::Host) coop::save_transfer::TickHost();
+    coop::net::fake_link_steps::Tick();  // the fake-link steps that came due
 
 
     // The world-up gate: a save-transfer joiner runs this Tick at the menu for 30-60 s, where the
@@ -529,6 +531,7 @@ void Tick(coop::net::Session& session) {
                 // is the host's bracket. Named so, the cover stops saying "loading the world" over
                 // a wait that is the host's, and the phase gets a watchdog of its own.
                 coop::join_progress::NoteWorldReady();
+                coop::net::fake_link_steps::NoteOrigin(coop::net::fake_link_steps::Origin::WorldReady);
                 UE_LOGI("net_pump: ClientWorldReady announced (world up + registry coherent + load "
                         "tail quiesced + key index caught up%s)",
                         reAnnounce ? " -- re-announce after world-change" : "");
@@ -640,11 +643,11 @@ void Tick(coop::net::Session& session) {
     // empty).
     if (isConnected && worldUp) { PP::Scope _s{PP::Bucket::SnapshotDrain}; coop::prop_snapshot::DrainChunk(); }
 
-    // The host's once-a-second word to each joiner, after the three owners of a join's host-side
-    // phases have had their pass (the chunk pump above, the capture inside it, the bracket drain
-    // just now). Ungated by worldUp: a host serving a joiner is by definition in a world, and the
-    // gate exists for the joiner's own menu ticks. A no-op on a client and for every slot nobody
-    // worked this pass, which is how the beacon falls silent when the work stops.
+    // The host's once-a-second word to each joiner. Its owners: save_transfer (the chunk pump and
+    // the capture), prop_snapshot::DrainChunk (the bracket, just now), and join_beacon itself for
+    // the Draining phase once the bracket is closed. Ungated by worldUp: a host serving a joiner is
+    // in a world, and the gate is for the joiner's own menu ticks. A no-op on a client; a slot
+    // nobody worked falls silent, and a delivered bracket stops its own Draining.
     if (isHost) coop::join_beacon::Tick();
 
     // Outside the world-up gate on purpose: what these dev readers see lies inside the world load,

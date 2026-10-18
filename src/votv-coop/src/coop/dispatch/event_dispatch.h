@@ -37,7 +37,7 @@ bool HandleEntityEvent(net::Session& session,
 
 // Keyed device-state family: the mirrored state of doors, lights, lockers, containers, appliances,
 // keypads, power, the ATV, drones, turbines, cleanliness and grime, plus the per-device claim,
-// sleep, email, inventory and voice rows, and the host's server-scope settings. `localPlayer`
+// sleep, email, inventory and voice rows, the PC user's tab, and the host's server-scope settings. `localPlayer`
 // threads into the KerfurConvert client apply (prop teardown and materialize).
 bool HandleStateEvent(net::Session& session,
                       const net::Session::ReliableMessage& msg,
@@ -51,7 +51,7 @@ bool HandleSignalEvent(const net::Session::ReliableMessage& msg);
 
 // CLIENT->HOST intent and request family: a client asks the host to perform something it alone is
 // authoritative for. Read the case for its gate rather than assuming one. GrabIntent, ThrowIntent,
-// PropDropIntent, ReelEjectIntent, DoorVerbIntent and KeypadIntent check role()==Host AND a client
+// PropDropIntent, ReelEjectIntent, DoorVerbIntent, CameraToggleIntent, LaptopTabReport and KeypadIntent check role()==Host AND a client
 // sender slot; KerfurConvertRequest and KerfurCommand check the role only, mapping an out-of-range
 // slot to the 0xFF sentinel and handing it on; OrderRequest, CoinGunSell and CoinCollect check the
 // slot here and leave the role gate to the module they call; CoinGunResult and OrderRefused are

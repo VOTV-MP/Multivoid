@@ -1,5 +1,4 @@
-// coop/interactables/interactable_sync.h -- keyed interactable open/close/on-off state sync. ONE
-// replication engine drives eight features through a shared Channel, with no per-feature copy:
+// coop/interactables/interactable_sync.h -- keyed interactable state sync: one engine, ten features, one Channel:
 //   - DoorState (9):         base doors     (Adoor_C, open intent, host-authoritative)
 //   - LightState (10):       light switches (Alightswitch_C::use, replayed on receipt)
 //   - ContainerState (11):   container lids (Aprop_swinger_C::Open / Close)
@@ -8,11 +7,12 @@
 //   - LockerDoorState (50):  lockers and the drone-console box (level-export name)
 //   - LightGroupState (129): light groups   (runTrigger on the root, host-authoritative)
 //   - OvenRepairState (151): the kitchen oven's repair (its fix(), one way)
+//   - CameraActiveState (181), CameraLightState (182): a security camera's two bits (host-authoritative)
 // Gameplay/network layer (principle 7): the wire protocol, the senders, the receiver apply, the key index, the
 // deferred-apply retry and the connect snapshot; the engine only through ue_wrap. Every channel is sent at the verbs
-// that write its state, on the authority: the host for doors and light groups (coop/interactables/door_state_verbs,
-// lightgroup_verbs), the peer that ran it for the symmetric rest (coop/interactables/toggle_verbs). A write no verb
-// makes, a save's load, reaches a joiner in the connect snapshot. The model: docs/devices.md.
+// that write its state, on the authority: the host for doors, light groups and cameras, the peer that ran it for
+// the symmetric rest (door_state_verbs, lightgroup_verbs, toggle_verbs). A write no verb makes, a save's load,
+// reaches a joiner in the connect snapshot. The model: docs/devices.md.
 
 #pragma once
 
@@ -47,6 +47,18 @@ void* ResolveDoor(const std::wstring& key);
 // Host: a door's state verb just ran on `door` (coop/interactables/door_state_verbs); the door lane
 // sends the state it left when that changed. Game thread.
 void OnDoorStateVerb(void* door);
+
+// Host: one of a security camera's verbs just ran on `cam` (coop/interactables/toggle_verbs: its use, upd,
+// updState, or the cursed camera's tick); both camera lanes send the bit they read when it changed. A client
+// calls it too and it does nothing there. Game thread.
+void OnCameraVerb(void* cam);
+
+// The camera lane's key for `cam`, or "" when the lane does not index it in the current world: the name a
+// camera toggle intent carries. Game thread.
+std::wstring CameraKey(void* cam);
+
+// The live camera the camera lane indexes under `key` in the current world, or null. Game thread.
+void* ResolveCamera(const std::wstring& key);
 
 // Whether the door lane's own apply is running on `door` now: a client's copy of a door refuses
 // every doorOpen and doorClose but that one. Game thread.

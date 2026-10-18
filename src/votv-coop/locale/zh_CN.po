@@ -162,10 +162,6 @@ msgid "%1$u / %2$u objects"
 msgstr ""
 
 #, c-format
-msgid "%1$u/%2$u players sleeping"
-msgstr ""
-
-#, c-format
 msgid "%d LAN"
 msgstr ""
 
@@ -442,9 +438,6 @@ msgstr ""
 msgid "Everyone in the registry is online."
 msgstr ""
 
-msgid "Everyone is asleep -- the night passes..."
-msgstr ""
-
 msgid "Everything scales with the screen automatically; this is your extra zoom."
 msgstr ""
 
@@ -460,9 +453,6 @@ msgstr ""
 
 msgid "Gamemode:"
 msgstr "游戏模式："
-
-msgid "Good morning -- everyone is rested."
-msgstr ""
 
 #, c-format
 msgid "Graphics API: %s"
@@ -876,9 +866,6 @@ msgstr ""
 msgid "Skins come from converter .pak files under Content/Paks/LogicMods (any subfolder). One pak may carry several skins -- the four scientists ship together in scientists.pak."
 msgstr "皮肤来自 Content/Paks/LogicMods 下的 .pak 文件（任意子文件夹）。一个 pak 可含多个皮肤——四个科学家就打包在 scientists.pak 里。"
 
-msgid "Sleep interrupted -- everyone wakes up."
-msgstr ""
-
 msgid "Something was sent before the identity was proved."
 msgstr ""
 
@@ -978,7 +965,7 @@ msgstr ""
 msgid "The host never finished preparing its world for you."
 msgstr ""
 
-msgid "The host never sent you the world it owed."
+msgid "The host stopped sending the world it owed, or the connection stopped delivering it."
 msgstr ""
 
 msgid "The host never sent your inventory."

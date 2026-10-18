@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 225;
+inline constexpr uint16_t kProtocolVersion = 234;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -392,8 +392,9 @@ enum class ReliableKind : uint8_t {
     // wrote it; the receiver appends it natively. DeskLogLinePayload.
     DeskLogLine = 65,
 
-    // Both directions on one kind: op Report is a peer's in-bed edge toward the host; Tally,
-    // Accelerate and End are host to all. SleepStatePayload.
+    // Both directions on one kind, multiplexed by op: a client's rest state to the host, the
+    // host's own sleeping flag to the clients, and one peer's rest state relayed to the clients.
+    // SleepStatePayload.
     SleepState = 66,
 
     // Host to one client: the killer wisp grabbed your puppet; die for real after killDelayMs.
@@ -984,6 +985,67 @@ enum class ReliableKind : uint8_t {
     // record, gone once opened. Trust: the amount is the host's copy's and the reach the host's pose of the
     // sender; the client names the sack and nothing else. PointSackRedeemPayload.
     PointSackRedeem = 173,
+
+    // Client to host: my player pressed the tool gun's remover on this element, seen from this camera point at
+    // this hit point. The host judges the sender's right, the element, who holds it and whether the sender could
+    // see it, and removes the prop itself; the client's own press is cancelled. Never relayed. Late join: none --
+    // a request is an act, and a joiner's snapshot no longer holds a prop the host removed. Trust: the eid is
+    // re-resolved by the host and the origin and the hit point are a claim the host re-traces.
+    // RemoverRequestPayload.
+    RemoverRequest = 174,
+
+    // Host to one client: what the host did with its RemoverRequest. Never relayed. Late join: none -- it
+    // answers a live request. Trust: from the host alone. RemoverResultPayload.
+    RemoverResult = 175,
+
+    // Host to all: whether a Bad Sun exists -- the gamemode's badSun after a `Spawn Bad Sun` call (1), or 0 when a
+    // copy's own remove() ran. A client holding none spawns one through the same verb; on a 0 it destroys its
+    // inactive copies and lets an active one end by its own clock. Never relayed; a client's own is refused at
+    // the host's receive edge. Late join: the seed at the joiner's world-ready, the same payload. Every state is
+    // absolute. BadSunPayload.
+    BadSun = 176,
+
+    // Host to all: a security camera's `active` bit (the LED, the click, the laptop's camera list), by the camera
+    // lane's key, absolute, whoever wrote it -- a player's use, a wisp, the gray events, the cursed camera's night roll.
+    // A client renders it and never authors it; a client's own copy is refused at the host's receive edge. Never
+    // relayed. Late join: the host's state for every indexed camera at the joiner's world-ready. KeyedTogglePayload.
+    CameraActiveState = 181,
+
+    // Host to all: a security camera's `isLight` bit (the spotlight), the same shape and rules as CameraActiveState.
+    CameraLightState = 182,
+
+    // Client to host: my player pressed this camera's use or the laptop's camera-light button. A client refuses both
+    // at their own bodies and asks here; the host judges the sender's reach and sets the bit to the value the sender
+    // wanted, and the result reaches every peer as CameraActiveState or CameraLightState. A bit already at the wanted
+    // value changes nothing and is sent again to the sender alone. Never relayed. Late join: nothing to replay -- a
+    // request is an act. Trust: the key must be one the host indexes, the bit and the value are range-checked, the
+    // sender must be within reach of the camera (the use) or of a device showing the laptop interface (the light),
+    // and its intents run from a bounded queue at a bounded rate. CameraToggleIntentPayload.
+    CameraToggleIntent = 183,
+
+    // Host to all: a creature's whole count of running events -- the host's net count of the `setEvent(true)` calls
+    // that creature made, by its element id, absolute. A client applies it to its mirror's registration in the
+    // gamemode's event count and never authors it; a client's own copy is refused at the host's receive edge. Never
+    // relayed. Late join: the host's count for every creature that holds one, at the joiner's world-ready. Trust:
+    // the id must be host-allocated and the count at most 8. CreatureEventActivePayload.
+    CreatureEventActive = 184,
+
+    // Client to host: the PC's user switched the laptop widget's tab. Sent only by the peer that holds the "laptop"
+    // device claim, at the POST of the widget's switcherSwitched and of its floppy and sub-game tab clicks, when the
+    // index differs from the last one this peer reported. The host drops a report from a peer that is not the holder
+    // and an index past its own switcher's tab count, applies the rest to its own widget's switcher and sends
+    // LaptopTabState to every client but the sender. Not relayed (the host validates first). Rides the lane of
+    // DeviceClaim (Normal), so a claim, its tabs and its release arrive in the order they were made; a leaving
+    // holder's last tab is sent before its release. Late join: LaptopTabState. LaptopTabPayload.
+    LaptopTabReport = 185,
+
+    // Host to client: the tab the PC's user is on, absolute. A client shows it by writing the switcher's index and
+    // nothing else, unless the host's claim table (HolderOf, not the client's own optimistic entry) names this client
+    // the PC's user, or the state comes from a slot other than the host's: those it drops. An entrant the host has not
+    // yet confirmed shows it like a viewer, one index. The host's own widget is the canonical, and the host sends this
+    // when it is the holder or after it applied a report. Never relayed; a client's own copy is refused at the host's
+    // receive edge. Late join: the host's widget index to the joiner, after its world-ready. LaptopTabPayload.
+    LaptopTabState = 186,
 };
 
 #pragma pack(push, 1)
@@ -1655,6 +1717,27 @@ static_assert(sizeof(DoorVerbIntentPayload) == 40, "DoorVerbIntentPayload must b
 static_assert(sizeof(DoorVerbIntentPayload) <= 256 - 20 - 8,
               "DoorVerbIntentPayload must fit one datagram");
 
+// A camera toggle intent (CameraToggleIntent): the camera by the lane's key, which of its two bits, and the value
+// the sender's press wants it to have (the sender's own copy negated). The use of the camera is the active bit; the
+// laptop's camera-light button is the light bit.
+namespace camera_toggle { constexpr uint8_t kActive = 0; constexpr uint8_t kLight = 1; }
+struct CameraToggleIntentPayload {
+    WireKey  key;        // 32 -- the camera lane's key for the camera
+    uint8_t  bit;        // 1  -- camera_toggle::kActive or kLight
+    uint8_t  desired;    // 1  -- 0 = off, 1 = on
+};
+static_assert(sizeof(CameraToggleIntentPayload) == 34, "CameraToggleIntentPayload must be 34 bytes");
+static_assert(sizeof(CameraToggleIntentPayload) <= 256 - 20 - 8,
+              "CameraToggleIntentPayload must fit one datagram");
+
+// The laptop widget's tab (LaptopTabReport, LaptopTabState): the switcher's active index. One layout for both kinds.
+struct LaptopTabPayload {
+    uint8_t index;  // 1 -- the switcher's ActiveWidgetIndex
+    uint8_t pad;    // 1 -- zero
+};
+static_assert(sizeof(LaptopTabPayload) == 2, "LaptopTabPayload must be 2 bytes");
+static_assert(sizeof(LaptopTabPayload) <= 256 - 20 - 8, "LaptopTabPayload must fit one datagram");
+
 // A keypad intent (KeypadIntent): the keypad by its Key and what the client's player did to it. A
 // submit carries no verdict, since the host judges the code on its own copy; a keycard's verdict is
 // the client's reading of the card against the door, taken only while the client holds a keycard.
@@ -1774,19 +1857,24 @@ struct DeskLogLinePayload {
 };
 static_assert(sizeof(DeskLogLinePayload) == 124, "DeskLogLinePayload must be 124 bytes");
 
-// The sleep gate (SleepState). op:
-//   0 Report     (peer -> host)  flag = inBed (the sender's isSleep edge)
-//   1 Tally      (host -> all)   count/total for the "N/M sleeping" feed line
-//   2 Accelerate (host -> all)   everyone is in bed: start the 20x phase
-//   3 End        (host -> all)   flag = natural (1: the host slept to full and every peer is
-//                                 granted sleep=100; 0: an early interrupt, peers keep their need)
+// SleepState: op-multiplexed, one fixed size. Every peer sleeps
+// natively on its own machine; the wire carries who rests, and the host's sleeping flag.
+//   ClientRest (client -> host)   state and bed: the sender's own rest state, sent on a change.
+//   HostAsleep (host -> clients)  state 0/1: the host's own isSleep, on a change and at the join.
+//   PeerRest   (host -> clients)  slot, state and bed: one peer's rest state (slot 0 = the host),
+//                                 on a change, at the join for every peer not awake, and with
+//                                 Awake when a peer leaves.
+enum class SleepOp : uint8_t { ClientRest = 0, HostAsleep = 1, PeerRest = 2 };
+// A peer's sleep state: awake, resting (in a bed, or fainted), dreaming (in a nightmare).
+enum class SleepPeerState : uint8_t { Awake = 0, Resting = 1, Dreaming = 2 };
 struct SleepStatePayload {
-    uint8_t op;     // 1
-    uint8_t flag;   // 1 -- Report: inBed; End: natural
-    uint8_t count;  // 1 -- Tally: peers in bed
-    uint8_t total;  // 1 -- Tally: world-ready peers
+    uint8_t op;     // 1 -- SleepOp
+    uint8_t state;  // 1 -- SleepPeerState; HostAsleep uses 0/1 only
+    uint8_t slot;   // 1 -- PeerRest: the peer it describes (0 = the host); 0 for the other ops
+    uint8_t _pad;   // 1
+    WireKey bed;    // 32 -- ClientRest / PeerRest: the bed's class name (empty: bedless or awake); empty for HostAsleep
 };
-static_assert(sizeof(SleepStatePayload) == 4, "SleepStatePayload must be 4 bytes");
+static_assert(sizeof(SleepStatePayload) == 36, "SleepStatePayload must be 36 bytes");
 
 // An event fire (EventFire), host to all: dispatch 0 runEvent, 1 runSpecialEvent, and the row name.
 // Receivers replay only policy-allowlisted rows. No special-event field: the only special is a
@@ -1851,6 +1939,37 @@ struct PointSackRedeemPayload {
     uint32_t _pad;       // 4  -- zeroed
 };
 static_assert(sizeof(PointSackRedeemPayload) == 40, "PointSackRedeemPayload must be 40 bytes");
+
+// A client's press of the tool gun's remover (RemoverRequest): the element it hit, the camera point it looked
+// from and the point its shot struck, in world centimetres. The host judges all three; none is trusted.
+struct RemoverRequestPayload {
+    uint32_t elementId;  // 4  -- the hit actor's Element id on the sender
+    float    origin[3];  // 12 -- the sender's camera location at the press
+    float    hit[3];     // 12 -- the impact point of the shot
+};
+static_assert(sizeof(RemoverRequestPayload) == 28, "RemoverRequestPayload must be 28 bytes");
+
+// Why the host did what it did with a RemoverRequest (RemoverResult). Removed, NotReady and Gone are not shown to the
+// player; NoRight, Unsupported, Held, OutOfSight and Failed are.
+enum class RemoverReason : uint8_t {
+    Removed     = 0,  // the host removed the prop
+    NotReady    = 1,  // the sender, its body or the host's classes were not ready; nothing was judged
+    Gone        = 2,  // the element is no longer live (a second press, or another player's)
+    Unsupported = 3,  // the element is not a prop the remover removes in multiplayer
+    NoRight     = 4,  // the host withholds the remover from this player
+    Held        = 5,  // someone is holding or dragging the prop
+    OutOfSight  = 6,  // the sender's shot does not stand: too far from its body, off the prop, or blocked
+    Failed      = 7,  // the host could not judge the sight, or its destroy left the prop live; shown as "not removable"
+    Count       = 8,
+};
+
+// The host's answer to a RemoverRequest, to the sender alone.
+struct RemoverResultPayload {
+    uint32_t elementId;  // 4 -- the request's element id
+    uint8_t  reason;     // 1 -- RemoverReason
+    uint8_t  _pad[3];    // 3 -- zeroed
+};
+static_assert(sizeof(RemoverResultPayload) == 8, "RemoverResultPayload must be 8 bytes");
 
 // The server upgrades lane (ServerUpgradeState). Ops 0 (install) and 1 (take-out) name a box by its
 // servers[] index; op 2, the canonical, carries every box's level in servers[] order (a farm past 64
@@ -2960,13 +3079,20 @@ static_assert(sizeof(PileResyncRequestPayload) == 8, "PileResyncRequestPayload m
 
 // A position correction (PropSnapPos): the eid and the host's current transform, and for a prop its
 // physics flags there; the client snaps its bound native at the quiescence sweep and converges the
-// prop's frozen and sleep to the host's. Identity is preserved; idempotent.
+// prop's frozen and sleep to the host's. Identity is preserved; idempotent. It carries the host's
+// drive context for the prop, and the client drops one older than a drive END still on its copy; a
+// keyed prop a hand held after its correction went out gets a follow-up after the release.
 struct PropSnapPosPayload {
     uint32_t eid;                       // the save-authoritative pile eid to reposition
     float    locX, locY, locZ;          // host's CURRENT authoritative world position (cm)
     float    rotPitch, rotYaw, rotRoll; // host's CURRENT authoritative rotation (deg)
     uint8_t  physFlags;                 // propspawn_flags on the host; meaningful for an Aprop_C only
-    uint8_t  _pad[3];
+    // The host's drive context for the eid when this was read (prop_drive_host): the claim
+    // generation (0 = never driven this session) and 1 while that generation's drive is open, 0 once
+    // its end edge went out. The client drops a correction older than a drive end it applied.
+    uint8_t  driveGen;
+    uint8_t  driveOpen;
+    uint8_t  _pad;
 };
 static_assert(sizeof(PropSnapPosPayload) == 32, "PropSnapPosPayload must be 32 bytes (eid + loc + rot + flags)");
 static_assert(sizeof(PropSnapPosPayload) <= 256 - 20 - 8, "PropSnapPosPayload must fit one datagram");
@@ -3304,6 +3430,29 @@ static_assert(sizeof(RedSkyPayload) == 8, "RedSkyPayload must be 8 bytes");
 static_assert(sizeof(RedSkyPayload) <= 256 - 20 - 8,
               "RedSkyPayload must fit in one reliable datagram");
 
+// The Bad Sun (BadSun): whether a copy of the world event exists. The receiver spawns one or destroys its inactive
+// copies to match; the effect itself is each peer's own.
+struct BadSunPayload {
+    // The sender's Player element id; the receiver requires slot 0.
+    uint32_t senderElementId;
+    uint8_t  state;          // 0 = no Bad Sun, 1 = one exists
+    uint8_t  _pad[3];        // zero
+};
+static_assert(sizeof(BadSunPayload) == 8, "BadSunPayload must be 8 bytes");
+static_assert(sizeof(BadSunPayload) <= 256 - 20 - 8,
+              "BadSunPayload must fit in one reliable datagram");
+
+// A creature's running events (CreatureEventActive): the host's count of that creature's `setEvent(true)` calls not
+// yet undone. `elementId` is the creature's, a host-allocated id, not a sender's. The receiver applies the difference
+// to its mirror's registration in the gamemode's event count.
+struct CreatureEventActivePayload {
+    uint32_t elementId;
+    uint8_t  count;          // 0..8
+};
+static_assert(sizeof(CreatureEventActivePayload) == 5, "CreatureEventActivePayload must be 5 bytes");
+static_assert(sizeof(CreatureEventActivePayload) <= 256 - 20 - 8,
+              "CreatureEventActivePayload must fit in one reliable datagram");
+
 // A lightning strike (LightningStrike): the strike's world location; the receiver spawns the
 // strike actor there, and it destroys itself.
 struct LightningStrikePayload {
@@ -3338,19 +3487,19 @@ static_assert(sizeof(LinkProbePayload) == 4, "LinkProbePayload must be 4 bytes")
 
 // The phases of a join the HOST owns, and therefore the ones whose silence only the host can
 // explain. The joiner's own phases (its download, its engine load) are watched on its own side
-// from what it can see. A value this receiver does not know is still a beacon: it proves the host
-// is answering, which is the token, so an unknown phase renews the wait and only its label is
-// dropped.
+// from what it can see. A value this receiver does not know is a phase change like any other: it
+// renews the wait once, and only its label is dropped.
 enum class HostJoinPhase : uint8_t {
     CapturingWorld = 1,    // reading the host's save to a stable blob (no numerator: it retries until stable)
     StreamingWorld = 2,    // handing the blob to the transport: bytes accepted / blob bytes
     SnapshotDeferred = 3,  // the bracket is held because the host's registry does not express its world
-    StreamingSnapshot = 4, // draining the connect bracket: props sent / candidates
+    StreamingSnapshot = 4, // enqueueing the connect bracket: props sent / candidates
+    Draining = 5,          // the bracket is enqueued and the link is delivering it: KiB delivered / 0
 };
 
 // The beacon itself. `done` and `total` are the phase's own numerator and denominator, both 0 for a
-// phase that has none; the joiner reads a rising `done` as progress and the message's ARRIVAL as
-// liveness, so a phase with no numerator still renews the wait.
+// phase that has none; the joiner renews its wait on a phase change or a rise of `done`, never on a
+// repeat. In Draining `done` is the KiB the link has delivered to this joiner and `total` is 0.
 struct JoinPhaseNotePayload {
     uint8_t  phase;    // HostJoinPhase
     uint8_t  _pad[3];  // reserved, zero

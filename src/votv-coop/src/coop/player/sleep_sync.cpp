@@ -6,186 +6,192 @@
 #include "coop/net/latest_wins.h"
 #include "coop/net/net_clock.h"
 #include "coop/net/session.h"
-#include "coop/player/roster_ledger.h"  // PerSlotState
+#include "coop/net/wire_key_util.h"
+#include "coop/player/roster_ledger.h"  // PerSlotState, DisplayName
+#include "coop/text/utf8_codec.h"
 #include "l10n/l10n.h"
 
-#include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/sleep.h"
+#include "ue_wrap/actors/vitals.h"
+#include "ue_wrap/core/log.h"
 #include "ue_wrap/world/world_singleton.h"
 
 #include <atomic>
+#include <cstring>
 #include <string>
 
 namespace coop::sleep_sync {
 namespace {
 
 namespace SLP = ue_wrap::sleep;
+using coop::net::SleepOp;
+using coop::net::SleepPeerState;
+using coop::net::SleepStatePayload;
+using coop::net::WireKey;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// ---- local peer state -------------------------------------------------------
-bool g_lastInBed = false;       // the isSleep edge detector
-bool g_waitUndone = false;      // WAITING enforcement latch (dilation undone for this bed entry)
-bool g_accelerate = false;      // the 20x phase is on (host decides; mirrored from the wire on clients)
-bool g_dreamProbSuppressed = false;  // we hold gamemode.dreamProbability at 0
-void* g_gmInst = nullptr;       // gamemode instance the policy/edge state was applied to
+// ---- this peer's own state, as polled -------------------------------------------------------------
+SleepPeerState g_localState = SleepPeerState::Awake;
+WireKey        g_localBed{};              // the bed's class name while not awake, else empty
+bool           g_localSleeping = false;   // isSleep
+bool           g_dreamProbSuppressed = false;  // a client holds gamemode.dreamProbability at 0
+void*          g_gmInst = nullptr;        // the gamemode the polled state belongs to
 
-// ---- host tally -------------------------------------------------------------
-bool g_inBed[coop::net::kMaxPeers] = {};
-uint8_t g_lastCount = 0, g_lastTotal = 0;
+// ---- what is known of every peer ------------------------------------------------------------------
+// The host: each slot's state as it applied it (slot 0 the host's own, published). A client: as the host
+// relayed it.
+SleepPeerState g_state[coop::net::kMaxPeers] = {};
+WireKey        g_bed[coop::net::kMaxPeers] = {};
+bool           g_hostSleeping = false;    // the host: its isSleep as last published. A client: the host's last flag.
+// A client: the state last sent to the host.
+SleepPeerState g_sentState = SleepPeerState::Awake;
+WireKey        g_sentBed{};
 
 bool IsHost(coop::net::Session* s) { return s->role() == coop::net::Role::Host; }
 
-void PushCounterLine(uint8_t count, uint8_t total) {
-    if (count == 0) return;
+// Two beds are the same name: the length and the bytes inside it, whatever sits past them.
+bool SameBed(const WireKey& a, const WireKey& b) {
+    return a.len == b.len && a.len <= sizeof(a.data) && std::memcmp(a.data, b.data, a.len) == 0;
+}
+
+// A bed name is a class name: identifier characters inside `len` and zero past it. WireKey's contract says so
+// and nothing on the wire enforces it (coop/items/coingun_arbiter.cpp:145-155 clamps the length and stops at
+// the first NUL, where this refuses); a name with a line break would forge a line in every peer's log, and a
+// tail byte would pass for a change. True with the first fault found.
+bool BedFaulty(const WireKey& k, BedRefusal* why) {
+    if (k.len > sizeof(k.data)) { *why = BedRefusal::Length; return true; }
+    for (size_t i = 0; i < sizeof(k.data); ++i) {
+        const unsigned char c = static_cast<unsigned char>(k.data[i]);
+        if (i >= k.len) {
+            if (c != 0) { *why = BedRefusal::Tail; return true; }
+        } else if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
+            *why = BedRefusal::Charset;
+            return true;
+        }
+    }
+    return false;
+}
+
+// One warning per refused field, at most one every five seconds each: a hostile sender cannot fill the log, and
+// a flood on one field does not hide another's refusal. The fields are the literals this file passes; a table
+// that ran out would share its last row, which no caller here can reach.
+void Refuse(const char* field, int senderSlot) {
+    struct Said { const char* field; bool said; uint64_t lastMs; };
+    static Said table[12] = {};
+    const uint64_t now = coop::net::NowMs();
+    Said* row = nullptr;
+    for (Said& e : table) {
+        if (e.field && std::strcmp(e.field, field) == 0) { row = &e; break; }
+        if (!e.field) { row = &e; e.field = field; break; }
+    }
+    if (!row) row = &table[11];
+    if (row->said && now - row->lastMs < 5000) return;
+    row->said = true;
+    row->lastMs = now;
+    UE_LOGW("sleep_sync: SleepState refused -- %s (sender slot %d)", field, senderSlot);
+}
+
+// The bed refusals, counted per sender and reason for the hostile drill (coop/dev/hostile_drill_world).
+struct BedRefusals { uint32_t n[4] = {}; };
+coop::roster_ledger::PerSlotState<BedRefusals> g_bedRefused;
+
+void RefuseBed(BedRefusal why, int senderSlot) {
+    if (senderSlot > 0 && senderSlot < static_cast<int>(coop::net::kMaxPeers))
+        ++g_bedRefused[senderSlot].n[static_cast<int>(why)];
+    Refuse("bed", senderSlot);
+}
+
+// The host's name for the chat line; the ledger owns the fallback when the host's row has no nick.
+void PushHostAsleepLine() {
+    const std::string name = coop::text::ToUtf8(coop::roster_ledger::DisplayName(0));
     char buf[256];
-    if (l10n::Fmt(buf, sizeof(buf), l10n::T("%1$u/%2$u players sleeping"),
-                  static_cast<unsigned>(count), static_cast<unsigned>(total)) < 0)
+    if (l10n::Fmt(buf, sizeof(buf), l10n::T("%1$s is asleep -- the world runs faster"), name.c_str()) < 0)
         return;
-    // All three sleep lines are Transient: they are a live STATUS readout of an
-    // in-progress ritual ("2/3 players sleeping"), meaningless once it is over --
-    // reading them back hours later would be noise, not history.
+    // A status readout of a state that ends: reading it back hours later would be noise, not history.
     coop::chat_feed::Push(std::string(buf), coop::chat_feed::Keep::Transient);
 }
 
-void ApplyDreamProbPolicy(coop::net::Session* s) {
-    // CLIENTS: nightmares suppressed for the whole session (host-only rolls).
-    // HOST: suppressed while idle/waiting; the -1 sentinel (use bed.dreamProb)
-    // is restored only DURING the accelerate phase, making the host the single
-    // nightmare roller of the gated night.
-    const bool wantSuppressed = !(IsHost(s) && g_accelerate);
-    if (SLP::SetDreamProbability(wantSuppressed ? 0.f : -1.f))
-        g_dreamProbSuppressed = wantSuppressed;
-}
-
-// HOST: recount + broadcast the tally; fire phase transitions.
-void HostRetally(coop::net::Session* s);
-
-// Apply the accelerate phase locally (both roles). The dilation only applies
-// to a peer that is actually in bed -- a peer that raced its exit stays at
-// 1.0 (its inBed=false report is in flight; the host will End).
-void ApplyAccelerateLocal(coop::net::Session* s, bool on) {
-    if (g_accelerate == on) return;
-    g_accelerate = on;
-    if (on) {
-        if (SLP::IsSleeping()) {
-            SLP::SetGlobalTimeDilation(20.f);
-            // The cinematic base view belongs to THIS phase: the WAITING hold
-            // parked the camera at the bed; hand it to the gamemode's own
-            // sleepCam now.
-            if (SLP::SetSleepViewTarget(SLP::SleepCam()))
-                UE_LOGI("sleep_sync: camera -> sleepCam (the timelapse view)");
-        }
-        coop::chat_feed::Push(std::string(l10n::T("Everyone is asleep -- the night passes...")),
-                              coop::chat_feed::Keep::Transient);
-        UE_LOGI("sleep_sync: ACCELERATE (local dilation -> %s)",
-                SLP::IsSleeping() ? "20" : "1 (not in bed)");
+// To one slot, or (toSlot < 0) to every client but `exceptSlot` (-1: none).
+void SendPeerRest(coop::net::Session* s, int toSlot, int slot, int exceptSlot = -1) {
+    SleepStatePayload p{};
+    p.op = static_cast<uint8_t>(SleepOp::PeerRest);
+    p.state = static_cast<uint8_t>(g_state[slot]);
+    p.slot = static_cast<uint8_t>(slot);
+    p.bed = g_bed[slot];
+    if (toSlot >= 0) {
+        s->SendReliableToSlot(toSlot, coop::net::ReliableKind::SleepState, &p, sizeof(p));
+        return;
     }
-    ApplyDreamProbPolicy(s);
+    for (int to = 1; to < static_cast<int>(coop::net::kMaxPeers); ++to)
+        if (to != exceptSlot) s->SendReliableToSlot(to, coop::net::ReliableKind::SleepState, &p, sizeof(p));
 }
 
-// Apply the END locally (both roles). `natural` grants the full night's rest.
-// ORDER MATTERS: wakeup() first (the 10% gearer gift rolls iff need >= 99 at
-// call time -- the native waker keeps its own native roll; mirrors must not
-// add one), the need write after.
-void ApplyEndLocal(coop::net::Session* s, bool natural) {
-    ApplyAccelerateLocal(s, false);
-    if (SLP::IsSleeping()) SLP::CallWakeup();
-    if (natural) SLP::WriteSleepNeed(100.f);
-    coop::chat_feed::Push(std::string(natural ? l10n::T("Good morning -- everyone is rested.")
-                                              : l10n::T("Sleep interrupted -- everyone wakes up.")),
-                          coop::chat_feed::Keep::Transient);
-    UE_LOGI("sleep_sync: END (natural=%d)", natural ? 1 : 0);
+void SendHostAsleep(coop::net::Session* s, int toSlot) {
+    SleepStatePayload p{};
+    p.op = static_cast<uint8_t>(SleepOp::HostAsleep);
+    p.state = g_hostSleeping ? 1 : 0;
+    if (toSlot < 0) s->SendReliable(coop::net::ReliableKind::SleepState, &p, sizeof(p));
+    else s->SendReliableToSlot(toSlot, coop::net::ReliableKind::SleepState, &p, sizeof(p));
 }
 
-void HostBroadcast(coop::net::Session* s, uint8_t op, uint8_t flag,
-                   uint8_t count, uint8_t total) {
-    coop::net::SleepStatePayload p{};
-    p.op = op;
-    p.flag = flag;
-    p.count = count;
-    p.total = total;
-    s->SendReliable(coop::net::ReliableKind::SleepState, &p, sizeof(p));
-}
-
-void HostRetally(coop::net::Session* s) {
-    // total = the host + every world-ready client (a mid-join peer is not in
-    // the world yet and must not block the gate; once world-ready it counts
-    // -- and being awake, it holds the gate open until it sleeps too).
-    uint8_t total = 1, count = g_inBed[0] ? 1 : 0;
-    for (int slot = 1; slot < static_cast<int>(coop::net::kMaxPeers); ++slot) {
-        if (!s->IsSlotWorldReady(slot)) continue;
-        ++total;
-        if (g_inBed[slot]) ++count;
-    }
-    if (count != g_lastCount || total != g_lastTotal) {
-        g_lastCount = count;
-        g_lastTotal = total;
-        // The counter is waiting-room UI only: during the accelerate phase a
-        // count drop is the END transition, and "1/2 players sleeping"
-        // flashing right before "Sleep interrupted" reads as nonsense (the
-        // 00:28 probe smoke).
-        if (!g_accelerate && count > 0 && count < total) {
-            HostBroadcast(s, 1 /*Tally*/, 0, count, total);
-            PushCounterLine(count, total);
-            UE_LOGI("sleep_sync: tally %u/%u in bed", static_cast<unsigned>(count),
-                    static_cast<unsigned>(total));
-        }
-    }
-    if (!g_accelerate && count > 0 && count == total) {
-        HostBroadcast(s, 2 /*Accelerate*/, 0, count, total);
-        ApplyAccelerateLocal(s, true);
-    } else if (g_accelerate && count < total) {
-        // ANY drop ends the night. Natural iff the HOST is the one who woke
-        // with a full need (its native wake-check fired at >= 100; clients
-        // are clamped below the threshold and cannot end naturally; every
-        // other cause -- manual exit, hunger, event, nightmare -- interrupts).
-        float hostNeed = 0.f;
-        const bool natural = !g_inBed[0] && SLP::ReadSleepNeed(hostNeed) && hostNeed >= 99.5f;
-        // Zero the tally NOW: every peer's wakeup is about to report a falling
-        // edge; processing those against stale true flags would paint spurious
-        // "N/M sleeping" lines after the morning line.
-        for (bool& b : g_inBed) b = false;
-        g_lastCount = 0;
-        HostBroadcast(s, 3 /*End*/, natural ? 1 : 0, 0, total);
-        ApplyEndLocal(s, natural);
-    }
-}
-
-// The host's applications of a client's bed report, per sender (an instrument: the world_latest drill counts them).
+// ---- the host's side of a client's reports --------------------------------------------------------
+// The host's applications of a client's rest report, per sender (an instrument: the world_latest drill counts
+// them).
 coop::roster_ledger::PerSlotState<uint32_t> g_reportsApplied;
 
-// HOST: a client's changed bed flag, stored and tallied.
-void ApplyReport(coop::net::Session* s, int slot, bool inBed) {
-    g_inBed[slot] = inBed;
-    ++g_reportsApplied[slot];
-    HostRetally(s);
-}
-
-// A client's bed reports, the newest kept at a pace (coop/net/latest_wins.h). The flag on the wire is a level, the
-// bed's state, sent on its edge; a player's entries and exits peak at 1 a second and 3 in ten in the archived client
-// logs, and a changed flag retallies, which can broadcast a tally and a chat line or run the night's accelerate or
-// end: four at once, then one a second. A flag still owed when the night ends is paid after it like any other: only a
-// sender past its burst is ever owed, and it could send the same flag again. MTA applies a client's element data at
-// once (CGame.cpp:2757); paced here for the retally's cost.
-constexpr coop::net::IntentBudget kReportBudget{4.0f, 1.0f};
-struct PendingBed {
-    bool inBed = false;
+// A client's rest reports, the newest kept at a pace (coop/net/latest_wins.h). The state on the wire is a level,
+// sent on its edge; a player's entries and exits peak at 1 a second and 3 in ten in the archived client logs, and
+// a changed state is relayed to every client, so a sender past its burst costs every peer a message. A state still
+// owed when the player leaves is dropped with the slot; one still owed otherwise is paid like any other: only a
+// sender past its burst is ever owed, and it could send the same state again. MTA applies a client's element data
+// at once (CGame.cpp:2757); paced here for the relay's cost.
+constexpr coop::net::IntentBudget kRestBudget{4.0f, 1.0f};
+struct PendingRest {
+    SleepPeerState state = SleepPeerState::Awake;
+    WireKey bed{};
     coop::net::LatestWins pace;
 };
-coop::roster_ledger::PerSlotState<PendingBed> g_pending;
+coop::roster_ledger::PerSlotState<PendingRest> g_pending;
 
-void ReportLocalEdge(coop::net::Session* s, bool inBed) {
-    if (IsHost(s)) {
-        g_inBed[0] = inBed;
-        HostRetally(s);
-    } else {
-        coop::net::SleepStatePayload p{};
-        p.op = 0;  // Report
-        p.flag = inBed ? 1 : 0;
-        s->SendReliableToSlot(0, coop::net::ReliableKind::SleepState, &p, sizeof(p));
+bool HoldsRest(int slot, SleepPeerState state, const WireKey& bed) {
+    return g_state[slot] == state && SameBed(g_bed[slot], bed);
+}
+
+// HOST: a client's changed rest state, stored and relayed to every client but the reporter, as MTA's element-data
+// relay skips its source (CGame.cpp:2761, the skip at :2768). MTA relays to joined players only; ours is the same
+// through SendReliableToSlot's pre-world gate (coop/net/session.cpp:99).
+void ApplyRest(coop::net::Session* s, int slot, SleepPeerState state, const WireKey& bed) {
+    g_state[slot] = state;
+    g_bed[slot] = bed;
+    ++g_reportsApplied[slot];
+    SendPeerRest(s, -1, slot, slot);
+    UE_LOGI("sleep_sync: slot %d is now %d (bed '%.*s')", slot, static_cast<int>(state),
+            static_cast<int>(bed.len), bed.data);
+}
+
+// ---- this peer's own state ------------------------------------------------------------------------
+// The state of the gamemode now: dreaming over resting over awake. False while the flags do not resolve.
+bool ReadLocal(SleepPeerState* state, bool* sleeping) {
+    float asleep = 0.f, dreaming = 0.f;
+    namespace V = ue_wrap::vitals;
+    if (!V::Read(V::Field::Sleeping, &asleep) || !V::Read(V::Field::Dreaming, &dreaming)) return false;
+    *sleeping = asleep != 0.f;
+    *state = dreaming != 0.f ? SleepPeerState::Dreaming
+                             : (*sleeping ? SleepPeerState::Resting : SleepPeerState::Awake);
+    return true;
+}
+
+// A CLIENT: this peer's polled state to the host. Recorded as sent only when the transport took it.
+void SendClientRest(coop::net::Session* s) {
+    SleepStatePayload p{};
+    p.op = static_cast<uint8_t>(SleepOp::ClientRest);
+    p.state = static_cast<uint8_t>(g_localState);
+    p.bed = g_localBed;
+    if (s->SendReliableToSlot(0, coop::net::ReliableKind::SleepState, &p, sizeof(p))) {
+        g_sentState = g_localState;
+        g_sentBed = g_localBed;
     }
-    UE_LOGI("sleep_sync: local %s bed", inBed ? "entered" : "left");
 }
 
 }  // namespace
@@ -201,108 +207,120 @@ void Tick() {
     void* gm = ue_wrap::world_singleton::Gamemode();
     if (!gm) return;
 
-    // Fresh gamemode (boot / level reload): re-prime the edge state + re-apply
-    // the nightmare policy on the new instance (the signal_catch shape). A
-    // connected gamemode swap is unreachable in the session lifecycle today
-    // (level travel disconnects first), but a stranded accelerate/tally would
-    // be poisonous if it ever became reachable -- clear it all.
+    // A fresh gamemode (boot, level reload) starts awake with its own dreamProbability; what was
+    // published stays until the poll below compares it with the new one.
     if (gm != g_gmInst) {
         g_gmInst = gm;
-        g_lastInBed = SLP::IsSleeping();
-        g_waitUndone = false;
-        g_accelerate = false;
-        for (bool& b : g_inBed) b = false;
-        g_lastCount = g_lastTotal = 0;
-        if (s->connected()) ApplyDreamProbPolicy(s);
+        g_localState = SleepPeerState::Awake;
+        std::memset(&g_localBed, 0, sizeof(g_localBed));
+        g_localSleeping = false;
+        g_dreamProbSuppressed = false;
     }
 
-    if (!s->connected()) {
-        // Solo session (host with no peers yet): stock SP behavior, nothing
-        // gated. The policy/state re-arms on the first connect edge below.
+    SleepPeerState state = SleepPeerState::Awake;
+    bool sleeping = false;
+    if (!ReadLocal(&state, &sleeping)) return;
+    if (state != g_localState || sleeping != g_localSleeping) {
+        // The bed is read at the edge only: the gamemode sets it before isSleep rises, and a read per tick
+        // would allocate. Into a dream the bed is kept as published: the non-ariral wakeup() clears
+        // gamemode.bed before the dream, so a read there finds none.
+        WireKey bed{};
+        if (state == SleepPeerState::Dreaming && g_localState != SleepPeerState::Awake) bed = g_localBed;
+        else if (state != SleepPeerState::Awake) coop::net::WireKeyFromString(SLP::BedClassName(), bed);
+        g_localState = state;
+        g_localSleeping = sleeping;
+        g_localBed = bed;
+        UE_LOGI("sleep_sync: local state %d (sleeping %d, bed '%.*s')", static_cast<int>(state),
+                sleeping ? 1 : 0, static_cast<int>(bed.len), bed.data);
+    }
+
+    if (IsHost(s)) {
+        // The host's own state is published to every client on a change; while nobody is connected the
+        // tables still follow it, and a joiner is sent them (QueueConnectBroadcastForSlot).
+        if (sleeping != g_hostSleeping) {
+            g_hostSleeping = sleeping;
+            if (s->connected()) SendHostAsleep(s, -1);
+        }
+        if (!HoldsRest(0, g_localState, g_localBed)) {
+            g_state[0] = g_localState;
+            g_bed[0] = g_localBed;
+            if (s->connected()) SendPeerRest(s, -1, 0);
+        }
         return;
     }
 
-    const bool inBed = SLP::IsSleeping();
+    if (!s->connected()) return;
 
-    // One-shot per connect edge: make sure the nightmare policy is applied
-    // (covers the host-was-already-running case + the first client connect).
-    if (!g_dreamProbSuppressed && !g_accelerate) ApplyDreamProbPolicy(s);
+    // A client holds its nightmare rolls off for the session: a nightmare is the host's machine's roll alone.
+    if (!g_dreamProbSuppressed && SLP::SetDreamProbability(0.f)) g_dreamProbSuppressed = true;
 
-    // WAITING enforcement: a peer in bed outside the accelerate phase runs at
-    // dilation 1.0. Edge-latched -- the only native setter is the sleep()
-    // entry (@70543), so one undo per bed entry suffices; wakeup() itself
-    // restores 1.0 on every exit path. Covers ALL entries: bed interaction,
-    // the dev probe's reflected sleep(), and a host that was already asleep
-    // when the first client connected.
-    if (inBed && !g_accelerate && !g_waitUndone) {
-        // Latch ONLY on success: a transient world-context
-        // gap would otherwise skip the undo yet latch, stranding this peer at
-        // the native 20x for the whole wait. On failure we just retry next tick.
-        if (SLP::SetGlobalTimeDilation(1.0f)) {
-            g_waitUndone = true;
-            // Hold the camera AT THE BED while waiting: the native entry
-            // retargeted it to the sleepCam base shot, and the cinematic only
-            // belongs to the all-asleep phase
-            // (ApplyAccelerateLocal hands it back). Null-safe: if the pawn/
-            // controller is not up yet the view stays native -- cosmetic,
-            // never a gate blocker.
-            const bool held = SLP::SetSleepViewTarget(SLP::SleepingPawn());
-            UE_LOGI("sleep_sync: WAITING -- dilation undone to 1.0 (gate not full)%s",
-                    held ? ", camera held at the bed" : "");
-        }
-    } else if ((!inBed || g_accelerate) && g_waitUndone) {
-        g_waitUndone = false;
-    }
-
-    // The isSleep edge -> report (host tallies itself directly).
-    if (inBed != g_lastInBed) {
-        g_lastInBed = inBed;
-        ReportLocalEdge(s, inBed);
-    }
-
-    // CLIENT clamp during the phase: only the HOST ends the night naturally
-    // (one authority, no first-to-fill race; the full need is granted to
-    // everyone at a natural END anyway). Clamp at 98 -- STRICTLY below both
-    // the natural-wake check (>= 100) and wakeup's gearer-gift threshold
-    // (>= 99 at call time): a 99 clamp would make every clamped client roll
-    // the 10% gift inside the END wakeup. 1 float read per tick, only while
-    // accelerated and in bed.
-    if (g_accelerate && !IsHost(s) && inBed) {
-        float need = 0.f;
-        if (SLP::ReadSleepNeed(need) && need > 98.f) SLP::WriteSleepNeed(98.f);
-    }
+    if (g_localState != g_sentState || !SameBed(g_localBed, g_sentBed)) SendClientRest(s);
 }
 
-void OnReliable(const coop::net::SleepStatePayload& p, uint8_t senderSlot) {
+void OnReliable(const uint8_t* payload, size_t len, uint8_t senderSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
+    if (len != sizeof(SleepStatePayload)) return Refuse("length", senderSlot);
+    SleepStatePayload p{};
+    std::memcpy(&p, payload, sizeof(p));
+    if (p.op > static_cast<uint8_t>(SleepOp::PeerRest)) return Refuse("op", senderSlot);
+    if (p.state > static_cast<uint8_t>(p.op == static_cast<uint8_t>(SleepOp::HostAsleep)
+                                           ? SleepPeerState::Resting
+                                           : SleepPeerState::Dreaming))
+        return Refuse("state", senderSlot);
+    BedRefusal fault{};
+    if (BedFaulty(p.bed, &fault)) return RefuseBed(fault, senderSlot);
+    if (p.op == static_cast<uint8_t>(SleepOp::HostAsleep)) {
+        if (p.slot != 0) return Refuse("slot", senderSlot);
+        if (p.bed.len != 0) return Refuse("bed", senderSlot);
+    }
+
     if (IsHost(s)) {
-        // Host ingests Reports only; trust = the transport sender slot.
-        if (p.op != 0) return;
-        if (senderSlot == 0 || senderSlot >= coop::net::kMaxPeers) return;
-        PendingBed& pend = g_pending[senderSlot];
-        const bool inBed = p.flag != 0;
-        if (g_inBed[senderSlot] == inBed) {
+        // The host takes a client's own state only, from the transport's sender slot.
+        if (p.op != static_cast<uint8_t>(SleepOp::ClientRest)) return Refuse("op for the host", senderSlot);
+        if (senderSlot == 0 || senderSlot >= coop::net::kMaxPeers) return Refuse("sender", senderSlot);
+        if (p.slot != 0) return Refuse("slot", senderSlot);
+        // MTA acts on a joined player's reports only (CGame.cpp:2376; coop/interactables/dish_calib_sync.cpp).
+        if (!s->IsSlotWorldReady(senderSlot)) return Refuse("slot", senderSlot);
+        const SleepPeerState state = static_cast<SleepPeerState>(p.state);
+        if (state == SleepPeerState::Awake && p.bed.len != 0) return RefuseBed(BedRefusal::AwakeWithBed, senderSlot);
+        PendingRest& pend = g_pending[senderSlot];
+        if (HoldsRest(senderSlot, state, p.bed)) {
             pend.pace.Withdraw();
             return;
         }
-        pend.inBed = inBed;
-        if (pend.pace.Offer(kReportBudget, coop::net::NowMs())) ApplyReport(s, senderSlot, inBed);
+        pend.state = state;
+        pend.bed = p.bed;
+        if (pend.pace.Offer(kRestBudget, coop::net::NowMs())) ApplyRest(s, senderSlot, state, p.bed);
         return;
     }
-    // Client: phase broadcasts from the host only (transport-trusted slot 0).
-    if (senderSlot != 0) return;
-    switch (p.op) {
-    case 1:  // Tally
-        PushCounterLine(p.count, p.total);
+
+    // A client takes the host's word only (the transport's slot 0).
+    if (senderSlot != 0) return Refuse("sender", senderSlot);
+    switch (static_cast<SleepOp>(p.op)) {
+    case SleepOp::HostAsleep: {
+        const bool now = p.state != 0;
+        if (now && !g_hostSleeping) PushHostAsleepLine();
+        if (now != g_hostSleeping) UE_LOGI("sleep_sync: the host is %s", now ? "asleep" : "awake");
+        g_hostSleeping = now;
+        // The host refuses a rest from a slot it does not yet hold world-ready, so a rest sent early is sent
+        // again here (the connect broadcast reaches this slot only once it is); a held one is dropped there.
+        if (g_localState != SleepPeerState::Awake) SendClientRest(s);
         break;
-    case 2:  // Accelerate
-        ApplyAccelerateLocal(s, true);
+    }
+    case SleepOp::PeerRest: {
+        if (p.slot >= coop::net::kMaxPeers) return Refuse("slot", senderSlot);
+        const SleepPeerState state = static_cast<SleepPeerState>(p.state);
+        if (!HoldsRest(p.slot, state, p.bed)) {
+            g_state[p.slot] = state;
+            g_bed[p.slot] = p.bed;
+            UE_LOGI("sleep_sync: peer %u is now %d (bed '%.*s')", static_cast<unsigned>(p.slot),
+                    static_cast<int>(state), static_cast<int>(p.bed.len), p.bed.data);
+        }
         break;
-    case 3:  // End
-        ApplyEndLocal(s, p.flag != 0);
-        break;
+    }
     default:
+        Refuse("op for a client", senderSlot);
         break;
     }
 }
@@ -311,65 +329,72 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !IsHost(s)) return;
     if (peerSlot <= 0 || peerSlot >= static_cast<int>(coop::net::kMaxPeers)) return;
-    g_inBed[peerSlot] = false;  // a joiner arrives awake
-    // A running phase cannot survive an awake arrival; a waiting tally just
-    // re-counts (the joiner now holds the gate open until it sleeps too).
-    HostRetally(s);
+    SendHostAsleep(s, peerSlot);
+    for (int slot = 0; slot < static_cast<int>(coop::net::kMaxPeers); ++slot)
+        if (g_state[slot] != SleepPeerState::Awake) SendPeerRest(s, peerSlot, slot);
 }
 
 void OnDisconnectForSlot(int slot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !IsHost(s)) return;
     if (slot <= 0 || slot >= static_cast<int>(coop::net::kMaxPeers)) return;
-    if (!g_inBed[slot]) {
-        // An awake leaver may have been the one holding the gate open.
-        HostRetally(s);
-        return;
-    }
-    g_inBed[slot] = false;
-    HostRetally(s);
+    g_pending[slot].pace.Withdraw();
+    if (g_state[slot] == SleepPeerState::Awake) return;  // every client already holds it awake
+    g_state[slot] = SleepPeerState::Awake;
+    std::memset(&g_bed[slot], 0, sizeof(WireKey));
+    SendPeerRest(s, -1, slot);
 }
 
-bool InAcceleratePhase() { return g_accelerate; }
+SleepPeerState PeerState(int slot) {
+    return (slot >= 0 && slot < static_cast<int>(coop::net::kMaxPeers)) ? g_state[slot]
+                                                                         : SleepPeerState::Awake;
+}
+
+bool HostAsleepNow() {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (s && !IsHost(s)) return g_hostSleeping;
+    return SLP::IsSleeping();
+}
 
 void PayOwed(coop::net::Session& session) {
     if (session.role() != coop::net::Role::Host) return;
     uint64_t now = 0;  // read once, and only when a report is owed
     for (int slot = 1; slot < static_cast<int>(coop::net::kMaxPeers); ++slot) {
-        PendingBed& pend = g_pending[slot];
+        PendingRest& pend = g_pending[slot];
         if (!pend.pace.Owed()) continue;
-        if (g_inBed[slot] == pend.inBed) {  // the night's end or the slot's own arrival got there first
+        if (HoldsRest(slot, pend.state, pend.bed)) {  // the slot's own arrival or leaving got there first
             pend.pace.Withdraw();
             continue;
         }
         if (now == 0) now = coop::net::NowMs();
-        if (pend.pace.Due(kReportBudget, now)) ApplyReport(&session, slot, pend.inBed);
+        if (pend.pace.Due(kRestBudget, now)) ApplyRest(&session, slot, pend.state, pend.bed);
     }
 }
 
 uint32_t ReportsApplied(int slot) { return g_reportsApplied[slot]; }
 
-bool InBed(int slot) {
-    return slot >= 0 && slot < static_cast<int>(coop::net::kMaxPeers) && g_inBed[slot];
+uint32_t BedRefusalsFrom(int slot, BedRefusal why) {
+    return g_bedRefused[slot].n[static_cast<int>(why)];
 }
 
-bool LocalInBed() { return g_lastInBed; }
+bool LocalInBed() { return g_localState != SleepPeerState::Awake; }
 
 void OnDisconnect() {
-    // Restore the SP nightmare sentinel + normal time policy. A peer still in
-    // bed keeps sleeping -- with the session gone its world is SP again and
-    // the native 20x timelapse is exactly the stock behavior; time_sync's own
-    // OnDisconnect hands the client's clock back.
+    // Restore the SP nightmare sentinel. A host still asleep keeps sleeping: its timelapse was the game's own
+    // all along. A client that loses its session leaves to the menu; its world stays at 1, which is what it ran.
     if (g_dreamProbSuppressed) {
         SLP::SetDreamProbability(-1.f);
         g_dreamProbSuppressed = false;
     }
-    g_accelerate = false;
-    g_waitUndone = false;
-    g_lastInBed = false;
+    g_localState = SleepPeerState::Awake;
+    std::memset(&g_localBed, 0, sizeof(g_localBed));
+    g_localSleeping = false;
     g_gmInst = nullptr;
-    for (bool& b : g_inBed) b = false;
-    g_lastCount = g_lastTotal = 0;
+    for (auto& st : g_state) st = SleepPeerState::Awake;
+    std::memset(g_bed, 0, sizeof(g_bed));
+    g_hostSleeping = false;
+    g_sentState = SleepPeerState::Awake;
+    std::memset(&g_sentBed, 0, sizeof(g_sentBed));
 }
 
 }  // namespace coop::sleep_sync

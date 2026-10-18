@@ -435,9 +435,8 @@ void Tick() {
     g_lastDriverMs = now;
 
     if (!g_parkInstalled && !g_parkRefused) Install(s);
-    // Before this lane's own resolve gate: a tie a hook built before the members resolved waits a
-    // bounded time and is then let go with a warning, which behind a gate that never opens -- a
-    // build whose hook members differ -- it would never be.
+    // Before this lane's own resolve gate: the watch needs the hook class names and the gate's name
+    // resolve, not the member table.
     coop::hook_constraint::Tick();
     if (!H::EnsureResolved()) return;
 
@@ -490,6 +489,7 @@ void OnStateMsg(const coop::net::HookStatePayload& p, int senderPeerSlot) {
         it->second.tailAttached = AttachTailToSlotBody(m, slot);
     }
     Mirror& row = it->second;
+    row.biteEid = (p.flags & coop::net::kHookStateBitten) ? p.biteEid : 0u;
     void* m = row.ref.Get();
     if (!m) return;
 
@@ -563,6 +563,24 @@ void OnDestroyMsg(const coop::net::HookDestroyPayload& p, int senderPeerSlot) {
                     "it, so nobody is left holding a hook the others cannot see", (unsigned)p.seq);
         }
     }
+}
+
+bool HasMirrorFrom(int ownerSlot, bool tied) {
+    if (!GT::IsGameThread() || ownerSlot < 0 || ownerSlot >= coop::players::kMaxPeers) return false;
+    for (const auto& kv : Mirrors()) {
+        if (SlotOf(kv.first) != static_cast<uint8_t>(ownerSlot) || !kv.second.ref.Alive()) continue;
+        if (!tied || kv.second.bitten) return true;
+    }
+    return false;
+}
+
+uint32_t BittenEidFrom(int ownerSlot) {
+    if (!GT::IsGameThread() || ownerSlot < 0 || ownerSlot >= coop::players::kMaxPeers) return 0;
+    for (const auto& kv : Mirrors()) {
+        if (SlotOf(kv.first) != static_cast<uint8_t>(ownerSlot) || !kv.second.ref.Alive()) continue;
+        if (kv.second.biteEid != 0) return kv.second.biteEid;
+    }
+    return 0;
 }
 
 void OnPeerLeftSlot(int slot) {

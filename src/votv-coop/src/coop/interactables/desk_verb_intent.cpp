@@ -8,10 +8,13 @@
 #include "coop/interactables/desk_verb_effects.h"
 #include "coop/interactables/signal_wire.h"
 #include "coop/net/intent_bucket.h"
+#include "coop/net/intent_queue.h"
+#include "coop/net/net_clock.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/player/roster_ledger.h"  // PerSlotState
 #include "coop/props/prop_sound.h"
 
 #include "ue_wrap/core/log.h"
@@ -25,8 +28,6 @@
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
-#include <chrono>
-#include <deque>
 
 namespace coop::desk_verb_intent {
 namespace {
@@ -38,7 +39,6 @@ namespace DC = ue_wrap::drive_chain;
 namespace SD = ue_wrap::signal_dynamic;
 namespace DV = coop::net::desk_verb;
 using coop::net::DeskVerbPayload;
-using Clock = std::chrono::steady_clock;
 
 constexpr int kTagPress = 0x44565001;  // 'DVP' 1
 UE_FACT_FN(kRowActionOptionIndex, "desk_verb_intent", L"analogDScreenTest_C", L"actionOptionIndex", Declared);
@@ -68,20 +68,15 @@ bool     g_watchRefused = false;  // refused or settled dead: said once, and the
 bool     g_saidOffline = false;
 uint32_t g_pressSeq = 0;  // CLIENT: this machine's press count
 
-struct Bucket {
-    coop::net::IntentBucket rate;
-    Clock::time_point       nextSay{};
+// One sender: its queued presses with their bucket, and the latches that clear with its occupant.
+struct Slot {
+    coop::net::IntentQueue<DeskVerbPayload> queue;
+    uint64_t nextSayMs = 0;      // the full queue's drop, said once in kSayEveryMs
+    bool     waitSaid  = false;  // a wait for the body, said once a streak
 };
-Bucket g_rate[coop::net::kMaxPeers];
-std::deque<DeskVerbPayload> g_pending[coop::net::kMaxPeers];
-bool g_waitSaid[coop::net::kMaxPeers] = {};
+coop::roster_ledger::PerSlotState<Slot> g_slots;
 
 unsigned long long g_sent = 0, g_ran = 0, g_refused = 0, g_dropped = 0, g_heard = 0;
-
-bool TakeToken(uint8_t slot) {
-    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
-    return g_rate[slot].rate.Take(kBudget, static_cast<uint64_t>(now));
-}
 
 // ---- what a button acts on ----------------------------------------------------------------------------------
 
@@ -275,8 +270,8 @@ bool Execute(coop::net::Session& s, const DeskVerbPayload& p, uint8_t slot) {
     if (!desk_verb_effects::Ready()) return false;
     const EL::IntentSubject subj = EL::IntentTarget::ForClientIntent(s, slot, kDeskReachUU).Authorize(desk);
     if (subj.outcome == EL::IntentOutcome::NoBody) {
-        if (!g_waitSaid[slot]) {
-            g_waitSaid[slot] = true;
+        if (!g_slots[slot].waitSaid) {
+            g_slots[slot].waitSaid = true;
             UE_LOGI("desk_verb: slot %u's desk presses wait: the host has no body for it yet",
                     static_cast<unsigned>(slot));
         }
@@ -357,13 +352,12 @@ void Tick(coop::net::Session& session) {
     }
     if (!session.running() || session.role() != coop::net::Role::Host) return;
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
-        if (g_pending[slot].empty() || !TakeToken(slot)) continue;
-        if (Execute(session, g_pending[slot].front(), slot)) {
-            g_pending[slot].pop_front();
-            g_waitSaid[slot] = false;  // a consumed press ends the wait's streak
-        } else {
-            g_rate[slot].rate.Refund(kBudget);  // a wait runs nothing, so it spends no token
-        }
+        Slot& sl = g_slots[slot];
+        sl.queue.Serve(kBudget, coop::net::NowMs, [&](const DeskVerbPayload& p) {
+            if (!Execute(session, p, slot)) return coop::net::Served::Wait;  // a wait runs nothing: no token spent
+            sl.waitSaid = false;  // a consumed press ends the wait's streak
+            return coop::net::Served::Done;
+        });
     }
 }
 
@@ -374,18 +368,17 @@ void OnMessage(coop::net::Session& session, const DeskVerbPayload& p, int sender
             return;
         }
         const uint8_t slot = static_cast<uint8_t>(senderSlot);
-        if (g_pending[slot].size() >= kMaxPending) {
+        Slot& sl = g_slots[slot];
+        DeskVerbPayload copy = p;
+        if (!sl.queue.Push(std::move(copy), kMaxPending)) {
             ++g_dropped;
-            Bucket& b = g_rate[slot];
-            const Clock::time_point now = Clock::now();
-            if (now >= b.nextSay) {
-                b.nextSay = now + std::chrono::milliseconds(kSayEveryMs);
+            const uint64_t now = coop::net::NowMs();
+            if (now >= sl.nextSayMs) {
+                sl.nextSayMs = now + kSayEveryMs;
                 UE_LOGW("desk_verb: slot %u's queue is full (%zu) -- its presses are dropped until it drains",
-                        static_cast<unsigned>(slot), g_pending[slot].size());
+                        static_cast<unsigned>(slot), sl.queue.size());
             }
-            return;
         }
-        g_pending[slot].push_back(p);
         return;
     }
     // A client hears DeskVerb from the host alone: the kind is never relayed.
@@ -393,18 +386,10 @@ void OnMessage(coop::net::Session& session, const DeskVerbPayload& p, int sender
     else if (p.op == DV::kOpGloss || p.op == DV::kOpSound || p.op == DV::kOpStat) desk_verb_effects::OnEffect(p);
 }
 
-void OnPeerLeft(uint8_t slot) {
-    if (slot >= coop::net::kMaxPeers) return;
-    g_pending[slot].clear();
-    g_rate[slot] = Bucket{};
-    g_waitSaid[slot] = false;
-}
-
 void OnDisconnect() {
     if (g_sent || g_ran || g_refused || g_dropped || g_heard)
         UE_LOGI("desk_verb: session end -- sent=%llu ran=%llu refused=%llu dropped=%llu verdicts heard=%llu", g_sent,
                 g_ran, g_refused, g_dropped, g_heard);
-    for (uint8_t slot = 0; slot < coop::net::kMaxPeers; ++slot) OnPeerLeft(slot);
     g_sent = g_ran = g_refused = g_dropped = g_heard = 0;
     g_saidOffline = false;
     desk_verb_effects::OnDisconnect();

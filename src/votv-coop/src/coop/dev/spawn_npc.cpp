@@ -37,23 +37,23 @@ namespace {
 // materialize a mirror. This is the ONLY programmatic NPC-spawn trigger (VOTV NPCs spawn
 // only from purchase/scripted events). Game thread only. The spawn refs come from
 // npc_sync::GetDevSpawnRefs.
-void SpawnNpcAt(const wchar_t* className, const ue_wrap::FTransform& xform) {
+void* SpawnNpcAt(const wchar_t* className, const ue_wrap::FTransform& xform) {
     using ue_wrap::ParamFrame;
     using ue_wrap::Call;
     coop::npc_sync::DevSpawnRefs refs;
     if (!coop::npc_sync::GetDevSpawnRefs(refs)) {
         UE_LOGW("spawn_npc: NPC spawn refs not ready (Install not complete?) -- ignoring");
-        return;
+        return nullptr;
     }
     void* actorClass = R::FindClass(className);
     if (!actorClass) {
         UE_LOGW("spawn_npc: class '%ls' not found in GUObjectArray -- ignoring", className);
-        return;
+        return nullptr;
     }
     void* worldCtx = E::GetWorldContext();
     if (!worldCtx) {
         UE_LOGW("spawn_npc: no world context -- ignoring");
-        return;
+        return nullptr;
     }
     constexpr uint8_t kAlwaysSpawn = 1;  // ESpawnActorCollisionHandlingMethod::AlwaysSpawn
     void* spawned = nullptr;
@@ -61,7 +61,7 @@ void SpawnNpcAt(const wchar_t* className, const ue_wrap::FTransform& xform) {
         ParamFrame begin(refs.beginDeferredFn);
         if (!begin.valid()) {
             UE_LOGE("spawn_npc: ParamFrame(BeginDeferred) invalid");
-            return;
+            return nullptr;
         }
         begin.Set<void*>(L"WorldContextObject", worldCtx);
         begin.Set<void*>(L"ActorClass", actorClass);
@@ -73,31 +73,32 @@ void SpawnNpcAt(const wchar_t* className, const ue_wrap::FTransform& xform) {
         // returns false (lets the spawn proceed). (Dev spawns are host-side.)
         if (!Call(refs.gsCdo, begin)) {
             UE_LOGE("spawn_npc: BeginDeferred call failed for '%ls'", className);
-            return;
+            return nullptr;
         }
         spawned = begin.Get<void*>(L"ReturnValue");
     }
     if (!spawned) {
         UE_LOGE("spawn_npc: BeginDeferred returned null for '%ls' (suppressed / not host?)",
                 className);
-        return;
+        return nullptr;
     }
     {
         ParamFrame finish(refs.finishSpawnFn);
         if (!finish.valid()) {
             UE_LOGE("spawn_npc: ParamFrame(FinishSpawning) invalid -- actor %p half-spawned",
                     spawned);
-            return;
+            return nullptr;
         }
         finish.Set<void*>(L"Actor", spawned);
         finish.SetRaw(L"SpawnTransform", &xform, sizeof(xform));
         if (!Call(refs.gsCdo, finish)) {
             UE_LOGE("spawn_npc: FinishSpawningActor call failed for %p '%ls'", spawned, className);
-            return;
+            return nullptr;
         }
     }
     UE_LOGI("spawn_npc: spawned '%ls' actor=%p at (%.0f, %.0f, %.0f)",
             className, spawned, xform.TX, xform.TY, xform.TZ);
+    return spawned;
 }
 
 // Spawn ~2.5 m in front of the local player at their view yaw (NO turn-to-face -- the
@@ -210,6 +211,14 @@ DWORD WINAPI FileTriggerThread(LPVOID) {
 }
 
 }  // namespace
+
+void* SpawnAt(const wchar_t* className, const ue_wrap::FVector& at) {
+    ue_wrap::FTransform xform{};
+    xform.TX = at.X;
+    xform.TY = at.Y;
+    xform.TZ = at.Z;
+    return SpawnNpcAt(className, xform);
+}
 
 void SpawnKerfurOmega() { PostSpawnKerfur(); }
 void SpawnKillerWisp()  { PostSpawnClass(P::name::NpcClass_KillerWisp); }
