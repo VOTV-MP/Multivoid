@@ -263,7 +263,7 @@ void RemotePlayer::SetVitals(float health01, float food01, float sleep01) {
 void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
     if (!valid()) { actor_ = nullptr; return; }
 
-    // The vitals ride the pose packet and snap (display only, the nameplate bar); before the
+    // The vitals ride the pose packet and snap (the nameplate bar, the hit judge's alive test); before the
     // interpolation branches, so they apply on the first packet, a teleport snap and the normal
     // path.
     SetVitals(coop::net::DequantizeUnitFraction(snap.healthFrac),

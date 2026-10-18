@@ -108,11 +108,11 @@ public:
     void SetNickname(std::wstring name);
     const std::wstring& GetNickname() const { return nickname_; }
 
-    // Display-only vitals, each a [0,1] fraction streamed in every PoseSnapshot (health over
-    // maxHealth; food and sleep over kVitalScalarMax). Set from SetTargetPose; the nameplate reads
-    // GetHealth for its bar. They never touch a saveSlot, since a puppet write would corrupt the
-    // local player's persisted health. SetVitals also edge-detects a health decrease and arms the
-    // hurt flash. Game thread only.
+    // The streamed vitals, each a [0,1] fraction from every PoseSnapshot (health over maxHealth;
+    // food and sleep over kVitalScalarMax). Set from SetTargetPose; the nameplate reads GetHealth
+    // for its bar, and the host's hit judge refuses a swing when it is 0. They never touch a
+    // saveSlot, since a puppet write would corrupt the local player's persisted health. SetVitals
+    // also edge-detects a health decrease and arms the hurt flash. Game thread only.
     void SetVitals(float health01, float food01, float sleep01);
     float GetHealth() const { return health_; }
     float GetFood() const { return food_; }

@@ -1136,8 +1136,9 @@ struct PoseSnapshot {
     float   headYawDelta;
     float   speed;
     uint8_t stateBits;
-    // Vitals, display only: each peer packs its own, the receiver draws the nameplate bar and
-    // never writes them back to a save. Continuous and lossy; they never trigger a state change.
+    // Vitals: each peer packs its own, the receiver draws the nameplate bar and never writes them
+    // back to a save. Continuous and lossy. One reader acts on one: the host's hit judge refuses a
+    // swinger whose healthFrac is 0 (only a health of zero or less encodes as 0).
     uint8_t healthFrac;  // health / maxHealth, quantized 0..255 (maxHealth is per-peer)
     uint8_t foodFrac;    // food  / kVitalScalarMax, quantized 0..255
     uint8_t sleepFrac;   // sleep / kVitalScalarMax, quantized 0..255
@@ -1156,12 +1157,12 @@ inline constexpr uint8_t kStateBitBurning = 0x04;  // the source's body is on fi
 // normalised by the peer's own max health before quantisation; food and sleep by this.
 inline constexpr float kVitalScalarMax = 100.0f;
 
-// Encode a [0,1] fraction as a byte (round-to-nearest, clamped). The exact
-// inverse pair lives here so sender + receiver can never drift. Only zero encodes as 0: a
-// positive fraction below half a step rounds up to 1, so a living player's health (the host's
-// hit judge refuses a swinger whose streamed health is 0) never reads as dead.
+// Encode a [0,1] fraction as a byte (round-to-nearest, clamped). The exact inverse pair lives
+// here so sender + receiver can never drift. Only zero or less (or NaN) encodes as 0: a positive
+// fraction below half a step rounds up to 1, so a living player's health (the host's hit judge
+// refuses a swinger whose streamed health is 0) never reads as dead.
 inline uint8_t QuantizeUnitFraction(float f01) {
-    if (f01 <= 0.f) return 0;
+    if (!(f01 > 0.f)) return 0;  // zero, below, or NaN
     if (f01 >= 1.f) return 255;
     const uint8_t b = static_cast<uint8_t>(f01 * 255.f + 0.5f);
     return b == 0 ? 1 : b;

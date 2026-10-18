@@ -125,8 +125,8 @@ bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) 
     }
     // The vitals (health fraction, food, sleep) in three bytes: ue_wrap::vitals reads this
     // machine's UsaveSlot_C, so each peer packs its own. Full (255) until the save resolves, so a
-    // booting peer does not flash an empty bar; the receiver treats them as display only. O(1)
-    // reads after the one-time resolve.
+    // booting peer does not flash an empty bar; the receiver draws them, and the host's hit judge
+    // reads a health of 0 as dead. O(1) reads after the one-time resolve.
     out.healthFrac = out.foodFrac = out.sleepFrac = 255;
     {
         namespace V = ue_wrap::vitals;
