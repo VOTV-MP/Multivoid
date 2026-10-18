@@ -20,11 +20,14 @@ const char* PhaseName();
 std::string EndLine();
 
 // The host's two lines of the hook steps: its own hook pulls the first crowbar; the client's hook pulls the second.
-// HookedLine adds the layout's relay count ("<said> n=<relays>;"), so a line of an earlier layout never satisfies the
-// client's wait on its current one.
+// Both lines carry the layout's relay count ("<said> n=<relays>"), so a line of an earlier layout never satisfies the
+// client's wait on its current one. The host-hooked line also names the element id of the crowbar the host's hook holds
+// ("<said> n=<relays> eid=<E>;"), so the client binds the two crowbars' roles by what the host says, not by distance.
 inline constexpr const char* kHostHookedSaid = "remover-drill host-hooked";
 inline constexpr const char* kSelfHookedSaid = "remover-drill self-hooked";
 std::string HookedLine(const char* said, int relays);
+std::string HostHookedPrefix(int relays);              // "<said> n=<relays> eid=": what the client searches for
+std::string HostHookedLine(int relays, uint32_t eid);  // that prefix, the id and ";": what the host says
 
 inline constexpr int      kSweepFloor   = 10;   // the fewest ring props in sight that make the sweep a measurement
 inline constexpr uint64_t kCheckEveryMs = 250;

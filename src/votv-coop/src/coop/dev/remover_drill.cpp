@@ -12,6 +12,7 @@
 #include "coop/net/session.h"
 #include "coop/element/registry.h"
 #include "coop/player/players_registry.h"
+#include "coop/props/remote_prop.h"  // ResolveLiveActorByEid
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
 
@@ -32,6 +33,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <utility>
@@ -129,6 +131,42 @@ int NoticeCount(const char* text) {
         if (r.line.find(text) != std::string_view::npos) ++n;
     });
     return n;
+}
+
+// The element id the host's host-hooked line of this layout names, read from this client's feed; false while none stands.
+bool ReadHostHookedEid(uint32_t& eid) {
+    const std::string prefix = HostHookedPrefix(g_relay);
+    bool found = false;
+    coop::chat_feed::ForEachRow([&](const coop::chat_feed::RowView& r) {
+        const size_t at = r.line.find(prefix);
+        if (at == std::string_view::npos) return;
+        const std::string tail(r.line.substr(at + prefix.size()));
+        char* end = nullptr;
+        const unsigned long v = std::strtoul(tail.c_str(), &end, 10);
+        if (end == tail.c_str() || *end != ';') return;
+        eid = static_cast<uint32_t>(v);
+        found = true;
+    });
+    return found;
+}
+
+// Binds the crowbars' roles to what the host named: the crowbar its hook holds is g_hostHooked, the other g_selfHooked.
+// Fails the drill (false) when the host's crowbar is neither of this client's two.
+bool BindHookedRoles(uint32_t hostEid) {
+    void* named = coop::remote_prop::ResolveLiveActorByEid(hostEid);
+    if (named && named == g_selfHooked.Get()) {
+        void* was = g_hostHooked.Get();
+        g_hostHooked.Set(named);
+        g_selfHooked.Set(was);
+    } else if (!named || named != g_hostHooked.Get()) {
+        char why[140];
+        std::snprintf(why, sizeof(why), "the host's hooked crowbar, eid %u, is neither of this client's crowbars", hostEid);
+        Fail(why);
+        return false;
+    }
+    UE_LOGI("[REMOVER-DRILL] client: crowbar roles bound by the host's eid -- host-hooked eid %u, self-hooked eid %u",
+            hostEid, static_cast<unsigned>(EL::Registry::Get().EidForActor(g_selfHooked.Get())));
+    return true;
 }
 
 void DestroyIfLive(void* actor) {
@@ -242,8 +280,9 @@ void* NearestNpc(const FVector& from) {
 }
 
 // The host's roles, each a class of its own (the single prop a medium sack, the mashed one a small sack, the ring plain
-// sacks, the creature a kerfurOmega, the two crowbars the nearer and the farther of their class), so a role is found by
-// what it is and not by where physics left it. Fills the client's roles; false while the host's props are not all here.
+// sacks, the creature a kerfurOmega, the two crowbars the nearer and the farther of their class until the host's
+// host-hooked line rebinds them by its eid at the hook step), so a role is found by what it is and not by where physics
+// left it. Fills the client's roles; false while the host's props are not all here.
 // Whether the camera can press each is Choose's, once they rest.
 bool Find(void* player) {
     FVector me{};
@@ -528,9 +567,10 @@ void ClientTick(coop::net::Session* s) {
         if (NoticeCount(kUnsupported) > g_noticeBase) { LegPass("unsupported", Step::HostHooked); return; }
         if (Expired(kLegBoundMs)) Fail("the remover's refusal of the creature was not shown within 30 s");
         return;
-    case Step::HostHooked:
+    case Step::HostHooked: {
         // The host's own hook must pull the first crowbar before the press; its line says the claim pass reads it.
-        if (NoticeCount(HookedLine(kHostHookedSaid, g_relay).c_str()) == 0) {
+        uint32_t hostEid = 0;
+        if (!ReadHostHookedEid(hostEid)) {
             if (Expired(kHostHookBoundMs)) {
                 char why[120];
                 std::snprintf(why, sizeof(why), "the host never said its hook pulls the first crowbar within %u s",
@@ -539,8 +579,10 @@ void ClientTick(coop::net::Session* s) {
             }
             return;
         }
+        if (!BindHookedRoles(hostEid)) return;
         if (FireOrFail(player, g_hostHooked, kHeldNotice)) Next(Step::HostHookedWait);
         return;
+    }
     case Step::HostHookedWait:
         if (!g_hostHooked.Alive()) { Fail("the crowbar the host's hook pulls was removed on this client"); return; }
         if (NoticeCount(kHeldNotice) > g_noticeBase) { LegPass("host-hooked", Step::SelfHooked); return; }
@@ -613,6 +655,14 @@ void End(const char* role, const char* word, const char* what, bool warn) {
 
 std::string HookedLine(const char* said, int relays) {
     return std::string(said) + " n=" + std::to_string(relays) + ";";
+}
+
+std::string HostHookedPrefix(int relays) {
+    return std::string(kHostHookedSaid) + " n=" + std::to_string(relays) + " eid=";
+}
+
+std::string HostHookedLine(int relays, uint32_t eid) {
+    return HostHookedPrefix(relays) + std::to_string(eid) + ";";
 }
 
 // The item's cancel for a hook this drill planted: the field the plant wrote is cleared whether or not the hook still

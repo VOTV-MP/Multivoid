@@ -8,6 +8,7 @@
 #include "coop/dev/director/director.h"
 #include "coop/dev/hook_plant.h"
 #include "coop/dev/remover_drill_layout.h"
+#include "coop/element/registry.h"
 #include "coop/items/hook_sync.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -153,13 +154,17 @@ void HostHookTick() {
         g_hookStep = HookStep::Pulling;
         return;
     }
-    case HookStep::Pulling:
+    case HookStep::Pulling: {
         if (!first || !(coop::hook_sync::PlayerHookHolders(first) & kHostBit)) return;
+        // The element the host's registry holds for the crowbar its hook pulls: the client binds its roles by it.
+        const coop::element::ElementId firstEid = coop::element::Registry::Get().EidForActor(first);
+        if (firstEid == coop::element::kInvalidId) return;
         g_heldBase = Answered(coop::net::RemoverReason::Held);
-        coop::chat_sync::QueueSend(HookedLine(kHostHookedSaid, layout::RelaysDone()));
+        coop::chat_sync::QueueSend(HostHookedLine(layout::RelaysDone(), firstEid));
         UE_LOGI("[REMOVER-DRILL] host: the claim pass reads its hook on the first crowbar; host-hooked said");
         g_hookStep = HookStep::Answering;
         return;
+    }
     case HookStep::Answering:
         if (Answered(coop::net::RemoverReason::Held) < g_heldBase + 1) return;
         ReleaseHook(g_hostHook);
