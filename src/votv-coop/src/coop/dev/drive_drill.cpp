@@ -189,13 +189,6 @@ bool InventoryHoldsKey(const std::wstring& key) {
     return false;
 }
 
-// Whether a player's press could gather `drive`: the game refuses a child actor, and a prop neither frozen nor
-// simulating on its root ("Cannot gather object"), so the drill tries no other.
-bool Gatherable(void* drive) {
-    return !E::IsChildActor(drive) &&
-           (ue_wrap::prop::IsFrozen(drive) || E::IsActorRootSimulatingPhysics(drive));
-}
-
 // The first client runs the steps; a second, the rig's observer, only watches: the lanes it hears the first client's
 // edits through are the host's relays, which its own drive lane's log names by their source slot.
 bool g_observerSaid = false;
@@ -361,6 +354,13 @@ void ClientTick() {
             Abandon("a drive could not be spawned at this client's player");
             return;
         }
+        // A drive turns its physics on only as it leaves a slot (prop_drive's drivePulledOut); one spawned into the
+        // world neither simulates nor is frozen, so no player could gather it. The born drive is made one that left
+        // its slot, so the re-placement below gathers it as a player would.
+        if (!E::SetActorSimulatePhysics(g_own.Get(), true)) {
+            Abandon("the born drive's physics could not be turned on");
+            return;
+        }
         UE_LOGI("[DRIVE-DRILL] client: the eraser showed the host's press; spawned a drive with the row '%ls'", kBorn);
         Next(Step::Born);
         return;
@@ -380,7 +380,7 @@ void ClientTick() {
             Fail("the born drive was gone before its pocket");
             return;
         }
-        if (!Gatherable(g_own.Get())) {
+        if (!ue_wrap::prop::IsGatherable(g_own.Get())) {
             if (Expired(kLegBoundMs)) Fail("the born drive never came to rest gatherable");
             return;
         }

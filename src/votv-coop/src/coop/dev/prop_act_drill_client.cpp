@@ -187,7 +187,7 @@ void ClientRead(const Row& row, void* player) {
         return;
     }
     if (g_mirror.Alive()) {
-        ClientFail(row, "the mirror stayed after the host's answer");
+        ClientFail(row, std::string("the mirror stayed after the host's answer") + MirrorState(g_mirror.Get()));
         return;
     }
     if (g_ceid != EL::kInvalidId && EL::LivePropActor(g_ceid)) {
@@ -424,7 +424,7 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         // A host mirror still driven is parked with physics off, and a take of it bails: act when a press could gather it.
         if (now < g_cNextMs) return;
         g_cNextMs = now + kPollEveryMs;
-        if (g_mirror.Get() && !MirrorGatherable(g_mirror.Get())) {
+        if (g_mirror.Get() && !MirrorGatherable(g_mirror.Get(), row.verb)) {
             if (CExpired(kGatherBoundMs))
                 ClientFail(row, "the mirror never became gatherable here (the host's drive did not end)");
             return;

@@ -5,6 +5,8 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_attach.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -35,6 +37,10 @@ bool IsStatic(void* prop) {
 bool IsFrozen(void* prop) {
     if (!prop) return false;
     return ReadField<bool>(prop, P::off::Aprop_frozen);
+}
+
+bool IsGatherable(void* prop) {
+    return prop && !engine::IsChildActor(prop) && (IsFrozen(prop) || engine::IsActorRootSimulatingPhysics(prop));
 }
 
 void WriteStatic(void* prop, bool on) {

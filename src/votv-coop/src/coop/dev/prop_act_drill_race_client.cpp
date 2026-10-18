@@ -183,7 +183,7 @@ void ReadReply(const RaceRow& r) {
         return;
     }
     if (g_mirror.Alive()) {
-        Fail(r, "the mirror stayed after the host's grant");
+        Fail(r, std::string("the mirror stayed after the host's grant") + MirrorState(g_mirror.Get()));
         return;
     }
     const bool keepsItem = g_slot == kSlotC2 || r.act.ends == Ends::Inventory;
@@ -343,8 +343,7 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
         if (!poll) return;
         const bool granted = g_slot == kSlotC1 ? !C1Refused(r.blocker) && r.act.target != Target::Client
                                                : r.act.target == Target::Client;
-        if (granted && g_mirror.Get() &&
-            !MirrorGatherable(g_mirror.Get())) {
+        if (granted && g_mirror.Get() && !MirrorGatherable(g_mirror.Get(), r.act.verb)) {
             if (CExpired(kGatherBoundMs))
                 Fail(r, "the mirror never became gatherable here (the host's drive did not end)");
             return;

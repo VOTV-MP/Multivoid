@@ -20,10 +20,12 @@
 #include "coop/props/remote_prop.h"
 #include "coop/save/join_window_baseline.h"
 
+#include "ue_wrap/actors/prop_flags.h"
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_attach.h"
 
 #include <windows.h>
 
@@ -304,8 +306,18 @@ bool ClientPuppetReady() {
     return rp.valid() && rp.HasPose();
 }
 
-bool MirrorGatherable(void* mirror) {
-    return mirror && !coop::prop_drive_stream::IsParked(mirror);
+bool MirrorGatherable(void* mirror, Verb verb) {
+    return mirror && !coop::prop_drive_stream::IsParked(mirror) &&
+           (verb != Verb::Pocket || ue_wrap::prop::IsGatherable(mirror));
+}
+
+std::string MirrorState(void* mirror) {
+    if (!mirror) return " (no mirror)";
+    char buf[96];
+    std::snprintf(buf, sizeof buf, " (child=%d frozen=%d simulating=%d parked=%d)", E::IsChildActor(mirror) ? 1 : 0,
+                  ue_wrap::prop::IsFrozen(mirror) ? 1 : 0, E::IsActorRootSimulatingPhysics(mirror) ? 1 : 0,
+                  coop::prop_drive_stream::IsParked(mirror) ? 1 : 0);
+    return buf;
 }
 
 // Spawns the row's class on the floor in front of slot 1's puppet, `extraCm` further along when it is a pair's

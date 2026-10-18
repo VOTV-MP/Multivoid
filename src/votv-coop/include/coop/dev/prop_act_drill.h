@@ -150,8 +150,13 @@ const char* SpawnTarget(const Row& row, float extraCm, void** out);
 bool ClientPuppetReady();
 
 // True when the mirror is there and the host's drive no longer parks it: the state a player meets it in. The host's
-// drive of a prop that fell parks the mirror with physics off until the drive ends, and a take then bails. CLIENT.
-bool MirrorGatherable(void* mirror);
+// drive of a prop that fell parks the mirror with physics off until the drive ends, and a take then bails. A pocket
+// also needs the game's own gather test (ue_wrap::prop::IsGatherable). CLIENT.
+bool MirrorGatherable(void* mirror, Verb verb);
+
+// The mirror's state for a FAIL line, " (child=%d frozen=%d simulating=%d parked=%d)" from the reads MirrorGatherable
+// makes, or " (no mirror)". CLIENT.
+std::string MirrorState(void* mirror);
 
 // What a client's steps use (prop_act_drill_client.cpp). HostSaid reads the text after `head` in the first row of this
 // client's feed that carries it. RunVerb is the row's verb on this player and the mirror, the call a press makes: null

@@ -205,7 +205,8 @@ bool AskTake(const EdgeRow& r, void* player, void* mirror, ue_wrap::CachedObjRef
 // The first take of the step is granted and replayed: its mirror is gone and its item is in the inventory.
 bool FirstReplayed(const EdgeRow& r) {
     if (g_mirror.Alive() || InventoryCount(r.act.leaf) != g_invBefore + 1) {
-        Fail(r, "the first take's mirror stayed or the inventory did not gain the item");
+        Fail(r, std::string("the first take's mirror stayed or the inventory did not gain the item") +
+                    MirrorState(g_mirror.Get()));
         return false;
     }
     return true;
@@ -252,7 +253,9 @@ void ReadReply(const EdgeRow& r) {
     switch (r.kind) {
     case Kind::Before:
         if (g_mirror.Alive() || g_mirror2.Alive() || InventoryCount(r.act.leaf) != g_invBefore + 2) {
-            Fail(r, "both takes were not granted and replayed: a mirror stayed or the inventory did not gain two");
+            Fail(r, std::string("both takes were not granted and replayed: a mirror stayed or the inventory did not "
+                                "gain two") +
+                        MirrorState(g_mirror.Get()) + MirrorState(g_mirror2.Get()));
             return;
         }
         Pass(r, "the second take waited behind the first's held commit and was granted after it; both are in the inventory");
@@ -260,7 +263,8 @@ void ReadReply(const EdgeRow& r) {
     case Kind::Dead:
         PAR::dev::HoldReplayUntilGone(false);
         if (g_mirror.Alive() || InventoryCount(r.act.leaf) != g_invBefore) {
-            Fail(r, "the mirror stayed after the host's destroy, or the aborted take changed the inventory");
+            Fail(r, std::string("the mirror stayed after the host's destroy, or the aborted take changed the inventory") +
+                        MirrorState(g_mirror.Get()));
             return;
         }
         Pass(r, "the grant's replay was parked, the mirror went with the host's destroy, and the take aborted");
@@ -400,8 +404,8 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
         // A host mirror still driven is parked with physics off, and a take of it bails: act when a press could gather
         // it. A pair's second mirror is taken in the same step, so it waits too.
         if (!poll) return;
-        if ((g_mirror.Get() && !MirrorGatherable(g_mirror.Get())) ||
-            (g_mirror2.Get() && !MirrorGatherable(g_mirror2.Get()))) {
+        if ((g_mirror.Get() && !MirrorGatherable(g_mirror.Get(), r.act.verb)) ||
+            (g_mirror2.Get() && !MirrorGatherable(g_mirror2.Get(), r.act.verb))) {
             if (CExpired(kGatherBoundMs))
                 Fail(r, "the mirror never became gatherable here (the host's drive did not end)");
             return;

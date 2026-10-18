@@ -22,6 +22,10 @@ bool IsStatic(void* prop);
 // Aprop_C.frozen, the BP-controlled freeze; a frozen prop does not move when grabbed.
 bool IsFrozen(void* prop);
 
+// The game's own gather test (mainPlayer's putObjectInventory2, the prop path): a prop is gathered only when it is
+// not a child actor and is frozen or its root simulates physics; otherwise "Cannot gather object". Game thread.
+bool IsGatherable(void* prop);
+
 // Static and frozen written on a live prop, the wall-attachable stick and unstick mirror; the
 // caller follows with an init() dispatch so the BP recomputes SetSimulatePhysics and collision
 // from the flags (the single-player unstick shape). Null-safe; game thread.
