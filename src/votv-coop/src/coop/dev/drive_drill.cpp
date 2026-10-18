@@ -87,6 +87,7 @@ size_t   g_stand = 0;
 // HOST: after its wipe, when the last of the client's rows came (taken or refused).
 uint64_t g_progressMs = 0;
 uint64_t g_progressCount = 0;
+bool     g_bornWoken = false;   // HOST: the client's born drive had its physics turned on, once per session
 
 const std::string& Mode() {
     static const std::string s = coop::config::ResolveString(::coop::config_registry::rows::drive_drill);
@@ -129,6 +130,14 @@ std::vector<coop::element::Registry::ActorIdPair> DrivesNamed(const wchar_t* nam
     return out;
 }
 
+// Is `drive` seated in one of the desk's slots?
+bool IsSeated(void* drive) {
+    for (int r = 0; r < DC::kRoleCount; ++r)
+        if (void* slot = DC::SlotActor(r))
+            if (DC::SlotDrive(slot) == drive) return true;
+    return false;
+}
+
 // HOST (join): a live drive in no slot, to carry the fixture row: one the joiner's world holds, since it came with the
 // host's world, so only the row is new to it.
 void* UnseatedDrive() {
@@ -136,11 +145,15 @@ void* UnseatedDrive() {
     coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, pairs);
     for (const auto& p : pairs) {
         if (!p.actor || !R::IsLiveByIndex(p.actor, p.internalIdx) || !DC::IsDriveClass(R::ClassOf(p.actor))) continue;
-        bool seated = false;
-        for (int r = 0; r < DC::kRoleCount && !seated; ++r)
-            if (void* slot = DC::SlotActor(r)) seated = DC::SlotDrive(slot) == p.actor;
-        if (!seated) return p.actor;
+        if (!IsSeated(p.actor)) return p.actor;
     }
+    return nullptr;
+}
+
+// HOST: the live drive in no slot whose row carries `name`, or null.
+void* UnseatedDriveNamed(const wchar_t* name) {
+    for (const auto& p : DrivesNamed(name))
+        if (!IsSeated(p.actor)) return p.actor;
     return nullptr;
 }
 
@@ -354,13 +367,6 @@ void ClientTick() {
             Abandon("a drive could not be spawned at this client's player");
             return;
         }
-        // A drive turns its physics on only as it leaves a slot (prop_drive's drivePulledOut); one spawned into the
-        // world neither simulates nor is frozen, so no player could gather it. The born drive is made one that left
-        // its slot, so the re-placement below gathers it as a player would.
-        if (!E::SetActorSimulatePhysics(g_own.Get(), true)) {
-            Abandon("the born drive's physics could not be turned on");
-            return;
-        }
         UE_LOGI("[DRIVE-DRILL] client: the eraser showed the host's press; spawned a drive with the row '%ls'", kBorn);
         Next(Step::Born);
         return;
@@ -525,6 +531,19 @@ void HostTick(coop::net::Session* s) {
     // The legs before the wipe are bounded on the client (the walk's deadline, the wipe's 10 s).
     const bool wiped = SizeOf(g_fixture) == 0.f && coop::eraser_press_intent::PressedCount() >= 1;
     if (!wiped) return;
+    // A drive turns its physics on only as it leaves a slot (prop_drive's drivePulledOut); one spawned into the world
+    // neither simulates nor is frozen. The born drive is the host's to wake, as a slot's pull-out would: the client's
+    // mirror then follows the host's drive stream and comes to rest gatherable.
+    if (!g_bornWoken) {
+        if (void* born = UnseatedDriveNamed(kBorn)) {
+            g_bornWoken = true;
+            if (!E::SetActorSimulatePhysics(born, true)) {
+                Fail("the host could not turn the born drive's physics on");
+                return;
+            }
+            UE_LOGI("[DRIVE-DRILL] host: the client's born drive '%ls' has left its slot (physics on)", kBorn);
+        }
+    }
     // The client's drives reach the host with their rows, each taken once from it; its forged row is refused.
     const DP::Counts c = DP::LaneCounts();
     const uint64_t progress = c.accepted + c.refused;
@@ -576,6 +595,7 @@ void OnDisconnect() {
     g_stand = 0;
     g_progressMs = 0;
     g_progressCount = 0;
+    g_bornWoken = false;
     g_observerSaid = false;
 }
 
