@@ -5,9 +5,9 @@
 
 #include "coop/comms/chat_feed.h"
 #include "coop/dev/director/aimed_grab.h"
+#include "coop/dev/director/clear_hand.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/drill_chat_pace.h"
-#include "drive_drill_verbs.h"  // Throw: the player's own throw (co-located private header)
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -41,7 +41,6 @@ namespace R   = ue_wrap::reflection;
 namespace EL  = coop::element;
 namespace PAR = coop::prop_act_request;
 namespace PU  = ue_wrap::prop_use;
-namespace DV  = coop::dev::drive_drill_verbs;
 using ue_wrap::FVector;
 
 constexpr uint8_t kEatAction = 4;   // actionOptionIndex's eat, as the watch reads it
@@ -60,6 +59,7 @@ ue_wrap::CachedObjRef g_mirror, g_mirror2;   // the step's target (a client-made
 int g_invBefore = 0;
 int g_fillCount = 0;
 std::shared_ptr<coop::director::BackgroundWalk> g_walk;
+std::unique_ptr<coop::director::ClearHand> g_clear;  // a grab row's hand clearing, until the hand reads empty
 std::unique_ptr<coop::director::AimedGrab> g_grab;   // a grab row's grab, until the host says it saw the drag
 bool g_grabbed = false;
 // The state a refused act must leave as it found it, taken at the call: this client's WrongFamily refusals so far
@@ -324,19 +324,11 @@ void ClientFill(const Row& row, void* player) {
     BeginWalk(row, mirror);
 }
 
-// The game's grab chain runs on an empty hand: both slots (the physics grab and the hand item) read empty.
-bool HandEmpty(void* player) {
-    E::MainPlayerGrabState hand{};
-    return E::ReadMainPlayerGrabState(player, hand) && !hand.grabbingActor && !hand.holdingActor;
-}
-
-// The hand cleared with the effect-seam verbs the director's ClearHand falls back to: the physics slot released, the
-// hand slot thrown. False when the throw could not run.
-bool ClearHandForGrab(void* player) {
-    E::MainPlayerGrabState hand{};
-    if (!E::ReadMainPlayerGrabState(player, hand)) return false;
-    if (hand.grabbingActor) E::ReleaseMainPlayerGrabIfHolding(player, hand.grabbingActor);
-    return !hand.holdingActor || DV::Throw(player);
+// The game's grab chain runs on an empty hand: the director's ClearHand takes the item out of it first (the drop key,
+// then its effect-seam fallback when that is measured inert), ticked every game tick.
+void BeginClear() {
+    g_clear = std::make_unique<coop::director::ClearHand>();
+    CEnter(CStep::ClearHand);
 }
 
 void BeginGrab(void* player) {
@@ -500,33 +492,31 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
             return;
         }
         if (row.grab) {
-            if (HandEmpty(player)) {
-                BeginGrab(player);
-                return;
-            }
-            if (!ClearHandForGrab(player)) {
-                ClientFail(row, "the hand could not be cleared before the grab");
-                return;
-            }
-            CEnter(CStep::ClearHand);
+            BeginClear();
             return;
         }
         ClientAct(row, player);
         return;
     }
-    case CStep::ClearHand:
-        if (now < g_cNextMs) return;
-        g_cNextMs = now + kPollEveryMs;
+    case CStep::ClearHand: {
+        // The clearing is ticked on every tick, like the grab after it.
         if (!g_mirror.Get()) {
             ClientFail(row, "the mirror was gone before the grab");
             return;
         }
-        if (!HandEmpty(player)) {
+        const coop::director::ClearState st = g_clear->Tick();
+        if (st == coop::director::ClearState::Failed) {
+            ClientFail(row, "the hand did not clear before the grab");
+            return;
+        }
+        if (st == coop::director::ClearState::Working) {
             if (CExpired(kHandClearBoundMs)) ClientFail(row, "the hand did not clear before the grab");
             return;
         }
+        g_clear.reset();
         BeginGrab(player);
         return;
+    }
     case CStep::Grab: {
         // The game's grab, ticked on every tick; once it has taken, the grabbed line goes through the drills' chat
         // pacing and the host says when it sees the prop driven.
@@ -577,6 +567,7 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         g_nextSayMs = now + coop::dev::kTalkEveryMs;
         g_mirror.Reset();
         g_mirror2.Reset();
+        g_clear.reset();
         g_grab.reset();
         if (g_sayFailed) {
             HintWatchOff();
@@ -610,6 +601,7 @@ void ClientReset() {
     ClearHint();
     HintWatchOff();
     g_walk.reset();
+    g_clear.reset();
     g_grab.reset();
     g_grabbed = false;
     g_refusedBefore = 0;

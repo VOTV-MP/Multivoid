@@ -14,6 +14,7 @@
 // Every action is at the human-INPUT seam. All OnTick runs on the game thread
 // (inside the ControlManager's per-tick closure), so engine calls are direct.
 
+#include "coop/dev/director/clear_hand.h"
 #include "coop/dev/director/detour.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/director/routes.h"
@@ -104,15 +105,9 @@ bool Arrived(const PlayerContext& ctx, const DirectorGoal& goal) {
     return HorizDist(ctx.pos, goal.targetPos) <= goal.reachCm && OnLevel(ctx.pos, goal.targetPos);
 }
 constexpr int   kVerifyTicks    = 90;    // ~1.8 s polling for the held clump
-constexpr int   kDropMeasureTicks = 20;  // ~0.4 s to MEASURE if the input-seam drop cleared the hand
 
 // ---- ClearHandProcess ------------------------------------------------------------------
-// Drive-at-input-seam FIRST: press InpActEvt_drop (the key a human presses), then
-// MEASURE whether the hand actually cleared. Do NOT mask with a mutator blindly --
-// that would be a workaround standing on an unmeasured fact. If the input seam is
-// INERT (the reflection stub does not run the drop body, the same way the chippile
-// InpActEvt_use body is inert), that is a HALT-fact we LABEL and record, then fall
-// back to the proven effect-seam release so the run can proceed.
+// The walk set's unit for ClearHand (clear_hand.h): it ticks the shared clearing while the hand is full.
 // `usedEffectFallback` is surfaced in the verdict.
 bool g_clearHandUsedEffectFallback = false;   // read by the scenario verdict (drive-at-seam honesty)
 
@@ -129,51 +124,21 @@ public:
         return ctx.HandFull() && !goal_.grabbed && HorizDist(ctx.pos, goal_.targetPos) > goal_.reachCm;
     }
     ProcStatus OnTick(const PlayerContext& ctx) override {
-        ++ticks_;
-        if (ticks_ == 1) {   // input seam ONLY -- the key a human presses to drop (measure it first)
-            const bool pressed = PressInputEvent(ctx.player, g_drop);
-            UE_LOGI("director/ClearHand: hand full (grabbing=%p holding=%p place=%d) -- input-seam "
-                    "InpActEvt_drop pressed=%d; MEASURING", ctx.held, ctx.holding, ctx.placeMode ? 1 : 0, pressed ? 1 : 0);
-            return ProcStatus::Working;
-        }
-        if (ticks_ == kDropMeasureTicks && !measured_) {   // MEASURE the input-seam result, don't assume
-            measured_ = true;
-            if (!ctx.HandFull()) {
-                UE_LOGI("director/ClearHand: input-seam InpActEvt_drop WORKED -- hand cleared (measured); "
-                        "no effect-seam needed");
-                return ProcStatus::Working;
-            }
-            // MEASURED HALT-fact, LABELED (not a silent mask): the reflection input stub does not run the
-            // drop body (chippile InpActEvt_use precedent) -> the drop is not input-seam-faithful. Clear at
-            // the effect seam, ONE reasoned verb per slot: grabbing_actor -> PHC release; holding_actor
-            // (the hand item / morph carry) -> throwHoldingProp (the SDK's "drop the held prop").
-            g_clearHandUsedEffectFallback = true;
-            void* cls = R::FindClass(P::name::MainPlayerClass);
-            void* throwFn = cls ? R::FindFunction(cls, L"throwHoldingProp") : nullptr;
-            UE_LOGW("director/ClearHand: InpActEvt_drop INERT (measured) -- effect-seam clear: "
-                    "release(grabbing=%p) + throwHoldingProp(holding=%p) fn=%p", ctx.held, ctx.holding, throwFn);
-            if (ctx.held) E::ReleaseMainPlayerGrabIfHolding(ctx.player, ctx.held);
-            if (ctx.holding && throwFn) { ue_wrap::ParamFrame pf(throwFn); ue_wrap::Call(ctx.player, pf); }
-            return ProcStatus::Working;
-        }
-        if (ticks_ == kDropMeasureTicks * 2 && ctx.HandFull()) {   // still full -> honest failure, not a silent deadline
-            UE_LOGW("director/ClearHand: STILL full after effect-seam clear (grabbing=%p holding=%p place=%d) "
-                    "-- no known verb emptied the slot; failing the run", ctx.held, ctx.holding, ctx.placeMode ? 1 : 0);
+        const ClearState st = clear_.Tick(ctx);
+        if (clear_.UsedEffectFallback()) g_clearHandUsedEffectFallback = true;
+        if (st == ClearState::Failed) {   // the run ends on this process's failure: the hand was not cleared
             failed_ = true;
             return ProcStatus::Failed;
         }
         return ProcStatus::Working;   // IsActive() flips false once the hand clears -> we yield
     }
     void OnLostControl() override {
-        if (ticks_ > 0 && !failed_)
-            UE_LOGI("director/ClearHand: hand cleared after %d ticks (input-seam-faithful=%d) -- yielding",
-                    ticks_, g_clearHandUsedEffectFallback ? 0 : 1);
+        if (clear_.Ticks() > 0 && !failed_) clear_.LogCleared();
     }
 private:
     DirectorGoal& goal_;
-    int  ticks_ = 0;
-    bool measured_ = false;
-    bool failed_ = false;   // the run ends on this process's failure: the hand was not cleared
+    ClearHand clear_;
+    bool failed_ = false;
 };
 
 // What stands between a stuck walker and its waypoint, named: a trace at knee and at chest height
@@ -539,6 +504,65 @@ ue_wrap::FRotator LookAt(const ue_wrap::FVector& from, const ue_wrap::FVector& t
     r.Pitch = std::atan2(dz, std::sqrt(dx * dx + dy * dy)) * kRad2Deg;
     r.Roll  = 0.f;
     return r;
+}
+
+// Drive-at-input-seam FIRST: press InpActEvt_drop (the key a human presses), then
+// MEASURE whether the hand actually cleared. Do NOT mask with a mutator blindly --
+// that would be a workaround standing on an unmeasured fact. If the input seam is
+// INERT (the reflection stub does not run the drop body, the same way the chippile
+// InpActEvt_use body is inert), that is a HALT-fact we LABEL and record, then fall
+// back to the proven effect-seam release so the run can proceed.
+constexpr int kDropMeasureTicks = 20;   // ~0.4 s to MEASURE if the input-seam drop cleared the hand
+
+ClearState ClearHand::Tick(const PlayerContext& ctx) {
+    if (failed_) return ClearState::Failed;
+    if (!ctx.HandFull()) {
+        if (ticks_ > 0) LogCleared();
+        return ClearState::Cleared;
+    }
+    ++ticks_;
+    if (ticks_ == 1) {   // input seam ONLY -- the key a human presses to drop (measure it first)
+        const bool pressed = PressInputEvent(ctx.player, g_drop);
+        UE_LOGI("director/ClearHand: hand full (grabbing=%p holding=%p place=%d) -- input-seam "
+                "InpActEvt_drop pressed=%d; MEASURING", ctx.held, ctx.holding, ctx.placeMode ? 1 : 0, pressed ? 1 : 0);
+        return ClearState::Working;
+    }
+    if (ticks_ == kDropMeasureTicks) {   // MEASURED, the hand still full: the input-seam result, not assumed
+        // MEASURED HALT-fact, LABELED (not a silent mask): the reflection input stub does not run the
+        // drop body (chippile InpActEvt_use precedent) -> the drop is not input-seam-faithful. Clear at
+        // the effect seam, ONE reasoned verb per slot: grabbing_actor -> PHC release; holding_actor
+        // (the hand item / morph carry) -> throwHoldingProp (the SDK's "drop the held prop").
+        usedEffectFallback_ = true;
+        void* cls = R::FindClass(P::name::MainPlayerClass);
+        void* throwFn = cls ? R::FindFunction(cls, L"throwHoldingProp") : nullptr;
+        UE_LOGW("director/ClearHand: InpActEvt_drop INERT (measured) -- effect-seam clear: "
+                "release(grabbing=%p) + throwHoldingProp(holding=%p) fn=%p", ctx.held, ctx.holding, throwFn);
+        if (ctx.held) E::ReleaseMainPlayerGrabIfHolding(ctx.player, ctx.held);
+        if (ctx.holding && throwFn) { ue_wrap::ParamFrame pf(throwFn); ue_wrap::Call(ctx.player, pf); }
+        return ClearState::Working;
+    }
+    if (ticks_ >= kDropMeasureTicks * 2) {   // still full -> honest failure, not a silent deadline
+        UE_LOGW("director/ClearHand: STILL full after effect-seam clear (grabbing=%p holding=%p place=%d) "
+                "-- no known verb emptied the slot; failing the run", ctx.held, ctx.holding, ctx.placeMode ? 1 : 0);
+        failed_ = true;
+        why_ = "the drop key and the effect-seam release both left the hand full";
+        return ClearState::Failed;
+    }
+    return ClearState::Working;
+}
+
+ClearState ClearHand::Tick() {
+    PlayerContext ctx;
+    if (!ctx.Refresh()) {
+        why_ = "the local player is not possessed or its state could not be read";
+        return ClearState::Failed;
+    }
+    return Tick(ctx);
+}
+
+void ClearHand::LogCleared() const {
+    UE_LOGI("director/ClearHand: hand cleared after %d ticks (input-seam-faithful=%d)", ticks_,
+            usedEffectFallback_ ? 0 : 1);
 }
 
 void AddWalkGrabProcesses(ControlManager& mgr, DirectorGoal& goal) {
