@@ -18,6 +18,7 @@
 #include "ue_wrap/actors/int_objects.h"
 #include "ue_wrap/actors/zombie.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/obj_keyed_cache.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
@@ -74,6 +75,12 @@ void SayPredicted(const wchar_t* function) {
 
 // The cosmetic half of a hit: the family's feedback at once, so the swing does not wait on the host. Only the zombie
 // family has one; the fossilhound's single hit sound sits in a refused resume.
+// Source plays a melee swing's impact effect on both sides and its damage on the server alone
+// (reference/source-sdk-2013/src/game/shared/hl2mp/weapon_hl2mpbasebasebludgeon.cpp:149-172), and withholds the
+// server's copy of the shooter's own sounds from the shooter (reference/source-sdk-2013/src/game/shared/
+// basecombatweapon_shared.cpp:1925-1930). This takes the first half: the swinger's feedback is local, health and
+// death are the host's. The second half is not taken: another peer sees no feedback for this swing, and a swing the
+// host refuses has already shown its feedback.
 void Predict(void* mirror, const FVector& hitLoc) {
     void* zombie = ue_wrap::object_index::ClassByName(P::name::NpcClass_Zombie);
     if (!zombie || !R::IsDescendantOfAny(R::ClassOf(mirror), &zombie, 1)) return;
@@ -87,14 +94,29 @@ const uint8_t* ParamBytes(const sg::Call& c, int32_t offset) {
     return out ? out : c.locals + offset;
 }
 
+// Where addDamage's parameters sit in one class's function. The watch is on every class's addDamage, and the
+// families' functions alternate, so each is held on its own.
+struct ParamLayout {
+    int32_t actor = -1, damage = -1, impact = -1, hit = -1, hitSize = -1;
+};
+
+const ParamLayout& LayoutOf(void* function) {
+    static ue_wrap::ObjKeyedCache<ParamLayout, 4> sLayouts;
+    if (const ParamLayout* held = sLayouts.Find(function)) return *held;
+    ParamLayout l;
+    l.actor = R::FindParamOffset(function, L"actor");
+    l.damage = R::FindParamOffset(function, L"damage");
+    l.impact = R::FindParamOffset(function, L"impact");
+    l.hit = R::FindParamOffset(function, L"hit");
+    l.hitSize = R::FindParamSize(function, L"hit");
+    return sLayouts.Insert(function, l);
+}
+
 // The point the swing struck: the call's `hit` parameter's impact point, else the mirror's own location.
-FVector HitPoint(const sg::Call& c) {
-    static R::ParamOffset sHit{L"hit"};
-    const int32_t off = sHit.Of(c.function);
-    const int32_t size = R::FindParamSize(c.function, L"hit");
-    const uint8_t* bytes = ParamBytes(c, off);
+FVector HitPoint(const sg::Call& c, const ParamLayout& layout) {
+    const uint8_t* bytes = ParamBytes(c, layout.hit);
     ue_wrap::hit_result::Hit hit;
-    if (bytes && size > 0 && ue_wrap::hit_result::Parse(bytes, size, &hit)) {
+    if (bytes && layout.hitSize > 0 && ue_wrap::hit_result::Parse(bytes, layout.hitSize, &hit)) {
         const FVector& p = hit.location;
         if (std::isfinite(p.X) && std::isfinite(p.Y) && std::isfinite(p.Z) && (p.X != 0.f || p.Y != 0.f || p.Z != 0.f))
             return p;
@@ -111,10 +133,10 @@ sg::Verdict OnAddDamagePre(const sg::Call& c) {
         !coop::npc_mirror_brain::IsParkedClass(R::ClassOf(c.object)))
         return sg::Verdict::Run;
 
-    static R::ParamOffset sActor{L"actor"}, sDamage{L"damage"}, sImpact{L"impact"};
-    const uint8_t* actorAt = ParamBytes(c, sActor.Of(c.function));
-    const uint8_t* damageAt = ParamBytes(c, sDamage.Of(c.function));
-    const uint8_t* impactAt = ParamBytes(c, sImpact.Of(c.function));
+    const ParamLayout& layout = LayoutOf(c.function);
+    const uint8_t* actorAt = ParamBytes(c, layout.actor);
+    const uint8_t* damageAt = ParamBytes(c, layout.damage);
+    const uint8_t* impactAt = ParamBytes(c, layout.impact);
     if (!actorAt || !damageAt || !impactAt) {
         if (!g_paramsWarned) {
             g_paramsWarned = true;
@@ -131,7 +153,7 @@ sg::Verdict OnAddDamagePre(const sg::Call& c) {
     const EL::ElementId eid = EL::Registry::Get().EidForActor(c.object);
     if (eid == EL::kInvalidId) return sg::Verdict::Run;
 
-    const FVector hitLoc = HitPoint(c);
+    const FVector hitLoc = HitPoint(c, layout);
     float damage = 0.f;
     FVector impact{};
     std::memcpy(&damage, damageAt, sizeof(damage));
@@ -174,7 +196,7 @@ struct Reason {
     const char* why = nullptr;
     uint32_t count = 0;
 };
-constexpr int kMaxReasons = 16;
+constexpr int kMaxReasons = 24;   // the serve's own six and the judge's eleven, with room
 
 struct Slot {
     coop::net::IntentQueue<Queued> queue;
@@ -182,6 +204,7 @@ struct Slot {
 };
 coop::roster_ledger::PerSlotState<Slot> g_slots;
 uint32_t g_applied = 0;
+ue_wrap::ObjKeyedCache<bool, 24> g_appliedSaid;   // the classes whose first applied hit has been said
 
 void Refuse(int slot, const char* why) {
     if (slot < 1 || slot >= coop::players::kMaxPeers) return;
@@ -218,16 +241,27 @@ void Serve(coop::net::Session& s, int slot, const Queued& q) {
     if (!coop::hit_judge::JudgeHit(slot, q.eye, hitLoc, creature, p.damage, damage, why))
         return Refuse(slot, why);
 
-    // Read before the hit: it may kill the creature.
-    FVector at{};
-    E::TryGetActorLocation(creature, at);
-    const float reach = Dist(q.eye, hitLoc), target = Dist(hitLoc, at);
-    const std::wstring cls = R::ClassNameOf(creature);
+    // The first applied hit of a class says what it measured; the rest are counted (g_applied). Read before the
+    // hit, which may kill the creature.
+    void* const cls = R::ClassOf(creature);
+    const bool say = !g_appliedSaid.Find(cls);
+    float reach = 0.f, target = 0.f;
+    std::wstring name;
+    if (say) {
+        FVector at{};
+        E::TryGetActorLocation(creature, at);
+        reach = Dist(q.eye, hitLoc);
+        target = Dist(hitLoc, at);
+        name = R::ClassNameOf(creature);
+    }
     if (!ue_wrap::int_objects::InvokeAddDamage(creature, nullptr, damage, hitLoc, impact))
         return Refuse(slot, "addDamage did not run");
     ++g_applied;
-    UE_LOGI("creature_hit_intent: slot=%d creature=%ls damage=%.1f reach=%.0f target=%.0f applied", slot, cls.c_str(),
-            damage, reach, target);
+    if (say) {
+        g_appliedSaid.Insert(cls, true);
+        UE_LOGI("creature_hit_intent: slot=%d creature=%ls damage=%.1f reach=%.0f target=%.0f applied (first of its "
+                "class; the rest are counted)", slot, name.c_str(), damage, reach, target);
+    }
 }
 
 void ServeQueues(coop::net::Session& s) {
@@ -295,6 +329,7 @@ void OnIntent(int senderSlot, const coop::net::CreatureHitIntentPayload& payload
 void OnDisconnect() {
     g_predictedCount = 0;
     g_paramsWarned = false;
+    g_appliedSaid.Clear();
 }
 
 uint32_t AppliedCount() { return g_applied; }
