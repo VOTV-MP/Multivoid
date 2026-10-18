@@ -67,6 +67,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/load_reroll_watch.cpp
     src/coop/dev/container_selftest.cpp
     src/coop/dev/drive_selftest.cpp
+    src/coop/dev/hand_drop_census.cpp
     src/coop/dev/hand_drop_selftest.cpp
     src/coop/dev/run_and_wait_selftest.cpp
     src/coop/dev/world_singleton_parity.cpp
