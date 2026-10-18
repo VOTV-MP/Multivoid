@@ -396,6 +396,29 @@ bool IsEmptySaveClass(void* prop) {
     return false;
 }
 
+// A hose's getData writes nothing while its `placing` flag is true, so the game refuses to save, pocket or hold one
+// being placed; a hose whose flag cannot be read counts as placing (fail closed).
+ue_wrap::CachedObjRef g_hoseClass;
+struct PlacingField {
+    ue_wrap::CachedObjRef cls;
+    int32_t               off = -1;
+    uint8_t               mask = 0;
+    bool                  ok = false;
+};
+PlacingField g_placing;
+
+bool IsHosePlacing(void* prop) {
+    void* const cls = R::ClassOf(prop);
+    if (!g_hoseClass.Alive()) g_hoseClass.Set(object_index::ClassByName(L"prop_hose_C"));
+    if (!g_hoseClass.Raw() || !prop::WalksToBase(cls, g_hoseClass.Raw())) return false;
+    if (!g_placing.cls.Is(cls)) {
+        g_placing.cls.Set(cls);
+        g_placing.ok = R::FindBoolProperty(cls, L"placing", g_placing.off, g_placing.mask);
+    }
+    if (!g_placing.ok) return true;
+    return (*(static_cast<const uint8_t*>(prop) + g_placing.off) & g_placing.mask) != 0;
+}
+
 bool LiveProp(void* prop) { return prop && R::IsLive(prop); }
 
 }  // namespace
@@ -449,7 +472,7 @@ bool ReadPocketFacts(void* prop, PocketFacts& out) {
     float volume = 0.f, bound = 0.f;
     if (!VolumeOfMesh(prop, mesh, volume) || !Bound(bound)) return false;
     f.volumeFits = volume <= bound;
-    f.saveClass = !IsEmptySaveClass(prop);
+    f.saveClass = !IsEmptySaveClass(prop) && !IsHosePlacing(prop);
     out = f;
     return true;
 }
@@ -473,7 +496,7 @@ bool ReadHoldFacts(void* prop, HoldFacts& out) {
     if (!FlagsAndMesh(prop, f.frozen, nullptr, name, flags, mesh)) return false;
     f.canHold = flags.canHold;
     f.heavy = flags.heavy;
-    f.saveClass = !IsEmptySaveClass(prop);
+    f.saveClass = !IsEmptySaveClass(prop) && !IsHosePlacing(prop);
     if (!HasEquipRow(name, &f.equipRow)) return false;
     out = f;
     return true;
