@@ -21,7 +21,7 @@ host validates and commits contested writes), `local` (never shared).
 | Nameplates, colours, skins | nickname, ping, health bar, visibility preference, colour, the body skin | peer, arbitrated by the host for uniqueness | at join | works |
 | Chat and the event feed | text lines, join and leave lines, a retained history shown to late joiners | presser; host relays | seeded from the host's retained log | works |
 | Voice | Opus frames, 3D positional | peer | state replay | works |
-| Player damage and hazards | enemy hits delivered to the hit peer; vitals as fractions | host delivers, peer computes | none needed | works |
+| Player damage and hazards | vitals as fractions; a zombie or fossil hound hit on a peer delivered to that peer `[RD]` | host delivers, peer computes | none needed | vitals work; the hit delivery is read from the code and not yet run |
 | Death | the native death runs to its end; the level travel is refused and a revive written in its place | peer | none needed | tested |
 | Teleport (dev) | host pushes a placement | host | the join placement | works |
 

@@ -143,7 +143,7 @@ Creature hits are the one relay: the host runs the creatures. A creature of a pa
 fossil hound) hits through those verbs, and its copy on a client makes no hit of its own, so when the host's
 creature hits a peer's puppet the host sends that peer a reliable `PlayerHit`, which runs the same verb on the
 peer's own player (`coop/player/player_hit`), armour and inventory mitigation included, so its health stream
-and hurt flash follow.
+and hurt flash follow. `[RD]`: read from the code, not yet run on the rig.
 
 Death is per peer and runs natively to its end: the sound, the dead flag, the black screen. The
 cut is the last stage, the travel that would unload the world.
