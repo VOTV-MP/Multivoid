@@ -319,12 +319,16 @@ const char* SpawnTarget(const Row& row, float extraCm, void** out) {
 
 }  // namespace detail
 
+// Once a session: the session start calls Install many times, and EdgeInstall sets the client's announce hold.
+bool g_installed = false;
+
 void Install(coop::net::Session* s) {
-    if (!s || PhaseName() == "off") return;
+    if (!s || g_installed || PhaseName() == "off") return;
     if (!ActivePhase() && !RaceArmed() && !DepartArmed() && !EdgeArmed()) {
         UE_LOGW("%s phase %s has no steps in this build -- nothing will run", kTag, PhaseName().c_str());
         return;
     }
+    g_installed = true;
     UE_LOGI("%s armed: phase %s on the %s", kTag, PhaseName().c_str(),
             s->role() == coop::net::Role::Host ? "host" : "client");
     if (EdgeArmed()) EdgeInstall(s);
@@ -356,6 +360,7 @@ void Tick(coop::net::Session* s) {
 }
 
 void OnDisconnect() {
+    g_installed = false;
     g_hstep = HStep::Arm;
     g_hStepMs = g_hNextMs = 0;
     g_hrow = 0;
