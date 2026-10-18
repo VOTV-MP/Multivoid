@@ -97,7 +97,7 @@ int g_sweepN = 0;
 int g_sweepAt = 0;
 int g_noticeBase = 0;   // the leg's notice count before its shot
 char g_aimWhy[420] = "";   // why the last AimedHit or press failed
-FVector g_restAt[kRing + 2];   // where the pair and the ring stood at the last rest read
+FVector g_restAt[kRing + 4];   // where the pair, the two crowbars and the ring stood at the last rest read
 int g_restReads = 0;           // reads in a row at which none of them had moved
 int g_relay = 0;                 // relays asked of the host for this run
 std::string g_relayWhy;          // what each direction's blocked trace met, for the abandon that ends the fan
@@ -268,7 +268,7 @@ bool Find(void* player) {
     return true;
 }
 
-// Have the pair and the ring stopped moving: no one of them has moved more than a centimetre since the last read, as
+// Have the pair, the crowbars and the ring stopped moving: no one of them has moved more than a centimetre since the last read, as
 // sack_drill waits for its sack. A press at a prop still falling or coasting is not a press at the layout the host laid.
 bool AtRest() {
     bool still = true;
@@ -283,6 +283,8 @@ bool AtRest() {
     visit(g_single);
     if (PhaseOf() == Phase::Granted) {
         visit(g_mash);
+        visit(g_hostHooked);
+        visit(g_selfHooked);
         for (int i = 0; i < g_ringN; ++i) visit(g_ring[i]);
     }
     return still;
@@ -327,6 +329,8 @@ bool Choose(void* player, coop::net::Session* s) {
     if (PhaseOf() != Phase::Granted) return true;
     if (!AimedHit(player, g_mash.Get(), &probe)) return Blocked(s, "the mashed prop");
     if (!AimedHit(player, g_npc.Get(), &probe)) return Blocked(s, "the creature");
+    if (!AimedHit(player, g_hostHooked.Get(), &probe)) return Blocked(s, "the host-hooked crowbar");
+    if (!AimedHit(player, g_selfHooked.Get(), &probe)) return Blocked(s, "the self-hooked crowbar");
     int n = 0;
     for (int i = 0; i < g_ringN; ++i) {
         void* r = g_ring[i].Get();
