@@ -1,0 +1,77 @@
+// ue_wrap/world/explosion.h -- the explosion classes of the game: explosion_C (an AActor; the blast, its
+// radial force and its damage verbs), and its two Blueprint children explosion_pc_C and
+// explosion_saltrocket_C. A class table (which UClass each is, resolved by name, and which of the three a
+// class is) and the engine access to an explosion: spawning a copy with its parameters, reading its
+// parameters, transform and ignored actor, and narrowing its radial force. Game thread.
+#pragma once
+
+#include <cstdint>
+
+namespace ue_wrap::explosion {
+
+// The three classes, in the order a wire's classId numbers them.
+enum class Cls : uint8_t { Explosion = 0, Pc = 1, SaltRocket = 2, Count = 3 };
+
+// Resolve each unresolved class from the object index by name, when the index has no backlog; it never loads
+// by path (a class the index lacks cannot have been spawned by the game). Each class logs once when it
+// resolves. True when all three are resolved.
+bool Resolve();
+
+// The class at once: from the index, else ONE load by its asset path per class per world (a failed load is
+// logged once and not repeated until Reset()), with no backlog gate. Null when neither answers. The only
+// resolve that loads: the apply's path.
+void* ResolveNow(Cls c);
+
+// Forget the pointers and the load attempts: a new world resolves again. The same happens, inside Resolve,
+// ResolveNow, ClassPtr, Resolved and ClassIdOf, whenever the index has unlisted a class since the last call
+// (a pointer may then name a freed class).
+void Reset();
+
+bool Resolved(Cls c);
+
+// The class object, null while unresolved.
+void* ClassPtr(Cls c);
+
+// Which of the three `cls` is, or -1. Each resolved class is compared by pointer and each unresolved one by
+// name; only without an exact match, `cls`'s super chain is compared by pointer for two steps. `byName` is set
+// when a name matched.
+int ClassIdOf(void* cls, bool& byName);
+
+// The class's short name, as the game spells it.
+const wchar_t* ClassName(Cls c);
+
+// Narrow an explosion's radial force to pawns: its RadialForce member's own RemoveObjectTypeToAffect, called twice with
+// the enum bytes 1 and 3 (WorldDynamic, PhysicsBody; byte 2, Pawn, stays). The component's array is never written
+// raw: that does not narrow. False when the member or the function does not resolve, or a call fails.
+bool NarrowForceToPawn(void* explosion);
+
+// The parameters a blast reads, as the host captured them. objType is explosion_C's Int.
+struct Params {
+    float   damage, radius, force, fireStrength, fireFuel, innerShake, outerShake;
+    int32_t objType;
+    bool    ignoreWalls, skipSetting;
+};
+
+// A new explosion of class `c` at a full transform (rotation = pitch, yaw, roll in degrees; the scale included, which
+// engine::BeginDeferredSpawn takes no argument for), its parameters written between the deferred spawn and its finish,
+// and, when `ignoreActor` is non-null, its `ignores` set to that one actor. The class must be resolved. Game thread.
+// Null on failure: a property that does not resolve is said once per class, before anything is spawned.
+void* SpawnDeferred(Cls c, const float loc[3], const float rot[3], const float scale[3], const Params& p,
+                    void* ignoreActor);
+
+// An explosion actor's parameters, as its Blueprint left them. False when its class is not one of the three or a
+// property does not resolve (said once per class). Game thread.
+bool ReadParams(void* explosion, Params& out);
+
+// Where an explosion went off: location, rotation (pitch, yaw, roll in degrees) and scale. A failed scale read is the
+// unit scale; false when the location or the rotation could not be read. Game thread.
+bool ReadTransform(void* explosion, float loc[3], float rot[3], float scale[3]);
+
+// The first actor in the explosion's `ignores` array, or null when it is empty or the property does not resolve.
+void* FirstIgnore(void* explosion);
+
+// The live radius of the explosion's RadialForce member, cm: what its begin-play wrote there (radius times scale).
+// False when the member or the property does not resolve. Game thread.
+bool ReadForceRadius(void* explosion, float& out);
+
+}  // namespace ue_wrap::explosion

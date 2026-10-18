@@ -63,6 +63,9 @@ bool IsActorUnderAnyDrive(void* actor);
 // Game thread.
 bool IsOwnedHere(void* actor);
 
+// A drive on `actor` belonging to a slot other than `slot` (-1 excludes none). Game thread.
+bool IsActorDrivenByOtherThan(void* actor, int slot);
+
 // Register a wire-received prop mirror Element at `eid` bound to `actor`. Idempotent for
 // duplicate eids (a silent no-op); skips an eid of 0 (an unminted sender) and the invalid id.
 // The register-mirror pattern: allocate, insert under the manager mutex, register, roll back
@@ -80,6 +83,9 @@ void RegisterPropMirror(coop::element::ElementId eid,
                         const std::wstring& cls,
                         int senderSlot,
                         bool rebindInPlace = false);
+
+// Drops the mirror row of `eid` (no-op for 0 or an unknown eid) and forgets a kerfur prop mirror. Game thread.
+void UnregisterPropMirror(coop::element::ElementId eid);
 
 // The reverse lookup of the wire eid bound to `actor` in the prop mirror manager, or the
 // invalid id. The element tracker's forward map is the constant-time path for owned props;
@@ -139,6 +145,12 @@ void AddDestroyListener(DestroyHeardFn fn);
 enum class DestroyApply : uint8_t { Applied, NotFound, NotYet };
 DestroyApply TryApplyDestroy(const coop::net::PropDestroyPayload& payload);
 
+// The host's destroy of a prop it judged for `senderSlot` (a granted take or use): no defer, the sender's slot to the
+// destroy listeners. Applied when the eid resolved and the destroy was dispatched; it does not prove the actor died
+// (a failed K2_DestroyActor still answers Applied), so the caller holds a CachedObjRef taken before and tests it
+// after, as the remover's judge does. Game thread.
+DestroyApply DestroyJudged(const coop::net::PropDestroyPayload& payload, int senderSlot);
+
 // Clear every slot's kinematic-drive cache entry for `actor`, so nothing drives a destroyed
 // actor next tick. The adoption sweep destroys actors through the same teardown contract, one
 // implementation. Game thread only; a no-op for null.
@@ -165,5 +177,15 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
 // makes our destroy observer skip the re-broadcast. Used by ForceRelease to tear down a
 // null-mesh clump mirror at teardown. Game thread only; a no-op for null or dead.
 void ConsumeLocalActor(void* actor);
+
+namespace dev {   // called only from src/coop/dev/ (the act drills); compiled always, inert unless called
+// From now, count the PropDestroy messages from `slot` that name `a` or `b` (b may be kInvalidId), each eid on
+// its own, from zero. A message with eid 0 counts for the eid whose actor's key, read here at arm time, it
+// carries (a destroy sent by key alone); an eid with no live actor or no key counts by eid only. One watch
+// at a time; a second call replaces it. ForceRelease clears it.
+void WatchWireDestroys(int slot, coop::element::ElementId a, coop::element::ElementId b);
+// The PropDestroy messages the watch counted for `eid`: the count for `a` or `b`, 0 for any other eid.
+uint32_t WireDestroysNaming(coop::element::ElementId eid);
+}  // namespace dev
 
 }  // namespace coop::remote_prop

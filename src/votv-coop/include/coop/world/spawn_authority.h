@@ -39,4 +39,9 @@ namespace coop::spawn_authority {
 // not this module.
 void Install(coop::net::Session* session);
 
+// Whether this process holds a running CLIENT session: the gate of every refusal in the table, and of the
+// other client-only seams that must not bleed into single player or a host. The running flag flips true in
+// the session start and false in the stop, which every disconnect path reaches. Any thread.
+bool IsActiveClientSession();
+
 }  // namespace coop::spawn_authority

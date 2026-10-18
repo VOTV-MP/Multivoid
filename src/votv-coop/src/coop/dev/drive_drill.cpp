@@ -7,26 +7,36 @@
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/director/routes.h"
+#include "coop/dev/drill_props.h"
 #include "coop/element/registry.h"
 #include "coop/interactables/drive_payload_sync.h"
 #include "coop/interactables/drive_sync.h"
 #include "coop/interactables/eraser_press_intent.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/puppet_drive.h"
+#include "coop/player/remote_player.h"
+#include "coop/props/prop_act_request.h"
+#include "coop/props/prop_drive_stream.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/save/save_transfer.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
 
+#include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/actors/prop.h"
+#include "ue_wrap/actors/prop_gather.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/desk/drive_chain.h"
 #include "ue_wrap/desk/drive_eraser.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_physics.h"
 
 #include <windows.h>
 
+#include <cmath>
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -38,6 +48,7 @@ namespace {
 namespace DC = ue_wrap::drive_chain;
 namespace DE = ue_wrap::drive_eraser;
 namespace DP = coop::drive_payload_sync;
+namespace DPR = coop::dev::drill_props;
 namespace DV = coop::dev::drive_drill_verbs;
 namespace E  = ue_wrap::engine;
 namespace PT = coop::prop_element_tracker;
@@ -48,9 +59,13 @@ const wchar_t* const kFixture   = L"drill-fixture";
 const wchar_t* const kDeviation = L"drill-deviation";
 const wchar_t* const kBorn      = L"drill-newborn";
 const wchar_t* const kForged    = L"drill-forged";
+const wchar_t* const kReplace   = L"drill-replace";   // the drive the host lays beside the client
 const wchar_t* const kDriveCls  = L"prop_drive_C";
 constexpr uint64_t kArmBoundMs   = 60000;  // CLIENT: world-ready to the fixture's row
 constexpr uint64_t kLegBoundMs   = 30000;  // a leg's own event, from the step that started it
+// HOST: the re-placement's lay to the client's take-out row: the lay, its replication, the client's gatherable wait
+// (kLegBoundMs), the pocket and the take-out.
+constexpr uint64_t kReplaceLegBoundMs = 90000;
 constexpr uint64_t kWipeBoundMs  = 10000;  // the press to the host's wipe here (the press's own 3 s, and the wire)
 constexpr uint64_t kHoldMs       = 3000;
 constexpr uint64_t kCheckEveryMs = 250;
@@ -64,10 +79,17 @@ constexpr int      kFirstWalkDeadlineS = 300;  // from wherever this client stan
 constexpr int      kNextWalkDeadlineS  = 30;   // a step round the eraser
 // The client's drives that must reach the host with their row: its birth, its take-out and its throw.
 constexpr int kOwnDrives = 3;
+// The host's re-placement drive: slot 1's puppet's facing, then a fan round it; the first direction and distance whose
+// column has a floor takes it, a little above that floor so it settles.
+constexpr int   kReplaceSlot = 1;
+constexpr float kLayAheadCm[] = {200.f, 150.f, 250.f};
+constexpr float kLayFanDeg[] = {0.f, 45.f, -45.f, 90.f, -90.f, 135.f, -135.f, 180.f};
+constexpr float kLayDropCm = 40.f;
+constexpr float kLayFloorDownCm = 400.f;   // how far under the puppet's middle the floor is looked for
+constexpr float kLayMinColumnCm = 20.f;    // a column whose floor is nearer than this to its start began inside geometry
 
-enum class Step : uint8_t { Arm, PutBack, Walk, Seat, SeatLine, Wipe, Show, Born, TakeOut, HoldIt, Thrown, Forge,
-                            Hold, Done };
-constexpr int kPocketTries = 8;  // candidates the pocket may refuse (asleep, static, a full inventory)
+enum class Step : uint8_t { Arm, PutBack, Walk, Seat, SeatLine, Wipe, Show, Born, Pocket, PocketWait,
+                            TakeOut, HoldIt, HoldWait, Thrown, Forge, Hold, Done };
 Step     g_step = Step::Arm;
 uint64_t g_stepMs = 0;
 uint64_t g_nextCheckMs = 0;
@@ -75,16 +97,18 @@ int      g_session = 1;
 bool     g_hostArmed = false;
 bool     g_hostDone = false;
 void*    g_fixture = nullptr;   // this peer's copy of the fixture
-void*    g_own = nullptr;       // CLIENT: the drive of its current leg
+ue_wrap::CachedObjRef g_own;   // CLIENT: the drive of its current leg
+ue_wrap::CachedObjRef g_replace;   // CLIENT: the host's re-placement drive, held once found
 std::wstring g_ownKey;          // CLIENT: the carried drive's key, its inventory record's
 std::wstring g_ownName;         // CLIENT: the carried drive's row name
 uint64_t g_mark = 0;            // CLIENT: a counter's value when the step began
-std::shared_ptr<coop::director::BackgroundWalk> g_walk;  // CLIENT: the walk to the eraser, on a worker
+std::shared_ptr<coop::director::BackgroundWalk> g_walk;  // CLIENT: the walk to the eraser
 std::vector<ue_wrap::FVector> g_ring;
 size_t   g_stand = 0;
 // HOST: after its wipe, when the last of the client's rows came (taken or refused).
 uint64_t g_progressMs = 0;
 uint64_t g_progressCount = 0;
+bool     g_replaceLaid = false;   // HOST: the re-placement drive was laid, once per session
 
 const std::string& Mode() {
     static const std::string s = coop::config::ResolveString(::coop::config_registry::rows::drive_drill);
@@ -127,6 +151,14 @@ std::vector<coop::element::Registry::ActorIdPair> DrivesNamed(const wchar_t* nam
     return out;
 }
 
+// Is `drive` seated in one of the desk's slots?
+bool IsSeated(void* drive) {
+    for (int r = 0; r < DC::kRoleCount; ++r)
+        if (void* slot = DC::SlotActor(r))
+            if (DC::SlotDrive(slot) == drive) return true;
+    return false;
+}
+
 // HOST (join): a live drive in no slot, to carry the fixture row: one the joiner's world holds, since it came with the
 // host's world, so only the row is new to it.
 void* UnseatedDrive() {
@@ -134,11 +166,15 @@ void* UnseatedDrive() {
     coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, pairs);
     for (const auto& p : pairs) {
         if (!p.actor || !R::IsLiveByIndex(p.actor, p.internalIdx) || !DC::IsDriveClass(R::ClassOf(p.actor))) continue;
-        bool seated = false;
-        for (int r = 0; r < DC::kRoleCount && !seated; ++r)
-            if (void* slot = DC::SlotActor(r)) seated = DC::SlotDrive(slot) == p.actor;
-        if (!seated) return p.actor;
+        if (!IsSeated(p.actor)) return p.actor;
     }
+    return nullptr;
+}
+
+// The live drive in no slot whose row carries `name`, or null (on either peer).
+void* UnseatedDriveNamed(const wchar_t* name) {
+    for (const auto& p : DrivesNamed(name))
+        if (!IsSeated(p.actor)) return p.actor;
     return nullptr;
 }
 
@@ -178,36 +214,69 @@ void* SpawnDrive(float dz, const wchar_t* name, float size) {
 // CLIENT: its own drive's row left for the host since the step began (the lane counts each).
 bool OwnRowSent() { return DP::LaneCounts().ownSent > g_mark; }
 
-// CLIENT: pockets a world drive with a row of its own, as a player gathers one: the pocket refuses a drive asleep or
-// static, so candidates are tried in order. True with the carried drive's key and row name.
-bool PocketAWorldDrive(void* player) {
-    std::vector<coop::element::Registry::ActorIdPair> pairs;
-    coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, pairs);
-    int tries = 0;
-    for (const auto& p : pairs) {
-        if (tries >= kPocketTries) break;
-        if (!p.actor || p.actor == g_fixture || p.actor == g_own || !R::IsLiveByIndex(p.actor, p.internalIdx) ||
-            !DC::IsDriveClass(R::ClassOf(p.actor)))
-            continue;
-        SD::Row row;
-        if (!DC::ReadDriveRow(p.actor, row) || row.size <= 0.f || row.name.empty()) continue;
-        bool seated = false;
-        for (int r = 0; r < DC::kRoleCount && !seated; ++r)
-            if (void* slot = DC::SlotActor(r)) seated = DC::SlotDrive(slot) == p.actor;
-        if (seated) continue;
-        ++tries;
-        const std::wstring key = ue_wrap::prop::GetInteractableKeyString(p.actor);
-        if (!DV::Pocket(player, p.actor)) continue;
-        g_ownKey = key;
-        g_ownName = row.name;
-        return true;
-    }
+// CLIENT: does the carried inventory hold a record under `key`?
+bool InventoryHoldsKey(const std::wstring& key) {
+    ue_wrap::inventory::LivePersonalStore store;
+    if (!ue_wrap::inventory::ReadLivePersonalStore(store)) return false;
+    for (const auto& rec : store.records)
+        if (rec.key == key) return true;
     return false;
 }
 
 // The first client runs the steps; a second, the rig's observer, only watches: the lanes it hears the first client's
 // edits through are the host's relays, which its own drive lane's log names by their source slot.
 bool g_observerSaid = false;
+
+// CLIENT: the pocket took the re-placement drive; on to taking it back out.
+void PocketedReplacementDrive() {
+    UE_LOGI("[DRIVE-DRILL] client: the re-placement drive reading '%ls' pocketed", g_ownName.c_str());
+    Next(Step::TakeOut);
+}
+
+enum class Lay : uint8_t { Wait, Laid, Failed };
+
+// HOST: one drive with the row 'drill-replace' on the floor beside slot 1's puppet, its physics on at once (a drive
+// spawned into the world neither simulates nor is frozen). Wait while the puppet has no pose.
+Lay LayReplacementDrive() {
+    coop::RemotePlayer& rp = coop::puppet_drive::Puppet(kReplaceSlot);
+    if (!rp.valid() || !rp.HasPose()) return Lay::Wait;
+    void* const player = coop::players::Registry::Get().Local();   // the floor trace's world context
+    void* const puppet = rp.GetActor();
+    ue_wrap::FVector at{};
+    if (!player || !puppet || !DC::DriveClass() || !E::TryGetActorLocation(puppet, at)) return Lay::Failed;
+    const ue_wrap::FVector fwd = E::GetActorForwardVector(puppet);
+    const float len = std::sqrt(fwd.X * fwd.X + fwd.Y * fwd.Y);
+    if (len < 0.1f) return Lay::Failed;
+    for (const float deg : kLayFanDeg) {
+        const float rad = deg * (3.14159265f / 180.f);
+        const float dx = (fwd.X * std::cos(rad) - fwd.Y * std::sin(rad)) / len;
+        const float dy = (fwd.X * std::sin(rad) + fwd.Y * std::cos(rad)) / len;
+        for (const float ahead : kLayAheadCm) {
+            void* drive = nullptr;
+            const DPR::Drop d = DPR::DropOnFloor(player, DC::DriveClass(), nullptr, at.X + dx * ahead, at.Y + dy * ahead,
+                                                 at.Z, kLayFloorDownCm, kLayMinColumnCm, kLayDropCm, &drive);
+            if (d == DPR::Drop::NoFloor) continue;
+            if (d == DPR::Drop::SpawnFailed || !WriteRow(drive, kReplace, 5.f) || !E::SetActorSimulatePhysics(drive, true))
+                return Lay::Failed;
+            UE_LOGI("[DRIVE-DRILL] host: the re-placement drive '%ls' laid %.0f uu from slot 1's puppet at %.0f deg "
+                    "(physics on)", kReplace, ahead, deg);
+            return Lay::Laid;
+        }
+    }
+    return Lay::Failed;
+}
+
+// CLIENT: the drive is in the hand; throw it, which the game does by a new actor's birth.
+void ThrowTheHeldDrive(void* player) {
+    g_mark = DP::LaneCounts().ownSent;
+    if (!DV::Throw(player)) {
+        Abandon("the hand's drive could not be thrown");
+        return;
+    }
+    UE_LOGI("[DRIVE-DRILL] client: the taken-out drive's row went to the host; the drive taken into the hand and "
+            "thrown, which the game does by a new actor's birth");
+    Next(Step::Thrown);
+}
 
 void ClientTick() {
     const uint64_t now = ::GetTickCount64();
@@ -347,8 +416,8 @@ void ClientTick() {
             return;
         }
         g_mark = DP::LaneCounts().ownSent;
-        g_own = SpawnDrive(90.f, kBorn, 5.f);
-        if (!g_own) {
+        g_own.Set(SpawnDrive(90.f, kBorn, 5.f));
+        if (!g_own.Alive()) {
             Abandon("a drive could not be spawned at this client's player");
             return;
         }
@@ -360,20 +429,55 @@ void ClientTick() {
             if (Expired(kLegBoundMs)) Fail("the spawned drive's row never went to the host");
             return;
         }
-        // The re-placement: a world drive with a row, gathered into the inventory and taken back out, as the
-        // inventory screen does.
-        if (!PocketAWorldDrive(player)) {
-            Abandon("no world drive with a row could be pocketed");
+        // The re-placement: once the host took this drive's row it lays another beside this client's puppet, which is
+        // gathered into the inventory and taken back out as the inventory screen does.
+        UE_LOGI("[DRIVE-DRILL] client: the spawned drive's row went to the host");
+        Next(Step::Pocket);
+        return;
+    case Step::Pocket: {
+        // The game gathers only a drive frozen or simulating: the host's drive is pocketed once its copy here rests
+        // gatherable.
+        // Found once by the registry scan and held after: the poll then reads the held reference.
+        if (!g_replace.Alive()) g_replace.Set(UnseatedDriveNamed(kReplace));
+        void* const d = g_replace.Alive() ? g_replace.Get() : nullptr;
+        if (!d || !ue_wrap::prop_gather::IsGatherable(d)) {
+            if (Expired(kLegBoundMs)) {
+                char why[220];
+                if (d) {
+                    void* const mesh = ue_wrap::prop::GetStaticMesh(d);
+                    std::snprintf(why, sizeof why, "the re-placement drive never reached this client gatherable (child=%d "
+                                  "frozen=%d root simulating=%d mesh simulating=%d parked=%d)", E::IsChildActor(d) ? 1 : 0,
+                                  ue_wrap::prop::IsFrozen(d) ? 1 : 0, E::IsActorRootSimulatingPhysics(d) ? 1 : 0,
+                                  mesh && E::IsComponentSimulatingPhysics(mesh) ? 1 : 0,
+                                  coop::prop_drive_stream::IsParked(d) ? 1 : 0);
+                } else {
+                    std::snprintf(why, sizeof why, "the re-placement drive never reached this client gatherable (no live "
+                                  "unseated drive here reads its row)");
+                }
+                Fail(why);
+            }
             return;
         }
-        UE_LOGI("[DRIVE-DRILL] client: the spawned drive's row went to the host; a world drive reading '%ls' pocketed",
-                g_ownName.c_str());
-        Next(Step::TakeOut);
+        g_own.Set(d);
+        g_ownKey = ue_wrap::prop::GetInteractableKeyString(d);
+        g_ownName = kReplace;
+        // Taken at the call, or asked of the host (a mirror's pocket; the act ends a round trip later), or refused.
+        if (DV::Pocket(player, d)) PocketedReplacementDrive();
+        else if (coop::prop_act_request::dev::PendingId() != 0) Next(Step::PocketWait);
+        else Fail("the re-placement drive's pocket was refused");
+        return;
+    }
+    case Step::PocketWait:
+        // The host's answer is in once no request is open: a grant ran the pocket here, a refusal left the drive in
+        // the world. The inventory says which.
+        if (coop::prop_act_request::dev::PendingId() != 0) return;
+        if (InventoryHoldsKey(g_ownKey)) PocketedReplacementDrive();
+        else Fail("the re-placement drive's pocket was refused");
         return;
     case Step::TakeOut:
         g_mark = DP::LaneCounts().ownSent;
-        g_own = DV::TakeOut(kDriveCls, g_ownKey);
-        if (!g_own || NameOf(g_own) != g_ownName) {
+        g_own.Set(DV::TakeOut(kDriveCls, g_ownKey));
+        if (!g_own.Alive() || NameOf(g_own.Get()) != g_ownName) {
             Abandon("the pocketed drive did not come back out of the inventory with its row");
             return;
         }
@@ -386,19 +490,30 @@ void ClientTick() {
             if (Expired(kLegBoundMs)) Fail("the taken-out drive's row never went to the host");
             return;
         }
-        if (!DV::Hold(player, g_own)) {
+        if (DV::Hold(player, g_own.Get())) {
+            ThrowTheHeldDrive(player);
+            return;
+        }
+        if (coop::prop_act_request::dev::PendingId() == 0) {
             Abandon("the taken-out drive could not be taken into the hand");
             return;
         }
-        g_mark = DP::LaneCounts().ownSent;
-        if (!DV::Throw(player)) {
-            Abandon("the hand's drive could not be thrown");
+        Next(Step::HoldWait);
+        return;
+    case Step::HoldWait: {
+        // A hold of a shared prop ends a round trip after the call; the hand says whether it was taken.
+        if (coop::prop_act_request::dev::PendingId() != 0) return;
+        E::MainPlayerGrabState hand{};
+        // A hold destroys the world drive and spawns a hand item of its class: the hold is taken when the
+        // drive is gone and the hand has a drive.
+        if (!E::ReadMainPlayerGrabState(player, hand) || !hand.holdingActor || g_own.Alive() ||
+            R::ClassNameOf(hand.holdingActor) != kDriveCls) {
+            Abandon("the taken-out drive could not be taken into the hand");
             return;
         }
-        UE_LOGI("[DRIVE-DRILL] client: the taken-out drive's row went to the host; the drive taken into the hand and "
-                "thrown, which the game does by a new actor's birth");
-        Next(Step::Thrown);
+        ThrowTheHeldDrive(player);
         return;
+    }
     case Step::Thrown:
         if (!OwnRowSent()) {
             if (Expired(kLegBoundMs)) Fail("the thrown drive's row never went to the host");
@@ -428,8 +543,9 @@ void ClientTick() {
         }
         if (!Expired(kHoldMs)) return;
         UE_LOGI("[DRIVE-DRILL] client DONE in session %d (%s): the deviation went back, the eraser press was the host's "
-                "and showed here, the drive's row went to the host at its birth, its take-out and its throw, and "
-                "a forged row came back as the host's -- PASS", g_session, Mode().c_str());
+                "and showed here, the drive's row went to the host at its birth, its take-out and its throw, the host's "
+                "re-placement drive was pocketed, and a forged row came back as the host's -- PASS", g_session,
+                Mode().c_str());
         g_step = Step::Done;
         return;
     default:
@@ -487,6 +603,17 @@ void HostTick(coop::net::Session* s) {
     if (!wiped) return;
     // The client's drives reach the host with their rows, each taken once from it; its forged row is refused.
     const DP::Counts c = DP::LaneCounts();
+    // The birth row is taken: the host lays the drive the client re-places beside it, once a session. Its physics are on
+    // at once, so the client's copy follows the host's drive stream and comes to rest gatherable.
+    if (!g_replaceLaid && c.accepted >= 1) {
+        const Lay lay = LayReplacementDrive();
+        if (lay == Lay::Failed) {
+            Fail("the host could not lay the re-placement drive");
+            return;
+        }
+        g_replaceLaid = lay == Lay::Laid;
+        if (g_replaceLaid) g_progressMs = now;   // the take-out leg counts from the lay
+    }
     const uint64_t progress = c.accepted + c.refused;
     if (g_progressMs == 0 || progress != g_progressCount) {
         g_progressMs = now;
@@ -500,12 +627,14 @@ void HostTick(coop::net::Session* s) {
                 g_session, Mode().c_str());
         return;
     }
-    if (now - g_progressMs > kLegBoundMs) {
-        static const char* const kLeg[] = {"its birth", "its take-out", "its throw"};
-        char why[160];
+    const uint64_t legBound = c.accepted == 1 ? kReplaceLegBoundMs : kLegBoundMs;
+    if (now - g_progressMs > legBound) {
+        static const char* const kLeg[] = {"its birth", "its re-placement drive's take-out (lay, gather, pocket, take-out)",
+                                           "its throw"};
+        char why[200];
         if (static_cast<int>(c.accepted) < kOwnDrives)
-            std::snprintf(why, sizeof(why), "the client's drive did not reach the host with its row at %s within 30 s",
-                          kLeg[c.accepted]);
+            std::snprintf(why, sizeof(why), "the client's drive did not reach the host with its row at %s within %u s",
+                          kLeg[c.accepted], static_cast<unsigned>(legBound / 1000));
         else
             std::snprintf(why, sizeof(why), "the client's forged row did not reach the host within 30 s of its throw");
         Fail(why);
@@ -526,7 +655,9 @@ void OnDisconnect() {
     g_step = Step::Arm;
     g_stepMs = g_nextCheckMs = 0;
     g_hostArmed = g_hostDone = false;
-    g_fixture = g_own = nullptr;
+    g_fixture = nullptr;
+    g_own.Reset();
+    g_replace.Reset();
     g_ownKey.clear();
     g_ownName.clear();
     g_mark = 0;
@@ -535,6 +666,7 @@ void OnDisconnect() {
     g_stand = 0;
     g_progressMs = 0;
     g_progressCount = 0;
+    g_replaceLaid = false;
     g_observerSaid = false;
 }
 

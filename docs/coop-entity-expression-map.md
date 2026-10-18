@@ -193,6 +193,28 @@ install are taken back, and taken back again at its end (`coop/world/creature_ev
 fossilhound, the antibreather and the egg compute their event from the local camera, render state or player 0 and keep
 their own per peer. `[RD]`
 
+**A parked creature's brain.** A mirror of the zombie family or the fossilhound runs none of its Blueprint's event
+graph. It is marked when it is born (between the two halves of its spawn, or at the bind of a client's own
+save-loaded twin), and the graph watches (`coop/creatures/npc_mirror_brain`) refuse every entry of a marked mirror
+but the few a table names: the footstep notify, and the fossilhound's per-viewer loop. What its BeginPlay set up
+for the eye is done by our code after the install: the zombie's animation instance and walk blend, the fossilhound's
+mesh parent, animation instance and owner. Lost on a mirror: the attack animation and sounds, the fossilhound's hit
+sound and its hidden-then-dig-out. A client's own creature of these classes is never marked and runs whole. The mark
+is the actor's slot and the slot's serial, so a recycled address is never a mirror, and it ends with the mirror.
+`[RD]`; the refusals `[?]` until a run reads them.
+
+**A client's hit on a parked creature.** A client's swing ends in the struck mirror's `addDamage` with the player as the
+damager. The call is watched (`coop/creatures/creature_hit_intent`): the client plays the zombie family's hit feedback
+at once (the fossilhound has none), sends the creature's element id with the claimed damage, the point struck and the
+impact, and cancels the call. The host judges the swing against the sender's held item and its reach data, its reach
+from the eye the host holds for it, that the sender's newest streamed aim faces the point (within 60 degrees, in 3-D; eye
+and aim are captured when the intent arrives), the sight to the point and the point's distance from the creature,
+cuts the damage to the item's most and runs the creature's own `addDamage` with a null damager; health, death and
+the destroy are the host's, and nothing is answered. The swinger's liveness is judged by the health its pose stream
+carries (a dead player's pose says 0, and the puppet's `dead` flag is never set by a peer's death): at most 0 refuses
+the swing `dead`. A zombie the host kills this way leaves its ragdoll body on the host alone: the body's class has no
+lane (owed). A ranged tool's hit is not a swing and is refused. `[RD]`
+
 ## Event actors
 
 A second interceptor on the same deferred-spawn call carries a disjoint, name-matched allowlist

@@ -1,7 +1,7 @@
 // ue_wrap/world/weapon_catalog.cpp -- see ue_wrap/world/weapon_catalog.h.
 //
 // Build = walk `list_weapons`' RowMap for {row name -> damage, the largest material multiplier, whether
-// it swings}, then verify every damage against the reflected column (ue_wrap/engine/data_table reads
+// it swings, its reach}, then verify every damage against the reflected column (ue_wrap/engine/data_table reads
 // both). Every member resolved by name off the table's RowStruct.
 
 #include "ue_wrap/world/weapon_catalog.h"
@@ -73,12 +73,17 @@ void Build() {
     const int32_t offMontage = R::FindPropertyOffsetByPrefix(rowStruct, L"montage_");
     const int32_t offAttack  = R::FindPropertyOffsetByPrefix(rowStruct, L"attack_");
     const int32_t offMult    = R::FindPropertyOffsetByPrefix(rowStruct, L"matEffDmg_");
+    const int32_t offLength  = R::FindPropertyOffsetByPrefix(rowStruct, L"length_");
     if (offDamage < 0 || offMontage < 0 || offAttack < 0 || offMult < 0) {
         UE_LOGE("weapon_catalog: row struct members did not resolve (damage@%d montage@%d attack@%d "
                 "matEffDmg@%d) -- catalog INVALID", offDamage, offMontage, offAttack, offMult);
         g_outcome = Outcome::Hard;
         return;
     }
+    // Only the hit judge reads the reach: a build without the column leaves every row's length 0 (the judge refuses
+    // "no reach data") and the damage consumers keep a valid catalog.
+    if (offLength < 0)
+        UE_LOGW("weapon_catalog: the row struct has no length member -- every row's reach reads 0");
 
     std::vector<DT::RowRef> refs;
     if (!DT::Rows(table, refs, "weapon_catalog")) return;
@@ -98,6 +103,8 @@ void Build() {
                       *reinterpret_cast<const uint8_t*>(ref.row + offAttack) != 0;
         sw.maxDamage = damage * largest;
         if (!std::isfinite(sw.maxDamage)) sw.maxDamage = std::numeric_limits<float>::max();
+        if (offLength >= 0) sw.length = *reinterpret_cast<const float*>(ref.row + offLength);
+        if (!std::isfinite(sw.length) || sw.length < 0.f) sw.length = 0.f;
         if (sw.canSwing) {
             ++swings;
             if (swingList.size() < 600) {

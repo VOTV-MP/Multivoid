@@ -34,6 +34,18 @@ struct AttachedCharacter {
 // another actor owns names that actor, whose own attachments are not walked. Game thread.
 int AttachedCharactersOf(void* actor, AttachedCharacter* out, int max);
 
+// `actor`'s root component (a USceneComponent*) through AActor::K2_GetRootComponent; null for a dead actor, a call
+// that did not run or a dead root. Game thread.
+void* RootComponentOf(void* actor);
+// The actor's root pose read from memory (AActor::RootComponent, then the root's RelativeLocation and
+// RelativeRotation), with no UFunction call. True only when the root resolves and its AttachParent is null,
+// where the relative pose is the world pose; false otherwise (the caller reads through the engine). The offsets
+// are resolved once and cached; one that does not resolve is logged once and makes every call false. Game thread.
+bool TryGetRootPoseRaw(void* actor, FVector& loc, FRotator& rot);
+
+// The location form of TryGetRootPoseRaw, over the same members and the same conditions. Game thread.
+bool TryGetRootLocationRaw(void* actor, FVector& loc);
+
 // ---- Generic actor root-physics substrate ----
 // The root component through K2_GetRootComponent, never the Aprop_C mesh offset, so they work on the
 // non-Aprop_C trash clump. Each body call answers only a live primitive root and refuses any other (false,
@@ -75,5 +87,9 @@ void* GetActorRootPhysicalMaterial(void* actor);
 // True only when the root body is positively confirmed asleep or not simulating; false on any
 // failure. The host stamps kAtRest from it.
 bool IsActorRootBodyAtRest(void* actor);
+
+// True when the actor's root is a live primitive component that simulates physics (the root through
+// K2_GetRootComponent, then IsSimulatingPhysics); false for no root or a call that did not run.
+bool IsActorRootSimulatingPhysics(void* actor);
 
 }  // namespace ue_wrap::engine

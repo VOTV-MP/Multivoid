@@ -52,6 +52,10 @@ uint32_t          g_sendSeq = 0;
 Clock::time_point g_lastPoll{};
 Clock::time_point g_lastSweep{};
 
+// Host: the two counts a reader waits on rising (ProfilesReceived, WorldSavesWritten). Game thread.
+uint32_t g_profilesReceived  = 0;
+uint32_t g_worldSavesWritten = 0;
+
 constexpr auto kClientPoll  = std::chrono::seconds(1);
 // The vitals drain every second and the player walks, so they would re-send the whole profile
 // at the poll rate. They ride a change of the items at once, and on their own at this cadence,
@@ -337,6 +341,7 @@ void OnWorldSaveWritten(void* saveObject, const wchar_t* slotName) {
     UE_LOGI("player_inventory: the host's world was saved to '%ls' -- %zu changed profile(s) cut to "
             "disk with it in %lld us", slotName, n, static_cast<long long>(
                 std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - t0).count()));
+    ++g_worldSavesWritten;
 }
 
 }  // namespace
@@ -485,7 +490,12 @@ void OnReliable(const coop::net::BlobChunkPayload& p, uint8_t senderPeerSlot) {
     coop::player_profile_store::Put(guid, std::move(blob),
                                     coop::player_profile_store::NickForJson(
                                         coop::player_handshake::NicknameForSlot(senderPeerSlot)));
+    ++g_profilesReceived;
 }
+
+uint32_t ProfilesReceived() { return g_profilesReceived; }
+
+uint32_t WorldSavesWritten() { return g_worldSavesWritten; }
 
 // The single-player starter items: the game's begin-equipment logic gives exactly these three
 // at New Game, and the host save retains them across play.

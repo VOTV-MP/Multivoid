@@ -32,14 +32,6 @@ namespace SG = ue_wrap::script_gate;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// Refuse only while an active client session exists: the running flag flips true in the session
-// start and false in the stop, which every disconnect path reaches; a bare role gate would bleed the
-// refusal into single player after the session.
-bool IsActiveClientSession() {
-    auto* s = g_session.load(std::memory_order_acquire);
-    return s && s->running() && s->role() == coop::net::Role::Client;
-}
-
 // The facts rows: the body a client must not run, named by its class and its function. The function
 // is spelled as the live header dump spells it; names compare without case.
 UE_FACT_FN(kRowSpawnMushroomMaster, "spawn_authority", L"mushroomMaster_C", L"Spawn", Declared);
@@ -214,6 +206,14 @@ SG::Verdict OnRowPre(const SG::Call& call) {
 std::atomic<bool> g_watched{false};
 
 }  // namespace
+
+// Refuse only while an active client session exists: the running flag flips true in the session
+// start and false in the stop, which every disconnect path reaches; a bare role gate would bleed the
+// refusal into single player after the session.
+bool IsActiveClientSession() {
+    auto* s = g_session.load(std::memory_order_acquire);
+    return s && s->running() && s->role() == coop::net::Role::Client;
+}
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);

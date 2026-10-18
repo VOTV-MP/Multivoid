@@ -9,7 +9,7 @@ the commit that ships the change.
 
 | System | What is synced | Who owns it |
 |---|---|---|
-| Players | position and pose, the ragdoll and faint display state, health, food and sleep as fractions, the held item, skins, nameplate visibility, nickname colour; enemy hits delivered to the hit peer; death runs natively and the level travel is refused so the world survives | each peer computes its own vitals and death; the host delivers enemy hits |
+| Players | position and pose, the ragdoll and faint display state, health, food and sleep as fractions, the held item, skins, nameplate visibility, nickname colour; a zombie or fossil hound hit on a peer delivered to that peer `[RD]`; death runs natively and the level travel is refused so the world survives | each peer computes its own vitals and death; the host delivers those hits; every other creature's hit lands by the peer's own copy |
 | Chat and the event feed | text chat; join, leave and error lines | the host relays chat; each machine surfaces its own transport errors |
 | Voice | 3D positional voice | each peer |
 | Master server and browser | an opt-in listing of the host's game, the update check, signaling for NAT traversal | the host opts in per session; the master is external infrastructure |

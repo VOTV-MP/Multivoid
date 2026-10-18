@@ -35,9 +35,10 @@ void Install(coop::net::Session* session);
 // thread. No-op on the host, or on empty pending.
 void Tick(coop::net::Session* session);
 
-// Called from prop_lifecycle::DestroySeamBody right AFTER a CLIENT broadcasts a keyed-prop DESTROY:
-// park the key so a later same-key place authors a host-authoritative drop intent, and only then.
-// The park is the SAFETY INVARIANT -- it means the host has already destroyed its copy, so the
+// Called from prop_lifecycle::DestroySeamBody right AFTER a CLIENT's own keyed-prop DESTROY broadcast, or after the
+// destroy of a granted take's replay (which broadcasts nothing; its commit follows on the Bulk lane): park the key
+// so a later same-key place authors a host-authoritative drop intent, and only then.
+// The park is the SAFETY INVARIANT -- the host destroys its copy before the drop intent can arrive, so the
 // later re-spawn authors exactly ONE host prop and there is no dup. Game thread. Bounded FIFO set.
 void NoteClientKeyedDestroy(const std::wstring& key);
 

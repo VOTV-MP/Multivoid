@@ -6,6 +6,7 @@
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/director/door_approach.h"
+#include "coop/dev/drill_hand.h"          // the hand write, for the crowbar the hit phase takes
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"        // the local hand, for the crowbar the hit phase takes
 #include "coop/player/players_registry.h"
@@ -17,10 +18,9 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
-#include "ue_wrap/actors/inventory.h"          // the hold slot the crowbar is written to
+#include "ue_wrap/actors/inventory.h"          // the hold slot, read for the empty-hand check
 #include "ue_wrap/devices/door.h"
 #include "ue_wrap/engine/engine.h"
-#include "ue_wrap/engine/engine_mainplayer.h"  // the game's updateHold
 #include "ue_wrap/facts/function_row.h"
 #include "ue_wrap/world/weapon_catalog.h"      // what a crowbar's swing deals
 
@@ -272,12 +272,10 @@ bool HoldSlotEmpty() {
 }
 
 // The local hand takes `item` of class `cls` (list_props' row name and its class), or empties with
-// "None" and no class: the hold slot written, then the game's own updateHold.
+// "None" and no class: coop/dev/drill_hand's game-thread write, run from this drill's own thread.
 bool TakeIntoHand(const wchar_t* item, const wchar_t* cls) {
     return GT::RunAndWait([item, cls](std::atomic<int>& done) {
-        void* p = coop::players::Registry::Get().Local();
-        done.store(p && ue_wrap::inventory::WriteHeldItem(item, cls) && ue_wrap::engine::CallMainPlayerUpdateHold(p)
-                       ? 1 : 2);
+        done.store(coop::dev::drill_hand::TakeIntoHandNow(item, cls) ? 1 : 2);
     }) == 1;
 }
 

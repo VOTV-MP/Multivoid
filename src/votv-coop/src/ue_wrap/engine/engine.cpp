@@ -154,6 +154,7 @@ void* g_actorClass = nullptr;  // the Actor UClass (owns K2_Get/SetActorLocation
 void* g_getLocFn = nullptr;
 void* g_setLocFn = nullptr;
 void* g_getFwdFn = nullptr;
+void* g_getUpFn = nullptr;
 void* g_getRotFn = nullptr;
 void* g_getVelFn = nullptr;
 void* g_setRotFn = nullptr;
@@ -182,6 +183,7 @@ bool ResolveActorFns() {
         if (!g_getLocFn) g_getLocFn = R::FindFunction(g_actorClass, P::name::GetActorLocationFn);
         if (!g_setLocFn) g_setLocFn = R::FindFunction(g_actorClass, P::name::SetActorLocationFn);
         if (!g_getFwdFn) g_getFwdFn = R::FindFunction(g_actorClass, P::name::GetActorForwardVectorFn);
+        if (!g_getUpFn) g_getUpFn = R::FindFunction(g_actorClass, P::name::GetActorUpVectorFn);
         if (!g_getRotFn) g_getRotFn = R::FindFunction(g_actorClass, P::name::GetActorRotationFn);
         if (!g_getVelFn) g_getVelFn = R::FindFunction(g_actorClass, P::name::GetActorVelocityFn);
         if (!g_setRotFn) g_setRotFn = R::FindFunction(g_actorClass, P::name::SetActorRotationFn);
@@ -344,9 +346,10 @@ FVector GetActorScale3D(void* actor) {
     return scl;
 }
 
-bool IsChildActor(void* actor) {
+bool IsChildActor(void* actor, bool& readable) {
     // See engine.h. Offset states: -2 not yet resolved (retry while the Actor class loads), -1
     // property missing (layout drift; the exclusion goes inert, loudly, once).
+    readable = false;
     if (!actor) return false;
     static std::atomic<int32_t> sOff{-2};
     int32_t off = sOff.load(std::memory_order_acquire);
@@ -367,7 +370,13 @@ bool IsChildActor(void* actor) {
     if (off < 0) return false;
     struct { int32_t idx; int32_t serial; } weak{};
     std::memcpy(&weak, reinterpret_cast<uint8_t*>(actor) + off, sizeof(weak));
+    readable = true;
     return weak.idx >= 0 && weak.serial != 0;
+}
+
+bool IsChildActor(void* actor) {
+    bool readable = false;
+    return IsChildActor(actor, readable);
 }
 
 void* ParentActorOf(void* actor, std::wstring* outComponentName) {
@@ -439,6 +448,15 @@ FVector GetActorForwardVector(void* actor) {
     if (!Call(actor, f)) return fwd;
     f.GetRaw(L"ReturnValue", &fwd, sizeof(fwd));
     return fwd;
+}
+
+FVector GetActorUpVector(void* actor) {
+    FVector up;
+    if (!actor || !ResolveActorFns() || !g_getUpFn) return up;
+    ParamFrame f(g_getUpFn);
+    if (!Call(actor, f)) return up;
+    f.GetRaw(L"ReturnValue", &up, sizeof(up));
+    return up;
 }
 
 bool TryGetActorRotation(void* actor, FRotator& out) {

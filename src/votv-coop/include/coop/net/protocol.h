@@ -215,10 +215,11 @@ enum class ReliableKind : uint8_t {
     // is a replacement, and the receiver drains the outgoing occupant first.
     RosterRow = 19,
 
-    // Host to one client: an enemy on the host hit your puppet; apply this damage to your own
-    // player, whose own armor mitigates it. Never relayed; the receiver requires slot 0 as sender.
-    // PlayerDamagePayload.
-    PlayerDamage = 20,
+    // Host to one client: a parked creature's hit on your puppet; run the same verb (addDamage or
+    // punch) on your own player, whose own armor mitigates it. Never relayed: a client may not author the
+    // kind (the host's receive edge refuses it, client_authorship.h) and a client hears only the host.
+    // PlayerHitPayload.
+    PlayerHit = 20,
 
     // Host to all: the shared balance, absolute. The host polls its own points and sends on change
     // and on a connect edge; a client writes the value directly. BalancePayload. Value 24 was the
@@ -1009,6 +1010,19 @@ enum class ReliableKind : uint8_t {
     // absolute. BadSunPayload.
     BadSun = 176,
 
+    // CLIENT->HOST: a client asks to take or use a shared prop before its verb runs (coop::prop_act_host).
+    // Never relayed. Late join: not pre-world; a request before the sender's world is ready waits in the host's queue.
+    // Trust: the host judges the prop, its family, who holds or reserves it, and the reach.
+    PropActRequest = 178,
+
+    // HOST->CLIENT: the host's answer to one PropActRequest: granted (the prop is reserved for the sender) or refused
+    // with a reason. Never relayed.
+    PropActReply = 179,
+
+    // CLIENT->HOST: the client's verb ran (committed: the prop is gone on the client) or did not (aborted). Rides Bulk
+    // with PropDestroy and PropDropIntent, so a later drop of the item cannot overtake it. Never relayed.
+    PropActCommit = 180,
+
     // Host to all: a security camera's `active` bit (the LED, the click, the laptop's camera list), by the camera
     // lane's key, absolute, whoever wrote it -- a player's use, a wisp, the gray events, the cursed camera's night roll.
     // A client renders it and never authors it; a client's own copy is refused at the host's receive edge. Never
@@ -1051,31 +1065,45 @@ enum class ReliableKind : uint8_t {
     // receive edge. Late join: the host's widget index to the joiner, after its world-ready. LaptopTabPayload.
     LaptopTabState = 186,
 
+    // Client to host: my player's swing hit this creature's mirror. The client plays the hit's feedback at once, a
+    // cosmetic prediction, and cancels the mirror's own body; the host judges the swing (the sender's held item, its
+    // reach, its sight, the point on the creature) and runs the verb on its real creature. The verb is generic
+    // (0 addDamage, 1 exploded, 2 ignite) and the host judges 0 only. Never relayed; no answer: the creature's
+    // state is the host's and its death arrives as its destroy. Late join: none -- a request is an act. Trust:
+    // the id must name a live host creature of a parked family, the damage is clamped to the held item's, and
+    // intents run from a bounded queue at a bounded rate. CreatureHitIntentPayload.
+    CreatureHitIntent = 187,
+    // Host to client: an explosion the host's game ran, with its class, transform and parameters; the client
+    // spawns its own copy there in the lane's scope (its own game's explosions are dissolved at birth). Never
+    // relayed. Late join: none -- a one-shot cue. Trust: host-authored only (a client's copy is refused at the
+    // host's receive edge); the receiver drops a malformed one and counts it. ExplosionSpawnPayload.
+    ExplosionSpawn = 177,
+
     // A closed notebook editor's final page text. Clients send it to the host, which accepts it
     // only from the peer holding that notebook's occupancy claim and broadcasts the canonical
     // text. Chunked NotebookTextBlob; never relayed.
-    NotebookText = 187,
+    NotebookText = 188,
 
     // Client to host: unfold a packed sleepingbag or fold its deployed bed. The host runs the
     // source actor's own Blueprint; host_spawn_watcher and prop_lifecycle carry the replacement
     // birth and source death. Late join: host save plus the ordinary prop snapshot. Never relayed.
-    SleepingbagIntent = 188,
+    SleepingbagIntent = 189,
 
     // Any peer, relayed by the host: one corded prop's socket relationship, named by the prop's
     // save key and the socket's actor-save key (empty socket key means unplugged). Receivers
     // resolve both actors locally and replay the game's cordPlugged/cordUnplugged chain. The host
     // sends the current relationships to a joining peer at its world-ready edge. CordLinkPayload.
-    CordLinkState = 189,
+    CordLinkState = 190,
 
     // Client to host: a coffee vending machine or coffee maker action, or a coffee cup's final
     // eaten edge. The host resolves the keyed actor and runs the game's action for the requesting
     // player's puppet, so shared points and cup/empty-cup births have one author.
     // CoffeeActionIntentPayload.
-    CoffeeActionIntent = 190,
+    CoffeeActionIntent = 191,
 
     // Host to all and at connect replay: vending/maker state and a coffee cup's first flag and remaining uses.
     // CoffeeDeviceStatePayload.
-    CoffeeDeviceState = 191,
+    CoffeeDeviceState = 192,
 
 };
 
@@ -1157,8 +1185,9 @@ struct PoseSnapshot {
     float   headYawDelta;
     float   speed;
     uint8_t stateBits;
-    // Vitals, display only: each peer packs its own, the receiver draws the nameplate bar and
-    // never writes them back to a save. Continuous and lossy; they never trigger a state change.
+    // Vitals: each peer packs its own, the receiver draws the nameplate bar and never writes them
+    // back to a save. Continuous and lossy. One reader acts on one: the host's hit judge refuses a
+    // swinger whose healthFrac is 0 (only a health of zero or less encodes as 0).
     uint8_t healthFrac;  // health / maxHealth, quantized 0..255 (maxHealth is per-peer)
     uint8_t foodFrac;    // food  / kVitalScalarMax, quantized 0..255
     uint8_t sleepFrac;   // sleep / kVitalScalarMax, quantized 0..255
@@ -1177,12 +1206,15 @@ inline constexpr uint8_t kStateBitBurning = 0x04;  // the source's body is on fi
 // normalised by the peer's own max health before quantisation; food and sleep by this.
 inline constexpr float kVitalScalarMax = 100.0f;
 
-// Encode a [0,1] fraction as a byte (round-to-nearest, clamped). The exact
-// inverse pair lives here so sender + receiver can never drift.
+// Encode a [0,1] fraction as a byte (round-to-nearest, clamped). The exact inverse pair lives
+// here so sender + receiver can never drift. Only zero or less (or NaN) encodes as 0: a positive
+// fraction below half a step rounds up to 1, so a living player's health (the host's hit judge
+// refuses a swinger whose streamed health is 0) never reads as dead.
 inline uint8_t QuantizeUnitFraction(float f01) {
-    if (f01 <= 0.f) return 0;
+    if (!(f01 > 0.f)) return 0;  // zero, below, or NaN
     if (f01 >= 1.f) return 255;
-    return static_cast<uint8_t>(f01 * 255.f + 0.5f);
+    const uint8_t b = static_cast<uint8_t>(f01 * 255.f + 0.5f);
+    return b == 0 ? 1 : b;
 }
 inline float DequantizeUnitFraction(uint8_t b) {
     return static_cast<float>(b) * (1.f / 255.f);
@@ -1263,7 +1295,8 @@ struct EntityPoseSnapshot {
     float    lookAtX, lookAtY, lookAtZ;  // 12 -- the kerfur's head look target in world space, valid iff
                                          // stateBits has kEntityPoseBitHasLookAt. Only kerfur-family
                                          // NPCs carry it; the rest leave it zero with the bit clear.
-    float    bodyYaw;     // 4  -- the kerfur's visible body yaw, decoupled from the actor root; valid iff kEntityPoseBitHasBodyYaw
+    float    bodyYaw;     // 4  -- a kerfur's or a fossil hound's visible body yaw, apart from the actor
+                          //       root; valid iff kEntityPoseBitHasBodyYaw
     uint8_t  stateBits;   // 1  -- bit0=inAir, bit1=hasLookAt, bit2=hasBodyYaw, bit3=hasKerfurState, bit4=kerfurSpooky
     uint8_t  kerfState;   // 1  -- the kerfur's command state; valid iff bit 3. Drives the parked mirror's state machine.
     uint8_t  kerfFace;    // 1  -- the kerfur's face material index; valid iff bit 3.
@@ -2060,6 +2093,38 @@ struct RemoverResultPayload {
 };
 static_assert(sizeof(RemoverResultPayload) == 8, "RemoverResultPayload must be 8 bytes");
 
+// A client's ask to pocket, hold or use a world prop (PropActRequest), the host's answer (PropActReply) and the client's
+// closing word (PropActCommit). `id` is the client's own, nonzero, and pairs the three; `eid` is the prop's element
+// id on the sender.
+// The family byte names the verb, and the host judges each verb by its own conditions (the game's pocket test, its
+// hold test, its use test); any other byte fits nothing.
+enum class PropActFamily : uint8_t { Pocket = 1, Use = 2, Hold = 3 };
+enum class PropActReason : uint8_t { Granted = 0, Gone = 1, WrongFamily = 2, Held = 3, Reach = 4, QueueFull = 5 };
+inline constexpr uint8_t kPropActReasons = 6;   // Granted..QueueFull: the per-reason counter width
+
+struct PropActRequestPayload {
+    uint16_t id;      // 2 -- the sender's request id
+    uint8_t  family;  // 1 -- PropActFamily
+    uint8_t  pad;     // 1 -- zeroed
+    uint32_t eid;     // 4 -- the prop's Element id
+};
+static_assert(sizeof(PropActRequestPayload) == 8, "PropActRequestPayload must be 8 bytes");
+
+struct PropActReplyPayload {
+    uint16_t id;       // 2 -- the request's id
+    uint8_t  granted;  // 1 -- 1 with reason 0, or 0 with reason 1..5
+    uint8_t  reason;   // 1 -- PropActReason
+};
+static_assert(sizeof(PropActReplyPayload) == 4, "PropActReplyPayload must be 4 bytes");
+
+struct PropActCommitPayload {
+    uint16_t id;         // 2 -- the granted request's id
+    uint8_t  committed;  // 1 -- 1 the verb ran and the prop is gone on the client, 0 aborted
+    uint8_t  pad;        // 1 -- zeroed
+    uint32_t eid;        // 4 -- the prop's Element id
+};
+static_assert(sizeof(PropActCommitPayload) == 8, "PropActCommitPayload must be 8 bytes");
+
 // The server upgrades lane (ServerUpgradeState). Ops 0 (install) and 1 (take-out) name a box by its
 // servers[] index; op 2, the canonical, carries every box's level in servers[] order (a farm past 64
 // boxes logs and caps, as ServerState does); op 3 refuses the author's op `refused` at `box`.
@@ -2801,16 +2866,30 @@ static_assert(sizeof(ItemActivatePayload) <= 256 - 20 - 8,
 // flags bits for ItemActivatePayload.flags
 inline constexpr uint8_t kItemActivateFlag_HasActorKey = 0x01;
 
-// A damage relay (PlayerDamage): the owner peer's Player element id, so the receiver verifies it is
-// the addressed peer, and the raw hit amount its own armor mitigates.
-struct PlayerDamagePayload {
-    uint32_t targetElementId;  // the OWNER peer's Player Element id (host-stamped)
-    float    damage;           // raw hit amount; owner BP mitigates per its inventory
+// A hit on a player (PlayerHit), host to the victim: the verb the host's copy of the hit ran on the
+// victim's puppet, rebuilt on the victim's own player with only the arguments the Blueprint reads.
+// `hit` of addDamage travels as a default hit result and `skipSetting` as false. Host-authored, so
+// the receiver checks the format only: a zero-damage knock-down and a lethal 1E+27 are both real.
+inline constexpr uint8_t kPlayerHitVerbAddDamage = 0;  // v0 = impact
+inline constexpr uint8_t kPlayerHitVerbPunch     = 1;  // v0 = fullBody, v1 = boneImp, v2 = damageLocation
+inline constexpr uint8_t kPlayerHitBoneCount     = 6;  // bone: None, chest, head, pelvis, torso, lowlegs
+
+struct PlayerHitPayload {
+    uint32_t targetElementId;  // the VICTIM's Player Element id (host-stamped)
+    uint8_t  verb;             // kPlayerHitVerb*
+    uint8_t  bone;             // punch's bn1 as an index into the six names; 0 (None) for addDamage
+    uint16_t pad;              // 0, ignored
+    uint32_t sourceEid;        // the creature's Npc element, which addDamage's `actor` becomes on the victim's
+                               // machine; 0 = a null actor
+    float    damage;           // raw amount; the victim's armor and branches act on it
+    float    v0[3];
+    float    v1[3];
+    float    v2[3];
 };
-static_assert(sizeof(PlayerDamagePayload) == 8,
-              "PlayerDamagePayload must be exactly 8 bytes");
-static_assert(sizeof(PlayerDamagePayload) <= 256 - 20 - 8,
-              "PlayerDamagePayload must fit in one reliable datagram");
+static_assert(sizeof(PlayerHitPayload) == 52,
+              "PlayerHitPayload must be exactly 52 bytes");
+static_assert(sizeof(PlayerHitPayload) <= 256 - 20 - 8,
+              "PlayerHitPayload must fit in one reliable datagram");
 
 // WispGrab, host to one victim: the host's wisp is grabbing this client's puppet; the host
 // neutralized its own false grab and tells the victim to ragdoll-die after a fixed delay. The
@@ -3546,6 +3625,26 @@ static_assert(sizeof(CreatureEventActivePayload) == 5, "CreatureEventActivePaylo
 static_assert(sizeof(CreatureEventActivePayload) <= 256 - 20 - 8,
               "CreatureEventActivePayload must fit in one reliable datagram");
 
+// A client's hit on a creature (CreatureHitIntent): the creature's host-allocated element id, the verb, the damage the
+// client's swing claimed, the point the hit struck and the hit's impulse, in world centimetres. The host judges all of
+// it; none is trusted.
+inline constexpr uint8_t kCreatureHitVerbAddDamage = 0;
+inline constexpr uint8_t kCreatureHitVerbExploded  = 1;
+inline constexpr uint8_t kCreatureHitVerbIgnite    = 2;
+inline constexpr uint8_t kCreatureHitVerbCount     = 3;
+
+struct CreatureHitIntentPayload {
+    uint32_t creatureEid;  // 4  -- the creature's Element id (host-allocated)
+    uint8_t  verb;         // 1  -- kCreatureHitVerb*
+    uint8_t  pad[3];       // 3  -- zeroed
+    float    damage;       // 4  -- the claimed amount
+    float    hitLoc[3];    // 12 -- the impact point
+    float    impact[3];    // 12 -- the hit's impulse
+};
+static_assert(sizeof(CreatureHitIntentPayload) == 36, "CreatureHitIntentPayload must be 36 bytes");
+static_assert(sizeof(CreatureHitIntentPayload) <= 256 - 20 - 8,
+              "CreatureHitIntentPayload must fit in one reliable datagram");
+
 // A lightning strike (LightningStrike): the strike's world location; the receiver spawns the
 // strike actor there, and it destroys itself.
 struct LightningStrikePayload {
@@ -3556,6 +3655,21 @@ struct LightningStrikePayload {
 static_assert(sizeof(LightningStrikePayload) == 16, "LightningStrikePayload must be 16 bytes");
 static_assert(sizeof(LightningStrikePayload) <= 256 - 20 - 8,
               "LightningStrikePayload must fit in one reliable datagram");
+
+// An explosion (ExplosionSpawn): where it went off and the parameters its blast reads; the receiver spawns
+// its own copy of the class there. Not sent: debris, impact, shake, tag and the event flags.
+struct ExplosionSpawnPayload {
+    uint8_t  classId;                    // ue_wrap::explosion::Cls
+    uint8_t  flags;                      // bit0 ignoreWalls, bit1 Skip Setting
+    uint8_t  objType;                    // explosion_C.objType, 0..255
+    uint8_t  ignoreKind;                 // 0 none, 1 an element id, 2 a server box's index in the gamemode's list
+    float    loc[3], rot[3], scale[3];   // rot = pitch, yaw, roll
+    float    damage, radius, force, fireStrength, fireFuel, innerShake, outerShake;
+    uint32_t ignoreId;                   // per ignoreKind; 0 when none
+};
+static_assert(sizeof(ExplosionSpawnPayload) == 72, "ExplosionSpawnPayload must be 72 bytes");
+static_assert(sizeof(ExplosionSpawnPayload) <= 256 - 20 - 8,
+              "ExplosionSpawnPayload must fit in one reliable datagram");
 
 // The loading-screen brackets: SnapshotBegin carries the candidate count (the denominator),
 // SnapshotComplete the count actually sent.

@@ -381,6 +381,14 @@ CFG_ENUM(event_relay_drill, "event_relay_drill", "dev", "off", "off|on", "VOTVCO
     "tells the host by chat, and rejoins and reads the same; the host then destroys the krampus and the client's "
     "count must fall by one while the host's returns to where it began. Each step ends on a [EVR] PASS or "
     "[EVR] FAIL line (src/coop/dev/event_relay_drill.cpp); a step that does not come is a FAIL after 60 s.")
+CFG_ENUM(creature_hit_drill, "creature_hit_drill", "dev", "off", "off|zombie|fossilhound", "VOTVCOOP_CREATURE_HIT_DRILL",
+    "Drill (BOTH peers, one run), a parked creature's hit and a client's hit on it: the host spawns the creature "
+    "300 cm in front of the client's puppet once the client's join is over; its hits on the puppet must reach the "
+    "client three times and none may come from the mirror's own copy; then the client, with an empty hand and "
+    "then with an axe, calls the mirror's addDamage, and the host must refuse the first and judge the rest until "
+    "its creature dies and the mirror is destroyed. The fossilhound arm adds the mirror's own per-viewer event. "
+    "Each step ends on a [CHD] PASS or [CHD] FAIL line (src/coop/dev/creature_hit_drill.cpp); a step that does "
+    "not come is a FAIL after 60 s.")
 CFG_ENUM(world_roll_drill, "world_roll_drill", "dev", "off",
     "off|eye_host|eye_client|eye_join|jelly_host|jelly_client|jelly_join|redsky_host|redsky_client|redsky_join",
     "VOTVCOOP_WORLD_ROLL_DRILL",
@@ -775,6 +783,18 @@ CFG_FLAG(selftest_break_permissions, "selftest_break_permissions", "dev", false,
 CFG_FLAG(selftest_break_action_log, "selftest_break_action_log", "dev", false, "VOTVCOOP_SELFTEST_BREAK_ACTION_LOG",
     "Red arm of the commands selftest's action-log cases: the first acting case of each cases file expects "
     "no record, so it must fail.")
+CFG_ENUM(explosion_drill, "explosion_drill", "dev", "off", "off|dissolve|apply|coast|spawn_malformed",
+    "VOTVCOOP_EXPLOSION_DRILL",
+    "Drill, the explosion lane's arms; each runs the roles it names. dissolve (the CLIENT acts, the host only "
+    "hosts): a bomb barrel is spawned and broken once while the client's world loads and once in the loaded world; "
+    "its explosion must be dissolved at its birth (matched by class name while the class table is unresolved in "
+    "the load, by class in the world), must never run its begin-play, and its unfinished actor must be gone. apply "
+    "(HOST and CLIENT): the host blasts the three explosion classes ahead of the client; the client must apply "
+    "each once, narrow its force, refuse its rune check and drop nothing. coast (HOST and CLIENT): four papers lie "
+    "between the blast and the client's puppet; at least two client copies must fly, all four must rest again "
+    "and none may still be driven. spawn_malformed (HOST and CLIENT): the host "
+    "sends one valid explosion and four with a broken field; the client must drop each by its reason. Run it on a "
+    "fresh host world.")
 // The puppet-identity arc's selftests and drill (PI-1, PI-2, PI-3): their own file, one concept, included as
 // _dev_port.inc is above.
 #include "coop/config/config_registry_rows_dev_pi.inc"

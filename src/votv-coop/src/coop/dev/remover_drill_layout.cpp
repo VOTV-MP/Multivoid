@@ -4,6 +4,7 @@
 
 #include "coop/comms/chat_log.h"
 #include "coop/comms/chat_sync.h"
+#include "coop/dev/drill_props.h"
 #include "coop/dev/spawn_npc.h"
 #include "coop/element/registry.h"
 #include "coop/player/players_registry.h"
@@ -33,9 +34,11 @@ using ue_wrap::FVector;
 constexpr const wchar_t* kSinglePath = L"/Game/objects/prop_pointSack_m.prop_pointSack_m_C";
 constexpr const wchar_t* kMashPath   = L"/Game/objects/prop_pointSack_s.prop_pointSack_s_C";
 constexpr const wchar_t* kSackPath   = L"/Game/objects/prop_pointSack.prop_pointSack_C";
+constexpr const wchar_t* kHookedPath = L"/Game/objects/prop_crowbar.prop_crowbar_C";
 
 // The layout about the client's puppet, in centimetres along its facing: the single and the mashed props side by side
-// ahead of it, the creature straight ahead beyond them, a ring of kRing about it clear of the cone it faces.
+// ahead of it, the creature straight ahead beyond them, a ring of kRing about it clear of the cone it faces; the two
+// crowbars the hook steps use stand at the same two distances, each on the other side of the facing line from the sack there.
 constexpr float kSingleAheadCm = 120.f;
 constexpr float kMashAheadCm   = 190.f;
 constexpr float kPairSideCm    = 45.f;   // either side of the facing line, so neither prop stands in the other's way
@@ -64,22 +67,18 @@ struct Spot {
 // How far under the eye a spot's floor is looked for.
 constexpr float kFloorSearchCm = 500.f;
 
-// The floor under the column at (x, y): the first WorldStatic or WorldDynamic thing a trace meets going down from `fromZ`,
-// every player body ignored. False when none is met, or when the column starts inside geometry.
+// How near its start a column may find its floor before it began inside geometry.
+constexpr float kMinColumnCm = 5.f;
+
+// The spot's floor by the shared trace; on a miss, which branch it was, in words.
 bool FloorAt(void* puppet, float x, float y, float fromZ, float* floorZ, const char** why) {
-    const uint8_t types[2] = {0, 1};
-    void* ignore[coop::players::kMaxPeers];
-    const int nIgnore = coop::players::Registry::Get().LiveBodies(ignore, coop::players::kMaxPeers);
-    ue_wrap::trace::Hit hit;
-    if (!ue_wrap::trace::LineHitForObjects(puppet, {x, y, fromZ}, {x, y, fromZ - kFloorSearchCm}, types, 2, ignore,
-                                           nIgnore, &hit)) {
-        *why = "the floor trace did not run";
-        return false;
-    }
-    if (!hit.blocked) { *why = "no floor within 500 cm under the spot"; return false; }
-    if (Dist({x, y, fromZ}, hit.point) < 5.f) { *why = "the spot's column starts inside geometry"; return false; }
-    *floorZ = hit.point.Z;
-    return true;
+    namespace DP = coop::dev::drill_props;
+    DP::FloorMiss miss = DP::FloorMiss::None;
+    if (DP::FloorAt(puppet, x, y, fromZ, kFloorSearchCm, kMinColumnCm, floorZ, &miss)) return true;
+    *why = miss == DP::FloorMiss::TraceFailed ? "the floor trace did not run"
+         : miss == DP::FloorMiss::NoFloor     ? "no floor within 500 cm under the spot"
+                                              : "the spot's column starts inside geometry";
+    return false;
 }
 
 // Can a prop stand at (x, y), `up` cm above the floor found there, and be seen from `eye`? The floor is found by a trace
@@ -126,7 +125,8 @@ void SayDirection(float deg, const char* which, const Spot& s, const FVector& ey
 }
 
 // Spawns the host's layout about the client's puppet, by its facing: the single and the mashed props side by side ahead
-// of it (the single nearer), the creature straight ahead beyond them, and the ring about it clear of the cone it faces.
+// of it (the single nearer), the creature straight ahead beyond them, the ring about it clear of the cone it faces, and
+// the two crowbars (the host-hooked one the nearer).
 // The pair and the creature are laid only where each spot has a floor of its own and the segment from the puppet's eye
 // to it is clear -- the trace the judge runs -- trying the facing and then a fan round it, so the drill measures the
 // lane and not the map. The fan is walked from step `start` (a re-lay passes the step after the last), and `*chosen` is the
@@ -136,7 +136,8 @@ const char* SpawnLayout(coop::RemotePlayer& rp, const FVector& at, bool granted,
     void* singleCls = ue_wrap::asset_load::LoadObjectByPath(kSinglePath);
     void* mashCls = ue_wrap::asset_load::LoadObjectByPath(kMashPath);
     void* ringCls = ue_wrap::asset_load::LoadObjectByPath(kSackPath);
-    if (!singleCls || !mashCls || !ringCls) return "a prop class of the layout did not load";
+    void* hookedCls = granted ? ue_wrap::asset_load::LoadObjectByPath(kHookedPath) : nullptr;
+    if (!singleCls || !mashCls || !ringCls || (granted && !hookedCls)) return "a prop class of the layout did not load";
     FVector eye{};
     if (!rp.TryGetEyePosition(eye)) return "the sender's eye did not read on the host";
     FVector fwd0 = E::GetActorForwardVector(puppet);
@@ -147,7 +148,7 @@ const char* SpawnLayout(coop::RemotePlayer& rp, const FVector& at, bool granted,
             at.Y, at.Z, eye.X, eye.Y, eye.Z);
 
     FVector fwd{}, right{};
-    Spot single, mash, npc;
+    Spot single, mash, npc, hostHooked, selfHooked;
     bool found = false;
     for (int fan = start; fan < kFanCount; ++fan) {
         const float deg = kFanDeg[fan];
@@ -170,6 +171,14 @@ const char* SpawnLayout(coop::RemotePlayer& rp, const FVector& at, bool granted,
             npc = CheckSpot(puppet, eye, p3.X, p3.Y, kNpcUpCm);
             SayDirection(deg, "the creature", npc, eye);
             if (!npc.ok) continue;
+            const FVector p4 = where(kSingleAheadCm, -kPairSideCm);
+            hostHooked = CheckSpot(puppet, eye, p4.X, p4.Y, kTargetUpCm);
+            SayDirection(deg, "the host-hooked crowbar", hostHooked, eye);
+            if (!hostHooked.ok) continue;
+            const FVector p5 = where(kMashAheadCm, kPairSideCm);
+            selfHooked = CheckSpot(puppet, eye, p5.X, p5.Y, kTargetUpCm);
+            SayDirection(deg, "the self-hooked crowbar", selfHooked, eye);
+            if (!selfHooked.ok) continue;
         }
         found = true;
         *chosen = fan;
@@ -215,7 +224,12 @@ const char* SpawnLayout(coop::RemotePlayer& rp, const FVector& at, bool granted,
     void* npcActor = coop::dev::spawn_npc::SpawnAt(kNpcClass, {at.X + fwd.X * kNpcAheadCm, at.Y + fwd.Y * kNpcAheadCm,
                                                                npc.floorZ + kDropCm});
     g_laid.npc.Set(npcActor);
-    return npcActor ? nullptr : "the creature did not spawn";
+    if (!npcActor) return "the creature did not spawn";
+    if (!spawn(hookedCls, kSingleAheadCm, -kPairSideCm, hostHooked.floorZ, g_laid.hostHooked))
+        return "the host-hooked crowbar did not spawn";
+    if (!spawn(hookedCls, kMashAheadCm, kPairSideCm, selfHooked.floorZ, g_laid.selfHooked))
+        return "the self-hooked crowbar did not spawn";
+    return nullptr;
 }
 
 // The handshake that lets the client judge its own sight. The client says "remover-drill relay n cam x y z eid E at x y z"
@@ -274,6 +288,8 @@ Relayed HandleRelay(bool granted) {
     Destroy(g_laid.single);
     Destroy(g_laid.mash);
     Destroy(g_laid.npc);
+    Destroy(g_laid.hostHooked);
+    Destroy(g_laid.selfHooked);
     for (auto& r : g_laid.ring) Destroy(r);
     int chosen = g_fanIdx;
     if (const char* why = SpawnLayout(rp, at, granted, g_fanIdx + 1, &chosen)) {
@@ -288,6 +304,8 @@ Relayed HandleRelay(bool granted) {
 }
 
 Laid& Targets() { return g_laid; }
+
+int RelaysDone() { return g_relaysDone; }
 
 const char* Lay(coop::RemotePlayer& rp, const FVector& at, bool granted) {
     return SpawnLayout(rp, at, granted, 0, &g_fanIdx);

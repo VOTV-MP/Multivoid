@@ -199,6 +199,7 @@ inline constexpr const wchar_t* GetActorScale3DFn = L"GetActorScale3D";  // AAct
 inline constexpr const wchar_t* CollectGarbageFn = L"CollectGarbage";  // KismetSystemLibrary static; schedules a full GC purge end-of-frame (post-sweep plateau collapse). Class constant @ the existing KismetSystemLibraryClass above.
 inline constexpr const wchar_t* PropInventoryContainerPlayerClass = L"prop_inventoryContainer_player_C";  // PER-PLAYER inventory container -- never snapshot-expressed/broadcast/swept (prop_lifecycle::IsPerPlayerPropClass)
 inline constexpr const wchar_t* GetActorForwardVectorFn = L"GetActorForwardVector";
+inline constexpr const wchar_t* GetActorUpVectorFn = L"GetActorUpVector";
 inline constexpr const wchar_t* SetActorRotationFn = L"K2_SetActorRotation";
 inline constexpr const wchar_t* SetActorScale3DFn = L"SetActorScale3D";  // AActor::SetActorScale3D(FVector) -> void
 inline constexpr const wchar_t* SetActorTickEnabledFn = L"SetActorTickEnabled";
@@ -452,9 +453,9 @@ inline constexpr const wchar_t* PlaySoundAtLocationFn    = L"PlaySoundAtLocation
 inline constexpr const wchar_t* SoundAttenuationClass = L"SoundAttenuation";
 
 // mainPlayer_C drives every ragdoll cause through `ragdollMode(bool ragdoll, bool passOut, bool
-// death)` (mainPlayer.hpp:484) and recovers through `forceGetUp()` (line 641); both drive an
-// unpossessed puppet (ragdollMode(true,true,false) flips isRagdoll and spawns the ragdoll actor;
-// forceGetUp clears the AnimBP gate).
+// death)` (mainPlayer.hpp:484) and recovers through `forceGetUp()` (line 641). On an unpossessed puppet
+// ragdollMode(true,true,false) flips isRagdoll and spawns the ragdoll actor, and forceGetUp clears the AnimBP
+// gate; coop/player/player_damage refuses ragdollMode on a peer's puppet, whoever calls it.
 inline constexpr const wchar_t* MainPlayerRagdollModeFn = L"ragdollMode";
 inline constexpr const wchar_t* MainPlayerForceGetUpFn  = L"forceGetUp";
 // `forceWakeup()`: the unconditional stand-up. It jumps straight to the ubergraph block (@25800)
@@ -464,9 +465,9 @@ inline constexpr const wchar_t* MainPlayerForceGetUpFn  = L"forceGetUp";
 // respawn calls this one.
 inline constexpr const wchar_t* MainPlayerForceWakeupFn = L"forceWakeup";
 
-// The primary player-damage entry: the owning peer invokes it on its own possessed mainPlayer_C
-// when the host relays an enemy hit, so the damage runs through that peer's armour and inventory
-// BP and drops its saveSlot.health; it early-outs on an unpossessed puppet. The FName keeps its
+// The primary player-damage entry: addDamage and punch end in it on the owning peer's own possessed
+// mainPlayer_C, so a delivered hit runs through that peer's armour and inventory BP and drops its
+// saveSlot.health; coop/player/player_damage refuses it on a peer's puppet. The FName keeps its
 // spaces.
 inline constexpr const wchar_t* MainPlayerAddPlayerDamageFn = L"Add Player Damage";
 

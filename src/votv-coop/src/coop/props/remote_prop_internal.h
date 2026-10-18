@@ -1,5 +1,5 @@
-// coop/props/remote_prop_internal.h -- IMPLEMENTATION-PRIVATE shared seam between two of the
-// remote_prop TUs (remote_prop_destroy.cpp / remote_prop_convert.cpp).
+// coop/props/remote_prop_internal.h -- IMPLEMENTATION-PRIVATE shared seam between the
+// remote_prop TUs (remote_prop_destroy.cpp / remote_prop_convert.cpp / remote_prop.cpp).
 //
 // NOT a public header (it lives under src/, not include/): it declares the symbol those TUs
 // share across the cuts that split them, and that is NOT part of the public remote_prop.h
@@ -20,5 +20,9 @@ namespace coop::remote_prop {
 // the OLD rendering after a re-skin rebind, without that TU touching the destroy-fn global.
 // No-op on a dead or null actor.
 void DestroyEchoSuppressed(void* actor);
+
+// Clear the watch WatchWireDestroys set: the session's end (ForceRelease, in remote_prop.cpp,
+// calls it; the watch is the destroy TU's state).
+void ResetWireDestroys();
 
 }  // namespace coop::remote_prop

@@ -135,6 +135,9 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::PointSackRedeem:
     case ReliableKind::CoffeeActionIntent:
     case ReliableKind::RemoverRequest:
+    case ReliableKind::CreatureHitIntent:
+    case ReliableKind::PropActRequest:
+    case ReliableKind::PropActCommit:
     case ReliableKind::CameraToggleIntent:
     case ReliableKind::LaptopTabReport:
     case ReliableKind::NotebookText:
@@ -151,9 +154,10 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::BadSun:
     case ReliableKind::CreatureEventActive:
     case ReliableKind::LightningStrike:
+    case ReliableKind::ExplosionSpawn:
     case ReliableKind::AssignPeerSlot:
     case ReliableKind::RosterRow:
-    case ReliableKind::PlayerDamage:
+    case ReliableKind::PlayerHit:
     case ReliableKind::BalanceSync:
     case ReliableKind::CoffeeDeviceState:
     case ReliableKind::KeypadState:
@@ -211,6 +215,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::TaskNewState:
     case ReliableKind::HookAnchored:
     case ReliableKind::RemoverResult:
+    case ReliableKind::PropActReply:
     case ReliableKind::CameraActiveState:
     case ReliableKind::CameraLightState:
     case ReliableKind::LaptopTabState:

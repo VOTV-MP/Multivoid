@@ -26,7 +26,9 @@ local twin by class after a deferred poll instead of spawning a second one
 
 On a client the mirror is the game's actor with its brain parked: the AI timers neutralised and
 the movement tick off, with the actor tick kept where the class's tick is per-viewer cosmetic,
-such as the wisp's fade and bob (`ue_wrap/actors/kerfur`, `ue_wrap/actors/wisp`). The host
+such as the wisp's fade and bob (`ue_wrap/actors/kerfur`, `ue_wrap/actors/wisp`). The zombie family and the
+fossilhound go further: their Blueprint's event graph is refused entry by entry on a mirror, but for the footstep and
+the fossilhound's per-viewer loop (`coop/creatures/npc_mirror_brain`). The host
 streams a pose batch every tick, rotated fair-share when more characters are tracked than a batch
 holds, and the mirror interpolates it in the same window a remote player uses
 (`coop/creatures/npc_pose_drive`); a landing edge that depends on movement-component state is

@@ -6,6 +6,7 @@
 #include "coop/config/config_registry.h"
 #include "coop/dev/director/director.h"       // StartBackgroundWalk: the walk is the director's, never a teleport
 #include "coop/dev/director/routes.h"         // ReachableStandpoints: a point a route reaches
+#include "coop/dev/hook_plant.h"              // Plant: the hook planted on the prop, as the item does it
 #include "coop/items/hook_sync.h"             // HasMirrorFrom, BittenEidFrom: the planter's hook, as this peer holds it
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"            // CollectHandAxisActors: the hand is not a world prop
@@ -218,34 +219,6 @@ void* PickTarget(const ue_wrap::FVector& anchor, std::wstring& keyOut, ue_wrap::
     return best;
 }
 
-// The item's own plant, by hand: a hook spawned at the prop, attach_a with the head on the prop's
-// mesh and the tail on the player, then the field the item writes so the owner lane adopts it.
-//
-// The hook is spawned as a MIRROR, not a canonical one: a canonical hook is a save participant,
-// and the game's own autosave and save-on-death would write a driver-planted one into the slot,
-// where it outlives the run. A mirror is kept out of the save and has its tick disabled, and a
-// drag needs neither: the constraint attach_a builds between the prop's mesh and the player's
-// root is independent of both.
-bool Plant(void* player, void* target) {
-    void* mesh = PR::GetStaticMesh(target);
-    if (!mesh) { g_plantNote = "no-static-mesh"; return false; }
-    ue_wrap::FVector loc{};
-    if (!E::TryGetActorLocation(target, loc)) { g_plantNote = "target-location-unread"; return false; }
-    void* hook = H::SpawnMirror(H::Kind::Hook, loc, ue_wrap::FRotator{});
-    if (!hook) { g_plantNote = "hook-did-not-spawn"; return false; }
-    if (!H::AttachHead(hook, target, mesh, ue_wrap::FVector{loc.X, loc.Y, loc.Z + 20.f},
-                       ue_wrap::FVector{0.f, 0.f, 1.f}, player, /*checkLen=*/true,
-                       /*unfreezeFrozen=*/false)) {
-        E::DestroyActor(hook);
-        g_plantNote = "attach_a-did-not-dispatch";
-        return false;
-    }
-    H::WriteActiveHook(player, hook);
-    g_hook.Set(hook);
-    g_plantNote = "planted";
-    return true;
-}
-
 // The shared clock the two peers' samples are aligned on: both run on one machine, so the system
 // clock is common to the millisecond, where each peer's own origin is a second apart.
 uint64_t WallMs() {
@@ -351,9 +324,8 @@ bool BeginWalkOut(void* player, void* target, const char*& why) {
 // The item's cancel: the field this driver wrote is cleared whether or not the hook still stands,
 // then the actor goes. True when the hook still stood.
 bool ReleaseHook() {
-    if (void* p = LocalPlayer()) H::WriteActiveHook(p, nullptr);
     void* h = g_hook.Get();
-    if (h) E::DestroyActor(h);
+    coop::dev::hook_plant::Release(LocalPlayer(), h);
     g_hook.Reset();
     return h != nullptr;
 }
@@ -509,7 +481,9 @@ void Tick() {
         void* p = LocalPlayer();
         void* t = g_target.Get();
         if (!p || !t) g_plantNote = !p ? "no-local-player" : "target-gone";
-        if (!p || !t || !Plant(p, t)) return Fail(isHost, "%s", g_plantNote);
+        void* hook = (p && t) ? coop::dev::hook_plant::Plant(p, t, &g_plantNote) : nullptr;
+        if (!hook) return Fail(isHost, "%s", g_plantNote);
+        g_hook.Set(hook);
         UE_LOGI("hookdrag_selftest: PLANT key='%ls' hook=%p -- attach_a with the head on the "
                 "prop and the tail on the player", g_targetKey.c_str(), g_hook.Raw());
         const char* walkWhy = "";

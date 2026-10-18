@@ -1,5 +1,5 @@
 // coop/dev/remover_drill_layout.h -- the host's half of the remover drill that lays and re-lays its targets: the single
-// prop, the mashed prop, the ring and the creature, about the client's puppet. One concept: where the targets stand.
+// prop, the mashed prop, the ring, the creature and the two crowbars the hook steps use, about the client's puppet. One concept: where the targets stand.
 // The layout is laid only where each spot has a floor of its own, found by a trace, and the segment from the puppet's eye
 // to it is clear (the trace the judge runs), in the first direction of a fan round the puppet's facing that satisfies
 // both. The client, which judges its own sight, may ask for the next direction in a chat line; HandleRelay answers it.
@@ -23,6 +23,7 @@ inline constexpr const wchar_t* kSingleClass = L"prop_pointSack_m_C";
 inline constexpr const wchar_t* kMashClass   = L"prop_pointSack_s_C";
 inline constexpr const wchar_t* kSackClass   = L"prop_pointSack_C";
 inline constexpr const wchar_t* kNpcClass    = L"kerfurOmega_C";
+inline constexpr const wchar_t* kHookedClass = L"prop_crowbar_C";
 
 inline float Dist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
@@ -32,11 +33,13 @@ inline float Dist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
 // What the host laid; the drill's verdict reads it. Empty until a layout is laid.
 struct Laid {
     ue_wrap::CachedObjRef single, mash, npc;
+    ue_wrap::CachedObjRef hostHooked, selfHooked;   // crowbars: the host's hook pulls the first, the client's the second
     ue_wrap::CachedObjRef ring[kRing];
 };
 Laid& Targets();
 
-// Lays the layout about the puppet `rp` at `at`: only the single prop unless `granted`. Null on success; else the reason
+// Lays the layout about the puppet `rp` at `at`: only the single prop unless `granted` (the creature and the crowbars
+// are granted-only too). Null on success; else the reason
 // nothing was laid. Game thread, the host.
 const char* Lay(coop::RemotePlayer& rp, const ue_wrap::FVector& at, bool granted);
 
@@ -48,6 +51,9 @@ enum class Relayed { None, Laid, Failed, NoEye };
 // the client has been told; Failed: the fan has no step left (the client has been told); NoEye: the sender's eye did not read.
 // Game thread, the host.
 Relayed HandleRelay(bool granted);
+
+// The relay lines HandleRelay has taken: the number of the layout that stands now.
+int RelaysDone();
 
 // Back to the first fan step, nothing laid and no relay answered. A session's end.
 void Reset();

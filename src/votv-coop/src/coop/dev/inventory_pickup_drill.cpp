@@ -2,19 +2,23 @@
 
 #include "coop/dev/inventory_pickup_drill.h"
 
+#include "coop/comms/chat_sync.h"
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/director/routes.h"
+#include "coop/dev/prop_act_drill.h"   // the act drill's handshake reads: the host's line, OwnJoinOver, NowMs
 #include "record_digest.h"   // co-located private header (src tree, not include/)
+#include "coop/items/player_inventory_sync.h"
 #include "coop/player/players_registry.h"
 #include "coop/net/session.h"
 #include "coop/player/roster.h"
-#include "coop/session/join_progress.h"
-#include "coop/session/net_pump.h"
+#include "coop/props/prop_act_request.h"
+#include "coop/props/prop_key_index.h"
 #include "ue_wrap/actors/floppy_disc.h"
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/vitals.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -35,14 +39,17 @@ namespace {
 
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
+namespace PAD = coop::dev::prop_act_drill::detail;
 
-// The drill waits on readiness, not on a clock. A CLIENT acts once its join is over: it has announced
-// world-ready and the join cover is down, which is when the host's snapshot has been applied (a
-// measured run sat 39 s past that point on the old fixed wait). The HOST seeds once its own player
-// stands and the save's objects have had time to spawn; in a rig run that is before the client's
-// join capture, so the seeded drive and disc are in the world the joiner is handed.
-constexpr int kClientSettleTicks = 120;  // ~2 s past the join's end, at the pump's ~60 Hz
-constexpr int kHostSettleTicks   = 600;  // ~10 s past the host's player standing
+// The drill waits on readiness, not on a clock. The HOST seeds once its own player stands and the
+// object index holds the world (prop_key_index::CanAnswer: seeded, no backlog), so the loaded save's
+// drive and disc are found and not spawned twice; in a rig run that is before the client's join
+// capture, so the seeded drive and disc are in the world the joiner is handed. It then says
+// kHostSeeded in the lobby chat. A CLIENT acts once its join is over (it has announced world-ready and
+// the join cover is down) AND the host has said so; the host's record is seeded to a rejoiner, so the
+// line is there for a second life too. A wait that runs past kBoundMs FAILs, and the drill stops.
+const std::string kHostSeeded = "inv-pickup host seeded";
+constexpr uint64_t kBoundMs = 60000;   // a failure bound for each wait, never a delay
 constexpr float kDrillFood = 37.f, kDrillSleep = 61.f;
 constexpr int kMaxTries    = 8;     // per wanted kind: a full inventory refuses everything, so never one dispatch per prop in the world
 
@@ -111,7 +118,8 @@ DWORD WINAPI WalkAwayThread(LPVOID /*arg*/) {
     return 0;
 }
 
-void PocketTheWants(void* player);
+void PocketBegin(void* player);
+void PocketTick();
 void HostSeedTheWants(void* player);
 void KeyCensus(bool first);
 void HostSaveTick(coop::net::Session& session);
@@ -123,36 +131,43 @@ void Tick(coop::net::Session* session) {
     static const bool s_on = ::coop::config::ReadEnv("VOTVCOOP_INV_PICKUP_DRILL") == "1";
     if (!s_on || !session) return;
     static bool s_done = false;
-    if (s_done) { KeyCensus(false); HostSaveTick(*session); return; }
+    if (s_done) { PocketTick(); KeyCensus(false); HostSaveTick(*session); return; }
 
+    static bool s_failed = false;
+    if (s_failed) return;
     void* player = coop::players::Registry::Get().Local();
     if (!player || !R::IsLive(player) || !E::GetController(player)) return;
-    static int s_ticks = 0;
+    static uint64_t s_armAt = 0;   // when the wait on the other state began: the host's player stands, the client's join is over
     const bool host = coop::roster::LocalIsHost();
-    if (!host && (!coop::net_pump::HasAnnouncedWorldReady() ||
-                  coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle)) {
-        s_ticks = 0;  // the join is not over: the settle counts from its end
+    if (!host && !PAD::OwnJoinOver()) {
+        s_armAt = 0;  // the join is not over: the wait counts from its end
         return;
     }
-    if (++s_ticks < (host ? kHostSettleTicks : kClientSettleTicks)) return;
+    const uint64_t now = PAD::NowMs();
+    if (!s_armAt) s_armAt = now;
+    const bool settled = host ? coop::prop_key_index::CanAnswer() : PAD::HostSaid(kHostSeeded, nullptr);
+    if (!settled) {
+        if (now - s_armAt > kBoundMs) {
+            UE_LOGE("[INV-PICKUP-DRILL] FAIL %s within %d s", host ? "the object index never held the world"
+                                                                    : "the host never said it had seeded",
+                    static_cast<int>(kBoundMs / 1000));
+            s_failed = true;
+        }
+        return;
+    }
     s_done = true;
     KeyCensus(true);  // what stands in the world BEFORE this peer acts
 
     // The host only makes sure the world HOLDS a drive with a signal and a disc with data; the
-    // client's items are the ones under test.
-    if (coop::roster::LocalIsHost()) { HostSeedTheWants(player); return; }
+    // client's items are the ones under test. It tells the client when that is done.
+    if (host) {
+        HostSeedTheWants(player);
+        coop::chat_sync::QueueSend(kHostSeeded);
+        return;
+    }
 
-    PocketTheWants(player);
-    ClientWriteGateProbe();
-
-    // Vitals no fresh life and no host has: what a rejoin restores must be THESE numbers.
-    namespace V = ue_wrap::vitals;
-    const bool wrote = V::Write(V::Field::Food, kDrillFood) && V::Write(V::Field::Sleep, kDrillSleep);
-    UE_LOGI("[INV-PICKUP-DRILL] vitals set to food=%.0f sleep=%.0f -> %hs", kDrillFood, kDrillSleep,
-            wrote ? "written" : "WRITE FAILED");
-
-    g_walkEpoch.store(coop::director::WalkEpoch(), std::memory_order_release);
-    if (HANDLE t = ::CreateThread(nullptr, 0, &WalkAwayThread, nullptr, 0, nullptr)) ::CloseHandle(t);
+    // The rest of the client's life (the probe, the vitals, the walk) follows the pocketing, from PocketTick.
+    PocketBegin(player);
 }
 
 namespace {
@@ -272,134 +287,245 @@ void HostSeedTheWants(void* player) {
     }
 }
 
-void PocketTheWants(void* player) {
-    void* fn = R::FindFunction(R::ClassOf(player), L"putObjectInventory2");
-    if (!fn) {
-        UE_LOGE("[INV-PICKUP-DRILL] putObjectInventory2 did not resolve -- drill aborted");
-        return;
-    }
-    // What is carried already, by key: a prop that stands in the world under a carried key is a
-    // duplicate of a pocketed item, and pocketing it again would hide exactly that.
+// The pocketing in progress on the CLIENT: the wants in order, and in each the candidates one per act. A mirror's
+// pocket is cancelled and asked of the host, so the act ends a round trip after the call; the inventory then says
+// whether it was taken.
+struct PocketRun {
+    bool   active = false;
+    size_t want = 0;                           // the index into kWants being pocketed
+    bool   ordered = false;                    // its candidates are listed
+    std::vector<ue_wrap::CachedObjRef> order;  // the candidates, one that holds data first
+    size_t next = 0;                           // the candidate the next act tries
+    bool   asked = false;                      // the act in flight is open at the host
+    // The act in flight, for its line.
+    std::wstring cls, key;
+    ue_wrap::FVector at{};
+    bool   atRead = false;
+    // What was carried when the drill began, and where the player stood.
     ue_wrap::inventory::PlayerInventory mine;
-    ue_wrap::inventory::ReadAll(mine);
-    auto carriedKey = [&mine](const std::wstring& key) {
-        for (const auto& r : mine.inventory) if (r.key == key) return true;
+    ue_wrap::FVector me{};
+    bool   meRead = false;
+};
+PocketRun g_pocket;
+
+// The rest of the client's life once its pocketing is over: the write-gate probe, the vitals no fresh life has, and
+// the walk.
+void ClientFinish() {
+    g_pocket.active = false;
+    ClientWriteGateProbe();
+
+    // Vitals no fresh life and no host has: what a rejoin restores must be THESE numbers.
+    namespace V = ue_wrap::vitals;
+    const bool wrote = V::Write(V::Field::Food, kDrillFood) && V::Write(V::Field::Sleep, kDrillSleep);
+    UE_LOGI("[INV-PICKUP-DRILL] vitals set to food=%.0f sleep=%.0f -> %hs", kDrillFood, kDrillSleep,
+            wrote ? "written" : "WRITE FAILED");
+
+    g_walkEpoch.store(coop::director::WalkEpoch(), std::memory_order_release);
+    if (HANDLE t = ::CreateThread(nullptr, 0, &WalkAwayThread, nullptr, 0, nullptr)) ::CloseHandle(t);
+}
+
+void NextWant() {
+    ++g_pocket.want;
+    g_pocket.ordered = false;
+    g_pocket.order.clear();
+    g_pocket.next = 0;
+}
+
+// The candidates of the want in progress, in the order they are tried. False when the kind needs no pocket (already
+// carried) or the world holds no candidate.
+bool OrderWant(const Want& w) {
+    auto carriedKey = [](const std::wstring& key) {
+        for (const auto& r : g_pocket.mine.inventory) if (r.key == key) return true;
         return false;
     };
-    ue_wrap::FVector me{};
-    const bool meRead = E::TryGetActorLocation(player, me);   // only the duplicate line's distance uses it
+    // A rejoined life already carries what the first one pocketed: the kind is satisfied, and
+    // a second pickup would only blur which record the two lives are compared on.
+    bool carried = false;
+    for (const auto& r : g_pocket.mine.inventory)
+        for (const wchar_t* cls : w.classes) if (r.className == cls) carried = true;
 
-    for (const Want& w : kWants) {
-        // A rejoined life already carries what the first one pocketed: the kind is satisfied, and
-        // a second pickup would only blur which record the two lives are compared on.
-        bool carried = false;
-        for (const auto& r : mine.inventory)
-            for (const wchar_t* cls : w.classes) if (r.className == cls) carried = true;
-
-        // Candidates the verb may still refuse (a filtered class, a full inventory), so they are
-        // tried in order up to kMaxTries; one that holds data goes first.
-        std::vector<void*> order;
-        for (void* prop : LiveOf(w)) {
-            const std::wstring key = ue_wrap::prop::GetInteractableKeyString(prop);
-            if (carriedKey(key)) {
-                // Where it sits: at the player's feet it was ejected from an inventory, at a map
-                // location it came with the world.
-                ue_wrap::FVector at{};
-                const bool atRead = E::TryGetActorLocation(prop, at);
-                const float dx = at.X - me.X, dy = at.Y - me.Y, dz = at.Z - me.Z;
-                UE_LOGW("[INV-PICKUP-DRILL] DUPLICATE IN THE WORLD: '%ls' key='%ls' stands at "
-                        "(%.0f, %.0f, %.0f)%s, %.0f cm away, and that key is already carried -- "
-                        "left alone", R::ClassNameOf(prop).c_str(), key.c_str(), at.X, at.Y, at.Z,
-                        atRead ? "" : " (unread)",
-                        (atRead && meRead) ? std::sqrt(dx * dx + dy * dy + dz * dz) : -1.f);
-                continue;
-            }
-            if (HoldsData(w.kind, prop)) order.insert(order.begin(), prop);
-            else order.push_back(prop);
-        }
-        if (carried) {
-            UE_LOGI("[INV-PICKUP-DRILL] %hs is already carried -- nothing pocketed for it", w.label);
-            continue;
-        }
-        if (order.empty()) {
-            UE_LOGW("[INV-PICKUP-DRILL] the world holds no candidate for %hs", w.label);
-            continue;
-        }
-
-        bool took = false;
-        int tries = 0;
-        for (void* prop : order) {
-            if (++tries > kMaxTries) break;
-            const std::wstring cls = R::ClassNameOf(prop);
-            const std::wstring key = ue_wrap::prop::GetInteractableKeyString(prop);
-            if (!HoldsData(w.kind, prop)) {
-                // The host stamps its own; an empty one HERE means that content did not reach
-                // this peer's copy, which is a finding about the prop's data lane, not the profile.
-                const bool ok = Stamp(w.kind, prop);
-                UE_LOGW("[INV-PICKUP-DRILL] '%ls' key='%ls' stands here holding NO data -- stamped "
-                        "on this peer -> %hs", cls.c_str(), key.c_str(), ok ? "written" : "WRITE FAILED");
-            }
-            // The record as the item itself serializes it, before the verb runs. The carried
-            // record differs from it in the bool group by design: addObject appends the owner's
-            // `fridge` flag to bools[0].
-            // Deliberately NOT gated on prop_save_data::Covers. That gate answers "does the
-            // live-prop record lane publish this class", and a food is claimed off that lane; the
-            // pocket is a different custody with a different carrier, and this line is the readout
-            // of what the pocket will take. Gating it here would blind the drill to the one lane it
-            // is driving. It writes no field of the actor -- getData only builds a struct -- but it
-            // is not free of consequence: the first capture for a class runs the codec's convention
-            // check, which can eject that class from the record lane for the session. A drill can
-            // therefore be the party that ejects one, and the warning will name this class.
-            SR::SaveRecord before;
-            if (SR::CaptureRecord(prop, before))
-                UE_LOGI("[INV-PICKUP-DRILL] before the pickup '%ls' key='%ls': %hs", cls.c_str(),
-                        key.c_str(), coop::dev::record_digest::ValuesOf(before).c_str());
-
+    // Candidates the verb may still refuse (a filtered class, a full inventory, the host's no), so they are
+    // tried in order up to kMaxTries; one that holds data goes first.
+    std::vector<void*> order;
+    for (void* prop : LiveOf(w)) {
+        const std::wstring key = ue_wrap::prop::GetInteractableKeyString(prop);
+        if (carriedKey(key)) {
+            // Where it sits: at the player's feet it was ejected from an inventory, at a map
+            // location it came with the world.
             ue_wrap::FVector at{};
-            const bool atRead = E::TryGetActorLocation(prop, at);   // for the line below only
-            ue_wrap::ParamFrame f(fn);
-            f.Set(L"InputPin", prop);
-            f.Set(L"noNotify", true);
-            const bool called = ue_wrap::Call(player, f);
-            took = called && f.Get<bool>(L"return");
-            UE_LOGI("[INV-PICKUP-DRILL] putObjectInventory2('%ls' key='%ls' at (%.0f, %.0f, %.0f)%s) "
-                    "for %hs -> %hs", cls.c_str(), key.c_str(), at.X, at.Y, at.Z, atRead ? "" : " (unread)", w.label,
-                    !called ? "CALL FAILED" : took ? "POCKETED" : "refused");
-            if (took) break;
+            const bool atRead = E::TryGetActorLocation(prop, at);
+            const ue_wrap::FVector& me = g_pocket.me;
+            const float dx = at.X - me.X, dy = at.Y - me.Y, dz = at.Z - me.Z;
+            UE_LOGW("[INV-PICKUP-DRILL] DUPLICATE IN THE WORLD: '%ls' key='%ls' stands at "
+                    "(%.0f, %.0f, %.0f)%s, %.0f cm away, and that key is already carried -- "
+                    "left alone", R::ClassNameOf(prop).c_str(), key.c_str(), at.X, at.Y, at.Z,
+                    atRead ? "" : " (unread)",
+                    (atRead && g_pocket.meRead) ? std::sqrt(dx * dx + dy * dy + dz * dz) : -1.f);
+            continue;
         }
-        if (!took) UE_LOGW("[INV-PICKUP-DRILL] no candidate was accepted for %hs", w.label);
+        if (HoldsData(w.kind, prop)) order.insert(order.begin(), prop);
+        else order.push_back(prop);
     }
+    if (carried) {
+        UE_LOGI("[INV-PICKUP-DRILL] %hs is already carried -- nothing pocketed for it", w.label);
+        return false;
+    }
+    if (order.empty()) {
+        UE_LOGW("[INV-PICKUP-DRILL] the world holds no candidate for %hs", w.label);
+        return false;
+    }
+    for (void* prop : order) {
+        g_pocket.order.emplace_back();
+        g_pocket.order.back().Set(prop);
+    }
+    return true;
+}
+
+// The act in flight has ended (it ran at the call, or the host's answer is in): did the inventory take the item? A
+// refusal leaves the run for the next candidate; a take moves to the next want.
+void PocketSettle(bool called, bool took) {
+    const Want& w = kWants[g_pocket.want];
+    const bool wasAsked = g_pocket.asked;
+    if (wasAsked) {
+        // The call itself returned false (cancelled); the world says what the act came to. A prop without a key
+        // is read by its actor being gone.
+        const bool keyed = !g_pocket.key.empty() && g_pocket.key != L"None";
+        bool held = false;
+        ue_wrap::inventory::PlayerInventory now;
+        if (keyed && ue_wrap::inventory::ReadAll(now))
+            for (const auto& r : now.inventory) if (r.key == g_pocket.key) held = true;
+        took = keyed ? held : !g_pocket.order[g_pocket.next - 1].Alive();
+        g_pocket.asked = false;
+    }
+    UE_LOGI("[INV-PICKUP-DRILL] putObjectInventory2('%ls' key='%ls' at (%.0f, %.0f, %.0f)%s) "
+            "for %hs -> %hs%hs", g_pocket.cls.c_str(), g_pocket.key.c_str(), g_pocket.at.X, g_pocket.at.Y,
+            g_pocket.at.Z, g_pocket.atRead ? "" : " (unread)", w.label,
+            !called ? "CALL FAILED" : took ? "POCKETED" : "refused", wasAsked ? " (asked the host)" : "");
+    if (took) NextWant();
+}
+
+// One act per tick: while a request is open nothing else is called; otherwise the next candidate of the want in
+// progress is pocketed, and the pocketing ends with the last want.
+void PocketTick() {
+    if (!g_pocket.active) return;
+    void* player = coop::players::Registry::Get().Local();
+    if (!player || !R::IsLive(player)) return;
+    if (g_pocket.asked) {
+        if (coop::prop_act_request::dev::PendingId() != 0) return;
+        PocketSettle(true, false);
+        return;
+    }
+    for (;;) {
+        if (g_pocket.want >= sizeof(kWants) / sizeof(kWants[0])) { ClientFinish(); return; }
+        if (!g_pocket.ordered) {
+            g_pocket.ordered = true;
+            if (!OrderWant(kWants[g_pocket.want])) { NextWant(); continue; }
+        }
+        break;
+    }
+    const Want& w = kWants[g_pocket.want];
+    if (g_pocket.next >= g_pocket.order.size() || g_pocket.next >= static_cast<size_t>(kMaxTries)) {
+        UE_LOGW("[INV-PICKUP-DRILL] no candidate was accepted for %hs", w.label);
+        NextWant();
+        return;
+    }
+    void* prop = g_pocket.order[g_pocket.next++].Get();
+    if (!prop) return;   // died since it was listed: the try is spent
+    g_pocket.cls = R::ClassNameOf(prop);
+    g_pocket.key = ue_wrap::prop::GetInteractableKeyString(prop);
+    if (!HoldsData(w.kind, prop)) {
+        // The host stamps its own; an empty one HERE means that content did not reach
+        // this peer's copy, which is a finding about the prop's data lane, not the profile.
+        const bool ok = Stamp(w.kind, prop);
+        UE_LOGW("[INV-PICKUP-DRILL] '%ls' key='%ls' stands here holding NO data -- stamped "
+                "on this peer -> %hs", g_pocket.cls.c_str(), g_pocket.key.c_str(), ok ? "written" : "WRITE FAILED");
+    }
+    // The record as the item itself serializes it, before the verb runs. The carried
+    // record differs from it in the bool group by design: addObject appends the owner's
+    // `fridge` flag to bools[0].
+    // Deliberately NOT gated on prop_save_data::Covers. That gate answers "does the
+    // live-prop record lane publish this class", and a food is claimed off that lane; the
+    // pocket is a different custody with a different carrier, and this line is the readout
+    // of what the pocket will take. Gating it here would blind the drill to the one lane it
+    // is driving. It writes no field of the actor -- getData only builds a struct -- but it
+    // is not free of consequence: the first capture for a class runs the codec's convention
+    // check, which can eject that class from the record lane for the session. A drill can
+    // therefore be the party that ejects one, and the warning will name this class.
+    SR::SaveRecord before;
+    if (SR::CaptureRecord(prop, before))
+        UE_LOGI("[INV-PICKUP-DRILL] before the pickup '%ls' key='%ls': %hs", g_pocket.cls.c_str(),
+                g_pocket.key.c_str(), coop::dev::record_digest::ValuesOf(before).c_str());
+
+    g_pocket.atRead = E::TryGetActorLocation(prop, g_pocket.at);   // for the line below only
+    bool taken = false;
+    const bool called = E::CallPutObjectInventory2(player, prop, true, taken);
+    if (called && !taken && coop::prop_act_request::dev::PendingId() != 0) {
+        g_pocket.asked = true;
+        return;
+    }
+    PocketSettle(called, called && taken);
+}
+
+// CLIENT, once: starts the pocketing of the wants.
+void PocketBegin(void* player) {
+    if (!R::FindFunction(R::ClassOf(player), L"putObjectInventory2")) {
+        UE_LOGE("[INV-PICKUP-DRILL] putObjectInventory2 did not resolve -- drill aborted");
+        ClientFinish();
+        return;
+    }
+    g_pocket = PocketRun{};
+    g_pocket.active = true;
+    // What is carried already, by key: a prop that stands in the world under a carried key is a
+    // duplicate of a pocketed item, and pocketing it again would hide exactly that.
+    ue_wrap::inventory::ReadAll(g_pocket.mine);
+    g_pocket.meRead = E::TryGetActorLocation(player, g_pocket.me);   // only the duplicate line's distance uses it
 }
 
 // HOST, with VOTVCOOP_INV_PICKUP_DRILL_SAVE set: save the world through the game's own
 // saveSlot_C::save, when a joiner's world comes up. The host writes each player's profile to disk
 // only with its own world save, and a rig host never saves by itself, so without this the cut is
-// never exercised. The moment is a joiner's arrival and not a minute counter, because that is when
-// there is something to see: the join capture just gathered the world and set the profiles aside,
-// so the save after a REJOIN is the one that cuts what the first life left. `1` writes the slot the
-// host loaded, once per arrival. `quick` writes twice per arrival: the player's quicksave, which
-// puts the live world in a NEW <slot>_SUB_<n> file, then the pause menu's plain save, which writes
-// the main slot -- two files from one world, which is what a profile set that follows the written
-// slot has to be seen doing. The test rig puts the loaded slot and its profile files back after the
-// run and reports the subsaves a run made. The arrival is read off the session as a whole, which is
-// enough for the two peers this drill is written for: a SECOND client arriving while the first is
-// still there is no edge, and a three-peer drill would need the edge per slot.
-constexpr int kSaveGapTicks = 300;  // ~5 s at the pump's ~60 Hz: after the arrival, and between the two
-constexpr int kSaveRuns     = 6;
+// never exercised. The moment is a joiner's arrival: the save after a REJOIN is the one that cuts
+// what the first life left. `1` writes the slot the host loaded, once per arrival. `quick` writes
+// twice: the player's quicksave (a NEW <slot>_SUB_<n> file), then the pause menu's plain save of
+// the main slot -- two files from one world. The test rig puts the loaded slot and its profile
+// files back after the run. The arrival is read off the session as a whole (two peers; a third
+// would need the edge per slot). The first save waits for a joiner's profile to reach the host
+// after the edge (ProfilesReceived rising); the second for the first's write to be cut
+// (WorldSavesWritten rising); either past kBoundMs FAILs the arrival.
+constexpr int kSaveRuns = 6;
 
 void HostSaveTick(coop::net::Session& session) {
+    namespace PIS = coop::player_inventory_sync;
     static const std::string s_mode = ::coop::config::ReadEnv("VOTVCOOP_INV_PICKUP_DRILL_SAVE");
     static const bool s_on = s_mode == "1" || s_mode == "quick";
     if (!s_on || !coop::roster::LocalIsHost()) return;
     static bool s_wasReady = false;
-    static int s_left = 0, s_due = 0, s_runs = 0;
+    static int s_left = 0, s_runs = 0;
+    static uint32_t s_profilesAt = 0, s_writesAt = 0;   // the counts to see rise
+    static uint64_t s_waitSince = 0;
     const bool ready = session.AnyWorldReadyPeer();
-    if (ready && !s_wasReady) { s_left = s_mode == "quick" ? 2 : 1; s_due = kSaveGapTicks; }
+    if (ready && !s_wasReady) {
+        s_left = s_mode == "quick" ? 2 : 1;
+        s_profilesAt = PIS::ProfilesReceived();
+        s_waitSince = PAD::NowMs();
+    }
     s_wasReady = ready;
-    if (s_left == 0 || s_runs >= kSaveRuns || --s_due > 0) return;
-    s_due = kSaveGapTicks;
-    const bool firstOfArrival = s_left == 2;
+    if (s_left == 0 || s_runs >= kSaveRuns) return;
+    const bool firstOfArrival = s_left == (s_mode == "quick" ? 2 : 1);
+    if (firstOfArrival ? PIS::ProfilesReceived() == s_profilesAt : PIS::WorldSavesWritten() == s_writesAt) {
+        if (PAD::NowMs() - s_waitSince > kBoundMs) {
+            UE_LOGE("[INV-PICKUP-DRILL] FAIL HOST save #%d: %s within %d s", s_runs + 1,
+                    firstOfArrival ? "no profile reached the host after the arrival"
+                                   : "the first save's write was never cut",
+                    static_cast<int>(kBoundMs / 1000));
+            s_left = 0;
+        }
+        return;
+    }
+    const bool firstSaveOfTheTwo = s_mode == "quick" && firstOfArrival;
+    if (firstSaveOfTheTwo) s_writesAt = PIS::WorldSavesWritten();   // before the call: the write is inside it
     --s_left;
+    s_waitSince = PAD::NowMs();   // the second save's wait counts from this one
     ++s_runs;
     void* slot = ue_wrap::inventory::ResolveSaveSlot();
     void* fn = slot ? R::FindFunction(R::ClassOf(slot), L"save") : nullptr;
@@ -409,7 +535,7 @@ void HostSaveTick(coop::net::Session& session) {
     }
     // saveToSlot, quicksave first: (true, *) -> a new subsave; (false, true) -> the loaded slot as
     // named; (false, false) -> the main slot, also when a subsave is what was loaded.
-    const bool quick = s_mode == "quick" && firstOfArrival;
+    const bool quick = firstSaveOfTheTwo;
     const bool plain = s_mode == "quick" && !quick;
     ue_wrap::ParamFrame f(fn);
     f.Set(L"quicksave", quick);

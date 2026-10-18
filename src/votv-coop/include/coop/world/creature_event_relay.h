@@ -12,11 +12,13 @@
 //     cannot take makes none, and that mirror counts its own). The client's count is the sum of these keyed
 //     registrations and its own events; a mirror's end and the session's end retract them; a world change drops them.
 //   - PER VIEWER: killerwisp_C, fossilhound_C, antibreather_C and eg_C compute their event from the local camera or
-//     player 0; their mirror's own call is allowed and the host's relay skips them.
+//     player 0; the host's relay skips them and their mirror's own call runs (counted per eid, PerViewerTrues).
 
 #pragma once
 
 #include "coop/element/element.h"
+
+#include <cstdint>
 
 namespace coop::net {
 class Session;
@@ -50,5 +52,10 @@ void OnDisconnect();
 // [dev], for the drill alone: the target and the applied count of `eid`'s entry; -1 when there is none.
 int TargetFor(coop::element::ElementId eid);
 int AppliedFor(coop::element::ElementId eid);
+
+// [dev], for the drill alone: how many times the per-viewer mirror of `eid` called setEvent(true) and setEvent(false)
+// itself and ran it (a client; the calls outlive the mirror until the disconnect); 0 for any other creature.
+uint32_t PerViewerTrues(coop::element::ElementId eid);
+uint32_t PerViewerFalses(coop::element::ElementId eid);
 
 }  // namespace coop::creature_event_relay

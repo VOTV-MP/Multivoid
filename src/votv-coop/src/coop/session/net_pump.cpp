@@ -10,6 +10,7 @@
 #include "coop/player/nameplate.h"   // ResetSlots() on flee -- HasAny() keeps hud::IsActive() alive in the menu
 #include "ui/chat_input.h"           // Close() on flee -- an OPEN chat box must not survive into the menu
 #include "ui/voice_panel.h"          // Close() on flee -- don't leave the voice panel open across the transition
+#include "coop/dev/announce_hold.h"  // the pre-announce drill arms hold this client's announce
 #include "coop/dev/dev_lanes.h"
 #include "coop/dev/leak_probe.h"
 #include "coop/dev/heap_probe.h"
@@ -506,7 +507,7 @@ void Tick(coop::net::Session& session) {
                 UE_LOGI("net_pump: the re-announce waits on this machine -- %s",
                         coop::join_progress::WorldGateText(gate));
         }
-        if (keysReady) {
+        if (keysReady && !coop::dev::announce_hold::Held()) {
             if (session.SendReliableToSlot(0, coop::net::ReliableKind::ClientWorldReady,
                                            nullptr, 0)) {
                 g_worldReadyAnnounced.store(true, std::memory_order_relaxed);

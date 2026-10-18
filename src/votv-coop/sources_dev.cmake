@@ -30,7 +30,12 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/badsun_drill_clock.cpp
     src/coop/dev/badsun_drill_lane.cpp
     src/coop/dev/event_relay_drill.cpp
+    src/coop/dev/creature_hit_drill.cpp
+    src/coop/dev/drill_hand.cpp
+    src/coop/dev/announce_hold.cpp
     src/coop/dev/hostile_drill.cpp
+    src/coop/dev/hostile_drill_act.cpp
+    src/coop/dev/hostile_drill_act_family.cpp
     src/coop/dev/hostile_drill_chat.cpp
     src/coop/dev/hostile_drill_hand.cpp
     src/coop/dev/hostile_drill_kerfur.cpp
@@ -63,6 +68,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/load_reroll_watch.cpp
     src/coop/dev/container_selftest.cpp
     src/coop/dev/drive_selftest.cpp
+    src/coop/dev/hand_drop_census.cpp
     src/coop/dev/hand_drop_selftest.cpp
     src/coop/dev/run_and_wait_selftest.cpp
     src/coop/dev/world_singleton_parity.cpp
@@ -73,7 +79,17 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/physmods_drill.cpp
     src/coop/dev/drone_call_drill.cpp
     src/coop/dev/remover_drill.cpp
+    src/coop/dev/remover_drill_host.cpp
     src/coop/dev/remover_drill_layout.cpp
+    src/coop/dev/drill_props.cpp
+    src/coop/dev/prop_act_drill.cpp
+    src/coop/dev/prop_act_drill_client.cpp
+    src/coop/dev/prop_act_drill_depart.cpp
+    src/coop/dev/prop_act_drill_edge.cpp
+    src/coop/dev/prop_act_drill_edge_client.cpp
+    src/coop/dev/prop_act_drill_honest.cpp
+    src/coop/dev/prop_act_drill_race.cpp
+    src/coop/dev/prop_act_drill_race_client.cpp
     src/coop/dev/sack_drill.cpp
     src/coop/dev/fall_drill.cpp
     src/coop/dev/atv_spawn_drill.cpp
@@ -92,6 +108,10 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/download_drill.cpp
     src/coop/dev/laptop_drill.cpp
     src/coop/dev/laptop_power_drill.cpp
+    src/coop/dev/explosion_drill.cpp
+    src/coop/dev/explosion_drill_client.cpp
+    src/coop/dev/explosion_drill_fixture.cpp
+    src/coop/dev/explosion_drill_host.cpp
     src/coop/dev/grid_drill.cpp
     src/coop/dev/grid_drill_checks.cpp
     src/coop/dev/grid_drill_upgrade.cpp
@@ -107,6 +127,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/key_parity_probe.cpp
     src/coop/dev/floppy_selftest_world.cpp
     src/coop/dev/hookdrag_selftest.cpp
+    src/coop/dev/hook_plant.cpp
     src/coop/dev/roster_token_selftest.cpp
     src/coop/dev/kerfur_census.cpp
     src/coop/dev/food_clock_probe.cpp

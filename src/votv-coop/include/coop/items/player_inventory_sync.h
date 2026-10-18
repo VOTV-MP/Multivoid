@@ -82,6 +82,15 @@ void OnDisconnect();
 // items do not read, or when the transport refused or the profile is too large. Game thread.
 bool SendProfileNow(coop::net::Session* s);
 
+// HOST: how many client profile blobs have been assembled and handed to the store so far: one per complete stream
+// that came from a sender with a GUID (a complete stream dropped for want of one is not counted), an identical blob
+// included (the store skips those, so its own state does not move). A reader waits on the count rising. Game thread.
+uint32_t ProfilesReceived();
+
+// HOST: how many writes of the hosted world's save object have been seen and had their profiles cut to disk (the
+// last step of the save seam; a write the seam refuses is not counted). A reader waits on the count rising. Game thread.
+uint32_t WorldSavesWritten();
+
 // Per-tick: the client's outbound inventory stream, or the host's on-join push, by role. It
 // also carries a one-shot read-verify self-test (ini inventory_selftest=1) that reads the local
 // saveSlot inventory a few seconds after world-up and logs what it found; that part is a no-op

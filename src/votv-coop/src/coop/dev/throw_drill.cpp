@@ -13,6 +13,7 @@
 #include "coop/player/remote_player.h"
 #include "coop/props/container_birth.h"
 #include "coop/props/container_slice_wire.h"
+#include "coop/props/prop_act_request.h"
 #include "coop/props/prop_drive_stream.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
@@ -50,15 +51,16 @@ constexpr float    kAheadCm       = 100.f;
 constexpr float    kDropCm        = 30.f;
 constexpr float    kNearCm        = 400.f;    // CLIENT: the fixture's mirror is this near its player
 constexpr uint64_t kFillBoundMs   = 5000;     // HOST: the spawn to the backpack's own inventory binding its slot
-constexpr uint64_t kCopyBoundMs   = 90000;    // HOST: the fixture to its copy (the client's find, hold and throw)
+// HOST: the fixture to its copy: the client's find 60 s and settle 30 s, plus a 30 s margin for the throw
+constexpr uint64_t kCopyBoundMs   = 120000;
 constexpr uint64_t kSliceBoundMs  = 35000;    // HOST: the copy to its contents, past the transfer's 30 s
 constexpr uint64_t kGoneBoundMs   = 15000;    // HOST: the kick to the transfer ending with its author
 constexpr uint64_t kFindBoundMs   = 60000;    // CLIENT: world-ready to the fixture holding its records
-constexpr uint64_t kSettleBoundMs = 10000;
+constexpr uint64_t kSettleBoundMs = 30000;    // CLIENT: the mirror's first sight to rest and the host's drive ended
 constexpr uint64_t kCheckEveryMs  = 250;
 constexpr int      kRestChecks    = 4;
 
-enum class Step : uint8_t { Arm, Fill, Copy, Slice, Gone, Find, Settle, Throw, Done };
+enum class Step : uint8_t { Arm, Fill, Copy, Slice, Gone, Find, Settle, Throw, HoldWait, Done };
 Step     g_step = Step::Arm;
 uint64_t g_stepMs = 0;
 uint64_t g_nextCheckMs = 0;
@@ -212,7 +214,7 @@ void HostTick(coop::net::Session* s) {
     case Step::Copy: {   // the throw births a new backpack here, from the client's intent
         void* copy = NewCopy(ue_wrap::object_index::ClassByName(kPackClass));
         if (!copy) {
-            if (Expired(kCopyBoundMs)) Fail("no copy of the thrown backpack was born on the host within 90 s");
+            if (Expired(kCopyBoundMs)) Fail("no copy of the thrown backpack was born on the host within 120 s");
             return;
         }
         g_copy.Set(copy);
@@ -262,6 +264,13 @@ void HostTick(coop::net::Session* s) {
     }
 }
 
+// CLIENT: the backpack is in the hand; throw it, which births its copy on the host.
+void ThrowTheHeld(void* player) {
+    if (!coop::dev::drive_drill_verbs::Throw(player)) { Abandon("the hand's backpack could not be thrown"); return; }
+    UE_LOGI("[THROW-DRILL] client (%s): the backpack taken into the hand and thrown, a new actor's birth", Mode().c_str());
+    g_step = Step::Done;
+}
+
 void ClientTick() {
     if (g_step == Step::Done) return;
     // The first client throws; a second, the rig's observer, keeps the host's session alive when gone kicks the
@@ -300,17 +309,35 @@ void ClientTick() {
                           ? g_restReads + 1 : 0;
         g_lastAt = at;
         // At rest and out of the host's fall stream: a mirror the stream still parks is not the hand's to take.
-        if (g_restReads >= kRestChecks && !coop::prop_drive_stream::IsParked(pack)) Next(Step::Throw);
-        else if (Expired(kSettleBoundMs)) Abandon("the backpack's mirror never came to rest");
+        const bool parked = coop::prop_drive_stream::IsParked(pack);
+        const bool still = g_restReads >= kRestChecks;
+        if (still && !parked) Next(Step::Throw);
+        else if (Expired(kSettleBoundMs))
+            Abandon(!still && parked ? "the backpack's mirror was still moving and still parked by the host's drive"
+                    : parked ? "the backpack's mirror was at rest but the host's drive of it never ended"
+                             : "the backpack's mirror never came to rest");
         return;
     }
     case Step::Throw: {
         void* pack = g_fixture.Get();
         if (!pack) { Abandon("the backpack's mirror died"); return; }
-        if (!coop::dev::drive_drill_verbs::Hold(player, pack)) { Abandon("the backpack could not be taken into the hand"); return; }
-        if (!coop::dev::drive_drill_verbs::Throw(player)) { Abandon("the hand's backpack could not be thrown"); return; }
-        UE_LOGI("[THROW-DRILL] client (%s): the backpack taken into the hand and thrown, a new actor's birth", Mode().c_str());
-        g_step = Step::Done;
+        if (coop::dev::drive_drill_verbs::Hold(player, pack)) { ThrowTheHeld(player); return; }
+        // The mirror's hold is asked of the host and ends a round trip after the call.
+        if (coop::prop_act_request::dev::PendingId() == 0) { Abandon("the backpack could not be taken into the hand"); return; }
+        Next(Step::HoldWait);
+        return;
+    }
+    case Step::HoldWait: {
+        if (coop::prop_act_request::dev::PendingId() != 0) return;
+        E::MainPlayerGrabState hand{};
+        // A hold destroys the world mirror and spawns a hand item of its class, so the asked actor is
+        // never the one in the hand: the hold is taken when the mirror is gone and the hand has a backpack.
+        if (!E::ReadMainPlayerGrabState(player, hand) || !hand.holdingActor || g_fixture.Get() ||
+            R::ClassNameOf(hand.holdingActor) != kPackClass) {
+            Abandon("the backpack could not be taken into the hand");
+            return;
+        }
+        ThrowTheHeld(player);
         return;
     }
     default:

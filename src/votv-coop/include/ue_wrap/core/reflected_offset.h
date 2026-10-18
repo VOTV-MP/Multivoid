@@ -41,6 +41,10 @@ int32_t MainPlayer_holding_actor();
 // interactable being used; the use observer reads it there to name the door for the
 // host-authoritative sync.
 int32_t MainPlayer_lookAtActor();
+// The actor the player's last release put into the world: simulateDrop spawns it as a new actor
+// and parks it here, and throwHoldingProp then moves and throws it, so after a throw this is the
+// thrown prop (the hand item it replaced is destroyed).
+int32_t MainPlayer_droppedItem();
 // The rest of the look-at result the trace keeps. LookAtFunction compares all of them against the
 // frame's fresh trace and, when ANY one differs, rebuilds the action list and re-opens the
 // hovertext -- so a field that flips is a visible reset of the interaction UI. lookAtState is the

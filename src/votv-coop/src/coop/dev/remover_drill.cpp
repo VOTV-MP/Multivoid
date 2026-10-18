@@ -1,21 +1,18 @@
 // coop/dev/remover_drill.cpp -- see coop/dev/remover_drill.h.
 
 #include "coop/dev/remover_drill.h"
+#include "remover_drill_detail.h"
 
 #include "coop/comms/chat_feed.h"
-#include "coop/comms/chat_log.h"
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/dev/hook_plant.h"
 #include "coop/dev/remover_drill_layout.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/element/registry.h"
 #include "coop/player/players_registry.h"
-#include "coop/player/puppet_drive.h"
-#include "coop/player/remote_player.h"
-#include "coop/props/remover_request.h"
-#include "coop/props/prop_snapshot.h"
-#include "coop/save/join_window_baseline.h"
+#include "coop/props/remote_prop.h"  // ResolveLiveActorByEid
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
 
@@ -36,12 +33,14 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace coop::dev::remover_drill {
+using namespace detail;
 namespace {
 
 namespace E  = ue_wrap::engine;
@@ -56,17 +55,7 @@ using layout::kSingleClass;
 using layout::kMashClass;
 using layout::kSackClass;
 using layout::kNpcClass;
-
-enum class Phase : uint8_t { Off, Granted, Withheld };
-
-Phase PhaseOf() {
-    static const Phase p = [] {
-        const std::string v = coop::config::ResolveEnum(::coop::config_registry::rows::remover_drill);
-        return v == "granted" ? Phase::Granted : v == "withheld" ? Phase::Withheld : Phase::Off;
-    }();
-    return p;
-}
-const char* PhaseName() { return PhaseOf() == Phase::Granted ? "granted" : "withheld"; }
+using layout::kHookedClass;
 
 // Three plain props of three classes (none trash, kerfur or keyed-special), one per role: the single prop a medium sack,
 // the mashed one a small sack, the ring plain sacks. Sacks settle at a spawn at floor height; a dumbbell and a beer
@@ -79,11 +68,11 @@ constexpr const wchar_t* kToolgunPath = L"/Game/objects/prop_toolgun.prop_toolgu
 constexpr const char* kNoRight     = "The host does not allow the remover";
 constexpr const char* kOutOfSight  = "You can't see that from there";
 constexpr const char* kUnsupported = "The remover cannot remove that in multiplayer";
+constexpr const char* kHeldNotice  = "That is being held";
 
 // The host's layout about its client's puppet, in centimetres along its facing: the single and the mashed props side by
 // side ahead of it, the creature straight ahead beyond them, a ring of kRing about it clear of the cone it faces. The
 // client tells the roles by class (kSingleClass, kMashClass, the sacks), never by where physics left them.
-constexpr int   kSweepFloor   = 10;    // the fewest ring props in sight that make the sweep a measurement
 constexpr int   kMashShots    = 6;
 constexpr float kFindRadiusCm = 700.f;
 constexpr float kAimPastCm    = 50.f;   // the press aims this far past the target's middle
@@ -91,124 +80,20 @@ constexpr float kRestMoveCm   = 1.f;    // a prop that moved less than this betw
 constexpr int   kRestChecks   = 4;      // ...that many reads in a row, a check apart
 
 constexpr uint64_t kFindBoundMs  = 60000;   // CLIENT: the join's end to every prop the host spawned being here
+// CLIENT: the host's walk plus 60 s for its plant and its line.
+constexpr uint64_t kHostHookBoundMs = (uint64_t(kHostHookWalkDeadlineS) + 60) * 1000;
 constexpr uint64_t kLegBoundMs   = 30000;   // CLIENT: a shot to what it must show (a failure bound, never a wait)
-constexpr uint64_t kAwaitBoundMs = 900000;  // HOST: the spawn to the client's closing line
-constexpr uint64_t kCheckEveryMs = 250;
-
-std::string EndLine() { return std::string("remover-drill end ") + PhaseName(); }
-
-int  g_session = 1;
-bool g_done = false;
-uint64_t g_stepMs = 0;
-uint64_t g_nextCheckMs = 0;
-
-bool Expired(uint64_t bound) { return ::GetTickCount64() - g_stepMs > bound; }
-
-void End(const char* role, const char* word, const char* what, bool warn) {
-    if (warn) UE_LOGW("[REMOVER-DRILL] %s %s %s in session %d: %s", role, word, PhaseName(), g_session, what);
-    else      UE_LOGI("[REMOVER-DRILL] %s %s %s in session %d: %s", role, word, PhaseName(), g_session, what);
-    g_done = true;
-}
-
-
-// ---- host -------------------------------------------------------------------------------------------------------
-
-enum class HostStep : uint8_t { Arm, Await };
-HostStep g_hostStep = HostStep::Arm;
-
-bool ClientEnded() {
-    const std::string end = EndLine();
-    bool found = false;
-    coop::chat_log::ForEach([&](const coop::chat_log::Row& r) {
-        if (r.slot == 1 && r.text == end) found = true;
-    });
-    return found;
-}
-
-// The host's own count of its answers to slot 1, by reason.
-uint32_t Answered(coop::net::RemoverReason r) { return coop::remover_request::AnsweredFor(1, r); }
-
-// The prop is gone on the host AND the host performed it: the answers it gave are the host's own word, so a removal
-// the client did natively and the host merely applied cannot pass.
-void HostJudge() {
-    const layout::Laid& laid = layout::Targets();
-    using RR = coop::net::RemoverReason;
-    char why[240];
-    const uint32_t removed = Answered(RR::Removed);
-    const uint32_t noRight = Answered(RR::NoRight);
-    const uint32_t other = Answered(RR::NotReady) + Answered(RR::Unsupported) + Answered(RR::Held) +
-                           Answered(RR::OutOfSight) + Answered(RR::Failed);
-    if (PhaseOf() == Phase::Withheld) {
-        if (laid.single.Get() && removed == 0 && noRight >= 1)
-            End("host", "PASS", "the prop the host's permissions refuse stands here; NoRight was answered", false);
-        else {
-            std::snprintf(why, sizeof(why), "refused prop standing=%d, Removed answered %u, NoRight answered %u",
-                          laid.single.Get() ? 1 : 0, removed, noRight);
-            End("host", "FAIL", why, true);
-        }
-        return;
-    }
-    int ringGone = 0;
-    for (const auto& r : laid.ring)
-        if (!r.Get()) ++ringGone;
-    const bool single = !laid.single.Get(), mash = !laid.mash.Get(), npc = laid.npc.Get() != nullptr;
-    // One Removed for the single prop, one for the mashed one (the rest of its presses were answered Gone), one per ring
-    // prop; the sweep's presses were each judged in sight, and the creature was answered Unsupported.
-    const uint32_t wantRemoved = 2u + static_cast<uint32_t>(ringGone);
-    if (single && mash && ringGone >= kSweepFloor && npc && removed == wantRemoved && other == Answered(RR::Unsupported) &&
-        Answered(RR::Unsupported) >= 1) {
-        std::snprintf(why, sizeof(why), "the single prop, the mashed one and %d of %d ring props are gone here; the "
-                      "host answered Removed %u times; the creature stands", ringGone, kRing, removed);
-        End("host", "PASS", why, false);
-        return;
-    }
-    std::snprintf(why, sizeof(why),
-                  "single gone=%d mash gone=%d ring gone=%d (want at least %d) creature standing=%d; answered Removed %u "
-                  "(want %u), OutOfSight %u, Failed %u, NotReady %u, Held %u, Unsupported %u",
-                  single ? 1 : 0, mash ? 1 : 0, ringGone, kSweepFloor, npc ? 1 : 0, removed, wantRemoved,
-                  Answered(RR::OutOfSight), Answered(RR::Failed), Answered(RR::NotReady), Answered(RR::Held),
-                  Answered(RR::Unsupported));
-    End("host", "FAIL", why, true);
-}
-
-void HostTick(coop::net::Session* s) {
-    if (g_done) return;
-    const uint64_t now = ::GetTickCount64();
-    if (now < g_nextCheckMs) return;
-    g_nextCheckMs = now + kCheckEveryMs;
-    if (g_hostStep == HostStep::Arm) {
-        // The client's join and its late window are over, so what is spawned reaches it as a live spawn.
-        if (!s->IsSlotWorldReady(1) || !coop::prop_snapshot::IsBracketClosed(1) ||
-            coop::join_window_baseline::IsLateWindowOpen(1))
-            return;
-        // The layout is spawned only once the host holds a posed puppet for the client, and the client presses only
-        // after it finds the layout: by then the host can place the client's eye. Before its first pose a puppet
-        // stands at its spawn point.
-        coop::RemotePlayer& rp = coop::puppet_drive::Puppet(1);
-        void* puppet = rp.valid() && rp.HasPose() ? rp.GetActor() : nullptr;
-        FVector at{};
-        if (!puppet || !R::IsLive(puppet) || !E::TryGetActorLocation(puppet, at)) return;
-        if (const char* why = layout::Lay(rp, at, PhaseOf() == Phase::Granted)) { End("host", "ABANDONED", why, true); return; }
-        UE_LOGI("[REMOVER-DRILL] host: the layout is spawned about the client's puppet (%s)", PhaseName());
-        g_hostStep = HostStep::Await;
-        g_stepMs = now;
-        return;
-    }
-    if (layout::HandleRelay(PhaseOf() == Phase::Granted) == layout::Relayed::NoEye) {
-        End("host", "ABANDONED", "the sender's eye did not read for a relay", true);
-        return;
-    }
-    if (ClientEnded()) { HostJudge(); return; }
-    if (Expired(kAwaitBoundMs)) End("host", "ABANDONED", "the client's closing line never came", true);
-}
 
 // ---- client -----------------------------------------------------------------------------------------------------
 
 enum class Step : uint8_t {
-    Arm, Find, Settle, Relay, Cleared, Single, SingleWait, Mash, MashWait, Sweep, SweepWait, Npc, NpcWait, Finish
+    Arm, Find, Settle, Relay, Cleared, Single, SingleWait, Mash, MashWait, Sweep, SweepWait, Npc, NpcWait,
+    HostHooked, HostHookedWait, SelfHooked, SelfHookedWait, Finish
 };
 Step g_step = Step::Arm;
 ue_wrap::CachedObjRef g_toolgun, g_single, g_mash, g_npc;
+ue_wrap::CachedObjRef g_hostHooked, g_selfHooked;   // the crowbars: the host's hook pulls the first, this client's the second
+ue_wrap::CachedObjRef g_selfHook;                   // the hook this client planted on the second
 ue_wrap::CachedObjRef g_ring[kRing];    // every ring prop the host laid
 int g_ringN = 0;
 ue_wrap::CachedObjRef g_sweep[kRing];   // the ring props the camera's trace meets first: the shots of the sweep
@@ -216,7 +101,7 @@ int g_sweepN = 0;
 int g_sweepAt = 0;
 int g_noticeBase = 0;   // the leg's notice count before its shot
 char g_aimWhy[420] = "";   // why the last AimedHit or press failed
-FVector g_restAt[kRing + 2];   // where the pair and the ring stood at the last rest read
+FVector g_restAt[kRing + 4];   // where the pair, the two crowbars and the ring stood at the last rest read
 int g_restReads = 0;           // reads in a row at which none of them had moved
 int g_relay = 0;                 // relays asked of the host for this run
 std::string g_relayWhy;          // what each direction's blocked trace met, for the abandon that ends the fan
@@ -246,6 +131,64 @@ int NoticeCount(const char* text) {
         if (r.line.find(text) != std::string_view::npos) ++n;
     });
     return n;
+}
+
+// What this client's feed holds of the host's host-hooked line for this layout.
+enum class HostLine : uint8_t { None, Read, Malformed };
+
+// Reads the host's host-hooked line of this layout ("... eid=<E> self=<F>;") from this client's feed. A row that carries
+// the layout's prefix and does not parse is Malformed, with its text cut to 80 characters in `bad`.
+HostLine ReadHostHookedLine(uint32_t& hostEid, uint32_t& selfEid, std::string& bad) {
+    const std::string prefix = HostHookedPrefix(g_relay);
+    HostLine seen = HostLine::None;
+    coop::chat_feed::ForEachRow([&](const coop::chat_feed::RowView& r) {
+        const size_t at = r.line.find(prefix);
+        if (at == std::string_view::npos || seen == HostLine::Malformed) return;
+        const std::string tail(r.line.substr(at + prefix.size()));
+        char* end = nullptr;
+        const unsigned long e = std::strtoul(tail.c_str(), &end, 10);
+        const bool eidOk = end != tail.c_str() && e != 0;
+        const char* selfAt = eidOk ? end : nullptr;
+        constexpr char kSelf[] = " self=";
+        unsigned long f = 0;
+        bool ok = false;
+        if (selfAt && std::strncmp(selfAt, kSelf, sizeof(kSelf) - 1) == 0) {
+            const char* fromF = selfAt + sizeof(kSelf) - 1;
+            char* endF = nullptr;
+            f = std::strtoul(fromF, &endF, 10);
+            ok = endF != fromF && f != 0 && *endF == ';';
+        }
+        if (!ok) {
+            seen = HostLine::Malformed;
+            bad = std::string(r.line.substr(0, 80));
+            return;
+        }
+        hostEid = static_cast<uint32_t>(e);
+        selfEid = static_cast<uint32_t>(f);
+        seen = HostLine::Read;
+    });
+    return seen;
+}
+
+// Binds the crowbars' roles to what the host named: the mirror of its eid E is g_hostHooked, the mirror of F g_selfHooked.
+// Fails the drill (false) unless E and F are the two different crowbars Find bound.
+bool BindHookedRoles(uint32_t hostEid, uint32_t selfEid) {
+    void* const pair[2] = {g_hostHooked.Get(), g_selfHooked.Get()};
+    void* const host = coop::remote_prop::ResolveLiveActorByEid(hostEid);
+    void* const self = coop::remote_prop::ResolveLiveActorByEid(selfEid);
+    const auto isOne = [&](void* a) { return a && (a == pair[0] || a == pair[1]); };
+    if (!isOne(host) || !isOne(self) || host == self) {
+        char why[140];
+        std::snprintf(why, sizeof(why), "the host's crowbars, eids %u and %u, are not this client's two crowbars", hostEid,
+                      selfEid);
+        Fail(why);
+        return false;
+    }
+    g_hostHooked.Set(host);
+    g_selfHooked.Set(self);
+    UE_LOGI("[REMOVER-DRILL] client: crowbar roles bound by the host's eids -- host-hooked eid %u, self-hooked eid %u",
+            hostEid, selfEid);
+    return true;
 }
 
 void DestroyIfLive(void* actor) {
@@ -359,8 +302,10 @@ void* NearestNpc(const FVector& from) {
 }
 
 // The host's roles, each a class of its own (the single prop a medium sack, the mashed one a small sack, the ring plain
-// sacks, the creature a kerfurOmega), so a role is found by what it is and not by where physics left it. Fills the client's
-// roles; false while the host's props are not all here. Whether the camera can press each is Choose's, once they rest.
+// sacks, the creature a kerfurOmega, the two crowbars the nearer and the farther of their class, bound as the pair until
+// the host's host-hooked line names each by its eid at the hook step), so a role is found by what it is and not by where
+// physics left it. Fills the client's roles; false while the host's props are not all here.
+// Whether the camera can press each is Choose's, once they rest.
 bool Find(void* player) {
     FVector me{};
     if (!E::TryGetActorLocation(player, me)) return false;
@@ -373,17 +318,20 @@ bool Find(void* player) {
     }
     const std::vector<Seen> mash = PropsAbout(kMashClass, me);
     const std::vector<Seen> ring = PropsAbout(kSackClass, me);
+    const std::vector<Seen> hooked = PropsAbout(kHookedClass, me);
     void* npc = NearestNpc(me);
-    if (mash.empty() || ring.size() < static_cast<size_t>(kRing) || !npc) return false;
+    if (mash.empty() || ring.size() < static_cast<size_t>(kRing) || hooked.size() < 2 || !npc) return false;
     g_single.Set(single[0].actor);
     g_mash.Set(mash[0].actor);
+    g_hostHooked.Set(hooked[0].actor);
+    g_selfHooked.Set(hooked[1].actor);
     g_npc.Set(npc);
     g_ringN = kRing;
     for (int i = 0; i < kRing; ++i) g_ring[i].Set(ring[static_cast<size_t>(i)].actor);
     return true;
 }
 
-// Have the pair and the ring stopped moving: no one of them has moved more than a centimetre since the last read, as
+// Have the pair, the crowbars and the ring stopped moving: no one of them has moved more than a centimetre since the last read, as
 // sack_drill waits for its sack. A press at a prop still falling or coasting is not a press at the layout the host laid.
 bool AtRest() {
     bool still = true;
@@ -398,6 +346,8 @@ bool AtRest() {
     visit(g_single);
     if (PhaseOf() == Phase::Granted) {
         visit(g_mash);
+        visit(g_hostHooked);
+        visit(g_selfHooked);
         for (int i = 0; i < g_ringN; ++i) visit(g_ring[i]);
     }
     return still;
@@ -442,6 +392,8 @@ bool Choose(void* player, coop::net::Session* s) {
     if (PhaseOf() != Phase::Granted) return true;
     if (!AimedHit(player, g_mash.Get(), &probe)) return Blocked(s, "the mashed prop");
     if (!AimedHit(player, g_npc.Get(), &probe)) return Blocked(s, "the creature");
+    if (!AimedHit(player, g_hostHooked.Get(), &probe)) return Blocked(s, "the nearer crowbar");
+    if (!AimedHit(player, g_selfHooked.Get(), &probe)) return Blocked(s, "the farther crowbar");
     int n = 0;
     for (int i = 0; i < g_ringN; ++i) {
         void* r = g_ring[i].Get();
@@ -473,6 +425,21 @@ bool Fire(void* player, const ue_wrap::CachedObjRef& ref, const char* notice) {
     if (!target) { Abandon("the target is gone before its press"); return false; }
     g_noticeBase = notice ? NoticeCount(notice) : 0;
     if (!Press(player, target)) { AbandonAim("the press did not run"); return false; }
+    return true;
+}
+
+// Fire for the hook steps: a press that cannot be made there is the lane's failure (a hook has pulled the crowbar out of
+// this camera's sight), never an abandoned drill.
+bool FireOrFail(void* player, const ue_wrap::CachedObjRef& ref, const char* notice) {
+    void* target = ref.Get();
+    if (!target) { Fail("the crowbar is gone before its press"); return false; }
+    g_noticeBase = NoticeCount(notice);
+    if (!Press(player, target)) {
+        char why[560];
+        std::snprintf(why, sizeof(why), "the press on the hooked crowbar did not run: %s", g_aimWhy);
+        Fail(why);
+        return false;
+    }
     return true;
 }
 
@@ -545,7 +512,7 @@ void ClientTick(coop::net::Session* s) {
     case Step::Cleared: {
         // The old layout's mirrors go with the host's destroys; the roles are found again only once every one has gone, or
         // the find would take an old prop for a new one.
-        bool gone = !g_single.Alive() && !g_mash.Alive() && !g_npc.Alive();
+        bool gone = !g_single.Alive() && !g_mash.Alive() && !g_npc.Alive() && !g_hostHooked.Alive() && !g_selfHooked.Alive();
         for (int i = 0; i < g_ringN; ++i) gone = gone && !g_ring[i].Alive();
         if (!gone) {
             if (Expired(kFindBoundMs)) Abandon("the old layout's mirrors did not go within 60 s of the re-lay");
@@ -554,6 +521,8 @@ void ClientTick(coop::net::Session* s) {
         g_single.Reset();
         g_mash.Reset();
         g_npc.Reset();
+        g_hostHooked.Reset();
+        g_selfHooked.Reset();
         for (auto& r : g_ring) r.Reset();
         for (auto& r : g_sweep) r.Reset();
         for (auto& p : g_restAt) p = {};
@@ -617,8 +586,68 @@ void ClientTick(coop::net::Session* s) {
         return;
     case Step::NpcWait:
         if (!g_npc.Alive()) { Fail("the creature was removed on this client"); return; }
-        if (NoticeCount(kUnsupported) > g_noticeBase) { LegPass("unsupported", Step::Finish); return; }
+        if (NoticeCount(kUnsupported) > g_noticeBase) { LegPass("unsupported", Step::HostHooked); return; }
         if (Expired(kLegBoundMs)) Fail("the remover's refusal of the creature was not shown within 30 s");
+        return;
+    case Step::HostHooked: {
+        // The host's own hook must pull the first crowbar before the press; its line says the claim pass reads it.
+        uint32_t hostEid = 0, selfEid = 0;
+        std::string bad;
+        const HostLine line = ReadHostHookedLine(hostEid, selfEid, bad);
+        if (line == HostLine::Malformed) {
+            char why[200];
+            std::snprintf(why, sizeof(why), "the host's host-hooked line does not parse: %s", bad.c_str());
+            Fail(why);
+            return;
+        }
+        if (line == HostLine::None) {
+            if (Expired(kHostHookBoundMs)) {
+                char why[120];
+                std::snprintf(why, sizeof(why), "the host never said its hook pulls the first crowbar within %u s",
+                              static_cast<unsigned>(kHostHookBoundMs / 1000));
+                Fail(why);
+            }
+            return;
+        }
+        if (!BindHookedRoles(hostEid, selfEid)) return;
+        if (FireOrFail(player, g_hostHooked, kHeldNotice)) Next(Step::HostHookedWait);
+        return;
+    }
+    case Step::HostHookedWait:
+        if (!g_hostHooked.Alive()) { Fail("the crowbar the host's hook pulls was removed on this client"); return; }
+        if (NoticeCount(kHeldNotice) > g_noticeBase) { LegPass("host-hooked", Step::SelfHooked); return; }
+        if (Expired(kLegBoundMs)) Fail("the host's refusal of the host-hooked crowbar was not shown within 30 s");
+        return;
+    case Step::SelfHooked: {
+        // This client's own hook on the second crowbar first, then the host's line that its claim pass reads that hook.
+        if (!g_selfHook.Raw()) {
+            void* target = g_selfHooked.Get();
+            if (!target) { Fail("the second crowbar is gone before this client's hook"); return; }
+            const char* note = "";
+            void* hook = coop::dev::hook_plant::Plant(player, target, &note);
+            if (!hook) {
+                char why[120];
+                std::snprintf(why, sizeof(why), "this client's hook could not be planted: %s", note);
+                Fail(why);
+                return;
+            }
+            g_selfHook.Set(hook);
+            UE_LOGI("[REMOVER-DRILL] client: its own hook is planted on the second crowbar (hook %p)", hook);
+            return;
+        }
+        if (NoticeCount(HookedLine(kSelfHookedSaid, g_relay).c_str()) == 0) {
+            if (Expired(kFindBoundMs)) Fail("the host never said this client's hook pulls the second crowbar within 60 s");
+            return;
+        }
+        if (FireOrFail(player, g_selfHooked, kHeldNotice)) Next(Step::SelfHookedWait);
+        return;
+    }
+    case Step::SelfHookedWait:
+        // A client may remove what its own hook pulls, as what it drags: the copy goes, and the refusal never shows.
+        if (GoneOrFail(g_selfHooked, kHeldNotice, "the crowbar this client's own hook pulls was refused as held")) {
+            ReleaseHook(g_selfHook);
+            LegPass("self-hooked", Step::Finish);
+        }
         return;
     case Step::Finish:
         Finish(s);
@@ -627,6 +656,53 @@ void ClientTick(coop::net::Session* s) {
 }
 
 }  // namespace
+
+namespace detail {
+
+Phase PhaseOf() {
+    static const Phase p = [] {
+        const std::string v = coop::config::ResolveEnum(::coop::config_registry::rows::remover_drill);
+        return v == "granted" ? Phase::Granted : v == "withheld" ? Phase::Withheld : Phase::Off;
+    }();
+    return p;
+}
+const char* PhaseName() { return PhaseOf() == Phase::Granted ? "granted" : "withheld"; }
+
+std::string EndLine() { return std::string("remover-drill end ") + PhaseName(); }
+
+int  g_session = 1;
+bool g_done = false;
+uint64_t g_stepMs = 0;
+uint64_t g_nextCheckMs = 0;
+
+bool Expired(uint64_t bound) { return ::GetTickCount64() - g_stepMs > bound; }
+
+void End(const char* role, const char* word, const char* what, bool warn) {
+    if (warn) UE_LOGW("[REMOVER-DRILL] %s %s %s in session %d: %s", role, word, PhaseName(), g_session, what);
+    else      UE_LOGI("[REMOVER-DRILL] %s %s %s in session %d: %s", role, word, PhaseName(), g_session, what);
+    g_done = true;
+}
+
+std::string HookedLine(const char* said, int relays) {
+    return std::string(said) + " n=" + std::to_string(relays) + ";";
+}
+
+std::string HostHookedPrefix(int relays) {
+    return std::string(kHostHookedSaid) + " n=" + std::to_string(relays) + " eid=";
+}
+
+std::string HostHookedLine(int relays, uint32_t hostEid, uint32_t selfEid) {
+    return HostHookedPrefix(relays) + std::to_string(hostEid) + " self=" + std::to_string(selfEid) + ";";
+}
+
+// The item's cancel for a hook this drill planted: the field the plant wrote is cleared whether or not the hook still
+// stands, then the actor goes.
+void ReleaseHook(ue_wrap::CachedObjRef& hook) {
+    coop::dev::hook_plant::Release(coop::players::Registry::Get().Local(), hook.Get());
+    hook.Reset();
+}
+
+}  // namespace detail
 
 void Tick(coop::net::Session* s) {
     if (PhaseOf() == Phase::Off || !s) return;
@@ -638,14 +714,17 @@ void OnDisconnect() {
     if (PhaseOf() == Phase::Off) return;
     ++g_session;
     g_done = false;
-    g_hostStep = HostStep::Arm;
+    HostReset();
     g_step = Step::Arm;
     g_stepMs = g_nextCheckMs = 0;
     layout::Reset();
+    if (g_selfHook.Raw()) ReleaseHook(g_selfHook);
     g_toolgun.Reset();
     g_single.Reset();
     g_mash.Reset();
     g_npc.Reset();
+    g_hostHooked.Reset();
+    g_selfHooked.Reset();
     for (auto& r : g_sweep) r.Reset();
     g_sweepAt = 0;
     g_sweepN = 0;

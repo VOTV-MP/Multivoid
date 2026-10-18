@@ -13,6 +13,7 @@
 
 #include "coop/net/protocol.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/actors/fossilhound.h"  // DriveBodyYaw -- the hound's body facing
 #include "ue_wrap/actors/kerfur.h"   // DriveKerfurState -- host-authoritative command and spooky flag
 #include "ue_wrap/actors/puppet.h"
 #include "ue_wrap/core/reflection.h"
@@ -61,7 +62,7 @@ void Npc::SetTargetNpcPose(const coop::net::EntityPoseSnapshot& snap) {
 
     // Body-facing: the visible-body (ACharacter::Mesh) world yaw, interpolated like the actor
     // yaw (shortest-arc) and driven onto the mirror mesh in ApplyToEngine. Cleared -> body interp
-    // term goes to a no-op when the host stops sending it (non-kerfur NPCs never set the bit).
+    // term goes to a no-op when the host stops sending it (only the kerfur family and the fossil hound set the bit).
     hasBodyYaw_ = (snap.stateBits & coop::net::kEntityPoseBitHasBodyYaw) != 0;
     if (!hasBodyYaw_) errorBodyYaw_ = 0.f;
 
@@ -187,8 +188,12 @@ bool Npc::ApplyToEngine() {
     // Drive the VISIBLE body facing -- set the mirror's ACharacter::Mesh WORLD yaw to the
     // host's streamed (interpolated) value. MUST be AFTER SetActorRotation above (moving the actor
     // root re-bases this child mesh's world transform). The mirror's actor tick is off, so the
-    // kerfur BP never overwrites it -> no gate flag needed. Class-gated inside -> safe on non-kerfur.
-    if (hasBodyYaw_) Pup::DriveKerfurBodyYaw(actor, curBodyYaw_);
+    // kerfur BP never overwrites it -> no gate flag needed. Each is class-gated inside: the kerfur's, and the fossil
+    // hound's (its mesh hangs on a SpringArm a mirror never turns).
+    if (hasBodyYaw_) {
+        Pup::DriveKerfurBodyYaw(actor, curBodyYaw_);
+        ue_wrap::fossilhound::DriveBodyYaw(actor, curBodyYaw_);
+    }
     // Write the host-authoritative kerfur command and spooky flag so the parked mirror's AnimBP
     // state machine matches the host (the mirror runs no AI -> it can't pick its own). Class-gated
     // inside -> safe no-op on non-kerfur NPCs.

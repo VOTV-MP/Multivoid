@@ -94,6 +94,10 @@ public:
     // Positions a puppet-held item at the hand, since the puppet's own tick does not drive it. Game
     // thread.
     ue_wrap::FVector GetSyncedAimDirection() const;
+    // The same unit forward vector from the NEWEST streamed pose (the target the interpolation is heading to: the last
+    // packet's yaw, headYawDelta and pitch), not the interpolated one, which trails it by the interpolation window.
+    // What a judge of a swing reads: the sender's aim as the stream last said it. Game thread.
+    ue_wrap::FVector GetLatestAimDirection() const;
     // The same aim as a rotator (pitch, yaw, no roll), for a caller that wants the angles.
     ue_wrap::FRotator GetSyncedAimRotation() const { return {curPitch_, curYaw_ + curHeadYawDelta_, 0.f}; }
 
@@ -104,11 +108,11 @@ public:
     void SetNickname(std::wstring name);
     const std::wstring& GetNickname() const { return nickname_; }
 
-    // Display-only vitals, each a [0,1] fraction streamed in every PoseSnapshot (health over
-    // maxHealth; food and sleep over kVitalScalarMax). Set from SetTargetPose; the nameplate reads
-    // GetHealth for its bar. They never touch a saveSlot, since a puppet write would corrupt the
-    // local player's persisted health. SetVitals also edge-detects a health decrease and arms the
-    // hurt flash. Game thread only.
+    // The streamed vitals, each a [0,1] fraction from every PoseSnapshot (health over maxHealth;
+    // food and sleep over kVitalScalarMax). Set from SetTargetPose; the nameplate reads GetHealth
+    // for its bar, and the host's hit judge refuses a swing when it is 0. They never touch a
+    // saveSlot, since a puppet write would corrupt the local player's persisted health. SetVitals
+    // also edge-detects a health decrease and arms the hurt flash. Game thread only.
     void SetVitals(float health01, float food01, float sleep01);
     float GetHealth() const { return health_; }
     float GetFood() const { return food_; }

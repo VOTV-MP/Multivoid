@@ -3,6 +3,7 @@
 #include "coop/dev/kerfur_convert_drill.h"
 
 #include "coop/config/config.h"
+#include "coop/dev/drill_props.h"
 #include "coop/dev/spawn_npc.h"
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
@@ -30,6 +31,7 @@ namespace R  = ue_wrap::reflection;
 namespace OI = ue_wrap::object_index;
 namespace E  = ue_wrap::engine;
 namespace EL = coop::element;
+namespace DP = coop::dev::drill_props;
 using Clock = std::chrono::steady_clock;
 
 constexpr const wchar_t* kNpcClass     = L"kerfurOmega_C";
@@ -177,13 +179,6 @@ EL::Element* ByEid(const std::vector<EL::Element*>& els, uint32_t eid) {
     return nullptr;
 }
 
-bool CallTurnOff(void* npc) {
-    void* fn = R::FindDispatchFunctionCached(R::ClassOf(npc), L"dropKerfurProp");
-    if (!fn) return false;
-    ue_wrap::ParamFrame f(fn);
-    return f.valid() && ue_wrap::Call(npc, f);
-}
-
 bool CallTurnOn(void* prop) {
     void* player = coop::players::Registry::Get().Local();
     void* fn = R::FindDispatchFunctionCached(R::ClassOf(prop), L"actionOptionIndex");
@@ -223,7 +218,7 @@ void TickClient() {
                 "turning the kerfur off (dropKerfurProp)", g_npcEid, g_localDisc);
         void* const npcActor = npc->GetActor();
         const int32_t npcIdx = npc->GetInternalIdx();
-        if (!CallTurnOff(npcActor)) { ClientInvalid("the dropKerfurProp call did not dispatch"); return; }
+        if (!DP::TurnOffKerfur(npcActor)) { ClientInvalid("the dropKerfurProp call did not dispatch"); return; }
         g_offStood = R::IsLiveByIndex(npcActor, npcIdx);
         g_client = ClientStep::WaitOffApplied;
         return;

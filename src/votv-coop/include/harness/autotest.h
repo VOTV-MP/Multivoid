@@ -163,11 +163,11 @@ DWORD WINAPI DamageTestThread(LPVOID arg);
 void RunAutonomousDmgHazardTest();
 DWORD WINAPI DmgHazardTestThread(LPVOID arg);
 
-// The damage relay test (harness/autotest/autotest_playerdmg.cpp), both peers: the host sends a
-// synthetic PlayerDamage to slot 1 (player_damage::DebugForceHitPuppet), the client applies Add
-// Player Damage to its own player, and the client's streamed health drop flashes the host's slot-1
-// puppet. The full host-to-owner relay with no enemy. Env VOTVCOOP_RUN_PLAYERDMG_TEST=1 (host
-// drives and observes).
+// The hit delivery test (harness/autotest/autotest_playerdmg.cpp), both peers: the host delivers a
+// synthetic PlayerHit to slot 1 (player_damage::DebugForceHitPuppet, through player_hit::Deliver), the
+// client runs addDamage on its own player, and the client's streamed health drop flashes the host's
+// slot-1 puppet. The full host-to-owner delivery with no creature. Env VOTVCOOP_RUN_PLAYERDMG_TEST=1
+// (host drives and observes).
 void RunAutonomousPlayerDamageTest();
 DWORD WINAPI PlayerDamageTestThread(LPVOID arg);
 

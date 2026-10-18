@@ -72,6 +72,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/engine/engine_component.cpp
     src/ue_wrap/engine/hit_result.cpp
     src/ue_wrap/engine/engine_mainplayer.cpp
+    src/ue_wrap/engine/engine_player_verbs.cpp
     src/ue_wrap/engine/scs_rig.cpp
     src/ue_wrap/engine/engine_playerragdoll.cpp
     src/ue_wrap/engine/engine_attach.cpp
@@ -85,6 +86,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/world/jellyfish_path.cpp
     src/ue_wrap/world/bad_sun.cpp
     src/ue_wrap/world/red_sky.cpp
+    src/ue_wrap/world/explosion.cpp
     src/ue_wrap/world/skysphere.cpp
     src/ue_wrap/world/directionalwind.cpp
     src/ue_wrap/devices/lightswitch.cpp
@@ -154,6 +156,9 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/actors/puppet_spawn.cpp
     src/ue_wrap/actors/kerfur.cpp
     src/ue_wrap/actors/kerfus.cpp
+    src/ue_wrap/actors/zombie.cpp
+    src/ue_wrap/actors/fossilhound.cpp
+    src/ue_wrap/actors/int_objects.cpp
     src/ue_wrap/world/votv_lib.cpp
     src/ue_wrap/world/economy.cpp
     src/ue_wrap/world/profile.cpp
@@ -164,8 +169,10 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/actors/prop.cpp
     src/ue_wrap/actors/prop_keys.cpp
     src/ue_wrap/actors/prop_flags.cpp
+    src/ue_wrap/actors/prop_gather.cpp
     src/ue_wrap/actors/spawner_stamp.cpp
     src/ue_wrap/actors/prop_events.cpp
+    src/ue_wrap/actors/prop_use.cpp
     src/ue_wrap/actors/garbage_bag.cpp
     src/ue_wrap/actors/vitals.cpp
     src/ue_wrap/actors/effects.cpp
@@ -183,6 +190,10 @@ set(VOTVCOOP_SOURCES
     src/coop/player/skin_effects.cpp
     src/coop/player/skin_registry.cpp
     src/coop/player/local_body.cpp
+    src/coop/props/prop_act_host.cpp
+    src/coop/props/prop_act_request.cpp
+    src/coop/props/prop_act_selftest.cpp
+    src/coop/props/prop_hold.cpp
     src/coop/props/remover_request.cpp
     src/coop/props/remote_prop.cpp
     src/coop/props/unresolved_pose_ledger.cpp
@@ -258,6 +269,8 @@ set(VOTVCOOP_SOURCES
     src/coop/items/order_queue_sync.cpp
     src/coop/world/firefly_sync.cpp
     src/coop/world/spawn_authority.cpp
+    src/coop/world/explosion_sync.cpp
+    src/coop/world/explosion_parking.cpp
     src/coop/world/event_cue_sync.cpp
     src/coop/world/event_fire_policy.cpp
     src/coop/world/event_fire_sync.cpp
@@ -281,6 +294,8 @@ set(VOTVCOOP_SOURCES
     src/coop/props/grab_observer.cpp
     src/coop/player/item_activate.cpp
     src/coop/player/player_damage.cpp
+    src/coop/player/player_hit.cpp
+    src/coop/player/hit_judge.cpp
     src/coop/player/ragdoll_gate.cpp
     src/coop/player/death_revive.cpp
     src/coop/player/run_end_travel.cpp
@@ -296,6 +311,10 @@ set(VOTVCOOP_SOURCES
     src/ui/join_curtain.cpp
     src/coop/creatures/npc_adoption.cpp
     src/coop/creatures/npc_mirror.cpp
+    src/coop/creatures/npc_mirror_brain.cpp
+    src/coop/creatures/npc_mirror_brain_table.cpp
+    src/coop/creatures/creature_hit.cpp
+    src/coop/creatures/creature_hit_intent.cpp
     src/coop/creatures/npc_pose_drive.cpp
     src/coop/creatures/npc_pose_host.cpp
     src/coop/creatures/npc_sync.cpp

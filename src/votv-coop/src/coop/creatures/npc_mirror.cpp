@@ -15,6 +15,7 @@
 #include "coop/creatures/npc_adoption.h"
 #include "coop/creatures/kerfur_prop_adoption.h"  // the deferred prop-form kerfur adoption
 #include "coop/creatures/kerfur_reconcile.h"  // ArmPendingRetireByEid
+#include "coop/creatures/npc_mirror_brain.h"  // PrepareBirth / SetUpPresentation: a parked family's mirror has its brain off
 #include "coop/props/join_membership_sweep.h"  // TickClientReconcile
 #include "coop/dev/kerfur_census.h"  // the one-shot kerfur census
 #include "coop/creatures/npc_sync.h"
@@ -267,6 +268,8 @@ bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t 
         }
         return false;
     }
+    // A mirror of a parked family is marked before the finish runs its BeginPlay, which the graph watches refuse.
+    coop::npc_mirror_brain::PrepareBirth(spawned);
     {
         ParamFrame finish(g_finishSpawnFn);
         if (!finish.valid()) {
@@ -317,9 +320,12 @@ bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t 
         }
         return false;
     }
-    // The finish ran the creature's BeginPlay, so its own setEvent(true) is registered: the relay retracts it and
-    // applies the host's count.
+    // A creature of a family that is not parked ran its BeginPlay in the finish, so its own setEvent(true) is
+    // registered: the relay retracts it and applies the host's count. A parked family's BeginPlay was refused: the
+    // zombie never calls setEvent, and the hound's true comes from the presentation set-up below, after this call.
     coop::creature_event_relay::OnMirrorBound(eid, spawned);
+    // The presentation its refused BeginPlay would have set up.
+    coop::npc_mirror_brain::SetUpPresentation(spawned, coop::npc_mirror_brain::Origin::Spawned);
     // Parked so the streamed pose drive is authoritative: movement and actor ticks off (the AnimBP
     // still ticks and reads the velocity the drive writes). The wisp keeps its actor tick: its
     // ReceiveTick is per-viewer cosmetics (fade-in, bob, the shy despawn), not AI, so only its

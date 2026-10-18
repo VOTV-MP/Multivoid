@@ -87,7 +87,7 @@ struct PerViewerClass {
 };
 PerViewerClass g_perViewer[] = {
     { L"killerwisp_C" },     // rendered = player 0 within 5000 and not avoidPlayer (killerwisp.cpp:225-267)
-    { L"fossilhound_C" },    // rendered = camera 0 within 10000 (fossilhound.cpp:252-281)
+    { L"fossilhound_C" },    // rendered = camera 0 within 10000 (the Blueprint listing of fossilhound_C, lines 252-281)
     { L"antibreather_C" },   // rendered = camera 0 within 10000 (antibreather.cpp:944-952)
     { L"eg_C" },             // rendered = WasRecentlyRendered(0.5) (eg.cpp:124-136)
 };
@@ -260,5 +260,7 @@ void OnDisconnect() {
 
 int TargetFor(EL::ElementId eid) { return detail::ClientTargetFor(eid); }
 int AppliedFor(EL::ElementId eid) { return detail::ClientAppliedFor(eid); }
+uint32_t PerViewerTrues(EL::ElementId eid) { return detail::ClientViewerTrues(eid); }
+uint32_t PerViewerFalses(EL::ElementId eid) { return detail::ClientViewerFalses(eid); }
 
 }  // namespace coop::creature_event_relay

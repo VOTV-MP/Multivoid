@@ -83,6 +83,11 @@ FVector GetActorScale3D(void* actor);
 // actor even mid-teardown.
 bool IsChildActor(void* actor);
 
+// The same read, saying whether it could be made: `readable` is false when the Actor class is not loaded yet or
+// its ParentComponent member is missing (the answer is then false, which is no evidence the actor is not a
+// child). A reader that must fail closed uses this form.
+bool IsChildActor(void* actor, bool& readable);
+
 // The child actor's parent (the ParentComponent's Outer) and, in `outComponentName`, the
 // UChildActorComponent's name: the half of a child actor's identity that is stable across processes
 // (the `_CAT_<n>` tail of the actor's own name is a per-process counter). Null when not a child
@@ -100,6 +105,9 @@ bool ForceGarbageCollection();
 
 // AActor::GetActorForwardVector; (0,0,0) on failure.
 FVector GetActorForwardVector(void* actor);
+
+// AActor::GetActorUpVector; (0,0,0) on failure (a unit vector is never zero, so a zero is an unread one).
+FVector GetActorUpVector(void* actor);
 
 // AActor::K2_GetActorRotation (world), the one rotation read: false when the rotation could not be
 // obtained, a read that faulted inside the engine and was absorbed included. `out` is then the zero

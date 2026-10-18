@@ -21,6 +21,7 @@
 #include "coop/dev/throw_drill.h"  // [dev] a thrown container keeps its contents on the host
 #include "coop/dev/fall_drill.h"  // [dev] a falling host birth lands on the client where it lands on the host
 #include "coop/dev/remover_drill.h"  // [dev] the tool gun's remover pressed by a client
+#include "coop/dev/prop_act_drill.h"  // [dev] a client's take or use of a shared prop asks the host first
 #include "coop/dev/sack_drill.h"  // [dev] a client's point sack is paid by the host, once
 #include "coop/dev/server_upgrade_drill.h"  // [dev] a client's install and take-out at a server box
 #include "coop/dev/server_drill.h"  // [dev] a server box's break is the host's; a client's repair runs there
@@ -38,6 +39,7 @@
 #include "coop/dev/laptop_drill.h"  // [dev] the laptop's slot is the host's; a file edit lands on its own disc
 #include "coop/dev/laptop_power_drill.h"  // [dev] the laptop's power pressed on each peer, its replay silent
 #include "coop/dev/laptop_tab_drill.h"  // [dev] everyone sees the tab the PC's user is on, judged on the viewing peer
+#include "coop/dev/explosion_drill.h"  // [dev] the explosion lane's drill: dissolve, apply, coast, malformed spawns
 #include "coop/dev/grid_drill.h"  // [dev] the power grid: a client's presses and repair, the host's break and lockout
 #include "coop/dev/tower_drill.h"  // [dev] the coordinate towers: the host's break, a client's repair, a joiner's copy
 #include "coop/dev/drone_probe.h"
@@ -87,6 +89,7 @@
 #include "coop/dev/sleep_drill.h"  // [dev] a host's native sleep and a client's rest at the native rate, measured
 #include "coop/dev/badsun_drill.h"  // [dev] a peer's own Bad Sun copy against its own clock, measured
 #include "coop/dev/event_relay_drill.h"  // [dev] the host's creature event in a client's count, read through the relay
+#include "coop/dev/creature_hit_drill.h"  // [dev] a parked creature's hit delivered to a client, a client's hit on it judged by the host
 #include "coop/dev/hostile_drill.h"  // [dev] the receive boundary: a client forges malformed packets, the host judges
 #include "coop/dev/native_pile_inert_probe.h"
 #include "coop/dev/native_spawn_probe.h"  // [dev] every allowlisted creature a Blueprint graph spawns here, and the client orb question
@@ -124,7 +127,9 @@ void Install(coop::net::Session& session) {
     coop::dev::sleep_drill::Install(&session);  // [dev] the sleep drill (no-op unless sleep_drill is set)
     coop::dev::badsun_drill::Install(&session);  // [dev] the Bad Sun drill (no-op unless badsun_drill is set)
     coop::dev::event_relay_drill::Install(&session);  // [dev] the creature event relay drill (no-op unless event_relay_drill is on)
+    coop::dev::creature_hit_drill::Install(&session);  // [dev] the creature hit drill (no-op unless creature_hit_drill is set)
     coop::dev::hostile_drill::Install(&session);  // [dev] the receive-boundary drill (no-op unless hostile_drill is set)
+    coop::dev::prop_act_drill::Install(&session);  // [dev] the act drill's phase says it is armed (no-op unless prop_act_drill is set)
     coop::dev::world_roll_drill::Install(&session);  // [dev] the world roll drill (no-op unless world_roll_drill is set)
     coop::dev::kerfur_menu_drill::Install(&session);  // [dev] the kerfur menu drill (no-op unless kerfur_menu_drill=1)
     coop::dev::kerfur_convert_drill::Install(&session);  // [dev] the kerfur conversion drill (no-op unless kerfur_convert_drill=1)
@@ -154,6 +159,7 @@ void EndSession() {
     coop::dev::sleep_drill::OnDisconnect();  // [dev] back to the first phase, the host's nightmare chance restored
     coop::dev::badsun_drill::OnDisconnect();  // [dev] back to the first phase
     coop::dev::event_relay_drill::OnDisconnect();  // [dev] the client's steps back to the first; the host keeps its krampus
+    coop::dev::creature_hit_drill::OnDisconnect();  // [dev] the client's steps back to the first; the host keeps its creature
     coop::dev::hostile_drill::OnDisconnect();  // [dev] back to WaitArm; a rejoin re-arms
     coop::dev::world_roll_drill::OnDisconnect();  // [dev] back to the first phase
     coop::dev::kerfur_menu_drill::OnDisconnect();  // [dev] back to the first phase
@@ -172,6 +178,7 @@ void EndSession() {
     coop::dev::atv_spawn_drill::OnDisconnect();  // [dev] the spawn belongs to one session
     coop::dev::fall_drill::OnDisconnect();  // [dev] the drop belongs to one session
     coop::dev::remover_drill::OnDisconnect();  // [dev] the props and the toolgun belong to one session
+    coop::dev::prop_act_drill::OnDisconnect();  // [dev] the steps, the target and the walk belong to one session
     coop::dev::sack_drill::OnDisconnect();  // [dev] the sack and the counts belong to one session
     coop::dev::drone_call_drill::OnDisconnect();  // [dev] the console, the legs and the host's watch belong to one world
     coop::dev::server_upgrade_drill::OnDisconnect();  // [dev] the box and the legs belong to one world
@@ -187,6 +194,7 @@ void EndSession() {
     coop::dev::laptop_drill::OnDisconnect();  // [dev] a rejoin's peers run their legs again
     coop::dev::laptop_power_drill::OnDisconnect();  // [dev] a rejoin's peers press again
     coop::dev::laptop_tab_drill::OnDisconnect();  // [dev] a rejoin's peers run their legs again
+    coop::dev::explosion_drill::OnDisconnect();  // [dev] a rejoin's peers run their halves and arms again
     coop::dev::grid_drill::OnDisconnect();  // [dev] the panel and the legs belong to one world
     coop::dev::tower_drill::OnDisconnect();  // [dev] the tower and the legs belong to one world
     coop::dev::desk_verb_drill::OnDisconnect();  // [dev] the legs start over
@@ -226,6 +234,7 @@ void TickLoadWindow(coop::net::Session& session) {
     coop::dev::hotbar_icon_probe::Tick();  // [dev] the quick-slot bar's icons, decided during the load
     coop::dev::load_reroll_watch::Tick(session);  // [dev] what it watches runs inside the world load
     coop::dev::desk_verb_drill::TickLoad(&session);  // [dev] the join's census, armed ahead of the load it counts
+    coop::dev::explosion_drill::TickLoad(&session);  // [dev] the explosion drill's load half, inside the world load
 }
 
 void TickDrills(coop::net::Session& session) {
@@ -237,6 +246,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::sleep_drill::Tick();  // [dev] the sleep drill's phases (a single enum read when off)
     coop::dev::badsun_drill::Tick();  // [dev] the Bad Sun drill's phases (a single enum read when off)
     coop::dev::event_relay_drill::Tick();  // [dev] the creature event relay drill's steps (a single bool read when off)
+    coop::dev::creature_hit_drill::Tick();  // [dev] the creature hit drill's steps (a single enum read when off)
     coop::dev::hostile_drill::Tick();  // [dev] the receive-boundary drill's arm/judge (a single enum read when off)
     coop::dev::world_roll_drill::Tick();  // [dev] the world roll drill's arms (a single enum read when off)
     coop::dev::kerfur_menu_drill::Tick();  // [dev] the kerfur menu drill's phases (a single bool read when off)
@@ -271,6 +281,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::atv_spawn_drill::Tick(&session);  // [dev] the ATV spawn drill (latched string compares when off)
     coop::dev::fall_drill::Tick(&session);  // [dev] the fall drill (a latched bool read when off)
     coop::dev::remover_drill::Tick(&session);  // [dev] the remover drill (a latched enum read when off)
+    coop::dev::prop_act_drill::Tick(&session);  // [dev] the act drill (a latched phase read when off)
     coop::dev::sack_drill::Tick(&session);  // [dev] the point sack drill (a latched bool read when off)
     coop::dev::drone_call_drill::Tick(&session);  // [dev] the drone console drill (a single bool read when off)
     coop::dev::server_upgrade_drill::Tick(&session);  // [dev] the server upgrade drill (a single bool read when off)
@@ -284,6 +295,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::laptop_drill::Tick(&session);  // [dev] the laptop drill (a latched read when off)
     coop::dev::laptop_power_drill::Tick(&session);  // [dev] the laptop power drill (a bool read when off)
     coop::dev::laptop_tab_drill::Tick(&session);  // [dev] the PC tab drill (a latched string compare when off)
+    coop::dev::explosion_drill::Tick(&session);  // [dev] the explosion lane's drill: dissolve's world half, the other arms' ticks (a latched string compare when off)
     coop::dev::grid_drill::Tick(&session);  // [dev] the power grid drill (a latched read when off)
     coop::dev::tower_drill::Tick(&session);  // [dev] the coordinate towers drill (a latched read when off)
     coop::dev::desk_verb_drill::Tick(&session);  // [dev] the desk's save family drill (a latched read when off)

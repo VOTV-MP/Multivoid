@@ -2,6 +2,7 @@
 
 #include "coop/dev/hostile_drill.h"
 
+#include "coop/dev/hostile_drill_act.h"  // the take-or-use request arms
 #include "coop/dev/hostile_drill_chat.h"  // the chat arms
 #include "coop/dev/hostile_drill_hand.h"  // the hand-item class arm
 #include "coop/dev/hostile_drill_latest.h"  // the keep-the-latest arm
@@ -50,12 +51,13 @@ using Clock = std::chrono::steady_clock;
 // hostile_drill_walk.cpp, the hand arms (bad_hand_class, bad_hand_family) in hostile_drill_hand.cpp, the chat arms
 // (chat_ill_formed, chat_flood) in hostile_drill_chat.cpp, keep_latest in hostile_drill_latest.cpp and world_latest in
 // hostile_drill_world.cpp, kerfur_flood in hostile_drill_kerfur.cpp and the remover arms in
-// hostile_drill_remover.cpp -- this file is the dispatcher that owns the arm
-// selection and routes those fourteen to their module's sender and judge.
+// hostile_drill_remover.cpp and the take-or-use arms in hostile_drill_act.cpp -- this file is the dispatcher that
+// owns the arm selection and routes those to their module's sender and judge.
 enum class Arm { Off, SignalPark, ChatIllFormed, PropConvert, ReliableFlood, RepeatJoin,
                  RepeatWorldReady, RepeatSaveRequest, RecordBadClasses, BadAlarm, BadPropKey,
                  BadPropSpawn, BadHandClass, BadHandFamily, KeepLatest, ChatFlood, WorldLatest, KerfurFlood,
-                 RemoverFar, RemoverHidden, RemoverFlood };
+                 RemoverFar, RemoverHidden, RemoverFlood,
+                 ActFar, ActGone, ActWrongFamily, ActBadCommit, ActNotYet, ActFlood, ActFloodEarly };
 
 // Resolved once: with the environment variable unset every read would scan the ini on disk, and the
 // drill is asked per tick.
@@ -83,6 +85,13 @@ Arm ArmOf() {
              : v == "remover_far"         ? Arm::RemoverFar
              : v == "remover_hidden"      ? Arm::RemoverHidden
              : v == "remover_flood"       ? Arm::RemoverFlood
+             : v == "act_far"             ? Arm::ActFar
+             : v == "act_gone"            ? Arm::ActGone
+             : v == "act_wrongfamily"     ? Arm::ActWrongFamily
+             : v == "act_bad_commit"      ? Arm::ActBadCommit
+             : v == "act_notyet"          ? Arm::ActNotYet
+             : v == "act_flood"           ? Arm::ActFlood
+             : v == "act_flood_early"     ? Arm::ActFloodEarly
                                           : Arm::Off;
     }();
     return a;
@@ -110,6 +119,13 @@ const char* ArmName() {
     case Arm::RemoverFar:        return "remover_far";
     case Arm::RemoverHidden:     return "remover_hidden";
     case Arm::RemoverFlood:      return "remover_flood";
+    case Arm::ActFar:            return "act_far";
+    case Arm::ActGone:           return "act_gone";
+    case Arm::ActWrongFamily:    return "act_wrongfamily";
+    case Arm::ActBadCommit:      return "act_bad_commit";
+    case Arm::ActNotYet:         return "act_notyet";
+    case Arm::ActFlood:          return "act_flood";
+    case Arm::ActFloodEarly:     return "act_flood_early";
     default:                     return "off";
     }
 }
@@ -126,6 +142,20 @@ walk::Arm WalkArmOf() {
     }
 }
 bool IsWalkArm() { return WalkArmOf() != walk::Arm::None; }
+
+// The take-or-use arms: each peer's half is hostile_drill_act's.
+act::Arm ActArmOf() {
+    switch (ArmOf()) {
+    case Arm::ActFar:         return act::Arm::ActFar;
+    case Arm::ActGone:        return act::Arm::ActGone;
+    case Arm::ActWrongFamily: return act::Arm::ActWrongFamily;
+    case Arm::ActBadCommit:   return act::Arm::ActBadCommit;
+    case Arm::ActNotYet:      return act::Arm::ActNotYet;
+    case Arm::ActFlood:       return act::Arm::ActFlood;
+    case Arm::ActFloodEarly:  return act::Arm::ActFloodEarly;
+    default:                  return act::Arm::None;
+    }
+}
 
 // reliable_flood, repeat_world_ready and repeat_save_request are judged by the SENDER (the host's answer
 // is this session ending, with a code): the host runs no judge, the client reads the end on OnDisconnect.
@@ -653,6 +683,7 @@ bool IsEnabled() { return ArmOf() != Arm::Off; }
 void Install(coop::net::Session* session) {
     if (!IsEnabled()) return;
     g_session.store(session, std::memory_order_release);
+    act::Install(session, ActArmOf());   // a pre-announce arm holds this client's announce (once per session)
 }
 
 void Tick() {
@@ -676,6 +707,7 @@ void Tick() {
                                   : ArmOf() == Arm::RemoverHidden   ? remover::Arm::RemoverHidden
                                   : ArmOf() == Arm::RemoverFlood    ? remover::Arm::RemoverFlood
                                                                     : remover::Arm::None;
+    const act::Arm actArm = ActArmOf();
     const chat::Arm chatArm = ArmOf() == Arm::ChatIllFormed ? chat::Arm::ChatIllFormed
                             : ArmOf() == Arm::ChatFlood     ? chat::Arm::ChatFlood
                                                             : chat::Arm::None;
@@ -686,6 +718,7 @@ void Tick() {
         else if (worldArm != world::Arm::None)   world::TickHostJudge(s, worldArm);
         else if (kerfurArm != kerfur::Arm::None) kerfur::TickHostJudge(s, kerfurArm);
         else if (removerArm != remover::Arm::None) remover::TickHostJudge(s, removerArm);
+        else if (actArm != act::Arm::None)       act::TickHostJudge(s, actArm);
         else if (chatArm != chat::Arm::None)     chat::TickHostJudge(s, chatArm);
         else if (!ClientJudged())                TickHost(s);  // client-judged arms: the client judges, the host only answers
     } else {
@@ -695,6 +728,7 @@ void Tick() {
         else if (worldArm != world::Arm::None)   world::TickClient(s, worldArm);
         else if (kerfurArm != kerfur::Arm::None) kerfur::TickClient(s, kerfurArm);
         else if (removerArm != remover::Arm::None) remover::TickClient(s, removerArm);
+        else if (actArm != act::Arm::None)       act::TickClient(s, actArm);
         else if (chatArm != chat::Arm::None)     chat::TickClient(s, chatArm);
         else                                     TickClient(s);
     }
@@ -709,6 +743,7 @@ void OnDisconnect() {
     world::OnDisconnect();
     kerfur::OnDisconnect();
     remover::OnDisconnect();
+    act::OnDisconnect();
     chat::OnDisconnect();
     g_step = Step::WaitArm;
     g_saidArm = false;

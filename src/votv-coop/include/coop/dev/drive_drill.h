@@ -3,12 +3,14 @@
 //   HOST   -- gives a fixture drive the row "drill-fixture" (run: a drive it spawns once a client is in its world;
 //             join: a drive of its world in no slot, written after the joiner's world was taken and before it is
 //             ready, so only the lane's world-ready seed carries it) and fails if its copy takes the client's
-//             deviation or its forgery. After its wipe it counts the client's rows it takes and refuses; its DONE
-//             line, the run's end, comes at three taken and one refused, and the rig's grace covers the client's hold.
+//             deviation or its forgery. After its wipe and the client's birth row, it lays a "drill-replace" drive beside
+//             the client's puppet and counts the client's rows it takes and refuses; its DONE line, the run's end,
+//             comes at three taken and one refused, and the rig's grace covers the client's hold.
 //   CLIENT -- the put-back ("drill-deviation" written and upd() run must read "drill-fixture" at once); a director walk
 //             to a standpoint beside the eraser, the fixture seated, its slot line out, the delete pressed: the wipe
-//             within 10 s, the host's start and done shown by its eraser; a drive spawned with "drill-newborn"; a
-//             world drive with a row pocketed, taken back out, held and thrown; the wiped fixture forged and claimed.
+//             within 10 s, the host's start and done shown by its eraser; a drive spawned with "drill-newborn"; the
+//             host's "drill-replace" drive pocketed once it rests gatherable here, taken back out, held and thrown;
+//             the wiped fixture forged and claimed.
 // "[DRIVE-DRILL] FAIL" is the lane failing a step (--fail-marker), "[DRIVE-DRILL] ABANDONED" the drill unable to do
 // its part (--dead-marker). Run with drive_drill=run|join and --done-marker "[DRIVE-DRILL] host DONE".
 

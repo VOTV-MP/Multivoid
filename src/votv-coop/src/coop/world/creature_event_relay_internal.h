@@ -9,6 +9,7 @@
 #include "coop/net/session_config.h"
 
 #include <cstddef>
+#include <cstdint>
 
 namespace coop::net {
 class Session;
@@ -61,5 +62,7 @@ void ClientOnNpcEnd(const coop::element::death_seam::Death& death);
 void ClientOnDisconnect();
 int  ClientTargetFor(coop::element::ElementId eid);
 int  ClientAppliedFor(coop::element::ElementId eid);
+uint32_t ClientViewerTrues(coop::element::ElementId eid);
+uint32_t ClientViewerFalses(coop::element::ElementId eid);
 
 }  // namespace coop::creature_event_relay::detail
