@@ -198,11 +198,12 @@ bool FitCensus(void* actor, uint8_t family, std::optional<Tally>& why) {
     return false;
 }
 
-// The request's verdict on its act: the first term that refuses is tallied; the reply stays WrongFamily.
+// The request's verdict on its act: the first term that refuses is tallied; the reply stays WrongFamily. A verb byte
+// that names no verb is refused here as a second defence and not tallied: OnRequest tallied it on arrival.
 bool FamilyFits(void* actor, uint8_t family) {
     std::optional<Tally> why;
     if (FitCensus(actor, family, why)) return true;
-    if (why) ++g_tally[static_cast<int>(*why)];
+    if (why && *why != Tally::FitBadFamily) ++g_tally[static_cast<int>(*why)];
     return false;
 }
 
@@ -234,6 +235,8 @@ void ReadInputs(uint8_t slot, const Queued& q, internal::ActInputs& in, void*& a
     dist = sub.distUU;
     allowed = sub.reachUU;
     if (in.reach != EL::IntentOutcome::Ok) return;
+    // The act's facts are the dear reads, so they come last; MTA's entry tests its cheap conditions first too
+    // (trailer, action, occupant, then distance: CGame.cpp:3105-3113).
     in.familyFits = FamilyFits(actor, q.req.family);
 }
 
@@ -403,6 +406,17 @@ void OnRequest(const coop::net::PropActRequestPayload& p, uint8_t senderSlot) {
     if (!IsHost()) return;
     UE_ASSERT_GAME_THREAD("prop_act_host::OnRequest");
     if (!InRoster(senderSlot)) return;   // the dispatcher counted it
+    // The verb byte is judged before any world read. MTA ends the sender on an unknown action (CGame.cpp:3798-3802);
+    // here the byte is refused with a reply, counted and never queued, and only the edge's budget ends a peer. As on
+    // a full queue, a sender whose world is not ready is counted and not answered.
+    if (!internal::KnownFamily(p.family)) {
+        ++g_tally[static_cast<int>(Tally::FitBadFamily)];
+        if (g_session->IsSlotWorldReady(senderSlot)) {
+            Answer(senderSlot, *internal::ReplyFor(internal::ActVerdict::WrongFamily, p.id));
+            g_refusals.Note(senderSlot, internal::VerdictName(internal::ActVerdict::WrongFamily), Now());
+        }
+        return;
+    }
     Slot& sl = g_slots[senderSlot];
     if (sl.queue.size() >= kCap) {
         if (!g_session->IsSlotWorldReady(senderSlot)) {
@@ -423,6 +437,7 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
     if (!IsHost()) return;
     UE_ASSERT_GAME_THREAD("prop_act_host::OnCommit");
     if (!InRoster(senderSlot)) return;
+    // No act re-judge here: MTA's NOTIFY_IN re-tests only that the reservation stands (CGame.cpp:3376-3383).
     void* actor = nullptr;
     const bool matched = coop::prop_hold::Match(senderSlot, p.id, p.eid, &actor);
     const bool liveAndSame = actor && actor == coop::element::LivePropActor(p.eid);

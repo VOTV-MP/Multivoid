@@ -1994,7 +1994,7 @@ struct RemoverResultPayload {
 };
 static_assert(sizeof(RemoverResultPayload) == 8, "RemoverResultPayload must be 8 bytes");
 
-// A client's ask to take or use a world prop (PropActRequest), the host's answer (PropActReply) and the client's
+// A client's ask to pocket, hold or use a world prop (PropActRequest), the host's answer (PropActReply) and the client's
 // closing word (PropActCommit). `id` is the client's own, nonzero, and pairs the three; `eid` is the prop's element
 // id on the sender.
 // The family byte names the verb, and the host judges each verb by its own conditions (the game's pocket test, its

@@ -31,7 +31,8 @@ void NoteShortPayload(uint8_t senderSlot);        // the dispatcher saw a short 
 void RunSelftest();                               // the pure decisions, once per start; NOT the game thread
 
 // The host's dev counters (TallyOf). The Fit* tallies name the term of an act's conditions that refused it; the reply
-// to the sender stays WrongFamily.
+// to the sender stays WrongFamily. MTA sends a reason byte per cause (CGame.cpp:3359) because its client rolls back a
+// predicted entry; ours cancels at PRE and shows one line, so every refusal of the act is one reply reason.
 enum class Tally : uint8_t { TargetGone, BadCommit, HeldAtDisconnect, DestroyFailed, QueueFullUnready, BadSender,
                              GrantUnsent, FitUnread, FitBadFamily, FitTrash, FitNotProp, FitDenied, FitNoUseRow,
                              FitCollectRefused, FitPickupRefused, FitIgnoreSave, FitChild, FitPhysics, FitCanCollect,
@@ -55,6 +56,8 @@ struct ActTraits {
     bool read, collectRefused, pickupRefused, ignoreSave, child, frozen, simulating, driven, canCollect, canHold,
          heavy, meshRoot, volumeFits, saveClass, equipRow, offered, foodBody, notEdible;
 };
+// The requester's own state (room, hunger) is no term of a fit: MTA's pickup reads the requester's health and armor on
+// the server (CPickup.cpp:384-396), but a peer's inventory is not replicated here, so its replay refuses and aborts.
 bool PocketFits(const ActTraits& t);   // putObjectInventory2 and addObject
 bool HoldFits(const ActTraits& t);     // Hold Object and updateHold
 bool UseFits(const ActTraits& t);      // the use verbs the lane carries

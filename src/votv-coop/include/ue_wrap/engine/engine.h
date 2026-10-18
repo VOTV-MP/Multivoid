@@ -83,6 +83,11 @@ FVector GetActorScale3D(void* actor);
 // actor even mid-teardown.
 bool IsChildActor(void* actor);
 
+// The same read, saying whether it could be made: `readable` is false when the Actor class is not loaded yet or
+// its ParentComponent member is missing (the answer is then false, which is no evidence the actor is not a
+// child). A reader that must fail closed uses this form.
+bool IsChildActor(void* actor, bool& readable);
+
 // The child actor's parent (the ParentComponent's Outer) and, in `outComponentName`, the
 // UChildActorComponent's name: the half of a child actor's identity that is stable across processes
 // (the `_CAT_<n>` tail of the actor's own name is a per-process counter). Null when not a child

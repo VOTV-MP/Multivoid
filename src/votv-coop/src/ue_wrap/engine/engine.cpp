@@ -344,9 +344,10 @@ FVector GetActorScale3D(void* actor) {
     return scl;
 }
 
-bool IsChildActor(void* actor) {
+bool IsChildActor(void* actor, bool& readable) {
     // See engine.h. Offset states: -2 not yet resolved (retry while the Actor class loads), -1
     // property missing (layout drift; the exclusion goes inert, loudly, once).
+    readable = false;
     if (!actor) return false;
     static std::atomic<int32_t> sOff{-2};
     int32_t off = sOff.load(std::memory_order_acquire);
@@ -367,7 +368,13 @@ bool IsChildActor(void* actor) {
     if (off < 0) return false;
     struct { int32_t idx; int32_t serial; } weak{};
     std::memcpy(&weak, reinterpret_cast<uint8_t*>(actor) + off, sizeof(weak));
+    readable = true;
     return weak.idx >= 0 && weak.serial != 0;
+}
+
+bool IsChildActor(void* actor) {
+    bool readable = false;
+    return IsChildActor(actor, readable);
 }
 
 void* ParentActorOf(void* actor, std::wstring* outComponentName) {
