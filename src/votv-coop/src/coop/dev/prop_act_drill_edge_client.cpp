@@ -47,8 +47,8 @@ constexpr int kSlot = kClientSlot;
 constexpr const char* kSecondTag = " eid2=";    // after the first eid in a pair's ready line
 constexpr size_t kMaxPropClasses = 1024;        // the window row's scan: classes collected before their instances are walked
 
-enum class CStage : uint8_t { Window, WindowOver, AwaitReady, Resolve, Walk, AwaitFirst, AwaitLine, AwaitExpiry,
-                              AwaitReply, AwaitLate, Say, Done };
+enum class CStage : uint8_t { Window, WindowOver, AwaitReady, Resolve, Walk, AwaitGather, AwaitFirst, AwaitLine,
+                              AwaitExpiry, AwaitReply, AwaitLate, Say, Done };
 // What follows a said line: the next step, c1's wait for the host's line after the commit is held, or nothing.
 enum class Then : uint8_t { Advance, AwaitDestroyed, Stop };
 
@@ -391,6 +391,19 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
         g_walk.reset();
         if (st == 2) {
             Fail(r, "the walk to the mirror did not arrive");
+            return;
+        }
+        CEnter(CStage::AwaitGather);
+        return;
+    }
+    case CStage::AwaitGather: {
+        // A host mirror still driven is parked with physics off, and a take of it bails: act when a press could gather
+        // it. A pair's second mirror is taken in the same step, so it waits too.
+        if (!poll) return;
+        if ((g_mirror.Get() && !MirrorGatherable(g_mirror.Get())) ||
+            (g_mirror2.Get() && !MirrorGatherable(g_mirror2.Get()))) {
+            if (CExpired(kGatherBoundMs))
+                Fail(r, "the mirror never became gatherable here (the host's drive did not end)");
             return;
         }
         Act(r, player);

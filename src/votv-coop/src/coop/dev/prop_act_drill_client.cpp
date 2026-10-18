@@ -46,7 +46,7 @@ constexpr int kFillMax = 400;            // CLIENT: own spawns pocketed before t
 
 // ---- client (taker) ----------------------------------------------------------------------------------------------
 
-enum class CStep : uint8_t { Arm, AwaitReady, Resolve, Fill, Walk, AwaitReply, Say, Done };
+enum class CStep : uint8_t { Arm, AwaitReady, Resolve, Fill, Walk, AwaitGather, AwaitReply, Say, Done };
 CStep g_cstep = CStep::Arm;
 uint64_t g_cStepMs = 0, g_cNextMs = 0, g_nextSayMs = 0;
 size_t g_crow = 0;
@@ -408,6 +408,18 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         g_walk.reset();
         if (st == 2) {
             ClientFail(row, "the walk to the mirror did not arrive");
+            return;
+        }
+        CEnter(CStep::AwaitGather);
+        return;
+    }
+    case CStep::AwaitGather: {
+        // A host mirror still driven is parked with physics off, and a take of it bails: act when a press could gather it.
+        if (now < g_cNextMs) return;
+        g_cNextMs = now + kPollEveryMs;
+        if (g_mirror.Get() && !MirrorGatherable(g_mirror.Get())) {
+            if (CExpired(kGatherBoundMs))
+                ClientFail(row, "the mirror never became gatherable here (the host's drive did not end)");
             return;
         }
         ClientAct(row, player);

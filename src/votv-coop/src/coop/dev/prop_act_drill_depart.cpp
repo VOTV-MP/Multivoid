@@ -220,7 +220,7 @@ void HostStep(coop::net::Session* s) {
 
 // ---- client (c1) -------------------------------------------------------------------------------------------------
 
-enum class CStage : uint8_t { Arm, Decide, Forge, AwaitBad, Resolve, Walk, AwaitReply, Say, Done };
+enum class CStage : uint8_t { Arm, Decide, Forge, AwaitBad, Resolve, Walk, AwaitGather, AwaitReply, Say, Done };
 
 CStage g_cs = CStage::Arm;
 bool g_life2 = false;
@@ -376,9 +376,18 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
             Fail("the walk to the mirror did not arrive");
             return;
         }
-        Act(player);
+        CEnter(CStage::AwaitGather);
         return;
     }
+    case CStage::AwaitGather:
+        // A host mirror still driven is parked with physics off, and a take of it bails: act when a press could gather it.
+        if (!poll) return;
+        if (g_mirror.Get() && !MirrorGatherable(g_mirror.Get())) {
+            if (CExpired(kGatherBoundMs)) Fail("the mirror never became gatherable here (the host's drive did not end)");
+            return;
+        }
+        Act(player);
+        return;
     case CStage::AwaitReply:
         if (PAR::dev::PendingId() != 0) {
             if (CExpired(kReplyBoundMs)) Fail("the request was still pending");

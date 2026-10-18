@@ -40,8 +40,8 @@ using Reason = coop::net::PropActReason;
 
 constexpr float kEyeLiftCm = 60.f;   // the forged request's origin, above c2's origin
 
-enum class CStage : uint8_t { Arm, Begin, AwaitReady, Resolve, Walk, AwaitLine, AwaitReply, AwaitRelease, AwaitFanout,
-                              Hold, AwaitOver, Say, Done };
+enum class CStage : uint8_t { Arm, Begin, AwaitReady, Resolve, Walk, AwaitGather, AwaitLine, AwaitReply, AwaitRelease,
+                              AwaitFanout, Hold, AwaitOver, Say, Done };
 // What follows a said line: the next step (c1), c1's done line being awaited (c2), c1's ready line, or nothing.
 enum class Then : uint8_t { Advance, Over, Ready, Stop };
 
@@ -331,6 +331,19 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
         g_walk.reset();
         if (st == 2) {
             Fail(r, "the walk to the mirror did not arrive");
+            return;
+        }
+        CEnter(CStage::AwaitGather);
+        return;
+    }
+    case CStage::AwaitGather: {
+        // c1's take of a host mirror is granted and gathers it, so it waits until the host's drive of it has ended. Every
+        // other act here meets a mirror somebody holds or hooks, or is c2's refused take: held is the state it must meet.
+        if (!poll) return;
+        if (g_slot == kSlotC1 && !C1Refused(r.blocker) && r.act.target != Target::Client && g_mirror.Get() &&
+            !MirrorGatherable(g_mirror.Get())) {
+            if (CExpired(kGatherBoundMs))
+                Fail(r, "the mirror never became gatherable here (the host's drive did not end)");
             return;
         }
         Arrived(r, player);

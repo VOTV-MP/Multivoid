@@ -300,6 +300,12 @@ bool ClientPuppetReady() {
     return rp.valid() && rp.HasPose();
 }
 
+bool MirrorGatherable(void* mirror) {
+    if (!mirror) return false;
+    void* const root = RootOf(mirror);
+    return root && E::IsComponentSimulatingPhysics(root);
+}
+
 // Spawns the row's class on the floor in front of slot 1's puppet, `extraCm` further along when it is a pair's
 // second, so the client's walk to the mirror is short. A kerfur row spawns the NPC. Null on success, else why not.
 const char* SpawnTarget(const Row& row, float extraCm, void** out) {

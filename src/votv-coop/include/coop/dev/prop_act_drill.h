@@ -52,6 +52,7 @@ inline constexpr float kPairGapCm = 60.f;      // a pair's second prop, further 
 inline constexpr uint64_t kReadyBoundMs = 120000;   // CLIENT: a step's start to the host's ready line
 inline constexpr uint64_t kMirrorBoundMs = 60000;   // CLIENT: the ready line to the mirror being here
 inline constexpr uint64_t kReplyBoundMs = 30000;    // CLIENT: the call to no request pending
+inline constexpr uint64_t kGatherBoundMs = 10000;   // CLIENT: the walk's arrival to the mirror being gatherable
 inline constexpr uint64_t kAnnounceBoundMs = 60000; // HOST: the spawn to the target having a row
 inline constexpr uint64_t kDoneBoundMs = 180000;    // HOST: the ready line to the client's done line
 inline constexpr uint64_t kJudgeBoundMs = 30000;    // HOST: the done line to the counters it must show
@@ -146,6 +147,10 @@ bool ClientSaid(int slot, const std::string& head, std::string* rest);
 // is live and has a pose.
 const char* SpawnTarget(const Row& row, float extraCm, void** out);
 bool ClientPuppetReady();
+
+// True when the mirror is live and its root simulates physics: the state a press can gather it in. The host's drive of
+// a prop that fell parks the mirror with physics off until the drive ends, and a take then bails. CLIENT.
+bool MirrorGatherable(void* mirror);
 
 // What a client's steps use (prop_act_drill_client.cpp). HostSaid reads the text after `head` in the first row of this
 // client's feed that carries it. RunVerb is the row's verb on this player and the mirror, the call a press makes: null
