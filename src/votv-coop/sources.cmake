@@ -71,6 +71,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/engine/engine_component.cpp
     src/ue_wrap/engine/hit_result.cpp
     src/ue_wrap/engine/engine_mainplayer.cpp
+    src/ue_wrap/engine/engine_player_verbs.cpp
     src/ue_wrap/engine/scs_rig.cpp
     src/ue_wrap/engine/engine_playerragdoll.cpp
     src/ue_wrap/engine/engine_attach.cpp
@@ -152,6 +153,9 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/actors/puppet_spawn.cpp
     src/ue_wrap/actors/kerfur.cpp
     src/ue_wrap/actors/kerfus.cpp
+    src/ue_wrap/actors/zombie.cpp
+    src/ue_wrap/actors/fossilhound.cpp
+    src/ue_wrap/actors/int_objects.cpp
     src/ue_wrap/world/votv_lib.cpp
     src/ue_wrap/world/economy.cpp
     src/ue_wrap/world/profile.cpp
