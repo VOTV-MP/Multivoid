@@ -9,7 +9,7 @@
 // and nothing can starve. MTA latches an entity's transition the same way and clears it by the
 // ANSWER (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:3153); we clear on the
 // window instead, because there the client cannot see the transition and here both peers see the
-// birth. The window, and the game behaviour that sets it: docs/devices.md, "The floppy slot".
+// birth. The window, and the game behaviour that sets it: docs/base-computer.md, "The floppy slot".
 //
 // Game thread. No wire kind and no message: the whole lane is local.
 

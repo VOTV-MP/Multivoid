@@ -35,7 +35,7 @@ namespace P  = ue_wrap::profile;
 // before the SHORTER of the two pauses a device holds its own hitbox off for -- the entry is edge
 // triggered at that re-enable, so cancelling it does not postpone the device's own re-take, it
 // removes it. Under both, nothing an ejecting peer does changes. Lapsing costs nothing: the native
-// rule resumes, with nobody waiting on it. Both constants: docs/devices.md, "The floppy slot".
+// rule resumes, with nobody waiting on it. Both constants: docs/base-computer.md, "The floppy slot".
 constexpr uint64_t kTransitMs = 400;
 
 // A disc materialising is a spawn, and a spawn burst is a join. Sized so a join's worth of discs

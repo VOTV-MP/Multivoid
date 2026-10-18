@@ -260,6 +260,7 @@ docs/**
 !docs/status.md
 !docs/votv-ui-style.md
 !docs/devices.md
+!docs/base-computer.md
 !docs/deployables.md
 !docs/events-and-weather.md
 !docs/join.md

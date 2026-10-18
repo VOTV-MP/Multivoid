@@ -175,7 +175,7 @@ was hashed but never reached it (`coop/world/daily_task_sync`); a joiner the tas
 yet is owed it and the host retries each second. A receiver that cannot apply a task yet keeps the
 latest one and retries it each second, and drops it if its world changes first; the writes set the
 task's state and pay no reward. The rewards land in the shared balance, on
-[devices.md](devices.md).
+[base-computer.md](base-computer.md).
 
 ## Who owns what
 

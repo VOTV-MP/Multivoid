@@ -2,7 +2,7 @@
 // UDataTable. Engine-wrapper layer (principle 7): no network, no coop state, no policy. It answers
 // "what does the game say row <name> is?" and coop/items/order_sync decides what to do about it --
 // the arbiter's table behind the rule that an intent names WHAT, never WHAT IT COSTS (the lane is
-// docs/devices.md, "Shop orders").
+// docs/base-computer.md, "Shop orders").
 // It is also the only encoding that can NAME a shop item: 473 rows map onto 368 classes, so 112
 // have no unique class. `generateStore` stamps the row key into `Fstruct_store.name` at runtime;
 // in the table itself that field reads "None" on every row.

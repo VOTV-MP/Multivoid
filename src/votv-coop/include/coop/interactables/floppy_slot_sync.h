@@ -9,7 +9,7 @@
 // on one point: the claim carries an outcome rather than asking -- insertFloppy and ejectFloppy
 // have already run on the peer that reports them -- and the host's canonical is the answer a
 // client applies over its own optimistic copy; two peers' changes crossing inside one answer are
-// decided by the later claim (docs/devices.md, Known limits).
+// decided by the later claim (docs/base-computer.md, Known limits).
 
 #pragma once
 

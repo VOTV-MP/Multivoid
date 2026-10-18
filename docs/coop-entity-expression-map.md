@@ -120,7 +120,7 @@ are peer-gated. `[V]`
   born through the birth channels with its content on the save-record lane above. The slot itself
   is state on the wire, so the destroy is not the only thing that crosses: the host owns
   every device's slot, a peer reports the outcome of one its own game changed, and the host's
-  re-publish is the answer ([devices.md](devices.md)). `[V]` **An ejected disc is born where the box that
+  re-publish is the answer ([base-computer.md](base-computer.md)). `[V]` **An ejected disc is born where the box that
   ejected it turned its own collision off, and the box on the other machine never ran that eject**,
   so it would take the disc through the same overlap the insert uses. A disc is therefore marked IN
   TRANSIT at its own spawn and no device swallows one on any peer while the mark holds. The disc

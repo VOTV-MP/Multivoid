@@ -1,6 +1,6 @@
 // coop/world/email_sync.h -- the meadow-PC EMAIL mirror: the laptop's messages (the hash-collection
 // task mails, the scientist and alien responses, the event mails from caught signals) appear on
-// every peer, and a row deleted on one disappears on all. Reader-facing summary: docs/devices.md.
+// every peer, and a row deleted on one disappears on all. Reader-facing summary: docs/base-computer.md.
 // Every producer funnels through `gamemode.addEmail`, which is Blueprint-internal, into
 // `saveSlot.emails`; that same reflected call on a RECEIVER reproduces everything at once --
 // persistence append, list row, the ding at the physical laptop, tab highlight -- and re-stamps the
