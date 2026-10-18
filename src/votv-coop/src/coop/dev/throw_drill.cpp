@@ -55,7 +55,7 @@ constexpr uint64_t kCopyBoundMs   = 90000;    // HOST: the fixture to its copy (
 constexpr uint64_t kSliceBoundMs  = 35000;    // HOST: the copy to its contents, past the transfer's 30 s
 constexpr uint64_t kGoneBoundMs   = 15000;    // HOST: the kick to the transfer ending with its author
 constexpr uint64_t kFindBoundMs   = 60000;    // CLIENT: world-ready to the fixture holding its records
-constexpr uint64_t kSettleBoundMs = 10000;
+constexpr uint64_t kSettleBoundMs = 30000;    // CLIENT: the mirror's first sight to rest and the host's drive ended
 constexpr uint64_t kCheckEveryMs  = 250;
 constexpr int      kRestChecks    = 4;
 
@@ -308,8 +308,13 @@ void ClientTick() {
                           ? g_restReads + 1 : 0;
         g_lastAt = at;
         // At rest and out of the host's fall stream: a mirror the stream still parks is not the hand's to take.
-        if (g_restReads >= kRestChecks && !coop::prop_drive_stream::IsParked(pack)) Next(Step::Throw);
-        else if (Expired(kSettleBoundMs)) Abandon("the backpack's mirror never came to rest");
+        const bool parked = coop::prop_drive_stream::IsParked(pack);
+        const bool still = g_restReads >= kRestChecks;
+        if (still && !parked) Next(Step::Throw);
+        else if (Expired(kSettleBoundMs))
+            Abandon(!still && parked ? "the backpack's mirror was still moving and still parked by the host's drive"
+                    : parked ? "the backpack's mirror was at rest but the host's drive of it never ended"
+                             : "the backpack's mirror never came to rest");
         return;
     }
     case Step::Throw: {
