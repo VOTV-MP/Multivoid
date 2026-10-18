@@ -79,8 +79,9 @@ void SayPredicted(const wchar_t* function) {
 // (reference/source-sdk-2013/src/game/shared/hl2mp/weapon_hl2mpbasebasebludgeon.cpp:149-172), and withholds the
 // server's copy of the shooter's own sounds from the shooter (reference/source-sdk-2013/src/game/shared/
 // basecombatweapon_shared.cpp:1925-1930). This takes the first half: the swinger's feedback is local, health and
-// death are the host's. The second half is not taken: another peer sees no feedback for this swing, and a swing the
-// host refuses has already shown its feedback.
+// death are the host's. The second half, delivering the server's copy to every peer but the swinger, is not taken: the
+// host's own call plays its own feedback, a third client sees none, and a swing the host refuses has already shown its
+// feedback.
 void Predict(void* mirror, const FVector& hitLoc) {
     void* zombie = ue_wrap::object_index::ClassByName(P::name::NpcClass_Zombie);
     if (!zombie || !R::IsDescendantOfAny(R::ClassOf(mirror), &zombie, 1)) return;
@@ -183,11 +184,12 @@ sg::Verdict OnAddDamagePre(const sg::Call& c) {
 constexpr coop::net::IntentBudget kBudget{4.0f, 2.0f};
 constexpr size_t kMaxPending = 8;
 
-// An intent with the sender's eye as the host held it when the intent arrived: it is judged against the pose the
-// swing was made at, not the pose of the tick that serves it.
+// An intent with the sender's eye and its unit aim vector as the host held them when the intent arrived: it is judged
+// against the pose the swing was made at, not the pose of the tick that serves it.
 struct Queued {
     coop::net::CreatureHitIntentPayload req;
     FVector eye{};
+    FVector aim{};
     bool haveEye = false;
 };
 
@@ -238,7 +240,7 @@ void Serve(coop::net::Session& s, int slot, const Queued& q) {
     const FVector impact{p.impact[0], p.impact[1], p.impact[2]};
     float damage = 0.f;
     const char* why = nullptr;
-    if (!coop::hit_judge::JudgeHit(slot, q.eye, hitLoc, creature, p.damage, damage, why))
+    if (!coop::hit_judge::JudgeHit(slot, q.eye, q.aim, hitLoc, creature, p.damage, damage, why))
         return Refuse(slot, why);
 
     // The first applied hit of a class says what it measured; the rest are counted (g_applied). Read before the
@@ -320,9 +322,11 @@ void OnIntent(int senderSlot, const coop::net::CreatureHitIntentPayload& payload
     if (g_slots[senderSlot].queue.size() >= kMaxPending) return Refuse(senderSlot, "queue full");
     Queued q;
     q.req = payload;
-    // Only a puppet that has had its first pose has an eye: before it, it stands at its spawn point.
+    // Only a puppet that has had its first pose has an eye: before it, it stands at its spawn point. The aim is read
+    // with the eye, the one pose.
     coop::RemotePlayer& rp = coop::puppet_drive::Puppet(senderSlot);
     q.haveEye = rp.valid() && rp.HasPose() && rp.TryGetEyePosition(q.eye);
+    if (q.haveEye) q.aim = rp.GetSyncedAimDirection();
     g_slots[senderSlot].queue.Push(std::move(q), kMaxPending);   // room was checked above
 }
 

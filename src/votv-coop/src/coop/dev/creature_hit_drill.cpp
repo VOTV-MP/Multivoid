@@ -9,8 +9,10 @@
 //      "inbound done".
 //   3. OUTBOUND. The client empties its hand, the host posts "hand empty seen", the client calls the mirror's
 //      addDamage once and the host must refuse it. The client takes an axe, the host posts "axe seen", and the
-//      client calls the mirror's addDamage every 600 ms until the mirror is destroyed. The host passes when its
-//      creature died of judged hits and posts "host done"; the client passes on the destroy.
+//      client calls the mirror's addDamage every 600 ms until the mirror is destroyed, turning its own view toward the
+//      mirror (the control rotation only; the player does not move) before each swing, so the host's facing bound
+//      sees it face the creature. The host passes when its creature died of judged hits and posts "host done"; the
+//      client passes on the destroy.
 //   4. DONE: the client's after its outbound PASS and the host's line, the host's after its own.
 
 #include "coop/dev/creature_hit_drill.h"
@@ -20,6 +22,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/creatures/creature_hit_intent.h"
+#include "coop/dev/director/director.h"
 #include "coop/dev/drill_hand.h"
 #include "coop/dev/restore_vitals.h"
 #include "coop/dev/spawn_npc.h"
@@ -36,6 +39,7 @@
 #include "coop/session/net_pump.h"
 #include "coop/world/creature_event_relay.h"
 
+#include "ue_wrap/actors/fossilhound.h"
 #include "ue_wrap/actors/int_objects.h"
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -302,7 +306,7 @@ void HostTick(coop::net::Session* s, const Arm& arm) {
             if (applied >= 1) {
                 Verdict(true, "outbound", true, "applied=%u", applied);
                 Say(kHostDone);
-                UE_LOGI("[CHD] DONE role=host");
+                UE_LOGI("[CHD] DONE role=host refused_sends=%u", coop::player_hit::RefusedSendCount());
             } else {
                 Verdict(false, "outbound", true, "applied=%u reason=died of no judged hit", applied);
             }
@@ -330,7 +334,7 @@ struct ClientState {
     EL::ElementId         eid = EL::kInvalidId;
     float                 damage = 0.f;
     uint32_t              hits = 0;
-    bool                  inboundPassed = false, perceived = false, swingFaulted = false;
+    bool                  inboundPassed = false, perceived = false, swingFaulted = false, turnFaulted = false;
 } g_c;
 std::vector<EL::Npc*> g_scratch;
 
@@ -364,6 +368,22 @@ bool CallAddDamage() {
     ue_wrap::FVector at{};
     if (!mirror || !me || !E::TryGetActorLocation(mirror, at)) return false;
     return ue_wrap::int_objects::InvokeAddDamage(mirror, me, g_c.damage, at, ue_wrap::FVector{});
+}
+
+// Turn this player's own view toward the mirror: the controller's control rotation set to the look-at rotation from
+// its camera to the mirror's location, which is the point CallAddDamage claims. The host's facing bound reads the
+// aim the pose stream carries, so the swing is made facing the creature. The player is not moved.
+void FaceMirror() {
+    void* mirror = g_c.mirror.Get();
+    void* me = coop::players::Registry::Get().Local();
+    void* ctrl = me ? E::GetController(me) : nullptr;
+    ue_wrap::FVector at{};
+    if (mirror && ctrl && E::TryGetActorLocation(mirror, at)) {
+        E::SetControlRotation(ctrl, coop::director::LookAt(E::GetCameraLocation(), at));
+    } else if (!g_c.turnFaulted) {
+        g_c.turnFaulted = true;
+        UE_LOGW("[CHD] the client's view could not be turned toward the mirror");
+    }
 }
 
 void ClientInbound(const Arm& arm) {
@@ -460,6 +480,8 @@ void ClientTick(const Arm& arm) {
         } else if (Expired(g_c.stepMs)) {
             Verdict(false, "outbound", false, "hits=0 reason=the host's axe line did not come");
             ClientStop();
+        } else {
+            FaceMirror();   // the pose stream carries the aim before the first swing
         }
         return;
     case ClientStep::Swing: {
@@ -470,12 +492,16 @@ void ClientTick(const Arm& arm) {
         } else if (Expired(g_c.stepMs)) {
             Verdict(false, "outbound", false, "hits=%u reason=bound", g_c.hits);
             ClientStop();
-        } else if (now - g_c.swingMs >= kSwingGapMs) {
-            g_c.swingMs = now;
-            if (CallAddDamage()) ++g_c.hits;
-            else if (!g_c.swingFaulted) {
-                g_c.swingFaulted = true;
-                UE_LOGW("[CHD] the mirror's addDamage call did not run");
+        } else {
+            // Every tick, so the streamed aim follows the creature as it walks; the swing's own turn is the last.
+            FaceMirror();
+            if (now - g_c.swingMs >= kSwingGapMs) {
+                g_c.swingMs = now;
+                if (CallAddDamage()) ++g_c.hits;
+                else if (!g_c.swingFaulted) {
+                    g_c.swingFaulted = true;
+                    UE_LOGW("[CHD] the mirror's addDamage call did not run");
+                }
             }
         }
         return;
@@ -494,7 +520,7 @@ void ClientTick(const Arm& arm) {
     }
     case ClientStep::AwaitHostDone:
         if (HasRow(kHostDone)) {
-            UE_LOGI("[CHD] DONE role=client");
+            UE_LOGI("[CHD] DONE role=client adopted_kick_skips=%u", ue_wrap::fossilhound::AdoptedKickSkips());
             ClientStop();
         } else if (Expired(g_c.stepMs)) {
             Verdict(false, "done", false, "hits=%u reason=the host's done line did not come", g_c.hits);

@@ -9,7 +9,7 @@
 // The creature's health, death and corpse stay the host's: its death reaches the client as the creature's destroy.
 //
 // The host queues a client's intents (cap 8, a pace of 4 then 2 a second, which bounds a swing rate), captures the
-// sender's eye from its puppet when the intent arrives, and serves one head a tick through coop/player/hit_judge:
+// sender's eye and aim from its puppet when the intent arrives, and serves one head a tick through coop/player/hit_judge:
 // the held item, the reach, the facing, the sight and the point on the creature. A pass runs the creature's own
 // addDamage with a null damager, so a client's kill credits no host achievement. Nothing is sent back. Each refusal
 // is counted per reason and said once per sender and reason. Game thread.
@@ -31,15 +31,17 @@ void Install(coop::net::Session* session);
 // Settle the watch's registration with one line; on a running host, serve each sender's queue head. Game thread.
 void Tick();
 
-// HOST: a client's intent, queued with the sender's eye as the host holds it now. A full queue or an unknown sender
-// is refused into the count. The format was checked at the receive edge. Game thread.
+// HOST: a client's intent, queued with the sender's eye and aim as the host holds them now. A full queue or an
+// unknown sender is refused into the count. The format was checked at the receive edge. Game thread.
 //
 // Precedent. MTA applies a hit on a ped at the machine that syncs it and takes the reported health
-// (reference/mtasa-blue/Server/mods/deathmatch/logic/CPedSync.cpp:243-275), and replays the attacker's ray there
-// (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientPlayer.cpp:260-320); Source re-traces the swing on the
-// server from its own eye (reference/source-sdk-2013/src/game/shared/hl2mp/weapon_hl2mpbasebasebludgeon.cpp:292-302).
-// Here the Blueprint swing cannot be replayed on the host's puppet, so the client reports the struck point and the
-// host judges it.
+// (reference/mtasa-blue/Server/mods/deathmatch/logic/CPedSync.cpp:243-275); the attacker's ray is replayed on every
+// client that streams the shooter (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientPlayer.cpp:260-320: it
+// gives the remote ped the weapon and fires the bullet). Source re-traces the swing on the server from its own eye
+// (reference/source-sdk-2013/src/game/shared/hl2mp/weapon_hl2mpbasebasebludgeon.cpp:292-302). Here the host has no
+// copy of the swing's inputs: the Blueprint swing reads the swinging pawn's own weapon data and camera and applies its
+// hit to every actor its line trace strikes, and the host's puppet is not known to hold those inputs, so the
+// swing is not replayed on it. The client reports the struck point and the host judges it.
 void OnIntent(int senderSlot, const coop::net::CreatureHitIntentPayload& payload);
 
 // Net disconnect: the once-per-session log latches are forgotten. A sender's queue and counts go with its occupant
