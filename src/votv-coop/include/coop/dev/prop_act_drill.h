@@ -162,9 +162,10 @@ void Say(const std::string& line);
 // The text after `head` in the first row of the lobby record that `slot` said; false when none yet. HOST.
 bool ClientSaid(int slot, const std::string& head, std::string* rest);
 
-// Spawns the row's class on the first floor round slot 1's puppet (its facing first, then a fan of 8 directions),
-// `extraCm` further along the same direction when it is a pair's second. Null on success, else why not. HOST. ClientPuppetReady is what an arm gate waits on before it: the puppet
-// is live and has a pose.
+// Spawns the row's class on the first floor round slot 1's puppet (its facing first, then a fan of 8 directions) that
+// a NavMesh route from the puppet reaches within kReachCm, `extraCm` further along the same direction when it is a
+// pair's second. Null on success, else why not. HOST. ClientPuppetReady is what an arm gate waits on before it: the
+// puppet is live and has a pose.
 const char* SpawnTarget(const Row& row, float extraCm, void** out);
 bool ClientPuppetReady();
 

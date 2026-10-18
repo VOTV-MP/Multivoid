@@ -7,6 +7,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/creatures/kerfur_entity.h"
+#include "coop/dev/director/routes.h"
 #include "coop/dev/drill_props.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
@@ -74,7 +75,7 @@ constexpr const wchar_t* kKerfurNpc = L"kerfurOmega_C";
 bool g_installed = false;
 
 // The host's spawn: the puppet's facing, then the rest of a fan round it, the first direction and distance whose
-// column has a floor (found by a trace).
+// column has a floor (found by a trace) AND a route from the puppet (the NavMesh), so the client's walk can arrive.
 constexpr float kAheadCm[] = {200.f, 150.f, 250.f};
 constexpr float kFanDeg[] = {0.f, 45.f, -45.f, 90.f, -90.f, 135.f, -135.f, 180.f};
 constexpr int kFanCount = static_cast<int>(sizeof(kFanDeg) / sizeof(kFanDeg[0]));
@@ -430,8 +431,9 @@ std::string MirrorState(void* mirror) {
 }
 
 // Spawns the row's class on the first floor found round slot 1's puppet, its facing first, then the rest of the fan;
-// `extraCm` further along that direction when it is a pair's second, so the client's walk to the mirror is short. A
-// kerfur row spawns the NPC. Null on success, else why not.
+// the column must have a floor AND a NavMesh route from the puppet that ends within kReachCm of it (a floor the route
+// does not touch is skipped). `extraCm` further along that direction when it is a pair's second, so the client's walk
+// to the mirror is short. A kerfur row spawns the NPC. Null on success, else why not.
 const char* SpawnTarget(const Row& row, float extraCm, void** out) {
     void* const player = coop::players::Registry::Get().Local();   // the floor trace's world context
     coop::RemotePlayer& rp = coop::puppet_drive::Puppet(kClientSlot);
@@ -456,6 +458,12 @@ const char* SpawnTarget(const Row& row, float extraCm, void** out) {
             const float x = at.X + dx * ahead, y = at.Y + dy * ahead;
             float floorZ = 0.f;
             void* p = nullptr;
+            if (!DP::FloorAt(player, x, y, at.Z, kFloorDownCm, kMinColumnCm, &floorZ)) continue;
+            if (!coop::director::RouteInLegs(player, at, FVector{x, y, floorZ}, kReachCm)) {
+                UE_LOGI("%s host %s: no route from slot 1's puppet reaches the column %.0f uu away at %.0f deg",
+                        kTag, row.name, ahead, kFanDeg[i]);
+                continue;
+            }
             const DP::Drop d = DP::DropOnFloor(player, cls, kKerfurNpc, x, y, at.Z, kFloorDownCm, kMinColumnCm,
                                                npc ? kDropCm + kNpcLiftCm : kDropCm, &p, &floorZ);
             if (d == DP::Drop::NoFloor) continue;
@@ -476,8 +484,9 @@ const char* SpawnTarget(const Row& row, float extraCm, void** out) {
                 kMinColumnCm, &z, &facing);
     DP::FloorAt(player, at.X, at.Y, at.Z, kFloorDownCm, kMinColumnCm, &z, &own);
     static char why[200];
-    std::snprintf(why, sizeof why, "no floor was found round slot 1's puppet (puppet at %.0f %.0f %.0f; facing column: "
-                  "%s; own column: %s)", at.X, at.Y, at.Z, kMiss[static_cast<int>(facing)], kMiss[static_cast<int>(own)]);
+    std::snprintf(why, sizeof why, "no floor a route reaches was found round slot 1's puppet (puppet at %.0f %.0f "
+                  "%.0f; facing column: %s; own column: %s)", at.X, at.Y, at.Z, kMiss[static_cast<int>(facing)],
+                  kMiss[static_cast<int>(own)]);
     return why;
 }
 
