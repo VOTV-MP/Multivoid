@@ -24,6 +24,8 @@
 #include "coop/world/sky_sync.h"
 #include "coop/world/weather_lightning.h"
 #include "coop/world/weather_redsky.h"
+#include "coop/world/creature_event_relay.h"
+#include "coop/world/weather_badsun.h"
 #include "coop/world/weather_sync.h"
 
 #include "ue_wrap/core/game_thread.h"
@@ -361,6 +363,60 @@ bool HandleWorldEvent(const net::Session::ReliableMessage& msg) {
         net::RedSkyPayload pCopy = p;
         ue_wrap::game_thread::Post([pCopy] {
             ::coop::weather_redsky::Apply(pCopy);
+        });
+        break;
+    }
+    case net::ReliableKind::BadSun: {
+        // Whether a Bad Sun exists: the host sends it as each call that changes it leaves it (watched at the
+        // script gate); the receiver spawns one through the gamemode's verb or destroys its inactive copies.
+        if (msg.payloadLen < sizeof(net::BadSunPayload)) {
+            UE_LOGW("event_feed: BadSun payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::BadSunPayload));
+            break;
+        }
+        net::BadSunPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        // Host trust-bound: a client's copy is refused at the host's receive edge (client_authorship.h). The
+        // role-range trust on the sender element id.
+        if (!VerifySenderEidRange(msg.senderPeerSlot, p.senderElementId, "BadSun")) {
+            break;
+        }
+        if (p.state != 0 && p.state != 1) {
+            UE_LOGW("event_feed: BadSun state=%u out of range -- dropping",
+                    static_cast<unsigned>(p.state));
+            break;
+        }
+        net::BadSunPayload pCopy = p;
+        ue_wrap::game_thread::Post([pCopy] {
+            ::coop::weather_badsun::Apply(pCopy);
+        });
+        break;
+    }
+    case net::ReliableKind::CreatureEventActive: {
+        // A creature's whole count of running events: the host sends it as each `setEvent` of that creature leaves
+        // it (watched at the script gate), at its enrolment and at a joiner's world-ready; the receiver applies it
+        // to its mirror's registration in the gamemode's event count.
+        if (msg.payloadLen < sizeof(net::CreatureEventActivePayload)) {
+            UE_LOGW("event_feed: CreatureEventActive payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::CreatureEventActivePayload));
+            break;
+        }
+        net::CreatureEventActivePayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        // Host trust-bound: a client's copy is refused at the host's receive edge (client_authorship.h). The id is
+        // the creature's, host-allocated, not a sender's: checked against the host range, not the sender's.
+        if (!coop::element::Registry::IsAllowedHostAllocatedEid(p.elementId)) {
+            UE_LOGW("event_feed: CreatureEventActive eid=%u is not a host-allocated id -- dropping", p.elementId);
+            break;
+        }
+        if (p.count > 8) {
+            UE_LOGW("event_feed: CreatureEventActive eid=%u count=%u out of range -- dropping", p.elementId,
+                    static_cast<unsigned>(p.count));
+            break;
+        }
+        net::CreatureEventActivePayload pCopy = p;
+        ue_wrap::game_thread::Post([pCopy] {
+            ::coop::creature_event_relay::OnReliable(pCopy);
         });
         break;
     }

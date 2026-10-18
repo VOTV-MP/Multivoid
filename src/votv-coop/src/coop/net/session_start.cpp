@@ -10,12 +10,14 @@
 #include "coop/config/config_registry.h"  // rows: the fake-link knobs, the connect cap
 #include "coop/net/connect_history.h"
 #include "coop/net/endpoint_log.h"
+#include "coop/net/fake_link_steps.h"  // the fake-link writers and the step schedule
 #include "coop/net/ice_policy.h"         // what the player's net.ice refuses
 #include "coop/net/master_slots.h"       // an empty relay is the chosen master's
 #include "coop/net/peer_admission.h"
 #include "coop/net/peer_identity.h"
 #include "coop/net/session_serial.h"
 #include "coop/player/nickname_arbiter.h"
+#include "coop/session/join_beacon.h"    // RunDrainingSelftest
 #include "coop/session/player_handshake.h"
 #include "coop/text/case_fold.h"
 #include "coop/text/name_filter.h"
@@ -73,20 +75,11 @@ bool EnsureGnsInit() {
     // decides it and `coop/net/connection_tuning` opens it, so a global write here would be a
     // second writer of a quantity that has an owner. docs/send-path.md carries the measurements.
     //
-    // The overdrive drill knob is the one thing still written globally, and correctly so: it
-    // simulates a thin outbound link with the transport's send policer, which silently drops
-    // packets beyond the token budget. That is the PHYSICS of the box's uplink, not a policy about
-    // a link. 0 is off, the shipped default.
+    // The fake-link drill knobs are the only things still written globally, and correctly so: they
+    // simulate the PHYSICS of the box's uplink, not a policy about a link. 0 is off, the shipped
+    // default. Five are rewritten at every session start (`coop/net/fake_link_steps`), since a
+    // step can change them; the reorder pair below is never stepped, so once per process is enough.
     if (auto* utils = SteamNetworkingUtils()) {
-        const long fakeKbs =
-            coop::config::ResolveInt(coop::config_registry::rows::net_fakelink_kbs);
-        if (fakeKbs > 0) {
-            utils->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_FakeRateLimit_Send_Rate,
-                                             static_cast<int32>(fakeKbs) * 1024);
-            UE_LOGW("net: FAKE LINK LIMIT %ld KB/s outbound (drill knob net.fakelink_kbs) -- "
-                    "packets beyond the budget are silently dropped",
-                    fakeKbs);
-        }
         // The reordering knob, the same physics on the receiving side: a LAN delivers in order, so
         // without it no run ever exercises a stream's newest-wins store against an older datagram.
         const long reorderPct =
@@ -193,6 +186,20 @@ bool Session::Start(const Config& cfg, Refusal* why) {
     ResetOutboundStreams();
 
     if (!EnsureGnsInit()) return false;
+    // A new session's fake-link globals (the rows' values), step schedule and origins; a step's keys
+    // are written only when its origin comes due.
+    fake_link_steps::Arm();
+    // The step parser's selftest sits beside Arm, its only caller and the first reader of
+    // net.fakelink_steps, once per process: a red parser logs its line next to the "armed" line of
+    // the text it parsed, and the config is read by now. The send-rate base history's pure cases
+    // and the join beacon's Draining cases run in the same latch. Results are logged, not acted
+    // on, like the harness's net selftests.
+    static const bool kFakeLinkStepsOk = fake_link_steps::RunSelftest();
+    static const bool kBaseHistoryOk = SendRateControl::RunSelftest();
+    static const bool kJoinDrainingOk = coop::join_beacon::RunDrainingSelftest();
+    (void)kFakeLinkStepsOk;
+    (void)kBaseHistoryOk;
+    (void)kJoinDrainingOk;
 
     // This install's durable identity goes into GNS before any socket exists: the public key is the
     // identity (GNS's 32-byte GenericBytes form), so every connection this process makes or

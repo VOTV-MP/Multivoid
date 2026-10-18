@@ -10,11 +10,21 @@ them.
 
 | bin | default port | env |
 |---|---|---|
-| `coop-master` | `COOP_MASTER_PORT` (10001) | `COOP_TURN_SECRET`*, `COOP_SIGNALING_TOKEN`*, `COOP_SIGNALING_URL`, `COOP_STUN_URI`, `COOP_TURN_URI` |
+| `coop-master` | `COOP_MASTER_PORT` (10001) | `COOP_TURN_SECRET`*, `COOP_SIGNALING_TOKEN`*, `COOP_DOMAIN`*, `COOP_MASTER_NAME_ALIASES`, `COOP_MIN_LISTED_PROTO`, `COOP_BLOCKED_IDENTITIES`, `COOP_SIGNALING_URL`, `COOP_STUN_URI`, `COOP_TURN_URI` |
 | `coop-signaling` | `COOP_SIGNALING_PORT` (10000) | `COOP_SIGNALING_TOKEN`* |
 
 `*` required: the process refuses to start (exit 1) without it. All secrets are env-only;
 nothing is hardcoded, and it stays that way.
+
+The master's names: `COOP_DOMAIN` is required and is the name its clients dial, written as a
+bare host (`master.example.org` or an IPv4 literal: no scheme, path, login, port or IPv6 form; the
+master refuses to start without it or on anything else). A lobby proof is signed for that name, so the `net.masters` entry a player adds
+must dial the same host. `COOP_MASTER_NAME_ALIASES` is an optional comma list of other names it
+answers to, never a substitute for it (an IPv4 literal, a dev host): each entry follows the same rules
+bar an optional `:port`, which is stripped, and an invalid entry stops the master at start; names are
+trimmed and lower-cased, and a loopback alias is dropped with a warning. `COOP_MIN_LISTED_PROTO` (default 0) is the
+floor: a create from a build below it is refused, and a value that is not a decimal number
+stops the master at start.
 
 ## Build
 
@@ -36,9 +46,29 @@ limits and per-IP caps are the wrong fixture for many synthetic rows from one ad
 
 ## The wire
 
-- **Endpoints**: `/v1/host`, `/v1/heartbeat`, `/v1/leave`, `/v1/visibility`, `/v1/join`,
+- **Endpoints**: `/v1/host/challenge`, `/v1/host`, `/v1/heartbeat`, `/v1/leave`, `/v1/visibility`, `/v1/join`,
   `/v1/lobbies`, `/v1/latest`, `/v1/thanks`, `/healthz`. The mod's side is
   `coop/net/lobby_client` and `coop/net/lobby_announcer`.
+- **The lobby proof**: a create is two calls. `POST /v1/host/challenge` (body `{}`) answers a
+  `nonce`; `POST /v1/host` then carries `nonce` and `proof`, the host's Ed25519 signature over
+  `"multivoid-lobby-announce-v1" || identity || nonce || master_name` (`src/lobby_proof.rs`, the
+  shared vector in `tests/vectors/lobby_proof.json`). The nonce is stateless: its expiry, random
+  bytes and an HMAC (a secret drawn when the master starts) over the caller's address bucket, so
+  issuing stores nothing and no flood of challenges can fill the master; only a spent nonce is
+  kept, until it expires (single use; a full set, 65536 (sized to the master's memory), answers
+  `503 busy` and never forgets a nonce). A restart voids
+  outstanding nonces and the host asks again. The challenge has its own rate class. A build at or
+  above `MIN_PROVED_PROTO` (`src/version_gate.rs`) without a valid proof is `409 proof-required`;
+  a proof that is present must verify (`400 bad-proof`); a nonce that is not this master's for
+  this address, or is spent or expired, is `410 nonce-expired`; a build below
+  `COOP_MIN_LISTED_PROTO` is `403 build-too-old`; an identity in `COOP_BLOCKED_IDENTITIES` (comma
+  list of `gen:` keys; an entry of another shape refuses the start) is `403 blocked` and never listed (asked after the proof and the floor, so only a create that proves its key, or a build that need not, learns it).
+  A valid proof marks the row `proved`, and a
+  proved create for a key already listed replaces that key's row (new session and token). When
+  the table is full a create evicts the stalest unproved row, then the stalest proved one; an
+  unproved create is refused (`429`) when every row is proved. `/v1/lobbies` rows carry
+  `identity` and `proved`. The host name a client signs is the host of its master URL, by the
+  rules of `canon_host_name` (`src/common.rs`; cases in `tests/vectors/master_names.json`).
 - **The thanks list**: `/v1/thanks` answers `{"text": ...}` with the file `COOP_THANKS_FILE`
   names (default `/etc/coop-thanks.txt`), a copy of `src/votv-coop/assets/thanks/thanks.txt`.
   Re-read at most every thirty seconds, capped at 64 KiB, 404 when it cannot be served whole.
@@ -58,7 +88,8 @@ limits and per-IP caps are the wrong fixture for many synthetic rows from one ad
 Rightmost `X-Forwarded-For` from a loopback proxy only, so the rate-limit and target address
 cannot be spoofed; constant-time token compare; an opaque `lobbyId` against a secret `sessionId`;
 control-character strip and codepoint clamp on every string; per-(address, class) sliding-window
-rate limits; a global LRU and per-address lobby caps; a `LOBBY_TTL` sweep; bounded header and
+rate limits (the table of them holds 50000 keys and, full, forgets the least recently seen rather
+than refuse a new address; `GET /v1/lobbies` has its own class, 120 per minute); a global LRU and per-address lobby caps; a `LOBBY_TTL` sweep; bounded header and
 body; connection admission at accept (`admission.rs`: a total and a per-address cap, taken before
 the TLS handshake) under one deadline that covers the handshake and every read before the
 answer, or on the relay before registration; a relay destination's queue is capped in bytes;

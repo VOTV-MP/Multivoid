@@ -4,7 +4,9 @@
 // SleepState and LaptopState power messages each alternating its own value and the other, then the other; the HOST
 // judges by its own counts: once it has drained all of them, how many of each it applied, then whether each last
 // value still owed was applied by a later payment (a kind the burst already left holding it owes nothing and is not
-// judged), then whether its laptop settled on the last value with no edge broadcast as its own. Defensive testing
+// judged), then whether its laptop settled on the last value with no edge broadcast as its own. The bed flood also
+// carries forged ClientRest beds in rotation (a character outside an identifier, a nonzero byte past the length, an
+// Awake report with a bed), each of which the host must refuse and count. Defensive testing
 // of OUR OWN mod, per coop/dev/hostile_drill.h; nothing here ships enabled.
 
 #pragma once

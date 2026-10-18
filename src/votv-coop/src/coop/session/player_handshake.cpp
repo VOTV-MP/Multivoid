@@ -399,7 +399,7 @@ bool HandleJoinMessage(net::Session& session,
     }
     // The inventory identity is hex(SHA-256(pubkey)[0..16]) of the key the peer proved at
     // admission, published by the net thread and read here on the game thread. The 32-hex-chars
-    // validation it used to need (the value is a host filesystem path component under
+    // validation it used to need (the value is a host filesystem path component under the mod's
     // coop_players/) is structural now, and no peer can name a row that is not its own. Only the
     // host can answer; a client's store is empty.
     if (session.role() == coop::net::Role::Host) {

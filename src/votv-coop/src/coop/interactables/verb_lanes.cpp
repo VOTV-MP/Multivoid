@@ -2,6 +2,7 @@
 
 #include "coop/interactables/verb_lanes.h"
 
+#include "coop/interactables/camera_toggle_intent.h"
 #include "coop/interactables/desk_verb_intent.h"
 #include "coop/interactables/door_state_verbs.h"
 #include "coop/interactables/door_verb_intent.h"
@@ -21,6 +22,7 @@ void Install(coop::net::Session& session) {
     coop::drone_call_intent::Install(&session);  // a client's press of the drone console is run by the host
     coop::eraser_press_intent::Install(&session);  // a client's press of the drive eraser is run by the host
     coop::door_verb_intent::Install(&session);   // a client's press, hit or pry of a base door is run by the host
+    coop::camera_toggle_intent::Install(&session);  // a client's use of a security camera or its laptop light button is run by the host
     coop::door_state_verbs::Install(&session);   // a door's open state moves at doorOpen/doorClose: the host sends, a client refuses its own
     coop::lightgroup_verbs::Install(&session);   // a light group's state moves at its runTrigger: the host sends, a client refuses its own
     coop::toggle_verbs::Install(&session);       // a symmetric device's state goes at the verb that writes it: each peer sends its own
@@ -33,6 +35,7 @@ void Tick(coop::net::Session& session) {
     { ue_wrap::ScopedWalkTimer _w{"sync:drone_call"}; coop::drone_call_intent::Tick(session); }  // HOST: run one queued drone-console press a tick a client
     coop::eraser_press_intent::Tick(session);  // HOST: run one queued eraser press a tick a client, once its drive is seated
     { ue_wrap::ScopedWalkTimer _w{"sync:door_verb"}; coop::door_verb_intent::Tick(session); }    // HOST: run one queued door verb a tick a client
+    { ue_wrap::ScopedWalkTimer _w{"sync:camera_toggle"}; coop::camera_toggle_intent::Tick(session); }  // settle its gates; HOST: run one queued camera request a tick a client
     coop::door_state_verbs::Tick();     // settle the door state watches
     coop::lightgroup_verbs::Tick();     // settle the light group watch
     coop::toggle_verbs::Tick();         // settle the toggle verb watches
@@ -41,18 +44,11 @@ void Tick(coop::net::Session& session) {
     { ue_wrap::ScopedWalkTimer _w{"sync:desk_verb"}; coop::desk_verb_intent::Tick(session); }  // settle its seams; HOST: run one queued desk press a tick a client
 }
 
-void OnPeerLeft(uint8_t slot) {
-    coop::drone_call_intent::OnPeerLeft(slot);  // its console presses
-    coop::eraser_press_intent::OnPeerLeft(slot);  // its eraser presses
-    coop::door_verb_intent::OnPeerLeft(slot);   // its door verbs
-    coop::keypad_verbs::OnPeerLeft(slot);       // its keypad entries
-    coop::desk_verb_intent::OnPeerLeft(slot);   // its desk presses
-}
-
 void OnDisconnect() {
     coop::drone_call_intent::OnDisconnect();  // its own console button stands
     coop::eraser_press_intent::OnDisconnect();  // its own eraser button stands
     coop::door_verb_intent::OnDisconnect();   // a door's own verbs run where they are used
+    coop::camera_toggle_intent::OnDisconnect();  // a camera's own press runs where it is made
     coop::door_state_verbs::OnDisconnect();
     coop::lightgroup_verbs::OnDisconnect();
     coop::toggle_verbs::OnDisconnect();

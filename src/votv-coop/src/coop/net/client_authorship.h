@@ -130,8 +130,13 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::StatOrderReply:
     case ReliableKind::StatQueryReply:
     case ReliableKind::PointSackRedeem:
+    case ReliableKind::RemoverRequest:
+    case ReliableKind::CameraToggleIntent:
+    case ReliableKind::LaptopTabReport:
     case ReliableKind::NotebookText:
         return ClientAuthorship::Client;
+    // The Host row matches MTA's protected element data, which a client may not write: opt-in there
+    // (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:2743-2755), the only mode here.
     case ReliableKind::EntitySpawn:
     case ReliableKind::EntityDestroy:
     case ReliableKind::RestoreVitals:
@@ -139,6 +144,8 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::DoorState:
     case ReliableKind::WeatherState:
     case ReliableKind::RedSky:
+    case ReliableKind::BadSun:
+    case ReliableKind::CreatureEventActive:
     case ReliableKind::LightningStrike:
     case ReliableKind::AssignPeerSlot:
     case ReliableKind::RosterRow:
@@ -198,6 +205,10 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::DishCalib:
     case ReliableKind::TaskNewState:
     case ReliableKind::HookAnchored:
+    case ReliableKind::RemoverResult:
+    case ReliableKind::CameraActiveState:
+    case ReliableKind::CameraLightState:
+    case ReliableKind::LaptopTabState:
         return ClientAuthorship::Host;
     }
     return ClientAuthorship::NotAKind;  // a byte value that names no kind: refused like Host

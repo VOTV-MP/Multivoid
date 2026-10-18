@@ -90,6 +90,9 @@ int RemoveLeftovers(const std::filesystem::path& dir, std::wstring_view targetPa
 
 Result Write(const std::filesystem::path& target, std::string_view bytes, Mode mode, Sync sync,
              const _SECURITY_ATTRIBUTES* security) {
+    // An empty target is a caller whose folder is unknown: it would otherwise leave its temporary in
+    // the working directory and sweep dead-pid temporaries there.
+    if (target.empty()) return Fail(Step::Open, ERROR_PATH_NOT_FOUND);
     RemoveLeftovers(target.parent_path(), target.filename().native());
     const std::filesystem::path temp = TempPathFor(target);
     HANDLE h = ::CreateFileW(temp.c_str(), GENERIC_WRITE, 0,

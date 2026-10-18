@@ -149,9 +149,10 @@ DestroyApply OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* 
     if (!actor && !keyW.empty()) {
         // The arbiter echo short-circuit: if we destroyed this key ourselves as the authority's
         // half of a transaction a client asked for, the client's own destroy behind it is the echo of
-        // one already done, and resolving its key would find any other prop that shares it (saves
-        // ship duplicate keys) and destroy that too. One-shot, so only the echo is short-circuited
-        // and a later destroy of a re-placed prop under the same key resolves normally.
+        // one already done, and resolving its key would find any other prop that shares it (the level's
+        // clone families share one key) and destroy that too. One-shot, so only the echo is
+        // short-circuited and a later destroy of a re-placed prop under the same key resolves
+        // normally.
         if (coop::prop_echo_suppress::ConsumeArbiterConsumedKey(keyW)) {
             UnregisterPropMirror(payload.elementId);
             UE_LOGI("remote_prop::OnDestroy: key '%ls' eid=%u -- ECHO of a destroy this host already "

@@ -51,6 +51,7 @@ are peer-gated. `[V]`
 | the kerfur | conversion verbs inside the Blueprint | the script-body gate on the verbs: refused on a client, converged at the return on the host; whom it serves, its player-0 reads answered on the host with the puppet of the client whose command it runs (`kerfur_command`, `served_player`) | one host kerfur id across both forms |
 | the plain kerfur (the Kerfus) | a keyed prop with a brain; on and off are a field, not a second form | the prop lanes for identity and the record at birth; while on, the host's prop drive for its pose; KerfusState for on, charging and energy; whom it follows, its player-0 reads answered on the host with the puppet of the client that turned it on (`kerfus_follow`, `served_player`) | its prop key and host eid |
 | a deployed hook or rope | the fire input, inside the Blueprint | the thrower polls its own `activeHook` field | `(owner slot, sequence)` while the thrower holds it, a host-minted save key once anchored |
+| a remote player's puppet (`mainPlayer_C`, unpossessed) | `RemotePlayer::Spawn` -> `engine::SpawnActor` | registered between its deferred spawn and its `FinishSpawning`, by the before-finish callback; unregistered after its destroy (`DestroySlot`) | the peer's slot in `players::Registry` |
 | status effects (effect_C) | each peer's own, from its gamemode's addEffect; never sent | -- | none: a per-process actor; at a join the host's effect records are reset out of the joiner's save at the join |
 
 ## Keyed props
@@ -73,12 +74,14 @@ are peer-gated. `[V]`
   changes, so an adoption binds a wire identity to an actor that is about to vanish on somebody
   else's schedule and the prop the birth named never appears there. The hand axis has one owner
   and both walks that must respect it -- the census outward, this scan inward -- ask it. `[V]`
-- **Key uniqueness.** The game's own saves ship duplicate keys, a clone family of dozens of
-  trash-bit piles on one key among them, and every identity layer assumes uniqueness. The host
-  is the key authority: at enrolment, a keyed actor whose key another live actor already carries
-  is re-keyed with a fresh random key, once, and the game re-saves the live keys so the fix bakes
-  into the host's save and every transferred world. A dead incumbent's recreate inherits its
-  identity. Clients never re-key. `[V]`
+- **Key uniqueness.** The level's own content carries duplicate keys (present before any save record
+  loads, at the same keys and places every load), a clone family of dozens of
+  trash-bit piles on one key among them, and a New Game saves them as they are; every identity
+  layer assumes uniqueness. The host is the key authority: at enrolment, a keyed actor whose key
+  another live actor already carries is re-keyed with a fresh random key, once. The fix bakes into
+  the host's save and every transferred world for an actor that lives to a save; an actor
+  that a save's load destroys and re-creates from its records takes its throwaway key with it.
+  A dead incumbent's recreate inherits its identity. Clients never re-key. `[V]`
 - **A client never authors a save-loaded prop.** Three intent doors route around it: the drop
   intent for a parked key placed after a pickup, the whitelisted births (a reel, a module, a
   drive, a container extract) the client cannot avoid, and a birth a PLAYER's own spawn verb
@@ -173,13 +176,22 @@ graph spawns are caught at the native seam and enrolled at the next pose tick. A
 character on a joiner is adopted by class after a deferred poll, never by key, because the
 kerfur's key is random per peer. Pose is a batch, rotated fair-share past a batch's worth. A
 destroy is caught before it runs; a self-destroy inside the Blueprint is found dead by the pose
-walk and retired. `[V]`
+walk and retired. `[V]` A client's mirror of a character is stamped as the native spawner (`spawner_stamp`): the
+constants a class's own spawner writes between the two spawn halves are written there too. `[?]`
 
 The wisp swarm's spawns are `EX_CallMath` from the swarm trigger's graph and are caught at the
 native seam gated by the calling class; the ambient sky wisps are host-authored, their spawner
 cancelled on clients and their colour variants allowlisted. A wisp mirror keeps its actor tick,
 since the class's tick is per-viewer cosmetic, and its landing edge is replayed from the stream;
 its self-destroy is retired by the pose walk. `[V]`
+
+**A creature's event count.** A creature that calls `lib_C::setEvent` (the krampus, the orb, the ariral, the
+kerfur Omega among them) moves the gamemode's event count, which drives a peer's threat music, its sleep refusal and its
+save gate. Its mirror's own calls are refused once the relay binds it; the host's count for that creature crosses whole
+by its element id and is applied to the mirror's registration, after the mirror's own registrations from before its
+install are taken back, and taken back again at its end (`coop/world/creature_event_relay`). The killer wisp, the
+fossilhound, the antibreather and the egg compute their event from the local camera, render state or player 0 and keep
+their own per peer. `[RD]`
 
 ## Event actors
 
@@ -191,6 +203,15 @@ events' spawners for the vent crawler, the grays, the eggs and the tentacle ball
 native seam; on a client those creatures' own bodies are refused, so a mirror arms no gameplay. A heading that lives outside the actor's rotation streams as an auxiliary yaw. A
 mirror's tick is parked and whatever component its class simulates with is stopped, found from the
 class's members, so the pose drive alone moves it. `[V]`
+
+**The Bad Sun** is the event actor no mirror expresses: every peer runs its own `badSun_C` copy and
+its harm is local, so nothing crosses as a pose. Identity: none, a copy is found by class. Birth:
+the save (a joiner's copy comes with the join blob) or `Spawn Bad Sun`. Existence is the host's,
+through `coop/world/weather_badsun`: the host's spawn and its copy's `remove()` send an absolute
+present or absent, a client's own spawn is refused at the script-body gate, and a joiner is seeded
+at its world-ready. A client keeps exactly one copy. End: each copy's own fade; the host's absent
+destroys an inactive copy at once and leaves an active one to end by its own clock. The wire half is
+`[?]` until the lane's drill runs; the Blueprint routes are `[RD]`.
 
 **The materialisation window.** A mirror's component delegates bind during its begin-play, inside
 the finish-spawning call, while its row is installed only after that call returns; so for a
@@ -259,7 +280,7 @@ registry recycled that id. `[V]`
   `[V]`
 - **A prop a hook is tied to.** The constraint exists on the HOST and nowhere else, whichever
   peer fired the hook (`coop/items/hook_constraint`): a client's game breaks every tie a hook of
-  the lane's classes builds on it, at the native seam the build funnels through, and the host ties
+  the lane's classes builds on it, in the frame that built it (a post watch on `makeAttachments`, `[V]` on the rig: `hookdrag` on `72742a09`, every role), and the host ties
   a client's hook on its own mirror of it, against that client's puppet, from the bite the owner's
   state names -- the actor's key and element id, the component, the head in the component's frame,
   and whether the hook flew before it bit, which is what wakes a frozen prop. Every prop under a
@@ -294,6 +315,7 @@ Every place two seams can express one actor, and what deduplicates it:
 | a joiner's save-loaded anchored hook and the host's replay of the same hook | the host mints the save key, and the joiner skips a key the game already resolves `[V]` |
 | a level-placed hook variant, which attaches itself on every peer | it is not in the lane's class table, and the owner's own field can never name it `[V]` |
 | a conversion's fresh prop and the generic spawn seams | the captured form is tracked and its broadcast suppressed `[V]` |
+| a joiner's save-loaded Bad Sun copy and the seed's present, or the host's live present | the apply counts the live copies first: one copy is left alone, none is spawned, two are logged and not repaired `[V]` (the drill's rejoin) |
 | a client's menu-spawned prop and the host's copy of it, spawned from the intent | the client's own actor IS the mirror: the host sets the client's key, and the echo resolves it back to that actor and converges its pose instead of minting a second `[V]` |
 
 ## Needs a probe

@@ -34,6 +34,8 @@ constexpr int     kMaxPreParams = 16;
 constexpr int     kPreFrameBytes = 256;
 constexpr int     kPreFrameSlack = 8;
 constexpr uint8_t kExEndFunctionParms = 0x16;
+// A const reference is an out reference marked const; a pre hook steps and reads it as an input.
+constexpr uint64_t kConstRef = P::cpf::OutParm | P::cpf::ReferenceParm | P::cpf::ConstParm;
 
 struct Slot {
     void*              ufunction = nullptr;
@@ -58,9 +60,9 @@ struct Slot {
 // is GENERATED from this constant, so growing it means editing this one line. Size it for the
 // whole roster rather than a handful: peers install asymmetrically, so a table that fits one
 // role can be full on the other, and a hook that cannot install makes a fix work on one peer
-// and not the other. The count here covers the standing installs plus the driver natives and
-// QuitGame that a probe patches on top.
-constexpr int kMaxNativeHooks = 40;
+// and not the other. The count here covers the standing installs, a dev build's probes (the driver
+// natives and QuitGame among them) and the dev selftest's hooks, with headroom.
+constexpr int kMaxNativeHooks = 56;
 Slot g_slots[kMaxNativeHooks];
 int  g_slotCount = 0;
 // The VM's exec-handler table, taken from script_gate by the first pre hook's install.
@@ -118,6 +120,27 @@ inline void* ReadPtr(void* base, size_t off) {
     return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(base) + off);
 }
 
+// Where the frame's bytecode stands, from the start of the frame's function's Script data; -1 with no code
+// pointer (a native reached by ProcessEvent), no function or a pointer outside the function's own script.
+int32_t CodeOffsetOf(void* stack) {
+    const uint8_t* code = static_cast<const uint8_t*>(ReadPtr(stack, P::off::FFrame_Code));
+    void* fn = ReadPtr(stack, P::off::FFrame_Node);
+    if (!code || !fn) return -1;
+    const uint8_t* script = static_cast<const uint8_t*>(ReadPtr(fn, P::off::UStruct_Script));
+    const int32_t num = *reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(fn) + P::off::UStruct_ScriptNum);
+    if (!script || code < script || code > script + num) {
+        static bool s_said = false;
+        if (!s_said) {
+            s_said = true;
+            UE_LOGE("ufunction_hook: a frame's code pointer lies outside its function's script (script %p, "
+                    "%d bytes, code %p) -- reported as no bytecode caller", static_cast<const void*>(script), num,
+                    static_cast<const void*>(code));
+        }
+        return -1;
+    }
+    return static_cast<int32_t>(code - script);
+}
+
 template <int N>
 void __fastcall NativeThunk(void* context, void* stack, void* result) {
     Slot& s = g_slots[N];
@@ -128,12 +151,14 @@ void __fastcall NativeThunk(void* context, void* stack, void* result) {
     // FFrame::Object is the actor whose bytecode is executing -- the SOURCE entity for a spawn
     // issued from its ubergraph -- and Node and Locals are the function and storage of that
     // frame. Read after the forward: stepping the parameters moves the frame's code pointer and
-    // never writes those three.
+    // never writes those three. The code pointer stands at the call's end by then.
     void* srcObj = stack ? ReadPtr(stack, P::off::FFrame_Object) : nullptr;
-    const CallerFrame frame = stack
-        ? CallerFrame{ReadPtr(stack, P::off::FFrame_Node),
-                      static_cast<uint8_t*>(ReadPtr(stack, P::off::FFrame_Locals))}
-        : CallerFrame{nullptr, nullptr};
+    CallerFrame frame{nullptr, nullptr};
+    if (stack) {
+        frame.function = ReadPtr(stack, P::off::FFrame_Node);
+        frame.locals = static_cast<uint8_t*>(ReadPtr(stack, P::off::FFrame_Locals));
+        frame.codeOffset = CodeOffsetOf(stack);
+    }
     // *Result = the native fn's RESULT_PARAM (the spawned actor for BeginDeferred). NULL-safe:
     // a failed spawn leaves it null -> the cb gets null + logs it (never derefs blind).
     void* spawned = result ? *reinterpret_cast<void**>(result) : nullptr;
@@ -251,7 +276,8 @@ bool ReadPreSignature(void* ufunction, Slot& into) {
         const char* why = nullptr;
         const int32_t written = p.size > 4 ? p.size : 4;   // a bool is written as four bytes
         if (p.flags & P::cpf::ReturnParm) why = "a return value, which a refused call would leave unwritten";
-        else if (p.flags & P::cpf::OutParm) why = "an out or reference parameter";
+        else if ((p.flags & P::cpf::OutParm) && (p.flags & kConstRef) != kConstRef)
+            why = "an out parameter, or a reference that is not const";
         else if (!(p.flags & P::cpf::NoDestructor))
             why = "a parameter the engine destroys (a raw frame cannot)";
         else if (count >= kMaxPreParams || p.offset < 0 ||

@@ -3,12 +3,13 @@
 #include "coop/moderation/seen_players.h"
 
 #include "coop/atomic_file/atomic_file.h"
+#include "coop/mod_data/legacy_note.h"
 #include "coop/moderation/moderation.h"    // EnforceableAddress
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"  // kMaxPeers
 #include "coop/text/utf8_codec.h"
 #include "coop/session/player_handshake.h"
-#include "ue_wrap/core/paths.h"                // ExeDir -- the file lives beside the game exe
+#include "ue_wrap/core/paths.h"                // ModDataDir -- the file lives in the mod's folder
 #include "ue_wrap/core/log.h"
 
 #include <windows.h>
@@ -42,7 +43,7 @@ std::unordered_map<std::string, Record> g_records;  // keyed by GUID; guarded by
 std::array<std::string, coop::players::kMaxPeers> g_onlineGuidBySlot{};
 
 fs::path RegistryPath() {
-    const std::wstring dir = ue_wrap::paths::ExeDir();
+    const std::wstring dir = ue_wrap::paths::ModDataDir();
     if (dir.empty()) return {};
     return fs::path(dir) / L"multivoid-players.txt";
 }
@@ -63,7 +64,7 @@ std::string CleanField(const char* s) {
 void WriteFileLocked() {
     const fs::path path = RegistryPath();
     if (path.empty()) {
-        UE_LOGW("seen_players: module dir unresolved -- registry not persisted");
+        UE_LOGW("seen_players: the mod has no data folder -- registry not persisted");
         return;
     }
     std::string text =
@@ -102,6 +103,7 @@ void FillEntryLocked(const std::string& guid, const Record& rec, Entry& e) {
 void Load() {
     std::lock_guard<std::mutex> lk(g_mutex);
     g_records.clear();
+    coop::legacy_note::Once(coop::legacy_note::LegacyFile::SeenPlayers, L"multivoid-players.txt");
     const fs::path path = RegistryPath();
     if (path.empty()) return;
     std::error_code ec;

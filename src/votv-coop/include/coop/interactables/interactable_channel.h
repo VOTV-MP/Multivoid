@@ -1,6 +1,6 @@
 // coop/interactables/interactable_channel.h -- the keyed-interactable replication engine shared by
 // every keyed channel (doors, lights, light groups, containers, the garage, appliances, door
-// boxes): the key-to-actor index fed by the shared scan hub, per-key dedup, deferred apply with a
+// boxes, security cameras): the key-to-actor index fed by the shared scan hub, per-key dedup, deferred apply with a
 // throttled retry, echo suppression, the connect snapshot, and for an edge-fed channel the send at
 // the device's own verbs. A
 // feature is an Adapter (a vtable over its ue_wrap wrapper) plus a Channel instance in

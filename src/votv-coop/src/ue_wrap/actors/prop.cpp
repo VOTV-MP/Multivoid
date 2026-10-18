@@ -484,7 +484,7 @@ bool ResolvePrimVelocity() {
 
 }  // namespace
 
-VelocityState GetPhysicsVelocity(void* prop) {
+VelocityState GetPhysicsVelocity(void* prop, bool linearOnly) {
     VelocityState out;
     if (!prop) return out;
     void* mesh = GetStaticMesh(prop);
@@ -501,6 +501,7 @@ VelocityState GetPhysicsVelocity(void* prop) {
     *reinterpret_cast<R::FName*>(frameL + g_pvr.linBoneOff) = R::FName{0, 0};
     if (!R::CallFunction(mesh, g_pvr.getLinFn, frameL)) return out;
     out.linearCmS = *reinterpret_cast<FVector*>(frameL + g_pvr.linRetOff);
+    if (linearOnly) { out.ok = true; return out; }
     // Angular: the same shape, a separate frame.
     unsigned char frameA[32] = {};
     if (g_pvr.angFrameSize > static_cast<int32_t>(sizeof(frameA))) {

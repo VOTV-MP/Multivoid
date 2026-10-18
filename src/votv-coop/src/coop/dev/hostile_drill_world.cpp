@@ -33,6 +33,19 @@ using Kind = coop::net::ReliableKind;
 constexpr int      kAlternates = 120;
 constexpr uint32_t kPerKind    = kAlternates + 1;
 
+// Besides the bedless flood, the bed gets one forged ClientRest per alternation, in rotation over three kinds (a
+// character outside an identifier, a nonzero byte past the length, an Awake report carrying a bed): the host must
+// refuse every one of each kind, so the bed's drained count is the flood's plus these.
+constexpr int      kForgedKinds = 3;
+constexpr uint32_t kForgedEach  = kAlternates / kForgedKinds;
+static_assert(kAlternates % kForgedKinds == 0, "the forged kinds rotate evenly over the alternations");
+constexpr coop::sleep_sync::BedRefusal kForgedReasons[kForgedKinds] = {coop::sleep_sync::BedRefusal::Charset,
+                                                                       coop::sleep_sync::BedRefusal::Tail,
+                                                                       coop::sleep_sync::BedRefusal::AwakeWithBed};
+constexpr const char* kForgedNames[kForgedKinds] = {"charset", "tail", "awake-with-bed"};
+
+uint32_t Expected(int kind) { return kPerKind + (kind == 1 ? static_cast<uint32_t>(kAlternates) : 0u); }
+
 // The judge's numbers, literals written from the lanes' budgets (no symbol of the change itself): at the first read
 // after the drain, a kind has applied at least two of its values and at most its burst, the refills of the span the
 // judge measured from the first drained message to the last, and one for a refill inside the frame it did not see.
@@ -64,8 +77,9 @@ bool SendLevel(coop::net::Session* s, int i, bool value) {
     }
     case 1: {
         coop::net::SleepStatePayload p{};
-        p.op = 0;  // Report
-        p.flag = value ? 1 : 0;
+        p.op = static_cast<uint8_t>(coop::net::SleepOp::ClientRest);
+        p.state = static_cast<uint8_t>(value ? coop::net::SleepPeerState::Resting
+                                             : coop::net::SleepPeerState::Awake);
         return s->SendReliableToSlot(0, Kind::SleepState, &p, sizeof(p));
     }
     default: {
@@ -75,6 +89,20 @@ bool SendLevel(coop::net::Session* s, int i, bool value) {
         return s->SendReliableToSlot(0, Kind::LaptopState, &p, sizeof(p));
     }
     }
+}
+
+// One forged ClientRest of `forged` (0..2, kForgedReasons' order): the name a legal sender never writes.
+bool SendForgedBed(coop::net::Session* s, int forged) {
+    coop::net::SleepStatePayload p{};
+    p.op = static_cast<uint8_t>(coop::net::SleepOp::ClientRest);
+    p.state = static_cast<uint8_t>(forged == 2 ? coop::net::SleepPeerState::Awake
+                                               : coop::net::SleepPeerState::Resting);
+    p.bed.len = 3;
+    p.bed.data[0] = 'a';
+    p.bed.data[1] = forged == 0 ? '\n' : 'b';
+    p.bed.data[2] = 'c';
+    if (forged == 1) p.bed.data[10] = 1;
+    return s->SendReliableToSlot(0, Kind::SleepState, &p, sizeof(p));
 }
 
 // ---- host (judge) ----
@@ -90,6 +118,10 @@ uint32_t          g_appliedAtRead[3] = {};
 bool              g_judged[3] = {};
 bool              g_last[3] = {};  // B, per kind: the opposite of what the host held at arm
 uint32_t          g_organicBase = 0;
+uint32_t          g_refusedBase[kForgedKinds] = {};
+std::string       g_forgedCounts;  // "charset 40, tail 40, awake-with-bed 40", for the verdict line
+
+uint32_t Refused(int forged) { return coop::sleep_sync::BedRefusalsFrom(g_slot, kForgedReasons[forged]); }
 
 uint32_t Applied(int i) {
     switch (i) {
@@ -102,7 +134,7 @@ uint32_t Applied(int i) {
 bool Read(int i, bool& out) {
     switch (i) {
     case 0:  return coop::alarm_sync::ReadLocalActive(out);
-    case 1:  out = coop::sleep_sync::InBed(g_slot); return true;
+    case 1:  out = coop::sleep_sync::PeerState(g_slot) != coop::net::SleepPeerState::Awake; return true;
     default: return coop::laptop_sync::Target(out);
     }
 }
@@ -137,6 +169,7 @@ void ArmHost(coop::net::Session* s, Arm a) {
         return;
     }
     g_organicBase = coop::laptop_sync::OrganicEdgesSent();
+    for (int f = 0; f < kForgedKinds; ++f) g_refusedBase[f] = Refused(f);
     g_armAt = Clock::now();
     g_step = Step::WaitDrained;
     UE_LOGI("[HOSTILE-DRILL] %s armed on slot %d (held alarm %d, bed %d, laptop %d; drained %u/%u/%u, applied "
@@ -151,7 +184,7 @@ void WaitDrained(Arm a) {
     for (int i = 0; i < 3; ++i) {
         drained[i] = coop::event_feed::DrainedFrom(g_slot, kKinds[i]) - g_drainedBase[i];
         if (drained[i] > 0 && g_firstDrainAt == Clock::time_point{}) g_firstDrainAt = now;
-        all = all && drained[i] >= kPerKind;
+        all = all && drained[i] >= Expected(i);
     }
     if (!all) {
         if (now - g_armAt > kFailBound)
@@ -173,6 +206,22 @@ void WaitDrained(Arm a) {
             most[2]);
     const std::string counts = "alarm " + std::to_string(applied[0]) + ", bed " + std::to_string(applied[1]) +
                                ", laptop " + std::to_string(applied[2]);
+    uint32_t refused[kForgedKinds];
+    bool forgedMissed = false;
+    for (int f = 0; f < kForgedKinds; ++f) {
+        refused[f] = Refused(f) - g_refusedBase[f];
+        forgedMissed = forgedMissed || refused[f] != kForgedEach;
+    }
+    g_forgedCounts.clear();
+    for (int f = 0; f < kForgedKinds; ++f)
+        g_forgedCounts += std::string(f ? ", " : "") + kForgedNames[f] + " " + std::to_string(refused[f]);
+    UE_LOGI("[HOSTILE-DRILL] %s forged beds refused: %s (of %u each)", ArmName(a), g_forgedCounts.c_str(),
+            kForgedEach);
+    if (forgedMissed) {
+        Fail(a, "forged-bed-not-refused (" + g_forgedCounts + "; each kind sent " + std::to_string(kForgedEach) +
+                    " and every one must be refused, so none is applied)");
+        return;
+    }
     if (under) {
         Fail(a, "none-applied (" + counts + "; at least " + std::to_string(kMinApplies) + " each)");
         return;
@@ -249,7 +298,8 @@ void WaitSettle(Arm a) {
     }
     Verdict(a, "PASS",
             "each kind applied no more than its budget pays over the drain, each last value owed at the read was paid, "
-            "and the host's laptop settled on the last value with no edge sent as its own");
+            "the host's laptop settled on the last value with no edge sent as its own, and every forged bed was "
+            "refused (" + g_forgedCounts + " of " + std::to_string(kForgedEach) + " each)");
 }
 
 }  // namespace
@@ -273,15 +323,18 @@ void TickClient(coop::net::Session* s, Arm a) {
         return;
     }
     bool ok = true;
-    for (int n = 0; n < kAlternates && ok; ++n)
+    for (int n = 0; n < kAlternates && ok; ++n) {
         for (int i = 0; i < 3 && ok; ++i) ok = SendLevel(s, i, (n % 2) == 0 ? own[i] : !own[i]);
+        if (ok) ok = SendForgedBed(s, n % kForgedKinds);
+    }
     for (int i = 0; i < 3 && ok; ++i) ok = SendLevel(s, i, !own[i]);
     if (!ok) {
         UE_LOGW("[HOSTILE-DRILL] %s INCONCLUSIVE: a message of the flood was not sent", ArmName(a));
         return;
     }
-    UE_LOGI("[HOSTILE-DRILL] %s sent %u of each kind for slot %u (own alarm %d, bed %d, laptop %d; each ending on the "
-            "other)", ArmName(a), kPerKind, static_cast<unsigned>(self), own[0] ? 1 : 0, own[1] ? 1 : 0,
+    UE_LOGI("[HOSTILE-DRILL] %s sent %u of each kind and %u forged beds of each of three kinds for slot %u (own "
+            "alarm %d, bed %d, laptop %d; each ending on the other)", ArmName(a), kPerKind, kForgedEach,
+            static_cast<unsigned>(self), own[0] ? 1 : 0, own[1] ? 1 : 0,
             own[2] ? 1 : 0);
 }
 
@@ -309,6 +362,8 @@ void OnDisconnect() {
         g_judged[i] = g_last[i] = false;
     }
     g_organicBase = 0;
+    for (uint32_t& r : g_refusedBase) r = 0;
+    g_forgedCounts.clear();
 }
 
 }  // namespace coop::dev::hostile_drill::world

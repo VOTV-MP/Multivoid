@@ -72,6 +72,9 @@ struct Mirror {
     bool                  bitten     = false;
     uint8_t               biteTries  = 0;
     uint64_t              nextBiteMs = 0;
+    // What the owner's latest state said its head bit, on both roles: the element id, zero when
+    // it named none. Read through BittenEidFrom.
+    uint32_t              biteEid    = 0;
 };
 
 // A hook the HOST adopted at its anchor: the canonical actor, under the identity the handoff kept.

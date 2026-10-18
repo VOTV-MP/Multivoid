@@ -42,9 +42,16 @@ using PostNativeCallback = void(*)(void* context, void* sourceObject, void* spaw
 // `function` before reading. An ubergraph's locals are the actor's persistent frame, which is how a
 // spawn issued inside a Blueprint loop names the loop's current element. Both null outside any
 // callback; code a callback runs sees that callback's frame. Game thread.
+//
+// `codeOffset`, set for a post callback only, is where the calling frame's bytecode stands as the callback
+// runs, from the start of `function`'s Script data: a native has stepped its parameters and its end-of-
+// parameters opcode by then, so this is the END of the call expression that reached it, the `end` of the
+// matching script_calls::CallSite. -1 when no bytecode reached it (a native called through ProcessEvent, as
+// our own calls do) and in a pre callback, which stands before the call. A frame of two values leaves it -1.
 struct CallerFrame {
     void*    function;
     uint8_t* locals;
+    int32_t  codeOffset = -1;
 };
 CallerFrame CurrentCallerFrame();
 
@@ -89,8 +96,9 @@ using PreNativeCallback = script_gate::Verdict (*)(void* context, void* sourceOb
 // through the same table (script_gate::ExecHandlers) into a frame of its own. Run rewinds the caller's code
 // pointer and forwards, so the original steps them again: the engine's own shape for a native it calls both
 // remotely and locally (UObject::CallFunction). A ProcessEvent call's parameters are read from its frame.
-// Refused at install, logged: a script function, a return value, an out or reference parameter, a parameter
-// the engine must destroy, a frame past this one's, no exec-handler table. Off the game thread it forwards
+// A const reference parameter is read as an input. Refused at install, logged: a script function, a return
+// value, an out parameter or a reference that is not const, a parameter the engine must destroy, a frame
+// past this one's, no exec-handler table. Off the game thread it forwards
 // untouched. A pre hook stays the outermost patch on its function in either install order, so a post hook
 // never reports a call its pre hook refused. `armed` defaults to false, the shape being a seam armed only
 // while a call of the consumer's own runs. Idempotent per (ufunction, cb). Game thread.

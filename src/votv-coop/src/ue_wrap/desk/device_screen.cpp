@@ -2,6 +2,7 @@
 
 #include "ue_wrap/desk/device_screen.h"
 
+#include "ue_wrap/core/caller_locals.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
@@ -27,11 +28,10 @@ namespace P  = ue_wrap::profile;
 // FHitResult sub-offsets (ENGINE struct, 4.27-stable -- not BP-recook-volatile,
 // so a local constant per the reflected_offset.h doctrine; single consumer).
 // FHitResult is 0x88; `TWeakObjectPtr<AActor> Actor` sits at +0x68 as
-// {int32 ObjectIndex, int32 ObjectSerialNumber}. The canonical NULL weakptr is
-// ObjectIndex=-1 / Serial=0 -> 0x00000000FFFFFFFF little-endian. (RE doc U4:
-// layout consistent with the dumped FHitResult size 0x88.)
+// {int32 ObjectIndex, int32 ObjectSerialNumber}; the canonical NULL weakptr is
+// caller_locals::kNullWeakObjectPtr. (RE doc U4: layout consistent with the dumped
+// FHitResult size 0x88.)
 constexpr int32_t kFHitResult_Actor = 0x68;
-constexpr uint64_t kNullWeakPtr = 0x00000000FFFFFFFFull;
 
 // Cached UClass pointers. BP classes load with their content (several only
 // when their sublevel/asset streams in), so each slot lazily fills on the
@@ -339,7 +339,7 @@ bool ClearAimForDispatch(void* player) {
     g_saved.lookAtActor = *pLook;
     g_saved.hitActorWeak = *pWeak;
     *pLook = nullptr;
-    *pWeak = kNullWeakPtr;  // canonical null: every icast in the enter chain fails
+    *pWeak = caller_locals::kNullWeakObjectPtr;  // canonical null: every icast in the enter chain fails
     return true;
 }
 

@@ -11,6 +11,7 @@
 #include "coop/element/mirror_manager.h"
 #include "coop/element/mirror_managers.h"  // PropMirrors
 #include "coop/element/prop.h"
+#include "coop/element/quiescence_drain.h"  // SupersedePosCorrection: the release pose is the newest
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -115,6 +116,13 @@ bool IsActorUnderAnyDrive(void* actor) {
         if (d.actor == actor) return true;
     }
     return false;
+}
+
+bool IsOwnedHere(void* actor) {
+    if (!actor) return false;
+    if (IsActorUnderAnyDrive(actor) || coop::prop_drive_stream::IsParked(actor)) return true;
+    void* const localPlayer = coop::players::Registry::Get().Local();
+    return localPlayer && ue_wrap::engine::IsMainPlayerGrabbing(localPlayer, actor);
 }
 
 // The WireKey as a wstring, for the key index.
@@ -511,6 +519,11 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         ue_wrap::engine::SetActorLocation(propActor, ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});
         ue_wrap::engine::SetActorRotation(propActor,
                                           ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll});
+        // The registry reverse, not GetPropElementIdForActor (locals only), and not payload.elementId
+        // (0 for a keyed prop): a correction armed on this copy is keyed by the host's eid.
+        const coop::element::ElementId heldEid = coop::element::Registry::Get().EidForActor(propActor);
+        if (heldEid != coop::element::kInvalidId && heldEid != 0u)
+            coop::element::quiescence_drain::SupersedePosCorrection(heldEid, "hold release");
     }
     if (StickHoldsPhysicsOff(propActor)) {
         // The prop froze while held -- a wall-attachable's stick, a slot's insert, a mount: no

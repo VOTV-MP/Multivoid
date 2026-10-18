@@ -23,17 +23,6 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 
-// The pose-staleness budget, and the only copy of it. The host copy of a client body trails
-// reality by the one-way
-// latency + `RemotePlayer::kInterpWindowMs` (75 ms) + one send interval, and the game own reach
-// traces start at the player CAMERA, at eye height, not at the actor root that `TryGetActorLocation`
-// reports. 600 uu covers roughly half a second at a sprint plus that eye-height offset.
-//
-// Deliberately generous, and the reason is asymmetric cost: this bound exists to stop WORLD-WIDE
-// enumeration, not to adjudicate centimetres, and a false refusal costs a real player a real
-// action. Widening it does not re-open A50 -- the arbiter own destroy does that work.
-constexpr float kPoseStalenessUU = 600.0f;
-
 inline bool Finite3(const ue_wrap::FVector& v) {
     return std::isfinite(v.X) && std::isfinite(v.Y) && std::isfinite(v.Z);
 }

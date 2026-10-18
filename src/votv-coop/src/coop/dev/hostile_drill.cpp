@@ -6,6 +6,8 @@
 #include "coop/dev/hostile_drill_hand.h"  // the hand-item class arm
 #include "coop/dev/hostile_drill_latest.h"  // the keep-the-latest arm
 #include "coop/dev/hostile_drill_world.h"   // the world levels' keep-the-latest arm
+#include "coop/dev/hostile_drill_kerfur.h"  // the kerfur verbs' flood arm
+#include "coop/dev/hostile_drill_remover.h"  // the remover request's far, hidden and flood arms
 #include "coop/dev/hostile_drill_walk.h"  // the four walk arms
 #include "coop/comms/chat_feed.h"
 #include "coop/comms/chat_log.h"
@@ -47,11 +49,13 @@ using Clock = std::chrono::steady_clock;
 // The walk arms (record_bad_classes, bad_alarm, bad_prop_key, bad_prop_spawn) live in
 // hostile_drill_walk.cpp, the hand arms (bad_hand_class, bad_hand_family) in hostile_drill_hand.cpp, the chat arms
 // (chat_ill_formed, chat_flood) in hostile_drill_chat.cpp, keep_latest in hostile_drill_latest.cpp and world_latest in
-// hostile_drill_world.cpp -- this file is the dispatcher that owns the arm selection and routes those ten to their
-// module's sender and judge.
+// hostile_drill_world.cpp, kerfur_flood in hostile_drill_kerfur.cpp and the remover arms in
+// hostile_drill_remover.cpp -- this file is the dispatcher that owns the arm
+// selection and routes those fourteen to their module's sender and judge.
 enum class Arm { Off, SignalPark, ChatIllFormed, PropConvert, ReliableFlood, RepeatJoin,
                  RepeatWorldReady, RepeatSaveRequest, RecordBadClasses, BadAlarm, BadPropKey,
-                 BadPropSpawn, BadHandClass, BadHandFamily, KeepLatest, ChatFlood, WorldLatest };
+                 BadPropSpawn, BadHandClass, BadHandFamily, KeepLatest, ChatFlood, WorldLatest, KerfurFlood,
+                 RemoverFar, RemoverHidden, RemoverFlood };
 
 // Resolved once: with the environment variable unset every read would scan the ini on disk, and the
 // drill is asked per tick.
@@ -75,6 +79,10 @@ Arm ArmOf() {
              : v == "keep_latest"         ? Arm::KeepLatest
              : v == "chat_flood"          ? Arm::ChatFlood
              : v == "world_latest"        ? Arm::WorldLatest
+             : v == "kerfur_flood"        ? Arm::KerfurFlood
+             : v == "remover_far"         ? Arm::RemoverFar
+             : v == "remover_hidden"      ? Arm::RemoverHidden
+             : v == "remover_flood"       ? Arm::RemoverFlood
                                           : Arm::Off;
     }();
     return a;
@@ -98,6 +106,10 @@ const char* ArmName() {
     case Arm::KeepLatest:        return "keep_latest";
     case Arm::ChatFlood:         return "chat_flood";
     case Arm::WorldLatest:       return "world_latest";
+    case Arm::KerfurFlood:       return "kerfur_flood";
+    case Arm::RemoverFar:        return "remover_far";
+    case Arm::RemoverHidden:     return "remover_hidden";
+    case Arm::RemoverFlood:      return "remover_flood";
     default:                     return "off";
     }
 }
@@ -659,6 +671,11 @@ void Tick() {
                                                             : hand::Arm::None;
     const latest::Arm latestArm = ArmOf() == Arm::KeepLatest ? latest::Arm::KeepLatest : latest::Arm::None;
     const world::Arm worldArm = ArmOf() == Arm::WorldLatest ? world::Arm::WorldLatest : world::Arm::None;
+    const kerfur::Arm kerfurArm = ArmOf() == Arm::KerfurFlood ? kerfur::Arm::KerfurFlood : kerfur::Arm::None;
+    const remover::Arm removerArm = ArmOf() == Arm::RemoverFar      ? remover::Arm::RemoverFar
+                                  : ArmOf() == Arm::RemoverHidden   ? remover::Arm::RemoverHidden
+                                  : ArmOf() == Arm::RemoverFlood    ? remover::Arm::RemoverFlood
+                                                                    : remover::Arm::None;
     const chat::Arm chatArm = ArmOf() == Arm::ChatIllFormed ? chat::Arm::ChatIllFormed
                             : ArmOf() == Arm::ChatFlood     ? chat::Arm::ChatFlood
                                                             : chat::Arm::None;
@@ -667,6 +684,8 @@ void Tick() {
         else if (handArm != hand::Arm::None)     hand::TickHostJudge(s, handArm);
         else if (latestArm != latest::Arm::None) latest::TickHostJudge(s, latestArm);
         else if (worldArm != world::Arm::None)   world::TickHostJudge(s, worldArm);
+        else if (kerfurArm != kerfur::Arm::None) kerfur::TickHostJudge(s, kerfurArm);
+        else if (removerArm != remover::Arm::None) remover::TickHostJudge(s, removerArm);
         else if (chatArm != chat::Arm::None)     chat::TickHostJudge(s, chatArm);
         else if (!ClientJudged())                TickHost(s);  // client-judged arms: the client judges, the host only answers
     } else {
@@ -674,6 +693,8 @@ void Tick() {
         else if (handArm != hand::Arm::None)     hand::TickClient(s, handArm);
         else if (latestArm != latest::Arm::None) latest::TickClient(s, latestArm);
         else if (worldArm != world::Arm::None)   world::TickClient(s, worldArm);
+        else if (kerfurArm != kerfur::Arm::None) kerfur::TickClient(s, kerfurArm);
+        else if (removerArm != remover::Arm::None) remover::TickClient(s, removerArm);
         else if (chatArm != chat::Arm::None)     chat::TickClient(s, chatArm);
         else                                     TickClient(s);
     }
@@ -686,6 +707,8 @@ void OnDisconnect() {
     hand::OnDisconnect();
     latest::OnDisconnect();
     world::OnDisconnect();
+    kerfur::OnDisconnect();
+    remover::OnDisconnect();
     chat::OnDisconnect();
     g_step = Step::WaitArm;
     g_saidArm = false;

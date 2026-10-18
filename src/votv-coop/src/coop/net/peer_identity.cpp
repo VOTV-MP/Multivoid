@@ -2,6 +2,9 @@
 
 #include "coop/net/peer_identity.h"
 
+#include "identity_crypto.h"     // co-located: Sha256, hex, the key file's access list
+#include "identity_key_file.h"   // co-located: where the key is found, read and written
+
 #include "coop/atomic_file/atomic_file.h"
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
@@ -19,7 +22,6 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <aclapi.h>   // SetEntriesInAclW, SetNamedSecurityInfoW
 #include <bcrypt.h>
 
 #include <cstdio>
@@ -53,319 +55,19 @@ std::mutex  g_guidMu;  // takes Load()'s write and LocalGuid()'s read
 std::string g_identityString;
 bool        g_loaded = false;
 
-// --- primitives -------------------------------------------------------------
-
-// SHA-256 via the Windows CNG provider. bcrypt is already linked (GNS's
-// USE_CRYPTO=BCrypt backend), so this costs no new dependency and -- unlike
-// GNS's own CCrypto -- needs no header from the vendored tree's internal `src/`.
-bool Sha256(const void* data, size_t len, uint8_t out[32]) {
-    BCRYPT_ALG_HANDLE alg = nullptr;
-    if (::BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0)
-        return false;
-    BCRYPT_HASH_HANDLE hash = nullptr;
-    bool ok = ::BCryptCreateHash(alg, &hash, nullptr, 0, nullptr, 0, 0) == 0;
-    if (ok) ok = ::BCryptHashData(hash, static_cast<PUCHAR>(const_cast<void*>(data)),
-                                  static_cast<ULONG>(len), 0) == 0;
-    if (ok) ok = ::BCryptFinishHash(hash, out, 32, 0) == 0;
-    if (hash) ::BCryptDestroyHash(hash);
-    ::BCryptCloseAlgorithmProvider(alg, 0);
-    return ok;
-}
-
-std::string ToHex(const uint8_t* p, size_t n) {
-    static const char kHex[] = "0123456789abcdef";
-    std::string s;
-    s.reserve(n * 2);
-    for (size_t i = 0; i < n; ++i) {
-        s.push_back(kHex[p[i] >> 4]);
-        s.push_back(kHex[p[i] & 0xF]);
-    }
-    return s;
-}
-
-bool FromHex(const std::string& hex, uint8_t* out, size_t n) {
-    if (hex.size() != n * 2) return false;
-    auto nib = [](char c) -> int {
-        if (c >= '0' && c <= '9') return c - '0';
-        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-        return -1;
-    };
-    for (size_t i = 0; i < n; ++i) {
-        const int hi = nib(hex[i * 2]), lo = nib(hex[i * 2 + 1]);
-        if (hi < 0 || lo < 0) return false;
-        out[i] = static_cast<uint8_t>((hi << 4) | lo);
-    }
-    return true;
-}
-
-// --- the key file -----------------------------------------------------------
-// Where the key lives: beside the game executable, with the install, where every build has kept
-// it -- so an update changes nobody's identity, a Steam library move carries it, and a tester's
-// two installs are two players. It is created under a private access list (this account and the
-// system, nothing inherited), re-applied at every load, so another account on the same PC cannot
-// read it. An account that cannot read the install's file -- another account holds it -- keeps its
-// own key for this install beside it (`multivoid_identity_<account>.key`), so two accounts stay two
-// players; while the install has no file of its own, an account that has such a file reads it, and
-// one that has none mints the install's. A folder that refuses the write leaves the session on a
-// temporary identity, as it leaves every file the mod writes. Never in the ini: inis get pasted
-// into bug reports.
-
-const char* kKeyFileName = "multivoid_identity.key";
-
-std::wstring KeyFileName() {
-    std::wstring n;
-    for (const char* c = kKeyFileName; *c; ++c) n.push_back(static_cast<wchar_t>(*c));
-    return n;
-}
-
-// The install's own file. Empty only when the executable's folder cannot be resolved.
-std::wstring InstallKeyFilePath() {
-    const std::wstring dir = ue_wrap::paths::ExeDir();
-    if (dir.empty()) return {};
-    return dir + L"\\" + KeyFileName();
-}
-
-// The file's own access list: this account and the system, full control, nothing inherited, so
-// another account on the PC cannot read the key even from a folder that would let it. Built once
-// per process from the process token; not ok when the OS refused, and the file then keeps its
-// folder's inherited list, which the log says.
-// A key file under a restrictive access list is on the list of edge protections Relay, Moddy's
-// VOTV mod, publishes in its README (docs/credits.md).
-struct PrivateAcl {
-    std::vector<uint8_t> userSid;
-    uint8_t              systemSid[SECURITY_MAX_SID_SIZE]{};
-    PACL                 dacl = nullptr;  // allocated once, kept for the process
-    bool                 ok = false;
-};
-
-const PrivateAcl& KeyFileAcl() {
-    static const PrivateAcl acl = [] {
-        PrivateAcl a;
-        HANDLE tok = nullptr;
-        if (!::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &tok)) return a;
-        DWORD need = 0;
-        ::GetTokenInformation(tok, TokenUser, nullptr, 0, &need);
-        std::vector<uint8_t> buf(need ? need : 1);
-        const bool gotUser =
-            need != 0 && ::GetTokenInformation(tok, TokenUser, buf.data(), need, &need);
-        ::CloseHandle(tok);
-        if (!gotUser) return a;
-        PSID user = reinterpret_cast<TOKEN_USER*>(buf.data())->User.Sid;
-        const auto* userBytes = static_cast<const uint8_t*>(user);
-        a.userSid.assign(userBytes, userBytes + ::GetLengthSid(user));
-        DWORD cb = sizeof(a.systemSid);
-        if (!::CreateWellKnownSid(WinLocalSystemSid, nullptr, a.systemSid, &cb)) return a;
-        EXPLICIT_ACCESS_W ea[2] = {};
-        for (auto& e : ea) {
-            e.grfAccessPermissions = FILE_ALL_ACCESS;
-            e.grfAccessMode = SET_ACCESS;
-            e.grfInheritance = NO_INHERITANCE;
-            e.Trustee.TrusteeForm = TRUSTEE_IS_SID;
-        }
-        ea[0].Trustee.TrusteeType = TRUSTEE_IS_USER;
-        ea[0].Trustee.ptstrName = reinterpret_cast<LPWSTR>(a.userSid.data());
-        ea[1].Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
-        ea[1].Trustee.ptstrName = reinterpret_cast<LPWSTR>(a.systemSid);
-        if (::SetEntriesInAclW(2, ea, nullptr, &a.dacl) != ERROR_SUCCESS) {
-            a.dacl = nullptr;
-            return a;
-        }
-        a.ok = true;
-        return a;
-    }();
-    return acl;
-}
-
-// The file name of an account's own key: a hash of the account's SID bytes and nothing else, so two
-// accounts on one install stay two players. Empty when the SID is empty or the hash fails.
-std::wstring AccountKeyFileName(const uint8_t* sid, size_t n) {
-    if (sid == nullptr || n == 0) return {};
-    uint8_t digest[32];
-    if (!Sha256(sid, n, digest)) return {};
-    std::wstring name = L"multivoid_identity_";
-    for (char c : ToHex(digest, 8)) name.push_back(static_cast<wchar_t>(c));
-    return name + L".key";
-}
-
-// This account's key for an install whose own key file another account holds (minted here), read,
-// before anything is minted, when the install has no key file: beside it, named by a hash of this account's SID, so two
-// accounts on one install stay two players and the game folder holds everything the mod writes.
-// Empty when nothing resolves.
-std::wstring AccountKeyFilePath() {
-    const std::wstring dir = ue_wrap::paths::ExeDir();
-    const std::vector<uint8_t>& sid = KeyFileAcl().userSid;
-    if (dir.empty()) return {};
-    const std::wstring name = AccountKeyFileName(sid.data(), sid.size());
-    if (name.empty()) return {};
-    return dir + L"\\" + name;
-}
-
-// Sets the private list on the file; reports a volume that keeps none. False says only that the
-// list is not on the file: the caller keeps the file regardless, since an identity that does not
-// persist is the worse outcome.
-bool ApplyKeyFileAcl(const std::wstring& path) {
-    const PrivateAcl& acl = KeyFileAcl();
-    if (!acl.ok) {
-        UE_LOGW("peer_identity: could not build the key file's access list (this account's SID "
-                "or the system's was unavailable) -- %ls keeps its folder's inherited list",
-                path.c_str());
-        return false;
-    }
-    const DWORD rc = ::SetNamedSecurityInfoW(
-        const_cast<LPWSTR>(path.c_str()), SE_FILE_OBJECT,
-        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr,
-        acl.dacl, nullptr);
-    if (rc == ERROR_SUCCESS) return true;
-    if (rc == ERROR_NOT_SUPPORTED || rc == ERROR_INVALID_FUNCTION) {
-        UE_LOGW("peer_identity: the volume holding %ls keeps no access lists (FAT or exFAT), so "
-                "every account on this PC can read the key file; an NTFS volume protects it",
-                path.c_str());
-        return false;
-    }
-    UE_LOGW("peer_identity: could not set the key file's access list on %ls (error %lu) -- it "
-            "keeps its folder's inherited list", path.c_str(), static_cast<unsigned long>(rc));
-    return false;
-}
-
-// What a read found. Denied is the case the fallback exists for: the file is there and this
-// account may not read it, which is another account's file. Malformed is a file that is not a
-// key (a truncated or edited one); it gives way to a new key (written over it, except an account's
-// own file while the install has none, whose new key goes to the install's path), and the log says so. Unreadable is any
-// other failure to open or read a file that may well be there (a sharing violation from a scanner
-// holding it, a device error): nothing is written over it, and this session runs on a temporary
-// identity, because minting over a durable key that a transient error hid is the one loss this
-// module exists to prevent.
-enum class ReadResult { Loaded, Missing, Denied, Malformed, Unreadable };
-
-ReadResult ReadKeyFile(const std::wstring& path, uint8_t priv[kPrivKeyBytes], DWORD* errorOut) {
-    if (errorOut) *errorOut = 0;
-    if (path.empty()) return ReadResult::Missing;
-    HANDLE h = ::CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
-                             FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) {
-        const DWORD e = ::GetLastError();
-        if (errorOut) *errorOut = e;
-        if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) return ReadResult::Missing;
-        if (e == ERROR_ACCESS_DENIED) return ReadResult::Denied;
-        return ReadResult::Unreadable;
-    }
-    char buf[4096];
-    DWORD n = 0;
-    const bool readOk = ::ReadFile(h, buf, sizeof(buf) - 1, &n, nullptr) != 0;
-    if (!readOk && errorOut) *errorOut = ::GetLastError();
-    ::CloseHandle(h);
-    if (!readOk) return ReadResult::Unreadable;
-    std::string text(buf, n);
-    size_t pos = 0;
-    while (pos < text.size()) {
-        size_t nl = text.find('\n', pos);
-        if (nl == std::string::npos) nl = text.size();
-        std::string line = text.substr(pos, nl - pos);
-        pos = nl + 1;
-        if (line.empty() || line[0] == '#') continue;
-        const size_t eq = line.find('=');
-        if (eq == std::string::npos) continue;
-        if (line.compare(0, eq, "key") != 0) continue;
-        std::string hex = line.substr(eq + 1);
-        while (!hex.empty() && (hex.back() == '\r' || hex.back() == '\n' ||
-                                hex.back() == ' ' || hex.back() == '\t'))
-            hex.pop_back();
-        return FromHex(hex, priv, kPrivKeyBytes) ? ReadResult::Loaded : ReadResult::Malformed;
-    }
-    return ReadResult::Malformed;
-}
-
-// Writes the key under the private list, which rides the create of the temporary and stays with
-// the file through the move, so the file never exists with a wider one, not even for the instant
-// between a create and a set. `errorOut` carries the OS error on failure, so the caller can tell a
-// folder that refuses a write from anything else. CreateOnly fails with ERROR_ALREADY_EXISTS when
-// the file is there (a second copy of the game minted first): the caller keeps its own key
-// TEMPORARY and the next launch loads the file's.
-bool WriteKeyFile(const std::wstring& path, const uint8_t priv[kPrivKeyBytes], DWORD* errorOut,
-                  coop::atomic_file::Mode mode) {
-    if (errorOut) *errorOut = 0;
-    if (path.empty()) return false;
-    std::string text =
-        "# Multivoid durable player identity -- KEEP THIS FILE SECRET.\n"
-        "# Anyone who has this key can play as you: it is what proves your identity\n"
-        "# to every host you join, and it is what your stored inventory is named by.\n"
-        "# Copy it to another PC, named\n"
-        "# multivoid_identity.key, to take your identity with you; never paste it into\n"
-        "# a bug report, a screenshot or a Discord message.\n"
-        "key=";
-    text += ToHex(priv, kPrivKeyBytes);
-    text += "\n";
-    SECURITY_DESCRIPTOR sd{};
-    SECURITY_ATTRIBUTES sa{};
-    sa.nLength = sizeof(sa);
-    const PrivateAcl& acl = KeyFileAcl();
-    if (acl.ok && ::InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION) &&
-        ::SetSecurityDescriptorDacl(&sd, TRUE, acl.dacl, FALSE)) {
-        ::SetSecurityDescriptorControl(&sd, SE_DACL_PROTECTED, SE_DACL_PROTECTED);
-        sa.lpSecurityDescriptor = &sd;
-    }
-    const coop::atomic_file::Result r = coop::atomic_file::Write(
-        path, text, mode, coop::atomic_file::Sync::ToDisk,
-        sa.lpSecurityDescriptor ? &sa : nullptr);
-    if (errorOut) *errorOut = r.error;
-    return r.ok();
-}
-
-// The selftest's scratch keys: `multivoid.selftest-identity.<pid>.key` beside the executable. A
-// run killed inside the selftest leaves its file (and a temporary of it); the next run removes
-// every one whose process is gone.
-constexpr const wchar_t* kScratchKeyPrefix = L"multivoid.selftest-identity.";
-
-void SweepDeadScratchKeys(const std::wstring& exeDir) {
-    const std::wstring prefix = kScratchKeyPrefix;
-    const std::wstring suffix = L".key";
-    WIN32_FIND_DATAW fd{};
-    HANDLE h = ::FindFirstFileW((exeDir + L"\\" + prefix + L"*" + suffix).c_str(), &fd);
-    if (h != INVALID_HANDLE_VALUE) {
-        do {
-            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
-            const std::wstring name = fd.cFileName;
-            if (name.size() <= prefix.size() + suffix.size() || name.compare(0, prefix.size(), prefix) != 0 ||
-                name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0)
-                continue;
-            const std::wstring digits =
-                name.substr(prefix.size(), name.size() - prefix.size() - suffix.size());
-            if (digits.size() > 10) continue;
-            unsigned long long id = 0;
-            bool numeric = true;
-            for (wchar_t c : digits) {
-                if (c < L'0' || c > L'9') { numeric = false; break; }
-                id = id * 10 + static_cast<unsigned>(c - L'0');
-            }
-            if (!numeric || id > 0xFFFFFFFFull) continue;
-            if (coop::atomic_file::ProcessRunning(static_cast<unsigned long>(id))) continue;
-            ::DeleteFileW((exeDir + L"\\" + name).c_str());
-        } while (::FindNextFileW(h, &fd));
-        ::FindClose(h);
-    }
-    coop::atomic_file::RemoveLeftovers(exeDir, std::wstring(prefix) + L"*" + suffix);
-}
-
-// The access list of `path` as read back: protected, and its entry count.
-bool ReadKeyDacl(const std::wstring& path, bool& isProtected, DWORD& aceCount) {
-    PACL dacl = nullptr;
-    PSECURITY_DESCRIPTOR psd = nullptr;
-    if (::GetNamedSecurityInfoW(path.c_str(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, nullptr,
-                                nullptr, &dacl, nullptr, &psd) != ERROR_SUCCESS)
-        return false;
-    SECURITY_DESCRIPTOR_CONTROL ctrl = 0;
-    DWORD rev = 0;
-    ACL_SIZE_INFORMATION info{};
-    const bool ok = dacl != nullptr && ::GetSecurityDescriptorControl(psd, &ctrl, &rev) != 0 &&
-                    ::GetAclInformation(dacl, &info, sizeof(info), AclSizeInformation) != 0;
-    if (ok) {
-        isProtected = (ctrl & SE_DACL_PROTECTED) != 0;
-        aceCount = info.AceCount;
-    }
-    ::LocalFree(psd);
-    return ok;
-}
+using identity_crypto::FromHex;
+using identity_crypto::KeyFileAcl;
+using identity_crypto::kScratchKeyPrefix;
+using identity_crypto::ReadKeyDacl;
+using identity_crypto::Sha256;
+using identity_crypto::SweepDeadScratchKeys;
+using identity_crypto::ToHex;
+using identity_key_file::AccountKeyFileName;
+using identity_key_file::AccountKeyFilePath;
+using identity_key_file::KeyFilePath;
+using identity_key_file::ReadKeyFile;
+using identity_key_file::ReadResult;
+using identity_key_file::WriteKeyFile;
 
 }  // namespace
 
@@ -380,86 +82,9 @@ bool RandomBytes(void* out, size_t len) {
 
 bool Load() {
     if (g_loaded) return true;
-    const std::wstring installPath = InstallKeyFilePath();
-    const std::wstring account = AccountKeyFilePath();
-    std::wstring loadedFrom;   // the file the key was read from
-    std::wstring target;       // where a minted key is written; empty = temporary
-    bool minted = false;
-    // True only when the mint's target IS the file that read Malformed: only then may the write
-    // replace; every other mint writes a target that read Missing, and create-only keeps a key a
-    // second copy of the game minted a moment earlier.
-    bool replaceOnMint = false;
-    bool temporary = false;    // a file that may exist could not be read: nothing is written
-    DWORD readErr = 0;
-    // This account's own file: used when it loads; an unreadable one ends TEMPORARY with nothing
-    // written (never mint over a durable key a transient error hid); a malformed or missing one
-    // gives way to a new key written to `mintTarget` (over it only when `mintTarget` is this file).
-    auto readAccountKey = [&](const std::wstring& mintTarget) {
-        switch (ReadKeyFile(account, g_priv, &readErr)) {
-        case ReadResult::Loaded:
-            loadedFrom = account;
-            break;
-        case ReadResult::Unreadable:
-        case ReadResult::Denied:
-            UE_LOGW("peer_identity: could not read this account's key file %ls (error %lu) -- "
-                    "a TEMPORARY identity for this session, the file left untouched",
-                    account.c_str(), static_cast<unsigned long>(readErr));
-            minted = true;
-            temporary = true;
-            break;
-        case ReadResult::Malformed:
-            UE_LOGW("peer_identity: %ls is not a key file this build can read -- minting a new "
-                    "identity into %ls", account.c_str(), mintTarget.c_str());
-            minted = true;
-            target = mintTarget;
-            replaceOnMint = mintTarget == account;
-            break;
-        case ReadResult::Missing:
-            minted = true;
-            target = mintTarget;
-            break;
-        }
-    };
-    switch (ReadKeyFile(installPath, g_priv, &readErr)) {
-    case ReadResult::Loaded:
-        loadedFrom = installPath;
-        break;
-    case ReadResult::Denied:
-        // Another account's file: this account keeps its own key beside it.
-        if (account.empty()) {
-            UE_LOGW("peer_identity: the install's key file (%ls) belongs to another account and "
-                    "this account's own key file cannot be named -- a TEMPORARY identity for this "
-                    "session", installPath.c_str());
-            minted = true;
-            temporary = true;
-            break;
-        }
-        UE_LOGI("peer_identity: the install's key file (%ls) belongs to another account on this "
-                "PC -- using this account's own key beside it (%ls)",
-                installPath.c_str(), account.c_str());
-        readAccountKey(account);
-        break;
-    case ReadResult::Unreadable:
-        UE_LOGW("peer_identity: could not read the key file %ls (error %lu; a scanner holding it, "
-                "or a device error) -- a TEMPORARY identity for this session, the file left "
-                "untouched: your stored inventory will be found again once it reads",
-                installPath.c_str(), static_cast<unsigned long>(readErr));
-        minted = true;
-        temporary = true;
-        break;
-    case ReadResult::Malformed:
-        UE_LOGW("peer_identity: %ls is not a key file this build can read -- minting a new "
-                "identity over it", installPath.c_str());
-        minted = true;
-        target = installPath;
-        replaceOnMint = true;
-        break;
-    case ReadResult::Missing:
-        // No install key: an account whose owner deleted it keeps the identity it already has.
-        readAccountKey(installPath);
-        break;
-    }
-    if (minted) {
+    // Where the seed comes from (or where a new one goes) is the key file's; what it means is ours.
+    const identity_key_file::Found found = identity_key_file::Find(g_priv);
+    if (found.minted) {
         if (!RandomBytes(g_priv, kPrivKeyBytes)) {
             UE_LOGE("peer_identity: BCryptGenRandom failed -- no identity can be established");
             return false;
@@ -481,50 +106,7 @@ bool Load() {
     // the format is fixed at `steamnetworkingsockets_shared.cpp:234-247` and ParseString
     // round-trips it at `:335-357`.
     g_identityString = "gen:" + ToHex(g_pub.data(), g_pub.size());
-    if (minted && temporary) {
-        // The read said why; this names the identity the session runs on, with the dial half a
-        // joiner would need, so the host's log is complete even on the bad day.
-        UE_LOGW("peer_identity: TEMPORARY identity %s for this session (the key file could "
-                "not be read, see above) -- dial=%s", g_guid.c_str(), g_identityString.c_str());
-    } else if (minted) {
-        DWORD err = 0;
-        const coop::atomic_file::Mode mode =
-            replaceOnMint ? coop::atomic_file::Mode::Replace : coop::atomic_file::Mode::CreateOnly;
-        if (!target.empty() && WriteKeyFile(target, g_priv, &err, mode)) {
-            ApplyKeyFileAcl(target);
-            UE_LOGI("peer_identity: minted a new durable identity %s (saved to %ls) -- dial=%s",
-                    g_guid.c_str(), target.c_str(), g_identityString.c_str());
-        } else {
-            // Same shape as the retired player_guid's unreadable-ini path: the session still
-            // works, the identity just does not survive a restart, and saying so is the
-            // difference between a puzzle and a known state. MTA refuses to start when its
-            // server-id.keys cannot be read or created
-            // (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:758-762); a client of a
-            // single-player game still plays, on a temporary identity.
-            if (!target.empty() && !replaceOnMint &&
-                (err == ERROR_ALREADY_EXISTS || err == ERROR_FILE_EXISTS)) {
-                // The create-only write found the file: the one failure that is a race, not a
-                // folder that refuses a write.
-                UE_LOGW("peer_identity: minted identity %s but another copy of the game minted "
-                        "the key first (%ls); this session runs on a TEMPORARY identity, the next "
-                        "launch loads that key", g_guid.c_str(), target.c_str());
-            } else {
-                UE_LOGW("peer_identity: minted identity %s but could NOT write %ls (error %lu) "
-                        "-- this identity is TEMPORARY and your stored inventory will not be "
-                        "found again next launch", g_guid.c_str(),
-                        target.empty() ? L"the key file (no folder resolved)" : target.c_str(),
-                        static_cast<unsigned long>(err));
-            }
-        }
-    } else {
-        // Re-applied at every load, so a file an older build wrote, or one copied here from
-        // another PC, is tightened at the next boot.
-        ApplyKeyFileAcl(loadedFrom);
-        // The `dial=` half is the value a joiner needs when there is no master in the loop
-        // (net.host_identity), so it is printed on the ordinary path and not only on the mint.
-        UE_LOGI("peer_identity: loaded durable identity %s from %ls -- dial=%s",
-                g_guid.c_str(), loadedFrom.c_str(), g_identityString.c_str());
-    }
+    identity_key_file::Conclude(found, g_priv, g_guid, g_identityString);
     g_loaded = true;
     return true;
 }
@@ -697,21 +279,21 @@ static bool RunSelftestBody() {
               "our rendered identity does not parse back to our own public key");
 
         // 21-24: this account's key path resolves exactly when its SID does, is stable, and sits
-        // beside the install under a 16-hex id; 24 pins the name to the SID alone with a known
+        // beside the folder's key under a 16-hex id; 24 pins the name to the SID alone with a known
         // answer (the SYSTEM SID), since two accounts on one install are two players only while
         // the name is derived from the account and from nothing else.
         const std::wstring a = AccountKeyFilePath();
-        check(KeyFileAcl().userSid.empty() == a.empty(),
-              "the account key path does not resolve exactly when the SID does");
+        check((KeyFileAcl().userSid.empty() || ue_wrap::paths::ModDataDir().empty()) == a.empty(),
+              "the account key path does not resolve exactly when the SID and the data folder do");
         if (!a.empty()) {
-            const std::wstring exe = ue_wrap::paths::ExeDir();
-            check(a == AccountKeyFilePath() && a != InstallKeyFilePath() &&
-                  a == exe + L"\\" + AccountKeyFileName(KeyFileAcl().userSid.data(),
+            const std::wstring dir = ue_wrap::paths::ModDataDir();
+            check(a == AccountKeyFilePath() && a != KeyFilePath() &&
+                  a == dir + L"\\" + AccountKeyFileName(KeyFileAcl().userSid.data(),
                                                       KeyFileAcl().userSid.size()) &&
-                  a.rfind(exe + L"\\multivoid_identity_", 0) == 0 &&
-                  a.size() == exe.size() + 20 + 16 + 4 &&
+                  a.rfind(dir + L"\\multivoid_identity_", 0) == 0 &&
+                  a.size() == dir.size() + 20 + 16 + 4 &&
                   a.compare(a.size() - 4, 4, L".key") == 0,
-                  "the account key path is not stable, or not beside the install");
+                  "the account key path is not stable, or not beside the folder's key");
             bool hex = true;
             for (size_t i = a.size() - 4 - 16; i < a.size() - 4; ++i) {
                 const wchar_t c = a[i];
@@ -729,18 +311,18 @@ static bool RunSelftestBody() {
 
     // 25-29: the key file is written whole through coop/atomic_file, with the access list on the
     // result: a malformed file replaced, a second create-only write refused, the list protected
-    // with the two entries. The file is a scratch one, never the install's key, and no g_ state is
+    // with the two entries. The file is a scratch one, never the real key, and no g_ state is
     // touched.
     {
         const bool breakIt =
             coop::config::ResolveFlag(coop::config_registry::rows::selftest_break_identity);
-        const std::wstring exe = ue_wrap::paths::ExeDir();
-        if (exe.empty()) {
-            check(false, "the executable folder does not resolve (key-write case)");
+        const std::wstring dir = ue_wrap::paths::ModDataDir();
+        if (dir.empty()) {
+            UE_LOGI("peer_identity selftest: the mod has no data folder this session -- the key-write cases are skipped");
         } else {
-            SweepDeadScratchKeys(exe);
+            SweepDeadScratchKeys(dir);
             const std::wstring scratch =
-                exe + L"\\" + kScratchKeyPrefix + std::to_wstring(::GetCurrentProcessId()) + L".key";
+                dir + L"\\" + kScratchKeyPrefix + std::to_wstring(::GetCurrentProcessId()) + L".key";
             ::DeleteFileW(scratch.c_str());
             const bool seeded =
                 coop::atomic_file::Write(scratch, "malformed", coop::atomic_file::Mode::Replace,
@@ -755,15 +337,16 @@ static bool RunSelftestBody() {
             // The seed's own failure is named here, and adds a check only when it fails.
             if (!seeded)
                 check(false, "the key-write case's seed (a malformed file) was not written");
-            check(seeded && WriteKeyFile(scratch, want, &werr, coop::atomic_file::Mode::Replace),
+            check(seeded && WriteKeyFile(scratch, want, "selftest", &werr, coop::atomic_file::Mode::Replace),
                   "the key file was not written over a malformed one (Replace)");
             uint8_t got[kPrivKeyBytes]{};
+            std::string gotBound;
             DWORD rerr = 0;
-            check(ReadKeyFile(scratch, got, &rerr) == ReadResult::Loaded &&
+            check(ReadKeyFile(scratch, got, &gotBound, &rerr) == ReadResult::Loaded && gotBound == "selftest" &&
                       std::memcmp(got, expect, kPrivKeyBytes) == 0,
                   "the key file does not read back as the key that was written");
             DWORD cerr = 0;
-            check(!WriteKeyFile(scratch, want, &cerr, coop::atomic_file::Mode::CreateOnly) &&
+            check(!WriteKeyFile(scratch, want, "selftest", &cerr, coop::atomic_file::Mode::CreateOnly) &&
                       (cerr == ERROR_ALREADY_EXISTS || cerr == ERROR_FILE_EXISTS),
                   "a create-only key write over an existing file was not refused");
             if (coop::atomic_file::VolumeKeepsAcls(scratch) && KeyFileAcl().ok) {
@@ -791,6 +374,77 @@ bool RunSelftest() {
     static std::once_flag ran;
     static bool verdict = false;
     std::call_once(ran, [] { verdict = RunSelftestBody(); });
+    return verdict;
+}
+
+static bool RunBindingSelftestBody() {
+    int pass = 0, total = 0;
+    auto check = [&](bool ok, const char* what) {
+        ++total;
+        if (ok) { ++pass; return; }
+        UE_LOGE("identity binding selftest FAIL: %s", what);
+    };
+    using identity_key_file::Binding;
+    using identity_key_file::JudgeBinding;
+    using identity_key_file::ParseKeyText;
+
+    // The fingerprint against a vector fixed outside this code (sha256 of the tag, a newline and
+    // "abc"): the machine id is lower-cased first, an unreadable one binds `none`, and a fake id
+    // stands in for the registry value.
+    const std::string abc = "65007aa6fa75a9b6d93789c5c7a6c16c7bc1dc5aa0c87538083aa6435c515b0d";
+    check(identity_crypto::BindingValue("abc") == abc, "the binding of \"abc\" is not the vector");
+    check(identity_crypto::BindingValue("ABC") == abc, "the machine id is not lower-cased");
+    check(identity_crypto::BindingValue("") == "none", "an empty machine id does not bind `none`");
+    check(identity_crypto::BindingValue("abd") != abc, "two machine ids bind the same");
+
+    // The verdict, over every state of the file against every state of the machine.
+    const std::string other = identity_crypto::BindingValue("other");
+    check(JudgeBinding(abc, abc) == Binding::Match, "a matching bound is not accepted");
+    check(JudgeBinding(other, abc) == Binding::Foreign, "another machine's bound is not foreign");
+    check(JudgeBinding("", abc) == Binding::Foreign, "a file with no bound line is not foreign");
+    check(JudgeBinding("not hex", abc) == Binding::Foreign, "a malformed bound is not foreign");
+    check(JudgeBinding("none", abc) == Binding::Rebind, "a bound of none is not re-bound");
+    check(JudgeBinding(abc, "none") == Binding::MachineUnknown &&
+          JudgeBinding("", "none") == Binding::MachineUnknown &&
+          JudgeBinding("none", "none") == Binding::MachineUnknown,
+          "an unreadable machine id does not leave the key as it is");
+
+    // The file text to its key and its bound value.
+    const std::string hex(64, 'a');
+    uint8_t seed[kPrivKeyBytes]{};
+    std::string bound = "stale";
+    check(ParseKeyText("# h\nkey=" + hex + "\nbound=" + abc + "\n", seed, &bound) ==
+              identity_key_file::ReadResult::Loaded && bound == abc && seed[0] == 0xaa,
+          "a key and its bound do not parse");
+    check(ParseKeyText("key=" + hex + "\r\nbound=none\r\n", seed, &bound) ==
+              identity_key_file::ReadResult::Loaded && bound == "none",
+          "a CRLF file does not parse");
+    check(ParseKeyText("bound=" + abc + "\nkey=" + hex + "\n", seed, &bound) ==
+              identity_key_file::ReadResult::Loaded && bound == abc,
+          "a bound line before the key is not found");
+    check(ParseKeyText("key=" + hex + "\n", seed, &bound) == identity_key_file::ReadResult::Loaded &&
+              bound.empty(),
+          "a file with no bound line does not read as empty");
+    check(ParseKeyText("key=" + hex.substr(2) + "\nbound=" + abc + "\n", seed, &bound) ==
+              identity_key_file::ReadResult::Malformed,
+          "a short key is not malformed");
+    check(ParseKeyText("bound=" + abc + "\n", seed, &bound) == identity_key_file::ReadResult::Malformed,
+          "a file with no key line is not malformed");
+
+    if (pass == total) {
+        UE_LOGI("identity binding selftest: ALL PASS (%d checks)", total);
+        return true;
+    }
+    UE_LOGE("identity binding selftest: %d/%d checks passed", pass, total);
+    return false;
+}
+
+// Pure and fast, run once at boot beside the key's load: what decides whether a key file is this
+// machine's must not wait for a session.
+bool RunBindingSelftest() {
+    static std::once_flag ran;
+    static bool verdict = false;
+    std::call_once(ran, [] { verdict = RunBindingSelftestBody(); });
     return verdict;
 }
 

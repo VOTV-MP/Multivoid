@@ -2,16 +2,17 @@
 //
 // Each remote peer gets a Player Element whose ElementId is the unified runtime address event_feed
 // dispatch resolves against: Registry::Get(id) -> Element* answers uniformly across Player, Npc and
-// Prop with no per-type switch. Local and remote are the same class here, discriminated by
-// m_puppet, which is what IsLocal() reads. The Element owns neither the engine actor nor the
-// coop::RemotePlayer puppet -- those live in coop::players::Registry and in puppet_drive's
-// g_puppets array. It carries m_peerSlot, the slot id in [0, kMaxPeers), because wire packets carry
-// senderElementId and the receiver resolves it to a Player and reads PeerSlot() to key the per-slot
-// maps: item_activate's pending applies, flashlight_click_sound's last-state array, the nameplate's
-// nick slots. players::Registry owns them as a fixed unique_ptr<Player>[kMaxPeers], built by
-// RegisterPuppet, by EstablishMirrorForSlot when the wire names a slot before its puppet exists, or
-// by SetLocalPeerId's local-init path, and destroyed by UnregisterPuppet or by replacement when a
-// slot's puppet pointer changes. No global reset exists.
+// Prop with no per-type switch. The local peer's Element is the one in the slot
+// players::Registry::LocalPeerId() names; m_puppet is the puppet bound now, or null. The Element
+// owns neither the engine actor nor the RemotePlayer puppet (players::Registry and puppet_drive's
+// g_puppets hold those). It carries m_peerSlot in [0, kMaxPeers): wire packets carry
+// senderElementId, the receiver resolves it to a Player and reads PeerSlot() to key the per-slot
+// maps. players::Registry owns the Elements as unique_ptr<Player>[kMaxPeers], built by
+// RegisterPuppet, by EstablishMirrorForSlot or by SetLocalPeerId. A puppet is bound onto an
+// existing Element in place (a mirror, or one ClearPuppet emptied); ClearPuppet nulls it without
+// dropping the Element. UnregisterPuppet, a changed local id, one real puppet replacing another,
+// or EstablishMirrorForSlot replacing it with the wire-bound mirror destroys it. No global reset
+// exists.
 
 #pragma once
 
@@ -33,18 +34,23 @@ public:
 
     uint8_t              PeerSlot() const { return m_peerSlot; }
     coop::RemotePlayer*  Puppet() const   { return m_puppet; }
+    // True when no puppet is bound now. That holds for the local Element but also for a mirror
+    // before its puppet and for a remote Element after ClearPuppet, so it does not say whose Element
+    // this is: the local peer is the slot Registry::LocalPeerId() names.
     bool                 IsLocal() const  { return m_puppet == nullptr; }
 
 private:
     // The puppet pointer is mutable so players::Registry can bind a real puppet onto a MIRROR
-    // Player Element created before RegisterPuppet ran. Without it the mirror, and the wire-bound
-    // ElementId it holds, would be dropped whenever the AssignPeerSlot/Join handshake landed ahead
-    // of the puppet's first PoseSnapshot. Only Registry is expected to drive that transition.
+    // Player Element created before RegisterPuppet ran, or onto an Element ClearPuppet emptied.
+    // Without it the mirror, and the wire-bound ElementId it holds, would be dropped whenever the
+    // AssignPeerSlot/Join handshake landed ahead of the puppet's first PoseSnapshot. Only Registry
+    // calls it: the mirror bind and the cleared-Element rebind in EnsurePlayerElement_, and
+    // ClearPuppet's clear.
     friend class coop::players::Registry;
     void SetPuppet_(coop::RemotePlayer* p) { m_puppet = p; }
 
     uint8_t              m_peerSlot;
-    coop::RemotePlayer*  m_puppet;  // nullptr for the local peer
+    coop::RemotePlayer*  m_puppet;  // null: no puppet bound now
 };
 
 }  // namespace coop::element

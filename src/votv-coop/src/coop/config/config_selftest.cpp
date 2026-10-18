@@ -160,8 +160,12 @@ void NestedSetSubscriber() {
 int SelftestRuntimeLayer(void (*drain)(), bool (*onNotifyThread)()) {
     namespace reg = config_registry;
     const reg::IntRow& P = reg::rows::selftest_runtime_probe;
-    const std::wstring scratch =
-        ue_wrap::paths::ExeDir() + L"\\multivoid.selftest-runtime.ini";
+    const std::wstring dataDir = ue_wrap::paths::ModDataDir();
+    if (dataDir.empty()) {
+        UE_LOGI("config-selftest: runtime layer skipped -- no data folder");
+        return 0;
+    }
+    const std::wstring scratch = dataDir + L"\\multivoid.selftest-runtime.ini";
     const char* const kEnv = "VOTVCOOP_SELFTEST_RUNTIME_PROBE";
     int fail = 0;
     auto expect = [&](const char* what, bool ok) {
@@ -291,8 +295,12 @@ int SelftestRuntimeLayer(void (*drain)(), bool (*onNotifyThread)()) {
 
 int SelftestQuotedValues() {
     namespace reg = config_registry;
-    const std::wstring scratch =
-        ue_wrap::paths::ExeDir() + L"\\multivoid.selftest-quoting.ini";
+    const std::wstring dataDir = ue_wrap::paths::ModDataDir();
+    if (dataDir.empty()) {
+        UE_LOGI("config-selftest: quoting skipped -- no data folder");
+        return 0;
+    }
+    const std::wstring scratch = dataDir + L"\\multivoid.selftest-quoting.ini";
     const char* const kNick = "net.nick";
     // Read here and never in the product path: a read inside the writer would take the ini lock
     // the writer already holds.

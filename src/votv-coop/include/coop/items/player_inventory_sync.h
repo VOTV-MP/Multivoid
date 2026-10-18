@@ -1,5 +1,5 @@
 // coop/items/player_inventory_sync.h -- the per-player profile (coop/items/player_profile.h:
-// what a player carries, wears and holds, their vitals, where they stood), host-persisted at <game dir>/coop_players/<host save>/<guid>.json. The GUID is derived from the
+// what a player carries, wears and holds, their vitals, where they stood), host-persisted at <mod data dir>/coop_players/<host save>/<guid>.json. The GUID is derived from the
 // key that peer PROVED at admission (coop/net/peer_identity.h), never from a value it sent.
 //
 // A joiner's world is built from a capture of the HOST's save object, and the carried items

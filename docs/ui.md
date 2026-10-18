@@ -77,7 +77,7 @@ The names are data, never code (`coop/thanks/thanks_list`). One text file,
 is added or taken out by publishing the file, with no release. Nobody expires: a name stays for
 as long as its line does. Two copies are weighed, the build's and what the master last said: the
 higher `revision` wins and the master takes a tie, so a master left holding an old file cannot
-take names away from a newer build. The cache beside the executable (`multivoid_thanks.txt`) is
+take names away from a newer build. The cache in the mod's own folder (`multivoid_thanks.txt`) is
 only a memo of the master's last word: it names the master it came from, a new answer replaces
 it whatever its revision, and "no list" erases it, so a copy a master once served never outlives
 that master's say. The fetch rides the browser's open beside the update check and never the

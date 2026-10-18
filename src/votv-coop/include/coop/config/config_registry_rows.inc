@@ -51,7 +51,7 @@ CFG_STRING(net_peer, "net.peer", "net", "127.0.0.1", "VOTVCOOP_NET_PEER", false,
     "Test framework: the host address a client connects to at auto-start (lan topology).")
 CFG_ROWFLAGS(net_peer, kRowAddress)
 CFG_STRING(net_server, "net.server", "net", "", "VOTVCOOP_NET_SERVER", false,
-    "The server this install hosts: the name of its folder under multivoid_servers beside the game. "
+    "The server this install hosts: the name of its folder under multivoid_servers in the mod's folder. "
     "Set from your nickname the first time you host; empty means you have not hosted yet.")
 CFG_INT(net_port, "net.port", "net", ::coop::net::kDefaultPort, 1, 65535, "VOTVCOOP_NET_PORT",
     "UDP port a DIRECT host listens on: the lan topology, and a DIRECT game hosted from the menu.")
@@ -74,6 +74,31 @@ CFG_INT(net_fakelink_kbs, "net.fakelink_kbs", "net", 0, 0, 1048576, "VOTVCOOP_NE
     "Simulated OUTBOUND link capacity, KB/s (GNS FakeRateLimit_Send: a process-global policer "
     "that silently DROPS packets beyond the budget -- worst-case thin-uplink physics). 0 = off. "
     "Testing knob for the overdrive drill; pair with net.sendrate_kbs above this value.")
+CFG_INT(net_fakelag_ms, "net.fakelag_ms", "net", 0, 0, 2000, "VOTVCOOP_NET_FAKELAG_MS",
+    "Simulated extra one-way delay on every OUTBOUND packet, ms (GNS FakePacketLag_Send, "
+    "process-global), so the round trip grows by this much when both peers set it. 0 = off. "
+    "Testing knob for the send-rate law on a long link.")
+CFG_INT(net_fakeloss_send_pct, "net.fakeloss_send_pct", "net", 0, 0, 100,
+    "VOTVCOOP_NET_FAKELOSS_SEND_PCT",
+    "Percent of OUTBOUND packets silently discarded (GNS FakePacketLoss_Send, process-global). "
+    "0 = off. Testing knob for the send-rate law on a lossy link.")
+CFG_INT(net_fakeloss_recv_pct, "net.fakeloss_recv_pct", "net", 0, 0, 100,
+    "VOTVCOOP_NET_FAKELOSS_RECV_PCT",
+    "Percent of RECEIVED packets silently discarded (GNS FakePacketLoss_Recv, process-global). "
+    "0 = off. Testing knob for the send-rate law on a lossy link.")
+CFG_INT(net_fakejitter_ms, "net.fakejitter_ms", "net", 0, 0, 1000, "VOTVCOOP_NET_FAKEJITTER_MS",
+    "Mean extra random delay on every OUTBOUND packet, ms (GNS FakePacketJitter_Send_Avg, "
+    "exponentially distributed, applied to every packet; packets are clumped, not reordered). "
+    "0 = off. Testing knob for the send-rate law on a link whose round trip wanders.")
+CFG_STRING(net_fakelink_steps, "net.fakelink_steps", "net", "", "VOTVCOOP_NET_FAKELINK_STEPS", false,
+    "Changes the fake-link knobs above DURING a run, timed from the world transfer's own events: "
+    "steps separated by ';', each <origin>+<seconds>:<key>=<value>[&<key>=<value>] (keys join "
+    "with '&', because the rig's --config splits on commas). Origin: begin "
+    "(the world blob's announce -- the joiner's Begin, the host's first chunk) or wr (the "
+    "joiner's world-ready -- its announce, the host's receipt of it). Keys: lag, jitter, "
+    "loss_send, loss_recv, kbs (net.fakelink_kbs). Example: begin+3:lag=150&loss_send=2;wr+0:lag=0. "
+    "A schedule that does not parse is ignored whole. Every session start first returns all five "
+    "knobs to their own rows' values. Empty = none. Testing knob.")
 CFG_INT(net_fakereorder_pct, "net.fakereorder_pct", "net", 0, 0, 100, "VOTVCOOP_NET_FAKEREORDER_PCT",
     "Percent of RECEIVED packets held back by net.fakereorder_ms (GNS FakePacketReorder_Recv, "
     "process-global), so the packets behind them arrive first: a reordering link, which a LAN "

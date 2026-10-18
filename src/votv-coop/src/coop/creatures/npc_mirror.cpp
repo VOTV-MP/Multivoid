@@ -18,10 +18,13 @@
 #include "coop/props/join_membership_sweep.h"  // TickClientReconcile
 #include "coop/dev/kerfur_census.h"  // the one-shot kerfur census
 #include "coop/creatures/npc_sync.h"
+#include "coop/world/creature_event_relay.h"  // OnMirrorBound: the host's event count for a new mirror
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/actors/kerfur.h"  // NeutralizeAiTimers
+#include "ue_wrap/actors/spawner_stamp.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/actors/puppet.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"  // NpcClass_Wisp (the wisp mirror keeps its actor tick)
@@ -39,6 +42,7 @@ namespace {
 
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
+namespace OI = ue_wrap::object_index;
 
 // The client-side UFunction cache, filled by SetClientRefs once npc_sync::Install resolves them.
 // Plain storage: SetClientRefs and the receivers all run on the game thread.
@@ -47,6 +51,10 @@ void*   g_finishSpawnFn       = nullptr;
 void*   g_gsCdo               = nullptr;
 int32_t g_spawnReturnParamOff = -1;
 void*   g_k2DestroyFn         = nullptr;
+
+// The class listing a dropped stamp was last said for (the pointer is compared, never read through).
+void*    g_stampDropClass   = nullptr;
+uint64_t g_stampDropListing = 0;
 
 using coop::element::NpcMirrors;   // canonical accessor (coop/element/mirror_managers.h)
 
@@ -110,9 +118,10 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
                 payload.locX, payload.locY, payload.locZ, payload.elementId);
         return;
     }
-    // The duplicate-eid guard: the host allocates each id once and the reliable channel does not
-    // redeliver, but a late duplicate would duplicate the actor. An unlocked early exit; a race
-    // past it is caught by the install failure path below, which destroys the orphan.
+    // The duplicate-eid guard: a re-announce re-sends the whole NPC set through the connect
+    // broadcast by design (the joiner's world is re-derived whole, not diffed), so an eid already
+    // mirrored is that re-send, and a second install would duplicate the actor. An unlocked early
+    // exit; a race past it is caught by the install failure path below, which destroys the orphan.
     if (NpcMirrors().Get(payload.elementId) != nullptr) {
         UE_LOGW("npc-sync[client OnSpawn]: eid=%u already mirrored locally -- dropping duplicate",
                 payload.elementId);
@@ -230,6 +239,34 @@ bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t 
         coop::npc_sync::ClearIncomingNpcSpawn();
         return false;
     }
+    // Spawned as the game's own spawner spawns the class: what that spawner writes between the two halves is
+    // written here, before the finish runs the class's BeginPlay on it.
+    if (!ue_wrap::spawner_stamp::Stamp(actorClass, spawned)) {
+        // The drop: Source warns and skips an entity it cannot spawn (reference/source-sdk-2013/src/game/server/
+        // mapentities.cpp:585, "Can't init %s"); MTA keeps an element whose game entity it cannot create, for the
+        // streamer to retry (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientStreamElement.cpp:107), and
+        // drops the connection on a packet it cannot read (its CPacketHandler.cpp:5648). Here the spawn is dropped, not retried: a mirror whose
+        // guard constant is unknown would run the class's BeginPlay unstamped, and that quits this machine's game. A
+        // game that changed the constant's path changes it for every later attempt too, so a retry would only
+        // repeat the drop.
+        // Said once per listing of the class (once per class object while the index does not list it): the
+        // stamp's own line carries the property, this one the mirror.
+        const uint64_t listing = OI::ClassListingId(actorClass);
+        if (actorClass != g_stampDropClass || listing != g_stampDropListing) {
+            g_stampDropClass = actorClass;
+            g_stampDropListing = listing;
+            UE_LOGE("npc-sync[client OnSpawn]: no spawner stamp for '%ls' -- mirror eid=%u dropped, its begun "
+                    "actor destroyed unfinished (the class's BeginPlay would end this game)",
+                    classW.c_str(), elementId);
+        }
+        if (g_k2DestroyFn && R::IsLive(spawned)) {
+            R::CallFunction(spawned, g_k2DestroyFn, nullptr);
+        } else if (!g_k2DestroyFn) {
+            UE_LOGE("npc-sync[client OnSpawn]: g_k2DestroyFn=nullptr at stamp-failure cleanup -- actor %p "
+                    "LEAKS (Install gating invariant violated)", spawned);
+        }
+        return false;
+    }
     {
         ParamFrame finish(g_finishSpawnFn);
         if (!finish.valid()) {
@@ -280,6 +317,9 @@ bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t 
         }
         return false;
     }
+    // The finish ran the creature's BeginPlay, so its own setEvent(true) is registered: the relay retracts it and
+    // applies the host's count.
+    coop::creature_event_relay::OnMirrorBound(eid, spawned);
     // Parked so the streamed pose drive is authoritative: movement and actor ticks off (the AnimBP
     // still ticks and reads the velocity the drive writes). The wisp keeps its actor tick: its
     // ReceiveTick is per-viewer cosmetics (fade-in, bob, the shy despawn), not AI, so only its

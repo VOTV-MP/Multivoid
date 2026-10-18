@@ -154,6 +154,11 @@ msgstr ""
 msgid "%1$s deleted an email: %2$s"
 msgstr ""
 
+#: src/coop/player/sleep_sync.cpp
+#, c-format
+msgid "%1$s is asleep -- the world runs faster"
+msgstr ""
+
 #: src/coop/session/player_handshake.cpp
 #, c-format
 msgid "%1$s is connecting to the game..."
@@ -204,11 +209,6 @@ msgstr ""
 #: src/ui/loading_screen.cpp
 #, c-format
 msgid "%1$u / %2$u objects"
-msgstr ""
-
-#: src/coop/player/sleep_sync.cpp
-#, c-format
-msgid "%1$u/%2$u players sleeping"
 msgstr ""
 
 #: src/ui/server_browser_panels.cpp
@@ -582,10 +582,6 @@ msgstr ""
 msgid "Everyone in the registry is online."
 msgstr ""
 
-#: src/coop/player/sleep_sync.cpp
-msgid "Everyone is asleep -- the night passes..."
-msgstr ""
-
 #: src/ui/dev_menu.cpp
 msgid "Everything scales with the screen automatically; this is your extra zoom."
 msgstr ""
@@ -605,10 +601,6 @@ msgstr ""
 
 #: src/ui/world_rules_panel.cpp
 msgid "Gamemode:"
-msgstr ""
-
-#: src/coop/player/sleep_sync.cpp
-msgid "Good morning -- everyone is rested."
 msgstr ""
 
 #: src/ui/dev_menu.cpp
@@ -863,6 +855,10 @@ msgstr ""
 
 #: src/ui/admin_panel.cpp
 msgid "Nobody in the registry yet (players are recorded when they join)."
+msgstr ""
+
+#: src/coop/props/remover_request.cpp
+msgid "Not removable right now"
 msgstr ""
 
 #: src/ui/dev_menu.cpp
@@ -1159,10 +1155,6 @@ msgstr ""
 msgid "Skins come from converter .pak files under Content/Paks/LogicMods (any subfolder). One pak may carry several skins -- the four scientists ship together in scientists.pak."
 msgstr ""
 
-#: src/coop/player/sleep_sync.cpp
-msgid "Sleep interrupted -- everyone wakes up."
-msgstr ""
-
 #: src/coop/net/end_reason.cpp
 msgid "Something was sent before the identity was proved."
 msgstr ""
@@ -1196,6 +1188,10 @@ msgstr ""
 
 #: src/ui/scoreboard.cpp
 msgid "Teleport to me"
+msgstr ""
+
+#: src/coop/props/remover_request.cpp
+msgid "That is being held"
 msgstr ""
 
 #: src/coop/commands/command_sync.cpp
@@ -1274,6 +1270,10 @@ msgstr ""
 msgid "The host did not answer through the signaling server. It may be offline, or reconnecting -- try again in a minute."
 msgstr ""
 
+#: src/coop/props/remover_request.cpp
+msgid "The host does not allow the remover"
+msgstr ""
+
 #: src/coop/net/end_reason.cpp
 msgid "The host ended the session."
 msgstr ""
@@ -1292,10 +1292,6 @@ msgstr ""
 
 #: src/coop/net/end_reason.cpp
 msgid "The host never finished preparing its world for you."
-msgstr ""
-
-#: src/coop/net/end_reason.cpp
-msgid "The host never sent you the world it owed."
 msgstr ""
 
 #: src/coop/net/end_reason.cpp
@@ -1323,6 +1319,10 @@ msgid "The host sent an identity challenge this build cannot read."
 msgstr ""
 
 #: src/coop/net/end_reason.cpp
+msgid "The host stopped sending the world it owed, or the connection stopped delivering it."
+msgstr ""
+
+#: src/coop/net/end_reason.cpp
 msgid "The host was busy, and this connection was the slowest to prove itself."
 msgstr ""
 
@@ -1340,6 +1340,10 @@ msgstr ""
 
 #: src/coop/net/end_reason.cpp
 msgid "The join failed before it started. The log has the error."
+msgstr ""
+
+#: src/coop/props/remover_request.cpp
+msgid "The remover cannot remove that in multiplayer"
 msgstr ""
 
 #: src/coop/bug_report/report_bundle.cpp
@@ -1650,6 +1654,10 @@ msgstr ""
 
 #: src/ui/game_build_dialog.cpp
 msgid "You can play anyway. This message will not show again for this game version."
+msgstr ""
+
+#: src/coop/props/remover_request.cpp
+msgid "You can't see that from there"
 msgstr ""
 
 #: src/ui/config_review_panel.cpp

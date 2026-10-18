@@ -43,17 +43,25 @@ coop::RemotePlayer& Puppet(int slot) {
 
 bool DestroySlot(int slot) {
     UE_ASSERT_GAME_THREAD("g_puppets (puppet_drive::DestroySlot)");
-    // UnregisterPuppet drops the Player Element from players::Registry. If the puppet was never
-    // spawned -- the peer disconnected after Join but before any PoseSnapshot -- then
-    // g_puppets[slot].valid() is false while playerBySlot_[slot] may still hold a mirror Element
-    // installed by EstablishMirrorForSlot. Calling UnregisterPuppet unconditionally is safe:
-    // DropPlayerElement_ is a no-op when playerBySlot_ is null.
+    // The destroy comes first, so the puppet is still registered through its end of play and the
+    // end-overlaps it reports as it dies: the identity consumers that classify by IsPuppet (e.g. the
+    // damage and ignite cancels, the travel refusal) must still know the dying body. MTA ends a ped's
+    // contacts and clears its pool mapping before deleting it (CClientPed.cpp:3814-3819,
+    // CPoolsSA.cpp:481), and unlinks the player first (CClientPlayer.cpp:110, a destructor-order
+    // artefact); that GTA's ped delete runs no script, so nothing calls back, is an unmeasured
+    // reading of MTA's source. DestroyActor runs the body's Blueprint end-play and end-overlap
+    // code into hooks that classify by IsPuppet, so the reverse order is deliberate.
+    // Registry::Puppet(slot) has many readers, which see the puppet half-torn between the
+    // destroy and the unregister below; the ones read (tick readers) are not reached from the
+    // puppet's end of play, by inspection, and the rest were not enumerated.
+    const bool had = g_puppets[slot].valid();
+    if (had) g_puppets[slot].Destroy();
+    // UnregisterPuppet drops the Player Element from players::Registry, on every path: a puppet never
+    // spawned -- the peer disconnected after Join but before any PoseSnapshot -- leaves
+    // g_puppets[slot].valid() false while playerBySlot_[slot] may still hold a mirror Element
+    // installed by EstablishMirrorForSlot. DropPlayerElement_ is a no-op when playerBySlot_ is null.
     coop::players::Registry::Get().UnregisterPuppet(static_cast<uint8_t>(slot));
-    if (g_puppets[slot].valid()) {
-        g_puppets[slot].Destroy();
-        return true;
-    }
-    return false;
+    return had;
 }
 
 void DriveTick(coop::net::Session& session, bool worldReadyAnnounced) {
@@ -117,14 +125,14 @@ void DriveTick(coop::net::Session& session, bool worldReadyAnnounced) {
                 // or a later SkinChange), any slot incl. the
                 // host. Empty (not yet announced) -> kel baseline; the skin re-applies
                 // live when it lands (player_handshake::StoreSkinForSlot).
-                if (!g_puppets[slot].Spawn(coop::player_handshake::SkinForSlot(slot))) {
+                // The spawn registers the puppet with the central Registry (peerId == slot directly)
+                // before its BeginPlay.
+                if (!g_puppets[slot].Spawn(coop::player_handshake::SkinForSlot(slot),
+                                           static_cast<uint8_t>(slot))) {
                     UE_LOGW("net: slot %d puppet spawn failed; will retry in 1 s", slot);
                     sNextSpawnAttempt[slot] = now + seconds(1);
                     continue;
                 }
-                // Register with the central Registry. peerId == slot directly.
-                coop::players::Registry::Get().RegisterPuppet(
-                    static_cast<uint8_t>(slot), &g_puppets[slot]);
                 // Apply the cached nickname now that the puppet exists. The identity
                 // (Join / PlayerJoined) can arrive BEFORE the first pose spawns the
                 // puppet -- in that race the handler cached the nick and found no

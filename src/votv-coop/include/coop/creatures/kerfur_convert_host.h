@@ -33,11 +33,30 @@ void SetClasses(void* npcClass, void* propClass);
 // rather than CallFunction-ing a signature-changed verb over a zeroed 16-byte frame.
 void SetVerbs(void* spawnKerfuroFn, int32_t killOff);
 
-// HOST-only receiver for KerfurConvertRequest (wired in event_dispatch_intent). Validates, then runs the
-// real verb on the host's copy; the verb's return converges it through ConvergeAtReturn, inside the
-// call. payload.elementId is the requester's mirror eid of the current form; senderPeerSlot is who
-// asked, which the converge's log names. Game thread (the event_feed drain).
+// HOST-only receiver for KerfurConvertRequest (wired in event_dispatch_intent). Refuses an unknown sender, a
+// request before install resolved and an eid outside the host range into the lane's refusal tally, and queues the
+// rest per sender, up to a cap, refusing past it. payload.elementId is the requester's mirror eid of the current
+// form; senderPeerSlot is who asked, which the converge's log names. Game thread (the event_feed drain).
 void OnConvertRequest(const coop::net::KerfurConvertPayload& payload, uint8_t senderPeerSlot);
+
+// A refusal the router made before the lane saw the request (a short payload, a bad toProp), said through the
+// lane's tally. The slot is the router's, 0xFF for an unknown sender. Game thread.
+void NoteRefused(uint8_t senderPeerSlot, const char* why);
+
+// HOST per pump tick: serves one queued request per sender at a bounded rate, in arrival order. It checks the
+// kerfur as it is now (a live one of the right form, not in kill mode), runs the real verb on the host's copy, and
+// the verb's return converges it through ConvergeAtReturn, inside the call. Then says the refusals' summed line.
+// Game thread.
+void Tick();
+
+// Instruments (the kerfur_flood drill, coop/dev/hostile_drill_kerfur), game thread, per client slot (0 for any
+// other, the host's included): how many
+// requests were served (entered the cost path: the checks and the verb), and how many the lane refused before the
+// serve: the router's refusals (a short payload, a bad toProp), an unknown sender, a request before install, an eid
+// outside the host range, and a full queue. A refusal at the serve (no live kerfur of that form, kill mode) is a run
+// and is not counted here.
+uint32_t RunsFor(int slot);
+uint32_t RefusedFor(int slot);
 
 // The slot whose request is running a verb on `object` right now, or -1: the verb's entry records it,
 // so its return can name whose request it was. Game thread.
@@ -53,7 +72,7 @@ int RequestSlotFor(void* object);
 void ConvergeAtReturn(void* oldActor, int32_t oldIdx, coop::element::ElementId oldEid, bool toProp,
                       int requestSlot);
 
-// Clear the running request. Net disconnect (fanned from kerfur_convert::OnDisconnect).
+// Clear the running request and the tally. Net disconnect (fanned from kerfur_convert::OnDisconnect).
 void OnDisconnect();
 
 }  // namespace coop::kerfur_convert_host

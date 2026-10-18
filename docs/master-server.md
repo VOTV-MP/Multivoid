@@ -23,7 +23,7 @@ signaling leg is still plaintext TCP.
 ### The master
 
 A small HTTP JSON service. A host announces itself with the world, the player count and its
-identity and gets back a session id, an opaque lobby id and a host token; it heartbeats every
+identity and gets back a session id, an opaque lobby id and a host token (it first asks for a nonce and signs it with the key its identity names, so a listed row names a host that holds the key it advertises; a build too old to sign is listed as unproved); it heartbeats every
 thirty seconds with its player count, how they reach it (counted by the link it measures on each:
 relayed, direct, on a LAN) and whether it is listed, can flip its listing, and leaves on stop. A
 lobby that misses three heartbeats is reaped, so a killed host disappears from the browser within a
@@ -114,9 +114,13 @@ only after a drill proves the deployed relay speaks it.
 
 ### Self-hosting
 
-Run the two binaries with their environment (the TURN secret, the signaling token, the
-signaling and TURN addresses) and a TURN server that shares the secret, then add the master to
-`net.masters` as another entry (`Home=host:port`) and pick its tab in the browser. `net.signaling`
+Run the two binaries with their environment (the TURN secret, the signaling token, the master's
+own name `COOP_DOMAIN` as a bare host, the signaling and TURN addresses) and a TURN server that
+shares the secret, then add the master to
+`net.masters` as another entry (`Home=host:port`) whose host is exactly that name, and pick its
+tab in the browser: a host signs its announce for the host of the URL it dialled, and the master
+refuses a proof made for any other name (`COOP_MASTER_NAME_ALIASES` lists extra names it
+answers to). `net.signaling`
 names a relay only for a P2P connection made with no master at all; a lobby's own relay always
 comes from its master. The rig builds and launches the signaling binary
 locally for a scripted run, and serves a synthetic lobby list to the browser in place of a master.
@@ -136,8 +140,9 @@ locally for a scripted run, and serves a synthetic lobby list to the browser in 
 
 | Route | Who | Carries |
 |---|---|---|
-| `/v1/host`, `/v1/heartbeat`, `/v1/visibility`, `/v1/leave` | the host | the announce, which carries the host's build claim (`build_sha`, `build_key`, `build_sig`, optional), the game build it runs (`game_build`, refused unless of its shape) and `listed`; the keepalive with players, their links, listing and the TURN credential the host holds, answered with its renewal; the listing flip; the leave |
-| `/v1/lobbies`, `/v1/join` | the client | the list, each row with one word for how its players reach the host (relay, direct, lan, or none before anyone has joined) and the counts behind it, and `build_sha`, `build_key` and `build_sig`: the host's own claim of its build, recorded as sent: a field of the wrong type reads as none (no hash, key 0, an empty signature), and a claim whose hash, key and signature do not fit together is dropped with one log line (the master verifies nothing); the dialing information for a lobby |
+| `/v1/host/challenge` | the host | a POST with body `{}`, answered with a 64-hex `nonce` that the master can re-derive and so stores nothing for (its expiry, random bytes and an HMAC over the caller's address): single use, alive about 30 s, bound to the caller's address, counted in its own rate class |
+| `/v1/host`, `/v1/heartbeat`, `/v1/visibility`, `/v1/leave` | the host | the announce, which carries the host's build claim (`build_sha`, `build_key`, `build_sig`, optional), the game build it runs (`game_build`, refused unless of its shape), `listed`, and the lobby proof (`nonce` from the challenge, `proof`: the host's signature over the tag `multivoid-lobby-announce-v1`, its identity, the nonce and the master's name); a build that signs is refused without a valid proof (`409 proof-required`), a proof that is present must verify (`400 bad-proof`), a nonce that is spent, expired, another master's or another address's is `410 nonce-expired`, a build below the master's configured floor is `403 build-too-old`, an identity the operator listed in `COOP_BLOCKED_IDENTITIES` is `403 blocked`; a valid proof marks the row proved, and a proved announce for a key already listed replaces that row; the keepalive with players, their links, listing and the TURN credential the host holds, answered with its renewal; the listing flip; the leave |
+| `/v1/lobbies`, `/v1/join` | the client | the list (its own rate class, 120 a minute per address), each row with the host's `identity` (its key) and `proved` (whether the host signed for it), one word for how its players reach the host (relay, direct, lan, or none before anyone has joined) and the counts behind it, and `build_sha`, `build_key` and `build_sig`: the host's own claim of its build, recorded as sent: a field of the wrong type reads as none (no hash, key 0, an empty signature), and a claim whose hash, key and signature do not fit together is dropped with one log line (the master verifies nothing about the build claim); the dialing information for a lobby |
 | `/v1/latest`, `/healthz` | the client; an operator | the newest release per game version (`games`, from `COOP_LATEST_GAMES`), with the 0.9.0n entry as the `proto`/`mod` older clients read; liveness |
 | `/v1/thanks` | the client, on opening the browser | the thanks list's text |
 | the signaling lines | both peers | the greeting, the challenge and its proof, the forwarded candidates |
@@ -160,6 +165,6 @@ most until its heartbeats lapse.
 
 | Concept | Files |
 |---|---|
-| the services | `server/src/bin/master.rs`, `server/src/bin/signaling.rs`, `server/src/lobby.rs`, `server/src/ice.rs`, `server/src/version_gate.rs`, `server/src/tls.rs`, `server/src/common.rs`, `server/README.md` |
+| the services | `server/src/bin/master.rs`, `server/src/bin/signaling.rs`, `server/src/lobby.rs`, `server/src/lobby/host.rs`, `server/src/lobby_proof.rs`, `server/src/ice.rs`, `server/src/version_gate.rs`, `server/src/tls.rs`, `server/src/common.rs`, `server/README.md` |
 | the mod's master client | `coop/net/master_slots`, `coop/net/lobby_client`, `coop/net/lobby_announcer`, `coop/net/http_client`, `coop/session/session_manager` |
 | the rendezvous | `coop/net/signaling_client.h`, `coop/net/ice_config.h`, `coop/net/ice_policy.h`, `coop/session/host_mode` |

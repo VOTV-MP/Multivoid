@@ -5,10 +5,12 @@
 #include "coop/element/intent_authority.h"
 #include "coop/interactables/keypad_sync.h"
 #include "coop/net/intent_bucket.h"
+#include "coop/net/intent_queue.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/hand_item.h"
+#include "coop/player/roster_ledger.h"  // PerSlotState
 #include "coop/session/net_pump.h"  // IsInAnnouncedWorld: a client's own world load runs natively
 
 #include "ue_wrap/core/log.h"
@@ -20,7 +22,6 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
-#include <deque>
 #include <string>
 
 namespace coop::keypad_verbs {
@@ -81,17 +82,16 @@ uint64_t NowMs() {
         std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
-struct Bucket {
-    coop::net::IntentBucket rate;
-    uint64_t                nextSayMs = 0;
-};
-Bucket g_rate[coop::net::kMaxPeers];
-std::deque<coop::net::KeypadIntentPayload> g_pending[coop::net::kMaxPeers];
 // What a sender's queue head has waited for, each said once a streak: its body, its keypad's tail.
 constexpr uint8_t kWaitBody = 1, kWaitTail = 2;
-uint8_t g_waitSaid[coop::net::kMaxPeers] = {};
 
-bool TakeToken(uint8_t slot) { return g_rate[slot].rate.Take(kIntentBudget, NowMs()); }
+// One sender: its queued intents with their bucket, and the latches that clear with its occupant.
+struct Slot {
+    coop::net::IntentQueue<coop::net::KeypadIntentPayload> queue;
+    uint64_t nextSayMs = 0;  // the full queue's refusal, said once in kRefusalSayMs
+    uint8_t  waitSaid  = 0;  // kWaitBody / kWaitTail, each said once a streak
+};
+coop::roster_ledger::PerSlotState<Slot> g_slots;
 
 const char* IntentName(uint8_t verb) {
     switch (verb) {
@@ -126,8 +126,9 @@ bool CallerIs(const sg::Call& call, const wchar_t* className) {
 
 // ---- the host ----------------------------------------------------------------------------------
 void SayWait(uint8_t slot, uint8_t what, const std::wstring& key) {
-    if (g_waitSaid[slot] & what) return;
-    g_waitSaid[slot] |= what;
+    Slot& sl = g_slots[slot];
+    if (sl.waitSaid & what) return;
+    sl.waitSaid |= what;
     if (what == kWaitBody)
         UE_LOGI("[KEYPAD-VERB] slot %u's keypad input waits: the host has no body for it yet", static_cast<unsigned>(slot));
     else
@@ -408,14 +409,12 @@ void Tick(coop::net::Session& session) {
     }
     if (!session.running() || session.role() != coop::net::Role::Host) return;
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
-        if (g_pending[slot].empty() || !TakeToken(slot)) continue;
-        const coop::net::KeypadIntentPayload p = g_pending[slot].front();
-        if (Execute(session, p, slot)) {
-            g_pending[slot].pop_front();
-            g_waitSaid[slot] = 0;            // a consumed intent ends the wait's streak
-        } else {
-            g_rate[slot].rate.Refund(kIntentBudget);  // a wait runs nothing, so it spends no token
-        }
+        Slot& sl = g_slots[slot];
+        sl.queue.Serve(kIntentBudget, NowMs, [&](const coop::net::KeypadIntentPayload& p) {
+            if (!Execute(session, p, slot)) return coop::net::Served::Wait;  // a wait runs nothing: no token spent
+            sl.waitSaid = 0;  // a consumed intent ends the wait's streak
+            return coop::net::Served::Done;
+        });
     }
 }
 
@@ -423,26 +422,17 @@ void OnKeypadIntent(coop::net::Session& session, const coop::net::KeypadIntentPa
                     uint8_t senderSlot) {
     if (session.role() != coop::net::Role::Host) return;
     if (senderSlot < 1 || senderSlot >= coop::net::kMaxPeers) return;
-    auto& q = g_pending[senderSlot];
-    if (q.size() >= kMaxPending) {
-        Bucket& b = g_rate[senderSlot];
+    Slot& sl = g_slots[senderSlot];
+    coop::net::KeypadIntentPayload copy = payload;
+    if (!sl.queue.Push(std::move(copy), kMaxPending)) {
         const uint64_t now = NowMs();
-        if (now >= b.nextSayMs) {
-            b.nextSayMs = now + kRefusalSayMs;
+        if (now >= sl.nextSayMs) {
+            sl.nextSayMs = now + kRefusalSayMs;
             UE_LOGW("[KEYPAD-VERB] slot %u queue full (%zu) -- refusing its keypad intents until it drains",
-                    static_cast<unsigned>(senderSlot), q.size());
+                    static_cast<unsigned>(senderSlot), sl.queue.size());
         }
         ++g_denied;
-        return;
     }
-    q.push_back(payload);
-}
-
-void OnPeerLeft(uint8_t slot) {
-    if (slot >= coop::net::kMaxPeers) return;
-    g_pending[slot].clear();
-    g_rate[slot] = Bucket{};
-    g_waitSaid[slot] = 0;
 }
 
 void OnDisconnect() {
@@ -452,11 +442,6 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(g_sent), static_cast<unsigned long long>(g_ran),
                 static_cast<unsigned long long>(g_denied), static_cast<unsigned long long>(g_worldRefused),
                 static_cast<unsigned long long>(g_loadNative));
-    for (uint8_t slot = 0; slot < coop::net::kMaxPeers; ++slot) {
-        g_pending[slot].clear();
-        g_rate[slot] = Bucket{};
-        g_waitSaid[slot] = 0;
-    }
     g_sent = g_ran = g_denied = g_worldRefused = g_loadNative = 0;
 }
 

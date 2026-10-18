@@ -5,12 +5,19 @@
 
 #include "script_bytecode.h"
 #include "ue_wrap/core/hot_path_guard.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/script_calls.h"
 #include "ue_wrap/core/sdk_profile.h"
 
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
+#include <cwchar>
+#include <iterator>
+#include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace ue_wrap::script_fingerprint {
@@ -26,8 +33,8 @@ struct Decoded {
     std::unordered_map<uint32_t, int> index;
 };
 
-bool Decode(Ctx& c, const uint8_t* s, size_t n, Decoded& out) {
-    if (!Scan(c, s, n, out.stmts)) return false;
+bool Decode(Ctx& c, const uint8_t* s, size_t n, Decoded& out, bool wantCalls) {
+    if (!Scan(c, s, n, out.stmts, wantCalls)) return false;
     out.index.reserve(out.stmts.size());
     for (size_t i = 0; i < out.stmts.size(); ++i) out.index[out.stmts[i].off] = static_cast<int>(i);
     return true;
@@ -51,20 +58,26 @@ bool IsTerminator(uint8_t op) {
     return op == EX_Jump || op == EX_Return || op == EX_EndOfScript || op == EX_PopExecutionFlow || op == EX_ComputedJump;
 }
 
-// Flow order: follow a straight run (an EX_Jump is layout glue), defer every other code target LIFO in
-// operand order, mark where a run merges into a labelled statement.
-void RenderFlow(Ctx& c, const uint8_t* s, size_t n, const Decoded& d, uint32_t entry, std::string& text) {
-    const std::vector<Stmt>& stmts = d.stmts;
-    Block b;
-    b.d = &d;
+// A script's statements in flow order: `order` holds the statement offsets, `label` each one's position in
+// it, `merges` where a run ends by falling into a statement already labelled.
+struct Flow {
     std::vector<uint32_t> order;
     std::unordered_map<uint32_t, int> label;
     std::unordered_map<uint32_t, uint32_t> merges;
+};
+
+// Flow order: follow a straight run (an EX_Jump is layout glue), defer every other code target LIFO in
+// operand order, mark where a run merges into a labelled statement.
+Flow FlowOrder(Ctx& c, const Decoded& d, uint32_t entry) {
+    const std::vector<Stmt>& stmts = d.stmts;
+    Block b;
+    b.d = &d;
+    Flow f;
     std::vector<uint32_t> pending{b.Resolve(entry)};
     while (!pending.empty()) {
         uint32_t off = pending.back();
         pending.pop_back();
-        if (label.count(off)) continue;
+        if (f.label.count(off)) continue;
         bool havePrev = false;
         uint32_t prev = 0;
         for (;;) {
@@ -73,12 +86,12 @@ void RenderFlow(Ctx& c, const uint8_t* s, size_t n, const Decoded& d, uint32_t e
                 c.Fail("code offset is not a statement", off);
                 break;
             }
-            if (label.count(off)) {
-                if (havePrev) merges[prev] = off;
+            if (f.label.count(off)) {
+                if (havePrev) f.merges[prev] = off;
                 break;
             }
-            label[off] = static_cast<int>(order.size());
-            order.push_back(off);
+            f.label[off] = static_cast<int>(f.order.size());
+            f.order.push_back(off);
             const Stmt& st = stmts[it->second];
             for (size_t k = st.targets.size(); k-- > 0;) pending.push_back(b.Resolve(st.targets[k]));
             if (IsTerminator(st.op)) break;
@@ -89,7 +102,17 @@ void RenderFlow(Ctx& c, const uint8_t* s, size_t n, const Decoded& d, uint32_t e
             off = b.Resolve(stmts[i + 1].off);
         }
     }
-    for (uint32_t off : order) {
+    return f;
+}
+
+// The flow, rendered: one line per statement, labels and merges in the canonical text.
+void RenderFlow(Ctx& c, const uint8_t* s, size_t n, const Decoded& d, uint32_t entry, std::string& text) {
+    const std::vector<Stmt>& stmts = d.stmts;
+    Block b;
+    b.d = &d;
+    Flow flow = FlowOrder(c, d, entry);
+    std::unordered_map<uint32_t, int>& label = flow.label;
+    for (uint32_t off : flow.order) {
         const Stmt& st = stmts[d.index.at(off)];
         text += std::to_string(label[off]) + " ";
         const Labels labels{&label, &ResolveThunk, &b};
@@ -106,8 +129,8 @@ void RenderFlow(Ctx& c, const uint8_t* s, size_t n, const Decoded& d, uint32_t e
         } else {
             RenderExpr(c, s, n, off, labels, text);
         }
-        auto m = merges.find(off);
-        if (m != merges.end()) text += " >@" + std::to_string(label[m->second]);
+        auto m = flow.merges.find(off);
+        if (m != flow.merges.end()) text += " >@" + std::to_string(label[m->second]);
         text += "\n";
     }
 }
@@ -184,7 +207,7 @@ const Decoded* DecodeCached(Ctx& c, const uint8_t* s, size_t n, Decoded& local) 
         auto it = g_pass->scans.find(s);
         if (it != g_pass->scans.end() && it->second.first == n) return &it->second.second;
     }
-    if (!Decode(c, s, n, local)) return nullptr;
+    if (!Decode(c, s, n, local, /*wantCalls=*/false)) return nullptr;
     if (!g_pass) return &local;
     auto& e = g_pass->scans[s];
     e.first = n;
@@ -193,6 +216,46 @@ const Decoded* DecodeCached(Ctx& c, const uint8_t* s, size_t n, Decoded& local) 
 }
 
 // ---- one function ----
+
+// One event stub of an ubergraph's class that enters it: the stub's name (rendered as the canonical text
+// writes it) and the entry offset its call passes.
+struct Entry {
+    std::string stubName;
+    uint32_t    entry;
+};
+
+// The ubergraph's own logic is the region of every event stub of its class that enters it, so its flow is
+// listed stub by stub in name order, then entry; a fresh frame map per entry is the caller's. False, with
+// the problem on `c`, when a function of the class does not decode: it may be a stub, and a stub left out
+// is a region left out, so the ubergraph's text would be short and still read as whole.
+bool UberEntries(Ctx& c, void* ubergraphFn, std::vector<Entry>& out) {
+    out.clear();
+    void* cls = R::OuterOf(ubergraphFn);
+    void* f = cls ? Rd<void*>(cls, P::off::UStruct_Children) : nullptr;
+    for (int guard = 0; f && guard < 4096; ++guard, f = Rd<void*>(f, P::off::UField_Next)) {
+        const uint8_t* ss = Rd<const uint8_t*>(f, P::off::UStruct_Script);
+        const int32_t sn = Rd<int32_t>(f, P::off::UStruct_ScriptNum);
+        if (!ss || sn <= 0 || f == ubergraphFn) continue;
+        Ctx probe;  // its own frame map and problem; the pass's names
+        probe.names = c.names;
+        Decoded probeOwn;
+        const Decoded* pd = DecodeCached(probe, ss, static_cast<size_t>(sn), probeOwn);
+        if (!pd) {
+            c.Fail("a function of the ubergraph's class does not decode", 0);
+            return false;
+        }
+        for (const Stmt& x : pd->stmts)
+            if (x.uberFn == ubergraphFn) {
+                const R::FName& nm = R::NameOf(f);
+                out.push_back({c.names->Of(nm.ComparisonIndex, static_cast<uint32_t>(nm.Number)),
+                               static_cast<uint32_t>(x.uberEntry)});
+            }
+    }
+    std::sort(out.begin(), out.end(), [](const Entry& a, const Entry& b) {
+        return a.stubName != b.stubName ? a.stubName < b.stubName : a.entry < b.entry;
+    });
+    return true;
+}
 
 void Build(void* fn, Result& r, Ctx& c) {
     const uint32_t fflags = Rd<uint32_t>(fn, P::off::UFunction_FunctionFlags);
@@ -212,34 +275,12 @@ void Build(void* fn, Result& r, Ctx& c) {
     if (uber) {
         // the ubergraph itself: its dispatch is a computed jump, so its logic is the region of every event
         // stub of the class that enters it, stub by stub in name order (a fresh frame map per entry)
-        std::vector<std::pair<std::string, int32_t>> entries;
-        void* cls = R::OuterOf(fn);
-        void* f = cls ? Rd<void*>(cls, P::off::UStruct_Children) : nullptr;
-        for (int guard = 0; f && guard < 4096; ++guard, f = Rd<void*>(f, P::off::UField_Next)) {
-            const uint8_t* ss = Rd<const uint8_t*>(f, P::off::UStruct_Script);
-            const int32_t sn = Rd<int32_t>(f, P::off::UStruct_ScriptNum);
-            if (!ss || sn <= 0 || f == fn) continue;
-            // A function of the class that does not decode may be a stub, and a stub left out is a region
-            // left out: the ubergraph's text would be short and still read as whole.
-            Ctx probe;  // its own frame map and problem; the pass's names
-            probe.names = c.names;
-            Decoded probeOwn;
-            const Decoded* pd = DecodeCached(probe, ss, static_cast<size_t>(sn), probeOwn);
-            if (!pd) {
-                c.Fail("a function of the ubergraph's class does not decode", 0);
-                return;
-            }
-            for (const Stmt& x : pd->stmts)
-                if (x.uberFn == fn) {
-                    const R::FName& nm = R::NameOf(f);
-                    entries.emplace_back(c.names->Of(nm.ComparisonIndex, static_cast<uint32_t>(nm.Number)), x.uberEntry);
-                }
-        }
-        std::sort(entries.begin(), entries.end());
-        for (const auto& e : entries) {
-            r.text += "== entry " + e.first + " ==\n";
+        std::vector<Entry> entries;
+        if (!UberEntries(c, fn, entries)) return;
+        for (const Entry& e : entries) {
+            r.text += "== entry " + e.stubName + " ==\n";
             c.locals.clear();
-            RenderFlow(c, s, static_cast<size_t>(n), *decoded, static_cast<uint32_t>(e.second), r.text);
+            RenderFlow(c, s, static_cast<size_t>(n), *decoded, e.entry, r.text);
         }
         return;
     }
@@ -279,6 +320,45 @@ void SignatureLine(void* fn, Result& r, Ctx& c) { r.text = SigLine(c, fn); }
 int SignatureSEH(void* fn, Result* r, Ctx* c) {
     __try {
         SignatureLine(fn, *r, *c);
+        return 0;
+    } __except (ReadFaultFilter(GetExceptionCode())) {
+        return 1;
+    }
+}
+
+// The calls of one function in the fingerprint's own order: a plain function by its flow (a stub that only
+// jumps into its ubergraph lists its own statements only), an ubergraph by its stubs' entries, each
+// entry's flow with a statement an earlier entry reached skipped, so each call is listed once. False when
+// the function does not decode.
+bool ListCalls(void* fn, std::vector<script_calls::CallSite>& out, Ctx& c) {
+    if (Rd<uint32_t>(fn, P::off::UFunction_FunctionFlags) & P::off::FUNC_Native) return true;  // no script
+    const uint8_t* s = Rd<const uint8_t*>(fn, P::off::UStruct_Script);
+    const int32_t n = Rd<int32_t>(fn, P::off::UStruct_ScriptNum);
+    if (!s || n <= 0) return true;
+    Decoded d;
+    if (!Decode(c, s, static_cast<size_t>(n), d, /*wantCalls=*/true)) return false;
+    std::unordered_set<uint32_t> listed;
+    const auto list = [&](uint32_t entry) {
+        const Flow flow = FlowOrder(c, d, entry);
+        for (uint32_t off : flow.order) {
+            if (!listed.insert(off).second) continue;
+            const std::vector<script_calls::CallSite>& calls = d.stmts[d.index.at(off)].calls;
+            out.insert(out.end(), calls.begin(), calls.end());
+        }
+    };
+    if (IsUbergraph(c, fn)) {
+        std::vector<Entry> entries;
+        if (!UberEntries(c, fn, entries)) return false;
+        for (const Entry& e : entries) list(e.entry);
+    } else {
+        list(0);
+    }
+    return c.problem.empty();
+}
+
+int ListCallsSEH(void* fn, std::vector<script_calls::CallSite>* out, Ctx* c, bool* ok) {
+    __try {
+        *ok = ListCalls(fn, *out, *c);
         return 0;
     } __except (ReadFaultFilter(GetExceptionCode())) {
         return 1;
@@ -350,3 +430,89 @@ Result Of(void* ufunction) {
 }
 
 }  // namespace ue_wrap::script_fingerprint
+
+// script_calls.h has no source of its own: its three functions live here, beside the walk and the decoder.
+namespace ue_wrap::script_calls {
+
+bool EnumerateCalls(void* ufunction, std::vector<CallSite>& out) {
+    UE_ASSERT_GAME_THREAD("script_calls::EnumerateCalls");
+    namespace F = ue_wrap::script_fingerprint;
+    out.clear();
+    if (!ufunction) return false;
+    F::detail::Ctx c;
+    if (F::g_pass) c.names = &F::g_pass->names;
+    bool ok = false;
+    if (F::ListCallsSEH(ufunction, &out, &c, &ok) || !ok) {
+        out.clear();
+        return false;
+    }
+    return true;
+}
+
+bool SameCallee(const CallSite& site, void* ufunction) {
+    if (!ufunction) return false;
+    if (script_fingerprint::detail::IsNameCallOp(site.op)) {
+        const ue_wrap::reflection::FName& n = ue_wrap::reflection::NameOf(ufunction);
+        return static_cast<uint32_t>(n.ComparisonIndex) == site.nameComparisonIndex &&
+               static_cast<uint32_t>(n.Number) == site.nameNumber;
+    }
+    return site.callee == ufunction;
+}
+
+namespace {
+
+namespace F = ue_wrap::script_fingerprint;
+
+// The name compare over the stored property pointers, which are engine memory (no SEH in this function:
+// it owns strings).
+bool HasLocalRead(const CallSite& site, const wchar_t* localName) {
+    F::detail::Ctx c;
+    if (F::g_pass) c.names = &F::g_pass->names;
+    const size_t want = std::wcslen(localName);
+    for (uint8_t i = 0; i < site.localCount && i < std::size(site.locals); ++i) {
+        if (!site.locals[i]) continue;
+        // The renderer folds to lowercase and writes number n+1 as "_n": the whole string is the name.
+        const std::string have = F::detail::FieldName(c, site.locals[i]);
+        if (have.size() != want) continue;
+        bool same = true;
+        for (size_t k = 0; same && k < want; ++k) {
+            wchar_t ch = localName[k];
+            if (ch >= L'A' && ch <= L'Z') ch = static_cast<wchar_t>(ch - L'A' + L'a');
+            same = static_cast<wchar_t>(static_cast<unsigned char>(have[k])) == ch;
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+// A read fault is absorbed as "no match", the same wrap ListCallsSEH gives the walk.
+int HasLocalSEH(const CallSite* site, const wchar_t* localName, bool* found) {
+    __try {
+        *found = HasLocalRead(*site, localName);
+        return 0;
+    } __except (F::ReadFaultFilter(GetExceptionCode())) {
+        return 1;
+    }
+}
+
+}  // namespace
+
+bool CallHasLocal(const CallSite& site, const wchar_t* localName) {
+    UE_ASSERT_GAME_THREAD("script_calls::CallHasLocal");
+    if (!localName) return false;
+    bool found = false;
+    if (HasLocalSEH(&site, localName, &found)) {
+        static std::atomic<bool> faulted{false};
+        if (!faulted.exchange(true, std::memory_order_relaxed))
+            UE_LOGW("script_calls: CallHasLocal faulted reading a stored local (logged once); the CallSite outlived its class?");
+        return false;
+    }
+    if (!found && site.localsTruncated) {
+        static std::atomic<bool> said{false};
+        if (!said.exchange(true, std::memory_order_relaxed))
+            UE_LOGI("script_calls: CallHasLocal asked of a call with more locals than it stores; false is not known");
+    }
+    return found;
+}
+
+}  // namespace ue_wrap::script_calls

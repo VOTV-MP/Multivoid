@@ -3,7 +3,7 @@
 // (assets/thanks/thanks.txt) is embedded as the fallback and served by the master at /v1/thanks,
 // so a name is added or taken out by publishing the file, with no release. The game keeps its
 // supporter list the same way (downloaded, one name per line under a tier tag); what differs is
-// that this one has a real fallback, is cached beside the executable, and is fetched only where
+// that this one has a real fallback, is cached in the mod's data folder, and is fetched only where
 // the mod already talks to its master, never from the title screen alone.
 //
 // Two copies are weighed: the build's, and what the master last said. The higher `revision` wins

@@ -37,7 +37,8 @@ bool IsIncomingDestroy(void* actor);
 //
 // KEYED BY SAVE KEY, not by actor pointer: by the time the echo arrives the actor is gone, so there
 // is no pointer left to mark. Without it the echo reaches the destroy receiver's key fallback, which
-// finds any other live prop that shares the key (saves ship duplicate keys) and destroys it too.
+// finds any other live prop that shares the key (the level's clone families share one key) and
+// destroys it too.
 //
 // One-shot, and cleared whole at its cap of 256: an entry lost that way, or never consumed, lets that
 // one echo resolve its key, which destroys nothing unless another prop shares it. Game thread only.

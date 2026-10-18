@@ -392,8 +392,9 @@ const char* RetiredKeyNote(const char* key) {
           "line does nothing now and is safe to remove." },
         { "player_guid",
           "retired in b144 -- your player identity moved to the file "
-          "multivoid_identity.key next to this one, which cannot be copied out of "
-          "a screenshot. This line does nothing now and is safe to remove." },
+          "multivoid_identity.key in the mod's own folder (Mods\\Multivoid), which "
+          "cannot be copied out of a screenshot. This line does nothing now and is "
+          "safe to remove." },
         { "net.identity",
           "retired in b144 -- a peer's network name is now its own identity key, "
           "so there is nothing left to configure. Safe to remove." },

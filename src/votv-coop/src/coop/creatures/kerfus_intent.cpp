@@ -7,9 +7,11 @@
 #include "coop/element/intent_authority.h"
 #include "coop/element/registry.h"
 #include "coop/net/intent_bucket.h"
+#include "coop/net/intent_queue.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/roster_ledger.h"  // PerSlotState
 #include "coop/props/active_drive.h"
 
 #include "ue_wrap/actors/kerfus.h"
@@ -20,7 +22,6 @@
 
 #include <atomic>
 #include <cstdint>
-#include <deque>
 #include <string>
 
 namespace coop::kerfus_intent {
@@ -64,18 +65,16 @@ unsigned long long g_sent = 0, g_run = 0, g_denied = 0;
 void*   g_runningKerfus = nullptr;
 uint8_t g_runningSlot = 0;
 bool g_saidNoEid = false;
-bool g_waitSaid[coop::net::kMaxPeers] = {};
 
-struct Bucket {
-    coop::net::IntentBucket rate;
-    uint64_t                nextSayMs = 0;
+// One sender: its queued intents with their bucket, and the latches that clear with its occupant.
+struct Slot {
+    coop::net::IntentQueue<coop::net::KerfusIntentPayload> queue;
+    uint64_t nextSayMs = 0;      // the full queue's refusal, said once in kSayEveryMs
+    bool     waitSaid  = false;  // a wait for the body, said once a streak
 };
-Bucket g_rate[coop::net::kMaxPeers];
-std::deque<coop::net::KerfusIntentPayload> g_pending[coop::net::kMaxPeers];
+coop::roster_ledger::PerSlotState<Slot> g_slots;
 
 bool IsVerb(uint8_t a) { return a == kActionUse || a == kActionPat || a == kActionToggle; }
-
-bool TakeToken(uint8_t slot) { return g_rate[slot].rate.Take(kBudget, coop::active_drive::NowMs()); }
 
 // ---- the client's gate ---------------------------------------------------------------------------
 
@@ -177,8 +176,8 @@ bool Execute(coop::net::Session& s, const coop::net::KerfusIntentPayload& p, uin
     const auto token = EL::IntentTarget::ForClientIntent(s, slot, kKerfusReachUU);
     const EL::IntentSubject subj = token.Resolve(static_cast<EL::ElementId>(p.elementId), EL::ElementType::Prop);
     if (subj.outcome == EL::IntentOutcome::NoBody) {
-        if (!g_waitSaid[slot]) {
-            g_waitSaid[slot] = true;
+        if (!g_slots[slot].waitSaid) {
+            g_slots[slot].waitSaid = true;
             UE_LOGI("kerfus_intent: slot %u's Kerfus verbs wait: the host has no body for it yet",
                     static_cast<unsigned>(slot));
         }
@@ -237,46 +236,34 @@ void Tick(coop::net::Session& session) {
     }
     if (!session.running() || session.role() != coop::net::Role::Host) return;
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
-        if (g_pending[slot].empty() || !TakeToken(slot)) continue;
-        const coop::net::KerfusIntentPayload p = g_pending[slot].front();
-        if (Execute(session, p, slot)) {
-            g_pending[slot].pop_front();
-            g_waitSaid[slot] = false;      // a consumed intent ends the wait's streak
-        } else {
-            g_rate[slot].rate.Refund(kBudget);  // a wait runs nothing, so it spends no token
-        }
+        Slot& sl = g_slots[slot];
+        sl.queue.Serve(kBudget, coop::active_drive::NowMs, [&](const coop::net::KerfusIntentPayload& p) {
+            if (!Execute(session, p, slot)) return coop::net::Served::Wait;  // a wait runs nothing: no token spent
+            sl.waitSaid = false;  // a consumed intent ends the wait's streak
+            return coop::net::Served::Done;
+        });
     }
 }
 
 void OnIntent(coop::net::Session& session, const coop::net::KerfusIntentPayload& payload, uint8_t senderSlot) {
     if (session.role() != coop::net::Role::Host) return;
     if (senderSlot < 1 || senderSlot >= coop::net::kMaxPeers || !IsVerb(payload.action)) return;
-    auto& q = g_pending[senderSlot];
-    if (q.size() >= kMaxPending) {
-        Bucket& b = g_rate[senderSlot];
+    Slot& sl = g_slots[senderSlot];
+    coop::net::KerfusIntentPayload copy = payload;
+    if (!sl.queue.Push(std::move(copy), kMaxPending)) {
         const uint64_t now = coop::active_drive::NowMs();
-        if (now >= b.nextSayMs) {
-            b.nextSayMs = now + kSayEveryMs;
+        if (now >= sl.nextSayMs) {
+            sl.nextSayMs = now + kSayEveryMs;
             UE_LOGW("kerfus_intent: slot %u queue full (%zu) -- refusing verbs until it drains",
-                    static_cast<unsigned>(senderSlot), q.size());
+                    static_cast<unsigned>(senderSlot), sl.queue.size());
         }
         ++g_denied;
-        return;
     }
-    q.push_back(payload);
-}
-
-void OnPeerLeft(uint8_t slot) {
-    if (slot >= coop::net::kMaxPeers) return;
-    g_pending[slot].clear();
-    g_rate[slot] = Bucket{};
-    g_waitSaid[slot] = false;
 }
 
 void OnDisconnect() {
     if (g_sent || g_run || g_denied)
         UE_LOGI("kerfus_intent: session end -- sent=%llu run=%llu denied=%llu", g_sent, g_run, g_denied);
-    for (uint8_t slot = 0; slot < coop::net::kMaxPeers; ++slot) OnPeerLeft(slot);
     g_sent = g_run = g_denied = 0;
     g_saidNoEid = false;
 }

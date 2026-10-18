@@ -10,7 +10,8 @@
 // pile carries no position on the wire at all, and a keyed prop's is clobbered by the joiner's own
 // loadObjects afterwards. The flush is LATE-ARMED past the connect edge, because a pile moved late
 // in a long load tail would get no correction from a one-shot; its expiry is the join window's
-// true close and retires the maps. A stale-fallback join captures nothing and every entry point is
+// true close and retires the maps (a prop a hand held after its correction went out keeps its keyed
+// map through a settle phase). A stale-fallback join captures nothing and every entry point is
 // then a no-op, the divergence sweep keeping full responsibility. See docs/join.md.
 
 #pragma once
@@ -35,11 +36,14 @@ void CaptureForSlot(int peerSlot);
 void SendDivergenceDeletes(int peerSlot);
 
 // The connect edge, after the snapshot trigger: one position correction per save-authoritative
-// entity the host moved since the capture. Arms the late window and resets its dedupe.
+// entity the host moved since the capture. Arms the late window and resets its dedupe. A no-op,
+// said once, while the slot is in its hand settle: the window is over and does not re-open.
 void FlushDivergedPositions(int peerSlot);
 
 // The late-arm cadence: re-flush each armed joiner's diverged positions until its window expires,
-// then retire that slot's maps. From the transfer's host tick.
+// then retire that slot's maps -- the keyed ones after a settle of at most 30 s when a hand held a
+// prop after its correction went out, so that prop gets a follow-up once it is out of the hand and
+// at rest. From the transfer's host tick.
 void TickLateArm();
 
 // The save-time position of keyless chipPile `eid` for `peerSlot`. False (out untouched) for a
@@ -72,13 +76,15 @@ void RecordGrabTimePileXform(coop::element::ElementId eid, const ue_wrap::FVecto
 // A peer left, or its stream was cancelled: drop its baseline and disarm its late flush.
 void ClearForSlot(int peerSlot);
 
-// True from `peerSlot`'s capture instant until its join window closes: the world a joiner is
-// handed has been taken, whether or not its load is over.
+// True from `peerSlot`'s capture instant until its keyed map retires: the window's close, or, when a
+// settle phase follows it, that phase's end (<= 30 s later). The world a joiner is handed has been
+// taken, whether or not its load is over.
 bool HasCapture(int peerSlot);
 
 // True while `peerSlot`'s late flush is armed: a keyed prop the host moves now reaches that joiner
 // as a position correction, the join's own reconcile rather than the lane that owns the move. A
-// drill measuring a lane's own delivery starts once this is false.
+// drill measuring a lane's own delivery starts once this is false. False during the settle phase that
+// can follow the window, which watches only the props a hand held.
 bool IsLateWindowOpen(int peerSlot);
 
 }  // namespace coop::join_window_baseline

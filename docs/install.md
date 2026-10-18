@@ -145,25 +145,36 @@ from the folder that contains `VotV-Win64-Shipping.exe`, then install normally.
 - Manual: delete the `Mods\Multivoid` folder. The game boots completely stock
   without it (UE4SS may remain; it does nothing on its own).
 
-For a full clean sweep, also delete the mod's runtime files next to the
-executable unless noted (all optional — they only store mod settings and logs):
-`multivoid.ini`, `multivoid.ini.example`, `multivoid.log`, `multivoid.prev.log`,
-`multivoid-loaded.txt`, `multivoid-compat-report.txt`, `multivoid-players.txt`,
-`multivoid-banlist.txt` (from builds before this one; this build does not read it), the folder
-`multivoid_servers` (it holds your hosted server's folder), the folder `multivoid_reports`
-(your saved bug reports), the skin-pak folder
+The `Mods\Multivoid` folder also holds everything the mod keeps for itself: your settings
+(`multivoid.ini` and `multivoid.ini.example`), your hosted server's folder `multivoid_servers`, the
+players' saved inventories in `coop_players`, `multivoid-players.txt` and `multivoid_thanks.txt`.
+Deleting it removes them with the mod (under a mod manager, the same folder inside the manager's
+profile).
+
+For a full clean sweep, also delete the mod's diagnostics next to the
+executable unless noted (all optional — they only store logs and reports):
+`multivoid.log`, `multivoid.prev.log`, `multivoid-loaded.txt`, `multivoid-compat-report.txt`, the
+folder `multivoid_reports` (your saved bug reports), the folder `multivoid_locale` if you made
+one (your translations), the skin-pak folder
 `VotV\Content\Paks\LogicMods\multivoid` if you created one, and, from builds before this
-one, a folder `%LOCALAPPDATA%\Multivoid` (this build does not read it). Your identity is a separate
-file beside the executable, `multivoid_identity.key`, which only your Windows account can
+one, the files `multivoid.ini`, `multivoid.ini.example`, `multivoid-players.txt`,
+`multivoid_thanks.txt`, `multivoid-banlist.txt` and the folders `multivoid_servers` and
+`coop_players` (this build does not read them; the log names each once), and a folder
+`%LOCALAPPDATA%\Multivoid` (this build does not read it). Your identity is a separate
+file in the mod's own folder, `Mods\Multivoid\multivoid_identity.key` (under a mod manager, the
+same folder inside the manager's profile), which only your Windows account can
 read (another account on the same PC that cannot read it keeps its own key beside it
-(if it may write the game folder; otherwise each launch runs on a temporary identity and the
-log says so), as `multivoid_identity_<a code for that account>.key`; to move that one to another PC, rename
-it to `multivoid_identity.key`). If another program is holding that
+(if it may write that folder; otherwise each launch runs on a temporary identity and the
+log says so), as `multivoid_identity_<a code for that account>.key`). The file also records
+the PC it was made on: a copy placed on another PC, or in a game folder copied there, is set
+aside there (renamed `multivoid_identity.key.foreign-<time>`) and that PC makes a new identity,
+so an identity cannot be shared by copying files. If another program is holding that
 file when the game starts, that launch runs on a temporary identity and the log says so;
 nothing is written over the file and your inventory is back the next launch. Leave it unless
 you want a new identity: deleting it (and a `multivoid_identity_<code>.key` of yours beside
-it, if any) orphans the inventory hosts stored for you, and copying
-it to another PC takes your identity with you.
+it, if any) orphans the inventory hosts stored for you, and so does deleting the
+`Mods\Multivoid` folder, which holds it. A `multivoid_identity.key` left beside the executable
+by an earlier build is no longer read (the log names it once); you can delete it.
 
 ## Troubleshooting
 

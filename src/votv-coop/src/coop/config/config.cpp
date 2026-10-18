@@ -1,9 +1,10 @@
-// coop/config/config.cpp -- the env and ini configuration readers: the one unbounded ini line
-// primitive with its tri-state scan verdict, the occurrence rule and the two value layers, the
-// typed layered reads off the registry rows, and the net, nickname and skin readers.
+// coop/config/config.cpp -- the env and ini configuration readers: the occurrence rule and the two
+// value layers, the typed layered reads off the registry rows, and the net, nickname and skin
+// readers. The ini file reader itself, with its tri-state scan verdict, is config_ini_read.h.
 
 #include "coop/config/config.h"
 
+#include "config_ini_read.h"
 #include "config_internal.h"
 #include "ue_wrap/core/paths.h"
 #include "coop/session/player_handshake.h"  // kNickMaxChars
@@ -89,141 +90,21 @@ static bool ParseIniLine(const std::string& line, std::string& key, std::string&
     return !key.empty();
 }
 
-// One lock for every multivoid.ini access: writers come from two threads (the render thread's
-// skins and voice panels, the game thread's boot default writes), and an unserialised
-// read-modify-write pair let one writer rebuild the file from the other's half-written state.
-// Readers take it too, so a read never sees the pre-rename transition.
-static std::mutex g_iniMutex;
-
-// The fault of the last live-ini read that failed this launch (None while none did), and whether
-// the minted identity is session-only (the mint gate, or a failed persist); the boot sweep reads
-// them for its panel rows. Set for the module-dir ini only, never a selftest corpus path.
-static std::atomic<IniFault> g_iniFault{IniFault::None};
+// Whether the minted identity is session-only (the mint gate, or a failed persist); the boot
+// sweep reads it for its panel row.
 static std::atomic<bool> g_identityNotDurable{false};
 
-// The one ini line primitive. Three fixed line buffers once served one file format, and a line
-// longer than its consumer's buffer split, its tail parsing as a phantom key; one unbounded reader
-// delivers whole lines to every consumer. The scan verdict is a tri-state: Ok is a clean end of
-// stream (a caller's absent verdict is authoritative), Absent is ENOENT at open, Unreadable is any
-// other open failure, a mid-stream read error, or bytes that are not text. A stream error once
-// read as a clean end, absent for every key past it, and the writer rebuilt the file from the
-// truncated prefix. The enum lives in config_internal.h for the write TU.
+// The scan verdict of the ini reader (config_ini_read.h); the enum lives in config_internal.h.
 using IniScan = internal::IniScan;
 
-// A live-ini read's fault, kept for the panel and the census. A clean read leaves the last fault
-// standing: they report whether any read this launch ran without the file.
-static void NoteLiveScan(IniScan st, IniFault fault) {
-    if (st == IniScan::Unreadable) g_iniFault.store(fault, std::memory_order_relaxed);
-}
-
-// The line source seam (+1 a line, 0 a clean end, -1 a stream error, -2 a byte no text holds):
-// production reads a file, and the config selftest injects a failing source to prove the error
-// branch yields Unreadable, never Absent.
-struct LineSource {
-    int (*next)(void* ctx, std::string& out);
-    void* ctx;
-};
-
-// The file behind a scan, read as BYTES. Text mode failed quietly twice: a Ctrl+Z byte ended the
-// stream, and fgets cannot report a zero byte, so a file saved as UTF-16 read as lines holding no
-// key -- every key absent, a fail-closed row given the default its refusal exists to withhold
-// (net.ice fell to `all`), and the skin mint rebuilding the file from those lines. Text mode's one
-// translation stays, a CRLF ending delivered as LF, so a rebuild writes the bytes it wrote before.
-struct FileBytes {
-    FILE* f;
-    size_t pos = 0;
-    size_t len = 0;
-    char buf[4096];
-};
-
-// One line, unbounded, with its newline when the file has one. A line a read error cut short is
-// not delivered: its prefix could read as a different, valid value. A zero byte ends the scan
-// rather than being skipped: no UTF-8 text holds one, and reading around it could deliver a value
-// the file does not show.
-static int FileLineSourceNext(void* ctx, std::string& out) {
-    FileBytes& b = *static_cast<FileBytes*>(ctx);
-    out.clear();
-    for (;;) {
-        if (b.pos == b.len) {
-            b.pos = 0;
-            b.len = std::fread(b.buf, 1, sizeof(b.buf), b.f);
-            if (b.len == 0) {
-                if (std::ferror(b.f)) return -1;
-                return out.empty() ? 0 : 1;  // a final line without a trailing newline
-            }
-        }
-        const char* p = b.buf + b.pos;
-        const size_t avail = b.len - b.pos;
-        const char* nl = static_cast<const char*>(std::memchr(p, '\n', avail));
-        const size_t take = nl ? static_cast<size_t>(nl - p) + 1 : avail;
-        if (std::memchr(p, '\0', take)) return -2;
-        out.append(p, take);
-        b.pos += take;
-        if (nl) {
-            if (out.size() >= 2 && out[out.size() - 2] == '\r') out.erase(out.size() - 2, 1);
-            return 1;
-        }
-    }
-}
-
-template <typename Fn>
-static IniScan ScanLineSource(LineSource src, Fn&& cb, IniFault* faultOut = nullptr) {
-    if (faultOut) *faultOut = IniFault::None;
-    std::string line;
-    bool first = true;
-    for (;;) {
-        const int r = src.next(src.ctx, line);
-        if (r == 0) return IniScan::Ok;
-        if (r < 0) {
-            if (faultOut) *faultOut = r == -2 ? IniFault::NotText : IniFault::ReadFailed;
-            return IniScan::Unreadable;
-        }
-        if (first) {
-            // An editor's UTF-8 byte-order mark belongs to the file, not to its first key, which
-            // it would otherwise turn into an unknown one. A UTF-16 mark says the file is not UTF-8
-            // at all, even where no zero byte comes before the first newline.
-            if (line.compare(0, 3, "\xEF\xBB\xBF") == 0) {
-                line.erase(0, 3);
-            } else if (line.compare(0, 2, "\xFF\xFE") == 0 || line.compare(0, 2, "\xFE\xFF") == 0) {
-                if (faultOut) *faultOut = IniFault::NotText;
-                return IniScan::Unreadable;
-            }
-            first = false;
-        }
-        cb(line);
-    }
-}
-
-template <typename Fn>
-static IniScan ScanIniFileAt(const std::wstring& path, Fn&& cb, IniFault* faultOut = nullptr) {
-    if (faultOut) *faultOut = IniFault::None;
-    FILE* f = nullptr;
-    const errno_t rc = _wfopen_s(&f, path.c_str(), L"rb");
-    if (rc != 0 || !f) {
-        if (rc == ENOENT) return IniScan::Absent;
-        if (faultOut) *faultOut = IniFault::ReadFailed;
-        return IniScan::Unreadable;
-    }
-    FileBytes bytes;  // the buffer stays unset: only what fread returns is read
-    bytes.f = f;
-    const IniScan st = ScanLineSource(LineSource{&FileLineSourceNext, &bytes}, cb, faultOut);
-    std::fclose(f);
-    return st;
-}
-
 static std::wstring IniPath() {
-    const std::wstring dir = ue_wrap::paths::ExeDir();
+    const std::wstring dir = ue_wrap::paths::ModDataDir();
     return dir.empty() ? std::wstring{} : dir + L"\\multivoid.ini";
 }
 
 // The seams the write TU uses (config_internal.h).
 namespace internal {
-std::mutex& IniMutex() { return g_iniMutex; }
 std::wstring LiveIniPath() { return IniPath(); }
-IniScan ScanIniFile(const std::wstring& path,
-                    const std::function<void(const std::string&)>& cb, IniFault* faultOut) {
-    return ScanIniFileAt(path, cb, faultOut);
-}
 std::string TrimEdgesStr(const std::string& s) { return TrimEdges(s); }
 bool ParseIniKeyValue(const std::string& line, std::string& key, std::string& value) {
     return ParseIniLine(line, key, value);
@@ -362,36 +243,6 @@ bool ValueValidForKey(const char* key, const std::string& rawValue, std::string*
     }
 }
 
-// The reader core by path, unlocked (the public wrappers hold the lock; the selftest feeds corpus
-// files). On Absent or Unreadable the caller still gets `def`, and the verdict reaches the
-// callers that discriminate (the seeder, the mint gate, the sweep) through scanOut.
-static std::string ReadIniValueAt(const std::wstring& path, const char* key,
-                                  const char* def, IniScan* scanOut, IniFault* faultOut) {
-    std::string result = def;
-    bool found = false;
-    const IniScan st = ScanIniFileAt(path, [&](const std::string& line) {
-        if (found) return;
-        std::string k, v;
-        if (ParseIniLine(line, k, v) && _stricmp(k.c_str(), key) == 0) {
-            result = internal::CookIniValue(v, /*wsPrecededOnly=*/true);
-            found = true;
-        }
-    }, faultOut);
-    if (scanOut) *scanOut = st;
-    return result;
-}
-
-std::string ReadIniValue(const char* key, const char* def, IniScan* scanOut, IniFault* faultOut) {
-    std::lock_guard<std::mutex> lk(g_iniMutex);
-    IniScan st = IniScan::Ok;
-    IniFault fault = IniFault::None;
-    std::string v = ReadIniValueAt(IniPath(), key, def, &st, &fault);
-    NoteLiveScan(st, fault);
-    if (scanOut) *scanOut = st;
-    if (faultOut) *faultOut = fault;
-    return v;
-}
-
 // The P2P transport fields of `c` from a value set while the game runs (the runtime layer), then
 // the environment variable, then the ini value, then the default, for a session configured
 // with no master (ReadNetConfig's p2p topology); a master lobby takes its rendezvous and ICE
@@ -510,15 +361,6 @@ std::wstring ReadNickname() {
 // locked file as absent once minted and overwrote the real ini the moment the lock released, and a
 // file saved as UTF-16 was cut to the one line the mint appended. The boot panel shows an
 // "identity not durable" row for either outcome.
-
-// A key from the live ini with its scan verdict, under the lock.
-static std::string ReadLiveIniWithScan(const char* key, IniScan& st, IniFault& fault) {
-    std::lock_guard<std::mutex> lk(g_iniMutex);
-    std::string v = ReadIniValueAt(IniPath(), key, "", &st, &fault);
-    NoteLiveScan(st, fault);
-    return v;
-}
-
 std::string ReadPlayerSkin() {
     // The persisted body-skin choice (multivoid.ini player_skin=). A new identity (an absent or
     // malformed key) rolls a random starter from the converter-skin list, filtered to the paks on
@@ -526,7 +368,7 @@ std::string ReadPlayerSkin() {
     // identity.
     IniScan st = IniScan::Ok;
     IniFault fault = IniFault::None;
-    std::string skin = ReadLiveIniWithScan("player_skin", st, fault);
+    std::string skin = internal::ReadLiveIniWithScan("player_skin", st, fault);
     if (!coop::skins::IsValidSkinName(skin)) {
         skin = coop::skins::PickRandomStarterSkin();
         const std::string shownSkin =
@@ -549,7 +391,6 @@ std::string ReadPlayerSkin() {
 }
 
 bool IdentityNotDurable() { return g_identityNotDurable.load(std::memory_order_relaxed); }
-IniFault LastIniFault()   { return g_iniFault.load(std::memory_order_relaxed); }
 
 const char* IniFaultWords(IniFault fault) {
     switch (fault) {
@@ -558,18 +399,6 @@ const char* IniFaultWords(IniFault fault) {
         case IniFault::None:       break;
     }
     return "was read";
-}
-
-// The file operations the sweep and the owner reformat use.
-
-int ListLiveIniLines(std::vector<std::string>& out, IniFault* faultOut) {
-    std::lock_guard<std::mutex> lk(g_iniMutex);
-    IniFault fault = IniFault::None;
-    const IniScan st =
-        ScanIniFileAt(IniPath(), [&](const std::string& line) { out.push_back(line); }, &fault);
-    NoteLiveScan(st, fault);
-    if (faultOut) *faultOut = fault;
-    return static_cast<int>(st);
 }
 
 // The boolean ini flags: the same occurrence rule as the string layer (the first
@@ -585,7 +414,7 @@ namespace {
 int LookupTriStateAt(const std::wstring& path, const char* key) {
     int verdict = 0;
     bool found = false;
-    ScanIniFileAt(path, [&](const std::string& line) {
+    internal::ScanIniFileAt(path, [&](const std::string& line) {
         if (found) return;
         std::string k, v;
         if (ParseIniLine(line, k, v) && _stricmp(k.c_str(), key) == 0) {
@@ -610,9 +439,6 @@ bool MasterEnabled() {
 // product semantics: one core for the live resolve and its instrument.
 namespace internal {
 
-// The default a read of the ini is given when a line's absence must be told from any real value.
-static const char* const kIniAbsent = "\x01<absent>";
-
 // The layered raw-value pick (config_internal.h). The row comes from the caller's typed handle,
 // so no lookup and no unregistered key; the census passes a row straight off the table, which is
 // the one caller that has no handle and needs none.
@@ -635,27 +461,6 @@ bool PickRawLayered(const config_registry::Row* row, std::string& raw, bool* fro
     if (v == kIniAbsent) return false;
     raw = v;
     return true;
-}
-
-// The same layers without the session (config_internal.h), over the ini at `iniPath`. The ini is
-// read under IniMutex, as ReadIniValue reads it, and the scan's verdict is not recorded: an
-// unreadable file answers like an absent line, the default.
-void RawBelowSession(const std::wstring& iniPath, const config_registry::Row* row,
-                     std::string& raw) {
-    if (RuntimeLayerGet(row, raw)) return;
-    if (row->envVar) {
-        const std::string e = ReadEnv(row->envVar);
-        if (!e.empty()) {
-            raw = e;
-            return;
-        }
-    }
-    std::string v;
-    {
-        std::lock_guard<std::mutex> lk(g_iniMutex);
-        v = ReadIniValueAt(iniPath, row->key, kIniAbsent, nullptr, nullptr);
-    }
-    raw = (v == kIniAbsent) ? DefaultText(*row) : v;
 }
 
 bool FlagFromRaw(const config_registry::Row* row, bool have, const std::string& raw) {

@@ -3,6 +3,7 @@
 #include "coop/player/player_profile_store.h"
 
 #include "coop/atomic_file/atomic_file.h"
+#include "coop/mod_data/legacy_note.h"
 #include "coop/net/blob_chunks.h"  // Fnv64, the file's integrity hash
 #include "coop/save/save_transfer.h"  // HostSlot, the world the profiles belong to
 #include "coop/session/player_handshake.h"  // IsValidGuid
@@ -60,18 +61,18 @@ void DropHeldOfAnotherWorld() {
     g_heldForSerial = serial;
 }
 
-// <gameDir>/coop_players/<slot>, empty if a piece is missing. The slot name is the game's and
+// <mod data dir>/coop_players/<slot>, empty if a piece is missing. The slot name is the game's and
 // becomes ONE path component, so a name that could be more than one is refused.
 fs::path SlotDir(const std::wstring& slot) {
     if (slot.empty() || slot == L"." || slot == L".." ||
         slot.find_first_of(L"\\/:*?\"<>|") != std::wstring::npos)
         return {};
-    const std::wstring base = ue_wrap::paths::ExeDir();
+    const std::wstring base = ue_wrap::paths::ModDataDir();
     if (base.empty()) return {};
     return fs::path(base) / L"coop_players" / slot;
 }
 
-// <gameDir>/coop_players/<the set's slot>/<guid>.json, empty if any piece is missing.
+// <mod data dir>/coop_players/<the set's slot>/<guid>.json, empty if any piece is missing.
 fs::path PlayerFilePath(const std::string& guid) {
     // Defence in depth (the wire boundary already validates): a GUID that is not exactly 32 hex
     // characters never becomes a path component; an empty path makes every write no-op, so a
@@ -249,7 +250,7 @@ bool FollowWrittenSlot(const std::wstring& written) {
     if (to.empty() || ec) {
         UE_LOGW("player_profile: the profile directory of the slot '%ls' could not be made (%s) -- "
                 "nothing cut, everything stays for the next save", written.c_str(),
-                to.empty() ? "not a name for one directory, or no game directory" : ec.message().c_str());
+                to.empty() ? "not a name for one directory, or no data folder" : ec.message().c_str());
         return false;
     }
     if (g_setSlot.empty()) {
@@ -373,6 +374,10 @@ void Quarantine(const std::string& guid) {
                 "are for recovery", guid.c_str());
 }
 
+void NoteLegacyFolder() {
+    coop::legacy_note::Once(coop::legacy_note::LegacyFile::CoopPlayers, L"coop_players");
+}
+
 size_t ForgetSlot(const std::wstring& slot) {
     const fs::path dir = SlotDir(slot);
     size_t removed = 0;
@@ -422,7 +427,7 @@ size_t CutToDisk(const std::wstring& writtenSlot) {
                 if (dir.empty() || ec) {
                     UE_LOGW("player_profile: the profile directory could not be made (%s) -- "
                             "nothing cut, everything stays for the next save",
-                            dir.empty() ? "no game directory" : ec.message().c_str());
+                            dir.empty() ? "no data folder" : ec.message().c_str());
                     return 0;
                 }
                 dirReady = true;

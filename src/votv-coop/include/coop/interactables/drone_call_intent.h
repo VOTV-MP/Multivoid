@@ -37,11 +37,8 @@ void Tick(coop::net::Session& session);
 void OnDroneFlyIntent(coop::net::Session& session, const coop::net::DroneFlyIntentPayload& payload,
                       uint8_t senderSlot);
 
-// A peer left: its queue and its rate bucket go with it, so the next occupant of the slot starts
-// clean.
-void OnPeerLeft(uint8_t slot);
-
-// Session teardown: the queues and the buckets are dropped.
+// Session teardown: the counters are dropped. A sender's queue, its bucket and its said-once latch live in its
+// per-slot state and go with its occupant, so the next occupant of the slot starts clean.
 void OnDisconnect();
 
 // The keyboard presses this client has sent the host (the drone call drill's proof that a press

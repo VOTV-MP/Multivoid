@@ -7,6 +7,7 @@
 #pragma once
 
 #include "ue_wrap/core/types.h"
+#include "ue_wrap/engine/engine.h"  // BeforeFinishFn
 
 namespace ue_wrap::puppet {
 
@@ -35,8 +36,12 @@ void* GetComponentSkeletalMeshAsset(void* skinnedComponent);
 // class default may carry none; the game applies the skin at save load), its GameMode pointer
 // nulled and the gamemode's mainPlayer restored after BeginPlay, the post-process components
 // destroyed and the first-person arms hidden. The actor, or nullptr; logs a local-vs-puppet
-// AnimBP state diff.
-void* SpawnPuppet(const FVector& loc, void* skeletalMeshAsset, void* animClass);
+// AnimBP state diff. `beforeFinish` and `ctx` go to engine::SpawnActor: the callback runs on the
+// deferred actor before its BeginPlay and is not called when the spawn returns null before the
+// actor exists; a null result after it ran means the finish failed and the begun actor is
+// destroyed, so the caller undoes what the callback set.
+void* SpawnPuppet(const FVector& loc, void* skeletalMeshAsset, void* animClass,
+                  engine::BeforeFinishFn beforeFinish = nullptr, void* ctx = nullptr);
 
 // The puppet's USkeletalMeshComponent (the first such child), cached per actor; nullptr if none.
 void* GetSkeletalMeshComponent(void* puppetActor);

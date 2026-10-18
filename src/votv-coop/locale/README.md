@@ -18,7 +18,7 @@ The files are gettext catalogues (`.po`), the format MTA and most open-source pr
 
        <game dir>\WindowsNoEditor\VotV\Binaries\Win64\multivoid_locale\ru.po
 
-   It sits next to `multivoid.ini` and `multivoid.log`; create the folder if it does not exist. Restart the game.
+   It sits next to the game's executable; create the folder if it does not exist. Restart the game.
 
 ## How your file is chosen
 

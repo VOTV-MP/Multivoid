@@ -33,10 +33,8 @@ void Tick(coop::net::Session& session);
 // DeskVerb from `senderSlot`: a HOST queues a client's press, a CLIENT takes its verdict and effects.
 void OnMessage(coop::net::Session& session, const coop::net::DeskVerbPayload& p, int senderSlot);
 
-// A peer left: its queue and its rate bucket go.
-void OnPeerLeft(uint8_t slot);
-
-// Session end: the queues, the buckets and the counts go, the counts said.
+// Session end: the counts go, said. A sender's queue, its bucket and its said-once latch live in its per-slot
+// state and go with its occupant.
 void OnDisconnect();
 
 }  // namespace coop::desk_verb_intent

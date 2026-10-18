@@ -60,6 +60,9 @@ bool IsKerfurActor(void* actor);
 // base; the prop adoption collects prop-form candidates only (the NPC form is the NPC
 // adoption's job). False until the prop base is bound.
 bool IsKerfurPropClass(void* cls);
+// Whether the prop base is bound: IsKerfurPropClass answers false until it is, so a caller that must not take that
+// false for "not a kerfur" asks this first.
+bool KerfurPropBound();
 
 // Host only: reserve (or return the existing) stable kerfur id for a kerfur `actor` first
 // seen in `form`, whose current-form wire eid is `currentEid`. Idempotent per actor. Records

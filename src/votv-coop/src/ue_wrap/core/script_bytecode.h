@@ -7,6 +7,7 @@
 #pragma once
 
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_calls.h"
 
 #include <cstdint>
 #include <cstring>
@@ -16,9 +17,18 @@
 
 namespace ue_wrap::script_fingerprint::detail {
 
+constexpr uint8_t EX_LocalVariable = 0x00, EX_LocalOutVariable = 0x48;
 constexpr uint8_t EX_Return = 0x04, EX_Jump = 0x06, EX_EndFunctionParms = 0x16, EX_IntConst = 0x1D,
                   EX_FinalFunction = 0x1C, EX_LocalFinalFunction = 0x46, EX_PopExecutionFlow = 0x4D,
-                  EX_ComputedJump = 0x4E, EX_EndOfScript = 0x53;
+                  EX_ComputedJump = 0x4E, EX_EndOfScript = 0x53, EX_VirtualFunction = 0x1B,
+                  EX_LocalVirtualFunction = 0x45, EX_CallMath = 0x68;
+
+// The five call opcodes: a UFunction pointer operand, or an FName operand (the virtual forms).
+constexpr bool IsObjectCallOp(uint8_t op) {
+    return op == EX_FinalFunction || op == EX_LocalFinalFunction || op == EX_CallMath;
+}
+constexpr bool IsNameCallOp(uint8_t op) { return op == EX_VirtualFunction || op == EX_LocalVirtualFunction; }
+constexpr bool IsCallOp(uint8_t op) { return IsObjectCallOp(op) || IsNameCallOp(op); }
 
 template <typename T>
 T Rd(const void* base, size_t off) {
@@ -55,6 +65,7 @@ struct Stmt {
     std::vector<uint32_t> targets;  // code offsets inside, in operand order
     int32_t  uberEntry = -1;        // >= 0: an event stub's call into its ubergraph, at this entry
     void*    uberFn = nullptr;
+    std::vector<script_calls::CallSite> calls;  // its call expressions, pre-order; filled when Scan is asked
 };
 
 // How a rendered code offset becomes a label: through `resolve` (an EX_Jump chain followed) into `map`.
@@ -65,7 +76,8 @@ struct Labels {
 };
 
 // Every statement of a script, with its code offsets; false (and ctx.problem) when one does not decode.
-bool Scan(Ctx& c, const uint8_t* s, size_t n, std::vector<Stmt>& out);
+// `wantCalls` also lists each statement's call expressions (Stmt::calls), from the same walk.
+bool Scan(Ctx& c, const uint8_t* s, size_t n, std::vector<Stmt>& out, bool wantCalls);
 
 // Render the expression at `pos` onto `out`; the position after it, or 0 when it does not decode.
 size_t RenderExpr(Ctx& c, const uint8_t* s, size_t n, size_t pos, const Labels& labels, std::string& out);

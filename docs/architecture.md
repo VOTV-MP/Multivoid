@@ -127,8 +127,9 @@ refuses, and the packet header is the backstop.
 
 ## Identity
 
-**Peers.** Every install holds an Ed25519 keypair in a key file beside the game executable,
-under a private access list (`coop/net/peer_identity`); the public key *is*
+**Peers.** Every install holds an Ed25519 keypair in a key file in the mod's own folder,
+bound to the machine it was made on and under a private access list
+(`coop/net/peer_identity`); the public key *is*
 the peer's network identity, and the id the master server and the per-player inventory store
 use is derived from it. A name proves nothing by itself, so before a host spends
 a seat the two ends sign each other's nonces with the key their identity names
@@ -192,7 +193,7 @@ a call is a property of how the Blueprint VM dispatches it, not of the function:
 |---|---|---|
 | the `ProcessEvent` interceptor | engine-originated calls: ticks, BeginPlay, input events, delegates, timers, interface events | yes |
 | the script-body gate (`ue_wrap/core/script_gate`) | every Blueprint function body, on every route (an engine event, a Blueprint's own local call, a call through a context switch, an ubergraph entry; a virtual or final call to a script function ends in the same loop), with its arguments and the frame that called it | yes, per call |
-| the native function seam (`ue_wrap/core/ufunction_hook`) | calls into native functions on every route, including from inside a Blueprint's own graph | before the call, for a native with no return value and no out or reference parameter (its PRE form); after it, no |
+| the native function seam (`ue_wrap/core/ufunction_hook`) | calls into native functions on every route, including from inside a Blueprint's own graph | before the call, for a native with no return value and no out parameter or non-const reference (its PRE form); after it, no |
 | per-site reconcile | anything else: let the verb run, diff the observable state, converge to the authority's answer | after the fact |
 
 [coop-dispatch-visibility.md](coop-dispatch-visibility.md) is the per-function table and the

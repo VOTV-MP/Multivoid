@@ -18,33 +18,18 @@
 
 namespace coop::npc_world_enum {
 
-// Why a newly-registered NPC's EntitySpawn carries savePersisted=1 (adopt a local twin) vs 0
-// (fresh-spawn a mirror) depends on the CALLER's intent, NOT the actor's has-a-key property:
-//  - ConnectEdge:        host world-load init (subsystems). The broadcast (re)reaches a JOINER who
-//                        loaded the same save -> it MAY have a local twin of a keyed save object ->
-//                        savePersisted = HasSaveKey(obj).
-//  - MidSessionConverge: a kerfur turned ON mid-session (kerfur_convert). The broadcast reaches
-//                        ALREADY-CONNECTED peers who have NO twin (they cancelled their own local
-//                        turn-on) -> ALWAYS savePersisted=0 -> fresh-spawn now. A turn-on kerfur
-//                        has a random UCS-minted key so HasSaveKey is true, but the key is
-//                        meaningless to a peer that never loaded it -> routing it into the deferred
-//                        adoption poll costs an ~8s pop-in and a class-only false-bind dupe. This
-//                        matches the runtime-interceptor send, which already hardcodes
-//                        savePersisted=0 for the same "spawned after the join, no local twin"
-//                        reason.
-enum class NpcEnumOrigin { ConnectEdge, MidSessionConverge };
-
 // HOST-only PRE-EXISTING world-NPC enumeration: a kerfur already in the loaded save was never
 // synced, because it loaded with the level BEFORE the interceptor installed and so never went
 // through the intercepted BeginDeferred. Walk GUObjectArray for allowlisted-NPC actors that
 // EXIST but are NOT yet coop-tracked, and register each as a host Npc Element (alloc + bind the
 // live actor + reverse-map) -- the same end state the interceptor and its POST reach for a fresh
-// spawn. npc_sync::QueueConnectBroadcastForSlot then mirrors them to the joiner and
-// TickPoseStream streams them after. Idempotent (skips already-tracked actors). `origin` decides
-// the savePersisted policy (see above). Called at the host connect edge (ConnectEdge) AND from
-// the kerfur turn-on converge (MidSessionConverge). Returns the count newly registered. Game
-// thread. Cold path: one GUObjectArray walk per call.
-int RegisterExistingWorldNpcs(NpcEnumOrigin origin);
+// spawn. Each one's EntitySpawn goes to the peers already connected and NOT to `joiningSlot`:
+// npc_sync::QueueConnectBroadcastForSlot then mirrors every tracked NPC to the joiner, so the
+// joiner gets the spawn once, from there; TickPoseStream streams them after. Idempotent (skips
+// already-tracked actors). Called at the host connect edge, the one caller, with the joiner's
+// slot. Returns the count newly registered. Game thread. Cold path: one GUObjectArray walk per
+// call.
+int RegisterExistingWorldNpcs(int joiningSlot);
 
 // Patch the ufunction_hook Func-thunk onto the (already-resolved)
 // BeginDeferredActorSpawnFromClass UFunction so EX_CallMath spawns of allowlisted classes

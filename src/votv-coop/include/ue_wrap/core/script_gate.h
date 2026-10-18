@@ -37,6 +37,7 @@ struct Call {
     int      tag;             // the watch's tag, echoed back
     int      depth;           // nesting of watched bodies on this thread; 1 = outermost
     bool     fromOurCode;     // inside a reflection::CallFunction of ours
+    uintptr_t* scopeMark;     // the scope word of this call's dispatch (MarkScope); null for a post
 };
 
 // The watch surface follows the Watch that Relay, Moddy's VOTV mod, publishes in its README: a
@@ -176,6 +177,27 @@ Active CurrentThreadCall();
 // pre would stay raised for the life of the process and answer "my verb is running" forever.
 // Game thread in practice (the gate never fires callbacks off it); any thread reads its own chain.
 bool IsBodyActive(void* function, void* callerFunction = nullptr);
+
+// A scope mark: bits a PRE puts on the scope of the body it is about to let run, readable by any seam on
+// this thread while that body runs. MarkScope ORs `bits` into the dispatch's own word, which lives on the
+// stack of the dispatch and is zero at its start, so every PRE of one call adds to the same word and
+// nothing outlives the call: a nested dispatch inside a PRE has a word of its own, a Cancel never builds a
+// scope, and a fault the firewall absorbs unwinds the word with its frame. The body's scope takes the word
+// once no PRE cancelled. A mark from a post, from a body, or with no Call is a no-op. The Call a PRE
+// receives, and its scopeMark with it, is valid only inside that PRE: a copy kept past its return points
+// into a dispatch frame that is gone. Game thread.
+void MarkScope(const Call& call, uintptr_t bits);
+
+// The bits of the innermost scope on this thread's chain whose body is `function`, else 0. Readable from any
+// seam on the thread (a PRE, a post, a native hook) while the body runs; 0 before the body's scope is
+// built, after it ends, and for a body nobody marked.
+uintptr_t ScopeBits(void* function);
+
+// The bit `owner` (any stable address the consumer owns) holds: the same bit on every call for one owner, a
+// new one for a new owner, at most 64 owners in a process. 0 past that, logged once: a consumer that gets 0
+// treats its install as failed. Scans the owners taken so far: resolve once at install, not per dispatch.
+// Game thread.
+uintptr_t ScopeBitFor(const void* owner);
 
 // The caller's storage for the out parameter at `paramOffset` (an Offset_Internal), or null when
 // the frame carries no such record.

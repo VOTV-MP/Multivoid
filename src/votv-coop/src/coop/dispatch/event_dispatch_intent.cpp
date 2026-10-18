@@ -17,8 +17,10 @@
 #include "coop/creatures/kerfur_command.h"
 #include "coop/creatures/kerfur_convert_host.h"
 #include "coop/creatures/roach_sync.h"    // CLIENT->HOST local roach consumption intent
+#include "coop/interactables/camera_toggle_intent.h"  // CLIENT->HOST use of a security camera, or its laptop light button
 #include "coop/interactables/door_verb_intent.h"  // CLIENT->HOST press, hit or pry of a base door
 #include "coop/interactables/keypad_verbs.h"  // CLIENT->HOST digit, submit, cancel, keycard, reset
+#include "coop/interactables/laptop_tab.h"  // CLIENT->HOST the PC user's tab
 #include "coop/interactables/drone_call_intent.h"  // CLIENT->HOST press of the drone console
 #include "coop/interactables/eraser_press_intent.h"  // CLIENT->HOST press of the drive eraser; HOST->CLIENT its show
 #include "coop/creatures/kerfus_intent.h"  // CLIENT->HOST a Kerfus verb (on/off, fix the servers, pat)
@@ -30,6 +32,7 @@
 #include "coop/items/order_sync.h"
 #include "coop/props/pack_trash_intent.h"  // CLIENT->HOST bagging of a pile or clump
 #include "coop/props/prop_drop_intent.h"  // CLIENT->HOST client-placed keyed prop
+#include "coop/props/remover_request.h"  // CLIENT->HOST the tool gun's remover; HOST->CLIENT its answer
 #include "coop/items/broom_stroke.h"
 #include "coop/interactables/upgrade_sync.h"  // CLIENT->HOST upgrade purchase
 #include "coop/props/trash_channel.h"
@@ -167,6 +170,60 @@ bool HandleIntentEvent(net::Session& session,
                                                  static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
+    case net::ReliableKind::CameraToggleIntent: {
+        // CLIENT->HOST: a client used a security camera or pressed the laptop's camera-light button,
+        // and the host sets the bit to the value that client wanted. The camera's resolve, the reach
+        // and the rate live in the module; the format lives here.
+        // coop::camera_toggle_intent::OnCameraToggleIntent.
+        if (session.role() != net::Role::Host) {
+            UE_LOGW("event_feed: CameraToggleIntent received on a client -- dropping");
+            break;
+        }
+        if (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: CameraToggleIntent from invalid senderPeerSlot=%d -- dropping",
+                    msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::CameraToggleIntentPayload)) {
+            UE_LOGW("event_feed: CameraToggleIntent payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::CameraToggleIntentPayload));
+            break;
+        }
+        net::CameraToggleIntentPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        // The trust boundary: one of the two bits, and a value that is a bool.
+        if (p.bit > net::camera_toggle::kLight || p.desired > 1) {
+            UE_LOGW("event_feed: CameraToggleIntent bit=%u desired=%u out of range -- dropping",
+                    static_cast<unsigned>(p.bit), static_cast<unsigned>(p.desired));
+            break;
+        }
+        coop::camera_toggle_intent::OnCameraToggleIntent(session, p,
+                                                         static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::LaptopTabReport: {
+        // CLIENT->HOST: the peer holding the PC's claim switched the laptop widget's tab. Whether the sender holds
+        // the claim, the index against the host's own switcher and the pace live in the module; the format lives
+        // here. coop::laptop_tab::OnReport.
+        if (session.role() != net::Role::Host) {
+            UE_LOGW("event_feed: LaptopTabReport received on a client -- dropping");
+            break;
+        }
+        if (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: LaptopTabReport from invalid senderPeerSlot=%d -- dropping",
+                    msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::LaptopTabPayload)) {
+            UE_LOGW("event_feed: LaptopTabReport payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::LaptopTabPayload));
+            break;
+        }
+        net::LaptopTabPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::laptop_tab::OnReport(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
     case net::ReliableKind::KeypadIntent: {
         // CLIENT->HOST: a client typed, submitted, cancelled, swiped a keycard or used a pass changer
         // on a keypad, and the host runs the verb on its own copy. The keypad's resolve, the reach,
@@ -207,22 +264,21 @@ bool HandleIntentEvent(net::Session& session,
             UE_LOGW("event_feed: KerfurConvertRequest received on a client -- dropping");
             break;
         }
+        const uint8_t senderSlot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        // Both refusals are the lane's to say, in its tally: a sender cannot make the router's log the cost.
         if (msg.payloadLen < sizeof(net::KerfurConvertPayload)) {
-            UE_LOGW("event_feed: KerfurConvertRequest payload too short (%zu < %zu)",
-                    static_cast<size_t>(msg.payloadLen), sizeof(net::KerfurConvertPayload));
+            coop::kerfur_convert_host::NoteRefused(senderSlot, "payload too short");
             break;
         }
         net::KerfurConvertPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         if (p.toProp != 0 && p.toProp != 1) {
-            UE_LOGW("event_feed: KerfurConvertRequest toProp=%u out of range -- dropping",
-                    static_cast<unsigned>(p.toProp));
+            coop::kerfur_convert_host::NoteRefused(senderSlot, "toProp out of range");
             break;
         }
-        const uint8_t senderSlot =
-            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
-                ? static_cast<uint8_t>(msg.senderPeerSlot)
-                : static_cast<uint8_t>(0xFF);
         coop::kerfur_convert_host::OnConvertRequest(p, senderSlot);
         break;
     }
@@ -235,17 +291,16 @@ bool HandleIntentEvent(net::Session& session,
             UE_LOGW("event_feed: KerfurCommand received on a client -- dropping");
             break;
         }
-        if (msg.payloadLen < sizeof(net::KerfurCommandPayload)) {
-            UE_LOGW("event_feed: KerfurCommand payload too short (%zu < %zu)",
-                    static_cast<size_t>(msg.payloadLen), sizeof(net::KerfurCommandPayload));
-            break;
-        }
-        net::KerfurCommandPayload p{};
-        std::memcpy(&p, msg.payload, sizeof(p));
         const uint8_t senderSlot =
             (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
+        if (msg.payloadLen < sizeof(net::KerfurCommandPayload)) {
+            coop::kerfur_command::NoteRefused(senderSlot, "payload too short");
+            break;
+        }
+        net::KerfurCommandPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
         coop::kerfur_command::OnCommandRequest(p, senderSlot);
         break;
     }
@@ -372,6 +427,42 @@ bool HandleIntentEvent(net::Session& session,
         net::PointSackRedeemPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         coop::point_sack_intent::OnRedeem(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::RemoverRequest: {
+        // CLIENT->HOST: a client pressed the tool gun's remover. The host judges the sender's right, the element, who
+        // holds it and whether the sender could see it, and removes the prop itself (coop::remover_request). Never
+        // relayed.
+        if (session.role() != net::Role::Host) {
+            UE_LOGW("event_feed: RemoverRequest received on a client -- dropping");
+            break;
+        }
+        const uint8_t senderSlot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        // The refusal is the lane's to say, in its tally: a sender cannot make the router's log the cost.
+        if (msg.payloadLen < sizeof(net::RemoverRequestPayload)) {
+            coop::remover_request::NoteRefused(senderSlot, "payload too short");
+            break;
+        }
+        net::RemoverRequestPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::remover_request::OnRequest(p, senderSlot);
+        break;
+    }
+    case net::ReliableKind::RemoverResult: {
+        // HOST->CLIENT: what the host did with this client's RemoverRequest (coop::remover_request shows the five
+        // visible reasons).
+        if (session.role() != net::Role::Client || msg.senderPeerSlot != 0 ||
+            msg.payloadLen < sizeof(net::RemoverResultPayload)) {
+            UE_LOGW("event_feed: RemoverResult dropped (role, sender slot %d or length %zu)", msg.senderPeerSlot,
+                    static_cast<size_t>(msg.payloadLen));
+            break;
+        }
+        net::RemoverResultPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::remover_request::OnResult(p);
         break;
     }
     case net::ReliableKind::EraserPressIntent: {

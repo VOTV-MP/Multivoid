@@ -1,6 +1,6 @@
 // ue_wrap/actors/sleep.h -- standalone engine access for VOTV's sleep and timelapse state: the gamemode's
-// isSleep flag, the global time dilation, the nightmare probability override and the saveSlot sleep
-// need. Principle-7 wrapper, no network logic; coop/sleep_sync drives the sleep gate through it.
+// isSleep flag, the bed it sleeps in, the global time dilation and the nightmare probability override.
+// Principle-7 wrapper, no network logic; coop/sleep_sync reads and writes through it.
 //
 // The whole timelapse is ONE engine call -- SetGlobalTimeDilation(20) at sleep entry, 1.0 at wake
 // -- plus ONE world flag, mainGamemode.isSleep. The natural wake fires when saveSlot.sleep reaches
@@ -11,58 +11,51 @@
 //
 // gamemode.wakeup() is the idempotent END of the timelapse: re-possess, camera, dilation back to
 // 1.0, isSleep false. It also rolls the 10% gearer gift, but only when saveSlot.sleep is >= 99 AND
-// the bed is a bed_C -- so a caller that grants rest must call wakeup() FIRST and write the need
-// AFTER, or every mirror rolls its own gift.
+// the bed is a bed_C. The sleep need itself is a vitals row (ue_wrap/actors/vitals, Field::Sleep).
 
 #pragma once
 
 #include <cstdint>
+#include <string>
+
+namespace ue_wrap { struct FVector; }
 
 namespace ue_wrap::sleep {
 
-// Resolve mainGamemode_C fields/verbs + the GameplayStatics dilation calls +
-// the saveSlot sleep-need offset (throttled lazy retry). Game thread.
+// Resolve mainGamemode_C fields/verbs + the GameplayStatics dilation calls (throttled lazy
+// retry). Game thread.
 bool EnsureResolved();
 
 // mainGamemode.isSleep -- THE world sleep flag (false if unresolved).
 bool IsSleeping();
 
+// The class name of the bed the gamemode sleeps in (mainGamemode.bed, set by sleep() before
+// isSleep rises, null for a bedless entry; the non-ariral wakeup() path clears it, so read it
+// only while asleep and keep it across a dream); empty with no bed or unresolved. Game thread.
+std::wstring BedClassName();
+
+// mainGamemode.origPawn: the pawn `sleep` took from the controller before it possessed the sleeping
+// pawn, which is the player's body for the length of the rest. Null with no gamemode, unresolved or
+// unset; the pointer is as live as the game keeps it, so a caller holding it across ticks wraps it in a
+// CachedObjRef. Game thread.
+void* OrigPawn();
+
 // mainGamemode.dreamProbability: -1 = SP sentinel (use bed.dreamProb);
 // 0 = nightmares suppressed. Returns false if unresolved.
 bool SetDreamProbability(float v);
-
-// Reflected gamemode.wakeup() -- the native timelapse END (idempotent: BP
-// no-ops when !isSleep). Game thread.
-bool CallWakeup();
 
 // UGameplayStatics::SetGlobalTimeDilation / GetGlobalTimeDilation via the
 // CDO + a persistent WorldContextObject. Get returns <= 0 on failure.
 bool SetGlobalTimeDilation(float v);
 float GetGlobalTimeDilation();
 
-// saveSlot.sleep -- the sleep NEED (0..100; >= 100 triggers the natural
-// wake check @151). Read returns false if unresolved.
-bool ReadSleepNeed(float& out);
-bool WriteSleepNeed(float v);
-
-// ---- the WAITING-state camera ----------------------------------------------
-//
-// In single-player, sleep entry instantly retargets the view to the gamemode's sleepCam, the
-// cinematic base shot. In the gate's WAITING state the lone sleeper must NOT see that view: the
-// cinematic belongs to the ACCELERATE phase. These resolve the gamemode's own actors -- the camera
-// and the body in bed -- so coop/sleep_sync can hold the waiting camera at the bed and hand it to
-// the cinematic once the gate fills. All null-safe, since camera polish never blocks the gate.
-void* SleepCam();
-void* SleepingPawn();
-// SetViewTargetWithBlend via the SLEEPING PAWN's controller -- during sleep
-// the controller possesses the sleeping pawn (the local mainPlayer is
-// unpossessed, so the usual local-player route is null mid-sleep).
-bool SetSleepViewTarget(void* target);
-
-// ---- dev-probe helpers (coop/dev/sleep_probe) ----
-// First live bed actor (bed_C), or null. One GUObjectArray walk per call --
-// probe/one-shot use only.
+// ---- dev-drill helpers (coop/dev/midnight_drill and coop/dev/sleep_drill) ----
+// First live bed actor (bed_C or a descendant), or null. One GUObjectArray walk per call --
+// one-shot use only.
 void* FindBed();
+// The bed actor (bed_C or a descendant) nearest `from`, or null; one pass over the object index per
+// call, one-shot use only. Same descent test as FindBed.
+void* NearestBed(const FVector& from);
 // Reflected gamemode.sleep(bed, dropItem=false, ignoreRagdoll=true) -- the
 // native entry incl. its validation gates (event/hunger/ragdoll aborts).
 bool CallSleep(void* bed);

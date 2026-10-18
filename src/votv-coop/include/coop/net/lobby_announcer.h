@@ -5,7 +5,7 @@
 // a 30 s heartbeat -- three to the master's 90 s lobby expiry --, an explicit leave on stop, and a
 // re-announce when the master answers that it forgot the session (the announcer owns the lifecycle).
 //
-//   POST /v1/host        sessionId, an opaque lobbyId, the host token, identities and ICE
+//   POST /v1/host        (after /v1/host/challenge) sessionId, an opaque lobbyId, the host token, identities, ICE
 //   POST /v1/heartbeat   every 30 s: the lobby kept alive, its player count and their links, the host's
 //                        TURN credential reported and its renewal taken from the answer
 //   POST /v1/visibility  the "hide from the browser" toggle; POST /v1/leave on stop
@@ -20,6 +20,7 @@
 #include "coop/net/turn_credential.h"
 
 #include <atomic>
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -59,10 +60,13 @@ struct AnnounceRequest {
 // carried.
 struct ReannounceResult {
     bool ok = false;        // the master answered 200 with a session, a token and a lobby id
-    bool stopped = false;   // Stop() or shutdown began: nothing was POSTed
+    bool stopped = false;   // Stop() or shutdown was seen before the first POST: nothing was POSTed.
+                            // Seen between the create's POSTs, the create is abandoned and reads reached=false
     bool reached = false;   // the master answered at all
     int status = 0;
     bool listed = false;
+    std::string refused;    // the master's word of a refusal no retry can clear ("bad-proof",
+                            // "build-too-old", "blocked"); empty for every other outcome
     std::string lobbyId;    // the new lobby's id when ok
 };
 
@@ -73,9 +77,13 @@ class LobbyAnnouncer {
 public:
     ~LobbyAnnouncer();
 
-    // Blocking POST /v1/host. CALL ON A WORKER THREAD. On success it stashes the credentials and
-    // STARTS the 30 s heartbeat thread that keeps the lobby alive; a prior lobby is Stop()ped
-    // first. Returns the HostInfo, with ok=false on failure, in which case nothing was started.
+    // Blocking POST /v1/host (after its challenge, see lobby_proof.h). CALL ON A WORKER THREAD. On
+    // success it stashes the credentials and STARTS the 30 s heartbeat thread that keeps the lobby
+    // alive; a prior lobby is Stop()ped first. Returns the HostInfo, with ok=false on failure, in
+    // which case nothing was started.
+    //
+    // A Stop() that begins while this runs (the session ended under the worker) ends the create at
+    // its next POST; a lobby it had already made is left again and no heartbeat is started.
     //
     // A POSITIVE `directPort` announces a DIRECT lobby: the master records conn="direct" with this
     // LISTEN port and advertises the announce's source ip, so /v1/join returns {conn, addr} for a
@@ -139,6 +147,7 @@ private:
 
     std::atomic<bool> active_{false};
     std::atomic<bool> stop_{false};
+    std::atomic<uint64_t> gen_{0};   // bumped first by every Stop(): a Host() that sees it move beyond its own Stop() was cancelled
     std::thread hbThread_;
     std::atomic<int (*)()> playerCountFn_{nullptr};
     std::atomic<LobbyLinks (*)()> linksFn_{nullptr};

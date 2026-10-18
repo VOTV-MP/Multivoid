@@ -44,7 +44,10 @@ SRC = ROOT / "src" / "votv-coop" / "src"
 # is downstream of an action the player took; see b349de42's message for the
 # lane-by-lane reasoning.
 ALLOWED_HTTP = {
-    "coop/net/lobby_announcer.cpp": {"/v1/host", "/v1/heartbeat", "/v1/visibility", "/v1/leave"},
+    # `/v1/host/challenge` is the nonce a create signs: the same host action as `/v1/host`, one call
+    # earlier, so it is sent only when the player hosts through a master.
+    "coop/net/lobby_announcer.cpp": {"/v1/host/challenge", "/v1/host", "/v1/heartbeat", "/v1/visibility",
+                                     "/v1/leave"},
     # `<computed>` is the /v1/lobbies fetch: the path is assembled with query
     # parameters, so it reaches http::Get as a variable rather than a literal.
     # Declared explicitly so an unreadable endpoint still has to be admitted.

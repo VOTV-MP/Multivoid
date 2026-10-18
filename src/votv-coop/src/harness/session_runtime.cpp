@@ -38,8 +38,10 @@
 #include "coop/element/intent_authority.h"
 #include "coop/element/portable_identity.h"
 #include "coop/net/connect_history.h"
+#include "coop/net/intent_queue.h"
 #include "coop/net/latest_wins.h"
 #include "coop/net/lobby_password.h"
+#include "coop/net/lobby_proof.h"
 #include "coop/net/peer_admission.h"
 #include "coop/net/peer_identity.h"
 #include "coop/net/stream_slot.h"
@@ -47,6 +49,7 @@
 #include "coop/permissions/permission_host.h"
 #include "coop/permissions/permissions_selftest.h"
 #include "coop/player/movement_ledger.h"
+#include "coop/player/player_profile_store.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/puppet_drive.h"
 #include "coop/player/remote_player.h"
@@ -215,6 +218,10 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     // with a tamper arm, plus the decision this module exports (a signature verifies against its
     // own identity and no other). Un-gated: a verifier that accepts everything reads as working.
     coop::net::peer_identity::RunSelftest();
+    // And the lobby announce proof built on its signatures: the blob and the signature against the vector the
+    // master's tests share, a flipped bit and a proof for another master refused, then a round trip through
+    // our own loaded key. Un-gated: a proof the master rejects does not crash, it unlists the host.
+    coop::net::lobby_proof::RunSelftest();
     // And the admission decision built on it; its arms are the ones no LAN drill can stage: a proof
     // replayed in the wrong direction, aimed at a third party, or for a stale nonce.
     coop::net::peer_admission::RunSelftest();
@@ -230,6 +237,9 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     // And the host's pace on a client's display changes: a first change at once, a debt past the burst paid at a
     // refill and only when owed, a newer value while one is owed, a withdrawal.
     coop::net::LatestWins::RunSelftest();
+    // And a client's queued intents: the cap's refusal, no token serving nothing, a Done leaving and a Wait keeping its
+    // head with the token back, a value-initialised instance.
+    coop::net::RunIntentQueueSelftest();
     // And a client's chat rate, Source's two tiers: the interval, a burst's debt, the slowed refill, tier 2's long run
     // and both floors, each row from a stated state -- arithmetic no honest run reaches.
     coop::chat_rate::RunChatRateSelftest();
@@ -318,6 +328,9 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
         // Snapshot the canonical save before coop injects state (host only; clients are
         // save-blocked); synchronous, so it completes before Start.
         coop::save_guard::BackupSaveOnSessionStart();
+        // The players' profile folder of an older build, said once: the store reaches a path only
+        // at a new-game forget, a world save or a join.
+        coop::player_profile_store::NoteLegacyFolder();
         // The seen-players registry, host bookkeeping on any topology (on a relayed or unknown
         // path a record keeps the address it last had, and none if it never had one).
         coop::seen_players::Load();

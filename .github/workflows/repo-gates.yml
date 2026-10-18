@@ -159,6 +159,12 @@ jobs:
       - name: Fact rows gate (every watched or hooked game function is a well-formed row with a reference)
         run: python3 .github/ci/fact_rows_gate.py
 
+      - name: Data paths gate drill
+        run: python3 .github/ci/data_paths_gate.py --drill
+
+      - name: Data paths gate (the mod's own data is built from its own folder; ExeDir and the null-module path stay in their files)
+        run: python3 .github/ci/data_paths_gate.py
+
       - name: Plural vectors gate (the l10n selftest's expected forms are the independent evaluator's)
         run: python3 .github/ci/l10n_vectors.py --check
 

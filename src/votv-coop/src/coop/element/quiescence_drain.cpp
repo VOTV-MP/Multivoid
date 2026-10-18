@@ -83,6 +83,11 @@ struct PendingPosCorrection {
     uint8_t physFlags = 0;
     int unresolvedPasses = 0;
     bool hasRot = true;   // false: a position alone, and the actor keeps its own facing
+    // The host's drive context when it read the pose; hasCtx false for a re-arm from the identity map,
+    // which carries none and is judged as before.
+    uint8_t driveGen = 0;
+    bool driveOpen = false;
+    bool hasCtx = true;
 };
 std::unordered_map<uint32_t, PendingPosCorrection> g_pendingPosCorrection;
 constexpr int kMaxPosCorrectionPasses = 40;  // about 10 s at the 250 ms debounce
@@ -375,12 +380,26 @@ void ArmHostVacateTwin(coop::element::ElementId eid, const ue_wrap::FVector& old
 }
 
 void ArmPendingPosCorrection(coop::element::ElementId eid,
-                             const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot, uint8_t physFlags) {
-    g_pendingPosCorrection[static_cast<uint32_t>(eid)] =
-        PendingPosCorrection{loc.X, loc.Y, loc.Z, rot.Pitch, rot.Yaw, rot.Roll, physFlags};
-    UE_LOGI("[PILE-B3] CLIENT armed pos-correction eid=%u host=(%.1f,%.1f,%.1f) flags=0x%02x -- a "
+                             const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot, uint8_t physFlags,
+                             uint8_t driveGen, bool driveOpen) {
+    PendingPosCorrection c{loc.X, loc.Y, loc.Z, rot.Pitch, rot.Yaw, rot.Roll, physFlags};
+    c.driveGen  = driveGen;
+    c.driveOpen = driveOpen;
+    c.hasCtx    = true;
+    g_pendingPosCorrection[static_cast<uint32_t>(eid)] = c;
+    UE_LOGI("[PILE-B3] CLIENT armed pos-correction eid=%u host=(%.1f,%.1f,%.1f) flags=0x%02x gen=%u open=%u -- a "
             "save-authoritative entity the host moved in-window; snap the bound native at quiescence",
-            static_cast<unsigned>(eid), loc.X, loc.Y, loc.Z, static_cast<unsigned>(physFlags));
+            static_cast<unsigned>(eid), loc.X, loc.Y, loc.Z, static_cast<unsigned>(physFlags),
+            static_cast<unsigned>(driveGen), static_cast<unsigned>(driveOpen));
+}
+
+void SupersedePosCorrection(coop::element::ElementId eid, const char* by) {
+    const auto it = g_pendingPosCorrection.find(static_cast<uint32_t>(eid));
+    if (it == g_pendingPosCorrection.end()) return;
+    UE_LOGI("[PILE-B3] CLIENT pos-correction eid=%u host=(%.1f,%.1f,%.1f) superseded by %s -- a newer pose "
+            "of this prop landed after the arm; not applied",
+            static_cast<unsigned>(eid), it->second.x, it->second.y, it->second.z, by);
+    g_pendingPosCorrection.erase(it);
 }
 
 void ApplyPendingPosCorrections() {
@@ -407,6 +426,15 @@ void ApplyPendingPosCorrections() {
                 continue;
             }
             ++it;
+            continue;
+        }
+        // A drive end newer than the context this correction was read under landed here after the arm:
+        // the end's pose is the newer one, so this is dropped, ahead of the held/driven deferral below.
+        if (c.hasCtx && coop::prop_drive_stream::IsCorrectionStale(eid, c.driveGen, c.driveOpen)) {
+            UE_LOGI("[PILE-B3] CLIENT pos-correction eid=%u gen=%u open=%u superseded -- a drive end newer than "
+                    "it landed after the arm; not applied",
+                    eid, static_cast<unsigned>(c.driveGen), static_cast<unsigned>(c.driveOpen));
+            it = g_pendingPosCorrection.erase(it);
             continue;
         }
         // Settled re-validation: the actor is live, but a grab or convert may have landed between
@@ -468,6 +496,7 @@ void EnsurePosCorrection(coop::element::ElementId eid, const ue_wrap::FVector& l
     if (g_pendingPosCorrection.count(key) > 0) return;
     PendingPosCorrection c{loc.X, loc.Y, loc.Z, 0.f, 0.f, 0.f, /*physFlags=*/0};
     c.hasRot = false;
+    c.hasCtx = false;
     g_pendingPosCorrection[key] = c;
     UE_LOGI("[PILE-B3] CLIENT armed pos-correction eid=%u host=(%.1f,%.1f,%.1f) position only -- the identity "
             "re-bind's save-position re-create, snapped at quiescence with its own facing kept",

@@ -36,6 +36,23 @@ void OnEnd(const coop::net::PropDriveEndPayload& p);
 // would move it or re-run its init() leaves it alone, as it leaves a held prop. Game thread.
 bool IsParked(void* actor);
 
+// True when a join-window correction read under drive context (gen, open) is older than what this
+// copy holds of that prop's drive: a live drive row of a newer generation, or else the END pose
+// ApplyEnd wrote onto the eid's CURRENTLY bound actor, of a newer generation, or of the same one
+// while the correction was read with it still open. An END pose that died with its actor (a
+// load-tail re-create, a purge), never applied (pending expiry) or yielded to a hand judges
+// nothing: the correction then stands. Game thread.
+// Divergences from MTA's CanUpdateSync (reference/mtasa-blue/Server/mods/deathmatch/logic/
+// CElement.cpp:1300, its stamp compared at CUnoccupiedVehicleSync.cpp:285 of the same folder):
+// 1. gen 0 is a value ("never driven"), not a wildcard: a correction read before any drive must
+//    lose to a later drive END, which a wildcard would accept.
+// 2. The compare is ordered (GenAfter), not equality: a NEWER stamp is accepted, since the later
+//    drive messages write over it and a drop would lose the only reliable delivery of a prop at
+//    rest (MTA's sync is unreliable, so a drop either way costs only a packet).
+// 3. The context is two-phase (gen + open), the END edge bumping nothing: it needs no new wire byte.
+// MTA's "0 means ignore" is kept for the identity re-arm (hasCtx false), never judged by this rule.
+bool IsCorrectionStale(uint32_t eid, uint8_t gen, bool open);
+
 // Session end: every driven prop gets its physics back. Game thread.
 void OnDisconnect();
 

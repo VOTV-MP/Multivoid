@@ -227,13 +227,14 @@ NearestResult FindNearest(const FVector& anchor, bool wantHeavy = false,
 // The body's velocity at this instant, through UPrimitiveComponent UFunctions on the StaticMesh;
 // the host's release edge captures the inherited tracking velocity, the launch energy of a
 // flick. Linear in cm/s, angular in deg/s; ok is false when the prop, mesh or UFunctions do not
-// resolve. Two dispatches per call after the one-shot resolve. Game thread.
+// resolve. Two dispatches per call after the one-shot resolve; one with `linearOnly`, which leaves
+// angularDegS zero for a caller that never reads it. Game thread.
 struct VelocityState {
     FVector linearCmS{0.f, 0.f, 0.f};
     FVector angularDegS{0.f, 0.f, 0.f};
     bool ok = false;
 };
-VelocityState GetPhysicsVelocity(void* prop);
+VelocityState GetPhysicsVelocity(void* prop, bool linearOnly = false);
 
 // One actor the nearby-same-class scan accepted: right class, right list_props row, inside the
 // radius. `objIndex` is its GUObjectArray slot, which is the order the scan walks in.

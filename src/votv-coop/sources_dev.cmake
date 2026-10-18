@@ -20,13 +20,21 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/eid_lifetime_trace.cpp
     src/coop/dev/join_window_pos_trace.cpp
     src/coop/dev/rng_roll_census.cpp
+    src/coop/dev/server_breaker_census.cpp
     src/coop/dev/death_write_diff.cpp
     src/coop/dev/desk_diag.cpp
     src/coop/dev/rollover_watch.cpp
     src/coop/dev/midnight_drill.cpp
+    src/coop/dev/sleep_drill.cpp
+    src/coop/dev/badsun_drill.cpp
+    src/coop/dev/badsun_drill_clock.cpp
+    src/coop/dev/badsun_drill_lane.cpp
+    src/coop/dev/event_relay_drill.cpp
     src/coop/dev/hostile_drill.cpp
     src/coop/dev/hostile_drill_chat.cpp
     src/coop/dev/hostile_drill_hand.cpp
+    src/coop/dev/hostile_drill_kerfur.cpp
+    src/coop/dev/hostile_drill_remover.cpp
     src/coop/dev/hostile_drill_latest.cpp
     src/coop/dev/hostile_drill_world.cpp
     src/coop/dev/hostile_drill_walk.cpp
@@ -64,6 +72,8 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/dev_lanes.cpp
     src/coop/dev/physmods_drill.cpp
     src/coop/dev/drone_call_drill.cpp
+    src/coop/dev/remover_drill.cpp
+    src/coop/dev/remover_drill_layout.cpp
     src/coop/dev/sack_drill.cpp
     src/coop/dev/fall_drill.cpp
     src/coop/dev/atv_spawn_drill.cpp
@@ -71,6 +81,10 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/log_drill.cpp
     src/coop/dev/server_upgrade_drill.cpp
     src/coop/dev/server_drill.cpp
+    src/coop/dev/camera_drill.cpp
+    src/coop/dev/camera_state_drill.cpp
+    src/coop/dev/laptop_tab_drill.cpp
+    src/coop/dev/laptop_tab_drill_steps.cpp
     src/coop/dev/sat_console_drill.cpp
     src/coop/dev/calib_drill.cpp
     src/coop/dev/drive_drill.cpp
@@ -116,6 +130,8 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/rehost_rejoin.cpp
     src/coop/dev/join_abort_drill.cpp
     src/coop/dev/puppet_head_probe.cpp
+    src/coop/dev/puppet_reg_probe.cpp
+    src/coop/dev/pi0_selftest.cpp
     src/coop/dev/wire_census.cpp
     src/coop/dev/perf_probe.cpp
     src/coop/dev/input_focus_probe.cpp
@@ -131,7 +147,6 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/atv_probe.cpp
     src/coop/dev/atv_tire_probe.cpp
     src/coop/dev/pinecone_probe.cpp
-    src/coop/dev/sleep_probe.cpp
     src/coop/dev/event_trigger.cpp
     src/coop/dev/event_force.cpp
     src/coop/dev/light_group_census.cpp
@@ -166,4 +181,10 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/menu_proceed.cpp
     src/coop/dev/object_overlay.cpp
     src/coop/dev/ragdoll_bone_overlay.cpp
+    src/coop/dev/pi1_selftest.cpp
+    src/coop/dev/pi2_selftest.cpp
+    src/coop/dev/pi3_observer.cpp
+    src/coop/dev/pi3_arms.cpp
+    src/coop/dev/pi3_drill.cpp
+    src/coop/dev/native_spawn_probe.cpp
 )

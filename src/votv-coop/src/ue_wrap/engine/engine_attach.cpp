@@ -39,6 +39,7 @@ void* g_getMassFn = nullptr;  // PrimitiveComponent::GetMass
 void* g_getPhysMatFn = nullptr;  // MaterialInterface::GetPhysicalMaterial
 void* g_attachCompFn = nullptr;  // Actor::K2_AttachToComponent
 void* g_detachFn     = nullptr;  // Actor::K2_DetachFromActor
+void* g_getParentFn  = nullptr;  // Actor::GetAttachParentActor
 
 constexpr int     kMaxWalk     = 64;    // components a walk visits: a Kerfus carries about twenty
 constexpr int32_t kMaxChildren = 256;   // an AttachChildren count past this is not a count
@@ -239,6 +240,18 @@ bool DetachActorFromParent(void* actor) {
     f.Set<uint8_t>(L"RotationRule", uint8_t{1});       // KeepWorld
     f.Set<uint8_t>(L"ScaleRule",    uint8_t{1});       // KeepWorld
     return Call(actor, f);
+}
+
+bool GetAttachParentActor(void* actor, void*& parent) {
+    parent = nullptr;
+    if (!actor || !R::IsLive(actor)) return false;
+    void* fn = ActorFn(&g_getParentFn, L"GetAttachParentActor");
+    if (!fn) return false;
+    ParamFrame f(fn);
+    if (!Call(actor, f)) return false;
+    void* p = f.Get<void*>(L"ReturnValue");
+    parent = (p && R::IsLive(p)) ? p : nullptr;
+    return true;
 }
 
 int AttachedCharactersOf(void* actor, AttachedCharacter* out, int max) {

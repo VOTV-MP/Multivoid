@@ -46,7 +46,7 @@ constexpr Row kRows[] = {
     {EndReason::NoRendezvousAnswer,    {"MV-J20", L10N_MARK("The host did not answer through the signaling server. It may be offline, or reconnecting -- try again in a minute.")}},
     {EndReason::HostWorldNotPrepared,  {"MV-J21", L10N_MARK("The host never finished preparing its world for you.")}},
     {EndReason::WorldDownloadStalled,  {"MV-J22", L10N_MARK("The download of the host's world stopped part way through.")}},
-    {EndReason::HostWorldNotSent,      {"MV-J23", L10N_MARK("The host never sent you the world it owed.")}},
+    {EndReason::HostWorldNotSent,      {"MV-J23", L10N_MARK("The host stopped sending the world it owed, or the connection stopped delivering it.")}},
     {EndReason::WorldWouldNotLoad,     {"MV-J24", L10N_MARK("The host's world would not load on this machine.")}},
     {EndReason::WorldUnusable,         {"MV-J25", L10N_MARK("The host's world arrived damaged and could not be used.")}},
     {EndReason::ProfileNotSent,        {"MV-J26", L10N_MARK("The host never sent your inventory.")}},

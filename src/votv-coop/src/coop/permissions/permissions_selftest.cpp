@@ -36,10 +36,10 @@ bool AllDigits(const std::wstring& s) {
 }
 
 // Scratch folders of runs that are gone (a kill inside a selftest) are removed whole.
-void SweepDeadScratch(const std::wstring& exeDir) {
+void SweepDeadScratch(const std::wstring& dir) {
     const std::wstring prefix = kScratchPrefix;
     WIN32_FIND_DATAW fd{};
-    HANDLE h = ::FindFirstFileW((exeDir + L"\\" + prefix + L"*").c_str(), &fd);
+    HANDLE h = ::FindFirstFileW((dir + L"\\" + prefix + L"*").c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) return;
     do {
         if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
@@ -51,7 +51,7 @@ void SweepDeadScratch(const std::wstring& exeDir) {
         if (id > 0xFFFFFFFFull) continue;
         if (atomic_file::ProcessRunning(static_cast<unsigned long>(id))) continue;
         std::error_code ec;
-        fs::remove_all(fs::path(exeDir) / name, ec);
+        fs::remove_all(fs::path(dir) / name, ec);
     } while (::FindNextFileW(h, &fd));
     ::FindClose(h);
 }
@@ -63,16 +63,16 @@ static bool RunSelftestBody() {
     sink.breakFirst = coop::config::ResolveFlag(::coop::config_registry::rows::selftest_break_permissions);
     sink.onFail = &ReportFail;
 
-    // The files cases' disk case writes under a folder beside the executable, named by this
+    // The files cases' disk case writes under a folder in the mod's data folder, named by this
     // process; an empty path tells them there is none.
-    const std::wstring exeDir = ue_wrap::paths::ExeDir();
+    const std::wstring dataDir = ue_wrap::paths::ModDataDir();
     fs::path scratch;
     std::error_code ec;
-    if (exeDir.empty()) {
-        sink.Check(false, "the executable folder resolves");
+    if (dataDir.empty()) {
+        UE_LOGI("permissions selftest: disk cases skipped -- no data folder");
     } else {
-        SweepDeadScratch(exeDir);
-        scratch = fs::path(exeDir) / (std::wstring(kScratchPrefix) + std::to_wstring(::GetCurrentProcessId()));
+        SweepDeadScratch(dataDir);
+        scratch = fs::path(dataDir) / (std::wstring(kScratchPrefix) + std::to_wstring(::GetCurrentProcessId()));
         fs::remove_all(scratch, ec);
     }
 

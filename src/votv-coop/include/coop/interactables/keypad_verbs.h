@@ -39,10 +39,8 @@ void Tick(coop::net::Session& session);
 void OnKeypadIntent(coop::net::Session& session, const coop::net::KeypadIntentPayload& payload,
                     uint8_t senderSlot);
 
-// A peer left: its queued intents and its rate go with it.
-void OnPeerLeft(uint8_t slot);
-
-// The session ended: the queues, the rates and the counters, with one summary line.
+// The session ended: the counters, with one summary line. A sender's queue, its rate and its said-once latches
+// live in its per-slot state and go with its occupant.
 void OnDisconnect();
 
 }  // namespace coop::keypad_verbs

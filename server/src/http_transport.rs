@@ -13,8 +13,10 @@ use tokio::time::timeout;
 pub const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 pub const MAX_HEADER: usize = 16 * 1024;
 /// The largest body a client of ours sends is the host announce (coop/net/lobby_announcer.cpp):
-/// under 2 KiB with its name at the native host window's 96-byte cap (host_session_settings.cpp:59),
-/// fully escaped; the server then clamps names to 63 characters (`lobby::MAX_NAME`).
+/// about 2 KiB at its worst, a name at the native host window's 96-byte cap
+/// (host_session_settings.cpp:59) fully escaped (576 bytes), plus the identity, the build claim
+/// and the lobby proof's nonce and signature (about 450 hex digits, with their field names); the server then
+/// clamps names to 63 characters (`lobby::MAX_NAME`).
 /// 4 KiB leaves room and keeps a body's parse small: a `serde_json::Value` can cost 16x its bytes
 /// (tests/conn_cost.rs: a 4 KiB array of zeros parses to 65 KiB).
 pub const MAX_BODY: usize = 4 * 1024;

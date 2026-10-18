@@ -37,6 +37,11 @@ enum class Kind : uint8_t {
 // written against and a guessed offset would write into whatever now lives there.
 bool EnsureResolved();
 
+// EnsureResolved without waiting out its one-second pace, for a caller whose own running proves the
+// hook class is loaded: the post of a hook body must not leave a tie standing because an earlier pass
+// failed a moment ago. The latched-off state still answers false. Game thread.
+bool ResolveNow();
+
 // Mint the Kinds' class names, once per process. EnsureResolved mints them too; a seam that must judge
 // a hook before any hook class has loaded mints them where it installs. Game thread: the mint
 // dispatches.

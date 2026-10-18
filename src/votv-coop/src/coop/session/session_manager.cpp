@@ -589,9 +589,9 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
 // seeds it, SetListed flips it). True with no lobby.
 std::atomic<bool> g_listedState{true};
 
-// Serialises listing transitions: every branch either blocks (Announcer::Host is an 8 s round
-// trip; Stop joins the heartbeat thread and POSTs /v1/leave) or depends on Announcer().active().
-// The branch is decided inside the worker under this mutex, so an un-tick followed by a re-tick
+// Serialises listing transitions: every branch either blocks (Announcer::Host is up to four
+// POSTs of 8 s each; Stop joins the heartbeat thread and POSTs /v1/leave) or depends on
+// Announcer().active(). The branch is decided inside the worker under this mutex, so an un-tick followed by a re-tick
 // sees the state the retract actually left.
 std::mutex g_listingMu;
 

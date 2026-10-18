@@ -22,7 +22,7 @@ void* SpawnOf(const wchar_t* className, const FVector& at) {
 }  // namespace
 
 void* SpawnUncalibrator(const FVector& at) { return SpawnOf(kUncalibratorClass, at); }
-void* SpawnTool(const FVector& at) { return SpawnOf(kToolClass, at); }
+void* SpawnTool(void* toolClass, const FVector& at) { return toolClass ? engine::SpawnActor(toolClass, at) : nullptr; }
 void* SpawnToolgun(const FVector& at) { return SpawnOf(kToolgunClass, at); }
 
 bool CallUncalibratorUse(void* uncalibrator, void* player) {
@@ -50,6 +50,15 @@ bool CallToolInitByIndex(void* tool, void* toolgun, int32_t index, float value) 
         *reinterpret_cast<void**>(t + offGm) = world_singleton::Gamemode();
     auto* rmb = reinterpret_cast<uint8_t*>(toolgun) + rmbByte;
     *rmb = static_cast<uint8_t>(*rmb | rmbMask);
+    ParamFrame f(fn);
+    return f.valid() && f.Set<void*>(L"toolgun", toolgun) && Call(tool, f);
+}
+
+
+bool CallToolInit(void* tool, void* toolgun) {
+    if (!tool || !toolgun || !R::IsLive(tool) || !R::IsLive(toolgun)) return false;
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(tool), kToolVerb);
+    if (!fn) return false;
     ParamFrame f(fn);
     return f.valid() && f.Set<void*>(L"toolgun", toolgun) && Call(tool, f);
 }

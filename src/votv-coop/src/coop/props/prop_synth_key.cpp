@@ -96,10 +96,11 @@ std::wstring EnsureKeyForBroadcast(void* self, const std::wstring& currentKey,
 }
 
 std::wstring RandomKeyString() {
-    // Random, not counter-based like cs_: the key PERSISTS into the game's save, so it must stay
-    // unique across boots -- a counter restarting at 0 could re-mint a key already baked into an
-    // older record. 64 random bits is collision-free at this project's key volumes. The callers
-    // are game-thread, but the RNG stays mutex-guarded for the cost of nothing.
+    // Random, not counter-based like cs_: the key persists into the game's save for an actor that
+    // lives to one, so it must stay unique across boots -- a counter restarting at 0 could re-mint
+    // a key already baked into an older record. 64 random bits is collision-free at this project's
+    // key volumes. The callers are game-thread, but the RNG stays mutex-guarded for the cost of
+    // nothing.
     static std::mutex sRngMutex;
     uint64_t r;
     {

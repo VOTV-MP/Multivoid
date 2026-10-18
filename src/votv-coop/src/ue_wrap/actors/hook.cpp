@@ -271,6 +271,11 @@ bool EnsureResolved() {
     return false;
 }
 
+bool ResolveNow() {
+    g_nextTryMs = 0;
+    return EnsureResolved();
+}
+
 Kind KindOf(void* actor) {
     if (!actor || !g_namesResolved) return Kind::Count;
     // An EXACT class compare, never a descent test: hook_Child_C descends from hook_C, is placed by

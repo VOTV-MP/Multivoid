@@ -192,6 +192,8 @@ bool WriteIniValueAt(const std::wstring& path, const char* key, const char* valu
 bool EnsureIniSkeleton() {
     std::lock_guard<std::mutex> lk(internal::IniMutex());
     const std::wstring path = internal::LiveIniPath();
+    // No data folder: nothing to seed into (the boot warning said so).
+    if (path.empty()) return false;
     // Seed only on an authoritative absent (ENOENT). An existing file, readable or not, is never
     // touched: seeding over a locked-but-present ini is the same destruction class the writer
     // guards close.

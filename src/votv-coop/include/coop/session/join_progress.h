@@ -151,10 +151,15 @@ void NoteWorldReady();
 
 // The host's once-a-second beacon for this joiner arrived: `phase` is a net::HostJoinPhase and
 // `done`/`total` its numerator and denominator. Two things happen -- the phase is kept for the
-// screen, and the ARRIVAL renews the current phase's wait, which is what lets a join wait on the
-// host's own word instead of on a clock. An unknown phase value still renews it: a beacon this
-// build cannot label is still proof the host is answering. From the event feed, game thread.
+// screen, and a phase change or a rise of `done` renews the current phase's wait, which is what
+// lets a join wait on the host's own word instead of on a clock. An unknown phase value renews it
+// once, as any change does; its repeats do not. From the event feed, game thread.
 void NoteHostBeacon(uint8_t phase, uint32_t done, uint32_t total);
+
+// The renewal rule of NoteHostBeacon as a pure test: `wasPhase`/`wasDone` are the previous beacon's
+// (phase 0 = none heard yet), and a beacon renews the wait when its phase differs or its `done`
+// strictly rose. Its own function so a selftest can run the rule without a join in flight.
+bool BeaconRenews(uint8_t wasPhase, uint32_t wasDone, uint8_t phase, uint32_t done);
 
 // Driven by the harness, host only. Raise the cover for a host boot: hides the menu (so the
 // player cannot wander into the browser and self-join while the world loads) and shows the

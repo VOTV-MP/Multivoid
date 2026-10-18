@@ -2,15 +2,15 @@
 // slot, what this host is doing for that joiner and how far in. The client's half is
 // coop/session/join_progress.h, which waits on this token instead of on a wall clock.
 //
-// The contract is silence. An owner calls NotePhase every pass it works on a slot; Tick sends at
-// most one note per slot per second and sends NOTHING for a slot nobody noted. So a host that
-// stopped working on a joiner stops beaconing by construction, with no separate "I gave up"
-// message to remember to send -- and a joiner whose token expires names the phase and the side
-// that stopped. The deferred snapshot is noted the same way while it waits, which is the one
-// host-side state whose silence no other message covered.
+// The contract is silence once the bracket is delivered. An owner calls NotePhase every pass it
+// works on a slot; Tick sends at most one note per slot per second and NOTHING for a slot nobody
+// noted, so a host that stopped working on a joiner stops beaconing with no "I gave up" message,
+// and a joiner whose token expires names the phase and the side that stopped. The owners:
+// save_transfer (capture, stream), prop_snapshot::DrainChunk (deferred, streaming the bracket)
+// and this module (Draining, from the close until a fresh link sample finds the queue drained).
 //
-// Host only (Tick no-ops on a client), game thread only: the three owners all run inside the net
-// pump's tick. No engine calls.
+// Host only (Tick no-ops on a client), game thread only: all owners run inside the net pump's
+// tick. No engine calls.
 
 #pragma once
 
@@ -29,6 +29,19 @@ void SetSession(coop::net::Session* session);
 // denominator, 0/0 for a phase that has none. Cheap by design -- one struct store, no send, no
 // clock read -- because the owners call it from their per-tick loops.
 void NotePhase(int slot, coop::net::HostJoinPhase phase, uint32_t done, uint32_t total);
+
+// The slot's bracket closed (its SnapshotComplete went into the transport or the backlog) at
+// `closedAtMs` on the steady clock; or it was cleared, abandoned or never opened. Pushed by
+// prop_snapshot, which owns the bracket: from the close until the link's queue has drained, Tick
+// beacons the Draining phase for the slot itself, so the joiner's wait reads the delivery of the
+// bracket after the host has finished enqueueing it.
+void NoteBracketClosed(int slot, int64_t closedAtMs);
+void NoteBracketReset(int slot);
+
+// The Draining decision's table and the joiner's renewal rule across it (join_progress::
+// BeaconRenews), run once per process at the first session start. One PASS line each; false when
+// any case failed.
+bool RunDrainingSelftest();
 
 // Send what is due: one note per slot noted since the last Tick, at most one ATTEMPT a second, and
 // one at once when the phase changed (a joiner should see a transition without a second of lag).

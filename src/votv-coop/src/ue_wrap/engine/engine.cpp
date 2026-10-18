@@ -2,6 +2,7 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
+#include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
@@ -87,6 +88,7 @@ namespace {
 void* g_pauseGsCdo   = nullptr;
 void* g_isPausedFn   = nullptr;  // UGameplayStatics::IsGamePaused(WorldContextObject)
 void* g_setPausedFn  = nullptr;  // UGameplayStatics::SetGamePaused(WorldContextObject, bPaused)
+void* g_getTimeFn    = nullptr;  // UGameplayStatics::GetTimeSeconds(WorldContextObject)
 
 bool ResolvePauseFns() {
     if (g_pauseGsCdo && g_isPausedFn && g_setPausedFn) return true;
@@ -122,6 +124,24 @@ bool SetGamePaused(bool paused) {
     f.Set<bool>(L"bPaused", paused);
     if (!Call(g_pauseGsCdo, f)) return false;
     return f.Get<bool>(L"ReturnValue");
+}
+
+bool TryGetWorldTimeSeconds(float& seconds) {
+    seconds = 0.f;
+    void* const ctx = GetWorldContext();
+    if (!ctx) return false;
+    if (!g_pauseGsCdo) g_pauseGsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
+    if (!g_pauseGsCdo) return false;
+    if (!g_getTimeFn) {
+        if (void* cls = R::ClassOf(g_pauseGsCdo)) g_getTimeFn = R::FindFunction(cls, L"GetTimeSeconds");
+    }
+    if (!g_getTimeFn) return false;
+    ParamFrame f(g_getTimeFn);
+    if (!f.valid()) return false;
+    f.Set<void*>(L"WorldContextObject", ctx);
+    if (!Call(g_pauseGsCdo, f)) return false;
+    seconds = f.Get<float>(L"ReturnValue");
+    return true;
 }
 
 // Actor spawning and transform.
@@ -176,7 +196,8 @@ bool ResolveActorFns() {
 
 }  // namespace
 
-void* SpawnActor(void* actorClass, const FVector& location, bool inertPawn) {
+void* SpawnActor(void* actorClass, const FVector& location, bool inertPawn, BeforeFinishFn beforeFinish,
+                 void* ctx) {
     if (!actorClass) return nullptr;
     if (!ResolveSpawn()) {
         UE_LOGE("engine: SpawnActor unresolved (cdo=%p begin=%p finish=%p)",
@@ -201,6 +222,8 @@ void* SpawnActor(void* actorClass, const FVector& location, bool inertPawn) {
         UE_LOGE("engine: BeginDeferredActorSpawnFromClass returned null");
         return nullptr;
     }
+    // Read while the actor is known live, so the failed-finish branch below can tell it from a recycled address.
+    const int32_t actorIdx = R::InternalIndexOf(actor);
 
     // Before FinishSpawningActor runs BeginPlay, zero the fields that make a pawn behave as a
     // local player: BeginPlay's native auto-possess reads AutoPossessPlayer, and clearing it
@@ -219,6 +242,8 @@ void* SpawnActor(void* actorClass, const FVector& location, bool inertPawn) {
         *reinterpret_cast<void**>(a + P::off::APawn_AIControllerClass) = nullptr;
         UE_LOGI("engine: SpawnActor inertPawn -> no player possess, AIControllerClass=null, bBlockInput=1");
     }
+    // The caller's last word on the deferred actor: what must hold from its BeginPlay on is set here.
+    if (beforeFinish) beforeFinish(ctx, actor);
 
     // Step two: FinishSpawningActor runs the actor's construction and BeginPlay and returns the
     // same actor.
@@ -227,6 +252,14 @@ void* SpawnActor(void* actorClass, const FVector& location, bool inertPawn) {
     finish.SetRaw(L"SpawnTransform", &xform, sizeof(xform));
     if (!Call(g_gsCdo, finish)) {
         UE_LOGE("engine: FinishSpawningActor call failed");
+        // The begun actor is not left in the world, half made: no caller holds it (the result is null), and the
+        // engine would keep it. A failed finish call may have faulted past begin-play; if it began play, its
+        // destroy is an ordinary end of play to every observer, and if it did not there is none.
+        if (R::IsLiveByIndex(actor, actorIdx)) {
+            UE_LOGW("engine: SpawnActor: the finish of a '%ls' failed -- the begun actor is destroyed",
+                    R::ClassNameOf(actor).c_str());
+            DestroyActor(actor);
+        }
         return nullptr;
     }
     void* finished = finish.Get<void*>(L"ReturnValue");
@@ -551,6 +584,32 @@ bool SetActorEnableCollision(void* actor, bool enabled) {
     ParamFrame f(g_setCollisionFn);
     f.Set<bool>(L"bNewActorEnableCollision", enabled);
     return Call(actor, f);
+}
+
+namespace {
+// CustomTimeDilation's offset per actor class, found or (-1) not: a class asked again is not searched
+// again and its warning is said once. A handful of classes ask (the player's body, the effect classes).
+struct TimeDilationOffset { void* cls; int32_t off; };
+std::vector<TimeDilationOffset> g_timeDilationOffsets;
+}  // namespace
+
+bool SetCustomTimeDilation(void* actor, float value) {
+    UE_ASSERT_GAME_THREAD("engine::SetCustomTimeDilation");
+    if (!actor || !std::isfinite(value)) return false;
+    void* const cls = R::ClassOf(actor);
+    if (!cls) return false;
+    int32_t off = -2;
+    for (const TimeDilationOffset& e : g_timeDilationOffsets)
+        if (e.cls == cls) { off = e.off; break; }
+    if (off == -2) {
+        off = R::FindPropertyOffset(cls, L"CustomTimeDilation");
+        g_timeDilationOffsets.push_back({cls, off});
+        if (off < 0)
+            UE_LOGW("engine: CustomTimeDilation did not resolve on %ls", R::ToString(R::NameOf(cls)).c_str());
+    }
+    if (off < 0) return false;
+    *reinterpret_cast<float*>(static_cast<uint8_t*>(actor) + off) = value;
+    return true;
 }
 
 

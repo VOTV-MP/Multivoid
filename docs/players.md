@@ -167,12 +167,17 @@ Other peers see the death through the ragdoll bit.
 
 ### Sleep
 
-Sleeping in the game is a per-process time dilation, so a lone sleeper would run twenty times
-faster than a shared clock. The gate is Minecraft's (`coop/player/sleep_sync`): a peer entering
-a bed keeps the cosmetic half while the dilation is undone every tick; each peer's in-bed edge is
-reported, the host tallies and announces how many are sleeping, and when everyone is in bed the
-host broadcasts the acceleration. Any wake ends the night for everyone; only a natural end, the
-host sleeping it out, grants everyone a full night. Nightmares roll on the host only.
+The host sleeps with the game's own sleep: its world runs at the game's speed-up and a client sees the
+clock and the host's actors move faster (`coop/player/sleep_sync`). A client that sleeps keeps its
+world at the normal rate: a watch on the game's sleep call takes the world's dilation back to 1 in
+the frame of the call and, while the rest lasts, runs the player's body and the world's effects at
+the game's own factor, with food and coffee settled to the rate they would have had
+(`coop/player/sleep_rest`). What crosses the wire is who rests. Each peer's state (awake, resting
+in a bed or fainted, dreaming in a nightmare) with the bed's class name goes from a client to the
+host, which relays it to every other client; the host's own sleeping flag goes to the clients, which show
+one chat line naming the host when it rises. A joiner is sent the host's flag and every peer's
+state that is not awake, and a leaver is told to every client as awake. A client holds its
+nightmare chance at zero, so a nightmare is a roll of the host's machine alone. `[?]`
 
 ### Inventory
 
@@ -198,12 +203,12 @@ item twice after a host restart, and an older one would lose it. A host that qui
 saving takes its players' profiles back to its last save together with its world. The copy that
 is written is the one taken when the game gathered the world into its save object, which during
 a game event is not the moment of the save (see [join.md](join.md), the save transfer). The
-profiles stand beside the file the world is in, under `coop_players/<save slot>/` in the game
-folder, and one world is written under more than one name: a quicksave writes a new subsave file,
+profiles are keyed by the file the world is in: they stand under `coop_players/<save slot>/` in the
+mod's own folder (`Mods\Multivoid`), and one world is written under more than one name: a quicksave writes a new subsave file,
 and a plain save made after loading a subsave writes the main slot, so a save to another slot
 first copies the whole set beside that file. A profile reaches the host up to a second after the
 pickup it reports, so a save inside that second holds a profile one pickup behind its world. That identity is
-a key file beside the game executable, under a private access list that admits only the
+a key file in the mod's own folder, bound to the machine it was made on, under a private access list that admits only the
 account that made it (`coop/net/peer_identity`; [install.md](install.md) says where and
 what a second account on the same PC gets). The world-side effect of a pickup or a drop is
 on the props lane.
@@ -231,7 +236,7 @@ setting), the shape of MTA's join-flood protection (`coop/net/connect_history`).
 The host's moderation is a set of commands -- `/kick`, `/ban`, `/banid`, `/unban`, `/tphere` --
 which the player list and the Administration panel now run for the host. A friend can be given
 `/kick`, `/ban`, `/banid` or `/unban` by a line in the server's permission files
-(`multivoid_servers\<server>\permissions\users\<their player id>.json`, LuckPerms' format, e.g.
+(`Mods\Multivoid\multivoid_servers\<server>\permissions\users\<their player id>.json`, LuckPerms' format, e.g.
 `{"permissions": ["multivoid.kick"]}`; a player's id shows when you hover their name in the player
 list or the Administration panel); `/tphere` stays the host's until a command can name where to
 teleport. The host can deny itself a command the same way, in a file named by its own id (hover
@@ -268,7 +273,7 @@ host. A setting that holds a password is never set or shown by command.
 | damage from contact | the victim's machine | other bodies' impact entries are cancelled |
 | damage from enemies | the host detects, the victim applies | a reliable relay to the hit peer |
 | death and revive | that peer | the native chain; the run-ending travel refused by its author |
-| sleep | each peer reports; the host tallies, accelerates and ends | |
+| sleep | each peer sleeps natively; each peer reports its rest state, the host relays it and its own sleeping flag | |
 | inventory | that peer; the host stores it | never on the wire as gameplay |
 | roster, kick, ban | the host | rows asserted as state; a ban by id and address at the identity proof |
 
@@ -282,7 +287,7 @@ host. A setting that holds a password is never set or shown by command.
 | `SkinChange`, `NameplateChange`, `NickColorChange` | each peer, relayed | the three preferences |
 | `HandItem`, `ItemActivate` | each peer, relayed | the held item's class, its actor's name and its hold slot's item name (the key of the game's item tables); the flashlight state |
 | `PlayerDamage` | host to the hit peer | an enemy hit to apply |
-| `SleepState` | each peer to the host; the host to all | in bed or not; the tally; accelerate; end |
+| `SleepState` | a client to the host; the host to all | a rest state with its bed (awake, resting, dreaming); the host's sleeping flag; one peer's rest state relayed |
 | `PlayerInventoryBlob` | both | the per-player profile (items, vitals, standing spot), pre-world |
 | `TeleportClient` | host to one peer | a placement; the administration action, not the join |
 
@@ -291,8 +296,9 @@ host. A setting that holds a password is never set or shown by command.
 The puppet spawns on the first pose that arrives. The roster rows, skin, nameplate and colour
 preferences are in the set of messages a host may send before the joiner's world exists, so a
 choice made during the load is not lost. Hand items and item states are replayed to the joiner
-at its ready edge. A joiner arrives awake: a running acceleration is ended and the tally re-run.
-The inventory is seeded before the world. A peer's death state is not seeded; a joiner sees a
+at its ready edge. A joiner is sent the host's sleeping flag and the rest state of every peer
+that is not awake. A joiner that rests before the host holds its world ready has that report refused, and repeats
+it each time the host's sleeping flag reaches it, which the host sends once it holds the joiner ready. The inventory is seeded before the world. A peer's death state is not seeded; a joiner sees a
 dead peer through the ragdoll bit of its next pose.
 
 ## Known limits
@@ -318,7 +324,7 @@ dead peer through the ragdoll bit of its next pose.
 | skins | `coop/player/client_model`, `coop/player/skin_registry`, `coop/player/skin_effects`, `coop/player/local_body`, `coop/player/skin_preview`, `ui/skins_panel`, `assets/paks/` |
 | held and toggled items | `coop/player/hand_item`, `coop/player/item_activate`, `coop/player/flashlight_click_sound` |
 | damage and death | `coop/player/player_damage`, `coop/player/death_revive`, `coop/player/run_end_travel`, `coop/player/ragdoll_gate` |
-| sleep | `coop/player/sleep_sync` |
+| sleep | `coop/player/sleep_sync`, `coop/player/sleep_rest` |
 | inventory | `coop/items/player_inventory_sync` |
 | moderation | `coop/moderation/moderation`, `coop/moderation/ban_list`, `coop/moderation/seen_players` |
 | tests | `harness/autotest/autotest_death.cpp` (the drill) + `death_state_probe.cpp` (the reads it and `autotest_runend.cpp` share), `autotest_damage.cpp`, `autotest_playerdmg.cpp`, `autotest_ragdoll.cpp`, `autotest_puppetframe.cpp` |

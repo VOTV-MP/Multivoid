@@ -5,6 +5,7 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/mod_data/legacy_note.h"
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/paths.h"
@@ -31,9 +32,9 @@ bool IsIdByte(char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') 
 }  // namespace
 
 std::wstring ServersDir() {
-    const std::wstring exe = ue_wrap::paths::ExeDir();
-    if (exe.empty()) return {};
-    return exe + L"\\multivoid_servers";
+    const std::wstring data = ue_wrap::paths::ModDataDir();
+    if (data.empty()) return {};
+    return data + L"\\multivoid_servers";
 }
 
 bool IsValidId(std::string_view id) {
@@ -85,6 +86,9 @@ HostingId IdForHosting(std::string_view hostNickUtf8) {
 }
 
 std::wstring EnsureHosted(std::string_view hostNickUtf8) {
+    // The server profile of an older build, beside the exe, is read by nothing now.
+    coop::legacy_note::Once(coop::legacy_note::LegacyFile::Servers, L"multivoid_servers");
+
     const HostingId h = IdForHosting(hostNickUtf8);
     const std::string& id = h.id;
 
@@ -111,8 +115,8 @@ std::wstring EnsureHosted(std::string_view hostNickUtf8) {
 
     const std::wstring root = ServersDir();
     if (root.empty()) {
-        UE_LOGE("server: could not create <exe dir unreadable>\\multivoid_servers\\%s -- this session's "
-                "server stores will not persist",
+        UE_LOGE("server: the mod has no data folder, so no server folder for '%s' -- this session's "
+                "server stores live in memory and are not saved",
                 id.c_str());
         return {};
     }

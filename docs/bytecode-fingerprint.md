@@ -115,7 +115,9 @@ nearest ancestor), `AnyClass` (a name watch on every class), `RuntimeClass` (the
 run time; the site resolves it with `facts::ResolveOn`, which records the class's name for the census).
 The registration calls of `script_gate`, `ufunction_hook` and `game_thread` accept only a row or a
 `facts::Resolved` made from one, so a dependency cannot be added without its row, and each row records
-whether its registration was taken or refused.
+whether its registration was taken or refused. A function a constant the mod writes depends on (the string a game spawner
+stamps into an actor before its BeginPlay reads it) is a row too, resolved by the site that writes the constant,
+though nothing hooks it, so a build that moved the function is named by the census.
 
 ### The census
 
@@ -214,7 +216,7 @@ Not applicable: every peer checks its own game, once a process, in its first gam
 | File | What |
 |---|---|
 | `src/votv-coop/src/ue_wrap/core/script_bytecode.cpp` | the decoder: the opcode table, one expression scanned or rendered, a script's statements |
-| `src/votv-coop/src/ue_wrap/core/script_fingerprint.cpp` | flow order, the signature line, the fingerprints |
+| `src/votv-coop/src/ue_wrap/core/script_fingerprint.cpp` | flow order, the signature line, the fingerprints, and `script_calls::EnumerateCalls`, the call expressions in the same order |
 | `src/votv-coop/include/ue_wrap/facts/function_row.h` | the row macro, the modes, `Resolve` and `ResolveOn` |
 | `src/votv-coop/include/ue_wrap/facts/fingerprints_<target>.inc` | the generated reference table |
 | `src/votv-coop/src/harness/fingerprint_census.cpp` | the census |

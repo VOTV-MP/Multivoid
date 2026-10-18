@@ -28,8 +28,8 @@ namespace coop::door_verb_intent {
 void Install(coop::net::Session* session);
 
 // Both roles: settles the watches and says once when all three are live. Host: runs the queued
-// verbs in order, each sender at a bounded rate; a sender whose first pose has not arrived has no
-// body to measure its reach from, and its verbs wait for it. Game thread, once per pump tick.
+// verbs in order, each sender at a bounded rate from its own IntentQueue; a sender whose first pose has not
+// arrived has no body to measure its reach from, and its verbs wait for it. Game thread, once per pump tick.
 void Tick(coop::net::Session& session);
 
 // Host: a client's verb from the wire, its format already checked by the dispatcher. Queued, and
@@ -37,10 +37,8 @@ void Tick(coop::net::Session& session);
 void OnDoorVerbIntent(coop::net::Session& session, const coop::net::DoorVerbIntentPayload& payload,
                       uint8_t senderSlot);
 
-// A peer left: its queued verbs and its rate go with it.
-void OnPeerLeft(uint8_t slot);
-
-// The session ended: the queues, the rates and the counters, with one summary line.
+// The session ended: the counters, with one summary line. A sender's queue, its rate and its said-once latches
+// live in its per-slot state and go with its occupant.
 void OnDisconnect();
 
 // CLIENT: how many presses this client has sent the host this session, for a drill that reads

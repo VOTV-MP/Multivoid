@@ -180,7 +180,7 @@ std::string DefaultText(const config_registry::Row& r) {
 }  // namespace internal
 
 void GenerateExampleCatalog() {
-    const std::wstring dir = ue_wrap::paths::ExeDir();
+    const std::wstring dir = ue_wrap::paths::ModDataDir();
     if (dir.empty()) return;
     const std::wstring path = dir + L"\\multivoid.ini.example";
     const std::vector<std::string> lines = BuildExampleLines();

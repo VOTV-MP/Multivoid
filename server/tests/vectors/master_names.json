@@ -1,0 +1,12 @@
+[
+  {"url": "master.multivoid.dev:10443", "name": "master.multivoid.dev"},
+  {"url": "https://master.multivoid.dev:10443", "name": "master.multivoid.dev"},
+  {"url": "http://203.0.113.7:10443", "name": "203.0.113.7"},
+  {"url": "HTTPS://Master.Multivoid.DEV:10443", "name": "master.multivoid.dev"},
+  {"url": "https://master.multivoid.dev:10443/v1/lobbies", "name": "master.multivoid.dev"},
+  {"url": "https://master.multivoid.dev.:10443", "name": "master.multivoid.dev"},
+  {"url": "https://alice:pw@master.multivoid.dev:10443", "name": "master.multivoid.dev"},
+  {"url": "[::1]:10443", "name": "[::1]"},
+  {"url": "https://[2001:db8::1]:10443/", "name": "[2001:db8::1]"},
+  {"url": "https://b\u00fccher.example:10443", "name": ""}
+]

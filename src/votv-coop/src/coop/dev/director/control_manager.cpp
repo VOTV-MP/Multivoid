@@ -63,6 +63,11 @@ bool ControlManager::Drive(DirectorGoal& goal, int maxSeconds) {
             if (!goal.failed) { goal.failed = true; goal.failReason = "walks_ended"; }
             return false;
         }
+        if (goal.cancel && goal.cancel->load(std::memory_order_acquire)) {
+            UE_LOGW("director: the walk was cancelled by its owner -- run CANCELLED (tick=%d)", tick);
+            if (!goal.failed) { goal.failed = true; goal.failReason = "cancelled"; }
+            return false;
+        }
         const int r = GT::RunAndWait([this, &goal, &lastDriver](std::atomic<int>& d) {
             PlayerContext ctx;
             if (!ctx.Refresh()) {

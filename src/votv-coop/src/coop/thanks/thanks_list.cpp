@@ -3,6 +3,7 @@
 #include "coop/thanks/thanks_list.h"
 
 #include "coop/atomic_file/atomic_file.h"
+#include "coop/mod_data/legacy_note.h"
 #include "coop/net/lobby_client.h"
 #include "coop/net/master_slots.h"  // the chosen master, the one the browser talks to
 #include "coop/session/shutdown.h"
@@ -129,7 +130,7 @@ size_t NameCount(const List& l) {
 }
 
 std::wstring CachePath() {
-    const std::wstring dir = ue_wrap::paths::ExeDir();
+    const std::wstring dir = ue_wrap::paths::ModDataDir();
     return dir.empty() ? std::wstring() : dir + L"\\" + kCacheFileName;
 }
 
@@ -365,6 +366,7 @@ void Init() {
         UE_LOGE("thanks_list: the embedded list did not load -- the menu shows none until a "
                 "download lands");
     }
+    coop::legacy_note::Once(coop::legacy_note::LegacyFile::Thanks, kCacheFileName);
     const std::string masterUrl = coop::net::master_slots::Selected().url;
     std::string cached;
     if (ReadCacheFor(masterUrl, cached)) {

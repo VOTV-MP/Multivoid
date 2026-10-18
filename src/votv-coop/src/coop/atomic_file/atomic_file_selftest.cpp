@@ -1,6 +1,6 @@
 // coop/atomic_file/atomic_file_selftest.cpp -- the un-gated boot selftest of the one file writer,
 // run once per process on both peers (shape: coop/moderation/ban_list_selftest.cpp). It
-// writes real files in a scratch folder beside the executable: a writer that leaves a cut file or
+// writes real files in a scratch folder in the mod's folder: a writer that leaves a cut file or
 // a stray temporary loses an ini, a ban or a key, and nothing else would notice.
 //
 // Red arm: with the dev row selftest_break_atomic_file the first case expects the wrong bytes, so
@@ -88,10 +88,10 @@ bool AllDigits(const std::wstring& s) {
 }
 
 // Scratch folders of runs that are gone (a kill inside a selftest) are removed whole.
-void SweepDeadScratch(const std::wstring& exeDir) {
+void SweepDeadScratch(const std::wstring& dir) {
     const std::wstring prefix = kScratchPrefix;
     WIN32_FIND_DATAW fd{};
-    HANDLE h = ::FindFirstFileW((exeDir + L"\\" + prefix + L"*").c_str(), &fd);
+    HANDLE h = ::FindFirstFileW((dir + L"\\" + prefix + L"*").c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) return;
     do {
         if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
@@ -103,12 +103,12 @@ void SweepDeadScratch(const std::wstring& exeDir) {
         if (id > 0xFFFFFFFFull) continue;
         if (ProcessRunning(static_cast<unsigned long>(id))) continue;
         std::error_code ec;
-        fs::remove_all(fs::path(exeDir) / name, ec);
+        fs::remove_all(fs::path(dir) / name, ec);
     } while (::FindNextFileW(h, &fd));
     ::FindClose(h);
 }
 
-// The key file's access list shape (coop/net/peer_identity KeyFileAcl): this account and the
+// The key file's access list shape (coop/net/identity_crypto KeyFileAcl): this account and the
 // system, full control, nothing inherited, protected. Built here because this module may not
 // include coop/net.
 struct ProtectedDacl {
@@ -199,15 +199,29 @@ static bool RunSelftestBody() {
     const bool breakIt =
         coop::config::ResolveFlag(coop::config_registry::rows::selftest_break_atomic_file);
 
-    const std::wstring exeDir = ue_wrap::paths::ExeDir();
-    if (exeDir.empty()) {
-        check(false, "the executable folder resolves");
-        UE_LOGE("atomic_file selftest: %d/%d checks passed", pass, total);
-        return false;
+    {
+        const Result r = Write(fs::path{}, "x", Mode::Replace, Sync::Cached);
+        check(!r.ok() && r.failedAt == Step::Open, "case 0: an empty target is refused");
     }
-    SweepDeadScratch(exeDir);
+
+    const std::wstring dataDir = ue_wrap::paths::ModDataDir();
+    if (dataDir.empty()) {
+        if (pass != total) {
+            UE_LOGE("atomic_file selftest: %d/%d checks passed", pass, total);
+            return false;
+        }
+        if (breakIt) {
+            UE_LOGE("atomic_file selftest: the red arm cannot run -- no data folder, so the disk cases "
+                    "it breaks are skipped");
+            return false;
+        }
+        UE_LOGI("atomic_file selftest: disk cases skipped, the mod has no data folder (%d checks passed)",
+                total);
+        return true;
+    }
+    SweepDeadScratch(dataDir);
     const DWORD pid = ::GetCurrentProcessId();
-    const fs::path scratch = fs::path(exeDir) / (std::wstring(kScratchPrefix) + std::to_wstring(pid));
+    const fs::path scratch = fs::path(dataDir) / (std::wstring(kScratchPrefix) + std::to_wstring(pid));
     std::error_code ec;
     fs::remove_all(scratch, ec);
     fs::create_directories(scratch, ec);

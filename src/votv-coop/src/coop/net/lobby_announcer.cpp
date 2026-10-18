@@ -5,6 +5,7 @@
 
 #include "coop/build_trust/build_trust.h"
 #include "coop/net/http_client.h"
+#include "coop/net/lobby_proof.h"
 #include "coop/net/peer_identity.h"  // LocalIdentityString -- the identity joiners dial
 #include "coop/net/protocol.h"  // kProtocolVersion -- announced for the browser's join gate
 #include "coop/session/shutdown.h"
@@ -14,6 +15,7 @@
 #include "ue_wrap/core/log.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <thread>
 #include <utility>
@@ -50,7 +52,9 @@ BuildClaim ReadBuildClaim() {
 
 // The POST /v1/host body of a request: the first announce and every re-announce build it here, so
 // a re-announced lobby carries the same identity, claim and (current) listing as the first.
-std::string HostBody(const AnnounceRequest& r, bool listed, const BuildClaim& claim) {
+// `nonce` and `proof` ride along when the create is proved (both empty: the old master's create).
+std::string HostBody(const AnnounceRequest& r, bool listed, const BuildClaim& claim,
+                     const std::string& nonce, const std::string& proof) {
     // nlohmann builds + escapes the body (name/world are user-supplied -> may contain
     // quotes/backslashes; never string-concat them into JSON). J::Dump uses the
     // replace error handler so invalid-UTF-8 input can't throw out of a worker.
@@ -81,7 +85,157 @@ std::string HostBody(const AnnounceRequest& r, bool listed, const BuildClaim& cl
         b["build_sig"] = claim.sig;
     }
     b["listed"] = listed;
+    if (!proof.empty()) {
+        b["nonce"] = nonce;
+        b["proof"] = proof;
+    }
     return J::Dump(b);
+}
+
+// What the challenge came to: a nonce to sign, a master that has no such route (an old master),
+// or a failure to hand back as the create's own.
+enum class Challenge { Nonce, OldMaster, Failed };
+
+// An unknown route on today's master answers exactly this (server/src/bin/master.rs's 404), so a
+// proxy's or a captive portal's 404 is not mistaken for an old master.
+bool IsOldMasterNotFound(const http::Response& resp) {
+    J::Json j;
+    if (resp.status != 404 || !J::ParseObject(resp.body, j) || j.size() != 1) return false;
+    auto it = j.find("error");
+    return it != j.end() && it->is_string() && it->get<std::string>() == "not found";
+}
+
+bool Is64LowerHex(const std::string& s) {
+    if (s.size() != 64) return false;
+    for (char c : s)
+        if (!(('0' <= c && c <= '9') || ('a' <= c && c <= 'f'))) return false;
+    return true;
+}
+
+// POST /v1/host/challenge, whose answer is the nonce one create signs. `failure` is the response to
+// return as the create's when this is Failed (unreachable, another status, another 404). A 200
+// whose nonce is not 64 hex is a master that does not speak this exchange: the old-master case.
+Challenge FetchChallenge(const AnnounceRequest& r, std::string& nonce, http::Response& failure) {
+    const http::Response resp = http::Post(r.masterUrl, "/v1/host/challenge", "{}", r.timeoutMs);
+    if (resp.ok && IsOldMasterNotFound(resp)) return Challenge::OldMaster;
+    if (!resp.ok || resp.status != 200) { failure = resp; return Challenge::Failed; }
+    J::Json j;
+    if (!J::ParseObject(resp.body, j) || !Is64LowerHex(J::Str(j, "nonce"))) return Challenge::OldMaster;
+    nonce = J::Str(j, "nonce");
+    return Challenge::Nonce;
+}
+
+// The master's own error word of a refusal ("proof-required"), empty when the body has none.
+std::string ErrorWord(const http::Response& resp) {
+    J::Json j;
+    return J::ParseObject(resp.body, j) ? J::Str(j, "error") : std::string();
+}
+
+// The word of a refusal that waiting cannot clear: a proof the master will not accept, a build
+// below its floor, an identity it blocks. Empty for anything else, which may clear. MTA retries
+// only a timeout (CMasterServerAnnouncer.h:154) and gives up on every other answer (:169-180); we
+// also retry what the host's own clock or the master's restart can clear (410, 409, 5xx).
+std::string PermanentRefusal(const http::Response& resp) {
+    if (!resp.ok) return {};
+    const std::string why = ErrorWord(resp);
+    if ((resp.status == 400 && why == "bad-proof") ||
+        (resp.status == 403 && (why == "build-too-old" || why == "blocked")))
+        return why;
+    return {};
+}
+
+// What ends a create early, besides the process shutdown. The heartbeat thread's re-announce is
+// ended by the announcer's stop flag. A Host() worker cannot read that flag (its own leading Stop()
+// left it set); it is ended by a Stop() that began after its own, which moved the generation.
+struct CreateStop {
+    const std::atomic<bool>* flag = nullptr;
+    const std::atomic<uint64_t>* gen = nullptr;
+    uint64_t genAtStart = 0;
+
+    bool Now() const {
+        return coop::shutdown::IsShuttingDown() || (flag != nullptr && flag->load()) ||
+               (gen != nullptr && gen->load() != genAtStart);
+    }
+};
+
+// One create, proved. The first announce and every re-announce come through here, so both sign the
+// same way. A create is a challenge then a POST that carries the signed nonce; the signature is
+// made fresh on every try, since a nonce is single-use. A refused nonce (410) or a missing proof
+// (409) is retried ONCE with a new challenge, so a create takes at most four POSTs (two
+// challenges, two creates); a bad proof (400) is a bug or a misconfigured master and is not
+// retried. A master with no challenge route is an old master and gets the create it understands,
+// unproved: a P2P host's signaling and TURN come only from that answer, so an unlisted host would
+// fall back to a direct listen.
+//
+// `stop` is read before every POST after the first, so a slow master cannot hold a stopping caller
+// for the sum of four requests. An abandoned create returns a response that is not ok.
+http::Response CreateLobby(const AnnounceRequest& r, bool listed, const BuildClaim& claim,
+                           const CreateStop& stop) {
+    auto stopped = [&stop] {
+        const bool now = stop.Now();
+        if (now) UE_LOGI("lobby: host announce -- stopped before the next request");
+        return now;
+    };
+    // MTA sends one request per announce and retries only a timeout (CMasterServerAnnouncer.h:154);
+    // here a create is a challenge and a POST, and a spent or missing nonce is retried once.
+    http::Response resp;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        if (attempt > 0 && stopped()) return http::Response{};
+        std::string nonce;
+        http::Response failure;
+        const Challenge ch = FetchChallenge(r, nonce, failure);
+        if (ch == Challenge::Failed) return failure;
+        if (stopped()) return http::Response{};
+        if (ch == Challenge::OldMaster) {
+            // RETIREMENT: this branch goes when every master in the compiled-in list answers the
+            // challenge route (the lobby-proof design, "Retirement"); the build that drops it says so
+            // in its release notes.
+            static std::atomic<bool> said{false};
+            if (!said.exchange(true))
+                UE_LOGW("lobby: this master predates the lobby proof -- announcing unproved");
+            return http::Post(r.masterUrl, "/v1/host", HostBody(r, listed, claim, {}, {}), r.timeoutMs);
+        }
+        // The name signed is the host part of the URL that was dialled, taken by the same code that
+        // dials it, so a proof made for a master that was not asked verifies nowhere else.
+        const std::string proof = coop::net::lobby_proof::ProofHex(
+            coop::net::peer_identity::LocalIdentityString(), nonce, http::HostName(r.masterUrl));
+        if (proof.empty()) {
+            UE_LOGW("lobby: host announce -- no proof could be made");
+            return http::Response{};
+        }
+        resp = http::Post(r.masterUrl, "/v1/host", HostBody(r, listed, claim, nonce, proof),
+                          r.timeoutMs);
+        if (!resp.ok) return resp;
+        const std::string why = ErrorWord(resp);
+        if (resp.status == 400 && why == "bad-proof") {
+            UE_LOGW("lobby: host announce -- the master refused the proof (bad-proof)");
+            return resp;
+        }
+        if (resp.status == 403) {
+            if (why == "build-too-old")
+                UE_LOGW("lobby: host announce -- the master refuses this build -- update Multivoid");
+            else if (why == "blocked")
+                UE_LOGW("lobby: host announce -- the master has blocked this install's identity");
+            else
+                UE_LOGW("lobby: host announce -- the master refused it (403)");
+            return resp;
+        }
+        const bool retryable = (resp.status == 410 && why == "nonce-expired") ||
+                               (resp.status == 409 && why == "proof-required");
+        if (!retryable) return resp;
+        if (attempt == 1 && resp.status == 409)
+            UE_LOGW("lobby: host announce -- the master requires a signed announce and refused this one");
+    }
+    return resp;
+}
+
+// POST /v1/leave for a session: the retraction of a lobby this process announced.
+void SendLeave(const std::string& url, const std::string& sessionId, const std::string& token) {
+    J::Json b;
+    b["sessionId"] = sessionId;
+    b["token"] = token;
+    const http::Response resp = http::Post(url, "/v1/leave", J::Dump(b), 5000);
+    UE_LOGI("lobby: left lobby -> %s (%d)", resp.ok ? "ok" : "unreachable", resp.status);
 }
 
 }  // namespace
@@ -92,14 +246,23 @@ HostInfo LobbyAnnouncer::Host(const std::string& masterUrl, const std::string& n
                               const std::string& world,
                               bool locked, int playersMax, int timeoutMs, int directPort) {
     HostInfo info;
+    // The generation is read BEFORE our own Stop(), so a Stop() that finishes while that one is
+    // still joining and leaving is counted (see `gen` below).
+    const uint64_t entryGen = gen_.load();
     Stop();  // retire any prior lobby first (sends /leave, joins) -- on a worker, safe
 
     const AnnounceRequest req{masterUrl, name, world, locked, playersMax, timeoutMs, directPort};
     const BuildClaim claim = ReadBuildClaim();
     if (claim.present)
         UE_LOGI("lobby: announcing the build claim key=%u sha=%.8s", claim.key, claim.sha.c_str());
-    const http::Response resp =
-        http::Post(req.masterUrl, "/v1/host", HostBody(req, true, claim), req.timeoutMs);
+    // Stop() above left stop_ set (it ends the old heartbeat), so the flag cannot be read here: a
+    // Stop() that begins from now on is told by the generation it moves, and the process shutdown
+    // ends this create too. Our own Stop() adds exactly one to the generation, so entry + 1 is the
+    // value of a session nobody has stopped since; any other value (a second Stop() before, during
+    // or after ours, including one that completed inside the lead-in) is a bump we did not make and
+    // cancels the create.
+    const uint64_t gen = entryGen + 1;
+    const http::Response resp = CreateLobby(req, true, claim, CreateStop{nullptr, &gen_, gen});
     // No master address in these lines: they reach the console, and which master was asked is the
     // caller's to name (master_slots::DisplayName).
     if (!resp.ok) { UE_LOGW("lobby: host announce -- master unreachable"); return info; }
@@ -129,23 +292,32 @@ HostInfo LobbyAnnouncer::Host(const std::string& masterUrl, const std::string& n
     // can never move-assign over a joinable hbThread_ (which would std::terminate).
     {
         std::lock_guard<std::mutex> tl(threadMu_);
-        StopHeartbeatLocked();  // join anything that snuck in since the top Stop()
-        {
-            std::lock_guard<std::mutex> lk(mu_);
-            request_   = req;
-            sessionId_ = info.sessionId;
-            token_     = info.token;
-            lobbyId_   = info.lobbyId;
-            turnCur_   = info.turn.user;
-            turnPrev_.clear();
-            listed_    = true;
+        // A Stop() bumps the generation before it takes threadMu_, so an unchanged generation here
+        // means any later Stop() runs after the heartbeat below exists, and its /leave retracts this
+        // lobby; a changed one means the session this lobby was made for has ended.
+        if (gen_.load() == gen) {
+            StopHeartbeatLocked();  // join anything that snuck in since the top Stop()
+            {
+                std::lock_guard<std::mutex> lk(mu_);
+                request_   = req;
+                sessionId_ = info.sessionId;
+                token_     = info.token;
+                lobbyId_   = info.lobbyId;
+                turnCur_   = info.turn.user;
+                turnPrev_.clear();
+                listed_    = true;
+            }
+            stop_.store(false);
+            active_.store(true);
+            hbThread_ = std::thread(&LobbyAnnouncer::HeartbeatLoop, this);
+            UE_LOGI("lobby: announced '%s' lobbyId=%s -- heartbeating", name.c_str(), info.lobbyId.c_str());
+            return info;
         }
-        stop_.store(false);
-        active_.store(true);
-        hbThread_ = std::thread(&LobbyAnnouncer::HeartbeatLoop, this);
     }
-    UE_LOGI("lobby: announced '%s' lobbyId=%s -- heartbeating", name.c_str(), info.lobbyId.c_str());
-    return info;
+    // The POST runs outside threadMu_, like Stop()'s.
+    UE_LOGI("lobby: host announce -- stopped while it was made; leaving lobbyId=%s", info.lobbyId.c_str());
+    SendLeave(masterUrl, info.sessionId, info.token);
+    return HostInfo{};
 }
 
 std::string LobbyAnnouncer::OwnLobbyId() const {
@@ -155,7 +327,7 @@ std::string LobbyAnnouncer::OwnLobbyId() const {
 
 ReannounceResult LobbyAnnouncer::Reannounce() {
     ReannounceResult out;
-    if (stop_.load() || coop::shutdown::IsShuttingDown()) { out.stopped = true; return out; }
+    if (stop_.load() || coop::shutdown::IsShuttingDown()) { out.stopped = true; return out; }  // before any POST
     AnnounceRequest req;
     bool listed;
     {
@@ -166,10 +338,10 @@ ReannounceResult LobbyAnnouncer::Reannounce() {
     out.listed = listed;
     // Outside mu_: a POST never runs under it. The claim is read again, so the re-announced lobby
     // carries the same one.
-    const http::Response resp =
-        http::Post(req.masterUrl, "/v1/host", HostBody(req, listed, ReadBuildClaim()), req.timeoutMs);
+    const http::Response resp = CreateLobby(req, listed, ReadBuildClaim(), CreateStop{&stop_, nullptr, 0});
     out.reached = resp.ok;
     out.status = resp.status;
+    out.refused = PermanentRefusal(resp);
     if (!resp.ok || resp.status != 200) return out;
     J::Json j;
     if (!J::ParseObject(resp.body, j)) return out;
@@ -209,6 +381,14 @@ void LobbyAnnouncer::HeartbeatLoop() {
         if (forgotten) {
             const ReannounceResult r = Reannounce();
             if (r.stopped) break;
+            if (!r.refused.empty()) {
+                // The one line for this hosting; the game goes on, unlisted. A host that wants the
+                // listing back hosts again.
+                UE_LOGW("lobby: the master refused announcing again (%s) and waiting cannot change "
+                        "that -- no more tries for this hosting, the game stays unlisted",
+                        r.refused.c_str());
+                break;
+            }
             retryS = (retryS == 0) ? 30 : std::min(retryS * 2, 300);
             if (r.ok) {
                 forgotten = false;
@@ -253,18 +433,18 @@ void LobbyAnnouncer::HeartbeatLoop() {
         }
         if (ours) b["turn_user"] = held;
         const http::Response resp = http::Post(url, "/v1/heartbeat", J::Dump(b), 8000);
-        // The master's own answer to a session it does not hold (server/src/lobby.rs:452) is
-        // "unknown session or bad token"; the match is on "unknown session", and
-        // the local fake master (fake_master.py) answers the same words. A 403 from anything
-        // else, a proxy, is a plain failure and mints no duplicate lobby. MTA re-announces on a
-        // timer: after a timeout it retries 5 times, 5 minutes apart, and otherwise gives up to a
-        // 24 h reminder
-        // (:48-49, :154-181 and :232 of
-        // reference/mtasa-blue/Server/mods/deathmatch/utils/CMasterServerAnnouncer.h), and its
-        // push re-sends the same entry every 10 minutes (:50, :96-109), an upsert. We retry on the
+        // The master's own answer to a session it does not hold (h_heartbeat, server/src/lobby.rs)
+        // is "unknown session or bad token"; the match is on "unknown session", and the local fake
+        // master (fake_master.py) answers the same words. A 403 from anything else, a proxy, is a
+        // plain failure and mints no duplicate lobby. MTA re-announces on a timer: after a timeout
+        // it retries 5 times, 5 minutes apart, and otherwise gives up to a 24 h reminder (:48-49,
+        // :154-181 and :232 of reference/mtasa-blue/Server/mods/deathmatch/utils/
+        // CMasterServerAnnouncer.h), and its push re-sends the same entry every 10 minutes (:50,
+        // :96-109), an upsert on address. A proved create is an upsert on the host's key (it
+        // replaces that key's row and keeps its lobbyId, server/src/lobby/host.rs); a lobby the
+        // master forgot has no row to replace, so the re-announce mints a new one. We retry on the
         // 30/60/120/240/300 s schedule until the master answers, because a lobby the master forgot
-        // is missing from the browser; our /v1/host mints a new lobby per call, so the 403
-        // triggers a re-announce that replaces the lost one.
+        // is missing from the browser.
         if (resp.ok && resp.status == 403 &&
             resp.body.find("unknown session") != std::string::npos) {
             UE_LOGW("lobby: the master no longer knows lobbyId=%s (403) -- announcing again",
@@ -328,6 +508,10 @@ void LobbyAnnouncer::StopHeartbeatLocked() {
 }
 
 void LobbyAnnouncer::Stop() {
+    // First, before anything can block: a Host() in flight on another thread reads this to know the
+    // session it announces for has ended (its own leading Stop() adds one, which it counts for;
+    // any further bump cancels it).
+    gen_.fetch_add(1);
     bool was;
     std::string url, sid, tok;
     {
@@ -343,13 +527,7 @@ void LobbyAnnouncer::Stop() {
         sessionId_.clear(); token_.clear(); lobbyId_.clear(); turnCur_.clear(); turnPrev_.clear();
     }
     if (!was) return;  // nothing was announced -> no /leave to send
-    if (!url.empty() && !sid.empty()) {
-        J::Json b;
-        b["sessionId"] = sid;
-        b["token"] = tok;
-        const http::Response resp = http::Post(url, "/v1/leave", J::Dump(b), 5000);
-        UE_LOGI("lobby: left lobby -> %s (%d)", resp.ok ? "ok" : "unreachable", resp.status);
-    }
+    if (!url.empty() && !sid.empty()) SendLeave(url, sid, tok);
 }
 
 }  // namespace coop::net::lobby

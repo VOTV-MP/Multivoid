@@ -186,8 +186,8 @@ public:
     bool TakeRemotePropDriveBatch(std::vector<PropPoseSnapshot>& out);
 
     // Game thread: queue a reliable message to every connected client (host) or to the host
-    // (client). False on an oversize payload or no peer.
-    bool SendReliable(ReliableKind kind, const void* payload, int len);
+    // (client). False on an oversize payload or no peer. `skipSlot` skips one slot (-1: none): MTA pSkip.
+    bool SendReliable(ReliableKind kind, const void* payload, int len, int skipSlot = -1);
 
     // Single-target reliable send; false if peerSlot is out of range, not connected, or the payload
     // does not fit. `senderSlot` is the header's origin (0 = self; the late-join replay passes the
@@ -240,10 +240,10 @@ public:
 
     // Does any live peer pass the world-ready gate? A fan-out with zero eligible receivers is a
     // vacuous success for a save-and-seed-covered lane, not a reason to re-broadcast. Game or net
-    // thread.
-    bool AnyWorldReadyPeer() const {
+    // thread. `skipSlot` leaves a slot out, as SendReliable's does: one gate for both.
+    bool AnyWorldReadyPeer(int skipSlot = -1) const {
         for (int i = 0; i < kMaxPeers; ++i)
-            if (peerConns_[i].load() != 0 &&
+            if (i != skipSlot && peerConns_[i].load() != 0 &&
                 slotWorldReady_[i].load(std::memory_order_acquire)) return true;
         return false;
     }
@@ -279,7 +279,7 @@ public:
     bool SendPropRelease(const PropReleasePayload& payload);
     bool SendPropSpawn(const PropSpawnPayload& payload);
     bool SendPropDestroy(const PropDestroyPayload& payload);
-    bool SendEntitySpawn(const EntitySpawnPayload& payload);
+    bool SendEntitySpawn(const EntitySpawnPayload& payload, int skipSlot = -1);  // skipSlot: SendReliable's
     bool SendEntityDestroy(uint32_t elementId);
 
     // Diagnostics; the counters live in net_stats (bytes and packets at the GNS choke points).
@@ -320,6 +320,10 @@ public:
     // for it. False for an out-of-range slot, a slot with no connection, or a failed read. Game
     // thread. Not const: SendBacklog::DepthBytes is not.
     bool SlotReliableIdle(int slot);
+
+    // What the net thread last published about this slot's link: delivered and still-owed reliable
+    // bytes, with the sample's time on the net clock. See SendRateControl::Published. Any thread.
+    SendRateControl::Published LinkDeliveryOf(int slot) const { return rateControl_.PublishedFor(slot); }
 
     // The slot's occupancy generation: a host-minted, never reused, non-zero token naming who holds
     // the slot; 0 = empty. A change between reads is a replacement, which lowest-free slot reuse

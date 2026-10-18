@@ -16,6 +16,7 @@
 #include "coop/interactables/download_arm_sync.h"  // the armed state at the capture
 #include "coop/interactables/signal_sync.h"  // the seed snapshot capture and cancel
 #include "coop/world/email_sync.h"           // the seed snapshot capture and cancel
+#include "coop/net/fake_link_steps.h"  // the `begin` origin of net.fakelink_steps
 #include "coop/net/session.h"
 #include "coop/player/roster_ledger.h"  // PerSlotState: g_asked, the once-per-occupancy request latch
 #include "coop/props/prop_element_tracker.h"  // the blob-versus-live key diff
@@ -548,6 +549,8 @@ void TickHost() {
             }
             continue;  // the beacon below is skipped too: a stalled stream reports no new number
         }
+        if (hs.nextChunk == 0)
+            coop::net::fake_link_steps::NoteOrigin(coop::net::fake_link_steps::Origin::Begin);
         for (int n = 0; n < kChunksPerTick && hs.nextChunk < hs.chunkCount; ++n) {
             const size_t off = static_cast<size_t>(hs.nextChunk) * coop::net::kSaveChunkBytes;
             const size_t dataLen =
@@ -667,6 +670,7 @@ void OnBegin(const coop::net::SaveTransferBeginPayload& p) {
     // cap would have been a policy limit that could reject a legitimately grown world.
     UE_LOGI("save_transfer: Begin -- %u bytes in %u chunks (crc=0x%08X mode=%u sidecar=%u B)",
             p.totalBytes, p.chunkCount, p.crc32, p.gameMode, p.sidecarBytes);
+    coop::net::fake_link_steps::NoteOrigin(coop::net::fake_link_steps::Origin::Begin);
     MaybeFinishLocked_();
 }
 

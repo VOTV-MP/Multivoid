@@ -27,7 +27,6 @@ void Tick(coop::net::Session& session) {
 void OnPeerWorldReady(int slot) { coop::kerfus_state::OnPeerWorldReady(slot); }
 
 void OnPeerLeft(uint8_t slot) {
-    coop::kerfus_intent::OnPeerLeft(slot);
     coop::kerfus_follow::OnPeerLeft(slot);
 }
 

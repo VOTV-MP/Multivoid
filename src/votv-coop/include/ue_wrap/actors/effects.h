@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,11 @@ struct Entry { std::wstring name; bool live; float strength; float time; };
 // not resolve while the arrays hold an entry; an empty pair, or a pair whose headers save_record
 // rejects, lists as empty.
 bool List(std::vector<Entry>* out);
+
+// `fn(effect, ctx)` for each live actor of the gamemode's `effects` array, in array order; the number
+// visited. 0, calling nothing, when the gamemode or the array does not resolve or the array's header does
+// not read. `fn` may write the actor's fields and may not add or remove an effect. Game thread.
+size_t ForEachWorldEffect(void (*fn)(void* effect, void* ctx), void* ctx);
 
 // gamemode addEffect(effect, strength, time, incrementStrength=false, incrementTime=false). False,
 // calling nothing, for a name not in Names() (matched without case; the table's spelling is what

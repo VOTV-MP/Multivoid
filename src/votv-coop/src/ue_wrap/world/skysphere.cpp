@@ -154,6 +154,16 @@ void ApplySky(const FRotator& skyWorldRot, float moonPhase) {
     }
 }
 
+bool ReadSunIntensityMult(float& mult) {
+    static R::InstanceOffset s_mult{L"sunIntensityMult"};
+    void* sky = Sky();
+    if (!sky) return false;
+    const int32_t off = s_mult.Of(sky);
+    if (off < 0) return false;
+    mult = *reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sky) + off);
+    return true;
+}
+
 bool ReadEye(bool& eye) {
     void* sky = Sky();
     if (!sky) return false;

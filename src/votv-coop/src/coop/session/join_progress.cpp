@@ -117,7 +117,8 @@ PhaseWatch WatchFor(Phase ph, Stage st) {
                 "this machine never finished settling into the world it loaded"};
     case Phase::AwaitingWorldStream:
     case Phase::Receiving:
-        return {30'000, EndReason::HostWorldNotSent, "the host never sent the world it owed"};
+        return {30'000, EndReason::HostWorldNotSent,
+                "the host stopped sending the world it owed, or the connection stopped delivering it"};
     default:
         return {0, EndReason::None, ""};
     }
@@ -131,6 +132,7 @@ const char* HostPhaseName(uint8_t p) {
     case coop::net::HostJoinPhase::StreamingWorld:    return "streaming its world";
     case coop::net::HostJoinPhase::SnapshotDeferred:  return "holding the bracket until its world settles";
     case coop::net::HostJoinPhase::StreamingSnapshot: return "streaming the bracket";
+    case coop::net::HostJoinPhase::Draining:          return "delivering the bracket";
     }
     return "in a phase this build does not know";
 }
@@ -366,6 +368,10 @@ void NoteWorldReadyGate(WorldGate gate) {
 
 const char* WorldGateText(WorldGate gate) { return WorldGateName(static_cast<uint8_t>(gate)); }
 
+bool BeaconRenews(uint8_t wasPhase, uint32_t wasDone, uint8_t phase, uint32_t done) {
+    return wasPhase != phase || done > wasDone;
+}
+
 void NoteHostBeacon(uint8_t phase, uint32_t done, uint32_t total) {
     if (!Active()) return;
     if (g_mode.load(std::memory_order_relaxed) != static_cast<int>(Mode::Client)) return;
@@ -374,7 +380,7 @@ void NoteHostBeacon(uint8_t phase, uint32_t done, uint32_t total) {
     g_hostTotal.store(total, std::memory_order_relaxed);
     g_hostBeacons.fetch_add(1, std::memory_order_relaxed);
     g_hostBeaconMs.store(NowMs(), std::memory_order_relaxed);
-    // One line per CHANGE, never per beacon: four lines in a whole join, and they are the only
+    // One line per CHANGE, never per beacon: one per phase of the host, and they are the only
     // record anywhere of what the host was doing while this joiner waited.
     if (was != phase)
         UE_LOGI("join_progress: the host is %s (%u/%u)", HostPhaseName(phase), done, total);
@@ -383,7 +389,7 @@ void NoteHostBeacon(uint8_t phase, uint32_t done, uint32_t total) {
     // wait on it lets a host that is stuck hold a joiner forever, which is the failure the whole
     // watchdog exists to end (measured: a host holding its bracket kept a joiner waiting out 125
     // beacons and 120 seconds). A phase that changed, or a numerator that moved, IS progress.
-    if (was != phase || done > wasDone) StampToken();
+    if (BeaconRenews(was, wasDone, phase, done)) StampToken();
 }
 
 void NotePropApplied() {
@@ -580,7 +586,7 @@ void MaybeTimeout() {
                           PhaseName(ph), HostPhaseName(hp),
                           static_cast<long long>((now - beaconMs) / 1000));
         } else {
-            std::snprintf(detail, sizeof(detail), "%s: %s, and the host never answered at all",
+            std::snprintf(detail, sizeof(detail), "%s: %s (no beacon from the host at all)",
                           PhaseName(ph), w.detail);
         }
         Fail(w.code, detail);

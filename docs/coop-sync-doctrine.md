@@ -66,7 +66,7 @@ Read the dispatch map first, then pick the cheapest seam that actually fires:
 3. The native function seam (`ue_wrap/core/ufunction_hook`): calls into native functions on
    every route, because every route funnels through the function's thunk. After the call it
    reads the result and may overwrite it; its PRE form reads the parameters before the call and
-   can refuse it, for a native with no return value and no out or reference parameter
+   can refuse it, for a native with no return value and no out parameter or non-const reference
    (`InstallPreHook`). Any other native that must be cancelled needs a detour of the C++
    function itself.
 4. Per-site reconcile, the last resort: let the verb run, snapshot and diff the observable state,
