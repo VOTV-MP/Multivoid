@@ -152,6 +152,7 @@
 #include "coop/interactables/server_upgrade_sync.h"  // the servers' physical upgrades
 #include "coop/creatures/roach_sync.h"  // host-authoritative roach-infestation mirror
 #include "coop/creatures/owner_entity_sync.h"
+#include "coop/creatures/npc_mirror_brain.h"  // a parked family's mirror runs none of its Blueprint graph
 #include "coop/items/hook_anchor.h"
 #include "coop/items/hook_sync.h"  // the hook lane: owner-phase stream, mirrors, the tick park
 #include "coop/world/event_active_sync.h"  // the native activeEvents registry probe
@@ -220,6 +221,7 @@ void Install(coop::net::Session& session) {
     coop::event_fire_sync::Install(&session);  // scheduled events: the host's runEvent/runSpecialEvent watches -> EventFire; client hold + policy replay
     coop::event_active_sync::Install(&session);  // the host's setEvent watch: begin/end edges; the join snapshot reads the game's registry
     coop::creature_event_relay::Install(&session);  // a creature's setEvent: the host's count per creature, applied to its mirror on a client
+    coop::npc_mirror_brain::Install();  // a parked family's mirrors: the graph watches and the end of a mirror's mark
     coop::alarm_sync::Install(&session);  // base radar alarm shared-world toggle (a 1 Hz active poll on both roles)
     coop::serverbox_sync::Install(&session);  // the server boxes' break state: the verbs run on the host, a client's repair sent there
     coop::server_upgrade_sync::Install(&session);  // the servers' upgrades: ops at the box's two verbs + host canonical
@@ -542,6 +544,7 @@ DisconnectStats DisconnectAll() {
     coop::event_fire_sync::OnDisconnect();  // restore the client scheduler (allEvents.Num) + drop the queued fires
     coop::event_active_sync::OnDisconnect();  // drop the begun-events map and its world stamp
     coop::creature_event_relay::OnDisconnect();  // a client's applied creature events back out; both halves' state; the session
+    coop::npc_mirror_brain::OnDisconnect();  // what the graph watches refused, and every mark
     coop::alarm_sync::OnDisconnect();  // drop the cached trigger + poll baseline
     coop::serverbox_sync::OnDisconnect();  // the poll baseline and the session
     coop::server_upgrade_sync::OnDisconnect();  // verb snapshots + parked canonical + deny records

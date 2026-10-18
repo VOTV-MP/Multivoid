@@ -296,6 +296,8 @@ set(VOTVCOOP_SOURCES
     src/ui/join_curtain.cpp
     src/coop/creatures/npc_adoption.cpp
     src/coop/creatures/npc_mirror.cpp
+    src/coop/creatures/npc_mirror_brain.cpp
+    src/coop/creatures/npc_mirror_brain_table.cpp
     src/coop/creatures/npc_pose_drive.cpp
     src/coop/creatures/npc_pose_host.cpp
     src/coop/creatures/npc_sync.cpp
