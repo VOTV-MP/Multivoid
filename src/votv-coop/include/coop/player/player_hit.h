@@ -29,8 +29,10 @@ void Install(coop::net::Session* session);
 
 // Host: send `payload` to peer `slot` (a client's slot, 1 and up), `targetElementId` stamped from that slot's Player
 // Element; the caller leaves it unset. No-op, logged, when the session is unset, the slot is invalid or has no Player
-// Element yet. One reliable send per hit, never coalesced: a sum could cross the punch's 25 threshold. Game thread.
-void Deliver(uint8_t slot, const coop::net::PlayerHitPayload& payload);
+// Element yet. One reliable send per hit, never coalesced: a sum could cross the punch's 25 threshold. True when the
+// hit was handed to the session's send, false when nothing was sent (the cases above, or the send refused: a slot
+// that is not world-ready, a full backlog). Game thread.
+bool Deliver(uint8_t slot, const coop::net::PlayerHitPayload& payload);
 
 // Client: the wire. Checks the format only, as the host is the author: the verb 0 or 1, the bone under 6, a finite
 // non-negative damage, every vector component finite and within 1e7. A payload that passes is applied on the game

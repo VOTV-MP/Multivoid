@@ -12,6 +12,7 @@
 
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/obj_keyed_cache.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine_player_verbs.h"
@@ -43,7 +44,10 @@ int  g_applyDepth = 0;  // game thread
 uint32_t g_applied = 0;
 uint32_t g_droppedNoBody = 0;
 uint32_t g_droppedSource = 0;
+uint32_t g_failedApplies = 0;
 bool g_boneSaid = false;
+bool g_noneSaid = false;                          // the first hit with no source creature has been said
+ue_wrap::ObjKeyedCache<bool, 24> g_appliedSaid;   // the source classes whose first applied hit has been said
 
 bool FiniteWithin(const float (&v)[3]) {
     for (const float c : v)
@@ -85,7 +89,6 @@ void Apply(const coop::net::PlayerHitPayload& p) {
     // A source whose mirror is not resolved (the joiner's adoption window, a hidden mirror, a creature gone before
     // the hit arrived) drops the hit rather than run the other branch.
     void* source = nullptr;
-    std::wstring sourceName = L"none";
     if (p.sourceEid != 0) {
         EL::Npc* mirror = EL::NpcMirrors().Get(p.sourceEid);
         source = mirror ? mirror->LiveActor() : nullptr;
@@ -94,7 +97,6 @@ void Apply(const coop::net::PlayerHitPayload& p) {
                 UE_LOGW("player_hit: a hit from creature eid=%u whose mirror is not resolved -- dropped", p.sourceEid);
             return;
         }
-        sourceName = R::ClassNameOf(source);
     }
     bool ok = false;
     {
@@ -105,35 +107,41 @@ void Apply(const coop::net::PlayerHitPayload& p) {
             ok = EN::InvokePunch(body, Vec(p.v0), Vec(p.v1), kBones[p.bone], p.damage, Vec(p.v2));
     }
     if (ok) ++g_applied;
-    UE_LOGI("[HIT] applied verb=%s damage=%.2f source=%ls ok=%d",
-            p.verb == coop::net::kPlayerHitVerbAddDamage ? "addDamage" : "punch", p.damage, sourceName.c_str(),
-            ok ? 1 : 0);
+    else if (++g_failedApplies == 1) UE_LOGW("player_hit: the verb did not run on the local player");
+    // The first hit of a source class says what it was; the rest are counted (g_applied).
+    void* const sourceClass = source ? R::ClassOf(source) : nullptr;
+    const bool first = source ? !g_appliedSaid.Find(sourceClass) : !g_noneSaid;
+    if (!first) return;
+    if (source) g_appliedSaid.Insert(sourceClass, true); else g_noneSaid = true;
+    UE_LOGI("[HIT] applied verb=%s damage=%.2f source=%ls ok=%d (first of its source class; the rest are counted)",
+            p.verb == coop::net::kPlayerHitVerbAddDamage ? "addDamage" : "punch", p.damage,
+            source ? R::ClassNameOf(source).c_str() : L"none", ok ? 1 : 0);
 }
 
 }  // namespace
 
 void Install(coop::net::Session* session) { g_session.store(session, std::memory_order_release); }
 
-void Deliver(uint8_t slot, const coop::net::PlayerHitPayload& payload) {
+bool Deliver(uint8_t slot, const coop::net::PlayerHitPayload& payload) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) {
         UE_LOGW("player_hit: Deliver but the session is unset");
-        return;
+        return false;
     }
     if (slot == 0 || slot >= coop::players::kMaxPeers) {
         UE_LOGW("player_hit: Deliver invalid slot=%u", static_cast<unsigned>(slot));
-        return;
+        return false;
     }
     coop::element::Player* victim = coop::players::Registry::Get().GetPlayerElement(slot);
     if (!victim) {
         UE_LOGW("player_hit: Deliver slot=%u has no Player Element yet -- skipping (peer not fully identified)",
                 static_cast<unsigned>(slot));
-        return;
+        return false;
     }
     coop::net::PlayerHitPayload p = payload;
     p.targetElementId = victim->GetId();
     p.pad = 0;
-    s->SendReliableToSlot(slot, coop::net::ReliableKind::PlayerHit, &p, sizeof(p), /*senderSlot=*/0);
+    return s->SendReliableToSlot(slot, coop::net::ReliableKind::PlayerHit, &p, sizeof(p), /*senderSlot=*/0);
 }
 
 void OnReceived(const uint8_t* data, size_t len) {

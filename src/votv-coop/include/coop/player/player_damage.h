@@ -42,7 +42,7 @@ uint32_t DeliveredCount();
 uint32_t MirrorHitCount();
 
 // Test entry (host): confirm slot `ownerSlot` has a puppet, then deliver an addDamage of `damage`
-// with no source to that peer. True if a delivery was attempted. Drives the relay without a
+// with no source to that peer. True if the hit was sent (player_hit::Deliver's result). Drives the relay without a
 // creature. Game thread.
 bool DebugForceHitPuppet(int ownerSlot, float damage);
 

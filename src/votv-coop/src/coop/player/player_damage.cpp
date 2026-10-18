@@ -143,7 +143,9 @@ sg::Verdict OnIgnitePre(const sg::Call& c) {
 
 // The hit verbs. A creature's hit on a player is addDamage (damage, then a punch above 25) or punch (a
 // knock-down, then the damage); ragdollMode is the knock-down itself. Each is refused on a puppet like the
-// damage verb above, whatever the caller, a call the puppet makes on itself included. Beside the refusal:
+// damage verb above, whatever the caller, a call the puppet makes on itself included: MTA locks a remote copy's
+// health and the damage handler restores it (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientGame.cpp:4509).
+// Beside the refusal:
 //   - HOST, a cancelled addDamage or punch whose caller is a creature of a parked family is delivered to the
 //     puppet's peer, rebuilt from the call's parameters. A parked family's mirror makes no hit of its own, so
 //     this is the only one; any other caller, and a call routed through ProcessEvent (no caller object), is
@@ -242,7 +244,7 @@ void DeliverToOwner(const sg::Call& c, bool punch) {
     const uint8_t slot = coop::players::Registry::Get().PeerIdOfActor(c.object);
     if (slot == coop::players::kPeerIdHost || slot >= coop::players::kMaxPeers) return;
     const coop::net::PlayerHitPayload p = punch ? BuildPunch(c) : BuildAddDamage(c);
-    coop::player_hit::Deliver(slot, p);
+    if (!coop::player_hit::Deliver(slot, p)) return;   // not sent: not counted, not said
     ++g_delivered;
     void* const cls = R::ClassOf(c.callerObject);
     if (FirstSent(cls, p.verb)) {
@@ -252,7 +254,10 @@ void DeliverToOwner(const sg::Call& c, bool punch) {
     }
 }
 
-// CLIENT: a hit on this machine's own player that a parked creature's mirror made.
+// CLIENT: a hit on this machine's own player that a parked creature's mirror made. MTA's guard against a remote
+// inflictor's duplicate damage refuses it (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientGame.cpp:4345-4377);
+// this only counts, and the mark table fails open: a mirror left unmarked would hit here and again through the
+// delivery, and the count is what shows that double.
 void WatchMirrorHit(const sg::Call& c) {
     if (!c.callerObject || coop::player_hit::InApply()) return;
     auto* s = g_session.load(std::memory_order_acquire);
@@ -361,8 +366,7 @@ bool DebugForceHitPuppet(int ownerSlot, float damage) {
     coop::net::PlayerHitPayload p{};
     p.verb = coop::net::kPlayerHitVerbAddDamage;
     p.damage = damage;
-    coop::player_hit::Deliver(static_cast<uint8_t>(ownerSlot), p);
-    return true;
+    return coop::player_hit::Deliver(static_cast<uint8_t>(ownerSlot), p);
 }
 
 }  // namespace coop::player_damage

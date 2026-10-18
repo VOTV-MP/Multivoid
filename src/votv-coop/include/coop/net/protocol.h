@@ -212,8 +212,9 @@ enum class ReliableKind : uint8_t {
     RosterRow = 19,
 
     // Host to one client: a parked creature's hit on your puppet; run the same verb (addDamage or
-    // punch) on your own player, whose own armor mitigates it. Never relayed; the receiver requires
-    // slot 0 as sender. PlayerHitPayload.
+    // punch) on your own player, whose own armor mitigates it. Never relayed: a client may not author the
+    // kind (the host's receive edge refuses it, client_authorship.h) and a client hears only the host.
+    // PlayerHitPayload.
     PlayerHit = 20,
 
     // Host to all: the shared balance, absolute. The host polls its own points and sends on change
