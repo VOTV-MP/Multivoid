@@ -85,7 +85,7 @@ bool BindAsMirror(uint32_t eid, void* obj, const std::wstring& classW) {
     // A twin of a parked family is a mirror from here on: marked, so its armed timers and resumes fire into refused
     // entries (its BeginPlay ran as the client's own creature), and given the presentation that BeginPlay set up.
     coop::npc_mirror_brain::PrepareBirth(obj);
-    coop::npc_mirror_brain::SetUpPresentation(obj);
+    coop::npc_mirror_brain::SetUpPresentation(obj, coop::npc_mirror_brain::Origin::Adopted);
     // THOROUGH PARK: stop actor + CMC ticks AND neutralize the kerfur's looping AI timers
     // (timer_face/timer_kerf/checkDoor survive a tick-disable). Now host-driven, zero local AI.
     ue_wrap::puppet::DisableCharacterTicks(obj);

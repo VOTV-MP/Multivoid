@@ -11,6 +11,7 @@
 #include "ue_wrap/actors/zombie.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/obj_keyed_cache.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -115,15 +116,6 @@ void DropStale() {
     for (size_t i = 0; i < kept; ++i) Insert(live[i].index, live[i].serial);
 }
 
-// Does `cls` or a class above it carry the name `name`? The chain stops after 16 hops, as the engine's own readers
-// stop.
-bool ChainHas(void* cls, const wchar_t* name) {
-    int hops = 0;
-    for (; cls && hops < 16; cls = R::SuperStructOf(cls), ++hops)
-        if (R::NameEquals(R::NameOf(cls), name)) return true;
-    return false;
-}
-
 // ---- The watches ----
 
 struct Watch {
@@ -135,6 +127,7 @@ struct Watch {
     bool                            liveWarned = false;
     bool                            tableResolved = false;
     const EntryTable*               table = nullptr;
+    const EntryTable*               classTable = nullptr;  // the table of the row's own class, found once
 };
 Watch g_watches[] = {
     {&kRowZombie, kTagZombie, R::ParamOffset{L"EntryPoint"}},
@@ -149,6 +142,12 @@ Watch* WatchOf(int tag) {
     for (Watch& w : g_watches)
         if (w.tag == tag) return &w;
     return nullptr;
+}
+
+// Is `cls`, or a class above it, the class the watch's row names? Told by FName index through the class's table.
+bool ChainHasWatchClass(void* cls, Watch& w) {
+    if (!w.classTable) w.classTable = TableNamed(w.row->Class());
+    return w.classTable && ChainHasTable(cls, *w.classTable);
 }
 
 // What the watches refused: each (graph, entry) pair counted, and said once.
@@ -222,6 +221,7 @@ bool g_subscribed = false;
 bool g_announced = false;
 int  g_subscribeRetry = 0;
 bool g_subscribeWarned = false;
+ue_wrap::ObjKeyedCache<bool, 16> g_notLiveSaid;   // the classes whose not-live mirror has been said
 
 // An Npc mirror's end, after the engine's own: its mark goes by the record's own slot and serial.
 void OnNpcEnd(const EL::death_seam::Death& death) {
@@ -234,12 +234,12 @@ void OnNpcEnd(const EL::death_seam::Death& death) {
 // to resolve now; a watch seen live is never asked again (a watch matches every incarnation of its class).
 void CheckWatchesLive(void* cls) {
     bool unproven = false;
-    for (const Watch& w : g_watches)
-        if (!w.liveSeen && ChainHas(cls, w.row->Class())) unproven = true;
+    for (Watch& w : g_watches)
+        if (!w.liveSeen && ChainHasWatchClass(cls, w)) unproven = true;
     if (!unproven) return;
     sg::ResolvePendingNames();
     for (Watch& w : g_watches) {
-        if (w.liveSeen || !ChainHas(cls, w.row->Class())) continue;
+        if (w.liveSeen || !ChainHasWatchClass(cls, w)) continue;
         if (sg::NameWatchSettled(*w.row, w.tag) && sg::NameWatchLive(*w.row, w.tag)) {
             w.liveSeen = true;
         } else if (!w.liveWarned) {
@@ -253,7 +253,16 @@ void CheckWatchesLive(void* cls) {
 
 void MarkMirror(void* actor) {
     UE_ASSERT_GAME_THREAD("npc_mirror_brain::MarkMirror");
-    if (!actor || !R::IsLive(actor)) return;
+    if (!actor) return;
+    if (!R::IsLive(actor)) {
+        void* const cls = R::ClassOf(actor);
+        if (!g_notLiveSaid.Find(cls)) {
+            g_notLiveSaid.Insert(cls, true);
+            UE_LOGW("npc_mirror_brain: %ls mirror not marked -- it is not live; its Blueprint runs",
+                    R::ClassNameOf(actor).c_str());
+        }
+        return;
+    }
     const int32_t index = R::InternalIndexOf(actor);
     const int32_t serial = index >= 0 ? R::AllocateSlotSerial(index) : 0;
     if (serial == 0) {
@@ -296,21 +305,25 @@ void PrepareBirth(void* actor) {
     CheckWatchesLive(cls);
 }
 
-void SetUpPresentation(void* actor) {
+void SetUpPresentation(void* actor, Origin origin) {
     UE_ASSERT_GAME_THREAD("npc_mirror_brain::SetUpPresentation");
     if (!actor || !R::IsLive(actor) || !IsMarkedMirror(actor)) return;
     void* const cls = R::ClassOf(actor);
+    static const EntryTable* const zombieTable = TableNamed(P::name::NpcClass_Zombie);
+    static const EntryTable* const houndTable = TableNamed(P::name::NpcClass_Fossilhound);
     bool ok = true;
-    if (ChainHas(cls, P::name::NpcClass_Zombie)) {
+    if (zombieTable && ChainHasTable(cls, *zombieTable)) {
         ok = ue_wrap::zombie::ApplyBeginPlayPresentation(actor);
-    } else if (ChainHas(cls, P::name::NpcClass_Fossilhound)) {
-        ok = ue_wrap::fossilhound::ApplyBeginPlayPresentation(actor);
+    } else if (houndTable && ChainHasTable(cls, *houndTable)) {
+        // An adopted twin's own BeginPlay ran as the client's creature and already started the per-viewer loop.
+        ok = ue_wrap::fossilhound::ApplyBeginPlayPresentation(actor, /*ownBeginPlayRan=*/origin == Origin::Adopted);
     }
     UE_LOGI("npc_mirror_brain: %ls mirror brain off, presentation %s", R::ClassNameOf(actor).c_str(),
             ok ? "set up" : "incomplete");
 }
 
 void Install() {
+    ResolveClassNames();   // a latch; the lookups also ask for it
     bool registered = true;
     for (Watch& w : g_watches) {
         if (!w.registered) w.registered = sg::WatchName(*w.row, w.tag, &OnGraphPre, nullptr);
@@ -349,6 +362,7 @@ void OnDisconnect() {
     g_refusalCount = 0;
     g_refusalsUnlisted = 0;
     g_unlistedSaid = false;
+    g_notLiveSaid.Clear();
     ClearMarks();
 }
 

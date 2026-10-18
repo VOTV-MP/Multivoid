@@ -18,7 +18,9 @@ inline constexpr int32_t kPerViewerEntry = 2723;
 // construction parents it to the capsule), the mesh's animation instance written into `anim` and `anim.owner` set to
 // the hound, only when that instance's class is, or derives from, the class's own AnimBP; then the graph entered at
 // kPerViewerEntry. True when every step ran; false, and said once per class, when one did not resolve or its call
-// faulted (the later steps still run). Game thread.
-bool ApplyBeginPlayPresentation(void* hound);
+// faulted (the later steps still run). `ownBeginPlayRan` is true for a hound whose own BeginPlay ran (a twin the
+// save loaded): its loop is already running, so the graph is not entered a second time, and that is said once.
+// Game thread.
+bool ApplyBeginPlayPresentation(void* hound, bool ownBeginPlayRan);
 
 }  // namespace ue_wrap::fossilhound

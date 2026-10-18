@@ -95,7 +95,7 @@ bool EnterPerViewerLoop(void* hound) {
 
 }  // namespace
 
-bool ApplyBeginPlayPresentation(void* hound) {
+bool ApplyBeginPlayPresentation(void* hound, bool ownBeginPlayRan) {
     if (!hound || !R::IsLive(hound)) return false;
     bool ok = true;
     void* mesh = LiveAt(hound, P::off::ACharacter_Mesh);
@@ -105,7 +105,16 @@ bool ApplyBeginPlayPresentation(void* hound) {
         if (!AttachMesh(hound, mesh)) ok = Failed(hound, "attach");
         if (!WriteAnim(hound, mesh)) ok = Failed(hound, "anim");
     }
-    if (!EnterPerViewerLoop(hound)) ok = Failed(hound, "per-viewer loop");
+    if (ownBeginPlayRan) {
+        static bool sSaid = false;
+        if (!sSaid) {
+            sSaid = true;
+            UE_LOGI("fossilhound: %ls's own BeginPlay already started the per-viewer loop -- not entered again",
+                    R::ClassNameOf(hound).c_str());
+        }
+    } else if (!EnterPerViewerLoop(hound)) {
+        ok = Failed(hound, "per-viewer loop");
+    }
     return ok;
 }
 
