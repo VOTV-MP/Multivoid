@@ -6,11 +6,10 @@
 
 #include "coop/creatures/kerfur_entity.h"
 #include "coop/dev/drill_props.h"
-#include "coop/dispatch/event_feed.h"
 #include "coop/element/registry.h"
-#include "coop/net/protocol.h"
 #include "coop/props/prop_act_host.h"
 #include "coop/props/prop_act_request.h"
+#include "coop/props/remote_prop.h"
 
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -33,6 +32,7 @@ namespace {
 namespace E   = ue_wrap::engine;
 namespace R   = ue_wrap::reflection;
 namespace PAH = coop::prop_act_host;
+namespace PRP = coop::remote_prop;
 namespace EL  = coop::element;
 namespace sg  = ue_wrap::script_gate;
 namespace DP  = coop::dev::drill_props;
@@ -189,10 +189,10 @@ Judged JudgeAborted(const Row&, coop::element::ElementId eid, const Baseline& ba
         return Judged::Wait;
     }
     const uint32_t destroys = Since(PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Destroy), base.destroys);
-    const uint32_t raw = Since(coop::event_feed::DrainedFrom(kClientSlot, coop::net::ReliableKind::PropDestroy), base.rawDestroys);
+    const uint32_t raw = PRP::dev::WireDestroysNaming(eid);
     if (aborts != 1 || destroys != 0 || raw != 0) {
         *why = std::to_string(aborts) + " aborts, " + std::to_string(destroys) + " destroy commits, " + std::to_string(raw) +
-               " raw PropDestroy";
+               " raw PropDestroy naming the target";
         return Judged::Fail;
     }
     if (!coop::element::LivePropActor(eid)) {
@@ -203,8 +203,8 @@ Judged JudgeAborted(const Row&, coop::element::ElementId eid, const Baseline& ba
     return Judged::Pass;
 }
 
-// The client's take was its own commit (one destroy commit, the eid dead) and no raw destroy of the client's came
-// through the seam, except the one a second prop destroyed inside the replay makes.
+// The client's take was its own commit (one destroy commit, the eid dead) and no raw PropDestroy of the client's names
+// the target; a HostTwo row has exactly one that names the second prop, the destroy that leaves the latch.
 Judged JudgeTaken(const Row& row, coop::element::ElementId eid, const Baseline& base, std::string* why) {
     const uint32_t commits = Since(PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Destroy), base.destroys);
     if (commits == 0) {
@@ -230,14 +230,22 @@ Judged JudgeTaken(const Row& row, coop::element::ElementId eid, const Baseline& 
         }
     }
     const uint32_t wantRaw = row.target == Target::HostTwo ? 1 : 0;
-    const uint32_t raw = Since(coop::event_feed::DrainedFrom(kClientSlot, coop::net::ReliableKind::PropDestroy), base.rawDestroys);
-    if (raw < wantRaw) {
-        *why = "the second prop's destroy has not come through the seam: " + std::to_string(raw) + " raw PropDestroy";
-        return Judged::Wait;
-    }
-    if (raw != wantRaw) {
-        *why = std::to_string(raw) + " raw PropDestroy from the client, " + std::to_string(wantRaw) + " expected";
+    const uint32_t raw = PRP::dev::WireDestroysNaming(eid);
+    if (raw != 0) {
+        *why = std::to_string(raw) + " raw PropDestroy naming the target, 0 expected";
         return Judged::Fail;
+    }
+    if (wantRaw) {
+        const uint32_t second = PRP::dev::WireDestroysNaming(base.eid2);
+        if (second < wantRaw) {
+            *why = "the second prop's destroy has not come through the seam: " + std::to_string(second) +
+                   " raw PropDestroy naming the second prop";
+            return Judged::Wait;
+        }
+        if (second != wantRaw) {
+            *why = std::to_string(second) + " raw PropDestroy naming the second prop, " + std::to_string(wantRaw) + " expected";
+            return Judged::Fail;
+        }
     }
     *why = wantRaw ? "one destroy commit, the eid dead, the second prop's destroy through the seam"
                    : row.target == Target::HostKerfur

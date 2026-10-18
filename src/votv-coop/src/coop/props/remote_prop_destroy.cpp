@@ -53,6 +53,16 @@ bool IsTrashMirrorEid_(uint32_t eid) {
 // The lanes that hear a peer's destroy applied here; registered at their install, read on the game thread.
 std::vector<DestroyHeardFn> g_destroyHeard;
 
+// The dev drills' watch on the PropDestroy messages that reach OnDestroy: one sender slot and up to
+// two eids, each counted on its own, so the receive path allocates nothing and truncates nothing.
+// Set through WatchWireDestroys, read through WireDestroysNaming.
+struct WireWatch {
+    int slot = -1;
+    coop::element::ElementId a = coop::element::kInvalidId, b = coop::element::kInvalidId;
+    uint32_t countA = 0, countB = 0;
+};
+WireWatch g_wireWatch;
+
 // The cached destroy UFunction for receiver-side destroys.
 void* g_destroyActorFn = nullptr;
 ue_wrap::CachedObjRef g_actorCls;  // a slot-validated, self-healing cache
@@ -223,8 +233,29 @@ DestroyApply OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* 
 }  // namespace
 
 void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer, int senderSlot) {
+    // Counts PropDestroy messages from the watched slot only: the kerfur synthetic OnDestroy(..., 0)
+    // on a client is slot 0, never the watched client slot, so it cannot reach the count.
+    if (senderSlot == g_wireWatch.slot && payload.elementId != 0 && payload.elementId != coop::element::kInvalidId) {
+        if (payload.elementId == g_wireWatch.a) ++g_wireWatch.countA;
+        else if (payload.elementId == g_wireWatch.b) ++g_wireWatch.countB;
+    }
     OnDestroyImpl_(payload, localPlayer, senderSlot, /*allowDefer=*/true);
 }
+
+void ResetWireDestroys() { g_wireWatch = WireWatch{}; }
+
+namespace dev {
+void WatchWireDestroys(int slot, coop::element::ElementId a, coop::element::ElementId b) {
+    g_wireWatch = WireWatch{slot, a, b, 0, 0};
+}
+
+uint32_t WireDestroysNaming(coop::element::ElementId eid) {
+    if (eid == coop::element::kInvalidId) return 0;
+    if (eid == g_wireWatch.a) return g_wireWatch.countA;
+    if (eid == g_wireWatch.b) return g_wireWatch.countB;
+    return 0;
+}
+}  // namespace dev
 
 void AddDestroyListener(DestroyHeardFn fn) {
     if (fn && std::find(g_destroyHeard.begin(), g_destroyHeard.end(), fn) == g_destroyHeard.end())

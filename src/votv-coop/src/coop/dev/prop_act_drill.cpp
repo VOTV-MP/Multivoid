@@ -8,7 +8,6 @@
 #include "coop/config/config_registry.h"
 #include "coop/creatures/kerfur_entity.h"
 #include "coop/dev/drill_props.h"
-#include "coop/dispatch/event_feed.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -18,6 +17,7 @@
 #include "coop/props/prop_act_host.h"
 #include "coop/props/prop_drive_stream.h"
 #include "coop/props/prop_snapshot.h"
+#include "coop/props/remote_prop.h"
 #include "coop/save/join_window_baseline.h"
 
 #include "ue_wrap/core/asset_load.h"
@@ -58,6 +58,7 @@ namespace E   = ue_wrap::engine;
 namespace EL  = coop::element;
 namespace PAH = coop::prop_act_host;
 namespace KE  = coop::kerfur_entity;
+namespace PRP = coop::remote_prop;
 namespace DP  = coop::dev::drill_props;
 using ue_wrap::FVector;
 
@@ -116,12 +117,14 @@ void HostFail(const Row* row, const std::string& why) {
     g_hstep = HStep::Done;
 }
 
-// The counters of the client's slot as the step begins.
-Baseline TakeBaseline(EL::ElementId eid) {
+// The counters of the client's slot as the step begins, and the watch on its raw PropDestroy messages naming
+// the step's props.
+Baseline TakeBaseline(EL::ElementId eid, EL::ElementId eid2) {
+    PRP::dev::WatchWireDestroys(kClientSlot, eid, eid2);
     Baseline b;
     b.destroys = PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Destroy);
     b.aborts = PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Abort);
-    b.rawDestroys = coop::event_feed::DrainedFrom(kClientSlot, coop::net::ReliableKind::PropDestroy);
+    b.eid2 = eid2;
     b.answered = PAH::AnsweredTotal(kClientSlot);
     b.kerfurBound = eid != EL::kInvalidId && KE::GetKerfurIdForEid(eid) != EL::kInvalidId;
     return b;
@@ -176,7 +179,7 @@ bool KerfurPropReady(const Row& row) {
 
 // The targets are announced: take the counters, say the step is ready (a client-made target has no eid, said 0).
 void SayReady(const Row& row) {
-    g_base = TakeBaseline(g_eid);
+    g_base = TakeBaseline(g_eid, g_eid2);
     std::string line = ReadyHead(row) + std::to_string(Wire(g_eid));
     if (g_eid2 != EL::kInvalidId) line += " eid2=" + std::to_string(Wire(g_eid2));
     Say(line);

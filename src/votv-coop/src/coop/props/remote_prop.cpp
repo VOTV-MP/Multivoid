@@ -4,6 +4,7 @@
 // remote_prop_convert.cpp; the physics calls are ue_wrap/engine/engine_physics.
 
 #include "coop/props/remote_prop.h"
+#include "remote_prop_internal.h"  // impl-private (src-local), NOT under include/
 
 #include "coop/props/active_drive.h"   // the fixed-delay snapshot interp, shared with the trash carry stream
 #include "coop/props/prop_sound.h"
@@ -689,6 +690,7 @@ void ForceRelease() {
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::ForceRelease)");
     // A slot's generations are its holder's; the next session's holder counts its own.
     g_holds.fill({});
+    ResetWireDestroys();
     int released = 0;
     for (auto& d : g_drives) {
         if (!d.actor) continue;

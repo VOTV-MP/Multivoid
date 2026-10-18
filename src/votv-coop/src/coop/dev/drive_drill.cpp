@@ -72,7 +72,8 @@ constexpr int kOwnDrives = 3;
 
 enum class Step : uint8_t { Arm, PutBack, Walk, Seat, SeatLine, Wipe, Show, Born, Pocket, PocketWalk, PocketWait,
                             TakeOut, HoldIt, HoldWait, Thrown, Forge, Hold, Done };
-constexpr int kPocketTries = 8;  // candidates the pocket may refuse (asleep, static, a full inventory, the host's no)
+// Candidates the pocket may refuse or not reach: a full inventory, the host's no, a walk that does not arrive.
+constexpr int kPocketTries = 8;
 // The host's take judge refuses a take out of reach (its 200 uu beyond the target's bounds), so a candidate farther
 // than kPocketReachCm from the player is walked to first, to within kPocketStopCm.
 constexpr float kPocketReachCm       = 150.f;

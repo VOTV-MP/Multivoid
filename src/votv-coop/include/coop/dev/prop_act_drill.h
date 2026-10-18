@@ -90,11 +90,12 @@ struct Row {
     const char* (*fillStep)(void* player, bool* full) = nullptr;
 };
 
-// The host's counters for the client's slot when it said the step was ready.
+// The host's commit counters for the client's slot when it said the step was ready, and the second prop's eid; the
+// raw PropDestroy counts live in the watch (remote_prop.h).
 struct Baseline {
     uint32_t destroys = 0;      // CommitsOf(slot, Destroy)
     uint32_t aborts = 0;        // CommitsOf(slot, Abort)
-    uint32_t rawDestroys = 0;   // DrainedFrom(slot, PropDestroy)
+    coop::element::ElementId eid2 = coop::element::kInvalidId;   // a HostTwo row's second prop, as the host holds it
     uint32_t answered = 0;      // AnsweredTotal(slot)
     bool kerfurBound = false;   // GetKerfurIdForEid(eid) named a kerfur record
 };

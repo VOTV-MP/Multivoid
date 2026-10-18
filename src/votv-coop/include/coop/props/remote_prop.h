@@ -178,4 +178,12 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
 // null-mesh clump mirror at teardown. Game thread only; a no-op for null or dead.
 void ConsumeLocalActor(void* actor);
 
+namespace dev {   // called only from src/coop/dev/ (the act drills); compiled always, inert unless called
+// From now, count the PropDestroy messages from `slot` that name `a` or `b` (b may be kInvalidId), each eid on
+// its own, from zero. One watch at a time; a second call replaces it. ForceRelease clears it.
+void WatchWireDestroys(int slot, coop::element::ElementId a, coop::element::ElementId b);
+// The PropDestroy messages the watch counted for `eid`: the count for `a` or `b`, 0 for any other eid.
+uint32_t WireDestroysNaming(coop::element::ElementId eid);
+}  // namespace dev
+
 }  // namespace coop::remote_prop
