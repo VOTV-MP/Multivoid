@@ -148,6 +148,8 @@ struct ExSpawnSource {
     const wchar_t* const* outputs;   // null-terminated; null: any allowlisted output
 };
 constexpr const wchar_t* kEventerOutputs[] = {L"ventCrawler_C", L"superEgger_C", nullptr};
+constexpr const wchar_t* kGeomOctaNpcOutputs[] = {L"geomOcta_C", nullptr};
+constexpr const wchar_t* kGeomOctaOutputs[] = {L"geomOctaLazer_C", nullptr};
 constexpr ExSpawnSource kExSpawnSources[] = {
     {L"trigger_wispSwarm_C",     nullptr},          // the wisps event swarm
     {L"piramidSpawner_C",        nullptr},          // the piramid event chain
@@ -156,9 +158,11 @@ constexpr ExSpawnSource kExSpawnSources[] = {
     {L"prop_coingun_C",          nullptr},          // the sell gun's coin mint
     {L"jellyfishPath_C",         nullptr},          // the space jellyfish's seven (world-actor lane)
     {L"trigger_eventer_C",       kEventerOutputs},  // the scheduler's dispatcher
+    {L"mainGamemode_C",           kGeomOctaNpcOutputs}, // its ubergraph has the Geom Octa deferred spawn
     {L"grayEventController_C",   nullptr},          // graysforest: spawn() mints the grayTest_C pack
     {L"superEgger_C",            nullptr},          // eggvasion: spwn() mints the eg_C children
     {L"tentacleBallsFollower_C", nullptr},          // tentacleBalls: runTrigger() mints the pack
+    {L"geomOcta_C",              kGeomOctaOutputs}, // its bytecode-spawned beam (WorldActor lane)
 };
 
 // Whether `cls`'s own name is one of `names` (null-terminated). One render, then plain compares.

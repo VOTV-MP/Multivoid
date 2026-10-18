@@ -34,6 +34,7 @@ host validates and commits contested writes), `local` (never shared).
 | Trash-bits piles | the counter pair | presser and host | snapshot | built |
 | Containers | open and close, contents (a slice of the host's object stack) | presser; host for contents | snapshot | works, two known breaks |
 | NPCs | spawn, despawn, pose, state for the generic creatures | host | snapshot | works |
+| Geom Octahedron | NPC spawn, despawn, host pose, charge/attack state and montage; bytecode-spawned laser actor lifecycle and pose | host | NPC + WorldActor snapshots | built |
 | Kerfur | the prop-to-NPC conversion cycle, per-kerfur skins | host | snapshot plus adoption | works |
 | Owner-entity creatures | a creature whose AI reads the local player is owned per peer and mirrored to the rest | peer | keepalive | built |
 | Roaches | the paged infestation state | host | snapshot | built |

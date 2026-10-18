@@ -151,6 +151,19 @@ generic carries, the brain: the four state-writing timers are cancelled on the m
 gather choreography is relayed, and the wisp it chases is streamed by identity so the mirror
 runs the native chase look (`coop/creatures/piramid_sync`).
 
+The Geom Octahedron is an `ACharacter`, so its identity, spawn/despawn, host pose and join snapshot
+use the generic NPC lane. A Geom Octa pose also carries its Blueprint `isAnim`, `isCharge`,
+`Despawn`, `aCh` and `spwnAlpha` values, visible mesh yaw, the active Octa montage position and the
+`octBeamLoop` play state; client decision/overlap callbacks are suppressed while the host owns them.
+The client applies those values to the parked mirror and seeks the same montage. This uses the NPC pose
+payload's reserved fields, so its byte size and MTU budget do not change. The SDK dump shows
+`mainGamemode_C` finishing a `geomOcta_C` deferred spawn; the source-gated EX_CallMath catch enrolls
+that exact output from that source. Its Kismet graph creates `geomOctaLazer_C` from inside
+`geomOcta_C`'s bytecode; that child is enrolled by a second source-gated catch and uses the
+WorldActor spawn/pose/destroy lane. The dev menu exposes it under **Content > Entities** for
+host-side sync drills. The supplied dump does not identify a native eventer row that starts the
+octa, so the event registry is left unchanged instead of presenting a guessed event as a game event.
+
 ### The base alarm
 
 One trigger actor is the base alarm: the siren, every red beacon, the ceiling flicker, the
@@ -241,6 +254,6 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 | weather | `coop/world/weather_sync`, `coop/world/weather_rain`, `coop/world/weather_fog`, `coop/world/weather_lightning`, `coop/world/weather_redsky`, `coop/world/weather_badsun`, `coop/world/weather_event_births`, `ue_wrap/world/directionalwind`, `ue_wrap/world/bad_sun` |
 | fireflies and the spawners | `coop/world/firefly_sync`, `coop/world/spawn_authority` |
 | events | `coop/world/event_fire_sync`, `coop/world/event_active_sync`, `coop/world/creature_event_relay`, `coop/world/event_cue_sync`, `coop/dev/event_trigger` |
-| event actors and the pyramid | `coop/world/world_actor_sync`, `coop/world/world_actor_mirror`, `coop/creatures/piramid_sync` |
+| event actors, the pyramid and Geom Octahedron beam | `coop/world/world_actor_sync`, `coop/world/world_actor_mirror`, `coop/creatures/npc_sync`, `coop/creatures/npc_world_enum`, `coop/creatures/piramid_sync` |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
 | tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |

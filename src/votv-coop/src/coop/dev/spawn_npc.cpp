@@ -223,6 +223,7 @@ void* SpawnAt(const wchar_t* className, const ue_wrap::FVector& at) {
 void SpawnKerfurOmega() { PostSpawnKerfur(); }
 void SpawnKillerWisp()  { PostSpawnClass(P::name::NpcClass_KillerWisp); }
 void SpawnVentCrawler() { PostSpawnClass(P::name::NpcClass_VentCrawler); }
+void SpawnGeomOcta()    { PostSpawnClass(L"geomOcta_C"); }
 // OWNER-ENTITY test: eyer_C is NOT in the npc allowlist by design -- the
 // interceptor passes the spawn through and owner_entity_sync's own BeginDeferred
 // POST observer catches it as a LOCALLY-OWNED entity + announces it to peers
