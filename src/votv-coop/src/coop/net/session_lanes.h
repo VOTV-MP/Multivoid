@@ -251,6 +251,7 @@ constexpr bool IsClientRelayableReliableKind(ReliableKind k) {
     // reaches the host alone and the host authors the canonical.
     case ReliableKind::LightState:
     case ReliableKind::ContainerState:
+    case ReliableKind::SwingerMotion:   // presser-authored hinge input
     case ReliableKind::GarageDoorState:   // symmetric
     case ReliableKind::ApplianceState:    // symmetric
     case ReliableKind::OvenRepairState:   // symmetric, one way

@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 234;
+inline constexpr uint16_t kProtocolVersion = 235;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -122,7 +122,7 @@ enum class MsgType : uint8_t {
     VoiceFrame = 64,
 };
 
-// Payload kinds carried inside a Reliable message. A retired value is never reused: 16, 17, 21,
+// Payload kinds carried inside a Reliable message. A retired value is never reused: 16, 21,
 // 22, 24, 26, 29 and 138 stay unassigned; 32 and 128 are reserved.
 enum class ReliableKind : uint8_t {
     // Each peer to the other, once after admission: the sender's Player element id, then the nick,
@@ -180,6 +180,10 @@ enum class ReliableKind : uint8_t {
     // Any peer, relayed by the host: a swinger lid (cabinet, fridge, safe) open or closed, keyed
     // by the prop's key. KeyedTogglePayload.
     ContainerState = 11,
+
+    // Any peer, relayed by the host: mouse-driven hinge input for a prop_swinger, keyed by the
+    // prop's key. Ordered torque-driving mouseAssign samples. SwingerMotionPayload.
+    SwingerMotion = 17,
 
     // Host to all: the weather scheduler's state. The client suppresses its own five scheduler
     // functions on the day-night cycle and applies the host's state through the cycle's own mutators;
@@ -1700,6 +1704,28 @@ struct KeyedTogglePayload {
 static_assert(sizeof(KeyedTogglePayload) == 40, "KeyedTogglePayload must be 40 bytes");
 static_assert(sizeof(KeyedTogglePayload) <= 256 - 20 - 8,
               "KeyedTogglePayload must fit in one reliable datagram");
+
+// One mouseAssign input to a physical prop_swinger hinge. Values are the Blueprint's original
+// mouseXY sample; the receiver replays it through the hinge's own torque path.
+struct SwingerMotionPayload {
+    WireKey key;
+    uint8_t event;       // 0 = mouse sample, 1 = released hinge snapshot
+    uint8_t _pad[3] = {};
+    float mouseX;
+    float mouseY;
+    float pitch;
+    float yaw;
+    float roll;
+    float angularX;
+    float angularY;
+    float angularZ;
+    float linearX;
+    float linearY;
+    float linearZ;
+};
+static_assert(sizeof(SwingerMotionPayload) == 80, "SwingerMotionPayload must be 80 bytes");
+static_assert(sizeof(SwingerMotionPayload) <= 256 - 20 - 8,
+              "SwingerMotionPayload must fit in one reliable datagram");
 
 // A door verb intent (DoorVerbIntent): the door by the door lane's key, which entry verb, and the
 // one argument of it a door's body reads. The press carries its action back as the client's own

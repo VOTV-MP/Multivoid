@@ -85,6 +85,33 @@ bool HandleStateEvent(net::Session& session,
         coop::interactable_sync::OnReliable(static_cast<uint8_t>(msg.kind), p, senderSlot);
         break;
     }
+    case net::ReliableKind::SwingerMotion: {
+        if (msg.payloadLen < sizeof(net::SwingerMotionPayload)) {
+            UE_LOGW("event_feed: SwingerMotion payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::SwingerMotionPayload));
+            break;
+        }
+        net::SwingerMotionPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        const bool mouseSample = p.event == 0 && std::isfinite(p.mouseX) && std::isfinite(p.mouseY) &&
+                                 std::abs(p.mouseX) <= 100000.f && std::abs(p.mouseY) <= 100000.f;
+        const bool releaseSnapshot = p.event == 1 && std::isfinite(p.pitch) && std::isfinite(p.yaw) &&
+                                     std::isfinite(p.roll) && std::isfinite(p.angularX) &&
+                                     std::isfinite(p.angularY) && std::isfinite(p.angularZ) &&
+                                     std::isfinite(p.linearX) && std::isfinite(p.linearY) &&
+                                     std::isfinite(p.linearZ) &&
+                                     std::abs(p.pitch) <= 36000.f && std::abs(p.yaw) <= 36000.f &&
+                                     std::abs(p.roll) <= 36000.f && std::abs(p.angularX) <= 100000.f &&
+                                     std::abs(p.angularY) <= 100000.f && std::abs(p.angularZ) <= 100000.f &&
+                                     std::abs(p.linearX) <= 100000.f && std::abs(p.linearY) <= 100000.f &&
+                                     std::abs(p.linearZ) <= 100000.f;
+        if (!mouseSample && !releaseSnapshot) {
+            UE_LOGW("event_feed: SwingerMotion input out of range -- dropping");
+            break;
+        }
+        coop::interactable_sync::OnContainerMotion(p);
+        break;
+    }
     case net::ReliableKind::KeypadState: {
         // HOST->CLIENTS: what a keypad did on the host's copy -- a verb every client replays, or the
         // state a chain settled on. Only the host authors it; a client's own entries go up as

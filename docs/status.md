@@ -32,7 +32,7 @@ host validates and commits contested writes), `local` (never shared).
 | Physics props | spawn, pose, grab, carry, throw, drop, destroy, a hook's drag and a broom's push (built); identity across saves and rejoins; each prop's own save record, for the classes that keep one; client-born props, including what a player spawns from the sandbox menu | presser while held, host at rest and under a hook | snapshot; a player-authored birth is claimed at its seam and re-claimed by the host's echo, so a pending sweep cannot doom it | works |
 | Chip piles and clumps | the grab, carry, throw and re-pile cycle, and a broom's sweep | host with client intents | snapshot, a spawn-time bind, and a bounded hold for a pile the save load has not reached; a clump rolling at the join arrives as the pile it lands as | works |
 | Trash-bits piles | the counter pair | presser and host | snapshot | built |
-| Containers | open and close, contents (a slice of the host's object stack) | presser; host for contents | snapshot | works, two known breaks |
+| Containers | open and close, mouse-driven torque samples for physical swinger hinges, contents (a slice of the host's object stack) | presser; host for contents | saved open/closed state; active hinge motion is not replayed | built, two known breaks; hinge motion needs a two-peer physics check |
 | NPCs | spawn, despawn, pose, state for the generic creatures | host | snapshot | works |
 | Kerfur | the prop-to-NPC conversion cycle, per-kerfur skins | host | snapshot plus adoption | works |
 | Owner-entity creatures | a creature whose AI reads the local player is owned per peer and mirrored to the rest | peer | keepalive | built |

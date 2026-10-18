@@ -40,6 +40,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::PropDestroy:
     case ReliableKind::LightState:
     case ReliableKind::ContainerState:
+    case ReliableKind::SwingerMotion:
     case ReliableKind::ItemActivate:
     case ReliableKind::WindowCleanState:
     case ReliableKind::GrimeState:

@@ -17,7 +17,10 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"          // GetKeyString for swinger (it is an Aprop_C)
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/types.h"
 #include "ue_wrap/actors/swinger.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_physics.h"
 
 #include <chrono>
 #include <string>
@@ -34,6 +37,7 @@ namespace {
 // lightgroup_verbs). Game-thread serial.
 void* g_applyingDoor = nullptr;
 void* g_applyingGroup = nullptr;
+void* g_applyingContainerMotion = nullptr;
 
 struct ApplyMark {
     void*& slot;
@@ -295,6 +299,66 @@ void OnApplianceVerb(void* appliance) { g_appliance.OnLocalEdge(appliance); }
 void OnDoorBoxVerb(void* box) { g_doorBox.OnLocalEdge(box); }
 
 void OnContainerVerb(void* swinger) { g_container.OnLocalEdge(swinger); }
+
+void OnContainerMotion(void* swinger, const ue_wrap::FVector2D& xy) {
+    if (!swinger || swinger == g_applyingContainerMotion) return;
+    auto* s = g_container.GetSession();
+    if (!s || !s->connected()) return;
+    const std::wstring key = g_container.KeyForActor(swinger);
+    if (key.empty()) return;
+    coop::net::SwingerMotionPayload p{};
+    WireKeyFromString(key, p.key);
+    p.event = 0;
+    p.mouseX = xy.X;
+    p.mouseY = xy.Y;
+    s->SendReliable(coop::net::ReliableKind::SwingerMotion, &p, sizeof(p));
+}
+
+void OnContainerDrop(void* swinger) {
+    if (!swinger || swinger == g_applyingContainerMotion) return;
+    OnContainerVerb(swinger);  // the release may have crossed the game's opened threshold
+    auto* s = g_container.GetSession();
+    if (!s || !s->connected()) return;
+    const std::wstring key = g_container.KeyForActor(swinger);
+    void* mesh = ue_wrap::prop::GetStaticMesh(swinger);
+    if (key.empty() || !mesh) return;
+    const ue_wrap::FRotator rotation = ue_wrap::engine::GetComponentWorldRotation(mesh);
+    const ue_wrap::prop::VelocityState velocity = ue_wrap::prop::GetPhysicsVelocity(swinger);
+    if (!velocity.ok) return;
+    coop::net::SwingerMotionPayload p{};
+    WireKeyFromString(key, p.key);
+    p.event = 1;
+    p.pitch = rotation.Pitch;
+    p.yaw = rotation.Yaw;
+    p.roll = rotation.Roll;
+    p.angularX = velocity.angularDegS.X;
+    p.angularY = velocity.angularDegS.Y;
+    p.angularZ = velocity.angularDegS.Z;
+    p.linearX = velocity.linearCmS.X;
+    p.linearY = velocity.linearCmS.Y;
+    p.linearZ = velocity.linearCmS.Z;
+    s->SendReliable(coop::net::ReliableKind::SwingerMotion, &p, sizeof(p));
+}
+
+void OnContainerMotion(const coop::net::SwingerMotionPayload& payload) {
+    const std::wstring key = StringFromWireKey(payload.key);
+    if (key.empty() || !ue_wrap::swinger::EnsureResolved()) return;
+    void* actor = g_container.ActorForKey(key);
+    if (!actor) return;
+    ApplyMark mark(g_applyingContainerMotion, actor);
+    if (payload.event == 0) {
+        ue_wrap::swinger::CallMouseAssign(actor, ue_wrap::FVector2D{payload.mouseX, payload.mouseY});
+        return;
+    }
+    if (payload.event != 1) return;
+    ue_wrap::swinger::CallDropped(actor);
+    void* mesh = ue_wrap::prop::GetStaticMesh(actor);
+    if (!mesh) return;
+    ue_wrap::engine::SetComponentWorldRotation(mesh, ue_wrap::FRotator{payload.pitch, payload.yaw, payload.roll});
+    ue_wrap::engine::SetComponentSimulatePhysics(mesh, true);
+    ue_wrap::engine::SetComponentLinearVelocity(mesh, payload.linearX, payload.linearY, payload.linearZ);
+    ue_wrap::engine::SetComponentAngularVelocity(mesh, payload.angularX, payload.angularY, payload.angularZ);
+}
 
 void OnOvenVerb(void* oven) { g_oven.OnLocalEdge(oven); }
 

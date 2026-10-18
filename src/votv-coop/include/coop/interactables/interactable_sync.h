@@ -2,6 +2,7 @@
 //   - DoorState (9):         base doors     (Adoor_C, open intent, host-authoritative)
 //   - LightState (10):       light switches (Alightswitch_C::use, replayed on receipt)
 //   - ContainerState (11):   container lids (Aprop_swinger_C::Open / Close)
+//   - SwingerMotion (17):    mouse-driven physical hinge torque inputs
 //   - GarageDoorState (33):  the garage     (Agarage_C, keyed by level-export name)
 //   - ApplianceState (35):   the save-actor appliance family
 //   - LockerDoorState (50):  lockers and the drone-console box (level-export name)
@@ -19,9 +20,12 @@
 #include <cstdint>
 #include <string>
 
+namespace ue_wrap { struct FVector2D; }
+
 namespace coop::net {
 class Session;
 struct KeyedTogglePayload;
+struct SwingerMotionPayload;
 }  // namespace coop::net
 
 namespace coop::interactable_sync {
@@ -108,6 +112,10 @@ void OnDoorBoxVerb(void* box);
 // Any peer: a lid's open or close just ran on `swinger` (coop/interactables/toggle_verbs); the
 // container lane sends the `opened` it left when that changed. Game thread.
 void OnContainerVerb(void* swinger);
+// A mouseAssign call just applied its torque input to a physical swinger hinge.
+void OnContainerMotion(void* swinger, const ue_wrap::FVector2D& xy);
+void OnContainerDrop(void* swinger);
+void OnContainerMotion(const coop::net::SwingerMotionPayload& payload);
 
 // Any peer: an oven's fix() just ran on `oven` (coop/interactables/toggle_verbs); the oven lane
 // sends the `fixed` it left when that changed. Game thread.
