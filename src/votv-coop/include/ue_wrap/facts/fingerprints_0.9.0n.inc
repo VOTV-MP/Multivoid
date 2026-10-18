@@ -312,6 +312,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"prop_reelbox_c", L"bndevt__prop_reelbox_trigger_k2node_componentboundevent_0_componentbeginoverlapsignature__delegatesignature", L"prop_reelbox_c.bndevt__prop_reelbox_trigger_k2node_componentboundevent_0_componentbeginoverlapsignature__delegatesignature", 0x068571522f5f0453ull, 0x91ad63ff8b38cd9bull},
     {L"prop_reelbox_c", L"upd", L"prop_reelbox_c.upd", 0x6a2d5d90ab51fa2dull, 0x1f784839e2f42fb3ull},
     {L"prop_sleeppills_c", L"actionoptionindex", L"prop_sleeppills_c.actionoptionindex", 0x5a7351a33bbf62a6ull, 0x249805d79a338e24ull},
+    {L"prop_swinger_c", L"dropped", L"prop_swinger_c.dropped", 0x6a2d5d90ab51fa2dull, 0xd8ca590b092a80efull},
     {L"prop_uncalibrator_c", L"playerhanduse_lmb", L"prop_uncalibrator_c.playerhanduse_lmb", 0x5de5f12d89a97b5eull, 0xab406ed8495a737eull},
     {L"propinventory_c", L"takeobj", L"propinventory_c.takeobj", 0x707cde26b5d57927ull, 0xd7829e4e794b3620ull},
     {L"radialforcecomponent", L"fireimpulse", L"radialforcecomponent.fireimpulse", 0x6a2d5d90ab51fa2dull, 0xcbf29ce484222325ull},
