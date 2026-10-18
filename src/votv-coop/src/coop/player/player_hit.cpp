@@ -45,6 +45,7 @@ uint32_t g_applied = 0;
 uint32_t g_droppedNoBody = 0;
 uint32_t g_droppedSource = 0;
 uint32_t g_failedApplies = 0;
+uint32_t g_refusedSends = 0;
 bool g_boneSaid = false;
 bool g_noneSaid = false;                          // the first hit with no source creature has been said
 ue_wrap::ObjKeyedCache<bool, 24> g_appliedSaid;   // the source classes whose first applied hit has been said
@@ -141,7 +142,12 @@ bool Deliver(uint8_t slot, const coop::net::PlayerHitPayload& payload) {
     coop::net::PlayerHitPayload p = payload;
     p.targetElementId = victim->GetId();
     p.pad = 0;
-    return s->SendReliableToSlot(slot, coop::net::ReliableKind::PlayerHit, &p, sizeof(p), /*senderSlot=*/0);
+    if (s->SendReliableToSlot(slot, coop::net::ReliableKind::PlayerHit, &p, sizeof(p), /*senderSlot=*/0)) return true;
+    // The session refused the send (the slot is not world-ready, or its backlog dropped it): the hit is lost.
+    if (++g_refusedSends == 1)
+        UE_LOGW("player_hit: the session refused a PlayerHit send to slot=%u -- the hit is lost (counted from here)",
+                static_cast<unsigned>(slot));
+    return false;
 }
 
 void OnReceived(const uint8_t* data, size_t len) {
@@ -172,5 +178,7 @@ uint8_t BoneIndex(const std::wstring& name) {
 bool InApply() { return g_applyDepth > 0; }
 
 uint32_t AppliedCount() { return g_applied; }
+
+uint32_t RefusedSendCount() { return g_refusedSends; }
 
 }  // namespace coop::player_hit

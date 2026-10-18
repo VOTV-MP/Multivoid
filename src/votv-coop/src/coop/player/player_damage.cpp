@@ -244,7 +244,7 @@ void DeliverToOwner(const sg::Call& c, bool punch) {
     const uint8_t slot = coop::players::Registry::Get().PeerIdOfActor(c.object);
     if (slot == coop::players::kPeerIdHost || slot >= coop::players::kMaxPeers) return;
     const coop::net::PlayerHitPayload p = punch ? BuildPunch(c) : BuildAddDamage(c);
-    if (!coop::player_hit::Deliver(slot, p)) return;   // not sent: not counted, not said
+    if (!coop::player_hit::Deliver(slot, p)) return;   // not sent: not delivered (Deliver says and counts it)
     ++g_delivered;
     void* const cls = R::ClassOf(c.callerObject);
     if (FirstSent(cls, p.verb)) {
@@ -254,10 +254,10 @@ void DeliverToOwner(const sg::Call& c, bool punch) {
     }
 }
 
-// CLIENT: a hit on this machine's own player that a parked creature's mirror made. MTA's guard against a remote
-// inflictor's duplicate damage refuses it (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientGame.cpp:4345-4377);
-// this only counts, and the mark table fails open: a mirror left unmarked would hit here and again through the
-// delivery, and the count is what shows that double.
+// CLIENT: a hit on this machine's own player that a parked creature's mirror made. MTA's guard refuses a remote
+// player's duplicate damage event (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientGame.cpp:4345-4377);
+// this only counts. A refusal here would hide a leaked brain-off instead of showing it, and the mark table fails open:
+// a mirror left unmarked would hit here and again through the delivery, and the count is what shows that double.
 void WatchMirrorHit(const sg::Call& c) {
     if (!c.callerObject || coop::player_hit::InApply()) return;
     auto* s = g_session.load(std::memory_order_acquire);

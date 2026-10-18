@@ -50,4 +50,7 @@ bool InApply();
 // [dev], for the drill alone: the hits applied to this machine's own player.
 uint32_t AppliedCount();
 
+// [dev], for the drill alone: the sends of Deliver the session refused (said once, counted each time).
+uint32_t RefusedSendCount();
+
 }  // namespace coop::player_hit
