@@ -207,12 +207,13 @@ is the actor's slot and the slot's serial, so a recycled address is never a mirr
 damager. The call is watched (`coop/creatures/creature_hit_intent`): the client plays the zombie family's hit feedback
 at once (the fossilhound has none), sends the creature's element id with the claimed damage, the point struck and the
 impact, and cancels the call. The host judges the swing against the sender's held item and its reach data, its reach
-from the eye the host holds for it, that the sender's streamed aim faces the point (within 45 degrees, in 3-D; eye
+from the eye the host holds for it, that the sender's newest streamed aim faces the point (within 60 degrees, in 3-D; eye
 and aim are captured when the intent arrives), the sight to the point and the point's distance from the creature,
 cuts the damage to the item's most and runs the creature's own `addDamage` with a null damager; health, death and
-the destroy are the host's, and nothing is answered. The swinger's liveness is not judged: no death state of a peer
-reaches the host, and a client's dead player makes no swing of its own. A zombie the host kills this way leaves its
-ragdoll body on the host alone: the body's class has no lane (owed). A ranged tool's hit is not a swing and is refused. `[RD]`
+the destroy are the host's, and nothing is answered. The swinger's liveness is judged by the health its pose stream
+carries (a dead player's pose says 0, and the puppet's `dead` flag is never set by a peer's death): at most 0 refuses
+the swing `dead`. A zombie the host kills this way leaves its ragdoll body on the host alone: the body's class has no
+lane (owed). A ranged tool's hit is not a swing and is refused. `[RD]`
 
 ## Event actors
 

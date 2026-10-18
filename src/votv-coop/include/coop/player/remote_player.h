@@ -94,6 +94,10 @@ public:
     // Positions a puppet-held item at the hand, since the puppet's own tick does not drive it. Game
     // thread.
     ue_wrap::FVector GetSyncedAimDirection() const;
+    // The same unit forward vector from the NEWEST streamed pose (the target the interpolation is heading to: the last
+    // packet's yaw, headYawDelta and pitch), not the interpolated one, which trails it by the interpolation window.
+    // What a judge of a swing reads: the sender's aim as the stream last said it. Game thread.
+    ue_wrap::FVector GetLatestAimDirection() const;
     // The same aim as a rotator (pitch, yaw, no roll), for a caller that wants the angles.
     ue_wrap::FRotator GetSyncedAimRotation() const { return {curPitch_, curYaw_ + curHeadYawDelta_, 0.f}; }
 

@@ -25,17 +25,14 @@ float Dist(const FVector& a, const FVector& b) {
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-// The cosine of the angle, in 3-D, between the unit vector `aim` and the direction from `eye` to `hitLoc`. 1 when
-// `hitLoc` lies within kFacingMinCm of `eye` (no direction to test). NaN when an input is, so a caller written
-// `!(c >= bound)` refuses it.
+}  // namespace
+
 float FacingCosine(const FVector& aim, const FVector& eye, const FVector& hitLoc) {
     const float dx = hitLoc.X - eye.X, dy = hitLoc.Y - eye.Y, dz = hitLoc.Z - eye.Z;
     const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
     if (len <= kFacingMinCm) return 1.f;
     return (aim.X * dx + aim.Y * dy + aim.Z * dz) / len;
 }
-
-}  // namespace
 
 bool JudgeHit(int slot, const FVector& eye, const FVector& aim, const FVector& hitLoc, void* target,
               float claimedDamage, float& outDamage, const char*& outReason) {
@@ -62,9 +59,13 @@ bool JudgeHit(int slot, const FVector& eye, const FVector& aim, const FVector& h
         outReason = "puppet unreadable";
         return false;
     }
-    // No liveness gate: no death state reaches the host (a peer's death never sets the puppet's `dead`), and a
-    // client's dead player makes no swing of its own. MTA refuses a dead shooter on its server's own spawn and death
-    // state (reference/mtasa-blue/Server/mods/deathmatch/logic/packets/CBulletsyncPacket.cpp:165).
+    // Alive: the health the puppet's pose stream last carried is above 0. A peer's death never sets the puppet's `dead`
+    // flag, but its dead player's pose says health 0. MTA refuses a dead shooter on its server's own death state
+    // (reference/mtasa-blue/Server/mods/deathmatch/logic/packets/CBulletsyncPacket.cpp:165).
+    if (!(rp->GetHealth() > 0.f)) {
+        outReason = "dead";
+        return false;
+    }
 
     // Written so that a NaN fails.
     if (!(Dist(eye, hitLoc) <= swing.length + kReachSlackCm)) {

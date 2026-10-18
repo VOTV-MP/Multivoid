@@ -9,10 +9,10 @@
 // The creature's health, death and corpse stay the host's: its death reaches the client as the creature's destroy.
 //
 // The host queues a client's intents (cap 8, a pace of 4 then 2 a second, which bounds a swing rate), captures the
-// sender's eye and aim from its puppet when the intent arrives, and serves one head a tick through coop/player/hit_judge:
-// the held item, the reach, the facing, the sight and the point on the creature. A pass runs the creature's own
-// addDamage with a null damager, so a client's kill credits no host achievement. Nothing is sent back. Each refusal
-// is counted per reason and said once per sender and reason. Game thread.
+// sender's eye and newest streamed aim from its puppet when the intent arrives, and serves one head a tick through
+// coop/player/hit_judge: the held item, the sender alive, the reach, the facing, the sight and the point on the
+// creature. A pass runs the creature's own addDamage with a null damager, so a client's kill credits no host
+// achievement. Nothing is sent back. A refusal is counted, and said once per sender and reason. Game thread.
 
 #pragma once
 

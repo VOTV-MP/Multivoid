@@ -629,14 +629,24 @@ bool RemotePlayer::TryGetLocation(ue_wrap::FVector& out) const {
     return E::TryGetActorLocation(actor_, out);
 }
 
-ue_wrap::FVector RemotePlayer::GetSyncedAimDirection() const {
-    // The same convention as the head look: yaw = the wire yaw + the head-yaw delta, pitch = the
-    // controller pitch; the unit forward is (cp cos y, cp sin y, sin p).
+// The same convention as the head look: yaw = the wire yaw + the head-yaw delta, pitch = the controller pitch; the unit
+// forward is (cp cos y, cp sin y, sin p).
+namespace {
+ue_wrap::FVector AimForward(float yaw, float headYawDelta, float pitch) {
     constexpr float kDeg2Rad = 0.01745329252f;
-    const float yawRad   = (curYaw_ + curHeadYawDelta_) * kDeg2Rad;
-    const float pitchRad = curPitch_ * kDeg2Rad;
+    const float yawRad   = (yaw + headYawDelta) * kDeg2Rad;
+    const float pitchRad = pitch * kDeg2Rad;
     const float cp = std::cos(pitchRad);
     return { cp * std::cos(yawRad), cp * std::sin(yawRad), std::sin(pitchRad) };
+}
+}  // namespace
+
+ue_wrap::FVector RemotePlayer::GetSyncedAimDirection() const {
+    return AimForward(curYaw_, curHeadYawDelta_, curPitch_);
+}
+
+ue_wrap::FVector RemotePlayer::GetLatestAimDirection() const {
+    return AimForward(targetYaw_, targetHeadYawDelta_, targetPitch_);
 }
 
 // The head bone of whatever mesh renders the peer right now: the visible flop body while ragdolled (the kel meshes are

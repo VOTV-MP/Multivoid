@@ -3,8 +3,9 @@
 //
 // A held tool's swing is one line trace from the player's arm as long as the held item's list_weapons row says, and
 // deals the row's damage (ue_wrap/world/weapon_catalog). The judge asks whether the slot's puppet holds an item that
-// swings and has reach data; whether the struck point lies within that reach of the eye the host holds for the slot
-// (plus the pose's latency) and in front of the swinger's aim; whether nothing static stands between the eye and the
+// swings and has reach data and is alive (its streamed health above 0); whether the struck point lies within that
+// reach of the eye the host holds for the slot (plus the pose's latency) and in front of the swinger's aim; whether
+// nothing static stands between the eye and the
 // point (a block within the slack of the point is not cover); and whether the point lies on the target. It cuts the
 // claimed damage to what the held item can deal and has no notion of what the target is.
 // Source takes the swing's origin from the server's own eye, never the client's
@@ -36,24 +37,30 @@ inline constexpr float kReachSlackCm   = 100.f;
 inline constexpr float kTargetRadiusCm = 300.f;
 inline constexpr float kBlockedSlackCm = 25.f;
 
-// The least cosine, in 3-D, between the swinger's aim (the puppet's streamed aim, captured with the eye when the
-// intent arrived) and the direction from the eye to the struck point: Source's "sort of facing" bound of a melee hit,
-// 0.70721 there. Source dots the owner's aim vector (EyeVectors, weapon_hl2mpbasebasebludgeon.cpp:298) with the
-// direction to the target entity's origin, and only in the hull-trace fallback, after the line trace missed
-// (reference/source-sdk-2013/src/game/shared/hl2mp/weapon_hl2mpbasebasebludgeon.cpp:310-331). Ours is always on, since
-// the host has no trace of its own to fall back from, and takes the struck point, not the entity's origin. The aim is
-// the pose the host held, which trails the sender's by the pose latency; the reach check carries a slack for that and
-// this one carries none, so a turn made in the same instant as the swing can read as not facing.
-inline constexpr float kFacingCosine = 0.707f;
+// The least cosine, in 3-D, between the swinger's aim (the puppet's newest streamed aim, captured with the eye when the
+// intent arrived) and the direction from the eye to the struck point: cos 60 degrees. Source's "sort of facing" bound
+// of a melee hit is 0.70721 (EyeVectors dotted with the direction to the target entity's origin,
+// reference/source-sdk-2013/src/game/shared/hl2mp/weapon_hl2mpbasebasebludgeon.cpp:298, :310-331), there on a server
+// that owns the aim and only in the hull-trace fallback after the line trace missed. Ours is always on, since the host
+// has no trace of its own to fall back from, takes the struck point, not the entity's origin, and is wider: the aim
+// reaches the host after the stream's latency, and the swinger's client has already shown the hit, so a bound as tight
+// as the server-authoritative one would refuse swings made on screen. The reach check carries a slack for the same lag.
+inline constexpr float kFacingCosine = 0.5f;
 
 // A struck point this close to the eye (cm) has no direction to test and passes the facing bound.
 inline constexpr float kFacingMinCm = 1.f;
 
+// The cosine, in 3-D, between the unit vector `aim` and the direction from `eye` to `hitLoc`: what JudgeHit bounds by
+// kFacingCosine, exposed so a caller can log the margin. 1 when `hitLoc` lies within kFacingMinCm of `eye`. NaN when
+// an input is, so a caller written `!(c >= bound)` refuses it. Any thread.
+float FacingCosine(const ue_wrap::FVector& aim, const ue_wrap::FVector& eye, const ue_wrap::FVector& hitLoc);
+
 // Judge a swing `slot` claims to have landed on `target` at `hitLoc`, from the eye `eye` and the unit aim vector `aim`
 // the host captured for it together. True on a pass, with `outDamage` the claim cut to the held item's most
 // (`min(claimedDamage, maxDamage)`). False with `outReason` a static string naming the check that stopped it:
-// "weapon table unreadable", "no swinging item", "no reach data", "puppet unreadable", "out of reach", "not facing",
-// "sight unreadable", "no sight", "target unreadable" or "not on target". A NaN fails every distance and facing check.
+// "weapon table unreadable", "no swinging item", "no reach data", "puppet unreadable", "dead", "out of reach",
+// "not facing", "sight unreadable", "no sight", "target unreadable" or "not on target". A NaN fails every distance and
+// facing check.
 // Game thread.
 bool JudgeHit(int slot, const ue_wrap::FVector& eye, const ue_wrap::FVector& aim, const ue_wrap::FVector& hitLoc,
               void* target, float claimedDamage, float& outDamage, const char*& outReason);

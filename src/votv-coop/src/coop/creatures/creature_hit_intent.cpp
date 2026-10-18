@@ -208,14 +208,20 @@ coop::roster_ledger::PerSlotState<Slot> g_slots;
 uint32_t g_applied = 0;
 ue_wrap::ObjKeyedCache<bool, 24> g_appliedSaid;   // the classes whose first applied hit has been said
 
-void Refuse(int slot, const char* why) {
+// `facing` is the measured facing cosine when the refusal is the facing bound's, else NaN; the reason's first line
+// carries it, so the bound's margin reads off the log.
+void Refuse(int slot, const char* why, float facing = std::nanf("")) {
     if (slot < 1 || slot >= coop::players::kMaxPeers) return;
     Slot& sl = g_slots[slot];
     for (Reason& r : sl.reasons) {
         if (r.why && std::strcmp(r.why, why) != 0) continue;
         if (!r.why) {
             r.why = why;
-            UE_LOGI("creature_hit_intent: slot=%d refused %s", slot, why);
+            if (std::isfinite(facing))
+                UE_LOGI("creature_hit_intent: slot=%d refused %s facing=%.3f (the bound is %.3f)", slot, why, facing,
+                        coop::hit_judge::kFacingCosine);
+            else
+                UE_LOGI("creature_hit_intent: slot=%d refused %s", slot, why);
         }
         ++r.count;
         return;
@@ -240,20 +246,23 @@ void Serve(coop::net::Session& s, int slot, const Queued& q) {
     const FVector impact{p.impact[0], p.impact[1], p.impact[2]};
     float damage = 0.f;
     const char* why = nullptr;
-    if (!coop::hit_judge::JudgeHit(slot, q.eye, q.aim, hitLoc, creature, p.damage, damage, why))
-        return Refuse(slot, why);
+    if (!coop::hit_judge::JudgeHit(slot, q.eye, q.aim, hitLoc, creature, p.damage, damage, why)) {
+        const bool notFacing = std::strcmp(why, "not facing") == 0;
+        return Refuse(slot, why, notFacing ? coop::hit_judge::FacingCosine(q.aim, q.eye, hitLoc) : std::nanf(""));
+    }
 
     // The first applied hit of a class says what it measured; the rest are counted (g_applied). Read before the
     // hit, which may kill the creature.
     void* const cls = R::ClassOf(creature);
     const bool say = !g_appliedSaid.Find(cls);
-    float reach = 0.f, target = 0.f;
+    float reach = 0.f, target = 0.f, facing = 0.f;
     std::wstring name;
     if (say) {
         FVector at{};
         E::TryGetActorLocation(creature, at);
         reach = Dist(q.eye, hitLoc);
         target = Dist(hitLoc, at);
+        facing = coop::hit_judge::FacingCosine(q.aim, q.eye, hitLoc);
         name = R::ClassNameOf(creature);
     }
     if (!ue_wrap::int_objects::InvokeAddDamage(creature, nullptr, damage, hitLoc, impact))
@@ -261,8 +270,8 @@ void Serve(coop::net::Session& s, int slot, const Queued& q) {
     ++g_applied;
     if (say) {
         g_appliedSaid.Insert(cls, true);
-        UE_LOGI("creature_hit_intent: slot=%d creature=%ls damage=%.1f reach=%.0f target=%.0f applied (first of its "
-                "class; the rest are counted)", slot, name.c_str(), damage, reach, target);
+        UE_LOGI("creature_hit_intent: slot=%d creature=%ls damage=%.1f reach=%.0f target=%.0f facing=%.3f applied "
+                "(first of its class; the rest are counted)", slot, name.c_str(), damage, reach, target, facing);
     }
 }
 
@@ -322,11 +331,11 @@ void OnIntent(int senderSlot, const coop::net::CreatureHitIntentPayload& payload
     if (g_slots[senderSlot].queue.size() >= kMaxPending) return Refuse(senderSlot, "queue full");
     Queued q;
     q.req = payload;
-    // Only a puppet that has had its first pose has an eye: before it, it stands at its spawn point. The aim is read
-    // with the eye, the one pose.
+    // Only a puppet that has had its first pose has an eye: before it, it stands at its spawn point. The aim is the
+    // newest the stream carried, not the interpolated one, which trails it.
     coop::RemotePlayer& rp = coop::puppet_drive::Puppet(senderSlot);
     q.haveEye = rp.valid() && rp.HasPose() && rp.TryGetEyePosition(q.eye);
-    if (q.haveEye) q.aim = rp.GetSyncedAimDirection();
+    if (q.haveEye) q.aim = rp.GetLatestAimDirection();
     g_slots[senderSlot].queue.Push(std::move(q), kMaxPending);   // room was checked above
 }
 
