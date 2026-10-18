@@ -55,7 +55,10 @@ bool JudgeHit(int slot, const FVector& eye, const FVector& hitLoc, void* target,
         outReason = "sight unreadable";
         return false;
     }
-    if (blocker.blocked && blocker.actor != target) {
+    // A block within kBlockedSlackCm of the point still reaches it: a hit point at a creature's feet sits in the floor.
+    // Written so that a NaN blocks.
+    if (blocker.blocked && blocker.actor != target &&
+        !(Dist(eye, blocker.point) >= Dist(eye, hitLoc) - kBlockedSlackCm)) {
         outReason = "no sight";
         return false;
     }
