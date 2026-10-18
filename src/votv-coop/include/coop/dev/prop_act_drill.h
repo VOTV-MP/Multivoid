@@ -148,8 +148,8 @@ bool ClientSaid(int slot, const std::string& head, std::string* rest);
 const char* SpawnTarget(const Row& row, float extraCm, void** out);
 bool ClientPuppetReady();
 
-// True when the mirror is live and its root simulates physics: the state a press can gather it in. The host's drive of
-// a prop that fell parks the mirror with physics off until the drive ends, and a take then bails. CLIENT.
+// True when the mirror is there and the host's drive no longer parks it: the state a player meets it in. The host's
+// drive of a prop that fell parks the mirror with physics off until the drive ends, and a take then bails. CLIENT.
 bool MirrorGatherable(void* mirror);
 
 // What a client's steps use (prop_act_drill_client.cpp). HostSaid reads the text after `head` in the first row of this

@@ -16,6 +16,7 @@
 #include "coop/player/puppet_drive.h"
 #include "coop/player/remote_player.h"
 #include "coop/props/prop_act_host.h"
+#include "coop/props/prop_drive_stream.h"
 #include "coop/props/prop_snapshot.h"
 #include "coop/save/join_window_baseline.h"
 
@@ -301,9 +302,7 @@ bool ClientPuppetReady() {
 }
 
 bool MirrorGatherable(void* mirror) {
-    if (!mirror) return false;
-    void* const root = RootOf(mirror);
-    return root && E::IsComponentSimulatingPhysics(root);
+    return mirror && !coop::prop_drive_stream::IsParked(mirror);
 }
 
 // Spawns the row's class on the floor in front of slot 1's puppet, `extraCm` further along when it is a pair's
@@ -311,7 +310,7 @@ bool MirrorGatherable(void* mirror) {
 const char* SpawnTarget(const Row& row, float extraCm, void** out) {
     void* const player = coop::players::Registry::Get().Local();   // the floor trace's world context
     coop::RemotePlayer& rp = coop::puppet_drive::Puppet(kClientSlot);
-    void* const puppet = rp.GetActor();
+    void* const puppet = rp.valid() ? rp.GetActor() : nullptr;
     FVector at{};
     if (!player) return "the host's player was not there";
     if (!puppet || !E::TryGetActorLocation(puppet, at)) return "slot 1's puppet place could not be read";
@@ -343,6 +342,7 @@ const char* SpawnTarget(const Row& row, float extraCm, void** out) {
 void Install(coop::net::Session* s) {
     if (!s || g_installed || PhaseName() == "off") return;
     if (!ActivePhase() && !RaceArmed() && !DepartArmed() && !EdgeArmed()) {
+        g_installed = true;
         UE_LOGW("%s phase %s has no steps in this build -- nothing will run", kTag, PhaseName().c_str());
         return;
     }

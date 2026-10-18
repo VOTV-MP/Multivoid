@@ -337,10 +337,13 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
         return;
     }
     case CStage::AwaitGather: {
-        // c1's take of a host mirror is granted and gathers it, so it waits until the host's drive of it has ended. Every
-        // other act here meets a mirror somebody holds or hooks, or is c2's refused take: held is the state it must meet.
+        // A granted take gathers its mirror, so it waits until the host's drive of it has ended: c1's take of a host mirror,
+        // and c2's take of c1's own spawn. Every other act here meets a mirror somebody holds or hooks, or is c2's refused
+        // take: held is the state it must meet.
         if (!poll) return;
-        if (g_slot == kSlotC1 && !C1Refused(r.blocker) && r.act.target != Target::Client && g_mirror.Get() &&
+        const bool granted = g_slot == kSlotC1 ? !C1Refused(r.blocker) && r.act.target != Target::Client
+                                               : r.act.target == Target::Client;
+        if (granted && g_mirror.Get() &&
             !MirrorGatherable(g_mirror.Get())) {
             if (CExpired(kGatherBoundMs))
                 Fail(r, "the mirror never became gatherable here (the host's drive did not end)");
