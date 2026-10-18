@@ -203,6 +203,13 @@ bool InventoryHoldsKey(const std::wstring& key) {
 // at the call, a walk begun toward it, or no candidate left to try.
 enum class PocketTry : uint8_t { Taken, Asked, Refused, Walking, Exhausted };
 
+// Whether a player's press could gather `drive`: the game refuses a child actor, and a prop neither frozen nor
+// simulating on its root ("Cannot gather object"), so the drill tries no other.
+bool Gatherable(void* drive) {
+    return !E::IsChildActor(drive) &&
+           (ue_wrap::prop::IsFrozen(drive) || E::IsActorRootSimulatingPhysics(drive));
+}
+
 // CLIENT: the pocket of one world drive, as a player gathers one: the pocket refuses a drive asleep or static, and a
 // mirror's pocket is asked of the host, whose no is a refusal too.
 PocketTry PocketCandidate(void* player, void* drive) {
@@ -231,7 +238,7 @@ PocketTry PocketNextWorldDrive(void* player, const ue_wrap::FVector& from) {
         bool seated = false;
         for (int r = 0; r < DC::kRoleCount && !seated; ++r)
             if (void* slot = DC::SlotActor(r)) seated = DC::SlotDrive(slot) == p.actor;
-        if (seated) continue;
+        if (seated || !Gatherable(p.actor)) continue;
         ue_wrap::FVector at{};
         if (!E::TryGetActorLocation(p.actor, at)) continue;  // no place to walk to, nor to measure from
         const float dx = at.X - from.X, dy = at.Y - from.Y, dz = at.Z - from.Z;
@@ -449,10 +456,10 @@ void ClientTick() {
     }
     case Step::PocketWalk: {
         // Not arrived: the candidate stays tried and the next nearest is taken. Arrived: it is pocketed from the
-        // spot, read live (a drive gone meanwhile sends the leg back to the next candidate).
+        // spot, read live (a drive gone or parked meanwhile sends the leg back to the next candidate).
         const int state = g_walk ? g_walk->state.load() : 2;
         if (state == 0) return;
-        if (state == 2 || !g_pocketCand.Alive()) {
+        if (state == 2 || !g_pocketCand.Alive() || !Gatherable(g_pocketCand.Get())) {
             Next(Step::Pocket);
             return;
         }

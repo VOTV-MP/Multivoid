@@ -86,6 +86,11 @@ bool SetActorSimulatePhysics(void* actor, bool simulate) {
     return root && SetComponentSimulatePhysics(root, simulate);
 }
 
+bool IsActorRootSimulatingPhysics(void* actor) {
+    void* root = PrimitiveRootOf(actor);
+    return root && IsComponentSimulatingPhysics(root);
+}
+
 bool SetActorRootMovable(void* actor) {
     // Force the root component Movable so a subsequent SetActorLocation/Rotation actually takes. A
     // Static component silently no-ops the teleport and the K2 call still returns true, which is

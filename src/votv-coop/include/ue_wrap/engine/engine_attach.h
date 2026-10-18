@@ -76,4 +76,8 @@ void* GetActorRootPhysicalMaterial(void* actor);
 // failure. The host stamps kAtRest from it.
 bool IsActorRootBodyAtRest(void* actor);
 
+// True when the actor's root is a live primitive component that simulates physics (the root through
+// K2_GetRootComponent, then IsSimulatingPhysics); false for no root or a call that did not run.
+bool IsActorRootSimulatingPhysics(void* actor);
+
 }  // namespace ue_wrap::engine
