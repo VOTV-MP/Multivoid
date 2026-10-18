@@ -244,8 +244,9 @@ bool ReadMainPlayerSittingOn(void* mainPlayer, void*& sittingOn);
 // masked write and its offset live here, beside the read, instead of once per caller.
 bool WriteMainPlayerDead(void* mainPlayer, bool dead);
 
-// AmainPlayer_C::ragdollMode(ragdoll, passOut, death); (true, true, false) is the faint pose, which
-// works on an unpossessed puppet.
+// AmainPlayer_C::ragdollMode(ragdoll, passOut, death); (true, true, false) is the faint pose. On a peer's
+// puppet this verb is cancelled, whoever calls (coop/player/player_damage), so a puppet's faint is shown by
+// its playerRagdoll actor and not through here.
 bool SetMainPlayerRagdollMode(void* mainPlayer, bool ragdoll, bool passOut, bool death);
 
 // AmainPlayer_C::forceGetUp(): the get-up of a possessed player (its cleanup is tick-driven, so a
@@ -265,10 +266,10 @@ bool SetMainPlayerCanRagdoll(void* mainPlayer, bool allowed);
 // Read the same bool back, so a test can assert the gate took.
 bool ReadMainPlayerCanRagdoll(void* mainPlayer, bool& allowed);
 
-// AmainPlayer_C::"Add Player Damage": the owning peer applies a host-relayed enemy hit on its own
-// possessed pawn, so it runs through that peer's armour BP and drops saveSlot.health; early-outs on
-// a puppet. `blood` is not cosmetic: it gates the bloodLoss effect (@2784), so a hit without it
-// produces a death the game never produces. Game thread.
+// AmainPlayer_C::"Add Player Damage" on a possessed pawn: it runs through that pawn's armour BP and
+// drops saveSlot.health; early-outs on a puppet. Its caller is the death test; the delivery of a
+// creature's hit is coop/player/player_hit. `blood` is not cosmetic: it gates the bloodLoss effect
+// (@2784), so a hit without it produces a death the game never produces. Game thread.
 bool InvokeAddPlayerDamage(void* mainPlayer, float damage, bool blood = false);
 
 

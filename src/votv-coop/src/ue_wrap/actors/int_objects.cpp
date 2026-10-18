@@ -3,6 +3,7 @@
 #include "ue_wrap/actors/int_objects.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/obj_keyed_cache.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/hit_result.h"
 
@@ -14,10 +15,13 @@ namespace {
 namespace R = reflection;
 
 // The actor's ACharacter Mesh component, found by its reflected name; null when the class has none or the slot
-// is empty.
+// is empty. The offset is resolved once per class (-1 kept for a class with none): the family's classes alternate.
 void* MeshOf(void* actor) {
+    static ObjKeyedCache<int32_t, 8> sMeshOffsets;
     void* cls = R::ClassOf(actor);
-    const int32_t off = cls ? R::FindPropertyOffset(cls, L"Mesh") : -1;
+    if (!cls) return nullptr;
+    const int32_t* held = sMeshOffsets.Find(cls);
+    const int32_t off = held ? *held : sMeshOffsets.Insert(cls, R::FindPropertyOffset(cls, L"Mesh"));
     if (off < 0) return nullptr;
     void* mesh = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(actor) + off);
     return (mesh && R::IsLive(mesh)) ? mesh : nullptr;

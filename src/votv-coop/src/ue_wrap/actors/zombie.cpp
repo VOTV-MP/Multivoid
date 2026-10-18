@@ -4,6 +4,7 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/obj_keyed_cache.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -22,7 +23,6 @@ namespace R = reflection;
 constexpr const wchar_t* kAnimClass = L"kerfurOmegaV1_Skeleton_AnimBlueprint_Child_C";
 
 R::InstanceOffset g_anim{L"anim"};
-R::InstanceOffset g_headArmor{L"headArmor"};
 
 // A live object in the pointer slot `off` bytes into `base`, or null.
 void* LiveAt(void* base, size_t off) {
@@ -48,12 +48,34 @@ void Failed(void* zombie, const char* step) {
     UE_LOGW("zombie: %ls mirror presentation step '%s' did not run", R::ClassNameOf(zombie).c_str(), step);
 }
 
-bool BoolMember(void* obj, const wchar_t* name) {
-    void* cls = R::ClassOf(obj);
+// The `boney` flag's byte and bit mask, resolved once per class (a class without it is held too, as byte -1): the
+// family has a dozen classes and a swing at each asks again.
+struct BoolSlot {
     int32_t byteOff = -1;
     uint8_t mask = 0;
-    if (!cls || !R::FindBoolProperty(cls, name, byteOff, mask) || byteOff < 0) return false;
-    return (*(static_cast<const uint8_t*>(obj) + byteOff) & mask) != 0;
+};
+
+bool IsBoney(void* obj) {
+    static ObjKeyedCache<BoolSlot, 16> sSlots;
+    void* cls = R::ClassOf(obj);
+    if (!cls) return false;
+    const BoolSlot* held = sSlots.Find(cls);
+    if (!held) {
+        BoolSlot slot;
+        if (!R::FindBoolProperty(cls, L"boney", slot.byteOff, slot.mask) || slot.byteOff < 0) slot = BoolSlot{};
+        held = &sSlots.Insert(cls, slot);
+    }
+    return held->byteOff >= 0 && (*(static_cast<const uint8_t*>(obj) + held->byteOff) & held->mask) != 0;
+}
+
+// The `headArmor` float's offset, resolved once per class like `boney` (-1 where a class lacks it).
+int32_t HeadArmorOffset(void* obj) {
+    static ObjKeyedCache<int32_t, 16> sOffsets;
+    void* cls = R::ClassOf(obj);
+    if (!cls) return -1;
+    const int32_t* held = sOffsets.Find(cls);
+    if (!held) held = &sOffsets.Insert(cls, R::FindPropertyOffset(cls, L"headArmor"));
+    return *held;
 }
 
 }  // namespace
@@ -85,10 +107,10 @@ bool ApplyBeginPlayPresentation(void* zombie) {
 
 const wchar_t* PlayHitFeedback(void* zombie, const FVector& hitLoc) {
     if (!zombie || !R::IsLive(zombie)) return nullptr;
-    const int32_t armorOff = g_headArmor.Of(zombie);
+    const int32_t armorOff = HeadArmorOffset(zombie);
     const bool armored = armorOff >= 0 &&
                          *reinterpret_cast<const float*>(static_cast<const uint8_t*>(zombie) + armorOff) > 0.f;
-    const wchar_t* name = armored ? L"hitHeadArmor" : BoolMember(zombie, L"boney") ? L"hitBoney" : L"hitFlesh";
+    const wchar_t* name = armored ? L"hitHeadArmor" : IsBoney(zombie) ? L"hitBoney" : L"hitFlesh";
     void* fn = R::FindDispatchFunctionCached(R::ClassOf(zombie), name);
     ParamFrame f(fn);
     if (!fn || !f.valid()) return nullptr;
