@@ -4,7 +4,7 @@
 //
 //   act_far          a joined client asks to take a host prop 3000 uu from its body: Reach, and the prop stands.
 //   act_gone         it asks for a prop the host destroyed: Gone.
-//   act_wrongfamily  it asks to use a crowbar: WrongFamily.
+//   act_wrongfamily  it forges six acts the game never performs on four props: WrongFamily, each by its own term.
 //   act_bad_commit   it commits an id it never asked for, is granted a real take, aborts it, and aborts it again:
 //                    two bad commits tallied and the prop stands.
 //   act_notyet       it asks with its world up and its announce held, then lets the announce go: the host waits and

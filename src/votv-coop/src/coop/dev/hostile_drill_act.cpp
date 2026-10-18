@@ -2,6 +2,8 @@
 
 #include "coop/dev/hostile_drill_act.h"
 
+#include "hostile_drill_act_detail.h"  // co-located private header (src tree, not include/)
+
 #include "coop/comms/chat_feed.h"
 #include "coop/comms/chat_sync.h"
 #include "coop/dev/announce_hold.h"
@@ -36,6 +38,7 @@
 #include <string_view>
 
 namespace coop::dev::hostile_drill::act {
+using namespace detail;
 namespace {
 
 using Clock  = std::chrono::steady_clock;
@@ -48,8 +51,6 @@ namespace E   = ue_wrap::engine;
 namespace PAH = coop::prop_act_host;
 namespace PAR = coop::prop_act_request;
 namespace DP  = coop::dev::drill_props;
-
-constexpr const wchar_t* kCrowbarPath = L"/Game/objects/prop_crowbar.prop_crowbar_C";
 
 // The flood: far over the queue's cap of 2, so a queue that bounds nothing holds them all.
 constexpr uint32_t kFlood = 121;
@@ -71,45 +72,21 @@ constexpr float kDropCm = 40.f;          // above the floor, so the prop settles
 constexpr float kNearUpCm = 150.f, kNearDownCm = 600.f;
 constexpr float kFarUpCm = 1500.f, kFarDownCm = 4000.f;
 constexpr float kMinColumnCm = 20.f;     // a column whose floor is nearer than this to its start began inside geometry
-constexpr int kFan = 8;                  // the directions a spawn is tried in, round the puppet
 
 const char* kAbortedLine = "hostile-drill bad-commit aborted";
 
 bool Unready(Arm a) { return a == Arm::ActNotYet || a == Arm::ActFloodEarly; }
 bool DeadTarget(Arm a) { return a == Arm::ActGone || a == Arm::ActFlood; }
-Family FamilyOf(Arm a) { return a == Arm::ActWrongFamily ? Family::Use : Family::Pocket; }
-Reason WantedReason(Arm a) {
-    return a == Arm::ActFar ? Reason::Reach : a == Arm::ActGone ? Reason::Gone : Reason::WrongFamily;
-}
+Reason WantedReason(Arm a) { return a == Arm::ActFar ? Reason::Reach : Reason::Gone; }
 
 const char* ReasonName(size_t i) {
     static const char* const names[] = {"Granted", "Gone", "WrongFamily", "Held", "Reach", "QueueFull"};
     return i < sizeof(names) / sizeof(names[0]) ? names[i] : "?";
 }
 
-uint32_t Since(uint32_t now, uint32_t base) { return now >= base ? now - base : 0; }
-
 // The lines the two peers say to each other in the lobby chat. No save can hold them, as a prop class or a place could.
 std::string ReadyHead(Arm a) { return std::string("hostile-drill ") + ArmName(a) + " host-ready eid="; }
 std::string JudgedLine(Arm a) { return std::string("hostile-drill ") + ArmName(a) + " judged"; }
-
-void Say(const std::string& line) { coop::chat_sync::QueueSend(line); }
-
-bool ChatLine(const std::string& needle, std::string* whole) {
-    bool found = false;
-    coop::chat_feed::ForEachRow([&](const coop::chat_feed::RowView& r) {
-        if (found || r.line.find(needle) == std::string_view::npos) return;
-        found = true;
-        if (whole) *whole = std::string(r.line);
-    });
-    return found;
-}
-
-// A feed walk: a few times a second.
-bool PollDue() {
-    static uint32_t sTicks = 0;
-    return sTicks++ % 15 == 0;
-}
 
 // ---- client (sender) ----
 enum class CStep { Idle, AwaitReply, AwaitAborted, AwaitJudged, Done };
@@ -119,18 +96,8 @@ uint32_t g_staleBase = 0;
 Clock::time_point g_cwait{};   // the first tick the current wait began
 bool g_holdSet = false;
 
-bool OwnJoinOver() {
-    return coop::net_pump::HasAnnouncedWorldReady() &&
-           coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle;
-}
-
-void ClientSay(Arm a, const char* what, const char* why) {
-    if (std::string_view(what) == "PASS") UE_LOGI("[HOSTILE-DRILL] %s PASS -- %s", ArmName(a), why);
-    else UE_LOGW("[HOSTILE-DRILL] %s %s -- %s", ArmName(a), what, why);
-}
-
 void ClientEnd(Arm a, const char* what, const char* why) {
-    ClientSay(a, what, why);
+    LogVerdict(a, what, why);
     g_cstep = CStep::Done;
 }
 
@@ -138,14 +105,6 @@ void ClientEnd(Arm a, const char* what, const char* why) {
 bool ClientWaitedTooLong() {
     if (g_cwait == Clock::time_point{}) g_cwait = Clock::now();
     return Clock::now() - g_cwait > kFailBound;
-}
-
-bool SendRequest(coop::net::Session* s, uint16_t id, Family family, EL::ElementId eid) {
-    coop::net::PropActRequestPayload p{};
-    p.id = id;
-    p.family = static_cast<uint8_t>(family);
-    p.eid = static_cast<uint32_t>(eid);
-    return s->SendReliableToSlot(0, Kind::PropActRequest, &p, sizeof(p));
 }
 
 bool SendCommit(coop::net::Session* s, uint16_t id, uint8_t committed, EL::ElementId eid) {
@@ -288,12 +247,12 @@ void ClientTarget(coop::net::Session* s, Arm a) {
     default:
         break;
     }
-    if (!SendRequest(s, kRequestId, FamilyOf(a), g_ceid)) {
+    if (!SendRequest(s, kRequestId, Family::Pocket, g_ceid)) {
         ClientEnd(a, "INCONCLUSIVE", "the request was not sent");
         return;
     }
     UE_LOGI("[HOSTILE-DRILL] %s sent one PropActRequest (family %u) for eid %u", ArmName(a),
-            static_cast<unsigned>(FamilyOf(a)), static_cast<unsigned>(g_ceid));
+            static_cast<unsigned>(Family::Pocket), static_cast<unsigned>(g_ceid));
     g_cstep = CStep::Done;
 }
 
@@ -310,8 +269,7 @@ uint32_t g_answeredBase[coop::net::kPropActReasons] = {};
 uint32_t g_totalBase = 0, g_waitsBase = 0, g_unreadyBase = 0, g_badBase = 0, g_abortBase = 0;
 
 void Finish(Arm a, const char* what, const std::string& why) {
-    if (std::string_view(what) == "PASS") UE_LOGI("[HOSTILE-DRILL] %s PASS -- %s", ArmName(a), why.c_str());
-    else UE_LOGW("[HOSTILE-DRILL] %s %s -- %s", ArmName(a), what, why.c_str());
+    LogVerdict(a, what, why);
     // The client that reads a verdict of its own reads it after this line, and only after a pass.
     if (std::string_view(what) == "PASS" && (a == Arm::ActNotYet || a == Arm::ActFlood)) Say(JudgedLine(a));
     g_hstep = HStep::Done;
@@ -341,24 +299,10 @@ bool TargetAlive() {
 
 // Spawns the arm's crowbar beside (or 3000 uu from) the client's puppet. Null on success, else why not.
 const char* SpawnTarget(Arm a, coop::RemotePlayer& rp) {
-    FVector at{};
-    if (!E::TryGetActorLocation(rp.GetActor(), at)) return "the puppet's place could not be read";
-    void* const cls = ue_wrap::asset_load::LoadObjectByPath(kCrowbarPath);
-    if (!cls) return "prop_crowbar_C did not load";
-    const bool far = a == Arm::ActFar;
-    for (int i = 0; i < kFan; ++i) {
-        const float yaw = 6.2831853f * static_cast<float>(i) / static_cast<float>(kFan);
-        const float x = at.X + std::cos(yaw) * (far ? kFarCm : kNearCm);
-        const float y = at.Y + std::sin(yaw) * (far ? kFarCm : kNearCm);
-        void* p = nullptr;
-        const DP::Drop d = DP::DropOnFloor(rp.GetActor(), cls, nullptr, x, y, at.Z + (far ? kFarUpCm : kNearUpCm),
-                                           far ? kFarDownCm : kNearDownCm, kMinColumnCm, kDropCm, &p);
-        if (d == DP::Drop::NoFloor) continue;
-        if (d == DP::Drop::SpawnFailed) return "the crowbar did not spawn";
-        g_target.Set(p);
-        return nullptr;
-    }
-    return "no floor was found in any direction";
+    void* p = nullptr;
+    if (const char* why = SpawnOnFloor(rp, kCrowbarPath, a == Arm::ActFar, 0, nullptr, &p)) return why;
+    g_target.Set(p);
+    return nullptr;
 }
 
 // The arms that need the host's eye for the sender wait for a posed puppet, then spawn their prop.
@@ -416,7 +360,7 @@ void ArmUnready(coop::net::Session* s, Arm a) {
     UE_LOGI("[HOSTILE-DRILL] %s armed on slot %d (connected, not world-ready)", ArmName(a), g_slot);
 }
 
-// act_far, act_gone and act_wrongfamily: one request, one answer, and it is the arm's reason.
+// act_far and act_gone: one request, one answer, and it is the arm's reason.
 void JudgeOne(Arm a) {
     const uint32_t total = Since(PAH::AnsweredTotal(g_slot), g_totalBase);
     if (total == 0) {
@@ -533,6 +477,64 @@ void Reset() {
 
 }  // namespace
 
+namespace detail {
+
+void Say(const std::string& line) { coop::chat_sync::QueueSend(line); }
+
+bool ChatLine(const std::string& needle, std::string* whole) {
+    bool found = false;
+    coop::chat_feed::ForEachRow([&](const coop::chat_feed::RowView& r) {
+        if (found || r.line.find(needle) == std::string_view::npos) return;
+        found = true;
+        if (whole) *whole = std::string(r.line);
+    });
+    return found;
+}
+
+bool PollDue() {
+    static uint32_t sTicks = 0;
+    return sTicks++ % 15 == 0;
+}
+
+bool OwnJoinOver() {
+    return coop::net_pump::HasAnnouncedWorldReady() &&
+           coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle;
+}
+
+bool SendRequest(coop::net::Session* s, uint16_t id, Family family, EL::ElementId eid) {
+    coop::net::PropActRequestPayload p{};
+    p.id = id;
+    p.family = static_cast<uint8_t>(family);
+    p.eid = static_cast<uint32_t>(eid);
+    return s->SendReliableToSlot(0, Kind::PropActRequest, &p, sizeof(p));
+}
+
+void LogVerdict(Arm a, const char* what, const std::string& why) {
+    if (std::string_view(what) == "PASS") UE_LOGI("[HOSTILE-DRILL] %s PASS -- %s", ArmName(a), why.c_str());
+    else UE_LOGW("[HOSTILE-DRILL] %s %s -- %s", ArmName(a), what, why.c_str());
+}
+
+const char* SpawnOnFloor(coop::RemotePlayer& rp, const wchar_t* path, bool far, int firstDir, int* dirUsed, void** out) {
+    FVector at{};
+    if (!E::TryGetActorLocation(rp.GetActor(), at)) return "the puppet's place could not be read";
+    void* const cls = ue_wrap::asset_load::LoadObjectByPath(path);
+    if (!cls) return "the target's class did not load";
+    for (int i = firstDir; i < kFan; ++i) {
+        const float yaw = 6.2831853f * static_cast<float>(i) / static_cast<float>(kFan);
+        const float x = at.X + std::cos(yaw) * (far ? kFarCm : kNearCm);
+        const float y = at.Y + std::sin(yaw) * (far ? kFarCm : kNearCm);
+        const DP::Drop d = DP::DropOnFloor(rp.GetActor(), cls, nullptr, x, y, at.Z + (far ? kFarUpCm : kNearUpCm),
+                                           far ? kFarDownCm : kNearDownCm, kMinColumnCm, kDropCm, out);
+        if (d == DP::Drop::NoFloor) continue;
+        if (d == DP::Drop::SpawnFailed) return "the target did not spawn";
+        if (dirUsed) *dirUsed = i;
+        return nullptr;
+    }
+    return "no floor was found in any direction";
+}
+
+}  // namespace detail
+
 const char* ArmName(Arm a) {
     switch (a) {
     case Arm::ActFar:         return "act_far";
@@ -554,12 +556,20 @@ void Install(coop::net::Session* s, Arm a) {
 }
 
 void TickClient(coop::net::Session* s, Arm a) {
+    if (a == Arm::ActWrongFamily) {
+        TickFamilyClient(s);
+        return;
+    }
     if (g_cstep == CStep::Done) return;
     if (Unready(a)) ClientEarly(s, a);
     else ClientTarget(s, a);
 }
 
 void TickHostJudge(coop::net::Session* s, Arm a) {
+    if (a == Arm::ActWrongFamily) {
+        TickFamilyHost(s);
+        return;
+    }
     if (g_hstep == HStep::Done) return;
     if (g_hstep == HStep::WaitArm) {
         if (Unready(a)) ArmUnready(s, a);
@@ -590,6 +600,7 @@ void TickHostJudge(coop::net::Session* s, Arm a) {
 
 void OnDisconnect() {
     Reset();
+    ResetFamily();
     g_holdSet = false;
     coop::dev::announce_hold::Set(false);
 }
