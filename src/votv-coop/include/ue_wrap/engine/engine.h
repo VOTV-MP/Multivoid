@@ -106,6 +106,9 @@ bool ForceGarbageCollection();
 // AActor::GetActorForwardVector; (0,0,0) on failure.
 FVector GetActorForwardVector(void* actor);
 
+// AActor::GetActorUpVector; (0,0,0) on failure (a unit vector is never zero, so a zero is an unread one).
+FVector GetActorUpVector(void* actor);
+
 // AActor::K2_GetActorRotation (world), the one rotation read: false when the rotation could not be
 // obtained, a read that faulted inside the engine and was absorbed included. `out` is then the zero
 // rotator, an ordinary facing, so every caller decides what an unread rotation means. Game thread.

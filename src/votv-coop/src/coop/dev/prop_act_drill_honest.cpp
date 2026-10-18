@@ -15,7 +15,9 @@
 #include "ue_wrap/actors/prop_gather.h"
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/field_io.h"
 #include "ue_wrap/core/ftext_utils.h"
+#include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
@@ -24,6 +26,7 @@
 #include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/facts/function_row.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -53,10 +56,11 @@ constexpr const wchar_t* kChipPile = L"/Game/objects/actorChipPile.actorChipPile
 constexpr const wchar_t* kKerfurProp = L"prop_kerfurOmega_C";   // dropKerfurProp's prop class
 constexpr const wchar_t* kNoSpace = L"Not enough space";        // the hint a bailed pocket shows
 constexpr float kOwnLiftCm = 60.f;                              // a client's own spawn, above its player's origin
-constexpr float kBinDropCm = 60.f;                              // the item dropped into the bin, above the bin's origin
+constexpr float kBinDropCm = 80.f;                              // the item dropped into the bin, above the bin's location
+constexpr float kBinUprightZ = 0.5f;                            // a bin whose up vector's Z is above this stands
 constexpr float kBinInsideCm = 60.f;                            // a rest point within this of the bin's origin is in the bin
-constexpr uint64_t kBinLoadBoundMs = 20000;                     // HOST: the bin's rest, then the crowbar's rest, each from its start
-constexpr uint64_t kBinTakeBoundMs = 10000;                     // HOST: the crowbar's rest in the bin to canCollect off
+constexpr uint64_t kBinLoadBoundMs = 20000;                     // HOST: the bin's rest, then the item's rest, each from its start
+constexpr uint64_t kBinTakeBoundMs = 10000;                     // HOST: the item's rest in the bin to canCollect off
 
 // Every Blueprint addHint, read to tell the full inventory's refusal from any other hint.
 UE_FACT_FN(kRowHint, "dev.prop_act_drill", nullptr, L"addHint", AnyClass);
@@ -152,57 +156,94 @@ const char* SetShrimpLastEat(void* player, void* mirror) {
 
 // LoadBin's progress, cleared by its first call (the row's step runs one bin at a time).
 struct BinLoad {
-    ue_wrap::CachedObjRef crowbar;
-    FVector binAt{}, crowbarAt{};
-    bool haveBinAt = false, haveCrowbarAt = false, dropped = false, rested = false;
+    ue_wrap::CachedObjRef item;
+    FVector binAt{}, itemAt{};
+    bool haveBinAt = false, haveItemAt = false, dropped = false, rested = false;
     uint64_t phaseMs = 0;   // the sinceMs at which the current wait began
 };
 BinLoad g_bin;
 
 bool Unmoved(const FVector& a, const FVector& b) { return a.X == b.X && a.Y == b.Y && a.Z == b.Z; }
 
+constexpr float kBinUnread = -9.f;   // a value the bin's diagnostic could not read: outside every up-vector Z
+
+// The bin's itemsInside count (the TArray's Num, read by the member's name), -1 when the member is not found.
+int32_t ItemsInside(void* bin) {
+    static R::InstanceOffset sItems{L"itemsInside"};
+    const int32_t o = bin ? sItems.Of(bin) : -1;
+    if (o < 0) return -1;
+    return reinterpret_cast<const ue_wrap::field_io::TArrayView*>(static_cast<const uint8_t*>(bin) + o)->num;
+}
+
+// One line naming where the prep stood, written before each of its FAILs: the bin's place and up-Z, the item's rest
+// point and its distance to the bin's centre, the bin's itemsInside count and its canCollect.
+const char* BinFail(void* bin, const char* why) {
+    FVector binAt{}, itemAt{};
+    const bool haveBin = bin && E::TryGetActorLocation(bin, binAt);
+    void* const item = g_bin.item.Alive() ? g_bin.item.Get() : nullptr;
+    const bool haveItem = item && E::TryGetActorLocation(item, itemAt);
+    float dist = kBinUnread;
+    if (haveBin && haveItem) {
+        const float dx = itemAt.X - binAt.X, dy = itemAt.Y - binAt.Y, dz = itemAt.Z - binAt.Z;
+        dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+    }
+    const FVector up = bin ? E::GetActorUpVector(bin) : FVector{};
+    const float upZ = (up.X == 0.f && up.Y == 0.f && up.Z == 0.f) ? kBinUnread : up.Z;
+    ue_wrap::prop_gather::PropDataFlags flags{};
+    const int collect = bin && ue_wrap::prop_gather::ReadPropData(bin, flags) ? (flags.canCollect ? 1 : 0) : -1;
+    UE_LOGW("%s host bin prep: %s -- bin (%.0f, %.0f, %.0f) up-Z %.2f, item (%.0f, %.0f, %.0f) %.0f uu from the bin's "
+            "centre, itemsInside %d, canCollect %d",
+            kTag, why, binAt.X, binAt.Y, binAt.Z, upZ, itemAt.X, itemAt.Y, itemAt.Z, dist, ItemsInside(bin), collect);
+    return why;
+}
+
 // The wastebasket is loaded as the game loads it: an item dropped into its Box settles, and the bin's own tick freezes it
 // and attaches it, which turns the bin's canCollect off (checkPickup). The bin must first have come to rest (its place
-// unchanged across two polls), then a crowbar is dropped and awaited to rest in turn; the step is done once the bin's
-// data reads canCollect false, and a miss names the cause.
+// unchanged across two polls) and stand upright; then a small item (the pills) is dropped above it and awaited to rest in
+// turn; the step is done once the bin's data reads canCollect false, and a miss names the cause.
 const char* LoadBin(void* bin, uint64_t sinceMs, bool* done) {
     if (sinceMs == 0) g_bin = BinLoad{};
     FVector binAt{};
-    if (!E::TryGetActorLocation(bin, binAt)) return "the bin's place is unread";
+    if (!E::TryGetActorLocation(bin, binAt)) return BinFail(bin, "the bin's place is unread");
     if (!g_bin.dropped) {
         const bool rest = g_bin.haveBinAt && Unmoved(g_bin.binAt, binAt);
         g_bin.binAt = binAt;
         g_bin.haveBinAt = true;
-        if (!rest) return sinceMs > kBinLoadBoundMs ? "the bin never came to rest" : nullptr;
-        void* const cls = ue_wrap::asset_load::LoadObjectByPath(kCrowbar);
-        if (!cls) return "the crowbar class did not load";
+        if (!rest) return sinceMs > kBinLoadBoundMs ? BinFail(bin, "the bin never came to rest") : nullptr;
+        const FVector up = E::GetActorUpVector(bin);
+        if (up.X == 0.f && up.Y == 0.f && up.Z == 0.f) return BinFail(bin, "the bin's up vector is unread");
+        if (up.Z <= kBinUprightZ) return BinFail(bin, "the bin came to rest on its side");
+        void* const cls = ue_wrap::asset_load::LoadObjectByPath(kPills);
+        if (!cls) return BinFail(bin, "the pills class did not load");
         void* const item = E::SpawnActor(cls, {binAt.X, binAt.Y, binAt.Z + kBinDropCm});
-        if (!item) return "the item for the bin did not spawn";
-        g_bin.crowbar.Set(item);
+        if (!item) return BinFail(bin, "the item for the bin did not spawn");
+        g_bin.item.Set(item);
         g_bin.dropped = true;
         g_bin.phaseMs = sinceMs;
         return nullptr;
     }
     ue_wrap::prop_gather::PropDataFlags flags{};
-    if (!ue_wrap::prop_gather::ReadPropData(bin, flags)) return "the bin's propData could not be read";
+    if (!ue_wrap::prop_gather::ReadPropData(bin, flags)) return BinFail(bin, "the bin's propData could not be read");
     if (!flags.canCollect) {
         *done = true;
         return nullptr;
     }
     FVector at{};
-    void* const item = g_bin.crowbar.Alive() ? g_bin.crowbar.Get() : nullptr;
-    if (!item || !E::TryGetActorLocation(item, at)) return "the crowbar dropped for the bin is gone or its place is unread";
+    void* const item = g_bin.item.Alive() ? g_bin.item.Get() : nullptr;
+    if (!item || !E::TryGetActorLocation(item, at))
+        return BinFail(bin, "the item dropped for the bin is gone or its place is unread");
     if (!g_bin.rested) {
-        const bool rest = g_bin.haveCrowbarAt && Unmoved(g_bin.crowbarAt, at);
-        g_bin.crowbarAt = at;
-        g_bin.haveCrowbarAt = true;
-        if (!rest) return sinceMs - g_bin.phaseMs > kBinLoadBoundMs ? "the crowbar never came to rest" : nullptr;
+        const bool rest = g_bin.haveItemAt && Unmoved(g_bin.itemAt, at);
+        g_bin.itemAt = at;
+        g_bin.haveItemAt = true;
+        if (!rest)
+            return sinceMs - g_bin.phaseMs > kBinLoadBoundMs ? BinFail(bin, "the item never came to rest") : nullptr;
         g_bin.rested = true;
         g_bin.phaseMs = sinceMs;
         const float dx = at.X - binAt.X, dy = at.Y - binAt.Y, dz = at.Z - binAt.Z;
-        if (dx * dx + dy * dy + dz * dz > kBinInsideCm * kBinInsideCm) return "the crowbar did not land in the bin";
+        if (dx * dx + dy * dy + dz * dz > kBinInsideCm * kBinInsideCm) return BinFail(bin, "the item did not land in the bin");
     }
-    return sinceMs - g_bin.phaseMs > kBinTakeBoundMs ? "the bin never took the item" : nullptr;
+    return sinceMs - g_bin.phaseMs > kBinTakeBoundMs ? BinFail(bin, "the bin never took the item") : nullptr;
 }
 
 // A frozen heavy prop, on the host's copy and on the client's (frozen is not synced, and the client's own hold of a

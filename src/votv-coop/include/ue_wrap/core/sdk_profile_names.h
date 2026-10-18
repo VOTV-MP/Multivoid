@@ -199,6 +199,7 @@ inline constexpr const wchar_t* GetActorScale3DFn = L"GetActorScale3D";  // AAct
 inline constexpr const wchar_t* CollectGarbageFn = L"CollectGarbage";  // KismetSystemLibrary static; schedules a full GC purge end-of-frame (post-sweep plateau collapse). Class constant @ the existing KismetSystemLibraryClass above.
 inline constexpr const wchar_t* PropInventoryContainerPlayerClass = L"prop_inventoryContainer_player_C";  // PER-PLAYER inventory container -- never snapshot-expressed/broadcast/swept (prop_lifecycle::IsPerPlayerPropClass)
 inline constexpr const wchar_t* GetActorForwardVectorFn = L"GetActorForwardVector";
+inline constexpr const wchar_t* GetActorUpVectorFn = L"GetActorUpVector";
 inline constexpr const wchar_t* SetActorRotationFn = L"K2_SetActorRotation";
 inline constexpr const wchar_t* SetActorScale3DFn = L"SetActorScale3D";  // AActor::SetActorScale3D(FVector) -> void
 inline constexpr const wchar_t* SetActorTickEnabledFn = L"SetActorTickEnabled";
