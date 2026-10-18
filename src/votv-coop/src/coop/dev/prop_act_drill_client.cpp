@@ -7,6 +7,7 @@
 #include "coop/dev/director/aimed_grab.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/drill_chat_pace.h"
+#include "drive_drill_verbs.h"  // Throw: the player's own throw (co-located private header)
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -40,6 +41,7 @@ namespace R   = ue_wrap::reflection;
 namespace EL  = coop::element;
 namespace PAR = coop::prop_act_request;
 namespace PU  = ue_wrap::prop_use;
+namespace DV  = coop::dev::drive_drill_verbs;
 using ue_wrap::FVector;
 
 constexpr uint8_t kEatAction = 4;   // actionOptionIndex's eat, as the watch reads it
@@ -48,8 +50,8 @@ constexpr int kFillMax = 400;            // CLIENT: own spawns pocketed before t
 
 // ---- client (taker) ----------------------------------------------------------------------------------------------
 
-enum class CStep : uint8_t { Arm, AwaitReady, Resolve, Fill, Walk, AwaitGather, Grab, AwaitDriven, AwaitReply, Say,
-                             Done };
+enum class CStep : uint8_t { Arm, AwaitReady, Resolve, Fill, Walk, AwaitGather, ClearHand, Grab, AwaitDriven,
+                             AwaitReply, Say, Done };
 CStep g_cstep = CStep::Arm;
 uint64_t g_cStepMs = 0, g_cNextMs = 0, g_nextSayMs = 0;
 size_t g_crow = 0;
@@ -322,6 +324,26 @@ void ClientFill(const Row& row, void* player) {
     BeginWalk(row, mirror);
 }
 
+// The game's grab chain runs on an empty hand: both slots (the physics grab and the hand item) read empty.
+bool HandEmpty(void* player) {
+    E::MainPlayerGrabState hand{};
+    return E::ReadMainPlayerGrabState(player, hand) && !hand.grabbingActor && !hand.holdingActor;
+}
+
+// The hand cleared with the effect-seam verbs the director's ClearHand falls back to: the physics slot released, the
+// hand slot thrown. False when the throw could not run.
+bool ClearHandForGrab(void* player) {
+    E::MainPlayerGrabState hand{};
+    if (!E::ReadMainPlayerGrabState(player, hand)) return false;
+    if (hand.grabbingActor) E::ReleaseMainPlayerGrabIfHolding(player, hand.grabbingActor);
+    return !hand.holdingActor || DV::Throw(player);
+}
+
+void BeginGrab(void* player) {
+    g_grab = std::make_unique<coop::director::AimedGrab>(player, g_mirror.Get());
+    g_grabbed = false;
+    CEnter(CStep::Grab);
+}
 
 }  // namespace
 
@@ -478,14 +500,33 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
             return;
         }
         if (row.grab) {
-            g_grab = std::make_unique<coop::director::AimedGrab>(player, g_mirror.Get());
-            g_grabbed = false;
-            CEnter(CStep::Grab);
+            if (HandEmpty(player)) {
+                BeginGrab(player);
+                return;
+            }
+            if (!ClearHandForGrab(player)) {
+                ClientFail(row, "the hand could not be cleared before the grab");
+                return;
+            }
+            CEnter(CStep::ClearHand);
             return;
         }
         ClientAct(row, player);
         return;
     }
+    case CStep::ClearHand:
+        if (now < g_cNextMs) return;
+        g_cNextMs = now + kPollEveryMs;
+        if (!g_mirror.Get()) {
+            ClientFail(row, "the mirror was gone before the grab");
+            return;
+        }
+        if (!HandEmpty(player)) {
+            if (CExpired(kHandClearBoundMs)) ClientFail(row, "the hand did not clear before the grab");
+            return;
+        }
+        BeginGrab(player);
+        return;
     case CStep::Grab: {
         // The game's grab, ticked on every tick; once it has taken, the grabbed line goes through the drills' chat
         // pacing and the host says when it sees the prop driven.
@@ -500,7 +541,7 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
                 return;
             }
             if (st == coop::director::GrabState::Working) {
-                if (CExpired(kGrabBoundMs)) ClientFail(row, "the grab did not take");
+                if (CExpired(kGrabBoundMs)) ClientFail(row, "the grab neither took nor failed in time");
                 return;
             }
             g_grabbed = true;
@@ -538,6 +579,7 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         g_mirror2.Reset();
         g_grab.reset();
         if (g_sayFailed) {
+            HintWatchOff();
             g_cstep = CStep::Done;
             return;
         }
@@ -547,6 +589,7 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         }
         UE_LOGI("%s c%d %s PASS -- all %u steps held on this client", kTag, kClientSlot, ph.name,
                 static_cast<unsigned>(ph.count));
+        HintWatchOff();
         g_cstep = CStep::Done;
         return;
     }
@@ -565,6 +608,7 @@ void ClientReset() {
     g_invBefore = 0;
     g_fillCount = 0;
     ClearHint();
+    HintWatchOff();
     g_walk.reset();
     g_grab.reset();
     g_grabbed = false;

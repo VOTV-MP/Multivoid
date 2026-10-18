@@ -49,7 +49,7 @@ constexpr const wchar_t* kShrimpPath = L"/Game/objects/prop_food_shrimp.prop_foo
 constexpr const wchar_t* kPlushPath  = L"/Game/objects/prop_eriePlush.prop_eriePlush_C";
 constexpr auto kReplyBound = std::chrono::seconds(10);   // CLIENT: a request's send to the host's reply
 constexpr auto kSentBound = std::chrono::seconds(60);    // HOST: its ready line to the client's sent line
-constexpr auto kReadyBound = std::chrono::seconds(180);  // a failure bound on the targets' announce, never a wait
+constexpr auto kReadyBound = std::chrono::seconds(180);  // a failure bound on the announce, and on the client's wait for it
 
 // The four targets, in the order of the ready line.
 enum Tgt { kCrowbar, kHeater, kShrimp, kPlush, kTargets };
@@ -89,6 +89,7 @@ EL::ElementId g_ceids[kTargets] = {};
 size_t g_sent = 0;           // requests sent so far; the reply awaited is the last one's
 uint32_t g_staleBase = 0;
 Clock::time_point g_sentAt{};
+Clock::time_point g_idleAt{};   // the client's first Idle tick on its own slot: the targets line's wait counts from it
 
 void ClientEnd(const char* what, const std::string& why) {
     LogVerdict(kArm, what, why);
@@ -251,8 +252,12 @@ void TickFamilyClient(coop::net::Session* s) {
             g_cstep = CStep::Done;
             return;
         }
+        if (g_idleAt == Clock::time_point{}) g_idleAt = Clock::now();
         std::string line;
-        if (!ChatLine(kTargetsHead, &line)) return;
+        if (!ChatLine(kTargetsHead, &line)) {
+            if (Clock::now() - g_idleAt > kReadyBound) ClientEnd("FAIL", "the host never said its targets");
+            return;
+        }
         const char* missing = "";
         if (!ParseTargets(line, g_ceids, &missing)) {
             ClientEnd("FAIL", std::string("the host's targets line names no ") + missing);
@@ -315,6 +320,7 @@ void ResetFamily() {
     g_sent = 0;
     g_staleBase = 0;
     g_sentAt = {};
+    g_idleAt = {};
     g_hstep = HStep::WaitArm;
     g_playerNo = 0;
     g_armAt = {};

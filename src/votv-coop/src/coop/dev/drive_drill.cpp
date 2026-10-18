@@ -63,6 +63,9 @@ const wchar_t* const kReplace   = L"drill-replace";   // the drive the host lays
 const wchar_t* const kDriveCls  = L"prop_drive_C";
 constexpr uint64_t kArmBoundMs   = 60000;  // CLIENT: world-ready to the fixture's row
 constexpr uint64_t kLegBoundMs   = 30000;  // a leg's own event, from the step that started it
+// HOST: the re-placement's lay to the client's take-out row: the lay, its replication, the client's gatherable wait
+// (kLegBoundMs), the pocket and the take-out.
+constexpr uint64_t kReplaceLegBoundMs = 90000;
 constexpr uint64_t kWipeBoundMs  = 10000;  // the press to the host's wipe here (the press's own 3 s, and the wire)
 constexpr uint64_t kHoldMs       = 3000;
 constexpr uint64_t kCheckEveryMs = 250;
@@ -95,6 +98,7 @@ bool     g_hostArmed = false;
 bool     g_hostDone = false;
 void*    g_fixture = nullptr;   // this peer's copy of the fixture
 ue_wrap::CachedObjRef g_own;   // CLIENT: the drive of its current leg
+ue_wrap::CachedObjRef g_replace;   // CLIENT: the host's re-placement drive, held once found
 std::wstring g_ownKey;          // CLIENT: the carried drive's key, its inventory record's
 std::wstring g_ownName;         // CLIENT: the carried drive's row name
 uint64_t g_mark = 0;            // CLIENT: a counter's value when the step began
@@ -433,7 +437,9 @@ void ClientTick() {
     case Step::Pocket: {
         // The game gathers only a drive frozen or simulating: the host's drive is pocketed once its copy here rests
         // gatherable.
-        void* const d = UnseatedDriveNamed(kReplace);
+        // Found once by the registry scan and held after: the poll then reads the held reference.
+        if (!g_replace.Alive()) g_replace.Set(UnseatedDriveNamed(kReplace));
+        void* const d = g_replace.Alive() ? g_replace.Get() : nullptr;
         if (!d || !ue_wrap::prop_gather::IsGatherable(d)) {
             if (Expired(kLegBoundMs)) {
                 char why[220];
@@ -606,6 +612,7 @@ void HostTick(coop::net::Session* s) {
             return;
         }
         g_replaceLaid = lay == Lay::Laid;
+        if (g_replaceLaid) g_progressMs = now;   // the take-out leg counts from the lay
     }
     const uint64_t progress = c.accepted + c.refused;
     if (g_progressMs == 0 || progress != g_progressCount) {
@@ -620,12 +627,14 @@ void HostTick(coop::net::Session* s) {
                 g_session, Mode().c_str());
         return;
     }
-    if (now - g_progressMs > kLegBoundMs) {
-        static const char* const kLeg[] = {"its birth", "its take-out", "its throw"};
-        char why[160];
+    const uint64_t legBound = c.accepted == 1 ? kReplaceLegBoundMs : kLegBoundMs;
+    if (now - g_progressMs > legBound) {
+        static const char* const kLeg[] = {"its birth", "its re-placement drive's take-out (lay, gather, pocket, take-out)",
+                                           "its throw"};
+        char why[200];
         if (static_cast<int>(c.accepted) < kOwnDrives)
-            std::snprintf(why, sizeof(why), "the client's drive did not reach the host with its row at %s within 30 s",
-                          kLeg[c.accepted]);
+            std::snprintf(why, sizeof(why), "the client's drive did not reach the host with its row at %s within %u s",
+                          kLeg[c.accepted], static_cast<unsigned>(legBound / 1000));
         else
             std::snprintf(why, sizeof(why), "the client's forged row did not reach the host within 30 s of its throw");
         Fail(why);
@@ -648,6 +657,7 @@ void OnDisconnect() {
     g_hostArmed = g_hostDone = false;
     g_fixture = nullptr;
     g_own.Reset();
+    g_replace.Reset();
     g_ownKey.clear();
     g_ownName.clear();
     g_mark = 0;

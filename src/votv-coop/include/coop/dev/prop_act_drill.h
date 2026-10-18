@@ -1,18 +1,17 @@
 // coop/dev/prop_act_drill.h -- [dev] the act drill: a client's take or use of a shared prop asks the host first
 // (ini prop_act_drill=honest|race|depart|edge, env VOTVCOOP_PROP_ACT_DRILL; BOTH peers, the same value).
 //
-//   HOST   -- spawns each step's target on the floor in front of the client's puppet, waits until it is announced,
-//             says a ready line (the step and the target's eid) in the lobby chat, then judges its own counters when
-//             the client says its done line. Its PASS line ends the phase.
-//   CLIENT -- reads the line, resolves the mirror by eid, walks within reach with the director, runs the verb by
-//             reflection as a press would (the watch catches it), waits until no request is pending, judges what its
-//             own copies show, and says its done line.
+//   HOST   -- spawns each step's target in front of the client's puppet, waits until it is announced, preps it, checks
+//             the judge's census of it against the row (logged), says a ready line (step, eid) in the lobby chat, and
+//             judges its counters on the client's done line; a grab row also waits for the grab and the drive.
+//   CLIENT -- reads the line, resolves the mirror by eid, walks within reach with the director, grabs it with the
+//             game's grab on a grab row, runs the verb by reflection as a press would, waits until no request is
+//             pending, judges what its own copies show, and says its done line.
 // honest: one client takes and uses each family of shared prop. race: two clients and the host contend for one prop
-// (with --observer); its host half is in prop_act_drill_race.cpp and its clients' in prop_act_drill_race_client.cpp.
-// depart: a client leaves holding a reservation and a newcomer takes its slot (with --rejoin;
-// prop_act_drill_depart.cpp). edge: the windows of the ask (prop_act_drill_edge.cpp, its client half in
-// prop_act_drill_edge_client.cpp). A FAIL is the lane failing; every wait on the other peer ends on a chat line or a
-// counter, and its bound is a bound that FAILs the step, never a wait.
+// (with --observer; prop_act_drill_race.cpp, prop_act_drill_race_client.cpp). depart: a client leaves holding a
+// reservation and a newcomer takes its slot (with --rejoin; prop_act_drill_depart.cpp). edge: the windows of the ask
+// (prop_act_drill_edge.cpp, prop_act_drill_edge_client.cpp). A FAIL is the lane failing; every wait on the other peer
+// ends on a chat line or a counter, and its bound is a bound that FAILs the step, never a wait.
 
 #pragma once
 
@@ -54,7 +53,8 @@ inline constexpr uint64_t kReadyBoundMs = 120000;   // CLIENT: a step's start to
 inline constexpr uint64_t kMirrorBoundMs = 60000;   // CLIENT: the ready line to the mirror being here
 inline constexpr uint64_t kReplyBoundMs = 30000;    // CLIENT: the call to no request pending
 inline constexpr uint64_t kGatherBoundMs = 10000;   // CLIENT: the walk's arrival to the mirror being gatherable
-inline constexpr uint64_t kGrabBoundMs = 15000;     // CLIENT: a grab row's grab step to the game's grab having taken
+inline constexpr uint64_t kHandClearBoundMs = 10000; // CLIENT: the hand's clear before a grab to both slots reading empty
+inline constexpr uint64_t kGrabBoundMs = 45000;    // CLIENT: a grab row's grab step, a wall-clock backstop; the grab ends itself
 inline constexpr uint64_t kDrivenBoundMs = 20000;   // CLIENT: its grabbed line to the host's driven line
 inline constexpr uint64_t kDragBoundMs = 15000;     // HOST: the client's grabbed line to the prop driven by the client
 inline constexpr uint64_t kAnnounceBoundMs = 60000; // HOST: the spawn to the target having a row
@@ -198,6 +198,7 @@ void ClientReset();
 // What the honest rows need of the engine (prop_act_drill_honest.cpp). The hint watch tells a full inventory's refusal
 // ("Not enough space") from any other game hint.
 bool HintWatchLive();   // registered and its names resolved; a tick drives the resolve
+void HintWatchOff();    // retired when the phase ends: a live name watch costs every script call
 void ClearHint();
 bool HintSeen();        // the hint was shown since ClearHint
 void* FindKerfurProp(coop::element::ElementId kerfurId);        // the live prop whose eid names that kerfur record

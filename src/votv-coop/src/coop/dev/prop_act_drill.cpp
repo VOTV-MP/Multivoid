@@ -328,6 +328,11 @@ void HostTick(coop::net::Session* s, const Phase& ph) {
     }
     case HStep::AwaitGrab:
         if (!ClientSaid(kClientSlot, DragHead(row, false) + "grabbed", nullptr)) {
+            std::string failed;
+            if (ClientSaid(kClientSlot, DoneHead(row), &failed)) {
+                HostFail(&row, "the client reported: " + failed);
+                return;
+            }
             if (HExpired(kDoneBoundMs)) HostFail(&row, "the client never grabbed the prop");
             return;
         }
