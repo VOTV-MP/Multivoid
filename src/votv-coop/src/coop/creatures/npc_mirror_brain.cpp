@@ -14,7 +14,6 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/sdk_profile.h"
-#include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <cstddef>
@@ -27,7 +26,6 @@ namespace {
 namespace P  = ue_wrap::profile;
 namespace R  = ue_wrap::reflection;
 namespace sg = ue_wrap::script_gate;
-namespace WI = ue_wrap::world_identity;
 namespace EL = coop::element;
 
 // One row per class that OWNS an event graph. A class below one of these with no graph of its own runs its parent's
@@ -49,27 +47,19 @@ constexpr int kTagHound    = 0x4D504630;  // 'MPF0'
 // ---- The mark ----
 
 // A fixed open-addressed table, linear probing, no tombstones (a removal shifts the chain back). A slot's `index` is
-// the actor's object index (-1 empty) and `serial` the slot's serial when it was marked.
+// the actor's object index (-1 empty) and `serial` the slot's serial when it was marked. A mark of a dead world matches
+// nothing, its slot holding another serial, so no world change empties the table: a live mirror stays marked.
 constexpr size_t kMarkSlots = 256;  // a power of two: Home takes the hash's top eight bits
 struct Mark {
     int32_t index  = -1;
     int32_t serial = 0;
 };
-Mark     g_marks[kMarkSlots];
-uint32_t g_markWorld = 0;  // the world generation the table was filled in
+Mark g_marks[kMarkSlots];
 
 size_t Home(int32_t index) { return (static_cast<uint32_t>(index) * 2654435761u) >> 24; }
 
 void ClearMarks() {
     for (Mark& m : g_marks) m = Mark{};
-}
-
-// The table belongs to one world: a new generation empties it.
-void FollowWorld() {
-    const uint32_t gen = WI::Generation();
-    if (gen == g_markWorld) return;
-    ClearMarks();
-    g_markWorld = gen;
 }
 
 Mark* Find(int32_t index) {
@@ -264,7 +254,6 @@ void CheckWatchesLive(void* cls) {
 void MarkMirror(void* actor) {
     UE_ASSERT_GAME_THREAD("npc_mirror_brain::MarkMirror");
     if (!actor || !R::IsLive(actor)) return;
-    FollowWorld();
     const int32_t index = R::InternalIndexOf(actor);
     const int32_t serial = index >= 0 ? R::AllocateSlotSerial(index) : 0;
     if (serial == 0) {
@@ -281,7 +270,6 @@ void MarkMirror(void* actor) {
 
 bool IsMarkedMirror(void* obj) {
     if (!obj) return false;
-    FollowWorld();
     const int32_t index = R::InternalIndexOf(obj);
     const Mark* m = Find(index);
     return m && R::SlotSerial(index) == m->serial;
@@ -289,7 +277,6 @@ bool IsMarkedMirror(void* obj) {
 
 void UnmarkMirror(int32_t index, int32_t serial) {
     UE_ASSERT_GAME_THREAD("npc_mirror_brain::UnmarkMirror");
-    FollowWorld();
     Mark* m = Find(index);
     if (m && m->serial == serial) EraseAt(static_cast<size_t>(m - g_marks));
 }
