@@ -5,6 +5,7 @@
 
 #include "coop/comms/chat_log.h"
 #include "coop/comms/chat_sync.h"
+#include "coop/dev/director/director.h"
 #include "coop/dev/hook_plant.h"
 #include "coop/dev/remover_drill_layout.h"
 #include "coop/items/hook_sync.h"
@@ -26,6 +27,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <string>
 
 namespace coop::dev::remover_drill::detail {
@@ -38,16 +40,27 @@ namespace layout = coop::dev::remover_drill::layout;
 using layout::kRing;
 
 constexpr uint64_t kAwaitBoundMs = 900000;  // HOST: the spawn to the client's closing line
+constexpr float kHostHookReachCm = 300.f;   // HOST: how near the first crowbar its hook is planted from
+constexpr int kHostHookWalkDeadlineS = 240; // HOST: the director's walk to that crowbar, from its start
 
 enum class HostStep : uint8_t { Arm, Await };
 HostStep g_hostStep = HostStep::Arm;
 
-// The host's half of the hook steps, in order: its hook planted on the first crowbar, the line said once the claim pass
-// reads that hook, its hook released once the host has answered Held, then the wait for the client's hook on the second.
+// The host's half of the hook steps, in order: its hook planted on the first crowbar (after the walk to it), the line
+// said once the claim pass reads that hook, its hook released once the host has answered Held, then the wait for the
+// client's hook on the second.
 enum class HookStep : uint8_t { Plant, Pulling, Answering, AwaitClient, Done };
 HookStep g_hookStep = HookStep::Plant;
 ue_wrap::CachedObjRef g_hostHook;
 uint32_t g_heldBase = 0;   // the host's Held answers when it said host-hooked
+// The host's walk to the first crowbar: the hook's tail sits on the host's player, so a player far off reels the
+// crowbar across the map before the client presses. Started by the Plant step, dropped once it ends or restarts.
+std::shared_ptr<coop::director::BackgroundWalk> g_hostWalk;
+
+void DropHostWalk() {
+    if (g_hostWalk && g_hostWalk->state.load() == 0) coop::director::CancelBackgroundWalk(*g_hostWalk);
+    g_hostWalk.reset();
+}
 
 bool ClientEnded() {
     const std::string end = EndLine();
@@ -116,6 +129,17 @@ void HostHookTick() {
     switch (g_hookStep) {
     case HookStep::Plant: {
         if (!player || !first) return;
+        if (!g_hostWalk) {
+            FVector at{};
+            if (!E::TryGetActorLocation(first, at)) return;
+            g_hostWalk = coop::director::StartBackgroundWalk(at, kHostHookReachCm, kHostHookWalkDeadlineS);
+            UE_LOGI("[REMOVER-DRILL] host: walking to the first crowbar before it hooks it");
+            return;
+        }
+        const int walked = g_hostWalk->state.load();
+        if (walked == 0) return;
+        if (walked == 2) { End("host", "FAIL", "the host never reached the crowbar it hooks", true); return; }
+        g_hostWalk.reset();
         const char* note = "";
         void* hook = coop::dev::hook_plant::Plant(player, first, &note);
         if (!hook) { End("host", "FAIL", note, true); return; }
@@ -180,6 +204,7 @@ void HostTick(coop::net::Session* s) {
     }
     if (relayed != layout::Relayed::None) {
         ReleaseHook(g_hostHook);
+        DropHostWalk();
         g_hookStep = HookStep::Plant;
     }
     if (ClientEnded()) { HostJudge(); return; }
@@ -194,6 +219,7 @@ void HostReset() {
     g_hostStep = HostStep::Arm;
     g_hookStep = HookStep::Plant;
     g_heldBase = 0;
+    DropHostWalk();
     if (g_hostHook.Raw()) ReleaseHook(g_hostHook);
 }
 
