@@ -50,6 +50,37 @@ bool g_boneSaid = false;
 bool g_noneSaid = false;                          // the first hit with no source creature has been said
 ue_wrap::ObjKeyedCache<bool, 24> g_appliedSaid;   // the source classes whose first applied hit has been said
 
+// Why Deliver sent nothing: counted every time (RefusedSendCount), said on the first of each reason.
+enum class RefusedWhy : uint8_t { SessionUnset, BadSlot, NoPlayerElement, SessionRefused, Count };
+bool g_refusedSaid[static_cast<size_t>(RefusedWhy::Count)] = {};
+
+// Always false, so a refusing branch of Deliver reads `return Refused(...)`.
+bool Refused(RefusedWhy why, uint8_t slot) {
+    ++g_refusedSends;
+    bool& said = g_refusedSaid[static_cast<size_t>(why)];
+    if (said) return false;
+    said = true;
+    switch (why) {
+    case RefusedWhy::SessionUnset:
+        UE_LOGW("player_hit: Deliver but the session is unset -- the hit is lost (counted from here)");
+        break;
+    case RefusedWhy::BadSlot:
+        UE_LOGW("player_hit: Deliver invalid slot=%u -- the hit is lost (counted from here)",
+                static_cast<unsigned>(slot));
+        break;
+    case RefusedWhy::NoPlayerElement:
+        UE_LOGW("player_hit: Deliver slot=%u has no Player Element yet (peer not fully identified) -- the hit is "
+                "lost (counted from here)", static_cast<unsigned>(slot));
+        break;
+    default:
+        // The session refused the send: the slot is not world-ready, or its backlog dropped it.
+        UE_LOGW("player_hit: the session refused a PlayerHit send to slot=%u -- the hit is lost (counted from here)",
+                static_cast<unsigned>(slot));
+        break;
+    }
+    return false;
+}
+
 bool FiniteWithin(const float (&v)[3]) {
     for (const float c : v)
         if (!std::isfinite(c) || std::fabs(c) > kMaxComponent) return false;
@@ -125,29 +156,15 @@ void Install(coop::net::Session* session) { g_session.store(session, std::memory
 
 bool Deliver(uint8_t slot, const coop::net::PlayerHitPayload& payload) {
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s) {
-        UE_LOGW("player_hit: Deliver but the session is unset");
-        return false;
-    }
-    if (slot == 0 || slot >= coop::players::kMaxPeers) {
-        UE_LOGW("player_hit: Deliver invalid slot=%u", static_cast<unsigned>(slot));
-        return false;
-    }
+    if (!s) return Refused(RefusedWhy::SessionUnset, slot);
+    if (slot == 0 || slot >= coop::players::kMaxPeers) return Refused(RefusedWhy::BadSlot, slot);
     coop::element::Player* victim = coop::players::Registry::Get().GetPlayerElement(slot);
-    if (!victim) {
-        UE_LOGW("player_hit: Deliver slot=%u has no Player Element yet -- skipping (peer not fully identified)",
-                static_cast<unsigned>(slot));
-        return false;
-    }
+    if (!victim) return Refused(RefusedWhy::NoPlayerElement, slot);
     coop::net::PlayerHitPayload p = payload;
     p.targetElementId = victim->GetId();
     p.pad = 0;
     if (s->SendReliableToSlot(slot, coop::net::ReliableKind::PlayerHit, &p, sizeof(p), /*senderSlot=*/0)) return true;
-    // The session refused the send (the slot is not world-ready, or its backlog dropped it): the hit is lost.
-    if (++g_refusedSends == 1)
-        UE_LOGW("player_hit: the session refused a PlayerHit send to slot=%u -- the hit is lost (counted from here)",
-                static_cast<unsigned>(slot));
-    return false;
+    return Refused(RefusedWhy::SessionRefused, slot);
 }
 
 void OnReceived(const uint8_t* data, size_t len) {
