@@ -3,6 +3,7 @@
 #include "ue_wrap/actors/fossilhound.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -94,19 +95,25 @@ bool EnterPerViewerLoop(void* hound) {
     return f.valid() && f.Set<int32_t>(L"EntryPoint", kPerViewerEntry) && Call(hound, f);
 }
 
-// The hound's mesh when `actor` is a fossilhound_C or a descendant, else null. The class is resolved once loaded.
+// The hound's mesh when `actor` is a fossilhound_C or a descendant, else null. The class chain is compared by name (the
+// name resolved once, as npc_mirror_brain's table does), so no class is looked up per call and an unloaded class is
+// never held: the host asks this for every NPC on every pose send.
 void* HoundMesh(void* actor) {
     if (!actor || !R::IsLive(actor)) return nullptr;
-    // Re-resolved when the class it held was unlisted (ClassListingId moves, even for a reload at the same address).
-    static void* sHound = nullptr;
-    static uint64_t sListing = 0;
-    if (!sHound || sListing == 0 || object_index::ClassListingId(sHound) != sListing) {
-        sHound = object_index::ClassByName(P::name::NpcClass_Fossilhound);
-        sListing = sHound ? object_index::ClassListingId(sHound) : 0;
+    static R::FName sName{};
+    static bool sResolved = false;
+    if (!sResolved) {
+        if (!fname_utils::Resolved()) return nullptr;
+        sName = fname_utils::StringToFName(P::name::NpcClass_Fossilhound);
+        sResolved = true;
     }
-    void* cls = R::ClassOf(actor);
-    if (!sHound || !cls || !R::IsDescendantOfAny(cls, &sHound, 1)) return nullptr;
-    return LiveAt(actor, P::off::ACharacter_Mesh);
+    int hops = 0;
+    for (void* cls = R::ClassOf(actor); cls && hops < 16; cls = R::SuperStructOf(cls), ++hops) {
+        const R::FName& n = R::NameOf(cls);
+        if (n.ComparisonIndex == sName.ComparisonIndex && n.Number == sName.Number)
+            return LiveAt(actor, P::off::ACharacter_Mesh);
+    }
+    return nullptr;
 }
 
 }  // namespace
