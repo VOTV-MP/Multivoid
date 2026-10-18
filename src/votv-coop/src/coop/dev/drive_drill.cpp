@@ -14,6 +14,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_act_request.h"
+#include "coop/props/prop_drive_stream.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/save/save_transfer.h"
 #include "coop/session/join_progress.h"
@@ -27,6 +28,7 @@
 #include "ue_wrap/desk/drive_chain.h"
 #include "ue_wrap/desk/drive_eraser.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_physics.h"
 
 #include <windows.h>
 
@@ -387,7 +389,17 @@ void ClientTick() {
             return;
         }
         if (!ue_wrap::prop::IsGatherable(g_own.Get())) {
-            if (Expired(kLegBoundMs)) Fail("the born drive never came to rest gatherable");
+            if (Expired(kLegBoundMs)) {
+                void* const d = g_own.Get();
+                void* const mesh = ue_wrap::prop::GetStaticMesh(d);
+                char why[200];
+                std::snprintf(why, sizeof why, "the born drive never came to rest gatherable (child=%d frozen=%d "
+                              "root simulating=%d mesh simulating=%d parked=%d)", E::IsChildActor(d) ? 1 : 0,
+                              ue_wrap::prop::IsFrozen(d) ? 1 : 0, E::IsActorRootSimulatingPhysics(d) ? 1 : 0,
+                              mesh && E::IsComponentSimulatingPhysics(mesh) ? 1 : 0,
+                              coop::prop_drive_stream::IsParked(d) ? 1 : 0);
+                Fail(why);
+            }
             return;
         }
         g_ownKey = ue_wrap::prop::GetInteractableKeyString(g_own.Get());

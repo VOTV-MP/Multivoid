@@ -363,7 +363,17 @@ const char* SpawnTarget(const Row& row, float extraCm, void** out) {
         }
     }
     if (!second) g_fanDir = -1;
-    return "no floor was found round slot 1's puppet";
+    // Why the columns missed, read again at the facing's first column and under the puppet itself.
+    static const char* const kMiss[] = {"floor", "trace did not run", "no hit", "starts inside geometry"};
+    DP::FloorMiss facing = DP::FloorMiss::None, own = DP::FloorMiss::None;
+    float z = 0.f;
+    DP::FloorAt(player, at.X + fwd.X / len * kAheadCm[0], at.Y + fwd.Y / len * kAheadCm[0], at.Z, kFloorDownCm,
+                kMinColumnCm, &z, &facing);
+    DP::FloorAt(player, at.X, at.Y, at.Z, kFloorDownCm, kMinColumnCm, &z, &own);
+    static char why[200];
+    std::snprintf(why, sizeof why, "no floor was found round slot 1's puppet (puppet at %.0f %.0f %.0f; facing column: "
+                  "%s; own column: %s)", at.X, at.Y, at.Z, kMiss[static_cast<int>(facing)], kMiss[static_cast<int>(own)]);
+    return why;
 }
 
 }  // namespace detail
