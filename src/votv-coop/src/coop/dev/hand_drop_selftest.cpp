@@ -500,6 +500,9 @@ void Advance(bool isHost, uint64_t now) {
             Enter(Stage::ClearPeer, now);
             return;
         }
+        // The game writes droppedItem only on the throw's spawn path and never clears it, so a throw
+        // that spawned nothing would read the previous throw's prop.
+        void* const before = E::ReadMainPlayerDroppedItem(player);
         const bool called = CallDropHolding(player);
         UE_LOGI("hand_drop_selftest: CLEARHAND (+%llus) -- dropped the starting hand item %p "
                 "(call=%d, now holding=%p)", static_cast<unsigned long long>(since / 1000),
@@ -509,6 +512,10 @@ void Advance(bool isHost, uint64_t now) {
         void* thrown = E::ReadMainPlayerDroppedItem(player);
         if (!called || !thrown || !R::IsLive(thrown)) {
             Fail(n, "clear", "the throw left no dropped prop to wait on", false);
+            return;
+        }
+        if (thrown == before) {
+            Fail(n, "clear", "the throw left no new dropped prop to wait on", false);
             return;
         }
         g_dropped.Set(thrown);
@@ -573,10 +580,19 @@ void Advance(bool isHost, uint64_t now) {
         void* player = MainPlayer();
         if (!player) { Fail(n, "drop", "the local player is gone", false); return; }
         void* wasHolding = HoldingActor(player);
+        void* const before = E::ReadMainPlayerDroppedItem(player);
         ep.dropFired   = CallDropHolding(player);
         ep.dropCleared = (HoldingActor(player) == nullptr);
         UE_LOGI("hand_drop_selftest: ep%d DROP key='%ls' -- was holding=%p call=%d cleared=%d",
                 n, ep.targetKey.c_str(), wasHolding, ep.dropFired ? 1 : 0, ep.dropCleared ? 1 : 0);
+        if (!wasHolding) {
+            Fail(n, "drop", "the hand was empty before the throw", false);
+            return;
+        }
+        if (!ep.dropFired) {
+            Fail(n, "drop", "the drop hook did not fire", false);
+            return;
+        }
         if (!ep.dropCleared) {
             Fail(n, "drop", "the hand did not empty (call=" + std::to_string(ep.dropFired ? 1 : 0) + ")", false);
             return;
@@ -586,6 +602,10 @@ void Advance(bool isHost, uint64_t now) {
         void* thrown = E::ReadMainPlayerDroppedItem(player);
         if (!thrown || !R::IsLive(thrown)) {
             Fail(n, "drop", "the throw left no dropped prop to wait on", false);
+            return;
+        }
+        if (thrown == before) {
+            Fail(n, "drop", "the throw left no new dropped prop to wait on", false);
             return;
         }
         g_dropped.Set(thrown);
