@@ -119,6 +119,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::KeypadIntent:
     case ReliableKind::OvenRepairState:
     case ReliableKind::KerfusIntent:
+    case ReliableKind::CordLinkState:
     case ReliableKind::ServerUpgradeState:
     case ReliableKind::SatConsole:
     case ReliableKind::DishCalibIntent:

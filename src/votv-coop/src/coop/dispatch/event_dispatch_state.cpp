@@ -17,6 +17,7 @@
 #include "coop/interactables/drone_sync.h"
 #include "coop/interactables/grime_sync.h"
 #include "coop/interactables/interactable_sync.h"
+#include "coop/interactables/cord_sync.h"
 #include "coop/creatures/kerfur_convert_client.h"
 #include "coop/creatures/kerfus_state.h"  // HOST->CLIENT a Kerfus's on, charging and energy
 #include "coop/interactables/keypad_sync.h"
@@ -565,6 +566,24 @@ bool HandleStateEvent(net::Session& session,
             break;
         }
         coop::kerfus_state::OnState(p);
+        break;
+    }
+    case net::ReliableKind::CordLinkState: {
+        if (msg.payloadLen != sizeof(net::CordLinkPayload)) {
+            UE_LOGW("event_feed: CordLinkState payload size mismatch (%zu != %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::CordLinkPayload));
+            break;
+        }
+        net::CordLinkPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.propKey.len == 0 || p.propKey.len > sizeof(p.propKey.data) ||
+            p.socketKey.len > sizeof(p.socketKey.data)) {
+            UE_LOGW("event_feed: CordLinkState key length is invalid");
+            break;
+        }
+        const uint8_t senderSlot = msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers
+            ? static_cast<uint8_t>(msg.senderPeerSlot) : static_cast<uint8_t>(0xFF);
+        coop::cord_sync::OnReliable(p, senderSlot);
         break;
     }
     case net::ReliableKind::ServerSetting:

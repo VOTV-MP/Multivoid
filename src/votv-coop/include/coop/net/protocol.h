@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 236;
+inline constexpr uint16_t kProtocolVersion = 237;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1060,6 +1060,12 @@ enum class ReliableKind : uint8_t {
     // source actor's own Blueprint; host_spawn_watcher and prop_lifecycle carry the replacement
     // birth and source death. Late join: host save plus the ordinary prop snapshot. Never relayed.
     SleepingbagIntent = 188,
+
+    // Any peer, relayed by the host: one corded prop's socket relationship, named by the prop's
+    // save key and the socket's actor-save key (empty socket key means unplugged). Receivers
+    // resolve both actors locally and replay the game's cordPlugged/cordUnplugged chain. The host
+    // sends the current relationships to a joining peer at its world-ready edge. CordLinkPayload.
+    CordLinkState = 189,
 };
 
 #pragma pack(push, 1)
@@ -1193,6 +1199,12 @@ struct WireKey {
     char    data[31];  // UTF-8 (Aprop_C Keys are ASCII)
 };
 static_assert(sizeof(WireKey) == 32, "WireKey must be 32 bytes");
+
+struct CordLinkPayload {
+    WireKey propKey;
+    WireKey socketKey;
+};
+static_assert(sizeof(CordLinkPayload) == 64, "CordLinkPayload must be 64 bytes");
 
 // A Blueprint class leaf name ("Aprop_equipment_flashlight_C"). Bytes beyond len are zero.
 struct WireClassName {
