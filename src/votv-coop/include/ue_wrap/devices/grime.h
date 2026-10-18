@@ -1,19 +1,13 @@
-// ue_wrap/devices/grime.h -- standalone engine access for VOTV surface grime (Agrime_C and its
-// grime_* subclasses: grime_oil_C, grime_blood2_C, grime_dusty_C, ...). Principle-7
-// engine-wrapper layer, wrapping the reflection, struct-offset and UFunction-thunk details of
-// a grime actor: no network logic, no coop state, both of which coop::grime_sync owns.
+// ue_wrap/devices/grime.h -- engine access for VOTV surface grime (Agrime_C and grime_* subclasses).
+// This wrapper owns reflection, field offsets and UFunction calls; coop::grime_sync owns network
+// state and behavior.
 //
-// Agrime_C derives from AActor directly, not from a save or trigger actor, so it has no Key
-// field: it is UNKEYED, persisted as a primitive JSON blob [type, process] indexed by save
-// order. Its dirt is the whole-decal scalar `process`, higher being dirtier, and the decal is
-// painted from the ratio `process / maxProcess` on its dynamic material. A sponge wipe calls
-// clean(sponge, Sub, noSound), which does `process -= Sub * cleanStrength * 1.2`, sets that
-// scalar itself, and K2_DestroyActor()s the decal once `process < 0`.
+// Agrime_C has no save-actor Key, so persistence uses [type, process] in save order. The `process`
+// scalar controls decal dirt through `process / maxProcess`. A sponge wipe subtracts
+// `Sub * cleanStrength * 1.2`; the game destroys the decal when process becomes negative.
 //
-// A decal is STATIC -- level-placed, transform saved, never moving -- so its WORLD POSITION is
-// a deterministic cross-peer identity, and coop::grime_sync keys grime by a quantized position
-// string, not a host-allocated eid. Runtime coffee projectile splatter is outside the old
-// general grime process lane.
+// Level-placed decals never move, so grime_sync identifies them by quantized world position.
+// Runtime coffee-projectile splatter is outside this persistence lane.
 
 #pragma once
 

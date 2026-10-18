@@ -1,19 +1,9 @@
-// coop/interactables/interactable_sync.h -- keyed interactable state sync: one engine, ten features, one Channel:
-//   - DoorState (9):         base doors     (Adoor_C, open intent, host-authoritative)
-//   - LightState (10):       light switches (Alightswitch_C::use, replayed on receipt)
-//   - ContainerState (11):   container lids (Aprop_swinger_C::Open / Close)
-//   - SwingerMotion (17):    mouse-driven physical hinge torque inputs
-//   - GarageDoorState (33):  the garage     (Agarage_C, keyed by level-export name)
-//   - ApplianceState (35):   the save-actor appliance family
-//   - LockerDoorState (50):  lockers and the drone-console box (level-export name)
-//   - LightGroupState (129): light groups   (runTrigger on the root, host-authoritative)
-//   - OvenRepairState (151): the kitchen oven's repair (its fix(), one way)
-//   - CameraActiveState (181), CameraLightState (182): a security camera's two bits (host-authoritative)
-// Gameplay/network layer (principle 7): the wire protocol, the senders, the receiver apply, the key index, the
-// deferred-apply retry and the connect snapshot; the engine only through ue_wrap. Every channel is sent at the verbs
-// that write its state, on the authority: the host for doors, light groups and cameras, the peer that ran it for
-// the symmetric rest (door_state_verbs, lightgroup_verbs, toggle_verbs). A write no verb makes, a save's load,
-// reaches a joiner in the connect snapshot. The model: docs/devices.md.
+// coop/interactables/interactable_sync.h -- keyed state sync for doors, switches, containers,
+// swingers, garage doors, appliances, lockers, light groups, ovens and security cameras.
+// Each channel sends state when its authoritative gameplay verb writes it; the host owns doors,
+// light groups and cameras, while the peer that ran the verb owns the symmetric channels.
+// The connect snapshot supplies states that came from a save rather than a verb. Engine access
+// stays in ue_wrap; see docs/devices.md for the model.
 
 #pragma once
 
