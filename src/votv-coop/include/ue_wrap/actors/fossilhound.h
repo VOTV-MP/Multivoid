@@ -23,4 +23,8 @@ inline constexpr int32_t kPerViewerEntry = 2723;
 // Game thread.
 bool ApplyBeginPlayPresentation(void* hound, bool ownBeginPlayRan);
 
+// [dev] How many times the per-viewer kick was left out for a twin whose own BeginPlay ran (counted each time; the
+// log line is the first only).
+uint32_t AdoptedKickSkips();
+
 }  // namespace ue_wrap::fossilhound

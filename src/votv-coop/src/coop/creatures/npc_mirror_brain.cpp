@@ -203,11 +203,15 @@ sg::Verdict OnGraphPre(const sg::Call& call) {
     Watch* w = WatchOf(call.tag);
     if (!w) return sg::Verdict::Run;
     if (!w->tableResolved) {
-        w->tableResolved = true;
-        w->table = TableFor(R::OuterOf(call.function));
-        if (!w->table)
-            UE_LOGE("npc_mirror_brain: %ls has a watch and no table -- every entry of its mirrors is refused",
-                    w->row->Class());
+        // A table not found before the class names resolve is not latched: the next call asks again.
+        const EntryTable* found = TableFor(R::OuterOf(call.function));
+        if (found || ResolveClassNames()) {
+            w->tableResolved = true;
+            w->table = found;
+            if (!w->table)
+                UE_LOGE("npc_mirror_brain: %ls has a watch and no table -- every entry of its mirrors is refused",
+                        w->row->Class());
+        }
     }
     const int32_t entry = EntryOf(*w, call);
     if (w->table && Allowed(*w->table, entry)) return sg::Verdict::Run;
@@ -221,7 +225,8 @@ bool g_subscribed = false;
 bool g_announced = false;
 int  g_subscribeRetry = 0;
 bool g_subscribeWarned = false;
-ue_wrap::ObjKeyedCache<bool, 16> g_notLiveSaid;   // the classes whose not-live mirror has been said
+bool g_notLiveSaid = false;                         // a mirror that was not live has been said
+ue_wrap::ObjKeyedCache<bool, 16> g_namesPendingSaid;   // the classes born before the parked names resolved, said
 
 // An Npc mirror's end, after the engine's own: its mark goes by the record's own slot and serial.
 void OnNpcEnd(const EL::death_seam::Death& death) {
@@ -255,11 +260,10 @@ void MarkMirror(void* actor) {
     UE_ASSERT_GAME_THREAD("npc_mirror_brain::MarkMirror");
     if (!actor) return;
     if (!R::IsLive(actor)) {
-        void* const cls = R::ClassOf(actor);
-        if (!g_notLiveSaid.Find(cls)) {
-            g_notLiveSaid.Insert(cls, true);
-            UE_LOGW("npc_mirror_brain: %ls mirror not marked -- it is not live; its Blueprint runs",
-                    R::ClassNameOf(actor).c_str());
+        // No class is read of an actor that is not live, so the line is once, not once per class.
+        if (!g_notLiveSaid) {
+            g_notLiveSaid = true;
+            UE_LOGW("npc_mirror_brain: a mirror was not marked -- it is not live; its Blueprint runs");
         }
         return;
     }
@@ -300,6 +304,16 @@ bool IsParkedClass(void* cls) {
 void PrepareBirth(void* actor) {
     UE_ASSERT_GAME_THREAD("npc_mirror_brain::PrepareBirth");
     void* const cls = actor ? R::ClassOf(actor) : nullptr;
+    // The table's class names first: before they resolve no class reads as parked, so the mirror stays unmarked and
+    // its Blueprint runs (fail open), which is said once per class.
+    if (!ResolveClassNames()) {
+        if (cls && !g_namesPendingSaid.Find(cls)) {
+            g_namesPendingSaid.Insert(cls, true);
+            UE_LOGW("npc_mirror_brain: %ls born before the parked class names resolved -- not marked, its Blueprint "
+                    "runs", R::ClassNameOf(actor).c_str());
+        }
+        return;
+    }
     if (!IsParkedClass(cls)) return;
     MarkMirror(actor);
     CheckWatchesLive(cls);
@@ -362,7 +376,8 @@ void OnDisconnect() {
     g_refusalCount = 0;
     g_refusalsUnlisted = 0;
     g_unlistedSaid = false;
-    g_notLiveSaid.Clear();
+    g_notLiveSaid = false;
+    g_namesPendingSaid.Clear();
     ClearMarks();
 }
 

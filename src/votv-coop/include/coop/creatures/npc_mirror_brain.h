@@ -21,11 +21,13 @@
 
 namespace coop::npc_mirror_brain {
 
-// Precedent. MTA stops a non-authority copy at the source of the effect, patching the engine function to return
-// (reference/mtasa-blue/Client/multiplayer_sa/CMultiplayerSA.cpp:854-858), and locks its output: the syncer's report
-// locks a copy's health (reference/mtasa-blue/Client/mods/deathmatch/logic/CPedSync.cpp:236-252) and the damage
-// handler restores it (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientGame.cpp:4509). The output lock does
-// not reach a creature's Blueprint, which also writes world state and saves, so the body is refused at its entry.
+// Precedent. MTA patches an engine function to return where it wants an effect gone, unconditionally
+// (reference/mtasa-blue/Client/multiplayer_sa/CMultiplayerSA.cpp:854-858), and gates a copy's own decisions on
+// IsSyncing() or IsLocalPlayer() (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientPed.cpp:6546, :6756). Here
+// the gate is per mirror, by mark. MTA also locks a copy's output: the syncer's report locks its health
+// (reference/mtasa-blue/Client/mods/deathmatch/logic/CPedSync.cpp:236-252) and the damage handler restores it
+// (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientGame.cpp:4509). The output lock does not reach a
+// creature's Blueprint, which also writes world state and saves, so the body is refused at its entry.
 //
 // Mark `actor`, a mirror of a creature, before its BeginPlay can run. A full table drops the marks whose slot no
 // longer holds their serial first; a mirror still unmarkable is said, and its Blueprint runs. Game thread.
@@ -42,7 +44,9 @@ void UnmarkMirror(int32_t index, int32_t serial);
 bool IsParkedClass(void* cls);
 
 // A mirror of any family has been begun and not finished (or a twin is being bound): mark it when its class is
-// parked, and say, once per class, when a watch its BeginPlay passes through is not live. Game thread.
+// parked, and say, once per class, when a watch its BeginPlay passes through is not live. The tables' class names are
+// resolved first; until they are, no class can be told as parked, so the mirror is left unmarked, its Blueprint runs
+// (fail open), and that is said once per class. Game thread.
 void PrepareBirth(void* actor);
 
 // How a mirror came to be: spawned by the client for the host's creature, whose BeginPlay the graph watches refused;
@@ -50,8 +54,9 @@ void PrepareBirth(void* actor);
 enum class Origin : uint8_t { Spawned, Adopted };
 
 // After the mirror is installed: the presentation its class's BeginPlay set up and the refused graph no longer
-// does. An adopted twin already has what its own BeginPlay started, and is not started a second time. A no-op for an
-// actor that is not a marked mirror. Game thread.
+// does. On an adopted twin the zombie's setup is run again (it writes the same animation instance, and the walk
+// blend is picked again); only the hound's per-viewer loop is not kicked a second time, since its own BeginPlay
+// started it. A no-op for an actor that is not a marked mirror. Game thread.
 void SetUpPresentation(void* actor, Origin origin);
 
 // Register the watches and subscribe to the death seam, each once per process. Called every pump tick by the
