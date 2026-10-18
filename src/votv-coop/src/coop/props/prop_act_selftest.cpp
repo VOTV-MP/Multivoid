@@ -91,6 +91,18 @@ const Term kHoldTerms[] = {
     {"hold: a name with no equip row refuses", [](H::ActTraits& t) { t.equipRow = false; }, Tally::FitEquipRow},
 };
 
+// The hold terms a frozen prop still meets: broken with `frozen` set, each must still refuse.
+const Term kFrozenHoldTerms[] = {
+    {"hold: a frozen prop with a refused pickup refuses", [](H::ActTraits& t) { t.pickupRefused = true; },
+     Tally::FitPickupRefused},
+    {"hold: a frozen prop that ignores the save refuses", [](H::ActTraits& t) { t.ignoreSave = true; },
+     Tally::FitIgnoreSave},
+    {"hold: a frozen prop of a class that saves nothing refuses", [](H::ActTraits& t) { t.saveClass = false; },
+     Tally::FitSaveClass},
+    {"hold: a frozen prop with no equip row refuses", [](H::ActTraits& t) { t.equipRow = false; },
+     Tally::FitEquipRow},
+};
+
 const Term kUseTerms[] = {
     {"use: an unread fact refuses", [](H::ActTraits& t) { t.read = false; }, Tally::FitUnread},
     {"use: a class the game offers no eat on refuses", [](H::ActTraits& t) { t.offered = false; },
@@ -222,6 +234,22 @@ void RunSelftest() {
         check(!H::PocketFits(p), "fits: a frozen heavy pocket does not fit");
     }
     {
+        // The frozen skip leaves the other terms in force: the game's frozen branch jumps to the ignoreSave test.
+        for (const Term& term : kFrozenHoldTerms) {
+            H::ActTraits t = Fitting();
+            t.frozen = true;
+            term.breaks(t);
+            check(!H::HoldFits(t), term.what);
+            check(H::FirstRefusal(kHold, t) == term.refusal, term.what);
+        }
+        // The pocket has no frozen arm for a child actor.
+        H::ActTraits p = Fitting();
+        p.frozen = true;
+        p.child = true;
+        check(!H::PocketFits(p), "fits: a frozen child actor does not pocket");
+        check(H::FirstRefusal(kPocket, p) == Tally::FitChild, "refusal: a frozen child pocket is named child");
+    }
+    {
         // A prop a peer drags has its host copy parked with physics off: it fits by the drive.
         H::ActTraits p = Fitting();
         p.simulating = false;
@@ -257,6 +285,13 @@ void RunSelftest() {
     check(H::KnownFamily(1) && H::KnownFamily(2) && H::KnownFamily(3), "family: 1..3 are verbs");
     check(!H::KnownFamily(4), "family: 4 is not a verb");
     check(H::FirstRefusal(0, Fitting()) == Tally::FitBadFamily, "refusal: a byte that is no verb is named");
+    // A bad verb byte that reached the fit would be refused whatever the traits say (the judge's second defence).
+    constexpr uint8_t kBadVerbs[] = {0, 4, 255};
+    for (const uint8_t bad : kBadVerbs) {
+        check(!H::KnownFamily(bad), "family: a byte outside 1..3 is no verb");
+        check(H::FirstRefusal(bad, Fitting()) == Tally::FitBadFamily,
+              "refusal: a fitting trait set does not rescue a bad verb");
+    }
 
     // ReplyFor: Wait sends nothing; every other verdict sends one reply with its reason.
     check(!H::ReplyFor(H::ActVerdict::Wait, 7).has_value(), "reply: a wait sends nothing");

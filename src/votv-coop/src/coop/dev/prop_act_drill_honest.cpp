@@ -189,16 +189,17 @@ constexpr Row kRows[] = {
     {"soap",         kSoap,    L"prop_food_soap_C",   Verb::Soap,   Ends::Gone,      &SetUpSoap},
     {"pills",        kPills,   L"prop_sleeppills_C",  Verb::Use,    Ends::Gone,      nullptr},
     // The plush offers no option, so its last use is asked and refused. Then the classes the judge reads by their own
-    // data: a food subclass, a loaded bin, a frozen heavy prop, and a prop the client drags.
+    // data: a food subclass, a loaded bin, a prop the client drags, and last a frozen heavy prop (its hold leaves a
+    // heater in the client's hand, and the drag must start from an empty one).
     {"erie plush",   kPlush,   L"prop_eriePlush_C",   Verb::Use,    Ends::Refused,   &SetLastUse, Target::Host, true, false,
      nullptr, nullptr, false, PAH::Tally::FitDenied},
     {"food subclass", kMreAB,  L"prop_food_mre_AB_C", Verb::Use,    Ends::Gone,      &SetLastUse},
     {"loaded bin",   kBin,     L"prop_openContainer_wastebasket_C", Verb::Pocket, Ends::Refused, nullptr, Target::Host, true,
      false, nullptr, nullptr, false, PAH::Tally::FitCanCollect, &LoadBin},
-    {"frozen heavy hold", kHeater, L"prop_heater_C",  Verb::Hold,   Ends::Taken,     &FreezeCopy, Target::Host, true, false,
-     nullptr, nullptr, false, PAH::Tally::kCount, &FreezeHost},
     {"dragged pocket", kCrowbar, L"prop_crowbar_C",   Verb::Pocket, Ends::Inventory, nullptr, Target::Host, true, false,
      nullptr, nullptr, true},
+    {"frozen heavy hold", kHeater, L"prop_heater_C",  Verb::Hold,   Ends::Taken,     &FreezeCopy, Target::Host, true, false,
+     nullptr, nullptr, false, PAH::Tally::kCount, &FreezeHost},
     // The calls that are the client's own (no request), the take of a kerfur's prop, a use that also destroys a second
     // prop inside the latch, and last the full inventory, which stays full for whatever would follow it.
     {"own spawn",       kCrowbar,  L"prop_crowbar_C",     Verb::Pocket, Ends::Inventory, nullptr, Target::Client, false, false, &MakeOwnCrowbar},
