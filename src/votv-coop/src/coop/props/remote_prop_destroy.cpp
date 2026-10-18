@@ -55,13 +55,35 @@ std::vector<DestroyHeardFn> g_destroyHeard;
 
 // The dev drills' watch on the PropDestroy messages that reach OnDestroy: one sender slot and up to
 // two eids, each counted on its own, so the receive path allocates nothing and truncates nothing.
-// Set through WatchWireDestroys, read through WireDestroysNaming.
+// Each eid also carries the key of its actor at arm time (empty when none), for a destroy sent by key
+// alone. Set through WatchWireDestroys, read through WireDestroysNaming.
 struct WireWatch {
     int slot = -1;
     coop::element::ElementId a = coop::element::kInvalidId, b = coop::element::kInvalidId;
+    std::wstring keyA, keyB;
     uint32_t countA = 0, countB = 0;
 };
 WireWatch g_wireWatch;
+
+// The key of the live actor an eid names, as the wire carries it (at most 31 chars); empty when the eid
+// has no live actor or its actor has no key.
+std::wstring WatchedKeyOf(coop::element::ElementId eid) {
+    if (eid == coop::element::kInvalidId) return {};
+    void* actor = ResolveLiveActorByEid(eid);
+    if (!actor) return {};
+    std::wstring key = ue_wrap::prop::GetInteractableKeyString(actor);
+    if (key == L"None") return {};
+    if (key.size() > 31) key.resize(31);
+    return key;
+}
+
+// The wire key's bytes against a watched key, ASCII widened as the dispatcher builds its own copy.
+bool WireKeyIs(const std::wstring& key, const coop::net::WireKey& wire) {
+    if (key.empty() || key.size() != wire.len) return false;
+    for (uint8_t i = 0; i < wire.len && i < 31; ++i)
+        if (key[i] != static_cast<wchar_t>(static_cast<unsigned char>(wire.data[i]))) return false;
+    return true;
+}
 
 // The cached destroy UFunction for receiver-side destroys.
 void* g_destroyActorFn = nullptr;
@@ -234,10 +256,16 @@ DestroyApply OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* 
 
 void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer, int senderSlot) {
     // Counts PropDestroy messages from the watched slot only: the kerfur synthetic OnDestroy(..., 0)
-    // on a client is slot 0, never the watched client slot, so it cannot reach the count.
-    if (senderSlot == g_wireWatch.slot && payload.elementId != 0 && payload.elementId != coop::element::kInvalidId) {
-        if (payload.elementId == g_wireWatch.a) ++g_wireWatch.countA;
-        else if (payload.elementId == g_wireWatch.b) ++g_wireWatch.countB;
+    // on a client is slot 0, never the watched client slot, so it cannot reach the count. A message that
+    // names no eid counts for the eid whose recorded key it carries: the host resolves it by key too.
+    if (senderSlot == g_wireWatch.slot) {
+        if (payload.elementId != 0 && payload.elementId != coop::element::kInvalidId) {
+            if (payload.elementId == g_wireWatch.a) ++g_wireWatch.countA;
+            else if (payload.elementId == g_wireWatch.b) ++g_wireWatch.countB;
+        } else if (payload.elementId == 0) {
+            if (WireKeyIs(g_wireWatch.keyA, payload.key)) ++g_wireWatch.countA;
+            else if (WireKeyIs(g_wireWatch.keyB, payload.key)) ++g_wireWatch.countB;
+        }
     }
     OnDestroyImpl_(payload, localPlayer, senderSlot, /*allowDefer=*/true);
 }
@@ -246,7 +274,7 @@ void ResetWireDestroys() { g_wireWatch = WireWatch{}; }
 
 namespace dev {
 void WatchWireDestroys(int slot, coop::element::ElementId a, coop::element::ElementId b) {
-    g_wireWatch = WireWatch{slot, a, b, 0, 0};
+    g_wireWatch = WireWatch{slot, a, b, WatchedKeyOf(a), WatchedKeyOf(b), 0, 0};
 }
 
 uint32_t WireDestroysNaming(coop::element::ElementId eid) {
