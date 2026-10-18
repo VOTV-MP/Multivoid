@@ -381,6 +381,14 @@ CFG_ENUM(event_relay_drill, "event_relay_drill", "dev", "off", "off|on", "VOTVCO
     "tells the host by chat, and rejoins and reads the same; the host then destroys the krampus and the client's "
     "count must fall by one while the host's returns to where it began. Each step ends on a [EVR] PASS or "
     "[EVR] FAIL line (src/coop/dev/event_relay_drill.cpp); a step that does not come is a FAIL after 60 s.")
+CFG_ENUM(creature_hit_drill, "creature_hit_drill", "dev", "off", "off|zombie|fossilhound", "VOTVCOOP_CREATURE_HIT_DRILL",
+    "Drill (BOTH peers, one run), a parked creature's hit and a client's hit on it: the host spawns the creature "
+    "300 cm in front of the client's puppet once the client's join is over; its hits on the puppet must reach the "
+    "client three times and none may come from the mirror's own copy; then the client, with an empty hand and "
+    "then with an axe, calls the mirror's addDamage, and the host must refuse the first and judge the rest until "
+    "its creature dies and the mirror is destroyed. The fossilhound arm adds the mirror's own per-viewer event. "
+    "Each step ends on a [CHD] PASS or [CHD] FAIL line (src/coop/dev/creature_hit_drill.cpp); a step that does "
+    "not come is a FAIL after 60 s.")
 CFG_ENUM(world_roll_drill, "world_roll_drill", "dev", "off",
     "off|eye_host|eye_client|eye_join|jelly_host|jelly_client|jelly_join|redsky_host|redsky_client|redsky_join",
     "VOTVCOOP_WORLD_ROLL_DRILL",

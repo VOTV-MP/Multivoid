@@ -87,6 +87,7 @@
 #include "coop/dev/sleep_drill.h"  // [dev] a host's native sleep and a client's rest at the native rate, measured
 #include "coop/dev/badsun_drill.h"  // [dev] a peer's own Bad Sun copy against its own clock, measured
 #include "coop/dev/event_relay_drill.h"  // [dev] the host's creature event in a client's count, read through the relay
+#include "coop/dev/creature_hit_drill.h"  // [dev] a parked creature's hit delivered to a client, a client's hit on it judged by the host
 #include "coop/dev/hostile_drill.h"  // [dev] the receive boundary: a client forges malformed packets, the host judges
 #include "coop/dev/native_pile_inert_probe.h"
 #include "coop/dev/native_spawn_probe.h"  // [dev] every allowlisted creature a Blueprint graph spawns here, and the client orb question
@@ -124,6 +125,7 @@ void Install(coop::net::Session& session) {
     coop::dev::sleep_drill::Install(&session);  // [dev] the sleep drill (no-op unless sleep_drill is set)
     coop::dev::badsun_drill::Install(&session);  // [dev] the Bad Sun drill (no-op unless badsun_drill is set)
     coop::dev::event_relay_drill::Install(&session);  // [dev] the creature event relay drill (no-op unless event_relay_drill is on)
+    coop::dev::creature_hit_drill::Install(&session);  // [dev] the creature hit drill (no-op unless creature_hit_drill is set)
     coop::dev::hostile_drill::Install(&session);  // [dev] the receive-boundary drill (no-op unless hostile_drill is set)
     coop::dev::world_roll_drill::Install(&session);  // [dev] the world roll drill (no-op unless world_roll_drill is set)
     coop::dev::kerfur_menu_drill::Install(&session);  // [dev] the kerfur menu drill (no-op unless kerfur_menu_drill=1)
@@ -154,6 +156,7 @@ void EndSession() {
     coop::dev::sleep_drill::OnDisconnect();  // [dev] back to the first phase, the host's nightmare chance restored
     coop::dev::badsun_drill::OnDisconnect();  // [dev] back to the first phase
     coop::dev::event_relay_drill::OnDisconnect();  // [dev] the client's steps back to the first; the host keeps its krampus
+    coop::dev::creature_hit_drill::OnDisconnect();  // [dev] the client's steps back to the first; the host keeps its creature
     coop::dev::hostile_drill::OnDisconnect();  // [dev] back to WaitArm; a rejoin re-arms
     coop::dev::world_roll_drill::OnDisconnect();  // [dev] back to the first phase
     coop::dev::kerfur_menu_drill::OnDisconnect();  // [dev] back to the first phase
@@ -237,6 +240,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::sleep_drill::Tick();  // [dev] the sleep drill's phases (a single enum read when off)
     coop::dev::badsun_drill::Tick();  // [dev] the Bad Sun drill's phases (a single enum read when off)
     coop::dev::event_relay_drill::Tick();  // [dev] the creature event relay drill's steps (a single bool read when off)
+    coop::dev::creature_hit_drill::Tick();  // [dev] the creature hit drill's steps (a single enum read when off)
     coop::dev::hostile_drill::Tick();  // [dev] the receive-boundary drill's arm/judge (a single enum read when off)
     coop::dev::world_roll_drill::Tick();  // [dev] the world roll drill's arms (a single enum read when off)
     coop::dev::kerfur_menu_drill::Tick();  // [dev] the kerfur menu drill's phases (a single bool read when off)
