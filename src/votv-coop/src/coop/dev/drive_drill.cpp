@@ -30,8 +30,6 @@
 
 #include <windows.h>
 
-#include <algorithm>
-#include <cmath>
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -70,15 +68,8 @@ constexpr int      kNextWalkDeadlineS  = 30;   // a step round the eraser
 // The client's drives that must reach the host with their row: its birth, its take-out and its throw.
 constexpr int kOwnDrives = 3;
 
-enum class Step : uint8_t { Arm, PutBack, Walk, Seat, SeatLine, Wipe, Show, Born, Pocket, PocketWalk, PocketWait,
+enum class Step : uint8_t { Arm, PutBack, Walk, Seat, SeatLine, Wipe, Show, Born, Pocket, PocketWait,
                             TakeOut, HoldIt, HoldWait, Thrown, Forge, Hold, Done };
-// Candidates the pocket may refuse or not reach: a full inventory, the host's no, a walk that does not arrive.
-constexpr int kPocketTries = 8;
-// The host's take judge refuses a take out of reach (its 200 uu beyond the target's bounds), so a candidate farther
-// than kPocketReachCm from the player is walked to first, to within kPocketStopCm.
-constexpr float kPocketReachCm       = 150.f;
-constexpr float kPocketStopCm        = 100.f;
-constexpr int   kPocketWalkDeadlineS = 60;
 Step     g_step = Step::Arm;
 uint64_t g_stepMs = 0;
 uint64_t g_nextCheckMs = 0;
@@ -90,11 +81,9 @@ ue_wrap::CachedObjRef g_own;   // CLIENT: the drive of its current leg
 std::wstring g_ownKey;          // CLIENT: the carried drive's key, its inventory record's
 std::wstring g_ownName;         // CLIENT: the carried drive's row name
 uint64_t g_mark = 0;            // CLIENT: a counter's value when the step began
-std::shared_ptr<coop::director::BackgroundWalk> g_walk;  // CLIENT: the walk to the eraser, then to a drive
+std::shared_ptr<coop::director::BackgroundWalk> g_walk;  // CLIENT: the walk to the eraser
 std::vector<ue_wrap::FVector> g_ring;
 size_t   g_stand = 0;
-std::vector<coop::element::ElementId> g_pocketTried;  // CLIENT: the world drives whose pocket was tried
-ue_wrap::CachedObjRef g_pocketCand;  // CLIENT: the drive being walked to, to pocket
 // HOST: after its wipe, when the last of the client's rows came (taken or refused).
 uint64_t g_progressMs = 0;
 uint64_t g_progressCount = 0;
@@ -200,10 +189,6 @@ bool InventoryHoldsKey(const std::wstring& key) {
     return false;
 }
 
-// What one candidate's pocket came to: taken at the call, asked of the host (the act ends a round trip later), refused
-// at the call, a walk begun toward it, or no candidate left to try.
-enum class PocketTry : uint8_t { Taken, Asked, Refused, Walking, Exhausted };
-
 // Whether a player's press could gather `drive`: the game refuses a child actor, and a prop neither frozen nor
 // simulating on its root ("Cannot gather object"), so the drill tries no other.
 bool Gatherable(void* drive) {
@@ -211,63 +196,13 @@ bool Gatherable(void* drive) {
            (ue_wrap::prop::IsFrozen(drive) || E::IsActorRootSimulatingPhysics(drive));
 }
 
-// CLIENT: the pocket of one world drive, as a player gathers one: the pocket refuses a drive asleep or static, and a
-// mirror's pocket is asked of the host, whose no is a refusal too.
-PocketTry PocketCandidate(void* player, void* drive) {
-    if (DV::Pocket(player, drive)) return PocketTry::Taken;
-    return coop::prop_act_request::dev::PendingId() != 0 ? PocketTry::Asked : PocketTry::Refused;
-}
-
-// CLIENT: takes the world drive with a row of its own that lies NEAREST to `from`, ONE per act. Its key and row name
-// are left in g_ownKey and g_ownName. Within kPocketReachCm it is pocketed at once; farther, a walk toward it begins
-// and g_pocketCand holds it for Step::PocketWalk.
-PocketTry PocketNextWorldDrive(void* player, const ue_wrap::FVector& from) {
-    if (g_pocketTried.size() >= static_cast<size_t>(kPocketTries)) return PocketTry::Exhausted;
-    std::vector<coop::element::Registry::ActorIdPair> pairs;
-    coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, pairs);
-    const coop::element::Registry::ActorIdPair* best = nullptr;
-    std::wstring bestName;
-    ue_wrap::FVector bestAt{};
-    float bestCm = 0.f;
-    for (const auto& p : pairs) {
-        if (!p.actor || p.actor == g_fixture || g_own.Is(p.actor) || !R::IsLiveByIndex(p.actor, p.internalIdx) ||
-            !DC::IsDriveClass(R::ClassOf(p.actor)) ||
-            std::find(g_pocketTried.begin(), g_pocketTried.end(), p.id) != g_pocketTried.end())
-            continue;
-        SD::Row row;
-        if (!DC::ReadDriveRow(p.actor, row) || row.size <= 0.f || row.name.empty()) continue;
-        bool seated = false;
-        for (int r = 0; r < DC::kRoleCount && !seated; ++r)
-            if (void* slot = DC::SlotActor(r)) seated = DC::SlotDrive(slot) == p.actor;
-        if (seated || !Gatherable(p.actor)) continue;
-        ue_wrap::FVector at{};
-        if (!E::TryGetActorLocation(p.actor, at)) continue;  // no place to walk to, nor to measure from
-        const float dx = at.X - from.X, dy = at.Y - from.Y, dz = at.Z - from.Z;
-        const float cm = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (best && cm >= bestCm) continue;
-        best = &p;
-        bestName = row.name;
-        bestAt = at;
-        bestCm = cm;
-    }
-    if (!best) return PocketTry::Exhausted;
-    g_pocketTried.push_back(best->id);
-    g_ownKey = ue_wrap::prop::GetInteractableKeyString(best->actor);
-    g_ownName = bestName;
-    if (bestCm <= kPocketReachCm) return PocketCandidate(player, best->actor);
-    g_pocketCand.Set(best->actor);
-    g_walk = coop::director::StartBackgroundWalk(bestAt, kPocketStopCm, kPocketWalkDeadlineS);
-    UE_LOGI("[DRIVE-DRILL] client: walking to the drive reading '%ls' at %.0f cm", bestName.c_str(), bestCm);
-    return PocketTry::Walking;
-}
-
 // The first client runs the steps; a second, the rig's observer, only watches: the lanes it hears the first client's
 // edits through are the host's relays, which its own drive lane's log names by their source slot.
 bool g_observerSaid = false;
 
-// CLIENT: the pocket took a world drive; on to taking it back out.
-void PocketedWorldDrive() {
-    UE_LOGI("[DRIVE-DRILL] client: a world drive reading '%ls' pocketed", g_ownName.c_str());
+// CLIENT: the pocket took the born drive; on to taking it back out.
+void PocketedBornDrive() {
+    UE_LOGI("[DRIVE-DRILL] client: the born drive reading '%ls' pocketed", g_ownName.c_str());
     Next(Step::TakeOut);
 }
 
@@ -434,48 +369,31 @@ void ClientTick() {
             if (Expired(kLegBoundMs)) Fail("the spawned drive's row never went to the host");
             return;
         }
-        // The re-placement: a world drive with a row, gathered into the inventory and taken back out, as the
-        // inventory screen does.
+        // The re-placement: the drive this client spawned, whose row the host took, gathered into the inventory and
+        // taken back out as the inventory screen does. It stands beside the player; a save's world drives may not.
         UE_LOGI("[DRIVE-DRILL] client: the spawned drive's row went to the host");
-        g_pocketTried.clear();
         Next(Step::Pocket);
         return;
     case Step::Pocket: {
-        ue_wrap::FVector from{};
-        if (!player || !E::TryGetActorLocation(player, from)) {
-            Abandon("this client's player has no place to measure a drive's distance from");
+        // The game gathers only a drive frozen or simulating: the born drive is pocketed once it rests gatherable.
+        if (!g_own.Alive() || !Gatherable(g_own.Get())) {
+            if (Expired(kLegBoundMs)) Fail("the born drive never came to rest gatherable");
             return;
         }
-        switch (PocketNextWorldDrive(player, from)) {
-        case PocketTry::Taken: PocketedWorldDrive(); return;
-        case PocketTry::Asked: Next(Step::PocketWait); return;
-        case PocketTry::Refused: return;
-        case PocketTry::Walking: Next(Step::PocketWalk); return;
-        case PocketTry::Exhausted: Abandon("no world drive with a row could be pocketed"); return;
-        }
+        g_ownKey = ue_wrap::prop::GetInteractableKeyString(g_own.Get());
+        g_ownName = kBorn;
+        // Taken at the call, or asked of the host (a mirror's pocket; the act ends a round trip later), or refused.
+        if (DV::Pocket(player, g_own.Get())) PocketedBornDrive();
+        else if (coop::prop_act_request::dev::PendingId() != 0) Next(Step::PocketWait);
+        else Fail("the born drive's pocket was refused");
         return;
-    }
-    case Step::PocketWalk: {
-        // Not arrived: the candidate stays tried and the next nearest is taken. Arrived: it is pocketed from the
-        // spot, read live (a drive gone or parked meanwhile sends the leg back to the next candidate).
-        const int state = g_walk ? g_walk->state.load() : 2;
-        if (state == 0) return;
-        if (state == 2 || !g_pocketCand.Alive() || !Gatherable(g_pocketCand.Get())) {
-            Next(Step::Pocket);
-            return;
-        }
-        switch (PocketCandidate(player, g_pocketCand.Get())) {
-        case PocketTry::Taken: PocketedWorldDrive(); return;
-        case PocketTry::Asked: Next(Step::PocketWait); return;
-        default: Next(Step::Pocket); return;
-        }
     }
     case Step::PocketWait:
         // The host's answer is in once no request is open: a grant ran the pocket here, a refusal left the drive in
         // the world. The inventory says which.
         if (coop::prop_act_request::dev::PendingId() != 0) return;
-        if (InventoryHoldsKey(g_ownKey)) PocketedWorldDrive();
-        else Next(Step::Pocket);
+        if (InventoryHoldsKey(g_ownKey)) PocketedBornDrive();
+        else Fail("the born drive's pocket was refused");
         return;
     case Step::TakeOut:
         g_mark = DP::LaneCounts().ownSent;
@@ -646,14 +564,12 @@ void OnDisconnect() {
     g_hostArmed = g_hostDone = false;
     g_fixture = nullptr;
     g_own.Reset();
-    g_pocketCand.Reset();
     g_ownKey.clear();
     g_ownName.clear();
     g_mark = 0;
     g_walk.reset();
     g_ring.clear();
     g_stand = 0;
-    g_pocketTried.clear();
     g_progressMs = 0;
     g_progressCount = 0;
     g_observerSaid = false;
