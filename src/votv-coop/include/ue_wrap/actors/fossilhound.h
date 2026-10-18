@@ -27,4 +27,11 @@ bool ApplyBeginPlayPresentation(void* hound, bool ownBeginPlayRan);
 // turns it toward the velocity), or null. Game thread.
 void* SpringArm(void* hound);
 
+// The hound's visible body facing: its mesh's world yaw. The mesh hangs on the SpringArm's end, whose rotation follows
+// the arm's target (the controller's view, the velocity, the arm's lag) on the host's copy and never moves on a mirror,
+// whose ticks are off. Read is false when `actor` is not a hound or has no live mesh; Drive sets the mesh's world
+// rotation to that yaw and does nothing on a non-hound. Game thread.
+bool ReadBodyYaw(void* actor, float& outYaw);
+void DriveBodyYaw(void* actor, float yaw);
+
 }  // namespace ue_wrap::fossilhound

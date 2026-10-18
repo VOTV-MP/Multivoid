@@ -22,6 +22,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/actors/fossilhound.h"  // ReadBodyYaw -- the hound's body hangs on its SpringArm's end
 #include "ue_wrap/actors/kerfur.h"  // HasSaveKey (savePersisted flag) + ReadKerfurState (mirror fidelity)
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/puppet.h"
@@ -184,13 +185,15 @@ void TickPoseStream() {
         // the LOCAL player, decoupled from the actor root above. Read the resolved mesh world yaw
         // so the mirror reproduces the host's body facing (its actor tick is off -> it cannot
         // compute it).
+        // The fossil hound's body turns the same way, apart from its root: its mesh hangs on the SpringArm's end,
+        // which the host's copy turns and a mirror never does.
         float bodyYaw = 0.f;
-        if (ue_wrap::puppet::ReadKerfurBodyYaw(actor, bodyYaw)) {
+        if (ue_wrap::puppet::ReadKerfurBodyYaw(actor, bodyYaw) || ue_wrap::fossilhound::ReadBodyYaw(actor, bodyYaw)) {
             snap.bodyYaw = ue_wrap::NormalizeAxis(bodyYaw);
             snap.stateBits |= coop::net::kEntityPoseBitHasBodyYaw;
             static bool s_loggedBody = false;
             if (!s_loggedBody) { s_loggedBody = true;
-                UE_LOGI("npc-bodyfacing: host streaming kerfur bodyYaw=%.1f eid=%u (first)",
+                UE_LOGI("npc-bodyfacing: host streaming bodyYaw=%.1f eid=%u (first)",
                         snap.bodyYaw, snap.elementId); }
         }
         // Host-authoritative kerfur cosmetic/command state: the parked mirror runs no AI (actor

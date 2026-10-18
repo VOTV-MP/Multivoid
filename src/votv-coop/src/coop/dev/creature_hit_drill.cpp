@@ -562,10 +562,10 @@ void FacingProbe(bool host) {
     void* arm = ue_wrap::fossilhound::SpringArm(hound);
     const ue_wrap::FRotator armRot = arm ? E::GetComponentWorldRotation(arm) : ue_wrap::FRotator{};
     void* mesh = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(hound) + P::off::ACharacter_Mesh);
-    const float meshYaw = (mesh && R::IsLive(mesh)) ? E::GetComponentWorldRotation(mesh).Yaw : 0.f;
+    const ue_wrap::FRotator meshRot = (mesh && R::IsLive(mesh)) ? E::GetComponentWorldRotation(mesh) : ue_wrap::FRotator{};
     UE_LOGI("[CHD] facing role=%s actorYaw=%.1f speed=%.0f velYaw=%.1f velZ=%.0f arm=%d armPitch=%.1f armYaw=%.1f "
-            "meshYaw=%.1f", host ? "host" : "client", rot.Yaw, speed, velYaw, v.Z, arm ? 1 : 0, armRot.Pitch,
-            armRot.Yaw, meshYaw);
+            "meshPitch=%.1f meshYaw=%.1f meshRoll=%.1f", host ? "host" : "client", rot.Yaw, speed, velYaw, v.Z, arm ? 1 : 0,
+            armRot.Pitch, armRot.Yaw, meshRot.Pitch, meshRot.Yaw, meshRot.Roll);
 }
 
 void Tick() {

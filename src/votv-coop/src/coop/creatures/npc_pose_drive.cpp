@@ -13,6 +13,7 @@
 
 #include "coop/net/protocol.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/actors/fossilhound.h"  // DriveBodyYaw -- the hound's body facing
 #include "ue_wrap/actors/kerfur.h"   // DriveKerfurState -- host-authoritative command and spooky flag
 #include "ue_wrap/actors/puppet.h"
 #include "ue_wrap/core/reflection.h"
@@ -188,7 +189,10 @@ bool Npc::ApplyToEngine() {
     // host's streamed (interpolated) value. MUST be AFTER SetActorRotation above (moving the actor
     // root re-bases this child mesh's world transform). The mirror's actor tick is off, so the
     // kerfur BP never overwrites it -> no gate flag needed. Class-gated inside -> safe on non-kerfur.
-    if (hasBodyYaw_) Pup::DriveKerfurBodyYaw(actor, curBodyYaw_);
+    if (hasBodyYaw_) {
+        Pup::DriveKerfurBodyYaw(actor, curBodyYaw_);
+        ue_wrap::fossilhound::DriveBodyYaw(actor, curBodyYaw_);
+    }
     // Write the host-authoritative kerfur command and spooky flag so the parked mirror's AnimBP
     // state machine matches the host (the mirror runs no AI -> it can't pick its own). Class-gated
     // inside -> safe no-op on non-kerfur NPCs.

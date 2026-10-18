@@ -7,6 +7,7 @@
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/engine/engine.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -93,7 +94,28 @@ bool EnterPerViewerLoop(void* hound) {
     return f.valid() && f.Set<int32_t>(L"EntryPoint", kPerViewerEntry) && Call(hound, f);
 }
 
+// The hound's mesh when `actor` is a fossilhound_C or a descendant, else null. The class is resolved once loaded.
+void* HoundMesh(void* actor) {
+    if (!actor || !R::IsLive(actor)) return nullptr;
+    static void* sHound = nullptr;
+    if (!sHound) sHound = object_index::ClassByName(P::name::NpcClass_Fossilhound);
+    void* cls = R::ClassOf(actor);
+    if (!sHound || !cls || !R::IsDescendantOfAny(cls, &sHound, 1)) return nullptr;
+    return LiveAt(actor, P::off::ACharacter_Mesh);
+}
+
 }  // namespace
+
+bool ReadBodyYaw(void* actor, float& outYaw) {
+    void* mesh = HoundMesh(actor);
+    if (!mesh) return false;
+    outYaw = engine::GetComponentWorldRotation(mesh).Yaw;
+    return true;
+}
+
+void DriveBodyYaw(void* actor, float yaw) {
+    if (void* mesh = HoundMesh(actor)) engine::SetComponentWorldRotation(mesh, FRotator{0.f, yaw, 0.f});
+}
 
 void* SpringArm(void* hound) {
     if (!hound || !R::IsLive(hound)) return nullptr;
