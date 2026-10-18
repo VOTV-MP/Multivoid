@@ -15,6 +15,7 @@
 
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/actors/prop_use.h"
+#include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
@@ -103,6 +104,12 @@ void ClientAct(const Row& row, void* player) {
             ClientFail(row, why);
             return;
         }
+    }
+    if (row.verb == Verb::Use && !ue_wrap::vitals::Write(ue_wrap::vitals::Field::Food, 0.f)) {
+        // An eat goes through mainPlayer.addFood, which eats nothing once the save slot's food is at 100 ("Im not
+        // hungry", mainPlayer_C's addFood); the rows before have fed this player.
+        ClientFail(row, "the player's hunger could not be emptied before the eat");
+        return;
     }
     ClearHint();
     if (row.target == Target::HostTwo) {
