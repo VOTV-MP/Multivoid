@@ -1,6 +1,7 @@
 // coop/props/prop_act_selftest.cpp -- the un-gated selftest of a client's take or use of a shared prop, run once per
-// session start: the host's judge (every verdict, the order of its reads), the reply a verdict sends, the commit's
-// rows and the client's reply decision, each from a stated input -- states no honest run lines up.
+// session start: the host's judge (every verdict, the order of its reads, each verb's fit term by term), the reply a
+// verdict sends, the commit's rows and the client's reply decision, each from a stated input -- states no honest run
+// lines up.
 
 #include "coop/props/prop_act_host.h"
 #include "coop/props/prop_act_request.h"
@@ -31,6 +32,72 @@ H::ActInputs Ready() {
 bool SameReply(const std::optional<PropActReplyPayload>& r, uint16_t id, uint8_t granted, uint8_t reason) {
     return r && r->id == id && r->granted == granted && r->reason == reason;
 }
+
+constexpr uint8_t kPocket = static_cast<uint8_t>(coop::net::PropActFamily::Pocket);
+constexpr uint8_t kUse = static_cast<uint8_t>(coop::net::PropActFamily::Use);
+constexpr uint8_t kHold = static_cast<uint8_t>(coop::net::PropActFamily::Hold);
+
+// An act the game would perform: every read passed and every term of the three fits holds.
+H::ActTraits Fitting() {
+    H::ActTraits t{};
+    t.read = true;
+    t.simulating = true;
+    t.canCollect = true;
+    t.canHold = true;
+    t.meshRoot = true;
+    t.volumeFits = true;
+    t.saveClass = true;
+    t.equipRow = true;
+    t.offered = true;
+    return t;
+}
+
+// One term of a verb's fit, broken alone: what it says, the break, and the tally FirstRefusal names for it.
+struct Term {
+    const char* what;
+    void (*breaks)(H::ActTraits&);
+    Tally refusal;
+};
+
+const Term kPocketTerms[] = {
+    {"pocket: an unread fact refuses", [](H::ActTraits& t) { t.read = false; }, Tally::FitUnread},
+    {"pocket: a refused collect refuses", [](H::ActTraits& t) { t.collectRefused = true; }, Tally::FitCollectRefused},
+    {"pocket: a child actor refuses", [](H::ActTraits& t) { t.child = true; }, Tally::FitChild},
+    {"pocket: neither frozen, simulating nor driven refuses", [](H::ActTraits& t) { t.simulating = false; },
+     Tally::FitPhysics},
+    {"pocket: a prop the data row does not collect refuses", [](H::ActTraits& t) { t.canCollect = false; },
+     Tally::FitCanCollect},
+    {"pocket: a heavy prop refuses", [](H::ActTraits& t) { t.heavy = true; }, Tally::FitHeavy},
+    {"pocket: a root that is not a static mesh refuses", [](H::ActTraits& t) { t.meshRoot = false; },
+     Tally::FitMeshRoot},
+    {"pocket: a volume past the bound refuses", [](H::ActTraits& t) { t.volumeFits = false; }, Tally::FitVolume},
+    {"pocket: a class that saves nothing refuses", [](H::ActTraits& t) { t.saveClass = false; },
+     Tally::FitSaveClass},
+};
+
+const Term kHoldTerms[] = {
+    {"hold: an unread fact refuses", [](H::ActTraits& t) { t.read = false; }, Tally::FitUnread},
+    {"hold: a refused pickup refuses", [](H::ActTraits& t) { t.pickupRefused = true; }, Tally::FitPickupRefused},
+    {"hold: neither frozen, simulating nor driven refuses", [](H::ActTraits& t) { t.simulating = false; },
+     Tally::FitPhysics},
+    {"hold: a child actor that is not frozen refuses", [](H::ActTraits& t) { t.child = true; }, Tally::FitChild},
+    {"hold: a heavy prop that is not frozen refuses", [](H::ActTraits& t) { t.heavy = true; }, Tally::FitHeavy},
+    {"hold: a prop the data row does not hold refuses", [](H::ActTraits& t) { t.canHold = false; },
+     Tally::FitCanHold},
+    {"hold: a prop that ignores the save refuses", [](H::ActTraits& t) { t.ignoreSave = true; },
+     Tally::FitIgnoreSave},
+    {"hold: a class that saves nothing refuses", [](H::ActTraits& t) { t.saveClass = false; },
+     Tally::FitSaveClass},
+    {"hold: a name with no equip row refuses", [](H::ActTraits& t) { t.equipRow = false; }, Tally::FitEquipRow},
+};
+
+const Term kUseTerms[] = {
+    {"use: an unread fact refuses", [](H::ActTraits& t) { t.read = false; }, Tally::FitUnread},
+    {"use: a class the game offers no eat on refuses", [](H::ActTraits& t) { t.offered = false; },
+     Tally::FitNoUseRow},
+    {"use: a food body that is not edible refuses",
+     [](H::ActTraits& t) { t.foodBody = true; t.notEdible = true; }, Tally::FitNotEdible},
+};
 }  // namespace
 
 void RunSelftest() {
@@ -97,6 +164,99 @@ void RunSelftest() {
         in.reach = IntentOutcome::NoBody;
         check(H::Decide(in) == H::ActVerdict::Wait, "decide: a reach that finds no body, with a body read, waits");
     }
+
+    // The act is read last: a hold or a reach that refuses is answered before the family.
+    {
+        H::ActInputs in = Ready();
+        in.familyFits = false;
+        in.reach = IntentOutcome::OutOfReach;
+        check(H::Decide(in) == H::ActVerdict::Reach, "decide: the reach is read before the family");
+        in.reach = IntentOutcome::NoBody;
+        check(H::Decide(in) == H::ActVerdict::Wait, "decide: a reach that finds no body waits before the family");
+        in.reach = IntentOutcome::Ok;
+        in.heldByOther = true;
+        check(H::Decide(in) == H::ActVerdict::Held, "decide: a prop held by another is held before the family");
+    }
+
+    // The fits: the baseline, each term broken alone, and the cases that fit by another term.
+    check(H::PocketFits(Fitting()), "fits: the baseline pocket fits");
+    check(H::HoldFits(Fitting()), "fits: the baseline hold fits");
+    check(H::UseFits(Fitting()), "fits: the baseline use fits");
+    check(!H::FirstRefusal(kPocket, Fitting()), "refusal: a pocket that fits names no term");
+    check(!H::FirstRefusal(kHold, Fitting()), "refusal: a hold that fits names no term");
+    check(!H::FirstRefusal(kUse, Fitting()), "refusal: a use that fits names no term");
+    for (const Term& term : kPocketTerms) {
+        H::ActTraits t = Fitting();
+        term.breaks(t);
+        check(!H::PocketFits(t), term.what);
+        check(H::FirstRefusal(kPocket, t) == term.refusal, term.what);
+    }
+    for (const Term& term : kHoldTerms) {
+        H::ActTraits t = Fitting();
+        term.breaks(t);
+        check(!H::HoldFits(t), term.what);
+        check(H::FirstRefusal(kHold, t) == term.refusal, term.what);
+    }
+    for (const Term& term : kUseTerms) {
+        H::ActTraits t = Fitting();
+        term.breaks(t);
+        check(!H::UseFits(t), term.what);
+        check(H::FirstRefusal(kUse, t) == term.refusal, term.what);
+    }
+    {
+        // A frozen prop is held whatever it weighs and whatever its row says, as the game's Hold Object does.
+        H::ActTraits t = Fitting();
+        t.frozen = true;
+        t.heavy = true;
+        t.canHold = false;
+        t.child = true;
+        t.simulating = false;
+        check(H::HoldFits(t), "fits: a frozen heavy hold that the row does not hold still fits");
+        check(!H::FirstRefusal(kHold, t), "refusal: a frozen hold names no term");
+        // A frozen prop is pocketed, but never a heavy one.
+        H::ActTraits p = Fitting();
+        p.frozen = true;
+        p.simulating = false;
+        check(H::PocketFits(p), "fits: a frozen pocket fits");
+        p.heavy = true;
+        check(!H::PocketFits(p), "fits: a frozen heavy pocket does not fit");
+    }
+    {
+        // A prop a peer drags has its host copy parked with physics off: it fits by the drive.
+        H::ActTraits p = Fitting();
+        p.simulating = false;
+        p.driven = true;
+        check(H::PocketFits(p), "fits: a pocket fits only by a peer's drive");
+        check(H::HoldFits(p), "fits: a hold fits only by a peer's drive");
+    }
+    {
+        H::ActTraits t = Fitting();
+        t.foodBody = true;
+        check(H::UseFits(t), "fits: an edible food body fits");
+        t.foodBody = false;
+        t.notEdible = true;
+        check(H::UseFits(t), "fits: notEdible is read for a food body alone");
+    }
+    {
+        H::ActTraits t = Fitting();
+        t.heavy = true;
+        check(H::FirstRefusal(kPocket, t) == Tally::FitHeavy, "refusal: a heavy pocket is named heavy");
+        t = Fitting();
+        t.simulating = false;
+        check(H::FirstRefusal(kPocket, t) == Tally::FitPhysics, "refusal: a pocket with no physics is named so");
+        t = Fitting();
+        t.read = false;
+        t.heavy = true;
+        check(H::FirstRefusal(kPocket, t) == Tally::FitUnread, "refusal: an unread fact is named before any term");
+        t = Fitting();
+        t.collectRefused = true;
+        t.heavy = true;
+        check(H::FirstRefusal(kPocket, t) == Tally::FitCollectRefused, "refusal: the first term in order is named");
+    }
+    check(!H::KnownFamily(0), "family: 0 is not a verb");
+    check(H::KnownFamily(1) && H::KnownFamily(2) && H::KnownFamily(3), "family: 1..3 are verbs");
+    check(!H::KnownFamily(4), "family: 4 is not a verb");
+    check(H::FirstRefusal(0, Fitting()) == Tally::FitBadFamily, "refusal: a byte that is no verb is named");
 
     // ReplyFor: Wait sends nothing; every other verdict sends one reply with its reason.
     check(!H::ReplyFor(H::ActVerdict::Wait, 7).has_value(), "reply: a wait sends nothing");
