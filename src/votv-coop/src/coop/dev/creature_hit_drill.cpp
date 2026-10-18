@@ -80,11 +80,11 @@ namespace EL = coop::element;
 struct Arm {
     const char*    name;
     const wchar_t *cls, *path;
-    bool           perViewer, stuckTimer;
+    bool           perViewer, stuckTimer, bodyFacing;
 };
 constexpr Arm kArms[] = {
-    {"zombie", P::name::NpcClass_Zombie, L"/Game/objects/npc/npc_zombie.npc_zombie_C", false, true},
-    {"fossilhound", P::name::NpcClass_Fossilhound, L"/Game/objects/fossilhound.fossilhound_C", true, false},
+    {"zombie", P::name::NpcClass_Zombie, L"/Game/objects/npc/npc_zombie.npc_zombie_C", false, true, false},
+    {"fossilhound", P::name::NpcClass_Fossilhound, L"/Game/objects/fossilhound.fossilhound_C", true, false, true},
 };
 
 constexpr long long kBoundMs = 60000;
@@ -340,6 +340,16 @@ struct ClientState {
 } g_c;
 std::vector<EL::Npc*> g_scratch;
 
+// The client's verdict on a creature whose body turns apart from its root (the hound): its mirror's mesh world yaw
+// must leave the first sample's by more than kTurnDeg in kTurnsNeeded samples, or the body never turned.
+constexpr float kTurnDeg = 30.f;
+constexpr int kTurnsNeeded = 3;
+struct FacingState {
+    bool  have = false, passed = false;
+    float firstYaw = 0.f;
+    int   turned = 0;
+} g_face;
+
 void ClientTo(ClientStep s) { g_c.step = s; g_c.stepMs = NowMs(); }
 
 void ClientStop() { g_c.step = ClientStep::Done; }
@@ -523,6 +533,8 @@ void ClientTick(const Arm& arm) {
     }
     case ClientStep::AwaitHostDone:
         if (HasRow(kHostDone)) {
+            if (arm.bodyFacing && !g_face.passed)
+                Verdict(false, "facing", false, "turned=%d reason=the mirror's body never turned", g_face.turned);
             UE_LOGI("[CHD] DONE role=client adopted_kick_skips=%u", coop::npc_mirror_brain::AdoptedKickSkips());
             ClientStop();
         } else if (Expired(g_c.stepMs)) {
@@ -544,9 +556,9 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
 }
 
-// PROBE (measurement, not a verdict): the hound's facing on each peer every 500 ms -- the actor's yaw, its velocity,
-// the SpringArm's world rotation (the graph's tick turns it toward the velocity, and it carries the mesh) and the
-// mesh's world yaw -- so the host's body facing and the mirror's can be compared line by line.
+// The hound's facing on each peer every 500 ms -- the actor's yaw, its velocity, the SpringArm's world rotation (the
+// graph's tick turns it toward the velocity, and it carries the mesh) and the mesh's world yaw -- so the host's body
+// facing and the mirror's compare line by line. On the client it is also the facing verdict's sample (g_face).
 void FacingProbe(bool host) {
     static long long lastMs = 0;
     const long long now = NowMs();
@@ -566,6 +578,16 @@ void FacingProbe(bool host) {
     UE_LOGI("[CHD] facing role=%s actorYaw=%.1f speed=%.0f velYaw=%.1f velZ=%.0f arm=%d armPitch=%.1f armYaw=%.1f "
             "meshPitch=%.1f meshYaw=%.1f meshRoll=%.1f", host ? "host" : "client", rot.Yaw, speed, velYaw, v.Z, arm ? 1 : 0,
             armRot.Pitch, armRot.Yaw, meshRot.Pitch, meshRot.Yaw, meshRot.Roll);
+    if (host || !mesh || !R::IsLive(mesh) || g_face.passed) return;
+    if (!g_face.have) {
+        g_face = FacingState{true, false, meshRot.Yaw, 0};
+        return;
+    }
+    const float d = std::remainder(meshRot.Yaw - g_face.firstYaw, 360.f);
+    if (std::fabs(d) > kTurnDeg && ++g_face.turned >= kTurnsNeeded) {
+        g_face.passed = true;
+        Verdict(true, "facing", false, "turned=%d last=%.1f first=%.1f", g_face.turned, meshRot.Yaw, g_face.firstYaw);
+    }
 }
 
 void Tick() {
@@ -576,9 +598,12 @@ void Tick() {
     const bool host = s->role() == coop::net::Role::Host;
     if (host) HostTick(s, *arm);
     else ClientTick(*arm);
-    if (arm->perViewer) FacingProbe(host);
+    if (arm->bodyFacing) FacingProbe(host);
 }
 
-void OnDisconnect() { g_c = ClientState{}; }
+void OnDisconnect() {
+    g_c = ClientState{};
+    g_face = FacingState{};
+}
 
 }  // namespace coop::dev::creature_hit_drill

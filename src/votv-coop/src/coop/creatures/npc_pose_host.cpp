@@ -185,8 +185,8 @@ void TickPoseStream() {
         // the LOCAL player, decoupled from the actor root above. Read the resolved mesh world yaw
         // so the mirror reproduces the host's body facing (its actor tick is off -> it cannot
         // compute it).
-        // The fossil hound's body turns the same way, apart from its root: its mesh hangs on the SpringArm's end,
-        // which the host's copy turns and a mirror never does.
+        // The fossil hound's body turns apart from its root too: its mesh hangs on the SpringArm's end, which the
+        // host's copy turns (the graph's tick, toward the velocity) and a mirror never does.
         float bodyYaw = 0.f;
         if (ue_wrap::puppet::ReadKerfurBodyYaw(actor, bodyYaw) || ue_wrap::fossilhound::ReadBodyYaw(actor, bodyYaw)) {
             snap.bodyYaw = ue_wrap::NormalizeAxis(bodyYaw);

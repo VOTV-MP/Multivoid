@@ -27,10 +27,11 @@ bool ApplyBeginPlayPresentation(void* hound, bool ownBeginPlayRan);
 // turns it toward the velocity), or null. Game thread.
 void* SpringArm(void* hound);
 
-// The hound's visible body facing: its mesh's world yaw. The mesh hangs on the SpringArm's end, whose rotation follows
-// the arm's target (the controller's view, the velocity, the arm's lag) on the host's copy and never moves on a mirror,
-// whose ticks are off. Read is false when `actor` is not a hound or has no live mesh; Drive sets the mesh's world
-// rotation to that yaw and does nothing on a non-hound. Game thread.
+// The hound's visible body facing: its mesh's world yaw. The mesh hangs on the SpringArm's end; on the host's copy the
+// graph's tick turns the arm toward the velocity and the measured body yaw moves (also while the hound stands), and on
+// a mirror, whose ticks are off, it never moves. Read is false when `actor` is not a hound or has no live mesh; Drive
+// sets the mesh's world rotation to that yaw with pitch and roll 0 (the host's were measured 0 but for transients of
+// up to ~10 and ~15 degrees in a leap, not streamed) and does nothing on a non-hound. Game thread.
 bool ReadBodyYaw(void* actor, float& outYaw);
 void DriveBodyYaw(void* actor, float yaw);
 

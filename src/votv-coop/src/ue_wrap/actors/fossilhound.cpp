@@ -97,8 +97,8 @@ bool EnterPerViewerLoop(void* hound) {
 // The hound's mesh when `actor` is a fossilhound_C or a descendant, else null. The class is resolved once loaded.
 void* HoundMesh(void* actor) {
     if (!actor || !R::IsLive(actor)) return nullptr;
-    static void* sHound = nullptr;
-    if (!sHound) sHound = object_index::ClassByName(P::name::NpcClass_Fossilhound);
+    static void* sHound = nullptr;  // re-resolved when the class it held is gone
+    if (!sHound || !R::IsLive(sHound)) sHound = object_index::ClassByName(P::name::NpcClass_Fossilhound);
     void* cls = R::ClassOf(actor);
     if (!sHound || !cls || !R::IsDescendantOfAny(cls, &sHound, 1)) return nullptr;
     return LiveAt(actor, P::off::ACharacter_Mesh);

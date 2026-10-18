@@ -1240,7 +1240,8 @@ struct EntityPoseSnapshot {
     float    lookAtX, lookAtY, lookAtZ;  // 12 -- the kerfur's head look target in world space, valid iff
                                          // stateBits has kEntityPoseBitHasLookAt. Only kerfur-family
                                          // NPCs carry it; the rest leave it zero with the bit clear.
-    float    bodyYaw;     // 4  -- the kerfur's visible body yaw, decoupled from the actor root; valid iff kEntityPoseBitHasBodyYaw
+    float    bodyYaw;     // 4  -- a kerfur's or a fossil hound's visible body yaw, apart from the actor
+                          //       root; valid iff kEntityPoseBitHasBodyYaw
     uint8_t  stateBits;   // 1  -- bit0=inAir, bit1=hasLookAt, bit2=hasBodyYaw, bit3=hasKerfurState, bit4=kerfurSpooky
     uint8_t  kerfState;   // 1  -- the kerfur's command state; valid iff bit 3. Drives the parked mirror's state machine.
     uint8_t  kerfFace;    // 1  -- the kerfur's face material index; valid iff bit 3.
