@@ -50,6 +50,9 @@ const std::string& PhaseName() {
 // The lines the two peers say to each other in the lobby chat.
 std::string ReadyHead(const Row& r) { return std::string(kTag) + " host " + r.name + " ready eid="; }
 std::string DoneHead(const Row& r, int slot) { return std::string(kTag) + " c" + std::to_string(slot) + " " + r.name + " done "; }
+std::string DragHead(const Row& r, bool fromHost) {
+    return std::string(kTag) + (fromHost ? " host " : " c" + std::to_string(kClientSlot) + " ") + r.name + " dragged: ";
+}
 
 void Say(const std::string& line) { coop::chat_sync::QueueSend(line); }
 
@@ -102,9 +105,10 @@ bool EdgeArmed() {
 
 // ---- host (judge) ------------------------------------------------------------------------------------------------
 
-enum class HStep : uint8_t { Arm, Spawn, Announce, AwaitDone, Judge, Done };
+enum class HStep : uint8_t { Arm, Spawn, Announce, Prep, AwaitGrab, AwaitDrive, AwaitDone, Judge, Done };
 HStep g_hstep = HStep::Arm;
 uint64_t g_hStepMs = 0, g_hNextMs = 0;
+uint64_t g_prepMs = 0;   // the row's hostPrep: when its first call ran, 0 before it
 size_t g_hrow = 0;
 ue_wrap::CachedObjRef g_target, g_target2;
 EL::ElementId g_eid = EL::kInvalidId, g_eid2 = EL::kInvalidId;
@@ -126,13 +130,15 @@ void HostFail(const Row* row, const std::string& why) {
 
 // The counters of the client's slot as the step begins, and the watch on its raw PropDestroy messages naming
 // the step's props.
-Baseline TakeBaseline(EL::ElementId eid, EL::ElementId eid2) {
+Baseline TakeBaseline(const Row& row, EL::ElementId eid, EL::ElementId eid2) {
     PRP::dev::WatchWireDestroys(kClientSlot, eid, eid2);
     Baseline b;
     b.destroys = PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Destroy);
     b.aborts = PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Abort);
     b.eid2 = eid2;
     b.answered = PAH::AnsweredTotal(kClientSlot);
+    b.wrongFamily = PAH::AnsweredFor(kClientSlot, coop::net::PropActReason::WrongFamily);
+    b.fit = PAH::TallyOf(row.fitTally);
     b.kerfurBound = eid != EL::kInvalidId && KE::GetKerfurIdForEid(eid) != EL::kInvalidId;
     return b;
 }
@@ -186,12 +192,57 @@ bool KerfurPropReady(const Row& row) {
 
 // The targets are announced: take the counters, say the step is ready (a client-made target has no eid, said 0).
 void SayReady(const Row& row) {
-    g_base = TakeBaseline(g_eid, g_eid2);
+    g_base = TakeBaseline(row, g_eid, g_eid2);
     std::string line = ReadyHead(row) + std::to_string(Wire(g_eid));
     if (g_eid2 != EL::kInvalidId) line += " eid2=" + std::to_string(Wire(g_eid2));
     Say(line);
     UE_LOGI("%s host %s said ready: eid %u", kTag, row.name, Wire(g_eid));
-    HEnter(HStep::AwaitDone);
+    HEnter(row.grab ? HStep::AwaitGrab : HStep::AwaitDone);
+}
+
+struct Fit {
+    bool fits;
+    PAH::Tally first;
+};
+
+Fit CensusOf(void* actor, coop::net::PropActFamily family) {
+    Fit f{};
+    f.fits = PAH::dev::CensusFits(actor, static_cast<uint8_t>(family), &f.first);
+    return f;
+}
+
+const char* FirstWord(const Fit& f) { return f.fits ? "none" : PAH::TallyName(f.first); }
+
+// What the host's judge says of the row's target for each verb, logged, and checked against what the row expects: a
+// row that asks and expects a grant must fit its verb, a refusal row must refuse it by its own term. Empty when the
+// row holds, else the census line. Native rows (they never ask) are logged and not checked.
+std::string CensusCheck(const Row& row, void* actor) {
+    using coop::net::PropActFamily;
+    const Fit pocket = CensusOf(actor, PropActFamily::Pocket), hold = CensusOf(actor, PropActFamily::Hold);
+    const bool useRow = row.verb == Verb::Use || row.verb == Verb::Soap;
+    const Fit use = useRow ? CensusOf(actor, PropActFamily::Use) : Fit{};
+    char buf[320];
+    int n = std::snprintf(buf, sizeof buf, "census %s pocket=%d pocket_first=%s hold=%d hold_first=%s", row.name,
+                          pocket.fits ? 1 : 0, FirstWord(pocket), hold.fits ? 1 : 0, FirstWord(hold));
+    if (useRow && n > 0 && static_cast<size_t>(n) < sizeof buf)
+        std::snprintf(buf + n, sizeof buf - n, " use=%d use_first=%s", use.fits ? 1 : 0, FirstWord(use));
+    std::string line = buf;
+    if (row.target == Target::HostKerfur) {
+        float volume = 0.f, bound = 0.f;
+        if (ue_wrap::prop_gather::ReadVolumeAndBound(actor, volume, bound)) {
+            char v[64];
+            std::snprintf(v, sizeof v, " volume=%.0f bound=%.0f", volume, bound);
+            line += v;
+        } else {
+            line += " volume=unread";
+        }
+    }
+    line += E::IsActorRootSimulatingPhysics(actor) ? " simulating=1" : " simulating=0";
+    UE_LOGI("%s %s", kTag, line.c_str());
+    if (!row.asks) return {};
+    const Fit& mine = row.verb == Verb::Pocket ? pocket : row.verb == Verb::Hold ? hold : use;
+    if (row.ends == Ends::Refused) return mine.fits || mine.first != row.fitTally ? line : std::string();
+    return mine.fits ? std::string() : line;
 }
 
 void ResetStep() {
@@ -199,6 +250,7 @@ void ResetStep() {
     g_target2.Reset();
     g_eid = g_eid2 = g_kerfurId = EL::kInvalidId;
     g_turnedOff = false;
+    g_prepMs = 0;
 }
 
 void HostTick(coop::net::Session* s, const Phase& ph) {
@@ -248,8 +300,55 @@ void HostTick(coop::net::Session* s, const Phase& ph) {
         if (row.target == Target::HostKerfur && !KerfurPropReady(row)) return;
         if (!TargetAnnounced(row, g_target, &g_eid)) return;
         if (row.target == Target::HostTwo && !TargetAnnounced(row, g_target2, &g_eid2)) return;
+        HEnter(HStep::Prep);
+        return;
+    case HStep::Prep: {
+        void* const actor = g_target.Get();
+        if (!actor) {
+            HostFail(&row, "the target was gone before the host's prep");
+            return;
+        }
+        if (row.hostPrep) {
+            const uint64_t since = g_prepMs ? now - g_prepMs : 0;
+            if (!g_prepMs) g_prepMs = now;
+            bool done = false;
+            if (const char* why = row.hostPrep(actor, since, &done)) {
+                HostFail(&row, why);
+                return;
+            }
+            if (!done) return;
+        }
+        const std::string bad = CensusCheck(row, actor);
+        if (!bad.empty()) {
+            HostFail(&row, "the host's judge contradicts the row: " + bad);
+            return;
+        }
         SayReady(row);
         return;
+    }
+    case HStep::AwaitGrab:
+        if (!ClientSaid(kClientSlot, DragHead(row, false) + "grabbed", nullptr)) {
+            if (HExpired(kDoneBoundMs)) HostFail(&row, "the client never grabbed the prop");
+            return;
+        }
+        HEnter(HStep::AwaitDrive);
+        return;
+    case HStep::AwaitDrive: {
+        void* const actor = g_target.Get();
+        if (!actor) {
+            HostFail(&row, "the dragged prop was gone on the host");
+            return;
+        }
+        if (!PRP::IsActorDrivenByOtherThan(actor, -1)) {
+            if (HExpired(kDragBoundMs)) HostFail(&row, "the host never saw the drag");
+            return;
+        }
+        UE_LOGI("%s host %s: the dragged prop is driven by another peer (host copy simulating=%d)", kTag, row.name,
+                E::IsActorRootSimulatingPhysics(actor) ? 1 : 0);
+        Say(DragHead(row, true) + "driven");
+        HEnter(HStep::AwaitDone);
+        return;
+    }
     case HStep::AwaitDone: {
         std::string rest;
         if (!ClientSaid(kClientSlot, DoneHead(row), &rest)) {

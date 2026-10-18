@@ -80,4 +80,10 @@ uint32_t MaxDepthOf(int slot);                                    // the deepest
 uint32_t AnsweredTotal(int slot);                                 // the sum of AnsweredFor over every reason
 uint32_t CommitsOf(int slot, internal::CommitStep s);             // commits taken per step
 
+namespace dev {   // called only from src/coop/dev/ (the act drills); compiled always, inert unless called
+// Would the judge accept `family` on `actor`? FamilyFits' path with no tally bumped. `*first` is the term that
+// refuses, Tally::kCount when the act fits. Game thread.
+bool CensusFits(void* actor, uint8_t family, Tally* first);
+}  // namespace dev
+
 }  // namespace coop::prop_act_host

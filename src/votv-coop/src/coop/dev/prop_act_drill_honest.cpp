@@ -11,6 +11,8 @@
 #include "coop/props/prop_act_request.h"
 #include "coop/props/remote_prop.h"
 
+#include "ue_wrap/actors/prop_flags.h"
+#include "ue_wrap/actors/prop_gather.h"
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/ftext_utils.h"
@@ -44,10 +46,15 @@ constexpr const wchar_t* kSoap    = L"/Game/objects/prop_food_soap.prop_food_soa
 constexpr const wchar_t* kPlush   = L"/Game/objects/prop_eriePlush.prop_eriePlush_C";
 constexpr const wchar_t* kSponge  = L"/Game/objects/prop_sponge.prop_sponge_C";
 constexpr const wchar_t* kShrimp  = L"/Game/objects/prop_food_shrimp.prop_food_shrimp_C";
+constexpr const wchar_t* kMreAB   = L"/Game/objects/prop_food_mre_AB.prop_food_mre_AB_C";
+constexpr const wchar_t* kBin     = L"/Game/objects/prop_openContainer_wastebasket.prop_openContainer_wastebasket_C";
+constexpr const wchar_t* kHeater  = L"/Game/objects/prop_heater.prop_heater_C";
 constexpr const wchar_t* kChipPile = L"/Game/objects/actorChipPile.actorChipPile_C";
 constexpr const wchar_t* kKerfurProp = L"prop_kerfurOmega_C";   // dropKerfurProp's prop class
 constexpr const wchar_t* kNoSpace = L"Not enough space";        // the hint a bailed pocket shows
 constexpr float kOwnLiftCm = 60.f;                              // a client's own spawn, above its player's origin
+constexpr float kBinDropCm = 60.f;                              // the item dropped into the bin, above the bin's origin
+constexpr uint64_t kBinLoadBoundMs = 20000;                     // HOST: the item's spawn to the bin having taken it
 
 // Every Blueprint addHint, read to tell the full inventory's refusal from any other hint.
 UE_FACT_FN(kRowHint, "dev.prop_act_drill", nullptr, L"addHint", AnyClass);
@@ -141,6 +148,37 @@ const char* SetShrimpLastEat(void* player, void* mirror) {
     return SetLastUse(player, mirror);
 }
 
+// The wastebasket is loaded as the game loads it: an item dropped into its Box settles, and the bin's own tick freezes it
+// and attaches it, which turns the bin's canCollect off (checkPickup). The first call drops a crowbar; the step is
+// done once the bin's data reads canCollect false.
+const char* LoadBin(void* bin, uint64_t sinceMs, bool* done) {
+    if (sinceMs == 0) {
+        void* const cls = ue_wrap::asset_load::LoadObjectByPath(kCrowbar);
+        FVector at{};
+        if (!cls || !E::TryGetActorLocation(bin, at)) return "the crowbar class did not load or the bin's place is unread";
+        return E::SpawnActor(cls, {at.X, at.Y, at.Z + kBinDropCm}) ? nullptr : "the item for the bin did not spawn";
+    }
+    ue_wrap::prop_gather::PropDataFlags flags{};
+    if (!ue_wrap::prop_gather::ReadPropData(bin, flags)) return "the bin's propData could not be read";
+    if (!flags.canCollect) {
+        *done = true;
+        return nullptr;
+    }
+    return sinceMs > kBinLoadBoundMs ? "the bin never took the item" : nullptr;
+}
+
+// A frozen heavy prop, on the host's copy and on the client's (frozen is not synced, and the client's own hold of a
+// heavy prop would answer "too heavy"): the game's own setter, with active off.
+const char* FreezeHost(void* actor, uint64_t, bool* done) {
+    if (!ue_wrap::prop::CallSetPropProps(actor, false, true, false)) return "setPropProps could not freeze the host's copy";
+    *done = true;
+    return nullptr;
+}
+
+const char* FreezeCopy(void*, void* mirror) {
+    return ue_wrap::prop::CallSetPropProps(mirror, false, true, false) ? nullptr : "setPropProps could not freeze this client's copy";
+}
+
 constexpr Row kRows[] = {
     {"pocket",       kCrowbar, L"prop_crowbar_C",     Verb::Pocket, Ends::Inventory, nullptr},
     {"hold crowbar", kCrowbar, L"prop_crowbar_C",     Verb::Hold,   Ends::Hand,      nullptr},
@@ -150,14 +188,25 @@ constexpr Row kRows[] = {
     {"mre",          kMre,     L"prop_food_mre_C",    Verb::Use,    Ends::Gone,      nullptr},
     {"soap",         kSoap,    L"prop_food_soap_C",   Verb::Soap,   Ends::Gone,      &SetUpSoap},
     {"pills",        kPills,   L"prop_sleeppills_C",  Verb::Use,    Ends::Gone,      nullptr},
-    {"erie plush",   kPlush,   L"prop_eriePlush_C",   Verb::Use,    Ends::Gone,      &SetLastUse},
+    // The plush offers no option, so its last use is asked and refused. Then the classes the judge reads by their own
+    // data: a food subclass, a loaded bin, a frozen heavy prop, and a prop the client drags.
+    {"erie plush",   kPlush,   L"prop_eriePlush_C",   Verb::Use,    Ends::Refused,   &SetLastUse, Target::Host, true, false,
+     nullptr, nullptr, false, PAH::Tally::FitDenied},
+    {"food subclass", kMreAB,  L"prop_food_mre_AB_C", Verb::Use,    Ends::Gone,      &SetLastUse},
+    {"loaded bin",   kBin,     L"prop_openContainer_wastebasket_C", Verb::Pocket, Ends::Refused, nullptr, Target::Host, true,
+     false, nullptr, nullptr, false, PAH::Tally::FitCanCollect, &LoadBin},
+    {"frozen heavy hold", kHeater, L"prop_heater_C",  Verb::Hold,   Ends::Taken,     &FreezeCopy, Target::Host, true, false,
+     nullptr, nullptr, false, PAH::Tally::kCount, &FreezeHost},
+    {"dragged pocket", kCrowbar, L"prop_crowbar_C",   Verb::Pocket, Ends::Inventory, nullptr, Target::Host, true, false,
+     nullptr, nullptr, true},
     // The calls that are the client's own (no request), the take of a kerfur's prop, a use that also destroys a second
     // prop inside the latch, and last the full inventory, which stays full for whatever would follow it.
     {"own spawn",       kCrowbar,  L"prop_crowbar_C",     Verb::Pocket, Ends::Inventory, nullptr, Target::Client, false, false, &MakeOwnCrowbar},
     {"native subclass", kShrimp,   L"prop_food_shrimp_C", Verb::Use,    Ends::NativeGone, &SetShrimpLastEat, Target::Host, false},
     {"non-last use",    kFood,     L"prop_food_C",        Verb::Use,    Ends::Unchecked, &SetTwoUses, Target::Host, false, true},
     {"trash native",    kChipPile, L"actorChipPile_C",    Verb::Hold,   Ends::Unchecked, nullptr, Target::Host, false},
-    {"kerfur take",     nullptr,   L"prop_kerfurOmega_C", Verb::Pocket, Ends::Inventory, nullptr, Target::HostKerfur},
+    {"kerfur pocket",   nullptr,   L"prop_kerfurOmega_C", Verb::Pocket, Ends::Stays,     nullptr, Target::HostKerfur},
+    {"kerfur hold",     nullptr,   L"prop_kerfurOmega_C", Verb::Hold,   Ends::Taken,     nullptr, Target::HostKerfur},
     {"second destroy",  kCrowbar,  L"prop_crowbar_C",     Verb::Pocket, Ends::Inventory, nullptr, Target::HostTwo},
     {"full",            kCrowbar,  L"prop_crowbar_C",     Verb::Pocket, Ends::Stays,     nullptr, Target::Host, true, false, nullptr, &FillStep},
 };
@@ -181,8 +230,9 @@ Judged JudgeNative(const Row& row, coop::element::ElementId eid, const Baseline&
     return Judged::Pass;
 }
 
-// The take that bailed on the client (a full inventory): one abort, no destroy, the prop alive.
-Judged JudgeAborted(const Row&, coop::element::ElementId eid, const Baseline& base, std::string* why) {
+// The take that bailed on the client (a full inventory, or a volume its container cannot hold): one abort, no destroy,
+// the prop alive, and a kerfur item's record still bound to it.
+Judged JudgeAborted(const Row& row, coop::element::ElementId eid, const Baseline& base, std::string* why) {
     const uint32_t aborts = Since(PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Abort), base.aborts);
     if (aborts == 0) {
         *why = "no abort commit from the client yet";
@@ -199,7 +249,33 @@ Judged JudgeAborted(const Row&, coop::element::ElementId eid, const Baseline& ba
         *why = "the eid is gone on the host after an abort";
         return Judged::Fail;
     }
-    *why = "one abort commit, no destroy, the eid alive";
+    if (row.target == Target::HostKerfur && coop::kerfur_entity::GetKerfurIdForEid(eid) == coop::element::kInvalidId) {
+        *why = "the kerfur record no longer names the eid after an abort";
+        return Judged::Fail;
+    }
+    *why = row.target == Target::HostKerfur ? "one abort commit, no destroy, the eid alive, the kerfur record still bound"
+                                            : "one abort commit, no destroy, the eid alive";
+    return Judged::Pass;
+}
+
+// The host's judge refused the act: one WrongFamily answer, by the row's own term, and the target stands.
+Judged JudgeRefused(const Row& row, coop::element::ElementId eid, const Baseline& base, std::string* why) {
+    const uint32_t refused = Since(PAH::AnsweredFor(kClientSlot, coop::net::PropActReason::WrongFamily), base.wrongFamily);
+    if (refused == 0) {
+        *why = "no WrongFamily answer for the client yet";
+        return Judged::Wait;
+    }
+    const uint32_t byTerm = Since(PAH::TallyOf(row.fitTally), base.fit);
+    if (refused != 1 || byTerm != 1) {
+        *why = std::to_string(refused) + " WrongFamily answers and " + std::to_string(byTerm) + " " +
+               PAH::TallyName(row.fitTally) + " refusals, 1 of each expected";
+        return Judged::Fail;
+    }
+    if (!coop::element::LivePropActor(eid)) {
+        *why = "the eid is gone on the host after a refusal";
+        return Judged::Fail;
+    }
+    *why = std::string("one WrongFamily answer by ") + PAH::TallyName(row.fitTally) + ", the eid alive";
     return Judged::Pass;
 }
 
@@ -257,6 +333,7 @@ Judged JudgeTaken(const Row& row, coop::element::ElementId eid, const Baseline& 
 // The host's side of every step here.
 Judged Judge(const Row& row, coop::element::ElementId eid, const Baseline& base, std::string* why) {
     if (!row.asks) return JudgeNative(row, eid, base, why);
+    if (row.ends == Ends::Refused) return JudgeRefused(row, eid, base, why);
     if (row.ends == Ends::Stays) return JudgeAborted(row, eid, base, why);
     return JudgeTaken(row, eid, base, why);
 }

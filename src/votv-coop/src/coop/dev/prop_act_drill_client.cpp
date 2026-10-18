@@ -4,6 +4,7 @@
 #include "coop/dev/prop_act_drill.h"
 
 #include "coop/comms/chat_feed.h"
+#include "coop/dev/director/aimed_grab.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/drill_chat_pace.h"
 #include "coop/element/registry.h"
@@ -47,7 +48,8 @@ constexpr int kFillMax = 400;            // CLIENT: own spawns pocketed before t
 
 // ---- client (taker) ----------------------------------------------------------------------------------------------
 
-enum class CStep : uint8_t { Arm, AwaitReady, Resolve, Fill, Walk, AwaitGather, AwaitReply, Say, Done };
+enum class CStep : uint8_t { Arm, AwaitReady, Resolve, Fill, Walk, AwaitGather, Grab, AwaitDriven, AwaitReply, Say,
+                             Done };
 CStep g_cstep = CStep::Arm;
 uint64_t g_cStepMs = 0, g_cNextMs = 0, g_nextSayMs = 0;
 size_t g_crow = 0;
@@ -56,6 +58,13 @@ ue_wrap::CachedObjRef g_mirror, g_mirror2;   // the step's target (a client-made
 int g_invBefore = 0;
 int g_fillCount = 0;
 std::shared_ptr<coop::director::BackgroundWalk> g_walk;
+std::unique_ptr<coop::director::AimedGrab> g_grab;   // a grab row's grab, until the host says it saw the drag
+bool g_grabbed = false;
+// The state a refused act must leave as it found it, taken at the call: this client's WrongFamily refusals so far
+// and the hand's item.
+uint32_t g_refusedBefore = 0;
+bool g_handHeldBefore = false;
+ue_wrap::CachedObjRef g_handBefore;
 std::string g_sayLine;
 bool g_sayFailed = false;
 
@@ -112,6 +121,10 @@ void ClientAct(const Row& row, void* player) {
         return;
     }
     ClearHint();
+    g_refusedBefore = PAR::dev::RefusedCount(coop::net::PropActReason::WrongFamily);
+    E::MainPlayerGrabState handBefore{};
+    g_handHeldBefore = E::ReadMainPlayerGrabState(player, handBefore) && handBefore.holdingActor;
+    g_handBefore.Set(g_handHeldBefore ? handBefore.holdingActor : nullptr);
     if (row.target == Target::HostTwo) {
         // The second prop dies inside the replay's latch, so it goes through the destroy seam as any destroy does.
         if (!g_mirror2.Get()) {
@@ -166,6 +179,37 @@ void ClientReadStays(const Row& row) {
     ClientPass(row, "asked, granted, the pocket bailed with the full-inventory hint; the mirror and the inventory stayed");
 }
 
+// The host refused the act (WrongFamily): the refusal came once, no request is open, and the mirror, the inventory and
+// the hand are as they were before the call.
+void ClientReadRefused(const Row& row, void* player) {
+    const uint32_t refused = PAR::dev::RefusedCount(coop::net::PropActReason::WrongFamily) - g_refusedBefore;
+    if (refused != 1) {
+        ClientFail(row, std::to_string(refused) + " WrongFamily refusals reached this client, 1 expected");
+        return;
+    }
+    if (PAR::dev::PendingId() != 0) {
+        ClientFail(row, "a request is still open after the refusal");
+        return;
+    }
+    if (!g_mirror.Alive() || !EL::LivePropActor(g_ceid)) {
+        ClientFail(row, "the mirror is gone after a refused act");
+        return;
+    }
+    const int now = InventoryCount(row.leaf);
+    if (now != g_invBefore) {
+        ClientFail(row, "the inventory changed on a refused act: " + std::to_string(g_invBefore) + " before, " +
+                            std::to_string(now) + " after");
+        return;
+    }
+    E::MainPlayerGrabState hand{};
+    const bool held = E::ReadMainPlayerGrabState(player, hand) && hand.holdingActor;
+    if (held != g_handHeldBefore || (held && !g_handBefore.Is(hand.holdingActor))) {
+        ClientFail(row, "the hand changed on a refused act");
+        return;
+    }
+    ClientPass(row, "asked, refused WrongFamily; the mirror, the inventory and the hand stayed");
+}
+
 // The call is over: no request is pending (the host's answer is in and the replay has run, or the call was native).
 // What this client's copies show now.
 void ClientRead(const Row& row, void* player) {
@@ -184,6 +228,10 @@ void ClientRead(const Row& row, void* player) {
     }
     if (row.ends == Ends::Stays) {
         ClientReadStays(row);
+        return;
+    }
+    if (row.ends == Ends::Refused) {
+        ClientReadRefused(row, player);
         return;
     }
     if (g_mirror.Alive()) {
@@ -387,7 +435,7 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
             if (CExpired(kMirrorBoundMs)) ClientFail(row, "the host's prop never reached this client");
             return;
         }
-        if (row.fillStep && !HintWatchLive()) {
+        if ((row.fillStep || row.ends == Ends::Stays) && !HintWatchLive()) {
             if (CExpired(kMirrorBoundMs)) ClientFail(row, "the addHint watch never went live");
             return;
         }
@@ -429,9 +477,51 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
                 ClientFail(row, "the mirror never became gatherable here (the host's drive did not end)");
             return;
         }
+        if (row.grab) {
+            g_grab = std::make_unique<coop::director::AimedGrab>(player, g_mirror.Get());
+            g_grabbed = false;
+            CEnter(CStep::Grab);
+            return;
+        }
         ClientAct(row, player);
         return;
     }
+    case CStep::Grab: {
+        // The game's grab, ticked on every tick; once it has taken, the grabbed line goes through the drills' chat
+        // pacing and the host says when it sees the prop driven.
+        if (!g_mirror.Get()) {
+            ClientFail(row, "the mirror was gone before the grab");
+            return;
+        }
+        if (!g_grabbed) {
+            const coop::director::GrabState st = g_grab->Tick();
+            if (st == coop::director::GrabState::Failed) {
+                ClientFail(row, std::string("the grab did not take: ") + g_grab->Why());
+                return;
+            }
+            if (st == coop::director::GrabState::Working) {
+                if (CExpired(kGrabBoundMs)) ClientFail(row, "the grab did not take");
+                return;
+            }
+            g_grabbed = true;
+            UE_LOGI("%s c%d %s %s: grabbed after %d aim pose(s)", kTag, kClientSlot, PhaseName().c_str(), row.name,
+                    g_grab->AimPoses());
+        }
+        if (now < g_nextSayMs) return;
+        Say(DragHead(row, false) + "grabbed");
+        g_nextSayMs = now + coop::dev::kTalkEveryMs;
+        CEnter(CStep::AwaitDriven);
+        return;
+    }
+    case CStep::AwaitDriven:
+        if (now < g_cNextMs) return;
+        g_cNextMs = now + kPollEveryMs;
+        if (!HostSaid(DragHead(row, true) + "driven", nullptr)) {
+            if (CExpired(kDrivenBoundMs)) ClientFail(row, "the host never saw the drag");
+            return;
+        }
+        ClientAct(row, player);
+        return;
     case CStep::AwaitReply:
         if (PAR::dev::PendingId() != 0) {
             if (CExpired(kReplyBoundMs)) ClientFail(row, "the request was still pending");
@@ -446,6 +536,7 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         g_nextSayMs = now + coop::dev::kTalkEveryMs;
         g_mirror.Reset();
         g_mirror2.Reset();
+        g_grab.reset();
         if (g_sayFailed) {
             g_cstep = CStep::Done;
             return;
@@ -475,6 +566,11 @@ void ClientReset() {
     g_fillCount = 0;
     ClearHint();
     g_walk.reset();
+    g_grab.reset();
+    g_grabbed = false;
+    g_refusedBefore = 0;
+    g_handHeldBefore = false;
+    g_handBefore.Reset();
     g_sayLine.clear();
     g_sayFailed = false;
 }

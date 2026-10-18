@@ -17,6 +17,7 @@
 #pragma once
 
 #include "coop/element/element.h"
+#include "coop/props/prop_act_host.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -53,6 +54,9 @@ inline constexpr uint64_t kReadyBoundMs = 120000;   // CLIENT: a step's start to
 inline constexpr uint64_t kMirrorBoundMs = 60000;   // CLIENT: the ready line to the mirror being here
 inline constexpr uint64_t kReplyBoundMs = 30000;    // CLIENT: the call to no request pending
 inline constexpr uint64_t kGatherBoundMs = 10000;   // CLIENT: the walk's arrival to the mirror being gatherable
+inline constexpr uint64_t kGrabBoundMs = 15000;     // CLIENT: a grab row's grab step to the game's grab having taken
+inline constexpr uint64_t kDrivenBoundMs = 20000;   // CLIENT: its grabbed line to the host's driven line
+inline constexpr uint64_t kDragBoundMs = 15000;     // HOST: the client's grabbed line to the prop driven by the client
 inline constexpr uint64_t kAnnounceBoundMs = 60000; // HOST: the spawn to the target having a row
 inline constexpr uint64_t kDoneBoundMs = 180000;    // HOST: the ready line to the client's done line
 inline constexpr uint64_t kJudgeBoundMs = 30000;    // HOST: the done line to the counters it must show
@@ -66,8 +70,11 @@ enum class Verb : uint8_t { Pocket, Hold, Use, Soap };   // putObjectInventory2,
 // Where a consumed target ends, on the client's own copies: the inventory gains one of its class, the hand holds one
 // of its class, or nowhere (an eaten or used-up prop). Stays: the take bails (a full inventory) and the mirror and the
 // inventory are as they were. Unchecked: the call runs natively and only the absence of a request is judged. NativeGone:
-// the same, and the eaten copy is gone from this client afterwards.
-enum class Ends : uint8_t { Inventory, Hand, Gone, Stays, Unchecked, NativeGone };
+// the same, and the eaten copy is gone from this client afterwards. Refused: the host answered WrongFamily (this
+// client's RefusedCount for it rose by one), no request is open, and the mirror, the inventory and the hand are as
+// they were. Taken: the mirror is gone after the commit and the hand is not asserted (a heavy item's hand view is
+// unmeasured).
+enum class Ends : uint8_t { Inventory, Hand, Gone, Stays, Unchecked, NativeGone, Refused, Taken };
 
 // Who makes a step's target: the host, on the floor in front of the client's puppet (HostTwo: a second one beside it;
 // HostKerfur: a kerfur NPC the host turns off into its prop), or the client itself (the host spawns nothing).
@@ -88,6 +95,14 @@ struct Row {
     // One own spawn pocketed natively per tick, `*full` set once the native return is false (the take then bails);
     // null when done, else why not. The step starts only once the addHint watch is live.
     const char* (*fillStep)(void* player, bool* full) = nullptr;
+    // The client grabs the mirror with the game's grab (the director's aimed grab) before its act, and the host must
+    // see the prop driven by the client before the act runs.
+    bool grab = false;
+    // A refused row: the term of the host's judge that refuses it, the tally its count must rise by one.
+    coop::prop_act_host::Tally fitTally = coop::prop_act_host::Tally::kCount;
+    // HOST, after the target is announced and before the ready line: called each poll until `*done`. `sinceMs` is 0 on
+    // the first call, then the time since it. A non-null return FAILs the step with it.
+    const char* (*hostPrep)(void* actor, uint64_t sinceMs, bool* done) = nullptr;
 };
 
 // The host's commit counters for the client's slot when it said the step was ready, and the second prop's eid; the
@@ -97,6 +112,8 @@ struct Baseline {
     uint32_t aborts = 0;        // CommitsOf(slot, Abort)
     coop::element::ElementId eid2 = coop::element::kInvalidId;   // a HostTwo row's second prop, as the host holds it
     uint32_t answered = 0;      // AnsweredTotal(slot)
+    uint32_t wrongFamily = 0;   // AnsweredFor(slot, WrongFamily)
+    uint32_t fit = 0;           // TallyOf(the row's fitTally)
     bool kerfurBound = false;   // GetKerfurIdForEid(eid) named a kerfur record
 };
 
@@ -138,6 +155,8 @@ uint64_t NowMs();
 const std::string& PhaseName();
 std::string ReadyHead(const Row& r);
 std::string DoneHead(const Row& r, int slot = kClientSlot);
+// The head of a grab row's two mid-step lines: the client's "grabbed" and the host's "driven" follow it.
+std::string DragHead(const Row& r, bool fromHost);
 void Say(const std::string& line);
 
 // The text after `head` in the first row of the lobby record that `slot` said; false when none yet. HOST.

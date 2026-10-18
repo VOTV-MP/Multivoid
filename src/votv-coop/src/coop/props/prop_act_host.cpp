@@ -99,11 +99,6 @@ ue_wrap::CachedObjRef g_useDenied[std::size(kUseDenied)];
 // Classes whose act facts could not be read, said once each per session.
 std::unordered_set<std::wstring> g_unreadSaid;
 
-bool Refuse(Tally t) {
-    ++g_tally[static_cast<int>(t)];
-    return false;
-}
-
 void NoteUnread(void* actor) {
     const std::wstring name = R::ToString(R::NameOf(R::ClassOf(actor)));
     if (g_unreadSaid.insert(name).second) UE_LOGW("prop_act: cannot read %ls's act facts -- refusing it", name.c_str());
@@ -140,13 +135,13 @@ void HoldTraits(void* actor, internal::ActTraits& t) {
     t.equipRow = f.equipRow;
 }
 
-// The use verb's traits: the class the game offers the eat on, and for food's body whether it is edible. False when
-// the class is not offered (its tally bumped).
-bool UseTraits(void* actor, internal::ActTraits& t) {
+// The use verb's traits: the class the game offers the eat on, and for food's body whether it is edible. The term that
+// refuses the class when it is not offered, none when it is.
+std::optional<Tally> UseTraits(void* actor, internal::ActTraits& t) {
     void* const cls = R::ClassOf(actor);
     for (size_t i = 0; i < std::size(kUseDenied); ++i) {
         void* const c = ResolveClass(g_useDenied[i], kUseDenied[i]);
-        if (c && ue_wrap::prop::WalksToBase(cls, c)) return Refuse(Tally::FitDenied);
+        if (c && ue_wrap::prop::WalksToBase(cls, c)) return Tally::FitDenied;
     }
     const UseClass* row = nullptr;
     for (UseClass& u : g_useClasses) {
@@ -156,7 +151,7 @@ bool UseTraits(void* actor, internal::ActTraits& t) {
             break;
         }
     }
-    if (!row) return Refuse(Tally::FitNoUseRow);
+    if (!row) return Tally::FitNoUseRow;
     t.offered = true;
     t.foodBody = row->foodBody;
     t.read = true;
@@ -164,20 +159,32 @@ bool UseTraits(void* actor, internal::ActTraits& t) {
         int32_t uses = 0;
         t.read = ue_wrap::prop_use::ReadFoodUse(actor, uses, t.notEdible);
     }
-    return true;
+    return std::nullopt;
 }
 
 // Does the act the request names fit `actor`, by the game's own conditions for that verb? The trash lanes own the
-// trash actors, so no verb takes them. The first term that refuses is tallied; the reply stays WrongFamily.
-bool FamilyFits(void* actor, uint8_t family) {
-    if (!internal::KnownFamily(family)) return Refuse(Tally::FitBadFamily);
-    if (ue_wrap::prop::IsTrashActor(actor) || ue_wrap::prop::IsTrashBitsPile(actor)) return Refuse(Tally::FitTrash);
+// trash actors, so no verb takes them. Nothing is tallied here: `why` gets the first term that refuses, when one is
+// named.
+bool FitCensus(void* actor, uint8_t family, std::optional<Tally>& why) {
+    why.reset();
+    if (!internal::KnownFamily(family)) {
+        why = Tally::FitBadFamily;
+        return false;
+    }
+    if (ue_wrap::prop::IsTrashActor(actor) || ue_wrap::prop::IsTrashBitsPile(actor)) {
+        why = Tally::FitTrash;
+        return false;
+    }
     internal::ActTraits t{};
     const bool use = family == static_cast<uint8_t>(PropActFamily::Use);
     if (use) {
-        if (!UseTraits(actor, t)) return false;
+        why = UseTraits(actor, t);
+        if (why) return false;
     } else {
-        if (!ue_wrap::prop::IsDescendantOfProp(actor)) return Refuse(Tally::FitNotProp);
+        if (!ue_wrap::prop::IsDescendantOfProp(actor)) {
+            why = Tally::FitNotProp;
+            return false;
+        }
         t.driven = coop::remote_prop::IsActorDrivenByOtherThan(actor, -1);
         if (family == static_cast<uint8_t>(PropActFamily::Pocket)) PocketTraits(actor, t);
         else HoldTraits(actor, t);
@@ -187,7 +194,15 @@ bool FamilyFits(void* actor, uint8_t family) {
                           : family == static_cast<uint8_t>(PropActFamily::Pocket) ? internal::PocketFits(t)
                                                                                  : internal::HoldFits(t);
     if (fits) return true;
-    if (const std::optional<Tally> why = internal::FirstRefusal(family, t)) ++g_tally[static_cast<int>(*why)];
+    why = internal::FirstRefusal(family, t);
+    return false;
+}
+
+// The request's verdict on its act: the first term that refuses is tallied; the reply stays WrongFamily.
+bool FamilyFits(void* actor, uint8_t family) {
+    std::optional<Tally> why;
+    if (FitCensus(actor, family, why)) return true;
+    if (why) ++g_tally[static_cast<int>(*why)];
     return false;
 }
 
@@ -502,6 +517,17 @@ uint32_t AnsweredFor(int slot, PropActReason reason) {
 }
 
 uint32_t TallyOf(Tally t) { return t < Tally::kCount ? g_tally[static_cast<int>(t)] : 0; }
+
+namespace dev {
+
+bool CensusFits(void* actor, uint8_t family, Tally* first) {
+    std::optional<Tally> why;
+    const bool fits = FitCensus(actor, family, why);
+    if (first) *first = why.value_or(Tally::kCount);
+    return fits;
+}
+
+}  // namespace dev
 
 uint32_t WaitsOf(int slot, WaitCause c) {
     return InRoster(slot) && c < WaitCause::kCount ? g_slots[slot].waits[static_cast<int>(c)] : 0;
