@@ -27,6 +27,7 @@
 #include "coop/interactables/download_arm_sync.h"
 #include "coop/interactables/sat_console_sync.h"  // the SAT console's shared commands run on the host
 #include "coop/interactables/tape_caddy_sync.h"
+#include "coop/interactables/coffee_intent.h"
 #include "coop/world/daily_task_sync.h"
 #include "coop/interactables/device_occupancy.h"
 #include "coop/interactables/notebook_sync.h"
@@ -273,6 +274,7 @@ void Install(coop::net::Session& session) {
     coop::dish_hashcode_sync::Install(&session);  // the dishes' hash codes: the host's rollover sends them, a client refuses its own
     coop::sat_console_sync::Install(&session);  // the SAT console: a client's shared commands run on a terminal the host keeps for it
     coop::tape_caddy_sync::Install(&session);  // caddy reel slots (presser edges) + host accrual corrector (client accrual NOT parked -- corrector-bounded)
+    coop::coffee_intent::Install(&session);  // client coffee actions run on the host
     coop::daily_task_sync::Install(&session);  // saveSlot.taskNew host mirror (rollover/sell are host-only live)
     coop::email_sync::Install(&session);  // meadow-PC email mirror (watermark -> chunked rows -> addEmail)
     coop::signal_sync::Install(&session);  // desk signal-library mirror (savedSignals_0 shadow/diff)
@@ -394,6 +396,7 @@ void ConnectReplayForSlot(int slot) {
     coop::npc_sync::QueueConnectBroadcastForSlot(slot);  // existing NPCs -> joiner
     coop::world_actor_sync::QueueConnectBroadcastForSlot(slot);  // existing event WorldActors -> joiner
     coop::balance_sync::SendCurrentToSlot(slot);  // host's current balance
+    coop::coffee_intent::SnapshotToSlot(slot);  // current vending/maker state after the joiner's props are materialised
     coop::upgrade_sync::SendCurrentToSlot(slot);  // and the upgrade levels: the joiner's save was taken at the handshake
     coop::daily_task_sync::SendCurrentToSlot(slot);  // and the daily task: a change in its load window was hashed but never sent to it
     // The host-to-client apply-blob push is not here: this fires at ClientWorldReady, after the
@@ -590,6 +593,7 @@ DisconnectStats DisconnectAll() {
     coop::dish_hashcode_sync::OnDisconnect();
     coop::sat_console_sync::OnDisconnect();  // the terminals it keeps, and a busy flag mirrored here
     coop::tape_caddy_sync::OnDisconnect();  // poll baselines + IsRecent stamps + the singleton cache (no suppression -- nothing to restore)
+    coop::coffee_intent::OnDisconnect();
     coop::daily_task_sync::OnDisconnect();  // change-hash baseline
     coop::desk_input_sync::OnDisconnect();
     coop::desk_snd_fx::OnDisconnect();
@@ -665,6 +669,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
       coop::prop_element_tracker::InstallReseedScanConsumer();
       coop::prop_element_tracker::DrainReseedQueue(); }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:interactable"}; coop::interactable_sync::Tick(); }  // retry deferred door/light/container applies (still streaming in)
+    coop::coffee_intent::Tick();
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:cord"}; coop::cord_sync::Tick(); }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:keypad"}; coop::keypad_sync::Tick(); }  // a keypad state that arrived before its keypad was indexed
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:time"}; coop::time_sync::Tick(); }  // the world clock: the host hands the net thread a sample when one is due; the client applies at its cycle's own tick

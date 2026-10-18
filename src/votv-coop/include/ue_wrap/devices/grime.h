@@ -12,7 +12,8 @@
 //
 // A decal is STATIC -- level-placed, transform saved, never moving -- so its WORLD POSITION is
 // a deterministic cross-peer identity, and coop::grime_sync keys grime by a quantized position
-// string, not a host-allocated eid. Runtime projectile splatter is outside that model.
+// string, not a host-allocated eid. Runtime coffee projectile splatter is outside the old
+// general grime process lane.
 
 #pragma once
 

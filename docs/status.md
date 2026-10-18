@@ -48,6 +48,7 @@ host validates and commits contested writes), `local` (never shared).
 | Story and scheduled events | host-observed fires replayed on clients by a per-event policy; the active-events registry mirrored for late joiners | host | replay and snapshot | built |
 | Alarm | the base klaxon | presser | snapshot | built |
 | Balance | the shared points total | host | replay at connect | built |
+| Coffee maker, vending machine, coffee bag and cups | client actions execute on the host; machine fields and remaining cup `uses` mirror; cup births use prop sync; bag `amounts` uses prop save data; costs use shared balance | host | machine/cup state replay; props and records in snapshot | implemented; needs build and two-peer verification |
 | Email, daily task | host-appended emails, peer-symmetric delete; the host's task state | host | save transfer plus a prime | built |
 | Deployed hook and rope | existence, flight, the head pose and the reel while the thrower holds it; the handover to the host when both ends anchor, and the anchor itself; the tie, which exists on the host alone, so a prop any peer's hook drags streams to everyone and two hooks on one prop are two host constraints | peer while held, arbiter at the anchor, host after; the host for every constraint | keepalive while held; the save plus a ready-edge replay once anchored; a mirror re-bites from the state it is rebuilt from | built |
 | Lamp posts | not synced: lockstep from the shared day and night cycle | local | none, by design | built |

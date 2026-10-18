@@ -133,6 +133,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::StatOrderReply:
     case ReliableKind::StatQueryReply:
     case ReliableKind::PointSackRedeem:
+    case ReliableKind::CoffeeActionIntent:
     case ReliableKind::RemoverRequest:
     case ReliableKind::CameraToggleIntent:
     case ReliableKind::LaptopTabReport:
@@ -154,6 +155,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::RosterRow:
     case ReliableKind::PlayerDamage:
     case ReliableKind::BalanceSync:
+    case ReliableKind::CoffeeDeviceState:
     case ReliableKind::KeypadState:
     case ReliableKind::SnapshotBegin:
     case ReliableKind::SnapshotComplete:

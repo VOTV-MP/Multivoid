@@ -29,6 +29,7 @@
 #include "coop/interactables/desk_verb_intent.h"  // a press on the main desk's save family, and its answers
 #include "coop/items/coingun_sync.h"
 #include "coop/items/point_sack_intent.h"  // CLIENT->HOST an opened point sack
+#include "coop/interactables/coffee_intent.h"
 #include "coop/items/order_queue_sync.h"  // HOST->CLIENT the delivery order queue
 #include "coop/items/order_sync.h"
 #include "coop/props/pack_trash_intent.h"  // CLIENT->HOST bagging of a pile or clump
@@ -448,6 +449,18 @@ bool HandleIntentEvent(net::Session& session,
         net::PointSackRedeemPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         coop::point_sack_intent::OnRedeem(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::CoffeeActionIntent: {
+        if (session.role() != net::Role::Host || msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers ||
+            msg.payloadLen != sizeof(net::CoffeeActionIntentPayload)) {
+            UE_LOGW("event_feed: CoffeeActionIntent dropped (role, sender slot %d or length %zu)",
+                    msg.senderPeerSlot, static_cast<size_t>(msg.payloadLen));
+            break;
+        }
+        net::CoffeeActionIntentPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::coffee_intent::OnAction(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::RemoverRequest: {

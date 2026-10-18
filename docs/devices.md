@@ -111,6 +111,29 @@ by default, is addressed by no lane: a client's press on it is refused and sends
 cursed one's tick stays that peer's own. A client's copy of a wisp still switches that client's own
 cameras off until the creature mirror stops running the wisp's world writes `[?]`.
 
+### Coffee maker and vending machine
+
+The vending machine and coffee maker use their native `actionOptionIndex` body, but a client
+does not run that body on its own copy. `coop/interactables/coffee_intent` sends the keyed device
+and selected action to the host; the host resolves the live actor, checks the sender's reach, and
+runs the same Blueprint action with that sender's puppet. The request carries no price or credit
+amount. The game's machine reads and debits the host's shared points, which `balance_sync` then
+mirrors to every client. This keeps machine credit, the common balance and the outcome under one
+authority.
+
+After the action, the host sends the machine's vending balance/processing or maker cup/coffee/
+readiness/power flags. Coffee cups spawned by the vending machine use the ordinary host prop birth
+and snapshot lanes; their `first` flag and inherited `uses` remaining-sip count are sent as host
+coffee-device state and included in the join snapshot, so a client sees the same count after a drink. An existing
+prop's `getData`/`loadData` record carries the coffee bag's `amounts` field. `SnapshotToSlot` seeds
+vending machines, coffee makers and cups at world-ready. The dump identifies
+these fields and the action entry points (`prop_coffeevending_C`, `prop_coffeeMaker_C`,
+`prop_coffeeBag_C`). The coffee maker's cup birth is re-expressed through the
+keyed prop lane after its Blueprint action, and a client's final `eaten` edge now runs on the host
+so the empty cup birth and full-cup destroy reach every peer. The cup's remaining sips are host state.
+The `used` coffee-power increase stays local to the drinking player. Two-peer play still needs to
+confirm cup handoff/drinking and bag-record updates across both installations `[RD]`.
+
 ### What is inside a container
 
 A container's contents are not on the container. Every one of them reads from a single global

@@ -62,7 +62,7 @@ messages, the late-join answer, the known limits with their evidence, and the co
 | [npcs-and-kerfur.md](npcs-and-kerfur.md) | Host-owned characters, the creatures each peer owns, the killer wisp, the roaches, and the kerfur robot across its two forms |
 | [events-and-weather.md](events-and-weather.md) | The clock, the weather, who rolls, the story events and how a client sees one fire, the event actors, the pyramid, the alarm, emails and the task |
 | [signals.md](signals.md) | The signal workstation: occupancy, the desk, the download simulation, the catch and the dishes, the deck, drives and racks, the laptop, the database, and the upgrades |
-| [devices.md](devices.md) | Doors, keypads, lights, the power panel, the turbine, windows and grime, the drone, the signal servers |
+| [devices.md](devices.md) | Doors, keypads, lights, the power panel, the turbine, windows and grime, coffee appliances, the drone, the signal servers |
 | [base-computer.md](base-computer.md) | The base laptop and the economy: the balance, upgrades, the laptop's tab and inbox, shop orders, the coin gun, the floppy slot |
 | [vehicles.md](vehicles.md) | The ATV: a mirror that runs the vehicle's physics natively and is corrected, the two authority predicates, the condition that travels |
 | [ui.md](ui.md) | The native screens, the F1 overlay, the HUD, and the game's notifications |

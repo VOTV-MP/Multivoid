@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 237;
+inline constexpr uint16_t kProtocolVersion = 239;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1066,6 +1066,17 @@ enum class ReliableKind : uint8_t {
     // resolve both actors locally and replay the game's cordPlugged/cordUnplugged chain. The host
     // sends the current relationships to a joining peer at its world-ready edge. CordLinkPayload.
     CordLinkState = 189,
+
+    // Client to host: a coffee vending machine or coffee maker action, or a coffee cup's final
+    // eaten edge. The host resolves the keyed actor and runs the game's action for the requesting
+    // player's puppet, so shared points and cup/empty-cup births have one author.
+    // CoffeeActionIntentPayload.
+    CoffeeActionIntent = 190,
+
+    // Host to all and at connect replay: vending/maker state and a coffee cup's first flag and remaining uses.
+    // CoffeeDeviceStatePayload.
+    CoffeeDeviceState = 191,
+
 };
 
 #pragma pack(push, 1)
@@ -1999,6 +2010,24 @@ struct PointSackRedeemPayload {
     uint32_t _pad;       // 4  -- zeroed
 };
 static_assert(sizeof(PointSackRedeemPayload) == 40, "PointSackRedeemPayload must be 40 bytes");
+
+// A coffee appliance action: its host-allocated prop element and the selected game action.
+struct CoffeeActionIntentPayload {
+    uint32_t elementId;
+    uint8_t verb;       // 0 appliance action, 1 coffee cup eaten (host spawns the empty cup)
+    uint8_t action;
+    uint8_t reserved[2];
+};
+static_assert(sizeof(CoffeeActionIntentPayload) == 8, "CoffeeActionIntentPayload must be 8 bytes");
+
+struct CoffeeDeviceStatePayload {
+    uint32_t elementId;
+    uint8_t device;     // 0 vending, 1 maker, 2 coffee cup
+    uint8_t flags;      // maker: hasCup/hasCoffee/coffeeReady/hasPower; vending: processing; cup: first sip remains
+    uint16_t reserved;  // 2 -- zeroed; keeps the payload naturally aligned to 12 bytes on the wire
+    int32_t balance;    // vending's inserted points, or coffee-cup uses remaining; otherwise ignored
+};
+static_assert(sizeof(CoffeeDeviceStatePayload) == 12, "CoffeeDeviceStatePayload must be 12 bytes");
 
 // A client's press of the tool gun's remover (RemoverRequest): the element it hit, the camera point it looked
 // from and the point its shot struck, in world centimetres. The host judges all three; none is trusted.
