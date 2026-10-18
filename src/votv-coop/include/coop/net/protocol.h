@@ -1997,7 +1997,9 @@ static_assert(sizeof(RemoverResultPayload) == 8, "RemoverResultPayload must be 8
 // A client's ask to take or use a world prop (PropActRequest), the host's answer (PropActReply) and the client's
 // closing word (PropActCommit). `id` is the client's own, nonzero, and pairs the three; `eid` is the prop's element
 // id on the sender.
-enum class PropActFamily : uint8_t { Take = 1, Use = 2 };
+// The family byte names the verb, and the host judges each verb by its own conditions (the game's pocket test, its
+// hold test, its use test); any other byte fits nothing.
+enum class PropActFamily : uint8_t { Pocket = 1, Use = 2, Hold = 3 };
 enum class PropActReason : uint8_t { Granted = 0, Gone = 1, WrongFamily = 2, Held = 3, Reach = 4, QueueFull = 5 };
 inline constexpr uint8_t kPropActReasons = 6;   // Granted..QueueFull: the per-reason counter width
 

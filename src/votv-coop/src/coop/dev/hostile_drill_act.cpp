@@ -77,7 +77,7 @@ const char* kAbortedLine = "hostile-drill bad-commit aborted";
 
 bool Unready(Arm a) { return a == Arm::ActNotYet || a == Arm::ActFloodEarly; }
 bool DeadTarget(Arm a) { return a == Arm::ActGone || a == Arm::ActFlood; }
-Family FamilyOf(Arm a) { return a == Arm::ActWrongFamily ? Family::Use : Family::Take; }
+Family FamilyOf(Arm a) { return a == Arm::ActWrongFamily ? Family::Use : Family::Pocket; }
 Reason WantedReason(Arm a) {
     return a == Arm::ActFar ? Reason::Reach : a == Arm::ActGone ? Reason::Gone : Reason::WrongFamily;
 }
@@ -204,7 +204,7 @@ void ClientEarly(coop::net::Session* s, Arm a) {
         return;   // the world or the slot is not up yet; the hold stays
     const uint32_t n = a == Arm::ActNotYet ? 1u : kFlood;
     bool sent = EL::Registry::Get().Get(kUnusedEid) == nullptr;
-    for (uint32_t i = 0; sent && i < n; ++i) sent = SendRequest(s, static_cast<uint16_t>(i + 1), Family::Take, kUnusedEid);
+    for (uint32_t i = 0; sent && i < n; ++i) sent = SendRequest(s, static_cast<uint16_t>(i + 1), Family::Pocket, kUnusedEid);
     coop::dev::announce_hold::Set(false);
     if (!sent) {
         ClientEnd(a, "INCONCLUSIVE", "the requests were not all sent (or this client holds the unused id)");
@@ -265,7 +265,7 @@ void ClientTarget(coop::net::Session* s, Arm a) {
     switch (a) {
     case Arm::ActBadCommit: {
         g_staleBase = StaleReplies();
-        if (!SendCommit(s, kForgedCommitId, 1, g_ceid) || !SendRequest(s, kRequestId, Family::Take, g_ceid)) {
+        if (!SendCommit(s, kForgedCommitId, 1, g_ceid) || !SendRequest(s, kRequestId, Family::Pocket, g_ceid)) {
             ClientEnd(a, "INCONCLUSIVE", "the forged commit or the take was not sent");
             return;
         }
@@ -276,7 +276,7 @@ void ClientTarget(coop::net::Session* s, Arm a) {
     }
     case Arm::ActFlood: {
         for (uint32_t i = 0; i < kFlood; ++i) {
-            if (SendRequest(s, static_cast<uint16_t>(i + 1), Family::Take, g_ceid)) continue;
+            if (SendRequest(s, static_cast<uint16_t>(i + 1), Family::Pocket, g_ceid)) continue;
             ClientEnd(a, "INCONCLUSIVE", "a request of the flood was not sent");
             return;
         }

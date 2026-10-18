@@ -71,7 +71,7 @@ void RunSelftest() {
         in.familyFits = false;
         in.heldByOther = true;
         in.reach = IntentOutcome::OutOfReach;
-        check(H::Decide(in) == H::ActVerdict::Gone, "decide: a dead prop is gone before family, hold and reach");
+        check(H::Decide(in) == H::ActVerdict::Gone, "decide: a dead prop is gone before hold and reach");
     }
     {
         H::ActInputs in = Ready();
@@ -79,7 +79,7 @@ void RunSelftest() {
         check(H::Decide(in) == H::ActVerdict::WrongFamily, "decide: a family that does not fit is refused");
         in.heldByOther = true;
         in.reach = IntentOutcome::OutOfReach;
-        check(H::Decide(in) == H::ActVerdict::WrongFamily, "decide: the family is read before hold and reach");
+        check(H::Decide(in) == H::ActVerdict::Held, "decide: the hold is read before the family");
     }
     {
         H::ActInputs in = Ready();

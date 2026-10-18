@@ -16,6 +16,8 @@
 #include "coop/props/remote_prop.h"
 
 #include "ue_wrap/actors/prop.h"
+#include "ue_wrap/actors/prop_gather.h"
+#include "ue_wrap/actors/prop_use.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
@@ -26,6 +28,8 @@
 #include <cstdint>
 #include <iterator>
 #include <optional>
+#include <string>
+#include <unordered_set>
 #include <utility>
 
 namespace coop::prop_act_host {
@@ -69,31 +73,121 @@ bool InRoster(int slot) { return slot >= 1 && slot < coop::net::kMaxPeers; }
 bool IsHost() { return g_session && g_session->running() && g_session->role() == coop::net::Role::Host; }
 coop::net::RefusalTally::Clock::time_point Now() { return coop::net::RefusalTally::Clock::now(); }
 
-// The use family's classes, each re-resolved when its cached class is no longer alive: a world reload can re-create
-// a class.
-struct UseClass {
-    const wchar_t* name;
-    ue_wrap::CachedObjRef cls;
-};
-UseClass g_useClasses[] = {{L"prop_food_C", {}}, {L"prop_food_mre_C", {}}, {L"prop_sleeppills_C", {}}};
-
-void* ResolveUseClass(UseClass& u) {
-    if (u.cls.Alive()) return u.cls.Raw();
-    u.cls.Set(ue_wrap::object_index::ClassByName(u.name));
-    return u.cls.Raw();
+// A class by name, re-resolved when the cached one is no longer alive: a world reload can re-create a class.
+void* ResolveClass(ue_wrap::CachedObjRef& ref, const wchar_t* name) {
+    if (ref.Alive()) return ref.Raw();
+    ref.Set(ue_wrap::object_index::ClassByName(name));
+    return ref.Raw();
 }
 
-// Does `actor` belong to the family the request names? The trash lanes own the trash actors, so neither family
-// takes them.
-bool FamilyFits(void* actor, uint8_t family) {
-    if (ue_wrap::prop::IsTrashActor(actor) || ue_wrap::prop::IsTrashBitsPile(actor)) return false;
-    if (family == static_cast<uint8_t>(PropActFamily::Take)) return ue_wrap::prop::IsDescendantOfProp(actor);
-    if (family != static_cast<uint8_t>(PropActFamily::Use)) return false;
+// The use family's classes: the ones whose eat the player is offered and whose destroy this lane carries.
+// `foodBody` marks prop_food_C's own row, the one whose `notEdible` the game tests before it eats.
+struct UseClass {
+    const wchar_t* name;
+    bool foodBody;
+    ue_wrap::CachedObjRef cls;
+};
+UseClass g_useClasses[] = {{L"prop_food_C", true, {}}, {L"prop_food_mre_C", false, {}},
+                           {L"prop_sleeppills_C", false, {}}};
+
+// Food-body classes that are not offered the use: the plush offers no option (its getActionOptions is empty), and
+// the others own their action 4, whose destroy is carried by another request.
+constexpr const wchar_t* kUseDenied[] = {L"prop_eriePlush_C", L"prop_food_shrimp_C", L"prop_dingus_C",
+                                         L"prop_cookietray_C", L"prop_breadmold_bread_C"};
+ue_wrap::CachedObjRef g_useDenied[std::size(kUseDenied)];
+
+// Classes whose act facts could not be read, said once each per session.
+std::unordered_set<std::wstring> g_unreadSaid;
+
+bool Refuse(Tally t) {
+    ++g_tally[static_cast<int>(t)];
+    return false;
+}
+
+void NoteUnread(void* actor) {
+    const std::wstring name = R::ToString(R::NameOf(R::ClassOf(actor)));
+    if (g_unreadSaid.insert(name).second) UE_LOGW("prop_act: cannot read %ls's act facts -- refusing it", name.c_str());
+}
+
+// Reads the facts of the pocket (or hold) verb into the pure traits; `read` says whether they could be read.
+void PocketTraits(void* actor, internal::ActTraits& t) {
+    ue_wrap::prop_gather::PocketFacts f{};
+    t.read = ue_wrap::prop_gather::ReadPocketFacts(actor, f);
+    if (!t.read) return;
+    t.collectRefused = f.collectRefused;
+    t.child = f.child;
+    t.frozen = f.frozen;
+    t.simulating = f.simulating;
+    t.canCollect = f.canCollect;
+    t.heavy = f.heavy;
+    t.meshRoot = f.meshRoot;
+    t.volumeFits = f.volumeFits;
+    t.saveClass = f.saveClass;
+}
+
+void HoldTraits(void* actor, internal::ActTraits& t) {
+    ue_wrap::prop_gather::HoldFacts f{};
+    t.read = ue_wrap::prop_gather::ReadHoldFacts(actor, f);
+    if (!t.read) return;
+    t.pickupRefused = f.pickupRefused;
+    t.ignoreSave = f.ignoreSave;
+    t.child = f.child;
+    t.frozen = f.frozen;
+    t.simulating = f.simulating;
+    t.canHold = f.canHold;
+    t.heavy = f.heavy;
+    t.saveClass = f.saveClass;
+    t.equipRow = f.equipRow;
+}
+
+// The use verb's traits: the class the game offers the eat on, and for food's body whether it is edible. False when
+// the class is not offered (its tally bumped).
+bool UseTraits(void* actor, internal::ActTraits& t) {
     void* const cls = R::ClassOf(actor);
-    for (UseClass& u : g_useClasses) {
-        void* const c = ResolveUseClass(u);
-        if (c && ue_wrap::prop::WalksToBase(cls, c)) return true;
+    for (size_t i = 0; i < std::size(kUseDenied); ++i) {
+        void* const c = ResolveClass(g_useDenied[i], kUseDenied[i]);
+        if (c && ue_wrap::prop::WalksToBase(cls, c)) return Refuse(Tally::FitDenied);
     }
+    const UseClass* row = nullptr;
+    for (UseClass& u : g_useClasses) {
+        void* const c = ResolveClass(u.cls, u.name);
+        if (c && ue_wrap::prop::WalksToBase(cls, c)) {
+            row = &u;
+            break;
+        }
+    }
+    if (!row) return Refuse(Tally::FitNoUseRow);
+    t.offered = true;
+    t.foodBody = row->foodBody;
+    t.read = true;
+    if (row->foodBody) {
+        int32_t uses = 0;
+        t.read = ue_wrap::prop_use::ReadFoodUse(actor, uses, t.notEdible);
+    }
+    return true;
+}
+
+// Does the act the request names fit `actor`, by the game's own conditions for that verb? The trash lanes own the
+// trash actors, so no verb takes them. The first term that refuses is tallied; the reply stays WrongFamily.
+bool FamilyFits(void* actor, uint8_t family) {
+    if (!internal::KnownFamily(family)) return Refuse(Tally::FitBadFamily);
+    if (ue_wrap::prop::IsTrashActor(actor) || ue_wrap::prop::IsTrashBitsPile(actor)) return Refuse(Tally::FitTrash);
+    internal::ActTraits t{};
+    const bool use = family == static_cast<uint8_t>(PropActFamily::Use);
+    if (use) {
+        if (!UseTraits(actor, t)) return false;
+    } else {
+        if (!ue_wrap::prop::IsDescendantOfProp(actor)) return Refuse(Tally::FitNotProp);
+        t.driven = coop::remote_prop::IsActorDrivenByOtherThan(actor, -1);
+        if (family == static_cast<uint8_t>(PropActFamily::Pocket)) PocketTraits(actor, t);
+        else HoldTraits(actor, t);
+    }
+    if (!t.read) NoteUnread(actor);
+    const bool fits = use ? internal::UseFits(t)
+                          : family == static_cast<uint8_t>(PropActFamily::Pocket) ? internal::PocketFits(t)
+                                                                                 : internal::HoldFits(t);
+    if (fits) return true;
+    if (const std::optional<Tally> why = internal::FirstRefusal(family, t)) ++g_tally[static_cast<int>(*why)];
     return false;
 }
 
@@ -118,14 +212,14 @@ void ReadInputs(uint8_t slot, const Queued& q, internal::ActInputs& in, void*& a
     actor = coop::element::LivePropActor(q.req.eid);
     in.live = actor != nullptr;
     if (!in.live) return;
-    in.familyFits = FamilyFits(actor, q.req.family);
-    if (!in.familyFits) return;
     in.heldByOther = coop::prop_hold::HeldByOther(actor, slot);
     if (in.heldByOther) return;
     const EL::IntentSubject sub = tok.Authorize(actor);
     in.reach = sub.outcome;
     dist = sub.distUU;
     allowed = sub.reachUU;
+    if (in.reach != EL::IntentOutcome::Ok) return;
+    in.familyFits = FamilyFits(actor, q.req.family);
 }
 
 // One queued request, judged.
@@ -177,12 +271,59 @@ ActVerdict Decide(const ActInputs& in) {
     if (in.holdsReservation) return ActVerdict::Wait;
     if (!in.hasBody) return ActVerdict::Wait;
     if (!in.live) return ActVerdict::Gone;
-    if (!in.familyFits) return ActVerdict::WrongFamily;
     if (in.heldByOther) return ActVerdict::Held;
-    if (in.reach == coop::element::IntentOutcome::Ok) return ActVerdict::Grant;
     // Authorize answers NoBody for the state HasBody reads, so this is the defence for a body lost between the two.
     if (in.reach == coop::element::IntentOutcome::NoBody) return ActVerdict::Wait;
-    return ActVerdict::Reach;
+    if (in.reach != coop::element::IntentOutcome::Ok) return ActVerdict::Reach;
+    if (!in.familyFits) return ActVerdict::WrongFamily;
+    return ActVerdict::Grant;
+}
+
+bool KnownFamily(uint8_t family) {
+    return family >= static_cast<uint8_t>(PropActFamily::Pocket) && family <= static_cast<uint8_t>(PropActFamily::Hold);
+}
+
+bool PocketFits(const ActTraits& t) {
+    return t.read && !t.collectRefused && !t.child && (t.frozen || t.simulating || t.driven) && t.canCollect &&
+           !t.heavy && t.meshRoot && t.volumeFits && t.saveClass;
+}
+
+bool HoldFits(const ActTraits& t) {
+    return t.read && !t.pickupRefused &&
+           (t.frozen || ((t.simulating || t.driven) && !t.child && !t.heavy && t.canHold)) && !t.ignoreSave &&
+           t.saveClass && t.equipRow;
+}
+
+bool UseFits(const ActTraits& t) { return t.read && t.offered && !(t.foodBody && t.notEdible); }
+
+std::optional<Tally> FirstRefusal(uint8_t family, const ActTraits& t) {
+    if (!KnownFamily(family)) return Tally::FitBadFamily;
+    if (!t.read) return Tally::FitUnread;
+    if (family == static_cast<uint8_t>(PropActFamily::Pocket)) {
+        if (t.collectRefused) return Tally::FitCollectRefused;
+        if (t.child) return Tally::FitChild;
+        if (!(t.frozen || t.simulating || t.driven)) return Tally::FitPhysics;
+        if (!t.canCollect) return Tally::FitCanCollect;
+        if (t.heavy) return Tally::FitHeavy;
+        if (!t.meshRoot) return Tally::FitMeshRoot;
+        if (!t.volumeFits) return Tally::FitVolume;
+        if (!t.saveClass) return Tally::FitSaveClass;
+    } else if (family == static_cast<uint8_t>(PropActFamily::Hold)) {
+        if (t.pickupRefused) return Tally::FitPickupRefused;
+        if (!t.frozen) {
+            if (!(t.simulating || t.driven)) return Tally::FitPhysics;
+            if (t.child) return Tally::FitChild;
+            if (t.heavy) return Tally::FitHeavy;
+            if (!t.canHold) return Tally::FitCanHold;
+        }
+        if (t.ignoreSave) return Tally::FitIgnoreSave;
+        if (!t.saveClass) return Tally::FitSaveClass;
+        if (!t.equipRow) return Tally::FitEquipRow;
+    } else {
+        if (!t.offered) return Tally::FitNoUseRow;
+        if (t.foodBody && t.notEdible) return Tally::FitNotEdible;
+    }
+    return std::nullopt;
 }
 
 std::optional<coop::net::PropActReplyPayload> ReplyFor(ActVerdict v, uint16_t id) {
@@ -324,8 +465,29 @@ void OnPeerGone(uint8_t slot) {
     coop::prop_hold::Release(slot);
 }
 
+const char* TallyName(Tally t) {
+    static const char* const kNames[] = {
+        "target_gone", "bad_commit", "held_at_disconnect", "destroy_failed", "queue_full_unready", "bad_sender",
+        "grant_unsent", "fit_unread", "fit_bad_family", "fit_trash", "fit_not_prop", "fit_denied", "fit_no_use_row",
+        "fit_collect_refused", "fit_pickup_refused", "fit_ignore_save", "fit_child", "fit_physics",
+        "fit_can_collect", "fit_can_hold", "fit_heavy", "fit_mesh_root", "fit_volume", "fit_save_class",
+        "fit_equip_row", "fit_not_edible"};
+    static_assert(std::size(kNames) == static_cast<size_t>(Tally::kCount), "a name for every tally");
+    return t < Tally::kCount ? kNames[static_cast<int>(t)] : "";
+}
+
 void OnDisconnect() {
+    std::string fits;   // the session's act refusals, said once at its end
+    for (int i = static_cast<int>(Tally::FitUnread); i < static_cast<int>(Tally::kCount); ++i) {
+        if (!g_tally[i]) continue;
+        fits += ' ';
+        fits += TallyName(static_cast<Tally>(i));
+        fits += '=';
+        fits += std::to_string(g_tally[i]);
+    }
+    if (!fits.empty()) UE_LOGI("prop_act: fit refusals this session:%s", fits.c_str());
     std::fill(std::begin(g_tally), std::end(g_tally), 0u);
+    g_unreadSaid.clear();
     g_refusals.Clear();
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) coop::prop_hold::Release(slot);
 }

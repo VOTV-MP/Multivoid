@@ -151,7 +151,7 @@ bool ClientPuppetReady();
 
 // True when the mirror is there and the host's drive no longer parks it: the state a player meets it in. The host's
 // drive of a prop that fell parks the mirror with physics off until the drive ends, and a take then bails. A pocket
-// also needs the game's own gather test (ue_wrap::prop::IsGatherable). CLIENT.
+// also needs the game's own gather test (ue_wrap::prop_gather::IsGatherable). CLIENT.
 bool MirrorGatherable(void* mirror, Verb verb);
 
 // The mirror's state for a FAIL line, " (child=%d frozen=%d simulating=%d parked=%d)" from the reads MirrorGatherable

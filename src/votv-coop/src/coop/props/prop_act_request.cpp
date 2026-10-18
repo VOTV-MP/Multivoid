@@ -423,7 +423,7 @@ sg::Verdict PrePocket(const sg::Call& c) {
     uint8_t noNotify = 0;
     ReadParam(sNoNotify, c, noNotify);
     p.noNotify = noNotify != 0;
-    Ask(p, PropActFamily::Take);
+    Ask(p, PropActFamily::Pocket);
     return sg::Verdict::Cancel;
 }
 
@@ -457,7 +457,7 @@ sg::Verdict PreHold(const sg::Call& c) {
     p.eid = eid;
     p.row = kHold;
     p.target.Set(target);
-    Ask(p, PropActFamily::Take);
+    Ask(p, PropActFamily::Hold);
     return sg::Verdict::Cancel;
 }
 
@@ -514,7 +514,7 @@ struct Watch {
     const ue_wrap::facts::Function& row;
     int tag;
     sg::PreFn pre;
-    const char* verb;   // the family, for the line a dead watch prints
+    const char* verb;   // the word for the line a dead watch prints
     WatchState state;
 };
 Watch g_watches[] = {

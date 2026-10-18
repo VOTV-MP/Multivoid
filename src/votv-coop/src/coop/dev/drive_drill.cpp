@@ -22,6 +22,7 @@
 
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/actors/prop.h"
+#include "ue_wrap/actors/prop_gather.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -388,7 +389,7 @@ void ClientTick() {
             Fail("the born drive was gone before its pocket");
             return;
         }
-        if (!ue_wrap::prop::IsGatherable(g_own.Get())) {
+        if (!ue_wrap::prop_gather::IsGatherable(g_own.Get())) {
             if (Expired(kLegBoundMs)) {
                 void* const d = g_own.Get();
                 void* const mesh = ue_wrap::prop::GetStaticMesh(d);

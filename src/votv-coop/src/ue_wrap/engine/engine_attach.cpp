@@ -57,8 +57,8 @@ void* PrimFn(void** cache, const wchar_t* name) {
     return *cache;
 }
 
-// Resolve `actor`'s root component (USceneComponent*) via K2_GetRootComponent.
-// null on failure. Game thread.
+}  // namespace
+
 void* RootComponentOf(void* actor) {
     if (!actor || !R::IsLive(actor)) return nullptr;
     void* fn = ActorFn(&g_getRootFn, L"K2_GetRootComponent");
@@ -68,6 +68,8 @@ void* RootComponentOf(void* actor) {
     void* root = f.Get<void*>(L"ReturnValue");
     return (root && R::IsLive(root)) ? root : nullptr;
 }
+
+namespace {
 
 // The root when it is a primitive component, the only layout the body calls dispatch on; null otherwise.
 void* PrimitiveRootOf(void* actor) {

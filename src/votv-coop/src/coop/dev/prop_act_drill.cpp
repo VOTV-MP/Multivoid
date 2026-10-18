@@ -21,6 +21,7 @@
 #include "coop/save/join_window_baseline.h"
 
 #include "ue_wrap/actors/prop_flags.h"
+#include "ue_wrap/actors/prop_gather.h"
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
@@ -312,7 +313,7 @@ bool ClientPuppetReady() {
 
 bool MirrorGatherable(void* mirror, Verb verb) {
     return mirror && !coop::prop_drive_stream::IsParked(mirror) &&
-           (verb != Verb::Pocket || ue_wrap::prop::IsGatherable(mirror));
+           (verb != Verb::Pocket || ue_wrap::prop_gather::IsGatherable(mirror));
 }
 
 std::string MirrorState(void* mirror) {

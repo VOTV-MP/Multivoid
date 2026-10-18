@@ -1,7 +1,8 @@
 // coop/props/prop_act_host.h -- the host's half of a client's take or use of a shared prop: a request is judged (the
-// prop live, its family, nobody else holding or reserving it, the reach), a grant reserves the prop for the sender,
-// and the sender's commit makes the host destroy the prop itself and tell every other peer. Gameplay layer
-// (principle 7). Game thread unless marked.
+// prop live, nobody else holding or reserving it, the reach, and last the act itself: the game's own conditions for
+// the verb the request names, read on the host's copy), a grant reserves the prop for the sender, and the sender's
+// commit makes the host destroy the prop itself and tell every other peer. Gameplay layer (principle 7). Game thread
+// unless marked.
 //
 // The queue's Wait is the mid-join answer: a request before the sender's world is ready, before its body has a pose
 // or while it holds a reservation stays at the head of its queue, and every one of those ends by the client's own
@@ -29,14 +30,37 @@ void NoteBadSender();                             // the dispatcher saw a sender
 void NoteShortPayload(uint8_t senderSlot);        // the dispatcher saw a short payload
 void RunSelftest();                               // the pure decisions, once per start; NOT the game thread
 
+// The host's dev counters (TallyOf). The Fit* tallies name the term of an act's conditions that refused it; the reply
+// to the sender stays WrongFamily.
+enum class Tally : uint8_t { TargetGone, BadCommit, HeldAtDisconnect, DestroyFailed, QueueFullUnready, BadSender,
+                             GrantUnsent, FitUnread, FitBadFamily, FitTrash, FitNotProp, FitDenied, FitNoUseRow,
+                             FitCollectRefused, FitPickupRefused, FitIgnoreSave, FitChild, FitPhysics, FitCanCollect,
+                             FitCanHold, FitHeavy, FitMeshRoot, FitVolume, FitSaveClass, FitEquipRow, FitNotEdible,
+                             kCount };
+const char* TallyName(Tally t);   // "target_gone" ... "fit_not_edible"; "" past kCount
+
 namespace internal {   // pure, no engine call: prop_act_selftest drives these (NOT the game thread)
 enum class ActVerdict : uint8_t { Wait, Gone, WrongFamily, Held, Reach, Grant };
+// Decide's inputs in the order Decide reads them. familyFits is read last: a request is refused for its act only
+// once everything cheaper (the body, the prop, the hold, the reach) has passed.
 struct ActInputs {
-    bool worldReady = false, holdsReservation = false, live = false, familyFits = false, heldByOther = false,
-         hasBody = false;
+    bool worldReady = false, holdsReservation = false, hasBody = false, live = false, heldByOther = false;
     coop::element::IntentOutcome reach = coop::element::IntentOutcome::NoBody;
+    bool familyFits = false;
 };
 ActVerdict Decide(const ActInputs& in);
+
+// The facts one act is judged on. `read` is false when a fact could not be read, and then nothing fits.
+struct ActTraits {
+    bool read, collectRefused, pickupRefused, ignoreSave, child, frozen, simulating, driven, canCollect, canHold,
+         heavy, meshRoot, volumeFits, saveClass, equipRow, offered, foodBody, notEdible;
+};
+bool PocketFits(const ActTraits& t);   // putObjectInventory2 and addObject
+bool HoldFits(const ActTraits& t);     // Hold Object and updateHold
+bool UseFits(const ActTraits& t);      // the use verbs the lane carries
+bool KnownFamily(uint8_t family);      // 1..3
+// The first term of the verb's fit that is false, in the order the fit reads them; none when the act fits.
+std::optional<Tally> FirstRefusal(uint8_t family, const ActTraits& t);
 std::optional<coop::net::PropActReplyPayload> ReplyFor(ActVerdict v, uint16_t id);
 enum class CommitStep : uint8_t { BadCommit, Abort, TargetGone, Destroy };
 CommitStep DecideCommit(bool matched, uint8_t committed, bool liveAndSame);
@@ -46,8 +70,6 @@ const char* VerdictName(ActVerdict v);   // "wait" "gone" "wrong-family" "held" 
 const char* CommitName(CommitStep s);    // "bad" "abort" "target-gone" "destroy"
 }  // namespace internal
 
-enum class Tally : uint8_t { TargetGone, BadCommit, HeldAtDisconnect, DestroyFailed, QueueFullUnready, BadSender,
-                             GrantUnsent, kCount };
 enum class WaitCause : uint8_t { NotReady, Reservation, NoBody, kCount };
 
 // The counters the drills judge by. A slot outside 1..kMaxPeers-1 reads 0.
