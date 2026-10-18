@@ -27,8 +27,6 @@ R::InstanceOffset g_owner{L"owner"};  // on the AnimBP: the creature whose veloc
 // EAttachmentRule::KeepRelative, which BeginPlay passes for all three rules.
 constexpr uint8_t kKeepRelative = 0;
 
-uint32_t g_adoptedKickSkips = 0;   // the per-viewer kicks left out because the twin's own BeginPlay ran them
-
 // A live object in the pointer slot `off` bytes into `base`, or null.
 void* LiveAt(void* base, size_t off) {
     void* p = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(base) + off);
@@ -109,7 +107,6 @@ bool ApplyBeginPlayPresentation(void* hound, bool ownBeginPlayRan) {
     }
     if (ownBeginPlayRan) {
         static bool sSaid = false;
-        ++g_adoptedKickSkips;
         if (!sSaid) {
             sSaid = true;
             UE_LOGI("fossilhound: %ls's own BeginPlay already started the per-viewer loop -- not entered again",
@@ -120,7 +117,5 @@ bool ApplyBeginPlayPresentation(void* hound, bool ownBeginPlayRan) {
     }
     return ok;
 }
-
-uint32_t AdoptedKickSkips() { return g_adoptedKickSkips; }
 
 }  // namespace ue_wrap::fossilhound

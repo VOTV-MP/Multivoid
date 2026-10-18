@@ -22,6 +22,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/creatures/creature_hit_intent.h"
+#include "coop/creatures/npc_mirror_brain.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/drill_hand.h"
 #include "coop/dev/restore_vitals.h"
@@ -39,7 +40,6 @@
 #include "coop/session/net_pump.h"
 #include "coop/world/creature_event_relay.h"
 
-#include "ue_wrap/actors/fossilhound.h"
 #include "ue_wrap/actors/int_objects.h"
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -452,6 +452,7 @@ void ClientTick(const Arm& arm) {
             }
             g_c.damage = sw.maxDamage;
             // The call's own result is not judged here: the host's negative step reads whether it arrived.
+            FaceMirror();
             if (!CallAddDamage()) UE_LOGW("[CHD] the empty-hand call of the mirror's addDamage did not run");
             ClientTo(ClientStep::AwaitNegative);
         } else if (Expired(g_c.stepMs)) {
@@ -520,7 +521,7 @@ void ClientTick(const Arm& arm) {
     }
     case ClientStep::AwaitHostDone:
         if (HasRow(kHostDone)) {
-            UE_LOGI("[CHD] DONE role=client adopted_kick_skips=%u", ue_wrap::fossilhound::AdoptedKickSkips());
+            UE_LOGI("[CHD] DONE role=client adopted_kick_skips=%u", coop::npc_mirror_brain::AdoptedKickSkips());
             ClientStop();
         } else if (Expired(g_c.stepMs)) {
             Verdict(false, "done", false, "hits=%u reason=the host's done line did not come", g_c.hits);

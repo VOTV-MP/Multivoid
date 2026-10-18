@@ -226,6 +226,7 @@ bool g_announced = false;
 int  g_subscribeRetry = 0;
 bool g_subscribeWarned = false;
 bool g_notLiveSaid = false;                         // a mirror that was not live has been said
+uint32_t g_adoptedKickSkips = 0;                    // the per-viewer kicks left out for a twin whose BeginPlay ran
 ue_wrap::ObjKeyedCache<bool, 16> g_namesPendingSaid;   // the classes born before the parked names resolved, said
 
 // An Npc mirror's end, after the engine's own: its mark goes by the record's own slot and serial.
@@ -330,11 +331,15 @@ void SetUpPresentation(void* actor, Origin origin) {
         ok = ue_wrap::zombie::ApplyBeginPlayPresentation(actor);
     } else if (houndTable && ChainHasTable(cls, *houndTable)) {
         // An adopted twin's own BeginPlay ran as the client's creature and already started the per-viewer loop.
-        ok = ue_wrap::fossilhound::ApplyBeginPlayPresentation(actor, /*ownBeginPlayRan=*/origin == Origin::Adopted);
+        const bool ownBeginPlayRan = origin == Origin::Adopted;
+        ok = ue_wrap::fossilhound::ApplyBeginPlayPresentation(actor, ownBeginPlayRan);
+        if (ownBeginPlayRan) ++g_adoptedKickSkips;
     }
     UE_LOGI("npc_mirror_brain: %ls mirror brain off, presentation %s", R::ClassNameOf(actor).c_str(),
             ok ? "set up" : "incomplete");
 }
+
+uint32_t AdoptedKickSkips() { return g_adoptedKickSkips; }
 
 void Install() {
     ResolveClassNames();   // a latch; the lookups also ask for it

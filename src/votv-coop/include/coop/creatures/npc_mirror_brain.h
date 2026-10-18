@@ -59,6 +59,10 @@ enum class Origin : uint8_t { Spawned, Adopted };
 // started it. A no-op for an actor that is not a marked mirror. Game thread.
 void SetUpPresentation(void* actor, Origin origin);
 
+// [dev], for the drill alone: how many times SetUpPresentation left the hound's per-viewer kick out for an adopted
+// twin, whose own BeginPlay ran it (counted each time).
+uint32_t AdoptedKickSkips();
+
 // Register the watches and subscribe to the death seam, each once per process. Called every pump tick by the
 // install fanout, which is also the retry until each piece latches. Game thread.
 void Install();
