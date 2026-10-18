@@ -18,7 +18,7 @@ namespace ue_wrap::weapon_catalog {
 struct Swing {
     bool  canSwing  = false;  // a row with a montage and the attack flag: the fire input swings it
     float maxDamage = 0.f;    // its damage times its largest material multiplier, when one is above 1
-    float length    = 0.f;    // the reach of the swing's line trace, in cm
+    float length    = 0.f;    // the reach of the swing's line trace, in cm; 0 when the table has no such column
 };
 
 // Builds the catalog if it is not built; false when it is unusable, and the caller refuses rather

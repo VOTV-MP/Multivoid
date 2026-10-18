@@ -74,13 +74,16 @@ void Build() {
     const int32_t offAttack  = R::FindPropertyOffsetByPrefix(rowStruct, L"attack_");
     const int32_t offMult    = R::FindPropertyOffsetByPrefix(rowStruct, L"matEffDmg_");
     const int32_t offLength  = R::FindPropertyOffsetByPrefix(rowStruct, L"length_");
-    if (offDamage < 0 || offMontage < 0 || offAttack < 0 || offMult < 0 || offLength < 0) {
+    if (offDamage < 0 || offMontage < 0 || offAttack < 0 || offMult < 0) {
         UE_LOGE("weapon_catalog: row struct members did not resolve (damage@%d montage@%d attack@%d "
-                "matEffDmg@%d length@%d) -- catalog INVALID", offDamage, offMontage, offAttack, offMult,
-                offLength);
+                "matEffDmg@%d) -- catalog INVALID", offDamage, offMontage, offAttack, offMult);
         g_outcome = Outcome::Hard;
         return;
     }
+    // Only the hit judge reads the reach: a build without the column leaves every row's length 0 (the judge refuses
+    // "no reach data") and the damage consumers keep a valid catalog.
+    if (offLength < 0)
+        UE_LOGW("weapon_catalog: the row struct has no length member -- every row's reach reads 0");
 
     std::vector<DT::RowRef> refs;
     if (!DT::Rows(table, refs, "weapon_catalog")) return;
@@ -100,7 +103,7 @@ void Build() {
                       *reinterpret_cast<const uint8_t*>(ref.row + offAttack) != 0;
         sw.maxDamage = damage * largest;
         if (!std::isfinite(sw.maxDamage)) sw.maxDamage = std::numeric_limits<float>::max();
-        sw.length = *reinterpret_cast<const float*>(ref.row + offLength);
+        if (offLength >= 0) sw.length = *reinterpret_cast<const float*>(ref.row + offLength);
         if (!std::isfinite(sw.length) || sw.length < 0.f) sw.length = 0.f;
         if (sw.canSwing) {
             ++swings;
