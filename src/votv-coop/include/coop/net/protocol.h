@@ -1046,6 +1046,15 @@ enum class ReliableKind : uint8_t {
     // when it is the holder or after it applied a report. Never relayed; a client's own copy is refused at the host's
     // receive edge. Late join: the host's widget index to the joiner, after its world-ready. LaptopTabPayload.
     LaptopTabState = 186,
+
+    // Client to host: my player's swing hit this creature's mirror. The client plays the hit's feedback at once, a
+    // cosmetic prediction, and cancels the mirror's own body; the host judges the swing (the sender's held item, its
+    // reach, its sight, the point on the creature) and runs the verb on its real creature. The verb is generic
+    // (0 addDamage, 1 exploded, 2 ignite) and the host judges 0 only. Never relayed; no answer: the creature's
+    // state is the host's and its death arrives as its destroy. Late join: none -- a request is an act. Trust:
+    // the id must name a live host creature of a parked family, the damage is clamped to the held item's, and
+    // intents run from a bounded queue at a bounded rate. CreatureHitIntentPayload.
+    CreatureHitIntent = 187,
 };
 
 #pragma pack(push, 1)
@@ -3461,6 +3470,26 @@ struct CreatureEventActivePayload {
 static_assert(sizeof(CreatureEventActivePayload) == 5, "CreatureEventActivePayload must be 5 bytes");
 static_assert(sizeof(CreatureEventActivePayload) <= 256 - 20 - 8,
               "CreatureEventActivePayload must fit in one reliable datagram");
+
+// A client's hit on a creature (CreatureHitIntent): the creature's host-allocated element id, the verb, the damage the
+// client's swing claimed, the point the hit struck and the hit's impulse, in world centimetres. The host judges all of
+// it; none is trusted.
+inline constexpr uint8_t kCreatureHitVerbAddDamage = 0;
+inline constexpr uint8_t kCreatureHitVerbExploded  = 1;
+inline constexpr uint8_t kCreatureHitVerbIgnite    = 2;
+inline constexpr uint8_t kCreatureHitVerbCount     = 3;
+
+struct CreatureHitIntentPayload {
+    uint32_t creatureEid;  // 4  -- the creature's Element id (host-allocated)
+    uint8_t  verb;         // 1  -- kCreatureHitVerb*
+    uint8_t  pad[3];       // 3  -- zeroed
+    float    damage;       // 4  -- the claimed amount
+    float    hitLoc[3];    // 12 -- the impact point
+    float    impact[3];    // 12 -- the hit's impulse
+};
+static_assert(sizeof(CreatureHitIntentPayload) == 36, "CreatureHitIntentPayload must be 36 bytes");
+static_assert(sizeof(CreatureHitIntentPayload) <= 256 - 20 - 8,
+              "CreatureHitIntentPayload must fit in one reliable datagram");
 
 // A lightning strike (LightningStrike): the strike's world location; the receiver spawns the
 // strike actor there, and it destroys itself.

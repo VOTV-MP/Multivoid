@@ -203,6 +203,15 @@ sound and its hidden-then-dig-out. A client's own creature of these classes is n
 is the actor's slot and the slot's serial, so a recycled address is never a mirror, and it ends with the mirror.
 `[RD]`; the refusals `[?]` until a run reads them.
 
+**A client's hit on a parked creature.** A client's swing ends in the struck mirror's `addDamage` with the player as the
+damager. The call is watched (`coop/creatures/creature_hit_intent`): the client plays the zombie family's hit feedback
+at once (the fossilhound has none), sends the creature's element id with the claimed damage, the point struck and the
+impact, and cancels the call. The host judges the swing against the sender's held item, its reach from the eye the host
+holds for it, the sight to the point and the point's distance from the creature, cuts the damage to the item's most and
+runs the creature's own `addDamage` with a null damager; health, death and the destroy are the host's, and nothing is
+answered. A zombie the host kills this way leaves its ragdoll body on the host alone: the body's class has no lane
+(owed). A ranged tool's hit is not a swing and is refused. `[RD]`
+
 ## Event actors
 
 A second interceptor on the same deferred-spawn call carries a disjoint, name-matched allowlist

@@ -14,6 +14,7 @@
 
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
+#include "coop/creatures/creature_hit_intent.h"  // CLIENT->HOST a swing that hit a creature's mirror
 #include "coop/creatures/kerfur_command.h"
 #include "coop/creatures/kerfur_convert_host.h"
 #include "coop/creatures/roach_sync.h"    // CLIENT->HOST local roach consumption intent
@@ -26,6 +27,7 @@
 #include "coop/creatures/kerfus_intent.h"  // CLIENT->HOST a Kerfus verb (on/off, fix the servers, pat)
 #include "coop/interactables/desk_ping_sync.h"    // a ping's verdict on the main desk, and its answers
 #include "coop/interactables/desk_verb_intent.h"  // a press on the main desk's save family, and its answers
+#include "coop/element/registry.h"  // IsAllowedHostAllocatedEid
 #include "coop/items/coingun_sync.h"
 #include "coop/items/point_sack_intent.h"  // CLIENT->HOST an opened point sack
 #include "coop/items/order_queue_sync.h"  // HOST->CLIENT the delivery order queue
@@ -463,6 +465,39 @@ bool HandleIntentEvent(net::Session& session,
         net::RemoverResultPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         coop::remover_request::OnResult(p);
+        break;
+    }
+    case net::ReliableKind::CreatureHitIntent: {
+        // CLIENT->HOST: a client's swing hit a creature's mirror. The host judges the swing and runs the verb on its
+        // own creature (coop::creature_hit_intent); the format lives here. Never relayed.
+        if (session.role() != net::Role::Host) {
+            UE_LOGW("event_feed: CreatureHitIntent received on a client -- dropping");
+            break;
+        }
+        if (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: CreatureHitIntent from invalid senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::CreatureHitIntentPayload)) {
+            UE_LOGW("event_feed: CreatureHitIntent payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::CreatureHitIntentPayload));
+            break;
+        }
+        net::CreatureHitIntentPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        // The trust boundary: a known verb, a host-allocated id, a damage that is not negative, and every float a
+        // finite value within the world's range.
+        constexpr float kMaxComponent = 1e7f;
+        const auto bounded = [](float v) { return std::isfinite(v) && std::fabs(v) <= kMaxComponent; };
+        bool floatsOk = bounded(p.damage) && p.damage >= 0.f;
+        for (int i = 0; i < 3; ++i) floatsOk = floatsOk && bounded(p.hitLoc[i]) && bounded(p.impact[i]);
+        if (p.verb >= net::kCreatureHitVerbCount || !floatsOk ||
+            !coop::element::Registry::IsAllowedHostAllocatedEid(p.creatureEid)) {
+            UE_LOGW("event_feed: CreatureHitIntent verb=%u eid=%u out of range -- dropping",
+                    static_cast<unsigned>(p.verb), p.creatureEid);
+            break;
+        }
+        coop::creature_hit_intent::OnIntent(static_cast<int>(msg.senderPeerSlot), p);
         break;
     }
     case net::ReliableKind::EraserPressIntent: {

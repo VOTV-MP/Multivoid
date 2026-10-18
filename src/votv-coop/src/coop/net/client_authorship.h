@@ -131,6 +131,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::StatQueryReply:
     case ReliableKind::PointSackRedeem:
     case ReliableKind::RemoverRequest:
+    case ReliableKind::CreatureHitIntent:
     case ReliableKind::CameraToggleIntent:
     case ReliableKind::LaptopTabReport:
         return ClientAuthorship::Client;

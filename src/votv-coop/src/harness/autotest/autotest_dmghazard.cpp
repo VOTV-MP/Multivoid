@@ -239,15 +239,15 @@ void ProbeDamageHazardOnHost() {
             Name(o4), h4, ReadHostHealthGT());
     RestoreHostHealth(before);
 
-    const bool refusedAll = o1 == Outcome::Refused && o2 != Outcome::Landed && o3 == Outcome::Refused;
+    const bool refusedAll = o1 == Outcome::Refused && o2 == Outcome::Refused && o3 == Outcome::Refused;
     const bool controlLanded = o4 == Outcome::Landed;
     if (o1 == Outcome::Landed || o2 == Outcome::Landed || o3 == Outcome::Landed) {
         UE_LOGW("dmghazard[host]: VERDICT FAIL -- a peer's puppet took %s%s%s on this machine (health restored to "
                 "%.2f)", o1 == Outcome::Landed ? "the damage verb " : "", o2 == Outcome::Landed ? "addDamage " : "",
                 o3 == Outcome::Landed ? "fire" : "", before);
     } else if (refusedAll && controlLanded) {
-        UE_LOGI("dmghazard[host]: VERDICT PASS -- the damage verb and ignite at a peer's puppet were refused, "
-                "addDamage wrote nothing, and the same verb at this machine's player landed (health restored to "
+        UE_LOGI("dmghazard[host]: VERDICT PASS -- the damage verb, addDamage and ignite at a peer's puppet were "
+                "refused, and the same verb at this machine's player landed (health restored to "
                 "%.2f)", before);
     } else {
         UE_LOGW("dmghazard[host]: VERDICT INCONCLUSIVE -- verb=%s addDamage=%s ignite=%s control=%s: a call that "

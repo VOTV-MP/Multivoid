@@ -282,6 +282,7 @@ set(VOTVCOOP_SOURCES
     src/coop/player/item_activate.cpp
     src/coop/player/player_damage.cpp
     src/coop/player/player_hit.cpp
+    src/coop/player/hit_judge.cpp
     src/coop/player/ragdoll_gate.cpp
     src/coop/player/death_revive.cpp
     src/coop/player/run_end_travel.cpp
@@ -300,6 +301,7 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/npc_mirror_brain.cpp
     src/coop/creatures/npc_mirror_brain_table.cpp
     src/coop/creatures/creature_hit.cpp
+    src/coop/creatures/creature_hit_intent.cpp
     src/coop/creatures/npc_pose_drive.cpp
     src/coop/creatures/npc_pose_host.cpp
     src/coop/creatures/npc_sync.cpp

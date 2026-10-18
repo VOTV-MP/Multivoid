@@ -217,10 +217,11 @@ inline Lane LaneForKind(ReliableKind k) {
     // A desk press names what it acts on by content; its answers go to the presser alone. The default, by decision.
     case ReliableKind::DeskVerb:          return Lane::Normal;
     case ReliableKind::DeskPingVerdict:   return Lane::Normal;
-    // A remover press reaches the host in the order its client made it, and the answer follows the host's serve of it.
-    // Not relayable: the request goes to the host alone and the answer to its sender alone. The default, by decision.
+    // A remover press and a creature hit reach the host in the order their client made them; the remover's answer
+    // follows the host's serve of it. Not relayable: a request goes to the host alone. The default, by decision.
     case ReliableKind::RemoverRequest:    return Lane::Normal;
     case ReliableKind::RemoverResult:     return Lane::Normal;
+    case ReliableKind::CreatureHitIntent: return Lane::Normal;
     // The camera kinds are ordered against nothing else and not relayable. The default, by decision.
     case ReliableKind::CameraActiveState:  return Lane::Normal;
     case ReliableKind::CameraLightState:   return Lane::Normal;
