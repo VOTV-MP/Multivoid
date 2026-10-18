@@ -1,7 +1,7 @@
 // coop/dev/prop_act_drill.h -- [dev] the act drill: a client's take or use of a shared prop asks the host first
 // (ini prop_act_drill=honest|race|depart|edge, env VOTVCOOP_PROP_ACT_DRILL; BOTH peers, the same value).
 //
-//   HOST   -- spawns each step's target on the floor in front of its own player, waits until the target is announced,
+//   HOST   -- spawns each step's target on the floor in front of the client's puppet, waits until it is announced,
 //             says a ready line (the step and the target's eid) in the lobby chat, then judges its own counters when
 //             the client says its done line. Its PASS line ends the phase.
 //   CLIENT -- reads the line, resolves the mirror by eid, walks within reach with the director, runs the verb by
@@ -46,7 +46,7 @@ inline constexpr uint64_t kPollEveryMs = 200;   // a chat walk, a few times a se
 
 inline constexpr float kReachCm = 120.f;       // the client's stop beside the mirror
 inline constexpr int kWalkDeadlineS = 60;      // the director's own bound on the walk
-inline constexpr float kPairGapCm = 60.f;      // a pair's second prop, further along the host's line
+inline constexpr float kPairGapCm = 60.f;      // a pair's second prop, further along the spawn line
 
 // Bounds: each ends a step that did not get its line or its count, and FAILs it.
 inline constexpr uint64_t kReadyBoundMs = 120000;   // CLIENT: a step's start to the host's ready line
@@ -68,7 +68,7 @@ enum class Verb : uint8_t { Pocket, Hold, Use, Soap };   // putObjectInventory2,
 // the same, and the eaten copy is gone from this client afterwards.
 enum class Ends : uint8_t { Inventory, Hand, Gone, Stays, Unchecked, NativeGone };
 
-// Who makes a step's target: the host, on the floor in front of its player (HostTwo: a second one beside it;
+// Who makes a step's target: the host, on the floor in front of the client's puppet (HostTwo: a second one beside it;
 // HostKerfur: a kerfur NPC the host turns off into its prop), or the client itself (the host spawns nothing).
 enum class Target : uint8_t { Host, HostTwo, HostKerfur, Client };
 
@@ -141,9 +141,11 @@ void Say(const std::string& line);
 // The text after `head` in the first row of the lobby record that `slot` said; false when none yet. HOST.
 bool ClientSaid(int slot, const std::string& head, std::string* rest);
 
-// Spawns the row's class on the floor in front of the host's player, `extraCm` further along when it is a pair's
-// second. Null on success, else why not. HOST.
+// Spawns the row's class on the floor in front of slot 1's puppet, `extraCm` further along when it is a pair's
+// second. Null on success, else why not. HOST. ClientPuppetReady is what an arm gate waits on before it: the puppet
+// is live and has a pose.
 const char* SpawnTarget(const Row& row, float extraCm, void** out);
+bool ClientPuppetReady();
 
 // What a client's steps use (prop_act_drill_client.cpp). HostSaid reads the text after `head` in the first row of this
 // client's feed that carries it. RunVerb is the row's verb on this player and the mirror, the call a press makes: null

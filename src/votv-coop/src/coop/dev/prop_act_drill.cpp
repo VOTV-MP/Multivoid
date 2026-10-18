@@ -13,6 +13,8 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/puppet_drive.h"
+#include "coop/player/remote_player.h"
 #include "coop/props/prop_act_host.h"
 #include "coop/props/prop_snapshot.h"
 #include "coop/save/join_window_baseline.h"
@@ -60,10 +62,13 @@ using ue_wrap::FVector;
 
 constexpr const wchar_t* kKerfurNpc = L"kerfurOmega_C";
 
-// The host's spawn: along its player's facing, the first distance whose column has a floor; the floor found by a trace.
+// Once a session: the session start calls Install many times, and EdgeInstall sets the client's announce hold.
+bool g_installed = false;
+
+// The host's spawn: along slot 1's puppet's facing, the first distance whose column has a floor (found by a trace).
 constexpr float kAheadCm[] = {200.f, 150.f, 250.f};
 constexpr float kDropCm = 40.f;          // above the floor, so the prop settles
-constexpr float kFloorDownCm = 400.f;    // how far under the player's middle the floor is looked for
+constexpr float kFloorDownCm = 400.f;    // how far under the puppet's middle the floor is looked for
 constexpr float kMinColumnCm = 20.f;     // a column whose floor is nearer than this to its start began inside geometry
 constexpr float kNpcLiftCm = 60.f;       // a kerfur NPC is placed above the floor so its capsule clears it
 
@@ -199,7 +204,8 @@ void HostTick(coop::net::Session* s, const Phase& ph) {
     case HStep::Arm:
         // The client's join and its late window are over, so what is spawned reaches it as a live spawn.
         if (!s->IsSlotWorldReady(kClientSlot) || !coop::prop_snapshot::IsBracketClosed(kClientSlot) ||
-            coop::join_window_baseline::IsLateWindowOpen(kClientSlot) || !coop::players::Registry::Get().Local())
+            coop::join_window_baseline::IsLateWindowOpen(kClientSlot) || !coop::players::Registry::Get().Local() ||
+            !ClientPuppetReady())
             return;
         UE_LOGI("%s host %s armed on slot %d", kTag, ph.name, kClientSlot);
         HEnter(HStep::Spawn);
@@ -288,15 +294,24 @@ bool ClientSaid(int slot, const std::string& head, std::string* rest) {
     return found;
 }
 
-// Spawns the row's class on the floor in front of the host's player, `extraCm` further along when it is a pair's
-// second. A kerfur row spawns the NPC. Null on success, else why not.
+// True once slot 1's puppet is live and has a pose, the place and facing SpawnTarget reads. The HOST arm gates wait on it.
+bool ClientPuppetReady() {
+    coop::RemotePlayer& rp = coop::puppet_drive::Puppet(kClientSlot);
+    return rp.valid() && rp.HasPose();
+}
+
+// Spawns the row's class on the floor in front of slot 1's puppet, `extraCm` further along when it is a pair's
+// second, so the client's walk to the mirror is short. A kerfur row spawns the NPC. Null on success, else why not.
 const char* SpawnTarget(const Row& row, float extraCm, void** out) {
-    void* const player = coop::players::Registry::Get().Local();
+    void* const player = coop::players::Registry::Get().Local();   // the floor trace's world context
+    coop::RemotePlayer& rp = coop::puppet_drive::Puppet(kClientSlot);
+    void* const puppet = rp.GetActor();
     FVector at{};
-    if (!player || !E::TryGetActorLocation(player, at)) return "the host's player place could not be read";
-    FVector fwd = E::GetActorForwardVector(player);
+    if (!player) return "the host's player was not there";
+    if (!puppet || !E::TryGetActorLocation(puppet, at)) return "slot 1's puppet place could not be read";
+    FVector fwd = E::GetActorForwardVector(puppet);
     const float len = std::sqrt(fwd.X * fwd.X + fwd.Y * fwd.Y);
-    if (len < 0.1f) return "the host's player facing could not be read";
+    if (len < 0.1f) return "slot 1's puppet facing could not be read";
     const bool npc = row.target == Target::HostKerfur;
     void* const cls = npc ? nullptr : ue_wrap::asset_load::LoadObjectByPath(row.path);
     if (!npc && !cls) return "the target's class did not load";
@@ -309,18 +324,15 @@ const char* SpawnTarget(const Row& row, float extraCm, void** out) {
                                            npc ? kDropCm + kNpcLiftCm : kDropCm, &p, &floorZ);
         if (d == DP::Drop::NoFloor) continue;
         if (d == DP::Drop::SpawnFailed) return "the target did not spawn";
-        UE_LOGI("%s host %s spawned %ls at (%.0f, %.0f, %.0f), %.0f uu ahead of its player", kTag, row.name,
+        UE_LOGI("%s host %s spawned %ls at (%.0f, %.0f, %.0f), %.0f uu ahead of slot 1's puppet", kTag, row.name,
                 npc ? kKerfurNpc : row.leaf, x, y, floorZ + kDropCm, ahead);
         *out = p;
         return nullptr;
     }
-    return "no floor was found in front of the host's player";
+    return "no floor was found in front of slot 1's puppet";
 }
 
 }  // namespace detail
-
-// Once a session: the session start calls Install many times, and EdgeInstall sets the client's announce hold.
-bool g_installed = false;
 
 void Install(coop::net::Session* s) {
     if (!s || g_installed || PhaseName() == "off") return;

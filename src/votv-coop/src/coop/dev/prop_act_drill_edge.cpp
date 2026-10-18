@@ -302,7 +302,8 @@ void HostStep(coop::net::Session* s) {
         // c1's announce is held by its window row, so this waits for the window row's end: the join and its late
         // window are then over, and what is spawned reaches the client as a live spawn.
         if (!s->IsSlotWorldReady(kSlot) || !coop::prop_snapshot::IsBracketClosed(kSlot) ||
-            coop::join_window_baseline::IsLateWindowOpen(kSlot) || !coop::players::Registry::Get().Local())
+            coop::join_window_baseline::IsLateWindowOpen(kSlot) || !coop::players::Registry::Get().Local() ||
+            !ClientPuppetReady())
             return;
         UE_LOGI("%s host edge armed on slot %d", kTag, kSlot);
         HEnter(HStage::AwaitDone);

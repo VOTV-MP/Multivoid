@@ -314,7 +314,7 @@ void HostStep(coop::net::Session* s) {
             if (!s->IsSlotWorldReady(slot) || !coop::prop_snapshot::IsBracketClosed(slot) ||
                 coop::join_window_baseline::IsLateWindowOpen(slot))
                 return;
-        if (!coop::players::Registry::Get().Local()) return;
+        if (!coop::players::Registry::Get().Local() || !ClientPuppetReady()) return;
         UE_LOGI("%s host race armed on slots %d and %d", kTag, kSlotC1, kSlotC2);
         HEnter(r.act.target == Target::Client ? HStage::AwaitKey : HStage::Spawn);
         return;

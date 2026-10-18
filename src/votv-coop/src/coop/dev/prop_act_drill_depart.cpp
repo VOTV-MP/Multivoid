@@ -94,7 +94,8 @@ void HostStep(coop::net::Session* s) {
     case HStage::Arm:
         // The join and its late window are over, so what is spawned reaches the client as a live spawn.
         if (!s->IsSlotWorldReady(kSlot) || !coop::prop_snapshot::IsBracketClosed(kSlot) ||
-            coop::join_window_baseline::IsLateWindowOpen(kSlot) || !coop::players::Registry::Get().Local())
+            coop::join_window_baseline::IsLateWindowOpen(kSlot) || !coop::players::Registry::Get().Local() ||
+            !ClientPuppetReady())
             return;
         UE_LOGI("%s host depart armed on slot %d", kTag, kSlot);
         HEnter(HStage::Spawn);
