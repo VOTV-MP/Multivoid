@@ -2,8 +2,8 @@
 
 // The steps, each ending on a line the peer prints; every wait is bounded to 60 s from when it can hold:
 //   1. HOST, once slot 1 is world-ready and its bracket closed: spawns the arm's creature 300 cm along the puppet's
-//      yaw. While the drill runs it refills its vitals as a hit is delivered and, on the zombie arm, clears the
-//      stuck-count timer every second.
+//      yaw. While the drill runs it refills its vitals each second and as a hit is delivered and, on the zombie arm,
+//      clears the stuck-count timer every second.
 //   2. INBOUND. The client passes once three hits were applied and none came from the mirror's own copy (the
 //      fossilhound arm also passes its perception); the host once three were delivered. The client posts
 //      "inbound done".
@@ -84,6 +84,7 @@ constexpr Arm kArms[] = {
 constexpr long long kBoundMs = 60000;
 constexpr long long kSwingGapMs = 600;     // a player's swing rate, inside the intent queue's budget of 2 a second
 constexpr long long kClearGapMs = 1000;
+constexpr long long kRestoreGapMs = 1000;
 constexpr float kSpawnAheadCm = 300.f;
 constexpr uint32_t kInboundNeeded = 3;
 constexpr const wchar_t* kStuckTimer = L"timer_checkForStuck";
@@ -171,6 +172,7 @@ struct HostState {
     HostStep              step = HostStep::Wait;
     long long             stepMs = 0;
     long long             clearMs = 0;
+    long long             restoreMs = 0;
     ue_wrap::CachedObjRef creature;
     uint32_t              delivered0 = 0, deliveredSeen = 0;
 } g_h;
@@ -215,11 +217,15 @@ void HostSpawn(const Arm& arm, void* puppet) {
     HostTo(HostStep::Inbound);
 }
 
-// While the drill runs: the host refills its vitals (and so the client's) each time a hit is delivered, and the
-// zombie's stuck count, which kills one that stands still to attack, is held off.
+// While the drill runs: the host refills its vitals (and so the client's) each time a hit is delivered and once a
+// second besides, since the creature also bites the host, which stands 25 cm from the client's puppet, and the hits on
+// the host are not deliveries. The zombie's stuck count, which kills one that stands still to attack, is held off.
 void HostKeepAlive(const Arm& arm, long long now) {
     const uint32_t d = coop::player_damage::DeliveredCount();
-    if (d > g_h.deliveredSeen) coop::dev::restore_vitals::Restore();
+    if (d > g_h.deliveredSeen || now - g_h.restoreMs >= kRestoreGapMs) {
+        g_h.restoreMs = now;
+        coop::dev::restore_vitals::Restore();
+    }
     g_h.deliveredSeen = d;
     if (arm.stuckTimer && now - g_h.clearMs >= kClearGapMs) {
         g_h.clearMs = now;
