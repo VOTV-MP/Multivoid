@@ -87,6 +87,8 @@ inline Lane LaneForKind(ReliableKind k) {
     // ReelEjectIntent, the same order-paired family: the ejecting client may pocket the reel a pass
     // later (a keyed destroy on Bulk), and in-lane ordering makes the host author the spawn first.
     case ReliableKind::ReelEjectIntent: return Lane::Bulk;
+    // Keep the intent with the host-authored prop birth and source destroy it produces.
+    case ReliableKind::SleepingbagIntent: return Lane::Bulk;
     case ReliableKind::EntitySpawn:    return Lane::Bulk;
     case ReliableKind::EntityDestroy:  return Lane::Bulk;
     // A creature's event count rides its lifecycle lane, so a count is ordered after its spawn and before its
@@ -259,7 +261,9 @@ constexpr bool IsClientRelayableReliableKind(ReliableKind k) {
     // as DoorVerbIntent, an intent addressed to the host alone. PowerControlState likewise: a press
     // reaches the host alone and the host authors the canonical.
     case ReliableKind::LightState:
+    case ReliableKind::CordLinkState:
     case ReliableKind::ContainerState:
+    case ReliableKind::SwingerMotion:   // presser-authored hinge input
     case ReliableKind::GarageDoorState:   // symmetric
     case ReliableKind::ApplianceState:    // symmetric
     case ReliableKind::OvenRepairState:   // symmetric, one way

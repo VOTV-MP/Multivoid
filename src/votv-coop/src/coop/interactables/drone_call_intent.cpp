@@ -15,6 +15,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/devices/drone_console.h"
+#include "ue_wrap/devices/drone.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
@@ -69,7 +70,6 @@ coop::roster_ledger::PerSlotState<Slot> g_slots;
 // mid-join window rather than a verdict, which the door-verb, keypad and container lanes wait out the
 // same way (principle 8): a press made in it is not lost.
 bool Execute(coop::net::Session& s, const coop::net::DroneFlyIntentPayload& p, uint8_t slot) {
-    (void)p;  // verb 0 is the only face with a lane; the dispatcher refuses the rest
     // The console carries no identity to name, so the sender's reach IS the resolve: of this
     // world's consoles, the one the sender is standing at. Any of them calls the same drone, so
     // the first within reach is the press.
@@ -101,6 +101,21 @@ bool Execute(coop::net::Session& s, const coop::net::DroneFlyIntentPayload& p, u
                 static_cast<unsigned>(slot));
         return true;
     }
+    if (p.verb == 1) {
+        void* drone = ue_wrap::drone::Find();
+        bool leaveAfter5min = false;
+        if (!drone || !ue_wrap::drone::ReadLeaveAfter5min(drone, leaveAfter5min) ||
+            !ue_wrap::drone::WriteLeaveAfter5min(drone, !leaveAfter5min)) {
+            ++g_denied;
+            UE_LOGW("[DRONE-CALL] slot=%u -- leave timer could not be written on the host drone",
+                    static_cast<unsigned>(slot));
+            return true;
+        }
+        ++g_flown;
+        UE_LOGI("[DRONE-CALL] leave timer set by slot=%u to %s",
+                static_cast<unsigned>(slot), leaveAfter5min ? "indefinitely" : "five minutes");
+        return true;
+    }
     if (!D::TriggerFly(console)) {
         ++g_denied;
         UE_LOGW("[DRONE-CALL] slot=%u -- triggerFly did not dispatch (no drone reference or the "
@@ -130,15 +145,21 @@ sg::Verdict OnActionPre(const sg::Call& call) {
         return sg::Verdict::Run;  // the lid's cases stay the game's, on every peer
 
     // Which face this press is belongs to the presser: the cursor fields are written by this
-    // machine's own look-at. The other face only toggles leaveAfter5min, which has no lane and
-    // stays local.
-    if (!D::IsCursorOnKeyboard(call.object)) return sg::Verdict::Run;
+    // machine's own look-at. Each timer-face press remains a toggle, which the host applies to its
+    // latest value so two quick presses still select the original setting.
+    const bool keyboard = D::IsCursorOnKeyboard(call.object);
+    const bool leaveTimer = D::IsCursorOnLeaveTimer(call.object);
+    if (!keyboard && !leaveTimer) return sg::Verdict::Run;
 
     coop::net::DroneFlyIntentPayload p{};
-    p.verb = 0;  // the keyboard; the leave-timer face still runs locally and has no lane
+    if (keyboard) {
+        p.verb = 0;
+    } else {
+        p.verb = 1;
+    }
     if (!s->SendReliable(coop::net::ReliableKind::DroneFlyIntent, &p, sizeof(p))) {
-        UE_LOGW("[DRONE-CALL] a keyboard press was not sent (the session refused it); the drone stays as "
-                "the host has it");
+        UE_LOGW("[DRONE-CALL] the console press was not sent (the session refused it); the drone stays "
+                "as the host has it");
         return sg::Verdict::Cancel;
     }
     ++g_sent;

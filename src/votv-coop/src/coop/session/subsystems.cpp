@@ -27,13 +27,16 @@
 #include "coop/interactables/download_arm_sync.h"
 #include "coop/interactables/sat_console_sync.h"  // the SAT console's shared commands run on the host
 #include "coop/interactables/tape_caddy_sync.h"
+#include "coop/interactables/coffee_intent.h"
 #include "coop/world/daily_task_sync.h"
 #include "coop/interactables/device_occupancy.h"
+#include "coop/interactables/notebook_sync.h"
 #include "coop/world/email_sync.h"
 #include "coop/interactables/laptop_sync.h"  // the stationary PC lane
 #include "coop/interactables/laptop_tab.h"  // the tab the PC's user is on
 #include "coop/interactables/laptop_buffer_sync.h"  // the PC buffer quad lane
 #include "coop/interactables/portable_pc_lid.h"  // the portable PC's lid lane
+#include "coop/interactables/sleepingbag_sync.h"  // client fold/unfold verbs run on the host's source prop
 #include "coop/interactables/floppy_slot_entry.h"
 #include "coop/interactables/mirror_slot_entry.h"
 #include "coop/interactables/floppy_slot_sync.h"
@@ -85,6 +88,7 @@
 #include "coop/session/join_beacon.h"
 #include "coop/interactables/grime_sync.h"
 #include "coop/interactables/interactable_sync.h"
+#include "coop/interactables/cord_sync.h"
 #include "coop/interactables/atv_sync.h"
 #include "coop/interactables/drone_sync.h"
 #include "coop/items/coingun_sync.h"
@@ -214,6 +218,7 @@ void Install(coop::net::Session& session) {
     coop::player_damage::Install(&session);  // the refusals on a peer's puppet: its impacts, damage, fire and hit verbs
     coop::weather_sync::Install(&session);  // weather
     coop::interactable_sync::Install(&session);  // doors + lights + container lids
+    coop::cord_sync::Install(&session);  // corded props and socket links
     coop::keypad_sync::Install(&session);  // the password keypads' index and wire (its own module)
     coop::time_sync::Install(&session);  // host-authoritative world clock (time-of-day / dark-world fix)
     coop::sky_sync::Install(&session);  // host-authoritative night-sky orientation, moon phase and eye
@@ -252,11 +257,13 @@ void Install(coop::net::Session& session) {
     coop::turbine_sync::Install(&session);  // wind-turbine facing/spin mirror (host-auth ~1 Hz)
     coop::upgrade_sync::Install(&session);  // a client's upgrade purchase is charged and written by the host
     coop::device_occupancy::Install(&session);  // enterable-device occupancy (busy claim + E deny gate)
+    coop::notebook_sync::Install(&session);
     coop::console_state_sync::Install(&session);  // signal-catcher state mirror (sky signals + desk + dish aim)
     coop::signal_catch_sync::Install(&session);  // the signal-catch consume replay (dish slew + downloader arm on every peer)
     coop::laptop_sync::Install(&session);  // the stationary PC's power and the portable PC lid's wire
     coop::laptop_tab::Install(&session);  // the PC user's tab: the three tab watches, and the receive paths' session
     coop::portable_pc_lid::Install(&session);  // the portable PC's lid, on its own verb
+    coop::sleepingbag_sync::Install(&session);  // sleepingbag transitions use host-authored prop births
     coop::laptop_buffer_sync::Install(&session);  // the PC buffer quad
     coop::floppybox_sync::Install(&session);  // the disc crate stack
     coop::props::container_contents_sync::Install(&session);  // container contents
@@ -278,6 +285,7 @@ void Install(coop::net::Session& session) {
     coop::dish_hashcode_sync::Install(&session);  // the dishes' hash codes: the host's rollover sends them, a client refuses its own
     coop::sat_console_sync::Install(&session);  // the SAT console: a client's shared commands run on a terminal the host keeps for it
     coop::tape_caddy_sync::Install(&session);  // caddy reel slots (presser edges) + host accrual corrector (client accrual NOT parked -- corrector-bounded)
+    coop::coffee_intent::Install(&session);  // client coffee actions run on the host
     coop::daily_task_sync::Install(&session);  // saveSlot.taskNew host mirror (rollover/sell are host-only live)
     coop::email_sync::Install(&session);  // meadow-PC email mirror (watermark -> chunked rows -> addEmail)
     coop::signal_sync::Install(&session);  // desk signal-library mirror (savedSignals_0 shadow/diff)
@@ -361,6 +369,7 @@ void ConnectReplayForSlot(int slot) {
     coop::item_activate::QueueConnectBroadcastForSlot(slot);
     coop::weather_sync::QueueConnectBroadcastForSlot(slot);
     coop::interactable_sync::QueueConnectBroadcastForSlot(slot);  // door/light/container states
+    coop::cord_sync::QueueConnectBroadcastForSlot(slot);
     coop::keypad_sync::QueueConnectBroadcastForSlot(slot);  // keypad states
     coop::sky_sync::QueueConnectBroadcastForSlot(slot);  // night-sky orientation, moon phase, eye
     coop::power_grid::QueueConnectBroadcastForSlot(slot);  // the generators' rows, before the panel they gate
@@ -401,6 +410,7 @@ void ConnectReplayForSlot(int slot) {
     coop::npc_sync::QueueConnectBroadcastForSlot(slot);  // existing NPCs -> joiner
     coop::world_actor_sync::QueueConnectBroadcastForSlot(slot);  // existing event WorldActors -> joiner
     coop::balance_sync::SendCurrentToSlot(slot);  // host's current balance
+    coop::coffee_intent::SnapshotToSlot(slot);  // current vending/maker state after the joiner's props are materialised
     coop::upgrade_sync::SendCurrentToSlot(slot);  // and the upgrade levels: the joiner's save was taken at the handshake
     coop::daily_task_sync::SendCurrentToSlot(slot);  // and the daily task: a change in its load window was hashed but never sent to it
     // The host-to-client apply-blob push is not here: this fires at ClientWorldReady, after the
@@ -486,6 +496,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::remote_prop::OnDisconnectForSlot(slot);
     coop::item_activate::OnDisconnectForSlot(slot);
     coop::device_occupancy::OnDisconnectForSlot(slot);  // release a leaver's device claims
+    coop::notebook_sync::OnDisconnectForSlot(slot);
     coop::desk_input_sync::OnPeerLeft(slot);  // clear a leaver's dangling coordIsPing (its ping would swallow every peer's desk keys)
     coop::desk_ping_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and the verdict it sent, if the desk has not run it
     coop::signal_catch_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and the catch marked as its
@@ -541,11 +552,13 @@ DisconnectStats DisconnectAll() {
     coop::prop_act_request::OnDisconnect();  // drop the pending take or use, its latch and its expired records
     coop::kerfur_menu_input::OnDisconnect();  // drop the cached session (the InpActEvt_use observer stays registered)
     coop::prop_stick_sync::OnDisconnect();  // drop commit-pending stick records
+    coop::sleepingbag_sync::OnDisconnect();
     coop::item_activate::OnDisconnect();
     coop::weather_sync::OnDisconnect();
     coop::explosion_sync::OnDisconnect();  // the class table and the counters
     coop::explosion_parking::OnDisconnect();  // the counters, after a summary
     coop::interactable_sync::OnDisconnect();
+    coop::cord_sync::OnDisconnect();
     coop::keypad_sync::OnDisconnect();
     coop::time_sync::OnDisconnect();
     coop::sky_sync::OnDisconnect();
@@ -581,6 +594,7 @@ DisconnectStats DisconnectAll() {
     coop::turbine_sync::OnDisconnect();
     coop::upgrade_sync::OnDisconnect();  // and its own upgrade panel buys locally again
     coop::device_occupancy::OnDisconnect();
+    coop::notebook_sync::OnDisconnect();
     coop::console_state_sync::OnDisconnect();
     coop::signal_catch_sync::OnDisconnect();
     coop::prop_save_data::OnDisconnect();
@@ -600,6 +614,7 @@ DisconnectStats DisconnectAll() {
     coop::dish_hashcode_sync::OnDisconnect();
     coop::sat_console_sync::OnDisconnect();  // the terminals it keeps, and a busy flag mirrored here
     coop::tape_caddy_sync::OnDisconnect();  // poll baselines + IsRecent stamps + the singleton cache (no suppression -- nothing to restore)
+    coop::coffee_intent::OnDisconnect();
     coop::daily_task_sync::OnDisconnect();  // change-hash baseline
     coop::desk_input_sync::OnDisconnect();
     coop::desk_snd_fx::OnDisconnect();
@@ -676,6 +691,8 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
       coop::prop_element_tracker::InstallReseedScanConsumer();
       coop::prop_element_tracker::DrainReseedQueue(); }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:interactable"}; coop::interactable_sync::Tick(); }  // retry deferred door/light/container applies (still streaming in)
+    coop::coffee_intent::Tick();
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:cord"}; coop::cord_sync::Tick(); }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:keypad"}; coop::keypad_sync::Tick(); }  // a keypad state that arrived before its keypad was indexed
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:time"}; coop::time_sync::Tick(); }  // the world clock: the host hands the net thread a sample when one is due; the client applies at its cycle's own tick
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sky"}; coop::sky_sync::Tick(); }  // night-sky: the eye gate's name (both roles), then the host's throttled push
@@ -701,6 +718,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::skin_preview::Tick();  // F1-skins live mannequin preview (spawn/apply/position/hide)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:laptop_tab"}; coop::laptop_tab::Tick(session); }  // the tab watches until live, the refusal window, and a tab report owed by its pace; BEFORE the occupancy poll, so a leaving user's last tab goes ahead of the claim's release
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:device_occupancy"}; coop::device_occupancy::Tick(); }  // device occupancy: activeInterface edge poll + pending claim retry
+    coop::notebook_sync::Tick();
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:console_state"}; coop::console_state_sync::Tick(); }  // signal-catcher: host sky poll / client mirror sweep / desk + dish owner streams
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal_catch"}; coop::signal_catch_sync::Tick(); }  // the catch and cleared detectors, 1 Hz
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:propsave"}; coop::prop_save_data::Drive(); }  // budgeted park applies + the 1 Hz assembler sweep
@@ -780,6 +798,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; coop::broom_stroke::Tick(session); }  // HOST: run the clients' queued broom strokes, one a tick a client (last: what a stroke spawns, sweeps and pushes is picked up next tick, as for the host's own)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:pack_trash"}; coop::pack_trash_intent::Tick(session); }  // client: spend the tools its presses sent; HOST: run one queued pack a tick a client
     { PP::Scope _s{PP::Bucket::Interactable}; coop::verb_lanes::Tick(session); }  // settle each verb lane's watches; HOST: run their queued intents
+    { PP::Scope _s{PP::Bucket::Interactable}; coop::sleepingbag_sync::Tick(session); }  // settle the gates and serve bounded fold/unfold intents
     { PP::Scope _s{PP::Bucket::Interactable}; coop::kerfus_lanes::Tick(session); }  // the Kerfus lanes' watches; CLIENT: waiting states; HOST: queued verbs
     { PP::Scope _s{PP::Bucket::Interactable}; coop::served_player::Tick(); }  // HOST: the served robots' seams
     { PP::Scope _s{PP::Bucket::Balance};       coop::balance_sync::Tick(); }  // host polls saveSlot.Points + broadcasts on change; client retries the pending mirror apply

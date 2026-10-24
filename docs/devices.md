@@ -56,8 +56,17 @@ writer of Open past the load, and the appliance lane an appliance's bool at its 
 (a faucet's, sink's, shower's, oven's and tape unit's toggle) or a server box's `visual` (the kerfur
 Omega's call), the box lane a locker's `opened` at its `open` (its toggle's, a murder kerfur's) and the drone
 console's at its `actionOptionIndex`, and the container lane a lid's `opened` at its `open` or `close`
-(which its setup, grab, damage, padlock and resting swing, and a cremator's door, call), and the oven
-lane an oven's `fixed` at its `fix()`, the repair widget's last step, which goes one way: a receiver
+(which its setup, grab, damage, padlock and resting swing, and a cremator's door, call). Swinger
+hinges also use `mouseAssign(FVector2D)` while a player drags the handle. That body converts the
+mouse sample into torque on `PhysicsConstraint` (`prop_swinger` graph, block 386); its post-gate
+observer sends each sample as `SwingerMotion` and receivers replay it through their own
+`mouseAssign` body. On release, the same channel sends the hinge's final rotation and linear and
+angular velocity and runs the swinger's `dropped` cleanup remotely. This covers the smooth, physical
+movement during the drag and corrects the receiving hinge at release for microwave, oven and other
+`prop_swinger_C` descendants. The sample stream is ordered and relayed, while the game still
+simulates each peer's physics locally, so matching hinge motion needs a two-peer in-game check. A
+joiner receives the channel's saved open/closed state, not the exact in-flight hinge angle.
+The oven lane an oven's `fixed` at its `fix()`, the repair widget's last step, which goes one way: a receiver
 writes it and repaints on 1, `fix()`'s work without its screen, and refuses 0.
 A client's own press, hit or pry of a door never runs on its copy either: the
 script-body gate refuses the door's entry verb there and sends it to the host
@@ -101,6 +110,29 @@ is refused on a client: the host rolls it. A camera whose key is empty, or the k
 by default, is addressed by no lane: a client's press on it is refused and sends nothing, and a
 cursed one's tick stays that peer's own. A client's copy of a wisp still switches that client's own
 cameras off until the creature mirror stops running the wisp's world writes `[?]`.
+
+### Coffee maker and vending machine
+
+The vending machine and coffee maker use their native `actionOptionIndex` body, but a client
+does not run that body on its own copy. `coop/interactables/coffee_intent` sends the keyed device
+and selected action to the host; the host resolves the live actor, checks the sender's reach, and
+runs the same Blueprint action with that sender's puppet. The request carries no price or credit
+amount. The game's machine reads and debits the host's shared points, which `balance_sync` then
+mirrors to every client. This keeps machine credit, the common balance and the outcome under one
+authority.
+
+After the action, the host sends the machine's vending balance/processing or maker cup/coffee/
+readiness/power flags. Coffee cups spawned by the vending machine use the ordinary host prop birth
+and snapshot lanes; their `first` flag and inherited `uses` remaining-sip count are sent as host
+coffee-device state and included in the join snapshot, so a client sees the same count after a drink. An existing
+prop's `getData`/`loadData` record carries the coffee bag's `amounts` field. `SnapshotToSlot` seeds
+vending machines, coffee makers and cups at world-ready. The dump identifies
+these fields and the action entry points (`prop_coffeevending_C`, `prop_coffeeMaker_C`,
+`prop_coffeeBag_C`). The coffee maker's cup birth is re-expressed through the
+keyed prop lane after its Blueprint action, and a client's final `eaten` edge now runs on the host
+so the empty cup birth and full-cup destroy reach every peer. The cup's remaining sips are host state.
+The `used` coffee-power increase stays local to the drinking player. Two-peer play still needs to
+confirm cup handoff/drinking and bag-record updates across both installations `[RD]`.
 
 ### What is inside a container
 
@@ -281,9 +313,9 @@ judged within reach of the part it acts on, in the player's order, at a few a se
 
 The delivery drone is one host-simulated actor: its flight is a fragile per-tick integrator not
 worth reproducing, so the host streams its transform while it moves (it glides on after its active
-flag drops) and its state the moment it changes, the client suppresses
-the drone's own tick and drives the streamed transform through an interpolation window, and the
-cargo it drops rides the ordinary prop lanes (`coop/interactables/drone_sync`). The drone's sale
+flag drops) and streams its state at change edges, including the five-minute or indefinite leave
+mode. The client suppresses its own drone tick and drives the streamed transform through an
+interpolation window; dropped cargo rides the ordinary prop lanes (`coop/interactables/drone_sync`). The drone's sale
 runs on the host only, which is what makes selling into it the one economy path that credits the
 group correctly.
 
@@ -298,7 +330,9 @@ stands at, re-tests its own copy of the lid, then runs the same verb, so the fli
 machine that owns it and arrives on the stream that already carries it
 (`coop/interactables/drone_call_intent`). A press that reaches the host before it holds the sender's
 body, from a joiner who presses at once, waits for the body rather than being refused, as the
-door-verb, keypad and container lanes wait. The leave-timer face has no lane and stays local.
+door-verb, keypad and container lanes wait. A client toggles the leave-time face through the same
+intent lane; the host applies the toggle to its current setting and the next state update carries it
+back (`coop/interactables/drone_sync`, `coop/interactables/drone_call_intent`).
 
 ### The computer and the economy
 
@@ -354,7 +388,12 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | the coordinate towers | the host | a row per tower whenever one changes; a client's presses are intents the host runs, its fuse pulls and inserts claims the host takes or refuses |
 | the turbine | the host | six floats a second |
 | a window, the grime | any peer, minimum wins | monotone decreases |
-| the drone | the host | a transform stream; the client's tick suppressed |
+| the drone | the host | a transform stream and canonical flight/leave flags; the client's tick suppressed |
+| the balance | the host | one-way, absolute, on change |
+| the upgrade levels | the host | the struct whole, on change; a purchase is an intent |
+| an order | the client names the row; the host performs and prices | an intent |
+| a coin gun sale | the client names the prop; the host prices, mints and destroys | an intent ahead of the destroy |
+| a device's floppy slot | the host | a 1 Hz digest-gated poll; a peer claims the outcome of its own insert or eject, and the host's canonical is the answer |
 
 ## Wire messages
 
@@ -373,6 +412,13 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | `TurbineState`, `WindowCleanState`, `GrimeState` | each peer or the host | the driver floats; a decrease |
 | `DroneState` | the host to all | the drone's transform and flags |
 | `DroneFlyIntent` | a client to the host | the face pressed, the keyboard; the host finds the console by the sender's reach |
+| `BalanceSync` | the host to all | the absolute balance |
+| `UpgradeLevels` | the host to all | the eighteen levels, whole |
+| `UpgradeIntent` | a client to the host | the panel row's index and whether it is a buy or a sell |
+| `OrderRequest`, `OrderRefused` | a client to the host; the host to one client | the items by row; a refusal and its reason |
+| `OrderQueue` | the host to all | a change to the delivery queue: a reset, an order queued (its items by row or by class), the first one taken off |
+| `CoinGunSell`, `CoinGunResult`, `CoinCollect` | a client to the host; the host to one client; a client to the host | the sold prop's key; the outcome; a coin the client tripped |
+| `FloppySlotState` | a peer to the host with a claim; the host to all with the canonical | one device's slot, or a set of them -- the server boxes' and the laptop's: the type, the writes, the rows and the save JSON, and the laptop's generation |
 
 ## Late join
 
@@ -390,6 +436,9 @@ state it shows, and the first rows a world takes play no sound.
 
 | Limit | Evidence |
 |---|---|
+| A refused coin-gun sale has already destroyed the prop on the client, and no heal re-asserts it: a client authors that destruction before the arbiter answers, as its generator install does, whose refusal refunds the upgrade. The host rebuilds its key index periodically, so a refusal is rare | `[V]` `coop/items/coingun_sync` |
+| The coin collect has two entries; the interceptor sits on the overlap entry, and the E-press entry dispatches inside the Blueprint where it cannot fire, so a coin a client collects by pressing is credited on the client only and the host's next balance broadcast erases it | `[V]` `coop/items/coingun_sync` |
+| A client's earnings from a chest or an achievement reach only its own machine and are erased by the host's next broadcast | `[V]` `coop/world/balance_sync` is one-way |
 | A client's light-group index has been reported dropping to zero after a join; not reproduced | `[?]` [issue 11](https://github.com/VOTV-MP/Multivoid/issues/11) |
 
 ## Code map
@@ -397,6 +446,7 @@ state it shows, and the first rows a world takes play no sound.
 | Concept | Files |
 |---|---|
 | the engine and the adapters | `coop/interactables/interactable_channel.h`, `coop/interactables/interactable_sync`, `coop/interactables/door_verb_intent`, `coop/interactables/door_state_verbs`, `coop/interactables/toggle_verbs`, `coop/interactables/verb_lanes`, `ue_wrap/devices/door`, `ue_wrap/devices/door_box`, `ue_wrap/devices/lightswitch`, `ue_wrap/devices/garage`, `ue_wrap/devices/appliance` |
+| cords and sockets | `coop/interactables/cord_sync`, `ue_wrap/devices/cord` |
 | security cameras | `coop/interactables/camera_toggle_intent`, `coop/interactables/toggle_verbs`, `coop/interactables/interactable_sync`, `ue_wrap/devices/security_camera` |
 | keypads | `coop/interactables/keypad_sync`, `ue_wrap/devices/passwordlock` |
 | power, turbine, windows, grime | `coop/world/power_panel`, `coop/world/power_grid`, `ue_wrap/devices/generator`, `coop/interactables/turbine_sync`, `coop/interactables/window_sync`, `coop/interactables/grime_sync`, `ue_wrap/devices/power_control`, `ue_wrap/devices/windturbine`, `ue_wrap/devices/base_window`, `ue_wrap/devices/grime` |

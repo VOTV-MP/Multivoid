@@ -20,6 +20,7 @@
 #include "ue_wrap/engine/engine.h"           // DestroyActor (drill)
 #include "ue_wrap/core/reflection.h"         // NumObjects/ObjectAt/IsLive (drill)
 #include "coop/interactables/interactable_sync.h"
+#include "coop/interactables/coffee_intent.h"
 #include "ui/join_curtain.h"  // the curtain: Show at SnapshotBegin, dismiss at Complete
 #include "coop/session/join_progress.h"
 #include "coop/element/mirror_defer.h"  // deferred hide, armed at Begin and revealed at the lift
@@ -263,6 +264,20 @@ void Update(net::Session& session, void* localPlayer) {
             net::BalancePayload p{};
             std::memcpy(&p, msg.payload, sizeof(p));
             coop::balance_sync::ApplyFromHost(p.value);
+            break;
+        }
+        case net::ReliableKind::CoffeeDeviceState: {
+            // The host's canonical coffee appliance state. The action itself, its shared-points
+            // debit and any spawned cup are host-authored; this mirrors the small appliance fields.
+            if (session.role() != net::Role::Client || msg.senderPeerSlot != 0 ||
+                msg.payloadLen != sizeof(net::CoffeeDeviceStatePayload)) {
+                UE_LOGW("event_feed: CoffeeDeviceState dropped (role, sender slot %d or length %zu)",
+                        msg.senderPeerSlot, static_cast<size_t>(msg.payloadLen));
+                break;
+            }
+            net::CoffeeDeviceStatePayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            coop::coffee_intent::OnState(p);
             break;
         }
         case net::ReliableKind::TeleportClient: {

@@ -12,7 +12,9 @@
 #include "ue_wrap/core/reflection.h"
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
+#include <cstring>
 
 namespace ue_wrap::swinger {
 namespace {
@@ -23,6 +25,7 @@ std::atomic<bool> g_resolved{false};
 
 int32_t g_openedOff  = -1;       // Aprop_swinger_C::opened
 int32_t g_lockableOff = -1;      // Aprop_swinger_C::isLockable (optional: only a drill reads it)
+int32_t g_mouseXYOff = -1;       // mouseAssign's FVector2D parameter
 
 // A swinger class whose `opened` or verbs did not resolve: said once, asked again only for another
 // class object.
@@ -68,6 +71,12 @@ bool EnsureResolved() {
 
     g_openedOff  = openedOff;
     g_lockableOff = R::FindPropertyOffset(cls, L"isLockable");
+    g_mouseXYOff = R::FindParamOffset(R::FindFunction(cls, L"mouseAssign"), L"mouseXY");
+    if (g_mouseXYOff < 0) {
+        g_failedCls = cls;
+        UE_LOGE("swinger: prop_swinger_C::mouseAssign mouseXY did not resolve -- hinge motion lane stays off");
+        return false;
+    }
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("swinger: resolved prop_swinger_C=%p opened@0x%04X Open=%p Close=%p",
             cls, openedOff, openFn, closeFn);
@@ -109,6 +118,28 @@ bool CallClose(void* swinger) {
     ParamFrame f(fn);
     if (!f.valid()) return false;
     return Call(swinger, f);
+}
+
+bool TryReadMouseXY(void* function, const uint8_t* locals, FVector2D& xy) {
+    if (!function || !locals || g_mouseXYOff < 0) return false;
+    std::memcpy(&xy, locals + g_mouseXYOff, sizeof(xy));
+    return std::isfinite(xy.X) && std::isfinite(xy.Y);
+}
+
+bool CallMouseAssign(void* swinger, const FVector2D& xy) {
+    void* const fn = VerbFor(swinger, L"mouseAssign");
+    if (!fn) return false;
+    ParamFrame f(fn);
+    if (!f.valid()) return false;
+    f.Set<FVector2D>(L"mouseXY", xy);
+    return Call(swinger, f);
+}
+
+bool CallDropped(void* swinger) {
+    void* const fn = VerbFor(swinger, L"dropped");
+    if (!fn) return false;
+    ParamFrame f(fn);
+    return f.valid() && Call(swinger, f);
 }
 
 }  // namespace ue_wrap::swinger

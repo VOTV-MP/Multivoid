@@ -20,6 +20,7 @@
 #include "coop/creatures/roach_sync.h"    // CLIENT->HOST local roach consumption intent
 #include "coop/interactables/camera_toggle_intent.h"  // CLIENT->HOST use of a security camera, or its laptop light button
 #include "coop/interactables/door_verb_intent.h"  // CLIENT->HOST press, hit or pry of a base door
+#include "coop/interactables/sleepingbag_sync.h"  // CLIENT->HOST fold/unfold; HOST runs the source Blueprint
 #include "coop/interactables/keypad_verbs.h"  // CLIENT->HOST digit, submit, cancel, keycard, reset
 #include "coop/interactables/laptop_tab.h"  // CLIENT->HOST the PC user's tab
 #include "coop/interactables/drone_call_intent.h"  // CLIENT->HOST press of the drone console
@@ -30,6 +31,7 @@
 #include "coop/element/registry.h"  // IsAllowedHostAllocatedEid
 #include "coop/items/coingun_sync.h"
 #include "coop/items/point_sack_intent.h"  // CLIENT->HOST an opened point sack
+#include "coop/interactables/coffee_intent.h"
 #include "coop/items/order_queue_sync.h"  // HOST->CLIENT the delivery order queue
 #include "coop/items/order_sync.h"
 #include "coop/props/pack_trash_intent.h"  // CLIENT->HOST bagging of a pile or clump
@@ -172,6 +174,26 @@ bool HandleIntentEvent(net::Session& session,
         }
         coop::door_verb_intent::OnDoorVerbIntent(session, p,
                                                  static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::SleepingbagIntent: {
+        if (session.role() != net::Role::Host) {
+            UE_LOGW("event_feed: SleepingbagIntent received on a client -- dropping");
+            break;
+        }
+        if (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: SleepingbagIntent from invalid senderPeerSlot=%d -- dropping",
+                    msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen != sizeof(net::SleepingbagIntentPayload)) {
+            UE_LOGW("event_feed: SleepingbagIntent payload size %zu != %zu",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::SleepingbagIntentPayload));
+            break;
+        }
+        net::SleepingbagIntentPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::sleepingbag_sync::OnIntent(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::CameraToggleIntent: {
@@ -433,6 +455,18 @@ bool HandleIntentEvent(net::Session& session,
         coop::point_sack_intent::OnRedeem(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
+    case net::ReliableKind::CoffeeActionIntent: {
+        if (session.role() != net::Role::Host || msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers ||
+            msg.payloadLen != sizeof(net::CoffeeActionIntentPayload)) {
+            UE_LOGW("event_feed: CoffeeActionIntent dropped (role, sender slot %d or length %zu)",
+                    msg.senderPeerSlot, static_cast<size_t>(msg.payloadLen));
+            break;
+        }
+        net::CoffeeActionIntentPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::coffee_intent::OnAction(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
     case net::ReliableKind::RemoverRequest: {
         // CLIENT->HOST: a client pressed the tool gun's remover. The host judges the sender's right, the element, who
         // holds it and whether the sender could see it, and removes the prop itself (coop::remover_request). Never
@@ -581,7 +615,7 @@ bool HandleIntentEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::DroneFlyIntent: {
-        // CLIENT->HOST drone call REQUEST: a client pressed the garage console's keyboard. The
+        // CLIENT->HOST drone request: a client pressed the keyboard or leave-timer face. The
         // console is not named -- it is baked into the level and no lane keys it -- so the host
         // resolves the one the sender stands at from its own world and re-tests the lid there,
         // then runs the button's own verb. That resolve, the lid and the rate live in the module;
@@ -603,7 +637,7 @@ bool HandleIntentEvent(net::Session& session,
         }
         net::DroneFlyIntentPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (p.verb != 0) {
+        if (p.verb > 1) {
             UE_LOGW("event_feed: DroneFlyIntent verb=%u has no lane -- dropping",
                     static_cast<unsigned>(p.verb));
             break;

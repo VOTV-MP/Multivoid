@@ -174,6 +174,7 @@ private:
     static constexpr float kSnapPerSpeedSec = 0.5f;
 
     void* actor_ = nullptr;  // the engine puppet actor, a mainPlayer_C orphan; owned by the engine
+    void* radarComp_ = nullptr;  // the comp_radarPoint_C component attached to actor_ for base radar display
 
     // The peer slot Spawn registers the puppet under, read by OnBeforeFinish during the spawn call.
     uint8_t pendingSlot_ = players::kPeerIdUnknown;

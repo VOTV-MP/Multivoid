@@ -27,6 +27,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/actors/sleepingbag.h"  // BP replacement forms can finish with Key=None
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -298,6 +299,30 @@ std::atomic<coop::net::Session*> g_session_ptr{nullptr};
 // same keyed broadcast. Game thread (the caller guarantees it); the HasProcessedInit latch
 // dedupes against an Init POST that did fire.
 void ExpressSpawnedProp(void* actor) {
+    // The sleepingbag Blueprint creates sleepingbagWrap_* with Key=None. Its Init POST is seen
+    // before the deferred spawn finishes, marks ProcessedInit, and exits at the normal None-key
+    // guard. The host_spawn_watcher calls this only after FinishSpawningActor and the Blueprint
+    // verb have returned, when this actor is mature. Give that host-owned successor a stable wire
+    // key and reopen the Init dedupe so the ordinary lifecycle express can assign its eid and send
+    // PropSpawn; otherwise the source's later destroy reaches clients with no replacement birth.
+    if (actor && PT::SessionIsHost() &&
+        (ue_wrap::sleepingbag::IsPacked(actor) || ue_wrap::sleepingbag::IsDeployed(actor))) {
+        const std::wstring currentKey = ue_wrap::prop::GetInteractableKeyString(actor);
+        if (currentKey.empty() || currentKey == L"None") {
+            const std::wstring key = coop::prop_synth_key::EnsureKeyForBroadcast(
+                actor, currentKey, /*mintForAprop=*/true);
+            if (key.empty() || key == L"None") {
+                UE_LOGW("grab_hook[spawn seam]: sleepingbag successor %p class='%ls' still has no Key "
+                        "after FinishSpawningActor -- replacement birth cannot be expressed",
+                        actor, R::ClassNameOf(actor).c_str());
+                return;
+            }
+            PT::UnmarkProcessedInit(actor);
+            UE_LOGI("grab_hook[spawn seam]: host sleepingbag successor %p class='%ls' had no Key "
+                    "after Blueprint finish -- minted '%ls' and retrying its birth express",
+                    actor, R::ClassNameOf(actor).c_str(), key.c_str());
+        }
+    }
     GrabObserver_Aprop_Init_POST_Body(actor);
 }
 

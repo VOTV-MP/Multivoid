@@ -5,9 +5,9 @@ row is. This is a count view, never a percentage: the number of facets a system 
 is not enumerable, so a single "N% done" would hide which systems are solid and which are untouched.
 
 **State** says how far the row is: `works` (established in play), `tested` (exercised by a scripted
-run), `built` (the lane exists and has not been exercised), with the known breaks counted where
-there are any; the breaks themselves are on the system's page. Most mechanic-level facets sit at
-`built`; that majority is the honest state. **Owner**: `host` (the host writes, clients mirror), `peer` (each peer authors its own slice
+run), `built` (the lane exists and has not been exercised); known breaks are counted where there are any,
+and the breaks themselves are on the system's page. Most mechanic-level facets sit at `built`; that
+majority is the honest state. **Owner**: `host` (the host writes, clients mirror), `peer` (each peer authors its own slice
 and streams it), `presser` (whoever performs the action authors it, the host relays), `arbiter` (the
 host validates and commits contested writes), `local` (never shared).
 
@@ -30,9 +30,10 @@ host validates and commits contested writes), `local` (never shared).
 | System | Synced | Owner | Late join | State |
 |---|---|---|---|---|
 | Physics props | spawn, pose, grab, carry, throw, drop, destroy, a hook's drag and a broom's push (built); identity across saves and rejoins; each prop's own save record, for the classes that keep one; client-born props, including what a player spawns from the sandbox menu | presser while held, host at rest and under a hook | snapshot; a player-authored birth is claimed at its seam and re-claimed by the host's echo, so a pending sweep cannot doom it | works |
+| Sleeping bags and mattresses | a client interaction action sent to the host; the host runs the Blueprint that replaces the packed bag or mattress with its deployed form, or folds it back | host | host save and prop snapshot contain the currently live form | built (see [props.md](props.md)) |
 | Chip piles and clumps | the grab, carry, throw and re-pile cycle, and a broom's sweep | host with client intents | snapshot, a spawn-time bind, and a bounded hold for a pile the save load has not reached; a clump rolling at the join arrives as the pile it lands as | works |
 | Trash-bits piles | the counter pair | presser and host | snapshot | built |
-| Containers | open and close, contents (a slice of the host's object stack) | presser; host for contents | snapshot | works, two known breaks |
+| Containers | open and close, mouse-driven torque samples for physical swinger hinges, contents (a slice of the host's object stack) | presser; host for contents | saved open/closed state; active hinge motion is not replayed | built, two known breaks; hinge motion needs a two-peer physics check |
 | NPCs | spawn, despawn, pose, state for the generic creatures | host | snapshot | works |
 | Kerfur | the prop-to-NPC conversion cycle, per-kerfur skins | host | snapshot plus adoption | works |
 | Owner-entity creatures | a creature whose AI reads the local player is owned per peer and mirrored to the rest | peer | keepalive | built |
@@ -47,6 +48,7 @@ host validates and commits contested writes), `local` (never shared).
 | Story and scheduled events | host-observed fires replayed on clients by a per-event policy; the active-events registry mirrored for late joiners | host | replay and snapshot | built |
 | Alarm | the base klaxon | presser | snapshot | built |
 | Balance | the shared points total | host | replay at connect | built |
+| Coffee maker, vending machine, coffee bag and cups | client actions execute on the host; machine fields and remaining cup `uses` mirror; cup births use prop sync; bag `amounts` uses prop save data; costs use shared balance | host | machine/cup state replay; props and records in snapshot | implemented; needs build and two-peer verification |
 | Email, daily task | host-appended emails, peer-symmetric delete; the host's task state | host | save transfer plus a prime | built |
 | Deployed hook and rope | existence, flight, the head pose and the reel while the thrower holds it; the handover to the host when both ends anchor, and the anchor itself; the tie, which exists on the host alone, so a prop any peer's hook drags streams to everyone and two hooks on one prop are two host constraints | peer while held, arbiter at the anchor, host after; the host for every constraint | keepalive while held; the save plus a ready-edge replay once anchored; a mirror re-bites from the state it is rebuilt from | built |
 | Lamp posts | not synced: lockstep from the shared day and night cycle | local | none, by design | built |
@@ -58,6 +60,7 @@ host validates and commits contested writes), `local` (never shared).
 | Doors, keypads, locks | a door's state, sent at its own verbs; a keypad's verbs, replayed from the host, and the state each chain settles on; a client's own door press, hit and pry and its keypad entries run on the host | host | snapshot | tested; a pry, a keycard and a pass changer built |
 | Lights and light groups | switch state; the group's live state | presser; host for the group | snapshot | built |
 | The power grid | the panel's breakers and lockout; each generator's break, wear, upgrades and repair puzzle | host; a client's presses, Activate presses, installs, hits and puzzle inputs are ops | snapshot | built |
+| Power cords and sockets | a corded prop's socket link, including plug and unplug changes | presser; host relays | host snapshot | built |
 | Turbine, grime, windows, appliances | the float, the decrease-only cleanliness, the one-bit states | presser or host | snapshot | built; windows tested |
 | The bay window's dirt | each sponge dab on its render target: the pixel, the edge, the brush's opacity and colour | presser, relayed by the host | the host's transferred save | built |
 | Device occupancy | who is using a device | arbiter | snapshot of the table | works |

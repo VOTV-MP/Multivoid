@@ -54,6 +54,77 @@ float Dist3(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
+// Attach the game's native comp_radarPoint_C to the puppet actor so it renders on the base radar console.
+// The component registers with AmainGamemode_C on ReceiveBeginPlay and unregisters automatically
+// when the actor is destroyed.
+void AttachRadarMarker(void* actor, void*& outComp) {
+    outComp = nullptr;
+    if (!actor) return;
+
+    static void* sRadarCompClass = nullptr;
+    if (!sRadarCompClass) {
+        sRadarCompClass = R::FindClass(L"comp_radarPoint_C");
+    }
+    if (!sRadarCompClass) {
+        UE_LOGW("radar: comp_radarPoint_C class not found");
+        return;
+    }
+
+    static void* sAddCompFn = nullptr;
+    if (!sAddCompFn) {
+        if (void* actorClass = R::FindClass(L"Actor")) {
+            sAddCompFn = R::FindFunction(actorClass, L"AddComponentByClass");
+        }
+    }
+    if (!sAddCompFn) {
+        UE_LOGW("radar: AddComponentByClass function not found on Actor");
+        return;
+    }
+
+    ue_wrap::ParamFrame f(sAddCompFn);
+    f.Set<void*>(L"Class", sRadarCompClass);
+    f.Set<bool>(L"bManualAttachment", false);
+    f.Set<bool>(L"bDeferredFinish", false);
+    ue_wrap::Call(actor, f);
+
+    void* comp = f.Get<void*>(L"ReturnValue");
+    if (!comp) {
+        UE_LOGW("radar: AddComponentByClass returned null for comp_radarPoint_C");
+        return;
+    }
+    outComp = comp;
+
+    // Direct byte offsets from Dumper-7 dump (comp_radarPoint_classes.hpp):
+    // 0x00B8: Owner (AActor*)
+    // 0x00C0: important (bool)
+    // 0x00C1: Active (bool)
+    // 0x00C4: Color (FLinearColor: 4 floats)
+    auto* bytes = reinterpret_cast<uint8_t*>(comp);
+    *reinterpret_cast<void**>(bytes + 0x00B8) = actor;
+    *reinterpret_cast<bool*>(bytes + 0x00C0)  = false;
+    *reinterpret_cast<bool*>(bytes + 0x00C1)  = true;
+
+    // Cyan / light blue marker: R=0.0f, G=0.8f, B=1.0f, A=1.0f so remote players
+    // stand out clearly against yellow signals and red hostile entities.
+    float* color = reinterpret_cast<float*>(bytes + 0x00C4);
+    color[0] = 0.0f;
+    color[1] = 0.8f;
+    color[2] = 1.0f;
+    color[3] = 1.0f;
+
+    // Dispatch ReceiveBeginPlay to register the point into AmainGamemode_C's radar registry.
+    static void* sBeginPlayFn = nullptr;
+    if (!sBeginPlayFn) {
+        sBeginPlayFn = R::FindFunction(sRadarCompClass, L"ReceiveBeginPlay");
+    }
+    if (sBeginPlayFn) {
+        ue_wrap::ParamFrame bpFrame(sBeginPlayFn);
+        ue_wrap::Call(comp, bpFrame);
+    }
+
+    UE_LOGI("radar: comp_radarPoint_C attached to puppet %p (color Cyan)", actor);
+}
+
 }  // namespace
 
 void RemotePlayer::OnBeforeFinish(void* ctx, void* actor) {
@@ -169,6 +240,9 @@ bool RemotePlayer::Spawn(const std::string& skinName, uint8_t peerSlot) {
     // idempotent here.
     appliedSkin_.clear();
     ApplySkin(skinName);
+
+    // Attach the native radar point component so this puppet is tracked on the base radar console.
+    AttachRadarMarker(actor_, radarComp_);
 
     // Eager-resolve the hurt-flash material and functions, so the first flash does no name walks.
     E::WarmupHurtFlashCache();
@@ -464,6 +538,7 @@ void RemotePlayer::Destroy() {
     // and DestroyActor would destroy the foreign object at that address.
     if (R::IsLiveByIndex(actor_, internalIdx_)) E::DestroyActor(actor_);
     actor_ = nullptr;
+    radarComp_ = nullptr;  // destroyed with actor_ by the engine
     internalIdx_ = -1;
     hasPose_ = false;
     window_.Close();

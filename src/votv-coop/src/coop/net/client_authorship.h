@@ -40,6 +40,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::PropDestroy:
     case ReliableKind::LightState:
     case ReliableKind::ContainerState:
+    case ReliableKind::SwingerMotion:
     case ReliableKind::ItemActivate:
     case ReliableKind::WindowCleanState:
     case ReliableKind::GrimeState:
@@ -114,9 +115,11 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::UpgradeIntent:
     case ReliableKind::WindowStroke:
     case ReliableKind::DoorVerbIntent:
+    case ReliableKind::SleepingbagIntent:
     case ReliableKind::KeypadIntent:
     case ReliableKind::OvenRepairState:
     case ReliableKind::KerfusIntent:
+    case ReliableKind::CordLinkState:
     case ReliableKind::ServerUpgradeState:
     case ReliableKind::SatConsole:
     case ReliableKind::DishCalibIntent:
@@ -130,12 +133,14 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::StatOrderReply:
     case ReliableKind::StatQueryReply:
     case ReliableKind::PointSackRedeem:
+    case ReliableKind::CoffeeActionIntent:
     case ReliableKind::RemoverRequest:
     case ReliableKind::CreatureHitIntent:
     case ReliableKind::PropActRequest:
     case ReliableKind::PropActCommit:
     case ReliableKind::CameraToggleIntent:
     case ReliableKind::LaptopTabReport:
+    case ReliableKind::NotebookText:
         return ClientAuthorship::Client;
     // The Host row matches MTA's protected element data, which a client may not write: opt-in there
     // (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:2743-2755), the only mode here.
@@ -154,6 +159,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::RosterRow:
     case ReliableKind::PlayerHit:
     case ReliableKind::BalanceSync:
+    case ReliableKind::CoffeeDeviceState:
     case ReliableKind::KeypadState:
     case ReliableKind::SnapshotBegin:
     case ReliableKind::SnapshotComplete:

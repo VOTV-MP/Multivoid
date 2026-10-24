@@ -10,12 +10,14 @@
 #include "coop/interactables/atv_sync.h"
 #include "coop/player/sleep_sync.h"
 #include "coop/interactables/device_occupancy.h"
+#include "coop/interactables/notebook_sync.h"
 #include "coop/world/email_sync.h"
 #include "coop/items/player_inventory_sync.h"  // the inventory blob receiver
 #include "coop/voice/voice_chat.h"
 #include "coop/interactables/drone_sync.h"
 #include "coop/interactables/grime_sync.h"
 #include "coop/interactables/interactable_sync.h"
+#include "coop/interactables/cord_sync.h"
 #include "coop/creatures/kerfur_convert_client.h"
 #include "coop/creatures/kerfus_state.h"  // HOST->CLIENT a Kerfus's on, charging and energy
 #include "coop/interactables/keypad_sync.h"
@@ -82,6 +84,33 @@ bool HandleStateEvent(net::Session& session,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::interactable_sync::OnReliable(static_cast<uint8_t>(msg.kind), p, senderSlot);
+        break;
+    }
+    case net::ReliableKind::SwingerMotion: {
+        if (msg.payloadLen < sizeof(net::SwingerMotionPayload)) {
+            UE_LOGW("event_feed: SwingerMotion payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::SwingerMotionPayload));
+            break;
+        }
+        net::SwingerMotionPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        const bool mouseSample = p.event == 0 && std::isfinite(p.mouseX) && std::isfinite(p.mouseY) &&
+                                 std::abs(p.mouseX) <= 100000.f && std::abs(p.mouseY) <= 100000.f;
+        const bool releaseSnapshot = p.event == 1 && std::isfinite(p.pitch) && std::isfinite(p.yaw) &&
+                                     std::isfinite(p.roll) && std::isfinite(p.angularX) &&
+                                     std::isfinite(p.angularY) && std::isfinite(p.angularZ) &&
+                                     std::isfinite(p.linearX) && std::isfinite(p.linearY) &&
+                                     std::isfinite(p.linearZ) &&
+                                     std::abs(p.pitch) <= 36000.f && std::abs(p.yaw) <= 36000.f &&
+                                     std::abs(p.roll) <= 36000.f && std::abs(p.angularX) <= 100000.f &&
+                                     std::abs(p.angularY) <= 100000.f && std::abs(p.angularZ) <= 100000.f &&
+                                     std::abs(p.linearX) <= 100000.f && std::abs(p.linearY) <= 100000.f &&
+                                     std::abs(p.linearZ) <= 100000.f;
+        if (!mouseSample && !releaseSnapshot) {
+            UE_LOGW("event_feed: SwingerMotion input out of range -- dropping");
+            break;
+        }
+        coop::interactable_sync::OnContainerMotion(p);
         break;
     }
     case net::ReliableKind::KeypadState: {
@@ -392,6 +421,15 @@ bool HandleStateEvent(net::Session& session,
         coop::laptop_tab::OnState(session, p, tslot);
         break;
     }
+    case net::ReliableKind::NotebookText: {
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) break;
+        net::BlobChunkPayload chunk{};
+        std::memcpy(&chunk, msg.payload, sizeof(chunk));
+        const uint8_t slot = (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+            ? static_cast<uint8_t>(msg.senderPeerSlot) : static_cast<uint8_t>(0xFF);
+        coop::notebook_sync::OnReliable(chunk, slot);
+        break;
+    }
     // The signal-pipeline kinds (the sky signals, the desk, the dish, the laptop, the saved
     // signals, the refiner) are in event_dispatch_signal.cpp.
     case net::ReliableKind::SleepState: {
@@ -528,6 +566,24 @@ bool HandleStateEvent(net::Session& session,
             break;
         }
         coop::kerfus_state::OnState(p);
+        break;
+    }
+    case net::ReliableKind::CordLinkState: {
+        if (msg.payloadLen != sizeof(net::CordLinkPayload)) {
+            UE_LOGW("event_feed: CordLinkState payload size mismatch (%zu != %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::CordLinkPayload));
+            break;
+        }
+        net::CordLinkPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.propKey.len == 0 || p.propKey.len > sizeof(p.propKey.data) ||
+            p.socketKey.len > sizeof(p.socketKey.data)) {
+            UE_LOGW("event_feed: CordLinkState key length is invalid");
+            break;
+        }
+        const uint8_t senderSlot = msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers
+            ? static_cast<uint8_t>(msg.senderPeerSlot) : static_cast<uint8_t>(0xFF);
+        coop::cord_sync::OnReliable(p, senderSlot);
         break;
     }
     case net::ReliableKind::ServerSetting:

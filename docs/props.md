@@ -223,6 +223,45 @@ host re-publishes. The far side applies it through the prop's `loadData`, whose 
 the reel case; the drive box's look follows its name, which a record does not carry, so the
 receiver re-derives it from `opened` (`coop/props/prop_record_refresh`).
 
+### Notebook
+
+The notebook editor claims the prop while open: the host arbitrates the claim so only the
+current holder can edit it. The editor streams its page array in chunked `NotebookText`
+snapshots; the host accepts and broadcasts text only from that holder. Closing the editor
+publishes the notebook's updated prop save record (`coop/interactables/notebook_sync`,
+`coop/props/prop_save_data`). A joiner receives the notebook state from the loaded save; later
+in-session edits have no notebook-specific join replay. `[?]`
+
+### Sleeping bags and mattresses
+
+`prop_sleepingbag_C` exposes `actionOptionIndex` and has an `unwrapOnBed` field. Its generated
+Blueprint graph carries a `FinishSpawningActor` result typed as `sleepingbagWrap_C`. The wrapped
+form derives from `bed_C`, which derives from `Aprop_C`; it exposes `fold()`, whose graph carries a
+`FinishSpawningActor` result typed as `prop_sleepingbag_C`. The blue, brown, Stolas and mattress
+forms are subclasses of these two base classes. `[RD]`
+
+The deployed Blueprint form finishes with `Key=None`; after `FinishSpawningActor` the host assigns
+it a synthetic prop key and retries the ordinary lifecycle express. The client gates the packed
+bag's `actionOptionIndex` and the deployed bag's `fold()` call, sends the
+source prop's host element id and the action byte when unfolding, and cancels its local Blueprint
+verb. The host checks that the sender is in reach and that the named prop is still in the expected
+form, then invokes that same Blueprint verb on its copy. The Blueprint owns the replacement birth
+and source destruction; the host spawn watcher and prop lifecycle carry those edges to every peer.
+The joiner's host save and ordinary prop snapshot seed whichever form is live. The client does not
+choose the replacement class or transform. `[V]` `coop/interactables/sleepingbag_sync`,
+`ue_wrap/actors/sleepingbag`, `coop/props/host_spawn_watcher`, `coop/props/prop_lifecycle`.
+The receiver also handles a host replacement that reuses a save key with a different actor class:
+it retires the old local rendering before materialising the successor and consumes the source's
+following destroy, so that edge cannot remove the new form. `[V]` `coop/props/remote_prop_spawn`,
+`coop/props/remote_prop_destroy`.
+
+Unfolding is relayed as the interaction action byte so the Blueprint retains its own placement and
+mattress branches. The host runs it with the sender's remote-player puppet, preserving the game's
+player-relative checks. The intent is refused if the source lacks a host prop id, is out of reach,
+or has already changed form. `[RD]` the packed Blueprint graph uses two sphere traces, checks the
+target bed, spawns the wrapped actor and destroys its source; the wrapped graph's `fold()` spawns a
+packed actor and destroys its source. `[V]` sleepingbag CFG and generated SDK parameters.
+
 ### Props that change on their own
 
 A joiner loads the host's save, so every keyed world prop is a real save-loaded actor with its
@@ -249,6 +288,8 @@ is built; concrete and food are designed and not built.
 | container contents | the host | slices of its object array; an extraction is an intent |
 | a stuck prop, and its unstick | the peer that sticks or frees it; every peer runs the component's own verb | one reliable message |
 | a self-changing prop's progression | the host | park, corrector or anchor, per prop |
+| notebook editor occupancy | the host arbitrates | a claim keyed by the owning prop |
+| notebook page text | the current notebook holder; the host relays it | chunked `NotebookText` snapshots; closing publishes the prop save record |
 | a client's shared-world spawners | the host | refused on a client at the script-body gate; shared-world content arrives only from the host |
 
 ## Wire messages
@@ -263,6 +304,7 @@ is built; concrete and food are designed and not built.
 | `PropDropIntent`, `ReelEjectIntent` | a client to the host | a place, or an unavoidable birth, for the host to author |
 | `PropStickState` | the peer that sticks or frees it, to all | frozen or static, the commit pose and the hold the stick ended; or an unstick, with the pose and velocity |
 | `PropSnapPos` | the host to one joiner | a position correction for a save-authoritative prop moved in the join window, with a keyed prop's frozen and sleep; it carries the host's drive context for the prop (claim generation and open), the client drops one older than a drive END still on its copy, and a prop a hand held after its correction went out gets a follow-up after the release `[?]` |
+| `NotebookText` | the editor holder to all (relayed via host) | chunked snapshots of the notebook page array |
 | `ContainerState`, `ContainerContents` | the presser; the host | open or closed; one slice of the host's object array |
 | `InventoryPickup` | each peer, relayed | the pocket blip, so others hear a pickup |
 
@@ -306,6 +348,7 @@ prop resolves.
 
 | Concept | Files |
 |---|---|
+| sleeping bag and mattress replacement | `coop/interactables/sleepingbag_sync`, `ue_wrap/actors/sleepingbag`, `coop/props/host_spawn_watcher`, `coop/props/prop_lifecycle` |
 | the birth and death seams | `coop/props/prop_lifecycle`, `coop/props/host_spawn_watcher`, `coop/props/prop_element_tracker`, `coop/props/prop_synth_key`, `coop/props/registry_reaper`, `coop/props/prop_echo_suppress` |
 | the receivers | `coop/props/remote_prop` (held), `coop/props/remote_prop_spawn` (birth: adopt, converge, create), `coop/props/prop_fresh_spawn` (the materialiser), `coop/props/prop_wire_parity`, `coop/props/active_drive`, `coop/props/prop_sound` |
 | a client's intents | `coop/props/prop_drop_intent` |
@@ -313,6 +356,7 @@ prop resolves.
 | a prop under a hook's drive or a broom's push | `coop/props/prop_drive_host` (the host's set and stream), `coop/props/prop_drive_stream` (the receiver), `coop/items/hook_prop_claim` (the hook lane feeding it), `coop/items/hook_constraint` (the tie itself, host-only), `coop/items/broom_push` (the broom's push feeding it) |
 | containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync` |
 | a record that changes in place | `coop/props/prop_record_refresh` (the drive box, the reel case) |
+| notebook sync | `coop/interactables/notebook_sync`, `coop/props/prop_save_data` |
 | the pocket blip | `coop/items/inventory_pickup_sync` |
 | the join | `coop/props/prop_snapshot`, `coop/props/snapshot_census`, `coop/props/join_membership_sweep`, `coop/props/unresolved_pose_ledger` |
 | the spawners a client must not run | `coop/world/spawn_authority` |

@@ -32,6 +32,8 @@ UE_FACT_FN(kRowActionOptionIndex, "toggle_verbs", nullptr, L"actionOptionIndex",
 UE_FACT_FN(kRowVisual, "toggle_verbs", nullptr, L"visual", AnyClass);
 UE_FACT_FN(kRowOpen, "toggle_verbs", nullptr, L"open", AnyClass);
 UE_FACT_FN(kRowClose, "toggle_verbs", nullptr, L"close", AnyClass);
+UE_FACT_FN(kRowMouseAssign, "toggle_verbs", L"prop_swinger_C", L"mouseAssign", Declared);
+UE_FACT_FN(kRowSwingerDropped, "toggle_verbs", L"prop_swinger_C", L"dropped", Declared);
 UE_FACT_FN(kRowFix, "toggle_verbs", nullptr, L"fix", AnyClass);
 // A security camera's writers all end in one of these (the player's use ends in updState; the wisp's
 // and the gray events' writes in upd or updState), except the cursed camera's night roll, which calls
@@ -86,6 +88,26 @@ enum class Reg : uint8_t { Pending, Registered, Refused };
 Reg  g_reg[kRowCount] = {};
 bool g_settled = false;
 uint64_t g_edges[kRowCount] = {};
+Reg g_mouseReg = Reg::Pending;
+Reg g_dropReg = Reg::Pending;
+uint64_t g_mouseEdges = 0;
+
+void OnMouseAssignPost(const sg::Call& call) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || !call.object || !ue_wrap::swinger::IsSwinger(call.object)) return;
+    if (s->role() != coop::net::Role::Host && !coop::net_pump::IsInAnnouncedWorld(call.object)) return;
+    ue_wrap::FVector2D xy{};
+    if (!ue_wrap::swinger::TryReadMouseXY(call.function, call.locals, xy)) return;
+    ++g_mouseEdges;
+    coop::interactable_sync::OnContainerMotion(call.object, xy);
+}
+
+void OnSwingerDroppedPost(const sg::Call& call) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || !call.object || !ue_wrap::swinger::IsSwinger(call.object)) return;
+    if (s->role() != coop::net::Role::Host && !coop::net_pump::IsInAnnouncedWorld(call.object)) return;
+    coop::interactable_sync::OnContainerDrop(call.object);
+}
 
 const Row* RowOf(int tag, int* index) {
     for (int i = 0; i < kRowCount; ++i)
@@ -110,6 +132,22 @@ void OnVerbPost(const sg::Call& call) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    if (g_mouseReg == Reg::Pending) {
+        if (sg::WatchName(kRowMouseAssign, 0x53574D41 /*'SWMA'*/, nullptr, &OnMouseAssignPost))
+            g_mouseReg = Reg::Registered;
+        else {
+            g_mouseReg = Reg::Refused;
+            UE_LOGE("[TOGGLE-VERB] script-body gate refused prop_swinger_C::mouseAssign -- swinger hinge motion cannot sync");
+        }
+    }
+    if (g_dropReg == Reg::Pending) {
+        if (sg::WatchName(kRowSwingerDropped, 0x53574452 /*'SWDR'*/, nullptr, &OnSwingerDroppedPost))
+            g_dropReg = Reg::Registered;
+        else {
+            g_dropReg = Reg::Refused;
+            UE_LOGE("[TOGGLE-VERB] script-body gate refused prop_swinger_C::dropped -- hinge release cannot sync");
+        }
+    }
     for (int i = 0; i < kRowCount; ++i) {
         if (g_reg[i] != Reg::Pending) continue;
         if (sg::WatchName(*kRows[i].verb, kRows[i].tag, nullptr, &OnVerbPost)) {
@@ -147,6 +185,10 @@ void OnDisconnect() {
                     "lane's own applies among them", kRows[i].what, static_cast<unsigned long long>(g_edges[i]));
         g_edges[i] = 0;
     }
+    if (g_mouseEdges)
+        UE_LOGI("[TOGGLE-VERB] session end -- swinger mouseAssign observed %llu time(s)",
+                static_cast<unsigned long long>(g_mouseEdges));
+    g_mouseEdges = 0;
 }
 
 }  // namespace coop::toggle_verbs

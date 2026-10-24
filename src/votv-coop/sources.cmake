@@ -56,6 +56,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/actors/container_openers.cpp
     src/ue_wrap/actors/container_view.cpp
     src/ue_wrap/actors/floppy_disc.cpp
+    src/ue_wrap/actors/sleepingbag.cpp
     src/ue_wrap/actors/hook.cpp
     src/ue_wrap/world/keyed_objects.cpp
     src/coop/items/hook_sync.cpp
@@ -76,6 +77,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/engine/engine_playerragdoll.cpp
     src/ue_wrap/engine/engine_attach.cpp
     src/ue_wrap/devices/door.cpp
+    src/ue_wrap/devices/cord.cpp
     src/ue_wrap/devices/base_window.cpp
     src/ue_wrap/devices/window_canvas.cpp
     src/ue_wrap/devices/grime.cpp
@@ -223,6 +225,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/turbine_sync.cpp
     src/coop/interactables/upgrade_sync.cpp
     src/coop/interactables/interactable_sync.cpp
+    src/coop/interactables/cord_sync.cpp
     src/coop/creatures/kerfur_convert.cpp
     src/coop/creatures/kerfur_convert_client.cpp
     src/coop/creatures/kerfur_convert_host.cpp
@@ -240,6 +243,7 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/served_player.cpp
     src/coop/interactables/keypad_sync.cpp
     src/coop/interactables/keypad_verbs.cpp
+    src/coop/interactables/sleepingbag_sync.cpp
     src/coop/world/time_sync.cpp
     src/coop/world/day_edge.cpp
     src/coop/world/sky_sync.cpp
@@ -470,6 +474,7 @@ set(VOTVCOOP_SOURCES
     src/coop/session/world_ready_answer.cpp
     src/coop/player/local_streams.cpp
     src/coop/interactables/device_occupancy.cpp
+    src/coop/interactables/notebook_sync.cpp
     src/coop/interactables/console_state_sync.cpp
     src/coop/interactables/desk_cursor_sync.cpp
     src/coop/interactables/desk_input_sync.cpp
@@ -496,6 +501,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/dish_calib_sync.cpp
     src/coop/interactables/download_arm_sync.cpp
     src/coop/interactables/tape_caddy_sync.cpp
+    src/coop/interactables/coffee_intent.cpp
     src/coop/interactables/laptop_sync.cpp
     src/coop/interactables/laptop_tab.cpp
     src/coop/interactables/portable_pc_lid.cpp

@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 237;
+inline constexpr uint16_t kProtocolVersion = 239;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -122,7 +122,7 @@ enum class MsgType : uint8_t {
     VoiceFrame = 64,
 };
 
-// Payload kinds carried inside a Reliable message. A retired value is never reused: 16, 17, 21,
+// Payload kinds carried inside a Reliable message. A retired value is never reused: 16, 21,
 // 22, 24, 26, 29 and 138 stay unassigned; 32 and 128 are reserved.
 enum class ReliableKind : uint8_t {
     // Each peer to the other, once after admission: the sender's Player element id, then the nick,
@@ -180,6 +180,10 @@ enum class ReliableKind : uint8_t {
     // Any peer, relayed by the host: a swinger lid (cabinet, fridge, safe) open or closed, keyed
     // by the prop's key. KeyedTogglePayload.
     ContainerState = 11,
+
+    // Any peer, relayed by the host: mouse-driven hinge input for a prop_swinger, keyed by the
+    // prop's key. Ordered torque-driving mouseAssign samples. SwingerMotionPayload.
+    SwingerMotion = 17,
 
     // Host to all: the weather scheduler's state. The client suppresses its own five scheduler
     // functions on the day-night cycle and applies the host's state through the cycle's own mutators;
@@ -766,8 +770,8 @@ enum class ReliableKind : uint8_t {
     // PackTrashIntentPayload.
     PackTrashIntent = 144,
 
-    // Client to host: press the garage console's keyboard, the call-or-send button behind the
-    // "drone is active" line. Every peer's console holds its own drone as a level reference, so a
+    // Client to host: press the garage console's keyboard (call/send) or set its leave timer mode.
+    // Every peer's console holds its own drone as a level reference, so a
     // client's press reached only its own suppressed mirror and the drone never moved; the client
     // refuses its own body at the script-body gate and asks here instead. The console is NOT named
     // here: it is baked into the level and no lane keys it, so it has neither a save key nor an
@@ -1074,6 +1078,33 @@ enum class ReliableKind : uint8_t {
     // relayed. Late join: none -- a one-shot cue. Trust: host-authored only (a client's copy is refused at the
     // host's receive edge); the receiver drops a malformed one and counts it. ExplosionSpawnPayload.
     ExplosionSpawn = 177,
+
+    // A closed notebook editor's final page text. Clients send it to the host, which accepts it
+    // only from the peer holding that notebook's occupancy claim and broadcasts the canonical
+    // text. Chunked NotebookTextBlob; never relayed.
+    NotebookText = 188,
+
+    // Client to host: unfold a packed sleepingbag or fold its deployed bed. The host runs the
+    // source actor's own Blueprint; host_spawn_watcher and prop_lifecycle carry the replacement
+    // birth and source death. Late join: host save plus the ordinary prop snapshot. Never relayed.
+    SleepingbagIntent = 189,
+
+    // Any peer, relayed by the host: one corded prop's socket relationship, named by the prop's
+    // save key and the socket's actor-save key (empty socket key means unplugged). Receivers
+    // resolve both actors locally and replay the game's cordPlugged/cordUnplugged chain. The host
+    // sends the current relationships to a joining peer at its world-ready edge. CordLinkPayload.
+    CordLinkState = 190,
+
+    // Client to host: a coffee vending machine or coffee maker action, or a coffee cup's final
+    // eaten edge. The host resolves the keyed actor and runs the game's action for the requesting
+    // player's puppet, so shared points and cup/empty-cup births have one author.
+    // CoffeeActionIntentPayload.
+    CoffeeActionIntent = 191,
+
+    // Host to all and at connect replay: vending/maker state and a coffee cup's first flag and remaining uses.
+    // CoffeeDeviceStatePayload.
+    CoffeeDeviceState = 192,
+
 };
 
 #pragma pack(push, 1)
@@ -1211,6 +1242,12 @@ struct WireKey {
     char    data[31];  // UTF-8 (Aprop_C Keys are ASCII)
 };
 static_assert(sizeof(WireKey) == 32, "WireKey must be 32 bytes");
+
+struct CordLinkPayload {
+    WireKey propKey;
+    WireKey socketKey;
+};
+static_assert(sizeof(CordLinkPayload) == 64, "CordLinkPayload must be 64 bytes");
 
 // A Blueprint class leaf name ("Aprop_equipment_flashlight_C"). Bytes beyond len are zero.
 struct WireClassName {
@@ -1729,6 +1766,28 @@ static_assert(sizeof(KeyedTogglePayload) == 40, "KeyedTogglePayload must be 40 b
 static_assert(sizeof(KeyedTogglePayload) <= 256 - 20 - 8,
               "KeyedTogglePayload must fit in one reliable datagram");
 
+// One mouseAssign input to a physical prop_swinger hinge. Values are the Blueprint's original
+// mouseXY sample; the receiver replays it through the hinge's own torque path.
+struct SwingerMotionPayload {
+    WireKey key;
+    uint8_t event;       // 0 = mouse sample, 1 = released hinge snapshot
+    uint8_t _pad[3] = {};
+    float mouseX;
+    float mouseY;
+    float pitch;
+    float yaw;
+    float roll;
+    float angularX;
+    float angularY;
+    float angularZ;
+    float linearX;
+    float linearY;
+    float linearZ;
+};
+static_assert(sizeof(SwingerMotionPayload) == 80, "SwingerMotionPayload must be 80 bytes");
+static_assert(sizeof(SwingerMotionPayload) <= 256 - 20 - 8,
+              "SwingerMotionPayload must fit in one reliable datagram");
+
 // A door verb intent (DoorVerbIntent): the door by the door lane's key, which entry verb, and the
 // one argument of it a door's body reads. The press carries its action back as the client's own
 // verb had it; a hit's damage is the only addDamage argument any door body reads (door_C and
@@ -1744,6 +1803,23 @@ struct DoorVerbIntentPayload {
 static_assert(sizeof(DoorVerbIntentPayload) == 40, "DoorVerbIntentPayload must be 40 bytes");
 static_assert(sizeof(DoorVerbIntentPayload) <= 256 - 20 - 8,
               "DoorVerbIntentPayload must fit one datagram");
+
+namespace sleepingbag_intent {
+constexpr uint8_t kUnwrap = 1;
+constexpr uint8_t kFold = 2;
+}  // namespace sleepingbag_intent
+
+// The folded or deployed source prop by host eid, the verb, and the selected action byte for
+// actionOptionIndex (zero for fold). No transform or spawned class comes from the client.
+struct SleepingbagIntentPayload {
+    uint32_t elementId;
+    uint8_t  verb;
+    uint8_t  action;
+    uint8_t  reserved[2];
+};
+static_assert(sizeof(SleepingbagIntentPayload) == 8, "SleepingbagIntentPayload must be 8 bytes");
+static_assert(sizeof(SleepingbagIntentPayload) <= 256 - 20 - 8,
+              "SleepingbagIntentPayload must fit one datagram");
 
 // A camera toggle intent (CameraToggleIntent): the camera by the lane's key, which of its two bits, and the value
 // the sender's press wants it to have (the sender's own copy negated). The use of the camera is the active bit; the
@@ -1967,6 +2043,24 @@ struct PointSackRedeemPayload {
     uint32_t _pad;       // 4  -- zeroed
 };
 static_assert(sizeof(PointSackRedeemPayload) == 40, "PointSackRedeemPayload must be 40 bytes");
+
+// A coffee appliance action: its host-allocated prop element and the selected game action.
+struct CoffeeActionIntentPayload {
+    uint32_t elementId;
+    uint8_t verb;       // 0 appliance action, 1 coffee cup eaten (host spawns the empty cup)
+    uint8_t action;
+    uint8_t reserved[2];
+};
+static_assert(sizeof(CoffeeActionIntentPayload) == 8, "CoffeeActionIntentPayload must be 8 bytes");
+
+struct CoffeeDeviceStatePayload {
+    uint32_t elementId;
+    uint8_t device;     // 0 vending, 1 maker, 2 coffee cup
+    uint8_t flags;      // maker: hasCup/hasCoffee/coffeeReady/hasPower; vending: processing; cup: first sip remains
+    uint16_t reserved;  // 2 -- zeroed; keeps the payload naturally aligned to 12 bytes on the wire
+    int32_t balance;    // vending's inserted points, or coffee-cup uses remaining; otherwise ignored
+};
+static_assert(sizeof(CoffeeDeviceStatePayload) == 12, "CoffeeDeviceStatePayload must be 12 bytes");
 
 // A client's press of the tool gun's remover (RemoverRequest): the element it hit, the camera point it looked
 // from and the point its shot struck, in world centimetres. The host judges all three; none is trusted.
@@ -2203,6 +2297,7 @@ inline constexpr uint8_t kOpIntent = 0;   // client to host: roll the verdict of
 inline constexpr uint8_t kOpRefused = 1;  // host to the pinger: the verdict is not rolled, for `reason`
 inline constexpr uint8_t kOpFound = 2;    // host to the pinger: the verdict caught a signal; the find is its own
 inline constexpr uint8_t kOpInsta = 3;    // client to host: roll the verdict of this cheat-menu insta-catch
+inline constexpr uint8_t kOpProgress = 4; // ping owner -> host -> clients: visual scan progress snapshot
 inline constexpr uint8_t kRefusedBusy = 0;  // the host's desk was pinging, or held another verdict
 inline constexpr uint8_t kRefusedLost = 1;  // any other: no claim, no ping running, an aim not finite or not pingable,
                                             // cheats the host's game does not allow, or a desk that did not roll it
@@ -2217,8 +2312,12 @@ struct DeskPingVerdictPayload {
     float    viewX;      // ops 0 and 3: the coords panel's viewCoordinate, the dishes' target
     float    viewY;
     DishAimStatePayload aim;  // ops 0 and 3: the committed triangle the verdict's circle comes from
+    int32_t progressStage;    // op 4: visual-only scan state; receivers never set coord_isPing
+    float progressOuter;
+    float progressInner;
+    float progressPing;
 };
-static_assert(sizeof(DeskPingVerdictPayload) == 48, "DeskPingVerdictPayload must be 48 bytes");
+static_assert(sizeof(DeskPingVerdictPayload) == 64, "DeskPingVerdictPayload must be 64 bytes");
 static_assert(sizeof(DeskPingVerdictPayload) <= 228, "DeskPingVerdictPayload must fit the inline reliable buffer");
 
 // A server-scope setting's session value (ServerSetting): a flags byte, then the row's key and its
@@ -2519,8 +2618,7 @@ struct DroneStatePayload {
     float   x, y, z;           // 12 -- root actor world location (cm)
     float   pitch, yaw, roll;  // 12 -- full rotation (the drone leans/pitches in flight)
     uint8_t active;            // 1  -- Adrone_C::Active (dormant<->flying); a change is sent at once
-    uint8_t stateBits;         // 1  -- bit 0 rotor dust active, bit 1 can take off (arrived: the alarm cue and the
-                               //        interaction gate), bit 2 has sack (cargo aboard)
+    uint8_t stateBits;         // 1  -- bit 0 rotor dust, bit 1 arrived, bit 2 has sack, bit 3 leaveAfter5min
     uint8_t adopt;             // 1  -- 1 = host connect-snapshot (snap as is), 0 = live stream
     uint8_t _pad;              // 1
     float   dustX, dustY, dustZ;  // 12 -- the dust emitter's world location, which the host's tick pins to its ground
@@ -3114,8 +3212,8 @@ static_assert(sizeof(GrabRefusedPayload) == 8, "GrabRefusedPayload must be 8 byt
 // console carries no identity to name (see the kind's comment), so the host resolves the console
 // the sender stands at and re-tests the lid there.
 struct DroneFlyIntentPayload {
-    uint8_t verb;        // 0 = the keyboard's call-or-send; the leave-timer face has no lane yet
-    uint8_t _pad[7];     // 8-byte alignment; bytes beyond the verb zero
+    uint8_t verb;        // 0 = keyboard call/send, 1 = set the leave timer mode
+    uint8_t _pad[7];     // 8-byte alignment; zero
 };
 static_assert(sizeof(DroneFlyIntentPayload) == 8, "DroneFlyIntentPayload must be 8 bytes");
 static_assert(sizeof(DroneFlyIntentPayload) <= 256 - 20 - 8,
