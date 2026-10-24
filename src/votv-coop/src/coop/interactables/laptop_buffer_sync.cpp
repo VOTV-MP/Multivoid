@@ -43,8 +43,20 @@ std::wstring FromUtf8(const std::string& s) {
     return w;
 }
 
+// The wire's string encoder: UTF-8 of every code unit, control characters included. coop::chat_feed::ToUtf8 is a chat
+// sanitiser and drops CR and LF, which a disc's rows are made of ("$t", "Server data: ...", "/n kilo", "/d " are
+// separate lines). A row sent through it arrived with its line breaks gone, so the laptop could not parse it.
+std::string ToUtf8Exact(const std::wstring& w) {
+    if (w.empty()) return std::string();
+    const int n = ::WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
+    if (n <= 0) return std::string();
+    std::string s(static_cast<size_t>(n), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), s.data(), n, nullptr, nullptr);
+    return s;
+}
+
 uint64_t HashStr(const std::wstring& w) {
-    const std::string u = coop::chat_feed::ToUtf8(w);
+    const std::string u = ToUtf8Exact(w);
     return coop::blob_chunks::Fnv64(reinterpret_cast<const uint8_t*>(u.data()), u.size());
 }
 
@@ -101,7 +113,7 @@ void PutU64(std::vector<uint8_t>& b, uint64_t v) {
     for (int i = 0; i < 8; ++i) b.push_back(static_cast<uint8_t>((v >> (i * 8)) & 0xFF));
 }
 void PutStr(std::vector<uint8_t>& b, const std::wstring& w) {
-    std::string u = coop::chat_feed::ToUtf8(w);
+    std::string u = ToUtf8Exact(w);
     if (u.size() > 0xFFFF) u.resize(0xFFFF);
     PutU16(b, static_cast<uint16_t>(u.size()));
     b.insert(b.end(), u.begin(), u.end());

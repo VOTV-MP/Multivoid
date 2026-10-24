@@ -12,6 +12,8 @@
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
 #include "coop/props/prop_lifecycle.h"        // DestroyLocalProp (deny-ghost teardown)
+#include "coop/props/prop_save_data.h"        // DeclareClassOwnedElsewhere (the rack's rows are this lane's)
+#include "coop/session/join_progress.h"       // a joiner's pending canonicals wait out its join
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -84,6 +86,7 @@ Clock::time_point g_nextStats{};
 // ---- counters (60 s line -- dead matchers visible) ----
 std::atomic<uint64_t> g_cMarksRack{0};
 uint64_t g_cRackOps = 0, g_cRackCanon = 0, g_cDenies = 0, g_cCanonApplied = 0;
+uint64_t g_cMassRebased = 0;  // CLIENT: sweeps where several rows vanished at once (a reset, not a take), rebased
 
 // --------------------------------------------------------------------------
 // helpers
@@ -228,6 +231,26 @@ void SweepRacks(bool announce) {
             bool havePrev = false;
             auto sh = g_rackShadow.find(eid);
             if (sh != g_rackShadow.end()) havePrev = ParseRackCanonical(sh->second, prev);
+
+            // Safety net: a player takes ONE drive at a time. Several rows vanishing in a single
+            // sweep is a reset or a restore (a loadData re-running the rack's init, a world
+            // change), not a player -- sending takes for it would make the host clear the rack
+            // and broadcast it empty. Rebase on what is there and send nothing; the host's next
+            // canonical corrects any real divergence.
+            if (havePrev) {
+                int removed = 0;
+                for (int i = 0; i < DC::kRackSlots; ++i)
+                    if (prev[i].has && !rows[i].has) ++removed;
+                if (removed > 1) {
+                    ++g_cMassRebased;
+                    UE_LOGW("drive_rack: rack eid=%u lost %d rows at once -- not a player take, rebased "
+                            "(no ops sent)", eid, removed);
+                    g_rackBase[eid] = h;
+                    g_rackShadow[eid] = std::move(blob);
+                    continue;
+                }
+            }
+
             for (int i = 0; i < DC::kRackSlots; ++i) {
                 const bool was = havePrev && prev[i].has;
                 if (was && !rows[i].has) {
@@ -420,8 +443,12 @@ void ClientApplyRackBlob(const coop::net::RackStateHead& h, const std::vector<ui
 void RetryPendingTick() {
     if (g_pending.empty()) return;
     const auto now = Clock::now();
+    // A joiner's wait starts once its join is over: its racks arrive with the world's snapshot, on
+    // another lane (same rule as drive_payload_sync::RetryParked).
+    const bool joining = coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle;
     std::vector<Pending> keep;
     for (auto& pd : g_pending) {
+        if (joining) pd.until = now + kPendingTtl;
         if (now >= pd.until) {
             UE_LOGW("drive_rack: pending canonical expired (rack never resolved)");
             continue;
@@ -448,6 +475,10 @@ void PrimeRacks() {
 // --------------------------------------------------------------------------
 
 void Install(coop::net::Session* session) {
+    // This lane owns prop_driveRack's rows by canonical; the save-record lane's loadData must not
+    // rewrite them from a second address space (a reset there reads as the player taking every
+    // drive). Idempotent -- only a NEW claim does any work -- so a per-tick call is safe.
+    coop::prop_save_data::DeclareClassOwnedElsewhere(L"prop_driveRack_C");
     g_session.store(session, std::memory_order_release);
     // Verb matchers live in drive_sync (one-callback-per-verb-name; putDriveIn
     // is shared slot/rack ctx) -- it forwards rack marks via MarkDirtyFromVerb.
@@ -484,11 +515,11 @@ void Tick() {
     if (now >= g_nextStats) {
         g_nextStats = now + std::chrono::seconds(60);
         UE_LOGI("drive_rack: 60s marks=%llu | ops=%llu canon=%llu applied=%llu | denies=%llu "
-                "pending=%zu",
+                "massRebased=%llu pending=%zu",
                 (unsigned long long)g_cMarksRack.load(std::memory_order_relaxed),
                 (unsigned long long)g_cRackOps, (unsigned long long)g_cRackCanon,
                 (unsigned long long)g_cCanonApplied, (unsigned long long)g_cDenies,
-                g_pending.size());
+                (unsigned long long)g_cMassRebased, g_pending.size());
     }
 }
 
@@ -543,6 +574,7 @@ void OnDisconnect() {
     for (auto& d : g_denies) d = DenyRec{};
     for (auto& t : g_takenRing) t = TakenRow{};
     g_takenNext = 0;
+    g_cMassRebased = 0;
     g_primed = false;
     g_wasConnected = false;
     g_session.store(nullptr, std::memory_order_release);
