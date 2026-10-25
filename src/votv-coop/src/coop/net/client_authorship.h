@@ -149,6 +149,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::EntityDestroy:
     case ReliableKind::RestoreVitals:
     case ReliableKind::TeleportClient:
+    case ReliableKind::CremationControl:
     case ReliableKind::DoorState:
     case ReliableKind::WeatherState:
     case ReliableKind::RedSky:

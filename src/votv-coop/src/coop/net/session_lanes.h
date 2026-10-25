@@ -55,6 +55,7 @@ inline Lane LaneForKind(ReliableKind k) {
     // nothing -- it carries no state, only what the host is doing now.
     case ReliableKind::JoinPhaseNote:  return Lane::High;
     case ReliableKind::TeleportClient: return Lane::High;
+    case ReliableKind::CremationControl: return Lane::High;
     case ReliableKind::RestoreVitals:  return Lane::High;
     case ReliableKind::ItemActivate:   return Lane::High;
     case ReliableKind::PlayerHit:      return Lane::High;  // combat event -- prioritize

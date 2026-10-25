@@ -245,6 +245,15 @@ teleport. The host can deny itself a command the same way, in a file named by it
 your own row in the player list). A player whose permission file sets `multivoid.kick.exempt` (or
 `.ban.exempt`) cannot be kicked or banned by a friend, only by the host.
 
+The online player row also has **Send to the crematorium**. The host moves that client's local
+pawn into the nearest cremator's firebox, blocks movement while leaving camera look available, and
+closes and locks the door. The client invokes the cremator's `igniteInside` sequence and the game's
+`mainPlayer_C::ignite` and waits for the burning timer to expire before applying a lethal native
+damage call if the player survived the flame. It repeats that call until the pawn reports dead.
+The host watches the puppet's streamed health and disconnects it after death with the English reason
+`You have been sent to the crematorium.` If the host does not observe death within sixty seconds,
+it restores movement controls.
+
 The same files can be edited in game with `/mv`, in LuckPerms' `/lp` shape: `/mv user <who> permission set
 <node> [true|false]`, `/mv user <who> parent add <group>`, `/mv group <name> permission set ...`, `/mv creategroup
 <name>`, `/mv user <who> info`, `/mv listgroups`, and `/mv reload` after editing a file by hand; `/help` lists them
