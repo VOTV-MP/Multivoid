@@ -86,6 +86,7 @@ inline Lane LaneForKind(ReliableKind k) {
     // progress it reports, it would arrive as news about a minute ago. It carries no state, only
     // what the host is doing now.
     case ReliableKind::JoinPhaseNote:  return Lane::High;
+    case ReliableKind::CremationControl: return Lane::High;
     case ReliableKind::RestoreVitals:  return Lane::High;
     // The save stream and the drill filler: the transfers that can exceed the blob ceiling. The filler's lane is
     // the drill knob's (LoadFillerOnDefault above), so a red arm can stand it on Default.
