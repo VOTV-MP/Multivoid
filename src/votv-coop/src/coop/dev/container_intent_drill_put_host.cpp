@@ -85,7 +85,7 @@ uint64_t g_hNextMs = 0;      // the host checks four times a second, not every f
 int      g_hSub = 0;         // the interleave's own step
 uint32_t g_hP2Base = 0;      // putowed phase 2: restore_owed when the put was given up
 uint64_t g_hSubMs = 0;       // and the time it was entered (the grant's, for putdeadline and putowed)
-ue_wrap::CachedObjRef g_hTarget, g_hItem, g_hItem2;
+ue_wrap::CachedObjRef g_hTarget, g_hItem, g_hItem2, g_hItem3;
 int      g_hCount0 = -1;     // the target's record count at the fixture line
 int      g_hClientOk = -1;
 int      g_hClientStray = -1;
@@ -144,6 +144,14 @@ bool SpawnFixture(const FVector& at, const FVector& fwd) {
             return false;
         }
         g_hItem2.Set(item2);
+    }
+    if (arm == Arm::PutJoin) {   // the joiner's put: client 1 takes the first two
+        void* item3 = E::SpawnActor(itemCls, Place(at, fwd, kItemAheadCm + kItemSideCm, 0.f));
+        if (!item3) {
+            Fail("the third item the joiner takes did not spawn");
+            return false;
+        }
+        g_hItem3.Set(item3);
     }
     return true;
 }
@@ -274,7 +282,9 @@ void StepHostBind() {
     void* target = g_hTarget.Get();
     void* item = g_hItem.Get();
     void* item2 = g_hItem2.Get();
-    if (!target || (PutHasItem(ArmOf()) && !item) || ((ArmOf() == Arm::PutDeadline || ArmOf() == Arm::PutJoin) && !item2)) {
+    void* item3 = g_hItem3.Get();
+    if (!target || (PutHasItem(ArmOf()) && !item) || ((ArmOf() == Arm::PutDeadline || ArmOf() == Arm::PutJoin) && !item2) ||
+        (ArmOf() == Arm::PutJoin && !item3)) {
         Fail("a fixture actor died before the client took it");
         return;
     }
@@ -284,6 +294,7 @@ void StepHostBind() {
     void* filled = FilledPack();
     const uint32_t fe = filled ? RD::EidOf(filled) : 0;
     const bool bound = EidBound(te) && (!item || EidBound(ie)) && (!item2 || EidBound(i2e)) &&
+                       (!item3 || EidBound(RD::EidOf(item3))) &&
                        (!filled || (EidBound(fe) && CC::SentBaselineKnown(fe)));
     const int count = bound ? CountOf(te) : -1;
     if (!bound || count < 0) {
@@ -671,6 +682,7 @@ void PutHostReset() {
     g_hTarget.Reset();
     g_hItem.Reset();
     g_hItem2.Reset();
+    g_hItem3.Reset();
     PutJoinReset();
     g_hSub = 0;
     g_hSubMs = 0;
@@ -681,6 +693,6 @@ void PutHostReset() {
     g_hDriveVolume = g_hPackMax = -1.f;
 }
 
-PutHostView PutHostViewOf() { return PutHostView{g_hTarget.Get(), g_hCount0, g_hItem2.Get()}; }
+PutHostView PutHostViewOf() { return PutHostView{g_hTarget.Get(), g_hCount0, g_hItem2.Get(), g_hItem3.Get()}; }
 
 }  // namespace coop::dev::container_intent_drill::detail

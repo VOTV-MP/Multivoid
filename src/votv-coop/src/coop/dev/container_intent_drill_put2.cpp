@@ -44,6 +44,7 @@ constexpr const char* kNoSpaceLine = "Not enough space.";
 constexpr const char* kLapsedLine  = "Try again in a moment.";
 constexpr uint64_t kGoBoundMs      = 360000;  // putjoin: the host's go or its NOT MEASURED (it bounds the second client at 300 s)
 constexpr uint64_t kReleaseBoundMs = 35000;   // putjoin: the park to the host's release; its reservation lapses at 30 s
+constexpr uint64_t kSecondBoundMs  = 200000;  // putjoin: the first put's commit to the host's second line (its join bound is 150 s)
 constexpr uint64_t kAgreeBoundMs   = 20000;   // putjoin: both commits to the mirror agreeing with the host
 constexpr uint64_t kOpenBoundMs    = 10000;   // putowed phase 2: the screen showing the target again
 constexpr uint64_t kRestoreBoundMs = 75000;   // putowed phase 2: the knob's 35 s, then the restore landing
@@ -51,14 +52,18 @@ constexpr uint64_t kPollEveryMs    = 250;
 
 // The hook's steps: waiting for the park, the park held (putdeadline), the released replay's end, the next put
 // (putdeadline), the phantom record leaving the mirror (putowed), and nothing more to do; then putjoin's go, release and
-// agreement, and putowed's second phase (the take asked, parked, aborted, and its record restored).
-enum class K : uint8_t { Park, Hold, Ended, Second, Phantom, Idle, Go, Release, Agree, TakeAsk, TakePark, TakeEnd, Restore };
+// agreement, and putowed's second phase (the take asked, parked, aborted, and its record restored). putjoin's first client
+// puts at once (First), sees its mirror hold the record (Mirror1) and waits for the host's second line (Await); the joiner
+// waits for its mirror to hold the first put before it asks (Seeded).
+enum class K : uint8_t { Park, Hold, Ended, Second, Phantom, Idle, Go, Release, Agree, TakeAsk, TakePark, TakeEnd, Restore,
+                         First, Mirror1, Await, Seeded };
 K        g_k = K::Park;
 uint64_t g_kMs = 0;
 bool     g_asked2 = false;
 bool     g_rejoinRead = false, g_rejoined = false;   // once per process: a relaunch is a new process
 bool     g_joinerKnown = false, g_joiner = false;     // putjoin: this client joined after another one
-bool     g_goSeen = false, g_releaseSeen = false, g_notMeasured = false;   // putjoin: the host's lines, latched when seen
+bool     g_goSeen = false, g_releaseSeen = false, g_secondSeen = false, g_notMeasured = false;   // putjoin: the host's lines, latched when seen
+int      g_joinAsk = 0;                                       // putjoin's first client: the put it asks (0 the first, 1 the second)
 uint64_t g_nextPollMs = 0;
 bool     g_reopened = false, g_sawDrop = false;       // putowed phase 2
 uint32_t g_take0 = 0;                                 // and the take commits sent before it asked
@@ -205,10 +210,11 @@ void StepPhantom() {
                 static_cast<unsigned long long>(kPhantomBoundMs / 1000));
 }
 
-// putjoin, the first client: the host says go once a second client is connecting, and the put is asked then.
+// putjoin, the first client: the host says go once a second client is connecting, and the first put is asked then. It is
+// not parked: it commits at once, while the second client is still joining.
 void StepGo() {
     if (g_notMeasured) {
-        PutNotMeasured("the host found no second client joining the reservation");
+        PutNotMeasured("the host found no second client joining");
         return;
     }
     if (!g_goSeen) {
@@ -221,9 +227,81 @@ void StepGo() {
         PutFail("the screen does not show the target when the host said go");
         return;
     }
-    UE_LOGI("[CI-DRILL] client putjoin: the host said go; the put is asked");
+    UE_LOGI("[CI-DRILL] client putjoin: the host said go; the first put is asked, its replay not parked");
+    KNext(K::First);
+    PutAskR2(ui);   // the FAIL is printed when it cannot
+}
+
+// putjoin, the first client: the first put commits.
+void StepFirst() {
+    if (!PutActEnded()) {
+        if (KExpired(kActBoundMs))
+            PutFail("the first put was not answered within %llu s", static_cast<unsigned long long>(kActBoundMs / 1000));
+        return;
+    }
+    const AR::dev::Put p = AR::dev::LastPut();
+    UE_LOGI("[CI-DRILL] client putjoin: the first put -> %s after %llu ms", AR::dev::PutOutcomeName(p.outcome),
+            static_cast<unsigned long long>(::GetTickCount64() - g_kMs));
+    if (p.outcome != AR::dev::PutOutcome::Done) {
+        PutFail("the first put ended %s, expected done", AR::dev::PutOutcomeName(p.outcome));
+        return;
+    }
+    KNext(K::Mirror1);
+}
+
+// putjoin, the first client: the mirror holds the first put (+1 on the contents before any put).
+void StepMirror1() {
+    const PutBase b = PutBaseOf();
+    const int count = CountOf(b.packEid);
+    if (count == b.need + 1) {
+        UE_LOGI("[CI-DRILL] client putjoin: the mirror holds the first put after %llu ms (container %d -> %d); the host's "
+                "second line is awaited", static_cast<unsigned long long>(::GetTickCount64() - g_kMs), b.need, count);
+        KNext(K::Await);
+        return;
+    }
+    if (KExpired(kAgreeBoundMs))
+        PutFail("the mirror holds %d record(s), expected %d (the first put on %d), %llu s after the commit", count, b.need + 1,
+                b.need, static_cast<unsigned long long>(kAgreeBoundMs / 1000));
+}
+
+// putjoin, the first client: the host says second once the joiner is world-ready; the second put is asked with its
+// replay parked.
+void StepAwait() {
+    if (!g_secondSeen) {
+        if (KExpired(kSecondBoundMs))
+            PutFail("the host never said second within %llu s (the joiner was not world-ready)", static_cast<unsigned long long>(kSecondBoundMs / 1000));
+        return;
+    }
+    void* const ui = RD::Screen();
+    if (!ui || CV::Viewed() != PutBaseOf().pack) {
+        PutFail("the screen does not show the target when the host said second");
+        return;
+    }
+    UE_LOGI("[CI-DRILL] client putjoin: the host said second; the second put is asked, its replay parked");
+    g_joinAsk = 1;
     KNext(K::Park);
     PutAskR2(ui);   // the FAIL is printed when it cannot
+}
+
+// putjoin, the joiner: its mirror holds the first put (the seed or the replay carried it) before its own put is asked.
+void StepSeeded() {
+    const PutBase b = PutBaseOf();
+    const int count = CountOf(b.packEid);
+    if (count != b.need + 1) {
+        if (KExpired(kAgreeBoundMs))
+            PutFail("the joiner's mirror holds %d record(s), expected %d (the first put on %d), %llu s after the screen showed the target",
+                    count, b.need + 1, b.need, static_cast<unsigned long long>(kAgreeBoundMs / 1000));
+        return;
+    }
+    void* const ui = RD::Screen();
+    if (!ui || CV::Viewed() != b.pack) {
+        PutFail("the screen does not show the target for the joiner's put");
+        return;
+    }
+    UE_LOGI("[CI-DRILL] client putjoin: the joiner's mirror holds the first put after %llu ms (container %d -> %d); its put is asked",
+            static_cast<unsigned long long>(::GetTickCount64() - g_kMs), b.need, count);
+    KNext(K::Ended);   // the act's end is read like a parked arm's, the verdict is the settle's
+    PutAskR2(ui);      // the FAIL is printed when it cannot
 }
 
 // putjoin, the first client: the parked replay runs once the host releases it, after the joiner has asked.
@@ -241,18 +319,18 @@ void StepRelease() {
     KNext(K::Ended);
 }
 
-// putjoin, both clients: the mirror agrees with the host's two puts.
+// putjoin, both clients: the mirror agrees with the host's three puts (the first, then the two that waited).
 void StepAgree() {
     const PutBase b = PutBaseOf();
     const int count = CountOf(b.packEid);
-    if (count == b.count0 + 2) {
+    if (count == b.need + 3) {
         UE_LOGI("[CI-DRILL] client putjoin: the mirror agrees with the host after %llu ms (container %d -> %d)",
-                static_cast<unsigned long long>(::GetTickCount64() - g_kMs), b.count0, count);
+                static_cast<unsigned long long>(::GetTickCount64() - g_kMs), b.need, count);
         PutPass(PutStrayCount(RD::kDriveClass, b.pack));
         return;
     }
     if (KExpired(kAgreeBoundMs))
-        PutFail("the mirror holds %d record(s), expected %d (two puts on %d), %llu s after the put", count, b.count0 + 2, b.count0,
+        PutFail("the mirror holds %d record(s), expected %d (three puts on %d), %llu s after the put", count, b.need + 3, b.need,
                 static_cast<unsigned long long>(kAgreeBoundMs / 1000));
 }
 
@@ -382,11 +460,12 @@ bool Put2Hooked() {
     return a == Arm::PutHover || a == Arm::PutDepart || a == Arm::PutDeadline || (a == Arm::PutJoin && !Put2IsJoiner());
 }
 
-int Put2Pockets() { return ArmOf() == Arm::PutDeadline ? 2 : 1; }
+int Put2Pockets() { return ArmOf() == Arm::PutDeadline || (ArmOf() == Arm::PutJoin && !Put2IsJoiner()) ? 2 : 1; }
 
 void Put2BeforeAsk() {
     if (!Put2Hooked()) return;
     if (ArmOf() == Arm::PutDeadline && g_k == K::Second) return;   // the next put is not parked
+    if (ArmOf() == Arm::PutJoin && g_joinAsk == 0) return;          // the first put commits at once
     AR::dev::HoldReplay(true);
 }
 
@@ -401,6 +480,10 @@ void Put2Hook() {
     case K::Idle:    return;
     case K::Go:      StepGo(); return;
     case K::Release: StepRelease(); return;
+    case K::First:   StepFirst(); return;
+    case K::Mirror1: StepMirror1(); return;
+    case K::Await:   StepAwait(); return;
+    case K::Seeded:  StepSeeded(); return;
     case K::Agree:   StepAgree(); return;
     case K::TakeAsk: StepTakeAsk(); return;
     case K::TakePark: StepTakePark(); return;
@@ -502,12 +585,13 @@ void Put2Poll() {
     g_nextPollMs = now + kPollEveryMs;
     if (!g_goSeen && DC::ChatHasLive(kPutGoLine)) g_goSeen = true;
     if (!g_releaseSeen && DC::ChatHasLive(kPutReleaseLine)) g_releaseSeen = true;
+    if (!g_secondSeen && DC::ChatHasLive(kPutSecondLine)) g_secondSeen = true;
     if (!g_notMeasured && DC::ChatHasLive(kPutNotMeasuredLine)) g_notMeasured = true;
 }
 
 bool Put2AskGated() {
-    if (ArmOf() != Arm::PutJoin || Put2IsJoiner()) return false;
-    KNext(K::Go);
+    if (ArmOf() != Arm::PutJoin) return false;
+    KNext(Put2IsJoiner() ? K::Seeded : K::Go);   // the first client waits for the host's go, the joiner for its mirror
     return true;
 }
 
@@ -522,7 +606,8 @@ void Put2Reset() {
     g_k = K::Park;
     g_kMs = 0;
     g_asked2 = false;
-    g_goSeen = g_releaseSeen = g_notMeasured = false;
+    g_goSeen = g_releaseSeen = g_secondSeen = g_notMeasured = false;
+    g_joinAsk = 0;
     g_joinerKnown = g_joiner = false;
     g_nextPollMs = 0;
     g_reopened = g_sawDrop = false;

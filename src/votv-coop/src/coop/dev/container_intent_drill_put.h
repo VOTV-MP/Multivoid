@@ -17,10 +17,11 @@ namespace coop::dev::container_intent_drill::detail {
 // The lines the two peers say to each other on drill chat.
 inline constexpr const char* kPutFixtureLine = "ci-put host fixture ";   // + "pack=<eid> item=<eid|0> item2=<eid|0> count=<n>"
 inline constexpr const char* kPutDoneLine    = "ci-put client done ";    // + "ok=<0 failed|1 passed|2 not measured> stray=<n|-1>"
-// putjoin: the host tells client 1 to ask (go) and to release its parked replay (release); the joiner is told its
-// fixture, and says the contents its seed showed and its own end.
+// putjoin: the host tells client 1 to put (go), to ask its second put once the joiner is world-ready (second) and to release
+// that put's parked replay (release); the joiner is told its fixture, and says the contents its seed showed and its own end.
 inline constexpr const char* kPutGoLine       = "ci-put host go";
 inline constexpr const char* kPutReleaseLine  = "ci-put host release";
+inline constexpr const char* kPutSecondLine   = "ci-put host second";
 inline constexpr const char* kPutJoinLine     = "ci-put host joiner ";    // + "pack=<eid> item=<eid> item2=0 count=<n>"
 inline constexpr const char* kPutSeedLine     = "ci-put joiner seed ";    // + "n=<records the seeded mirror showed>"
 inline constexpr const char* kPutJoinDoneLine = "ci-put joiner done ";    // + the done line's fields
@@ -53,7 +54,7 @@ inline int PutHostDelta(Arm a) {
     case Arm::PutEmpty:
     case Arm::PutReserved:
     case Arm::PutDeadline: return 1;
-    case Arm::PutJoin:     return 2;
+    case Arm::PutJoin:     return 3;
     default:               return 0;
     }
 }
@@ -92,6 +93,7 @@ struct PutBase {
     int count0 = -1;
     uint32_t packEid = 0;
     void* pack = nullptr;
+    int need = -1;   // the records the target held at the fixture line (putjoin: the contents before any put)
 };
 PutBase PutBaseOf();
 
@@ -135,6 +137,7 @@ struct PutHostView {
     void* target = nullptr;
     int count0 = -1;   // the target's record count at the fixture line
     void* item2 = nullptr;   // the second item (putdeadline, putjoin)
+    void* item3 = nullptr;   // the third item (putjoin): the joiner's
 };
 PutHostView PutHostViewOf();
 void PutJoinHost(const coop::net::Session& s);

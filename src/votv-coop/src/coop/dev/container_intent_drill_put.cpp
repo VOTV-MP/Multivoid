@@ -701,7 +701,7 @@ int PutStrayCount(const wchar_t* cls, void* target, void* skip) {
 
 // ---- what put2.cpp and the host's half use of the client's machine ----------------------------------------------------
 
-PutBase PutBaseOf() { return PutBase{g_put0, g_own0, g_count0, g_packEid, g_pack.Get()}; }
+PutBase PutBaseOf() { return PutBase{g_put0, g_own0, g_count0, g_packEid, g_pack.Get(), g_needCount}; }
 
 void PutFail(const char* fmt, ...) {
     char buf[300];
