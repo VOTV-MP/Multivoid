@@ -249,6 +249,7 @@ void StepHostJudge() {
 }  // namespace
 
 void PutHostTick(const coop::net::Session& session) {
+    if (!g_hMs) HNext(HStep::WaitPeer);   // the first step's clock starts when the arm does, never at reset
     const uint64_t now = ::GetTickCount64();
     if (now < g_hNextMs) return;
     g_hNextMs = now + RD::kCheckEveryMs;
