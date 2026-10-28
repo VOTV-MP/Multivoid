@@ -13,6 +13,7 @@
 #include "container_route_drill_detail.h"
 #include "drive_drill_verbs.h"  // Pocket, Hold: the player's own verbs (co-located private header)
 
+#include "coop/dev/container_pick.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/drill_chat.h"
 #include "coop/dev/drill_hand.h"
@@ -52,6 +53,7 @@ namespace E  = ue_wrap::engine;
 namespace R  = ue_wrap::reflection;
 namespace ci = ue_wrap::container_inventory;
 namespace CV = ue_wrap::container_view;
+namespace CP = coop::dev::container_pick;
 namespace DV = coop::dev::drive_drill_verbs;
 namespace DR = coop::director;
 namespace DC = coop::dev::drill_chat;
@@ -195,7 +197,7 @@ bool StartWalk(bool carry) {
         to.X = g_packAt.X + dx * kPassBeyondCm - dy * kPassSideCm;
         to.Y = g_packAt.Y + dy * kPassBeyondCm + dx * kPassSideCm;
     }
-    g_walk = DR::StartBackgroundWalk(to, kStandCm, kWalkDeadlineS, carry);
+    g_walk = DR::StartBackgroundWalk(to, CP::kStandCm, kWalkDeadlineS, carry);
     UE_LOGI("[CI-DRILL] client %s walks %s to (%.0f,%.0f,%.0f), target at (%.0f,%.0f,%.0f)", ArmName(),
             carry ? "carrying" : "on", static_cast<double>(to.X), static_cast<double>(to.Y), static_cast<double>(to.Z),
             static_cast<double>(g_packAt.X), static_cast<double>(g_packAt.Y), static_cast<double>(g_packAt.Z));

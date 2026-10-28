@@ -583,10 +583,12 @@ CFG_INT(dronesack_drill, "dronesack_drill", "dev", 0, 0, 4, "VOTVCOOP_DRONESACK_
     "peer logs the destroys it sees and the host then calls the delivery drone and logs when its sale clears the "
     "drone's container. 3 -- the host itself drops six cups and one fresh crate onto the sack, one at a time, then "
     "calls the drone; both peers take the container census around the sale and log the crate's "
-    "inventory index and which containers hold it afterwards. It judges nothing. Lines tagged [SACK-DRILL] and "
-    "[SACK-CENSUS]. 4 -- arm 3, then the client reads its sack mirror 1, 5, 15 and 30 s after the sale; if the "
-    "mirror still holds records at 5 s it takes record 0 out through the container's getObject, the call a "
-    "player's take makes. The host says what the container lane made of that.")
+    "inventory index and which containers hold it afterwards. Arms 1 to 3 judge nothing. Lines tagged [SACK-DRILL] and "
+    "[SACK-CENSUS]. 4 -- arm 3, with the client walking to the sack and opening its screen before the sale; at the "
+    "host's sale marker it presses the first slot, a player's take, which is an act, so the press races the sale's "
+    "publication. Both peers judge it: the take is refused Gone and nothing comes out, and the sack stays at 0 on "
+    "the host (a publication that came first leaves nothing to press, which also passes). The client also judges its "
+    "mirror: it reads 0 within 2 s of the sale, or it fails. The mirror is logged 1, 5, 15 and 30 s after the sale.")
 CFG_STRING(sat_console_drill, "sat_console_drill", "dev", "", "VOTVCOOP_SAT_CONSOLE_DRILL", false,
     "Drill (BOTH peers): run -- a client types sd.cal, sauce.get and sv.hash at its SAT console; the host runs "
     "them on the terminal it keeps for that client and sends the lines back. rejoin -- the client leaves in the "

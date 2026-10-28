@@ -5,7 +5,6 @@
 
 #include "ue_wrap/core/types.h"
 
-#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -17,13 +16,6 @@ namespace coop::dev::container_intent_drill::detail {
 inline constexpr uint64_t kPickEveryMs = 1000;
 inline constexpr uint64_t kPickFailMs  = 60000;
 inline constexpr int      kMinRecords  = 2;
-inline constexpr float    kPickNearCm  = 5000.f;   // the pick takes a container within this of the local player
-inline constexpr float    kStandCm     = 150.f;    // this near the container, a player stands where it can open it
-inline constexpr int      kWalkMaxS    = 900;      // the walk's longest budget, in seconds
-
-// The walker's budget, in seconds, for a route of this length; and whether the route fits the longest budget.
-inline int WalkSeconds(float routeCm) { return std::clamp(static_cast<int>(routeCm / 100.f) + 60, 90, kWalkMaxS); }
-inline bool WalkFits(float routeCm) { return static_cast<int>(routeCm / 100.f) + 60 <= kWalkMaxS; }
 
 // A record's identity in the inventories: addObject re-files a record with the owner's flag in bools[0], so its hash
 // differs between a container and an inventory, and its class and first name do not.
@@ -74,7 +66,7 @@ extern ItemKey         g_r0Key;      // the class and name of that record
 
 // The client's press and its answer, shared by the take arms and the append arms.
 extern uint64_t        g_phaseStartMs;
-extern uint64_t        g_pressMs;
+extern uint64_t        g_takePressMs;
 extern uint64_t        g_waitFromMs;   // the commit's bound counts from here
 extern int             g_containerBefore;
 extern int             g_ownBefore;
@@ -92,9 +84,6 @@ bool ContainerHashes(void* container, std::vector<uint64_t>& out);
 
 // The ItemKey of each record of a container actor's inventory, in order.
 bool ContainerKeys(void* container, std::vector<ItemKey>& out);
-
-// The open inventory screen's container slot that names record `id`, or its first slot when `id` is negative.
-void* SlotById(int32_t id);
 
 // How many records of the local player's own inventory have this class and name; -1 when the inventory does not read.
 int OwnHolds(const ItemKey& key);

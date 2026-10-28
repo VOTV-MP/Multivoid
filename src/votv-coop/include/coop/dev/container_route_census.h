@@ -3,8 +3,9 @@
 // (uicomp_playerInvContainerSlot_C::pressButton), R2 the take key (ui_playerInventory_C::em_take), R3 hold+run
 // (prop_container_C::playerUsedOn with the player running), R4 the overlap (prop_container_C::putObjectIn_overlap),
 // R5 the vacuum (prop_vacuum2_C::gather), R6 none of them (the game's own logic, named by its caller's class and
-// the outermost script function of its stack). The slices a client sends are charged to the route that last wrote
-// the container. Observe-only: it never cancels a call.
+// the outermost script function of its stack). A client's take is an act the host answers, and a client sends a
+// container slice only for a birth (an item it made, filed into a container), so the slices it sends are charged to
+// the route that last wrote the container and are few. Observe-only: it never cancels a call.
 //
 // Armed by the [dev] row container_route_census (both peers): 1 the census, drill the census plus the drill that
 // drives each route once (coop/dev/container_route_drill). Lines tagged
@@ -37,7 +38,8 @@ void OnDisconnect();
 // The census hook of container_writer_watch's verb entry: counts the verb. `take` is takeObj.
 void OnVerb(const ue_wrap::script_gate::Call& call, bool take);
 
-// A client-authored slice for `eid` left this peer (charged to the route that last wrote the container).
+// A client-authored slice for `eid` left this peer (charged to the route that last wrote the container). A client
+// sends one only for a birth, so after a take by act the count stays at 0.
 void NoteSliceSent(uint32_t eid);
 
 // Prints the non-zero cells now, `why` naming the moment.

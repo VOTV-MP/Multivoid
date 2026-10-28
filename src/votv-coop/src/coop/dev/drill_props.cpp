@@ -3,6 +3,7 @@
 #include "coop/dev/drill_props.h"
 
 #include "coop/dev/spawn_npc.h"
+#include "coop/element/registry.h"
 #include "coop/player/players_registry.h"
 
 #include "ue_wrap/actors/prop.h"
@@ -12,6 +13,7 @@
 #include "ue_wrap/engine/engine.h"
 
 #include <string>
+#include <vector>
 
 namespace coop::dev::drill_props {
 
@@ -54,6 +56,22 @@ bool TurnOffKerfur(void* npc) {
     if (!fn) return false;
     ue_wrap::ParamFrame f(fn);
     return f.valid() && ue_wrap::Call(npc, f);
+}
+
+int PropsNearPlayer() {
+    static std::vector<coop::element::Registry::ActorIdPair> pairs;
+    void* const p = coop::players::Registry::Get().Local();
+    ue_wrap::FVector at{};
+    if (!p || !E::TryGetActorLocation(p, at)) return -1;
+    coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, pairs);
+    int n = 0;
+    for (const auto& a : pairs) {
+        ue_wrap::FVector pos{};
+        if (!a.actor || !R::IsLiveByIndex(a.actor, a.internalIdx) || !E::TryGetActorLocation(a.actor, pos)) continue;
+        const float dx = pos.X - at.X, dy = pos.Y - at.Y, dz = pos.Z - at.Z;
+        if (dx * dx + dy * dy + dz * dz <= kNearCm * kNearCm) ++n;
+    }
+    return n;
 }
 
 bool HasKey(void* actor) {

@@ -11,8 +11,8 @@
 //        every world container ([SACK-CENSUS]) at the call, at the sale and 5 s later, and name what changed.
 //   3 -- the host itself drops six cups and one fresh crate onto the sack, one at a time, then the same call, sale and
 //        census; the crate's GObjStack index is logged before the sale and the containers holding it after.
-//   4 -- arm 3, then the client reads its sack 1, 5, 15 and 30 s after the sale; if it holds records at 5 s it takes
-//        one out through getObject (a player's take) and the host says if the container lane accepted or refused it.
+//   4 -- arm 3, the client opening the sack's screen before the sale and pressing its first slot (an act) at the sale
+//        marker: refused Gone, nothing comes out, the sack stays 0, and its mirror reads 0 within 2 s of the sale.
 
 #pragma once
 

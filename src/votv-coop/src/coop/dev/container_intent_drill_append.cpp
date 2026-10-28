@@ -145,10 +145,10 @@ void StartAppend(uint64_t now) {
 void AppendTick(uint64_t now) {
     switch (g_phase) {
     case Phase::GhostFind: {
-        void* const slot = SlotById(g_ghostSlotId);
+        void* const slot = CV::SlotById(CV::InventoryScreen(), g_ghostSlotId);
         if (slot) {
             g_takesBefore = AR::dev::LastTake().count;
-            g_pressMs = g_waitFromMs = now;
+            g_takePressMs = g_waitFromMs = now;
             if (!PressAndCheck(slot)) return;
             g_phase = Phase::GhostWait;
             return;

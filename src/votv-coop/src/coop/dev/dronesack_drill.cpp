@@ -1,5 +1,5 @@
-// coop/dev/dronesack_drill.cpp -- see coop/dev/dronesack_drill.h: the client's half, the destroy hooks and what the
-// two halves share.
+// coop/dev/dronesack_drill.cpp -- see coop/dev/dronesack_drill.h: the client's half (its arm 4 take is
+// dronesack_drill_take.cpp), the destroy hooks and what the two halves share.
 
 #include "coop/dev/dronesack_drill.h"
 
@@ -10,8 +10,10 @@
 #include "coop/config/config_registry.h"
 #include "coop/dev/director/aimed_grab.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/director/routes.h"
 #include "coop/dev/drill_chat.h"
 #include "coop/element/registry.h"
+#include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_echo_suppress.h"
@@ -98,35 +100,6 @@ template <class T> T ReadAt(const void* base, int32_t off) {
 
 // ---- the client ----
 
-enum class Ph : uint8_t { Wait, Mirror, Props, Route, Watch, Done };
-// One loose prop's walk, grab, carry and release (arm 2).
-enum class Put : uint8_t { Pick, Resolve, Drive, Walk, Grab, Carry, Over, Settle };
-
-struct Client {
-    Ph                    ph = Ph::Wait;
-    uint64_t              phaseMs = 0, armMs = 0;
-    uint32_t              sackEid = 0;
-    ue_wrap::CachedObjRef sack;
-    // arm 2
-    std::vector<uint32_t> eids;
-    size_t                i = 0;
-    Put                   st = Put::Pick;
-    uint64_t              stMs = 0;
-    int                   grabTries = 0;
-    ue_wrap::CachedObjRef prop;
-    int                   aimTicks = 0;                 // the Over leg: ticks spent steering the held prop
-    float                 bestMiss = 1e9f, bestFlat = 0.f, bestAbove = 0.f;   // ... and the nearest it came to the window
-    bool                  letGo = false;                // the Settle leg: the drop was called, not yet checked
-    int                   census = 0;   // 0 none yet, 1 before taken, 2 after taken, 3 after+5s taken and compared
-    uint64_t              soldSeenMs = 0;     // arm 4: when this peer first saw the host's sold line
-    bool                  probed[4] = {};     // ... and which of the after-sale reads have been made
-    int                   took = -1;          // ... and whether the client took a record out of the sold sack (-1: not yet)
-    uint64_t              afterMs = 0;
-    std::shared_ptr<D::BackgroundWalk> walk;
-    std::unique_ptr<D::AimedGrab>      grab;
-};
-Client g_c;
-
 void CancelWalk() {
     if (g_c.walk && g_c.walk->state.load() == 0) D::CancelBackgroundWalk(*g_c.walk);
     g_c.walk.reset();
@@ -136,7 +109,7 @@ void Abandon(const char* why) {
     UE_LOGW("[SACK-DRILL] ABANDONED on the client: %s", why);
     CancelWalk();
     g_c.grab.reset();
-    g_c.ph = Ph::Done;
+    g_c.ph = ClientPh::Done;
 }
 
 uint32_t ParseEid(const std::string& s) {
@@ -155,6 +128,8 @@ std::vector<uint32_t> ParseEids(const std::string& csv) {
 }  // namespace
 
 namespace detail {
+
+Client g_c;
 
 uint64_t NowMs() { return ::GetTickCount64(); }
 
@@ -269,8 +244,6 @@ void GoPut(Put st) {
     g_c.stMs = NowMs();
 }
 
-int WalkState() { return g_c.walk ? g_c.walk->state.load() : 2; }
-
 void RouteTick(void* player) {
     const uint64_t now = NowMs();
     if (now - g_c.phaseMs > kClientBoundMs) { Abandon("the route did not finish"); return; }
@@ -280,7 +253,7 @@ void RouteTick(void* player) {
         if (g_c.i >= g_c.eids.size()) {
             Say(kPutsDoneLine);
             UE_LOGI("[SACK-DRILL] client puts done: %zu props tried", g_c.eids.size());
-            g_c.ph = Ph::Watch;
+            g_c.ph = ClientPh::Watch;
             return;
         }
         GoPut(Put::Resolve);
@@ -408,45 +381,13 @@ void RouteTick(void* player) {
 
 constexpr unsigned kProbeS[4] = {1, 5, 15, 30};   // seconds after the host's sold line
 
-std::wstring FirstRecordClass(void* container) {
-    void* const inv = CI::InventoryOf(container);
-    std::vector<SR::SaveRecord> recs;
-    if (!inv || !CI::ReadContents(inv, recs, 4096) || recs.empty()) return L"?";
-    return recs[0].className;
-}
-
-// A player's take: the container's own getObject(0), the call the inventory UI makes when a record is pressed. It
-// takes record 0 out of the inventory and spawns its item at the player, and hands the spawned actor back.
-void TakeFromSold(void* container) {
-    const int before = RecordsOf(container);
-    if (before <= 0) {
-        UE_LOGI("[SACK-DRILL] client took nothing from the sold sack: it reads %d records", before);
-        g_c.took = 0;
-    } else {
-        const std::wstring cls = FirstRecordClass(container);
-        void* const fn = R::FindDispatchFunctionCached(R::ClassOf(container), L"getObject");
-        ue_wrap::ParamFrame f(fn);
-        const ue_wrap::FVector none{};
-        if (!fn || !f.valid() || !f.Set<int32_t>(L"index", 0) || !f.Set(L"customLoc", false) ||
-            !f.SetRaw(L"loc", &none, sizeof(none)) || !ue_wrap::Call(container, f)) {
-            UE_LOGI("[SACK-DRILL] client could not take from the sold sack: getObject does not run for class '%ls'",
-                    R::ClassNameOf(container).c_str());
-            g_c.took = 0;
-        } else {
-            void* const out = f.Get<void*>(L"OutputPin");
-            const bool live = out && R::IsLive(out);
-            UE_LOGI("[SACK-DRILL] client took from the sold sack through getObject: records %d -> %d, record 0 was '%ls', "
-                    "returned '%ls'", before, RecordsOf(container), cls.c_str(),
-                    live ? R::ClassNameOf(out).c_str() : L"nothing");
-            g_c.took = live ? 1 : 0;
-        }
-    }
-    Say(std::string(kTookPrefix) + std::to_string(g_c.took));
-}
-
 void SoldProbes(uint64_t now) {
     if (!g_c.soldSeenMs) {
-        if (!Heard(kSoldLine)) return;
+        if (!Heard(kSoldLine)) {   // before the sale: the walk to the sack and its screen opened, then held
+            if (g_c.take == Take::Idle) TakeStart(now);
+            TakeTick(now);
+            return;
+        }
         g_c.soldSeenMs = now;
         void* const container = ContainerOf(g_c.sack.Get());
         const EL::ElementId eid = container ? EL::Registry::Get().EidForActor(container) : EL::kInvalidId;
@@ -458,7 +399,19 @@ void SoldProbes(uint64_t now) {
         if (g_c.probed[i] || now - g_c.soldSeenMs < kProbeS[i] * 1000ULL) continue;
         g_c.probed[i] = true;
         UE_LOGI("[SACK-DRILL] client after sale +%us sack records=%d", kProbeS[i], SackRecords(g_c.sack.Get()));
-        if (i == 1) TakeFromSold(ContainerOf(g_c.sack.Get()));
+    }
+    MirrorWatch(now);
+    TakeTick(now);   // the press, once the mirror has been watched alone and still lists records
+    // The verdict has both halves: the press (refused Gone with nothing out, or nothing to take) and the mirror (0 in
+    // time). The mirror's FAIL is said here, after the press has answered, so the press runs in the red too.
+    if (g_c.take == Take::Done && g_c.mirror != 0 && !g_c.verdicted) {
+        g_c.verdicted = true;
+        if (g_c.mirror == 2)
+            UE_LOGW("[SACK-DRILL] client arm 4 FAIL: the mirror still showed %d records 2 s after the sale, before any press",
+                    g_c.mirrorLeft);
+        else if (g_c.takeOk)
+            UE_LOGI("[SACK-DRILL] client arm 4 PASS: the mirror read 0 within 2 s of the sale, and every press was "
+                    "refused Gone or none was made");
     }
 }
 
@@ -492,14 +445,14 @@ void CensusStep(uint64_t now) {
 void ClientTickImpl() {
     const uint64_t now = NowMs();
     switch (g_c.ph) {
-    case Ph::Wait:
+    case ClientPh::Wait:
         if (!coop::net_pump::HasAnnouncedWorldReady() ||
             coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle)
             return;
         g_c.phaseMs = now;
-        g_c.ph = Ph::Mirror;
+        g_c.ph = ClientPh::Mirror;
         return;
-    case Ph::Mirror: {
+    case ClientPh::Mirror: {
         std::string rest;
         if (!Rest(kSackPrefix, &rest)) return;   // the host has not named its sack
         g_c.sackEid = ParseEid(rest);
@@ -513,11 +466,12 @@ void ClientTickImpl() {
         g_c.armMs = now;
         Say(std::string(kBoundPrefix) + std::to_string(g_c.sackEid));
         UE_LOGI("[SACK-DRILL] client READY sack mirror eid=%u records=%d", g_c.sackEid, SackRecords(mirror));
+        if (Mode() == 4) WalkToSack();
         g_c.phaseMs = now;
-        g_c.ph = Mode() == 2 ? Ph::Props : Ph::Watch;   // arms 1 and 3: the host does the work, this peer reads
+        g_c.ph = Mode() == 2 ? ClientPh::Props : ClientPh::Watch;   // arms 1 and 3: the host does the work, this peer reads
         return;
     }
-    case Ph::Props: {
+    case ClientPh::Props: {
         std::string rest;
         if (!Rest(kPropsPrefix, &rest)) return;   // the host has not named its loose props
         g_c.eids = ParseEids(rest);
@@ -525,13 +479,13 @@ void ClientTickImpl() {
         SetWatch(g_c.eids);
         UE_LOGI("[SACK-DRILL] client READY %zu loose props to put", g_c.eids.size());
         g_c.phaseMs = now;
-        g_c.ph = Ph::Route;
+        g_c.ph = ClientPh::Route;
         return;
     }
-    case Ph::Route:
+    case ClientPh::Route:
         if (void* const player = coop::players::Registry::Get().Local()) RouteTick(player);
         return;
-    case Ph::Watch: {
+    case ClientPh::Watch: {
         if (Mode() >= 2) CensusStep(now);
         // The census after the sale is compared before the run ends; a host that ended with no sale has none to wait for.
         if (!Heard(kDoneLine) || g_c.census == 2) return;
@@ -551,10 +505,10 @@ void ClientTickImpl() {
             UE_LOGI("[SACK-DRILL] client DONE sack records=%d crate mirror alive=%d", SackRecords(g_c.sack.Get()),
                     alive ? 1 : 0);
         }
-        g_c.ph = Ph::Done;
+        g_c.ph = ClientPh::Done;
         return;
     }
-    case Ph::Done:
+    case ClientPh::Done:
         return;
     }
 }

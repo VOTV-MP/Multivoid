@@ -5,13 +5,14 @@
 // `saveSlot.GObjStack` wholesale rather than through the watched verbs, so the lane's central claim
 // -- that the `addObject`/`takeObj` watch ENTERS on each peer -- stays invisible to it.
 //
-// It dispatches `prop_container_C::extract(0)` and nothing else, because extract's first act is
-// `propInventory->takeObj(...)` dispatched blueprint-internally: the call WE make is the outer one
-// and the mutation to be caught is the game's own inner dispatch. The host fires at +10 s on the
-// nearest non-empty container to its own body, the client at +25 s on the second-nearest
-// (`VOTVCOOP_CONTAINER_FIRE_MS` overrides that delay); both print a DIGEST every 5 s and one
-// VERDICT fifteen seconds after their own fire. RED means the trigger changed nothing or the watch
-// never fired -- the two failures that void every other line in the run.
+// The host dispatches `prop_container_C::extract(0)` at +10 s on the nearest non-empty container
+// to its own body: extract's inner `takeObj` is the game's own dispatch the watch must catch. The
+// client does what a player does: at +25 s (`VOTVCOOP_CONTAINER_FIRE_MS` overrides) it walks to a
+// container the shared pick chose (near, a nav route reaches it, two records or more), says its eid
+// on drill chat, opens its screen and presses the first slot, so its take is an act. Both print a
+// DIGEST every 5 s. Verdicts: HOST, 15 s after its fire (RED: the trigger changed nothing or the
+// watch never fired); HOST-SEES-CLIENT (one grant, no Gone, the announced target's count fell by
+// one); CLIENT (a Granted reply and a done commit). The host then prints DONE.
 
 #pragma once
 
@@ -22,13 +23,12 @@ namespace coop::dev::container_selftest {
 // Cache the session pointer. Call once at boot (subsystems Install). No-op with the flag off.
 void Install(coop::net::Session* session);
 
-// WHAT IT DOES NOT MEASURE, so nobody reads it as a pass: this peer never walks, so a client firing
-// from across the room authors a slice the host refuses on reach, and the verdict reports REVERTED
-// as a legal outcome. The ACCEPTED client path belongs to `mp.py ctakerace`, whose peers walk to a
-// shared container and whose orchestrator sums the item across them.
+// WHAT IT DOES NOT MEASURE, so nobody reads it as a pass: a take that races another peer's. That
+// belongs to `mp.py ctakerace`, whose peers walk to a shared container and whose orchestrator sums
+// the item across them.
 
-// Game thread, per tick. Drives the two scheduled dispatches and the 5s digest. No-op with the
-// flag off, before the session connects, or once both dispatches have fired.
+// Game thread, per tick. Drives the host's dispatch, the client's take and the 5s digest. No-op
+// with the flag off or before the session connects.
 void Tick();
 
 // Clear the schedule + the resolved containers so a reconnect re-runs the circle.

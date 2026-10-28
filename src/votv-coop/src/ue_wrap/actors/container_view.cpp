@@ -1,6 +1,7 @@
 // ue_wrap/actors/container_view.cpp -- see container_view.h.
 #include "ue_wrap/actors/container_view.h"
 
+#include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -9,6 +10,7 @@
 #include "ue_wrap/world/world_singleton.h"
 
 #include <cstdint>
+#include <cstring>
 
 namespace ue_wrap::container_view {
 namespace {
@@ -41,6 +43,8 @@ struct Fields {
     int32_t enabledOff = -1;    // the button's bIsEnabled bitfield: its byte and mask
     uint8_t enabledMask = 0;
     void* getIndFn = nullptr;   // ui_playerInventory_C.getInd of putCls
+    void* slotsCls = nullptr;   // the screen class slotsProp was read from
+    int32_t slotsProp = -1;     // ui_playerInventory_C.slots_prop, the container slots
 };
 Fields g;
 
@@ -173,6 +177,45 @@ bool ReadSlot(void* obj, Slot& out) {
     out.container = PointerAt(screen, g.asProp);
     out.id = *reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(obj) + g.slotId);
     return true;
+}
+
+void* InventoryScreen() {
+    void* const screen = PointerAt(Gamemode(), g.propInventory);
+    return screen && R::IsLive(screen) ? screen : nullptr;
+}
+
+namespace {
+
+// The live slot widgets of the screen's slots_prop, each handed to `want` until it answers true; that slot, or null.
+template <typename Want>
+void* FindSlot(void* screen, Want want) {
+    if (!screen) return nullptr;
+    if (void* const cls = R::ClassOf(screen); cls != g.slotsCls) {
+        g.slotsCls = cls;
+        g.slotsProp = R::FindPropertyOffset(cls, L"slots_prop");
+    }
+    if (g.slotsProp < 0) return nullptr;
+    const save_record::Arr arr = save_record::ReadArr(screen, g.slotsProp);
+    if (!arr.data) return nullptr;
+    for (int32_t i = 0; i < arr.num; ++i) {
+        void* slot = nullptr;
+        std::memcpy(&slot, arr.data + static_cast<size_t>(i) * sizeof(slot), sizeof(slot));
+        if (slot && R::IsLive(slot) && want(slot)) return slot;
+    }
+    return nullptr;
+}
+
+}  // namespace
+
+void* SlotById(void* screen, int32_t id) {
+    return FindSlot(screen, [id](void* slot) {
+        Slot s{};
+        return ReadSlot(slot, s) && s.id == id;
+    });
+}
+
+void* FirstSlot(void* screen) {
+    return FindSlot(screen, [](void*) { return true; });
 }
 
 bool PressSlot(void* slot) {

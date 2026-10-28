@@ -126,7 +126,7 @@ constexpr uint64_t kFindBoundMs   = 60000;   // world-ready to the fixtures' mir
 constexpr uint64_t kSettleBoundMs = 30000;   // the mirrors' first sight to rest and the host's drive ended
 constexpr uint64_t kViewBoundMs   = 5000;    // the open verb to the screen showing the backpack
 constexpr uint64_t kActBoundMs    = 12000;   // a route's verb to the end of its act, and to the host's truth in the mirror
-constexpr uint64_t kBackBoundMs   = 8000;    // the refused slice to the host's truth coming back
+constexpr uint64_t kBackBoundMs   = 8000;    // the settle watches the count this long for a rise after the act (there is none)
 constexpr int      kRestChecks    = 4;
 
 uint64_t g_next = 0;

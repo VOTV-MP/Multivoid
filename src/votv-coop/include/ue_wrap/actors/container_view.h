@@ -45,6 +45,14 @@ struct Slot {
 // Read `obj` as a slot. False when it is not a uicomp_playerInvContainerSlot_C or a field does not resolve.
 bool ReadSlot(void* obj, Slot& out);
 
+// The gamemode's inventory screen (propInventory), open or not; null when it does not resolve or is not live.
+void* InventoryScreen();
+
+// The slot widget of `screen` (a ui_playerInventory_C) that names record `id`, or null; and its first live slot.
+// Both read the screen's slots_prop.
+void* SlotById(void* screen, int32_t id);
+void* FirstSlot(void* screen);
+
 // The slot's own pressButton. False when it does not resolve or the call fails.
 bool PressSlot(void* slot);
 

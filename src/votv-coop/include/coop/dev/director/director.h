@@ -185,7 +185,8 @@ DWORD WINAPI ContainerTakeProbeThread(LPVOID arg);
 // setHoverContainerSlot on the bound slot, then pressButton) at the same instant. Each peer
 // counts X locally afterwards and the driver sums across peers: 1 is correct, 2 a duplicate, 0
 // means X vanished, more is worse. Modes: "race" (both take) and "control" (only the host
-// takes, whose solo sum must be 1 before the summation is trusted). Env:
+// takes, whose solo sum must be 1 before the summation is trusted). The host picks the
+// container and names it in a sentinel file beside the GO file; the client takes that one. Env:
 // VOTVCOOP_RUN_CTAKE_RACE=1, VOTVCOOP_RACE_MODE, VOTVCOOP_RACE_ROLE, VOTVCOOP_RACE_GO_FILE.
 // Greppable as "director/ctake-race:".
 void RunContainerRace();

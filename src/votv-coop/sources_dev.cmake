@@ -110,6 +110,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/container_intent_drill_append.cpp
     src/coop/dev/container_intent_drill_depart_room.cpp
     src/coop/dev/container_intent_drill_host.cpp
+    src/coop/dev/container_pick.cpp
     src/coop/dev/container_intent_drill_pick.cpp
     src/coop/dev/container_intent_drill_put.cpp
     src/coop/dev/container_intent_drill_put_host.cpp
@@ -137,6 +138,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/physmods_drill.cpp
     src/coop/dev/drone_call_drill.cpp
     src/coop/dev/dronesack_drill.cpp
+    src/coop/dev/dronesack_drill_take.cpp
     src/coop/dev/dronesack_drill_host.cpp
     src/coop/dev/dronesack_drill_census.cpp
     src/coop/dev/remover_drill.cpp
@@ -293,6 +295,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/director/director_run.cpp
     src/coop/dev/director/container_take_probe.cpp
     src/coop/dev/director/dup_verifier.cpp
+    src/coop/dev/director/container_take_judge.cpp
     src/coop/dev/director/door_approach.cpp
     src/coop/dev/director/routes.cpp
     src/coop/dev/director/aim_fan.cpp

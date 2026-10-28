@@ -1,5 +1,7 @@
-// coop/dev/container_poke.h -- [dev] the organic container mutation the container drills share: the game's own
-// extract(0) on a world container, so the addObject/takeObj watch sees what a player's extraction would send.
+// coop/dev/container_poke.h -- [dev] the organic container mutation the HOST's container drills share: the game's own
+// extract(0) on a world container, so the addObject/takeObj watch sees what a player's extraction would send. A host
+// verb is authority. A client must not call it on a shared container: its take is an act, which a drill drives by
+// opening the screen and pressing a slot (container_view).
 
 #pragma once
 

@@ -7,6 +7,8 @@
 #include "coop/config/config_registry.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/director/routes.h"
+#include "coop/dev/container_pick.h"
+#include "coop/dev/drill_props.h"
 #include "coop/element/registry.h"
 #include "coop/net/net_clock.h"
 #include "coop/net/protocol.h"
@@ -47,6 +49,7 @@ namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
 namespace GT = ue_wrap::game_thread;
 namespace CV = ue_wrap::container_view;
+namespace CP = coop::dev::container_pick;
 namespace DR = coop::director;
 namespace CC = coop::props::container_contents_sync;
 namespace CAH = coop::props::container_apply_hold;
@@ -113,7 +116,7 @@ ItemKey  g_r0Key;
 
 // The client arms that append to the mirror (container_intent_drill_append.cpp) share these with the take arms.
 uint64_t g_phaseStartMs = 0;
-uint64_t g_pressMs = 0;
+uint64_t g_takePressMs = 0;
 uint64_t g_waitFromMs = 0;  // the commit's bound counts from here
 int      g_containerBefore = -1;
 int      g_ownBefore = -1;
@@ -197,7 +200,6 @@ constexpr uint64_t kHeldHoldMs   = 20000;   // held: the parked replay is releas
 constexpr uint64_t kDeadlineHoldMs = 32000; // deadline: this long, past the host's 30 s hold
 constexpr uint64_t kRaceHoldMs   = 8000;    // race: the parked replay waits this long for the host's press (the client cannot see it)
 constexpr uint64_t kRaceSettleMs = 3000;    // race and two: the own inventory is read this long after the commit or the refusal
-constexpr float    kNearCm       = 300.f;   // the props counted around the player
 
 // The arms that park the grant's replay.
 bool Parks() {
@@ -290,23 +292,6 @@ bool IsLowerClient() {
     return mine >= 0 && mine == lowest;
 }
 
-// The live props within kNearCm of the player: what a take that spawned an item would have grown.
-int PropsNearPlayer() {
-    static std::vector<coop::element::Registry::ActorIdPair> pairs;
-    void* const p = coop::players::Registry::Get().Local();
-    FVector at{};
-    if (!p || !E::TryGetActorLocation(p, at)) return -1;
-    coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, pairs);
-    int n = 0;
-    for (const auto& a : pairs) {
-        FVector pos{};
-        if (!a.actor || !R::IsLiveByIndex(a.actor, a.internalIdx) || !E::TryGetActorLocation(a.actor, pos)) continue;
-        const float dx = pos.X - at.X, dy = pos.Y - at.Y, dz = pos.Z - at.Z;
-        if (dx * dx + dy * dy + dz * dz <= kNearCm * kNearCm) ++n;
-    }
-    return n;
-}
-
 struct WalkArg {
     uint32_t gen;
     uint32_t epoch;
@@ -319,7 +304,7 @@ struct WalkArg {
 DWORD WINAPI WalkerThread(LPVOID arg) {
     const WalkArg a = *std::unique_ptr<WalkArg>(static_cast<WalkArg*>(arg));
     auto goal = std::make_shared<DR::DirectorGoal>();
-    goal->reachCm = kStandCm;
+    goal->reachCm = CP::kStandCm;
     goal->epoch = a.epoch;
     goal->targetActor = a.actor;
     goal->targetPos = a.pos;
@@ -331,7 +316,7 @@ DWORD WINAPI WalkerThread(LPVOID arg) {
             done.store(2);
             return;
         }
-        done.store(DR::RouteInLegs(p, at, goal->targetPos, kStandCm, len.get()) ? 1 : 2);
+        done.store(DR::RouteInLegs(p, at, goal->targetPos, CP::kStandCm, len.get()) ? 1 : 2);
     });
     if (routed != 1) {
         Publish(a.gen, 2);
@@ -341,7 +326,7 @@ DWORD WINAPI WalkerThread(LPVOID arg) {
             static_cast<double>(*len));
     DR::ControlManager mgr;
     DR::AddWalkToProcesses(mgr, *goal);
-    const bool arrived = mgr.Run(*goal, WalkSeconds(*len)) && goal->reached;
+    const bool arrived = mgr.Run(*goal, CP::WalkSeconds(*len)) && goal->reached;
     Publish(a.gen, arrived ? 1 : 3);
     return 0;
 }
@@ -367,7 +352,7 @@ void StartWalk() {
 // The press of the screen's first slot, with the counts before taken first. The arms that park the grant's replay
 // hold it before the press.
 void PressFirstSlot(uint64_t now) {
-    void* const slot = SlotById(-1);
+    void* const slot = CV::FirstSlot(CV::InventoryScreen());
     CV::Slot s{};
     if (!slot || !CV::ReadSlot(slot, s)) {
         Fail("the open screen has no readable first container slot");
@@ -376,9 +361,9 @@ void PressFirstSlot(uint64_t now) {
     UE_LOGI("[CI-DRILL] client first slot id=%d", s.id);
     g_containerBefore = CountOf(g_eid);
     g_ownBefore = ue_wrap::inventory::LivePersonalStoreCount();
-    g_propsBefore = PropsNearPlayer();
+    g_propsBefore = coop::dev::drill_props::PropsNearPlayer();
     g_takesBefore = AR::dev::LastTake().count;
-    g_pressMs = g_waitFromMs = now;
+    g_takePressMs = g_waitFromMs = now;
     if (JudgesR()) {
         std::vector<uint64_t> hashes;
         std::vector<ItemKey> keys;
@@ -505,7 +490,7 @@ void ClientTick() {
     case Phase::Parked:
         if (AR::dev::ReplayParked()) {
             g_parkedMs = now;
-            UE_LOGI("[CI-DRILL] client grant parked after %llu ms", static_cast<unsigned long long>(now - g_pressMs));
+            UE_LOGI("[CI-DRILL] client grant parked after %llu ms", static_cast<unsigned long long>(now - g_takePressMs));
             if (ArmOf() == Arm::Depart) {
                 // The rig drops this client on the next line and relaunches it; nothing more runs in this life.
                 DepartMarkParked();
@@ -522,7 +507,7 @@ void ClientTick() {
             }
             return;
         }
-        if (now - g_pressMs >= kCommitFailMs)
+        if (now - g_takePressMs >= kCommitFailMs)
             Fail("the grant did not park within 15 s of the press (pending id=%u)",
                  static_cast<unsigned>(AR::dev::PendingId()));
         return;
@@ -575,14 +560,14 @@ void ClientTick() {
         // An abort's mirror is back at the host's count within kBackMs of the commit.
         if (backArm && containerAfter != g_containerBefore && now - g_commitMs < kBackMs) return;
         const int ownAfter = ue_wrap::inventory::LivePersonalStoreCount();
-        const int propsAfter = PropsNearPlayer();
+        const int propsAfter = coop::dev::drill_props::PropsNearPlayer();
         const uint32_t stale = AR::dev::StaleGrantAborts();
         UE_LOGI("[CI-DRILL] client %s committed=%u ms=%llu container %d -> %d own %d -> %d unread=%u stale=%u "
                 "props %d -> %d",
-                ArmName(), g_committed, static_cast<unsigned long long>(g_commitMs - g_pressMs), g_containerBefore,
+                ArmName(), g_committed, static_cast<unsigned long long>(g_commitMs - g_takePressMs), g_containerBefore,
                 containerAfter, g_ownBefore, ownAfter, AR::dev::TakeDoneUnread(), stale, g_propsBefore, propsAfter);
         if (ArmOf() == Arm::Settle)
-            UE_LOGI("[CI-DRILL] client settle reply_ms=%llu", static_cast<unsigned long long>(g_commitMs - g_pressMs));
+            UE_LOGI("[CI-DRILL] client settle reply_ms=%llu", static_cast<unsigned long long>(g_commitMs - g_takePressMs));
         const bool fell = g_containerBefore >= 0 && containerAfter >= 0 && g_containerBefore - containerAfter == 1;
         const bool rose = g_ownBefore >= 0 && ownAfter >= 0 && ownAfter - g_ownBefore == 1;
         const bool ownSame = g_ownBefore >= 0 && ownAfter == g_ownBefore;
@@ -660,7 +645,7 @@ void OnDisconnect() {
     g_actorIdx = -1;
     g_pos = FVector{};
     g_records0 = 0;
-    g_phaseStartMs = g_pressMs = g_commitMs = g_parkedMs = g_waitFromMs = 0;
+    g_phaseStartMs = g_takePressMs = g_commitMs = g_parkedMs = g_waitFromMs = 0;
     g_containerBefore = g_ownBefore = g_propsBefore = -1;
     AppendReset();
     g_takesBefore = g_committed = 0;

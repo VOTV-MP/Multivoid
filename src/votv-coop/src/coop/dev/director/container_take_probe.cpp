@@ -7,17 +7,20 @@
 // rung reached, with the container's extract verb as a non-faithful diagnostic fallback. Dev
 // only, env-gated (VOTVCOOP_RUN_CTAKE_PROBE=1); greppable "director/ctake: VERDICT".
 
+#include "coop/dev/container_pick.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/director/dup_verifier.h"
 #include "coop/dev/director/routes.h"   // the no-dup verifier + its positive control
+#include "container_take_judge.h"          // co-located private header: the cross-peer counts file and verdict
 
 #include "coop/config/config.h"               // ReadEnv
+#include "coop/element/registry.h"            // LivePropActor
 #include "coop/player/players_registry.h"
-#include "coop/props/prop_element_tracker.h"  // CollectTrackedKeyEntries -- the tracked save keys
+#include "coop/props/container_act_request.h"     // dev::LastTake, LastRefusal, PendingId
+#include "coop/props/container_contents_sync.h"   // ContentsDigest
 #include "ue_wrap/actors/inventory.h"      // ResolveSaveSlot
 #include "ue_wrap/actors/prop.h"           // WalksToBase
 #include "ue_wrap/actors/save_record.h"    // ReadArr, kMxStride
-#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"             // ParamFrame, Call
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -45,7 +48,6 @@ namespace GT  = ue_wrap::game_thread;
 namespace SR  = ue_wrap::save_record;
 namespace INV = ue_wrap::inventory;
 namespace PR  = ue_wrap::prop;
-namespace PT  = coop::prop_element_tracker;
 
 // A step of the probe on the game thread (GT::RunAndWait: it waits out a stall and cannot outlive a
 // task that faulted). The first step whose task faulted is kept, so the probe ends naming it instead of
@@ -94,25 +96,48 @@ bool IsWorldContainerInv(void* inv) {
     std::memcpy(&player, reinterpret_cast<const uint8_t*>(inv) + off, 1);
     return player == 0;
 }
-// The container's item count through its GObjStack slice, the read container_contents_sync
-// uses: the save's GObjStack[inv.Index] wraps a TArray of save structs. -1 when unresolvable,
-// distinct from 0 (empty).
-int32_t ContainerItemCount(void* container) {
+// The container's GObjStack slice (the read container_contents_sync uses): the save's GObjStack[inv.Index] wraps a
+// TArray of save structs. False when unresolvable.
+bool ContainerSliceArr(void* container, SR::Arr& out) {
     void* inv = InventoryOf(container);
-    if (!inv || !IsWorldContainerInv(inv)) return -1;
+    if (!inv || !IsWorldContainerInv(inv)) return false;
     void* save = INV::ResolveSaveSlot();
-    if (!save) return -1;
+    if (!save) return false;
     static int32_t offStack = -2, offIndex = -2;
     if (offStack == -2) offStack = R::FindPropertyOffset(R::ClassOf(save), L"GObjStack");
     if (offIndex == -2) offIndex = R::FindPropertyOffset(R::ClassOf(inv), L"Index");
-    if (offStack < 0 || offIndex < 0) return -1;
+    if (offStack < 0 || offIndex < 0) return false;
     int32_t idx = -1;
     std::memcpy(&idx, reinterpret_cast<const uint8_t*>(inv) + offIndex, sizeof(idx));
-    if (idx < 0) return -1;
+    if (idx < 0) return false;
     const SR::Arr stack = SR::ReadArr(save, offStack);
-    if (idx >= stack.num) return -1;
+    if (idx >= stack.num) return false;
     const uint8_t* slot = stack.data + static_cast<size_t>(idx) * SR::kMxStride;
-    return SR::ReadArr(slot, 0).num;
+    out = SR::ReadArr(slot, 0);
+    return true;
+}
+// The record count, -1 when unresolvable, distinct from 0 (empty).
+int32_t ContainerItemCount(void* container) {
+    SR::Arr slice;
+    return ContainerSliceArr(container, slice) ? slice.num : -1;
+}
+// The prop name (names[0][0]) of the container's record at `slotIdx`: with the class, what the pocket count matches.
+bool ContainerRecordName(void* container, int32_t slotIdx, std::wstring& name) {
+    SR::Arr slice;
+    if (!ContainerSliceArr(container, slice) || slotIdx < 0 || slotIdx >= slice.num) return false;
+    SR::SaveRecord rec;
+    SR::ReadSaveRecord(slice.data + static_cast<size_t>(slotIdx) * SR::kSaveStride, rec);
+    return SR::RecordName(rec, name);
+}
+// The local player's own carried records that are X by class and name (not the container's, not another peer's copy);
+// -1 when the inventory does not read.
+int32_t PocketCount(const ItemSig& x, const std::wstring& name) {
+    INV::PlayerInventory pinv;
+    if (!INV::ReadAll(pinv)) return -1;
+    int32_t n = 0;
+    std::wstring nm;
+    for (const SR::SaveRecord& r : pinv.inventory) n += (r.className == x.className && SR::RecordName(r, nm) && nm == name);
+    return n;
 }
 
 // Call a no-arg UFunction on `obj`, resolved on the given declaring class; FindFunction is
@@ -151,9 +176,12 @@ int32_t ReadInt32Field(void* obj, const wchar_t* field) {
 
 constexpr float kMinCm      = 150.f;
 constexpr float kMaxCm      = 6000.f;
-constexpr float kReachCm    = 250.f;   // a container's interaction reach (not a nav constant)
+constexpr float kReachCm    = 150.f;   // inside the act's 200 uu reach, or the view closes on arrival
 constexpr int   kMaxCand    = 12;
 constexpr int   kUiWaitTicks = 30;     // ~poll after openContainer for the UI widget to spawn
+constexpr uint64_t kGoWaitMs     = 240000;   // the orchestrator's own bound on both peers arriving
+constexpr uint64_t kActCloseMs   = 30000;    // a client's act open at the press, until it commits, aborts or is refused
+constexpr uint64_t kCountsWaitMs = 60000;    // the other peer's counts file, after this peer's own act is over
 
 // The probe's measurements.
 struct Probe {
@@ -174,13 +202,13 @@ struct Probe {
     ItemSig  xSig;
     int32_t  phaseA = -1;
     int32_t  phaseB = -1;
-    std::wstring targetKey;   // the shared container's stable SAVE KEY (the by-construction race key)
+    uint32_t targetEid = 0;   // the shared container's element id (the race key, equal on both peers)
+    // The race's counts per peer, before (A) and after (B): the container's records and the own pocket's X.
+    std::wstring xName;       // X's prop name (names[0][0]); with its class, what the pocket count matches
+    int32_t  contA = -1, contB = -1, pockA = -1, pockB = -1;
+    uint32_t takesA = 0;      // the take commits this peer had sent before the GO
     // The pick, written by a game-thread task.
     ue_wrap::FVector targetPos{};
-    bool     playerUnread = false;   // the race pick: the route start could not be read, which a retry does not change
-    // The race pick's candidates whose read failed: a retry skips them, since a failed read of a live actor
-    // faults again, and still counts them among those it could not place.
-    std::vector<ue_wrap::CachedObjRef> unreadable;
 };
 
 }  // namespace
@@ -455,59 +483,6 @@ namespace {
 
 std::string EnvStr(const char* k) { return coop::config::ReadEnv(k); }
 
-uint64_t NowUnixMs() {   // system wall-clock (shared across peers on one box) as Unix ms
-    FILETIME ft; ::GetSystemTimeAsFileTime(&ft);
-    uint64_t t = (static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;  // 100ns since 1601
-    return (t - 116444736000000000ULL) / 10000ULL;   // -> Unix ms
-}
-
-// The deterministic shared target, identical on both peers. `playerUnread`: the route start could not be read,
-// which a retry does not change. `unreadOut`: keyed non-empty containers that could not be placed; one the other
-// peer could place makes the two picks differ, so the count is printed with the pick.
-void* PickSharedContainer(void* player, int32_t& outCount, ue_wrap::FVector& outPos, std::wstring& outKey,
-                          bool& playerUnread, int& unreadOut, std::vector<ue_wrap::CachedObjRef>& unreadable) {
-    unreadOut = 0;
-    ue_wrap::FVector at{};
-    playerUnread = !E::TryGetActorLocation(player, at);
-    if (playerUnread) return nullptr;
-    // The shared key is the persistent save key, identical on every peer (the same save) and
-    // unchanged by spawn order or geometry, through the mod's keyed-element index. Not the position
-    // (a property of this save's geometry) and not the runtime name, whose number is assigned by
-    // spawn order at load and diverges across peers. The lexicographically smallest key among
-    // non-empty keyed containers wins; nav-reachability is a feasibility filter, not the identity,
-    // and the orchestrator checks both peers picked the same key.
-    std::vector<PT::TrackedKeyEntry> keyed;
-    PT::CollectTrackedKeyEntries(keyed);
-    struct Cand { void* o; ue_wrap::FVector p; int32_t cnt; std::wstring key; };
-    std::vector<Cand> cs;
-    for (const auto& ke : keyed) {
-        if (!ke.actor || ke.key.empty() || !R::IsLiveByIndex(ke.actor, ke.internalIdx)) continue;
-        if (!IsPlacedContainer(ke.actor)) continue;
-        const int32_t cnt = ContainerItemCount(ke.actor);
-        if (cnt <= 0) continue;
-        bool latched = false;
-        for (const ue_wrap::CachedObjRef& u : unreadable)
-            if (u.Is(ke.actor)) { latched = true; break; }
-        ue_wrap::FVector p{};
-        if (latched || !E::TryGetActorLocation(ke.actor, p)) {   // no route to judge: no candidate
-            if (!latched) {
-                unreadable.emplace_back();
-                unreadable.back().Set(ke.actor);
-            }
-            ++unreadOut;
-            continue;
-        }
-        cs.push_back({ ke.actor, p, cnt, ke.key });
-    }
-    std::sort(cs.begin(), cs.end(), [](const Cand& a, const Cand& b){ return a.key < b.key; });  // BY CONSTRUCTION
-    for (const Cand& c : cs) {
-        if (!RouteInLegs(player, at, c.p, kReachCm)) continue;                 // feasibility: reachable
-        outCount = c.cnt; outPos = c.p; outKey = c.key; return c.o;            // smallest-key reachable
-    }
-    outCount = 0; outPos = {}; outKey.clear();
-    return nullptr;
-}
-
 // The orchestrator's GO sentinel: mp.py writes a future Unix time in ms into the file once both
 // peers have logged ARRIVED, and each bot spins to that instant, sub-millisecond simultaneity
 // on one box. False on timeout.
@@ -530,6 +505,44 @@ bool WaitForGo(const std::string& goFile, uint64_t timeoutMs) {
     return false;
 }
 
+// The target sentinel: the host's pick, shared. It sits beside the GO file; the host writes the picked container's
+// element id into it (a temp file, renamed over it), the client waits for it and takes that container, so both peers
+// race for one container however far apart they stand.
+// The host's picked eid, polled until the file reads; 0 on timeout.
+uint32_t WaitForTarget(const std::string& file, uint64_t timeoutMs) {
+    const uint64_t start = NowUnixMs();
+    while (NowUnixMs() - start < timeoutMs) {
+        std::ifstream f(file, std::ios::binary);
+        unsigned long long v = 0;
+        if (f && f >> v && v > 0) return static_cast<uint32_t>(v);
+        ::Sleep(200);
+    }
+    UE_LOGW("director/ctake-race: target sentinel timed out (%llums) file=%s", (unsigned long long)timeoutMs, file.c_str());
+    return 0;
+}
+
+// Removes the sentinel when the host's probe ends, on whichever path.
+struct TargetFileGuard {
+    std::string file;
+    ~TargetFileGuard() { if (!file.empty()) ::DeleteFileA(file.c_str()); }
+};
+
+// The container the host picked, as the pick would have found it: the live actor, its place and its record count.
+bool ResolveHostPick(uint32_t eid, coop::dev::container_pick::Pick& out) {
+    out = coop::dev::container_pick::Pick{};
+    void* const actor = coop::element::LivePropActor(eid);
+    ue_wrap::FVector at{};
+    int32_t n = 0;
+    float vol = 0.f;
+    if (!actor || !E::TryGetActorLocation(actor, at) || !coop::props::container_contents_sync::ContentsDigest(eid, n, vol))
+        return false;
+    out.eid = eid;
+    out.actor = actor;
+    out.pos = at;
+    out.records = n;
+    return true;
+}
+
 }  // namespace
 
 void RunContainerRace() {
@@ -543,6 +556,15 @@ void RunContainerRace() {
     // store walk finds the item (where a losing client's optimistic copy would live), or a real
     // duplicate on the client would read 0 and the sum would falsely say no duplicate.
     const bool shouldTake = (mode == "race") || (mode == "control" && role == taker);
+    const std::string targetFile = BesideGo(goFile, "multivoid_race_target.txt");
+    const bool hostPicks = role == "host";
+    TargetFileGuard targetGuard;
+    if (hostPicks && !targetFile.empty()) {
+        ::DeleteFileA(targetFile.c_str());   // a sentinel left by an earlier run names that run's container
+        targetGuard.file = targetFile;
+    }
+    const std::string countsFile = CountsFile(goFile, role);   // an earlier run's file would be read as the peer's
+    if (!countsFile.empty()) ::DeleteFileA(countsFile.c_str());
     UE_LOGI("director/ctake-race: START mode=%s role=%s taker=%s shouldTake=%d goFile=%s",
             mode.c_str(), role.c_str(), taker.c_str(), shouldTake ? 1 : 0, goFile.c_str());
 
@@ -565,55 +587,71 @@ void RunContainerRace() {
     }
     if (!*rsv) { UE_LOGW("director/ctake-race: VERDICT no possessed local player -- ABORT (role=%s)", role.c_str()); return; }
 
+    // The client takes the host's pick (the sentinel beside the GO file); the host picks and writes it.
+    uint32_t hostEid = 0;
+    if (!hostPicks && !targetFile.empty()) {
+        hostEid = WaitForTarget(targetFile, /*timeoutMs=*/60000);
+        if (!hostEid) { UE_LOGW("director/ctake-race: VERDICT no host target -- ABORT (role=%s)", role.c_str()); return; }
+    }
+
     // The shared target and the item's signature (both peers read the same slice, so the same
-    // signature). Retried until a shared container with contents resolves: on a client the
-    // contents sync lands after the player is possessed.
+    // signature). The host's target is the container pick (coop/dev/container_pick): near, a nav
+    // route reaches it within the walk budget, two records or more, ranked by element id. The
+    // client resolves that element id. Retried until one resolves: on a client the contents sync
+    // lands after the player is possessed.
     DirectorGoal goal; goal.reachCm = kReachCm;
     auto pb = std::make_shared<Probe>();
-    auto unread = std::make_shared<int>(0);   // the last try's unplaceable candidates
     bool picked = false;
-    for (int tries = 0; tries < 40 && !picked && !pb->playerUnread; ++tries) {
-        const int r = Step("the pick", [rsv, pb, unread](std::atomic<int>& d) {
-            ue_wrap::FVector pos{}; int32_t cnt = 0; std::wstring key;
-            void* c = PickSharedContainer(*rsv, cnt, pos, key, pb->playerUnread, *unread, pb->unreadable);
-            if (!c) { d.store(2); return; }
-            pb->container = c; pb->targetPos = pos; pb->countBefore = cnt;
-            pb->fname = R::ToString(R::NameOf(c)); pb->targetKey = key; pb->slotId = 0;
-            pb->xSig = CaptureContainerSlotSig(c, pb->slotId);
-            UE_LOGI("director/ctake-race: SHARED target key=%ls pos=(%.0f,%.0f,%.0f) items=%d slotID=%d "
-                    "X(cls=%ls key=%ls) unreadAnywhere=%d -- both peers must pick the SAME save-key (by construction)",
-                    key.c_str(), pos.X, pos.Y, pos.Z, cnt, pb->slotId,
-                    pb->xSig.className.c_str(), pb->xSig.key.c_str(), *unread);
+    for (int tries = 0; tries < 40 && !picked; ++tries) {
+        const int r = Step("the pick", [pb, hostEid](std::atomic<int>& d) {
+            coop::dev::container_pick::Pick pick;
+            if (hostEid ? !ResolveHostPick(hostEid, pick)
+                        : !coop::dev::container_pick::PickContainer(coop::dev::container_pick::Want{}, pick)) {
+                d.store(2);
+                return;
+            }
+            pb->container = pick.actor; pb->targetPos = pick.pos; pb->countBefore = pick.records;
+            pb->fname = R::ToString(R::NameOf(pick.actor)); pb->targetEid = pick.eid; pb->slotId = 0;
+            pb->xSig = CaptureContainerSlotSig(pick.actor, pb->slotId);
+            ContainerRecordName(pick.actor, pb->slotId, pb->xName);
+            UE_LOGI("director/ctake-race: SHARED target eid=%u pos=(%.0f,%.0f,%.0f) items=%d slotID=%d "
+                    "X(cls=%ls key=%ls) fallback=%d -- both peers must pick the SAME eid",
+                    pick.eid, pick.pos.X, pick.pos.Y, pick.pos.Z, pick.records, pb->slotId,
+                    pb->xSig.className.c_str(), pb->xSig.key.c_str(), pick.fallback ? 1 : 0);
             d.store(1);
         });
         if (r == 1) picked = true;
         else if (g_faultedStep) break;
-        else if (!pb->playerUnread) ::Sleep(2000);   // world/contents not ready yet -- wait + retry
+        else ::Sleep(2000);   // world/contents not ready yet -- wait + retry
     }
     if (g_faultedStep) {
         UE_LOGW("director/ctake-race: VERDICT the game thread's task faulted at %s -- ABORT (role=%s)", g_faultedStep,
                 role.c_str());
         return;
     }
-    if (pb->playerUnread) {
-        UE_LOGW("director/ctake-race: VERDICT the player's location could not be read, so no route starts -- ABORT "
-                "(role=%s)", role.c_str());
+    if (!picked) {
+        UE_LOGW("director/ctake-race: VERDICT could not pick shared container (world not ready / none near and "
+                "reachable) -- ABORT (role=%s)", role.c_str());
         return;
     }
-    if (!picked) {
-        UE_LOGW("director/ctake-race: VERDICT could not pick shared container (world not ready / none reachable; "
-                "unreadAnywhere=%d on the last try) -- ABORT (role=%s)", *unread, role.c_str());
+    if (hostPicks && !targetFile.empty() && !WriteSentinel(targetFile, std::to_string(pb->targetEid))) {
+        UE_LOGW("director/ctake-race: VERDICT could not write the target sentinel %s -- ABORT (role=%s)", targetFile.c_str(),
+                role.c_str());
         return;
     }
     goal.targetActor = pb->container;
     goal.targetPos = pb->targetPos;
 
     // The item counted before, per peer.
-    Step("phase A", [pb](std::atomic<int>& d) { pb->phaseA = CountItemInstances(pb->xSig, /*print=*/false); d.store(1); });
-    UE_LOGI("director/ctake-race: PRECOUNT role=%s localCountBefore=%d", role.c_str(), pb->phaseA);
+    Step("phase A", [pb](std::atomic<int>& d) {
+        pb->phaseA = CountItemInstances(pb->xSig, /*print=*/false);
+        pb->contA = ContainerItemCount(pb->container); pb->pockA = PocketCount(pb->xSig, pb->xName);
+        pb->takesA = coop::props::container_act_request::dev::LastTake().count; d.store(1);
+    });
+    UE_LOGI("director/ctake-race: PRECOUNT role=%s localCountBefore=%d containerBefore=%d pocketBefore=%d X(name=%ls)",
+            role.c_str(), pb->phaseA, pb->contA, pb->pockA, pb->xName.c_str());
 
-    // Walk to the shared container; a generous deadline, since the smallest-key container may be a
-    // long route.
+    // Walk to the shared container; the pick takes one within 5000 cm of the player, so 300 s is generous.
     { ControlManager mgr; AddWalkToProcesses(mgr, goal); mgr.Run(goal, /*maxSeconds=*/300);
       if (!goal.reached) { UE_LOGW("director/ctake-race: VERDICT did NOT reach shared container (role=%s reason=%s) -- ABORT", role.c_str(), goal.failReason); return; } }
 
@@ -627,11 +665,14 @@ void RunContainerRace() {
         Step("the UI wait", [pb](std::atomic<int>& d) { pb->slotFound = (FirstLiveOfClass(L"uicomp_playerInvContainerSlot_C") != nullptr); d.store(1); });
         if (!pb->slotFound) ::Sleep(30);
     }
-    UE_LOGI("director/ctake-race: ARRIVED role=%s key=%ls open=%d slot=%d -- waiting for GO",
-            role.c_str(), pb->targetKey.c_str(), pb->openCalled ? 1 : 0, pb->slotFound ? 1 : 0);
+    // mp.py ctakerace compares the key= field of this line across the peers: it is the target's element id.
+    UE_LOGI("director/ctake-race: ARRIVED role=%s key=%u open=%d slot=%d -- waiting for GO",
+            role.c_str(), pb->targetEid, pb->openCalled ? 1 : 0, pb->slotFound ? 1 : 0);
 
-    // The barrier: wait on the GO instant, then fire the faithful take at it.
-    const bool go = goFile.empty() ? true : WaitForGo(goFile, /*timeoutMs=*/60000);
+    // The barrier: wait on the GO instant, then fire the faithful take at it. The orchestrator writes GO once BOTH peers
+    // arrived, and waits up to its own probe timeout (240 s) for the slower one, so this wait is that long: a shorter
+    // wait lets the first peer judge before the other has even pressed.
+    const bool go = goFile.empty() ? true : WaitForGo(goFile, kGoWaitMs);
     if (go && shouldTake) {
         Step("the take", [pb](std::atomic<int>& d) {
             void* ui = FirstLiveOfClass(L"ui_playerInventory_C");
@@ -651,18 +692,61 @@ void RunContainerRace() {
     }
 
     ::Sleep(1500);   // let the take + the host CAS + any re-publish settle across peers
-    Step("phase B", [pb](std::atomic<int>& d) { pb->phaseB = CountItemInstances(pb->xSig, /*print=*/true); d.store(1); });
-    if (g_faultedStep) {
+    // A client that was to take reports how its act ended; the host takes natively and runs no act.
+    const bool actExpected = go && shouldTake && !hostPicks;
+    auto act = std::make_shared<int32_t>(kActIdle);
+    // One reading of the counts and of the act, a step of the game thread; `print` lists the item's rows.
+    const auto measure = [pb, act, actExpected](bool print) {
+        Step("phase B", [pb, act, actExpected, print](std::atomic<int>& d) {
+            namespace AR = coop::props::container_act_request;
+            pb->phaseB = CountItemInstances(pb->xSig, print);
+            pb->contB = ContainerItemCount(pb->container); pb->pockB = PocketCount(pb->xSig, pb->xName);
+            if (actExpected) {
+                const AR::dev::Take t = AR::dev::LastTake();
+                *act = AR::dev::PendingId() ? kActPending
+                       : t.count != pb->takesA ? (t.committed ? kActDone : kActAborted)
+                       : AR::dev::LastRefusal() ? kActRefused : kActNone;
+            }
+            d.store(1);
+        });
+    };
+    const auto mineNow = [pb, act] { return PeerCounts{pb->contA, pb->contB, pb->pockA, pb->pockB, *act}; };
+    const auto faulted = [&role] {
+        if (!g_faultedStep) return false;
         UE_LOGW("director/ctake-race: VERDICT the game thread's task faulted at %s -- ABORT (role=%s)", g_faultedStep,
                 role.c_str());
-        return;
+        return true;
+    };
+    // The counts cross through files beside the GO file, and the order is the point. The client writes its counts once
+    // its act closed (done, aborted or refused). The host reads ITS container only after those arrived: the client's press
+    // can come long after the host reached GO, and a container read before it is the count from before the take.
+    PeerCounts theirs;
+    bool paired = false;
+    if (hostPicks) {
+        const bool got = WaitForCounts(CountsFile(goFile, "client"), kCountsWaitMs, theirs);
+        measure(true);
+        if (faulted()) return;
+        paired = WriteCounts(countsFile, mineNow()) && got;
+    } else {
+        const uint64_t start = NowUnixMs();
+        do { measure(false); if (g_faultedStep || *act != kActPending) break; ::Sleep(200); }
+        while (NowUnixMs() - start < kActCloseMs);
+        measure(true);
+        if (faulted()) return;
+        paired = WriteCounts(countsFile, mineNow()) &&
+                 WaitForCounts(CountsFile(goFile, "host"), kCountsWaitMs, theirs);
     }
-    // The per-peer result; mp.py sums the after-counts across peers (1 correct, 2 a duplicate, 0
-    // vanished). A single peer's count is not the verdict.
+    // Both RESULT lines carry the same total and verdict. mp.py's sum of localCountAfter is informational (it counts the
+    // client's mirror as a second copy).
+    const PeerCounts mine = mineNow();
+    const Judged j = paired ? (hostPicks ? Judge(mine, theirs) : Judge(theirs, mine))
+                            : Judged{-1, "aborted", "the-other-peers-counts-did-not-arrive"};
     UE_LOGI("director/ctake-race: RESULT role=%s mode=%s took=%d localCountBefore=%d localCountAfter=%d "
-            "| X(cls=%ls key=%ls) | mp.py sums across peers: 1=correct 2=DUP(R11b) 0=VANISHED >2=worse",
-            role.c_str(), mode.c_str(), (go && shouldTake) ? 1 : 0, pb->phaseA, pb->phaseB,
-            pb->xSig.className.c_str(), pb->xSig.key.c_str());
+            "containerBefore=%d containerAfter=%d pocketBefore=%d pocketAfter=%d act=%d total=%d verdict=%s%s%s "
+            "| X(cls=%ls key=%ls name=%ls) | the verdict is the one to read; mp.py's sum of localCountAfter is informational",
+            role.c_str(), mode.c_str(), (go && shouldTake) ? 1 : 0, pb->phaseA, pb->phaseB, pb->contA, pb->contB,
+            pb->pockA, pb->pockB, *act, j.total, j.verdict, *j.why ? " why=" : "", j.why, pb->xSig.className.c_str(),
+            pb->xSig.key.c_str(), pb->xName.c_str());
 }
 
 DWORD WINAPI ContainerRaceThread(LPVOID /*arg*/) {

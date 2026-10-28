@@ -124,7 +124,7 @@ void HostRace(uint64_t now, int count, size_t holds, uint32_t bad) {
             if (now - g_raceStepMs >= kOpenFailMs) Fail("the screen does not show the container 10 s after openPropInv");
             return;
         }
-        void* const slot = SlotById(-1);
+        void* const slot = CV::FirstSlot(CV::InventoryScreen());
         CV::Slot s{};
         if (!slot || !CV::ReadSlot(slot, s)) {
             Fail("the open screen has no readable first container slot");
