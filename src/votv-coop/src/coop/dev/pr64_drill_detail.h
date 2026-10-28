@@ -42,7 +42,6 @@ inline constexpr int kWalkDeadlineS = 300;     // the director's bound on one wa
 inline constexpr uint64_t kObserveMs = 3000;   // how long the client reads after a press
 inline constexpr uint64_t kPuppetBoundMs = 60000, kEidBoundMs = 5000, kFinalBoundMs = 30000, kHearBoundMs = 180000;
 inline constexpr uint64_t kMirrorBoundMs = 15000, kAimBoundMs = 3000, kHostWordBoundMs = 30000;
-inline constexpr uint64_t kWatchMs = 4000;     // the host reads this long after it hears the press
 inline constexpr uint64_t kPressBoundMs = (static_cast<uint64_t>(kWalkDeadlineS) + 90) * 1000;
 inline constexpr uint64_t kKeyBoundMs = 5000, kFindBoundMs = 20000, kFoundBoundMs = 40000;   // the lid arm's waits
 inline constexpr uint64_t kMutateBoundMs = 5000;     // one held E: from the key down until the change reads on the host

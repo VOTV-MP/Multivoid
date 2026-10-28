@@ -74,7 +74,6 @@ struct State {
     int b0 = -1, pointsSeen = -2, aliveSeen = -1;
     int32_t points0 = -1;
     int32_t coinPts = -1;                // the coin's points as the host minted it
-    int hostAfter = -1, hostAlive = -1;  // the host's balance and the coin's life after the collect, as it said them
     std::vector<ue_wrap::CachedObjRef> coins;
     ue_wrap::CachedObjRef coin;
     std::shared_ptr<DR::BackgroundWalk> walk;
@@ -201,29 +200,37 @@ void HostWatch() {
         g_s.aliveSeen = alive;
         UE_LOGI("[PR64-DRILL] host +%llums points=%d coin lives=%d", Since(), pts, alive);
     }
-    if (!Late(D::kWatchMs)) return;
+    // The collect has settled when the coin is gone and the balance rose by the coin's points: that marker, not a clock,
+    // ends the watch. A balance that never gets there fails at the bound, with the numbers it stood at.
+    if (alive != 0 || pts != g_s.points0 + g_s.coinPts) {
+        if (Late(D::kFinalBoundMs))
+            D::Fail("the host's collect never settled in %llu ms: points %d -> %d (a collect of the %d-point coin makes "
+                    "%d), coin lives=%d", Since(), static_cast<int>(g_s.points0), pts, static_cast<int>(g_s.coinPts),
+                    static_cast<int>(g_s.points0 + g_s.coinPts), alive);
+        return;
+    }
     char line[96];
     std::snprintf(line, sizeof(line), "%s%d %d %d", D::kCoinHost, static_cast<int>(g_s.points0), pts, alive);
     D::Say(line);
-    UE_LOGI("[PR64-DRILL] host after the collect: points %d -> %d, coin lives=%d", static_cast<int>(g_s.points0), pts,
-            alive);
-    g_s.hostAfter = pts;
-    g_s.hostAlive = alive;
+    UE_LOGI("[PR64-DRILL] host after the collect: points %d -> %d, coin lives=%d, settled after %llu ms",
+            static_cast<int>(g_s.points0), pts, alive, Since());
     Go(Step::WaitFinal);
 }
 
 // The host's verdict once the client has said its own: one collect rose its balance by the coin's points and the coin
-// is gone. Judged here, after the client's line, so a failing host does not tell the client to fail before it reads.
+// is gone. Read again here, after the client's line (which follows the client's whole observe window), so a second
+// credit after the watch's marker still fails it, and a failing host does not tell the client to fail before it reads.
 // A red client's FAIL line races this one in the chat, so the rig reads the client's line.
 void HostWaitFinal() {
     std::string rest;
     if (D::Rest(D::kCoinFinal, &rest)) {
         UE_LOGI("[PR64-DRILL] host client's final numbers: %s", rest.c_str());
-        if (g_s.hostAlive != 0)
+        const int pts = static_cast<int>(CD::Points());
+        if (Lives(g_s.eid) != 0)
             D::Fail("the coin still lives on the host after the collect");
-        else if (g_s.hostAfter != g_s.points0 + g_s.coinPts)
+        else if (pts != g_s.points0 + g_s.coinPts)
             D::Fail("the host's balance went %d -> %d, one collect of the %d-point coin makes it %d",
-                    static_cast<int>(g_s.points0), g_s.hostAfter, static_cast<int>(g_s.coinPts),
+                    static_cast<int>(g_s.points0), pts, static_cast<int>(g_s.coinPts),
                     static_cast<int>(g_s.points0 + g_s.coinPts));
         else
             D::Pass();
@@ -349,6 +356,8 @@ void ClientAim() {
     Go(Step::Observe);
 }
 
+// A fixed window on purpose: it is the negative half. "No local credit" is the absence of a call, which no marker can
+// announce, so the client reads for kObserveMs after its press before it takes the host's word.
 void ClientObserve() {
     UE_LOGI("[PR64-DRILL] client +%llums points=%d coin lives=%d", Since(), static_cast<int>(CD::Points()), Lives(g_s.eid));
     if (Late(D::kObserveMs)) Go(Step::WaitHost);
