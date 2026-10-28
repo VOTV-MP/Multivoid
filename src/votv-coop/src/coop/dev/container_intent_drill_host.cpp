@@ -13,7 +13,7 @@
 #include "coop/player/remote_player.h"
 #include "coop/props/container_act_host.h"
 #include "coop/props/container_act_state.h"
-#include "coop/props/container_contents_sync.h"
+#include "coop/props/container_truth.h"
 #include "coop/props/container_record_edit.h"
 
 #include "ue_wrap/actors/container_view.h"
@@ -35,7 +35,7 @@ namespace AH = coop::props::container_act_host;
 namespace AS = coop::props::container_act_state;
 namespace CV = ue_wrap::container_view;
 namespace CRE = coop::props::container_record_edit;
-namespace CC = coop::props::container_contents_sync;
+namespace CC = coop::props::container_truth;
 namespace DC = coop::dev::drill_chat;
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;

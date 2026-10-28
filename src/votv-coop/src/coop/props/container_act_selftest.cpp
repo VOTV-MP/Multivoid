@@ -10,9 +10,9 @@
 #include "coop/props/container_act_selftest_internal.h"
 #include "coop/props/container_act_state.h"
 #include "coop/props/container_act_wire.h"
-#include "coop/props/container_contents_sync.h"
 #include "coop/props/container_record_edit.h"
 #include "coop/props/container_slice_wire.h"
+#include "coop/props/container_truth.h"
 
 #include "ue_wrap/core/log.h"
 
@@ -27,7 +27,7 @@ namespace caw = coop::props::container_act_wire;
 namespace cas = coop::props::container_act_state;
 namespace cre = coop::props::container_record_edit;
 namespace cr  = coop::props::container_reach;
-namespace CS  = coop::props::container_contents_sync;
+namespace CS  = coop::props::container_truth;
 namespace SR  = ue_wrap::save_record;
 
 namespace selftest {

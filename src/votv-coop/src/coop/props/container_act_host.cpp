@@ -10,9 +10,9 @@
 #include "coop/net/session.h"
 #include "coop/player/roster_ledger.h"
 #include "coop/props/container_act_wire.h"
-#include "coop/props/container_contents_sync.h"
 #include "coop/props/container_record_edit.h"
 #include "coop/props/container_slice_wire.h"
+#include "coop/props/container_truth.h"
 
 #include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/core/hot_path_guard.h"
@@ -250,7 +250,7 @@ coop::net::ContainerActReplyPayload ReplyOf(internal::Verdict v, uint16_t id) {
 namespace {
 
 // The host's truth of a container to a slot whose view it just refused, bounded by the lane's one throttle.
-void SendTruth(uint8_t slot, uint32_t eid) { coop::props::container_contents_sync::SendTruthBounded(eid, slot); }
+void SendTruth(uint8_t slot, uint32_t eid) { coop::props::container_truth::SendTruthBounded(eid, slot); }
 
 // Reads Decide's inputs in Decide's order and stops at the first that decides, so a request that must wait reads only
 // what the wait needs. A take's record lookup comes last: it reads and hashes the whole container. A put's own terms

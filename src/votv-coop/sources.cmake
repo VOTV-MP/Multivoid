@@ -429,6 +429,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/container_reach.cpp
     src/coop/props/container_record_edit.cpp
     src/coop/props/container_slice_wire.cpp
+    src/coop/props/container_truth.cpp
     src/coop/props/container_view_close.cpp
     src/coop/props/container_writer_watch.cpp
     src/ue_wrap/actors/inventory.cpp

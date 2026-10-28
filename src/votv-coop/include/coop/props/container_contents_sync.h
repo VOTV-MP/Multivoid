@@ -99,16 +99,6 @@ bool DevRawAppendActor(uint32_t eid, void* item, bool publish);
 // means the send was not refused, never a delivery. Game thread.
 bool SendTruthToSlot(uint32_t eid, int slot);
 
-// SendTruthToSlot, bounded: at most one per kTruthEveryMs per (slot, container) and one per kTruthSlotEveryMs per slot
-// across containers, so a forged address buys no more than one container blob per interval and a flood of distinct
-// addresses no more than the slot's floor. The table is written only for a container that resolves. False when
-// nothing was sent. For a refusal the sender can repeat; a send owed once (a put commit's) uses SendTruthToSlot.
-bool SendTruthBounded(uint32_t eid, int slot);
-inline constexpr uint64_t kTruthEveryMs = 2000;
-inline constexpr uint64_t kTruthSlotEveryMs = 500;
-bool TruthDue(uint64_t lastSentMs, uint64_t nowMs);
-bool SlotTruthDue(uint64_t lastAnyMs, uint64_t nowMs);   // lastAnyMs 0: none sent yet
-
 // Call fn once per live world container, boundary 1 applied: the set the connect seed walks. Game thread.
 void ForEachWorldContainer(void (*fn)(uint32_t eid, void* ctx), void* ctx);
 
@@ -131,11 +121,5 @@ bool SentBaselineKnown(uint32_t eid);
 // Dev: how often this lane touched the container: a local write (MarkHostWrite), an applied remote slice, a connect
 // seed's send. 0 when it never has. Game thread; reset at session end.
 uint32_t TouchEpochOf(uint32_t eid);
-
-// Dev (container_intent_drill): what the host took in from one client slot since the session began (or the slot's
-// occupant changed): the slices that arrived, those refused as not a birth, and the truths it sent back through
-// SendTruthBounded. Host; zeros for a slot that is not a client's. Game thread.
-struct DevClientSlices { uint32_t received = 0, refused = 0, truths = 0; };
-DevClientSlices DevClientSlicesOf(int slot);
 
 }  // namespace coop::props::container_contents_sync
