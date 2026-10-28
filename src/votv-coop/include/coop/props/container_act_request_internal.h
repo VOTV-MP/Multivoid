@@ -61,6 +61,10 @@ struct Latched {
 bool QueueCommit(const container_act_wire::Commit& c);   // false, nothing queued, when it does not pack
 void SendCommit(uint16_t id, uint32_t eid, uint8_t committed);
 
+// The put seats say how the open put act stands, for dev::LastPut: the ask, then the replay's end (`index` and
+// `replayHash` as dev::Put names them).
+void NotePut(const Pending& p, dev::PutOutcome outcome, uint16_t index, uint64_t replayHash);
+
 // The player's lines. Each is shown at most once per window.
 void ShowRefusal(uint8_t reason);
 void ShowBadReason();

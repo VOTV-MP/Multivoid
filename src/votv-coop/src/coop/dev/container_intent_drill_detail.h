@@ -1,4 +1,4 @@
-// coop/dev/container_intent_drill_detail.h -- what the container intent drill's two files share. A private header of
+// coop/dev/container_intent_drill_detail.h -- what the container intent drill's files share. A private header of
 // coop/dev/container_intent_drill*.cpp (src tree, not include/).
 
 #pragma once
@@ -33,9 +33,13 @@ struct ItemKey {
     bool operator==(const ItemKey& o) const { return cls == o.cls && name == o.name; }
 };
 
-enum class Arm : uint8_t { Off, Take, Settle, Abort, Deadline, Double, Ghost, Held, Race, Two, Sale, Depart, Room };
+enum class Arm : uint8_t { Off, Take, Settle, Abort, Deadline, Double, Ghost, Held, Race, Two, Sale, Depart, Room,
+                           PutRecord, PutHand, PutFood, PutHidden, PutNested, PutEmpty };
 Arm ArmOf();
 const char* ArmName();
+
+// The put arms are their own drill (container_intent_drill_put*.cpp): neither half picks a world container.
+inline bool IsPutArm(Arm a) { return a >= Arm::PutRecord; }
 
 // The arms that name the record the press takes (R) at the pick, preferring a container where it is unique.
 bool NamesR();
@@ -88,5 +92,10 @@ void RoomRestore();
 // The host's half (container_intent_drill_host.cpp).
 void HostTick(const coop::net::Session& session);
 void HostReset();
+
+// The put arms' two halves, and their state back to the start (container_intent_drill_put.cpp, _put_host.cpp).
+void PutHostTick(const coop::net::Session& session);
+void PutClientTick();
+void PutReset();
 
 }  // namespace coop::dev::container_intent_drill::detail

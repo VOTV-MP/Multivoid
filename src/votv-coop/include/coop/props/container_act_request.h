@@ -95,6 +95,23 @@ struct Take {
 };
 Take LastTake();
 
+// The last put act this peer asked, as the put seats saw it end. `route` is 2 (the hotbar key, R2) or 3 (hold and
+// run, R3). `index` is the selected pane index at the ask (R2), then where the container stored the record once the
+// put is done. `askHash` is the hash the host was asked and the replay compares: R3's with the held actor's pose and
+// lifespan zeroed (PutHandHash), R2's the record's own. `replayHash` is that same hash read again at the replay, 0
+// when the replay did not get as far as reading it. Refused is the host's answer to the ask. Reset at the session's end.
+enum class PutOutcome : uint8_t { None, Asked, Done, Aborted, Refused };
+struct Put {
+    uint16_t id = 0;
+    uint8_t route = 0;
+    PutOutcome outcome = PutOutcome::None;
+    uint16_t index = 0;
+    uint64_t askHash = 0;
+    uint64_t replayHash = 0;
+};
+Put LastPut();
+const char* PutOutcomeName(PutOutcome o);   // "none" "asked" "done" "aborted" "refused"
+
 // Inert unless called; all reset at the session's end.
 void HoldReplay(bool on);   // while on, a take's grant parks its replay (the record stays open, its grant time kept)
 bool ReplayParked();        // a grant is parked

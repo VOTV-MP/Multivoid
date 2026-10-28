@@ -130,6 +130,7 @@ sg::Verdict AskPut(uint8_t route, uint32_t eid, void* container, const SR::SaveR
         p.name = name;
         UE_LOGI("container_act: put id=%u eid=%u route=%s asked %ls", static_cast<unsigned>(p.id),
                 static_cast<unsigned>(eid), RouteName(route), rec.className.c_str());
+        NotePut(p, dev::PutOutcome::Asked, p.index, 0);
     }
     // A refused ask has shown its own line, and an open act shows nothing.
     return sg::Verdict::Cancel;
@@ -224,9 +225,14 @@ bool ReadRecordHashes(void* container, std::vector<SR::SaveRecord>& recs, std::v
     return true;
 }
 
+// The hash the replay read of the record it was asked about (what the check compared with the asked one), 0 until a
+// check reads it; dev::LastPut says it.
+uint64_t g_replayHash = 0;
+
 void NotReplayed(const Pending& p, const char* why) {
     UE_LOGI("container_act: put id=%u eid=%u route=%s not replayed (%s) -> aborted", static_cast<unsigned>(p.id),
             static_cast<unsigned>(p.eid), RouteName(p.route), why);
+    NotePut(p, dev::PutOutcome::Aborted, p.index, g_replayHash);
     SendCommit(p.id, p.eid, 0);
     ShowBadReason();   // the click is lost, never the record: the player puts again
 }
@@ -241,8 +247,9 @@ internal::PutCheck CheckR2(const Pending& p, void* container, bool containerLive
         void* const pane = cv::PlayerContainer();
         void* const inv = pane ? ci::InventoryOf(pane) : nullptr;
         std::vector<SR::SaveRecord> mine;
-        hashMatches = inv && cio::ReadRecords(inv, mine, /*neuterNested=*/false) && p.index < mine.size() &&
-                      csw::RecordHash(mine[p.index]) == p.hash;
+        const bool readMine = inv && cio::ReadRecords(inv, mine, /*neuterNested=*/false) && p.index < mine.size();
+        if (readMine) g_replayHash = csw::RecordHash(mine[p.index]);
+        hashMatches = readMine && g_replayHash == p.hash;
     }
     const bool shows = read && st.container == container && cv::Viewed() == container;
     const bool notHovered = read && !st.hovered;
@@ -258,7 +265,9 @@ internal::PutCheck CheckR2(const Pending& p, void* container, bool containerLive
 internal::PutCheck CheckR3(const Pending& p, void* hand, bool containerLive, const char*& why) {
     const bool isAsked = hand && hand == p.hand.Get();
     SR::SaveRecord rec;
-    const bool hashMatches = isAsked && SR::CaptureOwnRecord(hand, rec) && internal::PutHandHash(rec) == p.hash;
+    const bool captured = isAsked && SR::CaptureOwnRecord(hand, rec);
+    if (captured) g_replayHash = internal::PutHandHash(rec);
+    const bool hashMatches = captured && g_replayHash == p.hash;
     why = !containerLive ? "the container is gone" : !isAsked ? "the hand changed" : !hashMatches ? "the record changed" : "";
     return internal::CheckPutR3(containerLive, isAsked, hashMatches);
 }
@@ -283,6 +292,7 @@ const WatchRow* PutWatches(size_t& count) {
 // done exactly when one record was inserted, and carries it as the container stored it (the fridge flag added).
 void ReplayPut() {
     Pending& p = Rec();
+    g_replayHash = 0;
     void* const container = p.container.Get();
     std::vector<SR::SaveRecord> before;
     std::vector<uint64_t> beforeHashes;
@@ -325,6 +335,7 @@ void ReplayPut() {
         if (QueueCommit(done)) {   // false: the commit does not pack, nothing queued
             UE_LOGI("container_act: put id=%u eid=%u route=%s replayed -> done at index %zu",
                     static_cast<unsigned>(p.id), static_cast<unsigned>(p.eid), RouteName(p.route), *at);
+            NotePut(p, dev::PutOutcome::Done, static_cast<uint16_t>(*at), g_replayHash);
             return;
         }
         // Cannot happen under the size gate; the container has the record and the host will not.
@@ -336,6 +347,7 @@ void ReplayPut() {
     // the player let go of run. An R2 whose fit failed leaves the item a world prop, as the single-player game does.
     UE_LOGI("container_act: put id=%u eid=%u route=%s replayed ran=%d -> aborted (the container stored nothing)",
             static_cast<unsigned>(p.id), static_cast<unsigned>(p.eid), RouteName(p.route), ran ? 1 : 0);
+    NotePut(p, dev::PutOutcome::Aborted, p.index, g_replayHash);
     SendCommit(p.id, p.eid, 0);
 }
 

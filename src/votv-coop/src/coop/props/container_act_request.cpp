@@ -78,6 +78,7 @@ bool g_holdReplay = false;       // dev (dev:: below): a take's grant parks its 
 bool g_doubleAbort = false;      // dev: a take's abort commit is sent twice
 dev::Take g_lastTake;            // the last take's commit as it was sent; the drills read it
 uint32_t g_acts[3] = {};   // done, aborted, refused: how the client's acts ended (dev::ActsDone ...)
+dev::Put g_lastPut;        // the last put act's stand, as the put seats noted it; the drills read it
 
 // A request whose wait ran out, kept until the host answers it, so a grant that still arrives is answered with an
 // abort and the host's escrow is always ended. Dropped once the host's own deadline has passed: a grant that late finds
@@ -123,6 +124,13 @@ void Show(Line which, const char* line) {
     g_shown[which] = true;
     g_shownAt[which] = now;
     coop::chat_feed::Push(std::string(line), coop::chat_feed::Keep::Transient);
+}
+
+// The reply refused the open act: when it is a put, dev::LastPut says so.
+void NoteRefusedPut() {
+    if (g_rec.open && static_cast<ContainerActFamily>(g_rec.family) == ContainerActFamily::PutRecord &&
+        g_lastPut.id == g_rec.id)
+        g_lastPut.outcome = dev::PutOutcome::Refused;
 }
 
 }  // namespace
@@ -239,6 +247,10 @@ void DrainCommits() {
 }  // namespace
 
 namespace detail {
+
+void NotePut(const Pending& p, dev::PutOutcome outcome, uint16_t index, uint64_t replayHash) {
+    g_lastPut = dev::Put{p.id, static_cast<uint8_t>(p.route + 1), outcome, index, p.hash, replayHash};
+}
 
 bool QueueCommit(const caw::Commit& c) {
     QueuedCommit q;
@@ -535,12 +547,14 @@ void OnReply(const coop::net::ContainerActReplyPayload& p) {
         return;
     case internal::ReplyAction::BadReason:
         ++g_acts[2];
+        NoteRefusedPut();
         ShowBadReason();
         Close();
         return;
     case internal::ReplyAction::Refused:
         g_lastRefusal = p.reason;
         ++g_acts[2];
+        NoteRefusedPut();
         ShowRefusal(p.reason);
         Close();
         return;
@@ -581,6 +595,7 @@ void OnDisconnect() {
     g_doubleAbort = false;
     g_lastTake = dev::Take{};
     std::memset(g_acts, 0, sizeof(g_acts));
+    g_lastPut = dev::Put{};
     ResetPutLines();
     g_nextId = 0;
     g_nextRequestSeq = 1;
@@ -617,6 +632,19 @@ void ReleaseReplay() {
 void DoubleAbort(bool on) { g_doubleAbort = on; }
 
 Take LastTake() { return g_lastTake; }
+
+Put LastPut() { return g_lastPut; }
+
+const char* PutOutcomeName(PutOutcome o) {
+    switch (o) {
+    case PutOutcome::None:    return "none";
+    case PutOutcome::Asked:   return "asked";
+    case PutOutcome::Done:    return "done";
+    case PutOutcome::Aborted: return "aborted";
+    case PutOutcome::Refused: return "refused";
+    }
+    return "none";
+}
 
 }  // namespace dev
 

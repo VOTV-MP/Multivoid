@@ -35,7 +35,7 @@ CFG_FLAG(container_view_drill, "container_view_drill", "dev", false, "VOTVCOOP_C
     "Drill (client): walks to the ATV, opens its container through the game's own openPropInv, then walks "
     "back; the view must stay open while the ATV is within reach and close on the tick it leaves it. Run it "
     "with join_at_host=1. Lines tagged [CVIEW-DRILL]; the client's DONE line, carrying the verdict, ends it.")
-CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room",
+CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room|putrecord|puthand|putfood|puthidden|putnested|putempty",
     "VOTVCOOP_CONTAINER_INTENT_DRILL",
     "Drill (BOTH peers): both pick the same shared container (the smallest element id, within 5000 cm of the player, "
     "that holds two records or more and that a nav route reaches; race, two, sale and room take one whose first record "
@@ -51,7 +51,14 @@ CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|ta
     "container (a stand-in for a sale) comes between the grant and the replay; the client keeps the item. depart -- "
     "the replay is parked and the rig drops the client (--rejoin --rejoin-marker \"[CI-DRILL] client depart "
     "parked\"); the host's record returns. room -- the client's own inventory has no room, so the item stays a world "
-    "prop. Lines tagged [CI-DRILL]; the host's DONE line ends it. It MUTATES the world.")
+    "prop. The put arms pick no container: the host spawns a target (a backpack, a minifridge for putfood) 600 cm "
+    "ahead of the client and the item it takes, and each arm MEASURES and prints. putrecord -- the client pockets a "
+    "drive and puts it in by the hotbar key. puthand -- it carries a drive past the target and puts it in by hold and "
+    "run. putfood -- the same with food and the fridge; the held food's temperature, ripeness and record hash are "
+    "printed at the ask and the replay. puthidden -- a hovered slot is hidden and the take key asked: no put may be "
+    "asked. putnested -- a backpack that holds a record is put into the target: refused, no put asked. putempty -- an "
+    "empty backpack is put in by the hotbar key and the host's stored record is read. Lines tagged [CI-DRILL]; the "
+    "host's DONE line ends it. It MUTATES the world.")
 CFG_FLAG(container_act_no_escrow, "container_act_no_escrow", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_ESCROW",
     "Red arm for the container intent drill (HOST): a grant opens its escrow with the record found but does not "
     "remove it from the container, so a second taker finds it still there and the item is taken twice.")

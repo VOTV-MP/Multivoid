@@ -63,7 +63,9 @@ struct ArmRow {
 constexpr ArmRow kArms[] = {{"take", Arm::Take},     {"settle", Arm::Settle}, {"abort", Arm::Abort},
                             {"deadline", Arm::Deadline}, {"double", Arm::Double}, {"ghost", Arm::Ghost},
                             {"held", Arm::Held},     {"race", Arm::Race},     {"two", Arm::Two},
-                            {"sale", Arm::Sale},     {"depart", Arm::Depart}, {"room", Arm::Room}};
+                            {"sale", Arm::Sale},     {"depart", Arm::Depart}, {"room", Arm::Room},
+                            {"putrecord", Arm::PutRecord}, {"puthand", Arm::PutHand}, {"putfood", Arm::PutFood},
+                            {"puthidden", Arm::PutHidden}, {"putnested", Arm::PutNested}, {"putempty", Arm::PutEmpty}};
 }  // namespace
 
 Arm ArmOf() {
@@ -698,6 +700,11 @@ void Tick(coop::net::Session* session) {
     g_session = session;
     if (g_phase == Phase::Done) return;
     if (!session || !session->connected() || !RoleIsReady()) return;
+    if (IsPutArm(ArmOf())) {
+        if (coop::roster::LocalIsHost()) PutHostTick(*session);
+        else PutClientTick();
+        return;
+    }
     if (coop::roster::LocalIsHost()) HostTick(*session);
     else ClientTick();
 }
@@ -713,6 +720,7 @@ void OnDisconnect() {
         g_walk.result = 0;
     }
     RoomRestore();
+    PutReset();
     g_phase = Phase::Picking;
     g_pickStartMs = g_nextPickMs = 0;
     g_eid = 0;
