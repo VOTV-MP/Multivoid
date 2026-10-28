@@ -11,6 +11,8 @@
 
 #include "coingun_internal.h"   // co-located private header (src tree, not include/)
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/element/intent_authority.h"   // may this sender name this coin
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
@@ -258,6 +260,12 @@ sg::Verdict OnCollectVerb(const sg::Call& b) {
     if (I::IsCapturedCoin(b.object)) return sg::Verdict::Cancel;
     if (!IsHostOwnedCoin(b.object)) return sg::Verdict::Run;  // map-placed coin
     ForwardCollectToHost(b.object, L"press");
+    // Drill red (pr64_coin_local_credit_red, read only while the pr64 drill is set): the press is let through after the
+    // forward, the behaviour before this verdict cancelled it, so the client credits itself at the press.
+    static const bool kLocalCreditRed =
+        coop::config::ResolveEnum(coop::config_registry::rows::pr64_drill) != "off" &&
+        coop::config::ResolveFlag(coop::config_registry::rows::pr64_coin_local_credit_red);
+    if (kLocalCreditRed) return sg::Verdict::Run;
     // Even a failed send or host refusal must leave both the coin and the balance unchanged.
     return sg::Verdict::Cancel;
 }

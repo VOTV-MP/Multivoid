@@ -2,6 +2,9 @@
 
 #include "coop/props/prop_record_refresh.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
+#include "coop/net/net_clock.h"
 #include "coop/net/session.h"
 #include "coop/props/join_membership_sweep.h"
 #include "coop/props/prop_save_data.h"
@@ -20,6 +23,7 @@
 #include <cstring>
 #include <iterator>
 #include <string>
+#include <unordered_map>
 
 namespace coop::props::prop_record_refresh {
 namespace {
@@ -141,6 +145,27 @@ const Watched* ByTag(int tag) {
     return nullptr;
 }
 
+// Drill red (pr64_record_window_red_ms, read only while the pr64 drill is set): puts back the leading-edge window this
+// lane no longer has. A publish for a box whose last publish is younger than the row's milliseconds is dropped, so a
+// change that follows another closely never reaches the far peer. Keyed by the box's interactable key; game thread.
+std::unordered_map<std::wstring, uint64_t> g_lastPublishMs;
+
+bool DroppedByRedWindow(const std::wstring& key) {
+    static const long kRedMs =
+        coop::config::ResolveEnum(coop::config_registry::rows::pr64_drill) != "off"
+            ? coop::config::ResolveInt(coop::config_registry::rows::pr64_record_window_red_ms) : 0;
+    if (kRedMs <= 0) return false;
+    const uint64_t now = coop::net::NowMs();
+    const auto it = g_lastPublishMs.find(key);
+    if (it != g_lastPublishMs.end() && now - it->second < static_cast<uint64_t>(kRedMs)) {
+        UE_LOGI("prop_record_refresh: RED window dropped a publish for key='%ls' (%llu ms after the last)", key.c_str(),
+                static_cast<unsigned long long>(now - it->second));
+        return true;
+    }
+    g_lastPublishMs[key] = now;
+    return false;
+}
+
 void OnUpdPost(const sg::Call& call) {
     const Watched* w = ByTag(call.tag);
     if (!w || !call.object) return;
@@ -176,6 +201,7 @@ void OnUpdPost(const sg::Call& call) {
         // upd() itself. Nothing to address a record to, and the birth paths publish it anyway.
         return;
     }
+    if (DroppedByRedWindow(key)) return;
     // Every native mutation has a final record, even when another mutation just ran. A time
     // window cannot distinguish duplicate notifications from a newly inserted drive or reel.
     // Host: the record to every peer. Client: an intent the host validates and re-publishes, which
@@ -252,6 +278,7 @@ void OnDisconnect() {
                 g_cPublished, g_cRelooked);
     g_cPublished = 0;
     g_cRelooked  = 0;
+    g_lastPublishMs.clear();
     g_session.store(nullptr, std::memory_order_release);
 }
 
