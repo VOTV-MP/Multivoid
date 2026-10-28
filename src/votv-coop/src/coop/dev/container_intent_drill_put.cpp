@@ -579,6 +579,7 @@ void StepQuiet() {
 }  // namespace
 
 void PutClientTick() {
+    PutArmClientKnobs();
     if (!g_cMs) CNext(CStep::WaitLine);   // the first step's clock starts when the arm does, never at reset
     if (g_cStep != CStep::Carry && ::GetTickCount64() < g_nextMs) return;   // the carry walk is read every tick
     g_nextMs = ::GetTickCount64() + RD::kCheckEveryMs;

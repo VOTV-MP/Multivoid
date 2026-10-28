@@ -74,7 +74,7 @@ Latch g_latch;
 uint32_t g_takeDoneUnread = 0;   // takes committed done although the press's count could not be read back
 uint32_t g_staleGrantAborts = 0; // grants aborted for their age instead of replayed
 uint8_t g_lastRefusal = 0;       // the reason of the refusal of the open or last ask, 0 when none
-bool g_holdReplay = false;       // dev (dev:: below): a take's grant parks its replay
+bool g_holdReplay = false;       // dev (dev:: below): a take's or a put's grant parks its replay
 bool g_doubleAbort = false;      // dev: a take's abort commit is sent twice
 dev::Take g_lastTake;            // the last take's commit as it was sent; the drills read it
 uint32_t g_acts[3] = {};   // done, aborted, refused: how the client's acts ended (dev::ActsDone ...)
@@ -576,6 +576,10 @@ void OnReply(const coop::net::ContainerActReplyPayload& p) {
             ReplayTake();
             break;
         case ContainerActFamily::PutRecord:
+            if (g_holdReplay) {
+                g_rec.replayHeld = true;
+                return;
+            }
             ReplayPut();
             break;
         default:
@@ -630,7 +634,8 @@ bool ReplayParked() { return g_rec.open && g_rec.replayHeld; }
 void ReleaseReplay() {
     if (!ReplayParked()) return;
     g_rec.replayHeld = false;
-    ReplayTake();
+    if (static_cast<ContainerActFamily>(g_rec.family) == ContainerActFamily::PutRecord) ReplayPut();
+    else ReplayTake();
     Close();
 }
 

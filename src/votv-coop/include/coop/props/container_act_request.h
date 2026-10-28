@@ -128,10 +128,16 @@ Put LastPut();
 const char* PutOutcomeName(PutOutcome o);   // "none" "asked" "done" "aborted" "refused"
 
 // Inert unless called; all reset at the session's end.
-void HoldReplay(bool on);   // while on, a take's grant parks its replay (the record stays open, its grant time kept)
+void HoldReplay(bool on);   // while on, a take's or a put's grant parks its replay (the record stays open, a take's
+                            // grant time kept)
 bool ReplayParked();        // a grant is parked
 void ReleaseReplay();       // runs the parked replay now, through the same checks as an unparked one
 void DoubleAbort(bool on);  // while on, a take's abort commit is sent twice
+
+// The put drill's reds (CLIENT). NoHoverGuard: R2's replay no longer requires that no slot is hovered. NoHandTable: the
+// hold-and-run hash leaves out no class's ticking fields (PutExclusionRowsOf answers none).
+void NoHoverGuard(bool on);
+void NoHandTable(bool on);
 
 // Acts this session by how the client ended them: a commit sent done, a commit sent aborted, a reply that refused. The
 // census drill judges each route by the delta of these.

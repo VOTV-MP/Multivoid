@@ -62,6 +62,21 @@ CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|ta
 CFG_FLAG(container_act_no_escrow, "container_act_no_escrow", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_ESCROW",
     "Red arm for the container intent drill (HOST): a grant opens its escrow with the record found but does not "
     "remove it from the container, so a second taker finds it still there and the item is taken twice.")
+CFG_FLAG(container_act_no_hover_guard, "container_act_no_hover_guard", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_HOVER_GUARD",
+    "Red arm for the put drill's puthover (CLIENT): the replay of a hotbar-key put no longer checks that no slot "
+    "is hovered, so a slot hovered after the ask is pressed by the replay and its record is taken unjudged.")
+CFG_FLAG(container_act_no_reservation, "container_act_no_reservation", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_RESERVATION",
+    "Red arm for the put drill's putreserved (HOST): a put's grant opens no reservation, so the host's own put "
+    "into the same container is not refused while the client's put stands granted.")
+CFG_FLAG(container_act_no_lapse, "container_act_no_lapse", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_LAPSE",
+    "Red arm for the put drill's putdeadline (HOST): a sender whose reservation lapsed, or was abandoned late, "
+    "is never slowed, so its next put is granted at once instead of answered Lapsed.")
+CFG_FLAG(container_act_no_hand_table, "container_act_no_hand_table", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_HAND_TABLE",
+    "Red arm for the put drill's putfood (CLIENT): the per-class table of hold-and-run hash exclusions is empty, so "
+    "only the transform and the lifespan are left out and a held food's ticking fields abort the put.")
+CFG_FLAG(container_act_insert_notready, "container_act_insert_notready", "dev", false, "VOTVCOOP_CONTAINER_ACT_INSERT_NOTREADY",
+    "Drill knob for the put drill's putowed (HOST): the insert of a put's record answers NotReady every time, so "
+    "the put goes the owed path and is given up after 30 tries. An escrow's restore is not affected.")
 CFG_STRING(container_route_census, "container_route_census", "dev", "", "VOTVCOOP_CONTAINER_ROUTE_CENSUS", false,
     "Census (BOTH peers): counts each container verb on a shared world container by the route on its stack (the "
     "slot press, the take key, hold+run, the overlap, the vacuum; none is the game's own logic) and the slices "

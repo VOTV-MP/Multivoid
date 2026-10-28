@@ -30,4 +30,9 @@ int PutStrayCount(const wchar_t* cls, void* target);
 // The host's half: its steps, and its state back to the start.
 void PutHostReset();
 
+// The reds of the put arms (container_intent_drill_put2.cpp): each dev row is read once and its knob set on the peer it
+// breaks, every tick (a session's end puts the knobs back). Inert when no row is on.
+void PutArmClientKnobs();
+void PutArmHostKnobs();
+
 }  // namespace coop::dev::container_intent_drill::detail

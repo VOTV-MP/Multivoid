@@ -98,9 +98,17 @@ struct VerdictCount {
 };
 bool g_holdReplies = false;
 bool g_noEscrow = false;
+bool g_insertNotReady = false;   // dev: a put's insert (Source::Wire) answers NotReady
 std::vector<QueuedReply> g_queuedReplies;
 uint16_t g_lastGrantId[coop::net::kMaxPeers] = {};   // per slot: the id of the hold its last grant opened
 std::map<uint32_t, VerdictCount> g_verdicts;
+
+// A hold's record written into its container. The drill's knob makes a put's insert (a record off the wire) answer
+// NotReady, which is the owed path; an escrow's restore (Source::Host) is never touched by it.
+cre::EditResult InsertHold(const cas::Hold& h, cre::Source src) {
+    if (g_insertNotReady && src == cre::Source::Wire) return cre::EditResult::NotReady;
+    return cre::InsertAt(h.eid, h.index, h.record, src);
+}
 
 bool InRoster(int slot) { return slot >= 1 && slot < coop::net::kMaxPeers; }
 bool IsHostRole() { return g_session && g_session->role() == coop::net::Role::Host; }
@@ -145,7 +153,7 @@ void GiveUp(const cas::Hold& h, const char* why, const char* cause) {
 // Refused for a put (Source::Wire): the container cannot take it. Any other result is a write that cannot happen now:
 // it is owed with its source and retried. An escrow's restore (Source::Host) is never dropped while the session runs.
 void Place(cas::Hold h, const char* why, cre::Source src, const char* what) {
-    const cre::EditResult r = cre::InsertAt(h.eid, h.index, h.record, src);
+    const cre::EditResult r = InsertHold(h, src);
     if (r == cre::EditResult::Done) {
         UE_LOGI("container_act: slot=%u id=%u eid=%u %s, %s", static_cast<unsigned>(h.slot), static_cast<unsigned>(h.id),
                 static_cast<unsigned>(h.eid), why, what);
@@ -192,7 +200,7 @@ void RetryOwed(uint64_t now) {
     for (size_t i = 0; i < g_restoreOwed.size();) {
         Owed& o = g_restoreOwed[i];
         const cas::Hold& h = o.hold;
-        const cre::EditResult r = cre::InsertAt(h.eid, h.index, h.record, o.src);
+        const cre::EditResult r = InsertHold(h, o.src);
         if (r == cre::EditResult::Done || r == cre::EditResult::NoElement || r == cre::EditResult::NoInventory) {
             if (r != cre::EditResult::Done) Bump(Tally::TargetGone);
             UE_LOGI("container_act: slot=%u id=%u eid=%u owed write %s", static_cast<unsigned>(h.slot),
@@ -671,6 +679,8 @@ void OnDisconnect() {
     g_refusals.Clear();
     g_holdReplies = false;
     g_noEscrow = false;
+    g_insertNotReady = false;
+    detail::ResetPutDev();
     g_queuedReplies.clear();
     std::fill(std::begin(g_lastGrantId), std::end(g_lastGrantId), uint16_t{0});
     g_verdicts.clear();
@@ -711,6 +721,7 @@ void ReleaseReplies() {
 }
 
 void NoEscrow(bool on) { g_noEscrow = on; }
+void InsertNotReady(bool on) { g_insertNotReady = on; }
 
 bool FirstEscrow(uint32_t eid, uint64_t& hash) {
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {

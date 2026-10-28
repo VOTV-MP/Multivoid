@@ -34,6 +34,10 @@ namespace ci  = ue_wrap::container_inventory;
 namespace pg  = ue_wrap::prop_gather;
 namespace SR  = ue_wrap::save_record;
 
+// The put drill's reds (dev:: below): inert unless a drill calls them, reset at the session's end.
+bool g_noReservation = false;   // a put's grant opens no hold
+bool g_noLapse = false;         // a sender is never slowed
+
 // The container's room for one more record of `rec`'s size plus `flagBytes` (the fridge flag the container will add to a
 // record asked; none to a record it already stored): the lane's record cap and the slice's byte ceiling, the one SendBlob enforces on what the container publishes. Done unless the
 // container moved under the read; a count past the cap does not read at all, and is the cap.
@@ -68,7 +72,7 @@ void ReadPutInputs(uint8_t slot, const caw::Request& q, internal::PutInputs& p) 
     p.termsRead = actor && ci::ReadPutTerms(actor, t);
     if (!p.termsRead) return;
     p.locked = t.locked;
-    p.slowed = cas::Live().Slowed(slot, coop::net::NowMs());
+    p.slowed = !g_noLapse && cas::Live().Slowed(slot, coop::net::NowMs());   // the red: container_act_no_lapse
     if (p.locked || p.slowed) return;
     std::wstring name;
     p.nameOk = internal::PutNameOk(q.record);
@@ -111,11 +115,14 @@ std::optional<coop::net::Served> GrantPut(uint8_t slot, const caw::Request& q) {
     h.eid = q.eid;
     h.record = q.record;
     h.grantedMs = coop::net::NowMs();
+    if (g_noReservation) return std::nullopt;   // the red: the grant stands with no hold (container_act_no_reservation)
     if (cas::Live().Open(std::move(h))) return std::nullopt;
     Bump(Tally::GrantUnsent);   // cannot happen past holdsWait
     Answer(slot, ReplyOf(internal::Verdict::Gone, q.id));
     return coop::net::Served::Done;
 }
+
+void ResetPutDev() { g_noReservation = g_noLapse = false; }
 
 void SendTruthNow(uint8_t slot, uint32_t eid) { coop::props::container_contents_sync::SendTruthToSlot(eid, slot); }
 
@@ -306,3 +313,10 @@ const char* PutWaitCause(const PutInputs& in) {
 }  // namespace internal
 
 }  // namespace coop::props::container_act_host
+
+namespace coop::props::container_act_host::dev {
+
+void NoReservation(bool on) { g_noReservation = on; }
+void NoLapse(bool on) { g_noLapse = on; }
+
+}  // namespace coop::props::container_act_host::dev

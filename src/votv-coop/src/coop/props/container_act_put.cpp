@@ -60,6 +60,10 @@ constexpr int kTagR3 = 0x43414333;   // "CAC3"
 
 const char* RouteName(uint8_t route) { return route == kRouteR2 ? "R2" : "R3"; }
 
+// The put drill's knobs (dev:: below): inert unless a drill calls them, all reset at the session's end.
+bool g_noHoverGuard = false;   // R2's replay does not require that no slot is hovered
+bool g_noHandTable = false;    // the hand hash leaves out no class's ticking fields
+
 // A read that tells a put from any other press and fails leaves the verb to run natively, unjudged: said once per
 // session, with the field, so a layout change cannot turn the feature off silently. kSayUnloaded is the hand-hash
 // table's own once-per-session line, not a failed read.
@@ -270,7 +274,7 @@ internal::PutCheck CheckR2(const Pending& p, void* container, bool containerLive
         hashMatches = readMine && g_replayHash == p.hash;
     }
     const bool shows = read && st.container == container && cv::Viewed() == container;
-    const bool notHovered = read && !st.hovered;
+    const bool notHovered = g_noHoverGuard || (read && !st.hovered);   // the red skips the guard (container_act_no_hover_guard)
     const bool enabled = read && st.takeEnabled;
     const bool sameIndex = read && st.index >= 0 && static_cast<uint32_t>(st.index) == p.index;
     why = !containerLive ? "the container is gone" : !shows ? "the screen changed" : !notHovered ? "a slot is hovered"
@@ -295,6 +299,7 @@ internal::PutCheck CheckR3(const Pending& p, void* hand, bool containerLive, con
 
 void ResetPutLines() {
     for (bool& said : g_said) said = false;
+    g_noHoverGuard = g_noHandTable = false;
 }
 
 const WatchRow* PutWatches(size_t& count) {
@@ -447,7 +452,7 @@ uint32_t PutExclusionRowsOf(void* heldActor) {
     namespace OI = ue_wrap::object_index;
     namespace R  = ue_wrap::reflection;
     void* const actorClass = heldActor ? R::ClassOf(heldActor) : nullptr;
-    if (!actorClass) return 0;
+    if (!actorClass || detail::g_noHandTable) return 0;   // the red: an empty table (container_act_no_hand_table)
     uint32_t rows = 0;
     size_t unloaded = 0;
     for (size_t i = 0; i < kExclusionCount; ++i) {
@@ -499,3 +504,10 @@ std::optional<size_t> StoredIndex(const std::vector<uint64_t>& before, const std
 }
 
 }  // namespace coop::props::container_act_request::internal
+
+namespace coop::props::container_act_request::dev {
+
+void NoHoverGuard(bool on) { detail::g_noHoverGuard = on; }
+void NoHandTable(bool on) { detail::g_noHandTable = on; }
+
+}  // namespace coop::props::container_act_request::dev

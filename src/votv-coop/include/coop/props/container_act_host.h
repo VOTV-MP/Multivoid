@@ -148,6 +148,13 @@ void ReleaseReplies();
 // taker finds it still there.
 void NoEscrow(bool on);
 
+// The put drill's knobs. NoReservation: a put's grant opens no hold. NoLapse: a sender is never slowed (its next put is
+// not answered Lapsed). InsertNotReady: the insert of a put's record (never an escrow's restore) answers NotReady, so the
+// put is owed and retried, then given up after kMaxOwedTries.
+void NoReservation(bool on);
+void NoLapse(bool on);
+void InsertNotReady(bool on);
+
 // The RecordHash of the record held in escrow on `eid` (the neutered copy); false when none.
 bool FirstEscrow(uint32_t eid, uint64_t& hash);
 
