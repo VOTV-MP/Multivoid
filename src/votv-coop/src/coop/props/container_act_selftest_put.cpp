@@ -11,6 +11,7 @@
 #include "coop/props/container_act_wire.h"
 #include "coop/props/container_slice_wire.h"
 
+#include <array>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -29,6 +30,124 @@ H::PutInputs PutInputsReady() {
     H::PutInputs p;
     p.base = Ready();
     return p;
+}
+
+// What each exclusion row must zero, written from the getData lines of the row's class and kept apart from the code's
+// own table: a wrong index there fails against this copy. Rows are matched through PutExclusionRowOf, in any order.
+enum class G : uint8_t { Floats, Ints, Bools, Vectors };
+struct ExpectedRow {
+    const wchar_t* cls;
+    G group;
+    size_t outer, first, count;
+};
+constexpr ExpectedRow kExpected[] = {
+    {L"prop_food_C", G::Floats, 0, 1, 3},          {L"prop_atvcarbattery_C", G::Floats, 1, 1, 1},
+    {L"prop_funGun_crossbow_C", G::Floats, 1, 0, 1}, {L"prop_concreteBucket_C", G::Bools, 1, 0, 1},
+    {L"prop_lamp_C", G::Floats, 1, 0, 1},          {L"prop_torch_C", G::Floats, 1, 0, 1},
+    {L"prop_fireExt_C", G::Floats, 1, 0, 1},       {L"prop_grenade_C", G::Floats, 1, 0, 1},
+    {L"prop_pipebomb_C", G::Floats, 1, 0, 1},      {L"prop_lemonade_C", G::Floats, 1, 0, 1},
+    {L"prop_radio_local_C", G::Floats, 1, 0, 1},   {L"prop_librarian_C", G::Ints, 0, 0, 1},
+    {L"prop_physgun_soft_C", G::Floats, 1, 0, 1},  {L"prop_popcorn_C", G::Floats, 1, 0, 1},
+    {L"prop_corded_C", G::Vectors, 0, 0, 2},
+};
+constexpr G kAllGroups[] = {G::Floats, G::Ints, G::Bools, G::Vectors};
+constexpr size_t kOuters = 3, kWide = 5;   // every group of the probe record: 3 arrays of 5 nonzero elements
+
+// A record whose every element of the four groups is nonzero, so a zeroed one always shows in the hash.
+SR::SaveRecord ProbeRecord() {
+    SR::SaveRecord r = Rec(L"prop_apple_C", 1, L"x");
+    r.floats.assign(kOuters, {});
+    r.ints.assign(kOuters, {});
+    r.bools.assign(kOuters, {});
+    r.vectors.assign(kOuters, {});
+    for (size_t o = 0; o < kOuters; ++o) {
+        for (size_t i = 0; i < kWide; ++i) {
+            const float v = 1.f + 10.f * static_cast<float>(o) + static_cast<float>(i);
+            r.floats[o].push_back(v);
+            r.ints[o].push_back(static_cast<int32_t>(v) + 7);
+            r.bools[o].push_back(1);
+            r.vectors[o].push_back({v, v + 0.5f, v + 0.25f});
+        }
+    }
+    return r;
+}
+
+// One element changed to another nonzero-or-zero value (a bool flips), or, with `zero`, set to zero.
+void Touch(SR::SaveRecord& r, G g, size_t o, size_t i, bool zero) {
+    switch (g) {
+        case G::Floats:  r.floats[o][i] = zero ? 0.f : r.floats[o][i] + 100.5f; break;
+        case G::Ints:    r.ints[o][i] = zero ? 0 : r.ints[o][i] + 100; break;
+        case G::Bools:   r.bools[o][i] = zero ? uint8_t{0} : static_cast<uint8_t>(r.bools[o][i] ^ 1); break;
+        case G::Vectors:
+            r.vectors[o][i] = zero ? std::array<float, 3>{} : std::array<float, 3>{r.vectors[o][i][0] + 100.f, 0.f, 0.f};
+            break;
+    }
+}
+
+void Shrink(SR::SaveRecord& r, G g, size_t o, size_t n) {
+    switch (g) {
+        case G::Floats:  r.floats[o].resize(n); break;
+        case G::Ints:    r.ints[o].resize(n); break;
+        case G::Bools:   r.bools[o].resize(n); break;
+        case G::Vectors: r.vectors[o].resize(n); break;
+    }
+}
+
+// Every row of the hand hash, one by one: the elements the row names hash the same changed or not, and every other
+// element of every group (the neighbours of the range included) changes the hash; the same record without the row
+// sees every one of them; a range that runs past the end of its array zeroes the part inside and writes nothing else.
+// The ask and the replay share the class cache of PutExclusionRowsOf, which only the rig's put drills reach.
+void CheckExclusionRows(Checks& check) {
+    namespace RQ = coop::props::container_act_request::internal;
+    const SR::SaveRecord probe = ProbeRecord();
+    const uint64_t plain = RQ::PutHandHash(probe, 0);
+    uint32_t seen = 0;
+    bool named = true;
+    for (const ExpectedRow& e : kExpected) {
+        const size_t row = RQ::PutExclusionRowOf(e.cls);
+        if (row >= 32 || (seen & (1u << row))) {
+            named = false;
+            continue;
+        }
+        seen |= 1u << row;
+        const uint32_t bit = 1u << row;
+        std::string cls;
+        for (const wchar_t* c = e.cls; *c; ++c) cls.push_back(static_cast<char>(*c));
+        const uint64_t through = RQ::PutHandHash(probe, bit);
+        bool exact = true, seenWithout = true;
+        for (G g : kAllGroups) {
+            const size_t outers = g == G::Floats ? probe.floats.size() : g == G::Ints ? probe.ints.size()
+                                  : g == G::Bools ? probe.bools.size() : probe.vectors.size();
+            for (size_t o = 0; o < outers; ++o) {
+                for (size_t i = 0; i < kWide; ++i) {
+                    SR::SaveRecord varied = probe;
+                    Touch(varied, g, o, i, false);
+                    const bool defaultZeroed = g == G::Floats && o == 0 && i == 0;   // the lifespan, in every record
+                    const bool inRow = g == e.group && o == e.outer && i >= e.first && i < e.first + e.count;
+                    const bool excluded = defaultZeroed || inRow;
+                    if ((RQ::PutHandHash(varied, bit) == through) != excluded) exact = false;
+                    if (!defaultZeroed && RQ::PutHandHash(varied, 0) == plain) seenWithout = false;
+                }
+            }
+        }
+        check(exact, ("hand-hash: " + cls + "'s row zeroes exactly its elements and no neighbour").c_str());
+        check(seenWithout, ("hand-hash: " + cls + "'s elements all show in the hash without the row").c_str());
+
+        if (e.count > 1) {   // an array that ends inside the range: the part inside is zeroed, nothing else
+            SR::SaveRecord shortRec = probe;
+            Shrink(shortRec, e.group, e.outer, e.first + 1);
+            SR::SaveRecord explicitZero = shortRec;
+            Touch(explicitZero, e.group, e.outer, e.first, true);
+            check(RQ::PutHandHash(shortRec, bit) == RQ::PutHandHash(explicitZero, 0) &&
+                      RQ::PutHandHash(shortRec, 0) != RQ::PutHandHash(explicitZero, 0),
+                  ("hand-hash: " + cls + "'s range past the end of its array zeroes the part inside only").c_str());
+        }
+    }
+    size_t active = 0;
+    for (uint32_t r = 0; r < 32; ++r)
+        if (RQ::PutHandHash(probe, 1u << r) != plain) ++active;
+    check(named && active == std::size(kExpected),
+          "hand-hash: the table holds each expected class once and no row the selftest does not name");
 }
 
 }  // namespace
@@ -406,6 +525,7 @@ void RunPutSelftest(Checks& check) {
                   RQ::PutHandHash(bucket, bucketBit) == RQ::PutHandHash(bucketDry, bucketBit) &&
                   RQ::PutHandHash(bucket, 0) != RQ::PutHandHash(bucketDry, 0),
               "hand-hash: a librarian's seconds and a bucket's dry flag are left out through their rows");
+        CheckExclusionRows(check);
 
         const size_t asked = caw::RecordBytes(hand);
         SR::SaveRecord big = hand;

@@ -60,8 +60,9 @@ constexpr int kTagR3 = 0x43414333;   // "CAC3"
 const char* RouteName(uint8_t route) { return route == kRouteR2 ? "R2" : "R3"; }
 
 // A read that tells a put from any other press and fails leaves the verb to run natively, unjudged: said once per
-// session, with the field, so a layout change cannot turn the feature off silently.
-enum SayKind : size_t { kSayScreen, kSayPlayer, kSayHold, kSayRun, kSayCount };
+// session, with the field, so a layout change cannot turn the feature off silently. kSayUnloaded is the hand-hash
+// table's own once-per-session line, not a failed read.
+enum SayKind : size_t { kSayScreen, kSayPlayer, kSayHold, kSayRun, kSayUnloaded, kSayCount };
 bool g_said[kSayCount] = {};
 
 sg::Verdict SayUnreadable(SayKind which, const char* seat, const char* field) {
@@ -417,7 +418,6 @@ struct ClassSlot {
     uint64_t listing = 0;
 };
 ClassSlot g_slots[kExclusionCount];
-bool g_saidUnloaded = false;
 
 }  // namespace
 
@@ -447,10 +447,11 @@ uint32_t PutExclusionRowsOf(void* heldActor) {
         void* const base = s.cls;
         if (R::IsDescendantOfAny(actorClass, &base, 1)) rows |= 1u << i;
     }
-    if (unloaded && !g_saidUnloaded) {
-        g_saidUnloaded = true;
-        UE_LOGI("container_act: put hash: %zu of %zu exclusion classes are not loaded yet; their rows are skipped",
-                unloaded, kExclusionCount);
+    bool& said = detail::g_said[detail::kSayUnloaded];
+    if (unloaded && !said) {
+        said = true;
+        UE_LOGI("container_act: %zu hand-hash exclusion class(es) are not loaded in this world; their rows apply once "
+                "they load", unloaded);
     }
     return rows;
 }
