@@ -75,6 +75,12 @@ struct Take {
     uint32_t count = 0;
 };
 Take LastTake();
+
+// Inert unless called; all reset at the session's end.
+void HoldReplay(bool on);   // while on, a take's grant parks its replay (the record stays open, its grant time kept)
+bool ReplayParked();        // a grant is parked
+void ReleaseReplay();       // runs the parked replay now, through the same checks as an unparked one
+void DoubleAbort(bool on);  // while on, a take's abort commit is sent twice
 }  // namespace dev
 
 }  // namespace coop::props::container_act_request

@@ -75,6 +75,7 @@ struct Pending {
     uint16_t index = 0;
     uint64_t hash = 0;
     uint64_t grantedMs = 0;   // when the Granted reply was taken here
+    bool replayHeld = false;  // dev: HoldReplay parked the replay of a grant
 };
 
 // The replay's apply latch, for the length of one synchronous verb call: the verb watches ask it whether a verb is the
@@ -93,6 +94,8 @@ struct Latched {
 
 uint32_t g_takeDoneUnread = 0;   // takes committed done although the press's count could not be read back
 uint32_t g_staleGrantAborts = 0; // grants aborted for their age instead of replayed
+bool g_holdReplay = false;       // dev (dev:: below): a take's grant parks its replay
+bool g_doubleAbort = false;      // dev: a take's abort commit is sent twice
 dev::Take g_lastTake;            // the last take's commit as it was sent; the drills read it
 
 // A request whose wait ran out, kept until the host answers it, so a grant that still arrives is answered with an
@@ -336,6 +339,7 @@ sg::Verdict PreTake(const sg::Call& c) {
 void SendTakeCommit(uint16_t id, uint32_t eid, uint8_t committed) {
     g_lastTake = dev::Take{id, committed, g_lastTake.count + 1};
     SendCommit(id, eid, committed);
+    if (g_doubleAbort && !committed) SendCommit(id, eid, committed);
 }
 
 // The granted take: the same slot is pressed again, under the latch, if it still names the record the host granted;
@@ -460,7 +464,7 @@ void Tick() {
                 static_cast<unsigned>(it->id), static_cast<unsigned>(it->eid));
         it = g_expired.erase(it);
     }
-    if (!g_rec.open) return;
+    if (!g_rec.open || g_rec.replayHeld) return;   // a parked replay is a drill's to release
     const uint64_t waited = now - g_rec.sentMs;
     if (waited < kReplyWaitMs) return;
     UE_LOGI("container_act: request id %u eid %u expired after %llu ms", static_cast<unsigned>(g_rec.id),
@@ -494,6 +498,10 @@ void OnReply(const coop::net::ContainerActReplyPayload& p) {
         switch (static_cast<ContainerActFamily>(g_rec.family)) {
         case ContainerActFamily::Take:
             g_rec.grantedMs = coop::net::NowMs();
+            if (g_holdReplay) {
+                g_rec.replayHeld = true;
+                return;
+            }
             ReplayTake();
             break;
         default:
@@ -513,6 +521,8 @@ void OnDisconnect() {
         UE_LOGW("container_act: this session committed %u take(s) done UNREAD", dev::TakeDoneUnread());
     g_takeDoneUnread = 0;
     g_staleGrantAborts = 0;
+    g_holdReplay = false;
+    g_doubleAbort = false;
     g_lastTake = dev::Take{};
     g_nextId = 0;
     g_nextRequestSeq = 1;
@@ -529,6 +539,19 @@ uint32_t TakeDoneUnread() { return g_takeDoneUnread; }
 uint16_t PendingId() { return g_rec.open ? g_rec.id : 0; }
 
 uint32_t StaleGrantAborts() { return g_staleGrantAborts; }
+
+void HoldReplay(bool on) { g_holdReplay = on; }
+
+bool ReplayParked() { return g_rec.open && g_rec.replayHeld; }
+
+void ReleaseReplay() {
+    if (!ReplayParked()) return;
+    g_rec.replayHeld = false;
+    ReplayTake();
+    Close();
+}
+
+void DoubleAbort(bool on) { g_doubleAbort = on; }
 
 Take LastTake() { return g_lastTake; }
 
