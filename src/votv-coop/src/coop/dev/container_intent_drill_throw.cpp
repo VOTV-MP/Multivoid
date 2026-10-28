@@ -1,8 +1,8 @@
 // coop/dev/container_intent_drill_throw.cpp -- the CLIENT's half of the container intent drill's throw arms (throwhand,
 // throwgrab); see container_intent_drill_throw.h for what they measure and coop/dev/container_intent_drill.h for the drill.
 //   throwhand -- takes a drive into the hotbar hand (drill_hand), stands about kStandFromTargetCm before the target (the
-//                director's walk, then it stops), turns the camera through the aim fan until the player's own look trace
-//                strikes the target, and throws with the game's own throwHoldingProp.
+//                director's walk, then it stops), turns the camera through the aim fan until its forward points at the
+//                target's opening, and throws with the game's own throwHoldingProp.
 //   throwgrab -- the same, but the drive is the host's, taken by the use key's physics grab (director::AimedGrab) and thrown
 //                from the grab: throwHoldingProp first and, when the grab is still held a second later, the fire input.
 // A first throw that lands short or long of the target (and not in it) is followed, ONCE, by a second from a standpoint moved
@@ -29,6 +29,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
+#include "ue_wrap/engine/engine_pawn.h"
 
 #include <windows.h>
 
@@ -62,6 +63,7 @@ constexpr uint64_t kGrabBoundMs      = 20000;
 constexpr uint64_t kItem2BoundMs     = 60000;   // the second standpoint's drive: the host's line, then its mirror
 constexpr uint64_t kArmBoundMs       = 60000;   // the client's arm line to the host's armed line (drill chat leaves one line a second)
 constexpr uint64_t kAimBoundMs       = 40000;
+constexpr float    kAimDeg           = 2.f;     // the camera's forward is aimed when within this of the direction to the opening
 constexpr uint64_t kThrowSeenMs      = 1000;    // throwgrab: the grab is let go within this of a throw seam, or the next seam is tried
 
 DR::InputStub g_fire{L"InpActEvt_fire_K2Node_InputActionEvent_58"};   // the fire key's press: a grabbed prop is thrown by it
@@ -82,6 +84,9 @@ int      g_settled = 0;
 std::shared_ptr<DR::BackgroundWalk> g_walk;
 std::unique_ptr<DR::AimedGrab> g_grab;
 DR::AimFan g_fan;
+FVector  g_aimPoint{};         // the target's opening: its location plus its bounds' half-height, read once per throw
+bool     g_aimRead = false;
+bool     g_aimDirect = false;  // the fan never got there: the camera looks at the point itself
 
 // The throw in flight.
 Track    g_local, g_mirror;
@@ -320,6 +325,7 @@ void StepGrab() {
 void StepArmWait() {
     if (DC::ChatHasLive(ThrowLine("host", "armed", g_n, false))) {
         g_fan = DR::AimFan();
+        g_aimRead = g_aimDirect = false;
         Next(Step::Aim);
         return;
     }
@@ -383,26 +389,72 @@ void ThrowTheGrab(void* player) {
     Next(Step::ThrowCheck);
 }
 
+// The angle, in degrees, between the camera's forward vector and the direction from the camera to `point`. The game's throw
+// (traceThrow) aims along the camera's forward, not along the use key's look trace, which reaches less far than the stand.
+float CameraOffDeg(const FVector& point) {
+    constexpr float kRad = 3.14159265358979f / 180.f;
+    const FVector cam = E::GetCameraLocation();
+    const ue_wrap::FRotator r = E::GetCameraRotation();
+    const float cp = std::cos(r.Pitch * kRad);
+    const float fx = cp * std::cos(r.Yaw * kRad), fy = cp * std::sin(r.Yaw * kRad), fz = std::sin(r.Pitch * kRad);
+    const float dx = point.X - cam.X, dy = point.Y - cam.Y, dz = point.Z - cam.Z;
+    const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (len < 1.f) return 180.f;
+    return std::acos(std::clamp((fx * dx + fy * dy + fz * dz) / len, -1.f, 1.f)) / kRad;
+}
+
+void AimedAt(void* player, float offDeg, bool direct) {
+    UE_LOGI("[CI-DRILL] client %s: throw %d aimed after %d pose(s)%s, the camera %.2f deg off the opening point", ArmName(), g_n,
+            g_fan.Poses(), direct ? " and a direct look" : "", static_cast<double>(offDeg));
+    if (ArmOf() == Arm::ThrowHand) ThrowTheHeld(player);
+    else ThrowTheGrab(player);
+}
+
+// The camera turned through the fan round the target's opening (its location plus its bounds' half-height, read once) until
+// its forward is within kAimDeg of the direction to it; a fan that never gets there is followed by a direct look at the point.
 void StepAim(void* player) {
     void* pack = g_pack.Get();
-    FVector at{};
-    if (!pack || !E::TryGetActorLocation(pack, at)) {
+    if (!pack) {
         CFail("the target's mirror died");
         return;
     }
-    switch (g_fan.Tick(player, at, E::ReadMainPlayerHitActor(player) == pack)) {
-    case DR::AimFan::State::Working:
-        if (Expired(kAimBoundMs)) CFail("the aim never struck the target within %llu s (%.0f cm)", U(kAimBoundMs / 1000),
-                                       static_cast<double>(std::hypot(at.X - g_stand.X, at.Y - g_stand.Y)));
+    if (!g_aimRead) {
+        FVector at{}, origin{}, extent{};
+        if (!E::TryGetActorLocation(pack, at) || !E::GetActorBounds(pack, false, origin, extent)) {
+            CFail("the target's place or bounds do not read");
+            return;
+        }
+        g_aimPoint = {at.X, at.Y, at.Z + extent.Z};
+        g_aimRead = true;
+        UE_LOGI("[CI-DRILL] client %s: throw %d aims at the opening point (%.0f,%.0f,%.0f), %.0f cm from the standpoint", ArmName(),
+                g_n, static_cast<double>(g_aimPoint.X), static_cast<double>(g_aimPoint.Y), static_cast<double>(g_aimPoint.Z),
+                static_cast<double>(std::hypot(at.X - g_stand.X, at.Y - g_stand.Y)));
+    }
+    const float off = CameraOffDeg(g_aimPoint);
+    if (g_aimDirect) {
+        if (off < kAimDeg) {
+            AimedAt(player, off, true);
+            return;
+        }
+        if (Expired(kAimBoundMs)) {
+            CFail("the camera stays %.2f deg off the opening point after a direct look", static_cast<double>(off));
+            return;
+        }
+        E::SetControlRotation(E::GetController(player), DR::LookAt(E::GetCameraLocation(), g_aimPoint));
         return;
-    case DR::AimFan::State::Failed:
-        CFail("the aim never struck the target: the look trace missed it in all %d pose(s), %.0f cm away", g_fan.Poses(),
-              static_cast<double>(std::hypot(at.X - g_stand.X, at.Y - g_stand.Y)));
+    }
+    switch (g_fan.Tick(player, g_aimPoint, off < kAimDeg)) {
+    case DR::AimFan::State::Working:
+        if (Expired(kAimBoundMs)) CFail("the camera never came within %.0f deg of the opening point (%.2f deg off)",
+                                       static_cast<double>(kAimDeg), static_cast<double>(off));
+        return;
+    case DR::AimFan::State::Failed:   // every pose of the fan was held: look at the point itself
+        g_aimDirect = true;
+        Next(Step::Aim);   // the direct look has the whole bound
+        E::SetControlRotation(E::GetController(player), DR::LookAt(E::GetCameraLocation(), g_aimPoint));
         return;
     case DR::AimFan::State::Aimed:
-        UE_LOGI("[CI-DRILL] client %s: throw %d aimed after %d pose(s)", ArmName(), g_n, g_fan.Poses());
-        if (ArmOf() == Arm::ThrowHand) ThrowTheHeld(player);
-        else ThrowTheGrab(player);
+        AimedAt(player, off, false);
         return;
     }
 }
@@ -593,6 +645,8 @@ void ThrowReset() {
     g_lastPos[0] = g_lastPos[1] = FVector{};
     g_rest = g_settled = 0;
     g_fan = DR::AimFan();
+    g_aimPoint = FVector{};
+    g_aimRead = g_aimDirect = false;
     g_local = Track{};
     g_mirror = Track{};
     g_hostEid = 0;
