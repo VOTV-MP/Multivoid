@@ -248,8 +248,13 @@ void DrainCommits() {
 
 namespace detail {
 
-void NotePut(const Pending& p, dev::PutOutcome outcome, uint16_t index, uint64_t replayHash) {
+void NotePut(const Pending& p, dev::PutOutcome outcome, uint16_t index, uint64_t replayHash, const float (&floats)[3]) {
+    const dev::Put was = g_lastPut;
     g_lastPut = dev::Put{p.id, static_cast<uint8_t>(p.route + 1), outcome, index, p.hash, replayHash};
+    float(&dst)[3] = outcome == dev::PutOutcome::Asked ? g_lastPut.askFloats : g_lastPut.replayFloats;
+    std::memcpy(dst, floats, sizeof(dst));
+    if (outcome != dev::PutOutcome::Asked && was.id == p.id)
+        std::memcpy(g_lastPut.askFloats, was.askFloats, sizeof(was.askFloats));
 }
 
 bool QueueCommit(const caw::Commit& c) {

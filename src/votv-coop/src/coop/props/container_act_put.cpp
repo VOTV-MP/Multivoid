@@ -33,6 +33,7 @@
 #include <cstring>
 #include <cwchar>
 #include <iterator>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -81,6 +82,13 @@ bool ReadParam(R::ParamOffset& offset, const sg::Call& c, T& out) {
     return true;
 }
 
+// The record's raw floats[0][1..3], for dev::LastPut: NaN for an index the record does not have.
+void RawFloats(const SR::SaveRecord& rec, float (&out)[3]) {
+    for (size_t i = 0; i < 3; ++i)
+        out[i] = !rec.floats.empty() && rec.floats[0].size() > i + 1 ? rec.floats[0][i + 1]
+                                                                      : std::numeric_limits<float>::quiet_NaN();
+}
+
 // May this record travel? A container's contents live at its GObjStack slot, which means nothing on another peer, so
 // one that holds anything is refused with a line; one with no slot (-1) or an empty slot travels. An index or a store
 // that does not read is refused too: a loaded container's contents are never lost to a read that failed.
@@ -124,6 +132,8 @@ sg::Verdict AskPut(uint8_t route, uint32_t eid, void* container, const SR::SaveR
     // change while the player runs, and some classes carry a field that ticks by itself; R3 hashes it without them.
     r.hash = route == kRouteR3 ? internal::PutHandHash(rec, internal::PutExclusionRowsOf(hand)) : csw::HashBytes(wire);
     if (Ask(r)) {
+        float asked[3];
+        RawFloats(rec, asked);
         Pending& p = Rec();
         p.container.Set(container);
         p.screen.Set(screen);
@@ -134,7 +144,7 @@ sg::Verdict AskPut(uint8_t route, uint32_t eid, void* container, const SR::SaveR
         p.name = name;
         UE_LOGI("container_act: put id=%u eid=%u route=%s asked %ls", static_cast<unsigned>(p.id),
                 static_cast<unsigned>(eid), RouteName(route), rec.className.c_str());
-        NotePut(p, dev::PutOutcome::Asked, p.index, 0);
+        NotePut(p, dev::PutOutcome::Asked, p.index, 0, asked);
     }
     // A refused ask has shown its own line, and an open act shows nothing.
     return sg::Verdict::Cancel;
@@ -232,11 +242,15 @@ bool ReadRecordHashes(void* container, std::vector<SR::SaveRecord>& recs, std::v
 // The hash the replay read of the record it was asked about (what the check compared with the asked one), 0 until a
 // check reads it; dev::LastPut says it.
 uint64_t g_replayHash = 0;
+// The record's raw floats[0][1..3] the replay's own capture read, before the hash zeroes anything; NaN until a capture
+// reads them. dev::LastPut says it.
+float g_replayFloats[3] = {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN(),
+                           std::numeric_limits<float>::quiet_NaN()};
 
 void NotReplayed(const Pending& p, const char* why) {
     UE_LOGI("container_act: put id=%u eid=%u route=%s not replayed (%s) -> aborted", static_cast<unsigned>(p.id),
             static_cast<unsigned>(p.eid), RouteName(p.route), why);
-    NotePut(p, dev::PutOutcome::Aborted, p.index, g_replayHash);
+    NotePut(p, dev::PutOutcome::Aborted, p.index, g_replayHash, g_replayFloats);
     SendCommit(p.id, p.eid, 0);
     ShowBadReason();   // the click is lost, never the record: the player puts again
 }
@@ -270,6 +284,7 @@ internal::PutCheck CheckR3(const Pending& p, void* hand, bool containerLive, con
     const bool isAsked = hand && hand == p.hand.Get();
     SR::SaveRecord rec;
     const bool captured = isAsked && SR::CaptureOwnRecord(hand, rec);
+    if (captured) RawFloats(rec, g_replayFloats);
     if (captured) g_replayHash = internal::PutHandHash(rec, internal::PutExclusionRowsOf(hand));
     const bool hashMatches = captured && g_replayHash == p.hash;
     why = !containerLive ? "the container is gone" : !isAsked ? "the hand changed" : !hashMatches ? "the record changed" : "";
@@ -297,6 +312,7 @@ const WatchRow* PutWatches(size_t& count) {
 void ReplayPut() {
     Pending& p = Rec();
     g_replayHash = 0;
+    for (float& f : g_replayFloats) f = std::numeric_limits<float>::quiet_NaN();
     void* const container = p.container.Get();
     std::vector<SR::SaveRecord> before;
     std::vector<uint64_t> beforeHashes;
@@ -339,7 +355,7 @@ void ReplayPut() {
         if (QueueCommit(done)) {   // false: the commit does not pack, nothing queued
             UE_LOGI("container_act: put id=%u eid=%u route=%s replayed -> done at index %zu",
                     static_cast<unsigned>(p.id), static_cast<unsigned>(p.eid), RouteName(p.route), *at);
-            NotePut(p, dev::PutOutcome::Done, static_cast<uint16_t>(*at), g_replayHash);
+            NotePut(p, dev::PutOutcome::Done, static_cast<uint16_t>(*at), g_replayHash, g_replayFloats);
             return;
         }
         // Cannot happen under the size gate; the container has the record and the host will not.
@@ -351,7 +367,7 @@ void ReplayPut() {
     // the player let go of run. An R2 whose fit failed leaves the item a world prop, as the single-player game does.
     UE_LOGI("container_act: put id=%u eid=%u route=%s replayed ran=%d -> aborted (the container stored nothing)",
             static_cast<unsigned>(p.id), static_cast<unsigned>(p.eid), RouteName(p.route), ran ? 1 : 0);
-    NotePut(p, dev::PutOutcome::Aborted, p.index, g_replayHash);
+    NotePut(p, dev::PutOutcome::Aborted, p.index, g_replayHash, g_replayFloats);
     SendCommit(p.id, p.eid, 0);
 }
 

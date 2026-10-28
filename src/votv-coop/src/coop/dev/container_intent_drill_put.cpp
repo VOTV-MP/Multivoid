@@ -24,7 +24,6 @@
 #include "ue_wrap/actors/container_view.h"
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/actors/prop_gather.h"
-#include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
@@ -96,9 +95,6 @@ std::shared_ptr<DR::BackgroundWalk> g_walk;
 int      g_own0 = -1, g_count0 = -1;
 AR::dev::Put g_put0;
 uint32_t g_acts0[3] = {};
-bool     g_haveFloats = false;
-float    g_temp0 = 0.f, g_ripe0 = 0.f, g_tempN = 0.f, g_ripeN = 0.f;   // the food's, at the ask and the last read before the act's end
-float    g_clock0 = 0.f, g_clockN = 0.f;   // the food record's floats[0][3] (the game's GetTimeSeconds), read as PutHandHash reads it
 float    g_minDist = 1e9f, g_topSpeed = 0.f;                          // the carry walk's closest approach and top speed
 uint64_t g_endMs = 0;
 int      g_settled = 0;   // consecutive reads of the hand holding the item
@@ -139,23 +135,6 @@ void CPass(int stray) {
     UE_LOGI("[CI-DRILL] client %s PASS", ArmName());
     CEnd(1, stray);
     Finish();
-}
-
-bool ReadFloat(void* actor, const wchar_t* name, float& out) {
-    const int32_t off = actor && R::IsLive(actor) ? R::FindPropertyOffset(R::ClassOf(actor), name) : -1;
-    if (off < 0) return false;
-    std::memcpy(&out, static_cast<const uint8_t*>(actor) + off, sizeof(out));
-    return true;
-}
-
-// The food's temperature and ripeness, and the clock its record carries (floats[0][3]: the game's GetTimeSeconds, written
-// fresh by every getData), the record read the way the put's hand hash reads it.
-bool ReadFood(void* actor, float& temp, float& ripe, float& stamp) {
-    ue_wrap::save_record::SaveRecord rec;
-    if (!ReadFloat(actor, L"temperature", temp) || !ReadFloat(actor, L"ripeness", ripe)) return false;
-    if (!ue_wrap::save_record::CaptureOwnRecord(actor, rec) || rec.floats.empty() || rec.floats[0].size() < 4) return false;
-    stamp = rec.floats[0][3];
-    return true;
 }
 
 // Why a pocket put nothing, said once in the FAIL line: the mirror's root simulating physics (the game's gate), the
@@ -502,10 +481,6 @@ void StepCarry() {
     if (speed > g_topSpeed) g_topSpeed = speed;
     if (dist <= kPressCm && speed > kPressSpeedCmS) {
         Baseline();
-        g_haveFloats = ArmOf() == Arm::PutFood && ReadFood(hand, g_temp0, g_ripe0, g_clock0);
-        g_tempN = g_temp0;
-        g_ripeN = g_ripe0;
-        g_clockN = g_clock0;
         if (!RD::UseWithRun(player, g_pack.Get(), hand)) {
             CFail("playerUsedOn did not dispatch");
             return;
@@ -520,10 +495,8 @@ void StepCarry() {
               static_cast<double>(g_minDist), static_cast<double>(g_topSpeed));
 }
 
-// The put act ends when LastPut names a new id that is no longer only asked. The food's floats are read each tick
-// while its actor lives, so the last read before the end stands for the replay's.
+// The put act ends when LastPut names a new id that is no longer only asked.
 void StepActWait() {
-    if (g_haveFloats) ReadFood(g_hand.Get(), g_tempN, g_ripeN, g_clockN);
     const AR::dev::Put p = AR::dev::LastPut();
     if (p.id != g_put0.id && p.outcome != AR::dev::PutOutcome::Asked && p.outcome != AR::dev::PutOutcome::None) {
         g_endMs = ::GetTickCount64();
@@ -553,8 +526,9 @@ void StepSettle() {
     if (arm == Arm::PutFood)
         UE_LOGI("[CI-DRILL] client putfood temp %.4f -> %.4f ripeness %.4f -> %.4f clock %.4f -> %.4f hash %016llx -> %016llx "
                 "act -> %s",
-                static_cast<double>(g_temp0), static_cast<double>(g_tempN), static_cast<double>(g_ripe0),
-                static_cast<double>(g_ripeN), static_cast<double>(g_clock0), static_cast<double>(g_clockN),
+                static_cast<double>(p.askFloats[0]), static_cast<double>(p.replayFloats[0]),
+                static_cast<double>(p.askFloats[1]), static_cast<double>(p.replayFloats[1]),
+                static_cast<double>(p.askFloats[2]), static_cast<double>(p.replayFloats[2]),
                 static_cast<unsigned long long>(p.askHash),
                 static_cast<unsigned long long>(p.replayHash), AR::dev::PutOutcomeName(p.outcome));
     UE_LOGI("[CI-DRILL] client %s stray %ls client=%d", ArmName(), cls, stray);
@@ -643,8 +617,7 @@ void PutReset() {
     g_own0 = g_count0 = -1;
     g_put0 = AR::dev::Put{};
     g_acts0[0] = g_acts0[1] = g_acts0[2] = 0;
-    g_haveFloats = false;
-    g_temp0 = g_ripe0 = g_tempN = g_ripeN = g_clock0 = g_clockN = g_topSpeed = 0.f;
+    g_topSpeed = 0.f;
     g_minDist = 1e9f;
     g_settled = 0;
 }

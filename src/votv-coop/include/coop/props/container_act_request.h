@@ -21,6 +21,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -106,7 +107,9 @@ Take LastTake();
 // run, R3). `index` is the selected pane index at the ask (R2), then where the container stored the record once the
 // put is done. `askHash` is the hash the host was asked and the replay compares: R3's with the held actor's pose and
 // lifespan and its class's ticking fields zeroed (PutHandHash), R2's the record's own. `replayHash` is that same hash
-// read again at the replay, 0 when the replay did not get as far as reading it. Refused is the host's answer to the ask.
+// read again at the replay, 0 when the replay did not get as far as reading it. `askFloats` and `replayFloats` are the
+// record's raw floats[0][1..3] (a food's temperature, ripeness and clock) at the ask and at the replay's own capture, NaN
+// where the record has no such index or no capture was made. Refused is the host's answer to the ask.
 // Reset at the session's end.
 enum class PutOutcome : uint8_t { None, Asked, Done, Aborted, Refused };
 struct Put {
@@ -116,6 +119,10 @@ struct Put {
     uint16_t index = 0;
     uint64_t askHash = 0;
     uint64_t replayHash = 0;
+    float askFloats[3] = {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN(),
+                          std::numeric_limits<float>::quiet_NaN()};
+    float replayFloats[3] = {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN(),
+                             std::numeric_limits<float>::quiet_NaN()};
 };
 Put LastPut();
 const char* PutOutcomeName(PutOutcome o);   // "none" "asked" "done" "aborted" "refused"
