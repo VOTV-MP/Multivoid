@@ -229,6 +229,7 @@ set(VOTVCOOP_SOURCES
     src/coop/comms/chat_bubbles.cpp
     src/coop/comms/peer_action_feed.cpp
     src/coop/dispatch/event_feed.cpp
+    src/coop/dispatch/event_dispatch_container_act.cpp
     src/coop/dispatch/event_dispatch_economy.cpp
     src/coop/dispatch/event_dispatch_entity.cpp
     src/coop/dispatch/event_dispatch_intent.cpp
@@ -579,6 +580,7 @@ set(VOTVCOOP_SOURCES
     src/coop/items/save_record_wire.cpp
     src/coop/props/container_act_host.cpp
     src/coop/props/container_act_request.cpp
+    src/coop/props/container_act_selftest.cpp
     src/coop/props/container_act_state.cpp
     src/coop/props/container_act_wire.cpp
     src/coop/props/container_birth.cpp

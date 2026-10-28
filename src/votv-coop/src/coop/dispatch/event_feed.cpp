@@ -1,6 +1,6 @@
 // coop/dispatch/event_feed.cpp -- the per-tick reliable-message drain: the per-slot Join edge, then the
 // ReliableKind dispatch switch. The kind-to-handler table lives here; the case bodies for the
-// seven families (entity, state, signal, intent, economy, prop-drive, world) live in
+// eight families (entity, state, signal, intent, container-act, economy, prop-drive, world) live in
 // event_dispatch_<family>.cpp. Session, handshake, snapshot and dev-key cases stay inline.
 
 #include "coop/dispatch/event_feed.h"
@@ -473,6 +473,7 @@ void Update(net::Session& session, void* localPlayer) {
             if (HandleStateEvent(session, msg, localPlayer)) break;
             if (HandleSignalEvent(msg)) break;
             if (HandleIntentEvent(session, msg)) break;
+            if (HandleContainerActEvent(session, msg)) break;
             if (HandleEconomyEvent(session, msg, localPlayer)) break;
             if (HandlePropDriveEvent(session, msg)) break;
             if (HandleWorldEvent(msg)) break;

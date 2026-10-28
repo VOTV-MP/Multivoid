@@ -113,7 +113,7 @@ One connection carries two kinds of traffic, split by reliability rather than by
   per-tick streams (`MsgType`, fourteen kinds). The receiver interpolates; newest wins.
 - **The reliable ordered channel**: every discrete event and state change, routed by
   `ReliableKind` (over a hundred kinds, from Join and Chat to the prop, container, workstation
-  and vehicle lanes). Routing is `coop/dispatch/`: one drain and seven family routers, each owning
+  and vehicle lanes). Routing is `coop/dispatch/`: one drain and eight family routers, each owning
   its kinds.
 
 Reliable traffic rides three lanes (high, default, transfer). Every kind that names an element or the world rides the one ordered default lane, the save stream rides the lowest, so a join's bulk stream never delays a teleport. A joiner's default-lane sends are held behind its snapshot until it completes. `[?]`

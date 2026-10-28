@@ -1,6 +1,6 @@
 // coop/dispatch/event_dispatch.h -- INTERNAL per-domain reliable-message handlers for
 // coop::event_feed::Update's dispatch switch. event_feed.cpp handles the session and handshake
-// kinds inline and chains these seven families from its default case; each family's own switch is
+// kinds inline and chains these eight families from its default case; each family's own switch is
 // where its kinds are declared.
 //
 // Sibling-internal header, the coop/net/session_lanes.h shape: not part of the public coop/ include
@@ -57,6 +57,12 @@ bool HandleSignalEvent(const net::Session::ReliableMessage& msg);
 // roach_sync::OnConsumedIntent.
 bool HandleIntentEvent(net::Session& session,
                        const net::Session::ReliableMessage& msg);
+
+// Container-act family: a client's take of a record out of a world container, or put into one. The request and
+// the commit check role()==Host AND a client sender slot, and hand the chunk to the host's lane; the reply is the
+// HOST->CLIENT answer, dropped on the host and from any sender but slot 0.
+bool HandleContainerActEvent(net::Session& session,
+                             const net::Session::ReliableMessage& msg);
 
 // Economy family: the delivery order with its queue, the coin gun's sale and collect, the laptop
 // upgrade purchase and the point sack. OrderRequest, CoinGunSell and CoinCollect check the slot here

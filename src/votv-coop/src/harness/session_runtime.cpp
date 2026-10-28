@@ -60,6 +60,7 @@
 #include "coop/props/container_birth.h"
 #include "coop/props/container_park.h"
 #include "coop/props/container_write_policy.h"
+#include "coop/props/container_act_host.h"
 #include "coop/props/prop_act_host.h"
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/prop_snapshot.h"
@@ -247,6 +248,9 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     // And a take or use of a shared prop: the host's judge and the order it reads in, the reply a verdict sends, the
     // commit's rows and the client's reply decision, each from a stated input.
     coop::prop_act_host::RunSelftest();
+    // And a container act: the codec and its hostile blobs, one record's hash, the record lookup, the holds, the host's
+    // judge and the order it reads in, the commit's rows and the client's reply decision, each from a stated input.
+    coop::props::container_act_host::RunSelftest();
     // And the deferred-destroy table's retire rule: a destroy naming an element leaves with a spawn of
     // that element only, a key-only destroy with a spawn of its key, a None or empty key with nothing.
     coop::element::quiescence_drain::RunDestroyDeferSelftest();

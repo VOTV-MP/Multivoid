@@ -27,7 +27,7 @@ WHAT IT HOLDS -- these FAIL the build:
      `return;` changed nothing the gate read. An exception is a claim about a BRANCH, so
      the check has to be about the branch.
 
-  3. A family dispatcher that is no longer CHAINED. The 100 case labels in the seven
+  3. A family dispatcher that is no longer CHAINED. The 170 case labels in the eight
      family files are reachable only because event_feed's `default:` calls each
      Handle*Event in turn; delete one call and ~25 kinds die while every case label is
      still present and the coverage arithmetic still adds up.
@@ -82,7 +82,7 @@ ROW_VALUES = ("Client", "Host")
 EDGE_SHAPE = re.compile(r"if\s*\(\s*cfg_\.role\s*==\s*Role::Host\s*\)\s*\{\s*const\s+ClientAuthorship\s+(\w+)\s*=\s*"
                         r"AuthorshipOf\(\s*static_cast<ReliableKind>\(\s*rh\.kind\s*\)\s*\)\s*;\s*if\s*\(")
 
-# The seven family dispatchers. Each Handle*Event returns true iff msg.kind is in its
+# The eight family dispatchers. Each Handle*Event returns true iff msg.kind is in its
 # family, so its own switch IS the membership declaration (SyncRouter consolidation,
 # 2026-06-28) -- which is exactly why parsing these case labels is parsing the truth
 # and not a parallel list that can drift from it.
@@ -94,6 +94,7 @@ FAMILY_FILES = [
     "src/coop/dispatch/event_dispatch_signal.cpp",
     "src/coop/dispatch/event_dispatch_state.cpp",
     "src/coop/dispatch/event_dispatch_world.cpp",
+    "src/coop/dispatch/event_dispatch_container_act.cpp",
 ]
 # event_feed's own top-level switch: the handful of specials that are disjoint from every
 # family (Join / Balance / Teleport / Wisp / Snapshot / the handshake kinds).
@@ -356,7 +357,7 @@ def check(tree: dict):
         return fails, enums, fam
 
     # --- every family is still CHAINED --------------------------------------------
-    # 100 case labels are reachable only because event_feed's default: calls each
+    # 170 case labels are reachable only because event_feed's default: calls each
     # Handle*Event in turn. Delete one call and ~25 kinds die with every label intact.
     for rel in FAMILY_FILES:
         handlers = set(HANDLER_DEF.findall(strip_comments(tree[rel])))
