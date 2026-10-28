@@ -109,6 +109,12 @@ sell function and destroys the sold prop itself; the coins are host-owned world 
 event-actor mirror carries, and whoever's body trips one on the host credits the host, a client's
 puppet included (`coop/items/coingun_sync`). The client is told the result.
 
+For host-owned coins, the client's overlap and E-press entries both forward a collect intent and
+cancel local credit and destruction. A refused request or failed send leaves the coin available
+for retry without a phantom balance. A client's unpublished sale coins stay under the sale barrier.
+`[V]` `.github/ci/coingun_collect_drill.py` executes the production E-press callback against isolated
+boundaries; real-client collection is a separate acceptance check.
+
 ### The floppy slot
 
 A laptop and a signal server hold a disc the same way: inserting one moves its type, its remaining
@@ -222,7 +228,7 @@ an error line.
 | Limit | Evidence |
 |---|---|
 | A refused coin-gun sale has already destroyed the prop on the client, and no heal re-asserts it: a client authors that destruction before the arbiter answers, as its generator install does, whose refusal refunds the upgrade. The host rebuilds its key index periodically, so a refusal is rare | `[V]` `coop/items/coingun_sync` |
-| The coin collect has two entries; the interceptor sits on the overlap entry, and the E-press entry dispatches inside the Blueprint where it cannot fire, so a coin a client collects by pressing is credited on the client only and the host's next balance broadcast erases it | `[V]` `coop/items/coingun_sync` |
+| Map-placed coins are not enrolled as host-owned world actors. Their local collection can temporarily credit only the client until the host's balance changes | `[RD]` `coop/items/coingun_collect` leaves non-mirrored map coins native |
 | A client's earnings from a chest or an achievement reach only its own machine and are erased by the host's next broadcast | `[V]` `coop/world/balance_sync` is one-way |
 | A slot change reaches the other peer on the next poll, so up to a second plus the round trip. A player who reaches a box inside that window acts on the slot as it was: an eject of a disc the other peer has just inserted answers "No floppy disc in the slot" and is not retried, and a client's insert into a slot the host has just filled replaces the host's disc when the claim lands, which loses that disc | `[V]` the lane polls at 1 Hz, and the host applies a claim over whatever its slot holds (`coop/interactables/floppy_slot_sync`); a faster poll would narrow the window rather than close it |
 
