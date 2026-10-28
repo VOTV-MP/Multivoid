@@ -43,6 +43,12 @@ the destroy-and-recreate that made the record need to travel in the first place.
 for the same key replaces the waiting one whether it applies at once or waits too, so an older
 record never lands on top of a newer one.
 
+Drive boxes and reel cases also publish after each native `upd` mutation, including consecutive
+changes in one frame. A timed notification window would discard a distinct insertion or lid change
+without publishing its final record. Mirrored applications and a joining client's load churn stay
+excluded so records do not echo. `[V]` `.github/ci/prop_record_refresh_drill.py` executes the
+production callback with isolated engine boundaries; two-peer gameplay remains a separate check.
+
 On the host, a prop born during play -- a device's eject, a drop, a place -- gets its record from
 the finish-spawning drain a tick after the birth, because the Blueprint that spawned it fills its
 state in after the finish call returns: a disc's eject loads it from the slot's JSON there. The

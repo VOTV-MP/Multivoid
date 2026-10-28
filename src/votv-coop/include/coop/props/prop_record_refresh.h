@@ -24,7 +24,7 @@ namespace coop::props::prop_record_refresh {
 // retried on the next call. Game thread.
 void Install(coop::net::Session* session);
 
-// Session teardown: the per-actor coalescing state is dropped.
+// Session teardown: release the session and reset publication counters.
 void OnDisconnect();
 
 }  // namespace coop::props::prop_record_refresh
