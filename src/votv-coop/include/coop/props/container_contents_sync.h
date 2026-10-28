@@ -10,7 +10,9 @@
 // AND on the way in, since a real value there names a slot in the SENDER's array.
 //
 // The edge is coop/props/container_writer_watch (ue_wrap/core/script_gate on addObject and takeObj),
-// marking the OWNING actor's eid dirty through MarkHostWrite. Apply raw-writes the receiver's own GObjStack slot, then re-derives the setter-managed
+// marking the OWNING actor's eid dirty through MarkHostWrite on the host. A client's mirror of a shared container is
+// display only: a verb on it marks nothing, and a client authors only a thrown container's birth slice.
+// Apply raw-writes the receiver's own GObjStack slot, then re-derives the setter-managed
 // state through updateVolumesAndMass and recalculateNames; addObject cannot be the apply verb (it
 // takes a live AActor* and serialises it itself) and checkObjectsVolume is not called (it ejects).
 

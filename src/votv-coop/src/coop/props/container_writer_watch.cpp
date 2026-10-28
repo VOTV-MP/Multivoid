@@ -6,6 +6,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/dev/container_route_census.h"
+#include "coop/dev/container_writer_probe.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
 #include "coop/props/container_act_request.h"
@@ -53,13 +54,15 @@ bool IsHost() {
 }
 
 // Fires at the entry of addObject and takeObj on the game thread, a change notice rather than an
-// action: it remembers which component was touched. No role gate: the verb is a local virtual
-// call, so by the time it is seen the item has already moved on this machine, and an intent the
-// host could deny cannot exist here. Gated on the host it dropped every client extraction: the
-// client took one of two burgers, the host's slot stayed at two, and the world gained a burger.
-// One exception, by the replay latch and not by role: a verb inside a granted act's replay marks
-// nothing, since the host publishes its own escrow and the replay's slice would only be judged
-// stale beside it. The extraction latch above is still armed.
+// action: it remembers which component was touched. The verb is a local virtual call, so by the
+// time it is seen the item has already moved on this machine. The role decides what it means:
+//  - on the host it marks the container dirty, and the lane's sweep publishes it;
+//  - on a client a shared container's mirror is display only (the host holds the record). The
+//    verb runs on the client's copy, the watch forgets the applied hash so the host's next
+//    publication or its Gone truth puts the mirror back, and the probe names the writer. A client
+//    slice is authored only for a thrown container's birth, from container_birth's sweep.
+// A verb inside a granted act's replay is handled by the replay itself and is left alone, by the
+// latch. The extraction latch above is armed either way.
 sg::Verdict OnVerbEntry(const sg::Call& br) {
     // The first statement, ahead of every filter: a resolved verb name does not prove this callback
     // runs, and a registration once returned true with the callback inert for a whole session. If
@@ -88,6 +91,11 @@ sg::Verdict OnVerbEntry(const sg::Call& br) {
         static_cast<uint32_t>(coop::element::Registry::Get().EidForActor(owner));
     if (eid == static_cast<uint32_t>(coop::element::kInvalidId)) return sg::Verdict::Run;
     // Resolve identity AT THE EDGE; the lane derefs nothing later.
+    if (!IsHost()) {
+        coop::props::container_contents_sync::ForgetApplied(eid);
+        coop::dev::container_writer_probe::OnClientVerb(eid, owner, br, br.tag == kVerbTakeObj);
+        return sg::Verdict::Run;
+    }
     coop::props::container_contents_sync::MarkHostWrite(eid);
     return sg::Verdict::Run;
 }

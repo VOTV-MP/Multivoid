@@ -1,8 +1,9 @@
 // coop/props/container_writer_watch.h -- the edge half of the container contents lane: the one
 // module that turns a write to a container's inventory into a dirty mark. The script gate watches
 // addObject and takeObj by name; a hit on a world container's inventory resolves the owner's
-// element id and hands it to container_contents_sync::MarkHostWrite, which the lane's sweep
-// drains. The verbs are local virtual calls (EX_LocalVirtualFunction), so only the script gate
+// element id. On the host it goes to container_contents_sync::MarkHostWrite, which the lane's sweep
+// drains; on a client the mirror is display only, so the hit forgets the applied hash and names the
+// writer to the dev probe, and marks nothing. The verbs are local virtual calls (EX_LocalVirtualFunction), so only the script gate
 // sees them; docs/coop-dispatch-visibility.md has the row. One writer calls neither verb: the
 // drone's sale (droneSellLocation_C::sell) clears its container's save-slot row directly, so the
 // host watches that body too and marks the container it emptied.
