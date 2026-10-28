@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute the verbatim production collect callback against the client state boundary."""
+"""Execute the production collect callback against the client state boundary."""
 
 import os
 from pathlib import Path
