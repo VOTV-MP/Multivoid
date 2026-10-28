@@ -4,19 +4,14 @@
 // Gameplay layer (principle 7). Game thread.
 //
 // One act is pending at a time. An honest wait ends in milliseconds; the 10 s bound covers a transport that refused
-// the reply. A request whose wait ran out is kept until the host answers it, and a grant after the bound is answered
-// with an abort, so the host's escrow never outlives the client's wait; one older than the host's 30 s hold deadline
-// is dropped, since the host has ended that hold by itself. A refused commit is sent again every 250 ms at most.
+// the reply. A request whose wait ran out is kept until the host answers it, and a grant that comes after the bound is
+// answered with an abort; one older than the host's 30 s hold deadline is dropped. A refused commit is sent again
+// every 250 ms at most.
 //
-// The take family has its replay: a client's press of an inventory-screen slot is cancelled at the slot's pressButton
-// and asked of the host; on a grant the same slot is pressed again under the replay latch, if it still names the
-// record the host granted and the grant is younger than the host's hold less a margin, and the commit says whether
-// the record left the container.
-//
-// The put-record family has two seats: the hotbar key with no hovered slot (the screen's em_take) and hold-and-run
-// (the container's playerUsedOn), each cancelled and asked with the record the player would put in. On a grant the
-// same verb runs again under the latch, if it still names that record, and the commit says where the container stored
-// it, or that it did not. Any other family's grant is answered with an abort.
+// The take and put-record families have a replay: the player's verb is cancelled at its seat (a slot's pressButton;
+// the screen's em_take or the container's playerUsedOn for a put) and asked of the host; on a grant the same verb runs
+// again under the replay latch if it still names the record asked (a take's grant also younger than the host's hold
+// less a margin), and the commit says whether and where the container changed. Any other family's grant is answered with an abort.
 
 #pragma once
 

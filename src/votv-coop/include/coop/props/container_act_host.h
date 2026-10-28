@@ -1,17 +1,14 @@
 // coop/props/container_act_host.h -- the host's half of a client's act on a world container: a request is judged
-// (the sender's world, the family, the holds, the reach, the container, the record's address or the record's own
-// terms), and the sender's commit ends the hold. A take's grant puts the record into escrow: done drops it (the
-// client has it), abort puts it back. A put's grant reserves room and writes nothing: done inserts the record the
-// client's own container stored, abort releases the reservation. Gameplay layer (principle 7). Game thread unless
-// marked.
+// (the sender's world, the family, the holds, the reach, the container, the record's address or its own terms), and
+// the sender's commit ends the hold. A take's grant puts the record into escrow: done drops it, abort restores it. A
+// put's grant reserves room and writes nothing: done inserts the record the client's container stored, abort releases.
+// Gameplay layer (principle 7). Game thread unless marked.
 //
-// Every hold ends: by the commit, by its 30 s deadline, by the sender's departure or by the session's end. An
-// escrow's end restores its record; a reservation's end releases it and inserts nothing. A write that cannot happen
-// now is owed and retried at 1 Hz, never dropped while the session runs. A reservation that ends by its deadline
-// leaves a tombstone, so a put the client did anyway is inserted when its commit comes late, and the sender is
-// slowed meanwhile. The queue's Wait is the mid-join answer: a request before the sender's world is ready, before
-// its body has a pose, or while a hold stands in its way stays at the head of its queue, until kWaitBoundMs after
-// it was queued; then it is answered Gone.
+// Every hold ends: by the commit, by its 30 s deadline, by the sender's departure or by the session's end. A write
+// that cannot happen now is owed and retried at 1 Hz. A reservation that lapses leaves a tombstone, so a late done is
+// still inserted, and slows its sender. The queue's Wait is the mid-join answer: a request before the sender's world
+// is ready, before its body has a pose, or while a hold stands in its way stays at the head of its queue until
+// kWaitBoundMs after it was queued; then it is answered Gone.
 //
 // The Take and PutRecord families are served here; PutProp is answered WrongFamily until its package arrives.
 
