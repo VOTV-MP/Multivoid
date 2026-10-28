@@ -18,10 +18,8 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
-#include <chrono>
 #include <iterator>
 #include <string>
-#include <unordered_map>
 
 namespace coop::props::prop_record_refresh {
 namespace {
@@ -30,18 +28,9 @@ namespace GT = ue_wrap::game_thread;
 namespace R  = ue_wrap::reflection;
 namespace sg = ue_wrap::script_gate;
 
-using Clock = std::chrono::steady_clock;
-
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// The coalescing window. One player action can end in more than one upd() -- the open path runs
-// it and the equip behind it can run it again -- and the record is the whole state either way,
-// so the second publish would carry the same bytes. Game-thread serial, no lock.
-constexpr auto kCoalesce = std::chrono::milliseconds(300);
-std::unordered_map<void*, Clock::time_point> g_lastPublish;
-
 unsigned long long g_cPublished = 0;
-unsigned long long g_cCoalesced = 0;
 unsigned long long g_cRelooked  = 0;
 
 // `opened` is read to drive the look below; `name` and init() are what re-derive it.
@@ -181,22 +170,14 @@ void OnUpdPost(const sg::Call& call) {
         !coop::join_membership_sweep::HasLoadTailQuiesced()) {
         return;
     }
-    const auto now = Clock::now();
-    auto it = g_lastPublish.find(actor);
-    if (it != g_lastPublish.end() && now - it->second < kCoalesce) { ++g_cCoalesced; return; }
-    // Evict what the window has passed. The map is keyed on the actor's address, so without this it
-    // both grows for the life of the session and can hold a dead box's entry against a new one the
-    // allocator puts at the same address -- which would swallow that box's first publish.
-    for (auto e = g_lastPublish.begin(); e != g_lastPublish.end();)
-        e = (now - e->second >= kCoalesce) ? g_lastPublish.erase(e) : std::next(e);
-
     const std::wstring key = ue_wrap::prop::GetInteractableKeyString(actor);
     if (key.empty() || key == L"None") {
         // A prop mid-construction: the key is minted inside the construction script, which calls
         // upd() itself. Nothing to address a record to, and the birth paths publish it anyway.
         return;
     }
-    g_lastPublish[actor] = now;
+    // Every native mutation has a final record, even when another mutation just ran. A time
+    // window cannot distinguish duplicate notifications from a newly inserted drive or reel.
     // Host: the record to every peer. Client: an intent the host validates and re-publishes, which
     // is also the acknowledgement. Either way the far side's loadData applies it and calls upd(),
     // so the lid, the contents and the repaint all land together.
@@ -266,12 +247,10 @@ void Install(coop::net::Session* session) {
 }
 
 void OnDisconnect() {
-    if (g_cPublished || g_cCoalesced || g_cRelooked)
-        UE_LOGI("prop_record_refresh: session end -- published=%llu coalesced=%llu relooked=%llu",
-                g_cPublished, g_cCoalesced, g_cRelooked);
-    g_lastPublish.clear();
+    if (g_cPublished || g_cRelooked)
+        UE_LOGI("prop_record_refresh: session end -- published=%llu relooked=%llu",
+                g_cPublished, g_cRelooked);
     g_cPublished = 0;
-    g_cCoalesced = 0;
     g_cRelooked  = 0;
     g_session.store(nullptr, std::memory_order_release);
 }
