@@ -4,7 +4,7 @@
 //                director's walk, then it stops), turns the camera through the aim fan until its forward points at the
 //                target's opening, and throws with the game's own throwHoldingProp.
 //   throwgrab -- the same, but the drive is the host's, taken by the use key's physics grab (director::AimedGrab) and thrown
-//                from the grab: throwHoldingProp first and, when the grab is still held a second later, the fire input.
+//                from the grab by the body of the fire key's grab branch (traceThrow, throwShit, thrown, dropGrabObject).
 // A first throw that lands short or long of the target (and not in it) is followed, ONCE, by a second from a standpoint moved
 // by the miss along the line to the target. Both throws are traced and reported. Lines are tagged [CI-DRILL].
 
@@ -16,7 +16,6 @@
 #include "coop/dev/director/aim_fan.h"
 #include "coop/dev/director/aimed_grab.h"
 #include "coop/dev/director/director.h"
-#include "coop/dev/director/input_stub.h"
 #include "coop/dev/drill_chat.h"
 #include "coop/dev/drill_hand.h"
 #include "coop/element/registry.h"
@@ -25,17 +24,20 @@
 #include "coop/props/prop_drop_intent.h"
 
 #include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/engine/engine_pawn.h"
+#include "ue_wrap/engine/engine_physics.h"
 
 #include <windows.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdarg>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
@@ -64,12 +66,10 @@ constexpr uint64_t kItem2BoundMs     = 60000;   // the second standpoint's drive
 constexpr uint64_t kArmBoundMs       = 60000;   // the client's arm line to the host's armed line (drill chat leaves one line a second)
 constexpr uint64_t kAimBoundMs       = 40000;
 constexpr float    kAimDeg           = 2.f;     // the camera's forward is aimed when within this of the direction to the opening
-constexpr uint64_t kThrowSeenMs      = 1000;    // throwgrab: the grab is let go within this of a throw seam, or the next seam is tried
 
-DR::InputStub g_fire{L"InpActEvt_fire_K2Node_InputActionEvent_58"};   // the fire key's press: a grabbed prop is thrown by it
 
 enum class Step : uint8_t { WaitLine, WaitMirrors, Rest, WalkWait, Item2Wait, TakeHand, HandRead, Grab, ArmWait, Aim,
-                            ThrowCheck, Flight };
+                            Flight };
 
 Step     g_step = Step::WaitLine;
 uint64_t g_stepMs = 0;      // the time the step was entered
@@ -98,9 +98,7 @@ uint64_t g_ovSeen = 0;            // the census's overlap sequence read last
 uint64_t g_ovAll0 = 0, g_adds0 = 0;
 int      g_count0 = -1;
 int      g_ovCount = 0;
-bool     g_fireTried = false;
 const char* g_via = "";
-void*    g_thrownBare = nullptr;  // the thrown actor, for the throwgrab release check (identity only)
 
 void Next(Step s) { g_step = s; g_stepMs = ::GetTickCount64(); }
 bool Expired(uint64_t bound) { return ::GetTickCount64() - g_stepMs > bound; }
@@ -349,7 +347,6 @@ void Baseline() {
 }
 
 void BeginFlight(void* actor, const char* via) {
-    g_thrownBare = actor;
     g_via = via;
     TrackBegin(g_local, "client", "local");
     TrackSet(g_local, actor);
@@ -373,6 +370,48 @@ void ThrowTheHeld(void* player) {
     BeginFlight(placed, "throwHoldingProp");
 }
 
+// The grabbed prop thrown by the body of the fire key's grab branch (mainPlayer's Hot Objects, input_fire with a
+// grabbing_actor), called as its own functions in its order: traceThrow from the grab's centre of mass for the velocity,
+// throwShit on the grab's component, the prop's thrown, and dropGrabObject, which releases the grab. The fire key's input
+// event stub does not run that body (a zeroed frame), and throwHoldingProp reads the hand's item, not the grab. The two
+// arrays and the hit results traceThrow fills in its frame are left to the engine's heap: a dev arm throws twice.
+bool ThrowGrabBranch(void* player, void* item, char* why, size_t whyLen) {
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(player), L"grabbing_component");
+    void* comp = nullptr;
+    if (off >= 0) comp = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(player) + off);
+    FVector com{};
+    if (!comp || !R::IsLive(comp) || !E::GetComponentCenterOfMass(comp, com)) {
+        std::snprintf(why, whyLen, "the grab's component or its centre of mass does not read");
+        return false;
+    }
+    void* traceFn = R::FindDispatchFunctionCached(R::ClassOf(player), L"traceThrow");
+    ue_wrap::ParamFrame trace(traceFn);
+    FVector vel{};
+    if (!traceFn || !trace.valid() || !trace.Set<bool>(L"debug", false) || !trace.Set<FVector>(L"weaponLocation", com) ||
+        !trace.Set<FVector>(L"cameraLocation", com) || !ue_wrap::Call(player, trace) ||
+        !trace.GetRaw(L"velocity_fromCamera", &vel, sizeof(vel))) {
+        std::snprintf(why, whyLen, "traceThrow did not run or its velocity_fromCamera does not read");
+        return false;
+    }
+    void* shitFn = R::FindDispatchFunctionCached(R::ClassOf(player), L"throwShit");
+    ue_wrap::ParamFrame shit(shitFn);
+    if (!shitFn || !shit.valid() || !shit.Set<void*>(L"InputPin", comp) || !shit.Set<FVector>(L"NewVel", vel) ||
+        !ue_wrap::Call(player, shit)) {
+        std::snprintf(why, whyLen, "throwShit did not run");
+        return false;
+    }
+    const bool thrown = DR::CallWithPlayer(item, L"thrown", player);
+    if (!DR::CallOnPlayer(player, L"dropGrabObject")) {
+        std::snprintf(why, whyLen, "dropGrabObject did not run");
+        return false;
+    }
+    UE_LOGI("[CI-DRILL] client %s throw %d: traceThrow velocity (%.0f,%.0f,%.0f) from the grab's centre (%.0f,%.0f,%.0f), "
+            "thrown called=%d", ArmName(), g_n, static_cast<double>(vel.X), static_cast<double>(vel.Y),
+            static_cast<double>(vel.Z), static_cast<double>(com.X), static_cast<double>(com.Y), static_cast<double>(com.Z),
+            thrown ? 1 : 0);
+    return true;
+}
+
 void ThrowTheGrab(void* player) {
     Baseline();
     void* item = DR::Grabbing(player);
@@ -380,13 +419,14 @@ void ThrowTheGrab(void* player) {
         CFail("the grab was lost before the throw");
         return;
     }
-    g_fireTried = false;
-    if (!DV::Throw(player)) {
-        CFail("throwHoldingProp did not run");
+    char why[160];
+    if (!ThrowGrabBranch(player, item, why, sizeof(why))) {
+        CFail("%s", why);
         return;
     }
-    BeginFlight(item, "throwHoldingProp");
-    Next(Step::ThrowCheck);
+    UE_LOGI("[CI-DRILL] client %s throw %d: after dropGrabObject the grab is %s", ArmName(), g_n,
+            DR::Grabbing(player) == item ? "still held" : "released");
+    BeginFlight(item, "traceThrow+throwShit+dropGrabObject");
 }
 
 // The angle, in degrees, between the camera's forward vector and the direction from the camera to `point`. The game's throw
@@ -457,29 +497,6 @@ void StepAim(void* player) {
         AimedAt(player, off, false);
         return;
     }
-}
-
-// throwgrab: throwHoldingProp does not read the grab (it works on the hand's item); when the grab is still held a second
-// after it, the fire key is pressed, which is the game's own throw of a grabbed prop. Neither releasing it is a fixture
-// failure that names both.
-void StepThrowCheck(void* player, const coop::net::Session& session) {
-    TrackTick(g_local, session.rttMsForSlot(0));
-    if (DR::Grabbing(player) != g_thrownBare) {
-        UE_LOGI("[CI-DRILL] client %s throw %d: the grab was let go via %s", ArmName(), g_n, g_via);
-        Next(Step::Flight);
-        return;
-    }
-    if (::GetTickCount64() - g_stepMs < kThrowSeenMs) return;
-    if (!g_fireTried) {
-        g_fireTried = true;
-        g_via = "fire";
-        const bool pressed = DR::PressInputEvent(player, g_fire);
-        UE_LOGI("[CI-DRILL] client %s throw %d: throwHoldingProp left the grab held; the fire input pressed=%d", ArmName(), g_n,
-                pressed ? 1 : 0);
-        Next(Step::ThrowCheck);
-        return;
-    }
-    CFail("neither throwHoldingProp nor the fire input let the grab go");
 }
 
 // ---- the flight and its end ---------------------------------------------------------------------------------------------
@@ -607,13 +624,12 @@ void ThrowClientTick(const coop::net::Session& session) {
             CFail("the host ended the arm with a FAIL");
             return;
         }
-        if (g_step == Step::Flight || g_step == Step::ThrowCheck) PollMirror();
+        if (g_step == Step::Flight) PollMirror();
     }
     void* player = coop::players::Registry::Get().Local();
     switch (g_step) {
     case Step::Aim:        if (player) StepAim(player); else CFail("the local player is gone"); return;
     case Step::Grab:       StepGrab(); return;
-    case Step::ThrowCheck: if (player) StepThrowCheck(player, session); else CFail("the local player is gone"); return;
     case Step::Flight:     StepFlight(session); return;
     default:               break;
     }
@@ -654,9 +670,7 @@ void ThrowReset() {
     g_pressMs = g_endAtMs = g_ovSeen = g_ovAll0 = g_adds0 = 0;
     g_count0 = -1;
     g_ovCount = 0;
-    g_fireTried = false;
     g_via = "";
-    g_thrownBare = nullptr;
 }
 
 }  // namespace coop::dev::container_intent_drill::detail
