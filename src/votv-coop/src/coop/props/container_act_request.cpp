@@ -440,8 +440,9 @@ void ReplayTake() {
         Latched latch;
         pressed = cv::PressSlot(slot);
     }
-    // D4: the press changed the mirror under the latch, where no verb watch marks it; the host's next truth must apply.
-    coop::props::container_contents_sync::ForgetApplied(g_rec.eid);
+    // A replay on a shared mirror changes it under the latch, where no verb watch marks it, so the host's next truth for
+    // this container must apply even when it equals the last one applied. Only a press that dispatched can have changed it.
+    if (pressed) coop::props::container_contents_sync::ForgetApplied(g_rec.eid);
     std::vector<SR::SaveRecord> after;
     void* const invAfter = g_rec.container.Get() ? ci::InventoryOf(g_rec.container.Get()) : nullptr;
     const bool afterRead = invAfter && cio::ReadRecords(invAfter, after, /*neuterNested=*/true);

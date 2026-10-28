@@ -356,8 +356,10 @@ void ReplayPut() {
                   ? cv::RunPut(p.screen.Get())
                   : PU::CallPlayerUsedOn(container, player, nullptr, ue_wrap::FVector{}, nullptr, hand, R::FName{});
     }
-    // D4: the verb may have changed the mirror under the latch, whatever the commit says; the host's next truth must apply.
-    coop::props::container_contents_sync::ForgetApplied(p.eid);
+    // A replay on a shared mirror changes it under the latch, where no verb watch marks it, so the host's next truth for
+    // this container must apply even when it equals the last one applied, whatever the commit says. Only a verb that
+    // dispatched can have changed it.
+    if (ran) coop::props::container_contents_sync::ForgetApplied(p.eid);
     std::vector<SR::SaveRecord> after;
     std::vector<uint64_t> afterHashes;
     const bool read = ReadRecordHashes(p.container.Get(), after, afterHashes);
