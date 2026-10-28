@@ -1,5 +1,6 @@
 // coop/dev/container_route_drill_detail.h -- what the census drill's three files share. A private header of
-// coop/dev/container_route_drill*.cpp (src tree, not include/).
+// coop/dev/container_route_drill*.cpp and, for the four verbs at its foot, of container_intent_drill_put.cpp (src tree,
+// not include/).
 
 #pragma once
 
@@ -108,5 +109,13 @@ bool IntAfter(const std::string& text, const char* key, int& out);
 
 // Live, non-default instances of prop_drive_C on this peer.
 int LiveDrives();
+
+// The player's verbs the container intent drill's put arms drive as well (container_intent_drill_put.cpp):
+// the screen's hovered container slot cleared and read back; hold+run (playerUsedOn with input_run raised, kept
+// raised until LowerRun, which puts the flag back); the backpack's own addObject for a fixture's fill.
+bool ClearHover(void* ui);
+bool UseWithRun(void* player, void* pack, void* hold);
+void LowerRun();
+bool PutIn(void* pack, void* item);
 
 }  // namespace coop::dev::container_route_drill::detail

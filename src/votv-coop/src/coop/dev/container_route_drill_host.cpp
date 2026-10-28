@@ -32,6 +32,20 @@
 #include <vector>
 
 namespace coop::dev::container_route_drill::detail {
+
+// The backpack's own put-in, as the player's hand puts an item in. True when it took the item.
+bool PutIn(void* pack, void* item) {
+    namespace R  = ue_wrap::reflection;
+    namespace ci = ue_wrap::container_inventory;
+    void* inv = ci::InventoryOf(pack);
+    void* fn = inv ? R::FindDispatchFunctionCached(R::ClassOf(inv), L"addObject") : nullptr;
+    ue_wrap::ParamFrame f(fn);
+    if (!fn || !f.valid() || !f.Set<void*>(L"actor", item) || !f.Set<int32_t>(L"insertIndex1", -1) ||
+        !ue_wrap::Call(inv, f))
+        return false;
+    return f.Get<bool>(L"return");
+}
+
 namespace {
 
 namespace E   = ue_wrap::engine;
@@ -100,17 +114,6 @@ void HostDone() {
 
 ue_wrap::FVector Offset(const ue_wrap::FVector& at, const ue_wrap::FVector& fwd, float ahead, float side) {
     return {at.X + fwd.X * ahead + fwd.Y * side, at.Y + fwd.Y * ahead - fwd.X * side, at.Z + kDropCm};
-}
-
-// The backpack's own put-in, as the player's hand puts an item in. True when it took the item.
-bool PutIn(void* pack, void* item) {
-    void* inv = ci::InventoryOf(pack);
-    void* fn = inv ? R::FindDispatchFunctionCached(R::ClassOf(inv), L"addObject") : nullptr;
-    ue_wrap::ParamFrame f(fn);
-    if (!fn || !f.valid() || !f.Set<void*>(L"actor", item) || !f.Set<int32_t>(L"insertIndex1", -1) ||
-        !ue_wrap::Call(inv, f))
-        return false;
-    return f.Get<bool>(L"return");
 }
 
 // The fixture's own fill, or the refill: two drives put into the backpack the way the player's hand puts one in,

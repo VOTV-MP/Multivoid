@@ -65,6 +65,54 @@ void* HeldActor(void* player) {
     return E::ReadMainPlayerGrabState(player, hand) ? hand.holdingActor : nullptr;
 }
 
+// The screen's hovered container slot cleared the way the game's own unhover does (setHoverContainerSlot with no
+// object), and read back: em_take presses the hovered slot first, so a stale hover makes the take key an R1.
+bool ClearHover(void* ui) {
+    namespace R = ue_wrap::reflection;
+    void* fn = ui ? R::FindDispatchFunctionCached(R::ClassOf(ui), L"setHoverContainerSlot") : nullptr;
+    ue_wrap::ParamFrame f(fn);
+    const int32_t off = ui ? R::FindPropertyOffset(R::ClassOf(ui), L"hoverContainerSlot") : -1;
+    if (!fn || !f.valid() || off < 0 || !f.Set<void*>(L"containerSlot", nullptr) || !ue_wrap::Call(ui, f)) return false;
+    return *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(ui) + off) == nullptr;
+}
+
+// hold+run with the held prop: playerUsedOn with the player's input_run raised. The act replays the verb after the
+// host's grant, and the BP reads input_run live then, so the flag stays raised until the route's act ends (LowerRun).
+namespace {
+ue_wrap::CachedObjRef g_runPlayer;
+int32_t g_runOff = -1;
+uint8_t g_runMask = 0, g_runWas = 0;
+}  // namespace
+
+void LowerRun() {
+    if (void* player = g_runPlayer.Get(); player && g_runOff >= 0) {
+        uint8_t* flag = static_cast<uint8_t*>(player) + g_runOff;
+        *flag = static_cast<uint8_t>((*flag & ~g_runMask) | (g_runWas & g_runMask));
+    }
+    g_runPlayer.Reset();
+}
+
+bool UseWithRun(void* player, void* pack, void* hold) {
+    namespace R = ue_wrap::reflection;
+    int32_t off = -1;
+    uint8_t mask = 0;
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(pack), L"playerUsedOn");
+    ue_wrap::ParamFrame f(fn);
+    if (!fn || !f.valid() || !R::FindBoolProperty(R::ClassOf(player), L"input_run", off, mask) || off < 0 ||
+        !f.Set<void*>(L"player", player) || !f.Set<void*>(L"holdObject", hold))
+        return false;
+    uint8_t* flag = static_cast<uint8_t*>(player) + off;
+    const uint8_t was = *flag;
+    *flag = static_cast<uint8_t>(was | mask);
+    g_runPlayer.Set(player);
+    g_runOff = off;
+    g_runMask = mask;
+    g_runWas = was;
+    const bool ok = ue_wrap::Call(pack, f);
+    if (!ok) LowerRun();
+    return ok;
+}
+
 namespace {
 
 namespace E   = ue_wrap::engine;
@@ -176,16 +224,6 @@ bool PressSlot(void* ui, int index) {
     return CallNoArg(slot, L"pressButton");
 }
 
-// The screen's hovered container slot cleared the way the game's own unhover does (setHoverContainerSlot with no
-// object), and read back: em_take presses the hovered slot first, so a stale hover makes the take key an R1.
-bool ClearHover(void* ui) {
-    void* fn = ui ? R::FindDispatchFunctionCached(R::ClassOf(ui), L"setHoverContainerSlot") : nullptr;
-    ue_wrap::ParamFrame f(fn);
-    const int32_t off = ui ? R::FindPropertyOffset(R::ClassOf(ui), L"hoverContainerSlot") : -1;
-    if (!fn || !f.valid() || off < 0 || !f.Set<void*>(L"containerSlot", nullptr) || !ue_wrap::Call(ui, f)) return false;
-    return *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(ui) + off) == nullptr;
-}
-
 // The first hash of `a` that `b` does not hold (a record `b` lacks), or 0 when `b` holds them all.
 uint64_t FirstMissing(const std::vector<uint64_t>& a, std::vector<uint64_t> b) {
     for (uint64_t h : a) {
@@ -195,40 +233,6 @@ uint64_t FirstMissing(const std::vector<uint64_t>& a, std::vector<uint64_t> b) {
         if (!found) return h;
     }
     return 0;
-}
-
-// hold+run with the held prop: playerUsedOn with the player's input_run raised. The act replays the verb after the
-// host's grant, and the BP reads input_run live then, so the flag stays raised until the route's act ends (LowerRun).
-ue_wrap::CachedObjRef g_runPlayer;
-int32_t g_runOff = -1;
-uint8_t g_runMask = 0, g_runWas = 0;
-
-void LowerRun() {
-    if (void* player = g_runPlayer.Get(); player && g_runOff >= 0) {
-        uint8_t* flag = static_cast<uint8_t*>(player) + g_runOff;
-        *flag = static_cast<uint8_t>((*flag & ~g_runMask) | (g_runWas & g_runMask));
-    }
-    g_runPlayer.Reset();
-}
-
-bool UseWithRun(void* player, void* pack, void* hold) {
-    int32_t off = -1;
-    uint8_t mask = 0;
-    void* fn = R::FindDispatchFunctionCached(R::ClassOf(pack), L"playerUsedOn");
-    ue_wrap::ParamFrame f(fn);
-    if (!fn || !f.valid() || !R::FindBoolProperty(R::ClassOf(player), L"input_run", off, mask) || off < 0 ||
-        !f.Set<void*>(L"player", player) || !f.Set<void*>(L"holdObject", hold))
-        return false;
-    uint8_t* flag = static_cast<uint8_t*>(player) + off;
-    const uint8_t was = *flag;
-    *flag = static_cast<uint8_t>(was | mask);
-    g_runPlayer.Set(player);
-    g_runOff = off;
-    g_runMask = mask;
-    g_runWas = was;
-    const bool ok = ue_wrap::Call(pack, f);
-    if (!ok) LowerRun();
-    return ok;
 }
 
 struct Gather {
