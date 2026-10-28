@@ -6,6 +6,7 @@
 
 #include "coop/commands/command_sync.h"
 #include "coop/player/roster.h"
+#include "coop/player/cremation.h"
 #include "coop/moderation/ban_list.h"
 #include "coop/moderation/seen_players.h"
 #include "ui/link_format.h"
@@ -120,7 +121,7 @@ void RenderOnlineSection(const coop::roster::Snapshot& rs) {
         ImGui::TableSetupColumn(l10n::Label(l10n::T("Player"), "player"), ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn(l10n::Label(l10n::T("Link"), "link"), ImGuiTableColumnFlags_WidthFixed, S(72.f));
         ImGui::TableSetupColumn(l10n::Label(l10n::T("Ping"), "ping"), ImGuiTableColumnFlags_WidthFixed, S(52.f));
-        ImGui::TableSetupColumn(l10n::Label(l10n::T("Actions"), "actions"), ImGuiTableColumnFlags_WidthFixed, S(220.f));
+        ImGui::TableSetupColumn(l10n::Label(l10n::T("Actions"), "actions"), ImGuiTableColumnFlags_WidthFixed, S(350.f));
         ImGui::TableHeadersRow();
         for (int i = 0; i < rs.count; ++i) {
             const coop::roster::Row& r = rs.rows[i];
@@ -156,6 +157,12 @@ void RenderOnlineSection(const coop::roster::Snapshot& rs) {
             ImGui::SameLine();
             if (IdButton(l10n::Label(l10n::Tc("f1", "Kick"), "kick"), hasId))
                 coop::command_sync::Submit(std::string("kick ") + r.playerId);
+            ImGui::SameLine();
+            if (IdButton(l10n::Label(l10n::Tc("f1", "Send to the crematorium"), "cremate"),
+                         hasId && r.worldReady)) {
+                coop::cremation::SendToCremator(coop::moderation::TokenFor(
+                    r.slot, r.playerNo, r.generation));
+            }
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.45f, 0.42f, 1.0f));
             if (IdButton(l10n::Label(l10n::Tc("f1", "Ban..."), "ban_"), hasId)) OpenBanFor(true, r.playerId, r.nick);

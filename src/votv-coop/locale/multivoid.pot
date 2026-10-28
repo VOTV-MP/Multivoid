@@ -1945,6 +1945,11 @@ msgstr ""
 
 #: src/ui/admin_panel.cpp
 msgctxt "f1"
+msgid "Send to the crematorium"
+msgstr ""
+
+#: src/ui/admin_panel.cpp
+msgctxt "f1"
 msgid "Teleport"
 msgstr ""
 

@@ -1552,6 +1552,10 @@ msgid "Reset"
 msgstr "[[Reset]]"
 
 msgctxt "f1"
+msgid "Send to the crematorium"
+msgstr "[[Send to the crematorium]]"
+
+msgctxt "f1"
 msgid "Teleport"
 msgstr "[[Teleport]]"
 

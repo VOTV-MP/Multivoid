@@ -98,13 +98,14 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::SaveTransferBegin: return Lane::Transfer;
     case ReliableKind::SaveTransferChunk: return Lane::Transfer;
     case ReliableKind::DevLoadFiller:     return Lane::Transfer;
-    // These four rode High and now name an element, so they ride Default behind its spawn: a player
-    // (ItemActivate, TeleportClient), a creature's Npc eid (PlayerHit) and an ignoreId (ExplosionSpawn).
-    case ReliableKind::TeleportClient: return Lane::Default;
-    case ReliableKind::ItemActivate:   return Lane::Default;
-    case ReliableKind::PlayerHit:      return Lane::Default;
-    case ReliableKind::ExplosionSpawn: return Lane::Default;
-    default:                           return Lane::Default;
+    // These five rode High and now name an element, so they ride Default behind its spawn: a player
+    // (ItemActivate, TeleportClient, CremationControl), a creature's Npc eid (PlayerHit) and an ignoreId (ExplosionSpawn).
+    case ReliableKind::TeleportClient:    return Lane::Default;
+    case ReliableKind::CremationControl:  return Lane::Default;
+    case ReliableKind::ItemActivate:      return Lane::Default;
+    case ReliableKind::PlayerHit:         return Lane::Default;
+    case ReliableKind::ExplosionSpawn:    return Lane::Default;
+    default:                              return Lane::Default;
     }
 }
 

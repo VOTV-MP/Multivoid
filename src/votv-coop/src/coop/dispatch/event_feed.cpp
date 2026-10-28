@@ -52,6 +52,7 @@
 #include "coop/moderation/seen_players.h"
 #include "coop/dev/restore_vitals.h"
 #include "coop/session/teleport_client.h"
+#include "coop/player/cremation.h"
 #include "l10n/l10n.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -304,6 +305,21 @@ void Update(net::Session& session, void* localPlayer) {
                 p.rotPitch, p.rotYaw, p.rotRoll,
             };
             ue_wrap::game_thread::Post([args] { ::coop::teleport_client::ApplyLocally(args); });
+            break;
+        }
+        case net::ReliableKind::CremationControl: {
+            if (msg.payloadLen < sizeof(net::CremationControlPayload)) break;
+            net::CremationControlPayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            if (p.action > 4) break;
+            if (p.action <= 1) coop::cremation::ApplyLocalControl(p.action == 1);
+            if (p.action == 2)
+                ue_wrap::game_thread::Post([] { coop::cremation::StartLocalSequence(); });
+            if (p.action == 3 || p.action == 4)
+                ue_wrap::game_thread::Post([p] {
+                    coop::cremation::SetLocalCrematorLock(
+                        p.locX, p.locY, p.locZ, p.action == 3);
+                });
             break;
         }
         case net::ReliableKind::JoinPhaseNote: {

@@ -47,6 +47,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "coop/player/death_revive.h"
+#include "coop/player/cremation.h"
 #include "coop/player/revive_protection.h"
 #include "coop/player/run_end_travel.h"
 #include "coop/items/broom_stroke.h"
@@ -222,6 +223,7 @@ void TearDownSession(coop::net::Session& session, const char* why) {
         uint64_t stops;
         ~FinishGuard() { g_tornDownFinished.store(stops, std::memory_order_release); }
     } finish{stops};
+    coop::cremation::OnSessionEnd();
     coop::revive_protection::End(coop::revive_protection::EndWhy::Session);
     g_wasConnected = false;
     g_wasConnectedBySlot.fill(false);
@@ -565,6 +567,7 @@ void Tick(coop::net::Session& session) {
         // run-ending seam asked for. Here, not in the seam's own callback, because that runs inside
         // the VM's body loop, where a UFunction dispatch re-enters the interpreter.
         coop::death_revive::Tick(session, g_netLocal.Raw());
+        coop::cremation::Tick(session);
         coop::revive_protection::Tick();
         // A revive that gave up has torn the session down and fled, as the local-death branch below
         // does; nothing after it may run for this session, the lanes' Install least of all.

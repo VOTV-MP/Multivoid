@@ -1198,6 +1198,8 @@ enum class ReliableKind : uint8_t {
     // a press whose sender has no body on the host yet waits in its queue. Late join: none, a press is an act.
     // CoffeeActionIntentPayload.
     CoffeeActionIntent = 194,
+    // Host to clients: control lock (1), target sequence (2), shared cremator lock (3/release 4).
+    CremationControl = 207,
 };
 
 #pragma pack(push, 1)
@@ -3078,6 +3080,13 @@ struct TeleportClientPayload {
 static_assert(sizeof(TeleportClientPayload) == 24, "TeleportClientPayload must be 24 bytes");
 static_assert(sizeof(TeleportClientPayload) <= 256 - 20 - 8,
               "TeleportClientPayload must fit in one reliable datagram");
+
+struct CremationControlPayload {
+    uint8_t action; // 0 restores controls, 1 locks controls, 2 starts the target sequence,
+                    // 3 locks/starts the named cremator for this client, 4 releases that lock
+    float locX, locY, locZ; // cremator firebox world position for actions 3 and 4
+};
+static_assert(sizeof(CremationControlPayload) == 13, "CremationControlPayload must be 13 bytes");
 
 // RestoreVitals carries no payload: the receiver maxes out food, sleep and health.
 

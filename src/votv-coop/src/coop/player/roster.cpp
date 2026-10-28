@@ -95,6 +95,8 @@ void Refresh() {
         Row& r = snap.rows[idx];
         r.slot = slot;
         r.playerNo = led.playerNo;
+        r.generation = led.bornGeneration;
+        r.worldReady = isHost && s->IsSlotWorldReady(slot);
         if (isHost) {
             const std::string& id = slot == 0 ? localId : led.guid;
             std::snprintf(r.playerId, sizeof(r.playerId), "%s", id.c_str());

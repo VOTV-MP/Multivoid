@@ -37,6 +37,7 @@ struct Row {
     // never reused within a session. 0 only out of session (see kNoPlayerNo).
     // Deliberately NOT the slot: slots recycle, IDs do not.
     unsigned short playerNo = 0;
+    uint32_t generation = 0; // host-side occupancy generation, captured for stale-safe admin actions
     // The occupant's proved player id (32 lower-case hex), the name a moderation command line
     // addresses a person by and the name a permission file is stored under. Filled by the HOST's
     // publisher from the ledger (slot 0: the local id); empty when the proof has not landed, on a
@@ -45,6 +46,7 @@ struct Row {
     bool isLocal = false;    // this row is YOU
     bool isHost  = false;    // this row's peer is the host (slot 0)
     bool connected = false;
+    bool worldReady = false; // host-side: safe to send world actions to this peer
     // Host only: this player was admitted under net.allow_other_builds with another build. False on a
     // client and for the host's own row.
     bool otherBuild = false;
