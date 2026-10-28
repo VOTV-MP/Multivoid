@@ -24,6 +24,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 
 namespace coop::dev::container_intent_drill::detail {
 namespace {
@@ -417,15 +418,18 @@ bool Put2Judge(const PutSettle& s) {
     const char* const outcome = AR::dev::PutOutcomeName(s.p.outcome);
     switch (arm) {
     case Arm::PutHover: {
-        UE_LOGI("[CI-DRILL] client puthover: act -> %s, own %d -> %d, container %d -> %d", outcome, b.own0, s.own, b.count0,
-                count);
-        if (s.p.outcome == AR::dev::PutOutcome::Aborted && s.own == b.own0 && count == b.count0 && s.stray == 0) {
+        const char* const why = AR::dev::LastWhy();
+        UE_LOGI("[CI-DRILL] client puthover: act -> %s (why: %s), own %d -> %d, container %d -> %d", outcome, why, b.own0,
+                s.own, b.count0, count);
+        // The abort must be the hover's: a replay that aborted for another reason has not shown the hover judged.
+        if (s.p.outcome == AR::dev::PutOutcome::Aborted && std::strcmp(why, AR::dev::kPutWhyHovered) == 0 &&
+            s.own == b.own0 && count == b.count0 && s.stray == 0) {
             PutPass(s.stray);
             return true;
         }
-        PutFail("the hovered slot's record was %s: act -> %s, own %d -> %d, container %d -> %d, stray %d",
-                s.own > b.own0 || count < b.count0 ? "taken unjudged" : "not as expected", outcome, b.own0, s.own, b.count0,
-                count, s.stray);
+        PutFail("the hovered slot's record was %s: act -> %s (why: %s), own %d -> %d, container %d -> %d, stray %d",
+                s.own > b.own0 || count < b.count0 ? "taken unjudged" : "not as expected", outcome, why, b.own0, s.own,
+                b.count0, count, s.stray);
         return true;
     }
     case Arm::PutFull:

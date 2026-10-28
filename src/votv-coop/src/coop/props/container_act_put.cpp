@@ -253,7 +253,11 @@ uint64_t g_replayHash = 0;
 float g_replayFloats[3] = {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN(),
                            std::numeric_limits<float>::quiet_NaN()};
 
+// The reason of the last abort before the verb, for dev::LastWhy.
+const char* g_lastWhy = "";
+
 void NotReplayed(const Pending& p, const char* why) {
+    g_lastWhy = why;
     UE_LOGI("container_act: put id=%u eid=%u route=%s not replayed (%s) -> aborted", static_cast<unsigned>(p.id),
             static_cast<unsigned>(p.eid), RouteName(p.route), why);
     NotePut(p, dev::PutOutcome::Aborted, p.index, g_replayHash, g_replayFloats);
@@ -275,11 +279,14 @@ internal::PutCheck CheckR2(const Pending& p, void* container, bool containerLive
         if (readMine) g_replayHash = csw::RecordHash(mine[p.index]);
         hashMatches = readMine && g_replayHash == p.hash;
     }
+    hashMatches = hashMatches || g_noHoverGuard;
     const bool shows = read && st.container == container && cv::Viewed() == container;
-    const bool notHovered = g_noHoverGuard || (read && !st.hovered);   // the red skips the guard (container_act_no_hover_guard)
+    // The red (container_act_no_hover_guard) leaves the hover unjudged: a hovered slot reads index -1 and the pane's
+    // record is not the one the em_take presses, so the hover, the index and the hash go together.
+    const bool notHovered = g_noHoverGuard || (read && !st.hovered);
     const bool enabled = read && st.takeEnabled;
-    const bool sameIndex = read && st.index >= 0 && static_cast<uint32_t>(st.index) == p.index;
-    why = !containerLive ? "the container is gone" : !shows ? "the screen changed" : !notHovered ? "a slot is hovered"
+    const bool sameIndex = g_noHoverGuard || (read && st.index >= 0 && static_cast<uint32_t>(st.index) == p.index);
+    why = !containerLive ? "the container is gone" : !shows ? "the screen changed" : !notHovered ? dev::kPutWhyHovered
           : !enabled ? "the take button is off" : !sameIndex ? "the selected record changed"
           : !hashMatches ? "the record changed" : "";
     return internal::CheckPutR2(containerLive, shows, notHovered, enabled, sameIndex, hashMatches);
@@ -302,6 +309,7 @@ internal::PutCheck CheckR3(const Pending& p, void* hand, bool containerLive, con
 void ResetPutLines() {
     for (bool& said : g_said) said = false;
     g_noHoverGuard = g_noHandTable = g_doubleDone = false;
+    g_lastWhy = "";
 }
 
 const WatchRow* PutWatches(size_t& count) {
@@ -319,6 +327,7 @@ const WatchRow* PutWatches(size_t& count) {
 void ReplayPut() {
     Pending& p = Rec();
     g_replayHash = 0;
+    g_lastWhy = "";
     for (float& f : g_replayFloats) f = std::numeric_limits<float>::quiet_NaN();
     void* const container = p.container.Get();
     std::vector<SR::SaveRecord> before;
@@ -515,5 +524,6 @@ namespace coop::props::container_act_request::dev {
 void NoHoverGuard(bool on) { detail::g_noHoverGuard = on; }
 void NoHandTable(bool on) { detail::g_noHandTable = on; }
 void DoubleDone(bool on) { detail::g_doubleDone = on; }
+const char* LastWhy() { return detail::g_lastWhy; }
 
 }  // namespace coop::props::container_act_request::dev

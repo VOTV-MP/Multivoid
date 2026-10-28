@@ -125,6 +125,10 @@ struct Put {
                              std::numeric_limits<float>::quiet_NaN()};
 };
 Put LastPut();
+// The reason the last put replay aborted with, as the abort line said it ("" when the last replay did not abort before its
+// verb). kPutWhyHovered is R2's hovered-slot guard.
+inline constexpr const char* kPutWhyHovered = "a slot is hovered";
+const char* LastWhy();
 const char* PutOutcomeName(PutOutcome o);   // "none" "asked" "done" "aborted" "refused"
 
 // Inert unless called; all reset at the session's end.
@@ -135,7 +139,8 @@ void ReleaseReplay();       // runs the parked replay now, through the same chec
 void DoubleAbort(bool on);  // while on, a take's abort commit is sent twice
 void DoubleDone(bool on);   // while on, a put's done commit is sent twice
 
-// The put drill's reds (CLIENT). NoHoverGuard: R2's replay no longer requires that no slot is hovered. NoHandTable: the
+// The put drill's reds (CLIENT). NoHoverGuard: R2's replay judges neither the hover, the selected index nor the record's
+// hash, so the replay's em_take runs with the slot hovered and presses it. NoHandTable: the
 // hold-and-run hash leaves out no class's ticking fields (PutExclusionRowsOf answers none).
 void NoHoverGuard(bool on);
 void NoHandTable(bool on);
