@@ -86,6 +86,7 @@ struct Latched {
 };
 
 uint32_t g_takeDoneUnread = 0;   // takes committed done although the press's count could not be read back
+dev::Take g_lastTake;            // the last take's commit as it was sent; the drills read it
 
 // A request whose wait ran out, kept until the host answers it, so a grant that still arrives is answered with an
 // abort and the host's escrow is always ended. Dropped once the host's own deadline has passed: a grant that late finds
@@ -324,6 +325,12 @@ sg::Verdict PreTake(const sg::Call& c) {
     return sg::Verdict::Cancel;
 }
 
+// The take's commit goes out: the id, what it said, and how many takes have said it this session.
+void SendTakeCommit(uint16_t id, uint32_t eid, uint8_t committed) {
+    g_lastTake = dev::Take{id, committed, g_lastTake.count + 1};
+    SendCommit(id, eid, committed);
+}
+
 // The granted take: the same slot is pressed again, under the latch, if it still names the record the host granted;
 // the commit then says whether the record left the container.
 void ReplayTake() {
@@ -341,7 +348,7 @@ void ReplayTake() {
         UE_LOGI("container_act: take id=%u eid=%u index=%u not replayed (the slot, the screen or the record changed) "
                 "-> aborted", static_cast<unsigned>(g_rec.id), static_cast<unsigned>(g_rec.eid),
                 static_cast<unsigned>(g_rec.index));
-        SendCommit(g_rec.id, g_rec.eid, 0);
+        SendTakeCommit(g_rec.id, g_rec.eid, 0);
         ShowBadReason();   // the click is lost, never the record: the escrow restores it; the player clicks again
         return;
     }
@@ -367,7 +374,7 @@ void ReplayTake() {
                 static_cast<unsigned>(g_rec.slot.Idx()), static_cast<unsigned>(g_rec.index),
                 recs[g_rec.index].className.c_str());
     }
-    SendCommit(g_rec.id, g_rec.eid, done);
+    SendTakeCommit(g_rec.id, g_rec.eid, done);
     UE_LOGI("container_act: take id=%u eid=%u index=%u replayed -> %s", static_cast<unsigned>(g_rec.id),
             static_cast<unsigned>(g_rec.eid), static_cast<unsigned>(g_rec.index), done ? "done" : "aborted");
 }
@@ -488,6 +495,7 @@ void OnDisconnect() {
     if (dev::TakeDoneUnread())
         UE_LOGW("container_act: this session committed %u take(s) done UNREAD", dev::TakeDoneUnread());
     g_takeDoneUnread = 0;
+    g_lastTake = dev::Take{};
     g_nextId = 0;
     g_nextRequestSeq = 1;
     g_nextCommitSeq = 1;
@@ -499,6 +507,10 @@ void OnDisconnect() {
 namespace dev {
 
 uint32_t TakeDoneUnread() { return g_takeDoneUnread; }
+
+uint16_t PendingId() { return g_rec.open ? g_rec.id : 0; }
+
+Take LastTake() { return g_lastTake; }
 
 }  // namespace dev
 

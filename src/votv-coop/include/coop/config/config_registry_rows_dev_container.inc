@@ -35,6 +35,11 @@ CFG_FLAG(container_view_drill, "container_view_drill", "dev", false, "VOTVCOOP_C
     "Drill (client): walks to the ATV, opens its container through the game's own openPropInv, then walks "
     "back; the view must stay open while the ATV is within reach and close on the tick it leaves it. Run it "
     "with join_at_host=1. Lines tagged [CVIEW-DRILL]; the client's DONE line, carrying the verdict, ends it.")
+CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take", "VOTVCOOP_CONTAINER_INTENT_DRILL",
+    "Drill (BOTH peers): both pick the same shared container (the smallest element id holding two records or more); "
+    "the client walks to it, opens it and presses its first slot, and prints the reply-to-commit time and the "
+    "container and own counts; the host prints the container's count and the act holds on change. take -- the "
+    "one arm, a measurement. Lines tagged [CI-DRILL]; the host's DONE line ends it. It MUTATES the world.")
 CFG_STRING(container_route_census, "container_route_census", "dev", "", "VOTVCOOP_CONTAINER_ROUTE_CENSUS", false,
     "Census (BOTH peers): counts each container verb on a shared world container by the route on its stack (the "
     "slot press, the take key, hold+run, the overlap, the vacuum; none is the game's own logic) and the slices "

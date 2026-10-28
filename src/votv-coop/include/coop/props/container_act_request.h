@@ -61,6 +61,16 @@ uint8_t TakeCommitted(bool pressed, bool afterRead, size_t countBefore, size_t c
 
 namespace dev {   // the container act drills read it; OnDisconnect says it once; compiled always
 uint32_t TakeDoneUnread();   // takes committed done although the press's count could not be read back
+uint16_t PendingId();        // the open act's id, 0 when none is open
+
+// The last take commit this peer sent: the act's id, what it said (1 done, 0 abort), and how many take commits this
+// session has sent (0: none yet). Reset at the session's end.
+struct Take {
+    uint16_t id = 0;
+    uint8_t committed = 0;
+    uint32_t count = 0;
+};
+Take LastTake();
 }  // namespace dev
 
 }  // namespace coop::props::container_act_request
