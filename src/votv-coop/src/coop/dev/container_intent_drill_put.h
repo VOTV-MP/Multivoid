@@ -13,6 +13,10 @@ namespace coop::dev::container_intent_drill::detail {
 inline constexpr const char* kPutFixtureLine = "ci-put host fixture ";   // + "pack=<eid> item=<eid, 0 when none>"
 inline constexpr const char* kPutDoneLine    = "ci-put client done ";    // + "ok=<0 failed|1 passed|2 not measured> stray=<n|-1>"
 
+// The container the nested and empty arms pocket: a gembox, whose volume fits the player's pocket.
+inline constexpr const wchar_t* kBoxPath  = L"/Game/objects/prop_container_gembox.prop_container_gembox_C";
+inline constexpr const wchar_t* kBoxClass = L"prop_container_gembox_C";
+
 // The arms in which no put may be asked: puthidden (the game only clears the hover) and putnested (the seat refuses).
 inline bool PutIsNoPutArm(Arm a) { return a == Arm::PutHidden || a == Arm::PutNested; }
 

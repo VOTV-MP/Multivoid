@@ -23,11 +23,14 @@
 #include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/actors/container_view.h"
 #include "ue_wrap/actors/inventory.h"
+#include "ue_wrap/actors/prop_gather.h"
+#include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_attach.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
 
 #include <windows.h>
@@ -95,6 +98,7 @@ AR::dev::Put g_put0;
 uint32_t g_acts0[3] = {};
 bool     g_haveFloats = false;
 float    g_temp0 = 0.f, g_ripe0 = 0.f, g_tempN = 0.f, g_ripeN = 0.f;   // the food's, at the ask and the last read before the act's end
+float    g_clock0 = 0.f, g_clockN = 0.f;   // the food record's floats[0][3] (the game's GetTimeSeconds), read as PutHandHash reads it
 float    g_minDist = 1e9f, g_topSpeed = 0.f;                          // the carry walk's closest approach and top speed
 uint64_t g_endMs = 0;
 int      g_settled = 0;   // consecutive reads of the hand holding the item
@@ -144,8 +148,31 @@ bool ReadFloat(void* actor, const wchar_t* name, float& out) {
     return true;
 }
 
-bool ReadFood(void* actor, float& temp, float& ripe) {
-    return ReadFloat(actor, L"temperature", temp) && ReadFloat(actor, L"ripeness", ripe);
+// The food's temperature and ripeness, and the clock its record carries (floats[0][3]: the game's GetTimeSeconds, written
+// fresh by every getData), the record read the way the put's hand hash reads it.
+bool ReadFood(void* actor, float& temp, float& ripe, float& stamp) {
+    ue_wrap::save_record::SaveRecord rec;
+    if (!ReadFloat(actor, L"temperature", temp) || !ReadFloat(actor, L"ripeness", ripe)) return false;
+    if (!ue_wrap::save_record::CaptureOwnRecord(actor, rec) || rec.floats.empty() || rec.floats[0].size() < 4) return false;
+    stamp = rec.floats[0][3];
+    return true;
+}
+
+// Why a pocket put nothing, said once in the FAIL line: the mirror's root simulating physics (the game's gate), the
+// item's Get Volume, and the player's pocket room.
+const char* PocketWhy(void* item) {
+    static char why[200];
+    float volume = -1.f, bound = 0.f, curr = -1.f, room = -1.f;
+    ue_wrap::prop_gather::ReadVolumeAndBound(item, volume, bound);
+    if (void* pane = CV::PlayerContainer())
+        if (void* inv = ci::InventoryOf(pane)) {
+            ci::CurrentVolume(inv, curr);
+            ci::MaxVolume(inv, room);
+        }
+    std::snprintf(why, sizeof(why), "root simulating=%d, item volume %.1f, player currVol %.1f maxVol %.1f",
+                  ue_wrap::engine::IsActorRootSimulatingPhysics(item) ? 1 : 0, static_cast<double>(volume),
+                  static_cast<double>(curr), static_cast<double>(room));
+    return why;
 }
 
 // The counts a put is judged against, taken just before the press.
@@ -185,14 +212,14 @@ bool StartWalk(bool carry) {
     return true;
 }
 
-// The own inventory's backpack record that was pocketed: its container stack index and that stack's record count.
+// The own inventory's gembox record that was pocketed: its container stack index and that stack's record count.
 // putnested reads whether the contents travelled with the pocket; putempty, that the record is empty.
 bool MeasureBackpack(int& stackIndex, int& records) {
     ue_wrap::inventory::LivePersonalStore store;
     if (!ue_wrap::inventory::ReadLivePersonalStore(store)) return false;
     for (size_t i = store.records.size(); i-- > 0;) {
         const auto& r = store.records[i];
-        if (r.className != RD::kPackClass) continue;
+        if (r.className != kBoxClass) continue;
         int32_t idx = -1;
         if (!ci::ContainerStackIndex(r, idx)) return false;
         int32_t held = 0;
@@ -290,17 +317,18 @@ void StepPocketWait() {
     }
     const int own = ue_wrap::inventory::LivePersonalStoreCount();
     if (own != g_own0 + 1) {
-        if (CExpired(kPocketBoundMs)) CFail("the pocket put no record in the own inventory (%d -> %d)", g_own0, own);
+        if (CExpired(kPocketBoundMs))
+            CFail("the pocket put no record in the own inventory (%d -> %d): %s", g_own0, own, PocketWhy(g_item.Get()));
         return;
     }
     UE_LOGI("[CI-DRILL] client %s pocketed: own inventory %d -> %d", ArmName(), g_own0, own);
     if (ArmOf() == Arm::PutNested || ArmOf() == Arm::PutEmpty) {
         int stack = -1, records = -1;
         if (!MeasureBackpack(stack, records)) {
-            CFail("the pocketed backpack's record does not read");
+            CFail("the pocketed gembox's record does not read");
             return;
         }
-        UE_LOGI("[CI-DRILL] client %s pocketed backpack: stack index=%d records=%d", ArmName(), stack, records);
+        UE_LOGI("[CI-DRILL] client %s pocketed gembox: stack index=%d records=%d", ArmName(), stack, records);
         if (ArmOf() == Arm::PutNested && records == 0) {
             UE_LOGI("[CI-DRILL] client putnested fixture: the contents did not travel with the pocket");
             UE_LOGI("[CI-DRILL] client putnested NOT MEASURED");
@@ -474,9 +502,10 @@ void StepCarry() {
     if (speed > g_topSpeed) g_topSpeed = speed;
     if (dist <= kPressCm && speed > kPressSpeedCmS) {
         Baseline();
-        g_haveFloats = ArmOf() == Arm::PutFood && ReadFood(hand, g_temp0, g_ripe0);
+        g_haveFloats = ArmOf() == Arm::PutFood && ReadFood(hand, g_temp0, g_ripe0, g_clock0);
         g_tempN = g_temp0;
         g_ripeN = g_ripe0;
+        g_clockN = g_clock0;
         if (!RD::UseWithRun(player, g_pack.Get(), hand)) {
             CFail("playerUsedOn did not dispatch");
             return;
@@ -494,7 +523,7 @@ void StepCarry() {
 // The put act ends when LastPut names a new id that is no longer only asked. The food's floats are read each tick
 // while its actor lives, so the last read before the end stands for the replay's.
 void StepActWait() {
-    if (g_haveFloats) ReadFood(g_hand.Get(), g_tempN, g_ripeN);
+    if (g_haveFloats) ReadFood(g_hand.Get(), g_tempN, g_ripeN, g_clockN);
     const AR::dev::Put p = AR::dev::LastPut();
     if (p.id != g_put0.id && p.outcome != AR::dev::PutOutcome::Asked && p.outcome != AR::dev::PutOutcome::None) {
         g_endMs = ::GetTickCount64();
@@ -522,9 +551,11 @@ void StepSettle() {
             static_cast<unsigned long long>(p.askHash), static_cast<unsigned long long>(p.replayHash), g_own0, own,
             held ? "held" : "empty");
     if (arm == Arm::PutFood)
-        UE_LOGI("[CI-DRILL] client putfood temp %.4f -> %.4f ripeness %.4f -> %.4f hash %016llx -> %016llx act -> %s",
+        UE_LOGI("[CI-DRILL] client putfood temp %.4f -> %.4f ripeness %.4f -> %.4f clock %.4f -> %.4f hash %016llx -> %016llx "
+                "act -> %s",
                 static_cast<double>(g_temp0), static_cast<double>(g_tempN), static_cast<double>(g_ripe0),
-                static_cast<double>(g_ripeN), static_cast<unsigned long long>(p.askHash),
+                static_cast<double>(g_ripeN), static_cast<double>(g_clock0), static_cast<double>(g_clockN),
+                static_cast<unsigned long long>(p.askHash),
                 static_cast<unsigned long long>(p.replayHash), AR::dev::PutOutcomeName(p.outcome));
     UE_LOGI("[CI-DRILL] client %s stray %ls client=%d", ArmName(), cls, stray);
     if (IsHandArm(arm)) UE_LOGI("[CI-DRILL] client %s carry walk: closest approach %.0f cm, top speed %.0f cm/s", ArmName(),
@@ -613,7 +644,7 @@ void PutReset() {
     g_put0 = AR::dev::Put{};
     g_acts0[0] = g_acts0[1] = g_acts0[2] = 0;
     g_haveFloats = false;
-    g_temp0 = g_ripe0 = g_tempN = g_ripeN = g_topSpeed = 0.f;
+    g_temp0 = g_ripe0 = g_tempN = g_ripeN = g_clock0 = g_clockN = g_topSpeed = 0.f;
     g_minDist = 1e9f;
     g_settled = 0;
 }
@@ -624,7 +655,7 @@ const wchar_t* PutItemClass(Arm a) {
     case Arm::PutHand:   return RD::kDriveClass;
     case Arm::PutFood:   return kFoodClass;
     case Arm::PutNested:
-    case Arm::PutEmpty:  return RD::kPackClass;
+    case Arm::PutEmpty:  return kBoxClass;
     default:             return nullptr;
     }
 }

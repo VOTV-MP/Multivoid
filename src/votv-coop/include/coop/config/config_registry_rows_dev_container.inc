@@ -54,10 +54,10 @@ CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|ta
     "prop. The put arms pick no container: the host spawns a target (a backpack, a minifridge for putfood) 600 cm "
     "ahead of the client and the item it takes, and each arm MEASURES and prints. putrecord -- the client pockets a "
     "drive and puts it in by the hotbar key. puthand -- it carries a drive past the target and puts it in by hold and "
-    "run. putfood -- the same with food and the fridge; the held food's temperature, ripeness and record hash are "
+    "run. putfood -- the same with food and the fridge; the held food's temperature, ripeness, record clock and hash are "
     "printed at the ask and the replay. puthidden -- a hovered slot is hidden and the take key asked: no put may be "
-    "asked. putnested -- a backpack that holds a record is put into the target: refused, no put asked. putempty -- an "
-    "empty backpack is put in by the hotbar key and the host's stored record is read. Lines tagged [CI-DRILL]; the "
+    "asked. putnested -- a gembox that holds a record is put into the target: refused, no put asked. putempty -- an "
+    "empty gembox is put in by the hotbar key and the host's stored record is read. Lines tagged [CI-DRILL]; the "
     "host's DONE line ends it. It MUTATES the world.")
 CFG_FLAG(container_act_no_escrow, "container_act_no_escrow", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_ESCROW",
     "Red arm for the container intent drill (HOST): a grant opens its escrow with the record found but does not "

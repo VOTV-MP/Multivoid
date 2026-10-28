@@ -15,6 +15,7 @@
 #include "coop/props/container_contents_sync.h"
 
 #include "ue_wrap/actors/container_inventory.h"
+#include "ue_wrap/actors/prop_gather.h"
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -62,6 +63,7 @@ ue_wrap::CachedObjRef g_hTarget, g_hItem;
 int      g_hCount0 = -1;     // the target's record count at the fixture line
 int      g_hClientOk = -1;
 int      g_hClientStray = -1;
+float    g_hDriveVolume = -1.f, g_hPackMax = -1.f;   // the fill's drive Get Volume and the pack's maxVol, -1 when not read
 
 void HNext(HStep s) { g_hStep = s; g_hMs = ::GetTickCount64(); }
 bool HExpired(uint64_t bound) { return ::GetTickCount64() - g_hMs > bound; }
@@ -88,14 +90,19 @@ bool SpawnFixture(const FVector& at, const FVector& fwd) {
     }
     g_hTarget.Set(target);
     void* itemCls = nullptr;
+    const wchar_t* itemPath = RD::kDriveClass;   // a class name for the drive, a path for the others
     switch (arm) {
     case Arm::PutRecord: itemCls = R::FindClass(RD::kDriveClass); break;
-    case Arm::PutFood:   itemCls = ue_wrap::asset_load::LoadObjectByPath(kFoodPath); break;
+    case Arm::PutFood:   itemPath = kFoodPath; itemCls = ue_wrap::asset_load::LoadObjectByPath(itemPath); break;
     case Arm::PutNested:
-    case Arm::PutEmpty:  itemCls = targetCls; break;   // the backpack the client pockets
+    case Arm::PutEmpty:  itemPath = kBoxPath; itemCls = ue_wrap::asset_load::LoadObjectByPath(itemPath); break;   // the gembox
     default: return true;
     }
-    void* item = itemCls ? E::SpawnActor(itemCls, Place(at, fwd, kItemAheadCm, kItemSideCm)) : nullptr;
+    if (!itemCls) {
+        Fail("the item's class does not load (%ls)", itemPath);
+        return false;
+    }
+    void* item = E::SpawnActor(itemCls, Place(at, fwd, kItemAheadCm, kItemSideCm));
     if (!item) {
         Fail("the item the client takes did not spawn");
         return false;
@@ -111,6 +118,9 @@ bool FillWithDrive(void* pack) {
     FVector put{};
     if (!cls || !E::TryGetActorLocation(pack, put)) return false;
     void* drive = E::SpawnActor(cls, {put.X, put.Y, put.Z + 60.f});
+    float bound = 0.f;   // the volume is the game's Get Volume on the drive's mesh; the room is the pack's own maxVol
+    if (drive) ue_wrap::prop_gather::ReadVolumeAndBound(drive, g_hDriveVolume, bound);
+    if (void* inv = ci::InventoryOf(pack)) ci::MaxVolume(inv, g_hPackMax);
     if (!drive || !RD::PutIn(pack, drive)) return false;
     E::DestroyActor(drive);
     return true;
@@ -147,7 +157,8 @@ void StepHostFill() {
             return;
         }
         if (!FillWithDrive(pack)) {
-            Fail("the pack did not take its drive");
+            Fail("the pack did not take its drive (drive volume %.1f, pack maxVol %.1f)", static_cast<double>(g_hDriveVolume),
+                 static_cast<double>(g_hPackMax));
             return;
         }
     }
@@ -175,8 +186,9 @@ void StepHostBind() {
     char say[64];
     std::snprintf(say, sizeof(say), "%spack=%u item=%u", kPutFixtureLine, te, item ? ie : 0u);
     DC::Say(say);
-    UE_LOGI("[CI-DRILL] host %s fixture: target eid=%u %ls holds %d record(s), item eid=%u", ArmName(), te,
-            R::ClassNameOf(target).c_str(), count, item ? ie : 0u);
+    UE_LOGI("[CI-DRILL] host %s fixture: target eid=%u %ls holds %d record(s), item eid=%u, fill: drive volume %.1f in "
+            "pack maxVol %.1f", ArmName(), te, R::ClassNameOf(target).c_str(), count, item ? ie : 0u,
+            static_cast<double>(g_hDriveVolume), static_cast<double>(g_hPackMax));
     HNext(HStep::WaitClient);
 }
 
@@ -269,6 +281,7 @@ void PutHostReset() {
     g_hTarget.Reset();
     g_hItem.Reset();
     g_hCount0 = g_hClientOk = g_hClientStray = -1;
+    g_hDriveVolume = g_hPackMax = -1.f;
 }
 
 }  // namespace coop::dev::container_intent_drill::detail
