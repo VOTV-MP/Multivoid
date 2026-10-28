@@ -686,6 +686,9 @@ msgstr "[[No tools here yet -- coming soon.]]"
 msgid "Nobody in the registry yet (players are recorded when they join)."
 msgstr "[[Nobody in the registry yet (players are recorded when they join).]]"
 
+msgid "Not enough space."
+msgstr "[[Not enough space.]]"
+
 msgid "Not ready yet, try again in a moment."
 msgstr "[[Not ready yet, try again in a moment.]]"
 
@@ -976,6 +979,15 @@ msgstr "[[Teleport to me]]"
 
 msgid "That can't be done right now."
 msgstr "[[That can't be done right now.]]"
+
+msgid "That can't go in there."
+msgstr "[[That can't go in there.]]"
+
+msgid "That container is locked."
+msgstr "[[That container is locked.]]"
+
+msgid "That container is too far away."
+msgstr "[[That container is too far away.]]"
 
 msgid "That is being held"
 msgstr "[[That is being held]]"

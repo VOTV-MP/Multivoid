@@ -861,6 +861,10 @@ msgstr ""
 msgid "Nobody in the registry yet (players are recorded when they join)."
 msgstr ""
 
+#: src/coop/props/container_act_request.cpp
+msgid "Not enough space."
+msgstr ""
+
 #: src/coop/props/prop_act_request.cpp
 msgid "Not ready yet, try again in a moment."
 msgstr ""
@@ -1202,15 +1206,27 @@ msgstr ""
 msgid "Teleport to me"
 msgstr ""
 
-#: src/coop/props/prop_act_request.cpp
+#: src/coop/props/container_act_request.cpp src/coop/props/prop_act_request.cpp
 msgid "That can't be done right now."
+msgstr ""
+
+#: src/coop/props/container_act_request.cpp
+msgid "That can't go in there."
+msgstr ""
+
+#: src/coop/props/container_act_request.cpp
+msgid "That container is locked."
+msgstr ""
+
+#: src/coop/props/container_act_request.cpp
+msgid "That container is too far away."
 msgstr ""
 
 #: src/coop/props/remover_request.cpp
 msgid "That is being held"
 msgstr ""
 
-#: src/coop/props/prop_act_request.cpp
+#: src/coop/props/container_act_request.cpp src/coop/props/prop_act_request.cpp
 msgid "That item is gone."
 msgstr ""
 
@@ -1270,7 +1286,7 @@ msgstr ""
 msgid "The host could not accept the connection."
 msgstr ""
 
-#: src/coop/props/prop_act_request.cpp
+#: src/coop/props/container_act_request.cpp src/coop/props/prop_act_request.cpp
 msgid "The host could not be asked; try again."
 msgstr ""
 
@@ -1488,7 +1504,7 @@ msgstr ""
 msgid "Tidy up multivoid.ini"
 msgstr ""
 
-#: src/coop/props/prop_act_request.cpp
+#: src/coop/props/container_act_request.cpp src/coop/props/prop_act_request.cpp
 msgid "Too many actions at once, try again."
 msgstr ""
 
