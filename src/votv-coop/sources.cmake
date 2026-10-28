@@ -416,6 +416,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/container_act_put.cpp
     src/coop/props/container_act_request.cpp
     src/coop/props/container_act_selftest.cpp
+    src/coop/props/container_act_selftest_put.cpp
     src/coop/props/container_act_state.cpp
     src/coop/props/container_act_wire.cpp
     src/coop/props/container_apply_hold.cpp
