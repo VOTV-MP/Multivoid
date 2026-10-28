@@ -123,8 +123,8 @@ void WalkStop() {
 void CEnd(int ok, int stray) {
     WalkStop();
     RD::LowerRun();
-    char say[64];
-    std::snprintf(say, sizeof(say), "%sok=%d stray=%d", kPutDoneLine, ok, stray);
+    char say[112];
+    std::snprintf(say, sizeof(say), "%sok=%d stray=%d mirror=%d", Put2DonePrefix(), ok, stray, CountOf(g_packEid));
     DC::Say(say);
 }
 
@@ -221,7 +221,7 @@ bool MeasureBackpack(int& stackIndex, int& records) {
 
 void StepWaitLine() {
     std::string rest;
-    if (DC::LiveRestOf(kPutFixtureLine, &rest)) {
+    if (DC::LiveRestOf(Put2WaitPrefix(), &rest)) {
         int pack = 0, item = 0, item2 = 0, count = 0;
         if (!RD::IntAfter(rest, "pack", pack) || !RD::IntAfter(rest, "item", item) ||
             !RD::IntAfter(rest, "item2", item2) || !RD::IntAfter(rest, "count", count) || pack <= 0) {
@@ -251,6 +251,7 @@ void StepWaitMirrors() {
         g_pack.Set(pack);
         g_item.Set(item);
         g_item2.Set(item2);
+        Put2OnMirrors();
         g_rest = 0;
         UE_LOGI("[CI-DRILL] client %s: the fixture's mirrors are here (target eid=%u holds %d record(s), item eid=%u, "
                 "item2 eid=%u)", ArmName(), g_packEid, CountOf(g_packEid), g_itemEid, g_item2Eid);
@@ -421,6 +422,10 @@ bool AskR2(void* ui) {
 }
 
 void PressR2(void* ui) {
+    if (Put2AskGated()) {   // the hook asks when the host says go
+        CNext(CStep::Hook);
+        return;
+    }
     if (AskR2(ui)) CNext(PutIsNoPutArm(ArmOf()) ? CStep::Quiet : Put2Hooked() ? CStep::Hook : CStep::ActWait);
 }
 
@@ -603,6 +608,7 @@ void StepQuiet() {
 
 void PutClientTick() {
     PutArmClientKnobs();
+    Put2Poll();
     if (Put2Idle()) return;   // a putdepart client relaunched after its park has nothing to do
     if (!g_cMs) CNext(CStep::WaitLine);   // the first step's clock starts when the arm does, never at reset
     if (g_cStep != CStep::Carry && ::GetTickCount64() < g_nextMs) return;   // the carry walk is read every tick

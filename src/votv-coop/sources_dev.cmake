@@ -113,6 +113,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/container_intent_drill_put.cpp
     src/coop/dev/container_intent_drill_put_host.cpp
     src/coop/dev/container_intent_drill_put2.cpp
+    src/coop/dev/container_intent_drill_put_join.cpp
     src/coop/dev/pr64_drill.cpp
     src/coop/dev/pr64_drill_coin.cpp
     src/coop/dev/pr64_drill_coin_credit.cpp

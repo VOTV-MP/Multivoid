@@ -149,11 +149,22 @@ void ReleaseReplies();
 void NoEscrow(bool on);
 
 // The put drill's knobs. NoReservation: a put's grant opens no hold. NoLapse: a sender is never slowed (its next put is
-// not answered Lapsed). InsertNotReady: the insert of a put's record (never an escrow's restore) answers NotReady, so the
-// put is owed and retried, then given up after kMaxOwedTries.
+// not answered Lapsed). InsertNotReady: mode 1 answers the insert of a put's record NotReady, so the put is owed and
+// retried, then given up after kMaxOwedTries; mode 2 answers an escrow's restore so too (which is retried for good);
+// 0 puts it back.
 void NoReservation(bool on);
 void NoLapse(bool on);
-void InsertNotReady(bool on);
+void InsertNotReady(int mode);
+
+// The host's judgements of a put head, counted while on: for a slot, the id of its latest put head, how many times the
+// host judged it (the early return of a head that waits is not one), and the first and last of those, in NetClock ms.
+struct PutJudged {
+    uint16_t id = 0;
+    uint32_t n = 0;
+    uint64_t firstMs = 0, lastMs = 0;
+};
+void CountPutJudgements(bool on);
+PutJudged LastPutJudged(uint8_t slot);
 
 // The RecordHash of the record held in escrow on `eid` (the neutered copy); false when none.
 bool FirstEscrow(uint32_t eid, uint64_t& hash);

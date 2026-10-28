@@ -35,7 +35,7 @@ CFG_FLAG(container_view_drill, "container_view_drill", "dev", false, "VOTVCOOP_C
     "Drill (client): walks to the ATV, opens its container through the game's own openPropInv, then walks "
     "back; the view must stay open while the ATV is within reach and close on the tick it leaves it. Run it "
     "with join_at_host=1. Lines tagged [CVIEW-DRILL]; the client's DONE line, carrying the verdict, ends it.")
-CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room|putrecord|puthand|putfood|puthidden|putnested|putempty|puthover|putreserved|putfull|putfullhand|putdepart|putdeadline|putowed",
+CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room|putrecord|puthand|putfood|puthidden|putnested|putempty|puthover|putreserved|putfull|putfullhand|putdepart|putdeadline|putowed|putjoin",
     "VOTVCOOP_CONTAINER_INTENT_DRILL",
     "Drill (BOTH peers): both pick the same shared container (the smallest element id, within 5000 cm of the player, "
     "that holds two records or more and that a nav route reaches; race, two, sale and room take one whose first record "
@@ -65,8 +65,10 @@ CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|ta
     "(--rejoin --rejoin-marker \"[CI-DRILL] client putdepart parked\"); the host releases the reservation and inserts "
     "nothing. putdeadline -- the replay is parked past the host's 30 s deadline: the late done is inserted once, a "
     "second done of it is a bad commit, and the next put is answered Lapsed (red: container_act_no_lapse). putowed -- "
-    "the host's insert answers NotReady (container_act_insert_notready=1): the put is given up after 30 tries and the "
-    "client's mirror loses the phantom record. Lines tagged [CI-DRILL]; the "
+    "the host's insert answers NotReady (container_act_insert_notready=1 or 2): the put is given up after 30 tries and the "
+    "client's mirror loses the phantom record; with 2 a take is then aborted and its restore must stay owed, never given "
+    "up, until the knob is set to 0. putjoin -- two clients (--observer): the first client's put is granted while the "
+    "second joins, the second asks the same target and waits at the head, then both commit. Lines tagged [CI-DRILL]; the "
     "host's DONE line ends it. It MUTATES the world.")
 CFG_FLAG(container_act_no_escrow, "container_act_no_escrow", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_ESCROW",
     "Red arm for the container intent drill (HOST): a grant opens its escrow with the record found but does not "
@@ -83,9 +85,11 @@ CFG_FLAG(container_act_no_lapse, "container_act_no_lapse", "dev", false, "VOTVCO
 CFG_FLAG(container_act_no_hand_table, "container_act_no_hand_table", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_HAND_TABLE",
     "Red arm for the put drill's putfood (CLIENT): the per-class table of hold-and-run hash exclusions is empty, so "
     "only the transform and the lifespan are left out and a held food's ticking fields abort the put.")
-CFG_FLAG(container_act_insert_notready, "container_act_insert_notready", "dev", false, "VOTVCOOP_CONTAINER_ACT_INSERT_NOTREADY",
-    "Drill knob for the put drill's putowed (HOST): the insert of a put's record answers NotReady every time, so "
-    "the put goes the owed path and is given up after 30 tries. An escrow's restore is not affected.")
+CFG_INT(container_act_insert_notready, "container_act_insert_notready", "dev", 0, 0, 2, "VOTVCOOP_CONTAINER_ACT_INSERT_NOTREADY",
+    "Drill knob for the put drill's putowed (HOST): 1 -- the insert of a put's record answers NotReady every time, so "
+    "the put goes the owed path and is given up after 30 tries; an escrow's restore is not affected. 2 -- the host's "
+    "restores (Source::Host) answer NotReady too, and the arm's second phase asserts a restore owed that way is never "
+    "given up; the drill then sets the knob back to 0 and the record lands.")
 CFG_STRING(container_route_census, "container_route_census", "dev", "", "VOTVCOOP_CONTAINER_ROUTE_CENSUS", false,
     "Census (BOTH peers): counts each container verb on a shared world container by the route on its stack (the "
     "slot press, the take key, hold+run, the overlap, the vacuum; none is the game's own logic) and the slices "

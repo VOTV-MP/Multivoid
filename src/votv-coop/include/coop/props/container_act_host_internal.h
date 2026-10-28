@@ -42,6 +42,9 @@ void PlaceTimelyDone(container_act_state::Hold h, const container_act_wire::Comm
 // The put drill's reds (container_act_host_put.cpp), put back at the session's end.
 void ResetPutDev();
 
+// A put head was judged: counted while the drill asks (CountPutJudgements).
+void NoteJudged(uint8_t slot, uint16_t id);
+
 // The host's truth of a container to the sender of a put commit it refused or lost (MTA syncs a refused change back to
 // its source, CGame.cpp:2779-2795). Unlike a request's refusal this is bounded by the commit, one per hold.
 void SendTruthNow(uint8_t slot, uint32_t eid);

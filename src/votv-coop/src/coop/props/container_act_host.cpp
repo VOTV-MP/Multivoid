@@ -98,15 +98,15 @@ struct VerdictCount {
 };
 bool g_holdReplies = false;
 bool g_noEscrow = false;
-bool g_insertNotReady = false;   // dev: a put's insert (Source::Wire) answers NotReady
+int g_insertNotReady = 0;   // dev: 1 a put's insert (Source::Wire) answers NotReady; 2 a restore (Source::Host) too
 std::vector<QueuedReply> g_queuedReplies;
 uint16_t g_lastGrantId[coop::net::kMaxPeers] = {};   // per slot: the id of the hold its last grant opened
 std::map<uint32_t, VerdictCount> g_verdicts;
 
 // A hold's record written into its container. The drill's knob makes a put's insert (a record off the wire) answer
-// NotReady, which is the owed path; an escrow's restore (Source::Host) is never touched by it.
+// NotReady, which is the owed path (mode 1); mode 2 answers an escrow's restore (Source::Host) so too.
 cre::EditResult InsertHold(const cas::Hold& h, cre::Source src) {
-    if (g_insertNotReady && src == cre::Source::Wire) return cre::EditResult::NotReady;
+    if (g_insertNotReady >= (src == cre::Source::Wire ? 1 : 2)) return cre::EditResult::NotReady;
     return cre::InsertAt(h.eid, h.index, h.record, src);
 }
 
@@ -392,6 +392,7 @@ coop::net::Served ServeHead(uint8_t slot, const Queued& item) {
     // A put that waits is judged again no sooner than kPutRejudgeMs: its reads are many. The bound still ends it.
     if (put && coop::net::NowMs() < item.nextJudgeMs && !internal::WaitExpired(item.queuedMs, coop::net::NowMs()))
         return coop::net::Served::Wait;
+    if (put) detail::NoteJudged(slot, q.id);
     internal::PutInputs pin;
     internal::Inputs& in = pin.base;
     uint16_t foundIndex = 0;
@@ -679,7 +680,7 @@ void OnDisconnect() {
     g_refusals.Clear();
     g_holdReplies = false;
     g_noEscrow = false;
-    g_insertNotReady = false;
+    g_insertNotReady = 0;
     detail::ResetPutDev();
     g_queuedReplies.clear();
     std::fill(std::begin(g_lastGrantId), std::end(g_lastGrantId), uint16_t{0});
@@ -721,7 +722,7 @@ void ReleaseReplies() {
 }
 
 void NoEscrow(bool on) { g_noEscrow = on; }
-void InsertNotReady(bool on) { g_insertNotReady = on; }
+void InsertNotReady(int mode) { g_insertNotReady = mode; }
 
 bool FirstEscrow(uint32_t eid, uint64_t& hash) {
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {

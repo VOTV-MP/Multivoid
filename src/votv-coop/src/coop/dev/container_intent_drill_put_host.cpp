@@ -69,6 +69,9 @@ constexpr uint64_t kLapseMinMs    = 29000;   // putdeadline: the grant to the re
 constexpr uint64_t kLapseMaxMs    = 36000;   // and at most
 constexpr uint64_t kOwedBoundMs   = 90000;   // putowed: the grant to the owed put being given up (30 tries at 1 Hz)
 constexpr int      kBrimMax       = 120;     // putfull: drives put in before the pack is declared never to refuse one
+constexpr uint64_t kTakeBoundMs   = 40000;   // putowed phase 2: the phantom gone to the take's restore going owed
+constexpr uint64_t kNoGiveUpMs    = 35000;   // and the time an owed restore must stand with no give-up
+constexpr uint64_t kRestoreLandMs = 15000;   // and the knob back at 0 to the restore landing (it retries at 1 Hz)
 constexpr const char* kBusyLine   = "Another player is using that item.";
 
 
@@ -79,6 +82,7 @@ HStep    g_hStep = HStep::WaitPeer;
 uint64_t g_hMs = 0;          // the time the step was entered
 uint64_t g_hNextMs = 0;      // the host checks four times a second, not every frame
 int      g_hSub = 0;         // the interleave's own step
+uint32_t g_hP2Base = 0;      // putowed phase 2: restore_owed when the put was given up
 uint64_t g_hSubMs = 0;       // and the time it was entered (the grant's, for putdeadline and putowed)
 ue_wrap::CachedObjRef g_hTarget, g_hItem, g_hItem2;
 int      g_hCount0 = -1;     // the target's record count at the fixture line
@@ -131,7 +135,7 @@ bool SpawnFixture(const FVector& at, const FVector& fwd) {
         return false;
     }
     g_hItem.Set(item);
-    if (arm == Arm::PutDeadline) {   // the next put of the lapsed sender needs a second item
+    if (arm == Arm::PutDeadline || arm == Arm::PutJoin) {   // the next put of the lapsed sender, the joiner's put: a second item
         void* item2 = E::SpawnActor(itemCls, Place(at, fwd, kItemAheadCm, -kItemSideCm));
         if (!item2) {
             Fail("the second item the client takes did not spawn");
@@ -228,6 +232,7 @@ void StepHostWaitPeer(const coop::net::Session& s) {
     for (int i = 1; i < coop::net::kMaxPeers && !slot; ++i)
         if (s.IsSlotWorldReady(i)) slot = i;
     if (!slot) return;
+    PutJoinNoteSlot1(slot);
     void* puppet = coop::puppet_drive::Puppet(slot).GetActor();   // spawned once the peer's pose arrives
     FVector at{};
     if (!puppet || !R::IsLive(puppet) || !E::TryGetActorLocation(puppet, at)) return;
@@ -261,7 +266,7 @@ void StepHostBind() {
     void* target = g_hTarget.Get();
     void* item = g_hItem.Get();
     void* item2 = g_hItem2.Get();
-    if (!target || (PutHasItem(ArmOf()) && !item) || (ArmOf() == Arm::PutDeadline && !item2)) {
+    if (!target || (PutHasItem(ArmOf()) && !item) || ((ArmOf() == Arm::PutDeadline || ArmOf() == Arm::PutJoin) && !item2)) {
         Fail("a fixture actor died before the client took it");
         return;
     }
@@ -448,7 +453,8 @@ void HostDeadline() {
 }
 
 // putowed: the put's insert answers NotReady, so it is owed and retried at 1 Hz, then given up and lost; the host's truth
-// goes back to the sender.
+// goes back to the sender. With the knob at 2 a second phase follows: a take is aborted, its restore stays owed for 35 s
+// and is never given up, then the knob goes back to 0 and the record lands.
 void HostOwed() {
     const uint64_t now = ::GetTickCount64();
     uint32_t grants = 0, gones = 0;
@@ -463,16 +469,70 @@ void HostOwed() {
         UE_LOGI("[CI-DRILL] host putowed: the client's grant stands (grants=%u)", grants);
         return;
     }
-    const uint64_t since = now - g_hSubMs;
-    if (!AH::TallyOf(AH::Tally::OwedLost)) {
-        if (since > kOwedBoundMs)
-            Fail("the owed put was never given up %llu s after the grant (restore_owed=%u)", static_cast<unsigned long long>(since / 1000),
-                 AH::TallyOf(AH::Tally::RestoreOwed));
+    if (g_hSub == 1) {
+        const uint64_t since = now - g_hSubMs;
+        if (!AH::TallyOf(AH::Tally::OwedLost)) {
+            if (since > kOwedBoundMs)
+                Fail("the owed put was never given up %llu s after the grant (restore_owed=%u)", static_cast<unsigned long long>(since / 1000),
+                     AH::TallyOf(AH::Tally::RestoreOwed));
+            return;
+        }
+        UE_LOGI("[CI-DRILL] host putowed: the owed put was given up %llu ms after the grant (restore_owed=%u owed_lost=%u)",
+                static_cast<unsigned long long>(since), AH::TallyOf(AH::Tally::RestoreOwed), AH::TallyOf(AH::Tally::OwedLost));
+        if (PutNotReadyMode() < 2) {
+            HNext(HStep::WaitClient);
+            return;
+        }
+        g_hP2Base = AH::TallyOf(AH::Tally::RestoreOwed);   // phase 2: the client takes a record and aborts the take
+        g_hSubMs = now;
+        g_hSub = 2;
         return;
     }
-    UE_LOGI("[CI-DRILL] host putowed: the owed put was given up %llu ms after the grant (restore_owed=%u owed_lost=%u)",
-            static_cast<unsigned long long>(since), AH::TallyOf(AH::Tally::RestoreOwed), AH::TallyOf(AH::Tally::OwedLost));
-    HNext(HStep::WaitClient);
+    const uint64_t since = now - g_hSubMs;
+    const uint32_t lost = AH::TallyOf(AH::Tally::OwedLost);
+    void* const target = g_hTarget.Get();
+    const int count = CountOf(RD::EidOf(target));
+    switch (g_hSub) {
+    case 2:   // the take's restore goes owed
+        if (AH::TallyOf(AH::Tally::RestoreOwed) <= g_hP2Base) {
+            if (since > kTakeBoundMs) Fail("the aborted take's restore never went owed (%llu s)", static_cast<unsigned long long>(since / 1000));
+            return;
+        }
+        UE_LOGI("[CI-DRILL] host putowed phase 2: the take's restore went owed %llu ms after the put was given up; target %d "
+                "record(s) of %d", static_cast<unsigned long long>(since), count, g_hCount0);
+        g_hSubMs = now;
+        g_hSub = 3;
+        return;
+    case 3:   // 35 s in which an owed restore must never be given up
+        if (lost != 1) {
+            Fail("a write of the host's own was given up (owed_lost=%u)", lost);
+            return;
+        }
+        if (since < kNoGiveUpMs) return;
+        UE_LOGI("[CI-DRILL] host putowed phase 2: no give-up in %llu ms (owed_lost=%u restore_owed=%u), target %d of %d; the "
+                "knob goes back to 0", static_cast<unsigned long long>(since), lost, AH::TallyOf(AH::Tally::RestoreOwed), count,
+                g_hCount0);
+        if (count != g_hCount0 - 1) {
+            Fail("the owed restore landed while the knob stood (target %d of %d)", count, g_hCount0);
+            return;
+        }
+        PutKnobRelease();
+        AH::dev::InsertNotReady(0);
+        g_hSubMs = now;
+        g_hSub = 4;
+        return;
+    case 4:   // the restore lands
+        if (count != g_hCount0) {
+            if (since > kRestoreLandMs) Fail("the restore did not land %llu ms after the knob went back (target %d of %d)", static_cast<unsigned long long>(since), count, g_hCount0);
+            return;
+        }
+        UE_LOGI("[CI-DRILL] host putowed phase 2: the restore landed %llu ms after the knob went back (target %d)",
+                static_cast<unsigned long long>(since), count);
+        HNext(HStep::WaitClient);
+        return;
+    default:
+        return;
+    }
 }
 
 void StepHostInterleave(const coop::net::Session& s) {
@@ -481,6 +541,7 @@ void StepHostInterleave(const coop::net::Session& s) {
     case Arm::PutDepart:   HostDepart(s); return;
     case Arm::PutDeadline: HostDeadline(); return;
     case Arm::PutOwed:     HostOwed(); return;
+    case Arm::PutJoin:     PutJoinHost(s); return;
     default:               HNext(HStep::WaitClient); return;
     }
 }
@@ -593,10 +654,14 @@ void PutHostReset() {
     g_hTarget.Reset();
     g_hItem.Reset();
     g_hItem2.Reset();
+    PutJoinReset();
     g_hSub = 0;
     g_hSubMs = 0;
+    g_hP2Base = 0;
     g_hCount0 = g_hClientOk = g_hClientStray = -1;
     g_hDriveVolume = g_hPackMax = -1.f;
 }
+
+PutHostView PutHostViewOf() { return PutHostView{g_hTarget.Get(), g_hCount0, g_hItem2.Get()}; }
 
 }  // namespace coop::dev::container_intent_drill::detail

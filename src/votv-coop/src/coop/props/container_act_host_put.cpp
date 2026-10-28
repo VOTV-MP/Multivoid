@@ -8,6 +8,7 @@
 #include "coop/element/registry.h"
 #include "coop/net/blob_chunks.h"
 #include "coop/net/net_clock.h"
+#include "coop/net/session.h"
 #include "coop/props/container_act_wire.h"
 #include "coop/props/container_contents_sync.h"
 #include "coop/props/container_record_edit.h"
@@ -37,6 +38,8 @@ namespace SR  = ue_wrap::save_record;
 // The put drill's reds (dev:: below): inert unless a drill calls them, reset at the session's end.
 bool g_noReservation = false;   // a put's grant opens no hold
 bool g_noLapse = false;         // a sender is never slowed
+bool g_countJudged = false;     // the judgements of each slot's latest put head are counted
+dev::PutJudged g_judged[coop::net::kMaxPeers];
 
 // The container's room for one more record of `rec`'s size plus `flagBytes` (the fridge flag the container will add to a
 // record asked; none to a record it already stored): the lane's record cap and the slice's byte ceiling, the one SendBlob enforces on what the container publishes. Done unless the
@@ -122,7 +125,20 @@ std::optional<coop::net::Served> GrantPut(uint8_t slot, const caw::Request& q) {
     return coop::net::Served::Done;
 }
 
-void ResetPutDev() { g_noReservation = g_noLapse = false; }
+void ResetPutDev() {
+    g_noReservation = g_noLapse = g_countJudged = false;
+    for (dev::PutJudged& j : g_judged) j = dev::PutJudged{};
+}
+
+// A put head was judged (not the early return of a head that waits): counted for the drill when it asks.
+void NoteJudged(uint8_t slot, uint16_t id) {
+    if (!g_countJudged || slot >= coop::net::kMaxPeers) return;
+    dev::PutJudged& j = g_judged[slot];
+    const uint64_t now = coop::net::NowMs();
+    if (j.id != id || !j.n) j = dev::PutJudged{id, 0, now, now};
+    ++j.n;
+    j.lastMs = now;
+}
 
 void SendTruthNow(uint8_t slot, uint32_t eid) { coop::props::container_contents_sync::SendTruthToSlot(eid, slot); }
 
@@ -318,5 +334,7 @@ namespace coop::props::container_act_host::dev {
 
 void NoReservation(bool on) { g_noReservation = on; }
 void NoLapse(bool on) { g_noLapse = on; }
+void CountPutJudgements(bool on) { g_countJudged = on; }
+PutJudged LastPutJudged(uint8_t slot) { return slot < coop::net::kMaxPeers ? g_judged[slot] : PutJudged{}; }
 
 }  // namespace coop::props::container_act_host::dev

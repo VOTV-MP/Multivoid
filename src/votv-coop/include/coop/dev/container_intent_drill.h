@@ -10,7 +10,7 @@
 //   HOST   -- prints the container's count and the act holds each time they change, and judges the count's timeline.
 // The arms are the values of the container_intent_drill config row (take, settle, abort, deadline, double, held, ghost,
 // race, two, sale, depart, room, and the put arms putrecord, puthand, putfood, puthidden, putnested, putempty, puthover,
-// putreserved, putfull, putfullhand, putdepart, putdeadline, putowed), each described there. The red of race, two and
+// putreserved, putfull, putfullhand, putdepart, putdeadline, putowed, putjoin), each described there. The red of race, two and
 // sale is container_act_no_escrow=1; the put arms pick no world container (the host spawns the target and the item,
 // container_intent_drill_put*.cpp) and have their own container_act_* red rows. Lines are tagged [CI-DRILL]; each peer
 // prints `<role> <arm> PASS|FAIL`.
