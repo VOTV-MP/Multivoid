@@ -11,7 +11,8 @@
 // The take and put-record families have a replay: the player's verb is cancelled at its seat (a slot's pressButton;
 // the screen's em_take or the container's playerUsedOn for a put) and asked of the host; on a grant the same verb runs
 // again under the replay latch if it still names the record asked (a take's grant also younger than the host's hold
-// less a margin), and the commit says whether and where the container changed. Any other family's grant is answered with an abort.
+// less a margin), and the commit says whether and where the container changed. Any other family's grant is answered
+// with an abort.
 
 #pragma once
 

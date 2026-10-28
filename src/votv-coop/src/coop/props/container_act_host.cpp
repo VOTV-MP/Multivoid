@@ -405,7 +405,10 @@ coop::net::Served ServeHead(uint8_t slot, const Queued& item) {
     if (v == internal::Verdict::Grant) {
         const std::optional<coop::net::Served> early =
             put ? GrantPut(slot, q) : GrantTake(slot, item, in, foundIndex, v);
-        if (early) return *early;
+        if (early) {
+            if (put) NoteWaited(slot, item);   // a put's grant that did not open, as a take's says its wait
+            return *early;
+        }
     }
     if (refusal != Tally::kCount) Bump(refusal);
 
@@ -703,7 +706,7 @@ void ReleaseReplies() {
     for (const QueuedReply& q : queued) {
         if (Answer(q.slot, q.reply)) continue;
         Bump(Tally::GrantUnsent);
-        if (std::optional<cas::Hold> h = cas::Live().Close(q.slot, q.reply.id)) Restore(std::move(*h), "grant not sent");
+        if (std::optional<cas::Hold> h = cas::Live().Close(q.slot, q.reply.id)) EndHold(std::move(*h), "grant not sent");
     }
 }
 

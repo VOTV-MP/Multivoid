@@ -135,8 +135,8 @@ uint32_t TallyOf(Tally t);
 
 // Called only from src/coop/dev/ (the container act drill); each knob is inert unless called, all reset at the session
 // end. The two counters FirstEscrow and Verdicts read are written in every host session, a map entry per container
-// taken from and one slot per peer; Verdicts counts the grants sent or queued and the Gone replies, not the "hold not
-// opened" Gone.
+// taken from or put into and one slot per peer; Verdicts counts every family's grants sent or queued and Gone replies,
+// not the "hold not opened" Gone.
 namespace dev {
 
 // While on, a Granted reply is queued instead of sent: the escrow is made, its deadline runs, the lane publishes as usual.
@@ -151,7 +151,7 @@ void NoEscrow(bool on);
 // The RecordHash of the record held in escrow on `eid` (the neutered copy); false when none.
 bool FirstEscrow(uint32_t eid, uint64_t& hash);
 
-// The take verdicts this session answered for `eid`: grants sent (or queued) and Gone replies.
+// The verdicts this session answered for `eid`, takes and puts together: grants sent (or queued) and Gone replies.
 void Verdicts(uint32_t eid, uint32_t& grants, uint32_t& gones);
 }  // namespace dev
 
