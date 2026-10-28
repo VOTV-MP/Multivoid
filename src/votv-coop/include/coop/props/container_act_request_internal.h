@@ -10,12 +10,21 @@
 
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/facts/function_row.h"
 
+#include <cstddef>
 #include <cstdint>
+#include <string>
 
 namespace coop::props::container_act_request::detail {
 
-// The one open act. A take keeps its slot and the record's index and hash; the container is every family's.
+// A put's route: R2 is the hotbar key with no hovered slot (em_take), R3 is hold and run (playerUsedOn).
+inline constexpr uint8_t kRouteR2 = 1;
+inline constexpr uint8_t kRouteR3 = 2;
+
+// The one open act. A take keeps its slot and the record's index and hash; the container is every family's. A put keeps
+// its route, the record as it was asked (its hash and name), the player's-pane index it came from (R2, with the
+// screen that pressed) or the actor in the hand (R3).
 struct Pending {
     bool open = false;
     uint16_t id = 0;
@@ -30,6 +39,10 @@ struct Pending {
     uint64_t hash = 0;
     uint64_t grantedMs = 0;   // when the Granted reply was taken here
     bool replayHeld = false;  // dev: HoldReplay parked the replay of a grant
+    uint8_t route = 0;
+    std::wstring name;
+    ue_wrap::CachedObjRef screen;
+    ue_wrap::CachedObjRef hand;
 };
 
 // The open act, and its end: the record cleared.
@@ -54,9 +67,28 @@ void ShowBadReason();
 void ShowNotAsked();
 void ShowNotReady();
 void ShowBusy();
+void ShowEmptyFirst();
+
+// The session while a link to the other peers is up, else null. A watch fires on the game thread.
+coop::net::Session* LinkedSession();
 
 // The host's own player beside a client's hold: Cancel (and the busy line) when `container` holds a client hold of
 // any kind (`anyHold`) or one reserved by a client; Run otherwise, and for anything that is not a shared container.
 ue_wrap::script_gate::Verdict HostPre(void* container, bool anyHold);
+
+// Is `container` one the host shares? Own: not a world container, or a client's own (a thrown one whose birth slice has
+// not gone, or one in an announced world with no element): the act runs natively. NotReady: a host container this
+// client has not bound yet: the act is cancelled with the not-ready line. Shared: `eid` is its element.
+enum class Target : uint8_t { Own, NotReady, Shared };
+Target SharedTarget(void* container, uint32_t& eid);
+
+// The put seats' watches, appended to the request's watch table, and the replay of a granted put (OnReply's switch).
+struct WatchRow {
+    const ue_wrap::facts::Function& row;
+    int tag;
+    ue_wrap::script_gate::PreFn pre;
+};
+const WatchRow* PutWatches(size_t& count);
+void ReplayPut();
 
 }  // namespace coop::props::container_act_request::detail

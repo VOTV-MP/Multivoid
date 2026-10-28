@@ -578,6 +578,10 @@ msgstr ""
 msgid "Each surface picks its own family; applies on the next frame."
 msgstr ""
 
+#: src/coop/props/container_act_request.cpp
+msgid "Empty it before putting it in a shared container."
+msgstr ""
+
 #: src/ui/chat_input.cpp
 msgid "Enter = send, Esc = close, Up/Down = history"
 msgstr ""

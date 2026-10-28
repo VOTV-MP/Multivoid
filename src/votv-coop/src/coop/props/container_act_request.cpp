@@ -113,7 +113,8 @@ std::deque<QueuedCommit> g_commits;
 
 // A line is shown at most once per kind per window.
 enum Line : size_t { kLineGone, kLineReach, kLineNoSpace, kLineLocked, kLineRefused, kLineQueueFull, kLineCantNow,
-                     kLineNotAsked, kLineNotReady, kLineLapsed, kLineBusy, kLineCount };
+                     kLineNotAsked, kLineNotReady, kLineLapsed, kLineBusy,
+                     kLineEmptyFirst, kLineCount };
 constexpr uint64_t kShowEveryMs = 5000;
 uint64_t g_shownAt[kLineCount] = {};
 bool g_shown[kLineCount] = {};
@@ -168,7 +169,25 @@ void ShowRefusal(uint8_t reason) {
 void ShowBadReason() { Show(kLineCantNow, l10n::T("That can't be done right now.")); }
 void ShowNotAsked() { Show(kLineNotAsked, l10n::T("The host could not be asked; try again.")); }
 void ShowNotReady() { Show(kLineNotReady, l10n::T("Not ready yet, try again in a moment.")); }
+coop::net::Session* LinkedSession() { return g_session && g_session->connected() ? g_session : nullptr; }
+
 void ShowBusy() { Show(kLineBusy, l10n::T("Another player is using that item.")); }
+void ShowEmptyFirst() { Show(kLineEmptyFirst, l10n::T("Empty it before putting it in a shared container.")); }
+
+Target SharedTarget(void* container, uint32_t& eid) {
+    eid = EL::kInvalidId;
+    if (!container || !ci::IsContainer(container)) return Target::Own;
+    void* const inv = ci::InventoryOf(container);
+    if (!inv || !ci::IsWorldInventory(inv)) return Target::Own;
+    eid = EL::Registry::Get().EidForActor(container);
+    if (eid == EL::kInvalidId) {
+        // A host container the client has not bound yet would make the item twice if acted on natively; one in an
+        // announced world with no element is the client's own, and nothing ships for it.
+        return coop::net_pump::IsInAnnouncedWorld(container) ? Target::Own : Target::NotReady;
+    }
+    // A container the client threw: its contents are the thrower's own until its birth slice goes.
+    return coop::props::container_birth::IsBirthSlice(eid) ? Target::Own : Target::Shared;
+}
 
 // The host's own player beside a client's hold (the pocket's HostPre, prop_act_request.cpp): a put is cancelled on a
 // container any client holds anything on, since the restore of an escrow could overflow it; a take is cancelled on
@@ -325,20 +344,18 @@ sg::Verdict PreTake(const sg::Call& c) {
     cv::Slot s{};
     if (!cv::ReadSlot(c.object, s)) return sg::Verdict::Run;
     if (g_session->role() == coop::net::Role::Host) return HostPre(s.container, /*anyHold=*/false);
-    // The player's own pane, or a container this lane does not share, takes natively.
-    if (!s.container || !ci::IsContainer(s.container)) return sg::Verdict::Run;
-    void* const inv = ci::InventoryOf(s.container);
-    if (!inv || !ci::IsWorldInventory(inv)) return sg::Verdict::Run;
-    const EL::ElementId eid = EL::Registry::Get().EidForActor(s.container);
-    if (eid == EL::kInvalidId) {
-        // A host container the client has not bound yet would make the item twice if taken natively; one in an
-        // announced world with no element is the client's own, and nothing ships for it.
-        if (coop::net_pump::IsInAnnouncedWorld(s.container)) return sg::Verdict::Run;
+    // The player's own pane, a container this lane does not share and one the client threw take natively.
+    EL::ElementId eid = EL::kInvalidId;
+    switch (SharedTarget(s.container, eid)) {
+    case Target::Own:
+        return sg::Verdict::Run;
+    case Target::NotReady:
         ShowNotReady();
         return sg::Verdict::Cancel;
+    case Target::Shared:
+        break;
     }
-    // A container the client threw: its contents are the thrower's own until its birth slice goes.
-    if (coop::props::container_birth::IsBirthSlice(eid)) return sg::Verdict::Run;
+    void* const inv = ci::InventoryOf(s.container);
     std::vector<SR::SaveRecord> recs;
     if (!cio::ReadRecords(inv, recs, /*neuterNested=*/true) || s.id < 0 || static_cast<size_t>(s.id) >= recs.size()) {
         ShowRefusal(static_cast<uint8_t>(ContainerActReason::Gone));
@@ -430,14 +447,12 @@ struct Watch {
     sg::PreFn pre;
     WatchState state;
 };
-Watch g_watches[] = {
-    {kRowTake, kTagTake, &PreTake, WatchState::Pending},
-};
+std::vector<Watch> g_watches;   // the take's, then the put seats': filled by the first Install
 bool g_watchesSettled = false;
 
 // Says once per watch whether the gate took it. The names resolve on the game thread, so a tick drives them.
 void SettleWatches() {
-    if (g_watchesSettled) return;
+    if (g_watchesSettled || g_watches.empty()) return;
     bool registered = false;
     for (const Watch& w : g_watches) registered = registered || w.state == WatchState::Registered;
     if (registered) sg::ResolvePendingNames();
@@ -451,8 +466,8 @@ void SettleWatches() {
             UE_LOGI("container_act: watch %ls.%ls live", w.row.Class(), w.row.Name());
         } else if (w.state == WatchState::Refused || sg::NameWatchSettled(w.row, w.tag)) {
             w.state = WatchState::Settled;
-            UE_LOGE("container_act: the take watch did not register -- a client's take from a shared container runs "
-                    "unasked");
+            UE_LOGE("container_act: the %ls.%ls watch did not register -- a client's act on a shared container runs "
+                    "unasked", w.row.Class(), w.row.Name());
         } else {
             open = true;
         }
@@ -466,6 +481,13 @@ bool InReplay() { return g_latch.on; }
 
 void Install(coop::net::Session* session) {
     g_session = session;
+    if (g_watches.empty()) {
+        g_watches.push_back(Watch{kRowTake, kTagTake, &PreTake, WatchState::Pending});
+        size_t puts = 0;
+        const WatchRow* const rows = PutWatches(puts);
+        for (size_t i = 0; i < puts; ++i)
+            g_watches.push_back(Watch{rows[i].row, rows[i].tag, rows[i].pre, WatchState::Pending});
+    }
     // The gate refuses a watch it cannot keep for the process; a refused one is said dead at the settle.
     for (Watch& w : g_watches) {
         if (w.state != WatchState::Pending) continue;
@@ -518,8 +540,8 @@ void OnReply(const coop::net::ContainerActReplyPayload& p) {
         Close();
         return;
     case internal::ReplyAction::Granted:
-        // The take family replays; any other family has no replay yet, so its grant is answered with an abort: the
-        // host's hold is ended, not kept.
+        // The take and the put-record families replay; any other family has no replay yet, so its grant is answered
+        // with an abort: the host's hold is ended, not kept.
         switch (static_cast<ContainerActFamily>(g_rec.family)) {
         case ContainerActFamily::Take:
             g_rec.grantedMs = coop::net::NowMs();
@@ -528,6 +550,9 @@ void OnReply(const coop::net::ContainerActReplyPayload& p) {
                 return;
             }
             ReplayTake();
+            break;
+        case ContainerActFamily::PutRecord:
+            ReplayPut();
             break;
         default:
             SendCommit(g_rec.id, g_rec.eid, 0);

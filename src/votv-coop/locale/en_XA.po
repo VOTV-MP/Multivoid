@@ -465,6 +465,9 @@ msgstr "[[Duplicate settings with different values]]"
 msgid "Each surface picks its own family; applies on the next frame."
 msgstr "[[Each surface picks its own family; applies on the next frame.]]"
 
+msgid "Empty it before putting it in a shared container."
+msgstr "[[Empty it before putting it in a shared container.]]"
+
 msgid "Enter = send, Esc = close, Up/Down = history"
 msgstr "[[Enter = send, Esc = close, Up/Down = history]]"
 

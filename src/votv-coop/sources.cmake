@@ -412,6 +412,7 @@ set(VOTVCOOP_SOURCES
     src/coop/items/inventory_wire.cpp
     src/coop/items/save_record_wire.cpp
     src/coop/props/container_act_host.cpp
+    src/coop/props/container_act_put.cpp
     src/coop/props/container_act_request.cpp
     src/coop/props/container_act_selftest.cpp
     src/coop/props/container_act_state.cpp

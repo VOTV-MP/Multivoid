@@ -11,7 +11,12 @@
 // The take family has its replay: a client's press of an inventory-screen slot is cancelled at the slot's pressButton
 // and asked of the host; on a grant the same slot is pressed again under the replay latch, if it still names the
 // record the host granted and the grant is younger than the host's hold less a margin, and the commit says whether
-// the record left the container. Any other family's grant is answered with an abort until it brings its own replay.
+// the record left the container.
+//
+// The put-record family has two seats: the hotbar key with no hovered slot (the screen's em_take) and hold-and-run
+// (the container's playerUsedOn), each cancelled and asked with the record the player would put in. On a grant the
+// same verb runs again under the latch, if it still names that record, and the commit says where the container stored
+// it, or that it did not. Any other family's grant is answered with an abort.
 
 #pragma once
 
@@ -20,6 +25,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <vector>
 
 namespace coop::net { class Session; }
 
@@ -59,6 +66,19 @@ TakeCheck CheckTake(bool grantFresh, bool slotLive, bool screenShowsContainer, b
 // back and did not fall); else 1 (done): a press that ran and whose count could not be read back counts as done, since
 // an abort there would give back a record the player may hold.
 uint8_t TakeCommitted(bool pressed, bool afterRead, size_t countBefore, size_t countAfter);
+
+enum class PutCheck : uint8_t { Replay, Abort };
+// R2 (the hotbar key) replays only the put that asked: the container live and still on the screen, no slot hovered,
+// the take button enabled, the same selected index, and the record there still hashing what was asked.
+PutCheck CheckPutR2(bool containerLive, bool screenShowsContainer, bool notHovered, bool takeEnabled, bool sameIndex,
+                    bool hashMatches);
+// R3 (hold and run) replays only for the actor that asked: the container live, that actor still the one in the hand,
+// and its own record still hashing what was asked.
+PutCheck CheckPutR3(bool containerLive, bool handIsAsked, bool hashMatches);
+// Where a put's record went, from the container's record hashes before and after the put's verb: the index i when
+// after is before with one record inserted at i (the first index where they differ, else the end). None when the count
+// did not rise by one or the rest does not line up, so the verb stored nothing, or something else did.
+std::optional<size_t> StoredIndex(const std::vector<uint64_t>& before, const std::vector<uint64_t>& after);
 }  // namespace internal
 
 namespace dev {   // the container act drills read it; OnDisconnect says it once; compiled always
