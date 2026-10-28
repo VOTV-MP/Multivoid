@@ -1,6 +1,7 @@
 // coop/props/container_act_request.cpp -- see coop/props/container_act_request.h.
 
 #include "coop/props/container_act_request.h"
+#include "coop/props/container_act_request_internal.h"
 
 #include "coop/comms/chat_feed.h"
 #include "coop/element/registry.h"
@@ -31,6 +32,9 @@
 #include <vector>
 
 namespace coop::props::container_act_request {
+
+using namespace detail;
+
 namespace {
 
 namespace caw = coop::props::container_act_wire;
@@ -63,36 +67,12 @@ constexpr uint64_t kCommitRetryMs = 250;
 // that is why it exists.
 constexpr uint64_t kGrantMarginMs = 5000;
 
-// The one open act.
-struct Pending {
-    bool open = false;
-    uint16_t id = 0;
-    uint32_t eid = 0;
-    uint8_t family = 0;
-    uint64_t sentMs = 0;
-    // A take's address, kept for the replay: the slot that asked, the container it takes from, and the record's index
-    // and hash as the host was asked.
-    ue_wrap::CachedObjRef slot;
-    ue_wrap::CachedObjRef container;
-    uint16_t index = 0;
-    uint64_t hash = 0;
-    uint64_t grantedMs = 0;   // when the Granted reply was taken here
-    bool replayHeld = false;  // dev: HoldReplay parked the replay of a grant
-};
-
 // The replay's apply latch, for the length of one synchronous verb call: the verb watches ask it whether a verb is the
 // replay's.
 struct Latch {
     bool on = false;
 };
 Latch g_latch;
-
-struct Latched {
-    Latched() { g_latch.on = true; }
-    ~Latched() { g_latch = Latch{}; }
-    Latched(const Latched&) = delete;
-    Latched& operator=(const Latched&) = delete;
-};
 
 uint32_t g_takeDoneUnread = 0;   // takes committed done although the press's count could not be read back
 uint32_t g_staleGrantAborts = 0; // grants aborted for their age instead of replayed
@@ -146,6 +126,15 @@ void Show(Line which, const char* line) {
     coop::chat_feed::Push(std::string(line), coop::chat_feed::Keep::Transient);
 }
 
+}  // namespace
+
+namespace detail {
+
+Pending& Rec() { return g_rec; }
+
+Latched::Latched() { g_latch.on = true; }
+Latched::~Latched() { g_latch = Latch{}; }
+
 void ShowRefusal(uint8_t reason) {
     switch (static_cast<ContainerActReason>(reason)) {
     case ContainerActReason::Gone:
@@ -177,9 +166,13 @@ void ShowBadReason() { Show(kLineCantNow, l10n::T("That can't be done right now.
 void ShowNotAsked() { Show(kLineNotAsked, l10n::T("The host could not be asked; try again.")); }
 void ShowNotReady() { Show(kLineNotReady, l10n::T("Not ready yet, try again in a moment.")); }
 
-// ---- the record and its commits -------------------------------------------------------------------------------
-
 void Close() { g_rec = Pending{}; }
+
+}  // namespace detail
+
+namespace {
+
+// ---- the record and its commits -------------------------------------------------------------------------------
 
 void DrainCommits() {
     if (!g_session) return;
@@ -206,6 +199,10 @@ void DrainCommits() {
     }
 }
 
+}  // namespace
+
+namespace detail {
+
 void QueueCommit(const caw::Commit& c) {
     QueuedCommit q;
     q.blob = caw::PackCommit(c);
@@ -224,6 +221,10 @@ void SendCommit(uint16_t id, uint32_t eid, uint8_t committed) {
     UE_LOGI("container_act: commit id %u eid %u -> %s", static_cast<unsigned>(id), static_cast<unsigned>(eid),
             committed ? "done" : "aborted");
 }
+
+}  // namespace detail
+
+namespace {
 
 // The reply matched no open record. One for an expired request ends the host's hold: a grant is answered with an
 // abort, a refusal reserved nothing.
