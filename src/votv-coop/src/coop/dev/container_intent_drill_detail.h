@@ -72,6 +72,15 @@ extern uint64_t        g_r0;         // race and two: the hash of the target's r
 extern bool            g_r0Unique;   // and whether no other record of the target has its class and name
 extern ItemKey         g_r0Key;      // the class and name of that record
 
+// The client's press and its answer, shared by the take arms and the append arms.
+extern uint64_t        g_phaseStartMs;
+extern uint64_t        g_pressMs;
+extern uint64_t        g_waitFromMs;   // the commit's bound counts from here
+extern int             g_containerBefore;
+extern int             g_ownBefore;
+extern uint32_t        g_takesBefore;
+extern uint32_t        g_committed;
+
 const char* Role();
 void Finish();
 void Fail(const char* fmt, ...);
@@ -99,6 +108,16 @@ bool DepartRejoined();
 // Room: the own inventory's capacity is written to 0 until RoomRestore writes the old value back (idempotent).
 bool RoomFill();
 void RoomRestore();
+
+// Presses the slot as a click does. False, with the failure printed, when no act opened.
+bool PressAndCheck(void* slot);
+
+// The client's ghost, forge and unasked arms (container_intent_drill_append.cpp): a record appended to the mirror, then
+// judged. StartGhost and StartAppend begin on the open screen; AppendTick runs the phases GhostFind to GhostBack.
+void StartGhost(uint64_t now);
+void StartAppend(uint64_t now);
+void AppendTick(uint64_t now);
+void AppendReset();
 
 // The host's half (container_intent_drill_host.cpp).
 void HostTick(const coop::net::Session& session);
