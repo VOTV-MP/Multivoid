@@ -50,6 +50,14 @@ EditResult InsertAt(uint32_t eid, uint16_t index, const ue_wrap::save_record::Sa
 
 const char* EditResultName(EditResult r);
 
+namespace dev {   // called only from src/coop/dev/ (the container intent drill's sale arm)
+
+// Writes an empty record list over the container and publishes it, as a writer the act does not see would (a sale
+// that empties it). `cleared` gets the number of records it held; Done when it was written.
+EditResult Clear(uint32_t eid, size_t& cleared);
+
+}  // namespace dev
+
 namespace internal {   // pure
 
 size_t ClampIndex(uint16_t index, size_t length);   // min(index, length)

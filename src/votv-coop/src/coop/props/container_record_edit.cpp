@@ -115,6 +115,20 @@ const char* EditResultName(EditResult r) {
     return "?";
 }
 
+namespace dev {
+
+EditResult Clear(uint32_t eid, size_t& cleared) {
+    cleared = 0;
+    void* inv = nullptr;
+    if (const EditResult r = Resolve(eid, inv); r != EditResult::Done) return r;
+    std::vector<SR::SaveRecord> recs;
+    if (!cio::ReadRecords(inv, recs, /*neuterNested=*/false)) return EditResult::Unreadable;
+    cleared = recs.size();
+    return Commit(eid, inv, std::vector<SR::SaveRecord>{}, "clear", 0);
+}
+
+}  // namespace dev
+
 namespace internal {
 
 size_t ClampIndex(uint16_t index, size_t length) { return std::min<size_t>(index, length); }

@@ -59,6 +59,13 @@ void RederiveShownState(void* container, void* inventory);
 // The inventory's currVol. False when the field does not resolve.
 bool CurrentVolume(void* inventory, float& out);
 
+// The inventory's maxVol, the capacity addObject's volume check reads (a take fits while the item's volume plus
+// currVol is at most maxVol). False when the field does not resolve.
+bool MaxVolume(void* inventory, float& out);
+// Dev: a raw write of maxVol, for the intent drill's full-pocket arm; the caller writes the old value back. False
+// when the field does not resolve.
+bool SetMaxVolume(void* inventory, float value);
+
 // Whether the container's inventory component has run its init: its `obj` field, set on init's first
 // line and never cleared, is live. False when the component or the field does not resolve.
 bool InventoryInitialized(void* container);

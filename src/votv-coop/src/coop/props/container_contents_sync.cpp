@@ -6,6 +6,7 @@
 
 #include "coop/props/prop_save_data.h"
 #include "coop/props/container_contents_sync.h"
+#include "coop/props/container_apply_hold.h"
 #include "coop/props/container_birth.h"
 #include "coop/props/container_contents_io.h"
 #include "coop/props/container_park.h"
@@ -532,11 +533,16 @@ void MarkHostWrite(uint32_t eid) {
     Touch(eid);
 }
 
+namespace {
+void ApplyHeld(const std::vector<uint8_t>& blob, uint8_t senderSlot);   // defined with DeliverBlob below
+}  // namespace
+
 void Install(coop::net::Session* session) {
     // This lane owns a container's GObjStack slice behind a host-arbitrated compare-and-swap; the
     // container's own save record carries the index into that stack, with none of the arbitration.
     coop::prop_save_data::DeclareClassOwnedElsewhere(L"prop_container_C");
     g_session.store(session, std::memory_order_release);
+    coop::props::container_apply_hold::SetApply(&ApplyHeld);
     cww::Install(session);
 }
 
@@ -566,23 +572,10 @@ void Tick() {
     pk::Sweep(&ReplayParked, NowMs());
 }
 
-void OnContentsChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s) return;
-    // The acceptance matrix, before the assembler so no peer drives reassembly for a direction it
-    // may not send: the host accepts only a non-zero slot (slot 0 is its own fan-out coming back);
-    // a client accepts only slot 0, since peers never hear each other directly.
-    if (IsHost()) {
-        if (senderSlot == 0) return;  // our own fan-out echoed back -- not a thing to apply
-    } else if (senderSlot != 0) {
-        UE_LOGW("container_contents: blob from non-host slot %u on a CLIENT -- REJECTED "
-                "(the host is the only authority a client accepts)",
-                static_cast<unsigned>(senderSlot));
-        return;
-    }
-    std::vector<uint8_t> blob;
-    if (!g_asm.OnChunk(p, senderSlot, blob)) return;  // incomplete
+namespace {
 
+// What an assembled blob does here: applied, or kept in the bind wait or the readiness pen.
+void DeliverBlob(std::vector<uint8_t> blob, uint8_t senderSlot) {
     uint32_t eid = 0;
     const Ingest outcome = ParseAndApply(blob, eid, senderSlot, wp::Source::Arrival);
     if (outcome == Ingest::NoActor) {
@@ -602,6 +595,39 @@ void OnContentsChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     // Applied here and now: an older slice of this eid still waiting in the pen must not apply over it at the
     // next sweep.
     if (outcome == Ingest::Applied) pk::Erase(eid);
+}
+
+// What container_apply_hold replays a kept blob through.
+void ApplyHeld(const std::vector<uint8_t>& blob, uint8_t senderSlot) { DeliverBlob(blob, senderSlot); }
+
+}  // namespace
+
+void OnContentsChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s) return;
+    // The acceptance matrix, before the assembler so no peer drives reassembly for a direction it
+    // may not send: the host accepts only a non-zero slot (slot 0 is its own fan-out coming back);
+    // a client accepts only slot 0, since peers never hear each other directly.
+    if (IsHost()) {
+        if (senderSlot == 0) return;  // our own fan-out echoed back -- not a thing to apply
+    } else if (senderSlot != 0) {
+        UE_LOGW("container_contents: blob from non-host slot %u on a CLIENT -- REJECTED "
+                "(the host is the only authority a client accepts)",
+                static_cast<unsigned>(senderSlot));
+        return;
+    }
+    std::vector<uint8_t> blob;
+    if (!g_asm.OnChunk(p, senderSlot, blob)) return;  // incomplete
+
+    if (coop::props::container_apply_hold::Armed()) {   // the drill's hold: the header is read for it alone
+        size_t headerEnd = 0;
+        uint32_t headerEid = 0;
+        uint64_t headerBase = 0;
+        if (cw::ParseHeader(blob, headerEnd, headerEid, headerBase) &&
+            coop::props::container_apply_hold::Keep(headerEid, std::move(blob), senderSlot))
+            return;
+    }
+    DeliverBlob(std::move(blob), senderSlot);
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
@@ -739,6 +765,7 @@ ClientSliceOutcome LastClientSliceOutcome(uint32_t eid) {
 }
 
 void OnDisconnect() {
+    coop::props::container_apply_hold::Reset();
     g_wrongClassSaid.clear();
     g_dirty.clear();
     g_retry.clear();

@@ -90,6 +90,11 @@ bool IsOwnInventory(void* container) {
     return ownCls && cls && R::IsDescendantOfAny(cls, &ownCls, 1);
 }
 
+void* OwnInventory() {
+    void* const own = PointerAt(Gamemode(), g.playerContainer);
+    return own && R::IsLive(own) ? own : nullptr;
+}
+
 bool CanClose() {
     void* const screen = OpenScreen();
     return screen && R::FindDispatchFunctionCached(R::ClassOf(screen), L"exit");

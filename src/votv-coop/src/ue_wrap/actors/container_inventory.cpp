@@ -23,6 +23,7 @@ int32_t g_offInvOwner  = -2;  // propInventory_C.Owner   -- the Aprop_container_
 int32_t g_offGObjStack = -2;  // saveSlot_C.GObjStack
 int32_t g_offPropInv   = -2;  // prop_container_C.propInventory
 int32_t g_offCurrVol   = -2;  // propInventory_C.currVol
+int32_t g_offMaxVol    = -2;  // propInventory_C.maxVol  -- the capacity addObject's volume check reads
 int32_t g_offInvObj    = -2;  // propInventory_C.obj  -- set by init, never cleared
 int32_t g_offAllContainers = -2;  // mainGamemode_C.allContainers
 
@@ -154,6 +155,19 @@ bool CurrentVolume(void* inventory, float& out) {
     out = 0.f;
     if (!inventory || CachedOffset(g_offCurrVol, R::ClassOf(inventory), L"currVol") < 0) return false;
     out = ReadAt<float>(inventory, g_offCurrVol);
+    return true;
+}
+
+bool MaxVolume(void* inventory, float& out) {
+    out = 0.f;
+    if (!inventory || CachedOffset(g_offMaxVol, R::ClassOf(inventory), L"maxVol") < 0) return false;
+    out = ReadAt<float>(inventory, g_offMaxVol);
+    return true;
+}
+
+bool SetMaxVolume(void* inventory, float value) {
+    if (!inventory || CachedOffset(g_offMaxVol, R::ClassOf(inventory), L"maxVol") < 0) return false;
+    std::memcpy(reinterpret_cast<uint8_t*>(inventory) + g_offMaxVol, &value, sizeof(value));
     return true;
 }
 

@@ -58,7 +58,9 @@ constexpr uint64_t kCommitRetryMs = 250;
 
 // A grant older than the host's hold deadline less this is not replayed. The host restores the record by itself at its
 // deadline, so a replay after that makes the item twice. The age is counted from the reply's receipt here, which
-// underestimates the grant's age by at most the one-way latency; the margin covers that.
+// underestimates the grant's age by at most the one-way latency; the margin covers that. The replay runs inline at the
+// receipt today, so the guard fires only for a replay held on the client (the drill's hold, or any future deferral):
+// that is why it exists.
 constexpr uint64_t kGrantMarginMs = 5000;
 
 // The one open act.
@@ -94,6 +96,7 @@ struct Latched {
 
 uint32_t g_takeDoneUnread = 0;   // takes committed done although the press's count could not be read back
 uint32_t g_staleGrantAborts = 0; // grants aborted for their age instead of replayed
+uint8_t g_lastRefusal = 0;       // the reason of the refusal of the open or last ask, 0 when none
 bool g_holdReplay = false;       // dev (dev:: below): a take's grant parks its replay
 bool g_doubleAbort = false;      // dev: a take's abort commit is sent twice
 dev::Take g_lastTake;            // the last take's commit as it was sent; the drills read it
@@ -287,6 +290,7 @@ bool Ask(caw::Request r) {
     g_rec.eid = r.eid;
     g_rec.family = r.family;
     g_rec.sentMs = coop::net::NowMs();
+    g_lastRefusal = 0;   // per press: a refusal read after this ask is this ask's
     return true;
 }
 
@@ -489,6 +493,7 @@ void OnReply(const coop::net::ContainerActReplyPayload& p) {
         Close();
         return;
     case internal::ReplyAction::Refused:
+        g_lastRefusal = p.reason;
         ShowRefusal(p.reason);
         Close();
         return;
@@ -521,6 +526,7 @@ void OnDisconnect() {
         UE_LOGW("container_act: this session committed %u take(s) done UNREAD", dev::TakeDoneUnread());
     g_takeDoneUnread = 0;
     g_staleGrantAborts = 0;
+    g_lastRefusal = 0;
     g_holdReplay = false;
     g_doubleAbort = false;
     g_lastTake = dev::Take{};
@@ -539,6 +545,8 @@ uint32_t TakeDoneUnread() { return g_takeDoneUnread; }
 uint16_t PendingId() { return g_rec.open ? g_rec.id : 0; }
 
 uint32_t StaleGrantAborts() { return g_staleGrantAborts; }
+
+uint8_t LastRefusal() { return g_lastRefusal; }
 
 void HoldReplay(bool on) { g_holdReplay = on; }
 

@@ -19,6 +19,10 @@ void* Viewed();
 // apart). A view onto it is opened through no actor.
 bool IsOwnInventory(void* container);
 
+// The gamemode's playerContainer, the actor of the local player's own inventory; null when it does not resolve or is
+// not live. Its records read through container_inventory::InventoryOf like any container's.
+void* OwnInventory();
+
 // Whether the open screen's close resolves; false when no screen is open.
 bool CanClose();
 

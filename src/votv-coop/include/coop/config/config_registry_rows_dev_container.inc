@@ -35,11 +35,26 @@ CFG_FLAG(container_view_drill, "container_view_drill", "dev", false, "VOTVCOOP_C
     "Drill (client): walks to the ATV, opens its container through the game's own openPropInv, then walks "
     "back; the view must stay open while the ATV is within reach and close on the tick it leaves it. Run it "
     "with join_at_host=1. Lines tagged [CVIEW-DRILL]; the client's DONE line, carrying the verdict, ends it.")
-CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take", "VOTVCOOP_CONTAINER_INTENT_DRILL",
-    "Drill (BOTH peers): both pick the same shared container (the smallest element id holding two records or more); "
+CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room",
+    "VOTVCOOP_CONTAINER_INTENT_DRILL",
+    "Drill (BOTH peers): both pick the same shared container (the smallest element id, within 5000 cm of the player, "
+    "that holds two records or more and that a nav route reaches; race, two, sale and room take one whose first record "
+    "is unique first; with none reached, the nearest); "
     "the client walks to it, opens it and presses its first slot, and prints the reply-to-commit time and the "
     "container and own counts; the host prints the container's count and the act holds on change. take -- the "
-    "one arm, a measurement. Lines tagged [CI-DRILL]; the host's DONE line ends it. It MUTATES the world.")
+    "honest take. settle -- the press comes 5 s after the screen opened. abort -- the replay is parked and the "
+    "screen closed under it, so the take is aborted. deadline -- the replay is parked past the host's hold "
+    "deadline, so the client aborts the stale grant. double -- abort, sent twice. held -- the replay is parked "
+    "20 s and still runs. ghost -- a record the host never had is pressed. race -- the client's grant, then the host's own "
+    "press of the same container; the client keeps the item and the host does not. two -- two clients press the same "
+    "record (run with --observer): one grant and one Gone. sale -- the host's reply is held and a raw clear of the "
+    "container (a stand-in for a sale) comes between the grant and the replay; the client keeps the item. depart -- "
+    "the replay is parked and the rig drops the client (--rejoin --rejoin-marker \"[CI-DRILL] client depart "
+    "parked\"); the host's record returns. room -- the client's own inventory has no room, so the item stays a world "
+    "prop. Lines tagged [CI-DRILL]; the host's DONE line ends it. It MUTATES the world.")
+CFG_FLAG(container_act_no_escrow, "container_act_no_escrow", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_ESCROW",
+    "Red arm for the container intent drill (HOST): a grant opens its escrow with the record found but does not "
+    "remove it from the container, so a second taker finds it still there and the item is taken twice.")
 CFG_STRING(container_route_census, "container_route_census", "dev", "", "VOTVCOOP_CONTAINER_ROUTE_CENSUS", false,
     "Census (BOTH peers): counts each container verb on a shared world container by the route on its stack (the "
     "slot press, the take key, hold+run, the overlap, the vacuum; none is the game's own logic) and the slices "

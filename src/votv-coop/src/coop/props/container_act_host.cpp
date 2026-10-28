@@ -13,12 +13,14 @@
 #include "coop/props/container_record_edit.h"
 #include "coop/props/container_slice_wire.h"
 
+#include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 
 #include <algorithm>
 #include <chrono>
 #include <iterator>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -71,6 +73,21 @@ coop::blob_chunks::Assembler g_requestAsm;
 coop::blob_chunks::Assembler g_commitAsm;
 std::vector<Owed> g_restoreOwed;
 uint64_t g_nextSecondMs = 0;
+
+// Dev (dev:: below). Reset at the session's end.
+struct QueuedReply {
+    uint8_t slot;
+    coop::net::ContainerActReplyPayload reply;
+};
+struct VerdictCount {
+    uint32_t grants = 0;
+    uint32_t gones = 0;
+};
+bool g_holdReplies = false;
+bool g_noEscrow = false;
+std::vector<QueuedReply> g_queuedReplies;
+uint16_t g_lastGrantId[coop::net::kMaxPeers] = {};   // per slot: the id of the hold its last grant opened
+std::map<uint32_t, VerdictCount> g_verdicts;
 
 bool InRoster(int slot) { return slot >= 1 && slot < coop::net::kMaxPeers; }
 bool IsHostRole() { return g_session && g_session->role() == coop::net::Role::Host; }
@@ -237,6 +254,16 @@ void NoteWaited(uint8_t slot, const Queued& item) {
             static_cast<unsigned long long>(waited), item.lastWait ? item.lastWait : "none");
 }
 
+// The red's grant (NoEscrow): the record is copied out and stays in the container.
+cre::EditResult KeepRecord(uint32_t eid, uint16_t index, SR::SaveRecord& out) {
+    std::vector<SR::SaveRecord> recs;
+    const cre::EditResult r = cre::ReadRecords(eid, recs, /*neuterNested=*/true);
+    if (r != cre::EditResult::Done) return r;
+    if (index >= recs.size()) return cre::EditResult::Unreadable;
+    out = recs[index];
+    return cre::EditResult::Done;
+}
+
 // One queued request, judged.
 coop::net::Served ServeHead(uint8_t slot, const Queued& item) {
     const caw::Request& q = item.req;
@@ -249,7 +276,7 @@ coop::net::Served ServeHead(uint8_t slot, const Queued& item) {
 
     if (v == internal::Verdict::Grant) {
         SR::SaveRecord taken;
-        switch (cre::RemoveAt(q.eid, foundIndex, q.hash, taken)) {
+        switch (g_noEscrow ? KeepRecord(q.eid, foundIndex, taken) : cre::RemoveAt(q.eid, foundIndex, q.hash, taken)) {
             case cre::EditResult::Done:     break;
             case cre::EditResult::NotReady: return WaitOrEnd(slot, item, in);
             default:                        v = internal::Verdict::Gone; break;   // moved under the lookup
@@ -270,11 +297,15 @@ coop::net::Served ServeHead(uint8_t slot, const Queued& item) {
                 Answer(slot, ReplyOf(internal::Verdict::Gone, q.id));   // so the client does not wait out its 10 s
                 return coop::net::Served::Done;
             }
+            g_lastGrantId[slot] = q.id;
         }
     }
 
     NoteWaited(slot, item);
-    const bool sent = Answer(slot, ReplyOf(v, q.id));
+    const coop::net::ContainerActReplyPayload reply = ReplyOf(v, q.id);
+    bool sent = true;
+    if (v == internal::Verdict::Grant && g_holdReplies) g_queuedReplies.push_back(QueuedReply{slot, reply});
+    else sent = Answer(slot, reply);
     if (v == internal::Verdict::Grant && !sent) {
         Bump(Tally::GrantUnsent);
         if (std::optional<cas::Hold> h = cas::Live().Close(slot, q.id)) Restore(std::move(*h), "grant not sent");
@@ -282,6 +313,8 @@ coop::net::Served ServeHead(uint8_t slot, const Queued& item) {
         g_refusals.Note(slot, internal::VerdictName(v), Now());
     }
     if (v == internal::Verdict::Gone && in.container == internal::Container::Ready) SendTruth(slot, q.eid);
+    if (v == internal::Verdict::Grant && sent) ++g_verdicts[q.eid].grants;
+    else if (v == internal::Verdict::Gone) ++g_verdicts[q.eid].gones;
     UE_LOGI("container_act: slot=%u id=%u eid=%u %s -> %s", static_cast<unsigned>(slot), static_cast<unsigned>(q.id),
             static_cast<unsigned>(q.eid), FamilyName(q.family),
             v == internal::Verdict::Grant && !sent ? "grant-unsent" : internal::VerdictName(v));
@@ -489,6 +522,11 @@ void OnDisconnect() {
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) g_slots[slot] = Slot{};
     std::fill(std::begin(g_tally), std::end(g_tally), 0u);
     g_refusals.Clear();
+    g_holdReplies = false;
+    g_noEscrow = false;
+    g_queuedReplies.clear();
+    std::fill(std::begin(g_lastGrantId), std::end(g_lastGrantId), uint16_t{0});
+    g_verdicts.clear();
 }
 
 void NoteBadSender() { Bump(Tally::BadSender); }
@@ -507,5 +545,41 @@ const char* TallyName(Tally t) {
 }
 
 uint32_t TallyOf(Tally t) { return t < Tally::kCount ? g_tally[static_cast<int>(t)] : 0; }
+
+namespace dev {
+
+void HoldReplies(bool on) { g_holdReplies = on; }
+
+void ReleaseReplies() {
+    std::vector<QueuedReply> queued;
+    queued.swap(g_queuedReplies);
+    for (const QueuedReply& q : queued) {
+        if (Answer(q.slot, q.reply)) continue;
+        Bump(Tally::GrantUnsent);
+        if (std::optional<cas::Hold> h = cas::Live().Close(q.slot, q.reply.id)) Restore(std::move(*h), "grant not sent");
+    }
+}
+
+void NoEscrow(bool on) { g_noEscrow = on; }
+
+bool FirstEscrow(uint32_t eid, uint64_t& hash) {
+    for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
+        const cas::Hold* h = cas::Live().Match(static_cast<uint8_t>(slot), g_lastGrantId[slot]);
+        if (!h || h->kind != cas::HoldKind::Escrow || h->eid != eid) continue;
+        SR::SaveRecord rec = h->record;
+        if (ue_wrap::container_inventory::IsContainerRecord(rec)) ue_wrap::container_inventory::ClearInventoryIndex(rec);
+        hash = coop::props::container_slice_wire::RecordHash(rec);
+        return true;
+    }
+    return false;
+}
+
+void Verdicts(uint32_t eid, uint32_t& grants, uint32_t& gones) {
+    const auto it = g_verdicts.find(eid);
+    grants = it == g_verdicts.end() ? 0 : it->second.grants;
+    gones = it == g_verdicts.end() ? 0 : it->second.gones;
+}
+
+}  // namespace dev
 
 }  // namespace coop::props::container_act_host
