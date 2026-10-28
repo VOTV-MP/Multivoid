@@ -13,6 +13,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/reflected_offset.h"
 
@@ -224,6 +225,24 @@ bool CallPutObjectInventory2(void* mainPlayer, void* target, bool noNotify, bool
     if (!f.valid() || !f.Set<void*>(L"InputPin", target) || !f.Set<bool>(L"noNotify", noNotify) || !Call(mainPlayer, f))
         return false;
     taken = f.Get<bool>(L"return");
+    return true;
+}
+
+bool ReadInputRun(void* mainPlayer, bool& out) {
+    static void* sCls = nullptr;   // the class the bitfield was read from; asked again when it changes
+    static int32_t sOff = -1;
+    static uint8_t sMask = 0;
+    out = false;
+    if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
+    void* const cls = R::ClassOf(mainPlayer);
+    if (cls != sCls) {
+        sCls = cls;
+        sOff = -1;
+        sMask = 0;
+        if (!R::FindBoolProperty(cls, L"input_run", sOff, sMask)) sOff = -1;
+    }
+    if (sOff < 0 || sMask == 0) return false;
+    out = (*(reinterpret_cast<const uint8_t*>(mainPlayer) + sOff) & sMask) != 0;
     return true;
 }
 

@@ -4,6 +4,8 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
+#include "ue_wrap/facts/function_row.h"
 #include "ue_wrap/world/world_singleton.h"
 
 #include <cstdint>
@@ -31,8 +33,18 @@ struct Fields {
     void* slotCls = nullptr;
     int32_t slotId = -1;     // uicomp_playerInvContainerSlot_C.id, the record index
     int32_t slotOwner = -1;  // uicomp_playerInvContainerSlot_C.owner, the screen
+    void* putCls = nullptr;    // the screen class the put fields below were read from
+    int32_t putAsProp = -1;    // ui_playerInventory_C.as_prop
+    int32_t putHover = -1;     // ui_playerInventory_C.hoverContainerSlot
+    int32_t putTake = -1;      // ui_playerInventory_C.Button_a_take
+    void* buttonCls = nullptr;  // the class of the take button
+    int32_t enabledOff = -1;    // the button's bIsEnabled bitfield: its byte and mask
+    uint8_t enabledMask = 0;
 };
 Fields g;
+
+// The call whose result is the selected record's index; its row is the fingerprint table's.
+UE_FACT_FN(kRowGetInd, "container_act", L"ui_playerInventory_C", L"getInd", Declared);
 
 void* PointerAt(void* obj, int32_t off) {
     return obj && off >= 0 ? *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(obj) + off) : nullptr;
@@ -181,6 +193,74 @@ bool Redraw(void* container) {
     f.Set<void*>(L"enter", container);
     f.Set<bool>(L"double", true);
     return Call(screen, f);
+}
+
+namespace {
+
+// A UWidget's visibility answer, its own IsVisible. False when it does not resolve or the call fails.
+bool WidgetVisible(void* widget, bool& visible) {
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(widget), L"IsVisible");
+    if (!fn) return false;
+    ParamFrame f(fn);
+    if (!f.valid() || !Call(widget, f)) return false;
+    visible = f.Get<bool>(L"ReturnValue");
+    return true;
+}
+
+// The take button's bIsEnabled, a packed bitfield: read by its mask, the class asked again when it changes.
+bool ButtonEnabled(void* button, bool& enabled) {
+    void* const cls = R::ClassOf(button);
+    if (cls != g.buttonCls) {
+        g.buttonCls = cls;
+        g.enabledOff = -1;
+        g.enabledMask = 0;
+        if (!R::FindBoolProperty(cls, L"bIsEnabled", g.enabledOff, g.enabledMask)) g.enabledOff = -1;
+    }
+    if (g.enabledOff < 0 || g.enabledMask == 0) return false;
+    enabled = (*(static_cast<const uint8_t*>(button) + g.enabledOff) & g.enabledMask) != 0;
+    return true;
+}
+
+}  // namespace
+
+bool ReadPutState(void* screen, PutState& out) {
+    out = PutState{};
+    if (!screen || !R::IsLive(screen)) return false;
+    void* const cls = R::ClassOf(screen);
+    if (cls != g.putCls) {
+        g.putCls = cls;
+        g.putAsProp = R::FindPropertyOffset(cls, L"as_prop");
+        g.putHover = R::FindPropertyOffset(cls, L"hoverContainerSlot");
+        g.putTake = R::FindPropertyOffset(cls, L"Button_a_take");
+    }
+    if (g.putAsProp < 0 || g.putHover < 0 || g.putTake < 0) return false;
+    void* const button = PointerAt(screen, g.putTake);
+    const facts::Resolved getInd = facts::ResolveOn(kRowGetInd, cls);
+    if (!button || !getInd) return false;
+    PutState s{};
+    if (!ButtonEnabled(button, s.takeEnabled)) return false;
+    s.container = PointerAt(screen, g.putAsProp);
+    void* const hover = PointerAt(screen, g.putHover);
+    s.hovered = hover && R::IsLive(hover);
+    if (s.hovered && !WidgetVisible(hover, s.hoverVisible)) return false;
+    ParamFrame f(getInd.Fn());
+    if (!f.valid() || !Call(screen, f)) return false;
+    s.index = f.Get<int32_t>(L"ReturnValue");
+    out = s;
+    return true;
+}
+
+bool RunPut(void* screen) {
+    if (!screen || !R::IsLive(screen)) return false;
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(screen), L"em_take");
+    if (!fn) return false;
+    ParamFrame f(fn);
+    return f.valid() && Call(screen, f);
+}
+
+void* PlayerContainer() {
+    void* const c = PointerAt(Gamemode(), g.playerContainer);
+    return c && R::IsLive(c) ? c : nullptr;
 }
 
 }  // namespace ue_wrap::container_view

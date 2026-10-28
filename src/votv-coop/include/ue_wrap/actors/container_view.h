@@ -52,4 +52,26 @@ bool PressSlot(void* slot);
 // redraw does. False, and nothing done, when the screen is closed, shows another container, or the call fails.
 bool Redraw(void* container);
 
+// What the `hotbar_1` key's em_take reads before it puts the selected record of the player's own pane into the
+// container the screen shows: that container (as_prop; null on the player's own pane), whether the screen's take
+// button is enabled, whether a container slot is hovered (a live hoverContainerSlot) and visible, and the selected
+// record's index (the screen's own getInd).
+struct PutState {
+    void* container;
+    bool takeEnabled;
+    bool hovered;
+    bool hoverVisible;
+    int32_t index;
+};
+
+// Read `screen` (a ui_playerInventory_C) as the put reads it. False, `out` zeroed, when it is not live or a field or
+// a call does not resolve.
+bool ReadPutState(void* screen, PutState& out);
+
+// The screen's em_take, the hotbar_1 key's verb. False when it does not resolve or the call fails.
+bool RunPut(void* screen);
+
+// The gamemode's playerContainer, the player's own inventory actor; null when the gamemode or the field does not resolve.
+void* PlayerContainer();
+
 }  // namespace ue_wrap::container_view

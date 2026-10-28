@@ -143,6 +143,21 @@ bool OverridesGetData(void* cls);
 // VOTV mod, publishes as a rule's spawn payload on its README Blueprint page (docs/credits.md).
 bool CaptureRecord(void* actor, SaveRecord& out);
 
+// `actor`'s record as the game's own addObject files it: the most-derived `getData`, with no splice convention, since
+// a put stores the record raw. False when `actor` is not a prop, `getData` does not resolve or the call fails.
+bool CaptureOwnRecord(void* actor, SaveRecord& out);
+
+// Whether `cls` is Aprop_C or a descendant of it: the classes a prop record can name. One walk of the class chain.
+bool IsPropClass(void* cls);
+
+// The prop's name, names[0][0] (Aprop_C::getData packs [name, nametag] as the first names group). False when the
+// record has no such element: a record that came off the wire is never indexed without this.
+inline bool RecordName(const SaveRecord& r, std::wstring& out) {
+    if (r.names.empty() || r.names[0].empty()) return false;
+    out = r.names[0][0];
+    return true;
+}
+
 // Hand a record back to `actor` through its own `loadData` -- the LEAF half of it only.
 //
 // Aprop_C::loadData restores the save Key, the two names, the four saved bools, the scale and the

@@ -413,6 +413,16 @@ bool CaptureRecord(void* actor, SaveRecord& out) {
     return CallForRecord(actor, v->getData, out);
 }
 
+bool CaptureOwnRecord(void* actor, SaveRecord& out) {
+    if (!actor) return false;
+    const ClassVerbs* v = VerbsFor(R::ClassOf(actor));
+    return v && v->getData && CallForRecord(actor, v->getData, out);
+}
+
+bool IsPropClass(void* cls) {
+    return cls && EnsurePropClass() && R::IsDescendantOfAny(cls, &g_propCls, 1);
+}
+
 bool ApplyRecord(void* actor, const SaveRecord& r, ClassResolver resolve) {
     if (!actor || !EnsurePropClass() || !g_baseGetData) return false;
     const ClassVerbs* v = VerbsFor(R::ClassOf(actor));

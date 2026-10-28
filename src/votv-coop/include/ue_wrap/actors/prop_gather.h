@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <string>
+
 namespace ue_wrap::prop_gather {
 
 // The three flags of a prop's data row. Read from the live struct in the prop, or, for a frozen prop, from the
@@ -40,5 +42,14 @@ bool IsGatherable(void* prop);
 // The prop's volume (the game's Get Volume on its mesh; zero when it has none) and the largest volume a
 // container a player can reach holds: the two numbers ReadPocketFacts compares.
 bool ReadVolumeAndBound(void* prop, float& volume, float& bound);
+
+// The list_props row of a prop NAME (any case), the row the game's own init() resets a frozen prop from. False when
+// the table cannot be read; `found` says whether it has the row, and `out` is the row's flags only then.
+bool ReadRowFlags(const std::wstring& name, PropDataFlags& out, bool& found);
+
+// The game's Get Volume with no mesh and the prop's name: the volume a container sums for a record it holds, by name.
+// `worldContext` is any live object. False when the call could not run (the library is not resolved); `valid` is
+// the function's own flag, false for a name it does not know, and `out` is then no volume.
+bool VolumeOfName(const std::wstring& name, void* worldContext, float& out, bool& valid);
 
 }  // namespace ue_wrap::prop_gather

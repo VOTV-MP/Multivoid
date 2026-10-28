@@ -61,6 +61,10 @@ struct MainPlayerGrabState {
 
 bool ReadMainPlayerGrabState(void* mainPlayer, MainPlayerGrabState& out);
 
+// mainPlayer_C's input_run, the run key's flag (a packed bitfield bool), which prop_container_C's playerUsedOn reads
+// to tell a put from a look. False on a null or dead pawn or an unresolved field. Game thread.
+bool ReadInputRun(void* mainPlayer, bool& out);
+
 // The player's own updateHold: the hand item rebuilt from the save slot's first hold slot, the one
 // held before destroyed. A dev drill's equip, after ue_wrap/actors/inventory::WriteHeldItem.
 // False when the function does not resolve or the call fails. Game thread.

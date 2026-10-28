@@ -42,6 +42,30 @@ uint8_t* ContentsSlot(void* inventory);
 bool ReadContents(void* inventory, std::vector<save_record::SaveRecord>& out, size_t maxRecords,
                   int32_t* countOut = nullptr);
 
+// The record count of GObjStack[stackIndex], the contents of the container whose Index that is. False when the save
+// slot, the field or the index (negative, or past the array) does not resolve; `count` is then 0.
+bool ReadStackCount(int32_t stackIndex, int32_t& count);
+
+// The GObjStack index a container record carries (ints[0][0]; an empty array reads as 0, as the game reads it).
+// False when the record is not a container's.
+bool ContainerStackIndex(const save_record::SaveRecord& r, int32_t& index);
+
+// What a put into `container` is judged on, as propInventory.addObject reads it: the volume room, whether the
+// inventory is infinite, whether the container is a mailbox, whether it is locked (playerUsedOn returns early on it).
+struct PutTerms {
+    float maxVol;
+    float currVol;
+    bool infinite;
+    bool ownerIsMailbox;
+    bool locked;
+};
+// False when `container` has no live inventory or a field does not resolve; `out` is then zeroed.
+bool ReadPutTerms(void* container, PutTerms& out);
+
+// Whether the inventory's filter holds the class `cls` (an exact class, as addObject asks it). False when the filter
+// does not read; `holds` is then false.
+bool FilterHolds(void* inventory, void* cls, bool& holds);
+
 // Whether a record's class is a container. A container record's ints[0][0] is its own GObjStack index,
 // which prop_container::loadData reads unguarded and propInventory::init binds when it is >= 0; -1 is
 // the class default's "none", the value the init guard is written against.

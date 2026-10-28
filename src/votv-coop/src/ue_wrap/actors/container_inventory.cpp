@@ -8,6 +8,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 
 #include <cstring>
 
@@ -78,17 +79,90 @@ bool IsWorldInventory(void* inventory) {
     return ReadAt<uint8_t>(inventory, g_offInvPlayer) == 0;
 }
 
-uint8_t* ContentsSlot(void* inventory) {
-    if (!inventory) return nullptr;
+namespace {
+
+// GObjStack[idx], the struct_mObject element: null when the save slot, the field or the index does not resolve.
+uint8_t* StackSlotAt(int32_t idx) {
+    if (idx < 0) return nullptr;
     void* save = ue_wrap::inventory::ResolveSaveSlot();
     if (!save) return nullptr;
     if (CachedOffset(g_offGObjStack, R::ClassOf(save), L"GObjStack") < 0) return nullptr;
-    if (CachedOffset(g_offInvIndex, R::ClassOf(inventory), L"Index") < 0) return nullptr;
-    const int32_t idx = ReadAt<int32_t>(inventory, g_offInvIndex);
-    if (idx < 0) return nullptr;
     const SR::Arr stack = SR::ReadArr(save, g_offGObjStack);
     if (idx >= stack.num) return nullptr;
     return const_cast<uint8_t*>(stack.data) + static_cast<size_t>(idx) * SR::kMxStride;
+}
+
+}  // namespace
+
+uint8_t* ContentsSlot(void* inventory) {
+    if (!inventory) return nullptr;
+    if (CachedOffset(g_offInvIndex, R::ClassOf(inventory), L"Index") < 0) return nullptr;
+    return StackSlotAt(ReadAt<int32_t>(inventory, g_offInvIndex));
+}
+
+bool ReadStackCount(int32_t stackIndex, int32_t& count) {
+    count = 0;
+    uint8_t* const slot = StackSlotAt(stackIndex);
+    if (!slot) return false;
+    count = SR::ReadArr(slot, 0).num;   // struct_mObject.obj @ +0
+    return true;
+}
+
+bool ContainerStackIndex(const SR::SaveRecord& r, int32_t& index) {
+    if (!IsContainerRecord(r)) return false;
+    index = !r.ints.empty() && !r.ints[0].empty() ? r.ints[0][0] : 0;
+    return true;
+}
+
+namespace {
+
+// A bitfield bool of one object's class, read by byte and mask; the class is asked again when it changes.
+struct BoolField {
+    void* cls = nullptr;
+    int32_t off = -1;
+    uint8_t mask = 0;
+};
+
+bool ReadBool(BoolField& f, void* obj, const wchar_t* name, bool& out) {
+    void* const cls = R::ClassOf(obj);
+    if (cls != f.cls) {
+        f.cls = cls;
+        f.off = -1;
+        f.mask = 0;
+        if (!R::FindBoolProperty(cls, name, f.off, f.mask)) f.off = -1;
+    }
+    if (f.off < 0 || f.mask == 0) return false;
+    out = (*(static_cast<const uint8_t*>(obj) + f.off) & f.mask) != 0;
+    return true;
+}
+
+}  // namespace
+
+bool ReadPutTerms(void* container, PutTerms& out) {
+    static BoolField sInfinite, sLocked;
+    static int32_t sMaxVol = -2;
+    out = PutTerms{};
+    void* const inv = InventoryOf(container);
+    if (!inv || CachedOffset(sMaxVol, R::ClassOf(inv), L"maxVol") < 0) return false;
+    PutTerms t{};
+    t.maxVol = ReadAt<float>(inv, sMaxVol);
+    if (!CurrentVolume(inv, t.currVol) || !ReadBool(sInfinite, inv, L"infinite", t.infinite) ||
+        !ReadBool(sLocked, container, L"locked", t.locked))
+        return false;
+    void* const mailbox = ue_wrap::object_index::ClassByName(L"prop_mailbox_C");
+    t.ownerIsMailbox = mailbox && ue_wrap::prop::WalksToBase(R::ClassOf(container), mailbox);
+    out = t;
+    return true;
+}
+
+bool FilterHolds(void* inventory, void* cls, bool& holds) {
+    static int32_t sFilter = -2;
+    holds = false;
+    if (!inventory || !cls || CachedOffset(sFilter, R::ClassOf(inventory), L"filter") < 0) return false;
+    const SR::Arr filter = SR::ReadArr(inventory, sFilter);
+    for (int32_t i = 0; i < filter.num; ++i)
+        if (ReadAt<void*>(filter.data, i * static_cast<int32_t>(sizeof(void*))) == cls) { holds = true; break; }
+    return true;
 }
 
 bool ReadContents(void* inventory, std::vector<SR::SaveRecord>& out, size_t maxRecords,

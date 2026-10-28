@@ -10,6 +10,7 @@
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/field_io.h"
+#include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -503,6 +504,32 @@ bool ReadHoldFacts(void* prop, HoldFacts& out) {
     f.saveClass = !IsEmptySaveClass(prop) && !IsHosePlacing(prop);
     if (!HasEquipRow(name, &f.equipRow)) return false;
     out = f;
+    return true;
+}
+
+bool ReadRowFlags(const std::wstring& name, PropDataFlags& out, bool& found) {
+    UE_ASSERT_GAME_THREAD("prop_gather::ReadRowFlags");
+    out = PropDataFlags{};
+    found = false;
+    void* mesh = nullptr;
+    return ListPropsRow(Lower(name), out, &mesh, &found);
+}
+
+bool VolumeOfName(const std::wstring& name, void* worldContext, float& out, bool& valid) {
+    UE_ASSERT_GAME_THREAD("prop_gather::VolumeOfName");
+    out = 0.f;
+    valid = false;
+    if (!worldContext || !EnsureLib()) return false;
+    ParamFrame f(g_getVolume.Fn());
+    float volume = 0.f;
+    bool known = false;
+    if (!f.valid() || !f.Set<R::FName>(L"name", fname_utils::StringToFName(name)) ||
+        !f.Set<void*>(L"__WorldContext", worldContext) || !Call(g_libCdo.Get(), f) ||
+        !f.GetRaw(L"volume", &volume, static_cast<int32_t>(sizeof volume)) ||
+        !f.GetRaw(L"valid", &known, static_cast<int32_t>(sizeof known)))
+        return false;
+    out = volume;
+    valid = known;
     return true;
 }
 
