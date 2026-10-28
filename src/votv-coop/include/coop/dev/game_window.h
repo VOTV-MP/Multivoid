@@ -16,7 +16,12 @@ namespace coop::dev::game_window {
 // where the foreground window is not: an unattended run can have another window focused.
 HWND GameWindow();
 
-// A press and release of the virtual key `vk` posted to the game window. False without a window.
+// The press of the virtual key `vk` posted to the game window, and its release. A game action that reads the key HELD
+// (a use key that opens after a delay) takes the first, a wait, then the second. False without a window.
+bool PostKeyDown(unsigned vk);
+bool PostKeyUp(unsigned vk);
+
+// A press and release of `vk`, back to back: both calls above in one pump pass. False without a window.
 bool PostKeyPress(unsigned vk);
 
 // A WM_CHAR for `c` posted to the game window: the character message the window's queue would

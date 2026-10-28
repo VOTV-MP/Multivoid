@@ -118,6 +118,8 @@ CFG_FLAG(desk_snd_selftest, "desk_snd_selftest", "dev", false, nullptr,
 // The container rows (selftest, join drill and its red arms, opener probe, view drill): their own file, one concept,
 // included as _dev_port.inc is above.
 #include "coop/config/config_registry_rows_dev_container.inc"
+// The pr64 drill's row: its own file, one concept.
+#include "coop/config/config_registry_rows_dev_pr64.inc"
 CFG_FLAG(hand_drop_selftest, "hand_drop_selftest", "dev", false, "VOTVCOOP_HAND_DROP_SELFTEST",
     "Autonomous selftest: a prop through a player's hotbar HAND and back out -- pick it up with "
     "the game's own verb, drop it, first with the host holding and then with the client, twice "

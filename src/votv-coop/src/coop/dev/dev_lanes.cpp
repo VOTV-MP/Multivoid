@@ -13,6 +13,7 @@
 #include "coop/dev/container_selftest.h"  // [dev] container-lane e2e circle (organic addLoot)
 #include "coop/dev/container_view_drill.h"  // [dev] a container view closes as its opener leaves reach
 #include "coop/dev/container_intent_drill.h"  // [dev] a client takes from a shared container by the player's click
+#include "coop/dev/pr64_drill.h"  // [dev] a client's E on a host-owned coin and a drive box's lid, measured on both peers
 #include "coop/dev/container_route_census.h"  // [dev] each container verb counted by the route on its stack
 #include "coop/dev/container_route_drill.h"  // [dev] the census drill: each route driven once on a client
 #include "coop/dev/death_seam_census.h"  // [dev] every element end the death seam announces
@@ -208,6 +209,7 @@ void EndSession() {
     coop::dev::keypad_drill::OnDisconnect();  // [dev] the keypad and the legs belong to one world
     coop::dev::container_view_drill::OnDisconnect();  // [dev] the ATV, the view and the walks belong to one world
     coop::dev::container_intent_drill::OnDisconnect();  // [dev] the target, the screen and the walk belong to one session
+    coop::dev::pr64_drill::OnDisconnect();  // [dev] the arm's steps and its walk belong to one session
     coop::dev::container_route_drill::OnDisconnect();  // [dev] the fixtures and the steps belong to one session
     coop::dev::container_route_census::OnDisconnect();  // [dev] the census reports and starts over
     coop::dev::physmods_drill::OnDisconnect();  // [dev] the client arms again, so a rejoin says its line
@@ -340,6 +342,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::container_writer_probe::Tick(&session);  // [dev] a container changed by a writer nothing watches (latched read when off)
     coop::dev::container_view_drill::Tick(&session);  // [dev] the view-close drill (a single bool read when off)
     coop::dev::container_intent_drill::Tick(&session);  // [dev] the container intent drill (a latched bool read when off)
+    coop::dev::pr64_drill::Tick(&session);  // [dev] the pr64 drill (a latched enum read when off)
     coop::dev::container_route_census::Tick(&session);  // [dev] the route census (a latched string read when off)
     coop::dev::container_route_drill::Tick(&session);  // [dev] the census drill (a latched bool read when off)
     coop::dev::physmods_drill::Tick(&session);  // [dev] the module-plug drill (a single bool read when off)
