@@ -47,6 +47,8 @@ constexpr std::chrono::seconds kAssemblyTtl{10};
 struct Queued {
     caw::Request req;
     uint64_t queuedMs = 0;
+    // What the head was last held on (WaitCause's text); the queue hands the head out const, so the serving writes it.
+    mutable const char* lastWait = nullptr;
 };
 
 struct Slot {
@@ -211,7 +213,10 @@ const char* WaitCause(const internal::Inputs& in) {
 // world load.
 coop::net::Served WaitOrEnd(uint8_t slot, const Queued& item, const internal::Inputs& in) {
     const uint64_t now = coop::net::NowMs();
-    if (!internal::WaitExpired(item.queuedMs, now)) return coop::net::Served::Wait;
+    if (!internal::WaitExpired(item.queuedMs, now)) {
+        item.lastWait = WaitCause(in);
+        return coop::net::Served::Wait;
+    }
     Bump(Tally::WaitExpired);
     Answer(slot, ReplyOf(internal::Verdict::Gone, item.req.id));
     g_refusals.Note(slot, "wait expired", Now());
@@ -219,6 +224,17 @@ coop::net::Served WaitOrEnd(uint8_t slot, const Queued& item, const internal::In
             static_cast<unsigned>(item.req.id), static_cast<unsigned>(item.req.eid), FamilyName(item.req.family),
             static_cast<unsigned long long>(now - item.queuedMs), WaitCause(in));
     return coop::net::Served::Done;
+}
+
+// A head served after it waited this long says what it waited on.
+constexpr uint64_t kWaitedLineMs = 1000;
+
+void NoteWaited(uint8_t slot, const Queued& item) {
+    const uint64_t waited = coop::net::NowMs() - item.queuedMs;
+    if (waited < kWaitedLineMs) return;
+    UE_LOGI("container_act: slot=%u id=%u eid=%u waited %llu ms (last wait: %s)", static_cast<unsigned>(slot),
+            static_cast<unsigned>(item.req.id), static_cast<unsigned>(item.req.eid),
+            static_cast<unsigned long long>(waited), item.lastWait ? item.lastWait : "none");
 }
 
 // One queued request, judged.
@@ -249,6 +265,7 @@ coop::net::Served ServeHead(uint8_t slot, const Queued& item) {
             h.grantedMs = coop::net::NowMs();
             if (!cas::Live().Open(h)) {   // cannot happen past holdsWait; the record must not be lost if it does
                 Bump(Tally::GrantUnsent);
+                NoteWaited(slot, item);
                 Restore(std::move(h), "hold not opened");
                 Answer(slot, ReplyOf(internal::Verdict::Gone, q.id));   // so the client does not wait out its 10 s
                 return coop::net::Served::Done;
@@ -256,6 +273,7 @@ coop::net::Served ServeHead(uint8_t slot, const Queued& item) {
         }
     }
 
+    NoteWaited(slot, item);
     const bool sent = Answer(slot, ReplyOf(v, q.id));
     if (v == internal::Verdict::Grant && !sent) {
         Bump(Tally::GrantUnsent);
