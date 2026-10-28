@@ -351,7 +351,7 @@ msgstr ""
 msgid "Also refuses anyone connecting from the same address -- people who share their router or their provider's address are refused too. It only works on a direct connection: a player who comes through a relay is refused by their identity alone."
 msgstr ""
 
-#: src/coop/props/prop_act_request.cpp
+#: src/coop/props/container_act_request.cpp src/coop/props/prop_act_request.cpp
 msgid "Another player is using that item."
 msgstr ""
 
@@ -1514,6 +1514,10 @@ msgstr ""
 
 #: src/coop/net/end_reason.cpp
 msgid "Too many password attempts. Try again in ten minutes."
+msgstr ""
+
+#: src/coop/props/container_act_request.cpp
+msgid "Try again in a moment."
 msgstr ""
 
 #: include/coop/commands/command_dispatcher.h

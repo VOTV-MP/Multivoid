@@ -2,6 +2,7 @@
 
 #include "coop/props/container_act_host.h"
 
+#include "coop/element/registry.h"
 #include "coop/net/blob_chunks.h"
 #include "coop/net/intent_queue.h"
 #include "coop/net/net_clock.h"
@@ -14,8 +15,10 @@
 #include "coop/props/container_slice_wire.h"
 
 #include "ue_wrap/actors/container_inventory.h"
+#include "ue_wrap/actors/prop_gather.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 
 #include <algorithm>
 #include <chrono>
@@ -32,6 +35,9 @@ namespace cas = coop::props::container_act_state;
 namespace cre = coop::props::container_record_edit;
 namespace caw = coop::props::container_act_wire;
 namespace cr  = coop::props::container_reach;
+namespace csw = coop::props::container_slice_wire;
+namespace ci  = ue_wrap::container_inventory;
+namespace pg  = ue_wrap::prop_gather;
 namespace SR  = ue_wrap::save_record;
 using coop::net::ContainerActFamily;
 using coop::net::ContainerActReason;
@@ -59,9 +65,11 @@ struct Slot {
     uint64_t truthAnyMs = 0;                              // any container: when the last one went (0: none yet)
 };
 
-// A restore that could not write when it was tried: the hold, and when its next ERROR is due.
+// A write that could not happen when it was tried: the hold (the record, where it goes), whose record it is, and when
+// its next ERROR is due.
 struct Owed {
     cas::Hold hold;
+    cre::Source src;
     uint64_t nextErrorMs;
 };
 
@@ -107,45 +115,62 @@ const char* FamilyName(uint8_t family) {
 // MTA's vehicle entry reserves the seat at the request, confirms it, and commits with a re-check (CGame.cpp:3148-3153,
 // 3419-3445). Ours holds the record itself, because a take shifts every later index.
 //
-// Put a hold's record back where it was. Done: said. NoElement: the container is gone and the record with it. Any other
-// result is a write that cannot happen now: the hold is owed and retried, never dropped while the session runs.
-void Restore(cas::Hold h, const char* why) {
-    const cre::EditResult r = cre::InsertAt(h.eid, h.index, h.record, cre::Source::Host);
+// Write a hold's record into its container at its index. `what` is the verb the log says on success. NoElement and
+// NoInventory are permanent: the container is gone, or no longer holds a world inventory, and the record with it. Any
+// other result is a write that cannot happen now: it is owed with its source and retried, never dropped while the
+// session runs.
+void Place(cas::Hold h, const char* why, cre::Source src, const char* what) {
+    const cre::EditResult r = cre::InsertAt(h.eid, h.index, h.record, src);
     if (r == cre::EditResult::Done) {
-        UE_LOGI("container_act: slot=%u id=%u eid=%u %s, restored", static_cast<unsigned>(h.slot),
-                static_cast<unsigned>(h.id), static_cast<unsigned>(h.eid), why);
+        UE_LOGI("container_act: slot=%u id=%u eid=%u %s, %s", static_cast<unsigned>(h.slot), static_cast<unsigned>(h.id),
+                static_cast<unsigned>(h.eid), why, what);
         return;
     }
-    if (r == cre::EditResult::NoElement) {
+    if (r == cre::EditResult::NoElement || r == cre::EditResult::NoInventory) {
         Bump(Tally::TargetGone);
-        UE_LOGI("container_act: slot=%u id=%u eid=%u %s, the container is gone and the record with it",
-                static_cast<unsigned>(h.slot), static_cast<unsigned>(h.id), static_cast<unsigned>(h.eid), why);
+        UE_LOGI("container_act: slot=%u id=%u eid=%u %s, the container is %s and the record with it",
+                static_cast<unsigned>(h.slot), static_cast<unsigned>(h.id), static_cast<unsigned>(h.eid), why,
+                r == cre::EditResult::NoElement ? "gone" : "no longer a world container");
         return;
     }
     Bump(Tally::RestoreOwed);
-    UE_LOGE("container_act: slot=%u id=%u eid=%u %s -- the restore of a %ls at index %u failed (%s); owed, retried "
+    UE_LOGE("container_act: slot=%u id=%u eid=%u %s -- the write of a %ls at index %u failed (%s); owed, retried "
             "every second", static_cast<unsigned>(h.slot), static_cast<unsigned>(h.id), static_cast<unsigned>(h.eid),
             why, h.record.className.c_str(), static_cast<unsigned>(h.index), cre::EditResultName(r));
-    g_restoreOwed.push_back(Owed{std::move(h), coop::net::NowMs() + kOwedErrorEveryMs});
+    g_restoreOwed.push_back(Owed{std::move(h), src, coop::net::NowMs() + kOwedErrorEveryMs});
 }
 
-// Try every owed restore once; an ERROR for one still owed once a minute.
+// Put an escrow's record back where it was.
+void Restore(cas::Hold h, const char* why) { Place(std::move(h), why, cre::Source::Host, "restored"); }
+
+// The one place a hold's end is acted on, whatever ended it: an escrow's record is restored; a reservation is released
+// and inserts nothing.
+void EndHold(cas::Hold h, const char* why) {
+    if (h.kind == cas::HoldKind::Escrow) {
+        Restore(std::move(h), why);
+        return;
+    }
+    UE_LOGI("container_act: slot=%u id=%u eid=%u %s, reservation released", static_cast<unsigned>(h.slot),
+            static_cast<unsigned>(h.id), static_cast<unsigned>(h.eid), why);
+}
+
+// Try every owed write once; an ERROR for one still owed once a minute.
 void RetryOwed(uint64_t now) {
     for (size_t i = 0; i < g_restoreOwed.size();) {
         Owed& o = g_restoreOwed[i];
         const cas::Hold& h = o.hold;
-        const cre::EditResult r = cre::InsertAt(h.eid, h.index, h.record, cre::Source::Host);
-        if (r == cre::EditResult::Done || r == cre::EditResult::NoElement) {
-            if (r == cre::EditResult::NoElement) Bump(Tally::TargetGone);
-            UE_LOGI("container_act: slot=%u id=%u eid=%u owed restore %s", static_cast<unsigned>(h.slot),
+        const cre::EditResult r = cre::InsertAt(h.eid, h.index, h.record, o.src);
+        if (r == cre::EditResult::Done || r == cre::EditResult::NoElement || r == cre::EditResult::NoInventory) {
+            if (r != cre::EditResult::Done) Bump(Tally::TargetGone);
+            UE_LOGI("container_act: slot=%u id=%u eid=%u owed write %s", static_cast<unsigned>(h.slot),
                     static_cast<unsigned>(h.id), static_cast<unsigned>(h.eid),
-                    r == cre::EditResult::Done ? "done" : "dropped, the container is gone");
+                    r == cre::EditResult::Done ? "done" : "dropped, the container is gone or holds no world inventory");
             g_restoreOwed.erase(g_restoreOwed.begin() + static_cast<std::ptrdiff_t>(i));
             continue;
         }
         if (now >= o.nextErrorMs) {
             o.nextErrorMs = now + kOwedErrorEveryMs;
-            UE_LOGE("container_act: eid=%u index=%u: a %ls is still owed back to the container (%s)",
+            UE_LOGE("container_act: eid=%u index=%u: a %ls is still owed to the container (%s)",
                     static_cast<unsigned>(h.eid), static_cast<unsigned>(h.index), h.record.className.c_str(),
                     cre::EditResultName(r));
         }
@@ -162,6 +187,10 @@ coop::net::ContainerActReplyPayload ReplyOf(internal::Verdict v, uint16_t id) {
         case internal::Verdict::Grant:       return {id, 1, static_cast<uint8_t>(ContainerActReason::Granted)};
         case internal::Verdict::Reach:       return {id, 0, static_cast<uint8_t>(ContainerActReason::Reach)};
         case internal::Verdict::WrongFamily: return {id, 0, static_cast<uint8_t>(ContainerActReason::WrongFamily)};
+        case internal::Verdict::Locked:      return {id, 0, static_cast<uint8_t>(ContainerActReason::Locked)};
+        case internal::Verdict::NoSpace:     return {id, 0, static_cast<uint8_t>(ContainerActReason::NoSpace)};
+        case internal::Verdict::Refused:     return {id, 0, static_cast<uint8_t>(ContainerActReason::Refused)};
+        case internal::Verdict::Lapsed:      return {id, 0, static_cast<uint8_t>(ContainerActReason::Lapsed)};
         case internal::Verdict::Gone:
         case internal::Verdict::Wait:        break;
     }
@@ -183,11 +212,13 @@ void SendTruth(uint8_t slot, uint32_t eid) {
 }
 
 // Reads Decide's inputs in Decide's order and stops at the first that decides, so a request that must wait reads only
-// what the wait needs. The record lookup comes last: it reads and hashes the whole container.
+// what the wait needs. A take's record lookup comes last: it reads and hashes the whole container. A put's own terms
+// are read after this, by ReadPutInputs.
 void ReadInputs(uint8_t slot, const caw::Request& q, internal::Inputs& in, uint16_t& foundIndex) {
     in.worldReady = g_session->IsSlotWorldReady(slot);
     if (!in.worldReady) return;
-    in.served = q.family == static_cast<uint8_t>(ContainerActFamily::Take);
+    in.served = q.family == static_cast<uint8_t>(ContainerActFamily::Take) ||
+                q.family == static_cast<uint8_t>(ContainerActFamily::PutRecord);
     if (!in.served) return;
     in.holdsWait = cas::Live().WaitsOnHolds(q.family != static_cast<uint8_t>(ContainerActFamily::Take), q.eid, slot);
     if (in.holdsWait) return;
@@ -199,22 +230,84 @@ void ReadInputs(uint8_t slot, const caw::Request& q, internal::Inputs& in, uint1
         default:                        in.container = internal::Container::Gone; break;
     }
     if (in.container != internal::Container::Ready || in.reach == cr::Reach::Unreachable) return;
+    if (q.family != static_cast<uint8_t>(ContainerActFamily::Take)) return;
     // Past Probe the only failure of the read is Unreadable, a count over the cap: permanent, so the record is gone.
     std::vector<SR::SaveRecord> recs;
     if (cre::ReadRecords(q.eid, recs, /*neuterNested=*/true) != cre::EditResult::Done) return;
     // The honest address is the record at the named index: hash that one alone, and the rest only on a mismatch.
-    if (q.index < recs.size() && coop::props::container_slice_wire::RecordHash(recs[q.index]) == q.hash) {
+    if (q.index < recs.size() && csw::RecordHash(recs[q.index]) == q.hash) {
         in.found = true;
         foundIndex = q.index;
         return;
     }
     std::vector<uint64_t> hashes;
     hashes.reserve(recs.size());
-    for (const SR::SaveRecord& r : recs) hashes.push_back(coop::props::container_slice_wire::RecordHash(r));
+    for (const SR::SaveRecord& r : recs) hashes.push_back(csw::RecordHash(r));
     const std::optional<size_t> at = internal::FindRecord(hashes, q.index, q.hash);
     if (!at) return;
     in.found = true;
     foundIndex = static_cast<uint16_t>(*at);
+}
+
+// The container's room for one more record of `rec`'s size (and the fridge flag the container adds): the lane's record
+// cap and the slice's byte ceiling, the one SendBlob enforces on what the container publishes. Done unless the
+// container moved under the read; a count past the cap does not read at all, and is the cap.
+cre::EditResult ReadFit(uint32_t eid, const SR::SaveRecord& rec, bool& countAtCap, bool& bytesOver) {
+    countAtCap = bytesOver = false;
+    std::vector<SR::SaveRecord> recs;
+    const cre::EditResult r = cre::ReadRecords(eid, recs, /*neuterNested=*/false);
+    if (r == cre::EditResult::Unreadable) {
+        countAtCap = true;
+        return cre::EditResult::Done;
+    }
+    if (r != cre::EditResult::Done) return r;
+    countAtCap = recs.size() >= csw::kMaxRecords;
+    bytesOver = csw::Pack(eid, 0, recs).size() + caw::RecordBytes(rec) + caw::kFridgeElementBytes >
+                coop::blob_chunks::MaxBlobBytes();
+    return cre::EditResult::Done;
+}
+
+// A put's own terms, read in DecidePut's order after the common ones; each read stops at the first term that decides.
+// The class resolves through the object index, the resolver the container's own write uses, so a name it cannot
+// resolve is refused here and never written as a null class; a forged name costs a hash probe, not an array walk.
+void ReadPutInputs(uint8_t slot, const caw::Request& q, internal::PutInputs& p) {
+    const internal::Inputs& b = p.base;
+    if (!b.worldReady || b.holdsWait || b.reach != cr::Reach::Reached || b.container != internal::Container::Ready)
+        return;
+    void* const actor = coop::element::LivePropActor(q.eid);
+    ci::PutTerms t{};
+    p.termsRead = actor && ci::ReadPutTerms(actor, t);
+    if (!p.termsRead) return;
+    p.locked = t.locked;
+    p.slowed = cas::Live().Slowed(slot, coop::net::NowMs());
+    if (p.locked || p.slowed) return;
+    std::wstring name;
+    p.nameOk = SR::RecordName(q.record, name);
+    if (!p.nameOk) return;
+    void* const cls = ue_wrap::object_index::ClassByName(q.record.className.c_str());
+    p.classResolved = cls != nullptr;
+    p.propClass = SR::IsPropClass(cls);
+    if (!p.classResolved || !p.propClass) return;
+    p.filterRead = ci::FilterHolds(ci::InventoryOf(actor), cls, p.filterHolds);
+    if (!p.filterRead || p.filterHolds) return;
+    p.mailboxContainer = t.ownerIsMailbox && ci::IsContainerRecord(q.record);
+    if (p.mailboxContainer) return;
+    pg::PropDataFlags row{};
+    bool found = false;
+    p.rowRead = pg::ReadRowFlags(name, row, found);
+    if (!p.rowRead) return;
+    p.rowRefuses = found && (!row.canCollect || row.heavy);   // a class with no row is collectable, the game's rule
+    if (p.rowRefuses) return;
+    switch (ReadFit(q.eid, q.record, p.countAtCap, p.bytesOver)) {
+        case cre::EditResult::Done:     break;
+        case cre::EditResult::NotReady: p.base.container = internal::Container::NotReady; return;
+        default:                        p.base.container = internal::Container::Gone; return;
+    }
+    if (p.countAtCap || p.bytesOver) return;
+    p.infinite = t.infinite;
+    p.maxVol = t.maxVol;
+    p.currVol = t.currVol;
+    if (!t.infinite) p.volumeRead = pg::VolumeOfName(name, actor, p.volume, p.volumeKnown);
 }
 
 // What the head waits on, for the line that ends the wait.
@@ -264,42 +357,77 @@ cre::EditResult KeepRecord(uint32_t eid, uint16_t index, SR::SaveRecord& out) {
     return cre::EditResult::Done;
 }
 
+// A take's grant: the record leaves the container into an escrow. Empty when the grant stands; the head's own
+// answer when it could not be made (a wait, or a hold that would not open), `v` set to Gone when the record moved.
+std::optional<coop::net::Served> GrantTake(uint8_t slot, const Queued& item, const internal::Inputs& in,
+                                           uint16_t foundIndex, internal::Verdict& v) {
+    const caw::Request& q = item.req;
+    SR::SaveRecord taken;
+    switch (g_noEscrow ? KeepRecord(q.eid, foundIndex, taken) : cre::RemoveAt(q.eid, foundIndex, q.hash, taken)) {
+        case cre::EditResult::Done:     break;
+        case cre::EditResult::NotReady: return WaitOrEnd(slot, item, in);
+        default:                        v = internal::Verdict::Gone; return std::nullopt;   // moved under the lookup
+    }
+    cas::Hold h;
+    h.kind = cas::HoldKind::Escrow;
+    h.slot = slot;
+    h.id = q.id;
+    h.eid = q.eid;
+    h.index = foundIndex;
+    h.record = std::move(taken);
+    h.grantedMs = coop::net::NowMs();
+    if (cas::Live().Open(h)) {
+        g_lastGrantId[slot] = q.id;
+        return std::nullopt;
+    }
+    // Cannot happen past holdsWait; the record must not be lost if it does.
+    Bump(Tally::GrantUnsent);
+    NoteWaited(slot, item);
+    EndHold(std::move(h), "hold not opened");
+    Answer(slot, ReplyOf(internal::Verdict::Gone, q.id));   // so the client does not wait out its 10 s
+    return coop::net::Served::Done;
+}
+
+// A put's grant: room is reserved for the asked record and nothing is written.
+std::optional<coop::net::Served> GrantPut(uint8_t slot, const caw::Request& q) {
+    cas::Hold h;
+    h.kind = cas::HoldKind::Reservation;
+    h.slot = slot;
+    h.id = q.id;
+    h.eid = q.eid;
+    h.record = q.record;
+    h.grantedMs = coop::net::NowMs();
+    if (cas::Live().Open(std::move(h))) return std::nullopt;
+    Bump(Tally::GrantUnsent);   // cannot happen past holdsWait
+    Answer(slot, ReplyOf(internal::Verdict::Gone, q.id));
+    return coop::net::Served::Done;
+}
+
 // One queued request, judged.
 coop::net::Served ServeHead(uint8_t slot, const Queued& item) {
     const caw::Request& q = item.req;
-    internal::Inputs in;
+    const bool put = q.family == static_cast<uint8_t>(ContainerActFamily::PutRecord);
+    internal::PutInputs pin;
+    internal::Inputs& in = pin.base;
     uint16_t foundIndex = 0;
     ReadInputs(slot, q, in, foundIndex);
 
-    internal::Verdict v = internal::Decide(in);
+    Tally refusal = Tally::kCount;
+    internal::Verdict v = internal::Verdict::WrongFamily;
+    if (put) {
+        ReadPutInputs(slot, q, pin);
+        v = internal::DecidePut(pin, &refusal);
+    } else {
+        v = internal::Decide(in);
+    }
     if (v == internal::Verdict::Wait) return WaitOrEnd(slot, item, in);
 
     if (v == internal::Verdict::Grant) {
-        SR::SaveRecord taken;
-        switch (g_noEscrow ? KeepRecord(q.eid, foundIndex, taken) : cre::RemoveAt(q.eid, foundIndex, q.hash, taken)) {
-            case cre::EditResult::Done:     break;
-            case cre::EditResult::NotReady: return WaitOrEnd(slot, item, in);
-            default:                        v = internal::Verdict::Gone; break;   // moved under the lookup
-        }
-        if (v == internal::Verdict::Grant) {
-            cas::Hold h;
-            h.kind = cas::HoldKind::Escrow;
-            h.slot = slot;
-            h.id = q.id;
-            h.eid = q.eid;
-            h.index = foundIndex;
-            h.record = std::move(taken);
-            h.grantedMs = coop::net::NowMs();
-            if (!cas::Live().Open(h)) {   // cannot happen past holdsWait; the record must not be lost if it does
-                Bump(Tally::GrantUnsent);
-                NoteWaited(slot, item);
-                Restore(std::move(h), "hold not opened");
-                Answer(slot, ReplyOf(internal::Verdict::Gone, q.id));   // so the client does not wait out its 10 s
-                return coop::net::Served::Done;
-            }
-            g_lastGrantId[slot] = q.id;
-        }
+        const std::optional<coop::net::Served> early =
+            put ? GrantPut(slot, q) : GrantTake(slot, item, in, foundIndex, v);
+        if (early) return *early;
     }
+    if (refusal != Tally::kCount) Bump(refusal);
 
     NoteWaited(slot, item);
     const coop::net::ContainerActReplyPayload reply = ReplyOf(v, q.id);
@@ -308,9 +436,9 @@ coop::net::Served ServeHead(uint8_t slot, const Queued& item) {
     else sent = Answer(slot, reply);
     if (v == internal::Verdict::Grant && !sent) {
         Bump(Tally::GrantUnsent);
-        if (std::optional<cas::Hold> h = cas::Live().Close(slot, q.id)) Restore(std::move(*h), "grant not sent");
+        if (std::optional<cas::Hold> h = cas::Live().Close(slot, q.id)) EndHold(std::move(*h), "grant not sent");
     } else if (v != internal::Verdict::Grant) {
-        g_refusals.Note(slot, internal::VerdictName(v), Now());
+        g_refusals.Note(slot, refusal != Tally::kCount ? TallyName(refusal) : internal::VerdictName(v), Now());
     }
     if (v == internal::Verdict::Gone && in.container == internal::Container::Ready) SendTruth(slot, q.eid);
     if (v == internal::Verdict::Grant && sent) ++g_verdicts[q.eid].grants;
@@ -319,6 +447,59 @@ coop::net::Served ServeHead(uint8_t slot, const Queued& item) {
             static_cast<unsigned>(q.eid), FamilyName(q.family),
             v == internal::Verdict::Grant && !sent ? "grant-unsent" : internal::VerdictName(v));
     return coop::net::Served::Done;
+}
+
+// A commit whose hold is gone: the deadline released a reservation and left its tombstone, so an honest client's late
+// answer ends here. True when the commit was a tombstone's, consumed whatever came of it; false when it has none, so
+// it is a bad commit. A late done is inserted like a timely one, unfitted at worst (volume is the client's fit), unless
+// the container has since filled past a cap, taken a hold or filtered the class: then it is named and lost.
+bool LateCommit(uint8_t slot, const caw::Commit& c) {
+    if ((c.committed == 1) != c.hasRecord) return false;
+    std::optional<cas::Tombstone> t = cas::Live().ConsumeTombstone(slot, c.id, c.eid);
+    if (!t) return false;
+    if (c.committed == 0) {
+        UE_LOGI("container_act: slot=%u id=%u eid=%u late put abort, nothing to release", static_cast<unsigned>(slot),
+                static_cast<unsigned>(c.id), static_cast<unsigned>(c.eid));
+        return true;
+    }
+    std::wstring name;
+    if (c.record.className != t->className || !SR::RecordName(c.record, name) || name != t->name) {
+        Bump(Tally::BadCommit);
+        g_refusals.Note(slot, "late commit names another record", Now());
+        UE_LOGI("container_act: slot=%u id=%u eid=%u late put done names another record -> bad",
+                static_cast<unsigned>(slot), static_cast<unsigned>(c.id), static_cast<unsigned>(c.eid));
+        return true;
+    }
+    bool countAtCap = false, bytesOver = false;
+    const cre::EditResult read = ReadFit(c.eid, c.record, countAtCap, bytesOver);
+    if (read == cre::EditResult::NoElement || read == cre::EditResult::NoInventory) {
+        Bump(Tally::TargetGone);
+        UE_LOGI("container_act: slot=%u id=%u eid=%u late put done, the container is gone and the item with it",
+                static_cast<unsigned>(slot), static_cast<unsigned>(c.id), static_cast<unsigned>(c.eid));
+        return true;
+    }
+    void* const cls = ue_wrap::object_index::ClassByName(c.record.className.c_str());
+    bool filtered = false;
+    const bool filterRead = cls && ci::FilterHolds(ci::InventoryOf(coop::element::LivePropActor(c.eid)), cls, filtered);
+    if (countAtCap || bytesOver || cas::Live().HoldOn(c.eid) || !filterRead || filtered) {
+        Bump(Tally::BadCommit);
+        Bump(Tally::LateDoneLost);
+        g_refusals.Note(slot, "late put done over the cap", Now());
+        UE_LOGW("container_act: late put done over the cap (eid %u, %ls) -- the item is lost",
+                static_cast<unsigned>(c.eid), c.record.className.c_str());
+        return true;
+    }
+    cas::Hold h;
+    h.slot = slot;
+    h.id = c.id;
+    h.eid = c.eid;
+    h.index = c.index;
+    h.record = c.record;
+    Bump(Tally::LateDone);
+    UE_LOGI("container_act: late put done inserted (eid %u, %ls)", static_cast<unsigned>(c.eid),
+            c.record.className.c_str());
+    Place(std::move(h), "late put done", cre::Source::Wire, "inserted");
+    return true;
 }
 
 }  // namespace
@@ -337,13 +518,52 @@ Verdict Decide(const Inputs& in) {
     return Verdict::Grant;
 }
 
-bool CommitMatches(const cas::Hold* h, uint32_t commitEid, bool hasRecord) {
-    return h && h->kind == cas::HoldKind::Escrow && h->eid == commitEid && !hasRecord;
+Verdict DecidePut(const PutInputs& in, Tally* refusal) {
+    Tally none = Tally::kCount;
+    Tally& why = refusal ? *refusal : none;
+    why = Tally::kCount;
+    const Inputs& b = in.base;
+    if (!b.worldReady) return Verdict::Wait;
+    if (b.holdsWait) return Verdict::Wait;
+    if (b.reach == cr::Reach::NoBody) return Verdict::Wait;
+    if (b.container == Container::Gone) return Verdict::Gone;
+    if (b.container == Container::NotReady) return Verdict::Wait;
+    if (b.reach == cr::Reach::Unreachable) return Verdict::Reach;
+    if (!in.termsRead) return Verdict::Wait;
+    if (in.locked) return Verdict::Locked;
+    if (in.slowed) return Verdict::Lapsed;
+    if (!in.nameOk) { why = Tally::PutNoName; return Verdict::Refused; }
+    if (!in.classResolved) { why = Tally::PutClassUnresolved; return Verdict::Refused; }
+    if (!in.propClass) { why = Tally::PutNotProp; return Verdict::Refused; }
+    if (!in.filterRead) return Verdict::Wait;
+    if (in.filterHolds) { why = Tally::PutFiltered; return Verdict::Refused; }
+    if (in.mailboxContainer) { why = Tally::PutIntoMailbox; return Verdict::Refused; }
+    if (!in.rowRead) return Verdict::Wait;
+    if (in.rowRefuses) { why = Tally::PutRowRefuses; return Verdict::Refused; }
+    if (in.countAtCap || in.bytesOver) return Verdict::NoSpace;
+    if (!in.infinite) {
+        if (!in.volumeRead) return Verdict::Wait;
+        if (!in.volumeKnown) { why = Tally::PutUnknownName; return Verdict::Refused; }
+        if (in.currVol + in.volume > in.maxVol) return Verdict::NoSpace;
+    }
+    return Verdict::Grant;
+}
+
+bool CommitMatches(const cas::Hold* h, uint32_t commitEid, bool hasRecord, uint8_t committed) {
+    if (!h || h->eid != commitEid) return false;
+    if (h->kind == cas::HoldKind::Escrow) return !hasRecord;
+    return hasRecord == (committed == 1);
 }
 
 CommitStep DecideCommit(bool matched, uint8_t committed) {
     if (!matched) return CommitStep::BadCommit;
     return committed == 1 ? CommitStep::Done : CommitStep::Abort;
+}
+
+bool StoredMatches(const SR::SaveRecord& asked, const SR::SaveRecord& stored) {
+    std::wstring askedName, storedName;
+    return asked.className == stored.className && SR::RecordName(asked, askedName) &&
+           SR::RecordName(stored, storedName) && askedName == storedName;
 }
 
 std::optional<size_t> FindRecord(const std::vector<uint64_t>& hashes, uint16_t index, uint64_t hash) {
@@ -368,6 +588,10 @@ const char* VerdictName(Verdict v) {
         case Verdict::Reach:       return "reach";
         case Verdict::WrongFamily: return "wrong-family";
         case Verdict::Grant:       return "grant";
+        case Verdict::Locked:      return "locked";
+        case Verdict::NoSpace:     return "no-space";
+        case Verdict::Refused:     return "refused";
+        case Verdict::Lapsed:      return "lapsed";
     }
     return "?";
 }
@@ -394,6 +618,8 @@ void Tick() {
     }
     g_refusals.Flush(Now());
 
+    // Tombstones and slowings outlive every hold, so they are swept before the idle return below.
+    if (cas::Live().HasLapsed()) cas::Live().SweepLapsed(coop::net::NowMs());
     if (cas::Live().Count() == 0 && g_restoreOwed.empty() && g_requestAsm.Idle() && g_commitAsm.Idle()) return;
     const uint64_t now = coop::net::NowMs();
     if (now < g_nextSecondMs) return;
@@ -402,11 +628,17 @@ void Tick() {
     if (!g_requestAsm.Idle()) g_requestAsm.Sweep(std::chrono::steady_clock::now(), kAssemblyTtl);
     if (!g_commitAsm.Idle()) g_commitAsm.Sweep(std::chrono::steady_clock::now(), kAssemblyTtl);
 
-    // The owed restores first, so one owed this tick is not tried twice in its first second.
+    // The owed writes first, so one owed this tick is not tried twice in its first second.
     RetryOwed(now);
     // MTA's reservation ends only by the client (CGame.cpp:3419-3445). Ours also ends by itself after 30 s, because the
-    // effect runs on the client and the host cannot see it.
-    for (cas::Hold& h : cas::Live().TakeExpired(now)) Restore(std::move(h), "hold expired after 30 s");
+    // effect runs on the client and the host cannot see it. A reservation that lapses leaves its tombstone.
+    for (cas::Hold& h : cas::Live().TakeExpired(now)) {
+        if (h.kind == cas::HoldKind::Reservation) {
+            Bump(Tally::ReservationLapsed);
+            cas::Live().Lapse(h, now);
+        }
+        EndHold(std::move(h), "hold expired after 30 s");
+    }
     // A container destroyed under a hold takes the record with it.
     for (const uint32_t eid : cas::Live().HeldEids()) {
         if (cre::Probe(eid) != cre::EditResult::NoElement) continue;
@@ -470,8 +702,13 @@ void OnCommitChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
         g_refusals.Note(senderSlot, why, Now());
         return;
     }
-    // No act re-judge here: the commit only names the hold it ends. A Reservation never matches in this package.
-    const bool matched = internal::CommitMatches(cas::Live().Match(senderSlot, c.id), c.eid, c.hasRecord);
+    // No act re-judge here: the commit only names the hold it ends. A put's done also names the record it stored: the
+    // class and name of what was reserved for.
+    const cas::Hold* hold = cas::Live().Match(senderSlot, c.id);
+    if (!hold && LateCommit(senderSlot, c)) return;
+    bool matched = internal::CommitMatches(hold, c.eid, c.hasRecord, c.committed);
+    if (matched && hold->kind == cas::HoldKind::Reservation && c.committed == 1)
+        matched = internal::StoredMatches(hold->record, c.record);
     const internal::CommitStep step = internal::DecideCommit(matched, c.committed);
     UE_LOGI("container_act: slot=%u id=%u eid=%u commit -> %s", static_cast<unsigned>(senderSlot),
             static_cast<unsigned>(c.id), static_cast<unsigned>(c.eid), internal::CommitName(step));
@@ -482,27 +719,40 @@ void OnCommitChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
         return;
     }
     std::optional<cas::Hold> closed = cas::Live().Close(senderSlot, c.id);
-    if (step == internal::CommitStep::Abort && closed) Restore(std::move(*closed), "aborted");
+    if (!closed) return;
+    if (step == internal::CommitStep::Abort) {
+        EndHold(std::move(*closed), "aborted");
+        return;
+    }
+    // Done: an escrow's record is the client's now. A reservation inserts the record the client's container stored, at
+    // the index it stored it, neutered as a record off the wire.
+    if (closed->kind == cas::HoldKind::Reservation) {
+        closed->index = c.index;
+        closed->record = std::move(c.record);
+        Place(std::move(*closed), "put committed", cre::Source::Wire, "inserted");
+    }
 }
 
-// A departed sender's holds end with it.
+// A departed sender's holds end with it, and its tombstones and slowing with them: the slot is reused.
 void OnPeerGone(uint8_t slot) {
     if (!IsHostRole() || !InRoster(slot)) return;
     g_requestAsm.ClearSlot(slot);
     g_commitAsm.ClearSlot(slot);
-    for (cas::Hold& h : cas::Live().TakeForSlot(slot)) Restore(std::move(h), "the sender left");
+    for (cas::Hold& h : cas::Live().TakeForSlot(slot)) EndHold(std::move(h), "the sender left");
+    cas::Live().DropLapsedOf(slot);
 }
 
 void OnDisconnect() {
-    // Owed restores first, then the holds: a restore that fails here is owed and not tried twice.
+    // Owed writes first, then the holds: a write that fails here is owed and not tried twice.
     RetryOwed(coop::net::NowMs());
-    for (cas::Hold& h : cas::Live().TakeAll()) Restore(std::move(h), "the link ended");
+    for (cas::Hold& h : cas::Live().TakeAll()) EndHold(std::move(h), "the link ended");
+    cas::Live().DropLapsed();
     // A host whose last client left while the session lives on keeps what is owed and retries it each second; at a stop
     // no Tick follows, so what is still owed is lost, and said.
     if (!(g_session && g_session->running() && IsHostRole())) {
         for (const Owed& o : g_restoreOwed) {
             UE_LOGE("container_act: LOST a %ls owed to eid %u at index %u: the session ended before the container "
-                    "took it back", o.hold.record.className.c_str(), static_cast<unsigned>(o.hold.eid),
+                    "took it", o.hold.record.className.c_str(), static_cast<unsigned>(o.hold.eid),
                     static_cast<unsigned>(o.hold.index));
         }
         g_restoreOwed.clear();
@@ -539,7 +789,9 @@ void NoteShortPayload(uint8_t senderSlot) {
 const char* TallyName(Tally t) {
     static const char* const kNames[] = {"target_gone", "bad_commit", "grant_unsent", "queue_full_unready", "bad_sender",
                                          "short_payload", "malformed", "unknown_family_unready", "restore_owed",
-                                         "wait_expired"};
+                                         "wait_expired", "reservation_lapsed", "late_done", "late_done_lost",
+                                         "put_no_name", "put_class_unresolved", "put_not_prop", "put_filtered",
+                                         "put_into_mailbox", "put_row_refuses", "put_unknown_name"};
     static_assert(std::size(kNames) == static_cast<size_t>(Tally::kCount), "a name for every tally");
     return t < Tally::kCount ? kNames[static_cast<int>(t)] : "";
 }

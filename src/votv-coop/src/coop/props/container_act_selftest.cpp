@@ -28,6 +28,7 @@ namespace cre = coop::props::container_record_edit;
 namespace cr  = coop::props::container_reach;
 namespace SR  = ue_wrap::save_record;
 using coop::net::ContainerActFamily;
+using coop::net::ContainerActReason;
 using coop::net::ContainerActReplyPayload;
 
 constexpr uint8_t kTake = static_cast<uint8_t>(ContainerActFamily::Take);
@@ -359,14 +360,15 @@ void RunSelftest() {
     {
         cas::State s;
         s.Open(MakeHold(cas::HoldKind::Escrow, 1, 5, 100, 1000));
-        check(H::CommitMatches(s.Match(1, 5), 100, false), "commit: the right id and eid match");
-        check(!H::CommitMatches(s.Match(1, 5), 101, false) && s.Count() == 1,
+        check(H::CommitMatches(s.Match(1, 5), 100, false, 1), "commit: the right id and eid match");
+        check(!H::CommitMatches(s.Match(1, 5), 101, false, 1) && s.Count() == 1,
               "commit: the right id and a wrong eid do not match and the hold stands");
-        check(!H::CommitMatches(s.Match(1, 5), 100, true), "commit: a record on an escrow commit does not match");
-        check(!H::CommitMatches(s.Match(1, 6), 100, false), "commit: an unknown id does not match");
+        check(!H::CommitMatches(s.Match(1, 5), 100, true, 1), "commit: a record on an escrow commit does not match");
+        check(!H::CommitMatches(s.Match(1, 6), 100, false, 1), "commit: an unknown id does not match");
         s.TakeAll();
         s.Open(MakeHold(cas::HoldKind::Reservation, 1, 5, 100, 1000));
-        check(!H::CommitMatches(s.Match(1, 5), 100, false), "commit: a reservation never matches here");
+        check(!H::CommitMatches(s.Match(1, 5), 100, false, 1),
+              "commit: a reservation done without a record does not match");
         s.TakeAll();
 
         check(H::DecideCommit(false, 1) == H::CommitStep::BadCommit, "commit: unmatched and committed is bad");
@@ -395,13 +397,16 @@ void RunSelftest() {
               "decide-reply: a matching grant is granted");
         for (uint8_t reason = 1; reason < coop::net::kContainerActReasons; ++reason) {
             check(RQ::DecideReply(true, 5, ContainerActReplyPayload{5, 0, reason}) == RQ::ReplyAction::Refused,
-                  "decide-reply: a refusal with reason 1..7 is refused");
+                  "decide-reply: a refusal with reason 1..8 is refused");
         }
+        check(static_cast<uint8_t>(ContainerActReason::Lapsed) == 8 && coop::net::kContainerActReasons == 9 &&
+                  RQ::DecideReply(true, 5, ContainerActReplyPayload{5, 0, 8}) == RQ::ReplyAction::Refused,
+              "decide-reply: Lapsed is reason 8, the ninth counted, and a refusal");
         check(RQ::DecideReply(true, 5, ContainerActReplyPayload{5, 0, 0}) == RQ::ReplyAction::BadReason,
               "decide-reply: not granted with reason 0 is a bad reason");
         check(RQ::DecideReply(true, 5, ContainerActReplyPayload{5, 0, coop::net::kContainerActReasons}) ==
                   RQ::ReplyAction::BadReason,
-              "decide-reply: reason 8 is a bad reason");
+              "decide-reply: the reason past the last is a bad reason");
         check(RQ::DecideReply(true, 5, ContainerActReplyPayload{5, 1, 3}) == RQ::ReplyAction::BadReason,
               "decide-reply: granted with a reason is a bad reason");
     }

@@ -1216,6 +1216,9 @@ msgstr "[[Too many connections from you in a short time. Try again shortly.]]"
 msgid "Too many password attempts. Try again in ten minutes."
 msgstr "[[Too many password attempts. Try again in ten minutes.]]"
 
+msgid "Try again in a moment."
+msgstr "[[Try again in a moment.]]"
+
 msgid "Type /help for the commands."
 msgstr "[[Type /help for the commands.]]"
 

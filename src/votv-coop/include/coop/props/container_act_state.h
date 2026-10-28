@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace coop::props::container_act_state {
@@ -29,6 +30,21 @@ struct Hold {
     uint16_t index = 0;                       // Escrow: where the record was; Reservation: unused
     ue_wrap::save_record::SaveRecord record;  // Escrow: the record taken, not neutered; Reservation: the record asked
     uint64_t grantedMs = 0;
+};
+
+// A reservation that ended by its deadline leaves a tombstone: the put it promised room for may still have been done on
+// the client, and its late commit is inserted, not lost. It lives one more deadline, and the sender is slowed for as long.
+inline constexpr uint64_t kTombstoneMs = kHoldDeadlineMs;
+inline constexpr uint64_t kSlowedMs = kHoldDeadlineMs;
+inline constexpr size_t kTombstonesPerSlot = 4;
+
+struct Tombstone {
+    uint8_t slot = 0;
+    uint16_t id = 0;
+    uint32_t eid = 0;
+    std::wstring className;   // the asked record's class and name: the late commit is checked against them
+    std::wstring name;
+    uint64_t atMs = 0;
 };
 
 // The hold table. The host uses the one instance `Live()` returns, on the game thread; the selftest builds its own.
@@ -50,7 +66,28 @@ struct State {
     // Some slot has a record of this container in escrow.
     bool EscrowOn(uint32_t eid) const;
 
+    // Some slot holds anything on this container.
+    bool HoldOn(uint32_t eid) const;
+
     std::vector<uint32_t> HeldEids() const;
+
+    // A reservation `h` ended by its deadline at `nowMs`: its tombstone is kept (at most kTombstonesPerSlot per slot,
+    // the oldest of the slot evicted) and the slot is slowed until nowMs + kSlowedMs.
+    void Lapse(const Hold& h, uint64_t nowMs);
+
+    // Removes the tombstone of (slot, id) on `eid` and ends the slot's slowing: its sender has answered. None when
+    // there is no such tombstone, so a second late commit finds nothing.
+    std::optional<Tombstone> ConsumeTombstone(uint8_t slot, uint16_t id, uint32_t eid);
+
+    // The slot is slowed: a reservation of its own lapsed less than kSlowedMs ago and has not been answered.
+    bool Slowed(uint8_t slot, uint64_t nowMs) const;
+
+    // Drops what is past its span (a tombstone at atMs + kTombstoneMs, a slowing at its end). Cheap when none stand.
+    void SweepLapsed(uint64_t nowMs);
+    bool HasLapsed() const;
+    size_t TombstoneCount() const;
+    void DropLapsedOf(uint8_t slot);   // a departed sender's tombstones and slowing: the slot is reused
+    void DropLapsed();
 
     // grantedMs + kHoldDeadlineMs <= nowMs.
     std::vector<Hold> TakeExpired(uint64_t nowMs);
@@ -68,7 +105,14 @@ struct State {
 private:
     std::vector<Hold> TakeIf(bool (*pred)(const Hold&, uint64_t), uint64_t arg);
 
+    struct Slowing {
+        uint8_t slot;
+        uint64_t untilMs;
+    };
+
     std::vector<Hold> holds_;   // at most one per slot, so a handful
+    std::vector<Tombstone> tombstones_;
+    std::vector<Slowing> slowed_;
 };
 
 State& Live();

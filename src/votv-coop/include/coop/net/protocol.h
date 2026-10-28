@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 259;
+inline constexpr uint16_t kProtocolVersion = 260;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -2311,12 +2311,13 @@ static_assert(sizeof(PropActCommitPayload) == 8, "PropActCommitPayload must be 8
 // own conditions; a family it does not serve is answered WrongFamily.
 enum class ContainerActFamily : uint8_t { Take = 1, PutRecord = 2, PutProp = 3 };
 enum class ContainerActReason : uint8_t { Granted = 0, Gone = 1, Reach = 2, NoSpace = 3, Locked = 4, Refused = 5,
-                                          QueueFull = 6, WrongFamily = 7 };
-inline constexpr uint8_t kContainerActReasons = 8;   // Granted..WrongFamily: the per-reason counter width
+                                          QueueFull = 6, WrongFamily = 7, Lapsed = 8 };
+// Lapsed: the sender let a reservation of the host's run out its deadline, so its next put is refused for a spell.
+inline constexpr uint8_t kContainerActReasons = 9;   // Granted..Lapsed: the per-reason counter width
 
 struct ContainerActReplyPayload {
     uint16_t id;       // 2 -- the request's id
-    uint8_t  granted;  // 1 -- 1 with reason 0, or 0 with reason 1..7
+    uint8_t  granted;  // 1 -- 1 with reason 0, or 0 with reason 1..8
     uint8_t  reason;   // 1 -- ContainerActReason
 };
 static_assert(sizeof(ContainerActReplyPayload) == 4, "ContainerActReplyPayload must be 4 bytes");

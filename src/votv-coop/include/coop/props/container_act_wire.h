@@ -26,6 +26,17 @@ namespace coop::props::container_act_wire {
 // One record's bytes, at most: 16 times the largest record measured on the wire.
 inline constexpr size_t kMaxRecordBytes = 4096;
 
+// A put's record is stored by the container with the owner's fridge flag appended to bools[0], and the commit carries it
+// as stored. A client asks only a record at most this much under kMaxRecordBytes, so the stored one always packs.
+inline constexpr size_t kPutStoredSlack = 64;
+// The most the fridge flag adds to a record's wire form: a new bools group (its u32 element count) and the flag's byte.
+inline constexpr size_t kFridgeElementBytes = sizeof(uint32_t) + sizeof(uint8_t);
+static_assert(kMaxRecordBytes - kPutStoredSlack + kFridgeElementBytes <= kMaxRecordBytes,
+              "the stored form of the largest record a client may ask still packs under the byte cap");
+
+// The record's wire size in the grammar a request and a commit carry it in.
+size_t RecordBytes(const ue_wrap::save_record::SaveRecord& r);
+
 struct Request {
     uint16_t id = 0;
     uint8_t family = 0;

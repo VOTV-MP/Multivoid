@@ -9,6 +9,7 @@
 #include "coop/props/container_act_wire.h"
 
 #include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/script_gate.h"
 
 #include <cstdint>
 
@@ -52,5 +53,10 @@ void ShowRefusal(uint8_t reason);
 void ShowBadReason();
 void ShowNotAsked();
 void ShowNotReady();
+void ShowBusy();
+
+// The host's own player beside a client's hold: Cancel (and the busy line) when `container` holds a client hold of
+// any kind (`anyHold`) or one reserved by a client; Run otherwise, and for anything that is not a shared container.
+ue_wrap::script_gate::Verdict HostPre(void* container, bool anyHold);
 
 }  // namespace coop::props::container_act_request::detail

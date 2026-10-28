@@ -113,7 +113,7 @@ std::deque<QueuedCommit> g_commits;
 
 // A line is shown at most once per kind per window.
 enum Line : size_t { kLineGone, kLineReach, kLineNoSpace, kLineLocked, kLineRefused, kLineQueueFull, kLineCantNow,
-                     kLineNotAsked, kLineNotReady, kLineCount };
+                     kLineNotAsked, kLineNotReady, kLineLapsed, kLineBusy, kLineCount };
 constexpr uint64_t kShowEveryMs = 5000;
 uint64_t g_shownAt[kLineCount] = {};
 bool g_shown[kLineCount] = {};
@@ -155,6 +155,9 @@ void ShowRefusal(uint8_t reason) {
     case ContainerActReason::QueueFull:
         Show(kLineQueueFull, l10n::T("Too many actions at once, try again."));
         return;
+    case ContainerActReason::Lapsed:
+        Show(kLineLapsed, l10n::T("Try again in a moment."));
+        return;
     case ContainerActReason::WrongFamily:
     case ContainerActReason::Granted:
         Show(kLineCantNow, l10n::T("That can't be done right now."));
@@ -165,6 +168,21 @@ void ShowRefusal(uint8_t reason) {
 void ShowBadReason() { Show(kLineCantNow, l10n::T("That can't be done right now.")); }
 void ShowNotAsked() { Show(kLineNotAsked, l10n::T("The host could not be asked; try again.")); }
 void ShowNotReady() { Show(kLineNotReady, l10n::T("Not ready yet, try again in a moment.")); }
+void ShowBusy() { Show(kLineBusy, l10n::T("Another player is using that item.")); }
+
+// The host's own player beside a client's hold (the pocket's HostPre, prop_act_request.cpp): a put is cancelled on a
+// container any client holds anything on, since the restore of an escrow could overflow it; a take is cancelled on
+// one a client holds reserved. Everything else runs natively.
+sg::Verdict HostPre(void* container, bool anyHold) {
+    if (!container || !ci::IsContainer(container)) return sg::Verdict::Run;
+    const EL::ElementId eid = EL::Registry::Get().EidForActor(container);
+    if (eid == EL::kInvalidId) return sg::Verdict::Run;
+    const bool busy = anyHold ? container_act_state::Live().HoldOn(eid)
+                              : container_act_state::Live().ReservedByOther(eid, 0);
+    if (!busy) return sg::Verdict::Run;
+    ShowBusy();
+    return sg::Verdict::Cancel;
+}
 
 void Close() { g_rec = Pending{}; }
 
@@ -303,9 +321,10 @@ namespace {
 // test, and one latch serves the one pending act (prop_act_request.cpp:352-360 is the shape it follows).
 sg::Verdict PreTake(const sg::Call& c) {
     if (g_latch.on) return sg::Verdict::Run;
-    if (!g_session || !g_session->connected() || g_session->role() == coop::net::Role::Host) return sg::Verdict::Run;
+    if (!g_session || !g_session->connected()) return sg::Verdict::Run;
     cv::Slot s{};
     if (!cv::ReadSlot(c.object, s)) return sg::Verdict::Run;
+    if (g_session->role() == coop::net::Role::Host) return HostPre(s.container, /*anyHold=*/false);
     // The player's own pane, or a container this lane does not share, takes natively.
     if (!s.container || !ci::IsContainer(s.container)) return sg::Verdict::Run;
     void* const inv = ci::InventoryOf(s.container);

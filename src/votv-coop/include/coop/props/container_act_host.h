@@ -1,15 +1,19 @@
 // coop/props/container_act_host.h -- the host's half of a client's act on a world container: a request is judged
-// (the sender's world, the family, the holds, the reach, the container, the record's address), a grant takes the
-// record out of the container into escrow, and the sender's commit ends the hold: done drops the record (the client
-// has it), abort puts it back. Gameplay layer (principle 7). Game thread unless marked.
+// (the sender's world, the family, the holds, the reach, the container, the record's address or the record's own
+// terms), and the sender's commit ends the hold. A take's grant puts the record into escrow: done drops it (the
+// client has it), abort puts it back. A put's grant reserves room and writes nothing: done inserts the record the
+// client's own container stored, abort releases the reservation. Gameplay layer (principle 7). Game thread unless
+// marked.
 //
-// Every hold ends: by the commit, by its 30 s deadline, by the sender's departure or by the session's end, and each
-// end restores the record. A restore that cannot write now is owed and retried at 1 Hz, never dropped while the
-// session runs. The queue's Wait is the mid-join answer: a request before the sender's world is ready, before its
-// body has a pose, or while a hold stands in its way stays at the head of its queue, until kWaitBoundMs after it
-// was queued; then it is answered Gone.
+// Every hold ends: by the commit, by its 30 s deadline, by the sender's departure or by the session's end. An
+// escrow's end restores its record; a reservation's end releases it and inserts nothing. A write that cannot happen
+// now is owed and retried at 1 Hz, never dropped while the session runs. A reservation that ends by its deadline
+// leaves a tombstone, so a put the client did anyway is inserted when its commit comes late, and the sender is
+// slowed meanwhile. The queue's Wait is the mid-join answer: a request before the sender's world is ready, before
+// its body has a pose, or while a hold stands in its way stays at the head of its queue, until kWaitBoundMs after
+// it was queued; then it is answered Gone.
 //
-// The Take family is served here; the put families are answered WrongFamily until their packages arrive.
+// The Take and PutRecord families are served here; PutProp is answered WrongFamily until its package arrives.
 
 #pragma once
 
@@ -35,14 +39,17 @@ void NoteBadSender();                             // the dispatcher saw a sender
 void NoteShortPayload(uint8_t senderSlot);        // the dispatcher saw a short payload
 void RunSelftest();                               // the pure decisions, once per start; NOT the game thread
 
-// The host's dev counters (TallyOf).
+// The host's dev counters (TallyOf). The Put* terms are the put's refusals, each by name; ReservationLapsed counts
+// reservations that ended by their deadline, LateDone the late puts inserted, LateDoneLost the late puts a cap refused.
 enum class Tally : uint8_t { TargetGone, BadCommit, GrantUnsent, QueueFullUnready, BadSender, ShortPayload,
-                             Malformed, UnknownFamilyUnready, RestoreOwed, WaitExpired, kCount };
-const char* TallyName(Tally t);   // "target_gone" ... "wait_expired"; "" past kCount
+                             Malformed, UnknownFamilyUnready, RestoreOwed, WaitExpired, ReservationLapsed, LateDone,
+                             LateDoneLost, PutNoName, PutClassUnresolved, PutNotProp, PutFiltered, PutIntoMailbox,
+                             PutRowRefuses, PutUnknownName, kCount };
+const char* TallyName(Tally t);   // "target_gone" ... "put_unknown_name"; "" past kCount
 
 namespace internal {   // pure, no engine call: the selftest drives these (NOT the game thread)
 
-enum class Verdict : uint8_t { Wait, Gone, Reach, WrongFamily, Grant };
+enum class Verdict : uint8_t { Wait, Gone, Reach, WrongFamily, Grant, Locked, NoSpace, Refused, Lapsed };
 enum class Container : uint8_t { Gone, NotReady, Ready };
 
 // Decide's inputs in the order Decide reads them; ReadInputs fills them in that order and stops at the first that
@@ -58,13 +65,43 @@ struct Inputs {
 // container NotReady -> Wait; reach Unreachable -> Reach; !found -> Gone; else Grant.
 Verdict Decide(const Inputs& in);
 
+// A put's inputs: `base` is the part every family reads (the world, the holds, the reach, the container), then what
+// the put's own terms read, each flag in the order DecidePut reads it. The defaults pass every term.
+struct PutInputs {
+    Inputs base;
+    bool termsRead = true;                    // the container's PutTerms read; false: a transient read, so Wait
+    bool locked = false;
+    bool slowed = false;                      // the sender let a reservation lapse and is slowed
+    bool nameOk = true;                       // the record carries names[0][0]
+    bool classResolved = true, propClass = true;
+    bool filterRead = true, filterHolds = false;
+    bool mailboxContainer = false;            // the container is a mailbox and the record a container
+    bool rowRead = true, rowRefuses = false;  // the list_props row is readable; a row says not collectable or heavy
+    bool countAtCap = false, bytesOver = false;
+    bool infinite = false;
+    bool volumeRead = true, volumeKnown = true;
+    float maxVol = 0.f, currVol = 0.f, volume = 0.f;
+};
+
+// Order: !worldReady -> Wait; holdsWait -> Wait; reach NoBody -> Wait; container Gone -> Gone; NotReady -> Wait;
+// Unreachable -> Reach; !termsRead -> Wait; locked -> Locked; slowed -> Lapsed; !nameOk, !classResolved, !propClass
+// -> Refused; !filterRead -> Wait; filterHolds -> Refused; mailboxContainer -> Refused; !rowRead -> Wait; rowRefuses
+// -> Refused; countAtCap, bytesOver -> NoSpace; then unless infinite: !volumeRead -> Wait, !volumeKnown -> Refused,
+// currVol + volume > maxVol -> NoSpace; else Grant. `refusal`, when given, gets the tally term of a Refused
+// verdict, and Tally::kCount for any other.
+Verdict DecidePut(const PutInputs& in, Tally* refusal = nullptr);
+
 enum class CommitStep : uint8_t { BadCommit, Done, Abort };
 
-// The commit names this hold: `h` is Match(slot, id), non-null, an Escrow, h->eid equals the commit's eid, and the
-// commit carries no record. A Reservation's rule is the put package's, decided by the hold's kind, never the
-// commit's; here no Reservation is ever opened, so a Reservation never matches.
-bool CommitMatches(const coop::props::container_act_state::Hold* h, uint32_t commitEid, bool hasRecord);
+// The commit names this hold: `h` is Match(slot, id), non-null and h->eid equals the commit's eid. An Escrow's
+// commit carries no record. A Reservation's commit carries a record exactly when it is done (`committed` == 1).
+bool CommitMatches(const coop::props::container_act_state::Hold* h, uint32_t commitEid, bool hasRecord,
+                   uint8_t committed);
 CommitStep DecideCommit(bool matched, uint8_t committed);
+
+// A put's done names what was asked: the stored record's class and names[0][0] equal the asked record's, and both
+// carry a name. The rest of the record is the container's own (the fridge flag, the rest of its state).
+bool StoredMatches(const ue_wrap::save_record::SaveRecord& asked, const ue_wrap::save_record::SaveRecord& stored);
 
 // The index when its hash matches, else the first record with the hash; none: Gone.
 std::optional<size_t> FindRecord(const std::vector<uint64_t>& hashes, uint16_t index, uint64_t hash);
@@ -82,7 +119,7 @@ bool SlotTruthDue(uint64_t lastAnyMs, uint64_t nowMs);
 inline constexpr uint64_t kWaitBoundMs = 15000;
 bool WaitExpired(uint64_t queuedMs, uint64_t nowMs);
 
-const char* VerdictName(Verdict v);   // "wait" "gone" "reach" "wrong-family" "grant"
+const char* VerdictName(Verdict v);   // "wait" "gone" "reach" "wrong-family" "grant" "locked" "no-space" "refused" "lapsed"
 const char* CommitName(CommitStep s); // "bad" "done" "abort"
 
 }  // namespace internal

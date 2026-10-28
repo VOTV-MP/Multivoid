@@ -88,6 +88,76 @@ std::vector<Hold> State::TakeAll() { return std::exchange(holds_, {}); }
 
 size_t State::Count() const { return holds_.size(); }
 
+bool State::HoldOn(uint32_t eid) const {
+    for (const Hold& h : holds_)
+        if (h.eid == eid) return true;
+    return false;
+}
+
+void State::Lapse(const Hold& h, uint64_t nowMs) {
+    Tombstone t;
+    t.slot = h.slot;
+    t.id = h.id;
+    t.eid = h.eid;
+    t.className = h.record.className;
+    ue_wrap::save_record::RecordName(h.record, t.name);
+    t.atMs = nowMs;
+    size_t ofSlot = 0;
+    for (const Tombstone& o : tombstones_) ofSlot += o.slot == h.slot ? 1 : 0;
+    if (ofSlot >= kTombstonesPerSlot) {   // the oldest of the slot goes: they are kept in the order they lapsed
+        const auto oldest = std::find_if(tombstones_.begin(), tombstones_.end(),
+                                         [&](const Tombstone& o) { return o.slot == h.slot; });
+        tombstones_.erase(oldest);
+    }
+    tombstones_.push_back(std::move(t));
+    const auto mark = std::find_if(slowed_.begin(), slowed_.end(), [&](const Slowing& s) { return s.slot == h.slot; });
+    if (mark != slowed_.end()) mark->untilMs = nowMs + kSlowedMs;
+    else slowed_.push_back(Slowing{h.slot, nowMs + kSlowedMs});
+}
+
+std::optional<Tombstone> State::ConsumeTombstone(uint8_t slot, uint16_t id, uint32_t eid) {
+    for (auto it = tombstones_.begin(); it != tombstones_.end(); ++it) {
+        if (it->slot != slot || it->id != id || it->eid != eid) continue;
+        Tombstone t = std::move(*it);
+        tombstones_.erase(it);
+        slowed_.erase(std::remove_if(slowed_.begin(), slowed_.end(), [&](const Slowing& s) { return s.slot == slot; }),
+                      slowed_.end());
+        return t;
+    }
+    return std::nullopt;
+}
+
+bool State::Slowed(uint8_t slot, uint64_t nowMs) const {
+    for (const Slowing& s : slowed_)
+        if (s.slot == slot && nowMs < s.untilMs) return true;
+    return false;
+}
+
+void State::SweepLapsed(uint64_t nowMs) {
+    tombstones_.erase(std::remove_if(tombstones_.begin(), tombstones_.end(),
+                                     [&](const Tombstone& t) { return t.atMs + kTombstoneMs <= nowMs; }),
+                      tombstones_.end());
+    slowed_.erase(std::remove_if(slowed_.begin(), slowed_.end(), [&](const Slowing& s) { return s.untilMs <= nowMs; }),
+                  slowed_.end());
+}
+
+bool State::HasLapsed() const { return !tombstones_.empty() || !slowed_.empty(); }
+
+size_t State::TombstoneCount() const { return tombstones_.size(); }
+
+void State::DropLapsedOf(uint8_t slot) {
+    tombstones_.erase(std::remove_if(tombstones_.begin(), tombstones_.end(),
+                                     [&](const Tombstone& t) { return t.slot == slot; }),
+                      tombstones_.end());
+    slowed_.erase(std::remove_if(slowed_.begin(), slowed_.end(), [&](const Slowing& s) { return s.slot == slot; }),
+                  slowed_.end());
+}
+
+void State::DropLapsed() {
+    tombstones_.clear();
+    slowed_.clear();
+}
+
 bool State::WaitsOnHolds(bool isPut, uint32_t eid, uint8_t slot) const {
     if (SlotHolds(slot)) return true;
     if (ReservedByOther(eid, slot)) return true;
