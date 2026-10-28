@@ -8,6 +8,7 @@
 #include "coop/dev/container_route_census.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
+#include "coop/props/container_act_request.h"
 #include "coop/props/container_contents_sync.h"
 #include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/core/log.h"
@@ -56,6 +57,9 @@ bool IsHost() {
 // call, so by the time it is seen the item has already moved on this machine, and an intent the
 // host could deny cannot exist here. Gated on the host it dropped every client extraction: the
 // client took one of two burgers, the host's slot stayed at two, and the world gained a burger.
+// One exception, by the replay latch and not by role: a verb inside a granted act's replay marks
+// nothing, since the host publishes its own escrow and the replay's slice would only be judged
+// stale beside it. The extraction latch above is still armed.
 sg::Verdict OnVerbEntry(const sg::Call& br) {
     // The first statement, ahead of every filter: a resolved verb name does not prove this callback
     // runs, and a registration once returned true with the callback inert for a whole session. If
@@ -77,6 +81,7 @@ sg::Verdict OnVerbEntry(const sg::Call& br) {
     coop::dev::container_route_census::OnVerb(br, br.tag == kVerbTakeObj);
     // A takeObj on any inventory component arms the extraction latch; addObject must not.
     if (br.tag == kVerbTakeObj) g_takeObjInFlight.store(true, std::memory_order_relaxed);
+    if (coop::props::container_act_request::InReplay()) return sg::Verdict::Run;
     void* owner = ci::OwnerOf(br.object);
     if (!owner) return sg::Verdict::Run;
     const uint32_t eid =
