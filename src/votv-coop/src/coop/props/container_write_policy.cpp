@@ -6,7 +6,6 @@
 #include "coop/config/config_registry.h"
 #include "coop/element/element.h"
 #include "coop/element/intent_authority.h"
-#include "coop/net/connect_history.h"
 #include "coop/net/session.h"
 #include "coop/props/container_reach.h"
 #include "ue_wrap/core/log.h"
@@ -15,17 +14,6 @@ namespace coop::props::container_write_policy {
 namespace {
 
 uint64_t g_refused = 0;
-
-// One instance of the tree's per-source limit, the same class the accept edge and the lobby
-// password use. MTA bounds a source at the JOIN edge alone (CConnectHistory, CGame.cpp:163) and
-// needs no in-session twin, because there a client never authors a server-owned element's state --
-// it sends pure-sync for the ped it owns and the server writes the rest. Our container verbs run
-// below any seam that could refuse them, so the peer authors and the host arbitrates, and this is
-// where that divergence gets its bound. Game thread, unlike its siblings on the net thread; each
-// instance is lock-free and single-threaded on its own.
-coop::net::connect_history::History g_writes{
-    coop::net::connect_history::Policy{kRateMax, kRateWindowMs, kRateWindowMs},
-    "container writes"};
 
 }  // namespace
 
@@ -42,45 +30,10 @@ Decision Judge(const Inputs& in) {
     return Decision::Accept;
 }
 
-Decision SpendArrival(uint32_t eid, uint8_t authorSlot, uint64_t nowMs, coop::net::Session& session,
-                      Source src, bool held) {
-    // The budget is spent by ARRIVAL, not by acceptance: a refused slice still costs the host a
-    // parse, this arbitration and a corrective re-publish. A replay out of bind_wait or the pen spends
-    // nothing -- it arrived once already, and a pen sweeping four times a second would otherwise
-    // rate-block the author of the very slice it is holding. A seated peer's proved storage guid
-    // is the source; an author the host has no proved identity for is not counted rather than
-    // refused, the same way a full table here refuses nobody -- every other gate still applies.
-    coop::net::connect_history::Key key;
-    if (src == Source::Arrival &&
-        coop::net::connect_history::KeyFromProvedGuid(session.ProvedGuidForSlot(authorSlot), key)) {
-        const auto v = g_writes.Note(key, nowMs);
-        if (v.refused) {
-            ++g_refused;
-            UE_LOGW("container_contents: CONFLICT eid=%u slot %u -- %d slices inside %llu ms is "
-                    "past the bound; refused for %llu ms. %s Total refused this session: %llu",
-                    eid, static_cast<unsigned>(authorSlot), v.count,
-                    static_cast<unsigned long long>(kRateWindowMs),
-                    static_cast<unsigned long long>(v.retryMs),
-                    held ? "A birth slice: HELD in the pen and replayed, since it is the thrower's only copy."
-                         : "Write REFUSED, and nothing re-published: an author pushing faster must not make "
-                           "the host spend more.",
-                    static_cast<unsigned long long>(g_refused));
-            return Decision::TooFast;
-        }
-    } else if (src == Source::Arrival) {
-        static bool sSaid = false;
-        if (!sSaid) {
-            sSaid = true;
-            UE_LOGW("container_contents: slot %u has no proved identity -- its slices are "
-                    "arbitrated but not rate-bounded", static_cast<unsigned>(authorSlot));
-        }
-    }
-    return Decision::Accept;
-}
-
 Decision Accept(uint32_t eid, uint64_t baseHash, LiveHashReader readLive, uint8_t authorSlot, uint64_t nowMs,
-                coop::net::Session& session, Source src) {
-    if (SpendArrival(eid, authorSlot, nowMs, session, src) == Decision::TooFast) return Decision::TooFast;
+                coop::net::Session& session, coop::props::container_birth::Source src) {
+    if (container_birth::SpendArrival(eid, authorSlot, nowMs, session, src) == container_birth::Arrival::TooFast)
+        return Decision::TooFast;
 
     // REACH: container_reach judges it; the refusal and its count are this policy's.
     const auto reach = container_reach::Judge(session, authorSlot, eid);
@@ -173,9 +126,7 @@ bool RunSelftest() {
 }
 
 void Reset() {
-    g_writes.Clear();
     g_refused = 0;
-    container_reach::Reset();
 }
 
 }  // namespace coop::props::container_write_policy

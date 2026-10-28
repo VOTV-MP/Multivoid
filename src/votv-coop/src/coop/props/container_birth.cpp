@@ -6,6 +6,7 @@
 #include "coop/config/config_registry.h"
 
 #include "coop/element/registry.h"
+#include "coop/net/session.h"
 #include "coop/props/container_slice_wire.h"
 #include "coop/props/prop_element_tracker.h"   // SessionIsHost
 #include "ue_wrap/actors/container_inventory.h"
@@ -72,7 +73,51 @@ void Push(std::vector<Birth>& births, void* actor, uint8_t authorSlot) {
 
 uint32_t g_endedGone = 0, g_endedExpired = 0;   // the throw drill's counts; process-long, the drill baselines
 
+// The arrival bound. MTA bounds a source at the JOIN edge alone (CConnectHistory, CGame.cpp:163) and needs no
+// in-session twin, because there a client never authors a server-owned element's state. A thrown container's first
+// contents ARE client-authored, so this is where that divergence gets its bound. Game thread, unlike the history's
+// other instances on the net thread; each is lock-free and single-threaded on its own.
+ArrivalState g_arrival;
+uint64_t g_arrivalRefused = 0;
+
 }  // namespace
+
+bool ArrivalAllows(ArrivalState& st, uint64_t nowMs) {
+    st.verdict = st.writes.Note(st.key, nowMs);
+    return !st.verdict.refused;
+}
+
+Arrival SpendArrival(uint32_t eid, uint8_t authorSlot, uint64_t nowMs, coop::net::Session& session, Source src,
+                     bool held) {
+    // The budget is spent by ARRIVAL, not by replay: a replay out of bind_wait or the pen spends nothing -- it arrived
+    // once already, and a pen sweeping four times a second would otherwise rate-block the author of the very slice
+    // it is holding. A seated peer's proved storage guid is the source; an author the host has no proved identity
+    // for is not counted rather than refused, the same way a full table refuses nobody.
+    if (src == Source::Arrival &&
+        coop::net::connect_history::KeyFromProvedGuid(session.ProvedGuidForSlot(authorSlot), g_arrival.key)) {
+        if (!ArrivalAllows(g_arrival, nowMs)) {
+            ++g_arrivalRefused;
+            UE_LOGW("container_contents: CONFLICT eid=%u slot %u -- %d slices inside %llu ms is "
+                    "past the bound; refused for %llu ms. %s Total refused this session: %llu",
+                    eid, static_cast<unsigned>(authorSlot), g_arrival.verdict.count,
+                    static_cast<unsigned long long>(kRateWindowMs),
+                    static_cast<unsigned long long>(g_arrival.verdict.retryMs),
+                    held ? "A birth slice: HELD in the pen and replayed, since it is the thrower's only copy."
+                         : "Write REFUSED, and nothing re-published: an author pushing faster must not make "
+                           "the host spend more.",
+                    static_cast<unsigned long long>(g_arrivalRefused));
+            return Arrival::TooFast;
+        }
+    } else if (src == Source::Arrival) {
+        static bool sSaid = false;
+        if (!sSaid) {
+            sSaid = true;
+            UE_LOGW("container_contents: slot %u has no proved identity -- its slices are "
+                    "arbitrated but not rate-bounded", static_cast<unsigned>(authorSlot));
+        }
+    }
+    return Arrival::Ok;
+}
 
 void NoteAuthoredBirth(void* actor) {
     if (IsHost() || !ci::IsContainer(actor)) return;
@@ -206,6 +251,8 @@ void Reset() {
     g_awaited.clear();
     g_hostBirths.clear();
     g_owedFirst.clear();
+    g_arrival.writes.Clear();
+    g_arrivalRefused = 0;
 }
 
 bool RunSelftest() {
@@ -264,6 +311,18 @@ bool RunSelftest() {
     g_owedFirst[9] = 5000;
     Forget(9);
     check(FirstOwed(9, 0) == Owed::None, "a container that no longer resolves owes nothing");
+
+    // The arrival bound: the arrival after the window's count is refused, another author is not, and the window slides.
+    ArrivalState st;
+    st.key.bytes[0] = 1;
+    bool allFirstAllowed = true;
+    for (int i = 0; i < kRateMax; ++i) allFirstAllowed = ArrivalAllows(st, 1000) && allFirstAllowed;
+    check(allFirstAllowed, "an author's arrivals up to the window's count are allowed");
+    check(!ArrivalAllows(st, 1000), "the arrival past the window's count is refused");
+    st.key.bytes[0] = 2;
+    check(ArrivalAllows(st, 1000), "another author is not held to the first one's count");
+    st.key.bytes[0] = 1;
+    check(ArrivalAllows(st, 1000 + 2 * kRateWindowMs + 1), "the refusal lifts and the window slides");
 
     Reset();
     g_quiet = false;

@@ -342,7 +342,7 @@ Ingest ApplyContents(uint32_t eid, const std::vector<SR::SaveRecord>& recs, uint
 }
 
 Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t senderSlot,
-                     wp::Source src) {
+                     cb::Source src) {
     size_t o = 0;
     uint64_t baseHash = 0;
     if (!cw::ParseHeader(blob, o, outEid, baseHash)) return Ingest::Handled;
@@ -360,7 +360,7 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
     if (birth) {
         auto* s = g_session.load(std::memory_order_acquire);
         if (!s) return Ingest::Handled;
-        if (wp::SpendArrival(outEid, senderSlot, NowMs(), *s, src, /*held=*/true) == wp::Decision::TooFast)
+        if (cb::SpendArrival(outEid, senderSlot, NowMs(), *s, src, /*held=*/true) == cb::Arrival::TooFast)
             return Ingest::Park;
     }
     // Host arbitration before anything is touched; a refusal is answered by re-publishing the
@@ -477,7 +477,7 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
 // own authority, and the host does park client writes (a slice whose author has no body yet).
 bool ReplayParked(const std::vector<uint8_t>& blob, uint8_t authorSlot) {
     uint32_t eid = 0;
-    const Ingest outcome = ParseAndApply(blob, eid, authorSlot, wp::Source::Replay);
+    const Ingest outcome = ParseAndApply(blob, eid, authorSlot, cb::Source::Replay);
     if (outcome == Ingest::NoActor) {
         // Parked with no actor (its author had no body yet), or the container went while it waited: the
         // eid was bound once or was never a bind wait, so this is a drop and not a never-bound one.
@@ -492,7 +492,7 @@ bool ReplayParked(const std::vector<uint8_t>& blob, uint8_t authorSlot) {
 void ReplayHeld(const uint8_t* bytes, size_t n, int senderSlot) {
     std::vector<uint8_t> blob(bytes, bytes + n);
     uint32_t eid = 0;
-    const Ingest outcome = ParseAndApply(blob, eid, static_cast<uint8_t>(senderSlot), wp::Source::Replay);
+    const Ingest outcome = ParseAndApply(blob, eid, static_cast<uint8_t>(senderSlot), cb::Source::Replay);
     if (outcome == Ingest::NoActor)
         coop::element::bind_wait::NoteNeverBound(kContainerContents, eid);
     else if (outcome == Ingest::Park)
@@ -579,7 +579,7 @@ namespace {
 // What an assembled blob does here: applied, or kept in the bind wait or the readiness pen.
 void DeliverBlob(std::vector<uint8_t> blob, uint8_t senderSlot) {
     uint32_t eid = 0;
-    const Ingest outcome = ParseAndApply(blob, eid, senderSlot, wp::Source::Arrival);
+    const Ingest outcome = ParseAndApply(blob, eid, senderSlot, cb::Source::Arrival);
     if (outcome == Ingest::NoActor) {
         // The container's element is not bound yet: held in bind_wait for the bind, the latest blob
         // winning. Not deferred: no bind is coming for this eid, so there is nothing to wait for.

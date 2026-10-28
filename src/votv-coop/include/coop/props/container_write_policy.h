@@ -1,7 +1,7 @@
 // coop/props/container_write_policy.h -- the host's answer to ONE question: may this
 // client-authored container slice be applied? The lane beside it (container_contents_sync) owns
 // the verb edge, the blob and the apply; this owns the arbitration and the state that arbitration
-// needs -- the rate it spends per author and how many writes it has refused. A slice is judged
+// needs -- how many writes it has refused. A slice is judged
 // against what the container holds right now, whoever wrote it: the lane's reader gives the live
 // content hash at the arbitration, so a write nothing published (the drone's sale) still
 // leaves a stale author refused.
@@ -12,6 +12,8 @@
 // a client runs no arbitration at all (it accepts slot 0 and nothing else).
 
 #pragma once
+
+#include "coop/props/container_birth.h"
 
 #include <cstdint>
 
@@ -39,27 +41,12 @@ enum class Decision : uint8_t {
                          // answered like StaleBase
 };
 
-// Where this slice is coming from. A slice the host parked and is now replaying was already
-// admitted once: it costs the host no second arrival, and what bounds the cost of holding it is
-// the park's own per-author cap, not this window. Its REACH is judged on the replay all the same,
-// because that is the first moment it can be judged at all -- an element that did not resolve at
-// arrival could not be measured against anybody's reach.
-enum class Source : uint8_t { Arrival = 0, Replay };
-
 // What the host reads at the moment of the decision.
 struct Inputs {
     uint64_t baseHash     = 0;      // what the author says it edited from
     uint64_t liveHash     = 0;      // the content hash of what the container holds now
     bool     liveReadable = false;  // false: the live contents did not read, and liveHash means nothing
 };
-
-// How many slices one author may have arbitrated inside a window, and how long the refusal lasts.
-// An author's own sweep ships at most one slice per container per 250 ms, so sixteen in a second
-// is four times the rate this build can produce and still bounds a sender that ignores its own
-// sweep: every accepted change allocates a fresh records buffer on the host and orphans the old
-// one, so the rate of accepted change IS the rate the host spends.
-inline constexpr int      kRateMax      = 16;
-inline constexpr uint64_t kRateWindowMs = 1000;
 
 // The PURE half, and the half a selftest drives without an engine or a session: Unreadable when the
 // live contents did not read, then Accept when the base is the live hash. An author that never
@@ -71,19 +58,12 @@ Decision Judge(const Inputs& in);
 // reaches the base, so a slice refused on the rate or the reach, or held for a body, never reads the container.
 using LiveHashReader = bool (*)(uint32_t eid, uint64_t& outHash);
 
-// The stateful call the lane makes: the rate (SpendArrival), the reach question, then the base against
-// the live hash. Logs the refusal, including which condition failed, and counts it. An eid that
+// The stateful call the lane makes: the arrival bound (container_birth::SpendArrival), the reach question, then the
+// base against the live hash. Logs the refusal, including which condition failed, and counts it. An eid that
 // resolves to no live prop element is NOT a reach refusal -- the lane holds such a slice in bind_wait
 // and replays it, and the hold is where the birth-skew answer lives.
 Decision Accept(uint32_t eid, uint64_t baseHash, LiveHashReader readLive, uint8_t authorSlot, uint64_t nowMs,
-                coop::net::Session& session, Source src);
-
-// The rate half alone, Accept or TooFast: an arrival spends one of its author's window, a replay
-// nothing. Accept runs it first; the lane runs it by itself for a slice it takes unjudged (a thrown
-// container's birth), which must not be free of the bound either.
-// `held` says what the caller does with a TooFast slice, for the log: refuses it, or holds it in the pen.
-Decision SpendArrival(uint32_t eid, uint8_t authorSlot, uint64_t nowMs, coop::net::Session& session,
-                      Source src, bool held = false);
+                coop::net::Session& session, coop::props::container_birth::Source src);
 
 void Reset();
 

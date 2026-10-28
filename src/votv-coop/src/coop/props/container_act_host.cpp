@@ -657,6 +657,7 @@ void OnDisconnect() {
     RetryOwed(coop::net::NowMs());
     for (cas::Hold& h : cas::Live().TakeAll()) EndHold(std::move(h), "the link ended");
     cas::Live().DropLapsed();
+    cr::Reset();   // the reach judge's once-log is filled by this host's reach calls
     // A host whose last client left while the session lives on keeps what is owed and retries it each second; at a stop
     // no Tick follows, so what is still owed is lost, and said.
     if (!(g_session && g_session->running() && IsHostRole())) {
