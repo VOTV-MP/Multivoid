@@ -6,12 +6,14 @@
 #include "coop/config/config_registry.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
+#include "coop/player/players_registry.h"
 #include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_physics.h"
+#include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <windows.h>
@@ -32,7 +34,6 @@ namespace E  = ue_wrap::engine;
 constexpr int kR3 = 2, kR4 = 3, kR5 = 4, kNone = 5;   // route indices
 constexpr int kGenTag = 6;
 constexpr uint64_t kReportMs = 30000;
-constexpr int kStack = 16;       // open scopes, nesting included
 constexpr int kLast = 32;        // containers whose last writing route is remembered
 constexpr int kCallers = 16;     // distinct R6 caller classes, then "other"
 constexpr int kClasses = 8;      // distinct R4 simulated-shared classes
@@ -62,17 +63,14 @@ bool g_said[6] = {};              // each seam's state said once
 uint64_t g_nextReport = 0;
 int g_quiet = 0;
 
-uint8_t g_stack[kStack] = {};     // route ids of the open scopes, innermost last
-int g_depth = 0;
-uint64_t g_underflow = 0;
-uint64_t g_overflow = 0;
+void* g_fn[5] = {};               // each route's function, as its pre last saw it (for IsBodyActive)
+unsigned g_multiSaid = 0;         // the combinations of routes said to be active together
 
 uint64_t g_entries[5] = {};       // seam entries R1..R5
 uint64_t g_unshared[6] = {};      // verbs on an inventory that is no shared world container, by the open route
 uint64_t g_cell[kRoutes][2] = {};     // [route][add=0, take=1] verbs on a shared container
 uint64_t g_slices[kRoutes][2] = {};
 uint64_t g_unattributed = 0;
-uint64_t g_slicesSent = 0;
 uint64_t g_gen = 0;
 uint64_t g_hostSlice[coop::net::kMaxPeers][2] = {};   // [slot][accepted=0, refused=1]
 
@@ -101,24 +99,6 @@ void Narrow(const std::wstring& w, char* out, size_t cap) {
     out[i] = 0;
 }
 
-int Innermost() { return g_depth > 0 ? g_stack[g_depth - 1] : -1; }
-
-void Push(int route) {
-    if (g_depth >= kStack) { ++g_overflow; return; }
-    g_stack[g_depth++] = static_cast<uint8_t>(route);
-}
-
-// Removes the innermost open scope of `route`. False when none is open.
-bool Pop(int route) {
-    for (int i = g_depth - 1; i >= 0; --i) {
-        if (g_stack[i] != route) continue;
-        for (int j = i; j + 1 < g_depth; ++j) g_stack[j] = g_stack[j + 1];
-        --g_depth;
-        return true;
-    }
-    return false;
-}
-
 void* ParamPtr(const sg::Call& c, R::ParamOffset& param) {
     const int32_t off = c.function ? param.Of(c.function) : -1;
     if (off < 0 || !c.locals) return nullptr;
@@ -128,21 +108,44 @@ void* ParamPtr(const sg::Call& c, R::ParamOffset& param) {
 }
 
 // R3 counts only the put, the BP's own branch: the player's input_run.
+bool Runs(void* player) {
+    bool run = false;
+    return player && R::IsLive(player) && E::ReadInputRun(player, run) && run;
+}
+
 bool PlayerRuns(const sg::Call& c) {
     static R::ParamOffset sPlayer(L"player");
-    static void* sCls = nullptr;
-    static int32_t sOff = -1;
-    static uint8_t sMask = 0;
-    void* player = ParamPtr(c, sPlayer);
-    if (!player || !R::IsLive(player)) return false;
-    void* cls = R::ClassOf(player);
-    if (cls != sCls) {
-        sCls = cls;
-        sOff = -1;
-        R::FindBoolProperty(cls, L"input_run", sOff, sMask);
-        if (sOff < 0) UE_LOGW("[CI-CENSUS] R3: the player's input_run does not resolve -- R3 is not counted");
+    return Runs(ParamPtr(c, sPlayer));
+}
+
+// Is `route`'s own body running on this thread's chain of watched bodies? The gate's RAII answer, which unwinds on a
+// Cancel and on a fault; the function is the one the route's pre last saw. An R3 body is the put only for a running
+// player (the BP returns without a put otherwise).
+bool Active(int route) {
+    if (!g_fn[route] || !sg::IsBodyActive(g_fn[route])) return false;
+    return route != kR3 || Runs(coop::players::Registry::Get().Local());
+}
+
+// The route a verb runs in, innermost by the BP's nesting: R1 when its body is active (em_take's hover branch calls
+// pressButton, so R1 is the inner one); else the one active route. Two or more of the others active at once is said
+// once per combination, by name, and counted as the first in R1..R5 order. -1: none.
+int ActiveRoute() {
+    if (Active(0)) return 0;
+    int first = -1;
+    unsigned mask = 0;
+    for (int r = 1; r < 5; ++r) {
+        if (!Active(r)) continue;
+        if (first < 0) first = r;
+        mask |= 1u << r;
     }
-    return sOff >= 0 && (*(static_cast<const uint8_t*>(player) + sOff) & sMask) != 0;
+    if ((mask & (mask - 1)) != 0 && !(g_multiSaid & mask)) {
+        g_multiSaid |= mask;
+        char names[16] = "";
+        for (int r = 1; r < 5; ++r)
+            if (mask & (1u << r)) std::snprintf(names + std::strlen(names), sizeof(names) - std::strlen(names), "R%d ", r + 1);
+        UE_LOGW("[CI-CENSUS] routes active together: %s-- counted as R%d", names, first + 1);
+    }
+    return first;
 }
 
 void NoteOverlap(const sg::Call& c) {
@@ -175,22 +178,18 @@ void NoteOverlap(const sg::Call& c) {
     }
 }
 
+// Each route's function is kept as it is entered, for IsBodyActive; the entry is counted. The scope itself is the gate's:
+// it unwinds on a Cancel (the act's seats cancel R2 and R3) and on a fault, which no counter here could.
 sg::Verdict ScopePre(const sg::Call& c) {
     const int route = c.tag - 1;
     if (route < 0 || route > 4) return sg::Verdict::Run;
+    g_fn[route] = c.function;
     if (route == kR3 && !PlayerRuns(c)) return sg::Verdict::Run;   // only the put is an R3 entry
     ++g_entries[route];
     if (route == kR4) NoteOverlap(c);
-    Push(route);
     return sg::Verdict::Run;
 }
 
-void ScopePost(const sg::Call& c) {
-    const int route = c.tag - 1;
-    if (route < 0 || route > 4) return;
-    // R3 pushes only for the put, so its post may find nothing to close.
-    if (!Pop(route) && route != kR3) ++g_underflow;
-}
 
 void GenPost(const sg::Call&) { ++g_gen; }
 
@@ -222,7 +221,7 @@ void RegisterWatches() {
     sg::PreFn pre[5] = {&ScopePre, &ScopePre, &ScopePre, &ScopePre, &ScopePre};
     bool all = true;
     for (int i = 0; i < 5; ++i) {
-        const bool ok = sg::WatchName(*kRows[i], i + 1, pre[i], &ScopePost);
+        const bool ok = sg::WatchName(*kRows[i], i + 1, pre[i], nullptr);
         if (!ok) { all = false; UE_LOGE("[CI-CENSUS] seam %s: the gate REFUSED the watch -- no scope for that route", kSeam[i]); }
     }
     if (!sg::WatchName(kRowGen, kGenTag, nullptr, &GenPost)) {
@@ -249,8 +248,8 @@ void SaySeams() {
 }
 
 void Reset() {
-    g_depth = 0;
-    g_underflow = g_overflow = 0;
+    std::memset(g_fn, 0, sizeof(g_fn));
+    g_multiSaid = 0;
     std::memset(g_entries, 0, sizeof(g_entries));
     std::memset(g_unshared, 0, sizeof(g_unshared));
     std::memset(g_cell, 0, sizeof(g_cell));
@@ -260,7 +259,7 @@ void Reset() {
     for (Last& l : g_last) l.route = -1;
     std::memset(g_callers, 0, sizeof(g_callers));
     std::memset(g_r4Classes, 0, sizeof(g_r4Classes));
-    g_unattributed = g_slicesSent = g_gen = 0;
+    g_unattributed = g_gen = 0;
     g_lastNext = g_callerCount = g_r4ClassCount = g_r4Lines = 0;
     g_callerOther = g_r4Sim = g_r4Overlaps = 0;
     for (bool& b : g_said) b = false;
@@ -287,7 +286,7 @@ Quiet::~Quiet() { --g_quiet; }
 
 void OnVerb(const sg::Call& c, bool take) {
     if (!IsEnabled() || g_quiet > 0) return;
-    const int open = Innermost();
+    const int open = ActiveRoute();
     void* inv = c.object;
     void* owner = inv ? ci::OwnerOf(inv) : nullptr;
     const uint32_t eid = (owner && ci::IsWorldInventory(inv))
@@ -305,7 +304,6 @@ void OnVerb(const sg::Call& c, bool take) {
 
 void NoteSliceSent(uint32_t eid) {
     if (!IsEnabled()) return;
-    ++g_slicesSent;
     for (Last& l : g_last) {
         if (l.eid != eid || l.route < 0) continue;
         ++g_slices[l.route][l.verb];
@@ -357,14 +355,6 @@ void ReportNow(const char* why) {
             if (g_hostSlice[s][0] || g_hostSlice[s][1])
                 UE_LOGI("[CI-CENSUS] host slices from slot %d: accepted=%llu refused=%llu", s,
                         static_cast<unsigned long long>(g_hostSlice[s][0]), static_cast<unsigned long long>(g_hostSlice[s][1]));
-    for (int r = 0; r < 5; ++r) {
-        int depth = 0;
-        for (int i = 0; i < g_depth; ++i) depth += g_stack[i] == r ? 1 : 0;
-        if (depth) UE_LOGW("[CI-CENSUS] scope leak route=R%d depth=%d", r + 1, depth);
-    }
-    if (g_underflow || g_overflow)
-        UE_LOGW("[CI-CENSUS] scope bookkeeping: post without a pre=%llu, nesting past %d=%llu",
-                static_cast<unsigned long long>(g_underflow), kStack, static_cast<unsigned long long>(g_overflow));
 }
 
 void Tick(coop::net::Session* s) {
@@ -391,7 +381,6 @@ void OnDisconnect() {
     Reset();
 }
 
-uint64_t SlicesSent() { return g_slicesSent; }
 uint64_t RouteEntries(int route) { return route >= 0 && route < 5 ? g_entries[route] : 0; }
 uint64_t R4Overlaps() { return g_r4Overlaps; }
 uint64_t GenCalls() { return g_gen; }

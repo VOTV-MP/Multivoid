@@ -1,5 +1,5 @@
 // coop/dev/container_route_census.h -- [dev] which route a container verb came by. Every addObject / takeObj on a
-// shared world container is counted by the route open on the script stack when it ran: R1 a container slot press
+// shared world container is counted by the route whose body was running (sg::IsBodyActive) when it ran: R1 a container slot press
 // (uicomp_playerInvContainerSlot_C::pressButton), R2 the take key (ui_playerInventory_C::em_take), R3 hold+run
 // (prop_container_C::playerUsedOn with the player running), R4 the overlap (prop_container_C::putObjectIn_overlap),
 // R5 the vacuum (prop_vacuum2_C::gather), R6 none of them (the game's own logic, named by its caller's class and
@@ -48,7 +48,6 @@ void NoteSliceJudged(uint8_t senderSlot, bool accepted);
 void ReportNow(const char* why);
 
 // What the drill reads. All since the session began.
-uint64_t SlicesSent();                 // client-authored slices sent
 uint64_t RouteEntries(int route);      // seam entries of route 0..4 (R1..R5)
 uint64_t R4Overlaps();
 uint64_t GenCalls();                   // ui_playerInventory_C::gen_player bodies run (the screen's rebuild)

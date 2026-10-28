@@ -44,14 +44,13 @@ namespace cs  = coop::props::container_contents_sync;
 constexpr uint64_t kFillBoundMs    = 5000;   // the spawn to the backpack's inventory binding its slot
 constexpr uint64_t kPublishBoundMs = 10000;  // the fill to the first fan-out
 constexpr uint64_t kViewBoundMs    = 5000;   // the open verb to the screen showing the backpack
-constexpr uint64_t kJudgeBoundMs   = 15000;  // the client's R1 slice sent to the host judging it
 constexpr const wchar_t* kSecondClass = L"prop_floppyDisc_R_C";   // the second class of read 7; no drill puts a disc into a container, so the capture check below is its guard
 constexpr const wchar_t* kSecondPath  = L"/Game/objects/prop_floppyDisc_R.prop_floppyDisc_R_C";
 constexpr uint64_t kRoutesBoundMs  = 300000; // the routes phase: above the client's worst chain of independent bounds (about 230 s)
 constexpr uint64_t kBeforeBoundMs  = 60000;  // the unpublished write to the client's take reported
 constexpr uint64_t kThrownBoundMs  = 30000;  // r4-start to the host holding a drive made by the throw
 
-enum class Step : uint8_t { Arm, Fill, Publish, WaitR1, WaitJudge, WaitRoutes, ViewOpen, ViewRegen, WaitBefore, WaitDone, Done };
+enum class Step : uint8_t { Arm, Fill, Publish, WaitR1, WaitRoutes, ViewOpen, ViewRegen, WaitBefore, WaitDone, Done };
 Step     g_step = Step::Arm;
 uint64_t g_stepMs = 0;
 uint64_t g_next = 0;
@@ -62,7 +61,6 @@ uint64_t g_gen0 = 0;
 void*    g_slot0 = nullptr;   // the screen's first slot widget before the raw write
 int      g_drives0 = 0;
 bool     g_opened = false;   // the open verb was sent for the host's screen
-int      g_r1Sent = 0;       // the slices the client had sent when it finished R1
 std::string g_slotText0;   // the screen's first slot before the raw write
 
 bool     g_r4Started = false, g_r4Over = false, g_r4Gone = false, g_r4Failed = false;   // g_r4Failed: R4 ended without a drive
@@ -188,39 +186,28 @@ void StepPublish() {
     Next(cen::IsBeforeOnly() ? Step::WaitBefore : Step::WaitR1);
 }
 
-// The client's R1 take is done: once the host has judged the slices it sent, the backpack is handed two fresh records
-// (the fixture the R2 put-back and the later reads stand on), and the client is told.
+// The client's R1 take is done (it says so once its act ended and its mirror followed the host's truth): the backpack is
+// handed two fresh records (the fixture the R2 put-back and the later reads stand on), and the client is told.
 void StepWaitR1() {
-    std::string rest;
-    int sent = 0;
-    if (coop::dev::drill_chat::PollDue() && coop::dev::drill_chat::LiveRestOf(kPrefixR1Done, &rest) &&
-        IntAfter(rest, "sent", sent)) {
-        g_r1Sent = sent;
-        Next(Step::WaitJudge);
+    std::string said;
+    if (!coop::dev::drill_chat::PollDue() || !coop::dev::drill_chat::LiveRestOf(kPrefixR1Done, &said)) {
+        if (Expired(kRoutesBoundMs)) {
+            RouteFail("R1 the client never reported its R1 done");
+            Next(Step::WaitRoutes);
+        }
         return;
-    }
-    if (Expired(kRoutesBoundMs)) {
-        RouteFail("R1 the client never reported its R1 done");
-        Next(Step::WaitRoutes);
-    }
-}
-
-void StepWaitJudge() {
-    const uint64_t judged = cen::HostSlices(1, true) + cen::HostSlices(1, false);
-    if (judged < static_cast<uint64_t>(g_r1Sent)) {
-        if (!Expired(kJudgeBoundMs)) return;
-        RouteFail("R1 the client's slice was never judged");   // the fresh records are R2's fixture: handed all the same
     }
     void* pack = g_pack.Get();
     if (!pack) { Fail("the backpack died"); return; }
+    const int held = RecordCount(g_eid);   // the host's side of R1: the take left it one record short
     if (AddDrives(pack) != kItems) {
         RouteFail("R2 the backpack did not take the two fresh drives");
         coop::dev::drill_chat::Say(kLineRefillRefused);   // the client's R2 ends with it
         Next(Step::WaitRoutes);
         return;
     }
-    UE_LOGI("[CI-CENSUS] drill host: two fresh records handed to the backpack (%d record(s) now), after %llu judged slice(s)",
-            RecordCount(g_eid), static_cast<unsigned long long>(judged));
+    UE_LOGI("[CI-CENSUS] drill host: two fresh records handed to the backpack (%d record(s) now, %d before the hand-out)",
+            RecordCount(g_eid), held);
     coop::dev::drill_chat::Say(kLineRefilled);
     Next(Step::WaitRoutes);
 }
@@ -430,7 +417,6 @@ void HostTick(coop::net::Session* s) {
     case Step::Fill:       StepFill(); return;
     case Step::Publish:    StepPublish(); return;
     case Step::WaitR1:     StepWaitR1(); return;
-    case Step::WaitJudge:  StepWaitJudge(); return;
     case Step::WaitRoutes: StepWaitRoutes(); return;
     case Step::ViewOpen:   StepViewOpen(); return;
     case Step::ViewRegen:  StepViewRegen(); return;
@@ -449,7 +435,6 @@ void HostReset() {
     g_gen0 = 0;
     g_slot0 = nullptr;
     g_slotText0.clear();
-    g_r1Sent = 0;
     g_r4Prop.Reset();
     g_drives0 = 0;
     g_r4StartMs = g_ov0 = 0;

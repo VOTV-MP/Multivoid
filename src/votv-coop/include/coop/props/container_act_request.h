@@ -99,6 +99,12 @@ void HoldReplay(bool on);   // while on, a take's grant parks its replay (the re
 bool ReplayParked();        // a grant is parked
 void ReleaseReplay();       // runs the parked replay now, through the same checks as an unparked one
 void DoubleAbort(bool on);  // while on, a take's abort commit is sent twice
+
+// Acts this session by how the client ended them: a commit sent done, a commit sent aborted, a reply that refused. The
+// census drill judges each route by the delta of these.
+uint32_t ActsDone();
+uint32_t ActsAborted();
+uint32_t ActsRefused();
 }  // namespace dev
 
 }  // namespace coop::props::container_act_request

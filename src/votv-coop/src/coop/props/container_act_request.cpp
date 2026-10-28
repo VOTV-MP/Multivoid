@@ -26,6 +26,7 @@
 #include "ue_wrap/facts/function_row.h"
 
 #include <algorithm>
+#include <cstring>
 #include <deque>
 #include <string>
 #include <utility>
@@ -76,6 +77,7 @@ uint8_t g_lastRefusal = 0;       // the reason of the refusal of the open or las
 bool g_holdReplay = false;       // dev (dev:: below): a take's grant parks its replay
 bool g_doubleAbort = false;      // dev: a take's abort commit is sent twice
 dev::Take g_lastTake;            // the last take's commit as it was sent; the drills read it
+uint32_t g_acts[3] = {};   // done, aborted, refused: how the client's acts ended (dev::ActsDone ...)
 
 // A request whose wait ran out, kept until the host answers it, so a grant that still arrives is answered with an
 // abort and the host's escrow is always ended. Dropped once the host's own deadline has passed: a grant that late finds
@@ -242,6 +244,7 @@ bool QueueCommit(const caw::Commit& c) {
     QueuedCommit q;
     q.blob = caw::PackCommit(c);   // packed once, here
     if (q.blob.empty()) return false;
+    ++g_acts[c.committed ? 0 : 1];
     q.id = c.id;
     q.queuedMs = coop::net::NowMs();
     g_commits.push_back(std::move(q));
@@ -531,11 +534,13 @@ void OnReply(const coop::net::ContainerActReplyPayload& p) {
         NoteStale(p);
         return;
     case internal::ReplyAction::BadReason:
+        ++g_acts[2];
         ShowBadReason();
         Close();
         return;
     case internal::ReplyAction::Refused:
         g_lastRefusal = p.reason;
+        ++g_acts[2];
         ShowRefusal(p.reason);
         Close();
         return;
@@ -575,6 +580,7 @@ void OnDisconnect() {
     g_holdReplay = false;
     g_doubleAbort = false;
     g_lastTake = dev::Take{};
+    std::memset(g_acts, 0, sizeof(g_acts));
     ResetPutLines();
     g_nextId = 0;
     g_nextRequestSeq = 1;
@@ -587,6 +593,9 @@ void OnDisconnect() {
 namespace dev {
 
 uint32_t TakeDoneUnread() { return g_takeDoneUnread; }
+uint32_t ActsDone() { return g_acts[0]; }
+uint32_t ActsAborted() { return g_acts[1]; }
+uint32_t ActsRefused() { return g_acts[2]; }
 
 uint16_t PendingId() { return g_rec.open ? g_rec.id : 0; }
 

@@ -32,7 +32,7 @@ inline constexpr const char* kLineBeforeWritten = "ci-census host before-written
 inline constexpr const char* kLineRefilled      = "ci-census host refilled";
 inline constexpr const char* kLineRefillRefused = "ci-census host refilled ok=0";   // the refill the backpack refused
 inline constexpr const char* kLineBeforeFailed  = "ci-census client before-failed";   // the client ended the take route
-inline constexpr const char* kPrefixR1Done      = "ci-census client r1-done ";   // + "sent=<slices sent so far>"
+inline constexpr const char* kPrefixR1Done      = "ci-census client r1-done ";   // + "act=<done|aborted|refused|none>"
 inline constexpr const char* kPrefixR4Start     = "ci-census client r4-start ";  // + "eid=<the held prop, or 0>"
 inline constexpr const char* kPrefixR4Thrown    = "ci-census host r4-thrown ";   // + "eid=<the host's drive for the throw>"
 inline constexpr const char* kPrefixR4Hold     = "ci-census client r4-hold ";   // + "eid=<the held prop, or 0>"
