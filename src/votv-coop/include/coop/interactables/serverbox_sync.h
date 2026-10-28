@@ -50,6 +50,10 @@ struct Counts {
     uint64_t repairsSent = 0;     // CLIENT: its player's repairs sent to the host
     uint64_t repairsRun = 0;      // HOST: a client's repair run
     uint64_t repairsRefused = 0;  // HOST: a client's repair answered with the state row
+    int32_t  lastPaid = 0;        // HOST: the base reward the last client repair it ran paid
+    int32_t  lastRecord = 0;      // HOST: the record bonus that repair paid
+    bool     lastPaidLol = false; // HOST: the lol flag that repair carried
+    bool     lastSentLol = false; // CLIENT: the lol flag of the last repair it sent
 };
 Counts LaneCounts();
 

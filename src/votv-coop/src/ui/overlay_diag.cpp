@@ -54,7 +54,7 @@ void NoteWndProcThread() {
     const bool no  = ue_wrap::game_thread::IsDefinitelyOffGameThread();
     if (!yes && !no) return;  // id not known yet; ask again on the next message
     sLogged.store(true, std::memory_order_relaxed);
-    UE_LOGI("gate3: WndProcDetour thread=%lu isGameThread=%d definitelyOff=%d",
+    UE_LOGI("gate3: game window proc thread=%lu isGameThread=%d definitelyOff=%d",
             ::GetCurrentThreadId(), (int)yes, (int)no);
 }
 

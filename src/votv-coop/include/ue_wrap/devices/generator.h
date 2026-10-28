@@ -85,6 +85,10 @@ bool InsertUpgrade(void* gen, void* player, void* upgrade);
 // the grid drill finds the upgrade handed to its player, and its refund. Game thread.
 int UpgradesNear(const FVector& at, float radius, void** nearest);
 
+// [dev] the upgrade meshes updUpgrades built on `gen` (its upgradeMeshes, the live ones): what a player sees of the
+// upgrades installed. -1 while the field or the generator is unread. Game thread.
+int UpgradeMeshCount(void* gen);
+
 // [dev] the grid drill's shortcut through the repair puzzle: the generator's panel reads all three pages solved,
 // as a player's solving leaves them. Game thread.
 bool WritePuzzleSolved(void* gen);

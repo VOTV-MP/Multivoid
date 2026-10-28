@@ -54,6 +54,13 @@ constexpr ScanCost kCosts[] = {
      "tried when the overlay starts"},
     {"ActorEndPlay", CR::Severity::Important,
      "actors ending play go unseen: synced entities the world destroyed stay registered", "not tried yet"},
+    {"VulkanPresent", CR::Severity::Important,
+     "under the Vulkan renderer the overlay has no draw seam: no Multivoid menu, chat, HUD or dialogs",
+     "tried when the overlay starts"},
+    {"VulkanPixelFormats", CR::Severity::Important,
+     "under the Vulkan renderer the overlay cannot learn the back buffer's format: no Multivoid menu, chat, HUD "
+     "or dialogs",
+     "tried when the overlay starts"},
 };
 static_assert(sizeof kCosts / sizeof kCosts[0] == static_cast<size_t>(SL::Scan::kCount), "a cost per Scan");
 

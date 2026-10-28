@@ -8,10 +8,10 @@
 // at its exit, from whichever peer ran it. The host applies a client's line and sends it to every
 // client, its author too, so every peer ends at the host's order of lines. A receiver runs the same
 // `open` inside the lane's own scope, which sends nothing. A line for a PC this peer has not enrolled
-// yet waits, keyed by its eid, for its birth to land, and does not age while this peer's join is still
-// streaming the world in; an edge on a PC no element names yet waits by the actor until the element
-// lane names it, or until a line for that PC lands first, which sends the edge at once and is neither
-// applied nor passed on. A joiner gets every open lid at its world-ready. Game thread throughout.
+// yet is held in bind_wait for its bind and relayed, by a host, when it applies; a local edge voids it.
+// An edge on a PC no element names yet waits by the actor until the element lane names it, or until a
+// line for that PC lands first, which sends the edge at once and is neither applied nor passed on. A
+// joiner gets every open lid at its world-ready. Game thread throughout.
 
 #pragma once
 
@@ -25,8 +25,7 @@ namespace coop::portable_pc_lid {
 
 void Install(coop::net::Session* session);
 
-// Per tick: the watch until it is live, then the waiting lines and held edges once a second while any
-// waits.
+// Per tick: the watch until it is live, then the held edges once a second while any waits.
 void Tick();
 
 // Wire ingest: an op-6 LaptopState line.

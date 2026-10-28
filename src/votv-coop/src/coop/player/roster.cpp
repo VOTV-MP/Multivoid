@@ -38,7 +38,7 @@ void SetSession(coop::net::Session* session) {
 }
 
 void Refresh() {
-    // Roster changes are rare; throttle to ~6 Hz so a 125 Hz tick doesn't churn
+    // Roster changes are rare; throttle to ~6 Hz so a ~60 Hz tick doesn't churn
     // the mutex / WideCharToMultiByte every iteration.
     const unsigned long long now = ::GetTickCount64();
     if (g_lastMs != 0 && now - g_lastMs < 160) return;

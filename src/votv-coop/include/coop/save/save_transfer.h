@@ -1,7 +1,7 @@
 // coop/save/save_transfer.h -- the save-transfer join bootstrap: the host's save to the joining
 // client. A menu-mode joining client does not generate its own fresh world (its first-run
 // spawns and litter would never match the host's): it connects at the menu, requests the
-// host's save, receives it chunked on the bulk lane, writes it as the ephemeral slot
+// host's save, receives it chunked on the Transfer lane, writes it as the ephemeral slot
 // zcoop_<pid>, loads it through the game's own story load (the engine places every prop at
 // rest, with the host's keys), then announces world-ready, and the host runs the connect
 // replay (the key diff, the snapshot bracket, the state broadcasts) as a thin true-up for

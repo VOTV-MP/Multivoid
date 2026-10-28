@@ -20,7 +20,7 @@
 namespace coop::net { class Session; }
 
 // Wire: ReliableKind::FloppySlotState (BlobChunkPayload; head [u8 op][u8 deviceKind], op 0=claim
-// carrying one device, 1=canonical carrying a set). On PropSpawn's lane, so a claim cannot
+// carrying one device, 1=canonical carrying a set). On the Default lane with PropDestroy, so a claim cannot
 // overtake the destroy of the disc it absorbed. Never blindly relayed: a client's claim reaches
 // other peers only as the host's canonical. Game thread throughout.
 namespace coop::floppy_slot_sync {

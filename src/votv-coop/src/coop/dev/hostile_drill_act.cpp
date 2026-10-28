@@ -515,14 +515,19 @@ void LogVerdict(Arm a, const char* what, const std::string& why) {
 }
 
 const char* SpawnOnFloor(coop::RemotePlayer& rp, const wchar_t* path, bool far, int firstDir, int* dirUsed, void** out) {
-    FVector at{};
-    if (!E::TryGetActorLocation(rp.GetActor(), at)) return "the puppet's place could not be read";
     void* const cls = ue_wrap::asset_load::LoadObjectByPath(path);
     if (!cls) return "the target's class did not load";
+    return SpawnClassOnFloor(rp, cls, far ? kFarCm : kNearCm, far, firstDir, dirUsed, out);
+}
+
+const char* SpawnClassOnFloor(coop::RemotePlayer& rp, void* cls, float outCm, bool far, int firstDir, int* dirUsed,
+                              void** out) {
+    FVector at{};
+    if (!E::TryGetActorLocation(rp.GetActor(), at)) return "the puppet's place could not be read";
     for (int i = firstDir; i < kFan; ++i) {
         const float yaw = 6.2831853f * static_cast<float>(i) / static_cast<float>(kFan);
-        const float x = at.X + std::cos(yaw) * (far ? kFarCm : kNearCm);
-        const float y = at.Y + std::sin(yaw) * (far ? kFarCm : kNearCm);
+        const float x = at.X + std::cos(yaw) * outCm;
+        const float y = at.Y + std::sin(yaw) * outCm;
         const DP::Drop d = DP::DropOnFloor(rp.GetActor(), cls, nullptr, x, y, at.Z + (far ? kFarUpCm : kNearUpCm),
                                            far ? kFarDownCm : kNearDownCm, kMinColumnCm, kDropCm, out);
         if (d == DP::Drop::NoFloor) continue;

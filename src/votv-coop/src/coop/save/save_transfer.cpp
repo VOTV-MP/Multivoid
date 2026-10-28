@@ -1,6 +1,6 @@
 // coop/save/save_transfer.cpp -- the host's world to a joining client: a live capture of the host's
 // world into a scratch slot (or the on-disk slot behind a torn-read guard), chunked over the
-// bulk lane behind a Begin, CRC-checked and written to the client's coop slot. The photograph
+// Transfer lane behind a Begin, CRC-checked and written to the client's coop slot. The photograph
 // only; what the world did while it travelled is coop/save/join_window_baseline, captured in the
 // same breath here and flushed from this tick. See coop/save/save_transfer.h.
 
@@ -13,6 +13,7 @@
 #include "coop/config/config.h"  // the test-cue flag
 #include "coop/config/config_registry.h"  // [dev] stall_world_stream_at_pct, the stalled-download drill
 #include "coop/dev/atv_spawn_drill.h"  // [dev] the ATV spawn drill's divergence arm acts as a stream ends
+#include "coop/dev/host_settle_drill.h"  // [dev] the settle drill's hold and capture readings
 #include "coop/interactables/meadow_db_sync.h"  // the join-seed multiset snapshot at the blob instant
 #include "coop/interactables/download_arm_sync.h"  // the armed state at the capture
 #include "coop/interactables/signal_sync.h"  // the seed snapshot capture and cancel
@@ -24,6 +25,7 @@
 #include "coop/props/save_identity_bind.h"  // the client's eid-range bind
 #include "coop/props/save_identity_map.h"  // the host's keyless index-to-eid map
 #include "coop/session/join_beacon.h"  // the joiner hears which phase this stream is in
+#include "coop/session/host_world_settle.h"  // whether the host's world has finished starting
 #include "coop/save/join_window_baseline.h"  // the capture instant's baselines and their flush
 #include "coop/save/save_guard.h"
 #include "coop/save/save_indicator_suppress.h"  // detect the SAVED HUD across the join scratch save
@@ -67,6 +69,7 @@ struct HostStream {
     // The joiner asked while the host's world was still coming in: TickHost captures it once it is in.
     bool     waitWorld = false;
     int      probeTicks = 0;  // [dev] save_wait_probe: the ticks the wait is held after the world is in
+    uint32_t heldNoteMs = 0;  // the hold's last progress note, so a world change never lowers it
     bool     active = false;
     bool     blobReady = false;
     // The pump owns Begin's delivery: a fire-and-forget send under backpressure was silently
@@ -91,7 +94,10 @@ coop::roster_ledger::PerSlotState<bool> g_asked;
 bool g_worldTaken[coop::net::kMaxPeers] = {};
 
 // Chunks per TickHost pass per slot: a ~13 MB/s ceiling at 60 Hz; the send buffer's backpressure
-// (a failed send stops the pass) is the real pacer on a slower link.
+// (a failed send stops the pass) is the real pacer on a slower link. Divergence from MTA, which ships
+// resources over HTTP (reference/mtasa-blue/Client/mods/deathmatch/logic/
+// CResourceFileDownloadManager.cpp:21-31): the world
+// save goes in-band here, on the Transfer lane, paced by this pump.
 constexpr int kChunksPerTick = 4;
 
 // The mode byte the host announces. The header has no "unknown" encoding, so an unreadable mode
@@ -300,13 +306,15 @@ void BeginSink_(const uint8_t* data, int len) {
     OnBegin(p);
 }
 
-// The gamemode that owns the world's save is not there yet, and the host is not in a world without one (the
-// menu): it is loading the gameplay map, or between worlds on the way. A world the identity layer cannot
-// read at all (Degraded) waits for nothing.
+// The host's world is still coming in: the gamemode that owns its save is not there yet (the host is
+// loading the gameplay map, or between worlds on the way), or it is there and the world has not finished
+// starting up (host_world_settle: the prop processor's passes and the containers' inventories). A world
+// the identity layer cannot read at all (Degraded) and a world of another kind (the menu) wait for nothing.
 bool HostWorldComingIn_() {
     namespace WI = ue_wrap::world_identity;
-    if (ue_wrap::world_singleton::Gamemode() || WI::Degraded()) return false;
-    return WI::CurrentWorldKind() != WI::WorldKind::Other;
+    if (WI::Degraded()) return false;
+    if (WI::CurrentWorldKind() == WI::WorldKind::Other) return false;
+    return !ue_wrap::world_singleton::Gamemode() || !coop::host_world_settle::Settled();
 }
 
 void DeleteFileLogged_(const fs::path& p) {
@@ -356,6 +364,7 @@ void CaptureAndBegin_(int peerSlot, HostStream& hs) {
     // HUD rather than suppressing it -- nothing suppresses it yet: the bracket spans the
     // synchronous capture, and a manual save uses a BP path the mod never calls, so a fire inside
     // it belongs to the join save.
+    coop::dev::host_settle_drill::NoteCapture();  // [dev] the real settle conditions at the capture (a no-op when off)
     coop::save_indicator_suppress::Begin();
     const bool captured = ue_wrap::save_capture::CaptureLiveWorldToScratchSlot(kHostXferSlot);
     coop::save_indicator_suppress::End();
@@ -470,12 +479,17 @@ void OnRequest(int peerSlot) {
         coop::chat_feed::Push(L"[1c-test] JOIN-WINDOW OPEN -- joiner loading; move/drop test piles NOW (close at 'JOIN-WINDOW CLOSED')",
                               coop::chat_feed::Keep::Transient);
 
-    // A joiner that asks while the host's world is still coming in -- a world is current, but not yet the
-    // gamemode that owns its save, the seconds after a load that a quick rejoin lands in -- waits for it
-    // rather than taking the canonical slot: the live capture carries what the host changed since its
-    // save, and the lanes' join snapshots are taken in the same breath, so their seeds run. The joiner
-    // hears it as the host capturing its world; its own wait renews at that first note only, so a world
-    // that never comes in ends the join as the host never preparing it.
+    // A joiner that asks while the host's world is still coming in -- a world is current but not yet the
+    // gamemode that owns its save, or the gamemode is up and the world has not finished starting (its prop
+    // processor's passes, its containers' inventories): the seconds after a load that a quick rejoin lands
+    // in -- waits for it rather than taking the canonical slot: the live capture carries what the host
+    // changed since its save, and the lanes' join snapshots are taken in the same breath, so their seeds
+    // run. The joiner hears it as the host capturing its world. With no gamemode the note renews its wait at
+    // the first note only, so a world that never comes in ends the join as the host never preparing it;
+    // once there is a gamemode the note's progress rises, bounded by the host's own settle ceiling.
+    // MTA opens its port before the rest of Start (`CGame.cpp:982, 1021`) and processes no packet until
+    // Start returns and its pulse runs; here the world finishes starting after Start, so a join's capture
+    // waits for it.
     // [dev] save_wait_probe holds every request on this path a second longer, so a drill reaches it without
     // racing a rehost's load.
     static const bool s_waitProbe =
@@ -483,6 +497,7 @@ void OnRequest(int peerSlot) {
     if (HostWorldComingIn_() || s_waitProbe) {
         hs.waitWorld = true;
         hs.probeTicks = s_waitProbe ? 60 : 0;
+        coop::dev::host_settle_drill::NoteHold();  // [dev] a request met the host's start-up (a no-op when off)
         UE_LOGI("save_transfer: slot %d -- the host's world is still coming in%s; the transfer waits for it",
                 peerSlot, s_waitProbe ? " (or the wait probe holds it)" : "");
         return;
@@ -496,7 +511,18 @@ void TickHost() {
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         HostStream& hs = g_host[slot];
         if (hs.waitWorld) {
-            coop::join_beacon::NotePhase(slot, coop::net::HostJoinPhase::CapturingWorld, 0, 0);
+            // Progress only while there is a gamemode: the milliseconds since the world began, against the
+            // settle ceiling that bounds this hold, so the joiner's wait renews while the host's world is
+            // starting. With no gamemode the note stays 0/0 and renews the wait once.
+            // The numerator never falls within one request: a world change during the hold restarts the
+            // clock, and the joiner renews on a rise only.
+            if (ue_wrap::world_singleton::Gamemode()) {
+                const uint32_t ms = coop::host_world_settle::MsSinceWorldBegan();
+                if (ms > hs.heldNoteMs) hs.heldNoteMs = ms;
+                coop::join_beacon::NotePhase(slot, coop::net::HostJoinPhase::CapturingWorld, hs.heldNoteMs,
+                                             coop::host_world_settle::kCeilingMs);
+            } else
+                coop::join_beacon::NotePhase(slot, coop::net::HostJoinPhase::CapturingWorld, 0, 0);
             if (captured || hs.probeTicks-- > 0 || HostWorldComingIn_()) continue;
             captured = true;
             hs.waitWorld = false;

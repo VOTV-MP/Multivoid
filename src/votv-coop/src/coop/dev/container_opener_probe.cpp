@@ -8,7 +8,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
-#include "coop/props/container_write_policy.h"
+#include "coop/props/container_reach.h"
 #include "ue_wrap/actors/container_openers.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -28,7 +28,7 @@ namespace EL = coop::element;
 namespace E  = ue_wrap::engine;
 using ue_wrap::FVector;
 
-constexpr float kReachUU = coop::props::container_write_policy::kReachUU;
+constexpr float kReachUU = coop::props::container_reach::kReachUU;
 
 // The openers and their fields, as the game declares them; the probe reads them itself so the reverse
 // lookup is checked against an independent read.
@@ -78,12 +78,12 @@ void* Body(int slot) {
     return rp && rp->valid() && rp->HasPose() ? rp->GetActor() : nullptr;
 }
 
-// The host's own verdict, the one container_write_policy judges a slice by, on the container and on the
+// The host's own verdict, the one container_reach judges a client by, on the container and on the
 // actor that opens it.
 void JudgeReach(coop::net::Session& s, int slot, void* container, void* opener) {
     const auto eid = EL::Registry::Get().EidForActor(container);
     const auto tok = EL::IntentTarget::ForClientIntent(s, static_cast<uint8_t>(slot),
-                                                       coop::props::container_write_policy::kReachUU);
+                                                       coop::props::container_reach::kReachUU);
     const auto atContainer = tok.Resolve(eid, EL::ElementType::Prop);
     const auto atOpener = tok.Authorize(opener);
     UE_LOGI("container_opener_probe: slot %d -- the container eid=%u %s (dist=%.0f allowed=%.0f), its %ls %s "

@@ -5,18 +5,41 @@
 
 #pragma once
 
-#include "coop/net/protocol.h"  // ReliableKind
+#include "coop/config/config.h"           // ResolveEnum, the drill knob
+#include "coop/config/config_registry.h"  // rows::prop_syncer_load_lane
+#include "coop/net/protocol.h"            // ReliableKind
 
 namespace coop::net {
 
-// The priority lanes. connection_tuning's TuneConnection hard-codes the count to 3, and
-// session.cpp pins the two together with a static_assert on Lane::Count.
+// The reliable lanes, MTA's two channels plus a lane for what names nothing. GNS drains by priority
+// first and strictly (weights act only within one priority, isteamnetworkingsockets.h) and orders
+// delivery within a lane: the three are three FIFO streams, drained High, Default, Transfer.
+//   High      a kind that names nothing: the link probe and its echo, the join beacon, the vitals restore.
+//   Default   a kind that names an element or the world. MTA carries every element message on one ordered
+//             channel, PACKET_ORDERING_DEFAULT (reference/mtasa-blue/Server/mods/deathmatch/logic/packets/
+//             CPacket.h:43), so a message that names a prop meets that prop's spawn by FIFO order.
+//   Transfer  a payload that can exceed the blob ceiling, in MTA's latent shape: a channel of its own at low
+//             priority and a capped rate (reference/mtasa-blue/Shared/mods/deathmatch/logic/
+//             CLatentSendQueue.cpp:46-81,129-130), the whole message wrapped into one buffer
+//             (CLatentTransferManager.cpp:123-150).
+// connection_tuning's TuneConnection hard-codes the count to 3, and session.cpp pins the two together with a
+// static_assert on Lane::Count.
 enum class Lane : int {
     High = 0,
-    Normal = 1,
-    Bulk = 2,
+    Default = 1,
+    Transfer = 2,
     Count = 3,
 };
+
+// The FIFO exceptions: the save stream is taken by a bulk sink on receipt, before the inbox (nothing waits on
+// its order), and the admission kinds are sent raw on lane 0 (SendRawReliableToConn), outside the send backlog.
+//
+// A divergence from MTA, which sends explosions, damage and element RPCs at HIGH priority on its DEFAULT
+// channel (reference/mtasa-blue/Server/mods/deathmatch/logic/packets/CExplosionSyncPacket.h:41,
+// CElementRPCPacket.h:23): a GNS lane fuses order and priority, so ours are ordered on Default at the
+// middle priority. Element kinds stay off lane 0 because the link probe and the join beacon must never
+// queue behind the ordered element backlog (the LinkProbe and JoinPhaseNote arms). They wait behind what
+// that peer's Default lane holds, and on a joiner until its join gate closes.
 
 // The three admission kinds appear in none of the three routers below, and that is not an
 // omission: they never travel through a slot send (no slot exists yet; the raw connection send
@@ -42,219 +65,47 @@ inline bool IsReserveExemptKind(ReliableKind k) {
            k == ReliableKind::JoinPhaseNote;
 }
 
+// [dev] Drill knob prop_syncer_load_lane=default puts the load arm's filler on the ordered lane, the red of the
+// lane rule. Resolved once: LaneForKind runs per send.
+inline bool LoadFillerOnDefault() {
+    static const bool onDefault =
+        coop::config::ResolveEnum(coop::config_registry::rows::prop_syncer_load_lane) == "default";
+    return onDefault;
+}
+
 inline Lane LaneForKind(ReliableKind k) {
+    if (k == ReliableKind::DevLoadFiller && LoadFillerOnDefault()) return Lane::Default;
     switch (k) {
     // The link probe and its echo ride High because that is the lane whose delay the measurement
-    // is about: a reading taken on Bulk would time the bulk queue instead of the path the pose
+    // is about: a reading taken on Transfer would time the bulk queue instead of the path the pose
     // stream takes. Pinned as a pair -- an echo on another lane measures a different queue than
     // the probe it answers.
     case ReliableKind::LinkProbe:      return Lane::High;
     case ReliableKind::LinkProbeReply: return Lane::High;
-    // The join beacon rides High for the reason it exists: on Bulk it would queue behind the very
-    // world blob whose progress it reports, and arrive as news about a minute ago. Ordered against
-    // nothing -- it carries no state, only what the host is doing now.
+    // The join beacon rides High for the reason it exists: queued behind the very world blob whose
+    // progress it reports, it would arrive as news about a minute ago. It carries no state, only
+    // what the host is doing now.
     case ReliableKind::JoinPhaseNote:  return Lane::High;
-    case ReliableKind::TeleportClient: return Lane::High;
-    case ReliableKind::CremationControl: return Lane::High;
     case ReliableKind::RestoreVitals:  return Lane::High;
-    case ReliableKind::ItemActivate:   return Lane::High;
-    case ReliableKind::PlayerHit:      return Lane::High;  // combat event -- prioritize
-    case ReliableKind::ExplosionSpawn: return Lane::High;  // carries a victim's damage; MTA's packet is high priority
-    // Spawn and Destroy share a lane: GNS orders delivery within a lane, not across lanes, and a
-    // destroy overtaking its spawn under backpressure leaves a phantom actor.
-    case ReliableKind::PropSpawn:      return Lane::Bulk;
-    case ReliableKind::PropDestroy:    return Lane::Bulk;
-    // A prop's save record shares PropSpawn's lane on purpose: same FIFO, so a record can never
-    // overtake the birth it belongs to. The intent rides it too, so a client's authored record
-    // cannot pass the destroy or spawn that produced it.
-    case ReliableKind::PropSaveData:       return Lane::Bulk;
-    case ReliableKind::PropSaveDataIntent: return Lane::Bulk;
-    // A device slot rides the same lane for the same reason: a peer's insert destroys the disc and
-    // then reports the slot, and on another lane the report could pass the destroy. The laptop's
-    // file quad follows its slot: a canonical or a batch must not pass the slot change that names
-    // its disc.
-    case ReliableKind::FloppySlotState:    return Lane::Bulk;
-    case ReliableKind::LaptopQuad:         return Lane::Bulk;
-    // PropConvert destroys the ball and spawns the pile, so it shares the spawn lane; on another
-    // lane a convert could overtake the ball's spawn and leave a never-destroyed ball.
-    case ReliableKind::PropConvert:    return Lane::Bulk;
-    // PropSnapPos rides Bulk so it lands after the connect snapshot's spawns for the same join.
-    case ReliableKind::PropSnapPos:    return Lane::Bulk;
-    // PropDropIntent is order-paired with PropDestroy: the race defence is that the pickup's husk
-    // destroy delivers before the place's intent re-spawn, which holds only within a lane; on the
-    // default lane the intent could overtake the destroy (the place lost) or the destroy land after
-    // the re-spawn (a fresh copy retracted on every peer).
-    case ReliableKind::PropDropIntent: return Lane::Bulk;
-    // ReelEjectIntent, the same order-paired family: the ejecting client may pocket the reel a pass
-    // later (a keyed destroy on Bulk), and in-lane ordering makes the host author the spawn first.
-    case ReliableKind::ReelEjectIntent: return Lane::Bulk;
-    // A client's press, on the lane of its other prop intents: ordered against that client's own bulk
-    // sends only; the host's birth and destroy it causes travel the other way and are not ordered by it.
-    case ReliableKind::SleepingbagIntent: return Lane::Bulk;
-    case ReliableKind::EntitySpawn:    return Lane::Bulk;
-    case ReliableKind::EntityDestroy:  return Lane::Bulk;
-    // A creature's event count rides its lifecycle lane, so a count is ordered after its spawn and before its
-    // destroy. Host-authoritative: not relayable, not pre-world (the snapshot at world-ready carries it).
-    // Matches MTA's one ordered channel (reference/mtasa-blue/Server/mods/deathmatch/logic/packets/CPacket.h:43).
-    case ReliableKind::CreatureEventActive: return Lane::Bulk;
-    // The world-actor pair shares the spawn lane for the same reason. Host-authoritative: not
-    // relayable, not pre-world.
-    case ReliableKind::WorldActorSpawn:   return Lane::Bulk;
-    case ReliableKind::WorldActorDestroy: return Lane::Bulk;
-    // The snapshot brackets share PropSpawn's lane, so they deliver as Begin, every spawn,
-    // Complete; on another lane Complete could overtake the stream and lift the joiner's cover
-    // mid-build.
-    case ReliableKind::SnapshotBegin:    return Lane::Bulk;
-    case ReliableKind::SnapshotComplete: return Lane::Bulk;
-    // A joiner's dish codes are sent at its world-ready, ahead of its bracket's Begin; in this lane a
-    // set that goes whole lands before the bracket's Complete.
-    case ReliableKind::DishHashcodes:    return Lane::Bulk;
-    // The save blob is phase-ordered before the bracket (the client sends ClientWorldReady only
-    // after loading the save), so Bulk costs nothing, and Begin must precede its chunks in-lane.
-    case ReliableKind::SaveTransferBegin: return Lane::Bulk;
-    case ReliableKind::SaveTransferChunk: return Lane::Bulk;
-    // The host-to-client inventory blob must reach the joiner before its world loads (the inventory
-    // is substituted before materialisation), so it rides Normal, ahead of the Bulk streams, and is
-    // pre-world sendable; a self-contained blob with no in-lane dependency.
-    case ReliableKind::PlayerInventoryBlob: return Lane::Normal;  // StatOrderReply is pinned with it
-    case ReliableKind::StatOrderReply: return Lane::Normal;  // pinned with the profile blob: an order's reply must arrive after the profile it answers for
-    // PropStickState and PropRelease are order-paired: the release gate reads the frozen state the
-    // stick writes, and a release overtaking its stick re-enables physics on a just-stuck mirror.
-    // Pinned, so a single-kind lane move cannot split them.
-    case ReliableKind::PropStickState: return Lane::Normal;
-    case ReliableKind::PropRelease:    return Lane::Normal;
-    // The ATV kinds are order-paired: a destroy overtaking the last pose would tear down a mirror
-    // mid-update, an announce must reach a peer before its first pose, and the host must meet a
-    // client's sits, takeovers and stream in the order it made them. Pinned together; none is relayed.
-    case ReliableKind::AtvState:       return Lane::Normal;
-    case ReliableKind::AtvSeat:        return Lane::Normal;
-    case ReliableKind::AtvTakeover:    return Lane::Normal;
-    case ReliableKind::AtvAnswer:      return Lane::Normal;
-    case ReliableKind::AtvSpawn:       return Lane::Normal;
-    case ReliableKind::AtvDestroy:     return Lane::Normal;
-    // The set's edge rides behind the AtvSpawns it counts: FIFO on this lane is what makes the count mean them.
-    case ReliableKind::AtvSetComplete: return Lane::Normal;
-    // DeskState, DeskInput and DeskScanEvent are order-coupled (adopt before deltas, charge before
-    // scan); pinned together.
-    case ReliableKind::DeskState:      return Lane::Normal;
-    case ReliableKind::DeskInput:      return Lane::Normal;
-    case ReliableKind::DeskScanEvent:  return Lane::Normal;
-    // LaptopState carries the laptop's power and the portable PC's lid; its disc slot is FloppySlotState's.
-    case ReliableKind::LaptopState:    return Lane::Normal;
-    // PlayDeckEvent is order-coupled with DeskInput and with SavedSignalAppend (a play must land
-    // after its row's append); pinned.
-    case ReliableKind::PlayDeckEvent:  return Lane::Normal;
-    // PhysModsState's ops, canonical and deny assume in-lane order (an op must not overtake the
-    // canonical it was diffed against); pinned. Not relayable: ops are host-terminal, and the
-    // canonical is host-authored.
-    case ReliableKind::PhysModsState:  return Lane::Normal;
-    // ServerUpgradeState is the same shape for the servers' upgrades: an op must not overtake the
-    // canonical it was diffed against, and a deny precedes its canonical; pinned. Not relayable.
-    case ReliableKind::ServerUpgradeState: return Lane::Normal;
-    // SatConsole's blobs assume in-lane order: a line's echo before its answers, a busy level between
-    // the lines it falls between; pinned. Not relayable: a line is addressed to the host, and its
-    // answers to its typist alone.
-    case ReliableKind::SatConsole: return Lane::Normal;
-    // The power grid's two kinds share a lane: the blackout canonical a generator's break produced reaches a
-    // client before that break's rows, and one client's presses and ops reach the host in the order it made them.
-    // Not relayable: a press goes to the host alone, and the host authors the canonical and the rows.
-    case ReliableKind::PowerControlState:  return Lane::Normal;
-    case ReliableKind::PowerGridState:     return Lane::Normal;
-    // The towers' rows and a client's ops share a lane: one client's presses and claims reach the host in the
-    // order it made them. Not relayable: an op goes to the host alone, and the host authors the rows.
-    case ReliableKind::CoordTowerState:    return Lane::Normal;
-    // The drive chain keeps its order on one lane: a slot line, the drive rows and a rack pair; a joiner's seed
-    // sends them in that order.
-    case ReliableKind::DriveSlotState: return Lane::Normal;
-    case ReliableKind::DrivePayload:   return Lane::Normal;
-    // An eraser press follows its presser's insert on this lane; the host waits only while that insert's line
-    // waits for its drive.
-    case ReliableKind::EraserPressIntent: return Lane::Normal;
-    case ReliableKind::RackState:      return Lane::Normal;
-    // MeadowAppend and MeadowDelete share one lane: the join seed's no-reorder argument assumes one
-    // FIFO stream per connection.
-    case ReliableKind::MeadowAppend:   return Lane::Normal;
-    case ReliableKind::MeadowDelete:   return Lane::Normal;
-    // CoinGunSell rides Bulk because PropDestroy does: the sale must arrive in front of the
-    // sender's own destroy of the same prop, since the host mints from the sold prop's component,
-    // and on separate lanes the destroy could overtake the sale. If PropDestroy moves lane, this
-    // moves with it.
-    case ReliableKind::CoinGunSell:    return Lane::Bulk;
-    // CoinCollect rides Bulk with the coin family: it races the coin's own WorldActorDestroy, and
-    // sharing the destroy lane keeps the forward in the same FIFO. Moves with PropDestroy.
-    case ReliableKind::CoinCollect:    return Lane::Bulk;
-    // CoinGunResult is host-to-one-client and deliberately unpinned: it is ordered against nothing,
-    // and takes the default by decision. GrabRefused likewise: PropConvert rides Bulk, and what
-    // keeps a refusal from ending the wrong request is its reqId, never lane order.
-    case ReliableKind::MeadowOrder:    return Lane::Normal;  // an order line must not overtake the append it references
-    // RosterRow and the email and signal families are pinned to the default they ride: the
-    // ready-edge seed's exactly-once and clear-before-chunks arguments need the roster transition,
-    // the seed rows and the live rows in one FIFO per slot.
-    case ReliableKind::RosterRow:         return Lane::Normal;
-    case ReliableKind::EmailAppend:       return Lane::Normal;
-    case ReliableKind::EmailDelete:       return Lane::Normal;
-    case ReliableKind::SavedSignalAppend: return Lane::Normal;
-    case ReliableKind::SavedSignalDelete: return Lane::Normal;
-    // The floppy box rides the laptop family's lane for the one-FIFO discipline.
-    case ReliableKind::FloppyBoxState: return Lane::Normal;
-    // The container-contents slice stays behind the entity lifecycle it references: a blob for an
-    // eid whose spawn has not landed parks and retries, and one FIFO makes the park rare.
-    case ReliableKind::ContainerContents: return Lane::Normal;
-    // The hook family shares ONE lane, pinned to the default it rides, because the handover at the
-    // anchor is an ordered transaction: the owner's last HookState, the host's HookAnchored that
-    // retires that mirror and builds the anchored hook in its place, and a HookDestroy are three
-    // statements about one hook, and on separate lanes the answer could overtake the question.
-    case ReliableKind::HookState:         return Lane::Normal;
-    case ReliableKind::HookDestroy:       return Lane::Normal;
-    case ReliableKind::HookAnchorCommit:  return Lane::Normal;
-    case ReliableKind::HookAnchored:      return Lane::Normal;
-    // PropDriveEnd is host-to-all, with no lane order against other kinds: its stream is unreliable on
-    // its own datagram kind, and a never-parked receiver closes the generation and no more. A
-    // join-window PropSnapPos (Bulk) is ordered against it by its drive context. The default.
-    case ReliableKind::PropDriveEnd:      return Lane::Normal;
-    // The Kerfus pair is ordered against nothing: a state for a Kerfus whose mirror has not bound
-    // waits for the bind, and the host resolves an intent by eid. The default, by decision.
-    case ReliableKind::KerfusState:       return Lane::Normal;
-    case ReliableKind::KerfusIntent:      return Lane::Normal;
-    // The precision family is ordered against itself and one other kind: a joiner's seed and every
-    // later batch are one kind, an intent is performed by dish index, and the host hears an intent
-    // only from a slot whose ClientWorldReady it has applied (dish_calib_sync), so that announce
-    // rides the intent's lane and a client's verb cannot overtake it. The default, by decision.
-    case ReliableKind::ClientWorldReady:  return Lane::Normal;
-    case ReliableKind::DishCalib:         return Lane::Normal;
-    case ReliableKind::DishCalibIntent:   return Lane::Normal;
-    // A desk press names what it acts on by content; its answers go to the presser alone. The default, by decision.
-    case ReliableKind::DeskVerb:          return Lane::Normal;
-    case ReliableKind::DeskPingVerdict:   return Lane::Normal;
-    // A remover press and a creature hit reach the host in the order their client made them; the remover's answer
-    // follows the host's serve of it. Not relayable: a request goes to the host alone. The default, by decision.
-    case ReliableKind::RemoverRequest:    return Lane::Normal;
-    case ReliableKind::RemoverResult:     return Lane::Normal;
-    case ReliableKind::CreatureHitIntent: return Lane::Normal;
-    // Order-paired: a blast's request is judged after its own shot, so the two share one lane; the judges also read the
-    // hand and seat states their lanes apply, and Normal keeps them ordered with those. MTA sends both at high
-    // priority (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientGame.cpp:5403, :5501). A light on a salt rocket
-    // is judged against the sender's hand states, which ride Normal.
-    case ReliableKind::ProjectileFired:   return Lane::Normal;
-    case ReliableKind::ExplosionRequest:  return Lane::Normal;
-    case ReliableKind::AtvExplodeRequest: return Lane::Normal;
-    case ReliableKind::PropIgniteIntent:  return Lane::Normal;
-    // A take or use: the request and its reply ride Normal; the commit rides PropDestroy's lane (Bulk), where PropDropIntent
-    // is order-paired with it, so the item's drop cannot overtake it. The next request (Normal) can reach the host before this
-    // commit, so the host waits on the slot's own reservation; MTA sends both as one packet id (CVehicleInOutPacket.h:27).
-    case ReliableKind::PropActRequest:    return Lane::Normal;
-    case ReliableKind::PropActReply:      return Lane::Normal;
-    case ReliableKind::PropActCommit:     return Lane::Bulk;
-
-    // The camera kinds are ordered against nothing else and not relayable. The default, by decision.
-    case ReliableKind::CameraActiveState:  return Lane::Normal;
-    case ReliableKind::CameraLightState:   return Lane::Normal;
-    case ReliableKind::CameraToggleIntent: return Lane::Normal;
-    // DeviceClaim's lane (Normal, the default) by an explicit case: a tab never overtakes its claim, nor the release
-    // a leaving holder's last tab.
-    case ReliableKind::LaptopTabReport: return Lane::Normal;
-    case ReliableKind::LaptopTabState:  return Lane::Normal;
-    default:                           return Lane::Normal;
+    // The save stream and the drill filler: the transfers that can exceed the blob ceiling. The filler's lane is
+    // the drill knob's (LoadFillerOnDefault above), so a red arm can stand it on Default.
+    // The lane is built, MTA's latent shape is not: the save stream is paced by save_transfer's pump, and only
+    // the dev filler rides it beside. The first Transfer kind to take that shape owes five properties the lane
+    // does not enforce: dispatch on completion, dropped if its element is gone or not yet added
+    // (CLatentReceiver.cpp:160-186); an owner token cancelled when the peer leaves or the owner is destroyed
+    // (CLatentTransferManager.cpp:85-115,188-210); one transfer in flight per peer (CLatentReceiver.cpp:121-123);
+    // a size bound (:121-126); and its own rate cap (CLatentSendQueue.cpp:62-70).
+    case ReliableKind::SaveTransferBegin: return Lane::Transfer;
+    case ReliableKind::SaveTransferChunk: return Lane::Transfer;
+    case ReliableKind::DevLoadFiller:     return Lane::Transfer;
+    // These five rode High and now name an element, so they ride Default behind its spawn: a player
+    // (ItemActivate, TeleportClient, CremationControl), a creature's Npc eid (PlayerHit) and an ignoreId (ExplosionSpawn).
+    case ReliableKind::TeleportClient:    return Lane::Default;
+    case ReliableKind::CremationControl:  return Lane::Default;
+    case ReliableKind::ItemActivate:      return Lane::Default;
+    case ReliableKind::PlayerHit:         return Lane::Default;
+    case ReliableKind::ExplosionSpawn:    return Lane::Default;
+    default:                              return Lane::Default;
     }
 }
 
@@ -299,8 +150,8 @@ constexpr bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::OwnerEntityDestroy:
     case ReliableKind::HookState:         // a hook belongs to the player who fired it
     case ReliableKind::HookDestroy:
-    // PropDriveEnd is not relayable: the host originates it, and a client's copy would be a forged
-    // end for a stream only the host runs.
+    // PropDriveEnd is not relayable: a client's End goes to the host, which judges it and re-publishes it. Nor is
+    // PropSyncClaim (the host answers the sender alone); PropSyncAnswer is host-authored.
     // HookAnchorCommit is deliberately NOT relayable: it is an intent addressed to the host alone,
     // and the host's own HookAnchored is what the other peers get. Relaying it would hand every
     // peer a record the arbiter has not validated yet, and two of them would build the hook.
@@ -369,7 +220,7 @@ inline bool IsPreWorldSendableKind(ReliableKind k) {
     // A command's answer is a private text line; the receiver touches no world.
     case ReliableKind::CommandReply:
     // PropDriveEnd stays gated: it names a prop by eid, which a joiner has only after its world is up,
-    // and the world-ready replay re-sends every driven prop's pose in any case.
+    // and the world-ready replay re-sends every driven prop's pose in any case. The syncer pair likewise.
         return true;
     default:
         return false;

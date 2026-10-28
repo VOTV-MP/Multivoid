@@ -12,6 +12,7 @@
 #include "coop/net/session.h"
 #include "coop/creatures/npc_adoption.h"
 #include "coop/creatures/kerfur_prop_adoption.h"  // OnClientWorldReady: the deferred-adoption per-world reset
+#include "coop/element/bind_wait.h"  // Clear: the messages held for the old world's binds
 #include "coop/world/event_fire_sync.h"  // OnClientWorldReady: the fires queued in the join window
 #include "coop/world/daily_task_sync.h"  // OnClientWorldReady: a task kept from the world left behind
 #include "coop/props/prop_key_index.h"     // CanAnswer at the world-ready gate
@@ -204,6 +205,7 @@ const char* TickWorldReadyAnnounce(coop::net::Session& session, void* localNow, 
                 // state so the new world re-adopts its save NPCs and re-sweeps orphans.
                 coop::npc_adoption::OnClientWorldReady();
                 coop::kerfur_prop_adoption::OnClientWorldReady();  // drop the stale prop-kerfur pending set
+                coop::element::bind_wait::Clear("the world changed");  // the messages held for the old world's binds
                 coop::event_fire_sync::OnClientWorldReady();  // the fires queued in the join window replay now
                 coop::daily_task_sync::OnClientWorldReady();  // a task kept from the world left behind goes
                 // The same reset for the deferred prop divergence sweep: one armed for the prior

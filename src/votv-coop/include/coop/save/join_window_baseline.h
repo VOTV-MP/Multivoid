@@ -46,7 +46,8 @@ void FlushDivergedPositions(int peerSlot);
 // at rest. From the transfer's host tick.
 void TickLateArm();
 
-// The save-time position of keyless chipPile `eid` for `peerSlot`. False (out untouched) for a
+// The save-time position of keyless chipPile `eid` for `peerSlot`, as the capture recorded it and
+// nothing wrote after: the key the joiner's native sits at. False (out untouched) for a
 // stale-fallback join, an unseeded or post-save pile, or an out-of-range slot. The connect-replay
 // snapshot builder stamps it onto the pile's spawn so the client's twin destroy reconciles a pile
 // the host moved in the join window.
@@ -56,22 +57,13 @@ bool TryGetPileXform(int peerSlot, coop::element::ElementId eid, ue_wrap::FVecto
 // a clump at this position.
 bool TryGetClumpXform(int peerSlot, coop::element::ElementId eid, ue_wrap::FVector& out);
 
-// Like TryGetPileXform but across all active join slots: a convert broadcast is a single fan-out
-// with no slot, and a pile eid is unique, so at most one slot holds it.
-bool TryGetPileXformAnySlot(coop::element::ElementId eid, ue_wrap::FVector& out);
-
-// The save-time position of off-form kerfur `eid`, across every active slot for the same reason.
+// The save-time position of off-form kerfur `eid`, across every active slot: a KerfurConvert is a
+// single fan-out with no slot, and a kerfur's host eid is unique.
 // False if no slot captured it: a stale-fallback join, a kerfur bought after the save, or one
 // already active at every blob instant. The kerfur table reads it at the first conversion to
 // record the off-prop's origin eid, which the connect snapshot carries to the joiner as the eid to
 // retire.
 bool TryGetKerfurXformAnySlot(coop::element::ElementId eid, ue_wrap::FVector& out);
-
-// Record the pre-grab position of pile `eid` into every active slot's map, at the seam where a
-// grabbed pile's clump is born and before the pile dies in place, so what is recorded is still its
-// save position -- the key the joiner's native sits at. The landing convert then carries it and the
-// client arms a pending save-time twin. A no-op outside a join; a re-grab overwrites.
-void RecordGrabTimePileXform(coop::element::ElementId eid, const ue_wrap::FVector& preGrabLoc);
 
 // A peer left, or its stream was cancelled: drop its baseline and disarm its late flush.
 void ClearForSlot(int peerSlot);

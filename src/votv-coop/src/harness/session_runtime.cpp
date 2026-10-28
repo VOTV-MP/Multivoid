@@ -63,6 +63,7 @@
 #include "coop/props/prop_act_host.h"
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/prop_snapshot.h"
+#include "coop/props/trash_morph_gate.h"
 #include "coop/save/save_guard.h"
 #include "coop/save/save_transfer.h"
 #include "coop/session/join_beacon.h"
@@ -70,7 +71,6 @@
 #include "coop/session/local_grants.h"
 #include "coop/session/net_pump.h"
 #include "coop/session/player_handshake.h"
-#include "coop/session/rig_ready.h"
 #include "coop/session/server_settings_sync.h"
 #include "coop/text/utf8_codec.h"
 #include "coop/session/session_manager.h"
@@ -340,6 +340,9 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     // client's spawners tick from its world's first frame, and nothing orders that after the pawn
     // subsystems::Install waits for. Idempotent across Stop/Start.
     coop::spawn_authority::Install(&g_session);
+    // And the trash morph gate's three verbs: a joiner's pile loads with the save, and the watch is
+    // by class and name, so no pile runs a morph unjudged. Idempotent across Stop/Start.
+    coop::trash_morph_gate::Install(&g_session);
     if (netCfg.role == coop::net::Role::Host) {
         // Snapshot the canonical save before coop injects state (host only; clients are
         // save-blocked); synchronous, so it completes before Start.
@@ -370,8 +373,8 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
             netCfg.role == coop::net::Role::Host ? "host" : "client",
             netCfg.topology == coop::net::Topology::P2P ? "p2p" : "lan-direct",
             ok ? "" : " -- START FAILED");
-    // Every host start is made in a loaded world (the boot load or the picker's load comes first).
-    if (ok && netCfg.role == coop::net::Role::Host) coop::rig_ready::Say("hosting");
+    // The host starts in a loaded level whose world may still be starting up: `rig: READY hosting` is
+    // said by host_world_settle once that world has settled, and a join waits for the same edge.
     return ok;
 }
 

@@ -5,7 +5,7 @@
 // boot does nothing here. The variables that do what a click in the multiplayer menu does are
 // harness/browser_click_arm's.
 //
-// WHY IT LIVES HERE AND NOT IN THE OVERLAY: imgui_overlay.cpp owns the DXGI hooks, the WndProc and
+// WHY IT LIVES HERE AND NOT IN THE OVERLAY: imgui_overlay.cpp owns the DXGI hooks, the window-message handler and
 // surface compositing. These blocks are the harness's ACTUATION points about those surfaces --
 // ui/overlay_diag.cpp is the same argument for the observation side -- and they had pushed that
 // file past the 800-line soft cap.

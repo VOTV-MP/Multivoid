@@ -30,6 +30,8 @@
 #include <atomic>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace harness::world_boot {
 namespace {
@@ -88,6 +90,35 @@ void FailHostBeforeLoad_(const coop::net::Refusal& r) {
     ReturnToMenuAfterFailedHost();
 }
 
+// The new_game_rules row, "key=value;key=value", handed to the fresh boot so its blank save starts
+// with those world rules. A rule is split at its first '='; one with no key or no '=' is named and
+// skipped. A key the game's rules do not have is named by the engine when it writes the save.
+void HandFreshGameRules() {
+    const std::string raw = cfg::ResolveString(coop::config_registry::rows::new_game_rules);
+    std::vector<std::pair<std::string, std::string>> rules;
+    std::string applied;
+    size_t pos = 0;
+    while (pos <= raw.size() && !raw.empty()) {
+        size_t end = raw.find(';', pos);
+        if (end == std::string::npos) end = raw.size();
+        std::string item = raw.substr(pos, end - pos);
+        pos = end + 1;
+        const size_t a = item.find_first_not_of(" \t");
+        if (a == std::string::npos) continue;
+        item = item.substr(a, item.find_last_not_of(" \t") - a + 1);
+        const size_t eq = item.find('=');
+        if (eq == std::string::npos || eq == 0) {
+            UE_LOGW("harness: new game rule '%s' is not key=value; skipped", item.c_str());
+            continue;
+        }
+        rules.emplace_back(item.substr(0, eq), item.substr(eq + 1));
+        if (!applied.empty()) applied += ',';
+        applied += item;
+    }
+    ue_wrap::engine::SetFreshGameRules(rules);
+    if (!rules.empty()) UE_LOGI("harness: new game rules applied: %s", applied.c_str());
+}
+
 }  // namespace
 
 bool BootStorySaveBlocking(bool forceFresh, const wchar_t* slotOverride, int forceGameMode) {
@@ -124,10 +155,11 @@ bool BootStorySaveBlocking(bool forceFresh, const wchar_t* slotOverride, int for
         std::string slotA = cfg::ResolveString(coop::config_registry::rows::save);
         slot.assign(slotA.begin(), slotA.end());  // ASCII slot name
     }
-    if (freshBoot)
+    if (freshBoot) {
         UE_LOGI("harness: target FRESH New Game (blank save) in mode %d (%s)", freshMode,
                 ue_wrap::game_mode::NameOrOrdinal(freshMode).c_str());
-    else
+        HandFreshGameRules();
+    } else
         UE_LOGI("harness: target SAVE slot '%ls' (its name carries its mode)", slot.c_str());
     for (int i = 0; i < 80; ++i) {  // ~120 s cap (boot + omega + level load)
         if (coop::shutdown::IsShuttingDown()) {

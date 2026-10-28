@@ -3,8 +3,8 @@
 // the slot and rack verb watches and forwards rack marks to drive_rack_sync.
 //
 // The design's slotted latch is SATISFIED BY the existing frozen/static pose gate in
-// remote_prop.cpp: a slotted drive is frozen by putDriveIn on every peer, so straggler poses are
-// already dropped and a second mechanism would be redundant. Game thread throughout.
+// remote_prop_drive.cpp (ResolveAndStartDrive): a slotted drive is frozen by putDriveIn on every peer, so
+// straggler poses are already dropped and a second mechanism would be redundant. Game thread throughout.
 
 #pragma once
 
@@ -20,7 +20,7 @@ namespace coop::drive_sync {
 void Install(coop::net::Session* session);
 
 // Per net-pump tick: verb-name resolution, the dirty-mark barrier drain,
-// the 1 Hz slot sweep, pending-apply retries.
+// the 1 Hz slot sweep. An insert line for a drive not bound here waits in bind_wait.
 void Tick();
 
 // Router entries (event_dispatch_signal.cpp).
@@ -36,9 +36,6 @@ void Tick();
 // holds, to its source.
 void OnDriveSlotState(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot);
 
-// HOST: whether a slot line for `role` naming `driveEid` waits here for its drive to bind. Game thread.
-bool HasPendingLine(int role, uint32_t driveEid);
-
 // The slot lines this peer announced this session: a caller that must follow its own insert onto the wire waits for
 // it to rise. Game thread.
 uint64_t AnnouncedCount();
@@ -48,7 +45,7 @@ uint64_t AnnouncedCount();
 void QueueConnectBroadcastForSlot(int peerSlot);
 
 // Full teardown (the OnDisconnect fanout) -- clears the slot baselines,
-// dirty marks, pending applies; the deny/taken rings are drive_rack_sync's
+// dirty marks; the deny/taken rings are drive_rack_sync's
 // (its own OnDisconnect). Re-run implicitly at next start.
 void OnDisconnect();
 

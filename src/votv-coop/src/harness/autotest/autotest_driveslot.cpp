@@ -179,7 +179,7 @@ void RunHost() {
         return;
     }
     // Straight into the port: an insert that overtakes its drive's birth broadcast is parked by the
-    // receiver (drive_sync's pending list, retried until the eid resolves), so no wait is owed here.
+    // receiver (a line held in bind_wait until the drive binds), so no wait is owed here.
     const bool portRead = RunGT([sb](std::atomic<int>& d) {
         DC::CallPutDriveIn(sb->slot, sb->drive);
         sb->eid = EidOf(sb->drive);

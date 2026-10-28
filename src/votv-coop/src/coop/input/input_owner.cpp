@@ -401,9 +401,9 @@ void TickGameThread(bool doFullScan) {
     coop::dev::perf_probe::Scope perfScope(coop::dev::perf_probe::Bucket::InputOwner);
     // The refresh floor for world_identity, and it comes first. CurrentWorld memoises on a 100 ms
     // timer and is refreshed by whoever calls it, which is not a floor; this tick is one: 10 Hz,
-    // ungated, alive at the menu with no session. First, because this tick is posted from the
-    // overlay's present path and presents stop for seconds during a world teardown; the first tick
-    // after they resume must already know the new world, or it resolves the pawn against the
+    // ungated, alive at the menu with no session. First, because this tick rides the frame tail
+    // (harness/pump.cpp) and the tail stops for seconds during a world teardown; the first tick
+    // after it resumes must already know the new world, or it resolves the pawn against the
     // previous one, the dead-pawn read this term exists to refuse.
     (void)ue_wrap::world_identity::CurrentWorld();
     // On the slow cadence only: once installed this is one compare, but a retry walks the object

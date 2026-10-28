@@ -74,6 +74,11 @@ bool Unavailable();
 // How many props the index holds now, for a diagnostic line.
 size_t Size();
 
+// A number that moves whenever the index's table changes: a prop born, dead, re-keyed, the seed, the end of a
+// session's hold. A caller that retries a read asks again only when it moved, since a read that missed cannot
+// answer otherwise until then. Game thread.
+uint64_t Version();
+
 // [dev] Every entry as the store holds it, for the parity probe's stale count.
 struct DebugEntry {
     void*        actor;

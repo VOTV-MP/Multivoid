@@ -2,10 +2,19 @@
 
 #include "coop/net/send_backlog.h"
 
+#include "session_lanes.h"  // Lane (co-located private header)
+
+#include "coop/config/config.h"           // ResolveInt, the red arm
+#include "coop/config/config_registry.h"  // rows::join_gate_red
 #include "coop/net/net_stats.h"
+#include "coop/net/protocol.h"            // PacketHeader / ReliableHeader, to read a held packet's kind
+#include "coop/net/snapshot_send_scope.h"
 #include "ue_wrap/core/log.h"
 
+#include <algorithm>
+#include <cstdio>
 #include <cstring>
+#include <utility>
 
 #pragma warning(push)
 #pragma warning(disable: 4100 4127 4191 4244 4245 4267 4310 4324 4458)
@@ -16,6 +25,9 @@
 namespace coop::net {
 
 namespace {
+
+// Held messages the gate's enqueue stamps make room for at open, so a typical join does not regrow them.
+constexpr size_t kJoinStampReserve = 512;
 
 // One GNS send attempt of a prebuilt wire packet. Returns the raw rc
 // (message number >= 0 on success, -EResult on refusal). The refused
@@ -42,6 +54,12 @@ int64_t AttemptSend_(uint32_t hConn, int lane, const uint8_t* wire, int len) {
 void SendBacklog::ResetLocked_(SlotQ& s) {
     for (auto& l : s.lanes) { l.q.clear(); l.bytes = 0; }
     s.totalBytes = 0;
+    s.joinGate = false;
+    s.announceHolds = 0;
+    s.joinQ.clear();
+    s.joinStamps.clear();
+    s.joinBytes = 0;
+    s.joinWarned = false;
     s.hConn = 0;
     s.episodeOpen = false;
     s.episodeQueued = 0;
@@ -59,13 +77,59 @@ SendOutcome SendBacklog::SendOrQueue(int slot, int lane, uint32_t hConn,
         return SendOutcome::Dropped;
     SlotQ& s = slots_[slot];
     std::lock_guard<std::mutex> lk(s.mu);
+    return SendLocked_(s, slot, lane, hConn, wire, len, adm);
+}
+
+SendOutcome SendBacklog::SendOrQueueBatch(int slot, int lane, uint32_t hConn, const uint8_t* wire,
+                                          int len, int count, SendAdmission& adm, int& streamed) {
+    streamed = 0;
+    if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers))
+        return SendOutcome::Dropped;
+    if (lane < 0 || lane >= kLaneCount || !wire || len <= 0 || count <= 0 || hConn == 0)
+        return SendOutcome::Dropped;
+    SlotQ& s = slots_[slot];
+    // One acquisition for every packet: the join gate and the lane's queue state cannot change
+    // between two packets of the batch, so all of them go straight or all of them queue behind
+    // the same head. The first Dropped ends the batch, as it ends a chunk loop.
+    std::lock_guard<std::mutex> lk(s.mu);
+    SendOutcome worst = SendOutcome::Streamed;
+    for (int i = 0; i < count; ++i) {
+        const SendOutcome rc = SendLocked_(s, slot, lane, hConn, wire + static_cast<size_t>(i) * len,
+                                           len, adm);
+        if (rc == SendOutcome::Dropped) return rc;
+        if (rc == SendOutcome::Streamed) ++streamed;
+        else worst = SendOutcome::Queued;
+    }
+    return worst;
+}
+
+SendOutcome SendBacklog::SendLocked_(SlotQ& s, int slot, int lane, uint32_t hConn,
+                                     const uint8_t* wire, int len, SendAdmission& adm) {
     // A backlog stamped for a PREVIOUS connection is dead state -- discard it
     // before this (new-connection) send, never deliver it (slot recycling).
-    if (s.totalBytes > 0 && s.hConn != hConn) {
+    if ((s.totalBytes > 0 || s.joinBytes > 0) && s.hConn != hConn) {
         UE_LOGW("send_backlog: slot %d backlog (%zu B) belonged to stale conn 0x%08x -- "
                 "discarded on new conn 0x%08x (teardown raced the reassign)",
-                slot, s.totalBytes, s.hConn, hConn);
+                slot, s.totalBytes + s.joinBytes, s.hConn, hConn);
         ResetLocked_(s);
+    }
+    // The join gate: a Default-lane send to a joining slot waits in the join queue, in send order,
+    // until the snapshot completes -- unless it IS the snapshot (a SnapshotSendScope for this slot).
+    // Held packets are Queued: they will be delivered, and the drain counts them when it hands them over.
+    if (s.joinGate && lane == static_cast<int>(Lane::Default) &&
+        SnapshotSendScope::CurrentSlot() != slot) {
+        if (s.totalBytes + s.joinBytes + static_cast<size_t>(len) > kMaxBytesPerSlot) {
+            s.fatal = true;
+            s.fatalReason = "send backlog over byte cap (link too slow for the session)";
+        }
+        s.hConn = hConn;
+        const uint8_t kind = len >= static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader))
+                                 ? reinterpret_cast<const ReliableHeader*>(wire + sizeof(PacketHeader))->kind
+                                 : uint8_t{0};
+        s.joinQ.emplace_back(wire, wire + len);
+        s.joinStamps.push_back({std::chrono::steady_clock::now(), kind});
+        s.joinBytes += static_cast<size_t>(len);
+        return SendOutcome::Queued;
     }
     LaneQ& l = s.lanes[lane];
     // Which of the two brims turned this packet back, for the episode line: our own reserve, or
@@ -107,7 +171,7 @@ SendOutcome SendBacklog::SendOrQueue(int slot, int lane, uint32_t hConn,
         }
     }
     // Queue behind whatever is already pending on this (slot,lane).
-    if (s.totalBytes + static_cast<size_t>(len) > kMaxBytesPerSlot) {
+    if (s.totalBytes + s.joinBytes + static_cast<size_t>(len) > kMaxBytesPerSlot) {
         // The fatal byte cap. Do NOT drop this message silently -- queue it and
         // latch fatal; the net thread kicks the slot (the whole backlog dies
         // with the connection, which is the guarantee's honest boundary).
@@ -135,6 +199,15 @@ int SendBacklog::Drain(int slot, uint32_t hConn, SendAdmission& adm) {
     if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return 0;
     SlotQ& s = slots_[slot];
     std::lock_guard<std::mutex> lk(s.mu);
+    // A gate that stays open means the slot's snapshot has not completed -- deferred, or waiting behind
+    // another joiner's drain. The gate stays open on purpose (a seed sent before its props is the defect
+    // it exists to stop), so the only action is this one line per open, with the queue's depth.
+    if (s.joinGate && !s.joinWarned &&
+        std::chrono::steady_clock::now() - s.joinOpenedAt > kJoinGateWarn) {
+        s.joinWarned = true;
+        UE_LOGW("[JOIN-GATE] slot %d open for over %lld s without closing -- %zu msgs, %zu B held",
+                slot, static_cast<long long>(kJoinGateWarn.count()), s.joinQ.size(), s.joinBytes);
+    }
     if (s.totalBytes == 0) return 0;
     if (hConn == 0 || s.hConn != hConn) {
         // The connection this backlog belonged to is gone (slot empty or
@@ -151,7 +224,7 @@ int SendBacklog::Drain(int slot, uint32_t hConn, SendAdmission& adm) {
     bool progressed = false;
     bool blocked = false;
     int sentThisPass = 0;  // kDrainPassCap bounds the mutex hold
-    for (int lane = 0; lane < kLaneCount && !blocked; ++lane) {  // High -> Normal -> Bulk
+    for (int lane = 0; lane < kLaneCount && !blocked; ++lane) {  // High -> Default -> Transfer
         LaneQ& l = s.lanes[lane];
         while (!l.q.empty()) {
             if (sentThisPass >= kDrainPassCap) { blocked = true; break; }
@@ -194,8 +267,9 @@ bool SendBacklog::CheckFatal(int slot, const char** reason) {
     if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return false;
     SlotQ& s = slots_[slot];
     std::lock_guard<std::mutex> lk(s.mu);
-    if (s.totalBytes == 0) return false;
-    if (!s.fatal &&
+    if (s.totalBytes == 0 && s.joinBytes == 0) return false;
+    // The no-progress timer measures the lane queue only: a held join queue is not a stalled link.
+    if (!s.fatal && s.totalBytes > 0 &&
         std::chrono::steady_clock::now() - s.lastProgress > kNoProgress) {
         s.fatal = true;
         s.fatalReason = "send backlog made no progress (link stalled)";
@@ -208,10 +282,117 @@ void SendBacklog::FreeSlot(int slot) {
     if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return;
     SlotQ& s = slots_[slot];
     std::lock_guard<std::mutex> lk(s.mu);
-    if (s.totalBytes > 0)
-        UE_LOGI("send_backlog: slot %d teardown -- %zu queued B discarded with the connection",
-                slot, s.totalBytes);
+    if (s.totalBytes > 0 || s.joinBytes > 0)
+        UE_LOGI("send_backlog: slot %d teardown -- %zu queued B and %zu join-gate B discarded with the connection",
+                slot, s.totalBytes, s.joinBytes);
     ResetLocked_(s);
+}
+
+namespace {
+// Resolved once: the red arm of the join drills, where the gate is bypassed and the receive
+// parks catch the seeds that precede their props.
+bool JoinGateRed_() {
+    static const bool red = coop::config::ResolveInt(coop::config_registry::rows::join_gate_red) != 0;
+    return red;
+}
+}  // namespace
+
+void SendBacklog::OpenJoinGate(int slot) {
+    if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return;
+    if (JoinGateRed_()) return;
+    SlotQ& s = slots_[slot];
+    std::lock_guard<std::mutex> lk(s.mu);
+    ++s.announceHolds;
+    OpenLocked_(s);
+}
+
+void SendBacklog::OpenJoinGateForSnapshot(int slot) {
+    if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return;
+    if (JoinGateRed_()) return;
+    SlotQ& s = slots_[slot];
+    std::lock_guard<std::mutex> lk(s.mu);
+    OpenLocked_(s);
+}
+
+void SendBacklog::ReleaseAnnounceHold(int slot) {
+    if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return;
+    SlotQ& s = slots_[slot];
+    std::lock_guard<std::mutex> lk(s.mu);
+    if (s.announceHolds > 0) --s.announceHolds;
+}
+
+void SendBacklog::OpenLocked_(SlotQ& s) {
+    if (s.joinGate) return;  // a re-announce while open keeps the queue and the window
+    s.joinGate = true;
+    s.joinOpenedAt = std::chrono::steady_clock::now();
+    s.joinWarned = false;
+    s.joinStamps.reserve(kJoinStampReserve);
+}
+
+void SendBacklog::CloseJoinGate(int slot) {
+    if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return;
+    SlotQ& s = slots_[slot];
+    std::lock_guard<std::mutex> lk(s.mu);
+    if (!s.joinGate || s.announceHolds > 0) return;
+    const auto now = std::chrono::steady_clock::now();
+
+    // The close line: the window, what the gate held, and how long each held message waited.
+    uint32_t perKind[256] = {};
+    std::vector<long long> delays;
+    delays.reserve(s.joinStamps.size());
+    for (const auto& st : s.joinStamps) {
+        ++perKind[st.kind];
+        delays.push_back(std::chrono::duration_cast<std::chrono::milliseconds>(now - st.at).count());
+    }
+    std::vector<std::pair<uint32_t, int>> byCount;  // (count, kind id), the top eight by count
+    for (int k = 0; k < 256; ++k)
+        if (perKind[k] > 0) byCount.emplace_back(perKind[k], k);
+    std::sort(byCount.begin(), byCount.end(), [](const auto& a, const auto& b) {
+        return a.first != b.first ? a.first > b.first : a.second < b.second;
+    });
+    char kinds[256];
+    size_t at = 0;
+    uint32_t other = 0;
+    for (size_t i = 0; i < byCount.size(); ++i) {
+        if (i < 8 && at + 16 < sizeof(kinds))
+            at += static_cast<size_t>(std::snprintf(kinds + at, sizeof(kinds) - at, "%sk%d=%u",
+                                                    at ? " " : "", byCount[i].second, byCount[i].first));
+        else
+            other += byCount[i].first;
+    }
+    if (at == 0) kinds[0] = '\0';
+    long long median = 0, maxDelay = 0;
+    if (!delays.empty()) {
+        std::nth_element(delays.begin(), delays.begin() + static_cast<long>(delays.size() / 2), delays.end());
+        median = delays[delays.size() / 2];
+        maxDelay = *std::max_element(delays.begin(), delays.end());
+    }
+    UE_LOGI("[JOIN-GATE] slot %d closed: window_ms=%lld msgs=%zu bytes=%zu kinds=[%s other=%u] "
+            "delay_ms median=%lld max=%lld",
+            slot,
+            static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - s.joinOpenedAt).count()),
+            s.joinQ.size(), s.joinBytes, kinds, other, median, maxDelay);
+
+    // The splice: the held packets join the Default lane behind whatever it already holds, in send
+    // order, under the lock: a swap when the lane is empty, an append otherwise. They become backlog
+    // from here: the byte count moves with them, and the no-progress timer starts if the lanes were empty.
+    LaneQ& dl = s.lanes[static_cast<int>(Lane::Default)];
+    if (!s.joinQ.empty()) {
+        if (s.totalBytes == 0) s.lastProgress = now;
+        if (dl.q.empty()) {
+            dl.q.swap(s.joinQ);
+        } else {
+            for (auto& m : s.joinQ) dl.q.push_back(std::move(m));
+        }
+        dl.bytes += s.joinBytes;
+        s.totalBytes += s.joinBytes;
+    }
+    s.joinQ.clear();
+    s.joinStamps.clear();
+    s.joinBytes = 0;
+    s.joinGate = false;
+    s.joinWarned = false;
 }
 
 size_t SendBacklog::DepthBytes(int slot) {

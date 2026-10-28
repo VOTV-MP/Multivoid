@@ -9,7 +9,8 @@
 //
 // Wire: ReliableKind::LaptopQuad over BlobChunkPayload, head byte 0 a client's batch, 1 the host's canonical. Both
 // carry the laptop's generation from coop/interactables/floppy_slot_sync, which owns which disc the slot holds, and
-// ride its lane: the host refuses a batch of another generation, a client drops a canonical of another, and neither
+// ride the Default lane behind its slot states: the host refuses a batch of another generation, a client drops a
+// canonical of another, and neither
 // end sends while that lane has not settled the disc. Never refanned. Game thread throughout.
 
 #pragma once

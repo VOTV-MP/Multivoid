@@ -52,9 +52,9 @@ void PostComposite(Body&& body) {
 void PostMenuTick();
 
 // The tail every composite runs, in a session or out of one, at the menu or in a world: the
-// nameplates, the dev overlays, the chat feed, the lookup parity probes and the shutdown hooks. One
-// list, so an item added for one composite runs on the other's frames too: a join's menu is ticked by
-// this module's own composite, not the play loop's. Game thread.
+// nameplates, the dev overlays, the chat feed, the lookup parity probes, the game window's subclass, the
+// input owner's tick and the shutdown hooks. One list, so an item added for one composite runs on the
+// other's frames too: a join's menu is ticked by this module's own composite, not the play loop's. Game thread.
 void TickFrameTail();
 
 // The watchdogs that cover a failure of the PUMP itself, and therefore the one thing that must

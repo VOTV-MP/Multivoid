@@ -163,8 +163,8 @@ copy's chain put up is cleared.
 A refused run-ending is answered with a revive in its place: the position at the base gate,
 health, the dead flag, the ragdoll, the pause an ending set, and the screen artifacts the travel
 used to dispose of -- the damage quadrants, the red overlay and the blood-loss effect
-(`coop/player/death_revive`). A host that dies is revived the same way, so a host death no longer
-ends the session; a revive that fails returns to the menu, and on a host that ends the lobby.
+(`coop/player/death_revive`). A host that dies is revived the same way, so a host death does not
+end the session; a revive that fails returns to the menu, and on a host that ends the lobby.
 Other peers see the death through the ragdoll bit.
 
 ### Sleep

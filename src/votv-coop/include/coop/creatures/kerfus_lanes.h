@@ -2,7 +2,7 @@
 // one place: its brain refused on a client (kerfus_brain), its state and drive from the host
 // (kerfus_state), a client's verbs as the host's (kerfus_intent), and a Kerfus a client turned on
 // following that client (kerfus_follow). Each registers its watches (Install,
-// a per-tick retry), settles them and runs its queue or its waiting states (Tick), and drops its
+// a per-tick retry), settles them and runs its queue (Tick), and drops its
 // session state (OnDisconnect); a joiner's world-ready gets every state again and a leaver's followed Kerfuses
 // follow the host again. This calls them, in that order. Game thread.
 

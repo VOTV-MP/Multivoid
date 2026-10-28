@@ -1,17 +1,18 @@
-// ui/imgui_overlay.cpp -- the Dear ImGui host over the game's swap chain. Init() AOB-resolves four
-// engine-private functions and MinHooks them: the two per-RHI present choke points (the draw seam,
-// FD3D11Viewport::PresentChecked and FD3D12Viewport::PresentInternal) and the two per-RHI viewport
-// Resize functions (the render-target release bracket). No DXGI vtable entry is patched, so
-// RivaTuner has nothing of ours to unlink and OBS's game capture sees our pixels (docs/ui.md). The
-// first real present brings ImGui and the RHI backend up (ui/overlay_backend.h) and hooks the
-// WndProc; each frame runs the ImGui pass and composites the open surfaces. Capture (the software
-// cursor, the input swallow, the SetCursorPos no-op) follows whichever interactive surface is up.
+// ui/imgui_overlay.cpp -- the Dear ImGui host over the game's swap chain. The engine seams that
+// deliver each present and each resize live in ui/overlay_seams.cpp and hand every frame to
+// OverlayFrame here. The first real present brings ImGui and the RHI backend up
+// (ui/overlay_backend.h); each frame runs the ImGui pass and composites the open surfaces. The
+// window's messages reach HandleWindowMessage from coop/input/game_window_proc, which owns the one
+// subclass of the game window and so works without a present. Capture (the software cursor, the
+// input swallow, the SetCursorPos no-op) follows whichever interactive surface is up.
 // The diagnostics live in ui/overlay_diag.cpp, the test-only env arming in ui/overlay_test_arm.cpp.
 
 #include "ui/imgui_overlay.h"
 #include "ui/native_text_field.h"   // a focused native field claims the key first
 
 #include "ui/overlay_backend.h"
+#include "overlay_seams.h"
+#include "overlay_backend_internal.h"  // FrameTarget, Rhi
 
 #include "ui/dev_menu.h"
 #include "ui/scoreboard.h"
@@ -44,18 +45,14 @@
 #include "coop/dev/input_focus_probe.h"
 #include "coop/dev/worldless_frames.h"
 #include "coop/input/input_owner.h"
-#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hook.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/scan_ledger.h"  // the draw seam and the resize bracket, each found or missed
-#include "ue_wrap/core/sig_scan.h"     // FindPattern -- the FD3D11Viewport::PresentChecked seam probe
-#include "ue_wrap/core/sdk_profile.h"  // the four seam signatures
 
 #include <windows.h>
-#include <dxgi.h>
 
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 
 #include "imgui.h"
 #include "backends/imgui_impl_win32.h"
@@ -67,8 +64,6 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 namespace ui::imgui_overlay {
 namespace {
 
-int g_seamsArmed = 0;   // how many of the four engine seams installed (for the boot line)
-
 // user32!SetCursorPos, hooked to no-op UE4's per-tick cursor recentre while a surface captures, so
 // the cursor can track the mouse over the menu.
 using SetCursorPosFn = BOOL(WINAPI*)(int, int);
@@ -76,7 +71,6 @@ SetCursorPosFn  g_setCursorPosTrampoline  = nullptr;
 void*           g_setCursorPosTarget = nullptr;
 
 HWND    g_hwnd    = nullptr;
-WNDPROC g_origWndProc = nullptr;
 
 std::atomic<bool> g_installed{false};   // hooks installed
 std::atomic<bool> g_imguiReady{false};  // first-present init done (backend live)
@@ -108,6 +102,9 @@ inline bool AnyOpen()     { return MenuOpen() || ScoreOpen() || BrowserOpen() ||
                                    LoadingOpen() || ConsoleOpen() || ChatOpen() || VoiceOpen() ||
                                    EndReasonOpen() || BootWarningOpen() || GameBuildOpen() || ConfigReviewOpen(); }
 inline bool CaptureActive() {
+    // No surface captures while ImGui is down: none of them can draw, and a capture without a
+    // drawn surface would only suppress the cursor recentre and the game's input.
+    if (!g_imguiReady.load(std::memory_order_acquire)) return false;
     // The surfaces that take the cursor and input; the host scoreboard is one, the client
     // scoreboard is a passive peek.
     return MenuOpen() || BrowserOpen() || PickerOpen() || LoadingOpen() || ConsoleOpen() ||
@@ -135,124 +132,13 @@ inline void ProbeKeyMsg(UINT msg, WPARAM wParam, const char* verdict) {
                                  {CaptureActive(), ChatOpen(), PauseMenuOpen()});
 }
 
-LRESULT CALLBACK WndProcDetour(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    ui::overlay_diag::NoteWndProcMsg(msg);
-    ui::overlay_diag::NoteWndProcThread();
-    // Losing focus drops the scoreboard: a background window never receives the tilde WM_KEYUP, so
-    // a hold-to-peek would stick open. Falls through to the game.
-    if (msg == WM_KILLFOCUS) g_scoreboard.store(false, std::memory_order_relaxed);
-    // F1 toggles the menu; the key is consumed. State, not the ShowCursor counter, drives the
-    // cursor: VOTV shows the OS cursor during play, and the SetCursorPos no-op lets it track.
-    if (msg == WM_KEYDOWN && wParam == VK_F1 &&
-        (MenuOpen() || coop::input::input_owner::MayTakeKey(VK_F1))) {
-        g_visible.store(!g_visible.load(std::memory_order_relaxed), std::memory_order_relaxed);
-        return 0;
-    }
-    // Tilde (VK_OEM_3, the physical key above TAB on every layout) opens the player list: the host
-    // toggles the interactive board, a client holds to peek. Swallowed from the game and from
-    // ImGui. Not TAB, which is the game's inventory key. On a fresh install this key also opens
-    // UE4's developer console (DefaultInput.ini ConsoleKeys=Tilde), which the swallow takes away.
-    if (msg == WM_KEYDOWN && wParam == VK_OEM_3 &&
-        (ScoreOpen() || coop::input::input_owner::MayTakeKey(VK_OEM_3))) {
-        if (ui::scoreboard::LocalIsHost()) {
-            if ((lParam & (1 << 30)) == 0)  // ignore auto-repeat while held
-                g_scoreboard.store(!g_scoreboard.load(std::memory_order_relaxed), std::memory_order_relaxed);
-        } else {
-            g_scoreboard.store(true, std::memory_order_relaxed);
-        }
-        return 0;
-    }
-    if (msg == WM_KEYUP && wParam == VK_OEM_3 &&
-        (ScoreOpen() || coop::input::input_owner::MayTakeKey(VK_OEM_3))) {
-        if (!ui::scoreboard::LocalIsHost()) g_scoreboard.store(false, std::memory_order_relaxed);
-        return 0;
-    }
-    // T opens the chat input, only mid-session and only when no surface owns input (typing 't' into
-    // the browser's name field must not pop the chat); the press is swallowed so the bar does not
-    // start with a "t". Known gap: !CaptureActive() means the loading screen and the host
-    // scoreboard, which own input but no text, still swallow T, so chat is unreachable during a
-    // join; curing it means splitting CaptureActive by whether the surface takes typed text.
-    if (msg == WM_KEYDOWN && wParam == 'T' && !CaptureActive() && !PauseMenuOpen() &&
-        coop::input::input_owner::MayTakeKey('T') && coop::chat_sync::SessionActive()) {
-        ProbeKeyMsg(msg, wParam, "SWALLOWED by the T-chat hotkey");
-        ui::chat_input::Open();
-        return 0;
-    }
-    // V toggles the voice settings panel: opens only while voice runs and no surface owns typed
-    // input, closes whenever the panel is up; both edges are swallowed. Surfaces with text fields
-    // never coexist with the panel, so the close path cannot eat a typed letter.
-    if (msg == WM_KEYDOWN && wParam == 'V' && (lParam & (1 << 30)) == 0) {
-        if (VoiceOpen()) { ui::voice_panel::Close(); return 0; }
-        if (!CaptureActive() && coop::input::input_owner::MayTakeKey('V') &&
-            coop::voice_chat::Enabled()) {
-            ui::voice_panel::Toggle();
-            return 0;
-        }
-    }
-    // ESC with the chat open closes it and falls through, so the pause menu opens as it normally
-    // would; after Close() the capture block below no longer swallows this keydown.
-    if (msg == WM_KEYDOWN && wParam == VK_ESCAPE && ChatOpen()) {
-        ui::chat_input::Close();
-    }
-    if (g_imguiReady.load(std::memory_order_acquire)) {
-        // ImGui must see the release of every key it saw pressed: a surface can close on a key's
-        // WM_KEYDOWN (chat's Enter-submit, the ESC-close above), and an up routed to the game would
-        // latch that key down in ImGui, so every later InputText insta-submits. Releases and
-        // WM_CHAR are fed unconditionally; feeding alone never captures, since the swallow below
-        // stays gated.
-        const bool release = (msg == WM_KEYUP || msg == WM_SYSKEYUP || msg == WM_CHAR);
-        if (CaptureActive() || release)
-            ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam);
-
-        if (CaptureActive()) {
-            // Force-hide the OS cursor over the client area (ImGui draws its own): SetCursor(NULL)
-            // wins regardless of UE4's ShowCursor count, and TRUE halts further WM_SETCURSOR
-            // processing.
-            if (msg == WM_SETCURSOR && LOWORD(lParam) == HTCLIENT) { ::SetCursor(nullptr); return TRUE; }
-            // Swallow the input the game would act on, WM_INPUT included: it is UE4's raw-input
-            // mouselook feed, and the camera would spin under the menu.
-            switch (msg) {
-                case WM_INPUT:
-                case WM_MOUSEMOVE: case WM_LBUTTONDOWN: case WM_LBUTTONUP:
-                case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_MBUTTONDOWN: case WM_MBUTTONUP:
-                case WM_MOUSEWHEEL: case WM_MOUSEHWHEEL:
-                case WM_KEYDOWN: case WM_KEYUP: case WM_CHAR:
-                case WM_SYSKEYDOWN: case WM_SYSKEYUP:
-                    ProbeKeyMsg(msg, wParam, "SWALLOWED by CaptureActive");
-                    return 1;
-                default: break;
-            }
-        }
-    }
-    // A focused native text field takes the key here, the only place it can: the native screens are
-    // hand-wired widget trees that Slate never routes keystrokes into (a UEditableTextBox with
-    // keyboard focus read its Text back empty after two WM_CHARs, measured). Below the
-    // CaptureActive block on purpose, in the gap it leaves: a native screen up and no ImGui
-    // surface. Escape is only half handled here; the screens poll the physical key and ask
-    // ConsumeEscape() at their edge.
-    if (msg == WM_CHAR && ui::native_text_field::OnChar(static_cast<wchar_t>(wParam))) {
-        ProbeKeyMsg(msg, wParam, "SWALLOWED by a native text field");
-        return 1;
-    }
-    if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) &&
-        ui::native_text_field::OnKeyDown(static_cast<int>(wParam))) {
-        ProbeKeyMsg(msg, wParam, "SWALLOWED by a native text field");
-        return 1;
-    }
-
-    if (msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_CHAR ||
-        msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP)
-        ProbeKeyMsg(msg, wParam, "passed to the GAME");
-    return ::CallWindowProcW(g_origWndProc, hwnd, msg, wParam, lParam);
-}
-
 // First-present bring-up; true once ImGui and the RHI backend are live. On any failure it releases
 // what it acquired this call.
-bool BringUp(IDXGISwapChain* sc) {
-    DXGI_SWAP_CHAIN_DESC desc{};
-    if (FAILED(sc->GetDesc(&desc)) || !desc.OutputWindow) return false;
+bool BringUp(const overlay_backend::FrameTarget& t) {
+    // The DX seams read the window off the swapchain descriptor; no window, no overlay yet.
+    if (!t.hwnd) return false;
 
-    if (!overlay_backend::CaptureDevice(sc)) return false;
+    if (!overlay_backend::CaptureDevice(t)) return false;
 
     bool ctxCreated = false;
     if (!ImGui::GetCurrentContext()) { ImGui::CreateContext(); ctxCreated = true; }
@@ -265,21 +151,21 @@ bool BringUp(IDXGISwapChain* sc) {
     // born at this resolution's size (ui/scale.h).
     ui::scale::LoadUserPrefOnce();  // ini ui.scale (the F1 "UI size" pref)
     RECT rc{};
-    if (::GetClientRect(desc.OutputWindow, &rc))
+    if (::GetClientRect(t.hwnd, &rc))
         ui::scale::NoteViewport(static_cast<float>(rc.right - rc.left),
                                 static_cast<float>(rc.bottom - rc.top));
     ui::scale::ConsumeRebuild();  // the initial bake right here applies it
     // Reset, then scale (ui::style::MaybeRescale's shape): ScaleAllSizes is cumulative, and a
     // SEH-swallowed half bring-up can re-enter with an already scaled style.
     ui::style::Rebuild();
-    if (!ImGui_ImplWin32_Init(desc.OutputWindow)) {
+    if (!ImGui_ImplWin32_Init(t.hwnd)) {
         UE_LOGE("imgui_overlay: ImGui_ImplWin32_Init failed");
         if (ctxCreated) { ImGui::DestroyContext(); ui::fonts::OnContextDestroyed();
                           ui::atlas_watch::OnContextDestroyed(); }
         overlay_backend::AbandonCapture();
         return false;
     }
-    if (!overlay_backend::InitRenderer(sc)) {
+    if (!overlay_backend::InitRenderer(t)) {
         ImGui_ImplWin32_Shutdown();
         if (ctxCreated) { ImGui::DestroyContext(); ui::fonts::OnContextDestroyed();
                           ui::atlas_watch::OnContextDestroyed(); }
@@ -293,9 +179,7 @@ bool BringUp(IDXGISwapChain* sc) {
     // impossible rather than merely absent.
     ui::fonts::Load();
 
-    g_hwnd = desc.OutputWindow;
-    g_origWndProc = reinterpret_cast<WNDPROC>(
-        ::SetWindowLongPtrW(g_hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&WndProcDetour)));
+    g_hwnd = t.hwnd;
     UE_LOGI("imgui_overlay: %s bring-up OK (hwnd=%p) -- F1 toggles the menu",
             overlay_backend::Kind(), g_hwnd);
     return true;
@@ -304,7 +188,7 @@ bool BringUp(IDXGISwapChain* sc) {
 
 // The SEH-guarded per-frame ImGui pass (render thread): a fault hides the surfaces rather than
 // taking down the render thread.
-void RenderFrameGuarded(IDXGISwapChain* sc) {
+void RenderFrameGuarded(const overlay_backend::FrameTarget& t) {
     __try {
         ui::style::MaybeRescale(g_hwnd);
         ui::voice_panel::CommitAbandonedDrag();
@@ -368,7 +252,7 @@ void RenderFrameGuarded(IDXGISwapChain* sc) {
         ui::overlay_cursor::FrameTransition(g_hwnd, CaptureActive(), g_setCursorPosTrampoline);
         ui::overlay_diag::CursorFrame(g_hwnd, CaptureActive(), g_setCursorPosTrampoline);
         ImGui::Render();
-        overlay_backend::RenderDrawData(sc);
+        overlay_backend::RenderDrawData(t);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         UE_LOGE("imgui_overlay: SEH in render frame -- hiding surfaces to protect the render thread");
         g_visible.store(false, std::memory_order_relaxed);
@@ -397,68 +281,17 @@ void RenderFrameGuarded(IDXGISwapChain* sc) {
 }
 
 // SEH-guarded first-present bring-up (also on the render thread).
-bool BringUpGuarded(IDXGISwapChain* sc) {
-    __try { return BringUp(sc); }
+bool BringUpGuarded(const overlay_backend::FrameTarget& t) {
+    __try { return BringUp(t); }
     __except (EXCEPTION_EXECUTE_HANDLER) {
         UE_LOGE("imgui_overlay: SEH during ImGui bring-up -- overlay disabled this run");
         return false;
     }
 }
-
-// Read `viewport + off`, SEH-guarded: a drifted offset must not fault the render thread.
-IDXGISwapChain* RawViewportSwapChain(void* viewport, size_t off) {
-    if (!viewport) return nullptr;
-    __try {
-        return *reinterpret_cast<IDXGISwapChain**>(reinterpret_cast<uint8_t*>(viewport) + off);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return nullptr;
-    }
-}
-
-// The guard covers the QueryInterface, not only the load: QI is a vtable dispatch through the very
-// pointer this distrusts. A recook that moves the swapchain field leaves the AOB matching and a
-// non-null value at the old offset, so the dispatch is where a drifted offset faults.
-bool QiIsSwapChain(IDXGISwapChain* sc) {
-    __try {
-        IDXGISwapChain* probe = nullptr;
-        if (FAILED(sc->QueryInterface(__uuidof(IDXGISwapChain),
-                                      reinterpret_cast<void**>(&probe))) || !probe)
-            return false;
-        probe->Release();
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-}
-
-// The swapchain, re-read every call and QI-validated on change: a fullscreen transition replaces
-// the object, so a cached pointer would draw into an abandoned swapchain; and QueryInterface is a
-// COM call on a ~120 Hz path proving an offset, which drifts between builds, not between frames.
-// Fails closed: an unprovable pointer yields null, complained about once per pointer.
-IDXGISwapChain* ValidatedSwapChain(void* viewport, size_t off, const char* which,
-                                   IDXGISwapChain*& lastOk) {
-    IDXGISwapChain* sc = RawViewportSwapChain(viewport, off);
-    if (!sc) return nullptr;
-    if (sc == lastOk) return sc;
-    if (!QiIsSwapChain(sc)) {
-        static const void* sComplainedAbout = nullptr;
-        if (sComplainedAbout != sc) {
-            sComplainedAbout = sc;
-            UE_LOGE("imgui_overlay: %s -- the pointer at viewport+0x%zX (%p) does not "
-                    "QueryInterface as IDXGISwapChain. The offset has drifted for this "
-                    "build; the overlay draws NOTHING rather than through an unidentified "
-                    "pointer -- re-derive per docs/versioning.md.",
-                    which, off, static_cast<void*>(sc));
-            ue_wrap::log::Flush();
-        }
-        return nullptr;
-    }
-    lastOk = sc;
-    return sc;
-}
+}  // namespace
 
 // One frame of overlay work; the swapchain arrives from whichever present seam fired.
-void OverlayFrame(IDXGISwapChain* sc) {
+void OverlayFrame(const overlay_backend::FrameTarget& t) {
     // The perf probe's frame count (the anchor for ms/frame): a relaxed increment when armed, a
     // bool load when off. It is also the instrument that shows a present seam unlinked (fps=0 while
     // everything else ticks), so it stays on this path.
@@ -474,21 +307,11 @@ void OverlayFrame(IDXGISwapChain* sc) {
     // Count frames presented per WorldKind: the one place "does the game present frames when no
     // world exists" can be asked.
     coop::dev::worldless_frames::NoteFrame();
-    // Republish "does the game own typed text" on two cadences (input_owner.h): the cheap path at
-    // ~10 Hz, the GUObjectArray walk at ~1 Hz, both posted to the game thread because they call
-    // UFunctions.
-    {
-        static ULONGLONG sNextFast = 0, sNextFull = 0;
-        const ULONGLONG now = ::GetTickCount64();
-        if (now >= sNextFast) {
-            const bool full = now >= sNextFull;
-            if (full) sNextFull = now + 1000;
-            sNextFast = now + 100;
-            ue_wrap::game_thread::Post([full] { coop::input::input_owner::TickGameThread(full); });
-        }
-    }
-    if (!g_imguiReady.load(std::memory_order_acquire)) {
-        if (BringUpGuarded(sc)) g_imguiReady.store(true, std::memory_order_release);
+    // The bring-up below is the DX targets'; a Vulkan target is brought up by its own engine seam
+    // (BringUpFromSeam).
+    const bool dxTarget = t.rhi == overlay_backend::Rhi::Dx11 || t.rhi == overlay_backend::Rhi::Dx12;
+    if (dxTarget && !g_imguiReady.load(std::memory_order_acquire)) {
+        if (BringUpGuarded(t)) g_imguiReady.store(true, std::memory_order_release);
         // Not brought up yet: present normally.
     }
 
@@ -497,8 +320,8 @@ void OverlayFrame(IDXGISwapChain* sc) {
     // is in the render gate only, not AnyOpen, which also gates input and the cursor.
     if (g_imguiReady.load(std::memory_order_acquire) &&
         (AnyOpen() || ui::hud::IsActive() || coop::join_curtain::IsActive())) {
-        overlay_backend::EnsureTarget(sc);  // recreate the render target after a resize
-        RenderFrameGuarded(sc);
+        overlay_backend::EnsureTarget(t);  // recreate the render target after a resize
+        RenderFrameGuarded(t);
     }
     if (perfOn) {
         coop::dev::perf_probe::AddTicks(coop::dev::perf_probe::Bucket::OverlayPresent,
@@ -506,155 +329,155 @@ void OverlayFrame(IDXGISwapChain* sc) {
     }
 }
 
-// The draw seam. An inline patch on IDXGISwapChain::Present is the byte region RivaTuner restores
-// (the overlay died after a frame) and sits below where OBS copies the backbuffer;
-// FD3D11Viewport::PresentChecked and FD3D12Viewport::PresentInternal are the engine's own
-// once-per-frame callers of that Present, upstream of every external hook, found by AOB (the price
-// every core hook here pays; docs/versioning.md covers a recook). The draw is unconditional
-// (PresentChecked's non-presenting exits would be a site list to mirror; a wasted draw is
-// harmless). The return is forwarded as a register-width integer: the DX12 seam tail-jumps into
-// Present, whose HRESULT return disagrees with UE's bool declaration, and forwarding RAX byte-exact
-// needs no verdict.
-using EnginePresentFn = uintptr_t(__fastcall*)(void* viewport, int32_t syncInterval);
-EnginePresentFn g_d3d11PresentTrampoline = nullptr;
-EnginePresentFn g_d3d12PresentTrampoline = nullptr;
-// One proven-pointer cache per RHI, shared by its present seam and its resize bracket: they read
-// the same field of the same viewport.
-IDXGISwapChain* g_lastOkSc11 = nullptr;
-IDXGISwapChain* g_lastOkSc12 = nullptr;
+bool ImguiReady() { return g_imguiReady.load(std::memory_order_acquire); }
 
-uintptr_t __fastcall D3D11PresentCheckedDetour(void* viewport, int32_t syncInterval) {
-    if (IDXGISwapChain* sc = ValidatedSwapChain(viewport, ue_wrap::profile::kD3D11Viewport_SwapChain,
-                                                "FD3D11Viewport::PresentChecked",
-                                                g_lastOkSc11))
-        OverlayFrame(sc);
-    return g_d3d11PresentTrampoline(viewport, syncInterval);
+bool BringUpFromSeam(const overlay_backend::FrameTarget& t) {
+    if (g_imguiReady.load(std::memory_order_acquire)) return true;
+    if (!BringUpGuarded(t)) return false;
+    g_imguiReady.store(true, std::memory_order_release);
+    return true;
 }
 
-uintptr_t __fastcall D3D12PresentInternalDetour(void* viewport, int32_t syncInterval) {
-    if (IDXGISwapChain* sc = ValidatedSwapChain(viewport, ue_wrap::profile::kD3D12Viewport_SwapChain,
-                                                "FD3D12Viewport::PresentInternal",
-                                                g_lastOkSc12))
-        OverlayFrame(sc);
-    return g_d3d12PresentTrampoline(viewport, syncInterval);
-}
-
-// The resize bracket, on the engine's own seam. IDXGISwapChain::ResizeBuffers fails unless every
-// back-buffer reference is released first, and UE turns that failure into a Fatal; our render
-// target view is such a reference, and a release bracket on the DXGI function itself is unlinked
-// by RivaTuner (measured: the second resize with it armed killed the game). FD3D11Viewport::Resize
-// and FD3D12Viewport::ResizeInternal are the engine's private callers, which nothing else patches.
-// The swapchain is re-read after the original, never cached: a fullscreen transition can replace
-// it. Two signatures: the DX12 seam takes only `this` and reads the extent from a member.
-using D3D11ResizeFn = void(__fastcall*)(void* viewport, uint32_t sizeX, uint32_t sizeY,
-                                        uint8_t bFullscreen, int32_t pixelFormat);
-using D3D12ResizeInternalFn = void(__fastcall*)(void* viewport);
-D3D11ResizeFn         g_d3d11ResizeTrampoline = nullptr;
-D3D12ResizeInternalFn g_d3d12ResizeTrampoline = nullptr;
-
-// The half both seams share: re-derive the render target after the engine resized. The call to the
-// original stays with the caller (the two take different arguments), and `sizeNote` is
-// pre-formatted because only one seam has any size to report.
-void EngineResizeBracket(const char* which, size_t scOff, IDXGISwapChain*& lastOk,
-                         void* viewport, const char* sizeNote) {
-    IDXGISwapChain* sc = ValidatedSwapChain(viewport, scOff, which, lastOk);
-    if (sc && g_imguiReady.load(std::memory_order_acquire)) {
-        overlay_backend::OnResizeRecreate(sc);
-        // Resizes are rare, so one line each is not spam, and it is the one line that says the
-        // bracket ran, with or without RivaTuner in the process.
-        UE_LOGI("imgui_overlay: %s%s -- render target rebuilt on %s", which, sizeNote,
-                overlay_backend::Kind() ? overlay_backend::Kind() : "?");
-        ue_wrap::log::Flush();
+// A backend that went down after the bring-up (Vulkan's, on a failed call of its own) stops the overlay for
+// the run: no hotkey opens a surface and CaptureActive() is false, so no input is swallowed for a UI that no
+// longer draws.
+void OverlayDown() { g_imguiReady.store(false, std::memory_order_release); }
+bool HandleWindowMessage(void* hwndRaw, unsigned msg, uintptr_t wParam, intptr_t lParam,
+                         intptr_t& result) {
+    HWND hwnd = static_cast<HWND>(hwndRaw);
+    ui::overlay_diag::NoteWndProcMsg(msg);
+    ui::overlay_diag::NoteWndProcThread();
+    // A surface that cannot draw must not open: ImGui draws every surface, so the hotkeys below act
+    // only once it is up, and CaptureActive() is false until then, which leaves the engine's cursor
+    // recentre and the game's keys alone under an RHI the overlay does not present through. The
+    // native text fields are not gated: they need no ImGui.
+    const bool imguiUp = g_imguiReady.load(std::memory_order_acquire);
+    // Losing focus drops the scoreboard: a background window never receives the tilde WM_KEYUP, so
+    // a hold-to-peek would stick open. Falls through to the game.
+    if (msg == WM_KILLFOCUS) g_scoreboard.store(false, std::memory_order_relaxed);
+    // F1 toggles the menu; the key is consumed. State, not the ShowCursor counter, drives the
+    // cursor: VOTV shows the OS cursor during play, and the SetCursorPos no-op lets it track.
+    if (msg == WM_KEYDOWN && wParam == VK_F1 && imguiUp &&
+        (MenuOpen() || coop::input::input_owner::MayTakeKey(VK_F1))) {
+        g_visible.store(!g_visible.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        result = 0;
+        return true;
     }
-    // A null `sc` needs no line: ValidatedSwapChain complained once about the pointer that caused
-    // it.
-}
+    // Tilde (VK_OEM_3, the physical key above TAB on every layout) opens the player list: the host
+    // toggles the interactive board, a client holds to peek. Swallowed from the game and from
+    // ImGui. Not TAB, which is the game's inventory key. On a fresh install this key also opens
+    // UE4's developer console (DefaultInput.ini ConsoleKeys=Tilde), which the swallow takes away.
+    if (msg == WM_KEYDOWN && wParam == VK_OEM_3 && imguiUp &&
+        (ScoreOpen() || coop::input::input_owner::MayTakeKey(VK_OEM_3))) {
+        if (ui::scoreboard::LocalIsHost()) {
+            if ((lParam & (1 << 30)) == 0)  // ignore auto-repeat while held
+                g_scoreboard.store(!g_scoreboard.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        } else {
+            g_scoreboard.store(true, std::memory_order_relaxed);
+        }
+        result = 0;
+        return true;
+    }
+    if (msg == WM_KEYUP && wParam == VK_OEM_3 && imguiUp &&
+        (ScoreOpen() || coop::input::input_owner::MayTakeKey(VK_OEM_3))) {
+        if (!ui::scoreboard::LocalIsHost()) g_scoreboard.store(false, std::memory_order_relaxed);
+        result = 0;
+        return true;
+    }
+    // T opens the chat input, only mid-session and only when no surface owns input (typing 't' into
+    // the browser's name field must not pop the chat); the press is swallowed so the bar does not
+    // start with a "t". Known gap: !CaptureActive() means the loading screen and the host
+    // scoreboard, which own input but no text, still swallow T, so chat is unreachable during a
+    // join; curing it means splitting CaptureActive by whether the surface takes typed text.
+    if (msg == WM_KEYDOWN && wParam == 'T' && imguiUp && !CaptureActive() && !PauseMenuOpen() &&
+        coop::input::input_owner::MayTakeKey('T') && coop::chat_sync::SessionActive()) {
+        ProbeKeyMsg(msg, wParam, "SWALLOWED by the T-chat hotkey");
+        ui::chat_input::Open();
+        result = 0;
+        return true;
+    }
+    // V toggles the voice settings panel: opens only while voice runs and no surface owns typed
+    // input, closes whenever the panel is up; both edges are swallowed. Surfaces with text fields
+    // never coexist with the panel, so the close path cannot eat a typed letter.
+    if (msg == WM_KEYDOWN && wParam == 'V' && imguiUp && (lParam & (1 << 30)) == 0) {
+        if (VoiceOpen()) { ui::voice_panel::Close(); result = 0; return true; }
+        if (!CaptureActive() && coop::input::input_owner::MayTakeKey('V') &&
+            coop::voice_chat::Enabled()) {
+            ui::voice_panel::Toggle();
+            result = 0;
+            return true;
+        }
+    }
+    // ESC with the chat open closes it and falls through, so the pause menu opens as it normally
+    // would; after Close() the capture block below no longer swallows this keydown.
+    if (msg == WM_KEYDOWN && wParam == VK_ESCAPE && imguiUp && ChatOpen()) {
+        ui::chat_input::Close();
+    }
+    // The block below calls ImGui, so it too waits for the bring-up.
+    if (imguiUp) {
+        // ImGui must see the release of every key it saw pressed: a surface can close on a key's
+        // WM_KEYDOWN (chat's Enter-submit, the ESC-close above), and an up routed to the game would
+        // latch that key down in ImGui, so every later InputText insta-submits. Releases and
+        // WM_CHAR are fed unconditionally; feeding alone never captures, since the swallow below
+        // stays gated.
+        const bool release = (msg == WM_KEYUP || msg == WM_SYSKEYUP || msg == WM_CHAR);
+        if (CaptureActive() || release)
+            ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam);
 
-void __fastcall D3D11ResizeDetour(void* viewport, uint32_t sizeX, uint32_t sizeY,
-                                  uint8_t bFullscreen, int32_t pixelFormat) {
-    overlay_backend::OnResizeRelease();   // the back buffers are about to be recreated
-    g_d3d11ResizeTrampoline(viewport, sizeX, sizeY, bFullscreen, pixelFormat);
-    char note[96];
-    _snprintf_s(note, sizeof(note), _TRUNCATE, " (%ux%u fullscreen=%u fmt=%d)", sizeX, sizeY,
-                bFullscreen, pixelFormat);
-    EngineResizeBracket("FD3D11Viewport::Resize", ue_wrap::profile::kD3D11Viewport_SwapChain,
-                        g_lastOkSc11, viewport, note);
-}
+        if (CaptureActive()) {
+            // Force-hide the OS cursor over the client area (ImGui draws its own): SetCursor(NULL)
+            // wins regardless of UE4's ShowCursor count, and TRUE halts further WM_SETCURSOR
+            // processing.
+            if (msg == WM_SETCURSOR && LOWORD(lParam) == HTCLIENT) {
+                ::SetCursor(nullptr);
+                result = TRUE;
+                return true;
+            }
+            // Swallow the input the game would act on, WM_INPUT included: it is UE4's raw-input
+            // mouselook feed, and the camera would spin under the menu.
+            switch (msg) {
+                case WM_INPUT:
+                case WM_MOUSEMOVE: case WM_LBUTTONDOWN: case WM_LBUTTONUP:
+                case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_MBUTTONDOWN: case WM_MBUTTONUP:
+                case WM_MOUSEWHEEL: case WM_MOUSEHWHEEL:
+                case WM_KEYDOWN: case WM_KEYUP: case WM_CHAR:
+                case WM_SYSKEYDOWN: case WM_SYSKEYUP:
+                    ProbeKeyMsg(msg, wParam, "SWALLOWED by CaptureActive");
+                    result = 1;
+                    return true;
+                default: break;
+            }
+        }
+    }
+    // A focused native text field takes the key here, the only place it can: the native screens are
+    // hand-wired widget trees that Slate never routes keystrokes into (a UEditableTextBox with
+    // keyboard focus read its Text back empty after two WM_CHARs, measured). Below the
+    // CaptureActive block on purpose, in the gap it leaves: a native screen up and no ImGui
+    // surface. Escape is only half handled here; the screens poll the physical key and ask
+    // ConsumeEscape() at their edge.
+    if (msg == WM_CHAR && ui::native_text_field::OnChar(static_cast<wchar_t>(wParam))) {
+        ProbeKeyMsg(msg, wParam, "SWALLOWED by a native text field");
+        result = 1;
+        return true;
+    }
+    if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) &&
+        ui::native_text_field::OnKeyDown(static_cast<int>(wParam))) {
+        ProbeKeyMsg(msg, wParam, "SWALLOWED by a native text field");
+        result = 1;
+        return true;
+    }
 
-void __fastcall D3D12ResizeDetour(void* viewport) {
-    overlay_backend::OnResizeRelease();
-    g_d3d12ResizeTrampoline(viewport);
-    // No size in the line: ResizeInternal takes only `this`, so four numbers here would be register
-    // residue.
-    EngineResizeBracket("FD3D12Viewport::ResizeInternal",
-                        ue_wrap::profile::kD3D12Viewport_SwapChain, g_lastOkSc12, viewport, "");
+    if (msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_CHAR ||
+        msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP)
+        ProbeKeyMsg(msg, wParam, "passed to the GAME");
+    return false;
 }
-
-}  // namespace
 
 bool Init() {
     if (g_installed.load(std::memory_order_acquire)) return true;
     if (!ue_wrap::hook::Init()) { UE_LOGE("imgui_overlay: hook::Init failed"); return false; }
-    // Both RHIs' seams are installed unconditionally: which one the game presents with is unknown
-    // at Init, and the other signature simply does not resolve in a single-RHI build. A stale
-    // signature is not fatal: the overlay keeps drawing and says loudly that resizes are
-    // unprotected.
-    {
-        struct Seam { const char* name; const char* sig; void* detour; void** tramp; bool draws; };
-        const Seam seams[] = {
-            {"FD3D11Viewport::PresentChecked", ue_wrap::profile::kSigD3D11ViewportPresentChecked,
-             reinterpret_cast<void*>(&D3D11PresentCheckedDetour),
-             reinterpret_cast<void**>(&g_d3d11PresentTrampoline), true},
-            {"FD3D12Viewport::PresentInternal", ue_wrap::profile::kSigD3D12ViewportPresentInternal,
-             reinterpret_cast<void*>(&D3D12PresentInternalDetour),
-             reinterpret_cast<void**>(&g_d3d12PresentTrampoline), true},
-            {"FD3D11Viewport::Resize", ue_wrap::profile::kSigD3D11ViewportResize,
-             reinterpret_cast<void*>(&D3D11ResizeDetour),
-             reinterpret_cast<void**>(&g_d3d11ResizeTrampoline), false},
-            {"FD3D12Viewport::ResizeInternal", ue_wrap::profile::kSigD3D12ViewportResizeInternal,
-             reinterpret_cast<void*>(&D3D12ResizeDetour),
-             reinterpret_cast<void**>(&g_d3d12ResizeTrampoline), false},
-        };
-        int drawArmed = 0;
-        // Each requirement is met by either RHI's signature, so the scan ledger's two rows are decided once
-        // the loop has tried all four.
-        bool drawFound = false, resizeFound = false;
-        for (const Seam& sm : seams) {
-            const uintptr_t at = ue_wrap::FindPattern(sm.sig);
-            if (at) (sm.draws ? drawFound : resizeFound) = true;
-            if (!at) {
-                // Expected for the RHI this cook does not contain; zero draw seams is checked after
-                // the loop.
-                UE_LOGW("imgui_overlay: %s signature NOT found -- that seam is ABSENT this "
-                        "run.", sm.name);
-                continue;
-            }
-            if (ue_wrap::hook::Install(reinterpret_cast<void*>(at), sm.detour, sm.tramp)) {
-                ++g_seamsArmed;
-                if (sm.draws) ++drawArmed;
-                UE_LOGI("imgui_overlay: %s %s armed @%p (image+0x%llX)", sm.name,
-                        sm.draws ? "DRAW seam" : "resize bracket",
-                        reinterpret_cast<void*>(at),
-                        static_cast<unsigned long long>(
-                            at - reinterpret_cast<uintptr_t>(::GetModuleHandleW(nullptr))));
-            } else {
-                UE_LOGE("imgui_overlay: %s resolved but MinHook Install FAILED", sm.name);
-            }
-        }
-        ue_wrap::scan_ledger::Record(ue_wrap::scan_ledger::Scan::OverlayDraw, drawFound);
-        ue_wrap::scan_ledger::Record(ue_wrap::scan_ledger::Scan::OverlayResize, resizeFound);
-        // Fail closed on the draw seam only: with none there is no overlay at all, so this returns
-        // false rather than install a WndProc hook that swallows keys for a UI that cannot appear.
-        // A missing resize bracket is a degradation, reported above.
-        if (drawArmed == 0) {
-            UE_LOGE("imgui_overlay: NO DRAW SEAM. Neither FD3D11Viewport::PresentChecked nor "
-                    "FD3D12Viewport::PresentInternal resolved, so the overlay cannot draw and "
-                    "is DISABLED for this run. This is what a game recook looks like from "
-                    "here -- re-derive the signatures per docs/versioning.md.");
-            ue_wrap::log::Flush();
-            return false;
-        }
-    }
+    int seamsArmed = 0, seamsTotal = 0;
+    if (!ui::overlay_seams::Install(seamsArmed, seamsTotal)) return false;
     // Hook user32!SetCursorPos to neutralise UE4's cursor recentre while a surface captures;
     // non-fatal, the cursor just tracks less cleanly.
     if (HMODULE u32 = ::GetModuleHandleW(L"user32.dll")) {
@@ -676,10 +499,16 @@ bool Init() {
     // Test-only env arming (the test launcher's entry into the UI surfaces),
     // ui/overlay_test_arm.cpp; inert unless a VOTVCOOP_* test variable is set.
     ui::overlay_test_arm::ArmFromEnv();
-    UE_LOGI("imgui_overlay: draw seam installed on the ENGINE present path (%d of 4 "
+    UE_LOGI("imgui_overlay: draw seam installed on the ENGINE present path (%d of %d "
             "engine seams armed) -- ImGui brings up on the first frame; press F1 "
-            "in-game for the menu", g_seamsArmed);
+            "in-game for the menu", seamsArmed, seamsTotal);
     return true;
+}
+
+void OnMilestone(const char* milestone) {
+    if (milestone && (std::strcmp(milestone, "hosting") == 0 || std::strcmp(milestone, "world-ready") == 0 ||
+                      std::strcmp(milestone, "solo-world") == 0))
+        ui::overlay_seams::NoteWorldUp();
 }
 
 void SetVisible(bool visible) { g_visible.store(visible, std::memory_order_relaxed); }

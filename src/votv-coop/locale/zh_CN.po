@@ -1320,9 +1320,6 @@ msgstr ""
 msgid "say:"
 msgstr "说："
 
-msgid "starting up"
-msgstr ""
-
 msgid "the host"
 msgstr ""
 

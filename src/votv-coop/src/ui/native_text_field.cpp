@@ -242,6 +242,7 @@ void Blur(Field* f) {
 }
 
 bool Focused(const Field* f) { return f && f->focused; }
+void* Box(const Field* f)     { return f ? f->box : nullptr; }
 bool AnyFocused()            { return g_focus.load() != nullptr; }
 
 const std::string& Text(const Field* f) {

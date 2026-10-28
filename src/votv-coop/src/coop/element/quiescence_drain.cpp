@@ -7,6 +7,7 @@
 #include "coop/element/quiescence_drain.h"
 
 #include "coop/creatures/kerfur_reconcile.h"   // SweepReconcileSaveTimeKerfurs, HasPendingRetire
+#include "coop/element/bind_wait.h"            // GiveUp: a pile that never found its native
 #include "coop/element/registry.h"             // Registry
 #include "coop/props/prop_element_tracker.h"   // IsBoundMirrorNative, InPurgeEpisode
 #include "coop/props/remote_prop.h"            // TryApplyDestroy, KeyToWString, IsActorUnderAnyDrive
@@ -19,6 +20,7 @@
 #include "coop/props/pile_spawn_bind.h"  // AdoptOwnNative (the shared bind primitive)
 #include "coop/props/save_time_retire_util.h"  // FindExactMatch, UnmarkAndDestroy
 #include "coop/config/config.h"           // ResolveFlag
+#include "coop/dev/pile_defer_drill.h"     // [dev] the pile deferral drill's give-up count
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"
@@ -134,16 +136,27 @@ std::chrono::steady_clock::time_point g_lastPurgeAt{};
 // the join with no actor at all: the host has a pile this client will not see until a later join
 // re-expresses it. Nothing is materialised in its place, because the only position the row
 // carries is the stale save-time key and the host may have moved or removed the pile since --
-// inventing one there would be a second divergence on top of the first.
+// inventing one there would be a second divergence on top of the first. A convert held for the eid is
+// the exception: it carries the host's own current pose and form, so it still lands (below).
 void NoteGaveUp(uint32_t eid, const PendingTwin& p, void* bound) {
     if (bound) {
         UE_LOGI("[PILE-1C] twin eid=%u dropped after %d pass(es) -- E keeps its actor; the twin at "
                 "(%.1f,%.1f,%.1f) never resolved", eid, p.unresolvedPasses, p.x, p.y, p.z);
         return;
     }
-    UE_LOGW("[PILE-1C] eid=%u GIVEN UP after %d pass(es) with NO actor -- no native ever appeared at "
-            "its save-time key (%.1f,%.1f,%.1f), so this pile is absent on this client until a later "
-            "join re-expresses it", eid, p.unresolvedPasses, p.x, p.y, p.z);
+    if (bind_wait::Holds(eid, static_cast<uint16_t>(coop::net::ReliableKind::PropConvert))) {
+        UE_LOGW("[PILE-1C] eid=%u GIVEN UP after %d pass(es) with NO native at its save-time key "
+                "(%.1f,%.1f,%.1f) -- a held convert replays, and the host's pile lands from it", eid,
+                p.unresolvedPasses, p.x, p.y, p.z);
+    } else {
+        UE_LOGW("[PILE-1C] eid=%u GIVEN UP after %d pass(es) with NO actor -- no native ever appeared at "
+                "its save-time key (%.1f,%.1f,%.1f), so this pile is absent on this client until a later "
+                "join re-expresses it", eid, p.unresolvedPasses, p.x, p.y, p.z);
+    }
+    coop::dev::pile_defer_drill::NoteGivenUp(eid);   // [dev] the pile deferral drill's count
+    // The held converts carry the host's real pose and form: they replay at the next Pump on the unbound path
+    // (queued, since this runs inside the sweep's walk of the pending map). Anything else held is dropped.
+    bind_wait::GiveUpReplayHeld(eid, "no native appeared at the save-time key");
 }
 
 int SweepReconcileSaveTimeTwins() {
@@ -195,7 +208,7 @@ int SweepReconcileSaveTimeTwins() {
     int confirmedRetired = 0, held = 0, lateBound = 0;
     for (auto& [eid, p] : g_pendingSaveTimeTwin) {
         const ue_wrap::FVector key{p.x, p.y, p.z};
-        const int idx = coop::save_time_retire_util::FindExactMatch(
+        int idx = coop::save_time_retire_util::FindExactMatch(
             natives, consumedFlags, key,
             [&p](const LiveNative& nv) {
                 // A host-vacate twin is whatever stale copy sits at the vacated key, of either form;
@@ -353,19 +366,14 @@ void ArmPendingSaveTimeTwin(coop::element::ElementId eid, const ue_wrap::FVector
         return;
     // Record the save-time key for the post-quiescence sweep; no bracket index is needed, since the
     // sweep walks the GUObjectArray fresh and matches the key through the shared kernel. Idempotent
-    // per eid; the latest grab, land or spawn miss wins.
+    // per eid; the latest spawn miss or stale-twin retire wins.
     PendingTwin twin{savePos.X, savePos.Y, savePos.Z, chipType};
     twin.wantClump = wantClump;
     g_pendingSaveTimeTwin[static_cast<uint32_t>(eid)] = twin;
     UE_LOGI("[PILE-09] CLIENT armed pending save-time twin eid=%u key=(%.1f,%.1f,%.1f) chipType=%u form=%s "
-            "(in-window grabbed/moved or world-ready-miss pile -> sweep retires the stale native@old at quiescence)",
+            "(world-ready-miss or late-row pile -> sweep retires the stale native@old at quiescence)",
             static_cast<unsigned>(eid), savePos.X, savePos.Y, savePos.Z, static_cast<unsigned>(chipType),
             wantClump ? "clump" : "pile");
-}
-
-bool HasPendingSaveTimeTwin(coop::element::ElementId eid) {
-    auto it = g_pendingSaveTimeTwin.find(static_cast<uint32_t>(eid));
-    return it != g_pendingSaveTimeTwin.end() && !it->second.hostVacate;
 }
 
 void ArmHostVacateTwin(coop::element::ElementId eid, const ue_wrap::FVector& oldPos) {

@@ -8,6 +8,8 @@
 
 #include <string>
 #include <cstdint>
+#include <utility>
+#include <vector>
 
 namespace ue_wrap::engine {
 
@@ -31,6 +33,12 @@ void ResetCachedSave();
 // so the host's snapshot mirrors onto it with nothing to reconcile away. The blank save has no
 // slot file, so the mode is named rather than derived from a prefix. Game thread.
 bool StartFreshGame(int gameMode);
+
+// The rules the next StartFreshGame writes into its blank save's localGameRules before the save's
+// rules are put in force: (game_rules key, value text) pairs, as game_rules::WriteSavedRule takes
+// them. Consumed by the one fresh save that call creates, then cleared; a save loaded from a slot
+// is never touched. Set before the call, from the thread that drives the boot; empty clears.
+void SetFreshGameRules(const std::vector<std::pair<std::string, std::string>>& rules);
 
 // ---- Save-object-ready hook ----
 // Fires once per LoadStorySave / StartFreshGame, on the game thread, with the USaveGame* about to

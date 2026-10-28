@@ -88,6 +88,8 @@ void Session::RunPendingFrees() {
             pendingFrees_.pop_back();
         }
         { std::lock_guard<std::mutex> lk(remoteMutex_); ResetPeerRemoteState(f.slot); }
+        backlog_.FreeSlot(f.slot);  // again, after the inbox erase: a ClientWorldReady receipt that raced an off-thread
+                                     // kick could have opened the join gate after the first free
         peerGenBySlot_[f.slot].store(0, std::memory_order_release);
         any = true;
     }

@@ -19,6 +19,8 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace ue_wrap::engine {
 
@@ -70,6 +72,8 @@ void* g_saveSlotsUiCdo  = nullptr;  // the ui_saveSlots_C CDO; getSavePrefix is 
 int32_t g_saveSlotsUiCdoIdx = -1;   // its GUObjectArray index; a BP CDO can be collected with its class
 void* g_getSavePrefixFn = nullptr;  // ui_saveSlots_C::getSavePrefix(mode) -> FString prefix
 bool  g_gameModeApplied = false;    // the GameMode is derived and written once per campaign
+// SetFreshGameRules' pending list; read only on the game thread, in StartFreshGame.
+std::vector<std::pair<std::string, std::string>> g_freshGameRules;
 
 // The ui_saveSlots_C CDO and its getSavePrefix, cached. The widget loads on the first menu or
 // gameplay transition; before that this returns false and the caller retries. getSavePrefix is
@@ -275,7 +279,38 @@ void PutSaveStartDayInForce(void* gi, void* save, const char* who) {
     sLastSave = save;
 }
 
+// The pending new-game rules written into the blank save's saved copy; a rule that did not take is
+// named, and the list is spent either way.
+void WriteFreshGameRules(void* save) {
+    namespace GR = ue_wrap::game_rules;
+    int written = 0;
+    for (const auto& kv : g_freshGameRules) {
+        switch (GR::WriteSavedRule(save, kv.first, kv.second)) {
+            case GR::WriteResult::Written: ++written; break;
+            case GR::WriteResult::UnknownKey:
+                UE_LOGW("engine: StartFreshGame -- new-game rule '%s' names no gameRules member", kv.first.c_str());
+                break;
+            case GR::WriteResult::BadValue:
+                UE_LOGW("engine: StartFreshGame -- new-game rule '%s' cannot take '%s'", kv.first.c_str(),
+                        kv.second.c_str());
+                break;
+            case GR::WriteResult::Unresolved:
+                UE_LOGW("engine: StartFreshGame -- new-game rule '%s': the blank save's rules are unresolved",
+                        kv.first.c_str());
+                break;
+        }
+    }
+    if (!g_freshGameRules.empty())
+        UE_LOGI("engine: StartFreshGame -- %d of %zu new-game rule(s) written to the blank save", written,
+                g_freshGameRules.size());
+    g_freshGameRules.clear();
+}
+
 }  // namespace
+
+void SetFreshGameRules(const std::vector<std::pair<std::string, std::string>>& rules) {
+    g_freshGameRules = rules;
+}
 
 bool GetSavePrefix(uint8_t mode, std::wstring& out) {
     out.clear();
@@ -458,9 +493,14 @@ bool StartFreshGame(int gameMode) {
         g_storySaveSlot = kFreshSlotName;                  // campaign identity
         UE_LOGI("engine: StartFreshGame -- created BLANK saveSlot_C = %p (idx %d, fresh New Game baseline)",
                 g_storySave, g_storySaveIdx);
+        WriteFreshGameRules(g_storySave);
         // A fresh client join still gets its per-player inventory applied onto the blank save
         // before loadObjects materialises it.
         FireSaveObjectReadyHook(g_storySave);
+    } else if (!g_freshGameRules.empty()) {
+        UE_LOGW("engine: StartFreshGame -- %zu new-game rule(s) named but the blank save already exists; "
+                "not written", g_freshGameRules.size());
+        g_freshGameRules.clear();
     }
 
     // The blank save registered under the pseudo-slot name.

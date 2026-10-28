@@ -20,10 +20,11 @@ void TuneConnection(uint32_t hConn, bool rateControlled, long pinnedRateKbs) {
 
     // The lanes. On failure reliable sends collapse to lane 0 -- functional, no priority routing.
     constexpr int kLaneCount = 3;  // matches Lane::Count in session_lanes.h
+    // Three distinct priorities and no weights: weights act only within one priority
+    // (isteamnetworkingsockets.h, ConfigureConnectionLanes), so the drain is strictly lane 0, 1, 2.
     const int priorities[kLaneCount] = { 0, 1, 2 };
-    const uint16 weights[kLaneCount] = { 4, 2, 1 };
     const EResult rc = SteamNetworkingSockets()->ConfigureConnectionLanes(
-        h, kLaneCount, priorities, weights);
+        h, kLaneCount, priorities, nullptr);
     if (rc != k_EResultOK) {
         UE_LOGW("net: ConfigureConnectionLanes(h=0x%08x) rc=%d",
                 static_cast<unsigned>(hConn), static_cast<int>(rc));

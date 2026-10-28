@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace coop::net { class Session; }
 
 namespace coop::shutdown {
@@ -25,15 +27,23 @@ namespace coop::shutdown {
 // flag is private to shutdown.cpp; this is its only public accessor.
 bool IsShuttingDown();
 
-// Install the close subclass on the game window. Idempotent; called once at boot after the
-// game window exists (the harness locates the window). Holds the session pointer so the
-// close handler can stop it.
-void Install(coop::net::Session* session);
+// The session the close handler stops. Idempotent: the first non-null session is kept. Called
+// at boot, before any window message can reach OnWindowMessage.
+void SetSession(coop::net::Session* session);
+
+// The shutdown share of one game-window message, called by coop/input/game_window_proc, which
+// owns the window's one subclass. OnWindowMessage runs BEFORE the engine's procedure sees the
+// message and fires DoShutdown on the user-close signals (WM_CLOSE, and SC_CLOSE through
+// WM_SYSCOMMAND, which is what the X click and Alt+F4 send); OnWindowMessageForwarded runs AFTER
+// it with the engine's answer, since WM_QUERYENDSESSION can be refused. `wp` is the WPARAM,
+// `result` the LRESULT. Any thread the window procedure runs on; no lock.
+void OnWindowMessage(void* hwnd, unsigned msg, uintptr_t wp);
+void OnWindowMessageForwarded(unsigned msg, intptr_t result);
 
 // Set the window title to the host or client form depending on the session role.
 // Idempotent, and it fires only once the session has started (the role is the default before
 // the start, so it defers until running). Called per tick from the boot loop; a no-op until
-// the conditions hold. Separate from Install, which runs before the session start and would
+// the conditions hold. Separate from SetSession, which runs before the session start and would
 // always see the host role.
 void UpdateWindowTitle();
 

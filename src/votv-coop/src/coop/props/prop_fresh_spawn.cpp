@@ -4,6 +4,7 @@
 
 #include "coop/props/prop_fresh_spawn.h"
 
+#include "coop/dev/cord_pos_drill.h"           // [dev] the late-mirror drill's bind hook
 #include "coop/element/mirror_defer.h"        // instant-world: hide the fresh mirror until reveal
 #include "coop/props/join_membership_sweep.h" // RecordClaimIfTracking (claim BEFORE any failure return)
 #include "coop/props/prop_echo_suppress.h"    // ScopedMirrorSpawn + MarkMirrorSpawn
@@ -306,12 +307,18 @@ void* Materialize(const coop::net::PropSpawnPayload& payload, int senderSlot,
     // actor_save's own field); a chip pile or a clump carries no key and travels by its eid.
     coop::prop_element_tracker::TrackActorKey(spawned, keyW);
     // Hide the freshly spawned and registered mirror until the reveal, after the bind so it is
-    // always enumerable. A real prop: collision off too (hiding alone leaves collision on, and a
-    // hidden mirror must not be grab-trace-hittable or physics-active). A matched position means
-    // a save-time-keyed form whose local twin is still visible, so hold to quiescence; otherwise
-    // reveal at the lift.
-    coop::mirror_defer::OnMirrorSpawned(payload.elementId, spawned, /*collisionOff=*/true,
-                                        /*holdUntilQuiescence=*/payload.hasMatchPos != 0);
+    // always enumerable. A real prop: hiding alone leaves its collision on, and a hidden mirror must
+    // not be grab-trace-hittable. A matched position means a save-time-keyed form whose local twin is
+    // still visible, so hold to quiescence (collision off, so the two do not collide); otherwise reveal
+    // at the lift, with every primitive it owns PhysicsOnly: out of every query trace, yet it lands and rests on the
+    // floor as the host's copy does instead of falling through it.
+    const bool held = payload.hasMatchPos != 0;
+    coop::dev::cord_pos_drill::OnMirrorBound(payload.elementId, spawned);  // [dev] the late-mirror drill reads it from here
+    coop::mirror_defer::OnMirrorSpawned(payload.elementId, spawned,
+                                        held ? coop::mirror_defer::HideCollision::Off
+                                             : coop::mirror_defer::HideCollision::PhysicsOnly,
+                                        /*holdUntilQuiescence=*/held);
+    coop::dev::cord_pos_drill::OnMirrorHidden(payload.elementId, spawned);  // [dev] and its first hidden read
     // A peer's later grab of this mirror is caught by the use-press observer (trash_collect_sync)
     // reading the looked-at pile, resolving the mirror's eid from its registration and
     // broadcasting a destroy by eid. It covers the pre-existing and snapshot pile cases too, since

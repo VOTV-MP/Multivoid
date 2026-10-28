@@ -18,7 +18,7 @@
 
 #include "ue_wrap/desk/comp_pane.h"
 #include "ue_wrap/desk/console_desk.h"
-#include "ue_wrap/desk/coord_tower.h"
+#include "ue_wrap/devices/coord_tower.h"
 #include "ue_wrap/desk/coords_panel.h"
 #include "ue_wrap/desk/dish.h"
 #include "ue_wrap/desk/sat_console.h"  // SatConsoleLineCount: this machine's own terminal

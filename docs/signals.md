@@ -212,7 +212,7 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 | drives, racks, modules, the crate, the file buffer | the host, canonical | any peer's operations, the host's array back |
 | a drive's recorded row | the host | sent at the drive's own `upd`; a client's new drive's first row, from the client that brought it |
 | the eraser's delete | the host | a client's press as an intent; the host's press and wipe shown on every client's eraser |
-| the tape accrual | each peer, host-corrected | a one-hertz re-snap |
+| the tape accrual | each peer, host-adjusted | a one-hertz re-snap |
 | the servers | the host | state driven into each box |
 | a SAT console command that rests on the world | the host, on a terminal kept for its typist | the typed line up; the printed lines and the busy state back |
 | the upgrade levels | the host's save, once | not mirrored |
@@ -266,7 +266,7 @@ arrive with the save and never again.
 |---|---|
 | The upgrade levels are not mirrored; a level bought mid-session diverges until the next join | `[V]` no lane exists; `coop/interactables/desk_sim_sync` names the gap |
 | The coordinate log's animated line families are generated per peer from inputs that never mirror, so the host's and a client's logs differ; only the eight one-shot lines ride the wire, the reset's line written by each peer's own reset | `[V]` `coop/interactables/console_state_sync` |
-| A signal whose download's `begin` spawns a world prop (lifecrystal's crystal at the ROZ ship) spawns it on each peer, and a client's own is a world birth it does not author: the host's arriving birth adopts it when the arm's row came first, and it stays beside the host's when the birth overtakes the arm on its own lane | `[RD]` `objectRenderer.begin`'s fourth step; the arriving birth's same-class match within 30 cm (`coop/props/remote_prop_spawn`) |
+| A signal whose download's `begin` spawns a world prop (lifecrystal's crystal at the ROZ ship) spawns it on each peer, and a client's own is a world birth it does not author: the host's arriving birth adopts it when the arm's row came first, and it stays beside the host's when the host sent its birth before the arm's row (both ride the Default lane, so they arrive in send order) | `[RD]` `objectRenderer.begin`'s fourth step; the arriving birth's same-class match within 30 cm (`coop/props/remote_prop_spawn`) |
 | The signal camera's trigger runs on each peer, as its arm's `begin` does; the main map's one, the locker looker, watches that peer's own camera and ends that player's game as in single player | `[RD]` `mainGamemode.deleteActiveSignal`, `objectRenderer.begin`, `trigger_lockerLooker`; by design until decided |
 | The desk cursor has degraded to a few frames per second mid-session; two mechanisms were removed, and a warning names an occupancy flap if it recurs | `[?]` `coop/interactables/desk_cursor_sync`; not reproduced since |
 | A level-3 refiner completion's world trigger (the evil's spawn, the rozship's, the deer's) runs on the host alone; a client sees what that object's own lane carries | `[V]` `coop/interactables/comp_sync`: the host is the one simulator; `[?]` each object's lane |

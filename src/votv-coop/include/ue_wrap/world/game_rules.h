@@ -54,6 +54,10 @@ bool ReadLocal(Snapshot& out);
 // float among the floats, a combo row of its enum among the enums.
 const RuleField* NthOfKind(const std::vector<RuleField>& rules, Kind kind, int n);
 
+// The process copy's difficulty ordinal (0 the easiest), one byte read at an offset resolved once from the rules
+// struct: no snapshot, no allocation. -1 while the GameInstance or its rules struct is not resolvable. Game thread.
+int ReadDifficulty();
+
 // Put the save's rules in force: copy `save.localGameRules` over `gameInstance.gameRules`. The
 // game does this in its slot menu on the way into a world (ui_saveSlots, the one blueprint that
 // writes the process copy), so a load that does not pass that menu has to do it itself, and BEFORE
@@ -61,5 +65,14 @@ const RuleField* NthOfKind(const std::vector<RuleField>& rules, Kind kind, int n
 // on a BeginPlay. Returns how many rules the copy changed, 0 when the two already agreed, -1 when
 // either struct could not be resolved (nothing written). Game thread.
 int ApplySavedToProcess(void* gameInstance, void* save);
+
+// The outcome of WriteSavedRule.
+enum class WriteResult { Written, UnknownKey, BadValue, Unresolved };
+
+// Write one rule into `save.localGameRules`, the saved copy a new game starts from: `key` is a
+// RuleField.key, `value` the text of the member's kind (a bool "0" or "1", an enum's ordinal, a
+// float). Nothing is written unless the key and the value both parse. Unresolved: the save or its
+// rules struct could not be read. Game thread.
+WriteResult WriteSavedRule(void* save, const std::string& key, const std::string& value);
 
 }  // namespace ue_wrap::game_rules

@@ -77,6 +77,23 @@ int BuildReliableWire_(uint8_t* buf, ReliableKind kind, const void* payload, int
     }
     return static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + len;
 }
+
+// `count` equal-sized payloads (contiguous at `payloads`) as `count` consecutive wire packets in
+// `wire` (a buffer the calling thread reuses, so a blob costs no allocation per chunk), each with its
+// own seq as one-at-a-time sends would take. Returns the length of one packet.
+int BuildReliableBatch_(std::vector<uint8_t>& wire, ReliableKind kind, const void* payloads,
+                        int payloadLen, int count, std::atomic<uint32_t>& sendSeq,
+                        uint32_t ownEpoch) {
+    const int total = static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + payloadLen;
+    wire.resize(static_cast<size_t>(total) * count);
+    for (int i = 0; i < count; ++i) {
+        BuildReliableWire_(wire.data() + static_cast<size_t>(i) * total, kind,
+                           static_cast<const uint8_t*>(payloads) + static_cast<size_t>(i) * payloadLen,
+                           payloadLen, sendSeq.fetch_add(1), ownEpoch, /*senderSlot*/0);
+    }
+    return total;
+}
+thread_local std::vector<uint8_t> t_batchWire;
 }  // namespace
 
 bool Session::SendReliableToSlot(int peerSlot, ReliableKind kind, const void* payload,
@@ -242,6 +259,75 @@ bool Session::SendReliable(ReliableKind kind, const void* payload, int len, int 
     return anySuccess;
 }
 
+bool Session::SendReliableBatchToSlot(int peerSlot, ReliableKind kind, const void* payloads,
+                                      int payloadLen, int count) {
+    if (peerSlot < 0 || peerSlot >= kMaxPeers) return false;
+    if (payloadLen < 0 || payloadLen > kMaxReliablePayload || count <= 0 || !payloads) {
+        UE_LOGW("net: SendReliableBatchToSlot rejected (slot=%d len=%d count=%d)",
+                peerSlot, payloadLen, count);
+        return false;
+    }
+    // The save-stream family never joins the backlog (see SendReliableToSlot): each payload takes
+    // the paced single path, and the first refusal is the caller's pacing signal.
+    if (kind == ReliableKind::SaveTransferBegin || kind == ReliableKind::SaveTransferChunk) {
+        for (int i = 0; i < count; ++i) {
+            if (!TrySendReliableToSlot(peerSlot, kind,
+                                       static_cast<const uint8_t*>(payloads) +
+                                           static_cast<size_t>(i) * payloadLen,
+                                       payloadLen))
+                return false;
+        }
+        return true;
+    }
+    // SendReliableToSlot's pre-world gate and dead-slot rule, once for the whole batch.
+    if (!IsSlotWorldReady(peerSlot) && !IsPreWorldSendableKind(kind)) return false;
+    const uint32_t hConn = peerConns_[peerSlot].load();
+    if (hConn == 0) return false;
+
+    const int total = BuildReliableBatch_(t_batchWire, kind, payloads, payloadLen, count,
+                                          sendSeq_, ownEpoch_);
+    int streamed = 0;
+    const SendOutcome rc = backlog_.SendOrQueueBatch(
+        peerSlot, static_cast<int>(LaneForKind(kind)), hConn, t_batchWire.data(), total, count,
+        admission_, streamed);
+    if (streamed > 0) rateControl_.NoteReliableQueued(peerSlot, streamed * total);
+    return rc != SendOutcome::Dropped;
+}
+
+bool Session::SendReliableBatch(ReliableKind kind, const void* payloads, int payloadLen, int count) {
+    if (payloadLen < 0 || payloadLen > kMaxReliablePayload || count <= 0 || !payloads) {
+        UE_LOGW("net: SendReliableBatch rejected (len=%d count=%d)", payloadLen, count);
+        return false;
+    }
+    // The save-stream family never joins the backlog (see SendReliableToSlot): the fan-out takes
+    // the to-slot form, which paces each payload through the single path.
+    if (kind == ReliableKind::SaveTransferBegin || kind == ReliableKind::SaveTransferChunk) {
+        bool anySent = false;
+        for (int i = 0; i < kMaxPeers; ++i) {
+            if (peerConns_[i].load() == 0) continue;
+            if (SendReliableBatchToSlot(i, kind, payloads, payloadLen, count)) anySent = true;
+        }
+        return anySent;
+    }
+    // One wire build and one seq run for the whole fan-out, as SendReliable's.
+    const int total = BuildReliableBatch_(t_batchWire, kind, payloads, payloadLen, count,
+                                          sendSeq_, ownEpoch_);
+    const int laneIdx = static_cast<int>(LaneForKind(kind));
+
+    bool anySuccess = false;
+    for (int i = 0; i < kMaxPeers; ++i) {
+        const uint32_t hConn = peerConns_[i].load();
+        if (hConn == 0) continue;
+        if (!IsSlotWorldReady(i) && !IsPreWorldSendableKind(kind)) continue;
+        int streamed = 0;
+        const SendOutcome rc = backlog_.SendOrQueueBatch(i, laneIdx, hConn, t_batchWire.data(), total,
+                                                         count, admission_, streamed);
+        if (streamed > 0) rateControl_.NoteReliableQueued(i, streamed * total);
+        if (rc != SendOutcome::Dropped) anySuccess = true;
+    }
+    return anySuccess;
+}
+
 bool Session::SendPropRelease(const PropReleasePayload& payload) {
     return SendReliable(ReliableKind::PropRelease, &payload, sizeof(payload));
 }
@@ -278,6 +364,12 @@ bool Session::SlotReliableIdle(int slot) {
     if (sockets->GetConnectionRealTimeStatus(hConn, &st, 0, nullptr) != k_EResultOK) return false;
     return st.m_cbPendingReliable == 0 && st.m_cbSentUnackedReliable == 0;
 }
+
+void Session::OpenJoinGateForSnapshot(int slot) { backlog_.OpenJoinGateForSnapshot(slot); }
+
+void Session::ReleaseAnnounceHold(int slot) { backlog_.ReleaseAnnounceHold(slot); }
+
+void Session::CloseJoinGate(int slot) { backlog_.CloseJoinGate(slot); }
 
 void Session::SampleLinkRates(uint64_t nowMs) {
     auto* sockets = SteamNetworkingSockets();
@@ -636,6 +728,18 @@ void Session::NetThread() {
 
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
+}
+
+bool Session::IsRelayEligible(int peerSlot, uint32_t hConn) const {
+    return peerSlot >= 0 && peerSlot < kMaxPeers && hConn != 0 &&
+           relayEligible_[peerSlot].load(std::memory_order_acquire) == hConn;
+}
+
+bool Session::AnyWorldReadyPeer(int skipSlot) const {
+    for (int i = 0; i < kMaxPeers; ++i)
+        if (i != skipSlot && peerConns_[i].load() != 0 &&
+            slotWorldReady_[i].load(std::memory_order_acquire)) return true;
+    return false;
 }
 
 }  // namespace coop::net

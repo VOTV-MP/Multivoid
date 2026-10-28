@@ -10,6 +10,7 @@
 
 #include "coop/interactables/drive_sync.h"
 
+#include "coop/element/bind_wait.h"
 #include "coop/element/registry.h"
 #include "coop/interactables/desk_snd_fx.h"   // ScopedWireApply (the shared desk wire guard)
 #include "coop/interactables/drive_rack_sync.h"  // MarkDirtyFromVerb (owner API)
@@ -28,6 +29,8 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
+#include <set>
 #include <vector>
 
 namespace coop::drive_sync {
@@ -84,17 +87,23 @@ const char* EidText(uint32_t eid, char (&buf)[16]) {
 bool g_primed = false;
 bool g_wasConnected = false;
 
-// ---- pending applies (drive actor not resolvable yet -- spawn in flight) ----
-struct Pending {
-    coop::net::DriveSlotStatePayload slotLine{};
-    SlotBase slotAtQueue{};  // the role's baseline when queued -- replay only
-                             // if the slot has NOT moved on since
-    uint8_t senderSlot = 0xFF;
-    Clock::time_point until{};
+// ---- held lines (drive actor not resolvable yet -- spawn in flight), waiting in bind_wait ----
+// A role's generation moves at every place its held lines go stale: a newer insert line, an eject, a move of the
+// slot's base (an edit, a restore, an applied insert). A line is held with the generation it was held under and
+// replays only if the role still carries it.
+constexpr uint16_t kDriveSlotState = static_cast<uint16_t>(coop::net::ReliableKind::DriveSlotState);
+struct HeldSlotLine {
+    coop::net::DriveSlotStatePayload line;
+    uint32_t roleGen;
 };
-std::vector<Pending> g_pending;
-constexpr auto kPendingTtl = std::chrono::seconds(10);
-constexpr size_t kPendingCap = 256;  // drop-oldest + WARN past this
+uint32_t g_roleGen[DC::kRoleCount] = {};
+
+// SetBase for a move that is not a re-key, voiding the role's held lines when the base changes.
+void MoveBase(int role, bool occupied, uint32_t eid, void* drive) {
+    const SlotBase& b = g_slotBase[role];
+    if (!b.known || b.occupied != occupied || b.eid != eid) ++g_roleGen[role];   // a stale base moved: held lines are older
+    SetBase(role, occupied, eid, drive);
+}
 
 // ---- cadence ----
 Clock::time_point g_nextSweep{};
@@ -108,6 +117,7 @@ uint64_t g_cGrabKept = 0;  // this player's grab left alone inside a replayed in
 uint64_t g_cPrimedOffWorld = 0;  // CLIENT: slot edges outside the world it announced, primed
 uint64_t g_cRekeyed = 0;         // a slot's drive under a new eid, primed
 uint64_t g_cEjectRefused = 0;    // HOST: client ejects naming another drive, answered
+std::set<uint32_t> g_wrongClassSaid;  // eids a slot line named that are no drive here (said once a session)
 
 // ---- the local player is never the subject of a replayed insert ----
 // The slot's putDriveIn, and the eraser's handler of the slot's driveIn, end the grab of the machine's
@@ -250,7 +260,7 @@ void AnswerSlot(int role, uint8_t sourceSlot, bool occupied, uint32_t eid) {
 // the world it announced world-ready in -- before the announce, and while a world change waits for its re-announce --
 // is the host's save being restored: the menu join connects at the menu, before any slot exists, and the host's seed
 // converges the loaded slots at world-ready. And the drive a slot holds under a new eid is the reconcile binding it,
-// which moves the eid the role's pending lines were queued against as well, so they still replay.
+// which changes only the eid's spelling: the role's held lines still replay, since its generation does not move.
 void ProcessSlot(int role, bool announce) {
     void* slot = DC::SlotActor(role);
     if (!slot) return;
@@ -267,10 +277,7 @@ void ProcessSlot(int role, bool announce) {
     const bool rekey = b.known && b.occupied && occupied && b.drive.Is(drive);
     const uint32_t was = b.eid;
     SetBase(role, occupied, eid, drive);
-    if (rekey) {
-        for (Pending& pd : g_pending)
-            if (pd.slotLine.role == role) pd.slotAtQueue.eid = eid;
-    }
+    if (!rekey) ++g_roleGen[role];   // a local edge or a host-save restore moved the slot: its held lines are older
     if (!announce) return;
     char a[16], z[16];
     if (rekey) {
@@ -288,14 +295,27 @@ void ProcessSlot(int role, bool announce) {
     AnnounceSlot(role, occupied, occupied ? eid : ejectEid);
 }
 
-void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, bool fromPending);
+void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot);
 
-void RetryPendingTick();
+// A slot line held in bind_wait runs again once its drive is bound -- unless the role's generation moved on since
+// it was held, when the world passed it by and it is dropped, never replayed stale.
+void ReplaySlotLine(const uint8_t* bytes, size_t n, int senderSlot) {
+    HeldSlotLine held{};
+    if (n != sizeof held) return;
+    std::memcpy(&held, bytes, sizeof held);
+    if (held.line.role >= DC::kRoleCount) return;
+    if (g_roleGen[held.line.role] != held.roleGen) {
+        UE_LOGW("drive_sync: held slot line role=%u dropped (a newer line or move for this role came since)",
+                held.line.role);
+        return;
+    }
+    OnSlotLine(held.line, static_cast<uint8_t>(senderSlot));
+}
 
 // --------------------------------------------------------------------------
 // slot line apply
 
-void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, bool fromPending) {
+void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot) {
     if (p.role >= DC::kRoleCount) return;
     void* slot = DC::SlotActor(p.role);
     if (!slot) return;
@@ -305,32 +325,30 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
 
     if (p.occupied) {
         if (cur && curEid == p.driveEid) {  // already true: prime-only no-op
-            SetBase(p.role, true, curEid, cur);
+            MoveBase(p.role, true, curEid, cur);
             return;
         }
         void* drive = LivePropActor(p.driveEid);
-        if (!drive || !DC::IsDriveClass(R::ClassOf(drive))) {
-            if (!fromPending) {
-                // At most ONE pending line per role (a newer
-                // line supersedes the older), and the baseline at queue time
-                // is stashed so the replay DROPS if the slot moved on --
-                // never resurrect a stale occupant.
-                for (auto it2 = g_pending.begin(); it2 != g_pending.end();) {
-                    if (it2->slotLine.role == p.role)
-                        it2 = g_pending.erase(it2);
-                    else ++it2;
-                }
-                Pending pd;
-                pd.slotLine = p;
-                pd.slotAtQueue = g_slotBase[p.role];
-                pd.senderSlot = senderSlot;
-                pd.until = Clock::now() + kPendingTtl;
-                if (g_pending.size() >= kPendingCap) {
-                g_pending.erase(g_pending.begin());
-                UE_LOGW("drive_sync: pending cap hit -- oldest dropped");
-            }
-            g_pending.push_back(pd);
-            }
+        if (!drive) {
+            // Held for the drive's bind, with the role's generation after this line's own bump: a newer line or
+            // a move of the slot since voids it at replay -- never resurrect a stale occupant. This is the one
+            // module that holds several lines per eid (coalesce=false), each judged by its own role's generation;
+            // the others keep the latest state of an eid. Not deferred: no bind is coming for this eid, so there
+            // is nothing to wait for.
+            ++g_roleGen[p.role];
+            HeldSlotLine held{};
+            held.line = p;
+            held.roleGen = g_roleGen[p.role];
+            if (!coop::element::bind_wait::Hold(p.driveEid, kDriveSlotState, senderSlot, &ReplaySlotLine, &held,
+                                                sizeof held, /*coalesce=*/false))
+                coop::element::bind_wait::NoteNeverBound(kDriveSlotState, p.driveEid);
+            return;
+        }
+        if (!DC::IsDriveClass(R::ClassOf(drive))) {
+            // A live actor of another class: an identity defect to see, not a wait.
+            if (g_wrongClassSaid.insert(p.driveEid).second)
+                UE_LOGW("drive_sync: slot role=%u line names eid=%u, a live actor that is not a prop_drive_C -- "
+                        "dropped", p.role, p.driveEid);
             return;
         }
         if (cur && curEid != p.driveEid) {
@@ -358,7 +376,7 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
             ReplayingInsert replaying;
             LaneApply apply;
             DC::CallPutDriveIn(slot, drive);
-            SetBase(p.role, true, p.driveEid, drive);
+            MoveBase(p.role, true, p.driveEid, drive);
         }
         ++g_cSlotApplied;
         if (IsHost()) RelaySlot(p.role, true, p.driveEid, senderSlot);
@@ -366,7 +384,7 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
                 p.role, p.driveEid, senderSlot);
     } else {
         // A client's eject names the drive it saw leave its copy of the slot. One naming another drive, or none, is a
-        // stale view of this slot and not an edit of it: the host keeps its drive, and the role's pending lines with
+        // stale view of this slot and not an edit of it: the host keeps its drive, and the role's held lines with
         // it, and answers the source with the slot as it stands.
         if (IsHost() && cur && p.driveEid != curEid) {
             ++g_cEjectRefused;
@@ -376,15 +394,10 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
             AnswerSlot(p.role, senderSlot, true, curEid);
             return;
         }
-        // A newer line supersedes an older pending one for the role, an eject as much as an insert:
-        // the slot's base can read the same after an eject as when the insert was queued, so the
-        // base check at replay would let a stale insert put the drive back in a slot it has left.
-        if (!fromPending) {
-            for (auto it2 = g_pending.begin(); it2 != g_pending.end();) {
-                if (it2->slotLine.role == p.role) it2 = g_pending.erase(it2);
-                else ++it2;
-            }
-        }
+        // An eject voids the role's held insert lines, the already-empty one as much as the rest: the slot's base
+        // can read the same after an eject as when the insert was held, so a stale insert must not put the
+        // drive back in a slot it has left.
+        ++g_roleGen[p.role];
         if (!cur) {  // already empty: prime + belt latch completion
             SetBase(p.role, false, 0, nullptr);
             DC::CompleteEjectLatch(slot, LivePropActor(p.driveEid));
@@ -409,35 +422,6 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
         UE_LOGI("drive_sync: slot role=%u EJECT applied (was eid=%u, from slot %u, frozen=%d)",
                 p.role, curEid, senderSlot, frozen ? 1 : 0);
     }
-}
-
-void RetryPendingTick() {
-    if (g_pending.empty()) return;
-    const auto now = Clock::now();
-    std::vector<Pending> keep;
-    for (auto& pd : g_pending) {
-        if (now >= pd.until) {
-            UE_LOGW("drive_sync: pending slot line role=%u expired (its drive never resolved)", pd.slotLine.role);
-            continue;
-        }
-        // If the slot's state moved since the line was
-        // queued, the world passed it by -- DROP, never replay stale.
-        const SlotBase& nowB = g_slotBase[pd.slotLine.role];
-        if (nowB.known != pd.slotAtQueue.known ||
-            nowB.occupied != pd.slotAtQueue.occupied ||
-            nowB.eid != pd.slotAtQueue.eid) {
-            UE_LOGW("drive_sync: pending slot line role=%u dropped (slot moved on)",
-                    pd.slotLine.role);
-            continue;
-        }
-        void* drive = LivePropActor(pd.slotLine.driveEid);
-        if (drive || !pd.slotLine.occupied) {
-            OnSlotLine(pd.slotLine, pd.senderSlot, /*fromPending*/true);
-            continue;
-        }
-        keep.push_back(std::move(pd));
-    }
-    g_pending.swap(keep);
 }
 
 void PrimeAll() {
@@ -497,15 +481,14 @@ void Tick() {
     if (now >= g_nextSweep) {  // the 1 Hz slot sweep
         g_nextSweep = now + std::chrono::seconds(1);
         for (int r = 0; r < DC::kRoleCount; ++r) ProcessSlot(r, /*announce*/true);
-        RetryPendingTick();
     }
 
     if (now >= g_nextStats) {
         g_nextStats = now + std::chrono::seconds(60);
-        UE_LOGI("drive_sync: 60s marks slot=%llu | sent slot=%llu | applied slot=%llu | latchFix=%llu pending=%zu "
+        UE_LOGI("drive_sync: 60s marks slot=%llu | sent slot=%llu | applied slot=%llu | latchFix=%llu "
                 "grabKept=%llu | primed offWorld=%llu rekey=%llu | ejectRefused=%llu",
                 (unsigned long long)g_cMarksSlot.load(std::memory_order_relaxed), (unsigned long long)g_cSlotSent,
-                (unsigned long long)g_cSlotApplied, (unsigned long long)g_cLatchCompleted, g_pending.size(),
+                (unsigned long long)g_cSlotApplied, (unsigned long long)g_cLatchCompleted,
                 (unsigned long long)g_cGrabKept, (unsigned long long)g_cPrimedOffWorld,
                 (unsigned long long)g_cRekeyed, (unsigned long long)g_cEjectRefused);
     }
@@ -513,7 +496,7 @@ void Tick() {
 
 void OnDriveSlotState(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot) {
     if (!DC::EnsureResolved()) return;
-    OnSlotLine(p, senderSlot, /*fromPending*/false);
+    OnSlotLine(p, senderSlot);
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
@@ -539,12 +522,6 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     UE_LOGI("drive_sync: connect seed -> joiner slot %d (%d of %d slot lines)", peerSlot, lines, DC::kRoleCount);
 }
 
-bool HasPendingLine(int role, uint32_t driveEid) {
-    for (const Pending& pd : g_pending)
-        if (pd.slotLine.role == role && pd.slotLine.occupied && pd.slotLine.driveEid == driveEid) return true;
-    return false;
-}
-
 uint64_t AnnouncedCount() { return g_cSlotSent; }
 
 void OnDisconnect() {
@@ -553,14 +530,14 @@ void OnDisconnect() {
         g_lastEjected[r].Reset();
         g_slotBase[r] = {};
     }
-    g_pending.clear();
     g_primed = false;
     g_wasConnected = false;
     g_replayingInsert = false;
     g_cGrabKept = 0;
     g_cPrimedOffWorld = g_cRekeyed = g_cEjectRefused = 0;
+    g_wrongClassSaid.clear();
     g_session.store(nullptr, std::memory_order_release);
-    UE_LOGI("drive_sync: teardown (slot baselines + pending cleared)");
+    UE_LOGI("drive_sync: teardown (slot baselines cleared)");
 }
 
 }  // namespace coop::drive_sync

@@ -308,6 +308,16 @@ bool Search::Holds(void* player, const ue_wrap::FVector& via, std::vector<ue_wra
     return true;
 }
 
+void Search::Cancel() {
+    if (!active_) return;
+    active_ = false;
+    failed_ = {};
+    next_ = 0;
+    best_.clear();
+    bestScore_ = 0.f;
+    UE_LOGI("director/detour: the search round (%.0f,%.0f,%.0f) was cancelled", round_.X, round_.Y, round_.Z);
+}
+
 Search::Step Search::Advance(void* player, std::vector<ue_wrap::FVector>* route) {
     if (!active_) return Step::Exhausted;
     samples_ = 0;

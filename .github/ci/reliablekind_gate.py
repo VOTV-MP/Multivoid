@@ -27,7 +27,7 @@ WHAT IT HOLDS -- these FAIL the build:
      `return;` changed nothing the gate read. An exception is a claim about a BRANCH, so
      the check has to be about the branch.
 
-  3. A family dispatcher that is no longer CHAINED. The 100 case labels in the six
+  3. A family dispatcher that is no longer CHAINED. The 100 case labels in the seven
      family files are reachable only because event_feed's `default:` calls each
      Handle*Event in turn; delete one call and ~25 kinds die while every case label is
      still present and the coverage arithmetic still adds up.
@@ -46,7 +46,7 @@ WHAT IT HOLDS -- these FAIL the build:
      not a kind, or a relayable kind that is not Client (the edge would refuse what the relay forwards).
 
 WHAT IT DELIBERATELY DOES NOT HOLD. `session_lanes.h`'s three switches -- `LaneForKind`,
-`IsClientRelayableReliableKind`, `IsPreWorldSendableKind` -- all default safely (Normal /
+`IsClientRelayableReliableKind`, `IsPreWorldSendableKind` -- all default safely (Default /
 no-relay / hold-until-world-ready), and whether a given kind SHOULD relay is a design
 decision no text scan can make. Absence there is legitimate for every host-authored kind.
 So they are reported in `--table`, not gated: this file must not manufacture a failure it
@@ -82,7 +82,7 @@ ROW_VALUES = ("Client", "Host")
 EDGE_SHAPE = re.compile(r"if\s*\(\s*cfg_\.role\s*==\s*Role::Host\s*\)\s*\{\s*const\s+ClientAuthorship\s+(\w+)\s*=\s*"
                         r"AuthorshipOf\(\s*static_cast<ReliableKind>\(\s*rh\.kind\s*\)\s*\)\s*;\s*if\s*\(")
 
-# The six family dispatchers. Each Handle*Event returns true iff msg.kind is in its
+# The seven family dispatchers. Each Handle*Event returns true iff msg.kind is in its
 # family, so its own switch IS the membership declaration (SyncRouter consolidation,
 # 2026-06-28) -- which is exactly why parsing these case labels is parsing the truth
 # and not a parallel list that can drift from it.
@@ -90,6 +90,7 @@ FAMILY_FILES = [
     "src/coop/dispatch/event_dispatch_economy.cpp",
     "src/coop/dispatch/event_dispatch_entity.cpp",
     "src/coop/dispatch/event_dispatch_intent.cpp",
+    "src/coop/dispatch/event_dispatch_prop_drive.cpp",
     "src/coop/dispatch/event_dispatch_signal.cpp",
     "src/coop/dispatch/event_dispatch_state.cpp",
     "src/coop/dispatch/event_dispatch_world.cpp",
@@ -522,11 +523,11 @@ def print_table(tree, enums, fam):
             where = "net thread (terminal)"
         print("  %3s %-26s %-24s %-7s %-6s %s"
               % (enums[name] if enums[name] is not None else "?", name, where,
-                 lanes["lane"].get(name, "Normal*"),
+                 lanes["lane"].get(name, "Default*"),
                  "yes" if name in lanes["relay"] else "-",
                  "yes" if name in lanes["preworld"] else "-"))
     print("  (* = falls to the switch default. All three session_lanes.h switches default")
-    print("   safely -- Normal / no-relay / hold-until-world-ready -- so absence there is")
+    print("   safely -- Default / no-relay / hold-until-world-ready -- so absence there is")
     print("   legitimate for every host-authored kind and is reported, not gated.)")
 
 

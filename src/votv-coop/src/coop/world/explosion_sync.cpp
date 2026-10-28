@@ -6,6 +6,7 @@
 #include "coop/config/config_registry.h"
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
+#include "coop/net/net_clock.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/world/explosion_parking.h"
@@ -412,7 +413,11 @@ void Apply(const coop::net::ExplosionSpawnPayload& p) {
         return;
     }
     ++g_counters.applied[p.classId];
-    UE_LOGI("[EXPLOSION] apply class=%u", static_cast<unsigned>(p.classId));
+    // A monotonic stamp (the log's own has a one-second grain), so a drill can time a blast against the laser that
+    // made it: the Octa lane logs the laser's `t=` from the same clock.
+    g_counters.lastApplyMs = coop::net::NowMs();
+    UE_LOGI("[EXPLOSION] apply class=%u t=%llu", static_cast<unsigned>(p.classId),
+            static_cast<unsigned long long>(g_counters.lastApplyMs));
 }
 
 }  // namespace coop::explosion_sync

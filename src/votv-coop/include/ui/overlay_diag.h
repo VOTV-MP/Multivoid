@@ -3,7 +3,7 @@
 // and the CURSOR probe (VOTVCOOP_CURSOR_PROBE=1); both are armed by environment variable and both
 // are silent otherwise.
 //
-// WHY THEY LIVE HERE AND NOT IN THE OVERLAY: imgui_overlay.cpp owns the DXGI hooks, the WndProc and
+// WHY THEY LIVE HERE AND NOT IN THE OVERLAY: imgui_overlay.cpp owns the DXGI hooks, the window-message handler and
 // surface compositing. These two are instruments ABOUT that file rather than part of it, and they
 // pushed it past the 800-line soft cap. Retiring a replaced feature does not reach a probe, but a
 // probe still owes its own file once it is big enough to crowd the subsystem it watches.
@@ -29,7 +29,7 @@ void NoteWndProcMsg(UINT msg);
 
 // ---- GATE 3: which thread is the WndProc? -------------------------------------
 //
-// Called from `WndProcDetour` on every message; logs ONCE. The answer decides an architecture, not
+// Called from `HandleWindowMessage` on every message; logs ONCE. The answer decides an architecture, not
 // a detail: if the WndProc runs on the GAME thread, a hotkey can ask "does the game own typed text"
 // SYNCHRONOUSLY at the keydown, exactly and with no staleness, instead of reading a value
 // republished by a polled tick. Windows delivers messages to the thread that CREATED the window and

@@ -2,9 +2,9 @@
 
 #include "coop/interactables/portable_pc_lid.h"
 
+#include "coop/element/bind_wait.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
-#include "coop/session/join_progress.h"
 
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
@@ -15,7 +15,8 @@
 #include <windows.h>
 
 #include <atomic>
-#include <map>
+#include <cstring>
+#include <set>
 #include <vector>
 
 namespace coop::portable_pc_lid {
@@ -31,29 +32,22 @@ constexpr int kTagLid = 0x4C504344;  // 'LPCD'
 bool g_watched = false;  // registered, once a process
 bool g_settled = false;  // its names resolved at the gate, live or dead for good
 
-constexpr uint64_t kRetryMs      = 1000;   // a waiting line's and a held edge's retry, while any waits
-constexpr uint64_t kPendingTtlMs = 30000;  // how long a line waits for its PC's birth, an edge for its name
-// The waiting lines are keyed by a wire eid and inserted into precisely when that eid does not
-// resolve: the garbage case is the inserting case, so an attacker-chosen eid stream grows the map at
-// line rate, and the TTL bounds it in time but not in rate. This is the absolute size bound. A new key
-// is refused rather than the oldest evicted: eviction would let a flood push out exactly the entry of
-// a PC whose birth is on its way. Legitimate entries are the PCs whose eid has not resolved on this
-// peer yet, single digits. The residual: under a sustained flood a legitimate line can be refused
-// while the map is full, and its lid stays apart until that PC's next `open`.
-constexpr size_t kPendingCap = 64;
-struct PendingLid { bool opened; uint8_t from; uint64_t deadline; };
-std::map<uint32_t, PendingLid> g_pending;
+constexpr uint64_t kRetryMs       = 1000;   // a held edge's retry, while any waits
+constexpr uint64_t kHeldEdgeTtlMs = 30000;  // how long an edge waits for its PC's name
+constexpr uint16_t kLaptopState = static_cast<uint16_t>(coop::net::ReliableKind::LaptopState);
 
 // A local edge on a PC no element names yet: a client's placed PC is named only when the host's echo of
 // its spawn comes back. Held by the actor and sent, with the lid as it is then, once the element lane
 // names it -- or at once when a line for that PC lands before that, since the line is older than the
-// held edge; dropped with its PC, or after kPendingTtlMs. A handful at most, since a placed PC is named
+// held edge; dropped with its PC, or after kHeldEdgeTtlMs. A handful at most, since a placed PC is named
 // within a round trip.
 constexpr size_t kHeldCap = 16;
 struct HeldEdge { ue_wrap::CachedObjRef pc; uint64_t deadline; };
 std::vector<HeldEdge> g_held;
 
 uint64_t g_nextRetry = 0;
+bool g_saidUnreadable = false;  // a live PC whose lid does not read: said once a session
+std::set<uint32_t> g_wrongClassSaid;  // eids a lid line named that are no portable PC here (said once a session)
 Counts g_counts{};  // [dev] this session's authored and applied lines
 
 // The lane's own `open` calls in progress (game thread): a receiver's apply runs the verb a player
@@ -139,7 +133,7 @@ bool Apply(void* actor, bool opened) {
 // entry, since what goes is the lid as it is when the name lands.
 void Hold(void* actor) {
     for (HeldEdge& h : g_held) {
-        if (h.pc.Is(actor)) { h.deadline = NowMs() + kPendingTtlMs; return; }
+        if (h.pc.Is(actor)) { h.deadline = NowMs() + kHeldEdgeTtlMs; return; }
     }
     if (g_held.size() >= kHeldCap) {
         UE_LOGW("portable_pc_lid: a lid edge on a portable PC no element names yet REFUSED -- %zu edges already "
@@ -148,7 +142,7 @@ void Hold(void* actor) {
     }
     HeldEdge h;
     h.pc.Set(actor);
-    h.deadline = NowMs() + kPendingTtlMs;
+    h.deadline = NowMs() + kHeldEdgeTtlMs;
     g_held.push_back(h);
     UE_LOGI("portable_pc_lid: a lid edge on a portable PC no element names yet -- held until it is named");
 }
@@ -187,16 +181,17 @@ void OnOpenPost(const sg::Call& call) {
         Hold(f.actor);
         return;
     }
-    g_pending.erase(static_cast<uint32_t>(eid));  // this edge is newer than any line that waits for the PC
+    // This edge is newer than any line held for the PC.
+    coop::element::bind_wait::Drop(static_cast<uint32_t>(eid), kLaptopState, "a local lid edge is newer");
     SendOut(s, LidLine(static_cast<uint32_t>(eid), after), 0);
     ++g_counts.sent;
     UE_LOGI("portable_pc_lid: local lid edge (eid=%u opened=%u) -- sent",
             static_cast<uint32_t>(eid), static_cast<unsigned>(after));
 }
 
-// The held edges whose PC has been named, then the waiting lines whose PC has landed. The edges go first:
-// a line parked while this peer's PC had no name was authored by a peer that had not seen this peer's
-// edge, and the host, which gets the edge after it, ends at the edge too; so the edge's send drops it.
+// The held edges whose PC has been named. An edge's send voids the line held for that PC: it was authored
+// by a peer that had not seen this peer's edge, and the host, which gets the edge after it, ends at the
+// edge too.
 void Retry(coop::net::Session* s, uint64_t now) {
     for (auto it = g_held.begin(); it != g_held.end();) {
         void* pc = it->pc.Get();
@@ -206,7 +201,7 @@ void Retry(coop::net::Session* s, uint64_t now) {
         if (!pc) {
             it = g_held.erase(it);  // the PC went before it was named: nothing of it is anywhere else
         } else if (eid != coop::element::kInvalidId && ReadLid(pc, opened)) {
-            g_pending.erase(static_cast<uint32_t>(eid));
+            coop::element::bind_wait::Drop(static_cast<uint32_t>(eid), kLaptopState, "a local lid edge is newer");
             if (s->connected()) {
                 SendOut(s, LidLine(static_cast<uint32_t>(eid), opened), 0);
                 ++g_counts.sent;
@@ -216,31 +211,8 @@ void Retry(coop::net::Session* s, uint64_t now) {
             it = g_held.erase(it);
         } else if (now > it->deadline) {
             UE_LOGW("portable_pc_lid: a held lid edge EXPIRED unsent (its PC was not named within %llu ms)",
-                    static_cast<unsigned long long>(kPendingTtlMs));
+                    static_cast<unsigned long long>(kHeldEdgeTtlMs));
             it = g_held.erase(it);
-        } else {
-            ++it;
-        }
-    }
-    // While this peer's join is still streaming the world in, the births these lines wait for are in the
-    // snapshot behind them: they do not age, and their time runs from the join's end.
-    const bool joining = coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle;
-    for (auto it = g_pending.begin(); it != g_pending.end();) {
-        void* actor = coop::element::LivePropActor(it->first);
-        bool cur = false;
-        if (ReadLid(actor, cur)) {
-            if (Apply(actor, it->second.opened))
-                UE_LOGI("portable_pc_lid: a waiting lid line applied once its PC landed (eid=%u opened=%u, from "
-                        "slot %u)", it->first, static_cast<unsigned>(it->second.opened),
-                        static_cast<unsigned>(it->second.from));
-            it = g_pending.erase(it);
-        } else if (joining) {
-            it->second.deadline = now + kPendingTtlMs;
-            ++it;
-        } else if (now > it->second.deadline) {
-            UE_LOGW("portable_pc_lid: a waiting lid line for eid=%u EXPIRED unapplied (its PC's birth did not "
-                    "land within %llu ms)", it->first, static_cast<unsigned long long>(kPendingTtlMs));
-            it = g_pending.erase(it);
         } else {
             ++it;
         }
@@ -271,12 +243,22 @@ void Tick() {
             UE_LOGW("portable_pc_lid: the lid's writer is NOT watched -- a lid change is not sent");
         }
     }
-    if (g_pending.empty() && g_held.empty()) return;
+    if (g_held.empty()) return;
     const uint64_t now = NowMs();
     if (now < g_nextRetry) return;
     g_nextRetry = now + kRetryMs;
     Retry(s, now);
 }
+
+namespace {
+// A line held in bind_wait runs again once its PC is bound: the whole of OnLid.
+void ReplayLid(const uint8_t* bytes, size_t n, int senderSlot) {
+    coop::net::LaptopStatePayload p{};
+    if (n != sizeof p) return;
+    std::memcpy(&p, bytes, sizeof p);
+    OnLid(p, static_cast<uint8_t>(senderSlot));
+}
+}  // namespace
 
 void OnLid(const coop::net::LaptopStatePayload& p, uint8_t senderSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
@@ -284,13 +266,29 @@ void OnLid(const coop::net::LaptopStatePayload& p, uint8_t senderSlot) {
     const bool opened = p.isOpened != 0;
     void* actor = coop::element::LivePropActor(p.eid);
     if (actor && !IsPc(actor)) {
-        UE_LOGW("portable_pc_lid: a lid line for eid=%u (from slot %u) names a prop that is not a portable PC -- "
-                "dropped", p.eid, static_cast<unsigned>(senderSlot));
+        if (g_wrongClassSaid.insert(p.eid).second)
+            UE_LOGW("portable_pc_lid: a lid line for eid=%u (from slot %u) names a prop that is not a portable PC -- "
+                    "dropped", p.eid, static_cast<unsigned>(senderSlot));
         return;
     }
-    g_pending.erase(p.eid);  // this line is newer than any that waits for the PC
+    if (!actor) {
+        // Held, not relayed: the replay runs OnLid again at the PC's bind and relays the line once, when it
+        // applies. Not deferred: no bind is coming for this eid, so there is nothing to wait for.
+        if (!coop::element::bind_wait::Hold(p.eid, kLaptopState, senderSlot, &ReplayLid, &p, sizeof p,
+                                            /*coalesce=*/true))
+            coop::element::bind_wait::NoteNeverBound(kLaptopState, p.eid);
+        return;
+    }
     bool cur = false;
-    if (ReadLid(actor, cur) && TakeHeld(actor)) {
+    if (!ReadLid(actor, cur)) {
+        if (!g_saidUnreadable) {
+            g_saidUnreadable = true;
+            UE_LOGW("portable_pc_lid: a lid line for eid=%u (from slot %u) names a portable PC whose lid does not "
+                    "read here -- dropped", p.eid, static_cast<unsigned>(senderSlot));
+        }
+        return;
+    }
+    if (TakeHeld(actor)) {
         // This peer's edge on the PC waited for its name and has not gone: whoever sent this line had not
         // seen it, and the host, which gets the edge after the line, ends at the edge. So the edge goes now,
         // with the lid as it is, and the line is not applied.
@@ -301,17 +299,10 @@ void OnLid(const coop::net::LaptopStatePayload& p, uint8_t senderSlot) {
                     static_cast<unsigned>(cur));
         }
         return;  // a host sends on the edge, not the line it supersedes
-    } else if (ReadLid(actor, cur)) {
-        if (Apply(actor, opened))
-            UE_LOGI("portable_pc_lid: wire lid applied (eid=%u opened=%u, from slot %u)", p.eid,
-                    static_cast<unsigned>(opened), static_cast<unsigned>(senderSlot));
-    } else if (g_pending.size() < kPendingCap) {
-        g_pending[p.eid] = PendingLid{opened, senderSlot, NowMs() + kPendingTtlMs};
-    } else {
-        UE_LOGW("portable_pc_lid: a lid line for eid=%u (from slot %u) REFUSED -- %zu lines already wait "
-                "for their PC", p.eid, static_cast<unsigned>(senderSlot), kPendingCap);
-        return;  // nor relayed: the host sends on only a line it holds
     }
+    if (Apply(actor, opened))
+        UE_LOGI("portable_pc_lid: wire lid applied (eid=%u opened=%u, from slot %u)", p.eid,
+                static_cast<unsigned>(opened), static_cast<unsigned>(senderSlot));
     if (s->role() == coop::net::Role::Host) SendOut(s, p, senderSlot);
 }
 
@@ -339,7 +330,8 @@ Counts LineCounts() {
 
 void OnDisconnect() {
     g_counts = {};
-    g_pending.clear();
+    g_saidUnreadable = false;
+    g_wrongClassSaid.clear();
     g_held.clear();
     g_nextRetry = 0;
     g_inFlight.clear();

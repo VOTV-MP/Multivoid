@@ -203,6 +203,11 @@ uintptr_t ScopeBitFor(const void* owner);
 // the frame carries no such record.
 uint8_t* OutParamPtr(const Call& call, int32_t paramOffset);
 
+// The function of the outermost Blueprint frame on the chain `call` was entered through (PreviousFrame, up to
+// its end): the script function that began the stack, or the call's own function when it was entered with no
+// caller. Valid in a PRE, while the frame is live. Null for a call with no frame. Game thread.
+void* OutermostFunction(const Call& call);
+
 // Counters for the perf probe and the drills. `calls` and `callsGameThread` count only while
 // SetPerfCounting is on (an increment on every script call otherwise); the rest always.
 struct Stats {

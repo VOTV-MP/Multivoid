@@ -84,6 +84,8 @@ public:
     int PassedSpot(const std::vector<ue_wrap::FVector>& route) const { return PassedSpotWhy(route, nullptr); }
 
     bool Active() const { return active_; }
+    // Ends an active search and drops its round (its candidates, its best way); the remembered spots stay.
+    void Cancel();
     // The via point of the last way round found.
     const ue_wrap::FVector& LastVia() const { return lastVia_; }
     size_t Spots() const { return spots_.size(); }

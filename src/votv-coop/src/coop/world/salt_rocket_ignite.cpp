@@ -217,7 +217,7 @@ void TickClient() {
             continue;
         }
         // A rocket this client has just placed waits for the host's spawn of it, so the light never overtakes the drop
-        // intent on the bulk lane.
+        // intent on the Default lane.
         const EL::ElementId eid = EL::Registry::Get().EidForActor(rocket);
         if (!EL::Registry::IsAllowedHostAllocatedEid(eid)) {
             if (coop::net::NowMs() - h.atMs < kPlaceAnswerMs) return;

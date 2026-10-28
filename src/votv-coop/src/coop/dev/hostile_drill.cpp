@@ -170,7 +170,7 @@ void PutClassName(Wire& w, const char* cls) {
 }
 
 // A convert no honest client sends -- the trash channel's re-skin, the host's alone -- of a trash pile at
-// this client's own feet, then one honest trash spawn behind it on the same ordered lane (both Bulk): the
+// this client's own feet, then one honest trash spawn behind it on the same ordered lane (both Default): the
 // host dispatches the convert before the spawn, so the spawn's element appearing on the host means the
 // convert has been judged.
 void SendPropConvert(coop::net::Session* s, const ue_wrap::FVector& at) {
@@ -231,7 +231,7 @@ std::string RepeatSentinel() {
     return std::string("hostile-drill ") + ArmName() + " sentinel " + g_repeatStamp;
 }
 
-// `count` messages of a kind only the host authors, one byte each, then one chat line: all on the Normal lane,
+// `count` messages of a kind only the host authors, one byte each, then one chat line: all on the Default lane,
 // which GNS keeps in order, so the line arriving at the host means every message before it has arrived.
 bool SendFloodBurst(coop::net::Session* s, int count, const std::string& sentinel) {
     const uint8_t filler = 0;
@@ -334,7 +334,7 @@ void SendRepeatJoin(coop::net::Session* s, uint32_t selfEid) {
 }
 
 // repeat_world_ready / repeat_save_request (client sends and judges, since the host's answer is this
-// session ending with a code). The repeat(s) then one stamped chat line, all Normal-lane, so the line's
+// session ending with a code). The repeat(s) then one stamped chat line, all Default-lane, so the line's
 // return in this client's own feed means the host drained the repeats, answered them and KEPT the link.
 void TickClientRepeat(coop::net::Session* s) {
     if (g_repeat == RepeatSend::Done) return;

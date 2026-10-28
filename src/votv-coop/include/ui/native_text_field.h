@@ -5,7 +5,7 @@
 // own text back as empty. Slate does not route keystrokes into a hand-wired, never
 // initialised widget tree, and our native screens are exactly that. So the engine gives us
 // pixels and geometry but not keyboard delivery, and the field owns the input half itself:
-// our window-procedure detour already sees the character messages and, when no overlay
+// the game window's one subclass (coop/input/game_window_proc) already sees the character messages and, when no overlay
 // surface holds capture, passes them to the game; a native field claims them at that seam
 // and renders the result into an ordinary text block, which the same probe proved we can
 // drive. One primitive, not one field: two shipped screens need it (the browser's address
@@ -44,6 +44,9 @@ void Release(Field* f);
 void Focus(Field* f);
 void Blur(Field* f);
 bool Focused(const Field* f);
+
+// The framed box widget, for a caller that aims a pointer at it (a drill's click), or null.
+void* Box(const Field* f);
 
 // The content. `Text` is UTF-8 (the wire and the ini both take UTF-8; the widget layer
 // converts once, on write).

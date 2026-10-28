@@ -49,7 +49,7 @@ UE_FACT_FN(kRowGrabFinishedFunc, "grab_observer", L"mainPlayer_C", L"grab__Finis
 std::atomic<bool> g_installed{false};
 // The retry throttle: while the classes have not resolved (the splash window, tens of
 // seconds), a class find walks the full object array with a string allocation per entry,
-// and pumping that at 125 Hz is the install-loop bomb. Wait N ticks between retries; 60
+// and pumping that at ~60 Hz is the install-loop bomb. Wait N ticks between retries; 60
 // ticks is about half a second, matching the NPC sync's countdown.
 std::atomic<int> g_installRetryCountdown{0};
 
@@ -135,7 +135,7 @@ void GrabObserver_PrimComp_AddImpulse(void* self, void* /*function*/, void* para
 // add-to-current flag, the bone name.
 void GrabObserver_PrimComp_SetLinearVelocity_PRE(void* self, void* /*function*/, void* params) {
     if (!self || !params) return;
-    // The remote-prop drive calls this UFunction at 125 Hz per held-prop slot, and an
+    // The remote-prop drive calls this UFunction at ~60 Hz per held-prop slot, and an
     // unthrottled log here funnels debug output at hundreds of hertz under several peers and
     // props, stalling the render thread. The same throttle policy as the set-target observer.
     static std::atomic<uint64_t> sCount{0};
@@ -197,7 +197,7 @@ void GrabObserver_grab_Finished_PRE(void* self, void* /*function*/, void* /*para
 
 void Install() {
     if (g_installed.load(std::memory_order_acquire)) return;
-    // Throttle the retries to avoid four full class finds at 125 Hz during the pre-possession
+    // Throttle the retries to avoid four full class finds at ~60 Hz during the pre-possession
     // window (the splash and the loading screen).
     if (g_installRetryCountdown.load(std::memory_order_relaxed) > 0) {
         g_installRetryCountdown.fetch_sub(1, std::memory_order_relaxed);

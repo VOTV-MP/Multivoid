@@ -29,7 +29,8 @@ void NotifyPropEidRebound(void* actor);
 
 // The local player's currently-held actor (grab/hold slot), IsLive-guarded; null when nothing is
 // held. Read by trash_channel::TickCarry for its rest exclusion: a still player holding a clump
-// must not read as a clump at rest and un-held. Game thread.
+// must not read as a clump at rest and un-held. A swinger let go keeps being returned while its pose
+// stream coasts to rest. Game thread.
 void* LastHeldActor();
 
 // The generation of this peer's current hold, minted at each new-held edge and never 0 once one

@@ -9,8 +9,8 @@
 //
 // net_pump stays the per-tick ORCHESTRATOR -- connection edges, death policy, the reaper, the
 // puppet drive -- and calls in here at the right moments. A new sync feature wires itself in
-// HERE (Install and TickGameplay, plus DisconnectAll and optionally ConnectReplayForSlot) and
-// never touches net_pump. The MTA shape: CClientManager owns the sub-manager list and fans
+// HERE (Install and TickGameplay, plus DisconnectAll and optionally ConnectReplayForSlot, which
+// lives in connect_replay.cpp) and never touches net_pump. The MTA shape: CClientManager owns the sub-manager list and fans
 // DoPulse, connect and disconnect out to them, keeping the pump thin.
 
 #pragma once

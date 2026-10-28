@@ -1,14 +1,17 @@
 // ui/overlay_backend.cpp -- the RHI dispatcher behind ui/overlay_backend.h.
 //
-// Owns exactly one concept: WHICH per-RHI implementation is live. The first
-// present's CaptureDevice picks it by what the game's swapchain actually is:
-// a DX11 device comes straight off the swapchain, while DX12 additionally has
-// to capture its presenting command queue first (a few frames -- see
-// overlay_backend_dx12_capture.cpp).
+// Owns exactly one concept: WHICH per-RHI implementation is live. The engine seam that fired
+// (the D3D11, the D3D12 or the Vulkan present detour) names it through SelectRhi before the frame runs;
+// every entry below forwards to that RHI's ops table. DX12 additionally has to capture its
+// presenting command queue first (a few frames -- see overlay_backend_dx12_capture.cpp).
 
 #include "ui/overlay_backend.h"
 
 #include "overlay_backend_internal.h"
+#include "overlay_backend_vk.h"
+#include "ue_wrap/core/log.h"
+
+#include "imgui.h"
 
 #include <windows.h>
 #include <wincodec.h>  // WIC: the skins-browser preview decode (PNG/BMP -> BGRA)
@@ -19,83 +22,98 @@
 namespace ui::overlay_backend {
 namespace {
 
-enum class Active { None, Dx11, Dx12 };
-Active g_active = Active::None;  // render-thread-owned (all writers run in the Present detour)
+const BackendOps* OpsFor(Rhi rhi) {
+    switch (rhi) {
+        case Rhi::Dx11: return &dx11::Ops();
+        case Rhi::Dx12: return &dx12::Ops();
+        case Rhi::Vulkan: return &vk::Ops();
+        default:        return nullptr;
+    }
+}
+
+const BackendOps* g_ops = nullptr;  // render-thread-owned (all writers run in the Present detour)
+bool g_brought = false;             // an InitRenderer succeeded: the RHI is latched for the run
 
 }  // namespace
 
-const char* Kind() {
-    if (g_active == Active::Dx11 && dx11::Live()) return "DX11";
-    if (g_active == Active::Dx12 && dx12::Live()) return "DX12";
-    return nullptr;
+bool SelectRhi(Rhi rhi) {
+    const BackendOps* want = OpsFor(rhi);
+    if (g_brought && want != g_ops) {
+        // A backend that was never captured or initialised must not run a frame, so the seam of
+        // the other RHI is refused; a second viewport is the only way one could fire.
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            UE_LOGW("imgui_overlay: the %s present seam fired after the overlay came up on %s -- "
+                    "that seam's frames are ignored for the rest of the run",
+                    want ? want->name : "unknown-RHI", g_ops->name);
+        }
+        return false;
+    }
+    g_ops = want;
+    return want != nullptr;
 }
 
-bool CaptureDevice(IDXGISwapChain* sc) {
-    if (dx11::CaptureDevice(sc)) {
-        g_active = Active::Dx11;
-        return true;
-    }
-    if (dx12::CaptureDevice(sc)) {  // true only once the presenting queue is CONFIRMED
-        g_active = Active::Dx12;
-        return true;
-    }
-    return false;
+const char* Kind() { return g_ops ? g_ops->name : nullptr; }
+
+bool CaptureDevice(const FrameTarget& t) {
+    return g_ops && g_ops->capture(t);  // true only once the presenting queue is CONFIRMED
 }
 
 void AbandonCapture() {
-    if (g_active == Active::Dx11) dx11::AbandonCapture();
-    else if (g_active == Active::Dx12) dx12::AbandonCapture();
-    g_active = Active::None;
+    if (g_ops) g_ops->abandon();
 }
 
-bool InitRenderer(IDXGISwapChain* sc) {
-    if (g_active == Active::Dx11) return dx11::InitRenderer(sc);
-    if (g_active == Active::Dx12) return dx12::InitRenderer(sc);
-    return false;
+bool InitRenderer(const FrameTarget& t) {
+    if (!g_ops || !g_ops->init(t)) return false;
+    g_brought = true;
+    return true;
 }
 
 void NewFrame() {
-    if (g_active == Active::Dx11) dx11::NewFrame();
-    else if (g_active == Active::Dx12) dx12::NewFrame();
+    if (g_ops) g_ops->newFrame();
 }
 
 void InvalidateDeviceObjects() {
-    if (g_active == Active::Dx11) dx11::InvalidateDeviceObjects();
-    else if (g_active == Active::Dx12) dx12::InvalidateDeviceObjects();
+    if (g_ops) g_ops->invalidate();
 }
 
-void EnsureTarget(IDXGISwapChain* sc) {
-    if (g_active == Active::Dx11) dx11::EnsureTarget(sc);
-    else if (g_active == Active::Dx12) dx12::EnsureTarget(sc);
+void EnsureTarget(const FrameTarget& t) {
+    if (g_ops) g_ops->ensureTarget(t);
 }
 
-void RenderDrawData(IDXGISwapChain* sc) {
-    if (g_active == Active::Dx11) dx11::RenderDrawData(sc);
-    else if (g_active == Active::Dx12) dx12::RenderDrawData(sc);
+void RenderDrawData(const FrameTarget& t) {
+    if (g_ops) g_ops->render(t);
 }
 
-void OnResizeRelease() {
-    if (g_active == Active::Dx11) dx11::OnResizeRelease();
-    else if (g_active == Active::Dx12) dx12::OnResizeRelease();
+// The resize pair is the DX resize bracket's mechanism: a half without one leaves it null. The
+// backend is the one of the seam that fired, not the last selected one.
+void OnResizeRelease(Rhi rhi) {
+    const BackendOps* ops = OpsFor(rhi);
+    if (ops && ops->resizeRelease) ops->resizeRelease();
 }
 
-void OnResizeRecreate(IDXGISwapChain* sc) {
-    if (g_active == Active::Dx11) dx11::OnResizeRecreate(sc);
-    else if (g_active == Active::Dx12) dx12::OnResizeRecreate(sc);
+void OnResizeRecreate(const FrameTarget& t) {
+    const BackendOps* ops = OpsFor(t.rhi);
+    if (ops && ops->resizeRecreate) ops->resizeRecreate(t);
 }
 
 void* CreateTextureFromImageFile(const wchar_t* path, int* outW, int* outH) {
-    if (g_active == Active::Dx11) return dx11::CreateTextureFromImageFile(path, outW, outH);
-    if (g_active == Active::Dx12) return dx12::CreateTextureFromImageFile(path, outW, outH);
-    return nullptr;
+    return g_ops ? g_ops->textureFromFile(path, outW, outH) : nullptr;
 }
 
-void DestroyTexture(void* id) {
-    if (g_active == Active::Dx11) dx11::DestroyTexture(id);
-    else if (g_active == Active::Dx12) dx12::DestroyTexture(id);
+ImTextureRef TextureRef(void* handle) {
+    if (g_ops && g_ops->textureRef) return g_ops->textureRef(handle);
+    return ImTextureRef(static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(handle)));
+}
+
+void DestroyTexture(void* handle) {
+    if (g_ops) g_ops->destroyTexture(handle);
 }
 
 void InstallCreationProbe() { dx12_capture::InstallCreationProbe(); }
+
+void RestoreEngineSlots() { vk::RestoreSlots(); }
 
 // RULE 2: there is deliberately no Shutdown() here, and nothing needs one. InitRenderer's
 // failure paths call ReleaseRendererState(); at process exit the OS reclaims what that released;

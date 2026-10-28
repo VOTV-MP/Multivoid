@@ -21,11 +21,11 @@
 #include "coop/props/remote_prop.h"        // ResolveMirrorEidByActor (the pile-grab hook mirror eid resolve)
 #include "coop/props/remote_prop_spawn.h"
 #include "coop/props/join_membership_sweep.h"  // the sweep's candidate and claim queries
-#include "coop/save/join_window_baseline.h"  // RecordGrabTimePileXform, the grab-edge save-time key
 #include "coop/props/trash_channel.h"      // NoteClumpBorn, the clump's birth certificate
 #include "coop/props/trash_sweep.h"        // NoteSwept, a broom stroke's clumps
 #include "coop/props/trash_use_intercept.h"
-#include "coop/props/trash_morph_gate.h"  // the client-side refusal of the trash morph verbs
+#include "coop/props/trash_morph_gate.h"  // OnDisconnect: the session the refusals read
+#include "coop/props/trash_native_hold.h"  // OnDisconnect: the load catch's cached session
 #include "coop/props/prop_wire_parity.h"  // PhysFlagsOf, the one flag builder
 #include "coop/interactables/drive_payload_sync.h"
 #include "ue_wrap/desk/drive_chain.h"
@@ -34,6 +34,7 @@
 #include "ue_wrap/core/game_thread.h"     // RegisterPreObserver (the InpActEvt_use pile-grab observer)
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"
+#include "ue_wrap/actors/swinger.h"       // IsSwinger: the held-item express leaves a dragged door alone
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"     // MainPlayerClass + MainPlayerUseInputEventFn
 #include "ue_wrap/core/types.h"
@@ -80,9 +81,9 @@ bool g_repileThunkInstalled = false;          // process-lifetime Func-patch lat
 std::vector<std::wstring> g_pilelessClumpSources;
 
 // A clump was just born of `pile` (a grab's spawn, or a broom stroke's copy of the pile's morph):
-// resolve the pile's eid, minting one for an untracked pile, freeze the pile's position as its
-// save-time key and record the clump's certificate, which moves the id onto the clump now, before
-// the pile's destroy. False when no eid could be had.
+// resolve the pile's eid, minting one for an untracked pile, and record the clump's certificate,
+// which moves the id onto the clump now, before the pile's destroy. The join's save-time key is
+// not written here: the capture is its only writer. False when no eid could be had.
 bool NoteClumpBornOfPile(void* pile, void* clump) {
     coop::element::ElementId E = PT::GetPropElementIdForActor(pile);
     if (E == coop::element::kInvalidId)
@@ -98,11 +99,6 @@ bool NoteClumpBornOfPile(void* pile, void* clump) {
                     pile, static_cast<unsigned>(E));
     }
     if (E == coop::element::kInvalidId) return false;
-    // The pile's position frozen as the save-time key (it has not moved; it dies in place after
-    // this spawn).
-    ue_wrap::FVector pileLoc{};
-    if (ue_wrap::engine::TryGetActorLocation(pile, pileLoc))   // no read, no save-time key
-        coop::join_window_baseline::RecordGrabTimePileXform(E, pileLoc);
     coop::trash_channel::NoteClumpBorn(clump, E, ue_wrap::prop::GetChipType(pile));
     return true;
 }
@@ -230,6 +226,10 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     // here as a fresh-eid keyless spawn it would be a second cross-peer entity, so a stray clump is
     // carry-only.
     if (ue_wrap::prop::IsGarbageClump(heldActor)) return false;
+    // The swinger gate: a door or lid a player drags is a child actor every peer already holds, never a prop to
+    // spawn on the others. Its held pose crosses under the container lane's key, which the receiver finds in
+    // that lane's index (interactable_sync::ContainerActor), and its release is the held stream's own.
+    if (ue_wrap::swinger::EnsureResolved() && ue_wrap::swinger::IsSwinger(heldActor)) return false;
     // Any keyed interactable, the Aprop_C items and the non-Aprop_C clump and pile alike. Crash
     // safety is on the receiver: GetStaticMesh is null for a non-Aprop_C, so the peer never runs
     // physics on a clump mirror, which is driven kinematically.
@@ -397,11 +397,6 @@ void Install(coop::net::Session* session) {
     // hard-throw bridge) lives in trash_use_intercept, which caches its own session and retries
     // until mainPlayer_C is loaded.
     coop::trash_use_intercept::Install(session);
-
-    // The morph gate refuses the three verbs the game's own trash actors use to author a
-    // transition, on a client only; it needs the two trash classes rather than mainPlayer_C and so
-    // resolves on its own schedule.
-    coop::trash_morph_gate::Install(session);
 }
 
 void OnDisconnect() {
@@ -409,6 +404,7 @@ void OnDisconnect() {
     g_pilelessClumpSources.clear();
     coop::trash_use_intercept::OnDisconnect();  // clears its cached session + gesture-pairing latch
     coop::trash_morph_gate::OnDisconnect();     // with no session the game's trash authors itself again
+    coop::trash_native_hold::OnDisconnect();    // and a save load holds nothing
 }
 
 bool DebugSendGrabIntent(uint32_t eid) {

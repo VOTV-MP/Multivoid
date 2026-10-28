@@ -51,6 +51,12 @@ CFG_FLAG(load_reroll_watch, "load_reroll_watch", "dev", false, "VOTVCOOP_LOAD_RE
     "since both run inside the load, and logs the first calls with their callers. It holds the "
     "script gate on while set, with or without a session, so every lane's gate watch also runs "
     "outside a session for that run; read-only otherwise.")
+CFG_STRING(radio_tower_probe, "radio_tower_probe", "dev", "", "VOTVCOOP_RADIO_TOWER_PROBE", false,
+    "Diagnostic probe (BOTH peers): the radio tower. observe: reads the tower once its gamemode holds it (where, "
+    "its puzzle's size, its fuse and puzzle counts), prints its state once a second when it changed, and counts "
+    "each call of its bodies on this peer. fixclient: observe, plus a fixture: the host breaks the tower once a "
+    "client's world is ready and the client completes the puzzle on its own copy, which today stays on the "
+    "client. Holds the script gate on while set. Lines tagged [RADIO-TOWER]; the host's DONE line ends it.")
 CFG_FLAG(client_world_first, "client_world_first", "dev", false, "VOTVCOOP_CLIENT_WORLD_FIRST",
     "Rig (CLIENT): before it joins, the client boots a world of its own (a New Game: the rig starts every "
     "client fresh) and stands in it, then joins from inside it: the host's save downloaded and its world "
@@ -83,7 +89,35 @@ CFG_FLAG(replay_watch_break, "replay_watch_break", "dev", false, "VOTVCOOP_DEV_R
     "Red arm: the save-replay watch is registered on a function this game does not have.")
 CFG_FLAG(replay_post_drop, "replay_post_drop", "dev", false, "VOTVCOOP_DEV_REPLAY_POST_DROP",
     "Red arm: the save-replay watch ignores the replay.")
-CFG_FLAG(atv_adopt_break, "atv_adopt_break", "dev", false, "VOTVCOOP_DEV_ATV_ADOPT_BREAK",
+CFG_FLAG(host_settle_red, "host_settle_red", "dev", false, "VOTVCOOP_HOST_SETTLE_RED",
+    "Red arm (HOST): the host's world counts as settled as soon as a gamemode exists, the old test, for "
+    "the join's hold and the start-up birth gate alike. The drill's real-conditions read "
+    "is never overridden, so it names the capture that ran too early.")
+CFG_FLAG(host_settle_drill, "host_settle_drill", "dev", false, "VOTVCOOP_HOST_SETTLE_DRILL",
+    "Drill (HOST judges): a join that meets the host's world start-up waits for it. At the join's "
+    "capture it reads the real conditions (the prop processor's phases and every container's "
+    "inventory, never overridden by host_settle_red); it requires a request that waited in the hold, "
+    "and no births dropped at the watcher's cap, then prints PASS, "
+    "INCONCLUSIVE (the join never met the start-up) or FAIL, and DONE. Lines tagged [HOST-SETTLE-DRILL].")
+CFG_FLAG(host_settle_ceiling_probe, "host_settle_ceiling_probe", "dev", false,
+    "VOTVCOOP_HOST_SETTLE_CEILING_PROBE",
+    "Probe (HOST): the settle walk never passes, as if the prop processor never finished, so the "
+    "25 s ceiling admits the world with its WARN and the held join completes.")
+CFG_STRING(new_game_rules, "new_game_rules", "dev", "", "VOTVCOOP_NEW_GAME_RULES", false,
+    "Drill (any peer that boots a fresh New Game): world rules the blank save starts with, as the new-game "
+    "menu's toggles write them. A list of key=value separated by ';' over the game's rule names (a bool is "
+    "0 or 1, an enum its ordinal, a float its number), e.g. enableLightsOut=1;difficulty=2. A rule the "
+    "game does not have is logged and skipped. A world loaded from a save is never touched.")
+CFG_FLAG(atv_adopt_break,"atv_adopt_break", "dev", false, "VOTVCOOP_DEV_ATV_ADOPT_BREAK",
     "Red arm: an announced ATV is never adopted from the world's own copy; a mirror is spawned beside it.")
 CFG_FLAG(atv_set_break, "atv_set_break", "dev", false, "VOTVCOOP_DEV_ATV_SET_BREAK",
     "Red arm: the host's complete ATV set removes nothing on this client.")
+
+// The late-join drill's row: the host's staged world, and the bind wait's per-kind tallies on a client once its join
+// has settled.
+CFG_FLAG(late_join_drill, "late_join_drill", "dev", false, "VOTVCOOP_LATE_JOIN_DRILL",
+    "Drill (both peers): the HOST stages a PC with its lid open, a floppy box, a Kerfus on, a rack with rows and a "
+    "seated drive once its own world is up, before any client joins; the CLIENT (one life, no rejoin), once its join "
+    "returns to idle, checks the staged world is in its world, prints the bind wait's tallies per message kind and in "
+    "all (held, coalesced, replayed, dropped, given up, never bound) then and ten seconds later, judges the staged "
+    "effects, then prints 'client DONE'. Lines tagged [LATE-JOIN].")

@@ -205,6 +205,13 @@ bool Tick(coop::net::Session& session) {
             if (session.role() != coop::net::Role::Host) return;
             for (int slot = 1; slot < coop::players::kMaxPeers; ++slot) {
                 if (session.IsSlotReady(slot)) {
+                    // A world-ready peer only: a joiner still loading is gated by its own announce,
+                    // and a gate opened earlier would hold the pre-world kinds it must receive.
+                    // Not MTA's shape: a joined player is never un-joined there (SetJoined is one-way,
+                    // CGame.cpp:1407; CPlayerManager.cpp:159-172 skips only the not-joined). A re-seed
+                    // gives props new mirrors, so a live row ahead of its re-snapshot spawn would miss it.
+                    // Costs the peer's Default lane one drain, on a world transition.
+                    if (session.IsSlotWorldReady(slot)) session.OpenJoinGateForSnapshot(slot);
                     coop::prop_snapshot::TriggerForSlot(slot);
                     UE_LOGI("net_pump: re-snapshot ready slot %d after re-seed", slot);
                 }

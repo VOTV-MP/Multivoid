@@ -3,12 +3,13 @@
 #include "coop/dev/container_selftest.h"
 
 #include "coop/config/config.h"
+#include "coop/dev/container_poke.h"
 #include "coop/dev/director/director.h"   // PlayerContext -- where the local body is
 #include "coop/net/session.h"
 #include "coop/props/container_contents_sync.h"
+#include "coop/props/container_writer_watch.h"
 
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 
 #include <algorithm>
@@ -23,7 +24,6 @@
 namespace coop::dev::container_selftest {
 namespace {
 
-namespace R  = ue_wrap::reflection;
 namespace CC = coop::props::container_contents_sync;
 using Clock = std::chrono::steady_clock;
 
@@ -45,8 +45,8 @@ constexpr uint64_t kClientFireMs = 25000;
 constexpr uint64_t kDigestEveryMs = 5000;
 
 // A run with SEVERAL clients needs every client to fire after the LAST of them has joined, or
-// each one is judged against a baseline its own join seed had just refreshed and the peers never
-// exercise each other. Raw env, no registry row, like the other per-run drill triggers.
+// a later joiner's seed already carries an earlier client's write and the peers never exercise
+// each other. Raw env, no registry row, like the other per-run drill triggers.
 uint64_t ClientFireMs() {
     static const uint64_t ms = [] {
         const std::string v = coop::config::ReadEnv("VOTVCOOP_CONTAINER_FIRE_MS");
@@ -129,12 +129,8 @@ bool ResolveTargets() {
     return true;
 }
 
-// Dispatch the ORGANIC mutation: `Aprop_container_C::extract(int32 Index)`, the very verb a
-// player's UI extraction runs. extract's first act is `propInventory->takeObj(index, false,
-// ...)`, dispatched through EX_LocalVirtualFunction, so the call WE make is the outer one and
-// the mutation the lane must catch is the game's own inner dispatch. Calling `takeObj`
-// ourselves would arrive by ProcessEvent -- the one path the lane does NOT rely on -- and
-// would prove nothing, since a probe must never resolve through the mechanism under test.
+// Dispatch the ORGANIC mutation, the very verb a player's UI extraction runs (the dispatch, and
+// why never takeObj itself: coop/dev/container_poke).
 //
 // It spawns the extracted prop into the world, exactly as a real extraction does. That is
 // litter in a throwaway world and the price of an honest trigger.
@@ -149,22 +145,14 @@ void FireExtract(uint32_t eid, const char* who) {
         UE_LOGW("container_selftest: %s target eid=%u no longer resolves -- not fired", who, eid);
         return;
     }
-    // The DISPATCH function for THIS actor's own class, resolved per fire and not cached in one
-    // slot: FindFunction is exact-owner, so ClassOf(actor) -- always a subclass here -- yields
-    // null through it, while resolving the base instead would run the base body on a player
-    // inventory container, which overrides extract. The targets differ between fires, so one
-    // cached pointer would carry the first target's body to every later one.
-    void* extractFn = R::FindDispatchFunction(R::ClassOf(actor), L"extract", nullptr);
-    if (!extractFn) {
+    int32_t before = -1, after = -1, count = -1;
+    float volBefore = 0.f, volAfter = 0.f;
+    CC::ContentsDigest(eid, count, volBefore);
+    if (!coop::dev::container_poke::Extract(actor, before, after, eid)) {
         UE_LOGW("container_selftest: extract did not resolve for this container -- not fired");
         return;
     }
-    int32_t before = -1; float volBefore = 0.f;
-    CC::ContentsDigest(eid, before, volBefore);
-    struct { int32_t Index; } params{0};   // always the first record
-    R::CallFunction(actor, extractFn, &params);
-    int32_t after = -1; float volAfter = 0.f;
-    CC::ContentsDigest(eid, after, volAfter);
+    CC::ContentsDigest(eid, count, volAfter);
     g_fireEid = eid; g_fireBefore = before; g_fireAfter = after;
     UE_LOGI("container_selftest: %s FIRED extract(0) on eid=%u -- records %d -> %d, "
             "currVol %.1f -> %.1f", who, eid, before, after, volBefore, volAfter);
@@ -183,7 +171,7 @@ void FireExtract(uint32_t eid, const char* who) {
 void Verdict(bool host) {
     int32_t now = -1; float vol = 0.f;
     const bool live = CC::ContentsDigest(g_fireEid, now, vol);
-    const bool entered = CC::VerbWatchEntered();
+    const bool entered = coop::props::container_writer_watch::VerbWatchEntered();
     const bool inert = (g_fireBefore >= 0 && g_fireBefore == g_fireAfter);
     const char* fate = !live      ? "the container stopped resolving"
                      : now == g_fireAfter ? "STUCK (the arbiter accepted it, or this peer is the host)"

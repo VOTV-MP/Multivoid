@@ -105,8 +105,9 @@ site's own words, and a stable code to paste into a report, listed in
 ### The overlay
 
 The overlay is one Dear ImGui host over the game's swap chain: it hooks the present and resize
-calls and the window procedure through the mod's own detour substrate, detects the graphics API
-at the swap chain, and draws on DirectX 11 and 12 alike (`ui/imgui_overlay`,
+calls through the mod's own detour substrate and takes the game window's messages from the one
+window subclass (`coop/input/game_window_proc`), learns the graphics API from the engine
+seam that fired, and draws on DirectX 11 and 12 alike (`ui/imgui_overlay`, `ui/overlay_seams`,
 `ui/overlay_backend`). It survives other overlays and capture software on the same swap chain.
 Fonts are vendored families embedded in the DLL with Cyrillic ranges, rasterised at the real
 size for the current resolution; the whole overlay scales with the window height and a user size
@@ -240,7 +241,7 @@ scoreboard fills as roster rows arrive; nameplates appear with each puppet's fir
 | the main menu and the native screens | `ui/multiplayer_menu`, `ui/server_browser_native` with `ui/server_browser_rows`, `ui/server_browser_tabs`, `ui/server_browser_actions`, `ui/server_browser_panels`, `ui/server_browser_surface`, `ui/host_window_native`, `ui/host_save_picker`, `ui/host_session_settings`, `ui/host_session_choices`, `ui/browser_input_screens`, `ui/native_screen`, `ui/native_text_field`, `ue_wrap/engine/umg_build` |
 | the fallback browser | `ui/server_browser` |
 | joining and failing | `ui/loading_screen`, `ui/join_curtain`, `ui/end_reason_dialog`, `ui/boot_warning_dialog`, `ui/console` |
-| the overlay host | `ui/imgui_overlay`, `ui/overlay_backend`, `ui/overlay_backend_dx11`, `ui/overlay_backend_dx12`, `ui/overlay_cursor`, `ui/input_focus`, `ui/fonts`, `ui/atlas_watch`, `ui/scale`, `ui/style` |
+| the overlay host | `ui/imgui_overlay`, `ui/overlay_seams`, `ui/overlay_backend`, `ui/overlay_backend_dx11`, `ui/overlay_backend_dx12`, `ui/overlay_backend_vk`, `ui/overlay_backend_vk_frame`, `ui/overlay_cursor`, `ui/input_focus`, `ui/fonts`, `ui/atlas_watch`, `ui/scale`, `ui/style` |
 | the F1 panels | `ui/dev_menu`, `ui/skins_panel`, `ui/voice_panel`, `ui/world_rules_panel`, `ui/net_stats_panel`, `ui/admin_panel`, `ui/server_settings_pane`, `ui/bug_report_pane`, `ui/config_review_panel` |
 | the HUD | `ui/hud`, `ui/chat_input`, `ui/chat_view`, `ui/scoreboard`, `ui/voice_icons`, `ui/menu_sfx`, `ui/link_format` |
 | tests | the browser screenshot run and the four-peer scoreboard capture, both scripted on the rig |

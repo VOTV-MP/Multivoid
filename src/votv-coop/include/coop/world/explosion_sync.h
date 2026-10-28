@@ -53,6 +53,7 @@ struct Counters {
     uint32_t dropped[static_cast<int>(DropReason::Count)];
     void*    lastDissolved;
     int32_t  lastDissolvedIndex;
+    uint64_t lastApplyMs;   // coop::net::NowMs() at the last applied blast (0 before the first); the log line's `t=`
 };
 Counters GetCounters();
 

@@ -90,4 +90,9 @@ size_t OnDisconnect();
 // Read-only; game thread.
 bool IsBracketClosed(int peerSlot);
 
+// HOST: is a snapshot for `peerSlot` running, queued behind the running one, or deferred for a
+// retry? The slot's join gate lives exactly this long: the game thread closes a gate that no
+// snapshot owns (a trigger that started nothing). Game thread.
+bool HasSnapshotFor(int peerSlot);
+
 }  // namespace coop::prop_snapshot

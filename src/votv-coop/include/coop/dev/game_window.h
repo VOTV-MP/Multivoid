@@ -11,12 +11,17 @@
 
 namespace coop::dev::game_window {
 
-// The first visible top-level window of the calling (game) thread with a usable client area, or null. Deterministic
+// The window the mod subclasses once it is held, else the first visible top-level window of the calling (game)
+// thread with a usable client area, or null. Deterministic
 // where the foreground window is not: an unattended run can have another window focused.
 HWND GameWindow();
 
 // A press and release of the virtual key `vk` posted to the game window. False without a window.
 bool PostKeyPress(unsigned vk);
+
+// A WM_CHAR for `c` posted to the game window: the character message the window's queue would
+// have produced from a typed key. False without a window.
+bool PostChar(wchar_t c);
 
 // The virtual key of a key the game displays as `displayName` (Key_GetDisplayName: a letter, a digit, "Space Bar",
 // "Enter", "Tab", "Backspace", "Escape"), 0 for one this table does not know.

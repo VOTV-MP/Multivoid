@@ -84,7 +84,7 @@ Or if you already cloned without `--recursive`:
 git submodule update --init --recursive
 ```
 
-Submodules that are **compiled into the DLL** — all four are required; a
+Submodules that are **compiled into the DLL** — all five are required; a
 missing one fails the CMake configure, not the link:
 
 - `src/votv-coop/third_party/minhook` — hook engine (MIT), v1.3.4.
@@ -95,6 +95,8 @@ missing one fails the CMake configure, not the link:
   (own-substrate rule: the mod imports nothing from its loader).
 - `src/votv-coop/third_party/opus` — libopus (BSD-3), pinned **v1.5.2**, the
   voice codec.
+- `src/votv-coop/third_party/Vulkan-Headers` — the Khronos Vulkan headers
+  (Apache-2.0 OR MIT), pinned **v1.4.365**; types only, nothing links to Vulkan.
 
 Reference-only checkouts (never built; documentation / RE inputs):
 `reference/RE-UE4SS`, `reference/mtasa-blue`. They are large; if you only

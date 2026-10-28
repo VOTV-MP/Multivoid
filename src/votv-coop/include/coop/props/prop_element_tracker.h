@@ -124,8 +124,9 @@ void CollectTrackedKeyedPropKeys(std::unordered_set<std::wstring>& out);
 
 // The save-time position of every live tracked chipPile by host eid, captured once at the scratch
 // save so the host can stamp each pile's snapshot with the position the client loaded it at.
-// Keyless piles only; an unseeded pile is skipped and the receiver uses the current pose. One
-// GUObjectArray walk on the game thread, at the connect edge.
+// Keyless piles only; an unseeded pile is minted by the walk (a WARN when it cannot be, or its
+// location cannot be read, and that pile carries no key). One GUObjectArray walk on the game thread,
+// at the connect edge.
 void CollectTrackedPileTransforms(
     std::unordered_map<coop::element::ElementId, ue_wrap::FVector>& out);
 

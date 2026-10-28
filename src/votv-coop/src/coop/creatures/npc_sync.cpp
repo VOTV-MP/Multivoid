@@ -15,6 +15,7 @@
 #include "coop/element/identity_destroy.h"   // RetireMirror, the single destroy funnel
 #include "coop/element/npc.h"
 #include "coop/element/registry.h"
+#include "coop/creatures/geom_octa_sync.h"  // OnNpcSpawnSent: the Octa's events follow its spawn's send
 #include "coop/creatures/kerfur_entity.h"   // AllocKerfurId and ReleaseKerfurForEid, the id's two ends
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -297,10 +298,16 @@ bool NpcSuppress_Interceptor(void* self, void* params) {
         // An alone host's spawns, and those made while every client is still loading, are
         // delivered by the join snapshot (the connect broadcast) instead: MTA's broadcast skips a
         // player not yet joined (reference/mtasa-blue/Server/mods/deathmatch/logic/CPlayerManager.cpp:167).
-        if (s->connected() && s->AnyWorldReadyPeer() && !s->SendEntitySpawn(p)) {
-            UE_LOGW("npc-sync[host]: SendEntitySpawn failed (reliable channel busy?) -- NPC elementId=%u not broadcast",
-                    p.elementId);
+        bool spawnSent = false;
+        if (s->connected() && s->AnyWorldReadyPeer()) {
+            spawnSent = s->SendEntitySpawn(p);
+            if (!spawnSent)
+                UE_LOGW("npc-sync[host]: SendEntitySpawn failed (reliable channel busy?) -- NPC elementId=%u not broadcast",
+                        p.elementId);
         }
+        // The Geom Octa's lane sends none of its events before the spawn's send; this is before the actor exists. When no
+        // peer was world-ready nothing was sent, and the join's snapshot carries the spawn instead.
+        coop::geom_octa_sync::OnNpcSpawnSent(p.elementId, nullptr, p.className.data, p.className.len, spawnSent, -1);
         // The original spawn always proceeds on the host (false = pass-through).
         return false;
     }

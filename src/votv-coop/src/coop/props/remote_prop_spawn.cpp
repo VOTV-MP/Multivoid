@@ -12,6 +12,7 @@
 #include "coop/creatures/kerfur_entity.h"  // GetKerfurMirrorEidForActor, the grab guard's kerfur exemption
 #include "coop/creatures/kerfur_prop_adoption.h"  // a kerfur prop's fuzzy miss defers to the polled adoption
 #include "coop/creatures/kerfur_reconcile.h"  // the post-quiescence retry of the kerfur off-to-active retire
+#include "coop/element/bind_wait.h"      // MarkDeferred: the kerfur prop's adoption is a deferred bind
 #include "coop/element/mirror_defer.h"  // hide a fresh host mirror until the reveal
 #include "coop/element/quiescence_drain.h"  // ArmHostVacateTwin: a row whose twin at the key has the other form
 #include "coop/net/protocol.h"
@@ -232,7 +233,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             // Hide the fresh mirror until the reveal: a moved-save pile (hasMatchPos) whose local
             // native at the old spot is still visible holds to quiescence; a derived or window pile
             // reveals at the curtain lift. A convert re-skin (skipBind) is OnConvert's.
-            coop::mirror_defer::OnMirrorSpawned(payload.elementId, mirror, /*collisionOff=*/false,
+            coop::mirror_defer::OnMirrorSpawned(payload.elementId, mirror, coop::mirror_defer::HideCollision::Keep,
                                                 /*holdUntilQuiescence=*/payload.hasMatchPos != 0);
         }
         if (outSpawned) *outSpawned = mirror;
@@ -523,6 +524,11 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     // fresh-spawns at quiescence. deferKerfur is false on that fallback and on a convert.
     if (deferKerfur && classW.find(L"prop_kerfurOmega") != std::wstring::npos) {
         coop::kerfur_prop_adoption::Arm(payload);
+        // Messages for the eid wait for the adoption's bind (or its fresh spawn); an eid that has a row
+        // is bound already and Arm did nothing.
+        if (payload.elementId != 0 && payload.elementId != coop::element::kInvalidId &&
+            !coop::element::Registry::Get().Get(payload.elementId))
+            coop::element::bind_wait::MarkDeferred(payload.elementId, "kerfur prop awaiting its local twin");
         return;
     }
     // No local match anywhere: materialise a fresh mirror (prop_fresh_spawn); with skipBind,

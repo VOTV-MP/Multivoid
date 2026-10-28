@@ -24,7 +24,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         // WITHOUT touching the engine or the registry lock.
         //
         // It has to be HERE and not only in DoShutdown, because DoShutdown runs only from
-        // CoopWndProc's close branch: the game's own quit (RequestExit -> FEngineLoop::Exit) never
+        // the game window's close message (coop/input/game_window_proc): the game's own quit (RequestExit -> FEngineLoop::Exit) never
         // reaches it. Pins live inside statics -- the proxy map holds up to ~871 -- and the CRT
         // runs those destructors after this callback, where un-rooting would deref a freed UObject
         // and walk a GUObjectArray UE has already torn down.

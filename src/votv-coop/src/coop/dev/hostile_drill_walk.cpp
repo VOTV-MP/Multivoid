@@ -156,7 +156,7 @@ void SendRecordBadClasses(coop::net::Session* s) {
         Inconclusive(Arm::RecordBadClasses, "the crafted intent was not sent (link refused it)");
         return;
     }
-    // One honest trash spawn behind the intent on the same Bulk FIFO: its binding on the host means the
+    // One honest trash spawn behind the intent on the same Default FIFO: its binding on the host means the
     // intent before it was drained and applied, so the walk count is final when the judge reads it.
     coop::net::PropSpawnPayload p{};
     PutClassName(p.className, kSentinelClass);
@@ -197,7 +197,7 @@ void PutKey(coop::net::WireKey& w, const char* key) {
     w.len = static_cast<uint8_t>(n);
 }
 
-// The Bulk sentinel behind a burst on the same lane: its binding on the host means every message before
+// The Default-lane sentinel behind a burst on the same lane: its binding on the host means every message before
 // it was drained and applied, so the walk count is final when the judge reads it.
 bool SendSentinelSpawn(coop::net::Session* s, const ue_wrap::FVector& at) {
     coop::net::PropSpawnPayload p{};

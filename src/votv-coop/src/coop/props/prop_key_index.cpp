@@ -76,6 +76,8 @@ constexpr auto kParkedHoldsPending = std::chrono::seconds(5);
 std::unordered_map<std::wstring, std::vector<Holder>> g_byKey;
 std::unordered_map<int32_t, SlotEntry>                g_bySlot;
 std::vector<Parked>                                   g_parked;  // born while still loading
+// Moves on every change of the two tables above: a holder filed, dropped or re-filed, a seed, the end of a hold.
+uint64_t                                              g_version = 0;
 
 bool g_installed = false;
 bool g_watchRefused = false;
@@ -148,6 +150,7 @@ bool IsHand(void* obj) {
 
 // Remove one holder from one key, and the slot's entry if it still names that holder.
 void DropHolder(const std::wstring& key, int32_t idx, void* obj) {
+    ++g_version;
     const auto kt = g_byKey.find(key);
     if (kt != g_byKey.end()) {
         auto& v = kt->second;
@@ -182,6 +185,7 @@ void Index(void* obj, int32_t idx, KeyField f) {
     if (key.ComparisonIndex == 0) return;  // None: no key to be found by
     std::wstring keyStr = R::ToString(key);
     const int32_t serial = R::AllocateSlotSerial(idx);
+    ++g_version;
     g_byKey[keyStr].push_back(Holder{obj, idx, serial, key});
     g_bySlot[idx] = SlotEntry{obj, serial, key, std::move(keyStr)};
     ++g_sum.reindexed;
@@ -501,6 +505,7 @@ void TrySeed() {
     g_byKey.clear();
     g_bySlot.clear();
     g_parked.clear();
+    ++g_version;
     std::vector<void*> classes;
     OI::ForEachClass(
         [](void* ctx, void* cls, void*) {
@@ -513,6 +518,7 @@ void TrySeed() {
             cls, [](void* ctx, void* obj, int32_t idx) { Admit(obj, idx, *static_cast<KeyField*>(ctx)); }, &f);
     }
     g_live = true;
+    ++g_version;
     UE_LOGI("prop_key_index: seeded %zu keyed props under %zu keys from %zu classes, %zu still loading, in %lld us",
             g_bySlot.size(), g_byKey.size(), classes.size(), g_parked.size(),
             static_cast<long long>(
@@ -605,6 +611,7 @@ void End() {
     g_byKey.clear();
     g_bySlot.clear();
     g_parked.clear();
+    ++g_version;
 }
 
 void Tick() {
@@ -655,6 +662,8 @@ bool CanAnswer() {
 bool Unavailable() { return g_unavailable.load(std::memory_order_acquire); }
 
 size_t Size() { return g_bySlot.size(); }
+
+uint64_t Version() { return g_version; }
 
 void DebugCollect(std::vector<DebugEntry>& out) {
     for (const auto& [key, holders] : g_byKey)

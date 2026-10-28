@@ -49,6 +49,7 @@ are peer-gated. `[V]`
 | a pocket pickup and a place | the destroy seam; the finish-spawning seam | the drop-intent door | the parked key |
 | characters | a deferred spawn | the spawn interceptor; the object scan; the native seam for graph spawns | a host id |
 | the wisp swarm | `EX_CallMath` spawns from the swarm trigger's graph | the native seam, gated by the calling class | a host id |
+| the Geom Octa (`geomOcta_C`) | the host's night roll (an Octa, else a night egg); the dev menu's spawn button; the spawn menu's row | the EX spawn catch's gamemode source row on the host; the spawn interceptor for the dev button | a host id (an NPC element) |
 | event actors | a deferred spawn, or a graph spawn | a second interceptor with a disjoint allowlist; the native seam | a host id |
 | the kerfur | conversion verbs inside the Blueprint | the script-body gate on the verbs: refused on a client, converged at the return on the host; whom it serves, its player-0 reads answered on the host with the puppet of the client whose command it runs (`kerfur_command`, `served_player`) | one host kerfur id across both forms |
 | the plain kerfur (the Kerfus) | a keyed prop with a brain; on and off are a field, not a second form | the prop lanes for identity and the record at birth; while on, the host's prop drive for its pose; KerfusState for on, charging and energy; whom it follows, its player-0 reads answered on the host with the puppet of the client that turned it on (`kerfus_follow`, `served_player`) | its prop key and host eid |
@@ -57,6 +58,7 @@ are peer-gated. `[V]`
 | a remote player's puppet (`mainPlayer_C`, unpossessed) | `RemotePlayer::Spawn` -> `engine::SpawnActor` | registered between its deferred spawn and its `FinishSpawning`, by the before-finish callback; unregistered after its destroy (`DestroySlot`) | the peer's slot in `players::Registry` |
 | an ATV (`ATV_C` and its descendants, the witch car included) | the save; a runtime spawn | the object scan's ATV lane (`atv_index`); the host announces each by key (`AtvSpawn`); the seat and the syncer are the host's table (`atv_authority`) | the game's own key, which the save carries; a runtime one gets a synthetic key at its host birth |
 | status effects (effect_C) | each peer's own, from its gamemode's addEffect; never sent | -- | none: a per-process actor; at a join the host's effect records are reset out of the joiner's save at the join |
+| a fuse tower (the three `coordRadarDish_C` and the one `radiotower_C`) | placed in the level; no runtime birth (the gamemode's `radiotower` is its one `GetActorOfClass`) | not caught: the host reads each tower every tick; a client keeps the host's last row of each tower and applies it when the tower resolves (the dish by the object index, the radio tower by the gamemode's field), looking up again once a second while a row waits | the pair (kind, id): a dish's own `id` 0..2, the radio tower's 0; its state, not its life, is what crosses (`coop/world/fuse_tower_rows`) |
 
 ## Keyed props
 
@@ -156,7 +158,10 @@ copy of the row's form at the save-time position and parks it (tick and physics 
 authors its pose), and the row is followed by a to-clump convert at the entity's current
 generation, without which every later pose of it is held. The key on a row says which form the
 save held: an entity that changed form in the join window is materialised as it is now, and the
-joiner's copy of the old form is retired at the key. `[V]`
+joiner's copy of the old form is retired at the key. `[V]` The key and its form are the blob
+capture's: the capture is the only writer, an id sits in exactly one of the capture's pile and clump
+maps, and the row is the key's one carrier (no convert repeats it). The snapshot drain is keyed by
+id and resolves each to its element's current actor at its turn. `[?]`
 
 A DISPENSER pile (`trashBitsPile_C`, the "uses 6 of 7" one) is the opposite: it is a save actor and
 its save key IS its cross-peer identity, which is what its counter mirror, its depletion destroy and
@@ -218,6 +223,39 @@ the destroy are the host's, and nothing is answered. The swinger's liveness is j
 carries (a dead player's pose says 0, and the puppet's `dead` flag is never set by a peer's death): at most 0 refuses
 the swing `dead`. A zombie the host kills this way leaves its ragdoll body on the host alone: the body's class has no
 lane (owed). A ranged tool's hit is not a swing and is refused. `[RD]`
+
+**The Geom Octa.** It is a character of the NPC lane. The host's night roll (an Octa, or else a night egg) is a
+source row of the EX spawn catch, the dev menu's button spawns through the interceptor, and the allowlist gives
+either an element, so its identity, its spawn on every peer, its pose and its destroy (its own rise-away
+despawn included) are the generic ones. A client's roll is refused (`coop/world/spawn_authority`), so a client
+mints neither the Octa nor the egg; an Octa a client's own menu or toolgun spawns stays local, with its blast
+dissolved (GO-3, owed). `[V]` (`octa_drill` births, measure)
+
+*The mirror.* It is marked between the two halves of its spawn (`coop/creatures/npc_mirror_brain`) and runs
+the game's Blueprint for the eye, with the twelve entries that decide refused (the wander, the target, the
+leave, the fire verdict); its actor tick is kept for the turn toward its target. The mirror tick is a table by
+class in `npc_mirror`: the wisp and the Octa keep the actor tick, every other character loses it, and the
+movement tick is always off. `[V]` (the refusals: `octa_drill` measure; the kept tick `[RD]`)
+
+*The attack.* The host's two decisions cross as `GeomOctaEvent` (`coop/creatures/geom_octa_sync`, the default lane,
+behind the Octa's `EntitySpawn`): an Aggro (the target as a player slot, an element or none, and the Octa's count
+of fire verdicts) and a FireVerdict (that count, and whether it fires again). The client replays the Aggro as its
+own `minSphere` begin-overlap with the target's counterpart (the host's player is the host's puppet there) and
+answers its own refused fire-finish notify with the newest verdict kept, replaying the notify once with the
+answer written into its overlap read (`coop/creatures/geom_octa_relay`). The look is the client's own Blueprint
+running a few moments behind the host's; every outcome is the host's. `[V]` (`octa_drill` attack)
+
+*Two lasers, one beam.* Each peer's Octa runs its own `fire()`, so the host's laser actor and each client's are
+two actors drawing one beam. The client's blast is dissolved by the explosion lane with no request (the laser is
+none of its request kinds), and the host's arrives as `ExplosionSpawn`: one explosion per shot. `[V]` (`octa_drill`
+measure: the client's applied blasts equal the host's captured ones)
+
+*The join.* The joiner's snapshot carries the Octa and, for one mid-attack on a target the wire can name, one
+Aggro to that slot (the target now, the verdict count now). Its graph starts the attack from the beginning, shows
+the host's freshest decision and runs about one chain (some twelve seconds) behind. An Octa between attacks, or
+attacking nobody, sends nothing; the joiner's next Aggro is the host's next. `[V]` (`octa_drill` join; with
+`octa_red=no_join` a verdict arrives with no Aggro and the arm fails). Named limits: an attack on an ATV is
+relayed as none (an ATV is no element), so the look idles and its blast still arrives; a joiner's look runs behind.
 
 ## Event actors
 
@@ -356,6 +394,22 @@ registry recycled that id. `[V]`
   whose host copy explodes natively and so
   reaches the capture. A projectile of the client's with no shot sent is not requested and is counted.
   `[V]`
+- **A cord a player plugs.** A cord's link (its prop's `socket`, the cord's `socket`, the socket's `cord`) is
+  the host's: a client's own press and release run the game's verbs, and their outcome goes to the host as a
+  `CordLinkState` claim (`coop/interactables/cord_sync`); the host checks the sender, reach and its own drag, applies
+  the game's occupied-socket rule and answers with the link it now has; every change is broadcast, and a joiner is
+  seeded with every corded prop's link, plugged or not, which also repairs a cord its save plugged. A level socket is
+  named by its key, a generator's outlet by its owner prop's key and its component.
+- **A coffee device a player uses.** A press of the coffee vending machine or the coffee maker is a request the host
+  performs: a client's own press is cancelled at the gate and goes as a `CoffeeActionIntent` naming the device by its
+  key (`coop/interactables/coffee_intent`); the host checks the sender's reach and that the key names exactly one of
+  the two classes, then runs the game's own action with the sender's puppet as the player, so the debit crosses by the
+  balance and the cup by PropSpawn on the Default lane. The maker's state is its save record, published by the host after a brew
+  and after a fill (`coop/interactables/coffee_state`) and applied on each client through the record's own `loadData`;
+  the fill (a cup or a bag touching the maker) is the host's, a client's own run of the hit handler is cancelled, and
+  the cup's destroy crosses by the native destroy seam. A client's record for a maker or a bag is refused, except the
+  one behind its own drop. The maker's power follows the cord lane on each peer and is not in the record.
+  A joiner's maker and bags arrive with the prop snapshot's records. `[V]` (`coffee_drill`)
 - **A salt rocket a client lights.** The rocket's own fuse and thrust run only on the host: a client's gate refuses its `attemptIgnite` and its `ignite`, and a light its own player's lighter or torch made goes to the host as `PropIgniteIntent` (`coop/world/salt_rocket_ignite`); the host checks the sender's reach and the tool its hand held, performs the verb on its copy, and its `fire()` puts the rocket under the drive claim (`coop/world/salt_rocket_flight`) until its blast, which the capture above carries. `[V]`
 - **Destroy.** Nothing crosses. Each copy ends by the actor's own lifespan, 10 s by the class default.
   `[RD]`
@@ -413,10 +467,14 @@ Every place two seams can express one actor, and what deduplicates it:
 | a joiner's save-loaded Bad Sun copy and the seed's present, or the host's live present | the apply counts the live copies first: one copy is left alone, none is spawned, two are logged and not repaired `[V]` (the drill's rejoin) |
 | a client's menu-spawned prop and the host's copy of it, spawned from the intent | the client's own actor IS the mirror: the host sets the client's key, and the echo resolves it back to that actor and converges its pose instead of minting a second `[V]` |
 | a client's own rocket, sticky bomb, held grenade or pipe bomb, or pilled burn: the client's birth of its explosion and the host's blast its request makes | one blast: the client's birth is dissolved and never spawns; the host's blast reaches every peer as `ExplosionSpawn`, the requester included `[V]` (the request drill's arms) |
-| a joiner's save-loaded ATV and the host's announce of the same ATV | the joiner resolves the announce by key (the lane's row, else the game's key map) and adopts the copy it holds; it spawns a mirror only for a key it holds none under, and the host's set edge (`AtvSetComplete`) removes the save's ATVs the host no longer holds `[V]` (`atv_spawn_drill`) |
+| a joiner's save-loaded ATV and the host's announce of the same ATV | the joiner resolves the announce by key (the lane's row, else the game's key map) and adopts the copy it holds; it spawns a mirror only for a key it holds none under, and the host's set edge (`AtvSetComplete`) removes the save's ATVs the host has dropped `[V]` (`atv_spawn_drill`) |
 | a client's light on a salt rocket and the host's | one fuse: a client's copy never runs `fire()` (its gate refuses the light and asks); the host lights its copy and drives its flight `[V]` (`fire_ignite_drill`) |
 | a client's local sit or grab of an ATV and the host's table | one seat and one syncer: the client acts at once, asks, and yields to the answer or stamp that names another; the host drops a block from any slot that is not the ATV's syncer `[?]` |
 | the host's idle stream and a client syncer's stream of one ATV | the host streams an ATV only while its table names the host; until the hand-back a client syncer's blocks are the ones applied and re-sent `[?]` |
+| a client's plug of a cord and the host's | one link: the client's own verb runs and its outcome is a claim; the host compares, applies the game's rule and answers every claim, and a client copy's stretch break is refused `[V]` (`cord_drill`) |
+| a client's press or fill of a coffee device and the host's | one run: the client's body is cancelled at the gate (the press is sent, the hit handler is counted) and the host performs it once; the maker's flags change on the host's copy and reach a client as the record, never from the client's own run `[V]` (`coffee_drill`) |
+| a client's Octa laser and the host's | two actors, one beam: each peer's Octa runs its own `fire()`; the client's blast is dissolved with no request and the host's `ExplosionSpawn` is the one explosion `[V]` (`octa_drill`) |
+| a client's roll of the night Octa and the host's | one Octa: the client's roll body is refused at the script gate and the host's roll is the only source `[V]` (`octa_drill` births) |
 
 ## Needs a probe
 

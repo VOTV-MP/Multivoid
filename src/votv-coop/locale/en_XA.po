@@ -1483,9 +1483,6 @@ msgstr "[[reason (shown in the Banned list)]]"
 msgid "say:"
 msgstr "[[say:]]"
 
-msgid "starting up"
-msgstr "[[starting up]]"
-
 msgid "the host"
 msgstr "[[the host]]"
 

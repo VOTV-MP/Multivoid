@@ -8,6 +8,8 @@
 
 #include "coop/creatures/npc_world_enum.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/element/element_deleter.h"
 #include "coop/element/mirror_manager.h"
 #include "coop/element/mirror_managers.h"  // PropMirrors/NpcMirrors/WaMirrors
@@ -15,6 +17,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/creatures/kerfur_entity.h"  // reserve the stable kerfur id when a kerfur NPC is registered
+#include "coop/creatures/geom_octa_sync.h"  // OnNpcSpawnSent: the Octa's events follow its spawn's send
 #include "coop/creatures/npc_sync.h"
 #include "coop/world/world_actor_sync.h"  // HostEnrollExSpawn -- the WA branch of the EX-catch drain
 #include "ue_wrap/engine/engine.h"   // TryGetActorLocation / TryGetActorRotation
@@ -106,6 +109,7 @@ coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& 
     // fan-out's own gate first, where MTA filters inside its fan-out (CPlayerManager.cpp:162-170).
     // MTA registers an element at its creation (reference/mtasa-blue/Server/mods/deathmatch/logic/CElement.cpp:39);
     // a creature that loaded with the level, or that no watched spawn source made, is enrolled here.
+    bool spawnSent = false;
     if (s->connected() && s->AnyWorldReadyPeer(skipSlot)) {
         coop::net::EntitySpawnPayload p{};
         const std::string& tn = el->GetTypeName();
@@ -123,11 +127,16 @@ coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& 
         // that eid, since the eid-keyed sweep finds nothing.
         const coop::element::ElementId offEid = coop::kerfur_entity::GetOriginOffEidForEid(eid);
         p.retireOffEid = (offEid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(offEid);
-        if (!s->SendEntitySpawn(p, skipSlot)) {
+        spawnSent = s->SendEntitySpawn(p, skipSlot);
+        if (!spawnSent) {
             UE_LOGW("npc-sync[%s]: SendEntitySpawn failed for newly-registered eid=%u",
                     logTag, p.elementId);
         }
     }
+    // The Geom Octa's lane sends none of its events before the spawn's send. When no peer was world-ready nothing was
+    // sent, and the join's snapshot carries the spawn instead.
+    coop::geom_octa_sync::OnNpcSpawnSent(static_cast<uint32_t>(eid), obj, el->GetTypeName().data(),
+                                         el->GetTypeName().size(), spawnSent, -1);
     return eid;
 }
 
@@ -137,8 +146,8 @@ coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& 
 // chain (four killer wisps and a pyramid on the world-actor lane), the ambient sky wisps and night
 // eggs (world-anchored, so the host rolls them and a client's ticker is refused in the spawn
 // authority), the sell gun's coin mint (the host's own sale and the re-commit of a client's alike;
-// without its row the coin allowlist entry is inert), the jellyfish path's seven, and the story-event
-// spawners' creatures. Outputs still pass the allowlist gates in the queue branch below (NPC, else
+// without its row the coin allowlist entry is inert), the jellyfish path's seven, the story-event
+// spawners' creatures, and the gamemode's night roll (an Octa or an egg). Outputs still pass the allowlist gates in the queue branch below (NPC, else
 // world-actor), so no arbitrary EX spawn enrolls. `outputs` narrows a source to the outputs whose
 // client copies the spawn authority makes inert: the eventer also mints world actors whose BeginPlay
 // plays gameplay on a mirror (soltomiaCleaning_C writes the client's ATV and mints a sponge), so they
@@ -148,6 +157,10 @@ struct ExSpawnSource {
     const wchar_t* const* outputs;   // null-terminated; null: any allowlisted output
 };
 constexpr const wchar_t* kEventerOutputs[] = {L"ventCrawler_C", L"superEgger_C", nullptr};
+// The gamemode mints many classes besides these, and most of its other spawners are not refused on a client yet,
+// so its source is narrowed to the two outputs of the night roll (mainGamemode_C::CustomEvent_5, an Octa or a
+// night egg), whose client roll the spawn authority refuses.
+constexpr const wchar_t* kGeomOctaNpcOutputs[] = {L"geomOcta_C", L"eg_C", nullptr};
 constexpr ExSpawnSource kExSpawnSources[] = {
     {L"trigger_wispSwarm_C",     nullptr},          // the wisps event swarm
     {L"piramidSpawner_C",        nullptr},          // the piramid event chain
@@ -156,6 +169,7 @@ constexpr ExSpawnSource kExSpawnSources[] = {
     {L"prop_coingun_C",          nullptr},          // the sell gun's coin mint
     {L"jellyfishPath_C",         nullptr},          // the space jellyfish's seven (world-actor lane)
     {L"trigger_eventer_C",       kEventerOutputs},  // the scheduler's dispatcher
+    {L"mainGamemode_C",          kGeomOctaNpcOutputs}, // the night roll's Octa or egg, and the spawn menu's Octa
     {L"grayEventController_C",   nullptr},          // graysforest: spawn() mints the grayTest_C pack
     {L"superEgger_C",            nullptr},          // eggvasion: spwn() mints the eg_C children
     {L"tentacleBallsFollower_C", nullptr},          // tentacleBalls: runTrigger() mints the pack
@@ -216,6 +230,10 @@ void OnBeginDeferredExSpawn(void* /*context*/, void* srcObj, void* spawned) {
     for (const ExSpawnSource& e : kExSpawnSources)
         if (_wcsicmp(srcName.c_str(), e.cls) == 0) { source = &e; break; }
     if (!source) return;
+    // [dev] octa_red=no_source, the Octa drill's red arm: the gamemode's row is left out of the catch.
+    static const bool s_noGamemodeSource =
+        coop::config::ResolveEnum(::coop::config_registry::rows::octa_red) == "no_source";
+    if (s_noGamemodeSource && _wcsicmp(srcName.c_str(), L"mainGamemode_C") == 0) return;
     void* cls = R::ClassOf(spawned);
     if (!cls) return;
     // A scoped source's outputs first: one render, before the world-actor list's per-entry renders.
@@ -249,6 +267,7 @@ void InstallExSpawnCatch() {
                 "trigger_wispSwarm_C -> wisp_C, piramidSpawner_C -> killerwisp_C + piramid2_C, "
                 "jellyfishPath_C -> jellyfish_C, trigger_eventer_C -> ventCrawler_C + superEgger_C, "
                 "grayEventController_C -> grayTest_C, superEgger_C + ticker_egSpawner_C -> eg_C, "
+                "mainGamemode_C -> geomOcta_C + eg_C, "
                 "tentacleBallsFollower_C -> tentacleBall_C; EX_CallMath spawns now enroll)");
     } else {
         UE_LOGW("npc-sync[ex-spawn]: InstallPostHook FAILED -- EX_CallMath creature spawns will "

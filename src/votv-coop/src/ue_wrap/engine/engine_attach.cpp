@@ -33,6 +33,7 @@ void* g_getRootFn = nullptr;  // Actor::K2_GetRootComponent
 void* g_getLinFn  = nullptr;  // PrimitiveComponent::GetPhysicsLinearVelocity
 void* g_getAngFn  = nullptr;  // PrimitiveComponent::GetPhysicsAngularVelocityInDegrees
 void* g_setCollFn = nullptr;  // PrimitiveComponent::SetCollisionEnabled
+void* g_getCollFn = nullptr;  // PrimitiveComponent::GetCollisionEnabled
 void* g_setNotifyHitFn = nullptr;  // PrimitiveComponent::SetNotifyRigidBodyCollision
 void* g_isAwakeFn = nullptr;  // PrimitiveComponent::IsAnyRigidBodyAwake
 void* g_getMatFn  = nullptr;  // PrimitiveComponent::GetMaterial
@@ -122,13 +123,29 @@ bool SetActorRootCollisionEnabled(void* actor, uint8_t collisionType) {
     // collisionType: 0=NoCollision 1=QueryOnly 2=PhysicsOnly 3=QueryAndPhysics.
     // The thrown clump mirror needs 3 so it collides with the world + lands (the
     // bare-spawned mirror otherwise sinks through the floor on release).
-    void* root = PrimitiveRootOf(actor);
-    if (!root) return false;
+    return SetComponentCollisionEnabled(PrimitiveRootOf(actor), collisionType);
+}
+
+int GetActorRootCollisionEnabled(void* actor) {
+    return GetComponentCollisionEnabled(PrimitiveRootOf(actor));
+}
+
+bool SetComponentCollisionEnabled(void* component, uint8_t collisionType) {
+    if (!IsPrimitiveComponent(component)) return false;
     void* fn = PrimFn(&g_setCollFn, L"SetCollisionEnabled");
     if (!fn) { UE_LOGW("engine: SetCollisionEnabled unresolved"); return false; }
     ParamFrame f(fn);
     f.Set<uint8_t>(L"NewType", collisionType);
-    return Call(root, f);
+    return Call(component, f);
+}
+
+int GetComponentCollisionEnabled(void* component) {
+    if (!IsPrimitiveComponent(component)) return -1;
+    void* fn = PrimFn(&g_getCollFn, L"GetCollisionEnabled");
+    if (!fn) { UE_LOGW("engine: GetCollisionEnabled unresolved"); return -1; }
+    ParamFrame f(fn);
+    if (!f.valid() || !Call(component, f)) return -1;
+    return static_cast<int>(f.Get<uint8_t>(L"ReturnValue"));
 }
 
 bool SetActorRootNotifyRigidBodyCollision(void* actor, bool notify) {
@@ -292,6 +309,37 @@ int AttachedCharactersOf(void* actor, AttachedCharacter* out, int max) {
             if (listed || n >= max) continue;
             void* updated = ReadPtrAt(movement, P::off::UMovementComponent_UpdatedComponent);
             out[n++] = AttachedCharacter{owner, movement, (updated && R::IsLive(updated)) ? updated : nullptr};
+        }
+    }
+    return n;
+}
+
+int OwnPrimitiveComponents(void* actor, void** out, int max) {
+    if (!out || max <= 0) return 0;
+    void* root = RootComponentOf(actor);
+    if (!root) return 0;
+    void* stack[kMaxWalk];
+    int top = 0, visited = 0, n = 0;
+    stack[top++] = root;
+    while (top > 0) {
+        if (visited >= kMaxWalk) return -1;   // the walk's bound: the list would be partial
+        void* const self = stack[--top];
+        ++visited;
+        if (IsPrimitiveComponent(self)) {
+            if (n >= max) return -1;
+            out[n++] = self;
+        }
+        const uint8_t* comp = static_cast<const uint8_t*>(self);
+        void* const* children = *reinterpret_cast<void* const* const*>(comp + P::off::USceneComponent_AttachChildren);
+        const int32_t num = *reinterpret_cast<const int32_t*>(comp + P::off::USceneComponent_AttachChildren + 8);
+        if (!children || num <= 0) continue;
+        if (num > kMaxChildren) return -1;
+        for (int32_t i = 0; i < num; ++i) {
+            void* child = children[i];
+            // Only this actor's own components, at every depth: an attached actor's are its own.
+            if (!child || !R::IsLive(child) || R::OuterOf(child) != actor) continue;
+            if (top >= kMaxWalk) return -1;
+            stack[top++] = child;
         }
     }
     return n;

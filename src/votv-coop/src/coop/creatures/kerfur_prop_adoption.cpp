@@ -3,6 +3,7 @@
 
 #include "coop/creatures/kerfur_prop_adoption.h"
 
+#include "coop/element/bind_wait.h"    // GiveUp: a dropped pending adoption releases its held messages
 #include "coop/element/element.h"      // ElementId + kInvalidId
 #include "coop/element/mirror_manager.h"
 #include "coop/element/mirror_managers.h"  // PropMirrors/NpcMirrors/WaMirrors
@@ -203,6 +204,11 @@ void ResolvePending() {
     }
 }
 
+// The pending set is dropped whole, so the messages held for its eids have no bind to wait for.
+void GiveUpAll(const char* why) {
+    for (const Pending& e : g_pending) coop::element::bind_wait::GiveUp(e.payload.elementId, why);
+}
+
 }  // namespace
 
 void Arm(const coop::net::PropSpawnPayload& payload) {
@@ -250,11 +256,13 @@ void OnSnapshotComplete() {
 
 void OnClientWorldReady() {
     UE_ASSERT_GAME_THREAD("kerfur_prop_adoption::OnClientWorldReady");
+    GiveUpAll("the world changed");
     g_pending.clear();  // a fresh connect replay re-arms from the new world's PropSpawns
 }
 
 void OnSessionEnd() {
     UE_ASSERT_GAME_THREAD("kerfur_prop_adoption::OnSessionEnd");
+    GiveUpAll("the session ended");
     g_pending.clear();
 }
 

@@ -29,6 +29,7 @@
 #include "coop/interactables/desk_ping_sync.h"    // a ping's verdict on the main desk, and its answers
 #include "coop/interactables/desk_verb_intent.h"  // a press on the main desk's save family, and its answers
 #include "coop/element/registry.h"  // IsAllowedHostAllocatedEid
+#include "coop/interactables/coffee_intent.h"
 #include "coop/props/pack_trash_intent.h"  // CLIENT->HOST bagging of a pile or clump
 #include "coop/props/prop_act_host.h"  // CLIENT->HOST a take or use of a shared prop, and its commit
 #include "coop/props/prop_act_request.h"  // HOST->CLIENT its answer
@@ -319,6 +320,18 @@ bool HandleIntentEvent(net::Session& session,
                 static_cast<unsigned>(p.targetKind), static_cast<unsigned>(p.toolKind));
         coop::pack_trash_intent::OnPackTrashIntent(session, p,
                                                    static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::CoffeeActionIntent: {
+        if (session.role() != net::Role::Host || msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: CoffeeActionIntent dropped (role or sender slot %d)", msg.senderPeerSlot);
+            break;
+        }
+        net::CoffeeActionIntentPayload p{};
+        if (msg.payloadLen != sizeof(p)) { coop::coffee_intent::CountDropped(coop::coffee_intent::Drop::Size); break; }
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.key.len > sizeof(p.key.data)) { coop::coffee_intent::CountDropped(coop::coffee_intent::Drop::Key); break; }
+        coop::coffee_intent::OnAction(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::RemoverRequest: {

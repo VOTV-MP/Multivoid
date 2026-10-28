@@ -51,8 +51,8 @@ constexpr int32_t kMaxUpgrade   = 6;    // the insert's own gate, `upgradeLevel 
 constexpr int32_t kFullWear     = 100;  // what the Activate button's repair and service write the wear back to
 // A slot's ops wait, in arrival order, while the generators have not resolved or their sender has no body here
 // yet (a joiner's first pose follows its world-ready by seconds, 3 s measured on the LAN rig), and an install
-// while the destroy of the upgrade its insert spent has not arrived: it was sent first, on the bulk lane, whose
-// queue holds about 2 s (coop/net/send_admission.h). Each is taken as refused once it has waited this long, and
+// while the destroy of the upgrade its insert spent has not arrived: it was sent first, on the same ordered Default
+// lane, so it lands ahead of the op unless the link is slow. Each is taken as refused once it has waited this long, and
 // answered while the host has generators to read: unlike a door verb, which waits for its body without a bound, a
 // repair or an install is a prediction its sender already shows.
 constexpr uint64_t kWaitMs = 10000;

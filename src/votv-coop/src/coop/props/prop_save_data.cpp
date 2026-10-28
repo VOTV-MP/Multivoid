@@ -433,6 +433,11 @@ void ExpectRecordFor(void* actor, const std::wstring& key, uint8_t senderSlot) {
     g_awaiting[key] = a;
 }
 
+bool AwaitsRecordFrom(const std::wstring& key, uint8_t senderSlot) {
+    const auto it = g_awaiting.find(key);
+    return it != g_awaiting.end() && it->second.senderSlot == senderSlot && NowMs() < it->second.deadlineMs;
+}
+
 // True while the author's record for this key has not landed here. A wait that has run out is
 // dropped here rather than lingering: an intent can be lost to a refused rate window, a malformed
 // body, a dropped peer or a prop that died first, or sit parked on an apply that keeps failing, and

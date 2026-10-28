@@ -59,6 +59,38 @@ console's at its `actionOptionIndex`, and the container lane a lid's `opened` at
 (which its setup, grab, damage, padlock and resting swing, and a cremator's door, call), and the oven
 lane an oven's `fixed` at its `fix()`, the repair widget's last step, which goes one way: a receiver
 writes it and repaints on 1, `fix()`'s work without its screen, and refuses 0.
+A lid a player drags with the mouse (`mouseAssign`, bound to the player's `input_mouseXY` while the grab
+lasts) is not a verb of this lane: the game leaves the lid in the dragger's `grabbing_actor`, so the
+held-item stream carries its pose and the host relays it to the other clients. The game's own `Key` of a
+lid differs between peers for most lids (a barrel's or crate's cap), so the pose and the release go under
+this lane's key for the lid, the portable `mv_` token; a lid the lane files under its game Key (no portable
+identity) streams under that key and is logged once, and one the lane has not indexed streams nothing and
+is logged. The receiving side resolves a portable `mv_` key through this lane's index alone, and any other key through the prop key index first and this lane's index
+(`interactable_sync::ContainerActor`) second; it parks the lid's mesh and follows the pose as it follows any
+held prop. A lid with nothing to hang on (a barrel's or crate's cap) falls when it is let go, so the holder
+keeps streaming its pose from its own copy, under the identity the hold streamed, until that copy is at rest,
+and only then sends the release (`PropRelease`): the others follow the same fall, parked, and the release puts
+the lid where it stopped and unparks it with no throw velocity, thrown event or whoosh. At rest is the body
+asleep, or within a quarter of a centimetre and a tenth of a degree of one pose for 30 equal reads (about half a second), so a slow creep is
+not rest. The coast is bounded at ten seconds from the release: a lid that never rests (on a moving carrier, or jittering against
+its limit) is released at its current pose and each peer's own physics takes it from there. A grab of another
+item while a lid coasts sends the lid's release at once. A lid the lane has not indexed streams nothing, held or
+let go. One limit stays: a second player who drags the same lid during the first one's coast makes two slots
+stream one lid, and each receiver follows whichever pose came last, as for any prop two peers grab; the
+coasting peer, whose copy the other drag parks, ends its coast and sends its release, and a receiver that
+follows the other drag applies nothing for it. A peer whose own player is dragging the same lid does not apply
+the remote poses for it, whether its drag began before the stream or in the middle of it.
+The held-item broadcast never expresses a lid as a spawned prop. Mid-join: the game saves nothing for a lid
+(a child actor is skipped by the save), so a joiner's lid spawns closed at its hinge default, and the connect
+snapshot carries a lid's `opened` and nothing else. A closed lid is locked at that default on every peer and
+needs no more. An open one rests wherever it was left, which only the host's copy knows, so right after the
+snapshot the host sends each open lid's place (`SwingerRestPose`, under the lane's portable key), and the
+joiner puts its copy there, with no velocity and still simulating, once the key resolves and its copy reads
+open. A lid without a portable key is skipped and counted in the host's log line. A place that cannot be applied
+yet is parked and retried once per index pass, and dropped by the lane's own rule for its parked states with one
+warning naming the key. A lid a remote stream drives, or the joiner's own player drags, is left to that owner, and a stream or release that reaches a lid whose place is still parked drops the place, as newer. A
+joiner arriving mid-drag or mid-coast gets the place, then the live stream, then the release.
+`[?]` until the swinger drill has a two-peer proof.
 A client's own press, hit or pry of a door never runs on its copy either: the
 script-body gate refuses the door's entry verb there and sends it to the host
 (`coop/interactables/door_verb_intent`), which
@@ -252,7 +284,7 @@ every peer's wipes. Never `setDraw`, `endDraw` or `dirty` from outside: the sess
 window, and an outside `endDraw` deletes the world canvas the game's own next dab draws into
 (`coop/interactables/window_stroke_sync`, `ue_wrap/devices/window_canvas`).
 
-### The coordinate towers
+### The fuse towers
 
 Each of the three coordinate towers can break, and a broken one blocks the ping. A tower's state is
 its broken flag, eight fuses (empty, good or blown) and a lights-out puzzle, and its panel, on a
@@ -262,8 +294,8 @@ left, scrambles the puzzle and breaks the tower; three callers reach it -- the d
 generators' saboteur runs, an explosion nearby, and the tower's own load when it was saved broken
 -- and the lever's end judges the puzzle. A client refuses both at the script gate on every route,
 its world's load included, so the host's world is the towers' only author
-(`coop/world/coord_tower_ops`). The host reads its towers each tick and sends every tower's row
-whenever one changes (`coop/world/coord_tower_rows`); a client applies each change as the tower's
+(`coop/world/fuse_tower_ops`). The host reads its towers each tick and sends every tower's row
+whenever one changes (`coop/world/fuse_tower_rows`); a client applies each change as the tower's
 own graph makes it: the painters for the state, `solvePuzzle` for a repair with its success sound,
 `moveLever` for the lever, and its own retract for the panel once its own montage is idle; a press,
 a pull, an insert and a failed lever play their own sounds. The lever's end, refused on a client, is
@@ -272,10 +304,38 @@ puzzle button, the lever or the panel's retract is refused and sent to the host,
 tower's own use with the look-at answered and then gives its own player's look-at back. A pull or an
 insert moves a fuse into or out of the player's own hand, so the client's own game makes it and
 claims the slot. The host takes a pull when its copy has the panel open, the lever at rest and that
-fuse blown, and an insert when the slot is empty and the host saw that player spend a good fuse at
-the tower; it refuses one otherwise, answering in the rows, and a refused pull's fuse is taken back
-out of the puller's hand, a refused insert's fuse given back where the player stands. Every act is
-judged within reach of the part it acts on, in the player's order, at a few a second.
+fuse blown, and an insert when the slot is empty and, above the two easiest difficulties, the host saw
+that player spend a good fuse at the tower; it refuses one otherwise, answering in the rows to the
+sender alone, and a refused pull's fuse is taken back out of the puller's hand, a refused insert's
+fuse given back where the player stands. A press or a lever the tower's own gates would ignore on the
+host's copy is refused the same way, and a dead player's acts are. Every act is judged within reach of
+the part it acts on, in the player's order, at a few a second.
+
+The radio tower is the second kind (`coop/world/fuse_tower_kind` holds what differs between the two). It
+is one actor, the gamemode's `radiotower`, and the drone's shop run reads its broken flag on the host, so
+a client's own break or repair that stayed on its own copy left the order flow judged by the host alone.
+It has the same fuses, a lights-out puzzle on a torus of up to 5x5 cells, a confirm lever whose forward
+end judges the puzzle and one `animation` flag that gates every use, and no panel; its second lever, the
+reset lever, re-rolls the tower. Its one roll is `scramble` (the decay timer, an explosion nearby and the
+reset lever all reach it), refused on a client with the lever's judgement, so the host is its only
+author. Only its fuses are saved: it loads whole and rolls nothing at load. Its row rides the same
+message: the confirm lever's two bits are its timeline's (running, and running forward), the reset
+lever's one is new, and a client starts each lever's timeline once when the host's row first has it
+running, takes `animation` from the row, and repairs through `completeMinigame`. A client that is shown
+a fuse blowing or the tower breaking raises the console's "Radio tower has been damaged!" and "is
+down!" alert by hand (the handler the host's broadcast would call), never for a tower's first applied
+row, since the handler also wakes the player. A client's press of a puzzle button or of either lever is
+sent to the host when its own copy is broken and idle; a whole tower answers with its own hint on the
+client. The host takes a pull of a blown fuse when no lever runs, and an insert on an empty slot. At
+the two easiest difficulties the game keeps the held fuse and the insert solves the puzzle (the radio
+tower also writes the slot, the coordinate tower does not): a client's insert there is refused at the
+gate and sent to the host like a press, which judges reach and the slot on its copy and runs the solve,
+its rows answering. No spend is asked, since the game spends none, so a client holding no fuse can
+solve an easy tower. A client keeps the host's last row of each tower and applies it when that tower
+resolves, looking it up again once a second meanwhile; a tower's first applied row is silent in every
+sound, and a tower that is another object than the row last went to starts over as a first row. The
+radio tower regenerates its puzzle and fuses at construction and at BeginPlay, so a client watches both
+generators and puts the kept row back onto the tower after each.
 
 ### The drone
 
@@ -353,7 +413,7 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | a light switch, a lid, the garage, an appliance, an oven's repair, a locker | any peer | symmetric state edges, relayed |
 | the power panel, the generators | the host | a client's press, repair, service, upgrade install and hit are ops the host takes from a player within reach; the host sends the breakers after its panel's apply and every generator's row after its verbs |
 | a keypad | the host | its verbs replayed on every client and its settled state after each chain; a client's own entries are an intent the host runs |
-| the coordinate towers | the host | a row per tower whenever one changes; a client's presses are intents the host runs, its fuse pulls and inserts claims the host takes or refuses |
+| the fuse towers (the three coordinate towers and the radio tower) | the host | a row per tower whenever one changes; a client's presses are intents the host runs, its fuse pulls and inserts claims the host takes or refuses |
 | the turbine | the host | six floats a second |
 | a window, the grime | any peer, minimum wins | monotone decreases |
 | the drone | the host | a transform stream; the client's tick suppressed |
@@ -371,7 +431,7 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | `KeypadIntent` | a client to the host | a keypad's key and the entry: a digit, a submit, a cancel, a keycard's verdict, a reset |
 | `PowerControlState` | a client to the host; the host to all | the breakers a press flipped; the breakers, the lockout, a lever's click and each slot's last press taken |
 | `PowerGridState` | the host to all; a client to the host | every generator's row and each slot's last op taken; a repair, a service, an upgrade install or a hit |
-| `CoordTowerState` | the host to all; a client to the host | every tower's row (broken, fuses, puzzle, panel, lever), each slot's last op taken and last claim refused; a press of a puzzle button, the lever or the retract, a fuse pulled or inserted |
+| `FuseTowerState` | the host to all; a client to the host | every tower's row (kind, broken, fuses, puzzle, panel, levers), each slot's last op taken and last claim refused; a press of a puzzle button, a lever or the retract, a fuse pulled or inserted |
 | `TurbineState`, `WindowCleanState`, `GrimeState` | each peer or the host | the driver floats; a decrease |
 | `DroneState` | the host to all | the drone's transform and flags, among them its leave timer |
 | `DroneFlyIntent` | a client to the host | the face pressed, the keyboard or the leave timer; the host finds the console by the sender's reach |
@@ -392,6 +452,7 @@ state it shows, and the first rows a world takes play no sound.
 
 | Limit | Evidence |
 |---|---|
+| A cord's link is the host's: a client reports the plug its player made and the host's answer settles both copies, so two clients on one cord settle in arrival order and a claim on a cord the host's player is dragging is answered with the host's link. A socket's power, a generator's outlets and a Kerfus's charging are not this lane's. Not yet exercised in a two-peer game run | `[RD]` the cord and socket Blueprint call surface; `[?]` `coop/interactables/cord_sync`, `ue_wrap/devices/cord` |
 | A client's light-group index has been reported dropping to zero after a join; not reproduced | `[?]` [issue 11](https://github.com/VOTV-MP/Multivoid/issues/11) |
 
 ## Code map
@@ -399,10 +460,11 @@ state it shows, and the first rows a world takes play no sound.
 | Concept | Files |
 |---|---|
 | the engine and the adapters | `coop/interactables/interactable_channel.h`, `coop/interactables/interactable_sync`, `coop/interactables/door_verb_intent`, `coop/interactables/door_state_verbs`, `coop/interactables/toggle_verbs`, `coop/interactables/verb_lanes`, `ue_wrap/devices/door`, `ue_wrap/devices/door_box`, `ue_wrap/devices/lightswitch`, `ue_wrap/devices/garage`, `ue_wrap/devices/appliance` |
+| cords and sockets | `coop/interactables/cord_sync`, `coop/interactables/cord_sync_watch`, `coop/interactables/cord_sync_sockets`, `ue_wrap/devices/cord` |
 | security cameras | `coop/interactables/camera_toggle_intent`, `coop/interactables/toggle_verbs`, `coop/interactables/interactable_sync`, `ue_wrap/devices/security_camera` |
 | keypads | `coop/interactables/keypad_sync`, `ue_wrap/devices/passwordlock` |
 | power, turbine, windows, grime | `coop/world/power_panel`, `coop/world/power_grid`, `ue_wrap/devices/generator`, `coop/interactables/turbine_sync`, `coop/interactables/window_sync`, `coop/interactables/grime_sync`, `ue_wrap/devices/power_control`, `ue_wrap/devices/windturbine`, `ue_wrap/devices/base_window`, `ue_wrap/devices/grime` |
-| the coordinate towers | `coop/world/coord_tower_rows`, `coop/world/coord_tower_ops`, `ue_wrap/desk/coord_tower` |
+| the fuse towers | `coop/world/fuse_tower_rows`, `coop/world/fuse_tower_ops`, `coop/world/fuse_tower_kind`, `ue_wrap/devices/coord_tower`, `ue_wrap/devices/radio_tower` |
 | the drone | `coop/interactables/drone_sync`, `coop/interactables/drone_call_intent`, `ue_wrap/devices/drone`, `ue_wrap/devices/drone_console` |
 | the signal servers | `coop/interactables/serverbox_sync`, `coop/interactables/server_upgrade_sync`, `ue_wrap/devices/serverbox` |
 | identity | `coop/element/portable_identity` |

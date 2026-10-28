@@ -2,11 +2,11 @@
 //
 // The ONE ImGui integration point for the whole mod (RULE: dev features live in a
 // categorized ImGui menu; future: a main-menu MP server browser on this same host).
-// It hooks IDXGISwapChain::Present (via our MinHook substrate) + ResizeBuffers + the
-// window's WndProc, auto-detects the RHI at the swapchain (DX11 and DX12 both
-// draw -- the per-RHI half lives behind ui/overlay_backend.h), runs the ImGui
-// frame, and calls the active UI surface's Render(). F1 toggles visibility.
-// Input is captured only while visible.
+// It hooks the engine's present and resize paths (via our MinHook substrate), auto-detects the RHI
+// at the swapchain (DX11, DX12 and Vulkan draw -- the per-RHI half lives behind ui/overlay_backend.h),
+// runs the ImGui frame, and calls the active UI surface's Render(). F1 toggles visibility. Input is
+// captured only while visible. The window's messages are routed in by coop/input/game_window_proc
+// through HandleWindowMessage.
 //
 // Principle 7: pure engine substrate + presentation -- NO gameplay/network logic.
 // The UI surfaces (ui::dev_menu, future server browser) own their content; the
@@ -16,17 +16,35 @@
 
 #pragma once
 
+#include <cstdint>
+
 #include <string>
 
 namespace ui::imgui_overlay {
 
-// Install the DXGI present/resize/wndproc hooks + bring up ImGui lazily on the
+// Install the present/resize hooks + bring up ImGui lazily on the
 // first real Present (so the game's device + window already exist). Idempotent;
 // safe to call once from harness boot. Returns false if the present-hook target
 // couldn't be resolved (logged); the caller may retry. The heavy init (ImGui
-// context, backend, RTV, wndproc swap) happens inside the Present detour on the
+// context, backend, RTV) happens inside the Present detour on the
 // render thread the first time the game presents a frame.
 bool Init();
+
+// The overlay's share of one game-window message: the F1, tilde, T, V and ESC hotkeys and the
+// ImGui input feed and capture swallow (all only once ImGui is up), and the native text field's
+// keys. True means the message is consumed and `result` is the window procedure's return; false
+// means it goes on to the next consumer and the game. Called on every message from the window
+// procedure's thread, ahead of the shutdown handling and the game; needs no present.
+// The parameters are the window procedure's (HWND, UINT, WPARAM, LPARAM, LRESULT) in plain integer
+// types, so this header stays free of the Windows headers.
+bool HandleWindowMessage(void* hwnd, unsigned msg, uintptr_t wParam, intptr_t lParam,
+                         intptr_t& result);
+
+// Called with every readiness milestone the rig is told (coop/session/rig_ready.h). The first one that
+// means a gameplay world is up (hosting, world-ready, solo-world) judges the draw seams: none of the three
+// present seams having fired by then is reported once, and the scan ledger's draw row is marked missed.
+// Any thread.
+void OnMilestone(const char* milestone);
 
 // Force visibility (e.g. a future main-menu button opening the server browser).
 void SetVisible(bool visible);
@@ -42,7 +60,7 @@ void ForceScoreboardOpen();
 // answer is nobody). Diagnostic only.
 //
 // While ANY of them is up, `CaptureActive()` is true, and that has two consequences a
-// reader of this header will not guess: WndProcDetour swallows every mouse message before
+// reader of this header will not guess: HandleWindowMessage swallows every mouse message before
 // the game sees it, and the SetCursorPos detour returns TRUE without moving the pointer.
 // So a surface the mod draws OUTSIDE ImGui -- the native server browser, the native host
 // window -- silently receives no mouse input at all whenever an ImGui surface is open at

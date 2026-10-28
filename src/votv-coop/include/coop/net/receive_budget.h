@@ -44,8 +44,9 @@ public:
     static bool RunSelftest();
 
 private:
-    // The stream types a client sends: the nine scalar channels and voice.
-    static constexpr int kStreamTypes = 10;
+    // The stream types a client sends: the nine scalar channels, voice and the driven-prop rows of a
+    // prop it syncs.
+    static constexpr int kStreamTypes = 11;
     static int StreamIndex(MsgType type);  // -1 for a type counted as a message
 
     struct Slot {

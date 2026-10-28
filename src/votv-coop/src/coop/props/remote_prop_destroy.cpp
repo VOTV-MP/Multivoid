@@ -12,6 +12,7 @@
 #include "coop/props/remote_prop.h"
 #include "remote_prop_internal.h"  // impl-private (src-local), NOT under include/
 
+#include "coop/element/bind_wait.h"            // GiveUp: a destroyed eid's held messages are dropped
 #include "coop/element/mirror_manager.h"
 #include "coop/element/registry.h"             // Registry::EidForActor (the key fallback refuses another incarnation)
 #include "coop/element/mirror_managers.h"     // PropMirrors() (UnregisterPropMirror)
@@ -133,7 +134,7 @@ void DestroyResolvedLocalActor_(void* actor, const std::wstring& keyW,
                 "matching the host)", payload.elementId, actor);
     }
     // Clear any slot's drive on this prop, so nothing drives a destroyed actor next tick (the
-    // drive table lives in remote_prop.cpp).
+    // drive table lives in remote_prop_drive.cpp).
     ClearAnyDriveFor(actor);
     // If this peer's local player is grabbing the doomed actor, tear the grab down cleanly first
     // (a no-op when not grabbed).
@@ -224,6 +225,8 @@ DestroyApply OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* 
     // local actor still exists (an echo bounce where we initiated the destroy and the actor is
     // already gone); after the eid resolution above, so that lookup could still see it. A silent
     // no-op for unknown eids.
+    // The eid ends here, so messages held for a bind that was still to come have nothing to reach.
+    coop::element::bind_wait::GiveUp(payload.elementId, "the prop was destroyed before its bind");
     UnregisterPropMirror(payload.elementId);
     if (!actor) {
         if (keyW.empty() &&

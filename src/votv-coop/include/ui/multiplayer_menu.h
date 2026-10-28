@@ -35,6 +35,10 @@ void Init();
 // race in the brief screenshot window). Game thread only.
 void ForceInjectNow();
 
+// Whether our MULTIPLAYER button is present on `menu`, the ui_menu_C instance (compared, never
+// dereferenced). What a test waits on after ForceInjectNow. Game thread only.
+bool IsInjectedInto(void* menu);
+
 // True while VOTV's native pause/ESC menu (ui_menu_C with isPause) is currently up.
 // Backed by a freshness-stamped atomic the game-thread Tick observer updates, so this
 // is RENDER-THREAD / WndProc safe. The ImGui overlay reads it to NOT draw the passive

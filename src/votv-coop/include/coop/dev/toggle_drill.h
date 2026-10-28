@@ -21,6 +21,10 @@ namespace coop::dev::toggle_drill {
 
 bool IsEnabled();
 
+// A prop_swinger_C that cannot lock: no refused open, and no tick that closes it at rest on its own. The lid
+// kind's pick, and the swinger drill's.
+bool IsSteadyLid(void* swinger);
+
 // Game thread, once per pump tick; a single check when off. One device read a tick once picked.
 void Tick(coop::net::Session* session);
 

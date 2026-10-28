@@ -4,12 +4,13 @@
 
 #include "grid_drill_checks.h"  // co-located private header (src tree, not include/)
 #include "grid_drill_upgrade.h"  // the upgrade arms' own legs
+#include "grid_drill_solve.h"  // the solve and flood legs beside the generator
+#include "grid_drill_walk.h"  // the walk to the generator
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/director/routes.h"
-#include "coop/interactables/device_occupancy.h"  // the panel's claim
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -20,7 +21,6 @@
 #include "coop/world/power_puzzle.h"
 
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/desk/device_screen.h"  // the panel's claim key, the interface's exit
 #include "ue_wrap/devices/generator.h"
 #include "ue_wrap/devices/generator_panel.h"
 #include "ue_wrap/devices/laptop.h"
@@ -43,23 +43,17 @@ namespace GP  = ue_wrap::generator_panel;
 
 constexpr uint8_t  kCalcBit       = 0x08;    // the calc breaker: the lockout's end switches the servers with it
 constexpr float    kPressReachCm  = 150.f;   // a lever, within the look-at trace's 200
-// The host's reach for a generator op (coop/world/power_grid): a repair pressed within it must be taken; one pressed
-// beyond anything its pads add (the generator's bounds and the puppet's lag, a few hundred uu) must be refused.
-constexpr float    kGeneratorReachUU = 400.f;
+// A repair pressed within the host's reach for a generator op (coop::power_grid::kGeneratorReachUU) must be taken;
+// one pressed beyond anything its pads add (the generator's bounds and the puppet's lag, a few hundred uu) must be
+// refused.
 constexpr float    kBeyondPadsUU     = 5000.f;
 constexpr uint64_t kLockPollMs       = 250;     // the lock legs read the servers at this cadence
 constexpr int      kWalkDeadlineS = 240;
-// Failure bounds only: each leg ends on the state it waits for, and these say it never came.
-constexpr uint64_t kAckBoundMs    = 15000;
-constexpr uint64_t kRowBoundMs    = 30000;
+// Failure bound only (the shared ones are in grid_drill_checks.h).
 constexpr uint64_t kLockBoundMs   = 90000;   // the desk virus's lockout lasts 60 s on the host
-constexpr uint64_t kSolveBoundMs  = 60000;   // a solve is some ninety inputs, a click's move 0.1-0.2 s
-// The flood: more than one burst of the host's rate for inputs, fewer than a burst and a full queue, so every input
-// is taken, some at the rate.
-constexpr int      kFloodInputs   = 40;
 
 enum class Arm : uint8_t { Off, Run, Red, Join, Lockout, LockJoin, Puzzle, PuzzleRed, PuzzleSolve, PuzzleFlood,
-                          Upgrade };
+                          Upgrade, UpgradeRepair, UpgradeRepairRed, UpgradeRepairLossRed };
 Arm Mode() {
     static const Arm a = [] {
         const std::string v = coop::config::ResolveString(::coop::config_registry::rows::grid_drill);
@@ -67,6 +61,8 @@ Arm Mode() {
              : v == "lockjoin" ? Arm::LockJoin : v == "puzzle" ? Arm::Puzzle : v == "puzzlered" ? Arm::PuzzleRed
              : v == "puzzlesolve" ? Arm::PuzzleSolve : v == "puzzleflood" ? Arm::PuzzleFlood
              : (v == "upgrade" || v == "upgradered") ? Arm::Upgrade
+             : v == "upgraderepair" ? Arm::UpgradeRepair : v == "upgraderepairred" ? Arm::UpgradeRepairRed
+             : v == "upgraderepairlossred" ? Arm::UpgradeRepairLossRed
              : Arm::Off;
     }();
     return a;
@@ -83,9 +79,8 @@ uint64_t NowMs() {
 // ---- the client's legs -----------------------------------------------------------------------------------------
 
 enum class Step : uint8_t {
-    Arm, WalkPanel, Press, Ack, WaitBreak, Repair, RepairAck, HostRepair, LockStart, LockEnd,
-    PuzzleMatch, PuzzleHost, PuzzleOwn, PuzzleOwnAck, SolveArm, SolveEnter, SolveClaim, SolveWork, SolveSync,
-    SolvePress, SolveAck, FloodProbe, FloodProbeAck, Flood, FloodAck, Done
+    Arm, WalkPanel, WalkGen, Press, Ack, WaitBreak, Repair, RepairAck, HostRepair, LockStart, LockEnd,
+    PuzzleMatch, PuzzleHost, PuzzleOwn, PuzzleOwnAck, Solve, Done
 };
 Step     g_step = Step::Arm;
 uint64_t g_stepMs = 0;
@@ -94,8 +89,6 @@ int      g_presses = 0;
 uint8_t  g_maskBefore = 0;   // the breakers as the last press went
 bool     g_repairFar = false;  // the repair was pressed beyond the Activate button's reach
 coop::net::PowerGridPuzzle g_puzzleSeen{};  // the host's puzzle as the last puzzle leg read it
-bool     g_switchLsb = false;  // the solve's reading of the switch target: least significant bit first
-uint8_t  g_probeFrom = 0;      // the offset knob before the flood's probe input
 std::shared_ptr<coop::director::BackgroundWalk> g_walk;  // the director blocks, so the walk runs on a worker
 
 // A walk by the director to `to`, polled: 0 while it walks, 1 once there, 2 when it failed.
@@ -207,7 +200,7 @@ void ClientTick(void* player) {
         }
         Say("client", "armed");
         SayCensus(player, panel);
-        Go(BesideArm() ? Step::SolveArm : Step::WalkPanel);
+        Go(BesideArm() ? Step::WalkGen : Step::WalkPanel);
         return;
     }
     case Step::LockStart:
@@ -242,6 +235,21 @@ void ClientTick(void* player) {
         if (st != 1) { Abandon("the walk to the panel failed (no route, or the deadline)"); return; }
         SayCensus(player, panel);
         Go(Step::Press);
+        return;
+    }
+    case Step::WalkGen: {
+        // Down to the drill's generator by the director: a generator op is judged where the player stands.
+        switch (WalkBesideGenerator(player)) {
+        case WalkState::Walking:
+            return;
+        case WalkState::Ended:
+            g_step = Step::Done;
+            return;
+        case WalkState::Arrived:
+            SolveBegin(Mode() == Arm::PuzzleFlood);
+            Go(Step::Solve);
+            return;
+        }
         return;
     }
     case Step::Press: {
@@ -352,163 +360,23 @@ void ClientTick(void* player) {
         g_step = Step::Done;
         return;
     }
-    case Step::SolveArm: {
-        // This client stands beside the drill's generator (its stored pose), which the host broke as this client's
-        // world became ready: it must hold the host's puzzle before it touches it.
-        bool broken = false;
-        std::string why;
-        coop::net::PowerGridPuzzle canon{};
-        if (!DrillGenBroken(broken) || !broken || !PuzzleMatches(why, canon)) {
-            if (now - g_stepMs > kRowBoundMs) Fail("the host's break and its puzzle never reached this copy");
+    case Step::Solve: {
+        // The legs beside the drill's generator (grid_drill_solve.cpp); the end of each is said here.
+        switch (SolveTick(player)) {
+        case SolveState::Running:
+            return;
+        case SolveState::Ended:
+            g_step = Step::Done;
+            return;
+        case SolveState::Repaired:
+            if (Say("client", "the host judged the press on its own copy and repaired")) SayDone();
+            g_step = Step::Done;
+            return;
+        case SolveState::Flooded:
+            if (Say("client", "the host answered every input of the flood")) SayDone();
+            g_step = Step::Done;
             return;
         }
-        if (!Say("client", "beside the broken generator, holding its puzzle")) { g_step = Step::Done; return; }
-        Go(Step::SolveEnter);
-        return;
-    }
-    case Step::SolveEnter: {
-        void* knobs = GP::PanelOf(DrillGen());
-        if (!knobs || !GP::Enter(knobs, player)) { Abandon("the panel's use did not run"); return; }
-        Go(Step::SolveClaim);
-        return;
-    }
-    case Step::SolveClaim: {
-        // Inside the panel's interface the device lock claims it, and the host takes this client's inputs only then.
-        void* knobs = GP::PanelOf(DrillGen());
-        const std::wstring key = knobs ? ue_wrap::device_screen::ClassifyDeviceActorClaimKey(knobs) : std::wstring();
-        if (key.empty() || !coop::device_occupancy::LocalHolds(key.c_str())) {
-            if (now - g_stepMs > kAckBoundMs) Abandon("this client never held the panel's claim");
-            return;
-        }
-        UE_LOGI("[GRID-DRILL] client: inside the panel, holding its claim %ls", key.c_str());
-        g_switchLsb = false;
-        Go(Mode() == Arm::PuzzleFlood ? Step::FloodProbe : Step::SolveWork);
-        return;
-    }
-    case Step::FloodProbe: {
-        // One input first, which the host must take before the flood goes: it takes a client's inputs once it has the
-        // client's body and its claim on the panel, and an input waiting for either would hold the flood behind it.
-        GP::Puzzle p{};
-        if (!GP::Read(GP::PanelOf(DrillGen()), p)) { Abandon("the drill's generator's panel is unread"); return; }
-        g_probeFrom = p.sine[0];
-        coop::power_puzzle::DevFlood(GEN::IndexOf(DrillGen()), 1);
-        Go(Step::FloodProbeAck);
-        return;
-    }
-    case Step::FloodProbeAck: {
-        std::string why;
-        coop::net::PowerGridPuzzle canon{};
-        if (coop::power_puzzle::UntakenInputs() != 0 || !PuzzleMatches(why, canon)) {
-            if (now - g_stepMs > kAckBoundMs) Abandon("the host never answered the probe input");
-            return;
-        }
-        GP::Puzzle p{};
-        if (!GP::Read(GP::PanelOf(DrillGen()), p) || p.sine[0] == g_probeFrom) {
-            Abandon("the host refused the probe input (its log says why)");
-            return;
-        }
-        Go(Step::Flood);
-        return;
-    }
-    case Step::Flood: {
-        // What a modified client sends: a burst of inputs at once, past its own send rate. The host must take them
-        // within its rate for inputs and broadcast the rows coalesced; its own lines judge both.
-        const uint64_t sent0 = coop::power_puzzle::InputsSent();
-        coop::power_puzzle::DevFlood(GEN::IndexOf(DrillGen()), kFloodInputs);
-        if (coop::power_puzzle::InputsSent() != sent0 + kFloodInputs) { Abandon("the flood did not go"); return; }
-        UE_LOGI("[GRID-DRILL] client: sent %d inputs at once", kFloodInputs);
-        Go(Step::FloodAck);
-        return;
-    }
-    case Step::FloodAck: {
-        std::string why;
-        coop::net::PowerGridPuzzle canon{};
-        if (coop::power_puzzle::UntakenInputs() != 0 || !PuzzleMatches(why, canon)) {
-            if (now - g_stepMs > kSolveBoundMs) {
-                const std::string what = "the host never answered the flood: " + why;
-                Fail(what.c_str());
-            }
-            return;
-        }
-        if (Say("client", "the host answered every input of the flood")) SayDone();
-        g_step = Step::Done;
-        return;
-    }
-    case Step::SolveWork: {
-        // One input a tick, as a hand makes them: the wheel over a knob toward its target, a rotator's click toward
-        // the turn its grid was built at, a switch's click toward its bit of the target byte, each click waiting for
-        // the move before it. The switches' bit order is the one the panel then reads back as complete.
-        void* knobs = GP::PanelOf(DrillGen());
-        GP::Puzzle p{};
-        if (!knobs || !GP::Read(knobs, p)) { Abandon("the drill's generator's panel is unread"); return; }
-        if (now - g_stepMs > kSolveBoundMs) { Fail("the puzzle was not solved in time"); return; }
-        if (GP::IsMoving(knobs)) return;
-        for (int k = 0; k < 3; ++k) {
-            if (p.sine[k] == p.targetSine[k]) continue;
-            GP::Scroll(knobs, k, p.sine[k] < p.targetSine[k] ? 1.f : -1.f);
-            return;
-        }
-        for (int i = 0; i < GP::kRotators; ++i) {
-            if (p.rotators[i] == 0) continue;
-            GP::ClickRotator(knobs, i);
-            return;
-        }
-        for (int i = 0; i < GP::kSwitches; ++i) {
-            const unsigned want = (p.switchesTarget >> (g_switchLsb ? i : 7 - i)) & 1u;
-            if (((p.switches >> i) & 1u) == want) continue;
-            GP::ClickSwitch(knobs, i);
-            return;
-        }
-        if (!GP::Solved(knobs)) {
-            if (g_switchLsb) { Fail("every value set, and the panel still reads unsolved"); return; }
-            g_switchLsb = true;
-            return;
-        }
-        UE_LOGI("[GRID-DRILL] client: solved the puzzle on this copy (the switch target read from its %s bit)",
-                g_switchLsb ? "lowest" : "highest");
-        ue_wrap::device_screen::ForceExitInterface(player);
-        Go(Step::SolveSync);
-        return;
-    }
-    case Step::SolveSync: {
-        // The host must hold this client's solution before the press it rests on: every input taken, its
-        // canonical this copy's values.
-        std::string why;
-        coop::net::PowerGridPuzzle canon{};
-        if (coop::power_puzzle::UntakenInputs() != 0 || !PuzzleMatches(why, canon)) {
-            if (now - g_stepMs > kAckBoundMs) {
-                const std::string what = "the host never took this client's solution: " + why;
-                Fail(what.c_str());
-            }
-            return;
-        }
-        if (!Say("client", "the host holds this client's solution")) { g_step = Step::Done; return; }
-        Go(Step::SolvePress);
-        return;
-    }
-    case Step::SolvePress: {
-        void* gen = DrillGen();
-        const uint64_t sent0 = coop::power_grid::ClientOpsSent();
-        if (!GEN::PressActivate(gen, player)) { Abandon("the Activate press did not run"); return; }
-        bool broken = true;
-        if (!DrillGenBroken(broken) || broken) { Fail("the Activate press left its generator broken here"); return; }
-        if (coop::power_grid::ClientOpsSent() == sent0) { Fail("the Activate press sent the host nothing"); return; }
-        UE_LOGI("[GRID-DRILL] client: pressed Activate beside the generator, its puzzle solved");
-        Go(Step::SolveAck);
-        return;
-    }
-    case Step::SolveAck: {
-        if (coop::power_grid::PendingOps() != 0) {
-            if (now - g_stepMs > kAckBoundMs) Abandon("the host never answered the press");
-            return;
-        }
-        bool broken = true;
-        if (!DrillGenBroken(broken) || broken) {
-            Fail("the host refused a press made beside the generator on a puzzle this client solved");
-            return;
-        }
-        if (Say("client", "the host judged the press on its own copy and repaired")) SayDone();
-        g_step = Step::Done;
         return;
     }
     case Step::Repair: {
@@ -525,7 +393,7 @@ void ClientTick(void* player) {
             return;
         }
         const float dist = Dist(me, ue_wrap::engine::GetComponentLocation(button));
-        if (dist > kGeneratorReachUU && dist <= kBeyondPadsUU) {
+        if (dist > coop::power_grid::kGeneratorReachUU && dist <= kBeyondPadsUU) {
             Abandon("the repair would be pressed between the button's reach and the host's pads");
             return;
         }
@@ -737,8 +605,12 @@ void HostTick(coop::net::Session* s) {
 void Tick(coop::net::Session* session) {
     if (Mode() == Arm::Off || !session || !session->connected()) return;
     if (!PC::EnsureResolved() || !GEN::EnsureResolved()) return;
-    if (Mode() == Arm::Upgrade) {
-        UpgradeTick(session);
+    if (Mode() == Arm::Upgrade || Mode() == Arm::UpgradeRepair || Mode() == Arm::UpgradeRepairRed ||
+        Mode() == Arm::UpgradeRepairLossRed) {
+        UpgradeTick(session, Mode() == Arm::UpgradeRepair          ? UpgradeFlavour::Repair
+                             : Mode() == Arm::UpgradeRepairRed     ? UpgradeFlavour::RepairRed
+                             : Mode() == Arm::UpgradeRepairLossRed ? UpgradeFlavour::RepairLossRed
+                                                                   : UpgradeFlavour::Plain);
         return;
     }
     if (session->role() == coop::net::Role::Host) {
@@ -758,6 +630,7 @@ void OnDisconnect() {
     g_nextLockReadMs = 0;
     g_presses = 0;
     g_walk.reset();
+    WalkReset();
     g_hostSeen = 0;
     g_hostOpsSeen = 0;
     g_hostSaidArm = false;

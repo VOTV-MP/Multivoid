@@ -11,6 +11,7 @@
 #include "prop_lifecycle_detail.h"  // co-located private header (src tree, not include/)
 
 #include "coop/creatures/kerfur_convert.h"  // TryCaptureKerfurPropDestroy, the conversion's hold on a kerfur prop death
+#include "coop/dev/dronesack_drill.h"        // NoteDestroy, NoteBroadcast (the drone sack drill's record)
 #include "coop/dev/prop_birth_key_probe.h"   // NoteDestroy (who destroyed a prop it saw born)
 #include "coop/dev/spawn_match_probe.h"      // NoteDestroy (the fuzzy-adoption watch)
 #include "coop/element/prop.h"
@@ -228,7 +229,10 @@ void DestroySeamBody(void* self, HandView handView) {
     if (coop::coingun_sync::IsInCoinGunVerb())
         coop::coingun_sync::SendSaleForDyingProp(keyless ? std::wstring() : keyStr, dp.elementId);
 
-    if (!actLatched) s->SendPropDestroy(dp);  // channel queues internally; always accepted
+    if (!actLatched) {
+        s->SendPropDestroy(dp);  // channel queues internally; always accepted
+        coop::dev::dronesack_drill::NoteBroadcast(self);
+    }
     // A client that just destroyed a keyed prop may be about to re-place the same prop (a
     // pickup, then a place). The key is parked so the place authors a host-authoritative drop
     // intent, and only for a key whose destroy we just broadcast, whose granted take's commit is
@@ -247,6 +251,7 @@ void OnK2DestroyFunc(void* context, void* srcObj, void* /*result*/) {
     // The record is consulted before any early return in the body, so every post balances its pre.
     const HandView handView = NoteHandViewPost(context);
     coop::dev::prop_birth_key_probe::NoteDestroy(context, srcObj, LoadSession());
+    coop::dev::dronesack_drill::NoteDestroy(context, srcObj);
     DestroySeamBody(context, handView);
 }
 

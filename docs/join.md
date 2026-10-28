@@ -80,7 +80,7 @@ inheritance: of the 87 classes that register an event, 21 implement it, eleven t
 `actor_save_C`, seven through `prop_C`, and `ATV`, `kerfurOmega` and `firetank` directly. A mirror
 lane that owns such a class already refuses its local spawn on a client; for the rest the joiner
 runs the event's own actor from its saved state. Neither has been measured per class.
-The host then streams the file on the bulk lane in chunks paced by send-buffer backpressure (`coop/save/save_transfer`). The game
+The host then streams the file on the transfer lane in chunks paced by send-buffer backpressure (`coop/save/save_transfer`). The game
 writes a save in place, with no rename, so the file is trusted only when its size and timestamp
 hold across two polls and two full reads agree. A joiner that asks while the host is still loading its
 world -- a quick rejoin after a rehost lands seconds after the host is up -- waits for that world, the
@@ -151,7 +151,7 @@ On the ready announce the host runs the replay for that slot, in this order
 (`coop/session/subsystems`):
 
 1. **Explicit deletes.** One destroy per keyed prop the joiner's blob had and the host's live
-   world no longer has (grabbed, eaten, converted during the download). The joiner drops exactly
+   world lacks (grabbed, eaten, converted during the download). The joiner drops exactly
    those instead of inferring them.
 2. **The snapshot bracket.** A begin marker, one spawn per live keyed prop, an end marker. On the
    client an existing actor is adopted by key, a missing one is created, and a transform that
@@ -174,6 +174,10 @@ On the ready announce the host runs the replay for that slot, in this order
    live state is sent as appends and hash-keyed deletes (`coop/session/join_seed` for saved
    signals and emails; the meadow database has its own).
 
+Steps 3 to 5, and every other default-lane send to the slot while its snapshot runs, are held by the
+slot's join gate and reach the wire after the spawns and before the end marker, so a seed never
+precedes the prop it names `[?]`.
+
 ### 6. Reconcile and reveal
 
 The begin marker arms a claim bracket on the client: every actor a spawn binds is claimed. The
@@ -185,8 +189,9 @@ census counted, and a valve aborts a sweep that would remove more than half of w
 
 Visually the joiner never sees the reconcile. A full-screen curtain rises at connect and fades
 out when the primary world is assembled, at the end marker plus the spawn drain, seconds before
-quiescence (`ui/join_curtain`). Every host mirror spawns hidden and without collision
-(`coop/element/mirror_defer`); the confirmed ones are revealed as the curtain lifts, the ones
+quiescence (`ui/join_curtain`). Every host mirror spawns hidden (`coop/element/mirror_defer`): an
+NPC or a prop held for its local twin without collision, any other prop with only the physics
+collision of each primitive it owns, so no trace reaches it yet it rests on the floor `[?]`; the confirmed ones are revealed as the curtain lifts, the ones
 still pending adjudication are revealed at quiescence, after the sweep has run.
 
 ### The join window
@@ -200,8 +205,12 @@ is tied to its host id by the exact position it had at the blob instant, carried
 that delivers it and matched at quiescence (`coop/props/pile_spawn_bind`,
 `coop/element/quiescence_drain`, `coop/creatures/kerfur_reconcile`); a pile the host grabs
 inside the window has its id minted at the grab edge so the identity survives the pile-to-clump
-change of actor. The index-to-id sidecar of step 2 is the intended replacement for the position
-match; see the limits.
+change of actor. That position is the capture's alone: the blob capture records it in the tick the
+save is serialised and nothing writes it afterwards, so a pile that loops between pile and clump
+while the joiner loads keeps the key its save holds. The spawn is the key's one carrier (a later
+convert carries none), and the snapshot drain is keyed by id: each id is resolved to its element's
+current actor at its turn, so an entity that changes form mid-drain still gets its row `[?]`. The
+index-to-id sidecar of step 2 is the intended replacement for the position match; see the limits.
 
 ### A world change mid-session
 

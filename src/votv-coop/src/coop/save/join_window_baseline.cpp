@@ -33,13 +33,14 @@ std::unordered_set<std::wstring> g_blobKeys[coop::net::kMaxPeers];
 // The save-time position of every live keyless chipPile at the capture instant, by host eid: the
 // positions the joiner loads its natives at. The connect replay stamps each pile's snapshot with
 // it, so the client's twin destroy matches the save-loaded native at the old spot even when the
-// host moved the pile in the join-load window.
+// host moved the pile in the join-load window. The capture writes this map and nothing after it does,
+// so an eid sits here or in the clump map below, with the key and form the save holds.
 std::unordered_map<coop::element::ElementId, ue_wrap::FVector>
     g_blobPileXforms[coop::net::kMaxPeers];
 
 // The same for every live garbage clump at the capture instant: a clump at rest is in the save as
 // a clump, so the joiner loads its own copy there. A map of its own: what reads the pile map (the
-// position flush, a land convert's key) means a PILE at that key.
+// position flush) means a PILE at that key.
 std::unordered_map<coop::element::ElementId, ue_wrap::FVector>
     g_blobClumpXforms[coop::net::kMaxPeers];
 
@@ -85,8 +86,8 @@ std::chrono::steady_clock::time_point g_flushArmUntil[coop::net::kMaxPeers]{};
 std::chrono::steady_clock::time_point g_flushLastRun[coop::net::kMaxPeers]{};
 constexpr auto kFlushLateWindow = std::chrono::seconds(25);       // cover a long load tail + late clusters
 constexpr auto kFlushCadence    = std::chrono::milliseconds(500); // 2 Hz re-flush (cold; deduped to changes)
-// The keyed props a hand held after their correction had gone out: the first correction rides Bulk
-// and can land after the hand's release (Normal), so each is sent a follow-up once it is out of the
+// The keyed props a hand held after their correction had gone out: the first correction was read before the grab,
+// so each is sent a follow-up once it is out of the
 // hand and at rest. After the late window only these stay watched, until the set empties or
 // g_settleUntil passes.
 std::unordered_set<coop::element::ElementId> g_handSinceSent[coop::net::kMaxPeers];
@@ -162,17 +163,17 @@ bool AtRest_(void* actor) {
 // One keyed prop of the diverged flush, for the keyed scan and for the settle phase alike; true when
 // a correction went out. A prop in a hand is the hand's: its stream is continuous and its release
 // carries the pose, so no correction is read for it now. When a correction for it had already gone
-// out, the prop is noted in g_handSinceSent: a read taken before the grab rides Bulk behind the
-// snapshot and can land after the release, which rides Normal, and nothing is armed for the release
-// to erase. A read taken after the release rides the same Bulk lane, so it lands after that one:
-// the prop stays noted until it is out of the hand and at rest, and every pass sends it its follow-up
-// (deduped to a move past 4 cm of what was last delivered). A driven prop is sent as any other,
+// out, the prop is noted in g_handSinceSent: that correction was read at the pose the hand then
+// took it from, so the client's last word for it is stale once the hand has moved it. The prop stays
+// noted until it is out of the hand and at rest, and every pass sends it a follow-up at its current
+// pose (deduped to a move past 4 cm of what was last delivered), so the last correction the client
+// holds is the resting one. A driven prop is sent as any other,
 // stamped with its drive context, and the client orders it.
 // Divergence from MTA, which stamps a detach with a fresh element context
 // (reference/mtasa-blue/Server/mods/deathmatch/logic/CStaticFunctionDefinitions.cpp:1689-1700, client
 // reference/mtasa-blue/Client/mods/deathmatch/logic/rpc/CElementRPCs.cpp:389) because its server
 // authors the detach: a keyed prop's release here is authored by its holder, which holds no host-side
-// per-eid context to stamp, so the order comes from the Bulk lane (the follow-up lands behind any
+// per-eid context to stamp, so the order comes from the Default lane (the follow-up lands behind any
 // stale sample).
 bool FlushKeyedProp_(int peerSlot, const char* phase, coop::element::ElementId eid,
                      const ue_wrap::FVector& savePos) {
@@ -348,7 +349,7 @@ void SendDivergenceDeletes(int peerSlot) {
         for (size_t i = 0; i < k.size() && i < 31; ++i)
             dp.key.data[dp.key.len++] = static_cast<char>(k[i]);
         dp.elementId = 0;  // resolve by key: the eid is host-range-unstable across a transfer
-        // Per slot: the divergence is this joiner's blob's. On the bulk lane ahead of the snapshot
+        // Per slot: the divergence is this joiner's blob's. Inside the snapshot scope, ahead of the snapshot
         // bracket, so the removes land before the adds.
         g_session->SendReliableToSlot(peerSlot, coop::net::ReliableKind::PropDestroy,
                                       &dp, sizeof(dp));
@@ -395,7 +396,7 @@ void TickLateArm() {
             // SettleTick_ retires them. Otherwise the keyed half retires here with the rest.
             // A last word for every prop corrected this join, read now: one moved since its last
             // delivery (a grab and release inside the last scan interval among them) is sent its
-            // follow-up on the same Bulk lane, behind anything still queued; one in a hand now is
+            // follow-up on the same lane, behind anything still queued; one in a hand now is
             // watched. Cold: the dedupe holds only the props corrected this join.
             std::vector<coop::element::ElementId> corrected;
             corrected.reserve(g_lastFlushedKeyedPos[slot].size());
@@ -410,13 +411,9 @@ void TickLateArm() {
                 g_lastFlushedKeyedPos[slot].clear();
             }
             // The join window closes here for the slot. The save-time maps are join-window
-            // structures, and with "active join" defined as a non-empty map that nothing emptied,
-            // every steady-state host pile grab kept stamping its pre-grab key and every landing
-            // carried one; the client then armed a hopeless pending twin per drop (its native was
-            // already retired at the hand-off), and each pinned the quiescence drain for many
-            // full-array sweeps, a hitch storm during pile play. The late flush is the maps' last
-            // consumer: at its expiry the joiner has quiesced and reconciled, and a late kerfur
-            // turn-on resolves by eid.
+            // structures, written by the capture alone. The late flush is their last consumer: at
+            // its expiry the joiner has quiesced and reconciled, and a late kerfur turn-on resolves
+            // by eid.
             if (held > 0) {
                 g_settleUntil[slot] = now + kHandSettleWindow;
                 UE_LOGI("[PILE-09] slot %d join window CLOSED -- %zu prop(s) a hand held after their "
@@ -427,8 +424,8 @@ void TickLateArm() {
             } else if (!g_blobPileXforms[slot].empty() || !g_blobClumpXforms[slot].empty() ||
                        !g_blobKerfurXforms[slot].empty() || !g_blobKeyedXforms[slot].empty()) {
                 UE_LOGI("[PILE-09] slot %d join window CLOSED (b3 late-flush expiry) -- retiring "
-                        "save-time maps (%zu pile + %zu clump + %zu kerfur + %zu keyed xform(s)); steady-state "
-                        "grabs no longer stamp save-time keys for this joiner",
+                        "save-time maps (%zu pile + %zu clump + %zu kerfur + %zu keyed xform(s)); the capture's "
+                        "keys are spent for this joiner",
                         slot, g_blobPileXforms[slot].size(), g_blobClumpXforms[slot].size(),
                         g_blobKerfurXforms[slot].size(), g_blobKeyedXforms[slot].size());
                 g_blobPileXforms[slot].clear();
@@ -463,15 +460,6 @@ bool TryGetClumpXform(int peerSlot, coop::element::ElementId eid, ue_wrap::FVect
     return true;
 }
 
-bool TryGetPileXformAnySlot(coop::element::ElementId eid, ue_wrap::FVector& out) {
-    for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
-        const auto& m = g_blobPileXforms[slot];
-        auto it = m.find(eid);
-        if (it != m.end()) { out = it->second; return true; }
-    }
-    return false;
-}
-
 bool TryGetKerfurXformAnySlot(coop::element::ElementId eid, ue_wrap::FVector& out) {
     // A KerfurConvert is one fan-out with no slot, and a kerfur's host eid is unique, so all active
     // slots are searched.
@@ -481,20 +469,6 @@ bool TryGetKerfurXformAnySlot(coop::element::ElementId eid, ue_wrap::FVector& ou
         if (it != m.end()) { out = it->second; return true; }
     }
     return false;
-}
-
-void RecordGrabTimePileXform(coop::element::ElementId eid, const ue_wrap::FVector& preGrabLoc) {
-    if (eid == 0u || eid == coop::element::kInvalidId) return;
-    int slots = 0;
-    for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
-        if (g_blobPileXforms[slot].empty()) continue;   // no active join captured piles here
-        g_blobPileXforms[slot][eid] = preGrabLoc;
-        ++slots;
-    }
-    if (slots > 0)
-        UE_LOGI("[PILE-09] HOST pre-grab pos recorded eid=%u at (%.1f,%.1f,%.1f) -> %d active join slot(s) "
-                "(the kToPile convert will carry it as the save-time key)",
-                static_cast<unsigned>(eid), preGrabLoc.X, preGrabLoc.Y, preGrabLoc.Z, slots);
 }
 
 void ClearForSlot(int peerSlot) {

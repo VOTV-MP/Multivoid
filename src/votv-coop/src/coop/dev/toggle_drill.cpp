@@ -23,6 +23,13 @@
 #include <string>
 
 namespace coop::dev::toggle_drill {
+
+// A lid that cannot lock: no refused open, and no tick that closes it at rest on its own.
+bool IsSteadyLid(void* s) {
+    bool lockable = true;
+    return ue_wrap::swinger::IsSwinger(s) && ue_wrap::swinger::TryReadLockable(s, lockable) && !lockable;
+}
+
 namespace {
 
 namespace R  = ue_wrap::reflection;
@@ -62,11 +69,6 @@ bool GarageAtRest(void* g) {
 bool GarageToggle(void* g, void* p) { return G::CallRunTrigger(g, p, 0); }
 bool TapToggle(void* a, void* p) { return A::CallAction(a, p, A::kTapToggleAction); }
 bool LockerToggle(void* l, void* p) { return DB::CallAction(l, p, DB::kToggleAction); }
-// A lid that cannot lock: no refused open, and no tick that closes it at rest on its own.
-bool IsSteadyLid(void* s) {
-    bool lockable = true;
-    return SW::IsSwinger(s) && SW::TryReadLockable(s, lockable) && !lockable;
-}
 bool LidToggle(void* s, void*) {
     bool open = false;
     return SW::TryReadOpen(s, open) && (open ? SW::CallClose(s) : SW::CallOpen(s, false));

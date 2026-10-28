@@ -8,11 +8,16 @@
 #include "coop/net/protocol.h"
 #include "ue_wrap/core/types.h"  // FVector
 
+#include <cstdint>
 #include <string>
 
 namespace coop::dev::grid_drill {
 
 constexpr int kLightBit = 4;  // the panel's light lever
+
+// Failure bounds only, shared by every leg: each leg ends on the state it waits for, and these say it never came.
+constexpr uint64_t kAckBoundMs = 15000;
+constexpr uint64_t kRowBoundMs = 30000;
 
 float Dist(const ue_wrap::FVector& a, const ue_wrap::FVector& b);
 

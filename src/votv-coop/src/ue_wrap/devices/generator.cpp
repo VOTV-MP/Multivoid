@@ -45,6 +45,7 @@ uint8_t  g_maskLookButton = 0;
 int32_t  g_offLookUpgrade = -1;   // lookAtUpgrade, the drill's install
 uint8_t  g_maskLookUpgrade = 0;
 int32_t  g_offUpgradeButtons = -1;  // upgradeButtons, the drill's install
+int32_t  g_offUpgradeMeshes = -1;   // upgradeMeshes, the drill's read of what updUpgrades built
 ue_wrap::CachedObjRef g_upgradeCls;  // prop_transformerUpgrade_C
 int32_t  g_offPanelObj = -1;      // panelObj, the drill's puzzle shortcut
 int32_t  g_offTurnOn = -1;        // turnon, the drill's read of the last cue
@@ -128,6 +129,7 @@ bool EnsureResolved() {
     R::FindBoolProperty(cls, L"lookAtButton", g_offLookButton, g_maskLookButton);
     R::FindBoolProperty(cls, L"lookAtUpgrade", g_offLookUpgrade, g_maskLookUpgrade);
     g_offUpgradeButtons = R::FindPropertyOffset(cls, L"upgradeButtons");
+    g_offUpgradeMeshes = R::FindPropertyOffset(cls, L"upgradeMeshes");
     g_offPanelObj = R::FindPropertyOffset(cls, L"panelObj");
     g_offTurnOn = R::FindPropertyOffset(cls, L"turnon");
 
@@ -299,6 +301,18 @@ int UpgradesNear(const FVector& at, float radius, void** nearest) {
     }, &n);
     if (nearest) *nearest = n.nearest;
     return n.count;
+}
+
+int UpgradeMeshCount(void* gen) {
+    if (!gen || !g_resolved || g_offUpgradeMeshes < 0) return -1;
+    const auto* arr =
+        reinterpret_cast<const field_io::TArrayView*>(reinterpret_cast<const uint8_t*>(gen) + g_offUpgradeMeshes);
+    if (arr->num < 0 || arr->num > 64 || (arr->num > 0 && !arr->data)) return -1;
+    void* const* elems = reinterpret_cast<void* const*>(arr->data);
+    int live = 0;
+    for (int32_t i = 0; i < arr->num; ++i)
+        if (elems[i] && R::IsLive(elems[i])) ++live;
+    return live;
 }
 
 bool WritePuzzleSolved(void* gen) {

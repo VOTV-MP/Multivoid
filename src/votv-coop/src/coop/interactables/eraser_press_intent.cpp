@@ -2,9 +2,9 @@
 
 #include "coop/interactables/eraser_press_intent.h"
 
+#include "coop/element/bind_wait.h"       // Holds: an insert still waiting here for its drive
 #include "coop/element/intent_authority.h"
 #include "coop/element/registry.h"
-#include "coop/interactables/drive_sync.h"  // HasPendingLine: an insert still waiting here for its drive
 #include "coop/net/intent_bucket.h"
 #include "coop/net/intent_queue.h"
 #include "coop/net/protocol.h"
@@ -98,7 +98,7 @@ void Refuse(coop::net::Session& s, uint8_t slot, uint32_t driveEid, const char* 
 }
 
 // HOST: one press, run or refused and then consumed (true), or left at the head of its queue (false) while the host has
-// no body for the sender, or while the eraser's slot line naming that drive waits here for the drive to bind (a press
+// no body for the sender, or while a slot line naming that drive waits in bind_wait for the drive to bind (a press
 // follows its presser's insert on the wire, and that insert can still be waiting for its drive).
 bool Execute(coop::net::Session& s, uint32_t driveEid, uint8_t slot) {
     void* eraser = DE::Instance();
@@ -108,7 +108,8 @@ bool Execute(coop::net::Session& s, uint32_t driveEid, uint8_t slot) {
     }
     void* named = coop::element::LivePropActor(driveEid);
     if (!named || SeatedDrive() != named) {
-        if (coop::drive_sync::HasPendingLine(DC::kRoleEraser, driveEid)) return false;
+        if (coop::element::bind_wait::Holds(driveEid, static_cast<uint16_t>(coop::net::ReliableKind::DriveSlotState)))
+            return false;
         Refuse(s, slot, driveEid, "the host's eraser does not hold that drive");
         return true;
     }

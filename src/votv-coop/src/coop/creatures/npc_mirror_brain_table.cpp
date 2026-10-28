@@ -43,12 +43,61 @@ constexpr int32_t kFossilhound[] = {
     10636,
 };
 
+// geomOcta_C
+//
+// Only the class's DECISIONS are refused; its BeginPlay, tick, timelines, montages and sounds run on the mirror, and
+// coop/creatures/geom_octa_sync relays the host's decisions into it. The twelve entries refused, with what each does:
+//   5538 move (the wander: a random point on this machine's navmesh) and 466 its Delay(1) resume;
+//   2783 and 2659 the move-to proxy's success and fail, and 481 their 1-5 s wait's resume (the next move);
+//   3766 minSphere's begin-overlap and 6252 propAggroSphere's (the target, rolled against this machine's pawns);
+//   3592 aggro (the target write, the montage start);
+//   6806 despawnAttempt (the leave decision) and 573 its Delay(60) resume (the destroy);
+//   496 BeginPlay's Delay(300) resume (it only arms the despawn timer);
+//   1092 the "fire" montage's finish notify (re-fire or close, from this machine's overlap).
+// The twenty-five allowed are below, each presentation or the deterministic continuation of a relayed decision. As
+// MTA's remote ped runs on relayed sync state while the game animates it, the Octa's output lock is the explosion
+// lane's dissolve of its laser's blast (the header's precedent paragraph cites MTA).
+constexpr int32_t kGeomOcta[] = {
+    // BeginPlay: the 3 s hum timer and the mesh attached to the spring arm. Its first move() and its Delay(300) land in
+    // refused entries.
+    5940,
+    // ReceiveTick: the mesh turns toward the target's direction, and while charging the ring emitter and charge sound
+    // spawn at the muzzle. `despawn` stays false on a mirror, so the climb branch never runs.
+    4007,
+    // sound: with no target, the hum at the actor.
+    6082,
+    // rotateTo, and the rotation timeline's update (rotA) and finish: the turn toward the target and back.
+    5380, 5935, 6223,
+    // charge: the beam loop, isCharge and the charge timeline played or reversed.
+    5399,
+    // The charge timeline's update (glow power and scale, the beam loop's volume and pitch) and its finish, which
+    // ends the charge and calls fire().
+    2906, 3761,
+    // fire(): lastRot, isAnim, the "fire" montage section, charge(false) and the laser's deferred spawn. The laser's
+    // blast is a host-side birth on a client, dissolved by the explosion lane; the host's arrives as its own.
+    2911,
+    // aggro's Delay(2) resume: the "open" montage section and isAnim, entered after a relayed aggro.
+    30,
+    // "open" montage's finish notify: the sphere's collision refreshed and charge(true).
+    578,
+    // "close" montage's finish notify: isAnim false and the sphere's collision refreshed. A begin-overlap that
+    // refresh re-fires lands in a refused entry (3766).
+    837,
+    // The montage proxies' delegates but the finish notify, four for each of the three sections ("open", "close",
+    // "fire"): completed, blend-out, interrupted and notify-end. Each only copies the notify's name into a
+    // temporary and returns.
+    725, 753, 781, 6224,
+    809, 980, 1008, 1036,
+    1064, 1826, 1854, 1882,
+};
+
 constexpr EntryTable kTables[] = {
     {P::name::NpcClass_Zombie, kZombie, sizeof(kZombie) / sizeof(kZombie[0])},
     {L"npc_zombie_alienSummoner_C", nullptr, 0},
     {L"npc_zombie_corpse_C", nullptr, 0},
     {L"npc_zombie_skerfuro_C", nullptr, 0},
     {P::name::NpcClass_Fossilhound, kFossilhound, sizeof(kFossilhound) / sizeof(kFossilhound[0])},
+    {P::name::NpcClass_GeomOcta, kGeomOcta, sizeof(kGeomOcta) / sizeof(kGeomOcta[0])},
 };
 
 constexpr size_t kTableCount = sizeof(kTables) / sizeof(kTables[0]);

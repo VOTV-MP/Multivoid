@@ -1,8 +1,8 @@
 // coop/dispatch/event_dispatch_entity.cpp -- the entity-lifecycle and held-item reliable kinds:
 // PropStickState, PropRelease, PropSpawn, PropDestroy, PropConvert, PropSnapPos, the
-// owner-entity lane, EntitySpawn and EntityDestroy, the world-actor pair, PyramidGather and
-// ItemActivate. Each case validates at the trust boundary and hands off to its module. See
-// coop/dispatch/event_dispatch.h.
+// owner-entity lane, EntitySpawn and EntityDestroy, GeomOctaEvent, the world-actor pair, PyramidGather and
+// ItemActivate. Each case validates at the trust boundary and hands off to its module. The driven
+// prop's kinds are in event_dispatch_prop_drive.cpp. See coop/dispatch/event_dispatch.h.
 
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
@@ -11,18 +11,21 @@
 
 #include "coop/player/item_activate.h"
 #include "coop/session/join_progress.h"
+#include "coop/dev/dronesack_drill.h"  // NoteWirePropDestroy (the drone sack drill's record)
 #include "coop/creatures/npc_mirror.h"
 #include "coop/creatures/owner_entity_sync.h"
 #include "coop/items/hook_anchor.h"
 #include "coop/items/hook_sync.h"  // the hook lane
+#include "coop/element/bind_wait.h"  // Holds: a held convert is no failed spawn
 #include "coop/element/quiescence_drain.h"  // the pending position corrections
 #include "coop/props/save_identity_bind.h"  // UpdateChipHostPos
 #include "coop/player/players_registry.h"
 #include "coop/world/world_actor_sync.h"  // the world-actor mirror receivers
 #include "coop/creatures/piramid_sync.h"      // the PyramidGather receiver
+#include "coop/creatures/geom_octa_relay.h"   // the Geom Octa's decisions replayed on a client
 #include "coop/props/prop_save_data.h"    // the per-prop save record lane
 #include "coop/props/prop_stick_sync.h"
-#include "coop/props/prop_drive_stream.h"  // the driven-prop end edge
+#include "coop/props/prop_drive_stream.h"  // the driven-prop correction gate
 #include "coop/player/remote_player.h"
 #include "coop/props/prop_element_tracker.h"  // SessionIsHost
 #include "coop/props/remote_prop.h"
@@ -121,16 +124,8 @@ bool HandleEntityEvent(net::Session& session,
             UE_LOGW("event_feed: PropRelease velocity or pose non-finite or out of bounds -- dropping");
             break;
         }
-        // The bounds: real throws peak at a few thousand cm/s and a fast tumble at a few thousand
-        // deg/s; 1e6 is generous headroom, below anything that would teleport a body in one tick.
-        constexpr float kMaxLinVel = 1.0e6f;
-        constexpr float kMaxAngVel = 1.0e6f;
-        if (std::fabs(p.linVelX) > kMaxLinVel ||
-            std::fabs(p.linVelY) > kMaxLinVel ||
-            std::fabs(p.linVelZ) > kMaxLinVel ||
-            std::fabs(p.angVelX) > kMaxAngVel ||
-            std::fabs(p.angVelY) > kMaxAngVel ||
-            std::fabs(p.angVelZ) > kMaxAngVel) {
+        // The bounds (net::kMaxPropLinVel / kMaxPropAngVel): the End a syncing client sends the host meets the same.
+        if (!net::PropVelocityInBounds(p.linVelX, p.linVelY, p.linVelZ, p.angVelX, p.angVelY, p.angVelZ)) {
             UE_LOGW("event_feed: PropRelease velocity out of bounds (lin=(%.1f,%.1f,%.1f) ang=(%.1f,%.1f,%.1f)) -- dropping",
                     p.linVelX, p.linVelY, p.linVelZ,
                     p.angVelX, p.angVelY, p.angVelZ);
@@ -232,7 +227,7 @@ bool HandleEntityEvent(net::Session& session,
             }
         }
         // The host saying an identity is alive now retires that identity's deferred destroy. PropSpawn
-        // and PropDestroy share the Bulk lane in order, and the host's snapshot drain re-validates
+        // and PropDestroy share the Default lane in order, and the host's snapshot drain re-validates
         // liveness per row, so a spawn received after a destroy is newer: applying the older destroy at
         // quiescence would kill the re-creation. Taken here, at the wire edge, since OnSpawn is also
         // replayed with an older arrival's payload (kerfur adoption), which proves nothing about order.
@@ -283,6 +278,7 @@ bool HandleEntityEvent(net::Session& session,
                 dkey.push_back(static_cast<wchar_t>(static_cast<unsigned char>(p.key.data[i])));
             coop::trash_pile_sync::NotifyWireDestroy(dkey);
         }
+        coop::dev::dronesack_drill::NoteWirePropDestroy(p.elementId, p.key.data, p.key.len, msg.senderPeerSlot);
         remote_prop::OnDestroy(p, localPlayer, msg.senderPeerSlot);
         break;
     }
@@ -331,8 +327,10 @@ bool HandleEntityEvent(net::Session& session,
         }
         // OnConvert spawns the pile through the mirror spawn path, which binds it so a later grab
         // resolves its eid. A null return is a failed spawn (a transient class miss), logged since
-        // the re-grab destroy would not propagate.
-        if (!remote_prop::OnConvert(p, localPlayer, msg.senderPeerSlot)) {
+        // the re-grab destroy would not propagate -- unless the convert was held for its eid's
+        // deferred bind (bind_wait), which replays it at the bind: that is no failure.
+        if (!remote_prop::OnConvert(p, localPlayer, msg.senderPeerSlot) &&
+            !coop::element::bind_wait::Holds(p.newEid, static_cast<uint16_t>(net::ReliableKind::PropConvert))) {
             UE_LOGW("event_feed: PropConvert newEid=%u pile spawn FAILED -- a re-grab of this "
                     "pile won't propagate its destroy", p.newEid);
         }
@@ -377,7 +375,7 @@ bool HandleEntityEvent(net::Session& session,
         // pose (MTA: the context is
         // reference/mtasa-blue/Server/mods/deathmatch/logic/CElement.h:220-221, and the check is
         // CanUpdateSync at reference/mtasa-blue/Server/mods/deathmatch/logic/CElement.cpp:1300), so a
-        // sample that crossed a drive's end edge on another lane is judged by what it read, never by
+        // sample that crossed a drive's end edge is judged by what it read, never by
         // when it arrived.
         if (coop::prop_drive_stream::IsCorrectionStale(p.eid, p.driveGen, p.driveOpen != 0)) {
             UE_LOGI("[PILE-B3] CLIENT pos-correction eid=%u gen=%u open=%u dropped on arrival -- older than a "
@@ -466,35 +464,6 @@ bool HandleEntityEvent(net::Session& session,
         });
         break;
     }
-    case net::ReliableKind::PropDriveEnd: {
-        // Host to all: a driven prop's stream closed. Host-only, never relayed; validated here and
-        // applied by the stream's receiver on the game thread.
-        if (msg.payloadLen < sizeof(net::PropDriveEndPayload)) {
-            UE_LOGW("event_feed: PropDriveEnd payload too short (%zu < %zu)",
-                    static_cast<size_t>(msg.payloadLen), sizeof(net::PropDriveEndPayload));
-            break;
-        }
-        net::PropDriveEndPayload p{};
-        std::memcpy(&p, msg.payload, sizeof(p));
-        const float vals[12] = { p.x, p.y, p.z, p.pitch, p.yaw, p.roll,
-                                 p.linVelX, p.linVelY, p.linVelZ, p.angVelX, p.angVelY, p.angVelZ };
-        bool finite = true;
-        for (float v : vals) { if (!std::isfinite(v)) { finite = false; break; } }
-        if (!finite) { UE_LOGW("event_feed: PropDriveEnd floats non-finite -- dropping"); break; }
-        if (std::fabs(p.x) > net::kMaxCoord || std::fabs(p.y) > net::kMaxCoord ||
-            std::fabs(p.z) > net::kMaxCoord) {
-            UE_LOGW("event_feed: PropDriveEnd location out of bounds (%.1f,%.1f,%.1f) -- dropping",
-                    p.x, p.y, p.z);
-            break;
-        }
-        if (p.eid == 0u || p.eid == coop::element::kInvalidId ||
-            !coop::element::Registry::IsAllowedHostAllocatedEid(p.eid)) {
-            UE_LOGW("event_feed: PropDriveEnd eid=0x%08x not a valid host-allocated id -- dropping", p.eid);
-            break;
-        }
-        ::coop::prop_drive_stream::OnEnd(p);   // the router is on the game thread; PropRelease's shape
-        break;
-    }
     case net::ReliableKind::HookAnchorCommit: {
         // Client to host only: a hook that anchored both ends and is being handed over. The
         // arbiter in hook_anchor decides what of the sender's record it is willing to apply.
@@ -562,6 +531,19 @@ bool HandleEntityEvent(net::Session& session,
         ue_wrap::game_thread::Post([pCopy] {
             ::coop::npc_mirror::OnEntityDestroy(pCopy);
         });
+        break;
+    }
+    case net::ReliableKind::GeomOctaEvent: {
+        // A host Geom Octa decision. Exact length (a stated departure from the `<` cases: the payload has no tail);
+        // geom_octa_relay does the per-field validation on the game thread.
+        if (msg.payloadLen != sizeof(net::GeomOctaEventPayload)) {
+            UE_LOGW("event_feed: GeomOctaEvent payload is %zu bytes, not %zu -- dropping",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::GeomOctaEventPayload));
+            break;
+        }
+        net::GeomOctaEventPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        ue_wrap::game_thread::Post([p] { ::coop::geom_octa_relay::OnEvent(p); });
         break;
     }
     case net::ReliableKind::WorldActorSpawn: {

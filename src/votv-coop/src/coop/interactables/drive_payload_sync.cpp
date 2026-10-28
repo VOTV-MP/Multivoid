@@ -2,15 +2,15 @@
 
 #include "coop/interactables/drive_payload_sync.h"
 
+#include "coop/element/bind_wait.h"
 #include "coop/element/registry.h"
-#include "coop/interactables/desk_snd_fx.h"      // ScopedWireApply (the shared desk wire guard)
+#include "coop/interactables/desk_snd_fx.h"     // ScopedWireApply (the shared desk wire guard)
 #include "coop/interactables/drive_rack_sync.h"  // TryConsumeDenyReap: a denied rack take's ghost
 #include "coop/interactables/signal_wire.h"
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
 #include "coop/props/prop_lifecycle.h"           // DestroyLocalProp (the deny-ghost teardown)
 #include "coop/props/prop_save_data.h"           // DeclareClassOwnedElsewhere
-#include "coop/session/join_progress.h"          // a joiner's parked rows wait out its join
 
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
@@ -25,6 +25,7 @@
 #include <cstring>
 #include <cwchar>
 #include <map>
+#include <set>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -41,11 +42,10 @@ using coop::element::LivePropActor;
 
 UE_FACT_FN(kRowUpd, "drive_payload_sync", L"prop_drive_C", L"upd", Declared);
 constexpr int  kTagUpd = 0x44525550;  // 'DRUP'
-constexpr auto kPendingTtl = std::chrono::seconds(10);
 constexpr auto kNoteTtl = std::chrono::seconds(30);
 constexpr auto kSayEvery = std::chrono::seconds(10);
 constexpr auto kClassRetry = std::chrono::seconds(5);
-constexpr size_t kPendingCap = 256;
+constexpr uint16_t kDrivePayload = static_cast<uint16_t>(coop::net::ReliableKind::DrivePayload);
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -59,10 +59,6 @@ struct Kept {
 };
 std::map<uint32_t, Kept> g_lastSent;  // HOST: what every client holds, by what the host last sent or the class default
 std::map<uint32_t, Kept> g_held;      // CLIENT: the host's last row, or this player's own sent row
-
-// A row that arrived before its drive bound here, the newest per eid.
-struct Parked { std::vector<uint8_t> blob; uint8_t senderSlot = 0xFF; Clock::time_point since{}; };
-std::map<uint32_t, Parked> g_parked;
 
 struct Noted { ue_wrap::CachedObjRef ref; Clock::time_point until; };
 std::vector<Noted> g_noted;  // CLIENT: drives this player brought into the world, until their eid binds
@@ -94,6 +90,7 @@ coop::blob_chunks::Assembler g_asm;
 Clock::time_point g_nextSlow{};
 Clock::time_point g_nextStats{};
 Clock::time_point g_nextRefusalSay[coop::net::kMaxPeers] = {};
+std::set<uint32_t> g_wrongClassSaid;  // eids a row named that are no drive here (said once a session)
 Counts g_counts;
 
 enum class Reg : uint8_t { Pending, Registered, Refused };
@@ -251,21 +248,6 @@ void OnUpdPost(const sg::Call& call) {
             eid, keep.name.c_str(), keep.size, row.name.c_str(), row.size);
 }
 
-void Park(uint32_t eid, const std::vector<uint8_t>& blob, uint8_t senderSlot) {
-    if (g_parked.size() >= kPendingCap && g_parked.find(eid) == g_parked.end()) {
-        UE_LOGW("drive_payload_sync: parked-row cap hit -- eid=%u dropped", eid);
-        return;
-    }
-    const bool fresh = g_parked.find(eid) == g_parked.end();
-    Parked& p = g_parked[eid];  // the newest row for an eid wins; it waits from the first
-    p.blob = blob;
-    p.senderSlot = senderSlot;
-    if (fresh) {
-        p.since = Clock::now();
-        UE_LOGI("drive_payload_sync: row for eid=%u parked -- its drive is not bound here yet", eid);
-    }
-}
-
 // A client's row a host could write: finite and non-negative where the download reads it as an amount,
 // and no name leaf the engine interns to NAME_None -- a leaf "None" in any case, which the write refuses
 // and no honest sender carries, since ReadFNameLeaf reads NAME_None as empty.
@@ -332,7 +314,15 @@ bool HostTakeClientRow(coop::net::Session* s, uint32_t eid, void* actor, const S
     return true;
 }
 
-void ApplyBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot, bool fromParked) {
+void ApplyBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot);
+
+// A row held in bind_wait runs again once its drive is bound: the whole of ApplyBlob, so the role gate and the
+// class test judge it again against the world as it is then.
+void ReplayBlob(const uint8_t* bytes, size_t n, int senderSlot) {
+    ApplyBlob(std::vector<uint8_t>(bytes, bytes + n), static_cast<uint8_t>(senderSlot));
+}
+
+void ApplyBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || blob.size() < 5) return;
     uint32_t eid = 0;
@@ -340,11 +330,20 @@ void ApplyBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot, bool fromPa
     const bool host = IsHost(s);
     if (host == (senderSlot == 0)) return;  // rows go client to host and host to client, never relayed
     void* actor = LivePropActor(eid);
-    if (!actor || !DC::IsDriveClass(R::ClassOf(actor))) {
-        if (!fromParked) Park(eid, blob, senderSlot);
+    if (!actor) {
+        // Held for the drive's bind, the newest row winning. Not deferred: no bind is coming for this eid,
+        // so there is nothing to wait for.
+        if (!coop::element::bind_wait::Hold(eid, kDrivePayload, senderSlot, &ReplayBlob, blob.data(), blob.size(),
+                                            /*coalesce=*/true))
+            coop::element::bind_wait::NoteNeverBound(kDrivePayload, eid);
         return;
     }
-    g_parked.erase(eid);
+    if (!DC::IsDriveClass(R::ClassOf(actor))) {
+        // A live actor of another class: an identity defect to see, not a wait.
+        if (g_wrongClassSaid.insert(eid).second)
+            UE_LOGW("drive_payload_sync: a row for eid=%u names a live actor that is not a prop_drive_C -- dropped", eid);
+        return;
+    }
     SD::Row row;
     const std::vector<uint8_t> rb(blob.begin() + 4, blob.end());
     if (!coop::signal_wire::Deserialize(rb, row)) {
@@ -365,38 +364,6 @@ void ApplyBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot, bool fromPa
     if (DC::ReadDriveRow(actor, applied)) Keep(g_held, eid, actor, Hash(applied), &applied);
     ++g_counts.applied;
     UE_LOGI("drive_payload_sync: row applied eid=%u ('%ls', size %.0f) from the host", eid, row.name.c_str(), row.size);
-}
-
-// Parked rows wait for their drive. A joiner's wait starts once its join is over: its drives arrive with the world's
-// snapshot, on another lane.
-void RetryParked() {
-    const auto now = Clock::now();
-    const bool joining = coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle;
-    std::vector<std::pair<uint32_t, Parked>> ready;
-    for (auto it = g_parked.begin(); it != g_parked.end();) {
-        if (LivePropActor(it->first)) {
-            ready.emplace_back(it->first, std::move(it->second));
-            it = g_parked.erase(it);
-        } else if (joining) {
-            it->second.since = now;
-            ++it;
-        } else if (now - it->second.since >= kPendingTtl) {
-            ++g_counts.parkedExpired;
-            UE_LOGW("drive_payload_sync: parked row eid=%u expired (its drive never bound here)", it->first);
-            it = g_parked.erase(it);
-        } else {
-            ++it;
-        }
-    }
-    for (auto& [eid, p] : ready) {
-        const uint64_t waited = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(now - p.since).count());
-        if (waited > g_counts.maxParkedMs) g_counts.maxParkedMs = waited;
-        ++g_counts.parkedApplied;
-        UE_LOGI("drive_payload_sync: parked row eid=%u applied -- its drive bound after %llu ms", eid,
-                static_cast<unsigned long long>(waited));
-        ApplyBlob(p.blob, p.senderSlot, /*fromParked*/true);
-    }
 }
 
 // HOST: a drop intent's drive enrolled; its author's row is the one the host takes for it.
@@ -476,7 +443,6 @@ void Tick() {
     const auto now = Clock::now();
     if (now >= g_nextSlow) {
         g_nextSlow = now + std::chrono::seconds(1);
-        RetryParked();
         SweepNotes();
         SweepKept(g_held);
         SweepKept(g_lastSent);
@@ -485,10 +451,10 @@ void Tick() {
     }
     if (now >= g_nextStats) {
         g_nextStats = now + std::chrono::seconds(60);
-        UE_LOGI("drive_payload_sync: 60s sent=%llu applied=%llu accepted=%llu putBack=%llu ownSent=%llu refused=%llu "
-                "parked=%zu", (unsigned long long)g_counts.sent, (unsigned long long)g_counts.applied,
+        UE_LOGI("drive_payload_sync: 60s sent=%llu applied=%llu accepted=%llu putBack=%llu ownSent=%llu refused=%llu",
+                (unsigned long long)g_counts.sent, (unsigned long long)g_counts.applied,
                 (unsigned long long)g_counts.accepted, (unsigned long long)g_counts.putBack,
-                (unsigned long long)g_counts.ownSent, (unsigned long long)g_counts.refused, g_parked.size());
+                (unsigned long long)g_counts.ownSent, (unsigned long long)g_counts.refused);
     }
 }
 
@@ -496,7 +462,7 @@ void OnDrivePayloadChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlo
     std::vector<uint8_t> blob;
     if (!g_asm.OnChunk(p, senderSlot, blob)) return;
     if (!DC::EnsureResolved()) return;
-    ApplyBlob(blob, senderSlot, /*fromParked*/false);
+    ApplyBlob(blob, senderSlot);
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
@@ -566,7 +532,6 @@ void OnBound(uint32_t eid, void* actor, int senderSlot) {
 void OnPeerLeft(uint8_t slot) {
     if (slot >= coop::net::kMaxPeers) return;
     g_asm.ClearSlot(slot);
-    for (auto it = g_parked.begin(); it != g_parked.end();) it = it->second.senderSlot == slot ? g_parked.erase(it) : std::next(it);
     for (auto it = g_brought.begin(); it != g_brought.end();)
         it = it->second.slot == slot ? g_brought.erase(it) : std::next(it);
     for (auto it = g_broughtPending.begin(); it != g_broughtPending.end();)
@@ -577,7 +542,6 @@ void OnPeerLeft(uint8_t slot) {
 void OnDisconnect() {
     g_lastSent.clear();
     g_held.clear();
-    g_parked.clear();
     g_noted.clear();
     g_brought.clear();
     g_broughtPending.clear();
@@ -589,6 +553,7 @@ void OnDisconnect() {
     g_applying = false;
     g_counts = Counts{};
     for (auto& t : g_nextRefusalSay) t = {};
+    g_wrongClassSaid.clear();
 }
 
 Counts LaneCounts() { return g_counts; }

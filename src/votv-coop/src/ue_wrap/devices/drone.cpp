@@ -336,4 +336,21 @@ void RepointContainer(void* drone) {
     }
 }
 
+void* ContainerOf(void* drone) {
+    if (!drone) return nullptr;
+    EnsureFxResolved();   // sets the offset (its FX members are not needed here)
+    if (g_containerOff < 0) return nullptr;
+    void* const c = *reinterpret_cast<void* const*>(reinterpret_cast<const char*>(drone) + g_containerOff);
+    return c && R::IsLive(c) ? c : nullptr;
+}
+
+void* OfSellLocation(void* sellLocation) {
+    static R::InstanceOffset s_droneOff{L"drone"};
+    if (!sellLocation) return nullptr;
+    const int32_t off = s_droneOff.Of(sellLocation);
+    if (off < 0) return nullptr;
+    void* const d = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(sellLocation) + off);
+    return d && R::IsLive(d) ? d : nullptr;
+}
+
 }  // namespace ue_wrap::drone

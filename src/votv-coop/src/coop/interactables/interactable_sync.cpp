@@ -7,6 +7,7 @@
 
 #include "coop/interactables/interactable_sync.h"
 #include "coop/interactables/interactable_channel.h"  // the generic engine: Adapter and Channel
+#include "coop/interactables/swinger_join_pose.h"     // a joiner's open lids at their host's places
 
 #include "ue_wrap/devices/appliance.h"     // the six-class save-actor toggle family
 #include "ue_wrap/devices/door.h"
@@ -318,21 +319,39 @@ std::wstring ApplianceKey(void* a) { return g_appliance.KeyForActor(a); }
 std::wstring GarageKey(void* g) { return g_garage.KeyForActor(g); }
 std::wstring DoorBoxKey(void* box) { return g_doorBox.KeyForActor(box); }
 std::wstring ContainerKey(void* swinger) { return g_container.KeyForActor(swinger); }
+
+void* ContainerActor(const std::wstring& key) {
+    return key.empty() || !ue_wrap::swinger::EnsureResolved() ? nullptr : g_container.ActorForKey(key);
+}
+void ContainerLids(std::vector<std::pair<std::wstring, void*>>& out) {
+    if (ue_wrap::swinger::EnsureResolved()) g_container.LiveIndexed(out);
+}
+
+uint64_t ContainerIndexPasses() { return g_container.Passes(); }
+
+bool ContainerWaitSettled(uint64_t queuedAtPass) { return g_container.WaitSettled(queuedAtPass); }
+
+std::chrono::steady_clock::duration ContainerWaitBackstop() { return kPendingTTL; }
+
 std::wstring OvenKey(void* oven) { return g_oven.KeyForActor(oven); }
 
 std::wstring LightSwitchKey(void* sw) { return g_light.KeyForActor(sw); }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
     for (Channel* ch : kChannels) ch->QueueConnectBroadcastForSlot(peerSlot);
+    // After the lids' open or closed: the open ones' places, which that snapshot does not carry.
+    coop::swinger_join_pose::QueueConnectBroadcastForSlot(g_container.GetSession(), peerSlot);
 }
 
 void Tick() {
     for (Channel* ch : kChannels) ch->Tick();
+    coop::swinger_join_pose::Tick();   // a joiner's parked lid places, once per container index pass
     ue_wrap::door_box::TickVerify();  // force-snap far-frozen locker/console swings
 }
 
 void OnDisconnect() {
     for (Channel* ch : kChannels) ch->OnDisconnect();
+    coop::swinger_join_pose::OnDisconnect();
     ue_wrap::door_box::OnDisconnect();  // drop the mid-swing verify entries
 }
 

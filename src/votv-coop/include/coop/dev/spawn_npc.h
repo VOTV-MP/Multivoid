@@ -38,6 +38,10 @@ void* SpawnAt(const wchar_t* className, const ue_wrap::FVector& at);
 void SpawnKillerWisp();
 void SpawnVentCrawler();
 
+// The Geom Octahedron is an ACharacter and rides the host-authoritative NPC spawn/pose/destroy
+// lane. It is intentionally exposed as an entity tool (not an invented event-table row).
+void SpawnGeomOcta();
+
 // OWNER-ENTITY lane test (F1 > Content > Entities): spawn an eyer_C in front of the local player.
 // eyer is NOT npc-allowlisted by design -- the owner_entity_sync BeginDeferred observer catches it
 // as a LOCALLY-OWNED entity and announces it, so every peer materializes a brain-parked,

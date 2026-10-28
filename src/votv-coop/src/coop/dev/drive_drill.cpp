@@ -8,6 +8,7 @@
 #include "coop/dev/director/director.h"
 #include "coop/dev/director/routes.h"
 #include "coop/dev/drill_props.h"
+#include "coop/element/bind_wait.h"
 #include "coop/element/registry.h"
 #include "coop/interactables/drive_payload_sync.h"
 #include "coop/interactables/drive_sync.h"
@@ -45,6 +46,7 @@
 namespace coop::dev::drive_drill {
 namespace {
 
+namespace BW = coop::element::bind_wait;
 namespace DC = ue_wrap::drive_chain;
 namespace DE = ue_wrap::drive_eraser;
 namespace DP = coop::drive_payload_sync;
@@ -303,13 +305,13 @@ void ClientTick() {
             if (Expired(kArmBoundMs)) Fail("no drive here reads the host's fixture row 60 s after this world was ready");
             return;
         }
-        if (DP::LaneCounts().parkedExpired > 0) {
-            Fail("a drive row the host sent expired here before its drive bound");
+        if (BW::DropsNeverBound() > 0 || BW::GivenUpCount() > 0 || BW::RefusedCount() > 0) {
+            Fail("a message waiting in bind_wait was dropped here before its prop bound (never bound, given up or refused)");
             return;
         }
         g_fixture = found.front().actor;
-        UE_LOGI("[DRIVE-DRILL] client: the fixture reads '%ls' here (a row parked for at most %llu ms)", kFixture,
-                static_cast<unsigned long long>(DP::LaneCounts().maxParkedMs));
+        UE_LOGI("[DRIVE-DRILL] client: the fixture reads '%ls' here (bind_wait: %u held, %u replayed, none dropped)",
+                kFixture, BW::HeldCount(), BW::ReplayedCount());
         Next(Step::PutBack);
         return;
     }

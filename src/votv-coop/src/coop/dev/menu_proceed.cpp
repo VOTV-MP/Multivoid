@@ -4,15 +4,15 @@
 // a special early-boot widget, not ui_menu_C, carrying no standard UButtons, and VOTV's menu
 // cursor is raw-input driven, so synthetic OS clicks do not activate it either.
 //
-// So instead of fighting OMEGA this goes the other way: wait until the game reaches GAMEPLAY
-// (the harness boots past OMEGA with StartFreshGame or LoadStorySave), then issue VOTV's own
+// So instead of fighting OMEGA this goes the other way: from whatever world the game boots into
+// (the preload level, a fresh game, a loaded save), issue VOTV's own
 // AmainGamemode_C::transition("/Game/menu"). Quitting to the menu loads the real ui_menu_C main
 // menu without re-showing OMEGA, and our ui_menu_C::Tick observer (coop::multiplayer_menu)
 // injects the MULTIPLAYER button. A transparent ProcessEvent bypass covers the dying-world
 // teardown, where our detour otherwise hangs on the EndPlay storm (autotest_menutravel_probe is
 // what shows that); it auto-expires, so the observers re-engage at the loaded menu.
 //
-// Requires the launch to boot gameplay (scenario=play, ideally fresh_boot=1).
+// Needs no gameplay boot: any world with a live gamemode works, and the menu level itself skips this.
 
 #include "coop/dev/menu_proceed.h"
 
@@ -44,19 +44,44 @@ namespace {
 
 std::atomic<bool> g_running{false};
 
-// Read the live UWorld leaf name on the game thread ("<null>" if none).
-std::wstring WorldNameGT() {
+// What the thread reads off the game each poll. Every field is read on the game thread.
+struct Probe {
+    std::wstring world = L"<null>";   // the live UWorld leaf name
+    bool gamemodeLive = false;        // a live mainGamemode_C: the object transition() is called on
+    bool menuLive     = false;        // a live ui_menu_C: the main menu is ticking
+    bool injected     = false;        // our MULTIPLAYER button is on that menu
+};
+
+// Run `body` on the game thread and wait for it. False when the game thread did not get to it
+// within the wait (a long script stall, or the transparent bypass, which skips the task pump).
+template <typename Body>
+bool OnGameThread(Body body) {
     auto done = std::make_shared<std::atomic<int>>(0);
-    auto out = std::make_shared<std::wstring>(L"<null>");
-    GT::Post([done, out] {
-        if (void* w = R::FindObjectByClass(prof::name::WorldClass)) *out = R::ToString(R::NameOf(w));
-        done->store(1);
-    });
+    GT::Post([done, body] { body(); done->store(1); });
     for (int i = 0; i < 1600 && done->load() == 0; ++i) ::Sleep(5);
-    return *out;
+    return done->load() != 0;
 }
 
-bool InGameplay(const std::wstring& world) { return world.find(L"ntitled") != std::wstring::npos; }
+// One reading. With `inject` it first forces the MULTIPLAYER inject onto the live menu, so the
+// confirmation below reads the result of that same task. False when the reading did not happen.
+bool ReadProbe(Probe& out, bool inject) {
+    auto p = std::make_shared<Probe>();
+    const bool ok = OnGameThread([p, inject] {
+        if (void* w = R::FindObjectByClass(prof::name::WorldClass)) p->world = R::ToString(R::NameOf(w));
+        void* gm = R::FindObjectByClass(prof::name::GamemodeClass);
+        p->gamemodeLive = gm && R::IsLive(gm);
+        void* menu = R::FindObjectByClass(prof::name::UiMenuClass);
+        p->menuLive = menu && R::IsLive(menu);
+        if (inject && p->menuLive) coop::multiplayer_menu::ForceInjectNow();
+        p->injected = p->menuLive && coop::multiplayer_menu::IsInjectedInto(menu);
+    });
+    if (ok) out = *p;
+    return ok;
+}
+
+// The menu level is the world named "menu"; a world not yet created reads "<null>".
+bool IsMenuLevel(const std::wstring& world) { return world == L"menu"; }
+bool HasWorld(const std::wstring& world) { return world != L"<null>"; }
 
 // AmainGamemode_C::transition(FName LevelName) -- VOTV's own level travel. Game thread.
 bool CallTransition(const std::wstring& level) {
@@ -70,40 +95,81 @@ bool CallTransition(const std::wstring& level) {
     return Call(gm, f);
 }
 
+// Every wait below is a poll of the thing it waits for, once a second, bounded by the same number
+// of tries; a bound that runs out ends the run with a FAIL line and never prints READY.
+constexpr int kMaxTries = 90;
+
+void Fail(const char* step, const Probe& p) {
+    UE_LOGE("menu_proceed FAIL: %s (world='%ls' gamemode=%d menu=%d injected=%d)", step,
+            p.world.c_str(), p.gamemodeLive ? 1 : 0, p.menuLive ? 1 : 0, p.injected ? 1 : 0);
+    g_running.store(false);
+}
+
 DWORD WINAPI Thread(LPVOID) {
-    // 1. Wait for gameplay (the harness boots past OMEGA into untitled_1).
-    std::wstring w;
-    for (int i = 0; i < 90 && !coop::shutdown::IsShuttingDown(); ++i) {
-        w = WorldNameGT();
-        if (InGameplay(w)) break;
-        ::Sleep(1000);
+    Probe p;
+    // 1+2. The transition is ready when a mainGamemode_C is live and the world is a real one other
+    // than the menu level: whichever world the game booted into (the fresh game's, the preload level,
+    // a loaded save) the game's own transition travels from it. A world that already IS the menu level
+    // skips the transition. The call is retried each second until it dispatches. The bypass for the
+    // dying-world teardown is armed in the same game-thread task as the call and cleared again if
+    // the call did not dispatch, so a refused attempt leaves the task pump running.
+    bool dispatched = false;
+    bool ready = false;
+    for (int i = 0; i < kMaxTries && !dispatched && !coop::shutdown::IsShuttingDown(); ++i) {
+        if (i > 0) ::Sleep(1000);
+        if (!ReadProbe(p, false)) continue;
+        if (IsMenuLevel(p.world)) {
+            UE_LOGW("menu_proceed: the world is already the menu level -- no transition needed");
+            dispatched = true;
+            break;
+        }
+        if (!HasWorld(p.world) || !p.gamemodeLive) continue;
+        if (!ready) {
+            ready = true;
+            UE_LOGW("menu_proceed: world='%ls' with a live gamemode -- transitioning to /Game/menu for the menu shot",
+                    p.world.c_str());
+        }
+        auto ok = std::make_shared<std::atomic<int>>(0);
+        if (!OnGameThread([ok] {
+                GT::SetTransparentBypass(14000);
+                if (CallTransition(L"/Game/menu")) ok->store(1);
+                else GT::SetTransparentBypass(0);
+                UE_LOGW("menu_proceed: armed bypass(14s) + transition(/Game/menu) dispatched=%d",
+                        ok->load());
+            }))
+            continue;
+        dispatched = ok->load() != 0;
     }
-    if (!InGameplay(w)) {
-        UE_LOGW("menu_proceed: never reached gameplay (world='%ls') -- cannot transition to menu", w.c_str());
-        g_running.store(false);
+    if (!dispatched) {
+        Fail(ready ? "the transition never dispatched" : "no world with a live gamemode to travel from", p);
         return 0;
     }
-    UE_LOGW("menu_proceed: in gameplay (world='%ls') -- transitioning to /Game/menu for the menu shot", w.c_str());
 
-    // 2. Arm a transparent bypass for the dying-world teardown, then transition. The
-    // bypass auto-expires after 14 s so our layer is active again at the loaded menu.
-    auto ok = std::make_shared<int>(0);
-    GT::Post([ok] {
-        GT::SetTransparentBypass(14000);
-        if (CallTransition(L"/Game/menu")) *ok = 1;
-        UE_LOGW("menu_proceed: armed bypass(14s) + transition(/Game/menu) dispatched=%d", *ok);
-    });
+    // 3. The menu is up when the world is the menu level, a ui_menu_C is live and the bypass has expired
+    // (a task posted under the bypass does not run, so it is checked first).
+    bool menuUp = false;
+    for (int i = 0; i < kMaxTries && !menuUp && !coop::shutdown::IsShuttingDown(); ++i) {
+        ::Sleep(1000);
+        if (GT::TransparentBypassActive()) continue;
+        menuUp = ReadProbe(p, false) && IsMenuLevel(p.world) && p.menuLive;
+    }
+    if (!menuUp) {
+        Fail("the main menu never came up after the transition", p);
+        return 0;
+    }
 
-    // 3. Wait for the bypass to expire + the menu to finish loading (our layer active).
-    ::Sleep(15000);
-
-    // 4. Force the inject DETERMINISTICALLY -- don't rely on the Tick observer firing
-    // in the brief window before our-layer-resume reverts the menu (~25 s+ after the
-    // transition). ForceInjectNow injects onto the live ui_menu_C right now.
-    GT::Post([] { coop::multiplayer_menu::ForceInjectNow(); });
-
-    // 5. Let the inject land, then signal the capture (well before the menu reverts).
-    ::Sleep(2500);
+    // 4. Force the inject DETERMINISTICALLY -- don't rely on the Tick observer firing in the brief
+    // window before our-layer-resume reverts the menu (~25 s+ after the transition) -- and signal the
+    // capture once the inject is confirmed on that menu.
+    bool injected = false;
+    for (int i = 0; i < kMaxTries && !injected && !coop::shutdown::IsShuttingDown(); ++i) {
+        if (i > 0) ::Sleep(500);
+        injected = ReadProbe(p, true) && p.injected;
+    }
+    if (!injected) {
+        Fail("the MULTIPLAYER button was not injected", p);
+        return 0;
+    }
     UE_LOGW("menu_proceed: MENU-SHOT READY");  // capture the window here
     g_running.store(false);
     return 0;

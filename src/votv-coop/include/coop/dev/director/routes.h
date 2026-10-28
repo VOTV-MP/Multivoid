@@ -6,6 +6,7 @@
 
 #include "ue_wrap/core/types.h"
 
+#include <string>
 #include <vector>
 
 namespace coop::director {
@@ -30,8 +31,11 @@ bool RouteInLegs(void* player, const ue_wrap::FVector& from, const ue_wrap::FVec
 // The `count` points of a ring of `ringCm` about `about`, at the height `player` stands at, that a route from `player`
 // reaches, shortest route first: the legs toward the ring's centre walked once (RouteInLegs' rule; toward its points
 // when the centre ends no route), each point asked from the start of the leg that reaches the ring. Empty when
-// `player` does not read or no route reaches one.
+// `player` does not read or no route reaches one. `ringZ`, when given, is the height of the ring's centre and points in
+// place of the player's. `trace`, when given, is appended a line per leg walked (where it starts and ends, or that it
+// found no route) and per ring point asked, so a dev run can say where a route stops; the caller prints it.
 std::vector<ue_wrap::FVector> ReachableStandpoints(void* player, const ue_wrap::FVector& about, float ringCm, int count,
-                                                   float reachCm);
+                                                   float reachCm, const float* ringZ = nullptr,
+                                                   std::string* trace = nullptr);
 
 }  // namespace coop::director

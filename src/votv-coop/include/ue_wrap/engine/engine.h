@@ -148,8 +148,9 @@ bool SetActorTickEnabled(void* actor, bool enabled);
 // below. Game thread.
 bool SetActorHiddenInGame(void* actor, bool hidden);
 
-// AActor::SetActorEnableCollision; pair it with a hide so an invisible mirror is neither grabbable
-// nor physics-active. Game thread.
+// AActor::SetActorEnableCollision: the whole actor's collision flag, query and physics. A mirror that
+// must be neither grabbable nor physics-active while hidden takes it (mirror_defer's Off mode); one that
+// must still land on the floor keeps its physics through SetActorRootCollisionEnabled. Game thread.
 bool SetActorEnableCollision(void* actor, bool enabled);
 
 // AActor::CustomTimeDilation, the actor's own multiplier on its tick delta (the world's global dilation
@@ -201,5 +202,11 @@ void RotatorToQuat(float pitchDeg, float yawDeg, float rollDeg,
 // The inverse, FQuat to FRotator in UE4.27's convention (the pitch singularity handled as the
 // engine does, at +-90 degrees). The quaternion is taken as a unit one.
 FRotator QuatToRotator(float qx, float qy, float qz, float qw);
+
+// The angle between two orientations, degrees, 0 to 180: 2*acos(|dot|) of their quaternions, computed in double
+// on quaternions re-normalised there, so two reads of one orientation give 0 and not the float rounding of a
+// near-1 dot (about 0.05 degrees). Rotators near pitch +-90 degrees are not unique per orientation, so this is
+// the comparison to use, never a difference of pitch, yaw and roll.
+float RotatorAngleDeg(const FRotator& a, const FRotator& b);
 
 }  // namespace ue_wrap::engine

@@ -21,6 +21,7 @@
 #include "coop/creatures/npc_sync.h"
 #include "coop/world/creature_event_relay.h"  // OnMirrorBound: the host's event count for a new mirror
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/actors/kerfur.h"  // NeutralizeAiTimers
 #include "ue_wrap/actors/spawner_stamp.h"
@@ -28,7 +29,7 @@
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/actors/puppet.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/sdk_profile.h"  // NpcClass_Wisp (the wisp mirror keeps its actor tick)
+#include "ue_wrap/core/sdk_profile.h"  // NpcClass_Wisp, NpcClass_GeomOcta (the mirrors that keep their actor tick)
 #include "ue_wrap/core/types.h"
 
 #include <cmath>
@@ -58,6 +59,75 @@ void*    g_stampDropClass   = nullptr;
 uint64_t g_stampDropListing = 0;
 
 using coop::element::NpcMirrors;   // canonical accessor (coop/element/mirror_managers.h)
+
+// The wisp's landing replay: its landing gate reads a floor the parked movement never updates, so the pose drive
+// replays that edge (the landing drive on the grounded edge) once the mirror is marked. A local shy despawn makes
+// the host's later EntityDestroy a no-op.
+void ArmWispLanding(coop::element::ElementId eid) {
+    if (coop::element::Npc* el = NpcMirrors().Get(eid)) {
+        el->MarkWispMirror();
+    } else {
+        // Unreachable after a successful install; a silent miss would be a mirror that never
+        // fades in.
+        UE_LOGW("npc-sync[client OnSpawn]: wisp mirror eid=%u not retrievable post-install -- "
+                "landing drive NOT armed (mirror would stay faded-out)", eid);
+    }
+}
+
+// What the mirror install parks, by the spawned class's name. A class with a row may keep its actor tick (the
+// movement tick is always parked: an ACharacter mirror whose movement ticks falls under gravity between pose packets)
+// and may arm something on its mirror; every other class takes both ticks off. The wisp keeps its actor tick: its
+// ReceiveTick is per-viewer cosmetics (fade-in, bob, the shy despawn), not AI. The Octa keeps it for its turn toward
+// the target and its charge rings (its decisions are parked by npc_mirror_brain); it needs no landing replay, since
+// the mirror spawns at the host's current pose and the pose stream carries it down.
+struct MirrorTickRow {
+    const wchar_t* cls;
+    bool           keepActorTick;
+    void         (*onMirror)(coop::element::ElementId eid);   // null: nothing to arm
+};
+constexpr MirrorTickRow kMirrorTicks[] = {
+    {ue_wrap::profile::name::NpcClass_Wisp,     true, &ArmWispLanding},
+    {ue_wrap::profile::name::NpcClass_GeomOcta, true, nullptr},
+};
+
+constexpr size_t kMirrorTickCount = sizeof(kMirrorTicks) / sizeof(kMirrorTicks[0]);
+
+// The rows' class names as engine FNames, resolved once (as npc_mirror_brain_table resolves its tables'), so a class is
+// told from a row by two integers and no spawn renders a name. Null until every name has resolved.
+const R::FName* MirrorTickNames() {
+    static bool resolved = false;
+    static R::FName held[kMirrorTickCount];
+    if (!resolved) {
+        if (!ue_wrap::fname_utils::Resolved()) return nullptr;
+        for (size_t i = 0; i < kMirrorTickCount; ++i) {
+            held[i] = ue_wrap::fname_utils::StringToFName(kMirrorTicks[i].cls);
+            if (held[i].ComparisonIndex == 0 && held[i].Number == 0) return nullptr;
+        }
+        resolved = true;
+    }
+    return held;
+}
+
+// The row of the spawned actor's class, or null for a class with none. While the names cannot yet be resolved the class
+// is told by its rendered name instead (said once), so a class that has a row gets it either way.
+const MirrorTickRow* MirrorTickRowOf(void* actor) {
+    const R::FName& name = R::NameOf(R::ClassOf(actor));
+    const R::FName* names = MirrorTickNames();
+    if (!names) {
+        static bool said = false;
+        if (!said) {
+            said = true;
+            UE_LOGW("npc-sync[client OnSpawn]: the tick table's class names are not resolved -- a mirror is told by "
+                    "its rendered name");
+        }
+        for (const MirrorTickRow& row : kMirrorTicks)
+            if (R::NameEquals(name, row.cls)) return &row;
+        return nullptr;
+    }
+    for (size_t i = 0; i < kMirrorTickCount; ++i)
+        if (name.ComparisonIndex == names[i].ComparisonIndex && name.Number == names[i].Number) return &kMirrorTicks[i];
+    return nullptr;
+}
 
 // A save-persisted NPC the joining client also loaded from the transferred save is adopted by
 // class match through npc_adoption's deferred poll: the local twin spawns on an invisible path
@@ -326,34 +396,26 @@ bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t 
     coop::creature_event_relay::OnMirrorBound(eid, spawned);
     // The presentation its refused BeginPlay would have set up.
     coop::npc_mirror_brain::SetUpPresentation(spawned, coop::npc_mirror_brain::Origin::Spawned);
-    // Parked so the streamed pose drive is authoritative: movement and actor ticks off (the AnimBP
-    // still ticks and reads the velocity the drive writes). The wisp keeps its actor tick: its
-    // ReceiveTick is per-viewer cosmetics (fade-in, bob, the shy despawn), not AI, so only its
-    // movement parks; its landing gate reads a floor the parked movement never updates, so the pose
-    // drive replays that edge (MarkWispMirror, then the landing drive on the grounded edge). A
-    // local shy despawn makes the host's later EntityDestroy a no-op.
-    const bool wispMirror = (classW == ue_wrap::profile::name::NpcClass_Wisp);
-    if (wispMirror) {
+    // Parked so the streamed pose drive is authoritative: the movement tick is always off, the actor
+    // tick off unless the class's row (kMirrorTicks) keeps it (the AnimBP still ticks and reads the
+    // velocity the drive writes).
+    const MirrorTickRow* tickRow = MirrorTickRowOf(spawned);
+    if (tickRow && tickRow->keepActorTick) {
         ue_wrap::puppet::DisableMovementTick(spawned);
-        if (coop::element::Npc* el = coop::element::NpcMirrors().Get(eid)) {
-            el->MarkWispMirror();
-        } else {
-            // Unreachable after a successful install; a silent miss would be a mirror that never
-            // fades in.
-            UE_LOGW("npc-sync[client OnSpawn]: wisp mirror eid=%u not retrievable post-install -- "
-                    "landing drive NOT armed (mirror would stay faded-out)", eid);
-        }
     } else {
         ue_wrap::puppet::DisableCharacterTicks(spawned);
     }
+    if (tickRow && tickRow->onMirror) tickRow->onMirror(eid);
     // Disabling the ticks does not stop timers: a kerfur arms three looping ones that keep running
     // local AI on a parked mirror. A no-op on other classes.
     ue_wrap::kerfur::NeutralizeAiTimers(spawned);
 
     // Hidden until the reveal, after the install so it is enumerable. A fresh-spawn NPC has no
-    // local twin, so it is confirmed and revealed at the curtain lift; collision off, so the
-    // invisible capsule cannot block the player.
-    coop::mirror_defer::OnMirrorSpawned(elementId, spawned, /*collisionOff=*/true, /*holdUntilQuiescence=*/false);
+    // local twin, so it is confirmed and revealed at the curtain lift; collision Off, not PhysicsOnly:
+    // the mirror is parked, so it has no floor to keep, and a PhysicsOnly capsule could shove local
+    // props or block the player.
+    coop::mirror_defer::OnMirrorSpawned(elementId, spawned, coop::mirror_defer::HideCollision::Off,
+                                        /*holdUntilQuiescence=*/false);
 
     UE_LOGI("npc-sync[client OnSpawn]: materialized mirror eid=%u class='%ls' actor=%p loc=(%.0f, %.0f, %.0f)",
             elementId, classW.c_str(), spawned, locX, locY, locZ);

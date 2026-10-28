@@ -17,9 +17,11 @@
 #include "ue_wrap/devices/serverbox.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_component.h"
+#include "ue_wrap/world/economy.h"
 
 #include <windows.h>
 
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <vector>
@@ -39,10 +41,16 @@ constexpr int      kWalkDeadlineS = 300;
 constexpr uint64_t kMirrorBoundMs = 60000;   // CLIENT: world-ready to the host's break shown here
 constexpr uint64_t kRowBoundMs    = 30000;   // CLIENT: its repair to the host's row showing it
 constexpr uint64_t kRepairBoundMs = 600000;  // HOST: its break to the client's repair (the walk included)
+constexpr uint64_t kBalanceBoundMs = 10000;  // CLIENT: the host's row showing the fix to its balance moving
+// HOST, runred: its break to its own verdict. The client carries the red (its AwaitBalance FAIL, after the
+// walk and the balance wait); the host's line only follows once that bound is past.
+constexpr uint64_t kRedBoundMs    = kWalkDeadlineS * 1000ull + kBalanceBoundMs + 110000;
 constexpr uint64_t kCheckEveryMs  = 250;
+// The repair minigame's pay (serverbox_sync.cpp, PayRepairReward): 15, or 50 in lol mode.
+constexpr int32_t  kPayPlain = 15, kPayLol = 50;
 
 enum class HStep : uint8_t { Wait, Break, AwaitRepair, Done };
-enum class CStep : uint8_t { Ready, Find, OwnBreak, Walk, Repair, AwaitRow, Done };
+enum class CStep : uint8_t { Ready, Find, OwnBreak, Walk, Repair, AwaitRow, AwaitBalance, Done };
 HStep    g_host = HStep::Wait;
 CStep    g_client = CStep::Ready;
 uint64_t g_stepMs = 0;
@@ -50,6 +58,8 @@ uint64_t g_nextCheckMs = 0;
 int      g_session = 1;
 ue_wrap::CachedObjRef g_box;
 int32_t  g_boxIdx = -1;
+int32_t  g_hostBefore = 0;   // HOST: its points when it broke the box
+int32_t  g_clientBefore = 0; // CLIENT: its points when it saw the host's break (b0)
 std::shared_ptr<coop::director::BackgroundWalk> g_walk;
 
 const std::string& Mode() {
@@ -57,7 +67,8 @@ const std::string& Mode() {
     return s;
 }
 bool Join() { return Mode() == "join"; }
-bool Enabled() { return Mode() == "run" || Join(); }
+bool Red() { return Mode() == "runred"; }   // the client ends the widget with a failed repair: nothing is paid
+bool Enabled() { return Mode() == "run" || Red() || Join(); }
 bool Expired(uint64_t bound) { return ::GetTickCount64() - g_stepMs > bound; }
 
 void Fail(const char* what) {
@@ -75,6 +86,12 @@ void HGo(HStep s) { g_host = s; g_stepMs = ::GetTickCount64(); }
 void CGo(CStep s) { g_client = s; g_stepMs = ::GetTickCount64(); }
 
 bool Resolved() { return SB::EnsureBreakResolved() && SB::EnsureRepairResolved(); }
+
+void FailFmt(const char* fmt, int a, int b) {
+    char buf[160];
+    std::snprintf(buf, sizeof(buf), fmt, a, b);
+    Fail(buf);
+}
 
 
 // HOST: the first healthy box with no upgrades and a bay (its take-out component) breaks on its own verb.
@@ -125,6 +142,10 @@ void HostTick(coop::net::Session* s) {
             g_host = HStep::Done;
             return;
         }
+        if (!ue_wrap::economy::ReadPoints(&g_hostBefore)) {
+            Abandon("the host's points did not read at the break");
+            return;
+        }
         HGo(HStep::AwaitRepair);
         return;
     case HStep::AwaitRepair: {
@@ -133,8 +154,42 @@ void HostTick(coop::net::Session* s) {
             Abandon("the host's box died");
             return;
         }
+        int32_t after = 0;
         if (SB::ReadIsBroken(box)) {
-            if (Expired(kRepairBoundMs)) Fail("the client's repair never reached the host");
+            if (Red() && Expired(kRedBoundMs)) {
+                // The client's failed repair pays nothing; its own FAIL came first, this is the host's reading.
+                const SS::Counts hc = SS::LaneCounts();
+                ue_wrap::economy::ReadPoints(&after);
+                UE_LOGI("[SERVER-DRILL] host paid %d (lol=%d) for the client's repair (points %d -> %d)",
+                        hc.lastPaid, hc.lastPaidLol ? 1 : 0, g_hostBefore, after);
+                FailFmt("the client's repair never fixed the box, the host paid %d (lol=%d)", hc.lastPaid,
+                        hc.lastPaidLol ? 1 : 0);
+            } else if (!Red() && Expired(kRepairBoundMs)) {
+                Fail("the client's repair never reached the host");
+            }
+            return;
+        }
+        if (!ue_wrap::economy::ReadPoints(&after)) {
+            Abandon("the host's points did not read after the fix");
+            return;
+        }
+        const SS::Counts hc = SS::LaneCounts();
+        UE_LOGI("[SERVER-DRILL] host paid %d (lol=%d) for the client's repair (points %d -> %d)", hc.lastPaid,
+                hc.lastPaidLol ? 1 : 0, g_hostBefore, after);
+        if (hc.lastRecord != 0) {
+            // A record's bonus rides the widget's clock, which the client cannot see: both peers compare the base pay.
+            char buf[120];
+            std::snprintf(buf, sizeof(buf), "a record was paid (%d), the fixture's widget ticked", hc.lastRecord);
+            Abandon(buf);
+            return;
+        }
+        const int32_t want = hc.lastPaidLol ? kPayLol : kPayPlain;
+        if (hc.lastPaid != want) {
+            FailFmt("the host paid %d for the client's repair, its tier pays %d", hc.lastPaid, want);
+            return;
+        }
+        if (after - g_hostBefore != hc.lastPaid) {
+            FailFmt("the host's points moved %d, the repair paid %d", after - g_hostBefore, hc.lastPaid);
             return;
         }
         UE_LOGI("[SERVER-DRILL] host DONE in session %d (run): box %d fixed by the client's repair (%llu run here)",
@@ -194,7 +249,12 @@ void ClientTick(void* player) {
             g_client = CStep::Done;
             return;
         }
-        UE_LOGI("[SERVER-DRILL] client: box %d broken here with the host's repair type", idx);
+        if (!ue_wrap::economy::ReadPoints(&g_clientBefore)) {
+            Abandon("this client's points did not read at the host's break");
+            return;
+        }
+        UE_LOGI("[SERVER-DRILL] client: box %d broken here with the host's repair type (points %d)", idx,
+                g_clientBefore);
         CGo(CStep::OwnBreak);
         return;
     }
@@ -239,6 +299,16 @@ void ClientTick(void* player) {
     case CStep::Repair: {
         void* box = g_box.Get();
         const uint64_t sent = c.repairsSent;
+        if (Red()) {
+            // A failed repair: end(false) never calls fix, so nothing is sent and nothing is paid.
+            if (!box || !SB::CallRepairEnd(box, false)) {
+                Abandon("the repair widget's end did not run");
+                return;
+            }
+            UE_LOGI("[SERVER-DRILL] client: the repair widget ended with a failed repair (red arm)");
+            CGo(CStep::AwaitBalance);
+            return;
+        }
         if (!box || !SB::CallRepairEnd(box, true)) {
             Abandon("the repair widget's end did not run");
             return;
@@ -257,9 +327,26 @@ void ClientTick(void* player) {
             if (Expired(kRowBoundMs)) Fail("the host's row never showed the box fixed");
             return;
         }
-        UE_LOGI("[SERVER-DRILL] client DONE in session %d (run): the break and its type came from the host, its own "
-                "break was refused, and its repair ran on the host and came back -- PASS", g_session);
-        g_client = CStep::Done;
+        CGo(CStep::AwaitBalance);
+        return;
+    }
+    case CStep::AwaitBalance: {
+        // The host pays the repair; its balance reaches this client by the balance lane, b0 + the pay.
+        const int32_t want = SS::LaneCounts().lastSentLol ? kPayLol : kPayPlain;
+        int32_t now = 0;
+        const bool read = ue_wrap::economy::ReadPoints(&now);
+        if (read && now == g_clientBefore + want) {
+            UE_LOGI("[SERVER-DRILL] client balance %d -> %d (+%d) as the host paid", g_clientBefore, now,
+                    now - g_clientBefore);
+            UE_LOGI("[SERVER-DRILL] client DONE in session %d (run): the break and its type came from the host, its "
+                    "own break was refused, and its repair ran on the host and came back, paid=%d -- PASS",
+                    g_session, now - g_clientBefore);
+            g_client = CStep::Done;
+            return;
+        }
+        if (Expired(kBalanceBoundMs))
+            FailFmt("the client's balance moved %d, expected %d for the flag it sent", read ? now - g_clientBefore : 0,
+                    want);
         return;
     }
     default:
@@ -291,6 +378,7 @@ void OnDisconnect() {
     g_stepMs = g_nextCheckMs = 0;
     g_box.Reset();
     g_boxIdx = -1;
+    g_hostBefore = g_clientBefore = 0;
     g_walk.reset();
 }
 

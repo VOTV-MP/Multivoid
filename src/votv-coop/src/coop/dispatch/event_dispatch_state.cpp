@@ -16,6 +16,8 @@
 #include "coop/interactables/drone_sync.h"
 #include "coop/interactables/grime_sync.h"
 #include "coop/interactables/interactable_sync.h"
+#include "coop/interactables/cord_sync.h"
+#include "coop/interactables/swinger_join_pose.h"  // HOST->CLIENT an open lid's rest place
 #include "coop/creatures/kerfur_convert_client.h"
 #include "coop/creatures/kerfus_state.h"  // HOST->CLIENT a Kerfus's on, charging and energy
 #include "coop/interactables/keypad_sync.h"
@@ -403,6 +405,40 @@ bool HandleStateEvent(net::Session& session,
         coop::laptop_tab::OnState(session, p, tslot);
         break;
     }
+    case net::ReliableKind::SwingerRestPose: {
+        // HOST->CLIENT: where an open lid rests on the host, sent after the container lane's connect snapshot.
+        // Host-authored: the host's receive edge refuses a client's copy (client_authorship.h) and the host relays
+        // none. The format is checked here (finite, a location inside the world's bound, the portable key); the
+        // resolve, the open check and the placement live in coop::swinger_join_pose.
+        if (session.role() != net::Role::Client) {
+            UE_LOGW("event_feed: SwingerRestPose received on the host -- dropping");
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::SwingerRestPosePayload)) {
+            UE_LOGW("event_feed: SwingerRestPose payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::SwingerRestPosePayload));
+            break;
+        }
+        net::SwingerRestPosePayload rp{};
+        std::memcpy(&rp, msg.payload, sizeof(rp));
+        const float rvals[6] = { rp.locX, rp.locY, rp.locZ, rp.rotPitch, rp.rotYaw, rp.rotRoll };
+        bool rfinite = true;
+        for (float v : rvals) { if (!std::isfinite(v)) { rfinite = false; break; } }
+        constexpr float kMaxRestCoord = 1.0e6f;   // the bound PropSnapPos holds a position to
+        if (!rfinite || std::fabs(rp.locX) > kMaxRestCoord || std::fabs(rp.locY) > kMaxRestCoord ||
+            std::fabs(rp.locZ) > kMaxRestCoord) {
+            UE_LOGW("event_feed: SwingerRestPose pose not finite or out of bounds (%.1f,%.1f,%.1f) -- dropping",
+                    rp.locX, rp.locY, rp.locZ);
+            break;
+        }
+        if (rp.key.len < 3 || rp.key.len > sizeof(rp.key.data) || std::memcmp(rp.key.data, "mv_", 3) != 0) {
+            UE_LOGW("event_feed: SwingerRestPose key is not a portable key (len %u) -- dropping",
+                    static_cast<unsigned>(rp.key.len));
+            break;
+        }
+        coop::swinger_join_pose::OnReliable(rp);
+        break;
+    }
     // The signal-pipeline kinds (the sky signals, the desk, the dish, the laptop, the saved
     // signals, the refiner) are in event_dispatch_signal.cpp.
     case net::ReliableKind::SleepState: {
@@ -539,6 +575,38 @@ bool HandleStateEvent(net::Session& session,
             break;
         }
         coop::kerfus_state::OnState(p);
+        break;
+    }
+    case net::ReliableKind::CordLinkState: {
+        // A cord's link, one kind in three ops by direction: op 0 (a client's claim) reaches the host alone, ops 1
+        // (a canonical) and 2 (the seed's end) reach a client from the host alone. The format and the direction are
+        // judged here, every other check in the module; a message that fails either is counted there under its
+        // reason (cord_sync.h, Drop), not logged, so a flood costs no line. coop::cord_sync::OnReliable.
+        if (msg.payloadLen != sizeof(net::CordLinkPayload)) {
+            coop::cord_sync::CountDropped(coop::cord_sync::Drop::Size);
+            break;
+        }
+        net::CordLinkPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        const bool validSender = msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers;
+        const bool fromClient = validSender && msg.senderPeerSlot != 0;
+        const bool fromHost = validSender && msg.senderPeerSlot == 0;
+        const bool direction = (p.op == 0 && session.role() == net::Role::Host && fromClient) ||
+                               ((p.op == 1 || p.op == 2) && session.role() == net::Role::Client && fromHost);
+        // The fields a form leaves empty are empty: an unplugged link names no socket, the seed's end carries
+        // nothing, and a claim is numbered from 1 (seq 0 is a broadcast's).
+        const bool fieldsAgree = !(p.sockForm == 0 && (p.sock.len != 0 || p.child.len != 0)) &&
+                                 !(p.op == 2 && (p.sockForm != 0 || p.seq != 0 || p.cord.len != 0 ||
+                                                 p.sock.len != 0 || p.child.len != 0)) &&
+                                 !(p.op == 0 && p.seq == 0);
+        using coop::cord_sync::Drop;
+        const bool keyTooLong = p.cord.len > sizeof(p.cord.data) || p.sock.len > sizeof(p.sock.data) ||
+                                p.child.len > sizeof(p.child.data);
+        if (keyTooLong || !direction || !fieldsAgree || p.pad != 0 || p.sockForm > 2) {
+            coop::cord_sync::CountDropped(keyTooLong ? Drop::Key : !direction ? Drop::Op : Drop::Field);
+            break;
+        }
+        coop::cord_sync::OnReliable(p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::ServerSetting:

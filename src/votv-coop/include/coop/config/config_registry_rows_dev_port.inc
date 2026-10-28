@@ -24,7 +24,7 @@ CFG_STRING(game_build_force, "game_build_force", "dev", "", "VOTVCOOP_GAME_BUILD
     "Changes what the mod believes, never the game. Empty: the build as read.")
 CFG_STRING(scan_ledger_red, "scan_ledger_red", "dev", "", "VOTVCOOP_SCAN_LEDGER_RED", false,
     "The scan ledger's red arm: a scan row's name (GUObjectArray, FNameToString, ProcessEvent, FMemoryRealloc, "
-    "ScriptGate, SaveGameToSlot, OverlayDraw, OverlayResize, ActorEndPlay) the compat report reads as missed, so "
+    "ScriptGate, SaveGameToSlot, OverlayDraw, OverlayResize, ActorEndPlay, VulkanPresent, VulkanPixelFormats) the compat report reads as missed, so "
     "it must name what that miss takes away and read DEGRADED; it prints 'scan-ledger: RED ARM <row> reported "
     "missed', or 'RED ARM FAILED'. The report only: the scan itself is untouched. Empty: no red arm.")
 CFG_FLAG(game_build_dialog_continue, "game_build_dialog_continue", "dev", false,

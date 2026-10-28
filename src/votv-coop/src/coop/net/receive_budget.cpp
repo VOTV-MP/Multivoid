@@ -30,6 +30,7 @@ int ReceiveBudget::StreamIndex(MsgType type) {
     case MsgType::DishPose:       return 7;
     case MsgType::ReelPose:       return 8;
     case MsgType::VoiceFrame:     return 9;
+    case MsgType::PropDrivePose:  return 10;
     default:                      return -1;
     }
 }

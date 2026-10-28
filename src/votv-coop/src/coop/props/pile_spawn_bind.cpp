@@ -8,13 +8,17 @@
 
 #include "coop/props/pile_spawn_bind.h"
 
+#include "coop/element/bind_wait.h"  // MarkDeferred: messages for the unbound eid wait for the sweep's bind
 #include "coop/element/quiescence_drain.h"  // ArmPendingSaveTimeTwin (the spawn mechanism CAPTURES into the order owner)
 #include "coop/config/config.h"  // ResolveFlag -- the [PILE-DELTA] probe flag (multivoid.ini [dev], not bats/env)
+#include "coop/dev/pile_defer_drill.h"  // [dev] the pile deferral drill's counts
+#include "coop/dev/pile_late_load.h"    // [dev] the late-load seam's chosen clump
 #include "coop/element/registry.h"  // Element::SetSaveNative on the bound native
 #include "coop/props/join_membership_sweep.h"  // RecordClaimIfTracking (a bound native is expressed this bracket)
 #include "coop/props/prop_element_tracker.h"  // IsBoundMirrorNative / GetPropElementIdForActor
 #include "coop/props/prop_wire_parity.h"  // RestoreCollisionIfNeeded
 #include "coop/props/remote_prop.h"  // RegisterPropMirror
+#include "coop/props/trash_native_hold.h"  // Hold and Release: the one recipe that parks a trash body and its inverse
 #include "coop/props/save_time_retire_util.h"  // kExactMatchR2Cm (the shared match radius)
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
@@ -185,12 +189,21 @@ void* BindOwnSavePile(const coop::net::PropSpawnPayload& payload,
     // comment, and an unarmed one leaves the eid with no actor for the rest of the session: the
     // host has a pile the client can neither see nor aim at.
     auto armAndFail = [&](const char* why) -> void* {
-        if (isSaveTimeKey && payload.elementId != 0)
+        if (isSaveTimeKey && payload.elementId != 0) {
             coop::element::quiescence_drain::ArmPendingSaveTimeTwin(payload.elementId, matchPos, payload.chipType,
                                                                     wantClump);
-        else
+            // Messages for the eid wait for the sweep's bind only while it owns no actor: the same twin is
+            // also armed for a bound eid (a dup retire), which has nothing to wait for.
+            coop::element::Element* row = coop::element::Registry::Get().Get(payload.elementId);
+            if (!row || !row->GetActor() || !R::IsLiveByIndex(row->GetActor(), row->GetInternalIdx())) {
+                coop::element::bind_wait::MarkDeferred(payload.elementId, why);
+                coop::dev::pile_defer_drill::NoteDeferred(payload.elementId);   // [dev] the pile deferral drill's count
+                coop::dev::pile_late_load::NoteDeferred(payload.elementId, matchPos, wantClump);   // [dev] the late-load seam
+            }
+        } else {
             UE_LOGW("[PILE] BIND eid=%u at (%.1f,%.1f,%.1f) -- %s, and the expression carries no "
                     "save-time key to retry from", payload.elementId, matchPos.X, matchPos.Y, matchPos.Z, why);
+        }
         return nullptr;
     };
     if (matchCount > 1) {
@@ -225,12 +238,29 @@ void* BindOwnSavePile(const coop::net::PropSpawnPayload& payload,
     // host has it. Converge only on real divergence: save-aligned piles are sub-millimetre
     // identical, so the common case writes and wakes nothing. A native whose location cannot be read
     // is not known to be aligned, so the host's transform converges it.
+    // Aligned means the same place AND the same root turn: a pile the host re-piled in place keeps its spot but
+    // comes back with a fresh root (yaw 0), while the native the joiner's save holds kept the old pile's yaw. A
+    // location-only test bound it unturned, and the look then applied on that root showed it turned by the
+    // difference. A pile root is Static, which drops a transform write while reporting success
+    // (trash_mirror.cpp), so it is made Movable first.
     ue_wrap::FVector cur{};
+    ue_wrap::FRotator curRot{};
     const bool curRead = ue_wrap::engine::TryGetActorLocation(native, cur);
+    const bool rotRead = ue_wrap::engine::TryGetActorRotation(native, curRot);
     const float ddx = cur.X - payload.locX, ddy = cur.Y - payload.locY, ddz = cur.Z - payload.locZ;
     constexpr float kAlignedCm = 2.0f;
-    const bool aligned = curRead && (ddx * ddx + ddy * ddy + ddz * ddz) <= (kAlignedCm * kAlignedCm);
+    constexpr float kAlignedDeg = 1.0f;
+    auto angAligned = [](float a, float b) {
+        float d = std::fabs(std::fmod(std::fabs(a - b), 360.0f));
+        if (d > 180.0f) d = 360.0f - d;
+        return d <= kAlignedDeg;
+    };
+    const bool locAligned = curRead && (ddx * ddx + ddy * ddy + ddz * ddz) <= (kAlignedCm * kAlignedCm);
+    const bool rotAligned = rotRead && angAligned(curRot.Pitch, payload.rotPitch) &&
+                            angAligned(curRot.Yaw, payload.rotYaw) && angAligned(curRot.Roll, payload.rotRoll);
+    const bool aligned = locAligned && rotAligned;
     if (!aligned) {
+        ue_wrap::engine::SetActorRootMovable(native);
         ue_wrap::engine::SetActorLocation(native, ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});
         ue_wrap::engine::SetActorRotation(native,
             ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll});
@@ -244,12 +274,12 @@ void AdoptOwnNative(void* native, uint32_t eid, int senderSlot, const char* why)
     if (!native || eid == 0u) return;
     // A bound PILE is a Static, inert actor. A bound CLUMP is a ticking, simulating body, and from
     // this bind the host authors its pose and its turn back into a pile: left as loaded it is a
-    // second author of both (it rolls and is pushed on this peer alone). The same two parkings a
-    // spawned clump mirror gets (trash_mirror::Materialize); its collision stays, because a clump
-    // at rest is aimed at and stood on like the host's.
+    // second author of both (it rolls and is pushed on this peer alone). The same parking a
+    // spawned clump mirror gets (trash_mirror::Materialize) and a joiner's load spawn gave it
+    // (trash_native_hold); its collision stays, because a clump at rest is aimed at and stood on
+    // like the host's.
     if (ue_wrap::prop::IsGarbageClump(native)) {
-        ue_wrap::engine::SetActorTickEnabled(native, false);      // a clump's tick wakes its body every second
-        ue_wrap::engine::SetActorSimulatePhysics(native, false);  // kinematic: the host drives it
+        coop::trash_native_hold::Hold(native);   // the join's load hold, kept: the host drives it from here
         g_parkedClumps.push_back({native, R::InternalIndexOf(native)});
     }
     // The claim: this actor was expressed on the wire this bracket, so the membership sweep must
@@ -264,6 +294,7 @@ void AdoptOwnNative(void* native, uint32_t eid, int senderSlot, const char* why)
     // Save-native is what the rest of the machinery tests (IsBoundMirrorNative): the grab route,
     // the morph hand-off, the divergence-sweep exemption and the retire all read it.
     if (auto* el = coop::element::Registry::Get().Get(eid)) el->SetSaveNative(true);
+    coop::dev::pile_defer_drill::NoteBound(eid);   // [dev] the pile deferral drill's count
     ++g_pileBindCount;
     if (g_pileBindCount <= 8 || (g_pileBindCount % 200) == 0) {
         ue_wrap::FVector at{};
@@ -281,8 +312,7 @@ void OnDisconnect() {
     for (const ParkedClump& c : g_parkedClumps) {
         if (!R::IsLiveByIndex(c.actor, c.idx)) continue;
         coop::remote_prop::ClearAnyDriveFor(c.actor);   // before ForceRelease, which destroys a driven clump
-        ue_wrap::engine::SetActorTickEnabled(c.actor, true);
-        ue_wrap::engine::SetActorSimulatePhysics(c.actor, true);
+        coop::trash_native_hold::Release(c.actor);
         ++restored;
     }
     if (!g_parkedClumps.empty())

@@ -88,6 +88,7 @@ UE_FACT_FN(kRowReceiveTickTentacleBallsFollower, "spawn_authority", L"tentacleBa
            Declared);
 UE_FACT_FN(kRowReceiveBeginPlaySuperEgger, "spawn_authority", L"superEgger_C", L"ReceiveBeginPlay", Declared);
 UE_FACT_FN(kRowSpwnSuperEgger, "spawn_authority", L"superEgger_C", L"spwn", Declared);
+UE_FACT_FN(kRowCustomEvent5Gamemode, "spawn_authority", L"mainGamemode_C", L"CustomEvent_5", Declared);
 
 // One row: the facts row a client must not run, and the tag its refusal log carries.
 struct Row {
@@ -184,6 +185,11 @@ constexpr Row kRows[] = {
     // BeginDeferred (@1399, @1316). Refusing both keeps the mirror a husk.
     {&kRowReceiveBeginPlaySuperEgger,     "superEgger.ReceiveBeginPlay"},
     {&kRowSpwnSuperEgger,                 "superEgger.spwn"},
+    // mainGamemode_C: the night roll. CustomEvent_5 is a one-shot timer's body, and the body is the roll AND its
+    // own re-arm (eleven blocks of the graph: the 3 % night roll that mints a Geom Octa or a night egg, and the next
+    // 120-300 s timer), so a client's timer simply ends here. The host rolls and the source-gated catch mirrors the
+    // Octa and the egg; the level-placed egg roller is already a row above.
+    {&kRowCustomEvent5Gamemode,           "gamemode.CustomEvent_5"},
 };
 constexpr int kRowCount = static_cast<int>(std::size(kRows));
 constexpr int kTagBase = 0x53410000;   // 'SA', then the row

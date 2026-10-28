@@ -6,6 +6,8 @@
 #include "coop/dev/hostile_drill_act.h"  // the take-or-use request arms
 #include "coop/dev/hostile_drill_atv.h"  // the ATV lanes' refusal arms
 #include "coop/dev/hostile_drill_chat.h"  // the chat arms
+#include "coop/dev/hostile_drill_coffee.h"  // the coffee lane's refusal arms
+#include "coop/dev/hostile_drill_cord.h"  // the cord link lane's refusal arms
 #include "coop/dev/hostile_drill_explosion.h"  // the explosion request lane's refusal arms
 #include "coop/dev/hostile_drill_hand.h"  // the hand-item class arm
 #include "coop/dev/hostile_drill_ignite.h"  // the salt rocket ignite lane's refusal arms
@@ -57,6 +59,8 @@ Arm ArmOf() {
              : v.rfind("explosion_", 0) == 0 ? Arm::Explosion
              : v.rfind("ignite_", 0) == 0    ? Arm::Ignite
              : v.rfind("atv_", 0) == 0       ? Arm::Atv
+             : v.rfind("cord_", 0) == 0      ? Arm::Cord
+             : v.rfind("coffee_", 0) == 0    ? Arm::Coffee
                                           : Arm::Off;
     }();
     return a;
@@ -85,6 +89,22 @@ atv::Arm AtvArmOf() {
     static const atv::Arm a = ArmOf() == Arm::Atv
         ? atv::ArmOf(coop::config::ResolveEnum(::coop::config_registry::rows::hostile_drill))
         : atv::Arm::None;
+    return a;
+}
+
+// The coffee family's sub-arm, the same way.
+coffee::Arm CoffeeArmOf() {
+    static const coffee::Arm a = ArmOf() == Arm::Coffee
+        ? coffee::ArmOf(coop::config::ResolveEnum(::coop::config_registry::rows::hostile_drill))
+        : coffee::Arm::None;
+    return a;
+}
+
+// The cord family's sub-arm, the same way.
+cord::Arm CordArmOf() {
+    static const cord::Arm a = ArmOf() == Arm::Cord
+        ? cord::ArmOf(coop::config::ResolveEnum(::coop::config_registry::rows::hostile_drill))
+        : cord::Arm::None;
     return a;
 }
 
@@ -122,6 +142,8 @@ const char* ArmName() {
     case Arm::Explosion:         return explosion::ArmName(ExplosionArmOf());
     case Arm::Ignite:            return ignite::ArmName(IgniteArmOf());
     case Arm::Atv:               return atv::ArmName(AtvArmOf());
+    case Arm::Cord:              return cord::ArmName(CordArmOf());
+    case Arm::Coffee:            return coffee::ArmName(CoffeeArmOf());
     default:                     return "off";
     }
 }
@@ -186,12 +208,16 @@ bool TickFamilyHost(coop::net::Session* s) {
     const explosion::Arm explosionArm = ExplosionArmOf();
     const ignite::Arm igniteArm = IgniteArmOf();
     const atv::Arm atvArm = AtvArmOf();
+    const cord::Arm cordArm = CordArmOf();
+    const coffee::Arm coffeeArm = CoffeeArmOf();
     const chat::Arm chatArm = ArmOf() == Arm::ChatIllFormed ? chat::Arm::ChatIllFormed
                             : ArmOf() == Arm::ChatFlood     ? chat::Arm::ChatFlood
                                                             : chat::Arm::None;
     if (explosionArm != explosion::Arm::None) explosion::TickHostJudge(s, explosionArm);
     else if (igniteArm != ignite::Arm::None) ignite::TickHostJudge(s, igniteArm);
     else if (atvArm != atv::Arm::None)       atv::TickHostJudge(s, atvArm);
+    else if (cordArm != cord::Arm::None)     cord::TickHostJudge(s, cordArm);
+    else if (coffeeArm != coffee::Arm::None) coffee::TickHostJudge(s, coffeeArm);
     else if (IsWalkArm())                    walk::TickHostJudge(s, WalkArmOf());  // host counts its own walks
     else if (handArm != hand::Arm::None)     hand::TickHostJudge(s, handArm);
     else if (latestArm != latest::Arm::None) latest::TickHostJudge(s, latestArm);
@@ -219,12 +245,16 @@ bool TickFamilyClient(coop::net::Session* s) {
     const explosion::Arm explosionArm = ExplosionArmOf();
     const ignite::Arm igniteArm = IgniteArmOf();
     const atv::Arm atvArm = AtvArmOf();
+    const cord::Arm cordArm = CordArmOf();
+    const coffee::Arm coffeeArm = CoffeeArmOf();
     const chat::Arm chatArm = ArmOf() == Arm::ChatIllFormed ? chat::Arm::ChatIllFormed
                             : ArmOf() == Arm::ChatFlood     ? chat::Arm::ChatFlood
                                                             : chat::Arm::None;
     if (explosionArm != explosion::Arm::None) explosion::TickClient(s, explosionArm);
     else if (igniteArm != ignite::Arm::None) ignite::TickClient(s, igniteArm);
     else if (atvArm != atv::Arm::None)       atv::TickClient(s, atvArm);
+    else if (cordArm != cord::Arm::None)     cord::TickClient(s, cordArm);
+    else if (coffeeArm != coffee::Arm::None) coffee::TickClient(s, coffeeArm);
     else if (IsWalkArm())                    walk::TickClient(s, WalkArmOf());
     else if (handArm != hand::Arm::None)     hand::TickClient(s, handArm);
     else if (latestArm != latest::Arm::None) latest::TickClient(s, latestArm);
@@ -248,6 +278,8 @@ void OnDisconnectFamilies() {
     explosion::OnDisconnect();
     ignite::OnDisconnect();
     atv::OnDisconnect();
+    cord::OnDisconnect();
+    coffee::OnDisconnect();
     chat::OnDisconnect();
 }
 

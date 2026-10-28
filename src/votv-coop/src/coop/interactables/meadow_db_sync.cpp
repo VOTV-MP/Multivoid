@@ -268,8 +268,8 @@ void AuthorLine(coop::net::Session* s, uint64_t hash, bool isDelete,
 
 // The order line, when the order every peer will hold is not this peer's: the host's goes to every
 // peer, a client's to the host, which answers with its own. The FIFO guard: an order line that
-// references a hash whose append or delete is still pending would overtake it on the wire (the lane
-// pin orders only what was handed to the transport), the receiver would skip the unknown hash and the
+// references a hash whose append or delete is still pending would overtake it on the wire (the Default lane
+// orders only what was handed to the transport), the receiver would skip the unknown hash and the
 // late append would land at the tail, a permanent per-peer divergence -- so it waits for the queue to
 // empty. A send failure leaves the baseline old, so the retry sends it.
 void SendOrderIfDiffers(coop::net::Session* s, const std::vector<uint64_t>& seq) {

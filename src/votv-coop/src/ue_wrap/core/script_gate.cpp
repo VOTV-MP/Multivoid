@@ -508,6 +508,20 @@ std::uint8_t* OutParamPtr(const Call& call, int32_t paramOffset) {
     return nullptr;
 }
 
+void* OutermostFunction(const Call& call) {
+    // A chain of Blueprint frames is short; the cap only stops a corrupted link from looping.
+    constexpr int kMaxFrames = 64;
+    const void* frame = call.stack;
+    void* outer = frame ? Read<void*>(frame, P::off::FFrame_Node) : nullptr;
+    for (int i = 0; frame && i < kMaxFrames; ++i) {
+        const void* prev = Read<void*>(frame, P::off::FFrame_PreviousFrame);
+        if (!prev) break;
+        outer = Read<void*>(prev, P::off::FFrame_Node);
+        frame = prev;
+    }
+    return outer;
+}
+
 Stats GetStats() {
     Stats s{};
     s.calls = g_calls.load(std::memory_order_relaxed);

@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <cstddef>
+
 namespace coop::net { class Session; }
 
 namespace coop::host_spawn_watcher {
@@ -58,6 +60,10 @@ void DrainPendingSpawns(coop::net::Session* session);
 // K2_DestroyActor) it broadcasts PropDestroy(eid) so the other peers drop their mirrors. Cheap
 // (IsLiveByIndex over a small bounded set). Game thread (net-pump tick).
 void TickWatchedProps(coop::net::Session* session);
+
+// How many keyed births the pending queue's cap has dropped in this process. The settle drill reads
+// it: with the start-up burst gated off, a drop here is a live burst the cap could not hold.
+size_t PendingCapDrops();
 
 // Clear per-session state: the death-watch list, the pending queue and the session pointer. The
 // POST observer stays registered -- it self-gates on connected() and on not being inside a

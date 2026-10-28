@@ -115,17 +115,9 @@ CFG_FLAG(burn_revive_drill, "burn_revive_drill", "dev", false, "VOTVCOOP_BURN_RE
     "[BURN-REVIVE]; the client's DONE line ends it.")
 CFG_FLAG(desk_snd_selftest, "desk_snd_selftest", "dev", false, nullptr,
     "Autonomous selftest: desk sound mirror.")
-CFG_FLAG(container_selftest, "container_selftest", "dev", false, "VOTVCOOP_CONTAINER_SELFTEST",
-    "Autonomous selftest: container contents sync. It MUTATES the world -- it extracts an item on"
-    " each peer -- so it is armed per run from the environment, like the hand-drop one.")
-CFG_FLAG(container_opener_probe, "container_opener_probe", "dev", false, "VOTVCOOP_CONTAINER_OPENER_PROBE",
-    "Probe (host): once each client's world is up and it has a body, every drone, dronesack and ATV with "
-    "the container it opens, the lookups both ways that must name the pair, and each client's reach to "
-    "both, again when a client stands at an opener; a verdict per pass. Read-only.")
-CFG_FLAG(container_view_drill, "container_view_drill", "dev", false, "VOTVCOOP_CONTAINER_VIEW_DRILL",
-    "Drill (client): walks to the ATV, opens its container through the game's own openPropInv, then walks "
-    "back; the view must stay open while the ATV is within reach and close on the tick it leaves it. Run it "
-    "with join_at_host=1. Lines tagged [CVIEW-DRILL]; the client's DONE line, carrying the verdict, ends it.")
+// The container rows (selftest, join drill and its red arms, opener probe, view drill): their own file, one concept,
+// included as _dev_port.inc is above.
+#include "coop/config/config_registry_rows_dev_container.inc"
 CFG_FLAG(hand_drop_selftest, "hand_drop_selftest", "dev", false, "VOTVCOOP_HAND_DROP_SELFTEST",
     "Autonomous selftest: a prop through a player's hotbar HAND and back out -- pick it up with "
     "the game's own verb, drop it, first with the host holding and then with the client, twice "
@@ -528,6 +520,50 @@ CFG_STRING(sack_drill, "sack_drill", "dev", "", "VOTVCOOP_SACK_DRILL", false,
     "client's puppet once its world is ready; the client aims and presses it; the host's DONE line ends it.")
 CFG_FLAG(point_sack_client_runs, "point_sack_client_runs", "dev", false, "VOTVCOOP_POINT_SACK_CLIENT_RUNS",
     "Developer: a client's point sack runs the game's own body there instead of asking the host (the sack drill's red).")
+CFG_ENUM(prop_syncer_drill, "prop_syncer_drill", "dev", "off", "off|kick|forge", "VOTVCOOP_PROP_SYNCER_DRILL",
+    "Drill (host and BOTH clients, the same value; three peers): a client syncs a prop its own interaction moves. "
+    "kick: the client in slot 1 walks to a keyed prop with the director, claims it, kicks it with the game's own "
+    "physics and holds the claim for a second; the host and the client in slot 2 must each take at least three rows "
+    "of its generation, see the prop travel, and rest within 5 cm / 3 deg of the client's pose. forge: the client in "
+    "slot 2 also publishes rows for the kicked prop at its own place; the host must count them as from a non-syncer, "
+    "admit none and still land on the client's pose. Lines tagged [PROP-SYNC]; the verdict is DONE PASS or FAIL:.")
+CFG_ENUM(prop_syncer_red, "prop_syncer_red", "dev", "off", "off|refuse|no_relay|not_syncer", "VOTVCOOP_PROP_SYNCER_RED",
+    "Developer red arm: never set. refuse (HOST): every claim is refused as paced, so the kick arm's client must fail. "
+    "no_relay (HOST): an admitted client row is applied to the host's copy and never re-published, so the kick arm's "
+    "observer must fail. not_syncer (HOST): the sender test of admission is skipped, so the forge arm's host must fail.")
+CFG_INT(join_gate_red, "join_gate_red", "dev", 0, 0, 1, "VOTVCOOP_JOIN_GATE_RED",
+    "Developer red arm: never set (HOST). 1 bypasses the join gate: a joining slot's sends are not held behind its "
+    "snapshot, so the receive parks catch the seeds that precede their props, and the join drills' park counts go "
+    "nonzero.")
+CFG_INT(bind_wait_red, "bind_wait_red", "dev", 0, 0, 1, "VOTVCOOP_BIND_WAIT_RED",
+    "Developer red arm: never set. 1 makes the bind wait refuse every hold, so a message for a prop whose bind is "
+    "deferred is dropped and counted as never bound, so the drills that count what the wait replayed must fail.")
+CFG_FLAG(window_proc_red, "window_proc_red", "dev", false, "VOTVCOOP_WINDOW_PROC_RED",
+    "Developer red arm: never set. 1 makes game_window_proc never subclass the game window, so no key reaches a "
+    "native text field and the server browser selftest's INPUT TYPE phase must FAIL with \"the characters did not "
+    "arrive\".")
+// A drill seam, never on by default: the late-join drill sets it on the JOINER so that every seed landing before
+// its spawn is held and replays at the bind, and every drill line that uses it names it. Not with
+// bind_wait_selftest: its first check expects an unmarked eid to be refused.
+CFG_FLAG(bind_wait_mark_unknown, "bind_wait_mark_unknown", "dev", false, "VOTVCOOP_BIND_WAIT_MARK_UNKNOWN",
+    "Drill (the JOINER): the bind wait marks an eid this peer has no registry row for as deferred when a message "
+    "for it arrives, so a seed that lands before its spawn is held and replays at the spawn's bind instead of "
+    "being dropped as never bound. Pair with join_gate_red=1 on the host. Not with bind_wait_selftest, whose first check fails under it.")
+CFG_INT(bind_wait_selftest, "bind_wait_selftest", "dev", 0, 0, 1, "VOTVCOOP_BIND_WAIT_SELFTEST",
+    "Selftest (a CLIENT): once its world is announced, the bind wait's rules are checked on synthetic eids: a hold for "
+    "an eid not deferred is refused, holds replay in order with the coalesced one in its place, a replay that holds "
+    "again does not corrupt the pump, a given-up eid and a slot that left take their holds with them (also during a "
+    "pump), a row awaiting its re-bind holds, the 65th hold of one eid is refused and counted, a module's Drop voids "
+    "its stored, due and in-pass holds, and the per-kind tallies tell a coalesced hold from a distinct one and balance, a client slot has its own share of the pool. Its last check Clears the wait, ending the session's real marks. Prints [BIND-WAIT-SELFTEST] PASS or FAIL. With bind_wait_red=1 it prints RED ARM and no PASS.")
+CFG_ENUM(prop_syncer_load_lane, "prop_syncer_load_lane", "dev", "transfer", "transfer|default", "VOTVCOOP_PROP_SYNCER_LOAD_LANE",
+    "Drill knob (HOST): the lane the load arm's filler rides. transfer is the shipped lane of a payload that can "
+    "exceed the blob ceiling; default puts the filler on the ordered lane the syncer's own messages ride, which is "
+    "the red: a 4 MiB filler then stands ahead of the claim's answer and the grant misses its bound.")
+CFG_INT(prop_syncer_load_kb, "prop_syncer_load_kb", "dev", 0, 0, 16384, "VOTVCOOP_PROP_SYNCER_LOAD_KB",
+    "Drill (host and the kicking client, the same value; arm kick or forge): the filler the host queues on the transfer "
+    "lane to the kicking client right before it says go, in KiB (0 = none). The client waits for the filler's first "
+    "message before it claims, so its claim stands behind the transfer; its DONE line carries the grant latency and "
+    "the filler counts.")
 CFG_FLAG(drone_call_drill, "drone_call_drill", "dev", false, "VOTVCOOP_DRONE_CALL_DRILL",
     "Drill (BOTH peers): the client walks to the garage's drone console, opens its lid if it is shut, presses "
     "the leave-timer face twice (the click sounds on its copy and the host's stream flips the timer, then flips "
@@ -536,6 +572,19 @@ CFG_FLAG(drone_call_drill, "drone_call_drill", "dev", false, "VOTVCOOP_DRONE_CAL
     "second press, and the client's DONE line says whether the drone flew on its copy; the host logs its "
     "drone's changes. "
     "Lines tagged [DRONE-CALL-DRILL].")
+CFG_INT(dronesack_drill, "dronesack_drill", "dev", 0, 0, 4, "VOTVCOOP_DRONESACK_DRILL",
+    "Drill (BOTH peers, the same value): the host puts a drone sack on the floor in front of itself and the client "
+    "says its mirror of it is bound. 1 -- the host drops a loot crate onto the sack; for 15 s each peer logs the "
+    "crate's local destroy (and the caller's class), the client whether its destroy seam sent a PropDestroy, the "
+    "host whether one reached it, and the sack's record counts. 2 -- the host spawns six loose props round the "
+    "sack and the client walks to each with the director, grabs it, carries it over the sack and lets go; each "
+    "peer logs the destroys it sees and the host then calls the delivery drone and logs when its sale clears the "
+    "drone's container. 3 -- the host itself drops six cups and one fresh crate onto the sack, one at a time, then "
+    "calls the drone; both peers take the container census around the sale and log the crate's "
+    "inventory index and which containers hold it afterwards. It judges nothing. Lines tagged [SACK-DRILL] and "
+    "[SACK-CENSUS]. 4 -- arm 3, then the client reads its sack mirror 1, 5, 15 and 30 s after the sale; if the "
+    "mirror still holds records at 5 s it takes record 0 out through the container's getObject, the call a "
+    "player's take makes. The host says what the container lane made of that.")
 CFG_STRING(sat_console_drill, "sat_console_drill", "dev", "", "VOTVCOOP_SAT_CONSOLE_DRILL", false,
     "Drill (BOTH peers): run -- a client types sd.cal, sauce.get and sv.hash at its SAT console; the host runs "
     "them on the terminal it keeps for that client and sends the lines back. rejoin -- the client leaves in the "
@@ -551,12 +600,6 @@ CFG_STRING(calib_drill, "calib_drill", "dev", "", "VOTVCOOP_CALIB_DRILL", false,
     "the tool's NaN on the fourth, which the host must refuse and answer. "
     "run -- the host holds them once a client is in its world; join -- before any client connects. Lines tagged "
     "[CALIB-DRILL]; the client's DONE line ends it.")
-CFG_STRING(server_drill, "server_drill", "dev", "", "VOTVCOOP_SERVER_DRILL", false,
-    "Drill (BOTH peers): a server box's break is the host's and a client's repair of it runs there. The host breaks "
-    "a box with no upgrades and stamps its repair type 123. run -- once a client is in its world: the client finds "
-    "it broken with that type, its own breakServer on a healthy box is refused, it walks to the box and runs the "
-    "repair widget's end(true), and the host's box ends fixed; join -- the break in the joiner's window, found after "
-    "its world is ready. Lines tagged [SERVER-DRILL]; the client's DONE line ends it.")
 CFG_STRING(camera_drill, "camera_drill", "dev", "", "VOTVCOOP_CAMERA_DRILL", false,
     "Drill (BOTH peers): does a picked-up camera stick to its wall again, and by whose hand. grab -- the host hangs "
     "a camera on a wall a walker reaches (before any client joins); the client finds it stuck, walks to it, grabs "
@@ -598,90 +641,12 @@ CFG_STRING(laptop_tab_drill, "laptop_tab_drill", "dev", "", "VOTVCOOP_LAPTOP_TAB
     "counts as a bad slot; tab-join -- the host switches to tab 4 before any client connects, and every joiner reads "
     "it; tab-relay (needs --observer) -- the first client holds, the second reads, and the first is sent no state. "
     "Lines tagged [LAPTOP-TAB-DRILL]; the judging peer's PASS or FAIL line ends the arm.")
-CFG_STRING(server_upgrade_drill, "server_upgrade_drill", "dev", "", "VOTVCOOP_SERVER_UPGRADE_DRILL", false,
-    "Drill (BOTH peers): a client installs an upgrade into a server box and takes one out. apply: the host "
-    "applies both; refuse: the host refuses both, as if each had lost its race, and the client sees its install "
-    "refunded and its take-out's upgrade go. Lines tagged [SRV-UPG-DRILL].")
 CFG_STRING(power_decay_drill, "power_decay_drill", "dev", "", "VOTVCOOP_POWER_DECAY_DRILL", false,
     "Drill (BOTH peers): the generators' 30 s decay tick. watch: each peer says every tick's verdict, a client "
     "refusing its own and the host running its own, and the client's second tick prints the DONE line; red: a "
     "client runs its own tick, the negative control. Lines tagged [POWER-DECAY].")
-CFG_STRING(desk_verb_drill, "desk_verb_drill", "dev", "", "VOTVCOOP_DESK_VERB_DRILL", false,
-    "Drill (BOTH peers): the main desk's save family pressed by the client through its own input. run: the host "
-    "arms a caught signal formed from a sky signal's object, downloaded and detected, and the client, walked to the "
-    "desk, presses SAVE; then DELETE on a second one, the deck's send on the saved row, the deck's drive button "
-    "both ways and the refiner's upload, then the refiner's start, its stop, a start the host completes and one at "
-    "level 2 whose completion is the last level's. Both peers count the game's own entries into the functions those "
-    "branches call; the host says it entered them, the client that it entered none, that its refiner never latched, "
-    "that SAVE's and each completion's gloss and the last level's processed point reached its profile and the row "
-    "its photo. join: the host decodes on its refiner and saves a row as the client joins; the client finds the row "
-    "with its photo, and its restore of the decode refused, mirroring the host's. Lines tagged [DESK-VERB-DRILL]; "
-    "'client DONE PASS|FAIL' ends it; ABANDONED is a step that could not run.")
-CFG_STRING(desk_crossing_drill, "desk_crossing_drill", "dev", "", "VOTVCOOP_DESK_CROSSING_DRILL", false,
-    "Drill (BOTH peers): the main desk's detection needle crosses on the host alone. run: two legs, planeteater's "
-    "caught signal (its object renderer spawns the signal object fullyProcessed lives on) and looker_behind's; the "
-    "host holds its needle just below 1 for three of its play cycles, then lets its step cross. The client says its "
-    "own step never crossed, that it ran its desk's path after the step once, and on looker_behind that its autoSave "
-    "body never ran while the host's saved the one row; at the crossing canDL holds on both, and on planeteater "
-    "fullyProcessed. join: the host crosses on planeteater before the client's world is ready; the client relays no "
-    "catch of its own, reads the host's needle at 1, and finds canDL and fullyProcessed. Lines tagged "
-    "[DESK-CROSSING-DRILL]; 'client DONE PASS|FAIL' ends it; ABANDONED is a step that could not run.")
-CFG_STRING(drive_drill, "drive_drill", "dev", "", "VOTVCOOP_DRIVE_DRILL", false,
-    "Drill (BOTH peers): the host gives a drive a row; a client's deviation on its copy must be put back at once, "
-    "its eraser press must wipe the drive on the host and show here, a drive it spawns, takes out or throws must "
-    "reach the host with its row, and its forged row on a drive it did not bring must be refused. "
-    "run -- a drive the host spawns once a client is in its world; join -- a drive of the host's world, written "
-    "while a joiner loads it; obs -- run's steps, begun once two clients stand in the world, the second (the rig's "
-    "observer) only watching the drive lane. Lines tagged [DRIVE-DRILL]; the host's DONE line ends it.")
-CFG_STRING(tower_drill, "tower_drill", "dev", "", "VOTVCOOP_TOWER_DRILL", false,
-    "Drill (BOTH peers): the coordinate towers. run: once the client stands in its world, the host breaks the "
-    "drill's tower (the one nearest the alpha base) on its own dice and opens its panel; the client presses a "
-    "puzzle button and pulls a blown fuse from where it stands, both refused out of reach and the pulled fuse "
-    "reaped; then the host's player pulls a fuse, inserts one, presses a button, pulls the lever on the unsolved "
-    "puzzle, solves it and pulls the lever again, and the client reads each change applied as the tower's own. "
-    "join: the host breaks the tower as it hosts, and the joiner's tower reads the host's without a roll of its "
-    "own. red, joinred: the controls, a client whose gates stand open and who applies no rows, as before the "
-    "lane. Lines tagged [TOWER-DRILL]; the client's DONE line ends it.")
-CFG_STRING(desk_ping_drill, "desk_ping_drill", "dev", "", "VOTVCOOP_DESK_PING_DRILL", false,
-    "Drill (BOTH peers): a client's ping is rolled on the host. run: the client walks to the main desk, enters the "
-    "coordinates screen, commits a triangle and presses its coord_ping key on the game window; legs: miss (a clear "
-    "sky), catch (the host's fixture signal under the triangle), busy (a second verdict right behind the catch's). "
-    "The client says its gatherSignal was entered and never ran, the host's failure line reached its log once, the "
-    "catch is on its profile and desk, and the busy verdict came back refused; the host that it rolled two, caught "
-    "the second without counting it as its own, relayed it as the client's, and refused the third. Every peer that "
-    "does not ping (the host, and a second client under --observer) also reads its own desk: the first edge line's "
-    "alpha must pass 0.5 at stage 0 and the first inner line's at stage 1 with coord_isPing clear, and all four "
-    "values must read 0 after the scan's ending; a second client says observer PASS|FAIL per scan, and observer DONE "
-    "once the first client, which leaves the desk before its DONE, has left it. observed: the same, but the client "
-    "starts only once the observer in slot 2 is ready (rig --observer), and the observer must judge both scans, the "
-    "miss and the catch; under run one judged scan passes. Lines tagged [DESK-PING-DRILL]; 'client DONE' ('observer "
-    "DONE' under --observer) ends it; ABANDONED is a step that could not run.")
-CFG_STRING(download_drill, "download_drill", "dev", "", "VOTVCOOP_DOWNLOAD_DRILL", false,
-    "Drill (BOTH peers): the host arms and resets its download five times; the client must replay each once with the "
-    "host's values (formDownload's body once an arm, one reset line a reset, the reset clean) and have its own "
-    "arm and reset refused. run -- once a client is in its world; join (with --rejoin and --rejoin-marker "
-    "'[DOWNLOAD-DRILL] client LIFE 1 DONE') -- an arm while the client's first life is in, then in the rejoiner's "
-    "window a reset, a second catch and its arm, which it must end armed on. Lines tagged [DOWNLOAD-DRILL]; the "
-    "client's DONE line ends it.")
-CFG_STRING(laptop_drill, "laptop_drill", "dev", "", "VOTVCOOP_LAPTOP_DRILL", false,
-    "Drill (BOTH peers): the laptop's disc slot is the host's and its file edits land on the disc they were made on. "
-    "run: the client inserts a disc and edits its files before the host answered the claim, ejects it, inserts a "
-    "second; the host ejects that one ahead of the client's next edit, then a batch and a canonical of the ejected "
-    "disc, each on its old generation, must land nowhere. join: the host inserts a disc and adds a buffer row while "
-    "a joiner loads, and the joiner's laptop must hold both. Lines tagged [LAPTOP-DRILL]; the client's DONE line "
-    "ends it.")
-CFG_STRING(grid_drill, "grid_drill", "dev", "", "VOTVCOOP_GRID_DRILL", false,
-    "Drill (BOTH peers): the power grid, arm by arm. run: the client presses the panel's light lever, the host "
-    "breaks the drill's generator (the one nearest the panel), the client's Activate press from where it stands is "
-    "refused beyond reach, and the host's own repair reaches the client. puzzle: the host's puzzle and inputs reach "
-    "the client, whose own input from out of reach rolls back. puzzlesolve: the client, posed beside the generator, "
-    "solves its puzzle and presses Activate, which the host takes; puzzleflood: from there it sends 40 inputs at "
-    "once, which the host must take within its rate for inputs, its rows coalesced. upgrade: from that pose an "
-    "install op with no "
-    "insert behind it is refused, nothing refunded, the client's install is taken, and a refused one is refunded. "
-    "join, lockout, lockjoin: the blackout at a join, the desk virus's lockout. red, puzzlered, upgradered: the "
-    "controls (the rows applied raw, no puzzle written, installs judged unpaired). Lines tagged [GRID-DRILL]; the "
-    "client's DONE line ends it.")
+// The signal workstation's drills: their own file, one concept, included as _dev_swinger.inc is below.
+#include "coop/config/config_registry_rows_dev_desk.inc"
 CFG_STRING(toggle_drill, "toggle_drill", "dev", "", "VOTVCOOP_TOGGLE_DRILL", false,
     "Drill (BOTH peers), by kind: garage, tap (a faucet or a sink), locker or lid. The device of that kind "
     "with the lowest key in its lane, toggled through its own verb by the client and toggled back by "
@@ -689,6 +654,8 @@ CFG_STRING(toggle_drill, "toggle_drill", "dev", "", "VOTVCOOP_TOGGLE_DRILL", fal
     "[TOGGLE-DRILL]; the client's DONE line ends it. One way: oven (the client repairs the oven, the "
     "host reads it) and oven_host (the host repairs it once a client's world is ready); the host puts "
     "back an oven its save had repaired before any client connects, and the reader's DONE line ends it.")
+// The swinger drill's row: its own file, one concept, included as _dev_nb.inc is below.
+#include "coop/config/config_registry_rows_dev_swinger.inc"
 CFG_STRING(door_drill_door, "door_drill_door", "dev", "", "VOTVCOOP_DOOR_DRILL_DOOR", false,
     "With door_drill: the object name of the one door the walker walks to (e.g. "
     "door_GEN_VARIABLE_door_C_CAT_45); empty walks the nearest one its navmesh reaches.")
@@ -804,12 +771,25 @@ CFG_FLAG(key_index_forget_one, "key_index_forget_one", "dev", false, "VOTVCOOP_K
 // The explosion lane's drill, birth line and selftest red arms: their own file, one concept, included as
 // _dev_port.inc is above.
 #include "coop/config/config_registry_rows_dev_explosion.inc"
+// The Geom Octa lane's drill and red arm: their own file, one concept, included as _dev_port.inc is above.
+#include "coop/config/config_registry_rows_dev_octa.inc"
 // The fire lane's drill: its own file, one concept, included as _dev_port.inc is above.
 #include "coop/config/config_registry_rows_dev_fire.inc"
+// The cord lane's drill: its own file, one concept, included as _dev_port.inc is above.
+#include "coop/config/config_registry_rows_dev_cord.inc"
+// The coffee lane's drill and red arm: their own file, one concept, included as _dev_port.inc is above.
+#include "coop/config/config_registry_rows_dev_coffee.inc"
+// The pile deferral drill's row: its own file, one concept, included as _dev_port.inc is above.
+#include "coop/config/config_registry_rows_dev_pile.inc"
 // The ATV lane's rows (its probe, corrector arm, spawn drill, health drill): their own file, as _dev_port.inc is above.
 #include "coop/config/config_registry_rows_dev_atv.inc"
+// The server boxes' drills (the repair and its pay, the upgrade install): their own file, one concept, included
+// as _dev_port.inc is above.
+#include "coop/config/config_registry_rows_dev_server.inc"
 // The puppet-identity arc's selftests and drill (PI-1, PI-2, PI-3): their own file, one concept, included as
 // _dev_port.inc is above.
 #include "coop/config/config_registry_rows_dev_pi.inc"
 // The NPC-spawner arc's native-spawn probe (NB): the same shape, the last rows of the list.
 #include "coop/config/config_registry_rows_dev_nb.inc"
+// The Vulkan overlay arc's probes: their own file, one concept, included as _dev_nb.inc is above.
+#include "coop/config/config_registry_rows_dev_vulkan.inc"

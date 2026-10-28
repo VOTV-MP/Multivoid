@@ -20,10 +20,17 @@ namespace coop::net { class Session; }
 
 namespace coop::trash_morph_gate {
 
-// Resolve the three verbs and watch their bodies (idempotent; the session pointer is re-cached
-// on every call so a reconnect keeps the refusals live). Safe before the trash classes load: the class resolve is throttled and a
-// partial set never latches, so a verb that is not resident yet is picked up later. Game thread.
+// Cache the session the refusals read and watch the three verbs by class and name (the watches
+// are registered once per process; the session is re-cached at every call, so a reconnect keeps
+// the refusals live). From the session start, before the world: a watch needs no loaded class,
+// since the gate matches by the owning class's name from the first instance. Called from the
+// session start (the TimelineThread); the name resolve is driven by Tick.
 void Install(coop::net::Session* session);
+
+// The owner of the resolve: until the three watches are live (or dead for good) it asks the script gate to
+// resolve the pending names, and logs "3/3 ... live" once. One bool check after. Game thread, every session
+// tick.
+void Tick();
 
 // Zero the per-verb tallies so a second session's numbers are its own. Game thread.
 void OnSessionStart();

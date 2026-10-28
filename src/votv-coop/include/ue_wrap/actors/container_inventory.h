@@ -59,4 +59,16 @@ void RederiveShownState(void* container, void* inventory);
 // The inventory's currVol. False when the field does not resolve.
 bool CurrentVolume(void* inventory, float& out);
 
+// Whether the container's inventory component has run its init: its `obj` field, set on init's first
+// line and never cleared, is live. False when the component or the field does not resolve.
+bool InventoryInitialized(void* container);
+
+// Whether the gamemode's allContainers field resolves, which AllContainers cannot say: it reads an
+// empty registry and an unresolved field both as zero entries.
+bool AllContainersResolved(void* gamemode);
+
+// The gamemode's allContainers registry, null and non-live entries skipped: copies up to `cap` actor
+// pointers into `out` and returns the count copied. Zero when the gamemode or the field does not resolve.
+size_t AllContainers(void* gamemode, void** out, size_t cap);
+
 }  // namespace ue_wrap::container_inventory

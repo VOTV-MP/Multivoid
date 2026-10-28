@@ -16,12 +16,14 @@ namespace coop::blob_chunks {
 constexpr size_t kMaxAssembliesPerSender = 4;
 
 namespace {
-// Shared chunker for SendBlob / SendBlobToSlot. `sendOne(p)` does the per-chunk transport
-// (broadcast vs slot-targeted); everything else (chunk count, 255-cap, all-or-nothing) is
-// identical (RULE 2 -- one chunking implementation).
-template <class SendOne>
+// Shared chunker for SendBlob / SendBlobToSlot. It builds every chunk first, then `sendAll(chunks,
+// n)` hands the whole blob to the transport in one call (broadcast vs slot-targeted), so a join gate
+// cannot split it; everything else (chunk count, 255-cap, all-or-nothing) is identical (RULE 2 --
+// one chunking implementation). The chunk buffer is reused across blobs.
+template <class SendAll>
 bool ChunkAndSend(coop::net::ReliableKind kind, uint32_t seq,
-                  const std::vector<uint8_t>& blob, SendOne sendOne) {
+                  const std::vector<uint8_t>& blob, SendAll sendAll) {
+    static thread_local std::vector<coop::net::BlobChunkPayload> chunkBuf;
     const size_t maxData = sizeof(coop::net::BlobChunkPayload{}.data);
     const uint8_t chunks =
         static_cast<uint8_t>(blob.empty() ? 1 : (blob.size() + maxData - 1) / maxData);
@@ -30,9 +32,10 @@ bool ChunkAndSend(coop::net::ReliableKind kind, uint32_t seq,
                 blob.size(), static_cast<unsigned>(kind));
         return false;
     }
+    chunkBuf.assign(chunks, coop::net::BlobChunkPayload{});
     size_t off = 0;
     for (uint8_t i = 0; i < chunks; ++i) {
-        coop::net::BlobChunkPayload p{};
+        coop::net::BlobChunkPayload& p = chunkBuf[i];
         p.blobSeq = seq;
         p.chunkIdx = i;
         p.chunks = chunks;
@@ -40,13 +43,12 @@ bool ChunkAndSend(coop::net::ReliableKind kind, uint32_t seq,
         p.chunkLen = static_cast<uint16_t>(take);
         if (take) std::memcpy(p.data, blob.data() + off, take);
         off += take;
-        if (!sendOne(p)) {
-            UE_LOGW("blob_chunks: chunk %u/%u send refused (kind %u, seq=%u) -- "
-                    "blob will retry under a fresh seq",
-                    static_cast<unsigned>(i), static_cast<unsigned>(chunks),
-                    static_cast<unsigned>(kind), seq);
-            return false;
-        }
+    }
+    if (!sendAll(chunkBuf.data(), static_cast<int>(chunks))) {
+        UE_LOGW("blob_chunks: send of %u chunks refused (kind %u, seq=%u) -- "
+                "blob will retry under a fresh seq",
+                static_cast<unsigned>(chunks), static_cast<unsigned>(kind), seq);
+        return false;
     }
     return true;
 }
@@ -55,16 +57,17 @@ bool ChunkAndSend(coop::net::ReliableKind kind, uint32_t seq,
 bool SendBlob(coop::net::Session* s, coop::net::ReliableKind kind, uint32_t seq,
               const std::vector<uint8_t>& blob) {
     return ChunkAndSend(kind, seq, blob,
-                        [&](const coop::net::BlobChunkPayload& p) {
-                            return s->SendReliable(kind, &p, sizeof(p));
+                        [&](const coop::net::BlobChunkPayload* chunks, int n) {
+                            return s->SendReliableBatch(kind, chunks, sizeof(*chunks), n);
                         });
 }
 
 bool SendBlobToSlot(coop::net::Session* s, int peerSlot, coop::net::ReliableKind kind,
                     uint32_t seq, const std::vector<uint8_t>& blob) {
     return ChunkAndSend(kind, seq, blob,
-                        [&](const coop::net::BlobChunkPayload& p) {
-                            return s->SendReliableToSlot(peerSlot, kind, &p, sizeof(p));
+                        [&](const coop::net::BlobChunkPayload* chunks, int n) {
+                            return s->SendReliableBatchToSlot(peerSlot, kind, chunks,
+                                                              sizeof(*chunks), n);
                         });
 }
 

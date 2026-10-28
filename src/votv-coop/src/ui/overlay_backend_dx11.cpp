@@ -26,7 +26,6 @@ namespace {
 ID3D11Device*           g_device  = nullptr;
 ID3D11DeviceContext*    g_context = nullptr;
 ID3D11RenderTargetView* g_rtv     = nullptr;
-bool                    g_live    = false;   // InitRenderer committed
 
 void CreateRTV(IDXGISwapChain* sc) {
     if (g_rtv || !g_device) return;
@@ -44,17 +43,24 @@ void ReleaseRTV() {
     if (g_rtv) { g_rtv->Release(); g_rtv = nullptr; }
 }
 
-}  // namespace
-
-bool Live() { return g_live; }
-
-bool CaptureDevice(IDXGISwapChain* sc) {
-    // Silent on a non-DX11 swapchain: the DISPATCHER owns the RHI verdict and
-    // the DX12 path's own logging (the old one-shot "NOT DX11" WARN moved
-    // there, replaced by the stage-1 detection lines -- RULE 2).
+bool CaptureDevice(const FrameTarget& t) {
+    IDXGISwapChain* sc = t.dxgi;
+    // The D3D11 present seam fired, so a swapchain without an ID3D11Device means the seam's AOB
+    // landed on the wrong function. Nothing else decides the RHI now, so say so once: the
+    // bring-up retries on every frame and would otherwise fail without a line.
     ID3D11Device* dev = nullptr;
-    if (FAILED(sc->GetDevice(IID_PPV_ARGS(&dev))) || !dev) {
+    const HRESULT hr = sc->GetDevice(IID_PPV_ARGS(&dev));
+    if (FAILED(hr) || !dev) {
         if (dev) dev->Release();
+        static bool s_logged = false;
+        if (!s_logged) {
+            s_logged = true;
+            UE_LOGE("imgui_overlay: the FD3D11Viewport::PresentChecked seam fired but its swapchain "
+                    "(%p) has no ID3D11Device (GetDevice hr=0x%08lX) -- the seam is on the wrong "
+                    "function or the game is not D3D11; the overlay stays down",
+                    static_cast<void*>(sc), static_cast<unsigned long>(hr));
+            ue_wrap::log::Flush();
+        }
         return false;
     }
     ID3D11DeviceContext* ctx = nullptr;
@@ -68,14 +74,13 @@ void AbandonCapture() {
     // Total, not partial: this is the unwind arm for a capture that CaptureDevice committed, so it
     // must leave the backend as if the capture never happened. Today its two callers both run
     // before InitRenderer commits, but a render target left pointing at a released device -- or
-    // g_live still true over a null context -- would be a use-after-free the moment one did not.
+    // a stale device pointer -- would be a use-after-free the moment one did not.
     ReleaseRTV();
-    g_live = false;
     if (g_context) { g_context->Release(); g_context = nullptr; }
     if (g_device)  { g_device->Release();  g_device = nullptr; }
 }
 
-bool InitRenderer(IDXGISwapChain* sc) {
+bool InitRenderer(const FrameTarget& t) {
     if (!ImGui_ImplDX11_Init(g_device, g_context)) {
         UE_LOGE("imgui_overlay: ImGui_ImplDX11_Init failed");
         return false;
@@ -88,8 +93,7 @@ bool InitRenderer(IDXGISwapChain* sc) {
     //
     // ONE AXIS, deliberately -- a per-RHI flip would re-create the exact defect this rule prevents,
     // and a DX12-only risk is answered by the atlas-regime census in CI, not by splitting the flag.
-    g_live = true;
-    CreateRTV(sc);
+    CreateRTV(t.dxgi);
     return true;
 }
 
@@ -97,11 +101,11 @@ void NewFrame() { ImGui_ImplDX11_NewFrame(); }
 
 void InvalidateDeviceObjects() { ImGui_ImplDX11_InvalidateDeviceObjects(); }
 
-void EnsureTarget(IDXGISwapChain* sc) {
-    if (!g_rtv) CreateRTV(sc);  // recreate after a resize
+void EnsureTarget(const FrameTarget& t) {
+    if (!g_rtv) CreateRTV(t.dxgi);  // recreate after a resize
 }
 
-void RenderDrawData(IDXGISwapChain*) {
+void RenderDrawData(const FrameTarget&) {
     if (g_rtv) {
         g_context->OMSetRenderTargets(1, &g_rtv, nullptr);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
@@ -110,7 +114,7 @@ void RenderDrawData(IDXGISwapChain*) {
 
 void OnResizeRelease() { ReleaseRTV(); }
 
-void OnResizeRecreate(IDXGISwapChain* sc) { CreateRTV(sc); }
+void OnResizeRecreate(const FrameTarget& t) { CreateRTV(t.dxgi); }
 
 void* CreateTextureFromImageFile(const wchar_t* path, int* outW, int* outH) {
     // RENDER THREAD ONLY (call from a surface's Render() -- the Present detour
@@ -145,5 +149,14 @@ void DestroyTexture(void* id) {
     if (id) static_cast<ID3D11ShaderResourceView*>(id)->Release();
 }
 
+}  // namespace
+
+const BackendOps& Ops() {
+    static const BackendOps ops = {
+        &CaptureDevice, &AbandonCapture, &InitRenderer, &NewFrame, &EnsureTarget, &RenderDrawData,
+        &InvalidateDeviceObjects, &OnResizeRelease, &OnResizeRecreate,
+        &CreateTextureFromImageFile, &DestroyTexture, "DX11"};
+    return ops;
+}
 
 }  // namespace ui::overlay_backend::dx11

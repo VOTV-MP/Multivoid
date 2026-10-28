@@ -1,11 +1,11 @@
-// coop/creatures/npc_mirror_brain.h -- a creature mirror's Blueprint makes nothing of its own.
-//
+// coop/creatures/npc_mirror_brain.h -- a creature mirror's Blueprint makes only what its table lets run.
 // A mirror is the creature's whole Blueprint running on a client: every body its BeginPlay armed (timers, delay
 // resumes, overlap and montage delegates, move callbacks) fires on the client's clock and acts there. The host's
-// copy is the creature; the pose stream shows the mirror. So a mirror of a parked family has its event graph refused
-// entry by entry but the few a table names, and the part of BeginPlay it needs to look right is done by our code.
-//   - FAMILIES: the zombie and every class below it, and the fossilhound; the table's class names decide it
-//     (IsParkedClass). Every other family keeps its own pair of hits until it is parked.
+// copy decides; the pose stream moves the mirror. So a mirror of a parked class has its event graph refused
+// entry by entry but the few a table names (or only its decisions, the Octa), and our code redoes a refused BeginPlay.
+//   - FAMILIES: the zombie and every class below it, the fossilhound, and the Geom Octa, whose table lists all but
+//     the twelve entries that decide, relayed from the host by coop/creatures/geom_octa_sync; the table's class
+//     names decide it (IsParkedClass). Every other family keeps its own pair of hits until it is parked.
 //   - THE MARK: set when a mirror is born, or when a client's own save-loaded twin is bound; a client's own creature
 //     is never marked and runs whole. It is the actor's slot and the slot's serial, true only while the slot holds
 //     that serial, so a recycled address is never a mirror and a mark nothing removed matches nothing.
@@ -18,6 +18,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 
 namespace coop::npc_mirror_brain {
 
@@ -27,7 +28,11 @@ namespace coop::npc_mirror_brain {
 // the gate is per mirror, by mark. MTA also locks a copy's output: the syncer's report locks its health
 // (reference/mtasa-blue/Client/mods/deathmatch/logic/CPedSync.cpp:236-252) and the damage handler restores it
 // (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientGame.cpp:4509). The output lock does not reach a
-// creature's Blueprint, which also writes world state and saves, so the body is refused at its entry.
+// creature's Blueprint, which also writes world state and saves, so the body is refused at its entry. The Octa is the
+// other half of the precedent: MTA's remote ped is driven by relayed sync state while the game animates it
+// (reference/mtasa-blue/Client/mods/deathmatch/logic/CPedSync.cpp:236-252, CClientPed.cpp:6546). It keeps its brain
+// because every live piece is presentation or the continuation of a relayed decision, and its output lock is the
+// explosion lane's dissolve of its laser's blast, not a Blueprint refusal.
 //
 // Mark `actor`, a mirror of a creature, before its BeginPlay can run. A full table drops the marks whose slot no
 // longer holds their serial first; a mirror still unmarkable is said, and its Blueprint runs. Game thread.
@@ -56,7 +61,8 @@ enum class Origin : uint8_t { Spawned, Adopted };
 // After the mirror is installed: the presentation its class's BeginPlay set up and the refused graph no longer
 // does. On an adopted twin the zombie's setup is run again (it writes the same animation instance, and the walk
 // blend is picked again); only the hound's per-viewer loop is not kicked a second time, since its own BeginPlay
-// started it. A no-op for an actor that is not a marked mirror. Game thread.
+// started it. A no-op for an actor that is not a marked mirror, and for a class that has only its decisions refused
+// (the Octa: its BeginPlay ran, so nothing is left to set up). Game thread.
 void SetUpPresentation(void* actor, Origin origin);
 
 // [dev], for the drill alone: how many times SetUpPresentation left the hound's per-viewer kick out for an adopted
@@ -69,6 +75,26 @@ void Install();
 
 // Teardown: say what the watches refused, drop every mark.
 void OnDisconnect();
+
+// A one-shot pass for a lane's own replay into a marked mirror: for the life of the object, each of `entries` of
+// `actor`'s event graph that the table refuses runs ONCE, the first time it is entered on this thread, and is then
+// consumed. The lane arms it around one synchronous reflected call and it ends with that call, so nothing outlives it;
+// an entry the replay did not reach is simply never run. Thread-local; at most one is open, and a second is inert (said).
+// An entry run by a pass records the frame (the graph call's locals) it ran with, for a post hook that must tell this
+// replay's own reads from a natural call's. Precedent: piramid_sync's thread-local allow slot. Game thread.
+class ScopedEntryPass {
+public:
+    ScopedEntryPass(void* actor, std::initializer_list<int32_t> entries);
+    ~ScopedEntryPass();
+    ScopedEntryPass(const ScopedEntryPass&) = delete;
+    ScopedEntryPass& operator=(const ScopedEntryPass&) = delete;
+
+    // The frame of the entry the open pass last let run, or null before one has (and with no pass open).
+    static const uint8_t* Frame();
+
+private:
+    bool owns_ = false;
+};
 
 // ---- The tables (npc_mirror_brain_table.cpp) ----
 // The entries of one event graph that run on a marked mirror, as EntryPoint values.

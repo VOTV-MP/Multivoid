@@ -102,10 +102,20 @@ add_library(imgui STATIC
     ${IMGUI_DIR}/imgui_demo.cpp
     ${IMGUI_DIR}/backends/imgui_impl_dx11.cpp
     ${IMGUI_DIR}/backends/imgui_impl_dx12.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
     ${IMGUI_DIR}/backends/imgui_impl_win32.cpp
     ${IMGUI_DIR}/misc/freetype/imgui_freetype.cpp
 )
 target_include_directories(imgui PUBLIC ${IMGUI_DIR} ${IMGUI_DIR}/backends)
+# The Vulkan backend and the overlay's Vulkan half see the Khronos headers (Apache-2.0 OR MIT, a git submodule
+# pinned to a release tag) for TYPES only: VK_NO_PROTOTYPES and IMGUI_IMPL_VULKAN_NO_PROTOTYPES leave every Vulkan
+# function undeclared, so nothing links against vulkan-1.lib and the DLL imports no Vulkan symbol (RULE 3). The
+# functions come at run time from the loader the game already mapped (ImGui_ImplVulkan_LoadFunctions, and the
+# game's own device through vkGetDeviceProcAddr). Both macros must reach imgui_impl_vulkan.cpp, which is why they
+# ride the target rather than a .cpp.
+set(VULKAN_HEADERS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/Vulkan-Headers)
+target_include_directories(imgui SYSTEM PUBLIC ${VULKAN_HEADERS_DIR}/include)
+target_compile_definitions(imgui PUBLIC VK_NO_PROTOTYPES IMGUI_IMPL_VULKAN_NO_PROTOTYPES)
 # IMGUI_ENABLE_FREETYPE makes FreeType the DEFAULT atlas builder (since 1.81) --
 # every font in the atlas (chat, panels, nameplates) rasterizes through it.
 # IMGUI_USE_WCHAR32 widens ImWchar to 32 bits (imgui.h:273) and raises

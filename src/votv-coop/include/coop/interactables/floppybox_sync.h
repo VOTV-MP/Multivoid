@@ -11,7 +11,7 @@
 //
 // Wire: ReliableKind::FloppyBoxState (BlobChunkPayload; blob head [u8 op][u32 eid]; op 0=push
 // 1=pop 2=deny 3=canonical). Never refanned; clients accept canonicals and denies from the
-// host only. Game thread throughout.
+// host only; a canonical for a box not bound yet is held in bind_wait. Game thread throughout.
 
 #pragma once
 
@@ -36,5 +36,9 @@ void OnBoxChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 void QueueConnectBroadcastForSlot(int peerSlot);
 
 void OnDisconnect();
+
+// [dev] how many host canonicals this peer has applied to a bound box since its session began; a read-only
+// question for the late-join drill. Game thread.
+uint32_t AppliedCanonicals();
 
 }  // namespace coop::floppybox_sync

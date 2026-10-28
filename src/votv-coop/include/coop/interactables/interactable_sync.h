@@ -16,8 +16,11 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace coop::net {
 class Session;
@@ -75,6 +78,23 @@ std::wstring DoorBoxKey(void* box);
 std::wstring ContainerKey(void* swinger);
 std::wstring OvenKey(void* oven);
 
+// The live swinger the container lane indexes under `key` (the key ContainerKey gives: the portable `mv_` one where
+// the swinger has an identity, else its game key), or null. The held-item receiver's answer for a dragged lid,
+// a child actor the prop key index leaves out. Game thread.
+void* ContainerActor(const std::wstring& key);
+
+// The container lane's live indexed lids, key and actor, appended to `out` (empty with a stale index): what
+// coop/interactables/swinger_join_pose sends a joiner the place of. Game thread.
+void ContainerLids(std::vector<std::pair<std::wstring, void*>>& out);
+
+// The lane's deferral clock, for a wait that rests on the same index (swinger_join_pose): the hub passes the index
+// has completed; whether a wait queued at pass `queuedAt` may be dropped (the index settled and was passed over
+// twice since, the lane's own rule for the states it parks); and the outer backstop on such a wait.
+// Game thread.
+uint64_t ContainerIndexPasses();
+bool ContainerWaitSettled(uint64_t queuedAtPass);
+std::chrono::steady_clock::duration ContainerWaitBackstop();
+
 // The light switch lane's key for `sw`, or "" when the lane does not index it in the current world.
 // Game thread.
 std::wstring LightSwitchKey(void* sw);
@@ -120,8 +140,9 @@ bool ApplyingLightGroup(void* root);
 // HOST-only: snapshot the FULL current state (open AND closed / on AND off) of
 // every indexed instance (all channels) to a freshly connected client `peerSlot`.
 // A joiner loads its own save, so a host-turned-OFF switch (from a saved/default
-// ON) must be pushed too -- the receiver idempotently skips already-matching ones.
-// Called from the net-pump connect edge. Game thread.
+// ON) must be pushed too -- the receiver idempotently skips already-matching ones. Each open lid's
+// place follows (coop/interactables/swinger_join_pose). Called from the net-pump connect edge.
+// Game thread.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
 // Per-tick retry pump for deferred applies (instances still streaming in). No-op

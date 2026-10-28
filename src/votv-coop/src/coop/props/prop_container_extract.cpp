@@ -178,7 +178,7 @@ std::atomic<bool> g_takeObjInFlight{false};
 void InstallInventory(coop::net::Session* session) {
     g_session_ptr.store(session, std::memory_order_release);
     PT::SetSession(session);  // mirror; see SetSession comment in prop_lifecycle.cpp.
-    // An atomic latch, matching Install()'s. Without it the 125 Hz pump's InstallGrabObservers call
+    // An atomic latch, matching Install()'s. Without it the ~60 Hz pump's InstallGrabObservers call
     // runs R::FindClass -- a full GUObjectArray walk with a std::wstring allocation per entry -- on
     // every tick until propInventory_C loads.
     static std::atomic<bool> s_done{false};

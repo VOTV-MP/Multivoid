@@ -50,7 +50,6 @@
 #include "coop/interactables/signal_sync.h"
 #include "coop/player/movement_ledger.h"
 #include "coop/player/run_end_travel.h"
-#include "coop/player/hand_item.h"  // hotbar hand-item display axis (connect replay)
 #include "coop/player/local_body.h"  // skins: local first-person body owner
 #include "coop/player/nameplate.h"  // plate-pref session wiring (Install)
 #include "coop/player/nick_color.h"  // nick-color session wiring (Install)
@@ -60,11 +59,11 @@
 #include "coop/creatures/wisp_attack_sync.h"  // Killer Wisp coop: host detect + neutralize + relay
 #include "coop/creatures/wisp_grab_hold.h"  // Killer Wisp: grab-window body placement (per-slot/full teardown)
 #include "coop/creatures/wisp_tear_mirror.h"  // Killer Wisp coop: victim kill + tear mirror
-#include "coop/session/rig_ready.h"
 #include "coop/session/pause_guard.h"  // coop no-pause invariant (ESC pause froze clients)
 #include "coop/items/player_inventory_sync.h"  // per-player inventory (host file scaffold)
 #include "coop/player/stat_orders.h"  // an admin's orders to a player's stats: the kept session, the tokens answered Left
 #include "coop/voice/voice_chat.h"
+#include "coop/element/bind_wait.h"  // OnSlotLeft / Clear: the messages held for a deferred bind
 #include "coop/element/death_seam.h"  // an element's end of play, handed to the lanes that subscribed
 #include "coop/props/host_spawn_watcher.h"  // HOST mirror of those ambient spawner outputs (the pinecone scare)
 #include "coop/props/prop_drop_intent.h"  // client-place -> host-auth keyed-prop DROP INTENT
@@ -102,8 +101,8 @@
 #include "coop/interactables/upgrade_sync.h"
 #include "coop/interactables/turbine_sync.h"
 #include "coop/interactables/keypad_sync.h"
-#include "coop/world/coord_tower_ops.h"
-#include "coop/world/coord_tower_rows.h"
+#include "coop/world/fuse_tower_ops.h"
+#include "coop/world/fuse_tower_rows.h"
 #include "coop/world/power_grid.h"
 #include "coop/world/power_panel.h"
 #include "coop/world/sky_sync.h"
@@ -120,10 +119,12 @@
 #include "coop/props/trash_clump_pose_stream.h"
 #include "coop/props/trash_sweep.h"
 #include "coop/props/prop_drive_host.h"    // HOST: the props a hook drags, streamed while they move
-#include "coop/props/prop_drive_stream.h"  // CLIENT: park and drive those props
+#include "coop/props/prop_drive_stream.h"  // park and drive those props (a client's, and the host's copies of a client's)
+#include "coop/props/prop_syncer_host.h"   // HOST: judge a syncing client's rows
 #include "coop/props/prop_park.h"  // the parks' held Characters, given back at session end
 #include "coop/props/rider_hold.h"  // the holds on welded Characters' movement, released last
 #include "coop/props/trash_collect_sync.h"
+#include "coop/props/trash_native_hold.h"  // the load catch on the join's save spawns
 #include "coop/items/broom_stroke.h"
 #include "coop/props/pack_trash_intent.h"
 #include "coop/interactables/verb_lanes.h"  // the interactable lanes on a device's own verbs, at the script gate
@@ -144,9 +145,10 @@
 #include "coop/creatures/kerfur_prop_adoption.h"
 #include "coop/creatures/npc_mirror.h"
 #include "coop/creatures/npc_sync.h"
-#include "coop/creatures/npc_world_enum.h"  // RegisterExistingWorldNpcs
 #include "coop/world/world_actor_sync.h"  // non-Character event-actor transform mirror (sibling of npc_sync)
 #include "coop/creatures/piramid_sync.h"  // piramid event choreography lane (mirror brain suppression + PyramidGather)
+#include "coop/creatures/geom_octa_sync.h"  // the Geom Octa's lane: its host decisions and each peer's look, observed
+#include "coop/creatures/geom_octa_relay.h"  // the Geom Octa's lane, the client's half: the host's decisions replayed
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/pile_spawn_bind.h"       // OnDisconnect: a client's own parked clumps go back to the game
@@ -205,6 +207,7 @@ void InstallLoadWatchers(coop::net::Session& session) {
     coop::explosion_sync::Install(&session);  // the birth seam on every Blueprint deferred spawn: a client's own explosions dissolve, from the load window on; also the request lane's session and client watches
     coop::explosion_parking::Install(&session);  // the explosion copy's parking watches: the four verbs, the rune check, the force narrowing (client session only)
     coop::world_load_episode::InstallReplayWatch(session);
+    coop::trash_native_hold::Install(&session);  // the join load's clumps held still at their spawn: a catch installed with the world would arm after the load
 }
 
 void Install(coop::net::Session& session) {
@@ -214,6 +217,7 @@ void Install(coop::net::Session& session) {
     coop::npc_sync::Install(&session);
     coop::world_actor_sync::Install(&session);  // non-Character event-actor mirror (2nd BeginDeferred interceptor, disjoint allowlist)
     coop::piramid_sync::Install(&session);  // piramid event choreography lane (hooks arm lazily on the first piramid element)
+    coop::geom_octa_sync::Install(&session);  // the Geom Octa's lane: the [OCTA] watches (live once the class loads)
     coop::item_activate::Install(&session);  // flashlight
     coop::player_damage::Install(&session);  // the refusals on a peer's puppet: its impacts, damage, fire and hit verbs
     coop::weather_sync::Install(&session);  // weather
@@ -223,8 +227,8 @@ void Install(coop::net::Session& session) {
     coop::sky_sync::Install(&session);  // host-authoritative night-sky orientation, moon phase and eye
     coop::power_panel::Install(&session);  // the power panel: presses to the host, its canonical to every peer
     coop::power_grid::Install(&session);  // the grid runs on the host: its generators' rows, a client's ops
-    coop::coord_tower_rows::Install(&session);  // the towers roll and judge on the host: their rows to every peer
-    coop::coord_tower_ops::Install(&session);  // a client's presses and fuse claims, and its refused rolls
+    coop::fuse_tower_rows::Install(&session);  // the towers roll and judge on the host: their rows to every peer
+    coop::fuse_tower_ops::Install(&session);  // a client's presses and fuse claims, and its refused rolls
     coop::atv_sync::Install(&session);  // ATV body pose (the syncer the host assigned streams a keyed pose)
     coop::drone_sync::Install(&session);  // delivery drone body pose (host-authoritative singleton)
     coop::order_sync::Install(&session);  // delivery-drone economy: client->host shop-order forward
@@ -333,118 +337,6 @@ void Install(coop::net::Session& session) {
     // window on the splash.
 }
 
-namespace {
-// ConnectReplayForSlot is the host's response to ClientWorldReady, which a client re-fires on
-// every world-change re-seed (the join double-load and a mid-session level travel), so the host
-// re-asserts world state into the client's reloaded world; its keyless chipPiles, eid-only,
-// re-acquire their host eid that way. The replay is idempotent (adopt snapshots, deduplicated
-// mirror registration), so re-running it is correct.
-}  // namespace
-
-void ConnectReplayForSlot(int slot) {
-    if (slot < 1 || slot >= static_cast<int>(coop::players::kMaxPeers)) return;
-    UE_LOGI("net: slot %d world-ready -- replaying snapshot + flashlight + weather + peer states", slot);
-    coop::rig_ready::Say("peer-world-ready", slot);
-    // Before the snapshot, explicit per-key destroys for props this joiner's blob had that the
-    // host's live world no longer has (grabbed or destroyed during the download and load), so the
-    // client drops exactly those rather than the divergence sweep inferring the deletes. On the
-    // bulk lane ahead of the snapshot, so the removes land before the adds. A no-op for a joiner
-    // with no blob baseline, which the sweep still owns.
-    coop::join_window_baseline::SendDivergenceDeletes(slot);
-    // Every dish code, sent here on the bracket's lane ahead of its Begin, so a set that goes whole lands
-    // before its Complete and a joined client holds the host's codes, a midnight since the capture
-    // included; a set not taken whole is retried from the lane's tick and can land after it.
-    coop::dish_hashcode_sync::QueueConnectBroadcastForSlot(slot);
-    coop::prop_snapshot::TriggerForSlot(slot);
-    coop::prop_drive_host::OnPeerWorldReady();  // every driven prop's pose again, so the joiner parks the resting ones the delta gate would never send it
-    coop::kerfus_lanes::OnPeerWorldReady(slot);  // and every Kerfus's on, charging and energy
-    coop::sat_console_sync::OnPeerWorldReady(slot);  // a SAT console typist back at a terminal still running finds it
-    // Deliver the current position of any save-authoritative chipPile the host moved in this
-    // joiner's connect window (the move's convert was dropped pre-world, and chipPiles carry no
-    // position in the snapshot). After the snapshot, so it rides the bulk lane behind it; the
-    // client snaps the bound native at quiescence.
-    coop::join_window_baseline::FlushDivergedPositions(slot);
-    coop::item_activate::QueueConnectBroadcastForSlot(slot);
-    coop::weather_sync::QueueConnectBroadcastForSlot(slot);
-    coop::interactable_sync::QueueConnectBroadcastForSlot(slot);  // door/light/container states
-    coop::keypad_sync::QueueConnectBroadcastForSlot(slot);  // keypad states
-    coop::sky_sync::QueueConnectBroadcastForSlot(slot);  // night-sky orientation, moon phase, eye
-    coop::power_grid::QueueConnectBroadcastForSlot(slot);  // the generators' rows, before the panel they gate
-    coop::power_panel::QueueConnectBroadcastForSlot(slot);  // the panel's canonical
-    coop::coord_tower_rows::QueueConnectBroadcastForSlot(slot);  // every tower's row
-    coop::atv_sync::QueueConnectBroadcastForSlot(slot);  // ATV body pose, stamped with the host's seat and syncer (adopt=1)
-    coop::drone_sync::QueueConnectBroadcastForSlot(slot);  // delivery drone pose (adopt=1)
-    coop::order_queue_sync::QueueConnectBroadcastForSlot(slot);  // the delivery order queue: a reset + every queued order
-    coop::turbine_sync::QueueConnectBroadcastForSlot(slot);  // wind-turbine facing/spin snap
-    coop::device_occupancy::QueueConnectBroadcastForSlot(slot);  // live device claims (busy table)
-    coop::download_arm_sync::QueueConnectResetForSlot(slot);  // a reset since the capture, ahead of the desk's seed: the game's order is reset, catch, arm
-    coop::console_state_sync::QueueConnectBroadcastForSlot(slot);  // sky-signal snapshot + desk adopt
-    coop::desk_input_sync::SeedPingAttributionFromMachine();  // a SOLO host's ping edge is absorbed unwired (PollOnce gated on connected) -- re-derive from ground truth so a mid-ping joiner gets the FSM-hold
-    coop::desk_snd_fx::QueueConnectBroadcastForSlot(slot);  // desk loop-sound ground truth (a mid-loop joiner gets the ON)
-    coop::physmods_sync::QueueConnectBroadcastForSlot(slot);  // canonical module array (ground truth over save drift)
-    coop::drive_sync::QueueConnectBroadcastForSlot(slot);  // slot lines
-    coop::drive_payload_sync::QueueConnectBroadcastForSlot(slot);  // every drive row that differs from its class default
-    coop::drive_rack_sync::QueueConnectBroadcastForSlot(slot);  // rack canonicals (AFTER the payloads -- the shipped seed order on the one pinned lane)
-    coop::meadow_db_sync::QueueConnectBroadcastForSlot(slot);  // the seedDelta(h) join seed (blob-instant snapshot vs live)
-    coop::signal_sync::QueueConnectBroadcastForSlot(slot);  // the join-window saved-signal seed, both signs
-    coop::email_sync::QueueConnectBroadcastForSlot(slot);  // the join-window email seed, both signs
-    coop::signal_catch_sync::QueueConnectBroadcastForSlot(slot);  // the in-flight catch replay (the identity half) and the kind-2 state seed
-    coop::laptop_sync::QueueConnectBroadcastForSlot(slot);  // the PC's power (its disc slot is floppy_slot_sync's)
-    coop::laptop_tab::QueueConnectBroadcastForSlot(slot);  // the tab the PC's user is on
-    coop::portable_pc_lid::QueueConnectBroadcastForSlot(slot);  // every open portable PC lid
-    coop::floppybox_sync::QueueConnectBroadcastForSlot(slot);  // one canonical per live box
-    coop::props::container_contents_sync::QueueConnectBroadcastForSlot(slot);  // one slice per live world container (principle 8 anchor over the join snapshot)
-    coop::dish_sync::QueueConnectBroadcastForSlot(slot);  // the dish snapshot -- AFTER the desk rows + the catch seed (same ordered lane)
-    coop::download_arm_sync::QueueConnectArmForSlot(slot);  // an armed machine's ARM row, after the catch's seed and the dish snapshot
-    coop::dish_calib_sync::QueueConnectBroadcastForSlot(slot);  // every dish's precision, the joiner's seed
-    coop::sleep_sync::QueueConnectBroadcastForSlot(slot);  // the host's sleeping flag + every peer's rest state that is not awake
-    coop::comp_sync::QueueConnectBroadcastForSlot(slot);  // the refiner's seed (CompState + CompData)
-    coop::voice_chat::ReplayPeerStatesToSlot(slot);  // voice mute/disabled states -> joiner
-    coop::window_sync::QueueConnectBroadcastForSlot(slot);  // base-window clean (adopt=1)
-    coop::grime_sync::QueueConnectBroadcastForSlot(slot);  // surface grime process (adopt=1)
-    coop::trash_pile_sync::QueueConnectBroadcastForSlot(slot);  // pile counters (adopt=1) + depleted-key replay
-    coop::npc_world_enum::RegisterExistingWorldNpcs(slot);  // pre-existing/level-load NPCs (the save's kerfur) -> the peers already in; the joiner (slot) is skipped, its connect broadcast below sends it and it adopts its twin
-    coop::npc_sync::QueueConnectBroadcastForSlot(slot);  // existing NPCs -> joiner
-    coop::world_actor_sync::QueueConnectBroadcastForSlot(slot);  // existing event WorldActors -> joiner
-    coop::balance_sync::SendCurrentToSlot(slot);  // host's current balance
-    coop::upgrade_sync::SendCurrentToSlot(slot);  // and the upgrade levels: the joiner's save was taken at the handshake
-    coop::daily_task_sync::SendCurrentToSlot(slot);  // and the daily task: a change in its load window was hashed but never sent to it
-    // The host-to-client apply-blob push is not here: this fires at ClientWorldReady, after the
-    // joiner loaded its world, so the blob would miss the pre-materialise hook; the host tick's
-    // connect-edge detector drives it pre-world instead. No join teleport here either: the
-    // joiner places itself at its world appearance, and a host teleport at world-ready
-    // overwrote it, since world-ready arrives after the client has placed itself. The teleport
-    // helper stays for the admin bring-to-host action. Then catch the new client up to the
-    // existing peers' item state.
-    coop::item_activate::ReplayPeerStatesToSlot(slot);
-    // Existing peers' hand items to the joiner, as display mirrors.
-    coop::hand_item::ReplayPeerStatesToSlot(slot);
-    // One EventSnapshot per in-flight registry entry; the joiner replays the replay-safe rows with
-    // the active override.
-    coop::event_active_sync::SendJoinSnapshotForSlot(slot);
-    // Each creature's count, after its NPC spawn (the queue above, same lane): the joiner applies a count at the bind.
-    coop::creature_event_relay::SendJoinSnapshotForSlot(slot);
-    // The alarm lane's late-join answer: the current alarm state, unconditionally, so a mid-alarm
-    // joiner starts its klaxon on arrival.
-    coop::alarm_sync::QueueConnectBroadcastForSlot(slot);
-    coop::serverbox_sync::QueueConnectBroadcastForSlot(slot);  // current server state to the joiner
-    coop::server_upgrade_sync::QueueConnectBroadcastForSlot(slot);  // every box's upgrade level
-    coop::floppy_slot_sync::QueueConnectBroadcastForSlot(slot);  // every device slot, the laptop's file quad behind the laptop's: the joiner's world came from a save frozen before the first insert
-    coop::hook_anchor::QueueConnectBroadcastForSlot(slot);  // anchored hooks the joiner's save capture missed; it dedups by key
-    coop::roach_sync::QueueConnectBroadcastForSlot(slot);  // current roach population to the joiner
-    // The piramid lane's late-join answer: re-send an in-flight gather commit to the slot, after
-    // the world-actor and NPC snapshots above, since the replay's eid lookups need the joiner's
-    // mirrors; its retry window absorbs drain skew.
-    coop::piramid_sync::QueueConnectBroadcastForSlot(slot);
-    // The cue lane's late-join answer: re-send the live cosmetic cue emitters, so a mid-shower
-    // joiner replays the emitter.
-    coop::event_cue_sync::QueueConnectBroadcastForSlot(slot);
-    // The chat lane's late-join answer: the lobby's chat record, oldest first, one message per
-    // line. It lands retained on the joiner: arriving in a lobby must not replay a conversation
-    // you were not in across your screen; it is there when you open the chat.
-    coop::chat_sync::QueueConnectBroadcastForSlot(slot);
-}
-
 void ClientConnectEdge(coop::net::Session& session) {
     coop::item_activate::QueueConnectBroadcastForSlot(0);
     coop::save_transfer::ClientNoteConnected();
@@ -487,9 +379,11 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::broom_stroke::OnPeerLeft(static_cast<uint8_t>(slot));  // the leaver's stroke rate goes with it
     coop::kerfus_lanes::OnPeerLeft(static_cast<uint8_t>(slot));  // and the Kerfuses it turned on follow the host again (its verbs' queue goes with its slot)
     coop::dish_calib_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and its precision-intent budget
-    coop::drive_payload_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and its drive rows in assembly, parked or owed
+    coop::drive_payload_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and its drive rows in assembly, its brought drives
     coop::wisp_grab_hold::OnPeerLeft(static_cast<uint8_t>(slot));  // drop the leaver's grab-window puppet hold
     coop::remote_prop::OnDisconnectForSlot(slot);
+    coop::prop_syncer_host::OnSlotLeft(static_cast<uint8_t>(slot));  // the rows the leaver synced end, with no word to it
+    coop::element::bind_wait::OnSlotLeft(slot);  // and the messages it sent that wait for a prop to bind
     coop::item_activate::OnDisconnectForSlot(slot);
     coop::device_occupancy::OnDisconnectForSlot(slot);  // release a leaver's device claims
     coop::desk_input_sync::OnPeerLeft(slot);  // clear a leaver's dangling coordIsPing (its ping would swallow every peer's desk keys)
@@ -500,7 +394,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::served_player::OnPeerLeft(static_cast<uint8_t>(slot));  // robots serving the leaver read the host
     coop::power_panel::OnPeerLeft(static_cast<uint8_t>(slot));  // and its presses that wait for its body
     coop::power_grid::OnPeerLeft(static_cast<uint8_t>(slot));  // and its generator ops
-    coop::coord_tower_ops::OnPeerLeft(static_cast<uint8_t>(slot));  // and its tower ops
+    coop::fuse_tower_ops::OnPeerLeft(static_cast<uint8_t>(slot));  // and its tower ops
     coop::voice_chat::OnDisconnectSlot(slot);  // drop the leaver's voice channel + icon state
     coop::sleep_sync::OnDisconnectForSlot(slot);  // the leaver's rest state back to awake, told to every client
     coop::owner_entity_sync::OnPeerLeftSlot(slot);  // destroy the leaver's owner-entity mirrors (its eyer dies with it)
@@ -516,6 +410,7 @@ DisconnectStats DisconnectAll() {
     coop::trash_mirror::OnDisconnect();
     coop::pile_look::OnDisconnect();
     coop::pile_spawn_bind::OnDisconnect();   // this client's own parked clumps go back to the game, before ForceRelease
+    coop::trash_native_hold::ReleaseUnbound();   // and the load hold's unbound ones, the same way
     coop::remote_prop::ForceRelease();
     // A disconnect mid-snapshot drops the armed claim set (dangling actor pointers must not survive
     // into the next session); no sweep.
@@ -527,6 +422,7 @@ DisconnectStats DisconnectAll() {
     coop::npc_sync::OnDisconnect();
     coop::world_actor_sync::OnDisconnect();  // drain WorldActor mirrors (K2 client ones) + clear host reverse-map
     coop::piramid_sync::OnDisconnect();  // drop pending gather + gather-edge map + restored-tick set (hooks stay latched)
+    coop::geom_octa_sync::OnDisconnect();  // the host's verdict counts and the counters (the watches stay latched)
     coop::npc_adoption::OnSessionEnd();  // drop pending deferred adoptions + reset latches
     coop::kerfur_prop_adoption::OnSessionEnd();  // drop pending prop-form kerfur adoptions
     coop::dev::dev_lanes::EndSession();  // [dev] the probes' verdicts, before the prop seams reset below, then each drill back to its first step
@@ -558,8 +454,8 @@ DisconnectStats DisconnectAll() {
     coop::sky_sync::OnDisconnect();
     coop::power_panel::OnDisconnect();
     coop::power_grid::OnDisconnect();
-    coop::coord_tower_ops::OnDisconnect();
-    coop::coord_tower_rows::OnDisconnect();
+    coop::fuse_tower_ops::OnDisconnect();
+    coop::fuse_tower_rows::OnDisconnect();
     coop::atv_sync::OnDisconnect();
     coop::drone_sync::OnDisconnect();
     coop::order_sync::OnDisconnect();
@@ -596,7 +492,7 @@ DisconnectStats DisconnectAll() {
     coop::laptop_tab::OnDisconnect();
     coop::portable_pc_lid::OnDisconnect();
     coop::laptop_buffer_sync::OnDisconnect();  // quad shadow + assembler
-    coop::floppybox_sync::OnDisconnect();  // box shadows + taken-ring + pendings
+    coop::floppybox_sync::OnDisconnect();  // box shadows + taken-ring + canonical retries
     coop::props::container_contents_sync::OnDisconnect();  // dirty set + retry + parked + assembler
     coop::props::prop_record_refresh::OnDisconnect();  // per-prop coalescing state
     coop::dev::dev_lanes::RearmSelftests();  // [dev] the selftests re-arm for the next session
@@ -613,9 +509,9 @@ DisconnectStats DisconnectAll() {
     coop::desk_snd_fx::OnDisconnect();
     coop::deck_play_sync::OnDisconnect();  // gen counters + ring + self-test latch
     coop::physmods_sync::OnDisconnect();  // verb snapshots + parked canonical + deny records
-    coop::drive_sync::OnDisconnect();  // slot baselines + latch/dirty state + pending
-    coop::drive_payload_sync::OnDisconnect();  // held and sent rows, parked rows, notes
-    coop::drive_rack_sync::OnDisconnect();  // rack baselines/shadow + pending + deny/taken rings
+    coop::drive_sync::OnDisconnect();  // slot baselines + latch/dirty state
+    coop::drive_payload_sync::OnDisconnect();  // held and sent rows, notes
+    coop::drive_rack_sync::OnDisconnect();  // rack baselines/shadow + deny/taken rings
     coop::sleep_sync::OnDisconnect();
     coop::sleep_rest::OnDisconnect();  // a rest in progress goes back to factor 1
     coop::wisp_attack_sync::OnDisconnect();  // clear damage-cancel latch + handled-wisp edges + pending despawns
@@ -641,7 +537,8 @@ DisconnectStats DisconnectAll() {
     coop::puppet_carry_drive::OnDisconnect();  // drop all puppet-held clump drives
     coop::trash_sweep::OnDisconnect();  // drop the swept clumps still rolling
     coop::trash_clump_pose_stream::OnDisconnect();  // drop all client per-eid carry drives
-    coop::prop_drive_host::OnDisconnect();  // drop the host's driven-prop set
+    coop::prop_drive_host::OnDisconnect();  // drop the host's driven-prop set and the client syncers' table (prop_syncer_host)
+    coop::element::bind_wait::Clear("disconnect");  // the messages waiting for a bind go with the session
     coop::prop_drive_stream::OnDisconnect();  // every driven prop here gets its physics back
     coop::prop_park::OnDisconnect();  // after both receivers gave their props back: the holds a park still has
     coop::rider_hold::OnDisconnect();  // last: any movement still held ticks again
@@ -688,7 +585,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:time"}; coop::time_sync::Tick(); }  // the world clock: the host hands the net thread a sample when one is due; the client applies at its cycle's own tick
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sky"}; coop::sky_sync::Tick(); }  // night-sky: the eye gate's name (both roles), then the host's throttled push
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:power"}; coop::power_panel::Tick(); coop::power_grid::Tick(); }
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:towers"}; coop::coord_tower_ops::Tick(); coop::coord_tower_rows::Tick(); }  // the towers: the gates settle, the host's ops and rows, a client's panels  // the panel's and the grid's gates settle; what came before the panel or the generators resolved is taken
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:towers"}; coop::fuse_tower_ops::Tick(); coop::fuse_tower_rows::Tick(); }  // the towers: the gates settle, the host's ops and rows, a client's panels  // the panel's and the grid's gates settle; what came before the panel or the generators resolved is taken
     coop::dish_calib_sync::Tick();  // settle the precision lane's three watches
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:atv"}; coop::atv_sync::Tick(); }  // ATV: the host judges its own seat and grab, a client asks the host; the syncer streams its pose (host+client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drone"}; coop::drone_sync::Tick(); }  // delivery drone: host streams transform / client suppresses tick + mirrors
@@ -702,7 +599,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:owner_entity"}; coop::owner_entity_sync::Tick(); }  // owner-entity: 4 Hz own-pose stream + keepalive + death-watch + mirror prune
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hook"}; coop::hook_sync::Tick(); }  // hook: one activeHook read, then a gated 4/20 Hz head poll only while a hook exists
     if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:explosion_coast"}; coop::explosion_parking::Tick(&session); }  // HOST: the props a blast flung, handed to the driven-prop channel (before its tick below; an empty list costs one size check)
-    if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_drive_host"}; coop::prop_drive_host::Tick(session); }  // HOST: publish the driven props that moved, close the streams that rested (after the hook poll that feeds it; an empty set costs one size check)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_drive_host"}; coop::prop_drive_host::Pump(session, isHost); }  // the driven props, both roles: HOST judges a syncing client's rows, publishes the props that moved, closes the streams that rested (after the hook poll that feeds it); then both park + drive what the host streams (an empty set costs one size check)
     coop::dev::dev_lanes::TickDrills(session);  // [dev] the drills' and censuses' legs (a single read each when off)
     coop::player_damage::Tick();  // impact-entry PRE cancels lazy install (non-local bodies)
     coop::player_handshake::TickSkinConverge();  // heal a join-window deferred skin apply (~2 s throttle)
@@ -713,7 +610,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal_catch"}; coop::signal_catch_sync::Tick(); }  // the catch and cleared detectors, 1 Hz
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:propsave"}; coop::prop_save_data::Drive(); }  // budgeted park applies + the 1 Hz assembler sweep
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:laptop"}; coop::laptop_sync::Tick(); }  // PC power edge poll (4 Hz)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:pc_lid"}; coop::portable_pc_lid::Tick(); }  // the lid's watch until live, then waiting lines and held edges (1 Hz while any)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:pc_lid"}; coop::portable_pc_lid::Tick(); }  // the lid's watch until live, then the held lid edges (1 Hz while any)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:laptop_quad"}; coop::laptop_buffer_sync::Tick(); }  // quad int pre-filter poll (4 Hz)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:floppybox"}; coop::floppybox_sync::Tick(); }  // box sweep (1 Hz)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:containerContents"}; coop::props::container_contents_sync::Tick(); }  // edge-driven dirty drain (4 Hz gate)
@@ -731,7 +628,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_snd"}; coop::desk_snd_fx::Tick(); }  // audio-seam ring flush + lazy hook install + pending loop retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:deck_play"}; coop::deck_play_sync::Tick(); }  // deck playback ring flush + lazy Deactivate/fin seam install + gen author
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:physmods"}; coop::physmods_sync::Tick(); }  // parked-canonical apply at desk resolve
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drive"}; coop::drive_sync::Tick(); coop::drive_payload_sync::Tick(); }  // the slot lane's drain and sweep; the rows' enrolments and parked retries
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drive"}; coop::drive_sync::Tick(); coop::drive_payload_sync::Tick(); }  // the slot lane's drain and sweep; the rows' enrolments
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drive_rack"}; coop::drive_rack_sync::Tick(); }  // rack barrier drain + 1 Hz sweep
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:email"}; coop::email_sync::Tick(); }  // email shadow poll (1 Hz; appends -> chunked broadcast, shrinks -> content-keyed deletes)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal"}; coop::signal_sync::Tick(); }  // saved-signals shadow poll (same shape on gamemode.savedSignals_0)
@@ -751,9 +648,9 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:npc_client"}; coop::npc_mirror::TickClientNpcs(); }  // CLIENT: apply batch + drive mirror interp (client-only, no-op on host)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:worldactor_host"}; coop::world_actor_sync::TickPoseStream(); }  // HOST: read event WorldActors -> publish WorldActorPose batch (host-only, no-op on client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:worldactor_client"}; coop::world_actor_sync::TickClientWorldActors(); }  // CLIENT: apply batch + drive WorldActor mirror interp (client-only, no-op on host)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:octa_relay"}; coop::geom_octa_relay::Tick(); }  // CLIENT: the Octa's held Aggro and paired verdicts, replayed (a role test when idle)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:piramid"}; coop::piramid_sync::Tick(); }  // pre-arm probe (250 ms gate) / host gather-edge sweep (1 s) / client mirror restore + pending gather replay
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:trash_clump_pose"}; coop::trash_clump_pose_stream::TickApplyAndDrive(session); }  // CLIENT: apply host-auth carry/flight pose batch + per-eid interp (client-only, no-op on host)
-    if (!isHost) { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_drive_stream"}; coop::prop_drive_stream::TickApplyAndDrive(session); }  // CLIENT: park + drive the host's driven props (the host originates them and never receives any)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::host_spawn_watcher::TickWatchedProps(&session); }  // ambient-prop (pinecone) SetLifeSpan-expiry / consumption despawn -> PropDestroy(eid)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::host_spawn_watcher::DrainPendingSpawns(&session); }  // adopt+express FinishSpawningActor Func-seam spawns (R-drop/place/Q-menu) one tick after Finish (key restored, hand actor excluded)
     if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; coop::broom_push::Tick(); }  // HOST: stream the props and clumps a broom stroke pushed (AFTER the drain above, which names the trash that same stroke dispensed)

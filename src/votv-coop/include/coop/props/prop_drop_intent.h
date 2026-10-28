@@ -36,7 +36,7 @@ void Install(coop::net::Session* session);
 void Tick(coop::net::Session* session);
 
 // Called from prop_lifecycle::DestroySeamBody right AFTER a CLIENT's own keyed-prop DESTROY broadcast, or after the
-// destroy of a granted take's replay (which broadcasts nothing; its commit follows on the Bulk lane), or after the
+// destroy of a granted take's replay (which broadcasts nothing; its commit follows on the Default lane), or after the
 // destroy of the local hand-view actor (also not broadcast; the drop that follows authors from it): park the key
 // so a later same-key place authors a host-authoritative drop intent, and only then.
 // The park is the SAFETY INVARIANT -- the host destroys its copy before the drop intent can arrive, so the
@@ -68,5 +68,11 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
 
 // Session teardown -- clear the park set + pending. Game thread.
 void Reset();
+
+namespace dev {   // called only from src/coop/dev/ (the census drill); read-only, inert unless called
+// The actor of the most recent place spawn the client's FinishSpawn hook enqueued while the census row is armed (the
+// world actor a throw spawned), or null when none or it is gone. Game thread.
+void* LastClientPlaceSpawn();
+}  // namespace dev
 
 }  // namespace coop::prop_drop_intent

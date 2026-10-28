@@ -29,7 +29,9 @@ constexpr uint64_t kSustainedMs    = 500;
 // Record one unresolved pose for (slot, key, eid).
 // Returns true EXACTLY ONCE per identity -- on the packet that crosses both thresholds --
 // so the caller emits the sustained WARN a single time and never repeats it.
-bool Note(int slot, const std::wstring& keyW, uint32_t eid, uint64_t nowMs);
+// `newBurst`, when given, is set to whether this pose starts a burst: the identity's first, or the first after a
+// 500 ms silence. A caller that logs each unresolved pose says it for a burst's first only.
+bool Note(int slot, const std::wstring& keyW, uint32_t eid, uint64_t nowMs, bool* newBurst = nullptr);
 
 // A pose for this identity resolved: the race healed, or the peer finally sent the spawn.
 // Drops the row so a later, unrelated miss starts its own count. Logs a one-line recovery

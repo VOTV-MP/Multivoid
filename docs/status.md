@@ -33,12 +33,13 @@ host validates and commits contested writes), `local` (never shared).
 | Sleeping bags and mattresses | a client interaction action sent to the host; the host runs the Blueprint that replaces the packed bag or mattress with its deployed form, or folds it back | host | host save and prop snapshot contain the currently live form | built (see [props.md](props.md)) |
 | Chip piles and clumps | the grab, carry, throw and re-pile cycle, and a broom's sweep | host with client intents | snapshot, a spawn-time bind, and a bounded hold for a pile the save load has not reached; a clump rolling at the join arrives as the pile it lands as | works |
 | Trash-bits piles | the counter pair | presser and host | snapshot | built |
-| Containers | open and close, contents (a slice of the host's object stack) | presser; host for contents | snapshot | works, two known breaks |
+| Containers | open and close, a dragged lid's pose (the held-item stream), contents (a slice of the host's object stack) | presser; host for contents | snapshot | works, two known breaks; a dragged lid is built, not yet proven on two peers |
 | NPCs | spawn, despawn, pose, state for the generic creatures | host | snapshot | works |
 | Kerfur | the prop-to-NPC conversion cycle, per-kerfur skins | host | snapshot plus adoption | works |
 | Owner-entity creatures | a creature whose AI reads the local player is owned per peer and mirrored to the rest | peer | keepalive | built |
 | Roaches | the paged infestation state | host | snapshot | built |
 | Wisp | the killer wisp's hunt, grab, tear | host | none (transient) | works |
+| Geom Octa | the host's night roll or dev spawn (the Octa and, from the same roll, the night egg), a mirror with its decisions parked, and the host's attack relayed into each client's own Blueprint (whom it hunts, each fire's outcome); its blast is the host's explosion, and a client's own roll is refused | host | the snapshot carries the Octa; one mid-attack sends the joiner an Aggro, replayed from the start | tested; a client's own menu or toolgun Octa stays local, an attack on an ATV is not relayed (its blast still arrives), a joiner's look runs about one chain behind |
 | Pyramid | the walking-pyramid choreography | host | world-actor snapshot and replay | works |
 | World actors | the event-spawned non-character actors | host | replay or seed | works |
 | Drone | the delivery drone's flight and state | host | snapshot | built |
@@ -60,6 +61,7 @@ host validates and commits contested writes), `local` (never shared).
 | Doors, keypads, locks | a door's state, sent at its own verbs; a keypad's verbs, replayed from the host, and the state each chain settles on; a client's own door press, hit and pry and its keypad entries run on the host | host | snapshot | tested; a pry, a keycard and a pass changer built |
 | Lights and light groups | switch state; the group's live state | presser; host for the group | snapshot | built |
 | The power grid | the panel's breakers and lockout; each generator's break, wear, upgrades and repair puzzle | host; a client's presses, Activate presses, installs, hits and puzzle inputs are ops | snapshot | built |
+| Power cords and sockets | a corded prop's socket link, including plug and unplug changes | arbiter: a client reports its player's plug, the host decides | every corded prop's link at the joiner's world-ready | built |
 | Turbine, grime, windows, appliances | the float, the decrease-only cleanliness, the one-bit states | presser or host | snapshot | built; windows tested |
 | The bay window's dirt | each sponge dab on its render target: the pixel, the edge, the brush's opacity and colour | presser, relayed by the host | the host's transferred save | built |
 | Device occupancy | who is using a device | arbiter | snapshot of the table | works |
@@ -74,7 +76,7 @@ host validates and commits contested writes), `local` (never shared).
 | Server boxes | the signal-server simulation state and its notices; a client's repair run on the host | host | snapshot | built |
 | Disc slots | the slot a laptop or a signal server holds a disc in, and the disc that comes back out of one | host owns the slot; the peer whose game changed it reports the outcome | every device's slot at the barrier | tested |
 | Shop orders | the client names a row, the host performs and prices it; the delivery queue is the host's, mirrored | arbiter | a reset and every queued order | built |
-| ATV | the driver authors the pose; a non-driving peer runs the rig natively and is corrected; condition (tyres, fuel, health) travels | driver, host for the rest | snapshot | tested; eject and configuration intents not built |
+| ATV | the driver authors the pose; a non-driving peer runs the rig natively and is steered; condition (tyres, fuel, health) travels | driver, host for the rest | snapshot | tested; eject and configuration intents not built |
 | Sleep | each peer's rest state and the host's sleeping flag | each peer for its own state; the host relays | the host's flag and every peer not awake | built |
 | Player inventory | per-peer, persisted by the host per player identity; the contents never cross the wire | local; host stores | seeded before the world | tested |
 

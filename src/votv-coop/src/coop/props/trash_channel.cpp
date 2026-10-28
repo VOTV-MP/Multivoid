@@ -13,7 +13,6 @@
 #include "coop/player/puppet_carry_drive.h"  // OnTakenOver: a taker ends a client's carry drive
 #include "coop/props/pile_look.h"
 #include "coop/props/remote_prop.h"   // RegisterPropMirror (the single rebind entry point)
-#include "coop/save/join_window_baseline.h"  // the save-time pile transform for a land
 #include "ue_wrap/engine/engine.h"      // the per-form scale and the transform and velocity reads
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"        // IsGarbageClump (rest detection)
@@ -138,20 +137,6 @@ coop::net::PropConvertPayload BuildConvert(coop::element::ElementId E, uint8_t k
             if (p.look.sclX != 0) coop::pile_look::LogLandLook("HOST", static_cast<uint32_t>(E), pile);
         }
     }
-    // A to-pile land carries the pile's pre-grab save-time position if one was recorded (the host
-    // grabbed an untracked pile in a join window, and the grab observer self-seeded the eid and
-    // stamped the pre-grab position into the blob map). An any-slot lookup, since this is a single
-    // fan-out and the eid is unique. The client's convert then arms a pending save-time twin so the
-    // quiescence sweep retires its stale native at the old position. A to-clump carries no key,
-    // since there is no native twin at that edge.
-    p.hasMatchPos = 0;
-    if (kind == coop::net::propconvert_kind::kToPile && static_cast<uint32_t>(E) != 0u) {
-        ue_wrap::FVector sv;
-        if (coop::join_window_baseline::TryGetPileXformAnySlot(E, sv)) {
-            p.matchX = sv.X; p.matchY = sv.Y; p.matchZ = sv.Z;
-            p.hasMatchPos = 1;
-        }
-    }
     return p;
 }
 
@@ -165,11 +150,10 @@ uint8_t BroadcastConvert(coop::net::Session& s, coop::element::ElementId E, uint
     const uint8_t ctx = Bump(static_cast<uint32_t>(E));
     const coop::net::PropConvertPayload p = BuildConvert(E, kind, ctx, loc, rot, scale, chipType, cls);
     s.SendReliable(coop::net::ReliableKind::PropConvert, &p, sizeof(p));
-    UE_LOGI("[TRASH-CH] HOST BROADCAST %s eid=%u ctx=%u (%s) at (%.1f,%.1f,%.1f) variant=%u%s",
+    UE_LOGI("[TRASH-CH] HOST BROADCAST %s eid=%u ctx=%u (%s) at (%.1f,%.1f,%.1f) variant=%u",
             kind == coop::net::propconvert_kind::kToClump ? "ToClump" : "ToPile",
             static_cast<unsigned>(E), static_cast<unsigned>(ctx), why,
-            p.locX, p.locY, p.locZ, static_cast<unsigned>(chipType),
-            p.hasMatchPos ? " [+saveTimeKey]" : "");
+            p.locX, p.locY, p.locZ, static_cast<unsigned>(chipType));
     return ctx;
 }
 

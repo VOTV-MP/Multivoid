@@ -37,10 +37,9 @@ void OnTick();
 
 // The queue arm entry points: event handlers capture here and never apply.
 
-// A land carried a save-time key (the host self-seeded the eid at an in-window grab and
-// stamped the pre-grab position), or the pile spawn bind's twin missed at world-ready. Arm a
-// pending save-time twin so the sweep retires the stale native at the old position at
-// quiescence. Idempotent per eid; the latest wins.
+// A save-time key to arm: the pile spawn bind's twin missed (at world-ready, or a late row), or the
+// dark identity bind's duplicate retire found a stale twin. Arm a pending save-time twin so the sweep
+// retires the stale native at the old position at quiescence. Idempotent per eid; the latest wins.
 void ArmPendingSaveTimeTwin(coop::element::ElementId eid, const ue_wrap::FVector& savePos, uint8_t chipType,
                             bool wantClump = false);
 
@@ -50,10 +49,6 @@ void ArmPendingSaveTimeTwin(coop::element::ElementId eid, const ue_wrap::FVector
 // what pointer reuse corrupted). The host-mutated-in-window authority the client heuristics
 // only inferred.
 void ArmHostVacateTwin(coop::element::ElementId eid, const ue_wrap::FVector& oldPos);
-
-// Is a save-time key pending for `eid` that will BIND a native of this client's own (not a
-// host-vacate twin, which only retires one)? Game thread.
-bool HasPendingSaveTimeTwin(coop::element::ElementId eid);
 
 // A join-window position correction for a save-authoritative entity (a chip pile, a keyed prop)
 // the host moved while the joiner's reliable channel was not ready. Armed on receipt; the latest

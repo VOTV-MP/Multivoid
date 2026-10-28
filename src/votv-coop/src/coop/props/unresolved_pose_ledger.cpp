@@ -16,9 +16,14 @@ namespace {
 // identities has a different problem, and an unbounded map on a receive path is its own bug.
 constexpr size_t kLedgerCap = 256;
 
+// A silence this long between two unresolved poses of one identity ends its burst (the receivers' own stream-stop
+// timeout is the same 500 ms), so the next one is the first of a new burst.
+constexpr uint64_t kBurstGapMs = 500;
+
 struct Entry {
     uint32_t count    = 0;
     uint64_t firstMs  = 0;
+    uint64_t lastMs   = 0;   // the previous unresolved pose, for the burst's end
     bool     reported = false;   // latched: the sustained WARN fires at most once per identity
 };
 
@@ -40,7 +45,7 @@ std::wstring RowKey(int slot, const std::wstring& keyW, uint32_t eid) {
 
 }  // namespace
 
-bool Note(int slot, const std::wstring& keyW, uint32_t eid, uint64_t nowMs) {
+bool Note(int slot, const std::wstring& keyW, uint32_t eid, uint64_t nowMs, bool* newBurst) {
     UE_ASSERT_GAME_THREAD("unresolved_pose_ledger (Note)");
     if (g_rows.size() >= kLedgerCap) {
         UE_LOGW("unresolved_pose_ledger: %zu distinct unresolved identities -- clearing. That is "
@@ -50,6 +55,8 @@ bool Note(int slot, const std::wstring& keyW, uint32_t eid, uint64_t nowMs) {
     }
     Entry& e = g_rows[RowKey(slot, keyW, eid)];
     if (e.count == 0) e.firstMs = nowMs;
+    if (newBurst) *newBurst = e.count == 0 || nowMs - e.lastMs > kBurstGapMs;
+    e.lastMs = nowMs;
     ++e.count;
     if (e.reported) return false;
     if (e.count >= kSustainedCount && (nowMs - e.firstMs) >= kSustainedMs) {

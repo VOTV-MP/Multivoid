@@ -22,6 +22,7 @@
 #include "coop/net/lobby_client.h"        // LobbyRow -- the rows a tab click must bring
 #include "coop/net/lobby_password.h"      // kGeneratedLength -- what a minted password measures
 #include "coop/net/master_slots.h"
+#include "coop/dev/game_window.h"          // PostChar / PostKeyPress -- the keys the typing phase sends
 #include "coop/session/session_manager.h"  // CopyRows
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/reflection.h"
@@ -148,34 +149,45 @@ constexpr int kHostEscVerify  = 348;
 // holds long enough to be photographed.
 constexpr int kInputDirectShot = 354;
 constexpr int kInputDirectHold = 355;
-constexpr int kInputNameOpen   = 362;
-constexpr int kInputNameShot   = 368;
-constexpr int kInputNameHold   = 369;
+// The typing is preceded by a click on the address box, as a player focuses it: the field's own
+// focus is not assumed, since a stale Escape release from the hosting phases blurs it.
+constexpr int kInputClickMove       = 356;   // kInputDirectHold + 1, since the counter advances by one after a break
+constexpr int kInputClickDown       = 362;
+constexpr int kInputClickUp         = 366;
+constexpr int kInputFocusVerify     = 370;
+constexpr int kInputTypePost        = 371;
+constexpr int kInputTypeCharsVerify = 372;
+constexpr int kInputTypeBackPost    = 373;
+constexpr int kInputTypeVerify      = 374;
+constexpr int kInputNameOpen   = 377;
+constexpr int kInputNameShot   = 383;
+constexpr int kInputNameHold   = 384;
 // Session settings, step two of hosting and the only caller of HostWithSave: reached by pressing
 // Next on the hosting window and by nothing else (no dev auto-open for it), so these phases drive
 // the real path. The Host button itself is never pressed: it would leave the rig hosting.
-constexpr int kSessOpen       = 376;
-constexpr int kSessNextMove   = 384;
-constexpr int kSessNextDown   = 390;
-constexpr int kSessNextUp     = 394;
-constexpr int kSessVerify     = 402;
-constexpr int kSessShotHold   = 403;
-constexpr int kSessWarnHold   = 404;   // the version warning, held for the eye; then Next again
-constexpr int kSessLockMove   = 410;
-constexpr int kSessLockDown   = 416;
-constexpr int kSessLockUp     = 420;
-constexpr int kSessLockVerify = 428;
-constexpr int kSessLockHold   = 429;
-constexpr int kSessBackMove   = 436;
-constexpr int kSessBackDown   = 442;
-constexpr int kSessBackUp     = 446;
-constexpr int kSessBackVerify = 454;
+constexpr int kSessOpen       = 391;
+constexpr int kSessNextMove   = 399;
+constexpr int kSessNextDown   = 405;
+constexpr int kSessNextUp     = 409;
+constexpr int kSessVerify     = 417;
+constexpr int kSessShotHold   = 418;
+constexpr int kSessWarnHold   = 419;   // the version warning, held for the eye; then Next again
+constexpr int kSessLockMove   = 425;
+constexpr int kSessLockDown   = 431;
+constexpr int kSessLockUp     = 435;
+constexpr int kSessLockVerify = 443;
+constexpr int kSessLockHold   = 444;
+constexpr int kSessBackMove   = 451;
+constexpr int kSessBackDown   = 457;
+constexpr int kSessBackUp     = 461;
+constexpr int kSessBackVerify = 469;
 
 // The forced offset for the positive control, far past any real extent: a getter that returns it
 // unchanged echoes the request rather than reading Slate.
 constexpr float    kHugeOffset   = 1.0e6f;
 constexpr uint64_t kRowWaitMs    = 30000;  // rows arrive over HTTP; 30 s covers a cold fetch at the 5 s cadence
 constexpr uint64_t kShotHoldMs   = 6000;   // mp.py polls the log every 3 s
+constexpr uint64_t kTypeWaitMs   = 5000;   // how long posted keys may take to reach the field before the verdict is FAIL
 constexpr uint64_t kWindowWaitMs = 15000;  // how long a null active window is a WAIT, not a fault
 
 // The precondition takes two terms: an empty UScrollBox one tick after Show() reports offsetOfEnd
@@ -201,6 +213,9 @@ bool g_lockWasLockedBefore = false;
 uint64_t g_windowWaitStartMs = 0;
 uint64_t g_scrollWaitStartMs = 0;
 uint64_t g_holdUntilMs       = 0;
+// The Direct connect address as the typing phase found it, so the expected text is the prefill plus
+// what was typed rather than a literal.
+std::string g_typePrefill;
 // The ini's net.master before a tab click, which a list from the environment must leave as it was.
 std::string g_tabIniBefore;
 // A skin shot's aim has been checked on this hold (the first tick after the aim, see kSkinHoldOther).
@@ -305,7 +320,7 @@ void Tick(void* scrim, void* list, void* exitBtn) {
     }
     g_windowWaitStartMs = 0;   // it came back; a later blip starts its own patience
 
-    // The second precondition: an ImGui surface that is up owns the mouse, WndProcDetour swallows
+    // The second precondition: an ImGui surface that is up owns the mouse, HandleWindowMessage swallows
     // every mouse message and SetCursorPosDetour returns TRUE without moving the pointer, so a
     // perfect aim at a perfect widget reads IsHovered() == false everywhere (measured: the
     // config-review panel, armed at boot by an ini finding, held the pointer at client (0,0) for a
@@ -1138,8 +1153,100 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             // Holding: a window for the rig's 3 s capture poll. Returning without advancing is how
             // every hold here works; the counter increments after the switch.
             if (nowMs < g_holdUntilMs) return;
+            break;   // the click and typing phases below act on this same window
+        case kInputClickMove: {
+            // Focus the address box the way a player does, with a click: the field's own focus is not
+            // assumed. The hosting phases' Escape release can land just after this window opens and
+            // blur the field, so whether it was still focused is logged for the run to show.
+            namespace BIS = ui::browser_input_screens;
+            UE_LOGW("server_browser_native: INPUT TYPE -- the address field is %s before the click "
+                    "(unfocused means a stray Escape release blurred it)",
+                    BIS::FieldFocused(BIS::Kind::DirectConnect) ? "focused" : "NOT focused");
+            void* box = BIS::FieldBox(BIS::Kind::DirectConnect);
+            ue_wrap::FVector2D tl{}, sz{};
+            if (!box || !U::WidgetScreenRect(box, tl, sz) || sz.X < 1.f) {
+                UE_LOGE("server_browser_native: INPUT TYPE FAIL -- the address box %s, so it cannot "
+                        "be clicked.", box ? "has no readable rect" : "does not exist");
+                g_selfCheckStep = -1;
+                return;
+            }
+            PlaceCursorOnAbsolute(tl.X + sz.X * 0.5f, tl.Y + sz.Y * 0.5f);
+            break;
+        }
+        case kInputClickDown:
+            ::mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+            break;
+        case kInputClickUp:
+            ::mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+            g_holdUntilMs = nowMs + kTypeWaitMs;
+            break;
+        case kInputFocusVerify:
+            if (ui::browser_input_screens::FieldFocused(ui::browser_input_screens::Kind::DirectConnect))
+                break;
+            if (nowMs < g_holdUntilMs) return;
+            UE_LOGE("server_browser_native: INPUT TYPE FAIL -- the field did not take focus from a "
+                    "click, so typed characters have nowhere to go.");
+            ui::browser_input_screens::Open(ui::browser_input_screens::Kind::ChangeName);
+            g_selfCheckStep = kInputTypeVerify;   // past the typing steps
+            break;
+        case kInputTypePost: {
+            // Real window messages, the way a keyboard delivers them, so the whole route is measured:
+            // the window procedure seam, then the focused native field. The characters and the
+            // Backspace go in two steps, each verified, so a passing verdict proves both arrived.
+            g_typePrefill = ui::browser_input_screens::FieldText(
+                ui::browser_input_screens::Kind::DirectConnect);
+            namespace GW = coop::dev::game_window;
+            if (!(GW::PostChar(L'1') && GW::PostChar(L'.') && GW::PostChar(L'2'))) {
+                UE_LOGE("server_browser_native: INPUT TYPE FAIL -- there is no game window to post "
+                        "the keys to.");
+                g_selfCheckStep = -1;
+                return;
+            }
+            g_holdUntilMs = nowMs + kTypeWaitMs;
+            break;
+        }
+        case kInputTypeCharsVerify: {
+            const std::string want = g_typePrefill + "1.2";
+            const std::string got = ui::browser_input_screens::FieldText(
+                ui::browser_input_screens::Kind::DirectConnect);
+            // Ready when the field holds the expected text; until then the keys are still in the
+            // window's queue, bounded so a seam that never delivers them ends in a verdict.
+            if (got != want && nowMs < g_holdUntilMs) return;
+            if (got != want) {
+                UE_LOGE("server_browser_native: INPUT TYPE FAIL -- the characters did not arrive: "
+                        "read '%s', expected '%s' after posting \"1.2\" to the game window. No key "
+                        "reaches a native text field, so no address can be typed.",
+                        got.c_str(), want.c_str());
+                ui::browser_input_screens::Open(ui::browser_input_screens::Kind::ChangeName);
+                g_selfCheckStep = kInputTypeVerify;   // past the Backspace steps
+            }
+            break;
+        }
+        case kInputTypeBackPost:
+            if (!coop::dev::game_window::PostKeyPress(VK_BACK)) {
+                UE_LOGE("server_browser_native: INPUT TYPE FAIL -- there is no game window to post "
+                        "the Backspace to.");
+                g_selfCheckStep = -1;
+                return;
+            }
+            g_holdUntilMs = nowMs + kTypeWaitMs;
+            break;
+        case kInputTypeVerify: {
+            const std::string want = g_typePrefill + "1.";
+            const std::string got = ui::browser_input_screens::FieldText(
+                ui::browser_input_screens::Kind::DirectConnect);
+            if (got != want && nowMs < g_holdUntilMs) return;
+            if (got == want)
+                UE_LOGW("server_browser_native: INPUT TYPE PASS -- \"1.2\" and a Backspace posted to "
+                        "the game window left the direct-connect address field at its prefill plus "
+                        "\"1.\".");
+            else
+                UE_LOGE("server_browser_native: INPUT TYPE FAIL -- the Backspace did not arrive: "
+                        "read '%s', expected '%s' after the characters had arrived.",
+                        got.c_str(), want.c_str());
             ui::browser_input_screens::Open(ui::browser_input_screens::Kind::ChangeName);
             break;
+        }
         case kInputNameOpen:
             // One phase of slack: the open is deferred to the next menu tick, and the shot must not
             // fire on the window it is replacing.

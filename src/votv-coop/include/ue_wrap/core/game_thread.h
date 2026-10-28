@@ -44,6 +44,11 @@ void SetTransparentBypass(int ms);
 // function behaves as SetTransparentBypass(maxMs). Lock-free.
 void SetTransparentBypassUntil(void* resumeOnFunction, int maxMs);
 
+// Whether a transparent bypass is armed and not yet past its deadline. Read-only and lock-free, from
+// any thread; the bypass clears itself only when the next dispatch notices the deadline, so this reads
+// the deadline rather than the stored flag. While it holds, posted tasks do not run.
+bool TransparentBypassActive();
+
 // Queue `task` to run on the game thread at the next outermost ProcessEvent call -- one nested in no
 // other, so before any Blueprint body runs -- outside a window where the world refuses spawns (an
 // actor's construction, the world's teardown). A task posted while a body runs waits for that body

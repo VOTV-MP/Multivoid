@@ -3,6 +3,7 @@
 #include "coop/props/prop_save_data.h"
 #include "coop/interactables/floppybox_sync.h"
 
+#include "coop/element/bind_wait.h"
 #include "coop/element/registry.h"
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
@@ -38,7 +39,7 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 
 constexpr uint64_t kSweepMs = 1000;      // 1 Hz (the rack cadence)
 constexpr uint64_t kDenyTtlMs = 10000;   // reap correlation window
-constexpr uint64_t kPendingTtlMs = 30000;
+constexpr uint16_t kBoxKind = static_cast<uint16_t>(coop::net::ReliableKind::FloppyBoxState);
 
 uint64_t NowMs() { return static_cast<uint64_t>(::GetTickCount64()); }
 
@@ -98,8 +99,6 @@ struct Shadow {
     uint64_t digest = 0;  // FB::ReadDigest of `arrays` as last seen (pre-filter)
 };
 std::map<uint32_t, Shadow> g_shadow;   // eid -> last known arrays + digest
-struct PendingCanonical { std::vector<uint8_t> blob; uint64_t deadline; };
-std::map<uint32_t, PendingCanonical> g_pending;  // unresolved-eid canonicals
 struct Taken { uint32_t eid; uint64_t hash; uint64_t when; };
 Taken g_takenRing[8] = {};
 int g_takenNext = 0;
@@ -107,7 +106,9 @@ coop::blob_chunks::Assembler g_asm;
 uint32_t g_nextSeq = 1;
 uint64_t g_nextSweep = 0;
 std::set<uint32_t> g_canonRetry;  // eids whose canonical send was refused
+std::set<uint32_t> g_wrongClassSaid;  // eids a canonical named that are no box here (said once)
 bool g_announced = false;
+uint32_t g_canonicalsApplied = 0;  // canonicals a client's ClientBlob took to a bound box
 
 bool IsHost() {
     auto* s = g_session.load(std::memory_order_acquire);
@@ -223,24 +224,6 @@ void Sweep(coop::net::Session* s, uint64_t now) {
         }
     }
 
-    // Drain unresolved-eid canonicals (birth skew).
-    for (auto it = g_pending.begin(); it != g_pending.end();) {
-        void* actor = LivePropActor(it->first);
-        if (actor && FB::IsFloppyBoxClass(R::ClassOf(actor))) {
-            Reader r{it->second.blob.data(), it->second.blob.size()};
-            FB::BoxArrays a;
-            if (ParseCanonical(r, a)) ApplyCanonicalTo(actor, it->first, a);
-            it = g_pending.erase(it);
-            continue;
-        }
-        if (now > it->second.deadline) {
-            UE_LOGW("floppybox: pending canonical eid=%u EXPIRED (birth lane skew)", it->first);
-            it = g_pending.erase(it);
-            continue;
-        }
-        ++it;
-    }
-
     const bool host = IsHost();
     const bool clientReady = host || coop::net_pump::HasAnnouncedWorldReady();
     std::vector<coop::element::Registry::ActorIdPair> pairs;
@@ -350,6 +333,51 @@ void ReapDeniedPop(uint32_t eid, uint64_t hash) {
             "skip (content duplication is native-legal; canonical converges the box)", eid);
 }
 
+void ReplayClientBlob(const uint8_t* bytes, size_t n, int senderSlot);
+
+// CLIENT: a whole reassembled blob (head and payload): canonicals and denies, host-authored only. A canonical
+// whose box has no actor here yet is held in bind_wait for its bind (birth skew) and runs again through here.
+void ClientBlob(const uint8_t* bytes, size_t n, uint8_t senderSlot) {
+    Reader r{bytes, n};
+    const uint8_t op = r.U8();
+    const uint32_t eid = r.U32();
+    if (senderSlot != 0) {
+        UE_LOGW("floppybox: op=%u from non-host slot %u -- REJECTED", op,
+                static_cast<unsigned>(senderSlot));
+        return;
+    }
+    if (op == 2) {
+        const uint64_t hash = r.U64();
+        if (r.ok) ReapDeniedPop(eid, hash);
+        return;
+    }
+    if (op != 3) return;
+    FB::BoxArrays a;
+    if (!ParseCanonical(r, a)) {
+        UE_LOGW("floppybox: malformed canonical eid=%u -- dropped", eid);
+        return;
+    }
+    void* actor = LivePropActor(eid);
+    if (!actor) {
+        // Not deferred: no bind is coming for this eid, so there is nothing to wait for.
+        if (!coop::element::bind_wait::Hold(eid, kBoxKind, senderSlot, &ReplayClientBlob, bytes, n,
+                                            /*coalesce=*/true))
+            coop::element::bind_wait::NoteNeverBound(kBoxKind, eid);
+        return;
+    }
+    if (!FB::IsFloppyBoxClass(R::ClassOf(actor))) {
+        if (g_wrongClassSaid.insert(eid).second)
+            UE_LOGW("floppybox: canonical eid=%u names a prop that is no prop_floppyBox_C here -- dropped", eid);
+        return;
+    }
+    ApplyCanonicalTo(actor, eid, a);
+    ++g_canonicalsApplied;
+}
+
+void ReplayClientBlob(const uint8_t* bytes, size_t n, int senderSlot) {
+    ClientBlob(bytes, n, static_cast<uint8_t>(senderSlot));
+}
+
 }  // namespace
 
 void Install(coop::net::Session* session) {
@@ -444,32 +472,7 @@ void OnBoxChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
         return;
     }
 
-    // CLIENT: canonicals + denies, host-authored only.
-    if (senderSlot != 0) {
-        UE_LOGW("floppybox: op=%u from non-host slot %u -- REJECTED", op,
-                static_cast<unsigned>(senderSlot));
-        return;
-    }
-    if (op == 2) {
-        const uint64_t hash = r.U64();
-        if (r.ok) ReapDeniedPop(eid, hash);
-        return;
-    }
-    if (op != 3) return;
-    FB::BoxArrays a;
-    if (!ParseCanonical(r, a)) {
-        UE_LOGW("floppybox: malformed canonical eid=%u -- dropped", eid);
-        return;
-    }
-    void* actor = LivePropActor(eid);
-    if (!actor || !FB::IsFloppyBoxClass(R::ClassOf(actor))) {
-        PendingCanonical pc;
-        pc.blob.assign(blob.begin() + 5, blob.end());
-        pc.deadline = NowMs() + kPendingTtlMs;
-        g_pending[eid] = std::move(pc);
-        return;
-    }
-    ApplyCanonicalTo(actor, eid, a);
+    ClientBlob(blob.data(), blob.size(), senderSlot);
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
@@ -499,9 +502,12 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         UE_LOGI("floppybox: connect canonicals -> slot %d (%d box(es))", peerSlot, shipped);
 }
 
+uint32_t AppliedCanonicals() { return g_canonicalsApplied; }
+
 void OnDisconnect() {
+    g_canonicalsApplied = 0;
     g_shadow.clear();
-    g_pending.clear();
+    g_wrongClassSaid.clear();
     for (auto& t : g_takenRing) t = Taken{};
     g_takenNext = 0;
     g_asm.Clear();

@@ -5,9 +5,11 @@
 #include "coop/player/local_streams.h"
 
 #include "coop/dev/perf_probe.h"
+#include "coop/dev/swinger_drill.h"  // NoteReleased
 #include "coop/element/element.h"
 #include "coop/element/quiescence_drain.h"  // SupersedePosCorrection: the own release is the newest pose
 #include "coop/element/registry.h"          // EidForActor: the keyed eid of the released prop
+#include "coop/interactables/interactable_sync.h"  // ContainerKey: a dragged swinger's portable key
 #include "coop/config/config.h"
 #include "coop/creatures/kerfur_entity.h"  // GetKerfurMirrorEidForActor, the held kerfur prop's eid
 #include "coop/net/protocol.h"
@@ -17,6 +19,7 @@
 #include "coop/player/skin_effects.h"  // own-body step FX at the wire-pose stride
 #include "coop/props/trash_channel.h"   // CtxForEid, the trash sync-time context
 #include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_syncer.h"        // Claim: a dragged swinger's parent prop
 #include "coop/props/prop_wire_parity.h"  // PhysFlagsOf, the flags a release carries
 #include "coop/props/remote_prop.h"     // ResolveMirrorEidByActor (the bound-clump held-pose eid fallback)
 #include "coop/props/trash_collect_sync.h"
@@ -24,13 +27,16 @@
 #include "ue_wrap/devices/atv.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_attach.h"   // IsActorRootBodyAtRest: a released swinger stops coasting
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/puppet.h"
+#include "ue_wrap/actors/swinger.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/actors/vitals.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -46,6 +52,8 @@ namespace R = ue_wrap::reflection;
 // edge and read on later edges.
 ue_wrap::CachedObjRef g_lastHeldProp;
 coop::net::WireKey g_lastHeldKey{};
+bool g_heldSwinger = false;   // the held actor is a swinger, set at each new-held edge
+bool g_swingerKeySaid = false;   // the hold's key problem has been said
 // The held actor's wire eid, resolved once on the new-held edge (where the O(n) mirror lookup
 // for a morph-bound clump may run) and reused per tick; a held actor's identity is stable for
 // the carry. kInvalidId = unkeyed.
@@ -62,7 +70,7 @@ uint64_t g_ragdollEmitCount = 0;
 // The release branch below re-enters EVERY pump tick for the whole flight of a thrown clump --
 // it deliberately keeps the held cache so the stream continues -- while its verdict stays
 // constant across that window. These remember the verdict already reported so the branch logs
-// one line per DECISION rather than one per tick at the 125 Hz pump rate. File scope, cleared by
+// one line per DECISION rather than one per tick at the ~60 Hz pump rate. File scope, cleared by
 // OnSessionStart, for the same reason the edge state above is.
 coop::element::ElementId g_relEdgeLoggedEid = coop::element::kInvalidId;
 int  g_relEdgeLoggedSkip = -1;  // -1 = nothing reported yet, else the last relSkip reported
@@ -171,6 +179,190 @@ coop::element::ElementId ResolveHeldPropEid(void* heldActor) {
     return eid;
 }
 
+// The held-prop pose of the hold: the identity (key, eid, the trash context), the hold's generation and
+// the actor's place with its rotation normalised at the wire boundary. The hold branch and the swinger
+// coast both stream through it, so a coast pose is the hold's pose.
+coop::net::PropPoseSnapshot HeldPose(const coop::net::WireKey& key, coop::element::ElementId eid,
+                                     const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot) {
+    coop::net::PropPoseSnapshot pp{};
+    pp.key = key;
+    // The eid cached on the new-held edge; the O(n) resolve never runs per tick.
+    pp.elementId = (eid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(eid);
+    // The trash entity's sync-time context, so the receiver drops a carry pose that arrives
+    // after a transition; 0 for a non-trash prop.
+    pp.ctx = coop::trash_channel::CtxForEid(eid);
+    pp.holdGen = g_holdGen;
+    pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
+    // Normalised at the wire boundary: a physics prop's rotation accumulates through quaternion
+    // conversions to values like Yaw 359.8 that the receiver's guard rejects.
+    pp.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
+    pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
+    pp.roll  = ue_wrap::NormalizeAxis(rot.Roll);
+    return pp;
+}
+
+// A swinger with nothing to hang on (a barrel's cap, a crate's lid) falls when it is let go, and each peer's own
+// physics would carry it somewhere else. So the peer that let it go keeps the held pose stream running for it, from
+// its own copy, until that copy is at rest, and only then sends the release: the other peers follow the same fall
+// parked and let go of a door already where it stopped. At rest is the body asleep, or the same place and
+// orientation for kCoastStillTicks equal reads (about half a second at the pump's rate), measured from the pose
+// where that still run began, so a creep past the band is not rest. The release branch below is the trash flight's neighbour:
+// that one keeps streaming a thrown clump under its eid; this one keeps a released swinger under its key.
+// Divergence from MTA (CUnoccupiedVehicleSync.cpp, client and server): there the syncer sends while the
+// vehicle changes and the server reassigns the syncer. Here the releaser is the syncer until rest, because no
+// server-side physics arbiter exists and the pose carries no velocity, so the receivers stay parked through the
+// fall instead of simulating from a velocity.
+constexpr int   kCoastStillTicks = 30;   // a count of equal reads, not a duration
+// A lid rocking against a contact cycles between two poses about 0.6 cm and 0.5 deg apart, both at rest, so the
+// band is wider than that rock.
+constexpr float kCoastStillCm    = 1.0f;
+constexpr float kCoastStillDeg   = 1.0f;
+// The bound on a coast: ten seconds from the release edge, a deadline and not a tick count, since the pump runs at
+// about 60 Hz (the timeline loop sleeps 16 ms, harness/session_runtime.cpp) and slows with the game thread. A lid that
+// keeps moving (on a moving carrier, or creeping past the band) is released at its current pose with its measured
+// velocity, and every peer's own physics takes it from there.
+constexpr auto  kCoastMax = std::chrono::seconds(10);
+std::chrono::steady_clock::time_point g_coastDeadline{};
+bool g_coasting = false;               // the release edge has begun a coast
+ue_wrap::FVector  g_stillFromLoc{};    // where the current still run began
+ue_wrap::FRotator g_stillFromRot{};
+int g_coastStill = 0;                  // ticks within tolerance of that pose
+
+// A swinger on a prop (a barrel's cap on its barrel) is joined to it by a constraint, so the drag rolls the parent
+// too, and no channel carries that motion: the dragging peer syncs the parent (prop_syncer.h), claimed every tick of
+// the hold and of the coast. A parent that does not simulate (a static frame) is not claimed.
+void FeedSwingerParent(void* door) {
+    static const bool sRedNoClaim =
+        ::coop::config::ResolveEnum(::coop::config_registry::rows::swinger_drill_red) == "no_parent_claim";
+    if (sRedNoClaim) return;
+    void* const parent = ue_wrap::engine::ParentActorOf(door);
+    if (!parent || !R::IsLive(parent) || !ue_wrap::engine::IsActorRootSimulatingPhysics(parent)) return;
+    coop::prop_syncer::Claim(parent, coop::net::PropSyncReason::SwingerParent);
+}
+
+// True while the released swinger is still moving: its pose goes out this tick and the release waits.
+bool CoastSwinger(coop::net::Session& session) {
+    if (!g_heldSwinger || !g_lastHeldProp.Alive()) return false;
+    // A lid that streamed nothing while held has nothing to wait for.
+    if (g_lastHeldKey.len == 0 && g_lastHeldEid == coop::element::kInvalidId) return false;
+    void* const door = g_lastHeldProp.Raw();
+    ue_wrap::FVector loc{};
+    ue_wrap::FRotator rot{};
+    if (!ue_wrap::engine::TryGetActorLocation(door, loc) || !ue_wrap::engine::TryGetActorRotation(door, rot))
+        return false;
+    if (!g_coasting) {   // the first tick after the release edge starts the still run afresh
+        g_coasting = true;
+        g_coastDeadline = std::chrono::steady_clock::now() + kCoastMax;
+        g_coastStill = 0;
+        g_stillFromLoc = loc;
+        g_stillFromRot = rot;
+    }
+    if (std::chrono::steady_clock::now() > g_coastDeadline) {
+        UE_LOGI("local_streams: swinger '%.*s' still moving after %lld s of coasting -- released at its current pose",
+                static_cast<int>(g_lastHeldKey.len), g_lastHeldKey.data, static_cast<long long>(kCoastMax.count()));
+        return false;
+    }
+    const float dx = loc.X - g_stillFromLoc.X, dy = loc.Y - g_stillFromLoc.Y, dz = loc.Z - g_stillFromLoc.Z;
+    const bool still = dx * dx + dy * dy + dz * dz <= kCoastStillCm * kCoastStillCm &&
+                       ue_wrap::engine::RotatorAngleDeg(rot, g_stillFromRot) <= kCoastStillDeg;
+    if (still) {
+        ++g_coastStill;
+    } else {
+        g_coastStill = 0;
+        g_stillFromLoc = loc;
+        g_stillFromRot = rot;
+    }
+    // The body's rest flag is read only on a still tick: a body in motion is not at rest.
+    if (g_coastStill >= kCoastStillTicks || (still && ue_wrap::engine::IsActorRootBodyAtRest(door))) return false;
+    session.SetLocalPropPose(true, HeldPose(g_lastHeldKey, g_lastHeldEid, loc, rot));
+    FeedSwingerParent(door);
+    return true;
+}
+
+// The release of the held prop: the held-pose stream stops, a PropRelease goes out (a trash entity's is left to
+// its channel) and the edge state clears. The release edge sends it, and so does a grab of another item while a
+// swinger still coasts, so a coasting lid's release goes out once either way.
+void SendHeldRelease(coop::net::Session& session) {
+    // The release edge (not carrying: the latch closed, or this is a non-trash prop). The
+    // stream stops and a PropRelease goes out with the body's current velocity: the BP has
+    // cleared grabbing_actor, released the handle and applied any impulse, and PhysX has not
+    // stepped, so the body carries the kinematic-tracking velocity plus the impulse in one
+    // value. The clump has no StaticMesh for GetPhysicsVelocity, so the generic root velocity
+    // is the fallback.
+    session.SetLocalPropPose(false, {});  // stop the held-pose stream (BOTH paths below)
+    // A trash entity's throw is owned by the host-authoritative channel: the flight stream
+    // carries the arc and the ToPile convert is the landing (it re-skins, snaps and clears the
+    // client's drive). By this edge the carry has already closed, so a PropRelease here was
+    // redundant and harmful: the client turned each into a trash throw that churned the drive
+    // and replayed the pickup sound. A tracked trash entity stops the stream and clears the
+    // cache without a PropRelease; a non-trash prop keeps its velocity release.
+    const uint32_t relEid = (g_lastHeldEid == coop::element::kInvalidId)
+                                ? 0u : static_cast<uint32_t>(g_lastHeldEid);
+    const bool isTrashEid = (g_lastHeldEid != coop::element::kInvalidId &&
+                             coop::trash_channel::CtxForEid(g_lastHeldEid) != 0);
+    if (isTrashEid) {
+        UE_LOGI("[PILE] HOST trash release eid=%u -- PropRelease SUPPRESSED (host-auth flight-stream + "
+                "ToPile convert own the throw end; client drives no clump physics, ToPile clears the drive)",
+                relEid);
+    } else {
+        ue_wrap::prop::VelocityState vel{};
+        if (g_lastHeldProp.Alive()) {
+            vel = ue_wrap::prop::GetPhysicsVelocity(g_lastHeldProp.Raw());
+            if (!vel.ok) {
+                ue_wrap::FVector lin{}, ang{};
+                if (ue_wrap::engine::GetActorRootPhysicsVelocity(g_lastHeldProp.Raw(), lin, ang)) {
+                    vel.linearCmS = lin; vel.angularDegS = ang; vel.ok = true;
+                }
+            }
+        }
+        const float linMagSq = vel.linearCmS.X * vel.linearCmS.X +
+                               vel.linearCmS.Y * vel.linearCmS.Y +
+                               vel.linearCmS.Z * vel.linearCmS.Z;
+        UE_LOGI("net: held -> released (vel.ok=%d linVel=(%.1f, %.1f, %.1f) |v|=%.1f cm/s angVel=(%.1f, %.1f, %.1f))",
+                vel.ok ? 1 : 0,
+                vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
+                std::sqrt(linMagSq),
+                vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z);
+        // The prop's flags as the hold left them: not frozen after a grab, frozen when a slot or
+        // a dock took it from the hand. A pocketed prop is gone and reports none, a trash clump has
+        // none.
+        coop::net::PropReleasePayload rel{};
+        rel.key = g_lastHeldKey;
+        rel.linVelX = vel.linearCmS.X; rel.linVelY = vel.linearCmS.Y; rel.linVelZ = vel.linearCmS.Z;
+        rel.angVelX = vel.angularDegS.X; rel.angVelY = vel.angularDegS.Y; rel.angVelZ = vel.angularDegS.Z;
+        rel.elementId = relEid;  // a keyless clump is routed by eid (key None cannot disambiguate)
+        rel.holdGen = g_holdGen;
+        if (g_lastHeldProp.Alive()) {
+            rel.physFlags = coop::prop_wire_parity::PhysFlagsOf(g_lastHeldProp.Raw());
+            // Where the hold let go, so a receiver whose last poses were lost lets go from here;
+            // unread, the release carries no pose and the receiver lets go from its own.
+            ue_wrap::FVector loc{};
+            ue_wrap::FRotator rot{};
+            if (ue_wrap::engine::TryGetActorLocation(g_lastHeldProp.Raw(), loc) &&
+                ue_wrap::engine::TryGetActorRotation(g_lastHeldProp.Raw(), rot)) {
+                rel.locX = loc.X; rel.locY = loc.Y; rel.locZ = loc.Z;
+                rel.rotPitch = rot.Pitch; rel.rotYaw = rot.Yaw; rel.rotRoll = rot.Roll;
+                rel.hasPose = 1;
+            }
+        }
+        session.SendPropRelease(rel);
+        coop::dev::swinger_drill::NoteReleased(g_lastHeldProp.Raw());
+        // This peer's own release: a join-window correction armed before the hold is older than
+        // where the prop was put down, and would snap it back once the drain's grab deferral ends.
+        if (session.role() == coop::net::Role::Client && g_lastHeldProp.Alive()) {
+            const coop::element::ElementId heldEid =
+                coop::element::Registry::Get().EidForActor(g_lastHeldProp.Raw());
+            if (heldEid != coop::element::kInvalidId && heldEid != 0u)
+                coop::element::quiescence_drain::SupersedePosCorrection(heldEid, "own release");
+        }
+    }
+    g_lastHeldProp.Reset();
+    g_lastHeldKey = {};
+    g_heldSwinger = false;
+    g_coasting = false;
+    g_lastHeldEid = coop::element::kInvalidId;  // the cached held eid goes with the release
+}
+
 }  // namespace
 
 void NotifyPropEidRebound(void* actor) {
@@ -190,13 +382,22 @@ uint16_t CurrentHoldGen() { return g_holdGen; }
 
 void* LastHeldActor() {
     // The local player's held actor, or null, for the trash channel's rest exclusion; live-guarded
-    // so a stale pointer never aliases a recycled address.
+    // so a stale pointer never aliases a recycled address. A released swinger is returned while it
+    // coasts; the readers (prop_hold, prop_drive_host, prop_drive_stream, prop_stick_sync and the
+    // trash carry tick) act on props and trash only, and a swinger is neither.
     return g_lastHeldProp.Get();
 }
 
 void OnSessionStart() {
     g_lastHeldProp.Reset();
     g_lastHeldKey = {};
+    g_heldSwinger = false;
+    g_swingerKeySaid = false;
+    g_coasting = false;
+    g_coastStill = 0;
+    g_coastDeadline = {};
+    g_stillFromLoc = {};
+    g_stillFromRot = {};
     g_lastHeldEid = coop::element::kInvalidId;
     g_propEmitCount = 0;
     g_wasRagdolling = false;
@@ -283,7 +484,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         }
     }
     // The held-state diagnostic at the branch point: the pose branch, the release edge, or idle;
-    // about 8 a second while something is or was held.
+    // about 4 a second while something is or was held.
     if (heldActor || g_lastHeldProp.Raw()) {
         static uint32_t sHS = 0;
         if ((sHS++ % 15) == 0) {
@@ -300,6 +501,9 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // the same pipeline identified by eid (key None), renders as the bare dirtball, floats in
         // front of the puppet through this stream and gets physics on release.
         if (heldActor != g_lastHeldProp.Raw()) {
+            // A swinger let go and still coasting (or held) when another item is taken: its release goes
+            // out now, with its own hold's generation, key and eid, before this edge replaces them.
+            if (g_heldSwinger && g_lastHeldProp.Raw()) SendHeldRelease(session);
             // The new-held edge. A held trash clump is adopted here onto the grabbed pile's eid:
             // the birth certificate the BeginDeferred thunk recorded at its spawn carries the pile
             // eid and chipType, and this edge consumes it and broadcasts the ToClump convert.
@@ -357,6 +561,8 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                     heldActor, R::ClassNameOf(heldActor).c_str(),
                     ue_wrap::prop::GetInteractableKeyString(heldActor).c_str(),
                     eidLog, mirrored ? "BROADCAST" : "carry-only(trash/clump)");
+            g_heldSwinger = ue_wrap::swinger::EnsureResolved() && ue_wrap::swinger::IsSwinger(heldActor);
+            g_swingerKeySaid = false;
             // The carry-only invariant: every refusal in EnsureHeldItemBroadcast is an anti-dupe
             // gate that assumes the receiver resolves the item by another route (a kerfur prop by
             // its mirror eid, a clump by its pile's eid, a claimed save-loaded local by its shared
@@ -365,7 +571,10 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
             // the field, 91 poses in 1.5 s no peer could resolve, and an item invisible to everyone
             // but its holder). Reported once per held edge with the actor named, and not
             // suppressed: a key-only pose is legitimate when both peers share a save-loaded prop.
-            if (!mirrored && g_lastHeldEid == coop::element::kInvalidId) {
+            // A dragged swinger is the exception: its identity is the container lane's key, which the receiver finds
+            // in that lane's index (EnsureHeldItemBroadcast leaves it alone by design).
+            if (!mirrored && g_lastHeldEid == coop::element::kInvalidId &&
+                !(g_heldSwinger && !coop::interactable_sync::ContainerKey(heldActor).empty())) {
                 UE_LOGW("local_streams: CARRY-ONLY WITH NO WIRE IDENTITY -- held actor %p "
                         "cls='%ls' key='%ls' is streaming a held pose with eid=0 and no spawn "
                         "broadcast, so a receiver can resolve NEITHER term. Every carry-only "
@@ -385,30 +594,28 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         }
         // The held world transform: key (None for the clump) and eid; the receiver resolves by key,
         // then eid.
-        const std::wstring keyW = ue_wrap::prop::GetInteractableKeyString(heldActor);
-        coop::net::PropPoseSnapshot pp{};
-        pp.key.len = 0;
+        // A dragged swinger goes under the container lane's key: the portable `mv_` token where the lid has an
+        // identity, since the game's own Key differs between peers for most lids. A lid the lane has not indexed has
+        // no key (it streams nothing), and one it filed under the game Key has only the key that may differ: each said
+        // once per hold.
+        const std::wstring keyW = g_heldSwinger ? coop::interactable_sync::ContainerKey(heldActor)
+                                                : ue_wrap::prop::GetInteractableKeyString(heldActor);
+        if (g_heldSwinger && !g_swingerKeySaid && (keyW.empty() || keyW.rfind(L"mv_", 0) != 0)) {
+            g_swingerKeySaid = true;
+            UE_LOGW("local_streams: dragged swinger %p %s", heldActor,
+                    keyW.empty() ? "is not indexed by the container lane: it streams nothing"
+                                 : "has no portable key: it streams under its game Key, which may differ on the other peers");
+        }
+        coop::net::WireKey key{};
         for (size_t i = 0; i < keyW.size() && i < 31; ++i) {
             // Save keys are ASCII; the narrowing is lossless.
-            pp.key.data[pp.key.len++] = static_cast<char>(keyW[i]);
+            key.data[key.len++] = static_cast<char>(keyW[i]);
         }
-        // The eid cached on the new-held edge; the O(n) resolve never runs per tick.
-        pp.elementId = (g_lastHeldEid == coop::element::kInvalidId) ? 0u
-                                                                    : static_cast<uint32_t>(g_lastHeldEid);
-        // The trash entity's sync-time context, so the receiver drops a carry pose that arrives
-        // after a transition; 0 for a non-trash prop.
-        pp.ctx = coop::trash_channel::CtxForEid(g_lastHeldEid);
-        pp.holdGen = g_holdGen;
         ue_wrap::FVector loc{};
         ue_wrap::FRotator rot{};
         const bool poseRead = ue_wrap::engine::TryGetActorLocation(heldActor, loc) &&
                               ue_wrap::engine::TryGetActorRotation(heldActor, rot);
-        pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
-        // Normalised at the wire boundary: a physics prop's rotation accumulates through quaternion
-        // conversions to values like Yaw 359.8 that the receiver's guard rejects.
-        pp.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
-        pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
-        pp.roll  = ue_wrap::NormalizeAxis(rot.Roll);
+        const coop::net::PropPoseSnapshot pp = HeldPose(key, g_lastHeldEid, loc, rot);
         // Only a pose with a cross-peer identity (a key or an eid) is streamed: a clump grabbed
         // before quiescence that the broadcast declined has neither, and streaming it floods the
         // peer with unresolved-pose warnings for an actor it will never have. The stream resumes
@@ -432,11 +639,14 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
             // means the cached eid went invalid, not a dead branch.
             static uint64_t sPK = 0;
             if ((sPK++ % 15) == 0)
-                UE_LOGI("[POSE-SKIP] eid=0 key.len=0 -- held clump has NO identity to stream (g_lastHeldEid invalid -> carry frozen between E)");
+                UE_LOGI("%s", g_heldSwinger ? "[POSE-SKIP] a dragged swinger has no container-lane key: nothing is streamed"
+                            : "[POSE-SKIP] eid=0 key.len=0 -- held clump has NO identity to stream (g_lastHeldEid invalid -> carry frozen between E)");
         }
         // heldActor is live here, so Set's contract holds; the ref captures the index and serial.
         g_lastHeldProp.Set(heldActor);
         g_lastHeldKey = pp.key;
+        if (g_heldSwinger) FeedSwingerParent(heldActor);
+        g_coasting = false;  // a re-grab of the coasting door ends the coast; the next one starts afresh
     } else if (g_lastHeldProp.Raw()) {
         // The carry latch owns "carrying", not the flickering holding_actor: a churn re-pile
         // destroys the held clump and the field is empty for a frame, and the held-puppet
@@ -504,82 +714,8 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                         "(!IsLive or not-a-clump) -> the gap; await the re-grab or the land-settle close",
                         static_cast<unsigned>(g_lastHeldEid));
             }
-        } else {
-        // The release edge (not carrying: the latch closed, or this is a non-trash prop). The
-        // stream stops and a PropRelease goes out with the body's current velocity: the BP has
-        // cleared grabbing_actor, released the handle and applied any impulse, and PhysX has not
-        // stepped, so the body carries the kinematic-tracking velocity plus the impulse in one
-        // value. The clump has no StaticMesh for GetPhysicsVelocity, so the generic root velocity
-        // is the fallback.
-        session.SetLocalPropPose(false, {});  // stop the held-pose stream (BOTH paths below)
-        // A trash entity's throw is owned by the host-authoritative channel: the flight stream
-        // carries the arc and the ToPile convert is the landing (it re-skins, snaps and clears the
-        // client's drive). By this edge the carry has already closed, so a PropRelease here was
-        // redundant and harmful: the client turned each into a trash throw that churned the drive
-        // and replayed the pickup sound. A tracked trash entity stops the stream and clears the
-        // cache without a PropRelease; a non-trash prop keeps its velocity release.
-        const uint32_t relEid = (g_lastHeldEid == coop::element::kInvalidId)
-                                    ? 0u : static_cast<uint32_t>(g_lastHeldEid);
-        const bool isTrashEid = (g_lastHeldEid != coop::element::kInvalidId &&
-                                 coop::trash_channel::CtxForEid(g_lastHeldEid) != 0);
-        if (isTrashEid) {
-            UE_LOGI("[PILE] HOST trash release eid=%u -- PropRelease SUPPRESSED (host-auth flight-stream + "
-                    "ToPile convert own the throw end; client drives no clump physics, ToPile clears the drive)",
-                    relEid);
-        } else {
-            ue_wrap::prop::VelocityState vel{};
-            if (g_lastHeldProp.Alive()) {
-                vel = ue_wrap::prop::GetPhysicsVelocity(g_lastHeldProp.Raw());
-                if (!vel.ok) {
-                    ue_wrap::FVector lin{}, ang{};
-                    if (ue_wrap::engine::GetActorRootPhysicsVelocity(g_lastHeldProp.Raw(), lin, ang)) {
-                        vel.linearCmS = lin; vel.angularDegS = ang; vel.ok = true;
-                    }
-                }
-            }
-            const float linMagSq = vel.linearCmS.X * vel.linearCmS.X +
-                                   vel.linearCmS.Y * vel.linearCmS.Y +
-                                   vel.linearCmS.Z * vel.linearCmS.Z;
-            UE_LOGI("net: held -> released (vel.ok=%d linVel=(%.1f, %.1f, %.1f) |v|=%.1f cm/s angVel=(%.1f, %.1f, %.1f))",
-                    vel.ok ? 1 : 0,
-                    vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
-                    std::sqrt(linMagSq),
-                    vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z);
-            // The prop's flags as the hold left them: not frozen after a grab, frozen when a slot or
-            // a dock took it from the hand. A pocketed prop is gone and reports none, a trash clump has
-            // none.
-            coop::net::PropReleasePayload rel{};
-            rel.key = g_lastHeldKey;
-            rel.linVelX = vel.linearCmS.X; rel.linVelY = vel.linearCmS.Y; rel.linVelZ = vel.linearCmS.Z;
-            rel.angVelX = vel.angularDegS.X; rel.angVelY = vel.angularDegS.Y; rel.angVelZ = vel.angularDegS.Z;
-            rel.elementId = relEid;  // a keyless clump is routed by eid (key None cannot disambiguate)
-            rel.holdGen = g_holdGen;
-            if (g_lastHeldProp.Alive()) {
-                rel.physFlags = coop::prop_wire_parity::PhysFlagsOf(g_lastHeldProp.Raw());
-                // Where the hold let go, so a receiver whose last poses were lost lets go from here;
-                // unread, the release carries no pose and the receiver lets go from its own.
-                ue_wrap::FVector loc{};
-                ue_wrap::FRotator rot{};
-                if (ue_wrap::engine::TryGetActorLocation(g_lastHeldProp.Raw(), loc) &&
-                    ue_wrap::engine::TryGetActorRotation(g_lastHeldProp.Raw(), rot)) {
-                    rel.locX = loc.X; rel.locY = loc.Y; rel.locZ = loc.Z;
-                    rel.rotPitch = rot.Pitch; rel.rotYaw = rot.Yaw; rel.rotRoll = rot.Roll;
-                    rel.hasPose = 1;
-                }
-            }
-            session.SendPropRelease(rel);
-            // This peer's own release: a join-window correction armed before the hold is older than
-            // where the prop was put down, and would snap it back once the drain's grab deferral ends.
-            if (session.role() == coop::net::Role::Client && g_lastHeldProp.Alive()) {
-                const coop::element::ElementId heldEid =
-                    coop::element::Registry::Get().EidForActor(g_lastHeldProp.Raw());
-                if (heldEid != coop::element::kInvalidId && heldEid != 0u)
-                    coop::element::quiescence_drain::SupersedePosCorrection(heldEid, "own release");
-            }
-        }
-        g_lastHeldProp.Reset();
-        g_lastHeldKey = {};
-        g_lastHeldEid = coop::element::kInvalidId;  // the cached held eid goes with the release
+        } else if (!CoastSwinger(session)) {   // a swinger still falling keeps streaming; the release waits
+            SendHeldRelease(session);
         }
     }
 

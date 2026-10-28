@@ -4,41 +4,39 @@
 
 #include "coop/net/session.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/actors/prop.h"        // ChipPileClass / GarbageClumpClass
-#include "ue_wrap/core/reflection.h"    // FindDispatchFunction
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
-#include <chrono>
 
 namespace coop::trash_morph_gate {
 namespace {
 
-namespace R = ue_wrap::reflection;
 namespace sg = ue_wrap::script_gate;
 
 // The three trash morph verbs a client refuses. `toClump` is the pile's morph verb and covers every caller
 // of it -- the collision component's overlap handler and the arir follower alike; `playerGrabbed` spawns
 // the carried clump inline instead of calling it, so it needs its own watch; the clump's re-pile is inline
-// in its ubergraph, so the contact handler that enters there is the verb. All three are declared on the
-// two base classes, so one resolve covers every variant under them.
-UE_FACT_FN(kRowToClump, "trash_morph_gate", L"actorChipPile_C", L"toClump", Dispatch);
-UE_FACT_FN(kRowPlayerGrabbed, "trash_morph_gate", L"actorChipPile_C", L"playerGrabbed", Dispatch);
+// in its ubergraph, so the contact handler that enters there is the verb. Each is declared on its own
+// class with no subclass overriding it, so a Declared row covers every variant under the class.
+UE_FACT_FN(kRowToClump, "trash_morph_gate", L"actorChipPile_C", L"toClump", Declared);
+UE_FACT_FN(kRowPlayerGrabbed, "trash_morph_gate", L"actorChipPile_C", L"playerGrabbed", Declared);
 UE_FACT_FN(kRowClumpContact, "trash_morph_gate", L"prop_garbageClump_C",
            L"BndEvt__prop_garbageClump_StaticMesh_K2Node_ComponentBoundEvent_0_ComponentHitSignature__DelegateSignature",
-           Dispatch);
+           Declared);
 
 // The session the role gate reads. The verdicts carry no session of their own, so they read this
-// cached pointer; Install re-stores it on every call and OnDisconnect clears it.
+// cached pointer; Install re-stores it at every session start and OnDisconnect clears it.
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// Registration is process-wide (a UFunction outlives a session), so the watches latch once all
-// three are on; the role gate below is what turns the refusals on and off. A partial set never
-// latches, or a verb that failed to resolve would stay ungated for the life of the process behind
-// one warning.
-bool g_installed = false;
-std::chrono::steady_clock::time_point g_lastResolveAt{};
+// Registration is process-wide (a name watch matches every incarnation of its class), so the watches
+// are registered once, and the flag is set only when all three took: a partial set is retried by the
+// next Install. The role gate below is what turns the refusals on and off.
+std::atomic<bool> g_watched{false};
+
+// Set by Tick, game thread only: the three watches settled (live, or dead for good). Process-wide like
+// the registration, so a reconnect does not repeat the check.
+bool g_live = false;
 
 // The watch tags, distinct so the gate's tables keep them apart.
 constexpr int kTagToClump      = 1;
@@ -82,56 +80,61 @@ sg::Verdict OnToClump(const sg::Call& call)       { return Judge(g_toClump, call
 sg::Verdict OnPlayerGrabbed(const sg::Call& call) { return Judge(g_playerGrab, call); }
 sg::Verdict OnClumpContact(const sg::Call& call)  { return Judge(g_clumpContact, call); }
 
-// Resolve one verb on `cls` and watch its body. FindDispatchFunction rather than FindFunction: it
-// climbs and names the declaring class, and the answer here is expected to BE the base, which is
-// what makes one watch cover every variant under it. An EXACT watch rather than a watch by name,
-// because `playerGrabbed` is an interface event dozens of unrelated prop classes implement and a
-// name watch would judge every one of them.
-bool Register(void* cls, const ue_wrap::facts::Function& row, int tag, sg::PreFn pre, const char* what) {
-    if (!cls) return false;
-    const wchar_t* fnName = row.Name();
-    const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(row);
-    if (!fn) {
-        UE_LOGW("trash_morph_gate: '%ls' not found on the trash class -- a client can still author "
-                "%s locally", fnName, what);
-        return false;
-    }
-    if (!sg::Watch(fn, tag, pre, nullptr)) {
-        UE_LOGW("trash_morph_gate: the script-body gate refused the watch on '%ls' (not installed, "
-                "native, or the table is full)", fnName);
-        return false;
-    }
-    // The row resolved it; the declaring class is asked once more, for the line below only.
-    void* declarer = nullptr;
-    R::FindDispatchFunction(cls, fnName, &declarer);
-    UE_LOGI("trash_morph_gate: watching %s at the script-body gate -- '%ls' declared on '%ls'",
-            what, fnName, R::ToString(R::NameOf(declarer)).c_str());
-    return true;
-}
-
 }  // namespace
 
 void Install(coop::net::Session* session) {
-    g_session.store(session, std::memory_order_release);  // re-cache every call (reconnect)
-    if (g_installed) return;
-    // FindClass does not memoise a miss, so an unresolved class walks the whole object array on
-    // every attempt; this runs from the per-tick install pump, so the retry is throttled the way
-    // the sibling trash lane throttles its own.
-    const auto now = std::chrono::steady_clock::now();
-    if (g_lastResolveAt.time_since_epoch().count() != 0 && (now - g_lastResolveAt) < std::chrono::seconds(2))
+    g_session.store(session, std::memory_order_release);  // re-cache at every session start
+    if (g_watched.load(std::memory_order_acquire)) return;
+    // Name watches, registered at session start before the trash classes need to be loaded: a watch
+    // matches by the owning class's name once its names are resolved, whether or not the class has
+    // loaded yet, so a class that loads later is judged from its first instance. A Declared row, not
+    // an exact watch on a resolved function: `playerGrabbed` is an interface event dozens of
+    // unrelated prop classes implement, and the row's class keeps a name watch from judging them.
+    struct Row { const ue_wrap::facts::Function* row; int tag; sg::PreFn pre; };
+    const Row rows[] = {
+        {&kRowToClump,       kTagToClump,      &OnToClump},
+        {&kRowPlayerGrabbed, kTagPlayerGrab,   &OnPlayerGrabbed},
+        {&kRowClumpContact,  kTagClumpContact, &OnClumpContact},
+    };
+    int watched = 0;
+    for (const Row& r : rows) {
+        if (sg::WatchName(*r.row, r.tag, r.pre, nullptr)) {
+            ++watched;
+        } else {
+            UE_LOGW("trash_morph_gate: the watch on %ls::%ls did not register -- a client can still author "
+                    "that transition locally", r.row->Class(), r.row->Name());
+        }
+    }
+    // Install runs on the TimelineThread, where ResolvePendingNames does nothing; WatchName posted one
+    // resolve to the game thread, and Tick drives the rest until all three watches are live.
+    if (watched != 3) {
+        UE_LOGW("trash_morph_gate: only %d/3 trash morph verbs registered -- the next session start retries", watched);
         return;
-    g_lastResolveAt = now;
-    void* pileCls  = ue_wrap::prop::ChipPileClass();
-    void* clumpCls = ue_wrap::prop::GarbageClumpClass();
-    if (!pileCls || !clumpCls) return;  // classes not loaded yet -> retry on a later tick
-    int n = 0;
-    n += Register(pileCls,  kRowToClump,       kTagToClump,      &OnToClump,       "a pile's morph to a clump") ? 1 : 0;
-    n += Register(pileCls,  kRowPlayerGrabbed, kTagPlayerGrab,   &OnPlayerGrabbed, "a pile's grab morph") ? 1 : 0;
-    n += Register(clumpCls, kRowClumpContact,  kTagClumpContact, &OnClumpContact,  "a clump's re-pile") ? 1 : 0;
-    if (n < 3) return;  // partial: retry rather than latch with a verb nobody is watching
-    g_installed = true;
-    UE_LOGI("trash_morph_gate: all 3 trash morph verbs watched -- on a client every pile-clump "
-            "transition is the host's, delivered as PropConvert");
+    }
+    g_watched.store(true, std::memory_order_release);
+    UE_LOGI("trash_morph_gate: 3/3 trash morph verbs registered by class and name -- live once their names "
+            "resolve (Tick says when)");
+}
+
+void Tick() {
+    if (g_live || !g_watched.load(std::memory_order_acquire)) return;
+    sg::ResolvePendingNames();
+    const bool live = sg::NameWatchLive(kRowToClump, kTagToClump) &&
+                      sg::NameWatchLive(kRowPlayerGrabbed, kTagPlayerGrab) &&
+                      sg::NameWatchLive(kRowClumpContact, kTagClumpContact);
+    if (!live) {
+        // A watch dead for good (its class declares no such function) never goes live: say so once, stop.
+        if (!(sg::NameWatchSettled(kRowToClump, kTagToClump) && sg::NameWatchSettled(kRowPlayerGrabbed, kTagPlayerGrab) &&
+              sg::NameWatchSettled(kRowClumpContact, kTagClumpContact)))
+            return;
+        UE_LOGW("trash_morph_gate: the three watches settled and not all are live -- a client can still "
+                "author a trash transition locally");
+        g_live = true;
+        return;
+    }
+    g_live = true;
+    UE_LOGI("trash_morph_gate: 3/3 trash morph verbs live -- on a client every pile-clump transition is "
+            "the host's, delivered as PropConvert");
 }
 
 void OnSessionStart() {

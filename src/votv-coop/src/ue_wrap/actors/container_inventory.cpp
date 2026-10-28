@@ -23,6 +23,8 @@ int32_t g_offInvOwner  = -2;  // propInventory_C.Owner   -- the Aprop_container_
 int32_t g_offGObjStack = -2;  // saveSlot_C.GObjStack
 int32_t g_offPropInv   = -2;  // prop_container_C.propInventory
 int32_t g_offCurrVol   = -2;  // propInventory_C.currVol
+int32_t g_offInvObj    = -2;  // propInventory_C.obj  -- set by init, never cleared
+int32_t g_offAllContainers = -2;  // mainGamemode_C.allContainers
 
 int32_t CachedOffset(int32_t& slot, void* cls, const wchar_t* name) {
     if (slot == -2) {
@@ -142,8 +144,10 @@ void RederiveShownState(void* container, void* inventory) {
                     "-- applied contents will show a STALE currVol / names", updateVol, recalcNames);
         }
     }
-    if (updateVol)   ue_wrap::component_calls::CallParamless(container, updateVol);
+    // The volume sum reads the names array that recalculateNames rebuilds from the records,
+    // so the names come first.
     if (recalcNames) ue_wrap::component_calls::CallParamless(inventory, recalcNames);
+    if (updateVol)   ue_wrap::component_calls::CallParamless(container, updateVol);
 }
 
 bool CurrentVolume(void* inventory, float& out) {
@@ -151,6 +155,33 @@ bool CurrentVolume(void* inventory, float& out) {
     if (!inventory || CachedOffset(g_offCurrVol, R::ClassOf(inventory), L"currVol") < 0) return false;
     out = ReadAt<float>(inventory, g_offCurrVol);
     return true;
+}
+
+// The host's world-settle edge: propInventory.init sets `obj` on its first line and nothing clears it,
+// so a live `obj` is the mark that a container's inventory has run its init.
+bool InventoryInitialized(void* container) {
+    void* const inv = InventoryOf(container);
+    if (!inv || CachedOffset(g_offInvObj, R::ClassOf(inv), L"obj") < 0) return false;
+    void* const obj = ReadAt<void*>(inv, g_offInvObj);
+    return obj && R::IsLive(obj);
+}
+
+bool AllContainersResolved(void* gamemode) {
+    return gamemode && CachedOffset(g_offAllContainers, R::ClassOf(gamemode), L"allContainers") >= 0;
+}
+
+// The gamemode's allContainers (each container adds itself at BeginPlay and leaves at its end): the
+// registry the host's world-settle edge counts against. Null and non-live entries are skipped.
+size_t AllContainers(void* gamemode, void** out, size_t cap) {
+    if (!gamemode || !out || cap == 0) return 0;
+    if (CachedOffset(g_offAllContainers, R::ClassOf(gamemode), L"allContainers") < 0) return 0;
+    const SR::Arr arr = SR::ReadArr(gamemode, g_offAllContainers);
+    size_t n = 0;
+    for (int32_t i = 0; i < arr.num && n < cap; ++i) {
+        void* const c = ReadAt<void*>(arr.data, i * static_cast<int32_t>(sizeof(void*)));
+        if (c && R::IsLive(c)) out[n++] = c;
+    }
+    return n;
 }
 
 }  // namespace ue_wrap::container_inventory

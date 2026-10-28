@@ -125,6 +125,47 @@ inline constexpr const char* kSigD3D12ViewportPresentInternal =
     "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 33 DB 8B F2 48 "
     "8B F9 85 D2 75 10 38 59 54 75 0B 38";
 
+// FVulkanViewport::Present (VulkanViewport.cpp, bool Present(Context, CmdBuffer, Queue, PresentQueue,
+// bLockToVsync)): the Vulkan renderer's once-per-frame engine seam, the one function that holds the
+// viewport (this) from which every handle the overlay's Vulkan half needs is read. Found by a stretch of
+// its body, not its prologue, since the prologue carries the frame size; the entry is
+// FunctionStart(match).
+inline constexpr const char* kSigVulkanViewportPresentBody =
+    "0F B6 84 24 ?? ?? ?? ?? 45 32 ED 86 81 ?? ?? 00 00 45 33 FF 4C 89 4C 24 ?? 4D 8B F1 49 8B E8";
+
+// The EPixelFormat table the swapchain constructor reads (GPixelFormats, RHIDefinitions.h
+// FPixelFormatInfo): a rip-relative lea of the table, then the per-format Supported byte at +0x20 and the
+// PlatformFormat at +0x1C. The lea is at match + 3: its rel32 sits at match + 6 and the next instruction
+// at match + 10, so table = match + 10 + rel32.
+inline constexpr const char* kSigVulkanPixelFormatTable =
+    "4C 63 D8 48 8D 0D ?? ?? ?? ?? 45 32 C0 4B 8D 04 9B 38 5C C1 20 0F 84 ?? ?? ?? ?? 44 8B 54 C1 1C";
+inline constexpr size_t kVulkanPixelFormatTableRelOff  = 6;
+inline constexpr size_t kVulkanPixelFormatTableNextOff = 10;
+inline constexpr size_t kGPixelFormats_Stride         = 0x28;  // sizeof(FPixelFormatInfo)
+inline constexpr size_t kGPixelFormats_PlatformFormat = 0x1C;  // int32, the VkFormat the RHI fills in at init
+
+// Layouts of the Vulkan RHI's objects at the Present seam (UE 4.27 VulkanViewport.h:110-127,
+// VulkanDevice.h, VulkanSwapChain.h, VulkanQueue.h; read from the cook's code). FVulkanViewport:
+inline constexpr size_t kVkViewport_Device        = 0x18;   // FVulkanDevice* (FDeviceChild)
+inline constexpr size_t kVkViewport_PixelFormat   = 0x18C;  // int32 EPixelFormat, written back by the swapchain constructor
+inline constexpr size_t kVkViewport_SwapChain     = 0x198;  // FVulkanSwapChain*
+inline constexpr size_t kVkViewport_WindowHandle  = 0x1A0;  // HWND
+// FVulkanDevice, FVulkanDynamicRHI, FVulkanQueue:
+inline constexpr size_t kVkDevice_VkDevice        = 0x8;     // VkDevice
+inline constexpr size_t kVkDevice_PhysicalDevice  = 0x958;   // VkPhysicalDevice
+inline constexpr size_t kVkDevice_Rhi             = 0x1D50;  // FVulkanDynamicRHI*
+inline constexpr size_t kVkDevice_PresentQueue    = 0x17F0;  // FVulkanQueue*
+inline constexpr size_t kVkRhi_Instance           = 0x20;    // VkInstance
+inline constexpr size_t kVkQueue_Queue            = 0x0;     // VkQueue
+inline constexpr size_t kVkQueue_FamilyIndex      = 0x8;     // uint32
+inline constexpr size_t kVkQueue_QueueIndex       = 0xC;     // uint32
+// FVulkanSwapChain:
+inline constexpr size_t kVkSwapChain_VkSwapchain  = 0x8;     // VkSwapchainKHR
+inline constexpr size_t kVkSwapChain_Surface      = 0x18;    // VkSurfaceKHR
+inline constexpr size_t kVkSwapChain_InternalW    = 0x30;    // uint32, min(requested, image extent)
+inline constexpr size_t kVkSwapChain_InternalH    = 0x34;    // uint32
+inline constexpr size_t kVkSwapChain_ImageCount   = 0x78;    // TArray Num of the per-image fences = the real image count
+
 // ---- struct offsets (stable within UE4.27; re-check on an engine bump) ----
 namespace off {
 inline constexpr size_t UObject_ObjectFlags = 0x08;   // int32 EObjectFlags -- RF_BeginDestroyed 1<<15 / RF_FinishDestroyed 1<<16 name the destruction STAGE

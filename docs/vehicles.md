@@ -20,7 +20,7 @@ peer's copy at a metre and a half per second. That lane was replaced whole
 (`coop/interactables/atv_sync`).
 
 A peer that does not sync an ATV runs the rig natively, physics on and tick on, and is
-corrected toward the syncer on every packet (`coop/interactables/atv_corrector`): the
+steered toward the syncer on every packet (`coop/interactables/atv_corrector`): the
 velocity is written, the position error is closed by a bounded corrective velocity, and past a
 speed-scaled threshold, or when the error stops shrinking, the mirror is cut to the syncer's
 pose through the game's own teleport. This is MTA's vehicle shape, and the one thing a mirror may

@@ -11,6 +11,7 @@
 // run on the game thread (net_pump::Tick asserts GT). Receiver-side mirror drive
 // is npc_mirror.cpp; host PRE/POST/interceptor + lifecycle stay in npc_sync.cpp.
 
+#include "coop/creatures/geom_octa_sync.h"  // OnNpcSpawnSent: the Octa's events follow its spawn's send
 #include "coop/creatures/npc_sync.h"
 
 #include "coop/element/mirror_manager.h"
@@ -100,8 +101,13 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         // KerfurConvert reliable, which is pre-world-gated mid-join.
         const coop::element::ElementId offEid = coop::kerfur_entity::GetOriginOffEidForEid(el->GetId());
         p.retireOffEid = (offEid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(offEid);
-        if (s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::EntitySpawn, &p, sizeof(p)))
+        if (s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::EntitySpawn, &p, sizeof(p))) {
             ++sent;
+            // The third NPC spawn send: a joiner's snapshot carries an Octa that spawned while no peer was ready, and
+            // from here on the Octa's events have a mirror to find. Called on a success only: a slot that failed says
+            // nothing of the spawn the other slots were sent.
+            coop::geom_octa_sync::OnNpcSpawnSent(p.elementId, actor, tn.data(), tn.size(), true, peerSlot);
+        }
     }
     UE_LOGI("npc-sync: connect-snapshot -- sent %d existing NPC(s) to slot %d (%zu Npc Element(s), %d unbound-skipped, "
             "%d unread-skipped)", sent, peerSlot, elems.size(), unbound, unread);

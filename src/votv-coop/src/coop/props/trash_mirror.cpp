@@ -3,6 +3,7 @@
 #include "ue_wrap/core/gc_pin.h"
 #include "coop/props/trash_mirror.h"
 
+#include "coop/dev/pile_defer_drill.h"  // [dev] the pile deferral drill counts a deferred eid's mirrors
 #include "coop/element/element.h"
 #include "coop/element/element_deleter.h"
 #include "coop/element/mirror_manager.h"
@@ -12,6 +13,7 @@
 #include "coop/props/prop_echo_suppress.h"  // MarkIncomingDestroy (an authoritative destroy is not our news)
 #include "coop/props/prop_element_tracker.h"  // UnmarkKnownKeyedProp
 #include "coop/props/remote_prop.h"  // RegisterPropMirror / ClearAnyDriveFor
+#include "coop/props/trash_native_hold.h"  // Hold: the one recipe that parks a trash body
 #include "coop/props/trash_clump_pose_stream.h"  // ClearDriveForEid (the per-eid carry drive)
 
 #include "ue_wrap/engine/engine.h"
@@ -123,9 +125,7 @@ void* Materialize(coop::element::ElementId eid, const std::wstring& className, u
     // after it exactly one peer authors each, which is what makes these root-cause parkings and
     // not blindfolds. All three are restorable; the session teardown destroys what it made rather
     // than restoring, because a mirror expresses a remote entity and there is none left.
-    E::SetActorTickEnabled(native, false);         // scheduler kill: a clump's tick wakes its body every second
-    E::SetActorSimulatePhysics(native, false);     // physics receiver: kinematic while the host drives it
-    E::SetActorRootMovable(native);                // else SetActorLocation silently no-ops on a Static root
+    coop::trash_native_hold::Hold(native);         // tick off, kinematic, root Movable: the host authors it
     // Skin the host's chip type the GAME's OWN way: the chip type through the actor's own init,
     // then the scale and the host actor's rotation. The SpawnActor above already ran init once,
     // through the construction script, with the default chip type of 0; this re-skins it to the
@@ -144,6 +144,7 @@ void* Materialize(coop::element::ElementId eid, const std::wstring& className, u
         coop::remote_prop::RegisterPropMirror(eid, native, L"", className, senderSlot, rebindInPlace);
         if (auto* el = coop::element::Registry::Get().Get(eid)) el->SetSaveNative(true);  // mark bound-native
     }
+    coop::dev::pile_defer_drill::NoteMaterialised(static_cast<uint32_t>(eid));   // [dev] the pile deferral drill's count
     UE_LOGI("[PILE] trash_mirror: MATERIALIZED eid=%u native=%p class='%ls' chipType=%u form=%s "
             "(rooted, tick-off, kinematic, Movable) -- the game's own hover GUI, trace and rotation",
             eid, native, className.c_str(), static_cast<unsigned>(chipType),

@@ -12,7 +12,8 @@
 
 namespace coop::net {
 
-// One origin's streams, the five the host relays, kept per origin slot. Reset when the slot's
+// One origin's streams, the five the host relays and the driven-prop rows a client that syncs a prop sends
+// the host (judged there, never relayed), kept per origin slot. Reset when the slot's
 // connection closes, at a session's stop, and on a client at its roster's edges for a relayed slot:
 // the occupancy that left, and another occupancy named (coop/net/origin_context.h). A client's
 // relayed slots have no connection of their own: they reset, every slot, when its host link closes.
@@ -22,6 +23,7 @@ struct OriginStreams {
     StreamSlot<RagdollPoseSnapshot>    ragdoll;
     StreamSlot<HandPoseSnapshot>       hand;
     StreamSlot<DeskCursorPoseSnapshot> deskCursor;
+    EidPoseMerge<PropPoseSnapshot>     propDrive;
 
     void Reset() { *this = OriginStreams{}; }
 };

@@ -401,9 +401,10 @@ void Render() {
         // because it renders through it). Answers "why does X look/behave
         // different for me" without asking the user to dig through logs.
         {
+            // The menu draws only once the overlay is up, after a seam selected the RHI.
             const char* rhi = ui::overlay_backend::Kind();
             char line[256];
-            l10n::Fmt(line, sizeof(line), l10n::T("Graphics API: %s"), rhi ? rhi : l10n::T("starting up"));
+            l10n::Fmt(line, sizeof(line), l10n::T("Graphics API: %s"), rhi ? rhi : "?");
             ImGui::Spacing();
             ImGui::TextDisabled("%s", line);
         }

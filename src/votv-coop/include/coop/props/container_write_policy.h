@@ -1,11 +1,13 @@
 // coop/props/container_write_policy.h -- the host's answer to ONE question: may this
 // client-authored container slice be applied? The lane beside it (container_contents_sync) owns
 // the verb edge, the blob and the apply; this owns the arbitration and the state that arbitration
-// needs -- what the host last published per container, when the host itself last changed one, and
-// how many writes it has refused.
+// needs -- the rate it spends per author and how many writes it has refused. A slice is judged
+// against what the container holds right now, whoever wrote it: the lane's reader gives the live
+// content hash at the arbitration, so a write nothing published (the drone's sale) still
+// leaves a stale author refused.
 //
 // The decision is split in two on purpose, the shape intent_authority already uses: `Judge` is
-// pure arithmetic over what the host knows, so a selftest drives the REAL decision rather than a
+// pure arithmetic over what the host reads, so a selftest drives the REAL decision rather than a
 // copy of it, and `Accept` is the stateful wrapper the lane calls. Host-only and game-thread only:
 // a client runs no arbitration at all (it accepts slot 0 and nothing else).
 
@@ -25,16 +27,16 @@ enum class Decision : uint8_t {
     Accept = 0,
     TooFast,             // this author has spent its window's worth of the host's arbitration
     Unreachable,         // the author is neither where this container is nor at an actor that opens
-                         // it (ue_wrap/actors/container_openers); the outcome name rides in the log
+                         // it (coop/props/container_reach); the outcome name rides in the log
     NoBodyYet,           // the author has no body on this machine to measure a reach from, which
                          // is a mid-join window rather than a verdict: the caller HOLDS the slice
                          // instead of refusing it (principle 8 -- a lane owes its late-join answer,
                          // and losing an honest edit for the seconds before a puppet poses is the
                          // worse one). The pen bounds the hold: 8 per author, 30 s
-    StaleBase,           // the author edited a world the host has not published
-    HostChangeInFlight,  // the author edited the published world, but a host-side change to this
-                         // container is younger than the conflict window and the author provably
-                         // had not seen it
+    StaleBase,           // the author edited from contents the container no longer holds
+    Unreadable,          // the container's live contents do not read (a transfer into it is in
+                         // progress, or its inventory does not resolve), so no base can be judged;
+                         // answered like StaleBase
 };
 
 // Where this slice is coming from. A slice the host parked and is now replaying was already
@@ -44,22 +46,12 @@ enum class Decision : uint8_t {
 // arrival could not be measured against anybody's reach.
 enum class Source : uint8_t { Arrival = 0, Replay };
 
-// What the host knows at the moment of the decision. `lastLocalChangeMs` is 0 when this peer has
-// never fired a verb on this container.
+// What the host reads at the moment of the decision.
 struct Inputs {
-    uint64_t baseHash          = 0;  // what the author says it edited from
-    uint64_t publishedHash     = 0;  // what the host last told the world this container held
-    uint64_t lastLocalChangeMs = 0;  // when the host itself last mutated it
-    uint64_t nowMs             = 0;
+    uint64_t baseHash     = 0;      // what the author says it edited from
+    uint64_t liveHash     = 0;      // the content hash of what the container holds now
+    bool     liveReadable = false;  // false: the live contents did not read, and liveHash means nothing
 };
-
-// A client write is refused within this window of a host-side change.
-inline constexpr uint64_t kConflictWindowMs = 1500;
-
-// The lane's own reach, before intent_authority adds the target's bounds and its pose-staleness
-// budget. The game opens and mutates a container through the camera trace mainPlayer::arm, whose
-// default length is armLength = 200 uu, so that is the number this lane owns.
-inline constexpr float kReachUU = 200.0f;
 
 // How many slices one author may have arbitrated inside a window, and how long the refusal lasts.
 // An author's own sweep ships at most one slice per container per 250 ms, so sixteen in a second
@@ -69,19 +61,21 @@ inline constexpr float kReachUU = 200.0f;
 inline constexpr int      kRateMax      = 16;
 inline constexpr uint64_t kRateWindowMs = 1000;
 
-// The PURE half. An author that never received anything sends base 0 and is refused rather than
-// trusted, which is why the match requires a non-zero base.
+// The PURE half, and the half a selftest drives without an engine or a session: Unreadable when the
+// live contents did not read, then Accept when the base is the live hash. An author that never
+// received anything sends base 0 and is refused rather than trusted, which is why the match requires
+// a non-zero base.
 Decision Judge(const Inputs& in);
 
-// Judge against what this module remembers for that container. The half `Accept` runs after the
-// rate and the reach, and the half a selftest can drive without an engine or a session.
-Decision JudgeAgainstState(uint32_t eid, uint64_t baseHash, uint64_t nowMs);
+// The lane's reader of a container's live content hash: false when it does not read. Accept calls it only when it
+// reaches the base, so a slice refused on the rate or the reach, or held for a body, never reads the container.
+using LiveHashReader = bool (*)(uint32_t eid, uint64_t& outHash);
 
-// The stateful call the lane makes: the rate (SpendArrival), the reach question, then the base. Logs
-// the refusal, including which condition failed, and counts it. An eid that resolves to no live prop
-// element is NOT a reach refusal -- the lane parks such a slice and replays it, and the park is where
-// the birth-skew answer lives.
-Decision Accept(uint32_t eid, uint64_t baseHash, uint8_t authorSlot, uint64_t nowMs,
+// The stateful call the lane makes: the rate (SpendArrival), the reach question, then the base against
+// the live hash. Logs the refusal, including which condition failed, and counts it. An eid that
+// resolves to no live prop element is NOT a reach refusal -- the lane holds such a slice in bind_wait
+// and replays it, and the hold is where the birth-skew answer lives.
+Decision Accept(uint32_t eid, uint64_t baseHash, LiveHashReader readLive, uint8_t authorSlot, uint64_t nowMs,
                 coop::net::Session& session, Source src);
 
 // The rate half alone, Accept or TooFast: an arrival spends one of its author's window, a replay
@@ -91,20 +85,13 @@ Decision Accept(uint32_t eid, uint64_t baseHash, uint8_t authorSlot, uint64_t no
 Decision SpendArrival(uint32_t eid, uint8_t authorSlot, uint64_t nowMs, coop::net::Session& session,
                       Source src, bool held = false);
 
-// The host has told the world what this container holds, by any route -- a fan-out or a targeted
-// connect seed. This is the compare-and-swap baseline a later client write is judged against.
-void NotePublished(uint32_t eid, uint64_t contentHash);
-
-// This peer's own verb edge fired on this container.
-void NoteLocalChange(uint32_t eid, uint64_t nowMs);
-
 void Reset();
 
 // The arithmetic selftest, run once per session start beside the identity ones: the base that is
-// refused, the base that is accepted, the host change in flight, and the sequence a THIRD peer
-// walks into -- the host publishes, one client's slice is accepted and relayed, and the next
-// author is judged against what the relay carried rather than against the older fan-out. Leaves
-// the module empty.
+// refused, the base that is accepted, the unreadable contents, and the sequence a THIRD peer walks
+// into -- one client's slice is accepted and relayed, so the container holds what the relay wrote,
+// and the next author is judged against that rather than against the older fan-out. Leaves the
+// module empty.
 bool RunSelftest();
 
 }  // namespace coop::props::container_write_policy

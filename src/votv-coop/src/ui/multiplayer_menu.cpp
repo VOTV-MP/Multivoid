@@ -385,4 +385,8 @@ void ForceInjectNow() {
     UE_LOGW("multiplayer_menu: ForceInjectNow on menu=%p -> %s", menu, DoInject(menu) ? "injected" : "FAILED");
 }
 
+bool IsInjectedInto(void* menu) {
+    return menu && menu == g_injectedMenu && g_button.Alive();
+}
+
 }  // namespace coop::multiplayer_menu

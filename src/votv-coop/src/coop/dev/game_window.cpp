@@ -2,6 +2,8 @@
 
 #include "coop/dev/game_window.h"
 
+#include "coop/input/game_window_proc.h"
+
 namespace coop::dev::game_window {
 namespace {
 
@@ -16,6 +18,9 @@ BOOL CALLBACK PickThreadWindow(HWND h, LPARAM lp) {
 }  // namespace
 
 HWND GameWindow() {
+    // The window the mod subclasses is the one its keys and messages travel through, so it is the
+    // one to post to; the thread scan below answers only before that subclass exists.
+    if (void* subclassed = coop::input::game_window_proc::Hwnd()) return static_cast<HWND>(subclassed);
     HWND found = nullptr;
     ::EnumThreadWindows(::GetCurrentThreadId(), &PickThreadWindow, reinterpret_cast<LPARAM>(&found));
     return found;
@@ -29,6 +34,12 @@ bool PostKeyPress(unsigned vk) {
     const bool down = ::PostMessageW(hwnd, WM_KEYDOWN, vk, 1 | scan) != 0;
     const bool up = ::PostMessageW(hwnd, WM_KEYUP, vk, 1 | scan | (1LL << 30) | (1LL << 31)) != 0;
     return down && up;
+}
+
+bool PostChar(wchar_t c) {
+    HWND hwnd = GameWindow();
+    if (!hwnd) return false;
+    return ::PostMessageW(hwnd, WM_CHAR, static_cast<WPARAM>(c), 1) != 0;
 }
 
 unsigned VirtualKeyOf(const std::wstring& displayName) {

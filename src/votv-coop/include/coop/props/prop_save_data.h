@@ -76,6 +76,11 @@ bool PublishWithSpawn(coop::net::Session* s, void* actor, const coop::net::WireK
 // carry (`Covers`) is never owed one, so `actor` of such a class is not awaited at all.
 void ExpectRecordFor(void* actor, const std::wstring& key, uint8_t senderSlot);
 
+// Whether the host's wait for this key's author record names `senderSlot` and has not run out: the record that
+// slot sends next for the key is the one its drop owes. Read-only; the wait is cleared by the record's land. A
+// class gate on who may write its record asks it (coop/props/prop_record_gates). Host, game thread.
+bool AwaitsRecordFrom(const std::wstring& key, uint8_t senderSlot);
+
 // A chunk of either kind off the wire. `intent` distinguishes PropSaveDataIntent (a client's
 // claim, which only the host acts on) from PropSaveData (the canonical). The session is the one
 // the host re-publishes a taken claim on. A class with a rule about who may write its record or when it may

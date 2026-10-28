@@ -6,6 +6,7 @@
 
 #include "coop/interactables/drive_rack_sync.h"
 
+#include "coop/element/bind_wait.h"
 #include "coop/element/registry.h"
 #include "coop/interactables/desk_snd_fx.h"   // ScopedWireApply (the shared desk wire guard)
 #include "coop/interactables/signal_wire.h"
@@ -13,7 +14,6 @@
 #include "coop/net/session.h"
 #include "coop/props/prop_lifecycle.h"        // DestroyLocalProp (deny-ghost teardown)
 #include "coop/props/prop_save_data.h"        // DeclareClassOwnedElsewhere (the rack's rows are this lane's)
-#include "coop/session/join_progress.h"       // a joiner's pending canonicals wait out its join
 
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
@@ -25,6 +25,7 @@
 #include <chrono>
 #include <cstring>
 #include <map>
+#include <set>
 #include <vector>
 
 namespace coop::drive_rack_sync {
@@ -38,6 +39,8 @@ using coop::element::LivePropActor;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
+constexpr uint16_t kRackState = static_cast<uint16_t>(coop::net::ReliableKind::RackState);
+
 // ---- dirty mark (set via MarkDirtyFromVerb -- relaxed, drained at Tick) ----
 std::atomic<bool> g_rackDirty{false};
 
@@ -47,6 +50,7 @@ std::map<uint32_t, std::vector<uint8_t>> g_rackShadow;  // rack eid -> last cano
 // MTA keeps an element's state on the element (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientObject.cpp);
 // ours is the engine's actor, so the lane tags each shadow with the actor it was read from.
 std::map<uint32_t, ue_wrap::CachedObjRef> g_rackActor;  // rack eid -> the actor its shadow was taken from
+std::set<uint32_t> g_wrongClassSaid;  // eids a canonical named that are no rack here (said once a session)
 
 bool g_primed = false;
 bool g_wasConnected = false;
@@ -54,20 +58,6 @@ bool g_wasConnected = false;
 // ---- wire plumbing ----
 uint32_t g_nextSeq = 1;
 coop::blob_chunks::Assembler g_rackAsm;
-
-// ---- pending applies (rack actor not resolvable yet -- spawn in flight).
-// Replay predicate = resolve-only (canonicals are absolute states; two queued
-// blobs replay in insertion order, newest wins).
-// MTA drops an RPC whose element is not there yet (reference/mtasa-blue/Client/mods/deathmatch/logic/rpc/
-// CRPCFunctions.cpp); its one ordered stream makes that safe. A canonical here rides another lane than its rack's
-// spawn, so it parks.
-struct Pending {
-    std::vector<uint8_t> blob;
-    Clock::time_point until{};
-};
-std::vector<Pending> g_pending;
-constexpr auto kPendingTtl = std::chrono::seconds(10);
-constexpr size_t kPendingCap = 256;  // drop-oldest and WARN past this
 
 // ---- rack take deny records, correlated by CONTENT ----
 // Matching a deny on its slot alone can reap a legitimate unrelated birth from the same peer.
@@ -371,8 +361,10 @@ void HostApplyRackOp(const coop::net::RackStateHead& h, const std::vector<uint8_
     }
 }
 
-void ClientApplyRackBlob(const coop::net::RackStateHead& h, const std::vector<uint8_t>& blob,
-                         bool fromPending) {
+// A canonical held in bind_wait runs again once its rack is bound: the whole of ClientApplyRackBlob.
+void ReplayRack(const uint8_t* bytes, size_t n, int senderSlot);
+
+void ClientApplyRackBlob(const coop::net::RackStateHead& h, const std::vector<uint8_t>& blob, uint8_t senderSlot) {
     if (h.op == 2) {  // deny: destroy OUR ghost from that exact take (content-matched)
         // Never sweep all untracked drives -- a legitimate fresh birth would die too. The denied
         // take's ghost carries the row that sat at (rackEid, idx) in OUR shadow, so match by
@@ -407,17 +399,21 @@ void ClientApplyRackBlob(const coop::net::RackStateHead& h, const std::vector<ui
     }
     if (h.op != 3) return;  // clients only ever apply canonical (+deny)
     void* rack = LivePropActor(h.rackEid);
-    if (!rack || !DC::IsRackClass(R::ClassOf(rack))) {
-        if (!fromPending) {
-            Pending pd;
-            pd.blob = blob;
-            pd.until = Clock::now() + kPendingTtl;
-            if (g_pending.size() >= kPendingCap) {
-                g_pending.erase(g_pending.begin());
-                UE_LOGW("drive_rack: pending cap hit -- oldest dropped");
-            }
-            g_pending.push_back(std::move(pd));
-        }
+    if (!rack) {
+        // Held for the rack's bind, the newest canonical winning (a canonical is an absolute state). MTA drops
+        // an RPC whose element is not there yet (reference/mtasa-blue/Client/mods/deathmatch/logic/rpc/
+        // CRPCFunctions.cpp), which its one ordered stream makes safe; a canonical here can still reach a rack
+        // whose spawn has not bound. Not deferred: no bind is coming for this eid, so nothing waits.
+        if (!coop::element::bind_wait::Hold(h.rackEid, kRackState, senderSlot, &ReplayRack, blob.data(), blob.size(),
+                                            /*coalesce=*/true))
+            coop::element::bind_wait::NoteNeverBound(kRackState, h.rackEid);
+        return;
+    }
+    if (!DC::IsRackClass(R::ClassOf(rack))) {
+        // A live actor of another class: an identity defect to see, not a wait.
+        if (g_wrongClassSaid.insert(h.rackEid).second)
+            UE_LOGW("drive_rack: a canonical for eid=%u names a live actor that is not a prop_driveRack_C -- dropped",
+                    h.rackEid);
         return;
     }
     // Drain before adopt: push any local pending diff as ops FIRST.
@@ -444,28 +440,11 @@ void ClientApplyRackBlob(const coop::net::RackStateHead& h, const std::vector<ui
     UE_LOGI("drive_rack: rack canonical adopted eid=%u", h.rackEid);
 }
 
-void RetryPendingTick() {
-    if (g_pending.empty()) return;
-    const auto now = Clock::now();
-    // A joiner's wait starts once its join is over: its racks arrive with the world's snapshot, on
-    // another lane (same rule as drive_payload_sync::RetryParked).
-    const bool joining = coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle;
-    std::vector<Pending> keep;
-    for (auto& pd : g_pending) {
-        if (joining) pd.until = now + kPendingTtl;
-        if (now >= pd.until) {
-            UE_LOGW("drive_rack: pending canonical expired (rack never resolved)");
-            continue;
-        }
-        coop::net::RackStateHead h{};
-        if (pd.blob.size() >= sizeof(h)) std::memcpy(&h, pd.blob.data(), sizeof(h));
-        if (LivePropActor(h.rackEid)) {
-            ClientApplyRackBlob(h, pd.blob, /*fromPending*/true);
-            continue;
-        }
-        keep.push_back(std::move(pd));
-    }
-    g_pending.swap(keep);
+void ReplayRack(const uint8_t* bytes, size_t n, int senderSlot) {
+    coop::net::RackStateHead h{};
+    if (n < sizeof h) return;
+    std::memcpy(&h, bytes, sizeof h);
+    ClientApplyRackBlob(h, std::vector<uint8_t>(bytes, bytes + n), static_cast<uint8_t>(senderSlot));
 }
 
 void PrimeRacks() {
@@ -514,17 +493,14 @@ void Tick() {
         g_nextSweep = now + std::chrono::seconds(1);
         SweepRacks(/*announce*/true);
         g_rackAsm.Sweep(now, std::chrono::seconds(20));
-        RetryPendingTick();
     }
 
     if (now >= g_nextStats) {
         g_nextStats = now + std::chrono::seconds(60);
-        UE_LOGI("drive_rack: 60s marks=%llu | ops=%llu canon=%llu applied=%llu | denies=%llu "
-                "pending=%zu",
+        UE_LOGI("drive_rack: 60s marks=%llu | ops=%llu canon=%llu applied=%llu | denies=%llu",
                 (unsigned long long)g_cMarksRack.load(std::memory_order_relaxed),
                 (unsigned long long)g_cRackOps, (unsigned long long)g_cRackCanon,
-                (unsigned long long)g_cCanonApplied, (unsigned long long)g_cDenies,
-                g_pending.size());
+                (unsigned long long)g_cCanonApplied, (unsigned long long)g_cDenies);
     }
 }
 
@@ -539,7 +515,7 @@ void OnRackStateChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) 
         if (h.op == 0 || h.op == 1) HostApplyRackOp(h, blob, senderSlot);
         // ops 2/3 never legitimately arrive at the host
     } else {
-        ClientApplyRackBlob(h, blob, /*fromPending*/false);
+        ClientApplyRackBlob(h, blob, senderSlot);
     }
 }
 
@@ -579,11 +555,11 @@ uint64_t HostCanonicalsSent() {
 }
 
 void OnDisconnect() {
+    g_wrongClassSaid.clear();
     g_rackDirty.store(false, std::memory_order_relaxed);
     g_rackBase.clear();
     g_rackShadow.clear();
     g_rackActor.clear();
-    g_pending.clear();
     g_rackAsm.Clear();
     for (auto& d : g_denies) d = DenyRec{};
     for (auto& t : g_takenRing) t = TakenRow{};
@@ -591,7 +567,7 @@ void OnDisconnect() {
     g_primed = false;
     g_wasConnected = false;
     g_session.store(nullptr, std::memory_order_release);
-    UE_LOGI("drive_rack: teardown (baselines/shadow/pending/deny+taken rings cleared)");
+    UE_LOGI("drive_rack: teardown (baselines/shadow/deny+taken rings cleared)");
 }
 
 }  // namespace coop::drive_rack_sync

@@ -443,6 +443,19 @@ void Close() {
 
 bool IsOpen() { return g_open >= 0; }
 
+std::string FieldText(Kind kind) {
+    const TF::Field* f = g_screen[Idx(kind)].field;
+    return f ? TF::Text(f) : std::string();
+}
+
+void* FieldBox(Kind kind) {
+    return TF::Box(g_screen[Idx(kind)].field);
+}
+
+bool FieldFocused(Kind kind) {
+    return TF::Focused(g_screen[Idx(kind)].field);
+}
+
 // These windows exist only as doors off the native browser, so they follow its flag; otherwise
 // they would be built into every menu instance with the browser disabled, unreachable.
 bool Armed() {

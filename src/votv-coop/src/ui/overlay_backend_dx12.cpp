@@ -329,11 +329,12 @@ void ReinitBackendIfDescChanged(UINT oldCount, DXGI_FORMAT oldFormat) {
     }
 }
 
-}  // namespace
-
-bool Live() { return g_live; }  // "DX12 is the active backend", even if drawing is disabled
-
-bool CaptureDevice(IDXGISwapChain* sc) {
+// Bring-up step 1. Detects D3D12 off the swapchain (P1/P3 logged once), arms the
+// ExecuteCommandLists capture hook, and runs candidate+confirmation on the presenting queue.
+// Returns true ONLY when the queue is confirmed -- until then the overlay stays down and Present
+// passes through (a handful of frames).
+bool CaptureDevice(const FrameTarget& t) {
+    IDXGISwapChain* sc = t.dxgi;
     if (g_live) return true;
     ID3D12CommandQueue* confirmed = dx12_capture::TryConfirmQueue(sc);
     g_device = dx12_capture::Device();
@@ -347,7 +348,8 @@ void AbandonCapture() {
     if (g_queue) { g_queue->Release(); g_queue = nullptr; }
 }
 
-bool InitRenderer(IDXGISwapChain* sc) {
+bool InitRenderer(const FrameTarget& t) {
+    IDXGISwapChain* sc = t.dxgi;
     if (!g_device || !g_queue) return false;
     if (!CreateSwapchainDerived(sc)) {
         UE_LOGE("imgui_overlay: dx12 bring-up failed -- swapchain-derived state (RTVs)");
@@ -427,7 +429,8 @@ void InvalidateDeviceObjects() {
     ImGui_ImplDX12_InvalidateDeviceObjects();
 }
 
-void EnsureTarget(IDXGISwapChain* sc) {
+void EnsureTarget(const FrameTarget& t) {
+    IDXGISwapChain* sc = t.dxgi;
     if (!g_live) return;
     ProcessPendingReleases();  // RenderDrawData may not run for many frames
     if (g_disabled) return;
@@ -506,7 +509,8 @@ void ServiceTexturesTimed(ImDrawData* dd) {
     }
 }
 
-void RenderDrawData(IDXGISwapChain* sc) {
+void RenderDrawData(const FrameTarget& t) {
+    IDXGISwapChain* sc = t.dxgi;
     if (!g_live || g_disabled || !g_rtvHeap || !g_sc3 || !g_queue || sc != g_boundSc) return;
     FrameContext& fc = g_frames[g_frameIndex % g_bufferCount];
     ++g_frameIndex;
@@ -562,7 +566,8 @@ void OnResizeRelease() {
     ReleaseSwapchainDerived();
 }
 
-void OnResizeRecreate(IDXGISwapChain* sc) {
+void OnResizeRecreate(const FrameTarget& t) {
+    IDXGISwapChain* sc = t.dxgi;
     if (!g_live || g_disabled) return;
     const UINT oldCount = g_bufferCount;
     const DXGI_FORMAT oldFormat = g_rtvFormat;
@@ -693,5 +698,14 @@ void DestroyTexture(void* id) {
         }
 }
 
+}  // namespace
+
+const BackendOps& Ops() {
+    static const BackendOps ops = {
+        &CaptureDevice, &AbandonCapture, &InitRenderer, &NewFrame, &EnsureTarget, &RenderDrawData,
+        &InvalidateDeviceObjects, &OnResizeRelease, &OnResizeRecreate,
+        &CreateTextureFromImageFile, &DestroyTexture, "DX12"};
+    return ops;
+}
 
 }  // namespace ui::overlay_backend::dx12

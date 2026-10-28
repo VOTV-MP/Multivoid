@@ -6,6 +6,7 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/dev/container_route_census.h"
 #include "coop/net/end_reason.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -194,9 +195,15 @@ void HostTick(coop::net::Session* s) {
         ue_wrap::FVector put{};
         if (!itemCls || !E::TryGetActorLocation(pack, put)) { Abandon("the drive's class or the backpack's place is unread"); return; }
         int added = 0;
-        for (int i = 0; i < kItems; ++i) {
-            void* item = E::SpawnActor(itemCls, {put.X, put.Y, put.Z + 60.f + 30.f * i});
-            if (item && AddObject(pack, item)) ++added;
+        {
+            coop::dev::container_route_census::Quiet quiet;   // the fixture's fill is no route the census counts
+            for (int i = 0; i < kItems; ++i) {
+                void* item = E::SpawnActor(itemCls, {put.X, put.Y, put.Z + 60.f + 30.f * i});
+                if (item && AddObject(pack, item)) {
+                    ++added;
+                    E::DestroyActor(item);   // as every BP caller does after a put that took
+                }
+            }
         }
         size_t n = 0;
         if (added != kItems || !Contents(pack, &n, &g_digest) || n != static_cast<size_t>(kItems)) {

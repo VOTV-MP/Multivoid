@@ -19,7 +19,7 @@ namespace ui::skins_panel {
 namespace {
 
 struct Preview {
-    void* srv = nullptr;  // ImTextureID (device-owned; dies with the device)
+    void* srv = nullptr;  // the backend's texture handle; drawn through overlay_backend::TextureRef
     int   w = 0, h = 0;
     bool  tried = false;  // one decode attempt per file per rescan
 };
@@ -121,10 +121,8 @@ void Render() {
                                                                   : tileImgH / pv.h;
                 iw = pv.w * s; ih = pv.h * s;
             }
-            // ImTextureID is ImU64 since 1.91.4 -- pointer goes through uintptr_t.
-            clicked = ImGui::ImageButton("##tile",
-                                         static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(pv.srv)),
-                                         ImVec2(iw, ih));
+            // The reference is asked for on every draw: a backend re-init changes the device id behind the handle.
+            clicked = ImGui::ImageButton("##tile", ui::overlay_backend::TextureRef(pv.srv), ImVec2(iw, ih));
         } else {
             clicked = ImGui::Button(e.name == coop::skins::kNativeSkinName
                                         ? l10n::Label(l10n::T("Dr. Kel\n(default)"), "dr_kel_default_")

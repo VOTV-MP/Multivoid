@@ -139,7 +139,7 @@ void ShowBusy() { Show(kLineBusy, l10n::T("Another player is using that item."))
 void Close() { g_rec = Pending{}; }
 
 // A commit the transport refused stays at the head and is sent again, so the host's reservation is always ended. The
-// order of the queue is the order the host must see (the Bulk lane pairs by it).
+// order of the queue is the order the host must see (the Default lane pairs by it).
 struct QueuedCommit {
     coop::net::PropActCommitPayload payload;
     bool refusedLogged = false;

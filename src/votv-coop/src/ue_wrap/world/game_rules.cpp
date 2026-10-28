@@ -3,11 +3,14 @@
 #include "ue_wrap/world/game_rules.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/world/game_mode.h"  // the mode byte: a GI member, not one of the rules
 
+#include <cerrno>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <cwctype>
 
@@ -153,6 +156,30 @@ bool ReadLocal(Snapshot& out) {
     return out.valid;
 }
 
+int ReadDifficulty() {
+    static void*   sGiClass = nullptr;
+    static int32_t sOff = -1;
+    void* gi = world_singleton::GameInstance();
+    void* giClass = gi ? R::ClassOf(gi) : nullptr;
+    if (!giClass) return -1;
+    if (giClass != sGiClass) {
+        const int32_t rulesOff = R::FindPropertyOffset(giClass, L"gameRules");
+        void* rules = rulesOff >= 0 ? R::PropertyInnerStruct(giClass, L"gameRules") : nullptr;
+        if (!rules) return -1;
+        sGiClass = giClass;
+        sOff = -1;
+        for (const R::StructFieldInfo& fi : R::EnumerateStructFields(rules))
+            if (TrimmedKey(fi.name) == "difficulty") {
+                // One byte, as the rules classify it (ReadRulesAt); a recook that widened it reads as absent.
+                if (fi.size == 1) sOff = rulesOff + fi.offset;
+                else UE_LOGW("game_rules: gameRules.difficulty is %d bytes, not one -- latched OFF; game version "
+                             "mismatch?", fi.size);
+                break;
+            }
+    }
+    return sOff >= 0 ? static_cast<int>(reinterpret_cast<const uint8_t*>(gi)[sOff]) : -1;
+}
+
 const RuleField* NthOfKind(const std::vector<RuleField>& rules, Kind kind, int n) {
     for (const RuleField& f : rules) {
         if (f.kind != kind) continue;
@@ -191,6 +218,40 @@ int ApplySavedToProcess(void* gameInstance, void* save) {
     // The members are bools, bytes and one float: a plain value copy is the whole assignment.
     std::memcpy(dst, src, static_cast<size_t>(size));
     return changed;
+}
+
+WriteResult WriteSavedRule(void* save, const std::string& key, const std::string& value) {
+    if (!save || !R::IsLive(save)) return WriteResult::Unresolved;
+    void* saveClass = R::ClassOf(save);
+    const int32_t off = saveClass ? R::FindPropertyOffset(saveClass, L"localGameRules") : -1;
+    void* structObj = saveClass ? R::PropertyInnerStruct(saveClass, L"localGameRules") : nullptr;
+    if (off < 0 || !structObj) return WriteResult::Unresolved;
+    uint8_t* base = reinterpret_cast<uint8_t*>(save) + off;
+
+    for (const R::StructFieldInfo& fi : R::EnumerateStructFields(structObj)) {
+        if (TrimmedKey(fi.name) != key) continue;
+        const char* text = value.c_str();
+        char* end = nullptr;
+        int32_t bOff = -1;
+        uint8_t bMask = 0;
+        if (R::FindBoolProperty(structObj, fi.name.c_str(), bOff, bMask) && bOff >= 0) {
+            if (value != "0" && value != "1") return WriteResult::BadValue;
+            if (value == "1") base[bOff] |= bMask;
+            else base[bOff] &= static_cast<uint8_t>(~bMask);
+        } else if (fi.size == 4) {
+            errno = 0;
+            const float f = std::strtof(text, &end);
+            if (end == text || *end != '\0' || errno != 0) return WriteResult::BadValue;
+            *reinterpret_cast<float*>(base + fi.offset) = f;
+        } else {
+            errno = 0;
+            const long n = std::strtol(text, &end, 10);
+            if (end == text || *end != '\0' || errno != 0 || n < 0 || n > 255) return WriteResult::BadValue;
+            base[fi.offset] = static_cast<uint8_t>(n);
+        }
+        return WriteResult::Written;
+    }
+    return WriteResult::UnknownKey;
 }
 
 }  // namespace ue_wrap::game_rules

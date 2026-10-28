@@ -95,6 +95,9 @@ inline constexpr const wchar_t* NpcClass_WispG        = L"wisp_g_C";
 inline constexpr const wchar_t* NpcClass_WispO        = L"wisp_o_C";
 inline constexpr const wchar_t* NpcClass_WispP        = L"wisp_p_C";
 inline constexpr const wchar_t* NpcClass_WispBlu      = L"wisp_blu_C";
+// geomOcta_C (AgeomOcta_C : ACharacter): the Geom Octahedron. Host-authored; a client's mirror keeps its presentation
+// and has only its decisions refused (coop/creatures/npc_mirror_brain).
+inline constexpr const wchar_t* NpcClass_GeomOcta     = L"geomOcta_C";
 
 // The allowlist array: resolved once at install through R::FindClass and cached. The classes load
 // on the first gameplay-level transition, not at the menu, so the install retries until every
@@ -126,6 +129,7 @@ inline constexpr const wchar_t* kNpcAllowlist[] = {
     NpcClass_WispO,
     NpcClass_WispP,
     NpcClass_WispBlu,
+    NpcClass_GeomOcta,          // the Geom Octahedron; host-authored ACharacter, pose rides EntityPose
 };
 inline constexpr size_t kNpcAllowlistSize = sizeof(kNpcAllowlist) / sizeof(kNpcAllowlist[0]);
 
@@ -205,7 +209,7 @@ inline constexpr const wchar_t* SetActorScale3DFn = L"SetActorScale3D";  // AAct
 inline constexpr const wchar_t* SetLifeSpanFn = L"SetLifeSpan";  // AActor::SetLifeSpan(float InLifespan) -> void
 inline constexpr const wchar_t* SetActorTickEnabledFn = L"SetActorTickEnabled";
 inline constexpr const wchar_t* SetActorHiddenInGameFn = L"SetActorHiddenInGame";        // AActor::SetActorHiddenInGame(bool bNewHidden) -- visual-only (instant-world deferred-hide)
-inline constexpr const wchar_t* SetActorEnableCollisionFn = L"SetActorEnableCollision";  // AActor::SetActorEnableCollision(bool bNewActorEnableCollision) -- paired with hide so a hidden mirror is not grabbable
+inline constexpr const wchar_t* SetActorEnableCollisionFn = L"SetActorEnableCollision";  // AActor::SetActorEnableCollision(bool bNewActorEnableCollision) -- the Off mode of a mirror hide (a parked NPC, a held mirror)
 inline constexpr const wchar_t* DestroyActorFn = L"K2_DestroyActor";
 inline constexpr const wchar_t* TeleportToFn = L"K2_TeleportTo";  // bool(FVector, FRotator); large-distance teleport that survives Character/CMC constraints
 inline constexpr const wchar_t* GetActorBoundsFn = L"GetActorBounds";   // (bool,FVector&,FVector&,bool); world-space AABB of the actor's mesh

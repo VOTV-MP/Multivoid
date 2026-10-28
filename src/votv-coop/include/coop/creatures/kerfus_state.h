@@ -7,12 +7,11 @@
 // `charging`, and energy moves every tick with no upd() to publish at. A client writes the fields
 // and runs the game's own upd(false), which sets the looks and sounds and asks the pawn to move
 // (refused there). While a Kerfus is on, the host holds it under prop_drive_host's drive, so its
-// pose streams as a hooked prop's does, and lets go when it goes off. MTA's unoccupied-vehicle
-// syncer, the host the one syncer
-// (reference/mtasa-blue/Server/mods/deathmatch/logic/CUnoccupiedVehicleSync.cpp:171,194).
+// pose streams as a hooked prop's does, and lets go when it goes off. MTA's unoccupied-vehicle syncer, the
+// host the one syncer (reference/mtasa-blue/Server/mods/deathmatch/logic/CUnoccupiedVehicleSync.cpp:171,194).
 // Late join (principle 8): a joiner's transferred save sets the three fields through loadData, its
 // world-ready gets every Kerfus's state again, and the drive re-sends a moving Kerfus's pose at the
-// same edge. A state for a Kerfus whose mirror has not bound yet waits for the bind. Game thread.
+// same edge. A state for a Kerfus not bound yet is held in bind_wait, the latest winning. Game thread.
 
 #pragma once
 
@@ -29,16 +28,20 @@ namespace coop::kerfus_state {
 // Game thread.
 void Install(coop::net::Session* session);
 
-// CLIENT per tick: apply the states that waited for their Kerfus's mirror. A no-op with none waiting.
+// Per tick: settle the host's tick watch (it says once that the watch is live).
 void Tick();
 
 // HOST: a peer's world came up -- send it every Kerfus's state. Game thread.
 void OnPeerWorldReady(int slot);
 
+// HOST: whether the tick watch has entered the Kerfus with this eid in its table, which a connect seed
+// reads; a read-only question for the drills. Game thread.
+bool HostKnows(uint32_t eid);
+
 // CLIENT: the host's state for one Kerfus. From the event feed, game thread.
 void OnState(const coop::net::KerfusStatePayload& payload);
 
-// Session end: the host's per-Kerfus records and the client's waiting states go.
+// Session end: the host's per-Kerfus records go.
 void OnDisconnect();
 
 }  // namespace coop::kerfus_state

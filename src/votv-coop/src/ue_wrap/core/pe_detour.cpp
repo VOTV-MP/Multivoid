@@ -642,6 +642,11 @@ void SetTransparentBypassUntil(void* resumeOnFunction, int maxMs) {
             maxMs > 0 ? "ARMED" : "cleared", resumeOnFunction, maxMs);
 }
 
+bool TransparentBypassActive() {
+    const long long until = g_bypassUntilMs.load(std::memory_order_relaxed);
+    return until != 0 && NowMs() < until;
+}
+
 void SetPerfCounting(bool countDispatches, bool sampleSelfTime) {
     // Self-timing first, so the first counted dispatch can sample.
     g_peSelfOn.store(countDispatches && sampleSelfTime, std::memory_order_relaxed);

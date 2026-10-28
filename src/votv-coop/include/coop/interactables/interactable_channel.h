@@ -279,7 +279,7 @@ public:
                         ApplyResolved(actor, it->first, it->second.want, 0xFF);
                         it = pending_.erase(it);
                         ++applied;
-                    } else if (stablePasses_ >= kSettlePassesForExpiry && passes_ - it->second.queuedAt >= 2) {
+                    } else if (WaitSettled(it->second.queuedAt)) {
                         // The world settled and it is still not here: the count that grades this
                         // lane.
                         if (ProbeLog())
@@ -388,6 +388,25 @@ public:
 
     // The live actor this channel indexes under `key` in the current world, or null. Game thread.
     void* ActorForKey(const std::wstring& key) { return ResolveFast(key); }
+
+    // Every live instance the index holds, key and actor, for a lane that sends more about the same devices
+    // than their state. Empty with a stale index. Game thread.
+    void LiveIndexed(std::vector<std::pair<std::wstring, void*>>& out) const {
+        if (!IndexCurrent()) return;
+        std::lock_guard<std::mutex> lk(indexMutex_);
+        for (const auto& kv : byKey_)
+            if (R::IsLiveByIndex(kv.second.actor, kv.second.idx)) out.emplace_back(kv.first, kv.second.actor);
+    }
+
+    // The hub passes this index has completed. Game thread.
+    uint64_t Passes() const { return passes_; }
+
+    // Whether a wait for a device the index does not hold, queued at pass `queuedAt`, may be dropped: the world
+    // settled (the live count unchanged for kSettlePassesForExpiry passes) and the hub has passed over it twice
+    // since. The rule for a state this lane parks, and for any wait that rests on the same index. Game thread.
+    bool WaitSettled(uint64_t queuedAt) const {
+        return stablePasses_ >= kSettlePassesForExpiry && passes_ - queuedAt >= 2;
+    }
 
     void HubPassBegin(bool /*isFull*/) { scanFound_.clear(); }
 

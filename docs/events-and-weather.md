@@ -93,6 +93,12 @@ the host roll (a shop delivery time, a signal catch, a device claim), and a shar
 the game already uses a seeded stream. Cosmetic-local randomness (view bob, flicker, exhaust)
 is left alone.
 
+The gamemode's night roll is the host's. It is a one-shot timer, re-armed every two to five minutes, that in a
+night from the fourth day rolls a three-percent chance of a visitor: a Geom Octa four times in ten, else a night
+egg. A client's body of it is refused at the script gate, which also ends its own re-arm, so a client never mints
+either; the host's roll is a spawn source of the character lane, and the Octa or the egg reaches every client as
+a mirror `[V]` (`octa_drill` births). The Octa's attack on a player is relayed from the host (`docs/npcs-and-kerfur.md`).
+
 ### Story and scheduled events
 
 The scheduler is the save's own time step: it walks the event table and runs each due row

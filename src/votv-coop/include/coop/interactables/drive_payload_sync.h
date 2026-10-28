@@ -23,8 +23,8 @@ namespace coop::drive_payload_sync {
 // Keeps the session; registers the upd watch once a process. Called every pump tick.
 void Install(coop::net::Session* session);
 
-// Game thread, every pump tick: settles the watch; sends the enrolments queued since; once a second retries parked
-// rows and drops rows kept for drives that are gone.
+// Game thread, every pump tick: settles the watch; sends the enrolments queued since; once a second drops notes
+// and rows kept for drives that are gone. A row for a drive not bound here waits in bind_wait.
 void Tick();
 
 // Reliable applier (event_dispatch_signal).
@@ -47,10 +47,10 @@ void OnEnrolled(void* actor, uint32_t eid);
 // remote_prop::RegisterPropMirror bound `actor` to `eid`, the prop of the peer at `senderSlot`. Game thread.
 void OnBound(uint32_t eid, void* actor, int senderSlot);
 
-// A peer's slot is free: its half-assembled rows, its parked rows and the drives it brought go with it.
+// A peer's slot is free: its half-assembled rows and the drives it brought go with it (bind_wait drops its held rows).
 void OnPeerLeft(uint8_t slot);
 
-// The session's end: nothing held, sent, parked or noted.
+// The session's end: nothing held, sent or noted.
 void OnDisconnect();
 
 // [dev] CLIENT: send `actor`'s row to the host as its own, as a modified client would for a drive it did not bring:
@@ -65,9 +65,6 @@ struct Counts {
     uint64_t putBack = 0;        // CLIENT: drives put back to the held row
     uint64_t ownSent = 0;        // CLIENT: its own drives' rows sent to the host
     uint64_t refused = 0;        // HOST: client rows refused and answered
-    uint64_t parkedApplied = 0;  // rows applied once their drive bound here
-    uint64_t parkedExpired = 0;  // rows whose drive never bound here
-    uint64_t maxParkedMs = 0;    // the longest a parked row waited for its drive
 };
 Counts LaneCounts();
 

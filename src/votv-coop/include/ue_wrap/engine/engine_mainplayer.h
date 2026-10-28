@@ -291,6 +291,14 @@ bool ReadMainPlayerCanRagdoll(void* mainPlayer, bool& allowed);
 bool InvokeAddPlayerDamage(void* mainPlayer, float damage, bool blood = false);
 
 
+// Fire the player's `input_mouseXY` dispatcher with (x, y): the multicast the player's own tick broadcasts
+// every frame from the mouse axes (`GetInputAxisValue("mouseX")` and `("mouseY")`), which a grabbed
+// swinger binds `mouseAssign` to. Each bound entry whose function takes `mouseXY` runs through ProcessEvent
+// with that value, as the Broadcast runs it; the invocation list is read from the player's reflected member.
+// `delivered` is how many entries ran. False when the member does not resolve or the player is dead.
+// Game thread.
+bool BroadcastMainPlayerMouseXY(void* mainPlayer, float x, float y, int* delivered = nullptr);
+
 // ---- The puppet's faint display ----
 // A puppet never runs ragdollMode: its playerRagdoll_C's lifecycle assumes a possessed, ticking
 // player, and on a tickless orphan the actor is never reaped and its PhysX keeps simulating. The

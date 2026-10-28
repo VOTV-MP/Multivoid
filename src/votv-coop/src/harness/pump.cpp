@@ -13,6 +13,8 @@
 #include "coop/dev/function_lookup_parity.h"
 #include "coop/dev/join_abort_drill.h"
 #include "coop/dev/world_singleton_parity.h"
+#include "coop/input/game_window_proc.h"
+#include "coop/input/input_owner.h"
 #include "coop/player/death_revive.h"
 #include "coop/player/nameplate.h"
 #include "coop/player/revive_protection.h"
@@ -20,6 +22,8 @@
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
 #include "coop/session/shutdown.h"
+
+#include <windows.h>
 
 #include <atomic>
 #include <cstdint>
@@ -37,8 +41,8 @@ uint64_t g_lastDrain = 0;   // game thread
 // and a module that calls up into the lifecycle driver that calls it is a cycle nothing needs.
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// The shutdown hooks, run every tick regardless of possession and idempotent: the HWND subclass
-// and the window title must work before the local player exists (a close on the splash). The
+// The shutdown hooks, run every tick regardless of possession and idempotent: the window title
+// must work before the local player exists. The
 // run-ending seam is registered here unconditionally rather than lazily from the pump: registered
 // only while a session runs, the single-player guarantee would rest on the watch's absence rather
 // than on the seam's own session test, and a negative-control run would grade a watch that was
@@ -46,11 +50,24 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 void TickShutdownHooks() {
     coop::net::Session* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
-    coop::shutdown::Install(s);
     coop::shutdown::UpdateWindowTitle();
     coop::death_revive::Install(s);
     coop::revive_protection::Install();
     coop::player::run_end_travel::Install(s);
+}
+
+// Republishes "does the game own typed text" on two cadences (coop/input/input_owner.h): the cheap
+// path at ~10 Hz, the GUObjectArray walk at ~1 Hz. Driven from the frame tail, so it runs at the
+// menu and in a world alike with no present involved; the tail is a game-thread task, which is
+// where the tick's UFunction calls belong. Game thread only, so plain state.
+void TickInputOwner() {
+    static ULONGLONG sNextFast = 0, sNextFull = 0;
+    const ULONGLONG now = ::GetTickCount64();
+    if (now < sNextFast) return;
+    const bool full = now >= sNextFull;
+    if (full) sNextFull = now + 1000;
+    sNextFast = now + 100;
+    coop::input::input_owner::TickGameThread(full);
 }
 
 }  // namespace
@@ -108,6 +125,10 @@ void TickFrameTail() {
     // the play loop alike, so it catches either abort window) and notes the rejoin's world-ready; a
     // single enum read when off.
     coop::dev::join_abort_drill::OnFrameTail();
+    // The one subclass of the game window (close signals, hotkeys, native text fields): found and
+    // followed here, in session or out of one, with no present needed.
+    coop::input::game_window_proc::Tick();
+    TickInputOwner();
     TickShutdownHooks();
 }
 

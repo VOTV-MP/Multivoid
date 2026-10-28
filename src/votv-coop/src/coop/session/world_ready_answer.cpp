@@ -11,6 +11,7 @@
 #include "coop/net/protocol.h"  // kMaxPeers, Role
 #include "coop/net/session.h"
 #include "coop/player/roster_ledger.h"  // PerSlotState
+#include "coop/props/prop_snapshot.h"  // HasSnapshotFor
 #include "coop/session/player_handshake.h"  // OnClientWorldReady
 #include "coop/session/subsystems.h"  // ConnectReplayForSlot
 
@@ -34,6 +35,21 @@ constexpr coop::net::IntentBudget kReplayBudget{2.0f, 0.0f};
 // Per slot. PerSlotState resets it to a full IntentBucket at the successor's row birth, so a recycled
 // slot starts fresh -- no manual clear beside the automatic one, and no missed-window raw clear.
 coop::roster_ledger::PerSlotState<coop::net::IntentBucket> g_rate;
+
+// The net thread opened the slot's join gate at the announce's receipt, before any guard here ran,
+// and the gate stays held until the announce has been consumed. A trigger that started no snapshot
+// (refused, absorbed by nothing, the host not hosting) leaves the gate with no owner, and only this
+// call closes it; a snapshot running, queued or deferred closes it at its own Complete.
+void CloseGateIfNoSnapshot(coop::net::Session& session, int slot) {
+    if (!coop::prop_snapshot::HasSnapshotFor(slot)) session.CloseJoinGate(slot);
+}
+
+// Every path that consumes an announce ends here, once: its hold on the gate is given back, then the
+// gate closes if no snapshot is left to close it.
+void ConsumeAnnounce(coop::net::Session& session, int slot) {
+    session.ReleaseAnnounceHold(slot);
+    CloseGateIfNoSnapshot(session, slot);
+}
 
 uint64_t NowMs() {
     return static_cast<uint64_t>(
@@ -61,6 +77,7 @@ void OnAnnounce(coop::net::Session& session, int slot) {
         session.MarkSlotWorldReady(slot, true);
         coop::net::fake_link_steps::NoteOrigin(coop::net::fake_link_steps::Origin::WorldReady);
         coop::subsystems::ConnectReplayForSlot(slot);
+        ConsumeAnnounce(session, slot);
         // The joined-the-game line fires at the joiner's puppet appearance; this call announces only a
         // puppet that spawned before world-ready (a pre-world menu pose), a no-op otherwise.
         coop::player_handshake::OnClientWorldReady(slot);
@@ -76,10 +93,12 @@ void OnAnnounce(coop::net::Session& session, int slot) {
     // level travel is its own, so the host cannot see it and caps the repeat instead.
     if (g_rate[slot].Take(kReplayBudget, NowMs())) {
         coop::subsystems::ConnectReplayForSlot(slot);
+        ConsumeAnnounce(session, slot);
     } else {
         UE_LOGI("world_ready_answer: slot %d re-announced world-ready past the replay burst -- ending it "
                 "(MV-H34); no join announces this often", slot);
         session.Kick(slot, coop::net::EndReason::RepeatedWorldReady, "repeated world-ready");
+        ConsumeAnnounce(session, slot);
     }
 }
 

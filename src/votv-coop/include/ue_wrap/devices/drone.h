@@ -103,4 +103,12 @@ void WriteGateFields(void* drone, bool canTakeOff, bool hasSack);
 // container (Aprop_inventoryContainer_drone_C) so openPropInv opens it. Idempotent. Game thread.
 void RepointContainer(void* drone);
 
+// The container (Aprop_inventoryContainer_drone_C) the drone's `container` field names, or null when the field
+// is null or dead. Game thread.
+void* ContainerOf(void* drone);
+
+// The drone a droneSellLocation_C instance names through its `drone` field, or null when it is null or dead.
+// Game thread.
+void* OfSellLocation(void* sellLocation);
+
 }  // namespace ue_wrap::drone

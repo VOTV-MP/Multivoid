@@ -150,7 +150,7 @@ void HostOnNpcEnd(const EL::death_seam::Death& death) {
     g_host.erase(it);
     if (held <= 0) return;
     UE_LOGW("creature_event_relay: host eid=%u ended at count %d -- entry dropped", death.eid, held);
-    // After the creature's EntityDestroy on the same Bulk lane. MTA drops an element's custom data with the element
+    // After the creature's EntityDestroy on the same Default lane. MTA drops an element's custom data with the element
     // (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientEntity.cpp:86-90, the destructor frees it); our count
     // lives in the client's relay table keyed by eid, not on the element, so the end sends the zero that clears it: a
     // client entry that never bound has no mirror to end it.

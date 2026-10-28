@@ -2,6 +2,7 @@
 
 #include "coop/props/prop_drop_intent.h"
 
+#include "coop/dev/container_route_census.h"   // IsEnabled -- the dev read of the last place spawn is kept only while it runs
 #include "coop/dev/prop_birth_key_probe.h"   // the seam's key-timing and drain-exit instrumentation
 #include "coop/element/registry.h"          // EidForActor (drain: tracked/mirror exclusion)
 #include "coop/net/protocol.h"
@@ -15,10 +16,11 @@
 #include "coop/props/prop_wire_parity.h"    // PhysFlagsOf, the one builder of a live prop's flags
 #include "coop/props/prop_element_tracker.h"// GetPropElementIdForActor
 #include "coop/props/prop_key_index.h"  // a key on the wire to a live actor
-#include "coop/props/container_contents_sync.h"  // TakeObjInFlight -- mark a container-extraction birth
+#include "coop/props/container_writer_watch.h"   // TakeObjInFlight -- mark a container-extraction birth
 #include "coop/props/container_birth.h"           // a thrown container's birth slice
 #include "coop/session/world_load_episode.h"  // InEpisode (quiet during the join loadObjects churn)
 #include "ue_wrap/core/call.h"                   // ParamFrame + Call (setKey on the host re-spawn)
+#include "ue_wrap/core/cached_obj_ref.h"          // dev::LastClientPlaceSpawn
 #include "ue_wrap/engine/engine.h"                 // BeginDeferredSpawn/FinishDeferredSpawn/SetActorScale3D
 #include "ue_wrap/core/fname_utils.h"            // StringToFName
 #include "ue_wrap/core/game_thread.h"
@@ -84,6 +86,7 @@ struct PendingPlace {
     bool    playerSpawn = false;
 };
 std::vector<PendingPlace> g_pending;         // GT-only
+ue_wrap::CachedObjRef g_lastPlace;           // GT-only; the most recent pending place spawn's actor (dev read only)
 constexpr size_t kMaxPending  = 32;          // runaway backstop (a settled client rarely has >1 in flight)
 constexpr int    kMaxKeyTries = 8;           // ~8 net-pump ticks (~64 ms) for the Key to restore, then give up
 
@@ -188,13 +191,14 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
     // Was a container extraction in flight when this actor spawned? The extracted item's actor
     // materialises inside the take call, so the latch is live exactly here. Marks the entry as a
     // container-extraction birth, admitted at drain.
-    const bool fromContainerExtract = coop::props::container_contents_sync::TakeObjInFlight();
+    const bool fromContainerExtract = coop::props::container_writer_watch::TakeObjInFlight();
     if (coop::dev::prop_birth_key_probe::IsEnabled()) {
         // The seam reading the probe exists for: is the Key there before any drain tick waits?
         coop::dev::prop_birth_key_probe::NoteEnqueue(
             actor, R::ClassNameOf(actor), ue_wrap::prop::GetInteractableKeyString(actor),
             fromContainerExtract);
     }
+    if (coop::dev::container_route_census::IsEnabled()) g_lastPlace.Set(actor);   // the census drill's read, armed by its row only
     g_pending.push_back(PendingPlace{actor, R::InternalIndexOf(actor), 0, fromContainerExtract,
                                      playerAuthored});
     if (fromContainerExtract)
@@ -618,6 +622,11 @@ void Reset() {
     g_pending.clear();
     g_parkedKeys.clear();
     g_parkFifo.clear();
+    g_lastPlace.Reset();
 }
+
+namespace dev {
+void* LastClientPlaceSpawn() { return g_lastPlace.Get(); }
+}  // namespace dev
 
 }  // namespace coop::prop_drop_intent

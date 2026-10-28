@@ -9,12 +9,14 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/delivery_census_probe.cpp
     src/coop/dev/store_table_probe.cpp
     src/coop/dev/order_selftest.cpp
+    src/coop/dev/bind_wait_selftest.cpp
     src/coop/dev/meadow_selftest.cpp
     src/coop/dev/meadow_selftest_rows.cpp
     src/coop/dev/order_probe.cpp
     src/coop/dev/add_points.cpp
     src/coop/dev/spawn_order_probe.cpp
     src/coop/dev/prop_birth_key_probe.cpp
+    src/coop/dev/host_settle_drill.cpp
     src/coop/dev/spawn_match_probe.cpp
     src/coop/dev/native_text_probe.cpp
     src/coop/dev/eid_lifetime_trace.cpp
@@ -32,6 +34,11 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/event_relay_drill.cpp
     src/coop/dev/creature_hit_drill.cpp
     src/coop/dev/drill_hand.cpp
+    src/coop/dev/drill_hold.cpp
+    src/coop/dev/octa_drill.cpp
+    src/coop/dev/octa_drill_births.cpp
+    src/coop/dev/octa_drill_host.cpp
+    src/coop/dev/octa_probe.cpp
     src/coop/dev/announce_hold.cpp
     src/coop/dev/hostile_drill.cpp
     src/coop/dev/hostile_drill_act.cpp
@@ -46,6 +53,12 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/hostile_drill_ignite.cpp
     src/coop/dev/hostile_drill_ignite_client.cpp
     src/coop/dev/hostile_drill_ignite_host.cpp
+    src/coop/dev/hostile_drill_cord.cpp
+    src/coop/dev/hostile_drill_cord_client.cpp
+    src/coop/dev/hostile_drill_cord_host.cpp
+    src/coop/dev/hostile_drill_coffee.cpp
+    src/coop/dev/hostile_drill_coffee_client.cpp
+    src/coop/dev/hostile_drill_coffee_host.cpp
     src/coop/dev/hostile_drill_atv.cpp
     src/coop/dev/hostile_drill_atv_client.cpp
     src/coop/dev/hostile_drill_atv_host.cpp
@@ -78,7 +91,10 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/desk_verb_drill_refiner.cpp
     src/coop/dev/kerfur_serve_drill.cpp
     src/coop/dev/load_reroll_watch.cpp
+    src/coop/dev/radio_tower_probe.cpp
     src/coop/dev/container_selftest.cpp
+    src/coop/dev/container_poke.cpp
+    src/coop/dev/container_join_drill.cpp
     src/coop/dev/drive_selftest.cpp
     src/coop/dev/rack_birth_drill.cpp
     src/coop/dev/burn_revive_drill.cpp
@@ -88,10 +104,19 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/world_singleton_parity.cpp
     src/coop/dev/function_lookup_parity.cpp
     src/coop/dev/container_opener_probe.cpp
+    src/coop/dev/container_writer_probe.cpp
     src/coop/dev/container_view_drill.cpp
+    src/coop/dev/container_route_census.cpp
+    src/coop/dev/container_route_drill.cpp
+    src/coop/dev/container_route_drill_client.cpp
+    src/coop/dev/container_route_drill_client_hand.cpp
+    src/coop/dev/container_route_drill_host.cpp
     src/coop/dev/dev_lanes.cpp
     src/coop/dev/physmods_drill.cpp
     src/coop/dev/drone_call_drill.cpp
+    src/coop/dev/dronesack_drill.cpp
+    src/coop/dev/dronesack_drill_host.cpp
+    src/coop/dev/dronesack_drill_census.cpp
     src/coop/dev/remover_drill.cpp
     src/coop/dev/remover_drill_host.cpp
     src/coop/dev/remover_drill_layout.cpp
@@ -104,6 +129,9 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/prop_act_drill_honest.cpp
     src/coop/dev/prop_act_drill_race.cpp
     src/coop/dev/prop_act_drill_race_client.cpp
+    src/coop/dev/prop_syncer_drill.cpp
+    src/coop/dev/prop_syncer_drill_host.cpp
+    src/coop/dev/prop_syncer_drill_observer.cpp
     src/coop/dev/sack_drill.cpp
     src/coop/dev/fall_drill.cpp
     src/coop/dev/atv_spawn_drill.cpp
@@ -143,10 +171,30 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/explosion_drill_source_verbs.cpp
     src/coop/dev/explosion_drill_source_measure.cpp
     src/coop/dev/fire_ignite_drill.cpp
+    src/coop/dev/cord_drill.cpp
+    src/coop/dev/cord_drill_cast.cpp
+    src/coop/dev/cord_drill_client.cpp
+    src/coop/dev/cord_drill_hand.cpp
+    src/coop/dev/cord_drill_host.cpp
+    src/coop/dev/cord_pos_drill.cpp
+    src/coop/dev/cord_pos_drill_client.cpp
+    src/coop/dev/cord_pos_drill_host.cpp
+    src/coop/dev/late_join_drill.cpp
+    src/coop/dev/late_join_drill_host.cpp
+    src/coop/dev/coffee_drill.cpp
+    src/coop/dev/coffee_drill_cast.cpp
+    src/coop/dev/coffee_drill_client.cpp
+    src/coop/dev/coffee_drill_host.cpp
+    src/coop/dev/coffee_drill_maker.cpp
     src/coop/dev/grid_drill.cpp
     src/coop/dev/grid_drill_checks.cpp
+    src/coop/dev/grid_drill_solve.cpp
     src/coop/dev/grid_drill_upgrade.cpp
+    src/coop/dev/grid_drill_walk.cpp
     src/coop/dev/tower_drill.cpp
+    src/coop/dev/tower_drill_coord.cpp
+    src/coop/dev/tower_drill_radio.cpp
+    src/coop/dev/tower_drill_radio_arms.cpp
     src/coop/dev/dependency_dump.cpp
     src/coop/dev/end_play_probe.cpp
     src/coop/dev/death_seam_census.cpp
@@ -168,6 +216,9 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/settings_drill.cpp
     src/coop/dev/mannequin_drill.cpp
     src/coop/dev/toggle_drill.cpp
+    src/coop/dev/swinger_drill.cpp
+    src/coop/dev/swinger_drill_join.cpp
+    src/coop/dev/swinger_drill_pose.cpp
     src/coop/dev/world_first_check.cpp
     src/coop/dev/blackout_drill.cpp
     src/coop/dev/lid_drill.cpp
@@ -193,6 +244,11 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/inventory_pickup_drill.cpp
     src/coop/dev/drone_probe.cpp
     src/coop/dev/native_pile_inert_probe.cpp
+    src/coop/dev/pile_late_load.cpp
+    src/coop/dev/pile_defer_report.cpp
+    src/coop/dev/container_parity.cpp
+    src/coop/dev/pile_defer_drill.cpp
+    src/coop/dev/pile_defer_drill_host.cpp
     src/coop/dev/client_model_probe.cpp
     src/coop/dev/atv_eject_drill.cpp
     src/coop/dev/atv_probe.cpp
@@ -219,6 +275,8 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/director/routes.cpp
     src/coop/dev/director/aim_fan.cpp
     src/coop/dev/director/background_walk.cpp
+    src/coop/dev/director/input_stub.cpp
+    src/coop/dev/director/ladder_climb.cpp
     src/coop/dev/director/aimed_grab.cpp
     src/coop/dev/force_weather.cpp
     src/coop/dev/weather_probe.cpp

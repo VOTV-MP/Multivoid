@@ -81,7 +81,7 @@ void Init();
 // AnyOpen() gate so it counts every rendered frame, overlay shown or not.
 void NoteFrame();
 
-// Called once per net-pump tick (~125 Hz). Self-throttles to ~1 Hz: snapshots the counters, logs
+// Called once per net-pump tick (~60 Hz). Self-throttles to ~1 Hz: snapshots the counters, logs
 // four lines and resets the window.
 //   [perf] PE=<n>/s (GT=<g> wk=<w>) frames=<f>/s => PE/frame=<n/f> GT/frame=<g/f>
 //   [perf] detour self avg=<ns>/dispatch (<m> samp) => ~<x.x> ms/frame

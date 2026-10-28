@@ -17,6 +17,7 @@
 #include "coop/dev/director/clear_hand.h"
 #include "coop/dev/director/detour.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/director/input_stub.h"
 #include "coop/dev/director/routes.h"
 
 #include "ue_wrap/actors/prop.h"
@@ -70,26 +71,7 @@ constexpr int   kRouteRetryTicks = 50;   // a walker with no route here asks aga
 constexpr float kRunFromCm      = 3000.f;
 constexpr float kRunUntilCm     = 1500.f;
 
-// A key at the human-input seam: mainPlayer's input-action event stub, resolved once by its generated
-// name (said once when it does not resolve: a game update renames the K2Node stubs) and called with
-// its zeroed frame (the Key it is given is not read). False when it did not resolve or the call failed.
-struct InputStub {
-    const wchar_t* name;
-    void* fn = nullptr;
-    bool  tried = false;
-};
-bool PressInputEvent(void* player, InputStub& stub) {
-    if (!stub.tried) {
-        stub.tried = true;
-        void* cls = R::FindClass(P::name::MainPlayerClass);
-        stub.fn = cls ? R::FindFunction(cls, stub.name) : nullptr;
-        if (!stub.fn) UE_LOGW("director: the input stub '%ls' does not resolve -- that key is never pressed", stub.name);
-    }
-    if (!stub.fn || !player) return false;
-    const int32_t fs = R::FunctionFrameSize(stub.fn);
-    std::vector<uint8_t> f(fs > 0 ? static_cast<size_t>(fs) : 0, 0u);
-    return R::CallFunction(player, stub.fn, f.empty() ? nullptr : f.data());
-}
+// The keys the walk presses at the human-input seam: mainPlayer's input-action event stubs (input_stub.h).
 InputStub g_drop{L"InpActEvt_drop_K2Node_InputActionEvent_1"};
 InputStub g_runPress{L"InpActEvt_run_K2Node_InputActionEvent_8"};     // input_run = true
 InputStub g_runRelease{L"InpActEvt_run_K2Node_InputActionEvent_9"};   // input_run = false
@@ -212,6 +194,22 @@ public:
     }
     ProcStatus OnTick(const PlayerContext& ctx) override {
         ++tick_;
+        bool isRagdoll = false, dead = false;
+        if (E::ReadMainPlayerRagdollState(ctx.player, isRagdoll, dead) && !dead) {
+            if (isRagdoll) {   // down: no steering, no stuck count, no run key until it is up
+                fell_ = true;
+                sinceProgress_ = 0;
+                LetRunGo();
+                return ProcStatus::Working;
+            }
+            if (fell_) {   // a walker knocked down gets up somewhere else, and a route followed from the spot it
+                fell_ = false;   // fell would steer it at the waypoint it was heading for, through whatever stands between
+                UE_LOGI("director/Goto: the walker got up at (%.0f,%.0f,%.0f) after a fall -- re-path from here (toPile=%.0f)",
+                        ctx.pos.X, ctx.pos.Y, ctx.pos.Z, HorizDist(ctx.pos, goal_.targetPos));
+                pathed_ = false; waypoints_.clear(); wp_ = 0; lastWp_ = 0; bestWp_ = 1e9f; bestPile_ = 1e9f;
+                detour_.Cancel();   // a search begun before the fall would install a route from the pre-fall start
+            }
+        }
         if (detour_.Active()) {   // looking for a way round a slope the body cannot climb: stand while it does
             std::vector<ue_wrap::FVector> route;
             const detour::Search::Step step = detour_.Advance(ctx.player, &route);
@@ -414,6 +412,7 @@ private:
     int    legs_ = 0;
     float  legFrom_ = 0.f;     // the walker's distance to the goal where the current route began
     bool   routed_ = false;    // a NavMesh route was had: a later failed query is no reason to beeline
+    bool   fell_ = false;      // the last read found the walker in ragdoll: the edge to standing re-paths
     bool   runHeld_ = false;   // the run key is down (kRunFromCm), let go near the goal or on losing control
     ue_wrap::CachedObjRef runPlayer_;   // the pawn it was pressed on
     int    retryRouteAt_ = -1; // standing with no route: the tick to ask again at

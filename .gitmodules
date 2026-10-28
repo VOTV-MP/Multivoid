@@ -10,3 +10,6 @@
 [submodule "src/votv-coop/third_party/opus"]
 	path = src/votv-coop/third_party/opus
 	url = https://github.com/xiph/opus.git
+[submodule "src/votv-coop/third_party/Vulkan-Headers"]
+	path = src/votv-coop/third_party/Vulkan-Headers
+	url = https://github.com/KhronosGroup/Vulkan-Headers.git

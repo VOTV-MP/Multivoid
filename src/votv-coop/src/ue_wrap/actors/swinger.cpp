@@ -5,14 +5,17 @@
 
 #include "ue_wrap/actors/swinger.h"
 
+#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
 
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 
 namespace ue_wrap::swinger {
 namespace {
@@ -91,6 +94,14 @@ bool TryReadOpen(void* swinger, bool& on) {
     if (!swinger || g_openedOff < 0) return false;
     on = *reinterpret_cast<const bool*>(
         reinterpret_cast<const char*>(swinger) + g_openedOff);
+    return true;
+}
+
+bool TryReadMeshRelativeRotation(void* swinger, FRotator& out) {
+    void* const mesh = prop::GetStaticMesh(swinger);
+    if (!mesh || !R::IsLive(mesh)) return false;
+    std::memcpy(&out, static_cast<const uint8_t*>(mesh) + profile::off::USceneComponent_RelativeRotation,
+                sizeof(out));
     return true;
 }
 

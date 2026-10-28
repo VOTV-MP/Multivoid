@@ -215,6 +215,9 @@ void RenderSpawnNpc() {
     if (ImGui::Button("Spawn ventCrawler (in front)")) coop::dev::spawn_npc::SpawnVentCrawler();
     ImGui::SameLine();
     ImGui::TextDisabled("(mirror test: watch the client radar)");
+    if (ImGui::Button("Spawn geomOcta (in front)")) coop::dev::spawn_npc::SpawnGeomOcta();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(host-authored NPC; each peer's own copy fires the beam, the blast is the host's)");
     // Killer-wisp cross-peer kill test: spawn the wisp ON a client puppet so it grabs the
     // CLIENT, routing the kill there, instead of the nearest, which is the host.
     if (ImGui::Button("Spawn killerWisp ON client (coop kill test)"))

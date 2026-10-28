@@ -699,5 +699,49 @@ bool InvokeAddPlayerDamage(void* mainPlayer, float damage, bool blood) {
     return Call(mainPlayer, f);
 }
 
+bool BroadcastMainPlayerMouseXY(void* mainPlayer, float x, float y, int* delivered) {
+    if (delivered) *delivered = 0;
+    if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
+    // A multicast delegate member is its invocation TArray {data, num, max} of FScriptDelegate: the bound
+    // object's slot index and serial, then the function's FName. The member is found by name and size once
+    // per player class.
+    struct Entry {
+        int32_t objectIndex;
+        int32_t objectSerial;
+        R::FName functionName;
+    };
+    struct List {
+        Entry*  data;
+        int32_t num;
+        int32_t max;
+    };
+    static void* sCls = nullptr;
+    static int32_t sOff = -1;
+    void* cls = R::ClassOf(mainPlayer);
+    if (!cls) return false;
+    if (cls != sCls) {
+        sCls = cls;
+        sOff = -1;
+        for (const R::StructFieldInfo& f : R::EnumerateStructFields(cls))
+            if (f.name == L"input_mouseXY" && f.size == static_cast<int32_t>(sizeof(List))) sOff = f.offset;
+    }
+    if (sOff < 0) return false;
+    const List* list = reinterpret_cast<const List*>(static_cast<uint8_t*>(mainPlayer) + sOff);
+    if (!list->data || list->num <= 0 || list->num > 64) return true;
+    const FVector2D xy{x, y};
+    int ran = 0;
+    for (int32_t i = 0; i < list->num; ++i) {
+        const Entry e = list->data[i];
+        void* obj = R::ObjectAt(e.objectIndex);
+        if (!obj || R::SlotSerial(e.objectIndex) != e.objectSerial || !R::IsLive(obj)) continue;
+        void* fn = R::FindDispatchFunctionCached(R::ClassOf(obj), R::ToString(e.functionName).c_str());
+        if (!fn || R::FindParamOffset(fn, L"mouseXY") < 0) continue;
+        ParamFrame f(fn);
+        if (f.valid() && f.Set<FVector2D>(L"mouseXY", xy) && Call(obj, f)) ++ran;
+    }
+    if (delivered) *delivered = ran;
+    return true;
+}
+
 
 }  // namespace ue_wrap::engine

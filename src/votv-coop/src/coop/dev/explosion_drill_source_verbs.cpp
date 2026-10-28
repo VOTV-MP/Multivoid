@@ -12,6 +12,7 @@
 
 #include "coop/dev/director/director.h"  // LookAt
 #include "coop/dev/drill_hand.h"
+#include "coop/dev/drill_hold.h"
 #include "coop/player/players_registry.h"
 #include "coop/world/explosion_sync.h"
 
@@ -36,6 +37,7 @@ namespace coop::dev::explosion_drill::detail {
 namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
 namespace ES = coop::explosion_sync;
+namespace DH = coop::dev::drill_hold;
 
 namespace {
 
@@ -69,23 +71,11 @@ bool ReadInt(void* obj, const wchar_t* name, int& out) {
 
 constexpr int kInvincBit = 1, kUnlockBit = 2;
 
-// Sets `name` on `obj` and keeps the value to put back in `held` (`restoreTo`, or what it found when that is -1); says
-// so when it changed a value. False when the object or the member is unreadable.
-bool Hold(void* obj, const wchar_t* name, int& held, int restoreTo) {
-    bool now = false;
-    if (!R::IsLive(obj) || !ReadBool(obj, name, now)) return false;
-    if (held < 0) held = restoreTo >= 0 ? restoreTo : (now ? 1 : 0);
-    if (now) return true;
-    WriteBool(obj, name, true);
-    Info("source role=%s guard %ls set to 1", RoleName(g_src.host), name);
-    return true;
-}
-
-void Put(void* obj, const wchar_t* name, int& held) {
-    if (held < 0) return;
-    const bool ok = R::IsLive(obj) && WriteBool(obj, name, held != 0);
-    Info("source role=%s guard %ls restored to %d%s", RoleName(g_src.host), name, held, ok ? "" : " (object gone)");
-    held = -1;
+// The prefix of the guard's lines (coop/dev/drill_hold): the drill's tag and the role the arm runs.
+const char* GuardTag() {
+    static char tag[64];
+    std::snprintf(tag, sizeof(tag), "[EXPLOSION-DRILL] source role=%s", RoleName(g_src.host));
+    return tag;
 }
 
 // mainPlayer's own call of a held prop's hand verb: the Blueprint function of that name, with the player.
@@ -157,9 +147,11 @@ const wchar_t* Guard(bool hostRole) {
     const wchar_t* bad = nullptr;
     const struct { int bit; const wchar_t* name; bool ok; } rows[] = {
         {kInvincBit, L"startInvinc",
-         hostRole || Hold(coop::players::Registry::Get().Local(), L"startInvinc", g_src.invincBefore, 0)},
+         hostRole || DH::Hold(coop::players::Registry::Get().Local(), L"startInvinc", g_src.invincBefore, 0,
+                              GuardTag())},
         {kUnlockBit, L"unlockFungunsInStory",
-         Hold(ue_wrap::world_singleton::Gamemode(), L"unlockFungunsInStory", g_src.unlockBefore, -1)},
+         DH::Hold(ue_wrap::world_singleton::Gamemode(), L"unlockFungunsInStory", g_src.unlockBefore, -1,
+                  GuardTag())},
     };
     for (const auto& row : rows) {
         if (row.ok) continue;
@@ -176,8 +168,8 @@ const wchar_t* Guard(bool hostRole) {
 // and a second call does nothing.
 void Unguard() {
     if (g_src.invincBefore < 0 && g_src.unlockBefore < 0) return;  // nothing held: no player or gamemode lookup
-    Put(coop::players::Registry::Get().Local(), L"startInvinc", g_src.invincBefore);
-    Put(ue_wrap::world_singleton::Gamemode(), L"unlockFungunsInStory", g_src.unlockBefore);
+    DH::Put(coop::players::Registry::Get().Local(), L"startInvinc", g_src.invincBefore, GuardTag());
+    DH::Put(ue_wrap::world_singleton::Gamemode(), L"unlockFungunsInStory", g_src.unlockBefore, GuardTag());
 }
 
 bool BirthSeen(bool host) {

@@ -1,7 +1,8 @@
 // coop/dev/hostile_drill_act_detail.h -- sibling-internal state shared by the act drill arms' two TUs
 // (hostile_drill_act.cpp, the router and the single-target arms; hostile_drill_act_family.cpp, the act_wrongfamily arm).
 // The remover_drill_detail.h shape: private to the src tree, never part of the include surface. The ignite family's host
-// half (hostile_drill_ignite_host.cpp) includes it too, for SpawnOnFloor.
+// half (hostile_drill_ignite_host.cpp) includes it too, for SpawnOnFloor, and the cord family's (hostile_drill_cord_host.cpp)
+// for SpawnClassOnFloor.
 
 #pragma once
 
@@ -40,6 +41,11 @@ void LogVerdict(Arm a, const char* what, const std::string& why);
 // on (3000 uu out when `far`, else beside it); `*dirUsed`, when given, is the direction taken. Null on success, else
 // why not.
 const char* SpawnOnFloor(coop::RemotePlayer& rp, const wchar_t* path, bool far, int firstDir, int* dirUsed, void** out);
+
+// The same for a class already in hand, `outCm` out from the puppet; `far` picks the trace's start height and depth (the
+// far values reach down from 1500 uu above the puppet, the near ones from 150).
+const char* SpawnClassOnFloor(coop::RemotePlayer& rp, void* cls, float outCm, bool far, int firstDir, int* dirUsed,
+                              void** out);
 
 // The directions SpawnOnFloor tries.
 inline constexpr int kFan = 8;

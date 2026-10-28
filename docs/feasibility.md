@@ -23,9 +23,9 @@ nothing from it ([architecture.md](architecture.md)).
 not encrypted at runtime. Not a blocker.
 
 **What is the rendering API?** DirectX 11 or 12, or Vulkan, selectable in the launcher. The mod's
-overlay hooks the swap chain's present call with its own detour and draws on DirectX 11 and 12
-through a per-API backend ([ui.md](ui.md)); Vulkan has no DXGI swap chain to hook and is not
-covered.
+overlay hooks the engine's own present call with its own detour and draws through a per-API
+backend ([ui.md](ui.md)): DirectX 11 and 12 on the DXGI swap chain, Vulkan inside the
+engine's queue present.
 
 **What is the input API?** The engine's own input pipeline over the window's message pump. The
 mod reads its own hotkeys through a window-procedure subclass and the asynchronous key state, and
