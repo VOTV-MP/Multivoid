@@ -429,6 +429,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"ui_notebook_c", L"quit", L"ui_notebook_c.quit", 0x0b25e8d1090ed6ddull, 0xa1d644433971a9d1ull},
     {L"ui_playerinventory_c", L"em_take", L"ui_playerinventory_c.em_take", 0x6a2d5d90ab51fa2dull, 0x825e0a4aab1220ceull},
     {L"ui_playerinventory_c", L"gen_player", L"ui_playerinventory_c.gen_player", 0x8b8e64f7575273baull, 0x75c4175911a484d4ull},
+    {L"ui_playerinventory_c", L"getind", L"ui_playerinventory_c.getind", 0x4076e18b31459affull, 0xade479fbbcab140dull},
     {L"ui_signalname_c", L"executeubergraph_ui_signalname", L"ui_signalname_c.executeubergraph_ui_signalname", 0xd3c93c9d2749b427ull, 0xd56f30313cc94b71ull},
     {L"uicomp_playerinvcontainerslot_c", L"pressbutton", L"uicomp_playerinvcontainerslot_c.pressbutton", 0x6a2d5d90ab51fa2dull, 0xcb0b114d7767d161ull},
     {L"userwidget", L"addtoviewport", L"userwidget.addtoviewport", 0xfecdbe182afad3abull, 0xcbf29ce484222325ull},
