@@ -1,5 +1,6 @@
 #include <atomic>
 #include <cstdio>
+#include <string>
 
 namespace coop::net {
 enum class Role { Host, Client };
@@ -9,6 +10,19 @@ struct Session {
     bool connected() const { return live; }
     Role role() const { return side; }
 };
+}
+namespace coop::config_registry {
+struct EnumRow {};
+struct FlagRow {};
+namespace rows {
+inline constexpr EnumRow pr64_drill{};
+inline constexpr FlagRow pr64_coin_local_credit_red{};
+}
+}
+namespace coop::config {
+// The drill's red rows stay off here: the production verdict is what the assertions run.
+inline std::string ResolveEnum(const coop::config_registry::EnumRow&) { return "off"; }
+inline bool ResolveFlag(const coop::config_registry::FlagRow&) { return false; }
 }
 namespace sg {
 enum class Verdict { Run, Cancel };
