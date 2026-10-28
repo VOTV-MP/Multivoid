@@ -320,22 +320,92 @@ void RunPutSelftest(Checks& check) {
         SR::SaveRecord moved = hand;
         moved.xform = {0.1f, 0.2f, 0.3f, 0.9f, 50.f, 60.f, 70.f, 1.f, 1.f, 1.f};
         moved.floats[0][0] = 3.25f;
-        check(RQ::PutHandHash(hand) == RQ::PutHandHash(moved),
+        check(RQ::PutHandHash(hand, 0) == RQ::PutHandHash(moved, 0),
               "hand-hash: a record that only moved and aged hashes the same");
         check(csw::RecordHash(hand) != csw::RecordHash(moved), "hand-hash: the plain record hash does see the move");
         SR::SaveRecord changed = hand;
         changed.strings[0][0] = L'y';
-        check(RQ::PutHandHash(hand) != RQ::PutHandHash(changed), "hand-hash: any other change hashes differently");
+        check(RQ::PutHandHash(hand, 0) != RQ::PutHandHash(changed, 0), "hand-hash: any other change hashes differently");
         SR::SaveRecord noFloats = hand;
         noFloats.floats.clear();
-        check(RQ::PutHandHash(noFloats) != 0, "hand-hash: a record with no floats hashes");
+        check(RQ::PutHandHash(noFloats, 0) != 0, "hand-hash: a record with no floats hashes");
         SR::SaveRecord emptyGroup = hand;
         emptyGroup.floats = {{}};   // a first floats group with no element: nothing to zero, nothing to index
         SR::SaveRecord emptyGroupMoved = emptyGroup;
         emptyGroupMoved.xform = moved.xform;
-        check(RQ::PutHandHash(emptyGroup) == RQ::PutHandHash(emptyGroupMoved) &&
-                  RQ::PutHandHash(emptyGroup) != RQ::PutHandHash(noFloats),
+        check(RQ::PutHandHash(emptyGroup, 0) == RQ::PutHandHash(emptyGroupMoved, 0) &&
+                  RQ::PutHandHash(emptyGroup, 0) != RQ::PutHandHash(noFloats, 0),
               "hand-hash: an empty first floats group hashes, ignores the pose and differs from no group");
+
+        // The per-class table: a row zeroes the ticking fields of its class, and nothing else.
+        const size_t foodRow = RQ::PutExclusionRowOf(L"prop_food_C");
+        const size_t lampRow = RQ::PutExclusionRowOf(L"prop_lamp_C");
+        const size_t cordedRow = RQ::PutExclusionRowOf(L"prop_corded_C");
+        const size_t librarianRow = RQ::PutExclusionRowOf(L"prop_librarian_C");
+        const size_t bucketRow = RQ::PutExclusionRowOf(L"prop_concreteBucket_C");
+        check(foodRow != RQ::kNoExclusionRow && lampRow != RQ::kNoExclusionRow && cordedRow != RQ::kNoExclusionRow &&
+                  librarianRow != RQ::kNoExclusionRow && bucketRow != RQ::kNoExclusionRow &&
+                  RQ::PutExclusionRowOf(L"prop_apple_C") == RQ::kNoExclusionRow,
+              "hand-hash: the table names its classes and not an apple");
+        const uint32_t foodBit = 1u << foodRow, lampBit = 1u << lampRow, cordedBit = 1u << cordedRow;
+        const uint32_t librarianBit = 1u << librarianRow, bucketBit = 1u << bucketRow;
+
+        SR::SaveRecord food = Rec(L"prop_food_C", 1, L"x");
+        food.floats = {{1.5f, 293.016f, 7199.044f, 100.25f}};
+        SR::SaveRecord foodTicked = food;
+        foodTicked.floats[0][1] = 293.018f;
+        foodTicked.floats[0][2] = 7199.017f;
+        foodTicked.floats[0][3] = 130.5f;
+        check(RQ::PutHandHash(food, foodBit) == RQ::PutHandHash(foodTicked, foodBit),
+              "hand-hash: a food's temperature, ripeness and clock are left out through its row");
+        check(RQ::PutHandHash(food, 0) != RQ::PutHandHash(foodTicked, 0),
+              "hand-hash: the same drift hashes differently without the row");
+        SR::SaveRecord foodOther = foodTicked;
+        foodOther.ints[0][0] = 2;
+        check(RQ::PutHandHash(food, foodBit) != RQ::PutHandHash(foodOther, foodBit),
+              "hand-hash: a food row leaves every other field in the hash");
+
+        // A row whose class is not the actor's is not in the mask: the record is as it was.
+        check(RQ::PutHandHash(food, lampBit) == RQ::PutHandHash(food, 0) &&
+                  RQ::PutHandHash(food, lampBit) != RQ::PutHandHash(foodTicked, lampBit),
+              "hand-hash: a food hashed with another class's row still sees its drift");
+        // An index past the record's arrays is no write and no throw.
+        SR::SaveRecord shortFood = hand;   // floats[0] has one element: the food row's [1..3] are past it
+        check(RQ::PutHandHash(shortFood, foodBit) == RQ::PutHandHash(shortFood, 0),
+              "hand-hash: a row's index past the record's array is a no-op");
+        SR::SaveRecord noOuter = hand;   // a lamp's floats[1] does not exist here
+        check(RQ::PutHandHash(noOuter, lampBit) == RQ::PutHandHash(noOuter, 0),
+              "hand-hash: a row's group past the record's groups is a no-op");
+
+        SR::SaveRecord lamp = hand;
+        lamp.floats = {{1.5f}, {0.8f}};
+        SR::SaveRecord lampBurnt = lamp;
+        lampBurnt.floats[1][0] = 0.7f;
+        check(RQ::PutHandHash(lamp, lampBit) == RQ::PutHandHash(lampBurnt, lampBit) &&
+                  RQ::PutHandHash(lamp, foodBit) != RQ::PutHandHash(lampBurnt, foodBit),
+              "hand-hash: a lamp's fuel is left out through the lamp row only");
+
+        SR::SaveRecord corded = hand;
+        corded.vectors = {{{1.f, 2.f, 3.f}, {4.f, 5.f, 6.f}}};
+        SR::SaveRecord cordedMoved = corded;
+        cordedMoved.vectors[0][0] = {9.f, 9.f, 9.f};
+        cordedMoved.vectors[0][1] = {8.f, 8.f, 8.f};
+        check(RQ::PutHandHash(corded, cordedBit) == RQ::PutHandHash(cordedMoved, cordedBit) &&
+                  RQ::PutHandHash(corded, 0) != RQ::PutHandHash(cordedMoved, 0),
+              "hand-hash: a corded prop's cord head pose is left out through its row");
+
+        SR::SaveRecord librarian = hand;
+        librarian.ints = {{60}};
+        SR::SaveRecord librarianCounted = librarian;
+        librarianCounted.ints[0][0] = 59;
+        SR::SaveRecord bucket = hand;
+        bucket.bools = {{0, 0, 0, 0}, {0}};
+        SR::SaveRecord bucketDry = bucket;
+        bucketDry.bools[1][0] = 1;
+        check(RQ::PutHandHash(librarian, librarianBit) == RQ::PutHandHash(librarianCounted, librarianBit) &&
+                  RQ::PutHandHash(bucket, bucketBit) == RQ::PutHandHash(bucketDry, bucketBit) &&
+                  RQ::PutHandHash(bucket, 0) != RQ::PutHandHash(bucketDry, 0),
+              "hand-hash: a librarian's seconds and a bucket's dry flag are left out through their rows");
 
         const size_t asked = caw::RecordBytes(hand);
         SR::SaveRecord big = hand;

@@ -72,8 +72,15 @@ PutCheck CheckPutR2(bool containerLive, bool screenShowsContainer, bool notHover
 // and its own record still hashing what was asked.
 PutCheck CheckPutR3(bool containerLive, bool handIsAsked, bool hashMatches);
 // R3's hash of a held actor's record, at the ask and at the replay: the record with the two fields that change while the
-// player runs, its transform and floats[0][0] (the lifespan), zeroed. Any other change aborts the replay.
-uint64_t PutHandHash(const ue_wrap::save_record::SaveRecord& record);
+// player runs, its transform and floats[0][0] (the lifespan), zeroed, and with the fields of the held actor's class that
+// tick by themselves zeroed too (`rows`, from PutExclusionRowsOf; 0 zeroes none). Any other change aborts the replay.
+uint64_t PutHandHash(const ue_wrap::save_record::SaveRecord& record, uint32_t rows);
+// The exclusion rows (a bit per row) whose class the held actor's class is or derives from. Game thread: it reads the
+// class table. 0 for a null actor.
+uint32_t PutExclusionRowsOf(void* heldActor);
+// The row for a class name, or kNoExclusionRow: the pure half of the table, for the selftest.
+inline constexpr size_t kNoExclusionRow = static_cast<size_t>(-1);
+size_t PutExclusionRowOf(const wchar_t* className);
 // Where a put's record went, from the container's record hashes before and after the put's verb: the index i when
 // after is before with one record inserted at i (the first index where they differ, else the end). None when the count
 // did not rise by one or the rest does not line up, so the verb stored nothing, or something else did.
@@ -98,8 +105,9 @@ Take LastTake();
 // The last put act this peer asked, as the put seats saw it end. `route` is 2 (the hotbar key, R2) or 3 (hold and
 // run, R3). `index` is the selected pane index at the ask (R2), then where the container stored the record once the
 // put is done. `askHash` is the hash the host was asked and the replay compares: R3's with the held actor's pose and
-// lifespan zeroed (PutHandHash), R2's the record's own. `replayHash` is that same hash read again at the replay, 0
-// when the replay did not get as far as reading it. Refused is the host's answer to the ask. Reset at the session's end.
+// lifespan and its class's ticking fields zeroed (PutHandHash), R2's the record's own. `replayHash` is that same hash
+// read again at the replay, 0 when the replay did not get as far as reading it. Refused is the host's answer to the ask.
+// Reset at the session's end.
 enum class PutOutcome : uint8_t { None, Asked, Done, Aborted, Refused };
 struct Put {
     uint16_t id = 0;

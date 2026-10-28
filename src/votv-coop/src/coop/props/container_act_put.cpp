@@ -22,13 +22,16 @@
 #include "ue_wrap/actors/prop_use.h"
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/facts/function_row.h"
 
+#include <array>
 #include <cstring>
+#include <cwchar>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -117,8 +120,8 @@ sg::Verdict AskPut(uint8_t route, uint32_t eid, void* container, const SR::SaveR
     r.eid = eid;
     r.record = rec;
     // Not on the wire: the form the replay hashes again. A held actor's record carries its pose and its lifespan, which
-    // change while the player runs; R3 hashes it without them.
-    r.hash = route == kRouteR3 ? internal::PutHandHash(rec) : csw::HashBytes(wire);
+    // change while the player runs, and some classes carry a field that ticks by itself; R3 hashes it without them.
+    r.hash = route == kRouteR3 ? internal::PutHandHash(rec, internal::PutExclusionRowsOf(hand)) : csw::HashBytes(wire);
     if (Ask(r)) {
         Pending& p = Rec();
         p.container.Set(container);
@@ -266,7 +269,7 @@ internal::PutCheck CheckR3(const Pending& p, void* hand, bool containerLive, con
     const bool isAsked = hand && hand == p.hand.Get();
     SR::SaveRecord rec;
     const bool captured = isAsked && SR::CaptureOwnRecord(hand, rec);
-    if (captured) g_replayHash = internal::PutHandHash(rec);
+    if (captured) g_replayHash = internal::PutHandHash(rec, internal::PutExclusionRowsOf(hand));
     const bool hashMatches = captured && g_replayHash == p.hash;
     why = !containerLive ? "the container is gone" : !isAsked ? "the hand changed" : !hashMatches ? "the record changed" : "";
     return internal::CheckPutR3(containerLive, isAsked, hashMatches);
@@ -365,10 +368,107 @@ PutCheck CheckPutR3(bool containerLive, bool handIsAsked, bool hashMatches) {
     return containerLive && handIsAsked && hashMatches ? PutCheck::Replay : PutCheck::Abort;
 }
 
-uint64_t PutHandHash(const ue_wrap::save_record::SaveRecord& record) {
+namespace {
+
+// The fields of a held actor that tick by themselves, one row per class (a subclass matches its parent's row). A row
+// zeroes `count` elements from [group][outer][first] of the record before the hash. Safe because the commit carries the
+// record AS THE CONTAINER STORED IT and the replay still requires the same live holding_actor: an excluded field only
+// stops a ticking value from aborting the put, it never lets a different item through. Each row's (:N) is the line of the
+// class's own Blueprint dump that writes the field. A subclass appends one mFloat as floats[1], one mInt as ints[0] and
+// one mBool as bools[1] to its parent's record, and prop_food replaces floats[0].
+enum class Group : uint8_t { Floats, Ints, Bools, Vectors };
+struct Exclusion {
+    const wchar_t* cls;
+    Group group;
+    uint8_t outer, first, count;
+};
+constexpr Exclusion kExclusions[] = {
+    // Temperature and ripeness drift (measured); the clock is written fresh by every getData (:808-832).
+    {L"prop_food_C", Group::Floats, 0, 1, 3},
+    {L"prop_atvcarbattery_C", Group::Floats, 1, 1, 1},   // heat cools each tick (:43)
+    {L"prop_funGun_crossbow_C", Group::Floats, 1, 0, 1},  // temp, FInterpTo each tick (:41)
+    {L"prop_concreteBucket_C", Group::Bools, 1, 0, 1},    // dry flips on its own timer (:370-377)
+    {L"prop_lamp_C", Group::Floats, 1, 0, 1},             // fuel burns while lit (:38)
+    {L"prop_torch_C", Group::Floats, 1, 0, 1},            // fuel burns while lit (:143)
+    {L"prop_fireExt_C", Group::Floats, 1, 0, 1},          // life drains while spraying (:82)
+    {L"prop_grenade_C", Group::Floats, 1, 0, 1},          // timer counts down when armed (:21)
+    {L"prop_pipebomb_C", Group::Floats, 1, 0, 1},         // timer counts down when armed (:25)
+    {L"prop_lemonade_C", Group::Floats, 1, 0, 1},         // timer, after activation (:24)
+    {L"prop_radio_local_C", Group::Floats, 1, 0, 1},      // time, while playing (:136)
+    {L"prop_librarian_C", Group::Ints, 0, 0, 1},          // secs, while counting (:48)
+    {L"prop_physgun_soft_C", Group::Floats, 1, 0, 1},     // time, in use (:20)
+    {L"prop_popcorn_C", Group::Floats, 1, 0, 1},          // inflat, heating (:70)
+    // The cord head's world location and rotation: a world pose, the transform's kind (:187-215).
+    {L"prop_corded_C", Group::Vectors, 0, 0, 2},
+};
+constexpr size_t kExclusionCount = std::size(kExclusions);
+static_assert(kExclusionCount <= 32, "PutHandHash's row mask is 32 bits");
+
+template <class V>
+void ZeroElements(std::vector<std::vector<V>>& groups, const Exclusion& e, const V& zero) {
+    if (e.outer >= groups.size()) return;
+    std::vector<V>& group = groups[e.outer];
+    for (size_t i = e.first; i < e.first + e.count && i < group.size(); ++i) group[i] = zero;
+}
+
+// One row's class, found again when the class table dropped it (ClassListingId moves on an unload).
+struct ClassSlot {
+    void* cls = nullptr;
+    uint64_t listing = 0;
+};
+ClassSlot g_slots[kExclusionCount];
+bool g_saidUnloaded = false;
+
+}  // namespace
+
+size_t PutExclusionRowOf(const wchar_t* className) {
+    for (size_t i = 0; i < kExclusionCount; ++i)
+        if (std::wcscmp(kExclusions[i].cls, className) == 0) return i;
+    return kNoExclusionRow;
+}
+
+uint32_t PutExclusionRowsOf(void* heldActor) {
+    namespace OI = ue_wrap::object_index;
+    namespace R  = ue_wrap::reflection;
+    void* const actorClass = heldActor ? R::ClassOf(heldActor) : nullptr;
+    if (!actorClass) return 0;
+    uint32_t rows = 0;
+    size_t unloaded = 0;
+    for (size_t i = 0; i < kExclusionCount; ++i) {
+        ClassSlot& s = g_slots[i];
+        if (!s.cls || OI::ClassListingId(s.cls) != s.listing) {
+            s.cls = OI::ClassByName(kExclusions[i].cls);
+            s.listing = s.cls ? OI::ClassListingId(s.cls) : 0;
+        }
+        if (!s.cls) {   // a class no loaded actor can derive from: its row cannot match
+            ++unloaded;
+            continue;
+        }
+        void* const base = s.cls;
+        if (R::IsDescendantOfAny(actorClass, &base, 1)) rows |= 1u << i;
+    }
+    if (unloaded && !g_saidUnloaded) {
+        g_saidUnloaded = true;
+        UE_LOGI("container_act: put hash: %zu of %zu exclusion classes are not loaded yet; their rows are skipped",
+                unloaded, kExclusionCount);
+    }
+    return rows;
+}
+
+uint64_t PutHandHash(const ue_wrap::save_record::SaveRecord& record, uint32_t rows) {
     ue_wrap::save_record::SaveRecord copy = record;
     copy.xform.fill(0.f);
     if (!copy.floats.empty() && !copy.floats[0].empty()) copy.floats[0][0] = 0.f;
+    for (size_t i = 0; i < kExclusionCount; ++i) {
+        if (!(rows & (1u << i))) continue;
+        const Exclusion& e = kExclusions[i];
+        switch (e.group) {
+            case Group::Floats:  ZeroElements(copy.floats, e, 0.f); break;
+            case Group::Ints:    ZeroElements(copy.ints, e, int32_t{0}); break;
+            case Group::Bools:   ZeroElements(copy.bools, e, uint8_t{0}); break;
+            case Group::Vectors: ZeroElements(copy.vectors, e, std::array<float, 3>{}); break;
+        }
+    }
     return coop::props::container_slice_wire::RecordHash(copy);
 }
 
