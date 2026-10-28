@@ -35,6 +35,10 @@ void Tick();
 // dirty for the next sweep and drops the applied-hash no-op guard. Game thread.
 void MarkHostWrite(uint32_t eid);
 
+// The next host publication of this container applies even when it is identical to the last, because the client's
+// copy may no longer match it. Erases the applied hash and nothing else (no dirty mark, no touch). Game thread.
+void ForgetApplied(uint32_t eid);
+
 // ContainerContents chunks: a BlobChunkPayload whose blob is
 // `[u8 op=0][u32 eid][u64 baseHash][u16 n]` then n records in the coop/items/save_record_wire
 // grammar. Never refanned -- a client accepts slot 0 and nothing else, and the host accepts only a

@@ -15,6 +15,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/container_contents_io.h"
+#include "coop/props/container_contents_sync.h"
 #include "coop/props/container_slice_wire.h"
 
 #include "ue_wrap/actors/container_inventory.h"
@@ -346,6 +347,8 @@ void ReplayPut() {
                   ? cv::RunPut(p.screen.Get())
                   : PU::CallPlayerUsedOn(container, player, nullptr, ue_wrap::FVector{}, nullptr, hand, R::FName{});
     }
+    // D4: the verb may have changed the mirror under the latch, whatever the commit says; the host's next truth must apply.
+    coop::props::container_contents_sync::ForgetApplied(p.eid);
     std::vector<SR::SaveRecord> after;
     std::vector<uint64_t> afterHashes;
     const bool read = ReadRecordHashes(p.container.Get(), after, afterHashes);

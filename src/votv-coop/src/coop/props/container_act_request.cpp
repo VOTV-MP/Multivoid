@@ -11,6 +11,7 @@
 #include "coop/props/container_act_state.h"
 #include "coop/props/container_birth.h"
 #include "coop/props/container_contents_io.h"
+#include "coop/props/container_contents_sync.h"
 #include "coop/props/container_slice_wire.h"
 #include "coop/session/net_pump.h"
 
@@ -439,6 +440,8 @@ void ReplayTake() {
         Latched latch;
         pressed = cv::PressSlot(slot);
     }
+    // D4: the press changed the mirror under the latch, where no verb watch marks it; the host's next truth must apply.
+    coop::props::container_contents_sync::ForgetApplied(g_rec.eid);
     std::vector<SR::SaveRecord> after;
     void* const invAfter = g_rec.container.Get() ? ci::InventoryOf(g_rec.container.Get()) : nullptr;
     const bool afterRead = invAfter && cio::ReadRecords(invAfter, after, /*neuterNested=*/true);

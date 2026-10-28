@@ -533,6 +533,8 @@ void MarkHostWrite(uint32_t eid) {
     Touch(eid);
 }
 
+void ForgetApplied(uint32_t eid) { g_appliedHash.erase(eid); }
+
 namespace {
 void ApplyHeld(const std::vector<uint8_t>& blob, uint8_t senderSlot);   // defined with DeliverBlob below
 }  // namespace
