@@ -84,8 +84,9 @@ struct PutInputs {
 // Order: !worldReady -> Wait; holdsWait -> Wait; reach NoBody -> Wait; container Gone -> Gone; NotReady -> Wait;
 // Unreachable -> Reach; !termsRead -> Wait; locked -> Locked; slowed -> Lapsed; !nameOk, !classResolved, !propClass
 // -> Refused; !filterRead -> Wait; filterHolds -> Refused; mailboxContainer -> Refused; !rowRead -> Wait; rowRefuses
-// -> Refused; countAtCap, bytesOver -> NoSpace; then unless infinite: !volumeRead -> Wait, !volumeKnown -> Refused,
-// currVol + volume > maxVol -> NoSpace; else Grant. `refusal`, when given, gets the tally term of a Refused
+// -> Refused; !volumeRead -> Wait; !volumeKnown -> Refused (the name is not in the game's table, whatever the
+// container); countAtCap, bytesOver -> NoSpace; unless infinite: currVol + volume > maxVol -> NoSpace; else Grant.
+// `refusal`, when given, gets the tally term of a Refused
 // verdict, and Tally::kCount for any other.
 Verdict DecidePut(const PutInputs& in, Tally* refusal = nullptr);
 

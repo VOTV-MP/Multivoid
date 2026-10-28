@@ -47,9 +47,11 @@ bool ReadVolumeAndBound(void* prop, float& volume, float& bound);
 // the table cannot be read; `found` says whether it has the row, and `out` is the row's flags only then.
 bool ReadRowFlags(const std::wstring& name, PropDataFlags& out, bool& found);
 
-// The game's Get Volume with no mesh and the prop's name: the volume a container sums for a record it holds, by name.
-// `worldContext` is any live object. False when the call could not run (the library is not resolved); `valid` is
-// the function's own flag, false for a name it does not know, and `out` is then no volume.
-bool VolumeOfName(const std::wstring& name, void* worldContext, float& out, bool& valid);
+// The volume a container sums for a record it holds, by the prop's name: read from the game's own name table (the
+// gamemode's propRenderer names beside its prop_volumes), which is what Get Volume with no mesh indexes. The name
+// is looked up in a map of that table, kept current by the arrays' counts; no engine call is made and no name is made
+// for a string a peer sent. False when the table cannot be read or the game has not filled it yet; `valid` is false for
+// a name the table lacks, and `out` is then no volume.
+bool VolumeOfName(const std::wstring& name, float& out, bool& valid);
 
 }  // namespace ue_wrap::prop_gather

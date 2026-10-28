@@ -10,18 +10,20 @@
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/field_io.h"
-#include "ue_wrap/core/fname_utils.h"
+#include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/data_table.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <iterator>
 #include <string>
 #include <unordered_map>
@@ -515,21 +517,72 @@ bool ReadRowFlags(const std::wstring& name, PropDataFlags& out, bool& found) {
     return ListPropsRow(Lower(name), out, &mesh, &found);
 }
 
-bool VolumeOfName(const std::wstring& name, void* worldContext, float& out, bool& valid) {
+namespace {
+
+// The game's own name -> volume table: the gamemode's propRenderer names (TArray<FName>) beside the gamemode's
+// prop_volumes (TArray<float>), which Get Volume with no mesh reads as prop_volumes[Array_Find(names, name)]. It is
+// read into a map by lowercased name (an FName compares without case; the first name wins, as Array_Find does) and read
+// again when the renderer or either array's count changes. A name the table lacks is unknown with no engine call.
+struct VolumeTable {
+    void* gmCls = nullptr;       // the gamemode class the offsets below were read from
+    int32_t renderer = -1;       // mainGamemode_C.propRenderer
+    int32_t volumes = -1;        // mainGamemode_C.prop_volumes
+    void* rendererCls = nullptr;
+    int32_t names = -1;          // propProcessor_C.names
+    void* builtFor = nullptr;    // the renderer the map was built from
+    int32_t namesNum = -1;
+    int32_t volumesNum = -1;
+    std::unordered_map<std::wstring, float> byName;
+};
+VolumeTable g_volumeTable;
+
+void RebuildVolumeTable(VolumeTable& t, const save_record::Arr& names, const save_record::Arr& volumes) {
+    t.byName.clear();
+    t.byName.reserve(static_cast<size_t>(names.num));
+    for (int32_t i = 0; i < names.num && i < volumes.num; ++i) {
+        R::FName n{};
+        std::memcpy(&n, names.data + static_cast<size_t>(i) * sizeof(R::FName), sizeof n);
+        float v = 0.f;
+        std::memcpy(&v, volumes.data + static_cast<size_t>(i) * sizeof v, sizeof v);
+        t.byName.emplace(Lower(R::ToString(n)), v);   // emplace keeps the first of a repeated name
+    }
+}
+
+}  // namespace
+
+bool VolumeOfName(const std::wstring& name, float& out, bool& valid) {
     UE_ASSERT_GAME_THREAD("prop_gather::VolumeOfName");
     out = 0.f;
     valid = false;
-    if (!worldContext || !EnsureLib()) return false;
-    ParamFrame f(g_getVolume.Fn());
-    float volume = 0.f;
-    bool known = false;
-    if (!f.valid() || !f.Set<R::FName>(L"name", fname_utils::StringToFName(name)) ||
-        !f.Set<void*>(L"__WorldContext", worldContext) || !Call(g_libCdo.Get(), f) ||
-        !f.GetRaw(L"volume", &volume, static_cast<int32_t>(sizeof volume)) ||
-        !f.GetRaw(L"valid", &known, static_cast<int32_t>(sizeof known)))
-        return false;
-    out = volume;
-    valid = known;
+    void* const gm = world_singleton::Gamemode();
+    if (!gm) return false;
+    VolumeTable& t = g_volumeTable;
+    if (void* const gmCls = R::ClassOf(gm); gmCls != t.gmCls) {
+        t.gmCls = gmCls;
+        t.renderer = R::FindPropertyOffset(gmCls, L"propRenderer");
+        t.volumes = R::FindPropertyOffset(gmCls, L"prop_volumes");
+    }
+    if (t.renderer < 0 || t.volumes < 0) return false;
+    void* const renderer = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(gm) + t.renderer);
+    if (!renderer || !R::IsLive(renderer)) return false;
+    if (void* const rCls = R::ClassOf(renderer); rCls != t.rendererCls) {
+        t.rendererCls = rCls;
+        t.names = R::FindPropertyOffset(rCls, L"names");
+    }
+    if (t.names < 0) return false;
+    const save_record::Arr names = save_record::ReadArr(renderer, t.names);
+    const save_record::Arr volumes = save_record::ReadArr(gm, t.volumes);
+    if (names.num <= 0 || volumes.num <= 0) return false;   // the game has not filled its table yet
+    if (renderer != t.builtFor || names.num != t.namesNum || volumes.num != t.volumesNum) {
+        RebuildVolumeTable(t, names, volumes);
+        t.builtFor = renderer;
+        t.namesNum = names.num;
+        t.volumesNum = volumes.num;
+    }
+    const auto it = t.byName.find(Lower(name));
+    if (it == t.byName.end()) return true;   // unknown: valid stays false
+    out = it->second;
+    valid = true;
     return true;
 }
 

@@ -560,9 +560,7 @@ void RunSelftest() {
               "put: a row that is not collectable or heavy is refused, counted put_row_refuses");
         p = putReady();
         p.countAtCap = true;
-        p.volumeKnown = false;
-        check(H::DecidePut(p, &why) == H::Verdict::NoSpace && why == Tally::kCount,
-              "put: the record cap is NoSpace, and beats an unknown name");
+        check(H::DecidePut(p, &why) == H::Verdict::NoSpace && why == Tally::kCount, "put: the record cap is NoSpace");
         p = putReady();
         p.bytesOver = true;
         check(H::DecidePut(p) == H::Verdict::NoSpace, "put: the byte ceiling is NoSpace");
@@ -571,17 +569,19 @@ void RunSelftest() {
         check(H::DecidePut(p) == H::Verdict::Wait, "put: a volume that did not read waits");
         p = putReady();
         p.volumeKnown = false;
+        p.countAtCap = true;
         check(H::DecidePut(p, &why) == H::Verdict::Refused && why == Tally::PutUnknownName,
-              "put: an unknown name is refused, counted put_unknown_name");
+              "put: an unknown name is refused before the record cap, counted put_unknown_name");
         p = putReady();
         p.volume = 60.f;
         check(H::DecidePut(p) == H::Verdict::Grant, "put: a volume that exactly fills the container fits");
         p.volume = 60.5f;
         check(H::DecidePut(p) == H::Verdict::NoSpace, "put: a volume past the container's room is NoSpace");
         p.infinite = true;
-        p.volumeRead = false;
+        const bool infiniteGrants = H::DecidePut(p) == H::Verdict::Grant;
         p.volumeKnown = false;
-        check(H::DecidePut(p) == H::Verdict::Grant, "put: an infinite container reads no volume and grants");
+        check(infiniteGrants && H::DecidePut(p) == H::Verdict::Refused,
+              "put: an infinite container ignores the volume but not an unknown name");
     }
 
     // ---- the put's commit: the hold's rule, the stored record, the record's name ----

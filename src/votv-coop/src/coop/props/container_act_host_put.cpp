@@ -87,15 +87,13 @@ void ReadPutInputs(uint8_t slot, const caw::Request& q, internal::PutInputs& p) 
     if (!p.rowRead) return;
     p.rowRefuses = found && (!row.canCollect || row.heavy);   // a class with no row is collectable, the game's rule
     if (p.rowRefuses) return;
-    // The volume (two calls) comes before the container read and its size, which run only when every other term has
-    // passed: a head that waits on the volume is re-judged cheaply.
+    // The name's volume (a lookup in the game's own table, whatever the container) comes before the container read and
+    // its size, which run only when every other term has passed.
     p.infinite = t.infinite;
     p.maxVol = t.maxVol;
     p.currVol = t.currVol;
-    if (!t.infinite) {
-        p.volumeRead = pg::VolumeOfName(name, actor, p.volume, p.volumeKnown);
-        if (!p.volumeRead || !p.volumeKnown || p.currVol + p.volume > p.maxVol) return;
-    }
+    p.volumeRead = pg::VolumeOfName(name, p.volume, p.volumeKnown);
+    if (!p.volumeRead || !p.volumeKnown || (!t.infinite && p.currVol + p.volume > p.maxVol)) return;
     switch (ReadFit(q.eid, q.record, p.countAtCap, p.bytesOver)) {
         case cre::EditResult::Done:     break;
         case cre::EditResult::NotReady: p.base.container = internal::Container::NotReady; return;
@@ -265,12 +263,10 @@ Verdict DecidePut(const PutInputs& in, Tally* refusal) {
     if (in.mailboxContainer) { why = Tally::PutIntoMailbox; return Verdict::Refused; }
     if (!in.rowRead) return Verdict::Wait;
     if (in.rowRefuses) { why = Tally::PutRowRefuses; return Verdict::Refused; }
+    if (!in.volumeRead) return Verdict::Wait;
+    if (!in.volumeKnown) { why = Tally::PutUnknownName; return Verdict::Refused; }
     if (in.countAtCap || in.bytesOver) return Verdict::NoSpace;
-    if (!in.infinite) {
-        if (!in.volumeRead) return Verdict::Wait;
-        if (!in.volumeKnown) { why = Tally::PutUnknownName; return Verdict::Refused; }
-        if (in.currVol + in.volume > in.maxVol) return Verdict::NoSpace;
-    }
+    if (!in.infinite && in.currVol + in.volume > in.maxVol) return Verdict::NoSpace;
     return Verdict::Grant;
 }
 
