@@ -48,7 +48,7 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot);
 // nothing was minted. From the host alone: the host's receive edge refuses a client's copy (client_authorship.h).
 void OnReliableResult(const uint8_t* payload, int len);
 
-// Host ingest of CoinCollect: a client collected a mirror of one of our coins, so the collect runs
+// Host ingest of CoinCollect: a client pressed a mirror of one of our coins (its own press is cancelled), so the collect runs
 // on the authoritative coin by dispatching its own actionOptionIndex, and the game's native credit
 // and self-destroy follow. Checks the payload size, then fails closed on the element type and the
 // actor's class. The eid is range-checked in the host band only: a baocoin_C is host-minted by

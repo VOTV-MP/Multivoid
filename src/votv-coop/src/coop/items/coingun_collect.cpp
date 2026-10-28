@@ -194,9 +194,9 @@ bool OnCollectPre(void* self, void* params) {
         // Forward first, then cancel: after `return true` there is no seam left.
         const bool fwd = ForwardCollectToHost(self, L"overlap");
         UE_LOGI("coingun[client collect]: SUPPRESSED on mirror coin=%p (tripped by LOCAL %p), "
-                "forwarded=%d. The local credit is cancelled outright on THIS entry (unlike the "
-                "E-press, which is EX_LocalVirtualFunction and uncancellable); the host performs the "
-                "collect on its own coin.", self, other, fwd ? 1 : 0);
+                "forwarded=%d. The local credit is cancelled outright on THIS entry, as the E-press "
+                "is cancelled at the script-body gate; the host performs the collect on its own "
+                "coin.", self, other, fwd ? 1 : 0);
         return true;                             // cancel: no local addPoints, no local destroy
     }
 
@@ -469,9 +469,8 @@ void internal::OnDisconnectCollect() {
             g_noCredit.load(std::memory_order_relaxed),
             g_replayed.load(std::memory_order_relaxed));
     // Nothing world-scoped is held apart from g_collected, which goes whole: g_actionOptFn is a
-    // UFunction, and the repair throttle is a timestamp map by slot that a new session may reuse (a
-    // stale window can only delay a repair). A consumption guard keyed on a dead world's eids must
-    // not survive into a new session.
+    // UFunction, and no repair state exists: a client press forwards and is cancelled, and the host
+    // performs. A consumption guard keyed on a dead world's eids must not survive into a new session.
     g_collected.clear();
 }
 

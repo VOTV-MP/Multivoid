@@ -631,8 +631,8 @@ enum class ReliableKind : uint8_t {
     // from its own copy, mints the coins and destroys the prop itself. CoinGunSellPayload.
     CoinGunSell = 122,
 
-    // Client to host: I collected this coin (a host-minted world actor, named by eid); the host
-    // runs the coin's own verb. CoinCollectPayload.
+    // Client to host: I pressed this coin (a host-minted world actor, named by eid; the client's
+    // own press is cancelled); the host runs the coin's own verb. CoinCollectPayload.
     CoinCollect = 124,
 
     // Host to one client: what your sale did: sold with the host's price, or a named refusal.
