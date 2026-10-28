@@ -6,7 +6,6 @@
 #include "coop/config/config_registry.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
-#include "coop/player/players_registry.h"
 #include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -65,6 +64,7 @@ int g_quiet = 0;
 
 void* g_fn[5] = {};               // each route's function, as its pre last saw it (for IsBodyActive)
 unsigned g_multiSaid = 0;         // the combinations of routes said to be active together
+uintptr_t g_r3Bit = 0;            // the scope bit of an R3 body whose player was running (sg::ScopeBitFor)
 
 uint64_t g_entries[5] = {};       // seam entries R1..R5
 uint64_t g_unshared[6] = {};      // verbs on an inventory that is no shared world container, by the open route
@@ -107,10 +107,20 @@ void* ParamPtr(const sg::Call& c, R::ParamOffset& param) {
     return p;
 }
 
-// R3 counts only the put, the BP's own branch: the player's input_run.
+// R3 counts only the put, the BP's own branch: the body's player is running (input_run). An input_run that does not
+// resolve reads as not running, so it is said once.
 bool Runs(void* player) {
+    if (!player || !R::IsLive(player)) return false;
     bool run = false;
-    return player && R::IsLive(player) && E::ReadInputRun(player, run) && run;
+    if (!E::ReadInputRun(player, run)) {
+        static bool sSaid = false;
+        if (!sSaid) {
+            sSaid = true;
+            UE_LOGW("[CI-CENSUS] R3: the player's input_run does not resolve -- R3 is not counted");
+        }
+        return false;
+    }
+    return run;
 }
 
 bool PlayerRuns(const sg::Call& c) {
@@ -119,11 +129,11 @@ bool PlayerRuns(const sg::Call& c) {
 }
 
 // Is `route`'s own body running on this thread's chain of watched bodies? The gate's RAII answer, which unwinds on a
-// Cancel and on a fault; the function is the one the route's pre last saw. An R3 body is the put only for a running
-// player (the BP returns without a put otherwise).
+// Cancel and on a fault; the function is the one the route's pre last saw. An R3 body is the put only when its pre
+// marked the scope: the body's own player was running, the same player the entry count reads.
 bool Active(int route) {
     if (!g_fn[route] || !sg::IsBodyActive(g_fn[route])) return false;
-    return route != kR3 || Runs(coop::players::Registry::Get().Local());
+    return route != kR3 || (sg::ScopeBits(g_fn[route]) & g_r3Bit) != 0;
 }
 
 // The route a verb runs in, innermost by the BP's nesting: R1 when its body is active (em_take's hover branch calls
@@ -184,7 +194,10 @@ sg::Verdict ScopePre(const sg::Call& c) {
     const int route = c.tag - 1;
     if (route < 0 || route > 4) return sg::Verdict::Run;
     g_fn[route] = c.function;
-    if (route == kR3 && !PlayerRuns(c)) return sg::Verdict::Run;   // only the put is an R3 entry
+    if (route == kR3) {   // only the put is an R3 entry, and only its scope is marked as the put
+        if (!PlayerRuns(c)) return sg::Verdict::Run;
+        sg::MarkScope(c, g_r3Bit);
+    }
     ++g_entries[route];
     if (route == kR4) NoteOverlap(c);
     return sg::Verdict::Run;
@@ -218,6 +231,8 @@ void NoteR6Caller(const sg::Call& c) {
 }
 
 void RegisterWatches() {
+    g_r3Bit = sg::ScopeBitFor(&g_fn);
+    if (!g_r3Bit) UE_LOGE("[CI-CENSUS] no scope bit for R3 -- an R3 put is never attributed");
     sg::PreFn pre[5] = {&ScopePre, &ScopePre, &ScopePre, &ScopePre, &ScopePre};
     bool all = true;
     for (int i = 0; i < 5; ++i) {

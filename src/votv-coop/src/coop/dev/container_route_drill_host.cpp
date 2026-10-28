@@ -46,11 +46,12 @@ constexpr uint64_t kPublishBoundMs = 10000;  // the fill to the first fan-out
 constexpr uint64_t kViewBoundMs    = 5000;   // the open verb to the screen showing the backpack
 constexpr const wchar_t* kSecondClass = L"prop_floppyDisc_R_C";   // the second class of read 7; no drill puts a disc into a container, so the capture check below is its guard
 constexpr const wchar_t* kSecondPath  = L"/Game/objects/prop_floppyDisc_R.prop_floppyDisc_R_C";
-constexpr uint64_t kRoutesBoundMs  = 300000; // the routes phase: above the client's worst chain of independent bounds (about 230 s)
+constexpr uint64_t kHeldBoundMs    = 10000;  // the client's R1 done to the host's own copy holding one record fewer
+constexpr uint64_t kRoutesBoundMs  = 300000; // the routes phase: above the client's worst chain of independent bounds (about 250 s: the three acts' 12 s bounds)
 constexpr uint64_t kBeforeBoundMs  = 60000;  // the unpublished write to the client's take reported
 constexpr uint64_t kThrownBoundMs  = 30000;  // r4-start to the host holding a drive made by the throw
 
-enum class Step : uint8_t { Arm, Fill, Publish, WaitR1, WaitRoutes, ViewOpen, ViewRegen, WaitBefore, WaitDone, Done };
+enum class Step : uint8_t { Arm, Fill, Publish, WaitR1, WaitHeld, WaitRoutes, ViewOpen, ViewRegen, WaitBefore, WaitDone, Done };
 Step     g_step = Step::Arm;
 uint64_t g_stepMs = 0;
 uint64_t g_next = 0;
@@ -186,8 +187,7 @@ void StepPublish() {
     Next(cen::IsBeforeOnly() ? Step::WaitBefore : Step::WaitR1);
 }
 
-// The client's R1 take is done (it says so once its act ended and its mirror followed the host's truth): the backpack is
-// handed two fresh records (the fixture the R2 put-back and the later reads stand on), and the client is told.
+// The client's R1 take is done (it says so once its act ended and its mirror followed): the host looks at its own copy.
 void StepWaitR1() {
     std::string said;
     if (!coop::dev::drill_chat::PollDue() || !coop::dev::drill_chat::LiveRestOf(kPrefixR1Done, &said)) {
@@ -197,9 +197,23 @@ void StepWaitR1() {
         }
         return;
     }
+    Next(Step::WaitHeld);
+}
+
+// The host's own copy holds one record fewer (the take's escrow was dropped by the client's done). A host that disagrees
+// with the client's replay is seen here, FAIL as today after the bound; the backpack is handed two fresh records
+// either way (the fixture the R2 put-back and the later reads stand on), and the client is told.
+void StepWaitHeld() {
+    const int held = RecordCount(g_eid);
+    if (held != kItems - 1 && !Expired(kHeldBoundMs)) return;
+    if (held != kItems - 1) {
+        char phase[96];
+        std::snprintf(phase, sizeof(phase), "R1 the host holds %d record(s) after the client's take, expected %d", held,
+                      kItems - 1);
+        RouteFail(phase);
+    }
     void* pack = g_pack.Get();
     if (!pack) { Fail("the backpack died"); return; }
-    const int held = RecordCount(g_eid);   // the host's side of R1: the take left it one record short
     if (AddDrives(pack) != kItems) {
         RouteFail("R2 the backpack did not take the two fresh drives");
         coop::dev::drill_chat::Say(kLineRefillRefused);   // the client's R2 ends with it
@@ -417,6 +431,7 @@ void HostTick(coop::net::Session* s) {
     case Step::Fill:       StepFill(); return;
     case Step::Publish:    StepPublish(); return;
     case Step::WaitR1:     StepWaitR1(); return;
+    case Step::WaitHeld:   StepWaitHeld(); return;
     case Step::WaitRoutes: StepWaitRoutes(); return;
     case Step::ViewOpen:   StepViewOpen(); return;
     case Step::ViewRegen:  StepViewRegen(); return;

@@ -118,11 +118,13 @@ void Fail(const char* why) {
 // and commits. The act's own end is read from the client's counters (container_act_request::dev), by their delta since
 // the route began; the slice a native write would have sent is not sent (a latched replay ships none).
 enum class Act : uint8_t { None, Done, Aborted, Refused };
-void ActBaseline() {
+// False when the mirror's count does not read (-1): the route has no base to be judged against.
+bool ActBaseline() {
     g_act0[0] = car::dev::ActsDone();
     g_act0[1] = car::dev::ActsAborted();
     g_act0[2] = car::dev::ActsRefused();
     g_base = RecordCount(g_eid);
+    return g_base >= 0;
 }
 Act ActOutcome() {
     if (car::dev::ActsDone() > g_act0[0]) return Act::Done;
@@ -313,7 +315,7 @@ void StepOpenWait() {
 }
 
 void StepR1() {
-    ActBaseline();
+    if (!ActBaseline()) { RouteFailTo("R1 the mirror's record count does not read", Step::R1Done); return; }
     g_inv0 = ue_wrap::inventory::LivePersonalStoreCount();
     uint64_t whole = 0;
     cs::DevRecordHashes(g_eid, g_hashes, whole);
@@ -326,8 +328,8 @@ void StepR1Wait() {
     if (ActJudged("R1", -1)) Finish("R1", Step::R1Done);
 }
 
-// R1 is over: the record its press took is named by what the backpack lost, and the host is told how many slices this
-// peer has sent so it hands the backpack two fresh records only after it has judged them.
+// R1 is over (its act ended and the mirror followed): the record its press took is named by what the backpack lost, and
+// the host is told, so it checks its own copy and hands the backpack two fresh records.
 void StepR1Done() {
     std::vector<uint64_t> after;
     uint64_t whole = 0;
@@ -342,8 +344,8 @@ void StepR1Done() {
     Next(Step::R2Refill);
 }
 
-// The host hands the backpack two fresh records once it has judged R1's slice; the put-back goes on the base that
-// carries them, never on a stale one.
+// The host hands the backpack two fresh records once it has checked its own copy after R1; the put-back goes on the base
+// that carries them, never on a stale one.
 void StepR2Refill() {
     if (!g_refilled) {
         if (!Said(kLineRefilled)) {
@@ -374,7 +376,7 @@ void StepR2() {
     std::memcpy(static_cast<uint8_t*>(ui) + off, &sel, sizeof(sel));
     CallNoArg(ui, L"updSelect");
     g_inv0 = inv;
-    ActBaseline();
+    if (!ActBaseline()) { RouteFailTo("R2 the mirror's record count does not read", Step::R3); return; }
     g_r2Add0 = cen::RouteVerbs(1, false);
     g_r1Add0 = cen::RouteVerbs(0, false);
     uint64_t whole = 0;
@@ -421,7 +423,7 @@ void StepR3() {
 
 void StepR3Use(void* player) {
     void* hand = HeldActor(player);
-    ActBaseline();
+    if (!ActBaseline()) { R3Fail("R3 the mirror's record count does not read"); return; }
     if (!hand || !UseWithRun(player, g_pack.Get(), hand)) { R3Fail("R3 no hand actor, or playerUsedOn did not dispatch"); return; }
     UE_LOGI("[CI-CENSUS] drill client: R3 hold+run used on the backpack (route entries %llu)",
             static_cast<unsigned long long>(cen::RouteEntries(2)));
@@ -522,15 +524,15 @@ void StepBeforeWait() {
     }
     g_count0 = RecordCount(g_eid);
     g_inv0 = ue_wrap::inventory::LivePersonalStoreCount();
-    ActBaseline();
+    if (!ActBaseline()) { BeforeFailed("before the mirror's record count does not read"); return; }
     if (!PressSlot(Screen(), 0)) { BeforeFailed("before the take's slot press did not dispatch"); return; }
     g_pressMs = ::GetTickCount64();
     UE_LOGI("[CI-CENSUS] drill client: the take pressed on a base the host has moved past (%d record(s) here)", g_count0);
     Next(Step::BeforeTaken);
 }
 
-// The press's own local apply has run by the next check: the count the take left here, read before the slice can leave
-// and before the host's truth can come back.
+// The press goes through the act: the grant is a round trip away, so the count read at the next check is the one before
+// the verb replays and before the host's answer can come back.
 void StepBeforeTaken() {
     g_countTaken = RecordCount(g_eid);
     Next(Step::BeforeTake);
@@ -543,7 +545,7 @@ void StepBeforeTake() {
     Next(Step::BeforeSettle);
 }
 
-// The host refuses the stale slice and answers with its truth: the record is back when the count rises again.
+// The act ends and the mirror follows the host: the settle waits to see whether the count rises again (it should not).
 void StepBeforeSettle() {
     const int32_t now = RecordCount(g_eid);
     if (now <= g_countTaken && !Expired(kBackBoundMs)) return;
@@ -622,6 +624,7 @@ void ClientTick(coop::net::Session*) {
 }
 
 void ClientReset() {
+    LowerRun();   // first: a session that ends inside R3's act window must not leave input_run raised
     g_step = Step::Arm;
     g_stepMs = g_next = 0;
     g_pack.Reset();
@@ -633,7 +636,6 @@ void ClientReset() {
     g_gen0 = g_changedMs = 0;
     g_act0[0] = g_act0[1] = g_act0[2] = 0;
     g_base = 0;
-    g_runPlayer.Reset();
     g_refilled = false;
     g_count0 = g_countTaken = 0;
     g_slot0 = nullptr;
