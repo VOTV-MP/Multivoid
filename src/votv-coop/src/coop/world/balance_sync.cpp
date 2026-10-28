@@ -46,10 +46,11 @@ void Tick() {
         int32_t points = 0;
         if (!E::ReadPoints(&points)) return;  // not resolved yet (booting / at menu)
         if (g_haveSent && points == g_lastSent) return;  // unchanged -> no broadcast
+        coop::net::BalancePayload p{points};
+        // Keep retrying if no peer accepted the broadcast into its stream or backlog.
+        if (!s->SendReliable(coop::net::ReliableKind::BalanceSync, &p, sizeof(p))) return;
         g_haveSent = true;
         g_lastSent = points;
-        coop::net::BalancePayload p{points};
-        s->SendReliable(coop::net::ReliableKind::BalanceSync, &p, sizeof(p));
         UE_LOGI("balance_sync: host Points -> %d, broadcast BalanceSync to all", points);
     } else {
         // CLIENT: retry the latest pending mirror until WritePoints succeeds (the

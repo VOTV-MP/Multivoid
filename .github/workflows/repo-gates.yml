@@ -47,6 +47,9 @@ jobs:
       - name: Authoritative coin collection regression
         run: python3 .github/ci/coingun_collect_drill.py
 
+      - name: Shared balance broadcast retry regression
+        run: python3 .github/ci/balance_sync_drill.py
+
       - name: Public-leak gate drill
         run: python3 .github/ci/public_leak_gate_drill.py
 
