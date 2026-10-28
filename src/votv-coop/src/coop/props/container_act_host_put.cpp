@@ -41,6 +41,17 @@ bool g_noLapse = false;         // a sender is never slowed
 bool g_countJudged = false;     // the judgements of each slot's latest put head are counted
 dev::PutJudged g_judged[coop::net::kMaxPeers];
 
+// The last host events in order, a fixed ring: the drill judges which of two puts landed first from what the host did,
+// not from a count sampled a tick later. `seq` rises from 1 and 0 marks an empty entry.
+struct OrderEvent {
+    uint32_t seq = 0, eid = 0;
+    uint8_t slot = 0;
+    bool grant = false;   // a grant sent (or queued); false: a put commit inserted
+};
+constexpr size_t kOrderRing = 16;
+OrderEvent g_order[kOrderRing];
+uint32_t g_orderSeq = 0;
+
 // The container's room for one more record of `rec`'s size plus `flagBytes` (the fridge flag the container will add to a
 // record asked; none to a record it already stored): the lane's record cap and the slice's byte ceiling, the one SendBlob enforces on what the container publishes. Done unless the
 // container moved under the read; a count past the cap does not read at all, and is the cap.
@@ -128,6 +139,14 @@ std::optional<coop::net::Served> GrantPut(uint8_t slot, const caw::Request& q) {
 void ResetPutDev() {
     g_noReservation = g_noLapse = g_countJudged = false;
     for (dev::PutJudged& j : g_judged) j = dev::PutJudged{};
+    for (OrderEvent& e : g_order) e = OrderEvent{};
+    g_orderSeq = 0;
+}
+
+void NoteOrder(uint8_t slot, uint32_t eid, bool grant) {
+    if (!g_countJudged) return;
+    ++g_orderSeq;
+    g_order[g_orderSeq % kOrderRing] = OrderEvent{g_orderSeq, eid, slot, grant};
 }
 
 // A put head was judged (not the early return of a head that waits): counted for the drill when it asks.
@@ -199,7 +218,10 @@ void PlaceTimelyDone(cas::Hold h, const caw::Commit& c) {
     }
     h.index = c.index;
     h.record = c.record;
+    const uint8_t slot = h.slot;
+    const uint32_t eid = h.eid;
     Place(std::move(h), "put committed", cre::Source::Wire, "inserted");
+    if (check == DoneCheck::Insert) NoteOrder(slot, eid, /*grant=*/false);   // a NotReady insert is owed, not done
 }
 
 // A commit whose hold is gone: the deadline released a reservation and left its tombstone, so an honest client's late
@@ -336,5 +358,12 @@ void NoReservation(bool on) { g_noReservation = on; }
 void NoLapse(bool on) { g_noLapse = on; }
 void CountPutJudgements(bool on) { g_countJudged = on; }
 PutJudged LastPutJudged(uint8_t slot) { return slot < coop::net::kMaxPeers ? g_judged[slot] : PutJudged{}; }
+
+uint32_t OrderSeq(uint32_t eid, uint8_t slot, bool grant) {
+    uint32_t first = 0;
+    for (const OrderEvent& e : g_order)
+        if (e.seq && e.eid == eid && e.slot == slot && e.grant == grant && (!first || e.seq < first)) first = e.seq;
+    return first;
+}
 
 }  // namespace coop::props::container_act_host::dev

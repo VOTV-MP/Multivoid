@@ -166,6 +166,11 @@ struct PutJudged {
 void CountPutJudgements(bool on);
 PutJudged LastPutJudged(uint8_t slot);
 
+// While CountPutJudgements is on, the host's grants (sent or queued) and put commits inserted, in the order it did them,
+// a ring of the last 16. OrderSeq is the rising number (from 1) of the oldest such event of `slot` on `eid` still in the
+// ring, a grant when `grant` is true and an inserted commit otherwise; 0 when there is none.
+uint32_t OrderSeq(uint32_t eid, uint8_t slot, bool grant);
+
 // The RecordHash of the record held in escrow on `eid` (the neutered copy); false when none.
 bool FirstEscrow(uint32_t eid, uint64_t& hash);
 

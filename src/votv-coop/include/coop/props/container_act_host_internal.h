@@ -45,6 +45,10 @@ void ResetPutDev();
 // A put head was judged: counted while the drill asks (CountPutJudgements).
 void NoteJudged(uint8_t slot, uint16_t id);
 
+// A grant sent (or queued) or a put commit inserted, in the order the host did them: kept for the drill while it asks
+// (CountPutJudgements), read by dev::OrderSeq.
+void NoteOrder(uint8_t slot, uint32_t eid, bool grant);
+
 // The host's truth of a container to the sender of a put commit it refused or lost (MTA syncs a refused change back to
 // its source, CGame.cpp:2779-2795). Unlike a request's refusal this is bounded by the commit, one per hold.
 void SendTruthNow(uint8_t slot, uint32_t eid);

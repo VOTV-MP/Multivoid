@@ -234,13 +234,17 @@ void PutJoinHost(const coop::net::Session& s) {
             if (now - g_relMs > kSecondGrantMs) Fail("the joiner's put was not granted %llu ms after the release", static_cast<unsigned long long>(now - g_relMs));
             return;
         }
-        const int count = CountOf(TargetEid());
         const AH::dev::PutJudged j = AH::dev::LastPutJudged(static_cast<uint8_t>(g_slot2));
         const uint64_t w = j.lastMs - j.firstMs;
-        UE_LOGI("[CI-DRILL] host putjoin: judged %u over %llu ms (limit %llu); client 1's second record was in before the joiner's grant: "
-                "target %d -> %d", j.n, static_cast<unsigned long long>(w), static_cast<unsigned long long>(w / 250 + 1), v.count0 + 1, count);
-        if (count != v.count0 + 2) {
-            Fail("the joiner was granted with the target at %d, expected %d (client 1's second put in first)", count, v.count0 + 2);
+        // The order is the host's own: its sequence of inserts and grants, never a count sampled a tick after the joiner's commit.
+        const uint32_t inserted = AH::dev::OrderSeq(TargetEid(), static_cast<uint8_t>(g_slot1), /*grant=*/false);
+        const uint32_t granted = AH::dev::OrderSeq(TargetEid(), static_cast<uint8_t>(g_slot2), /*grant=*/true);
+        UE_LOGI("[CI-DRILL] host putjoin: judged %u over %llu ms (limit %llu); client 1's second put was inserted as event %u, the "
+                "joiner's grant came as event %u", j.n, static_cast<unsigned long long>(w), static_cast<unsigned long long>(w / 250 + 1),
+                inserted, granted);
+        if (!inserted || !granted || inserted > granted) {
+            Fail("client 1's second put was not inserted before the joiner's grant (insert event %u, grant event %u; 0 is none)",
+                 inserted, granted);
             return;
         }
         if (j.n > w / 250 + 1) {

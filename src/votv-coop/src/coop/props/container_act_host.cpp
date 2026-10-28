@@ -433,8 +433,12 @@ coop::net::Served ServeHead(uint8_t slot, const Queued& item) {
         g_refusals.Note(slot, refusal != Tally::kCount ? TallyName(refusal) : internal::VerdictName(v), Now());
     }
     if (v == internal::Verdict::Gone && in.container == internal::Container::Ready) SendTruth(slot, q.eid);
-    if (v == internal::Verdict::Grant && sent) ++g_verdicts[q.eid].grants;
-    else if (v == internal::Verdict::Gone) ++g_verdicts[q.eid].gones;
+    if (v == internal::Verdict::Grant && sent) {
+        ++g_verdicts[q.eid].grants;
+        detail::NoteOrder(slot, q.eid, /*grant=*/true);
+    } else if (v == internal::Verdict::Gone) {
+        ++g_verdicts[q.eid].gones;
+    }
     UE_LOGI("container_act: slot=%u id=%u eid=%u %s -> %s", static_cast<unsigned>(slot), static_cast<unsigned>(q.id),
             static_cast<unsigned>(q.eid), FamilyName(q.family),
             v == internal::Verdict::Grant && !sent ? "grant-unsent" : internal::VerdictName(v));
