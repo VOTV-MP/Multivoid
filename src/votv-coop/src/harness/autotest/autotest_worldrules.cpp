@@ -26,6 +26,7 @@ namespace {
 
 namespace GT = ue_wrap::game_thread;
 namespace GR = ue_wrap::game_rules;
+namespace GP = ue_wrap::game_rules_pane;
 
 std::string ValueText(const GR::RuleField& f) {
     char buf[32];
@@ -140,7 +141,6 @@ void RunWorldRulesProbe() {
     // The game's own pane layout, joined to the rules the way the panel joins it: a rule the pane
     // does not place, or a row that finds no rule, shows here before it shows on screen.
     OnGameThread([] {
-        namespace GP = ue_wrap::game_rules_pane;
         GP::Pane pane;
         GR::Snapshot s;
         if (!GP::Read(pane) || !GR::ReadLocal(s)) {
