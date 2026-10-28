@@ -1,5 +1,6 @@
 // coop/props/container_writer_watch.cpp -- the addObject / takeObj watch on a container's inventory:
-// a change notice, never an action. See coop/props/container_writer_watch.h.
+// a change notice, never an action. On the host a hit marks the container for the sweep; on a client
+// a shared container's mirror is display only, so a hit marks nothing. See coop/props/container_writer_watch.h.
 
 #include "coop/props/container_writer_watch.h"
 

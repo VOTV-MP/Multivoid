@@ -1,7 +1,7 @@
 // coop/props/container_contents_io.h -- the raw I/O of one world container's inventory slice: the
 // records are read out of its GObjStack array, and written back into it through the engine's own
 // verbs. Holds no lane state, no session and no maps; the lane beside it (container_contents_sync)
-// owns the hashes, the pen and the arbitration, and calls these on the game thread.
+// owns the hashes, the pen and the birth rule, and calls these on the game thread.
 
 #pragma once
 

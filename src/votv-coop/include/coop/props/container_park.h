@@ -39,7 +39,7 @@ void Admit(uint32_t eid, uint8_t authorSlot, std::vector<uint8_t>&& blob, uint64
 // at the next sweep. Not for the replay callback of Sweep, whose entry the sweep retires itself.
 void Erase(uint32_t eid);
 
-// Re-offer each parked blob to its own author's arbitration. The callback returns false only when
+// Re-offer each parked blob as its own author's. The callback returns false only when
 // the container is STILL not ready; anything else (applied, refused, malformed) retires the
 // entry.
 using ReplayFn = bool (*)(const std::vector<uint8_t>& blob, uint8_t authorSlot);

@@ -1,7 +1,8 @@
 // coop/props/container_contents_sync.cpp -- world-container contents over the wire: a write to a
 // container (the writer watches, coop/props/container_writer_watch) marks it dirty, a 250 ms
-// sweep ships its GObjStack slice as a blob, the receiver writes the slice back and re-derives the volume and names through the
-// engine's own verbs; a client's edit is a compare-and-swap the host arbitrates and relays. See
+// sweep ships its GObjStack slice as a blob, the receiver writes the slice back and re-derives the volume and names
+// through the engine's own verbs. The host publishes; a client ships only a thrown container's birth slice, and the
+// host refuses every other client slice. See
 // coop/props/container_contents_sync.h.
 
 #include "coop/props/prop_save_data.h"
@@ -349,8 +350,8 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
     // throw put it where it is.
     void* const bornActor = (IsHost() && senderSlot != 0) ? LivePropActor(outEid) : nullptr;
     const bool birth = bornActor && cb::Awaited(bornActor, senderSlot);
-    // Unjudged is not unbounded: a birth slice spends the same arrival budget an edit does, so an
-    // author cannot make the host parse slices for this container at any rate while it waits. Past
+    // A birth is not unbounded: it spends the author's arrival budget, so an author cannot make the
+    // host parse slices for this container at any rate while it waits. Past
     // the budget it is HELD in the pen rather than refused: it is the thrower's only copy of the
     // contents and is sent once, and a replay spends nothing, so the pen's own per-author cap and TTL
     // are what bound it.
@@ -413,9 +414,8 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
     }
     const uint64_t contentHash = cw::ContentHash(outEid, recs);
     const Ingest outcome = ApplyContents(outEid, recs, contentHash);
-    // Host, client-authored and accepted. g_sentHash keeps the host's own drain from re-broadcasting
-    // the identical slice back the long way round. The compare-and-swap needs no record of its own:
-    // the next author is judged against the contents this apply just wrote.
+    // Host, a client's birth applied. g_sentHash keeps the host's own drain from re-broadcasting
+    // the identical slice back the long way round.
     if (outcome == Ingest::Applied && IsHost() && senderSlot != 0) {
         if (birth) cb::Complete(bornActor);
         if (merged) {
@@ -447,9 +447,9 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
 }
 
 // The readiness pen's replay: true when the blob was dealt with, false while its container is still
-// not ready. The author rides with the blob because a parked slice must pass the SAME arbitration it
-// would have passed on arrival -- replaying a client's write as slot 0 would hand it the host's
-// own authority, and the host does park client writes (a slice whose author has no body yet).
+// not ready. The author rides with the blob because a parked slice must meet the SAME rule it would
+// have met on arrival -- replaying a client's slice as slot 0 would hand it the host's own authority,
+// and the host does park a client's birth slice (past the author's arrival budget).
 bool ReplayParked(const std::vector<uint8_t>& blob, uint8_t authorSlot) {
     uint32_t eid = 0;
     const Ingest outcome = ParseAndApply(blob, eid, authorSlot, cb::Source::Replay);
@@ -463,7 +463,7 @@ bool ReplayParked(const std::vector<uint8_t>& blob, uint8_t authorSlot) {
 }
 
 // A blob held in bind_wait runs again once its container is bound: the whole of ParseAndApply, the author's
-// arbitration included, and its outcome is routed as on arrival except that a second miss is a drop.
+// birth check included, and its outcome is routed as on arrival except that a second miss is a drop.
 void ReplayHeld(const uint8_t* bytes, size_t n, int senderSlot) {
     std::vector<uint8_t> blob(bytes, bytes + n);
     uint32_t eid = 0;
@@ -515,8 +515,8 @@ void ApplyHeld(const std::vector<uint8_t>& blob, uint8_t senderSlot);   // defin
 }  // namespace
 
 void Install(coop::net::Session* session) {
-    // This lane owns a container's GObjStack slice behind a host-arbitrated compare-and-swap; the
-    // container's own save record carries the index into that stack, with none of the arbitration.
+    // This lane owns a container's GObjStack slice, which the host publishes; the container's own
+    // save record carries the index into that stack, with none of the contents.
     coop::prop_save_data::DeclareClassOwnedElsewhere(L"prop_container_C");
     g_session.store(session, std::memory_order_release);
     coop::props::container_apply_hold::SetApply(&ApplyHeld);
@@ -542,9 +542,9 @@ void Tick() {
 
     g_asm.Sweep(std::chrono::steady_clock::now(), std::chrono::seconds(10));
 
-    // Both peers drain: the host fans its changes out, a client ships the container it mutated to
-    // the host, which arbitrates and relays. Both sweep the readiness pen: a slice for a container that
-    // is here but not ready (a client write whose author has no body yet, say) is retried and evicted.
+    // Both peers drain: the host fans its changes out, a client ships a container it threw to the host,
+    // which applies it and relays. Both sweep the readiness pen: a slice for a container that is here
+    // but not ready (a birth past its author's arrival budget, say) is retried and evicted.
     cb::Sweep(now, g_dirty);
     DrainDirty(s);
     pk::Sweep(&ReplayParked, NowMs());

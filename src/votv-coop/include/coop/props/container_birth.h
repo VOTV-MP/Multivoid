@@ -2,8 +2,9 @@
 // the container and the game's loadData rebinds it to its slot in the thrower's own GObjStack, firing
 // neither addObject nor takeObj, and the drop intent carries no contents: the thrower's slice is the
 // only copy of them, so it has to travel, and the host must not publish over it meanwhile. This
-// module holds that transfer on both sides; coop/props/container_contents_sync ships, judges and
-// applies the slices, and docs/devices.md carries the model.
+// module holds that transfer on both sides, and the host's bound on a client's arrivals;
+// coop/props/container_contents_sync ships, refuses what is not a birth, and
+// applies the births, and docs/devices.md carries the model.
 //
 // CLIENT: a container this peer threw is held until the host's echo binds it to an element; its
 // slice is then owed to the host as a birth.

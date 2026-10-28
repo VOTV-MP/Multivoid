@@ -112,8 +112,8 @@ Arrival SpendArrival(uint32_t eid, uint8_t authorSlot, uint64_t nowMs, coop::net
         static bool sSaid = false;
         if (!sSaid) {
             sSaid = true;
-            UE_LOGW("container_contents: slot %u has no proved identity -- its slices are "
-                    "arbitrated but not rate-bounded", static_cast<unsigned>(authorSlot));
+            UE_LOGW("container_contents: slot %u has no proved identity -- its birth slices are "
+                    "not rate-bounded", static_cast<unsigned>(authorSlot));
         }
     }
     return Arrival::Ok;
