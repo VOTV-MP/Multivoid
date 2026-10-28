@@ -37,14 +37,18 @@ bool Feasible(uint32_t n, const std::vector<uint8_t>& b, size_t o);
 
 // ---- append (little-endian) ----
 void AppU8(std::vector<uint8_t>& b, uint8_t v);
+void AppU16(std::vector<uint8_t>& b, uint16_t v);
 void AppU32(std::vector<uint8_t>& b, uint32_t v);
+void AppU64(std::vector<uint8_t>& b, uint64_t v);
 void AppI32(std::vector<uint8_t>& b, int32_t v);
 void AppF32(std::vector<uint8_t>& b, float v);
 void AppWStr(std::vector<uint8_t>& b, const std::wstring& s);  // u32 count + UTF-16LE code units
 
 // ---- read (cursor + bounds; every Rd fails cleanly on overrun) ----
 bool RdU8(const std::vector<uint8_t>& b, size_t& o, uint8_t& v);
+bool RdU16(const std::vector<uint8_t>& b, size_t& o, uint16_t& v);
 bool RdU32(const std::vector<uint8_t>& b, size_t& o, uint32_t& v);
+bool RdU64(const std::vector<uint8_t>& b, size_t& o, uint64_t& v);
 bool RdI32(const std::vector<uint8_t>& b, size_t& o, int32_t& v);
 bool RdF32(const std::vector<uint8_t>& b, size_t& o, float& v);
 bool RdWStr(const std::vector<uint8_t>& b, size_t& o, std::wstring& s);

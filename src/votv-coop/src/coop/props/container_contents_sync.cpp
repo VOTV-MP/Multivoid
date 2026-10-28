@@ -382,11 +382,7 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
             // rate one, because a bound on how fast an author may spend the host must not make
             // the host spend more the faster it is pushed. No peer of this build can reach that
             // bound (one slice per container per 250 ms sweep, and only when it changed).
-            void* actor = LivePropActor(outEid);
-            void* inv = actor && ci::IsContainer(actor) ? ci::InventoryOf(actor) : nullptr;
-            if (s && inv && d != wp::Decision::TooFast && ci::IsWorldInventory(inv)) {
-                BroadcastContainer(s, outEid, inv, static_cast<int>(senderSlot), /*force=*/true);
-            }
+            if (d != wp::Decision::TooFast) SendTruthToSlot(outEid, static_cast<int>(senderSlot));
             // Handled, not Applied: never relayed; third peers run no arbitration.
             return Ingest::Handled;
         }
@@ -708,6 +704,16 @@ bool DevRawAppendActor(uint32_t eid, void* item, bool publish) {
         return false;
     recs.push_back(std::move(rec));
     return ApplyAppended(eid, recs, publish);
+}
+
+bool SendTruthToSlot(uint32_t eid, int slot) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !IsHost()) return false;
+    void* actor = LivePropActor(eid);
+    if (!actor || !ci::IsContainer(actor)) return false;
+    void* inv = ci::InventoryOf(actor);
+    if (!inv || !ci::IsWorldInventory(inv)) return false;
+    return BroadcastContainer(s, eid, inv, slot, /*force=*/true);
 }
 
 void ForEachWorldContainer(void (*fn)(uint32_t eid, void* ctx), void* ctx) {

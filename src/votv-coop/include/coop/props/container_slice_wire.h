@@ -40,6 +40,11 @@ std::vector<uint8_t> Pack(uint32_t eid, uint64_t baseHash,
 // they edited from.
 uint64_t ContentHash(uint32_t eid, const std::vector<ue_wrap::save_record::SaveRecord>& recs);
 
+// The hash of ONE record: its save_record_wire bytes alone, no eid and no header. The caller hashes the record in
+// the form the wire carries (read with neuterNested=true), so a host record and its client mirror hash alike; two
+// equal records hash alike and are the same item to every peer.
+uint64_t RecordHash(const ue_wrap::save_record::SaveRecord& r);
+
 // False on a blob that is not one of ours, or too short. Leaves `o` at the record count.
 bool ParseHeader(const std::vector<uint8_t>& b, size_t& o, uint32_t& outEid, uint64_t& outBaseHash);
 

@@ -50,7 +50,9 @@ bool Feasible(uint32_t n, const std::vector<uint8_t>& b, size_t o) {
 }
 
 void AppU8(std::vector<uint8_t>& b, uint8_t v) { b.push_back(v); }
+void AppU16(std::vector<uint8_t>& b, uint16_t v) { AppPod(b, v); }
 void AppU32(std::vector<uint8_t>& b, uint32_t v) { AppPod(b, v); }
+void AppU64(std::vector<uint8_t>& b, uint64_t v) { AppPod(b, v); }
 void AppI32(std::vector<uint8_t>& b, int32_t v) { AppPod(b, v); }
 void AppF32(std::vector<uint8_t>& b, float v) { AppPod(b, v); }
 void AppWStr(std::vector<uint8_t>& b, const std::wstring& s) {
@@ -66,7 +68,9 @@ void AppWStr(std::vector<uint8_t>& b, const std::wstring& s) {
 bool RdU8(const std::vector<uint8_t>& b, size_t& o, uint8_t& v) {
     if (o + 1 > b.size()) return false; v = b[o++]; return true;
 }
+bool RdU16(const std::vector<uint8_t>& b, size_t& o, uint16_t& v) { return RdPod(b, o, v); }
 bool RdU32(const std::vector<uint8_t>& b, size_t& o, uint32_t& v) { return RdPod(b, o, v); }
+bool RdU64(const std::vector<uint8_t>& b, size_t& o, uint64_t& v) { return RdPod(b, o, v); }
 bool RdI32(const std::vector<uint8_t>& b, size_t& o, int32_t& v) { return RdPod(b, o, v); }
 bool RdF32(const std::vector<uint8_t>& b, size_t& o, float& v) { return RdPod(b, o, v); }
 bool RdWStr(const std::vector<uint8_t>& b, size_t& o, std::wstring& s) {

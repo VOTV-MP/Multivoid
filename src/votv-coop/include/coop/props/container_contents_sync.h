@@ -90,6 +90,11 @@ bool DevRawAppend(uint32_t eid, bool publish);
 // it) appended instead of a copy of the first. False as DevRawAppend, or when the item's record does not read.
 bool DevRawAppendActor(uint32_t eid, void* item, bool publish);
 
+// Host: send this container's live contents to one slot, forced past the unchanged-hash guard -- the truth a refused
+// client converges on. False when this is not the host, the container is not live, or the send was refused; true
+// means the send was not refused, never a delivery. Game thread.
+bool SendTruthToSlot(uint32_t eid, int slot);
+
 // Call fn once per live world container, boundary 1 applied: the set the connect seed walks. Game thread.
 void ForEachWorldContainer(void (*fn)(uint32_t eid, void* ctx), void* ctx);
 
