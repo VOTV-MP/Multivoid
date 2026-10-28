@@ -14,6 +14,7 @@ drone described in [devices.md](devices.md).
 
 The host owns the balance. It polls the points field every tick, which catches every writer, and
 broadcasts the absolute value on change and to a joiner; a client writes the host's value directly.
+If no peer accepts a broadcast into its stream or backlog, the next tick retries the current value.
 The wire is one-way. A client-to-host balance delta once existed with no bound, so any peer could
 set the group's money to anything; it was retired whole rather than clamped
 (`coop/world/balance_sync`). A client's own earnings are therefore not shared unless a lane

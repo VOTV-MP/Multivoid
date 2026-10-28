@@ -25,9 +25,9 @@ namespace coop::balance_sync {
 void SetSession(coop::net::Session* session);
 
 // Per-tick (net_pump game thread): on the HOST, poll Points + broadcast BalanceSync on
-// change; on a CLIENT, retry applying the latest pending host balance until the saveSlot
-// resolves (a connect-edge sync can arrive before the gamemode loads). No-op when not
-// connected.
+// change, retrying if no peer accepts the send; on a CLIENT, retry applying the latest
+// pending host balance until the saveSlot resolves (a connect-edge sync can arrive before
+// the gamemode loads). No-op when not connected.
 void Tick();
 
 // HOST: send the current balance to ONE slot, right now. Two callers, one reason -- the
