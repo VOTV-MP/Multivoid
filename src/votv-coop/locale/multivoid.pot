@@ -865,7 +865,7 @@ msgstr ""
 msgid "Not enough space."
 msgstr ""
 
-#: src/coop/props/prop_act_request.cpp
+#: src/coop/props/container_act_request.cpp src/coop/props/prop_act_request.cpp
 msgid "Not ready yet, try again in a moment."
 msgstr ""
 

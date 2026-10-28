@@ -9,23 +9,32 @@
 // 30 s hold deadline is dropped, since the host has ended that hold by itself. A refused commit is sent again every
 // 250 ms at most.
 //
-// No family's replay is built in this package: a grant is answered with an abort until a family brings its own.
+// The take family has its replay: a client's press of an inventory-screen slot is cancelled at the slot's pressButton
+// and asked of the host; on a grant the same slot is pressed again under the replay latch, if it still names the
+// record the host granted, and the commit says whether the record left the container. Any other family's grant is
+// answered with an abort until it brings its own replay.
 
 #pragma once
 
 #include "coop/net/protocol.h"
 #include "coop/props/container_act_wire.h"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace coop::net { class Session; }
 
 namespace coop::props::container_act_request {
 
-void Install(coop::net::Session* session);
-void Tick();            // sends the commits the transport refused again; the 10 s expiry of the open record
-void OnDisconnect();    // the pending record, the expired list, the unsent commits, both seq counters, the line timers
+void Install(coop::net::Session* session);   // also registers the take watch
+void Tick();            // settles the take watch; sends the commits the transport refused again; the 10 s expiry of the
+                        // open record
+void OnDisconnect();    // the pending record, the replay latch, the expired list, the unsent commits, both seq counters,
+                        // the line timers
 void OnReply(const coop::net::ContainerActReplyPayload& p);
+
+// True while a granted act's replay runs on this peer; the verb watch reads it. Game thread.
+bool InReplay();
 
 // Opens the one pending act and sends `r` with a fresh id written into it (ids skip 0). False when one is open, or
 // the send failed ("The host could not be asked; try again."), or the request cannot be packed (a record past the byte
@@ -39,6 +48,19 @@ enum class ReplyAction : uint8_t { Stale, Refused, BadReason, Granted };
 // granted == 0 && 1 <= reason < kContainerActReasons -> Refused; else BadReason.
 ReplyAction DecideReply(bool pending, uint16_t pendingId, const coop::net::ContainerActReplyPayload& p);
 const char* ReplyActionName(ReplyAction a);   // "stale" "refused" "bad-reason" "granted"
+
+enum class TakeCheck : uint8_t { Replay, Abort };
+// The replay presses only the slot that asked: live, its screen still showing the same container, the same id, and its
+// record still hashing what the host granted. A failed read or an id past the end is hashMatches = false.
+TakeCheck CheckTake(bool slotLive, bool screenShowsContainer, bool sameId, bool hashMatches);
+// The commit after the press. 0 (abort) only when the verb did not run, or it ran and took nothing (the count read
+// back and did not fall); else 1 (done): a press that ran and whose count could not be read back counts as done, since
+// an abort there would give back a record the player may hold.
+uint8_t TakeCommitted(bool pressed, bool afterRead, size_t countBefore, size_t countAfter);
 }  // namespace internal
+
+namespace dev {   // the container act drills read it; OnDisconnect says it once; compiled always
+uint32_t TakeDoneUnread();   // takes committed done although the press's count could not be read back
+}  // namespace dev
 
 }  // namespace coop::props::container_act_request
