@@ -6,7 +6,7 @@
 // applies the slices, and docs/devices.md carries the model.
 //
 // CLIENT: a container this peer threw is held until the host's echo binds it to an element; its
-// slice is then owed to the host as a birth (container_slice_wire::kBirthBase).
+// slice is then owed to the host as a birth.
 // HOST: the copy built from a client's intent is a transfer in progress until that author's slice
 // lands: not published, not seeded to a joiner, and every slice of that author for it is the newest
 // version. It ends when the slice lands, when the author leaves, or at its deadline.

@@ -59,7 +59,6 @@
 #include "coop/player/stat_orders_wire.h"
 #include "coop/props/container_birth.h"
 #include "coop/props/container_park.h"
-#include "coop/props/container_write_policy.h"
 #include "coop/props/container_act_host.h"
 #include "coop/props/prop_act_host.h"
 #include "coop/props/prop_lifecycle.h"
@@ -294,12 +293,7 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     // And the permission model: a resolution that answers wrong reads as working until a player is
     // refused or let in.
     coop::permissions::RunSelftest();
-    // And the container arbitration's own arithmetic: the base that is refused, the host change in
-    // flight, and the sequence a third peer walks into -- which no two-peer run can reach, because
-    // the peer that is judged against a stale baseline is the one that learned the world from a
-    // relay rather than from its own join seed.
-    coop::props::container_write_policy::RunSelftest();
-    // And the pen beside it, whose cap has never fired in a run: every park a measured join
+    // And the readiness pen, whose cap has never fired in a run: every park a measured join
     // produced was host-authored, and those are deliberately not capped.
     coop::props::container_park::RunSelftest();
     // And the transfer of a thrown container, whose cap, departure and deadline no run reaches.

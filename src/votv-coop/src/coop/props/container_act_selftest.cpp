@@ -10,6 +10,7 @@
 #include "coop/props/container_act_selftest_internal.h"
 #include "coop/props/container_act_state.h"
 #include "coop/props/container_act_wire.h"
+#include "coop/props/container_contents_sync.h"
 #include "coop/props/container_record_edit.h"
 #include "coop/props/container_slice_wire.h"
 
@@ -26,6 +27,7 @@ namespace caw = coop::props::container_act_wire;
 namespace cas = coop::props::container_act_state;
 namespace cre = coop::props::container_record_edit;
 namespace cr  = coop::props::container_reach;
+namespace CS  = coop::props::container_contents_sync;
 namespace SR  = ue_wrap::save_record;
 
 namespace selftest {
@@ -384,11 +386,11 @@ void RunSelftest() {
         check(H::DecideCommit(true, 1) == H::CommitStep::Done, "commit: matched and committed is done");
         check(H::DecideCommit(true, 0) == H::CommitStep::Abort, "commit: matched and aborted aborts");
 
-        check(!H::TruthDue(1000, 2999), "truth: 1999 ms after a send is not due");
-        check(H::TruthDue(1000, 3000), "truth: 2000 ms after a send is due");
-        check(H::SlotTruthDue(0, 1), "truth: a slot that was sent none is due");
-        check(!H::SlotTruthDue(1000, 1499), "truth: 499 ms after any send to the slot is not due");
-        check(H::SlotTruthDue(1000, 1500), "truth: 500 ms after any send to the slot is due");
+        check(!CS::TruthDue(1000, 2999), "truth: 1999 ms after a send is not due");
+        check(CS::TruthDue(1000, 3000), "truth: 2000 ms after a send is due");
+        check(CS::SlotTruthDue(0, 1), "truth: a slot that was sent none is due");
+        check(!CS::SlotTruthDue(1000, 1499), "truth: 499 ms after any send to the slot is not due");
+        check(CS::SlotTruthDue(1000, 1500), "truth: 500 ms after any send to the slot is due");
 
         check(!H::WaitExpired(1000, 15999), "wait: a head 1 ms short of the bound stays");
         check(H::WaitExpired(1000, 16000), "wait: a head at the bound is ended");

@@ -150,13 +150,11 @@ void StepArm(coop::net::Session* s) {
     void* pack = E::SpawnActor(packCls, Offset(at, fwd, kAheadCm, 0.f));
     if (!pack || !ci::IsContainer(pack)) { Fail("the backpack did not spawn as a container"); return; }
     g_pack.Set(pack);
-    if (!cen::IsBeforeOnly()) {
-        // One loose drive to the side, which the client holds and throws into the backpack (R4). The client's mirror
-        // arrives where the host put it.
-        void* driveCls = R::FindClass(kDriveClass);
-        void* b = driveCls ? E::SpawnActor(driveCls, Offset(at, fwd, kSideAheadCm, -kSideCm)) : nullptr;
-        if (!b) { Fail("the loose drive did not spawn"); return; }
-    }
+    // One loose drive to the side, which the client holds and throws into the backpack (R4). The client's mirror
+    // arrives where the host put it.
+    void* driveCls = R::FindClass(kDriveClass);
+    void* b = driveCls ? E::SpawnActor(driveCls, Offset(at, fwd, kSideAheadCm, -kSideCm)) : nullptr;
+    if (!b) { Fail("the loose drive did not spawn"); return; }
     Next(Step::Fill);
 }
 
@@ -187,7 +185,7 @@ void StepPublish() {
     LogHashes("host", g_eid, "published");
     LogSizes("host", "fixture", pack);
     cen::ReportNow("host fixture");
-    Next(cen::IsBeforeOnly() ? Step::WaitBefore : Step::WaitR1);
+    Next(Step::WaitR1);
 }
 
 // The client's R1 take is done (it says so once its act ended and its mirror followed): the host looks at its own copy.
@@ -414,9 +412,7 @@ void StepWaitDone() {
     std::snprintf(say, sizeof(say), "%sih=%d", kPrefixHostDone, ih);
     coop::dev::drill_chat::Say(say);
     // The host's own container never lost the record, so its answer to "is it back" is yes.
-    UE_LOGI("[CI-CENSUS] before record-back=1 item-client=%d item-host=%d (the host judged slot 1: accepted=%llu refused=%llu)",
-            ic, ih, static_cast<unsigned long long>(cen::HostSlices(1, true)),
-            static_cast<unsigned long long>(cen::HostSlices(1, false)));
+    UE_LOGI("[CI-CENSUS] before record-back=1 item-client=%d item-host=%d", ic, ih);
     HostDone();
 }
 

@@ -544,7 +544,7 @@ void RunPutSelftest(Checks& check) {
         check(!H::PutNameOk(named), "name-bound: a record with no name is refused");
 
         std::vector<SR::SaveRecord> three = {hand, moved, changed};
-        check(csw::SliceBytes(three) == csw::Pack(7, 0, three).size() && csw::SliceBytes({}) == csw::Pack(7, 0, {}).size(),
+        check(csw::SliceBytes(three) == csw::Pack(7, three).size() && csw::SliceBytes({}) == csw::Pack(7, {}).size(),
               "slice-bytes: the size without packing is the packed size");
 
         H::PutInputs w;

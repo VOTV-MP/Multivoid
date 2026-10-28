@@ -1,6 +1,6 @@
-// coop/props/container_contents_sync.h -- a world container's CONTENTS, authored by the peer whose
-// verb fired and arbitrated by the host. docs/devices.md carries the model; the invariants a
-// client-authored slice must pass are coop/props/container_write_policy, a slice for a container with no actor
+// coop/props/container_contents_sync.h -- a world container's CONTENTS, published by the host. docs/devices.md
+// carries the model. A client authors one slice kind, a thrown container's birth (coop/props/container_birth, with
+// its arrival bound); every other client slice is refused at the host. A slice for a container with no actor
 // waits in bind_wait, one for a container not ready in container_park, the bytes are container_slice_wire.
 //
 // Two rules restate HERE, because breaking either destroys player data: a container whose
@@ -42,9 +42,9 @@ void MarkHostWrite(uint32_t eid);
 void ForgetApplied(uint32_t eid);
 
 // ContainerContents chunks: a BlobChunkPayload whose blob is
-// `[u8 op=0][u32 eid][u64 baseHash][u16 n]` then n records in the coop/items/save_record_wire
+// `[u8 op=0][u32 eid][u16 n]` then n records in the coop/items/save_record_wire
 // grammar. Never refanned -- a client accepts slot 0 and nothing else, and the host accepts only a
-// non-zero slot, which is a client-authored slice it arbitrates.
+// non-zero slot, which is a client-authored slice it takes as a thrown container's birth and refuses otherwise.
 void OnContentsChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 
 // Host: ship the joiner one contents blob per live world container. The join save-transfer blob is
@@ -101,6 +101,16 @@ bool DevRawAppendActor(uint32_t eid, void* item, bool publish);
 // means the send was not refused, never a delivery. Game thread.
 bool SendTruthToSlot(uint32_t eid, int slot);
 
+// SendTruthToSlot, bounded: at most one per kTruthEveryMs per (slot, container) and one per kTruthSlotEveryMs per slot
+// across containers, so a forged address buys no more than one container blob per interval and a flood of distinct
+// addresses no more than the slot's floor. The table is written only for a container that resolves. False when
+// nothing was sent. For a refusal the sender can repeat; a send owed once (a put commit's) uses SendTruthToSlot.
+bool SendTruthBounded(uint32_t eid, int slot);
+inline constexpr uint64_t kTruthEveryMs = 2000;
+inline constexpr uint64_t kTruthSlotEveryMs = 500;
+bool TruthDue(uint64_t lastSentMs, uint64_t nowMs);
+bool SlotTruthDue(uint64_t lastAnyMs, uint64_t nowMs);   // lastAnyMs 0: none sent yet
+
 // Call fn once per live world container, boundary 1 applied: the set the connect seed walks. Game thread.
 void ForEachWorldContainer(void (*fn)(uint32_t eid, void* ctx), void* ctx);
 
@@ -123,10 +133,5 @@ bool SentBaselineKnown(uint32_t eid);
 // Dev: how often this lane touched the container: a local write (MarkHostWrite), an applied remote slice, a connect
 // seed's send. 0 when it never has. Game thread; reset at session end.
 uint32_t TouchEpochOf(uint32_t eid);
-
-// Dev: what the host's arbitration last decided about a client-authored slice for this container (None: no slice was
-// judged since the session began). A slice held for a body not yet posed is not a judgement. Host; reset at session end.
-enum class ClientSliceOutcome : uint8_t { None, Refused, Accepted };
-ClientSliceOutcome LastClientSliceOutcome(uint32_t eid);
 
 }  // namespace coop::props::container_contents_sync

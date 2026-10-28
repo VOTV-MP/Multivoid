@@ -271,10 +271,10 @@ void GatherFixtures(void* player, Gather& g) {
 void StepFind(void* player) {
     Gather g;
     GatherFixtures(player, g);
-    if (g.pack && (cen::IsBeforeOnly() || g.nDrives == 1)) {
+    if (g.pack && g.nDrives == 1) {
         g_pack.Set(g.pack);
         g_eid = EidOf(g.pack);
-        if (!cen::IsBeforeOnly()) g_drive.Set(g.drives[0]);
+        g_drive.Set(g.drives[0]);
         g_rest = 0;
         UE_LOGI("[CI-CENSUS] drill client: the backpack's mirror holds the host's %d records, eid=%u", kItems, g_eid);
         LogHashes("client", g_eid, "published");
@@ -287,9 +287,8 @@ void StepFind(void* player) {
 
 void StepSettle() {
     void* actors[2] = {g_pack.Get(), g_drive.Get()};
-    const int n = cen::IsBeforeOnly() ? 1 : 2;
     bool still = true, parked = false;
-    for (int i = 0; i < n; ++i) {
+    for (int i = 0; i < 2; ++i) {
         ue_wrap::FVector at{};
         if (!actors[i] || !E::TryGetActorLocation(actors[i], at)) { Fail("a fixture's mirror died"); return; }
         still = still && std::fabs(at.X - g_last[i].X) + std::fabs(at.Y - g_last[i].Y) + std::fabs(at.Z - g_last[i].Z) < 1.f;
@@ -312,7 +311,7 @@ void StepOpen() {
 void StepOpenWait() {
     if (CV::Viewed() == g_pack.Get() && SlotCount(Screen()) >= 1) {
         UE_LOGI("[CI-CENSUS] drill client: the screen shows the backpack, %d container slot(s)", SlotCount(Screen()));
-        Next(cen::IsBeforeOnly() ? Step::BeforeReady : Step::R1);
+        Next(Step::R1);
         return;
     }
     if (Expired(kViewBoundMs)) Fail("the screen never showed the backpack");

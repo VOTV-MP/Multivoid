@@ -15,19 +15,17 @@ constexpr uint8_t kOpContents = 0;
 
 }  // namespace
 
-std::vector<uint8_t> Pack(uint32_t eid, uint64_t baseHash,
-                          const std::vector<SR::SaveRecord>& recs) {
+std::vector<uint8_t> Pack(uint32_t eid, const std::vector<SR::SaveRecord>& recs) {
     std::vector<uint8_t> b;
     b.push_back(kOpContents);
     W::AppU32(b, eid);
-    W::AppU64(b, baseHash);
     W::AppU16(b, static_cast<uint16_t>(recs.size()));
     for (const auto& r : recs) W::SerSave(b, r);
     return b;
 }
 
 uint64_t ContentHash(uint32_t eid, const std::vector<SR::SaveRecord>& recs) {
-    return coop::blob_chunks::Fnv64(Pack(eid, 0, recs));
+    return coop::blob_chunks::Fnv64(Pack(eid, recs));
 }
 
 uint64_t RecordHash(const SR::SaveRecord& r) {
@@ -39,7 +37,7 @@ uint64_t RecordHash(const SR::SaveRecord& r) {
 uint64_t HashBytes(const std::vector<uint8_t>& recordWire) { return coop::blob_chunks::Fnv64(recordWire); }
 
 size_t SliceBytes(const std::vector<SR::SaveRecord>& recs) {
-    constexpr size_t kHeader = sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint64_t) + sizeof(uint16_t);
+    constexpr size_t kHeader = sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint16_t);
     size_t total = kHeader;
     std::vector<uint8_t> scratch;
     for (const SR::SaveRecord& r : recs) {
@@ -50,12 +48,10 @@ size_t SliceBytes(const std::vector<SR::SaveRecord>& recs) {
     return total;
 }
 
-bool ParseHeader(const std::vector<uint8_t>& b, size_t& o, uint32_t& outEid,
-                 uint64_t& outBaseHash) {
+bool ParseHeader(const std::vector<uint8_t>& b, size_t& o, uint32_t& outEid) {
     uint8_t op = 0;
     if (!W::RdU8(b, o, op) || op != kOpContents) return false;
-    if (!W::RdU32(b, o, outEid)) return false;
-    return W::RdU64(b, o, outBaseHash);
+    return W::RdU32(b, o, outEid);
 }
 
 bool ParseRecords(const std::vector<uint8_t>& b, size_t& o, std::vector<SR::SaveRecord>& out,

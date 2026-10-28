@@ -10,7 +10,6 @@
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
-#include "coop/props/container_contents_sync.h"
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/asset_load.h"
@@ -66,7 +65,7 @@ struct Host {
     // arm 3: the items dropped one at a time, cups first and the crate last
     int                   item = 0, absorbed = 0, recordsBeforeItem = 0, crateRecords = -1;
     int32_t               crateIndex = -1;
-    uint64_t              itemMs = 0, takeHeardMs = 0;
+    uint64_t              itemMs = 0;
     bool                  spawned = false, read = false, eidSeen = false;
     ue_wrap::CachedObjRef cur;
     std::vector<uint32_t> watchEids;
@@ -258,7 +257,7 @@ void Tail() {
     SaleDone();
 }
 
-// Arm 4: what reached the host about the client's take, from the container lane's own judgement of a client slice.
+// Arm 4: what the client says about its take from the sold sack, and the drone container's records on the host.
 void AwaitTake() {
     PrintNew();
     const uint64_t now = NowMs();
@@ -270,20 +269,9 @@ void AwaitTake() {
     const bool took = std::atoi(rest.c_str()) != 0;
     void* const container = ContainerOf(g_h.sack.Get());
     const EL::ElementId eid = container ? EidOf(container) : EL::kInvalidId;
-    namespace CC = coop::props::container_contents_sync;
-    const CC::ClientSliceOutcome out = eid == EL::kInvalidId ? CC::ClientSliceOutcome::None
-                                                             : CC::LastClientSliceOutcome(static_cast<uint32_t>(eid));
-    // A take that was made is given kTakeSettleMs for the slice to arrive and be judged; "none" is an answer.
-    if (took && out == CC::ClientSliceOutcome::None) {
-        if (g_h.takeHeardMs == 0) g_h.takeHeardMs = now;
-        if (now - g_h.takeHeardMs < kTakeSettleMs) return;
-    }
-    const char* seen = out == CC::ClientSliceOutcome::Accepted ? "accepted"
-                     : out == CC::ClientSliceOutcome::Refused  ? "refused" : "none";
     UE_LOGI("[SACK-DRILL] host: the client took=%d; the drone container is eid=%u", took ? 1 : 0,
             eid == EL::kInvalidId ? 0u : static_cast<unsigned>(eid));
-    UE_LOGI("[SACK-DRILL] host DONE arm 4 drone container records=%d; client take seen=%s",
-            SackRecords(g_h.sack.Get()), seen);
+    UE_LOGI("[SACK-DRILL] host DONE arm 4 drone container records=%d", SackRecords(g_h.sack.Get()));
     Say(kDoneLine);
     g_h.ph = Ph::Done;
 }

@@ -50,7 +50,6 @@ inline constexpr uint64_t kDriveBoundMs = 60000;   // a host-spawned prop leaves
 inline constexpr uint64_t kPutBoundMs = 15000;     // a prop let go over the sack is seen to die on the client
 inline constexpr uint64_t kFillItemBoundMs = 10000; // arm 3: a dropped item is absorbed within this, else it is logged as missed
 inline constexpr uint64_t kTakeBoundMs = 180000;    // arm 4: the client says whether it took from the sold sack
-inline constexpr uint64_t kTakeSettleMs = 5000;     // arm 4: the host waits this long for a taken slice to be judged (else: none)
 inline constexpr uint64_t kClientBoundMs = 1800000; // the client's whole route
 inline constexpr uint64_t kPutsSettleMs = 20000;   // the host waits this long for the props still outside the sack
 inline constexpr uint64_t kParkBoundMs = 240000;   // a drone in flight at the call lands within minutes

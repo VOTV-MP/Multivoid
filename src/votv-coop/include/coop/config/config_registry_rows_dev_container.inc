@@ -16,10 +16,6 @@ CFG_FLAG(container_retry_red, "container_retry_red", "dev", false, "VOTVCOOP_CON
 CFG_FLAG(drone_sale_watch_off, "drone_sale_watch_off", "dev", false, "VOTVCOOP_DRONE_SALE_WATCH_OFF",
     "Red arm for the drone sack drill (HOST): the watch that publishes the drone's emptied container after a sale "
     "is not registered, so the clients' copies keep the sold items until something else writes the container.")
-CFG_FLAG(container_judge_red, "container_judge_red", "dev", false, "VOTVCOOP_CONTAINER_JUDGE_RED",
-    "Red arm for the drone sack drill (HOST): a client container slice whose base is stale but not zero is "
-    "accepted (a zero base, and a live read that fails, are still refused), as when the host judged against what "
-    "it last published. With drone_sale_watch_off, the sold items come back into the drone's container.")
 CFG_FLAG(container_writer_probe, "container_writer_probe", "dev", false, "VOTVCOOP_CONTAINER_WRITER_PROBE",
     "Probe (HOST): every 2 s reads each world container's content hash and says once per container when it "
     "changed with no write the container lane saw (a local write, an applied remote slice or a connect seed's "
@@ -112,7 +108,7 @@ CFG_STRING(container_route_census, "container_route_census", "dev", "", "VOTVCOO
     "slot press, the take key, hold+run, the overlap, the vacuum; none is the game's own logic) and the slices "
     "each route sends, every 30 s and at session end. Lines tagged [CI-CENSUS]. 1 -- the census alone. drill -- "
     "also drives each route once on the client against a container the host places beside it, and reads the "
-    "open screen and the record hashes on both peers. drill-before -- the take the host refuses.")
+    "open screen and the record hashes on both peers.")
 CFG_FLAG(container_throw_no_elect, "container_throw_no_elect", "dev", false, "VOTVCOOP_CONTAINER_THROW_NO_ELECT",
     "Red arm for the throw arms (HOST): a thrown prop elects no syncer, so the host's own simulation of the throw "
     "is the only flight it streams and the copies part from the thrower's after the first contact.")

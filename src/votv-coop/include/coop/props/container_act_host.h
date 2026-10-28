@@ -113,14 +113,6 @@ const char* PutWaitCause(const PutInputs& in);
 // The index when its hash matches, else the first record with the hash; none: Gone.
 std::optional<size_t> FindRecord(const std::vector<uint64_t>& hashes, uint16_t index, uint64_t hash);
 
-// The least gap between two truth sends to one slot for one container.
-inline constexpr uint64_t kTruthEveryMs = 2000;
-bool TruthDue(uint64_t lastSentMs, uint64_t nowMs);
-
-// The least gap between two truth sends to one slot across all containers; `lastAnyMs` 0 is none sent yet.
-inline constexpr uint64_t kTruthSlotEveryMs = 500;
-bool SlotTruthDue(uint64_t lastAnyMs, uint64_t nowMs);
-
 // A head that waited this long since it was queued is answered Gone. Above the client's own 10 s reply wait, so an
 // honest client has already moved on.
 inline constexpr uint64_t kWaitBoundMs = 15000;

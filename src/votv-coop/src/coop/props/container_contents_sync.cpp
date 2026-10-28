@@ -12,17 +12,17 @@
 #include "coop/props/container_park.h"
 #include "coop/props/container_slice_wire.h"
 #include "coop/props/container_writer_watch.h"
-#include "coop/props/container_write_policy.h"
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
-#include "coop/dev/container_route_census.h"  // the census counts the slices a route sends and the host judges
-#include "coop/dev/dronesack_drill.h"  // IsEnabled -- the drill's judgement record is kept only while it runs
+#include "coop/dev/container_route_census.h"  // the census counts the slices a route sends
 #include "coop/element/bind_wait.h"
 #include "coop/element/registry.h"
 #include "coop/items/save_record_wire.h"
 #include "coop/net/blob_chunks.h"
+#include "coop/net/refusal_tally.h"
 #include "coop/net/session.h"
+#include "coop/player/roster_ledger.h"
 #include "coop/session/net_pump.h"
 #include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/actors/container_view.h"
@@ -38,6 +38,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -48,7 +49,6 @@ namespace R  = ue_wrap::reflection;
 namespace SR = ue_wrap::save_record;
 namespace W  = coop::save_record_wire;
 namespace sg = ue_wrap::script_gate;
-namespace wp = coop::props::container_write_policy;
 namespace pk = coop::props::container_park;
 namespace cw = coop::props::container_slice_wire;
 namespace ci = ue_wrap::container_inventory;
@@ -83,15 +83,6 @@ std::set<uint32_t> g_wrongClassSaid;  // eids a slice named that are no containe
 std::map<uint32_t, uint64_t> g_sentHash;
 std::map<uint32_t, uint64_t> g_appliedHash;
 
-// Client: the content this peer believes the host now publishes for an eid -- host truth it
-// applied, or its own slice once the transport took it, since an accepted client write becomes
-// exactly what the host publishes next. Not the same map as g_appliedHash, although both are
-// written at the same moment: a local mutation clears g_appliedHash (or a corrective re-publish is
-// skipped as a duplicate and the peer never converges) and keeps g_baseHash (that is the edit's
-// base; cleared, the peer declares base 0 and the host refuses every write). Fusing them produced
-// both failures in turn.
-std::map<uint32_t, uint64_t> g_baseHash;
-
 // Containers whose broadcast the transport refused while a world-ready peer was present, and
 // first publications whose contents do not read yet; retried by the sweep.
 std::set<uint32_t> g_retry;
@@ -101,14 +92,24 @@ std::set<uint32_t> g_retry;
 uint64_t g_noReadyRefusals = 0;
 uint64_t g_noReadyRetries = 0;
 std::set<uint32_t> g_noReadyEids;   // the containers whose fan-out met such a refusal
-// Dev instrument: the host's last judgement of a client-authored slice, per container. Reset at session end.
-std::map<uint32_t, ClientSliceOutcome> g_clientSlice;
 // Dev instrument: per container, how often this lane touched it (a local write, an applied remote slice, a
 // connect seed's send). The writer probe reads it to tell a change the lane saw from one it did not; kept only
 // while that probe is armed. Reset at session end.
 std::map<uint32_t, uint32_t> g_touchEpoch;
 // Containers whose accepted slice re-read to another hash, said once each. Reset at session end.
 std::set<uint32_t> g_rereadSaid;
+
+// Host, per client slot (cleared with the occupant and at the session's end): when the host's truth last went to the
+// slot, per container and across them, and which containers' refused client slices were already said.
+constexpr size_t kMaxRefusalLines = 256;
+struct TruthSlot {
+    std::unordered_map<uint32_t, uint64_t> sentMs;
+    uint64_t anyMs = 0;   // 0: none sent yet
+    std::set<uint32_t> refusedSaid;
+    bool capSaid = false;
+};
+coop::roster_ledger::PerSlotState<TruthSlot> g_truth;
+coop::net::RefusalTally g_refusals{"container_contents"};
 
 bool NoReadyRetryRed() {
     static const bool s = coop::config::ResolveFlag(coop::config_registry::rows::container_retry_red);
@@ -146,17 +147,9 @@ bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSl
                 "publication is given up", eid);
         return true;
     }
-    // The base being edited from: for a client the last host truth it applied; the host authors
-    // from its own state and sends 0.
-    uint64_t baseHash = 0;
+    // A client ships a slice only for a container it threw: its birth.
     const bool birth = !IsHost() && toSlot < 0 && cb::IsBirthSlice(eid);
-    if (birth) {
-        baseHash = cw::kBirthBase;
-    } else if (!IsHost()) {
-        auto it = g_baseHash.find(eid);
-        if (it != g_baseHash.end()) baseHash = it->second;
-    }
-    const std::vector<uint8_t> blob = cw::Pack(eid, baseHash, recs);
+    const std::vector<uint8_t> blob = cw::Pack(eid, recs);
     const uint64_t h = cw::ContentHash(eid, recs);
     if (!force && !birth) {
         auto it = g_sentHash.find(eid);
@@ -193,11 +186,6 @@ bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSl
         if (toSlot < 0) cb::FirstSent(eid);
         if (toSlot < 0) g_sentHash[eid] = h;  // only a FAN-OUT establishes what every peer has
         if (toSlot < 0 && !IsHost()) coop::dev::container_route_census::NoteSliceSent(eid);   // dev: the route census
-        // A client's own accepted slice IS the host's next published truth, and the author is
-        // deliberately excluded from the relay that carries it -- so it advances its base here.
-        // Optimistic and self-correcting: a refusal is answered by the host re-publishing its
-        // truth to this peer, which lands in this same map.
-        if (!IsHost()) g_baseHash[eid] = h;
         // The author of a mutation re-derives its own volume, mass and names here: the host
         // excludes the author from the relay, and the native take path does not call
         // updateVolumesAndMass, so the mutator's own displayed volume went stale while every other
@@ -292,12 +280,6 @@ enum class Ingest {
     Applied,   // this peer's state actually changed. The only outcome the host may pass on.
 };
 
-// The lane's reader the policy calls at the base compare (wp::LiveHashReader).
-bool ReadLiveHash(uint32_t eid, uint64_t& outHash) {
-    uint32_t records = 0;
-    return ContentHashOf(eid, outHash, records);
-}
-
 // Dev: the touch epoch is kept only while the writer probe is armed.
 void Touch(uint32_t eid) {
     static const bool on = coop::config::ResolveFlag(coop::config_registry::rows::container_writer_probe);
@@ -335,21 +317,36 @@ Ingest ApplyContents(uint32_t eid, const std::vector<SR::SaveRecord>& recs, uint
     Touch(eid);
     // An open screen onto this container does not rebuild on a raw write; redraw it from the new records.
     ue_wrap::container_view::Redraw(actor);
-    // The base a later local edit declares; never cleared by our own write edge.
-    if (!IsHost()) g_baseHash[eid] = blobHash;
     UE_LOGI("container_contents: eid=%u applied %d records", eid, static_cast<int32_t>(recs.size()));
     return Ingest::Applied;
+}
+
+// Host: a client slice that is not a thrown container's birth. It is counted, said once per (slot, container), and
+// the author is sent the host's truth, bounded, so an expired or forged birth still converges.
+void RefuseNonBirth(uint32_t eid, uint8_t senderSlot) {
+    g_refusals.Note(senderSlot, "not a birth", coop::net::RefusalTally::Clock::now());
+    TruthSlot& t = g_truth[senderSlot];
+    if (t.refusedSaid.count(eid) == 0) {
+        if (t.refusedSaid.size() < kMaxRefusalLines) {
+            t.refusedSaid.insert(eid);
+            UE_LOGI("container_contents: refused a client slice eid=%u from slot %u (not a birth)", eid,
+                    static_cast<unsigned>(senderSlot));
+        } else if (!t.capSaid) {
+            t.capSaid = true;
+            UE_LOGI("container_contents: refusal lines capped for slot %u", static_cast<unsigned>(senderSlot));
+        }
+    }
+    SendTruthBounded(eid, senderSlot);
 }
 
 Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t senderSlot,
                      cb::Source src) {
     size_t o = 0;
-    uint64_t baseHash = 0;
-    if (!cw::ParseHeader(blob, o, outEid, baseHash)) return Ingest::Handled;
+    if (!cw::ParseHeader(blob, o, outEid)) return Ingest::Handled;
     // A container a client threw: the host built its copy empty from the intent and has published
-    // nothing for it, so any slice of that author is the newest version of the transfer, whatever
-    // base it names -- an edit made while the first slice waited in the pen included. There is no
-    // reach to measure either: the throw put it where it is.
+    // nothing for it, so any slice of that author is the newest version of the transfer -- an edit
+    // made while the first slice waited in the pen included. There is no reach to measure either: the
+    // throw put it where it is.
     void* const bornActor = (IsHost() && senderSlot != 0) ? LivePropActor(outEid) : nullptr;
     const bool birth = bornActor && cb::Awaited(bornActor, senderSlot);
     // Unjudged is not unbounded: a birth slice spends the same arrival budget an edit does, so an
@@ -363,33 +360,11 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
         if (cb::SpendArrival(outEid, senderSlot, NowMs(), *s, src, /*held=*/true) == cb::Arrival::TooFast)
             return Ingest::Park;
     }
-    // Host arbitration before anything is touched; a refusal is answered by re-publishing the
-    // host's truth to the author, so it converges instead of sitting on a divergent view.
+    // A client authors a thrown container's birth and nothing else: any other client slice is refused here, after its
+    // header alone. Handled, not Applied: never applied, never relayed.
     if (IsHost() && senderSlot != 0 && !birth) {
-        auto* s = g_session.load(std::memory_order_acquire);
-        // No session, no arbitration, and a client slice is never applied unjudged: the refusal
-        // that cannot be explained is still a refusal. The base the author edited from is judged
-        // against what the container holds right now, whoever wrote it: a write nothing published yet
-        // (the drone's sale, a host-side take) leaves the author's base behind the live contents. The
-        // policy reads them through ReadLiveHash once the rate and the reach have passed.
-        const wp::Decision d = s ? wp::Accept(outEid, baseHash, &ReadLiveHash, senderSlot, NowMs(), *s, src)
-                                 : wp::Decision::StaleBase;
-        // No body to measure the author against yet: HOLD, do not refuse. The pen replays it and
-        // the reach is judged the moment that peer has posed; the hold is bounded per author and
-        // by the TTL, so a peer that never poses costs the host eight slices for thirty seconds.
-        if (d == wp::Decision::NoBodyYet) return Ingest::Park;
-        coop::dev::container_route_census::NoteSliceJudged(senderSlot, d == wp::Decision::Accept);   // dev: the route census
-        if (coop::dev::dronesack_drill::IsEnabled())
-            g_clientSlice[outEid] = d == wp::Decision::Accept ? ClientSliceOutcome::Accepted : ClientSliceOutcome::Refused;
-        if (d != wp::Decision::Accept) {
-            // Every refusal answers with the host's truth so the author converges -- except the
-            // rate one, because a bound on how fast an author may spend the host must not make
-            // the host spend more the faster it is pushed. No peer of this build can reach that
-            // bound (one slice per container per 250 ms sweep, and only when it changed).
-            if (d != wp::Decision::TooFast) SendTruthToSlot(outEid, static_cast<int>(senderSlot));
-            // Handled, not Applied: never relayed; third peers run no arbitration.
-            return Ingest::Handled;
-        }
+        RefuseNonBirth(outEid, senderSlot);
+        return Ingest::Handled;
     }
     std::vector<SR::SaveRecord> recs;
     const char* why = "";
@@ -453,12 +428,12 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
             return outcome;
         }
         g_sentHash[outEid] = contentHash;
-        // The next author is judged against a fresh read of what was just written, so the write and the
-        // read must hash alike; if they do not, that author is refused as stale.
+        // The write and a fresh read of it must hash alike: the publication and the parity report hash by the read.
         uint64_t reread = 0;
-        if (ReadLiveHash(outEid, reread) && reread != contentHash && g_rereadSaid.insert(outEid).second)
-            UE_LOGW("container_contents: eid=%u the applied slice re-reads to a different hash -- the next client "
-                    "will be judged stale", outEid);
+        uint32_t rereadRecords = 0;
+        if (ContentHashOf(outEid, reread, rereadRecords) && reread != contentHash &&
+            g_rereadSaid.insert(outEid).second)
+            UE_LOGW("container_contents: eid=%u the applied slice re-reads to a different hash", outEid);
         UE_LOGI("container_contents: eid=%u slot %u ACCEPTED -- the container now holds content %llu, "
                 "which is what the relay carries", outEid, static_cast<unsigned>(senderSlot),
                 static_cast<unsigned long long>(contentHash));
@@ -554,6 +529,7 @@ void Tick() {
 
     cww::Tick();
     sg::ResolvePendingNames();
+    g_refusals.Flush(coop::net::RefusalTally::Clock::now());   // closes a burst's window; cheap with none open
 
     if (!g_announced) {
         g_announced = true;
@@ -624,8 +600,7 @@ void OnContentsChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     if (coop::props::container_apply_hold::Armed()) {   // the drill's hold: the header is read for it alone
         size_t headerEnd = 0;
         uint32_t headerEid = 0;
-        uint64_t headerBase = 0;
-        if (cw::ParseHeader(blob, headerEnd, headerEid, headerBase) &&
+        if (cw::ParseHeader(blob, headerEnd, headerEid) &&
             coop::props::container_apply_hold::Keep(headerEid, std::move(blob), senderSlot))
             return;
     }
@@ -737,13 +712,44 @@ bool DevRawAppendActor(uint32_t eid, void* item, bool publish) {
     return ApplyAppended(eid, recs, publish);
 }
 
+namespace {
+
+// The inventory of the live world container `eid` names, or null.
+void* LiveWorldInventory(uint32_t eid) {
+    void* actor = LivePropActor(eid);
+    if (!actor || !ci::IsContainer(actor)) return nullptr;
+    void* inv = ci::InventoryOf(actor);
+    return inv && ci::IsWorldInventory(inv) ? inv : nullptr;
+}
+
+}  // namespace
+
 bool SendTruthToSlot(uint32_t eid, int slot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !IsHost()) return false;
-    void* actor = LivePropActor(eid);
-    if (!actor || !ci::IsContainer(actor)) return false;
-    void* inv = ci::InventoryOf(actor);
-    if (!inv || !ci::IsWorldInventory(inv)) return false;
+    void* inv = LiveWorldInventory(eid);
+    return inv && BroadcastContainer(s, eid, inv, slot, /*force=*/true);
+}
+
+bool TruthDue(uint64_t lastSentMs, uint64_t nowMs) { return nowMs >= lastSentMs + kTruthEveryMs; }
+
+bool SlotTruthDue(uint64_t lastAnyMs, uint64_t nowMs) {
+    return lastAnyMs == 0 || nowMs >= lastAnyMs + kTruthSlotEveryMs;
+}
+
+bool SendTruthBounded(uint32_t eid, int slot) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !IsHost() || slot <= 0 || slot >= coop::net::kMaxPeers) return false;
+    // The table is written only for a container that resolves, so a forged address grows nothing.
+    void* inv = LiveWorldInventory(eid);
+    if (!inv) return false;
+    TruthSlot& t = g_truth[slot];
+    const uint64_t now = NowMs();
+    if (!SlotTruthDue(t.anyMs, now)) return false;
+    const auto it = t.sentMs.find(eid);
+    if (it != t.sentMs.end() && !TruthDue(it->second, now)) return false;
+    t.sentMs[eid] = now;
+    t.anyMs = now;
     return BroadcastContainer(s, eid, inv, slot, /*force=*/true);
 }
 
@@ -761,10 +767,6 @@ uint32_t TouchEpochOf(uint32_t eid) {
     const auto it = g_touchEpoch.find(eid);
     return it == g_touchEpoch.end() ? 0 : it->second;
 }
-ClientSliceOutcome LastClientSliceOutcome(uint32_t eid) {
-    const auto it = g_clientSlice.find(eid);
-    return it == g_clientSlice.end() ? ClientSliceOutcome::None : it->second;
-}
 
 void OnDisconnect() {
     coop::props::container_apply_hold::Reset();
@@ -774,13 +776,12 @@ void OnDisconnect() {
     g_noReadyRefusals = 0;
     g_noReadyRetries = 0;
     g_noReadyEids.clear();
-    g_clientSlice.clear();
     g_touchEpoch.clear();
     g_rereadSaid.clear();
-    wp::Reset();
+    for (int slot = 0; slot < coop::net::kMaxPeers; ++slot) g_truth[slot] = TruthSlot{};
+    g_refusals.Clear();
     pk::Reset();
     g_sentHash.clear();
-    g_baseHash.clear();
     g_appliedHash.clear();
     cb::Reset();
     g_asm.Clear();

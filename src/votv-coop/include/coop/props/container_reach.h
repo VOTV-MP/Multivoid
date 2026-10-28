@@ -1,6 +1,6 @@
 // coop/props/container_reach.h -- a container's reach: the container itself, or an actor that opens
 // it (ue_wrap/actors/container_openers), within the distance an author may act from. One judgement,
-// shared by the host's arbitration of a client's slice (container_write_policy) and by the opener
+// shared by the host's container act (container_act_host) and by the opener
 // probe, so the number and the rule have one home. Game thread.
 
 #pragma once

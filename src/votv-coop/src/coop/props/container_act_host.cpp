@@ -23,7 +23,6 @@
 #include <iterator>
 #include <map>
 #include <string>
-#include <unordered_map>
 #include <utility>
 
 namespace coop::props::container_act_host {
@@ -61,8 +60,6 @@ struct Queued {
 
 struct Slot {
     coop::net::IntentQueue<Queued> queue;
-    std::unordered_map<uint32_t, uint64_t> truthSentMs;   // per container: when the host's truth last went to this slot
-    uint64_t truthAnyMs = 0;                              // any container: when the last one went (0: none yet)
 };
 
 // A write that could not happen when it was tried: the hold (the record, where it goes), whose record it is, and when
@@ -252,19 +249,8 @@ coop::net::ContainerActReplyPayload ReplyOf(internal::Verdict v, uint16_t id) {
 
 namespace {
 
-// The host's truth of a container to a slot whose view it just refused: at most one per kTruthEveryMs per container and
-// one per kTruthSlotEveryMs per slot across containers, so a forged address buys no more than one container blob per
-// interval and a flood of distinct addresses no more than the slot's floor.
-void SendTruth(uint8_t slot, uint32_t eid) {
-    Slot& s = g_slots[slot];
-    const uint64_t now = coop::net::NowMs();
-    if (!internal::SlotTruthDue(s.truthAnyMs, now)) return;
-    const auto it = s.truthSentMs.find(eid);
-    if (it != s.truthSentMs.end() && !internal::TruthDue(it->second, now)) return;
-    s.truthSentMs[eid] = now;
-    s.truthAnyMs = now;
-    coop::props::container_contents_sync::SendTruthToSlot(eid, slot);
-}
+// The host's truth of a container to a slot whose view it just refused, bounded by the lane's one throttle.
+void SendTruth(uint8_t slot, uint32_t eid) { coop::props::container_contents_sync::SendTruthBounded(eid, slot); }
 
 // Reads Decide's inputs in Decide's order and stops at the first that decides, so a request that must wait reads only
 // what the wait needs. A take's record lookup comes last: it reads and hashes the whole container. A put's own terms
@@ -477,12 +463,6 @@ std::optional<size_t> FindRecord(const std::vector<uint64_t>& hashes, uint16_t i
     const auto it = std::find(hashes.begin(), hashes.end(), hash);
     if (it == hashes.end()) return std::nullopt;
     return static_cast<size_t>(it - hashes.begin());
-}
-
-bool TruthDue(uint64_t lastSentMs, uint64_t nowMs) { return nowMs >= lastSentMs + kTruthEveryMs; }
-
-bool SlotTruthDue(uint64_t lastAnyMs, uint64_t nowMs) {
-    return lastAnyMs == 0 || nowMs >= lastAnyMs + kTruthSlotEveryMs;
 }
 
 bool WaitExpired(uint64_t queuedMs, uint64_t nowMs) { return nowMs >= queuedMs + kWaitBoundMs; }

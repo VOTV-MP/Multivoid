@@ -72,7 +72,6 @@ uint64_t g_cell[kRoutes][2] = {};     // [route][add=0, take=1] verbs on a share
 uint64_t g_slices[kRoutes][2] = {};
 uint64_t g_unattributed = 0;
 uint64_t g_gen = 0;
-uint64_t g_hostSlice[coop::net::kMaxPeers][2] = {};   // [slot][accepted=0, refused=1]
 
 struct Last { uint32_t eid; int8_t route; int8_t verb; };
 Last g_last[kLast] = {};
@@ -274,7 +273,6 @@ void Reset() {
     std::memset(g_unshared, 0, sizeof(g_unshared));
     std::memset(g_cell, 0, sizeof(g_cell));
     std::memset(g_slices, 0, sizeof(g_slices));
-    std::memset(g_hostSlice, 0, sizeof(g_hostSlice));
     std::memset(g_last, 0, sizeof(g_last));
     for (Last& l : g_last) l.route = -1;
     std::memset(g_callers, 0, sizeof(g_callers));
@@ -298,8 +296,7 @@ uint64_t UnixMs() {
 }
 
 bool IsEnabled() { return !Mode().empty(); }
-bool IsDrill() { return Mode() == "drill" || Mode() == "drill-before"; }
-bool IsBeforeOnly() { return Mode() == "drill-before"; }
+bool IsDrill() { return Mode() == "drill"; }
 
 Quiet::Quiet() { ++g_quiet; }
 Quiet::~Quiet() { --g_quiet; }
@@ -334,10 +331,6 @@ void NoteSliceSent(uint32_t eid) {
     ++g_unattributed;
 }
 
-void NoteSliceJudged(uint8_t senderSlot, bool accepted) {
-    if (!IsEnabled() || senderSlot >= coop::net::kMaxPeers) return;
-    ++g_hostSlice[senderSlot][accepted ? 0 : 1];
-}
 
 void ReportNow(const char* why) {
     if (!IsEnabled()) return;
@@ -371,11 +364,6 @@ void ReportNow(const char* why) {
     }
     if (g_unattributed) UE_LOGI("[CI-CENSUS] %s slices with no counted writer=%llu", Role(),
                                 static_cast<unsigned long long>(g_unattributed));
-    if (g_host)
-        for (int s = 0; s < coop::net::kMaxPeers; ++s)
-            if (g_hostSlice[s][0] || g_hostSlice[s][1])
-                UE_LOGI("[CI-CENSUS] host slices from slot %d: accepted=%llu refused=%llu", s,
-                        static_cast<unsigned long long>(g_hostSlice[s][0]), static_cast<unsigned long long>(g_hostSlice[s][1]));
 }
 
 void Tick(coop::net::Session* s) {
@@ -406,9 +394,6 @@ uint64_t RouteEntries(int route) { return route >= 0 && route < 5 ? g_entries[ro
 uint64_t R4Overlaps() { return g_r4Overlaps; }
 R4Overlap LastR4Overlap() { return g_lastR4; }
 uint64_t GenCalls() { return g_gen; }
-uint64_t HostSlices(int slot, bool accepted) {
-    return slot >= 0 && slot < coop::net::kMaxPeers ? g_hostSlice[slot][accepted ? 0 : 1] : 0;
-}
 uint64_t RouteVerbs(int route, bool take) {
     return route >= 0 && route < kRoutes ? g_cell[route][take ? 1 : 0] : 0;
 }
