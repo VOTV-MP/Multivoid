@@ -37,12 +37,13 @@ void NoteShortPayload(uint8_t senderSlot);        // the dispatcher saw a short 
 void RunSelftest();                               // the pure decisions, once per start; NOT the game thread
 
 // The host's dev counters (TallyOf). The Put* terms are the put's refusals, each by name; ReservationLapsed counts
-// reservations that ended by their deadline, LateDone the late puts inserted, LateDoneLost the late puts a cap refused.
+// reservations that ended by their deadline, LateDone the late puts inserted, LateDoneLost the late puts a cap refused,
+// PutDoneLost the timely puts a re-check refused at the insert, OwedLost the owed puts given up.
 enum class Tally : uint8_t { TargetGone, BadCommit, GrantUnsent, QueueFullUnready, BadSender, ShortPayload,
                              Malformed, UnknownFamilyUnready, RestoreOwed, WaitExpired, ReservationLapsed, LateDone,
                              LateDoneLost, PutNoName, PutClassUnresolved, PutNotProp, PutFiltered, PutIntoMailbox,
-                             PutRowRefuses, PutUnknownName, kCount };
-const char* TallyName(Tally t);   // "target_gone" ... "put_unknown_name"; "" past kCount
+                             PutRowRefuses, PutUnknownName, PutDoneLost, OwedLost, kCount };
+const char* TallyName(Tally t);   // "target_gone" ... "owed_lost"; "" past kCount
 
 namespace internal {   // pure, no engine call: the selftest drives these (NOT the game thread)
 
@@ -99,6 +100,14 @@ CommitStep DecideCommit(bool matched, uint8_t committed);
 // A put's done names what was asked: the stored record's class and names[0][0] equal the asked record's, and both
 // carry a name. The rest of the record is the container's own (the fridge flag, the rest of its state).
 bool StoredMatches(const ue_wrap::save_record::SaveRecord& asked, const ue_wrap::save_record::SaveRecord& stored);
+
+// The client's word is bounded where it is stored (MTA, CGame.cpp:2731-2771): a done's record is no larger than the
+// one asked plus the slack the container's own flag needs, and a put's name is at most kMaxPutNameChars.
+bool DoneSizeOk(size_t askedBytes, const ue_wrap::save_record::SaveRecord& committed);
+bool PutNameOk(const ue_wrap::save_record::SaveRecord& r);
+
+// What a put's Wait waits on, for the line that ends the wait: the first term whose read did not come.
+const char* PutWaitCause(const PutInputs& in);
 
 // The index when its hash matches, else the first record with the hash; none: Gone.
 std::optional<size_t> FindRecord(const std::vector<uint64_t>& hashes, uint16_t index, uint64_t hash);

@@ -36,6 +36,20 @@ uint64_t RecordHash(const SR::SaveRecord& r) {
     return coop::blob_chunks::Fnv64(b);
 }
 
+uint64_t HashBytes(const std::vector<uint8_t>& recordWire) { return coop::blob_chunks::Fnv64(recordWire); }
+
+size_t SliceBytes(const std::vector<SR::SaveRecord>& recs) {
+    constexpr size_t kHeader = sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint64_t) + sizeof(uint16_t);
+    size_t total = kHeader;
+    std::vector<uint8_t> scratch;
+    for (const SR::SaveRecord& r : recs) {
+        scratch.clear();
+        W::SerSave(scratch, r);
+        total += scratch.size();
+    }
+    return total;
+}
+
 bool ParseHeader(const std::vector<uint8_t>& b, size_t& o, uint32_t& outEid,
                  uint64_t& outBaseHash) {
     uint8_t op = 0;

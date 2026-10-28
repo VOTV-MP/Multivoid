@@ -40,6 +40,7 @@ struct Fields {
     void* buttonCls = nullptr;  // the class of the take button
     int32_t enabledOff = -1;    // the button's bIsEnabled bitfield: its byte and mask
     uint8_t enabledMask = 0;
+    void* getIndFn = nullptr;   // ui_playerInventory_C.getInd of putCls
 };
 Fields g;
 
@@ -223,29 +224,55 @@ bool ButtonEnabled(void* button, bool& enabled) {
 
 }  // namespace
 
-bool ReadPutState(void* screen, PutState& out) {
+bool ReadPutState(void* screen, PutState& out, const char** failed) {
+    const char* sink = "";
+    const char*& field = failed ? *failed : sink;
+    field = "";
     out = PutState{};
-    if (!screen || !R::IsLive(screen)) return false;
+    out.index = -1;
+    if (!screen || !R::IsLive(screen)) {
+        field = "the screen";
+        return false;
+    }
     void* const cls = R::ClassOf(screen);
     if (cls != g.putCls) {
         g.putCls = cls;
         g.putAsProp = R::FindPropertyOffset(cls, L"as_prop");
         g.putHover = R::FindPropertyOffset(cls, L"hoverContainerSlot");
         g.putTake = R::FindPropertyOffset(cls, L"Button_a_take");
+        g.getIndFn = facts::ResolveOn(kRowGetInd, cls).Fn();   // once per class, not once per press
     }
-    if (g.putAsProp < 0 || g.putHover < 0 || g.putTake < 0) return false;
+    if (g.putAsProp < 0 || g.putHover < 0 || g.putTake < 0) {
+        field = "as_prop, hoverContainerSlot or Button_a_take";
+        return false;
+    }
     void* const button = PointerAt(screen, g.putTake);
-    const facts::Resolved getInd = facts::ResolveOn(kRowGetInd, cls);
-    if (!button || !getInd) return false;
     PutState s{};
-    if (!ButtonEnabled(button, s.takeEnabled)) return false;
+    s.index = -1;
+    if (!button || !ButtonEnabled(button, s.takeEnabled)) {
+        field = "Button_a_take.bIsEnabled";
+        return false;
+    }
     s.container = PointerAt(screen, g.putAsProp);
     void* const hover = PointerAt(screen, g.putHover);
     s.hovered = hover && R::IsLive(hover);
-    if (s.hovered && !WidgetVisible(hover, s.hoverVisible)) return false;
-    ParamFrame f(getInd.Fn());
-    if (!f.valid() || !Call(screen, f)) return false;
-    s.index = f.Get<int32_t>(L"ReturnValue");
+    if (s.hovered && !WidgetVisible(hover, s.hoverVisible)) {
+        field = "hoverContainerSlot.IsVisible";
+        return false;
+    }
+    // The selected index is asked of the game only for a press that can go on to a put.
+    if (!s.hovered && s.takeEnabled) {
+        if (!g.getIndFn) {
+            field = "getInd";
+            return false;
+        }
+        ParamFrame f(g.getIndFn);
+        if (!f.valid() || !Call(screen, f)) {
+            field = "getInd";
+            return false;
+        }
+        s.index = f.Get<int32_t>(L"ReturnValue");
+    }
     out = s;
     return true;
 }

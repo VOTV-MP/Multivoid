@@ -36,4 +36,11 @@ std::optional<coop::net::Served> GrantPut(uint8_t slot, const container_act_wire
 // A commit whose hold is gone. True when it was a tombstone's (consumed whatever came of it); false when it has none.
 bool LateCommit(uint8_t slot, const container_act_wire::Commit& c);
 
+// A timely done of a closed reservation `h`: re-checked on the live container, then inserted, or lost and named.
+void PlaceTimelyDone(container_act_state::Hold h, const container_act_wire::Commit& c);
+
+// The host's truth of a container to the sender of a put commit it refused or lost (MTA syncs a refused change back to
+// its source, CGame.cpp:2777-2795). Unlike a request's refusal this is bounded by the commit, one per hold.
+void SendTruthNow(uint8_t slot, uint32_t eid);
+
 }  // namespace coop::props::container_act_host::detail

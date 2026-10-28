@@ -4,7 +4,8 @@
 // playerUsedOn, which puts the actor in the hand). Each is cancelled at its seat and asked of the host with the record
 // the player would put in; on a grant the same verb runs again under the replay latch, if it still names that record,
 // and the commit says where the container stored it, or that it stored nothing. The take seat, the pending record and
-// the commit queue are container_act_request's (see container_act_request_internal.h).
+// the commit queue are container_act_request's (see container_act_request_internal.h). The fit runs on the client, on
+// the real actors (MTA's server has no client-side fit, CGame.cpp:3150-3153): the container's test needs the actor.
 // Gameplay layer (principle 7). Game thread.
 
 #include "coop/props/container_act_request.h"
@@ -55,6 +56,19 @@ constexpr int kTagR3 = 0x43414333;   // "CAC3"
 
 const char* RouteName(uint8_t route) { return route == kRouteR2 ? "R2" : "R3"; }
 
+// A read that tells a put from any other press and fails leaves the verb to run natively, unjudged: said once per
+// session, with the field, so a layout change cannot turn the feature off silently.
+enum SayKind : size_t { kSayScreen, kSayPlayer, kSayHold, kSayRun, kSayCount };
+bool g_said[kSayCount] = {};
+
+sg::Verdict SayUnreadable(SayKind which, const char* seat, const char* field) {
+    if (!g_said[which]) {
+        g_said[which] = true;
+        UE_LOGW("container_act: the %s seat could not read %s -- the verb runs natively, unjudged", seat, field);
+    }
+    return sg::Verdict::Run;
+}
+
 template <class T>
 bool ReadParam(R::ParamOffset& offset, const sg::Call& c, T& out) {
     const int32_t o = offset.Of(c.function);
@@ -91,7 +105,8 @@ sg::Verdict AskPut(uint8_t route, uint32_t eid, void* container, const SR::SaveR
         return sg::Verdict::Cancel;
     }
     if (!MayTravel(rec)) return sg::Verdict::Cancel;
-    if (caw::RecordBytes(rec) > caw::kMaxRecordBytes - caw::kPutStoredSlack) {
+    const std::vector<uint8_t> wire = caw::RecordWire(rec);   // serialised once: its size and its hash
+    if (wire.size() > caw::kMaxRecordBytes - caw::kPutStoredSlack) {
         UE_LOGW("container_act: put eid=%u route=%s: the %ls is past the byte cap a put may ask", eid, RouteName(route),
                 rec.className.c_str());
         ShowBadReason();
@@ -101,7 +116,9 @@ sg::Verdict AskPut(uint8_t route, uint32_t eid, void* container, const SR::SaveR
     r.family = static_cast<uint8_t>(ContainerActFamily::PutRecord);
     r.eid = eid;
     r.record = rec;
-    r.hash = csw::RecordHash(rec);   // not on the wire: the form the replay hashes again
+    // Not on the wire: the form the replay hashes again. A held actor's record carries its pose and its lifespan, which
+    // change while the player runs; R3 hashes it without them.
+    r.hash = route == kRouteR3 ? internal::PutHandHash(rec) : csw::HashBytes(wire);
     if (Ask(r)) {
         Pending& p = Rec();
         p.container.Set(container);
@@ -143,7 +160,8 @@ sg::Verdict PreR2(const sg::Call& c) {
     coop::net::Session* const s = LinkedSession();
     if (!s) return sg::Verdict::Run;
     cv::PutState st{};
-    if (!cv::ReadPutState(c.object, st)) return sg::Verdict::Run;
+    const char* failed = "";
+    if (!cv::ReadPutState(c.object, st, &failed)) return SayUnreadable(kSayScreen, "R2 (em_take)", failed);
     if (st.hovered || !st.takeEnabled) return sg::Verdict::Run;
     if (s->role() == coop::net::Role::Host) return HostPre(st.container, /*anyHold=*/true);
     uint32_t eid = 0;
@@ -173,8 +191,10 @@ sg::Verdict PreR3(const sg::Call& c) {
     void* player = nullptr;
     void* hold = nullptr;
     bool runs = false;
-    if (!ReadParam(sPlayer, c, player) || !ReadParam(sHold, c, hold) || !E::ReadInputRun(player, runs) || !runs)
-        return sg::Verdict::Run;
+    if (!ReadParam(sPlayer, c, player)) return SayUnreadable(kSayPlayer, "R3 (playerUsedOn)", "the player parameter");
+    if (!ReadParam(sHold, c, hold)) return SayUnreadable(kSayHold, "R3 (playerUsedOn)", "the holdObject parameter");
+    if (!E::ReadInputRun(player, runs)) return SayUnreadable(kSayRun, "R3 (playerUsedOn)", "input_run");
+    if (!runs) return sg::Verdict::Run;
     if (!hold || !R::IsLive(hold)) return sg::Verdict::Run;
     if (s->role() == coop::net::Role::Host) return HostPre(c.object, /*anyHold=*/true);
     uint32_t eid = 0;
@@ -238,12 +258,16 @@ internal::PutCheck CheckR2(const Pending& p, void* container, bool containerLive
 internal::PutCheck CheckR3(const Pending& p, void* hand, bool containerLive, const char*& why) {
     const bool isAsked = hand && hand == p.hand.Get();
     SR::SaveRecord rec;
-    const bool hashMatches = isAsked && SR::CaptureOwnRecord(hand, rec) && csw::RecordHash(rec) == p.hash;
+    const bool hashMatches = isAsked && SR::CaptureOwnRecord(hand, rec) && internal::PutHandHash(rec) == p.hash;
     why = !containerLive ? "the container is gone" : !isAsked ? "the hand changed" : !hashMatches ? "the record changed" : "";
     return internal::CheckPutR3(containerLive, isAsked, hashMatches);
 }
 
 }  // namespace
+
+void ResetPutLines() {
+    for (bool& said : g_said) said = false;
+}
 
 const WatchRow* PutWatches(size_t& count) {
     static const WatchRow kRows[] = {
@@ -298,8 +322,7 @@ void ReplayPut() {
         done.hasRecord = true;
         done.index = static_cast<uint16_t>(*at);
         done.record = after[*at];
-        if (!caw::PackCommit(done).empty()) {
-            QueueCommit(done);
+        if (QueueCommit(done)) {   // false: the commit does not pack, nothing queued
             UE_LOGI("container_act: put id=%u eid=%u route=%s replayed -> done at index %zu",
                     static_cast<unsigned>(p.id), static_cast<unsigned>(p.eid), RouteName(p.route), *at);
             return;
@@ -328,6 +351,13 @@ PutCheck CheckPutR2(bool containerLive, bool screenShowsContainer, bool notHover
 
 PutCheck CheckPutR3(bool containerLive, bool handIsAsked, bool hashMatches) {
     return containerLive && handIsAsked && hashMatches ? PutCheck::Replay : PutCheck::Abort;
+}
+
+uint64_t PutHandHash(const ue_wrap::save_record::SaveRecord& record) {
+    ue_wrap::save_record::SaveRecord copy = record;
+    copy.xform.fill(0.f);
+    if (!copy.floats.empty() && !copy.floats[0].empty()) copy.floats[0][0] = 0.f;
+    return coop::props::container_slice_wire::RecordHash(copy);
 }
 
 std::optional<size_t> StoredIndex(const std::vector<uint64_t>& before, const std::vector<uint64_t>& after) {

@@ -64,9 +64,10 @@ struct PutState {
     int32_t index;
 };
 
-// Read `screen` (a ui_playerInventory_C) as the put reads it. False, `out` zeroed, when it is not live or a field or
-// a call does not resolve.
-bool ReadPutState(void* screen, PutState& out);
+// Read `screen` (a ui_playerInventory_C) as the put reads it. `index` is asked of the game only when no slot is hovered
+// and the take button is enabled, the press that can go on to a put; it is -1 otherwise. False, `out` zeroed, when it
+// is not live or a field or a call does not resolve; `failed`, when given, then names the field.
+bool ReadPutState(void* screen, PutState& out, const char** failed = nullptr);
 
 // The screen's em_take, the hotbar_1 key's verb. False when it does not resolve or the call fails.
 bool RunPut(void* screen);

@@ -4,6 +4,7 @@
 
 #include "ue_wrap/actors/inventory.h"      // ResolveSaveSlot
 #include "ue_wrap/actors/prop.h"           // WalksToBase
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/component_calls.h"  // CallParamless
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -116,31 +117,40 @@ bool ContainerStackIndex(const SR::SaveRecord& r, int32_t& index) {
 
 namespace {
 
-// A bitfield bool of one object's class, read by byte and mask; the class is asked again when it changes.
+// A bitfield bool of an object's class, read by byte and mask. Containers are several classes (a barrel, a crate, a
+// bin), so a few classes are kept; a class not kept is asked of reflection once and takes the oldest place.
 struct BoolField {
     void* cls = nullptr;
     int32_t off = -1;
     uint8_t mask = 0;
 };
+struct BoolFields {
+    static constexpr size_t kKept = 8;
+    BoolField kept[kKept];
+    size_t next = 0;
+};
 
-bool ReadBool(BoolField& f, void* obj, const wchar_t* name, bool& out) {
+bool ReadBool(BoolFields& fields, void* obj, const wchar_t* name, bool& out) {
     void* const cls = R::ClassOf(obj);
-    if (cls != f.cls) {
-        f.cls = cls;
-        f.off = -1;
-        f.mask = 0;
-        if (!R::FindBoolProperty(cls, name, f.off, f.mask)) f.off = -1;
+    BoolField* f = nullptr;
+    for (BoolField& k : fields.kept)
+        if (k.cls == cls) { f = &k; break; }
+    if (!f) {
+        f = &fields.kept[fields.next++ % BoolFields::kKept];
+        *f = BoolField{cls, -1, 0};
+        if (!R::FindBoolProperty(cls, name, f->off, f->mask)) f->off = -1;
     }
-    if (f.off < 0 || f.mask == 0) return false;
-    out = (*(static_cast<const uint8_t*>(obj) + f.off) & f.mask) != 0;
+    if (f->off < 0 || f->mask == 0) return false;
+    out = (*(static_cast<const uint8_t*>(obj) + f->off) & f->mask) != 0;
     return true;
 }
 
 }  // namespace
 
 bool ReadPutTerms(void* container, PutTerms& out) {
-    static BoolField sInfinite, sLocked;
+    static BoolFields sInfinite, sLocked;
     static int32_t sMaxVol = -2;
+    static ue_wrap::CachedObjRef sMailbox;   // the mailbox class, asked of the object index until it is found
     out = PutTerms{};
     void* const inv = InventoryOf(container);
     if (!inv || CachedOffset(sMaxVol, R::ClassOf(inv), L"maxVol") < 0) return false;
@@ -149,8 +159,8 @@ bool ReadPutTerms(void* container, PutTerms& out) {
     if (!CurrentVolume(inv, t.currVol) || !ReadBool(sInfinite, inv, L"infinite", t.infinite) ||
         !ReadBool(sLocked, container, L"locked", t.locked))
         return false;
-    void* const mailbox = ue_wrap::object_index::ClassByName(L"prop_mailbox_C");
-    t.ownerIsMailbox = mailbox && ue_wrap::prop::WalksToBase(R::ClassOf(container), mailbox);
+    if (!sMailbox.Alive()) sMailbox.Set(ue_wrap::object_index::ClassByName(L"prop_mailbox_C"));
+    t.ownerIsMailbox = sMailbox.Alive() && ue_wrap::prop::WalksToBase(R::ClassOf(container), sMailbox.Raw());
     out = t;
     return true;
 }

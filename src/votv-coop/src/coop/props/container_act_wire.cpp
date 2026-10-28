@@ -65,11 +65,13 @@ bool RdHead(const std::vector<uint8_t>& b, size_t& o, uint16_t& id, uint8_t& sec
 
 }  // namespace
 
-size_t RecordBytes(const SR::SaveRecord& r) {
+std::vector<uint8_t> RecordWire(const SR::SaveRecord& r) {
     std::vector<uint8_t> rec;
     W::SerSave(rec, r);
-    return rec.size();
+    return rec;
 }
+
+size_t RecordBytes(const SR::SaveRecord& r) { return RecordWire(r).size(); }
 
 std::vector<uint8_t> PackRequest(const Request& r) {
     std::vector<uint8_t> b;

@@ -1206,8 +1206,8 @@ enum class ReliableKind : uint8_t {
     // put's record is the client's word, bounded at the host's judge.
     ContainerActRequest = 207,
 
-    // HOST->CLIENT: the host's answer to one ContainerActRequest: granted (the host holds the record in escrow for the
-    // sender) or refused with a reason. ContainerActReplyPayload. Never relayed; not pre-world.
+    // HOST->CLIENT: the host's answer to one ContainerActRequest: granted (the host holds the record in escrow, or room
+    // in a reservation, for the sender) or refused with a reason. ContainerActReplyPayload. Never relayed; not pre-world.
     ContainerActReply = 208,
 
     // CLIENT->HOST: the client's verb ran (committed) or did not (aborted), closing the host's hold: a chunked blob,

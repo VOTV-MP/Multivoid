@@ -45,6 +45,13 @@ uint64_t ContentHash(uint32_t eid, const std::vector<ue_wrap::save_record::SaveR
 // equal records hash alike and are the same item to every peer.
 uint64_t RecordHash(const ue_wrap::save_record::SaveRecord& r);
 
+// RecordHash of a record already serialised, so a caller that has the bytes does not serialise it again.
+uint64_t HashBytes(const std::vector<uint8_t>& recordWire);
+
+// The size of Pack(eid, base, recs) without building it: the header and each record's wire size, one record
+// serialised at a time into a buffer that is reused.
+size_t SliceBytes(const std::vector<ue_wrap::save_record::SaveRecord>& recs);
+
 // False on a blob that is not one of ours, or too short. Leaves `o` at the record count.
 bool ParseHeader(const std::vector<uint8_t>& b, size_t& o, uint32_t& outEid, uint64_t& outBaseHash);
 

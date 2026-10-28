@@ -2,6 +2,8 @@
 
 #include "coop/props/container_act_state.h"
 
+#include "coop/props/container_act_wire.h"
+
 #include <algorithm>
 #include <utility>
 
@@ -101,6 +103,7 @@ void State::Lapse(const Hold& h, uint64_t nowMs) {
     t.eid = h.eid;
     t.className = h.record.className;
     ue_wrap::save_record::RecordName(h.record, t.name);
+    t.askedBytes = coop::props::container_act_wire::RecordBytes(h.record);
     t.atMs = nowMs;
     size_t ofSlot = 0;
     for (const Tombstone& o : tombstones_) ofSlot += o.slot == h.slot ? 1 : 0;
@@ -110,9 +113,13 @@ void State::Lapse(const Hold& h, uint64_t nowMs) {
         tombstones_.erase(oldest);
     }
     tombstones_.push_back(std::move(t));
-    const auto mark = std::find_if(slowed_.begin(), slowed_.end(), [&](const Slowing& s) { return s.slot == h.slot; });
+    Slow(h.slot, nowMs);
+}
+
+void State::Slow(uint8_t slot, uint64_t nowMs) {
+    const auto mark = std::find_if(slowed_.begin(), slowed_.end(), [&](const Slowing& s) { return s.slot == slot; });
     if (mark != slowed_.end()) mark->untilMs = nowMs + kSlowedMs;
-    else slowed_.push_back(Slowing{h.slot, nowMs + kSlowedMs});
+    else slowed_.push_back(Slowing{slot, nowMs + kSlowedMs});
 }
 
 std::optional<Tombstone> State::ConsumeTombstone(uint8_t slot, uint16_t id, uint32_t eid) {
@@ -120,8 +127,6 @@ std::optional<Tombstone> State::ConsumeTombstone(uint8_t slot, uint16_t id, uint
         if (it->slot != slot || it->id != id || it->eid != eid) continue;
         Tombstone t = std::move(*it);
         tombstones_.erase(it);
-        slowed_.erase(std::remove_if(slowed_.begin(), slowed_.end(), [&](const Slowing& s) { return s.slot == slot; }),
-                      slowed_.end());
         return t;
     }
     return std::nullopt;

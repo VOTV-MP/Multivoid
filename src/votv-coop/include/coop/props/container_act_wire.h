@@ -31,10 +31,11 @@ inline constexpr size_t kMaxRecordBytes = 4096;
 inline constexpr size_t kPutStoredSlack = 64;
 // The most the fridge flag adds to a record's wire form: a new bools group (its u32 element count) and the flag's byte.
 inline constexpr size_t kFridgeElementBytes = sizeof(uint32_t) + sizeof(uint8_t);
-static_assert(kMaxRecordBytes - kPutStoredSlack + kFridgeElementBytes <= kMaxRecordBytes,
-              "the stored form of the largest record a client may ask still packs under the byte cap");
+// The longest prop name a put may carry (the game's own are short): a longer one is refused before any engine call.
+inline constexpr size_t kMaxPutNameChars = 128;
 
-// The record's wire size in the grammar a request and a commit carry it in.
+// The record's wire form in the grammar a request and a commit carry it in, and its size.
+std::vector<uint8_t> RecordWire(const ue_wrap::save_record::SaveRecord& r);
 size_t RecordBytes(const ue_wrap::save_record::SaveRecord& r);
 
 struct Request {

@@ -58,7 +58,7 @@ struct Latched {
 };
 
 // A commit is queued and sent, and sent again until the transport takes it. SendCommit is a commit without a record.
-void QueueCommit(const container_act_wire::Commit& c);
+bool QueueCommit(const container_act_wire::Commit& c);   // false, nothing queued, when it does not pack
 void SendCommit(uint16_t id, uint32_t eid, uint8_t committed);
 
 // The player's lines. Each is shown at most once per window.
@@ -90,5 +90,6 @@ struct WatchRow {
 };
 const WatchRow* PutWatches(size_t& count);
 void ReplayPut();
+void ResetPutLines();   // the once-per-session lines of the seats: said again in the next session
 
 }  // namespace coop::props::container_act_request::detail

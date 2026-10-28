@@ -70,6 +70,9 @@ PutCheck CheckPutR2(bool containerLive, bool screenShowsContainer, bool notHover
 // R3 (hold and run) replays only for the actor that asked: the container live, that actor still the one in the hand,
 // and its own record still hashing what was asked.
 PutCheck CheckPutR3(bool containerLive, bool handIsAsked, bool hashMatches);
+// R3's hash of a held actor's record, at the ask and at the replay: the record with the two fields that change while the
+// player runs, its transform and floats[0][0] (the lifespan), zeroed. Any other change aborts the replay.
+uint64_t PutHandHash(const ue_wrap::save_record::SaveRecord& record);
 // Where a put's record went, from the container's record hashes before and after the put's verb: the index i when
 // after is before with one record inserted at i (the first index where they differ, else the end). None when the count
 // did not rise by one or the rest does not line up, so the verb stored nothing, or something else did.

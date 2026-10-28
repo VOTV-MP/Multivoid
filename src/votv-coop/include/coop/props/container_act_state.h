@@ -27,15 +27,21 @@ struct Hold {
     uint8_t slot = 0;
     uint16_t id = 0;
     uint32_t eid = 0;
-    uint16_t index = 0;                       // Escrow: where the record was; Reservation: unused
+    uint16_t index = 0;                       // Escrow: where the record was; Reservation: set from the commit's done
     ue_wrap::save_record::SaveRecord record;  // Escrow: the record taken, not neutered; Reservation: the record asked
     uint64_t grantedMs = 0;
 };
 
 // A reservation that ended by its deadline leaves a tombstone: the put it promised room for may still have been done on
-// the client, and its late commit is inserted, not lost. It lives one more deadline, and the sender is slowed for as long.
+// the client, and its late commit is inserted, not lost. It lives one more deadline. No precedent in MTA, whose server
+// ignores a confirm that finds no reservation (CGame.cpp:3376); here the replay has already moved the item out of the
+// client's inventory, so ignoring the late confirm would lose it.
 inline constexpr uint64_t kTombstoneMs = kHoldDeadlineMs;
+// The slowing of a sender that holds a container for long and walks away: its next put is answered Lapsed. MTA has no
+// deadline and so no penalty; the shape of a per-client budget the sender cannot erase is Source's (player.cpp:3392).
+// A reservation held no longer than the client's own reply wait (10 s) is an honest round trip and is not slowed.
 inline constexpr uint64_t kSlowedMs = kHoldDeadlineMs;
+inline constexpr uint64_t kSlowAfterMs = 10000;
 inline constexpr size_t kTombstonesPerSlot = 4;
 
 struct Tombstone {
@@ -44,6 +50,7 @@ struct Tombstone {
     uint32_t eid = 0;
     std::wstring className;   // the asked record's class and name: the late commit is checked against them
     std::wstring name;
+    size_t askedBytes = 0;    // the asked record's wire size: a late done may be no larger than this plus the slack
     uint64_t atMs = 0;
 };
 
@@ -75,11 +82,15 @@ struct State {
     // the oldest of the slot evicted) and the slot is slowed until nowMs + kSlowedMs.
     void Lapse(const Hold& h, uint64_t nowMs);
 
-    // Removes the tombstone of (slot, id) on `eid` and ends the slot's slowing: its sender has answered. None when
-    // there is no such tombstone, so a second late commit finds nothing.
+    // The slot is slowed until nowMs + kSlowedMs: a reservation of its own ended without a timely done after holding
+    // more than kSlowAfterMs. The mark ends by time or by the slot's departure, never by the slot's own commit.
+    void Slow(uint8_t slot, uint64_t nowMs);
+
+    // Removes the tombstone of (slot, id) on `eid`. None when there is no such tombstone, so a second late commit
+    // finds nothing. It does not end the slowing.
     std::optional<Tombstone> ConsumeTombstone(uint8_t slot, uint16_t id, uint32_t eid);
 
-    // The slot is slowed: a reservation of its own lapsed less than kSlowedMs ago and has not been answered.
+    // The slot is slowed (see Slow).
     bool Slowed(uint8_t slot, uint64_t nowMs) const;
 
     // Drops what is past its span (a tombstone at atMs + kTombstoneMs, a slowing at its end). Cheap when none stand.

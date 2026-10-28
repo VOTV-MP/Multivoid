@@ -65,6 +65,13 @@ H::Inputs Ready() {
     return in;
 }
 
+// A put that passes every term: Ready() with the defaults of the put's own terms.
+H::PutInputs PutInputsReady() {
+    H::PutInputs p;
+    p.base = Ready();
+    return p;
+}
+
 cas::Hold MakeHold(cas::HoldKind kind, uint8_t slot, uint16_t id, uint32_t eid, uint64_t grantedMs) {
     cas::Hold h;
     h.kind = kind;
@@ -675,7 +682,7 @@ void RunSelftest() {
         check(t && t->className == h.record.className && t->name == L"apple" && s.TombstoneCount() == 0,
               "lapse: a tombstone keeps the asked class and name and is consumed");
         check(!s.ConsumeTombstone(2, 7, 300), "lapse: a tombstone is consumed once");
-        check(!s.Slowed(2, 31001), "lapse: consuming the tombstone ends the slowing");
+        check(s.Slowed(2, 31001), "lapse: consuming the tombstone does not end the slowing");
 
         s.Lapse(h, 31000);
         check(s.Slowed(2, 60999) && !s.Slowed(2, 61000), "lapse: a slowing lasts 30 s");
@@ -702,6 +709,82 @@ void RunSelftest() {
         cas::State held;
         held.Open(MakeHold(cas::HoldKind::Reservation, 1, 5, 100, 0));
         check(held.HoldOn(100) && !held.HoldOn(101), "state: HoldOn names a container any hold stands on");
+    }
+
+    // ---- the commit's re-check: sizes, names, a held actor's hash, the slowing of an abandoned reservation ----
+    {
+        namespace RQ = coop::props::container_act_request::internal;
+        namespace csw = coop::props::container_slice_wire;
+
+        SR::SaveRecord hand = Rec(L"prop_apple_C", 1, L"x");
+        hand.names = {{L"apple", L"tag"}};
+        SR::SaveRecord moved = hand;
+        moved.xform = {0.1f, 0.2f, 0.3f, 0.9f, 50.f, 60.f, 70.f, 1.f, 1.f, 1.f};
+        moved.floats[0][0] = 3.25f;
+        check(RQ::PutHandHash(hand) == RQ::PutHandHash(moved),
+              "hand-hash: a record that only moved and aged hashes the same");
+        check(csw::RecordHash(hand) != csw::RecordHash(moved), "hand-hash: the plain record hash does see the move");
+        SR::SaveRecord changed = hand;
+        changed.strings[0][0] = L'y';
+        check(RQ::PutHandHash(hand) != RQ::PutHandHash(changed), "hand-hash: any other change hashes differently");
+        SR::SaveRecord noFloats = hand;
+        noFloats.floats.clear();
+        check(RQ::PutHandHash(noFloats) != 0, "hand-hash: a record with no floats hashes");
+
+        const size_t asked = caw::RecordBytes(hand);
+        SR::SaveRecord big = hand;
+        check(H::DoneSizeOk(asked, hand), "done-size: the asked record itself is within the bound");
+        big.strings = {{std::wstring(5, L'x')}};
+        check(H::DoneSizeOk(asked, big), "done-size: a record a little larger than asked is within the slack");
+        big.strings = {{std::wstring(caw::kPutStoredSlack, L'x')}};
+        check(!H::DoneSizeOk(asked, big), "done-size: a record larger than asked by more than the slack is refused");
+
+        SR::SaveRecord named = hand;
+        named.names = {{std::wstring(caw::kMaxPutNameChars, L'a')}};
+        check(H::PutNameOk(named), "name-bound: a name at the bound is accepted");
+        named.names = {{std::wstring(caw::kMaxPutNameChars + 1, L'a')}};
+        check(!H::PutNameOk(named), "name-bound: a name past the bound is refused");
+        named.names.clear();
+        check(!H::PutNameOk(named), "name-bound: a record with no name is refused");
+
+        std::vector<SR::SaveRecord> three = {hand, moved, changed};
+        check(csw::SliceBytes(three) == csw::Pack(7, 0, three).size() && csw::SliceBytes({}) == csw::Pack(7, 0, {}).size(),
+              "slice-bytes: the size without packing is the packed size");
+
+        H::PutInputs w;
+        w = PutInputsReady();
+        w.termsRead = false;
+        check(std::strcmp(H::PutWaitCause(w), "the container's terms did not read") == 0, "wait-cause: terms");
+        w = PutInputsReady();
+        w.filterRead = false;
+        check(std::strcmp(H::PutWaitCause(w), "the container's filter did not read") == 0, "wait-cause: filter");
+        w = PutInputsReady();
+        w.rowRead = false;
+        check(std::strcmp(H::PutWaitCause(w), "the list_props row did not read") == 0, "wait-cause: row");
+        w = PutInputsReady();
+        w.volumeRead = false;
+        check(std::strcmp(H::PutWaitCause(w), "the volume of the name did not read") == 0, "wait-cause: volume");
+        w = PutInputsReady();
+        w.base.holdsWait = true;
+        check(std::strcmp(H::PutWaitCause(w), "a hold stands in its way") == 0, "wait-cause: a hold");
+        check(std::strcmp(TallyName(Tally::PutDoneLost), "put_done_lost") == 0 &&
+                  std::strcmp(TallyName(Tally::OwedLost), "owed_lost") == 0,
+              "tally: the commit re-check's and the owed give-up's names");
+
+        cas::State s;
+        check(cas::kSlowAfterMs == 10000, "slow: a reservation is slowed after the client's own 10 s reply wait");
+        s.Slow(4, 1000);
+        check(s.Slowed(4, 1000) && s.Slowed(4, 30999) && !s.Slowed(4, 31000) && s.HasLapsed() &&
+                  s.TombstoneCount() == 0,
+              "slow: an abandoned reservation slows its slot for 30 s and leaves no tombstone");
+        s.SweepLapsed(31000);
+        check(!s.HasLapsed(), "slow: the mark is swept at its end");
+        s.Slow(4, 0);
+        s.Lapse(MakeHold(cas::HoldKind::Reservation, 4, 3, 50, 0), 100);
+        s.ConsumeTombstone(4, 3, 50);
+        check(s.Slowed(4, 101), "slow: the slot's own late commit does not end the slowing");
+        s.DropLapsedOf(4);
+        check(!s.Slowed(4, 101), "slow: the slot's departure ends the slowing");
     }
 
     if (pass == total) UE_LOGI("container_act_selftest: ALL PASS (%d checks)", total);

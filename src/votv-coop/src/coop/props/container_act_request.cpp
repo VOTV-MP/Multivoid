@@ -191,7 +191,9 @@ Target SharedTarget(void* container, uint32_t& eid) {
 
 // The host's own player beside a client's hold (the pocket's HostPre, prop_act_request.cpp): a put is cancelled on a
 // container any client holds anything on, since the restore of an escrow could overflow it; a take is cancelled on
-// one a client holds reserved. Everything else runs natively.
+// one a client holds reserved. Everything else runs natively. MTA never refuses its server body for a client's seat
+// claim (CGame.cpp:3340 refuses only the second client); here the host player is a participant on the same container,
+// whose restore of an escrow could overflow it.
 sg::Verdict HostPre(void* container, bool anyHold) {
     if (!container || !ci::IsContainer(container)) return sg::Verdict::Run;
     const EL::ElementId eid = EL::Registry::Get().EidForActor(container);
@@ -240,13 +242,15 @@ void DrainCommits() {
 
 namespace detail {
 
-void QueueCommit(const caw::Commit& c) {
+bool QueueCommit(const caw::Commit& c) {
     QueuedCommit q;
-    q.blob = caw::PackCommit(c);
+    q.blob = caw::PackCommit(c);   // packed once, here
+    if (q.blob.empty()) return false;
     q.id = c.id;
     q.queuedMs = coop::net::NowMs();
     g_commits.push_back(std::move(q));
     DrainCommits();
+    return true;
 }
 
 void SendCommit(uint16_t id, uint32_t eid, uint8_t committed) {
@@ -575,6 +579,7 @@ void OnDisconnect() {
     g_holdReplay = false;
     g_doubleAbort = false;
     g_lastTake = dev::Take{};
+    ResetPutLines();
     g_nextId = 0;
     g_nextRequestSeq = 1;
     g_nextCommitSeq = 1;
