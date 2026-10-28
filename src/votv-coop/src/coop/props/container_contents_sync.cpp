@@ -24,6 +24,7 @@
 #include "coop/net/session.h"
 #include "coop/session/net_pump.h"
 #include "ue_wrap/actors/container_inventory.h"
+#include "ue_wrap/actors/container_view.h"
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"  // ClassByName -- the host's O(1) class resolve for a client's contents
@@ -331,6 +332,8 @@ Ingest ApplyContents(uint32_t eid, const std::vector<SR::SaveRecord>& recs, uint
 
     g_appliedHash[eid] = blobHash;
     Touch(eid);
+    // An open screen onto this container does not rebuild on a raw write; redraw it from the new records.
+    ue_wrap::container_view::Redraw(actor);
     // The base a later local edit declares; never cleared by our own write edge.
     if (!IsHost()) g_baseHash[eid] = blobHash;
     UE_LOGI("container_contents: eid=%u applied %d records", eid, static_cast<int32_t>(recs.size()));

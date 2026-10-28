@@ -9,6 +9,7 @@
 #include "coop/props/prop_element_tracker.h"
 
 #include "ue_wrap/actors/container_inventory.h"
+#include "ue_wrap/actors/container_view.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -48,6 +49,9 @@ EditResult Commit(uint32_t eid, void* inv, const std::vector<SR::SaveRecord>& re
         case cio::WriteResult::Written:  break;
     }
     coop::props::container_contents_sync::MarkHostWrite(eid);
+    // An open screen onto this container does not rebuild on a raw write; with none open this does nothing,
+    // which is also the case when a session's teardown restores a record.
+    ue_wrap::container_view::Redraw(coop::element::LivePropActor(eid));
     UE_LOGI("container_record_edit: eid=%u %s index=%zu -> %zu records", eid, what, index, recs.size());
     return EditResult::Done;
 }
