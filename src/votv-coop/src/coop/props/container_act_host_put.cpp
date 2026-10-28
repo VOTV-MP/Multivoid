@@ -34,10 +34,10 @@ namespace ci  = ue_wrap::container_inventory;
 namespace pg  = ue_wrap::prop_gather;
 namespace SR  = ue_wrap::save_record;
 
-// The container's room for one more record of `rec`'s size (and the fridge flag the container adds): the lane's record
-// cap and the slice's byte ceiling, the one SendBlob enforces on what the container publishes. Done unless the
+// The container's room for one more record of `rec`'s size plus `flagBytes` (the fridge flag the container will add to a
+// record asked; none to a record it already stored): the lane's record cap and the slice's byte ceiling, the one SendBlob enforces on what the container publishes. Done unless the
 // container moved under the read; a count past the cap does not read at all, and is the cap.
-cre::EditResult ReadFit(uint32_t eid, const SR::SaveRecord& rec, bool& countAtCap, bool& bytesOver) {
+cre::EditResult ReadFit(uint32_t eid, const SR::SaveRecord& rec, size_t flagBytes, bool& countAtCap, bool& bytesOver) {
     countAtCap = bytesOver = false;
     std::vector<SR::SaveRecord> recs;
     const cre::EditResult r = cre::ReadRecords(eid, recs, /*neuterNested=*/false);
@@ -47,7 +47,7 @@ cre::EditResult ReadFit(uint32_t eid, const SR::SaveRecord& rec, bool& countAtCa
     }
     if (r != cre::EditResult::Done) return r;
     countAtCap = recs.size() >= csw::kMaxRecords;
-    bytesOver = csw::SliceBytes(recs) + caw::RecordBytes(rec) + caw::kFridgeElementBytes >
+    bytesOver = csw::SliceBytes(recs) + caw::RecordBytes(rec) + flagBytes >
                 coop::blob_chunks::MaxBlobBytes();
     return cre::EditResult::Done;
 }
@@ -94,7 +94,7 @@ void ReadPutInputs(uint8_t slot, const caw::Request& q, internal::PutInputs& p) 
     p.currVol = t.currVol;
     p.volumeRead = pg::VolumeOfName(name, p.volume, p.volumeKnown);
     if (!p.volumeRead || !p.volumeKnown || (!t.infinite && p.currVol + p.volume > p.maxVol)) return;
-    switch (ReadFit(q.eid, q.record, p.countAtCap, p.bytesOver)) {
+    switch (ReadFit(q.eid, q.record, caw::kFridgeElementBytes, p.countAtCap, p.bytesOver)) {
         case cre::EditResult::Done:     break;
         case cre::EditResult::NotReady: p.base.container = internal::Container::NotReady; return;
         default:                        p.base.container = internal::Container::Gone; return;
@@ -102,7 +102,7 @@ void ReadPutInputs(uint8_t slot, const caw::Request& q, internal::PutInputs& p) 
 }
 
 // A put's grant: room is reserved for the asked record and nothing is written. MTA reserves the seat at the request and
-// confirms it later (CGame.cpp:3150-3153, 3373-3393); the confirm here is the commit, which carries the record.
+// confirms it later (CGame.cpp:3152-3153, 3373-3417); the confirm here is the commit, which carries the record.
 std::optional<coop::net::Served> GrantPut(uint8_t slot, const caw::Request& q) {
     cas::Hold h;
     h.kind = cas::HoldKind::Reservation;
@@ -121,23 +121,23 @@ void SendTruthNow(uint8_t slot, uint32_t eid) { coop::props::container_contents_
 
 namespace {
 
-enum class DoneCheck : uint8_t { Insert, TooLarge, NoRoom, Gone };
-// What a done (timely or late) finds on the live container. The client's word is bounded where it is stored (MTA
-// bounds a client-set value at the store, CGame.cpp:2731-2771): the committed record is no larger than the asked one
-// plus the container's own flag, and the caps and the filter are read again, since the host's own writers are not
-// stopped by a reservation. Volume overfill is accepted: the client's own fit ran the game's whole test.
-DoneCheck CheckPutDone(uint32_t eid, size_t askedBytes, const SR::SaveRecord& committed, bool otherHolds,
-                       const char*& why) {
+enum class DoneCheck : uint8_t { Insert, NoRoom, Gone, NotReady };
+// What a done (timely or late) finds on the live container, after its size was bounded by the asked one (MTA bounds a
+// client-set value at the store, CGame.cpp:2731-2736, 2743-2753): the caps and the filter are read again, since the
+// host's own writers are not stopped by a reservation. The record is the one the container stored, so its fridge flag
+// is already counted. Volume overfill is accepted: the client's own fit ran the game's whole test. A container whose
+// slice is not ready cannot be read: NotReady, and the insert waits on the owed path.
+DoneCheck CheckPutDone(uint32_t eid, const SR::SaveRecord& committed, bool otherHolds, const char*& why) {
     why = "";
-    if (!internal::DoneSizeOk(askedBytes, committed)) {
-        why = "larger than asked";
-        return DoneCheck::TooLarge;
-    }
     bool countAtCap = false, bytesOver = false;
-    const cre::EditResult read = ReadFit(eid, committed, countAtCap, bytesOver);
+    const cre::EditResult read = ReadFit(eid, committed, /*flagBytes=*/0, countAtCap, bytesOver);
     if (read == cre::EditResult::NoElement || read == cre::EditResult::NoInventory) {
         why = "the container is gone";
         return DoneCheck::Gone;
+    }
+    if (read == cre::EditResult::NotReady) {
+        why = "the container is not ready";
+        return DoneCheck::NotReady;
     }
     void* const cls = ue_wrap::object_index::ClassByName(committed.className.c_str());
     bool filtered = false;
@@ -156,14 +156,17 @@ DoneCheck CheckPutDone(uint32_t eid, size_t askedBytes, const SR::SaveRecord& co
 // record off the wire. A done the re-check refuses is lost, named, and the host's truth goes back to its sender.
 void PlaceTimelyDone(cas::Hold h, const caw::Commit& c) {
     const char* why = "";
-    const DoneCheck check = CheckPutDone(h.eid, caw::RecordBytes(h.record), c.record, /*otherHolds=*/false, why);
+    const DoneCheck check = CheckPutDone(h.eid, c.record, /*otherHolds=*/false, why);
+    if (check == DoneCheck::NotReady)
+        UE_LOGI("container_act: slot=%u id=%u eid=%u put done, the container is not ready; the insert is owed",
+                static_cast<unsigned>(h.slot), static_cast<unsigned>(h.id), static_cast<unsigned>(h.eid));
     if (check == DoneCheck::Gone) {
         Bump(Tally::TargetGone);
         UE_LOGI("container_act: slot=%u id=%u eid=%u put done, the container is gone and the item with it",
                 static_cast<unsigned>(h.slot), static_cast<unsigned>(h.id), static_cast<unsigned>(h.eid));
         return;
     }
-    if (check != DoneCheck::Insert) {
+    if (check == DoneCheck::NoRoom) {
         Bump(Tally::PutDoneLost);
         NoteRefusal(h.slot, "put done refused at the insert");
         UE_LOGW("container_act: put done refused at the insert (eid %u, %ls, %s) -- the item is lost",
@@ -199,20 +202,23 @@ bool LateCommit(uint8_t slot, const caw::Commit& c) {
         SendTruthNow(slot, c.eid);
         return true;
     }
-    const char* why = "";
-    const DoneCheck check = CheckPutDone(c.eid, t->askedBytes, c.record, cas::Live().HoldOn(c.eid), why);
-    if (check == DoneCheck::Gone) {
-        Bump(Tally::TargetGone);
-        UE_LOGI("container_act: slot=%u id=%u eid=%u late put done, the container is gone and the item with it",
-                static_cast<unsigned>(slot), static_cast<unsigned>(c.id), static_cast<unsigned>(c.eid));
-        return true;
-    }
-    if (check == DoneCheck::TooLarge) {
+    if (!internal::DoneSizeOk(t->askedBytes, c.record)) {
         Bump(Tally::BadCommit);
         NoteRefusal(slot, "late put done larger than asked");
         UE_LOGI("container_act: slot=%u id=%u eid=%u late put done larger than asked -> bad",
                 static_cast<unsigned>(slot), static_cast<unsigned>(c.id), static_cast<unsigned>(c.eid));
         SendTruthNow(slot, c.eid);
+        return true;
+    }
+    const char* why = "";
+    const DoneCheck check = CheckPutDone(c.eid, c.record, cas::Live().HoldOn(c.eid), why);
+    if (check == DoneCheck::NotReady)
+        UE_LOGI("container_act: slot=%u id=%u eid=%u late put done, the container is not ready; the insert is owed",
+                static_cast<unsigned>(slot), static_cast<unsigned>(c.id), static_cast<unsigned>(c.eid));
+    if (check == DoneCheck::Gone) {
+        Bump(Tally::TargetGone);
+        UE_LOGI("container_act: slot=%u id=%u eid=%u late put done, the container is gone and the item with it",
+                static_cast<unsigned>(slot), static_cast<unsigned>(c.id), static_cast<unsigned>(c.eid));
         return true;
     }
     if (check == DoneCheck::NoRoom) {

@@ -40,7 +40,7 @@ bool LateCommit(uint8_t slot, const container_act_wire::Commit& c);
 void PlaceTimelyDone(container_act_state::Hold h, const container_act_wire::Commit& c);
 
 // The host's truth of a container to the sender of a put commit it refused or lost (MTA syncs a refused change back to
-// its source, CGame.cpp:2777-2795). Unlike a request's refusal this is bounded by the commit, one per hold.
+// its source, CGame.cpp:2779-2795). Unlike a request's refusal this is bounded by the commit, one per hold.
 void SendTruthNow(uint8_t slot, uint32_t eid);
 
 }  // namespace coop::props::container_act_host::detail

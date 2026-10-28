@@ -521,8 +521,9 @@ namespace {
 
 // The game's own name -> volume table: the gamemode's propRenderer names (TArray<FName>) beside the gamemode's
 // prop_volumes (TArray<float>), which Get Volume with no mesh reads as prop_volumes[Array_Find(names, name)]. It is
-// read into a map by lowercased name (an FName compares without case; the first name wins, as Array_Find does) and read
-// again when the renderer or either array's count changes. A name the table lacks is unknown with no engine call.
+// read into a map from lowercased name to index (an FName compares without case; the first name wins, as Array_Find
+// does); the volume is read from prop_volumes[index] on each call, and the map is built again when the renderer or the
+// names array changes. A name the table lacks is unknown with no engine call.
 struct VolumeTable {
     void* gmCls = nullptr;       // the gamemode class the offsets below were read from
     int32_t renderer = -1;       // mainGamemode_C.propRenderer
@@ -531,20 +532,17 @@ struct VolumeTable {
     int32_t names = -1;          // propProcessor_C.names
     void* builtFor = nullptr;    // the renderer the map was built from
     int32_t namesNum = -1;
-    int32_t volumesNum = -1;
-    std::unordered_map<std::wstring, float> byName;
+    std::unordered_map<std::wstring, int32_t> byName;   // lowercased name -> its index in both arrays
 };
 VolumeTable g_volumeTable;
 
-void RebuildVolumeTable(VolumeTable& t, const save_record::Arr& names, const save_record::Arr& volumes) {
+void RebuildVolumeTable(VolumeTable& t, const save_record::Arr& names) {
     t.byName.clear();
     t.byName.reserve(static_cast<size_t>(names.num));
-    for (int32_t i = 0; i < names.num && i < volumes.num; ++i) {
+    for (int32_t i = 0; i < names.num; ++i) {
         R::FName n{};
         std::memcpy(&n, names.data + static_cast<size_t>(i) * sizeof(R::FName), sizeof n);
-        float v = 0.f;
-        std::memcpy(&v, volumes.data + static_cast<size_t>(i) * sizeof v, sizeof v);
-        t.byName.emplace(Lower(R::ToString(n)), v);   // emplace keeps the first of a repeated name
+        t.byName.emplace(Lower(R::ToString(n)), i);   // emplace keeps the first of a repeated name
     }
 }
 
@@ -573,15 +571,15 @@ bool VolumeOfName(const std::wstring& name, float& out, bool& valid) {
     const save_record::Arr names = save_record::ReadArr(renderer, t.names);
     const save_record::Arr volumes = save_record::ReadArr(gm, t.volumes);
     if (names.num <= 0 || volumes.num <= 0) return false;   // the game has not filled its table yet
-    if (renderer != t.builtFor || names.num != t.namesNum || volumes.num != t.volumesNum) {
-        RebuildVolumeTable(t, names, volumes);
+    if (renderer != t.builtFor || names.num != t.namesNum) {
+        RebuildVolumeTable(t, names);
         t.builtFor = renderer;
         t.namesNum = names.num;
-        t.volumesNum = volumes.num;
     }
     const auto it = t.byName.find(Lower(name));
-    if (it == t.byName.end()) return true;   // unknown: valid stays false
-    out = it->second;
+    if (it == t.byName.end() || it->second >= volumes.num) return true;   // unknown: valid stays false
+    // The value is read live, so a volume the game changes is seen without a rebuild.
+    std::memcpy(&out, volumes.data + static_cast<size_t>(it->second) * sizeof out, sizeof out);
     valid = true;
     return true;
 }

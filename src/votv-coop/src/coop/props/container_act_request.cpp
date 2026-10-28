@@ -53,10 +53,6 @@ using coop::net::ReliableKind;
 UE_FACT_FN(kRowTake, "container_act", L"uicomp_playerInvContainerSlot_C", L"pressButton", Declared);
 constexpr int kTagTake = 0x43414331;   // "CAC1"
 
-// A reply that has not come in this long closes the record: an honest wait ends in milliseconds, so the bound covers
-// only a transport that refused the reply.
-constexpr uint64_t kReplyWaitMs = 10000;
-
 // A refused commit is sent again at most this often.
 constexpr uint64_t kCommitRetryMs = 250;
 
@@ -516,7 +512,7 @@ void Tick() {
     }
     if (!g_rec.open || g_rec.replayHeld) return;   // a parked replay is a drill's to release
     const uint64_t waited = now - g_rec.sentMs;
-    if (waited < kReplyWaitMs) return;
+    if (waited < container_act_state::kReplyWaitMs) return;
     UE_LOGI("container_act: request id %u eid %u expired after %llu ms", static_cast<unsigned>(g_rec.id),
             static_cast<unsigned>(g_rec.eid), static_cast<unsigned long long>(waited));
     g_expired.push_back(Expired{g_rec.id, g_rec.eid, now});

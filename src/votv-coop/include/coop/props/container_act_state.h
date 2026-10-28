@@ -17,7 +17,11 @@
 
 namespace coop::props::container_act_state {
 
-// Above the client's 10 s reply wait plus a round trip.
+// A reply that has not come in this long closes the client's record: an honest wait ends in milliseconds, so the bound
+// covers only a transport that refused the reply. The client waits it; the host slows a sender that held a reservation
+// longer (a round trip is inside it).
+inline constexpr uint64_t kReplyWaitMs = 10000;
+// Above the client's reply wait plus a round trip.
 inline constexpr uint64_t kHoldDeadlineMs = 30000;
 
 enum class HoldKind : uint8_t { Escrow, Reservation };
@@ -38,10 +42,9 @@ struct Hold {
 // client's inventory, so ignoring the late confirm would lose it.
 inline constexpr uint64_t kTombstoneMs = kHoldDeadlineMs;
 // The slowing of a sender that holds a container for long and walks away: its next put is answered Lapsed. MTA has no
-// deadline and so no penalty; the shape of a per-client budget the sender cannot erase is Source's (player.cpp:3392).
+// deadline and so no penalty; the shape of a per-client budget the sender cannot erase is Source's (player.cpp:3391-3392, sv_maxusrcmdprocessticks).
 // A reservation held no longer than the client's own reply wait (10 s) is an honest round trip and is not slowed.
 inline constexpr uint64_t kSlowedMs = kHoldDeadlineMs;
-inline constexpr uint64_t kSlowAfterMs = 10000;
 inline constexpr size_t kTombstonesPerSlot = 4;
 
 struct Tombstone {
@@ -83,7 +86,7 @@ struct State {
     void Lapse(const Hold& h, uint64_t nowMs);
 
     // The slot is slowed until nowMs + kSlowedMs: a reservation of its own ended without a timely done after holding
-    // more than kSlowAfterMs. The mark ends by time or by the slot's departure, never by the slot's own commit.
+    // more than kReplyWaitMs. The mark ends by time or by the slot's departure, never by the slot's own commit.
     void Slow(uint8_t slot, uint64_t nowMs);
 
     // Removes the tombstone of (slot, id) on `eid`. None when there is no such tombstone, so a second late commit

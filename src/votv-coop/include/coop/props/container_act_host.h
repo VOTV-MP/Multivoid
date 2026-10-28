@@ -102,7 +102,7 @@ CommitStep DecideCommit(bool matched, uint8_t committed);
 // carry a name. The rest of the record is the container's own (the fridge flag, the rest of its state).
 bool StoredMatches(const ue_wrap::save_record::SaveRecord& asked, const ue_wrap::save_record::SaveRecord& stored);
 
-// The client's word is bounded where it is stored (MTA, CGame.cpp:2731-2771): a done's record is no larger than the
+// The client's word is bounded where it is stored (MTA, CGame.cpp:2731-2736, 2743-2753): a done's record is no larger than the
 // one asked plus the slack the container's own flag needs, and a put's name is at most kMaxPutNameChars.
 bool DoneSizeOk(size_t askedBytes, const ue_wrap::save_record::SaveRecord& committed);
 bool PutNameOk(const ue_wrap::save_record::SaveRecord& r);

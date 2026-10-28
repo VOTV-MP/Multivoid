@@ -5,7 +5,7 @@
 // the player would put in; on a grant the same verb runs again under the replay latch, if it still names that record,
 // and the commit says where the container stored it, or that it stored nothing. The take seat, the pending record and
 // the commit queue are container_act_request's (see container_act_request_internal.h). The fit runs on the client, on
-// the real actors (MTA's server has no client-side fit, CGame.cpp:3150-3153): the container's test needs the actor.
+// the real actors (MTA's confirm reads only server state, CGame.cpp:3373-3417): the container's test needs the actor.
 // Gameplay layer (principle 7). Game thread.
 
 #include "coop/props/container_act_request.h"

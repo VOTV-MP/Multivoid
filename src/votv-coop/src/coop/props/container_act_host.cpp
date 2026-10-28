@@ -306,7 +306,7 @@ const char* WaitCause(const internal::Inputs& in) {
 
 // A head that cannot be judged yet stays at the front, until kWaitBoundMs after it was queued; then it is answered
 // Gone. A client asks only from a world it plays in, so the not-ready wait is a race measured in frames, never a
-// world load. MTA refuses a second act on a held seat outright (FAIL_ACTION, CGame.cpp:3092, 3340); a wait here is
+// world load. MTA refuses a second act on a held seat outright (FAIL_SEAT, CGame.cpp:3340; FAIL_ACTION, 3350); a wait here is
 // the mid-join answer, since the hold is a round trip long and the request is the player's only press.
 coop::net::Served WaitOrEnd(uint8_t slot, const Queued& item, const char* cause) {
     const uint64_t now = coop::net::NowMs();
@@ -344,6 +344,8 @@ cre::EditResult KeepRecord(uint32_t eid, uint16_t index, SR::SaveRecord& out) {
     return cre::EditResult::Done;
 }
 
+// MTA's vehicle entry reserves the seat at the request, confirms it, and commits with a re-check (CGame.cpp:3152-3153,
+// 3373-3417, 3419-3445). Ours holds the record itself, because a take shifts every later index.
 // A take's grant: the record leaves the container into an escrow. Empty when the grant stands; the head's own
 // answer when it could not be made (a wait, or a hold that would not open), `v` set to Gone when the record moved.
 std::optional<coop::net::Served> GrantTake(uint8_t slot, const Queued& item, const internal::Inputs& in,
@@ -592,7 +594,7 @@ void OnCommitChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     }
     // No act re-judge here: the commit only names the hold it ends. A put's done also names the record it stored, the
     // class and name of what was reserved for, and bounds it by the size asked: the client's word is bounded where it
-    // is stored (MTA, CGame.cpp:2731-2771). The MTA confirm (CGame.cpp:3373-3393) carries no client data; a put's does,
+    // is stored (MTA, CGame.cpp:2731-2736, 2743-2753). The MTA confirm (CGame.cpp:3373-3417) carries no client data; a put's does,
     // because the fit ran on the client, whose container holds the actors the game's own test needs.
     const cas::Hold* hold = cas::Live().Match(senderSlot, c.id);
     if (!hold && LateCommit(senderSlot, c)) return;
@@ -607,7 +609,7 @@ void OnCommitChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
         // An unmatched commit owns nothing; a hold named with a wrong eid stays open for the real commit.
         Bump(Tally::BadCommit);
         g_refusals.Note(senderSlot, "bad commit", Now());
-        // A refused put commit leaves the client's mirror holding the record: its truth goes back (CGame.cpp:2777-2795).
+        // A refused put commit leaves the client's mirror holding the record: its truth goes back (CGame.cpp:2779-2795).
         if (hold && hold->kind == cas::HoldKind::Reservation) SendTruth(senderSlot, hold->eid);   // rate-limited
         return;
     }
@@ -616,7 +618,7 @@ void OnCommitChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     if (step == internal::CommitStep::Abort) {
         // A reservation held past the client's own reply wait and then abandoned slows its sender, as a lapse does.
         const uint64_t now = coop::net::NowMs();
-        if (closed->kind == cas::HoldKind::Reservation && now - closed->grantedMs > cas::kSlowAfterMs)
+        if (closed->kind == cas::HoldKind::Reservation && now - closed->grantedMs > cas::kReplyWaitMs)
             cas::Live().Slow(senderSlot, now);
         EndHold(std::move(*closed), "aborted");
         return;

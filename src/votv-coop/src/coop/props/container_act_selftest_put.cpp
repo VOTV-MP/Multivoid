@@ -329,6 +329,13 @@ void RunPutSelftest(Checks& check) {
         SR::SaveRecord noFloats = hand;
         noFloats.floats.clear();
         check(RQ::PutHandHash(noFloats) != 0, "hand-hash: a record with no floats hashes");
+        SR::SaveRecord emptyGroup = hand;
+        emptyGroup.floats = {{}};   // a first floats group with no element: nothing to zero, nothing to index
+        SR::SaveRecord emptyGroupMoved = emptyGroup;
+        emptyGroupMoved.xform = moved.xform;
+        check(RQ::PutHandHash(emptyGroup) == RQ::PutHandHash(emptyGroupMoved) &&
+                  RQ::PutHandHash(emptyGroup) != RQ::PutHandHash(noFloats),
+              "hand-hash: an empty first floats group hashes, ignores the pose and differs from no group");
 
         const size_t asked = caw::RecordBytes(hand);
         SR::SaveRecord big = hand;
@@ -371,7 +378,7 @@ void RunPutSelftest(Checks& check) {
               "tally: the commit re-check's and the owed give-up's names");
 
         cas::State s;
-        check(cas::kSlowAfterMs == 10000, "slow: a reservation is slowed after the client's own 10 s reply wait");
+        check(cas::kReplyWaitMs == 10000, "slow: a reservation is slowed after the client's own 10 s reply wait");
         s.Slow(4, 1000);
         check(s.Slowed(4, 1000) && s.Slowed(4, 30999) && !s.Slowed(4, 31000) && s.HasLapsed() &&
                   s.TombstoneCount() == 0,
