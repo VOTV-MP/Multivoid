@@ -16,7 +16,8 @@ struct Actor {
     int record = 0;
 };
 inline std::vector<int> records;
-inline bool publishOk = true, quiesced = true;
+inline bool publishOk = true, quiesced = true, peerReady = true;
+inline int keyReads = 0;
 }
 
 namespace coop::net {
@@ -26,6 +27,7 @@ struct Session {
     bool live = true;
     bool connected() const { return live; }
     Role role() const { return side; }
+    bool AnyWorldReadyPeer() const { return fixture::peerReady; }
 };
 }
 namespace coop::net { inline uint64_t NowMs() { return 0; } }
@@ -74,6 +76,7 @@ inline int32_t FindPropertyOffset(void*, const wchar_t* name) {
 namespace ue_wrap::prop {
 inline std::wstring GetPropNameString(void*) { return L"drivebox_s"; }
 inline std::wstring GetInteractableKeyString(void* actor) {
+    ++fixture::keyReads;
     return static_cast<fixture::Actor*>(actor)->key;
 }
 }

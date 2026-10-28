@@ -501,7 +501,7 @@ DisconnectStats DisconnectAll() {
     coop::laptop_buffer_sync::OnDisconnect();  // quad shadow + assembler
     coop::floppybox_sync::OnDisconnect();  // box shadows + taken-ring + canonical retries
     coop::props::container_contents_sync::OnDisconnect();  // dirty set + retry + parked + assembler
-    coop::props::prop_record_refresh::OnDisconnect();  // per-prop coalescing state
+    coop::props::prop_record_refresh::OnDisconnect();  // session release, counters, the drill red's map
     coop::dev::dev_lanes::RearmSelftests();  // [dev] the selftests re-arm for the next session
     coop::desk_cursor_sync::OnDisconnect();
     coop::desk_ping_sync::OnDisconnect();

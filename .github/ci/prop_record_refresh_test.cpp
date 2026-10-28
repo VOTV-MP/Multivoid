@@ -42,6 +42,14 @@ int main() {
           "a refused publication does not suppress the next update");
 
     fixture::records.clear();
+    fixture::peerReady = false;
+    fixture::keyReads = 0;
+    pr::OnUpdPost(call);
+    fixture::peerReady = true;
+    check(fixture::records.empty() && fixture::keyReads == 0,
+          "a host with no world-ready peer builds no key and publishes nothing");
+
+    fixture::records.clear();
     pr::OnUpdPost({&box, 0x44424F58, true});
     pr::OnUpdPost({&box, 0x5242584F, true});
     check(fixture::records.empty(), "mirrored records never echo to the sender");

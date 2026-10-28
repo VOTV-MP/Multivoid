@@ -195,6 +195,9 @@ void OnUpdPost(const sg::Call& call) {
         !coop::join_membership_sweep::HasLoadTailQuiesced()) {
         return;
     }
+    // A host with no world-ready peer has nobody to publish to: the same test prop_save_data::Publish
+    // returns on before its capture, asked here before the key string is built.
+    if (s->role() == coop::net::Role::Host && !s->AnyWorldReadyPeer()) return;
     const std::wstring key = ue_wrap::prop::GetInteractableKeyString(actor);
     if (key.empty() || key == L"None") {
         // A prop mid-construction: the key is minted inside the construction script, which calls

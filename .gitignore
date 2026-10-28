@@ -50,6 +50,8 @@ build/
 out/
 bin/
 obj/
+# the CI drills under .github/ci build their fixtures here
+/local/
 # what deploy-all.ps1 lays down and what package.ps1 wraps up
 /Mods/
 /Pelmentor-Multivoid-*.zip
