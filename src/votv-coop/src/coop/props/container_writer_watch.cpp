@@ -11,6 +11,7 @@
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
 #include "coop/props/container_act_request.h"
+#include "coop/props/container_birth.h"
 #include "coop/props/container_contents_sync.h"
 #include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/core/log.h"
@@ -58,10 +59,11 @@ bool IsHost() {
 // action: it remembers which component was touched. The verb is a local virtual call, so by the
 // time it is seen the item has already moved on this machine. The role decides what it means:
 //  - on the host it marks the container dirty, and the lane's sweep publishes it;
-//  - on a client a shared container's mirror is display only (the host holds the record). The
+//  - on a client a shared world container's mirror is display only (the host holds the record). The
 //    verb runs on the client's copy, the watch forgets the applied hash so the host's next
-//    publication or its Gone truth puts the mirror back, and the probe names the writer. A client
-//    slice is authored only for a thrown container's birth, from container_birth's sweep.
+//    publication or its Gone truth puts the mirror back, and the probe names the writer. A container
+//    the client threw is its author's until its birth slice goes: that one marks like the host's,
+//    and its sweep ships the birth slice (container_birth).
 // A verb inside a granted act's replay is handled by the replay itself and is left alone, by the
 // latch. The extraction latch above is armed either way.
 sg::Verdict OnVerbEntry(const sg::Call& br) {
@@ -92,7 +94,10 @@ sg::Verdict OnVerbEntry(const sg::Call& br) {
         static_cast<uint32_t>(coop::element::Registry::Get().EidForActor(owner));
     if (eid == static_cast<uint32_t>(coop::element::kInvalidId)) return sg::Verdict::Run;
     // Resolve identity AT THE EDGE; the lane derefs nothing later.
-    if (!IsHost()) {
+    if (!IsHost() && ci::IsContainer(owner) && ci::IsWorldInventory(br.object) &&
+        !coop::props::container_birth::IsBirthSlice(eid)) {
+        // The verb runs, not cancelled: a writer that spawns an actor and then absorbs it would leave the
+        // spawned actor behind; the host's truth restores the copy.
         coop::props::container_contents_sync::ForgetApplied(eid);
         coop::dev::container_writer_probe::OnClientVerb(eid, owner, br, br.tag == kVerbTakeObj);
         return sg::Verdict::Run;

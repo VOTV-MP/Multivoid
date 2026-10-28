@@ -20,9 +20,13 @@ namespace coop::dev::container_writer_probe {
 void Tick(coop::net::Session* session);
 
 // A client's addObject (take=false) or takeObj (take=true) on the shared container `eid`, outside a granted act's
-// replay. A takeObj is a warning: its item still reaches the host while the host keeps the record. Inert when the
-// row is off. Game thread.
+// replay. A takeObj is a warning: its item still reaches the host while the host keeps the record. Counted per
+// container whatever the row says; said only with the row on. Game thread.
 void OnClientVerb(uint32_t eid, void* owner, const ue_wrap::script_gate::Call& c, bool take);
+
+// How many client verbs OnClientVerb has counted on this container since the session began: the witness a drill
+// reads to know the verb watch fired. Counts at most kMaxClientKeys containers. Game thread.
+uint32_t ClientVerbsOf(uint32_t eid);
 
 // The session's end: the readings belong to one world.
 void OnDisconnect();

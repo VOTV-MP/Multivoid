@@ -18,12 +18,10 @@ namespace ccs = coop::props::container_contents_sync::internal;
 
 // Host, per client slot (cleared with the occupant and at the session's end): when the host's truth last went to the
 // slot, per container and across them, and which containers' refused client slices were already said.
-constexpr size_t kMaxRefusalLines = 256;
 struct TruthSlot {
     std::unordered_map<uint32_t, uint64_t> sentMs;
     uint64_t anyMs = 0;   // 0: none sent yet
-    std::set<uint32_t> refusedSaid;
-    bool capSaid = false;
+    RefusalOnce refused;
     DevClientSlices dev;   // the drill's counts
 };
 coop::roster_ledger::PerSlotState<TruthSlot> g_truth;
@@ -31,19 +29,32 @@ coop::net::RefusalTally g_refusals{"container_contents"};
 
 }  // namespace
 
+RefusalOnce::Say RefusalOnce::Note(uint32_t eid) {
+    if (said_.count(eid) != 0) return Say::Quiet;
+    if (said_.size() < kMaxRefusalLines) {
+        said_.insert(eid);
+        return Say::Refusal;
+    }
+    if (capSaid_) return Say::Quiet;
+    capSaid_ = true;
+    return Say::Capped;
+}
+
+// The author of a refused slice is sent the host's truth: MTA's sync-back of a cancelled client change
+// (CGame.cpp:2777-2795).
 void RefuseNonBirth(uint32_t eid, uint8_t senderSlot) {
     g_refusals.Note(senderSlot, "not a birth", coop::net::RefusalTally::Clock::now());
     TruthSlot& t = g_truth[senderSlot];
     ++t.dev.refused;
-    if (t.refusedSaid.count(eid) == 0) {
-        if (t.refusedSaid.size() < kMaxRefusalLines) {
-            t.refusedSaid.insert(eid);
+    switch (t.refused.Note(eid)) {
+        case RefusalOnce::Say::Refusal:
             UE_LOGI("container_contents: refused a client slice eid=%u from slot %u (not a birth)", eid,
                     static_cast<unsigned>(senderSlot));
-        } else if (!t.capSaid) {
-            t.capSaid = true;
+            break;
+        case RefusalOnce::Say::Capped:
             UE_LOGI("container_contents: refusal lines capped for slot %u", static_cast<unsigned>(senderSlot));
-        }
+            break;
+        case RefusalOnce::Say::Quiet: break;
     }
     SendTruthBounded(eid, senderSlot);
 }
@@ -54,16 +65,20 @@ bool SlotTruthDue(uint64_t lastAnyMs, uint64_t nowMs) {
     return lastAnyMs == 0 || nowMs >= lastAnyMs + kTruthSlotEveryMs;
 }
 
+// Divergence from MTA's unthrottled sync-back (CGame.cpp:2777-2795): its unit is one value, ours a whole container
+// blob, so the truth is bounded. A container that does not resolve gets no answer where MTA sends
+// REMOVE_ELEMENT_DATA (:2790-2794); the entity lane replicates its destroy.
 bool SendTruthBounded(uint32_t eid, int slot) {
     if (!ccs::IsHostRole() || slot <= 0 || slot >= coop::net::kMaxPeers) return false;
-    // The table is written only for a container that resolves, so a forged address grows nothing.
-    void* inv = ccs::LiveWorldInventory(eid);
-    if (!inv) return false;
+    // The bounds are read first, so a flood the slot's floor already refuses pays no container resolve. The table is
+    // written only for a container that resolves, so a forged address grows nothing.
     TruthSlot& t = g_truth[slot];
     const uint64_t now = ccs::NowMs();
     if (!SlotTruthDue(t.anyMs, now)) return false;
     const auto it = t.sentMs.find(eid);
     if (it != t.sentMs.end() && !TruthDue(it->second, now)) return false;
+    void* inv = ccs::LiveWorldInventory(eid);
+    if (!inv) return false;
     t.sentMs[eid] = now;
     t.anyMs = now;
     ++t.dev.truths;

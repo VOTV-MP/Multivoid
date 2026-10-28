@@ -4,9 +4,24 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <set>
 
 namespace coop::props::container_truth {
+
+// One slot's once-set of refused containers: each is said the first time; once kMaxRefusalLines are in, the next new
+// one is answered Capped (said once) and the rest are Quiet. Pure; the selftest drives it.
+inline constexpr size_t kMaxRefusalLines = 256;
+class RefusalOnce {
+public:
+    enum class Say : uint8_t { Quiet, Refusal, Capped };
+    Say Note(uint32_t eid);
+
+private:
+    std::set<uint32_t> said_;
+    bool capSaid_ = false;
+};
 
 // Host: a client slice that is not a birth. Counted, said once per (slot, container); the author gets the host's
 // truth, bounded. Game thread.

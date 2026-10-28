@@ -489,12 +489,11 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::ContainerContents: {
-        // A world container's stack slice, bidirectional: the peer whose add or take verb fired
-        // authors it, and the host arbitrates (a base-hash compare-and-swap) before applying and
-        // relaying to the others, the author excluded. So the sender-slot rule is asymmetric and
+        // A world container's stack slice. The host publishes it; a client authors only a thrown
+        // container's birth slice, which the host applies and relays to the others, the author
+        // excluded, and refuses every other client slice. So the sender-slot rule is asymmetric and
         // the module owns it: a client accepts slot 0 only, the host accepts a non-zero slot only.
-        // Not host-authored: under that rule a client's every extraction was silently dropped. The
-        // module also owns the world-versus-personal boundary; see container_contents_sync.h.
+        // The module also owns the world-versus-personal boundary; see container_contents_sync.h.
         if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
             UE_LOGW("event_feed: ContainerContents payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));

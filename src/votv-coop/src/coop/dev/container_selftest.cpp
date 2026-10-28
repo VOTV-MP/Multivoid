@@ -85,12 +85,9 @@ bool     g_anchorUnread    = false;   // the player's location could not be read
 // Choosing by CONTENT rather than by registry order is what makes the trigger real.
 constexpr size_t kScan = 64;
 
-// ...and by DISTANCE, because the host arbitrates a client's slice against the author's reach: a
-// client firing on a container across the map now authors a write the host refuses, and the
-// instrument would be measuring the refusal path while claiming to measure the circle. Both peers
-// order the same candidate set by (distance from their own body, eid), which picks the same pair
-// while they stand together -- and the chosen distances are logged, so a run where they did not
-// can be told apart from a run where the lane broke.
+// ...and by DISTANCE: both peers order the same candidate set by (distance from their own body,
+// eid), which picks the same pair while they stand together -- and the chosen distances are
+// logged, so a run where they did not can be told apart from a run where the lane broke.
 bool ResolveTargets() {
     if (g_eidHostTarget && g_eidClientTarget) return true;
     if (g_anchorUnread) return false;
@@ -165,17 +162,17 @@ void FireExtract(uint32_t eid, const char* who) {
 
 // One line a run is judged by. RED is reserved for the two failures that make every other line
 // in the run meaningless: a trigger that changed nothing, and a watch that never fired. What the
-// HOST's answer was is reported, not asserted -- a client that fired from outside the arbiter's
-// reach is SUPPOSED to be reverted, and this instrument does not walk, so both outcomes are legal
-// here. The accepted client path has an owner that does walk: `mp.py ctakerace`.
+// mirror holds afterwards is reported, not asserted -- a client's fire is display only and stays
+// until the host's next publication of that container, so both outcomes are legal here. The asked
+// client path has an owner that does walk: `mp.py ctakerace`.
 void Verdict(bool host) {
     int32_t now = -1; float vol = 0.f;
     const bool live = CC::ContentsDigest(g_fireEid, now, vol);
     const bool entered = coop::props::container_writer_watch::VerbWatchEntered();
     const bool inert = (g_fireBefore >= 0 && g_fireBefore == g_fireAfter);
     const char* fate = !live      ? "the container stopped resolving"
-                     : now == g_fireAfter ? "STUCK (the arbiter accepted it, or this peer is the host)"
-                     : now == g_fireBefore ? "REVERTED (the host refused and re-published its truth)"
+                     : now == g_fireAfter ? "STUCK (the fired change stayed: a client's mirror is display only, or this peer is the host)"
+                     : now == g_fireBefore ? "REVERTED (the host's truth put the contents back)"
                      : "MOVED AGAIN (another peer edited it since)";
     UE_LOGI("container_selftest: VERDICT %s -- %s: watch ENTERED=%d, fire eid=%u %d -> %d, now %d "
             "[%s]", host ? "HOST" : "CLIENT",

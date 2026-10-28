@@ -258,9 +258,7 @@ void DrainDirty(coop::net::Session* s) {
 // own verbs, never raw-written (ci::RederiveShownState).
 
 // What an inbound blob did to this peer; a bool cannot express it, since "handled" and "changed
-// something" are different facts and the relay needs the second. Gated on a bool that was true
-// for both an accepted and a refused client write, a refused write was relayed to every other
-// client stamped as slot 0, host truth, which peers running no CAS applied unconditionally.
+// something" are different facts and the relay needs the second: a refused write must never be relayed.
 enum class Ingest {
     NoActor,   // the eid has no live actor here yet (birth skew / mid-join) -- hold in bind_wait for its bind
     Park,      // the actor is here but not ready (inventory, slice slot, author's body, budget) -- the pen
@@ -322,16 +320,14 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
     if (!cw::ParseHeader(blob, o, outEid)) return Ingest::Handled;
     if (IsHost() && senderSlot != 0 && src == cb::Source::Arrival) ct::NoteSliceReceived(senderSlot);
     // A container a client threw: the host built its copy empty from the intent and has published
-    // nothing for it, so any slice of that author is the newest version of the transfer -- an edit
-    // made while the first slice waited in the pen included. There is no reach to measure either: the
-    // throw put it where it is.
+    // nothing for it, so the slice of that author is the newest version of the transfer. There is no
+    // reach to measure: the throw put it where it is.
     void* const bornActor = (IsHost() && senderSlot != 0) ? LivePropActor(outEid) : nullptr;
     const bool birth = bornActor && cb::Awaited(bornActor, senderSlot);
     // A birth is not unbounded: it spends the author's arrival budget, so an author cannot make the
-    // host parse slices for this container at any rate while it waits. Past
-    // the budget it is HELD in the pen rather than refused: it is the thrower's only copy of the
-    // contents and is sent once, and a replay spends nothing, so the pen's own per-author cap and TTL
-    // are what bound it.
+    // host parse slices for this container at any rate while it waits. Past the budget it is HELD in
+    // the pen rather than refused: it is the thrower's only copy of the contents and is sent once,
+    // and a replay spends nothing, so the pen's own per-author cap and TTL are what bound it.
     if (birth) {
         auto* s = g_session.load(std::memory_order_acquire);
         if (!s) return Ingest::Handled;
@@ -561,9 +557,15 @@ void OnContentsChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     if (!s) return;
     // The acceptance matrix, before the assembler so no peer drives reassembly for a direction it
     // may not send: the host accepts only a non-zero slot (slot 0 is its own fan-out coming back);
-    // a client accepts only slot 0, since peers never hear each other directly.
+    // a client accepts only slot 0, since peers never hear each other directly. A slot past the roster is no
+    // client's: the per-slot tables clamp it into slot 0, so it is refused before any of them is touched.
     if (IsHost()) {
         if (senderSlot == 0) return;  // our own fan-out echoed back -- not a thing to apply
+        if (senderSlot >= coop::net::kMaxPeers) {
+            UE_LOGW("container_contents: blob from slot %u, past the roster -- REJECTED",
+                    static_cast<unsigned>(senderSlot));
+            return;
+        }
     } else if (senderSlot != 0) {
         UE_LOGW("container_contents: blob from non-host slot %u on a CLIENT -- REJECTED "
                 "(the host is the only authority a client accepts)",

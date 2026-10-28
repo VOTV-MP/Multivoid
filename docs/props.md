@@ -243,11 +243,12 @@ per-peer array in the save object, addressed by an index the container holds, an
 verb runs inside the Blueprint, below the two dispatch seams a hook can intercept. The
 script-body gate does see it -- that is how this lane learns a container changed -- but it runs on
 the presser's own machine, and no local body can wait for an answer from across the network. So
-the peer whose verb fired authors the contents and the host arbitrates them (`coop/props/container_contents_sync`): one slice of its
-array per live container is sent at a joiner's ready edge and on change, a client's slice is
-accepted only if its author could have reached that container, has not sent more in the last
-second than an honest client produces, and edited the contents the container holds now, and an
-extraction on a client is a container-extract birth through the intent door above. The open and closed state is a keyed-device channel like a
+the host publishes the contents (`coop/props/container_contents_sync`): one slice of its
+array per live container is sent at a joiner's ready edge and on change, and a client's mirror is
+display only. A client's only slice is a thrown container's birth, bounded by its arrival rate;
+the host refuses every other client slice and answers the author with its own truth
+(`coop/props/container_truth`). A change a client makes to a shared container is an act the host
+judges, and an extraction on a client is a container-extract birth through the intent door above. The open and closed state is a keyed-device channel like a
 door's ([devices.md](devices.md)). The full break-and-spill behaviour, and the single-slot verbs, are reverse-engineered
 and designed and not built.
 

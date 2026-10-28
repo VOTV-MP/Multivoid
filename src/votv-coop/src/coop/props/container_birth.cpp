@@ -73,10 +73,11 @@ void Push(std::vector<Birth>& births, void* actor, uint8_t authorSlot) {
 
 uint32_t g_endedGone = 0, g_endedExpired = 0;   // the throw drill's counts; process-long, the drill baselines
 
-// The arrival bound. MTA bounds a source at the JOIN edge alone (CConnectHistory, CGame.cpp:163) and needs no
-// in-session twin, because there a client never authors a server-owned element's state. A thrown container's first
-// contents ARE client-authored, so this is where that divergence gets its bound. Game thread, unlike the history's
-// other instances on the net thread; each is lock-free and single-threaded on its own.
+// The arrival bound. MTA bounds a source at the JOIN edge (CConnectHistory, CGame.cpp:163); in session it only
+// counts the events a client triggers and raises one (CGame.cpp:4935-4970), because a client never authors a
+// server-owned element's state there. A thrown container's first contents ARE client-authored, so this is where that
+// divergence gets its bound. Game thread, unlike the history's other instances on the net thread; each is lock-free
+// and single-threaded on its own.
 ArrivalState g_arrival;
 uint64_t g_arrivalRefused = 0;
 

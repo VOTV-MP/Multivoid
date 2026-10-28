@@ -379,6 +379,8 @@ sg::Verdict PreTake(const sg::Call& c) {
     void* const inv = ci::InventoryOf(s.container);
     std::vector<SR::SaveRecord> recs;
     if (!cio::ReadRecords(inv, recs, /*neuterNested=*/true) || s.id < 0 || static_cast<size_t>(s.id) >= recs.size()) {
+        // No ask goes out, so no truth comes: the next publication must apply even when identical to the last.
+        coop::props::container_contents_sync::ForgetApplied(eid);
         ShowRefusal(static_cast<uint8_t>(ContainerActReason::Gone));
         return sg::Verdict::Cancel;
     }
@@ -540,6 +542,7 @@ void Tick() {
     UE_LOGI("container_act: request id %u eid %u expired after %llu ms", static_cast<unsigned>(g_rec.id),
             static_cast<unsigned>(g_rec.eid), static_cast<unsigned long long>(waited));
     g_expired.push_back(Expired{g_rec.id, g_rec.eid, now});
+    coop::props::container_contents_sync::ForgetApplied(g_rec.eid);
     ShowNotAsked();
     Close();
 }
@@ -557,6 +560,7 @@ void OnReply(const coop::net::ContainerActReplyPayload& p) {
     case internal::ReplyAction::BadReason:
         ++g_acts[2];
         NoteRefusedPut();
+        coop::props::container_contents_sync::ForgetApplied(g_rec.eid);
         ShowBadReason();
         Close();
         return;

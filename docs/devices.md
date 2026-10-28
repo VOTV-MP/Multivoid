@@ -146,26 +146,27 @@ drone delivery landed full on the host and empty on the client.
 
 The seam is a gate on the Blueprint body of the add and take verbs, and it only marks the
 container dirty -- it reads no arguments and takes no action, which is what makes it correct for
-every caller. The peer whose verb fired then authors the slice on the next sweep. There is no
-request the host could refuse: the gate fires at the body's entry, on the presser's own machine,
-and the item has moved there before an answer from anywhere else could arrive. So the host arbitrates instead, and a client's slice has to pass four things: the author
-is close enough to have used the container (the game's own reach, widened by the container's size
-and by how far a player can move while their position is in flight), it has not sent more slices
-in the last second than any honest client can produce, it edited the truth the host last
-published, and no host-side change is in flight. The host then relays to every peer except the
-author -- echoing a peer's own state back would revert its newer local value. A refused write is
-answered by re-publishing the host's truth to that author, and counted; the one exception is the
-rate refusal, which answers with nothing, because a limit on how fast someone may make the host
-work must not make it work harder. Whatever the host publishes becomes the truth the next write is
-judged against, including a client's slice it has just accepted and passed on.
+every caller. On the host the next sweep publishes the slice. There is no request the host could
+refuse here: the gate fires at the body's entry, on the presser's own machine, and the item has
+moved there before an answer from anywhere else could arrive. So a client's mirror of a shared
+container is display only: its own add or take runs on the mirror, the watch forgets the applied
+hash, and the host's next publication, or the truth it sends a refused ask, puts the mirror back.
+A change a client really makes to a shared container is an act the host judges
+(`coop/props/container_act_*`). One client slice remains, a thrown container's birth: the host
+built its copy empty from the throw, the contents are the thrower's, and that slice is the one a
+host takes. It spends the author's arrival budget (sixteen a second); past it the slice waits in
+the pen. The host refuses every other client slice after its header, never applies or relays it,
+counts it, says it once per container, and answers the author with its own truth: at most one
+per container every two seconds and one per author every half second, so a forged address buys
+no more than the floor. An accepted birth is relayed to every peer except the author -- echoing a
+peer's own state back would revert its newer local value.
 
 Two things can arrive before they can be judged, and neither is refused for it. A slice whose
 container has not spawned on this machine yet waits in a holding pen -- one entry per container,
 replayed until it lands, and dropped after thirty seconds; while a join is streaming in, that
 clock does not run at all, because contents normally arrive ahead of the props they belong to. And
-a slice from a player the host has not yet placed in the world -- the first seconds of a join --
-waits in the same pen rather than being turned down, since refusing it would throw away a real
-edit at exactly the moment the game is least able to judge it. A client's pen is bounded per
+a thrown container's first contents that arrive faster than their arrival budget allows wait in
+the same pen rather than being turned down, since they are the thrower's only copy. A client's pen is bounded per
 author; the host's own slices are not bounded, the way nothing of the host's is.
 
 A container that is thrown changes hands without either verb: the game rebinds the thrown actor to

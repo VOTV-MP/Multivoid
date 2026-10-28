@@ -392,6 +392,16 @@ void RunSelftest() {
         check(!CS::SlotTruthDue(1000, 1499), "truth: 499 ms after any send to the slot is not due");
         check(CS::SlotTruthDue(1000, 1500), "truth: 500 ms after any send to the slot is due");
 
+        CS::RefusalOnce once;
+        bool allSaid = true;
+        for (uint32_t i = 0; i < CS::kMaxRefusalLines; ++i)
+            allSaid = allSaid && once.Note(i) == CS::RefusalOnce::Say::Refusal;
+        check(allSaid, "truth: the first 256 refused containers are each said");
+        check(once.Note(0) == CS::RefusalOnce::Say::Quiet, "truth: a container already said stays quiet");
+        check(once.Note(1000) == CS::RefusalOnce::Say::Capped, "truth: the 257th container is answered capped");
+        check(once.Note(1001) == CS::RefusalOnce::Say::Quiet, "truth: the cap is said once");
+        check(once.Note(1000) == CS::RefusalOnce::Say::Quiet, "truth: a capped container stays quiet");
+
         check(!H::WaitExpired(1000, 15999), "wait: a head 1 ms short of the bound stays");
         check(H::WaitExpired(1000, 16000), "wait: a head at the bound is ended");
     }

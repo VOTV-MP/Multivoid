@@ -470,8 +470,8 @@ traffic-protection section.* Relay's README gives its container handling one par
 routed through the host, the client's rows a mirror and not the canonical copy -- and says the host
 validates replicated actions, without listing the checks. There was no list to copy, so the row was
 built the other way round: this project wrote down the invariants its own container lane must hold,
-measured each, and closed the gaps the measuring found (`coop/props/container_write_policy` and its
-siblings). The prompt is Moddy's; the invariants, the measurements and the fixes are this project's
+measured each, and closed the gaps the measuring found (the `coop/props/container_*`
+lane). The prompt is Moddy's; the invariants, the measurements and the fixes are this project's
 own.
 
 **The hook audit (b161).** *Source: the README Blueprint, the note "3 // WATCH VANILLA

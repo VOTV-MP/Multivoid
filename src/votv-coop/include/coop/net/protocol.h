@@ -607,10 +607,10 @@ enum class ReliableKind : uint8_t {
     // peer: a denial. Chunked blob, eid-addressed.
     FloppyBoxState = 117,
 
-    // A world container's contents as state, eid-addressed. The peer whose take or add ran authors
-    // the slice with the base hash it last applied; the host accepts it only against its current
-    // truth, then relays it to everyone but the author. Chunked blob; personal inventories are
-    // skipped.
+    // A world container's contents as state, eid-addressed. The host publishes it; a client authors
+    // one kind only, the birth slice of a container it threw, which the host applies and relays to
+    // everyone but the author. Any other client slice is refused and answered with the host's truth.
+    // Chunked blob; personal inventories are skipped.
     ContainerContents = 118,
 
     // Host to all, the origin included: one chat line with the host-assigned sequence that orders

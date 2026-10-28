@@ -4,6 +4,7 @@
 #include "container_intent_drill_detail.h"
 #include "container_route_drill_detail.h"
 
+#include "coop/dev/container_writer_probe.h"
 #include "coop/dev/drill_chat.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
@@ -33,6 +34,9 @@ namespace DC = coop::dev::drill_chat;
 namespace RD = coop::dev::container_route_drill::detail;
 using ue_wrap::FVector;
 
+// Each wait below follows the event it waits on (the append, the redraw, the refusal): the forge's second append comes a
+// second after the first because that gap is the measurement, and the unasked arm's absence is read once the sweep
+// has run. The arm's own phase still ends on its printed line.
 constexpr uint64_t kOpenFailMs   = 10000;   // the screen shows the new record's slot within this after the redraw
 constexpr uint64_t kCommitFailMs = 15000;   // the refusal arrives within this after the press
 constexpr uint64_t kSettleMs     = 1000;    // the counts are read this long after the commit
@@ -43,6 +47,7 @@ int      g_ghostSlotId = -1;
 uint64_t g_ghostAnsweredMs = 0;   // the host's refusal of the ghost arrived
 size_t   g_appendFrom = 0;   // the next nearby prop the ghost, the forge and the unasked append try
 int      g_forges = 0;       // forge: the records published so far
+uint32_t g_verbsBefore = 0;  // unasked: the verb watch's count for the target before the append
 
 // The nearest keyed world props to the player, in order from candidate `from` (moved past the one used), until one's
 // record is appended to the mirror: by a raw write (the ghost; the forge publishes it) or by the game's own addObject.
@@ -84,6 +89,12 @@ void AppendedTick(uint64_t now) {
         return;
     }
     if (now - g_phaseStartMs < kSettleMs) return;   // the sweep that would ship a slice has run
+    // Unasked: no slice going out proves nothing unless the verb watch saw the verb; a deaf watch fails the arm.
+    const uint32_t seen = coop::dev::container_writer_probe::ClientVerbsOf(g_eid);
+    if (ArmOf() == Arm::Unasked && seen <= g_verbsBefore) {
+        Fail("the verb watch did not see the addObject on eid=%u (verbs %u -> %u)", g_eid, g_verbsBefore, seen);
+        return;
+    }
     UE_LOGI("[CI-DRILL] client %s PASS (appended %d)", ArmName(), g_forges);
     DC::Say(kAppendDoneLine);
     Finish();
@@ -121,6 +132,7 @@ void StartGhost(uint64_t now) {
 // The forge publishes a record of its mirror twice, a second apart; the unasked arm calls the game's addObject on it once.
 void StartAppend(uint64_t now) {
     g_containerBefore = CountOf(g_eid);
+    g_verbsBefore = coop::dev::container_writer_probe::ClientVerbsOf(g_eid);
     if (g_containerBefore < 0 || !AppendGhost(ArmOf() == Arm::Forge, ArmOf() == Arm::Unasked, g_appendFrom)) {
         Fail("no nearby prop's record could be appended to the mirror (count %d)", g_containerBefore);
         return;
@@ -190,6 +202,7 @@ void AppendReset() {
     g_ghostAnsweredMs = 0;
     g_appendFrom = 0;
     g_forges = 0;
+    g_verbsBefore = 0;
 }
 
 }  // namespace coop::dev::container_intent_drill::detail
