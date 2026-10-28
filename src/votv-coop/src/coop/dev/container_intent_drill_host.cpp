@@ -5,6 +5,7 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/dev/drill_chat.h"
 #include "coop/element/registry.h"
 #include "coop/net/net_clock.h"
 #include "coop/net/session.h"
@@ -12,6 +13,7 @@
 #include "coop/player/remote_player.h"
 #include "coop/props/container_act_host.h"
 #include "coop/props/container_act_state.h"
+#include "coop/props/container_contents_sync.h"
 #include "coop/props/container_record_edit.h"
 
 #include "ue_wrap/actors/container_view.h"
@@ -33,6 +35,8 @@ namespace AH = coop::props::container_act_host;
 namespace AS = coop::props::container_act_state;
 namespace CV = ue_wrap::container_view;
 namespace CRE = coop::props::container_record_edit;
+namespace CC = coop::props::container_contents_sync;
+namespace DC = coop::dev::drill_chat;
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 using ue_wrap::FVector;
@@ -281,6 +285,27 @@ void HostTwo(uint64_t now, int count, size_t holds) {
     if (late) Fail("the two takers did not both end in time (grants %u, gones %u, holds %zu)", grants, gones, holds);
 }
 
+// Forge and unasked: once the client says its appends are done, the slices the host took from it are judged. Forge:
+// both forged slices refused as not a birth, the truth sent once, the container unchanged. Unasked: no slice arrived.
+void HostAppended(uint64_t now, int count) {
+    if (!DC::ChatHasLive(kAppendDoneLine)) {
+        if (g_readyMs && now - g_readyMs >= kHostReadyMs) Fail("the client never said its appends were done");
+        return;
+    }
+    const CC::DevClientSlices s = CC::DevClientSlicesOf(1);
+    UE_LOGI("[CI-DRILL] host %s slices received=%u refused=%u truths=%u, container %d -> %d", ArmName(), s.received,
+            s.refused, s.truths, g_records0, count);
+    const bool slices = ArmOf() == Arm::Forge ? s.refused >= 2 && s.received == s.refused && s.truths == 1
+                                              : s.received == 0;
+    if (slices && count == g_records0) {
+        UE_LOGI("[CI-DRILL] host %s PASS", ArmName());
+        Finish();
+    } else {
+        Fail("%u slices received, %u refused, %u truths sent, the container went %d -> %d", s.received, s.refused,
+             s.truths, g_records0, count);
+    }
+}
+
 }  // namespace
 
 void HostTick(const coop::net::Session& session) {
@@ -356,6 +381,10 @@ void HostTick(const coop::net::Session& session) {
     }
     if (count > g_records0) {
         Fail("the count rose above the start (%d -> %d)", g_records0, count);
+        return;
+    }
+    if (ArmOf() == Arm::Forge || ArmOf() == Arm::Unasked) {
+        HostAppended(now, count);
         return;
     }
     if (ArmOf() == Arm::Ghost) {

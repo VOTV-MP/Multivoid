@@ -34,11 +34,14 @@ struct ItemKey {
 };
 
 enum class Arm : uint8_t { Off, Take, Settle, Abort, Deadline, Double, Ghost, Held, Race, Two, Sale, Depart, Room,
-                           PutRecord, PutHand, PutFood, PutHidden, PutNested, PutEmpty, PutHover, PutReserved, PutFull,
+                           Forge, Unasked, PutRecord, PutHand, PutFood, PutHidden, PutNested, PutEmpty, PutHover, PutReserved, PutFull,
                            PutFullHand, PutDepart, PutDeadline, PutOwed, PutJoin, ThrowHand, ThrowGrab, ThrowHostGrab, ThrowClamp,
                            ThrowPlace, ThrowJoin, ThrowDepart, ThrowTouch };
 Arm ArmOf();
 const char* ArmName();
+
+// The forge and unasked arms: the client's line on drill chat once its appends are done, which the host judges on.
+inline constexpr const char* kAppendDoneLine = "ci-drill append done";
 
 // The put arms are their own drill (container_intent_drill_put*.cpp): neither half picks a world container.
 inline bool IsPutArm(Arm a) { return a >= Arm::PutRecord && a <= Arm::PutJoin; }
@@ -53,7 +56,7 @@ inline bool IsHandThrow(Arm a) { return a == Arm::ThrowHand || a == Arm::ThrowCl
 bool NamesR();
 
 enum class Phase { Picking, Walking, Opening, SettleWait, Pressed, Parked, Holding, Settling,
-                   GhostFind, GhostWait, GhostBack, Watching, Done };
+                   GhostFind, GhostWait, GhostBack, Appended, Watching, Done };
 
 extern Phase    g_phase;
 extern uint64_t g_pickStartMs;

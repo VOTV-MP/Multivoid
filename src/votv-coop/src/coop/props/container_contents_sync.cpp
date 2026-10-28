@@ -108,6 +108,7 @@ struct TruthSlot {
     uint64_t anyMs = 0;   // 0: none sent yet
     std::set<uint32_t> refusedSaid;
     bool capSaid = false;
+    DevClientSlices dev;   // the drill's counts
 };
 coop::roster_ledger::PerSlotState<TruthSlot> g_truth;
 coop::net::RefusalTally g_refusals{"container_contents"};
@@ -322,11 +323,19 @@ Ingest ApplyContents(uint32_t eid, const std::vector<SR::SaveRecord>& recs, uint
     return Ingest::Applied;
 }
 
-// Host: a client slice that is not a thrown container's birth. It is counted, said once per (slot, container), and
-// the author is sent the host's truth, bounded, so an expired or forged birth still converges.
+// The inventory of the live world container `eid` names, or null.
+void* LiveWorldInventory(uint32_t eid) {
+    void* actor = LivePropActor(eid);
+    if (!actor || !ci::IsContainer(actor)) return nullptr;
+    void* inv = ci::InventoryOf(actor);
+    return inv && ci::IsWorldInventory(inv) ? inv : nullptr;
+}
+
+// Host: a client slice that is not a birth. Counted, said once per (slot, container); the author gets the host's truth, bounded.
 void RefuseNonBirth(uint32_t eid, uint8_t senderSlot) {
     g_refusals.Note(senderSlot, "not a birth", coop::net::RefusalTally::Clock::now());
     TruthSlot& t = g_truth[senderSlot];
+    ++t.dev.refused;
     if (t.refusedSaid.count(eid) == 0) {
         if (t.refusedSaid.size() < kMaxRefusalLines) {
             t.refusedSaid.insert(eid);
@@ -340,10 +349,17 @@ void RefuseNonBirth(uint32_t eid, uint8_t senderSlot) {
     SendTruthBounded(eid, senderSlot);
 }
 
+// Dev red (container_slice_accept_red): the refusal is skipped, so the host applies a forged slice as it would a birth.
+bool SliceAcceptRed() {
+    static const bool on = coop::config::ResolveFlag(coop::config_registry::rows::container_slice_accept_red);
+    return on;
+}
+
 Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t senderSlot,
                      cb::Source src) {
     size_t o = 0;
     if (!cw::ParseHeader(blob, o, outEid)) return Ingest::Handled;
+    if (IsHost() && senderSlot != 0 && src == cb::Source::Arrival) ++g_truth[senderSlot].dev.received;
     // A container a client threw: the host built its copy empty from the intent and has published
     // nothing for it, so any slice of that author is the newest version of the transfer -- an edit
     // made while the first slice waited in the pen included. There is no reach to measure either: the
@@ -361,9 +377,8 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
         if (cb::SpendArrival(outEid, senderSlot, NowMs(), *s, src, /*held=*/true) == cb::Arrival::TooFast)
             return Ingest::Park;
     }
-    // A client authors a thrown container's birth and nothing else: any other client slice is refused here, after its
-    // header alone. Handled, not Applied: never applied, never relayed.
-    if (IsHost() && senderSlot != 0 && !birth) {
+    // A client authors a thrown container's birth only: any other slice is refused after its header (never applied, never relayed).
+    if (IsHost() && senderSlot != 0 && !birth && !SliceAcceptRed()) {
         RefuseNonBirth(outEid, senderSlot);
         return Ingest::Handled;
     }
@@ -712,18 +727,6 @@ bool DevRawAppendActor(uint32_t eid, void* item, bool publish) {
     return ApplyAppended(eid, recs, publish);
 }
 
-namespace {
-
-// The inventory of the live world container `eid` names, or null.
-void* LiveWorldInventory(uint32_t eid) {
-    void* actor = LivePropActor(eid);
-    if (!actor || !ci::IsContainer(actor)) return nullptr;
-    void* inv = ci::InventoryOf(actor);
-    return inv && ci::IsWorldInventory(inv) ? inv : nullptr;
-}
-
-}  // namespace
-
 bool SendTruthToSlot(uint32_t eid, int slot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !IsHost()) return false;
@@ -750,6 +753,7 @@ bool SendTruthBounded(uint32_t eid, int slot) {
     if (it != t.sentMs.end() && !TruthDue(it->second, now)) return false;
     t.sentMs[eid] = now;
     t.anyMs = now;
+    ++t.dev.truths;
     return BroadcastContainer(s, eid, inv, slot, /*force=*/true);
 }
 
@@ -766,6 +770,9 @@ bool SentBaselineKnown(uint32_t eid) { return g_sentHash.count(eid) != 0; }
 uint32_t TouchEpochOf(uint32_t eid) {
     const auto it = g_touchEpoch.find(eid);
     return it == g_touchEpoch.end() ? 0 : it->second;
+}
+DevClientSlices DevClientSlicesOf(int slot) {
+    return slot > 0 && slot < coop::net::kMaxPeers ? g_truth[slot].dev : DevClientSlices{};
 }
 
 void OnDisconnect() {

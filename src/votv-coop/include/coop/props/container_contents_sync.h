@@ -1,20 +1,18 @@
-// coop/props/container_contents_sync.h -- a world container's CONTENTS, published by the host. docs/devices.md
-// carries the model. A client authors one slice kind, a thrown container's birth (coop/props/container_birth, with
-// its arrival bound); every other client slice is refused at the host. A slice for a container with no actor
-// waits in bind_wait, one for a container not ready in container_park, the bytes are container_slice_wire.
+// coop/props/container_contents_sync.h -- a world container's CONTENTS, published by the host. docs/devices.md carries
+// the model. A client authors one slice kind, a thrown container's birth (coop/props/container_birth, with its arrival
+// bound); the host refuses every other client slice. A slice for a container with no actor waits in bind_wait, one for
+// a container not ready in container_park, the bytes are container_slice_wire.
 //
-// Two rules restate HERE, because breaking either destroys player data: a container whose
-// propInventory_C.Player reads true, OR whose offset will not resolve, is SKIPPED (personal
-// inventory shares one global GObjStack array, and a write over another peer's slice wipes that
-// player's inventory); and a nested container's own index rides as the sentinel -1, on the way out
-// AND on the way in, since a real value there names a slot in the SENDER's array.
+// Two rules restate HERE, because breaking either destroys player data: a container whose propInventory_C.Player
+// reads true, OR whose offset will not resolve, is SKIPPED (personal inventory shares one global GObjStack array, and
+// a write over another peer's slice wipes that player's inventory); and a nested container's own index rides as the
+// sentinel -1, on the way out AND on the way in, since a real value there names a slot in the SENDER's array.
 //
-// The edge is coop/props/container_writer_watch (ue_wrap/core/script_gate on addObject and takeObj),
-// marking the OWNING actor's eid dirty through MarkHostWrite on the host. A client's mirror of a shared container is
-// display only: a verb on it marks nothing, and a client authors only a thrown container's birth slice.
-// Apply raw-writes the receiver's own GObjStack slot, then re-derives the setter-managed
-// state through updateVolumesAndMass and recalculateNames; addObject cannot be the apply verb (it
-// takes a live AActor* and serialises it itself) and checkObjectsVolume is not called (it ejects).
+// The edge is coop/props/container_writer_watch (script_gate on addObject and takeObj), marking the OWNING actor's
+// eid dirty through MarkHostWrite on the host; a client's mirror is display only, a verb on it marks nothing. Apply
+// raw-writes the receiver's own GObjStack slot, then re-derives the setter-managed state through
+// updateVolumesAndMass and recalculateNames; addObject cannot be the apply verb (it takes a live AActor* and
+// serialises it itself) and checkObjectsVolume is not called (it ejects).
 
 #pragma once
 
@@ -133,5 +131,11 @@ bool SentBaselineKnown(uint32_t eid);
 // Dev: how often this lane touched the container: a local write (MarkHostWrite), an applied remote slice, a connect
 // seed's send. 0 when it never has. Game thread; reset at session end.
 uint32_t TouchEpochOf(uint32_t eid);
+
+// Dev (container_intent_drill): what the host took in from one client slot since the session began (or the slot's
+// occupant changed): the slices that arrived, those refused as not a birth, and the truths it sent back through
+// SendTruthBounded. Host; zeros for a slot that is not a client's. Game thread.
+struct DevClientSlices { uint32_t received = 0, refused = 0, truths = 0; };
+DevClientSlices DevClientSlicesOf(int slot);
 
 }  // namespace coop::props::container_contents_sync

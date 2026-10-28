@@ -2,11 +2,13 @@
 
 #include "coop/dev/container_intent_drill.h"
 #include "container_intent_drill_detail.h"
+#include "container_route_drill_detail.h"
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/director/routes.h"
+#include "coop/dev/drill_chat.h"
 #include "coop/element/registry.h"
 #include "coop/net/net_clock.h"
 #include "coop/net/protocol.h"
@@ -52,6 +54,8 @@ namespace CC = coop::props::container_contents_sync;
 namespace CAH = coop::props::container_apply_hold;
 namespace AR = coop::props::container_act_request;
 namespace AH = coop::props::container_act_host;
+namespace DC = coop::dev::drill_chat;
+namespace RD = coop::dev::container_route_drill::detail;
 using ue_wrap::FVector;
 
 namespace detail {
@@ -65,6 +69,7 @@ constexpr ArmRow kArms[] = {{"take", Arm::Take},     {"settle", Arm::Settle}, {"
                             {"deadline", Arm::Deadline}, {"double", Arm::Double}, {"ghost", Arm::Ghost},
                             {"held", Arm::Held},     {"race", Arm::Race},     {"two", Arm::Two},
                             {"sale", Arm::Sale},     {"depart", Arm::Depart}, {"room", Arm::Room},
+                            {"forge", Arm::Forge},   {"unasked", Arm::Unasked},
                             {"putrecord", Arm::PutRecord}, {"puthand", Arm::PutHand}, {"putfood", Arm::PutFood},
                             {"puthidden", Arm::PutHidden}, {"putnested", Arm::PutNested}, {"putempty", Arm::PutEmpty},
                             {"puthover", Arm::PutHover}, {"putreserved", Arm::PutReserved}, {"putfull", Arm::PutFull},
@@ -203,6 +208,8 @@ int      g_containerBefore = -1;
 int      g_ownBefore = -1;
 int      g_propsBefore = -1;
 int      g_ghostSlotId = -1;
+size_t   g_appendFrom = 0;   // the next nearby prop the ghost, the forge and the unasked append try
+int      g_forges = 0;       // forge: the records published so far
 uint32_t g_takesBefore = 0;
 uint32_t g_committed = 0;
 uint64_t g_rHash = 0;       // race and two: the hash of the record the press names, as the container holds it
@@ -289,8 +296,9 @@ int PropsNearPlayer() {
     return n;
 }
 
-// The ghost: the nearest keyed world props to the player, in order, until one's record is appended to the mirror.
-bool AppendGhost() {
+// The nearest keyed world props to the player, in order from candidate `from` (moved past the one used), until one's
+// record is appended to the mirror: by a raw write (the ghost; the forge publishes it) or by the game's own addObject.
+bool AppendGhost(bool publish, bool viaVerb, size_t& from) {
     static std::vector<coop::element::Registry::ActorIdPair> pairs;
     void* const p = coop::players::Registry::Get().Local();
     FVector at{};
@@ -306,8 +314,13 @@ bool AppendGhost() {
         cand.emplace_back(dx * dx + dy * dy + dz * dz, a.actor);
     }
     std::sort(cand.begin(), cand.end(), [](const auto& l, const auto& r) { return l.first < r.first; });
-    for (int i = 0; i < kGhostTries && i < static_cast<int>(cand.size()); ++i)
-        if (CC::DevRawAppendActor(g_eid, cand[static_cast<size_t>(i)].second, /*publish=*/false)) return true;
+    for (size_t i = from; i < from + kGhostTries && i < cand.size(); ++i) {
+        void* const item = cand[i].second;
+        if (viaVerb ? RD::PutIn(g_actor, item) : CC::DevRawAppendActor(g_eid, item, publish)) {
+            from = i + 1;
+            return true;
+        }
+    }
     return false;
 }
 
@@ -436,7 +449,7 @@ void StartGhost(uint64_t now) {
         Fail("the mirror's count does not read");
         return;
     }
-    if (!AppendGhost()) {
+    if (!AppendGhost(false, false, g_appendFrom)) {
         Fail("no nearby prop's record could be appended to the mirror");
         return;
     }
@@ -453,6 +466,35 @@ void StartGhost(uint64_t now) {
     g_ghostSlotId = g_containerBefore;
     g_phaseStartMs = now;
     g_phase = Phase::GhostFind;
+}
+
+// The forge publishes a record of its mirror twice, a second apart; the unasked arm calls the game's addObject on it once.
+void StartAppend(uint64_t now) {
+    g_containerBefore = CountOf(g_eid);
+    if (g_containerBefore < 0 || !AppendGhost(ArmOf() == Arm::Forge, ArmOf() == Arm::Unasked, g_appendFrom)) {
+        Fail("no nearby prop's record could be appended to the mirror (count %d)", g_containerBefore);
+        return;
+    }
+    g_forges = 1;
+    g_phaseStartMs = now;
+    g_phase = Phase::Appended;
+}
+
+void AppendedTick(uint64_t now) {
+    if (ArmOf() == Arm::Forge && g_forges == 1) {
+        if (now - g_phaseStartMs < kSettleMs) return;
+        if (!AppendGhost(true, false, g_appendFrom)) {
+            Fail("no second nearby prop's record could be appended to the mirror");
+            return;
+        }
+        g_forges = 2;
+        g_phaseStartMs = now;
+        return;
+    }
+    if (now - g_phaseStartMs < kSettleMs) return;   // the sweep that would ship a slice has run
+    UE_LOGI("[CI-DRILL] client %s PASS (appended %d)", ArmName(), g_forges);
+    DC::Say(kAppendDoneLine);
+    Finish();
 }
 
 void ClientTick() {
@@ -509,7 +551,9 @@ void ClientTick() {
         if (CV::Viewed() == g_actor) {
             UE_LOGI("[CI-DRILL] client opened eid=%u after %llu ms", g_eid,
                     static_cast<unsigned long long>(now - g_phaseStartMs));
-            if (ArmOf() == Arm::Ghost) {
+            if (ArmOf() == Arm::Forge || ArmOf() == Arm::Unasked) {
+                StartAppend(now);
+            } else if (ArmOf() == Arm::Ghost) {
                 StartGhost(now);
             } else if (ArmOf() == Arm::Settle || ArmOf() == Arm::Two) {
                 g_phaseStartMs = now;
@@ -681,6 +725,7 @@ void ClientTick() {
             Fail("no refusal 15 s after the press (pending id=%u)", static_cast<unsigned>(AR::dev::PendingId()));
         return;
     }
+    case Phase::Appended: AppendedTick(now); return;
     case Phase::GhostBack: {
         const int count = CountOf(g_eid);
         if (count != g_containerBefore) {
@@ -751,6 +796,8 @@ void OnDisconnect() {
     g_records0 = 0;
     g_phaseStartMs = g_pressMs = g_commitMs = g_parkedMs = g_waitFromMs = 0;
     g_containerBefore = g_ownBefore = g_propsBefore = g_ghostSlotId = -1;
+    g_appendFrom = 0;
+    g_forges = 0;
     g_takesBefore = g_committed = 0;
     g_r0 = g_rHash = 0;
     g_r0Key = g_rKey = ItemKey{};

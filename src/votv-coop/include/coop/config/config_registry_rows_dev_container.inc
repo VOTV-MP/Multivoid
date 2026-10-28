@@ -33,7 +33,7 @@ CFG_FLAG(container_view_drill, "container_view_drill", "dev", false, "VOTVCOOP_C
     "Drill (client): walks to the ATV, opens its container through the game's own openPropInv, then walks "
     "back; the view must stay open while the ATV is within reach and close on the tick it leaves it. Run it "
     "with join_at_host=1. Lines tagged [CVIEW-DRILL]; the client's DONE line, carrying the verdict, ends it.")
-CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room|putrecord|puthand|putfood|puthidden|putnested|putempty|puthover|putreserved|putfull|putfullhand|putdepart|putdeadline|putowed|putjoin|throwhand|throwgrab|throwhostgrab|throwclamp|throwplace|throwjoin|throwdepart|throwtouch",
+CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room|forge|unasked|putrecord|puthand|putfood|puthidden|putnested|putempty|puthover|putreserved|putfull|putfullhand|putdepart|putdeadline|putowed|putjoin|throwhand|throwgrab|throwhostgrab|throwclamp|throwplace|throwjoin|throwdepart|throwtouch",
     "VOTVCOOP_CONTAINER_INTENT_DRILL",
     "Drill (BOTH peers): both pick the same shared container (the smallest element id, within 5000 cm of the player, "
     "that holds two records or more and that a nav route reaches; race, two, sale and room take one whose first record "
@@ -49,7 +49,10 @@ CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|ta
     "container (a stand-in for a sale) comes between the grant and the replay; the client keeps the item. depart -- "
     "the replay is parked and the rig drops the client (--rejoin --rejoin-marker \"[CI-DRILL] client depart "
     "parked\"); the host's record returns. room -- the client's own inventory has no room, so the item stays a world "
-    "prop. The put arms pick no container: the host spawns a target (a backpack, a minifridge for putfood) 600 cm "
+    "prop. forge -- the client writes a record into its mirror twice, a second apart, and publishes each: the host "
+    "refuses both as not a birth and sends its truth once (red: container_slice_accept_red=1 on the host). unasked -- "
+    "the client calls the game's addObject on its mirror outside any act: the writer probe names it "
+    "(container_writer_probe=1 on the client) and the host receives no slice. The put arms pick no container: the host spawns a target (a backpack, a minifridge for putfood) 600 cm "
     "ahead of the client and the item it takes, and each arm MEASURES and prints. putrecord -- the client pockets a "
     "drive and puts it in by the hotbar key. puthand -- it carries a drive past the target and puts it in by hold and "
     "run. putfood -- the same with food and the fridge; the held food's temperature, ripeness, record clock and hash are "
@@ -86,6 +89,9 @@ CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|ta
 CFG_FLAG(container_act_no_escrow, "container_act_no_escrow", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_ESCROW",
     "Red arm for the container intent drill (HOST): a grant opens its escrow with the record found but does not "
     "remove it from the container, so a second taker finds it still there and the item is taken twice.")
+CFG_FLAG(container_slice_accept_red, "container_slice_accept_red", "dev", false, "VOTVCOOP_CONTAINER_SLICE_ACCEPT_RED",
+    "Red arm for the container intent drill's forge arm (HOST): a client's container slice that is not a thrown "
+    "container's birth is not refused at the receive edge, so the host applies the forged record and relays it.")
 CFG_FLAG(container_act_no_hover_guard, "container_act_no_hover_guard", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_HOVER_GUARD",
     "Red arm for the put drill's puthover (CLIENT): the replay of a hotbar-key put no longer checks that no slot "
     "is hovered, so a slot hovered after the ask is pressed by the replay and its record is taken unjudged.")
