@@ -56,6 +56,11 @@ constexpr uint64_t kReplyWaitMs = 10000;
 // A refused commit is sent again at most this often.
 constexpr uint64_t kCommitRetryMs = 250;
 
+// A grant older than the host's hold deadline less this is not replayed. The host restores the record by itself at its
+// deadline, so a replay after that makes the item twice. The age is counted from the reply's receipt here, which
+// underestimates the grant's age by at most the one-way latency; the margin covers that.
+constexpr uint64_t kGrantMarginMs = 5000;
+
 // The one open act.
 struct Pending {
     bool open = false;
@@ -69,6 +74,7 @@ struct Pending {
     ue_wrap::CachedObjRef container;
     uint16_t index = 0;
     uint64_t hash = 0;
+    uint64_t grantedMs = 0;   // when the Granted reply was taken here
 };
 
 // The replay's apply latch, for the length of one synchronous verb call: the verb watches ask it whether a verb is the
@@ -86,6 +92,7 @@ struct Latched {
 };
 
 uint32_t g_takeDoneUnread = 0;   // takes committed done although the press's count could not be read back
+uint32_t g_staleGrantAborts = 0; // grants aborted for their age instead of replayed
 dev::Take g_lastTake;            // the last take's commit as it was sent; the drills read it
 
 // A request whose wait ran out, kept until the host answers it, so a grant that still arrives is answered with an
@@ -242,8 +249,8 @@ const char* ReplyActionName(ReplyAction a) {
     return "";
 }
 
-TakeCheck CheckTake(bool slotLive, bool screenShowsContainer, bool sameId, bool hashMatches) {
-    return slotLive && screenShowsContainer && sameId && hashMatches ? TakeCheck::Replay : TakeCheck::Abort;
+TakeCheck CheckTake(bool grantFresh, bool slotLive, bool screenShowsContainer, bool sameId, bool hashMatches) {
+    return grantFresh && slotLive && screenShowsContainer && sameId && hashMatches ? TakeCheck::Replay : TakeCheck::Abort;
 }
 
 uint8_t TakeCommitted(bool pressed, bool afterRead, size_t countBefore, size_t countAfter) {
@@ -344,10 +351,19 @@ void ReplayTake() {
     const bool hashMatches = read && g_rec.index < recs.size() && csw::RecordHash(recs[g_rec.index]) == g_rec.hash;
     const bool shows = container && cv::Viewed() == container;
     const bool sameId = slotLive && s.id >= 0 && static_cast<uint32_t>(s.id) == g_rec.index;
-    if (internal::CheckTake(slotLive, shows, sameId, hashMatches) == internal::TakeCheck::Abort) {
-        UE_LOGI("container_act: take id=%u eid=%u index=%u not replayed (the slot, the screen or the record changed) "
-                "-> aborted", static_cast<unsigned>(g_rec.id), static_cast<unsigned>(g_rec.eid),
-                static_cast<unsigned>(g_rec.index));
+    const uint64_t grantAge = coop::net::NowMs() - g_rec.grantedMs;
+    const bool grantFresh = grantAge < container_act_state::kHoldDeadlineMs - kGrantMarginMs;
+    if (internal::CheckTake(grantFresh, slotLive, shows, sameId, hashMatches) == internal::TakeCheck::Abort) {
+        if (!grantFresh) {
+            ++g_staleGrantAborts;
+            UE_LOGW("container_act: take id=%u eid=%u index=%u grant %llu ms old -- not replayed past the host's hold, "
+                    "aborted", static_cast<unsigned>(g_rec.id), static_cast<unsigned>(g_rec.eid),
+                    static_cast<unsigned>(g_rec.index), static_cast<unsigned long long>(grantAge));
+        } else {
+            UE_LOGI("container_act: take id=%u eid=%u index=%u not replayed (the slot, the screen or the record "
+                    "changed) -> aborted", static_cast<unsigned>(g_rec.id), static_cast<unsigned>(g_rec.eid),
+                    static_cast<unsigned>(g_rec.index));
+        }
         SendTakeCommit(g_rec.id, g_rec.eid, 0);
         ShowBadReason();   // the click is lost, never the record: the escrow restores it; the player clicks again
         return;
@@ -477,6 +493,7 @@ void OnReply(const coop::net::ContainerActReplyPayload& p) {
         // host's hold is ended, not kept.
         switch (static_cast<ContainerActFamily>(g_rec.family)) {
         case ContainerActFamily::Take:
+            g_rec.grantedMs = coop::net::NowMs();
             ReplayTake();
             break;
         default:
@@ -495,6 +512,7 @@ void OnDisconnect() {
     if (dev::TakeDoneUnread())
         UE_LOGW("container_act: this session committed %u take(s) done UNREAD", dev::TakeDoneUnread());
     g_takeDoneUnread = 0;
+    g_staleGrantAborts = 0;
     g_lastTake = dev::Take{};
     g_nextId = 0;
     g_nextRequestSeq = 1;
@@ -509,6 +527,8 @@ namespace dev {
 uint32_t TakeDoneUnread() { return g_takeDoneUnread; }
 
 uint16_t PendingId() { return g_rec.open ? g_rec.id : 0; }
+
+uint32_t StaleGrantAborts() { return g_staleGrantAborts; }
 
 Take LastTake() { return g_lastTake; }
 

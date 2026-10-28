@@ -409,12 +409,13 @@ void RunSelftest() {
     // ---- the take's replay: the check before the press, and the commit after it ----
     {
         namespace RQ = coop::props::container_act_request::internal;
-        check(RQ::CheckTake(true, true, true, true) == RQ::TakeCheck::Replay, "check-take: all true replays");
-        check(RQ::CheckTake(false, true, true, true) == RQ::TakeCheck::Abort, "check-take: a dead slot aborts");
-        check(RQ::CheckTake(true, false, true, true) == RQ::TakeCheck::Abort,
+        check(RQ::CheckTake(true, true, true, true, true) == RQ::TakeCheck::Replay, "check-take: all true replays");
+        check(RQ::CheckTake(true, false, true, true, true) == RQ::TakeCheck::Abort, "check-take: a dead slot aborts");
+        check(RQ::CheckTake(true, true, false, true, true) == RQ::TakeCheck::Abort,
               "check-take: another container on the screen aborts");
-        check(RQ::CheckTake(true, true, false, true) == RQ::TakeCheck::Abort, "check-take: another id aborts");
-        check(RQ::CheckTake(true, true, true, false) == RQ::TakeCheck::Abort, "check-take: another record aborts");
+        check(RQ::CheckTake(true, true, true, false, true) == RQ::TakeCheck::Abort, "check-take: another id aborts");
+        check(RQ::CheckTake(true, true, true, true, false) == RQ::TakeCheck::Abort, "check-take: another record aborts");
+        check(RQ::CheckTake(false, true, true, true, true) == RQ::TakeCheck::Abort, "check-take: a stale grant aborts");
         check(RQ::TakeCommitted(false, true, 3, 2) == 0, "take-committed: a press that did not run is abort");
         check(RQ::TakeCommitted(true, true, 3, 3) == 0, "take-committed: a press that took nothing is abort");
         check(RQ::TakeCommitted(true, true, 3, 2) == 1, "take-committed: one record fewer is done");

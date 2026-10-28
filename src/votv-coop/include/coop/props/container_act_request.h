@@ -11,7 +11,8 @@
 //
 // The take family has its replay: a client's press of an inventory-screen slot is cancelled at the slot's pressButton
 // and asked of the host; on a grant the same slot is pressed again under the replay latch, if it still names the
-// record the host granted, and the commit says whether the record left the container. Any other family's grant is
+// record the host granted and the grant is younger than the host's hold less a margin, and the commit says whether
+// the record left the container. Any other family's grant is
 // answered with an abort until it brings its own replay.
 
 #pragma once
@@ -50,9 +51,11 @@ ReplyAction DecideReply(bool pending, uint16_t pendingId, const coop::net::Conta
 const char* ReplyActionName(ReplyAction a);   // "stale" "refused" "bad-reason" "granted"
 
 enum class TakeCheck : uint8_t { Replay, Abort };
-// The replay presses only the slot that asked: live, its screen still showing the same container, the same id, and its
-// record still hashing what the host granted. A failed read or an id past the end is hashMatches = false.
-TakeCheck CheckTake(bool slotLive, bool screenShowsContainer, bool sameId, bool hashMatches);
+// The replay presses only the slot that asked: its grant fresh (the host restores the record by itself at its hold
+// deadline, so a replay past that makes the item twice), the slot live, its screen still showing the same container,
+// the same id, and its record still hashing what the host granted. A failed read or an id past the end is
+// hashMatches = false.
+TakeCheck CheckTake(bool grantFresh, bool slotLive, bool screenShowsContainer, bool sameId, bool hashMatches);
 // The commit after the press. 0 (abort) only when the verb did not run, or it ran and took nothing (the count read
 // back and did not fall); else 1 (done): a press that ran and whose count could not be read back counts as done, since
 // an abort there would give back a record the player may hold.
@@ -62,6 +65,7 @@ uint8_t TakeCommitted(bool pressed, bool afterRead, size_t countBefore, size_t c
 namespace dev {   // the container act drills read it; OnDisconnect says it once; compiled always
 uint32_t TakeDoneUnread();   // takes committed done although the press's count could not be read back
 uint16_t PendingId();        // the open act's id, 0 when none is open
+uint32_t StaleGrantAborts(); // grants aborted for their age instead of replayed, this session
 
 // The last take commit this peer sent: the act's id, what it said (1 done, 0 abort), and how many take commits this
 // session has sent (0: none yet). Reset at the session's end.
