@@ -118,6 +118,13 @@ void Disarm() {
     AH::dev::HoldReplies(false);
     AH::dev::ReleaseReplies();
     AH::dev::NoEscrow(false);
+    AH::dev::NoReservation(false);   // the put arms' knobs and counters, whichever way the arm ended
+    AH::dev::NoLapse(false);
+    AH::dev::InsertNotReady(0);
+    AH::dev::CountPutJudgements(false);
+    AR::dev::DoubleDone(false);
+    AR::dev::NoHoverGuard(false);
+    AR::dev::NoHandTable(false);
     RoomRestore();
 }
 

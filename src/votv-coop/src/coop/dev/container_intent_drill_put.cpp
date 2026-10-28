@@ -80,7 +80,7 @@ constexpr uint64_t kSettleMs       = 1500;    // the act's end (or the no-put wi
 
 bool IsRecordArm(Arm a) {   // R2 after a pocket
     return a == Arm::PutRecord || a == Arm::PutNested || a == Arm::PutEmpty || a == Arm::PutHover || a == Arm::PutReserved ||
-           a == Arm::PutFull || a == Arm::PutDepart || a == Arm::PutDeadline || a == Arm::PutOwed;
+           a == Arm::PutFull || a == Arm::PutDepart || a == Arm::PutDeadline || a == Arm::PutOwed || a == Arm::PutJoin;
 }
 bool IsHandArm(Arm a) { return a == Arm::PutHand || a == Arm::PutFood || a == Arm::PutFullHand; }   // R3, walking
 
@@ -94,6 +94,7 @@ uint64_t g_nextMs = 0;
 uint32_t g_packEid = 0, g_itemEid = 0, g_item2Eid = 0;
 int      g_needCount = 0;   // the records the target holds at the fixture line: the mirror is waited for until it does
 int      g_pockets = 0;     // the items pocketed so far
+int      g_phase2 = 0;      // the host said on the fixture line that putowed runs its second phase
 ue_wrap::CachedObjRef g_pack, g_item, g_item2, g_hand;
 FVector  g_packAt{};
 FVector  g_lastPos[3] = {};
@@ -123,8 +124,11 @@ void WalkStop() {
 void CEnd(int ok, int stray) {
     WalkStop();
     RD::LowerRun();
-    char say[112];
-    std::snprintf(say, sizeof(say), "%sok=%d stray=%d mirror=%d", Put2DonePrefix(), ok, stray, CountOf(g_packEid));
+    // The drive still in the hand is told too, so the host does not count its mirror as a stray.
+    const uint32_t held = RD::EidOf(HeldActor(coop::players::Registry::Get().Local()));
+    char say[128];
+    std::snprintf(say, sizeof(say), "%sok=%d stray=%d mirror=%d held=%u", Put2DonePrefix(), ok, stray, CountOf(g_packEid),
+                  held == static_cast<uint32_t>(coop::element::kInvalidId) ? 0u : held);
     DC::Say(say);
 }
 
@@ -232,6 +236,7 @@ void StepWaitLine() {
         g_itemEid = static_cast<uint32_t>(item);
         g_item2Eid = static_cast<uint32_t>(item2);
         g_needCount = count;
+        if (!RD::IntAfter(rest, "phase2", g_phase2)) g_phase2 = 0;
         if (IsRecordArm(ArmOf()) && (!g_itemEid || (Put2Pockets() > 1 && !g_item2Eid))) {
             CFail("the host's fixture line names no item to pocket (%s)", rest.c_str());
             return;
@@ -545,7 +550,7 @@ void StepSettle() {
     const int own = ue_wrap::inventory::LivePersonalStoreCount();
     void* held = HeldActor(coop::players::Registry::Get().Local());
     const wchar_t* cls = PutItemClass(arm);
-    const int stray = PutStrayCount(cls, g_pack.Get());
+    const int stray = PutStrayCount(cls, g_pack.Get(), held);   // the drive still in the hand is not a stray
     UE_LOGI("[CI-DRILL] client %s act -> %s route=%u index=%u askHash=%016llx replayHash=%016llx own %d -> %d hand %s", ArmName(),
             AR::dev::PutOutcomeName(p.outcome), static_cast<unsigned>(p.route), static_cast<unsigned>(p.index),
             static_cast<unsigned long long>(p.askHash), static_cast<unsigned long long>(p.replayHash), g_own0, own,
@@ -640,7 +645,7 @@ void PutReset() {
     g_cStep = CStep::WaitLine;
     g_cMs = g_nextMs = g_endMs = 0;
     g_packEid = g_itemEid = g_item2Eid = 0;
-    g_needCount = g_pockets = 0;
+    g_needCount = g_pockets = g_phase2 = 0;
     Put2Reset();
     g_pack.Reset();
     g_item.Reset();
@@ -667,6 +672,7 @@ const wchar_t* PutItemClass(Arm a) {
     case Arm::PutDepart:
     case Arm::PutDeadline:
     case Arm::PutOwed:
+    case Arm::PutJoin:
     case Arm::PutHand:   return RD::kDriveClass;
     case Arm::PutFood:   return kFoodClass;
     case Arm::PutNested:
@@ -675,7 +681,7 @@ const wchar_t* PutItemClass(Arm a) {
     }
 }
 
-int PutStrayCount(const wchar_t* cls, void* target) {
+int PutStrayCount(const wchar_t* cls, void* target, void* skip) {
     static std::vector<coop::element::Registry::ActorIdPair> pairs;
     FVector at{};
     if (!cls || !target || !E::TryGetActorLocation(target, at)) return -1;
@@ -683,7 +689,7 @@ int PutStrayCount(const wchar_t* cls, void* target) {
     int n = 0;
     for (const auto& a : pairs) {
         FVector pos{};
-        if (!a.actor || a.actor == target || !R::IsLiveByIndex(a.actor, a.internalIdx) ||
+        if (!a.actor || a.actor == target || a.actor == skip || !R::IsLiveByIndex(a.actor, a.internalIdx) ||
             R::ClassNameOf(a.actor) != cls || !E::TryGetActorLocation(a.actor, pos))
             continue;
         const float dx = pos.X - at.X, dy = pos.Y - at.Y, dz = pos.Z - at.Z;
@@ -707,6 +713,13 @@ void PutFail(const char* fmt, ...) {
 }
 
 void PutPass(int stray) { CPass(stray); }
+int PutPhase2() { return g_phase2; }
+
+void PutNotMeasured(const char* why) {
+    UE_LOGI("[CI-DRILL] client %s NOT MEASURED (%s)", ArmName(), why);
+    CEnd(2, -1);
+    Finish();
+}
 bool PutActEnded() { return ActEnded(); }
 void PutToSettle() { ToSettle(); }
 void PutEnterHook() { CNext(CStep::Hook); }

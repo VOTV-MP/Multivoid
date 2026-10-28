@@ -44,8 +44,9 @@ constexpr uint64_t kHoldMs         = 3000;    // the joiner's head waits this lo
 constexpr uint64_t kSecondGrantMs  = 15000;   // the release to the joiner's grant
 constexpr uint64_t kDoneMs         = 60000;   // the joiner's grant to both clients being done
 constexpr uint64_t kCountMs        = 5000;    // the dones to the count reading +2
+constexpr uint64_t kTellMs         = 3000;    // NOT MEASURED said on chat to the end, so the client prints its own
 
-enum class J : uint8_t { Joining, Grant, Joiner, JoinerAsk, Hold, SecondGrant, Dones, Judge };
+enum class J : uint8_t { Joining, Grant, Joiner, JoinerAsk, Hold, SecondGrant, Dones, Judge, NotMeasured };
 J        g_j = J::Joining;
 uint64_t g_enterMs = 0, g_goMs = 0, g_grantMs = 0, g_waitMs = 0, g_relMs = 0, g_doneMs = 0;
 int      g_slot1 = -1, g_slot2 = -1;
@@ -87,6 +88,15 @@ int JoiningSlot(const coop::net::Session& s) {
     return joining;
 }
 
+
+// The arm cannot run here (no second client, or it joined before the first asked): said to the client and the log, never a
+// FAIL. The end waits kTellMs so the client prints its own line first.
+void NotMeasured(const char* why) {
+    UE_LOGI("[CI-DRILL] host putjoin NOT MEASURED (%s)", why);
+    DC::Say(kPutNotMeasuredLine);
+    g_doneMs = ::GetTickCount64();
+    g_j = J::NotMeasured;
+}
 }  // namespace
 
 void PutJoinNoteSlot1(int slot) { g_slot1 = slot; }
@@ -113,11 +123,11 @@ void PutJoinHost(const coop::net::Session& s) {
     case J::Joining: {
         const int slot = JoiningSlot(s);
         if (slot == -2) {
-            Fail("the second client was already world-ready when the first was to ask: its join cannot overlap the reservation");
+            NotMeasured("the second client was already world-ready when the first was to ask: its join cannot overlap the reservation");
             return;
         }
         if (slot < 0) {
-            if (now - g_enterMs > kBoundMs) Fail("no second client connected within %llu s", static_cast<unsigned long long>(kBoundMs / 1000));
+            if (now - g_enterMs > kBoundMs) NotMeasured("no second client connected within its bound");
             return;
         }
         g_slot2 = slot;
@@ -218,6 +228,9 @@ void PutJoinHost(const coop::net::Session& s) {
         g_j = J::Judge;
         return;
     }
+    case J::NotMeasured:
+        if (now - g_doneMs >= kTellMs) Finish();
+        return;
     case J::Judge: {
         const int count = CountOf(TargetEid());
         const int want = v.count0 + PutHostDelta(Arm::PutJoin);

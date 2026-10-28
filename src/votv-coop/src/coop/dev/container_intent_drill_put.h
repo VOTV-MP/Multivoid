@@ -24,6 +24,7 @@ inline constexpr const char* kPutReleaseLine  = "ci-put host release";
 inline constexpr const char* kPutJoinLine     = "ci-put host joiner ";    // + "pack=<eid> item=<eid> item2=0 count=<n>"
 inline constexpr const char* kPutSeedLine     = "ci-put joiner seed ";    // + "n=<records the seeded mirror showed>"
 inline constexpr const char* kPutJoinDoneLine = "ci-put joiner done ";    // + the done line's fields
+inline constexpr const char* kPutNotMeasuredLine = "ci-put host notmeasured";   // putjoin could not run: say so, do not fail
 
 // The container the nested and empty arms pocket: a gembox, whose volume fits the player's pocket.
 inline constexpr const wchar_t* kBoxPath  = L"/Game/objects/prop_container_gembox.prop_container_gembox_C";
@@ -66,8 +67,9 @@ inline bool PutHostInterleaves(Arm a) {
 const wchar_t* PutItemClass(Arm a);
 
 // The live prop elements of class `cls` within 500 cm of `target`, the target itself not counted; -1 when the target's
-// place does not read. One snapshot per call: once per arm, never per tick.
-int PutStrayCount(const wchar_t* cls, void* target);
+// place does not read. `skip` is an actor never counted: the drive still in a player's hand. One snapshot per call: once per
+// arm, never per tick.
+int PutStrayCount(const wchar_t* cls, void* target, void* skip = nullptr);
 
 // The own inventory's last record of the arm's item class selected on the open screen with the hover cleared, as the
 // hotbar key's put reads it; false, with `why` filled, when the screen does not read as a put of it. Both halves use it.
@@ -102,6 +104,8 @@ struct PutSettle {
 };
 
 void PutFail(const char* fmt, ...);     // the client's end with the FAIL line (the host is told)
+void PutNotMeasured(const char* why);   // the client's end with NOT MEASURED (the host is told)
+int  PutPhase2();                       // the host's insert_notready mode, said on the fixture line (2: putowed runs its second phase)
 void PutPass(int stray);                // the client's end with the PASS line
 bool PutActEnded();                     // the last put names a new id and is no longer only asked
 void PutToSettle();                     // the act is over: the machine reads the counts and judges

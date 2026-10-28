@@ -69,6 +69,7 @@ constexpr uint64_t kLapseMinMs    = 29000;   // putdeadline: the grant to the re
 constexpr uint64_t kLapseMaxMs    = 36000;   // and at most
 constexpr uint64_t kOwedBoundMs   = 90000;   // putowed: the grant to the owed put being given up (30 tries at 1 Hz)
 constexpr int      kBrimMax       = 120;     // putfull: drives put in before the pack is declared never to refuse one
+constexpr int      kBrimPerTick   = 4;       // putfull: drives spawned in one host tick
 constexpr uint64_t kTakeBoundMs   = 40000;   // putowed phase 2: the phantom gone to the take's restore going owed
 constexpr uint64_t kNoGiveUpMs    = 35000;   // and the time an owed restore must stand with no give-up
 constexpr uint64_t kRestoreLandMs = 15000;   // and the knob back at 0 to the restore landing (it retries at 1 Hz)
@@ -88,6 +89,7 @@ ue_wrap::CachedObjRef g_hTarget, g_hItem, g_hItem2;
 int      g_hCount0 = -1;     // the target's record count at the fixture line
 int      g_hClientOk = -1;
 int      g_hClientStray = -1;
+int      g_hClientHeld = 0;   // the eid of the drive still in the client's hand at its end, 0 when none
 float    g_hDriveVolume = -1.f, g_hPackMax = -1.f;   // the fill's drive Get Volume and the pack's maxVol, -1 when not read
 
 void HNext(HStep s) { g_hStep = s; g_hMs = ::GetTickCount64(); }
@@ -162,39 +164,44 @@ bool FillWithDrive(void* pack) {
 }
 
 // putfull: drives into `pack` by its own addObject until it refuses the next one (its volume, as the game counts it),
-// each accepted drive's actor destroyed. The refused drive is destroyed too, so none is left strewn. False, with the
-// FAIL printed, when a drive did not spawn, the first was refused, or the pack never refused one.
-bool FillToBrim(void* pack) {
+// each accepted drive's actor destroyed, at most kBrimPerTick drives a host tick. The refused drive is destroyed too, so
+// none is left strewn. 1 when the pack has refused one (the fill is done), 0 to be called again next tick, -1 with the FAIL
+// printed when a drive did not spawn, the first was refused, or the pack never refused one.
+int g_hBrimN = 0;   // drives put in so far
+
+int FillToBrim(void* pack) {
     void* cls = R::FindClass(RD::kDriveClass);
     FVector put{};
     void* inv = ci::InventoryOf(pack);
     if (!cls || !inv || !E::TryGetActorLocation(pack, put)) {
         Fail("the pack could not be filled (class %p, inventory %p)", cls, inv);
-        return false;
+        return -1;
     }
     ci::MaxVolume(inv, g_hPackMax);
-    int n = 0;
-    for (; n < kBrimMax; ++n) {
+    bool refused = false;
+    for (int spawned = 0; spawned < kBrimPerTick && g_hBrimN < kBrimMax && !refused; ++spawned) {
         void* drive = E::SpawnActor(cls, {put.X, put.Y, put.Z + 60.f});
         if (!drive) {
-            Fail("a drive did not spawn for the fill (%d put in)", n);
-            return false;
+            Fail("a drive did not spawn for the fill (%d put in)", g_hBrimN);
+            return -1;
         }
         float bound = 0.f;
-        if (!n) ue_wrap::prop_gather::ReadVolumeAndBound(drive, g_hDriveVolume, bound);
+        if (!g_hBrimN) ue_wrap::prop_gather::ReadVolumeAndBound(drive, g_hDriveVolume, bound);
         const bool took = RD::PutIn(pack, drive);
         E::DestroyActor(drive);
-        if (!took) break;
+        if (took) ++g_hBrimN;
+        else refused = true;
     }
+    if (!refused && g_hBrimN < kBrimMax) return 0;
     float curr = -1.f;
     ci::CurrentVolume(inv, curr);
-    UE_LOGI("[CI-DRILL] host %s filled %d, currVol/maxVol %.1f/%.1f, drive volume %.1f", ArmName(), n,
+    UE_LOGI("[CI-DRILL] host %s filled %d, currVol/maxVol %.1f/%.1f, drive volume %.1f", ArmName(), g_hBrimN,
             static_cast<double>(curr), static_cast<double>(g_hPackMax), static_cast<double>(g_hDriveVolume));
-    if (n == 0 || n >= kBrimMax) {
-        Fail("the pack %s (%d drives put in)", n == 0 ? "took no drive" : "never refused a drive", n);
-        return false;
+    if (g_hBrimN == 0 || !refused) {
+        Fail("the pack %s (%d drives put in)", g_hBrimN == 0 ? "took no drive" : "never refused a drive", g_hBrimN);
+        return -1;
     }
-    return true;
+    return 1;
 }
 
 // putreserved: the host's own drive in its own inventory, put there by the player's own verb, so the host has an item to
@@ -230,8 +237,9 @@ void* FilledPack() {
 void StepHostWaitPeer(const coop::net::Session& s) {
     int slot = 0;
     for (int i = 1; i < coop::net::kMaxPeers && !slot; ++i)
-        if (s.IsSlotWorldReady(i)) slot = i;
-    if (!slot) return;
+        if (ArmOf() == Arm::PutJoin ? s.IsSlotReady(i) : s.IsSlotWorldReady(i)) slot = i;
+    // putjoin: client 1 is the lowest connected client slot (the clients' rule too), whatever loads first.
+    if (!slot || !s.IsSlotWorldReady(slot)) return;
     PutJoinNoteSlot1(slot);
     void* puppet = coop::puppet_drive::Puppet(slot).GetActor();   // spawned once the peer's pose arrives
     FVector at{};
@@ -251,7 +259,7 @@ void StepHostFill() {
             return;
         }
         if (PutFillsToBrim(ArmOf())) {
-            if (!FillToBrim(pack)) return;
+            if (FillToBrim(pack) != 1) return;   // a few drives a tick: called again until the pack refuses one
         } else if (!FillWithDrive(pack)) {
             Fail("the pack did not take its drive (drive volume %.1f, pack maxVol %.1f)", static_cast<double>(g_hDriveVolume),
                  static_cast<double>(g_hPackMax));
@@ -285,8 +293,8 @@ void StepHostBind() {
     g_hCount0 = count;
     if (ArmOf() == Arm::PutReserved) AH::dev::HoldReplies(true);   // before the client can ask: its grant is held
     char say[112];
-    std::snprintf(say, sizeof(say), "%spack=%u item=%u item2=%u count=%d", kPutFixtureLine, te, item ? ie : 0u, item2 ? i2e : 0u,
-                  count);
+    std::snprintf(say, sizeof(say), "%spack=%u item=%u item2=%u count=%d phase2=%d", kPutFixtureLine, te, item ? ie : 0u,
+                  item2 ? i2e : 0u, count, PutNotReadyMode());   // the client follows the host's row, never its own
     DC::Say(say);
     UE_LOGI("[CI-DRILL] host %s fixture: target eid=%u %ls holds %d record(s), item eid=%u, item2 eid=%u, fill: drive "
             "volume %.1f in pack maxVol %.1f", ArmName(), te, R::ClassNameOf(target).c_str(), count, item ? ie : 0u,
@@ -375,7 +383,9 @@ void HostReserved() {
 }
 
 // putdepart: the client's grant stands (its replay parked); the client leaves; the reservation is released within
-// kReleaseMs of the departure, and the target keeps what it had.
+// kReleaseMs of the departure, and the target keeps what it had. The relaunched client is a new process, so its inventory is
+// not the first life's: the sender's item cannot be read on rejoin, and the arm is judged here (nothing inserted, the
+// reservation released, no stray).
 void HostDepart(const coop::net::Session& s) {
     const uint64_t now = ::GetTickCount64();
     uint32_t grants = 0, gones = 0;
@@ -386,11 +396,15 @@ void HostDepart(const coop::net::Session& s) {
             if (HExpired(kHostWaitMs)) Fail("the client never asked within %llu s", static_cast<unsigned long long>(kHostWaitMs / 1000));
             return;
         }
+        g_hSubMs = now;
         UE_LOGI("[CI-DRILL] host putdepart: the client's grant stands (grants=%u), holds=%zu", grants, AS::Live().Count());
         g_hSub = 1;
         return;
     case 1:
-        if (AnyPeerWorldReady(s)) return;
+        if (AnyPeerWorldReady(s)) {
+            if (now - g_hSubMs > kHostWaitMs) Fail("the client never left within %llu s of its grant", static_cast<unsigned long long>(kHostWaitMs / 1000));
+            return;
+        }
         g_hSubMs = now;
         UE_LOGI("[CI-DRILL] host putdepart: the client is gone, holds=%zu", AS::Live().Count());
         g_hSub = 2;
@@ -550,6 +564,7 @@ void StepHostWaitClient() {
     std::string rest;
     if (DC::LiveRestOf(kPutDoneLine, &rest) && RD::IntAfter(rest, "ok", g_hClientOk)) {
         if (!RD::IntAfter(rest, "stray", g_hClientStray)) g_hClientStray = -1;
+        if (!RD::IntAfter(rest, "held", g_hClientHeld)) g_hClientHeld = 0;
         UE_LOGI("[CI-DRILL] host %s: the client is done (%s)", ArmName(), rest.c_str());
         HNext(HStep::Judge);
         return;
@@ -588,7 +603,9 @@ void StepHostJudge() {
         return;
     }
     const wchar_t* cls = PutIsNoPutArm(arm) ? nullptr : PutItemClass(arm);   // no put, nothing to strew
-    const int stray = cls ? PutStrayCount(cls, target) : -1;
+    // The drive the client still holds (putfullhand's refusal) is its mirror here, not a stray.
+    void* const heldMirror = g_hClientHeld > 0 ? coop::element::LivePropActor(static_cast<uint32_t>(g_hClientHeld)) : nullptr;
+    const int stray = cls ? PutStrayCount(cls, target, heldMirror) : -1;
     UE_LOGI("[CI-DRILL] host %s target %d -> %d record(s)", ArmName(), g_hCount0, count);
     if (cls) UE_LOGI("[CI-DRILL] host %s stray %ls host=%d client=%d", ArmName(), cls, stray, g_hClientStray);
     if (count != want) {
@@ -659,6 +676,8 @@ void PutHostReset() {
     g_hSubMs = 0;
     g_hP2Base = 0;
     g_hCount0 = g_hClientOk = g_hClientStray = -1;
+    g_hClientHeld = 0;
+    g_hBrimN = 0;
     g_hDriveVolume = g_hPackMax = -1.f;
 }
 

@@ -41,7 +41,7 @@ constexpr uint64_t kDeadlineHoldMs = 32000;   // putdeadline: parked this long, 
 constexpr uint64_t kPhantomBoundMs = 90000;   // putowed: the host's 30 tries at 1 Hz, then the truth it sends
 constexpr const char* kNoSpaceLine = "Not enough space.";
 constexpr const char* kLapsedLine  = "Try again in a moment.";
-constexpr uint64_t kGoBoundMs      = 240000;  // putjoin: the host's go (the second client is yet to connect)
+constexpr uint64_t kGoBoundMs      = 360000;  // putjoin: the host's go or its NOT MEASURED (it bounds the second client at 300 s)
 constexpr uint64_t kReleaseBoundMs = 35000;   // putjoin: the park to the host's release; its reservation lapses at 30 s
 constexpr uint64_t kAgreeBoundMs   = 20000;   // putjoin: both commits to the mirror agreeing with the host
 constexpr uint64_t kOpenBoundMs    = 10000;   // putowed phase 2: the screen showing the target again
@@ -57,7 +57,7 @@ uint64_t g_kMs = 0;
 bool     g_asked2 = false;
 bool     g_rejoinRead = false, g_rejoined = false;   // once per process: a relaunch is a new process
 bool     g_joinerKnown = false, g_joiner = false;     // putjoin: this client joined after another one
-bool     g_goSeen = false, g_releaseSeen = false;     // putjoin: the host's lines, latched when seen
+bool     g_goSeen = false, g_releaseSeen = false, g_notMeasured = false;   // putjoin: the host's lines, latched when seen
 uint64_t g_nextPollMs = 0;
 bool     g_reopened = false, g_sawDrop = false;       // putowed phase 2
 uint32_t g_take0 = 0;                                 // and the take commits sent before it asked
@@ -192,7 +192,7 @@ void StepPhantom() {
     if (count == b.count0) {
         UE_LOGI("[CI-DRILL] client putowed: the phantom record left the mirror %llu ms after the put (container %d)",
                 static_cast<unsigned long long>(::GetTickCount64() - g_kMs), count);
-        if (PutNotReadyMode() >= 2) {   // the second phase: an aborted take's restore under the same knob
+        if (PutPhase2() >= 2) {   // the second phase, as the host said it: an aborted take's restore under the same knob
             KNext(K::TakeAsk);
             return;
         }
@@ -206,6 +206,10 @@ void StepPhantom() {
 
 // putjoin, the first client: the host says go once a second client is connecting, and the put is asked then.
 void StepGo() {
+    if (g_notMeasured) {
+        PutNotMeasured("the host found no second client joining the reservation");
+        return;
+    }
     if (!g_goSeen) {
         if (KExpired(kGoBoundMs))
             PutFail("the host never said go within %llu s (no second client connected)", static_cast<unsigned long long>(kGoBoundMs / 1000));
@@ -353,7 +357,9 @@ bool Put2Idle() {
     return g_rejoined;
 }
 
-// putjoin: the second client to join is the joiner (a client with a lower slot is connected when it first asks).
+// putjoin's one role rule, the host's too (it spawns the fixture for the lowest connected client slot): the client with
+// the lowest slot is client 1, a client with a connected peer of a lower slot is the joiner. It is asked afresh each time
+// until the fixture's mirrors are here (Put2OnMirrors), so a roster that has not yet shown the other peer never fixes it.
 bool Put2IsJoiner() {
     if (g_joinerKnown) return g_joiner;
     coop::roster::Snapshot r;
@@ -361,14 +367,13 @@ bool Put2IsJoiner() {
     int mine = -1;
     for (int i = 0; i < r.count; ++i)
         if (r.rows[i].isLocal) mine = r.rows[i].slot;
-    if (mine < 0) return false;   // the roster has not caught up: asked again
+    if (mine < 0) return false;
+    bool joiner = false;
     for (int i = 0; i < r.count; ++i) {
         const coop::roster::Row& row = r.rows[i];
-        if (row.connected && !row.isHost && !row.isLocal && row.slot >= 1 && row.slot < mine) g_joiner = true;
+        if (row.connected && !row.isHost && !row.isLocal && row.slot >= 1 && row.slot < mine) joiner = true;
     }
-    g_joinerKnown = true;
-    UE_LOGI("[CI-DRILL] client putjoin: slot %d is the %s client", mine, g_joiner ? "joining" : "first");
-    return g_joiner;
+    return joiner;
 }
 
 bool Put2Hooked() {
@@ -473,6 +478,11 @@ const char* Put2DonePrefix() { return ArmOf() == Arm::PutJoin && Put2IsJoiner() 
 // The joiner's seed is what its mirror of the target holds the moment the fixture's mirrors are here: the host judges it
 // against the contents before any put.
 void Put2OnMirrors() {
+    if (ArmOf() == Arm::PutJoin && !g_joinerKnown) {   // the fixture is here: the role stands from now on
+        g_joiner = Put2IsJoiner();
+        g_joinerKnown = true;
+        UE_LOGI("[CI-DRILL] client putjoin: this is the %s client", g_joiner ? "joining" : "first");
+    }
     if (ArmOf() != Arm::PutJoin || !Put2IsJoiner()) return;
     const int n = CountOf(PutBaseOf().packEid);
     char say[64];
@@ -488,6 +498,7 @@ void Put2Poll() {
     g_nextPollMs = now + kPollEveryMs;
     if (!g_goSeen && DC::ChatHasLive(kPutGoLine)) g_goSeen = true;
     if (!g_releaseSeen && DC::ChatHasLive(kPutReleaseLine)) g_releaseSeen = true;
+    if (!g_notMeasured && DC::ChatHasLive(kPutNotMeasuredLine)) g_notMeasured = true;
 }
 
 bool Put2AskGated() {
@@ -507,7 +518,8 @@ void Put2Reset() {
     g_k = K::Park;
     g_kMs = 0;
     g_asked2 = false;
-    g_goSeen = g_releaseSeen = false;
+    g_goSeen = g_releaseSeen = g_notMeasured = false;
+    g_joinerKnown = g_joiner = false;
     g_nextPollMs = 0;
     g_reopened = g_sawDrop = false;
     g_take0 = 0;
