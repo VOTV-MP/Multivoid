@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 258;
+inline constexpr uint16_t kProtocolVersion = 259;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1198,6 +1198,22 @@ enum class ReliableKind : uint8_t {
     // a press whose sender has no body on the host yet waits in its queue. Late join: none, a press is an act.
     // CoffeeActionIntentPayload.
     CoffeeActionIntent = 194,
+
+    // CLIENT->HOST: a client asks to take a record out of a world container, or to put one in, before its own verb runs
+    // (coop::props::container_act_host): a chunked blob, coop::props::container_act_wire's request. Never relayed; not
+    // pre-world; rides the Default lane. Late join: a request before the sender's world is ready waits in the host's
+    // queue. Trust: the host re-judges every field (the family, the container, the record's address, the reach); a
+    // put's record is the client's word, bounded at the host's judge.
+    ContainerActRequest = 207,
+
+    // HOST->CLIENT: the host's answer to one ContainerActRequest: granted (the host holds the record in escrow for the
+    // sender) or refused with a reason. ContainerActReplyPayload. Never relayed; not pre-world.
+    ContainerActReply = 208,
+
+    // CLIENT->HOST: the client's verb ran (committed) or did not (aborted), closing the host's hold: a chunked blob,
+    // coop::props::container_act_wire's commit. Never relayed; not pre-world; the same lane as the request, so an act's
+    // end cannot overtake its start.
+    ContainerActCommit = 209,
 };
 
 #pragma pack(push, 1)
@@ -2287,6 +2303,23 @@ struct PropActCommitPayload {
     uint32_t eid;        // 4 -- the prop's Element id
 };
 static_assert(sizeof(PropActCommitPayload) == 8, "PropActCommitPayload must be 8 bytes");
+
+// A client's ask to take a record out of a world container, or to put one in (ContainerActRequest), the host's
+// answer (ContainerActReply) and the client's closing word (ContainerActCommit). The request and the commit are
+// chunked blobs (coop::props::container_act_wire), since a put carries a record; only the answer is a fixed payload.
+// `id` is the client's own, nonzero, and pairs the three. The family names the verb, and the host judges each by its
+// own conditions; a family it does not serve is answered WrongFamily.
+enum class ContainerActFamily : uint8_t { Take = 1, PutRecord = 2, PutProp = 3 };
+enum class ContainerActReason : uint8_t { Granted = 0, Gone = 1, Reach = 2, NoSpace = 3, Locked = 4, Refused = 5,
+                                          QueueFull = 6, WrongFamily = 7 };
+inline constexpr uint8_t kContainerActReasons = 8;   // Granted..WrongFamily: the per-reason counter width
+
+struct ContainerActReplyPayload {
+    uint16_t id;       // 2 -- the request's id
+    uint8_t  granted;  // 1 -- 1 with reason 0, or 0 with reason 1..7
+    uint8_t  reason;   // 1 -- ContainerActReason
+};
+static_assert(sizeof(ContainerActReplyPayload) == 4, "ContainerActReplyPayload must be 4 bytes");
 
 // The server upgrades lane (ServerUpgradeState). Ops 0 (install) and 1 (take-out) name a box by its
 // servers[] index; op 2, the canonical, carries every box's level in servers[] order (a farm past 64

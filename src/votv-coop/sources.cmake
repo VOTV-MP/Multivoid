@@ -578,6 +578,7 @@ set(VOTVCOOP_SOURCES
     src/coop/items/inventory_wire.cpp
     src/coop/items/save_record_wire.cpp
     src/coop/props/container_act_state.cpp
+    src/coop/props/container_act_wire.cpp
     src/coop/props/container_birth.cpp
     src/coop/props/container_contents_io.cpp
     src/coop/props/container_contents_sync.cpp
