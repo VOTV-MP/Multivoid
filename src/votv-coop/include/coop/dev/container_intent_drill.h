@@ -9,11 +9,11 @@
 //             first slot as a click does, waits for the take's commit, and prints the counts and the verdict.
 //   HOST   -- prints the container's count and the act holds each time they change, and judges the count's timeline.
 // The arms are the values of the container_intent_drill config row (take, settle, abort, deadline, double, held, ghost,
-// race, two, sale, depart, room, and the put arms putrecord, puthand, putfood, puthidden, putnested, putempty, puthover,
-// putreserved, putfull, putfullhand, putdepart, putdeadline, putowed, putjoin), each described there. The red of race, two and
-// sale is container_act_no_escrow=1; the put arms pick no world container (the host spawns the target and the item,
-// container_intent_drill_put*.cpp) and have their own container_act_* red rows. Lines are tagged [CI-DRILL]; each peer
-// prints `<role> <arm> PASS|FAIL`.
+// race, two, sale, depart, room, the put arms putrecord, puthand, putfood, puthidden, putnested, putempty, puthover,
+// putreserved, putfull, putfullhand, putdepart, putdeadline, putowed, putjoin, and the throw arms throwhand, throwgrab),
+// each described there. The red of race, two and sale is container_act_no_escrow=1; the put arms have their own container_act_*
+// red rows; the throw arms (container_intent_drill_throw*.cpp) measure a client's throw at a shared backpack and need
+// container_route_census=1. Lines are tagged [CI-DRILL]; each peer prints `<role> <arm> PASS|FAIL|MEASURED`.
 
 #pragma once
 

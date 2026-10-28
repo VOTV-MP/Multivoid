@@ -86,6 +86,7 @@ uint64_t g_callerOther = 0;
 uint64_t g_r4Sim = 0;
 uint64_t g_r4Overlaps = 0;
 int g_r4Lines = 0;
+R4Overlap g_lastR4;
 char g_r4Classes[kClasses][kName] = {};
 int g_r4ClassCount = 0;
 
@@ -168,6 +169,10 @@ void NoteOverlap(const sg::Call& c) {
     if (comp && !R::IsLive(comp)) comp = nullptr;
     const bool sim = comp && E::IsComponentSimulatingPhysics(comp);
     const bool shared = actor && coop::element::Registry::Get().EidForActor(actor) != coop::element::kInvalidId;
+    if (shared) {   // read by the container intent drill's throw arms, whatever the row's value
+        auto& reg = coop::element::Registry::Get();
+        g_lastR4 = R4Overlap{g_lastR4.seq + 1, reg.EidForActor(c.object), reg.EidForActor(actor), sim, UnixMs(), actor};
+    }
     char cls[kName] = "?";
     if (actor) Narrow(R::ClassNameOf(actor), cls, sizeof(cls));
     if (IsDrill() && g_r4Lines < kOverlapLines) {
@@ -277,6 +282,7 @@ void Reset() {
     g_unattributed = g_gen = 0;
     g_lastNext = g_callerCount = g_r4ClassCount = g_r4Lines = 0;
     g_callerOther = g_r4Sim = g_r4Overlaps = 0;
+    g_lastR4 = R4Overlap{};
     for (bool& b : g_said) b = false;
     g_registered = false;
     g_nextReport = 0;
@@ -398,6 +404,7 @@ void OnDisconnect() {
 
 uint64_t RouteEntries(int route) { return route >= 0 && route < 5 ? g_entries[route] : 0; }
 uint64_t R4Overlaps() { return g_r4Overlaps; }
+R4Overlap LastR4Overlap() { return g_lastR4; }
 uint64_t GenCalls() { return g_gen; }
 uint64_t HostSlices(int slot, bool accepted) {
     return slot >= 0 && slot < coop::net::kMaxPeers ? g_hostSlice[slot][accepted ? 0 : 1] : 0;

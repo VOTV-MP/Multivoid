@@ -35,12 +35,15 @@ struct ItemKey {
 
 enum class Arm : uint8_t { Off, Take, Settle, Abort, Deadline, Double, Ghost, Held, Race, Two, Sale, Depart, Room,
                            PutRecord, PutHand, PutFood, PutHidden, PutNested, PutEmpty, PutHover, PutReserved, PutFull,
-                           PutFullHand, PutDepart, PutDeadline, PutOwed, PutJoin };
+                           PutFullHand, PutDepart, PutDeadline, PutOwed, PutJoin, ThrowHand, ThrowGrab };
 Arm ArmOf();
 const char* ArmName();
 
 // The put arms are their own drill (container_intent_drill_put*.cpp): neither half picks a world container.
-inline bool IsPutArm(Arm a) { return a >= Arm::PutRecord; }
+inline bool IsPutArm(Arm a) { return a >= Arm::PutRecord && a <= Arm::PutJoin; }
+
+// The throw arms are their own drill too (container_intent_drill_throw*.cpp): a client throws a drive at a shared backpack.
+inline bool IsThrowArm(Arm a) { return a == Arm::ThrowHand || a == Arm::ThrowGrab; }
 
 // The arms that name the record the press takes (R) at the pick, preferring a container where it is unique.
 bool NamesR();
@@ -98,5 +101,10 @@ void HostReset();
 void PutHostTick(const coop::net::Session& session);
 void PutClientTick();
 void PutReset();
+
+// The throw arms' two halves, and their state back to the start (container_intent_drill_throw.cpp, _throw_host.cpp).
+void ThrowHostTick(const coop::net::Session& session);
+void ThrowClientTick(const coop::net::Session& session);
+void ThrowReset();
 
 }  // namespace coop::dev::container_intent_drill::detail

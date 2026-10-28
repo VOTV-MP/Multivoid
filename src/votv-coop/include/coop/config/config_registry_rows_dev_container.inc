@@ -35,7 +35,7 @@ CFG_FLAG(container_view_drill, "container_view_drill", "dev", false, "VOTVCOOP_C
     "Drill (client): walks to the ATV, opens its container through the game's own openPropInv, then walks "
     "back; the view must stay open while the ATV is within reach and close on the tick it leaves it. Run it "
     "with join_at_host=1. Lines tagged [CVIEW-DRILL]; the client's DONE line, carrying the verdict, ends it.")
-CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room|putrecord|puthand|putfood|puthidden|putnested|putempty|puthover|putreserved|putfull|putfullhand|putdepart|putdeadline|putowed|putjoin",
+CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room|putrecord|puthand|putfood|puthidden|putnested|putempty|puthover|putreserved|putfull|putfullhand|putdepart|putdeadline|putowed|putjoin|throwhand|throwgrab",
     "VOTVCOOP_CONTAINER_INTENT_DRILL",
     "Drill (BOTH peers): both pick the same shared container (the smallest element id, within 5000 cm of the player, "
     "that holds two records or more and that a nav route reaches; race, two, sale and room take one whose first record "
@@ -68,7 +68,10 @@ CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|ta
     "the host's insert answers NotReady (container_act_insert_notready=1 or 2): the put is given up after 30 tries and the "
     "client's mirror loses the phantom record; with 2 a take is then aborted and its restore must stay owed, never given "
     "up, until the knob is set to 0. putjoin -- two clients (--observer): the first client's put is granted while the "
-    "second joins, the second asks the same target and waits at the head, then both commit. Lines tagged [CI-DRILL]; the "
+    "second joins, the second asks the same target and waits at the head, then both commit. throwhand and throwgrab "
+    "(run with container_route_census=1 on both peers) MEASURE a client throwing a drive at a shared backpack from about "
+    "350 cm, from the hotbar hand or from a physics grab: both peers trace the flight, the overlap and the final poses, "
+    "and the host prints MEASURED per throw; they fail only on a fixture failure. Lines tagged [CI-DRILL]; the "
     "host's DONE line ends it. It MUTATES the world.")
 CFG_FLAG(container_act_no_escrow, "container_act_no_escrow", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_ESCROW",
     "Red arm for the container intent drill (HOST): a grant opens its escrow with the record found but does not "

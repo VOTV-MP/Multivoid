@@ -68,7 +68,8 @@ constexpr ArmRow kArms[] = {{"take", Arm::Take},     {"settle", Arm::Settle}, {"
                             {"puthidden", Arm::PutHidden}, {"putnested", Arm::PutNested}, {"putempty", Arm::PutEmpty},
                             {"puthover", Arm::PutHover}, {"putreserved", Arm::PutReserved}, {"putfull", Arm::PutFull},
                             {"putfullhand", Arm::PutFullHand}, {"putdepart", Arm::PutDepart},
-                            {"putdeadline", Arm::PutDeadline}, {"putowed", Arm::PutOwed}, {"putjoin", Arm::PutJoin}};
+                            {"putdeadline", Arm::PutDeadline}, {"putowed", Arm::PutOwed}, {"putjoin", Arm::PutJoin},
+                            {"throwhand", Arm::ThrowHand}, {"throwgrab", Arm::ThrowGrab}};
 }  // namespace
 
 Arm ArmOf() {
@@ -715,6 +716,11 @@ void Tick(coop::net::Session* session) {
         else PutClientTick();
         return;
     }
+    if (IsThrowArm(ArmOf())) {
+        if (coop::roster::LocalIsHost()) ThrowHostTick(*session);
+        else ThrowClientTick(*session);
+        return;
+    }
     if (coop::roster::LocalIsHost()) HostTick(*session);
     else ClientTick();
 }
@@ -731,6 +737,7 @@ void OnDisconnect() {
     }
     RoomRestore();
     PutReset();
+    ThrowReset();
     g_phase = Phase::Picking;
     g_pickStartMs = g_nextPickMs = 0;
     g_eid = 0;

@@ -50,7 +50,22 @@ void ReportNow(const char* why);
 // What the drill reads. All since the session began.
 uint64_t RouteEntries(int route);      // seam entries of route 0..4 (R1..R5)
 uint64_t R4Overlaps();
-uint64_t GenCalls();                   // ui_playerInventory_C::gen_player bodies run (the screen's rebuild)
+
+// The last overlap a SHARED actor made into a container's putObjectIn_overlap, for the container intent drill's throw
+// arms: `seq` counts them since the session began, `container` and `eid` are the element ids of the container and of the
+// actor (kInvalidId when a side has none), `sim` whether the overlapping component simulates physics, `t` the clock of the
+// r4 lines. `actor` is a bare pointer for an equality test: it is never dereferenced.
+struct R4Overlap {
+    uint64_t seq = 0;
+    uint32_t container = 0;
+    uint32_t eid = 0;
+    bool     sim = false;
+    uint64_t t = 0;
+    const void* actor = nullptr;
+};
+R4Overlap LastR4Overlap();
+
+uint64_t GenCalls();                  // ui_playerInventory_C::gen_player bodies run (the screen's rebuild)
 uint64_t HostSlices(int slot, bool accepted);   // slices judged for a sender slot
 uint64_t RouteVerbs(int route, bool take);      // verbs counted on a shared container under route 0..5 (R1..R6)
 
