@@ -23,7 +23,9 @@ CFG_FLAG(container_judge_red, "container_judge_red", "dev", false, "VOTVCOOP_CON
 CFG_FLAG(container_writer_probe, "container_writer_probe", "dev", false, "VOTVCOOP_CONTAINER_WRITER_PROBE",
     "Probe (HOST): every 2 s reads each world container's content hash and says once per container when it "
     "changed with no write the container lane saw (a local write, an applied remote slice or a connect seed's "
-    "send), naming a writer nothing watches. Read-only. Lines tagged container_writer_probe.")
+    "send), naming a writer nothing watches. On a CLIENT it says once per (container, outermost script function) "
+    "when an addObject or takeObj ran on a shared container's mirror outside an asked act. Read-only. Lines "
+    "tagged container_writer_probe.")
 CFG_FLAG(container_parity_red, "container_parity_red", "dev", false, "VOTVCOOP_CONTAINER_PARITY_RED",
     "Red arm for the container parity report (the CLIENT): flips one bit of the first row's content hash "
     "before sending, so the host's judge must report a mismatch.")

@@ -10,10 +10,13 @@
 #include "coop/session/host_world_settle.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 
 #include <cstdint>
 #include <map>
 #include <set>
+#include <string>
+#include <utility>
 
 namespace coop::dev::container_writer_probe {
 namespace {
@@ -30,6 +33,13 @@ struct Reading {
 std::map<uint32_t, Reading> g_last;   // the probe's own last reading per container
 std::set<uint32_t> g_said;            // said once per container
 uint64_t g_nextMs = 0;
+
+// The client half: the (container, outermost script function) pairs already said, capped; past the cap the
+// probe only counts.
+constexpr size_t kMaxClientKeys = 256;
+std::set<std::pair<uint32_t, void*>> g_clientSaid;
+uint32_t g_clientOverCap = 0;
+bool g_clientCapSaid = false;
 
 void ReadOne(uint32_t eid, void*) {
     uint64_t hash = 0;
@@ -61,7 +71,38 @@ void Tick(coop::net::Session* session) {
     CC::ForEachWorldContainer(&ReadOne, nullptr);
 }
 
+void OnClientVerb(uint32_t eid, void* owner, const ue_wrap::script_gate::Call& c, bool take) {
+    static const bool on = coop::config::ResolveFlag(coop::config_registry::rows::container_writer_probe);
+    if (!on) return;
+    void* const outer = ue_wrap::script_gate::OutermostFunction(c);
+    if (g_clientSaid.count({eid, outer}) != 0) return;
+    if (g_clientSaid.size() >= kMaxClientKeys) {
+        ++g_clientOverCap;
+        if (!g_clientCapSaid) {
+            g_clientCapSaid = true;
+            UE_LOGW("container_writer_probe: client probe capped at %zu pairs -- later ones are only counted",
+                    kMaxClientKeys);
+        }
+        return;
+    }
+    g_clientSaid.insert({eid, outer});
+    namespace R = ue_wrap::reflection;
+    const std::wstring cls = owner ? R::ClassNameOf(owner) : std::wstring(L"?");
+    const std::wstring from = outer ? R::ToString(R::NameOf(outer)) : std::wstring(L"?");
+    if (take)
+        UE_LOGW("container_writer_probe: client takeObj on eid=%u (%ls) from %ls -- not an asked act", eid,
+                cls.c_str(), from.c_str());
+    else
+        UE_LOGI("container_writer_probe: client addObject on eid=%u (%ls) from %ls -- not an asked act", eid,
+                cls.c_str(), from.c_str());
+}
+
 void OnDisconnect() {
+    if (g_clientOverCap != 0)
+        UE_LOGW("container_writer_probe: %u client pairs past the cap were counted and not said", g_clientOverCap);
+    g_clientSaid.clear();
+    g_clientOverCap = 0;
+    g_clientCapSaid = false;
     g_last.clear();
     g_said.clear();
     g_nextMs = 0;
