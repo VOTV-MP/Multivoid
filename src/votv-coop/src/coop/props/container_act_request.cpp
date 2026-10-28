@@ -564,6 +564,9 @@ void OnReply(const coop::net::ContainerActReplyPayload& p) {
         g_lastRefusal = p.reason;
         ++g_acts[2];
         NoteRefusedPut();
+        // Only a Gone reason brings the host's truth; the call is harmless for the others. With the applied
+        // hash forgotten, a truth identical to the last publication still applies, so a ghost converges.
+        coop::props::container_contents_sync::ForgetApplied(g_rec.eid);
         ShowRefusal(p.reason);
         Close();
         return;
