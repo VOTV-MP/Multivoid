@@ -13,7 +13,6 @@
 #include "drive_drill_verbs.h"  // Throw: the player's own throw (co-located private header)
 
 #include "coop/dev/container_route_census.h"
-#include "coop/dev/director/aim_fan.h"
 #include "coop/dev/director/aimed_grab.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/drill_chat.h"
@@ -24,13 +23,11 @@
 #include "coop/props/prop_drop_intent.h"
 
 #include "ue_wrap/core/cached_obj_ref.h"
-#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/engine/engine_pawn.h"
-#include "ue_wrap/engine/engine_physics.h"
 
 #include <windows.h>
 
@@ -64,8 +61,6 @@ constexpr uint64_t kHandBoundMs      = 10000;
 constexpr uint64_t kGrabBoundMs      = 20000;
 constexpr uint64_t kItem2BoundMs     = 60000;   // the second standpoint's drive: the host's line, then its mirror
 constexpr uint64_t kArmBoundMs       = 60000;   // the client's arm line to the host's armed line (drill chat leaves one line a second)
-constexpr uint64_t kAimBoundMs       = 40000;
-constexpr float    kAimDeg           = 2.f;     // the camera's forward is aimed when within this of the direction to the opening
 
 
 enum class Step : uint8_t { WaitLine, WaitMirrors, Rest, WalkWait, Item2Wait, TakeHand, HandRead, Grab, ArmWait, Aim,
@@ -83,10 +78,8 @@ int      g_rest = 0;
 int      g_settled = 0;
 std::shared_ptr<DR::BackgroundWalk> g_walk;
 std::unique_ptr<DR::AimedGrab> g_grab;
-DR::AimFan g_fan;
-FVector  g_aimPoint{};         // the target's opening: its location plus its bounds' half-height, read once per throw
-bool     g_aimRead = false;
-bool     g_aimDirect = false;  // the fan never got there: the camera looks at the point itself
+Aimer    g_aimer;
+HitJudge g_hit;
 
 // The throw in flight.
 Track    g_local, g_mirror;
@@ -283,6 +276,10 @@ void SayArm(void* held) {
         CFail("the census's watches are not all live (%s)", dead ? dead : "pending");
         return;
     }
+    if (!HitWatchLive()) {
+        CFail("the hit watch on the drive's component-hit handler is not live");
+        return;
+    }
     char say[64];
     std::snprintf(say, sizeof(say), "%sheld=%u", ThrowLine("client", "arm", g_n, true).c_str(), WireEid(held));
     DC::Say(say);
@@ -322,8 +319,7 @@ void StepGrab() {
 
 void StepArmWait() {
     if (DC::ChatHasLive(ThrowLine("host", "armed", g_n, false))) {
-        g_fan = DR::AimFan();
-        g_aimRead = g_aimDirect = false;
+        g_aimer.Begin(g_n);
         Next(Step::Aim);
         return;
     }
@@ -350,6 +346,7 @@ void BeginFlight(void* actor, const char* via) {
     g_via = via;
     TrackBegin(g_local, "client", "local");
     TrackSet(g_local, actor);
+    g_hit.Begin(/*releaseKnown=*/true);
     UE_LOGI("[CI-DRILL] client %s throw %d press t=%llu via=%s target holds %d record(s)", ArmName(), g_n, U(g_pressMs), via,
             g_count0);
     Next(Step::Flight);
@@ -367,49 +364,8 @@ void ThrowTheHeld(void* player) {
         CFail("the throw spawned no world actor the place hook caught (run with container_route_census=1)");
         return;
     }
+    HitWatchBegin(placed);
     BeginFlight(placed, "throwHoldingProp");
-}
-
-// The grabbed prop thrown by the body of the fire key's grab branch (mainPlayer's Hot Objects, input_fire with a
-// grabbing_actor), called as its own functions in its order: traceThrow from the grab's centre of mass for the velocity,
-// throwShit on the grab's component, the prop's thrown, and dropGrabObject, which releases the grab. The fire key's input
-// event stub does not run that body (a zeroed frame), and throwHoldingProp reads the hand's item, not the grab. The two
-// arrays and the hit results traceThrow fills in its frame are left to the engine's heap: a dev arm throws twice.
-bool ThrowGrabBranch(void* player, void* item, char* why, size_t whyLen) {
-    const int32_t off = R::FindPropertyOffset(R::ClassOf(player), L"grabbing_component");
-    void* comp = nullptr;
-    if (off >= 0) comp = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(player) + off);
-    FVector com{};
-    if (!comp || !R::IsLive(comp) || !E::GetComponentCenterOfMass(comp, com)) {
-        std::snprintf(why, whyLen, "the grab's component or its centre of mass does not read");
-        return false;
-    }
-    void* traceFn = R::FindDispatchFunctionCached(R::ClassOf(player), L"traceThrow");
-    ue_wrap::ParamFrame trace(traceFn);
-    FVector vel{};
-    if (!traceFn || !trace.valid() || !trace.Set<bool>(L"debug", false) || !trace.Set<FVector>(L"weaponLocation", com) ||
-        !trace.Set<FVector>(L"cameraLocation", com) || !ue_wrap::Call(player, trace) ||
-        !trace.GetRaw(L"velocity_fromCamera", &vel, sizeof(vel))) {
-        std::snprintf(why, whyLen, "traceThrow did not run or its velocity_fromCamera does not read");
-        return false;
-    }
-    void* shitFn = R::FindDispatchFunctionCached(R::ClassOf(player), L"throwShit");
-    ue_wrap::ParamFrame shit(shitFn);
-    if (!shitFn || !shit.valid() || !shit.Set<void*>(L"InputPin", comp) || !shit.Set<FVector>(L"NewVel", vel) ||
-        !ue_wrap::Call(player, shit)) {
-        std::snprintf(why, whyLen, "throwShit did not run");
-        return false;
-    }
-    const bool thrown = DR::CallWithPlayer(item, L"thrown", player);
-    if (!DR::CallOnPlayer(player, L"dropGrabObject")) {
-        std::snprintf(why, whyLen, "dropGrabObject did not run");
-        return false;
-    }
-    UE_LOGI("[CI-DRILL] client %s throw %d: traceThrow velocity (%.0f,%.0f,%.0f) from the grab's centre (%.0f,%.0f,%.0f), "
-            "thrown called=%d", ArmName(), g_n, static_cast<double>(vel.X), static_cast<double>(vel.Y),
-            static_cast<double>(vel.Z), static_cast<double>(com.X), static_cast<double>(com.Y), static_cast<double>(com.Z),
-            thrown ? 1 : 0);
-    return true;
 }
 
 void ThrowTheGrab(void* player) {
@@ -419,82 +375,23 @@ void ThrowTheGrab(void* player) {
         CFail("the grab was lost before the throw");
         return;
     }
+    HitWatchBegin(item);   // before the release, so a hit at the release point is recorded
     char why[160];
-    if (!ThrowGrabBranch(player, item, why, sizeof(why))) {
+    if (!ThrowGrabBranch(player, item, g_n, why, sizeof(why))) {
         CFail("%s", why);
         return;
     }
-    UE_LOGI("[CI-DRILL] client %s throw %d: after dropGrabObject the grab is %s", ArmName(), g_n,
-            DR::Grabbing(player) == item ? "still held" : "released");
     BeginFlight(item, "traceThrow+throwShit+dropGrabObject");
 }
 
-// The angle, in degrees, between the camera's forward vector and the direction from the camera to `point`. The game's throw
-// (traceThrow) aims along the camera's forward, not along the use key's look trace, which reaches less far than the stand.
-float CameraOffDeg(const FVector& point) {
-    constexpr float kRad = 3.14159265358979f / 180.f;
-    const FVector cam = E::GetCameraLocation();
-    const ue_wrap::FRotator r = E::GetCameraRotation();
-    const float cp = std::cos(r.Pitch * kRad);
-    const float fx = cp * std::cos(r.Yaw * kRad), fy = cp * std::sin(r.Yaw * kRad), fz = std::sin(r.Pitch * kRad);
-    const float dx = point.X - cam.X, dy = point.Y - cam.Y, dz = point.Z - cam.Z;
-    const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
-    if (len < 1.f) return 180.f;
-    return std::acos(std::clamp((fx * dx + fy * dy + fz * dz) / len, -1.f, 1.f)) / kRad;
-}
-
-void AimedAt(void* player, float offDeg, bool direct) {
-    UE_LOGI("[CI-DRILL] client %s: throw %d aimed after %d pose(s)%s, the camera %.2f deg off the opening point", ArmName(), g_n,
-            g_fan.Poses(), direct ? " and a direct look" : "", static_cast<double>(offDeg));
-    if (ArmOf() == Arm::ThrowHand) ThrowTheHeld(player);
-    else ThrowTheGrab(player);
-}
-
-// The camera turned through the fan round the target's opening (its location plus its bounds' half-height, read once) until
-// its forward is within kAimDeg of the direction to it; a fan that never gets there is followed by a direct look at the point.
 void StepAim(void* player) {
-    void* pack = g_pack.Get();
-    if (!pack) {
-        CFail("the target's mirror died");
-        return;
-    }
-    if (!g_aimRead) {
-        FVector at{}, origin{}, extent{};
-        if (!E::TryGetActorLocation(pack, at) || !E::GetActorBounds(pack, false, origin, extent)) {
-            CFail("the target's place or bounds do not read");
-            return;
-        }
-        g_aimPoint = {at.X, at.Y, at.Z + extent.Z};
-        g_aimRead = true;
-        UE_LOGI("[CI-DRILL] client %s: throw %d aims at the opening point (%.0f,%.0f,%.0f), %.0f cm from the standpoint", ArmName(),
-                g_n, static_cast<double>(g_aimPoint.X), static_cast<double>(g_aimPoint.Y), static_cast<double>(g_aimPoint.Z),
-                static_cast<double>(std::hypot(at.X - g_stand.X, at.Y - g_stand.Y)));
-    }
-    const float off = CameraOffDeg(g_aimPoint);
-    if (g_aimDirect) {
-        if (off < kAimDeg) {
-            AimedAt(player, off, true);
-            return;
-        }
-        if (Expired(kAimBoundMs)) {
-            CFail("the camera stays %.2f deg off the opening point after a direct look", static_cast<double>(off));
-            return;
-        }
-        E::SetControlRotation(E::GetController(player), DR::LookAt(E::GetCameraLocation(), g_aimPoint));
-        return;
-    }
-    switch (g_fan.Tick(player, g_aimPoint, off < kAimDeg)) {
-    case DR::AimFan::State::Working:
-        if (Expired(kAimBoundMs)) CFail("the camera never came within %.0f deg of the opening point (%.2f deg off)",
-                                       static_cast<double>(kAimDeg), static_cast<double>(off));
-        return;
-    case DR::AimFan::State::Failed:   // every pose of the fan was held: look at the point itself
-        g_aimDirect = true;
-        Next(Step::Aim);   // the direct look has the whole bound
-        E::SetControlRotation(E::GetController(player), DR::LookAt(E::GetCameraLocation(), g_aimPoint));
-        return;
-    case DR::AimFan::State::Aimed:
-        AimedAt(player, off, false);
+    char why[160];
+    switch (g_aimer.Tick(player, g_pack.Get(), g_stand, why, sizeof(why))) {
+    case Aimer::State::Working: return;
+    case Aimer::State::Failed:  CFail("%s", why); return;
+    case Aimer::State::Aimed:
+        if (ArmOf() == Arm::ThrowHand) ThrowTheHeld(player);
+        else ThrowTheGrab(player);
         return;
     }
 }
@@ -511,7 +408,10 @@ void PollMirror() {
     g_mirrorSame = actor && actor == g_local.ref.Raw();
     UE_LOGI("[CI-DRILL] client %s throw %d: the host's element is eid=%u, %s the actor thrown", ArmName(), g_n, g_hostEid,
             g_mirrorSame ? "the same as" : "another from");
-    if (actor && !g_mirrorSame) TrackSet(g_mirror, actor);
+    if (actor && !g_mirrorSame) {
+        TrackSet(g_mirror, actor);
+        HitWatchAdd(actor);
+    }
 }
 
 // An overlap of the target by the thrown actor, whether or not addObject then ran (the census counts the verbs).
@@ -544,6 +444,8 @@ bool SecondStand(float along, FVector& out) {
 }
 
 void Wrap(const coop::net::Session& session) {
+    g_hit.Finish(g_local);
+    HitWatchEnd();
     const int count1 = CountOf(g_packEid);
     const uint64_t adds = cen::RouteVerbs(kR4Route, false) - g_adds0;
     const FVector rest = g_local.last;
@@ -591,6 +493,7 @@ void StepFlight(const coop::net::Session& session) {
     TrackTick(g_local, rtt);
     if (g_mirror.on) TrackTick(g_mirror, rtt);
     PollOverlap();
+    g_hit.Tick(g_local);
     const uint64_t now = cen::UnixMs();
     if (!g_endAtMs) {
         if (g_local.atRest) g_endAtMs = g_local.restMs + kAfterRestMs;
@@ -609,11 +512,16 @@ std::string ThrowLine(const char* who, const char* what, int n, bool fields) {
 }
 
 void ThrowClientTick(const coop::net::Session& session) {
+    if (ArmOf() == Arm::ThrowHostGrab) {
+        HostGrabClientTick(session);
+        return;
+    }
     if (!g_stepMs) {   // the first step's clock starts when the arm does, never at reset
         if (!cen::IsEnabled()) {
             CFail("the arm reads the census's overlap watch: run with container_route_census=1 on both peers");
             return;
         }
+        HitWatchInstall();
         Next(Step::WaitLine);
     }
     // The chat is read four times a second; the aim, the grab and the flight are read every tick.
@@ -651,6 +559,7 @@ void ThrowReset() {
     WalkStop();
     g_grab.reset();
     ThrowHostReset();
+    HostGrabReset();
     g_step = Step::WaitLine;
     g_stepMs = g_nextMs = 0;
     g_n = 1;
@@ -660,9 +569,8 @@ void ThrowReset() {
     g_packAt = g_start = g_goal = g_stand = FVector{};
     g_lastPos[0] = g_lastPos[1] = FVector{};
     g_rest = g_settled = 0;
-    g_fan = DR::AimFan();
-    g_aimPoint = FVector{};
-    g_aimRead = g_aimDirect = false;
+    g_aimer = Aimer();
+    g_hit = HitJudge();
     g_local = Track{};
     g_mirror = Track{};
     g_hostEid = 0;

@@ -11,9 +11,12 @@
 
 #include "container_intent_drill_detail.h"
 
+#include "coop/dev/director/aim_fan.h"
+
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/types.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -51,6 +54,7 @@ inline constexpr uint64_t kFlightBoundMs     = 25000;   // and never later than 
 struct Sample {
     uint64_t t;   // the clock of the r4 lines (container_route_census::UnixMs)
     ue_wrap::FVector pos;
+    float speed;  // cm/s against the sample at least kSpeedWindowMs older, 0 before there is one
 };
 struct Track {
     const char* role = "";
@@ -94,5 +98,60 @@ float Dist3(const ue_wrap::FVector& a, const ue_wrap::FVector& b);
 
 // The host's state back to the start (container_intent_drill_throw_host.cpp), called by the client's ThrowReset.
 void ThrowHostReset();
+
+// ---- the acts of a throw that the thrower's peer runs (container_intent_drill_throw_act.cpp) -------------------------------
+
+// The camera turned at the target's opening point (its location plus its bounds' half-height, read once): the aim fan
+// first and, when no pose of it gets the camera's forward within 2 degrees of the direction to the point, a direct look
+// at it. Ticked every game tick until Aimed or Failed (`why` filled); the bound is 40 s.
+class Aimer {
+public:
+    enum class State { Working, Aimed, Failed };
+    void Begin(int n);
+    State Tick(void* player, void* pack, const ue_wrap::FVector& stand, char* why, size_t whyLen);
+
+private:
+    coop::director::AimFan fan_;
+    ue_wrap::FVector point_{};
+    bool read_ = false, direct_ = false;
+    uint64_t startMs_ = 0;
+    float off_ = 0.f;
+    int n_ = 1;
+};
+
+// The grabbed `item` thrown by the functions the fire key's grab branch calls, in its order (traceThrow, throwShit, the
+// prop's thrown, dropGrabObject). False, with `why` filled, when one did not run.
+bool ThrowGrabBranch(void* player, void* item, int n, char* why, size_t whyLen);
+
+// ---- the first blocking hit of a thrown prop (container_intent_drill_throw_hit.cpp) --------------------------------------
+
+inline constexpr uint64_t kFirstHitWindowMs = 1000;   // no hit this long after the release: `first-hit none`
+inline constexpr float    kReleaseSpeedCmS  = 200.f;  // a peer that did not throw sees the release as the speed passing this
+
+// Registers the watch of prop_drive_C's component-hit handler (idempotent, game thread) and says whether it is live.
+void HitWatchInstall();
+bool HitWatchLive();
+// Records the hits of `actor` (and of a second actor) from now on; a new Begin forgets the last throw's.
+void HitWatchBegin(void* actor);
+void HitWatchAdd(void* actor);
+void HitWatchEnd();
+
+// Prints the first-hit line of one throw on this peer, once. `releaseKnown`: this peer made the release (the throw's press
+// is the release); otherwise the release is read from the trace.
+class HitJudge {
+public:
+    void Begin(bool releaseKnown);
+    void Tick(const Track& t);     // per tick
+    void Finish(const Track& t);   // the trace is over: a hit not yet judged is `none`
+private:
+    bool said_ = false;
+    size_t scanned_ = 0;
+    uint64_t releaseMs_ = 0;
+};
+
+// The host-as-thrower arm (container_intent_drill_throw_hostgrab.cpp); the two halves, and their state back to the start.
+void HostGrabHostTick(const coop::net::Session& session);
+void HostGrabClientTick(const coop::net::Session& session);
+void HostGrabReset();
 
 }  // namespace coop::dev::container_intent_drill::detail

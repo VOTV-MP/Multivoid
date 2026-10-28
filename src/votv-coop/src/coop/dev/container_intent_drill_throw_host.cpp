@@ -69,6 +69,7 @@ int      g_hSlot = 0;
 ue_wrap::CachedObjRef g_hTarget, g_hItem;
 uint32_t g_hTargetEid = 0, g_hItemEid = 0;
 Track    g_hTrack;
+HitJudge g_hHit;
 std::vector<uint32_t> g_hSet, g_hNow;   // the live drive element ids at the arm line; the ones live now
 std::vector<coop::element::Registry::ActorIdPair> g_hSnap;
 uint32_t g_hElemEid = 0;   // the host's element of the thrown drive (0 until found)
@@ -180,7 +181,10 @@ void FindThrown() {
         if (id < best && std::find(g_hSet.begin(), g_hSet.end(), id) == g_hSet.end()) best = id;
     if (!EidBound(best)) return;
     g_hElemEid = best;
-    TrackSet(g_hTrack, coop::element::LivePropActor(best));
+    void* actor = coop::element::LivePropActor(best);
+    TrackSet(g_hTrack, actor);
+    HitWatchBegin(actor);
+    g_hHit.Begin(/*releaseKnown=*/true);
     char say[64];
     std::snprintf(say, sizeof(say), "%seid=%u", ThrowLine("host", "thrown", g_hN, true).c_str(), best);
     DC::Say(say);
@@ -199,6 +203,10 @@ void StepWaitArm() {
         HFail("the census's watches are not all live (%s)", dead ? dead : "pending");
         return;
     }
+    if (!HitWatchLive()) {
+        HFail("the hit watch on the drive's component-hit handler is not live");
+        return;
+    }
     int held = 0;
     RD::IntAfter(rest, "held", held);
     TrackBegin(g_hTrack, "host", "element");
@@ -211,6 +219,8 @@ void StepWaitArm() {
         }
         g_hElemEid = static_cast<uint32_t>(held);
         TrackSet(g_hTrack, actor);
+        HitWatchBegin(actor);
+        g_hHit.Begin(/*releaseKnown=*/false);
     } else {
         LiveDriveEids(g_hSet);
     }
@@ -307,6 +317,8 @@ void Verdict(const std::string& endRest) {
             ArmName(), g_hN, g_hElemEid, g_hTrack.gone ? 1 : 0, c.gone, static_cast<double>(g_hTrack.peakSpeed),
             static_cast<double>(minGap), U(cen::R4Overlaps() - g_hOvAll0), c.all, U(cen::RouteVerbs(kR4Route, false) - g_hAdds0),
             g_hCount0, count1);
+    g_hHit.Finish(g_hTrack);
+    HitWatchEnd();
     g_hTrack.on = false;
     HNext(HStep::WaitNext);
 }
@@ -321,6 +333,7 @@ void StepTrace(const coop::net::Session& s, bool due) {
     }
     TrackTick(g_hTrack, s.rttMsForSlot(g_hSlot));
     PollOverlap();
+    g_hHit.Tick(g_hTrack);
     if (!due) return;
     std::string rest;
     if (DC::LiveRestOf(ThrowLine("client", "end", g_hN, true), &rest)) {
@@ -402,11 +415,16 @@ void StepItem2Bind() {
 }  // namespace
 
 void ThrowHostTick(const coop::net::Session& session) {
+    if (ArmOf() == Arm::ThrowHostGrab) {
+        HostGrabHostTick(session);
+        return;
+    }
     if (!g_hMs) {   // the first step's clock starts when the arm does, never at reset
         if (!cen::IsEnabled()) {
             HFail("the arm reads the census's overlap watch: run with container_route_census=1 on both peers");
             return;
         }
+        HitWatchInstall();
         HNext(HStep::WaitPeer);
     }
     if (g_hStep == HStep::Done) return;
@@ -444,6 +462,7 @@ void ThrowHostReset() {
     g_hItem.Reset();
     g_hTargetEid = g_hItemEid = 0;
     g_hTrack = Track{};
+    g_hHit = HitJudge();
     g_hSet.clear();
     g_hNow.clear();
     g_hElemEid = 0;

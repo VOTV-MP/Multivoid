@@ -69,7 +69,7 @@ constexpr ArmRow kArms[] = {{"take", Arm::Take},     {"settle", Arm::Settle}, {"
                             {"puthover", Arm::PutHover}, {"putreserved", Arm::PutReserved}, {"putfull", Arm::PutFull},
                             {"putfullhand", Arm::PutFullHand}, {"putdepart", Arm::PutDepart},
                             {"putdeadline", Arm::PutDeadline}, {"putowed", Arm::PutOwed}, {"putjoin", Arm::PutJoin},
-                            {"throwhand", Arm::ThrowHand}, {"throwgrab", Arm::ThrowGrab}};
+                            {"throwhand", Arm::ThrowHand}, {"throwgrab", Arm::ThrowGrab}, {"throwhostgrab", Arm::ThrowHostGrab}};
 }  // namespace
 
 Arm ArmOf() {

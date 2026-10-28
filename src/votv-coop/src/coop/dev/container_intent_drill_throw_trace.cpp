@@ -96,7 +96,7 @@ void TrackTick(Track& t, int rttMs) {
         const Sample& ref = t.samples[t.window];
         speed = Dist3(at, ref.pos) * 1000.f / static_cast<float>(now - ref.t);
     }
-    if (t.samples.size() < kMaxSamples) t.samples.push_back(Sample{now, at});
+    if (t.samples.size() < kMaxSamples) t.samples.push_back(Sample{now, at, speed});
     t.last = at;
     t.maxHoriz = std::max(t.maxHoriz, Horiz(at, t.first));
     if (speed > t.peakSpeed) {
