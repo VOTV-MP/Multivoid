@@ -34,7 +34,8 @@ struct ItemKey {
 };
 
 enum class Arm : uint8_t { Off, Take, Settle, Abort, Deadline, Double, Ghost, Held, Race, Two, Sale, Depart, Room,
-                           PutRecord, PutHand, PutFood, PutHidden, PutNested, PutEmpty };
+                           PutRecord, PutHand, PutFood, PutHidden, PutNested, PutEmpty, PutHover, PutReserved, PutFull,
+                           PutFullHand, PutDepart, PutDeadline, PutOwed };
 Arm ArmOf();
 const char* ArmName();
 

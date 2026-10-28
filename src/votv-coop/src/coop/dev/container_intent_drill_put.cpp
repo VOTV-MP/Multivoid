@@ -1,5 +1,7 @@
 // coop/dev/container_intent_drill_put.cpp -- the container intent drill's put arms (putrecord, puthand, putfood,
-// puthidden, putnested, putempty), the CLIENT's half; see coop/dev/container_intent_drill.h and, for the host's,
+// puthidden, putnested, putempty and the arms that interleave or break something on purpose, which hook into the
+// machine at the ask and at the settle: container_intent_drill_put2.cpp), the CLIENT's half; see
+// coop/dev/container_intent_drill.h and, for the host's,
 // container_intent_drill_put_host.cpp. Each arm runs alone and MEASURES what the put seats do (container_act_put.cpp):
 // the numbers it prints are what the next increment's verdicts are written on.
 //   CLIENT -- takes the item by the game's own verb (the pocket, the hold), walks to the target with the director (a
@@ -76,20 +78,25 @@ constexpr uint64_t kHandBoundMs    = 10000;
 constexpr uint64_t kActBoundMs     = 15000;   // the press to the act's end
 constexpr uint64_t kSettleMs       = 1500;    // the act's end (or the no-put window) to the counts being read
 
-bool IsRecordArm(Arm a)  { return a == Arm::PutRecord || a == Arm::PutNested || a == Arm::PutEmpty; }   // R2 after a pocket
-bool IsHandArm(Arm a)    { return a == Arm::PutHand || a == Arm::PutFood; }                              // R3, walking
+bool IsRecordArm(Arm a) {   // R2 after a pocket
+    return a == Arm::PutRecord || a == Arm::PutNested || a == Arm::PutEmpty || a == Arm::PutHover || a == Arm::PutReserved ||
+           a == Arm::PutFull || a == Arm::PutDepart || a == Arm::PutDeadline || a == Arm::PutOwed;
+}
+bool IsHandArm(Arm a) { return a == Arm::PutHand || a == Arm::PutFood || a == Arm::PutFullHand; }   // R3, walking
 
 // ---- the client ---------------------------------------------------------------------------------------------------
 
 enum class CStep : uint8_t { WaitLine, WaitMirrors, Rest, Pocket, PocketWait, TakeHand, HoldWait, HandRead, Walk, WalkWait,
-                             OpenWait, Carry, ActWait, Settle, Quiet };
+                             OpenWait, Carry, ActWait, Settle, Quiet, Hook };
 CStep    g_cStep = CStep::WaitLine;
 uint64_t g_cMs = 0;       // the time the step was entered
 uint64_t g_nextMs = 0;
-uint32_t g_packEid = 0, g_itemEid = 0;
-ue_wrap::CachedObjRef g_pack, g_item, g_hand;
+uint32_t g_packEid = 0, g_itemEid = 0, g_item2Eid = 0;
+int      g_needCount = 0;   // the records the target holds at the fixture line: the mirror is waited for until it does
+int      g_pockets = 0;     // the items pocketed so far
+ue_wrap::CachedObjRef g_pack, g_item, g_item2, g_hand;
 FVector  g_packAt{};
-FVector  g_lastPos[2] = {};
+FVector  g_lastPos[3] = {};
 int      g_rest = 0;
 std::shared_ptr<DR::BackgroundWalk> g_walk;
 int      g_own0 = -1, g_count0 = -1;
@@ -215,13 +222,20 @@ bool MeasureBackpack(int& stackIndex, int& records) {
 void StepWaitLine() {
     std::string rest;
     if (DC::LiveRestOf(kPutFixtureLine, &rest)) {
-        int pack = 0, item = 0;
-        if (!RD::IntAfter(rest, "pack", pack) || !RD::IntAfter(rest, "item", item) || pack <= 0) {
+        int pack = 0, item = 0, item2 = 0, count = 0;
+        if (!RD::IntAfter(rest, "pack", pack) || !RD::IntAfter(rest, "item", item) ||
+            !RD::IntAfter(rest, "item2", item2) || !RD::IntAfter(rest, "count", count) || pack <= 0) {
             CFail("the host's fixture line does not read (%s)", rest.c_str());
             return;
         }
         g_packEid = static_cast<uint32_t>(pack);
         g_itemEid = static_cast<uint32_t>(item);
+        g_item2Eid = static_cast<uint32_t>(item2);
+        g_needCount = count;
+        if (IsRecordArm(ArmOf()) && (!g_itemEid || (Put2Pockets() > 1 && !g_item2Eid))) {
+            CFail("the host's fixture line names no item to pocket (%s)", rest.c_str());
+            return;
+        }
         CNext(CStep::WaitMirrors);
         return;
     }
@@ -231,26 +245,30 @@ void StepWaitLine() {
 void StepWaitMirrors() {
     void* pack = coop::element::LivePropActor(g_packEid);
     void* item = g_itemEid ? coop::element::LivePropActor(g_itemEid) : nullptr;
-    const int need = ArmOf() == Arm::PutHidden ? 1 : 0;
-    if (pack && (!g_itemEid || item) && CountOf(g_packEid) >= need && E::TryGetActorLocation(pack, g_packAt)) {
+    void* item2 = g_item2Eid ? coop::element::LivePropActor(g_item2Eid) : nullptr;
+    if (pack && (!g_itemEid || item) && (!g_item2Eid || item2) && CountOf(g_packEid) >= g_needCount &&
+        E::TryGetActorLocation(pack, g_packAt)) {
         g_pack.Set(pack);
         g_item.Set(item);
+        g_item2.Set(item2);
         g_rest = 0;
-        UE_LOGI("[CI-DRILL] client %s: the fixture's mirrors are here (target eid=%u holds %d record(s), item eid=%u)",
-                ArmName(), g_packEid, CountOf(g_packEid), g_itemEid);
+        UE_LOGI("[CI-DRILL] client %s: the fixture's mirrors are here (target eid=%u holds %d record(s), item eid=%u, "
+                "item2 eid=%u)", ArmName(), g_packEid, CountOf(g_packEid), g_itemEid, g_item2Eid);
         CNext(CStep::Rest);
         return;
     }
-    if (CExpired(kFixtureBoundMs)) CFail("the fixture's mirrors never came (target %p, item %p, count %d)", pack, item, CountOf(g_packEid));
+    if (CExpired(kFixtureBoundMs))
+        CFail("the fixture's mirrors never came (target %p, item %p, item2 %p, count %d of %d)", pack, item, item2,
+              CountOf(g_packEid), g_needCount);
 }
 
 // The host's drive of the fixture (it falls and settles) is over once the mirrors stay put for kRestChecks checks.
 void StepRest() {
-    void* actors[2] = {g_pack.Get(), g_item.Get()};
+    void* actors[3] = {g_pack.Get(), g_item.Get(), g_item2.Get()};
     bool still = true;
-    for (int i = 0; i < 2; ++i) {
+    for (int i = 0; i < 3; ++i) {
         if (!actors[i]) {
-            if (i == 1 && !g_itemEid) continue;
+            if ((i == 1 && !g_itemEid) || (i == 2 && !g_item2Eid)) continue;
             CFail("a fixture's mirror died");
             return;
         }
@@ -269,8 +287,8 @@ void StepRest() {
     }
     E::TryGetActorLocation(g_pack.Get(), g_packAt);
     const Arm a = ArmOf();
-    CNext(IsRecordArm(a) ? CStep::Pocket : a == Arm::PutHand ? CStep::TakeHand : a == Arm::PutFood ? CStep::HoldWait
-                                                                                                    : CStep::Walk);
+    CNext(IsRecordArm(a) ? CStep::Pocket : a == Arm::PutHand || a == Arm::PutFullHand ? CStep::TakeHand
+                         : a == Arm::PutFood ? CStep::HoldWait : CStep::Walk);
     if (a == Arm::PutFood) {   // the hold is asked now; HoldWait reads the grant
         void* player = coop::players::Registry::Get().Local();
         if (!player || (!DV::Hold(player, g_item.Get()) && coop::prop_act_request::dev::PendingId() == 0))
@@ -282,7 +300,8 @@ void StepPocket() {
     void* player = coop::players::Registry::Get().Local();
     g_own0 = ue_wrap::inventory::LivePersonalStoreCount();
     // A mirror's pocket is cancelled and asked of the host: false at once, with the act pending.
-    if (!player || (!DV::Pocket(player, g_item.Get()) && coop::prop_act_request::dev::PendingId() == 0)) {
+    void* const item = g_pockets == 0 ? g_item.Get() : g_item2.Get();   // putdeadline pockets two
+    if (!player || (!DV::Pocket(player, item) && coop::prop_act_request::dev::PendingId() == 0)) {
         CFail("the item could not be pocketed");
         return;
     }
@@ -297,10 +316,15 @@ void StepPocketWait() {
     const int own = ue_wrap::inventory::LivePersonalStoreCount();
     if (own != g_own0 + 1) {
         if (CExpired(kPocketBoundMs))
-            CFail("the pocket put no record in the own inventory (%d -> %d): %s", g_own0, own, PocketWhy(g_item.Get()));
+            CFail("the pocket put no record in the own inventory (%d -> %d): %s", g_own0, own,
+                  PocketWhy(g_pockets == 0 ? g_item.Get() : g_item2.Get()));
         return;
     }
     UE_LOGI("[CI-DRILL] client %s pocketed: own inventory %d -> %d", ArmName(), g_own0, own);
+    if (++g_pockets < Put2Pockets()) {
+        CNext(CStep::Pocket);
+        return;
+    }
     if (ArmOf() == Arm::PutNested || ArmOf() == Arm::PutEmpty) {
         int stack = -1, records = -1;
         if (!MeasureBackpack(stack, records)) {
@@ -376,39 +400,28 @@ void StepWalkWait() {
     CNext(CStep::OpenWait);
 }
 
-// The hotbar key's put: the hover cleared, the pocketed item selected, em_take pressed.
-void PressR2(void* ui) {
-    if (!RD::ClearHover(ui)) {
-        CFail("the screen's hovered container slot would not clear");
-        return;
-    }
-    ue_wrap::inventory::LivePersonalStore store;
+// The hotbar key's put: the screen's em_take pressed with the hover cleared and the own inventory's item selected, the
+// baseline taken first. False, with the FAIL printed, when the screen does not read as a put or em_take did not dispatch.
+bool AskR2(void* ui) {
     int32_t sel = -1;
-    if (ue_wrap::inventory::ReadLivePersonalStore(store))
-        for (size_t i = store.records.size(); i-- > 0 && sel < 0;)
-            if (store.records[i].className == PutItemClass(ArmOf())) sel = static_cast<int32_t>(i);
-    const int32_t off = R::FindPropertyOffset(R::ClassOf(ui), L"selected");
-    if (sel < 0 || off < 0) {
-        CFail("the own inventory holds no %ls to select, or the screen has no selection", PutItemClass(ArmOf()));
-        return;
-    }
-    std::memcpy(static_cast<uint8_t*>(ui) + off, &sel, sizeof(sel));
-    RD::CallNoArg(ui, L"updSelect");
-    CV::PutState st{};
-    const char* failed = "";
-    if (!CV::ReadPutState(ui, st, &failed) || st.hovered || !st.takeEnabled || st.index != sel) {
-        CFail("the screen does not read as a put of item %d (hovered=%d takeEnabled=%d index=%d, %s)", sel,
-              st.hovered ? 1 : 0, st.takeEnabled ? 1 : 0, st.index, failed);
-        return;
+    char why[240];
+    if (!PutSelectOwnItem(ui, sel, why, sizeof(why))) {
+        CFail("%s", why);
+        return false;
     }
     Baseline();
     UE_LOGI("[CI-DRILL] client %s presses em_take: item %d selected of %d, target holds %d record(s)", ArmName(), sel,
             g_own0, g_count0);
+    Put2BeforeAsk();
     if (!CV::RunPut(ui)) {
         CFail("em_take did not dispatch");
-        return;
+        return false;
     }
-    CNext(PutIsNoPutArm(ArmOf()) ? CStep::Quiet : CStep::ActWait);
+    return true;
+}
+
+void PressR2(void* ui) {
+    if (AskR2(ui)) CNext(PutIsNoPutArm(ArmOf()) ? CStep::Quiet : Put2Hooked() ? CStep::Hook : CStep::ActWait);
 }
 
 bool HoverSlot(void* ui, void* slot) {
@@ -496,13 +509,22 @@ void StepCarry() {
 }
 
 // The put act ends when LastPut names a new id that is no longer only asked.
+bool ActEnded() {
+    const AR::dev::Put p = AR::dev::LastPut();
+    return p.id != g_put0.id && p.outcome != AR::dev::PutOutcome::Asked && p.outcome != AR::dev::PutOutcome::None;
+}
+
+void ToSettle() {
+    g_endMs = ::GetTickCount64();
+    RD::LowerRun();
+    WalkStop();
+    CNext(CStep::Settle);
+}
+
 void StepActWait() {
     const AR::dev::Put p = AR::dev::LastPut();
-    if (p.id != g_put0.id && p.outcome != AR::dev::PutOutcome::Asked && p.outcome != AR::dev::PutOutcome::None) {
-        g_endMs = ::GetTickCount64();
-        RD::LowerRun();
-        WalkStop();
-        CNext(CStep::Settle);
+    if (ActEnded()) {
+        ToSettle();
         return;
     }
     if (CExpired(kActBoundMs))
@@ -534,6 +556,7 @@ void StepSettle() {
     UE_LOGI("[CI-DRILL] client %s stray %ls client=%d", ArmName(), cls, stray);
     if (IsHandArm(arm)) UE_LOGI("[CI-DRILL] client %s carry walk: closest approach %.0f cm, top speed %.0f cm/s", ArmName(),
                                 static_cast<double>(g_minDist), static_cast<double>(g_topSpeed));
+    if (Put2Judge(PutSettle{p, own, held != nullptr, stray})) return;
     const bool done = p.outcome == AR::dev::PutOutcome::Done;
     const bool placed = IsRecordArm(arm) ? own == g_own0 - 1 : held == nullptr;
     if (done && placed && stray == 0) {
@@ -580,6 +603,7 @@ void StepQuiet() {
 
 void PutClientTick() {
     PutArmClientKnobs();
+    if (Put2Idle()) return;   // a putdepart client relaunched after its park has nothing to do
     if (!g_cMs) CNext(CStep::WaitLine);   // the first step's clock starts when the arm does, never at reset
     if (g_cStep != CStep::Carry && ::GetTickCount64() < g_nextMs) return;   // the carry walk is read every tick
     g_nextMs = ::GetTickCount64() + RD::kCheckEveryMs;
@@ -599,6 +623,7 @@ void PutClientTick() {
     case CStep::ActWait:     StepActWait(); return;
     case CStep::Settle:      StepSettle(); return;
     case CStep::Quiet:       StepQuiet(); return;
+    case CStep::Hook:        Put2Hook(); return;
     }
 }
 
@@ -608,12 +633,15 @@ void PutReset() {
     PutHostReset();
     g_cStep = CStep::WaitLine;
     g_cMs = g_nextMs = g_endMs = 0;
-    g_packEid = g_itemEid = 0;
+    g_packEid = g_itemEid = g_item2Eid = 0;
+    g_needCount = g_pockets = 0;
+    Put2Reset();
     g_pack.Reset();
     g_item.Reset();
+    g_item2.Reset();
     g_hand.Reset();
     g_packAt = FVector{};
-    g_lastPos[0] = g_lastPos[1] = FVector{};
+    g_lastPos[0] = g_lastPos[1] = g_lastPos[2] = FVector{};
     g_rest = 0;
     g_own0 = g_count0 = -1;
     g_put0 = AR::dev::Put{};
@@ -626,6 +654,13 @@ void PutReset() {
 const wchar_t* PutItemClass(Arm a) {
     switch (a) {
     case Arm::PutRecord:
+    case Arm::PutHover:
+    case Arm::PutReserved:
+    case Arm::PutFull:
+    case Arm::PutFullHand:
+    case Arm::PutDepart:
+    case Arm::PutDeadline:
+    case Arm::PutOwed:
     case Arm::PutHand:   return RD::kDriveClass;
     case Arm::PutFood:   return kFoodClass;
     case Arm::PutNested:
@@ -649,6 +684,55 @@ int PutStrayCount(const wchar_t* cls, void* target) {
         if (dx * dx + dy * dy + dz * dz <= kStrayCm * kStrayCm) ++n;
     }
     return n;
+}
+
+
+// ---- what put2.cpp and the host's half use of the client's machine ----------------------------------------------------
+
+PutBase PutBaseOf() { return PutBase{g_put0, g_own0, g_count0, g_packEid, g_pack.Get()}; }
+
+void PutFail(const char* fmt, ...) {
+    char buf[300];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    CFail("%s", buf);
+}
+
+void PutPass(int stray) { CPass(stray); }
+bool PutActEnded() { return ActEnded(); }
+void PutToSettle() { ToSettle(); }
+void PutEnterHook() { CNext(CStep::Hook); }
+bool PutAskR2(void* ui) { return AskR2(ui); }
+bool PutHoverSlot(void* ui, void* slot) { return HoverSlot(ui, slot); }
+
+bool PutSelectOwnItem(void* ui, int32_t& sel, char* why, size_t whyLen) {
+    sel = -1;
+    if (!RD::ClearHover(ui)) {
+        std::snprintf(why, whyLen, "the screen's hovered container slot would not clear");
+        return false;
+    }
+    ue_wrap::inventory::LivePersonalStore store;
+    if (ue_wrap::inventory::ReadLivePersonalStore(store))
+        for (size_t i = store.records.size(); i-- > 0 && sel < 0;)
+            if (store.records[i].className == PutItemClass(ArmOf())) sel = static_cast<int32_t>(i);
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(ui), L"selected");
+    if (sel < 0 || off < 0) {
+        std::snprintf(why, whyLen, "the own inventory holds no %ls to select, or the screen has no selection",
+                      PutItemClass(ArmOf()));
+        return false;
+    }
+    std::memcpy(static_cast<uint8_t*>(ui) + off, &sel, sizeof(sel));
+    RD::CallNoArg(ui, L"updSelect");
+    CV::PutState st{};
+    const char* failed = "";
+    if (!CV::ReadPutState(ui, st, &failed) || st.hovered || !st.takeEnabled || st.index != sel) {
+        std::snprintf(why, whyLen, "the screen does not read as a put of item %d (hovered=%d takeEnabled=%d index=%d, %s)",
+                      sel, st.hovered ? 1 : 0, st.takeEnabled ? 1 : 0, st.index, failed);
+        return false;
+    }
+    return true;
 }
 
 }  // namespace coop::dev::container_intent_drill::detail

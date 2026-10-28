@@ -63,6 +63,7 @@ const char* RouteName(uint8_t route) { return route == kRouteR2 ? "R2" : "R3"; }
 // The put drill's knobs (dev:: below): inert unless a drill calls them, all reset at the session's end.
 bool g_noHoverGuard = false;   // R2's replay does not require that no slot is hovered
 bool g_noHandTable = false;    // the hand hash leaves out no class's ticking fields
+bool g_doubleDone = false;     // a put's done commit is queued twice
 
 // A read that tells a put from any other press and fails leaves the verb to run natively, unjudged: said once per
 // session, with the field, so a layout change cannot turn the feature off silently. kSayUnloaded is the hand-hash
@@ -299,7 +300,7 @@ internal::PutCheck CheckR3(const Pending& p, void* hand, bool containerLive, con
 
 void ResetPutLines() {
     for (bool& said : g_said) said = false;
-    g_noHoverGuard = g_noHandTable = false;
+    g_noHoverGuard = g_noHandTable = g_doubleDone = false;
 }
 
 const WatchRow* PutWatches(size_t& count) {
@@ -361,6 +362,7 @@ void ReplayPut() {
             UE_LOGI("container_act: put id=%u eid=%u route=%s replayed -> done at index %zu",
                     static_cast<unsigned>(p.id), static_cast<unsigned>(p.eid), RouteName(p.route), *at);
             NotePut(p, dev::PutOutcome::Done, static_cast<uint16_t>(*at), g_replayHash, g_replayFloats);
+            if (g_doubleDone) QueueCommit(done);   // the drill's second send of the same done: the host's bad commit
             return;
         }
         // Cannot happen under the size gate; the container has the record and the host will not.
@@ -509,5 +511,6 @@ namespace coop::props::container_act_request::dev {
 
 void NoHoverGuard(bool on) { detail::g_noHoverGuard = on; }
 void NoHandTable(bool on) { detail::g_noHandTable = on; }
+void DoubleDone(bool on) { detail::g_doubleDone = on; }
 
 }  // namespace coop::props::container_act_request::dev

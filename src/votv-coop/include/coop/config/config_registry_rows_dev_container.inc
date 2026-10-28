@@ -35,7 +35,7 @@ CFG_FLAG(container_view_drill, "container_view_drill", "dev", false, "VOTVCOOP_C
     "Drill (client): walks to the ATV, opens its container through the game's own openPropInv, then walks "
     "back; the view must stay open while the ATV is within reach and close on the tick it leaves it. Run it "
     "with join_at_host=1. Lines tagged [CVIEW-DRILL]; the client's DONE line, carrying the verdict, ends it.")
-CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room|putrecord|puthand|putfood|puthidden|putnested|putempty",
+CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room|putrecord|puthand|putfood|puthidden|putnested|putempty|puthover|putreserved|putfull|putfullhand|putdepart|putdeadline|putowed",
     "VOTVCOOP_CONTAINER_INTENT_DRILL",
     "Drill (BOTH peers): both pick the same shared container (the smallest element id, within 5000 cm of the player, "
     "that holds two records or more and that a nav route reaches; race, two, sale and room take one whose first record "
@@ -57,7 +57,16 @@ CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|ta
     "run. putfood -- the same with food and the fridge; the held food's temperature, ripeness, record clock and hash are "
     "printed at the ask and the replay. puthidden -- a hovered slot is hidden and the take key asked: no put may be "
     "asked. putnested -- a gembox that holds a record is put into the target: refused, no put asked. putempty -- an "
-    "empty gembox is put in by the hotbar key and the host's stored record is read. Lines tagged [CI-DRILL]; the "
+    "empty gembox is put in by the hotbar key and the host's stored record is read. puthover -- a slot is hovered "
+    "under the parked replay: the put is aborted and the slot's record not taken (red: container_act_no_hover_guard). "
+    "putreserved -- the host's own put into the target while the client's grant stands is refused (red: "
+    "container_act_no_reservation). putfull / putfullhand -- the target is filled to its volume first and the client's "
+    "hotbar-key / hold-and-run put is refused for space. putdepart -- the client leaves with its grant parked "
+    "(--rejoin --rejoin-marker \"[CI-DRILL] client putdepart parked\"); the host releases the reservation and inserts "
+    "nothing. putdeadline -- the replay is parked past the host's 30 s deadline: the late done is inserted once, a "
+    "second done of it is a bad commit, and the next put is answered Lapsed (red: container_act_no_lapse). putowed -- "
+    "the host's insert answers NotReady (container_act_insert_notready=1): the put is given up after 30 tries and the "
+    "client's mirror loses the phantom record. Lines tagged [CI-DRILL]; the "
     "host's DONE line ends it. It MUTATES the world.")
 CFG_FLAG(container_act_no_escrow, "container_act_no_escrow", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_ESCROW",
     "Red arm for the container intent drill (HOST): a grant opens its escrow with the record found but does not "

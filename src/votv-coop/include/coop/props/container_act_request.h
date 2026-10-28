@@ -133,6 +133,7 @@ void HoldReplay(bool on);   // while on, a take's or a put's grant parks its rep
 bool ReplayParked();        // a grant is parked
 void ReleaseReplay();       // runs the parked replay now, through the same checks as an unparked one
 void DoubleAbort(bool on);  // while on, a take's abort commit is sent twice
+void DoubleDone(bool on);   // while on, a put's done commit is sent twice
 
 // The put drill's reds (CLIENT). NoHoverGuard: R2's replay no longer requires that no slot is hovered. NoHandTable: the
 // hold-and-run hash leaves out no class's ticking fields (PutExclusionRowsOf answers none).
