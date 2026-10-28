@@ -26,6 +26,11 @@ struct Fields {
     void* screenCls = nullptr;
     int32_t entered = -1;   // ui_playerInventory_C.entered, the container shown
     int32_t switcher = -1;  // ui_playerInventory_C.WidgetSwitcher_54, the screen's tabs
+    void* ownerCls = nullptr;  // the class of a slot's owner screen
+    int32_t asProp = -1;       // ui_playerInventory_C.as_prop, the container a slot takes from
+    void* slotCls = nullptr;
+    int32_t slotId = -1;     // uicomp_playerInvContainerSlot_C.id, the record index
+    int32_t slotOwner = -1;  // uicomp_playerInvContainerSlot_C.owner, the screen
 };
 Fields g;
 
@@ -124,6 +129,53 @@ bool Close() {
     }
     if (void* const upd = R::FindDispatchFunctionCached(cls, L"updSelect")) CallNoArgs(screen, upd);
     return true;
+}
+
+bool ReadSlot(void* obj, Slot& out) {
+    if (!obj) return false;
+    void* base = object_index::ClassByName(L"uicomp_playerInvContainerSlot_C");
+    void* const cls = R::ClassOf(obj);
+    if (!base || !cls || !R::IsDescendantOfAny(cls, &base, 1)) return false;
+    if (cls != g.slotCls) {
+        g.slotCls = cls;
+        g.slotId = R::FindPropertyOffset(cls, L"id");
+        g.slotOwner = R::FindPropertyOffset(cls, L"owner");
+    }
+    if (g.slotId < 0 || g.slotOwner < 0) return false;
+    void* const screen = PointerAt(obj, g.slotOwner);
+    if (!screen) return false;
+    void* const screenCls = R::ClassOf(screen);
+    if (!screenCls) return false;
+    if (screenCls != g.ownerCls) {
+        g.ownerCls = screenCls;
+        g.asProp = R::FindPropertyOffset(screenCls, L"as_prop");
+    }
+    if (g.asProp < 0) return false;
+    out.screen = screen;
+    out.container = PointerAt(screen, g.asProp);
+    out.id = *reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(obj) + g.slotId);
+    return true;
+}
+
+bool PressSlot(void* slot) {
+    if (!slot) return false;
+    void* const cls = R::ClassOf(slot);
+    void* const fn = cls ? R::FindDispatchFunctionCached(cls, L"pressButton") : nullptr;
+    if (!fn) return false;
+    ParamFrame f(fn);
+    return f.valid() && Call(slot, f);
+}
+
+bool Redraw(void* container) {
+    void* const screen = OpenScreen();
+    if (!container || !screen || PointerAt(screen, g.entered) != container) return false;
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(screen), L"gen_player");
+    if (!fn) return false;
+    ParamFrame f(fn);
+    if (!f.valid()) return false;
+    f.Set<void*>(L"enter", container);
+    f.Set<bool>(L"double", true);
+    return Call(screen, f);
 }
 
 }  // namespace ue_wrap::container_view

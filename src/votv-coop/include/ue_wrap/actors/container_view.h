@@ -6,6 +6,8 @@
 // Engine-wrapper layer (principle 7): no gameplay logic.
 #pragma once
 
+#include <cstdint>
+
 namespace ue_wrap::container_view {
 
 // The container the local player's inventory screen shows, or null when that screen is not the
@@ -27,5 +29,23 @@ bool Open(void* container);
 // Close the screen as its close key does. False, and nothing done, when it is not open or its exit()
 // does not resolve.
 bool Close();
+
+// One container slot of the inventory screen: its screen (owner), the container that screen takes from (the
+// screen's as_prop; null on the player's own pane, which is still a slot) and the record index it names (id).
+struct Slot {
+    void* screen;
+    void* container;
+    int32_t id;
+};
+
+// Read `obj` as a slot. False when it is not a uicomp_playerInvContainerSlot_C or a field does not resolve.
+bool ReadSlot(void* obj, Slot& out);
+
+// The slot's own pressButton. False when it does not resolve or the call fails.
+bool PressSlot(void* slot);
+
+// When the open screen shows `container`: gen_player(enter = container, double = true), as pressButton's own
+// redraw does. False, and nothing done, when the screen is closed, shows another container, or the call fails.
+bool Redraw(void* container);
 
 }  // namespace ue_wrap::container_view
