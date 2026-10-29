@@ -21,6 +21,7 @@
 #include "coop/props/prop_key_index.h"  // a key on the wire to a live actor
 #include "coop/props/prop_stick_sync.h"  // the stuck wall-attachable gates
 #include "coop/props/unresolved_pose_ledger.h"  // a pose-before-spawn race vs a sustained identity gap
+#include "coop/props/bracket_position_wait.h"  // KeepIfWaiting: a pose for a key whose spawn waits
 #include "coop/props/trash_channel.h"  // the per-eid sync-time context; stale carry and release drops
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
@@ -176,6 +177,11 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     void* prop = (!keyW.empty() && keyW != L"None") ? ResolveKeyedActor(keyW) : nullptr;
     if (!prop && pose.elementId != 0)
         prop = ResolveLiveActorByEid(pose.elementId);
+    // The prop's spawn waits for the snapshot bracket's end: the newest pose is kept for the bind, and is no gap in the
+    // sender's stream for the ledger below to count.
+    if (!prop && coop::props::bracket_position_wait::KeepIfWaiting(pose.key, coop::props::bracket_position_wait::Kept::Pose,
+                                                                   &pose, sizeof(pose), slot))
+        return;
     if (!prop) {
         coop::dev::swinger_drill::NotePropUnresolved(slot, pose);
         // The ledger separates the ordinary pose-before-spawn race from a sustained stream this

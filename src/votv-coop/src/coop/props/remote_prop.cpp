@@ -31,6 +31,7 @@
 #include "coop/props/prop_stick_sync.h"  // the stuck wall-attachable gates
 #include "coop/props/prop_wire_parity.h"  // ConvergeFrozenSleep, the release's flags
 #include "coop/props/unresolved_pose_ledger.h"  // a pose-before-spawn race vs a sustained identity gap
+#include "coop/props/bracket_position_wait.h"  // KeepIfWaiting: a release for a key whose spawn waits
 #include "coop/element/identity_create.h"  // CreateOrAdoptPropMirror, the prop-mirror bind
 #include "coop/props/trash_channel.h"  // the per-eid sync-time context; stale carry and release drops
 #include "coop/interactables/drive_payload_sync.h"
@@ -263,6 +264,12 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
             }
         }
     }
+    // No copy here yet, and the prop's spawn waits for the snapshot bracket's end: the newest release is kept for the
+    // bind. The relay to the other clients ran before this function, and the hold closed above.
+    if (!propActor && releasedSlot < 0 &&
+        coop::props::bracket_position_wait::KeepIfWaiting(payload.key, coop::props::bracket_position_wait::Kept::Release,
+                                                          &payload, sizeof(payload), senderSlot))
+        return;
     // Whether the sender is the holder of this prop: its drive carried the key, or (the implicit release: the poses
     // stopped, the drive was reset, and the reliable release arrives after) the hold it closes is the one whose drive
     // started on THIS prop. The hold gate outlives the drive's reset and records the prop beside the generation, so a

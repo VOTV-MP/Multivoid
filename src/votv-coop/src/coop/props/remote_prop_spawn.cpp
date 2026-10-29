@@ -6,6 +6,7 @@
 #include "coop/props/remote_prop_spawn.h"
 
 #include "coop/props/trash_pile_sync.h"  // the sweep's death-watch unwatch
+#include "coop/props/bracket_position_wait.h"  // a position match inside the snapshot bracket waits
 
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
@@ -519,6 +520,16 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
                     keyW.c_str(), fuzzyKey.c_str());
             fuzzy = nullptr;
         }
+    }
+    // Inside the snapshot bracket a position match waits for the bracket's end, where every waiting spawn is matched
+    // to the free candidates nearest first: a neighbour whose own key has not arrived yet reads as unbound here, so
+    // binding on arrival would let the bracket's eid order decide whose actor each key gets. Only the wire receive
+    // edge waits (the convert and kerfur callers pass one of these arguments); it sits after the kerfur gate, so a
+    // different-key kerfur never waits, and before the steal gate, which would judge by what has arrived so far.
+    if (fuzzy && deferKerfur && !fromConvert && !outSpawned && !skipBind &&
+        coop::props::bracket_position_wait::IsWaiting()) {
+        coop::props::bracket_position_wait::Wait(payload, senderSlot);
+        return;
     }
     // The identity-steal gate: a fuzzy match already mirror-bound to a different eid is an
     // established cross-peer identity, a different prop within 30 cm (N same-spot placements arrive

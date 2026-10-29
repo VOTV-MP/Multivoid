@@ -46,6 +46,7 @@
 #include "coop/player/roster_ledger.h"
 #include "coop/props/remote_prop_spawn.h"
 #include "coop/props/join_membership_sweep.h"  // the claim set and the divergence sweep
+#include "coop/props/bracket_position_wait.h"  // the bracket's wait for a position bind: Begin and the drain at Complete
 #include "coop/props/snapshot_census.h"  // the completeness census tail on SnapshotComplete
 #include "coop/props/container_contents_sync.h"  // park ageing anchored to the snapshot bracket
 #include "coop/save/save_transfer.h"
@@ -346,6 +347,8 @@ void Update(net::Session& session, void* localPlayer) {
             // kerfur the host had on loads as a stale off object while the snapshot delivers the
             // live one). The sweep's over-50% valve, not a skip, guards against a world wipe.
             coop::join_membership_sweep::BeginClaimTracking();
+            // From here to Complete a position match waits for the bracket's end (a re-sent bracket drops the old wait).
+            coop::props::bracket_position_wait::BeginBracket();
             // While the bracket is open, container-contents parks do not age: their PropSpawns are
             // still in the Default stream behind us.
             coop::props::container_contents_sync::NoteJoinSnapshotBracket(true);
@@ -403,6 +406,9 @@ void Update(net::Session& session, void* localPlayer) {
                     static_cast<size_t>(msg.payloadLen) - sizeof(net::SnapshotEndPayload));
             }
             coop::join_progress::Complete();
+            // Every spawn that waited for the bracket's end is matched nearest first and bound here: before the
+            // parks re-stamp, the lift and the claim sweep, so a twin it adopts is claimed and never revealed late.
+            coop::props::bracket_position_wait::DrainAtComplete(localPlayer);
             // The bracket closed: every PropSpawn it carried was dispatched above. Parks re-stamp,
             // and their TTL runs from here as a leak guard.
             coop::props::container_contents_sync::NoteJoinSnapshotBracket(false);

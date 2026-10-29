@@ -31,6 +31,7 @@
 #include "coop/props/prop_element_tracker.h"  // SessionIsHost
 #include "coop/props/remote_prop.h"
 #include "coop/props/remote_prop_spawn.h"
+#include "coop/props/bracket_position_wait.h"  // OnDestroy: a destroy of a waiting spawn
 #include "coop/props/join_membership_sweep.h"  // HasLoadTailQuiesced
 #include "coop/props/trash_pile_sync.h"
 
@@ -276,6 +277,8 @@ bool HandleEntityEvent(net::Session& session,
             coop::trash_pile_sync::NotifyWireDestroy(dkey);
         }
         coop::dev::dronesack_drill::NoteWirePropDestroy(p.elementId, p.key.data, p.key.len, msg.senderPeerSlot);
+        // A spawn waiting for the snapshot bracket's end is dropped by its own eid, or by its key for a key-only destroy.
+        coop::props::bracket_position_wait::OnDestroy(p.elementId, p.key);
         remote_prop::OnDestroy(p, localPlayer, msg.senderPeerSlot);
         break;
     }
