@@ -58,6 +58,7 @@ enum class State : uint8_t { Pending, Syncing };
 
 struct Entry {
     ue_wrap::CachedObjRef ref;
+    ue_wrap::CachedObjRef rootComp;                // the actor's primitive root, resolved once for the per-row velocity read
     State                 state = State::Pending;
     uint16_t              seq = 0;
     uint8_t               gen = 0;                 // Syncing only
@@ -281,9 +282,10 @@ void OnRevoked(const coop::net::PropSyncAnswerPayload& p) {
 // One Syncing entry's turn: a row when the copy moved (or the beat is due), the rest End when it rested and the
 // interaction is over. True when the entry ended.
 bool StepSyncing(coop::net::Session& s, uint32_t eid, Entry& e, void* actor, uint64_t now) {
-    // The engine is read (two dispatches) only when a row or the rest End may be due, in the host rows' order: the
-    // probe cadence and the send pace first, then the queue's turn. A moving copy is read at the pace, a still one at
-    // kRestProbeMs, so a feeder calling every tick costs nothing between turns.
+    // The engine is read (two dispatches for the pose, one more for the velocity of a row that is built) only when a row
+    // or the rest End may be due, in the host rows' order: the probe cadence and the send pace first, then the queue's
+    // turn. A moving copy is read at the pace, a still one at kRestProbeMs, so a feeder calling every tick costs
+    // nothing between turns.
     if (now < e.nextProbeMs) return false;
     if (e.everSent && now - e.lastSendMs < rules::kClientDriveSendMs) return false;
     if (s.PropDrivePoseTurn(eid) == coop::net::PoseTurn::Wait) return false;   // read again on a later tick
@@ -309,7 +311,7 @@ bool StepSyncing(coop::net::Session& s, uint32_t eid, Entry& e, void* actor, uin
         e.nextProbeMs = now + (now - e.lastMoveMs >= rules::kRestMs ? rules::kRestProbeMs : rules::kClientDriveSendMs);
         return false;
     }
-    coop::net::PropPoseSnapshot pp{};
+    coop::net::PropDriveRow pp{};
     pp.key       = e.key;
     pp.elementId = eid;
     pp.ctx       = e.gen;
@@ -318,9 +320,9 @@ bool StepSyncing(coop::net::Session& s, uint32_t eid, Entry& e, void* actor, uin
     pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
     pp.roll  = ue_wrap::NormalizeAxis(rot.Roll);
     // The copy's velocity as it is read now, and this row's age on the clock the grant or the throw started: the
-    // host judges a row's step against its velocity and its age, and takes the prop over from the last admitted one.
-    ue_wrap::FVector lin{}, ang{};
-    if (E::GetActorRootPhysicsVelocity(actor, lin, ang)) { pp.vel[0] = lin.X; pp.vel[1] = lin.Y; pp.vel[2] = lin.Z; }
+    // host judges a row's step against the speed a prop flies and its age, and takes the prop over from the last passing one.
+    ue_wrap::FVector lin{};
+    if (E::GetActorRootLinearVelocity(e.rootComp, actor, lin)) { pp.vel[0] = lin.X; pp.vel[1] = lin.Y; pp.vel[2] = lin.Z; }
     pp.sendTimeMs = static_cast<uint32_t>(now - e.epochMs);
     s.PublishPropDrivePose(pp);   // queued: it goes out in its turn, refreshed until then
     e.everSent   = true;

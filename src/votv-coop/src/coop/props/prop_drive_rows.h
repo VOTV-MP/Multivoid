@@ -21,6 +21,7 @@ namespace coop::prop_drive_host {
 
 struct Driven {
     ue_wrap::CachedObjRef ref;
+    ue_wrap::CachedObjRef rootComp;   // the actor's primitive root, resolved once for the per-row velocity read
     uint32_t              eid = 0;
     coop::net::WireKey    key{};
     uint8_t               gen = 0;

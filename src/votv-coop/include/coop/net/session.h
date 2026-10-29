@@ -136,7 +136,7 @@ public:
     // before a send is the only kind that never goes out, which keeps the publisher's delta baseline
     // consistent. Game thread.
     PoseTurn PropDrivePoseTurn(uint32_t eid) const;
-    void PublishPropDrivePose(const PropPoseSnapshot& pose);
+    void PublishPropDrivePose(const PropDriveRow& pose);
 
     // Per-peer reads; false if peerSlot is out of range, the slot has no pose yet, or the session
     // is not Connected. outIsNew tells a fresh arrival from a re-read of the last one.
@@ -184,10 +184,10 @@ public:
     // Client: swap out the trash-clump and driven-prop poses received since the last take, newest
     // per eid; `out` comes in empty and keeps its capacity.
     bool TakeRemoteTrashCarryBatch(std::vector<TrashClumpPoseSnapshot>& out);
-    bool TakeRemotePropDriveBatch(std::vector<PropPoseSnapshot>& out);
+    bool TakeRemotePropDriveBatch(std::vector<PropDriveRow>& out);
 
     // Host: each client slot's driven-prop rows since the last take, into out[slot]; the bits of the slots with rows.
-    uint32_t TakeRemotePropDriveBatches(std::vector<PropPoseSnapshot> (&out)[kMaxPeers]);
+    uint32_t TakeRemotePropDriveBatches(std::vector<PropDriveRow> (&out)[kMaxPeers]);
 
     // Game thread: queue a reliable message to every connected client (host) or to the host
     // (client). False on an oversize payload or no peer. `skipSlot` skips one slot (-1: none): MTA pSkip.
@@ -681,7 +681,7 @@ private:
     // rows of a prop it syncs, sent to the host alone), each with its own mutex (what a client receives of
     // them is in host_; what the host receives of a client's driven-prop rows is in origin_).
     EidPoseQueue<TrashClumpPoseSnapshot> trashCarryPoses_;
-    EidPoseQueue<PropPoseSnapshot>       propDrivePoses_;
+    EidPoseQueue<PropDriveRow>       propDrivePoses_;
     // The batch kinds only the host originates: a host refuses each from a client, said once per
     // kind and per session (the net thread sets, Stop clears).
     enum class HostBatch : uint8_t { Npc, WorldActor, TrashCarry, Count };

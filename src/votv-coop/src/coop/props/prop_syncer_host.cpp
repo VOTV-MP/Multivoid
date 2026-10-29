@@ -77,7 +77,7 @@ struct HandBack { uint8_t slot = 0; uint64_t ms = 0; };
 std::unordered_map<uint32_t, HandBack> g_handBack;
 uint64_t g_nextPassMs = 0;
 // Per client slot, kept capacity: the drain allocates nothing in steady state.
-std::vector<coop::net::PropPoseSnapshot> g_take[coop::net::kMaxPeers];
+std::vector<coop::net::PropDriveRow> g_take[coop::net::kMaxPeers];
 
 // Each outcome is counted and said at the first and at every 100th, so a client's flood costs the log nothing.
 uint32_t g_granted = 0, g_admitted = 0, g_notSyncer = 0, g_lateSyncer = 0, g_staleGen = 0, g_paced = 0, g_steps = 0;
@@ -174,7 +174,7 @@ coop::net::PropDriveEndPayload EndOf(const Driven& d, void* actor) {
 // row is still displayed: AdmitRow counts it on the row, and a run of them revokes the syncer's right. MTA applies
 // every row of the current syncer with no such test (CUnoccupiedVehicleSync.cpp:263-340); ours costs trust and never
 // display, the rule for a client's movement discontinuity (the host relays).
-bool ElectedRowPasses(const Driven& row, const coop::net::PropPoseSnapshot& e, uint64_t nowMs) {
+bool ElectedRowPasses(const Driven& row, const coop::net::PropDriveRow& e, uint64_t nowMs) {
     const bool first = !row.passedEver;
     const ue_wrap::FVector from = first ? row.startLoc : row.passLoc;
     const float dx = e.x - from.X, dy = e.y - from.Y, dz = e.z - from.Z;
@@ -190,7 +190,7 @@ bool ElectedRowPasses(const Driven& row, const coop::net::PropPoseSnapshot& e, u
 }
 
 // One row from slot `slot`, judged against the row that names it: the sender, the generation, the pace.
-void AdmitRow(const coop::net::PropPoseSnapshot& e, uint8_t slot, uint64_t nowMs) {
+void AdmitRow(const coop::net::PropDriveRow& e, uint8_t slot, uint64_t nowMs) {
     // The developer red arm of the prop syncer drill: the sender test is skipped, so a forged row of the open
     // generation is admitted and the drill's forge arm must fail. Resolved once.
     static const bool s_redNotSyncer =
@@ -208,7 +208,7 @@ void AdmitRow(const coop::net::PropPoseSnapshot& e, uint8_t slot, uint64_t nowMs
     // A client's value is bounded, never trusted: every row's velocity is clamped to the flight ceiling before it is
     // stored, relayed or carried into an End (a velocity that is not finite becomes zero), so no End carries an unbounded
     // one. The clamp is a value bound on input, not a refusal.
-    coop::net::PropPoseSnapshot r = e;
+    coop::net::PropDriveRow r = e;
     if (tb::ClampRowVelocity(r.vel) != tb::Clamp::Ok) Tally(g_rowsClamped, "row velocity clamped to the flight ceiling", e.elementId, slot);
     // An elected row's step is tested (a failing row is displayed all the same; it is counted on the row, and a run of
     // kMaxRefusedRows of them revokes the thrower's right: the host takes the prop back from the last passing row).
@@ -447,7 +447,7 @@ void Admit(coop::net::Session& s) {
     const uint32_t got = s.TakeRemotePropDriveBatches(g_take);   // every origin's merge, under one lock
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot)
         if (got & (1u << slot))
-            for (const coop::net::PropPoseSnapshot& e : g_take[slot]) AdmitRow(e, static_cast<uint8_t>(slot), nowMs);
+            for (const coop::net::PropDriveRow& e : g_take[slot]) AdmitRow(e, static_cast<uint8_t>(slot), nowMs);
     if (nowMs >= g_nextPassMs) {
         g_nextPassMs = nowMs + kPassMs;
         Pass(nowMs);

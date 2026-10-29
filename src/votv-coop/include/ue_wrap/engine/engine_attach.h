@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/types.h"
 
 #include <cstdint>
@@ -83,6 +84,10 @@ bool SetActorRootNotifyRigidBodyCollision(void* actor, bool notify);
 
 // The root's linear (cm/s) and angular (deg/s) velocity: the throw-energy transfer on release.
 bool GetActorRootPhysicsVelocity(void* actor, FVector& outLin, FVector& outAng);
+
+// The root's linear velocity (cm/s) alone, for a caller that reads it per row: `root` caches the root component,
+// resolved from `actor` when it is not alive, so a row costs one dispatch and never the angular one. Game thread.
+bool GetActorRootLinearVelocity(CachedObjRef& root, void* actor, FVector& outLin);
 
 bool SetActorRootPhysicsVelocity(void* actor, const FVector& lin, const FVector& ang);
 

@@ -105,7 +105,14 @@ void EnsureWatch() {
     if (now < g_nextWatchMs) return;
     g_nextWatchMs = now + 1000;
     if (!g_watchRegistered) g_watchRegistered = SG::WatchName(kRowThrowShit, kTagThrow, nullptr, &OnThrowShitPost);
-    if (!g_watchRegistered) return;
+    if (!g_watchRegistered) {
+        // Refused while the gate is not armed yet: asked again. Refused by an armed gate (its name table is full): for good.
+        if (SG::IsInstalled()) {
+            g_watchSettled = true;
+            UE_LOGE("prop_throw: the gate refused the throwShit watch -- no throw is seen, so none is elected");
+        }
+        return;
+    }
     SG::ResolvePendingNames();
     if (SG::NameWatchLive(kRowThrowShit, kTagThrow)) {
         g_watchSettled = true;

@@ -71,7 +71,7 @@ constexpr uint32_t kMissSaidAt  = 40;     // about ten seconds of misses: one li
 
 // The drained batch, kept across ticks for its capacity: the session swaps its buffer with this
 // one, so the steady state of a drag allocates nothing on either thread. Game thread only.
-std::vector<coop::net::PropPoseSnapshot> g_batch;
+std::vector<coop::net::PropDriveRow> g_batch;
 
 // Newer-than on the wrapping byte the stream carries.
 bool GenAfter(uint8_t a, uint8_t b) { return static_cast<int8_t>(a - b) > 0; }
@@ -174,7 +174,7 @@ void ApplyEnd(void* actor, const coop::net::PropDriveEndPayload& p, bool parkedH
 // One pose of a driven prop: parks the copy on a new generation's first, a lerp target after. The client's
 // apply of the host's batch, and the host's of a pose it admitted from a prop's syncer (FeedAdmitted); `who`
 // names the role in the log.
-void ApplyPose(const coop::net::PropPoseSnapshot& e, uint64_t nowMs, const char* who) {
+void ApplyPose(const coop::net::PropDriveRow& e, uint64_t nowMs, const char* who) {
     const uint32_t eid = e.elementId;
     if (eid == 0) return;
     // The generation gate: a pose of a closed generation, or older than the live drive's,
@@ -265,7 +265,7 @@ size_t RecentEnds(AppliedEnd* out, size_t max) {
     return n;
 }
 
-void FeedAdmitted(const coop::net::PropPoseSnapshot& e) {
+void FeedAdmitted(const coop::net::PropDriveRow& e) {
     UE_ASSERT_GAME_THREAD("prop_drive_stream::FeedAdmitted");
     ApplyPose(e, AD::NowMs(), "HOST");
 }
@@ -300,7 +300,7 @@ void TickApplyAndDrive(coop::net::Session& s) {
     g_batch.clear();
     // The host's own batch slot is never written (a client's rows go to the origin stores), so only a client drains it.
     if (s.role() != coop::net::Role::Host && s.TakeRemotePropDriveBatch(g_batch)) {
-        for (const coop::net::PropPoseSnapshot& e : g_batch) {
+        for (const coop::net::PropDriveRow& e : g_batch) {
             // The one skip: a prop this peer authors (a claim pending or granted) is moved by this peer's own
             // physics, and the host's poses for it are its own rows relayed, or a coast it parks onto once a
             // claim is refused. Skipping closes no generation, and an End is never skipped (OnEnd).

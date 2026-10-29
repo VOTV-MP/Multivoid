@@ -113,7 +113,7 @@ enum class MsgType : uint8_t {
     // Host to all: props in motion under something other than a hand -- a hook's constraint, a
     // body still sliding after the hook let go -- keyed by key and eid, ctx carrying the claim
     // generation; an entry only for a prop that moved since its last one. EntityPoseBatchHeader
-    // plus N PropPoseSnapshot; PropDriveEnd closes each eid's stream. A client that syncs a prop its
+    // plus N PropDriveRow; PropDriveEnd closes each eid's stream. A client that syncs a prop its
     // interaction moves (PropSyncClaim) sends the same batch to the host alone, which judges every
     // row by the sender, the eid's row and its generation before it relays one.
     PropDrivePose = 41,
@@ -1394,22 +1394,26 @@ struct PropPoseSnapshot {
     uint8_t  ctx;
     uint8_t  _pad;
     uint16_t holdGen;   // the holder's hold generation, wrapping, never 0; 0 in a PropDrivePose batch
-    // The copy's linear velocity (cm/s) when the pose was read, and the syncer's clock when it was sent: ms since that
-    // syncer's row opened (a thrown prop's client syncer counts from its throw, a host row from its opening). The
-    // host relays a client row's value unchanged and writes its own on a host row, so one field has one meaning: the
-    // syncer's clock. MTA's syncer packet carries velocity under a time context too, but the context is an epoch, not
-    // a clock (CUnoccupiedVehicleSync.cpp:263-340, CElement.cpp:1281-1305). A PropDrivePose row carries both; the held
-    // PropPose stream sends zero.
+};
+static_assert(sizeof(PropPoseSnapshot) == 64, "PropPoseSnapshot must be 64 bytes");
+
+// One row of a PropDrivePose batch: the pose above plus the copy's linear velocity (cm/s) when it was read, and the
+// syncer's clock when the row was sent: ms since that syncer's row opened (a thrown prop's client syncer counts from
+// its throw, a host row from its opening). The host relays a client row's value unchanged and writes its own on a host
+// row, so one field has one meaning: the syncer's clock. MTA's syncer packet carries velocity under a time context
+// too, but the context is an epoch, not a clock (CUnoccupiedVehicleSync.cpp:263-340, CElement.cpp:1281-1305). The held
+// PropPose stream is not a drive row and stays 64 B.
+struct PropDriveRow : PropPoseSnapshot {
     float    vel[3];
     uint32_t sendTimeMs;
 };
-static_assert(sizeof(PropPoseSnapshot) == 80, "PropPoseSnapshot must be 80 bytes");
+static_assert(sizeof(PropDriveRow) == 80, "PropDriveRow must be 80 bytes");
 
 struct PropPosePacket {
     PacketHeader     header;  // 20
     PropPoseSnapshot pose;    // 64
 };
-static_assert(sizeof(PropPosePacket) == 100, "PropPosePacket must be 100 bytes");
+static_assert(sizeof(PropPosePacket) == 84, "PropPosePacket must be 84 bytes");
 
 // One character's pose in the EntityPose batch, keyed by its element id. The host reads the live
 // actor each send tick; the client interpolates and drives the mirror's movement component.
@@ -1503,11 +1507,11 @@ inline constexpr int kTrashCarryPoseDatagramMax =
 // Max props per PropDrivePose datagram: 20 + 4 + 16*80 = 1304 B, under the 1400 MTU budget. The
 // host's pending batch is a queue merged by eid and drained from the front, so more moving props
 // than fit go out over the following sends rather than being dropped. Reuses EntityPoseBatchHeader
-// and PropPoseSnapshot (RULE 2).
+// and PropDriveRow (RULE 2).
 inline constexpr int kMaxPropDriveBatchEntries = 16;
 inline constexpr int kPropDrivePoseDatagramMax =
     static_cast<int>(sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader)) +
-    kMaxPropDriveBatchEntries * static_cast<int>(sizeof(PropPoseSnapshot));
+    kMaxPropDriveBatchEntries * static_cast<int>(sizeof(PropDriveRow));
 
 // A ragdolling player's pelvis: world location and rotation, linear and angular velocity, read off
 // the sender's own ragdoll actor and sent unreliably while ragdolled. The receiver writes the

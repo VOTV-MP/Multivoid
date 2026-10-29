@@ -24,7 +24,7 @@
 namespace coop::net {
 class Session;
 struct PropDriveEndPayload;
-struct PropPoseSnapshot;
+struct PropDriveRow;
 }  // namespace coop::net
 
 namespace coop::prop_drive_stream {
@@ -37,7 +37,7 @@ void TickApplyAndDrive(coop::net::Session& s);
 // HOST, game thread: a pose of `e.elementId` the host admitted from the prop's syncing client (the key is
 // the host's own): parks the host's copy on the first of its generation, a drive target after. Admission
 // is prop_syncer_host's; this is the same apply the client runs on the host's batch.
-void FeedAdmitted(const coop::net::PropPoseSnapshot& e);
+void FeedAdmitted(const coop::net::PropDriveRow& e);
 
 // HOST, game thread: the end of a client-authored drive on the host's copy of `end.eid`: unparks it,
 // places it at the End's pose, restores its physics from the End's flags and gives it the velocity.

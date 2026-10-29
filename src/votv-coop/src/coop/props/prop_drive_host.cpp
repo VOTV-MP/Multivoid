@@ -87,7 +87,7 @@ size_t PublishAdmitted(coop::net::Session& s, Driven& d) {
     }
     const coop::net::PoseTurn turn = s.PropDrivePoseTurn(d.eid);
     if (turn == coop::net::PoseTurn::Wait) return 0;   // the pose waiting in the queue is refreshed on a later tick
-    coop::net::PropPoseSnapshot pp{};
+    coop::net::PropDriveRow pp{};
     pp.key       = d.key;
     pp.elementId = d.eid;
     pp.ctx       = d.gen;
@@ -172,9 +172,8 @@ coop::net::PropDriveEndPayload EndFromBody(void* actor, uint32_t eid, uint8_t ge
     p.roll  = ue_wrap::NormalizeAxis(rot.Roll);
     // The body's velocity at this instant. At rest it is noise below kRestVelCmS and goes out as
     // zero, so no receiver wakes a resting body by writing a velocity into it. MTA's syncer
-    // (CUnoccupiedVehicleSync.cpp, bSyncVelocity) streams a velocity in every packet it moved in;
-    // ours rides the end edge only, since the receiver interpolates a parked body and has no use
-    // for one before that.
+    // (CUnoccupiedVehicleSync.cpp, bSyncVelocity) streams a velocity in every packet it moved in; a drive's rows carry
+    // the copy's velocity too (PropDriveRow), and this End carries the body's angular velocity as well, which no row does.
     const PR::VelocityState v = PR::GetPhysicsVelocity(actor);
     const float lin = std::sqrt(v.linearCmS.X * v.linearCmS.X + v.linearCmS.Y * v.linearCmS.Y +
                                 v.linearCmS.Z * v.linearCmS.Z);
@@ -388,7 +387,7 @@ static void Tick(coop::net::Session& s) {
                     "rests", d.eid);
         }
         if (poseRead && Moved(d, loc, rot)) {
-            coop::net::PropPoseSnapshot pp{};
+            coop::net::PropDriveRow pp{};
             pp.key       = d.key;
             pp.elementId = d.eid;
             pp.ctx       = d.gen;
@@ -397,8 +396,8 @@ static void Tick(coop::net::Session& s) {
             pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
             pp.roll  = ue_wrap::NormalizeAxis(rot.Roll);
             // The copy's velocity and the row's age: a receiver's override of this stream starts from them.
-            ue_wrap::FVector lin{}, ang{};
-            if (E::GetActorRootPhysicsVelocity(actor, lin, ang)) { pp.vel[0] = lin.X; pp.vel[1] = lin.Y; pp.vel[2] = lin.Z; }
+            ue_wrap::FVector lin{};
+            if (E::GetActorRootLinearVelocity(d.rootComp, actor, lin)) { pp.vel[0] = lin.X; pp.vel[1] = lin.Y; pp.vel[2] = lin.Z; }
             pp.sendTimeMs = static_cast<uint32_t>(now - d.openMs);
             s.PublishPropDrivePose(pp);   // queued: it goes out in its turn, refreshed until then
             if (turn == coop::net::PoseTurn::Join) ++joined;

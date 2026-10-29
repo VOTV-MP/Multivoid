@@ -119,6 +119,22 @@ bool GetActorRootPhysicsVelocity(void* actor, FVector& outLin, FVector& outAng) 
     return true;
 }
 
+bool GetActorRootLinearVelocity(CachedObjRef& root, void* actor, FVector& outLin) {
+    outLin = FVector{};
+    void* comp = root.Get();
+    if (!comp) {   // resolved once per record; again only when the cached root died or was replaced
+        comp = PrimitiveRootOf(actor);
+        if (!comp) return false;
+        root.Set(comp);
+    }
+    void* getLin = PrimFn(&g_getLinFn, L"GetPhysicsLinearVelocity");
+    if (!getLin) return false;
+    ParamFrame f(getLin);
+    if (!Call(comp, f)) return false;
+    outLin = f.Get<FVector>(L"ReturnValue");
+    return true;
+}
+
 bool SetActorRootCollisionEnabled(void* actor, uint8_t collisionType) {
     // collisionType: 0=NoCollision 1=QueryOnly 2=PhysicsOnly 3=QueryAndPhysics.
     // The thrown clump mirror needs 3 so it collides with the world + lands (the

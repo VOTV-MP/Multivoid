@@ -100,7 +100,7 @@ void Forge(coop::net::Session* s, uint64_t now) {
         for (size_t i = 0; i < w.size() && i < sizeof(o.key.data); ++i) o.key.data[o.key.len++] = static_cast<char>(w[i]);
     }
     if (s->PropDrivePoseTurn(o.eid) == coop::net::PoseTurn::Wait) return;
-    coop::net::PropPoseSnapshot pp{};
+    coop::net::PropDriveRow pp{};
     pp.key = o.key;
     pp.elementId = o.eid;
     pp.ctx = view.gen;

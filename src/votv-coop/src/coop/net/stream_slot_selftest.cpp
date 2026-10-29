@@ -102,17 +102,17 @@ bool RunSelftest() {
     // 7. The eid merge: sequence 0 latches, the latch outlives a take, and a take hands the buffer
     //    back cleared, so a reader's leftovers are never merged in.
     {
-        EidPoseMerge<PropPoseSnapshot> m;
-        PropPoseSnapshot p{};
+        EidPoseMerge<PropDriveRow> m;
+        PropDriveRow p{};
         p.elementId = 7;
         p.x = 1.f;
         m.Merge(&p, 1, 0);
-        std::vector<PropPoseSnapshot> out;
+        std::vector<PropDriveRow> out;
         check(m.Take(out) && out.size() == 1, "a first merge at sequence 0 is taken");
         m.Merge(&p, 1, 0);
-        std::vector<PropPoseSnapshot> none;
+        std::vector<PropDriveRow> none;
         check(!m.Take(none), "a duplicate of sequence 0 is refused after the take");
-        PropPoseSnapshot other{};
+        PropDriveRow other{};
         other.elementId = 8;
         out.assign(1, other);  // the reader hands back a buffer still holding another element's pose
         p.x = 2.f;
@@ -121,7 +121,7 @@ bool RunSelftest() {
               "a newer merge is taken");
         p.x = 3.f;
         m.Merge(&p, 1, 2);
-        std::vector<PropPoseSnapshot> next;
+        std::vector<PropDriveRow> next;
         check(m.Take(next) && next.size() == 1 && next[0].x == 3.f,
               "the reader's leftover, another element's pose, was not merged into the next take");
     }
