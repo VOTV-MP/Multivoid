@@ -132,6 +132,7 @@ bool InstantsComplete(const Instants& in);   // all m parts held
 // Sets the track against the instants a peer said: how many were said, how many the track has a sample for, the largest gap.
 struct Gap { int matched = 0, said = 0, worstK = 0; float worst = 0.f; };
 Gap JudgeInstants(const Track& t, const Instants& in);
+inline constexpr int kMatchedMin = 3;   // fewer matched instants than this is no judgement (the thrower's and the joiner's)
 // The fastest sample (cm/s) of the track within kEarlyMs after the press: the speed the throw gave the copy.
 inline constexpr uint64_t kEarlyMs = 500;
 int EarlySpeed(const Track& t, uint64_t pressMs);

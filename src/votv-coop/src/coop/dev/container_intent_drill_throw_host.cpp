@@ -65,7 +65,6 @@ constexpr uint64_t kArmBoundMs     = 240000;  // the fixture line to the client'
 constexpr uint64_t kEndBoundMs     = 120000;  // the arm line to the client's end line
 constexpr uint64_t kNextBoundMs    = 240000;  // the verdict to the client's second or done line (a second walk)
 constexpr uint64_t kFindEveryMs    = 50;      // the search for the host's element of a thrown hand drive
-constexpr int      kMatchedMin     = 3;       // fewer matched instants than this is no judgement
 constexpr int      kParkedSamplesMax = 3;     // PROVISIONAL: the thrower's samples before rest at which it may read not-simulating
 constexpr uint64_t kJoinerEndMs    = 150000;  // throwjoin: the first throw's verdict to the joiner's end line
 constexpr uint64_t kRejoinWaitMs   = 240000;  // throwdepart: the take-back to the rejoined client's seed line

@@ -541,7 +541,8 @@ void Wrap(const coop::net::Session& session) {
         return;
     }
     UE_LOGI("[CI-DRILL] client %s: no further throw (%s)", ArmName(),
-            g_n == 2 ? "both thrown" : hit ? "the first throw hit" : !landed ? "the first copy is gone or unread" : "the miss is across the line");
+            g_n == 2 ? "both thrown" : hit ? "the first throw hit" : !landed ? "the first copy is gone or unread"
+            : (ArmOf() == Arm::ThrowTouch || ArmOf() == Arm::ThrowJoin) ? "this arm throws once" : "the miss is across the line");
     DC::Say(kThrowDoneLine);
     UE_LOGI("[CI-DRILL] client %s MEASURED", ArmName());
     Finish();

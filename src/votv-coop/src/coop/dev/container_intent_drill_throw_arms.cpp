@@ -462,8 +462,8 @@ void JoinHostReport(int n, float gapCm) {
 }
 
 // The joiner's end line of throw n, set against the host's trace: the mirror gap at its instants and the rest agreement. A
-// joiner that sampled the prop only after the host's copy rested was not in flight: said so, and only the seeded rest pose is
-// checked. `gapOut` is -1 with no instant matched.
+// joiner that was not world-ready before the host copy rested, first saw the prop only after it rested, or has fewer than
+// kMatchedMin instants matched was not in flight: that fails the arm. `gapOut` is -1 on a failure.
 HostJudge JoinHostJudge(const Track& host, int n, float& gapOut, char* why, size_t whyLen) {
     gapOut = -1.f;
     JoinHostCollect(n);
@@ -487,9 +487,9 @@ HostJudge JoinHostJudge(const Track& host, int n, float& gapOut, char* why, size
     }
     const Gap g = JudgeInstants(host, g_jhInst);
     const bool inFlight = host.atRest ? first < host.restMs : true;
-    if (!(n == g_jhReadyN && g_jhReady) || !inFlight || g.matched == 0) {
-        std::snprintf(why, whyLen, "the joiner was not in flight: world-ready before rest=%d, it first saw the prop at %llu and the host copy rested at %llu, %d instants matched",
-                      (n == g_jhReadyN && g_jhReady) ? 1 : 0, first, U(host.restMs), g.matched);
+    if (!(n == g_jhReadyN && g_jhReady) || !inFlight || g.matched < kMatchedMin) {
+        std::snprintf(why, whyLen, "the joiner was not in flight: world-ready before rest=%d, it first saw the prop at %llu and the host copy rested at %llu, %d instants matched (need %d)",
+                      (n == g_jhReadyN && g_jhReady) ? 1 : 0, first, U(host.restMs), g.matched, kMatchedMin);
         return HostJudge::Failed;
     }
     gapOut = g.worst;
