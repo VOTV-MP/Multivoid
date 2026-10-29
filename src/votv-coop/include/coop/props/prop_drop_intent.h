@@ -73,6 +73,10 @@ namespace dev {   // called only from src/coop/dev/ (the census drill); read-onl
 // The actor of the most recent place spawn the client's FinishSpawn hook enqueued while the census row is armed (the
 // world actor a throw spawned), or null when none or it is gone. Game thread.
 void* LastClientPlaceSpawn();
+// HOST: the throw spawns (a drop intent carrying a throw sequence) made since the session began, and the speed in cm/s the
+// latest gave its copy (0 when it wrote none). A throw arm takes the count at its arm line and reads the speed after it.
+uint32_t LaunchesApplied();
+float LastAppliedLaunch();
 }  // namespace dev
 
 }  // namespace coop::prop_drop_intent

@@ -64,6 +64,10 @@ namespace E  = ue_wrap::engine;
 namespace GT = ue_wrap::game_thread;
 namespace PT = coop::prop_element_tracker;
 
+// The throw arms' read of what the host gave a thrown copy at its spawn (|v| cm/s of the latest, 0 when none was written).
+uint32_t g_launches = 0;
+float    g_lastLaunch = 0.f;
+
 UE_FACT_FN(kRowFinishSpawningActor, "prop_drop_intent", L"GameplayStatics", L"FinishSpawningActor", Declared);
 
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -335,9 +339,14 @@ void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::
         namespace pf = coop::net::propspawn_flags;
         const float speedSq = p.linVel[0] * p.linVel[0] + p.linVel[1] * p.linVel[1] + p.linVel[2] * p.linVel[2];
         const float rest = coop::prop_drive_rules::kRestVelCmS;
+        if (p.throwSeq != 0) {
+            ++g_launches;
+            g_lastLaunch = 0.f;
+        }
         if (speedSq > rest * rest && !(p.physFlags & (pf::kStatic | pf::kFrozen | pf::kSleep))) {
             E::SetActorRootPhysicsVelocity(actor, ue_wrap::FVector{p.linVel[0], p.linVel[1], p.linVel[2]},
                                            ue_wrap::FVector{p.angVel[0], p.angVel[1], p.angVel[2]});
+            if (p.throwSeq != 0) g_lastLaunch = std::sqrt(speedSq);
             UE_LOGI("[PROP-DROP] HOST gave the spawn the thrower's velocity (%.0f,%.0f,%.0f) |v|=%.0f cm/s throw seq %u",
                     p.linVel[0], p.linVel[1], p.linVel[2], std::sqrt(speedSq), static_cast<unsigned>(p.throwSeq));
         }
@@ -682,6 +691,8 @@ void Reset() {
 
 namespace dev {
 void* LastClientPlaceSpawn() { return g_lastPlace.Get(); }
+uint32_t LaunchesApplied() { return g_launches; }
+float LastAppliedLaunch() { return g_lastLaunch; }
 }  // namespace dev
 
 }  // namespace coop::prop_drop_intent

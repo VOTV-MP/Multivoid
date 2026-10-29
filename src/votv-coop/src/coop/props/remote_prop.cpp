@@ -61,6 +61,8 @@ namespace R = ue_wrap::reflection;
 
 // What this peer received of throws, for the throw arms: releases that carried a throw sequence, and the swings played.
 uint32_t g_throwReleases = 0, g_whooshes = 0;
+uint32_t g_releaseLaunches = 0;   // throw releases whose velocity was applied to a simulating copy
+float    g_lastReleaseLaunch = 0.f;
 namespace E = ue_wrap::engine;
 
 // ActiveDrive, BeginLerpToPose, AdvanceLerp, ResetDriveState, LerpAngle, NowMs and the lerp
@@ -350,6 +352,10 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         coop::prop_park::Unpark(propActor, meshToActOn, /*rootSimulates=*/true);
         ue_wrap::engine::SetComponentLinearVelocity(meshToActOn, payload.linVelX, payload.linVelY, payload.linVelZ);
         ue_wrap::engine::SetComponentAngularVelocity(meshToActOn, payload.angVelX, payload.angVelY, payload.angVelZ);
+        if (payload.throwSeq != 0) {   // the throw arms read the launch this copy was given
+            ++g_releaseLaunches;
+            g_lastReleaseLaunch = linSpeed;
+        }
         // The throw fires for a release the holder numbered (throwSeq: its game ran throwShit), so a passive drop stays
         // silent: the prop's own thrown event (subclass hooks) and the receiver-side swing, since the native swing
         // plays only in the thrower's input chain.
@@ -600,6 +606,8 @@ void OnDisconnectForSlot(int peerSlot) {
 namespace dev {
 uint32_t ThrowReleasesReceived() { return g_throwReleases; }
 uint32_t ThrowWhooshesPlayed() { return g_whooshes; }
+uint32_t ReleaseLaunchesApplied() { return g_releaseLaunches; }
+float LastReleaseLaunch() { return g_lastReleaseLaunch; }
 }  // namespace dev
 
 }  // namespace coop::remote_prop

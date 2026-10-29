@@ -369,6 +369,10 @@ uint32_t g_cRel0 = 0, g_cWhoosh0 = 0;   // the throw releases received and the s
 constexpr int kHgMatchedMin = 3;       // fewer matched instants than this is no judgement of the mirror
 ue_wrap::CachedObjRef g_cItem;
 Seen     g_cSeen;
+Instants g_cInst;                // the host's instants, collected part by part
+uint64_t g_cInstNextMs = 0;
+bool     g_cEndSeen = false;     // the host's end line, latched when first seen
+uint64_t g_cEndMs = 0;
 
 void CNext(CStep s) { g_cStep = s; g_cMs = ::GetTickCount64(); }
 bool CExpired(uint64_t bound) { return ::GetTickCount64() - g_cMs > bound; }
@@ -394,6 +398,11 @@ void HostGrabClientTick(const coop::net::Session& session) {
     }
     if (g_cStep == CStep::Done) return;
     if (g_cStep == CStep::Flight) {   // every tick
+        const uint64_t polled = ::GetTickCount64();
+        if (polled >= g_cInstNextMs) {
+            g_cInstNextMs = polled + RD::kCheckEveryMs;
+            InstantsCollect(g_cInst, "host", 1);
+        }
         const int rtt = session.rttMsForSlot(0);
         if (SeenTick(g_cSeen, rtt)) {
             SeenEnd(g_cSeen);
@@ -404,6 +413,7 @@ void HostGrabClientTick(const coop::net::Session& session) {
     const uint64_t now = ::GetTickCount64();
     if (now < g_cNextMs) return;
     g_cNextMs = now + RD::kCheckEveryMs;
+    InstantsCollect(g_cInst, "host", 1);
     if (DC::ChatHasLive(kHgHostFailed)) {
         CFail("the host ended the arm with a FAIL");
         return;
@@ -439,15 +449,25 @@ void HostGrabClientTick(const coop::net::Session& session) {
         return;
     }
     case CStep::WaitHostEnd: {
-        if (!DC::ChatHasLive(kHgEnd)) {
-            if (CExpired(kChatBoundMs)) CFail("the host never said its end within %llu s", U(kChatBoundMs / 1000));
+        if (!g_cEndSeen) {
+            if (!DC::ChatHasLive(kHgEnd)) {
+                if (CExpired(kChatBoundMs)) CFail("the host never said its end within %llu s", U(kChatBoundMs / 1000));
+                return;
+            }
+            g_cEndSeen = true;
+            g_cEndMs = ::GetTickCount64();
+        }
+        // The host's instants come before its end line, in a few parts; the judgement waits for every one of them.
+        if (!InstantsComplete(g_cInst)) {
+            if (::GetTickCount64() - g_cEndMs > kInstantsBoundMs)
+                CFail("the host's instants never all arrived (%d/%d)", InstantsHeld(g_cInst), g_cInst.m);
             return;
         }
         // The host's throw reached this peer: its release carried a throw sequence (the host's own throwShit watch minted it)
         // and the swing played, and the mirror followed the host's copy within the flight bound.
         const uint32_t rel = coop::remote_prop::dev::ThrowReleasesReceived() - g_cRel0;
         const uint32_t whoosh = coop::remote_prop::dev::ThrowWhooshesPlayed() - g_cWhoosh0;
-        const Gap g = JudgeInstants(g_cSeen.track, "host", 1);
+        const Gap g = JudgeInstants(g_cSeen.track, g_cInst);
         UE_LOGI("[CI-DRILL] client %s: the host's release reached this peer with a throw sequence on %u message(s), %u swing(s) played; "
                 "mirror-gap=%.0f cm over %d of %d instants (bound %.0f, PROVISIONAL)", ArmName(), rel, whoosh, static_cast<double>(g.worst),
                 g.matched, g.said, static_cast<double>(kFlightGapPassCm));
@@ -517,6 +537,9 @@ void HostGrabReset() {
     g_cRel0 = g_cWhoosh0 = 0;
     g_cItem.Reset();
     g_cSeen = Seen{};
+    g_cInst = Instants{};
+    g_cInstNextMs = g_cEndMs = 0;
+    g_cEndSeen = false;
 }
 
 }  // namespace coop::dev::container_intent_drill::detail

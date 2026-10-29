@@ -189,6 +189,9 @@ uint32_t WireDestroysNaming(coop::element::ElementId eid);
 // The PropRelease messages received this session that carried a throw sequence, and the throw swings played for them.
 uint32_t ThrowReleasesReceived();
 uint32_t ThrowWhooshesPlayed();
+// The throw releases whose velocity this peer applied to a simulating copy, and the speed in cm/s of the latest.
+uint32_t ReleaseLaunchesApplied();
+float LastReleaseLaunch();
 }  // namespace dev
 
 }  // namespace coop::remote_prop

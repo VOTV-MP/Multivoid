@@ -360,6 +360,10 @@ HostJudge DepartHostTick(const Track& host, uint32_t eid, char* why, size_t whyL
 
 namespace {
 constexpr const char* kJoinMarkLine = "ci-throw host joinmark ";   // + "n=<n> eid=<eid>"
+Instants    g_jhInst;           // the host's set of the joiner's instants, and the joiner's end line when first seen
+int         g_jhN = 0;
+std::string g_jhEnd;
+uint64_t    g_jhEndMs = 0;
 }
 
 // The go: a second client is connected (world-ready or not: either way it follows the rows). False while none is, until
@@ -390,13 +394,34 @@ void JoinHostSay(int n, uint32_t eid) {
     DC::Say(say);
 }
 
+// The joiner's instants of throw n, part by part; the poll runs while the throw is judged, so no part is lost to the feed.
+void JoinHostCollect(int n) {
+    if (n != g_jhN) {   // a new throw: the last throw's set and end line are not this one's
+        g_jhN = n;
+        g_jhInst = Instants{};
+        g_jhEnd.clear();
+        g_jhEndMs = 0;
+    }
+    InstantsCollect(g_jhInst, "joiner", n);
+}
+
 // The joiner's end line of throw n, set against the host's trace: the mirror gap at its instants and the rest agreement. A
 // joiner that sampled the prop only after the host's copy rested was not in flight: said so, and only the seeded rest pose is
 // checked. `gapOut` is -1 with no instant matched.
 HostJudge JoinHostJudge(const Track& host, int n, float& gapOut, char* why, size_t whyLen) {
-    std::string rest;
     gapOut = -1.f;
-    if (!DC::LiveRestOf(ThrowLine("joiner", "end", n, true), &rest)) return HostJudge::Working;
+    JoinHostCollect(n);
+    if (g_jhEnd.empty()) {
+        if (!DC::LiveRestOf(ThrowLine("joiner", "end", n, true), &g_jhEnd)) return HostJudge::Working;
+        g_jhEndMs = ::GetTickCount64();
+    }
+    // The joiner's instants come before its end line, in a few parts; the judgement waits for every one of them.
+    if (!InstantsComplete(g_jhInst)) {
+        if (::GetTickCount64() - g_jhEndMs <= kInstantsBoundMs) return HostJudge::Working;
+        std::snprintf(why, whyLen, "the joiner's instants never all arrived (%d/%d)", InstantsHeld(g_jhInst), g_jhInst.m);
+        return HostJudge::Failed;
+    }
+    const std::string& rest = g_jhEnd;
     int at[3] = {};
     unsigned long long first = 0;
     if (const size_t f = rest.find("first="); f != std::string::npos) first = std::strtoull(rest.c_str() + f + 6, nullptr, 10);
@@ -404,7 +429,7 @@ HostJudge JoinHostJudge(const Track& host, int n, float& gapOut, char* why, size
         std::snprintf(why, whyLen, "the joiner's end line does not read (%s)", rest.c_str());
         return HostJudge::Failed;
     }
-    const Gap g = JudgeInstants(host, "joiner", n);
+    const Gap g = JudgeInstants(host, g_jhInst);
     const bool inFlight = host.atRest ? first < host.restMs : true;
     if (!inFlight || g.matched == 0)
         UE_LOGI("[CI-DRILL] throwjoin: rested before the join (%lld ms): the joiner first saw the prop %llu, the host copy rested at %llu; only the seeded rest pose is checked",
@@ -493,6 +518,10 @@ void ArmsReset() {
     g_rjMs = 0;
     g_rjLast = FVector{};
     g_rjStill = 0;
+    g_jhInst = Instants{};
+    g_jhN = 0;
+    g_jhEnd.clear();
+    g_jhEndMs = 0;
 }
 
 }  // namespace coop::dev::container_intent_drill::detail

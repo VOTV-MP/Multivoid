@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace coop::dev::drill_chat {
 
@@ -28,6 +29,11 @@ bool ChatHasLive(const std::string& needle);
 // True with the text after `prefix` (trailing spaces cut, never empty) from the LAST live row that starts with `prefix`.
 // A retained row never counts, as in ChatHasLive.
 bool LiveRestOf(const std::string& prefix, std::string* rest);
+
+// Appends to `rests` the text after `prefix` (trailing spaces cut, never empty) of EVERY live row that starts with it.
+// A retained row never counts. For a line said in parts: the reader keeps each part it has seen, so none is lost to the
+// feed retiring a row (LiveRestOf sees only the last).
+void LiveRestsOf(const std::string& prefix, std::vector<std::string>* rests);
 
 // A feed walk is a few times a second: true on every fifteenth call.
 bool PollDue();

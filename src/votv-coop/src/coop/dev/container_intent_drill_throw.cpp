@@ -20,6 +20,7 @@
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/props/prop_drive_stream.h"
 #include "coop/props/prop_drop_intent.h"
 #include "coop/props/prop_throw.h"
 
@@ -73,6 +74,7 @@ uint64_t g_stepMs = 0;      // the time the step was entered
 uint64_t g_nextMs = 0;      // the steps that read the chat run four times a second; the aim, the grab and the flight every tick
 int      g_n = 1;           // the throw in hand
 uint32_t g_packEid = 0, g_itemEid = 0;
+uint32_t g_item2Eid = 0;      // the second drive the host named (throwgrab, throw 2)
 ue_wrap::CachedObjRef g_pack, g_item;
 FVector  g_packAt{}, g_start{}, g_goal{}, g_stand{};
 FVector  g_lastPos[2] = {};
@@ -241,25 +243,44 @@ void StepWalkWait() {
         Next(Step::Grab);
         return;
     }
+    g_item2Eid = 0;
     Next(Step::Item2Wait);   // the host spawns the second drive beside the second standpoint once told it
 }
 
-// throwgrab, throw 2: the host's second drive (its eid on a line), and its mirror.
+// throwgrab, throw 2: the host's second drive (its eid on a line, kept once read), and its mirror. The grab waits for the
+// mirror to be let go by the host's birth coast (not parked: the host's End applied) and to rest, as a parked body takes none.
 void StepItem2Wait() {
-    std::string rest;
-    int eid = 0;
-    if (DC::LiveRestOf(kThrowItem2Line, &rest) && RD::IntAfter(rest, "eid", eid) && eid > 0) {
-        void* item = coop::element::LivePropActor(static_cast<uint32_t>(eid));
-        void* player = coop::players::Registry::Get().Local();
-        if (item && player) {
-            g_itemEid = static_cast<uint32_t>(eid);
-            g_item.Set(item);
-            g_grab = std::make_unique<DR::AimedGrab>(player, item);
-            Next(Step::Grab);
-            return;
+    if (!g_item2Eid) {
+        std::string rest;
+        int eid = 0;
+        if (DC::LiveRestOf(kThrowItem2Line, &rest) && RD::IntAfter(rest, "eid", eid) && eid > 0) {
+            g_item2Eid = static_cast<uint32_t>(eid);
+            g_rest = 0;
+            g_lastPos[0] = FVector{};
         }
     }
-    if (Expired(kItem2BoundMs)) CFail("the second drive never came (host line %s)", rest.empty() ? "absent" : rest.c_str());
+    bool parked = false;
+    if (g_item2Eid) {
+        void* item = coop::element::LivePropActor(g_item2Eid);
+        void* player = coop::players::Registry::Get().Local();
+        FVector at{};
+        if (item && player && E::TryGetActorLocation(item, at)) {
+            parked = coop::prop_drive_stream::IsParked(item);
+            const bool still = !parked && std::fabs(at.X - g_lastPos[0].X) + std::fabs(at.Y - g_lastPos[0].Y) + std::fabs(at.Z - g_lastPos[0].Z) < 1.f;
+            g_lastPos[0] = at;
+            g_rest = still ? g_rest + 1 : 0;
+            if (g_rest >= kRestChecks) {
+                g_itemEid = g_item2Eid;
+                UE_LOGI("[CI-DRILL] client %s: the second drive (eid=%u) is unparked and at rest; grabbing it", ArmName(), g_item2Eid);
+                g_item.Set(item);
+                g_grab = std::make_unique<DR::AimedGrab>(player, item);
+                Next(Step::Grab);
+                return;
+            }
+        }
+    }
+    if (Expired(kItem2BoundMs))
+        CFail("the second drive never came to rest unparked (eid %u, %s)", g_item2Eid, !g_item2Eid ? "no host line" : parked ? "still parked" : "moving");
 }
 
 void StepTakeHand() {
@@ -517,18 +538,16 @@ void Wrap(const coop::net::Session& session) {
             static_cast<double>(rest.Z), along < 0.f ? "short" : "long", static_cast<double>(std::fabs(along)),
             static_cast<double>(side), g_ovCount, U(cen::R4Overlaps() - g_ovAll0), U(adds), g_count0, count1,
             static_cast<double>(g_local.peakSpeed), U(g_local.peakT), session.rttMsForSlot(0));
-    char say[160];
-    std::snprintf(say, sizeof(say), "%st=%llu v=%d p=%d,%d,%d", ThrowLine("client", "peak", g_n, true).c_str(), U(g_local.peakT),
-                  static_cast<int>(g_local.peakSpeed), static_cast<int>(g_local.peakPos.X), static_cast<int>(g_local.peakPos.Y),
-                  static_cast<int>(g_local.peakPos.Z));
-    DC::Say(say);
     // Where the thrower's copy was at fixed instants after the press: the host sets its own copy against them at the same
     // wall-clock instants. Said before the end line, which is what the host's verdict waits for.
     SayInstants(g_local, g_pressMs, "client", g_n);
-    std::snprintf(say, sizeof(say), "%sarc=%s gone=%d ov=%d all=%llu mir=%d rest=%d,%d,%d park=%d tmax=%llu",
-                  ThrowLine("client", "end", g_n, true).c_str(), ArcOf(g_local), g_local.gone ? 1 : 0, g_ovCount,
+    char say[200];
+    std::snprintf(say, sizeof(say), "%sarc=%s gone=%d ov=%d all=%llu mir=%d rest=%d,%d,%d park=%d tmax=%llu launch=%d peakt=%llu "
+                  "peakv=%d peakp=%d,%d,%d", ThrowLine("client", "end", g_n, true).c_str(), ArcOf(g_local), g_local.gone ? 1 : 0, g_ovCount,
                   U(cen::R4Overlaps() - g_ovAll0), count1 - g_count0, static_cast<int>(rest.X), static_cast<int>(rest.Y),
-                  static_cast<int>(rest.Z), g_local.notSimMoving, U(g_local.atRest && g_local.restMs > g_pressMs ? g_local.restMs - g_pressMs : 0));
+                  static_cast<int>(rest.Z), g_local.notSimMoving, U(g_local.atRest && g_local.restMs > g_pressMs ? g_local.restMs - g_pressMs : 0),
+                  EarlySpeed(g_local, g_pressMs), U(g_local.peakT), static_cast<int>(g_local.peakSpeed),
+                  static_cast<int>(g_local.peakPos.X), static_cast<int>(g_local.peakPos.Y), static_cast<int>(g_local.peakPos.Z));
     DC::Say(say);
     FVector next{};
     if (g_n == 1 && ArmOf() != Arm::ThrowTouch && landed && !hit && std::fabs(along) >= kMoveMinCm && SecondStand(along, next)) {
@@ -644,7 +663,7 @@ void ThrowReset() {
     g_step = Step::WaitLine;
     g_stepMs = g_nextMs = 0;
     g_n = 1;
-    g_packEid = g_itemEid = 0;
+    g_packEid = g_itemEid = g_item2Eid = 0;
     g_pack.Reset();
     g_item.Reset();
     g_packAt = g_start = g_goal = g_stand = FVector{};

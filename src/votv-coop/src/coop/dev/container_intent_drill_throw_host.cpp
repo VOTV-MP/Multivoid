@@ -23,7 +23,9 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/puppet_drive.h"
 #include "coop/player/remote_player.h"
+#include "coop/props/prop_drop_intent.h"
 #include "coop/props/prop_syncer_host.h"
+#include "coop/props/remote_prop.h"
 #include "coop/props/prop_throw.h"
 
 #include "ue_wrap/actors/container_inventory.h"
@@ -90,6 +92,14 @@ uint32_t g_hElemEid = 0;   // the host's element of the thrown drive (0 until fo
 int      g_hCount0 = -1;
 uint64_t g_hOvSeen = 0, g_hOvAll0 = 0, g_hAdds0 = 0;
 int      g_hOvCount = 0;
+bool     g_hArmRead = false;        // the client's arm line, read once: it is kept, never read again from the feed
+std::string g_hArmRest;
+bool     g_hGateLogged = false;
+Instants g_hInst;                   // the thrower's instants, collected part by part
+std::string g_hEndRest;             // the thrower's end line, kept when first seen (its row may retire while parts are awaited)
+uint64_t g_hEndSeenMs = 0;
+uint32_t g_hDrop0 = 0, g_hRel0 = 0;  // the launches the host applied (drop intent spawns, grab releases) at the arm line
+char     g_hLaunch[48] = "launch=n/a";
 
 void HNext(HStep s) { g_hStep = s; g_hMs = ::GetTickCount64(); }
 bool HExpired(uint64_t bound) { return ::GetTickCount64() - g_hMs > bound; }
@@ -207,11 +217,15 @@ void FindThrown() {
 }
 
 void StepWaitArm(const coop::net::Session& s) {
-    std::string rest;
-    if (!DC::LiveRestOf(ThrowLine("client", "arm", g_hN, true), &rest)) {
-        if (HExpired(kArmBoundMs)) HFail("the client never armed throw %d within %llu s", g_hN, U(kArmBoundMs / 1000));
-        return;
+    // The arm line is kept when first read: the wait for a second client (throwjoin) can outlast the feed's row.
+    if (!g_hArmRead) {
+        if (!DC::LiveRestOf(ThrowLine("client", "arm", g_hN, true), &g_hArmRest)) {
+            if (HExpired(kArmBoundMs)) HFail("the client never armed throw %d within %llu s", g_hN, U(kArmBoundMs / 1000));
+            return;
+        }
+        g_hArmRead = true;
     }
+    const std::string& rest = g_hArmRest;
     const char* dead = nullptr;
     if (cen::SeamsState(&dead) != cen::Seams::Live) {
         HFail("the census's watches are not all live (%s)", dead ? dead : "pending");
@@ -222,8 +236,20 @@ void StepWaitArm(const coop::net::Session& s) {
         return;
     }
     // throwjoin: the go waits for a second client to be connected, so the throw flies while it joins.
-    if (ArmOf() == Arm::ThrowJoin && g_hN == 1 && !JoinGate(s, g_hSlot, ::GetTickCount64() - g_hMs)) return;
+    if (ArmOf() == Arm::ThrowJoin && g_hN == 1 && !JoinGate(s, g_hSlot, ::GetTickCount64() - g_hMs)) {
+        if (!g_hGateLogged) {
+            g_hGateLogged = true;
+            UE_LOGI("[CI-DRILL] host throwjoin: the client is armed; waiting for a second client to connect (slot %d threw)", g_hSlot);
+        }
+        return;
+    }
     ArmsHostArmed();
+    g_hArmRead = false;
+    g_hInst = Instants{};
+    g_hEndRest.clear();
+    g_hEndSeenMs = 0;
+    g_hDrop0 = coop::prop_drop_intent::dev::LaunchesApplied();
+    g_hRel0 = coop::remote_prop::dev::ReleaseLaunchesApplied();
     g_hRevokes0 = coop::prop_syncer_host::dev::ThrowViewNow().revokes;
     if (ArmOf() == Arm::ThrowPlace) {   // a place is judged on what the host receives, not on a flight: no trace
         g_hPlacedMs = 0;
@@ -271,8 +297,9 @@ void PollOverlap() {
     UE_LOGI("[CI-DRILL] throw host overlap eid=%u sim=%d t=%llu", o.eid, o.sim ? 1 : 0, U(o.t));
 }
 
-// The words of the client's end line (arc=, gone=, ov=, all=, mir=, rest=x,y,z) and peak line (t= v= p=x,y,z).
+// The words of the client's end line (arc=, gone=, ov=, all=, mir=, rest=x,y,z, launch=, peakt= peakv= peakp=x,y,z).
 struct ClientEnd {
+    int launch = 0;                // the speed the throw gave the thrower's copy, cm/s
     char arc[8] = "?";
     int gone = 0, ov = 0, all = 0, mir = 0;
     int rest[3] = {};
@@ -300,20 +327,44 @@ ClientEnd ReadClientEnd(const std::string& endRest) {
     IntsAfter(endRest, "rest=", c.rest, 3);
     RD::IntAfter(endRest, "park", c.park);
     if (const size_t tm = endRest.find("tmax="); tm != std::string::npos) c.tmax = std::strtoull(endRest.c_str() + tm + 5, nullptr, 10);
-    std::string pk;
-    if (DC::LiveRestOf(ThrowLine("client", "peak", g_hN, true), &pk)) {
-        const size_t t = pk.find("t=");
-        if (t != std::string::npos) c.peakT = std::strtoull(pk.c_str() + t + 2, nullptr, 10);
-        c.peakRead = t != std::string::npos && RD::IntAfter(pk, "v", c.peakV) && IntsAfter(pk, "p=", c.peakP, 3);
-    }
+    RD::IntAfter(endRest, "launch", c.launch);
+    const size_t pt = endRest.find("peakt=");
+    if (pt != std::string::npos) c.peakT = std::strtoull(endRest.c_str() + pt + 6, nullptr, 10);
+    c.peakRead = pt != std::string::npos && RD::IntAfter(endRest, "peakv", c.peakV) && IntsAfter(endRest, "peakp=", c.peakP, 3);
     return c;
+}
+
+// The launch the host gave its copy of the throw, set against the thrower's: the drop intent's spawn velocity on the hand
+// path, the release's velocity on a grab path (the counters were taken at the arm line; none applied reads as 0). Every throw
+// arm needs at least half of the thrower's own launch speed (capped at the throw bound), and throwclamp no more than the bound.
+bool JudgeLaunch(const ClientEnd& c, char* why, size_t whyLen) {
+    const bool hand = HandPath(ArmOf(), g_hN);
+    const bool applied = hand ? coop::prop_drop_intent::dev::LaunchesApplied() > g_hDrop0
+                              : coop::remote_prop::dev::ReleaseLaunchesApplied() > g_hRel0;
+    const float a = !applied ? 0.f : hand ? coop::prop_drop_intent::dev::LastAppliedLaunch() : coop::remote_prop::dev::LastReleaseLaunch();
+    const float bound = coop::net::throw_bounds::kMaxLaunchSpeedCmS;
+    const float t = static_cast<float>(c.launch);
+    std::snprintf(g_hLaunch, sizeof(g_hLaunch), "launch=%.0f/%.0f", static_cast<double>(a), static_cast<double>(t));
+    UE_LOGI("[CI-DRILL] host throw %s n=%d launch: the host's copy was given %.0f cm/s (%s), the thrower threw at %.0f cm/s (bound %.0f)",
+            ArmName(), g_hN, static_cast<double>(a), hand ? "drop intent spawn" : "release", static_cast<double>(t), static_cast<double>(bound));
+    if (a < 0.5f * (std::min)(t, bound)) {
+        std::snprintf(why, whyLen, "the host's copy launched at %.0f cm/s where the thrower threw at %.0f cm/s", static_cast<double>(a),
+                      static_cast<double>(t));
+        return false;
+    }
+    if (ArmOf() == Arm::ThrowClamp && a > bound * 1.01f) {
+        std::snprintf(why, whyLen, "the host's copy launched at %.0f cm/s, past the throw bound %.0f cm/s", static_cast<double>(a),
+                      static_cast<double>(bound));
+        return false;
+    }
+    return true;
 }
 
 // The flight, judged: the host's copy against the thrower's at the instants the client said (wall clock, the same machine
 // on loopback), the thrower's copy never parked, and for throwclamp the host's copy no faster than the throw bound. Returns
 // the FAIL text, or null for a pass; always prints the numbers the constants are derived from.
 const char* JudgeFlight(const ClientEnd& c, char* why, size_t whyLen) {
-    const Gap judged = JudgeInstants(g_hTrack, "client", g_hN);
+    const Gap judged = JudgeInstants(g_hTrack, g_hInst);
     const int matched = judged.matched, said = judged.said, worstK = judged.worstK;
     const float worst = judged.worst;
     UE_LOGI("[CI-DRILL] host throw %s n=%d flight: matched=%d/%d instants, in-flight gap max=%.0f cm at k=%d (green bound %.0f cm, "
@@ -383,6 +434,14 @@ void Verdict(const std::string& endRest) {
                 tv.revokeRows, tv.failedDisplayed > 0 ? 1 : 0, tv.failedDisplayed);
     else
         UE_LOGI("[CI-DRILL] host throw %s n=%d revoked=0 (%u failed rows shown)", ArmName(), g_hN, tv.failedDisplayed);
+    char why[200];
+    if (!JudgeLaunch(c, why, sizeof(why))) {
+        g_hHit.Finish(g_hTrack);
+        HitWatchEnd();
+        g_hTrack.on = false;
+        HFail("%s", why);
+        return;
+    }
     // Under the stepped-rows red the arm's verdict is the revoke: the forged rows put the host's copy far from the thrower's
     // on purpose, so the flight's gap is not judged; display followed them, and the take-back must come.
     static const bool s_stepped = coop::config::ResolveFlag(coop::config_registry::rows::container_throw_stepped_rows);
@@ -394,14 +453,13 @@ void Verdict(const std::string& endRest) {
             HFail("the stepped rows were %s", revoked ? "never displayed before the revoke" : "never revoked");
             return;
         }
-        UE_LOGI("[CI-DRILL] host throw %s n=%d PASS stepped (trust revoked, display followed)", ArmName(), g_hN);
+        UE_LOGI("[CI-DRILL] host throw %s n=%d PASS stepped (trust revoked, display followed) %s", ArmName(), g_hN, g_hLaunch);
         HNext(HStep::WaitNext);
         return;
     }
     g_hHit.Finish(g_hTrack);
     HitWatchEnd();
     g_hTrack.on = false;
-    char why[200];
     if (const char* bad = JudgeFlight(c, why, sizeof(why))) {
         HFail("%s", bad);
         return;
@@ -410,7 +468,7 @@ void Verdict(const std::string& endRest) {
         HNext(HStep::JoinWait);
         return;
     }
-    UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=n/a", ArmName(), g_hN);
+    UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=n/a %s", ArmName(), g_hN, g_hLaunch);
     HNext(HStep::WaitNext);
 }
 
@@ -481,12 +539,23 @@ void StepTrace(const coop::net::Session& s, bool due) {
         }
     }
     if (!due) return;
-    std::string rest;
-    if (DC::LiveRestOf(ThrowLine("client", "end", g_hN, true), &rest)) {
-        Verdict(rest);
+    InstantsCollect(g_hInst, "client", g_hN);
+    if (ArmOf() == Arm::ThrowJoin) JoinHostCollect(g_hN);
+    const uint64_t now = ::GetTickCount64();
+    if (g_hEndRest.empty()) {
+        if (!DC::LiveRestOf(ThrowLine("client", "end", g_hN, true), &g_hEndRest)) {
+            if (HExpired(kEndBoundMs)) HFail("the client never ended throw %d within %llu s", g_hN, U(kEndBoundMs / 1000));
+            return;
+        }
+        g_hEndSeenMs = now;
+    }
+    // The instants come before the end line, in a few parts; the verdict waits for every one of them.
+    if (!InstantsComplete(g_hInst)) {
+        if (now - g_hEndSeenMs > kInstantsBoundMs)
+            HFail("the thrower's instants never all arrived (%d/%d)", InstantsHeld(g_hInst), g_hInst.m);
         return;
     }
-    if (HExpired(kEndBoundMs)) HFail("the client never ended throw %d within %llu s", g_hN, U(kEndBoundMs / 1000));
+    Verdict(g_hEndRest);
 }
 
 // throwjoin: the verdict of the flight stands, and the joiner's own numbers come after. The joiner's end line is judged when
@@ -494,13 +563,14 @@ void StepTrace(const coop::net::Session& s, bool due) {
 // never ends is NOT MEASURED, never a FAIL.
 void StepJoinWait(const coop::net::Session& s) {
     JoinHostSay(g_hN, g_hElemEid);
+    JoinHostCollect(g_hN);
     char why[200];
     float gap = -1.f;
     switch (JoinHostJudge(g_hTrack, g_hN, gap, why, sizeof(why))) {
     case HostJudge::Failed: HFail("%s", why); return;
     case HostJudge::Passed:
-        if (gap >= 0.f) UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=%.0f", ArmName(), g_hN, static_cast<double>(gap));
-        else            UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=n/a (the joiner was not in flight)", ArmName(), g_hN);
+        if (gap >= 0.f) UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=%.0f %s", ArmName(), g_hN, static_cast<double>(gap), g_hLaunch);
+        else            UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=n/a (the joiner was not in flight) %s", ArmName(), g_hN, g_hLaunch);
         DC::Say("ci-throw host norethrow");
         HNext(HStep::WaitNext);
         return;
@@ -517,8 +587,8 @@ void StepJoinWait(const coop::net::Session& s) {
         return;
     }
     if (waited > kJoinerEndMs) {
-        UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=n/a (NOT MEASURED: the second client never ended within %llu s)", ArmName(), g_hN,
-                U(kJoinerEndMs / 1000));
+        UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=n/a (NOT MEASURED: the second client never ended within %llu s) %s", ArmName(), g_hN,
+                U(kJoinerEndMs / 1000), g_hLaunch);
         DC::Say("ci-throw host norethrow");
         HNext(HStep::WaitNext);
     }
@@ -654,6 +724,13 @@ void ThrowHostReset() {
     g_hOvCount = 0;
     g_hTouch = Touch::Pending;
     g_hPlacedMs = 0;
+    g_hArmRead = g_hGateLogged = false;
+    g_hArmRest.clear();
+    g_hInst = Instants{};
+    g_hEndRest.clear();
+    g_hEndSeenMs = 0;
+    g_hDrop0 = g_hRel0 = 0;
+    std::snprintf(g_hLaunch, sizeof(g_hLaunch), "launch=n/a");
 }
 
 }  // namespace coop::dev::container_intent_drill::detail

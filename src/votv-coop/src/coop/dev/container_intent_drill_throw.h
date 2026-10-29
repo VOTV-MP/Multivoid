@@ -32,7 +32,8 @@ inline constexpr const char* kThrowDoneLine    = "ci-throw client done";
 inline constexpr const char* kThrowClientFailedLine = "ci-throw client failed";
 inline constexpr const char* kThrowHostFailedLine   = "ci-throw host failed";
 // "ci-throw <who> <what> n=<n>" + a trailing space when the line carries fields:
-//   client arm (held=<eid>), host armed, host thrown (eid=<eid>), client peak (t= v= p=), client end (arc= gone= ov= all= mir= rest=)
+//   client arm (held=<eid>), host armed, host thrown (eid=<eid>), client end (arc= gone= ov= all= mir= rest= park= tmax= launch= peakt= peakv= peakp=)
+//   and the "inst" lines of SayInstants (part=<i>/<m> press=<ms> then the tuples)
 std::string ThrowLine(const char* who, const char* what, int n, bool fields);
 
 inline constexpr float    kStandFromTargetCm = 350.f;   // the standpoint of throw 1, before the target
@@ -111,11 +112,29 @@ inline constexpr float    kRestAgreeCm     = 50.f;    // PROVISIONAL: peers at r
 
 // The `n` comma-separated integers after `key` (with its '=') in `text`; false when the key is absent or the list short.
 bool IntsAfter(const std::string& text, const char* key, int* out, int n);
-// Says the track's sample nearest each instant (pressMs + k * kAtEveryMs) as the at-lines of ThrowLine (k, t, p).
+// Says the track's sample nearest each instant (pressMs + k * kAtEveryMs) as the inst-lines of ThrowLine: `part=<i>/<m>
+// press=<ms> <k>,<ms after the press>,<x>,<y>,<z>;...`, in as few lines as the chat's cap allows (one part with no tuple says none).
 void SayInstants(const Track& t, uint64_t pressMs, const char* who, int n);
+// What a reader holds of one peer's instants: each part it has seen, kept however late the feed retires the row.
+struct Instants {
+    static constexpr int kMaxParts = 8;
+    struct One { bool have = false; long long dtMs = 0; int p[3] = {}; };
+    int m = 0;                  // the parts said (0 until one is read)
+    unsigned seen = 0;          // bit i-1: part i is held
+    uint64_t pressMs = 0;
+    One at[kAtCount + 1];       // by k
+};
+inline constexpr uint64_t kInstantsBoundMs = 30000;   // the end line seen to the last part: past it the arm fails
+// Reads the live inst-lines of `who`'s throw n into `in` (every part seen is kept); called on the drill's poll until complete.
+void InstantsCollect(Instants& in, const char* who, int n);
+int InstantsHeld(const Instants& in);
+bool InstantsComplete(const Instants& in);   // all m parts held
 // Sets the track against the instants a peer said: how many were said, how many the track has a sample for, the largest gap.
 struct Gap { int matched = 0, said = 0, worstK = 0; float worst = 0.f; };
-Gap JudgeInstants(const Track& t, const char* who, int n);
+Gap JudgeInstants(const Track& t, const Instants& in);
+// The fastest sample (cm/s) of the track within kEarlyMs after the press: the speed the throw gave the copy.
+inline constexpr uint64_t kEarlyMs = 500;
+int EarlySpeed(const Track& t, uint64_t pressMs);
 
 // The throw a hand path takes: the hotbar hand's (throwhand, throwclamp), and throwplace's second part. Every other throw
 // arm's is a physics grab's.
@@ -195,6 +214,8 @@ HostJudge TouchHostTick(uint32_t eid, char* why, size_t whyLen);
 HostJudge DepartHostTick(const Track& host, uint32_t eid, char* why, size_t whyLen);
 bool JoinGate(const coop::net::Session& s, int clientSlot, uint64_t waitedMs);
 void JoinHostSay(int n, uint32_t eid);
+// Collects the joiner's instant parts of throw n (a new n starts a new set); on the host's poll while the throw is judged.
+void JoinHostCollect(int n);
 HostJudge JoinHostJudge(const Track& host, int n, float& gapOut, char* why, size_t whyLen);
 void ArmsReset();
 
