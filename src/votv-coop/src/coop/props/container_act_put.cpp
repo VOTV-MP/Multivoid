@@ -26,6 +26,7 @@
 #include "ue_wrap/actors/prop_use.h"
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/obj_keyed_cache.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
@@ -327,9 +328,10 @@ sg::Verdict PreDingus(const sg::Call& c) {
     if (!s || s->role() == coop::net::Role::Host) return sg::Verdict::Run;
     uint32_t eid = 0;
     if (SharedTarget(c.object, eid) == Target::Own) return sg::Verdict::Run;
-    ++g_dingusCancelled;
-    UE_LOGI("container_act: dingus on the shared mirror eid=%u cancelled, its box is the host's (#%u)",
-            static_cast<unsigned>(eid), g_dingusCancelled);
+    const uint32_t n = ++g_dingusCancelled;
+    if (n == 1 || n % 100 == 0)   // the first, then every 100th
+        UE_LOGI("container_act: dingus on the shared mirror eid=%u cancelled, its box is the host's (#%u)",
+                static_cast<unsigned>(eid), n);
     return sg::Verdict::Cancel;
 }
 
@@ -350,15 +352,22 @@ sg::Verdict PreOverlap(const sg::Call& c) {
     uint32_t eid = 0;
     if (SharedTarget(c.object, eid) == Target::Own) return sg::Verdict::Run;
     if (c.callerFunction) {
-        static const std::wstring kGraph = L"ExecuteUbergraph_prop_container";
-        const std::wstring caller = R::ToString(R::NameOf(c.callerFunction));
-        if (c.callerObject != c.object || caller.compare(0, kGraph.size(), kGraph) != 0) return sg::Verdict::Run;
+        if (c.callerObject != c.object) return sg::Verdict::Run;
+        // Whether a caller function is the container's own overlap graph is asked of its name once per function.
+        static ue_wrap::ObjKeyedCache<bool, 8> sIsOwnGraph;
+        bool* own = sIsOwnGraph.Find(c.callerFunction);
+        if (!own) {
+            static const std::wstring kGraph = L"ExecuteUbergraph_prop_container";
+            own = &sIsOwnGraph.Insert(c.callerFunction, R::ToString(R::NameOf(c.callerFunction)).compare(0, kGraph.size(), kGraph) == 0);
+        }
+        if (!*own) return sg::Verdict::Run;
     } else {
         ++g_overlapNoFrame;
     }
-    ++g_overlapCancelled;
-    UE_LOGI("container_act: overlap put on the shared mirror eid=%u cancelled, the host judges it (#%u, %u without a caller frame)",
-            static_cast<unsigned>(eid), g_overlapCancelled, g_overlapNoFrame);
+    const uint32_t n = ++g_overlapCancelled;
+    if (n == 1 || n % 100 == 0)   // the first, then every 100th: a prop at a box's edge re-enters at the physics rate
+        UE_LOGI("container_act: overlap put on the shared mirror eid=%u cancelled, the host judges it (#%u, %u without a caller frame)",
+                static_cast<unsigned>(eid), n, g_overlapNoFrame);
     return sg::Verdict::Cancel;
 }
 

@@ -623,7 +623,7 @@ void RunPutSelftest(Checks& check) {
     // ---- the take's arming and the overlap put: the tallies' names ----
     check(std::strcmp(TallyName(Tally::TakeArmed), "take_armed") == 0 &&
               std::strcmp(TallyName(Tally::PutOverlapFiled), "put_overlap_filed") == 0 &&
-              std::strcmp(TallyName(Tally::PutOverlapGap), "put_overlap_gap") == 0,
+              std::strcmp(TallyName(Tally::PutOverlapLeft), "put_overlap_left") == 0,
           "tally: the first and last counters of the take's arming and the overlap put are named");
 }
 

@@ -46,14 +46,15 @@ void RunSelftest();                               // the pure decisions, once pe
 // The PutOverlap* terms are the overlap put's: Filed (the prop is gone after the body), Unarmed (the box is not armed),
 // Reach (a held or claimed prop is out of its driver's reach), Unread (a read the judge needs did not come), Held (a
 // client holds the container: the put waits), Fit (the put terms refuse it), Gate (the body's silent gates would swallow
-// it) and Gap (the body ran and the prop lived: a term the judge did not see).
+// it), Gap (the body ran and the prop lived: a term the judge did not see), WaitDropped (a wait fell out of a full table)
+// and Left (a waiting prop was no longer in the box when its turn came).
 enum class Tally : uint8_t { TargetGone, BadCommit, GrantUnsent, QueueFullUnready, BadSender, ShortPayload,
                              Malformed, UnknownFamilyUnready, RestoreOwed, WaitExpired, ReservationLapsed, LateDone,
                              LateDoneLost, PutNoName, PutClassUnresolved, PutNotProp, PutFiltered, PutIntoMailbox,
                              PutRowRefuses, PutUnknownName, PutDoneLost, OwedLost, TakeArmed, PutOverlapFiled,
                              PutOverlapUnarmed, PutOverlapReach, PutOverlapUnread, PutOverlapHeld, PutOverlapFit,
-                             PutOverlapGate, PutOverlapGap, kCount };
-const char* TallyName(Tally t);   // "target_gone" ... "put_overlap_gap"; "" past kCount
+                             PutOverlapGate, PutOverlapGap, PutOverlapWaitDropped, PutOverlapLeft, kCount };
+const char* TallyName(Tally t);   // "target_gone" ... "put_overlap_left"; "" past kCount
 
 // The host's judge of a world prop a client drives into a container's box (container_act_host_overlap.cpp): a PRE and a POST
 // on prop_container_C::putObjectIn_overlap, registered by container_act_put's watch table on both roles and acting on the
@@ -63,6 +64,7 @@ void Install(coop::net::Session* session);
 ue_wrap::script_gate::Verdict Pre(const ue_wrap::script_gate::Call& c);
 void Post(const ue_wrap::script_gate::Call& c);
 void OnContainerFree(uint32_t eid);
+void Tick();    // the puts that wait on a read that did not come are judged again
 void Reset();   // the session's end: the waiting puts and the pending body are dropped
 }  // namespace overlap
 

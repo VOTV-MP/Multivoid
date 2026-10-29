@@ -523,6 +523,7 @@ void Install(coop::net::Session* session) {
 void Tick() {
     if (!IsHost()) return;
     UE_ASSERT_GAME_THREAD("container_act_host::Tick");
+    overlap::Tick();
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         g_slots[slot].queue.Serve(kBudget, coop::net::NowMs,
                                   [&](const Queued& q) { return ServeHead(slot, q); });
@@ -718,7 +719,7 @@ const char* TallyName(Tally t) {
                                          "put_into_mailbox", "put_row_refuses", "put_unknown_name", "put_done_lost",
                                          "owed_lost", "take_armed", "put_overlap_filed", "put_overlap_unarmed",
                                          "put_overlap_reach", "put_overlap_unread", "put_overlap_held", "put_overlap_fit",
-                                         "put_overlap_gate", "put_overlap_gap"};
+                                         "put_overlap_gate", "put_overlap_gap", "put_overlap_wait_dropped", "put_overlap_left"};
     static_assert(std::size(kNames) == static_cast<size_t>(Tally::kCount), "a name for every tally");
     return t < Tally::kCount ? kNames[static_cast<int>(t)] : "";
 }
