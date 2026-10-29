@@ -47,6 +47,14 @@ struct Driven {
     bool                  freshAdmit   = false;  // admitted, not yet published
     coop::net::IntentBucket streamBucket;        // the syncer's rows only
     uint16_t              claimSeq    = 0;       // the claim that opened the row, echoed in its answers
+
+    // A thrown prop the host elected its thrower to sync (prop_syncer_host::ElectSyncer): the throw's sequence, which the
+    // grant and a Revoked echo, and the release the first row is measured from. refusedRun counts consecutive refused rows.
+    bool                  elected     = false;
+    uint16_t              throwSeq    = 0;
+    ue_wrap::FVector      startLoc{};
+    uint64_t              startMs     = 0;
+    uint8_t               refusedRun  = 0;
 };
 
 // The live row of the prop with element id `eid`, null if none. Game thread.
@@ -66,6 +74,11 @@ coop::net::PropDriveEndPayload EndFromBody(void* actor, uint32_t eid, uint8_t ge
 // in no hand, of a class peers hold); null otherwise. Fresh admission state: nothing admitted, a full
 // bucket, the silence clock at now. Game thread.
 Driven* OpenClientRow(void* actor, uint8_t slot, const char* why);
+
+// A client row for `actor` when a host row already stands on it (a release's override coasted a client's, a host verb's
+// is under way): that row becomes the client's under a new generation, nothing admitted. With no row, OpenClientRow's.
+// Null on the refusals Open has. Game thread.
+Driven* ElectClientRow(void* actor, uint8_t slot, const char* why);
 
 // Close `row`: it is skipped by every reader at once and swept after the tick's pass. Game thread.
 void EraseRow(Driven& row);

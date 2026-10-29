@@ -194,6 +194,34 @@ Driven* OpenClientRow(void* actor, uint8_t slot, const char* why) {
     return d;
 }
 
+Driven* ElectClientRow(void* actor, uint8_t slot, const char* why) {
+    UE_ASSERT_GAME_THREAD("prop_drive_host::ElectClientRow");
+    if (!actor || slot == 0) return nullptr;
+    Driven* d = Find(actor);
+    if (!d) return OpenClientRow(actor, slot, why);
+    if (InAHand(actor)) return nullptr;   // the held-prop lane owns a prop in a hand, as at Open
+    const uint64_t now = coop::active_drive::NowMs();
+    d->syncer       = slot;
+    d->claimed      = true;
+    d->gen          = BumpGen(d->eid);
+    d->everSent     = false;
+    d->resend       = false;
+    d->unreadSaid   = false;
+    d->openMs       = now;
+    d->lastMoveMs   = now;
+    d->nextProbeMs  = 0;
+    d->admittedEver = false;
+    d->freshAdmit   = false;
+    d->admitMs      = now;   // the silence clock starts at the grant
+    d->admitSendMs  = 0;
+    d->admitVel     = ue_wrap::FVector{};
+    d->claimSeq     = 0;
+    d->streamBucket.Reset();
+    UE_LOGI("[PROP-DRIVE] HOST GRANT eid=%u gen=%u (%s) -- the host row on it becomes slot %u's", d->eid,
+            static_cast<unsigned>(d->gen), why ? why : "", static_cast<unsigned>(slot));
+    return d;
+}
+
 void EraseRow(Driven& row) {
     row.dead = true;   // Tick's sweep erases it; every reader skips a dead row
 }

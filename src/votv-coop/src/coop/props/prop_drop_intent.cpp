@@ -13,6 +13,7 @@
 #include "coop/props/prop_lifecycle.h"      // IsPerPlayerPropClass / IsWireSuppressedPropClass (the host gate)
 #include "coop/props/prop_save_data.h"
 #include "coop/props/prop_spawn_authoring.h" // BirthIsPlayerAuthored (the spawn menu / the toolgun)
+#include "coop/props/prop_drive_rules.h"    // kRestVelCmS: the floor under which a spawn is written no velocity
 #include "coop/props/prop_throw.h"          // SeqFor: the throw that launched a drained place
 #include "coop/props/prop_wire_parity.h"    // PhysFlagsOf, the one builder of a live prop's flags
 #include "coop/props/prop_element_tracker.h"// GetPropElementIdForActor
@@ -45,6 +46,7 @@
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <deque>
 #include <string>
@@ -324,6 +326,20 @@ void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::
         auto clamp = [](float v) { return v < 0.f ? 0.f : (v > kMaxScale ? kMaxScale : v); };
         E::SetActorScale3D(actor, ue_wrap::FVector{clamp(p.scaleX), clamp(p.scaleY), clamp(p.scaleZ)});
     }
+    // The thrower's velocity at the drain, already clamped by the receiver: the copy leaves the host's hand-off in
+    // the arc the thrower's does. Written only above the rest floor (a place carries about zero and writes nothing)
+    // and only for a body the flags leave simulating.
+    {
+        namespace pf = coop::net::propspawn_flags;
+        const float speedSq = p.linVel[0] * p.linVel[0] + p.linVel[1] * p.linVel[1] + p.linVel[2] * p.linVel[2];
+        const float rest = coop::prop_drive_rules::kRestVelCmS;
+        if (speedSq > rest * rest && !(p.physFlags & (pf::kStatic | pf::kFrozen | pf::kSleep))) {
+            E::SetActorRootPhysicsVelocity(actor, ue_wrap::FVector{p.linVel[0], p.linVel[1], p.linVel[2]},
+                                           ue_wrap::FVector{p.angVel[0], p.angVel[1], p.angVel[2]});
+            UE_LOGI("[PROP-DROP] HOST gave the spawn the thrower's velocity (%.0f,%.0f,%.0f) |v|=%.0f cm/s throw seq %u",
+                    p.linVel[0], p.linVel[1], p.linVel[2], std::sqrt(speedSq), static_cast<unsigned>(p.throwSeq));
+        }
+    }
     // The prop's own save record, if the author's copy is already here. It usually is not -- it
     // rides behind this intent in the same FIFO -- and then it lands on this actor by Key once the
     // actor is indexed, which is what makes the store keyed by identity rather than by actor.
@@ -562,10 +578,13 @@ void NoteClientKeyedDestroy(const std::wstring& key) {
     }
 }
 
-void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropIntentPayload& p,
+void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropIntentPayload& sent,
                       uint8_t senderSlot) {
     UE_ASSERT_GAME_THREAD("prop_drop_intent::OnPropDropIntent");
     if (session.role() != coop::net::Role::Host) return;   // host-authoritative (router also gates)
+    // The velocity meets the throw bounds before the spawn is written it: clamped, or the intent refused when a float is not finite.
+    coop::net::PropDropIntentPayload p = sent;
+    if (!coop::prop_throw::JudgeDropIntent(p, senderSlot)) return;
     const std::wstring cls = WireToWide(p.className.len, p.className.data, sizeof(p.className.data));
     const std::wstring key = WireToWide(p.key.len, p.key.data, sizeof(p.key.data));
     if (key.empty() || key == L"None" || cls.empty()) {
@@ -583,9 +602,13 @@ void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropInte
     // A data drive the client brought in: its row, which only that client has, is the one the host takes for it.
     if (actor) coop::drive_payload_sync::NoteClientBrought(actor, senderSlot);
     if (actor) {
-        UE_LOGI("[PROP-DROP] HOST spawned client-placed prop key='%ls' cls='%ls' slot=%u at (%.1f,%.1f,%.1f) "
+        UE_LOGI("[PROP-DROP] HOST spawned client-placed prop key='%ls' cls='%ls' slot=%u at (%.1f,%.1f,%.1f) throw seq %u "
                 "-- FinishSpawn watcher broadcasts it this tick",
-                key.c_str(), cls.c_str(), senderSlot, p.locX, p.locY, p.locZ);
+                key.c_str(), cls.c_str(), senderSlot, p.locX, p.locY, p.locZ, static_cast<unsigned>(p.throwSeq));
+        // A thrown prop is elected its thrower's syncer where the watcher would open the birth coast, once the spawn has its
+        // element id (coop/props/prop_throw.h).
+        const float at[3] = {p.locX, p.locY, p.locZ};
+        if (p.throwSeq != 0) coop::prop_throw::NoteMark(key, senderSlot, p.throwSeq, at);
     }
 }
 
@@ -621,7 +644,13 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
     if (isServerUpg && coop::server_upgrade_sync::HostShouldReapUpgradeBirth(senderSlot)) return;
     // Drive births are authored normally; a denied rack-take ghost is reaped when its row arrives, by the row's
     // hash (drive_payload_sync).
-    OnPropDropIntent(session, p, senderSlot);  // same author: dup-guard + HostSpawnPlacedProp
+    // An eject is born in a hand or at a device's mouth and is never thrown: its velocity and throw sequence are
+    // zeroed before the shared apply, so it is never given a velocity and never elects a syncer.
+    coop::net::PropDropIntentPayload birth = p;
+    for (float& v : birth.linVel) v = 0.f;
+    for (float& v : birth.angVel) v = 0.f;
+    birth.throwSeq = 0;
+    OnPropDropIntent(session, birth, senderSlot);  // same author: dup-guard + HostSpawnPlacedProp
 }
 
 void Reset() {

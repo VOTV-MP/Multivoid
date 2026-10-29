@@ -119,7 +119,6 @@ constexpr bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::ItemActivate:
     case ReliableKind::PropSpawn:
     case ReliableKind::PropDestroy:
-    case ReliableKind::PropRelease:
     case ReliableKind::PropStickState:    // a client's wall-attachable stick
     // DoorState is not relayable: the host authors it, and a client's own door verbs reach the host
     // as DoorVerbIntent, an intent addressed to the host alone. PowerControlState likewise: a press
@@ -149,6 +148,8 @@ constexpr bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::OwnerEntityDestroy:
     case ReliableKind::HookState:         // a hook belongs to the player who fired it
     case ReliableKind::HookDestroy:
+    // PropRelease is not relayable: the host clamps a client's release and re-sends it to the other clients itself
+    // (prop_throw::JudgeRelease), with the sender's slot kept as the origin.
     // PropDriveEnd is not relayable: a client's End goes to the host, which judges it and re-publishes it. Nor is
     // PropSyncClaim (the host answers the sender alone); PropSyncAnswer is host-authored.
     // HookAnchorCommit is deliberately NOT relayable: it is an intent addressed to the host alone,

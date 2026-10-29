@@ -15,6 +15,7 @@
 #include "coop/props/prop_save_data.h"      // PublishHostBirth (the record behind the express)
 #include "coop/props/container_birth.h"  // NoteHostBirth (a container's contents behind it)
 #include "coop/props/prop_drive_host.h"          // Coast (a falling birth's pose until it rests)
+#include "coop/props/prop_syncer_host.h"          // ElectFromMark: a thrown birth is its thrower's to sync
 #include "coop/props/prop_wire_parity.h"         // PhysFlagsOf (frozen, static and sleep)
 #include "coop/props/remote_prop_spawn.h"
 #include "coop/session/host_world_settle.h"  // Settled: the host's start-up births are not live edits
@@ -391,6 +392,9 @@ constexpr size_t kMaxCoastingBirths = 32;
 namespace {
 void CoastIfFalling(void* actor) {
     namespace pf = coop::net::propspawn_flags;
+    // A prop a client threw is its thrower's to sync: its drop intent left a mark, and the election opens the row (the
+    // grant goes out behind the spawn just expressed) in place of the host's coast. A refused election falls to the coast.
+    if (coop::prop_syncer_host::ElectFromMark(actor)) return;
     if (coop::prop_drive_host::CoastingCount() >= kMaxCoastingBirths) {
         static bool sSaid = false;
         if (!sSaid) {

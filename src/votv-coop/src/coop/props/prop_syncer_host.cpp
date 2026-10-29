@@ -24,6 +24,7 @@
 #include "coop/props/prop_drive_stream.h"     // FeedAdmitted, ReleaseHost
 #include "coop/props/prop_element_tracker.h"  // GetPropElementIdForActor
 #include "coop/props/prop_lifecycle.h"        // IsWireSuppressedPropClass
+#include "coop/props/prop_throw.h"            // Mark: the thrown drop intent's election
 #include "coop/props/prop_wire_parity.h"      // PhysFlagsOf: the flags an End carries
 #include "coop/props/remote_prop.h"           // ResolveLiveActorByEid
 #include "prop_drive_rows.h"                  // co-located private header (src tree, not include/)
@@ -82,6 +83,7 @@ std::vector<coop::net::PropPoseSnapshot> g_take[coop::net::kMaxPeers];
 uint32_t g_granted = 0, g_admitted = 0, g_notSyncer = 0, g_lateSyncer = 0, g_staleGen = 0, g_paced = 0, g_steps = 0;
 uint32_t g_endsAdmitted = 0, g_endsNotSyncer = 0, g_endsStale = 0, g_endsOutOfBounds = 0, g_endsClamped = 0;
 uint32_t g_nonSyncerAdmitted = 0;
+uint32_t g_elected = 0, g_electRefused = 0, g_rowsRefused = 0;
 std::unordered_map<uint32_t, dev::Admitted> g_admittedBy;   // eid -> rows admitted, for the drill's judge
 uint32_t g_refused[8] = {};
 uint32_t g_ended[6] = {};
@@ -157,6 +159,27 @@ coop::net::PropDriveEndPayload EndOf(const Driven& d, void* actor) {
     return p;
 }
 
+// An elected row's test (coop/net/throw_bounds.h): its velocity under the flight ceiling and its step agreeing with
+// it. The first row is measured from the release (its pose, and its arrival on this clock), the rest from the last
+// admitted row (its stamp on the sender's clock, its arrival on this one); the host never compares clocks across
+// peers, only deltas. A refused row is counted against the run that ends the row (Commit 3's RowRefused).
+bool ElectedRowAdmitted(Driven& row, const coop::net::PropPoseSnapshot& e, uint8_t slot, uint64_t nowMs) {
+    const bool first = !row.admittedEver;
+    const ue_wrap::FVector from = first ? row.startLoc : row.admitLoc;
+    const float dx = e.x - from.X, dy = e.y - from.Y, dz = e.z - from.Z;
+    const float step = std::sqrt(dx * dx + dy * dy + dz * dz);
+    const int64_t dtRow = first ? static_cast<int64_t>(e.sendTimeMs)
+                                : static_cast<int64_t>(e.sendTimeMs) - static_cast<int64_t>(row.admitSendMs);
+    const int64_t arrival = static_cast<int64_t>(nowMs - (first ? row.startMs : row.admitMs));
+    if (tb::RowAdmitted(e.vel, step, dtRow, arrival)) {
+        row.refusedRun = 0;
+        return true;
+    }
+    if (row.refusedRun < 255) ++row.refusedRun;
+    Tally(g_rowsRefused, "row refused: its velocity or step does not agree with the throw", e.elementId, slot);
+    return false;
+}
+
 // One row from slot `slot`, judged against the row that names it: the sender, the generation, the pace.
 void AdmitRow(const coop::net::PropPoseSnapshot& e, uint8_t slot, uint64_t nowMs) {
     // The developer red arm of the prop syncer drill: the sender test is skipped, so a forged row of the open
@@ -173,9 +196,12 @@ void AdmitRow(const coop::net::PropPoseSnapshot& e, uint8_t slot, uint64_t nowMs
     // is "none" here, never issued, so a row that names no generation is stale by construction.
     if (e.ctx != row->gen) { Tally(g_staleGen, "row refused: stale generation", e.elementId, slot); return; }
     if (!row->streamBucket.Take(kStreamBudget, nowMs)) { Tally(g_paced, "row refused: paced", e.elementId, slot); return; }
-    // A movement discontinuity is logged, never refused (the host may cheat and the relay holds). The first row
-    // after a grant is not tested: the claim's reach test bounded where the motion started.
-    if (row->admittedEver) {
+    // An elected row meets the throw's bounds (a refusal is counted and, after a run of them, ends the row). Any other
+    // row keeps the old rule: a movement discontinuity is logged, never refused (the host may cheat and the relay
+    // holds), and its first row after a grant is not tested, the claim's reach test having bounded where it started.
+    if (row->elected) {
+        if (!ElectedRowAdmitted(*row, e, slot, nowMs)) return;
+    } else if (row->admittedEver) {
         const float dx = e.x - row->admitLoc.X, dy = e.y - row->admitLoc.Y, dz = e.z - row->admitLoc.Z;
         const float dtMs = static_cast<float>(std::max<uint64_t>(nowMs - row->admitMs, 1));
         if (std::sqrt(dx * dx + dy * dy + dz * dz) * 1000.f / dtMs > kSyncerMaxSpeedCmS)
@@ -262,6 +288,47 @@ void OnClaim(coop::net::Session& s, const coop::net::PropSyncClaimPayload& p, ui
             static_cast<unsigned>(p.seq), g_granted);
     coop::dev::prop_syncer_drill::BeforeGrant(s, slot);   // the load arm's filler goes out ahead of the answer
     Answer(s, slot, p.eid, p.seq, row->gen, PropSyncResult::Granted, PropSyncRefusal::None);
+}
+
+bool ElectSyncer(void* actor, uint8_t slot, uint16_t throwSeq, const float releaseLoc[3], uint64_t releaseMs) {
+    UE_ASSERT_GAME_THREAD("prop_syncer_host::ElectSyncer");
+    if (!g_session || !actor || slot == 0 || throwSeq == 0) return false;
+    const uint32_t eid = static_cast<uint32_t>(coop::prop_element_tracker::GetPropElementIdForActor(actor));
+    // The grant is answered to the thrower alone, on a lane a slot that is not world-ready drops.
+    if (!g_session->IsSlotWorldReady(slot)) {
+        Tally(g_electRefused, "election refused: the thrower is not world-ready", eid, slot);
+        return false;
+    }
+    int held = 0;
+    for (const Driven& d : coop::prop_drive_host::Rows())
+        if (!d.dead && d.syncer == slot && d.elected) ++held;
+    if (held >= tb::kMaxThrowRowsPerSlot) {
+        Tally(g_electRefused, "election refused: the slot syncs too many thrown props", eid, slot);
+        return false;
+    }
+    Driven* row = coop::prop_drive_host::ElectClientRow(actor, slot, "throw");
+    if (!row) {
+        Tally(g_electRefused, "election refused: the prop cannot open a row", eid, slot);
+        return false;
+    }
+    row->elected    = true;
+    row->throwSeq   = throwSeq;
+    row->startLoc   = ue_wrap::FVector{releaseLoc[0], releaseLoc[1], releaseLoc[2]};
+    row->startMs    = releaseMs;
+    row->refusedRun = 0;
+    row->claimSeq   = throwSeq;   // the grant, and a Revoked after it, echo the throw
+    UE_LOGI("[PROP-SYNC] HOST ELECT eid=%u gen=%u slot %u throw seq %u (#%u)", row->eid, static_cast<unsigned>(row->gen),
+            static_cast<unsigned>(slot), static_cast<unsigned>(throwSeq), ++g_elected);
+    Answer(*g_session, slot, row->eid, throwSeq, row->gen, PropSyncResult::Granted, PropSyncRefusal::None);
+    return true;
+}
+
+bool ElectFromMark(void* actor) {
+    UE_ASSERT_GAME_THREAD("prop_syncer_host::ElectFromMark");
+    if (!g_session || !actor || !coop::prop_throw::HasMarks()) return false;
+    coop::prop_throw::Mark m;
+    if (!coop::prop_throw::TakeMark(PR::GetInteractableKeyString(actor), &m)) return false;
+    return ElectSyncer(actor, m.slot, m.seq, m.loc, m.ms);
 }
 
 void OnClientEnd(coop::net::Session& s, const coop::net::PropDriveEndPayload& sent, uint8_t slot) {
@@ -373,6 +440,7 @@ void OnDisconnect() {
     g_granted = g_admitted = g_notSyncer = g_lateSyncer = g_staleGen = g_paced = g_steps = 0;
     g_endsAdmitted = g_endsNotSyncer = g_endsStale = g_endsOutOfBounds = g_endsClamped = 0;
     g_nonSyncerAdmitted = 0;
+    g_elected = g_electRefused = g_rowsRefused = 0;
     g_admittedBy.clear();
     std::fill(std::begin(g_refused), std::end(g_refused), 0u);
     std::fill(std::begin(g_ended), std::end(g_ended), 0u);

@@ -23,6 +23,7 @@
 #include "coop/props/pile_look.h"
 #include "coop/props/prop_drive_host.h"    // OverrideClientSyncer: a release that writes the copy ends a client's row on it
 #include "coop/props/prop_drive_stream.h"  // IsParked: the host's channel owns a parked copy
+#include "coop/props/prop_syncer_host.h"   // ElectSyncer: a thrown prop is its thrower's to sync
 #include "coop/props/prop_child_release.h"  // Defer: a jointed door waits for its parent
 #include "coop/props/prop_park.h"  // Park / Unpark: a held prop, and a Character welded on it
 #include "coop/props/prop_echo_suppress.h"
@@ -256,6 +257,12 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
             }
         }
     }
+    // Whether the sender is the holder of this prop: its drive carried the key, or (a release whose poses were lost
+    // before a drive began) the hold it closes is the slot's current one. The hold gate outlives the drive's reset.
+    const bool lastHolder = releasedSlot >= 0 ||
+                            (senderSlot >= 0 && senderSlot < static_cast<int>(coop::players::kMaxPeers) &&
+                             payload.holdGen != 0 && payload.holdGen == g_holds[senderSlot].driveGen);
+    void* thrownActor = nullptr;   // set where the release simulates the copy: the one branch an election follows
     // Someone else moves the prop -- this peer's own player, another slot's drive, the host's
     // driven-prop channel parking it: that owner has its physics and its flags, and this release
     // closes its own hold, clears its own drive and moves nothing. This slot's drive left the copy
@@ -333,6 +340,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         }
     } else if (meshToActOn) {
         // Simulate first, then the velocities: a kinematic body ignores a velocity write.
+        thrownActor = propActor;
         coop::prop_park::Unpark(propActor, meshToActOn, /*rootSimulates=*/true);
         ue_wrap::engine::SetComponentLinearVelocity(meshToActOn, payload.linVelX, payload.linVelY, payload.linVelZ);
         ue_wrap::engine::SetComponentAngularVelocity(meshToActOn, payload.angVelX, payload.angVelY, payload.angVelZ);
@@ -369,6 +377,20 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
     // Only the released slot clears.
     if (releasedSlot >= 0) {
         ResetDriveState(g_drives[releasedSlot]);
+    }
+    // The election, after the drive is cleared (a prop under a slot's drive opens no row) and only where the release
+    // simulated the copy here: the thrower is the prop's syncer from now, and the host's copy follows its rows. Only the
+    // prop's last holder is elected; any other slot's release has applied as it always did and elects nothing.
+    if (thrownActor && payload.throwSeq != 0 && senderSlot >= 1 && coop::prop_element_tracker::SessionIsHost()) {
+        ue_wrap::FVector at{payload.locX, payload.locY, payload.locZ};
+        if (!lastHolder) {
+            UE_LOGI("remote_prop: slot %d's throw seq %u is not the last holder's release of this prop -- applied, not elected",
+                    senderSlot, static_cast<unsigned>(payload.throwSeq));
+        } else if (payload.hasPose || E::TryGetActorLocation(thrownActor, at)) {
+            const float start[3] = {at.X, at.Y, at.Z};
+            coop::prop_syncer_host::ElectSyncer(thrownActor, static_cast<uint8_t>(senderSlot), payload.throwSeq, start,
+                                                NowMs());
+        }
     }
 }
 

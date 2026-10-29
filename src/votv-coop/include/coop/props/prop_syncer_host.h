@@ -28,6 +28,18 @@ namespace coop::prop_syncer_host {
 // A client's PropSyncClaim from peer slot `slot` (1..kMaxPeers-1): judged, then answered. Game thread.
 void OnClaim(coop::net::Session& s, const coop::net::PropSyncClaimPayload& p, uint8_t slot);
 
+// A thrown prop: the host elects its thrower (peer slot `slot`) the prop's syncer, MTA's server electing an unoccupied
+// vehicle's syncer (CUnoccupiedVehicleSync.cpp OverrideSyncer). A driven row names the slot under a new generation
+// (converting the host row an earlier write left, or opening one) and the grant goes to it unasked, echoing `throwSeq`.
+// `releaseLoc` is the release's pose and `releaseMs` its arrival on this clock: the first row is measured from them.
+// False, counted, when the slot syncs kMaxThrowRowsPerSlot thrown props already, is not world-ready, or the prop cannot
+// open a row (the host's copy then keeps its own stream). Game thread.
+bool ElectSyncer(void* actor, uint8_t slot, uint16_t throwSeq, const float releaseLoc[3], uint64_t releaseMs);
+
+// The drop intent's election, at the spawn watcher's birth coast, where the spawned prop has its element id: when
+// prop_throw holds a mark under `actor`'s key, elects the mark's thrower. True when it did (no birth coast then).
+bool ElectFromMark(void* actor);
+
 // A client's PropDriveEnd from peer slot `slot`: the rest End of the drive it syncs. Validated at the router.
 // Game thread.
 void OnClientEnd(coop::net::Session& s, const coop::net::PropDriveEndPayload& p, uint8_t slot);

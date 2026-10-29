@@ -13,7 +13,10 @@
 #include "ue_wrap/facts/function_row.h"
 
 #include <cstdint>
+#include <cstddef>
 #include <cstring>
+#include <string>
+#include <vector>
 
 namespace coop::prop_throw {
 namespace {
@@ -38,11 +41,15 @@ int    g_count = 0;
 uint16_t g_seq = 0;
 
 R::ParamOffset g_pinOff{L"InputPin"};
+
+// The host's marks of thrown drop intents, by key. At most kMaxPendingThrows: a flood of throws past it is not elected.
+struct KeyedMark { std::wstring key; Mark m; };
+std::vector<KeyedMark> g_marks;
 bool     g_watchRegistered = false;
 bool     g_watchSettled = false;
 bool     g_boundsSaid = false;
 uint64_t g_nextWatchMs = 0;
-uint32_t g_minted = 0, g_puppetIgnored = 0, g_noOwner = 0, g_evicted = 0;
+uint32_t g_minted = 0, g_puppetIgnored = 0, g_noOwner = 0, g_evicted = 0, g_marksDropped = 0;
 
 void Erase(int i) {
     for (int k = i; k + 1 < g_count; ++k) g_rec[k] = g_rec[k + 1];
@@ -123,10 +130,14 @@ void EnsureWatch() {
 
 void Tick() {
     EnsureWatch();
-    if (g_count == 0) return;
+    if (g_count == 0 && g_marks.empty()) return;
     const uint64_t now = coop::active_drive::NowMs();
     for (int i = 0; i < g_count;) {
         if (now - g_rec[i].startMs > tb::kGrantTimeoutMs || !g_rec[i].actor.Alive()) Erase(i);
+        else ++i;
+    }
+    for (size_t i = 0; i < g_marks.size();) {
+        if (now - g_marks[i].m.ms > tb::kGrantTimeoutMs) g_marks.erase(g_marks.begin() + static_cast<std::ptrdiff_t>(i));
         else ++i;
     }
 }
@@ -137,10 +148,51 @@ uint16_t SeqFor(void* actor) {
     return 0;
 }
 
+bool TakeForGrant(uint16_t seq, void** actor, uint64_t* startMs) {
+    for (int i = 0; i < g_count; ++i) {
+        Record& r = g_rec[i];
+        if (r.seq != seq || r.granted || !r.actor.Alive()) continue;
+        r.granted = true;   // kept until it expires: the adoption of this actor yields to it a little longer
+        if (actor) *actor = r.actor.Get();
+        if (startMs) *startMs = r.startMs;
+        return true;
+    }
+    return false;
+}
+
+void NoteMark(const std::wstring& key, uint8_t slot, uint16_t seq, const float loc[3]) {
+    for (size_t i = 0; i < g_marks.size(); ++i)
+        if (g_marks[i].key == key) { g_marks.erase(g_marks.begin() + static_cast<std::ptrdiff_t>(i)); break; }
+    if (g_marks.size() >= static_cast<size_t>(tb::kMaxPendingThrows)) {
+        if (++g_marksDropped == 1) UE_LOGW("prop_throw: %d thrown drop intents await their spawn -- a further one is not elected", tb::kMaxPendingThrows);
+        return;
+    }
+    KeyedMark km;
+    km.key = key;
+    km.m.slot = slot;
+    km.m.seq = seq;
+    km.m.loc[0] = loc[0]; km.m.loc[1] = loc[1]; km.m.loc[2] = loc[2];
+    km.m.ms = coop::active_drive::NowMs();
+    g_marks.push_back(std::move(km));
+}
+
+bool HasMarks() { return !g_marks.empty(); }
+
+bool TakeMark(const std::wstring& key, Mark* out) {
+    for (size_t i = 0; i < g_marks.size(); ++i) {
+        if (g_marks[i].key != key) continue;
+        if (out) *out = g_marks[i].m;
+        g_marks.erase(g_marks.begin() + static_cast<std::ptrdiff_t>(i));
+        return true;
+    }
+    return false;
+}
+
 void OnDisconnect() {
     for (Record& r : g_rec) r = Record{};
     g_count = 0;
-    g_minted = g_puppetIgnored = g_noOwner = g_evicted = 0;
+    g_marks.clear();
+    g_minted = g_puppetIgnored = g_noOwner = g_evicted = g_marksDropped = 0;
 }
 
 }  // namespace coop::prop_throw

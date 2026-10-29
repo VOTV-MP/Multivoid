@@ -13,6 +13,7 @@
 #include "coop/props/prop_drive_host.h"     // Claim (the host's), InAHand
 #include "coop/props/prop_drive_rules.h"    // the epsilons, the rest rule, the send pace
 #include "coop/props/prop_drive_stream.h"   // CloseGen
+#include "coop/props/prop_throw.h"         // TakeForGrant: the record of the throw a grant answers
 #include "coop/props/remote_prop.h"         // ResolveLiveActorByEid
 #include "coop/session/net_pump.h"          // HasAnnouncedWorldReady
 #include "prop_drive_rows.h"                // co-located private header (src tree, not include/)
@@ -184,10 +185,35 @@ void EndUnheldGrant(const coop::net::PropSyncAnswerPayload& p) {
     coop::prop_drive_stream::CloseGen(p.eid, p.gen);
 }
 
+// The host elected this client the syncer of a prop it threw: the answer's seq is the throw's sequence, and no claim
+// was sent. The record prop_throw kept of the throw supplies the actor and the clock, and the copy, simulating since
+// the throw, goes straight to Syncing. False when no unmatched live record has that sequence: a stale grant.
+bool EnterThrownSync(const coop::net::PropSyncAnswerPayload& p) {
+    void* actor = nullptr;
+    uint64_t startMs = 0;
+    if (!coop::prop_throw::TakeForGrant(p.seq, &actor, &startMs)) return false;
+    const uint64_t now = coop::active_drive::NowMs();
+    Entry& e = g_table[p.eid];   // a thrown prop replaces whatever entry the eid had: the newer throw owns it
+    e = Entry{};
+    e.ref.Set(actor);
+    e.state = State::Syncing;
+    e.seq = p.seq;
+    e.gen = p.gen;
+    const std::wstring keyW = ue_wrap::prop::GetInteractableKeyString(actor);
+    for (size_t i = 0; i < keyW.size() && i < sizeof(e.key.data); ++i) e.key.data[e.key.len++] = static_cast<char>(keyW[i]);
+    e.lastMoveMs = now;
+    e.epochMs = startMs;   // the rows count from the throw, on this clock
+    e.lastInteractMs = 0;  // no feeder: the copy's own rest ends the episode
+    ++CountRef(Count::Granted);
+    UE_LOGI("[PROP-SYNC] CLIENT granted a throw eid=%u gen=%u seq=%u ms=%llu (#%u)", p.eid, static_cast<unsigned>(p.gen),
+            static_cast<unsigned>(p.seq), static_cast<unsigned long long>(now - startMs), CountRef(Count::Granted));
+    return true;
+}
+
 void OnGranted(const coop::net::PropSyncAnswerPayload& p) {
     const auto it = g_table.find(p.eid);
     if (it == g_table.end() || it->second.state != State::Pending || it->second.seq != p.seq) {
-        EndUnheldGrant(p);
+        if (!EnterThrownSync(p)) EndUnheldGrant(p);
         return;
     }
     // The grant carries no state and the copy keeps simulating, where MTA's StartSync resets the syncer to the
