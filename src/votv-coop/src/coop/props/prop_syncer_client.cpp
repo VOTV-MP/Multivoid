@@ -432,6 +432,12 @@ bool SkipsHostPose(uint32_t eid) {
     return true;
 }
 
+bool AuthorsActorHere(void* actor) {
+    for (const auto& kv : g_table)
+        if (kv.second.ref.Is(actor)) return true;
+    return false;
+}
+
 void OnDisconnect() {
     g_role = Role::Unknown;
     g_session = nullptr;

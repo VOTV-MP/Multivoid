@@ -45,6 +45,13 @@ CFG_ENUM(join_prop_loss_drill, "join_prop_loss_drill", "dev", "off", "off|break|
     "within 150 cm of a host can's mirror and swings at it until its copy is gone or 10 swings; the host judges as "
     "in breakown. throwat -- a measure: the client throws a can at a host can's mirror, up to 3 times. Run both "
     "with impact_damage_probe=1 on both peers: the probe lines are the result. Lines tagged [JPL-DRILL].")
+CFG_FLAG(prop_damage_gate_off, "prop_damage_gate_off", "dev", false, "VOTVCOOP_PROP_DAMAGE_GATE_OFF",
+    "Developer red arm: never set. The client's gate on a prop's impactDamage and fireDamage does nothing, so a client's "
+    "own physics can break a mirror of a host prop again and the join prop loss drill's break and fire arms must fail.")
+CFG_FLAG(prop_damage_gate_strict, "prop_damage_gate_strict", "dev", false, "VOTVCOOP_PROP_DAMAGE_GATE_STRICT",
+    "Developer red arm: never set. The client's gate on a prop's impactDamage and fireDamage ignores that this client "
+    "holds, threw or syncs the prop, so a prop it holds no longer breaks on its own count and the join prop loss "
+    "drill's held-break arm must fail.")
 CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room|forge|unasked|putrecord|puthand|putfood|puthidden|putnested|putempty|puthover|putreserved|putfull|putfullhand|putdepart|putdeadline|putowed|putjoin|throwhand|throwgrab|throwhostgrab|throwclamp|throwplace|throwjoin|throwdepart|throwtouch",
     "VOTVCOOP_CONTAINER_INTENT_DRILL",
     "Drill (BOTH peers): both pick the same shared container (the smallest element id, within 5000 cm of the player, "

@@ -42,6 +42,10 @@ void OnHostEnd(uint32_t eid, uint8_t gen);
 // its own rows relayed, and the stream's batch apply skips them. Counts the skip.
 bool SkipsHostPose(uint32_t eid);
 
+// CLIENT: true while this peer's table holds `actor` (a claim pending or granted, a throw's election included): its
+// own copy of the prop is the truth and its damage stands. Walks the table, a handful of entries. Game thread.
+bool AuthorsActorHere(void* actor);
+
 // Session end: the table, the backoffs and the counters. Game thread.
 void OnDisconnect();
 
