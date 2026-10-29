@@ -292,10 +292,12 @@ void OnRevoked(const coop::net::PropSyncAnswerPayload& p) {
             static_cast<unsigned>(p.gen), CountRef(Count::Revoked));
 }
 
-// One Syncing entry's turn: a row when the copy moved (or the beat is due), the rest End when it rested and the
-// interaction is over. True when the entry ended.
+// One Syncing entry's turn: a row when the copy moved, when it is a thrown prop's (every row until its End), or when
+// the beat is due; the rest End when it rested and the interaction is over. True when the entry ended.
 bool StepSyncing(coop::net::Session& s, uint32_t eid, Entry& e, void* actor, uint64_t now) {
-    if (e.thrown && g_muteThrown) return false;   // the depart arm's mute: no row and no End, as a crashed client sends none    // The engine is read (two dispatches for the pose, one more for the velocity of a row that is built) only when a row
+    if (e.thrown && g_muteThrown) return false;   // the depart arm's mute: no row and no End, as a crashed client sends none
+
+    // The engine is read (two dispatches for the pose, one more for the velocity of a row that is built) only when a row
     // or the rest End may be due, in the host rows' order: the probe cadence and the send pace first, then the queue's
     // turn. A moving copy is read at the pace, a still one at kRestProbeMs, so a feeder calling every tick costs
     // nothing between turns.

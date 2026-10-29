@@ -370,7 +370,10 @@ static void Tick(coop::net::Session& s) {
         if (d.syncer != 0) {   // a client's row ends by its own rules (prop_syncer_host), never by the rest clock
             // A thrown prop's thrower that falls silent mid-flight is replaced at once, as MTA moves a silent unoccupied
             // syncer on its pulse (CUnoccupiedVehicleSync.cpp:171-260); a claim's row keeps the pass's 5 s rule.
-            if (d.elected && d.admittedEver && now - d.admitMs >= coop::net::throw_bounds::kThrowSilenceMs) {
+            const float v2 = d.admitVel.X * d.admitVel.X + d.admitVel.Y * d.admitVel.Y + d.admitVel.Z * d.admitVel.Z;
+            const float rest = coop::net::throw_bounds::kThrowRestCmS;
+            if (d.elected && d.admittedEver && v2 > rest * rest &&
+                now - d.admitMs >= coop::net::throw_bounds::kThrowSilenceMs) {
                 coop::prop_syncer_host::EndClientRow(d, coop::prop_syncer_host::Ending::Silence);
                 continue;
             }

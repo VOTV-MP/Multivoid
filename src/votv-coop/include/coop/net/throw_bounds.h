@@ -58,6 +58,11 @@ inline constexpr uint32_t kMaxThrowFlightMs = 10000; // an elected row's longest
 // (the `maxgap=` of its end line), measured under loopback and under net.fakelag_ms=50, times 2; if that comes out under
 // 250 the derived value is used. Nothing ships on the 250.
 inline constexpr uint32_t kThrowSilenceMs = 250;
+// The silence above is a thrower gone only while the prop moves: once its rows say it rests (the last one slower than
+// this), the client's next message is its rest End, which rides the reliable lane and may be resent past any bound
+// fitted to the row stream; a resting prop hangs nowhere, so its silence is left to the pass's generic rule. A body the
+// engine has settled reads well under it; a prop in flight reads hundreds of cm/s.
+inline constexpr float    kThrowRestCmS = 10.f;
 inline constexpr int      kMaxPendingThrows = 8;     // a peer's throws awaiting a grant
 inline constexpr int      kMaxThrowRowsPerSlot = 4;  // elected rows one client holds at once
 

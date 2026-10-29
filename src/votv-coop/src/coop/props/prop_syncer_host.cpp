@@ -287,8 +287,9 @@ void AdmitRow(const coop::net::PropDriveRow& e, uint8_t slot, uint64_t nowMs) {
     Tally(g_admitted, "row admitted", e.elementId, slot);
 }
 
-// Once a second (the ATV's RunPass rules 1 and 3): no admitted row for kSyncerSilenceMs, or the syncer's puppet
-// beyond kSyncerDistanceCm; and for a thrown prop no admitted row kGrantTimeoutMs after the election, or a flight past
+// Once a second (the ATV's RunPass rules 1 and 3): no admitted row for kSyncerSilenceMs (a thrown prop still moving is
+// taken back sooner, per tick, at kThrowSilenceMs: prop_drive_host Tick; a resting one keeps this rule while its rest End
+// is in flight), or the syncer's puppet beyond kSyncerDistanceCm; and for a thrown prop no admitted row kGrantTimeoutMs after the election, or a flight past
 // kMaxThrowFlightMs. MTA re-elects the nearest player on its pulse (:133-146, FindSyncer :171-260); a prop here
 // belongs to no author at rest and the host's world is always loaded (the ATV's reason, atv_authority.cpp:366-368).
 // Diverges from MTA, which has no cap on a syncer's tenure and no first-row deadline (its only take-back is distance,
