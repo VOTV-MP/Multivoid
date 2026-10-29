@@ -120,10 +120,10 @@ void EnsureWatch() {
         if (!g_boundsSaid) {
             g_boundsSaid = true;
             UE_LOGI("prop_throw: bounds launch=%.0f cm/s flight=%.0f cm/s (longest flight %.3f s) "
-                    "ang=%.0f deg/s stepSlack=%.0f cm jitter=%u ms refusedRows=%d grantWait=%u ms "
-                    "hostGrantFloor=%u ms flightBound=%u ms silence=%u ms pending=%d rowsPerSlot=%d",
+                    "dropIntentAng=%.0f deg/s releaseAng=%.0f deg/s stepSlack=%.0f cm jitter=%u ms refusedRows=%d "
+                    "grantWait=%u ms hostGrantFloor=%u ms flightBound=%u ms silence=%u ms pending=%d rowsPerSlot=%d",
                     tb::kMaxLaunchSpeedCmS, tb::kMaxFlightSpeedCmS, tb::kLongestFlightS,
-                    tb::kMaxLaunchAngDegS, tb::kStepSlackCm, tb::kJitterMs, tb::kMaxRefusedRows, tb::kGrantTimeoutMs,
+                    tb::kMaxLaunchAngDegS, tb::kMaxBodyAngDegS, tb::kStepSlackCm, tb::kJitterMs, tb::kMaxRefusedRows, tb::kGrantTimeoutMs,
                     tb::kGrantTimeoutFloorMs, tb::kMaxThrowFlightMs, tb::kThrowSilenceMs, tb::kMaxPendingThrows,
                     tb::kMaxThrowRowsPerSlot);
         }

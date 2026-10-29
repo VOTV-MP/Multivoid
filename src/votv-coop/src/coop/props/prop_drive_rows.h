@@ -107,8 +107,8 @@ namespace coop::prop_syncer_host {
 // prop_drive_host; the rest are prop_syncer_host's own passes. A rest End comes from the client itself (OnClientEnd)
 // and is not one of these. FlightBound (an elected row past kMaxThrowFlightMs), RowsUntrusted (kMaxRefusedRows rows in
 // a row failed the step test) and GrantTimeout (no row admitted GrantTimeoutMs of the slot's rtt after the election)
-// hand the prop to the host the way HostVerb does: its copy continues from the last passing row, or from its own state when none was.
-// So does every ending of an elected row but Died and Hand when nothing was admitted, SlotLeft of an elected row, and
+// hand the prop to the host the way HostVerb does: its copy continues from the last passing row, or from its own
+// state when none was. So does every ending of an elected row but Died and Hand when nothing was admitted, SlotLeft of an elected row, and
 // Silence of an elected row (kThrowSilenceMs without an admitted row, met by prop_drive_host's Tick).
 enum class Ending : uint8_t { Hand, HostVerb, Died, Silence, Range, SlotLeft, FlightBound, RowsUntrusted, GrantTimeout, kCount };
 

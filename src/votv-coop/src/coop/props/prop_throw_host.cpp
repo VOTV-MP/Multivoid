@@ -32,7 +32,7 @@ void JudgeRelease(coop::net::Session& session, int senderSlot, coop::net::PropRe
     // Finite already: the dispatcher refuses a release whose floats are not.
     // Every release meets the body's spin ceiling, thrown or not: throwShit ADDS its spin to the held body's
     // (SetPhysicsAngularVelocityInDegrees bAddToCurrent, mainPlayer.cpp:15615), so a grabbed prop leaves faster than the
-    // throw's own 450 deg/s (measured 1905 deg/s on a natural grab throw, p3 throwjoin HOST.log:17676, cut to 538 by
+    // throw's own 450 deg/s (measured 1905 deg/s on a natural grab throw, cut to 538 by
     // the throw ceiling). The drop intent of a hand throw is a fresh spawn and keeps the throw ceiling.
     if (!s_noClamp && tb::ClampPair(lin, tb::kMaxLaunchSpeedCmS, ang, tb::kMaxBodyAngDegS) == tb::Clamp::Clamped) {
         UE_LOGW("prop_throw: HOST clamped slot %d's release velocity lin=(%.0f,%.0f,%.0f)->(%.0f,%.0f,%.0f) "
