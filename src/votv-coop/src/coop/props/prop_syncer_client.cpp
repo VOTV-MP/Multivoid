@@ -60,6 +60,10 @@ constexpr uint64_t kInteractionHoldMs = 250;
 // kMaxRefusedRows revokes.
 constexpr uint32_t kSteppedRowFrom = 8;
 constexpr float    kSteppedRowCm = 1000.f;
+// The throwdepart arm's mute (dev::MuteThrownRows), default off, beside the stepped-rows red: every row and the End of
+// every thrown (elected) entry on this client stop for the session, as a crash would stop them, so the host sees the
+// silence mid-flight. Cleared by OnDisconnect. Game thread.
+bool g_muteThrown = false;
 enum class Role : uint8_t { Unknown, Host, Client };
 enum class State : uint8_t { Pending, Syncing };
 
@@ -290,7 +294,8 @@ void OnRevoked(const coop::net::PropSyncAnswerPayload& p) {
 
 // One Syncing entry's turn: a row when the copy moved (or the beat is due), the rest End when it rested and the
 // interaction is over. True when the entry ended.
-bool StepSyncing(coop::net::Session& s, uint32_t eid, Entry& e, void* actor, uint64_t now) {    // The engine is read (two dispatches for the pose, one more for the velocity of a row that is built) only when a row
+bool StepSyncing(coop::net::Session& s, uint32_t eid, Entry& e, void* actor, uint64_t now) {
+    if (e.thrown && g_muteThrown) return false;   // the depart arm's mute: no row and no End, as a crashed client sends none    // The engine is read (two dispatches for the pose, one more for the velocity of a row that is built) only when a row
     // or the rest End may be due, in the host rows' order: the probe cadence and the send pace first, then the queue's
     // turn. A moving copy is read at the pace, a still one at kRestProbeMs, so a feeder calling every tick costs
     // nothing between turns.
@@ -433,11 +438,14 @@ void OnDisconnect() {
     g_backoff.clear();
     g_lastGen.clear();
     g_lastGrantMs.clear();
+    g_muteThrown = false;
     for (uint32_t& n : g_count) n = 0;
     for (uint32_t& n : g_refused) n = 0;
 }
 
 namespace dev {
+
+void MuteThrownRows() { g_muteThrown = true; }
 
 EntryView EntryOf(uint32_t eid) {
     EntryView v;

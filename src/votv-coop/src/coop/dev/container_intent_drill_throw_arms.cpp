@@ -231,6 +231,7 @@ HostJudge TouchHostTick(uint32_t eid, char* why, size_t whyLen) {
 bool DepartParkTick(uint32_t itemEid) {
     const auto v = coop::prop_syncer::dev::EntryOf(itemEid);
     if (v.state != coop::prop_syncer::dev::EntryState::Syncing || v.rowsSent < 1) return false;
+    coop::prop_syncer::dev::MuteThrownRows();   // the thrower goes silent mid-flight before the rig drops it, as a crash would
     DepartMarkParked();
     UE_LOGI("[CI-DRILL] client throwdepart parked");   // the rig drops this client on this line and relaunches it
     return true;
