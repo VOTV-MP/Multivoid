@@ -7,6 +7,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"animblueprint_kerfuromega_skerfuro_c", L"blueprintupdateanimation", L"animblueprint_kerfuromega_skerfuro_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x043f72b999157c31ull},
     {L"antibreather_low_test_skeleton_animblueprint_c", L"blueprintupdateanimation", L"antibreather_low_test_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xf5ec444407b73527ull},
     {L"beacon_skeleton_animblueprint_c", L"blueprintupdateanimation", L"beacon_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xd65da5f81aa4b765ull},
+    {L"comp_physicsimpact_c", L"impactdamage", L"comp_physicsimpact_c.impactdamage", 0x323c9ce12704114full, 0x299679f28f9a9098ull},
     {L"deersk_skeleton_animblueprint_c", L"blueprintupdateanimation", L"deersk_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xace20bbd0bb7f351ull},
     {L"deerzombsk_skeleton_animblueprint_c", L"blueprintupdateanimation", L"deerzombsk_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xa79fd56b6089193dull},
     {L"erielive_skeleton_animblueprint_c", L"blueprintupdateanimation", L"erielive_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x38cb1b4544d0c701ull},
