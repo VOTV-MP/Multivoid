@@ -498,9 +498,10 @@ void JoinHostReport(int n, float gapCm) {
             ready ? 1 : 0, static_cast<double>(gapCm));
 }
 
-// The joiner's end line of throw n, set against the host's trace: the mirror gap at its instants and the rest agreement. A
-// joiner that was not world-ready before the host copy rested, first saw the prop only after it rested, or has fewer than
-// kMatchedMin instants matched was not in flight: that fails the arm. `gapOut` is -1 on a failure.
+// The joiner's end line of throw n, set against the host's trace. A mid-flight join is the host's world-ready edge for the
+// joiner between the elect and the rest; one outside that window fails the arm. The mirror gap is judged when the joiner's
+// first sample came before the rest with kMatchedMin instants matched; else its rest agreement is the verdict and `gapOut`
+// is -1 (also on a failure).
 HostJudge JoinHostJudge(const Track& host, int n, float& gapOut, char* why, size_t whyLen) {
     gapOut = -1.f;
     JoinHostCollect(n);
@@ -533,21 +534,36 @@ HostJudge JoinHostJudge(const Track& host, int n, float& gapOut, char* why, size
                       "edge %lld ms after the elect, need above 0)", g_jhReadyAtElect ? 1 : 0, seededMs);
         return HostJudge::Failed;
     }
-    if (!(n == g_jhReadyN && g_jhReady) || !inFlight || g.matched < kMatchedMin) {
-        std::snprintf(why, whyLen, "the joiner was not in flight: world-ready before rest=%d, world-ready already at the elect=%d (edge %lld ms after the elect, need above 0), it first saw the prop at %llu and the host copy rested at %llu, %d instants matched (need %d)",
-                      (n == g_jhReadyN && g_jhReady) ? 1 : 0, g_jhReadyAtElect ? 1 : 0, seededMs, first, U(host.restMs), g.matched, kMatchedMin);
+    if (!(n == g_jhReadyN && g_jhReady)) {
+        std::snprintf(why, whyLen, "the joiner never came world-ready for throw %d", n);
         return HostJudge::Failed;
     }
-    gapOut = g.worst;
+    // A mid-flight join is the host's world-ready edge between the elect and the rest (both on the host's clock). The
+    // joiner's world can come up after the rest even so (its seed is applied as it loads): then its rest pose is the
+    // verdict, and the in-flight gap is measured only when its first sample came before the rest.
+    if (host.atRest && g_jhReadyMs >= host.restMs) {
+        std::snprintf(why, whyLen, "the joiner was not in flight: its world-ready edge came %lld ms after the host copy rested",
+                      static_cast<long long>(g_jhReadyMs) - static_cast<long long>(host.restMs));
+        return HostJudge::Failed;
+    }
+    const bool sawFlight = inFlight && g.matched >= kMatchedMin;
+    gapOut = sawFlight ? g.worst : -1.f;
     UE_LOGI("[CI-DRILL] host throwjoin n=%d joiner: seeded %lld ms after the elect (its world-ready edge minus the elect)", n, seededMs);
-    UE_LOGI("[CI-DRILL] host throwjoin n=%d joiner: seeded mid-flight %lld ms after the release, mirror-gap=%.0f cm", n,
-            static_cast<long long>(first) - static_cast<long long>(g_jhReleaseMs), static_cast<double>(g.worst));
     const float restGap = Dist3(host.last, FVector{static_cast<float>(at[0]), static_cast<float>(at[1]), static_cast<float>(at[2])});
-    UE_LOGI("[CI-DRILL] host throwjoin n=%d: mirror-gap=%.0f cm over %d of %d instants (bound %.0f, PROVISIONAL), the joiner's rest is %.0f cm from the host's (bound %.0f, PROVISIONAL)",
-            n, static_cast<double>(g.worst), g.matched, g.said, static_cast<double>(kFlightGapPassCm), static_cast<double>(restGap), static_cast<double>(kRestAgreeCm));
-    if (gapOut > kFlightGapPassCm) {
+    const float bound = FlightGapBoundCm(host.peakSpeed, host.rttMax);
+    if (sawFlight)
+        UE_LOGI("[CI-DRILL] host throwjoin n=%d joiner: seeded mid-flight %lld ms after the release, mirror-gap=%.0f cm over %d of %d "
+                "instants (bound %.0f), its rest %.0f cm from the host's (bound %.0f)", n,
+                static_cast<long long>(first) - static_cast<long long>(g_jhReleaseMs), static_cast<double>(g.worst), g.matched, g.said,
+                static_cast<double>(bound), static_cast<double>(restGap), static_cast<double>(kRestAgreeCm));
+    else
+        UE_LOGI("[CI-DRILL] host throwjoin n=%d joiner: seeded mid-flight, its world up %lld ms after the host's rest (mirror-gap=n/a, "
+                "%d instants matched); its rest %.0f cm from the host's (bound %.0f) is the verdict", n,
+                static_cast<long long>(first) - static_cast<long long>(host.restMs), g.matched, static_cast<double>(restGap),
+                static_cast<double>(kRestAgreeCm));
+    if (sawFlight && g.worst > bound) {
         std::snprintf(why, whyLen, "the joiner's copy was %.0f cm from the host's at k=%d, past %.0f cm", static_cast<double>(g.worst), g.worstK,
-                      static_cast<double>(kFlightGapPassCm));
+                      static_cast<double>(bound));
         return HostJudge::Failed;
     }
     if (restGap > kRestAgreeCm) {

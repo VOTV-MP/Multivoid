@@ -469,8 +469,8 @@ void HostGrabClientTick(const coop::net::Session& session) {
         const uint32_t whoosh = coop::remote_prop::dev::ThrowWhooshesPlayed() - g_cWhoosh0;
         const Gap g = JudgeInstants(g_cSeen.track, g_cInst);
         UE_LOGI("[CI-DRILL] client %s: the host's release reached this peer with a throw sequence on %u message(s), %u swing(s) played; "
-                "mirror-gap=%.0f cm over %d of %d instants (bound %.0f, PROVISIONAL)", ArmName(), rel, whoosh, static_cast<double>(g.worst),
-                g.matched, g.said, static_cast<double>(kFlightGapPassCm));
+                "mirror-gap=%.0f cm over %d of %d instants (bound %.0f)", ArmName(), rel, whoosh, static_cast<double>(g.worst),
+                g.matched, g.said, static_cast<double>(FlightGapBoundCm(g_cSeen.track.peakSpeed, g_cSeen.track.rttMax)));
         if (rel == 0) {
             CFail("the host's throw reached this client with throwSeq 0 (no PropRelease carried a sequence)");
             return;
@@ -479,9 +479,9 @@ void HostGrabClientTick(const coop::net::Session& session) {
             CFail("no throw swing played on this client for the host's throw");
             return;
         }
-        if (g.matched >= kHgMatchedMin && g.worst > kFlightGapPassCm) {
+        if (g.matched >= kHgMatchedMin && g.worst > FlightGapBoundCm(g_cSeen.track.peakSpeed, g_cSeen.track.rttMax)) {
             CFail("the client's mirror was %.0f cm from the host's copy at k=%d, past %.0f cm", static_cast<double>(g.worst), g.worstK,
-                  static_cast<double>(kFlightGapPassCm));
+                  static_cast<double>(FlightGapBoundCm(g_cSeen.track.peakSpeed, g_cSeen.track.rttMax)));
             return;
         }
         char gapText[48] = "n/a (too few instants matched)";

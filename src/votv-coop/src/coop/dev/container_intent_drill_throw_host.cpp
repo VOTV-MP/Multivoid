@@ -377,10 +377,10 @@ const char* JudgeFlight(const ClientEnd& c, char* why, size_t whyLen) {
     const Gap judged = JudgeInstants(g_hTrack, g_hInst);
     const int matched = judged.matched, said = judged.said, worstK = judged.worstK;
     const float worst = judged.worst;
-    UE_LOGI("[CI-DRILL] host throw %s n=%d flight: matched=%d/%d instants, in-flight gap max=%.0f cm at k=%d (green bound %.0f cm, "
-            "PROVISIONAL), thrower parked in flight=%d sample(s) (bound %d), release-to-rest=%llu ms (t_max), host peak %.0f cm/s "
+    UE_LOGI("[CI-DRILL] host throw %s n=%d flight: matched=%d/%d instants, in-flight gap max=%.0f cm at k=%d (green bound %.0f cm: "
+            "speed x (rtt/2 + 71 ms) + 50), thrower parked in flight=%d sample(s) (bound %d), release-to-rest=%llu ms (t_max), host peak %.0f cm/s "
             "(launch bound %.0f, flight bound %.0f), throws minted here=%u, puppet throwShit ignored n=%u",
-            ArmName(), g_hN, matched, said, static_cast<double>(worst), worstK, static_cast<double>(kFlightGapPassCm), c.park,
+            ArmName(), g_hN, matched, said, static_cast<double>(worst), worstK, static_cast<double>(FlightGapBoundCm(g_hTrack.peakSpeed, g_hTrack.rttMax)), c.park,
             kParkedSamplesMax, c.tmax, static_cast<double>(g_hTrack.peakSpeed),
             static_cast<double>(coop::net::throw_bounds::kMaxLaunchSpeedCmS),
             static_cast<double>(coop::net::throw_bounds::kMaxFlightSpeedCmS), coop::prop_throw::dev::Minted(),
@@ -406,9 +406,9 @@ const char* JudgeFlight(const ClientEnd& c, char* why, size_t whyLen) {
         std::snprintf(why, whyLen, "only %d of the thrower's instants matched a host sample (need %d)", matched, kMatchedMin);
         return why;
     }
-    if (worst > kFlightGapPassCm) {
+    if (worst > FlightGapBoundCm(g_hTrack.peakSpeed, g_hTrack.rttMax)) {
         std::snprintf(why, whyLen, "the host's copy was %.0f cm from the thrower's at k=%d, past %.0f cm", static_cast<double>(worst), worstK,
-                      static_cast<double>(kFlightGapPassCm));
+                      static_cast<double>(FlightGapBoundCm(g_hTrack.peakSpeed, g_hTrack.rttMax)));
         return why;
     }
     return nullptr;
@@ -591,7 +591,9 @@ void StepJoinWait(const coop::net::Session& s) {
     case HostJudge::Failed: HFail("%s", why); return;
     case HostJudge::Passed:
         JoinHostReport(g_hN, gap);
-        UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=%.0f %s", ArmName(), g_hN, static_cast<double>(gap), g_hLaunch);
+        if (gap >= 0.f) UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=%.0f %s", ArmName(), g_hN, static_cast<double>(gap), g_hLaunch);
+        else            UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=n/a (the joiner's world came up after the rest) %s",
+                                ArmName(), g_hN, g_hLaunch);
         HNext(HStep::WaitNext);
         return;
     default: break;

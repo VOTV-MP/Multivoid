@@ -74,6 +74,7 @@ struct Track {
     ue_wrap::FVector last{};
     float maxHoriz = 0.f;         // the farthest horizontal distance from the first sample
     float peakSpeed = 0.f;        // the largest speed, cm/s
+    int rttMax = 0;               // the largest round trip read while tracing, ms (the gap bound's link time)
     int notSimMoving = 0;         // samples before rest at which the actor's root was not simulating (a parked copy)
     uint64_t peakT = 0;
     ue_wrap::FVector peakPos{};
@@ -107,7 +108,15 @@ void ThrowHostReset();
 inline constexpr int      kAtCount         = 8;       // a peer says where its copy was at this many instants after the press
 inline constexpr uint64_t kAtEveryMs       = 250;
 inline constexpr uint64_t kAtSlackMs       = 40;      // a sample this near an instant stands for it
-inline constexpr float    kFlightGapPassCm = 200.f;   // PROVISIONAL: the largest in-flight gap a green run may print; the proof sets it
+// The in-flight gap a green run may print: a follower trails its source by the one-way link time plus the host's own
+// follow delay, at the flight's speed. kFollowDelayMs is that delay measured on loopback (the largest gap, 106 cm at
+// 1500 cm/s, is 71 ms of it); kFlightGapSlackCm covers the tick a pose is read in. Against the measured runs: 106 cm
+// under a 156 cm bound on loopback, 288 cm under 422 at 2838 cm/s with a 50 ms fake lag each way.
+inline constexpr float    kFollowDelayMs    = 71.f;
+inline constexpr float    kFlightGapSlackCm = 50.f;
+inline float FlightGapBoundCm(float peakSpeedCmS, int rttMaxMs) {
+    return peakSpeedCmS * (static_cast<float>(rttMaxMs > 0 ? rttMaxMs : 0) * 0.5f + kFollowDelayMs) / 1000.f + kFlightGapSlackCm;
+}
 inline constexpr float    kRestAgreeCm     = 50.f;    // PROVISIONAL: peers at rest agree within this
 
 // The `n` comma-separated integers after `key` (with its '=') in `text`; false when the key is absent or the list short.

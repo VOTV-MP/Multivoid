@@ -70,6 +70,7 @@ void TrackSet(Track& t, void* actor) {
 
 void TrackTick(Track& t, int rttMs) {
     if (!t.on) return;
+    if (rttMs > t.rttMax) t.rttMax = rttMs;
     const uint64_t now = cen::UnixMs();
     void* actor = t.ref.Get();
     FVector at{};
