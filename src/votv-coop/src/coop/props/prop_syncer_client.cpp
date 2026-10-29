@@ -42,7 +42,7 @@ using dev::Count;
 // MTA's MIN_PUSH_ANTISPAM_RATE (CUnoccupiedVehicleSync.h:15), here per client and eid: after a refusal or a
 // revoke the same prop is not claimed again sooner.
 constexpr uint64_t kReclaimBackoffMs = 1500;
-// A syncing client that is standing still re-sends its pose this often, well inside the host's kSyncerSilenceMs, and
+// A claim's syncer that is standing still re-sends its pose this often, well inside the host's kSyncerSilenceMs, and
 // reads the prop at most every kRestProbeMs between beats. MTA sends a syncer's rows every 400 ms by default with the
 // move and turn speed in each, on change only and with no beat (CMainConfig.cpp:1513, and the client's
 // CUnoccupiedVehicleSync.cpp:19,66): rows here carry the pose and the copy's velocity at kClientDriveSendMs, the receiver
@@ -60,7 +60,6 @@ constexpr uint64_t kInteractionHoldMs = 250;
 // kMaxRefusedRows revokes.
 constexpr uint32_t kSteppedRowFrom = 8;
 constexpr float    kSteppedRowCm = 1000.f;
-
 enum class Role : uint8_t { Unknown, Host, Client };
 enum class State : uint8_t { Pending, Syncing };
 
@@ -291,8 +290,7 @@ void OnRevoked(const coop::net::PropSyncAnswerPayload& p) {
 
 // One Syncing entry's turn: a row when the copy moved (or the beat is due), the rest End when it rested and the
 // interaction is over. True when the entry ended.
-bool StepSyncing(coop::net::Session& s, uint32_t eid, Entry& e, void* actor, uint64_t now) {
-    // The engine is read (two dispatches for the pose, one more for the velocity of a row that is built) only when a row
+bool StepSyncing(coop::net::Session& s, uint32_t eid, Entry& e, void* actor, uint64_t now) {    // The engine is read (two dispatches for the pose, one more for the velocity of a row that is built) only when a row
     // or the rest End may be due, in the host rows' order: the probe cadence and the send pace first, then the queue's
     // turn. A moving copy is read at the pace, a still one at kRestProbeMs, so a feeder calling every tick costs
     // nothing between turns.
@@ -316,7 +314,11 @@ bool StepSyncing(coop::net::Session& s, uint32_t eid, Entry& e, void* actor, uin
                 static_cast<unsigned>(e.gen), loc.X, loc.Y, loc.Z, e.rowsSent, CountRef(Count::RestEnds));
         return true;
     }
-    const bool due = moved || now - e.lastSendMs >= kSyncerBeatMs;
+    // A thrown prop's syncer streams every row at the pace until its rest End, still or not: the host reads any gap in a
+    // thrown row's arrivals as the thrower being gone (kThrowSilenceMs), so a quiet stretch would be taken for a crash.
+    // The cost is about kRestMs / kClientDriveSendMs = 20 more rows per throw, over the rest window. A claim's row keeps
+    // the still-skip and the 1 s beat.
+    const bool due = moved || e.thrown || now - e.lastSendMs >= kSyncerBeatMs;
     if (!due) {
         e.nextProbeMs = now + (now - e.lastMoveMs >= rules::kRestMs ? rules::kRestProbeMs : rules::kClientDriveSendMs);
         return false;
