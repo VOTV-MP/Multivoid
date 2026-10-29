@@ -54,9 +54,10 @@ constexpr uint64_t kPendingMaxMs = 3000;
 // An interaction in progress keeps the sync across a still moment: the rest End waits this long after the
 // feeder's last Claim.
 constexpr uint64_t kInteractionHoldMs = 250;
-// The throw arms' red (container_throw_stepped_rows): from a thrown prop's kSteppedRowFrom-th row on, every other row is
-// offset by this step in x, so each row steps about this far from the one before it. A row of 25 ms may step
-// kMaxFlightSpeedCmS * 0.025 + kStepSlackCm = 302 cm, so every stepped row fails and kMaxRefusedRows of them in a run revoke.
+// The throw arms' red (container_throw_stepped_rows): from a thrown prop's kSteppedRowFrom-th row on, each row is offset
+// in x by kSteppedRowCm more than the one before. The host measures a row from the last PASSING one, whose allowance grows
+// by about kMaxFlightSpeedCmS * 0.025 = 252 cm per row, so the growing offset keeps every stepped row failing and a run of
+// kMaxRefusedRows revokes.
 constexpr uint32_t kSteppedRowFrom = 8;
 constexpr float    kSteppedRowCm = 1000.f;
 
@@ -329,7 +330,8 @@ bool StepSyncing(coop::net::Session& s, uint32_t eid, Entry& e, void* actor, uin
     pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
     pp.roll  = ue_wrap::NormalizeAxis(rot.Roll);
     static const bool s_stepped = coop::config::ResolveFlag(coop::config_registry::rows::container_throw_stepped_rows);
-    if (s_stepped && e.thrown && e.rowsSent >= kSteppedRowFrom && (e.rowsSent & 1u)) pp.x += kSteppedRowCm;   // the red: rows the host's test fails
+    if (s_stepped && e.thrown && e.rowsSent >= kSteppedRowFrom)   // the red: rows the host's test fails
+        pp.x += kSteppedRowCm * static_cast<float>(e.rowsSent - kSteppedRowFrom + 1);
     // The copy's velocity as it is read now, and this row's age on the clock the grant or the throw started: the
     // host judges a row's step against the speed a prop flies and its age, and takes the prop over from the last passing one.
     ue_wrap::FVector lin{};

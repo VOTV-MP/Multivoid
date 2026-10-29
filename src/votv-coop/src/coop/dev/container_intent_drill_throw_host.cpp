@@ -13,6 +13,8 @@
 #include "container_intent_drill_throw.h"
 #include "container_route_drill_detail.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/dev/container_route_census.h"
 #include "coop/dev/drill_chat.h"
 #include "coop/net/throw_bounds.h"
@@ -375,11 +377,27 @@ void Verdict(const std::string& endRest) {
     // The trust the host kept in the thrower's rows: a row whose step disagrees with its velocity is displayed and counted, and a
     // run of them revokes the thrower's right (the stepped-rows red makes the thrower send such rows).
     const auto& tv = coop::prop_syncer_host::dev::ThrowViewNow();
-    if (tv.revokes > g_hRevokes0)
+    const bool revoked = tv.revokes > g_hRevokes0;
+    if (revoked)
         UE_LOGI("[CI-DRILL] host throw %s n=%d trust revoked after %u rows, display followed=%d (%u failed rows shown)", ArmName(), g_hN,
                 tv.revokeRows, tv.failedDisplayed > 0 ? 1 : 0, tv.failedDisplayed);
     else
         UE_LOGI("[CI-DRILL] host throw %s n=%d revoked=0 (%u failed rows shown)", ArmName(), g_hN, tv.failedDisplayed);
+    // Under the stepped-rows red the arm's verdict is the revoke: the forged rows put the host's copy far from the thrower's
+    // on purpose, so the flight's gap is not judged; display followed them, and the take-back must come.
+    static const bool s_stepped = coop::config::ResolveFlag(coop::config_registry::rows::container_throw_stepped_rows);
+    if (s_stepped) {
+        g_hHit.Finish(g_hTrack);
+        HitWatchEnd();
+        g_hTrack.on = false;
+        if (!revoked || tv.failedDisplayed == 0) {
+            HFail("the stepped rows were %s", revoked ? "never displayed before the revoke" : "never revoked");
+            return;
+        }
+        UE_LOGI("[CI-DRILL] host throw %s n=%d PASS stepped (trust revoked, display followed)", ArmName(), g_hN);
+        HNext(HStep::WaitNext);
+        return;
+    }
     g_hHit.Finish(g_hTrack);
     HitWatchEnd();
     g_hTrack.on = false;

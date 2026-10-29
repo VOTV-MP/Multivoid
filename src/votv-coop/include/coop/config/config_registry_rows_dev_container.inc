@@ -124,6 +124,6 @@ CFG_INT(container_throw_scale, "container_throw_scale", "dev", 1, 1, 100, "VOTVC
     "Dev (CLIENT): the velocity a thrown prop's drop intent and release carry is multiplied by this, a forged "
     "throw for the throwclamp arm. 1 = off.")
 CFG_FLAG(container_throw_stepped_rows, "container_throw_stepped_rows", "dev", false, "VOTVCOOP_CONTAINER_THROW_STEPPED_ROWS",
-    "Red arm for the throw arms (CLIENT): the thrower of a thrown prop adds a step to the position of every fourth "
-    "drive row it sends, so the host's step test can fail. The host shows such a row all the same and counts it; a run "
+    "Red arm for the throw arms (CLIENT and HOST): from its eighth drive row on, the thrower of a thrown prop offsets "
+    "each row's position 1000 cm further than the last, so the host's step test fails. The host shows such a row all the same and counts it; a run "
     "of failed rows revokes the thrower's right and the host takes the prop back.")

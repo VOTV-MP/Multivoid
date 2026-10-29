@@ -174,14 +174,15 @@ thrower's puppet on the host (the claim's reach); out of reach, the release appl
 
 A thrown prop's rows cost trust, never display. A row whose step does not agree with the speed a prop can
 fly is shown like any other (the host's copy and every other client follow it) and counted on the row; a
-passing row resets the run. After `kMaxRefusedRows` failures in a row the thrower's right is revoked: the
-host takes the prop back from the last passing row's pose and velocity under a new generation, and one
-line names the slot and the counts. This diverges from MTA, which bounds nothing on an unoccupied-vehicle
+passing row resets the run. After `kMaxRefusedRows` failures in a row, or twice that many over the flight,
+the thrower's right is revoked: the host takes the prop back from the last passing row's pose and velocity
+under a new generation (when no row passed, from the release pose at rest), and one line names the slot and
+the counts. This diverges from MTA, which bounds nothing on an unoccupied-vehicle
 syncer's packet; ours follows the rule that a client's discontinuity costs trust. The host's own grab
 throw opens a coast row that streams it to rest. The host's grab, a flight past its bound, a grant that
 no row follows, a thrower who leaves and any end of a thrown prop nothing was admitted for hand the prop
-to the host; its copy then continues from the last passing row's pose and velocity (or its own state
-when none was) and every copy follows the host. `[?]` until the throw arms read them.
+to the host; its copy then continues from the last passing row's pose and velocity (from the release
+pose at rest when rows came and none passed; its own state when none came) and every copy follows the host. `[?]` until the throw arms read them.
 
 Joining mid-flight: a peer that becomes world-ready while a thrown prop flies gets the host's copy from
 the prop's spawn, the drive's resend of the admitted pose (`OnPeerWorldReady`), and then the relayed

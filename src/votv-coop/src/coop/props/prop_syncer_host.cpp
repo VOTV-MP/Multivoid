@@ -149,14 +149,17 @@ bool IsLateSyncer(uint32_t eid, uint8_t slot, uint64_t nowMs) {
     return nowMs - it->second.ms <= window;
 }
 
-// The End of a row ended by the host: the pose and linear velocity the host trusts (the last PASSING row of an elected
-// row, the last admitted one of any other; zero when the syncer never sent one; the rows carry no spin), and the
-// released copy's flags. MTA's receivers keep the last speed after a sync stops.
+// The End of a row ended by the host: the pose and linear velocity the host trusts, and the released copy's flags. For
+// an elected row, the last PASSING row; when none passed, the release pose the reach gate checked, at rest (a displayed
+// row that failed the step is the syncer's claim, never the host's anchor). For any other row, the last admitted one;
+// zero when the syncer never sent one; the rows carry no spin. MTA's receivers keep the last speed after a sync stops.
 coop::net::PropDriveEndPayload EndOf(const Driven& d, void* actor) {
+    static const ue_wrap::FVector kAtRest{};
     const bool passing = d.elected && d.passedEver;
-    const ue_wrap::FVector&  loc = passing ? d.passLoc : d.admitLoc;
+    const bool fromRelease = d.elected && !d.passedEver;
+    const ue_wrap::FVector&  loc = passing ? d.passLoc : fromRelease ? d.startLoc : d.admitLoc;
     const ue_wrap::FRotator& rot = passing ? d.passRot : d.admitRot;
-    const ue_wrap::FVector&  vel = passing ? d.passVel : d.admitVel;
+    const ue_wrap::FVector&  vel = passing ? d.passVel : fromRelease ? kAtRest : d.admitVel;
     coop::net::PropDriveEndPayload p{};
     p.eid       = d.eid;
     p.gen       = d.gen;
@@ -224,7 +227,12 @@ void AdmitRow(const coop::net::PropDriveRow& e, uint8_t slot, uint64_t nowMs) {
             ++g_rowsFailed;
             if (row->failedRun < 255) ++row->failedRun;
             if (row->failedTotal < 65535) ++row->failedTotal;
-            if (row->failedRun >= tb::kMaxRefusedRows) { EndClientRow(*row, Ending::RowsUntrusted); return; }
+            // A run of failures, or as many again over the flight in any pattern (a forged row between true ones resets
+            // the run, never the total); one lost or reordered row is not a cheat.
+            if (row->failedRun >= tb::kMaxRefusedRows || row->failedTotal >= 2 * tb::kMaxRefusedRows) {
+                EndClientRow(*row, Ending::RowsUntrusted);
+                return;
+            }
         }
     } else if (row->admittedEver) {
         const float dx = r.x - row->admitLoc.X, dy = r.y - row->admitLoc.Y, dz = r.z - row->admitLoc.Z;
@@ -522,12 +530,12 @@ void EndClientRow(Driven& d, Ending why) {
     if (why == Ending::RowsUntrusted)
         UE_LOGI("[PROP-SYNC] HOST took eid=%u back from slot %u (rows untrusted: %u in a row, %u in the flight) -- %s",
                 d.eid, static_cast<unsigned>(syncer), static_cast<unsigned>(d.failedRun), static_cast<unsigned>(d.failedTotal),
-                d.passedEver ? "from its last passing row" : "no row passed, from its last displayed row");
+                d.passedEver ? "from its last passing row" : "no row passed, from its release pose at rest");
     else if (d.elected && toHost && why != Ending::HostVerb)
         UE_LOGI("[PROP-SYNC] HOST took eid=%u back from slot %u (%s) -- %s", d.eid, static_cast<unsigned>(syncer),
                 kEndingName[static_cast<unsigned>(why)],
                 d.passedEver ? "from its last passing row"
-                             : d.admittedEver ? "no row passed, from its last displayed row"
+                             : d.admittedEver ? "no row passed, from its release pose at rest"
                                               : "from its own copy, no row was admitted");
     // (4) the row goes, or for a hand-over it becomes the host's: a new generation, nothing sent yet, the stream
     // continuing from the released copy. A verb's claim stays its own; the host's judgement coasts to rest.
