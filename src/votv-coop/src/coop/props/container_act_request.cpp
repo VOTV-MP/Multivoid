@@ -23,6 +23,7 @@
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/facts/function_row.h"
 
@@ -428,9 +429,15 @@ void ReplayTake() {
                     "aborted", static_cast<unsigned>(g_rec.id), static_cast<unsigned>(g_rec.eid),
                     static_cast<unsigned>(g_rec.index), static_cast<unsigned long long>(grantAge));
         } else {
-            UE_LOGI("container_act: take id=%u eid=%u index=%u not replayed (the slot, the screen or the record "
-                    "changed) -> aborted", static_cast<unsigned>(g_rec.id), static_cast<unsigned>(g_rec.eid),
-                    static_cast<unsigned>(g_rec.index));
+            // Which input failed, and what each side held: one line per take, player-paced.
+            void* const viewed = cv::Viewed();
+            UE_LOGI("container_act: take id=%u eid=%u index=%u not replayed (slotLive=%d screenShows=%d sameId=%d "
+                    "hashMatches=%d grantFresh=%d) slotId=%d grantIndex=%u shown=%ls asked=%ls -> aborted",
+                    static_cast<unsigned>(g_rec.id), static_cast<unsigned>(g_rec.eid),
+                    static_cast<unsigned>(g_rec.index), slotLive, shows, sameId, hashMatches, grantFresh,
+                    slotLive ? s.id : -1, static_cast<unsigned>(g_rec.index),
+                    ue_wrap::reflection::ClassNameOf(viewed).c_str(),
+                    ue_wrap::reflection::ClassNameOf(container).c_str());
         }
         SendTakeCommit(g_rec.id, g_rec.eid, 0);
         ShowBadReason();   // the click is lost, never the record: the escrow restores it; the player clicks again
