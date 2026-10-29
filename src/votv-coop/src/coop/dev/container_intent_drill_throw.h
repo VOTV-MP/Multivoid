@@ -3,7 +3,8 @@
 // _throw_trace.cpp (one actor's trace). A private header of coop/dev/container_intent_drill_throw*.cpp (src tree, not
 // include/).
 //
-// The arms MEASURE; they fail only on a fixture failure. A client throws a drive at a shared backpack from about
+// The arms MEASURE; they fail on a fixture failure and on the flight the host judges (the thrower parked, the host's copy too far
+// from the thrower's at the instants it says, throwclamp's copy past the throw bound). A client throws a drive at a shared backpack from about
 // kStandFromTargetCm, from the hotbar hand (throwhand) or from a physics grab (throwgrab); each peer traces the flight,
 // the overlap and the final poses, and the host prints the verdict of each throw from both peers' numbers.
 
@@ -72,6 +73,7 @@ struct Track {
     ue_wrap::FVector last{};
     float maxHoriz = 0.f;         // the farthest horizontal distance from the first sample
     float peakSpeed = 0.f;        // the largest speed, cm/s
+    int notSimMoving = 0;         // samples before rest at which the actor's root was not simulating (a parked copy)
     uint64_t peakT = 0;
     ue_wrap::FVector peakPos{};
     ue_wrap::FVector restRef{};

@@ -15,11 +15,13 @@
 
 #include "coop/dev/container_route_census.h"
 #include "coop/dev/drill_chat.h"
+#include "coop/net/throw_bounds.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/puppet_drive.h"
 #include "coop/player/remote_player.h"
+#include "coop/props/prop_throw.h"
 
 #include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/core/asset_load.h"
@@ -58,6 +60,11 @@ constexpr uint64_t kArmBoundMs     = 240000;  // the fixture line to the client'
 constexpr uint64_t kEndBoundMs     = 120000;  // the arm line to the client's end line
 constexpr uint64_t kNextBoundMs    = 240000;  // the verdict to the client's second or done line (a second walk)
 constexpr uint64_t kFindEveryMs    = 50;      // the search for the host's element of a thrown hand drive
+constexpr int      kAtCount        = 8;       // the thrower says where its copy was at 8 instants (container_intent_drill_throw.cpp)
+constexpr uint64_t kAtSlackMs      = 40;
+constexpr int      kMatchedMin     = 3;       // fewer matched instants than this is no judgement
+constexpr int      kParkedSamplesMax = 3;     // PROVISIONAL: the thrower's samples before rest at which it may read not-simulating
+constexpr float    kFlightGapPassCm = 200.f;  // PROVISIONAL: the largest in-flight gap a green run may print; the proof sets it
 
 enum class HStep : uint8_t { WaitPeer, Bind, WaitArm, Trace, WaitNext, Item2Bind, Done };
 HStep    g_hStep = HStep::WaitPeer;
@@ -250,6 +257,8 @@ struct ClientEnd {
     char arc[8] = "?";
     int gone = 0, ov = 0, all = 0, mir = 0;
     int rest[3] = {};
+    int park = 0;                  // samples at which the thrower's copy was not simulating before rest
+    unsigned long long tmax = 0;   // press to rest on the thrower, ms
     unsigned long long peakT = 0;
     int peakV = 0;
     int peakP[3] = {};
@@ -287,6 +296,8 @@ ClientEnd ReadClientEnd(const std::string& endRest) {
     RD::IntAfter(endRest, "all", c.all);
     RD::IntAfter(endRest, "mir", c.mir);
     IntsAfter(endRest, "rest=", c.rest, 3);
+    RD::IntAfter(endRest, "park", c.park);
+    if (const size_t tm = endRest.find("tmax="); tm != std::string::npos) c.tmax = std::strtoull(endRest.c_str() + tm + 5, nullptr, 10);
     std::string pk;
     if (DC::LiveRestOf(ThrowLine("client", "peak", g_hN, true), &pk)) {
         const size_t t = pk.find("t=");
@@ -294,6 +305,64 @@ ClientEnd ReadClientEnd(const std::string& endRest) {
         c.peakRead = t != std::string::npos && RD::IntAfter(pk, "v", c.peakV) && IntsAfter(pk, "p=", c.peakP, 3);
     }
     return c;
+}
+
+// The flight, judged: the host's copy against the thrower's at the instants the client said (wall clock, the same machine
+// on loopback), the thrower's copy never parked, and for throwclamp the host's copy no faster than the throw bound. Returns
+// the FAIL text, or null for a pass; always prints the numbers the constants are derived from.
+const char* JudgeFlight(const ClientEnd& c, char* why, size_t whyLen) {
+    int matched = 0, said = 0, worstK = 0;
+    float worst = 0.f;
+    for (int k = 1; k <= kAtCount; ++k) {
+        char key[24];
+        std::snprintf(key, sizeof(key), "k=%d ", k);
+        std::string rest;
+        if (!DC::LiveRestOf(ThrowLine("client", "at", g_hN, true) + key, &rest)) continue;
+        ++said;
+        int p[3] = {};
+        const size_t t = rest.find("t=");
+        if (t == std::string::npos || !IntsAfter(rest, "p=", p, 3)) continue;
+        const uint64_t want = std::strtoull(rest.c_str() + t + 2, nullptr, 10);
+        const Sample* best = nullptr;
+        for (const Sample& s : g_hTrack.samples) {
+            const uint64_t d = s.t > want ? s.t - want : want - s.t;
+            if (d <= kAtSlackMs && (!best || d < (best->t > want ? best->t - want : want - best->t))) best = &s;
+        }
+        if (!best) continue;
+        ++matched;
+        const float gap = Dist3(best->pos, FVector{static_cast<float>(p[0]), static_cast<float>(p[1]), static_cast<float>(p[2])});
+        if (gap > worst) { worst = gap; worstK = k; }
+    }
+    UE_LOGI("[CI-DRILL] host throw %s n=%d flight: matched=%d/%d instants, in-flight gap max=%.0f cm at k=%d (green bound %.0f cm, "
+            "PROVISIONAL), thrower parked in flight=%d sample(s) (bound %d), release-to-rest=%llu ms (t_max), host peak %.0f cm/s "
+            "(launch bound %.0f, flight bound %.0f), throws minted here=%u, puppet throwShit ignored n=%u",
+            ArmName(), g_hN, matched, said, static_cast<double>(worst), worstK, static_cast<double>(kFlightGapPassCm), c.park,
+            kParkedSamplesMax, c.tmax, static_cast<double>(g_hTrack.peakSpeed),
+            static_cast<double>(coop::net::throw_bounds::kMaxLaunchSpeedCmS),
+            static_cast<double>(coop::net::throw_bounds::kMaxFlightSpeedCmS), coop::prop_throw::dev::Minted(),
+            coop::prop_throw::dev::PuppetIgnored());
+    if (ArmOf() == Arm::ThrowClamp) {
+        if (g_hTrack.peakSpeed > coop::net::throw_bounds::kMaxLaunchSpeedCmS * 1.1f) {
+            std::snprintf(why, whyLen, "the host's copy flew at %.0f cm/s, past the throw bound %.0f cm/s", static_cast<double>(g_hTrack.peakSpeed),
+                          static_cast<double>(coop::net::throw_bounds::kMaxLaunchSpeedCmS));
+            return why;
+        }
+        return nullptr;
+    }
+    if (c.park > kParkedSamplesMax) {
+        std::snprintf(why, whyLen, "the thrower's copy was parked in flight (%d samples)", c.park);
+        return why;
+    }
+    if (matched < kMatchedMin) {
+        std::snprintf(why, whyLen, "only %d of the thrower's instants matched a host sample (need %d)", matched, kMatchedMin);
+        return why;
+    }
+    if (worst > kFlightGapPassCm) {
+        std::snprintf(why, whyLen, "the host's copy was %.0f cm from the thrower's at k=%d, past %.0f cm", static_cast<double>(worst), worstK,
+                      static_cast<double>(kFlightGapPassCm));
+        return why;
+    }
+    return nullptr;
 }
 
 void Verdict(const std::string& endRest) {
@@ -320,11 +389,17 @@ void Verdict(const std::string& endRest) {
     g_hHit.Finish(g_hTrack);
     HitWatchEnd();
     g_hTrack.on = false;
+    char why[200];
+    if (const char* bad = JudgeFlight(c, why, sizeof(why))) {
+        HFail("%s", bad);
+        return;
+    }
+    UE_LOGI("[CI-DRILL] host throw %s n=%d PASS", ArmName(), g_hN);
     HNext(HStep::WaitNext);
 }
 
 void StepTrace(const coop::net::Session& s, bool due) {
-    if (!g_hTrack.on && ArmOf() == Arm::ThrowHand) {
+    if (!g_hTrack.on && IsHandThrow(ArmOf())) {
         const uint64_t now = ::GetTickCount64();
         if (now >= g_hFindMs) {
             g_hFindMs = now + kFindEveryMs;
@@ -383,7 +458,7 @@ void StepWaitNext() {
             return;
         }
         g_hN = 2;
-        if (ArmOf() == Arm::ThrowHand) {
+        if (IsHandThrow(ArmOf())) {
             HNext(HStep::WaitArm);
             return;
         }

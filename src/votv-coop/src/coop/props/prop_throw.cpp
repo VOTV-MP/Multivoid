@@ -195,4 +195,9 @@ void OnDisconnect() {
     g_minted = g_puppetIgnored = g_noOwner = g_evicted = g_marksDropped = 0;
 }
 
+namespace dev {
+uint32_t Minted() { return g_minted; }
+uint32_t PuppetIgnored() { return g_puppetIgnored; }
+}  // namespace dev
+
 }  // namespace coop::prop_throw

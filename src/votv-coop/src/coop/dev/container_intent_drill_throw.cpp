@@ -21,6 +21,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_drop_intent.h"
+#include "coop/props/prop_throw.h"
 
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
@@ -61,6 +62,9 @@ constexpr uint64_t kHandBoundMs      = 10000;
 constexpr uint64_t kGrabBoundMs      = 20000;
 constexpr uint64_t kItem2BoundMs     = 60000;   // the second standpoint's drive: the host's line, then its mirror
 constexpr uint64_t kArmBoundMs       = 60000;   // the client's arm line to the host's armed line (drill chat leaves one line a second)
+constexpr int      kAtCount          = 8;       // the instants after the press at which the thrower says where its copy was
+constexpr uint64_t kAtEveryMs        = 250;
+constexpr uint64_t kAtSlackMs        = 40;      // a sample this near an instant stands for it
 
 
 enum class Step : uint8_t { WaitLine, WaitMirrors, Rest, WalkWait, Item2Wait, TakeHand, HandRead, Grab, ArmWait, Aim,
@@ -225,7 +229,7 @@ void StepWalkWait() {
     UE_LOGI("[CI-DRILL] client %s: throw %d stands at (%.0f,%.0f,%.0f), %.0f cm from the target", ArmName(), g_n,
             static_cast<double>(g_stand.X), static_cast<double>(g_stand.Y), static_cast<double>(g_stand.Z),
             static_cast<double>(std::hypot(g_packAt.X - g_stand.X, g_packAt.Y - g_stand.Y)));
-    if (ArmOf() == Arm::ThrowHand) {
+    if (IsHandThrow(ArmOf())) {
         Next(Step::TakeHand);
         return;
     }
@@ -343,6 +347,15 @@ void Baseline() {
 }
 
 void BeginFlight(void* actor, const char* via) {
+    // The throw is numbered on this copy (prop_throw), on both throw paths: a throw with no sequence would be a flight the
+    // host never elects.
+    const unsigned seq = coop::prop_throw::SeqFor(actor);
+    UE_LOGI("[CI-DRILL] client %s throw %d: throw seq %u (minted %u, puppet throwShit ignored n=%u)", ArmName(), g_n, seq,
+            coop::prop_throw::dev::Minted(), coop::prop_throw::dev::PuppetIgnored());
+    if (seq == 0) {
+        CFail("the game's throw left no sequence on the thrown copy (the throwShit watch)");
+        return;
+    }
     g_via = via;
     TrackBegin(g_local, "client", "local");
     TrackSet(g_local, actor);
@@ -390,7 +403,7 @@ void StepAim(void* player) {
     case Aimer::State::Working: return;
     case Aimer::State::Failed:  CFail("%s", why); return;
     case Aimer::State::Aimed:
-        if (ArmOf() == Arm::ThrowHand) ThrowTheHeld(player);
+        if (IsHandThrow(ArmOf())) ThrowTheHeld(player);
         else ThrowTheGrab(player);
         return;
     }
@@ -459,15 +472,29 @@ void Wrap(const coop::net::Session& session) {
             static_cast<double>(rest.Z), along < 0.f ? "short" : "long", static_cast<double>(std::fabs(along)),
             static_cast<double>(side), g_ovCount, U(cen::R4Overlaps() - g_ovAll0), U(adds), g_count0, count1,
             static_cast<double>(g_local.peakSpeed), U(g_local.peakT), session.rttMsForSlot(0));
-    char say[128];
+    char say[160];
     std::snprintf(say, sizeof(say), "%st=%llu v=%d p=%d,%d,%d", ThrowLine("client", "peak", g_n, true).c_str(), U(g_local.peakT),
                   static_cast<int>(g_local.peakSpeed), static_cast<int>(g_local.peakPos.X), static_cast<int>(g_local.peakPos.Y),
                   static_cast<int>(g_local.peakPos.Z));
     DC::Say(say);
-    std::snprintf(say, sizeof(say), "%sarc=%s gone=%d ov=%d all=%llu mir=%d rest=%d,%d,%d",
+    // Where the thrower's copy was at fixed instants after the press: the host sets its own copy against them at the same
+    // wall-clock instants. Said before the end line, which is what the host's verdict waits for.
+    for (int k = 1; k <= kAtCount; ++k) {
+        const uint64_t want = g_pressMs + static_cast<uint64_t>(k) * kAtEveryMs;
+        const Sample* best = nullptr;
+        for (const Sample& s : g_local.samples) {
+            const uint64_t d = s.t > want ? s.t - want : want - s.t;
+            if (d <= kAtSlackMs && (!best || d < (best->t > want ? best->t - want : want - best->t))) best = &s;
+        }
+        if (!best) continue;
+        std::snprintf(say, sizeof(say), "%sk=%d t=%llu p=%d,%d,%d", ThrowLine("client", "at", g_n, true).c_str(), k, U(best->t),
+                      static_cast<int>(best->pos.X), static_cast<int>(best->pos.Y), static_cast<int>(best->pos.Z));
+        DC::Say(say);
+    }
+    std::snprintf(say, sizeof(say), "%sarc=%s gone=%d ov=%d all=%llu mir=%d rest=%d,%d,%d park=%d tmax=%llu",
                   ThrowLine("client", "end", g_n, true).c_str(), ArcOf(g_local), g_local.gone ? 1 : 0, g_ovCount,
                   U(cen::R4Overlaps() - g_ovAll0), count1 - g_count0, static_cast<int>(rest.X), static_cast<int>(rest.Y),
-                  static_cast<int>(rest.Z));
+                  static_cast<int>(rest.Z), g_local.notSimMoving, U(g_local.atRest && g_local.restMs > g_pressMs ? g_local.restMs - g_pressMs : 0));
     DC::Say(say);
     FVector next{};
     if (g_n == 1 && landed && !hit && std::fabs(along) >= kMoveMinCm && SecondStand(along, next)) {

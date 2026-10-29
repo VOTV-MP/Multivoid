@@ -3,6 +3,8 @@
 
 #include "coop/props/prop_throw.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/throw_bounds.h"
@@ -20,11 +22,12 @@ uint32_t g_releaseClamped = 0, g_intentClamped = 0, g_intentRefused = 0, g_relay
 }  // namespace
 
 void JudgeRelease(coop::net::Session& session, int senderSlot, coop::net::PropReleasePayload& p) {
+    static const bool s_noClamp = coop::config::ResolveFlag(coop::config_registry::rows::container_throw_no_clamp);
     if (session.role() != coop::net::Role::Host || senderSlot < 1) return;
     float lin[3] = {p.linVelX, p.linVelY, p.linVelZ};
     float ang[3] = {p.angVelX, p.angVelY, p.angVelZ};
     // Finite already: the dispatcher refuses a release whose floats are not.
-    if (tb::ClampPair(lin, tb::kMaxLaunchSpeedCmS, ang, tb::kMaxLaunchAngDegS) == tb::Clamp::Clamped) {
+    if (!s_noClamp && tb::ClampPair(lin, tb::kMaxLaunchSpeedCmS, ang, tb::kMaxLaunchAngDegS) == tb::Clamp::Clamped) {
         UE_LOGW("prop_throw: HOST clamped slot %d's release velocity lin=(%.0f,%.0f,%.0f)->(%.0f,%.0f,%.0f) "
                 "ang=(%.0f,%.0f,%.0f)->(%.0f,%.0f,%.0f) (#%u)", senderSlot, p.linVelX, p.linVelY, p.linVelZ, lin[0],
                 lin[1], lin[2], p.angVelX, p.angVelY, p.angVelZ, ang[0], ang[1], ang[2], ++g_releaseClamped);
@@ -42,6 +45,8 @@ void JudgeRelease(coop::net::Session& session, int senderSlot, coop::net::PropRe
 }
 
 bool JudgeDropIntent(coop::net::PropDropIntentPayload& p, uint8_t senderSlot) {
+    static const bool s_noClamp = coop::config::ResolveFlag(coop::config_registry::rows::container_throw_no_clamp);
+    if (s_noClamp) return true;   // the clamp arm's red: the forged velocity reaches the spawn
     const float was[3] = {p.linVel[0], p.linVel[1], p.linVel[2]};
     const tb::Clamp c = tb::ClampPair(p.linVel, tb::kMaxLaunchSpeedCmS, p.angVel, tb::kMaxLaunchAngDegS);
     if (c == tb::Clamp::NonFinite) {

@@ -2,6 +2,8 @@
 
 #include "coop/props/prop_drop_intent.h"
 
+#include "coop/config/config.h"             // the throw arms' dev knobs
+#include "coop/config/config_registry.h"
 #include "coop/dev/container_route_census.h"   // IsEnabled -- the dev read of the last place spawn is kept only while it runs
 #include "coop/dev/prop_birth_key_probe.h"   // the seam's key-timing and drain-exit instrumentation
 #include "coop/element/registry.h"          // EidForActor (drain: tracked/mirror exclusion)
@@ -525,6 +527,17 @@ void Tick(coop::net::Session* session) {
                 p.angVel[0] = ang.X; p.angVel[1] = ang.Y; p.angVel[2] = ang.Z;
             }
             p.throwSeq = coop::prop_throw::SeqFor(e.actor);
+            // The throw arms' dev knobs: a red that sends the thrown prop's intent with no velocity, and a forged
+            // multiple of it for the clamp arm.
+            static const bool s_noVel = coop::config::ResolveFlag(coop::config_registry::rows::container_throw_no_velocity);
+            static const long s_scale = coop::config::ResolveInt(coop::config_registry::rows::container_throw_scale);
+            if (p.throwSeq != 0 && s_noVel) {
+                for (float& v : p.linVel) v = 0.f;
+                for (float& v : p.angVel) v = 0.f;
+            } else if (p.throwSeq != 0 && s_scale > 1) {
+                for (float& v : p.linVel) v *= static_cast<float>(s_scale);
+                for (float& v : p.angVel) v *= static_cast<float>(s_scale);
+            }
         }
         const auto scl = ue_wrap::engine::GetActorScale3D(e.actor);
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
@@ -552,7 +565,7 @@ void Tick(coop::net::Session* session) {
                              : isNotebookSheet ? "authored-notebook-sheet"
                                              : "authored-drop-intent",
                              e.tries, key);
-        UE_LOGI("[PROP-DROP] CLIENT authored %s key='%ls' cls='%ls' name='%ls' loc=(%.1f,%.1f,%.1f)%s",
+        UE_LOGI("[PROP-DROP] CLIENT authored %s key='%ls' cls='%ls' name='%ls' loc=(%.1f,%.1f,%.1f) drain |v|=%.1f cm/s throw seq %u%s",
                 freshBirth     ? "FRESH-BIRTH intent"
                 : e.playerSpawn ? "PLAYER-SPAWN intent"
                 : isNotebookSheet ? "NOTEBOOK-SHEET intent"
@@ -560,7 +573,8 @@ void Tick(coop::net::Session* session) {
                 key.c_str(), cls.c_str(),
                 WireToWide(p.propName.len, p.propName.data, sizeof(p.propName.data)).c_str(),
                 p.locX, p.locY, p.locZ,
-                coop::prop_save_data::Covers(e.actor) ? " +record" : "");
+                std::sqrt(p.linVel[0] * p.linVel[0] + p.linVel[1] * p.linVel[1] + p.linVel[2] * p.linVel[2]),
+                static_cast<unsigned>(p.throwSeq), coop::prop_save_data::Covers(e.actor) ? " +record" : "");
     }
     g_pending.swap(keep);
 }

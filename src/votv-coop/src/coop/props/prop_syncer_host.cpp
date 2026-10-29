@@ -83,7 +83,8 @@ std::vector<coop::net::PropPoseSnapshot> g_take[coop::net::kMaxPeers];
 uint32_t g_granted = 0, g_admitted = 0, g_notSyncer = 0, g_lateSyncer = 0, g_staleGen = 0, g_paced = 0, g_steps = 0;
 uint32_t g_endsAdmitted = 0, g_endsNotSyncer = 0, g_endsStale = 0, g_endsOutOfBounds = 0, g_endsClamped = 0;
 uint32_t g_nonSyncerAdmitted = 0;
-uint32_t g_elected = 0, g_electRefused = 0, g_rowsRefused = 0;
+uint32_t g_elected = 0, g_electRefused = 0, g_rowsRefused = 0, g_thrownAdmitted = 0, g_jitRows = 0;
+int64_t  g_jitMax = 0;   // the largest (sender dt - host arrival dt) of an elected row's later rows, ms
 std::unordered_map<uint32_t, dev::Admitted> g_admittedBy;   // eid -> rows admitted, for the drill's judge
 uint32_t g_refused[8] = {};
 uint32_t g_ended[static_cast<unsigned>(Ending::kCount)] = {};
@@ -173,6 +174,10 @@ bool ElectedRowAdmitted(Driven& row, const coop::net::PropPoseSnapshot& e, uint8
     const int64_t dtRow = first ? static_cast<int64_t>(e.sendTimeMs)
                                 : static_cast<int64_t>(e.sendTimeMs) - static_cast<int64_t>(row.admitSendMs);
     const int64_t arrival = static_cast<int64_t>(nowMs - (first ? row.startMs : row.admitMs));
+    if (!first) {
+        if (dtRow - arrival > g_jitMax || g_jitRows == 0) g_jitMax = dtRow - arrival;
+        ++g_jitRows;
+    }
     if (tb::RowAdmitted(e.vel, step, dtRow, arrival)) {
         row.refusedRun = 0;
         return true;
@@ -214,6 +219,15 @@ void AdmitRow(const coop::net::PropPoseSnapshot& e, uint8_t slot, uint64_t nowMs
     }
     row->admitLoc = ue_wrap::FVector{e.x, e.y, e.z};
     row->admitRot = ue_wrap::FRotator{e.pitch, e.yaw, e.roll};
+    if (row->elected && !row->admittedEver) {   // the first row: where the host copy stood against where the thrower's copy was
+        ue_wrap::FVector cur{};
+        void* a = row->ref.Get();
+        if (a && E::TryGetActorLocation(a, cur))
+            UE_LOGI("[PROP-SYNC] HOST first row eid=%u slot %u: the host copy is %.1f cm from the row, |v|=%.0f cm/s, release-to-row %llu ms",
+                    e.elementId, static_cast<unsigned>(slot), std::sqrt((cur.X - e.x) * (cur.X - e.x) + (cur.Y - e.y) * (cur.Y - e.y) + (cur.Z - e.z) * (cur.Z - e.z)),
+                    std::sqrt(e.vel[0] * e.vel[0] + e.vel[1] * e.vel[1] + e.vel[2] * e.vel[2]), static_cast<unsigned long long>(nowMs - row->startMs));
+    }
+    if (row->elected) ++g_thrownAdmitted;
     row->admitVel = ue_wrap::FVector{e.vel[0], e.vel[1], e.vel[2]};
     row->admitSendMs = e.sendTimeMs;
     row->admitMs = nowMs;
@@ -301,6 +315,8 @@ void OnClaim(coop::net::Session& s, const coop::net::PropSyncClaimPayload& p, ui
 
 bool ElectSyncer(void* actor, uint8_t slot, uint16_t throwSeq, const float releaseLoc[3], uint64_t releaseMs) {
     UE_ASSERT_GAME_THREAD("prop_syncer_host::ElectSyncer");
+    static const bool s_noElect = coop::config::ResolveFlag(coop::config_registry::rows::container_throw_no_elect);
+    if (s_noElect) return false;   // the throw arms' red: the host keeps its own simulation of the throw
     if (!g_session || !actor || slot == 0 || throwSeq == 0) return false;
     const uint32_t eid = static_cast<uint32_t>(coop::prop_element_tracker::GetPropElementIdForActor(actor));
     // The grant is answered to the thrower alone, on a lane a slot that is not world-ready drops.
@@ -374,6 +390,9 @@ void OnClientEnd(coop::net::Session& s, const coop::net::PropDriveEndPayload& se
     RecordHandBack(p.eid, slot, nowMs);
     coop::prop_drive_host::EraseRow(*row);
     Tally(g_endsAdmitted, "End admitted (rest)", p.eid, slot);
+    if (row->elected)
+        UE_LOGI("[PROP-SYNC] HOST thrown eid=%u gen=%u slot %u rested: release-to-End %llu ms, rows admitted %u, jitter (sender dt - arrival dt) max %lld ms over %u rows",
+                p.eid, static_cast<unsigned>(p.gen), static_cast<unsigned>(slot), static_cast<unsigned long long>(nowMs - row->startMs), g_thrownAdmitted, static_cast<long long>(g_jitMax), g_jitRows);
 }
 
 void Admit(coop::net::Session& s) {
@@ -464,7 +483,8 @@ void OnDisconnect() {
     g_granted = g_admitted = g_notSyncer = g_lateSyncer = g_staleGen = g_paced = g_steps = 0;
     g_endsAdmitted = g_endsNotSyncer = g_endsStale = g_endsOutOfBounds = g_endsClamped = 0;
     g_nonSyncerAdmitted = 0;
-    g_elected = g_electRefused = g_rowsRefused = 0;
+    g_elected = g_electRefused = g_rowsRefused = g_thrownAdmitted = g_jitRows = 0;
+    g_jitMax = 0;
     g_admittedBy.clear();
     std::fill(std::begin(g_refused), std::end(g_refused), 0u);
     std::fill(std::begin(g_ended), std::end(g_ended), 0u);

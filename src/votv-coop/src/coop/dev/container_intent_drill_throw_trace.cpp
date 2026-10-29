@@ -98,6 +98,7 @@ void TrackTick(Track& t, int rttMs) {
     }
     if (t.samples.size() < kMaxSamples) t.samples.push_back(Sample{now, at, speed});
     t.last = at;
+    if (!t.atRest && !E::IsActorRootSimulatingPhysics(actor)) ++t.notSimMoving;
     t.maxHoriz = std::max(t.maxHoriz, Horiz(at, t.first));
     if (speed > t.peakSpeed) {
         t.peakSpeed = speed;

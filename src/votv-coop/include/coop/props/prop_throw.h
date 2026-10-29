@@ -59,6 +59,11 @@ void NoteMark(const std::wstring& key, uint8_t slot, uint16_t seq, const float l
 bool HasMarks();   // any mark waiting: the spawn watcher reads a birth's key only then
 bool TakeMark(const std::wstring& key, Mark* out);
 
+namespace dev {   // read by the throw arms of the container intent drill
+uint32_t Minted();          // throw sequences minted this session
+uint32_t PuppetIgnored();   // throwShit calls on a pawn that is not the local one (expected 0)
+}  // namespace dev
+
 // A session ended: the records, the marks and the counters go.
 void OnDisconnect();
 

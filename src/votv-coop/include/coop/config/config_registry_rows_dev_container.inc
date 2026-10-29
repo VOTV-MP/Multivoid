@@ -35,7 +35,7 @@ CFG_FLAG(container_view_drill, "container_view_drill", "dev", false, "VOTVCOOP_C
     "Drill (client): walks to the ATV, opens its container through the game's own openPropInv, then walks "
     "back; the view must stay open while the ATV is within reach and close on the tick it leaves it. Run it "
     "with join_at_host=1. Lines tagged [CVIEW-DRILL]; the client's DONE line, carrying the verdict, ends it.")
-CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room|putrecord|puthand|putfood|puthidden|putnested|putempty|puthover|putreserved|putfull|putfullhand|putdepart|putdeadline|putowed|putjoin|throwhand|throwgrab|throwhostgrab",
+CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room|putrecord|puthand|putfood|puthidden|putnested|putempty|puthover|putreserved|putfull|putfullhand|putdepart|putdeadline|putowed|putjoin|throwhand|throwgrab|throwhostgrab|throwclamp",
     "VOTVCOOP_CONTAINER_INTENT_DRILL",
     "Drill (BOTH peers): both pick the same shared container (the smallest element id, within 5000 cm of the player, "
     "that holds two records or more and that a nav route reaches; race, two, sale and room take one whose first record "
@@ -72,7 +72,11 @@ CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|ta
     "(run with container_route_census=1 on both peers) MEASURE a client throwing a drive at a shared backpack from about "
     "350 cm, from the hotbar hand or from a physics grab (throwhostgrab: the host grabs and throws, the client only traces): "
     "both peers trace the flight, the first blocking hit, the overlap and the final poses, "
-    "and the host prints MEASURED per throw; they fail only on a fixture failure. Lines tagged [CI-DRILL]; the "
+    "and the host prints MEASURED per throw; they fail only on a fixture failure, and on the flight: the thrower's "
+    "copy parked in flight, or the host's copy more than the bound from the thrower's at the instants the client "
+    "says (red: container_throw_no_elect, container_throw_no_velocity). throwclamp -- throwhand with "
+    "container_throw_scale=10: the host's copy must fly no faster than the throw bound (red: container_throw_no_clamp). "
+    "Lines tagged [CI-DRILL]; the "
     "host's DONE line ends it. It MUTATES the world.")
 CFG_FLAG(container_act_no_escrow, "container_act_no_escrow", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_ESCROW",
     "Red arm for the container intent drill (HOST): a grant opens its escrow with the record found but does not "
@@ -100,3 +104,15 @@ CFG_STRING(container_route_census, "container_route_census", "dev", "", "VOTVCOO
     "each route sends, every 30 s and at session end. Lines tagged [CI-CENSUS]. 1 -- the census alone. drill -- "
     "also drives each route once on the client against a container the host places beside it, and reads the "
     "open screen and the record hashes on both peers. drill-before -- the take the host refuses.")
+CFG_FLAG(container_throw_no_elect, "container_throw_no_elect", "dev", false, "VOTVCOOP_CONTAINER_THROW_NO_ELECT",
+    "Red arm for the throw arms (HOST): a thrown prop elects no syncer, so the host's own simulation of the throw "
+    "is the only flight it streams and the copies part from the thrower's after the first contact.")
+CFG_FLAG(container_throw_no_velocity, "container_throw_no_velocity", "dev", false, "VOTVCOOP_CONTAINER_THROW_NO_VELOCITY",
+    "Red arm for the throw arms (CLIENT): the drop intent of a thrown prop sends zero velocity, so the host's copy "
+    "falls where the throw began while the thrower's flies on.")
+CFG_FLAG(container_throw_no_clamp, "container_throw_no_clamp", "dev", false, "VOTVCOOP_CONTAINER_THROW_NO_CLAMP",
+    "Red arm for the throwclamp arm (HOST): a client's release and drop-intent velocities are not clamped to the "
+    "throw bounds, so the host's copy flies at the forged speed.")
+CFG_INT(container_throw_scale, "container_throw_scale", "dev", 1, 1, 100, "VOTVCOOP_CONTAINER_THROW_SCALE",
+    "Dev (CLIENT): the velocity a thrown prop's drop intent and release carry is multiplied by this, a forged "
+    "throw for the throwclamp arm. 1 = off.")
