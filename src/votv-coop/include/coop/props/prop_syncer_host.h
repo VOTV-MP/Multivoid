@@ -7,9 +7,10 @@
 // unoccupied-vehicle syncer (reference/mtasa-blue/Server/mods/deathmatch/logic/CUnoccupiedVehicleSync.cpp),
 // with the push judged on the server, and the host's own copy kept in step.
 //
-// A row ends five ways, all here: the client's own rest End (OnClientEnd), a hand taking the prop, a host
-// verb on it, the syncer's silence, range or leaving, and the prop dying. The row's readers in
-// prop_drive_host call the first of those back through EndClientRow (prop_drive_rows.h).
+// A row ends these ways, all here: the client's own rest End (OnClientEnd), a hand taking the prop, a host verb on it,
+// the syncer's silence, range or leaving, the prop dying, and for a thrown prop a grant timeout, a flight bound or a run
+// of refused rows. The row's readers in prop_drive_host call the first of those back through EndClientRow
+// (prop_drive_rows.h).
 //
 // HOST-ONLY, game thread.
 

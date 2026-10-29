@@ -86,11 +86,12 @@ uint32_t g_nonSyncerAdmitted = 0;
 uint32_t g_elected = 0, g_electRefused = 0, g_rowsRefused = 0;
 std::unordered_map<uint32_t, dev::Admitted> g_admittedBy;   // eid -> rows admitted, for the drill's judge
 uint32_t g_refused[8] = {};
-uint32_t g_ended[6] = {};
+uint32_t g_ended[static_cast<unsigned>(Ending::kCount)] = {};
 
 const char* const kRefusalName[8] = {"none", "not_ready", "unknown", "in_hand", "host_authored", "other_syncer",
                                      "out_of_reach", "paced"};
-const char* const kEndingName[6] = {"hand", "host verb", "died", "silent", "out of range", "slot left"};
+const char* const kEndingName[static_cast<unsigned>(Ending::kCount)] = {
+    "hand", "host verb", "died", "silent", "out of range", "slot left", "flight bound", "rows refused", "grant timeout"};
 
 void Tally(uint32_t& n, const char* what, uint32_t eid, unsigned slot) {
     if (++n == 1 || (n % 100) == 0)
@@ -145,8 +146,8 @@ bool IsLateSyncer(uint32_t eid, uint8_t slot, uint64_t nowMs) {
     return nowMs - it->second.ms <= window;
 }
 
-// The End of a row ended by the host: the last admitted pose, the released copy's flags, the velocity zero. MTA's
-// receivers keep the last speed after a sync stops; here rows are pose-only, so the host has no velocity to carry.
+// The End of a row ended by the host: the last admitted pose and linear velocity (zero when the syncer never sent one;
+// the rows carry no spin), and the released copy's flags. MTA's receivers keep the last speed after a sync stops.
 coop::net::PropDriveEndPayload EndOf(const Driven& d, void* actor) {
     coop::net::PropDriveEndPayload p{};
     p.eid       = d.eid;
@@ -156,13 +157,14 @@ coop::net::PropDriveEndPayload EndOf(const Driven& d, void* actor) {
     p.pitch = ue_wrap::NormalizeAxis(d.admitRot.Pitch);
     p.yaw   = ue_wrap::NormalizeAxis(d.admitRot.Yaw);
     p.roll  = ue_wrap::NormalizeAxis(d.admitRot.Roll);
+    p.linVelX = d.admitVel.X; p.linVelY = d.admitVel.Y; p.linVelZ = d.admitVel.Z;
     return p;
 }
 
 // An elected row's test (coop/net/throw_bounds.h): its velocity under the flight ceiling and its step agreeing with
 // it. The first row is measured from the release (its pose, and its arrival on this clock), the rest from the last
 // admitted row (its stamp on the sender's clock, its arrival on this one); the host never compares clocks across
-// peers, only deltas. A refused row is counted against the run that ends the row (Commit 3's RowRefused).
+// peers, only deltas. A refused row is counted against the run that ends the row (RowRefused).
 bool ElectedRowAdmitted(Driven& row, const coop::net::PropPoseSnapshot& e, uint8_t slot, uint64_t nowMs) {
     const bool first = !row.admittedEver;
     const ue_wrap::FVector from = first ? row.startLoc : row.admitLoc;
@@ -200,7 +202,10 @@ void AdmitRow(const coop::net::PropPoseSnapshot& e, uint8_t slot, uint64_t nowMs
     // row keeps the old rule: a movement discontinuity is logged, never refused (the host may cheat and the relay
     // holds), and its first row after a grant is not tested, the claim's reach test having bounded where it started.
     if (row->elected) {
-        if (!ElectedRowAdmitted(*row, e, slot, nowMs)) return;
+        if (!ElectedRowAdmitted(*row, e, slot, nowMs)) {
+            if (row->refusedRun >= tb::kMaxRefusedRows) EndClientRow(*row, Ending::RowRefused);
+            return;
+        }
     } else if (row->admittedEver) {
         const float dx = e.x - row->admitLoc.X, dy = e.y - row->admitLoc.Y, dz = e.z - row->admitLoc.Z;
         const float dtMs = static_cast<float>(std::max<uint64_t>(nowMs - row->admitMs, 1));
@@ -229,11 +234,15 @@ void AdmitRow(const coop::net::PropPoseSnapshot& e, uint8_t slot, uint64_t nowMs
 }
 
 // Once a second (the ATV's RunPass rules 1 and 3): no admitted row for kSyncerSilenceMs, or the syncer's puppet
-// beyond kSyncerDistanceCm. MTA re-elects the nearest player (:133-146); a prop here belongs to no author at
-// rest and the host's world is always loaded (the ATV's reason, atv_authority.cpp:366-368).
+// beyond kSyncerDistanceCm; and for a thrown prop no admitted row kGrantTimeoutMs after the election, or a flight past
+// kMaxThrowFlightMs. MTA re-elects the nearest player (:133-146); a prop here belongs to no author at rest and the
+// host's world is always loaded (the ATV's reason, atv_authority.cpp:366-368).
 void Pass(uint64_t nowMs) {
     for (Driven& d : coop::prop_drive_host::Rows()) {
         if (d.dead || d.syncer == 0) continue;
+        // A thrown prop is the host's again when no row was admitted in time, or when its flight outlasts any throw.
+        if (d.elected && !d.admittedEver && nowMs - d.startMs >= tb::kGrantTimeoutMs) { EndClientRow(d, Ending::GrantTimeout); continue; }
+        if (d.elected && nowMs - d.startMs >= tb::kMaxThrowFlightMs) { EndClientRow(d, Ending::FlightBound); continue; }
         if (nowMs - d.admitMs >= kSyncerSilenceMs) { EndClientRow(d, Ending::Silence); continue; }
         void* actor = d.ref.Get();
         coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(d.syncer);
@@ -396,38 +405,53 @@ void EndClientRow(Driven& d, Ending why) {
     const uint8_t syncer = d.syncer;
     const uint8_t gen = d.gen;
     void* actor = d.ref.Get();
-    // (1) the host's copy is released at the last admitted pose, (2) the End is built from it. With nothing
-    // admitted no receiver saw this generation, and a dead prop has no copy: no release, no End.
+    // A host verb, and the three endings that are the host's own judgement of a thrown prop, hand the prop to the host:
+    // its copy goes on from the last admitted row and its stream takes over under a new generation.
+    const bool toHost = why == Ending::HostVerb || why == Ending::FlightBound || why == Ending::RowRefused ||
+                        why == Ending::GrantTimeout;
+    // (1) the host's copy is released at the last admitted pose and velocity, (2) the End is built from it. With
+    // nothing admitted no receiver saw this generation and the copy was never parked, and a dead prop has no copy:
+    // no release, no End.
     if (why != Ending::Died && d.admittedEver && actor) {
         coop::net::PropDriveEndPayload end = EndOf(d, actor);
         coop::prop_drive_stream::ReleaseHost(end);
-        // A host verb sends no End: its new generation's poses supersede this one on every receiver.
-        if (why != Ending::HostVerb && g_session) {
+        // A hand-over sends no End: its new generation's poses supersede this one on every receiver.
+        if (!toHost && g_session) {
             end.physFlags = coop::prop_wire_parity::PhysFlagsOf(actor);
             g_session->SendReliable(coop::net::ReliableKind::PropDriveEnd, &end, sizeof(end));
         }
     }
-    // (3) the syncer is told, with the generation it ends (before any bump) and the seq of its claim; a slot that
-    // left is told nothing.
+    // (3) the syncer is told, with the generation it ends (before any bump) and the seq of its claim or the sequence of
+    // its throw; a slot that left is told nothing.
     if (why != Ending::SlotLeft && g_session)
         Answer(*g_session, syncer, d.eid, d.claimSeq, gen, PropSyncResult::Revoked, PropSyncRefusal::None);
     RecordHandBack(d.eid, syncer, nowMs);
     Tally(g_ended[static_cast<unsigned>(why)], kEndingName[static_cast<unsigned>(why)], d.eid, syncer);
-    // (4) the row goes, or for a host verb it becomes the host's: a new generation, nothing sent yet, the verb's
-    // stream continuing from the released copy.
-    if (why != Ending::HostVerb) { coop::prop_drive_host::EraseRow(d); return; }
+    if (why == Ending::FlightBound || why == Ending::RowRefused || why == Ending::GrantTimeout)
+        UE_LOGI("[PROP-SYNC] HOST took eid=%u back from slot %u (%s) -- %s", d.eid, static_cast<unsigned>(syncer),
+                kEndingName[static_cast<unsigned>(why)],
+                d.admittedEver ? "from its last admitted row" : "from its own copy, no row was admitted");
+    // (4) the row goes, or for a hand-over it becomes the host's: a new generation, nothing sent yet, the stream
+    // continuing from the released copy. A verb's claim stays its own; the host's judgement coasts to rest.
+    if (!toHost) { coop::prop_drive_host::EraseRow(d); return; }
     d.syncer       = 0;
     d.gen          = coop::prop_drive_host::BumpGen(d.eid);
-    d.claimed      = true;
+    d.claimed      = why == Ending::HostVerb;
     d.everSent     = false;
     d.resend       = false;
     d.unreadSaid   = false;
+    d.openMs       = nowMs;
     d.lastMoveMs   = nowMs;
     d.nextProbeMs  = 0;
     d.admittedEver = false;
     d.freshAdmit   = false;
     d.admitMs      = 0;
+    d.admitVel     = ue_wrap::FVector{};
+    d.admitSendMs  = 0;
     d.claimSeq     = 0;
+    d.elected      = false;
+    d.throwSeq     = 0;
+    d.refusedRun   = 0;
     d.streamBucket.Reset();
 }
 

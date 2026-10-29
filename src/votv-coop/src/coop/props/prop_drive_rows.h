@@ -91,15 +91,17 @@ std::vector<Driven>& Rows();
 
 namespace coop::prop_syncer_host {
 
-// Why a client's row ends on the host. Hand, HostVerb and Died are met by the row's own
-// readers in prop_drive_host; the rest are prop_syncer_host's own passes. A rest End comes from the client
-// itself (OnClientEnd) and is not one of these.
-enum class Ending : uint8_t { Hand, HostVerb, Died, Silence, Range, SlotLeft };
+// Why a client's row ends on the host. Hand, HostVerb and Died are met by the row's own readers in
+// prop_drive_host; the rest are prop_syncer_host's own passes. A rest End comes from the client itself (OnClientEnd)
+// and is not one of these. FlightBound (an elected row past kMaxThrowFlightMs), RowRefused (kMaxRefusedRows refused
+// rows in a row) and GrantTimeout (no row admitted kGrantTimeoutMs after the election) hand the prop to the host the
+// way HostVerb does: its copy continues from the last admitted row, or from its own state when none was.
+enum class Ending : uint8_t { Hand, HostVerb, Died, Silence, Range, SlotLeft, FlightBound, RowRefused, GrantTimeout, kCount };
 
-// End client row `row` in the one order every ending uses: release the host's copy at the last admitted pose,
-// send the End built from it (none for a host verb, none with nothing admitted), tell the syncer `Revoked`
-// (none when its slot left), then erase the row, or for a host verb hand it to the host under a new
-// generation. Defined in prop_syncer_host.cpp; prop_drive_host.cpp calls it. Game thread.
+// End client row `row` in the one order every ending uses: release the host's copy at the last admitted pose and
+// velocity, send the End built from it (none for an ending that hands the prop to the host, none with nothing
+// admitted), tell the syncer `Revoked` (none when its slot left), then erase the row, or for those endings hand it to
+// the host under a new generation. Defined in prop_syncer_host.cpp; prop_drive_host.cpp calls it. Game thread.
 void EndClientRow(coop::prop_drive_host::Driven& row, Ending why);
 
 }  // namespace coop::prop_syncer_host
