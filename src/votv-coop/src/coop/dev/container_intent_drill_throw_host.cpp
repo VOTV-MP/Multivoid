@@ -347,6 +347,12 @@ bool JudgeLaunch(const ClientEnd& c, char* why, size_t whyLen) {
     std::snprintf(g_hLaunch, sizeof(g_hLaunch), "launch=%.0f/%.0f", static_cast<double>(a), static_cast<double>(t));
     UE_LOGI("[CI-DRILL] host throw %s n=%d launch: the host's copy was given %.0f cm/s (%s), the thrower threw at %.0f cm/s (bound %.0f)",
             ArmName(), g_hN, static_cast<double>(a), hand ? "drop intent spawn" : "release", static_cast<double>(t), static_cast<double>(bound));
+    // A launch the thrower did not say (cut from its end line, or a copy that never moved) is no floor: it fails, so a red
+    // cannot pass on a missing number.
+    if (t < 1.f) {
+        std::snprintf(why, whyLen, "the thrower's launch speed did not read (launch=%.0f)", static_cast<double>(t));
+        return false;
+    }
     if (a < 0.5f * (std::min)(t, bound)) {
         std::snprintf(why, whyLen, "the host's copy launched at %.0f cm/s where the thrower threw at %.0f cm/s", static_cast<double>(a),
                       static_cast<double>(t));
@@ -435,6 +441,13 @@ void Verdict(const std::string& endRest) {
     else
         UE_LOGI("[CI-DRILL] host throw %s n=%d revoked=0 (%u failed rows shown)", ArmName(), g_hN, tv.failedDisplayed);
     char why[200];
+    if (!c.peakRead) {   // the end line was cut past its peak words: the peak is not judged, so the arm cannot pass
+        g_hHit.Finish(g_hTrack);
+        HitWatchEnd();
+        g_hTrack.on = false;
+        HFail("the client's end line lost its peak words (peakv=/peakp=)");
+        return;
+    }
     if (!JudgeLaunch(c, why, sizeof(why))) {
         g_hHit.Finish(g_hTrack);
         HitWatchEnd();
