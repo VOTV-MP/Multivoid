@@ -527,10 +527,9 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     // edge waits (the convert and kerfur callers pass one of these arguments); it sits after the kerfur gate, so a
     // different-key kerfur never waits, and before the steal gate, which would judge by what has arrived so far.
     if (fuzzy && deferKerfur && !fromConvert && !outSpawned && !skipBind &&
-        coop::props::bracket_position_wait::IsWaiting()) {
-        coop::props::bracket_position_wait::Wait(payload, senderSlot);
+        coop::props::bracket_position_wait::IsWaiting() &&
+        coop::props::bracket_position_wait::Wait(payload, senderSlot))
         return;
-    }
     // The identity-steal gate: a fuzzy match already mirror-bound to a different eid is an
     // established cross-peer identity, a different prop within 30 cm (N same-spot placements arrive
     // back to back and the quiescence drain applies them in one batch); stealing it would chain N

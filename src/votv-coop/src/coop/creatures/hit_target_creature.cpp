@@ -64,12 +64,11 @@ void* CreatureOf(uint32_t eid) {
 
 }  // namespace
 
-uint32_t ClientClaim(const sg::Call& c) {
+uint32_t ClientClaim(const sg::Call& c, coop::hit_intent::Swing& swing) {
     if (!c.object || !coop::npc_mirror_brain::IsMarkedMirror(c.object) ||
         !coop::npc_mirror_brain::IsParkedClass(R::ClassOf(c.object)))
         return EL::kInvalidId;
 
-    coop::hit_intent::Swing swing;
     if (!coop::hit_intent::ReadLocalSwing(c, swing)) return EL::kInvalidId;
 
     const EL::ElementId eid = EL::Registry::Get().EidForActor(c.object);

@@ -9,7 +9,6 @@
 #include "coop/net/protocol.h"
 #include "coop/player/hit_intent.h"
 #include "coop/props/prop_damage_gate.h"
-#include "coop/props/remote_prop.h"
 
 #include "ue_wrap/actors/int_objects.h"
 #include "ue_wrap/actors/prop.h"
@@ -40,14 +39,15 @@ bool RefusesProps() {
 
 }  // namespace
 
-uint32_t ClientClaim(const sg::Call& c) {
+uint32_t ClientClaim(const sg::Call& c, coop::hit_intent::Swing& swing) {
     if (!c.object || !ue_wrap::prop::IsDescendantOfProp(c.object)) return EL::kInvalidId;
 
-    coop::hit_intent::Swing swing;
     if (!coop::hit_intent::ReadLocalSwing(c, swing)) return EL::kInvalidId;
     if (coop::props::prop_damage_gate::AuthoredHere(c.object)) return EL::kInvalidId;
 
-    const EL::ElementId eid = coop::remote_prop::ResolveMirrorEidByActor(c.object, true);
+    // The element the actor is bound to, O(1): a host element is the claim, a client's own row is refused by the host's
+    // type check.
+    const EL::ElementId eid = EL::Registry::Get().EidForActor(c.object);
     if (eid == EL::kInvalidId) {
         if (!g_unboundSaid) {
             g_unboundSaid = true;
@@ -55,11 +55,13 @@ uint32_t ClientClaim(const sg::Call& c) {
         }
         return coop::hit_intent::kClaimedUnsent;
     }
-    if (g_sentSaid < kMaxSaid) {
-        ++g_sentSaid;
-        UE_LOGI("hit_target_prop: sent eid=%u dmg=%.1f", static_cast<unsigned>(eid), static_cast<double>(swing.damage));
-    }
     return static_cast<uint32_t>(eid);
+}
+
+void NoteSent(uint32_t eid, float damage) {
+    if (g_sentSaid >= kMaxSaid) return;
+    ++g_sentSaid;
+    UE_LOGI("hit_target_prop: sent eid=%u dmg=%.1f", static_cast<unsigned>(eid), static_cast<double>(damage));
 }
 
 void* HostTarget(uint32_t eid) {

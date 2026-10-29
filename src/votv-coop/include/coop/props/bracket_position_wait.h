@@ -8,8 +8,8 @@
 // matched to the free candidates nearest first and adopted through remote_prop_spawn::AdoptByPosition. A spawn left
 // with no free candidate takes the ordinary spawn path, which fresh-spawns.
 //
-// A keyed prop's release and held pose name it by key and carry no eid, so bind_wait cannot hold them: the receivers
-// hand the newest of each to KeepIfWaiting at their key miss, and the drain replays them after the bind.
+// A keyed prop's release, pose and stick state carry no eid, so bind_wait cannot hold them: the receivers hand the
+// newest of each to KeepIfWaiting at their key miss, and the drain replays them after the bind.
 //
 // Only the wire receive edge waits (the convert and kerfur callers of OnSpawn never do), and only on a client. A spawn
 // after Complete never waits. The dev row bracket_position_wait_off turns the wait off whole. Game thread.
@@ -27,7 +27,7 @@ struct WireKey;
 namespace coop::props::bracket_position_wait {
 
 // Which kept message: the newest of each kind is kept per waiting key.
-enum class Kept : uint8_t { Release, Pose };
+enum class Kept : uint8_t { Release, Pose, Stick };
 
 // The bracket opened: any earlier wait is dropped (an aborted bracket re-sends its spawns), and the wait is armed.
 void BeginBracket();
@@ -38,8 +38,9 @@ bool IsWaiting();
 // How many spawns wait now; 0 once the bracket is drained. Read-only, for the dev drill.
 size_t WaitingCount();
 
-// Keep the spawn until the bracket's end. A second spawn of the same eid replaces the first.
-void Wait(const coop::net::PropSpawnPayload& payload, int senderSlot);
+// Keep the spawn until the bracket's end. A second spawn of the same eid replaces the first. False (said once per
+// bracket) when 256 spawns wait already: the caller binds this one on arrival.
+bool Wait(const coop::net::PropSpawnPayload& payload, int senderSlot);
 
 // A destroy of a waiting eid, or (eid 0 or invalid) of a waiting key, drops the wait. True when one was dropped.
 bool OnDestroy(uint32_t eid, const coop::net::WireKey& key);
@@ -49,8 +50,9 @@ bool OnDestroy(uint32_t eid, const coop::net::WireKey& key);
 // run before the receiver reaches its miss.
 bool KeepIfWaiting(const coop::net::WireKey& key, Kept what, const void* bytes, size_t n, int senderSlot);
 
-// The bracket closed: the flag drops first, then every waiting spawn is matched and bound (nearest first), the rest
-// take the spawn path, and the kept releases and poses replay in arrival order. One log line. `localPlayer` is the
+// The bracket closed: the flag drops first, then a spawn whose exact key resolves now takes the spawn path, every
+// other waiting spawn is matched and bound (nearest first), the rest take the spawn path, and the kept releases,
+// poses and stick states replay in arrival order. One log line. `localPlayer` is the
 // live AmainPlayer_C, possibly null.
 void DrainAtComplete(void* localPlayer);
 

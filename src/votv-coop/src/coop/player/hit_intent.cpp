@@ -63,13 +63,14 @@ const uint8_t* ParamBytes(const sg::Call& c, int32_t offset) {
 }
 
 // Where addDamage's parameters sit in one class's function. The watch is on every class's addDamage, and the
-// families' functions alternate, so each is held on its own.
+// functions of the creature families and of the prop classes that declare their own alternate, so each is held on
+// its own.
 struct ParamLayout {
     int32_t actor = -1, damage = -1, impact = -1, hit = -1, hitSize = -1;
 };
 
 const ParamLayout& LayoutOf(void* function) {
-    static ue_wrap::ObjKeyedCache<ParamLayout, 4> sLayouts;
+    static ue_wrap::ObjKeyedCache<ParamLayout, 16> sLayouts;
     if (const ParamLayout* held = sLayouts.Find(function)) return *held;
     ParamLayout l;
     l.actor = R::FindParamOffset(function, L"actor");
@@ -97,13 +98,16 @@ FVector HitPoint(const sg::Call& c, const ParamLayout& layout) {
 sg::Verdict OnAddDamagePre(const sg::Call& c) {
     coop::net::Session* s = LoadSession();
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return sg::Verdict::Run;
-    // The targets are asked in turn; a claim has read the swing as this machine's own player's.
-    uint32_t eid = coop::hit_target_creature::ClientClaim(c);
-    if (eid == coop::element::kInvalidId) eid = coop::hit_target_prop::ClientClaim(c);
+    // The targets are asked in turn; a claim has read the swing as this machine's own player's, and hands it back.
+    Swing swing;
+    bool byProp = false;
+    uint32_t eid = coop::hit_target_creature::ClientClaim(c, swing);
+    if (eid == coop::element::kInvalidId) {
+        eid = coop::hit_target_prop::ClientClaim(c, swing);
+        byProp = true;
+    }
     if (eid == coop::element::kInvalidId) return sg::Verdict::Run;
     if (eid == kClaimedUnsent) return sg::Verdict::Cancel;
-    Swing swing;
-    if (!ReadLocalSwing(c, swing)) return sg::Verdict::Run;
 
     coop::net::HitIntentPayload p{};
     p.targetEid = eid;
@@ -117,7 +121,9 @@ sg::Verdict OnAddDamagePre(const sg::Call& c) {
     p.impact[2] = swing.impact.Z;
 
     if (!s->SendReliableToSlot(0, coop::net::ReliableKind::HitIntent, &p, sizeof(p)))
-        UE_LOGW("creature_hit_intent: the hit on creature %u was not sent", p.targetEid);
+        UE_LOGW("creature_hit_intent: the hit on target %u was not sent", p.targetEid);
+    else if (byProp)
+        coop::hit_target_prop::NoteSent(eid, swing.damage);
     return sg::Verdict::Cancel;
 }
 
@@ -250,8 +256,8 @@ bool ReadLocalSwing(const sg::Call& c, Swing& out) {
     if (!actorAt || !damageAt || !impactAt) {
         if (!g_paramsWarned) {
             g_paramsWarned = true;
-            UE_LOGW("creature_hit_intent: the addDamage parameters did not resolve -- a client's hit on a creature "
-                    "is not sent");
+            UE_LOGW("creature_hit_intent: the addDamage parameters did not resolve -- a client's hit on a host "
+                    "entity is not sent");
         }
         return false;
     }
@@ -281,8 +287,8 @@ void Tick() {
             UE_LOGI("creature_hit_intent: the watch on addDamage is live");
         } else if (g_reg == Reg::Refused || sg::NameWatchSettled(kRowAddDamage, kTag)) {
             g_settled = true;
-            UE_LOGE("creature_hit_intent: the watch on addDamage is dead -- a client's hit on a creature reaches the "
-                    "host's creature by no route");
+            UE_LOGE("creature_hit_intent: the watch on addDamage is dead -- a client's hit on a host entity reaches "
+                    "the host's copy by no route");
         }
     }
     coop::net::Session* s = LoadSession();

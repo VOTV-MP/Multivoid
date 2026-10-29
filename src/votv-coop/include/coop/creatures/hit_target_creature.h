@@ -12,6 +12,10 @@ namespace coop::net {
 struct HitIntentPayload;
 }  // namespace coop::net
 
+namespace coop::hit_intent {
+struct Swing;
+}  // namespace coop::hit_intent
+
 namespace ue_wrap::script_gate {
 struct Call;
 }  // namespace ue_wrap::script_gate
@@ -19,8 +23,9 @@ struct Call;
 namespace coop::hit_target_creature {
 
 // CLIENT: the element id of the parked creature mirror this addDamage call strikes, when this machine's own player is
-// the damager; else kInvalidId. A claim plays the family's hit feedback before it returns.
-uint32_t ClientClaim(const ue_wrap::script_gate::Call& c);
+// the damager; else kInvalidId. A claim fills `swing` (the one read of the call the sender then uses) and plays the
+// family's hit feedback before it returns.
+uint32_t ClientClaim(const ue_wrap::script_gate::Call& c, coop::hit_intent::Swing& swing);
 
 // HOST: the live parked-family creature the element id names, else null.
 void* HostTarget(uint32_t eid);

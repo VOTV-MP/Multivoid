@@ -37,8 +37,9 @@ void Tick(coop::net::Session& session);
 // identifies which slot's drive to clear (a scan by key returned the first match and could clear
 // the wrong slot when two slots briefly held a prop with the same key). `localPlayer` gives the
 // thrown event a non-null player; the game's throw statistics credit the local player, a minor
-// inaccuracy for the natural effects.
-void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, void* localPlayer);
+// inaccuracy for the natural effects. `replayed` is a release the bracket kept for a waiting spawn: it was counted
+// when it arrived.
+void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, void* localPlayer, bool replayed = false);
 
 // Close hold `holdGen` of the peer in `slot` (PropPoseSnapshot::holdGen): a pose of it that
 // arrives later is the tail of an ended stream and starts no drive. The release closes its own

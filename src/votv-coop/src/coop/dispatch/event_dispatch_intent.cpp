@@ -371,8 +371,8 @@ bool HandleIntentEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::HitIntent: {
-        // CLIENT->HOST: a client's swing hit a creature's mirror. The host judges the swing and runs the verb on its
-        // own creature (coop::hit_intent); the format lives here. Never relayed.
+        // CLIENT->HOST: a client's swing hit a host entity's mirror. The host judges the swing and runs the verb on its
+        // own copy (coop::hit_intent); the format lives here. Never relayed.
         if (session.role() != net::Role::Host) {
             UE_LOGW("event_feed: HitIntent received on a client -- dropping");
             break;

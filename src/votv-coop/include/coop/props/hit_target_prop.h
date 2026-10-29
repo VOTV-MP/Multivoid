@@ -14,6 +14,10 @@ namespace coop::net {
 struct HitIntentPayload;
 }  // namespace coop::net
 
+namespace coop::hit_intent {
+struct Swing;
+}  // namespace coop::hit_intent
+
 namespace ue_wrap::script_gate {
 struct Call;
 }  // namespace ue_wrap::script_gate
@@ -22,8 +26,13 @@ namespace coop::hit_target_prop {
 
 // CLIENT: the element id of the prop mirror this addDamage call strikes, when this machine's own player is the damager
 // and this client does not author the prop; kInvalidId when the call is not such a hit; coop::hit_intent::kClaimedUnsent
-// when it is but the mirror is bound to no element yet (the call is cancelled, nothing is sent).
-uint32_t ClientClaim(const ue_wrap::script_gate::Call& c);
+// when it is but the mirror is bound to no element yet (the call is cancelled, nothing is sent). A claim fills `swing`,
+// the one read of the call the sender then uses. The id is whatever element the actor is bound to; the host checks the
+// element's type.
+uint32_t ClientClaim(const ue_wrap::script_gate::Call& c, coop::hit_intent::Swing& swing);
+
+// CLIENT: the claimed swing reached the host's queue; said, up to a session's first lines.
+void NoteSent(uint32_t eid, float damage);
 
 // HOST: the live prop the element id names, else null.
 void* HostTarget(uint32_t eid);

@@ -197,10 +197,10 @@ void CloseHold(int slot, uint16_t holdGen) {
     h.haveClosed = true;
 }
 
-void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, void* localPlayer) {
+void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, void* localPlayer, bool replayed) {
     // Reads and clears the sender's drive; dispatched from event_feed on the game thread.
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::OnRelease)");
-    if (payload.throwSeq != 0) ++g_throwReleases;
+    if (payload.throwSeq != 0 && !replayed) ++g_throwReleases;
     const std::wstring keyW = KeyToWString(payload.key);
     coop::swinger_join_pose::Forget(keyW);   // a release is newer than a connect pose parked for this lid
     const float linSpeedSq = payload.linVelX * payload.linVelX +
@@ -452,9 +452,10 @@ void RegisterPropMirror(coop::element::ElementId eid,
 }
 
 // The eid bound to `actor` among the Prop elements: the mirror-side fallback the chipPile grab
-// hook uses when a client grabs a host-owned pile, whose mirror is not in the forward map. O(n),
-// on the grab edge only; a snapshot under the manager lock, then a lock-free walk that reads
-// GetActor and GetId only.
+// hook uses when a client grabs a host-owned pile, whose mirror is not in the forward map. O(n):
+// a snapshot under the manager lock, then a lock-free walk that reads GetActor and GetId only. For
+// the grab edge and the spawn receiver's steal gate; a caller that runs per swing or per candidate
+// asks Registry::EidForActor, which is O(1).
 coop::element::ElementId ResolveMirrorEidByActor(void* actor, bool wireMirrorOnly) {
     if (!actor) return coop::element::kInvalidId;
     std::vector<coop::element::Prop*> snap;
