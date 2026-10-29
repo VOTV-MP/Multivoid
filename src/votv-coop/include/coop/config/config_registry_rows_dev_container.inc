@@ -33,18 +33,22 @@ CFG_FLAG(container_view_drill, "container_view_drill", "dev", false, "VOTVCOOP_C
     "Drill (client): walks to the ATV, opens its container through the game's own openPropInv, then walks "
     "back; the view must stay open while the ATV is within reach and close on the tick it leaves it. Run it "
     "with join_at_host=1. Lines tagged [CVIEW-DRILL]; the client's DONE line, carrying the verdict, ends it.")
-CFG_ENUM(join_prop_loss_drill, "join_prop_loss_drill", "dev", "off", "off|break|breakown|rekey|swing|throwat",
+CFG_ENUM(join_prop_loss_drill, "join_prop_loss_drill", "dev", "off", "off|break|swing|heldbreak|fire|rekey|twin|stack|late|throwat",
     "VOTVCOOP_JOIN_PROP_LOSS_DRILL",
     "Drill (BOTH peers, run with join_at_host=1): the host puts beer cans on the ground ahead of it before the client "
     "joins; the peers sequence each other by lobby-chat lines and each prints `<role> <arm> PASS|FAIL|INCONCLUSIVE`, "
-    "then DONE. break -- once the join is over the client breaks a resting mirror of a host can with an impact no "
-    "player caused; the host's can must survive. breakown -- the same with the client's own player as the cause; the "
-    "break must reach the host and the can be gone. rekey -- two cans 13.7 cm apart: the client destroys one before "
-    "the join's snapshot bracket, then after the bracket the other must still carry its own key, each key must "
-    "resolve to its own actor, and the host must still hold both. swing -- a measure: the client takes the axe, walks "
-    "within 150 cm of a host can's mirror and swings at it until its copy is gone or 10 swings; the host judges as "
-    "in breakown. throwat -- a measure: the client throws a can at a host can's mirror, up to 3 times. Run both "
-    "with impact_damage_probe=1 on both peers: the probe lines are the result. Lines tagged [JPL-DRILL].")
+    "then DONE. break -- once the join is over the client calls a resting mirror's impactDamage with no hitting actor; "
+    "its copy and the host's can must stand. fire -- the same with fireDamage. swing -- the client takes the axe, walks "
+    "within 150 cm of a host can's mirror and swings at it until its copy is gone or 10 swings; both copies must go. "
+    "heldbreak -- the client takes a host can into its hand with the director's grab and calls its impactDamage; the "
+    "copy must go and the host's can with it. rekey -- two cans 13.7 cm apart: the client destroys one before the "
+    "join's snapshot bracket, then after the bracket the other must still carry its own key, each key must resolve to "
+    "its own actor, and the host must still hold both. twin -- the client destroys its copy of a can and spawns one "
+    "of its own at its place before the bracket; after it key A must resolve to that can. stack -- three cans 13.7 cm "
+    "apart on X: the client destroys the middle copy before the bracket; after it the other two must keep their own "
+    "keys and the middle key must resolve to a third actor. late -- the host places a can on the client's line that "
+    "its bracket closed; it must show with no wait. throwat -- a measure: the client throws a can at a host can's "
+    "mirror, up to 3 times. Run all with impact_damage_probe=1 on both peers. Lines tagged [JPL-DRILL].")
 CFG_FLAG(prop_damage_gate_off, "prop_damage_gate_off", "dev", false, "VOTVCOOP_PROP_DAMAGE_GATE_OFF",
     "Developer red arm: never set. The client's gate on a prop's impactDamage and fireDamage does nothing, so a client's "
     "own physics can break a mirror of a host prop again and the join prop loss drill's break and fire arms must fail.")

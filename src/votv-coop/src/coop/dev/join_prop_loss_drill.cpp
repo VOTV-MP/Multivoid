@@ -10,7 +10,6 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/roster.h"
-#include "coop/props/join_membership_sweep.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_key_index.h"
 #include "coop/props/remote_prop.h"
@@ -50,14 +49,13 @@ using ue_wrap::FVector;
 
 namespace detail {
 
-enum class Arm : uint8_t { Off, Break, BreakOwn, Rekey, Swing, ThrowAt };
-
 struct ArmRow {
     const char* name;
     Arm arm;
 };
-constexpr ArmRow kArms[] = {{"break", Arm::Break}, {"breakown", Arm::BreakOwn}, {"rekey", Arm::Rekey},
-                           {"swing", Arm::Swing}, {"throwat", Arm::ThrowAt}};
+constexpr ArmRow kArms[] = {{"break", Arm::Break}, {"swing", Arm::Swing}, {"heldbreak", Arm::HeldBreak},
+                           {"fire", Arm::Fire},   {"rekey", Arm::Rekey}, {"twin", Arm::Twin},
+                           {"stack", Arm::Stack}, {"late", Arm::Late},   {"throwat", Arm::ThrowAt}};
 
 Arm ArmOf() {
     static const Arm a = [] {
@@ -79,15 +77,11 @@ const char* Role() { return coop::roster::LocalIsHost() ? "host" : "client"; }
 
 constexpr float kAheadCm = 150.f;                         // the placement spot, in front of the host player
 constexpr float kLiftCm = 3.f;                            // a can spawned at floor height falls through
-constexpr float kPairGapCm = 13.7f;                       // the second can, on world X
-constexpr float kPairRangeCm = 3000.f;                    // rekey: the pair nearest the client player
-constexpr float kPairMaxCm = 25.f;                        // two cans this close are the pair
-constexpr float kBreakDamage = 100000.f;
+constexpr float kPairGapCm = 13.7f;                       // the cans of a pair or a stack, on world X
+constexpr float kLateOffsetCm = 60.f;                     // late: the can placed after the bracket, on world Y
 constexpr uint64_t kFindBudgetMs = 5000;                  // a placed can shows, with its key, within this
 constexpr uint64_t kJudgeDelayMs = 3000;                  // the host judges this long after the client's line
-constexpr uint64_t kAnswerBudgetMs = 15000;               // the key index answers within this
 
-constexpr const char* kRekeyJudgedLine = "[JPL] rekey judged";
 constexpr const char* kClientInconclusiveLine = "[JPL] client inconclusive";
 
 bool g_done = false;
@@ -177,17 +171,9 @@ void* NearestMirror(void* me) {
 
 bool IsMeasureArm() { return ArmOf() == Arm::Swing || ArmOf() == Arm::ThrowAt; }
 bool IsThrowAt() { return ArmOf() == Arm::ThrowAt; }
-
-}  // namespace detail
-
-using namespace detail;
-
-namespace {
-
-bool Has(const std::vector<void*>& set, void* a) {
-    for (void* p : set)
-        if (p == a) return true;
-    return false;
+bool IsBracketArm() {
+    const Arm a = ArmOf();
+    return a == Arm::Rekey || a == Arm::Twin || a == Arm::Stack || a == Arm::Late;
 }
 
 bool KeyLive(const std::wstring& key) {
@@ -210,9 +196,65 @@ bool SpawnCan(const FVector& at) {
            f.Set<int32_t>(L"amount", 1) && ue_wrap::Call(gm, f);
 }
 
+namespace {
+
+// The can's physicsImpact component, or null.
+void* PhysicsImpactOf(void* can) {
+    static int32_t off = -2;
+    if (off == -2) {
+        void* cls = R::FindClass(L"prop_C");
+        if (!cls) return nullptr;
+        off = R::FindPropertyOffset(cls, L"physicsImpact");
+    }
+    if (off < 0) return nullptr;
+    void* comp = *reinterpret_cast<void**>(static_cast<uint8_t*>(can) + off);
+    return comp && R::IsLive(comp) ? comp : nullptr;
+}
+
+}  // namespace
+
+// impactDamage on the can's physicsImpact component, damage 100000, the hit zero; `causer` is the hitting actor.
+bool CallImpactDamage(void* can, void* causer) {
+    void* comp = PhysicsImpactOf(can);
+    void* fn = comp ? R::FindFunction(R::ClassOf(comp), L"impactDamage") : nullptr;
+    ue_wrap::ParamFrame f(fn);
+    if (!fn || !f.valid()) return false;
+    f.Set<float>(L"damage", kBreakDamage);
+    f.Set<void*>(L"actor", causer);
+    return ue_wrap::Call(comp, f);
+}
+
+// fireDamage(damage) on the same component: its health goes down by the damage and it ends in the owner's destroy.
+bool CallFireDamage(void* can) {
+    void* comp = PhysicsImpactOf(can);
+    void* fn = comp ? R::FindFunction(R::ClassOf(comp), L"fireDamage") : nullptr;
+    ue_wrap::ParamFrame f(fn);
+    if (!fn || !f.valid()) return false;
+    f.Set<float>(L"damage", kBreakDamage);
+    return ue_wrap::Call(comp, f);
+}
+
+bool EndOnHostJudged() {
+    if (!DC::SeenHas(kHostJudgedLine)) return false;
+    Finish();
+    return true;
+}
+
+}  // namespace detail
+
+using namespace detail;
+
+namespace {
+
+bool Has(const std::vector<void*>& set, void* a) {
+    for (void* p : set)
+        if (p == a) return true;
+    return false;
+}
+
 // ---- host ----------------------------------------------------------------------------------------------------
 
-enum class HStep : uint8_t { Ready, FindA, FindB, Wait, Judge, Done };
+enum class HStep : uint8_t { Ready, Find, WaitBracket, Wait, Judge, Done };
 
 struct Placed {
     std::wstring key;
@@ -222,7 +264,8 @@ struct Placed {
 HStep g_hstep = HStep::Ready;
 FVector g_spot{};
 std::vector<void*> g_before;
-Placed g_a, g_b;
+std::vector<FVector> g_plan;        // where each can goes, in order
+std::vector<Placed> g_placed;       // the cans placed so far, in order
 uint64_t g_hstepMs = 0;
 std::wstring g_brokeKey;
 uint64_t g_judgeAtMs = 0;
@@ -245,9 +288,28 @@ bool ComputeSpot() {
     return true;
 }
 
+// The cans of the arm, as offsets from the spot; late places its can after the client's bracket line instead.
+void BuildPlan() {
+    g_plan.clear();
+    g_plan.push_back({0.f, 0.f, 0.f});
+    switch (ArmOf()) {
+    case Arm::Rekey: g_plan.push_back({kPairGapCm, 0.f, 0.f}); break;
+    case Arm::Stack:   // the middle can first, then the left, then the right
+        g_plan.push_back({-kPairGapCm, 0.f, 0.f});
+        g_plan.push_back({kPairGapCm, 0.f, 0.f});
+        break;
+    case Arm::Late: g_plan[0] = {0.f, kLateOffsetCm, 0.f}; break;
+    default: break;
+    }
+}
+
+FVector PlanAt(size_t i) {
+    return {g_spot.X + g_plan[i].X, g_spot.Y + g_plan[i].Y, g_spot.Z + g_plan[i].Z};
+}
+
 // The first can not in g_before whose key has been written and whose element the tracker has registered; false while
-// there is none, and the drill ends when none shows within the budget. Waiting for the element orders the pair's ids:
-// B is placed only after A holds one, so A is the lower and arrives first in the snapshot bracket.
+// there is none, and the drill ends when none shows within the budget. Waiting for the element orders the cans' ids:
+// the next is placed only after this one holds one, so an earlier can arrives first in the snapshot bracket.
 bool FindNew(Placed& out, uint64_t now) {
     std::vector<void*> live;
     Cans(live);
@@ -272,7 +334,7 @@ bool FindNew(Placed& out, uint64_t now) {
     return false;
 }
 
-void Place(const FVector& at, HStep next, uint64_t now) {
+void Place(const FVector& at, uint64_t now) {
     Cans(g_before);
     if (!SpawnCan(at)) {
         Inconclusive("the gamemode's spawnPropThroughGamemode did not run");
@@ -281,7 +343,7 @@ void Place(const FVector& at, HStep next, uint64_t now) {
         return;
     }
     g_hstepMs = now;
-    g_hstep = next;
+    g_hstep = HStep::Find;
 }
 
 // The verdict, then the host's line that releases the client; an empty `failWhy` is a pass.
@@ -293,53 +355,92 @@ void HostJudgeAndFinish(const std::string& failWhy) {
     Finish();
 }
 
+// Every can placed has been found: the arm's lines, then the wait for the client.
+void PlacedAll() {
+    const Placed& p0 = g_placed[0];
+    if (ArmOf() == Arm::Rekey)
+        UE_LOGI("[JPL-DRILL] host pair A=%ls eid=%u B=%ls eid=%u (A first in the bracket: %d)", p0.key.c_str(), p0.eid,
+                g_placed[1].key.c_str(), g_placed[1].eid, p0.eid < g_placed[1].eid ? 1 : 0);
+    if (ArmOf() == Arm::Stack) {
+        const Placed &l = g_placed[1], &r = g_placed[2];
+        UE_LOGI("[JPL-DRILL] host stack M=%ls eid=%u L=%ls eid=%u R=%ls eid=%u (M is the lowest: %d)", p0.key.c_str(),
+                p0.eid, l.key.c_str(), l.eid, r.key.c_str(), r.eid, p0.eid < l.eid && p0.eid < r.eid ? 1 : 0);
+    }
+    if (ArmOf() == Arm::Late) DC::Say(std::string(kLateCanLine) + Narrow(p0.key));
+    g_hstep = HStep::Wait;
+}
+
+// A bracket arm's verdict: the client named the first can it judged, and every can the host placed must still live.
+void HostJudgeBracket(const std::string& named) {
+    if (named != Narrow(g_placed[0].key)) {
+        Inconclusive("the client judged %s, not the host's first can %ls", named.c_str(), g_placed[0].key.c_str());
+        DC::Say(kHostJudgedLine);
+        g_hstep = HStep::Done;
+        Finish();
+        return;
+    }
+    std::string lost;
+    for (const Placed& p : g_placed) {
+        const bool live = KeyLive(p.key);
+        UE_LOGI("[JPL-DRILL] host can %ls live=%d", p.key.c_str(), live ? 1 : 0);
+        if (!live && lost.empty()) lost = "host lost " + Narrow(p.key);
+    }
+    HostJudgeAndFinish(lost);
+}
+
 void HostTick() {
     if (g_hstep == HStep::Done) return;
     const uint64_t now = coop::net::NowMs();
     switch (g_hstep) {
     case HStep::Ready:
         if (!coop::host_world_settle::Settled() || !LocalPlayer() || !ComputeSpot()) return;
+        BuildPlan();
         UE_LOGI("[JPL-DRILL] host places at (%.1f,%.1f,%.1f)", g_spot.X, g_spot.Y, g_spot.Z);
-        Place(g_spot, HStep::FindA, now);
-        return;
-    case HStep::FindA:
-        if (!FindNew(g_a, now)) return;
-        if (ArmOf() != Arm::Rekey) {
-            g_hstep = HStep::Wait;
+        if (ArmOf() == Arm::Late) {
+            g_hstep = HStep::WaitBracket;
             return;
         }
-        Place({g_spot.X + kPairGapCm, g_spot.Y, g_spot.Z}, HStep::FindB, now);
+        Place(PlanAt(0), now);
         return;
-    case HStep::FindB:
-        if (!FindNew(g_b, now)) return;
-        UE_LOGI("[JPL-DRILL] host pair A=%ls eid=%u B=%ls eid=%u (A first in the bracket: %d)", g_a.key.c_str(),
-                g_a.eid, g_b.key.c_str(), g_b.eid, g_a.eid < g_b.eid ? 1 : 0);
-        g_hstep = HStep::Wait;
+    case HStep::WaitBracket:
+        if (DC::SeenHas(kClientInconclusiveLine)) {
+            Inconclusive("the client ended inconclusive");
+            Finish();
+            g_hstep = HStep::Done;
+            return;
+        }
+        if (!DC::SeenHas(kBracketDoneLine)) return;
+        UE_LOGI("[JPL-DRILL] host heard the client's bracket close; places can C");
+        Place(PlanAt(0), now);
         return;
+    case HStep::Find: {
+        Placed p;
+        if (!FindNew(p, now)) return;
+        g_placed.push_back(p);
+        if (g_placed.size() < g_plan.size()) Place(PlanAt(g_placed.size()), now);
+        else PlacedAll();
+        return;
+    }
     case HStep::Wait: {
         if (DC::SeenHas(kClientInconclusiveLine)) {
             Inconclusive("the client ended inconclusive");
             Finish();
-            return;
-        }
-        if (ArmOf() == Arm::Rekey) {
-            if (!DC::SeenHas(kRekeyJudgedLine)) return;
-            if (!KI::CanAnswer()) return;
-            const bool aLive = KeyLive(g_a.key), bLive = KeyLive(g_b.key);
-            UE_LOGI("[JPL-DRILL] host rekey A live=%d B live=%d", aLive ? 1 : 0, bLive ? 1 : 0);
-            if (!aLive) HostJudgeAndFinish("host lost " + Narrow(g_a.key));
-            else if (!bLive) HostJudgeAndFinish("host lost " + Narrow(g_b.key));
-            else HostJudgeAndFinish("");
+            g_hstep = HStep::Done;
             return;
         }
         std::string rest;
+        if (IsBracketArm()) {
+            if (!DC::SeenRestOf(kClientJudgedLine, &rest) || !KI::CanAnswer()) return;
+            HostJudgeBracket(rest);
+            return;
+        }
         // throwat reports a can that stood too: the host reads either line and measures.
         if (!DC::SeenRestOf(kBrokeLine, &rest) && !(IsThrowAt() && DC::SeenRestOf(kStoodLine, &rest))) return;
         g_brokeKey = Widen(rest);
         g_judgeAtMs = now + kJudgeDelayMs;
         g_hstepMs = now;
         UE_LOGI("[JPL-DRILL] host heard the client broke %ls (the placed can: %d)", g_brokeKey.c_str(),
-                g_brokeKey == g_a.key ? 1 : 0);
+                g_brokeKey == g_placed[0].key ? 1 : 0);
         g_hstep = HStep::Judge;
         return;
     }
@@ -355,9 +456,12 @@ void HostTick() {
         }
         const bool live = KeyLive(g_brokeKey);
         UE_LOGI("[JPL-DRILL] host can %ls live=%d", g_brokeKey.c_str(), live ? 1 : 0);
+        const Arm arm = ArmOf();
         if (IsThrowAt()) HostJudgeAndFinish("");   // a measure: the line above is the host's reading
-        else if (ArmOf() == Arm::Break) HostJudgeAndFinish(live ? std::string() : "host lost " + Narrow(g_brokeKey));
-        else HostJudgeAndFinish(live ? "host kept " + Narrow(g_brokeKey) : std::string());
+        else if (arm == Arm::Break || arm == Arm::Fire)   // a call the client's gate cancels: the can stays
+            HostJudgeAndFinish(live ? std::string() : "host lost " + Narrow(g_brokeKey));
+        else   // swing and heldbreak: the break is the client's to make and the host's to take
+            HostJudgeAndFinish(live ? "host kept " + Narrow(g_brokeKey) : std::string());
         return;
     }
     case HStep::Done:
@@ -365,35 +469,14 @@ void HostTick() {
     }
 }
 
-// ---- client --------------------------------------------------------------------------------------------------
+// ---- client: break and fire ----------------------------------------------------------------------------------
 
-enum class CStep : uint8_t { Seek, Broke, Observe, Destroyed, WaitHost, Done };
+enum class CStep : uint8_t { Seek, Observe, WaitHost, Done };
 
 CStep g_cstep = CStep::Seek;
 uint64_t g_readyMs = 0;
-ue_wrap::CachedObjRef g_target;     // break: the can broken. rekey: B's actor
+ue_wrap::CachedObjRef g_target;
 std::string g_targetKey;
-std::wstring g_keyA, g_keyB;
-bool g_pairSeen = false;
-
-// impactDamage on the can's physicsImpact component, damage 100000, the hit zero; `causer` is the hitting actor.
-bool CallImpactDamage(void* can, void* causer) {
-    static int32_t off = -2;
-    if (off == -2) {
-        void* cls = R::FindClass(L"prop_C");
-        if (!cls) return false;
-        off = R::FindPropertyOffset(cls, L"physicsImpact");
-    }
-    if (off < 0) return false;
-    void* comp = *reinterpret_cast<void**>(static_cast<uint8_t*>(can) + off);
-    if (!comp || !R::IsLive(comp)) return false;
-    void* fn = R::FindFunction(R::ClassOf(comp), L"impactDamage");
-    ue_wrap::ParamFrame f(fn);
-    if (!fn || !f.valid()) return false;
-    f.Set<float>(L"damage", kBreakDamage);
-    f.Set<void*>(L"actor", causer);
-    return ue_wrap::Call(comp, f);
-}
 
 void ClientBreakTick(uint64_t now) {
     switch (g_cstep) {
@@ -405,8 +488,8 @@ void ClientBreakTick(uint64_t now) {
         void* can = NearestMirror(me);
         if (!can) {
             if (now - g_readyMs >= kMirrorBudgetMs) {
-                Inconclusive("no beer can with a wire mirror within %.0f cm of the player after %llu ms", kMirrorRangeCm,
-                             static_cast<unsigned long long>(kMirrorBudgetMs));
+                Inconclusive("no beer can with a wire mirror within %.0f cm of the player after %llu ms",
+                             static_cast<double>(kMirrorRangeCm), static_cast<unsigned long long>(kMirrorBudgetMs));
                 g_cstep = CStep::Done;
                 Finish();
             }
@@ -414,12 +497,13 @@ void ClientBreakTick(uint64_t now) {
         }
         const std::wstring key = ue_wrap::prop::GetKeyString(can);
         g_targetKey = Narrow(key);
-        UE_LOGI("[JPL-DRILL] client breaks %ls eid=%u", key.c_str(),
+        UE_LOGI("[JPL-DRILL] client %s %ls eid=%u", ArmOf() == Arm::Fire ? "fires" : "breaks", key.c_str(),
                 static_cast<unsigned>(coop::remote_prop::ResolveMirrorEidByActor(can, true)));
         g_target.Set(can);
-        void* causer = ArmOf() == Arm::BreakOwn ? me : nullptr;
-        if (!CallImpactDamage(can, causer)) {
-            Inconclusive("impactDamage did not run on the can's physicsImpact component");
+        const bool ran = ArmOf() == Arm::Fire ? CallFireDamage(can) : CallImpactDamage(can, nullptr);
+        if (!ran) {
+            Inconclusive("%s did not run on the can's physicsImpact component",
+                         ArmOf() == Arm::Fire ? "fireDamage" : "impactDamage");
             g_cstep = CStep::Done;
             Finish();
             return;
@@ -430,109 +514,43 @@ void ClientBreakTick(uint64_t now) {
     case CStep::Observe: {
         const bool live = g_target.Alive() && R::IsLive(g_target.Get());
         UE_LOGI("[JPL-DRILL] client copy of %s live=%d", g_targetKey.c_str(), live ? 1 : 0);
-        if (ArmOf() == Arm::Break) {
-            if (live) Pass();
-            else Fail("the client's own physics destroyed the mirror");
-        } else {
-            if (!live) Pass();
-            else Fail("the client's own player's hit left the mirror standing");
-        }
+        if (live) Pass();
+        else Fail("the client's own %s destroyed the mirror", ArmOf() == Arm::Fire ? "fire damage" : "physics");
         DC::Say(std::string(kBrokeLine) + g_targetKey);
         g_cstep = CStep::WaitHost;
         return;
     }
-    default:
+    case CStep::WaitHost:
+        if (EndOnHostJudged()) g_cstep = CStep::Done;
+        return;
+    case CStep::Done:
         return;
     }
-}
-
-// The pair of cans within 25 cm of each other whose midpoint is nearest the local player within 3000 cm; A is the one
-// with the lower world X. False when there is none.
-bool FindPair(void* me, void*& a, void*& b, float& gap) {
-    FVector mine{};
-    if (!E::TryGetActorLocation(me, mine)) return false;
-    std::vector<void*> cans;
-    Cans(cans);
-    std::vector<FVector> pos(cans.size());
-    for (size_t i = 0; i < cans.size(); ++i) E::TryGetActorLocation(cans[i], pos[i]);
-    float bestMid = kPairRangeCm;
-    bool found = false;
-    for (size_t i = 0; i < cans.size(); ++i) {
-        for (size_t j = i + 1; j < cans.size(); ++j) {
-            const float d = Dist(pos[i], pos[j]);
-            if (d > kPairMaxCm) continue;
-            const FVector mid{(pos[i].X + pos[j].X) * .5f, (pos[i].Y + pos[j].Y) * .5f, (pos[i].Z + pos[j].Z) * .5f};
-            const float md = Dist(mine, mid);
-            if (md > bestMid) continue;
-            bestMid = md;
-            found = true;
-            gap = d;
-            const bool iLower = pos[i].X <= pos[j].X;
-            a = iLower ? cans[i] : cans[j];
-            b = iLower ? cans[j] : cans[i];
-        }
-    }
-    return found;
-}
-
-void RekeyAbort(const char* why) {
-    Inconclusive("%s", why);
-    g_cstep = CStep::Done;
-    Finish();
-}
-
-void ClientRekeyJudge(uint64_t now) {
-    if (!g_readyMs) g_readyMs = now;
-    if (!KI::CanAnswer()) {
-        if (now - g_readyMs >= kAnswerBudgetMs) RekeyAbort("the key index did not answer");
-        return;
-    }
-    void* b = g_target.Alive() ? g_target.Get() : nullptr;
-    const bool bLive = b && R::IsLive(b);
-    const std::wstring bKey = bLive ? ue_wrap::prop::GetKeyString(b) : std::wstring();
-    const bool c1 = bLive && bKey == g_keyB;
-    UE_LOGI("[JPL-DRILL] client (1) B live=%d carries %ls (own key %ls) -> %d", bLive ? 1 : 0, bKey.c_str(),
-            g_keyB.c_str(), c1 ? 1 : 0);
-    void* aNow = KI::Find(g_keyA);
-    const bool aLive = aNow && R::IsLive(aNow);
-    const bool c2 = aLive && aNow != b;
-    UE_LOGI("[JPL-DRILL] client (2) key A resolves to %p live=%d not B's=%d -> %d", aNow, aLive ? 1 : 0,
-            aNow != b ? 1 : 0, c2 ? 1 : 0);
-    void* bNow = KI::Find(g_keyB);
-    const bool c3 = bNow && bNow == b;
-    UE_LOGI("[JPL-DRILL] client (3) key B resolves to %p, B's actor %p -> %d", bNow, b, c3 ? 1 : 0);
-    if (!c1) Fail("(1) B's actor does not carry key B");
-    else if (!c2) Fail("(2) key A does not resolve to a live actor other than B's");
-    else if (!c3) Fail("(3) key B does not resolve to B's actor");
-    else Pass();
-    DC::Say(kRekeyJudgedLine);
-    g_cstep = CStep::WaitHost;
 }
 
 void ClientTick() {
     const uint64_t now = coop::net::NowMs();
-    if (IsMeasureArm()) {   // swing and throwat run their own steps (join_prop_loss_drill_arms.cpp)
+    switch (ArmOf()) {
+    case Arm::Swing:
+    case Arm::ThrowAt:   // run their own steps (join_prop_loss_drill_arms.cpp)
         MeasureClientTick(now);
         return;
-    }
-    if (g_cstep == CStep::Done) return;
-    if (g_cstep == CStep::WaitHost) {
-        if (DC::SeenHas(kHostJudgedLine)) {
-            g_cstep = CStep::Done;
-            Finish();
-        }
+    case Arm::HeldBreak:
+        HeldClientTick(now);
         return;
-    }
-    if (ArmOf() != Arm::Rekey) {
+    case Arm::Rekey:
+    case Arm::Twin:
+    case Arm::Stack:
+    case Arm::Late:
+        BracketClientTick(now);
+        return;
+    case Arm::Break:
+    case Arm::Fire:
         ClientBreakTick(now);
         return;
-    }
-    if (!JoinedAndQuiet()) return;
-    if (g_cstep == CStep::Seek) {
-        RekeyAbort(g_pairSeen ? "the bracket began before the destroy" : "no pair of cans was found before the bracket");
+    case Arm::Off:
         return;
     }
-    if (g_cstep == CStep::Destroyed) ClientRekeyJudge(now);
 }
 
 }  // namespace
@@ -544,37 +562,16 @@ void Tick(coop::net::Session*) {
 }
 
 void TickLoad(coop::net::Session*) {
-    if (ArmOf() != Arm::Rekey || g_done || g_cstep != CStep::Seek || coop::roster::LocalIsHost()) return;
-    if (coop::join_membership_sweep::IsClaimTrackingActive()) {
-        RekeyAbort("the bracket began before the destroy");
-        return;
-    }
-    if (!coop::net_pump::IsWorldSettled() || ue_wrap::object_index::Backlog() != 0) return;
-    void* me = LocalPlayer();
-    void *a = nullptr, *b = nullptr;
-    float gap = 0.f;
-    if (!me || !FindPair(me, a, b, gap)) return;
-    g_pairSeen = true;
-    g_keyA = ue_wrap::prop::GetKeyString(a);
-    g_keyB = ue_wrap::prop::GetKeyString(b);
-    UE_LOGI("[JPL-DRILL] client pair A=%ls B=%ls d=%.1f", g_keyA.c_str(), g_keyB.c_str(), gap);
-    g_target.Set(b);
-    UE_LOGI("[JPL-DRILL] client windows at the destroy: episode=%d reconcile=%d",
-            coop::world_load_episode::InEpisode() ? 1 : 0, coop::world_load_episode::InReconcileWindow() ? 1 : 0);
-    if (!E::DestroyActor(a)) {
-        RekeyAbort("K2_DestroyActor did not run on A");
-        return;
-    }
-    UE_LOGI("[JPL-DRILL] client destroyed A before the bracket");
-    g_cstep = CStep::Destroyed;
+    if (!IsBracketArm() || g_done || coop::roster::LocalIsHost()) return;
+    BracketLoadTick();
 }
 
 void OnDisconnect() {
     g_done = false;
     g_hstep = HStep::Ready;
     g_before.clear();
-    g_a = Placed{};
-    g_b = Placed{};
+    g_plan.clear();
+    g_placed.clear();
     g_hstepMs = 0;
     g_brokeKey.clear();
     g_judgeAtMs = 0;
@@ -582,10 +579,9 @@ void OnDisconnect() {
     g_readyMs = 0;
     g_target.Reset();
     g_targetKey.clear();
-    g_keyA.clear();
-    g_keyB.clear();
-    g_pairSeen = false;
     MeasureOnDisconnect();
+    HeldOnDisconnect();
+    BracketOnDisconnect();
 }
 
 }  // namespace coop::dev::join_prop_loss_drill

@@ -144,6 +144,8 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/dronesack_drill_census.cpp
     src/coop/dev/join_prop_loss_drill.cpp
     src/coop/dev/join_prop_loss_drill_arms.cpp
+    src/coop/dev/join_prop_loss_drill_bracket.cpp
+    src/coop/dev/join_prop_loss_drill_held.cpp
     src/coop/dev/remover_drill.cpp
     src/coop/dev/remover_drill_host.cpp
     src/coop/dev/remover_drill_layout.cpp

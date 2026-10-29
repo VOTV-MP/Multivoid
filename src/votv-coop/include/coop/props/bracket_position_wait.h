@@ -35,6 +35,9 @@ void BeginBracket();
 // True while a spawn arriving now would wait: the bracket is open and the dev row is off.
 bool IsWaiting();
 
+// How many spawns wait now; 0 once the bracket is drained. Read-only, for the dev drill.
+size_t WaitingCount();
+
 // Keep the spawn until the bracket's end. A second spawn of the same eid replaces the first.
 void Wait(const coop::net::PropSpawnPayload& payload, int senderSlot);
 

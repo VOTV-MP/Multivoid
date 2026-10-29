@@ -116,6 +116,8 @@ void BeginBracket() {
 
 bool IsWaiting() { return g_open; }
 
+size_t WaitingCount() { return g_waiters.size(); }
+
 void Wait(const coop::net::PropSpawnPayload& payload, int senderSlot) {
     for (Waiter& w : g_waiters) {
         if (w.payload.elementId != payload.elementId) continue;
