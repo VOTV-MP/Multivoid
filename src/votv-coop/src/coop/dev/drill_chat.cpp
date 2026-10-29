@@ -36,9 +36,43 @@ struct Flight {
     uint64_t    keyAfter = 0;
 };
 
+// A live row the poll read: the feed retires a row to its retained tier after about ten seconds, so a reader that looks
+// later than that finds it gone; the history keeps what was seen live. Bounded, the oldest dropped.
+constexpr size_t kSeenCap = 512;
+struct Seen {
+    uint64_t    key = 0;
+    std::string line;
+};
+
 std::deque<Item>            g_queue;
 Flight                      g_flight;
 coop::chat_rate::TalkBudget g_budget;  // this machine's copy of the budget the host keeps for it
+std::deque<Seen>            g_seen;
+bool                        g_seenArmed = false;  // set by the first Seen* read, so a session with no reader pays no walk
+
+// Appends every live row not yet in the history. A row seeded at the join is retained and never recorded.
+void RecordLive() {
+    coop::chat_feed::ForEachRow([&](const coop::chat_feed::RowView& r) {
+        if (r.retained) return;
+        for (const Seen& s : g_seen)
+            if (s.key == r.key) return;
+        if (g_seen.size() >= kSeenCap) g_seen.pop_front();
+        g_seen.push_back(Seen{r.key, std::string(r.line)});
+    });
+}
+
+void Arm() {
+    if (g_seenArmed) return;
+    g_seenArmed = true;
+    RecordLive();
+}
+
+std::string_view TrimmedRest(const std::string& line, const std::string& prefix) {
+    if (line.compare(0, prefix.size(), prefix) != 0) return {};
+    std::string_view tail = std::string_view(line).substr(prefix.size());
+    while (!tail.empty() && tail.back() == ' ') tail.remove_suffix(1);
+    return tail;
+}
 
 uint64_t NewestKey() {
     uint64_t newest = 0;
@@ -68,6 +102,10 @@ void Say(const std::string& line) { g_queue.push_back(Item{line, 0}); }
 // the next line, sent no earlier than echo + 0.66 s, is received after host-receive + 0.66 s. While a line waits, the
 // feed is walked on the drill poll (PollDue) and once more when the bound passes; the bound itself counts milliseconds.
 void Pump(uint64_t nowMs) {
+    if (g_seenArmed) {
+        static uint32_t sSeenTicks = 0;
+        if (sSeenTicks++ % 15 == 0) RecordLive();
+    }
     if (g_flight.on) {
         const bool waiting = nowMs - g_flight.sentMs < kEchoBoundMs;
         if (waiting && !PollDue()) return;
@@ -107,6 +145,33 @@ void Reset() {
     g_queue.clear();
     g_flight = Flight{};
     g_budget = coop::chat_rate::TalkBudget{};
+    g_seen.clear();
+}
+
+bool SeenHas(const std::string& needle) {
+    Arm();
+    for (const Seen& s : g_seen)
+        if (s.line.find(needle) != std::string::npos) return true;
+    return false;
+}
+
+bool SeenRestOf(const std::string& prefix, std::string* rest) {
+    Arm();
+    for (auto it = g_seen.rbegin(); it != g_seen.rend(); ++it) {
+        const std::string_view tail = TrimmedRest(it->line, prefix);
+        if (tail.empty()) continue;
+        rest->assign(tail.begin(), tail.end());
+        return true;
+    }
+    return false;
+}
+
+void SeenRestsOf(const std::string& prefix, std::vector<std::string>* rests) {
+    Arm();
+    for (const Seen& s : g_seen) {
+        const std::string_view tail = TrimmedRest(s.line, prefix);
+        if (!tail.empty()) rests->emplace_back(tail);
+    }
 }
 
 bool ChatHasLive(const std::string& needle) {
@@ -128,15 +193,6 @@ bool LiveRestOf(const std::string& prefix, std::string* rest) {
         found = true;
     });
     return found;
-}
-
-void LiveRestsOf(const std::string& prefix, std::vector<std::string>* rests) {
-    coop::chat_feed::ForEachRow([&](const coop::chat_feed::RowView& r) {
-        if (r.retained || r.line.compare(0, prefix.size(), prefix) != 0) return;
-        std::string_view tail = r.line.substr(prefix.size());
-        while (!tail.empty() && tail.back() == ' ') tail.remove_suffix(1);
-        if (!tail.empty()) rests->emplace_back(tail);
-    });
 }
 
 bool PollDue() {

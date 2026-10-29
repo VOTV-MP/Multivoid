@@ -85,7 +85,7 @@ void SayInstants(const Track& t, uint64_t pressMs, const char* who, int n) {
 
 void InstantsCollect(Instants& in, const char* who, int n) {
     std::vector<std::string> rows;
-    DC::LiveRestsOf(ThrowLine(who, "inst", n, true), &rows);
+    DC::SeenRestsOf(ThrowLine(who, "inst", n, true), &rows);
     for (const std::string& r : rows) {
         int i = 0, m = 0;
         unsigned long long press = 0;

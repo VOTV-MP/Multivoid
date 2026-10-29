@@ -214,6 +214,10 @@ HostJudge TouchHostTick(uint32_t eid, char* why, size_t whyLen);
 HostJudge DepartHostTick(const Track& host, uint32_t eid, char* why, size_t whyLen);
 bool JoinGate(const coop::net::Session& s, int clientSlot, uint64_t waitedMs);
 void JoinHostSay(int n, uint32_t eid);
+// Latches whether a client other than slot `thrower` was world-ready before the host copy rested (`hostAtRest`), per throw n.
+void JoinHostWatchReady(const coop::net::Session& s, int thrower, int n, bool hostAtRest);
+// The throw's one joiner line: bound, world-ready-before-rest, mirror gap (`gapCm` < 0: n/a).
+void JoinHostReport(int n, float gapCm);
 // Collects the joiner's instant parts of throw n (a new n starts a new set); on the host's poll while the throw is judged.
 void JoinHostCollect(int n);
 HostJudge JoinHostJudge(const Track& host, int n, float& gapOut, char* why, size_t whyLen);

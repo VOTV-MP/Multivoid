@@ -19,6 +19,7 @@
 #include "coop/dev/drill_chat.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
+#include "coop/net/throw_bounds.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_syncer.h"
 #include "coop/props/prop_syncer_host.h"
@@ -55,7 +56,8 @@ constexpr uint64_t kTouchAfterRowMs = 150;      // the host's grab follows the f
 constexpr uint64_t kTouchVerifyMs   = 3000;     // the grab is on the player, and the row ended, within this
 constexpr float    kDepartSpeedPct  = 0.20f;    // the host copy's speed after the take-back is within this of the last row's
 constexpr uint64_t kDepartSampleMs  = 50;       // the host copy's speed is read from the first sample this long after the take-back
-constexpr uint64_t kRejoinBoundMs   = 240000;   // the take-back to the rejoined client's seed line
+constexpr uint64_t kDepartTakeSlackMs = 500;    // the take-back follows the last admitted row by kThrowSilenceMs plus this
+constexpr uint64_t kRejoinBoundMs   = 240000;  // the take-back to the rejoined client's seed line
 constexpr uint64_t kJoinWaitMs      = 150000;   // the host's wait for a second client to be connected
 constexpr uint64_t kMarkEveryMs     = 1000;     // the host says the thrown eid to a joiner this often
 
@@ -81,8 +83,8 @@ bool     g_touchGrabbed = false;
 // ---- throwdepart ----------------------------------------------------------------------------------------------------------
 
 bool     g_departRejoinRead = false, g_departRejoined = false;
-uint32_t g_departTakeBacks0 = 0;
-uint64_t g_departTakeMs = 0, g_departSayMs = 0;
+uint32_t g_departTakeBacks0 = 0, g_departSilence0 = 0;
+uint64_t g_departTakeMs = 0, g_departSayMs = 0, g_departAfterRowMs = 0;
 float    g_departRowSpeed = 0.f;
 bool     g_departSpeedJudged = false;
 
@@ -90,7 +92,7 @@ bool     g_departSpeedJudged = false;
 
 Track    g_jTrack;
 uint32_t g_jEid = 0;
-int      g_jN = 0;
+int      g_jN = 0, g_jLastN = 0;   // the throw traced now, and the last one measured
 uint64_t g_jFirstMs = 0, g_jEndAtMs = 0, g_markMs = 0;
 bool     g_jDone = false;
 
@@ -140,7 +142,8 @@ void ArmsHostArmed() {
     g_base.intentsThrown = coop::prop_throw::dev::IntentsThrown();
     g_base.elected = coop::prop_syncer_host::dev::ThrowViewNow().elected;
     g_departTakeBacks0 = coop::prop_syncer_host::dev::ThrowViewNow().slotLeft;
-    g_touchRowMs = g_touchGrabMs = g_departTakeMs = g_departSayMs = 0;
+    g_departSilence0 = coop::prop_syncer_host::dev::ThrowViewNow().silence;
+    g_touchRowMs = g_touchGrabMs = g_departTakeMs = g_departSayMs = g_departAfterRowMs = 0;
     g_touchGrabbed = false;
     g_departSpeedJudged = false;
     g_jDone = false;
@@ -268,7 +271,7 @@ void DepartRejoinedTick() {
     if (!g_rjEid) {
         std::string rest;
         int eid = 0;
-        if (DC::LiveRestOf(kRejoinEidLine, &rest) && RD::IntAfter(rest, "eid", eid) && eid > 0) g_rjEid = static_cast<uint32_t>(eid);
+        if (DC::SeenRestOf(kRejoinEidLine, &rest) && RD::IntAfter(rest, "eid", eid) && eid > 0) g_rjEid = static_cast<uint32_t>(eid);
         return;
     }
     void* actor = coop::element::LivePropActor(g_rjEid);
@@ -287,18 +290,25 @@ void DepartRejoinedTick() {
 
 // ---- throwdepart: the host -----------------------------------------------------------------------------------------------
 
-// Per tick while the throw flies. The take-back (the thrower left) is read off the elected rows' view; the host copy's speed
-// at the first sample kDepartSampleMs after it is set against the last row's. Passed once the copy rests and the rejoined
-// client's seed agrees with its rest pose.
+// Per tick while the throw flies. The take-back (the thrower fell silent, or left) is read off the elected rows' view and must
+// follow the last admitted row by kThrowSilenceMs plus kDepartTakeSlackMs; the host copy's speed at the first sample
+// kDepartSampleMs after it is set against the last row's. Passed once the copy rests and the rejoined client's seed agrees
+// with its rest pose (a seed never read is NOT MEASURED, never a FAIL).
 HostJudge DepartHostTick(const Track& host, uint32_t eid, char* why, size_t whyLen) {
     const auto& tv = coop::prop_syncer_host::dev::ThrowViewNow();
     const uint64_t unixMs = cen::UnixMs();
     if (!g_departTakeMs) {
-        if (tv.slotLeft > g_departTakeBacks0) {
+        if (tv.slotLeft > g_departTakeBacks0 || tv.silence > g_departSilence0) {
             g_departTakeMs = unixMs;
             g_departRowSpeed = tv.lastTakeBackSpeed;
-            UE_LOGI("[CI-DRILL] host throwdepart: the thrower left; the host took the prop back at the last row's %.0f cm/s",
-                    static_cast<double>(g_departRowSpeed));
+            g_departAfterRowMs = tv.lastTakeBackMs >= tv.lastRowMs ? tv.lastTakeBackMs - tv.lastRowMs : 0;
+            UE_LOGI("[CI-DRILL] host throwdepart: the thrower %s; the host took the prop back %llu ms after the last admitted row, at the last row's %.0f cm/s",
+                    tv.silence > g_departSilence0 ? "fell silent" : "left", U(g_departAfterRowMs), static_cast<double>(g_departRowSpeed));
+            if (g_departAfterRowMs > coop::net::throw_bounds::kThrowSilenceMs + kDepartTakeSlackMs) {
+                std::snprintf(why, whyLen, "the take-back came %llu ms after the last admitted row, past %llu ms",
+                              U(g_departAfterRowMs), U(coop::net::throw_bounds::kThrowSilenceMs + kDepartTakeSlackMs));
+                return HostJudge::Failed;
+            }
             if (g_departRowSpeed <= 1.f) {
                 std::snprintf(why, whyLen, "the take-back carried no velocity (%.1f cm/s)", static_cast<double>(g_departRowSpeed));
                 return HostJudge::Failed;
@@ -311,8 +321,9 @@ HostJudge DepartHostTick(const Track& host, uint32_t eid, char* why, size_t whyL
             if (s.t < g_departTakeMs + kDepartSampleMs || s.speed <= 0.f) continue;
             g_departSpeedJudged = true;
             const float lo = g_departRowSpeed * (1.f - kDepartSpeedPct), hi = g_departRowSpeed * (1.f + kDepartSpeedPct);
-            UE_LOGI("[CI-DRILL] host throwdepart: the host copy flew at %.0f cm/s %llu ms after the take-back (the last row's %.0f, within %.0f percent)",
-                    static_cast<double>(s.speed), U(s.t - g_departTakeMs), static_cast<double>(g_departRowSpeed), static_cast<double>(kDepartSpeedPct * 100.f));
+            UE_LOGI("[CI-DRILL] host throwdepart: the host copy flew at %.0f cm/s %llu ms after the take-back (the last row's %.0f, within %.0f percent); took-back=%llu speed=%.0f/%.0f",
+                    static_cast<double>(s.speed), U(s.t - g_departTakeMs), static_cast<double>(g_departRowSpeed), static_cast<double>(kDepartSpeedPct * 100.f),
+                    U(g_departAfterRowMs), static_cast<double>(s.speed), static_cast<double>(g_departRowSpeed));
             if (s.speed < lo || s.speed > hi) {
                 std::snprintf(why, whyLen, "the host copy's speed %.0f cm/s after the take-back is not within %.0f percent of the last row's %.0f cm/s",
                               static_cast<double>(s.speed), static_cast<double>(kDepartSpeedPct * 100.f), static_cast<double>(g_departRowSpeed));
@@ -332,7 +343,7 @@ HostJudge DepartHostTick(const Track& host, uint32_t eid, char* why, size_t whyL
     }
     std::string rest;
     int at[3] = {};
-    if (!DC::LiveRestOf(kRejoinedLine, &rest)) {
+    if (!DC::SeenRestOf(kRejoinedLine, &rest)) {
         static uint64_t restMs = 0;
         if (!restMs) restMs = now;
         if (now - restMs > kRejoinBoundMs) {
@@ -364,6 +375,8 @@ Instants    g_jhInst;           // the host's set of the joiner's instants, and 
 int         g_jhN = 0;
 std::string g_jhEnd;
 uint64_t    g_jhEndMs = 0;
+int         g_jhReadyN = 0;          // the throw whose "was a second client in the world before the host copy rested" is latched
+bool        g_jhReady = false;
 }
 
 // The go: a second client is connected (world-ready or not: either way it follows the rows). False while none is, until
@@ -405,6 +418,29 @@ void JoinHostCollect(int n) {
     InstantsCollect(g_jhInst, "joiner", n);
 }
 
+// Latches, for throw n, whether a client other than the thrower was world-ready at some tick before the host copy rested.
+// Called every tick the throw flies or is judged; once the copy rests the answer stands.
+void JoinHostWatchReady(const coop::net::Session& s, int thrower, int n, bool hostAtRest) {
+    if (n != g_jhReadyN) {
+        g_jhReadyN = n;
+        g_jhReady = false;
+    }
+    if (hostAtRest || g_jhReady) return;
+    for (int i = 1; i < coop::net::kMaxPeers; ++i)
+        if (i != thrower && s.IsSlotWorldReady(i)) g_jhReady = true;
+}
+
+// One line per throw: whether the joiner bound the prop (its end line arrived), whether it was in the world before the host
+// copy rested, and the mirror gap. A throw that rested before the join says so; the next one measures the joiner as a mirror.
+void JoinHostReport(int n, float gapCm) {
+    char gap[24];
+    if (gapCm >= 0.f) std::snprintf(gap, sizeof(gap), "%.0f", static_cast<double>(gapCm));
+    else              std::snprintf(gap, sizeof(gap), "n/a");
+    const bool ready = n == g_jhReadyN && g_jhReady;
+    UE_LOGI("[CI-DRILL] host throwjoin n=%d joiner: bound=%d world-ready-before-rest=%d mirror-gap=%s%s", n, g_jhEnd.empty() ? 0 : 1,
+            ready ? 1 : 0, gap, ready ? "" : " (rested before the join)");
+}
+
 // The joiner's end line of throw n, set against the host's trace: the mirror gap at its instants and the rest agreement. A
 // joiner that sampled the prop only after the host's copy rested was not in flight: said so, and only the seeded rest pose is
 // checked. `gapOut` is -1 with no instant matched.
@@ -412,7 +448,7 @@ HostJudge JoinHostJudge(const Track& host, int n, float& gapOut, char* why, size
     gapOut = -1.f;
     JoinHostCollect(n);
     if (g_jhEnd.empty()) {
-        if (!DC::LiveRestOf(ThrowLine("joiner", "end", n, true), &g_jhEnd)) return HostJudge::Working;
+        if (!DC::SeenRestOf(ThrowLine("joiner", "end", n, true), &g_jhEnd)) return HostJudge::Working;
         g_jhEndMs = ::GetTickCount64();
     }
     // The joiner's instants come before its end line, in a few parts; the judgement waits for every one of them.
@@ -455,8 +491,9 @@ HostJudge JoinHostJudge(const Track& host, int n, float& gapOut, char* why, size
 
 bool JoinerRole() { return ArmOf() == Arm::ThrowJoin && Put2IsJoiner(); }
 
-// The second client: it waits for the host to name the thrown prop, traces its mirror from the moment it reads, and says where
-// it was at fixed instants after its first sample and where it came to rest.
+// The second client: for EVERY throw the host names it waits for the prop, traces its mirror from the moment it reads, and says
+// where it was at fixed instants after its first sample and where it came to rest. It is done once the thrower's done line
+// is seen and no newer throw is named.
 void JoinerTick(const coop::net::Session& session) {
     if (g_jDone) return;
     const uint64_t now = cen::UnixMs();
@@ -467,7 +504,15 @@ void JoinerTick(const coop::net::Session& session) {
         nextMs = tick + RD::kCheckEveryMs;
         std::string rest;
         int n = 0, eid = 0;
-        if (!DC::LiveRestOf(kJoinMarkLine, &rest) || !RD::IntAfter(rest, "n", n) || !RD::IntAfter(rest, "eid", eid) || eid <= 0) return;
+        if (!DC::SeenRestOf(kJoinMarkLine, &rest) || !RD::IntAfter(rest, "n", n) || !RD::IntAfter(rest, "eid", eid) || eid <= 0) return;
+        if (n <= g_jLastN) {   // every named throw is measured: the thrower's done line ends the arm
+            if (g_jLastN > 0 && DC::SeenHas(kThrowDoneLine)) {
+                UE_LOGI("[CI-DRILL] joiner throwjoin DONE (throws measured up to %d)", g_jLastN);
+                g_jDone = true;
+                Finish();
+            }
+            return;
+        }
         void* actor = coop::element::LivePropActor(static_cast<uint32_t>(eid));
         if (!actor) return;   // the join's seed has not bound the prop yet
         g_jEid = static_cast<uint32_t>(eid);
@@ -492,8 +537,10 @@ void JoinerTick(const coop::net::Session& session) {
     DC::Say(say);
     UE_LOGI("[CI-DRILL] joiner throwjoin MEASURED (throw %d, first sample t=%llu, rest (%.0f,%.0f,%.0f))", g_jN, U(g_jFirstMs),
             static_cast<double>(g_jTrack.last.X), static_cast<double>(g_jTrack.last.Y), static_cast<double>(g_jTrack.last.Z));
-    g_jDone = true;
-    Finish();
+    g_jLastN = g_jN;   // the next throw the host names is traced afresh
+    g_jEid = 0;
+    g_jEndAtMs = 0;
+    g_jTrack = Track{};
 }
 
 void ArmsReset() {
@@ -505,15 +552,17 @@ void ArmsReset() {
     g_touchRowMs = g_touchGrabMs = 0;
     g_touchGrabbed = false;
     g_departRejoinRead = g_departRejoined = false;
-    g_departTakeBacks0 = 0;
-    g_departTakeMs = g_departSayMs = 0;
+    g_departTakeBacks0 = g_departSilence0 = 0;
+    g_departTakeMs = g_departSayMs = g_departAfterRowMs = 0;
     g_departRowSpeed = 0.f;
     g_departSpeedJudged = false;
     g_jTrack = Track{};
     g_jEid = 0;
-    g_jN = 0;
+    g_jN = g_jLastN = 0;
     g_jFirstMs = g_jEndAtMs = g_markMs = 0;
     g_jDone = false;
+    g_jhReadyN = 0;
+    g_jhReady = false;
     g_rjEid = 0;
     g_rjMs = 0;
     g_rjLast = FVector{};

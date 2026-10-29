@@ -152,7 +152,7 @@ void StartWalk() {
 
 void StepWaitLine() {
     std::string rest;
-    if (DC::LiveRestOf(kThrowFixtureLine, &rest)) {
+    if (DC::SeenRestOf(kThrowFixtureLine, &rest)) {
         int pack = 0, item = 0;
         if (!RD::IntAfter(rest, "pack", pack) || !RD::IntAfter(rest, "item", item) || pack <= 0 || item <= 0) {
             CFail("the host's fixture line does not read (%s)", rest.c_str());
@@ -253,7 +253,7 @@ void StepItem2Wait() {
     if (!g_item2Eid) {
         std::string rest;
         int eid = 0;
-        if (DC::LiveRestOf(kThrowItem2Line, &rest) && RD::IntAfter(rest, "eid", eid) && eid > 0) {
+        if (DC::SeenRestOf(kThrowItem2Line, &rest) && RD::IntAfter(rest, "eid", eid) && eid > 0) {
             g_item2Eid = static_cast<uint32_t>(eid);
             g_rest = 0;
             g_lastPos[0] = FVector{};
@@ -341,7 +341,7 @@ void StepGrab() {
 }
 
 void StepArmWait() {
-    if (DC::ChatHasLive(ThrowLine("host", "armed", g_n, false))) {
+    if (DC::SeenHas(ThrowLine("host", "armed", g_n, false))) {
         if (ArmOf() == Arm::ThrowPlace) {   // a place: the grab is let go, then a held drive placed; no aim and no throw
             Next(Step::Place);
             return;
@@ -379,7 +379,7 @@ void StepPlace(void* player) {
 // throwjoin: the host says, after the first throw, whether the second client missed the flight (it was not in the world yet):
 // then the same standpoint throws once more, with the second client further into its join; else the arm ends.
 void StepRethrow() {
-    if (DC::ChatHasLive("ci-throw host rethrow")) {
+    if (DC::SeenHas("ci-throw host rethrow")) {
         g_n = 2;
         g_goal = g_stand;
         char say[64];
@@ -389,7 +389,7 @@ void StepRethrow() {
         StartWalk();
         return;
     }
-    if (DC::ChatHasLive("ci-throw host norethrow") || Expired(kRethrowBoundMs)) {
+    if (DC::SeenHas("ci-throw host norethrow") || Expired(kRethrowBoundMs)) {
         DC::Say(kThrowDoneLine);
         UE_LOGI("[CI-DRILL] client %s MEASURED (puppet throwShit ignored n=%u)", ArmName(), coop::prop_throw::dev::PuppetIgnored());
         Finish();
@@ -481,7 +481,7 @@ void PollMirror() {
     if (g_hostEid) return;
     std::string rest;
     int eid = 0;
-    if (!DC::LiveRestOf(ThrowLine("host", "thrown", g_n, true), &rest) || !RD::IntAfter(rest, "eid", eid) || eid <= 0) return;
+    if (!DC::SeenRestOf(ThrowLine("host", "thrown", g_n, true), &rest) || !RD::IntAfter(rest, "eid", eid) || eid <= 0) return;
     g_hostEid = static_cast<uint32_t>(eid);
     void* actor = coop::element::LivePropActor(g_hostEid);
     g_mirrorSame = actor && actor == g_local.ref.Raw();
@@ -624,7 +624,7 @@ void ThrowClientTick(const coop::net::Session& session) {
     const bool due = ::GetTickCount64() >= g_nextMs;
     if (due) {
         g_nextMs = ::GetTickCount64() + RD::kCheckEveryMs;
-        if (DC::ChatHasLive(kThrowHostFailedLine)) {
+        if (DC::SeenHas(kThrowHostFailedLine)) {
             CFail("the host ended the arm with a FAIL");
             return;
         }

@@ -219,7 +219,7 @@ void FindThrown() {
 void StepWaitArm(const coop::net::Session& s) {
     // The arm line is kept when first read: the wait for a second client (throwjoin) can outlast the feed's row.
     if (!g_hArmRead) {
-        if (!DC::LiveRestOf(ThrowLine("client", "arm", g_hN, true), &g_hArmRest)) {
+        if (!DC::SeenRestOf(ThrowLine("client", "arm", g_hN, true), &g_hArmRest)) {
             if (HExpired(kArmBoundMs)) HFail("the client never armed throw %d within %llu s", g_hN, U(kArmBoundMs / 1000));
             return;
         }
@@ -490,7 +490,7 @@ void StepPlaceTrace(bool due) {
     if (!due) return;
     const uint64_t now = ::GetTickCount64();
     if (!g_hPlacedMs) {
-        if (DC::ChatHasLive(ThrowLine("client", "placed", g_hN, false))) g_hPlacedMs = now;
+        if (DC::SeenHas(ThrowLine("client", "placed", g_hN, false))) g_hPlacedMs = now;
         else if (HExpired(kEndBoundMs)) HFail("the client never placed in part %d within %llu s", g_hN, U(kEndBoundMs / 1000));
         return;
     }
@@ -538,7 +538,10 @@ void StepTrace(const coop::net::Session& s, bool due) {
     PollOverlap();
     g_hHit.Tick(g_hTrack);
     char why[200];
-    if (ArmOf() == Arm::ThrowJoin) JoinHostSay(g_hN, g_hElemEid);   // a joiner may connect at any moment of the flight
+    if (ArmOf() == Arm::ThrowJoin) {   // a joiner may connect at any moment of the flight
+        JoinHostSay(g_hN, g_hElemEid);
+        JoinHostWatchReady(s, g_hSlot, g_hN, g_hTrack.atRest);
+    }
     if (ArmOf() == Arm::ThrowDepart) {
         StepDepartTrace();
         return;
@@ -556,7 +559,7 @@ void StepTrace(const coop::net::Session& s, bool due) {
     if (ArmOf() == Arm::ThrowJoin) JoinHostCollect(g_hN);
     const uint64_t now = ::GetTickCount64();
     if (g_hEndRest.empty()) {
-        if (!DC::LiveRestOf(ThrowLine("client", "end", g_hN, true), &g_hEndRest)) {
+        if (!DC::SeenRestOf(ThrowLine("client", "end", g_hN, true), &g_hEndRest)) {
             if (HExpired(kEndBoundMs)) HFail("the client never ended throw %d within %llu s", g_hN, U(kEndBoundMs / 1000));
             return;
         }
@@ -576,12 +579,14 @@ void StepTrace(const coop::net::Session& s, bool due) {
 // never ends is NOT MEASURED, never a FAIL.
 void StepJoinWait(const coop::net::Session& s) {
     JoinHostSay(g_hN, g_hElemEid);
+    JoinHostWatchReady(s, g_hSlot, g_hN, g_hTrack.atRest);
     JoinHostCollect(g_hN);
     char why[200];
     float gap = -1.f;
     switch (JoinHostJudge(g_hTrack, g_hN, gap, why, sizeof(why))) {
     case HostJudge::Failed: HFail("%s", why); return;
     case HostJudge::Passed:
+        JoinHostReport(g_hN, gap);
         if (gap >= 0.f) UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=%.0f %s", ArmName(), g_hN, static_cast<double>(gap), g_hLaunch);
         else            UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=n/a (the joiner was not in flight) %s", ArmName(), g_hN, g_hLaunch);
         DC::Say("ci-throw host norethrow");
@@ -594,12 +599,14 @@ void StepJoinWait(const coop::net::Session& s) {
         if (i != g_hSlot && s.IsSlotWorldReady(i)) ready = true;
     const uint64_t waited = ::GetTickCount64() - g_hMs;
     if (g_hN == 1 && !ready && waited > kRethrowAfterMs) {
+        JoinHostReport(g_hN, -1.f);
         UE_LOGI("[CI-DRILL] host throwjoin: the second client is not in the world after throw 1; throwing once more");
         DC::Say("ci-throw host rethrow");
         HNext(HStep::WaitNext);
         return;
     }
     if (waited > kJoinerEndMs) {
+        JoinHostReport(g_hN, -1.f);
         UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=n/a (NOT MEASURED: the second client never ended within %llu s) %s", ArmName(), g_hN,
                 U(kJoinerEndMs / 1000), g_hLaunch);
         DC::Say("ci-throw host norethrow");
@@ -633,7 +640,7 @@ bool SpawnItem2(const FVector& stand) {
 }
 
 void StepWaitNext() {
-    if (DC::ChatHasLive(kThrowDoneLine)) {
+    if (DC::SeenHas(kThrowDoneLine)) {
         if (ArmOf() == Arm::ThrowPlace) PlaceHostPass();
         UE_LOGI("[CI-DRILL] host %s MEASURED", ArmName());
         Finish();
@@ -642,7 +649,7 @@ void StepWaitNext() {
     }
     std::string rest;
     int at[3] = {};
-    if (g_hN == 1 && DC::LiveRestOf(kThrowSecondLine, &rest)) {
+    if (g_hN == 1 && DC::SeenRestOf(kThrowSecondLine, &rest)) {
         if (!IntsAfter(rest, "at=", at, 3)) {
             HFail("the client's second standpoint does not read (%s)", rest.c_str());
             return;
@@ -697,7 +704,7 @@ void ThrowHostTick(const coop::net::Session& session) {
     const bool due = now >= g_hNextMs;
     if (due) {
         g_hNextMs = now + RD::kCheckEveryMs;
-        if (g_hStep != HStep::WaitPeer && DC::ChatHasLive(kThrowClientFailedLine)) {
+        if (g_hStep != HStep::WaitPeer && DC::SeenHas(kThrowClientFailedLine)) {
             Fail("the client ended the arm with a FAIL");
             HNext(HStep::Done);
             return;

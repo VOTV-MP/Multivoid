@@ -278,7 +278,7 @@ void StepHAim() {
 void StepHWaitTracing() {
     void* player = coop::players::Registry::Get().Local();
     void* item = g_hItem.Get();
-    if (!DC::ChatHasLive(kHgTracing)) {
+    if (!DC::SeenHas(kHgTracing)) {
         if (HExpired(kChatBoundMs)) HFail("the client never said it traces within %llu s", U(kChatBoundMs / 1000));
         return;
     }
@@ -318,7 +318,7 @@ void HostGrabHostTick(const coop::net::Session& session) {
     const bool due = now >= g_hNextMs;
     if (due) {
         g_hNextMs = now + RD::kCheckEveryMs;
-        if (g_hStep != HStep::WaitPeer && DC::ChatHasLive(kHgClientFailed)) {
+        if (g_hStep != HStep::WaitPeer && DC::SeenHas(kHgClientFailed)) {
             Fail("the client ended the arm with a FAIL");
             HNext(HStep::Done);
             return;
@@ -345,7 +345,7 @@ void HostGrabHostTick(const coop::net::Session& session) {
     case HStep::Walk:        StepHWalk(); return;
     case HStep::WaitTracing: StepHWaitTracing(); return;
     case HStep::WaitDone:
-        if (DC::ChatHasLive(kHgDone)) {
+        if (DC::SeenHas(kHgDone)) {
             UE_LOGI("[CI-DRILL] host %s MEASURED", ArmName());
             Finish();
             HNext(HStep::Done);
@@ -414,7 +414,7 @@ void HostGrabClientTick(const coop::net::Session& session) {
     if (now < g_cNextMs) return;
     g_cNextMs = now + RD::kCheckEveryMs;
     InstantsCollect(g_cInst, "host", 1);
-    if (DC::ChatHasLive(kHgHostFailed)) {
+    if (DC::SeenHas(kHgHostFailed)) {
         CFail("the host ended the arm with a FAIL");
         return;
     }
@@ -422,7 +422,7 @@ void HostGrabClientTick(const coop::net::Session& session) {
     switch (g_cStep) {
     case CStep::WaitLine: {
         int pack = 0, item = 0;
-        if (DC::LiveRestOf(kHgFixture, &rest)) {
+        if (DC::SeenRestOf(kHgFixture, &rest)) {
             if (!RD::IntAfter(rest, "pack", pack) || !RD::IntAfter(rest, "item", item) || pack <= 0 || item <= 0) {
                 CFail("the host's fixture line does not read (%s)", rest.c_str());
                 return;
@@ -450,7 +450,7 @@ void HostGrabClientTick(const coop::net::Session& session) {
     }
     case CStep::WaitHostEnd: {
         if (!g_cEndSeen) {
-            if (!DC::ChatHasLive(kHgEnd)) {
+            if (!DC::SeenHas(kHgEnd)) {
                 if (CExpired(kChatBoundMs)) CFail("the host never said its end within %llu s", U(kChatBoundMs / 1000));
                 return;
             }
@@ -499,7 +499,7 @@ void HostGrabClientTick(const coop::net::Session& session) {
             CFail("the drive's mirror died");
             return;
         }
-        if (DC::ChatHasLive(kHgGo)) {
+        if (DC::SeenHas(kHgGo)) {
             g_cRel0 = coop::remote_prop::dev::ThrowReleasesReceived();
             g_cWhoosh0 = coop::remote_prop::dev::ThrowWhooshesPlayed();
             SeenBegin(g_cSeen, "client", item, /*releaseKnown=*/false);
