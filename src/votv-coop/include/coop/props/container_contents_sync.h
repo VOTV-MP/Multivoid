@@ -78,8 +78,8 @@ size_t SnapshotWorldContainers(WorldContainer* out, size_t want);
 // live world container here.
 bool ContentsDigest(uint32_t eid, int32_t& outCount, float& outVol);
 
-// The hash the wire uses for one container's contents (coop/props/container_slice_wire::ContentHash, over its records and
-// the arming flags this peer reads of it now) and its record count, for the parity report. False when the eid is not a
+// The hash of one container's records (coop/props/container_slice_wire::RecordsHash) and its record count, for the parity
+// report. The arming flags are the host's truth, read per peer and not compared across peers. False when the eid is not a
 // live world container here, its contents do not read, or a transfer into it is in progress. Game thread.
 bool ContentHashOf(uint32_t eid, uint64_t& outHash, uint32_t& outRecords);
 

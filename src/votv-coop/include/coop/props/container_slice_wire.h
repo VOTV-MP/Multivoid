@@ -29,7 +29,7 @@ inline constexpr uint8_t kKnownFlags = kFlagArmed;
 std::vector<uint8_t> Pack(uint32_t eid, const std::vector<ue_wrap::save_record::SaveRecord>& recs, uint8_t flags);
 
 // The hash of a pack: it names the contents and the flags, so the same records and flags hash the same whichever peer
-// authored them. The parity report compares by it.
+// authored them. The guards compare by RecordsHash and the flags apart; nothing compares this one across peers.
 uint64_t ContentHash(uint32_t eid, const std::vector<ue_wrap::save_record::SaveRecord>& recs, uint8_t flags);
 
 // The hash of the records alone (ContentHash with no flag set): what a sender's and a receiver's "unchanged" guards

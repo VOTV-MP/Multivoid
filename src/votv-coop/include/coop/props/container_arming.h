@@ -32,12 +32,14 @@ uint8_t ReadFlags(void* container);
 bool IsArmed(void* container);
 
 // Host: the container's `overlap` component joins the set the hook watches. Called at each publication, so a container is
-// watched from before its first slice is sent; idempotent. Untrack when the container is gone.
+// watched from before its first slice is sent; idempotent. A roomba is not watched: its own upd() writes its box, and its
+// edge has no consumer. A container leaves the set at its end of play (and by Untrack), by address and eid together.
 void Track(uint32_t eid, void* container);
 void Untrack(uint32_t eid);
 
-// Client: the mirror's box takes the host's flag, QueryOnly when armed and NoCollision when not. Not for a roomba, whose
-// own upd() writes it. True when the box was written.
+// Client: the mirror's box takes the host's flag, QueryOnly when armed and NoCollision when not. A roomba's, whose
+// own upd() writes it, is left alone. True when the box matches the flag afterwards (or is a roomba's); false when it did
+// not read or the write failed, so the caller does not record the flag as applied.
 bool ApplyFlags(uint32_t eid, void* container, uint8_t flags);
 
 }  // namespace coop::props::container_arming

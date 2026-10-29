@@ -82,6 +82,8 @@ std::set<uint32_t> g_wrongClassSaid;  // eids a slice named that are no containe
 // orphaned-buffer cost: a steady-state re-apply allocates nothing. A change of the container's arming with the same records
 // is applied to the mirror without a write of its records.
 using Seen = internal::Seen;
+// The flags a mirror records when its box did not write: no slice's masked flags equal it, so the next one tries again.
+constexpr uint8_t kFlagsUnapplied = 0xFF;
 std::map<uint32_t, Seen> g_applied;
 
 // Dev instrument: per container, how often this lane touched it (a local write, an applied remote slice, a
@@ -147,7 +149,7 @@ Ingest ApplyContents(uint32_t eid, const std::vector<SR::SaveRecord>& recs, uint
         const auto it = g_applied.find(eid);
         if (it != g_applied.end() && it->second.records == recordsHash) {
             if (!boxDue || it->second.flags == want) return Ingest::Handled;
-            ca::ApplyFlags(eid, actor, want);
+            if (!ca::ApplyFlags(eid, actor, want)) return Ingest::Handled;   // not written: tried again at the next slice
             it->second.flags = want;
             Touch(eid);
             return Ingest::Applied;
@@ -163,8 +165,8 @@ Ingest ApplyContents(uint32_t eid, const std::vector<SR::SaveRecord>& recs, uint
         case cio::WriteResult::Written:  break;
     }
 
-    g_applied[eid] = Seen{recordsHash, want};
-    if (boxDue) ca::ApplyFlags(eid, actor, want);
+    // A box that did not write is not recorded as applied: the next slice with these records tries it again.
+    g_applied[eid] = Seen{recordsHash, boxDue && !ca::ApplyFlags(eid, actor, want) ? kFlagsUnapplied : want};
     Touch(eid);
     // An open screen onto this container does not rebuild on a raw write; redraw it from the new records.
     ue_wrap::container_view::Redraw(actor);
@@ -522,7 +524,7 @@ bool ContentHashOf(uint32_t eid, uint64_t& outHash, uint32_t& outRecords) {
     if (cb::Awaited(actor, 0)) return false;   // a transfer in progress is not a settled reading
     std::vector<SR::SaveRecord> recs;
     if (!cio::ReadRecords(inv, recs)) return false;
-    outHash = cw::ContentHash(eid, recs, ca::ReadFlags(actor));
+    outHash = cw::RecordsHash(eid, recs);   // the flags are the host's truth, read per peer: never compared across peers
     outRecords = static_cast<uint32_t>(recs.size());
     return true;
 }
