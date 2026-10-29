@@ -40,9 +40,11 @@ void MarkHostWrite(uint32_t eid);
 void ForgetApplied(uint32_t eid);
 
 // ContainerContents chunks: a BlobChunkPayload whose blob is
-// `[u8 op=0][u32 eid][u16 n]` then n records in the coop/items/save_record_wire
+// `[u8 op=0][u32 eid][u16 n][u8 flags]` then n records in the coop/items/save_record_wire
 // grammar. Never refanned -- a client accepts slot 0 and nothing else, and the host accepts only a
-// non-zero slot, which is a client-authored slice it takes as a thrown container's birth and refuses otherwise.
+// non-zero slot, which is a client-authored slice it takes as a thrown container's birth and refuses otherwise. The flags
+// byte is the host's reading of the container's overlap arming (container_arming): a client applies it to its mirror's box, the host
+// never takes it from a client and relays a birth slice with its own reading.
 void OnContentsChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 
 // Host: ship the joiner one contents blob per live world container. The join save-transfer blob is
@@ -76,13 +78,14 @@ size_t SnapshotWorldContainers(WorldContainer* out, size_t want);
 // live world container here.
 bool ContentsDigest(uint32_t eid, int32_t& outCount, float& outVol);
 
-// The hash the wire uses for one container's contents (coop/props/container_slice_wire::ContentHash) and its record
-// count, for the parity report. False when the eid is not a live world container here, its contents do not read, or a
-// transfer into it is in progress. Game thread.
+// The hash the wire uses for one container's contents (coop/props/container_slice_wire::ContentHash, over its records and
+// the arming flags this peer reads of it now) and its record count, for the parity report. False when the eid is not a
+// live world container here, its contents do not read, or a transfer into it is in progress. Game thread.
 bool ContentHashOf(uint32_t eid, uint64_t& outHash, uint32_t& outRecords);
 
-// Dev (the route census drill): the content hash of each record of one container as the lane publishes it
-// (ContentHash over that record alone), in order, and of the whole slice. False as ContentHashOf. Game thread.
+// Dev (the route census drill): the hash of each record of one container as the lane publishes it
+// (RecordsHash over that record alone), in order, and of the whole slice's records, flags left out. False as ContentHashOf.
+// Game thread.
 bool DevRecordHashes(uint32_t eid, std::vector<uint64_t>& out, uint64_t& whole);
 
 // Dev (the route census drill): one raw write to a container's contents the way an accepted client slice is applied

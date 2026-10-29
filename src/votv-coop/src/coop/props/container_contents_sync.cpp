@@ -9,6 +9,7 @@
 #include "coop/props/container_contents_sync.h"
 #include "coop/props/container_contents_internal.h"
 #include "coop/props/container_apply_hold.h"
+#include "coop/props/container_arming.h"
 #include "coop/props/container_birth.h"
 #include "coop/props/container_contents_io.h"
 #include "coop/props/container_park.h"
@@ -37,6 +38,7 @@
 #include <chrono>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -56,6 +58,7 @@ namespace cb = coop::props::container_birth;
 namespace cio = coop::props::container_contents_io;
 namespace cww = coop::props::container_writer_watch;
 namespace ct  = coop::props::container_truth;
+namespace ca  = coop::props::container_arming;
 
 using coop::element::LivePropActor;
 
@@ -79,10 +82,12 @@ coop::blob_chunks::Assembler g_asm;
 std::set<uint32_t> g_dirty;
 std::set<uint32_t> g_wrongClassSaid;  // eids a slice named that are no container here (said once a session)
 
-// The hash of the last blob sent and of the last applied, per eid. Skipping an unchanged blob is
-// what bounds the orphaned-buffer cost: a steady-state re-broadcast applies and allocates nothing.
-std::map<uint32_t, uint64_t> g_sentHash;
-std::map<uint32_t, uint64_t> g_appliedHash;
+// What was last sent and last applied, per eid: the hash of the records and the flags apart. Skipping an unchanged blob is
+// what bounds the orphaned-buffer cost: a steady-state re-broadcast applies and allocates nothing. A change of the
+// container's arming with the same records is sent, and a mirror applies it without a write of its records.
+struct Seen { uint64_t records = 0; uint8_t flags = 0; };
+std::map<uint32_t, Seen> g_sent;
+std::map<uint32_t, Seen> g_applied;
 
 // Containers whose broadcast the transport refused while a world-ready peer was present, and
 // first publications whose contents do not read yet; retried by the sweep.
@@ -138,12 +143,17 @@ bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSl
     }
     // A client ships a slice only for a container it threw: its birth.
     const bool birth = !IsHost() && toSlot < 0 && cb::IsBirthSlice(eid);
-    const std::vector<uint8_t> blob = cw::Pack(eid, recs);
-    const uint64_t h = cw::ContentHash(eid, recs);
+    // The host's reading of the container's arming rides every slice it sends; a client's slice carries none (container_arming).
+    void* const owner = ci::OwnerOf(inv);
+    if (IsHost()) ca::Track(eid, owner);
+    const uint8_t flags = IsHost() ? ca::ReadFlags(owner) : uint8_t{0};
+    const uint64_t h = cw::RecordsHash(eid, recs);
     if (!force && !birth) {
-        auto it = g_sentHash.find(eid);
-        if (it != g_sentHash.end() && it->second == h) return true;  // unchanged -- say nothing
+        const auto it = g_sent.find(eid);
+        if (it != g_sent.end() && it->second.records == h && it->second.flags == flags)
+            return true;  // unchanged -- say nothing
     }
+    const std::vector<uint8_t> blob = cw::Pack(eid, recs, flags);
     if (blob.size() > coop::blob_chunks::MaxBlobBytes()) {
         UE_LOGW("container_contents: eid=%u blob %zu B exceeds the transport ceiling -- dropped "
                 "(contents stay diverged; there is no bulk path)", eid, blob.size());
@@ -159,7 +169,7 @@ bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSl
         // MarkSlotWorldReady), the thread of this sweep, so the check cannot race a ready edge.
         // Nobody received this hash, so no baseline of what every peer has may stand: a later edit
         // back to the old contents must be sent, not judged unchanged.
-        g_sentHash.erase(eid);
+        g_sent.erase(eid);
         ++g_noReadyRefusals;
         g_noReadyEids.insert(eid);
         if (!NoReadyRetryRed()) return true;
@@ -173,7 +183,7 @@ bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSl
                                             g_nextSeq++, blob);
     if (ok) {
         if (toSlot < 0) cb::FirstSent(eid);
-        if (toSlot < 0) g_sentHash[eid] = h;  // only a FAN-OUT establishes what every peer has
+        if (toSlot < 0) g_sent[eid] = Seen{h, flags};  // only a FAN-OUT establishes what every peer has
         if (toSlot < 0 && !IsHost()) coop::dev::container_route_census::NoteSliceSent(eid);   // dev: the route census
         // The author of a mutation re-derives its own volume, mass and names here: the host
         // excludes the author from the relay, and the native take path does not call
@@ -181,7 +191,7 @@ bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSl
         // peer converged. A targeted send -- a joiner's seed, the truth re-sent to a refused
         // author -- changed nothing on this peer, so it re-derives nothing; the seed sends every
         // container in the world in one frame.
-        if (toSlot < 0) ci::RederiveShownState(ci::OwnerOf(inv), inv);
+        if (toSlot < 0) ci::RederiveShownState(owner, inv);
         UE_LOGI("container_contents: eid=%u shipped %zu records (%zu B)%s%s%s",
                 eid, recs.size(), blob.size(),
                 toSlot < 0 ? "" : " [targeted]",
@@ -231,6 +241,7 @@ void DrainDirty(coop::net::Session* s) {
         void* actor = LivePropActor(eid);
         if (!actor) {   // gone: nothing is owed for it any more
             cb::Forget(eid);
+            ca::Untrack(eid);
             continue;
         }
         if (!ci::IsContainer(actor)) continue;
@@ -273,8 +284,11 @@ void Touch(uint32_t eid) {
     if (on) ++g_touchEpoch[eid];
 }
 
-// Applied, Handled, NoActor or Park; see Ingest.
-Ingest ApplyContents(uint32_t eid, const std::vector<SR::SaveRecord>& recs, uint64_t blobHash) {
+// Applied, Handled, NoActor or Park; see Ingest. `recordsHash` is cw::RecordsHash of `recs`. `flags`, when given, is the
+// slice's flags byte as sent: a client takes the container's box from it (container_arming), the host never does, since
+// its own reading is the truth; a caller with no flags to give leaves the box as it is.
+Ingest ApplyContents(uint32_t eid, const std::vector<SR::SaveRecord>& recs, uint64_t recordsHash,
+                     std::optional<uint8_t> flags) {
     void* actor = LivePropActor(eid);
     if (!actor) return Ingest::NoActor;
     // The wire eid must name a container before a cached component offset is read off it.
@@ -285,10 +299,19 @@ Ingest ApplyContents(uint32_t eid, const std::vector<SR::SaveRecord>& recs, uint
     }
     void* inv = ci::InventoryOf(actor);
     if (!inv || !ci::IsInventory(inv)) return Ingest::Park;
+    const bool boxDue = flags.has_value() && !IsHost();
+    const uint8_t want = flags ? static_cast<uint8_t>(*flags & cw::kKnownFlags) : uint8_t{0};
     {   // Identical contents -> do nothing. The raw-write orphans the previous arrays, so a
-        // no-op apply must not allocate at all (that is what bounds the leak).
-        auto it = g_appliedHash.find(eid);
-        if (it != g_appliedHash.end() && it->second == blobHash) return Ingest::Handled;
+        // no-op apply must not allocate at all (that is what bounds the leak). The same records with other flags
+        // apply the flags alone: an arming edge with no record change always reaches the mirror.
+        const auto it = g_applied.find(eid);
+        if (it != g_applied.end() && it->second.records == recordsHash) {
+            if (!boxDue || it->second.flags == want) return Ingest::Handled;
+            ca::ApplyFlags(eid, actor, want);
+            it->second.flags = want;
+            Touch(eid);
+            return Ingest::Applied;
+        }
     }
     // The HOST applies a CLIENT's contents with its world up, so it resolves each record's class
     // names through object_index (an attacker's unknown name is an O(1) miss, not a whole-array walk);
@@ -300,7 +323,8 @@ Ingest ApplyContents(uint32_t eid, const std::vector<SR::SaveRecord>& recs, uint
         case cio::WriteResult::Written:  break;
     }
 
-    g_appliedHash[eid] = blobHash;
+    g_applied[eid] = Seen{recordsHash, want};
+    if (boxDue) ca::ApplyFlags(eid, actor, want);
     Touch(eid);
     // An open screen onto this container does not rebuild on a raw write; redraw it from the new records.
     ue_wrap::container_view::Redraw(actor);
@@ -314,10 +338,21 @@ bool SliceAcceptRed() {
     return on;
 }
 
+// The hash of the records the container holds now (the guards' hash); false when they do not read.
+bool RecordsHashOfLive(uint32_t eid, uint64_t& out) {
+    void* const inv = internal::LiveWorldInventory(eid);
+    std::vector<SR::SaveRecord> recs;
+    if (!inv || !cio::ReadRecords(inv, recs)) return false;
+    out = cw::RecordsHash(eid, recs);
+    return true;
+}
+
 Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t senderSlot,
                      cb::Source src) {
     size_t o = 0;
-    if (!cw::ParseHeader(blob, o, outEid)) return Ingest::Handled;
+    uint16_t count = 0;
+    uint8_t flags = 0;
+    if (!cw::ParseHeader(blob, o, outEid, count, flags)) return Ingest::Handled;
     if (IsHost() && senderSlot != 0 && src == cb::Source::Arrival) ct::NoteSliceReceived(senderSlot);
     // A container a client threw: the host built its copy empty from the intent and has published
     // nothing for it, so the slice of that author is the newest version of the transfer. There is no
@@ -341,7 +376,7 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
     }
     std::vector<SR::SaveRecord> recs;
     const char* why = "";
-    if (!cw::ParseRecords(blob, o, recs, &why)) {
+    if (!cw::ParseRecords(blob, o, count, recs, &why)) {
         UE_LOGW("container_contents: eid=%u -- %s; dropped", outEid, why);
         return Ingest::Handled;
     }
@@ -384,27 +419,27 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
             }
         }
     }
-    const uint64_t contentHash = cw::ContentHash(outEid, recs);
-    const Ingest outcome = ApplyContents(outEid, recs, contentHash);
-    // Host, a client's birth applied. g_sentHash keeps the host's own drain from re-broadcasting
+    const uint64_t contentHash = cw::RecordsHash(outEid, recs);
+    const Ingest outcome = ApplyContents(outEid, recs, contentHash, flags);
+    // Host, a client's birth applied. g_sent keeps the host's own drain from re-broadcasting
     // the identical slice back the long way round.
     if (outcome == Ingest::Applied && IsHost() && senderSlot != 0) {
         if (birth) cb::Complete(bornActor);
         if (merged) {
             // The author lacks the host's part: the merged contents go to every peer, the author
             // included, by the host's own fan-out on the next sweep.
-            g_sentHash.erase(outEid);
+            g_sent.erase(outEid);
             g_dirty.insert(outEid);
             UE_LOGI("container_contents: eid=%u slot %u transfer MERGED with the host's own records -- "
                     "published to all on the next sweep", outEid, static_cast<unsigned>(senderSlot));
             return outcome;
         }
-        g_sentHash[outEid] = contentHash;
+        // The host's own reading of the container's arming is what its other peers are told, whatever the author sent.
+        const uint8_t hostFlags = ca::ReadFlags(bornActor);
+        g_sent[outEid] = Seen{contentHash, hostFlags};
         // The write and a fresh read of it must hash alike: the publication and the parity report hash by the read.
         uint64_t reread = 0;
-        uint32_t rereadRecords = 0;
-        if (ContentHashOf(outEid, reread, rereadRecords) && reread != contentHash &&
-            g_rereadSaid.insert(outEid).second)
+        if (RecordsHashOfLive(outEid, reread) && reread != contentHash && g_rereadSaid.insert(outEid).second)
             UE_LOGW("container_contents: eid=%u the applied slice re-reads to a different hash", outEid);
         UE_LOGI("container_contents: eid=%u slot %u ACCEPTED -- the container now holds content %llu, "
                 "which is what the relay carries", outEid, static_cast<unsigned>(senderSlot),
@@ -412,8 +447,11 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
         // The relay belongs HERE and not at the arrival site: a slice that waited in the pen and
         // applied on a replay is the host's new truth just as much as one that applied on arrival,
         // and relaying only the second kind left every other peer without it, silently.
-        if (auto* s = g_session.load(std::memory_order_acquire))
-            RelayToOthers(s, senderSlot, blob);
+        if (auto* s = g_session.load(std::memory_order_acquire)) {
+            std::vector<uint8_t> relayed = blob;
+            cw::SetFlags(relayed, hostFlags);
+            RelayToOthers(s, senderSlot, relayed);
+        }
     }
     return outcome;
 }
@@ -476,11 +514,11 @@ void NoteJoinSnapshotBracket(bool open) { pk::NoteJoinBracket(open, NowMs()); }
 // a client whose write was refused once kept its diverged contents forever that way.
 void MarkHostWrite(uint32_t eid) {
     g_dirty.insert(eid);
-    g_appliedHash.erase(eid);
+    g_applied.erase(eid);
     Touch(eid);
 }
 
-void ForgetApplied(uint32_t eid) { g_appliedHash.erase(eid); }
+void ForgetApplied(uint32_t eid) { g_applied.erase(eid); }
 
 namespace {
 void ApplyHeld(const std::vector<uint8_t>& blob, uint8_t senderSlot);   // defined with DeliverBlob below
@@ -493,6 +531,7 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     coop::props::container_apply_hold::SetApply(&ApplyHeld);
     cww::Install(session);
+    ca::Install(session);
 }
 
 void Tick() {
@@ -500,6 +539,7 @@ void Tick() {
     if (!s || !s->running()) return;
 
     cww::Tick();
+    ca::Tick();
     sg::ResolvePendingNames();
     ct::Flush();   // closes a burst's refusal window; cheap with none open
 
@@ -577,8 +617,10 @@ void OnContentsChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
 
     if (coop::props::container_apply_hold::Armed()) {   // the drill's hold: the header is read for it alone
         size_t headerEnd = 0;
+        uint16_t headerCount = 0;
+        uint8_t headerFlags = 0;
         uint32_t headerEid = 0;
-        if (cw::ParseHeader(blob, headerEnd, headerEid) &&
+        if (cw::ParseHeader(blob, headerEnd, headerEid, headerCount, headerFlags) &&
             coop::props::container_apply_hold::Keep(headerEid, std::move(blob), senderSlot))
             return;
     }
@@ -640,7 +682,7 @@ bool ContentHashOf(uint32_t eid, uint64_t& outHash, uint32_t& outRecords) {
     if (cb::Awaited(actor, 0)) return false;   // a transfer in progress is not a settled reading
     std::vector<SR::SaveRecord> recs;
     if (!cio::ReadRecords(inv, recs)) return false;
-    outHash = cw::ContentHash(eid, recs);
+    outHash = cw::ContentHash(eid, recs, ca::ReadFlags(actor));
     outRecords = static_cast<uint32_t>(recs.size());
     return true;
 }
@@ -651,8 +693,8 @@ bool DevRecordHashes(uint32_t eid, std::vector<uint64_t>& out, uint64_t& whole) 
     void* inv = actor && ci::IsContainer(actor) ? ci::InventoryOf(actor) : nullptr;
     std::vector<SR::SaveRecord> recs;
     if (!inv || !ci::IsWorldInventory(inv) || !cio::ReadRecords(inv, recs)) return false;
-    for (const SR::SaveRecord& r : recs) out.push_back(cw::ContentHash(eid, std::vector<SR::SaveRecord>{r}));
-    whole = cw::ContentHash(eid, recs);
+    for (const SR::SaveRecord& r : recs) out.push_back(cw::RecordsHash(eid, std::vector<SR::SaveRecord>{r}));
+    whole = cw::RecordsHash(eid, recs);
     return true;
 }
 
@@ -660,7 +702,7 @@ bool DevRecordHashes(uint32_t eid, std::vector<uint64_t>& out, uint64_t& whole) 
 // `publish` marks the container for the sweep like any local write.
 namespace {
 bool ApplyAppended(uint32_t eid, const std::vector<SR::SaveRecord>& recs, bool publish) {
-    if (ApplyContents(eid, recs, cw::ContentHash(eid, recs)) != Ingest::Applied) return false;
+    if (ApplyContents(eid, recs, cw::RecordsHash(eid, recs), std::nullopt) != Ingest::Applied) return false;
     if (publish) MarkHostWrite(eid);
     return true;
 }
@@ -720,12 +762,12 @@ void ForEachWorldContainer(void (*fn)(uint32_t eid, void* ctx), void* ctx) {
     WalkWorldContainers([&](uint32_t eid, void*, void*) { fn(eid, ctx); });
 }
 
-size_t AppliedEids() { return g_appliedHash.size(); }
+size_t AppliedEids() { return g_applied.size(); }
 
 uint64_t NoReadyRefusals() { return g_noReadyRefusals; }
 uint64_t NoReadyRetries() { return g_noReadyRetries; }
 bool NoReadyRefusedEid(uint32_t eid) { return g_noReadyEids.count(eid) != 0; }
-bool SentBaselineKnown(uint32_t eid) { return g_sentHash.count(eid) != 0; }
+bool SentBaselineKnown(uint32_t eid) { return g_sent.count(eid) != 0; }
 uint32_t TouchEpochOf(uint32_t eid) {
     const auto it = g_touchEpoch.find(eid);
     return it == g_touchEpoch.end() ? 0 : it->second;
@@ -743,13 +785,14 @@ void OnDisconnect() {
     g_rereadSaid.clear();
     ct::Reset();
     pk::Reset();
-    g_sentHash.clear();
-    g_appliedHash.clear();
+    g_sent.clear();
+    g_applied.clear();
     cb::Reset();
     g_asm.Clear();
     g_nextSweep = 0;
     g_announced = false;
     cww::OnDisconnect();
+    ca::OnDisconnect();
 }
 
 }  // namespace coop::props::container_contents_sync

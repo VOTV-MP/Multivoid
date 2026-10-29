@@ -544,8 +544,45 @@ void RunPutSelftest(Checks& check) {
         check(!H::PutNameOk(named), "name-bound: a record with no name is refused");
 
         std::vector<SR::SaveRecord> three = {hand, moved, changed};
-        check(csw::SliceBytes(three) == csw::Pack(7, three).size() && csw::SliceBytes({}) == csw::Pack(7, {}).size(),
-              "slice-bytes: the size without packing is the packed size");
+        check(csw::SliceBytes(three) == csw::Pack(7, three, 0).size() && csw::SliceBytes({}) == csw::Pack(7, {}, 0).size() &&
+                  csw::SliceBytes({}) == 8,
+              "slice-bytes: the size without packing is the packed size, and the header is eight bytes");
+
+        // The slice's flags byte: every value packs and parses back, the records after it are untouched, and the hash
+        // covers the flags and the records apart.
+        {
+            bool allBack = true;
+            for (int f = 0; f < 256; ++f) {
+                const std::vector<uint8_t> blob = csw::Pack(7, three, static_cast<uint8_t>(f));
+                size_t at = 0;
+                uint32_t eid = 0;
+                uint16_t n = 0;
+                uint8_t flags = 0;
+                std::vector<SR::SaveRecord> back;
+                const char* why = "";
+                allBack = allBack && csw::ParseHeader(blob, at, eid, n, flags) && eid == 7 && n == 3 && flags == f &&
+                          csw::ParseRecords(blob, at, n, back, &why) && at == blob.size() && back.size() == three.size();
+            }
+            check(allBack, "slice-flags: every flags value packs, parses back and leaves the three records whole");
+            check(csw::ContentHash(7, three, 0) != csw::ContentHash(7, three, csw::kFlagArmed) &&
+                      csw::ContentHash(7, three, csw::kFlagArmed) != csw::ContentHash(7, {}, csw::kFlagArmed),
+                  "slice-flags: the content hash covers the flags and the records");
+            check(csw::RecordsHash(7, three) == csw::ContentHash(7, three, 0),
+                  "slice-flags: the records' hash is the content hash with no flag set");
+            std::vector<uint8_t> blob = csw::Pack(7, three, 0);
+            size_t at = 0;
+            uint32_t eid = 0;
+            uint16_t n = 0;
+            uint8_t flags = 0;
+            check(csw::SetFlags(blob, csw::kFlagArmed) && csw::ParseHeader(blob, at, eid, n, flags) && flags == csw::kFlagArmed &&
+                      eid == 7 && n == 3 && blob == csw::Pack(7, three, csw::kFlagArmed),
+                  "slice-flags: a relayed slice's flags are rewritten and nothing else moves");
+            std::vector<uint8_t> shortBlob(7, 0);
+            check(!csw::SetFlags(shortBlob, csw::kFlagArmed), "slice-flags: a blob shorter than the header is refused");
+            at = 0;
+            check(!csw::ParseHeader(std::vector<uint8_t>(blob.begin(), blob.begin() + 7), at, eid, n, flags),
+                  "slice-flags: a header cut before its flags byte is refused");
+        }
 
         H::PutInputs w;
         w = PutInputsReady();

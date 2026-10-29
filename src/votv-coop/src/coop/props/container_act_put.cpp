@@ -59,6 +59,10 @@ UE_FACT_FN(kRowUsedOn, "container_act", L"prop_container_C", L"playerUsedOn", De
 constexpr int kTagR2 = 0x43414332;   // "CAC2"
 constexpr int kTagR3 = 0x43414333;   // "CAC3"
 
+// A client's own arming of a shared mirror (PreDingus below): the box is the host's display (container_arming).
+UE_FACT_FN(kRowDingus, "container_arming", L"prop_container_C", L"dingus", Declared);
+constexpr int kTagDingus = 0x43414344;   // "CACD"
+
 const char* RouteName(uint8_t route) { return route == kRouteR2 ? "R2" : "R3"; }
 
 // The put drill's knobs (dev:: below): inert unless a drill calls them, all reset at the session's end.
@@ -304,9 +308,28 @@ internal::PutCheck CheckR3(const Pending& p, void* hand, bool containerLive, con
     return internal::CheckPutR3(containerLive, isAsked, hashMatches);
 }
 
+// How many of this client's own dingus calls on a shared mirror were refused this session.
+uint32_t g_dingusCancelled = 0;
+
+// A client's own dingus on a shared container arms the mirror's box before, or without, the host's say (its R1 replay's
+// native extract runs one). The mirror's box is the host's display, written from the host's flag (container_arming), so a
+// local arm is refused: it would let the mirror's trigger fire against a box the host holds disarmed. A container that is
+// not a shared world one (a personal inventory's, a client's own) runs it.
+sg::Verdict PreDingus(const sg::Call& c) {
+    coop::net::Session* const s = LinkedSession();
+    if (!s || s->role() == coop::net::Role::Host) return sg::Verdict::Run;
+    uint32_t eid = 0;
+    if (SharedTarget(c.object, eid) == Target::Own) return sg::Verdict::Run;
+    ++g_dingusCancelled;
+    UE_LOGI("container_act: dingus on the shared mirror eid=%u cancelled, its box is the host's (#%u)",
+            static_cast<unsigned>(eid), g_dingusCancelled);
+    return sg::Verdict::Cancel;
+}
+
 }  // namespace
 
 void ResetPutLines() {
+    g_dingusCancelled = 0;
     for (bool& said : g_said) said = false;
     g_noHoverGuard = g_noHandTable = g_doubleDone = false;
     g_lastWhy = "";
@@ -316,6 +339,7 @@ const WatchRow* PutWatches(size_t& count) {
     static const WatchRow kRows[] = {
         {kRowEmTake, kTagR2, &PreR2},
         {kRowUsedOn, kTagR3, &PreR3},
+        {kRowDingus, kTagDingus, &PreDingus},
     };
     count = std::size(kRows);
     return kRows;

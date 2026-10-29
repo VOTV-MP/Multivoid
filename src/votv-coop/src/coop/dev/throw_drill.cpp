@@ -101,7 +101,7 @@ bool Contents(void* container, size_t* count, uint64_t* digest) {
     std::vector<ue_wrap::save_record::SaveRecord> recs;
     if (!inv || !ci::ReadContents(inv, recs, cw::kMaxRecords)) return false;
     *count = recs.size();
-    *digest = cw::ContentHash(0, recs);
+    *digest = cw::RecordsHash(0, recs);
     return true;
 }
 

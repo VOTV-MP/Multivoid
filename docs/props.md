@@ -251,7 +251,11 @@ the host refuses every other client slice and answers the author with its own tr
 judges, and an extraction on a client is a container-extract birth through the intent door above. The game arms a
 container's overlap box (the trigger a thrown prop enters to be filed) when a record leaves the container by a player's
 take, through the container's own `dingus`; the host's raw record edit never runs it, so the host calls `dingus` once a
-client's take is final (`container_act_host`) `[?]`. The open and closed state is a keyed-device channel like a
+client's take is final (`container_act_host`) `[?]`. Whether that box is armed is the host's own physical state: every
+slice the host publishes carries it in a flags byte (`coop/props/container_arming`, `container_slice_wire`), a native hook
+on `SetCollisionEnabled` marks the container for publication when the box changes (a host take, a broken container, a
+roomba's own writes included), and a client's mirror takes its box from the byte and cancels its own `dingus` on a shared
+container, so a mirror's trigger is never armed by a client alone `[?]`. The open and closed state is a keyed-device channel like a
 door's ([devices.md](devices.md)). The full break-and-spill behaviour, and the single-slot verbs, are reverse-engineered
 and designed and not built.
 

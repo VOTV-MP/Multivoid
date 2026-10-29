@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 263;
+inline constexpr uint16_t kProtocolVersion = 264;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -610,7 +610,8 @@ enum class ReliableKind : uint8_t {
     // A world container's contents as state, eid-addressed. The host publishes it; a client authors
     // one kind only, the birth slice of a container it threw, which the host applies and relays to
     // everyone but the author. Any other client slice is refused and answered with the host's truth.
-    // Chunked blob; personal inventories are skipped.
+    // Chunked blob; personal inventories are skipped. The blob's header is [u8 op][u32 eid][u16 n][u8 flags]: the
+    // flags byte is the host's reading of the container's overlap arming (bit 0 armed; coop/props/container_arming).
     ContainerContents = 118,
 
     // Host to all, the origin included: one chat line with the host-assigned sequence that orders
