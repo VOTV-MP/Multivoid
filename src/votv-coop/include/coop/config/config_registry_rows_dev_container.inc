@@ -127,3 +127,6 @@ CFG_FLAG(container_throw_stepped_rows, "container_throw_stepped_rows", "dev", fa
     "Red arm for the throw arms (CLIENT and HOST): from its eighth drive row on, the thrower of a thrown prop offsets "
     "each row's position 1000 cm further than the last, so the host's step test fails. The host shows such a row all the same and counts it; a run "
     "of failed rows revokes the thrower's right and the host takes the prop back.")
+CFG_FLAG(container_throw_join_nohold, "container_throw_join_nohold", "dev", false, "VOTVCOOP_CONTAINER_THROW_JOIN_NOHOLD",
+    "Red arm for the throwjoin arm (HOST): no hold on the second client's world-ready answer, and the throw waits for "
+    "its world-ready, so the joiner is seeded before the flight and the arm must fail with 'the joiner was not in flight'.")

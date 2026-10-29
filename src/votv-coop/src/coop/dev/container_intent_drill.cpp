@@ -19,6 +19,7 @@
 #include "coop/props/container_contents_sync.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
+#include "coop/session/world_ready_answer.h"
 
 #include "ue_wrap/actors/container_view.h"
 #include "ue_wrap/actors/inventory.h"
@@ -711,6 +712,7 @@ bool IsEnabled() { return ArmOf() != Arm::Off; }
 void Tick(coop::net::Session* session) {
     if (!IsEnabled()) return;
     g_session = session;
+    if (session) coop::world_ready_answer::dev::Tick(*session);   // the throwjoin hold's answers and its bound, whatever the phase
     if (g_phase == Phase::Done) return;
     if (!session || !session->connected() || !RoleIsReady()) return;
     if (IsPutArm(ArmOf())) {

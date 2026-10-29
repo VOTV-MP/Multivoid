@@ -24,14 +24,21 @@ void OnAnnounce(coop::net::Session& session, int slot);
 namespace dev {
 // Default off; the throwjoin drill's. While a slot is held, its FIRST announce is deferred: the slot stays not
 // world-ready (so every fan-out skips it) and its join gate stays held, the way container_act_host's HoldReplies keeps a
-// grant back. Release runs the deferred answer (the world-ready mark, the connect replay) at once; a slot that was not
-// caught is only unheld. Game thread.
+// grant back. The hold is the arm's intent for a slot, set before anyone occupies it; the CATCH is per occupancy (it
+// is cleared when the slot's occupant changes), named by Session::peerGenerationForSlot at the catch. A second
+// announce of the same occupant while caught replaces the first and gives back its own gate hold. Game thread.
 void HoldSlot(int slot, bool on);
-// True once the hold has caught the slot's announce.
+// True while the slot's announce is caught.
 bool Caught(int slot);
+// Unholds the slot and asks for the caught announce's answer (the world-ready mark, the connect replay); Tick runs it, and
+// only for the occupant that was caught, still connected. A slot that was not caught is only unheld.
 void Release(int slot);
-// The drill's reset: every hold and catch dropped without answering.
-void Forget();
+// Unholds the slot and drops its catch without answering; Tick gives the caught announce's gate hold back when that
+// occupant is still connected (a departed one's was discarded with its connection).
+void Forget(int slot);
+// Once per game tick, host: runs the requested answers and drops, and answers a catch older than the hold's bound (one
+// line), so no join gate stays open unbounded.
+void Tick(coop::net::Session& session);
 }  // namespace dev
 
 }  // namespace coop::world_ready_answer

@@ -214,10 +214,11 @@ void PlaceHostPass();
 HostJudge TouchHostTick(uint32_t eid, char* why, size_t whyLen);
 HostJudge DepartHostTick(const Track& host, uint32_t eid, char* why, size_t whyLen);
 // The joiner's world-ready answer is held from the host's first tick (JoinHoldBegin); the go is the hold having caught its ask.
+// The red (container_throw_join_nohold) holds nothing; its go is the joiner being world-ready.
 void JoinHoldBegin(const coop::net::Session& s);
 HostJudge JoinGate(const coop::net::Session& s, uint64_t waitedMs, char* why, size_t whyLen);
-// At the first admitted row of the throw: the hold is released, the joiner is seeded mid-flight.
-void JoinHostRelease();
+// Ticked while the throw is traced: notes the election, and at the first admitted row the hold is released, so the joiner is seeded mid-flight.
+void JoinHostRelease(const coop::net::Session& s);
 void JoinHostSay(int n, uint32_t eid);
 // Latches whether a client other than slot `thrower` was world-ready before the host copy rested (`hostAtRest`), per throw n.
 void JoinHostWatchReady(const coop::net::Session& s, int thrower, int n, bool hostAtRest);

@@ -543,7 +543,7 @@ void StepTrace(const coop::net::Session& s, bool due) {
     g_hHit.Tick(g_hTrack);
     char why[200];
     if (ArmOf() == Arm::ThrowJoin) {   // the joiner is answered at the first admitted row, then followed through the flight
-        JoinHostRelease();
+        JoinHostRelease(s);
         JoinHostSay(g_hN, g_hElemEid);
         JoinHostWatchReady(s, g_hSlot, g_hN, g_hTrack.atRest);
     }
