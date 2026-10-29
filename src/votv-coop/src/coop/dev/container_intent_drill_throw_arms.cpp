@@ -528,7 +528,12 @@ HostJudge JoinHostJudge(const Track& host, int n, float& gapOut, char* why, size
     // it was not world-ready at the elect's tick and its edge came later.
     const long long seededMs = g_jhReadyMs ? static_cast<long long>(g_jhReadyMs) - static_cast<long long>(g_jhElectMs) : 0;
     const bool seededAfterElect = g_jhElectMs && !g_jhReadyAtElect && seededMs > 0;
-    if (!(n == g_jhReadyN && g_jhReady) || !seededAfterElect || !inFlight || g.matched < kMatchedMin) {
+    if (g_jhElectMs && !seededAfterElect) {   // the red's condition, named on its own: seeded before the throw began
+        std::snprintf(why, whyLen, "the joiner was not in flight: it was world-ready at the elect (world-ready already at the elect=%d, "
+                      "edge %lld ms after the elect, need above 0)", g_jhReadyAtElect ? 1 : 0, seededMs);
+        return HostJudge::Failed;
+    }
+    if (!(n == g_jhReadyN && g_jhReady) || !inFlight || g.matched < kMatchedMin) {
         std::snprintf(why, whyLen, "the joiner was not in flight: world-ready before rest=%d, world-ready already at the elect=%d (edge %lld ms after the elect, need above 0), it first saw the prop at %llu and the host copy rested at %llu, %d instants matched (need %d)",
                       (n == g_jhReadyN && g_jhReady) ? 1 : 0, g_jhReadyAtElect ? 1 : 0, seededMs, first, U(host.restMs), g.matched, kMatchedMin);
         return HostJudge::Failed;

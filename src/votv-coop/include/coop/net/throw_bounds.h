@@ -53,8 +53,9 @@ inline constexpr float kMaxBodyAngDegS = 1.0e6f;
 // The host's arrival delta, allowed this much short of the sender's (ms): 2 x the largest sendTime jitter, 22 ms
 // (measured on loopback and with a 50 ms fake lag each way).
 inline constexpr uint32_t kJitterMs = 44;
-// A row's step beyond speed times time (cm): the only honest excess is the sender's clock running ahead of the host's by
-// up to the jitter above, at the fastest speed a launch has (4200 x 0.044 = 185 cm).
+// A row's step beyond speed times time (cm). A later row is stamped as it is read and its dt already carries the jitter
+// above, so the excess this covers is the FIRST row's: its reference is the release pose, which the thrower reads up to
+// a jitter after the throw's stamp, at the fastest speed a launch has (4200 x 0.044 = 185 cm). A margin, stated as such.
 inline constexpr float    kStepSlackCm = kMaxLaunchSpeedCmS * static_cast<float>(kJitterMs) / 1000.f;
 // Design value: consecutive failed rows that revoke the thrower, 125 ms of failures at 40 Hz.
 inline constexpr int      kMaxRefusedRows = 5;

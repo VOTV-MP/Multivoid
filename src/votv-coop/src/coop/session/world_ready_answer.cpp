@@ -83,16 +83,19 @@ void OnAnnounce(coop::net::Session& session, int slot) {
     if (slot < 1 || slot >= static_cast<int>(coop::net::kMaxPeers)) return;
 
     if (!session.IsSlotWorldReady(slot)) {
-        if (g_held[slot]) {   // dev::HoldSlot: the answer waits for dev::Release; the announce's gate hold stays
-            HeldAnnounce& h = g_catch[slot];
-            if (h.on) {   // a second announce replaces the caught one; its own gate hold goes back, the first stays
-                session.ReleaseAnnounceHold(slot);
-                h.gen = session.peerGenerationForSlot(slot);
-                UE_LOGI("world_ready_answer: [dev] slot %d announced again while held -- the caught announce is replaced",
-                        slot);
-                return;
-            }
+        // dev::HoldSlot: the answer waits for dev::Release; the announce's gate hold stays. The catch is per occupancy
+        // (cleared when the slot's occupant goes), and the hold catches ONE announce: a later occupant is never held.
+        HeldAnnounce& h = g_catch[slot];
+        if (h.on) {   // a second announce replaces the caught one; its own gate hold goes back, the first stays
+            session.ReleaseAnnounceHold(slot);
+            h.gen = session.peerGenerationForSlot(slot);
+            UE_LOGI("world_ready_answer: [dev] slot %d announced again while held -- the caught announce is replaced",
+                    slot);
+            return;
+        }
+        if (g_held[slot]) {
             h = HeldAnnounce{true, false, false, session.peerGenerationForSlot(slot), NowMs()};
+            g_held[slot] = false;
             return;
         }
         // The first announce of this occupancy completes the join. The join window closes for this joiner
