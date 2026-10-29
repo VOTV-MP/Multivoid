@@ -248,7 +248,10 @@ array per live container is sent at a joiner's ready edge and on change, and a c
 display only. A client's only slice is a thrown container's birth, bounded by its arrival rate;
 the host refuses every other client slice and answers the author with its own truth
 (`coop/props/container_truth`). A change a client makes to a shared container is an act the host
-judges, and an extraction on a client is a container-extract birth through the intent door above. The open and closed state is a keyed-device channel like a
+judges, and an extraction on a client is a container-extract birth through the intent door above. The game arms a
+container's overlap box (the trigger a thrown prop enters to be filed) when a record leaves the container by a player's
+take, through the container's own `dingus`; the host's raw record edit never runs it, so the host calls `dingus` once a
+client's take is final (`container_act_host`) `[?]`. The open and closed state is a keyed-device channel like a
 door's ([devices.md](devices.md)). The full break-and-spill behaviour, and the single-slot verbs, are reverse-engineered
 and designed and not built.
 

@@ -38,12 +38,13 @@ void RunSelftest();                               // the pure decisions, once pe
 
 // The host's dev counters (TallyOf). The Put* terms are the put's refusals, each by name; ReservationLapsed counts
 // reservations that ended by their deadline, LateDone the late puts inserted, LateDoneLost the late puts a cap refused,
-// PutDoneLost the timely puts a re-check refused at the insert, OwedLost the owed puts given up.
+// PutDoneLost the timely puts a re-check refused at the insert, OwedLost the owed puts given up, TakeArmed the final
+// takes after which the host called the container's own dingus (the game's arming of a container a record was taken from).
 enum class Tally : uint8_t { TargetGone, BadCommit, GrantUnsent, QueueFullUnready, BadSender, ShortPayload,
                              Malformed, UnknownFamilyUnready, RestoreOwed, WaitExpired, ReservationLapsed, LateDone,
                              LateDoneLost, PutNoName, PutClassUnresolved, PutNotProp, PutFiltered, PutIntoMailbox,
-                             PutRowRefuses, PutUnknownName, PutDoneLost, OwedLost, kCount };
-const char* TallyName(Tally t);   // "target_gone" ... "owed_lost"; "" past kCount
+                             PutRowRefuses, PutUnknownName, PutDoneLost, OwedLost, TakeArmed, kCount };
+const char* TallyName(Tally t);   // "target_gone" ... "take_armed"; "" past kCount
 
 namespace internal {   // pure, no engine call: the selftest drives these (NOT the game thread)
 

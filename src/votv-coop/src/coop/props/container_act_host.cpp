@@ -3,6 +3,7 @@
 #include "coop/props/container_act_host.h"
 #include "coop/props/container_act_host_internal.h"
 
+#include "coop/element/registry.h"
 #include "coop/net/blob_chunks.h"
 #include "coop/net/intent_queue.h"
 #include "coop/net/net_clock.h"
@@ -15,6 +16,7 @@
 #include "coop/props/container_truth.h"
 
 #include "ue_wrap/actors/container_inventory.h"
+#include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 
@@ -190,6 +192,25 @@ void EndHold(cas::Hold h, const char* why) {
     }
     UE_LOGI("container_act: slot=%u id=%u eid=%u %s, reservation released", static_cast<unsigned>(h.slot),
             static_cast<unsigned>(h.id), static_cast<unsigned>(h.eid), why);
+}
+
+// A take is final: the game arms a world container's overlap box when a record leaves it by the player's own take
+// (getObject calls dingus, prop_container.cpp:802), and the host's raw record edit never runs that. The container's own
+// dingus runs here, so the box arms after the BP's 0.1 s delay as it does in single-player; the arming is caught where it
+// lands (container_arming) and reaches every mirror in the container's next publication. Only a take arms: a put by
+// R2 or R3 does not in the BP, and neither does the escrow's restore.
+void ArmAfterTake(const cas::Hold& h) {
+    void* const container = coop::element::LivePropActor(h.eid);
+    const bool ran = container && ue_wrap::component_calls::CallParamlessNamed(container, L"dingus");
+    if (ran) {
+        Bump(Tally::TakeArmed);
+        UE_LOGI("container_act: slot=%u id=%u eid=%u take final, the container's dingus called", static_cast<unsigned>(h.slot),
+                static_cast<unsigned>(h.id), static_cast<unsigned>(h.eid));
+        return;
+    }
+    UE_LOGW("container_act: slot=%u id=%u eid=%u take final, but the container's dingus did not run (%s) -- its box "
+            "stays as it was", static_cast<unsigned>(h.slot), static_cast<unsigned>(h.id), static_cast<unsigned>(h.eid),
+            container ? "the call failed" : "the container is gone");
 }
 
 // Try every owed write once; an ERROR for one still owed once a minute.
@@ -621,6 +642,7 @@ void OnCommitChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     }
     // Done: an escrow's record is the client's now. A reservation inserts the record the client's container stored.
     if (closed->kind == cas::HoldKind::Reservation) PlaceTimelyDone(std::move(*closed), c);
+    else ArmAfterTake(*closed);
 }
 
 // A departed sender's holds end with it, and its tombstones and slowing with them: the slot is reused.
@@ -685,7 +707,7 @@ const char* TallyName(Tally t) {
                                          "wait_expired", "reservation_lapsed", "late_done", "late_done_lost",
                                          "put_no_name", "put_class_unresolved", "put_not_prop", "put_filtered",
                                          "put_into_mailbox", "put_row_refuses", "put_unknown_name", "put_done_lost",
-                                         "owed_lost"};
+                                         "owed_lost", "take_armed"};
     static_assert(std::size(kNames) == static_cast<size_t>(Tally::kCount), "a name for every tally");
     return t < Tally::kCount ? kNames[static_cast<int>(t)] : "";
 }
