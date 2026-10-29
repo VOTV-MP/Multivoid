@@ -315,7 +315,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
     // trajectory, and the host streams the clump's flight as poses until it re-piles. It freezes at
     // the release pose until that stream or the host's ToPile convert moves it; the swing plays.
     if (propActor && HostAuthorsTrashBody(propActor)) {
-        if (propActor && linSpeed > coop::net::kThrownLinVelThreshold)
+        if (propActor && payload.throwSeq != 0)
             coop::prop_sound::PlayThrowWhoosh(propActor);
         if (propActor) ClearAnyDriveFor(propActor);  // stop the carry drive; freeze in place
         UE_LOGI("[PILE] CLIENT trash throw eid=%u |v|=%.1f cm/s -- frozen at release (no local physics); "
@@ -336,14 +336,14 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         coop::prop_park::Unpark(propActor, meshToActOn, /*rootSimulates=*/true);
         ue_wrap::engine::SetComponentLinearVelocity(meshToActOn, payload.linVelX, payload.linVelY, payload.linVelZ);
         ue_wrap::engine::SetComponentAngularVelocity(meshToActOn, payload.angVelX, payload.angVelY, payload.angVelZ);
-        // The throw fires above kThrownLinVelThreshold so a passive drop stays silent: the prop's
-        // own thrown event (subclass hooks) and the receiver-side swing, since the native swing
+        // The throw fires for a release the holder numbered (throwSeq: its game ran throwShit), so a passive drop stays
+        // silent: the prop's own thrown event (subclass hooks) and the receiver-side swing, since the native swing
         // plays only in the thrower's input chain.
-        if (propActor && linSpeed > coop::net::kThrownLinVelThreshold) {
+        if (propActor && payload.throwSeq != 0) {
             ue_wrap::prop::CallPropThrown(propActor, localPlayer);
             coop::prop_sound::PlayThrowWhoosh(propActor);
-            UE_LOGI("remote_prop: fired Aprop_C.thrown(player=%p) + swing whoosh -- launch speed %.1f cm/s > threshold %.1f",
-                    localPlayer, linSpeed, coop::net::kThrownLinVelThreshold);
+            UE_LOGI("remote_prop: fired Aprop_C.thrown(player=%p) + swing whoosh -- throw seq %u, launch speed %.1f cm/s",
+                    localPlayer, static_cast<unsigned>(payload.throwSeq), linSpeed);
         }
     } else if (propActor) {  // validated-or-null since assignment (LiveActor / fresh resolve)
         // The clump mirror flies through the generic root physics with PhysicsOnly collision: it
@@ -362,7 +362,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
                 payload.elementId, linSpeed, propActor);
         // The swing for the clump too (every throw plays it, whatever the prop), above the same
         // speed gate.
-        if (linSpeed > coop::net::kThrownLinVelThreshold) {
+        if (payload.throwSeq != 0) {
             coop::prop_sound::PlayThrowWhoosh(propActor);
         }
     }

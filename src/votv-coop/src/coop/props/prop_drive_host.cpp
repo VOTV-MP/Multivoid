@@ -95,6 +95,8 @@ size_t PublishAdmitted(coop::net::Session& s, Driven& d) {
     pp.pitch = ue_wrap::NormalizeAxis(d.admitRot.Pitch);
     pp.yaw   = ue_wrap::NormalizeAxis(d.admitRot.Yaw);
     pp.roll  = ue_wrap::NormalizeAxis(d.admitRot.Roll);
+    pp.vel[0] = d.admitVel.X; pp.vel[1] = d.admitVel.Y; pp.vel[2] = d.admitVel.Z;
+    pp.sendTimeMs = d.admitSendMs;
     // A broadcast, the syncer included: MTA relays the accepted sync to every joined player but its source
     // (CUnoccupiedVehicleSync.cpp:472). The pose batch is one shared datagram per tick, so the source is not left out
     // here; its client skips the echo (prop_syncer::SkipsHostPose). The End is sent to the others alone.
@@ -134,7 +136,7 @@ Driven* Open(void* actor, bool claimed, const char* why, uint8_t syncer = 0) {
     for (size_t i = 0; i < keyW.size() && i < sizeof(d.key.data); ++i)
         d.key.data[d.key.len++] = static_cast<char>(keyW[i]);
     d.gen = BumpGen(d.eid);
-    d.lastMoveMs = coop::active_drive::NowMs();
+    d.openMs = d.lastMoveMs = coop::active_drive::NowMs();
     g_driven.push_back(std::move(d));
     UE_LOGI("[PROP-DRIVE] HOST %s eid=%u gen=%u key='%ls' (%s) -- %zu driven",
             syncer ? "GRANT" : (claimed ? "CLAIM" : "COAST"), g_driven.back().eid,
@@ -361,6 +363,10 @@ static void Tick(coop::net::Session& s) {
             pp.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
             pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
             pp.roll  = ue_wrap::NormalizeAxis(rot.Roll);
+            // The copy's velocity and the row's age: a receiver's override of this stream starts from them.
+            ue_wrap::FVector lin{}, ang{};
+            if (E::GetActorRootPhysicsVelocity(actor, lin, ang)) { pp.vel[0] = lin.X; pp.vel[1] = lin.Y; pp.vel[2] = lin.Z; }
+            pp.sendTimeMs = static_cast<uint32_t>(now - d.openMs);
             s.PublishPropDrivePose(pp);   // queued: it goes out in its turn, refreshed until then
             if (turn == coop::net::PoseTurn::Join) ++joined;
             d.everSent    = true;

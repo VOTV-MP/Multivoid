@@ -31,7 +31,7 @@ void Tick(coop::net::Session& session);
 // channel), converges the copy's frozen and sleep to the holder's at the edge, puts it at the
 // holder's transform at the edge (a stuck wall-attachable stays where its stick put it),
 // re-enables simulation and applies the launch velocity unless it ended frozen, and fires the
-// prop's own thrown event when the launch speed exceeds the threshold, so a passive drop stays
+// prop's own thrown event when the release carries a throw sequence (its holder's game ran throwShit), so a passive drop stays
 // silent and a real throw plays the game's own sound and trail. Clears the cached pointer, so the
 // next pose re-resolves. `senderSlot` is the sender's slot from the reliable header, which
 // identifies which slot's drive to clear (a scan by key returned the first match and could clear

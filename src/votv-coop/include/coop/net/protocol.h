@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 260;
+inline constexpr uint16_t kProtocolVersion = 261;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -138,8 +138,8 @@ enum class ReliableKind : uint8_t {
 
     // The holder released a held prop: the prop by key, the inherited linear and angular velocity,
     // and for a keyless trash entity the eid and its generation. The receiver re-enables physics,
-    // writes the velocities and fires the prop's own thrown event above kThrownLinVelThreshold.
-    // PropReleasePayload.
+    // writes the velocities and, when the release carries a throw sequence, fires the prop's own thrown
+    // event. PropReleasePayload.
     PropRelease = 2,
 
     // A prop was born: an inventory drop, a spawner, a container extract, or a save-loaded prop in
@@ -1394,14 +1394,19 @@ struct PropPoseSnapshot {
     uint8_t  ctx;
     uint8_t  _pad;
     uint16_t holdGen;   // the holder's hold generation, wrapping, never 0; 0 in a PropDrivePose batch
+    // The copy's linear velocity (cm/s) when the pose was read, and the sender's clock when it was sent:
+    // milliseconds since the row's stream began (a thrown prop's syncer counts from the throw, the host's
+    // coast from its opening). A PropDrivePose row carries both; the held PropPose stream sends zero.
+    float    vel[3];
+    uint32_t sendTimeMs;
 };
-static_assert(sizeof(PropPoseSnapshot) == 64, "PropPoseSnapshot must be 64 bytes");
+static_assert(sizeof(PropPoseSnapshot) == 80, "PropPoseSnapshot must be 80 bytes");
 
 struct PropPosePacket {
     PacketHeader     header;  // 20
     PropPoseSnapshot pose;    // 64
 };
-static_assert(sizeof(PropPosePacket) == 84, "PropPosePacket must be 84 bytes");
+static_assert(sizeof(PropPosePacket) == 100, "PropPosePacket must be 100 bytes");
 
 // One character's pose in the EntityPose batch, keyed by its element id. The host reads the live
 // actor each send tick; the client interpolates and drives the mirror's movement component.
@@ -1492,7 +1497,7 @@ inline constexpr int kTrashCarryPoseDatagramMax =
     static_cast<int>(sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader)) +
     kMaxTrashCarryBatchEntries * static_cast<int>(sizeof(TrashClumpPoseSnapshot));
 
-// Max props per PropDrivePose datagram: 20 + 4 + 16*64 = 1048 B, under the 1400 MTU budget. The
+// Max props per PropDrivePose datagram: 20 + 4 + 16*80 = 1304 B, under the 1400 MTU budget. The
 // host's pending batch is a queue merged by eid and drained from the front, so more moving props
 // than fit go out over the following sends rather than being dropped. Reuses EntityPoseBatchHeader
 // and PropPoseSnapshot (RULE 2).
@@ -1722,17 +1727,17 @@ struct PropReleasePayload {
     float    locX, locY, locZ;           // world cm at the edge
     float    rotPitch, rotYaw, rotRoll;  // degrees at the edge
     uint8_t  hasPose;    // 0: the prop was gone at the edge (pocketed), and the transform is unset
-    uint8_t  _pad[3];
+    uint8_t  _pad;
+    // The throw's sequence: the game's own throw ran on the holder's copy (throwShit, which sets the launch
+    // velocity) and minted this number, never 0; 0 = the release was not a throw. A receiver plays the thrown
+    // event and the swing only for a nonzero one, and the host's grant of a thrown prop echoes it.
+    uint16_t throwSeq;
 };
 static_assert(sizeof(PropReleasePayload) == 92, "PropReleasePayload must be 92 bytes");
 // Every reliable payload carries this guard: a payload past one datagram's budget would be
 // refused at send time, so catch it at compile time.
 static_assert(sizeof(PropReleasePayload) <= 256 - 20 - 8,
               "PropReleasePayload must fit in one reliable datagram (kMaxReliablePayload)");
-
-// Velocity magnitude (cm/s) above which a release counts as a throw on the receiver and fires the
-// prop's thrown event. 2 m/s is well above a walking drop's residual and well below a flick.
-inline constexpr float kThrownLinVelThreshold = 200.f;
 
 // The end of a host-driven prop's stream (PropDriveEnd): the eid, the claim generation the stream
 // carried in PropPoseSnapshot.ctx, the host's physics flags at that instant (propspawn_flags, the
@@ -1914,7 +1919,8 @@ static_assert(sizeof(PropDestroyPayload) == 40, "PropDestroyPayload must be 40 b
 
 // A placement intent (PropDropIntent), client to host: the identity the host needs to spawn the
 // authoritative prop by key (class, key, row name), the placement transform and scale, and the
-// parity flags. No element id (the host allocates its own) and no velocity (a placed prop rests).
+// parity flags, and the velocity of the placed actor's root when the intent was authored (a place carries about
+// zero; a thrown prop its launch, with `throwSeq` nonzero). No element id (the host allocates its own).
 struct PropDropIntentPayload {
     WireClassName className;                    // 64 -- "prop_rock_C" etc. (R::ClassNameOf of the placed actor)
     WireKey       key;                          // 32 -- the persistent cross-peer save Key (loadData-restored)
@@ -1922,10 +1928,13 @@ struct PropDropIntentPayload {
     float         locX, locY, locZ;             // 12 -- placement world cm
     float         rotPitch, rotYaw, rotRoll;    // 12 -- placement FRotator
     float         scaleX, scaleY, scaleZ;       // 12 -- placed actor's GetActorScale3D
+    float         linVel[3];                    // 12 -- the root's linear velocity (cm/s) at the drain
+    float         angVel[3];                    // 12 -- the root's angular velocity (deg/s) at the drain
     uint8_t       physFlags;                    // 1  -- propspawn_flags (kStatic/kFrozen/kSleep/kRemoveWOrespawn parity)
-    uint8_t       _pad[3];                      // 3  -- 4-byte alignment; zero on the wire
+    uint8_t       _pad;                         // 1  -- zero on the wire
+    uint16_t      throwSeq;                     // 2  -- the throw's sequence (PropReleasePayload::throwSeq); 0 = a place
 };
-static_assert(sizeof(PropDropIntentPayload) == 168, "PropDropIntentPayload must be 168 bytes");
+static_assert(sizeof(PropDropIntentPayload) == 192, "PropDropIntentPayload must be 192 bytes");
 static_assert(sizeof(PropDropIntentPayload) <= 256 - 20 - 8, "PropDropIntentPayload must fit one datagram");
 
 // --- The save transfer ---
@@ -4211,25 +4220,13 @@ inline bool PropPoseInBounds(const PropPoseSnapshot& p) {
     return std::fabs(p.pitch) <= 180.f && std::fabs(p.yaw) <= 180.f && std::fabs(p.roll) <= 180.f;
 }
 
-// The bounds of a client's prop velocity, for values already known finite: real throws peak at a few thousand cm/s
-// and a fast tumble at a few thousand deg/s; 1e6 is generous headroom, below anything that would teleport a body in
-// one tick. One rule for a client's PropRelease and for the End a syncing client sends the host. true == in bounds.
-inline constexpr float kMaxPropLinVel = 1.0e6f;
-inline constexpr float kMaxPropAngVel = 1.0e6f;
-inline bool PropVelocityInBounds(float linX, float linY, float linZ, float angX, float angY, float angZ) {
-    return std::fabs(linX) <= kMaxPropLinVel && std::fabs(linY) <= kMaxPropLinVel &&
-           std::fabs(linZ) <= kMaxPropLinVel && std::fabs(angX) <= kMaxPropAngVel &&
-           std::fabs(angY) <= kMaxPropAngVel && std::fabs(angZ) <= kMaxPropAngVel;
-}
-
-// A syncing client's PropDriveEnd for the host's body: the pose within the world bounds of a held pose, the
-// velocities within the release's. Floats already known finite. true == in bounds.
+// A syncing client's PropDriveEnd for the host's body: the pose within the world bounds of a held pose. Floats
+// already known finite. The velocities are clamped, not refused (coop/net/throw_bounds.h). true == in bounds.
 inline bool PropDriveEndInBounds(const PropDriveEndPayload& p) {
     PropPoseSnapshot pose{};
     pose.x = p.x; pose.y = p.y; pose.z = p.z;
     pose.pitch = p.pitch; pose.yaw = p.yaw; pose.roll = p.roll;
-    return PropPoseInBounds(pose) &&
-           PropVelocityInBounds(p.linVelX, p.linVelY, p.linVelZ, p.angVelX, p.angVelY, p.angVelZ);
+    return PropPoseInBounds(pose);
 }
 
 // Reject a clock sample no clock can hold, BEFORE it is stored: a NaN or absurd value written into the

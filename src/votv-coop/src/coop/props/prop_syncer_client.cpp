@@ -42,8 +42,8 @@ constexpr uint64_t kReclaimBackoffMs = 1500;
 // A syncing client that is standing still re-sends its pose this often, well inside the host's kSyncerSilenceMs, and
 // reads the prop at most every kRestProbeMs between beats. MTA sends a syncer's rows every 400 ms by default with the
 // move and turn speed in each, on change only and with no beat (CMainConfig.cpp:1513, and the client's
-// CUnoccupiedVehicleSync.cpp:19,66): rows here are pose-only at kClientDriveSendMs, a lerp-only receiver needing the
-// rate that MTA's velocity extrapolation buys, and the beat answers the host's silence rule, which MTA lacks.
+// CUnoccupiedVehicleSync.cpp:19,66): rows here carry the pose and the copy's velocity at kClientDriveSendMs, the receiver
+// lerping to the pose and the velocity serving the host's override, and the beat answers the host's silence rule, which MTA lacks.
 constexpr uint64_t kSyncerBeatMs = 1000;
 // A claim the host has not answered in this long is lost (an answer can only be lost to a session change): the entry
 // goes Idle with the backoff, so nothing skips the host's poses for a prop for good. D7: kPendingMaxMs = 3000.
@@ -70,6 +70,7 @@ struct Entry {
     uint64_t              claimSentMs = 0;         // Pending: when the claim went out
     uint64_t              nextProbeMs = 0;         // Syncing: the copy is not read before this
     uint64_t              lastInteractMs = 0;      // the feeder's last Claim
+    uint64_t              epochMs = 0;             // Syncing: the clock the rows' sendTimeMs counts from (the grant; a throw: the throw)
 };
 
 // A re-claim of the eid is held off until `untilMs`, and for an InHand refusal while a hand still holds it.
@@ -199,6 +200,7 @@ void OnGranted(const coop::net::PropSyncAnswerPayload& p) {
     e.rowsSent = 0;
     const uint64_t now = coop::active_drive::NowMs();
     e.lastMoveMs = now;
+    e.epochMs = now;
     e.nextProbeMs = 0;
     const uint64_t ms = now - e.claimSentMs;   // the claim's send to this grant, on this client's clock
     if (coop::dev::prop_syncer_drill::IsEnabled()) {
@@ -279,6 +281,11 @@ bool StepSyncing(coop::net::Session& s, uint32_t eid, Entry& e, void* actor, uin
     pp.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
     pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
     pp.roll  = ue_wrap::NormalizeAxis(rot.Roll);
+    // The copy's velocity as it is read now, and this row's age on the clock the grant or the throw started: the
+    // host judges a row's step against its velocity and its age, and takes the prop over from the last admitted one.
+    ue_wrap::FVector lin{}, ang{};
+    if (E::GetActorRootPhysicsVelocity(actor, lin, ang)) { pp.vel[0] = lin.X; pp.vel[1] = lin.Y; pp.vel[2] = lin.Z; }
+    pp.sendTimeMs = static_cast<uint32_t>(now - e.epochMs);
     s.PublishPropDrivePose(pp);   // queued: it goes out in its turn, refreshed until then
     e.everSent   = true;
     e.sentLoc    = loc;

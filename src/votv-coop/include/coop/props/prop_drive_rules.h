@@ -29,8 +29,8 @@ constexpr uint64_t kRestProbeMs = 250;
 constexpr float kRestVelCmS = 1.0f;
 // A syncing client sends its prop's pose at most this often; the host sizes its late-syncer window by it. 25 ms
 // is 40 Hz, the ATV's kStreamBudget refill, so the host's burst of 16 absorbs the jitter of a send at this rate.
-// MTA's default is a row every 400 ms carrying the move and turn speed (CMainConfig.cpp:1513); ours are pose-only
-// at 40 Hz because the receiver only lerps.
+// MTA's default is a row every 400 ms carrying the move and turn speed (CMainConfig.cpp:1513); ours carry the pose and the
+// velocity at 40 Hz because the receiver lerps to the pose and the velocity serves the host's takeover of a thrown prop.
 constexpr uint64_t kClientDriveSendMs = 25;
 
 // True when a pose moved past the send epsilons on any axis since `sentLoc`/`sentRot`, the last one that went out.

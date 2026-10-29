@@ -5,14 +5,14 @@
 // host-authoritative, so a client's own fresh Aprop_C spawn is skipped in prop_lifecycle and a
 // client-placed rock would be INVISIBLE to the host. The answer is the pattern chipPiles already
 // use: the CLIENT sends an INTENT and the HOST is the sole authority. This is the DROP half -- the
-// grab half already works, the hold-R pickup DESTROY crossing the bidirectional destroy-seam. Each
-// step is documented on the entry point performing it: NoteClientKeyedDestroy, Install, Tick,
-// OnPropDropIntent.
+// grab half already works, the hold-R pickup DESTROY crossing the bidirectional destroy-seam.
 //
 // WHY Tick sends a tick LATE: the place ALSO destroys the in-hand display husk, and if that crosses
 // as DESTROY(key) the reliable channel delivers it BEFORE the intent, so the host processes it
-// against a rock it no longer has -- a no-op -- and only then spawns from the intent, and the spawn
-// survives. Authoring in the same tick lets the husk-destroy kill it instead.
+// against a rock it no longer has and only then spawns from the intent, and the spawn survives.
+// The same late tick reads the actor's root velocity into the intent (a thrown prop has flown a
+// tick or more by then, so the sample is of that moment) and the throw sequence prop_throw minted
+// for it, 0 for a place.
 
 #pragma once
 

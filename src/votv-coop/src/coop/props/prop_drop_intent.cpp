@@ -13,6 +13,7 @@
 #include "coop/props/prop_lifecycle.h"      // IsPerPlayerPropClass / IsWireSuppressedPropClass (the host gate)
 #include "coop/props/prop_save_data.h"
 #include "coop/props/prop_spawn_authoring.h" // BirthIsPlayerAuthored (the spawn menu / the toolgun)
+#include "coop/props/prop_throw.h"          // SeqFor: the throw that launched a drained place
 #include "coop/props/prop_wire_parity.h"    // PhysFlagsOf, the one builder of a live prop's flags
 #include "coop/props/prop_element_tracker.h"// GetPropElementIdForActor
 #include "coop/props/prop_key_index.h"  // a key on the wire to a live actor
@@ -498,6 +499,17 @@ void Tick(coop::net::Session* session) {
         // data slot, which only this copy has: its row goes to the host once the host's echo binds it.
         if (ue_wrap::drive_chain::IsDriveClass(R::ClassOf(e.actor)))
             coop::drive_payload_sync::NoteOwnDrive(e.actor);
+        // The root's velocity now, a tick or more after the place or the throw spawned it: the host spawns the
+        // copy with it, so the copy leaves the host's hand-off in the arc the thrower's does. A throw's sequence
+        // (prop_throw) says the game's own throw launched it; a place carries none.
+        {
+            ue_wrap::FVector lin{}, ang{};
+            if (ue_wrap::engine::GetActorRootPhysicsVelocity(e.actor, lin, ang)) {
+                p.linVel[0] = lin.X; p.linVel[1] = lin.Y; p.linVel[2] = lin.Z;
+                p.angVel[0] = ang.X; p.angVel[1] = ang.Y; p.angVel[2] = ang.Z;
+            }
+            p.throwSeq = coop::prop_throw::SeqFor(e.actor);
+        }
         const auto scl = ue_wrap::engine::GetActorScale3D(e.actor);
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
         p.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);

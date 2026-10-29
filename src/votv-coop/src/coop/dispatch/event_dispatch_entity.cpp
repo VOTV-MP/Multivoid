@@ -25,6 +25,7 @@
 #include "coop/creatures/geom_octa_relay.h"   // the Geom Octa's decisions replayed on a client
 #include "coop/props/prop_save_data.h"    // the per-prop save record lane
 #include "coop/props/prop_stick_sync.h"
+#include "coop/props/prop_throw.h"        // JudgeRelease: the bounds and the relay of a client's release
 #include "coop/props/prop_drive_stream.h"  // the driven-prop correction gate
 #include "coop/player/remote_player.h"
 #include "coop/props/prop_element_tracker.h"  // SessionIsHost
@@ -46,7 +47,6 @@ namespace coop::event_feed {
 bool HandleEntityEvent(net::Session& session,
                        const net::Session::ReliableMessage& msg,
                        void* localPlayer) {
-    (void)session;
     switch (msg.kind) {
     case net::ReliableKind::PropStickState: {
         // A peer stuck a wall-attach component's prop (the camera) to a surface, or it came unstuck.
@@ -124,13 +124,8 @@ bool HandleEntityEvent(net::Session& session,
             UE_LOGW("event_feed: PropRelease velocity or pose non-finite or out of bounds -- dropping");
             break;
         }
-        // The bounds (net::kMaxPropLinVel / kMaxPropAngVel): the End a syncing client sends the host meets the same.
-        if (!net::PropVelocityInBounds(p.linVelX, p.linVelY, p.linVelZ, p.angVelX, p.angVelY, p.angVelZ)) {
-            UE_LOGW("event_feed: PropRelease velocity out of bounds (lin=(%.1f,%.1f,%.1f) ang=(%.1f,%.1f,%.1f)) -- dropping",
-                    p.linVelX, p.linVelY, p.linVelZ,
-                    p.angVelX, p.angVelY, p.angVelZ);
-            break;
-        }
+        // A client's release meets the throw bounds (clamped, then relayed to the other clients); the host's own does not.
+        coop::prop_throw::JudgeRelease(session, msg.senderPeerSlot, p);
         remote_prop::OnRelease(msg.senderPeerSlot, p, localPlayer);
         break;
     }

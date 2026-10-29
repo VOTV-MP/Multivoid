@@ -1,0 +1,146 @@
+// coop/props/prop_throw.cpp -- see coop/props/prop_throw.h. The throwShit watch and the thrower's records.
+
+#include "coop/props/prop_throw.h"
+
+#include "coop/net/net_clock.h"
+#include "coop/net/throw_bounds.h"
+#include "coop/player/players_registry.h"
+#include "coop/props/active_drive.h"   // NowMs: the clock a throw's rows count from
+#include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/facts/function_row.h"
+
+#include <cstdint>
+#include <cstring>
+
+namespace coop::prop_throw {
+namespace {
+
+namespace SG = ue_wrap::script_gate;
+namespace R  = ue_wrap::reflection;
+namespace tb = coop::net::throw_bounds;
+
+// The one body every throw path runs, after the launch velocity is set. Declared on the pawn's class; the
+// puppet's body is the same function, which the identity test below tells apart.
+UE_FACT_FN(kRowThrowShit, "prop_throw", L"mainPlayer_C", L"throwShit", Declared);
+constexpr int kTagThrow = 0x54485257;   // 'THRW'
+
+struct Record {
+    uint16_t              seq = 0;
+    ue_wrap::CachedObjRef actor;
+    uint64_t              startMs = 0;
+    bool                  granted = false;
+};
+Record g_rec[tb::kMaxPendingThrows];
+int    g_count = 0;
+uint16_t g_seq = 0;
+
+R::ParamOffset g_pinOff{L"InputPin"};
+bool     g_watchRegistered = false;
+bool     g_watchSettled = false;
+bool     g_boundsSaid = false;
+uint64_t g_nextWatchMs = 0;
+uint32_t g_minted = 0, g_puppetIgnored = 0, g_noOwner = 0, g_evicted = 0;
+
+void Erase(int i) {
+    for (int k = i; k + 1 < g_count; ++k) g_rec[k] = g_rec[k + 1];
+    g_rec[--g_count] = Record{};
+}
+
+uint16_t NextSeq() {
+    if (++g_seq == 0) ++g_seq;
+    return g_seq;
+}
+
+void Mint(void* actor) {
+    const uint64_t now = coop::active_drive::NowMs();
+    for (int i = 0; i < g_count; ++i)
+        if (g_rec[i].actor.Is(actor)) { Erase(i); break; }   // a re-throw: the newer record is the prop's
+    if (g_count == tb::kMaxPendingThrows) {   // the oldest waits no longer
+        Erase(0);
+        if (++g_evicted == 1) UE_LOGW("prop_throw: %d throws await a grant -- the oldest record dropped", tb::kMaxPendingThrows);
+    }
+    Record& r = g_rec[g_count++];
+    r.seq = NextSeq();
+    r.actor.Set(actor);
+    r.startMs = now;
+    r.granted = false;
+    ++g_minted;
+    UE_LOGI("prop_throw: throw seq=%u actor=%p cls='%ls' (#%u)", static_cast<unsigned>(r.seq), actor,
+            R::ClassNameOf(actor).c_str(), g_minted);
+}
+
+// POST: throwShit ran and set the launch velocity. The thrown actor is the owner of the component it was given.
+void OnThrowShitPost(const SG::Call& c) {
+    if (!coop::players::Registry::Get().IsLocal(c.object)) {
+        if (++g_puppetIgnored == 1 || (g_puppetIgnored % 100) == 0)
+            UE_LOGI("prop_throw: puppet throwShit ignored n=%u", g_puppetIgnored);
+        return;
+    }
+    const int32_t off = g_pinOff.Of(c.function);
+    void* comp = nullptr;
+    if (off >= 0 && c.locals) std::memcpy(&comp, c.locals + off, sizeof(comp));
+    void* actor = (comp && R::IsLive(comp)) ? R::OuterOf(comp) : nullptr;
+    if (!actor || !R::IsLive(actor)) {
+        if (++g_noOwner == 1) UE_LOGW("prop_throw: throwShit's component has no live owner -- no sequence minted");
+        return;
+    }
+    Mint(actor);
+}
+
+// Register the watch, then ask the gate to resolve its name until it is live or settled dead: at most once a
+// second, a refusal said once.
+void EnsureWatch() {
+    if (g_watchSettled) return;
+    const uint64_t now = coop::net::NowMs();
+    if (now < g_nextWatchMs) return;
+    g_nextWatchMs = now + 1000;
+    if (!g_watchRegistered) g_watchRegistered = SG::WatchName(kRowThrowShit, kTagThrow, nullptr, &OnThrowShitPost);
+    if (!g_watchRegistered) return;
+    SG::ResolvePendingNames();
+    if (SG::NameWatchLive(kRowThrowShit, kTagThrow)) {
+        g_watchSettled = true;
+        UE_LOGI("prop_throw: a throw is seen at the call (a script-gate watch on mainPlayer_C::throwShit)");
+        if (!g_boundsSaid) {
+            g_boundsSaid = true;
+            UE_LOGI("prop_throw: bounds launch=%.0f cm/s flight=%.0f cm/s (PROVISIONAL, longest flight %.1f s) "
+                    "ang=%.0f deg/s stepSlack=%.0f cm (PROVISIONAL) jitter=%u ms (PROVISIONAL) refusedRows=%d "
+                    "(PROVISIONAL) grantTimeout=%u ms (PROVISIONAL) flightBound=%u ms (PROVISIONAL) "
+                    "pending=%d rowsPerSlot=%d (PROVISIONAL)",
+                    tb::kMaxLaunchSpeedCmS, tb::kMaxFlightSpeedCmS, tb::kProvisionalLongestFlightS,
+                    tb::kMaxLaunchAngDegS, tb::kStepSlackCm, tb::kJitterMs, tb::kMaxRefusedRows, tb::kGrantTimeoutMs,
+                    tb::kMaxThrowFlightMs, tb::kMaxPendingThrows, tb::kMaxThrowRowsPerSlot);
+        }
+    } else if (SG::NameWatchSettled(kRowThrowShit, kTagThrow)) {
+        g_watchSettled = true;
+        UE_LOGE("prop_throw: the throwShit watch is dead -- no throw is seen, so none is elected");
+    }
+}
+
+}  // namespace
+
+void Tick() {
+    EnsureWatch();
+    if (g_count == 0) return;
+    const uint64_t now = coop::active_drive::NowMs();
+    for (int i = 0; i < g_count;) {
+        if (now - g_rec[i].startMs > tb::kGrantTimeoutMs || !g_rec[i].actor.Alive()) Erase(i);
+        else ++i;
+    }
+}
+
+uint16_t SeqFor(void* actor) {
+    for (int i = 0; i < g_count; ++i)
+        if (g_rec[i].actor.Is(actor)) return g_rec[i].seq;
+    return 0;
+}
+
+void OnDisconnect() {
+    for (Record& r : g_rec) r = Record{};
+    g_count = 0;
+    g_minted = g_puppetIgnored = g_noOwner = g_evicted = 0;
+}
+
+}  // namespace coop::prop_throw

@@ -14,6 +14,7 @@
 #include "coop/net/intent_bucket.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/net/throw_bounds.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/player/roster_ledger.h"
@@ -50,11 +51,12 @@ using coop::net::IntentBudget;
 using coop::net::PropSyncRefusal;
 using coop::net::PropSyncResult;
 using coop::prop_drive_host::Driven;
+namespace tb = coop::net::throw_bounds;
 
 // The ATV's numbers (atv_authority.cpp): the claim pace is per sender, where MTA's is per vehicle, one push per
 // 1500 ms (CUnoccupiedVehicleSync.cpp:490); the stream bucket is the row's, its burst absorbing a syncer's send jitter.
 // MTA polices no rate on the syncer's stream (CUnoccupiedVehicleSync.cpp:263-474 has no bucket): the bucket is ours,
-// because rows here are pose-only at 40 Hz and each one reaches the host's physics and every other peer.
+// because rows here are sent at 40 Hz and each one reaches the host's physics and every other peer.
 constexpr IntentBudget kClaimBudget{2.f, 1.f};
 constexpr IntentBudget kStreamBudget{16.f, 40.f};
 // Twice mainPlayer.armLength, the helper adding the prop's bounds. MTA's contact radius is 30 m by default
@@ -78,7 +80,7 @@ std::vector<coop::net::PropPoseSnapshot> g_take[coop::net::kMaxPeers];
 
 // Each outcome is counted and said at the first and at every 100th, so a client's flood costs the log nothing.
 uint32_t g_granted = 0, g_admitted = 0, g_notSyncer = 0, g_lateSyncer = 0, g_staleGen = 0, g_paced = 0, g_steps = 0;
-uint32_t g_endsAdmitted = 0, g_endsNotSyncer = 0, g_endsStale = 0, g_endsOutOfBounds = 0;
+uint32_t g_endsAdmitted = 0, g_endsNotSyncer = 0, g_endsStale = 0, g_endsOutOfBounds = 0, g_endsClamped = 0;
 uint32_t g_nonSyncerAdmitted = 0;
 std::unordered_map<uint32_t, dev::Admitted> g_admittedBy;   // eid -> rows admitted, for the drill's judge
 uint32_t g_refused[8] = {};
@@ -181,6 +183,8 @@ void AdmitRow(const coop::net::PropPoseSnapshot& e, uint8_t slot, uint64_t nowMs
     }
     row->admitLoc = ue_wrap::FVector{e.x, e.y, e.z};
     row->admitRot = ue_wrap::FRotator{e.pitch, e.yaw, e.roll};
+    row->admitVel = ue_wrap::FVector{e.vel[0], e.vel[1], e.vel[2]};
+    row->admitSendMs = e.sendTimeMs;
     row->admitMs = nowMs;
     row->admittedEver = true;
     row->freshAdmit = true;
@@ -260,7 +264,8 @@ void OnClaim(coop::net::Session& s, const coop::net::PropSyncClaimPayload& p, ui
     Answer(s, slot, p.eid, p.seq, row->gen, PropSyncResult::Granted, PropSyncRefusal::None);
 }
 
-void OnClientEnd(coop::net::Session& s, const coop::net::PropDriveEndPayload& p, uint8_t slot) {
+void OnClientEnd(coop::net::Session& s, const coop::net::PropDriveEndPayload& sent, uint8_t slot) {
+    coop::net::PropDriveEndPayload p = sent;   // clamped below before it reaches the host's body or any relay
     UE_ASSERT_GAME_THREAD("prop_syncer_host::OnClientEnd");
     g_session = &s;
     const uint64_t nowMs = coop::active_drive::NowMs();
@@ -270,11 +275,20 @@ void OnClientEnd(coop::net::Session& s, const coop::net::PropDriveEndPayload& p,
         return;
     }
     if (p.gen != row->gen) { Tally(g_endsStale, "End refused: stale generation", p.eid, slot); return; }
-    // The End reaches the host's body, so it meets the bounds a client's PropRelease and a client's rows meet; a
-    // refused End leaves the row, which the silence pass takes back.
+    // The End reaches the host's body: its pose meets the bounds a client's held pose meets (a refused End leaves the
+    // row, which the silence pass takes back) and its velocity the throw bounds, clamped, before the host copy or any relay.
     if (!coop::net::PropDriveEndInBounds(p)) {
-        Tally(g_endsOutOfBounds, "End refused: pose or velocity out of bounds", p.eid, slot);
+        Tally(g_endsOutOfBounds, "End refused: pose out of bounds", p.eid, slot);
         return;
+    }
+    {
+        float lin[3] = {p.linVelX, p.linVelY, p.linVelZ};
+        float ang[3] = {p.angVelX, p.angVelY, p.angVelZ};
+        if (tb::ClampPair(lin, tb::kMaxFlightSpeedCmS, ang, tb::kMaxLaunchAngDegS) == tb::Clamp::Clamped) {
+            p.linVelX = lin[0]; p.linVelY = lin[1]; p.linVelZ = lin[2];
+            p.angVelX = ang[0]; p.angVelY = ang[1]; p.angVelZ = ang[2];
+            Tally(g_endsClamped, "End velocity clamped", p.eid, slot);
+        }
     }
     // The client's rest End is always admitted when syncer, generation and bounds match, admitted pose or not: it
     // carries the client's truth. The host's copy takes it, every other client gets it as received (the syncer
@@ -357,7 +371,7 @@ void OnDisconnect() {
     for (auto& v : g_take) v.clear();
     g_nextPassMs = 0;
     g_granted = g_admitted = g_notSyncer = g_lateSyncer = g_staleGen = g_paced = g_steps = 0;
-    g_endsAdmitted = g_endsNotSyncer = g_endsStale = g_endsOutOfBounds = 0;
+    g_endsAdmitted = g_endsNotSyncer = g_endsStale = g_endsOutOfBounds = g_endsClamped = 0;
     g_nonSyncerAdmitted = 0;
     g_admittedBy.clear();
     std::fill(std::begin(g_refused), std::end(g_refused), 0u);

@@ -32,6 +32,7 @@ struct Driven {
     bool                  dead     = false;  // closed this tick; erased after the pass
     ue_wrap::FVector      sentLoc{};
     ue_wrap::FRotator     sentRot{};
+    uint64_t              openMs      = 0;   // when the row opened: the host's rows count their sendTimeMs from here
     uint64_t              lastMoveMs  = 0;
     uint64_t              nextProbeMs = 0;   // 0 = every tick; set while resting
 
@@ -39,6 +40,8 @@ struct Driven {
     // the row's turn in Tick published it yet. The host never reads the actor for such a row.
     ue_wrap::FVector      admitLoc{};
     ue_wrap::FRotator     admitRot{};
+    ue_wrap::FVector      admitVel{};            // that row's velocity (cm/s) and its sender-clock stamp
+    uint32_t              admitSendMs = 0;
     uint64_t              admitMs     = 0;
     bool                  admittedEver = false;  // a pose of this gen was admitted
     bool                  freshAdmit   = false;  // admitted, not yet published

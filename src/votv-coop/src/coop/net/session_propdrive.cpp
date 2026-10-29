@@ -39,7 +39,7 @@ uint32_t Session::TakeRemotePropDriveBatches(std::vector<PropPoseSnapshot> (&out
 }
 
 int Session::SerializeLocalPropDriveBatch(uint8_t* buf) {
-    // One datagram = PacketHeader(20) + EntityPoseBatchHeader(4) + N*PropPoseSnapshot(64), capped at
+    // One datagram = PacketHeader(20) + EntityPoseBatchHeader(4) + N*PropPoseSnapshot(80), capped at
     // kMaxPropDriveBatchEntries; the rest go out on the next send. The leading PacketHeader bytes
     // are left for the caller to stamp per-peer. The host publishes its driven rows and a client the
     // rows of a prop it syncs; the net thread sends a client's to the host connection alone.
@@ -81,6 +81,7 @@ void Session::StoreRemotePropDriveBatch(int originSlot, const void* data, int le
         const PropPoseSnapshot& e = batch[i];
         if (!std::isfinite(e.x) || !std::isfinite(e.y) || !std::isfinite(e.z) ||
             !std::isfinite(e.pitch) || !std::isfinite(e.yaw) || !std::isfinite(e.roll) ||
+            !std::isfinite(e.vel[0]) || !std::isfinite(e.vel[1]) || !std::isfinite(e.vel[2]) ||
             e.key.len > sizeof(e.key.data) || e.elementId == 0u || (onHost && !PropPoseInBounds(e))) {
             static uint32_t sMalformed = 0;
             if (++sMalformed <= 3 || (sMalformed % 100) == 0)
