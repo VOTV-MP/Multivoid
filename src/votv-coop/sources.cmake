@@ -429,6 +429,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/container_birth.cpp
     src/coop/props/container_contents_io.cpp
     src/coop/props/container_arming.cpp
+    src/coop/props/container_contents_publish.cpp
     src/coop/props/container_contents_sync.cpp
     src/coop/props/container_park.cpp
     src/coop/props/container_reach.cpp
