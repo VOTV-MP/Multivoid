@@ -5,20 +5,22 @@
 // the position its server applied (CObjectSync.cpp:220, CUnoccupiedVehicleSync.cpp:456); here the engine's overlap step of
 // the parked copy, which moves every frame, IS that test at our apply. Source's BumpWeapon is the server's own touch.
 //
-// The judge, in order, each refusal counted with its line and the BP call cancelled: the box is armed; a HELD or CLAIMED
-// driver is within reach of the prop (an ELECTED throw has none: its rows are step-tested and flight-bounded); no client
-// holds the container (else the put waits); the body's silent gates pass; the prop fits. Then the driver's row or drive
-// ends, the copy simulates, the PRE returns Run and the game's own body files the prop; the POST reads its death, and a
-// prop alive after the body is a term the judge did not see, counted and loud. A prop nobody drives is the BP's own, but a
-// put on a held container waits whoever's it is (HostPre's rule for R2 and R3). A waiting put is judged again when the hold
-// ends, or at the next tick for a read that did not come (a few times); a prop still in the box with no driver is the
-// host's own put by then, and the body runs on it, since a prop already overlapping fires no second BeginOverlap.
+// The judge's order is container_overlap_pure.h's Decide: armed; reach of a held or claimed driver (an elected throw has
+// none); no client's hold on the container; the body's silent gates; the fit. Then the driver's row or drive ends, the copy
+// simulates, the PRE returns Run and the game's own body files the prop; the POST reads its death, and a prop alive after a
+// body whose pre-check passed is a term the judge did not see, counted and loud. A prop nobody drives is the BP's own, but a
+// put on a held container waits whoever's it is (HostPre's rule for R2 and R3). Every put is filed, refused with its reason,
+// or dropped and counted. A waiting put is released by its edge: a hold's end, its prop's bind, its container's change; a
+// prop still in the box with no driver is then the host's own put, pre-checked as the judge does, and the body runs on it,
+// since a prop already overlapping fires no second BeginOverlap.
 
 #include "coop/props/container_act_host.h"
 #include "coop/props/container_act_host_internal.h"
+#include "coop/props/container_overlap_pure.h"
 
 #include "coop/element/intent_authority.h"
 #include "coop/element/registry.h"
+#include "coop/net/net_clock.h"
 #include "coop/net/session.h"
 #include "coop/props/container_act_state.h"
 #include "coop/props/container_arming.h"
@@ -37,6 +39,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
+#include "ue_wrap/engine/actor_end_play.h"
 #include "ue_wrap/engine/engine_physics.h"
 
 #include <cstddef>
@@ -57,55 +60,36 @@ namespace EL  = coop::element;
 namespace R   = ue_wrap::reflection;
 namespace SR  = ue_wrap::save_record;
 namespace sg  = ue_wrap::script_gate;
+namespace P   = pure;
 
-// The tables hold at most this many entries each. A design value, not a measurement: a hold ends within
-// container_act_state::kHoldDeadlineMs (30 s), and a handful of props can reach held containers in that time. Past it the
-// oldest wait is dropped, counted (put_overlap_wait_dropped) and said once; its prop then rests unfiled in the box, as one
-// whose put was refused does.
-constexpr size_t kMaxEntries = 8;
-// A read that did not come is tried again at the next tick this many times, then the put is refused as unread.
-constexpr uint8_t kReadTries = 5;
+using WaitRow = P::WaitRow<ue_wrap::CachedObjRef>;
 
 coop::net::Session* g_session = nullptr;
-bool g_applying = false;     // our own call of the body is running: the PRE stands aside
+int g_applyDepth = 0;        // our own call of the body is running: the PRE stands aside
 bool g_unreadSaid = false;   // the parameters did not read: said once a session
 bool g_dropSaid = false;     // a wait was dropped for a full table: said once a session
+P::WaitTable<ue_wrap::CachedObjRef> g_waiting;
+P::LatchTable<ue_wrap::CachedObjRef> g_latched;
 
 // Who drives the prop: a client's row on it (elected or claimed) and/or a held pose stream (a remote drive).
 struct Driver {
     uint8_t rowSlot = 0;     // 0: no client row
     int driveSlot = -1;      // -1: no remote drive
     bool elected = false;    // the row is an elected throw
+    uint32_t key = 0;        // the drive key: its slot and the generation of its row and hold
     uint8_t Slot() const { return rowSlot != 0 ? rowSlot : static_cast<uint8_t>(driveSlot); }
 };
 
 bool DriverOf(void* prop, uint32_t propEid, Driver& d) {
     d.rowSlot = coop::prop_drive_host::ClientSyncerOf(propEid);
     d.driveSlot = coop::remote_prop::DrivingSlotOf(prop);
+    if (d.rowSlot == 0 && d.driveSlot < 0) return false;
     d.elected = d.rowSlot != 0 && coop::prop_drive_host::ClientRowElected(propEid);
-    return d.rowSlot != 0 || d.driveSlot >= 0;
+    const uint8_t rowGen = d.rowSlot != 0 ? coop::prop_drive_host::ContextOf(prop, propEid).gen : uint8_t{0};
+    const uint16_t holdGen = d.driveSlot >= 0 ? coop::remote_prop::HoldGenOf(d.driveSlot) : uint16_t{0};
+    d.key = P::DriveKey(d.Slot(), rowGen, holdGen);
+    return true;
 }
-
-// A put that cannot be judged yet. onHold: it waits on a client's hold and is judged again when the hold ends; else a read
-// did not come and it is judged at the next tick, `tries` times at most.
-struct Waiting {
-    ue_wrap::CachedObjRef prop;
-    uint32_t containerEid = 0;
-    bool onHold = true;
-    uint8_t tries = 0;
-};
-std::vector<Waiting> g_waiting;
-
-// A refusal that stands for as long as the drive does: the same prop entering the same container again under the same
-// driver is refused again without a second judgement. Position and read dependent refusals (reach, unread) are not kept.
-struct Latch {
-    ue_wrap::CachedObjRef prop;
-    uint32_t containerEid = 0;
-    uint8_t rowSlot = 0;
-    int driveSlot = -1;
-    Tally tally = Tally::kCount;
-};
-std::vector<Latch> g_latched;
 
 // The prop whose body the PRE let run, until the POST reads whether it died.
 struct Pending {
@@ -123,16 +107,6 @@ bool ReadParam(R::ParamOffset& offset, const sg::Call& c, T& out) {
     std::memcpy(&out, c.locals + o, sizeof(T));
     return true;
 }
-
-enum class Judged : uint8_t { Pass, Wait, Refuse };
-struct Result {
-    Judged judged = Judged::Refuse;
-    Tally tally = Tally::kCount;   // the counter of a refusal or a hold
-    const char* why = "";
-    bool transient = false;        // a Wait on a read that did not come, not on a hold
-};
-
-Result Refuse(Tally t, const char* why) { return Result{Judged::Refuse, t, why, false}; }
 
 // The common put terms on the host's own capture of the prop, through the judge a hand item's put runs. The holds are the
 // caller's. Wait: a read did not come; Grant: the prop fits; anything else is the reason it does not.
@@ -155,33 +129,65 @@ internal::Verdict DecideWorldPut(uint8_t slot, uint32_t containerEid, void* prop
     return internal::DecidePut(pin, &refusal);
 }
 
-// The judge. `mesh` gets the prop's static mesh, the component the body is asked about. The cheap terms come first; the
-// record capture and the fit, which read the whole container, come last.
-Result Judge(void* prop, void* container, uint32_t containerEid, const Driver& d, void*& mesh) {
-    if (!ca::IsArmed(container)) return Refuse(Tally::PutOverlapUnarmed, "the container's box is not armed");
-    if (!d.elected) {
-        const auto sub = EL::IntentTarget::ForClientIntent(*g_session, d.Slot(), cr::kReachUU).Authorize(prop);
-        if (sub.outcome == EL::IntentOutcome::OutOfReach) return Refuse(Tally::PutOverlapReach, "the driver is out of reach");
-        if (sub.outcome != EL::IntentOutcome::Ok) return Refuse(Tally::PutOverlapUnread, "the driver's reach did not read");
-    }
-    if (cas::Live().HoldOn(containerEid)) return Result{Judged::Wait, Tally::PutOverlapHeld, "a client holds the container", false};
-    // The body's own silent gates: an answer that does not resolve is no pass (a host prop is a prop_C, which has both).
+P::GateRead ReadGates(void* prop, void*& mesh) {
     mesh = ue_wrap::prop::GetStaticMesh(prop);
+    if (!mesh) return P::GateRead::NoMesh;
     bool ignoreSave = false, canPickup = false;
-    if (!mesh) return Refuse(Tally::PutOverlapGate, "the prop has no mesh");
-    if (!ue_wrap::prop::ReadIgnoreSave(prop, ignoreSave)) return Refuse(Tally::PutOverlapGate, "ignoreSave does not read");
-    if (ignoreSave) return Refuse(Tally::PutOverlapGate, "the prop is not saved");
-    if (!ue_wrap::prop::ReadCanPickup(prop, canPickup)) return Refuse(Tally::PutOverlapGate, "canPickup does not read");
-    if (!canPickup) return Refuse(Tally::PutOverlapGate, "the prop cannot be picked up");
+    if (!ue_wrap::prop::ReadIgnoreSave(prop, ignoreSave)) return P::GateRead::IgnoreSaveUnread;
+    if (ignoreSave) return P::GateRead::Ignored;
+    if (!ue_wrap::prop::ReadCanPickup(prop, canPickup)) return P::GateRead::CanPickupUnread;
+    return canPickup ? P::GateRead::Pass : P::GateRead::CannotPickup;
+}
+
+// The judge: Decide names the next input, this reads it. `d` is the driver, null for a prop the host simulates (the same
+// armed, hold, gate and fit terms, no reach). `mesh` gets the prop's static mesh, the component the body is asked about.
+P::Decision Judge(void* prop, void* container, uint32_t containerEid, const Driver* d, void*& mesh) {
+    P::Inputs in;
+    in.needsReach = d && !d->elected;
+    const uint8_t slot = d ? d->Slot() : uint8_t{0};
     internal::PutInputs pin;
+    internal::Verdict fit = internal::Verdict::Grant;
     Tally specific = Tally::kCount;
-    const internal::Verdict fit = DecideWorldPut(d.Slot(), containerEid, prop, pin, specific);
-    if (fit == internal::Verdict::Wait) return Result{Judged::Wait, Tally::PutOverlapUnread, internal::PutWaitCause(pin), true};
-    if (fit != internal::Verdict::Grant) {
-        if (specific != Tally::kCount) detail::Bump(specific);
-        return Refuse(Tally::PutOverlapFit, internal::VerdictName(fit));
+    for (;;) {
+        P::Decision dec = P::Decide(in);
+        switch (dec.need) {
+            case P::Need::Nothing:
+                if (in.fitKnown && in.fit == P::FitRead::Unread) {
+                    dec.why = internal::PutWaitCause(pin);
+                } else if (in.fitKnown && in.fit == P::FitRead::Refused) {
+                    if (specific != Tally::kCount) detail::Bump(specific);
+                    dec.why = internal::VerdictName(fit);
+                }
+                return dec;
+            case P::Need::Armed:
+                in.armed = ca::IsArmed(container);
+                in.armedKnown = true;
+                break;
+            case P::Need::Reach: {
+                const auto sub = EL::IntentTarget::ForClientIntent(*g_session, slot, cr::kReachUU).Authorize(prop);
+                in.reach = sub.outcome == EL::IntentOutcome::Ok          ? P::ReachRead::Ok
+                           : sub.outcome == EL::IntentOutcome::OutOfReach ? P::ReachRead::OutOfReach
+                                                                          : P::ReachRead::Unread;
+                in.reachKnown = true;
+                break;
+            }
+            case P::Need::Hold:
+                in.held = cas::Live().HoldOn(containerEid);
+                in.holdKnown = true;
+                break;
+            case P::Need::Gates:
+                in.gate = ReadGates(prop, mesh);
+                in.gatesKnown = true;
+                break;
+            case P::Need::Fit:
+                fit = DecideWorldPut(slot, containerEid, prop, pin, specific);
+                in.fit = fit == internal::Verdict::Grant ? P::FitRead::Fits
+                         : fit == internal::Verdict::Wait ? P::FitRead::Unread
+                                                          : P::FitRead::Refused;
+                in.fitKnown = true;
+                break;
+        }
     }
-    return Result{Judged::Pass, Tally::kCount, "", false};
 }
 
 // The driver's row or drive ends, so the copy simulates and the body finds a simulating component.
@@ -190,69 +196,30 @@ void Take(void* prop, const Driver& d) {
     if (d.driveSlot >= 0) coop::remote_prop::EndDriveForPut(d.driveSlot);
 }
 
-void AddWaiting(void* prop, uint32_t containerEid, bool onHold) {
-    for (Waiting& w : g_waiting) {
-        if (w.containerEid != containerEid || w.prop.Raw() != prop) continue;
-        w.onHold = w.onHold && onHold;   // a read still to come keeps it on the tick
+void AddWaiting(void* prop, void* container, uint32_t containerEid, P::WaitKind kind) {
+    const uint64_t until = kind == P::WaitKind::Hold ? 0 : coop::net::NowMs() + P::kUnreadWaitMs;
+    if (g_waiting.Add(prop, container, containerEid, kind, until) != P::WaitTable<ue_wrap::CachedObjRef>::Added::NewDroppedOldest)
         return;
-    }
-    if (g_waiting.size() >= kMaxEntries) {
-        detail::Bump(Tally::PutOverlapWaitDropped);
-        if (!g_dropSaid) {
-            g_dropSaid = true;
-            UE_LOGW("container_act: the overlap-put wait table is full (%zu): the oldest wait (container %u) is dropped, "
-                    "its prop rests unfiled in the box (put_overlap_wait_dropped; said once a session)", kMaxEntries,
-                    static_cast<unsigned>(g_waiting.front().containerEid));
-        }
-        g_waiting.erase(g_waiting.begin());
-    }
-    g_waiting.emplace_back();
-    g_waiting.back().prop.Set(prop);
-    g_waiting.back().containerEid = containerEid;
-    g_waiting.back().onHold = onHold;
-}
-
-bool LatchHit(void* prop, uint32_t containerEid, const Driver& d, Tally& tally) {
-    for (const Latch& l : g_latched) {
-        if (l.containerEid != containerEid || l.rowSlot != d.rowSlot || l.driveSlot != d.driveSlot || !l.prop.Is(prop)) continue;
-        tally = l.tally;
-        return true;
-    }
-    return false;
-}
-
-void Unlatch(uint32_t containerEid) {
-    for (size_t i = 0; i < g_latched.size();) {
-        if (g_latched[i].containerEid == containerEid) g_latched.erase(g_latched.begin() + static_cast<std::ptrdiff_t>(i));
-        else ++i;
-    }
+    detail::Bump(Tally::PutOverlapWaitDropped);
+    if (g_dropSaid) return;
+    g_dropSaid = true;
+    UE_LOGW("container_act: the overlap-put wait table is full (%zu): the oldest wait is dropped, its prop rests unfiled in "
+            "the box (put_overlap_wait_dropped; said once a session)", P::kTableRows);
 }
 
 void AddLatch(void* prop, uint32_t containerEid, const Driver& d, Tally tally) {
-    if (tally == Tally::PutOverlapReach || tally == Tally::PutOverlapUnread) return;
-    for (size_t i = 0; i < g_latched.size();) {   // an older latch of the pair, or of a prop that is gone, goes
-        if ((g_latched[i].containerEid == containerEid && g_latched[i].prop.Is(prop)) || !g_latched[i].prop.Alive())
-            g_latched.erase(g_latched.begin() + static_cast<std::ptrdiff_t>(i));
-        else ++i;
-    }
-    if (g_latched.size() >= kMaxEntries) g_latched.erase(g_latched.begin());
-    g_latched.emplace_back();
-    Latch& l = g_latched.back();
-    l.prop.Set(prop);
-    l.containerEid = containerEid;
-    l.rowSlot = d.rowSlot;
-    l.driveSlot = d.driveSlot;
-    l.tally = tally;
+    if (g_latched.Add(prop, containerEid, d.key, tally)) detail::Bump(Tally::PutOverlapLatchEvicted);
 }
 
-void Refused(const Result& r, uint32_t propEid, uint32_t containerEid, const Driver& d) {
-    detail::Bump(r.tally);
-    detail::NoteRefusal(d.Slot(), TallyName(r.tally));
+void Refused(const char* why, Tally tally, uint32_t propEid, uint32_t containerEid, uint8_t slot) {
+    detail::Bump(tally);
+    detail::NoteRefusal(slot, TallyName(tally));
     UE_LOGI("container_act: overlap put prop=%u container=%u driven by slot %u: refused, %s (%s)",
-            static_cast<unsigned>(propEid), static_cast<unsigned>(containerEid), static_cast<unsigned>(d.Slot()), r.why,
-            TallyName(r.tally));
+            static_cast<unsigned>(propEid), static_cast<unsigned>(containerEid), static_cast<unsigned>(slot), why,
+            TallyName(tally));
 }
 
+// The outcome of a body run on a prop whose pre-check passed: it must have filed the prop, else the judge missed a term.
 void NoteOutcome(bool dead, uint32_t propEid, uint32_t containerEid, uint8_t slot, void* mesh) {
     if (dead) {
         detail::Bump(Tally::PutOverlapFiled);
@@ -267,23 +234,24 @@ void NoteOutcome(bool dead, uint32_t propEid, uint32_t containerEid, uint8_t slo
             mesh && E::IsComponentSimulatingPhysics(mesh) ? 1 : 0);
 }
 
-// The body, run by us on a prop that is already in the box, and its outcome read at once.
+// The body, run by us on a prop that is already in the box and has passed the pre-check, and its outcome read at once.
 void RunBody(void* prop, void* container, void* mesh, uint32_t propEid, uint32_t containerEid, uint8_t slot) {
     ue_wrap::CachedObjRef ref;
     ref.Set(prop);
-    g_applying = true;
+    ++g_applyDepth;
     const bool ran = cb::CallPutObjectInOverlap(container, prop, mesh);
-    g_applying = false;
+    --g_applyDepth;
     if (!ran) UE_LOGW("container_act: overlap put prop=%u container=%u: the body did not run", static_cast<unsigned>(propEid),
                       static_cast<unsigned>(containerEid));
     NoteOutcome(!ref.Alive(), propEid, containerEid, slot, mesh);
 }
 
-// A waiting put judged again. True: it stays in the table.
-bool Rejudge(Waiting& w) {
+// A waiting put judged again. True: it stays in the table, as `w` now says.
+bool Rejudge(WaitRow& w) {
     void* const prop = w.prop.Get();
     void* const container = EL::LivePropActor(w.containerEid);
     if (!prop || !container) {
+        detail::Bump(Tally::PutOverlapLeft);
         UE_LOGI("container_act: a waiting overlap put on container %u is dropped: the prop or the container is gone",
                 static_cast<unsigned>(w.containerEid));
         return false;
@@ -295,63 +263,75 @@ bool Rejudge(Waiting& w) {
         return false;
     }
     const uint32_t propEid = EL::Registry::Get().EidForActor(prop);
+    if (propEid == EL::kInvalidId) {   // still no id: the bind has not come, and the time bound ends it
+        w.ready = false;
+        return true;
+    }
+    if (cas::Live().HoldOn(w.containerEid)) {   // another hold stands on the container
+        w.kind = P::WaitKind::Hold;
+        w.untilMs = 0;
+        w.ready = false;
+        return true;
+    }
     Driver d;
-    if (propEid == EL::kInvalidId || !DriverOf(prop, propEid, d)) {
+    const bool driven = DriverOf(prop, propEid, d);
+    void* mesh = nullptr;
+    if (!driven) {
         // Nobody drives it now. A prop that still overlaps and simulates is the host's own put: no second BeginOverlap
-        // will fire for it, so the body runs here, once the container is free.
-        if (cas::Live().HoldOn(w.containerEid)) {
-            w.onHold = true;
-            return true;
-        }
-        void* const mesh = ue_wrap::prop::GetStaticMesh(prop);
-        if (!mesh || !E::IsComponentSimulatingPhysics(mesh)) {
+        // will fire for it, so it is pre-checked as a driven one is and the body runs here.
+        void* const body = ue_wrap::prop::GetStaticMesh(prop);
+        if (!body || !E::IsComponentSimulatingPhysics(body)) {
+            detail::Bump(Tally::PutOverlapLeft);
             UE_LOGI("container_act: a waiting overlap put on container %u is dropped: the prop is no longer driven and does "
                     "not simulate", static_cast<unsigned>(w.containerEid));
             return false;
         }
-        RunBody(prop, container, mesh, propEid, w.containerEid, 0);
+    }
+    const P::Decision r = Judge(prop, container, w.containerEid, driven ? &d : nullptr, mesh);
+    const uint8_t slot = driven ? d.Slot() : uint8_t{0};
+    if (r.judged == P::Judged::Refuse) {
+        Refused(r.why, r.tally, propEid, w.containerEid, slot);
+        if (driven) AddLatch(prop, w.containerEid, d, r.tally);
         return false;
     }
-    void* mesh = nullptr;
-    const Result r = Judge(prop, container, w.containerEid, d, mesh);
-    if (r.judged == Judged::Refuse) {
-        Refused(r, propEid, w.containerEid, d);
-        AddLatch(prop, w.containerEid, d, r.tally);
-        return false;
+    if (r.judged == P::Judged::Wait) {   // a hold or a read: it waits for that edge, in the time the first wait had
+        w.kind = r.transient ? P::WaitKind::Read : P::WaitKind::Hold;
+        if (r.transient && w.untilMs == 0) w.untilMs = coop::net::NowMs() + P::kUnreadWaitMs;
+        if (!r.transient) w.untilMs = 0;
+        w.ready = false;
+        return true;
     }
-    if (r.judged == Judged::Wait) {
-        w.onHold = !r.transient;
-        if (!r.transient || ++w.tries < kReadTries) return true;
-        Refused(Refuse(Tally::PutOverlapUnread, r.why), propEid, w.containerEid, d);
-        return false;
-    }
-    Take(prop, d);
-    RunBody(prop, container, mesh, propEid, w.containerEid, d.Slot());
+    if (driven) Take(prop, d);
+    RunBody(prop, container, mesh, propEid, w.containerEid, slot);
     return false;
 }
 
-// Every waiting put that `pick` names is judged again; the ones that still wait go back.
-template <class Pick>
-void RejudgeWhere(Pick pick) {
-    std::vector<Waiting> mine;
-    for (size_t i = 0; i < g_waiting.size();) {
-        if (!pick(g_waiting[i])) {
-            ++i;
-            continue;
-        }
-        mine.push_back(std::move(g_waiting[i]));
-        g_waiting.erase(g_waiting.begin() + static_cast<std::ptrdiff_t>(i));
-    }
-    for (Waiting& w : mine)
-        if (Rejudge(w)) g_waiting.push_back(std::move(w));
+void RejudgeAll(std::vector<WaitRow> rows) {
+    for (WaitRow& w : rows)
+        if (Rejudge(w)) g_waiting.Readd(std::move(w));
 }
+
+// A container ends its play: the puts waiting on it go with it.
+void OnEndPlay(void* actor, ue_wrap::actor_end_play::Reason) {
+    if (g_waiting.Empty()) return;
+    for (const WaitRow& w : g_waiting.TakeContainerActor(actor)) {
+        detail::Bump(Tally::PutOverlapLeft);
+        UE_LOGI("container_act: a waiting overlap put on container %u is dropped: the container is destroyed",
+                static_cast<unsigned>(w.containerEid));
+    }
+}
+
+bool IsHost() { return g_session && g_session->role() == coop::net::Role::Host; }
 
 }  // namespace
 
-void Install(coop::net::Session* session) { g_session = session; }
+void Install(coop::net::Session* session) {
+    g_session = session;
+    if (IsHost() && !ue_wrap::actor_end_play::AddSink(&OnEndPlay)) UE_LOGW("container_act: the end-of-play sink table is full");
+}
 
 sg::Verdict Pre(const sg::Call& c) {
-    if (g_applying || !g_session || g_session->role() != coop::net::Role::Host) return sg::Verdict::Run;
+    if (g_applyDepth > 0 || !IsHost()) return sg::Verdict::Run;
     UE_ASSERT_GAME_THREAD("container_act_host::overlap::Pre");
     static R::ParamOffset sActor{L"actor"};
     static R::ParamOffset sComp{L"component"};
@@ -372,8 +352,18 @@ sg::Verdict Pre(const sg::Call& c) {
     const uint32_t containerEid = EL::Registry::Get().EidForActor(c.object);
     if (containerEid == EL::kInvalidId) return sg::Verdict::Run;
     const uint32_t propEid = EL::Registry::Get().EidForActor(actor);
+    if (propEid == EL::kInvalidId) {
+        // A prop with no id yet: a client's thrown copy before its bind, or a prop the lane does not share. One that
+        // simulates is the BP's own; one that does not would be refused by the BP's first gate anyway, so it waits for its
+        // bind (the call list of RegisterPropMirror) instead, at most kUnreadWaitMs, and then is judged.
+        if (!ue_wrap::prop::IsDescendantOfProp(actor) || E::IsComponentSimulatingPhysics(comp)) return sg::Verdict::Run;
+        AddWaiting(actor, c.object, containerEid, P::WaitKind::Bind);
+        UE_LOGI("container_act: overlap put on container %u: the prop has no id yet, it waits for its bind",
+                static_cast<unsigned>(containerEid));
+        return sg::Verdict::Cancel;
+    }
     Driver d;
-    const bool driven = propEid != EL::kInvalidId && DriverOf(actor, propEid, d);
+    const bool driven = DriverOf(actor, propEid, d);
     const bool held = cas::Live().HoldOn(containerEid);
     // A prop nobody drives, on a container no client holds, is the BP's own: no engine call was spent on it.
     if (!driven && !held) return sg::Verdict::Run;
@@ -381,7 +371,7 @@ sg::Verdict Pre(const sg::Call& c) {
         if (!held) return sg::Verdict::Run;   // a simulating body is the host's own put, which the BP judges
         // The host's own put on a container a client holds waits, as HostPre makes R2 and R3 wait: the restore of the
         // client's escrow could overflow the container.
-        AddWaiting(actor, containerEid, /*onHold=*/true);
+        AddWaiting(actor, c.object, containerEid, P::WaitKind::Hold);
         detail::Bump(Tally::PutOverlapHeld);
         UE_LOGI("container_act: overlap put prop=%u container=%u (simulating): waits, a client holds the container",
                 static_cast<unsigned>(propEid), static_cast<unsigned>(containerEid));
@@ -389,26 +379,26 @@ sg::Verdict Pre(const sg::Call& c) {
     }
     if (!driven) return sg::Verdict::Run;   // not simulating and nobody drives it: the BP's own refusal
     Tally latched = Tally::kCount;
-    if (LatchHit(actor, containerEid, d, latched)) {   // refused already under this drive: counted, not judged again
+    if (g_latched.Hit(actor, containerEid, d.key, latched)) {   // refused already under this drive: counted, not judged again
         detail::Bump(latched);
         return sg::Verdict::Cancel;
     }
     void* mesh = nullptr;
-    const Result r = Judge(actor, c.object, containerEid, d, mesh);
-    if (r.judged == Judged::Refuse) {
-        Refused(r, propEid, containerEid, d);
+    const P::Decision r = Judge(actor, c.object, containerEid, &d, mesh);
+    if (r.judged == P::Judged::Refuse) {
+        Refused(r.why, r.tally, propEid, containerEid, d.Slot());
         AddLatch(actor, containerEid, d, r.tally);
         return sg::Verdict::Cancel;
     }
-    if (r.judged == Judged::Wait) {
-        AddWaiting(actor, containerEid, /*onHold=*/!r.transient);
+    if (r.judged == P::Judged::Wait) {
+        AddWaiting(actor, c.object, containerEid, r.transient ? P::WaitKind::Read : P::WaitKind::Hold);
         if (!r.transient) detail::Bump(r.tally);
         UE_LOGI("container_act: overlap put prop=%u container=%u driven by slot %u: waits, %s", static_cast<unsigned>(propEid),
                 static_cast<unsigned>(containerEid), static_cast<unsigned>(d.Slot()), r.why);
         return sg::Verdict::Cancel;
     }
     Take(actor, d);
-    Unlatch(containerEid);
+    g_latched.ClearContainer(containerEid);
     g_pending.prop.Set(actor);
     g_pending.propEid = propEid;
     g_pending.containerEid = containerEid;
@@ -428,27 +418,41 @@ void Post(const sg::Call& c) {
 }
 
 void Tick() {
-    if (g_waiting.empty()) return;   // the tick pays a size test; a table only a hold waits on pays nothing more
-    bool anyRead = false;
-    for (const Waiting& w : g_waiting) anyRead = anyRead || !w.onHold;
-    if (!anyRead) return;
+    if (!g_waiting.HasEdgeRows()) return;   // the tick pays a scan of at most kTableRows rows, and only with such a row
     UE_ASSERT_GAME_THREAD("container_act_host::overlap::Tick");
-    RejudgeWhere([](const Waiting& w) { return !w.onHold; });
+    for (const WaitRow& w : g_waiting.TakeExpired(coop::net::NowMs())) {
+        detail::Bump(Tally::PutOverlapUnread);
+        detail::NoteRefusal(0, TallyName(Tally::PutOverlapUnread));
+        UE_LOGI("container_act: a waiting overlap put on container %u is refused: its %s did not come in %llu ms (%s)",
+                static_cast<unsigned>(w.containerEid), w.kind == P::WaitKind::Bind ? "bind" : "read",
+                static_cast<unsigned long long>(P::kUnreadWaitMs), TallyName(Tally::PutOverlapUnread));
+    }
+    RejudgeAll(g_waiting.TakeReady());
+}
+
+void OnBound(void* actor) {
+    if (!g_waiting.Empty()) g_waiting.MarkBound(actor);
+}
+
+void OnContainerChanged(uint32_t eid) {
+    if (!IsHost()) return;
+    g_latched.ClearContainer(eid);
+    g_waiting.MarkChanged(eid);
 }
 
 void OnContainerFree(uint32_t eid) {
-    if (!g_session) return;
-    Unlatch(eid);
-    if (g_waiting.empty()) return;
+    if (!IsHost()) return;
+    g_latched.ClearContainer(eid);
+    if (g_waiting.Empty()) return;
     UE_ASSERT_GAME_THREAD("container_act_host::overlap::OnContainerFree");
-    RejudgeWhere([eid](const Waiting& w) { return w.containerEid == eid; });
+    RejudgeAll(g_waiting.TakeHold(eid));
 }
 
 void Reset() {
-    g_waiting.clear();
-    g_latched.clear();
+    g_waiting.Clear();
+    g_latched.Clear();
     g_pending = Pending{};
-    g_applying = false;
+    g_applyDepth = 0;
     g_unreadSaid = false;
     g_dropSaid = false;
 }

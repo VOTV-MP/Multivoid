@@ -66,6 +66,9 @@ int DrivingSlotOf(void* actor);
 // A no-op for a slot with no drive. Game thread.
 void EndDriveForPut(int slot);
 
+// The hold generation of `slot`'s drive, 0 when it has none: a new hold is a new generation. Game thread.
+uint16_t HoldGenOf(int slot);
+
 // True while this peer, not the wire, moves `actor`: a peer's drive targets it, the host's driven-prop
 // channel holds it parked, or the LOCAL player has it in its hands. The holder is the authority while
 // it holds, so a write that comes from elsewhere (an unstick's pose, a saved record's state) waits.

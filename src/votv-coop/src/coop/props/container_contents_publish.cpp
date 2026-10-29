@@ -5,6 +5,7 @@
 
 #include "coop/props/container_contents_sync.h"
 #include "coop/props/container_contents_internal.h"
+#include "coop/props/container_act_host.h"
 #include "coop/props/container_arming.h"
 #include "coop/props/container_birth.h"
 #include "coop/props/container_contents_io.h"
@@ -92,7 +93,7 @@ bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSl
     const bool birth = !IsHostRole() && toSlot < 0 && cb::IsBirthSlice(eid);
     // The host's reading of the container's arming rides every slice it sends; a client's slice carries none (container_arming).
     void* const owner = ci::OwnerOf(inv);
-    if (IsHostRole()) ca::Track(eid, owner);
+    if (IsHostRole()) ca::Track(eid);
     const uint8_t flags = IsHostRole() ? ca::ReadFlags(owner) : uint8_t{0};
     const uint64_t h = cw::RecordsHash(eid, recs);
     if (!force && !birth) {
@@ -210,7 +211,11 @@ void DrainDirty(coop::net::Session* s) {
     }
 }
 
-void MarkDirty(uint32_t eid) { g_dirty.insert(eid); }
+// Any change of a container's records or arming reaches here: the host's overlap-put judge forgets what it refused for it.
+void MarkDirty(uint32_t eid) {
+    g_dirty.insert(eid);
+    container_act_host::overlap::OnContainerChanged(eid);
+}
 
 std::set<uint32_t>& Dirty() { return g_dirty; }
 

@@ -20,6 +20,7 @@
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/props/container_act_host.h"  // overlap::OnBound: an overlap put waits for a prop's bind
 #include "coop/props/pile_look.h"
 #include "coop/props/prop_drive_host.h"    // OverrideClientSyncer: a release that writes the copy ends a client's row on it
 #include "coop/props/prop_drive_stream.h"  // IsParked: the host's channel owns a parked copy
@@ -444,6 +445,7 @@ void RegisterPropMirror(coop::element::ElementId eid,
         coop::pile_look::OnBound(static_cast<uint32_t>(eid), actor);
         coop::drive_payload_sync::OnBound(static_cast<uint32_t>(eid), actor, senderSlot);  // a data drive's row, by its author
         coop::element::bind_wait::OnBound(static_cast<uint32_t>(eid));  // messages held for this eid replay at the next Pump
+        coop::props::container_act_host::overlap::OnBound(actor);  // an overlap put that waited for this prop's id is judged at the next tick
     } else if (!row && actor && eid != 0 && eid != coop::element::kInvalidId) {
         // Refused and rowless: no retry runs inside the create path, so messages for the eid wait here until a
         // later bind, a destroy of it, or the world change.
@@ -506,6 +508,11 @@ void EndAnyHoldOn(void* actor) {
                 static_cast<unsigned>(g_holds[s].driveGen), actor);
         ResetDriveState(d);
     }
+}
+
+uint16_t HoldGenOf(int slot) {
+    UE_ASSERT_GAME_THREAD("g_holds (remote_prop::HoldGenOf)");
+    return slot >= 0 && slot < static_cast<int>(coop::players::kMaxPeers) ? g_holds[slot].driveGen : uint16_t{0};
 }
 
 void EndDriveForPut(int slot) {

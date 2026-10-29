@@ -182,6 +182,14 @@ namespace {
 // Put an escrow's record back where it was.
 void Restore(cas::Hold h, const char* why) { Place(std::move(h), why, cre::Source::Host, "restored"); }
 
+// The container is free of a hold for the overlap puts that waited on it, unless an escrow restore on it is still owed:
+// the room that restore needs is not a put's to fill. The owed write that lands frees it then (RetryOwed).
+void Freed(uint32_t eid) {
+    for (const Owed& o : g_restoreOwed)
+        if (o.hold.eid == eid) return;
+    overlap::OnContainerFree(eid);
+}
+
 // The one place a hold's end is acted on, whatever ended it: an escrow's record is restored; a reservation is released
 // and inserts nothing. The container is then free of this hold, so the overlap puts that waited on it are judged again.
 void EndHold(cas::Hold h, const char* why) {
@@ -192,7 +200,7 @@ void EndHold(cas::Hold h, const char* why) {
         UE_LOGI("container_act: slot=%u id=%u eid=%u %s, reservation released", static_cast<unsigned>(h.slot),
                 static_cast<unsigned>(h.id), static_cast<unsigned>(h.eid), why);
     }
-    overlap::OnContainerFree(eid);
+    Freed(eid);
 }
 
 // A take is final: the game arms a world container's overlap box when a record leaves it by the player's own take
@@ -225,7 +233,9 @@ void RetryOwed(uint64_t now) {
             UE_LOGI("container_act: slot=%u id=%u eid=%u owed write %s", static_cast<unsigned>(h.slot),
                     static_cast<unsigned>(h.id), static_cast<unsigned>(h.eid),
                     r == cre::EditResult::Done ? "done" : "dropped, the container is gone or holds no world inventory");
+            const uint32_t freedEid = h.eid;
             g_restoreOwed.erase(g_restoreOwed.begin() + static_cast<std::ptrdiff_t>(i));
+            Freed(freedEid);   // the restore landed (or the container is gone): the waiting puts may go on
             continue;
         }
         ++o.tries;
@@ -650,7 +660,7 @@ void OnCommitChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     const uint32_t freed = closed->eid;
     if (closed->kind == cas::HoldKind::Reservation) PlaceTimelyDone(std::move(*closed), c);
     else ArmAfterTake(*closed);
-    overlap::OnContainerFree(freed);
+    Freed(freed);
 }
 
 // A departed sender's holds end with it, and its tombstones and slowing with them: the slot is reused.
@@ -719,7 +729,7 @@ const char* TallyName(Tally t) {
                                          "put_into_mailbox", "put_row_refuses", "put_unknown_name", "put_done_lost",
                                          "owed_lost", "take_armed", "put_overlap_filed", "put_overlap_unarmed",
                                          "put_overlap_reach", "put_overlap_unread", "put_overlap_held", "put_overlap_fit",
-                                         "put_overlap_gate", "put_overlap_gap", "put_overlap_wait_dropped", "put_overlap_left"};
+                                         "put_overlap_gate", "put_overlap_gap", "put_overlap_wait_dropped", "put_overlap_left", "put_overlap_latch_evicted"};
     static_assert(std::size(kNames) == static_cast<size_t>(Tally::kCount), "a name for every tally");
     return t < Tally::kCount ? kNames[static_cast<int>(t)] : "";
 }

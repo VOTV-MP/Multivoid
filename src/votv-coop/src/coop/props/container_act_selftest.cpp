@@ -439,6 +439,7 @@ void RunSelftest() {
     }
 
     RunPutSelftest(check);
+    RunOverlapSelftest(check);
 
     if (check.pass == check.total) UE_LOGI("container_act_selftest: ALL PASS (%d checks)", check.total);
 }

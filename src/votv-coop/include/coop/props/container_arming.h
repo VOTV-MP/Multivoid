@@ -34,7 +34,7 @@ bool IsArmed(void* container);
 // Host: the container's `overlap` component joins the set the hook watches. Called at each publication, so a container is
 // watched from before its first slice is sent; idempotent. A roomba is not watched: its own upd() writes its box, and its
 // edge has no consumer. A container leaves the set at its end of play (and by Untrack), by address and eid together.
-void Track(uint32_t eid, void* container);
+void Track(uint32_t eid);
 void Untrack(uint32_t eid);
 
 // Client: the mirror's box takes the host's flag, QueryOnly when armed and NoCollision when not. A roomba's, whose

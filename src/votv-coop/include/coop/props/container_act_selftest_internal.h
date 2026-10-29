@@ -30,4 +30,7 @@ container_act_state::Hold MakeHold(container_act_state::HoldKind kind, uint8_t s
 // The put's checks (container_act_selftest_put.cpp).
 void RunPutSelftest(Checks& check);
 
+// The overlap put's checks (container_act_selftest_overlap.cpp).
+void RunOverlapSelftest(Checks& check);
+
 }  // namespace coop::props::container_act_host::selftest
