@@ -4,8 +4,8 @@
 //   throwplace  -- the bit stays CLEAR on a non-throw: the client lets go of a grab with dropGrabObject alone, then places a
 //                  held drive with the game's precision place; the host reads throwSeq 0 on the release and the drop intent
 //                  and elects no syncer.
-//   throwjoin   -- (--observer) a second client joins while the client's grab throw flies; once world-ready it follows the
-//                  relayed rows, and the host sets its copy against the joiner's instants.
+//   throwjoin   -- (--observer) the host holds the second client's world-ready answer until the thrower's first admitted row,
+//                  so it is seeded mid-flight and follows the relayed rows; the host sets its copy against its instants.
 //   throwdepart -- the client leaves at the first admitted row; the host takes the prop back at the last row's velocity, the
 //                  copy flies on and rests, and the rejoined client's seed agrees with the host's rest pose.
 //   throwtouch  -- the host picks the flying prop up 150 ms after the first admitted row; the thrower's row ends with it.
@@ -24,6 +24,7 @@
 #include "coop/props/prop_syncer.h"
 #include "coop/props/prop_syncer_host.h"
 #include "coop/props/prop_throw.h"
+#include "coop/session/world_ready_answer.h"
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
@@ -378,24 +379,45 @@ std::string g_jhEnd;
 uint64_t    g_jhEndMs = 0;
 int         g_jhReadyN = 0;          // the throw whose "was a second client in the world before the host copy rested" is latched
 bool        g_jhReady = false;
+constexpr int kJoinerSlot = 2;           // the client with a connected peer of a lower slot (Put2IsJoiner)
+bool        g_jhLate = false;            // the joiner was in the world before the hold was set
+uint64_t    g_jhReleaseMs = 0;           // cen::UnixMs() of the release: the joiner's first sample is set against it
 }
 
-// The go: a second client is connected (world-ready or not: either way it follows the rows). False while none is, until
-// the wait runs out; then the arm runs as a plain throw and says so.
-bool JoinGate(const coop::net::Session& s, int clientSlot, uint64_t waitedMs) {
-    int joining = -1;
-    for (int i = 1; i < coop::net::kMaxPeers; ++i) {
-        if (i == clientSlot || !s.IsSlotReady(i)) continue;
-        joining = i;
-        if (s.IsSlotWorldReady(i)) UE_LOGI("[CI-DRILL] host throwjoin: the second client (slot %d) is already world-ready; it follows the whole flight, not a mid-flight join", i);
-        else UE_LOGI("[CI-DRILL] host throwjoin: the second client (slot %d) is connected and not world-ready; the throw may fly through its join", i);
+// The hold on the joiner's world-ready answer (world_ready_answer::dev::HoldSlot, the way container_act_host's HoldReplies
+// keeps a grant back): set on the host's first tick, so the joiner's ask finds it. The joiner is the higher client slot.
+void JoinHoldBegin(const coop::net::Session& s) {
+    if (s.IsSlotWorldReady(kJoinerSlot)) {
+        g_jhLate = true;
+        return;
     }
-    if (joining >= 0) return true;
+    coop::world_ready_answer::dev::HoldSlot(kJoinerSlot, true);
+    UE_LOGI("[CI-DRILL] host throwjoin: slot %d's world-ready answer is held", kJoinerSlot);
+}
+
+// The go: the hold has caught the joiner's ask, so it is connected, asking, and not in the world. Working until then;
+// Failed once the wait runs out, or when the joiner was in the world before the hold could be set.
+HostJudge JoinGate(const coop::net::Session&, uint64_t waitedMs, char* why, size_t whyLen) {
+    if (g_jhLate) {
+        std::snprintf(why, whyLen, "slot %d was world-ready before the hold was set", kJoinerSlot);
+        return HostJudge::Failed;
+    }
+    if (coop::world_ready_answer::dev::Caught(kJoinerSlot)) return HostJudge::Passed;
     if (waitedMs > kJoinWaitMs) {
-        UE_LOGI("[CI-DRILL] host throwjoin: no second client within %llu s -- the throw runs alone and the mirror gap is NOT MEASURED", U(kJoinWaitMs / 1000));
-        return true;
+        std::snprintf(why, whyLen, "slot %d never asked for world-ready within %llu s", kJoinerSlot, U(kJoinWaitMs / 1000));
+        return HostJudge::Failed;
     }
-    return false;
+    return HostJudge::Working;
+}
+
+// At the thrower's first admitted row: the joiner is answered, so it is seeded while the prop flies.
+void JoinHostRelease() {
+    if (g_jhReleaseMs || g_jhLate) return;
+    const auto& tv = coop::prop_syncer_host::dev::ThrowViewNow();
+    if (tv.elected <= g_base.elected || tv.lastRows == 0) return;
+    g_jhReleaseMs = cen::UnixMs();
+    coop::world_ready_answer::dev::Release(kJoinerSlot);
+    UE_LOGI("[CI-DRILL] host throwjoin: the first admitted row; slot %d's world-ready answer is released", kJoinerSlot);
 }
 
 // Says the thrown eid to a joiner every second while the throw is judged: it may connect at any moment.
@@ -431,15 +453,12 @@ void JoinHostWatchReady(const coop::net::Session& s, int thrower, int n, bool ho
         if (i != thrower && s.IsSlotWorldReady(i)) g_jhReady = true;
 }
 
-// One line per throw: whether the joiner bound the prop (its end line arrived), whether it was in the world before the host
-// copy rested, and the mirror gap. A throw that rested before the join says so; the next one measures the joiner as a mirror.
+// The throw's joiner line: whether the joiner bound the prop (its end line arrived), whether it was in the world before the
+// host copy rested, and the mirror gap.
 void JoinHostReport(int n, float gapCm) {
-    char gap[24];
-    if (gapCm >= 0.f) std::snprintf(gap, sizeof(gap), "%.0f", static_cast<double>(gapCm));
-    else              std::snprintf(gap, sizeof(gap), "n/a");
     const bool ready = n == g_jhReadyN && g_jhReady;
-    UE_LOGI("[CI-DRILL] host throwjoin n=%d joiner: bound=%d world-ready-before-rest=%d mirror-gap=%s%s", n, g_jhEnd.empty() ? 0 : 1,
-            ready ? 1 : 0, gap, ready ? "" : " (rested before the join)");
+    UE_LOGI("[CI-DRILL] host throwjoin n=%d joiner: bound=%d world-ready-before-rest=%d mirror-gap=%.0f", n, g_jhEnd.empty() ? 0 : 1,
+            ready ? 1 : 0, static_cast<double>(gapCm));
 }
 
 // The joiner's end line of throw n, set against the host's trace: the mirror gap at its instants and the rest agreement. A
@@ -468,10 +487,14 @@ HostJudge JoinHostJudge(const Track& host, int n, float& gapOut, char* why, size
     }
     const Gap g = JudgeInstants(host, g_jhInst);
     const bool inFlight = host.atRest ? first < host.restMs : true;
-    if (!inFlight || g.matched == 0)
-        UE_LOGI("[CI-DRILL] throwjoin: rested before the join (%lld ms): the joiner first saw the prop %llu, the host copy rested at %llu; only the seeded rest pose is checked",
-                static_cast<long long>(first) - static_cast<long long>(host.restMs), first, U(host.restMs));
-    else gapOut = g.worst;
+    if (!(n == g_jhReadyN && g_jhReady) || !inFlight || g.matched == 0) {
+        std::snprintf(why, whyLen, "the joiner was not in flight: world-ready before rest=%d, it first saw the prop at %llu and the host copy rested at %llu, %d instants matched",
+                      (n == g_jhReadyN && g_jhReady) ? 1 : 0, first, U(host.restMs), g.matched);
+        return HostJudge::Failed;
+    }
+    gapOut = g.worst;
+    UE_LOGI("[CI-DRILL] host throwjoin n=%d joiner: seeded mid-flight %lld ms after the release, mirror-gap=%.0f cm", n,
+            static_cast<long long>(first) - static_cast<long long>(g_jhReleaseMs), static_cast<double>(g.worst));
     const float restGap = Dist3(host.last, FVector{static_cast<float>(at[0]), static_cast<float>(at[1]), static_cast<float>(at[2])});
     UE_LOGI("[CI-DRILL] host throwjoin n=%d: mirror-gap=%.0f cm over %d of %d instants (bound %.0f, PROVISIONAL), the joiner's rest is %.0f cm from the host's (bound %.0f, PROVISIONAL)",
             n, static_cast<double>(g.worst), g.matched, g.said, static_cast<double>(kFlightGapPassCm), static_cast<double>(restGap), static_cast<double>(kRestAgreeCm));
@@ -572,6 +595,9 @@ void ArmsReset() {
     g_jhN = 0;
     g_jhEnd.clear();
     g_jhEndMs = 0;
+    g_jhLate = false;
+    g_jhReleaseMs = 0;
+    coop::world_ready_answer::dev::Forget();
 }
 
 }  // namespace coop::dev::container_intent_drill::detail

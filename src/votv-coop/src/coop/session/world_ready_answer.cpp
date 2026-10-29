@@ -51,6 +51,11 @@ void ConsumeAnnounce(coop::net::Session& session, int slot) {
     CloseGateIfNoSnapshot(session, slot);
 }
 
+// The throwjoin drill's hold (dev::HoldSlot): per slot, and the session the caught announce came on.
+bool g_held[coop::net::kMaxPeers] = {};
+bool g_caught[coop::net::kMaxPeers] = {};
+coop::net::Session* g_caughtOn = nullptr;
+
 uint64_t NowMs() {
     return static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count());
@@ -63,6 +68,11 @@ void OnAnnounce(coop::net::Session& session, int slot) {
     if (slot < 1 || slot >= static_cast<int>(coop::net::kMaxPeers)) return;
 
     if (!session.IsSlotWorldReady(slot)) {
+        if (g_held[slot]) {   // dev::HoldSlot: the answer waits for dev::Release; the announce's gate hold stays
+            g_caught[slot] = true;
+            g_caughtOn = &session;
+            return;
+        }
         // The first announce of this occupancy completes the join. The join window closes for this joiner
         // here: a host pile moved before this line reconciles by its save-time key; a move after it is a
         // normal live edit. Runs free (no bucket take) -- it is the join, not a repeat.
@@ -101,5 +111,28 @@ void OnAnnounce(coop::net::Session& session, int slot) {
         ConsumeAnnounce(session, slot);
     }
 }
+
+namespace dev {
+
+void HoldSlot(int slot, bool on) {
+    if (slot >= 1 && slot < static_cast<int>(coop::net::kMaxPeers)) g_held[slot] = on;
+}
+
+bool Caught(int slot) { return slot >= 1 && slot < static_cast<int>(coop::net::kMaxPeers) && g_caught[slot]; }
+
+void Release(int slot) {
+    if (slot < 1 || slot >= static_cast<int>(coop::net::kMaxPeers)) return;
+    g_held[slot] = false;
+    if (!g_caught[slot] || !g_caughtOn) return;
+    g_caught[slot] = false;
+    OnAnnounce(*g_caughtOn, slot);
+}
+
+void Forget() {
+    for (int i = 0; i < static_cast<int>(coop::net::kMaxPeers); ++i) g_held[i] = g_caught[i] = false;
+    g_caughtOn = nullptr;
+}
+
+}  // namespace dev
 
 }  // namespace coop::world_ready_answer

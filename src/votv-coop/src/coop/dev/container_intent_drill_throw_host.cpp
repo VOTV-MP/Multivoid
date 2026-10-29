@@ -67,7 +67,6 @@ constexpr uint64_t kNextBoundMs    = 240000;  // the verdict to the client's sec
 constexpr uint64_t kFindEveryMs    = 50;      // the search for the host's element of a thrown hand drive
 constexpr int      kMatchedMin     = 3;       // fewer matched instants than this is no judgement
 constexpr int      kParkedSamplesMax = 3;     // PROVISIONAL: the thrower's samples before rest at which it may read not-simulating
-constexpr uint64_t kRethrowAfterMs = 5000;    // throwjoin: a second client still not in the world this long after the first throw gets one more
 constexpr uint64_t kJoinerEndMs    = 150000;  // throwjoin: the first throw's verdict to the joiner's end line
 constexpr uint64_t kRejoinWaitMs   = 240000;  // throwdepart: the take-back to the rejoined client's seed line
 
@@ -235,13 +234,19 @@ void StepWaitArm(const coop::net::Session& s) {
         HFail("the hit watch on the drive's component-hit handler is not live");
         return;
     }
-    // throwjoin: the go waits for a second client to be connected, so the throw flies while it joins.
-    if (ArmOf() == Arm::ThrowJoin && g_hN == 1 && !JoinGate(s, g_hSlot, ::GetTickCount64() - g_hMs)) {
-        if (!g_hGateLogged) {
-            g_hGateLogged = true;
-            UE_LOGI("[CI-DRILL] host throwjoin: the client is armed; waiting for a second client to connect (slot %d threw)", g_hSlot);
+    // throwjoin: the go waits for the hold to catch the second client's world-ready ask, so the throw flies while it joins.
+    if (ArmOf() == Arm::ThrowJoin) {
+        char gateWhy[200];
+        switch (JoinGate(s, ::GetTickCount64() - g_hMs, gateWhy, sizeof(gateWhy))) {
+        case HostJudge::Failed: HFail("%s", gateWhy); return;
+        case HostJudge::Working:
+            if (!g_hGateLogged) {
+                g_hGateLogged = true;
+                UE_LOGI("[CI-DRILL] host throwjoin: the client is armed; waiting for the second client to ask for world-ready (slot %d threw)", g_hSlot);
+            }
+            return;
+        default: break;
         }
-        return;
     }
     ArmsHostArmed();
     g_hArmRead = false;
@@ -538,7 +543,8 @@ void StepTrace(const coop::net::Session& s, bool due) {
     PollOverlap();
     g_hHit.Tick(g_hTrack);
     char why[200];
-    if (ArmOf() == Arm::ThrowJoin) {   // a joiner may connect at any moment of the flight
+    if (ArmOf() == Arm::ThrowJoin) {   // the joiner is answered at the first admitted row, then followed through the flight
+        JoinHostRelease();
         JoinHostSay(g_hN, g_hElemEid);
         JoinHostWatchReady(s, g_hSlot, g_hN, g_hTrack.atRest);
     }
@@ -575,8 +581,7 @@ void StepTrace(const coop::net::Session& s, bool due) {
 }
 
 // throwjoin: the verdict of the flight stands, and the joiner's own numbers come after. The joiner's end line is judged when
-// it arrives; a second client that is not yet in the world when the first throw is over gets one more throw, and one that
-// never ends is NOT MEASURED, never a FAIL.
+// it arrives; a joiner that was not in flight, or that never ends, fails the arm.
 void StepJoinWait(const coop::net::Session& s) {
     JoinHostSay(g_hN, g_hElemEid);
     JoinHostWatchReady(s, g_hSlot, g_hN, g_hTrack.atRest);
@@ -587,31 +592,13 @@ void StepJoinWait(const coop::net::Session& s) {
     case HostJudge::Failed: HFail("%s", why); return;
     case HostJudge::Passed:
         JoinHostReport(g_hN, gap);
-        if (gap >= 0.f) UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=%.0f %s", ArmName(), g_hN, static_cast<double>(gap), g_hLaunch);
-        else            UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=n/a (the joiner was not in flight) %s", ArmName(), g_hN, g_hLaunch);
-        DC::Say("ci-throw host norethrow");
+        UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=%.0f %s", ArmName(), g_hN, static_cast<double>(gap), g_hLaunch);
         HNext(HStep::WaitNext);
         return;
     default: break;
     }
-    bool ready = false;
-    for (int i = 1; i < coop::net::kMaxPeers; ++i)
-        if (i != g_hSlot && s.IsSlotWorldReady(i)) ready = true;
-    const uint64_t waited = ::GetTickCount64() - g_hMs;
-    if (g_hN == 1 && !ready && waited > kRethrowAfterMs) {
-        JoinHostReport(g_hN, -1.f);
-        UE_LOGI("[CI-DRILL] host throwjoin: the second client is not in the world after throw 1; throwing once more");
-        DC::Say("ci-throw host rethrow");
-        HNext(HStep::WaitNext);
-        return;
-    }
-    if (waited > kJoinerEndMs) {
-        JoinHostReport(g_hN, -1.f);
-        UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=n/a (NOT MEASURED: the second client never ended within %llu s) %s", ArmName(), g_hN,
-                U(kJoinerEndMs / 1000), g_hLaunch);
-        DC::Say("ci-throw host norethrow");
-        HNext(HStep::WaitNext);
-    }
+    if (::GetTickCount64() - g_hMs > kJoinerEndMs)
+        HFail("the joiner never ended its trace within %llu s", U(kJoinerEndMs / 1000));
 }
 
 // The second drive, beside the second standpoint the client names: throwgrab's client grabs it.
@@ -697,6 +684,7 @@ void ThrowHostTick(const coop::net::Session& session) {
             return;
         }
         HitWatchInstall();
+        if (ArmOf() == Arm::ThrowJoin) JoinHoldBegin(session);
         HNext(HStep::WaitPeer);
     }
     if (g_hStep == HStep::Done) return;

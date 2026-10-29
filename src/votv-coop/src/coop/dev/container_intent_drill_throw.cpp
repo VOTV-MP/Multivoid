@@ -62,11 +62,10 @@ constexpr uint64_t kRestBoundMs      = 30000;
 constexpr uint64_t kHandBoundMs      = 10000;
 constexpr uint64_t kGrabBoundMs      = 20000;
 constexpr uint64_t kItem2BoundMs     = 60000;   // the second standpoint's drive: the host's line, then its mirror
-constexpr uint64_t kRethrowBoundMs   = 60000;   // throwjoin: the host's word on a second throw
 constexpr uint64_t kArmBoundMs       = 60000;   // the client's arm line to the host's armed line (drill chat leaves one line a second)
 
 
-enum class Step : uint8_t { WaitLine, WaitMirrors, Rest, WalkWait, Item2Wait, TakeHand, HandRead, Grab, ArmWait, Aim, Place, Parked, Rethrow,
+enum class Step : uint8_t { WaitLine, WaitMirrors, Rest, WalkWait, Item2Wait, TakeHand, HandRead, Grab, ArmWait, Aim, Place, Parked,
                             Flight };
 
 Step     g_step = Step::WaitLine;
@@ -376,26 +375,6 @@ void StepPlace(void* player) {
     Finish();
 }
 
-// throwjoin: the host says, after the first throw, whether the second client missed the flight (it was not in the world yet):
-// then the same standpoint throws once more, with the second client further into its join; else the arm ends.
-void StepRethrow() {
-    if (DC::SeenHas("ci-throw host rethrow")) {
-        g_n = 2;
-        g_goal = g_stand;
-        char say[64];
-        std::snprintf(say, sizeof(say), "%sat=%d,%d,%d", kThrowSecondLine, static_cast<int>(g_stand.X), static_cast<int>(g_stand.Y),
-                      static_cast<int>(g_stand.Z));
-        DC::Say(say);
-        StartWalk();
-        return;
-    }
-    if (DC::SeenHas("ci-throw host norethrow") || Expired(kRethrowBoundMs)) {
-        DC::Say(kThrowDoneLine);
-        UE_LOGI("[CI-DRILL] client %s MEASURED (puppet throwShit ignored n=%u)", ArmName(), coop::prop_throw::dev::PuppetIgnored());
-        Finish();
-    }
-}
-
 // ---- the throw ----------------------------------------------------------------------------------------------------------
 
 // What the throw is judged against, taken just before it.
@@ -550,7 +529,7 @@ void Wrap(const coop::net::Session& session) {
                   static_cast<int>(g_local.peakPos.X), static_cast<int>(g_local.peakPos.Y), static_cast<int>(g_local.peakPos.Z));
     DC::Say(say);
     FVector next{};
-    if (g_n == 1 && ArmOf() != Arm::ThrowTouch && landed && !hit && std::fabs(along) >= kMoveMinCm && SecondStand(along, next)) {
+    if (g_n == 1 && ArmOf() != Arm::ThrowTouch && ArmOf() != Arm::ThrowJoin && landed && !hit && std::fabs(along) >= kMoveMinCm && SecondStand(along, next)) {
         g_n = 2;
         g_goal = next;
         std::snprintf(say, sizeof(say), "%sat=%d,%d,%d", kThrowSecondLine, static_cast<int>(next.X), static_cast<int>(next.Y),
@@ -559,10 +538,6 @@ void Wrap(const coop::net::Session& session) {
         UE_LOGI("[CI-DRILL] client %s throw 1 missed by %.0f cm along the line: the standpoint moves to (%.0f,%.0f,%.0f)", ArmName(),
                 static_cast<double>(along), static_cast<double>(next.X), static_cast<double>(next.Y), static_cast<double>(next.Z));
         StartWalk();
-        return;
-    }
-    if (ArmOf() == Arm::ThrowJoin && g_n == 1) {   // the host says whether the second client missed the flight: a throw again, or the end
-        Next(Step::Rethrow);
         return;
     }
     UE_LOGI("[CI-DRILL] client %s: no further throw (%s)", ArmName(),
@@ -649,7 +624,6 @@ void ThrowClientTick(const coop::net::Session& session) {
     case Step::TakeHand:    StepTakeHand(); return;
     case Step::HandRead:    StepHandRead(); return;
     case Step::ArmWait:     StepArmWait(); return;
-    case Step::Rethrow:     StepRethrow(); return;
     default:                return;
     }
 }

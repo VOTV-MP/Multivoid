@@ -21,4 +21,17 @@ namespace coop::world_ready_answer {
 // Game thread, from the event_feed drain.
 void OnAnnounce(coop::net::Session& session, int slot);
 
+namespace dev {
+// Default off; the throwjoin drill's. While a slot is held, its FIRST announce is deferred: the slot stays not
+// world-ready (so every fan-out skips it) and its join gate stays held, the way container_act_host's HoldReplies keeps a
+// grant back. Release runs the deferred answer (the world-ready mark, the connect replay) at once; a slot that was not
+// caught is only unheld. Game thread.
+void HoldSlot(int slot, bool on);
+// True once the hold has caught the slot's announce.
+bool Caught(int slot);
+void Release(int slot);
+// The drill's reset: every hold and catch dropped without answering.
+void Forget();
+}  // namespace dev
+
 }  // namespace coop::world_ready_answer
