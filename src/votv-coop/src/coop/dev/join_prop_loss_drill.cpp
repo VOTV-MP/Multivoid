@@ -9,6 +9,8 @@
 #include "coop/net/net_clock.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/puppet_drive.h"
+#include "coop/player/remote_player.h"
 #include "coop/player/roster.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_key_index.h"
@@ -269,6 +271,18 @@ std::vector<Placed> g_placed;       // the cans placed so far, in order
 uint64_t g_hstepMs = 0;
 std::wstring g_brokeKey;
 uint64_t g_judgeAtMs = 0;
+bool g_swingerSeen = false;
+
+// swing: a connected swing is read from the client's puppet, which has an eye only once a pose reached it (the test
+// hit_intent.cpp OnIntent makes). Said once; the client's swings wait for the line.
+void SaySwingerSeen() {
+    if (g_swingerSeen || ArmOf() != Arm::Swing) return;
+    coop::RemotePlayer& rp = coop::puppet_drive::Puppet(1);
+    if (!rp.valid() || !rp.HasPose()) return;
+    g_swingerSeen = true;
+    DC::Say(kHostSeesLine);
+    UE_LOGI("[JPL-DRILL] host sees the swinger");
+}
 
 // The host player's ground point 150 cm ahead, lifted 3 cm. False with the reason printed when there is none.
 bool ComputeSpot() {
@@ -422,6 +436,7 @@ void HostTick() {
         return;
     }
     case HStep::Wait: {
+        SaySwingerSeen();
         if (DC::SeenHas(kClientInconclusiveLine)) {
             Inconclusive("the client ended inconclusive");
             Finish();
@@ -575,6 +590,7 @@ void OnDisconnect() {
     g_hstepMs = 0;
     g_brokeKey.clear();
     g_judgeAtMs = 0;
+    g_swingerSeen = false;
     g_cstep = CStep::Seek;
     g_readyMs = 0;
     g_target.Reset();

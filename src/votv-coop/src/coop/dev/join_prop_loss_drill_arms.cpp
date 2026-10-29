@@ -2,7 +2,9 @@
 // coop/dev/join_prop_loss_drill_arms.h.
 //
 //   swing   -- the client takes the axe, walks within 150 cm of the mirror of a host can and fires the game's fire
-//              action at it, one swing every 600 ms, until its copy is gone or 10 swings.
+//              action at it, one swing every 600 ms, until its copy is gone or 20 swings.
+//              The first swing waits for the host's line that its puppet for the client has a pose: the host reads a
+//              swing's eye from that puppet and refuses a swing made before it.
 //   throwat -- the client takes a beer can into its hand, walks within 300 cm of the mirror and throws it at the mirror
 //              with the hand's throw, up to 3 times.
 // Neither is judged on the client: the impact_damage_probe lines are the result, and the host reads whether its own can
@@ -49,7 +51,8 @@ constexpr const wchar_t* kAxeItem = L"axe";
 constexpr const wchar_t* kAxeClass = L"prop_axe_C";
 constexpr float    kSwingReachCm = 150.f;   // the walk ends this near the can
 constexpr float    kThrowReachCm = 300.f;
-constexpr int      kMaxSwings = 10;
+constexpr int      kMaxSwings = 20;
+constexpr uint64_t kHostSeesBudgetMs = 60000;   // the host sees the swinger within this, from the walk's end
 constexpr int      kMaxThrows = 3;
 constexpr uint64_t kSwingGapMs = 600;       // a player's swing rate
 constexpr uint64_t kAimMs = 300;            // the camera follows the control rotation on the next frames
@@ -73,6 +76,7 @@ std::string               g_key;
 FVector                   g_targetAt{};
 std::shared_ptr<DR::BackgroundWalk> g_walk;
 int                       g_swings = 0;
+bool                      g_hostSees = false;
 int                       g_throws = 0;
 std::vector<void*>        g_before;
 ue_wrap::CachedObjRef     g_thrown;
@@ -178,6 +182,16 @@ void StepWalk(uint64_t now) {
 }
 
 void StepSwing(uint64_t now) {
+    if (!g_hostSees) {
+        if (DC::SeenHas(kHostSeesLine)) {
+            g_hostSees = true;
+            UE_LOGI("[JPL-DRILL] client heard the host see the swinger");
+        } else if (now - g_stepMs >= kHostSeesBudgetMs) {
+            return Abort("the host never saw the swinger");
+        } else {
+            return;
+        }
+    }
     if (TargetGone() || (g_swings >= kMaxSwings && now >= g_nextSwingMs)) return Report(now);
     if (g_swings >= kMaxSwings || now < g_nextSwingMs) return;
     void* me = LocalPlayer();
@@ -273,6 +287,7 @@ void MeasureOnDisconnect() {
     g_key.clear();
     g_targetAt = FVector{};
     g_swings = g_throws = g_restTicks = 0;
+    g_hostSees = false;
     g_before.clear();
     g_minDistCm = 1.0e9f;
 }

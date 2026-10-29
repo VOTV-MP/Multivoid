@@ -39,7 +39,7 @@ CFG_ENUM(join_prop_loss_drill, "join_prop_loss_drill", "dev", "off", "off|break|
     "joins; the peers sequence each other by lobby-chat lines and each prints `<role> <arm> PASS|FAIL|INCONCLUSIVE`, "
     "then DONE. break -- once the join is over the client calls a resting mirror's impactDamage with no hitting actor; "
     "its copy and the host's can must stand. fire -- the same with fireDamage. swing -- the client takes the axe, walks "
-    "within 150 cm of a host can's mirror and swings at it until its copy is gone or 10 swings; both copies must go. "
+    "within 150 cm of a host can's mirror and swings at it until its copy is gone or 20 swings, the first after the host has a pose for it; both copies must go. "
     "heldbreak -- the client takes a host can into its hand with the director's grab and calls its impactDamage; the "
     "copy must go and the host's can with it. rekey -- two cans 13.7 cm apart: the client destroys one before the "
     "join's snapshot bracket, then after the bracket the other must still carry its own key, each key must resolve to "

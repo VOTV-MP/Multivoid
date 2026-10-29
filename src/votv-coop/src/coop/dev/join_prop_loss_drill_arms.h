@@ -27,6 +27,7 @@ inline constexpr uint64_t       kAnswerBudgetMs = 15000;       // the key index 
 inline constexpr const char*    kBrokeLine = "[JPL] broke ";   // the client's copy of the host's can is gone
 inline constexpr const char*    kStoodLine = "[JPL] stood ";   // throwat: the copy stands
 inline constexpr const char*    kHostJudgedLine = "[JPL] host judged";
+inline constexpr const char*    kHostSeesLine = "[JPL] host sees you";   // swing: the host's puppet for the client has a pose
 inline constexpr const char*    kClientJudgedLine = "[JPL] client judged ";   // + the key of the first can the host placed
 inline constexpr const char*    kBracketDoneLine = "[JPL] bracket done";
 inline constexpr const char*    kLateCanLine = "[JPL] late can ";             // + the key of the can placed after it
