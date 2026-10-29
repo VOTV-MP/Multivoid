@@ -1,6 +1,6 @@
 // coop/props/prop_lifecycle.cpp -- the Aprop_C spawn seams: the Init watch that expresses a keyed
 // prop's birth on the wire, the install of the destroy seam, and the class predicates. The destroy
-// seam body lives in prop_destroy_seam.cpp and the container extract in prop_container_extract.cpp.
+// seam body lives in prop_destroy_seam.cpp.
 
 #include "coop/props/prop_lifecycle.h"
 
@@ -64,9 +64,6 @@ constexpr int kTagInit = 0x50494E54;  // 'PINT'
 UE_FACT_FN(kRowInit, "prop_lifecycle", nullptr, L"Init", AnyClass);
 UE_FACT_FN(kRowK2DestroyActor, "prop_lifecycle", L"Actor", L"K2_DestroyActor", Declared);
 
-// The takeObj-in-flight bracket is defined in prop_container_extract.cpp and shared through
-// prop_lifecycle_detail.h; the Init POST body reads it, OnDisconnect clears it.
-
 void GrabObserver_Aprop_Init_POST_Body(void* self) {
     if (!self) return;
     // The known-keyed set is marked before the session and echo gates. Its bulk comes from the seed
@@ -107,14 +104,6 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
         return;
     }
     PT::MarkProcessedInit(self);
-
-    // An actor spawned inside a takeObj call is broadcast by the takeObj POST, which sees the saved
-    // Key restored by loadData.
-    if (g_takeObjInFlight.load(std::memory_order_relaxed)) {
-        UE_LOGI("grab_hook[Aprop.Init POST]: actor %p spawned inside takeObj -- defer to takeObj POST (Key not yet restored by loadData)",
-                self);
-        return;
-    }
 
     // Host-authoritative intermediate variants: the client destroys its local one, and the mature
     // variant arrives on the wire.
@@ -258,8 +247,8 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
         // class's loadData has filled anything on a save load, and on a fresh spawn there is
         // nothing to carry yet -- the record would be the class default, and broadcasting a
         // default over an author's real copy is how a client's ejected disc came back blank. The
-        // record's publishers are the seams where the state exists: the container extract POST,
-        // the snapshot drain, the runtime-adoption express, the client's own drop intent, and the
+        // record's publishers are the seams where the state exists: the snapshot drain,
+        // the runtime-adoption express, the client's own drop intent, and the
         // host's spawn-seam drain (host_spawn_watcher), which runs this body a tick after the birth.
     }
     // Self-claim: this peer just expressed the spawn, so an open snapshot bracket's sweep must not
@@ -452,7 +441,6 @@ void Install(coop::net::Session* session) {
 DisconnectStats OnDisconnect() {
     DisconnectStats s;
     s.initProcessedDropped = PT::ClearProcessedInit();
-    g_takeObjInFlight.store(false, std::memory_order_relaxed);
     return s;
 }
 

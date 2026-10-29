@@ -93,7 +93,7 @@ bool Spared(void* actor, const std::wstring& cls, bool onHandAxis) {
 }  // namespace (file-local claim/sweep state)
 
 void RecordClaimIfTracking(void* actor) {
-    // The claim for the self-announce sites (Init, takeObj, held-item and convert broadcasts): a
+    // The claim for the self-announce sites (Init, held-item and convert broadcasts): a
     // prop a client announces while a bracket is open cannot be in the host's already-enumerated
     // bracket, and unclaimed it would be destroyed at the sweep while the host keeps the mirror. A
     // claim is an entity expressed on the wire this bracket, in either direction.

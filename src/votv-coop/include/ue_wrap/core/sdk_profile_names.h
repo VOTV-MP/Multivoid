@@ -531,11 +531,8 @@ inline constexpr const wchar_t* PropInitFn            = L"Init";
 // entry is the BP class FName.
 inline constexpr const wchar_t* PropMushroomGrowingClass = L"prop_food_mushroom7_C";
 
-// The BP function all four inventory drop paths funnel through: a POST hook on UpropInventory_C
-// reads its out-params to broadcast PropSpawn. On the receiver Aprop_C.setKey is dispatched
-// between Begin and Finish so the prop's Init() does not overwrite Key with NewGuid.
-inline constexpr const wchar_t* PropInventoryClass      = L"propInventory_C";
-inline constexpr const wchar_t* PropInventoryTakeObjFn  = L"takeObj";
+// On the receiver Aprop_C.setKey is dispatched between Begin and Finish so the prop's Init() does not
+// overwrite Key with NewGuid.
 inline constexpr const wchar_t* PropSetKeyFn            = L"setKey";
 
 // UKismetStringLibrary::Conv_StringToName(const FString&) -> FName (BlueprintPure, dispatched on

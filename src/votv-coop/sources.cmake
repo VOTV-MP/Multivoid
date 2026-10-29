@@ -207,7 +207,6 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_key_index.cpp
     src/coop/props/prop_destroy_seam.cpp
     src/coop/props/prop_lifecycle.cpp
-    src/coop/props/prop_container_extract.cpp
     src/coop/props/prop_food_state.cpp
     src/coop/props/prop_record_refresh.cpp
     src/coop/props/pack_trash_intent.cpp

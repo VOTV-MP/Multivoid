@@ -146,7 +146,6 @@ const ClassCheck kClasses[] = {
     {P::name::GamemodeClass,                 Severity::Important, "puppet spawn world-context lookup (puppet.cpp)"},
     // --- Important: gameplay subsystems (degrade silently if missing) ---
     {P::name::PropClass,                     Severity::Important, "prop_C base -- ALL prop wire sync"},
-    {P::name::PropInventoryClass,            Severity::Important, "storage container extract sync"},
     {P::name::PhysicsHandleComponentClass,   Severity::Important, "light-grab observers"},
     {P::name::PhysicsConstraintComponentClass, Severity::Important, "heavy-grab observers"},
     {P::name::PrimitiveComponentClass,       Severity::Important, "throw impulse + velocity capture"},

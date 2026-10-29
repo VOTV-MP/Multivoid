@@ -26,7 +26,7 @@ namespace coop::net { class Session; }
 
 namespace coop::prop_element_tracker {
 
-// Caches the session pointer; prop_lifecycle's Install, SetSession and InstallInventory call it, so
+// Caches the session pointer; prop_lifecycle's Install and SetSession call it, so
 // the in-lock role read in MarkPropElement and the seed has a live pointer.
 void SetSession(coop::net::Session* session);
 
@@ -57,7 +57,7 @@ void UnmarkKnownKeyedProp(void* actor);
 // keys, 65 on one GUID), and the host re-keys a true duplicate (a different live actor already
 // carries the key) before enrolling, so a broadcast builds its payload from the return, never the
 // input. Every caller names its enrolment source: an explicit express seam (the Init broadcast, a
-// container extract, a held-item express, a pile self-seed) mints and announces on any peer, while
+// held-item express, a pile self-seed) mints and announces on any peer, while
 // the passive census walk on a client mints nothing for a keyed prop (keyed identity is
 // host-authored: a save-loaded prop adopts the host eid by key, a client-born prop mints at its
 // express seam) and only tracks it by key; a silent local eid nobody was told about was a

@@ -215,7 +215,6 @@ void InstallLoadWatchers(coop::net::Session& session) {
 
 void Install(coop::net::Session& session) {
     coop::grab_observer::Install();
-    coop::prop_lifecycle::InstallInventory(&session);
     coop::prop_lifecycle::Install(&session);
     coop::npc_sync::Install(&session);
     coop::world_actor_sync::Install(&session);  // non-Character event-actor mirror (2nd BeginDeferred interceptor, disjoint allowlist)

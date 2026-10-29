@@ -242,8 +242,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     }
     // The dedupe: a local Aprop_C with the same Key already exists (both peers loaded the same
     // save, or a prior PropSpawn created it), so it is converged to the host's transform rather
-    // than duplicated. The host-authority gate comes first: a peer PropSpawn (a container extract,
-    // a held-item express) can resolve onto an actor the host already owns, and the old flow
+    // than duplicated. The host-authority gate comes first: a peer PropSpawn (a held-item express) can resolve onto an actor the host already owns, and the old flow
     // rekeyed it to the peer's key or stacked a peer-band mirror over it, unbinding the host's own
     // identity (its destroy observer silenced). The actor is enrolled host-side under its own key
     // and re-expressed under the host identity; the sender adopts the host eid. A client-band

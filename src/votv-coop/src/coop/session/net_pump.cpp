@@ -439,7 +439,7 @@ void Tick(coop::net::Session& session) {
             // held goes. A client's session ends instead, below or through the join's abort drain,
             // and TearDownSession takes all of it then.
             const auto stats = coop::subsystems::DisconnectAll();
-            UE_LOGI("net: all peers gone -- cleared %zu un-enumerated snapshot candidate(s) + %zu Init-processed entries; takeObjInFlight=0",
+            UE_LOGI("net: all peers gone -- cleared %zu un-enumerated snapshot candidate(s) + %zu Init-processed entries",
                     stats.snapPending, stats.initProcessedDropped);
         }
 

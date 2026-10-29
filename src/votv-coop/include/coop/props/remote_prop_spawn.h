@@ -13,8 +13,8 @@
 // The fresh spawn is coop::prop_fresh_spawn::Materialize: a deferred spawn with setKey called
 // BEFORE FinishSpawningActor, so Aprop_C.Init() cannot overwrite the Key with a new guid.
 //
-// No echo loop: this path spawns through engine::SpawnActor rather than UpropInventory_C.takeObj,
-// so the takeObj POST observer that authors a send never fires. Its cross-TU calls into
+// No echo loop: this path spawns through engine::SpawnActor, so no spawn observer authors a send
+// for it. Its cross-TU calls into
 // coop::remote_prop are IsActorUnderAnyDrive, RegisterPropMirror and KeyToWString.
 
 namespace coop::net {

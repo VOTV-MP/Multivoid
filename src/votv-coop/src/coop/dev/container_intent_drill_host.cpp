@@ -219,7 +219,7 @@ void HostSale(uint64_t now, int count, size_t holds, uint32_t bad) {
 }
 
 // Room: the keyed props of R's class within kRoomNearCm of the client's puppet; -1 when the puppet does not read.
-// The count before the grant's take is the base the express seam's client-born spawn is judged against.
+// The count before the grant's take is the base the drop intent's client-born spawn is judged against.
 int g_roomBase = -1;
 uint64_t g_nextRoomMs = 0;
 
