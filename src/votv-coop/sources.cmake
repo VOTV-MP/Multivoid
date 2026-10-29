@@ -212,6 +212,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_record_refresh.cpp
     src/coop/props/pack_trash_intent.cpp
     src/coop/props/prop_drop_intent.cpp
+    src/coop/props/hit_target_prop.cpp
     src/coop/props/prop_damage_gate.cpp
     src/coop/props/prop_throw.cpp
     src/coop/props/prop_throw_host.cpp

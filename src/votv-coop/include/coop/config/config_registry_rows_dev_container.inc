@@ -52,6 +52,9 @@ CFG_FLAG(prop_damage_gate_strict, "prop_damage_gate_strict", "dev", false, "VOTV
     "Developer red arm: never set. The client's gate on a prop's impactDamage and fireDamage ignores that this client "
     "holds, threw or syncs the prop, so a prop it holds no longer breaks on its own count and the join prop loss "
     "drill's held-break arm must fail.")
+CFG_FLAG(hit_intent_refuse_prop, "hit_intent_refuse_prop", "dev", false, "VOTVCOOP_HIT_INTENT_REFUSE_PROP",
+    "Developer red arm: never set (HOST). The host takes no prop as the target of a client's hit, so a client's swing at a "
+    "host prop reaches nobody and the join prop loss drill's swing arm must fail: both copies of the can stand.")
 CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room|forge|unasked|putrecord|puthand|putfood|puthidden|putnested|putempty|puthover|putreserved|putfull|putfullhand|putdepart|putdeadline|putowed|putjoin|throwhand|throwgrab|throwhostgrab|throwclamp|throwplace|throwjoin|throwdepart|throwtouch",
     "VOTVCOOP_CONTAINER_INTENT_DRILL",
     "Drill (BOTH peers): both pick the same shared container (the smallest element id, within 5000 cm of the player, "

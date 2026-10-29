@@ -13,6 +13,7 @@
 #include "coop/player/puppet_drive.h"
 #include "coop/player/remote_player.h"
 #include "coop/player/roster_ledger.h"
+#include "coop/props/hit_target_prop.h"
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/obj_keyed_cache.h"
@@ -97,8 +98,10 @@ sg::Verdict OnAddDamagePre(const sg::Call& c) {
     coop::net::Session* s = LoadSession();
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return sg::Verdict::Run;
     // The targets are asked in turn; a claim has read the swing as this machine's own player's.
-    const uint32_t eid = coop::hit_target_creature::ClientClaim(c);
+    uint32_t eid = coop::hit_target_creature::ClientClaim(c);
+    if (eid == coop::element::kInvalidId) eid = coop::hit_target_prop::ClientClaim(c);
     if (eid == coop::element::kInvalidId) return sg::Verdict::Run;
+    if (eid == kClaimedUnsent) return sg::Verdict::Cancel;
     Swing swing;
     if (!ReadLocalSwing(c, swing)) return sg::Verdict::Run;
 
@@ -174,40 +177,47 @@ void Serve(coop::net::Session& s, int slot, const Queued& q) {
     if (!s.IsSlotWorldReady(slot)) return Refuse(slot, "slot not world-ready");
     if (!q.haveEye) return Refuse(slot, "no eye");
     if (p.verb != coop::net::kHitVerbAddDamage) return Refuse(slot, "unjudged verb");
-    void* creature = coop::hit_target_creature::HostTarget(p.targetEid);
-    if (!creature) return Refuse(slot, "no such creature");
+    // The element's type picks the target: a creature of a parked family, else a prop.
+    void* target = coop::hit_target_creature::HostTarget(p.targetEid);
+    const bool isCreature = target != nullptr;
+    if (!target) target = coop::hit_target_prop::HostTarget(p.targetEid);
+    if (!target) return Refuse(slot, "not a hit target");
 
     const FVector hitLoc{p.hitLoc[0], p.hitLoc[1], p.hitLoc[2]};
     float damage = 0.f;
     const char* why = nullptr;
-    if (!coop::hit_judge::JudgeHit(slot, q.eye, q.aim, hitLoc, creature, p.damage, damage, why)) {
+    if (!coop::hit_judge::JudgeHit(slot, q.eye, q.aim, hitLoc, target, p.damage, damage, why)) {
         const bool notFacing = std::strcmp(why, "not facing") == 0;
         return Refuse(slot, why, notFacing ? coop::hit_judge::FacingCosine(q.aim, q.eye, hitLoc) : std::nanf(""));
     }
 
+    coop::net::HitIntentPayload judged = p;
+    judged.damage = damage;
+    if (!isCreature) {
+        if (!coop::hit_target_prop::HostApply(p.targetEid, judged)) return Refuse(slot, "addDamage did not run");
+        return;
+    }
+
     // The first applied hit of a class says what it measured; the rest are counted (g_applied). Read before the
     // hit, which may kill the creature.
-    void* const cls = R::ClassOf(creature);
+    void* const cls = R::ClassOf(target);
     const bool say = !g_appliedSaid.Find(cls);
-    float reach = 0.f, target = 0.f, facing = 0.f;
+    float reach = 0.f, away = 0.f, facing = 0.f;
     std::wstring name;
     if (say) {
         FVector at{};
-        E::TryGetActorLocation(creature, at);
+        E::TryGetActorLocation(target, at);
         reach = Dist(q.eye, hitLoc);
-        target = Dist(hitLoc, at);
+        away = Dist(hitLoc, at);
         facing = coop::hit_judge::FacingCosine(q.aim, q.eye, hitLoc);
-        name = R::ClassNameOf(creature);
+        name = R::ClassNameOf(target);
     }
-    coop::net::HitIntentPayload judged = p;
-    judged.damage = damage;
-    if (!coop::hit_target_creature::HostApply(p.targetEid, judged))
-        return Refuse(slot, "addDamage did not run");
+    if (!coop::hit_target_creature::HostApply(p.targetEid, judged)) return Refuse(slot, "addDamage did not run");
     ++g_applied;
     if (say) {
         g_appliedSaid.Insert(cls, true);
         UE_LOGI("creature_hit_intent: slot=%d creature=%ls damage=%.1f reach=%.0f target=%.0f facing=%.3f applied "
-                "(first of its class; the rest are counted)", slot, name.c_str(), damage, reach, target, facing);
+                "(first of its class; the rest are counted)", slot, name.c_str(), damage, reach, away, facing);
     }
 }
 
@@ -301,6 +311,7 @@ void OnIntent(int senderSlot, const coop::net::HitIntentPayload& payload) {
 
 void OnDisconnect() {
     coop::hit_target_creature::OnDisconnect();
+    coop::hit_target_prop::OnDisconnect();
     g_paramsWarned = false;
     g_appliedSaid.Clear();
 }

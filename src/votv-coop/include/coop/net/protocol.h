@@ -1076,7 +1076,7 @@ enum class ReliableKind : uint8_t {
     // sender's held item, its reach, its sight, the point on the target) and runs the verb on its real entity. The
     // verb is generic (0 addDamage, 1 exploded, 2 ignite) and the host judges 0 only. Never relayed; no answer: the
     // target's state is the host's and its death arrives as its destroy. Late join: none -- a request is an act.
-    // Trust: the id must name a live host element that is a hit target (today a creature of a parked family), the
+    // Trust: the id must name a live host element that is a hit target (a creature of a parked family, or a prop), the
     // damage is clamped to the held item's, and intents run from a bounded queue at a bounded rate. HitIntentPayload.
     HitIntent = 187,
     // Host to client: an explosion the host's game ran, with its class, transform and parameters; the client

@@ -1,17 +1,16 @@
 // coop/player/hit_intent.h -- a client's hit on an entity the host owns, as an intent the host judges.
 //
 // A client's swing (mainPlayer_C::attack) ends in the struck actor's own addDamage, with the player as the damager.
-// On a client the struck creature is a mirror of the host's, whose Blueprint graph coop/creatures/npc_mirror_brain
-// refuses, so the hit would land nowhere. The mirror's addDamage is watched instead: a target (coop/creatures/
-// hit_target_creature) claims the call when this machine's own player is the damager and the mirror's family is
-// parked (coop/creatures/npc_mirror_brain.h); the client then sends HitIntent -- the creature's element id,
-// the damage and impact the swing claimed and the point it struck -- and cancels the call. The target plays the hit's
-// feedback at once, a cosmetic prediction. The creature's health, death and corpse stay the host's.
+// On a client the struck entity is a mirror of the host's, whose own damage would land nowhere or diverge. The
+// mirror's addDamage is watched instead: a target claims the call when this machine's own player is the damager --
+// a parked creature (coop/creatures/hit_target_creature), a prop this client does not author (coop/props/
+// hit_target_prop). The client then sends HitIntent -- the target's element id, the damage and impact the swing
+// claimed and the point it struck -- and cancels the call. The target's health and death stay the host's.
 //
 // The host queues a client's intents (cap 8, a pace of 4 then 2 a second, which bounds a swing rate), captures the
 // sender's eye and newest streamed aim from its puppet when the intent arrives, and serves one head a tick through
 // coop/player/hit_judge: the held item, the sender alive, the reach, the facing, the sight and the point on the
-// creature. A pass runs the creature's own addDamage with a null damager, so a client's kill credits no host
+// target. A pass runs the target's own addDamage with a null damager, so a client's kill credits no host
 // achievement. Nothing is sent back. A refusal is counted, and said once per sender and reason. Game thread.
 
 #pragma once
@@ -30,6 +29,11 @@ struct Call;
 }  // namespace ue_wrap::script_gate
 
 namespace coop::hit_intent {
+
+// A target's ClientClaim answers with the target's element id, coop::element::kInvalidId when the call is not its hit, or
+// this when the call is its hit but there is nothing to send: it is cancelled and no intent goes. It lies past
+// kMaxElements, so no element carries it.
+inline constexpr uint32_t kClaimedUnsent = 0xFFFFFFFEu;
 
 // What a swing's addDamage call carries. hitLoc is the point the swing struck: the call's hit parameter, else the struck
 // actor's location.

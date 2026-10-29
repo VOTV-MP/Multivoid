@@ -51,14 +51,6 @@ bool Strict() {
     return s;
 }
 
-// This machine authors the prop's motion: it holds it in a hand grab, it threw it, or its prop-syncer episode names it.
-bool AuthoredHere(void* prop) {
-    void* me = coop::players::Registry::Get().Local();
-    if (me && ue_wrap::engine::IsMainPlayerGrabbing(me, prop)) return true;
-    if (coop::prop_throw::SeqFor(prop) != 0) return true;
-    return coop::prop_syncer::AuthorsActorHere(prop);
-}
-
 unsigned long long                g_cancelled[kRows] = {};
 ue_wrap::ObjKeyedCache<bool, 24>  g_said[kRows];   // the owner classes whose first cancelled call has been said
 
@@ -95,6 +87,13 @@ Reg  g_reg[kRows] = {Reg::Pending, Reg::Pending};
 bool g_settled[kRows] = {};
 
 }  // namespace
+
+bool AuthoredHere(void* prop) {
+    void* me = coop::players::Registry::Get().Local();
+    if (me && ue_wrap::engine::IsMainPlayerGrabbing(me, prop)) return true;
+    if (coop::prop_throw::SeqFor(prop) != 0) return true;
+    return coop::prop_syncer::AuthorsActorHere(prop);
+}
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);

@@ -22,6 +22,10 @@ class Session;
 
 namespace coop::props::prop_damage_gate {
 
+// True when this machine authors the prop's motion: it holds the prop in a hand grab, it threw it, or its prop-syncer
+// episode names it. Read by the hit intent's prop target too. Game thread.
+bool AuthoredHere(void* prop);
+
 // Cache the session; a client takes the two watches (once per process). Called each time the install fanout runs.
 void Install(coop::net::Session* session);
 
