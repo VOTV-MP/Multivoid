@@ -8,7 +8,7 @@
 //                  relayed rows, and the host sets its copy against the joiner's instants.
 //   throwdepart -- the client leaves at the first admitted row; the host takes the prop back at the last row's velocity, the
 //                  copy flies on and rests, and the rejoined client's seed agrees with the host's rest pose.
-//   throwtouch  -- the host grabs the flying prop 150 ms after the first admitted row; the thrower's copy follows the host.
+//   throwtouch  -- the host picks the flying prop up 150 ms after the first admitted row; the thrower's row ends with it.
 
 #include "container_intent_drill_put.h"        // Put2IsJoiner: putjoin's role rule
 #include "container_intent_drill_throw.h"
@@ -28,6 +28,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_mainplayer.h"
 
 #include <windows.h>
 
@@ -76,7 +77,6 @@ const char* g_placeHand = "n/a";  // "0", or "n/a" when the place verb did not l
 
 uint64_t g_touchRowMs = 0, g_touchGrabMs = 0;
 bool     g_touchGrabbed = false;
-uint32_t g_touchTakeBacks0 = 0;
 
 // ---- throwdepart ----------------------------------------------------------------------------------------------------------
 
@@ -139,7 +139,6 @@ void ArmsHostArmed() {
     g_base.intents = coop::prop_throw::dev::IntentsSeen();
     g_base.intentsThrown = coop::prop_throw::dev::IntentsThrown();
     g_base.elected = coop::prop_syncer_host::dev::ThrowViewNow().elected;
-    g_touchTakeBacks0 = coop::prop_syncer_host::dev::ThrowViewNow().takeBacks;
     g_departTakeBacks0 = coop::prop_syncer_host::dev::ThrowViewNow().slotLeft;
     g_touchRowMs = g_touchGrabMs = g_departTakeMs = g_departSayMs = 0;
     g_touchGrabbed = false;
@@ -182,9 +181,10 @@ void PlaceHostPass() {
 
 // ---- throwtouch: the host ------------------------------------------------------------------------------------------------
 
-// The host's pawn takes the flying prop by the use key's grab chain, as AimedGrab runs it once the aim is taken
-// (aimed_grab.cpp:97-102): the prop's playerGrabbed_pre, the player's useAction, the prop's playerGrabbed. Not a teleport and
-// not a dev write; whether the chain takes a prop the player has not aimed at is what the arm measures.
+// The host's pawn takes the flying prop with the game's own pickup of a named actor, `Hold Object` with `manual` set
+// (mainPlayer.cpp:16196; ue_wrap::engine::CallMainPlayerHoldObject): no aim, not a teleport, not a dev write. The pickup
+// equips the drive and the world prop leaves, so the thrower's row ends with the prop (Died) and its copy goes with the
+// host's destroy. A physics grab of the flying prop needs an aim at a moving target and is not measured here.
 HostJudge TouchHostTick(uint32_t eid, char* why, size_t whyLen) {
     const auto& tv = coop::prop_syncer_host::dev::ThrowViewNow();
     const uint64_t now = ::GetTickCount64();
@@ -197,34 +197,29 @@ HostJudge TouchHostTick(uint32_t eid, char* why, size_t whyLen) {
     if (!g_touchGrabMs) {
         if (now - g_touchRowMs < kTouchAfterRowMs) return HostJudge::Working;
         if (!prop || !player) {
-            std::snprintf(why, whyLen, "the flying prop or the host's player is gone before the grab");
+            std::snprintf(why, whyLen, "the flying prop or the host's player is gone before the pickup");
             return HostJudge::Failed;
         }
-        const bool pre = DR::CallWithPlayer(prop, L"playerGrabbed_pre", player);
-        bool use = false;
-        if (void* useFn = R::FindDispatchFunctionCached(R::ClassOf(player), L"useAction")) {
-            ue_wrap::ParamFrame f(useFn);
-            use = f.valid() && f.Set<bool>(L"sec", false) && ue_wrap::Call(player, f);
-        }
-        const bool post = DR::CallWithPlayer(prop, L"playerGrabbed", player);
+        bool collected = false;
+        const bool called = ue_wrap::engine::CallMainPlayerHoldObject(player, prop, collected);
+        g_touchGrabbed = called && collected;
         g_touchGrabMs = now;
-        UE_LOGI("[CI-DRILL] host throwtouch: the grab chain ran %llu ms after the first admitted row (pre/use/post %d/%d/%d)",
-                U(now - g_touchRowMs), pre ? 1 : 0, use ? 1 : 0, post ? 1 : 0);
+        UE_LOGI("[CI-DRILL] host throwtouch: the pickup ran %llu ms after the first admitted row (called %d, collected %d)",
+                U(now - g_touchRowMs), called ? 1 : 0, collected ? 1 : 0);
+        if (!g_touchGrabbed) {
+            UE_LOGI("[CI-DRILL] host throwtouch: NOT MEASURED (the game's pickup refused the flying prop)");
+            return HostJudge::NotMeasured;
+        }
         return HostJudge::Working;
     }
-    if (!player || !prop) return HostJudge::Working;
-    g_touchGrabbed = g_touchGrabbed || DR::Grabbing(player) == prop;
-    if (g_touchGrabbed && tv.takeBacks > g_touchTakeBacks0) {
-        UE_LOGI("[CI-DRILL] host throwtouch: the host holds the prop and the thrower's row ended (take-back cause %u)",
-                static_cast<unsigned>(tv.lastTakeBack));
+    if (!prop) {
+        UE_LOGI("[CI-DRILL] host throwtouch: the host picked the prop up mid-flight and it left the world %llu ms later",
+                U(now - g_touchGrabMs));
         return HostJudge::Passed;
     }
     if (now - g_touchGrabMs < kTouchVerifyMs) return HostJudge::Working;
-    if (!g_touchGrabbed) {
-        UE_LOGI("[CI-DRILL] host throwtouch: NOT MEASURED (the grab chain did not put the flying prop on the host's player)");
-        return HostJudge::NotMeasured;
-    }
-    std::snprintf(why, whyLen, "the host holds the prop and the thrower's row did not end within %llu s", U(kTouchVerifyMs / 1000));
+    std::snprintf(why, whyLen, "the host's pickup was collected and the flying prop was still in the world after %llu s",
+                  U(kTouchVerifyMs / 1000));
     return HostJudge::Failed;
 }
 
@@ -484,7 +479,6 @@ void ArmsReset() {
     g_placeHand = "n/a";
     g_touchRowMs = g_touchGrabMs = 0;
     g_touchGrabbed = false;
-    g_touchTakeBacks0 = 0;
     g_departRejoinRead = g_departRejoined = false;
     g_departTakeBacks0 = 0;
     g_departTakeMs = g_departSayMs = 0;

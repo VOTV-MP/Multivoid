@@ -331,12 +331,8 @@ const char* JudgeFlight(const ClientEnd& c, char* why, size_t whyLen) {
         return nullptr;
     }
     if (ArmOf() == Arm::ThrowTouch) {
-        // After the host's grab the thrower's copy follows the host's hold: it parks, and the gap from then on is the hold's, not
-        // a flight's. Without the grab having been measured there is no override to judge.
-        if (g_hTouch == Touch::Passed && c.park < 1) {
-            std::snprintf(why, whyLen, "the thrower's copy never parked after the host's grab (sim flag stayed 1)");
-            return why;
-        }
+        // The host's pickup took the prop out of the world mid-flight (TouchHostTick): the thrower's row ends with it, and
+        // the in-flight gap before the pickup is judged by the same bound as every arm. No pickup measured, no override to judge.
         return nullptr;
     }
     if (c.park > kParkedSamplesMax) {

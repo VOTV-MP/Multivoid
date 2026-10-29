@@ -54,11 +54,11 @@ constexpr uint64_t kPendingMaxMs = 3000;
 // An interaction in progress keeps the sync across a still moment: the rest End waits this long after the
 // feeder's last Claim.
 constexpr uint64_t kInteractionHoldMs = 250;
-// The throw arms' red (container_throw_stepped_rows): every fourth row a thrown prop sends carries this step in x.
-// PROVISIONAL: against the host's allowance (a row of 25 ms may step kMaxFlightSpeedCmS * 0.025 + kStepSlackCm = 302 cm) a
-// 200 cm step passes; the proof sets the step that fails.
-constexpr uint32_t kSteppedRowEvery = 4;
-constexpr float    kSteppedRowCm = 200.f;
+// The throw arms' red (container_throw_stepped_rows): from a thrown prop's kSteppedRowFrom-th row on, every other row is
+// offset by this step in x, so each row steps about this far from the one before it. A row of 25 ms may step
+// kMaxFlightSpeedCmS * 0.025 + kStepSlackCm = 302 cm, so every stepped row fails and kMaxRefusedRows of them in a run revoke.
+constexpr uint32_t kSteppedRowFrom = 8;
+constexpr float    kSteppedRowCm = 1000.f;
 
 enum class Role : uint8_t { Unknown, Host, Client };
 enum class State : uint8_t { Pending, Syncing };
@@ -329,7 +329,7 @@ bool StepSyncing(coop::net::Session& s, uint32_t eid, Entry& e, void* actor, uin
     pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
     pp.roll  = ue_wrap::NormalizeAxis(rot.Roll);
     static const bool s_stepped = coop::config::ResolveFlag(coop::config_registry::rows::container_throw_stepped_rows);
-    if (s_stepped && e.thrown && (e.rowsSent + 1) % kSteppedRowEvery == 0) pp.x += kSteppedRowCm;   // the red: a step the host's test can fail
+    if (s_stepped && e.thrown && e.rowsSent >= kSteppedRowFrom && (e.rowsSent & 1u)) pp.x += kSteppedRowCm;   // the red: rows the host's test fails
     // The copy's velocity as it is read now, and this row's age on the clock the grant or the throw started: the
     // host judges a row's step against the speed a prop flies and its age, and takes the prop over from the last passing one.
     ue_wrap::FVector lin{};
