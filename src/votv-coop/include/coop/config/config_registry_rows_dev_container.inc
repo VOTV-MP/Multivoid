@@ -35,7 +35,7 @@ CFG_FLAG(container_view_drill, "container_view_drill", "dev", false, "VOTVCOOP_C
     "Drill (client): walks to the ATV, opens its container through the game's own openPropInv, then walks "
     "back; the view must stay open while the ATV is within reach and close on the tick it leaves it. Run it "
     "with join_at_host=1. Lines tagged [CVIEW-DRILL]; the client's DONE line, carrying the verdict, ends it.")
-CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room|putrecord|puthand|putfood|puthidden|putnested|putempty|puthover|putreserved|putfull|putfullhand|putdepart|putdeadline|putowed|putjoin|throwhand|throwgrab|throwhostgrab|throwclamp",
+CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room|putrecord|puthand|putfood|puthidden|putnested|putempty|puthover|putreserved|putfull|putfullhand|putdepart|putdeadline|putowed|putjoin|throwhand|throwgrab|throwhostgrab|throwclamp|throwplace|throwjoin|throwdepart|throwtouch",
     "VOTVCOOP_CONTAINER_INTENT_DRILL",
     "Drill (BOTH peers): both pick the same shared container (the smallest element id, within 5000 cm of the player, "
     "that holds two records or more and that a nav route reaches; race, two, sale and room take one whose first record "
@@ -76,6 +76,13 @@ CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|ta
     "copy parked in flight, or the host's copy more than the bound from the thrower's at the instants the client "
     "says (red: container_throw_no_elect, container_throw_no_velocity). throwclamp -- throwhand with "
     "container_throw_scale=10: the host's copy must fly no faster than the throw bound (red: container_throw_no_clamp). "
+    "throwplace -- the client lets go of a grab and then places a held drive with the game's precision place: neither "
+    "carries a throw sequence and the host elects no syncer. throwjoin (--observer) -- a second client joins while the "
+    "client's grab throw flies: its copy follows the relayed rows. throwdepart -- the client leaves at the first "
+    "admitted row (--rejoin --rejoin-marker \"[CI-DRILL] client throwdepart parked\"): the host takes the prop back at "
+    "the last row's velocity and it lands where the host's copy lands. throwtouch -- the host grabs the flying prop "
+    "150 ms after the first admitted row: the host overrides the syncer and the thrower's copy follows the host. The "
+    "run on throwhand with container_throw_stepped_rows prints whether the host revoked the thrower's trust. "
     "Lines tagged [CI-DRILL]; the "
     "host's DONE line ends it. It MUTATES the world.")
 CFG_FLAG(container_act_no_escrow, "container_act_no_escrow", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_ESCROW",
@@ -116,3 +123,7 @@ CFG_FLAG(container_throw_no_clamp, "container_throw_no_clamp", "dev", false, "VO
 CFG_INT(container_throw_scale, "container_throw_scale", "dev", 1, 1, 100, "VOTVCOOP_CONTAINER_THROW_SCALE",
     "Dev (CLIENT): the velocity a thrown prop's drop intent and release carry is multiplied by this, a forged "
     "throw for the throwclamp arm. 1 = off.")
+CFG_FLAG(container_throw_stepped_rows, "container_throw_stepped_rows", "dev", false, "VOTVCOOP_CONTAINER_THROW_STEPPED_ROWS",
+    "Red arm for the throw arms (CLIENT): the thrower of a thrown prop adds a step to the position of every fourth "
+    "drive row it sends, so the host's step test can fail. The host shows such a row all the same and counts it; a run "
+    "of failed rows revokes the thrower's right and the host takes the prop back.")

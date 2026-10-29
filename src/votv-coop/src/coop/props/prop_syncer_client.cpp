@@ -5,6 +5,8 @@
 
 #include "coop/props/prop_syncer.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/dev/prop_syncer_drill.h"     // IsEnabled: the last-grant record is kept only while the drill is on
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
@@ -52,6 +54,11 @@ constexpr uint64_t kPendingMaxMs = 3000;
 // An interaction in progress keeps the sync across a still moment: the rest End waits this long after the
 // feeder's last Claim.
 constexpr uint64_t kInteractionHoldMs = 250;
+// The throw arms' red (container_throw_stepped_rows): every fourth row a thrown prop sends carries this step in x.
+// PROVISIONAL: against the host's allowance (a row of 25 ms may step kMaxFlightSpeedCmS * 0.025 + kStepSlackCm = 302 cm) a
+// 200 cm step passes; the proof sets the step that fails.
+constexpr uint32_t kSteppedRowEvery = 4;
+constexpr float    kSteppedRowCm = 200.f;
 
 enum class Role : uint8_t { Unknown, Host, Client };
 enum class State : uint8_t { Pending, Syncing };
@@ -59,6 +66,7 @@ enum class State : uint8_t { Pending, Syncing };
 struct Entry {
     ue_wrap::CachedObjRef ref;
     ue_wrap::CachedObjRef rootComp;                // the actor's primitive root, resolved once for the per-row velocity read
+    bool                  thrown = false;          // Syncing a thrown prop (the host's unasked grant), not a claim
     State                 state = State::Pending;
     uint16_t              seq = 0;
     uint8_t               gen = 0;                 // Syncing only
@@ -208,6 +216,7 @@ bool EnterThrownSync(const coop::net::PropSyncAnswerPayload& p) {
     e.lastMoveMs = now;
     e.epochMs = startMs;   // the rows count from the throw, on this clock
     e.lastInteractMs = 0;  // no feeder: the copy's own rest ends the episode
+    e.thrown = true;
     ++CountRef(Count::Granted);
     UE_LOGI("[PROP-SYNC] CLIENT granted a throw eid=%u gen=%u seq=%u ms=%llu (#%u)", p.eid, static_cast<unsigned>(p.gen),
             static_cast<unsigned>(p.seq), static_cast<unsigned long long>(now - startMs), CountRef(Count::Granted));
@@ -319,6 +328,8 @@ bool StepSyncing(coop::net::Session& s, uint32_t eid, Entry& e, void* actor, uin
     pp.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
     pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
     pp.roll  = ue_wrap::NormalizeAxis(rot.Roll);
+    static const bool s_stepped = coop::config::ResolveFlag(coop::config_registry::rows::container_throw_stepped_rows);
+    if (s_stepped && e.thrown && (e.rowsSent + 1) % kSteppedRowEvery == 0) pp.x += kSteppedRowCm;   // the red: a step the host's test can fail
     // The copy's velocity as it is read now, and this row's age on the clock the grant or the throw started: the
     // host judges a row's step against the speed a prop flies and its age, and takes the prop over from the last passing one.
     ue_wrap::FVector lin{};

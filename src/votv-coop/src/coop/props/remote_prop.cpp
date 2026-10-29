@@ -58,6 +58,9 @@ namespace coop::remote_prop {
 namespace {
 
 namespace R = ue_wrap::reflection;
+
+// What this peer received of throws, for the throw arms: releases that carried a throw sequence, and the swings played.
+uint32_t g_throwReleases = 0, g_whooshes = 0;
 namespace E = ue_wrap::engine;
 
 // ActiveDrive, BeginLerpToPose, AdvanceLerp, ResetDriveState, LerpAngle, NowMs and the lerp
@@ -194,6 +197,7 @@ void CloseHold(int slot, uint16_t holdGen) {
 void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, void* localPlayer) {
     // Reads and clears the sender's drive; dispatched from event_feed on the game thread.
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::OnRelease)");
+    if (payload.throwSeq != 0) ++g_throwReleases;
     const std::wstring keyW = KeyToWString(payload.key);
     coop::swinger_join_pose::Forget(keyW);   // a release is newer than a connect pose parked for this lid
     const float linSpeedSq = payload.linVelX * payload.linVelX +
@@ -322,8 +326,10 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
     // trajectory, and the host streams the clump's flight as poses until it re-piles. It freezes at
     // the release pose until that stream or the host's ToPile convert moves it; the swing plays.
     if (propActor && HostAuthorsTrashBody(propActor)) {
-        if (propActor && payload.throwSeq != 0)
+        if (propActor && payload.throwSeq != 0) {
             coop::prop_sound::PlayThrowWhoosh(propActor);
+            ++g_whooshes;
+        }
         if (propActor) ClearAnyDriveFor(propActor);  // stop the carry drive; freeze in place
         UE_LOGI("[PILE] CLIENT trash throw eid=%u |v|=%.1f cm/s -- frozen at release (no local physics); "
                 "the host's pose stream and its ToPile convert place it",
@@ -350,6 +356,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         if (propActor && payload.throwSeq != 0) {
             ue_wrap::prop::CallPropThrown(propActor, localPlayer);
             coop::prop_sound::PlayThrowWhoosh(propActor);
+            ++g_whooshes;
             UE_LOGI("remote_prop: fired Aprop_C.thrown(player=%p) + swing whoosh -- throw seq %u, launch speed %.1f cm/s",
                     localPlayer, static_cast<unsigned>(payload.throwSeq), linSpeed);
         }
@@ -372,6 +379,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         // speed gate.
         if (payload.throwSeq != 0) {
             coop::prop_sound::PlayThrowWhoosh(propActor);
+            ++g_whooshes;
         }
     }
     // Only the released slot clears.
@@ -588,5 +596,10 @@ void OnDisconnectForSlot(int peerSlot) {
     }
     ResetDriveState(d);
 }
+
+namespace dev {
+uint32_t ThrowReleasesReceived() { return g_throwReleases; }
+uint32_t ThrowWhooshesPlayed() { return g_whooshes; }
+}  // namespace dev
 
 }  // namespace coop::remote_prop

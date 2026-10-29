@@ -186,6 +186,9 @@ namespace dev {   // called only from src/coop/dev/ (the act drills); compiled a
 void WatchWireDestroys(int slot, coop::element::ElementId a, coop::element::ElementId b);
 // The PropDestroy messages the watch counted for `eid`: the count for `a` or `b`, 0 for any other eid.
 uint32_t WireDestroysNaming(coop::element::ElementId eid);
+// The PropRelease messages received this session that carried a throw sequence, and the throw swings played for them.
+uint32_t ThrowReleasesReceived();
+uint32_t ThrowWhooshesPlayed();
 }  // namespace dev
 
 }  // namespace coop::remote_prop

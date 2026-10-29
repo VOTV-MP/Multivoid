@@ -55,7 +55,7 @@ void OnSlotLeft(uint8_t slot);
 // Session end: the buckets, hand-back records, counters and the cached session. Game thread.
 void OnDisconnect();
 
-namespace dev {   // read only by src/coop/dev/ (the prop syncer and swinger drills); the admitted counts are kept only while one of the two rows is on
+namespace dev {   // read only by src/coop/dev/ (the prop syncer, swinger and throw drills); the admitted counts are kept only while a prop syncer or swinger drill row is on
 struct Admitted {
     uint8_t  gen = 0;     // the generation of the last row admitted for the eid
     uint32_t rows = 0;    // rows admitted in that generation, kept after the row ends
@@ -65,6 +65,24 @@ Admitted AdmittedOf(uint32_t eid);
 uint32_t NotSyncerCount();
 // Rows admitted from a sender that is no syncer of the prop: only the drill's red arm can make this nonzero.
 uint32_t NonSyncerAdmitted();
+// The elected rows of this session, for the throw arms: the last election, its admitted rows, and the take-backs. Kept
+// always (a few integers); the arms print and judge from them.
+struct ThrowView {
+    uint32_t elected = 0;          // elections this session
+    uint32_t lastEid = 0;          // the last elected prop and the generation of its row
+    uint8_t  lastGen = 0;
+    uint32_t lastRows = 0;         // rows admitted on that row (passing or not)
+    uint32_t failedDisplayed = 0;  // rows that failed the step test and were displayed all the same
+    uint32_t revokes = 0;          // RowsUntrusted take-backs
+    uint32_t revokeRows = 0;       // rows admitted when the last one fired
+    uint32_t revokeTotal = 0;      // failed rows of that flight
+    uint32_t takeBacks = 0;        // every take-back of an elected row to the host, and the last one's cause and speed
+    uint32_t slotLeft = 0;         // take-backs because the thrower left
+    uint8_t  lastTakeBack = 0;     // the Ending
+    uint64_t lastTakeBackMs = 0;   // active_drive::NowMs
+    float    lastTakeBackSpeed = 0.f;   // cm/s of the velocity the host copy was released with
+};
+const ThrowView& ThrowViewNow();
 }  // namespace dev
 
 }  // namespace coop::prop_syncer_host

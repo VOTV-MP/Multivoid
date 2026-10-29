@@ -117,6 +117,7 @@ bool PutHoverSlot(void* ui, void* slot);
 
 // put2.cpp: what an arm does around the ask and at the settle.
 bool Put2Idle();                        // a relaunched putdepart client has nothing to do
+bool Put2IsJoiner();                    // putjoin's role rule: a client with a connected peer of a lower slot is the joiner (throwjoin uses it too)
 void Put2BeforeAsk();                   // holds the replay for the arms that interleave
 bool Put2Hooked();                      // after the ask the arm runs Put2Hook, not the plain act wait
 int  Put2Pockets();                     // how many items the arm's client pockets

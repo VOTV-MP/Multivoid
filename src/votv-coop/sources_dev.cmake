@@ -116,6 +116,8 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/container_intent_drill_put_join.cpp
     src/coop/dev/container_intent_drill_throw.cpp
     src/coop/dev/container_intent_drill_throw_act.cpp
+    src/coop/dev/container_intent_drill_throw_arms.cpp
+    src/coop/dev/container_intent_drill_throw_gap.cpp
     src/coop/dev/container_intent_drill_throw_hit.cpp
     src/coop/dev/container_intent_drill_throw_hostgrab.cpp
     src/coop/dev/container_intent_drill_throw_host.cpp

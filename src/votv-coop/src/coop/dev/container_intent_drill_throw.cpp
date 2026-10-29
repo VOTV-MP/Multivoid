@@ -61,13 +61,11 @@ constexpr uint64_t kRestBoundMs      = 30000;
 constexpr uint64_t kHandBoundMs      = 10000;
 constexpr uint64_t kGrabBoundMs      = 20000;
 constexpr uint64_t kItem2BoundMs     = 60000;   // the second standpoint's drive: the host's line, then its mirror
+constexpr uint64_t kRethrowBoundMs   = 60000;   // throwjoin: the host's word on a second throw
 constexpr uint64_t kArmBoundMs       = 60000;   // the client's arm line to the host's armed line (drill chat leaves one line a second)
-constexpr int      kAtCount          = 8;       // the instants after the press at which the thrower says where its copy was
-constexpr uint64_t kAtEveryMs        = 250;
-constexpr uint64_t kAtSlackMs        = 40;      // a sample this near an instant stands for it
 
 
-enum class Step : uint8_t { WaitLine, WaitMirrors, Rest, WalkWait, Item2Wait, TakeHand, HandRead, Grab, ArmWait, Aim,
+enum class Step : uint8_t { WaitLine, WaitMirrors, Rest, WalkWait, Item2Wait, TakeHand, HandRead, Grab, ArmWait, Aim, Place, Parked, Rethrow,
                             Flight };
 
 Step     g_step = Step::WaitLine;
@@ -229,7 +227,7 @@ void StepWalkWait() {
     UE_LOGI("[CI-DRILL] client %s: throw %d stands at (%.0f,%.0f,%.0f), %.0f cm from the target", ArmName(), g_n,
             static_cast<double>(g_stand.X), static_cast<double>(g_stand.Y), static_cast<double>(g_stand.Z),
             static_cast<double>(std::hypot(g_packAt.X - g_stand.X, g_packAt.Y - g_stand.Y)));
-    if (IsHandThrow(ArmOf())) {
+    if (HandPath(ArmOf(), g_n)) {
         Next(Step::TakeHand);
         return;
     }
@@ -323,11 +321,58 @@ void StepGrab() {
 
 void StepArmWait() {
     if (DC::ChatHasLive(ThrowLine("host", "armed", g_n, false))) {
+        if (ArmOf() == Arm::ThrowPlace) {   // a place: the grab is let go, then a held drive placed; no aim and no throw
+            Next(Step::Place);
+            return;
+        }
         g_aimer.Begin(g_n);
         Next(Step::Aim);
         return;
     }
     if (Expired(kArmBoundMs)) CFail("the host never armed throw %d", g_n);
+}
+
+// throwplace: part 1 (n=1) lets go of the grab, part 2 (n=2) places the held drive. The host judges what it received.
+void StepPlace(void* player) {
+    char why[160];
+    switch (PlaceTick(player, g_n, why, sizeof(why))) {
+    case PlaceState::Working: return;
+    case PlaceState::Failed:  CFail("%s", why); return;
+    case PlaceState::Done:    break;
+    }
+    DC::Say(ThrowLine("client", "placed", g_n, false));
+    if (g_n == 1) {
+        g_n = 2;
+        char say[64];
+        std::snprintf(say, sizeof(say), "%sat=%d,%d,%d", kThrowSecondLine, static_cast<int>(g_stand.X), static_cast<int>(g_stand.Y),
+                      static_cast<int>(g_stand.Z));
+        DC::Say(say);
+        Next(Step::TakeHand);   // the hand part needs no walk: the standpoint is the one it is at
+        return;
+    }
+    DC::Say(kThrowDoneLine);
+    UE_LOGI("[CI-DRILL] client %s MEASURED (puppet throwShit ignored n=%u)", ArmName(), coop::prop_throw::dev::PuppetIgnored());
+    Finish();
+}
+
+// throwjoin: the host says, after the first throw, whether the second client missed the flight (it was not in the world yet):
+// then the same standpoint throws once more, with the second client further into its join; else the arm ends.
+void StepRethrow() {
+    if (DC::ChatHasLive("ci-throw host rethrow")) {
+        g_n = 2;
+        g_goal = g_stand;
+        char say[64];
+        std::snprintf(say, sizeof(say), "%sat=%d,%d,%d", kThrowSecondLine, static_cast<int>(g_stand.X), static_cast<int>(g_stand.Y),
+                      static_cast<int>(g_stand.Z));
+        DC::Say(say);
+        StartWalk();
+        return;
+    }
+    if (DC::ChatHasLive("ci-throw host norethrow") || Expired(kRethrowBoundMs)) {
+        DC::Say(kThrowDoneLine);
+        UE_LOGI("[CI-DRILL] client %s MEASURED (puppet throwShit ignored n=%u)", ArmName(), coop::prop_throw::dev::PuppetIgnored());
+        Finish();
+    }
 }
 
 // ---- the throw ----------------------------------------------------------------------------------------------------------
@@ -403,7 +448,7 @@ void StepAim(void* player) {
     case Aimer::State::Working: return;
     case Aimer::State::Failed:  CFail("%s", why); return;
     case Aimer::State::Aimed:
-        if (IsHandThrow(ArmOf())) ThrowTheHeld(player);
+        if (HandPath(ArmOf(), g_n)) ThrowTheHeld(player);
         else ThrowTheGrab(player);
         return;
     }
@@ -479,25 +524,14 @@ void Wrap(const coop::net::Session& session) {
     DC::Say(say);
     // Where the thrower's copy was at fixed instants after the press: the host sets its own copy against them at the same
     // wall-clock instants. Said before the end line, which is what the host's verdict waits for.
-    for (int k = 1; k <= kAtCount; ++k) {
-        const uint64_t want = g_pressMs + static_cast<uint64_t>(k) * kAtEveryMs;
-        const Sample* best = nullptr;
-        for (const Sample& s : g_local.samples) {
-            const uint64_t d = s.t > want ? s.t - want : want - s.t;
-            if (d <= kAtSlackMs && (!best || d < (best->t > want ? best->t - want : want - best->t))) best = &s;
-        }
-        if (!best) continue;
-        std::snprintf(say, sizeof(say), "%sk=%d t=%llu p=%d,%d,%d", ThrowLine("client", "at", g_n, true).c_str(), k, U(best->t),
-                      static_cast<int>(best->pos.X), static_cast<int>(best->pos.Y), static_cast<int>(best->pos.Z));
-        DC::Say(say);
-    }
+    SayInstants(g_local, g_pressMs, "client", g_n);
     std::snprintf(say, sizeof(say), "%sarc=%s gone=%d ov=%d all=%llu mir=%d rest=%d,%d,%d park=%d tmax=%llu",
                   ThrowLine("client", "end", g_n, true).c_str(), ArcOf(g_local), g_local.gone ? 1 : 0, g_ovCount,
                   U(cen::R4Overlaps() - g_ovAll0), count1 - g_count0, static_cast<int>(rest.X), static_cast<int>(rest.Y),
                   static_cast<int>(rest.Z), g_local.notSimMoving, U(g_local.atRest && g_local.restMs > g_pressMs ? g_local.restMs - g_pressMs : 0));
     DC::Say(say);
     FVector next{};
-    if (g_n == 1 && landed && !hit && std::fabs(along) >= kMoveMinCm && SecondStand(along, next)) {
+    if (g_n == 1 && ArmOf() != Arm::ThrowTouch && landed && !hit && std::fabs(along) >= kMoveMinCm && SecondStand(along, next)) {
         g_n = 2;
         g_goal = next;
         std::snprintf(say, sizeof(say), "%sat=%d,%d,%d", kThrowSecondLine, static_cast<int>(next.X), static_cast<int>(next.Y),
@@ -508,6 +542,10 @@ void Wrap(const coop::net::Session& session) {
         StartWalk();
         return;
     }
+    if (ArmOf() == Arm::ThrowJoin && g_n == 1) {   // the host says whether the second client missed the flight: a throw again, or the end
+        Next(Step::Rethrow);
+        return;
+    }
     UE_LOGI("[CI-DRILL] client %s: no further throw (%s)", ArmName(),
             g_n == 2 ? "both thrown" : hit ? "the first throw hit" : !landed ? "the first copy is gone or unread" : "the miss is across the line");
     DC::Say(kThrowDoneLine);
@@ -516,6 +554,10 @@ void Wrap(const coop::net::Session& session) {
 }
 
 void StepFlight(const coop::net::Session& session) {
+    if (ArmOf() == Arm::ThrowDepart && DepartParkTick(g_itemEid)) {   // the first row is sent: the client leaves; nothing more runs in this life
+        Next(Step::Parked);
+        return;
+    }
     const int rtt = session.rttMsForSlot(0);
     TrackTick(g_local, rtt);
     if (g_mirror.on) TrackTick(g_mirror, rtt);
@@ -543,6 +585,14 @@ void ThrowClientTick(const coop::net::Session& session) {
         HostGrabClientTick(session);
         return;
     }
+    if (DepartRejoinedIdle()) {   // throwdepart, relaunched: it reports the seed of the prop it threw before it left
+        DepartRejoinedTick();
+        return;
+    }
+    if (JoinerRole()) {   // throwjoin, the second client: it only traces the mirror of the thrown prop
+        JoinerTick(session);
+        return;
+    }
     if (!g_stepMs) {   // the first step's clock starts when the arm does, never at reset
         if (!cen::IsEnabled()) {
             CFail("the arm reads the census's overlap watch: run with container_route_census=1 on both peers");
@@ -565,6 +615,8 @@ void ThrowClientTick(const coop::net::Session& session) {
     switch (g_step) {
     case Step::Aim:        if (player) StepAim(player); else CFail("the local player is gone"); return;
     case Step::Grab:       StepGrab(); return;
+    case Step::Place:      if (player) StepPlace(player); else CFail("the local player is gone"); return;
+    case Step::Parked:     return;
     case Step::Flight:     StepFlight(session); return;
     default:               break;
     }
@@ -578,6 +630,7 @@ void ThrowClientTick(const coop::net::Session& session) {
     case Step::TakeHand:    StepTakeHand(); return;
     case Step::HandRead:    StepHandRead(); return;
     case Step::ArmWait:     StepArmWait(); return;
+    case Step::Rethrow:     StepRethrow(); return;
     default:                return;
     }
 }
@@ -586,6 +639,7 @@ void ThrowReset() {
     WalkStop();
     g_grab.reset();
     ThrowHostReset();
+    ArmsReset();
     HostGrabReset();
     g_step = Step::WaitLine;
     g_stepMs = g_nextMs = 0;

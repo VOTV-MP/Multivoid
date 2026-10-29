@@ -21,6 +21,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/puppet_drive.h"
 #include "coop/player/remote_player.h"
+#include "coop/props/prop_syncer_host.h"
 #include "coop/props/prop_throw.h"
 
 #include "ue_wrap/actors/container_inventory.h"
@@ -60,14 +61,18 @@ constexpr uint64_t kArmBoundMs     = 240000;  // the fixture line to the client'
 constexpr uint64_t kEndBoundMs     = 120000;  // the arm line to the client's end line
 constexpr uint64_t kNextBoundMs    = 240000;  // the verdict to the client's second or done line (a second walk)
 constexpr uint64_t kFindEveryMs    = 50;      // the search for the host's element of a thrown hand drive
-constexpr int      kAtCount        = 8;       // the thrower says where its copy was at 8 instants (container_intent_drill_throw.cpp)
-constexpr uint64_t kAtSlackMs      = 40;
 constexpr int      kMatchedMin     = 3;       // fewer matched instants than this is no judgement
 constexpr int      kParkedSamplesMax = 3;     // PROVISIONAL: the thrower's samples before rest at which it may read not-simulating
-constexpr float    kFlightGapPassCm = 200.f;  // PROVISIONAL: the largest in-flight gap a green run may print; the proof sets it
+constexpr uint64_t kRethrowAfterMs = 5000;    // throwjoin: a second client still not in the world this long after the first throw gets one more
+constexpr uint64_t kJoinerEndMs    = 150000;  // throwjoin: the first throw's verdict to the joiner's end line
+constexpr uint64_t kRejoinWaitMs   = 240000;  // throwdepart: the take-back to the rejoined client's seed line
 
-enum class HStep : uint8_t { WaitPeer, Bind, WaitArm, Trace, WaitNext, Item2Bind, Done };
+enum class HStep : uint8_t { WaitPeer, Bind, WaitArm, Trace, WaitNext, Item2Bind, JoinWait, Done };
 HStep    g_hStep = HStep::WaitPeer;
+enum class Touch : uint8_t { Pending, Passed, NotMeasured };   // throwtouch: the host's grab of the flying prop
+Touch    g_hTouch = Touch::Pending;
+uint64_t g_hPlacedMs = 0;   // throwplace: the client said it placed
+uint32_t g_hRevokes0 = 0;   // the host's trust revocations at the arm line
 uint64_t g_hMs = 0;        // the time the step was entered
 uint64_t g_hNextMs = 0;    // the chat is read four times a second; the trace every tick
 uint64_t g_hFindMs = 0;
@@ -199,7 +204,7 @@ void FindThrown() {
             best, g_hSet.size());
 }
 
-void StepWaitArm() {
+void StepWaitArm(const coop::net::Session& s) {
     std::string rest;
     if (!DC::LiveRestOf(ThrowLine("client", "arm", g_hN, true), &rest)) {
         if (HExpired(kArmBoundMs)) HFail("the client never armed throw %d within %llu s", g_hN, U(kArmBoundMs / 1000));
@@ -214,11 +219,23 @@ void StepWaitArm() {
         HFail("the hit watch on the drive's component-hit handler is not live");
         return;
     }
+    // throwjoin: the go waits for a second client to be connected, so the throw flies while it joins.
+    if (ArmOf() == Arm::ThrowJoin && g_hN == 1 && !JoinGate(s, g_hSlot, ::GetTickCount64() - g_hMs)) return;
+    ArmsHostArmed();
+    g_hRevokes0 = coop::prop_syncer_host::dev::ThrowViewNow().revokes;
+    if (ArmOf() == Arm::ThrowPlace) {   // a place is judged on what the host receives, not on a flight: no trace
+        g_hPlacedMs = 0;
+        DC::Say(ThrowLine("host", "armed", g_hN, false));
+        UE_LOGI("[CI-DRILL] host %s part %d armed", ArmName(), g_hN);
+        HNext(HStep::Trace);
+        return;
+    }
     int held = 0;
     RD::IntAfter(rest, "held", held);
+    g_hTouch = Touch::Pending;
     TrackBegin(g_hTrack, "host", "element");
     g_hElemEid = 0;
-    if (ArmOf() == Arm::ThrowGrab) {   // the element the client holds is the one thrown
+    if (!HandPath(ArmOf(), g_hN)) {   // a grab path: the element the client holds is the one thrown
         void* actor = held > 0 ? coop::element::LivePropActor(static_cast<uint32_t>(held)) : nullptr;
         if (!actor) {
             HFail("the grabbed drive has no live element here (eid %d)", held);
@@ -265,23 +282,6 @@ struct ClientEnd {
     bool peakRead = false;
 };
 
-// The `n` comma-separated integers after `key` (with its '=') in `text`; false when the key is absent or the list short.
-bool IntsAfter(const std::string& text, const char* key, int* out, int n) {
-    const size_t at = text.find(key);
-    if (at == std::string::npos) return false;
-    const char* p = text.c_str() + at + std::strlen(key);
-    for (int i = 0; i < n; ++i) {
-        char* end = nullptr;
-        out[i] = static_cast<int>(std::strtol(p, &end, 10));
-        if (end == p) return false;
-        p = end;
-        if (i + 1 < n) {
-            if (*p != ',') return false;
-            ++p;
-        }
-    }
-    return true;
-}
 
 ClientEnd ReadClientEnd(const std::string& endRest) {
     ClientEnd c;
@@ -311,28 +311,9 @@ ClientEnd ReadClientEnd(const std::string& endRest) {
 // on loopback), the thrower's copy never parked, and for throwclamp the host's copy no faster than the throw bound. Returns
 // the FAIL text, or null for a pass; always prints the numbers the constants are derived from.
 const char* JudgeFlight(const ClientEnd& c, char* why, size_t whyLen) {
-    int matched = 0, said = 0, worstK = 0;
-    float worst = 0.f;
-    for (int k = 1; k <= kAtCount; ++k) {
-        char key[24];
-        std::snprintf(key, sizeof(key), "k=%d ", k);
-        std::string rest;
-        if (!DC::LiveRestOf(ThrowLine("client", "at", g_hN, true) + key, &rest)) continue;
-        ++said;
-        int p[3] = {};
-        const size_t t = rest.find("t=");
-        if (t == std::string::npos || !IntsAfter(rest, "p=", p, 3)) continue;
-        const uint64_t want = std::strtoull(rest.c_str() + t + 2, nullptr, 10);
-        const Sample* best = nullptr;
-        for (const Sample& s : g_hTrack.samples) {
-            const uint64_t d = s.t > want ? s.t - want : want - s.t;
-            if (d <= kAtSlackMs && (!best || d < (best->t > want ? best->t - want : want - best->t))) best = &s;
-        }
-        if (!best) continue;
-        ++matched;
-        const float gap = Dist3(best->pos, FVector{static_cast<float>(p[0]), static_cast<float>(p[1]), static_cast<float>(p[2])});
-        if (gap > worst) { worst = gap; worstK = k; }
-    }
+    const Gap judged = JudgeInstants(g_hTrack, "client", g_hN);
+    const int matched = judged.matched, said = judged.said, worstK = judged.worstK;
+    const float worst = judged.worst;
     UE_LOGI("[CI-DRILL] host throw %s n=%d flight: matched=%d/%d instants, in-flight gap max=%.0f cm at k=%d (green bound %.0f cm, "
             "PROVISIONAL), thrower parked in flight=%d sample(s) (bound %d), release-to-rest=%llu ms (t_max), host peak %.0f cm/s "
             "(launch bound %.0f, flight bound %.0f), throws minted here=%u, puppet throwShit ignored n=%u",
@@ -345,6 +326,15 @@ const char* JudgeFlight(const ClientEnd& c, char* why, size_t whyLen) {
         if (g_hTrack.peakSpeed > coop::net::throw_bounds::kMaxLaunchSpeedCmS * 1.1f) {
             std::snprintf(why, whyLen, "the host's copy flew at %.0f cm/s, past the throw bound %.0f cm/s", static_cast<double>(g_hTrack.peakSpeed),
                           static_cast<double>(coop::net::throw_bounds::kMaxLaunchSpeedCmS));
+            return why;
+        }
+        return nullptr;
+    }
+    if (ArmOf() == Arm::ThrowTouch) {
+        // After the host's grab the thrower's copy follows the host's hold: it parks, and the gap from then on is the hold's, not
+        // a flight's. Without the grab having been measured there is no override to judge.
+        if (g_hTouch == Touch::Passed && c.park < 1) {
+            std::snprintf(why, whyLen, "the thrower's copy never parked after the host's grab (sim flag stayed 1)");
             return why;
         }
         return nullptr;
@@ -386,6 +376,14 @@ void Verdict(const std::string& endRest) {
             ArmName(), g_hN, g_hElemEid, g_hTrack.gone ? 1 : 0, c.gone, static_cast<double>(g_hTrack.peakSpeed),
             static_cast<double>(minGap), U(cen::R4Overlaps() - g_hOvAll0), c.all, U(cen::RouteVerbs(kR4Route, false) - g_hAdds0),
             g_hCount0, count1);
+    // The trust the host kept in the thrower's rows: a row whose step disagrees with its velocity is displayed and counted, and a
+    // run of them revokes the thrower's right (the stepped-rows red makes the thrower send such rows).
+    const auto& tv = coop::prop_syncer_host::dev::ThrowViewNow();
+    if (tv.revokes > g_hRevokes0)
+        UE_LOGI("[CI-DRILL] host throw %s n=%d trust revoked after %u rows, display followed=%d (%u failed rows shown)", ArmName(), g_hN,
+                tv.revokeRows, tv.failedDisplayed > 0 ? 1 : 0, tv.failedDisplayed);
+    else
+        UE_LOGI("[CI-DRILL] host throw %s n=%d revoked=0 (%u failed rows shown)", ArmName(), g_hN, tv.failedDisplayed);
     g_hHit.Finish(g_hTrack);
     HitWatchEnd();
     g_hTrack.on = false;
@@ -394,12 +392,57 @@ void Verdict(const std::string& endRest) {
         HFail("%s", bad);
         return;
     }
-    UE_LOGI("[CI-DRILL] host throw %s n=%d PASS", ArmName(), g_hN);
+    if (ArmOf() == Arm::ThrowJoin) {   // the PASS waits for the joiner's numbers
+        HNext(HStep::JoinWait);
+        return;
+    }
+    UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=n/a", ArmName(), g_hN);
     HNext(HStep::WaitNext);
 }
 
+// throwplace: the host waits for the client to say it let go (part 1) or placed (part 2), then reads what it received.
+void StepPlaceTrace(bool due) {
+    if (!due) return;
+    const uint64_t now = ::GetTickCount64();
+    if (!g_hPlacedMs) {
+        if (DC::ChatHasLive(ThrowLine("client", "placed", g_hN, false))) g_hPlacedMs = now;
+        else if (HExpired(kEndBoundMs)) HFail("the client never placed in part %d within %llu s", g_hN, U(kEndBoundMs / 1000));
+        return;
+    }
+    char why[200];
+    switch (PlaceHostJudge(g_hN, now - g_hPlacedMs, why, sizeof(why))) {
+    case HostJudge::Working: return;
+    case HostJudge::Failed:  HFail("%s", why); return;
+    default:                 break;
+    }
+    g_hPlacedMs = 0;
+    HNext(HStep::WaitNext);   // the client says its hand part (the second line) or its end
+}
+
+// throwdepart: the client has left; the host's trace goes on until the copy rests and the rejoined client's seed is read.
+void StepDepartTrace() {
+    char why[200];
+    switch (DepartHostTick(g_hTrack, g_hElemEid, why, sizeof(why))) {
+    case HostJudge::Failed:      HFail("%s", why); return;
+    case HostJudge::Working:
+        if (HExpired(kEndBoundMs + kRejoinWaitMs)) HFail("the thrower's take-back was never seen within %llu s", U((kEndBoundMs + kRejoinWaitMs) / 1000));
+        return;
+    default:                     break;
+    }
+    HitWatchEnd();
+    UE_LOGI("[CI-DRILL] host throw %s n=%d PASS (the thrower left at its first row; puppet throwShit ignored n=%u)", ArmName(), g_hN,
+            coop::prop_throw::dev::PuppetIgnored());
+    UE_LOGI("[CI-DRILL] host %s MEASURED", ArmName());
+    Finish();
+    HNext(HStep::Done);
+}
+
 void StepTrace(const coop::net::Session& s, bool due) {
-    if (!g_hTrack.on && IsHandThrow(ArmOf())) {
+    if (ArmOf() == Arm::ThrowPlace) {
+        StepPlaceTrace(due);
+        return;
+    }
+    if (!g_hTrack.on && HandPath(ArmOf(), g_hN)) {
         const uint64_t now = ::GetTickCount64();
         if (now >= g_hFindMs) {
             g_hFindMs = now + kFindEveryMs;
@@ -409,6 +452,20 @@ void StepTrace(const coop::net::Session& s, bool due) {
     TrackTick(g_hTrack, s.rttMsForSlot(g_hSlot));
     PollOverlap();
     g_hHit.Tick(g_hTrack);
+    char why[200];
+    if (ArmOf() == Arm::ThrowJoin) JoinHostSay(g_hN, g_hElemEid);   // a joiner may connect at any moment of the flight
+    if (ArmOf() == Arm::ThrowDepart) {
+        StepDepartTrace();
+        return;
+    }
+    if (ArmOf() == Arm::ThrowTouch && g_hTouch == Touch::Pending) {
+        switch (TouchHostTick(g_hElemEid, why, sizeof(why))) {
+        case HostJudge::Failed:      HFail("%s", why); return;
+        case HostJudge::Passed:      g_hTouch = Touch::Passed; break;
+        case HostJudge::NotMeasured: g_hTouch = Touch::NotMeasured; break;
+        case HostJudge::Working:     break;
+        }
+    }
     if (!due) return;
     std::string rest;
     if (DC::LiveRestOf(ThrowLine("client", "end", g_hN, true), &rest)) {
@@ -416,6 +473,41 @@ void StepTrace(const coop::net::Session& s, bool due) {
         return;
     }
     if (HExpired(kEndBoundMs)) HFail("the client never ended throw %d within %llu s", g_hN, U(kEndBoundMs / 1000));
+}
+
+// throwjoin: the verdict of the flight stands, and the joiner's own numbers come after. The joiner's end line is judged when
+// it arrives; a second client that is not yet in the world when the first throw is over gets one more throw, and one that
+// never ends is NOT MEASURED, never a FAIL.
+void StepJoinWait(const coop::net::Session& s) {
+    JoinHostSay(g_hN, g_hElemEid);
+    char why[200];
+    float gap = -1.f;
+    switch (JoinHostJudge(g_hTrack, g_hN, gap, why, sizeof(why))) {
+    case HostJudge::Failed: HFail("%s", why); return;
+    case HostJudge::Passed:
+        if (gap >= 0.f) UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=%.0f", ArmName(), g_hN, static_cast<double>(gap));
+        else            UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=n/a (the joiner was not in flight)", ArmName(), g_hN);
+        DC::Say("ci-throw host norethrow");
+        HNext(HStep::WaitNext);
+        return;
+    default: break;
+    }
+    bool ready = false;
+    for (int i = 1; i < coop::net::kMaxPeers; ++i)
+        if (i != g_hSlot && s.IsSlotWorldReady(i)) ready = true;
+    const uint64_t waited = ::GetTickCount64() - g_hMs;
+    if (g_hN == 1 && !ready && waited > kRethrowAfterMs) {
+        UE_LOGI("[CI-DRILL] host throwjoin: the second client is not in the world after throw 1; throwing once more");
+        DC::Say("ci-throw host rethrow");
+        HNext(HStep::WaitNext);
+        return;
+    }
+    if (waited > kJoinerEndMs) {
+        UE_LOGI("[CI-DRILL] host throw %s n=%d PASS mirror-gap=n/a (NOT MEASURED: the second client never ended within %llu s)", ArmName(), g_hN,
+                U(kJoinerEndMs / 1000));
+        DC::Say("ci-throw host norethrow");
+        HNext(HStep::WaitNext);
+    }
 }
 
 // The second drive, beside the second standpoint the client names: throwgrab's client grabs it.
@@ -445,6 +537,7 @@ bool SpawnItem2(const FVector& stand) {
 
 void StepWaitNext() {
     if (DC::ChatHasLive(kThrowDoneLine)) {
+        if (ArmOf() == Arm::ThrowPlace) PlaceHostPass();
         UE_LOGI("[CI-DRILL] host %s MEASURED", ArmName());
         Finish();
         HNext(HStep::Done);
@@ -458,7 +551,7 @@ void StepWaitNext() {
             return;
         }
         g_hN = 2;
-        if (IsHandThrow(ArmOf())) {
+        if (HandPath(ArmOf(), g_hN)) {
             HNext(HStep::WaitArm);
             return;
         }
@@ -521,9 +614,10 @@ void ThrowHostTick(const coop::net::Session& session) {
     switch (g_hStep) {
     case HStep::WaitPeer:  StepWaitPeer(session); return;
     case HStep::Bind:      StepBind(); return;
-    case HStep::WaitArm:   StepWaitArm(); return;
+    case HStep::WaitArm:   StepWaitArm(session); return;
     case HStep::WaitNext:  StepWaitNext(); return;
     case HStep::Item2Bind: StepItem2Bind(); return;
+    case HStep::JoinWait:  StepJoinWait(session); return;
     default:               return;
     }
 }
@@ -544,6 +638,8 @@ void ThrowHostReset() {
     g_hCount0 = -1;
     g_hOvSeen = g_hOvAll0 = g_hAdds0 = 0;
     g_hOvCount = 0;
+    g_hTouch = Touch::Pending;
+    g_hPlacedMs = 0;
 }
 
 }  // namespace coop::dev::container_intent_drill::detail

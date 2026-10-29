@@ -67,6 +67,11 @@ bool TakeMark(const std::wstring& key, Mark* out);
 namespace dev {   // read by the throw arms of the container intent drill
 uint32_t Minted();          // throw sequences minted this session
 uint32_t PuppetIgnored();   // throwShit calls on a pawn that is not the local one (expected 0)
+// HOST: the client releases and drop intents received, and how many of them carried a throw sequence.
+uint32_t ReleasesSeen();
+uint32_t ReleasesThrown();
+uint32_t IntentsSeen();
+uint32_t IntentsThrown();
 }  // namespace dev
 
 // A session ended: the records, the marks and the counters go.

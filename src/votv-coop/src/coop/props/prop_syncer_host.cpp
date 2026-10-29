@@ -86,6 +86,7 @@ uint32_t g_nonSyncerAdmitted = 0;
 uint32_t g_elected = 0, g_electRefused = 0, g_rowsFailed = 0, g_thrownAdmitted = 0, g_jitRows = 0, g_rowsClamped = 0;
 int64_t  g_jitMax = 0;   // the largest (sender dt - host arrival dt) of an elected row's later rows, ms
 std::unordered_map<uint32_t, dev::Admitted> g_admittedBy;   // eid -> rows admitted, for the drill's judge
+dev::ThrowView g_tv;   // the throw arms' view of the elected rows
 uint32_t g_refused[8] = {};
 uint32_t g_ended[static_cast<unsigned>(Ending::kCount)] = {};
 
@@ -259,6 +260,10 @@ void AdmitRow(const coop::net::PropDriveRow& e, uint8_t slot, uint64_t nowMs) {
     // The pose is the sender's, the key the row's: a forged key must not name another prop at the apply's fallback.
     r.key = row->key;
     coop::prop_drive_stream::FeedAdmitted(r);
+    if (row->elected) {
+        ++g_tv.lastRows;
+        if (!passed) ++g_tv.failedDisplayed;
+    }
     if (row->syncer != slot) ++g_nonSyncerAdmitted;
     if (coop::dev::prop_syncer_drill::IsEnabled() || coop::dev::swinger_drill::IsEnabled()) {   // the drills' judges read it
         dev::Admitted& seen = g_admittedBy[e.elementId];
@@ -384,6 +389,11 @@ bool ElectSyncer(void* actor, uint8_t slot, uint16_t throwSeq, const float relea
     row->passMs     = 0;
     row->passVel    = ue_wrap::FVector{};
     row->claimSeq   = throwSeq;   // the grant, and a Revoked after it, echo the throw
+    ++g_tv.elected;
+    g_tv.lastEid = row->eid;
+    g_tv.lastGen = row->gen;
+    g_tv.lastRows = 0;
+    g_tv.failedDisplayed = 0;
     UE_LOGI("[PROP-SYNC] HOST ELECT eid=%u gen=%u slot %u throw seq %u (#%u)", row->eid, static_cast<unsigned>(row->gen),
             static_cast<unsigned>(slot), static_cast<unsigned>(throwSeq), ++g_elected);
     Answer(*g_session, slot, row->eid, throwSeq, row->gen, PropSyncResult::Granted, PropSyncRefusal::None,
@@ -481,6 +491,7 @@ void EndClientRow(Driven& d, Ending why) {
     // no End.
     if (why != Ending::Died && d.admittedEver && actor) {
         coop::net::PropDriveEndPayload end = EndOf(d, actor);
+        if (d.elected) g_tv.lastTakeBackSpeed = std::sqrt(end.linVelX * end.linVelX + end.linVelY * end.linVelY + end.linVelZ * end.linVelZ);
         coop::prop_drive_stream::ReleaseHost(end);
         // A hand-over sends no End: its new generation's poses supersede this one on every receiver.
         if (!toHost && g_session) {
@@ -495,6 +506,18 @@ void EndClientRow(Driven& d, Ending why) {
                d.elected ? coop::net::PropSyncKind::Throw : coop::net::PropSyncKind::Claim);
     RecordHandBack(d.eid, syncer, nowMs);
     Tally(g_ended[static_cast<unsigned>(why)], kEndingName[static_cast<unsigned>(why)], d.eid, syncer);
+    if (d.elected && toHost) {
+        ++g_tv.takeBacks;
+        if (why == Ending::SlotLeft) ++g_tv.slotLeft;
+        g_tv.lastTakeBack = static_cast<uint8_t>(why);
+        g_tv.lastTakeBackMs = nowMs;
+        if (!d.admittedEver) g_tv.lastTakeBackSpeed = 0.f;
+        if (why == Ending::RowsUntrusted) {
+            ++g_tv.revokes;
+            g_tv.revokeRows = g_tv.lastRows;
+            g_tv.revokeTotal = d.failedTotal;
+        }
+    }
     // One line per flight at the take-back; a row that failed the step test logs nothing itself.
     if (why == Ending::RowsUntrusted)
         UE_LOGI("[PROP-SYNC] HOST took eid=%u back from slot %u (rows untrusted: %u in a row, %u in the flight) -- %s",
@@ -548,6 +571,7 @@ void OnDisconnect() {
     g_elected = g_electRefused = g_rowsFailed = g_thrownAdmitted = g_jitRows = g_rowsClamped = 0;
     g_jitMax = 0;
     g_admittedBy.clear();
+    g_tv = dev::ThrowView{};
     std::fill(std::begin(g_refused), std::end(g_refused), 0u);
     std::fill(std::begin(g_ended), std::end(g_ended), 0u);
 }
@@ -562,6 +586,8 @@ Admitted AdmittedOf(uint32_t eid) {
 uint32_t NotSyncerCount() { return g_notSyncer; }
 
 uint32_t NonSyncerAdmitted() { return g_nonSyncerAdmitted; }
+
+const ThrowView& ThrowViewNow() { return g_tv; }
 
 }  // namespace dev
 

@@ -101,6 +101,26 @@ float Dist3(const ue_wrap::FVector& a, const ue_wrap::FVector& b);
 // The host's state back to the start (container_intent_drill_throw_host.cpp), called by the client's ThrowReset.
 void ThrowHostReset();
 
+// ---- the instants of a flight, said by one peer and set against another's trace (container_intent_drill_throw_gap.cpp) ----
+
+inline constexpr int      kAtCount         = 8;       // a peer says where its copy was at this many instants after the press
+inline constexpr uint64_t kAtEveryMs       = 250;
+inline constexpr uint64_t kAtSlackMs       = 40;      // a sample this near an instant stands for it
+inline constexpr float    kFlightGapPassCm = 200.f;   // PROVISIONAL: the largest in-flight gap a green run may print; the proof sets it
+inline constexpr float    kRestAgreeCm     = 50.f;    // PROVISIONAL: peers at rest agree within this
+
+// The `n` comma-separated integers after `key` (with its '=') in `text`; false when the key is absent or the list short.
+bool IntsAfter(const std::string& text, const char* key, int* out, int n);
+// Says the track's sample nearest each instant (pressMs + k * kAtEveryMs) as the at-lines of ThrowLine (k, t, p).
+void SayInstants(const Track& t, uint64_t pressMs, const char* who, int n);
+// Sets the track against the instants a peer said: how many were said, how many the track has a sample for, the largest gap.
+struct Gap { int matched = 0, said = 0, worstK = 0; float worst = 0.f; };
+Gap JudgeInstants(const Track& t, const char* who, int n);
+
+// The throw a hand path takes: the hotbar hand's (throwhand, throwclamp), and throwplace's second part. Every other throw
+// arm's is a physics grab's.
+inline bool HandPath(Arm a, int n) { return a == Arm::ThrowHand || a == Arm::ThrowClamp || (a == Arm::ThrowPlace && n == 2); }
+
 // ---- the acts of a throw that the thrower's peer runs (container_intent_drill_throw_act.cpp) -------------------------------
 
 // The camera turned at the target's opening point (its location plus its bounds' half-height, read once): the aim fan
@@ -150,6 +170,33 @@ private:
     size_t scanned_ = 0;
     uint64_t releaseMs_ = 0;
 };
+
+// ---- throwplace, throwjoin, throwdepart, throwtouch (container_intent_drill_throw_arms.cpp) -----------------------------------
+
+// What a host-side judge says of its arm on a tick: still waiting, passed, failed (`why` filled), or not measured (said).
+enum class HostJudge { Working, Passed, Failed, NotMeasured };
+
+// throwplace, the client: part 1 lets go of the grab (n=1), part 2 places a held drive (n=2). Ticked until Done or Failed.
+enum class PlaceState { Working, Done, Failed };
+PlaceState PlaceTick(void* player, int n, char* why, size_t whyLen);
+// throwdepart, the client: true once it has parked (a row was sent); a relaunched client is idle and reports its seed.
+bool DepartParkTick(uint32_t itemEid);
+bool DepartRejoinedIdle();
+void DepartRejoinedTick();
+// throwjoin, the second client: its whole machine.
+bool JoinerRole();
+void JoinerTick(const coop::net::Session& session);
+
+// The host: the counters at the arm line (before the client's act), the judges per arm, the join's gate and its eid line.
+void ArmsHostArmed();
+HostJudge PlaceHostJudge(int n, uint64_t ageMs, char* why, size_t whyLen);
+void PlaceHostPass();
+HostJudge TouchHostTick(uint32_t eid, char* why, size_t whyLen);
+HostJudge DepartHostTick(const Track& host, uint32_t eid, char* why, size_t whyLen);
+bool JoinGate(const coop::net::Session& s, int clientSlot, uint64_t waitedMs);
+void JoinHostSay(int n, uint32_t eid);
+HostJudge JoinHostJudge(const Track& host, int n, float& gapOut, char* why, size_t whyLen);
+void ArmsReset();
 
 // The host-as-thrower arm (container_intent_drill_throw_hostgrab.cpp); the two halves, and their state back to the start.
 void HostGrabHostTick(const coop::net::Session& session);

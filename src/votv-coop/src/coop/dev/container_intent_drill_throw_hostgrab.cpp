@@ -15,6 +15,7 @@
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/props/remote_prop.h"
 
 #include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/core/asset_load.h"
@@ -330,6 +331,7 @@ void HostGrabHostTick(const coop::net::Session& session) {
     case HStep::Flight:
         if (SeenTick(g_hSeen, session.rttMsForSlot(1))) {
             SeenEnd(g_hSeen);
+            SayInstants(g_hSeen.track, g_hSeen.pressMs, "host", 1);   // the client sets its mirror against them
             DC::Say(kHgEnd);
             HNext(HStep::WaitDone);
         }
@@ -359,10 +361,12 @@ void HostGrabHostTick(const coop::net::Session& session) {
 
 namespace {
 
-enum class CStep : uint8_t { WaitLine, WaitMirrors, WaitGo, Flight, Done };
+enum class CStep : uint8_t { WaitLine, WaitMirrors, WaitGo, Flight, WaitHostEnd, Done };
 CStep    g_cStep = CStep::WaitLine;
 uint64_t g_cMs = 0, g_cNextMs = 0;
 uint32_t g_cItemEid = 0;
+uint32_t g_cRel0 = 0, g_cWhoosh0 = 0;   // the throw releases received and the swings played, at the go
+constexpr int kHgMatchedMin = 3;       // fewer matched instants than this is no judgement of the mirror
 ue_wrap::CachedObjRef g_cItem;
 Seen     g_cSeen;
 
@@ -393,10 +397,7 @@ void HostGrabClientTick(const coop::net::Session& session) {
         const int rtt = session.rttMsForSlot(0);
         if (SeenTick(g_cSeen, rtt)) {
             SeenEnd(g_cSeen);
-            DC::Say(kHgDone);
-            UE_LOGI("[CI-DRILL] client %s MEASURED", ArmName());
-            Finish();
-            CNext(CStep::Done);
+            CNext(CStep::WaitHostEnd);   // the host's instants come before its end line: the mirror is judged against them
         }
         return;
     }
@@ -437,6 +438,41 @@ void HostGrabClientTick(const coop::net::Session& session) {
         }
         return;
     }
+    case CStep::WaitHostEnd: {
+        if (!DC::ChatHasLive(kHgEnd)) {
+            if (CExpired(kChatBoundMs)) CFail("the host never said its end within %llu s", U(kChatBoundMs / 1000));
+            return;
+        }
+        // The host's throw reached this peer: its release carried a throw sequence (the host's own throwShit watch minted it)
+        // and the swing played, and the mirror followed the host's copy within the flight bound.
+        const uint32_t rel = coop::remote_prop::dev::ThrowReleasesReceived() - g_cRel0;
+        const uint32_t whoosh = coop::remote_prop::dev::ThrowWhooshesPlayed() - g_cWhoosh0;
+        const Gap g = JudgeInstants(g_cSeen.track, "host", 1);
+        UE_LOGI("[CI-DRILL] client %s: the host's release reached this peer with a throw sequence on %u message(s), %u swing(s) played; "
+                "mirror-gap=%.0f cm over %d of %d instants (bound %.0f, PROVISIONAL)", ArmName(), rel, whoosh, static_cast<double>(g.worst),
+                g.matched, g.said, static_cast<double>(kFlightGapPassCm));
+        if (rel == 0) {
+            CFail("the host's throw reached this client with throwSeq 0 (no PropRelease carried a sequence)");
+            return;
+        }
+        if (whoosh == 0) {
+            CFail("no throw swing played on this client for the host's throw");
+            return;
+        }
+        if (g.matched >= kHgMatchedMin && g.worst > kFlightGapPassCm) {
+            CFail("the client's mirror was %.0f cm from the host's copy at k=%d, past %.0f cm", static_cast<double>(g.worst), g.worstK,
+                  static_cast<double>(kFlightGapPassCm));
+            return;
+        }
+        char gapText[48] = "n/a (too few instants matched)";
+        if (g.matched >= kHgMatchedMin) std::snprintf(gapText, sizeof(gapText), "%.0f cm", static_cast<double>(g.worst));
+        UE_LOGI("[CI-DRILL] client %s PASS mirror-gap=%s", ArmName(), gapText);
+        DC::Say(kHgDone);
+        UE_LOGI("[CI-DRILL] client %s MEASURED", ArmName());
+        Finish();
+        CNext(CStep::Done);
+        return;
+    }
     case CStep::WaitGo: {
         void* item = g_cItem.Get();
         if (!item) {
@@ -444,6 +480,8 @@ void HostGrabClientTick(const coop::net::Session& session) {
             return;
         }
         if (DC::ChatHasLive(kHgGo)) {
+            g_cRel0 = coop::remote_prop::dev::ThrowReleasesReceived();
+            g_cWhoosh0 = coop::remote_prop::dev::ThrowWhooshesPlayed();
             SeenBegin(g_cSeen, "client", item, /*releaseKnown=*/false);
             HitWatchBegin(item);
             if (!HitWatchLive()) {
@@ -476,6 +514,7 @@ void HostGrabReset() {
     g_cStep = CStep::WaitLine;
     g_cMs = g_cNextMs = 0;
     g_cItemEid = 0;
+    g_cRel0 = g_cWhoosh0 = 0;
     g_cItem.Reset();
     g_cSeen = Seen{};
 }

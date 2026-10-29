@@ -18,12 +18,15 @@ namespace {
 namespace tb = coop::net::throw_bounds;
 
 uint32_t g_releaseClamped = 0, g_intentClamped = 0, g_intentRefused = 0, g_relayed = 0;
+uint32_t g_relSeen = 0, g_relThrown = 0, g_intSeen = 0, g_intThrown = 0;   // what the host received, for the throw arms
 
 }  // namespace
 
 void JudgeRelease(coop::net::Session& session, int senderSlot, coop::net::PropReleasePayload& p) {
     static const bool s_noClamp = coop::config::ResolveFlag(coop::config_registry::rows::container_throw_no_clamp);
     if (session.role() != coop::net::Role::Host || senderSlot < 1) return;
+    ++g_relSeen;
+    if (p.throwSeq != 0) ++g_relThrown;
     float lin[3] = {p.linVelX, p.linVelY, p.linVelZ};
     float ang[3] = {p.angVelX, p.angVelY, p.angVelZ};
     // Finite already: the dispatcher refuses a release whose floats are not.
@@ -47,6 +50,8 @@ void JudgeRelease(coop::net::Session& session, int senderSlot, coop::net::PropRe
 }
 
 bool JudgeDropIntent(coop::net::PropDropIntentPayload& p, uint8_t senderSlot) {
+    ++g_intSeen;
+    if (p.throwSeq != 0) ++g_intThrown;
     static const bool s_noClamp = coop::config::ResolveFlag(coop::config_registry::rows::container_throw_no_clamp);
     if (s_noClamp) return true;   // the clamp arm's red: the forged velocity reaches the spawn
     const float was[3] = {p.linVel[0], p.linVel[1], p.linVel[2]};
@@ -62,5 +67,12 @@ bool JudgeDropIntent(coop::net::PropDropIntentPayload& p, uint8_t senderSlot) {
                 senderSlot, was[0], was[1], was[2], p.linVel[0], p.linVel[1], p.linVel[2], ++g_intentClamped);
     return true;
 }
+
+namespace dev {
+uint32_t ReleasesSeen() { return g_relSeen; }
+uint32_t ReleasesThrown() { return g_relThrown; }
+uint32_t IntentsSeen() { return g_intSeen; }
+uint32_t IntentsThrown() { return g_intThrown; }
+}  // namespace dev
 
 }  // namespace coop::prop_throw
