@@ -187,7 +187,10 @@ void EndUnheldGrant(const coop::net::PropSyncAnswerPayload& p) {
 
 // The host elected this client the syncer of a prop it threw: the answer's seq is the throw's sequence, and no claim
 // was sent. The record prop_throw kept of the throw supplies the actor and the clock, and the copy, simulating since
-// the throw, goes straight to Syncing. False when no unmatched live record has that sequence: a stale grant.
+// the throw, goes straight to Syncing. False when no unmatched live record has that sequence: a stale grant. The
+// grant carries no state: MTA's StartSync carries the vehicle's position, rotation, velocity and turn speed and the
+// client snaps to them (CUnoccupiedVehicleStartSyncPacket.cpp:23-50, the client's CUnoccupiedVehicleSync.cpp:102-160),
+// where here the thrower's copy has flown on since the release and is the truth, so a snap would undo the throw.
 bool EnterThrownSync(const coop::net::PropSyncAnswerPayload& p) {
     void* actor = nullptr;
     uint64_t startMs = 0;
@@ -211,9 +214,15 @@ bool EnterThrownSync(const coop::net::PropSyncAnswerPayload& p) {
 }
 
 void OnGranted(const coop::net::PropSyncAnswerPayload& p) {
+    // A Throw grant is matched to a pending throw only, a Claim grant to a pending claim only: the two sequences are
+    // counters of their own and must not meet. A grant with no match is the End of a generation nobody holds.
+    if (p.kind == static_cast<uint8_t>(coop::net::PropSyncKind::Throw)) {
+        if (!EnterThrownSync(p)) EndUnheldGrant(p);
+        return;
+    }
     const auto it = g_table.find(p.eid);
     if (it == g_table.end() || it->second.state != State::Pending || it->second.seq != p.seq) {
-        if (!EnterThrownSync(p)) EndUnheldGrant(p);
+        EndUnheldGrant(p);
         return;
     }
     // The grant carries no state and the copy keeps simulating, where MTA's StartSync resets the syncer to the
@@ -261,6 +270,7 @@ void OnRevoked(const coop::net::PropSyncAnswerPayload& p) {
         Tally(Count::AnswersDropped, "answer dropped: no entry of that generation", p.eid);
         return;
     }
+    coop::prop_throw::Ended(it->second.ref.Get());   // a thrown prop's record goes with its row
     g_table.erase(it);
     SetBackoff(p.eid, coop::active_drive::NowMs(), false);
     ++CountRef(Count::Revoked);
@@ -349,6 +359,7 @@ void Tick(coop::net::Session& s, bool isHost) {
         }
         if (coop::prop_drive_host::InAHand(actor)) {   // the held stream owns it; the host closes the row
             Tally(Count::HandEnds, "entry dropped: a hand took the prop here", it->first);
+            coop::prop_throw::Ended(actor);
             SetBackoff(it->first, now, /*inHand=*/true);   // the feeder's next Claim waits for the hand to let go
             it = g_table.erase(it);
             continue;
@@ -359,7 +370,10 @@ void Tick(coop::net::Session& s, bool isHost) {
             it = g_table.erase(it);
             continue;
         }
-        if (e.state == State::Syncing && StepSyncing(s, it->first, e, actor, now)) it = g_table.erase(it);
+        if (e.state == State::Syncing && StepSyncing(s, it->first, e, actor, now)) {
+            coop::prop_throw::Ended(actor);   // a thrown prop's record goes with its row
+            it = g_table.erase(it);
+        }
         else ++it;
     }
 }
@@ -380,6 +394,7 @@ void OnHostEnd(uint32_t eid, uint8_t gen) {
     if (g_table.empty()) return;
     const auto it = g_table.find(eid);
     if (it == g_table.end() || it->second.state != State::Syncing || it->second.gen != gen) return;
+    coop::prop_throw::Ended(it->second.ref.Get());
     g_table.erase(it);
     SetBackoff(eid, coop::active_drive::NowMs(), false);
     ++CountRef(Count::HostEnds);

@@ -135,7 +135,9 @@ void* WallAttachCompOf(void* actor) {
 // not arrive before the PropStickState. GNS orders reliable delivery WITHIN a lane, so the pair is
 // FIFO only because both ride the one Default lane (LaneForKind in
 // coop/net/session_lanes.h). Draining next pass makes the order structural as well: TickGameplay
-// runs before local_streams' release edge.
+// runs before local_streams' release edge. At the host hop the stick is relayed on the net thread at its receipt and the
+// release from the game thread after its dispatch, so the stick-then-release order holds; the inverse pair (a release,
+// then a stick after a flight) is benign.
 struct Pending {
     void*   prop = nullptr;
     int32_t internalIdx = -1;

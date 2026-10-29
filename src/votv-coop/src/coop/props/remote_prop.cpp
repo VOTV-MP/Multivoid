@@ -257,11 +257,11 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
             }
         }
     }
-    // Whether the sender is the holder of this prop: its drive carried the key, or (a release whose poses were lost
-    // before a drive began) the hold it closes is the slot's current one. The hold gate outlives the drive's reset.
-    const bool lastHolder = releasedSlot >= 0 ||
-                            (senderSlot >= 0 && senderSlot < static_cast<int>(coop::players::kMaxPeers) &&
-                             payload.holdGen != 0 && payload.holdGen == g_holds[senderSlot].driveGen);
+    // Whether the sender is the holder of this prop: its drive carried the key, or (the implicit release: the poses
+    // stopped, the drive was reset, and the reliable release arrives after) the hold it closes is the one whose drive
+    // started on THIS prop. The hold gate outlives the drive's reset and records the prop beside the generation, so a
+    // hold of one prop does not vouch for a release of another. A release with no pose at all passes neither test.
+    const bool lastHolder = releasedSlot >= 0 || HoldDroveProp(senderSlot, payload.holdGen, payload.key, payload.elementId);
     void* thrownActor = nullptr;   // set where the release simulates the copy: the one branch an election follows
     // Someone else moves the prop -- this peer's own player, another slot's drive, the host's
     // driven-prop channel parking it: that owner has its physics and its flags, and this release

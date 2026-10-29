@@ -1394,9 +1394,12 @@ struct PropPoseSnapshot {
     uint8_t  ctx;
     uint8_t  _pad;
     uint16_t holdGen;   // the holder's hold generation, wrapping, never 0; 0 in a PropDrivePose batch
-    // The copy's linear velocity (cm/s) when the pose was read, and the sender's clock when it was sent:
-    // milliseconds since the row's stream began (a thrown prop's syncer counts from the throw, the host's
-    // coast from its opening). A PropDrivePose row carries both; the held PropPose stream sends zero.
+    // The copy's linear velocity (cm/s) when the pose was read, and the syncer's clock when it was sent: ms since that
+    // syncer's row opened (a thrown prop's client syncer counts from its throw, a host row from its opening). The
+    // host relays a client row's value unchanged and writes its own on a host row, so one field has one meaning: the
+    // syncer's clock. MTA's syncer packet carries velocity under a time context too, but the context is an epoch, not
+    // a clock (CUnoccupiedVehicleSync.cpp:263-340, CElement.cpp:1281-1305). A PropDrivePose row carries both; the held
+    // PropPose stream sends zero.
     float    vel[3];
     uint32_t sendTimeMs;
 };
@@ -1798,15 +1801,26 @@ enum class PropSyncRefusal : uint8_t {
     Paced = 7,          // the sender's claim bucket is empty
 };
 
+// Which opening a PropSyncAnswer answers. Wire-visible: the values are stable. Claim (0) is the answer to a PropSyncClaim
+// the client sent; Throw (1) is the host's unasked grant of a thrown prop's syncer right (and the Revoked that ends it),
+// whose `seq` is the throw sequence. The client matches a Throw grant only to a throw it has pending and a Claim grant
+// only to a claim it has pending, so the two uint16 counters never meet.
+enum class PropSyncKind : uint8_t {
+    Claim = 0,
+    Throw = 1,
+};
+
 // The host's verdict on one PropSyncClaim, or the end of a row it granted (PropSyncAnswer), to the claim's sender
-// alone. `seq` echoes the claim that opened the row; `gen` is the granted or the ended generation (0 on a refusal).
+// alone; or its grant of a thrown prop's syncer right (kind Throw). `seq` echoes the claim that opened the row, or is
+// the throw's sequence for a Throw; `gen` is the granted or the ended generation (0 on a refusal).
 struct PropSyncAnswerPayload {
     uint32_t eid;         // 4 -- the claim's eid
     uint16_t seq;         // 2
     uint8_t  gen;         // 1 -- the granted or the ended generation
     uint8_t  result;      // 1 -- a PropSyncResult
     uint8_t  refusal;     // 1 -- a PropSyncRefusal; None unless result is Refused
-    uint8_t  _pad[3];     // 3 -- zero
+    uint8_t  kind;        // 1 -- a PropSyncKind
+    uint8_t  _pad[2];     // 2 -- zero
 };
 static_assert(sizeof(PropSyncAnswerPayload) == 12, "PropSyncAnswerPayload must be 12 bytes");
 static_assert(sizeof(PropSyncAnswerPayload) <= 256 - 20 - 8,

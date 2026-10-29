@@ -31,6 +31,8 @@ struct HoldGate {
     uint16_t closedGen   = 0;
     bool     haveClosed  = false;
     uint16_t driveGen    = 0;      // the hold the slot's drive belongs to, while there is one
+    coop::net::WireKey driveKey{}; // the prop that hold drove (its key; a keyless clump by driveEid)
+    uint32_t driveEid    = 0;
     uint16_t refusedGen  = 0;      // the hold a refusal was said for (a static prop, a door the local player drags)
     uint16_t preludeGen  = 0;      // the hold the grab's prelude ran for
     uint16_t cueGen      = 0;      // the hold the grab's click and sound played for
@@ -47,6 +49,11 @@ extern std::array<HoldGate, coop::players::kMaxPeers> g_holds;
 bool GenAfter(uint16_t a, uint16_t b);
 
 bool IsHoldClosed(const HoldGate& h, uint16_t gen);
+
+// Whether hold `holdGen` of `slot` is the one whose drive started on THIS prop (its key; a keyless clump, its eid).
+// The hold gate outlives the drive's reset, so a release whose drive was reset still names its hold; the key keeps
+// a hold of one prop from vouching for a release of another.
+bool HoldDroveProp(int slot, uint16_t holdGen, const coop::net::WireKey& key, uint32_t eid);
 
 // A drive whose copy the game switches back to simulating this many times is being fought every
 // tick, not nudged once (a welded body, a Blueprint that sets it each frame): said loudly, once.

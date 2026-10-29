@@ -133,7 +133,8 @@ void Tick() {
     if (g_count == 0 && g_marks.empty()) return;
     const uint64_t now = coop::active_drive::NowMs();
     for (int i = 0; i < g_count;) {
-        if (now - g_rec[i].startMs > tb::kGrantTimeoutMs || !g_rec[i].actor.Alive()) Erase(i);
+        // A record lives until its grant times out unmatched, or (granted) until its row ends on this peer (Ended).
+        if ((!g_rec[i].granted && now - g_rec[i].startMs > tb::kGrantTimeoutMs) || !g_rec[i].actor.Alive()) Erase(i);
         else ++i;
     }
     for (size_t i = 0; i < g_marks.size();) {
@@ -152,12 +153,17 @@ bool TakeForGrant(uint16_t seq, void** actor, uint64_t* startMs) {
     for (int i = 0; i < g_count; ++i) {
         Record& r = g_rec[i];
         if (r.seq != seq || r.granted || !r.actor.Alive()) continue;
-        r.granted = true;   // kept until it expires: the adoption of this actor yields to it a little longer
+        r.granted = true;   // kept until its row ends here (Ended): the adoption of this actor yields to it meanwhile
         if (actor) *actor = r.actor.Get();
         if (startMs) *startMs = r.startMs;
         return true;
     }
     return false;
+}
+
+void Ended(void* actor) {
+    for (int i = 0; i < g_count; ++i)
+        if (g_rec[i].granted && g_rec[i].actor.Is(actor)) { Erase(i); return; }
 }
 
 void NoteMark(const std::wstring& key, uint8_t slot, uint16_t seq, const float loc[3]) {

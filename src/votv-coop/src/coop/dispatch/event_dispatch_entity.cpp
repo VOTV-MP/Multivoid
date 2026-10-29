@@ -125,6 +125,8 @@ bool HandleEntityEvent(net::Session& session,
             break;
         }
         // A client's release meets the throw bounds (clamped, then relayed to the other clients); the host's own does not.
+        // The relay is here, after the clamp and before OnRelease, whatever OnRelease does with the release: one it drops
+        // (a stale hold, a prop another owner has) must still close the holder's drive on every mirror.
         coop::prop_throw::JudgeRelease(session, msg.senderPeerSlot, p);
         remote_prop::OnRelease(msg.senderPeerSlot, p, localPlayer);
         break;

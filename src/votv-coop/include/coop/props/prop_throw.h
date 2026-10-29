@@ -25,15 +25,20 @@ struct PropDropIntentPayload;
 namespace coop::prop_throw {
 
 // Per tick, both roles: asks the gate to take and resolve the throwShit watch until it is live, and drops the
-// records and marks that waited kGrantTimeoutMs.
+// records whose grant never came and the marks that waited kGrantTimeoutMs.
 void Tick();
 
-// The sequence of the live record of `actor` (a throw within kGrantTimeoutMs, granted or not), 0 when none.
+// The sequence of the live record of `actor`, 0 when none. A record lives from the throw until its grant times out
+// unmatched (kGrantTimeoutMs) or, once granted, until its row ends on this peer (Ended): the adoption of the thrower's
+// own actor yields while a record exists, which is a state and not a clock.
 uint16_t SeqFor(void* actor);
 
 // The host's grant of the throw numbered seq arrived: its record, matched once. The thrown actor and the thrower's
 // clock at the throw (active_drive::NowMs) come out through the pointers.
 bool TakeForGrant(uint16_t seq, void** actor, uint64_t* startMs);
+
+// The granted row of `actor` ended on this peer (its rest End, or the host took it back): the record goes.
+void Ended(void* actor);
 
 // HOST: a client's release arrived (the finite check passed). Its velocity meets the throw bounds
 // (coop/net/throw_bounds.h): clamped in magnitude, direction kept, and counted. The release then goes to every

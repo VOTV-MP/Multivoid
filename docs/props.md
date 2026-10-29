@@ -166,12 +166,27 @@ release from the prop's last holder, or the drop intent of a hand throw once the
 element id, opens a driven row naming the thrower under a new generation and sends the grant unasked
 (`PropSyncAnswer`, whose `seq` is the sequence). The thrower's copy has flown since the throw and is
 never parked; it streams its pose, velocity and clock on the drive channel, the host's copy follows
-the first admitted row, and every other client receives the host's republish. A row is judged against
-the throw's bounds (`coop/net/throw_bounds.h`), a client's release, drop intent and End velocities are
-clamped to them, and the host relays a client's release to the other clients itself, after the clamp.
-The host's own grab throw opens a coast row that streams it to rest. The host's grab, a thrower who
-leaves, a flight past its bound or a run of refused rows end the thrower's row; the host's copy then
-continues from the last admitted row's pose and velocity.
+the first admitted row, and every other client receives the host's republish. A row's velocity, a release's,
+a drop intent's and an End's are clamped to the throw's bounds (`coop/net/throw_bounds.h`; a throw's spin
+meets throwShit's ceiling, every other spin a looser body ceiling), and the host relays a client's release
+to the other clients itself, after the clamp. The election also needs the release within reach of the
+thrower's puppet on the host (the claim's reach); out of reach, the release applies as a plain release.
+
+A thrown prop's rows cost trust, never display. A row whose step does not agree with the speed a prop can
+fly is shown like any other (the host's copy and every other client follow it) and counted on the row; a
+passing row resets the run. After `kMaxRefusedRows` failures in a row the thrower's right is revoked: the
+host takes the prop back from the last passing row's pose and velocity under a new generation, and one
+line names the slot and the counts. This diverges from MTA, which bounds nothing on an unoccupied-vehicle
+syncer's packet; ours follows the rule that a client's discontinuity costs trust. The host's own grab
+throw opens a coast row that streams it to rest. The host's grab, a flight past its bound, a grant that
+no row follows, a thrower who leaves and any end of a thrown prop nothing was admitted for hand the prop
+to the host; its copy then continues from the last passing row's pose and velocity (or its own state
+when none was) and every copy follows the host. `[?]` until the throw arms read them.
+
+Joining mid-flight: a peer that becomes world-ready while a thrown prop flies gets the host's copy from
+the prop's spawn, the drive's resend of the admitted pose (`OnPeerWorldReady`), and then the relayed
+rows of the elected syncer, each carrying the row's generation. A joiner is never the thrower, so it is
+never elected. `[?]` until the join arm of the throw drill reads it.
 
 ### Dragged by a hook
 

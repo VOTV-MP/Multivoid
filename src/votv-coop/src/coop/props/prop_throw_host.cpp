@@ -27,7 +27,9 @@ void JudgeRelease(coop::net::Session& session, int senderSlot, coop::net::PropRe
     float lin[3] = {p.linVelX, p.linVelY, p.linVelZ};
     float ang[3] = {p.angVelX, p.angVelY, p.angVelZ};
     // Finite already: the dispatcher refuses a release whose floats are not.
-    if (!s_noClamp && tb::ClampPair(lin, tb::kMaxLaunchSpeedCmS, ang, tb::kMaxLaunchAngDegS) == tb::Clamp::Clamped) {
+    // A throw meets throwShit's spin ceiling; a release that is no throw (a whipped held prop) the body ceiling.
+    const float angCap = p.throwSeq != 0 ? tb::kMaxLaunchAngDegS : tb::kMaxBodyAngDegS;
+    if (!s_noClamp && tb::ClampPair(lin, tb::kMaxLaunchSpeedCmS, ang, angCap) == tb::Clamp::Clamped) {
         UE_LOGW("prop_throw: HOST clamped slot %d's release velocity lin=(%.0f,%.0f,%.0f)->(%.0f,%.0f,%.0f) "
                 "ang=(%.0f,%.0f,%.0f)->(%.0f,%.0f,%.0f) (#%u)", senderSlot, p.linVelX, p.linVelY, p.linVelZ, lin[0],
                 lin[1], lin[2], p.angVelX, p.angVelY, p.angVelZ, ang[0], ang[1], ang[2], ++g_releaseClamped);
@@ -48,7 +50,8 @@ bool JudgeDropIntent(coop::net::PropDropIntentPayload& p, uint8_t senderSlot) {
     static const bool s_noClamp = coop::config::ResolveFlag(coop::config_registry::rows::container_throw_no_clamp);
     if (s_noClamp) return true;   // the clamp arm's red: the forged velocity reaches the spawn
     const float was[3] = {p.linVel[0], p.linVel[1], p.linVel[2]};
-    const tb::Clamp c = tb::ClampPair(p.linVel, tb::kMaxLaunchSpeedCmS, p.angVel, tb::kMaxLaunchAngDegS);
+    const tb::Clamp c = tb::ClampPair(p.linVel, tb::kMaxLaunchSpeedCmS, p.angVel,
+                                      p.throwSeq != 0 ? tb::kMaxLaunchAngDegS : tb::kMaxBodyAngDegS);
     if (c == tb::Clamp::NonFinite) {
         UE_LOGW("prop_throw: HOST refused slot %u's drop intent: a velocity is not finite (#%u)", senderSlot,
                 ++g_intentRefused);
