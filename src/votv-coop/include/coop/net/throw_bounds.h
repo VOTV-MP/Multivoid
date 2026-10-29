@@ -5,7 +5,7 @@
 // that is not finite is refused; a finite one is clamped in magnitude, direction kept, and counted by its caller.
 // A drive row whose step disagrees with its velocity is displayed and counted against its syncer's trust, and the
 // right is revoked after a run of them; MTA bounds nothing on a syncer's packet (CUnoccupiedVehicleSync.cpp:263-340).
-// Every ceiling carries a 20 percent margin; the constants marked provisional wait for the proof's numbers.
+// Every ceiling carries a 20 percent margin; "p3" below is ignore_folder/lanes/ci-wp4/p3-<arm>, build 68fcff87.
 // The sources, in the pawn's Blueprint (mainPlayer_C) as the 0.9.0n pak reflects it:
 //  - Launch: traceThrow's camera-forward speed 1000 / (max(mass, 10) / 15), 1500 cm/s for the lightest mass,
 //    plus the pawn's velocity, which traceThrow adds; throwShit sets the body to NewVel - fallVeloc with
@@ -32,10 +32,11 @@ inline constexpr float kRawLaunchCmS = kLightestThrowCmS + kPawnTermsInLaunch * 
 // A release's, a drop intent's launch speed (cm/s).
 inline constexpr float kMaxLaunchSpeedCmS = kRawLaunchCmS * kMargin;
 
-// PROVISIONAL: the longest flight the proof measures, in seconds; gravity over it adds to the launch ceiling.
-inline constexpr float kProvisionalLongestFlightS = 5.f;
+// The longest release-to-rest the proof measured, in seconds (p3 throwjoin n1: 5.378 s); gravity over it adds to the
+// launch ceiling, and the 20 percent margin on the sum covers a longer flight.
+inline constexpr float kLongestFlightS = 5.378f;
 // A drive row's, an End's speed (cm/s): the launch ceiling plus gravity over the longest flight.
-inline constexpr float kMaxFlightSpeedCmS = (kRawLaunchCmS + kGravityCmS2 * kProvisionalLongestFlightS) * kMargin;
+inline constexpr float kMaxFlightSpeedCmS = (kRawLaunchCmS + kGravityCmS2 * kLongestFlightS) * kMargin;
 
 // The spin ceiling (deg/s) of a THROW input (a release or a drop intent that carries a throw sequence): throwShit's
 // largest, with the margin.
@@ -47,24 +48,43 @@ inline constexpr float kMaxLaunchAngDegS = 300.f / (10.f / 15.f) * kMargin;
 // one tick), here applied to the magnitude and clamped.
 inline constexpr float kMaxBodyAngDegS = 1.0e6f;
 
-// PROVISIONAL, from nothing measured yet: the proof's printed row jitter sets them.
-inline constexpr float    kStepSlackCm = 50.f;       // a row's step beyond speed times time
-inline constexpr uint32_t kJitterMs = 50;            // the host's arrival delta, allowed this much short of the sender's
-inline constexpr int      kMaxRefusedRows = 5;       // consecutive failed rows that revoke the thrower (125 ms at 40 Hz)
-inline constexpr uint32_t kGrantTimeoutMs = 1000;    // a throw's wait for its grant; the host's wait for a first row
-inline constexpr uint32_t kMaxThrowFlightMs = 10000; // an elected row's longest life from the election
-// PROVISIONAL, pending its measurement: how long an elected row may go without an admitted row before the host takes the
-// prop back (prop_drive_host Tick). The derived value is the largest inter-ARRIVAL gap of an elected row on the host
-// (the `maxgap=` of its end line), measured under loopback and under net.fakelag_ms=50, times 2; if that comes out under
-// 250 the derived value is used. Nothing ships on the 250.
-inline constexpr uint32_t kThrowSilenceMs = 250;
+// A row's step beyond speed times time (cm): 2 x the largest first-row jump of a green non-clamp throw, 50.1 cm
+// (p3 hand-nov n1).
+inline constexpr float    kStepSlackCm = 100.f;
+// The host's arrival delta, allowed this much short of the sender's (ms): 2 x the largest sendTime jitter, 22 ms
+// (p3 clamp n2).
+inline constexpr uint32_t kJitterMs = 44;
+// Design value: consecutive failed rows that revoke the thrower, 125 ms of failures at 40 Hz.
+inline constexpr int      kMaxRefusedRows = 5;
+// A client's wait for its throw's grant (the unmatched record and the mark): a design value, a second on any link a
+// throw can be played on. The host's wait for a first row is per slot: GrantTimeoutMs below.
+inline constexpr uint32_t kGrantTimeoutMs = 1000;
+// The host's wait for a thrown prop's first admitted row after the election, from the link: the release-to-first-row
+// delay is link-bound (43-83 ms on loopback, 160-182 ms at rtt ~120, p3 hand, hand-nov, hand-lag, grab-lag), so it is
+// twice (the slot's rtt plus 83 ms, the loopback maximum), floor 250 ms; no rtt sample (-1) reads the floor. A late
+// timeout only keeps the host's own simulation of the prop longer.
+inline constexpr uint32_t kGrantTimeoutFloorMs = 250;
+inline constexpr uint32_t kGrantLoopbackMaxMs = 83;
+inline uint32_t GrantTimeoutMs(int rttMs) {
+    if (rttMs < 0) return kGrantTimeoutFloorMs;
+    const uint32_t t = 2u * (static_cast<uint32_t>(rttMs) + kGrantLoopbackMaxMs);
+    return t < kGrantTimeoutFloorMs ? kGrantTimeoutFloorMs : t;
+}
+// An elected row's longest life from the election (ms): 2 x the longest release-to-rest, 5378 ms (p3 throwjoin n1).
+inline constexpr uint32_t kMaxThrowFlightMs = 10756;
+// How long an elected row may go without an admitted row before the host takes the prop back (prop_drive_host Tick):
+// 2 x the largest host inter-arrival gap of an elected row, 57 ms (p3 clamp red run; 56 ms in the green runs and under
+// net.fakelag_ms=50, since a fixed delay keeps the spacing), 114 ms.
+inline constexpr uint32_t kThrowSilenceMs = 114;
 // The silence above is a thrower gone only while the prop moves: once its rows say it rests (the last one slower than
 // this), the client's next message is its rest End, which rides the reliable lane and may be resent past any bound
 // fitted to the row stream; a resting prop hangs nowhere, so its silence is left to the pass's generic rule. A body the
 // engine has settled reads well under it; a prop in flight reads hundreds of cm/s.
 inline constexpr float    kThrowRestCmS = 10.f;
-inline constexpr int      kMaxPendingThrows = 8;     // a peer's throws awaiting a grant
-inline constexpr int      kMaxThrowRowsPerSlot = 4;  // elected rows one client holds at once
+// Design values, counts rather than measurements. 8: the throws one player can have in flight before a grant, at the
+// fastest throw rate. 4: the elected flights one client syncs at once.
+inline constexpr int      kMaxPendingThrows = 8;
+inline constexpr int      kMaxThrowRowsPerSlot = 4;
 
 enum class Clamp : uint8_t { Ok, Clamped, NonFinite };
 
