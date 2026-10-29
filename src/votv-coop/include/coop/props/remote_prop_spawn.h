@@ -47,5 +47,15 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
              void* localPlayer, bool fromConvert = false, bool deferKerfur = true,
              void** outSpawned = nullptr, bool skipBind = false);
 
+// The radius of the position match: a same-class actor this near the wire prop is its twin.
+inline constexpr float kFuzzyRadiusCm = 30.f;
+
+// Adopts `actor`, a position match the caller chose, as the mirror of the wire prop: the
+// host-authority handback, the claim, the held and drive guards, the converge, the rekey to the
+// wire key and the mirror binding. Every path ends the spawn; the caller makes no further move.
+// `localPlayer` is the live AmainPlayer_C (possibly null), as for OnSpawn. Game thread.
+void AdoptByPosition(const coop::net::PropSpawnPayload& payload, int senderSlot,
+                     void* actor, void* localPlayer);
+
 
 }  // namespace coop::remote_prop_spawn
