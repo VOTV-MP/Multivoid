@@ -30,9 +30,11 @@ void JudgeRelease(coop::net::Session& session, int senderSlot, coop::net::PropRe
     float lin[3] = {p.linVelX, p.linVelY, p.linVelZ};
     float ang[3] = {p.angVelX, p.angVelY, p.angVelZ};
     // Finite already: the dispatcher refuses a release whose floats are not.
-    // A throw meets throwShit's spin ceiling; a release that is no throw (a whipped held prop) the body ceiling.
-    const float angCap = p.throwSeq != 0 ? tb::kMaxLaunchAngDegS : tb::kMaxBodyAngDegS;
-    if (!s_noClamp && tb::ClampPair(lin, tb::kMaxLaunchSpeedCmS, ang, angCap) == tb::Clamp::Clamped) {
+    // Every release meets the body's spin ceiling, thrown or not: throwShit ADDS its spin to the held body's
+    // (SetPhysicsAngularVelocityInDegrees bAddToCurrent, mainPlayer.cpp:15615), so a grabbed prop leaves faster than the
+    // throw's own 450 deg/s (measured 1905 deg/s on a natural grab throw, p3 throwjoin HOST.log:17676, cut to 538 by
+    // the throw ceiling). The drop intent of a hand throw is a fresh spawn and keeps the throw ceiling.
+    if (!s_noClamp && tb::ClampPair(lin, tb::kMaxLaunchSpeedCmS, ang, tb::kMaxBodyAngDegS) == tb::Clamp::Clamped) {
         UE_LOGW("prop_throw: HOST clamped slot %d's release velocity lin=(%.0f,%.0f,%.0f)->(%.0f,%.0f,%.0f) "
                 "ang=(%.0f,%.0f,%.0f)->(%.0f,%.0f,%.0f) (#%u)", senderSlot, p.linVelX, p.linVelY, p.linVelZ, lin[0],
                 lin[1], lin[2], p.angVelX, p.angVelY, p.angVelZ, ang[0], ang[1], ang[2], ++g_releaseClamped);
@@ -55,6 +57,7 @@ bool JudgeDropIntent(coop::net::PropDropIntentPayload& p, uint8_t senderSlot) {
     static const bool s_noClamp = coop::config::ResolveFlag(coop::config_registry::rows::container_throw_no_clamp);
     if (s_noClamp) return true;   // the clamp arm's red: the forged velocity reaches the spawn
     const float was[3] = {p.linVel[0], p.linVel[1], p.linVel[2]};
+    // Only a hand throw's drop intent takes the throw spin ceiling: its item is a fresh spawn (see JudgeRelease).
     const tb::Clamp c = tb::ClampPair(p.linVel, tb::kMaxLaunchSpeedCmS, p.angVel,
                                       p.throwSeq != 0 ? tb::kMaxLaunchAngDegS : tb::kMaxBodyAngDegS);
     if (c == tb::Clamp::NonFinite) {

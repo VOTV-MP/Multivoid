@@ -38,12 +38,14 @@ inline constexpr float kLongestFlightS = 5.378f;
 // A drive row's, an End's speed (cm/s): the launch ceiling plus gravity over the longest flight.
 inline constexpr float kMaxFlightSpeedCmS = (kRawLaunchCmS + kGravityCmS2 * kLongestFlightS) * kMargin;
 
-// The spin ceiling (deg/s) of a THROW input (a release or a drop intent that carries a throw sequence): throwShit's
-// largest, with the margin.
+// The spin ceiling (deg/s) of a hand throw's DROP INTENT (one that carries a throw sequence): throwShit's largest, with
+// the margin. The dropped item is a fresh spawn with no spin of its own, so throwShit's added spin is all it has.
 inline constexpr float kMaxLaunchAngDegS = 300.f / (10.f / 15.f) * kMargin;
 
-// The spin ceiling (deg/s) of every other client input that reaches a body: a non-throw release, a drop intent that is
-// no throw, every End. A whipped held prop or a tumble after a collision spins faster than a throw does. The value is
+// The spin ceiling (deg/s) of every other client input that reaches a body: every release, thrown or not (throwShit
+// adds its spin to the held body's, so a grabbed prop leaves above kMaxLaunchAngDegS: 1905 deg/s measured, p3
+// throwjoin), a drop intent that is no throw, every End. A whipped held prop or a tumble after a collision spins faster
+// than a throw does. The value is
 // the bound the per-axis check this replaced had (1e6 deg/s, headroom below anything that would teleport a body in
 // one tick), here applied to the magnitude and clamped.
 inline constexpr float kMaxBodyAngDegS = 1.0e6f;
