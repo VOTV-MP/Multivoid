@@ -84,9 +84,6 @@ std::vector<uint8_t> PackRequest(const Request& r) {
         case ContainerActFamily::PutRecord:
             if (!AppRecord(b, r.record)) return {};
             break;
-        case ContainerActFamily::PutProp:
-            W::AppU32(b, r.propEid);
-            break;
         default:
             break;   // an unknown family is the head alone
     }
@@ -107,12 +104,6 @@ Parse ParseRequest(const std::vector<uint8_t>& b, Request& out, const char** why
             break;
         case ContainerActFamily::PutRecord:
             if (!RdRecordToEnd(b, o, out.record, why)) return Parse::Malformed;
-            break;
-        case ContainerActFamily::PutProp:
-            if (!W::RdU32(b, o, out.propEid)) {
-                Fail(why, "short prop tail");
-                return Parse::Malformed;
-            }
             break;
         default:
             return Parse::UnknownFamily;

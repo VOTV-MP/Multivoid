@@ -1,7 +1,8 @@
 // ue_wrap/actors/prop_events.h -- the base prop class's own Blueprint events, run on a prop the way
 // the game runs them on the machine where they happen: a grab's prelude and a throw. Each call runs
 // prop_C's own function, never a subclass's override of it, so a receiver replays what the base does
-// and nothing a subclass adds. Engine-wrapper layer (principle 7): no network or coop state.
+// and nothing a subclass adds; the two readers at the end ask the prop's own class instead. Engine-wrapper layer
+// (principle 7): no network or coop state.
 // Implementation: src/ue_wrap/actors/prop_events.cpp.
 
 #pragma once
@@ -26,5 +27,13 @@ bool CallBaseSetPropProps(void* prop, bool isStatic, bool frozen, bool sleeping)
 // sound. False for a null prop or player, or when the class or the event did not resolve. Game
 // thread.
 bool CallPropThrown(void* prop, void* player);
+
+// The two pure answers prop_container's putObjectIn_overlap reads of a prop before it files it (it returns silently on
+// either): the prop's ignoreSave, and its canPickup (not static, not frozen, and its propData allows holding it). Each
+// is the BP function of that name on the prop's own class, so an override answers. False, `out` untouched, for a null or
+// dead prop and for a class without the function (an actor without the interface takes the body's cast branch), so a
+// caller reads an unresolved answer as no answer and never as a pass. Game thread.
+bool ReadIgnoreSave(void* prop, bool& out);
+bool ReadCanPickup(void* prop, bool& out);
 
 }  // namespace ue_wrap::prop

@@ -1,6 +1,7 @@
-// coop/props/container_act_host_internal.h -- what the host's two files share: container_act_host.cpp (the queue, the
-// holds' ends, the take) and container_act_host_put.cpp (the judge of a put from a record, its reservation and its late
-// commit). Not an API: only those two files include it. Game thread.
+// coop/props/container_act_host_internal.h -- what the host's three files share: container_act_host.cpp (the queue, the
+// holds' ends, the take), container_act_host_put.cpp (the judge of a put from a record, its reservation and its late
+// commit) and container_act_host_overlap.cpp (the judge of a world prop that enters a container's box). Not an API: only
+// those files include it. Game thread.
 
 #pragma once
 
@@ -27,8 +28,11 @@ void Place(container_act_state::Hold h, const char* why, container_record_edit::
 bool Answer(uint8_t slot, const coop::net::ContainerActReplyPayload& reply);
 coop::net::ContainerActReplyPayload ReplyOf(internal::Verdict v, uint16_t id);
 
-// A put's own terms, read after the common ones (see DecidePut for the order).
-void ReadPutInputs(uint8_t slot, const container_act_wire::Request& q, internal::PutInputs& p);
+// A put's own terms for `record` into the container `eid`, read after the common ones (see DecidePut for the order). The
+// record is the wire's or the host's own capture of a world prop; `slowable` says whether a sender's lapsed reservation
+// refuses the put (a hand item's, not a world prop's).
+void ReadPutInputs(uint8_t slot, uint32_t eid, const ue_wrap::save_record::SaveRecord& record, bool slowable,
+                   internal::PutInputs& p);
 
 // A put's grant: room is reserved for the asked record and nothing is written. Empty when the grant stands.
 std::optional<coop::net::Served> GrantPut(uint8_t slot, const container_act_wire::Request& q);

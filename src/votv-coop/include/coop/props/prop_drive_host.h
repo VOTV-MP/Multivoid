@@ -56,6 +56,14 @@ void Coast(void* actor, const char* reason);
 // for a prop with no client row, so a caller may ask before every such write. Game thread.
 void OverrideClientSyncer(void* actor, const char* reason);
 
+// The client slot whose row stands on the prop with element id `eid`, elected or claimed: the syncer the host admits rows
+// from. 0 when the prop has no row or the host authors it. Game thread.
+uint8_t ClientSyncerOf(uint32_t eid);
+
+// Is that client row an ELECTED throw (a flight the host step-tests and bounds), not a claimed one (a push or a pickup)?
+// False for a prop with no client row. Game thread.
+bool ClientRowElected(uint32_t eid);
+
 // A peer's world just came up: every driven prop's current pose is re-sent on the next tick, so
 // the joiner parks the resting ones too, which the delta gate would otherwise never send it.
 // Game thread.

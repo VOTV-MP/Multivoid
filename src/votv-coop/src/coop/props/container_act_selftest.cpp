@@ -83,7 +83,6 @@ using coop::net::ContainerActReplyPayload;
 
 constexpr uint8_t kTake = static_cast<uint8_t>(ContainerActFamily::Take);
 constexpr uint8_t kPutRecord = static_cast<uint8_t>(ContainerActFamily::PutRecord);
-constexpr uint8_t kPutProp = static_cast<uint8_t>(ContainerActFamily::PutProp);
 
 bool SameRecord(const SR::SaveRecord& a, const SR::SaveRecord& b) {
     std::vector<uint8_t> x, y;
@@ -119,15 +118,6 @@ void RunSelftest() {
         check(caw::ParseRequest(caw::PackRequest(in), out, &why) == caw::Parse::Ok, "codec: a put record parses");
         check(out.id == 8 && out.family == kPutRecord && out.eid == 10 && SameRecord(out.record, in.record),
               "codec: a put record round-trips field for field");
-
-        in = caw::Request{};
-        in.id = 9;
-        in.family = kPutProp;
-        in.eid = 11;
-        in.propEid = 0xCAFE;
-        check(caw::ParseRequest(caw::PackRequest(in), out, &why) == caw::Parse::Ok, "codec: a put prop parses");
-        check(out.id == 9 && out.family == kPutProp && out.eid == 11 && out.propEid == 0xCAFE,
-              "codec: a put prop round-trips field for field");
 
         caw::Commit c;
         c.id = 12;

@@ -87,11 +87,13 @@ ue_wrap::script_gate::Verdict HostPre(void* container, bool anyHold);
 enum class Target : uint8_t { Own, NotReady, Shared };
 Target SharedTarget(void* container, uint32_t& eid);
 
-// The put seats' watches, appended to the request's watch table, and the replay of a granted put (OnReply's switch).
+// The put seats' watches (and the overlap put's, the dingus cancel's), appended to the request's watch table, and the replay
+// of a granted put (OnReply's switch). `post` is null for a seat with no post.
 struct WatchRow {
     const ue_wrap::facts::Function& row;
     int tag;
     ue_wrap::script_gate::PreFn pre;
+    ue_wrap::script_gate::PostFn post;   // null for a seat with no post
 };
 const WatchRow* PutWatches(size_t& count);
 void ReplayPut();

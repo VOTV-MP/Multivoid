@@ -286,6 +286,18 @@ void OverrideClientSyncer(void* actor, const char* reason) {
     if (d && d->syncer != 0) Coast(actor, reason);
 }
 
+uint8_t ClientSyncerOf(uint32_t eid) {
+    UE_ASSERT_GAME_THREAD("prop_drive_host::ClientSyncerOf");
+    const Driven* d = FindByEid(eid);
+    return d ? d->syncer : 0;
+}
+
+bool ClientRowElected(uint32_t eid) {
+    UE_ASSERT_GAME_THREAD("prop_drive_host::ClientRowElected");
+    const Driven* d = FindByEid(eid);
+    return d && d->syncer != 0 && d->elected;
+}
+
 size_t CoastingCount() {
     size_t n = 0;
     for (const Driven& d : g_driven)

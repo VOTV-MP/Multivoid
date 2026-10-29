@@ -71,4 +71,24 @@ bool CallPropThrown(void* prop, void* player) {
     return f.valid() && f.Set<void*>(L"Player", player) && Call(prop, f);
 }
 
+namespace {
+
+// A pure BP function with one out bool, run on the prop's own class (a Dispatch lookup, memoised per class).
+bool AskBool(void* prop, const wchar_t* fnName, const wchar_t* outName, bool& out) {
+    if (!prop || !R::IsLive(prop)) return false;
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(prop), fnName);
+    if (!fn) return false;
+    ParamFrame f(fn);
+    bool value = false;
+    if (!f.valid() || !Call(prop, f) || !f.GetRaw(outName, &value, static_cast<int32_t>(sizeof value))) return false;
+    out = value;
+    return true;
+}
+
+}  // namespace
+
+bool ReadIgnoreSave(void* prop, bool& out) { return AskBool(prop, L"ignoreSave", L"ignoreSave", out); }
+
+bool ReadCanPickup(void* prop, bool& out) { return AskBool(prop, L"canPickup", L"return", out); }
+
 }  // namespace ue_wrap::prop

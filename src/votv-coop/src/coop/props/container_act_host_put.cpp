@@ -74,30 +74,32 @@ cre::EditResult ReadFit(uint32_t eid, const SR::SaveRecord& rec, size_t flagByte
 
 namespace detail {
 
-// A put's own terms, read in DecidePut's order after the common ones; each read stops at the first term that decides.
+// A put's own terms for `record` into the container `eid`, read in DecidePut's order after the common ones; each read
+// stops at the first term that decides. The record is the wire's (a hand item's) or the host's own capture of a world
+// prop; `slowable` is false for the latter, which a sender's lapsed reservation does not slow.
 // The class resolves through the object index, the resolver the container's own write uses, so a name it cannot
 // resolve is refused here and never written as a null class; a forged name costs a hash probe, not an array walk.
-void ReadPutInputs(uint8_t slot, const caw::Request& q, internal::PutInputs& p) {
+void ReadPutInputs(uint8_t slot, uint32_t eid, const SR::SaveRecord& record, bool slowable, internal::PutInputs& p) {
     const internal::Inputs& b = p.base;
     if (!b.worldReady || b.holdsWait || b.reach != cr::Reach::Reached || b.container != internal::Container::Ready)
         return;
-    void* const actor = coop::element::LivePropActor(q.eid);
+    void* const actor = coop::element::LivePropActor(eid);
     ci::PutTerms t{};
     p.termsRead = actor && ci::ReadPutTerms(actor, t);
     if (!p.termsRead) return;
     p.locked = t.locked;
-    p.slowed = !g_noLapse && cas::Live().Slowed(slot, coop::net::NowMs());   // the red: container_act_no_lapse
+    p.slowed = slowable && !g_noLapse && cas::Live().Slowed(slot, coop::net::NowMs());   // the red: container_act_no_lapse
     if (p.locked || p.slowed) return;
     std::wstring name;
-    p.nameOk = internal::PutNameOk(q.record);
-    if (!p.nameOk || !SR::RecordName(q.record, name)) return;
-    void* const cls = ue_wrap::object_index::ClassByName(q.record.className.c_str());
+    p.nameOk = internal::PutNameOk(record);
+    if (!p.nameOk || !SR::RecordName(record, name)) return;
+    void* const cls = ue_wrap::object_index::ClassByName(record.className.c_str());
     p.classResolved = cls != nullptr;
     p.propClass = SR::IsPropClass(cls);
     if (!p.classResolved || !p.propClass) return;
     p.filterRead = ci::FilterHolds(ci::InventoryOf(actor), cls, p.filterHolds);
     if (!p.filterRead || p.filterHolds) return;
-    p.mailboxContainer = t.ownerIsMailbox && ci::IsContainerRecord(q.record);
+    p.mailboxContainer = t.ownerIsMailbox && ci::IsContainerRecord(record);
     if (p.mailboxContainer) return;
     pg::PropDataFlags row{};
     bool found = false;
@@ -112,7 +114,7 @@ void ReadPutInputs(uint8_t slot, const caw::Request& q, internal::PutInputs& p) 
     p.currVol = t.currVol;
     p.volumeRead = pg::VolumeOfName(name, p.volume, p.volumeKnown);
     if (!p.volumeRead || !p.volumeKnown || (!t.infinite && p.currVol + p.volume > p.maxVol)) return;
-    switch (ReadFit(q.eid, q.record, caw::kFridgeElementBytes, p.countAtCap, p.bytesOver)) {
+    switch (ReadFit(eid, record, caw::kFridgeElementBytes, p.countAtCap, p.bytesOver)) {
         case cre::EditResult::Done:     break;
         case cre::EditResult::NotReady: p.base.container = internal::Container::NotReady; return;
         default:                        p.base.container = internal::Container::Gone; return;

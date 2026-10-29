@@ -120,6 +120,8 @@ uint8_t ReadFlags(void* container) {
     return box && E::GetComponentCollisionEnabled(box) > kNoCollision ? cw::kFlagArmed : uint8_t{0};
 }
 
+bool IsArmed(void* container) { return (ReadFlags(container) & cw::kFlagArmed) != 0; }
+
 void Track(uint32_t eid, void* container) {
     UE_ASSERT_GAME_THREAD("container_arming::Track");
     void* const box = cb::OverlapComponent(container);

@@ -6,8 +6,11 @@
 // and the commit says where the container stored it, or that it stored nothing. The take seat, the pending record and
 // the commit queue are container_act_request's (see container_act_request_internal.h). The fit runs on the client, on
 // the real actors (MTA's confirm reads only server state, CGame.cpp:3373-3417): the container's test needs the actor.
-// Gameplay layer (principle 7). Game thread.
+// The same table holds two seats that ask nothing: the client's cancel of its own dingus and of an overlap put on a shared
+// mirror, and the host's judge of a prop a client drives into a box (container_act_host_overlap). Gameplay layer
+// (principle 7). Game thread.
 
+#include "coop/props/container_act_host.h"
 #include "coop/props/container_act_request.h"
 #include "coop/props/container_act_request_internal.h"
 
@@ -62,6 +65,10 @@ constexpr int kTagR3 = 0x43414333;   // "CAC3"
 // A client's own arming of a shared mirror (PreDingus below): the box is the host's display (container_arming).
 UE_FACT_FN(kRowDingus, "container_arming", L"prop_container_C", L"dingus", Declared);
 constexpr int kTagDingus = 0x43414344;   // "CACD"
+
+// A prop entering a shared container's box: the client cancels it (PreOverlap), the host judges it (container_act_host_overlap).
+UE_FACT_FN(kRowOverlap, "container_act", L"prop_container_C", L"putObjectIn_overlap", Declared);
+constexpr int kTagOverlap = 0x43414345;   // "CACE"
 
 const char* RouteName(uint8_t route) { return route == kRouteR2 ? "R2" : "R3"; }
 
@@ -326,10 +333,40 @@ sg::Verdict PreDingus(const sg::Call& c) {
     return sg::Verdict::Cancel;
 }
 
+// How many overlap puts on a shared mirror this client refused this session, and how many of those had no caller frame.
+uint32_t g_overlapCancelled = 0;
+uint32_t g_overlapNoFrame = 0;
+
+// A prop entering a shared mirror's box must never be filed by this client: the mirror is display only, and a local body
+// would add the record to the display and destroy the prop before the host's truth overrules it. The host judges a put
+// at its own overlap (container_act_host_overlap), so nothing is asked and nothing is sent: the call is cancelled. Only the
+// container's own overlap graph is cancelled; a roomba's and the drone sack's calls, made from their own graphs, run.
+// A call with no caller frame cannot be told from the overlap, so it is cancelled too (fails closed). On the host this
+// seat is the host's judge.
+sg::Verdict PreOverlap(const sg::Call& c) {
+    coop::net::Session* const s = LinkedSession();
+    if (!s) return sg::Verdict::Run;
+    if (s->role() == coop::net::Role::Host) return coop::props::container_act_host::overlap::Pre(c);
+    uint32_t eid = 0;
+    if (SharedTarget(c.object, eid) == Target::Own) return sg::Verdict::Run;
+    if (c.callerFunction) {
+        static const std::wstring kGraph = L"ExecuteUbergraph_prop_container";
+        const std::wstring caller = R::ToString(R::NameOf(c.callerFunction));
+        if (c.callerObject != c.object || caller.compare(0, kGraph.size(), kGraph) != 0) return sg::Verdict::Run;
+    } else {
+        ++g_overlapNoFrame;
+    }
+    ++g_overlapCancelled;
+    UE_LOGI("container_act: overlap put on the shared mirror eid=%u cancelled, the host judges it (#%u, %u without a caller frame)",
+            static_cast<unsigned>(eid), g_overlapCancelled, g_overlapNoFrame);
+    return sg::Verdict::Cancel;
+}
+
 }  // namespace
 
 void ResetPutLines() {
     g_dingusCancelled = 0;
+    g_overlapCancelled = g_overlapNoFrame = 0;
     for (bool& said : g_said) said = false;
     g_noHoverGuard = g_noHandTable = g_doubleDone = false;
     g_lastWhy = "";
@@ -337,9 +374,10 @@ void ResetPutLines() {
 
 const WatchRow* PutWatches(size_t& count) {
     static const WatchRow kRows[] = {
-        {kRowEmTake, kTagR2, &PreR2},
-        {kRowUsedOn, kTagR3, &PreR3},
-        {kRowDingus, kTagDingus, &PreDingus},
+        {kRowEmTake, kTagR2, &PreR2, nullptr},
+        {kRowUsedOn, kTagR3, &PreR3, nullptr},
+        {kRowDingus, kTagDingus, &PreDingus, nullptr},
+        {kRowOverlap, kTagOverlap, &PreOverlap, &coop::props::container_act_host::overlap::Post},
     };
     count = std::size(kRows);
     return kRows;

@@ -508,6 +508,16 @@ void EndAnyHoldOn(void* actor) {
     }
 }
 
+void EndDriveForPut(int slot) {
+    UE_ASSERT_GAME_THREAD("g_drives (remote_prop::EndDriveForPut)");
+    if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return;
+    ActiveDrive& d = g_drives[slot];
+    if (!d.actor) return;
+    if (void* const live = d.LiveActor())
+        coop::prop_park::Unpark(live, d.mesh, !StickHoldsPhysicsOff(live));
+    ResetDriveState(d);
+}
+
 void ClearAnyDriveFor(void* actor) {
     // Every slot's drive on `actor` clears so nothing drives a destroyed actor next tick; the
     // adoption sweep destroys through the same contract.

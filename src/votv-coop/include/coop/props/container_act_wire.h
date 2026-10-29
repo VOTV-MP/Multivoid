@@ -5,7 +5,6 @@
 // Request: `[u16 id][u8 family][u8 pad=0][u32 eid]`, then by family
 //   1 (take)        `[u16 index][u64 hash]`   the record's address: the index it had, the hash of its wire form
 //   2 (put record)  `[u16 n][n bytes]`        one record in the save_record_wire grammar
-//   3 (put prop)    `[u32 propEid]`
 // Commit: `[u16 id][u8 committed][u8 pad=0][u32 eid]`, then iff the commit carries a record
 //   `[u16 index][u16 n][n bytes]`             a put's done: where it landed and the record, as the host stored it
 //
@@ -45,7 +44,6 @@ struct Request {
     uint16_t index = 0;                       // Take
     uint64_t hash = 0;                        // Take
     ue_wrap::save_record::SaveRecord record{};  // PutRecord
-    uint32_t propEid = 0;                     // PutProp
 };
 
 struct Commit {

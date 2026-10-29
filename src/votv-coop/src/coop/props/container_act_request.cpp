@@ -478,6 +478,7 @@ struct Watch {
     const ue_wrap::facts::Function& row;
     int tag;
     sg::PreFn pre;
+    sg::PostFn post;
     WatchState state;
 };
 std::vector<Watch> g_watches;   // the take's, then the put seats': filled by the first Install
@@ -515,16 +516,16 @@ bool InReplay() { return g_latch.on; }
 void Install(coop::net::Session* session) {
     g_session = session;
     if (g_watches.empty()) {
-        g_watches.push_back(Watch{kRowTake, kTagTake, &PreTake, WatchState::Pending});
+        g_watches.push_back(Watch{kRowTake, kTagTake, &PreTake, nullptr, WatchState::Pending});
         size_t puts = 0;
         const WatchRow* const rows = PutWatches(puts);
         for (size_t i = 0; i < puts; ++i)
-            g_watches.push_back(Watch{rows[i].row, rows[i].tag, rows[i].pre, WatchState::Pending});
+            g_watches.push_back(Watch{rows[i].row, rows[i].tag, rows[i].pre, rows[i].post, WatchState::Pending});
     }
     // The gate refuses a watch it cannot keep for the process; a refused one is said dead at the settle.
     for (Watch& w : g_watches) {
         if (w.state != WatchState::Pending) continue;
-        w.state = sg::WatchName(w.row, w.tag, w.pre, nullptr) ? WatchState::Registered : WatchState::Refused;
+        w.state = sg::WatchName(w.row, w.tag, w.pre, w.post) ? WatchState::Registered : WatchState::Refused;
     }
 }
 

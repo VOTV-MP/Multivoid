@@ -10,13 +10,16 @@
 // is ready, before its body has a pose, or while a hold stands in its way stays at the head of its queue until
 // kWaitBoundMs after it was queued; then it is answered Gone.
 //
-// The Take and PutRecord families are served here; PutProp is answered WrongFamily until its package arrives.
+// The Take and PutRecord families are served here. A world prop that a client drives into a container's box asks nothing:
+// the host judges it at its own overlap (namespace overlap, container_act_host_overlap.cpp).
 
 #pragma once
 
 #include "coop/net/protocol.h"
 #include "coop/props/container_act_state.h"
 #include "coop/props/container_reach.h"
+
+#include "ue_wrap/core/script_gate.h"
 
 #include <cstdint>
 #include <optional>
@@ -40,11 +43,28 @@ void RunSelftest();                               // the pure decisions, once pe
 // reservations that ended by their deadline, LateDone the late puts inserted, LateDoneLost the late puts a cap refused,
 // PutDoneLost the timely puts a re-check refused at the insert, OwedLost the owed puts given up, TakeArmed the final
 // takes after which the host called the container's own dingus (the game's arming of a container a record was taken from).
+// The PutOverlap* terms are the overlap put's: Filed (the prop is gone after the body), Unarmed (the box is not armed),
+// Reach (a held or claimed prop is out of its driver's reach), Unread (a read the judge needs did not come), Held (a
+// client holds the container: the put waits), Fit (the put terms refuse it), Gate (the body's silent gates would swallow
+// it) and Gap (the body ran and the prop lived: a term the judge did not see).
 enum class Tally : uint8_t { TargetGone, BadCommit, GrantUnsent, QueueFullUnready, BadSender, ShortPayload,
                              Malformed, UnknownFamilyUnready, RestoreOwed, WaitExpired, ReservationLapsed, LateDone,
                              LateDoneLost, PutNoName, PutClassUnresolved, PutNotProp, PutFiltered, PutIntoMailbox,
-                             PutRowRefuses, PutUnknownName, PutDoneLost, OwedLost, TakeArmed, kCount };
-const char* TallyName(Tally t);   // "target_gone" ... "take_armed"; "" past kCount
+                             PutRowRefuses, PutUnknownName, PutDoneLost, OwedLost, TakeArmed, PutOverlapFiled,
+                             PutOverlapUnarmed, PutOverlapReach, PutOverlapUnread, PutOverlapHeld, PutOverlapFit,
+                             PutOverlapGate, PutOverlapGap, kCount };
+const char* TallyName(Tally t);   // "target_gone" ... "put_overlap_gap"; "" past kCount
+
+// The host's judge of a world prop a client drives into a container's box (container_act_host_overlap.cpp): a PRE and a POST
+// on prop_container_C::putObjectIn_overlap, registered by container_act_put's watch table on both roles and acting on the
+// host alone. OnContainerFree: a hold on container `eid` ended, so the puts that waited on it are judged again.
+namespace overlap {
+void Install(coop::net::Session* session);
+ue_wrap::script_gate::Verdict Pre(const ue_wrap::script_gate::Call& c);
+void Post(const ue_wrap::script_gate::Call& c);
+void OnContainerFree(uint32_t eid);
+void Reset();   // the session's end: the waiting puts and the pending body are dropped
+}  // namespace overlap
 
 namespace internal {   // pure, no engine call: the selftest drives these (NOT the game thread)
 

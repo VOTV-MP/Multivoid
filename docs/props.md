@@ -255,7 +255,14 @@ client's take is final (`container_act_host`) `[?]`. Whether that box is armed i
 slice the host publishes carries it in a flags byte (`coop/props/container_arming`, `container_slice_wire`), a native hook
 on `SetCollisionEnabled` marks the container for publication when the box changes (a host take, a broken container, a
 roomba's own writes included), and a client's mirror takes its box from the byte and cancels its own `dingus` on a shared
-container, so a mirror's trigger is never armed by a client alone `[?]`. The open and closed state is a keyed-device channel like a
+container, so a mirror's trigger is never armed by a client alone `[?]`. A prop a client drives into an armed box is
+judged by the host at the host's own overlap, with no client message: the host's copy is kinematic there, so the box's
+own body would refuse it, and a PRE on `putObjectIn_overlap` judges it instead (the box is armed, a held or claimed
+driver is within reach, no client holds the container, the prop fits, the body's silent gates pass), ends the driver's
+row or drive so the copy simulates, and lets the game's body file it; a put that meets a client's hold waits and is
+judged again when the hold ends. The client's own copy of the call on a shared mirror is cancelled. A joiner needs no
+replay: the put is one host step, so a joiner seeded before it receives the prop's destroy and the container's
+publication, and one seeded after receives the container with the record `[?]`. The open and closed state is a keyed-device channel like a
 door's ([devices.md](devices.md)). The full break-and-spill behaviour, and the single-slot verbs, are reverse-engineered
 and designed and not built.
 

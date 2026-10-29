@@ -2340,7 +2340,7 @@ static_assert(sizeof(PropActCommitPayload) == 8, "PropActCommitPayload must be 8
 // chunked blobs (coop::props::container_act_wire), since a put carries a record; only the answer is a fixed payload.
 // `id` is the client's own, nonzero, and pairs the three. The family names the verb, and the host judges each by its
 // own conditions; a family it does not serve is answered WrongFamily.
-enum class ContainerActFamily : uint8_t { Take = 1, PutRecord = 2, PutProp = 3 };
+enum class ContainerActFamily : uint8_t { Take = 1, PutRecord = 2 };
 enum class ContainerActReason : uint8_t { Granted = 0, Gone = 1, Reach = 2, NoSpace = 3, Locked = 4, Refused = 5,
                                           QueueFull = 6, WrongFamily = 7, Lapsed = 8 };
 // Lapsed: the sender let a reservation of the host's run out its deadline, so its next put is refused for a spell.

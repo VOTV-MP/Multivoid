@@ -58,6 +58,14 @@ void CloseHold(int slot, uint16_t holdGen);
 // frame, a visible pop.
 bool IsActorUnderAnyDrive(void* actor);
 
+// The peer slot whose kinematic drive targets `actor` through the pose stream, or -1 when none does. Game thread.
+int DrivingSlotOf(void* actor);
+
+// The drive of `slot` ends because the host files its prop (a put by overlap, container_act_host_overlap): the copy
+// simulates again and the drive clears, as an implicit release does, so the container's body finds a simulating body.
+// A no-op for a slot with no drive. Game thread.
+void EndDriveForPut(int slot);
+
 // True while this peer, not the wire, moves `actor`: a peer's drive targets it, the host's driven-prop
 // channel holds it parked, or the LOCAL player has it in its hands. The holder is the authority while
 // it holds, so a write that comes from elsewhere (an unstick's pose, a saved record's state) waits.

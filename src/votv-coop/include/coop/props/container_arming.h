@@ -28,6 +28,9 @@ void OnDisconnect();
 // not NoCollision, else 0. 0 too for a null container and a class with no box.
 uint8_t ReadFlags(void* container);
 
+// The same reading as a question: is the box armed on this peer now?
+bool IsArmed(void* container);
+
 // Host: the container's `overlap` component joins the set the hook watches. Called at each publication, so a container is
 // watched from before its first slice is sent; idempotent. Untrack when the container is gone.
 void Track(uint32_t eid, void* container);

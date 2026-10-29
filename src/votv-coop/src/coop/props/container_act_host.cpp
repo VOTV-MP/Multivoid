@@ -129,7 +129,6 @@ const char* FamilyName(uint8_t family) {
     switch (static_cast<ContainerActFamily>(family)) {
         case ContainerActFamily::Take:      return "take";
         case ContainerActFamily::PutRecord: return "put-record";
-        case ContainerActFamily::PutProp:   return "put-prop";
     }
     return "unknown";
 }
@@ -184,14 +183,16 @@ namespace {
 void Restore(cas::Hold h, const char* why) { Place(std::move(h), why, cre::Source::Host, "restored"); }
 
 // The one place a hold's end is acted on, whatever ended it: an escrow's record is restored; a reservation is released
-// and inserts nothing.
+// and inserts nothing. The container is then free of this hold, so the overlap puts that waited on it are judged again.
 void EndHold(cas::Hold h, const char* why) {
+    const uint32_t eid = h.eid;
     if (h.kind == cas::HoldKind::Escrow) {
         Restore(std::move(h), why);
-        return;
+    } else {
+        UE_LOGI("container_act: slot=%u id=%u eid=%u %s, reservation released", static_cast<unsigned>(h.slot),
+                static_cast<unsigned>(h.id), static_cast<unsigned>(h.eid), why);
     }
-    UE_LOGI("container_act: slot=%u id=%u eid=%u %s, reservation released", static_cast<unsigned>(h.slot),
-            static_cast<unsigned>(h.id), static_cast<unsigned>(h.eid), why);
+    overlap::OnContainerFree(eid);
 }
 
 // A take is final: the game arms a world container's overlap box when a record leaves it by the player's own take
@@ -408,7 +409,7 @@ coop::net::Served ServeHead(uint8_t slot, const Queued& item) {
     Tally refusal = Tally::kCount;
     internal::Verdict v = internal::Verdict::WrongFamily;
     if (put) {
-        ReadPutInputs(slot, q, pin);
+        ReadPutInputs(slot, q.eid, q.record, /*slowable=*/true, pin);
         v = internal::DecidePut(pin, &refusal);
     } else {
         v = internal::Decide(in);
@@ -514,7 +515,10 @@ const char* CommitName(CommitStep s) {
 
 }  // namespace internal
 
-void Install(coop::net::Session* session) { g_session = session; }
+void Install(coop::net::Session* session) {
+    g_session = session;
+    overlap::Install(session);
+}
 
 void Tick() {
     if (!IsHost()) return;
@@ -640,9 +644,12 @@ void OnCommitChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
         EndHold(std::move(*closed), "aborted");
         return;
     }
-    // Done: an escrow's record is the client's now. A reservation inserts the record the client's container stored.
+    // Done: an escrow's record is the client's now. A reservation inserts the record the client's container stored. The
+    // container is then free of the hold, so the overlap puts that waited on it are judged again.
+    const uint32_t freed = closed->eid;
     if (closed->kind == cas::HoldKind::Reservation) PlaceTimelyDone(std::move(*closed), c);
     else ArmAfterTake(*closed);
+    overlap::OnContainerFree(freed);
 }
 
 // A departed sender's holds end with it, and its tombstones and slowing with them: the slot is reused.
@@ -655,7 +662,9 @@ void OnPeerGone(uint8_t slot) {
 }
 
 void OnDisconnect() {
-    // Owed writes first, then the holds: a write that fails here is owed and not tried twice.
+    // The waiting overlap puts go first: nothing is judged again while the holds end. Owed writes next, then the holds: a
+    // write that fails here is owed and not tried twice.
+    overlap::Reset();
     RetryOwed(coop::net::NowMs());
     for (cas::Hold& h : cas::Live().TakeAll()) EndHold(std::move(h), "the link ended");
     cas::Live().DropLapsed();
@@ -707,7 +716,9 @@ const char* TallyName(Tally t) {
                                          "wait_expired", "reservation_lapsed", "late_done", "late_done_lost",
                                          "put_no_name", "put_class_unresolved", "put_not_prop", "put_filtered",
                                          "put_into_mailbox", "put_row_refuses", "put_unknown_name", "put_done_lost",
-                                         "owed_lost", "take_armed"};
+                                         "owed_lost", "take_armed", "put_overlap_filed", "put_overlap_unarmed",
+                                         "put_overlap_reach", "put_overlap_unread", "put_overlap_held", "put_overlap_fit",
+                                         "put_overlap_gate", "put_overlap_gap"};
     static_assert(std::size(kNames) == static_cast<size_t>(Tally::kCount), "a name for every tally");
     return t < Tally::kCount ? kNames[static_cast<int>(t)] : "";
 }

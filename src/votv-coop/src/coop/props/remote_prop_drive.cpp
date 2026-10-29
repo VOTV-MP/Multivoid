@@ -84,6 +84,14 @@ bool IsActorUnderAnyDrive(void* actor) {
     return false;
 }
 
+int DrivingSlotOf(void* actor) {
+    UE_ASSERT_GAME_THREAD("g_drives (DrivingSlotOf)");
+    if (!actor) return -1;
+    for (int s = 0; s < static_cast<int>(coop::players::kMaxPeers); ++s)
+        if (g_drives[s].actor == actor) return s;
+    return -1;
+}
+
 bool IsOwnedHere(void* actor) {
     if (!actor) return false;
     if (IsActorUnderAnyDrive(actor) || coop::prop_drive_stream::IsParked(actor)) return true;
