@@ -46,7 +46,8 @@ bool ElectFromMark(void* actor);
 void OnClientEnd(coop::net::Session& s, const coop::net::PropDriveEndPayload& p, uint8_t slot);
 
 // Per gameplay tick, before the rows' publish: drain every origin's PropDrivePose rows and admit them against
-// the rows that name their sender; once a second, hand back the rows of a silent or far syncer. Game thread.
+// the rows that name their sender; once a second, hand back the rows of a silent or far syncer (a thrown prop's silence is
+// judged per tick by prop_drive_host, kThrowSilenceMs). Game thread.
 void Admit(coop::net::Session& s);
 
 // Peer slot `slot` left: its rows end with no word to it. Game thread.
@@ -78,6 +79,8 @@ struct ThrowView {
     uint32_t revokeTotal = 0;      // failed rows of that flight
     uint32_t takeBacks = 0;        // every take-back of an elected row to the host, and the last one's cause and speed
     uint32_t slotLeft = 0;         // take-backs because the thrower left
+    uint32_t silence = 0;          // take-backs because the thrower fell silent (kThrowSilenceMs)
+    uint64_t lastRowMs = 0;        // the arrival (active_drive::NowMs) of the last row admitted on the last election
     uint8_t  lastTakeBack = 0;     // the Ending
     uint64_t lastTakeBackMs = 0;   // active_drive::NowMs
     float    lastTakeBackSpeed = 0.f;   // cm/s of the velocity the host copy was released with

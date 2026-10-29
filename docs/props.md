@@ -180,8 +180,9 @@ under a new generation (when no row passed, from the release pose at rest), and 
 the counts. This diverges from MTA, which bounds nothing on an unoccupied-vehicle
 syncer's packet; ours follows the rule that a client's discontinuity costs trust. The host's own grab
 throw opens a coast row that streams it to rest. The host's grab, a flight past its bound, a grant that
-no row follows, a thrower who leaves and any end of a thrown prop nothing was admitted for hand the prop
-to the host; its copy then continues from the last passing row's pose and velocity (from the release
+no row follows, a thrower who leaves, a thrower who falls silent (no admitted row for `kThrowSilenceMs`,
+judged per host tick; a claim's row keeps the once-a-second pass and its 5 s) and any end of a thrown prop
+nothing was admitted for hand the prop to the host; its copy then continues from the last passing row's pose and velocity (from the release
 pose at rest when rows came and none passed; its own state when none came) and every copy follows the host. `[?]` until the throw arms read them.
 
 Joining mid-flight: a peer that becomes world-ready while a thrown prop flies gets the host's copy from

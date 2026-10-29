@@ -6,6 +6,7 @@
 #include "coop/config/config_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/net/throw_bounds.h"
 #include "coop/player/hand_item.h"            // IsHandAxisActor: the hotbar hand and its mirrors
 #include "coop/player/local_streams.h"        // LastHeldActor: this player's grab slot
 #include "coop/props/active_drive.h"          // NowMs
@@ -367,6 +368,12 @@ static void Tick(coop::net::Session& s) {
             continue;
         }
         if (d.syncer != 0) {   // a client's row ends by its own rules (prop_syncer_host), never by the rest clock
+            // A thrown prop's thrower that falls silent mid-flight is replaced at once, as MTA moves a silent unoccupied
+            // syncer on its pulse (CUnoccupiedVehicleSync.cpp:171-260); a claim's row keeps the pass's 5 s rule.
+            if (d.elected && d.admittedEver && now - d.admitMs >= coop::net::throw_bounds::kThrowSilenceMs) {
+                coop::prop_syncer_host::EndClientRow(d, coop::prop_syncer_host::Ending::Silence);
+                continue;
+            }
             joined += PublishAdmitted(s, d);
             continue;
         }

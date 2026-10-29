@@ -37,6 +37,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <iterator>
 #include <unordered_map>
 #include <vector>
@@ -252,6 +253,10 @@ void AdmitRow(const coop::net::PropDriveRow& e, uint8_t slot, uint64_t nowMs) {
     }
     if (row->elected) ++g_thrownAdmitted;
     row->admitVel = ue_wrap::FVector{r.vel[0], r.vel[1], r.vel[2]};
+    if (row->elected && row->admittedEver) {   // kThrowSilenceMs' instrument: the host's arrival gap between two admitted rows
+        const uint32_t gap = static_cast<uint32_t>(nowMs - row->admitMs);
+        if (gap > row->maxGapMs) row->maxGapMs = gap;
+    }
     row->admitSendMs = r.sendTimeMs;
     row->admitMs = nowMs;
     if (passed) {   // the take-back's starting point: the last row that agreed with the throw
@@ -270,6 +275,7 @@ void AdmitRow(const coop::net::PropDriveRow& e, uint8_t slot, uint64_t nowMs) {
     coop::prop_drive_stream::FeedAdmitted(r);
     if (row->elected) {
         ++g_tv.lastRows;
+        g_tv.lastRowMs = nowMs;
         if (!passed) ++g_tv.failedDisplayed;
     }
     if (row->syncer != slot) ++g_nonSyncerAdmitted;
@@ -396,11 +402,13 @@ bool ElectSyncer(void* actor, uint8_t slot, uint16_t throwSeq, const float relea
     row->passSendMs = 0;
     row->passMs     = 0;
     row->passVel    = ue_wrap::FVector{};
+    row->maxGapMs   = 0;
     row->claimSeq   = throwSeq;   // the grant, and a Revoked after it, echo the throw
     ++g_tv.elected;
     g_tv.lastEid = row->eid;
     g_tv.lastGen = row->gen;
     g_tv.lastRows = 0;
+    g_tv.lastRowMs = 0;
     g_tv.failedDisplayed = 0;
     UE_LOGI("[PROP-SYNC] HOST ELECT eid=%u gen=%u slot %u throw seq %u (#%u)", row->eid, static_cast<unsigned>(row->gen),
             static_cast<unsigned>(slot), static_cast<unsigned>(throwSeq), ++g_elected);
@@ -453,8 +461,9 @@ void OnClientEnd(coop::net::Session& s, const coop::net::PropDriveEndPayload& se
     coop::prop_drive_host::EraseRow(*row);
     Tally(g_endsAdmitted, "End admitted (rest)", p.eid, slot);
     if (row->elected)
-        UE_LOGI("[PROP-SYNC] HOST thrown eid=%u gen=%u slot %u rested: release-to-End %llu ms, rows admitted %u, jitter (sender dt - arrival dt) max %lld ms over %u rows",
-                p.eid, static_cast<unsigned>(p.gen), static_cast<unsigned>(slot), static_cast<unsigned long long>(nowMs - row->startMs), g_thrownAdmitted, static_cast<long long>(g_jitMax), g_jitRows);
+        UE_LOGI("[PROP-SYNC] HOST thrown eid=%u gen=%u slot %u rested: release-to-End %llu ms, rows admitted %u, jitter (sender dt - arrival dt) max %lld ms over %u rows, maxgap=%u ms",
+                p.eid, static_cast<unsigned>(p.gen), static_cast<unsigned>(slot), static_cast<unsigned long long>(nowMs - row->startMs), g_thrownAdmitted, static_cast<long long>(g_jitMax), g_jitRows,
+                static_cast<unsigned>(row->maxGapMs));
 }
 
 void Admit(coop::net::Session& s) {
@@ -486,14 +495,15 @@ void EndClientRow(Driven& d, Ending why) {
     const uint8_t syncer = d.syncer;
     const uint8_t gen = d.gen;
     void* actor = d.ref.Get();
-    // A host verb, the three endings that are the host's own judgement of a thrown prop, a leaving thrower and any ending
-    // of a thrown prop nothing was admitted for (but Died and Hand: the held lane streams a hand's) hand the prop to the
-    // host: its copy goes on from the last passing row, or from its own state when none was, and its stream takes over
+    // A host verb, the three endings that are the host's own judgement of a thrown prop, a leaving or silent thrower and any
+    // ending of a thrown prop nothing was admitted for (but Died and Hand: the held lane streams a hand's) hand the prop to
+    // the host: its copy goes on from the last passing row, or from its own state when none was, and its stream takes over
     // under a new generation. MTA re-elects a syncer whenever one is lost, so the prop is never left unsynced while it
     // moves (CUnoccupiedVehicleSync.cpp:36-40, :143-152).
     const bool unadmitted = d.elected && !d.admittedEver && why != Ending::Died && why != Ending::Hand;
     const bool toHost = why == Ending::HostVerb || why == Ending::FlightBound || why == Ending::RowsUntrusted ||
-                        why == Ending::GrantTimeout || (d.elected && why == Ending::SlotLeft) || unadmitted;
+                        why == Ending::GrantTimeout ||
+                        (d.elected && (why == Ending::SlotLeft || why == Ending::Silence)) || unadmitted;
     // (1) the host's copy is released at the trusted pose and velocity, (2) the End is built from it. With nothing
     // admitted no receiver saw this generation and the copy was never parked, and a dead prop has no copy: no release,
     // no End.
@@ -517,6 +527,7 @@ void EndClientRow(Driven& d, Ending why) {
     if (d.elected && toHost) {
         ++g_tv.takeBacks;
         if (why == Ending::SlotLeft) ++g_tv.slotLeft;
+        if (why == Ending::Silence) ++g_tv.silence;
         g_tv.lastTakeBack = static_cast<uint8_t>(why);
         g_tv.lastTakeBackMs = nowMs;
         if (!d.admittedEver) g_tv.lastTakeBackSpeed = 0.f;
@@ -528,15 +539,23 @@ void EndClientRow(Driven& d, Ending why) {
     }
     // One line per flight at the take-back; a row that failed the step test logs nothing itself.
     if (why == Ending::RowsUntrusted)
-        UE_LOGI("[PROP-SYNC] HOST took eid=%u back from slot %u (rows untrusted: %u in a row, %u in the flight) -- %s",
+        UE_LOGI("[PROP-SYNC] HOST took eid=%u back from slot %u (rows untrusted: %u in a row, %u in the flight) -- %s, maxgap=%u ms",
                 d.eid, static_cast<unsigned>(syncer), static_cast<unsigned>(d.failedRun), static_cast<unsigned>(d.failedTotal),
-                d.passedEver ? "from its last passing row" : "no row passed, from its release pose at rest");
-    else if (d.elected && toHost && why != Ending::HostVerb)
-        UE_LOGI("[PROP-SYNC] HOST took eid=%u back from slot %u (%s) -- %s", d.eid, static_cast<unsigned>(syncer),
-                kEndingName[static_cast<unsigned>(why)],
+                d.passedEver ? "from its last passing row" : "no row passed, from its release pose at rest",
+                static_cast<unsigned>(d.maxGapMs));
+    else if (d.elected && toHost && why != Ending::HostVerb) {
+        char label[40];   // a silent thrower's line names how long it was silent
+        if (why == Ending::Silence)
+            std::snprintf(label, sizeof(label), "silence %llu ms", static_cast<unsigned long long>(nowMs - d.admitMs));
+        else
+            std::snprintf(label, sizeof(label), "%s", kEndingName[static_cast<unsigned>(why)]);
+        UE_LOGI("[PROP-SYNC] HOST took eid=%u back from slot %u (%s) -- %s, maxgap=%u ms", d.eid, static_cast<unsigned>(syncer),
+                label,
                 d.passedEver ? "from its last passing row"
                              : d.admittedEver ? "no row passed, from its release pose at rest"
-                                              : "from its own copy, no row was admitted");
+                                              : "from its own copy, no row was admitted",
+                static_cast<unsigned>(d.maxGapMs));
+    }
     // (4) the row goes, or for a hand-over it becomes the host's: a new generation, nothing sent yet, the stream
     // continuing from the released copy. A verb's claim stays its own; the host's judgement coasts to rest.
     if (!toHost) { coop::prop_drive_host::EraseRow(d); return; }
@@ -564,6 +583,7 @@ void EndClientRow(Driven& d, Ending why) {
     d.passVel      = ue_wrap::FVector{};
     d.passSendMs   = 0;
     d.passMs       = 0;
+    d.maxGapMs     = 0;
     d.streamBucket.Reset();
 }
 

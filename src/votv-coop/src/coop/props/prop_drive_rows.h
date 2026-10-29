@@ -65,6 +65,7 @@ struct Driven {
     ue_wrap::FVector      passVel{};
     uint32_t              passSendMs  = 0;
     uint64_t              passMs      = 0;
+    uint32_t              maxGapMs    = 0;      // the largest gap between the host's arrivals of two admitted rows of this flight
 };
 
 // The live row of the prop with element id `eid`, null if none. Game thread.
@@ -107,7 +108,8 @@ namespace coop::prop_syncer_host {
 // and is not one of these. FlightBound (an elected row past kMaxThrowFlightMs), RowsUntrusted (kMaxRefusedRows rows in
 // a row failed the step test) and GrantTimeout (no row admitted kGrantTimeoutMs after the election) hand the prop to
 // the host the way HostVerb does: its copy continues from the last passing row, or from its own state when none was.
-// So does every ending of an elected row but Died and Hand when nothing was admitted, and SlotLeft of an elected row.
+// So does every ending of an elected row but Died and Hand when nothing was admitted, SlotLeft of an elected row, and
+// Silence of an elected row (kThrowSilenceMs without an admitted row, met by prop_drive_host's Tick).
 enum class Ending : uint8_t { Hand, HostVerb, Died, Silence, Range, SlotLeft, FlightBound, RowsUntrusted, GrantTimeout, kCount };
 
 // End client row `row` in the one order every ending uses: release the host's copy at the last admitted pose and

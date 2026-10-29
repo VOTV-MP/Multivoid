@@ -53,6 +53,11 @@ inline constexpr uint32_t kJitterMs = 50;            // the host's arrival delta
 inline constexpr int      kMaxRefusedRows = 5;       // consecutive failed rows that revoke the thrower (125 ms at 40 Hz)
 inline constexpr uint32_t kGrantTimeoutMs = 1000;    // a throw's wait for its grant; the host's wait for a first row
 inline constexpr uint32_t kMaxThrowFlightMs = 10000; // an elected row's longest life from the election
+// PROVISIONAL, pending its measurement: how long an elected row may go without an admitted row before the host takes the
+// prop back (prop_drive_host Tick). The derived value is the largest inter-ARRIVAL gap of an elected row on the host
+// (the `maxgap=` of its end line), measured under loopback and under net.fakelag_ms=50, times 2; if that comes out under
+// 250 the derived value is used. Nothing ships on the 250.
+inline constexpr uint32_t kThrowSilenceMs = 250;
 inline constexpr int      kMaxPendingThrows = 8;     // a peer's throws awaiting a grant
 inline constexpr int      kMaxThrowRowsPerSlot = 4;  // elected rows one client holds at once
 
