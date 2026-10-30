@@ -49,6 +49,8 @@ int32_t g_offActiveDownload = -1;       // bool
 int32_t g_offActiveCoords = -1;         // bool
 int32_t g_offActiveComp = -1;           // bool
 int32_t g_offCoordIsPing = -1;          // bool
+int32_t g_offRemapValue = -1;           // FVector2D: X the lower bound, Y the upper
+int32_t g_offVisualizerMode = -1;       // bool
 // The derived download-allowed flag is not a field here (see the header), and the comp-pane
 // fields live in ue_wrap/desk/comp_pane; the comp max level stays, since it rides the
 // desk-state marshal.
@@ -56,6 +58,8 @@ int32_t g_offCoordCoordLog2Text = -1;   // FString -- the LIVE log (coord_coordL
 
 struct FieldSlot { const wchar_t* name; int32_t* off; };
 FieldSlot g_fields[] = {
+    { L"remapValue",          &g_offRemapValue },
+    { L"visualizerMode",      &g_offVisualizerMode },
     { L"DL_poFilterOffset",   &g_offDlPoFilterOffset },
     { L"DL_FrFilterOffset",   &g_offDlFrFilterOffset },
     { L"DL_poFilterSpeed",    &g_offDlPoFilterSpeed },
@@ -103,6 +107,7 @@ RefreshSlot g_refresh[] = {
     { L"updPolarityLights",  nullptr },   // kPaintPolarityLights
     { L"updMaxLevelLights",  nullptr },   // kPaintMaxLevelLights
     { L"updateCoordCoords",  nullptr },   // kPaintCoordCoords
+    { L"updRemap",           nullptr },   // kPaintRemap
 };
 constexpr size_t kRefreshCount = sizeof(g_refresh) / sizeof(g_refresh[0]);
 static_assert(kPaintAll == (1u << kRefreshCount) - 1u,
@@ -161,6 +166,8 @@ int32_t g_offSignalSound = -1;       // signalSound (UAudioComponent* -- playbac
 void* g_stopSoundFn = nullptr;           // desk stopSound()
 void* g_playSignalFn = nullptr;          // desk playSignal (the deck-playback mirror replay)
 void* g_spawnDirsFn = nullptr;           // desk spawnDirs() (the scan arrows)
+void* g_setCanvasFn = nullptr;           // desk setCanvas(visualizerMode), the signal view's draw
+void* g_endCanvasFn = nullptr;           // desk endCanvas(), which closes it
 
 std::chrono::steady_clock::time_point g_nextResolve{};
 bool g_coreResolved = false;
@@ -223,6 +230,8 @@ void ResolvePass() {
     if (!g_stopSoundFn) g_stopSoundFn = R::FindFunction(g_cls, L"stopSound");
     if (!g_playSignalFn) g_playSignalFn = R::FindFunction(g_cls, L"playSignal");
     if (!g_spawnDirsFn) g_spawnDirsFn = R::FindFunction(g_cls, L"spawnDirs");
+    if (!g_setCanvasFn) g_setCanvasFn = R::FindFunction(g_cls, L"setCanvas");
+    if (!g_endCanvasFn) g_endCanvasFn = R::FindFunction(g_cls, L"endCanvas");
 
     if (all && !g_coreResolved) {
         g_coreResolved = true;
@@ -311,6 +320,9 @@ bool ReadScalars(Scalars& out) {
     out.activeCoords      = *OffPtr<bool>(d, g_offActiveCoords);
     out.activeComp        = *OffPtr<bool>(d, g_offActiveComp);
     out.coordIsPing       = *OffPtr<bool>(d, g_offCoordIsPing);
+    out.remapMin          = *OffPtr<float>(d, g_offRemapValue);
+    out.remapMax          = *OffPtr<float>(d, g_offRemapValue + static_cast<int32_t>(sizeof(float)));
+    out.visualizerMode    = *OffPtr<bool>(d, g_offVisualizerMode);
     return true;
 }
 
@@ -339,6 +351,9 @@ bool WriteScalars(const Scalars& in, uint32_t painters) {
     *OffPtr<bool>(d, g_offDlActiveFrFilter) = in.dlActiveFrFilter;
     *OffPtr<bool>(d, g_offDlActivePoFilter) = in.dlActivePoFilter;
     *OffPtr<bool>(d, g_offCoordIsPing)      = in.coordIsPing;
+    *OffPtr<float>(d, g_offRemapValue)      = in.remapMin;
+    *OffPtr<float>(d, g_offRemapValue + static_cast<int32_t>(sizeof(float))) = in.remapMax;
+    // visualizerMode is not written here: setCanvas writes it and draws (ApplyVisualizerMode).
     // Repaint through the blueprint's own painters -- only the ones the caller named. The comp-pane
     // repaint lives in ue_wrap/desk/comp_pane.
     for (size_t i = 0; i < kRefreshCount; ++i) {
@@ -686,6 +701,14 @@ bool ApplyPlayVolumeEffects(int32_t value) {
     if (mult < 0.1f) mult = 0.1f;
     if (mult > 5.0f) mult = 5.0f;
     return ue_wrap::component_calls::SetVolumeMultiplier(comp, mult);
+}
+
+bool ApplyVisualizerMode(bool spectrogram) {
+    void* d = Instance();
+    if (!d || !g_setCanvasFn || !g_endCanvasFn) return false;
+    ue_wrap::ParamFrame f(g_setCanvasFn);
+    if (!f.valid() || !f.Set<bool>(L"visualizerMode", spectrogram) || !ue_wrap::Call(d, f)) return false;
+    return ue_wrap::component_calls::CallParamless(d, g_endCanvasFn);
 }
 
 bool PlayScanEffects() {

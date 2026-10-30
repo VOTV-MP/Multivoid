@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 264;
+inline constexpr uint16_t kProtocolVersion = 265;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -2168,8 +2168,12 @@ struct DeskStatePayload {
     uint8_t dlActivePoFilter;   // 1
     uint8_t coordIsPing;        // 1 -- diagnostic only; receivers never adopt it (it is the ping machine's run flag)
     uint8_t adopt;              // 1
+    float   remapMin;           // 4
+    float   remapMax;           // 4
+    uint8_t visualizerMode;     // 1
+    uint8_t _pad[3];            // 3
 };
-static_assert(sizeof(DeskStatePayload) == 48, "DeskStatePayload must be 48 bytes");
+static_assert(sizeof(DeskStatePayload) == 60, "DeskStatePayload must be 60 bytes");
 static_assert(sizeof(DeskStatePayload) <= 256 - 20 - 8,
               "DeskStatePayload must fit in one reliable datagram");
 
@@ -3635,7 +3639,10 @@ enum class DeskInputField : uint8_t {
                          //         never write it, it is the ping machine's run flag; bookkeeping only
     CooldownCharge = 13, // float   coord_cooldown -- UPWARD jumps only (a press charge; decay is
                          //         per-peer local and never rides the wire)
-    Count = 14,
+    RemapMin = 14,       // float   remapValue.X, the signal view's lower bound (+ updRemap)
+    RemapMax = 15,       // float   remapValue.Y, its upper bound (+ updRemap)
+    VisualizerMode = 16, // bool    visualizerMode, graph or spectrogram (+ setCanvas, endCanvas)
+    Count = 17,
 };
 
 struct DeskInputPayload {

@@ -45,6 +45,9 @@ struct Scalars {
   bool  activeCoords = false;  // active_coords
   bool  activeComp = false;  // active_comp
   bool  coordIsPing = false;  // coord_isPing
+  float remapMin = 0;  // remapValue.X, the signal view's lower bound
+  float remapMax = 0;  // remapValue.Y, its upper bound
+  bool  visualizerMode = false;  // visualizerMode, graph or spectrogram (ApplyVisualizerMode draws it)
 };
 
 // Resolve the desk class, the singleton instance, every field offset and the refresh
@@ -73,7 +76,8 @@ enum Painter : uint32_t {
     kPaintPolarityLights = 1u << 6,   // updPolarityLights  -- DL_PolarityDir, active_download, canDL, physMods
     kPaintMaxLevelLights = 1u << 7,   // updMaxLevelLights  -- comp_maxLevel, active_comp, physMods
     kPaintCoordCoords    = 1u << 8,   // updateCoordCoords  -- the coords commit; no scalar
-    kPaintAll            = (1u << 9) - 1u,
+    kPaintRemap          = 1u << 9,   // updRemap           -- remapValue
+    kPaintAll            = (1u << 10) - 1u,
 };
 
 bool ReadScalars(Scalars& out);
@@ -236,6 +240,10 @@ bool ReadPrecMult(float& out);
 // the caller's (WriteScalars); this adds the sound's volume multiplier, the value over 10
 // clamped to 0.1 through 5. Game thread.
 bool ApplyPlayVolumeEffects(int32_t value);
+
+// Draw the signal view in `spectrogram` mode, as the desk's red button does: setCanvas, which writes
+// visualizerMode, then endCanvas. False if unresolved. Game thread.
+bool ApplyVisualizerMode(bool spectrogram);
 
 // The deck-playback replay surface (deck_play_sync): the reflected desk playSignal and
 // stopSound, parameterless. playSignal reads the selected index and gates on active play, a
