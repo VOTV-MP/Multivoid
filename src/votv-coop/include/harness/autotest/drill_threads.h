@@ -137,6 +137,9 @@ DWORD WINAPI SaveNoticeThread(LPVOID arg);
 // VOTVCOOP_RUN_VENT_CRAWLER, both peers -- harness/autotest/autotest_vent_crawler.cpp
 DWORD WINAPI VentCrawlerThread(LPVOID arg);
 
+// VOTVCOOP_RUN_CAN_STATE, both peers (shared folder VOTVCOOP_CAN_DIR) -- harness/autotest/autotest_can_state.cpp
+DWORD WINAPI CanStateThread(LPVOID arg);
+
 // VOTVCOOP_RUN_EVENTFORCE_TEST, host -- harness/autotest/autotest_eventforce.cpp
 void RunAutonomousEventForceTest();
 DWORD WINAPI EventForceTestThread(LPVOID arg);

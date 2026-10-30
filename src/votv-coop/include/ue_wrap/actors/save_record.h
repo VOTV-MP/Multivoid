@@ -173,6 +173,10 @@ inline bool RecordName(const SaveRecord& r, std::wstring& out) {
 // `resolve` is forwarded to the write of the merged record (null = FindClass; see ClassResolver).
 bool ApplyRecord(void* actor, const SaveRecord& r, ClassResolver resolve = nullptr);
 
+// True while ApplyRecord runs: what a prop's own bodies do then is a record arriving, not a change to report.
+// Game thread.
+bool IsApplying();
+
 // ---- the same dispatch, without the prop lineage ----------------------------------------------
 //
 // The pair above is the PROP codec: it resolves its verbs only for classes on the `Aprop_C` chain,
