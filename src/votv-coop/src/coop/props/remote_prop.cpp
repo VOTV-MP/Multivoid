@@ -410,7 +410,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         } else if (payload.hasPose || E::TryGetActorLocation(thrownActor, at)) {
             const float start[3] = {at.X, at.Y, at.Z};
             coop::prop_syncer_host::ElectSyncer(thrownActor, static_cast<uint8_t>(senderSlot), payload.throwSeq, start,
-                                                NowMs());
+                                                NowMs(), /*reachJudged=*/false);
         }
     }
 }

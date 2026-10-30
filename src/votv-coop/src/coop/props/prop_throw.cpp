@@ -218,6 +218,11 @@ void Ended(void* actor) {
         if (g_rec[i].granted && g_rec[i].actor.Is(actor)) { Erase(i); return; }
 }
 
+void Abandon(void* actor) {
+    for (int i = 0; i < g_count; ++i)
+        if (!g_rec[i].granted && g_rec[i].actor.Is(actor)) { Erase(i); return; }
+}
+
 void NoteMark(const std::wstring& key, uint8_t slot, uint16_t seq, const float loc[3]) {
     for (size_t i = 0; i < g_marks.size(); ++i)
         if (g_marks[i].key == key) { g_marks.erase(g_marks.begin() + static_cast<std::ptrdiff_t>(i)); break; }

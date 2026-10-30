@@ -33,9 +33,12 @@ void OnClaim(coop::net::Session& s, const coop::net::PropSyncClaimPayload& p, ui
 // vehicle's syncer (CUnoccupiedVehicleSync.cpp OverrideSyncer). A driven row names the slot under a new generation
 // (converting the host row an earlier write left, or opening one) and the grant goes to it unasked, echoing `throwSeq`.
 // `releaseLoc` is the release's pose and `releaseMs` its arrival on this clock: the first row is measured from them.
-// False, counted, when the slot syncs kMaxThrowRowsPerSlot thrown props already, is not world-ready, or the prop cannot
-// open a row (the host's copy then keeps its own stream). Game thread.
-bool ElectSyncer(void* actor, uint8_t slot, uint16_t throwSeq, const float releaseLoc[3], uint64_t releaseMs);
+// A client's swing at a prop is elected the same way (coop/props/hit_target_prop), its sequence as `throwSeq` and the
+// serve's clock as `releaseMs`; swings and throws share the per-slot cap. False, counted, when the sequence is 0, the
+// slot syncs kMaxThrowRowsPerSlot thrown props already, is not world-ready, or the prop cannot open a row (the host's
+// copy then keeps its own stream). Game thread.
+bool ElectSyncer(void* actor, uint8_t slot, uint16_t throwSeq, const float releaseLoc[3], uint64_t releaseMs,
+                 bool reachJudged);
 
 // The drop intent's election, at the spawn watcher's birth coast, where the spawned prop has its element id: when
 // prop_throw holds a mark under `actor`'s key, elects the mark's thrower. True when it did (no birth coast then).

@@ -39,7 +39,8 @@ CFG_ENUM(join_prop_loss_drill, "join_prop_loss_drill", "dev", "off", "off|break|
     "joins; the peers sequence each other by lobby-chat lines and each prints `<role> <arm> PASS|FAIL|INCONCLUSIVE`, "
     "then DONE. break -- once the join is over the client calls a resting mirror's impactDamage with no hitting actor; "
     "its copy and the host's can must stand. fire -- the same with fireDamage. swing -- the client takes the axe, walks "
-    "within 150 cm of a host can's mirror and swings at it until its copy is gone or 20 swings, the first after the host has a pose for it; both copies must go. "
+    "within 150 cm of a host can's mirror and swings at it until its copy is gone or 20 swings, each aimed at the copy's place a moment before, the first after the host has a pose for it; "
+    "both copies must go, the client's by its own break as the elected syncer and the host's by that destroy. "
     "heldbreak -- the client takes a host can into its hand with the director's grab and calls its impactDamage; the "
     "copy must go and the host's can with it. rekey -- two cans 13.7 cm apart: the client destroys one before the "
     "join's snapshot bracket, then after the bracket the other must still carry its own key, each key must resolve to "
@@ -57,8 +58,9 @@ CFG_FLAG(prop_damage_gate_strict, "prop_damage_gate_strict", "dev", false, "VOTV
     "holds, threw or syncs the prop, so a prop it holds no longer breaks on its own count and the join prop loss "
     "drill's held-break arm must fail.")
 CFG_FLAG(hit_intent_refuse_prop, "hit_intent_refuse_prop", "dev", false, "VOTVCOOP_HIT_INTENT_REFUSE_PROP",
-    "Developer red arm: never set (HOST). The host takes no prop as the target of a client's hit, so a client's swing at a "
-    "host prop reaches nobody and the join prop loss drill's swing arm must fail: both copies of the can stand.")
+    "Developer red arm: never set (HOST). The host takes no prop as the target of a client's hit: it elects no swinger "
+    "and drives its own copy of the prop instead. The client's break is never granted, so the join prop loss drill's "
+    "swing arm must fail: the client's copy follows the host and both copies of the can stand.")
 CFG_FLAG(bracket_position_wait_off, "bracket_position_wait_off", "dev", false, "VOTVCOOP_BRACKET_POSITION_WAIT_OFF",
     "Developer red arm: never set (CLIENT). Inside the snapshot bracket a host spawn that matches a neighbour by "
     "position binds it on arrival, as it did before the bracket's end was awaited, so the bracket's eid order decides "

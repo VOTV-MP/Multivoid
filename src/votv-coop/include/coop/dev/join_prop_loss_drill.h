@@ -1,7 +1,8 @@
 // coop/dev/join_prop_loss_drill.h -- [dev] the join prop-loss drill: proves a joining client's own physics, and the join's
 // snapshot bracket, cannot cost the host a prop. Inert unless the join_prop_loss_drill row is set; the arm is its value.
 //   break / fire -- the client calls a resting mirror's impactDamage / fireDamage; its copy and the host's can stand.
-//   swing        -- the client axes a mirror of a host can; both copies go (the host's by its judged intents).
+//   swing        -- the client axes a mirror of a host can; its copy breaks as the elected syncer and the host's can goes by
+//                   that destroy.
 //   heldbreak    -- the client holds a host can and calls its impactDamage; a prop it holds is its own to break.
 //   rekey        -- the client destroys one of two cans 13.7 cm apart before the bracket; each key keeps its own actor.
 //   twin         -- the client replaces its copy of a can with a can of its own before the bracket; the key follows it.

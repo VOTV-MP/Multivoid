@@ -201,7 +201,8 @@ Driven* ElectClientRow(void* actor, uint8_t slot, const char* why) {
     if (!d) return OpenClientRow(actor, slot, why);
     if (InAHand(actor)) return nullptr;   // the held-prop lane owns a prop in a hand, as at Open
     // A host verb's row wins, as at OnClaim (a verb or push in flight is MTA's persistent syncer); the thrown prop
-    // stays the host's. Another client's row is stopped first, as MTA's OverrideSyncer calls StopSync on the old syncer
+    // stays the host's. A host row that only coasts (no verb's claim) does not: a throw or a swing into a moving prop
+    // is a player moving a moving prop, and takes it. Another client's row is stopped first, as MTA's OverrideSyncer calls StopSync on the old syncer
     // (CUnoccupiedVehicleSync.cpp:74): that client is told Revoked and stops streaming.
     if (d->syncer == 0 && d->claimed) return nullptr;
     if (d->syncer != 0 && d->syncer != slot) coop::prop_syncer_host::EndClientRow(*d, coop::prop_syncer_host::Ending::HostVerb);

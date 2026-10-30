@@ -37,7 +37,7 @@
 #include "coop/props/prop_fresh_spawn.h"   // the deferred-spawn materialiser
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/prop_stick_sync.h"    // ConvergeStuck, a wall-attach copy's stuck state
-#include "coop/props/prop_throw.h"         // SeqFor: the actor this peer just threw is not converged
+#include "coop/props/prop_throw.h"         // SeqFor: the actor this peer just threw or swung is not converged
 #include "coop/props/prop_wire_parity.h"   // the shared physics and collision helpers
 #include "coop/props/remote_prop.h"
 #include "coop/props/trash_mirror.h"  // a rooted real chipPile native as the pile mirror
@@ -392,11 +392,12 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             coop::remote_prop::RegisterPropMirror(payload.elementId, existing, keyW, classW, senderSlot);
             return;
         }
-        // The actor this peer threw a moment ago, which the host spawned from the thrower's drop intent: its copy is the
-        // arc, and the host's spawn pose is where the throw began. A converge here (the kinematic toggle zeroes the
-        // body's velocity, then the teleport) would end the flight it is about to be the syncer of. Bound, nothing else.
+        // The actor this peer threw or swung a moment ago (a throw's is the one the host spawned from the thrower's drop
+        // intent): its copy is the flight, and the host's spawn pose is where it began. A converge here (the kinematic
+        // toggle zeroes the body's velocity, then the teleport) would end the flight it is about to be the syncer of.
+        // Bound, nothing else.
         if (coop::prop_throw::SeqFor(existing) != 0) {
-            UE_LOGI("remote_prop::OnSpawn: key '%ls' is the prop this peer just threw -- skipping convergence (its arc is the truth)",
+            UE_LOGI("remote_prop::OnSpawn: key '%ls' is the prop this peer just threw or swung -- skipping convergence (its flight is the truth)",
                     keyW.c_str());
             coop::remote_prop::RegisterPropMirror(payload.elementId, existing, keyW, classW, senderSlot);
             return;

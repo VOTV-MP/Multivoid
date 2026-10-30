@@ -74,6 +74,10 @@ bool TakeForGrant(uint16_t seq, void** actor, uint64_t* startMs);
 // The granted row of `actor` ended on this peer (its rest End, or the host took it back): the record goes.
 void Ended(void* actor);
 
+// The request that minted `actor`'s record never left this peer: the record, not yet granted, goes at once, so the
+// prop reads as not authored and the next swing mints again.
+void Abandon(void* actor);
+
 // HOST: a client's release arrived (the finite check passed). Its velocity meets the throw bounds
 // (coop/net/throw_bounds.h): clamped in magnitude, direction kept, and counted. The release then goes to every
 // world-ready client but its sender, with the sender's slot kept as the origin, so each mirror clears the holder's

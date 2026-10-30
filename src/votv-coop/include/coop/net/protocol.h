@@ -1071,13 +1071,16 @@ enum class ReliableKind : uint8_t {
     // receive edge. Late join: the host's widget index to the joiner, after its world-ready. LaptopTabPayload.
     LaptopTabState = 186,
 
-    // Client to host: my player's swing hit the mirror of an entity the host owns. The client plays the hit's
-    // feedback at once, a cosmetic prediction, and cancels the mirror's own body; the host judges the swing (the
-    // sender's held item, its reach, its sight, the point on the target) and runs the verb on its real entity. The
-    // verb is generic (0 addDamage, 1 exploded, 2 ignite) and the host judges 0 only. Never relayed; no answer: the
-    // target's state is the host's and its death arrives as its destroy. Late join: none -- a request is an act.
-    // Trust: the id must name a live host element that is a hit target (a creature of a parked family, or a prop), the
-    // damage is clamped to the held item's, and intents run from a bounded queue at a bounded rate. HitIntentPayload.
+    // Client to host: my player's swing hit the mirror of an entity the host owns. A creature: the client plays the
+    // hit's feedback at once, a cosmetic prediction, and cancels the mirror's own body; the host judges the swing (the
+    // sender's held item, its reach, its sight, the point on the target) and runs the verb on its real entity. A prop:
+    // the swing runs on the client's copy, which the shove moves, and the intent carries the swing's sequence; the host
+    // judges the same way and elects the sender the prop's syncer (PropSyncAnswer, kind Throw, echoing the sequence),
+    // or streams the prop's own pose back when it refuses. The verb is generic (0 addDamage, 1 exploded, 2 ignite) and
+    // the host judges 0 only. Never relayed; a creature's death arrives as its destroy. Late join: none -- a request
+    // is an act. Trust: the id must name a live host element that is a hit target (a creature of a parked family, or a
+    // prop), the damage is clamped to the held item's, and intents run from a bounded queue at a bounded rate.
+    // HitIntentPayload.
     HitIntent = 187,
     // Host to client: an explosion the host's game ran, with its class, transform and parameters; the client
     // spawns its own copy there in the lane's scope (its own game's explosions are dissolved at birth). Never
@@ -3965,7 +3968,8 @@ inline constexpr uint8_t kHitVerbCount     = 3;
 struct HitIntentPayload {
     uint32_t targetEid;    // 4  -- the target's Element id
     uint8_t  verb;         // 1  -- kHitVerb*
-    uint8_t  pad[3];       // 3  -- zeroed
+    uint8_t  pad;          // 1  -- zeroed
+    uint16_t seq;          // 2  -- a prop target's swing sequence (prop_throw::MintFor), 0 for a creature
     float    damage;       // 4  -- the claimed amount
     float    hitLoc[3];    // 12 -- the impact point
     float    impact[3];    // 12 -- the hit's impulse

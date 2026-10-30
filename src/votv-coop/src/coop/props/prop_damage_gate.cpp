@@ -116,9 +116,10 @@ bool Lethal(Row row, const sg::Call& c) {
 
 // This client authors the prop only by a sequence its swing or throw minted and the host has not granted yet.
 bool AuthoredByPendingSeqOnly(void* prop) {
+    if (!coop::prop_throw::IsPending(prop)) return false;   // the cheap test: a scan of at most eight records
     void* me = coop::players::Registry::Get().Local();
     if (me && ue_wrap::engine::IsMainPlayerGrabbing(me, prop)) return false;
-    return coop::prop_throw::IsPending(prop) && !coop::prop_syncer::AuthorsActorHere(prop);
+    return !coop::prop_syncer::AuthorsActorHere(prop);
 }
 
 // The impactDamage call as values, for the record to keep.

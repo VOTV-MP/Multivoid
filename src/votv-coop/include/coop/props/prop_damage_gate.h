@@ -6,8 +6,9 @@
 // the call on a connected client when the owner is a prop (prop_C) this client does not author; the host decides the
 // prop's damage, and a break reaches the client as the host's destroy.
 //
-// This client authors the owner when it holds it in a hand grab, threw it (coop/props/prop_throw) or syncs it
-// (coop/props/prop_syncer, a pending claim included): its own copy is then the truth and its damage stands. A caller's
+// This client authors the owner when it holds it in a hand grab, threw or swung it (coop/props/prop_throw) or syncs it
+// (coop/props/prop_syncer, a pending claim included): its own copy is then the truth and its damage stands, except a
+// lethal call while only a throw's or a swing's sequence is pending, which waits for the grant (below). A caller's
 // identity is never read: a physics impact carries the struck prop as its actor, and a drill's call nests under our code.
 
 // The watches fail open: a dead one leaves that verb running on every copy, said in one ERROR line. Other owners (the

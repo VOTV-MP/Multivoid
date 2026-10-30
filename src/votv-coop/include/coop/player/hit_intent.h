@@ -1,17 +1,17 @@
 // coop/player/hit_intent.h -- a client's hit on an entity the host owns, as an intent the host judges.
 //
 // A client's swing (mainPlayer_C::attack) ends in the struck actor's own addDamage, with the player as the damager.
-// On a client the struck entity is a mirror of the host's, whose own damage would land nowhere or diverge. The
-// mirror's addDamage is watched instead: a target claims the call when this machine's own player is the damager --
-// a parked creature (coop/creatures/hit_target_creature), a prop this client does not author (coop/props/
-// hit_target_prop). The client then sends HitIntent -- the target's element id, the damage and impact the swing
-// claimed and the point it struck -- and cancels the call. The target's health and death stay the host's.
+// On a client the struck entity is a mirror of the host's. The mirror's addDamage is watched: a target claims the
+// call when this machine's own player is the damager -- a parked creature (coop/creatures/hit_target_creature), a prop
+// this client does not author (coop/props/hit_target_prop). The client sends HitIntent -- the target's element id, the
+// damage, the impact and the struck point. A creature's call is cancelled: its health and death stay the host's. A
+// prop's call runs and the intent carries a swing sequence: the host elects the sender the prop's syncer, as for a throw.
 //
-// The host queues a client's intents (cap 8, a pace of 4 then 2 a second, which bounds a swing rate), captures the
-// sender's eye and newest streamed aim from its puppet when the intent arrives, and serves one head a tick through
-// coop/player/hit_judge: the held item, the sender alive, the reach, the facing, the sight and the point on the
-// target. A pass runs the target's own addDamage with a null damager, so a client's kill credits no host
-// achievement. Nothing is sent back. A refusal is counted, and said once per sender and reason. Game thread.
+// The host queues a client's intents (cap 8, a pace of 4 then 2 a second), captures the sender's eye and newest
+// aim from its puppet at arrival, and serves one head a tick through coop/player/hit_judge: the held item, the sender
+// alive, the reach, the facing, the sight and the point on the target. A creature's pass runs its own addDamage with
+// a null damager; a refused swing at a prop makes the host stream the prop's own pose back. A refusal is counted,
+// and said once per sender and reason. Game thread.
 
 #pragma once
 
@@ -41,6 +41,7 @@ struct Swing {
     ue_wrap::FVector hitLoc{};
     ue_wrap::FVector impact{};
     float            damage = 0.f;
+    uint16_t         seq = 0;   // a prop target's claim sets it: the swing then runs, and the intent carries it
 };
 
 // CLIENT, for a target's claim: read the swing of an addDamage call whose damager is this machine's own player,

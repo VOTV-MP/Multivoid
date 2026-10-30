@@ -361,12 +361,17 @@ void OnClaim(coop::net::Session& s, const coop::net::PropSyncClaimPayload& p, ui
     Answer(s, slot, p.eid, p.seq, row->gen, PropSyncResult::Granted, PropSyncRefusal::None);
 }
 
-bool ElectSyncer(void* actor, uint8_t slot, uint16_t throwSeq, const float releaseLoc[3], uint64_t releaseMs) {
+bool ElectSyncer(void* actor, uint8_t slot, uint16_t throwSeq, const float releaseLoc[3], uint64_t releaseMs,
+                 bool reachJudged) {
     UE_ASSERT_GAME_THREAD("prop_syncer_host::ElectSyncer");
     static const bool s_noElect = coop::config::ResolveFlag(coop::config_registry::rows::container_throw_no_elect);
     if (s_noElect) return false;   // the throw arms' red: the host keeps its own simulation of the throw
-    if (!g_session || !actor || slot == 0 || throwSeq == 0) return false;
+    if (!g_session || !actor || slot == 0) return false;
     const uint32_t eid = static_cast<uint32_t>(coop::prop_element_tracker::GetPropElementIdForActor(actor));
+    if (throwSeq == 0) {
+        Tally(g_electRefused, "election refused: the request carries no sequence", eid, slot);
+        return false;
+    }
     // The grant is answered to the thrower alone, on a lane a slot that is not world-ready drops.
     if (!g_session->IsSlotWorldReady(slot)) {
         Tally(g_electRefused, "election refused: the thrower is not world-ready", eid, slot);
@@ -375,7 +380,9 @@ bool ElectSyncer(void* actor, uint8_t slot, uint16_t throwSeq, const float relea
     // The release is within the thrower's reach on the host: its puppet stands where a hand can have held the prop
     // (the claim's reach, kReachUU). MTA's takeover by a client (the push) is gated on contact radius too
     // (CUnoccupiedVehicleSync.cpp:490-505). Out of reach: the release applied as it always did, and elects nothing.
-    {
+    // A swing's caller has already judged the struck point against the held weapon's own reach from the eye
+    // (coop/player/hit_judge), which a long weapon carries past this hand's reach.
+    if (!reachJudged) {
         const ue_wrap::FVector at{releaseLoc[0], releaseLoc[1], releaseLoc[2]};
         if (EL::IntentTarget::ForClientIntent(*g_session, slot, kReachUU).AuthorizeSegment(at, at).outcome !=
             EL::IntentOutcome::Ok) {
@@ -428,7 +435,7 @@ bool ElectFromMark(void* actor) {
     if (!g_session || !actor || !coop::prop_throw::HasMarks()) return false;
     coop::prop_throw::Mark m;
     if (!coop::prop_throw::TakeMark(PR::GetInteractableKeyString(actor), &m)) return false;
-    return ElectSyncer(actor, m.slot, m.seq, m.loc, m.ms);
+    return ElectSyncer(actor, m.slot, m.seq, m.loc, m.ms, /*reachJudged=*/false);
 }
 
 void OnClientEnd(coop::net::Session& s, const coop::net::PropDriveEndPayload& sent, uint8_t slot) {

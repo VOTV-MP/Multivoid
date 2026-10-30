@@ -112,6 +112,7 @@ sg::Verdict OnAddDamagePre(const sg::Call& c) {
     coop::net::HitIntentPayload p{};
     p.targetEid = eid;
     p.verb = coop::net::kHitVerbAddDamage;
+    p.seq = swing.seq;
     p.damage = swing.damage;
     p.hitLoc[0] = swing.hitLoc.X;
     p.hitLoc[1] = swing.hitLoc.Y;
@@ -120,11 +121,15 @@ sg::Verdict OnAddDamagePre(const sg::Call& c) {
     p.impact[1] = swing.impact.Y;
     p.impact[2] = swing.impact.Z;
 
-    if (!s->SendReliableToSlot(0, coop::net::ReliableKind::HitIntent, &p, sizeof(p)))
+    if (!s->SendReliableToSlot(0, coop::net::ReliableKind::HitIntent, &p, sizeof(p))) {
         UE_LOGW("creature_hit_intent: the hit on target %u was not sent", p.targetEid);
-    else if (byProp)
-        coop::hit_target_prop::NoteSent(eid, swing.damage);
-    return sg::Verdict::Cancel;
+        if (byProp) coop::hit_target_prop::NoteUnsent(c.object);   // the minted record ends, so the next swing mints again
+        return sg::Verdict::Cancel;
+    }
+    if (!byProp) return sg::Verdict::Cancel;
+    // A swing at a prop runs on the copy, as a throw does: the host's election of the swinger decides whose it is.
+    coop::hit_target_prop::NoteSent(eid, swing.damage, swing.seq);
+    return sg::Verdict::Run;
 }
 
 // ---- host -----------------------------------------------------------------------------------------------------
@@ -160,8 +165,8 @@ ue_wrap::ObjKeyedCache<bool, 24> g_appliedSaid;   // the classes whose first app
 
 // `facing` is the measured facing cosine when the refusal is the facing bound's, else NaN; the reason's first line
 // carries it, so the bound's margin reads off the log.
-void Refuse(int slot, const char* why, float facing = std::nanf("")) {
-    if (slot < 1 || slot >= coop::players::kMaxPeers) return;
+bool Refuse(int slot, const char* why, float facing = std::nanf("")) {
+    if (slot < 1 || slot >= coop::players::kMaxPeers) return false;
     Slot& sl = g_slots[slot];
     for (Reason& r : sl.reasons) {
         if (r.why && std::strcmp(r.why, why) != 0) continue;
@@ -174,11 +179,13 @@ void Refuse(int slot, const char* why, float facing = std::nanf("")) {
                 UE_LOGI("creature_hit_intent: slot=%d refused %s", slot, why);
         }
         ++r.count;
-        return;
+        return false;
     }
+    return false;
 }
 
-void Serve(coop::net::Session& s, int slot, const Queued& q) {
+// True when the intent was served; false when it was refused (counted, and said once per reason).
+bool Serve(coop::net::Session& s, int slot, const Queued& q) {
     const coop::net::HitIntentPayload& p = q.req;
     if (!s.IsSlotWorldReady(slot)) return Refuse(slot, "slot not world-ready");
     if (!q.haveEye) return Refuse(slot, "no eye");
@@ -193,6 +200,7 @@ void Serve(coop::net::Session& s, int slot, const Queued& q) {
     float damage = 0.f;
     const char* why = nullptr;
     if (!coop::hit_judge::JudgeHit(slot, q.eye, q.aim, hitLoc, target, p.damage, damage, why)) {
+        if (!isCreature) coop::hit_target_prop::OnRefused(p.targetEid);   // the copy the swinger shoved is converged
         const bool notFacing = std::strcmp(why, "not facing") == 0;
         return Refuse(slot, why, notFacing ? coop::hit_judge::FacingCosine(q.aim, q.eye, hitLoc) : std::nanf(""));
     }
@@ -200,8 +208,12 @@ void Serve(coop::net::Session& s, int slot, const Queued& q) {
     coop::net::HitIntentPayload judged = p;
     judged.damage = damage;
     if (!isCreature) {
-        if (!coop::hit_target_prop::HostApply(p.targetEid, judged)) return Refuse(slot, "addDamage did not run");
-        return;
+        const char* applyWhy = nullptr;
+        if (!coop::hit_target_prop::HostApply(p.targetEid, static_cast<uint8_t>(slot), judged, applyWhy)) {
+            coop::hit_target_prop::OnRefused(p.targetEid);
+            return Refuse(slot, applyWhy);
+        }
+        return true;
     }
 
     // The first applied hit of a class says what it measured; the rest are counted (g_applied). Read before the
@@ -225,6 +237,7 @@ void Serve(coop::net::Session& s, int slot, const Queued& q) {
         UE_LOGI("creature_hit_intent: slot=%d creature=%ls damage=%.1f reach=%.0f target=%.0f facing=%.3f applied "
                 "(first of its class; the rest are counted)", slot, name.c_str(), damage, reach, away, facing);
     }
+    return true;
 }
 
 void ServeQueues(coop::net::Session& s) {
@@ -304,7 +317,10 @@ void OnIntent(int senderSlot, const coop::net::HitIntentPayload& payload) {
     // Slot 0 is the host, whose own swings never arrive over the wire.
     if (senderSlot < 1 || senderSlot >= coop::players::kMaxPeers) return;
     // A full queue refuses before anything is read: a flood must not pay the eye read per message.
-    if (g_slots[senderSlot].queue.size() >= kMaxPending) return Refuse(senderSlot, "queue full");
+    if (g_slots[senderSlot].queue.size() >= kMaxPending) {
+        Refuse(senderSlot, "queue full");
+        return;
+    }
     Queued q;
     q.req = payload;
     // Only a puppet that has had its first pose has an eye: before it, it stands at its spawn point. The aim is the

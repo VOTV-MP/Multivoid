@@ -2,7 +2,8 @@
 // coop/dev/join_prop_loss_drill_arms.h.
 //
 //   swing   -- the client takes the axe, walks within 150 cm of the mirror of a host can and fires the game's fire
-//              action at it, one swing every 600 ms, until its copy is gone or 20 swings.
+//              action at it, one swing every 600 ms, until its copy is gone or 20 swings. Each swing is aimed at the
+//              copy's place when it is due and waits for the camera to follow: a swing shoves the copy.
 //              The first swing waits for the host's line that its puppet for the client has a pose: the host reads a
 //              swing's eye from that puppet and refuses a swing made before it.
 //   throwat -- the client takes a beer can into its hand, walks within 300 cm of the mirror and throws it at the mirror
@@ -55,7 +56,8 @@ constexpr int      kMaxSwings = 20;
 constexpr uint64_t kHostSeesBudgetMs = 60000;   // the host sees the swinger within this, from the walk's end
 constexpr int      kMaxThrows = 3;
 constexpr uint64_t kSwingGapMs = 600;       // a player's swing rate
-constexpr uint64_t kAimMs = 300;            // the camera follows the control rotation on the next frames
+constexpr uint64_t kAimMs = 300;            // the throw's camera follows the control rotation on the next frames
+constexpr float    kAimToleranceDeg = 5.f;  // a swing's camera is on the copy within this
 constexpr uint64_t kSettleMs = 5000;        // a thrown can rests, or this long passes
 constexpr uint64_t kMinFlightMs = 400;      // no rest is read before the can has left the hand
 constexpr int      kRestTicks = 3;
@@ -77,6 +79,8 @@ FVector                   g_targetAt{};
 std::shared_ptr<DR::BackgroundWalk> g_walk;
 int                       g_swings = 0;
 bool                      g_hostSees = false;
+bool                      g_aiming = false;   // a swing's aim is out, its press waits for the camera to be on the copy
+uint64_t                  g_aimMs = 0;
 int                       g_throws = 0;
 std::vector<void*>        g_before;
 ue_wrap::CachedObjRef     g_thrown;
@@ -123,6 +127,21 @@ FVector TargetAt() {
 void FaceTarget(void* me) {
     void* ctrl = E::GetController(me);
     if (ctrl) E::SetControlRotation(ctrl, DR::LookAt(E::GetCameraLocation(), TargetAt()));
+}
+
+// The camera's forward lies within kAimToleranceDeg of the direction to the target: the control rotation written by
+// FaceTarget has reached the view.
+bool CameraOnTarget() {
+    constexpr float kDegToRad = 0.01745329252f;
+    const FVector cam = E::GetCameraLocation();
+    const FVector to = TargetAt();
+    const float dx = to.X - cam.X, dy = to.Y - cam.Y, dz = to.Z - cam.Z;
+    const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (!(len > 1.f)) return true;   // standing in the target: any heading faces it
+    const ue_wrap::FRotator r = E::GetCameraRotation();
+    const float p = r.Pitch * kDegToRad, y = r.Yaw * kDegToRad;
+    const float dot = (std::cos(p) * std::cos(y) * dx + std::cos(p) * std::sin(y) * dy + std::sin(p) * dz) / len;
+    return dot >= std::cos(kAimToleranceDeg * kDegToRad);
 }
 
 // The hand takes what the arm uses: the axe for a swing, a beer can for a throw.
@@ -196,7 +215,19 @@ void StepSwing(uint64_t now) {
     if (g_swings >= kMaxSwings || now < g_nextSwingMs) return;
     void* me = LocalPlayer();
     if (!me) return Abort("the local player is gone");
+    // The copy's place now, not where the last swing found it: the shove has moved it. The press waits until a tick
+    // reads the camera on the copy; the arm's host-sees budget bounds the wait.
     FaceTarget(me);
+    if (!g_aiming) {
+        g_aiming = true;
+        g_aimMs = now;
+        return;   // the write reaches the camera on the next tick
+    }
+    if (!CameraOnTarget()) {
+        if (now - g_aimMs >= kHostSeesBudgetMs) return Abort("the camera never turned to the copy");
+        return;
+    }
+    g_aiming = false;
     if (!DR::PressInputEvent(me, g_firePress) || !DR::PressInputEvent(me, g_fireRelease))
         return Abort("the fire input event did not run");
     ++g_swings;
@@ -288,6 +319,7 @@ void MeasureOnDisconnect() {
     g_targetAt = FVector{};
     g_swings = g_throws = g_restTicks = 0;
     g_hostSees = false;
+    g_aiming = false;
     g_before.clear();
     g_minDistCm = 1.0e9f;
 }
