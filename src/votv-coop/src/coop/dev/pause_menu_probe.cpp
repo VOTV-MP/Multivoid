@@ -58,6 +58,7 @@ constexpr const char* kLineClosed = "[PM] pause closed";
 constexpr double kM2WindowS = 10.0;
 constexpr auto kStepBound = std::chrono::seconds(30);
 constexpr auto kHostBound = std::chrono::seconds(180);
+constexpr auto kReadyBound = std::chrono::seconds(180);
 
 int ArmNow() {
     static const int arm =
@@ -65,8 +66,8 @@ int ArmNow() {
     return arm;
 }
 
-enum class Ph : uint8_t { Wait, HostWatch, Closed, Open, WaitOpen, AtOpen, M2Window, Close, WaitClosed,
-                          OpenFrames, Rows, RowFrames, Bind, Done };
+enum class Ph : uint8_t { Wait, HostWatch, Closed, WaitOpen, M2Window, WaitClosed, OpenFrames, Rows, RowFrames,
+                          Bind, ClosedEnd, Done };
 enum class Cond : uint8_t { None, Closed, Open, Rows };
 
 Ph    g_ph = Ph::Wait;
@@ -216,7 +217,9 @@ void Call0(void* fn) { R::CallFunction(g_menu, fn, nullptr); }
 void Finish() {
     bind::Release();  // the delegates it bound are written back before the widgets they sit on can be freed
     rows::Teardown();
-    if (g_menuOpen && g_menu && R::IsLiveByIndex(g_menu, g_menuIdx)) Call0(g_resumeFn);
+    // The game's own state, not our flag: a Fail between enterPause and the open edge leaves the menu opening.
+    if (coop::multiplayer_menu::IsPauseMenuOpen() && g_menu && g_resumeFn && R::IsLiveByIndex(g_menu, g_menuIdx))
+        Call0(g_resumeFn);
     g_menuOpen = false;
     Release();
     g_ph = Ph::Done;
@@ -228,8 +231,8 @@ void Fail(const char* why) {
 }
 
 void Done() {
-    UE_LOGI("pmprobe DONE %d", ArmNow());
     Finish();
+    UE_LOGI("pmprobe DONE %d", ArmNow());
 }
 
 bool Overdue(std::chrono::seconds bound) { return Clock::now() - g_stageAt > bound; }
@@ -340,7 +343,9 @@ void CloseMenu() {
 void AfterClosed() {
     bind::ReportDispatch(g_cycle, ViaEscape() ? "Escape open, direct resume" : "direct call");
     if (g_cycle < 3) return OpenMenu();
-    Done();
+    // The first closed window ran while a joining client still loaded the host; this one is the settled baseline.
+    ArmSampler(Cond::Closed, "daynightCycle_C::ReceiveTick(post)");
+    Stage(Ph::ClosedEnd);
 }
 
 void AtOpen() {
@@ -432,6 +437,12 @@ void Run() {
     case Ph::Rows:        return Rows();
     case Ph::RowFrames:   return RowFrames();
     case Ph::Bind:        return Bind();
+    case Ph::ClosedEnd:
+        if (Overdue(kStepBound)) return Fail("the day cycle actor's tick did not run 300 times at the end");
+        if (g_s.n < kFrames) return;
+        LogFrames("closed_end");
+        g_cond = Cond::None;
+        return Done();
     default:              return;
     }
 }
@@ -441,7 +452,11 @@ void Run() {
 void Tick(coop::net::Session* s) {
     if (ArmNow() <= 0 || g_ph == Ph::Done || !s || !s->running()) return;
     if (g_ph == Ph::Wait) {
-        if (!Ready(*s) || !Prepare(*s)) return;
+        if (g_stageAt.time_since_epoch().count() == 0) g_stageAt = Clock::now();
+        if (!Ready(*s) || !Prepare(*s)) {
+            if (g_ph == Ph::Wait && Overdue(kReadyBound)) Fail("the pause menu or the session was not ready");
+            return;
+        }
         if (g_hostWatch) { Stage(Ph::HostWatch); return; }
         ArmSampler(Cond::Closed, "daynightCycle_C::ReceiveTick(post)");
         return Stage(Ph::Closed);

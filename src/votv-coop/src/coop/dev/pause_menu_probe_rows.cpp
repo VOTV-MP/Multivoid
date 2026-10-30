@@ -33,7 +33,6 @@ namespace NS = ui::native_screen;
 constexpr int kSmall = 12;
 constexpr int kLarge = 100;
 constexpr int kRebinds = 60;
-constexpr int kButtons = 4;
 constexpr float kBoxW = 600.f, kBoxH = 320.f;
 
 // One row: the server browser's cells in kind (a text, a slider, four buttons), the three texts a rebind

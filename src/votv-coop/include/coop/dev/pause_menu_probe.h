@@ -3,8 +3,8 @@
 // a world, it opens the pause menu through its own enterPause and closes it through resume, three times, and
 // prints "pmprobe" lines: m1 the widget tree and whether the third open rebuilt it, m4 frame time (300 frames,
 // the tick source named), arm 2 adds m3 (rows built and rebound inside the open menu, the settings row class),
-// arm 3 adds m5 (a click and a slide bound to a native function an interceptor swallows, pressed as the engine
-// broadcasts them; how enterPause and resume are reached from Escape). On a client (m2) the arms add a pause held
+// arm 3 adds m5 (a click and a slide bound to a native function an interceptor swallows, pressed the way the
+// multicast broadcast loop does (each bound pair through the detoured ProcessEvent); how enterPause and resume are reached from Escape). On a client (m2) the arms add a pause held
 // open for a window, its edges said on drill chat, and both peers log the wire counters, the paused state and the
 // hotkeys' state; its host runs arm 4, which only watches. The role is the row's, never who is connected. It ends with "pmprobe DONE <arm>"
 // or "pmprobe FAIL: <why>". Every wait ends on a readiness condition; a bound on it is only a fail-safe.

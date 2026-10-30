@@ -2,8 +2,10 @@
 // delegate bound to a native function can be caught by an interceptor on that function, and what that
 // function costs the rest of the game. See coop/dev/pause_menu_probe.h.
 //
-// A bound dynamic delegate is broadcast by the engine as one ProcessEvent per bound (object, function) pair,
-// so the target need not be a Blueprint function and the interceptor, which keys on the UFunction, sees it.
+// The probe fires a bound dynamic delegate the way the multicast broadcast loop does (each bound (object,
+// function) pair through the detoured ProcessEvent), so the target need not be a Blueprint function and the
+// interceptor, which keys on the UFunction, sees it. That proves the ProcessEvent route of a bound pair, not
+// the engine's own broadcast.
 // The target must be one the game never dispatches through ProcessEvent, or the interceptor would be asked
 // about every other caller: a count of PE dispatches is what proves that, and a Blueprint calling a native
 // function directly never passes ProcessEvent and so never reaches an interceptor either.
@@ -47,7 +49,6 @@ UE_FACT_FN(kRowMaxValue, "pause_menu_probe", L"Slider", L"SetMaxValue", Declared
 
 // The steady-state window the candidates are counted over before one is bound.
 constexpr auto kWindow = std::chrono::seconds(60);
-constexpr int  kButtons = 4;
 
 // FScriptDelegate: a weak object pointer and the function's name. A multicast delegate is the array of them.
 struct ScriptDelegate {
@@ -141,8 +142,9 @@ void LogSeen(const char* name, const Seen& s) {
             static_cast<unsigned long long>(s.gate), static_cast<unsigned long long>(s.gateOurs));
 }
 
-// The engine's own broadcast of a multicast delegate: each bound (object, function) pair dispatched through
-// the engine's ProcessEvent entry, the one our detour sits on, with the delegate signature's parameter block.
+// A multicast delegate fired the way the broadcast loop does: each bound (object, function) pair dispatched
+// through the engine's ProcessEvent entry, the one our detour sits on, with the delegate signature's parameter
+// block.
 // reflection::CallFunction calls that entry, not the detour's trampoline.
 int Broadcast(void* widget, int32_t off, void* parms) {
     const auto* md = reinterpret_cast<const MulticastDelegate*>(static_cast<uint8_t*>(widget) + off);
@@ -206,10 +208,11 @@ void Unbind() {
 
 char g_why[320];
 
-// The first usable candidate of the kind with no dispatch of the game's in the window; null when none.
+// The first usable candidate of the kind with no dispatch of the game's in the window; null when none. A
+// candidate whose observer was not taken counted nothing, so it proves nothing and is not chosen.
 Cand* Silent(bool slider) {
     for (Cand& c : g_c)
-        if (c.slider == slider && c.usable && c.count == 0) return &c;
+        if (c.slider == slider && c.usable && c.observed && c.count == 0) return &c;
     return nullptr;
 }
 
@@ -217,8 +220,8 @@ void NoSilentWhy() {
     int n = std::snprintf(g_why, sizeof(g_why), "no silent candidate:");
     for (const Cand& c : g_c)
         if (c.usable && n > 0 && n < static_cast<int>(sizeof(g_why)))
-            n += std::snprintf(g_why + n, sizeof(g_why) - static_cast<size_t>(n), " %ls=%llu", c.row->Name(),
-                               static_cast<unsigned long long>(c.count));
+            n += std::snprintf(g_why + n, sizeof(g_why) - static_cast<size_t>(n), " %ls=%llu(observed=%d)",
+                               c.row->Name(), static_cast<unsigned long long>(c.count), c.observed ? 1 : 0);
 }
 
 // Presses one widget and judges it: exactly one interceptor hit, on the row it belongs to. `value` is the float
@@ -343,6 +346,12 @@ Step Advance(const char** why) {
 void Release() {
     Unbind();
     if (!g_started) return;
+    const double total = std::chrono::duration<double>(Clock::now() - g_start).count();
+    for (const Cand& c : g_c)
+        if (c.observed)
+            UE_LOGI("pmprobe m5 count_total %ls.%ls = %llu PE dispatches in %.1fs since registration (+%llu by our own calls)",
+                    c.row->Class(), c.row->Name(), static_cast<unsigned long long>(c.count), total,
+                    static_cast<unsigned long long>(c.coop));
     for (Cand& c : g_c)
         if (c.observed) GT::UnregisterObservers(c.fn.Fn(), &OnCand);
     for (Seen* s : {&g_enter, &g_resume}) {

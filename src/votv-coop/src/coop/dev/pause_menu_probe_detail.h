@@ -11,6 +11,9 @@ namespace coop::dev::pause_menu_probe::detail {
 // One frame-time sample set per condition.
 inline constexpr int kFrames = 300;
 
+// The buttons of one row, in the rows measurement and in the bound-delegate measurement that walks them.
+inline constexpr int kButtons = 4;
+
 // A widget's identity: its address and the serial of its object-array slot, which a rebuilt widget at a
 // recycled address would not share.
 struct Ident {
