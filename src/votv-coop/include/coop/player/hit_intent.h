@@ -4,7 +4,7 @@
 // On a client the struck creature is a mirror of the host's, whose Blueprint graph coop/creatures/npc_mirror_brain
 // refuses, so the hit would land nowhere. The mirror's addDamage is watched instead: a target (coop/creatures/
 // hit_target_creature) claims the call when this machine's own player is the damager and the mirror's family is
-// parked (coop/creatures/npc_mirror_brain.h); the client then sends CreatureHitIntent -- the creature's element id,
+// parked (coop/creatures/npc_mirror_brain.h); the client then sends HitIntent -- the creature's element id,
 // the damage and impact the swing claimed and the point it struck -- and cancels the call. The target plays the hit's
 // feedback at once, a cosmetic prediction. The creature's health, death and corpse stay the host's.
 //
@@ -22,7 +22,7 @@
 
 namespace coop::net {
 class Session;
-struct CreatureHitIntentPayload;
+struct HitIntentPayload;
 }  // namespace coop::net
 
 namespace ue_wrap::script_gate {
@@ -61,7 +61,7 @@ void Tick();
 // copy of the swing's inputs: the Blueprint swing reads the swinging pawn's own weapon data and camera and applies its
 // hit to every actor its line trace strikes, and the host's puppet is not known to hold those inputs, so the
 // swing is not replayed on it. The client reports the struck point and the host judges it.
-void OnIntent(int senderSlot, const coop::net::CreatureHitIntentPayload& payload);
+void OnIntent(int senderSlot, const coop::net::HitIntentPayload& payload);
 
 // Net disconnect: the once-per-session log latches are forgotten. A sender's queue and counts go with its occupant
 // (the roster ledger clears them), not here.

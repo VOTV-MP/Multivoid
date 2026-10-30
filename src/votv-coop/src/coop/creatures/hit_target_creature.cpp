@@ -81,7 +81,7 @@ uint32_t ClientClaim(const sg::Call& c) {
 
 void* HostTarget(uint32_t eid) { return CreatureOf(eid); }
 
-bool HostApply(uint32_t eid, const coop::net::CreatureHitIntentPayload& judged) {
+bool HostApply(uint32_t eid, const coop::net::HitIntentPayload& judged) {
     void* creature = CreatureOf(eid);
     if (!creature) return false;
     const FVector hitLoc{judged.hitLoc[0], judged.hitLoc[1], judged.hitLoc[2]};

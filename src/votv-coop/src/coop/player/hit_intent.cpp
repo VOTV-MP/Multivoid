@@ -102,9 +102,9 @@ sg::Verdict OnAddDamagePre(const sg::Call& c) {
     Swing swing;
     if (!ReadLocalSwing(c, swing)) return sg::Verdict::Run;
 
-    coop::net::CreatureHitIntentPayload p{};
-    p.creatureEid = eid;
-    p.verb = coop::net::kCreatureHitVerbAddDamage;
+    coop::net::HitIntentPayload p{};
+    p.targetEid = eid;
+    p.verb = coop::net::kHitVerbAddDamage;
     p.damage = swing.damage;
     p.hitLoc[0] = swing.hitLoc.X;
     p.hitLoc[1] = swing.hitLoc.Y;
@@ -113,8 +113,8 @@ sg::Verdict OnAddDamagePre(const sg::Call& c) {
     p.impact[1] = swing.impact.Y;
     p.impact[2] = swing.impact.Z;
 
-    if (!s->SendReliableToSlot(0, coop::net::ReliableKind::CreatureHitIntent, &p, sizeof(p)))
-        UE_LOGW("creature_hit_intent: the hit on creature %u was not sent", p.creatureEid);
+    if (!s->SendReliableToSlot(0, coop::net::ReliableKind::HitIntent, &p, sizeof(p)))
+        UE_LOGW("creature_hit_intent: the hit on creature %u was not sent", p.targetEid);
     return sg::Verdict::Cancel;
 }
 
@@ -128,7 +128,7 @@ constexpr size_t kMaxPending = 8;
 // An intent with the sender's eye and its unit aim vector as the host held them when the intent arrived: it is judged
 // against the pose the swing was made at, not the pose of the tick that serves it.
 struct Queued {
-    coop::net::CreatureHitIntentPayload req;
+    coop::net::HitIntentPayload req;
     FVector eye{};
     FVector aim{};
     bool haveEye = false;
@@ -170,11 +170,11 @@ void Refuse(int slot, const char* why, float facing = std::nanf("")) {
 }
 
 void Serve(coop::net::Session& s, int slot, const Queued& q) {
-    const coop::net::CreatureHitIntentPayload& p = q.req;
+    const coop::net::HitIntentPayload& p = q.req;
     if (!s.IsSlotWorldReady(slot)) return Refuse(slot, "slot not world-ready");
     if (!q.haveEye) return Refuse(slot, "no eye");
-    if (p.verb != coop::net::kCreatureHitVerbAddDamage) return Refuse(slot, "unjudged verb");
-    void* creature = coop::hit_target_creature::HostTarget(p.creatureEid);
+    if (p.verb != coop::net::kHitVerbAddDamage) return Refuse(slot, "unjudged verb");
+    void* creature = coop::hit_target_creature::HostTarget(p.targetEid);
     if (!creature) return Refuse(slot, "no such creature");
 
     const FVector hitLoc{p.hitLoc[0], p.hitLoc[1], p.hitLoc[2]};
@@ -199,9 +199,9 @@ void Serve(coop::net::Session& s, int slot, const Queued& q) {
         facing = coop::hit_judge::FacingCosine(q.aim, q.eye, hitLoc);
         name = R::ClassNameOf(creature);
     }
-    coop::net::CreatureHitIntentPayload judged = p;
+    coop::net::HitIntentPayload judged = p;
     judged.damage = damage;
-    if (!coop::hit_target_creature::HostApply(p.creatureEid, judged))
+    if (!coop::hit_target_creature::HostApply(p.targetEid, judged))
         return Refuse(slot, "addDamage did not run");
     ++g_applied;
     if (say) {
@@ -279,10 +279,10 @@ void Tick() {
     if (s && s->running() && s->role() == coop::net::Role::Host) ServeQueues(*s);
 }
 
-void OnIntent(int senderSlot, const coop::net::CreatureHitIntentPayload& payload) {
+void OnIntent(int senderSlot, const coop::net::HitIntentPayload& payload) {
     coop::net::Session* s = LoadSession();
     if (!s || s->role() != coop::net::Role::Host) {
-        UE_LOGW("creature_hit_intent: CreatureHitIntent received on a non-host -- dropping");
+        UE_LOGW("creature_hit_intent: HitIntent received on a non-host -- dropping");
         return;
     }
     // Slot 0 is the host, whose own swings never arrive over the wire.

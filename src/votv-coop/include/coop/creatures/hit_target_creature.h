@@ -9,7 +9,7 @@
 #include <cstdint>
 
 namespace coop::net {
-struct CreatureHitIntentPayload;
+struct HitIntentPayload;
 }  // namespace coop::net
 
 namespace ue_wrap::script_gate {
@@ -27,7 +27,7 @@ void* HostTarget(uint32_t eid);
 
 // HOST: run the creature's own addDamage with a null damager, with the damage the judge allowed. False when the call
 // did not run.
-bool HostApply(uint32_t eid, const coop::net::CreatureHitIntentPayload& judged);
+bool HostApply(uint32_t eid, const coop::net::HitIntentPayload& judged);
 
 // Net disconnect: the once-per-session log latch is forgotten.
 void OnDisconnect();
