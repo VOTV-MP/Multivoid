@@ -10,6 +10,7 @@
 #include "coop/props/prop_throw.h"
 
 #include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/obj_keyed_cache.h"
 #include "ue_wrap/core/reflection.h"
@@ -19,6 +20,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 
 namespace coop::props::prop_damage_gate {
 namespace {
@@ -52,7 +54,105 @@ bool Strict() {
 }
 
 unsigned long long                g_cancelled[kRows] = {};
+unsigned long long                g_held[kRows] = {};   // lethal calls cancelled while a grant is awaited
+unsigned long long                g_replayed = 0;
 ue_wrap::ObjKeyedCache<bool, 24>  g_said[kRows];   // the owner classes whose first cancelled call has been said
+ue_wrap::ObjKeyedCache<bool, 24>  g_heldSaid[kRows];
+
+R::ParamOffset g_damageOff[kRows] = {R::ParamOffset{L"damage"}, R::ParamOffset{L"damage"}};
+R::ParamOffset g_impactOff{L"impact"};
+R::ParamOffset g_hitOff{L"hit"};
+R::ParamOffset g_actorOff{L"actor"};
+
+// A parameter's storage in the call: the caller's, for an out or reference parameter, else the frame's own slot.
+const uint8_t* ParamBytes(const sg::Call& c, int32_t offset) {
+    if (offset < 0 || !c.locals) return nullptr;
+    const uint8_t* out = sg::OutParamPtr(c, offset);
+    return out ? out : c.locals + offset;
+}
+
+// Where the component keeps its health and the resistance its damage is divided by (damageData's inner member).
+struct CompOffsets {
+    int32_t health = -1;
+    int32_t damageData = -1;
+    int32_t resistance = -1;
+    bool    resolved = false;
+};
+
+const CompOffsets& OffsetsOf(void* comp) {
+    static CompOffsets o;
+    if (o.resolved) return o;
+    void* cls = R::ClassOf(comp);
+    if (!cls) return o;
+    o.health = R::FindPropertyOffset(cls, L"health");
+    o.damageData = R::FindPropertyOffset(cls, L"damageData");
+    void* st = R::PropertyInnerStruct(cls, L"damageData");
+    o.resistance = st ? R::FindPropertyOffsetByPrefix(st, L"damageResistance_") : -1;
+    o.resolved = true;
+    if (o.health < 0 || o.damageData < 0 || o.resistance < 0)
+        UE_LOGE("prop_damage_gate: the component's health (%d) or damageData.damageResistance (%d+%d) did not resolve -- "
+                "a lethal call on a prop awaiting its grant runs", o.health, o.damageData, o.resistance);
+    return o;
+}
+
+// Whether this call would bring the component's health to zero or below, by the component's own arithmetic: an impact
+// is gated on damage / resistance > 1 and takes that quotient from the health; a fire takes the damage itself. A
+// resistance of 0 is lethal, as the division makes it. False when the figures cannot be read.
+bool Lethal(Row row, const sg::Call& c) {
+    const CompOffsets& o = OffsetsOf(c.object);
+    if (o.health < 0 || o.damageData < 0 || o.resistance < 0) return false;
+    float damage = 0.f;
+    const uint8_t* d = ParamBytes(c, g_damageOff[row].Of(c.function));
+    if (!d) return false;
+    std::memcpy(&damage, d, sizeof(damage));
+    const uint8_t* base = static_cast<const uint8_t*>(c.object);
+    float health = 0.f, resistance = 0.f;
+    std::memcpy(&health, base + o.health, sizeof(health));
+    std::memcpy(&resistance, base + o.damageData + o.resistance, sizeof(resistance));
+    if (row == kFire) return health - damage <= 0.f;
+    const float taken = damage / resistance;
+    return taken > 1.f && health - taken <= 0.f;
+}
+
+// This client authors the prop only by a sequence its swing or throw minted and the host has not granted yet.
+bool AuthoredByPendingSeqOnly(void* prop) {
+    void* me = coop::players::Registry::Get().Local();
+    if (me && ue_wrap::engine::IsMainPlayerGrabbing(me, prop)) return false;
+    return coop::prop_throw::IsPending(prop) && !coop::prop_syncer::AuthorsActorHere(prop);
+}
+
+// The impactDamage call as values, for the record to keep.
+void CaptureBreak(const sg::Call& c, coop::prop_throw::DeferredBreak& b) {
+    b.comp.Set(c.object);
+    if (const uint8_t* d = ParamBytes(c, g_damageOff[kImpact].Of(c.function))) std::memcpy(&b.damage, d, sizeof(b.damage));
+    if (const uint8_t* i = ParamBytes(c, g_impactOff.Of(c.function))) std::memcpy(b.impact, i, sizeof(b.impact));
+    void* causer = nullptr;
+    if (const uint8_t* a = ParamBytes(c, g_actorOff.Of(c.function))) std::memcpy(&causer, a, sizeof(causer));
+    if (causer && R::IsLive(causer)) b.causer.Set(causer);
+    const int32_t hitSize = R::FindParamSize(c.function, L"hit");
+    const uint8_t* h = ParamBytes(c, g_hitOff.Of(c.function));
+    if (h && hitSize > 0 && hitSize <= coop::prop_throw::kMaxHitBytes) {
+        std::memcpy(b.hit, h, static_cast<size_t>(hitSize));
+        b.hitSize = hitSize;
+    }
+}
+
+// A lethal call on a prop whose grant is awaited: cancelled. An impact is held for the grant, a fire is dropped.
+sg::Verdict HoldLethal(Row row, const sg::Call& c, void* owner) {
+    ++g_held[row];
+    void* const cls = R::ClassOf(owner);
+    if (!g_heldSaid[row].Find(cls)) {
+        g_heldSaid[row].Insert(cls, true);
+        UE_LOGI("prop_damage_gate: a lethal %s on a prop awaiting its grant is %s (cls=%ls)", kVerb[row],
+                row == kImpact ? "held for it" : "dropped", R::ClassNameOf(owner).c_str());
+    }
+    if (row == kImpact) {
+        coop::prop_throw::DeferredBreak b;
+        CaptureBreak(c, b);
+        coop::prop_throw::HoldBreak(owner, b);
+    }
+    return sg::Verdict::Cancel;
+}
 
 sg::Verdict Judge(Row row, const sg::Call& c) {
     if (Off()) return sg::Verdict::Run;
@@ -60,7 +160,12 @@ sg::Verdict Judge(Row row, const sg::Call& c) {
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return sg::Verdict::Run;
     void* owner = R::OuterOf(c.object);
     if (!owner || !ue_wrap::prop::IsDescendantOfProp(owner)) return sg::Verdict::Run;
-    if (!Strict() && AuthoredHere(owner)) return sg::Verdict::Run;
+    if (!Strict() && AuthoredHere(owner)) {
+        // A non-lethal call runs; a lethal one waits for the grant, since a break before it would delete the host's
+        // prop even when the host refuses the election.
+        if (AuthoredByPendingSeqOnly(owner) && Lethal(row, c)) return HoldLethal(row, c, owner);
+        return sg::Verdict::Run;
+    }
 
     // MTA lets the mirror break locally and sends nothing:
     // reference/mtasa-blue/Client/mods/deathmatch/logic/CClientGame.cpp:4894-4925. The server's is the shared break:
@@ -95,6 +200,26 @@ bool AuthoredHere(void* prop) {
     return coop::prop_syncer::AuthorsActorHere(prop);
 }
 
+void ReplayAtGrant(void* actor) {
+    coop::prop_throw::DeferredBreak b;
+    if (!coop::prop_throw::TakeBreak(actor, &b)) return;
+    void* const comp = b.comp.Alive() ? b.comp.Get() : nullptr;
+    void* const fn = comp ? R::FindFunction(R::ClassOf(comp), L"impactDamage") : nullptr;
+    ue_wrap::ParamFrame f(fn);
+    if (!fn || !f.valid()) {
+        UE_LOGW("prop_damage_gate: the held impactDamage cannot replay -- its component is gone or has no such function");
+        return;
+    }
+    f.Set<float>(L"damage", b.damage);
+    f.SetRaw(L"impact", b.impact, static_cast<int32_t>(sizeof(b.impact)));
+    if (b.hitSize > 0) f.SetRaw(L"hit", b.hit, b.hitSize);
+    f.Set<void*>(L"actor", b.causer.Alive() ? b.causer.Get() : nullptr);
+    ++g_replayed;
+    UE_LOGI("prop_damage_gate: the held impactDamage replays at its grant (damage=%.1f, causer %s) (#%llu)",
+            static_cast<double>(b.damage), b.causer.Alive() ? "alive" : "gone", g_replayed);
+    ue_wrap::Call(comp, f);
+}
+
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (!session || session->role() != coop::net::Role::Client) return;
@@ -127,9 +252,15 @@ void OnDisconnect() {
     if (g_cancelled[kImpact] != 0 || g_cancelled[kFire] != 0)
         UE_LOGI("prop_damage_gate: %llu impactDamage and %llu fireDamage calls cancelled this session",
                 g_cancelled[kImpact], g_cancelled[kFire]);
+    if (g_held[kImpact] != 0 || g_held[kFire] != 0 || g_replayed != 0)
+        UE_LOGI("prop_damage_gate: %llu lethal impactDamage held and %llu replayed, %llu lethal fireDamage dropped "
+                "while a grant was awaited this session", g_held[kImpact], g_replayed, g_held[kFire]);
+    g_replayed = 0;
     for (int i = 0; i < kRows; ++i) {
         g_cancelled[i] = 0;
+        g_held[i] = 0;
         g_said[i].Clear();
+        g_heldSaid[i].Clear();
     }
 }
 

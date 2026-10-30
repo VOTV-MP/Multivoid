@@ -21,7 +21,7 @@
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_drive_host.h"    // Coast: the host's own throw streams to rest
 #include "coop/props/prop_syncer.h"        // Claim: a dragged swinger's parent prop
-#include "coop/props/prop_throw.h"        // SeqFor: a release of a prop the game's throw launched
+#include "coop/props/prop_throw.h"        // ThrowSeqFor: a release of a prop the game's throw launched
 #include "coop/props/prop_wire_parity.h"  // PhysFlagsOf, the flags a release carries
 #include "coop/props/remote_prop.h"     // ResolveMirrorEidByActor (the bound-clump held-pose eid fallback)
 #include "coop/props/trash_collect_sync.h"
@@ -336,7 +336,7 @@ void SendHeldRelease(coop::net::Session& session) {
         rel.elementId = relEid;  // a keyless clump is routed by eid (key None cannot disambiguate)
         rel.holdGen = g_holdGen;
         // The game's own throw ran on this copy (prop_throw): the release says so, and every receiver plays the throw.
-        if (g_lastHeldProp.Alive()) rel.throwSeq = throwSeq = coop::prop_throw::SeqFor(g_lastHeldProp.Raw());
+        if (g_lastHeldProp.Alive()) rel.throwSeq = throwSeq = coop::prop_throw::ThrowSeqFor(g_lastHeldProp.Raw());
         if (g_lastHeldProp.Alive()) {
             rel.physFlags = coop::prop_wire_parity::PhysFlagsOf(g_lastHeldProp.Raw());
             // Where the hold let go, so a receiver whose last poses were lost lets go from here;

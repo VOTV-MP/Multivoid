@@ -35,6 +35,9 @@ struct Record {
     ue_wrap::CachedObjRef actor;
     uint64_t              startMs = 0;
     bool                  granted = false;
+    bool                  swing = false;      // a swing's election, not the game's throw
+    bool                  hasBreak = false;
+    DeferredBreak         brk;                // the one lethal impactDamage held until the grant; dies with the record
 };
 Record g_rec[tb::kMaxPendingThrows];
 int    g_count = 0;
@@ -49,9 +52,12 @@ bool     g_watchRegistered = false;
 bool     g_watchSettled = false;
 bool     g_boundsSaid = false;
 uint64_t g_nextWatchMs = 0;
-uint32_t g_minted = 0, g_puppetIgnored = 0, g_noOwner = 0, g_evicted = 0, g_marksDropped = 0;
+uint32_t g_minted = 0, g_puppetIgnored = 0, g_noOwner = 0, g_evicted = 0, g_marksDropped = 0, g_breaksDropped = 0;
 
 void Erase(int i) {
+    if (g_rec[i].hasBreak && (++g_breaksDropped == 1 || (g_breaksDropped % 100) == 0))
+        UE_LOGI("prop_throw: seq=%u ended without a grant -- its held break is dropped (#%u)",
+                static_cast<unsigned>(g_rec[i].seq), g_breaksDropped);
     for (int k = i; k + 1 < g_count; ++k) g_rec[k] = g_rec[k + 1];
     g_rec[--g_count] = Record{};
 }
@@ -59,24 +65,6 @@ void Erase(int i) {
 uint16_t NextSeq() {
     if (++g_seq == 0) ++g_seq;
     return g_seq;
-}
-
-void Mint(void* actor) {
-    const uint64_t now = coop::active_drive::NowMs();
-    for (int i = 0; i < g_count; ++i)
-        if (g_rec[i].actor.Is(actor)) { Erase(i); break; }   // a re-throw: the newer record is the prop's
-    if (g_count == tb::kMaxPendingThrows) {   // the oldest waits no longer
-        Erase(0);
-        if (++g_evicted == 1) UE_LOGW("prop_throw: %d throws await a grant -- the oldest record dropped", tb::kMaxPendingThrows);
-    }
-    Record& r = g_rec[g_count++];
-    r.seq = NextSeq();
-    r.actor.Set(actor);
-    r.startMs = now;
-    r.granted = false;
-    ++g_minted;
-    UE_LOGI("prop_throw: throw seq=%u actor=%p cls='%ls' (#%u)", static_cast<unsigned>(r.seq), actor,
-            R::ClassNameOf(actor).c_str(), g_minted);
 }
 
 // POST: throwShit ran and set the launch velocity. The thrown actor is the owner of the component it was given.
@@ -94,7 +82,7 @@ void OnThrowShitPost(const SG::Call& c) {
         if (++g_noOwner == 1) UE_LOGW("prop_throw: throwShit's component has no live owner -- no sequence minted");
         return;
     }
-    Mint(actor);
+    MintFor(actor, false);
 }
 
 // Register the watch, then ask the gate to resolve its name until it is live or settled dead: at most once a
@@ -150,10 +138,67 @@ void Tick() {
     }
 }
 
+uint16_t MintFor(void* actor, bool swing) {
+    const uint64_t now = coop::active_drive::NowMs();
+    for (int i = 0; i < g_count; ++i)
+        if (g_rec[i].actor.Is(actor)) { Erase(i); break; }   // a re-throw: the newer record is the prop's
+    if (g_count == tb::kMaxPendingThrows) {   // the oldest waits no longer
+        Erase(0);
+        if (++g_evicted == 1) UE_LOGW("prop_throw: %d throws await a grant -- the oldest record dropped", tb::kMaxPendingThrows);
+    }
+    Record& r = g_rec[g_count++];
+    r.seq = NextSeq();
+    r.actor.Set(actor);
+    r.startMs = now;
+    r.granted = false;
+    r.swing = swing;
+    r.hasBreak = false;
+    ++g_minted;
+    UE_LOGI("prop_throw: %s seq=%u actor=%p cls='%ls' (#%u)", swing ? "swing" : "throw", static_cast<unsigned>(r.seq),
+            actor, R::ClassNameOf(actor).c_str(), g_minted);
+    return r.seq;
+}
+
 uint16_t SeqFor(void* actor) {
     for (int i = 0; i < g_count; ++i)
         if (g_rec[i].actor.Is(actor)) return g_rec[i].seq;
     return 0;
+}
+
+uint16_t ThrowSeqFor(void* actor) {
+    for (int i = 0; i < g_count; ++i)
+        if (g_rec[i].actor.Is(actor)) return g_rec[i].swing ? 0 : g_rec[i].seq;
+    return 0;
+}
+
+bool IsPending(void* actor) {
+    for (int i = 0; i < g_count; ++i)
+        if (g_rec[i].actor.Is(actor)) return !g_rec[i].granted;
+    return false;
+}
+
+bool HoldBreak(void* actor, const DeferredBreak& b) {
+    for (int i = 0; i < g_count; ++i) {
+        Record& r = g_rec[i];
+        if (!r.actor.Is(actor)) continue;
+        if (r.granted || r.hasBreak) return false;
+        r.brk = b;
+        r.hasBreak = true;
+        return true;
+    }
+    return false;
+}
+
+bool TakeBreak(void* actor, DeferredBreak* out) {
+    for (int i = 0; i < g_count; ++i) {
+        Record& r = g_rec[i];
+        if (!r.granted || !r.hasBreak || !r.actor.Is(actor)) continue;
+        if (out) *out = r.brk;
+        r.hasBreak = false;
+        r.brk = DeferredBreak{};
+        return true;
+    }
+    return false;
 }
 
 bool TakeForGrant(uint16_t seq, void** actor, uint64_t* startMs) {
@@ -205,7 +250,7 @@ void OnDisconnect() {
     for (Record& r : g_rec) r = Record{};
     g_count = 0;
     g_marks.clear();
-    g_minted = g_puppetIgnored = g_noOwner = g_evicted = g_marksDropped = 0;
+    g_minted = g_puppetIgnored = g_noOwner = g_evicted = g_marksDropped = g_breaksDropped = 0;
 }
 
 namespace dev {

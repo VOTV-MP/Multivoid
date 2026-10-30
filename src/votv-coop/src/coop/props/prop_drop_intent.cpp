@@ -16,7 +16,7 @@
 #include "coop/props/prop_save_data.h"
 #include "coop/props/prop_spawn_authoring.h" // BirthIsPlayerAuthored (the spawn menu / the toolgun)
 #include "coop/props/prop_drive_rules.h"    // kRestVelCmS: the floor under which a spawn is written no velocity
-#include "coop/props/prop_throw.h"          // SeqFor: the throw that launched a drained place
+#include "coop/props/prop_throw.h"          // ThrowSeqFor: the throw that launched a drained place
 #include "coop/props/prop_wire_parity.h"    // PhysFlagsOf, the one builder of a live prop's flags
 #include "coop/props/prop_element_tracker.h"// GetPropElementIdForActor
 #include "coop/props/prop_key_index.h"  // a key on the wire to a live actor
@@ -535,7 +535,7 @@ void Tick(coop::net::Session* session) {
                 p.linVel[0] = lin.X; p.linVel[1] = lin.Y; p.linVel[2] = lin.Z;
                 p.angVel[0] = ang.X; p.angVel[1] = ang.Y; p.angVel[2] = ang.Z;
             }
-            p.throwSeq = coop::prop_throw::SeqFor(e.actor);
+            p.throwSeq = coop::prop_throw::ThrowSeqFor(e.actor);
             // The throw arms' dev knobs: a red that sends the thrown prop's intent with no velocity, and a forged
             // multiple of it for the clamp arm.
             static const bool s_noVel = coop::config::ResolveFlag(coop::config_registry::rows::container_throw_no_velocity);

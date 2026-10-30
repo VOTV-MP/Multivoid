@@ -15,6 +15,7 @@
 #include "coop/props/prop_drive_host.h"     // Claim (the host's), InAHand
 #include "coop/props/prop_drive_rules.h"    // the epsilons, the rest rule, the send pace
 #include "coop/props/prop_drive_stream.h"   // CloseGen
+#include "coop/props/prop_damage_gate.h"   // ReplayAtGrant: the break a pending sequence held
 #include "coop/props/prop_throw.h"         // TakeForGrant: the record of the throw a grant answers
 #include "coop/props/remote_prop.h"         // ResolveLiveActorByEid
 #include "coop/session/net_pump.h"          // HasAnnouncedWorldReady
@@ -224,6 +225,7 @@ bool EnterThrownSync(const coop::net::PropSyncAnswerPayload& p) {
     ++CountRef(Count::Granted);
     UE_LOGI("[PROP-SYNC] CLIENT granted a throw eid=%u gen=%u seq=%u ms=%llu (#%u)", p.eid, static_cast<unsigned>(p.gen),
             static_cast<unsigned>(p.seq), static_cast<unsigned long long>(now - startMs), CountRef(Count::Granted));
+    coop::props::prop_damage_gate::ReplayAtGrant(actor);   // after the entry: the prop is authored here, so the call runs
     return true;
 }
 

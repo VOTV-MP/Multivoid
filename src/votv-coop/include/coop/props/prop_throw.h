@@ -13,6 +13,8 @@
 
 #pragma once
 
+#include "ue_wrap/core/cached_obj_ref.h"
+
 #include <cstdint>
 #include <string>
 
@@ -24,6 +26,18 @@ struct PropDropIntentPayload;
 
 namespace coop::prop_throw {
 
+// The arguments of a comp_physicsImpact_C::impactDamage call held for the grant, all values: the component and the
+// hitting actor are re-resolved at the replay, and a dead actor replays as null.
+inline constexpr int kMaxHitBytes = 192;
+struct DeferredBreak {
+    ue_wrap::CachedObjRef comp;
+    ue_wrap::CachedObjRef causer;
+    float                 damage = 0.f;
+    float                 impact[3] = {};
+    int32_t               hitSize = 0;
+    uint8_t               hit[kMaxHitBytes] = {};
+};
+
 // Per tick, both roles: asks the gate to take and resolve the throwShit watch until it is live, and drops the
 // records whose grant never came and the marks that waited kGrantTimeoutMs.
 void Tick();
@@ -32,6 +46,26 @@ void Tick();
 // unmatched (kGrantTimeoutMs) or, once granted, until its row ends on this peer (Ended): the adoption of the thrower's
 // own actor yields while a record exists, which is a state and not a clock.
 uint16_t SeqFor(void* actor);
+
+// The sequence a record of `actor` takes when it is the game's throw, 0 for none or for a swing's record: the readers
+// that tell the host a prop was thrown (the release, the drop intent) use this one.
+uint16_t ThrowSeqFor(void* actor);
+
+// A new record for `actor` (a record it already has is replaced): the sequence, never 0. The throwShit watch mints the
+// game's throw. A swing at a prop this client does not author (coop/props/hit_target_prop) takes a sequence from the
+// same table with `swing` set, so the host's election of the swinger is matched by the grant exactly as a throw's is.
+// While a record awaits its grant it holds one lethal impactDamage of the prop (coop/props/prop_damage_gate): it
+// replays once at the grant, and dies with the record when the grant never comes.
+uint16_t MintFor(void* actor, bool swing);
+
+// True while `actor`'s record exists and its grant has not come.
+bool IsPending(void* actor);
+
+// Hold `b` as the one break of `actor`'s pending record. False when the record is not pending or already holds one.
+bool HoldBreak(void* actor, const DeferredBreak& b);
+
+// The break held by `actor`'s granted record, handed out once. False when none.
+bool TakeBreak(void* actor, DeferredBreak* out);
 
 // The host's grant of the throw numbered seq arrived: its record, matched once. The thrown actor and the thrower's
 // clock at the throw (active_drive::NowMs) come out through the pointers.

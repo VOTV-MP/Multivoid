@@ -26,6 +26,16 @@ namespace coop::props::prop_damage_gate {
 // episode names it. Read by the hit intent's prop target too. Game thread.
 bool AuthoredHere(void* prop);
 
+// A swing or a throw authors its prop from the moment its sequence is minted, before the host has granted the
+// election. Until then a lethal call on the prop is cancelled, since a break before the grant would delete the host's
+// prop even when the host refuses. A lethal impactDamage is held in the sequence's record (coop/props/prop_throw); a
+// lethal fireDamage is dropped; a non-lethal call runs. Lethal is the component's own arithmetic on its health and
+// damageData.damageResistance. A refused or silent sequence ends with its record, and the held break with it.
+//
+// CLIENT: the host granted the election of `actor`, whose syncer entry is open now: the impactDamage its record held
+// replays once, as the syncer's. A no-op when it held none. Game thread.
+void ReplayAtGrant(void* actor);
+
 // Cache the session; a client takes the two watches (once per process). Called each time the install fanout runs.
 void Install(coop::net::Session* session);
 
