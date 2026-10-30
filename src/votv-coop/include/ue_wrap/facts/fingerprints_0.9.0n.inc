@@ -365,7 +365,6 @@ inline constexpr RefFn kRefFns[] = {
     {L"prop_torch_c", L"playerhitwith", L"prop_torch_c.playerhitwith", 0x7a13222404a59f11ull, 0x0c9111d6f2c36b82ull},
     {L"prop_uncalibrator_c", L"playerhanduse_lmb", L"prop_uncalibrator_c.playerhanduse_lmb", 0x5de5f12d89a97b5eull, 0xab406ed8495a737eull},
     {L"prop_vacuum2_c", L"gather", L"prop_vacuum2_c.gather", 0x6a2d5d90ab51fa2dull, 0xdddfd79655f10503ull},
-    {L"propinventory_c", L"takeobj", L"propinventory_c.takeobj", 0x707cde26b5d57927ull, 0xd7829e4e794b3620ull},
     {L"radialforcecomponent", L"fireimpulse", L"radialforcecomponent.fireimpulse", 0x6a2d5d90ab51fa2dull, 0xcbf29ce484222325ull},
     {L"radiotower_c", L"actionoptionindex", L"radiotower_c.actionoptionindex", 0x5a7351a33bbf62a6ull, 0x3e3b2f70a4daa7c7ull},
     {L"radiotower_c", L"breakdown", L"radiotower_c.breakdown", 0x6a2d5d90ab51fa2dull, 0x516b4db1dc991c10ull},
