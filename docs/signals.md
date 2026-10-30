@@ -64,6 +64,13 @@ field's native side-effect path and prime their own poll baseline for that field
 echoes. The cooldown charge is detected as an upward jump, and the same jump classifies the
 quick-scan, whose accepted-branch effects the mirrors replay.
 
+The signal view's settings ride the same poll: the two bounds of `remapValue` and `visualizerMode`, graph or
+spectrogram, the red button the spectrogram module unlocks. A bound repaints through the game's `updRemap`, and
+the mode through `setCanvas` and `endCanvas`, the pair the button's own body runs; a joiner adopts all three with
+the desk scalars `[V]` (`harness/autotest/autotest_desk_view.cpp`: set before a join and changed from each peer,
+read the same on both after every step; the verbs by reflection, the buttons' own routes into them `[RD]`, and
+the drawn image not compared).
+
 The download simulation runs on the host only (`coop/interactables/desk_sim_sync`): the host
 rolls both random terms and streams the output vector (decoded, the needle, the rate, the
 frequency and polarity data and offsets, the cooldown) unreliable, about ten times a second, and

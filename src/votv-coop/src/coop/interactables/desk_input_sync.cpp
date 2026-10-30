@@ -84,6 +84,9 @@ bool PatchScalar(const coop::net::DeskInputPayload& p, CD::Scalars& sc) {
     // it into a scalar set that reaches WriteScalars would wake the phantom sim.
     // OnDeskInput intercepts it as bookkeeping before ApplyField.
     case DeskInputField::CooldownCharge:  sc.coordCooldown = p.floatVal; break;
+    case DeskInputField::RemapMin:        sc.remapMin = p.floatVal; break;
+    case DeskInputField::RemapMax:        sc.remapMax = p.floatVal; break;
+    case DeskInputField::VisualizerMode:  sc.visualizerMode = p.boolVal != 0; break;
     default: return false;
     }
     return true;
@@ -102,10 +105,13 @@ uint32_t PaintersFor(DeskInputField f) {
     case DeskInputField::PolarityDir:     return CD::kPaintPolarity | CD::kPaintPolarityLights;
     case DeskInputField::PlayVolume:      return CD::kPaintVolume;
     case DeskInputField::CompMaxLevel:    return CD::kPaintMaxLevelLights;
+    case DeskInputField::RemapMin:
+    case DeskInputField::RemapMax:        return CD::kPaintRemap;
     // Read by no painter: the filter speeds, the play index, and the cooldown charge.
     case DeskInputField::FrFilterSpeed:
     case DeskInputField::PoFilterSpeed:
     case DeskInputField::PlaySelectIndex:
+    case DeskInputField::VisualizerMode:   // drawn by ApplyVisualizerMode
     case DeskInputField::CooldownCharge:  return CD::kPaintNone;
     default:                              return CD::kPaintNone;
     }
@@ -118,6 +124,8 @@ bool ApplyField(const coop::net::DeskInputPayload& p, CD::Scalars& sc) {
     if (!CD::WriteScalars(sc, PaintersFor(static_cast<DeskInputField>(p.field)))) return false;
     if (static_cast<DeskInputField>(p.field) == DeskInputField::PlayVolume)
         CD::ApplyPlayVolumeEffects(p.intVal);
+    if (static_cast<DeskInputField>(p.field) == DeskInputField::VisualizerMode)
+        CD::ApplyVisualizerMode(p.boolVal != 0);
     return true;
 }
 
@@ -148,6 +156,12 @@ void PollOnce(coop::net::Session* s) {
         SendDelta(s, DeskInputField::PlaySelectIndex, 0, cur.playSelectIndex, false);
     if (cur.compMaxLevel != g_baseline.compMaxLevel)
         SendDelta(s, DeskInputField::CompMaxLevel, 0, cur.compMaxLevel, false);
+    if (cur.remapMin != g_baseline.remapMin && std::isfinite(cur.remapMin))
+        SendDelta(s, DeskInputField::RemapMin, cur.remapMin, 0, false);
+    if (cur.remapMax != g_baseline.remapMax && std::isfinite(cur.remapMax))
+        SendDelta(s, DeskInputField::RemapMax, cur.remapMax, 0, false);
+    if (cur.visualizerMode != g_baseline.visualizerMode)
+        SendDelta(s, DeskInputField::VisualizerMode, 0, 0, cur.visualizerMode);
     if (cur.coordIsPing != g_baseline.coordIsPing) {
         SendDelta(s, DeskInputField::CoordIsPing, 0, 0, cur.coordIsPing);
         if (s->role() == coop::net::Role::Host) {

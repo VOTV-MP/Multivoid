@@ -184,6 +184,7 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIf("VOTVCOOP_RUN_BEAM_LOOK", "flashlight beam look (shadow flags, captures)", &BeamLookThread, role);
     // The flashlight battery: each peer's runs out in turn and the other reads its puppet's light.
     SpawnIf("VOTVCOOP_RUN_FLASH_BATTERY", "flashlight battery drill", &FlashBatteryThread, role);
+    SpawnIf("VOTVCOOP_RUN_DESK_VIEW", "desk signal view drill", &DeskViewThread, role);
 
     // The bot-director halt probe, solo: measures the path query over the baked NavMesh and a
     // reflected AddMovementInput moving the possessed body.
