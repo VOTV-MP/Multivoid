@@ -11,6 +11,12 @@ CFG_FLAG(prop_birth_key_probe, "prop_birth_key_probe", "dev", false, "VOTVCOOP_P
     "every keyed prop it saw born that a script then destroys, with the session's state at the "
     "destroy, even with no session. The drain exits are the client's; the host places through a "
     "different path.")
+CFG_FLAG(impact_damage_probe, "impact_damage_probe", "dev", false, "VOTVCOOP_IMPACT_DAMAGE_PROBE",
+    "Diagnostic probe (both roles): one line per call of a prop's impactDamage -- the damage, the actor argument "
+    "(its class, whether it is this machine's own player, a remote player's puppet, or a prop this machine "
+    "authors), the owner prop with its key, whether the call is a reflected one of ours, and who called it. "
+    "At most 400 lines a session, the rest counted. Observe only: it never cancels a call. Off, no watch is "
+    "registered.")
 CFG_FLAG(spawn_match_probe, "spawn_match_probe", "dev", false, nullptr,
     "Diagnostic probe: the OnSpawn fuzzy-match candidate set -- every same-class prop inside the "
     "30 cm radius with its slot, distance, own key and mirror binding, plus a watch that reports a "

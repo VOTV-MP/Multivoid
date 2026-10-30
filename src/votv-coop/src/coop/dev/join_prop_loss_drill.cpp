@@ -5,6 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/dev/drill_chat.h"
+#include "join_prop_loss_drill_arms.h"  // the helpers shared with the arms (co-located private header)
 #include "coop/net/net_clock.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -47,15 +48,16 @@ namespace PT = coop::prop_element_tracker;
 namespace KI = coop::prop_key_index;
 using ue_wrap::FVector;
 
-namespace {
+namespace detail {
 
-enum class Arm : uint8_t { Off, Break, BreakOwn, Rekey };
+enum class Arm : uint8_t { Off, Break, BreakOwn, Rekey, Swing, ThrowAt };
 
 struct ArmRow {
     const char* name;
     Arm arm;
 };
-constexpr ArmRow kArms[] = {{"break", Arm::Break}, {"breakown", Arm::BreakOwn}, {"rekey", Arm::Rekey}};
+constexpr ArmRow kArms[] = {{"break", Arm::Break}, {"breakown", Arm::BreakOwn}, {"rekey", Arm::Rekey},
+                           {"swing", Arm::Swing}, {"throwat", Arm::ThrowAt}};
 
 Arm ArmOf() {
     static const Arm a = [] {
@@ -75,23 +77,17 @@ const char* ArmName() {
 
 const char* Role() { return coop::roster::LocalIsHost() ? "host" : "client"; }
 
-constexpr const wchar_t* kCanClass = L"prop_snack_beer_C";
-constexpr const wchar_t* kCanRow = L"beer_c";            // the props-table row of the can
 constexpr float kAheadCm = 150.f;                         // the placement spot, in front of the host player
 constexpr float kLiftCm = 3.f;                            // a can spawned at floor height falls through
 constexpr float kPairGapCm = 13.7f;                       // the second can, on world X
-constexpr float kMirrorRangeCm = 1500.f;                  // break: the can nearest the client player
 constexpr float kPairRangeCm = 3000.f;                    // rekey: the pair nearest the client player
 constexpr float kPairMaxCm = 25.f;                        // two cans this close are the pair
 constexpr float kBreakDamage = 100000.f;
 constexpr uint64_t kFindBudgetMs = 5000;                  // a placed can shows, with its key, within this
-constexpr uint64_t kMirrorBudgetMs = 30000;               // a wire mirror shows near the client within this
 constexpr uint64_t kJudgeDelayMs = 3000;                  // the host judges this long after the client's line
 constexpr uint64_t kAnswerBudgetMs = 15000;               // the key index answers within this
 
-constexpr const char* kBrokeLine = "[JPL] broke ";
 constexpr const char* kRekeyJudgedLine = "[JPL] rekey judged";
-constexpr const char* kHostJudgedLine = "[JPL] host judged";
 constexpr const char* kClientInconclusiveLine = "[JPL] client inconclusive";
 
 bool g_done = false;
@@ -151,6 +147,42 @@ void Cans(std::vector<void*>& out) {
     void* cls = R::FindClass(kCanClass);
     if (cls) ue_wrap::object_index::ForEachInstance(cls, &CollectOne, &out);
 }
+
+// The client's join is over and the bracket's windows are down: the seam broadcasts a destroy from here on.
+bool JoinedAndQuiet() {
+    return coop::net_pump::HasAnnouncedWorldReady() &&
+           coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle &&
+           !coop::world_load_episode::InEpisode() && !coop::world_load_episode::InReconcileWindow();
+}
+
+// The can nearest the local player within the range whose wire mirror resolves; null when none.
+void* NearestMirror(void* me) {
+    FVector mine{};
+    if (!E::TryGetActorLocation(me, mine)) return nullptr;
+    std::vector<void*> cans;
+    Cans(cans);
+    void* best = nullptr;
+    float bestD = kMirrorRangeCm;
+    for (void* a : cans) {
+        FVector at{};
+        if (!E::TryGetActorLocation(a, at)) continue;
+        const float d = Dist(mine, at);
+        if (d > bestD) continue;
+        if (coop::remote_prop::ResolveMirrorEidByActor(a, true) == coop::element::kInvalidId) continue;
+        best = a;
+        bestD = d;
+    }
+    return best;
+}
+
+bool IsMeasureArm() { return ArmOf() == Arm::Swing || ArmOf() == Arm::ThrowAt; }
+bool IsThrowAt() { return ArmOf() == Arm::ThrowAt; }
+
+}  // namespace detail
+
+using namespace detail;
+
+namespace {
 
 bool Has(const std::vector<void*>& set, void* a) {
     for (void* p : set)
@@ -301,7 +333,8 @@ void HostTick() {
             return;
         }
         std::string rest;
-        if (!DC::SeenRestOf(kBrokeLine, &rest)) return;
+        // throwat reports a can that stood too: the host reads either line and measures.
+        if (!DC::SeenRestOf(kBrokeLine, &rest) && !(IsThrowAt() && DC::SeenRestOf(kStoodLine, &rest))) return;
         g_brokeKey = Widen(rest);
         g_judgeAtMs = now + kJudgeDelayMs;
         g_hstepMs = now;
@@ -322,7 +355,8 @@ void HostTick() {
         }
         const bool live = KeyLive(g_brokeKey);
         UE_LOGI("[JPL-DRILL] host can %ls live=%d", g_brokeKey.c_str(), live ? 1 : 0);
-        if (ArmOf() == Arm::Break) HostJudgeAndFinish(live ? std::string() : "host lost " + Narrow(g_brokeKey));
+        if (IsThrowAt()) HostJudgeAndFinish("");   // a measure: the line above is the host's reading
+        else if (ArmOf() == Arm::Break) HostJudgeAndFinish(live ? std::string() : "host lost " + Narrow(g_brokeKey));
         else HostJudgeAndFinish(live ? "host kept " + Narrow(g_brokeKey) : std::string());
         return;
     }
@@ -342,13 +376,6 @@ std::string g_targetKey;
 std::wstring g_keyA, g_keyB;
 bool g_pairSeen = false;
 
-// The client's join is over and the bracket's windows are down: the seam broadcasts a destroy from here on.
-bool JoinedAndQuiet() {
-    return coop::net_pump::HasAnnouncedWorldReady() &&
-           coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle &&
-           !coop::world_load_episode::InEpisode() && !coop::world_load_episode::InReconcileWindow();
-}
-
 // impactDamage on the can's physicsImpact component, damage 100000, the hit zero; `causer` is the hitting actor.
 bool CallImpactDamage(void* can, void* causer) {
     static int32_t off = -2;
@@ -366,26 +393,6 @@ bool CallImpactDamage(void* can, void* causer) {
     f.Set<float>(L"damage", kBreakDamage);
     f.Set<void*>(L"actor", causer);
     return ue_wrap::Call(comp, f);
-}
-
-// The can nearest the local player within the range whose wire mirror resolves; null when none.
-void* NearestMirror(void* me) {
-    FVector mine{};
-    if (!E::TryGetActorLocation(me, mine)) return nullptr;
-    std::vector<void*> cans;
-    Cans(cans);
-    void* best = nullptr;
-    float bestD = kMirrorRangeCm;
-    for (void* a : cans) {
-        FVector at{};
-        if (!E::TryGetActorLocation(a, at)) continue;
-        const float d = Dist(mine, at);
-        if (d > bestD) continue;
-        if (coop::remote_prop::ResolveMirrorEidByActor(a, true) == coop::element::kInvalidId) continue;
-        best = a;
-        bestD = d;
-    }
-    return best;
 }
 
 void ClientBreakTick(uint64_t now) {
@@ -503,8 +510,12 @@ void ClientRekeyJudge(uint64_t now) {
 }
 
 void ClientTick() {
-    if (g_cstep == CStep::Done) return;
     const uint64_t now = coop::net::NowMs();
+    if (IsMeasureArm()) {   // swing and throwat run their own steps (join_prop_loss_drill_arms.cpp)
+        MeasureClientTick(now);
+        return;
+    }
+    if (g_cstep == CStep::Done) return;
     if (g_cstep == CStep::WaitHost) {
         if (DC::SeenHas(kHostJudgedLine)) {
             g_cstep = CStep::Done;
@@ -574,6 +585,7 @@ void OnDisconnect() {
     g_keyA.clear();
     g_keyB.clear();
     g_pairSeen = false;
+    MeasureOnDisconnect();
 }
 
 }  // namespace coop::dev::join_prop_loss_drill

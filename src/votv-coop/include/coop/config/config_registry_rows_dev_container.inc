@@ -33,7 +33,7 @@ CFG_FLAG(container_view_drill, "container_view_drill", "dev", false, "VOTVCOOP_C
     "Drill (client): walks to the ATV, opens its container through the game's own openPropInv, then walks "
     "back; the view must stay open while the ATV is within reach and close on the tick it leaves it. Run it "
     "with join_at_host=1. Lines tagged [CVIEW-DRILL]; the client's DONE line, carrying the verdict, ends it.")
-CFG_ENUM(join_prop_loss_drill, "join_prop_loss_drill", "dev", "off", "off|break|breakown|rekey",
+CFG_ENUM(join_prop_loss_drill, "join_prop_loss_drill", "dev", "off", "off|break|breakown|rekey|swing|throwat",
     "VOTVCOOP_JOIN_PROP_LOSS_DRILL",
     "Drill (BOTH peers, run with join_at_host=1): the host puts beer cans on the ground ahead of it before the client "
     "joins; the peers sequence each other by lobby-chat lines and each prints `<role> <arm> PASS|FAIL|INCONCLUSIVE`, "
@@ -41,7 +41,10 @@ CFG_ENUM(join_prop_loss_drill, "join_prop_loss_drill", "dev", "off", "off|break|
     "player caused; the host's can must survive. breakown -- the same with the client's own player as the cause; the "
     "break must reach the host and the can be gone. rekey -- two cans 13.7 cm apart: the client destroys one before "
     "the join's snapshot bracket, then after the bracket the other must still carry its own key, each key must "
-    "resolve to its own actor, and the host must still hold both. Lines tagged [JPL-DRILL].")
+    "resolve to its own actor, and the host must still hold both. swing -- a measure: the client takes the axe, walks "
+    "within 150 cm of a host can's mirror and swings at it until its copy is gone or 10 swings; the host judges as "
+    "in breakown. throwat -- a measure: the client throws a can at a host can's mirror, up to 3 times. Run both "
+    "with impact_damage_probe=1 on both peers: the probe lines are the result. Lines tagged [JPL-DRILL].")
 CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room|forge|unasked|putrecord|puthand|putfood|puthidden|putnested|putempty|puthover|putreserved|putfull|putfullhand|putdepart|putdeadline|putowed|putjoin|throwhand|throwgrab|throwhostgrab|throwclamp|throwplace|throwjoin|throwdepart|throwtouch",
     "VOTVCOOP_CONTAINER_INTENT_DRILL",
     "Drill (BOTH peers): both pick the same shared container (the smallest element id, within 5000 cm of the player, "

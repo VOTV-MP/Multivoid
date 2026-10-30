@@ -16,6 +16,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/add_points.cpp
     src/coop/dev/spawn_order_probe.cpp
     src/coop/dev/prop_birth_key_probe.cpp
+    src/coop/dev/impact_damage_probe.cpp
     src/coop/dev/host_settle_drill.cpp
     src/coop/dev/spawn_match_probe.cpp
     src/coop/dev/native_text_probe.cpp
@@ -142,6 +143,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/dronesack_drill_host.cpp
     src/coop/dev/dronesack_drill_census.cpp
     src/coop/dev/join_prop_loss_drill.cpp
+    src/coop/dev/join_prop_loss_drill_arms.cpp
     src/coop/dev/remover_drill.cpp
     src/coop/dev/remover_drill_host.cpp
     src/coop/dev/remover_drill_layout.cpp

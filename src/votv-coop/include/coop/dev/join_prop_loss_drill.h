@@ -6,6 +6,10 @@
 //   rekey     -- the client destroys one of two cans that stand 13.7 cm apart before the join's snapshot bracket;
 //                after the bracket the other can must still carry its own key and each key must resolve to its own
 //                actor, and the host must still hold both.
+//   swing     -- a measure: the client takes the axe, walks within 150 cm of the mirror of a host can and swings at it, up
+//                to 10 times; the host judges as in breakown.
+//   throwat   -- a measure: the client throws a can at the mirror, up to 3 times; the host prints whether its can lives.
+//                Both are read through the impact_damage_probe lines of the two peers.
 // The peers sequence each other with drill_chat lines; nothing crosses by file. Lines are tagged [JPL-DRILL]; each
 // peer prints `<role> <arm> PASS|FAIL|INCONCLUSIVE` and its last line is `<role> DONE`.
 
