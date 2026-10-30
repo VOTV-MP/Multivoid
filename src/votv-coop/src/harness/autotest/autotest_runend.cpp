@@ -19,6 +19,7 @@
 
 #include "coop/player/death_revive.h"
 #include "coop/player/run_end_travel.h"
+#include "ui/multiplayer_menu.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/game_thread.h"
@@ -106,10 +107,10 @@ void RunRunEndDrill() {
     // The ALLOW direction, by judgement: the pause menu's own quit must stay allowed. Asserting it
     // by dispatch would end the run and take the rest of the drill with it.
     RunOnGameThread([] {
-        void* menu = R::FindObjectByClass(L"ui_menu_C");
+        void* menu = coop::multiplayer_menu::PauseMenu();
         if (!menu) {
-            Check(false, "B1 quit-allowed", "no live ui_menu_C to judge -- the pause menu widget "
-                                            "is created at gamemode init, so this is a finding");
+            Check(false, "B1 quit-allowed", "no live pause menu to judge -- the gamemode makes the pause "
+                                            "menu widget at init, so this is a finding");
             return;
         }
         const RET::Judgement j = RET::JudgeMenuTravel(menu);

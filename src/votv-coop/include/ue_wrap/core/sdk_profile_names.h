@@ -371,7 +371,7 @@ inline constexpr const wchar_t* SetAlignmentInViewportFn = L"SetAlignmentInViewp
 inline constexpr const wchar_t* WidgetSetIsEnabledFn = L"SetIsEnabled";       // UWidget::SetIsEnabled(bool bInIsEnabled) -- blocks input + semantic disable (NOT a raw 0xB4 write: packed bitfield)
 inline constexpr const wchar_t* WidgetSetRenderOpacityFn = L"SetRenderOpacity";  // UWidget::SetRenderOpacity(float InOpacity) -- brush-independent visual dim
 inline constexpr const wchar_t* WidgetGetIsEnabledFn = L"GetIsEnabled";       // UWidget::GetIsEnabled()->bool ReturnValue (read-back diagnostic)
-inline constexpr const wchar_t* UiMenuClass = L"ui_menu_C";                   // VOTV unified main+pause menu widget (GameInstance-owned, one live instance)
+inline constexpr const wchar_t* UiMenuClass = L"ui_menu_C";                   // VOTV unified main+pause menu widget: mainGamemode_C makes one per level and holds it in pause_mainMenu (the pause menu in a game level, the main menu in the menu level)
 inline constexpr const wchar_t* UiMenuButtonSaveProp = L"button_Save";        // UButton* @ ui_menu_C+0x2D0 (the "Save Game" button)
 inline constexpr const wchar_t* UiMenuIsPauseProp = L"isPause";               // bool @ ui_menu_C+0x4C0 (true => the in-game pause menu, not the main menu)
 

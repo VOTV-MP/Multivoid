@@ -39,7 +39,6 @@ void* g_getEnabledFn = nullptr;   // UWidget::GetIsEnabled()->bool (diagnostic r
 void* g_escFn = nullptr;          // mainPlayer_C::InpActEvt_Escape (per-open anchor)
 void* g_tickFn = nullptr;         // ui_menu_C::Tick (self-heal anchor)
 int32_t g_buttonSaveOff = -1;     // ui_menu_C -> button_Save (UButton*)
-int32_t g_isPauseOff = -1;        // ui_menu_C -> isPause (bool)
 
 // UWidget::bIsEnabled is a PACKED bitfield @ +0xB4 (bit 0x04; siblings bIsVariable=0x01,
 // bCreatedByConstructionScript=0x02, bOverride_Cursor=0x08). READING a bit is safe; WRITING
@@ -79,10 +78,9 @@ void ApplyGreyOut(void* button) {
 // Return button_Save off a ui_menu instance IFF it is the pause variant (isPause==true).
 // Null for the main-menu instance (shares ui_menu_C) or unresolved offsets.
 void* PauseSaveButton(void* menu) {
-    if (!menu || g_buttonSaveOff < 0 || g_isPauseOff < 0) return nullptr;
-    auto* base = reinterpret_cast<uint8_t*>(menu);
-    if (*(base + g_isPauseOff) == 0) return nullptr;  // main menu -> leave alone
-    return *reinterpret_cast<void**>(base + g_buttonSaveOff);
+    if (!menu || g_buttonSaveOff < 0) return nullptr;
+    if (!coop::multiplayer_menu::IsPauseInstance(menu)) return nullptr;  // main menu -> leave alone
+    return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(menu) + g_buttonSaveOff);
 }
 
 // POST observer on mainPlayer_C::InpActEvt_Escape: fires on each ESC press (engine input
@@ -129,12 +127,10 @@ void Install(coop::net::Session* session) {
     g_escFn = escRow.Fn();
     g_tickFn = tickRow.Fn();
     g_buttonSaveOff = R::FindPropertyOffset(uiMenuCls, prof::name::UiMenuButtonSaveProp);
-    g_isPauseOff = R::FindPropertyOffset(uiMenuCls, prof::name::UiMenuIsPauseProp);
-    if (!g_setEnabledFn || !g_setOpacityFn || !g_escFn || !g_tickFn ||
-        g_buttonSaveOff < 0 || g_isPauseOff < 0) {
+    if (!g_setEnabledFn || !g_setOpacityFn || !g_escFn || !g_tickFn || g_buttonSaveOff < 0) {
         UE_LOGW("save_button_disable: resolve incomplete (setEnabled=%p setOpacity=%p esc=%p "
-                "tick=%p btnOff=%d isPauseOff=%d) -- retry next pump",
-                g_setEnabledFn, g_setOpacityFn, g_escFn, g_tickFn, g_buttonSaveOff, g_isPauseOff);
+                "tick=%p btnOff=%d) -- retry next pump",
+                g_setEnabledFn, g_setOpacityFn, g_escFn, g_tickFn, g_buttonSaveOff);
         return;
     }
 
@@ -147,9 +143,8 @@ void Install(coop::net::Session* session) {
     }
     g_installed.store(true, std::memory_order_release);
     UE_LOGI("save_button_disable: client pause-menu Save-button grey-out INSTALLED "
-            "(escFn=%p tickFn=%p button_Save@+0x%X isPause@+0x%X)",
-            g_escFn, g_tickFn, static_cast<unsigned>(g_buttonSaveOff),
-            static_cast<unsigned>(g_isPauseOff));
+            "(escFn=%p tickFn=%p button_Save@+0x%X)",
+            g_escFn, g_tickFn, static_cast<unsigned>(g_buttonSaveOff));
 }
 
 }  // namespace coop::save_button_disable

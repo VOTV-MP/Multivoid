@@ -53,6 +53,10 @@ bool IsPauseMenuOpen();
 // widget is not live; a caller treats null as "not now" and asks again. Game thread.
 void* GamemodeMenu();
 
+// Whether `menu`, a ui_menu_C handed to the caller (a tick's own self, never searched for), reads
+// isPause, by the bool's byte offset and bit mask. False for null. Game thread.
+bool IsPauseInstance(void* menu);
+
 // The in-game pause menu: GamemodeMenu() when that widget reads isPause, so null in the "menu"
 // level, where the field holds the main menu. Same null cases otherwise. Game thread.
 void* PauseMenu();

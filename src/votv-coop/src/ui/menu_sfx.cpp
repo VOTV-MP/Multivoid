@@ -2,10 +2,10 @@
 
 #include "ui/menu_sfx.h"
 
+#include "ui/multiplayer_menu.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
 
 namespace ui::menu_sfx {
@@ -13,7 +13,6 @@ namespace ui::menu_sfx {
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 namespace GT = ue_wrap::game_thread;
-namespace prof = ue_wrap::profile;
 
 namespace {
 
@@ -23,13 +22,13 @@ ImGuiID g_lastRollId     = 0;   // id we last chirped rollover for (0 = re-armed
 
 // Play a VOTV SoundWave (resolved by name) as a 2D UI sound through the game's audio
 // engine. Posted to the game thread (UFunction dispatch is GT-only). The world context
-// is the live ui_menu_C -- the browser is a main-menu-only surface, so it is always
-// present + carries the menu world (with an audio device). PlaySoundAtLocation with a
+// is the gamemode's own ui_menu_C -- the browser is a main-menu-only surface, so the
+// gamemode holds the menu there and it carries the menu world (with an audio device). PlaySoundAtLocation with a
 // null attenuation plays 2D; routing through UGameplayStatics means the SoundWave's
 // SoundClass + the game's SoundMix / volume apply (honors the game's sound settings).
 void PlayNamed(const wchar_t* soundName) {
     GT::Post([soundName] {
-        void* worldCtx = R::FindObjectByClass(prof::name::UiMenuClass);
+        void* worldCtx = coop::multiplayer_menu::GamemodeMenu();
         if (!worldCtx) return;
         void* sound = R::FindObject(soundName, L"SoundWave");
         if (!sound) return;

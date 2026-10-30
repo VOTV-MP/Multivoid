@@ -99,6 +99,27 @@ inline void* ReadPtr(void* base, int32_t off) {
                               : nullptr;
 }
 
+// isPause is a packed bool: the byte offset and the bit mask, resolved once on the menu class (a
+// miss is latched, not repeated). Game thread.
+uint8_t g_isPauseMask = 0;
+bool g_isPauseTried = false;
+
+bool ResolveIsPause(void* menuCls) {
+    if (g_isPauseOff >= 0) return true;
+    if (g_isPauseTried) return false;
+    g_isPauseTried = true;
+    int32_t off = -1;
+    uint8_t mask = 0;
+    if (!R::FindBoolProperty(menuCls, prof::name::UiMenuIsPauseProp, off, mask)) return false;
+    g_isPauseMask = mask;
+    g_isPauseOff = off;
+    return true;
+}
+
+inline bool IsPauseBit(void* menu) {
+    return (*(reinterpret_cast<uint8_t*>(menu) + g_isPauseOff) & g_isPauseMask) != 0;
+}
+
 // Inject the button into the menu's NEW GAME list, above NEW GAME. Idempotent per instance;
 // true if our button is present afterwards. Game thread only.
 bool DoInject(void* menu) {
@@ -184,7 +205,7 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
     // While the pause menu is up, the freshness-stamped signal the render-thread HUD reads is
     // published, so the passive overlay is not drawn on top of the modal menu, and nothing below
     // applies.
-    if (g_isPauseOff >= 0 && *(reinterpret_cast<uint8_t*>(self) + g_isPauseOff) != 0) {
+    if (g_isPauseOff >= 0 && IsPauseBit(self)) {
         g_pauseTickMs.store(::GetTickCount64(), std::memory_order_relaxed);
         return;
     }
@@ -293,7 +314,7 @@ bool TryInstall() {
     const ue_wrap::facts::Resolved tick = ue_wrap::facts::ResolveOn(kRowTickUiMenu, uiMenuCls);
     g_tickFn         = tick.Fn();
     g_buttonStartOff = R::FindPropertyOffset(uiMenuCls, prof::name::UiMenuButtonStartProp);
-    g_isPauseOff     = R::FindPropertyOffset(uiMenuCls, prof::name::UiMenuIsPauseProp);
+    ResolveIsPause(uiMenuCls);
     // The game's version label is the anchor for ours; non-fatal if absent, the label just does
     // not inject.
     g_txtVersionOff  = R::FindPropertyOffset(uiMenuCls, prof::name::UiMenuTxtVersionProp);
@@ -374,32 +395,31 @@ void* GamemodeMenu() {
     // mainGamemode_C creates the widget once at BeginPlay and assigns the field
     // (mainGamemode.cpp:4620-4624), the field the game itself reads to open the pause menu
     // (mainPlayer.cpp:2316, gamemode->pause_mainMenu).
+    // One class, one layout: the lookup is made once and a miss is latched with it.
     static int32_t s_off = -1;
+    static bool s_tried = false;
     void* gm = ue_wrap::world_singleton::Gamemode();
     if (!gm) return nullptr;
-    if (s_off < 0) {
+    if (!s_tried) {
+        s_tried = true;
         s_off = R::FindPropertyOffset(R::ClassOf(gm), L"pause_mainMenu");
-        if (s_off < 0) {
-            static bool s_said = false;
-            if (!s_said) {
-                s_said = true;
-                UE_LOGW("multiplayer_menu: mainGamemode_C has no pause_mainMenu field -- no menu reference");
-            }
-            return nullptr;
-        }
+        if (s_off < 0)
+            UE_LOGW("multiplayer_menu: mainGamemode_C has no pause_mainMenu field -- no menu reference");
     }
+    if (s_off < 0) return nullptr;
     void* menu = ReadPtr(gm, s_off);  // a fresh read off the live gamemode: bare IsLive is the contract
     return (menu && R::IsLive(menu)) ? menu : nullptr;
+}
+
+bool IsPauseInstance(void* menu) {
+    return menu && ResolveIsPause(R::ClassOf(menu)) && IsPauseBit(menu);
 }
 
 void* PauseMenu() {
     // The gamemode's menu is the pause menu only in a game level, where the menu widget sets
     // isPause at construction (ui_menu.cpp:301); in the "menu" level it is the main menu (:326).
     void* menu = GamemodeMenu();
-    if (!menu) return nullptr;
-    if (g_isPauseOff < 0) g_isPauseOff = R::FindPropertyOffset(R::ClassOf(menu), prof::name::UiMenuIsPauseProp);
-    if (g_isPauseOff < 0 || *(reinterpret_cast<uint8_t*>(menu) + g_isPauseOff) == 0) return nullptr;
-    return menu;
+    return IsPauseInstance(menu) ? menu : nullptr;
 }
 
 void* MenuTickFn() {
