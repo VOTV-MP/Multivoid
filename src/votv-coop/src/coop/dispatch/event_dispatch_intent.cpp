@@ -13,7 +13,7 @@
 
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
-#include "coop/creatures/creature_hit_intent.h"  // CLIENT->HOST a swing that hit a creature's mirror
+#include "coop/player/hit_intent.h"  // CLIENT->HOST a swing that hit a creature's mirror
 #include "coop/creatures/kerfur_command.h"
 #include "coop/creatures/kerfur_convert_host.h"
 #include "coop/creatures/roach_sync.h"    // CLIENT->HOST local roach consumption intent
@@ -372,7 +372,7 @@ bool HandleIntentEvent(net::Session& session,
     }
     case net::ReliableKind::CreatureHitIntent: {
         // CLIENT->HOST: a client's swing hit a creature's mirror. The host judges the swing and runs the verb on its
-        // own creature (coop::creature_hit_intent); the format lives here. Never relayed.
+        // own creature (coop::hit_intent); the format lives here. Never relayed.
         if (session.role() != net::Role::Host) {
             UE_LOGW("event_feed: CreatureHitIntent received on a client -- dropping");
             break;
@@ -400,7 +400,7 @@ bool HandleIntentEvent(net::Session& session,
                     static_cast<unsigned>(p.verb), p.creatureEid);
             break;
         }
-        coop::creature_hit_intent::OnIntent(static_cast<int>(msg.senderPeerSlot), p);
+        coop::hit_intent::OnIntent(static_cast<int>(msg.senderPeerSlot), p);
         break;
     }
     case net::ReliableKind::ProjectileFired: {

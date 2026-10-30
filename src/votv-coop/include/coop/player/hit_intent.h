@@ -1,12 +1,12 @@
-// coop/creatures/creature_hit_intent.h -- a client's hit on a parked creature as an intent the host judges.
+// coop/player/hit_intent.h -- a client's hit on an entity the host owns, as an intent the host judges.
 //
 // A client's swing (mainPlayer_C::attack) ends in the struck actor's own addDamage, with the player as the damager.
 // On a client the struck creature is a mirror of the host's, whose Blueprint graph coop/creatures/npc_mirror_brain
-// refuses, so the hit would land nowhere. The mirror's addDamage is watched instead: when this machine's own player
-// is the damager and the mirror's family is parked (coop/creatures/npc_mirror_brain.h), the client plays the hit's
-// feedback at once, a cosmetic prediction (the zombie family's emitter and sound), sends CreatureHitIntent -- the
-// creature's element id, the damage and impact the swing claimed and the point it struck -- and cancels the call.
-// The creature's health, death and corpse stay the host's: its death reaches the client as the creature's destroy.
+// refuses, so the hit would land nowhere. The mirror's addDamage is watched instead: a target (coop/creatures/
+// hit_target_creature) claims the call when this machine's own player is the damager and the mirror's family is
+// parked (coop/creatures/npc_mirror_brain.h); the client then sends CreatureHitIntent -- the creature's element id,
+// the damage and impact the swing claimed and the point it struck -- and cancels the call. The target plays the hit's
+// feedback at once, a cosmetic prediction. The creature's health, death and corpse stay the host's.
 //
 // The host queues a client's intents (cap 8, a pace of 4 then 2 a second, which bounds a swing rate), captures the
 // sender's eye and newest streamed aim from its puppet when the intent arrives, and serves one head a tick through
@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include "ue_wrap/core/types.h"
+
 #include <cstdint>
 
 namespace coop::net {
@@ -23,7 +25,24 @@ class Session;
 struct CreatureHitIntentPayload;
 }  // namespace coop::net
 
-namespace coop::creature_hit_intent {
+namespace ue_wrap::script_gate {
+struct Call;
+}  // namespace ue_wrap::script_gate
+
+namespace coop::hit_intent {
+
+// What a swing's addDamage call carries. hitLoc is the point the swing struck: the call's hit parameter, else the struck
+// actor's location.
+struct Swing {
+    ue_wrap::FVector hitLoc{};
+    ue_wrap::FVector impact{};
+    float            damage = 0.f;
+};
+
+// CLIENT, for a target's claim: read the swing of an addDamage call whose damager is this machine's own player,
+// whoever called (the drill's reflected call too). False when the call's parameters did not resolve (said once) or
+// when another actor is the damager.
+bool ReadLocalSwing(const ue_wrap::script_gate::Call& c, Swing& out);
 
 // Cache the session; a client takes the addDamage watch (once per process). Called each time the install fanout runs.
 void Install(coop::net::Session* session);
@@ -54,4 +73,4 @@ uint32_t AppliedCount();
 // [dev] HOST: how many intents of `slot`'s current occupant were refused for the reason `reason` (compared as text).
 uint32_t RefusedCount(int slot, const char* reason);
 
-}  // namespace coop::creature_hit_intent
+}  // namespace coop::hit_intent

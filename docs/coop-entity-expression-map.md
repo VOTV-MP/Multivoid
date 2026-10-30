@@ -213,7 +213,7 @@ is the actor's slot and the slot's serial, so a recycled address is never a mirr
 `[RD]`; the refusals `[?]` until a run reads them.
 
 **A client's hit on a parked creature.** A client's swing ends in the struck mirror's `addDamage` with the player as the
-damager. The call is watched (`coop/creatures/creature_hit_intent`): the client plays the zombie family's hit feedback
+damager. The call is watched (`coop/player/hit_intent`): the client plays the zombie family's hit feedback
 at once (the fossilhound has none), sends the creature's element id with the claimed damage, the point struck and the
 impact, and cancels the call. The host judges the swing against the sender's held item and its reach data, its reach
 from the eye the host holds for it, that the sender's newest streamed aim faces the point (within 60 degrees, in 3-D; eye

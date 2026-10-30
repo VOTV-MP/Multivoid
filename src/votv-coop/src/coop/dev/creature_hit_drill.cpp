@@ -22,7 +22,6 @@
 #include "coop/comms/chat_sync.h"
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
-#include "coop/creatures/creature_hit_intent.h"
 #include "coop/creatures/npc_mirror_brain.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/drill_hand.h"
@@ -32,6 +31,7 @@
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"
+#include "coop/player/hit_intent.h"
 #include "coop/player/player_damage.h"
 #include "coop/player/player_hit.h"
 #include "coop/player/players_registry.h"
@@ -298,7 +298,7 @@ void HostTick(coop::net::Session* s, const Arm& arm) {
         return;
     }
     case HostStep::Negative: {
-        const uint32_t refused = coop::creature_hit_intent::RefusedCount(1, kNoSwinging);
+        const uint32_t refused = coop::hit_intent::RefusedCount(1, kNoSwinging);
         if (refused >= 1) {
             Verdict(true, "negative", true, "refused=%u", refused);
             Say(kNegDone);  // the client takes its axe only now, so the refused hit is judged empty-handed
@@ -321,7 +321,7 @@ void HostTick(coop::net::Session* s, const Arm& arm) {
         return;
     }
     case HostStep::Outbound: {
-        const uint32_t applied = coop::creature_hit_intent::AppliedCount();
+        const uint32_t applied = coop::hit_intent::AppliedCount();
         if (!g_h.creature.Get()) {
             if (applied >= 1) {
                 Verdict(true, "outbound", true, "applied=%u", applied);
