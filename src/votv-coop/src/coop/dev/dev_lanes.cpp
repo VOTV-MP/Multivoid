@@ -84,6 +84,7 @@
 #include "coop/dev/bug_report_drill.h"  // [dev] a bug report is saved and its zip judged in memory
 #include "coop/dev/grants_drill.h"  // [dev] this machine's local grants judged against an arm
 #include "coop/dev/pause_quit_drill.h"  // [dev] a peer quits through the pause menu's own button
+#include "coop/dev/pause_menu_probe.h"  // [dev] the pause menu's tree, its frame time and the cost of rows in it
 #include "coop/dev/settings_drill.h"  // [dev] the host sets its own rows and the modules show they followed
 #include "coop/dev/mannequin_drill.h"  // [dev] the walking mannequin's spawn and baseline drill
 #include "coop/dev/fireext_drill.h"  // [dev] a wall-mounted fire extinguisher taken off and carried, watched on both peers
@@ -268,6 +269,7 @@ void EndSession() {
     coop::dev::l10n_drill::OnDisconnect();  // [dev] the drill starts over, a menu it opened is closed
     coop::dev::ban_drill::OnSessionEnd();  // [dev] empty by design: its one state, the step, stands
     coop::dev::pause_quit_drill::OnDisconnect();  // [dev] a pending wait for the pause menu is dropped; the per-process latch stands
+    coop::dev::pause_menu_probe::OnDisconnect();  // [dev] a probe in flight ends with its session
     coop::dev::order_selftest::OnDisconnect();  // [dev] a rejoin's peers run their legs again
     coop::dev::bind_wait_selftest::OnDisconnect();  // [dev] a rejoin's client runs the checks again
     coop::dev::pile_late_load::OnDisconnect();  // [dev] a clump still aside goes back to its saved pose
@@ -401,6 +403,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::bug_report_drill::Tick(&session);  // [dev] the bug-report drill (a latched read when off)
     coop::dev::grants_drill::Tick(&session);  // [dev] the local grants drill (a latched read when off)
     coop::dev::pause_quit_drill::Tick(&session);  // [dev] the pause-quit drill (a latched read when off)
+    coop::dev::pause_menu_probe::Tick(&session);  // [dev] the pause-menu probe (a latched read when off)
     coop::dev::drive_selftest::Tick();  // [dev] rack-lane e2e circles (single bool read when off; 5 s self-throttle)
     coop::dev::rack_birth_drill::Tick();  // [dev] the rack birth drill (a latched read when off)
     coop::dev::burn_revive_drill::Tick();  // [dev] the burn revive drill (a latched read when off)
