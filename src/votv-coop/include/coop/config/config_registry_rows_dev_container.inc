@@ -65,7 +65,7 @@ CFG_FLAG(bracket_position_wait_off, "bracket_position_wait_off", "dev", false, "
     "Developer red arm: never set (CLIENT). Inside the snapshot bracket a host spawn that matches a neighbour by "
     "position binds it on arrival, as it did before the bracket's end was awaited, so the bracket's eid order decides "
     "whose actor each key gets and the join prop loss drill's rekey arm must fail.")
-CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room|forge|unasked|putrecord|puthand|putfood|puthidden|putnested|putempty|puthover|putreserved|putfull|putfullhand|putdepart|putdeadline|putowed|putjoin|throwhand|throwgrab|throwhostgrab|throwclamp|throwplace|throwjoin|throwdepart|throwtouch",
+CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room|forge|unasked|putrecord|puthand|putfood|puthidden|putnested|putempty|puthover|putreserved|putfull|putfullhand|putdepart|putdeadline|putowed|putjoin|throwhand|throwgrab|throwhostgrab|throwclamp|throwplace|throwjoin|throwdepart|throwtouch|throwinto",
     "VOTVCOOP_CONTAINER_INTENT_DRILL",
     "Drill (BOTH peers): both pick the same shared container (the smallest element id, within 5000 cm of the player, "
     "that holds two records or more and that a nav route reaches; race, two, sale and room take one whose first record "
@@ -116,6 +116,13 @@ CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|ta
     "the last row's velocity and it lands where the host's copy lands. throwtouch -- the host grabs the flying prop "
     "150 ms after the first admitted row: the host overrides the syncer and the thrower's copy follows the host. The "
     "run on throwhand with container_throw_stepped_rows prints whether the host revoked the thrower's trust. "
+    "throwinto (container_route_census=1 on both peers) -- the client throws a hand drive into a shared open basket from "
+    "about 70 cm (n=1, up to two retries on a miss), then brings a grabbed one over a basket of its own and lets go (n=2, the control, no throw), "
+    "then lowers a grabbed one into the box of another basket of its own without letting go (n=3, held), then takes the one record of an unarmed "
+    "basket on the screen and throws a hand drive into it (n=4, armed by the take), then, with a second client (--observer), the first "
+    "takes from an unarmed basket and the second throws into it (n=5; without a second client it is NOT MEASURED): "
+    "each is judged on both peers, host +1, client mirror +1 and no live copy of the drive left (n=3: and the client's grab ended; "
+    "n=5: and the first client's mirror +1). "
     "Lines tagged [CI-DRILL]; the "
     "host's DONE line ends it. It MUTATES the world.")
 CFG_FLAG(container_act_no_escrow, "container_act_no_escrow", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_ESCROW",
@@ -166,3 +173,20 @@ CFG_FLAG(container_throw_stepped_rows, "container_throw_stepped_rows", "dev", fa
 CFG_FLAG(container_throw_join_nohold, "container_throw_join_nohold", "dev", false, "VOTVCOOP_CONTAINER_THROW_JOIN_NOHOLD",
     "Red arm for the throwjoin arm (HOST): no hold on the second client's world-ready answer, and the throw waits for "
     "its world-ready, so the joiner is seeded before the flight and the arm must fail with 'the joiner was not in flight'.")
+CFG_FLAG(container_arming_measure, "container_arming_measure", "dev", false, "VOTVCOOP_CONTAINER_ARMING_MEASURE",
+    "Measure round for a container's box arming (BOTH peers, with container_intent_drill=throwinto and "
+    "container_route_census=1): a native post hook on UPrimitiveComponent::SetCollisionEnabled prints every call on a shared "
+    "container's overlap component (the baskets, a roomba), counts every call game-wide and prints the rate every 5 s; a PRE "
+    "watch on dingus logs the inline call and its caller; after the five sub-runs a tail fills a basket, the client takes from it "
+    "through the opened screen (the slot's pressButton) and a basket that already holds a drive is armed. Measures only: nothing is "
+    "cancelled. The host's last line is the answer line, prefixed arming.")
+CFG_FLAG(container_overlap_no_cancel, "container_overlap_no_cancel", "dev", false, "VOTVCOOP_CONTAINER_OVERLAP_NO_CANCEL",
+    "Red arm for the throwinto arm (CLIENT): the client's cancel of the container's own putObjectIn_overlap on a shared mirror is "
+    "skipped, so the BP body runs on the client as it did before the host judged the put: the client files the prop into its mirror "
+    "and destroys it, and the host's copy is not put.")
+CFG_FLAG(container_throwinto_unarmed, "container_throwinto_unarmed", "dev", false, "VOTVCOOP_CONTAINER_THROWINTO_UNARMED",
+    "Red arm for the throwinto arm (BOTH peers): the host does not arm the fixtures' baskets and the client does not wait for the mirror's box, "
+    "so a thrown drive meets an unarmed box, the engine fires no overlap and n=1 is not recorded.")
+CFG_FLAG(container_overlap_reach_red, "container_overlap_reach_red", "dev", false, "VOTVCOOP_CONTAINER_OVERLAP_REACH_RED",
+    "Red arm for the throwinto arm (HOST): the host's overlap judge reads the reach term of a held or claimed driver as out of reach, so a held "
+    "drive lowered into a box is refused as put_overlap_reach and n=3 is not recorded.")

@@ -154,11 +154,15 @@ inline bool HandPath(Arm a, int n) { return a == Arm::ThrowHand || a == Arm::Thr
 
 // The camera turned at the target's opening point (its location plus its bounds' half-height, read once): the aim fan
 // first and, when no pose of it gets the camera's forward within 2 degrees of the direction to the point, a direct look
-// at it. Ticked every game tick until Aimed or Failed (`why` filled); the bound is 40 s.
+// at it. Aimed also needs the game's own launch vector (the player's Camera component's forward and velocity, read on the
+// tick that returns Aimed) within 5 degrees of that direction. Ticked every game tick until Aimed or Failed (`why` filled);
+// the bound is 40 s.
 class Aimer {
 public:
     enum class State { Working, Aimed, Failed };
     void Begin(int n);
+    // The same, at a point given: the opening is not read from the target's bounds.
+    void BeginAt(int n, const ue_wrap::FVector& point);
     State Tick(void* player, void* pack, const ue_wrap::FVector& stand, char* why, size_t whyLen);
 
 private:
@@ -166,7 +170,7 @@ private:
     ue_wrap::FVector point_{};
     bool read_ = false, direct_ = false;
     uint64_t startMs_ = 0;
-    float off_ = 0.f;
+    float off_ = 0.f, launch_ = 180.f;
     int n_ = 1;
 };
 
@@ -242,5 +246,15 @@ void ArmsReset();
 void HostGrabHostTick(const coop::net::Session& session);
 void HostGrabClientTick(const coop::net::Session& session);
 void HostGrabReset();
+
+// The live prop_drive_C element ids now, in `out` (container_intent_drill_throw_host.cpp).
+void LiveDriveEids(std::vector<uint32_t>& out);
+
+// throwinto (container_intent_drill_throw_into.cpp, _into_host.cpp): a thrown drive and a dropped one, landed in a shared basket, judged on
+// both peers; the two halves, and their state back to the start.
+void IntoHostTick(const coop::net::Session& session);
+void IntoClientTick(const coop::net::Session& session);
+void IntoHostReset();   // container_intent_drill_throw_into_host.cpp
+void IntoReset();
 
 }  // namespace coop::dev::container_intent_drill::detail

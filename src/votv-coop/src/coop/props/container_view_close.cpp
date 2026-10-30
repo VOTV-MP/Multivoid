@@ -22,17 +22,70 @@ namespace E  = ue_wrap::engine;
 namespace R  = ue_wrap::reflection;
 using ue_wrap::FVector;
 
-// Some point of the actor's reach sphere is within `arm` of `eye`. An actor whose place cannot be read is
-// not in reach, as the host answers it.
-bool InReach(const FVector& eye, float arm, void* actor) {
+constexpr float kUnread = -1.0e9f;
+
+// The room left between `eye` and the actor's reach sphere: `arm` plus its radius minus the distance to its
+// centre. Some point of the sphere is within `arm` of `eye` when it is not negative. An actor whose place
+// cannot be read has none, as the host answers it.
+float SphereMargin(const FVector& eye, float arm, void* actor) {
     FVector c{};
     float r = 0.f;
-    if (!E::ActorReachSphere(actor, c, r)) return false;
+    if (!E::ActorReachSphere(actor, c, r)) return kUnread;
     const float dx = c.X - eye.X, dy = c.Y - eye.Y, dz = c.Z - eye.Z;
-    return std::sqrt(dx * dx + dy * dy + dz * dz) <= arm + r;
+    return arm + r - std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+// The best margin over the container and the actors that open it. A container destroyed under the view is out
+// of reach too. With `stopAtReach` the search ends at the first sphere that holds.
+float BestMargin(const FVector& eye, float arm, void* container, bool stopAtReach) {
+    if (!R::IsLive(container)) return kUnread;
+    const float own = SphereMargin(eye, arm, container);
+    if (stopAtReach && own >= 0.f) return own;
+    struct Ctx {
+        const FVector* eye;
+        float arm;
+        bool stop;
+        float best;
+    } ctx{&eye, arm, stopAtReach, own};
+    ue_wrap::container_openers::ForEach(container, [](void* c, void* opener) {
+        Ctx& x = *static_cast<Ctx*>(c);
+        const float m = SphereMargin(*x.eye, x.arm, opener);
+        if (m > x.best) x.best = m;
+        return !(x.stop && x.best >= 0.f);
+    }, &ctx);
+    return ctx.best;
+}
+
+// The camera and the arm; false when either does not read, since the player's reach is then unknown.
+bool ReadReach(void* player, FVector& eye, float& arm) {
+    if (!E::ReadMainPlayerCameraLocation(player, eye)) return false;
+    if (!E::ReadMainPlayerArmLength(player, arm)) {
+        static bool s_armWarned = false;
+        if (!s_armWarned) {
+            s_armWarned = true;
+            UE_LOGW("container_view_close: mainPlayer_C.armLength does not resolve -- no view is closed, since "
+                    "the player's reach is unknown");
+        }
+        return false;
+    }
+    return true;
 }
 
 }  // namespace
+
+bool ViewInReach(void* player, void* container) {
+    FVector eye{};
+    float arm = 0.f;
+    if (!ReadReach(player, eye, arm)) return true;
+    return BestMargin(eye, arm, container, /*stopAtReach=*/true) >= 0.f;
+}
+
+float ViewReachMargin(void* player, void* container) {
+    FVector eye{};
+    float arm = 0.f;
+    if (!ReadReach(player, eye, arm)) return kUnread;
+    return BestMargin(eye, arm, container, /*stopAtReach=*/false);
+}
 
 void Tick() {
     if (coop::roster::LocalIsHost()) return;
@@ -48,35 +101,11 @@ void Tick() {
         return;
     }
     void* const player = coop::players::Registry::Get().Local();
-    FVector eye{};
+    if (ViewInReach(player, container)) return;
     float arm = 0.f;
-    if (!E::ReadMainPlayerCameraLocation(player, eye)) return;
-    if (!E::ReadMainPlayerArmLength(player, arm)) {
-        static bool s_armWarned = false;
-        if (!s_armWarned) {
-            s_armWarned = true;
-            UE_LOGW("container_view_close: mainPlayer_C.armLength does not resolve -- no view is closed, since "
-                    "the player's reach is unknown");
-        }
-        return;
-    }
-    // A container destroyed under the view is out of reach too.
-    const bool live = R::IsLive(container);
-    if (live && InReach(eye, arm, container)) return;
-    struct Ctx {
-        const FVector* eye;
-        float arm;
-        bool reached;
-    } ctx{&eye, arm, false};
-    if (live) {
-        ue_wrap::container_openers::ForEach(container, [](void* c, void* opener) {
-            Ctx& x = *static_cast<Ctx*>(c);
-            x.reached = InReach(*x.eye, x.arm, opener);
-            return !x.reached;
-        }, &ctx);
-    }
-    if (ctx.reached) return;
+    E::ReadMainPlayerArmLength(player, arm);
     // Named before the close, while the screen still holds it.
+    const bool live = R::IsLive(container);
     const std::wstring cls = live ? R::ClassNameOf(container) : std::wstring(L"(destroyed)");
     const auto eid = live ? coop::element::Registry::Get().EidForActor(container) : 0;
     if (CV::Close()) {

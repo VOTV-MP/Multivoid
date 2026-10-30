@@ -124,6 +124,20 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/container_intent_drill_throw_hit.cpp
     src/coop/dev/container_intent_drill_throw_hostgrab.cpp
     src/coop/dev/container_intent_drill_throw_host.cpp
+    src/coop/dev/container_intent_drill_throw_into_arm.cpp
+    src/coop/dev/container_intent_drill_throw_into_arming.cpp
+    src/coop/dev/container_intent_drill_throw_into.cpp
+    src/coop/dev/container_intent_drill_throw_into_release.cpp
+    src/coop/dev/container_intent_drill_throw_into_host.cpp
+    src/coop/dev/container_intent_drill_throw_into_verdict.cpp
+    src/coop/dev/container_intent_drill_throw_into_judge.cpp
+    src/coop/dev/container_intent_drill_throw_into_observer.cpp
+    src/coop/dev/container_intent_drill_throw_into_spawn.cpp
+    src/coop/dev/container_intent_drill_throw_into_stand.cpp
+    src/coop/dev/container_intent_drill_throw_into_take.cpp
+    src/coop/dev/container_intent_drill_throw_into_hold.cpp
+    src/coop/dev/container_intent_drill_throw_into_path.cpp
+    src/coop/dev/container_intent_drill_throw_into_probe.cpp
     src/coop/dev/container_intent_drill_throw_trace.cpp
     src/coop/dev/pr64_drill.cpp
     src/coop/dev/pr64_drill_coin.cpp

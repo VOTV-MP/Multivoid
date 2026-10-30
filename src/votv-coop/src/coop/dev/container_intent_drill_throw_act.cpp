@@ -10,6 +10,7 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflected_offset.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_pawn.h"
@@ -32,19 +33,43 @@ using ue_wrap::FVector;
 
 constexpr uint64_t kAimBoundMs = 40000;
 constexpr float    kAimDeg     = 2.f;   // the camera's forward is aimed when within this of the direction to the opening
+constexpr float    kLaunchDeg  = 5.f;   // and the game's launch vector, read at the release, within this of it
+// traceThrow's launch vector: the Camera component's forward times 1000 / (max(mass, 10) / 15), plus the player's velocity
+// (mainPlayer traceThrow, Add_VectorVector). The factor at the mass floor of 10 is used: the item's mass is not read before the throw.
+constexpr float    kLaunchScale = 1500.f;
+constexpr float    kRad        = 3.14159265358979f / 180.f;
 
-// The angle, in degrees, between the camera's forward vector and the direction from the camera to `point`. The game's throw
-// (traceThrow) aims along the camera's forward, not along the use key's look trace, which reaches less far than the stand.
+// The angle, in degrees, between the vector (vx,vy,vz) and the direction from `from` to `point`; 180 when either has no length.
+float AngleToPointDeg(float vx, float vy, float vz, const FVector& from, const FVector& point) {
+    const float dx = point.X - from.X, dy = point.Y - from.Y, dz = point.Z - from.Z;
+    const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+    const float vlen = std::sqrt(vx * vx + vy * vy + vz * vz);
+    if (len < 1.f || vlen < 1.f) return 180.f;
+    return std::acos(std::clamp((vx * dx + vy * dy + vz * dz) / (len * vlen), -1.f, 1.f)) / kRad;
+}
+
+// The angle, in degrees, between the view camera's forward vector and the direction from the view camera to `point`. The game's
+// throw does not read this camera (see LaunchOffDeg).
 float CameraOffDeg(const FVector& point) {
-    constexpr float kRad = 3.14159265358979f / 180.f;
     const FVector cam = E::GetCameraLocation();
     const ue_wrap::FRotator r = E::GetCameraRotation();
     const float cp = std::cos(r.Pitch * kRad);
-    const float fx = cp * std::cos(r.Yaw * kRad), fy = cp * std::sin(r.Yaw * kRad), fz = std::sin(r.Pitch * kRad);
-    const float dx = point.X - cam.X, dy = point.Y - cam.Y, dz = point.Z - cam.Z;
-    const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
-    if (len < 1.f) return 180.f;
-    return std::acos(std::clamp((fx * dx + fy * dy + fz * dz) / len, -1.f, 1.f)) / kRad;
+    return AngleToPointDeg(cp * std::cos(r.Yaw * kRad), cp * std::sin(r.Yaw * kRad), std::sin(r.Pitch * kRad), cam, point);
+}
+
+// The angle, in degrees, between the direction the game's throw launches along, read now, and the direction from the player's
+// Camera component to `point`. The throw builds its velocity on mainPlayer's Camera component (traceThrow's Camera->GetForwardVector
+// plus the player's velocity), not on the view camera of CameraOffDeg. 180 when it does not read.
+float LaunchOffDeg(void* player, const FVector& point) {
+    const int32_t off = ue_wrap::reflected_offset::MainPlayer_Camera();
+    void* cam = off < 0 ? nullptr : *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(player) + off);
+    FVector at{};
+    ue_wrap::FRotator r;
+    if (!cam || !R::IsLive(cam) || !E::TryGetComponentLocation(cam, at) || !E::TryGetComponentWorldRotation(cam, r)) return 180.f;
+    const FVector vel = E::GetActorVelocity(player);
+    const float cp = std::cos(r.Pitch * kRad);
+    return AngleToPointDeg(cp * std::cos(r.Yaw * kRad) * kLaunchScale + vel.X, cp * std::sin(r.Yaw * kRad) * kLaunchScale + vel.Y,
+                           std::sin(r.Pitch * kRad) * kLaunchScale + vel.Z, at, point);
 }
 
 }  // namespace
@@ -54,6 +79,12 @@ void Aimer::Begin(int n) {
     n_ = n;
     read_ = direct_ = false;
     startMs_ = ::GetTickCount64();
+}
+
+void Aimer::BeginAt(int n, const FVector& point) {
+    Begin(n);
+    point_ = point;
+    read_ = true;
 }
 
 // The camera turned through the fan round the target's opening (its location plus its bounds' half-height, read once) until
@@ -76,13 +107,17 @@ Aimer::State Aimer::Tick(void* player, void* pack, const FVector& stand, char* w
                 static_cast<double>(std::hypot(at.X - stand.X, at.Y - stand.Y)));
     }
     off_ = CameraOffDeg(point_);
+    launch_ = LaunchOffDeg(player, point_);
     const bool expired = ::GetTickCount64() - startMs_ > kAimBoundMs;
+    const bool looked = off_ < kAimDeg, launched = launch_ < kLaunchDeg;
     if (!direct_) {
-        switch (fan_.Tick(player, point_, off_ < kAimDeg)) {
+        // The view is on the opening but the throw's own launch vector is not: the pose is held and the fan does not move on.
+        switch (looked && !launched ? DR::AimFan::State::Working : fan_.Tick(player, point_, looked)) {
         case DR::AimFan::State::Working:
             if (expired) {
-                std::snprintf(why, whyLen, "the camera never came within %.0f deg of the opening point (%.2f deg off)",
-                              static_cast<double>(kAimDeg), static_cast<double>(off_));
+                std::snprintf(why, whyLen, "the camera never came within %.0f deg of the opening point (%.2f deg off) with the throw's "
+                              "launch vector within %.0f deg of it (%.2f deg off)", static_cast<double>(kAimDeg), static_cast<double>(off_),
+                              static_cast<double>(kLaunchDeg), static_cast<double>(launch_));
                 return State::Failed;
             }
             return State::Working;
@@ -93,17 +128,18 @@ Aimer::State Aimer::Tick(void* player, void* pack, const FVector& stand, char* w
             return State::Working;
         case DR::AimFan::State::Aimed: break;
         }
-    } else if (off_ >= kAimDeg) {
+    } else if (!looked || !launched) {
         if (expired) {
-            std::snprintf(why, whyLen, "the camera stays %.2f deg off the opening point after a direct look",
-                          static_cast<double>(off_));
+            std::snprintf(why, whyLen, "the camera stays %.2f deg off the opening point, the throw's launch vector %.2f deg off, after a "
+                          "direct look", static_cast<double>(off_), static_cast<double>(launch_));
             return State::Failed;
         }
-        E::SetControlRotation(E::GetController(player), DR::LookAt(E::GetCameraLocation(), point_));
+        if (!looked) E::SetControlRotation(E::GetController(player), DR::LookAt(E::GetCameraLocation(), point_));
         return State::Working;
     }
-    UE_LOGI("[CI-DRILL] %s %s throw %d aimed after %d pose(s)%s, the camera %.2f deg off the opening point", Role(), ArmName(), n_,
-            fan_.Poses(), direct_ ? " and a direct look" : "", static_cast<double>(off_));
+    UE_LOGI("[CI-DRILL] %s %s throw %d aimed after %d pose(s)%s, the camera %.2f deg off the opening point, the throw's launch vector "
+            "%.2f deg off it", Role(), ArmName(), n_, fan_.Poses(), direct_ ? " and a direct look" : "", static_cast<double>(off_),
+            static_cast<double>(launch_));
     return State::Aimed;
 }
 

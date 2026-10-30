@@ -9,8 +9,9 @@
 //   HOST   -- prints the container's count and the act holds each time they change, and judges the count's timeline.
 // The arms are the values of the container_intent_drill config row, each described there. Reds: race, two and sale
 // container_act_no_escrow=1; forge container_slice_accept_red=1; the put arms their own container_act_* rows. The
-// throw arms (container_intent_drill_throw*.cpp) need container_route_census=1. Lines are tagged [CI-DRILL]; each
-// peer prints `<role> <arm> PASS|FAIL|MEASURED`.
+// throw arms (container_intent_drill_throw*.cpp) need container_route_census=1; throwinto lands a thrown drive, a dropped one,
+// a held one and a taken-from basket's in a shared container (n=1..5; n=5 needs a second client). Lines are tagged [CI-DRILL]; each peer prints `<role> <arm> PASS|FAIL|MEASURED`
+// (throwinto: its host prints `-> PASS|FAIL: <why>` per sub-run).
 
 #pragma once
 

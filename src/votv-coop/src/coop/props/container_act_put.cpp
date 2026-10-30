@@ -77,6 +77,7 @@ const char* RouteName(uint8_t route) { return route == kRouteR2 ? "R2" : "R3"; }
 bool g_noHoverGuard = false;   // R2's replay does not require that no slot is hovered
 bool g_noHandTable = false;    // the hand hash leaves out no class's ticking fields
 bool g_doubleDone = false;     // a put's done commit is queued twice
+bool g_noOverlapCancel = false;  // the client does not cancel the container's own overlap put on a shared mirror (the red)
 
 // A read that tells a put from any other press and fails leaves the verb to run natively, unjudged: said once per
 // session, with the field, so a layout change cannot turn the feature off silently. kSayUnloaded is the hand-hash
@@ -351,6 +352,7 @@ sg::Verdict PreOverlap(const sg::Call& c) {
     if (s->role() == coop::net::Role::Host) return coop::props::container_act_host::overlap::Pre(c);
     uint32_t eid = 0;
     if (SharedTarget(c.object, eid) == Target::Own) return sg::Verdict::Run;
+    if (g_noOverlapCancel) return sg::Verdict::Run;   // the red: container_overlap_no_cancel, the BP body runs on the mirror
     if (c.callerFunction) {
         if (c.callerObject != c.object) return sg::Verdict::Run;
         // Whether a caller function is the container's own overlap graph is asked of its name once per function.
@@ -377,7 +379,7 @@ void ResetPutLines() {
     g_dingusCancelled = 0;
     g_overlapCancelled = g_overlapNoFrame = 0;
     for (bool& said : g_said) said = false;
-    g_noHoverGuard = g_noHandTable = g_doubleDone = false;
+    g_noHoverGuard = g_noHandTable = g_doubleDone = g_noOverlapCancel = false;
     g_lastWhy = "";
 }
 
@@ -597,6 +599,7 @@ namespace coop::props::container_act_request::dev {
 void NoHoverGuard(bool on) { detail::g_noHoverGuard = on; }
 void NoHandTable(bool on) { detail::g_noHandTable = on; }
 void DoubleDone(bool on) { detail::g_doubleDone = on; }
+void NoOverlapCancel(bool on) { detail::g_noOverlapCancel = on; }
 const char* LastWhy() { return detail::g_lastWhy; }
 
 }  // namespace coop::props::container_act_request::dev

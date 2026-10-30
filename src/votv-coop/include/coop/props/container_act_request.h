@@ -144,6 +144,9 @@ void DoubleDone(bool on);   // while on, a put's done commit is sent twice
 // hold-and-run hash leaves out no class's ticking fields (PutExclusionRowsOf answers none).
 void NoHoverGuard(bool on);
 void NoHandTable(bool on);
+// The throwinto arm's red (CLIENT): the cancel of the container's own putObjectIn_overlap on a shared mirror is skipped, so
+// the BP body runs on the client.
+void NoOverlapCancel(bool on);
 
 // Acts this session by how the client ended them: a commit sent done, a commit sent aborted, a reply that refused. The
 // census drill judges each route by the delta of these.

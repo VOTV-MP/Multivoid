@@ -580,6 +580,10 @@ void ThrowClientTick(const coop::net::Session& session) {
         HostGrabClientTick(session);
         return;
     }
+    if (ArmOf() == Arm::ThrowInto) {
+        IntoClientTick(session);
+        return;
+    }
     if (DepartRejoinedIdle()) {   // throwdepart, relaunched: it reports the seed of the prop it threw before it left
         DepartRejoinedTick();
         return;
@@ -635,6 +639,7 @@ void ThrowReset() {
     ThrowHostReset();
     ArmsReset();
     HostGrabReset();
+    IntoReset();
     g_step = Step::WaitLine;
     g_stepMs = g_nextMs = 0;
     g_n = 1;

@@ -28,7 +28,7 @@ struct ItemKey {
 enum class Arm : uint8_t { Off, Take, Settle, Abort, Deadline, Double, Ghost, Held, Race, Two, Sale, Depart, Room,
                            Forge, Unasked, PutRecord, PutHand, PutFood, PutHidden, PutNested, PutEmpty, PutHover, PutReserved, PutFull,
                            PutFullHand, PutDepart, PutDeadline, PutOwed, PutJoin, ThrowHand, ThrowGrab, ThrowHostGrab, ThrowClamp,
-                           ThrowPlace, ThrowJoin, ThrowDepart, ThrowTouch };
+                           ThrowPlace, ThrowJoin, ThrowDepart, ThrowTouch, ThrowInto };
 Arm ArmOf();
 const char* ArmName();
 
@@ -39,7 +39,7 @@ inline constexpr const char* kAppendDoneLine = "ci-drill append done";
 inline bool IsPutArm(Arm a) { return a >= Arm::PutRecord && a <= Arm::PutJoin; }
 
 // The throw arms are their own drill too (container_intent_drill_throw*.cpp): a client throws a drive at a shared backpack.
-inline bool IsThrowArm(Arm a) { return a >= Arm::ThrowHand && a <= Arm::ThrowTouch; }
+inline bool IsThrowArm(Arm a) { return a >= Arm::ThrowHand && a <= Arm::ThrowInto; }
 
 // The arms that throw from the hotbar hand: throwclamp is throwhand with a forged velocity.
 inline bool IsHandThrow(Arm a) { return a == Arm::ThrowHand || a == Arm::ThrowClamp; }

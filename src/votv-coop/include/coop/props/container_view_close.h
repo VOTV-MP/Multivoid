@@ -20,4 +20,15 @@ namespace coop::props::container_view_close {
 // test per actor that opens it. Game thread.
 void Tick();
 
+// The rule Tick closes on, asked of any view: the container, or an actor that opens it, has a reach sphere
+// within the player's live arm length of the camera. True too when the camera or the arm does not read, as
+// Tick closes nothing then. The dev drills read this, so a stand is judged by the rule that closes the
+// screen. Game thread.
+bool ViewInReach(void* player, void* container);
+
+// The room that rule has left, in uu: the arm plus the sphere's radius minus the camera's distance to its
+// centre, the best over the container and its openers. Negative: Tick closes the view. A very negative value
+// when the camera, the arm or every sphere does not read. Game thread.
+float ViewReachMargin(void* player, void* container);
+
 }  // namespace coop::props::container_view_close

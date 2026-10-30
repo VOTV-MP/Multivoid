@@ -69,6 +69,7 @@ uintptr_t g_r3Bit = 0;            // the scope bit of an R3 body whose player wa
 uint64_t g_entries[5] = {};       // seam entries R1..R5
 uint64_t g_unshared[6] = {};      // verbs on an inventory that is no shared world container, by the open route
 uint64_t g_cell[kRoutes][2] = {};     // [route][add=0, take=1] verbs on a shared container
+uint64_t g_firstMs[kRoutes][2] = {};   // the clock of the first verb of a cell since MarkVerbs (0: none)
 uint64_t g_slices[kRoutes][2] = {};
 uint64_t g_unattributed = 0;
 uint64_t g_gen = 0;
@@ -84,6 +85,7 @@ uint64_t g_callerOther = 0;
 
 uint64_t g_r4Sim = 0;
 uint64_t g_r4Overlaps = 0;
+uint64_t g_r4Items = 0, g_r4ItemsNoSim = 0, g_firstItemMs = 0;   // overlaps of a shared item (no container); those of a component not simulating; the first clock since the mark
 int g_r4Lines = 0;
 R4Overlap g_lastR4;
 char g_r4Classes[kClasses][kName] = {};
@@ -182,6 +184,11 @@ void NoteOverlap(const sg::Call& c) {
             UE_LOGI("[CI-CENSUS] r4 %s prop=(%.1f,%.1f,%.1f) t=%llu", Role(), at.X, at.Y, at.Z,
                     static_cast<unsigned long long>(UnixMs()));
     }
+    if (shared && !ci::IsContainer(actor)) {   // an item entered a container: counted where the overlap is, with its first clock
+        ++g_r4Items;
+        if (!sim) ++g_r4ItemsNoSim;
+        if (!g_firstItemMs) g_firstItemMs = UnixMs();
+    }
     if (!sim || !shared) return;
     ++g_r4Sim;
     for (int i = 0; i < g_r4ClassCount; ++i)
@@ -272,6 +279,7 @@ void Reset() {
     std::memset(g_entries, 0, sizeof(g_entries));
     std::memset(g_unshared, 0, sizeof(g_unshared));
     std::memset(g_cell, 0, sizeof(g_cell));
+    std::memset(g_firstMs, 0, sizeof(g_firstMs));
     std::memset(g_slices, 0, sizeof(g_slices));
     std::memset(g_last, 0, sizeof(g_last));
     for (Last& l : g_last) l.route = -1;
@@ -280,6 +288,7 @@ void Reset() {
     g_unattributed = g_gen = 0;
     g_lastNext = g_callerCount = g_r4ClassCount = g_r4Lines = 0;
     g_callerOther = g_r4Sim = g_r4Overlaps = 0;
+    g_r4Items = g_r4ItemsNoSim = g_firstItemMs = 0;
     g_lastR4 = R4Overlap{};
     for (bool& b : g_said) b = false;
     g_registered = false;
@@ -315,6 +324,7 @@ void OnVerb(const sg::Call& c, bool take) {
         if (open >= 0) ++g_unshared[open];
     } else {
         ++g_cell[route][take ? 1 : 0];
+        if (!g_firstMs[route][take ? 1 : 0]) g_firstMs[route][take ? 1 : 0] = UnixMs();
         RememberWriter(eid, route, take ? 1 : 0);
         if (route == kNone) NoteR6Caller(c);
     }
@@ -392,10 +402,21 @@ void OnDisconnect() {
 
 uint64_t RouteEntries(int route) { return route >= 0 && route < 5 ? g_entries[route] : 0; }
 uint64_t R4Overlaps() { return g_r4Overlaps; }
+uint64_t R4ItemOverlaps() { return g_r4Items; }
+uint64_t R4ItemOverlapsNoSim() { return g_r4ItemsNoSim; }
+uint64_t FirstItemOverlapMs() { return g_firstItemMs; }
+void MarkItemOverlaps() { g_firstItemMs = 0; }
 R4Overlap LastR4Overlap() { return g_lastR4; }
 uint64_t GenCalls() { return g_gen; }
 uint64_t RouteVerbs(int route, bool take) {
     return route >= 0 && route < kRoutes ? g_cell[route][take ? 1 : 0] : 0;
+}
+
+void MarkVerbs(int route, bool take) {
+    if (route >= 0 && route < kRoutes) g_firstMs[route][take ? 1 : 0] = 0;
+}
+uint64_t FirstVerbMs(int route, bool take) {
+    return route >= 0 && route < kRoutes ? g_firstMs[route][take ? 1 : 0] : 0;
 }
 
 Seams SeamsState(const char** dead) {

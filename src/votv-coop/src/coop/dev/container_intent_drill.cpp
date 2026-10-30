@@ -76,7 +76,7 @@ constexpr ArmRow kArms[] = {{"take", Arm::Take},     {"settle", Arm::Settle}, {"
                             {"putdeadline", Arm::PutDeadline}, {"putowed", Arm::PutOwed}, {"putjoin", Arm::PutJoin},
                             {"throwhand", Arm::ThrowHand}, {"throwgrab", Arm::ThrowGrab}, {"throwhostgrab", Arm::ThrowHostGrab},
                             {"throwclamp", Arm::ThrowClamp}, {"throwplace", Arm::ThrowPlace}, {"throwjoin", Arm::ThrowJoin},
-                            {"throwdepart", Arm::ThrowDepart}, {"throwtouch", Arm::ThrowTouch}};
+                            {"throwdepart", Arm::ThrowDepart}, {"throwtouch", Arm::ThrowTouch}, {"throwinto", Arm::ThrowInto}};
 }  // namespace
 
 Arm ArmOf() {
@@ -137,11 +137,13 @@ void Disarm() {
     AH::dev::NoEscrow(false);
     AH::dev::NoReservation(false);   // the put arms' knobs and counters, whichever way the arm ended
     AH::dev::NoLapse(false);
+    AH::overlap::dev::ReachRed(false);
     AH::dev::InsertNotReady(0);
     AH::dev::CountPutJudgements(false);
     AR::dev::DoubleDone(false);
     AR::dev::NoHoverGuard(false);
     AR::dev::NoHandTable(false);
+    AR::dev::NoOverlapCancel(false);
     RoomRestore();
 }
 

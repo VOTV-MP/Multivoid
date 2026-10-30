@@ -68,6 +68,11 @@ void Tick();    // the waiting puts whose edge came are judged again; those whos
 void OnBound(void* actor);                 // an actor was bound to an element id (RegisterPropMirror): a put waiting for its bind
 void OnContainerChanged(uint32_t eid);     // a container was marked dirty (its records or arming changed): its latches clear
 void Reset();   // the session's end: the waiting puts and the pending body are dropped
+namespace dev {
+// The throwinto arm's red (container_overlap_reach_red): the host's overlap judge reads the reach term of a held or claimed driver as
+// out of reach. Reset puts it back.
+void ReachRed(bool on);
+}  // namespace dev
 }  // namespace overlap
 
 namespace internal {   // pure, no engine call: the selftest drives these (NOT the game thread)

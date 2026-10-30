@@ -85,7 +85,6 @@ uint32_t g_hTargetEid = 0, g_hItemEid = 0;
 Track    g_hTrack;
 HitJudge g_hHit;
 std::vector<uint32_t> g_hSet, g_hNow;   // the live drive element ids at the arm line; the ones live now
-std::vector<coop::element::Registry::ActorIdPair> g_hSnap;
 uint32_t g_hElemEid = 0;   // the host's element of the thrown drive (0 until found)
 int      g_hCount0 = -1;
 uint64_t g_hOvSeen = 0, g_hOvAll0 = 0, g_hAdds0 = 0;
@@ -182,17 +181,6 @@ void StepBind() {
     UE_LOGI("[CI-DRILL] host %s fixture: target eid=%u %ls holds %d record(s), drive eid=%u", ArmName(), te,
             R::ClassNameOf(target).c_str(), count, ie);
     HNext(HStep::WaitArm);
-}
-
-// The live prop_drive_C element ids now, in `out`.
-void LiveDriveEids(std::vector<uint32_t>& out) {
-    out.clear();
-    void* driveCls = R::FindClass(RD::kDriveClass);
-    coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, g_hSnap);
-    for (const auto& p : g_hSnap) {
-        void* a = coop::element::LivePropActor(p.id);   // null when the element's actor is gone
-        if (a && driveCls && R::ClassOf(a) == driveCls) out.push_back(p.id);
-    }
 }
 
 // The host's element of the client's thrown hand drive: the first prop_drive_C element not in the set taken at the arm line.
@@ -674,9 +662,24 @@ void StepItem2Bind() {
 
 }  // namespace
 
+void LiveDriveEids(std::vector<uint32_t>& out) {
+    static std::vector<coop::element::Registry::ActorIdPair> snap;
+    out.clear();
+    void* driveCls = R::FindClass(RD::kDriveClass);
+    coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, snap);
+    for (const auto& p : snap) {
+        void* a = coop::element::LivePropActor(p.id);   // null when the element's actor is gone
+        if (a && driveCls && R::ClassOf(a) == driveCls) out.push_back(p.id);
+    }
+}
+
 void ThrowHostTick(const coop::net::Session& session) {
     if (ArmOf() == Arm::ThrowHostGrab) {
         HostGrabHostTick(session);
+        return;
+    }
+    if (ArmOf() == Arm::ThrowInto) {
+        IntoHostTick(session);
         return;
     }
     if (!g_hMs) {   // the first step's clock starts when the arm does, never at reset

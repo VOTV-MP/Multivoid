@@ -48,6 +48,13 @@ void ReportNow(const char* why);
 // What the drill reads. All since the session began.
 uint64_t RouteEntries(int route);      // seam entries of route 0..4 (R1..R5)
 uint64_t R4Overlaps();
+// The overlaps of a SHARED ITEM (an actor that is no container) into a container, counted where the overlap is entered (the PRE of
+// putObjectIn_overlap): all, those whose entering component was not simulating physics, and the clock (UnixMs) of the first since the
+// last MarkItemOverlaps, 0 when none.
+uint64_t R4ItemOverlaps();
+uint64_t R4ItemOverlapsNoSim();
+uint64_t FirstItemOverlapMs();
+void MarkItemOverlaps();
 
 // The last overlap a SHARED actor made into a container's putObjectIn_overlap, for the container intent drill's throw
 // arms: `seq` counts them since the session began, `container` and `eid` are the element ids of the container and of the
@@ -65,6 +72,10 @@ R4Overlap LastR4Overlap();
 
 uint64_t GenCalls();                  // ui_playerInventory_C::gen_player bodies run (the screen's rebuild)
 uint64_t RouteVerbs(int route, bool take);      // verbs counted on a shared container under route 0..5 (R1..R6)
+// The clock (UnixMs) of the first verb counted under `route` since the last MarkVerbs for it, 0 when none: the verb's own event,
+// stamped where it is counted. A drill marks before its act and reads after, and polls nothing.
+void MarkVerbs(int route, bool take);
+uint64_t FirstVerbMs(int route, bool take);
 
 // The six watches' state, said by the watches themselves: Live once every one is live, Dead as soon as one settles
 // without a hook (its name in `dead`), Pending before that and while the census has not registered them.

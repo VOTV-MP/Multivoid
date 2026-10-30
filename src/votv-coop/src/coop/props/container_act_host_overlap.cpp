@@ -70,6 +70,7 @@ bool g_unreadSaid = false;   // the parameters did not read: said once a session
 bool g_dropSaid = false;     // a wait was dropped for a full table: said once a session
 P::WaitTable<ue_wrap::CachedObjRef> g_waiting;
 P::LatchTable<ue_wrap::CachedObjRef> g_latched;
+bool g_reachRed = false;     // the red: the reach term of a held or claimed driver reads out of reach (container_overlap_reach_red)
 
 // Who drives the prop: a client's row on it (elected or claimed) and/or a held pose stream (a remote drive).
 struct Driver {
@@ -164,7 +165,12 @@ P::Decision Judge(void* prop, void* container, uint32_t containerEid, const Driv
                 in.armedKnown = true;
                 break;
             case P::Need::Reach: {
-                const auto sub = EL::IntentTarget::ForClientIntent(*g_session, slot, cr::kReachUU).Authorize(prop);
+                // The red reads the term as failed outright: the reach primitive pads a bound by the prop's bounds and the
+                // puppet's pose staleness (intent_authority.h kPoseStalenessUU, 600), so no small bound can refuse a prop in
+                // hand; the red proves the refusal's wiring, the distance math is the primitive's own.
+                EL::IntentSubject sub;
+                if (g_reachRed) sub.outcome = EL::IntentOutcome::OutOfReach;
+                else            sub = EL::IntentTarget::ForClientIntent(*g_session, slot, cr::kReachUU).Authorize(prop);
                 in.reach = sub.outcome == EL::IntentOutcome::Ok          ? P::ReachRead::Ok
                            : sub.outcome == EL::IntentOutcome::OutOfReach ? P::ReachRead::OutOfReach
                                                                           : P::ReachRead::Unread;
@@ -455,6 +461,11 @@ void Reset() {
     g_applyDepth = 0;
     g_unreadSaid = false;
     g_dropSaid = false;
+    g_reachRed = false;
 }
+
+namespace dev {
+void ReachRed(bool on) { g_reachRed = on; }
+}  // namespace dev
 
 }  // namespace coop::props::container_act_host::overlap
