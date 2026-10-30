@@ -71,8 +71,8 @@ enum class Cond : uint8_t { None, Closed, Open, Rows };
 
 Ph    g_ph = Ph::Wait;
 Cond  g_cond = Cond::None;
-bool  g_peerRun = false;     // the client of a settled pair: the arms include M2
-bool  g_hostWatch = false;   // the host of a settled pair: it only watches
+bool  g_peerRun = false;     // a client runs the arms with M2: its host is its peer
+bool  g_hostWatch = false;   // arm 4, the host only: it watches the client's M2 window
 int   g_cycle = 0;           // enterPause calls so far
 void* g_menu = nullptr;
 int32_t g_menuIdx = -1;
@@ -273,8 +273,10 @@ bool Prepare(coop::net::Session& s) {
         return false;
     }
     const bool peer = PeerPresent(s);
-    g_hostWatch = peer && s.role() == coop::net::Role::Host;
-    g_peerRun = peer && s.role() != coop::net::Role::Host;
+    // The role is the row's, never inferred from who is connected: a host is ready before its client joins.
+    g_hostWatch = ArmNow() == 4;
+    if (g_hostWatch && s.role() != coop::net::Role::Host) { Fail("arm 4 is the host's watch"); return false; }
+    g_peerRun = s.role() != coop::net::Role::Host;
     const char* why = "";
     if (ArmNow() >= 3 && !g_hostWatch && !bind::Start(&why)) { Fail(why); return false; }
     UE_LOGI("pmprobe start arm=%d role=%s peer=%d mode=%s menu=%p tick_sources=ui_menu_C::Tick(post),"
@@ -357,7 +359,7 @@ void AtOpen() {
         wire::Begin();
         return Stage(Ph::M2Window);
     }
-    UE_LOGI("pmprobe m2 SKIPPED: no peer was connected when the probe began");
+    UE_LOGI("pmprobe m2 SKIPPED: the host runs no m2 (a client on arm 3 with its host on arm 4 does)");
     CloseMenu();
 }
 
