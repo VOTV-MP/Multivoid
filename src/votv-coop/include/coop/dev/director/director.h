@@ -192,4 +192,12 @@ DWORD WINAPI ContainerTakeProbeThread(LPVOID arg);
 void RunContainerRace();
 DWORD WINAPI ContainerRaceThread(LPVOID arg);
 
+// The two-peer GRAB race (grab_race_probe.cpp), the measure of the one-holder rule: the host names a loose keyed
+// prop in a shared file, both peers walk to it and aim, wait on the GO sentinel, then run the grab chain at one
+// instant; each watches the prop for a few seconds and logs who holds it and which slot drives its copy. Modes:
+// "race" (both fire) and "control" (the host alone). Env: VOTVCOOP_RUN_GRAB_RACE=1, VOTVCOOP_RACE_MODE,
+// VOTVCOOP_RACE_ROLE, VOTVCOOP_RACE_GO_FILE, VOTVCOOP_RACE_TARGET_FILE. Greppable as "grab-race:".
+void RunGrabRace();
+DWORD WINAPI GrabRaceThread(LPVOID arg);
+
 }  // namespace coop::director
