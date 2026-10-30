@@ -7,13 +7,10 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/dev/drill_chat.h"
-#include "coop/input/input_owner.h"
-#include "coop/net/net_stats.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
-#include "ui/input_focus.h"
 #include "ui/multiplayer_menu.h"    // IsPauseMenuOpen
 #include "ui/native_screen.h"
 
@@ -58,7 +55,7 @@ constexpr const char* kLineOpen   = "[PM] pause open";
 constexpr const char* kLineClosed = "[PM] pause closed";
 // The measurement window of the client's pause, and the fail-safe bounds on the waits that are otherwise
 // on a readiness line (they end a run that cannot finish, they are not a verdict).
-constexpr auto kM2Window = std::chrono::seconds(10);
+constexpr double kM2WindowS = 10.0;
 constexpr auto kStepBound = std::chrono::seconds(30);
 constexpr auto kHostBound = std::chrono::seconds(180);
 
@@ -69,7 +66,7 @@ int ArmNow() {
 }
 
 enum class Ph : uint8_t { Wait, HostWatch, Closed, Open, WaitOpen, AtOpen, M2Window, Close, WaitClosed,
-                          OpenFrames, Rows, RowFrames, Done };
+                          OpenFrames, Rows, RowFrames, Bind, Done };
 enum class Cond : uint8_t { None, Closed, Open, Rows };
 
 Ph    g_ph = Ph::Wait;
@@ -217,6 +214,7 @@ void Call0(void* fn) { R::CallFunction(g_menu, fn, nullptr); }
 
 // The probe is over and the menu is as the player left it.
 void Finish() {
+    bind::Release();  // the delegates it bound are written back before the widgets they sit on can be freed
     rows::Teardown();
     if (g_menuOpen && g_menu && R::IsLiveByIndex(g_menu, g_menuIdx)) Call0(g_resumeFn);
     g_menuOpen = false;
@@ -236,61 +234,6 @@ void Done() {
 
 bool Overdue(std::chrono::seconds bound) { return Clock::now() - g_stageAt > bound; }
 void Stage(Ph next) { g_ph = next; g_stageAt = Clock::now(); }
-
-// ---- the wire counters and the hotkeys (M2) ---------------------------------------------------------------
-
-struct M2 {
-    Clock::time_point t0{};
-    Clock::time_point lastSec{};
-    coop::net::net_stats::Snapshot s0{};
-    coop::net::net_stats::Snapshot last{};
-    int sec = 0;
-};
-M2 g_m2;
-
-void M2Begin() {
-    coop::net::net_stats::Get(g_m2.s0);
-    g_m2.last = g_m2.s0;
-    g_m2.t0 = g_m2.lastSec = Clock::now();
-    g_m2.sec = 0;
-}
-
-// What the hotkeys' handlers consult, read as they read it. Chat's T (ui/imgui_overlay.cpp:392) needs no overlay
-// capture, the pause menu NOT open, the input owner's yes for the key and a chat session; F1 (:360) needs the
-// overlay menu open or the input owner's yes.
-void LogHotkeys(const char* who) {
-    const bool menu = coop::multiplayer_menu::IsPauseMenuOpen();
-    const bool f1 = coop::input::input_owner::MayTakeKey(VK_F1);
-    const bool t = coop::input::input_owner::MayTakeKey('T');
-    UE_LOGI("pmprobe m2 %s hotkeys: pause_menu_open=%d may_take_F1=%d may_take_T=%d overlay_capturing_text=%d "
-            "our_window_foreground=%d -> F1 %s, T chat %s", who, menu ? 1 : 0, f1 ? 1 : 0, t ? 1 : 0,
-            ui::input_focus::IsOverlayCapturingText() ? 1 : 0, ui::input_focus::IsOurWindowForeground() ? 1 : 0,
-            f1 ? "toggles the overlay" : "is left to the game", !menu && t ? "opens" : "does NOT open");
-}
-
-// One line a second: wire packets since the last line (every message kind; the pose stream is the steady
-// bulk, and no pose-only counter exists), and the world's paused state read by UGameplayStatics::IsGamePaused.
-void M2Second(const char* who) {
-    coop::net::net_stats::Snapshot now{};
-    coop::net::net_stats::Get(now);
-    ++g_m2.sec;
-    UE_LOGI("pmprobe m2 %s t=%ds wire_sent=%llu wire_recv=%llu paused=%d", who, g_m2.sec,
-            static_cast<unsigned long long>(now.packetsSent - g_m2.last.packetsSent),
-            static_cast<unsigned long long>(now.packetsRecv - g_m2.last.packetsRecv),
-            ue_wrap::engine::IsGamePaused() ? 1 : 0);
-    if (g_m2.sec == 1) LogHotkeys(who);
-    g_m2.last = now;
-    g_m2.lastSec += std::chrono::seconds(1);
-}
-
-void M2End(const char* who) {
-    coop::net::net_stats::Snapshot now{};
-    coop::net::net_stats::Get(now);
-    const double s = std::chrono::duration<double>(Clock::now() - g_m2.t0).count();
-    UE_LOGI("pmprobe m2 %s window=%.1fs wire_sent=%.1f/s wire_recv=%.1f/s paused_at_end=%d", who, s,
-            static_cast<double>(now.packetsSent - g_m2.s0.packetsSent) / s,
-            static_cast<double>(now.packetsRecv - g_m2.s0.packetsRecv) / s, ue_wrap::engine::IsGamePaused() ? 1 : 0);
-}
 
 // ---- readiness ------------------------------------------------------------------------------------------
 
@@ -332,6 +275,8 @@ bool Prepare(coop::net::Session& s) {
     const bool peer = PeerPresent(s);
     g_hostWatch = peer && s.role() == coop::net::Role::Host;
     g_peerRun = peer && s.role() != coop::net::Role::Host;
+    const char* why = "";
+    if (ArmNow() >= 3 && !g_hostWatch && !bind::Start(&why)) { Fail(why); return false; }
     UE_LOGI("pmprobe start arm=%d role=%s peer=%d mode=%s menu=%p tick_sources=ui_menu_C::Tick(post),"
             "daynightCycle_C::ReceiveTick(post)", ArmNow(), s.role() == coop::net::Role::Host ? "host" : "client",
             peer ? 1 : 0, g_hostWatch ? "watch" : g_peerRun ? "client-with-peer" : "solo", g_menu);
@@ -347,31 +292,55 @@ void HostWatch() {
     if (!opened) {
         if (!DC::SeenHas(kLineOpen)) return;
         opened = true;
-        M2Begin();
+        wire::Begin();
         g_stageAt = Clock::now();
         UE_LOGI("pmprobe m2 host: the client's pause is open");
         return;
     }
-    while (Clock::now() - g_m2.lastSec >= std::chrono::seconds(1) && g_m2.sec < 60) M2Second("host");
+    wire::Pump("host", 60);
     if (!DC::SeenHas(kLineClosed)) return;
-    M2End("host");
+    wire::End("host");
     Done();
+}
+
+// The player's Escape event, which opens the menu when it is closed and closes it when it is open: the route
+// the game itself takes, so the middle cycle shows how enterPause and resume are reached from it.
+bool SendEscape() {
+    void* player = coop::players::Registry::Get().Local();
+    void* fn = player ? R::FindFunction(R::ClassOf(player), P::name::MainPlayerEscapeFn) : nullptr;
+    if (!fn) return false;
+    const int32_t size = R::FunctionFrameSize(fn);
+    std::vector<uint8_t> frame(size > 0 ? static_cast<size_t>(size) : 0, 0u);
+    R::CallFunction(player, fn, frame.empty() ? nullptr : frame.data());
+    return true;
+}
+
+// Cycle 2 of arm 3 goes through the Escape event; every other open and close calls the menu's own function.
+bool ViaEscape() { return g_cycle == 2 && ArmNow() >= 3; }
+
+// Opens or closes the menu: by the Escape event when the cycle goes that way, else by `directFn`. False when the
+// event cannot be sent.
+bool Toggle(void* directFn) {
+    if (!ViaEscape()) { Call0(directFn); return true; }
+    return SendEscape();
 }
 
 void OpenMenu() {
     ++g_cycle;
-    Call0(g_enterFn);
-    UE_LOGI("pmprobe enterPause #%d called (game_paused=%d)", g_cycle, ue_wrap::engine::IsGamePaused() ? 1 : 0);
+    if (!Toggle(g_enterFn)) return Fail("the Escape event was not found");
+    UE_LOGI("pmprobe enterPause #%d via %s (game_paused=%d)", g_cycle, ViaEscape() ? "Escape" : "direct call",
+            ue_wrap::engine::IsGamePaused() ? 1 : 0);
     Stage(Ph::WaitOpen);
 }
 
 void CloseMenu() {
-    Call0(g_resumeFn);
+    if (!Toggle(g_resumeFn)) return Fail("the Escape event was not found");
     g_menuOpen = false;
     Stage(Ph::WaitClosed);
 }
 
 void AfterClosed() {
+    bind::ReportDispatch(g_cycle, ViaEscape() ? "Escape" : "direct call");
     if (g_cycle < 3) return OpenMenu();
     Done();
 }
@@ -385,7 +354,7 @@ void AtOpen() {
     }
     if (g_peerRun) {
         DC::Say(kLineOpen);
-        M2Begin();
+        wire::Begin();
         return Stage(Ph::M2Window);
     }
     UE_LOGI("pmprobe m2 SKIPPED: no peer was connected when the probe began");
@@ -393,9 +362,9 @@ void AtOpen() {
 }
 
 void M2Window() {
-    while (Clock::now() - g_m2.lastSec >= std::chrono::seconds(1) && g_m2.sec < 10) M2Second("client");
-    if (Clock::now() - g_m2.t0 < kM2Window) return;
-    M2End("client");
+    wire::Pump("client", 10);
+    if (wire::Elapsed() < kM2WindowS) return;
+    wire::End("client");
     DC::Say(kLineClosed);
     CloseMenu();
 }
@@ -428,6 +397,17 @@ void RowFrames() {
     if (g_s.n < kFrames) return;
     LogFrames("rows100_scrolled");
     g_cond = Cond::None;
+    if (ArmNow() >= 3) return Stage(Ph::Bind);
+    rows::Teardown();
+    CloseMenu();
+}
+
+// The bound delegates, on the rows still in the open menu; the candidates' counting window may have time left.
+void Bind() {
+    const char* why = "";
+    const bind::Step st = bind::Advance(&why);
+    if (st == bind::Step::Failed) return Fail(why);
+    if (st == bind::Step::Waiting) return;
     rows::Teardown();
     CloseMenu();
 }
@@ -453,6 +433,7 @@ void Run() {
     case Ph::OpenFrames:  return OpenFrames();
     case Ph::Rows:        return Rows();
     case Ph::RowFrames:   return RowFrames();
+    case Ph::Bind:        return Bind();
     default:              return;
     }
 }

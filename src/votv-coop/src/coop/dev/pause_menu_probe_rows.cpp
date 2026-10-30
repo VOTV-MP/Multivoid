@@ -244,6 +244,15 @@ Step Advance(const char** why) {
 
 void* Scroll() { return g_scroll; }
 
+int Count() { return static_cast<int>(g_rows.size()); }
+
+void* ButtonAt(int row, int button) {
+    return row >= 0 && row < Count() && button >= 0 && button < kButtons ? g_rows[static_cast<size_t>(row)].btn[button]
+                                                                         : nullptr;
+}
+
+void* SliderAt(int row) { return row >= 0 && row < Count() ? g_rows[static_cast<size_t>(row)].slider : nullptr; }
+
 void Teardown() {
     if (g_scroll && g_screen && R::IsLive(g_screen)) U::RemoveChild(g_screen, g_scroll);
     g_scroll = nullptr;

@@ -65,9 +65,11 @@ CFG_FLAG(server_breaker_census, "server_breaker_census", "dev", false, "VOTVCOOP
     "Diagnostic census (BOTH peers): every 30 s the server breaker's inputs in one line (its ticker, the game mode byte, the difficulty, the day, the server list against the live boxes, the broken count against the boxes actually broken), and a line per breakServer, fix and break_type. Read-only.")
 CFG_FLAG(leak_probe, "leak_probe", "dev", false, nullptr,
     "Diagnostic probe: object/memory leak counters.")
-CFG_INT(pause_menu_probe, "pause_menu_probe", "dev", 0, 0, 2, "VOTVCOOP_PAUSE_MENU_PROBE",
+CFG_INT(pause_menu_probe, "pause_menu_probe", "dev", 0, 0, 3, "VOTVCOOP_PAUSE_MENU_PROBE",
     "Probe (BOTH peers): the pause menu opened through its own enterPause and closed through resume, three times. "
     "1: the widget tree to depth 4 and whether the third open rebuilt it, the frame time with the menu closed "
     "and open, and, with a peer, the client's pause for a window (wire counters and hotkey state on both peers). "
     "2: adds rows built inside the open menu (12, then 100: build time, rebind cost, frame time scrolled) and "
-    "the settings screen's row class. Prints pmprobe lines, then pmprobe DONE or pmprobe FAIL.")
+    "the settings screen's row class. 3: adds a click and a slide bound to a native function an interceptor swallows, "
+    "pressed the way the engine broadcasts them, and how enterPause and resume are reached from the Escape event. "
+    "Prints pmprobe lines, then pmprobe DONE or pmprobe FAIL.")
