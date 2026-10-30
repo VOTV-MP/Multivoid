@@ -185,24 +185,6 @@ void DumpMenu(int cycle) {
 
 // ---- the menu --------------------------------------------------------------------------------------------
 
-bool IsPauseInstance(void* menu) {
-    static int32_t off = -1;
-    static uint8_t mask = 0;
-    if (off < 0 && !R::FindBoolProperty(R::ClassOf(menu), P::name::UiMenuIsPauseProp, off, mask)) return false;
-    return (*(static_cast<const uint8_t*>(menu) + off) & mask) != 0;
-}
-
-// The live ui_menu_C whose isPause reads true; the GameInstance owns it, so there is no world to filter by.
-void* FindPauseMenu(bool& ambiguous) {
-    void* found = nullptr;
-    for (void* obj : R::FindObjectsByClass(P::name::UiMenuClass)) {
-        if (!R::IsLive(obj) || !IsPauseInstance(obj)) continue;
-        if (found) { ambiguous = true; return nullptr; }
-        found = obj;
-    }
-    return found;
-}
-
 void Release() {
     if (g_resMenuTick) GT::UnregisterObservers(g_resMenuTick.Fn(), &OnMenuTick);
     if (g_resCycleTick) GT::UnregisterObservers(g_resCycleTick.Fn(), &OnCycleTick);
@@ -256,12 +238,8 @@ bool Ready(coop::net::Session& s) {
 
 // Resolves everything the arms need; false, with the reason printed, when something is not there.
 bool Prepare(coop::net::Session& s) {
-    static Clock::time_point lastFind{};
-    if (lastFind.time_since_epoch().count() != 0 && Clock::now() - lastFind < std::chrono::seconds(1)) return false;
-    lastFind = Clock::now();
-    bool ambiguous = false;
-    g_menu = FindPauseMenu(ambiguous);
-    if (ambiguous) { Fail("two pause menus"); return false; }
+    // The game's own reference to the menu: a field read on each pump tick until the gamemode has made it.
+    g_menu = coop::multiplayer_menu::PauseMenu();
     if (!g_menu) return false;
     g_menuIdx = R::InternalIndexOf(g_menu);
     g_enterFn = R::FindFunction(R::ClassOf(g_menu), L"enterPause");

@@ -3,9 +3,9 @@
 #include "coop/save/save_button_disable.h"
 
 #include "coop/net/session.h"
+#include "ui/multiplayer_menu.h"  // PauseMenu
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
-#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -40,11 +40,6 @@ void* g_escFn = nullptr;          // mainPlayer_C::InpActEvt_Escape (per-open an
 void* g_tickFn = nullptr;         // ui_menu_C::Tick (self-heal anchor)
 int32_t g_buttonSaveOff = -1;     // ui_menu_C -> button_Save (UButton*)
 int32_t g_isPauseOff = -1;        // ui_menu_C -> isPause (bool)
-
-// Cached live pause-menu instance (GameInstance-owned -> persists the whole session). A
-// CachedObjRef because this is probed on EVERY ESC press, including after a world swap freed the
-// old instance; only a stale probe re-walks.
-ue_wrap::CachedObjRef g_menuInstance;
 
 // UWidget::bIsEnabled is a PACKED bitfield @ +0xB4 (bit 0x04; siblings bIsVariable=0x01,
 // bCreatedByConstructionScript=0x02, bOverride_Cursor=0x08). READING a bit is safe; WRITING
@@ -91,13 +86,11 @@ void* PauseSaveButton(void* menu) {
 }
 
 // POST observer on mainPlayer_C::InpActEvt_Escape: fires on each ESC press (engine input
-// dispatch). Resolve the cached GameInstance-owned ui_menu instance + disable its Save button.
+// dispatch). Read the pause menu off the gamemode's own reference + disable its Save button. Null
+// (no gamemode yet, the menu level) leaves nothing to grey; the next ESC asks again.
 void OnEscapePost(void* /*self*/, void* /*function*/, void* /*params*/) {
     if (!IsClient()) return;
-    if (!g_menuInstance.Alive()) {
-        g_menuInstance.Set(R::FindObjectByClass(prof::name::UiMenuClass));  // one-time walk, then cached
-    }
-    if (void* btn = PauseSaveButton(g_menuInstance.Raw())) ApplyGreyOut(btn);
+    if (void* btn = PauseSaveButton(coop::multiplayer_menu::PauseMenu())) ApplyGreyOut(btn);
 }
 
 // POST observer on ui_menu_C::Tick: `self` IS the menu (zero scan). Self-heal -- only

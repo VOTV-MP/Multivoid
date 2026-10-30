@@ -45,13 +45,10 @@ Arm ArmNow() {
 enum class Phase : uint8_t { Armed, WaitMenu, Done };
 Phase g_phase = Phase::Armed;
 Clock::time_point g_escapeAt{};
-Clock::time_point g_lastFind{};
 
 // A fail-safe bound on a wait that is otherwise on readiness (the menu opening), not a clock the
 // drill's verdict rests on.
 constexpr auto kAbortAfter = std::chrono::seconds(30);
-// The walk that finds the menu instance is a one-shot-rate call.
-constexpr auto kFindEvery = std::chrono::seconds(1);
 
 const char* Me() { return ArmNow() == Arm::Host ? "host" : "client"; }
 
@@ -95,31 +92,7 @@ void SendEscape() {
     R::CallFunction(player, fn, frame.empty() ? nullptr : frame.data());
     UE_LOGI("[PAUSE-QUIT] %s: Escape sent", Me());
     g_escapeAt = Clock::now();
-    g_lastFind = Clock::time_point{};
     g_phase = Phase::WaitMenu;
-}
-
-// A ui_menu_C reads isPause true while it is the in-game pause menu. The property is read on the
-// class (the function walks a class's property chain), then the bit from the instance.
-bool IsPauseInstance(void* menu) {
-    static int32_t off = -1;
-    static uint8_t mask = 0;
-    if (off < 0 && !R::FindBoolProperty(R::ClassOf(menu), P::name::UiMenuIsPauseProp, off, mask))
-        return false;
-    return (*(static_cast<const uint8_t*>(menu) + off) & mask) != 0;
-}
-
-// The pause menu: the live ui_menu_C whose isPause reads true. Not a world filter (the widget is
-// owned by the GameInstance, so it has no world), and FindObjectsByClass can return a departed
-// widget, hence the liveness test. Null while none is found; sets `ambiguous` for two or more.
-void* FindPauseMenu(bool& ambiguous) {
-    void* found = nullptr;
-    for (void* obj : R::FindObjectsByClass(P::name::UiMenuClass)) {
-        if (!R::IsLive(obj) || !IsPauseInstance(obj)) continue;
-        if (found) { ambiguous = true; return nullptr; }
-        found = obj;
-    }
-    return found;
 }
 
 // The click handler of the "Main menu" button. It is synchronous: its script calls
@@ -144,12 +117,8 @@ void WaitForMenu() {
     if (Clock::now() - g_escapeAt > kAbortAfter)
         return Abort("the pause menu did not open (in bed, sitting, an interface open?)");
     if (!coop::multiplayer_menu::IsPauseMenuOpen()) return;
-    if (g_lastFind.time_since_epoch().count() != 0 && Clock::now() - g_lastFind < kFindEvery) return;
-    g_lastFind = Clock::now();
-    bool ambiguous = false;
-    void* menu = FindPauseMenu(ambiguous);
-    if (ambiguous) return Abort("two pause menus");
-    if (menu) PressMainMenu(menu);
+    // The game's own reference to the menu; null for a tick or two after a level change, then asked again.
+    if (void* menu = coop::multiplayer_menu::PauseMenu()) PressMainMenu(menu);
 }
 
 }  // namespace

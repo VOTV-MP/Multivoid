@@ -30,6 +30,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/facts/function_row.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <windows.h>
 
@@ -96,6 +97,31 @@ bool  g_menuFadeHidden = false;
 inline void* ReadPtr(void* base, int32_t off) {
     return (base && off >= 0) ? *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(base) + off)
                               : nullptr;
+}
+
+// The ui_menu_C the live gamemode made for the running level: its own field pause_mainMenu, which
+// mainGamemode_C creates once at BeginPlay and assigns (mainGamemode.cpp:4620-4624), the field the
+// game itself reads to open the pause menu (mainPlayer.cpp:2316, gamemode->pause_mainMenu). In a
+// game level that widget is the pause menu; in the "menu" level the same field holds the main menu.
+// A field read off the cached gamemode, never a walk of the object array. Null while the gamemode
+// is absent (boot, mid-travel), the field is unresolved, or the widget is not live. Game thread.
+void* GamemodeMenu() {
+    static int32_t s_off = -1;
+    void* gm = ue_wrap::world_singleton::Gamemode();
+    if (!gm) return nullptr;
+    if (s_off < 0) {
+        s_off = R::FindPropertyOffset(R::ClassOf(gm), L"pause_mainMenu");
+        if (s_off < 0) {
+            static bool s_said = false;
+            if (!s_said) {
+                s_said = true;
+                UE_LOGW("multiplayer_menu: mainGamemode_C has no pause_mainMenu field -- no menu reference");
+            }
+            return nullptr;
+        }
+    }
+    void* menu = ReadPtr(gm, s_off);  // a fresh read off the live gamemode: bare IsLive is the contract
+    return (menu && R::IsLive(menu)) ? menu : nullptr;
 }
 
 // Inject the button into the menu's NEW GAME list, above NEW GAME. Idempotent per instance;
@@ -369,6 +395,16 @@ bool IsPauseMenuOpen() {
     return t != 0 && (::GetTickCount64() - t) < 250;
 }
 
+void* PauseMenu() {
+    // The gamemode's menu is the pause menu only in a game level, where the menu widget sets
+    // isPause at construction (ui_menu.cpp:301); in the "menu" level it is the main menu (:326).
+    void* menu = GamemodeMenu();
+    if (!menu) return nullptr;
+    if (g_isPauseOff < 0) g_isPauseOff = R::FindPropertyOffset(R::ClassOf(menu), prof::name::UiMenuIsPauseProp);
+    if (g_isPauseOff < 0 || *(reinterpret_cast<uint8_t*>(menu) + g_isPauseOff) == 0) return nullptr;
+    return menu;
+}
+
 void* MenuTickFn() {
     // Resolved once at install, at the boot menu, and never moves; null only if the menu class
     // never resolved, in which case the death-flee bypass falls back to its time ceiling.
@@ -380,8 +416,8 @@ void ForceInjectNow() {
     // bypassing the observer-timing race in the brief post-bypass screenshot window. Ignores the
     // pause flag, since the caller has already reached the main menu. Game thread only.
     if (!g_installed.load(std::memory_order_acquire)) TryInstall();
-    void* menu = R::FindObjectByClass(prof::name::UiMenuClass);
-    if (!menu || !R::IsLive(menu)) { UE_LOGW("multiplayer_menu: ForceInjectNow -- no live ui_menu_C"); return; }
+    void* menu = GamemodeMenu();  // in the menu level the gamemode's field holds the main menu
+    if (!menu) { UE_LOGW("multiplayer_menu: ForceInjectNow -- no live ui_menu_C"); return; }
     UE_LOGW("multiplayer_menu: ForceInjectNow on menu=%p -> %s", menu, DoInject(menu) ? "injected" : "FAILED");
 }
 

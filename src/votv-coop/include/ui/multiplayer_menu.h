@@ -46,6 +46,13 @@ bool IsInjectedInto(void* menu);
 // Auto-clears ~250 ms after the pause menu stops ticking (closed or back in gameplay).
 bool IsPauseMenuOpen();
 
+// The in-game pause menu: the ui_menu_C that mainGamemode_C::pause_mainMenu holds (the game's own
+// reference to it), when that widget is live and reads isPause. A field read off the cached
+// gamemode, never a walk of the object array. Null while the gamemode is absent (boot, mid-travel),
+// in the "menu" level (the same field holds the main menu there, isPause false), or before the
+// gamemode has made the widget; a caller treats null as "not now" and asks again. Game thread.
+void* PauseMenu();
+
 // The resolved ui_menu_C::Tick UFunction* (the menu's per-frame tick), or null if
 // not resolved yet. net_pump uses it as the death-flee transparent-bypass RELEASE
 // condition: the first time this dispatches, the menu world is up so the detour
