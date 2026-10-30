@@ -317,32 +317,28 @@ bool SendEscape() {
     return true;
 }
 
-// Cycle 2 of arm 3 goes through the Escape event; every other open and close calls the menu's own function.
+// Cycle 2 of arm 3 opens through the Escape event; every other open, and every close, calls the menu's own
+// function. The player's Escape never closes the menu: with no interface active it always reaches enterPause
+// (mainPlayer.cpp:2263-2315); while the menu is open the key reaches the menu widget instead (ui_menu OnKeyDown).
 bool ViaEscape() { return g_cycle == 2 && ArmNow() >= 3; }
-
-// Opens or closes the menu: by the Escape event when the cycle goes that way, else by `directFn`. False when the
-// event cannot be sent.
-bool Toggle(void* directFn) {
-    if (!ViaEscape()) { Call0(directFn); return true; }
-    return SendEscape();
-}
 
 void OpenMenu() {
     ++g_cycle;
-    if (!Toggle(g_enterFn)) return Fail("the Escape event was not found");
+    if (!ViaEscape()) Call0(g_enterFn);
+    else if (!SendEscape()) return Fail("the Escape event was not found");
     UE_LOGI("pmprobe enterPause #%d via %s (game_paused=%d)", g_cycle, ViaEscape() ? "Escape" : "direct call",
             ue_wrap::engine::IsGamePaused() ? 1 : 0);
     Stage(Ph::WaitOpen);
 }
 
 void CloseMenu() {
-    if (!Toggle(g_resumeFn)) return Fail("the Escape event was not found");
+    Call0(g_resumeFn);
     g_menuOpen = false;
     Stage(Ph::WaitClosed);
 }
 
 void AfterClosed() {
-    bind::ReportDispatch(g_cycle, ViaEscape() ? "Escape" : "direct call");
+    bind::ReportDispatch(g_cycle, ViaEscape() ? "Escape open, direct resume" : "direct call");
     if (g_cycle < 3) return OpenMenu();
     Done();
 }
