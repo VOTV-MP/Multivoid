@@ -1,6 +1,7 @@
 // coop/dispatch/event_dispatch_prop_drive.cpp -- the driven prop's reliable kinds: PropDriveEnd (the
 // close of a prop's stream, the host's to all or a syncing client's to the host) and the prop
-// syncer's pair, PropSyncClaim (client to host) and PropSyncAnswer (host to one client), and the developer
+// syncer's pair, PropSyncClaim (client to host) and PropSyncAnswer (host to one client), the host's refusal of
+// a second hold of one prop (PropHoldRefused, host to every client), and the developer
 // filler DevLoadFiller (host to one client), DevParityReport (a joiner's pose report to the host) and
 // DevContainerParity (a joiner's container content report to the host). Each case
 // validates at the trust boundary and hands off to its module. The switch below is the family's
@@ -14,6 +15,7 @@
 #include "coop/dev/pile_defer_report.h"    // the pile deferral drill's report receiver
 #include "coop/element/registry.h"
 #include "coop/props/prop_drive_stream.h"  // the driven-prop end edge
+#include "coop/props/prop_hold_claim.h"    // the client's receiver of a refused hold
 #include "coop/props/prop_syncer.h"        // the client's answer receiver
 #include "coop/props/prop_syncer_host.h"   // the host's claim judge and a client's End
 
@@ -112,6 +114,30 @@ bool HandlePropDriveEvent(net::Session& session,
             break;
         }
         ::coop::prop_syncer::OnAnswer(p);
+        break;
+    }
+    case net::ReliableKind::PropHoldRefused: {
+        // HOST->CLIENTS: the host kept another hold of a prop and refused this one. Host-authored: a client's copy
+        // is refused at the host's receive edge (client_authorship.h).
+        if (session.role() == net::Role::Host) {
+            UE_LOGW("event_feed: PropHoldRefused received on the host -- dropping");
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::PropHoldRefusedPayload)) {
+            UE_LOGW("event_feed: PropHoldRefused payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::PropHoldRefusedPayload));
+            break;
+        }
+        net::PropHoldRefusedPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.key.len > sizeof(p.key.data) || p.holdGen == 0 || p.slot < 1 || p.slot >= net::kMaxPeers ||
+            p.holder >= net::kMaxPeers || p.holder == p.slot) {
+            UE_LOGW("event_feed: PropHoldRefused slot=%u holder=%u hold=%u key.len=%u malformed -- dropping",
+                    static_cast<unsigned>(p.slot), static_cast<unsigned>(p.holder),
+                    static_cast<unsigned>(p.holdGen), static_cast<unsigned>(p.key.len));
+            break;
+        }
+        ::coop::prop_hold_claim::OnRefused(p);
         break;
     }
     case net::ReliableKind::DevLoadFiller: {

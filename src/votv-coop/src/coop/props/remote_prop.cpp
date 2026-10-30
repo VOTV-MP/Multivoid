@@ -217,6 +217,13 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
     // The release closes its hold, even one dropped as stale below, so a pose of it still in flight
     // starts nothing.
     CloseHold(senderSlot, payload.holdGen);
+    // A hold the host refused drove no copy, and the prop is the kept hold's: its release lets go of nothing.
+    if (senderSlot >= 0 && senderSlot < static_cast<int>(coop::players::kMaxPeers) && payload.holdGen != 0 &&
+        g_holds[senderSlot].haveDenied && g_holds[senderSlot].deniedGen == payload.holdGen) {
+        UE_LOGI("remote_prop: RELEASE of slot %d hold %u, which the host refused -- nothing to apply", senderSlot,
+                static_cast<unsigned>(payload.holdGen));
+        return;
+    }
     // A stale trash release (ctx older than the entity's last transition) is dropped, so a throw
     // delayed past a re-pile or re-grab never applies velocity to the re-skinned entity. ctx 0 or
     // eid 0 (a keyed release) is always fresh.

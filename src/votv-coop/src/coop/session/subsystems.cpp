@@ -83,6 +83,7 @@
 #include "coop/creatures/kerfur_menu_input.h"  // client radial-menu verb detection (InpActEvt_use PRE -> kerfur_command relay)
 #include "coop/creatures/kerfur_entity.h"  // the stable-KerfurId authority table
 #include "coop/creatures/kerfur_form_assembler.h"  // script-body gate consumer (observe-only + containment counter)
+#include "coop/props/prop_hold_claim.h"
 #include "coop/props/prop_stick_sync.h"  // wall-attachable stick mirror (camera-on-wall)
 #include "coop/dev/dev_lanes.h"  // the developer drills, probes and selftests, wired in one place
 #include "coop/dev/perf_probe.h"
@@ -326,6 +327,7 @@ void Install(coop::net::Session& session) {
     coop::prop_act_request::Install(&session);  // the six take-or-use watches (CLIENT asks the host, HOST honours a reservation); CLIENT: the host's answer, and the replay of a grant
     coop::kerfur_menu_input::Install(&session);  // client radial-menu verb detect (InpActEvt_use PRE -- the actionName dispatch is PE-invisible) -> kerfur_command relay
     coop::kerfur_form_assembler::Install(&session);  // script-body gate consumer: watch the two conversion verbs
+    coop::prop_hold_claim::Install(&session);  // one hold per keyed prop: the host keeps the first and refuses a second
     coop::prop_stick_sync::Install(&session);  // wall-attachable stick mirror (camera-on-wall -- commit observer -> PropStickState; receiver replays forceStick)
     coop::sleep_sync::Install(&session);  // who rests: each peer's rest state (client -> host -> clients) and the host's sleeping flag
     coop::sleep_rest::Install(&session);  // a client's rest at the native rate: its own sleep watch and the factor on its body and effects
@@ -453,6 +455,7 @@ DisconnectStats DisconnectAll() {
     coop::props::container_act_request::OnDisconnect();  // drop the pending container act, its expired records and unsent commits
     coop::prop_act_request::OnDisconnect();  // drop the pending take or use, its latch and its expired records
     coop::kerfur_menu_input::OnDisconnect();  // drop the cached session (the InpActEvt_use observer stays registered)
+    coop::prop_hold_claim::OnDisconnect();  // drop the refusal records and the notice cooldown
     coop::prop_stick_sync::OnDisconnect();  // drop commit-pending stick records
     coop::sleepingbag_sync::OnDisconnect();
     coop::item_activate::OnDisconnect();
