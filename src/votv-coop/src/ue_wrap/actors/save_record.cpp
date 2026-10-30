@@ -413,6 +413,16 @@ bool CaptureRecord(void* actor, SaveRecord& out) {
     return CallForRecord(actor, v->getData, out);
 }
 
+namespace {
+int g_applying = 0;   // ApplyRecord calls in progress; game thread
+struct ApplyingScope {
+    ApplyingScope() { ++g_applying; }
+    ~ApplyingScope() { --g_applying; }
+};
+}  // namespace
+
+bool IsApplying() { return g_applying > 0; }
+
 bool CaptureOwnRecord(void* actor, SaveRecord& out) {
     if (!actor) return false;
     const ClassVerbs* v = VerbsFor(R::ClassOf(actor));
@@ -424,6 +434,7 @@ bool IsPropClass(void* cls) {
 }
 
 bool ApplyRecord(void* actor, const SaveRecord& r, ClassResolver resolve) {
+    const ApplyingScope applying;
     if (!actor || !EnsurePropClass() || !g_baseGetData) return false;
     const ClassVerbs* v = VerbsFor(R::ClassOf(actor));
     // `overrides` and not merely "a loadData exists somewhere": this function dispatches

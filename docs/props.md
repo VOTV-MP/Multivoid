@@ -49,6 +49,16 @@ without publishing its final record. Mirrored applications and a joining client'
 excluded so records do not echo. `[V]` `.github/ci/prop_record_refresh_drill.py` executes the
 production callback with isolated engine boundaries; two-peer gameplay remains a separate check.
 
+A canned food (`prop_cannedFood_C` and its variants, a `prop_C` and not of the `prop_food_C` family) keeps
+`opened` and `foods` in its record, and the can opener, enough impact damage and eating change them
+in place, each ending in `Init`. `Init` also runs for changes that touch neither, so every class's
+`init` is watched at the script gate, and a can publishes only when the two differ from what this peer
+last knew, a can it has not seen comparing with its class's defaults (`coop/props/prop_can_state`). A
+record landing here updates what is known and does not go back. `[V]`
+`harness/autotest/autotest_can_state.cpp`: two cans, each opened on one peer and eaten from on the
+other, read the same `opened`, `foods` and mesh on both peers after every step, with one record per
+change. The verbs ran by reflection; the can opener's and the use key's own routes into them are `[RD]`.
+
 On the host, a prop born during play -- a device's eject, a drop, a place -- gets its record from
 the finish-spawning drain a tick after the birth, because the Blueprint that spawned it fills its
 state in after the finish call returns: a disc's eject loads it from the slot's JSON there. The
@@ -456,6 +466,7 @@ prop resolves.
 | A prop the toolgun freezes, unfreezes or makes static changes on the tool user's machine only; the next hold of it converges frozen and sleep, never static, and a copy static on one peer, without a wall-attach component's unstick, is not driven there while another peer holds the prop -- a refusal that lasts until a lane carries static | `[V]` no lane under `src/coop` catches `setPropProps`; `coop/props/remote_prop` refuses a stream for a copy static here |
 | Another peer's hold can carry away the chair this peer sits in at the laptop, which single player never allows: the laptop freezes the seat only on the machine whose player sits | `[V]` the laptop Blueprint: `stabilizeSeat` sets the seat frozen, and the exit's `setPropProps` clears it; `coop/props/remote_prop` unfreezes a held copy at the hold's first pose |
 | A keyed prop a client creates outside the intent door (a place after a pickup, the whitelisted births, a container extract, a player's own spawn verb) never reaches the host. It is logged now: the drain names its exit, and `[dev] prop_birth_key_probe` tallies every exit by name | `[V]` `coop/props/prop_drop_intent` drops it at the drain; `coop/dev/prop_birth_key_probe` |
+| Two peers changing one canned food inside one round trip each publish a whole record, and the last to reach the host stands, so a bite can be lost; a can's `health` travels only with those records, so impact damage short of opening it stays on each peer | `[RD]` `coop/props/prop_can_state` publishes the record and takes no claim |
 | Concrete, food and every other local-accumulator prop drift between peers; only the tape reel has its corrector | `[V]` `coop/interactables/tape_caddy_sync` is the only corrector |
 | A prop tied by any hook -- a player's, an anchored one, the level's own -- is parked on every client for as long as the tie holds, since the host streams it, so it cannot be grabbed there until the hook lets go. A joiner parks one at rest on the host's ready-edge re-send, a single unreliable datagram: lost, it leaves that prop unparked there until it moves | `[V]` `coop/items/hook_prop_claim` claims every tied prop on the host every pass; `coop/props/prop_drive_stream` parks it; `coop/props/prop_drive_host` re-sends at the ready edge |
 | A wall-attachable whose stick replay finds no surface here is frozen in place without the attach, so when the thing it stuck to is destroyed it stays in the air here while every other copy falls | `[V]` `coop/props/prop_stick_sync`'s fallback writes the flag without the component's attach or its destroy binding; `[RD]` the stick carries no parent |
@@ -475,7 +486,7 @@ prop resolves.
 | the stick | `coop/props/prop_stick_sync` |
 | a prop under a hook's drive or a broom's push | `coop/props/prop_drive_host` (the host's set and stream), `coop/props/prop_drive_stream` (the receiver), `coop/items/hook_prop_claim` (the hook lane feeding it), `coop/items/hook_constraint` (the tie itself, host-only), `coop/items/broom_push` (the broom's push feeding it) |
 | containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync` |
-| a record that changes in place | `coop/props/prop_record_refresh` (the drive box, the reel case) |
+| a record that changes in place | `coop/props/prop_record_refresh` (the drive box, the reel case), `coop/props/prop_can_state` (the canned food) |
 | notebook sync | `coop/interactables/notebook_sync`, `coop/props/prop_save_data`, `ue_wrap/actors/notebook` |
 | the pocket blip | `coop/items/inventory_pickup_sync` |
 | the join | `coop/props/prop_snapshot`, `coop/props/snapshot_census`, `coop/props/join_membership_sweep`, `coop/props/unresolved_pose_ledger` |
