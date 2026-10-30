@@ -24,6 +24,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <windows.h>
 
@@ -68,10 +69,10 @@ bool ReadProbe(Probe& out, bool inject) {
     auto p = std::make_shared<Probe>();
     const bool ok = OnGameThread([p, inject] {
         if (void* w = R::FindObjectByClass(prof::name::WorldClass)) p->world = R::ToString(R::NameOf(w));
-        void* gm = R::FindObjectByClass(prof::name::GamemodeClass);
-        p->gamemodeLive = gm && R::IsLive(gm);
-        void* menu = R::FindObjectByClass(prof::name::UiMenuClass);
-        p->menuLive = menu && R::IsLive(menu);
+        p->gamemodeLive = ue_wrap::world_singleton::Gamemode() != nullptr;
+        // The gamemode's own menu field: the main menu in the menu level, the one ForceInjectNow acts on.
+        void* menu = coop::multiplayer_menu::GamemodeMenu();
+        p->menuLive = menu != nullptr;
         if (inject && p->menuLive) coop::multiplayer_menu::ForceInjectNow();
         p->injected = p->menuLive && coop::multiplayer_menu::IsInjectedInto(menu);
     });
@@ -85,8 +86,8 @@ bool HasWorld(const std::wstring& world) { return world != L"<null>"; }
 
 // AmainGamemode_C::transition(FName LevelName) -- VOTV's own level travel. Game thread.
 bool CallTransition(const std::wstring& level) {
-    void* gm = R::FindObjectByClass(prof::name::GamemodeClass);
-    if (!gm || !R::IsLive(gm)) { UE_LOGW("menu_proceed: no live mainGamemode_C"); return false; }
+    void* gm = ue_wrap::world_singleton::Gamemode();
+    if (!gm) { UE_LOGW("menu_proceed: no live mainGamemode_C"); return false; }
     void* fn = R::FindFunction(R::ClassOf(gm), L"transition");
     if (!fn) { UE_LOGW("menu_proceed: transition() not resolved"); return false; }
     R::FName ln = ue_wrap::fname_utils::StringToFName(level);

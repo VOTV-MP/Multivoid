@@ -9,6 +9,7 @@
 
 #include "harness/autotest.h"
 
+#include "ui/multiplayer_menu.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -112,7 +113,7 @@ DWORD WINAPI SaveBlockTestThread(LPVOID /*arg*/) {
 // CLIENT-ONLY. Proves that the InpActEvt_Escape POST observer in coop/save/save_button_disable.cpp
 // actually DISABLES the pause-menu Save button, not merely that it installed. The pause menu is
 // input-driven and a real ESC press cannot be produced autonomously, so the hooked input event is
-// driven by reflection: find the live GameInstance-owned ui_menu_C, force its isPause flag true so
+// driven by reflection: take the gamemode's own ui_menu_C, force its isPause flag true so
 // the observer treats it as the pause menu without a real PlayerController or SetGamePaused, then
 // CallFunction(mainPlayer_C::InpActEvt_Escape), which routes through ProcessEvent and fires
 // OnEscapePost exactly as a real ESC does. The module logs its read-back on apply.
@@ -134,7 +135,7 @@ void RunAutonomousSaveBtnDisableTest() {
 
     auto done = std::make_shared<std::atomic<int>>(0);  // 0=pending 1=drove -1=resolve-fail
     GT::Post([done] {
-        void* menu = R::FindObjectByClass(P::name::UiMenuClass);
+        void* menu = coop::multiplayer_menu::GamemodeMenu();  // the gamemode's own reference
         void* mp = R::FindObjectByClass(P::name::MainPlayerClass);
         if (!menu || !mp) {
             UE_LOGW("savebtn_test: ui_menu_C=%p mainPlayer_C=%p not loaded -- cannot drive", menu, mp);

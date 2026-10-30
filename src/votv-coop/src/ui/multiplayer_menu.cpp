@@ -99,31 +99,6 @@ inline void* ReadPtr(void* base, int32_t off) {
                               : nullptr;
 }
 
-// The ui_menu_C the live gamemode made for the running level: its own field pause_mainMenu, which
-// mainGamemode_C creates once at BeginPlay and assigns (mainGamemode.cpp:4620-4624), the field the
-// game itself reads to open the pause menu (mainPlayer.cpp:2316, gamemode->pause_mainMenu). In a
-// game level that widget is the pause menu; in the "menu" level the same field holds the main menu.
-// A field read off the cached gamemode, never a walk of the object array. Null while the gamemode
-// is absent (boot, mid-travel), the field is unresolved, or the widget is not live. Game thread.
-void* GamemodeMenu() {
-    static int32_t s_off = -1;
-    void* gm = ue_wrap::world_singleton::Gamemode();
-    if (!gm) return nullptr;
-    if (s_off < 0) {
-        s_off = R::FindPropertyOffset(R::ClassOf(gm), L"pause_mainMenu");
-        if (s_off < 0) {
-            static bool s_said = false;
-            if (!s_said) {
-                s_said = true;
-                UE_LOGW("multiplayer_menu: mainGamemode_C has no pause_mainMenu field -- no menu reference");
-            }
-            return nullptr;
-        }
-    }
-    void* menu = ReadPtr(gm, s_off);  // a fresh read off the live gamemode: bare IsLive is the contract
-    return (menu && R::IsLive(menu)) ? menu : nullptr;
-}
-
 // Inject the button into the menu's NEW GAME list, above NEW GAME. Idempotent per instance;
 // true if our button is present afterwards. Game thread only.
 bool DoInject(void* menu) {
@@ -393,6 +368,28 @@ bool IsPauseMenuOpen() {
     // is safe from the render thread and the window-procedure thread.
     const uint64_t t = g_pauseTickMs.load(std::memory_order_relaxed);
     return t != 0 && (::GetTickCount64() - t) < 250;
+}
+
+void* GamemodeMenu() {
+    // mainGamemode_C creates the widget once at BeginPlay and assigns the field
+    // (mainGamemode.cpp:4620-4624), the field the game itself reads to open the pause menu
+    // (mainPlayer.cpp:2316, gamemode->pause_mainMenu).
+    static int32_t s_off = -1;
+    void* gm = ue_wrap::world_singleton::Gamemode();
+    if (!gm) return nullptr;
+    if (s_off < 0) {
+        s_off = R::FindPropertyOffset(R::ClassOf(gm), L"pause_mainMenu");
+        if (s_off < 0) {
+            static bool s_said = false;
+            if (!s_said) {
+                s_said = true;
+                UE_LOGW("multiplayer_menu: mainGamemode_C has no pause_mainMenu field -- no menu reference");
+            }
+            return nullptr;
+        }
+    }
+    void* menu = ReadPtr(gm, s_off);  // a fresh read off the live gamemode: bare IsLive is the contract
+    return (menu && R::IsLive(menu)) ? menu : nullptr;
 }
 
 void* PauseMenu() {
