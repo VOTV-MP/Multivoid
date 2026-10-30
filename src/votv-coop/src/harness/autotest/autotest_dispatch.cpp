@@ -197,6 +197,9 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // barrier; each counts locally afterwards, and the driver sums across peers.
     SpawnIf("VOTVCOOP_RUN_CTAKE_RACE", "container concurrent-take race (director Phase-2)", &coop::director::ContainerRaceThread, role);
 
+    // The grab race: two peers aim at the same keyed prop and grab it at a barrier; each logs who holds it after.
+    SpawnIf("VOTVCOOP_RUN_GRAB_RACE", "prop grab race (one holder)", &coop::director::GrabRaceThread, role);
+
     // The after-join end-reason drill: the host kicks slot 1 once it is seated and in the world;
     // the client's log must carry the DISCONNECTED notice with the moderation code.
     SpawnIf("VOTVCOOP_RUN_KICK_PROBE", "kick probe (the after-join end-reason notice)", &KickProbeThread, role);
