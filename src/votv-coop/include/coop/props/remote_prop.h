@@ -58,9 +58,6 @@ void CloseHold(int slot, uint16_t holdGen);
 // frame, a visible pop.
 bool IsActorUnderAnyDrive(void* actor);
 
-// The peer slot whose kinematic drive targets `actor` through the pose stream, or -1 when none does. Game thread.
-int DrivingSlotOf(void* actor);
-
 // The drive of `slot` ends because the host files its prop (a put by overlap, container_act_host_overlap): the copy
 // simulates again and the drive clears, as an implicit release does, so the container's body finds a simulating body.
 // A no-op for a slot with no drive. Game thread.
@@ -77,6 +74,16 @@ bool IsOwnedHere(void* actor);
 
 // A drive on `actor` belonging to a slot other than `slot` (-1 excludes none). Game thread.
 bool IsActorDrivenByOtherThan(void* actor, int slot);
+
+// The slot other than `except` whose drive moves `actor`, the lowest when two do, or -1 (`except` -1
+// excludes none). Game thread.
+int DrivingSlotOf(void* actor, int except = -1);
+
+// The host refused hold `holdGen` of the peer in `slot` (coop/props/prop_hold_claim): the hold
+// closes, its release moves nothing, and its drive ends if one started. A copy that no other drive
+// moves and this peer's player does not hold goes back to physics where that drive left it. A
+// generation of 0 or a slot out of range changes nothing. Game thread.
+void RefuseHold(int slot, uint16_t holdGen);
 
 // Register a wire-received prop mirror Element at `eid` bound to `actor`. Idempotent for
 // duplicate eids (a silent no-op); skips an eid of 0 (an unminted sender) and the invalid id.

@@ -22,14 +22,14 @@ namespace coop::remote_prop {
 // hold is the tail of a stream that already ended, perhaps with the prop frozen on the holder by a
 // slot or a stick, and starts nothing; a pose of a newer hold is a new grab, whatever the drive
 // cache still holds. A generation of 0 is unversioned and passes. The shape is MTA's sync time
-// context, which settles a state change against sync still in flight (CElement.cpp), with one
-// divergence: MTA's server also keeps one syncer per unoccupied vehicle and relays only that
-// syncer's packets (CUnoccupiedVehicleSync.cpp), as the driven-prop channel's host claims a prop,
-// while here the holder mints a generation per hold and nothing assigns a prop to one holder -- two
-// peers grabbing one prop both stream it (docs/props.md, Known limits).
+// context, which settles a state change against sync still in flight (CElement.cpp). The holder
+// mints the generation, and the host keeps one hold per keyed prop (coop/props/prop_hold_claim): a
+// hold it refused is closed here and remembered, so that hold's release moves nothing.
 struct HoldGate {
     uint16_t closedGen   = 0;
     bool     haveClosed  = false;
+    uint16_t deniedGen   = 0;      // the newest hold the host refused
+    bool     haveDenied  = false;
     uint16_t driveGen    = 0;      // the hold the slot's drive belongs to, while there is one
     coop::net::WireKey driveKey{}; // the prop that hold drove (its key; a keyless clump by driveEid)
     uint32_t driveEid    = 0;

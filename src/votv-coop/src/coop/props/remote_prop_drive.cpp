@@ -18,6 +18,7 @@
 #include "coop/props/prop_drive_stream.h"  // IsParked: the host's channel owns a parked copy
 #include "coop/props/prop_park.h"  // Park / Unpark: a held prop, and a Character welded on it
 #include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_hold_claim.h"  // AdmitRemoteHold: one hold per keyed prop
 #include "coop/props/prop_key_index.h"  // a key on the wire to a live actor
 #include "coop/props/prop_stick_sync.h"  // the stuck wall-attachable gates
 #include "coop/props/unresolved_pose_ledger.h"  // a pose-before-spawn race vs a sustained identity gap
@@ -72,6 +73,36 @@ bool IsActorDrivenByOtherThan(void* actor, int slot) {
     return false;
 }
 
+int DrivingSlotOf(void* actor, int except) {
+    UE_ASSERT_GAME_THREAD("remote_prop::DrivingSlotOf");
+    if (!actor) return -1;
+    for (int s = 0; s < static_cast<int>(coop::players::kMaxPeers); ++s)
+        if (s != except && g_drives[s].actor == actor) return s;
+    return -1;
+}
+
+void RefuseHold(int slot, uint16_t holdGen) {
+    UE_ASSERT_GAME_THREAD("g_drives (remote_prop::RefuseHold)");
+    if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers) || holdGen == 0) return;
+    CloseHold(slot, holdGen);
+    HoldGate& h = g_holds[slot];
+    if (!h.haveDenied || GenAfter(holdGen, h.deniedGen)) {
+        h.deniedGen = holdGen;
+        h.haveDenied = true;
+    }
+    ActiveDrive& d = g_drives[slot];
+    if (!d.actor || h.driveGen != holdGen) return;
+    // Another drive keeps the copy parked; otherwise it goes back to physics, as at a stream's
+    // stop, which this peer's own grab needs too.
+    void* const live = d.LiveActor();
+    const bool otherDrive = live && IsActorDrivenByOtherThan(live, slot);
+    if (live && !otherDrive)
+        coop::prop_park::Unpark(live, d.mesh, !StickHoldsPhysicsOff(live) && !HostAuthorsTrashBody(live));
+    UE_LOGI("remote_prop: slot %d hold %u refused by the host -- its drive ends%s", slot,
+            static_cast<unsigned>(holdGen), otherDrive ? ", the kept hold's drive stays" : "");
+    ResetDriveState(d);
+}
+
 // True when some slot's drive targets `actor`; the spawn receiver skips the transform converge
 // for a driven prop (PropPose owns its position).
 bool IsActorUnderAnyDrive(void* actor) {
@@ -82,14 +113,6 @@ bool IsActorUnderAnyDrive(void* actor) {
         if (d.actor == actor) return true;
     }
     return false;
-}
-
-int DrivingSlotOf(void* actor) {
-    UE_ASSERT_GAME_THREAD("g_drives (DrivingSlotOf)");
-    if (!actor) return -1;
-    for (int s = 0; s < static_cast<int>(coop::players::kMaxPeers); ++s)
-        if (g_drives[s].actor == actor) return s;
-    return -1;
 }
 
 bool IsOwnedHere(void* actor) {
@@ -212,6 +235,9 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
         return;
     }
     coop::unresolved_pose_ledger::Clear(slot, keyW, pose.elementId);
+    // One hold per keyed prop: the host refuses a second, and a client waits for the host's word
+    // while its own player or another slot holds the prop.
+    if (!coop::prop_hold_claim::AdmitRemoteHold(slot, pose.holdGen, pose.key, prop)) return;
     // The half of the grab this peer never ran. A grab runs its prelude on the grabbing machine only:
     // prop_C's playerGrabbed_pre clears the prop's lifespan, broadcasts `touched` and runs
     // awakeUnfreeze on a frozen or sleeping prop, and a prop carrying the wall-attach component (the
