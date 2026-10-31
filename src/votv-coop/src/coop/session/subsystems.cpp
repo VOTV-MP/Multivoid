@@ -90,6 +90,7 @@
 #include "coop/props/prop_hold_claim.h"
 #include "coop/props/prop_can_state.h"
 #include "coop/props/food_tick_gate.h"  // the food ticks a client refuses: its counts end with the session
+#include "coop/world/world_sound_sync.h"
 #include "coop/props/prop_food_sync.h"
 #include "coop/world/plant_gate.h"  // the plant bodies a client refuses: its counts end with the session
 #include "coop/interactables/woodchipper_gate.h"  // the chipper bodies a client refuses: its counts end with the session
@@ -310,6 +311,7 @@ void Install(coop::net::Session& session) {
     coop::props::prop_record_refresh::Install(&session);  // drive box + reel case republish their own record
     coop::vent_crawler_sync::Install(&session);  // the crawl's start, for a client's sounds
     coop::props::prop_can_state::Install(&session);  // a canned food's lid and contents: its record on a change
+    coop::world_sound_sync::Install(&session);  // the sky's two sounds, a faucet's click
     coop::props::prop_food_sync::Install(&session);  // a world food's one author, the host
     coop::plant_sync::Install(&session);  // the host runs every plant
     coop::props::prop_food_state::Install();  // the food family claims its own live state off the record lane
@@ -509,6 +511,7 @@ DisconnectStats DisconnectAll() {
     coop::plant_gate::OnDisconnect();  // say the refused counts, start the next session from zero
     coop::woodchipper_gate::OnDisconnect();  // say the refused ticks and the asks, start the next session from zero
     coop::plant_sync::OnDisconnect();
+    coop::world_sound_sync::OnDisconnect();
     coop::prop_tool_flags::OnDisconnect();  // drop the pending press and the counters
     coop::prop_stick_sync::OnDisconnect();  // drop commit-pending stick records
     coop::sleepingbag_sync::OnDisconnect();

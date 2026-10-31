@@ -143,6 +143,19 @@ void PlayUseClick(void* propActor) {
     UE_LOGI("prop_sound: use click at (%.0f, %.0f, %.0f)", loc.X, loc.Y, loc.Z);
 }
 
+void PlayFaucetClick(void* faucet) {
+    if (!faucet || !R::IsLive(faucet)) return;
+    void* const sound = R::FindObject(L"door0_open", P::name::SoundWaveClass);
+    if (!sound) {
+        UE_LOGW("prop_sound: 'door0_open' sound asset not resolved yet -- no faucet click");
+        return;
+    }
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(faucet, loc)) return;
+    // The native 0.25 is in-ear, as the use click's is.
+    ue_wrap::engine::PlaySoundAtLocation(faucet, sound, loc, ResolveAttenuation(), 0.5f, 1.0f);
+}
+
 void PlayThrowWhoosh(void* propActor) {
     if (!propActor || !R::IsLive(propActor)) return;
     // SoundWave /Game/audio/effects/swing -- THE native throw whoosh, played

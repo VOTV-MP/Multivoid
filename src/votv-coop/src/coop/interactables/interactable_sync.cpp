@@ -10,6 +10,8 @@
 #include "coop/interactables/interactable_channel.h"  // the generic engine: Adapter and Channel
 #include "coop/interactables/swinger_join_pose.h"     // a joiner's open lids at their host's places
 
+#include "coop/world/world_sound_sync.h"  // a faucet's click
+#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/devices/appliance.h"     // the six-class save-actor toggle family
 #include "ue_wrap/devices/cremator.h"
 #include "ue_wrap/devices/door.h"
@@ -149,7 +151,14 @@ const Adapter g_applianceAdapter = {
     &ue_wrap::appliance::IsAppliance,
     &ue_wrap::appliance::GetKeyString,
     &ue_wrap::appliance::TryReadState,
-    [](void* a, bool on) -> bool { return ue_wrap::appliance::ApplyState(a, on); },
+    [](void* a, bool on) -> bool {
+        bool was = on;
+        const bool read = ue_wrap::appliance::TryReadState(a, was);
+        const bool applied = ue_wrap::appliance::ApplyState(a, on);
+        if (applied && read && was != on && ue_wrap::reflection::ClassNameOf(a) == L"faucet_C")
+            coop::world_sound_sync::OnFaucetChanged(a);
+        return applied;
+    },
     nullptr,
     &ue_wrap::appliance::ResolvedClassCount,
 };

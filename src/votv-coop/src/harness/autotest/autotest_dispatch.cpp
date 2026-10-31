@@ -207,6 +207,7 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIf("VOTVCOOP_RUN_VENT_CRAWLER", "vent crawler drill", &VentCrawlerThread, role);
     SpawnIf("VOTVCOOP_RUN_CAN_STATE", "canned food state drill", &CanStateThread, role);
     SpawnIf("VOTVCOOP_RUN_FOOD_STATE", "world food state drill", &FoodStateThread, role);
+    SpawnIf("VOTVCOOP_RUN_WORLD_SOUND", "world sound drill", &WorldSoundThread, role);
 
     SpawnIf("VOTVCOOP_RUN_PLANT_STATE", "plant drill", &PlantStateThread, role);
     SpawnIf("VOTVCOOP_RUN_SV_REQUEST", "sv.request drill", &SvRequestThread, role);
