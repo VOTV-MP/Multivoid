@@ -27,6 +27,7 @@ namespace K = ue_wrap::kitchen;
 using Clock = std::chrono::steady_clock;
 
 constexpr auto kPoll = std::chrono::milliseconds(250);
+constexpr float kNaturalEndSeconds = 1.f;  // a run that read more than this at the last poll did not end by its timer
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 Clock::time_point g_nextPoll{};
@@ -58,13 +59,19 @@ std::wstring KeyOf(void* actor) {
     return key == L"None" ? std::wstring{} : key;
 }
 
-coop::net::KitchenStatePayload Encode(const std::wstring& key, const K::State& state) {
+bool Stopped(const K::State& was, const K::State& now) {
+    return now.kind == K::Kind::Microwave && was.active && !now.active && was.remaining > kNaturalEndSeconds;
+}
+
+coop::net::KitchenStatePayload Encode(const std::wstring& key, const K::State& state, bool stopped) {
     coop::net::KitchenStatePayload p{};
     for (size_t i = 0; i < key.size() && i < sizeof(p.key.data); ++i)
         p.key.data[p.key.len++] = static_cast<char>(key[i]);  // save keys are ASCII
     p.kind = static_cast<uint8_t>(state.kind);
     p.active = state.active ? 1 : 0;
     p.lid = state.lid ? 1 : 0;
+    p.microwave = static_cast<uint8_t>((state.doorOpen ? coop::net::kitchen_flags::kDoorOpen : 0) |
+                                       (stopped ? coop::net::kitchen_flags::kStopped : 0));
     p.mode = state.mode;
     p.remaining = state.remaining;
     return p;
@@ -79,6 +86,7 @@ bool Crosses(const K::State& was, const K::State& now, bool host) {
     }
     if (now.mode != was.mode) return true;
     if (now.kind != K::Kind::Microwave) return now.active != was.active;
+    if (now.doorOpen != was.doorOpen || Stopped(was, now)) return true;
     // A run that ended and restarted between two polls never reads as off: its timer jumping back up is the start.
     return now.active && (!was.active || now.remaining > was.remaining + 1.f);
 }
@@ -99,7 +107,7 @@ void Poll(coop::net::Session& s) {
         const K::State was = it->second;
         it->second = now;
         if (!Crosses(was, now, s.role() == coop::net::Role::Host)) continue;
-        const coop::net::KitchenStatePayload p = Encode(key, now);
+        const coop::net::KitchenStatePayload p = Encode(key, now, Stopped(was, now));
         const bool sent = s.role() == coop::net::Role::Host
                               ? s.SendReliable(coop::net::ReliableKind::KitchenState, &p, sizeof(p))
                               : s.SendReliableToSlot(0, coop::net::ReliableKind::KitchenState, &p, sizeof(p));
@@ -131,8 +139,15 @@ void OnState(int senderSlot, const coop::net::KitchenStatePayload& p) {
         return;
     }
     K::ApplyMode(actor, p.mode);
-    K::ApplyActive(actor, p.active != 0, p.remaining);
-    K::ApplyLid(actor, p.lid != 0);
+    if (K::KindOf(actor) == K::Kind::Microwave) {
+        // Off in a message is only that peer's state, unless it says it stopped: its setting press must not end a run here.
+        if (p.microwave & coop::net::kitchen_flags::kStopped) K::ApplyActive(actor, false, 0.f);
+        K::ApplyDoor(actor, (p.microwave & coop::net::kitchen_flags::kDoorOpen) != 0);
+        if (p.active) K::ApplyActive(actor, true, p.remaining);
+    } else {
+        K::ApplyActive(actor, p.active != 0, p.remaining);
+        K::ApplyLid(actor, p.lid != 0);
+    }
     K::State after;
     if (K::Read(actor, after)) g_base[key] = after;
     ++g_applied;
@@ -147,10 +162,11 @@ void QueueConnectBroadcastForSlot(int slot) {
     Collect(machines);
     for (void* actor : machines) {
         K::State now;
-        if (!K::Read(actor, now) || (now.mode == 0 && !now.active && (now.kind != K::Kind::Grill || now.lid))) continue;
+        if (!K::Read(actor, now) || (now.mode == 0 && !now.active && !now.doorOpen && (now.kind != K::Kind::Grill || now.lid)))
+            continue;
         const std::wstring key = KeyOf(actor);
         if (key.empty()) continue;
-        const coop::net::KitchenStatePayload p = Encode(key, now);
+        const coop::net::KitchenStatePayload p = Encode(key, now, false);
         s->SendReliableToSlot(slot, coop::net::ReliableKind::KitchenState, &p, sizeof(p));
     }
 }

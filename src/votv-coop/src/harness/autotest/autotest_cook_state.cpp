@@ -181,6 +181,25 @@ void AddCoals(const std::string& key, int n) {
     for (int i = 0; i < n; ++i) GrillVerb(key, L"addCoal");
 }
 
+// The door's own functions on this peer's microwave, as its door's delegates call them.
+void DoorFn(const std::string& key, const wchar_t* fn) {
+    OnGameThread([&] { ue_wrap::component_calls::CallParamlessNamed(Find(key), fn); });
+}
+
+void CheckDoor(const char* step, const std::string& key, bool active, bool open) {
+    K::State s;
+    bool read = false;
+    for (int i = 0; i < 16; ++i) {
+        OnGameThread([&] { read = K::Read(Find(key), s); });
+        if (read && s.active == active && s.doorOpen == open) break;
+        ::Sleep(250);
+    }
+    Verdict(step, read && s.active == active && s.doorOpen == open,
+            read ? "active=" + std::to_string(s.active) + " open=" + std::to_string(s.doorOpen) +
+                       " left=" + std::to_string(s.remaining)
+                 : std::string("no such machine"));
+}
+
 float ReadTemperature(const std::string& key) {
     F::Condition c;
     bool ok = false;
@@ -326,6 +345,47 @@ void RunShared(const std::string& micro, const std::string& oven, const std::str
     if (!step("05")) return;
     Check("05-microwave-ends", micro, 2, false, 100);
     if (!step("05b")) return;
+
+    // A door opened mid-run stops every peer's, each way; an open door refuses a start on every peer.
+    if (!host) Press(micro, kActionStart);
+    CheckDoor("30-client-starts", micro, true, false);
+    if (!step("30")) return;
+    if (!host) DoorFn(micro, L"openDoor");
+    CheckDoor("31-client-door-stops-it-everywhere", micro, false, false);
+    if (!step("31")) return;
+    if (host) Press(micro, kActionStart);
+    CheckDoor("32-host-starts", micro, true, false);
+    if (!step("32")) return;
+    if (host) DoorFn(micro, L"openDoor");
+    CheckDoor("33-host-door-stops-it-everywhere", micro, false, false);
+    if (!step("33")) return;
+    if (!host) DoorFn(micro, L"openDoor");
+    CheckDoor("34-client-opens-idle-door", micro, false, true);
+    if (!step("34")) return;
+    if (host) Press(micro, kActionStart);
+    ::Sleep(1000);
+    CheckDoor("35-open-door-refuses-host-start", micro, false, true);
+    if (!step("35")) return;
+    if (host) DoorFn(micro, L"closeDoor");
+    CheckDoor("36-host-closes-door", micro, false, false);
+    if (!step("36")) return;
+    // A setting press from a peer whose copy is off leaves another peer's run alone.
+    if (host) Press(micro, kActionStart);
+    CheckDoor("37-host-starts", micro, true, false);
+    if (!step("37")) return;
+    if (!host) {
+        DoorFn(micro, L"forceOpenDoor");  // this copy alone, off without a press: the message below says it stopped
+        ::Sleep(600);
+    }
+    if (!step("37b")) return;
+    CheckDoor("38-a-stop-on-one-copy-crosses", micro, false, false);
+    if (!step("38")) return;
+    if (!host) Press(micro, kActionNext);
+    Check("39-setting-after-the-stops", micro, 3, false);
+    if (!step("39")) return;
+    if (!host) { Press(micro, kActionNext); Press(micro, kActionNext); Press(micro, kActionNext); Press(micro, kActionNext); }
+    Check("39b-setting-back-to-2", micro, 2, false);
+    if (!step("39b")) return;
 
     // The oven: the client's setting, the host's switch, the client's switch.
     if (!host) Press(oven, kActionNext, L"input_temp", L"input_switch");

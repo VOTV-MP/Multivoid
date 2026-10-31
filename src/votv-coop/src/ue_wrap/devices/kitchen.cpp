@@ -78,7 +78,12 @@ bool Read(void* actor, State& out) {
     value.kind = kind;
     value.active = (*byte & mask) != 0;
     if (kind == Kind::Microwave) {
-        if (!Get(g_timeMode, actor, value.mode) || !Get(g_time, actor, value.remaining)) return false;
+        uint8_t* door = nullptr;
+        uint8_t doorMask = 0;
+        if (!Get(g_timeMode, actor, value.mode) || !Get(g_time, actor, value.remaining) ||
+            !Bit(actor, L"opened", door, doorMask))
+            return false;
+        value.doorOpen = (*door & doorMask) != 0;
     } else if (kind == Kind::Grill) {
         uint8_t* lid = nullptr;
         uint8_t lidMask = 0;
@@ -109,7 +114,7 @@ bool ApplyActive(void* actor, bool active, float remaining) {
     if (kind == Kind::None || !ActiveBit(actor, byte, mask)) return false;
     const bool now = (*byte & mask) != 0;
     if (kind == Kind::Microwave) {
-        if (!active) return !now || Put(g_time, actor, 0.f);
+        if (!active) return !now || component_calls::CallParamlessNamed(actor, L"forceOpenDoor");
         if (!now && !component_calls::CallParamlessNamed(actor, L"Wave")) return false;
         return remaining <= 0.f || Put(g_time, actor, remaining);
     }
@@ -117,6 +122,14 @@ bool ApplyActive(void* actor, bool active, float remaining) {
     if (kind == Kind::Grill && now == active) return true;  // its repaint restarts its fire
     *byte = active ? (*byte | mask) : (*byte & ~mask);
     return component_calls::CallParamlessNamed(actor, L"upd");
+}
+
+bool ApplyDoor(void* actor, bool open) {
+    uint8_t* byte = nullptr;
+    uint8_t mask = 0;
+    if (KindOf(actor) != Kind::Microwave || !Bit(actor, L"opened", byte, mask)) return false;
+    if (((*byte & mask) != 0) == open) return true;
+    return component_calls::CallParamlessNamed(actor, open ? L"openDoor" : L"closeDoor");
 }
 
 bool ApplyLid(void* actor, bool lid) {

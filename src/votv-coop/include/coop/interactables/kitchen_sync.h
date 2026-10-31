@@ -3,7 +3,8 @@
 // A press on either machine runs on the presser's copy, so without this the host's machine stayed off, and since the
 // host is a food's one author (coop/props/prop_food_sync) a client's cooking came to nothing. Each peer polls the machines
 // for a change its own player made and sends it; every other peer applies it through the machine's own start and
-// repaint and primes its baseline. A microwave's natural end runs on each peer's own timer, so only its start crosses.
+// repaint and primes its baseline. A microwave's natural end runs on each peer's own timer, so what crosses is its
+// start, its door, and a stop that came before its timer's end.
 //
 // A grill burns its coals in its own tick on every peer, so the host's count is the count: a client sends only what its
 // player did, a coal, a light or the lid, and every host message also sets the client's burn, so the client's copy reaches
