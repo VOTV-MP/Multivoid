@@ -92,6 +92,7 @@ GrabState AimedGrab::Tick() {
         ++poses_;
         return GrabState::Working;
     }
+    if (holdAtAim_) return GrabState::Working;
     if (grabTicks_++ == 0) {
         // The use key's release on an aimed prop with an empty hand, in its order.
         chainPre_ = CallWithPlayer(prop, L"playerGrabbed_pre", player);

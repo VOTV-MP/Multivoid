@@ -313,6 +313,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/director/proc_walkgrab.cpp
     src/coop/dev/director/director_run.cpp
     src/coop/dev/director/container_take_probe.cpp
+    src/coop/dev/director/grab_race_probe.cpp
     src/coop/dev/director/dup_verifier.cpp
     src/coop/dev/director/container_take_judge.cpp
     src/coop/dev/director/door_approach.cpp

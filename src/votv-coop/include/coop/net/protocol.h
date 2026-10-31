@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 264;
+inline constexpr uint16_t kProtocolVersion = 265;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1182,6 +1182,13 @@ enum class ReliableKind : uint8_t {
     // rows, sent once after its join so the host can compare each with its own. Dropped at the host unless the drill
     // enabled it. Rides the Default lane; never relayed; not pre-world. Late join: none, a report is a reading.
     DevContainerParity = 206,
+    // HOST->CLIENTS: two players reached for one keyed prop and the host keeps the hold it saw first. A client's
+    // hold of a prop the host's player holds, or that another client's hold already drives on the host, is refused:
+    // the host closes that hold and tells every client, so the refused holder lets go and sends no release, and
+    // every other peer drops that hold's drive. Host-authored: a client's copy is refused at the host's receive
+    // edge; never relayed; not pre-world. Late join: none, a refusal is an act; a joiner gets the kept hold's
+    // stream. PropHoldRefusedPayload.
+    PropHoldRefused = 210,
     // HOST->CLIENT: one decision of a Geom Octa, to be replayed into the client's own Blueprint (coop/creatures/
     // geom_octa_relay): op 0, an Aggro, the Octa took a target (the replay runs minSphere's begin-overlap handler with
     // the target's counterpart here), carrying the host's verdict count as the base; op 1, a FireVerdict, the host's
@@ -1833,6 +1840,18 @@ struct PropSyncAnswerPayload {
 static_assert(sizeof(PropSyncAnswerPayload) == 12, "PropSyncAnswerPayload must be 12 bytes");
 static_assert(sizeof(PropSyncAnswerPayload) <= 256 - 20 - 8,
               "PropSyncAnswerPayload must fit in one reliable datagram");
+
+// The host's refusal of a hold (PropHoldRefused): the prop by key, the refused hold by its holder's slot and the
+// generation that holder minted at the grab, and the slot whose hold keeps the prop.
+struct PropHoldRefusedPayload {
+    WireKey  key;         // 32 -- the prop's Key, as the refused hold streamed it
+    uint16_t holdGen;     // 2  -- the refused hold; never 0
+    uint8_t  slot;        // 1  -- the refused holder, 1..kMaxPeers-1
+    uint8_t  holder;      // 1  -- the slot whose hold keeps the prop, 0..kMaxPeers-1
+};
+static_assert(sizeof(PropHoldRefusedPayload) == 36, "PropHoldRefusedPayload must be 36 bytes");
+static_assert(sizeof(PropHoldRefusedPayload) <= 256 - 20 - 8,
+              "PropHoldRefusedPayload must fit in one reliable datagram");
 
 // One message of the drill filler (DevLoadFiller): its place in the run and the run's length; the rest is fill.
 struct DevLoadFillerPayload {

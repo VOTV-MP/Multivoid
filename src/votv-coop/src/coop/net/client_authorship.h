@@ -230,6 +230,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::LaptopTabState:
     case ReliableKind::AtvSetComplete:
     case ReliableKind::PropSyncAnswer:
+    case ReliableKind::PropHoldRefused:
     case ReliableKind::SwingerRestPose:
     case ReliableKind::GeomOctaEvent:
     case ReliableKind::DevLoadFiller:
