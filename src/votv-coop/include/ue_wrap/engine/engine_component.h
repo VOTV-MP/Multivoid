@@ -49,6 +49,10 @@ void* GetParticleSystemTemplate(void* particleSystemComponent);
 // be the body mesh's AttachParent). Game thread.
 bool SetComponentVisible(void* component, bool visible = true, bool propagate = true);
 
+// UPrimitiveComponent::SetCastShadow: whether the component casts shadows from any light (the setter marks the
+// render state dirty, which a bit write does not). False when the function does not resolve. Game thread.
+bool SetComponentCastShadow(void* component, bool castShadow);
+
 // Force VisibilityBasedAnimTickOption = AlwaysTickPoseAndRefreshBones (a byte write; no setter
 // exists): an unrendered remote body otherwise stops posing. Game thread.
 bool SetAnimTickAlways(void* skeletalMeshComponent);

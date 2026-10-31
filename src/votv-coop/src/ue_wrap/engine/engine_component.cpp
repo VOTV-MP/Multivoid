@@ -208,6 +208,18 @@ bool SetComponentVisible(void* component, bool visible, bool propagate) {
     return true;
 }
 
+bool SetComponentCastShadow(void* component, bool castShadow) {
+    if (!component || !R::IsLive(component)) return false;
+    static void* sFn = nullptr;
+    if (!sFn) {
+        if (void* prim = R::FindClass(L"PrimitiveComponent")) sFn = R::FindFunction(prim, L"SetCastShadow");
+        if (!sFn) return false;
+    }
+    ParamFrame f(sFn);
+    f.Set<bool>(L"NewCastShadow", castShadow);
+    return Call(component, f);
+}
+
 void* CreateDynamicMaterialInstance(void* component, int32_t elementIndex) {
     if (!component || !ResolveMidFns()) {
         UE_LOGE("engine: CreateDynamicMaterialInstance unresolved (comp=%p fn=%p)",
