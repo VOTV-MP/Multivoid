@@ -421,7 +421,7 @@ hertz); or an anchor, a start stamp every peer computes from, valid only while t
 constant ([architecture.md](architecture.md), where the authority is going). The reel corrector
 and the food's tick gate are built; concrete is designed and not built.
 
-A world food takes the first shape (`coop/props/prop_food_sync`). Its tick rolls temperature and spoilage and, at the
+A world food takes the first shape (`coop/props/prop_food_sync`), cooking progress included. Its tick rolls temperature and spoilage and, at the
 ends of the range, spawns a burnt or frozen copy and destroys itself, so a client's copy is refused its tick at the
 script gate (`coop/props/food_tick_gate`: `prop_food_C.ReceiveTick` and the four subclasses that declare their own, a
 switch on the actor's tick being undone by the food's `init` and the coffee cup's BeginPlay) and takes the host's
@@ -440,6 +440,13 @@ rejoin; the verbs by reflection and the food `prop_food_C`). The host judges a r
 its temperature in 0 to 2000, its ripeness finite and in -1 to 1e9, and its use count no higher than the host copy's;
 one whose copy is not born yet waits 30 s for it, judged against where the sender stood, and a refused release is
 answered like a refused bite. A held food placed down, not thrown, is run by the same drill on both peers `[?]`.
+
+A microwave's and a mini oven's presses run on the presser's copy, so each peer polls them for its player's change and
+sends it (`KitchenState`); the others apply it through the machine's start or repaint, so the host's machine heats the
+food it authors. Only a microwave's start crosses, since each peer's timer ends its own run. A joiner gets every machine
+off its defaults, since an oven's controls are in no save `[V]` (`harness/autotest/autotest_cook_state.cpp`: each
+control from each peer, a food heated in a microwave a client started, a shrimp's progress and its one cooked food, a
+rejoin; machines powered by a write and pressed by reflection).
 
 ## Who owns what
 
@@ -464,6 +471,7 @@ answered like a refused bite. A held food placed down, not thrown, is run by the
 | `PropPose` (stream) | the holder to all | the held prop's world transform, per frame, and its hold's generation |
 | `PropSpawn`, `PropDestroy` | the host to all; a destroy from either role | class, key, id, transform, physics flags, the birth scalar; the key and id |
 | `PropRelease` | the holder to all | the prop's transform, its inherited linear and angular velocity and its frozen and sleep at the edge, the hold it closes and the throw sequence (0 = not a throw); a client's goes through the host, which clamps it and sends it on |
+| `KitchenState` | the presser to all | a microwave's or a mini oven's setting and whether it runs |
 | `PropHoldRefused` | the host to every client | a hold the host refused, by its holder's slot and generation, the prop's key, and the slot whose hold keeps the prop |
 | `FoodState`, `FoodBite`, `FoodRelease`, `FoodHand` | the host to all; a client to the host; a client to the host; the holder to all | a world food's temperature, ripeness and uses; a client's bite; the condition of a food a client let go; the condition of the food in a hand |
 | `PropDrivePose` (stream) | the host to all; a syncing client to the host | the poses of the props under a hook's drive or a broom's push that moved since their last one, with the claim generation; a client's rows of the prop its own interaction moves, which the host judges before it relays one `[?]` |
@@ -505,6 +513,7 @@ prop resolves.
 | A keyed prop a client creates outside the intent door (a place after a pickup, the whitelisted births, a container extract, a player's own spawn verb) never reaches the host. It is logged now: the drain names its exit, and `[dev] prop_birth_key_probe` tallies every exit by name | `[V]` `coop/props/prop_drop_intent` drops it at the drain; `coop/dev/prop_birth_key_probe` |
 | Two peers changing one canned food inside one round trip each publish a whole record, and the last to reach the host stands, so a bite can be lost; a can's `health` travels only with those records, so impact damage short of opening it stays on each peer | `[RD]` `coop/props/prop_can_state` publishes the record and takes no claim |
 | Concrete and every other local-accumulator prop drift between peers; only the tape reel and the world food have one author | `[V]` `coop/interactables/tape_caddy_sync`, `coop/props/prop_food_sync` |
+| A microwave stopped by opening its door stops on that peer alone, the others run out their timer, and a door opened on one peer is not read by another's start; the grill's heat, coals and lid stay on each peer | `[RD]` `coop/interactables/kitchen_sync` |
 | A hot food's ignition is the host's alone, since a client's copy is refused its tick, so a client sees no flame on it | `[RD]` `prop_food_C.ReceiveTick`; `ue_wrap/actors/food` |
 | A client's food's frost, impact material and freeze sound are painted but only its frozen flag and steam were read back | `[RD]` `ue_wrap/actors/food`, `coop/props/prop_food_sync` |
 | A food subclass's own counter (the shrimp's `shrimps`) and its own tick are not carried, and a heating device's work on a client's copy is local until the host's next value | `[RD]` `coop/props/prop_food_sync` |
@@ -529,6 +538,7 @@ prop resolves.
 | a prop under a hook's drive or a broom's push | `coop/props/prop_drive_host` (the host's set and stream), `coop/props/prop_drive_stream` (the receiver), `coop/items/hook_prop_claim` (the hook lane feeding it), `coop/items/hook_constraint` (the tie itself, host-only), `coop/items/broom_push` (the broom's push feeding it) |
 | containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync` |
 | a world food's condition | `coop/props/prop_food_sync`, `ue_wrap/actors/food` |
+| a microwave's and a mini oven's controls | `coop/interactables/kitchen_sync`, `ue_wrap/devices/kitchen` |
 | a record that changes in place | `coop/props/prop_record_refresh` (the drive box, the reel case), `coop/props/prop_can_state` (the canned food) |
 | notebook sync | `coop/interactables/notebook_sync`, `coop/props/prop_save_data`, `ue_wrap/actors/notebook` |
 | the pocket blip | `coop/items/inventory_pickup_sync` |

@@ -51,6 +51,7 @@
 #include "coop/world/power_panel.h"
 #include "coop/world/sky_sync.h"
 #include "coop/interactables/window_sync.h"
+#include "coop/interactables/kitchen_sync.h"  // the machines not at their defaults
 #include "coop/props/prop_food_sync.h"  // every world food's condition again
 #include "coop/world/plant_sync.h"
 #include "coop/props/prop_drive_host.h"    // HOST: the props a hook drags, streamed while they move
@@ -129,6 +130,7 @@ void ConnectReplayForSlot(int slot) {
     coop::desk_input_sync::SeedPingAttributionFromMachine();  // a SOLO host's ping edge is absorbed unwired (PollOnce gated on connected) -- re-derive from ground truth so a mid-ping joiner gets the FSM-hold
     coop::desk_snd_fx::QueueConnectBroadcastForSlot(slot);  // desk loop-sound ground truth (a mid-loop joiner gets the ON)
     coop::physmods_sync::QueueConnectBroadcastForSlot(slot);  // canonical module array (ground truth over save drift)
+    coop::kitchen_sync::QueueConnectBroadcastForSlot(slot);  // the machines not at their defaults
     coop::props::prop_food_sync::QueueConnectBroadcastForSlot(slot);  // every world food's condition again
     coop::plant_sync::QueueConnectBroadcastForSlot(slot);  // every plant again
     coop::drive_sync::QueueConnectBroadcastForSlot(slot);  // slot lines
