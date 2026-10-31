@@ -181,10 +181,20 @@ msgstr ""
 
 #: src/coop/comms/peer_action_feed.cpp
 #, c-format
+msgid "%1$s saved the game"
+msgstr ""
+
+#: src/coop/comms/peer_action_feed.cpp
+#, c-format
 msgid "%1$s sold it for %2$lld point (the host's price)"
 msgid_plural "%1$s sold it for %2$lld points (the host's price)"
 msgstr[0] ""
 msgstr[1] ""
+
+#: src/coop/comms/peer_action_feed.cpp
+#, c-format
+msgid "%1$s tried to save the game, but it cannot be saved during an event"
+msgstr ""
 
 #: src/coop/session/player_handshake_version.cpp
 #, c-format

@@ -49,6 +49,7 @@ set(VOTVCOOP_SOURCES
     src/coop/world/daily_task_sync.cpp
     src/coop/save/save_block.cpp
     src/coop/save/save_button_disable.cpp
+    src/coop/save/save_notice.cpp
     src/ui/multiplayer_menu.cpp
     src/coop/player/nameplate.cpp
     src/coop/player/nick_color.cpp
@@ -616,6 +617,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_runend.cpp
     src/harness/autotest/autotest_slip.cpp
     src/harness/autotest/autotest_move_osc.cpp
+    src/harness/autotest/autotest_save_notice.cpp
     src/harness/autotest/autotest_saveui.cpp
     src/ui/input_focus.cpp
     src/harness/screenshot.cpp

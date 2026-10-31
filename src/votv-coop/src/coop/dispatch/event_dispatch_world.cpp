@@ -1,6 +1,6 @@
 // coop/dispatch/event_dispatch_world.cpp -- the ambient and world-event reliable-kind case
 // bodies (the firefly, the event cue, fire and snapshot, the alarm, the server box, the
-// roaches, the inventory pickup, chat, the sky, the red sky, lightning, weather)
+// roaches, the inventory pickup, chat, the host's world save, the sky, the red sky, lightning, weather)
 // and the shared sender-eid range check; see coop/dispatch/event_dispatch.h.
 
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
@@ -13,6 +13,7 @@
 #include "coop/interactables/serverbox_sync.h"  // the host-authoritative signal-server state
 #include "coop/interactables/server_upgrade_sync.h"  // the servers' physical upgrades
 #include "coop/creatures/roach_sync.h"           // the host-authoritative roach snapshot
+#include "coop/save/save_notice.h"               // the host's world was saved
 #include "coop/world/event_active_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/world/event_fire_sync.h"
@@ -293,6 +294,24 @@ bool HandleWorldEvent(const net::Session::ReliableMessage& msg) {
         net::ChatLinePayload lp{};
         std::memcpy(&lp, msg.payload, sizeof(lp));
         coop::chat_sync::OnChatLine(lp);
+        break;
+    }
+    case net::ReliableKind::WorldSaved: {
+        // The host saved its world or tried to, host to client. Only the host authors: the host's receive edge refuses a
+        // client's copy (client_authorship.h).
+        if (msg.payloadLen < sizeof(net::WorldSavedPayload)) {
+            UE_LOGW("event_feed: WorldSaved payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::WorldSavedPayload));
+            break;
+        }
+        net::WorldSavedPayload sp{};
+        std::memcpy(&sp, msg.payload, sizeof(sp));
+        if (sp.outcome < static_cast<uint8_t>(net::WorldSaveOutcome::Saved) ||
+            sp.outcome > static_cast<uint8_t>(net::WorldSaveOutcome::EventRunning)) {
+            UE_LOGW("event_feed: WorldSaved outcome=%u unknown -- dropping", static_cast<unsigned>(sp.outcome));
+            break;
+        }
+        coop::save_notice::OnWorldSaved(sp);
         break;
     }
     case net::ReliableKind::CommandRequest: {
