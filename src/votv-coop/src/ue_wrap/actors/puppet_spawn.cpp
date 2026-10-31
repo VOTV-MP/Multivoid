@@ -182,6 +182,13 @@ static void* SpawnPuppetMainPlayer(const FVector& loc,
             UE_LOGI("puppet[MainPlayer]: destroyed mic UAudioCaptureComponent @ %p", mic);
         }
     }
+    // The body casts no shadow, as the game sets a real player's own body: the flashlight cone starts inside the
+    // head, and a body casting shadows from it cut its own silhouette out of the beam on every other peer's screen.
+    // The game leaves both body slots of a real player non-casting; a puppet kept the class's casting default.
+    for (void* body : {ReadPtr(actor, P::off::ACharacter_Mesh), meshComp}) {
+        if (body && !E::SetComponentCastShadow(body, false))
+            UE_LOGW("puppet[MainPlayer]: SetCastShadow(false) did not dispatch on body mesh %p", body);
+    }
     // The arms and playermodel are hidden without propagation: a propagating hide on any component
     // mesh_playerVisible is attached under cascades to the body, and the puppet rendered invisible.
     if (void* arms = ReadPtr(actor, P::off::AmainPlayer_arms)) {
