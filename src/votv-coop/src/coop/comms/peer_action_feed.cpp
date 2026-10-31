@@ -75,6 +75,9 @@ constexpr Row kRows[] = {
     {Action::OrderCommitFailed, L10N_MARK("%1$s could not order: the delivery could not be placed"), nullptr,
      Kind::None},
     {Action::OrderRefused, L10N_MARK("%1$s could not order: the host refused it"), nullptr, Kind::None},
+    {Action::SavedGame, L10N_MARK("%1$s saved the game"), nullptr, Kind::None},
+    {Action::SaveBlockedByEvent, L10N_MARK("%1$s tried to save the game, but it cannot be saved during an event"),
+     nullptr, Kind::None},
 };
 static_assert(sizeof(kRows) / sizeof(kRows[0]) == static_cast<size_t>(Action::kCount),
               "one sentence per Action");

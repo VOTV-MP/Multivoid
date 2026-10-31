@@ -348,7 +348,7 @@ void OnWorldSaveWritten(void* saveObject, const wchar_t* slotName) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    ue_wrap::save_to_slot_hook::SetWritten(&OnWorldSaveWritten);
+    ue_wrap::save_to_slot_hook::AddWritten(&OnWorldSaveWritten);
     ue_wrap::save_capture::SetWorldGatherHook(&OnWorldGather);
     // Arm the engine's pre-materialise apply point (a no-op until a client join has a pending
     // blob). Re-arming across stop and start is harmless.

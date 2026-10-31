@@ -84,7 +84,8 @@ bool HandlePropDriveEvent(net::Session& session,
                           const net::Session::ReliableMessage& msg);
 
 // Ambient and world-event family: fireflies, scheduled events with their cues and snapshots,
-// alarms, the server box, roaches, inventory pickups, chat, and the time, sky and weather stream.
+// alarms, the server box, roaches, inventory pickups, chat, the host's world save, and the time, sky and
+// weather stream.
 bool HandleWorldEvent(const net::Session::ReliableMessage& msg);
 
 }  // namespace coop::event_feed

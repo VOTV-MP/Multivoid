@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 264;
+inline constexpr uint16_t kProtocolVersion = 265;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1182,6 +1182,14 @@ enum class ReliableKind : uint8_t {
     // rows, sent once after its join so the host can compare each with its own. Dropped at the host unless the drill
     // enabled it. Rides the Default lane; never relayed; not pre-world. Late join: none, a report is a reading.
     DevContainerParity = 206,
+    // HOST->CLIENTS: the host saved the world, or tried to -- the game's own save of the hosted world, by the player
+    // or the autosave, written to its slot; a join's scratch capture and the save-slot menu's own writes are not.
+    // While the game counts an event as running its save is refused, or with bypassEvent writes the slot without
+    // gathering the world; either is a failed save, and the outcome says so. A client writes no world save of its
+    // own, so this is how it learns of one: it shows the chat line the host shows.
+    // Host-authored: a client's copy is refused at the host's receive edge; never relayed; not pre-world. Late join:
+    // none, a save is an act. WorldSavedPayload.
+    WorldSaved = 211,
     // HOST->CLIENT: one decision of a Geom Octa, to be replayed into the client's own Blueprint (coop/creatures/
     // geom_octa_relay): op 0, an Aggro, the Octa took a target (the replay runs minSphere's begin-overlap handler with
     // the target's counterpart here), carrying the host's verdict count as the base; op 1, a FireVerdict, the host's
@@ -1833,6 +1841,23 @@ struct PropSyncAnswerPayload {
 static_assert(sizeof(PropSyncAnswerPayload) == 12, "PropSyncAnswerPayload must be 12 bytes");
 static_assert(sizeof(PropSyncAnswerPayload) <= 256 - 20 - 8,
               "PropSyncAnswerPayload must fit in one reliable datagram");
+
+// What became of the host's save (WorldSaved). Wire-visible: the values are stable; 0 is never sent.
+enum class WorldSaveOutcome : uint8_t {
+    Saved = 1,          // the world was gathered and written
+    EventRunning = 2,   // an event was running: the game refused the save, or wrote the slot without the world
+};
+
+// The host saved the world or tried to (WorldSaved): the host's count of its save attempts this session, for the
+// logs, and what became of this one.
+struct WorldSavedPayload {
+    uint32_t saveNumber;   // 4 -- 1 for the session's first attempt
+    uint8_t  outcome;      // 1 -- a WorldSaveOutcome
+    uint8_t  _pad[3];      // 3 -- zero
+};
+static_assert(sizeof(WorldSavedPayload) == 8, "WorldSavedPayload must be 8 bytes");
+static_assert(sizeof(WorldSavedPayload) <= 256 - 20 - 8,
+              "WorldSavedPayload must fit in one reliable datagram");
 
 // One message of the drill filler (DevLoadFiller): its place in the run and the run's length; the rest is fill.
 struct DevLoadFillerPayload {
