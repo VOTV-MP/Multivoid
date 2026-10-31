@@ -268,7 +268,7 @@ bool HandlePropDriveEvent(net::Session& session,
         }
         net::KitchenStatePayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (p.key.len == 0 || p.key.len > sizeof(p.key.data) || p.mode < 0 || p.mode >= 5 ||
+        if (p.key.len == 0 || p.key.len > sizeof(p.key.data) || p.mode < 0 || p.mode > 16 ||
             !std::isfinite(p.remaining) || p.remaining < 0.f || p.remaining > 60.f) {
             UE_LOGW("event_feed: KitchenState malformed -- dropping");
             break;

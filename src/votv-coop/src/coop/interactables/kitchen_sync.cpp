@@ -40,7 +40,7 @@ void Collect(std::vector<void*>& out) {
         std::vector<void*>* out;
     } walk{ue_wrap::world_identity::CurrentWorld(), &out};
     if (!walk.world) return;
-    for (const wchar_t* name : {K::kMicrowaveClass, K::kMiniOvenClass}) {
+    for (const wchar_t* name : {K::kMicrowaveClass, K::kMiniOvenClass, K::kGrillClass}) {
         void* const cls = ue_wrap::object_index::ClassByName(name);
         if (!cls) continue;
         ue_wrap::object_index::ForEachInstance(
@@ -64,9 +64,23 @@ coop::net::KitchenStatePayload Encode(const std::wstring& key, const K::State& s
         p.key.data[p.key.len++] = static_cast<char>(key[i]);  // save keys are ASCII
     p.kind = static_cast<uint8_t>(state.kind);
     p.active = state.active ? 1 : 0;
+    p.lid = state.lid ? 1 : 0;
     p.mode = state.mode;
     p.remaining = state.remaining;
     return p;
+}
+
+// Whether this change is one the other peers must hear from this peer.
+bool Crosses(const K::State& was, const K::State& now, bool host) {
+    if (now.kind == K::Kind::Grill) {
+        if (now.lid != was.lid) return true;
+        if (host) return now.mode != was.mode || now.active != was.active;
+        return now.mode > was.mode || (now.active && !was.active);  // its burn is the host's to report
+    }
+    if (now.mode != was.mode) return true;
+    if (now.kind != K::Kind::Microwave) return now.active != was.active;
+    // A run that ended and restarted between two polls never reads as off: its timer jumping back up is the start.
+    return now.active && (!was.active || now.remaining > was.remaining + 1.f);
 }
 
 void Poll(coop::net::Session& s) {
@@ -84,8 +98,7 @@ void Poll(coop::net::Session& s) {
         }
         const K::State was = it->second;
         it->second = now;
-        const bool activeCrosses = now.kind == K::Kind::Microwave ? (now.active && !was.active) : now.active != was.active;
-        if (now.mode == was.mode && !activeCrosses) continue;
+        if (!Crosses(was, now, s.role() == coop::net::Role::Host)) continue;
         const coop::net::KitchenStatePayload p = Encode(key, now);
         const bool sent = s.role() == coop::net::Role::Host
                               ? s.SendReliable(coop::net::ReliableKind::KitchenState, &p, sizeof(p))
@@ -119,6 +132,7 @@ void OnState(int senderSlot, const coop::net::KitchenStatePayload& p) {
     }
     K::ApplyMode(actor, p.mode);
     K::ApplyActive(actor, p.active != 0, p.remaining);
+    K::ApplyLid(actor, p.lid != 0);
     K::State after;
     if (K::Read(actor, after)) g_base[key] = after;
     ++g_applied;
@@ -133,7 +147,7 @@ void QueueConnectBroadcastForSlot(int slot) {
     Collect(machines);
     for (void* actor : machines) {
         K::State now;
-        if (!K::Read(actor, now) || (now.mode == 0 && !now.active)) continue;
+        if (!K::Read(actor, now) || (now.mode == 0 && !now.active && (now.kind != K::Kind::Grill || now.lid))) continue;
         const std::wstring key = KeyOf(actor);
         if (key.empty()) continue;
         const coop::net::KitchenStatePayload p = Encode(key, now);

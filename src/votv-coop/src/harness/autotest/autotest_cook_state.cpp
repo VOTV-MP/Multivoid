@@ -3,7 +3,8 @@
 // The host spawns the machines and two foods, one in the microwave, and names them in a folder both peers read. Each peer
 // presses each machine's controls by its own action in turn, and each step is checked on both against the expected
 // setting. Then a cooking food's progress is read on both while the host's tick cooks it, and the client rejoins to read
-// the oven's controls, which no save carries. Machines are powered by a write, since a cord is another lane. Gated by
+// the oven's controls, which no save carries. A grill takes coals, a light and its lid from each peer, burns through two
+// coals on the host's count, and is left lit for the rejoin. Machines are powered by a write, since a cord is another lane. Gated by
 // VOTVCOOP_RUN_COOK_STATE; the folder is VOTVCOOP_CAN_DIR; VOTVCOOP_COOK_REJOIN=1 runs the rejoined client's half.
 
 #include "harness/autotest.h"
@@ -17,17 +18,22 @@
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/prop_use.h"
 #include "ue_wrap/core/asset_load.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/devices/kitchen.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_component.h"
 
 #include <windows.h>
 
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -122,6 +128,59 @@ void Check(const char* step, const std::string& key, int32_t mode, bool active, 
                  : std::string("no such machine"));
 }
 
+void CheckGrill(const char* step, const std::string& key, int32_t coals, bool active, bool lid, int quarterSeconds = 40) {
+    K::State s;
+    bool read = false;
+    for (int i = 0; i < quarterSeconds; ++i) {
+        OnGameThread([&] { read = K::Read(Find(key), s); });
+        if (read && s.mode == coals && s.active == active && s.lid == lid) break;
+        ::Sleep(250);
+    }
+    Verdict(step, read && s.mode == coals && s.active == active && s.lid == lid,
+            read ? "coals=" + std::to_string(s.mode) + " active=" + std::to_string(s.active) + " lid=" + std::to_string(s.lid) +
+                       " burn=" + std::to_string(s.remaining)
+                 : std::string("no such grill"));
+}
+
+void GrillVerb(const std::string& key, const wchar_t* verb) {
+    OnGameThread([&] {
+        void* grill = Find(key);
+        void* fn = grill ? R::FindDispatchFunctionCached(R::ClassOf(grill), verb) : nullptr;
+        if (!fn) {
+            UE_LOGW("cook-drill: %ls did not resolve", verb);
+            return;
+        }
+        ue_wrap::ParamFrame f(fn);
+        if (f.valid()) ue_wrap::Call(grill, f);
+    });
+}
+
+void SetLid(const std::string& key, bool lid) {
+    OnGameThread([&] {
+        void* grill = Find(key);
+        void* fn = grill ? R::FindDispatchFunctionCached(R::ClassOf(grill), L"setLid") : nullptr;
+        if (!fn) return;
+        ue_wrap::ParamFrame f(fn);
+        if (f.valid() && f.Set<bool>(L"lid", lid)) ue_wrap::Call(grill, f);
+    });
+}
+
+// The host's burn, nearly through its coal, so the next tick takes one.
+void NearlyBurnt(const std::string& key) {
+    OnGameThread([&] {
+        void* grill = Find(key);
+        static R::InstanceOffset sBurn{L"a"};
+        const int32_t off = grill ? sBurn.Of(grill) : -1;
+        const float value = 0.99f;
+        if (off >= 0) std::memcpy(static_cast<uint8_t*>(grill) + off, &value, sizeof(value));
+    });
+}
+
+// Coals in by the grill's own addCoal, with the host's count of them.
+void AddCoals(const std::string& key, int n) {
+    for (int i = 0; i < n; ++i) GrillVerb(key, L"addCoal");
+}
+
 float ReadTemperature(const std::string& key) {
     F::Condition c;
     bool ok = false;
@@ -169,6 +228,67 @@ std::string ListPlainFoods() {
 std::string KeyString(void* actor) {
     const std::wstring k = actor ? ue_wrap::prop::GetInteractableKeyString(actor) : L"";
     return std::string(k.begin(), k.end());
+}
+
+void RunGrill(const std::string& grill, const std::string& onGrill, bool host) {
+    const char* me = host ? "gh" : "gc";
+    const char* them = host ? "gc" : "gh";
+    const auto step = [&](const char* name) {
+        return Sync((std::string(me) + name).c_str(), (std::string(them) + name).c_str());
+    };
+    K::State start;
+    OnGameThread([&] { K::Read(Find(grill), start); });
+    const bool lid = start.lid;
+
+    if (!host) AddCoals(grill, 1);
+    CheckGrill("20-client-adds-coal", grill, 1, false, lid);
+    if (!step("20")) return;
+    if (host) AddCoals(grill, 2);
+    CheckGrill("21-host-adds-coals", grill, 3, false, lid);
+    if (!step("21")) return;
+    const float before = ReadTemperature(onGrill);
+    if (!host) GrillVerb(grill, L"attemptIgnite");
+    CheckGrill("22-client-lights-grill", grill, 3, true, lid);
+    // The heat is the overlap of the grill's box, whose collision the light switches on: the food goes in once it is lit.
+    if (host) {
+        OnGameThread([&] {
+            void* g = Find(grill);
+            void* food = Find(onGrill);
+            static R::InstanceOffset sBox{L"box"};
+            const int32_t off = g ? sBox.Of(g) : -1;
+            void* box = nullptr;
+            if (off >= 0) std::memcpy(&box, static_cast<const uint8_t*>(g) + off, sizeof(box));
+            if (box && food) E::SetActorLocation(food, E::GetComponentLocation(box));
+        });
+    }
+    float hot = before;
+    for (int i = 0; i < 32 && hot <= before + 1.f; ++i) {
+        ::Sleep(250);
+        hot = ReadTemperature(onGrill);
+    }
+    Verdict("22-food-on-grill-heats", hot > before + 1.f, std::to_string(before) + "->" + std::to_string(hot));
+    if (!step("22")) return;
+    if (host) NearlyBurnt(grill);
+    CheckGrill("23-a-coal-burns-on-the-host-count", grill, 2, true, lid, 60);
+    if (!step("23")) return;
+    if (host) NearlyBurnt(grill);
+    CheckGrill("24-a-second-coal", grill, 1, true, lid, 60);
+    if (!step("24")) return;
+    if (host) NearlyBurnt(grill);
+    CheckGrill("25-the-last-coal-puts-it-out", grill, 0, false, lid, 60);
+    if (!step("25")) return;
+    if (!host) SetLid(grill, !lid);
+    CheckGrill("26-client-moves-the-lid", grill, 0, false, !lid);
+    if (!step("26")) return;
+    if (host) SetLid(grill, lid);
+    CheckGrill("27-host-moves-the-lid", grill, 0, false, lid);
+    if (!step("27")) return;
+    if (host) {
+        AddCoals(grill, 8);
+        GrillVerb(grill, L"attemptIgnite");
+    }
+    CheckGrill("28-left-lit-for-the-rejoin", grill, 8, true, lid, 60);
+    (void)step("28");
 }
 
 void RunShared(const std::string& micro, const std::string& oven, const std::string& inside, bool host) {
@@ -228,8 +348,17 @@ void RunShared(const std::string& micro, const std::string& oven, const std::str
 void RunHost() {
     if (!Await("client_ready")) return;
     ::Sleep(3000);
-    std::string micro, oven, inside, cooking;
+    std::string micro, oven, inside, cooking, grill, onGrill;
     OnGameThread([&] {
+        void* g = SpawnHere(L"/Game/objects/prop_bbq.prop_bbq_C", 300.f, -60.f);
+        ue_wrap::FVector grillAt{};
+        void* food = nullptr;
+        if (g && E::TryGetActorLocation(g, grillAt)) {
+            void* cls = ue_wrap::asset_load::LoadObjectByPath(L"/Game/objects/prop_food.prop_food_C");
+            if (cls) food = E::SpawnActor(cls, grillAt);
+        }
+        grill = KeyString(g);
+        onGrill = KeyString(food);
         void* m = SpawnHere(L"/Game/objects/prop_microwave.prop_microwave_C", 150.f, 0.f);
         void* o = SpawnHere(L"/Game/objects/prop_minioven.prop_minioven_C", 150.f, 120.f);
         void* c = SpawnHere(L"/Game/objects/prop_cookingFood_shrimp.prop_cookingFood_shrimp_C", 150.f, -120.f);
@@ -244,16 +373,17 @@ void RunHost() {
         cooking = KeyString(c);
         inside = KeyString(f);
     });
-    if (micro.empty() || oven.empty() || inside.empty() || cooking.empty()) {
+    if (micro.empty() || oven.empty() || inside.empty() || cooking.empty() || grill.empty() || onGrill.empty()) {
         UE_LOGW("cook-drill: VERDICT ABORT -- spawned micro='%hs' oven='%hs' inside='%hs' cooking='%hs'", micro.c_str(),
                 oven.c_str(), inside.c_str(), cooking.c_str());
         Mark("keys", "none");
         return;
     }
     ::Sleep(2000);
-    Mark("keys", micro + " " + oven + " " + inside + " " + cooking);
+    Mark("keys", micro + " " + oven + " " + inside + " " + cooking + " " + grill + " " + onGrill);
     if (!Await("client_saw_born")) return;
     RunShared(micro, oven, inside, true);
+    RunGrill(grill, onGrill, true);
 
     // The host's tick cooks a hot food; the client's copy is parked and reads the progress. It ends in one plain food.
     if (!Await("client_counted")) return;
@@ -311,10 +441,11 @@ void RunClient() {
     std::string line;
     if (!Await("keys", &line) || line == "none") return;
     std::istringstream in(line);
-    std::string micro, oven, inside, cooking;
-    in >> micro >> oven >> inside >> cooking;
+    std::string micro, oven, inside, cooking, grill, onGrill;
+    in >> micro >> oven >> inside >> cooking >> grill >> onGrill;
     Mark("client_saw_born");
     RunShared(micro, oven, inside, false);
+    RunGrill(grill, onGrill, false);
 
     int before = 0, after = 0;
     OnGameThread([&] { before = CountInstances("prop_food_C"); });
@@ -359,10 +490,15 @@ void RunRejoin() {
     std::string line;
     if (!Await("keys", &line)) return;
     std::istringstream in(line);
-    std::string micro, oven;
-    in >> micro >> oven;
+    std::string micro, oven, inside, cooking, grill, onGrill;
+    in >> micro >> oven >> inside >> cooking >> grill >> onGrill;
     ::Sleep(3000);
     Check("11-joiner-reads-oven", oven, 2, true);
+    K::State g;
+    bool read = false;
+    OnGameThread([&] { read = K::Read(Find(grill), g); });
+    Verdict("29-joiner-reads-lit-grill", read && g.active && g.mode > 0 && g.mode <= 8,
+            read ? "coals=" + std::to_string(g.mode) + " active=" + std::to_string(g.active) : std::string("no such grill"));
     UE_LOGI("cook-drill: REJOIN DONE fails=%d", g_fails);
     Mark("rejoin_done");
 }

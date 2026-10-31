@@ -1223,8 +1223,8 @@ enum class ReliableKind : uint8_t {
     // The host judges it (coop/world/plant_edit_gate) and answers a refused edit of a plant it holds with that plant's
     // PlantState. PlantStatePayload.
     PlantEdit = 225,
-    // ANY->ALL: this peer's player changed a microwave's or a mini oven's setting or started it. A client's copy is
-    // relayed. Not pre-world. Late join: every machine not at its defaults, at the ready edge. KitchenStatePayload.
+    // ANY->ALL: this peer's player changed a microwave's or a mini oven's setting or started it, or a grill's coals, fire
+    // or lid; the host's burn of a grill's coals goes the same way. A client's copy is relayed. Not pre-world. Late join: every machine not at its defaults, at the ready edge. KitchenStatePayload.
     KitchenState = 239,
     // HOST->CLIENT: one decision of a Geom Octa, to be replayed into the client's own Blueprint (coop/creatures/
     // geom_octa_relay): op 0, an Aggro, the Octa took a target (the replay runs minSphere's begin-overlap handler with
@@ -2083,14 +2083,15 @@ struct SusHoleIntentPayload {
 static_assert(sizeof(SusHoleIntentPayload) == 12, "SusHoleIntentPayload must be 12 bytes");
 static_assert(sizeof(SusHoleIntentPayload) <= 256 - 20 - 8, "SusHoleIntentPayload must fit in one reliable datagram");
 
-// A microwave's or a mini oven's controls (KitchenState).
+// A microwave's, a mini oven's or a grill's controls (KitchenState).
 struct KitchenStatePayload {
     WireKey key;        // 32 -- the machine's Key
     uint8_t kind;       // 1  -- ue_wrap::kitchen::Kind
     uint8_t active;     // 1
-    uint8_t _pad[2];    // 2  -- zero
-    int32_t mode;       // 4  -- 0 to 4
-    float   remaining;  // 4  -- a running microwave's seconds left
+    uint8_t lid;        // 1  -- a grill's
+    uint8_t _pad;       // 1  -- zero
+    int32_t mode;       // 4  -- a setting, 0 to 4, or a grill's coals, 0 to 16
+    float   remaining;  // 4  -- a running microwave's seconds left, or a grill's burn through its coal
 };
 static_assert(sizeof(KitchenStatePayload) == 44, "KitchenStatePayload must be 44 bytes");
 
