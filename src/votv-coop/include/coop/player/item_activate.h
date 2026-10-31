@@ -56,8 +56,9 @@ void QueueConnectBroadcastForSlot(int peerSlot);
 // `newSlot` is the freshly connected client's slot. Game thread only.
 void ReplayPeerStatesToSlot(int newSlot);
 
-// The per-tick worker. Drains the pending broadcast queued at connect (retries the reliable
-// send until the channel accepts it, then updates the observer's dedup signature so the next
+// The per-tick worker. Sends the off state when the game switched the local flashlight off with
+// no function an observer sees (an empty battery, in ReceiveTick). Drains the pending broadcast
+// queued at connect (retries the reliable send until the channel accepts it, then updates the observer's dedup signature so the next
 // press does not re-send) and the per-peer pending applies (walks the puppet registry; each
 // slot with a pending payload and a valid puppet is applied and cleared). Cheap when nothing
 // is pending. Game thread only.

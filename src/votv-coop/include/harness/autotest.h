@@ -242,6 +242,9 @@ DWORD WINAPI MoveOscThread(LPVOID arg);
 // The beam look: each peer logs both bodies' shadow flags; the client aims a lit flashlight at the ground and the
 // host captures its window on the spot that beam lands. Gated by VOTVCOOP_RUN_BEAM_LOOK. See autotest_beam_look.cpp.
 DWORD WINAPI BeamLookThread(LPVOID arg);
+// The flashlight battery drill: each peer's battery runs out in turn and the other reads its puppet's light. Gated
+// by VOTVCOOP_RUN_FLASH_BATTERY; the peers' shared folder in VOTVCOOP_CAN_DIR. See autotest_flash_battery.cpp.
+DWORD WINAPI FlashBatteryThread(LPVOID arg);
 
 // The event force-now smoke (harness/autotest/autotest_eventforce.cpp), host: the volume-gate
 // feature (coop/dev/event_force) on obelisk, the badge snapshot resolving (armed 0, shots 1),

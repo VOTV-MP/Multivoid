@@ -615,6 +615,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_scriptgate.cpp
     src/harness/autotest/autotest_runend.cpp
     src/harness/autotest/autotest_slip.cpp
+    src/harness/autotest/autotest_flash_battery.cpp
     src/harness/autotest/autotest_move_osc.cpp
     src/harness/autotest/autotest_beam_look.cpp
     src/harness/autotest/autotest_saveui.cpp

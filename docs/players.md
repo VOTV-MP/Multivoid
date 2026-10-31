@@ -75,7 +75,11 @@ which flickers as the body animates. The game leaves a real player's two body me
 and drew that silhouette on every other peer's screen, so its spawn switches both off
 (`ue_wrap/actors/puppet_spawn`) `[V]` (`harness/autotest/autotest_beam_look.cpp`: the flags of both
 bodies logged side by side, and the host's captures of a client's beam on the floor, the silhouette
-there before and gone after). A carried trash clump is driven to the puppet's hand on
+there before and gone after). An empty battery switches the light off in the game's `ReceiveTick` with no
+function call to observe, so each tick the sender compares the game's flashlight bool with what it last
+sent, and the other peer's puppet goes dark too `[V]` (`harness/autotest/autotest_flash_battery.cpp`,
+each peer's battery drained in turn).
+A carried trash clump is driven to the puppet's hand on
 the host each tick (`coop/player/puppet_carry_drive`); a held physics prop is on the props lane.
 
 ### Name, colour and nameplate
