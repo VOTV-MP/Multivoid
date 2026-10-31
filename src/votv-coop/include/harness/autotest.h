@@ -249,6 +249,9 @@ DWORD WINAPI FlashBatteryThread(LPVOID arg);
 // Gated by VOTVCOOP_RUN_DESK_VIEW; the peers' shared folder in VOTVCOOP_CAN_DIR. See autotest_desk_view.cpp.
 DWORD WINAPI DeskViewThread(LPVOID arg);
 DWORD WINAPI DishSoundThread(LPVOID arg);
+// The save notice drill: the game's own save with and without an event, read on both peers. Gated by
+// VOTVCOOP_RUN_SAVE_NOTICE; the peers' shared folder in VOTVCOOP_CAN_DIR. See autotest_save_notice.cpp.
+DWORD WINAPI SaveNoticeThread(LPVOID arg);
 
 // The event force-now smoke (harness/autotest/autotest_eventforce.cpp), host: the volume-gate
 // feature (coop/dev/event_force) on obelisk, the badge snapshot resolving (armed 0, shots 1),

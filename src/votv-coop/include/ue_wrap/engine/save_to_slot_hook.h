@@ -33,8 +33,12 @@ using Written = void (*)(void* saveObject, const wchar_t* slotName);
 // miss is logged once and is final.
 bool Install();
 
-// One subscriber each; null clears. Any thread.
+// One gate; null clears. Any thread.
 void SetGate(Gate gate);
-void SetWritten(Written written);
+
+// Up to kMaxWritten written subscribers, each called in the order added. Adding one already added is a
+// no-op; false when the table is full. Any thread.
+inline constexpr int kMaxWritten = 4;
+bool AddWritten(Written written);
 
 }  // namespace ue_wrap::save_to_slot_hook

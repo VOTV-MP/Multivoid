@@ -139,6 +139,7 @@
 #include "coop/props/trash_pile_sync.h"
 #include "coop/save/save_block.h"
 #include "coop/save/save_button_disable.h"
+#include "coop/save/save_notice.h"
 #include "coop/props/grab_observer.h"
 #include "coop/player/item_activate.h"
 #include "coop/player/player_damage.h"
@@ -339,6 +340,7 @@ void Install(coop::net::Session& session) {
     coop::save_block::Install(&session);
     // Grey out the client pause menu's Save button; a no-op on the host.
     coop::save_button_disable::Install(&session);
+    coop::save_notice::Install(&session);  // the host's world saves: a chat line on every peer, the save animation on a client
     // The shutdown install and the window title are called from the boot timeline directly, not
     // here: they must work before the local player is possessed, since a player may close the
     // window on the splash.
@@ -562,6 +564,7 @@ DisconnectStats DisconnectAll() {
     // leftover one only waits for the boot sweep's one-hour cutoff. On a host this finds an empty
     // buffer, an unarmed map and no such file, and clears its own per-slot streams.
     coop::save_transfer::OnDisconnect();
+    coop::save_notice::OnDisconnect();  // drop the save count and the once-said latch
     // Every pin on a world-scoped object is session-scoped, so after a full teardown the
     // world-scoped pin count must be zero. A non-zero answer names the module still anchoring the
     // departing world's Outer chain, the condition that makes the next map load in this process
@@ -615,6 +618,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_drive_host"}; coop::prop_drive_host::Pump(session, isHost); }  // the driven props, both roles: HOST judges a syncing client's rows, publishes the props that moved, closes the streams that rested (after the hook poll that feeds it); then both park + drive what the host streams (an empty set costs one size check)
     coop::dev::dev_lanes::TickDrills(session);  // [dev] the drills' and censuses' legs (a single read each when off)
     coop::player_damage::Tick();  // impact-entry PRE cancels lazy install (non-local bodies)
+    coop::save_notice::Tick();  // the save watch's name resolves until it is live
     coop::player_handshake::TickSkinConverge();  // heal a join-window deferred skin apply (~2 s throttle)
     coop::skin_preview::Tick();  // F1-skins live mannequin preview (spawn/apply/position/hide)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:laptop_tab"}; coop::laptop_tab::Tick(session); }  // the tab watches until live, the refusal window, and a tab report owed by its pace; BEFORE the occupancy poll, so a leaving user's last tab goes ahead of the claim's release

@@ -37,7 +37,7 @@ SaveGameToSlotFn g_saveGameToSlotTrampoline = nullptr;
 void* g_saveSlotClass = nullptr;
 
 std::atomic<Gate>    g_gate{nullptr};
-std::atomic<Written> g_written{nullptr};
+std::atomic<Written> g_written[kMaxWritten] = {};
 
 // Install answered for good: armed, or the signature is stale for this build.
 std::atomic<bool> g_done{false};
@@ -89,8 +89,8 @@ Verdict DecideSEH(void* saveGameObject, void* slotNameFStr) {
 
 void NotifySEH(void* saveGameObject, void* slotNameFStr) {
     __try {
-        if (const Written w = g_written.load(std::memory_order_acquire))
-            w(saveGameObject, SlotOf(slotNameFStr));
+        for (const std::atomic<Written>& slot : g_written)
+            if (const Written w = slot.load(std::memory_order_acquire)) w(saveGameObject, SlotOf(slotNameFStr));
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         LogSeamFault("written", GetExceptionCode());
     }
@@ -152,6 +152,15 @@ bool Install() {
 }
 
 void SetGate(Gate gate) { g_gate.store(gate, std::memory_order_release); }
-void SetWritten(Written written) { g_written.store(written, std::memory_order_release); }
+bool AddWritten(Written written) {
+    if (!written) return false;
+    for (std::atomic<Written>& slot : g_written) {
+        Written cur = slot.load(std::memory_order_acquire);
+        if (cur == written) return true;
+        if (!cur && slot.compare_exchange_strong(cur, written, std::memory_order_acq_rel)) return true;
+        if (cur == written) return true;
+    }
+    return false;
+}
 
 }  // namespace ue_wrap::save_to_slot_hook

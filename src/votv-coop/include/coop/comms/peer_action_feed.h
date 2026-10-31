@@ -43,6 +43,8 @@ enum class Action : uint8_t {
     OrderNoCatalog,
     OrderCommitFailed,
     OrderRefused,
+    SavedGame,          // the host saved the world
+    SaveBlockedByEvent, // the host's save did not take: an event was running
     kCount
 };
 
