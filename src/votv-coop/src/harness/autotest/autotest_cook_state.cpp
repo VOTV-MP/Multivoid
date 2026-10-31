@@ -10,6 +10,7 @@
 #include "harness/autotest.h"
 
 #include "coop/config/config.h"
+#include "coop/player/hand_item.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/food_tick_gate.h"
 #include "coop/props/prop_key_index.h"
@@ -176,6 +177,68 @@ void NearlyBurnt(const std::string& key) {
     });
 }
 
+constexpr uint8_t kActionTakeLid = 7;
+constexpr uint8_t kActionOff = 4;
+
+// World lids: actors named bbq_1 of the two classes the press can make, outside any hand.
+int CountWorldLids() {
+    int n = 0;
+    for (const wchar_t* name : {L"prop_C", L"prop_food_C"}) {
+        void* cls = R::FindClass(name);
+        if (!cls) continue;
+        ue_wrap::object_index::ForEachInstance(
+            cls,
+            [](void* ctx, void* obj, int32_t) {
+                // The walk lists a destroyed actor until the collector takes it.
+                if (R::IsLive(obj) && ue_wrap::prop::GetPropNameString(obj) == L"bbq_1" &&
+                    !coop::hand_item::IsHandAxisActor(obj))
+                    ++*static_cast<int*>(ctx);
+            },
+            &n);
+    }
+    return n;
+}
+
+std::string HandName(void* actor) {
+    const std::wstring name = actor ? ue_wrap::prop::GetPropNameString(actor) : L"nothing";
+    return std::string(name.begin(), name.end());
+}
+
+// The holder's own hand, or the copy this peer shows in `slot`'s, within a few seconds.
+void CheckHand(const char* step, int slot, const std::string& want) {
+    std::string got;
+    int lids = -1;
+    for (int i = 0; i < 24; ++i) {
+        OnGameThread([&] {
+            void* actor = slot < 0 ? coop::hand_item::LocalHandActor()
+                                   : coop::hand_item::MirrorActorForSlot(static_cast<uint8_t>(slot));
+            got = HandName(actor);
+            lids = CountWorldLids();
+        });
+        if (got == want && lids == 0) break;
+        ::Sleep(250);
+    }
+    Verdict(step, got == want && lids == 0, "hand=" + got + " world lids=" + std::to_string(lids));
+}
+
+void PressGrill(const std::string& key, uint8_t action) { Press(key, action); }
+
+// The lid back on as the game's own use of a held item does it.
+void ReturnLid(const std::string& key) {
+    OnGameThread([&] {
+        void* grill = Find(key);
+        void* local = coop::players::Registry::Get().Local();
+        void* hand = coop::hand_item::LocalHandActor();
+        ue_wrap::FVector at{};
+        if (!grill || !local || !hand || !E::TryGetActorLocation(grill, at)) {
+            UE_LOGW("cook-drill: no lid in hand to return");
+            return;
+        }
+        void* mesh = ue_wrap::prop::GetStaticMesh(grill);
+        ue_wrap::prop_use::CallPlayerUsedOn(grill, local, mesh, at, mesh, hand, ue_wrap::prop::GetPropName(hand));
+    });
+}
+
 // Coals in by the grill's own addCoal, with the host's count of them.
 void AddCoals(const std::string& key, int n) {
     for (int i = 0; i < n; ++i) GrillVerb(key, L"addCoal");
@@ -302,6 +365,49 @@ void RunGrill(const std::string& grill, const std::string& onGrill, bool host) {
     if (host) SetLid(grill, lid);
     CheckGrill("27-host-moves-the-lid", grill, 0, false, lid);
     if (!step("27")) return;
+
+    // The real press: the lid comes off into the presser's hand, and its use on the grill puts it back.
+    if (host) SetLid(grill, true);
+    CheckGrill("40-the-lid-is-on", grill, 0, false, true);
+    if (!step("40")) return;
+    if (!host) PressGrill(grill, kActionTakeLid);
+    CheckGrill("41-client-takes-the-lid", grill, 0, false, false);
+    CheckHand(host ? "41-host-shows-it-in-client-hand" : "41-client-holds-it", host ? 1 : -1, "bbq_1");
+    if (!step("41")) return;
+    if (!host) ReturnLid(grill);
+    CheckGrill("42-client-puts-it-back", grill, 0, false, true);
+    CheckHand(host ? "42-client-hand-empty-here" : "42-client-hand-empty", host ? 1 : -1, "nothing");
+    if (!step("42")) return;
+    if (host) PressGrill(grill, kActionTakeLid);
+    CheckGrill("43-host-takes-the-lid", grill, 0, false, false);
+    CheckHand(host ? "43-host-holds-it" : "43-client-shows-it-in-host-hand", host ? -1 : 0, "bbq_1");
+    if (!step("43")) return;
+    if (host) ReturnLid(grill);
+    CheckGrill("44-host-puts-it-back", grill, 0, false, true);
+    CheckHand(host ? "44-host-hand-empty" : "44-host-hand-empty-here", host ? -1 : 0, "nothing");
+    if (!step("44")) return;
+
+    // A press with coals in puts the fire out on every peer, and the host's next count must not light it again.
+    if (host) AddCoals(grill, 3);
+    CheckGrill("45-coals-for-the-off-press", grill, 3, false, true);
+    if (!step("45")) return;
+    if (host) GrillVerb(grill, L"attemptIgnite");
+    CheckGrill("46-host-lights-it", grill, 3, true, true);
+    if (!step("46")) return;
+    if (!host) PressGrill(grill, kActionOff);
+    CheckGrill("47-client-press-puts-it-out", grill, 3, false, true);
+    if (!step("47")) return;
+    ::Sleep(2000);
+    CheckGrill("47b-it-stays-out", grill, 3, false, true, 4);
+    if (!step("47b")) return;
+    if (host) SetLid(grill, lid);
+    CheckGrill("48-lid-as-it-was", grill, 3, false, lid);
+    if (!step("48")) return;
+    if (host) {
+        OnGameThread([&] { K::ApplyMode(Find(grill), 0); });
+    }
+    CheckGrill("49-coals-cleared", grill, 0, false, lid);
+    if (!step("49")) return;
     if (host) {
         AddCoals(grill, 8);
         GrillVerb(grill, L"attemptIgnite");

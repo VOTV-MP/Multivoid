@@ -7,7 +7,7 @@
 // start, its door, and a stop that came before its timer's end.
 //
 // A grill burns its coals in its own tick on every peer, so the host's count is the count: a client sends only what its
-// player did, a coal, a light or the lid, and every host message also sets the client's burn, so the client's copy reaches
+// player did, a coal, a light, an off or the lid, and every host message also sets the client's burn, so the client's copy reaches
 // the next coal just behind the host's and takes the host's number. The tick keeps running there for its fire and sizzle.
 
 #pragma once

@@ -448,9 +448,9 @@ its timer's end, through the game's own `forceOpenDoor`, `openDoor` and `closeDo
 off its defaults, since an oven's controls are in no save `[V]` (`harness/autotest/autotest_cook_state.cpp`: each
 control from each peer, a food heated in a microwave a client started, a shrimp's progress and its one cooked food, a
 rejoin; machines powered by a write and pressed by reflection). A grill burns coals in its tick on every peer, so the
-host's count stands: a client sends only its player's coal, light or lid, and each host message sets the client's burn, so
+host's count stands: a client sends only its player's coal, light, off press or lid, and each host message sets the client's burn, so
 its copy never runs out first; the drill runs each from each peer, a food heating on it, three coals burnt on the host's
-count and a lit grill for a rejoin, the verbs by reflection.
+count, the lid's own press and its return from each peer, and a lit grill for a rejoin, the verbs by reflection.
 
 ## Who owns what
 
@@ -517,7 +517,6 @@ prop resolves.
 | A keyed prop a client creates outside the intent door (a place after a pickup, the whitelisted births, a container extract, a player's own spawn verb) never reaches the host. It is logged now: the drain names its exit, and `[dev] prop_birth_key_probe` tallies every exit by name | `[V]` `coop/props/prop_drop_intent` drops it at the drain; `coop/dev/prop_birth_key_probe` |
 | Two peers changing one canned food inside one round trip each publish a whole record, and the last to reach the host stands, so a bite can be lost; a can's `health` travels only with those records, so impact damage short of opening it stays on each peer | `[RD]` `coop/props/prop_can_state` publishes the record and takes no claim |
 | Concrete and every other local-accumulator prop drift between peers; only the tape reel and the world food have one author | `[V]` `coop/interactables/tape_caddy_sync`, `coop/props/prop_food_sync` |
-| A grill's lid press makes its lid prop on the presser's machine | `[RD]` `coop/interactables/kitchen_sync` |
 | A hot food's ignition is the host's alone, since a client's copy is refused its tick, so a client sees no flame on it | `[RD]` `prop_food_C.ReceiveTick`; `ue_wrap/actors/food` |
 | A client's food's frost, impact material and freeze sound are painted but only its frozen flag and steam were read back | `[RD]` `ue_wrap/actors/food`, `coop/props/prop_food_sync` |
 | A food subclass's own counter (the shrimp's `shrimps`) and its own tick are not carried, and a heating device's work on a client's copy is local until the host's next value | `[RD]` `coop/props/prop_food_sync` |

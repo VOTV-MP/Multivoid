@@ -82,7 +82,9 @@ bool Crosses(const K::State& was, const K::State& now, bool host) {
     if (now.kind == K::Kind::Grill) {
         if (now.lid != was.lid) return true;
         if (host) return now.mode != was.mode || now.active != was.active;
-        return now.mode > was.mode || (now.active && !was.active);  // its burn is the host's to report
+        // Its burn is the host's to report: coals falling, and the fire going out with the last of them. A press puts
+        // the fire out with coals left.
+        return now.mode > was.mode || (now.active != was.active && (now.active || now.mode > 0));
     }
     if (now.mode != was.mode) return true;
     if (now.kind != K::Kind::Microwave) return now.active != was.active;
