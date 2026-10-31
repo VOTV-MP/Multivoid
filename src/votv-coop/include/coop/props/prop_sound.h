@@ -25,6 +25,9 @@ namespace coop::prop_sound {
 // feedback every grab plays. Pairs with PlayGrabSound at the GRAB-IN edge.
 void PlayUseClick(void* propActor);
 
+// A faucet's click (door0_open, natively PlaySound2D on its presser alone), spatialized at the faucet for the other peers.
+void PlayFaucetClick(void* faucet);
+
 // The grabbed prop's per-material pickup cue at the prop's location.
 // prop_C reads its cached physSoundData; plain-Actor grabs (the clump)
 // resolve root material -> physmat -> the same physSound row. Silent when

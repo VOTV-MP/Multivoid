@@ -258,6 +258,7 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 
 | Limit | Evidence |
 |---|---|
+| The sky's earth teleport plays its two sounds on every client (`coop/world/world_sound_sync`, EventCue ids from 100), but its black hole light and its other effects are the host's; the outside alien noise and a plant's harvest sound stay on one machine, since their calls are not in the fingerprint table | `[V]` `harness/autotest/autotest_world_sound.cpp` for the two sounds' cues, not what a peer heard; `[RD]` for the rest |
 | A black fog the host rolls has no wire lane yet; the client's own rolls are suppressed | `[V]` `coop/world/weather_event_births` |
 | The flesh rain is rolled by every peer's own hour pulse and is not mirrored (the sky eye and the jellyfish are not: `SkyState` carries the eye, the world-actor lane the host's fish, and a client's own `setEye` and path spawn are refused) | `[RD]` the clock's hour roll; the jellyfish is on the world-actor mirror's list, but its spawn happens inside a Blueprint where the mirror's catch does not see it |
 | A decorated Christmas tree spawns its gifts on each peer whose player sleeps through midnight, and a client's gifts are its own | `[RD]` the tree's own check of the local player's sleep at hour 0 |

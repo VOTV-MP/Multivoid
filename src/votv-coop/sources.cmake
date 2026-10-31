@@ -258,6 +258,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/desk_short_sync.cpp
     src/coop/world/plant_edit_gate.cpp
     src/ue_wrap/actors/growing_plant.cpp
+    src/coop/world/world_sound_sync.cpp
     src/coop/props/prop_record_refresh.cpp
     src/coop/props/prop_record_wire.cpp
     src/coop/props/prop_can_state.cpp
@@ -692,6 +693,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_plant_gate.cpp
     src/harness/autotest/autotest_sv_request.cpp
     src/harness/autotest/autotest_module_buy.cpp
+    src/harness/autotest/autotest_world_sound.cpp
     src/harness/autotest/autotest_saveui.cpp
     src/harness/autotest/autotest_spill.cpp
     src/harness/autotest/autotest_drone_hover.cpp
