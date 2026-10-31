@@ -239,6 +239,10 @@ DWORD WINAPI HudTintProbeThread(LPVOID arg);
 void RunAutonomousMoveOsc();
 DWORD WINAPI MoveOscThread(LPVOID arg);
 
+// The flashlight battery drill: each peer's battery runs out in turn and the other reads its puppet's light. Gated
+// by VOTVCOOP_RUN_FLASH_BATTERY; the peers' shared folder in VOTVCOOP_CAN_DIR. See autotest_flash_battery.cpp.
+DWORD WINAPI FlashBatteryThread(LPVOID arg);
+
 // The event force-now smoke (harness/autotest/autotest_eventforce.cpp), host: the volume-gate
 // feature (coop/dev/event_force) on obelisk, the badge snapshot resolving (armed 0, shots 1),
 // ForceNow arming through HostFire and driving the box's own BeginOverlap with the local pawn, and

@@ -69,8 +69,11 @@ class and name on change, and every peer keeps a display-only mirror, physics an
 attached to the puppet's weapon component at the native hold transform
 (`coop/player/hand_item`). The flashlight rides the item-activation kind: the receiver toggles
 the puppet's own light and plays a positional click (`coop/player/item_activate`,
-`coop/player/flashlight_click_sound`). A carried trash clump is driven to the puppet's hand on
-the host each tick (`coop/player/puppet_carry_drive`); a held physics prop is on the props lane.
+`coop/player/flashlight_click_sound`). An empty battery switches the light off in the game's
+`ReceiveTick` with no function call to observe, so each tick the sender compares the game's flashlight
+bool with what it last sent, and the other peer's puppet goes dark too `[V]`
+(`harness/autotest/autotest_flash_battery.cpp`, each peer's battery drained in turn). A carried trash clump
+is driven to the puppet's hand on the host each tick (`coop/player/puppet_carry_drive`); a held physics prop is on the props lane.
 
 ### Name, colour and nameplate
 

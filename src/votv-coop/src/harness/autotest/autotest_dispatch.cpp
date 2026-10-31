@@ -181,6 +181,9 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // moving source; enable on one peer and read the other's pose diagnostic.
     SpawnIf("VOTVCOOP_RUN_MOVE_OSC", "move oscillator (interp verify)", &MoveOscThread, role);
 
+    // The flashlight battery: each peer's runs out in turn and the other reads its puppet's light.
+    SpawnIf("VOTVCOOP_RUN_FLASH_BATTERY", "flashlight battery drill", &FlashBatteryThread, role);
+
     // The bot-director halt probe, solo: measures the path query over the baked NavMesh and a
     // reflected AddMovementInput moving the possessed body.
     SpawnIf("VOTVCOOP_RUN_NAV_PROBE", "nav HALT probe (director Phase-0)", &NavHaltProbeThread, role);

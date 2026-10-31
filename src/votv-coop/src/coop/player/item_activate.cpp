@@ -71,6 +71,11 @@ void* g_timerHoldFlashlightFn = nullptr;
 inline constexpr uint64_t kNoSendYet = 0xFFFFFFFFFFFFFFFFULL;
 std::atomic<uint64_t> g_lastSentSig{kNoSendYet};
 
+// Whether the peers last heard this player's flashlight as on. An empty battery switches it off in the
+// game's ReceiveTick, which writes the bool and hides the light with no function an observer can see, so
+// TickConnect compares this with the bool.
+std::atomic<bool> g_lastSentOn{false};
+
 // The latched "on" intensity, sampled from the local light_R the first time it reads above
 // the off-state value; the receiver drives the puppet's light_R with it. VOTV's light_R uses
 // ELightUnits::Unitless, where Intensity is a small multiplier (about 0.2 off, roughly 5-10
@@ -158,6 +163,14 @@ uint64_t SignaturePayload(const coop::net::ItemActivatePayload& p) {
     mix(reinterpret_cast<const uint32_t&>(p.outerConeAngle));
     mix(reinterpret_cast<const uint32_t&>(p.innerConeAngle));
     return h;
+}
+
+// What the peers now hold, recorded after a send. A hash equal to kNoSendYet is shifted by one so the
+// sentinel stays unambiguous.
+void NoteSent(const coop::net::ItemActivatePayload& p) {
+    const uint64_t sig = SignaturePayload(p);
+    g_lastSentSig.store((sig == kNoSendYet) ? (kNoSendYet - 1) : sig, std::memory_order_release);
+    g_lastSentOn.store(p.state != 0, std::memory_order_release);
 }
 
 void OnUpdateFlashlightPost(void* self, void* function, void* /*params*/) {
@@ -254,7 +267,7 @@ void OnUpdateFlashlightPost(void* self, void* function, void* /*params*/) {
     if (!sent) {
         UE_LOGW("flashlight: SendReliable failed (channel busy or not connected) [%s]", which);
     } else {
-        g_lastSentSig.store(storeSig, std::memory_order_release);
+        NoteSent(p);
         UE_LOGI("flashlight: sent state=%d mode=%u Intensity=%.2f outerCone=%.1f innerCone=%.1f "
                 "(senderElementId=0x%08x, via %s)",
                 p.state, p.mode, p.intensity, p.outerConeAngle, p.innerConeAngle,
@@ -324,9 +337,7 @@ bool DebugForceToggle(void* mp) {
     }
 
     if (s->SendReliable(coop::net::ReliableKind::ItemActivate, &p, sizeof(p))) {
-        const uint64_t sig = SignaturePayload(p);
-        const uint64_t storeSig = (sig == kNoSendYet) ? (kNoSendYet - 1) : sig;
-        g_lastSentSig.store(storeSig, std::memory_order_release);
+        NoteSent(p);
         UE_LOGI("flashlight: DebugForceToggle sent state=%d mode=%u Intensity=%.2f outerCone=%.1f "
                 "(senderElementId=0x%08x)",
                 p.state, p.mode, p.intensity, p.outerConeAngle, p.senderElementId);
@@ -536,9 +547,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     }
     // To the one slot: the connected peers got the state on the toggle.
     s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::ItemActivate, &p, sizeof(p));
-    const uint64_t sig = SignaturePayload(p);
-    const uint64_t storeSig = (sig == kNoSendYet) ? (kNoSendYet - 1) : sig;
-    g_lastSentSig.store(storeSig, std::memory_order_release);
+    NoteSent(p);
     UE_LOGI("flashlight: connect-broadcast slot=%d sent state=%d Intensity=%.2f "
             "outerCone=%.1f mode=%u senderElementId=0x%08x",
             peerSlot, p.state, p.intensity, p.outerConeAngle, p.mode, p.senderElementId);
@@ -567,6 +576,22 @@ void ReplayPeerStatesToSlot(int newSlot) {
 }
 
 void TickConnect() {
+    // The peers hold this flashlight as on and the game has switched it off without a function call: the
+    // battery ran out. A failed send stays unrecorded, so the next tick retries it.
+    if (g_lastSentOn.load(std::memory_order_acquire)) {
+        auto* s = g_session.load(std::memory_order_acquire);
+        void* mp = coop::players::Registry::Get().Local();
+        ue_wrap::engine::MainPlayerFlashlightState fl{};
+        if (s && s->connected() && mp && ue_wrap::engine::ReadMainPlayerFlashlightState(mp, fl) &&
+            !fl.flashlight) {
+            coop::net::ItemActivatePayload p{};
+            if (BuildPayloadFromLocal(mp, p, s) &&
+                s->SendReliable(coop::net::ReliableKind::ItemActivate, &p, sizeof(p))) {
+                NoteSent(p);
+                UE_LOGI("flashlight: sent state=0 -- the game switched it off with no call (the battery ran out)");
+            }
+        }
+    }
 
     // The pending applies drain once the registry has a live puppet for the slot.
     for (uint8_t peer = 0; peer < coop::players::kMaxPeers; ++peer) {
@@ -586,6 +611,7 @@ void TickConnect() {
 }
 
 void OnDisconnect() {
+    g_lastSentOn.store(false, std::memory_order_release);
     int clearedApplies = 0;
     for (uint8_t i = 0; i < coop::players::kMaxPeers; ++i) {
         if (g_pendingApplyValid[i]) ++clearedApplies;
