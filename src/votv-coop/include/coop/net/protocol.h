@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 264;
+inline constexpr uint16_t kProtocolVersion = 265;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1182,6 +1182,20 @@ enum class ReliableKind : uint8_t {
     // rows, sent once after its join so the host can compare each with its own. Dropped at the host unless the drill
     // enabled it. Rides the Default lane; never relayed; not pre-world. Late join: none, a report is a reading.
     DevContainerParity = 206,
+    // HOST->ALL: a world food's temperature, ripeness and use count, sent when they move. A client's food is parked,
+    // so these are its values. Not pre-world. Late join: every food again at the joiner's ready edge, on the poll's
+    // budget. FoodStatePayload.
+    FoodState = 216,
+    // CLIENT->HOST: this client's player bit a world food. Its copy ran the bite; the host takes one use off its own
+    // count and the next FoodState answers. Not relayed, not pre-world. Late join: none. FoodBitePayload.
+    FoodBite = 217,
+    // CLIENT->HOST: this client's player threw or dropped a food it held. Its copy has the condition the hand kept, and
+    // the host's new copy has none of it, so this names it once; the host writes it and its FoodState answers. Not
+    // relayed, not pre-world. Late join: none. FoodStatePayload.
+    FoodRelease = 218,
+    // ANY->ALL: the condition of the food in this peer's hand, for the copy the others show there. A client's is
+    // relayed. Sent when it moves and every few seconds while held, which is also a joiner's copy. FoodHandPayload.
+    FoodHand = 219,
     // HOST->CLIENT: one decision of a Geom Octa, to be replayed into the client's own Blueprint (coop/creatures/
     // geom_octa_relay): op 0, an Aggro, the Octa took a target (the replay runs minSphere's begin-overlap handler with
     // the target's counterpart here), carrying the host's verdict count as the base; op 1, a FireVerdict, the host's
@@ -1833,6 +1847,30 @@ struct PropSyncAnswerPayload {
 static_assert(sizeof(PropSyncAnswerPayload) == 12, "PropSyncAnswerPayload must be 12 bytes");
 static_assert(sizeof(PropSyncAnswerPayload) <= 256 - 20 - 8,
               "PropSyncAnswerPayload must fit in one reliable datagram");
+
+// A world food's condition (FoodState): the food by key, and the three fields its tick and its bites move.
+struct FoodStatePayload {
+    WireKey key;          // 32 -- the food's Key
+    float   temperature;  // 4  -- kelvin
+    float   ripeness;     // 4
+    int32_t uses;         // 4
+};
+static_assert(sizeof(FoodStatePayload) == 44, "FoodStatePayload must be 44 bytes");
+static_assert(sizeof(FoodStatePayload) <= 256 - 20 - 8, "FoodStatePayload must fit in one reliable datagram");
+
+// A client's bite of a world food (FoodBite).
+struct FoodBitePayload {
+    WireKey key;  // 32 -- the food's Key
+};
+static_assert(sizeof(FoodBitePayload) == 32, "FoodBitePayload must be 32 bytes");
+
+// The food in the sender's hand (FoodHand).
+struct FoodHandPayload {
+    float   temperature;  // 4  -- kelvin
+    float   ripeness;     // 4
+    int32_t uses;         // 4
+};
+static_assert(sizeof(FoodHandPayload) == 12, "FoodHandPayload must be 12 bytes");
 
 // One message of the drill filler (DevLoadFiller): its place in the run and the run's length; the rest is fill.
 struct DevLoadFillerPayload {

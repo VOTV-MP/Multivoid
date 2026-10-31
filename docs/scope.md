@@ -36,7 +36,7 @@ the commit that ships the change.
 | Custom content paks and asset replication | a peer without a skin pak sees the default body, by design; nothing is downloaded from another peer |
 | Anti-cheat | the host is trusted and is the admin; every bound and sanity check applies to clients only |
 | Hint toasts, tutorial tips, the per-viewer HUD | local to the machine; the HUD reads shared state, it is not itself replicated |
-| A food's live condition on a world actor: its temperature, ripeness and use count | every peer simulates its own, and the prop's save record cannot carry them: it is taken at one birth while all three move continuously, and its timestamp is the capturing peer's world clock, which the receiver reads as elapsed time. A lane that gives them one author is designed and not built. A food inside a pocket or a container is a stored record and travels with it |
+| A bite of a food in another player's hand | the holder's own: its count reaches the others with the food's condition, and its hunger and effects stay the holder's. A world food has one author, the host ([props.md](props.md)) |
 
 ## Rules for classifying a new item
 

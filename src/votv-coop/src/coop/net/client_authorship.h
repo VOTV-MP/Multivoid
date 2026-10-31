@@ -36,6 +36,9 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     switch (k) {
     case ReliableKind::Join:
     case ReliableKind::PropRelease:
+    case ReliableKind::FoodBite:
+    case ReliableKind::FoodRelease:
+    case ReliableKind::FoodHand:
     case ReliableKind::PropSpawn:
     case ReliableKind::PropDestroy:
     case ReliableKind::LightState:
@@ -230,6 +233,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::LaptopTabState:
     case ReliableKind::AtvSetComplete:
     case ReliableKind::PropSyncAnswer:
+    case ReliableKind::FoodState:
     case ReliableKind::SwingerRestPose:
     case ReliableKind::GeomOctaEvent:
     case ReliableKind::DevLoadFiller:

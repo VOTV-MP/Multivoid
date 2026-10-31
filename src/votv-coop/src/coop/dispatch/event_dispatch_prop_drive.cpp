@@ -14,6 +14,7 @@
 #include "coop/dev/pile_defer_report.h"    // the pile deferral drill's report receiver
 #include "coop/element/registry.h"
 #include "coop/props/prop_drive_stream.h"  // the driven-prop end edge
+#include "coop/props/prop_food_sync.h"     // a world food's condition and a client's bite
 #include "coop/props/prop_syncer.h"        // the client's answer receiver
 #include "coop/props/prop_syncer_host.h"   // the host's claim judge and a client's End
 
@@ -112,6 +113,84 @@ bool HandlePropDriveEvent(net::Session& session,
             break;
         }
         ::coop::prop_syncer::OnAnswer(p);
+        break;
+    }
+    case net::ReliableKind::FoodState: {
+        // HOST->ALL: refused from a client at the host's edge (client_authorship).
+        if (msg.payloadLen < sizeof(net::FoodStatePayload)) {
+            UE_LOGW("event_feed: FoodState payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::FoodStatePayload));
+            break;
+        }
+        net::FoodStatePayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.key.len == 0 || p.key.len > sizeof(p.key.data) || !std::isfinite(p.temperature) ||
+            !std::isfinite(p.ripeness)) {
+            UE_LOGW("event_feed: FoodState malformed -- dropping");
+            break;
+        }
+        ::coop::props::prop_food_sync::OnState(p);
+        break;
+    }
+    case net::ReliableKind::FoodBite: {
+        // CLIENT->HOST: never relayed. The host's lane judges it.
+        if (session.role() != net::Role::Host || msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: FoodBite from slot %d on this role -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::FoodBitePayload)) {
+            UE_LOGW("event_feed: FoodBite payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::FoodBitePayload));
+            break;
+        }
+        net::FoodBitePayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.key.len == 0 || p.key.len > sizeof(p.key.data)) {
+            UE_LOGW("event_feed: FoodBite malformed -- dropping");
+            break;
+        }
+        ::coop::props::prop_food_sync::OnBite(msg.senderPeerSlot, p);
+        break;
+    }
+    case net::ReliableKind::FoodRelease: {
+        // CLIENT->HOST: never relayed. The host's lane judges it.
+        if (session.role() != net::Role::Host || msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: FoodRelease from slot %d on this role -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::FoodStatePayload)) {
+            UE_LOGW("event_feed: FoodRelease payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::FoodStatePayload));
+            break;
+        }
+        net::FoodStatePayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.key.len == 0 || p.key.len > sizeof(p.key.data) || !std::isfinite(p.temperature) ||
+            !std::isfinite(p.ripeness)) {
+            UE_LOGW("event_feed: FoodRelease malformed -- dropping");
+            break;
+        }
+        ::coop::props::prop_food_sync::OnRelease(msg.senderPeerSlot, p);
+        break;
+    }
+    case net::ReliableKind::FoodHand: {
+        // ANY->ALL: a client's copy is relayed at the host's receive edge (session_lanes.h).
+        if (msg.senderPeerSlot < 0 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: FoodHand from invalid senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::FoodHandPayload)) {
+            UE_LOGW("event_feed: FoodHand payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::FoodHandPayload));
+            break;
+        }
+        net::FoodHandPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (!std::isfinite(p.temperature) || !std::isfinite(p.ripeness)) {
+            UE_LOGW("event_feed: FoodHand malformed -- dropping");
+            break;
+        }
+        ::coop::props::prop_food_sync::OnHand(msg.senderPeerSlot, p);
         break;
     }
     case net::ReliableKind::DevLoadFiller: {

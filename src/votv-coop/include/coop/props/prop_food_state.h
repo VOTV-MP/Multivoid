@@ -9,7 +9,7 @@
 // A record is captured at one birth and applied at another, while these three fields move
 // continuously; worse, the record is stamped with the CAPTURING peer's world clock and the
 // receiver's loadData reads the difference as elapsed time, which it is not. The lane that gives
-// the state one author is not built yet.
+// the state one author is coop/props/prop_food_sync.
 //
 // The claim binds the live-prop record lane only. A food inside a container or a pocket is a
 // stored record on its own lane and still crosses whole, stamp included -- docs/scope.md.

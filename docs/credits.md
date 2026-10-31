@@ -48,6 +48,7 @@ from `git shortlog -sne` and fold each person's identity variants together.
 | **doctaaaaa** | report | A ten-item field pack on the released build, of which four landed on open work: a floppy disc lost when it is retrieved from a signal server, a recorded signal lost when the disc changes hands, the power chain, and the trash-pile cost. The disc pair is now root-caused — the box on the other machine takes the disc back the moment it appears | b150 · root-caused, unreleased |
 | **SirWilliam** | report | Rejoining a session requires a full relaunch | fixed, unreleased |
 | **thewittyrobin** | report | Doors that never open for the other peer, twice ([#17](https://github.com/VOTV-MP/Multivoid/pull/17), [#18](https://github.com/VOTV-MP/Multivoid/pull/18)). Both proposed mechanisms measured out differently, and both reports are of one real defect: on the public build a door is addressed by a key the game re-mints per process | root-caused, unreleased |
+| [**ElvardFIC**](https://github.com/ElvardFIC) and [**AquaFishhh**](https://github.com/AquaFishhh) | code | The shape of the food lane, from Watchers of the Void: the host as a food's one author, a client's bite as an intent, a held food's condition for the copy others show | food lane |
 
 ---
 
