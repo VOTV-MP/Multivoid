@@ -141,10 +141,97 @@ void AdvanceDishInterpSingle(int32_t index, uint64_t now) {
     }
 }
 
-// The per-frame client drive: advance open dish windows.
+// The client's copy of a slew's sounds. Its own body never runs here, and its `turnoff` timeline must not: its end runs the
+// dish bookkeeping that arms a download. So the order is the body's, read off the stream: an axis moving has the motor on, an
+// axis stopping clunks with the motor off, and the slew's end clunks and fades, then a second later plays its last sound.
+struct DishSound {
+    bool     motor = false;      // this copy's motor is on
+    bool     humming = false;    // this copy's hum is on
+    bool     seen = false;       // lastYaw and lastRoll hold a row
+    float    lastYaw = 0.f, lastRoll = 0.f;
+    int32_t  stillRows = 0;      // rows in a row with no movement while it slews
+    uint64_t fadeFromMs = 0;     // 0: not ending
+    uint64_t fadeMs = 0;
+};
+DishSound g_sound[coop::net::kMaxDishes];
+
+constexpr float    kMovedDeg = 0.01f;       // the stream's quantum
+constexpr int32_t  kStillRowsToStop = 2;    // one quiet row is a late packet or a slow ramp
+constexpr uint64_t kEndGapMs = 1000;        // turnoff's finish waits this before its last sound
+constexpr uint64_t kFallbackFadeMs = 1000;
+
+void EndSoundNow(int32_t index) {
+    DishSound& s = g_sound[index];
+    s.motor = s.humming = false;
+    s.stillRows = 0;
+    s.fadeFromMs = 0;
+}
+
+void AdvanceDishSound(int32_t index, uint64_t now) {
+    DishSound& s = g_sound[index];
+    if (!s.fadeFromMs) return;
+    const uint64_t elapsed = now - s.fadeFromMs;
+    if (elapsed < s.fadeMs) {
+        D::SetFade(index, 1.f - static_cast<float>(elapsed) / static_cast<float>(s.fadeMs));
+        return;
+    }
+    if (s.motor) {
+        D::SetMotor(index, false);
+        s.motor = false;
+    }
+    if (elapsed < s.fadeMs + kEndGapMs) return;
+    const bool ended = D::PlayStopAndEndHum(index);
+    UE_LOGI("[dish] %d '%ls' mirror slew sounds end (played=%d)", index, D::TechName(index).c_str(), ended ? 1 : 0);
+    EndSoundNow(index);
+}
+
+// One row's sound edges, before the row's pose is taken.
+void ApplyDishSound(int32_t index, bool isMoving, bool wasMoving, float yawZ, float rollY) {
+    DishSound& s = g_sound[index];
+    const bool moved = s.seen && (std::fabs(yawZ - s.lastYaw) > kMovedDeg || std::fabs(rollY - s.lastRoll) > kMovedDeg);
+    s.seen = true;
+    s.lastYaw = yawZ;
+    s.lastRoll = rollY;
+    if (isMoving) {
+        if (s.fadeFromMs) {  // a new slew over an old one's end
+            s.fadeFromMs = 0;
+            s.humming = false;
+        }
+        if (moved) {
+            s.stillRows = 0;
+            if (!s.humming) {
+                D::StartHum(index);
+                s.humming = true;
+                g_cueWatch |= (1u << index);
+            }
+            if (!s.motor) {
+                D::SetMotor(index, true);
+                s.motor = true;
+            }
+        } else if (s.motor && ++s.stillRows >= kStillRowsToStop) {
+            const bool played = D::PlayAxisStop(index);
+            UE_LOGI("[dish] %d mirror axis stop (played=%d)", index, played ? 1 : 0);
+            D::SetMotor(index, false);
+            s.motor = false;
+            s.stillRows = 0;
+        }
+    } else if (wasMoving && s.humming) {
+        const bool played = D::PlayAxisStop(index);
+        const float seconds = D::FadeSeconds(index);
+        s.fadeMs = seconds > 0.f ? static_cast<uint64_t>(seconds * 1000.f) : kFallbackFadeMs;
+        s.fadeFromMs = NowMs();
+        UE_LOGI("[dish] %d mirror last axis stop (played=%d), fading %llu ms", index, played ? 1 : 0,
+                static_cast<unsigned long long>(s.fadeMs));
+    }
+}
+
+// The per-frame client drive: advance open dish windows and fading sounds.
 void AdvanceDishInterp() {
     const uint64_t now = NowMs();
-    for (int32_t i = 0; i < coop::net::kMaxDishes; ++i) AdvanceDishInterpSingle(i, now);
+    for (int32_t i = 0; i < coop::net::kMaxDishes; ++i) {
+        AdvanceDishInterpSingle(i, now);
+        AdvanceDishSound(i, now);
+    }
 }
 
 // The one row applier (stream rows and snapshot rows): the shadow, the raw moving flag, the
@@ -156,13 +243,11 @@ void ApplyDishRow(int32_t index, bool isMoving, float yawZ, float rollY, bool sn
     g_shadowMoving[index] = isMoving;
     D::WriteIsMoving(index, isMoving);
     D::WriteActiveDish(index, isMoving);
+    ApplyDishSound(index, isMoving, wasShadow, yawZ, rollY);
     if (isMoving && !wasShadow) {
-        D::ActivateMoveCue(index);
-        g_cueWatch |= (1u << index);
         UE_LOGI("[dish] %d '%ls' mirror slew START (yaw=%.1f roll=%.1f)",
                 index, D::TechName(index).c_str(), yawZ, rollY);
     } else if (!isMoving && wasShadow) {
-        D::DeactivateCues(index);
         UE_LOGI("[dish] %d '%ls' mirror slew STOP (yaw=%.1f roll=%.1f)",
                 index, D::TechName(index).c_str(), yawZ, rollY);
     }
@@ -284,7 +369,7 @@ void ClientParkLatch() {
         const auto& r = rows[i];
         if (r.index < 0 || r.index >= coop::net::kMaxDishes) continue;
         if (!(g_cueWatch & (1u << r.index))) continue;
-        if (r.isMoving || g_shadowMoving[r.index]) continue;  // legitimately audible
+        if (r.isMoving || g_shadowMoving[r.index] || g_sound[r.index].fadeFromMs) continue;  // legitimately audible
         bool ok = false;
         if (D::AnyCueActive(r.index, ok) && ok) {
             D::DeactivateCues(r.index);
@@ -374,6 +459,7 @@ void SettleForArm() {
             g_shadowMoving[i] = false;
             D::WriteIsMoving(i, false);
             D::DeactivateCues(i);
+            EndSoundNow(i);
             ++cleared;
         }
         // Every dish inactive, as on the host: checkFordDishes' gate returns while any dish is active.
@@ -451,10 +537,11 @@ void OnDisconnect() {
     // loops, so this is state cleanup, not a latent-chain kill).
     if (D::EnsureResolved()) {
         for (int32_t i = 0; i < coop::net::kMaxDishes; ++i) {
-            if (!g_shadowMoving[i]) continue;
+            if (!g_shadowMoving[i] && !g_sound[i].fadeFromMs) continue;
             D::WriteIsMoving(i, false);
             D::WriteActiveDish(i, false);
             D::DeactivateCues(i);
+            EndSoundNow(i);
         }
         // The ticker restore (the suppression loan comes due; every session-end path funnels
         // through this fan-out). Re-look-up instead of trusting the parked pointer: the instance

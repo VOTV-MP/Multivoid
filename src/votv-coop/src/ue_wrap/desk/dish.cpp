@@ -314,16 +314,92 @@ bool DeactivateCues(int32_t index) {
     return ok;
 }
 
-bool ActivateMoveCue(int32_t index) {
-    if (!g_l4Resolved) return false;
-    void* d = DishByIndex(index);
-    if (!d) return false;
-    void* c = ComponentAt(d, g_offMoveCue);
+namespace {
+
+constexpr float kSlewVolume = 1.5f;  // startMove's own
+
+bool ActivateAt(void* d, int32_t off) {
+    void* c = ComponentAt(d, off);
     if (!c || !g_activateFn) return false;
     ue_wrap::ParamFrame f(g_activateFn);
     if (!f.valid()) return false;
-    f.Set<bool>(L"bReset", false);
+    f.Set<bool>(L"bReset", true);
     return ue_wrap::Call(c, f);
+}
+
+void SetVolumeAt(void* d, int32_t off, float volume) {
+    void* c = ComponentAt(d, off);
+    void* fn = c ? R::FindDispatchFunctionCached(R::ClassOf(c), L"SetVolumeMultiplier") : nullptr;
+    if (!fn) return;
+    ue_wrap::ParamFrame f(fn);
+    if (f.valid() && f.Set<float>(L"NewVolumeMultiplier", volume)) ue_wrap::Call(c, f);
+}
+
+int32_t OffsetOf(void* d, const wchar_t* name) { return R::FindPropertyOffset(R::ClassOf(d), name); }
+
+}  // namespace
+
+bool StartHum(int32_t index) {
+    if (!g_l4Resolved) return false;
+    void* d = DishByIndex(index);
+    if (!d) return false;
+    SetVolumeAt(d, g_offCue, kSlewVolume);
+    SetVolumeAt(d, g_offMoveCue, kSlewVolume);
+    return ActivateAt(d, g_offCue);
+}
+
+bool SetMotor(int32_t index, bool on) {
+    if (!g_l4Resolved) return false;
+    void* d = DishByIndex(index);
+    if (!d) return false;
+    if (on) return ActivateAt(d, g_offMoveCue);
+    void* c = ComponentAt(d, g_offMoveCue);
+    return c && CallNoArg(c, g_deactivateFn);
+}
+
+bool PlayAxisStop(int32_t index) {
+    if (!g_l4Resolved) return false;
+    void* d = DishByIndex(index);
+    return d && ActivateAt(d, OffsetOf(d, L"satellite_moveStop"));
+}
+
+bool SetFade(int32_t index, float volume) {
+    if (!g_l4Resolved) return false;
+    void* d = DishByIndex(index);
+    if (!d) return false;
+    SetVolumeAt(d, g_offCue, volume);
+    SetVolumeAt(d, g_offMoveCue, volume);
+    return true;
+}
+
+bool PlayStopAndEndHum(int32_t index) {
+    if (!g_l4Resolved) return false;
+    void* d = DishByIndex(index);
+    if (!d) return false;
+    const bool played = ActivateAt(d, OffsetOf(d, L"satellite_stop"));
+    void* c = ComponentAt(d, g_offCue);
+    return (c && CallNoArg(c, g_deactivateFn)) && played;
+}
+
+float FadeSeconds(int32_t index) {
+    if (!g_l4Resolved) return 0.f;
+    void* d = DishByIndex(index);
+    void* timeline = d ? ComponentAt(d, OffsetOf(d, L"turnoff")) : nullptr;
+    void* fn = timeline ? R::FindDispatchFunctionCached(R::ClassOf(timeline), L"GetTimelineLength") : nullptr;
+    if (!fn) return 0.f;
+    ue_wrap::ParamFrame f(fn);
+    float seconds = 0.f;
+    return f.valid() && ue_wrap::Call(timeline, f) && f.GetRaw(L"ReturnValue", &seconds, sizeof(seconds)) ? seconds : 0.f;
+}
+
+void ReadCues(int32_t index, bool& hum, bool& motor) {
+    hum = motor = false;
+    if (!g_l4Resolved) return;
+    void* d = DishByIndex(index);
+    if (!d) return;
+    bool ok = false;
+    hum = CueIsActive(ComponentAt(d, g_offCue), ok) && ok;
+    motor = CueIsActive(ComponentAt(d, g_offMoveCue), ok) && ok;
 }
 
 bool AnyCueActive(int32_t index, bool& ok) {

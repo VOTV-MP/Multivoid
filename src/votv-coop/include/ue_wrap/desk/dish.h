@@ -82,7 +82,20 @@ bool WriteIsMoving(int32_t index, bool moving);
 // Activate/Deactivate + IsActive. A mid-slew kill leaves the looping cues
 // Active forever -- the park owns deactivation.
 bool DeactivateCues(int32_t index);
-bool ActivateMoveCue(int32_t index);
+
+// A slew's sounds, as its own body plays them, for a copy whose body does not run: the hum at its volume, the motor on and
+// off, the clunk an axis stops with, the hum's fade and the last one-shot, with the hum off.
+bool StartHum(int32_t index);
+bool SetMotor(int32_t index, bool on);
+bool PlayAxisStop(int32_t index);
+bool SetFade(int32_t index, float volume);
+bool PlayStopAndEndHum(int32_t index);
+
+// The `turnoff` timeline's length, the fade a stop runs, in seconds; 0 when it does not resolve.
+float FadeSeconds(int32_t index);
+
+// Whether the hum and the motor read active, each `false` when unread.
+void ReadCues(int32_t index, bool& hum, bool& motor);
 // True if EITHER satellite cue reads Active (the cue-reconciler probe).
 // ok=false when the read itself failed (unresolved / dead component).
 bool AnyCueActive(int32_t index, bool& ok);
