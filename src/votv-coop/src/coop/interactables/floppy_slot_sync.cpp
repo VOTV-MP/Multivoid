@@ -42,11 +42,12 @@ constexpr uint64_t kSweepMs = 1000;   // the server lane's own cadence
 // serverbox_sync's, for the same reason -- one lane must not address a box the other cannot.
 constexpr size_t kMaxDevices = 64;
 
-// One slot body's ceiling. The measure that set it is the record lane's: a real disc record
-// measured 11.3 KB, and an 8 KB guess refused it inside one run. A body past this is a claim we
-// refuse and a canonical we cannot send, both loudly -- truncating instead would hand the game a
-// JSON its own stringToSaveData cannot parse, which is worse than not sending.
-constexpr size_t kMaxSlotBytes = 32 * 1024;
+// One slot body's ceiling: what one blob carries, less the set's own header. A disc takes 32 writes, and an
+// sv.request row costs 1.6 KB here (a dish's 706-character code, in the rows and again in the save JSON),
+// so a full disc is about 50 KB; a 32 KB ceiling stopped the slot crossing at 21 servers' rows. A body past
+// this is a claim we refuse and a canonical we cannot send, both loudly -- truncating instead would hand
+// the game a JSON its own stringToSaveData cannot parse, which is worse than not sending.
+constexpr size_t kMaxSlotBytes = coop::blob_chunks::MaxBlobBytes() - 64;
 
 // A client's claim is unbounded input. The window is generous next to the 1 Hz poll that
 // produces one, so a peer playing normally never reaches it.
@@ -609,9 +610,9 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
 
     if (op == kOpClaim) {
         if (!host) return;  // a client never takes another peer's claim; only the host's canonical
-        if (blob.size() > kMaxSlotBytes) {
+        if (blob.size() > coop::blob_chunks::MaxBlobBytes()) {
             UE_LOGW("floppy_slot_sync: claim from slot %u is %zu B, past the %zu B ceiling -- "
-                    "dropped", static_cast<unsigned>(senderSlot), blob.size(), kMaxSlotBytes);
+                    "dropped", static_cast<unsigned>(senderSlot), blob.size(), coop::blob_chunks::MaxBlobBytes());
             return;
         }
         bool warnNow = false;

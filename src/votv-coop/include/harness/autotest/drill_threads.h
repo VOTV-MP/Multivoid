@@ -207,5 +207,7 @@ DWORD WINAPI PlantStateThread(LPVOID arg);
 
 // woodchipper_drill, both peers -- harness/autotest/autotest_woodchipper.cpp
 DWORD WINAPI WoodchipperThread(LPVOID arg);
+// VOTVCOOP_RUN_SV_REQUEST, both peers -- harness/autotest/autotest_sv_request.cpp
+DWORD WINAPI SvRequestThread(LPVOID arg);
 
 }  // namespace harness::autotest
