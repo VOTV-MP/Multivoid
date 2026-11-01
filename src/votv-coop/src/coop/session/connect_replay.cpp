@@ -52,6 +52,7 @@
 #include "coop/world/sky_sync.h"
 #include "coop/interactables/window_sync.h"
 #include "coop/props/prop_food_sync.h"  // every world food's condition again
+#include "coop/world/plant_sync.h"
 #include "coop/props/prop_drive_host.h"    // HOST: the props a hook drags, streamed while they move
 #include "coop/interactables/verb_lanes.h"  // the interactable lanes on a device's own verbs, at the script gate
 #include "coop/creatures/kerfus_lanes.h"  // the plain kerfur: its brain on the host, its state and drive, its verbs
@@ -129,6 +130,7 @@ void ConnectReplayForSlot(int slot) {
     coop::desk_snd_fx::QueueConnectBroadcastForSlot(slot);  // desk loop-sound ground truth (a mid-loop joiner gets the ON)
     coop::physmods_sync::QueueConnectBroadcastForSlot(slot);  // canonical module array (ground truth over save drift)
     coop::props::prop_food_sync::QueueConnectBroadcastForSlot(slot);  // every world food's condition again
+    coop::plant_sync::QueueConnectBroadcastForSlot(slot);  // every plant again
     coop::drive_sync::QueueConnectBroadcastForSlot(slot);  // slot lines
     coop::drive_payload_sync::QueueConnectBroadcastForSlot(slot);  // every drive row that differs from its class default
     coop::drive_rack_sync::QueueConnectBroadcastForSlot(slot);  // rack canonicals (AFTER the payloads -- the shipped seed order, all on the Default lane)

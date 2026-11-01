@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 273;
+inline constexpr uint16_t kProtocolVersion = 274;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1216,6 +1216,12 @@ enum class ReliableKind : uint8_t {
     // ANY->ALL: the condition of the food in this peer's hand, for the copy the others show there. A client's is
     // relayed. Sent when it moves and every few seconds while held, which is also a joiner's copy. FoodHandPayload.
     FoodHand = 220,
+    // HOST->ALL: a plant's identity, place and values, at once on an edge a viewer sees and every few seconds while it changes,
+    // or its end. Not relayed, not pre-world. Late join: every plant again at the ready edge. PlantStatePayload.
+    PlantState = 224,
+    // CLIENT->HOST: what this client's player did to a plant, its new values, its removal or a plant it planted. Never relayed;
+    // the host's next PlantState answers. PlantStatePayload.
+    PlantEdit = 225,
     // HOST->CLIENT: one decision of a Geom Octa, to be replayed into the client's own Blueprint (coop/creatures/
     // geom_octa_relay): op 0, an Aggro, the Octa took a target (the replay runs minSphere's begin-overlap handler with
     // the target's counterpart here), carrying the host's verdict count as the base; op 1, a FireVerdict, the host's
@@ -1955,6 +1961,30 @@ struct FoodHandPayload {
     int32_t uses;         // 4
 };
 static_assert(sizeof(FoodHandPayload) == 12, "FoodHandPayload must be 12 bytes");
+namespace plant_edit {
+inline constexpr uint8_t kGrow = 1, kFertilizer = 2, kWater = 4, kFruitGrow = 8, kDryness = 16, kAmount = 32, kRow = 64;
+}  // namespace plant_edit
+
+// A plant (PlantState, PlantEdit).
+struct PlantStatePayload {
+    WireKey       key;               // 32 -- its save key
+    WireClassName cls;               // 64
+    WireKey       row;               // 32 -- its list_farmPlants row
+    WireKey       attachParent;      // 32 -- the pot it stands in, or empty
+    float         x, y, z;           // 12
+    float         pitch, yaw, roll;  // 12
+    float         grow;              // 4
+    float         fertilizer;        // 4
+    float         water;             // 4
+    float         fruitGrow;         // 4
+    float         dryness;           // 4 -- below zero: dead
+    int32_t       amount;            // 4 -- a ripe bush's berries
+    uint8_t       alive;             // 1 -- 0: it ended, and only `key` counts
+    uint8_t       hideDirt;          // 1
+    uint8_t       editMask;          // 1 -- PlantEdit: which values this player changed (plant_edit)
+    uint8_t       _pad;              // 1 -- zero
+};
+static_assert(sizeof(PlantStatePayload) == 212, "PlantStatePayload must be 212 bytes");
 
 // A walking tree's size and landing (AmbientTreeState).
 struct AmbientTreeStatePayload {

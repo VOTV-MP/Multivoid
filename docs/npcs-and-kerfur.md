@@ -79,6 +79,8 @@ leaving one leaves nothing to restore.
 | beehive | the timer's handler (`spawn`) refused | it runs on a repeating timer with no tick to take off, so the row is on the handler. The host's branch crosses by place and by the key its nest was born with, its nest as a prop; a joiner binds the loaded branch of that key, spawns a copy only when none is, and a census-end ends the loaded branches the host lacks `[?]` |
 | sus hole | left running | rolled by each peer's own spawner around its own camera and made by the host: a client's hole is destroyed at its birth and its place sent (`coop/world/sus_hole_intent`), and the host's holes cross by place (`coop/world/ambient_fixture_sync`) |
 | bp7, bush, tick, mannequin | left running | the product has no mirror of its own for these, and refusing a spawner whose output nothing replaces would just remove the content. The walking mannequin is the exception in the making: the host's walker already crosses as a plain prop mirror that runs a second brain on the client (measured on the rig), so the client's spawner stays running only until that mirror is parked and the host's walker is the one walker |
+| deer, bp7, hexahive, walking tree, sus hole, beehive, tick, mannequin | left running | the product has no mirror of its own for these, and refusing a spawner whose output nothing replaces would just remove the content. The walking mannequin is the exception in the making: the host's walker already crosses as a plain prop mirror that runs a second brain on the client (measured on the rig), so the client's spawner stays running only until that mirror is parked and the host's walker is the one walker |
+| bush | tick off, by a poll | a bush is a `growingPlant_C`, the class of a player's own plants, and the host runs them all (`coop/world/plant_sync`, `docs/events-and-weather.md`) |
 
 ### The killer wisp
 
@@ -180,6 +182,7 @@ wisp in flight is transient and owes nothing.
 | A client's sus hole roll can be lost: the host judges the point (100 to 500 m from the player's body, on grass by its own trace, at most 4 of that player's holes standing, a burst of 2 then one in 300 s) and a refusal costs that roll, the next being 300 to 600 s away. A drone's camera can be far from the body, so its roll is refused | `[?]` `coop/world/sus_hole_intent` |
 | A deer's dissolve is each viewer's: one a client walked up to is gone for that client and stands on the host until the host comes near. A walking tree halts and wanders by the host's view alone, so a client can watch one move | `[V]` `deer_C` and `walkingTree_C` read local player and render state; the deer mirror keeps its actor tick (`coop/creatures/npc_mirror`) and its pose drive refreshes the floor that tick reads `[?]` |
 | The host's own camera coming near a deer ends it on the host, and that end crosses as any NPC end: the deer is gone for every peer, however far from the host | `[I]` read from the deer's tick and the NPC end lane; no run measured it (the drill ends a deer on the host with a direct dissolve, not by the host's camera) |
+| Eight ambient spawner families are neither mirrored nor refused, so each peer grows its own deer, hexahives, walking trees and the rest | `[V]` they appear in no lane under `coop/creatures` and in no row of `coop/world/spawn_authority` |
 
 ## Code map
 

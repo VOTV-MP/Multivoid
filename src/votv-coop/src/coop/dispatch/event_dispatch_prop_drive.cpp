@@ -16,6 +16,7 @@
 #include "coop/dev/prop_syncer_drill.h"    // the drill's filler receiver
 #include "coop/dev/pile_defer_report.h"    // the pile deferral drill's report receiver
 #include "coop/element/registry.h"
+#include "coop/world/plant_sync.h"
 #include "coop/props/prop_drive_stream.h"  // the driven-prop end edge
 #include "coop/props/prop_hold_claim.h"    // the client's receiver of a refused hold
 #include "coop/props/prop_food_sync.h"     // a world food's condition and a client's bite
@@ -225,6 +226,31 @@ bool HandlePropDriveEvent(net::Session& session,
             break;
         }
         ::coop::props::prop_food_sync::OnHand(msg.senderPeerSlot, p);
+        break;
+    }
+    case net::ReliableKind::PlantState:
+    case net::ReliableKind::PlantEdit: {
+        // PlantState HOST->ALL, PlantEdit CLIENT->HOST.
+        const bool edit = msg.kind == net::ReliableKind::PlantEdit;
+        if (edit != (session.role() == net::Role::Host)) {
+            UE_LOGW("event_feed: a plant message the wrong way from slot %d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::PlantStatePayload)) {
+            UE_LOGW("event_feed: plant payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::PlantStatePayload));
+            break;
+        }
+        net::PlantStatePayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.alive > 1 || p.hideDirt > 1 || !std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z) || !std::isfinite(p.pitch) ||
+            !std::isfinite(p.yaw) || !std::isfinite(p.roll) || !std::isfinite(p.grow) || !std::isfinite(p.fertilizer) ||
+            !std::isfinite(p.water) || !std::isfinite(p.fruitGrow) || !std::isfinite(p.dryness)) {
+            UE_LOGW("event_feed: plant message malformed -- dropping");
+            break;
+        }
+        if (edit) ::coop::plant_sync::OnEdit(p);
+        else ::coop::plant_sync::OnState(p);
         break;
     }
     case net::ReliableKind::DevLoadFiller: {

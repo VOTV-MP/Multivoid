@@ -202,5 +202,7 @@ DWORD WINAPI AmbientFieldThread(LPVOID arg);
 
 // VOTVCOOP_RUN_SUS_HOLE -- a sus hole a client rolls, made by the host
 DWORD WINAPI SusHoleThread(LPVOID arg);
+// VOTVCOOP_RUN_PLANT_STATE, both peers -- harness/autotest/autotest_plant_state.cpp
+DWORD WINAPI PlantStateThread(LPVOID arg);
 
 }  // namespace harness::autotest
