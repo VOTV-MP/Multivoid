@@ -657,6 +657,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_plant_gate.cpp
     src/harness/autotest/autotest_sv_request.cpp
     src/harness/autotest/autotest_module_buy.cpp
+    src/harness/autotest/autotest_disc_race.cpp
     src/harness/autotest/autotest_saveui.cpp
     src/harness/autotest/autotest_spill.cpp
     src/harness/autotest/autotest_ambient_creature.cpp

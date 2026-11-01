@@ -137,6 +137,12 @@ lane, a batch made on another disc is answered with the canonical instead of app
 another disc is dropped, and neither end applies or sends one while its own change of the disc waits
 for the other.
 
+Two players can fill one slot inside a poll, and an insert destroys its disc's actor, so the slot and the
+claim hold the only copies. Neither is written over the other. A client whose unreported disc meets a
+canonical naming another disc claims first, and leaves the canonical unwritten. The host, given a claim
+naming another disc than the holder, runs the device's own eject and writes the claim once the eject's
+deferred spawn has read its fields.
+
 Emptying a slot writes only what the device's own eject writes -- the type and the rows. The eject
 runs in two phases: it clears those two, and about a second later, when the carrier's timeline
 finishes, the deferred spawn reads the remaining writes and the save JSON to rebuild the disc.
@@ -233,7 +239,7 @@ an error line.
 | Map-placed coins are not enrolled as host-owned world actors. Their local collection can temporarily credit only the client until the host's balance changes | `[RD]` `coop/items/coingun_collect` leaves non-mirrored map coins native |
 | A coin mirror whose host coin is already gone is not cleared by a press: the press forwards, the host finds nothing to collect and answers nothing, and the mirror stays until the world actor's destroy removes it | `[RD]` `coop/items/coingun_collect` cancels the press and the host's unresolved branch only logs |
 | A client's earnings from a chest or an achievement reach only its own machine and are erased by the host's next broadcast | `[V]` `coop/world/balance_sync` is one-way |
-| A slot change reaches the other peer on the next poll, so up to a second plus the round trip. A player who reaches a box inside that window acts on the slot as it was: an eject of a disc the other peer has just inserted answers "No floppy disc in the slot" and is not retried, and a client's insert into a slot the host has just filled replaces the host's disc when the claim lands, which loses that disc | `[V]` the lane polls at 1 Hz, and the host applies a claim over whatever its slot holds (`coop/interactables/floppy_slot_sync`); a faster poll would narrow the window rather than close it |
+| A slot change reaches the other peer on the next poll, so up to a second plus the round trip. A player who reaches a box inside that window acts on the slot as it was: an eject of a disc the other peer has just inserted answers "No floppy disc in the slot" and is not retried. Two inserts inside that window end as a swap, not a loss: the slot's holder comes out, and the later disc takes the slot about 2.5 s on | `[V]` the lane polls at 1 Hz; `autotest_disc_race` |
 
 ## Code map
 

@@ -4,6 +4,8 @@
 
 #include "coop/interactables/laptop_buffer_sync.h"  // the quad's shadow primes after a laptop apply
 #include "coop/net/blob_chunks.h"
+#include "ue_wrap/devices/laptop.h"
+#include "ue_wrap/devices/serverbox.h"
 #include "coop/net/session.h"
 #include "coop/text/utf8_codec.h"
 
@@ -20,9 +22,11 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <deque>
 #include <map>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace coop::floppy_slot_sync {
@@ -390,6 +394,24 @@ void HostBroadcastOne(coop::net::Session* s, FS::DeviceKind kind, size_t index, 
 
 // ---- client ----
 
+// HOST: the claims waiting for a slot another disc holds. Two players can fill one slot inside a poll, and the disc of
+// whichever came second lives only in its claim, as its insert destroyed the actor. So neither is written over the
+// other: the game's own eject brings the holder out, and the claim takes the slot once that eject has read the fields
+// its deferred spawn needs.
+struct SlotSwap {
+    FS::DeviceKind kind = FS::DeviceKind::ServerBox;
+    uint8_t index = 0;
+    std::deque<Slot> waiting;
+    uint64_t ejectedAt = 0;
+};
+std::unordered_map<uint32_t, SlotSwap> g_swaps;
+constexpr uint64_t kEjectSettleMs = 2500;  // the box's out-timeline runs about a second before its spawn
+
+bool EjectHolder(FS::DeviceKind kind, void* device) {
+    if (kind == FS::DeviceKind::Laptop) return ue_wrap::laptop::CallEjectDisc();
+    return ue_wrap::serverbox::EnsureResolved() && ue_wrap::serverbox::CallEjectFloppy(device);
+}
+
 void ClientClaim(coop::net::Session* s, FS::DeviceKind kind, size_t index, void* device) {
     Slot cur;
     if (!ReadSlotOf(kind, device, cur)) {
@@ -559,6 +581,49 @@ void SweepKind(coop::net::Session* s, FS::DeviceKind kind, bool host) {
 
 }  // namespace
 
+static void TickSwaps(coop::net::Session* s) {
+    if (g_swaps.empty()) return;
+    const uint64_t now = NowMs();
+    for (auto it = g_swaps.begin(); it != g_swaps.end();) {
+        SlotSwap& w = it->second;
+        std::vector<void*> devices;
+        const size_t n = ReadDevices(w.kind, devices);
+        void* device = w.index < n ? devices[w.index] : nullptr;
+        if (!device || !R::IsLive(device)) {
+            UE_LOGW("floppy_slot_sync: device %u is gone with %zu claim(s) waiting on it -- dropped",
+                    static_cast<unsigned>(w.index), w.waiting.size());
+            it = g_swaps.erase(it);
+            continue;
+        }
+        if (now < w.ejectedAt + kEjectSettleMs) {
+            ++it;
+            continue;
+        }
+        FS::Scalars st{};
+        const bool occupied = FS::ReadScalars(w.kind, device, st) && st.floppyType >= 0;
+        if (occupied) {
+            EjectHolder(w.kind, device);
+            w.ejectedAt = now;
+            UE_LOGI("floppy_slot_sync: swap on device %u -- ejecting the holder, %zu claim(s) waiting",
+                    static_cast<unsigned>(w.index), w.waiting.size());
+            ++it;
+            continue;
+        }
+        const Slot next = std::move(w.waiting.front());
+        w.waiting.pop_front();
+        ApplySlot(w.kind, w.index, device, next);
+        UE_LOGI("floppy_slot_sync: swap on device %u -- the claim took the slot (key '%ls')",
+                static_cast<unsigned>(w.index), FS::ObjectDataKey(next.c.objectData).c_str());
+        HostBroadcastOne(s, w.kind, w.index, device);
+        if (w.waiting.empty()) {
+            it = g_swaps.erase(it);
+        } else {
+            w.ejectedAt = 0;
+            ++it;
+        }
+    }
+}
+
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
 }
@@ -567,6 +632,7 @@ void Tick() {
     if (!GT::IsGameThread()) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
+    if (IsHost()) TickSwaps(s);
     const uint64_t now = NowMs();
     if (now < g_nextSweep) return;
     g_nextSweep = now + kSweepMs;
@@ -650,6 +716,18 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
         const bool held = ReadSlotOf(kind, devices[index], prev) && prev.st.floppyType >= 0;
         const std::wstring prevKey = held ? FS::ObjectDataKey(prev.c.objectData) : std::wstring();
         const std::wstring inKey = FS::ObjectDataKey(in.c.objectData);
+        // Another disc holds the slot, or claims wait on it: this one goes behind them, never over them.
+        const uint32_t swapKey = ShadowKey(kind, index);
+        if (in.st.floppyType >= 0 && ((held && prevKey != inKey) || g_swaps.count(swapKey))) {
+            SlotSwap& w = g_swaps[swapKey];
+            w.kind = kind;
+            w.index = index;
+            w.waiting.push_back(std::move(in));
+            UE_LOGI("floppy_slot_sync: swap on device %u -- a claim from slot %u (key '%ls') names another disc than the "
+                    "holder (key '%ls'), which comes out", static_cast<unsigned>(index), static_cast<unsigned>(senderSlot),
+                    inKey.c_str(), prevKey.c_str());
+            return;
+        }
         ApplySlot(kind, index, devices[index], in);
         UE_LOGI("floppy_slot_sync: HOST took slot claim (device=%u type=%d rw=%d rows=%zu key "
                 "'%ls') from slot %u -- answering with the canonical; the host's slot held type %d "
@@ -714,6 +792,19 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
         Slot prev;
         const bool held = FS::ReadScalars(kind, devices[index], prevSt) && prevSt.floppyType >= 0 &&
                           ReadSlotOf(kind, devices[index], prev);
+        // This peer's own insert the poll has not reported yet: the disc's actor is gone, so written over, it would be
+        // gone for good. The claim goes first, and the host's answer to it is what lands here.
+        if (held && g_haveCanonical[kindB] && FS::ObjectDataKey(prev.c.objectData) != FS::ObjectDataKey(in.c.objectData)) {
+            uint64_t digest = 0;
+            const auto shadow = g_shadow.find(ShadowKey(kind, index));
+            if (shadow != g_shadow.end() && FS::ReadDigest(kind, devices[index], digest, ScopeOf(kind)) && digest != shadow->second) {
+                UE_LOGI("floppy_slot_sync: swap on device %u -- this peer's unreported disc claims before the canonical lands",
+                        static_cast<unsigned>(index));
+                ClientClaim(g_session.load(std::memory_order_acquire), kind, index, devices[index]);
+                ++skipped;
+                continue;
+            }
+        }
         if (!ApplySlot(kind, index, devices[index], in)) { ++unchanged; continue; }
         ++applied;
         if (!held || in.st.floppyType < 0) continue;
@@ -774,6 +865,7 @@ void OnDisconnect() {
     g_unsendable.clear();
     g_awaiting.clear();
     g_connectRetry.clear();
+    g_swaps.clear();
     for (bool& have : g_haveCanonical) have = false;
     g_laptopGen = 0;
     g_laptopGenDigest = 0;
