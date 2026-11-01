@@ -43,17 +43,14 @@ constexpr uint8_t kBodyVersion = 1;
 // A Key is an Aprop_C save key: ASCII, at most WireKey's 31 chars.
 constexpr size_t kMaxKeyChars = 31;
 
-// The record ceiling, sized from what a record COSTS rather than from what the transport allows.
-// The transport would carry 56 KB, and the codec that decodes one allocates engine memory per
-// declared group and orphans it by this layer's out-param doctrine, so the transport's maximum is
-// an invitation rather than a bound. MEASURED on the test world: most covered props' records are a
-// few hundred bytes and the largest real one is 11.3 KB, so 32 KB is roughly three times the
-// biggest thing the game actually produces and still refuses a body shaped to make the decoder
-// allocate. [An 8 KB first guess was wrong and the run said so within a minute -- a cap picked
-// from an estimate rather than from a census refused a legitimate record.] A record over the cap
-// is REFUSED and logged, never truncated: half a record through loadData is worse than none, and
-// the peer that still holds the whole prop can re-publish.
-constexpr size_t kMaxRecordBytes = 32768;
+// The record ceiling is what the transport carries. The codec that decodes a record allocates engine
+// memory per declared group and orphans it by this layer's out-param doctrine, so a lower bound would
+// be welcome, but the game's own largest needs it: most covered props' records are a few hundred bytes,
+// while a disc of sv.request rows costs 1.5 KB a row (measured: 24 rows, 36.8 KB) and takes 32 writes,
+// about 50 KB. [An 8 KB and then a 32 KB cap were each wrong, and the second left a host a blank disc
+// where its client held 24 rows.] A record over the cap is REFUSED and logged, never truncated: half a
+// record through loadData is worse than none, and the peer that still holds the whole prop can re-publish.
+constexpr size_t kMaxRecordBytes = coop::blob_chunks::MaxBlobBytes();
 size_t MaxRecordBytes() { return kMaxRecordBytes; }
 
 // The park: records whose prop has not arrived, or whose apply has not had a budget slot yet.

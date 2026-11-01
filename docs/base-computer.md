@@ -152,8 +152,9 @@ from the host's finish-spawning drain, since the eject fills the disc in after t
 ([props.md](props.md)).
 
 The laptop's slot crosses as one blob, and the save JSON carries the rows a second time, so a disc
-with a few dozen rows is kilobytes. The blob is held to the ceiling the server slot uses and refused
-whole past it, never cut: a cut JSON is one the receiver's own eject cannot parse, and the disc it
+with a few dozen rows is kilobytes: an `sv.request` row costs 1.6 KB, and a disc holding all its 32
+writes of them about 50 KB. The blob is held to the ceiling the server slot uses, what one blob
+carries, and refused whole past it, never cut: a cut JSON is one the receiver's own eject cannot parse, and the disc it
 hands back comes out blank under a new key. The laptop keeps at most 31 rows in the slot itself
 (`ui_laptop.updFloppy` trims `floppyData`); the JSON keeps all of them.
 
