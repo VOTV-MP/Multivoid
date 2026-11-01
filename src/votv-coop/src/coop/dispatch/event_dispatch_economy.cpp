@@ -135,7 +135,7 @@ bool HandleEconomyEvent(net::Session& session,
         }
         net::UpgradeIntentPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (p.dir > 1) {
+        if (p.dir > net::upgrade_intent::kModuleSell) {
             UE_LOGW("event_feed: UpgradeIntent dir=%u has no lane -- dropping",
                     static_cast<unsigned>(p.dir));
             break;

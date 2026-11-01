@@ -203,6 +203,11 @@ the transferred save, once, so a level bought mid-session diverges silently. The
 around it by streaming the derived frequency and polarity data, but the struct itself, and the
 purchase as an intent the host validates against the shared research points, are designed and
 not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
+A module row is not a level of the panel's arithmetic: a client's press of one is cancelled at the script-body gate
+and goes to the host as an intent, and the host presses its own copy of the row, whose body charges the balance
+(`coop/interactables/upgrade_sync`). The row numbered 27 writes the triangle level at its 400 credits; the other nine
+have no store, as their index selects a temporary of the button's own, so a press charges and holds nothing, as in
+single player (read off the row's switch; which of them a player can reach is not measured).
 
 ## Who owns what
 
