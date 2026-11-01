@@ -106,7 +106,10 @@ two writes to the download machine) is replayed on every client
 (`coop/interactables/signal_catch_sync`); the host's unprimed change edge is the authority, because
 a claim-gated detector lost a live catch to the hold's own release. The dish theater is host-only:
 the client's dish simulation is parked, and the host's dishes slew natively and it streams the poses
-of all twenty-four; the download machine's arm and reset are the host's too: its desk's
+of all twenty-four, and a client plays a slew's sounds from that stream, since its own body does
+not run: the hum and motor when the dish first moves (so the hum comes later than the host's, which
+starts before the motion), the clunk and motor off when an axis stops, and at the end the fade and
+the last one-shot (`coop/interactables/dish_sync`); the download machine's arm and reset are the host's too: its desk's
 `formDownload` and its gamemode's `deleteActiveSignal` each reach every client, which runs the same
 verb once, whole, with the host's decoded and polarity written into it, and refuses its own
 (`coop/interactables/download_arm_sync`), so the object renderer's `begin` and the signal camera's

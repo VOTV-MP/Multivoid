@@ -248,6 +248,7 @@ DWORD WINAPI FlashBatteryThread(LPVOID arg);
 // The desk view drill: the signal view's bounds and mode, set before a join and changed from each peer, read on both.
 // Gated by VOTVCOOP_RUN_DESK_VIEW; the peers' shared folder in VOTVCOOP_CAN_DIR. See autotest_desk_view.cpp.
 DWORD WINAPI DeskViewThread(LPVOID arg);
+DWORD WINAPI DishSoundThread(LPVOID arg);
 
 // The event force-now smoke (harness/autotest/autotest_eventforce.cpp), host: the volume-gate
 // feature (coop/dev/event_force) on obelisk, the badge snapshot resolving (armed 0, shots 1),
