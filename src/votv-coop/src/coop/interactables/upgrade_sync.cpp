@@ -99,8 +99,9 @@ void Publish(coop::net::Session& s, const char* why) {
 void Execute(coop::net::Session& s, const coop::net::UpgradeIntentPayload& p, uint8_t slot) {
     const int index = static_cast<int>(p.panelIndex);
     const bool buying = p.dir == 0;
+    const bool moduleRow = p.dir == coop::net::upgrade_intent::kModuleBuy || p.dir == coop::net::upgrade_intent::kModuleSell;
 
-    if (!UP::IsLevelRow(index)) {
+    if (!moduleRow && !UP::IsLevelRow(index)) {
         ++g_denied;
         UE_LOGW("upgrade_sync: DENY slot=%u -- index %d is not a level row",
                 static_cast<unsigned>(slot), index);
@@ -113,6 +114,20 @@ void Execute(coop::net::Session& s, const coop::net::UpgradeIntentPayload& p, ui
         ++g_denied;
         UE_LOGW("upgrade_sync: DENY slot=%u -- the laptop is held by slot %u",
                 static_cast<unsigned>(slot), static_cast<unsigned>(holder));
+        return;
+    }
+
+    // A module row has no arithmetic of the lane's: the host's own row runs its own button, as a press at its panel does.
+    // The balance and the levels then cross by their own routes.
+    if (moduleRow) {
+        if (!UP::PressModuleRow(index, p.dir == coop::net::upgrade_intent::kModuleSell)) {
+            ++g_denied;
+            UE_LOGW("upgrade_sync: DENY slot=%u -- module row %d does not stand here", static_cast<unsigned>(slot), index);
+            return;
+        }
+        UE_LOGI("upgrade_sync: HOST pressed module row %d for slot %u (%s)", index, static_cast<unsigned>(slot),
+                p.dir == coop::net::upgrade_intent::kModuleSell ? "sell" : "buy");
+        Publish(s, "a module row");
         return;
     }
 
@@ -238,15 +253,12 @@ sg::Verdict OnButton(const sg::Call& call, uint8_t dir) {
     int index = -1;
     bool isModule = false;
     if (!RowOf(call.object, &index, &isModule)) return sg::Verdict::Run;
-    // A module row buys a one-shot unlock in a store this lane does not carry. Cancelling it would
-    // take the client's own unlock away and give it nothing, so it keeps running locally, exactly
-    // as it did before this lane existed. The flag is tested BEFORE the index, because an index is
-    // not unique across the two kinds of row.
-    if (isModule || !UP::IsLevelRow(index)) return sg::Verdict::Run;
+    // The flag is tested BEFORE the index, because an index is not unique across the two kinds of row.
+    if (!isModule && !UP::IsLevelRow(index)) return sg::Verdict::Run;
 
     coop::net::UpgradeIntentPayload p{};
     p.panelIndex = static_cast<uint8_t>(index);
-    p.dir = dir;
+    p.dir = isModule ? (dir == 0 ? coop::net::upgrade_intent::kModuleBuy : coop::net::upgrade_intent::kModuleSell) : dir;
     s->SendReliable(coop::net::ReliableKind::UpgradeIntent, &p, sizeof(p));
     ++g_sent;
     UE_LOGI("upgrade_sync: CLIENT asked to %s index=%d -- own body cancelled (#%llu)",
