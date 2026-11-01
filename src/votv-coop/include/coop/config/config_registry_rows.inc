@@ -221,6 +221,9 @@ CFG_STRING(browser_lastdirect, "browser.lastdirect", "ui", ::coop::net::kDefault
     "not Unreal's 7777, which nothing in the mod has ever bound. Replacing the address "
     "while keeping the port is the natural edit.")
 CFG_ROWFLAGS(browser_lastdirect, kRowAddress)
+CFG_FLAG(browser_hide_incompatible, "browser.hide_incompatible", "ui", false, nullptr,
+    "Leave out of the server browser every server you could not join, a different game version or mod build (remembered "
+    "automatically from the checkbox on that screen).")
 CFG_FLAG(multiplayer_menu_off, "multiplayer_menu_off", "ui", false, nullptr,
     "Set to 1 to hide the Multiplayer main-menu button (the mod stays loaded).")
 CFG_STRING(game_build_ack, "game_build_ack", "ui", "", nullptr, false,

@@ -14,6 +14,7 @@
 #include "ui/input_focus.h"            // a click only counts while OUR window is foreground
 #include "ui/native_screen.h"          // palette + widget primitives, shared with the host window
 #include "ui/server_browser_actions.h"   // CONNECT / HOST / REFRESH, its own TU
+#include "ui/server_browser_filter.h"    // the checkbox beside Back
 #include "ui/server_browser_panels.h"    // the details panel + the black status pane
 #include "ui/server_browser_rows.h"      // the LIST -- rows, identity, hover, selection
 #include "ui/server_browser_tabs.h"      // the master tabs above it
@@ -265,6 +266,8 @@ bool BuildScreen(void* switcher) {
                                 ui::native_screen::kBtnFontPx);
         if (!g_backBtn) return false;
         NS::SetHSlot(NS::SlotOf(g_backBtn), 0.f, NS::kLeft, kCenter);
+        // In Back's row, so the left column's height, which the list's height is reckoned from, does not move.
+        if (!ui::server_browser_filter::Build(footRow)) return false;
         if (void* s = NS::AddVFill(leftCol, footRow, 0.f, NS::kLeft, kBottom))
             NS::SetSlotPadding(s, P::off::UVerticalBoxSlot_Padding, 0.f, kPadPx, 0.f, 0.f);
     }
@@ -320,6 +323,7 @@ void Show() {
     g_lmbPrimed = false;   // ...and the same for the release that OPENED us
     rows::OnShown();       // ...and the hover, for the same reason: nothing else re-asks
     ui::server_browser_tabs::Sync();
+    ui::server_browser_filter::Sync();
     SyncRows();
     g_fit.Rearm();         // a fresh showing lays out again: measured on the next tick
     UE_LOGI("server_browser_native: shown (index %d -> %d)", g_priorIndex, g_ourIndex);
@@ -402,6 +406,7 @@ void OnMenuTick(void* menu, void* switcher) {
         g_backBtn = nullptr; g_scrimW = nullptr; g_frame = nullptr;
         ui::server_browser_actions::Forget();
         ui::server_browser_tabs::Forget();
+        ui::server_browser_filter::Forget();
         panels::Forget();
         g_ourIndex = -1; g_shown = false; g_buildAttempts = 0; g_toldTheUser = false;
         rows::Attach(nullptr);   // the panel died with the menu; drop it and the row ids
@@ -481,6 +486,7 @@ void OnMenuTick(void* menu, void* switcher) {
         g_lmbPrimed = false;   // BecameLive for why a revive owes these two
         rows::OnShown();
         ui::server_browser_tabs::Sync();
+        ui::server_browser_filter::Sync();
         g_fit.Rearm();
         UE_LOGI("server_browser_native: live again (the switcher index returned to ours)");
     }
@@ -537,6 +543,12 @@ void OnMenuTick(void* menu, void* switcher) {
                 }
                 return;
             }
+            // The checkbox: the list changes this tick, from the rows already fetched.
+            bool filterChanged = false;
+            if (ui::server_browser_filter::OnReleaseEdge(filterChanged)) {
+                if (filterChanged) SyncRows();
+                return;
+            }
             // A click on a hovered row selects it; the row is known from the hover pass, so this
             // costs no dispatch, and a handled click returns like the two above. The details panel
             // repaints now rather than at the 1 Hz cadence: a pane that fills in a second later
@@ -547,6 +559,7 @@ void OnMenuTick(void* menu, void* switcher) {
 
     rows::UpdateHover();
     ui::server_browser_tabs::UpdateHover();
+    ui::server_browser_filter::UpdateHover();
     g_fit.Tick(g_frame, g_backBtn, "master tabs, list, actions, Back");   // after a showing only
 
     // Fetch on a timer, paint on an arrival: with paint coupled to the fetch tick a lobby that

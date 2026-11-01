@@ -81,6 +81,7 @@ ALLOWLIST = [
     "src/ui/net_stats_panel.cpp",
     "src/ui/scoreboard.cpp",
     "src/ui/server_browser_actions.cpp",
+    "src/ui/server_browser_filter.cpp",
     "src/ui/server_browser_native.cpp",
     "src/ui/server_browser_panels.cpp",
     "src/ui/server_browser_rows.cpp",

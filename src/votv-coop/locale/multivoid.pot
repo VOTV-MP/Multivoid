@@ -17,6 +17,11 @@ msgstr ""
 msgid "%1$.1f / %2$.1f MB"
 msgstr ""
 
+#: src/ui/server_browser_panels.cpp
+#, c-format
+msgid "%1$s (%2$d hidden)"
+msgstr ""
+
 #: src/ui/bug_report_pane.cpp
 #, c-format
 msgid "%1$s (%2$llu KB)"
@@ -2025,6 +2030,11 @@ msgstr ""
 #: src/ui/browser_input_screens.cpp src/ui/server_browser_actions.cpp
 msgctxt "server_browser"
 msgid "Connect"
+msgstr ""
+
+#: src/ui/server_browser_filter.cpp
+msgctxt "server_browser"
+msgid "Hide incompatible servers"
 msgstr ""
 
 #: src/ui/browser_input_screens.cpp

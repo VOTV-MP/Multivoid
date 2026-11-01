@@ -335,7 +335,15 @@ void Sync(bool force) {
         char countLine[256];
         l10n::Fmt(countLine, sizeof(countLine), l10n::Tn("%llu server", "%llu servers",
                   static_cast<unsigned long long>(count)), static_cast<unsigned long long>(count));
-        g_sCount.Set(countLine);
+        // Beside the count, so a list the checkbox emptied never reads as a master with no games.
+        const int hiddenCount = rows::HiddenRows();
+        if (hiddenCount > 0) {
+            char withHidden[256];
+            l10n::Fmt(withHidden, sizeof(withHidden), l10n::T("%1$s (%2$d hidden)"), countLine, hiddenCount);
+            g_sCount.Set(withHidden);
+        } else {
+            g_sCount.Set(countLine);
+        }
         // Always say when, and say just now for the sub-second case rather than dropping the
         // clause: written only for a positive elapsed time, the line vanished on a capture taken
         // in the same millisecond as a fetch, and a clause that appears and disappears is a

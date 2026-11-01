@@ -11,6 +11,7 @@
 #include "coop/text/utf8_codec.h"       // the one owner of text encoding
 #include "ui/link_format.h"             // LobbyLinkLabel -- the link cell's word, shared with the overlay
 #include "ui/native_screen.h"           // palette + widget primitives, shared with the host window
+#include "ui/server_browser_filter.h"   // whether the list leaves incompatible lobbies out
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -20,6 +21,7 @@
 
 #include <windows.h>   // GetTickCount64 -- how long ago the rows we hold were fetched
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -88,6 +90,7 @@ std::vector<std::string> g_rowIds;
 std::vector<Row> g_rows;
 uint64_t g_lastRowsGen  = 0;   // the fetch generation last PAINTED
 int      g_visibleRows  = 0;   // rows actually SHOWN, not ChildCount's high-water mark
+int      g_hiddenRows   = 0;   // lobbies the master listed that the checkbox left out
 // When the rows we hold were fetched, in local ticks: `ageSec` is the master's seconds since
 // heartbeat at that moment, so the true age is ageSec + (now - this). Stamped only when the data
 // generation moves.
@@ -412,6 +415,12 @@ void UpdateHover() {
 void Sync() {
     std::string listMaster;
     g_lastRowsGen = sm::CopyRows(g_rows, &listMaster);
+    // Before anything counts or paints them, so the cap below keeps lobbies the player can join, and a selection on a row
+    // that went is dropped by Selected() as for a host that quit.
+    const size_t listed = g_rows.size();
+    if (ui::server_browser_filter::HideIncompatible())
+        g_rows.erase(std::remove_if(g_rows.begin(), g_rows.end(), [](const Row& r) { return IsIncompatible(r); }), g_rows.end());
+    g_hiddenRows = static_cast<int>(listed - g_rows.size());
     // One master's list at a time (lobby_client.h): a switch replaces the list whole, and the new
     // list's ids are its master's, so a selection made on the old one is dropped rather than
     // resolved against a different lobby that happens to share its id. The same master's list
@@ -599,6 +608,10 @@ bool ClickSelect() {
 int HoveredRow() { return g_hoverRow; }
 
 int ShownRows() { return g_visibleRows; }
+
+int HiddenRows() { return g_hiddenRows; }
+
+bool IsIncompatible(const coop::net::lobby::LobbyRow& r) { return !MismatchMark(r).empty(); }
 
 const char* SelectedId() { return g_selectedId.c_str(); }
 

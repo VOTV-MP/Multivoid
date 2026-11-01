@@ -17,6 +17,10 @@ msgid "%1$.1f / %2$.1f MB"
 msgstr "[[%1$.1f / %2$.1f MB]]"
 
 #, c-format
+msgid "%1$s (%2$d hidden)"
+msgstr "[[%1$s (%2$d hidden)]]"
+
+#, c-format
 msgid "%1$s (%2$llu KB)"
 msgstr "[[%1$s (%2$llu KB)]]"
 
@@ -1616,6 +1620,10 @@ msgstr "[[Back]]"
 msgctxt "server_browser"
 msgid "Connect"
 msgstr "[[Connect]]"
+
+msgctxt "server_browser"
+msgid "Hide incompatible servers"
+msgstr "[[Hide incompatible servers]]"
 
 msgctxt "server_browser"
 msgid "Join"
