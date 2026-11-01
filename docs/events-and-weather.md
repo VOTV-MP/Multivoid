@@ -183,6 +183,15 @@ latest one and retries it each second, and drops it if its world changes first; 
 task's state and pay no reward. The rewards land in the shared balance, on
 [base-computer.md](base-computer.md).
 
+### Plants
+
+A `growingPlant_C`, a player's planted seed or a winter bush alike, is a saved actor that a tick grows on its water, sun and rain. The
+host runs every plant and sends `PlantState` with its row, place and values: at once on an edge a viewer sees, such as ripening or
+death, and about every 5 s while it only changes slowly (`coop/world/plant_sync`). A client's copy has its tick off, so any change on
+it was that client's player, and it goes to the host as `PlantEdit`, naming only the values that changed. A plant is found by its
+save key, so what a join's load brought is already the host's, and a client's edits wait until its join has settled. A client's
+harvest leaves the host's plant empty and the item with the harvester. Tests: `harness/autotest/autotest_plant_state.cpp`.
+
 ## Who owns what
 
 | State | Owner | Shape |
@@ -235,6 +244,7 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 | A decorated Christmas tree spawns its gifts on each peer whose player sleeps through midnight, and a client's gifts are its own | `[RD]` the tree's own check of the local player's sleep at hour 0 |
 | Several rolls are still per peer: the rare gamemode rolls (the one-percent forced quit), the server break-minigame variant, the underground loot mounds, the signal scramble and the radio-tower shuffle | `[V]` no lane under `coop/world` carries them; `coop/interactables/garbage_sync` names the mounds |
 | The deer, hexahive, walking-tree, dirt-hole, beehive, flora and mannequin spawners are not refused on a client, so each peer rolls its own; the host's walking mannequin still crosses to clients as a prop, and the client's copy grows a brain of its own | `[V]` no row of `coop/world/spawn_authority` names them; the table in `docs/npcs-and-kerfur.md`, "Which spawners a client refuses"; the walker's crossing was measured on the rig: one key on both peers, `pawn=1` on both |
+| A plant runs on the host's sun, rain and view of the world alone. A fruit a client's toolgun forces on a plant that bears fruit as props stays on that client, as the prop it spawns does not cross; the host grows its own at its next ripening. What a client's copy shows between two gradual sends can be up to 5 s old | `[V]` `coop/world/plant_sync`; `tool_plantFruit_C` |
 | Rain falls inside the base for a player standing indoors, the host included: the game's own effect, the same in single player. The rain emitter follows the player's camera and spawns its drops around it, below the roof's rain-collision mesh, which stops only drops falling onto it from above | `[V]` `coop/world/weather_rain` never moves the emitter or the camera; `[RD]` the decompiled day-night cycle's emitter move |
 | Trigger-volume fires (a bed event, a scare a player walks into) run per peer, as the single-player design intends | `[V]` by design, not a gap |
 | Only the pyramid and the alarm have had the one-event-at-a-time pass; every other event rides the generic lanes on the per-row replay policy | `[V]` `coop/world/event_fire_sync`, the replay allowlist |
