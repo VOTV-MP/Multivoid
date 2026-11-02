@@ -89,10 +89,9 @@ void Render() {
     // Pull the latest fetched rows (cheap copy of a small list; render thread only), and the
     // master they came from, which a join from them goes through.
     sm::CopyRows(g_rows, &g_rowsMaster);
-    if (ui::server_browser_filter::HideIncompatible())
-        g_rows.erase(std::remove_if(g_rows.begin(), g_rows.end(),
-                                    [](const Row& r) { return ui::server_browser_rows::IsIncompatible(r); }),
-                     g_rows.end());
+    g_rows.erase(std::remove_if(g_rows.begin(), g_rows.end(),
+                                [](const Row& r) { return ui::server_browser_filter::Leaves(r); }),
+                 g_rows.end());
     // Drop a selection whose lobby has left the list: the host quit while the browser
     // was open and there is nothing to connect to. No index clamp is needed or correct.
     if (!g_selectedId.empty()) {
@@ -197,9 +196,14 @@ void Render() {
         const ImGuiTableFlags tflags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
                                        ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable |
                                        ImGuiTableFlags_PadOuterX;
-        bool hideIncompatible = ui::server_browser_filter::HideIncompatible();
+        namespace F = ui::server_browser_filter;
+        bool hideIncompatible = F::Hides(F::Filter::Incompatible);
         if (ImGui::Checkbox("Hide incompatible servers", &hideIncompatible))
-            ui::server_browser_filter::SetHideIncompatible(hideIncompatible);
+            F::SetHides(F::Filter::Incompatible, hideIncompatible);
+        ImGui::SameLine();
+        bool hideLocked = F::Hides(F::Filter::Locked);
+        if (ImGui::Checkbox("Hide locked servers", &hideLocked))
+            F::SetHides(F::Filter::Locked, hideLocked);
         if (ImGui::BeginTable("##serverlist", 7, tflags, ImVec2(0.0f, -footer))) {
             ImGui::TableSetupScrollFreeze(0, 1);
             ImGui::TableSetupColumn("",        ImGuiTableColumnFlags_WidthFixed, S(22.0f));   // lock

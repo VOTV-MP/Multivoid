@@ -14,7 +14,7 @@
 #include "ui/input_focus.h"            // a click only counts while OUR window is foreground
 #include "ui/native_screen.h"          // palette + widget primitives, shared with the host window
 #include "ui/server_browser_actions.h"   // CONNECT / HOST / REFRESH, its own TU
-#include "ui/server_browser_filter.h"    // the checkbox beside Back
+#include "ui/server_browser_filter.h"    // the checkboxes beside Back
 #include "ui/server_browser_panels.h"    // the details panel + the black status pane
 #include "ui/server_browser_rows.h"      // the LIST -- rows, identity, hover, selection
 #include "ui/server_browser_tabs.h"      // the master tabs above it
@@ -543,7 +543,7 @@ void OnMenuTick(void* menu, void* switcher) {
                 }
                 return;
             }
-            // The checkbox: the list changes this tick, from the rows already fetched.
+            // A checkbox: the list changes this tick, from the rows already fetched.
             bool filterChanged = false;
             if (ui::server_browser_filter::OnReleaseEdge(filterChanged)) {
                 if (filterChanged) SyncRows();

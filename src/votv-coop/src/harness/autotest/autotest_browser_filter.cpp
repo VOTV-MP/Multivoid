@@ -1,8 +1,9 @@
-// harness/autotest/autotest_browser_filter.cpp -- TEST-ONLY: the server browser's "Hide incompatible servers" checkbox, at the
-// main menu against a stand-in master that lists three lobbies we can join and two we cannot.
+// harness/autotest/autotest_browser_filter.cpp -- TEST-ONLY: the server browser's "Hide incompatible" and "Hide locked"
+// checkboxes, at the main menu against a stand-in master that lists three lobbies we can join and three we cannot, one of each
+// locked.
 //
-// The box is clicked with the real pointer. VOTVCOOP_BROWSER_FILTER_EXPECT=1 is the second launch: the box comes up as the first
-// left it, and is then cleared. Gated by VOTVCOOP_RUN_BROWSER_FILTER.
+// The boxes are clicked with the real pointer. VOTVCOOP_BROWSER_FILTER_EXPECT=1 is the second launch: the boxes come up as the
+// first left them, and are then cleared. Gated by VOTVCOOP_RUN_BROWSER_FILTER.
 
 #include "harness/autotest.h"
 
@@ -30,7 +31,8 @@ namespace F = ui::server_browser_filter;
 namespace Rows = ui::server_browser_rows;
 namespace U = ue_wrap::umg;
 
-constexpr int kAllRows = 5, kCompatibleRows = 3;
+constexpr int kAllRows = 6, kCompatibleRows = 3, kUnlockedRows = 4;
+constexpr int kOpenCompatibleRows = 2;   // neither box leaves these out
 
 int g_fails = 0;
 
@@ -56,11 +58,11 @@ bool WaitShown(int shown, int hidden) {
 }
 
 // The real pointer: the same release edge a player makes.
-bool ClickBox() {
+bool ClickBox(F::Filter f) {
     ue_wrap::FVector2D tl{}, sz{};
     bool ok = false;
     OnGameThread([&] {
-        void* box = F::Box();
+        void* box = F::Box(f);
         ok = box && U::WidgetScreenRect(box, tl, sz);
     });
     if (!ok) return false;
@@ -97,38 +99,48 @@ DWORD WINAPI BrowserFilterThread(LPVOID /*arg*/) {
     Check(open, "the browser opened");
     if (!open) return 0;
 
+    constexpr F::Filter kIncompat = F::Filter::Incompatible, kLocked = F::Filter::Locked;
     if (secondLaunch) {
-        bool on = false;
-        OnGameThread([&] { on = F::HideIncompatible(); });
-        Check(on, "the checkbox came up as the last launch left it");
-        Check(WaitShown(kCompatibleRows, kAllRows - kCompatibleRows), "and the list is filtered from the start");
+        bool on = false, locked = false;
+        OnGameThread([&] { on = F::Hides(kIncompat); locked = F::Hides(kLocked); });
+        Check(on && locked, "both checkboxes came up as the last launch left them");
+        Check(WaitShown(kOpenCompatibleRows, kAllRows - kOpenCompatibleRows), "and the list is filtered from the start");
         harness::screenshot::Capture(L"browser-filter-relaunch");
-        if (!ClickBox()) return 0;
+        if (!ClickBox(kLocked)) return 0;
+        Check(WaitShown(kCompatibleRows, kAllRows - kCompatibleRows), "unchecking the lock brings the locked server we can join back");
+        if (!ClickBox(kIncompat)) return 0;
         Check(WaitShown(kAllRows, 0), "unchecking brings the incompatible servers back");
         UE_LOGI("browser-filter: DONE fails=%d", g_fails);
         return 0;
     }
 
-    bool on = true;
-    OnGameThread([&] { on = F::HideIncompatible(); });
-    Check(!on, "the checkbox starts unchecked");
+    bool on = true, locked = true;
+    OnGameThread([&] { on = F::Hides(kIncompat); locked = F::Hides(kLocked); });
+    Check(!on && !locked, "both checkboxes start unchecked");
     Check(WaitShown(kAllRows, 0), "unchecked, every server shows");
     ::Sleep(500);
     harness::screenshot::Capture(L"browser-filter-unchecked");
 
-    if (!ClickBox()) return 0;
-    OnGameThread([&] { on = F::HideIncompatible(); });
-    Check(on, "a click checks it");
+    if (!ClickBox(kIncompat)) return 0;
+    OnGameThread([&] { on = F::Hides(kIncompat); locked = F::Hides(kLocked); });
+    Check(on && !locked, "a click checks it, and only it");
     Check(WaitShown(kCompatibleRows, kAllRows - kCompatibleRows), "checked, the incompatible servers are gone");
     harness::screenshot::Capture(L"browser-filter-checked");
     // A fetch must not bring them back: the master's list is fetched every 5 s.
     ::Sleep(6500);
     Check(WaitShown(kCompatibleRows, kAllRows - kCompatibleRows), "and a later fetch keeps them gone");
 
-    if (!ClickBox()) return 0;
+    if (!ClickBox(kIncompat)) return 0;
     Check(WaitShown(kAllRows, 0), "unchecking shows them again");
-    if (!ClickBox()) return 0;
-    Check(WaitShown(kCompatibleRows, kAllRows - kCompatibleRows), "checking again hides them, and this is what the next launch reads");
+
+    if (!ClickBox(kLocked)) return 0;
+    OnGameThread([&] { on = F::Hides(kIncompat); locked = F::Hides(kLocked); });
+    Check(locked && !on, "a click checks the lock box, and only it");
+    Check(WaitShown(kUnlockedRows, kAllRows - kUnlockedRows), "checked, the locked servers are gone");
+    harness::screenshot::Capture(L"browser-filter-locked");
+    if (!ClickBox(kIncompat)) return 0;
+    Check(WaitShown(kOpenCompatibleRows, kAllRows - kOpenCompatibleRows),
+          "both checked, a server either leaves out is gone, and this is what the next launch reads");
     UE_LOGI("browser-filter: DONE fails=%d", g_fails);
     return 0;
 }

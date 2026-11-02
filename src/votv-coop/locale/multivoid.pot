@@ -2034,7 +2034,12 @@ msgstr ""
 
 #: src/ui/server_browser_filter.cpp
 msgctxt "server_browser"
-msgid "Hide incompatible servers"
+msgid "Hide incompatible"
+msgstr ""
+
+#: src/ui/server_browser_filter.cpp
+msgctxt "server_browser"
+msgid "Hide locked"
 msgstr ""
 
 #: src/ui/browser_input_screens.cpp

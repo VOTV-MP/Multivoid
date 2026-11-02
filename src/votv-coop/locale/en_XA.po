@@ -1622,8 +1622,12 @@ msgid "Connect"
 msgstr "[[Connect]]"
 
 msgctxt "server_browser"
-msgid "Hide incompatible servers"
-msgstr "[[Hide incompatible servers]]"
+msgid "Hide incompatible"
+msgstr "[[Hide incompatible]]"
+
+msgctxt "server_browser"
+msgid "Hide locked"
+msgstr "[[Hide locked]]"
 
 msgctxt "server_browser"
 msgid "Join"

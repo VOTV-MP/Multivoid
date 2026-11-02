@@ -32,9 +32,10 @@ list with name, players, version, world and age, one word for how a lobby's play
 (Relay, Direct, LAN, or `--` when the host reports no one; the counts behind it on the details panel's
 connection line),
 an amber mark on a version pair that differs from ours, which always means the connect will be
-refused, a Host button and a Join. A "Hide incompatible servers" checkbox beside Back leaves those
-refused lobbies out of the list and says how many in the status pane; it starts unchecked and is
-remembered in `browser.hide_incompatible` (`ui/server_browser_filter`). A row of tabs
+refused, a Host button and a Join. A "Hide incompatible" checkbox beside Back leaves those
+refused lobbies out of the list, and a "Hide locked" one beside it the lobbies that ask for a
+password; the status pane says how many are hidden. Both start unchecked and are remembered in
+`browser.hide_incompatible` and `browser.hide_locked` (`ui/server_browser_filter`). A row of tabs
 above the list picks which master's list it is, one tab per master, the chosen one filled; the
 choice is remembered in the ini and is also where a hosted game is listed
 (`ui/server_browser_tabs`, [master-server.md](master-server.md)). When a master stops answering,

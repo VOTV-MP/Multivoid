@@ -88,10 +88,10 @@ const char* SelectedId();
 // are grown and collapsed, never removed, so a list that shrank still holds the rows it had.
 int         ShownRows();
 
-// How many lobbies the master listed that the checkbox leaves out. 0 with it unchecked.
+// How many lobbies the master listed that the checkboxes leave out. 0 with both unchecked.
 int         HiddenRows();
 
-// Whether the join gate would refuse this lobby: the test behind the row's red mark and the checkbox. A field the host's
+// Whether the join gate would refuse this lobby: the test behind the row's red mark and the first checkbox. A field the host's
 // build predates does not count against it, as the gate skips that axis too.
 bool        IsIncompatible(const coop::net::lobby::LobbyRow& r);
 
