@@ -1,7 +1,8 @@
 // harness/autotest/autotest_world_sound.cpp -- TEST-ONLY: the earth teleport's sounds and a faucet's click across two peers.
 //
-// The client presses a faucet and the host presses it back, each checked on the other as the faucet's state, and then the
-// host runs the sky's own tp, whose two sounds are about 86 s apart. The driver reads each peer's `world_sound:` lines,
+// The client presses a faucet and the host presses it back, each checked on the other as the faucet's state. The host fires the
+// alien sounds, and each peer counts its own noisers and the noises they start. Then the host runs the sky's own tp, whose two
+// sounds are about 86 s apart. The driver reads each peer's `world_sound:` lines,
 // since what a peer heard cannot be read back. Gated by VOTVCOOP_RUN_WORLD_SOUND; the folder is VOTVCOOP_CAN_DIR.
 
 #include "harness/autotest.h"
@@ -9,6 +10,7 @@
 #include "coop/config/config.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/net_pump.h"
+#include "coop/world/event_fire_sync.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/prop_use.h"
 #include "ue_wrap/core/asset_load.h"
@@ -24,9 +26,12 @@
 #include <windows.h>
 
 #include <atomic>
+#include <cmath>
 #include <cstring>
+#include <cwchar>
 #include <fstream>
 #include <string>
+#include <unordered_set>
 
 namespace harness::autotest {
 namespace {
@@ -37,6 +42,8 @@ namespace A = ue_wrap::appliance;
 
 constexpr uint8_t kActionFaucet = 5;  // the faucet's use action, which its click follows
 constexpr int     kTeleportSeconds = 100;
+constexpr size_t  kNoisers = 3;           // the alien sounds' count
+constexpr int     kNoiseWatchSeconds = 40;
 
 std::string g_dir;
 int g_fails = 0;
@@ -62,6 +69,59 @@ bool Await(const char* name, int seconds = 240) {
 void Verdict(const char* step, bool pass, const std::string& detail) {
     if (!pass) ++g_fails;
     UE_LOGI("sound-drill: %hs %hs %hs", step, pass ? "PASS" : "FAIL", detail.c_str());
+}
+
+// The live noisers here for `seconds`: the most at once, the nearest to this player, and each alien noise their timers started.
+struct Noisers {
+    size_t most = 0;
+    size_t noises = 0;
+    float nearest = 1e9f;
+};
+Noisers WatchNoisers(int seconds) {
+    Noisers out;
+    std::unordered_set<void*> seen;
+    for (int i = 0; i < seconds * 10; ++i) {
+        OnGameThread([&] {
+            void* const local = coop::players::Registry::Get().Local();
+            ue_wrap::FVector me{};
+            const bool placed = local && E::TryGetActorLocation(local, me);
+            size_t live = 0;
+            for (void* n : R::FindObjectsByClass(L"noiser_C")) {
+                ue_wrap::FVector at{};
+                if (!R::IsLive(n) || !E::TryGetActorLocation(n, at)) continue;
+                ++live;
+                if (placed)
+                    out.nearest = (std::min)(out.nearest, std::sqrt((at.X - me.X) * (at.X - me.X) + (at.Y - me.Y) * (at.Y - me.Y)));
+            }
+            out.most = (std::max)(out.most, live);
+            void* const audio = ue_wrap::object_index::ClassByName(L"AudioComponent");
+            const int32_t soundOff = audio ? R::FindPropertyOffset(audio, L"Sound") : -1;
+            if (soundOff < 0) return;
+            struct Ctx {
+                int32_t off;
+                std::unordered_set<void*>* seen;
+            } ctx{soundOff, &seen};
+            ue_wrap::object_index::ForEachInstance(
+                audio,
+                [](void* c, void* comp, int32_t) {
+                    auto* x = static_cast<Ctx*>(c);
+                    if (!R::IsLive(comp) || R::ClassNameOf(R::OuterOf(comp)) != L"noiser_C") return;
+                    void* sound = *reinterpret_cast<void**>(static_cast<uint8_t*>(comp) + x->off);
+                    if (sound && _wcsicmp(R::ToString(R::NameOf(sound)).c_str(), L"outsideAlien_Cue") == 0) x->seen->insert(comp);
+                },
+                &ctx);
+        });
+        ::Sleep(100);
+    }
+    out.noises = seen.size();
+    return out;
+}
+
+void CheckNoisers(const Noisers& n) {
+    UE_LOGI("sound-drill: noisers here at most %zu, nearest %.0f cm, %zu alien noises", n.most, n.nearest, n.noises);
+    Verdict("03-own-noisers", n.most == kNoisers, std::to_string(n.most) + " noisers, the event's own count");
+    Verdict("04-around-this-player", n.nearest < 6000.f, "nearest " + std::to_string(static_cast<int>(n.nearest)) + " cm");
+    Verdict("05-alien-noise", n.noises > 0, std::to_string(n.noises) + " noises");
 }
 
 // The one keyed faucet both peers' sorted keys agree on.
@@ -164,6 +224,11 @@ void RunHost() {
         Mark("h2");
         if (!Await("c2")) return;
     }
+    const bool fired = coop::event_fire_sync::HostFire(coop::event_fire_sync::FireKind::SpecialEvent, L"alienSounds", L"None");
+    UE_LOGI("sound-drill: the alien sounds fired=%d", fired ? 1 : 0);
+    Mark("alien");
+    CheckNoisers(WatchNoisers(kNoiseWatchSeconds));
+    if (!Await("c_alien")) return;
     OnGameThread([&] {
         void* sky = R::FindObjectByClass(L"newsky_C");
         const bool ran = sky && ue_wrap::component_calls::CallParamlessNamed(sky, L"tp");
@@ -214,6 +279,9 @@ void RunClient() {
         CheckFaucet("02-host-presses", start);
         Mark("c2");
     }
+    if (!Await("alien")) return;
+    CheckNoisers(WatchNoisers(kNoiseWatchSeconds));
+    Mark("c_alien");
     if (!Await("h3", 240)) return;
     UE_LOGI("sound-drill: DONE on client fails=%d", g_fails);
     Mark("c3");

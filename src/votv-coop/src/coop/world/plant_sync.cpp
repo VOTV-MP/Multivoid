@@ -48,6 +48,14 @@ constexpr int   kSendsPerPoll = 32;
 std::atomic<coop::net::Session*> g_session{nullptr};
 Clock::time_point g_nextPoll{};
 uint32_t g_world = 0;
+uint32_t g_harvestSounds = 0;
+
+// The harvesting player's game played it on that peer; this is the sound for everyone else.
+void PlayHarvest(void* plant, const std::wstring& key) {
+    GP::HarvestSound(plant);
+    ++g_harvestSounds;
+    UE_LOGI("plant_sync: another player harvested plant '%ls' -- its sound played here (#%u)", key.c_str(), g_harvestSounds);
+}
 
 // The edges a viewer sees at once; the rest of a plant's change is gradual.
 bool Edge(const GP::Values& a, const GP::Values& b) {
@@ -219,8 +227,12 @@ void ApplyInbox(std::unordered_map<std::wstring, void*>& index) {
         auto it = index.find(key);
         if (!p.alive) {
             g_gone.erase(key);
-            g_copies.erase(key);
-            if (it != index.end()) GP::Destroy(it->second);
+            // One the host named before; a copy this player harvested is gone already.
+            const bool copy = g_copies.erase(key) != 0;
+            if (it != index.end()) {
+                if (copy && GP::HarvestTakesPlant(it->second)) PlayHarvest(it->second, key);
+                GP::Destroy(it->second);
+            }
             index.erase(key);
             UE_LOGI("plant_sync: plant '%ls' ended here", key.c_str());
             continue;
@@ -237,7 +249,10 @@ void ApplyInbox(std::unordered_map<std::wstring, void*>& index) {
             UE_LOGI("plant_sync: plant '%ls' row '%ls' stands here", key.c_str(), coop::net::StringFromWireKey(p.row).c_str());
         }
         const std::wstring row = coop::net::StringFromWireKey(p.row);
+        GP::Values before;
+        const bool picked = g_copies.count(key) && GP::Read(plant, before) && before.amount > 0 && p.amount == 0;
         GP::Apply(plant, row, ValuesOf(p));
+        if (picked) PlayHarvest(plant, key);
         g_loaded.erase(plant);
         Copy& c = g_copies[key];
         c.actor = plant;
@@ -378,6 +393,10 @@ bool LastHostValues(const std::wstring& key, GP::Values& out) {
     out = it->second.host;
     return true;
 }
+
+uint32_t HarvestSoundsPlayed() { return g_harvestSounds; }
+
+void PlayHarvestSound(void* plant, const std::wstring& key) { PlayHarvest(plant, key); }
 
 void QueueConnectBroadcastForSlot(int /*slot*/) {
     for (auto& entry : g_sent) entry.second.pending = true;

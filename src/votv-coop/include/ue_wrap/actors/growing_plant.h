@@ -61,6 +61,13 @@ bool HideDirt(void* plant);
 
 bool Read(void* plant, Values& out);
 
+// Whether its harvest takes the whole plant: grown, not a bush or a tree, and its row gives a crop. The game's own `discard`
+// is set by the looking player's view, so this reads the row instead.
+bool HarvestTakesPlant(void* plant);
+
+// Its own harvest sound, played at its place on this peer.
+void HarvestSound(void* plant);
+
 // Writes the values and refreshes what the plant shows from them: its row's data when the row changed, its grown mesh, its
 // fruit mesh, its size.
 void Apply(void* plant, const std::wstring& row, const Values& v);

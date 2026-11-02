@@ -46,6 +46,12 @@ std::wstring StringFromClassName(const coop::net::WireClassName& c);
 ue_wrap::growing_plant::Values ValuesOf(const coop::net::PlantStatePayload& p);
 void* Materialize(const coop::net::PlantStatePayload& p, void* cls);
 
+// How many harvest sounds this peer played for another player's harvest: the harvester's game plays its own.
+uint32_t HarvestSoundsPlayed();
+
+// Another player's harvest of `plant` (`key`): its own harvest sound, here. The host's edit gate calls it for a client's.
+void PlayHarvestSound(void* plant, const std::wstring& key);
+
 // Every plant again for a joiner.
 void QueueConnectBroadcastForSlot(int slot);
 

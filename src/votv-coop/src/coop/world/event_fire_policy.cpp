@@ -26,6 +26,9 @@ const char* const kReplayRows[] = {
     // Trigger-box scare arms, per-viewer scares by design; arming both sides is the correct coop
     // semantics (each player gets the scare on their own overlap):
     "toeStab", "falseEnter", "mann", "vent", "crys", "fakeGrays", "susArir",
+    // Three noisers walk 25 to 35 m around player 0, sound every 5 to 10 s and go when that player sees one: each player
+    // gets their own, as with the scares. No lane carries the host's, which walk around the host:
+    "alienSounds",
     // Graffiti decal specials (a grime decal spawn; no lane):
     "arirGraff_0", "arirGraff_1", "arirGraff_2", "arirGraff_3",
     "arirGraff_4", "arirGraff_5", "arirGraff_6",
@@ -100,7 +103,6 @@ const NoReplayRow kNoReplayRows[] = {
     { "bombBox", "prank special (prop lane)" },
     { "rockThrow", "prank spawner (no lane)" }, { "hillRoller", "prank spawner (no lane)" },
     { "alienJump", "prank spawner (no lane)" }, { "trashBase", "prank spawner (no lane)" },
-    { "alienSounds", "sound gap (future WorldSoundCue)" },
 };
 
 // The interaction rows: the row's entire effect is the prank special, host-local RNG.
