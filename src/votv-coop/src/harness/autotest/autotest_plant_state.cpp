@@ -2,8 +2,9 @@
 //
 // A bush from its spawner's own body and a growingPlant_bush_C and a growingPlant_shroom_0_C (neither is in list_farmPlants,
 // so the script spawns them) stand on the host before the client's checks. Then growth, a client's water, ripening, a
-// client's harvest through the plant's own action (both on a plant the host plants beside the players: the spawner's bush
-// stands out of the client's reach), death, a plant a client spawned, a new bush and two removals. The arms
+// client's harvest through the plant's own action and the host's (on a plant the host plants beside the players: the
+// spawner's bush stands out of the client's reach), death, a plant a client spawned, a new bush, two removals and a whole
+// plant harvested by each peer; each harvest's sound is played by the other peer's lane, and by neither twice. The arms
 // that hold what the client refuses (a sprinkler, the spawner, a pine's lethal hit, the growth area's glow, the plant tick)
 // and the host's refusal of the plantings and edits a client crafts (the edit gate, term f1) are autotest_plant_gate.cpp's. The client tells
 // the host what it reads; the host judges and logs `plant-state: VERDICT PASS|FAIL <terms>`. Gated by VOTVCOOP_RUN_PLANT_STATE;
@@ -19,6 +20,7 @@
 #include "coop/session/host_world_settle.h"
 #include "coop/session/net_pump.h"
 #include "coop/world/event_cue_sync.h"
+#include "coop/world/plant_sync.h"
 #include "ue_wrap/actors/growing_plant.h"
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/call.h"
@@ -26,12 +28,15 @@
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
+#include "ue_wrap/engine/data_table.h"
 #include "ue_wrap/engine/engine.h"
 
 #include <windows.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -196,6 +201,63 @@ bool WriteHostWhenListed(const std::string& key, float grow, float water, float 
     return PS::WaitFor("the plant to be listed", 15, [&] { return WriteHost(key, grow, water, fruit, amount); }, false);
 }
 
+// The plant's own use action, by this peer's player: a bush gives its berries, another grown plant goes whole.
+void Harvest(const std::string& key) {
+    OnGameThread([&] {
+        void* p = ByKey(key);
+        void* fn = p ? R::FindDispatchFunctionCached(R::ClassOf(p), L"actionOptionIndex") : nullptr;
+        if (!fn) return;
+        ue_wrap::ParamFrame f(fn);
+        if (!f.valid()) return;
+        f.Set<void*>(L"player", coop::players::Registry::Get().Local());
+        f.Set<uint8_t>(L"action", 4);
+        ue_wrap::Call(p, f);
+    });
+}
+
+// The first list_farmPlants row a harvest takes whole: not a bush (1) or a tree (2), with a crop. "" if none.
+std::string WholeRow() {
+    std::string out;
+    OnGameThread([&] {
+        void* table = R::FindObject(L"list_farmPlants", L"DataTable");
+        void* rowStruct = table ? ue_wrap::data_table::RowStruct(table) : nullptr;
+        const int32_t type = rowStruct ? R::FindPropertyOffsetByPrefix(rowStruct, L"plantType_") : -1;
+        const int32_t range = rowStruct ? R::FindPropertyOffsetByPrefix(rowStruct, L"amount_range_") : -1;
+        std::vector<ue_wrap::data_table::RowRef> rows;
+        if (type < 0 || range < 0 || !ue_wrap::data_table::Rows(table, rows, "plant-state")) return;
+        for (const auto& r : rows) {
+            const uint8_t t = r.row[type];
+            int32_t lo = 0, hi = 0;
+            std::memcpy(&lo, r.row + range, sizeof(lo));
+            std::memcpy(&hi, r.row + range + 4, sizeof(hi));
+            if (t != 1 && t != 2 && (lo > 0 || hi > 0)) {
+                out = Narrow(R::ToString(r.key));
+                return;
+            }
+        }
+    });
+    return out;
+}
+
+// A grown plant of `row` beside the host's player. "" if it does not stand.
+std::string PlantGrown(const std::string& row, float side) {
+    const std::string key = SpawnRowPlant(row, side);
+    if (!key.empty() && !WriteHostWhenListed(key, 1.f, 500.f, 0.f)) return {};
+    return key;
+}
+
+// How many harvest sounds this peer's lane played for another player's harvest.
+uint32_t HarvestSounds() {
+    uint32_t n = 0;
+    OnGameThread([&] { n = coop::plant_sync::HarvestSoundsPlayed(); });
+    return n;
+}
+
+// Waits for this peer's lane to play one more harvest sound than `before`.
+bool HeardHarvest(uint32_t before, int seconds = 10) {
+    return PS::WaitFor("a harvest's sound", seconds, [&] { return HarvestSounds() > before; }, false);
+}
+
 // The client's word at its end: "<fails> <plants here> <host family plants it holds> <tick> <sprinkler> <spawner> <pine> <glow>",
 // each arm 1 when it held.
 struct ClientWord {
@@ -284,10 +346,12 @@ void RunHost() {
     if (!Await("ripe_here", kStep)) return;
     // Water the client has not heard of yet, as its slow change is still due: its harvest must not put back the old value.
     WriteHost(drillPlant, 1.f, 3000.f, 1.f);
+    const uint32_t heardBefore = HarvestSounds();
     Mark("harvest_go");
     if (!Await("harvest_done", kStep)) return;
     if (ripe.amount > 0) {
         Check(WaitPlant(drillPlant, [](void*, const GP::Values& v) { return v.amount == 0; }), "the client's harvest emptied the host's plant");
+        Check(HeardHarvest(heardBefore), "the client's harvest sounded on the host");
         GP::Values after;
         OnGameThread([&] { if (void* p = ByKey(drillPlant)) GP::Read(p, after); });
         UE_LOGI("plant-state: host water after the harvest %.0f", after.water);
@@ -297,6 +361,19 @@ void RunHost() {
     OnGameThread([&] { foodsHost = CountOf(L"prop_food_C"); propsHost = CountOf(L"prop_C"); });
     UE_LOGI("plant-state: host item counts after the harvest food=%zu prop=%zu", foodsHost, propsHost);
     Mark("harvest_seen");
+    if (ripe.amount > 0) {
+        // Ripe again, and the host's own harvest, which the client's lane plays.
+        WriteHost(drillPlant, 1.f, 3000.f, 1.f, kBerries);
+        const bool again = WaitPlant(drillPlant, [](void*, const GP::Values& v) { return v.amount > 0; });
+        Check(again, "the plant ripened again");
+        if (!Await("ripe2_seen", kStep)) return;
+        const uint32_t ownBefore = HarvestSounds();
+        if (again) Harvest(drillPlant);
+        Check(WaitPlant(drillPlant, [](void*, const GP::Values& v) { return v.amount == 0; }), "the host's harvest emptied its plant");
+        Mark("host_harvest");
+        if (!Await("host_harvest_heard", kStep)) return;
+        Check(HarvestSounds() == ownBefore, "the host's own harvest was not played again by its lane");
+    }
 
     // A plant this client spawned stands on the host under the same key, and the host runs it.
     std::string planted;
@@ -338,6 +415,32 @@ void RunHost() {
     if (!Await("removal", kStep)) return;
     Check(WaitGone(planted), "the plant the client removed left the host");
     Mark("removal_seen");
+    if (!Await("removal_quiet", kStep)) return;
+
+    // A whole plant: the client's harvest, then the host's.
+    const std::string whole = WholeRow();
+    UE_LOGI("plant-state: a whole-harvest row '%hs'", whole.c_str());
+    Check(!whole.empty(), "a row a harvest takes whole");
+    const uint32_t before = HarvestSounds();
+    const std::string first = whole.empty() ? std::string{} : PlantGrown(whole, -100.f);
+    if (!whole.empty()) Check(!first.empty(), "a grown plant stands for the client's harvest");
+    if (!first.empty()) {
+        Mark("whole", first);
+        if (!Await("whole_done", kStep)) return;
+        Check(WaitGone(first), "the client's whole harvest ended the host's plant");
+        Check(HeardHarvest(before), "the client's whole harvest sounded on the host");
+        const std::string other = PlantGrown(whole, 200.f);
+        Check(!other.empty(), "a grown plant stands for the host's harvest");
+        Mark("whole2", other.empty() ? std::string("none") : other);
+        if (!Await("whole2_seen", kStep)) return;
+        const uint32_t ownWhole = HarvestSounds();
+        Harvest(other);
+        Check(WaitGone(other, 5), "the host's whole harvest took its plant");
+        Check(HarvestSounds() == ownWhole, "the host's own whole harvest was not played again by its lane");
+        Mark("whole2_done");
+    } else {
+        Mark("whole", "none");
+    }
 
     // A pine: the client's lethal hit on its copy is refused, the host's own breaks it, and the end crosses.
     const std::string pine = SpawnFamily(kPinePath, kPineClass, 250.f);
@@ -464,6 +567,7 @@ void RunClient() {
     Check(WaitPlant(drillPlant, [&](void*, const GP::Values& v) { return v.grow >= 1.f && v.amount == hostAmount; }), "the ripe plant reads the same here");
     Mark("ripe_here");
     if (!Await("harvest_go", kStep)) return;
+    const uint32_t ownHeard = HarvestSounds();
     // A bush the host could not make bear berries has nothing to harvest: that is the run's failure, not a step to skip.
     if (Check(hostAmount > 0, "the host's ripe bush bears berries, so there is a harvest to run")) {
         size_t foodsBefore = 0, propsBefore = 0, foodsAfter = 0, propsAfter = 0;
@@ -485,6 +589,16 @@ void RunClient() {
     }
     Mark("harvest_done");
     if (!Await("harvest_seen", kStep)) return;
+    if (hostAmount > 0) {
+        Check(HarvestSounds() == ownHeard, "this player's own harvest was not played again by the lane");
+        Check(WaitPlant(drillPlant, [](void*, const GP::Values& v) { return v.amount > 0; }), "the host's ripening arrived");
+        const uint32_t before = HarvestSounds();
+        Mark("ripe2_seen");
+        if (!Await("host_harvest", kStep)) return;
+        Check(WaitPlant(drillPlant, [](void*, const GP::Values& v) { return v.amount == 0; }), "the host's harvest emptied this copy");
+        Check(HeardHarvest(before), "the host's harvest sounded here");
+        Mark("host_harvest_heard");
+    }
 
     // A plant of this player's, as a pot or a seed makes one: of the class its row plants, which is what the host plants for it.
     std::string planted;
@@ -513,12 +627,36 @@ void RunClient() {
     const int spawnerOk = SpawnerArm() ? 1 : 0;
     Mark("second_seen");
     const std::string second = body;
+    const uint32_t beforeRemovals = HarvestSounds();
     if (!Await("second_gone", kStep)) return;
     Check(WaitGone(second), "the host's removal ended it here");
 
     OnGameThread([&] { if (void* p = ByKey(planted)) GP::Destroy(p); });
     Mark("removal");
     if (!Await("removal_seen", kStep)) return;
+    Check(HarvestSounds() == beforeRemovals, "a bush's removal is no harvest");
+    Mark("removal_quiet");
+
+    if (!AwaitText("whole", body, kStep)) return;
+    if (body != "none") {
+        const std::string first = body;
+        Check(WaitPlant(first, [](void* p, const GP::Values& v) { return v.grow >= 1.f && GP::HarvestTakesPlant(p); }),
+              "the host's grown plant stands here, a whole harvest");
+        const uint32_t ownWhole = HarvestSounds();
+        Harvest(first);
+        Check(WaitGone(first, 5), "this player's whole harvest took its copy");
+        ::Sleep(1500);   // a window for an echo that must not come
+        Check(HarvestSounds() == ownWhole, "this player's whole harvest was not played again by the lane");
+        Mark("whole_done");
+        if (!AwaitText("whole2", body, kStep)) return;
+        const std::string other = body;
+        Check(WaitPlant(other, [](void*, const GP::Values& v) { return v.grow >= 1.f; }), "the host's second grown plant stands here");
+        const uint32_t before = HarvestSounds();
+        Mark("whole2_seen");
+        if (!Await("whole2_done", kStep)) return;
+        Check(WaitGone(other), "the host's whole harvest ended it here");
+        Check(HeardHarvest(before), "the host's whole harvest sounded here");
+    }
 
     if (!AwaitText("pine", body, kStep)) return;
     const std::string pine = body;

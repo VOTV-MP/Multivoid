@@ -113,9 +113,9 @@ received fire is a per-row policy kept in the code: rows whose outputs already r
 (props, creatures, the ATV, sleep, the wisps, the cues, the devices) are not replayed, because
 replaying them would deliver the effect twice; the level flips, story flags and cosmetic sounds
 no lane carries are replayed through the same native verb. A prank's rolled case arrives as its
-own `runSpecialEvent` fire and meets the same policy: a graffiti decal or a scare box's arm is
-replayed, the outcome the host rolled; a case whose output rides a lane or stays on the host is
-not. A client runs no eventer verb of its own: the game's event and cheat menus are refused there,
+own `runSpecialEvent` fire and meets the same policy: a graffiti decal, a scare box's arm or the
+alien sounds' noisers (each player's own, around them) are replayed, the outcome the host rolled;
+a case whose output rides a lane or stays on the host is not. A client runs no eventer verb of its own: the game's event and cheat menus are refused there,
 and the one eventer call it runs is the replay's own. A replay is skipped when the client's own
 passed list already carries the row, unless the host says the event is in flight; one whose world
 or eventer is not up yet waits and is retried each second. A special fired before a peer joins is
@@ -209,7 +209,9 @@ player, and it goes to the host as `PlantEdit`, naming only the values that chan
 applies it (`coop/world/plant_edit_gate`): the key, the row and class, the sender's reach, the pot a planting names and the
 bounds of the values, at a bounded rate per client; it answers a refused edit of a plant it holds with that plant's state. A
 plant is found by its save key, so what a join's load brought is already the host's, and a client's edits wait until its join has settled. A client's
-harvest leaves the host's plant empty and the item with the harvester. Tests: `harness/autotest/autotest_plant_state.cpp`.
+harvest leaves the host's plant empty and the item with the harvester. A harvest's sound is the harvester's own game's, and every
+other peer plays the plant's own `harvestSound` when its copy shows one: a bush's berries going to none, or a grown plant whose
+harvest takes it whole ending. Tests: `harness/autotest/autotest_plant_state.cpp`.
 
 ## Who owns what
 
@@ -258,7 +260,9 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 
 | Limit | Evidence |
 |---|---|
-| The sky's earth teleport plays its two sounds on every client (`coop/world/world_sound_sync`, EventCue ids from 100), but its black hole light and its other effects are the host's; the outside alien noise and a plant's harvest sound stay on one machine, since their calls are not in the fingerprint table | `[V]` `harness/autotest/autotest_world_sound.cpp` for the two sounds' cues, not what a peer heard; `[RD]` for the rest |
+| The sky's earth teleport plays its two sounds on every client (`coop/world/world_sound_sync`, EventCue ids from 100), but its black hole light and its other effects are the host's | `[V]` `harness/autotest/autotest_world_sound.cpp` for the two sounds' cues, not what a peer heard; `[RD]` for the rest |
+| The alien sounds are each player's own: the event is replayed, and each peer's three noisers walk around its own player, sound and leave when that player sees one. A player does not hear the noisers around another, and a joiner gets none from an event that began before it joined | `[V]` `harness/autotest/autotest_world_sound.cpp`: three noisers and their noises on each peer, not what a peer heard |
+| A grown plant ended by something other than a harvest, such as its pot's end, plays the harvest sound on the other peers, since the end carries no cause and a harvest is read from the row and its growth | `[RD]` `ue_wrap/actors/growing_plant` `HarvestTakesPlant` |
 | A black fog the host rolls has no wire lane yet; the client's own rolls are suppressed | `[V]` `coop/world/weather_event_births` |
 | The flesh rain is rolled by every peer's own hour pulse and is not mirrored (the sky eye and the jellyfish are not: `SkyState` carries the eye, the world-actor lane the host's fish, and a client's own `setEye` and path spawn are refused) | `[RD]` the clock's hour roll; the jellyfish is on the world-actor mirror's list, but its spawn happens inside a Blueprint where the mirror's catch does not see it |
 | A decorated Christmas tree spawns its gifts on each peer whose player sleeps through midnight, and a client's gifts are its own | `[RD]` the tree's own check of the local player's sleep at hour 0 |

@@ -204,6 +204,7 @@ bool ApplyEdit(coop::net::Session& s, EditSlot& sl, uint8_t slot, Payload p, std
         const Gate gate = Judge(reach.Authorize(plant), sl, slot, L"removal", key, g_refusedReach);
         if (gate == Gate::Wait) return false;
         if (gate == Gate::Refused) return true;
+        if (GP::HarvestTakesPlant(plant)) coop::plant_sync::PlayHarvestSound(plant, key);
         GP::Destroy(plant);
         index.erase(key);
         UE_LOGI("plant_edit_gate: a client's player removed plant '%ls'", key.c_str());
@@ -333,8 +334,14 @@ bool ApplyEdit(coop::net::Session& s, EditSlot& sl, uint8_t slot, Payload p, std
         UE_LOGI("plant_edit_gate: a client's player planted '%ls', row '%ls'", key.c_str(), coop::net::StringFromWireKey(p.row).c_str());
     }
     GP::Values v = coop::plant_sync::ValuesOf(p);
-    if (!planting && GP::Read(plant, v)) MergeEdit(p, v);
+    int32_t had = 0;
+    if (!planting && GP::Read(plant, v)) {
+        had = v.amount;
+        MergeEdit(p, v);
+    }
     GP::Apply(plant, boundRow, v);
+    // Only a harvest empties a bush.
+    if (had > 0 && v.amount == 0) coop::plant_sync::PlayHarvestSound(plant, key);
     changed.push_back(key);
     return true;
 }
