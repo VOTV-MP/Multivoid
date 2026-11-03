@@ -68,6 +68,7 @@
 #include "coop/items/hook_anchor.h"
 #include "coop/world/event_active_sync.h"  // the native activeEvents registry probe
 #include "coop/world/creature_event_relay.h"  // the host's creature events, carried to every client's count
+#include "coop/world/spill_sync.h"
 #include "coop/world/weather_sync.h"
 #include "ue_wrap/core/log.h"
 
@@ -185,6 +186,7 @@ void ConnectReplayForSlot(int slot) {
     // line. It lands retained on the joiner: arriving in a lobby must not replay a conversation
     // you were not in across your screen; it is there when you open the chat.
     coop::chat_sync::QueueConnectBroadcastForSlot(slot);
+    coop::spill_sync::QueueConnectBroadcastForSlot(slot);  // every live spill again
 }
 
 }  // namespace coop::subsystems

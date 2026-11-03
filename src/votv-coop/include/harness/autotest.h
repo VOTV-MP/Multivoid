@@ -323,5 +323,8 @@ DWORD WINAPI MenuSpawnDrillThread(LPVOID arg);
 
 void RunRunEndDrill();  // the run-ending seam, solo host; env VOTVCOOP_RUN_RUNEND_DRILL=1
 DWORD WINAPI RunEndDrillThread(LPVOID arg);
+// TEST-ONLY: spilled liquids each peer makes lie on both as the host's decals, wipes cross, the splash and a bottle's
+// pour are heard by all. Gated by VOTVCOOP_RUN_SPILL. See autotest_spill.cpp.
+DWORD WINAPI SpillThread(LPVOID arg);
 
 }  // namespace harness::autotest

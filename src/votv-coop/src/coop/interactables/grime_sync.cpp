@@ -522,6 +522,20 @@ void Tick() {
     sg::ResolvePendingNames();
 }
 
+void ForgetDecal(void* actor) {
+    if (!actor) return;
+    {
+        std::lock_guard<std::mutex> lk(g_indexMutex);
+        for (auto it = g_byKey.begin(); it != g_byKey.end(); ++it)
+            if (it->second.actor == actor) {
+                g_byKey.erase(it);
+                break;
+            }
+    }
+    g_posKeyByActor.erase(actor);
+    g_scanNextCache.erase(actor);
+}
+
 std::wstring DebugPosKeyForActor(void* actor) {
     // The dev drill's parity probe: the real quantiser, cache-independent.
     return actor ? PosKey(actor) : std::wstring();

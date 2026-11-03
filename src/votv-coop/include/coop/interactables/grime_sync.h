@@ -48,6 +48,10 @@ void QueueConnectBroadcastForSlot(int peerSlot);
 // take. Call every net-pump tick on the game thread.
 void Tick();
 
+// A decal this peer removes as not its own (coop/world/spill_sync refuses a client's own spill): it leaves the index,
+// so its end of play is no wipe. Call before the destroy. Game thread.
+void ForgetDecal(void* actor);
+
 // DEV-DRILL ONLY: the quantised position key this module would index `actor` under. The
 // scan-parity drill uses it so its independent walk counts DISTINCT CELLS the way the index
 // does. An instance count over-reads, because the grid is not collision-free: the rig's save puts
