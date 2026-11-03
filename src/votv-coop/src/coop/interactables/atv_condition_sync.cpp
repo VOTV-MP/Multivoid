@@ -339,6 +339,4 @@ Counters ReadCounters() {
     return c;
 }
 
-unsigned long long LocalAheadKept() { return g_localAhead.load(std::memory_order_relaxed); }
-
 }  // namespace coop::atv_condition_sync
