@@ -17,6 +17,7 @@
 #include "coop/props/prop_syncer.h"        // the client's answer receiver
 #include "coop/props/prop_syncer_host.h"   // the host's claim judge and a client's End
 
+#include "coop/world/spill_sync.h"
 #include "ue_wrap/core/log.h"
 
 #include <cmath>
@@ -171,6 +172,39 @@ bool HandlePropDriveEvent(net::Session& session,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         ::coop::dev::container_parity::OnChunk(chunk, slot);
+        break;
+    }
+    case net::ReliableKind::SpillState:
+    case net::ReliableKind::SpillIntent: {
+        // SpillState HOST->ALL, SpillIntent CLIENT->HOST.
+        const bool intent = msg.kind == net::ReliableKind::SpillIntent;
+        if (intent != (session.role() == net::Role::Host)) {
+            UE_LOGW("event_feed: a spill message the wrong way from slot %d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::SpillPayload)) {
+            UE_LOGW("event_feed: spill payload too short (%zu < %zu)", static_cast<size_t>(msg.payloadLen),
+                    sizeof(net::SpillPayload));
+            break;
+        }
+        net::SpillPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (intent) ::coop::spill_sync::OnIntent(msg.senderPeerSlot, p);
+        else ::coop::spill_sync::OnState(p);
+        break;
+    }
+    case net::ReliableKind::SpillPour:
+    case net::ReliableKind::SpillPourIntent: {
+        // SpillPour HOST->ALL, SpillPourIntent CLIENT->HOST.
+        const bool intent = msg.kind == net::ReliableKind::SpillPourIntent;
+        if (intent != (session.role() == net::Role::Host) || msg.payloadLen < sizeof(net::SpillPourPayload)) {
+            UE_LOGW("event_feed: a malformed or misdirected pour from slot %d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        net::SpillPourPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (intent) ::coop::spill_sync::OnPourIntent(msg.senderPeerSlot, p);
+        else ::coop::spill_sync::OnPour(p);
         break;
     }
     default:

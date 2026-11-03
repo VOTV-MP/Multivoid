@@ -174,6 +174,7 @@
 #include "coop/items/hook_sync.h"  // the hook lane: owner-phase stream, mirrors, the tick park
 #include "coop/world/event_active_sync.h"  // the native activeEvents registry probe
 #include "coop/world/creature_event_relay.h"  // the host's creature events, carried to every client's count
+#include "coop/world/spill_sync.h"
 #include "coop/world/weather_sync.h"
 
 #include "ue_wrap/core/log.h"
@@ -335,6 +336,7 @@ void Install(coop::net::Session& session) {
     // world-up, but the apply-blob receiver and the pre-materialise save hook must be live before
     // the join's world loads. Its tick and per-slot hooks below stay.
     coop::balance_sync::SetSession(&session);  // shared host-authoritative balance
+    coop::spill_sync::Install(&session);  // the host's spilled liquids
     // The client world-save block: registers its gate and arms the one save detour, in every
     // role (the gate reads the role when a save fires; a host's save passes and is reported).
     coop::save_block::Install(&session);
@@ -558,6 +560,7 @@ DisconnectStats DisconnectAll() {
     coop::prop_park::OnDisconnect();  // after both receivers gave their props back: the holds a park still has
     coop::rider_hold::OnDisconnect();  // last: any movement still held ticks again
     coop::balance_sync::OnDisconnect();  // reset the balance broadcast dedup
+    coop::spill_sync::OnDisconnect();
     // Last, after every element drain: the client's transfer state, its received identity map and
     // the ephemeral zcoop_<pid> slot the join wrote. The map's binds resolve against Elements, so
     // it must outlive their drain; the slot file is read once at the join and never again, and a
@@ -709,6 +712,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; coop::sleepingbag_sync::Tick(session); }  // settle the gates and serve bounded fold/unfold intents
     { PP::Scope _s{PP::Bucket::Interactable}; coop::kerfus_lanes::Tick(session); }  // the Kerfus lanes' watches; CLIENT: waiting states; HOST: queued verbs
     { PP::Scope _s{PP::Bucket::Interactable}; coop::served_player::Tick(); }  // HOST: the served robots' seams
+    { PP::Scope _s{PP::Bucket::Interactable}; coop::spill_sync::Tick(); }  // the spills the hook saw
     { PP::Scope _s{PP::Bucket::Balance};       coop::balance_sync::Tick(); }  // host polls saveSlot.Points + broadcasts on change; client retries the pending mirror apply
     { PP::Scope _s{PP::Bucket::Balance};       ue_wrap::ScopedWalkTimer _w{"sync:upgrades"}; coop::upgrade_sync::Tick(session); }  // host polls the upgrade struct + broadcasts on change, and runs one queued purchase a tick a client; client retries the pending mirror
     coop::dev::dev_lanes::TickProbes(session, isConnected, isHost);  // [dev] the RE probes, each self-installing when its knob is set

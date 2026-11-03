@@ -53,6 +53,14 @@ void PlayLandSound(void* propActor);
 // = any live actor in the world (typically the local player).
 void PlayInventoryBlipAt(void* worldCtx, const ue_wrap::FVector& loc);
 
+// A spilled liquid's splash (water_splash_Cue, vol 0.5 / pitch 1.25, att_small -- grimeProjectile_C's own at its hit),
+// at a spill another peer's flight landed (coop/world/spill_sync). `worldCtx` = any live actor in the world.
+void PlaySpillSplashAt(void* worldCtx, const ue_wrap::FVector& loc);
+
+// A beer's or wine's pour (fuel1, vol 0.5 / pitch 1.0, att_default -- prop_snack_beer_C's tick plays it at the bottle
+// each time it pours), at a bottle another peer poured (coop/world/spill_sync).
+void PlayBottlePourAt(void* worldCtx, const ue_wrap::FVector& loc);
+
 // The game's own save-denied/failed click (button_keypad_deny -- the desk play-screen deny
 // @23927 and the keypad deny, vol 0.5 / pitch 1.0), played at the LOCAL player whose action was
 // denied, which today is the device-occupancy busy deny. `playerActor` = the denied local

@@ -229,6 +229,7 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // The slip drill: a zero-damage ragdoll with `dead` already set must be shown to re-enter the
     // death chain, and our seam shown to refuse the menu travel it asks for.
     SpawnIf("VOTVCOOP_RUN_SLIP_DRILL", "slip / death re-entry drill", &SlipDrillThread, role);
+    SpawnIf("VOTVCOOP_RUN_SPILL", "spill drill", &SpillThread, role);
 }
 
 }  // namespace harness::autotest

@@ -214,6 +214,33 @@ void PlayDenyClick(void* playerActor) {
     UE_LOGI("prop_sound: deny click at (%.0f, %.0f, %.0f)", loc.X, loc.Y, loc.Z);
 }
 
+void PlaySpillSplashAt(void* worldCtx, const ue_wrap::FVector& loc) {
+    if (!worldCtx || !R::IsLive(worldCtx)) return;
+    // SoundCue water_splash_Cue and att_small: what grimeProjectile_C's tick plays where it lands. Latched resolves.
+    static void* sCue = nullptr;
+    static void* sAtt = nullptr;
+    if (!sCue) sCue = R::FindObject(L"water_splash_Cue", L"SoundCue");
+    if (!sAtt) sAtt = R::FindObject(L"att_small", L"SoundAttenuation");
+    if (!sCue) {
+        UE_LOGW("prop_sound: 'water_splash_Cue' not resolved yet -- no spill splash");
+        return;
+    }
+    ue_wrap::engine::PlaySoundAtLocation(worldCtx, sCue, loc, sAtt ? sAtt : ResolveAttenuation(), 0.5f, 1.25f);
+}
+
+void PlayBottlePourAt(void* worldCtx, const ue_wrap::FVector& loc) {
+    if (!worldCtx || !R::IsLive(worldCtx)) return;
+    // fuel1 at att_default: what prop_snack_beer_C's tick plays beside each pour. Latched resolve.
+    static void* sCue = nullptr;
+    if (!sCue) sCue = R::FindObject(L"fuel1", L"SoundCue");
+    if (!sCue) sCue = R::FindObject(L"fuel1", P::name::SoundWaveClass);
+    if (!sCue) {
+        UE_LOGW("prop_sound: 'fuel1' not resolved yet -- no bottle pour");
+        return;
+    }
+    ue_wrap::engine::PlaySoundAtLocation(worldCtx, sCue, loc, ResolveAttenuation(), 0.5f, 1.0f);
+}
+
 void PlayInventoryBlipAt(void* worldCtx, const ue_wrap::FVector& loc) {
     if (!worldCtx || !R::IsLive(worldCtx)) return;
     // SoundCue /Game/audio/effects/inventory_Cue -- THE native collect blip

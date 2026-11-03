@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 266;
+inline constexpr uint16_t kProtocolVersion = 267;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1226,6 +1226,20 @@ enum class ReliableKind : uint8_t {
     // coop::props::container_act_wire's commit. Never relayed; not pre-world; the same lane as the request, so an act's
     // end cannot overtake its start.
     ContainerActCommit = 209,
+    // HOST->ALL: a spilled liquid's decal on the host (a coffee cup, beer, wine, a gas bottle), where it landed. A client
+    // makes the same decal there, so the grime lane's position key names it on both. Not relayed, not pre-world. Late
+    // join: every live spill again at the ready edge, a client keeping one it already has there. SpillPayload.
+    SpillState = 212,
+    // CLIENT->HOST: a liquid this client's player held spilled, and its decal landed here; the client's own decal is
+    // removed. Never relayed; the host checks the class and the reach and makes it, and its SpillState answers.
+    // SpillPayload.
+    SpillIntent = 213,
+    // HOST->ALL: a bottle on the host poured, or a client's pour the host relays: each peer that did not pour it plays the
+    // bottle's pour sound there. Not relayed further, not pre-world, nothing at late join. SpillPourPayload.
+    SpillPour = 214,
+    // CLIENT->HOST: a bottle in this client's player's hand poured. Never relayed; the host plays it and sends it on as a
+    // SpillPour naming this client. SpillPourPayload.
+    SpillPourIntent = 215,
 };
 
 #pragma pack(push, 1)
@@ -4188,6 +4202,30 @@ struct StatQueryReplyPayload {
     StatEffectEntry effects[5];
 };
 static_assert(sizeof(StatQueryReplyPayload) == 205, "StatQueryReplyPayload must be 205 bytes");
+
+// A spilled liquid's decal (SpillState), or a client's (SpillIntent).
+struct SpillPayload {
+    WireKey cls;           // 32 -- the decal's grime class name
+    float   loc[3];        // 12 -- its world location
+    float   rot[3];        // 12 -- its rotation: pitch, yaw, roll
+    float   scale[3];      // 12 -- its scale
+    float   decalRot[3];   // 12 -- its decal component's world rotation (begin play turns it at random)
+    float   process;       // 4 -- its dirt; -1: wiped away
+    int32_t type;          // 4 -- its grime Type
+    uint8_t splash;        // 1 -- it just landed: a peer that did not hear it plays the splash
+    uint8_t origin;        // 1 -- the slot whose own flight landed it, which heard it; 0xFF none
+    uint8_t _pad[2];       // 2 -- zero
+};
+static_assert(sizeof(SpillPayload) == 92, "SpillPayload must be 92 bytes");
+
+// A bottle's pour, heard where it poured (SpillPour, SpillPourIntent).
+struct SpillPourPayload {
+    float   loc[3];        // 12 -- the bottle
+    uint8_t cue;           // 1 -- which pour sound: 1 a beer's or wine's fuel1
+    uint8_t origin;        // 1 -- the slot that poured it, which heard it; 0xFF none
+    uint8_t _pad[2];       // 2 -- zero
+};
+static_assert(sizeof(SpillPourPayload) == 16, "SpillPourPayload must be 16 bytes");
 static_assert(sizeof(StatQueryReplyPayload) <= 256 - 20 - 8,
               "StatQueryReplyPayload must fit in one reliable datagram");
 

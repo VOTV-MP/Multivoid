@@ -251,6 +251,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_park.cpp
     src/coop/props/rider_hold.cpp
     src/coop/world/weather_sync.cpp
+    src/coop/world/spill_sync.cpp
     src/coop/world/weather_fog.cpp
     src/coop/world/weather_lightning.cpp
     src/coop/world/weather_rain.cpp
@@ -624,6 +625,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_dish_sound.cpp
     src/harness/autotest/autotest_save_notice.cpp
     src/harness/autotest/autotest_saveui.cpp
+    src/harness/autotest/autotest_spill.cpp
     src/ui/input_focus.cpp
     src/harness/screenshot.cpp
     src/harness/mod_environment.cpp

@@ -273,6 +273,31 @@ minimum, and two peers wiping at once converge with no oscillation; the grime de
 their quantised world position, since both peers place them from the same save
 (`coop/interactables/window_sync`, `coop/interactables/grime_sync`).
 
+A spilled liquid is the host's (`coop/world/spill_sync`). A coffee cup tipped or flung fast, beer, wine and a gas
+bottle spill through a `grimeProjectile_C` that flies and leaves its grime decal (`grime_coffee_C` and the rest)
+where it meets a surface, so each peer's own flight would land somewhere else. The host sends each decal its
+projectile leaves, with its transform, its decal's random turn and its dirt (`SpillState`); a client makes it at that
+transform, so the grime lane's position key names it on both and a partial wipe crosses as any decal's does. A client
+removes a decal its own projectile leaves; when the liquid was in its player's hand it sends the decal first
+(`SpillIntent`), and the host checks its class and that it lies within 15 m of the sender, makes it and sends it back.
+A spill wiped away is said by whoever wiped it, the host's to everyone and a client's to the host, which wipes its own
+within reach. A spill that just landed carries its splash: every peer whose own flight did not land it plays the
+game's `water_splash_Cue` there, as the projectile does at its hit, and a replay plays none. A copy lies at the host's
+own floats, so a peer keeps one spill per message and checks only a replay against a decal already there; a bottle's
+pours land a millimetre apart and stack. A world cup or bottle does not spill on a client, whose copy of a food is
+parked; a gas bottle spills only as it breaks, which the host decides. A beer or wine pours on its tick while it is open
+and upside down, and each pour plays `fuel1` beside the bottle on the peer that pours it; the lane sees the pour as its
+projectile is born, with the `size` of 1 a pour writes (a break leaves the class default, 5, and plays no pour), so the
+host sends each of its pours (`SpillPour`), a client sends one from a bottle in its hand (`SpillPourIntent`) for the
+host to play and send on, and each peer that did not pour it plays it at the bottle. Water from a bucket leaves no
+puddle: the game's pour (`prop_sponge_bucketPour_C`) flies, puts out fires and cleans what it meets, then ends
+`[V]` (`harness/autotest/autotest_spill.cpp`, twice: a host cup spilled and on the client at its place with none of
+its own and its splash heard; a partial wipe each way, 100 to 76 and 76 to 52 on both; the host's wipe and the client's;
+an opened beer (7 and 8 decals), an opened wine (10) and a broken gas bottle (1) on their head on the host, every decal
+on the client at its place and none of its own; a cup in the client's hand spilled, made by the host, its splash heard
+there and back on the client once; the host's 16 bottle pours all heard on the client and a pour of a beer in the
+client's hand heard on the host; the client killed and rejoined, all 40 and 41 live spills there, none twice).
+
 The base's bay window is not one of those: its dirt is a 1645x512 render target that a sponge
 wipes one dab at a time, so there is no scalar to compare. A stroke reaches the window's own
 `cleanPhys` through a script call no hook here carries arguments for, so the dab is observed at
@@ -417,6 +442,7 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | the fuse towers (the three coordinate towers and the radio tower) | the host | a row per tower whenever one changes; a client's presses are intents the host runs, its fuse pulls and inserts claims the host takes or refuses |
 | the turbine | the host | six floats a second |
 | a window, the grime | any peer, minimum wins | monotone decreases |
+| a spilled liquid's decal | the host | a client's spill from its hand and its wipe are requests |
 | the drone | the host | a transform stream; the client's tick suppressed |
 
 ## Wire messages
@@ -434,6 +460,8 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | `PowerGridState` | the host to all; a client to the host | every generator's row and each slot's last op taken; a repair, a service, an upgrade install or a hit |
 | `FuseTowerState` | the host to all; a client to the host | every tower's row (kind, broken, fuses, puzzle, panel, levers), each slot's last op taken and last claim refused; a press of a puzzle button, a lever or the retract, a fuse pulled or inserted |
 | `TurbineState`, `WindowCleanState`, `GrimeState` | each peer or the host | the driver floats; a decrease |
+| `SpillState`, `SpillIntent` | the host to all; a client to the host | a spill's class, transform, decal turn and dirt, or that it was wiped away; a client's spill from its hand, or its wipe |
+| `SpillPour`, `SpillPourIntent` | the host to all; a client to the host | where a bottle poured and who poured it; a pour of a bottle in a client's hand |
 | `DroneState` | the host to all | the drone's transform and flags, among them its leave timer |
 | `DroneFlyIntent` | a client to the host | the face pressed, the keyboard or the leave timer; the host finds the console by the sender's reach |
 
@@ -443,7 +471,8 @@ Every channel snapshots the full state of every indexed instance to a joiner at 
 open and closed alike, because the save the joiner loaded, the host's captured at its join, holds
 neither a state the game does not save (a server box's `active`, a sink's tap) nor one changed while
 the joiner loaded; an oven's repair is in that save, and the snapshot says it again; the keypads, the power masks, the turbine, the windows, the grime and the
-drone's pose are sent the same way.
+drone's pose are sent the same way. Every live spill goes again at the ready edge, and a joiner keeps one it already
+has from the save at that place.
 
 The coordinate towers go to a joiner at the same edge, every tower's row. Its own world's load
 would have scrambled again any tower that was saved broken; that roll is refused, so the row is the
@@ -454,6 +483,7 @@ state it shows, and the first rows a world takes play no sound.
 | Limit | Evidence |
 |---|---|
 | A cord's link is the host's: a client reports the plug its player made and the host's answer settles both copies, so two clients on one cord settle in arrival order and a claim on a cord the host's player is dragging is answered with the host's link. A socket's power, a generator's outlets and a Kerfus's charging are not this lane's. Not yet exercised in a two-peer game run | `[RD]` the cord and socket Blueprint call surface; `[?]` `coop/interactables/cord_sync`, `ue_wrap/devices/cord` |
+| A client's spill from its hand lands where its own flight put it, which the host takes as is within 15 m. A bottle's opening click and a liquid that leaves something other than a grime decal are not carried | `[V]` `prop_snack_beer_C`'s `openBottle` plays `impact_plastic_cue`; `coop/world/spill_sync` |
 | A client's light-group index has been reported dropping to zero after a join; not reproduced | `[?]` [issue 11](https://github.com/VOTV-MP/Multivoid/issues/11) |
 
 ## Code map
@@ -464,6 +494,7 @@ state it shows, and the first rows a world takes play no sound.
 | cords and sockets | `coop/interactables/cord_sync`, `coop/interactables/cord_sync_watch`, `coop/interactables/cord_sync_sockets`, `ue_wrap/devices/cord` |
 | security cameras | `coop/interactables/camera_toggle_intent`, `coop/interactables/toggle_verbs`, `coop/interactables/interactable_sync`, `ue_wrap/devices/security_camera` |
 | keypads | `coop/interactables/keypad_sync`, `ue_wrap/devices/passwordlock` |
+| spilled liquids | `coop/world/spill_sync`, `ue_wrap/actors/grime_spill` |
 | power, turbine, windows, grime | `coop/world/power_panel`, `coop/world/power_grid`, `ue_wrap/devices/generator`, `coop/interactables/turbine_sync`, `coop/interactables/window_sync`, `coop/interactables/grime_sync`, `ue_wrap/devices/power_control`, `ue_wrap/devices/windturbine`, `ue_wrap/devices/base_window`, `ue_wrap/devices/grime` |
 | the fuse towers | `coop/world/fuse_tower_rows`, `coop/world/fuse_tower_ops`, `coop/world/fuse_tower_kind`, `ue_wrap/devices/coord_tower`, `ue_wrap/devices/radio_tower` |
 | the drone | `coop/interactables/drone_sync`, `coop/interactables/drone_call_intent`, `ue_wrap/devices/drone`, `ue_wrap/devices/drone_console` |
