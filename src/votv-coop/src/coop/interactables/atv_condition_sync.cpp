@@ -1,6 +1,9 @@
 // coop/interactables/atv_condition_sync.cpp -- see header for the lane's contract (authority
 // split, last-expressed edges, defer guard). This file is the policy; ue_wrap/devices/
 // atv_condition owns the layout and the dispatch.
+//
+// [PATCH b208] local-ahead tire/spare guard -- see ApplyPayload. Stops a client's wheel from
+// being "durability->0 -> ejectWheel"-ed by a host block that does not know about it yet.
 
 #include "coop/interactables/atv_condition_sync.h"
 
@@ -35,7 +38,8 @@ constexpr float kDirtEps = 0.01f;
 constexpr float kHealthEps = 0.5f;
 
 std::atomic<unsigned long long> g_applied{0}, g_updTires{0}, g_updDirt{0}, g_updSpare{0},
-    g_updHealth{0}, g_presenceSkipped{0}, g_deferred{0}, g_invalid{0};
+    g_updHealth{0}, g_presenceSkipped{0}, g_deferred{0}, g_invalid{0},
+    g_localAhead{0};   // [PATCH b208] blocks whose tire/spare presence was kept local
 
 void PayloadToSnapshot(const coop::net::AtvStatePayload& p, AC::Snapshot& s) {
     for (int i = 0; i < 4; ++i) {
@@ -135,6 +139,45 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
 
     AC::Snapshot in;
     PayloadToSnapshot(p, in);
+
+    // [PATCH b208] LOCAL-AHEAD PRESENCE -- the install/remove intent lane does not exist in this
+    // build, so a client can hold a tire (or the spare) the host has never heard of. The host's
+    // block for that slot then carries mask=0 and durability 0, and writing either one is
+    // destructive: the value write zeroes the mounted tire and the presence write un-mounts it,
+    // after which the game's own updTires runs "durability->0 -> ejectWheel" and the wheel props
+    // out. Keep every local-ahead slot (values, types and the presence bit) as the actor has it
+    // and let the host converge when it learns the install -- a visible divergence is strictly
+    // better than a lost wheel and a zeroed item.
+    {
+        AC::Snapshot cur;
+        uint8_t localAheadMask = 0;
+        bool spareLocalAhead = false;
+        if (AC::Read(actor, cur)) {
+            localAheadMask = static_cast<uint8_t>(cur.mask & ~in.mask);
+            spareLocalAhead = cur.hasSpare && !in.hasSpare;
+        }
+        if (localAheadMask || spareLocalAhead) {
+            for (int i = 0; i < 4; ++i) {
+                if (!((localAheadMask >> i) & 1)) continue;
+                in.dur[i]   = cur.dur[i];
+                in.dirt[i]  = cur.dirt[i];
+                in.fixes[i] = cur.fixes[i];
+                in.types[i] = cur.types[i];
+            }
+            in.mask = static_cast<uint8_t>(in.mask | localAheadMask);
+            if (spareLocalAhead) {
+                in.hasSpare   = true;
+                in.spareDur   = cur.spareDur;
+                in.spareDirt  = cur.spareDirt;
+                in.spareFixes = cur.spareFixes;
+            }
+            const auto n = g_localAhead.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (n == 1 || n % 100 == 0)
+                UE_LOGW("atv_condition: local-ahead kept (tires 0x%02X of host 0x%02X, spare %d) "
+                        "-- the slot stays local until the host's install arrives, x%llu",
+                        localAheadMask, p.tiresMask, spareLocalAhead ? 1 : 0, n);
+        }
+    }
 
     // The 13 floats reach engine fields and the HOST SAVE raw, and a NaN
     // would ALSO disable this lane's own edges forever (fabs(NaN-x)>eps is false) -- values
@@ -295,5 +338,7 @@ Counters ReadCounters() {
     c.invalidBlocks = g_invalid.load();
     return c;
 }
+
+unsigned long long LocalAheadKept() { return g_localAhead.load(std::memory_order_relaxed); }
 
 }  // namespace coop::atv_condition_sync
