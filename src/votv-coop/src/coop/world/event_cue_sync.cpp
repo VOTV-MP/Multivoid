@@ -12,6 +12,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/world/vent_crawler_sync.h"
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
@@ -149,6 +150,7 @@ void Install(coop::net::Session* session) {
 
 void OnReliable(const coop::net::EventCuePayload& payload) {
     if (!GT::IsGameThread()) { UE_LOGW("event_cue: OnReliable off-game-thread -- dropping"); return; }
+    if (coop::vent_crawler_sync::OnCue(payload)) return;  // a crawl's start
     if (payload.cueId >= static_cast<uint32_t>(kCueCount)) {
         UE_LOGW("event_cue: OnReliable unknown cueId=%u (have %d cues) -- dropping (newer host?)",
                 payload.cueId, kCueCount);

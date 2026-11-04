@@ -79,6 +79,10 @@ bool CallRunTrigger(void* door, void* owner, int32_t index);
 // do ventCrawler on one door and the save, and a level trigger's runTrigger 2/3 could. False on a null door or an unresolved field. Game thread.
 bool TryReadActive(void* door, bool& on);
 
+// Write that flag, as ventCrawler writes it: the field alone, no verb. False on a null door or an unresolved field.
+// Game thread.
+bool WriteActive(void* door, bool on);
+
 // Read the door's ignoreBlackout, level data only its save load writes: the power panel's blackout opens
 // each door it lists that does not ignore one, and a press opens an inactive door by hand while the power
 // is off only if it does not. False on a null door or an unresolved field. Game thread.

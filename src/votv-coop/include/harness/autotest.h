@@ -239,6 +239,9 @@ DWORD WINAPI HudTintProbeThread(LPVOID arg);
 void RunAutonomousMoveOsc();
 DWORD WINAPI MoveOscThread(LPVOID arg);
 
+// TEST-ONLY: the vent crawler event on host and client, its doors, keypads and vent compared.
+// Gated by VOTVCOOP_RUN_VENT_CRAWLER. See autotest_vent_crawler.cpp.
+DWORD WINAPI VentCrawlerThread(LPVOID arg);
 // The event force-now smoke (harness/autotest/autotest_eventforce.cpp), host: the volume-gate
 // feature (coop/dev/event_force) on obelisk, the badge snapshot resolving (armed 0, shots 1),
 // ForceNow arming through HostFire and driving the box's own BeginOverlap with the local pawn, and
