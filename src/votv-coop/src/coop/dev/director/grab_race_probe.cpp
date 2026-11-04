@@ -199,6 +199,9 @@ void RunGrabRace() {
     if (isHost) {
         Step("the pick", [player, prop, key](std::atomic<int>& d) { *prop = PickTarget(*player, *key); d.store(1); });
         if (!*prop) { UE_LOGW("grab-race: VERDICT ABORT -- no holdable keyed prop within reach of a walk"); return; }
+        // Named once the client is in: a signal counts only if written after the reader's drill began, and the
+        // host picks before the client has even launched (measured: the client never saw a target written early).
+        if (!PS::Await("client_ready")) return;
         PS::Mark("target", std::string(key->begin(), key->end()));
     } else {
         // The join's corrections replace and move props for a while after the world is up: the target is read once
@@ -209,6 +212,7 @@ void RunGrabRace() {
             if (!*ready) ::Sleep(500);
         }
         ::Sleep(10000);   // no signal announces the corrections' end: a clock, kept until one does
+        PS::Mark("client_ready");
         std::string k;
         if (!PS::AwaitText("target", k)) return;
         *key = std::wstring(k.begin(), k.end());
