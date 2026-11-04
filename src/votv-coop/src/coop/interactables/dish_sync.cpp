@@ -197,13 +197,15 @@ void ApplyDishSound(int32_t index, bool isMoving, bool wasMoving, float yawZ, fl
             s.fadeFromMs = 0;
             s.humming = false;
         }
+        // The host's body hums from the slew's order (isMoving rises before its random 1-12 s wait, dish.cpp
+        // Label_6298), and its motor only once the axes turn (Label_3515): the hum on the flag, the motor on motion.
+        if (!s.humming) {
+            D::StartHum(index);
+            s.humming = true;
+            g_cueWatch |= (1u << index);
+        }
         if (moved) {
             s.stillRows = 0;
-            if (!s.humming) {
-                D::StartHum(index);
-                s.humming = true;
-                g_cueWatch |= (1u << index);
-            }
             if (!s.motor) {
                 D::SetMotor(index, true);
                 s.motor = true;
