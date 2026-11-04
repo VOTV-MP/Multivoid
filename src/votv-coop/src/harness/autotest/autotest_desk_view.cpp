@@ -8,8 +8,8 @@
 // a bound, never on a clock.
 
 #include "harness/autotest.h"
+#include "harness/autotest/peer_signal.h"
 
-#include "coop/config/config.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/session/net_pump.h"
@@ -24,60 +24,20 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
-#include <fstream>
-#include <string>
 
 namespace harness::autotest {
 namespace {
 
 namespace R  = ue_wrap::reflection;
 namespace CD = ue_wrap::console_desk;
-
-std::string g_dir;
-uint64_t g_start = 0;  // FILETIME of this peer's drill start
+namespace PS = harness::autotest::peer_signal;
+using PS::Await;
+using PS::Mark;
+using PS::WaitFor;
 
 template <class Fn>
 void OnGameThread(Fn&& fn) {
     ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
-}
-
-void Mark(const char* name) {
-    std::ofstream(g_dir + "\\" + name, std::ios::binary | std::ios::trunc) << "x";
-}
-
-// A signal written before this peer's drill began is an earlier run's, so it does not count.
-bool WrittenSinceStart(const std::string& path) {
-    const int n = ::MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, nullptr, 0);
-    if (n <= 0) return false;
-    std::wstring w(static_cast<size_t>(n), L'\0');
-    ::MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, w.data(), n);
-    WIN32_FILE_ATTRIBUTE_DATA a{};
-    if (!::GetFileAttributesExW(w.c_str(), GetFileExInfoStandard, &a)) return false;
-    const uint64_t t = (static_cast<uint64_t>(a.ftLastWriteTime.dwHighDateTime) << 32) | a.ftLastWriteTime.dwLowDateTime;
-    return t >= g_start;
-}
-
-bool Await(const char* name, int seconds = 240) {
-    for (int i = 0; i < seconds * 10; ++i) {
-        const std::string path = g_dir + "\\" + name;
-        std::ifstream f(path, std::ios::binary);
-        std::string s;
-        if (f && std::getline(f, s) && !s.empty() && WrittenSinceStart(path)) return true;
-        ::Sleep(100);
-    }
-    UE_LOGW("desk-view: VERDICT ABORT -- no '%hs' from the other peer", name);
-    return false;
-}
-
-// Polls a game state every 100 ms for at most boundSeconds. A timeout is an ABORT unless the caller judges it.
-template <class Fn>
-bool WaitFor(const char* what, int boundSeconds, Fn pred, bool abortOnTimeout = true) {
-    for (int i = 0; i < boundSeconds * 10; ++i) {
-        if (pred()) return true;
-        ::Sleep(100);
-    }
-    if (abortOnTimeout) UE_LOGW("desk-view: VERDICT ABORT -- %hs not within %ds", what, boundSeconds);
-    return false;
 }
 
 // The three view settings as this peer reads them now; ok is false while the desk does not resolve.
@@ -203,14 +163,7 @@ void RunClient() {
 }  // namespace
 
 DWORD WINAPI DeskViewThread(LPVOID /*arg*/) {
-    FILETIME now{};
-    ::GetSystemTimeAsFileTime(&now);
-    g_start = (static_cast<uint64_t>(now.dwHighDateTime) << 32) | now.dwLowDateTime;
-    g_dir = coop::config::ReadEnv("VOTVCOOP_CAN_DIR");
-    if (g_dir.empty()) {
-        UE_LOGW("desk-view: VERDICT ABORT -- VOTVCOOP_CAN_DIR is unset");
-        return 0;
-    }
+    if (!PS::Begin("desk-view")) return 0;
     if (IsClientRole()) RunClient();
     else                RunHost();
     return 0;
