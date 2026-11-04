@@ -94,6 +94,25 @@ void SetBool(void* actor, const wchar_t* name, bool value) {
     b = value ? (b | mask) : (b & ~mask);
 }
 
+// The microwave's own inside: the centre of its Box, whose overlap fills the objectsInside its Wave heats.
+bool InsideOf(void* micro, ue_wrap::FVector& at) {
+    const int32_t off = micro ? R::FindPropertyOffset(R::ClassOf(micro), L"Box") : -1;
+    void* box = nullptr;
+    if (off >= 0) std::memcpy(&box, static_cast<uint8_t*>(micro) + off, sizeof(box));
+    return box && E::TryGetComponentLocation(box, at);
+}
+
+// Whether `obj` is in the microwave's objectsInside.
+bool IsInside(void* micro, void* obj) {
+    const int32_t off = micro ? R::FindPropertyOffset(R::ClassOf(micro), L"objectsInside") : -1;
+    if (off < 0 || !obj) return false;
+    struct Arr { void** data; int32_t num, max; } a{};
+    std::memcpy(&a, static_cast<uint8_t*>(micro) + off, sizeof(a));
+    for (int32_t i = 0; a.data && i < a.num && i < 64; ++i)
+        if (a.data[i] == obj) return true;
+    return false;
+}
+
 void Power(const std::string& key) {
     OnGameThread([&] { SetBool(Find(key), L"powered", true); });
 }
@@ -530,7 +549,7 @@ void RunHost() {
         void* c = SpawnHere(L"/Game/objects/prop_cookingFood_shrimp.prop_cookingFood_shrimp_C", 150.f, -120.f);
         ue_wrap::FVector at{};
         void* f = nullptr;
-        if (m && E::TryGetActorLocation(m, at)) {
+        if (m && (InsideOf(m, at) || E::TryGetActorLocation(m, at))) {
             void* cls = ue_wrap::asset_load::LoadObjectByPath(L"/Game/objects/prop_food.prop_food_C");
             if (cls) f = E::SpawnActor(cls, at);
         }
@@ -546,6 +565,9 @@ void RunHost() {
         return;
     }
     ::Sleep(2000);
+    bool in = false;
+    OnGameThread([&] { in = IsInside(Find(micro), Find(inside)); });
+    Verdict("00-food-in-the-microwave", in, inside);
     Mark("keys", micro + " " + oven + " " + inside + " " + cooking + " " + grill + " " + onGrill);
     if (!Await("client_saw_born")) return;
     RunShared(micro, oven, inside, true);
