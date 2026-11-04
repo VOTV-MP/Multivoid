@@ -85,6 +85,7 @@ int Cast(void* worldCtx, const FVector& start, const FVector& end, const uint8_t
     out->normal = hit.normal;
     out->actor = hit.actor;
     out->component = hit.component;
+    out->physMaterial = hit.physMaterial;
     // The engine must not report an actor it was told to ignore (or the context actor, which bIgnoreSelf ignores). One
     // reported means ActorsToIgnore did not take effect and every verdict drawn from this trace is wrong: said once.
     static bool sSaid = false;

@@ -28,13 +28,14 @@ namespace ue_wrap::trace {
 // Game thread only (dispatches a UFunction).
 int LineBlockedStatDyn(void* worldCtx, const FVector& start, const FVector& end);
 
-// What a trace hits first: the hit's actor and component (live, or null), and its
+// What a trace hits first: the hit's actor, component and physical material (live, or null), and its
 // impact point and normal, read from the call's FHitResult by the struct's reflected member
 // offsets (ue_wrap/engine/hit_result). `blocked` false on a clear line.
 struct Hit {
     bool    blocked = false;
     void*   actor = nullptr;
     void*   component = nullptr;
+    void*   physMaterial = nullptr;
     FVector point{};
     FVector normal{};
 };

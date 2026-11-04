@@ -24,7 +24,7 @@ void* g_hitStruct = nullptr;  // FHitResult's UScriptStruct, the return value's 
 // FHitResult's members the reader takes, by the struct's own reflection, resolved once.
 struct Layout {
     bool    tried = false, ok = false;
-    int32_t size = 0, blockByte = -1, actor = -1, component = -1, point = -1, normal = -1;
+    int32_t size = 0, blockByte = -1, actor = -1, component = -1, physMaterial = -1, point = -1, normal = -1;
     uint8_t blockMask = 0;
 };
 
@@ -35,6 +35,8 @@ const Layout& Members() {
     l.size = R::StructSize(g_hitStruct);
     l.actor = R::FindPropertyOffset(g_hitStruct, L"Actor");
     l.component = R::FindPropertyOffset(g_hitStruct, L"Component");
+    l.physMaterial = R::FindPropertyOffset(g_hitStruct, L"PhysMaterial");
+    if (l.physMaterial + 8 > l.size) l.physMaterial = -1;  // read as no material, never past the struct
     l.point = R::FindPropertyOffset(g_hitStruct, L"ImpactPoint");
     l.normal = R::FindPropertyOffset(g_hitStruct, L"ImpactNormal");
     const bool block = R::FindBoolProperty(g_hitStruct, L"bBlockingHit", l.blockByte, l.blockMask);
@@ -47,13 +49,13 @@ const Layout& Members() {
     return l;
 }
 
-enum class Member : uint8_t { Actor, Component };
+enum class Member : uint8_t { Actor, Component, PhysMaterial };
 
 // The object a hit's weak pointer member resolves to through the object array, as the engine's own BreakHitResult
 // reads it; null when it is stale or the member did not resolve. The offsets are the ones Members() holds.
 void* Weak(const uint8_t* hit, Member m) {
     const Layout& l = Members();
-    const int32_t off = m == Member::Actor ? l.actor : l.component;
+    const int32_t off = m == Member::Actor ? l.actor : m == Member::Component ? l.component : l.physMaterial;
     if (off < 0) return nullptr;
     int32_t idx = 0, serial = 0;
     std::memcpy(&idx, hit + off, sizeof(idx));
@@ -143,6 +145,7 @@ bool Parse(const void* hit, int32_t bytes, Hit* out) {
     out->blocking = (b[l.blockByte] & l.blockMask) != 0;
     out->actor = Weak(b, Member::Actor);
     out->component = Weak(b, Member::Component);
+    out->physMaterial = Weak(b, Member::PhysMaterial);
     std::memcpy(&out->location, b + l.point, sizeof(FVector));
     std::memcpy(&out->normal, b + l.normal, sizeof(FVector));
     return true;

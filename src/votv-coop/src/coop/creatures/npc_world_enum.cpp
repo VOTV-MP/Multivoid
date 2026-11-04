@@ -166,6 +166,8 @@ constexpr ExSpawnSource kExSpawnSources[] = {
     {L"piramidSpawner_C",        nullptr},          // the piramid event chain
     {L"ticker_wispSpawner_C",    nullptr},          // the ambient sky wisps
     {L"ticker_egSpawner_C",      nullptr},          // the ambient night eggs, one eg_C per roll
+    {L"ticker_deerSpawner_C",    nullptr},          // the ambient deer
+    {L"ticker_treeSpawner_C",    nullptr},          // the walking trees
     {L"prop_coingun_C",          nullptr},          // the sell gun's coin mint
     {L"jellyfishPath_C",         nullptr},          // the space jellyfish's seven (world-actor lane)
     {L"trigger_eventer_C",       kEventerOutputs},  // the scheduler's dispatcher
@@ -267,7 +269,8 @@ void InstallExSpawnCatch() {
                 "trigger_wispSwarm_C -> wisp_C, piramidSpawner_C -> killerwisp_C + piramid2_C, "
                 "jellyfishPath_C -> jellyfish_C, trigger_eventer_C -> ventCrawler_C + superEgger_C, "
                 "grayEventController_C -> grayTest_C, superEgger_C + ticker_egSpawner_C -> eg_C, "
-                "mainGamemode_C -> geomOcta_C + eg_C, "
+                "mainGamemode_C -> geomOcta_C + eg_C, ticker_deerSpawner_C -> deer_C, "
+                "ticker_treeSpawner_C -> walkingTree_C, "
                 "tentacleBallsFollower_C -> tentacleBall_C; EX_CallMath spawns now enroll)");
     } else {
         UE_LOGW("npc-sync[ex-spawn]: InstallPostHook FAILED -- EX_CallMath creature spawns will "

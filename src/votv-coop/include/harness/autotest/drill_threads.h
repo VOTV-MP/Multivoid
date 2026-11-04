@@ -194,4 +194,13 @@ DWORD WINAPI RunEndDrillThread(LPVOID arg);
 // VOTVCOOP_RUN_SPILL, both peers -- harness/autotest/autotest_spill.cpp
 DWORD WINAPI SpillThread(LPVOID arg);
 
+// VOTVCOOP_RUN_AMBIENT_CREATURE -- the ambient creatures: one set of deer and walking trees, the host's
+DWORD WINAPI AmbientCreatureThread(LPVOID arg);
+
+// VOTVCOOP_RUN_AMBIENT_FIELD -- one set of hexahive holes, sus holes and beehive branches
+DWORD WINAPI AmbientFieldThread(LPVOID arg);
+
+// VOTVCOOP_RUN_SUS_HOLE -- a sus hole the host rolls around a client
+DWORD WINAPI SusHoleThread(LPVOID arg);
+
 }  // namespace harness::autotest
