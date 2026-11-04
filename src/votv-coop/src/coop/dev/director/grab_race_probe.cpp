@@ -152,7 +152,10 @@ const char* Judge(bool control, const Result& host, const Result& client, const 
     if (hostHolds == clientHolds) return hostHolds ? "both peers held" : "no peer held";
     const Result& other = hostHolds ? client : host;
     winner = hostHolds ? "host" : "client";
-    if (other.held != 0) return "the other peer also held";
+    // The refused grab is the game's own and holds until the host's word arrives, one round trip (docs/props.md's
+    // known limit; measured 1 sample of 157 on loopback): a hold above the minority share is the defect.
+    if (Most(other.held, other.samples) || other.held * 1.0 > (1.0 - kMajority) * other.samples)
+        return "the other peer also held";
     if (other.slot != (hostHolds ? 0 : 1) || !Most(other.slotCount, other.samples))
         return "the other peer's copy was not driven by the holder's slot";
     return nullptr;
