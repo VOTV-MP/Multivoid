@@ -159,6 +159,7 @@ void* g_getRotFn = nullptr;
 void* g_getVelFn = nullptr;
 void* g_setRotFn = nullptr;
 void* g_setTickFn = nullptr;
+void* g_isTickFn = nullptr;
 void* g_getScaleFn = nullptr;
 void* g_setScaleFn = nullptr;
 void* g_setLifeFn = nullptr;
@@ -189,6 +190,7 @@ bool ResolveActorFns() {
         if (!g_getVelFn) g_getVelFn = R::FindFunction(g_actorClass, P::name::GetActorVelocityFn);
         if (!g_setRotFn) g_setRotFn = R::FindFunction(g_actorClass, P::name::SetActorRotationFn);
         if (!g_setTickFn) g_setTickFn = R::FindFunction(g_actorClass, P::name::SetActorTickEnabledFn);
+        if (!g_isTickFn) g_isTickFn = R::FindFunction(g_actorClass, P::name::IsActorTickEnabledFn);
         if (!g_getScaleFn) g_getScaleFn = R::FindFunction(g_actorClass, P::name::GetActorScale3DFn);
         if (!g_setScaleFn) g_setScaleFn = R::FindFunction(g_actorClass, P::name::SetActorScale3DFn);
         if (!g_setLifeFn) g_setLifeFn = R::FindFunction(g_actorClass, P::name::SetLifeSpanFn);
@@ -590,6 +592,13 @@ bool SetActorTickEnabled(void* actor, bool enabled) {
     ParamFrame f(g_setTickFn);
     f.Set<bool>(L"bEnabled", enabled);
     return Call(actor, f);
+}
+
+bool IsActorTickEnabled(void* actor) {
+    if (!actor || !ResolveActorFns() || !g_isTickFn) return false;
+    ParamFrame f(g_isTickFn);
+    if (!Call(actor, f)) return false;
+    return f.Get<bool>(L"ReturnValue");
 }
 
 bool SetActorHiddenInGame(void* actor, bool hidden) {

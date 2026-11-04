@@ -221,6 +221,11 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // The slip drill: a zero-damage ragdoll with `dead` already set must be shown to re-enter the
     // death chain, and our seam shown to refuse the menu travel it asks for.
     SpawnIf("VOTVCOOP_RUN_SLIP_DRILL", "slip / death re-entry drill", &SlipDrillThread, role);
+
+    // The ambient creatures: deer and walking trees; dirt holes and beehive branches; a sus hole around a client.
+    SpawnIf("VOTVCOOP_RUN_AMBIENT_CREATURE", "ambient creature drill", &AmbientCreatureThread, role);
+    SpawnIf("VOTVCOOP_RUN_AMBIENT_FIELD", "ambient field drill", &AmbientFieldThread, role);
+    SpawnIf("VOTVCOOP_RUN_SUS_HOLE", "sus hole drill", &SusHoleThread, role);
 }
 
 }  // namespace harness::autotest

@@ -324,4 +324,11 @@ DWORD WINAPI MenuSpawnDrillThread(LPVOID arg);
 void RunRunEndDrill();  // the run-ending seam, solo host; env VOTVCOOP_RUN_RUNEND_DRILL=1
 DWORD WINAPI RunEndDrillThread(LPVOID arg);
 
+// The ambient creatures: one set of deer and walking trees, the host's. Gated by VOTVCOOP_RUN_AMBIENT_CREATURE.
+DWORD WINAPI AmbientCreatureThread(LPVOID arg);
+// One set of hexahive holes, sus holes and beehive branches. Gated by VOTVCOOP_RUN_AMBIENT_FIELD.
+DWORD WINAPI AmbientFieldThread(LPVOID arg);
+// A sus hole the host rolls around a client. Gated by VOTVCOOP_RUN_SUS_HOLE.
+DWORD WINAPI SusHoleThread(LPVOID arg);
+
 }  // namespace harness::autotest

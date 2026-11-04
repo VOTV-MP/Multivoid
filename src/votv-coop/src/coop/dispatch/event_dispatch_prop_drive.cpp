@@ -9,6 +9,8 @@
 
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
+#include "coop/creatures/ambient_creature_sync.h"
+#include "coop/creatures/ambient_fixture_sync.h"
 #include "coop/dev/container_parity.h"     // the container join drill's report receiver
 #include "coop/dev/prop_syncer_drill.h"    // the drill's filler receiver
 #include "coop/dev/pile_defer_report.h"    // the pile deferral drill's report receiver
@@ -171,6 +173,47 @@ bool HandlePropDriveEvent(net::Session& session,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         ::coop::dev::container_parity::OnChunk(chunk, slot);
+        break;
+    }
+    case net::ReliableKind::AmbientTreeState: {
+        // HOST->ALL.
+        if (session.role() == net::Role::Host) {
+            UE_LOGW("event_feed: AmbientTreeState from slot %d -- dropping (host-authored)", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::AmbientTreeStatePayload)) {
+            UE_LOGW("event_feed: AmbientTreeState payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::AmbientTreeStatePayload));
+            break;
+        }
+        net::AmbientTreeStatePayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.landed > 1 || !std::isfinite(p.scale) || p.scale <= 0.f) {
+            UE_LOGW("event_feed: AmbientTreeState malformed -- dropping");
+            break;
+        }
+        ::coop::ambient_creature_sync::OnTreeState(p);
+        break;
+    }
+    case net::ReliableKind::AmbientFixtureState: {
+        // HOST->ALL.
+        if (session.role() == net::Role::Host) {
+            UE_LOGW("event_feed: AmbientFixtureState from slot %d -- dropping (host-authored)", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::AmbientFixtureStatePayload)) {
+            UE_LOGW("event_feed: AmbientFixtureState payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::AmbientFixtureStatePayload));
+            break;
+        }
+        net::AmbientFixtureStatePayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.family > net::ambient_fixture::kBranch || p.alive > 1 || !std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z) ||
+            !std::isfinite(p.pitch) || !std::isfinite(p.yaw) || !std::isfinite(p.roll)) {
+            UE_LOGW("event_feed: AmbientFixtureState malformed -- dropping");
+            break;
+        }
+        ::coop::ambient_fixture_sync::OnState(p);
         break;
     }
     default:
