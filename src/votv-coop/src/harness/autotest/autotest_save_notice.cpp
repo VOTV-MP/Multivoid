@@ -131,7 +131,6 @@ void RunHost() {
     if (!Save("4-no-event-again", false)) return;
     const auto host = ReadCounts();
     Mark("host_done", std::to_string(host.savedOk) + " " + std::to_string(host.savedFailed));
-    UE_LOGI("save-drill: DONE");
     std::string heardText;
     if (!AwaitText("client_counts", heardText)) return;
     uint32_t heardOk = 0, heardFailed = 0;
@@ -144,6 +143,7 @@ void RunHost() {
         UE_LOGW("save-drill: VERDICT FAIL host=%u %u client=%u %u want=%u %u", host.savedOk, host.savedFailed,
                 heardOk, heardFailed, kWantOk, kWantFailed);
     }
+    UE_LOGI("save-drill: DONE");   // after the verdict: a run ends on DONE
 }
 
 void RunClient() {
