@@ -96,11 +96,11 @@ bool HandleEconomyEvent(net::Session& session,
 // and answer. PropDriveEnd on the host is a syncing client's End, handed to the claim judge; on a client
 // it is the host's End, applied by the stream's receiver. PropSyncClaim checks role()==Host AND a client
 // sender slot; PropSyncAnswer is the HOST->CLIENT verdict, refused from a client at the host's edge, and
-// PropHoldRefused the host's refusal of a second hold, to every client; FoodState a world food's condition,
-// host to all, FoodBite a client's bite and FoodRelease the food it let go, client to host, FoodHand the
-// food in a hand, holder to all; AmbientTreeState a walking tree's size and landing and AmbientFixtureState a
-// dirt hole's or beehive branch's place, host to all; SusHoleIntent a client's sus hole for the host to make,
-// dropped on a client. DevLoadFiller
+// PropHoldRefused the host's refusal of a second hold, to every client; PropToolFlags a toolgun's flag change,
+// from its user to all; FoodState a world food's condition, host to all, FoodBite a client's bite and FoodRelease
+// the food it let go, client to host, FoodHand the food in a hand, holder to all; AmbientTreeState a walking tree's
+// size and landing and AmbientFixtureState a dirt hole's or beehive branch's place, host to all; SusHoleIntent a
+// client's sus hole for the host to make, dropped on a client. DevLoadFiller
 // is the developer filler of the syncer drill's load arm, host to client; DevParityReport is the pile deferral
 // drill's report, client to host; DevContainerParity is the container join drill's.
 bool HandlePropDriveEvent(net::Session& session,

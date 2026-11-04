@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 281;
+inline constexpr uint16_t kProtocolVersion = 282;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1226,6 +1226,12 @@ enum class ReliableKind : uint8_t {
     // The host judges it (coop/world/plant_edit_gate) and answers a refused edit of a plant it holds with that plant's
     // PlantState. PlantStatePayload.
     PlantEdit = 225,
+    // ANY->ALL: a toolgun tool this peer's player used changed a keyed prop's static, frozen or sleep (the freeze,
+    // the unfreeze, the make-static). The tool runs on its user's machine alone, so every other copy kept the old
+    // flags; the user sends the prop's flags as the tool left them, and every peer whose player does not hold the
+    // prop sets them through prop_C's own setter. A client's copy is relayed to the other clients. Not pre-world.
+    // Late join: none, the snapshot rows carry the host's flags. PropToolFlagsPayload.
+    PropToolFlags = 235,
     // HOST->CLIENT: one decision of a Geom Octa, to be replayed into the client's own Blueprint (coop/creatures/
     // geom_octa_relay): op 0, an Aggro, the Octa took a target (the replay runs minSphere's begin-overlap handler with
     // the target's counterpart here), carrying the host's verdict count as the base; op 1, a FireVerdict, the host's
@@ -2135,6 +2141,17 @@ struct SusHoleIntentPayload {
 };
 static_assert(sizeof(SusHoleIntentPayload) == 12, "SusHoleIntentPayload must be 12 bytes");
 static_assert(sizeof(SusHoleIntentPayload) <= 256 - 20 - 8, "SusHoleIntentPayload must fit in one reliable datagram");
+
+// A toolgun tool changed a prop's flags (PropToolFlags): the prop by key, and its propspawn_flags as the tool left
+// them, read off the live prop (kLiveState set).
+struct PropToolFlagsPayload {
+    WireKey  key;          // 32 -- the prop's Key
+    uint8_t  physFlags;    // 1  -- propspawn_flags: kStatic, kFrozen, kSleep with kLiveState
+    uint8_t  _pad[3];      // 3  -- zero
+};
+static_assert(sizeof(PropToolFlagsPayload) == 36, "PropToolFlagsPayload must be 36 bytes");
+static_assert(sizeof(PropToolFlagsPayload) <= 256 - 20 - 8,
+              "PropToolFlagsPayload must fit in one reliable datagram");
 
 // One message of the drill filler (DevLoadFiller): its place in the run and the run's length; the rest is fill.
 struct DevLoadFillerPayload {
