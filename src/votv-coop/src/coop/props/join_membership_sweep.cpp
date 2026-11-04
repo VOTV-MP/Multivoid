@@ -71,6 +71,9 @@ std::chrono::steady_clock::time_point g_sweepArmedAt{};  // fire-log timing only
 // host wedged), load-tail quiescence is declared without a doom sweep so every consumer (the
 // steady drain, NPC adoption, the grab guards) un-sticks.
 constexpr int kBracketFlakeMs = 30000;
+// The valve's floor: an incomplete bracket leaves most of a loaded world unclaimed, hundreds of props, so a handful
+// doomed in a small universe is a real delta, not a partial snapshot.
+constexpr size_t kValveMinDoomed = 8;
 
 // The host snapshot bound `actor` (exact key, fuzzy or fresh spawn), so the sweep spares it. One
 // bool read when tracking is disarmed.
@@ -83,12 +86,19 @@ void RecordClaim(void* actor) {
 // per-player state actor (the inventory container) is this player's own save state, never host expressed: the sweep
 // once destroyed the client's, which fataled at the next GC purge. A thing this peer's player made is not divergence
 // (RecordSelfAuthored). The hand axis -- the local hotbar hand item and every remote hand mirror -- is player
-// expression no snapshot names: a hand item taken before the load tail settled was destroyed here.
+// expression no snapshot names: a hand item taken before the load tail settled was destroyed here. A prop with a
+// lifespan is no save state either: the pinecone spawner, which each peer runs around its own camera, gives its drops
+// 600 s, and a client's are its own whether they fall before the join settles or after (measured: a stick dropped in
+// the join window made 2 of 3 doomed and tripped the valve below).
 bool Spared(void* actor, const std::wstring& cls, bool onHandAxis) {
     if (onHandAxis) return true;
     const auto it = g_selfAuthored.find(actor);
     if (it != g_selfAuthored.end() && R::SlotSerial(R::InternalIndexOf(actor)) == it->second) return true;
-    return coop::prop_lifecycle::IsPerPlayerPropClass(cls);
+    if (coop::prop_lifecycle::IsPerPlayerPropClass(cls)) return true;
+    // A wire-suppressed variant (the hidden mushroom stage) is swept whatever its lifespan: the host keeps its own.
+    if (coop::prop_lifecycle::IsWireSuppressedPropClass(cls)) return false;
+    float lifeLeft = 0.f;
+    return E::TryGetActorLifeSpan(actor, lifeLeft) && lifeLeft > 0.f;
 }
 }  // namespace (file-local claim/sweep state)
 
@@ -415,16 +425,24 @@ static void RunDivergenceSweep_(void* localPlayer) {
     }
 
     // The valve: the client loaded the host's save, so a legitimate divergence is a small delta. A
-    // sweep that would destroy more than half the universe is an incomplete snapshot (the host
-    // re-seeded mid-connect and sent a tiny first bracket, racing the chunked drain), and
-    // destroying on it wipes the just-loaded world. Abort instead: the claimed stay converged, the
+    // sweep that would destroy more than half the universe, and more than kValveMinDoomed, is an
+    // incomplete snapshot (the host re-seeded mid-connect and sent a tiny first bracket, racing the
+    // chunked drain), and destroying on it wipes the just-loaded world. Abort instead: the claimed stay converged, the
     // unclaimed survive until a fuller bracket re-expresses them, and the host's PropDestroy stream
     // still removes real deletions.
-    if (inClass > 0 && static_cast<int>(doomed.size()) * 2 > inClass) {
+    if (inClass > 0 && doomed.size() > kValveMinDoomed && static_cast<int>(doomed.size()) * 2 > inClass) {
         UE_LOGW("join_membership_sweep: claim sweep ABORTED -- would destroy %zu of %d in-universe "
                 "actor(s) (>50%%); the host snapshot is INCOMPLETE (partial/racing bracket), not a "
                 "divergence. Keeping the loaded world (%d claimed stay converged).",
                 doomed.size(), inClass, claimedCount);
+        // Which props stay, so a log read can compare them with the host's world. Cold path, once per join.
+        for (size_t i = 0; i < doomed.size(); ++i) {
+            ue_wrap::FVector at{};
+            const bool placed = ue_wrap::engine::TryGetActorLocation(doomed[i], at);
+            UE_LOGI("join_membership_sweep: abort keeps '%ls' key='%ls' held=%d at (%.1f, %.1f, %.1f)%s",
+                    R::ClassNameOf(doomed[i]).c_str(), ue_wrap::prop::GetInteractableKeyString(doomed[i]).c_str(),
+                    coop::trash_native_hold::IsHeld(doomed[i]) ? 1 : 0, at.X, at.Y, at.Z, placed ? "" : " (no place)");
+        }
         // The identity reconcile already ran at the fire edge, before this sweep. The deferred
         // queues survive the bracket; only the spawn-time index resets.
         g_claimedActors.clear();

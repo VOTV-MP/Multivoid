@@ -90,6 +90,9 @@
 #include "coop/props/prop_food_sync.h"
 #include "coop/world/plant_gate.h"  // the plant bodies a client refuses: its counts end with the session
 #include "coop/world/plant_sync.h"
+#include "coop/props/prop_settle.h"
+#include "coop/props/prop_fire_sync.h"
+#include "coop/props/prop_tool_flags.h"
 #include "coop/props/prop_stick_sync.h"  // wall-attachable stick mirror (camera-on-wall)
 #include "coop/dev/dev_lanes.h"  // the developer drills, probes and selftests, wired in one place
 #include "coop/dev/perf_probe.h"
@@ -355,6 +358,8 @@ void Install(coop::net::Session& session) {
     coop::kerfur_menu_input::Install(&session);  // client radial-menu verb detect (InpActEvt_use PRE -- the actionName dispatch is PE-invisible) -> kerfur_command relay
     coop::kerfur_form_assembler::Install(&session);  // script-body gate consumer: watch the two conversion verbs
     coop::prop_hold_claim::Install(&session);  // one hold per keyed prop: the host keeps the first and refuses a second
+    coop::prop_fire_sync::Install(&session);  // the host burns every keyed prop
+    coop::prop_tool_flags::Install(&session);  // a toolgun's freeze, unfreeze or make-static: every tool_*_C's init watched
     coop::prop_stick_sync::Install(&session);  // wall-attachable stick mirror (camera-on-wall -- commit observer -> PropStickState; receiver replays forceStick)
     coop::sleep_sync::Install(&session);  // who rests: each peer's rest state (client -> host -> clients) and the host's sleeping flag
     coop::sleep_rest::Install(&session);  // a client's rest at the native rate: its own sleep watch and the factor on its body and effects
@@ -493,6 +498,9 @@ DisconnectStats DisconnectAll() {
     coop::food_tick_gate::OnDisconnect();  // say the refused food ticks, start the next session from zero
     coop::plant_gate::OnDisconnect();  // say the refused counts, start the next session from zero
     coop::plant_sync::OnDisconnect();
+    coop::prop_settle::OnDisconnect();  // drop the watched releases
+    coop::prop_fire_sync::OnDisconnect();
+    coop::prop_tool_flags::OnDisconnect();  // drop the pending press and the counters
     coop::prop_stick_sync::OnDisconnect();  // drop commit-pending stick records
     coop::sleepingbag_sync::OnDisconnect();
     coop::item_activate::OnDisconnect();
@@ -763,6 +771,9 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:ambient_creature"}; coop::ambient_creature_sync::Tick(); }  // the walking trees' size and landing
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:ambient_fixture"}; coop::ambient_fixture_sync::Tick(); }  // the holes' and branches' poll
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sus_hole_intent"}; coop::sus_hole_intent::Tick(session); }  // CLIENT: its stamped sus holes go to the host; HOST: the queued ones are made
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_settle"}; coop::prop_settle::Tick(session); }  // the props this peer let go of: where each comes to rest goes out (an empty list costs one size check)
+    coop::prop_fire_sync::Tick();  // the burning props' poll
+    coop::prop_tool_flags::Tick();  // the init watch's names resolve until it is live (one flag test after)
     { PP::Scope _s{PP::Bucket::Balance};       coop::balance_sync::Tick(); }  // host polls saveSlot.Points + broadcasts on change; client retries the pending mirror apply
     { PP::Scope _s{PP::Bucket::Balance};       ue_wrap::ScopedWalkTimer _w{"sync:upgrades"}; coop::upgrade_sync::Tick(session); }  // host polls the upgrade struct + broadcasts on change, and runs one queued purchase a tick a client; client retries the pending mirror
     coop::dev::dev_lanes::TickProbes(session, isConnected, isHost);  // [dev] the RE probes, each self-installing when its knob is set

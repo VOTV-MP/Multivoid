@@ -60,4 +60,11 @@ void OnDisconnect();
 // Host receive: raw bytes, as the dispatch hands them; the format check and its refusal live here.
 void OnIntentReceived(int senderSlot, const uint8_t* bytes, uint16_t len);
 
+// Whether the local player's own lighter or torch verb is running now, on the tool in the engine's hand: a light inside it
+// is the player's. Read by the prop fire lane for the props that are not rockets. Game thread.
+bool LocalLightRunning();
+
+// Whether `obj` is a salt rocket, whose light this lane owns. Game thread.
+bool IsSaltRocket(void* obj);
+
 }  // namespace coop::salt_rocket_ignite

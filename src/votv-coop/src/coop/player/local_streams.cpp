@@ -19,8 +19,9 @@
 #include "coop/player/skin_effects.h"  // own-body step FX at the wire-pose stride
 #include "coop/props/trash_channel.h"   // CtxForEid, the trash sync-time context
 #include "coop/props/prop_element_tracker.h"
-#include "coop/props/prop_drive_host.h"    // Coast: the host's own throw streams to rest
 #include "coop/props/prop_hold_claim.h"    // AdmitLocalGrab, IsOwnHoldRefused: one hold per keyed prop
+#include "coop/props/prop_settle.h"        // Watch: where a released prop rests
+#include "coop/props/prop_drive_host.h"    // Coast: the host's own throw streams to rest
 #include "coop/props/prop_syncer.h"        // Claim: a dragged swinger's parent prop
 #include "coop/props/prop_throw.h"        // ThrowSeqFor: a release of a prop the game's throw launched
 #include "coop/props/prop_wire_parity.h"  // PhysFlagsOf, the flags a release carries
@@ -356,6 +357,8 @@ void SendHeldRelease(coop::net::Session& session) {
             }
         }
         session.SendPropRelease(rel);
+        // Unthrown, every copy falls by its own physics from here; where this one rests goes out once it does.
+        if (rel.hasPose && throwSeq == 0) coop::prop_settle::Watch(g_lastHeldProp.Raw(), g_holdGen, g_lastHeldKey);
         coop::dev::swinger_drill::NoteReleased(g_lastHeldProp.Raw());
         // This peer's own release: a join-window correction armed before the hold is older than
         // where the prop was put down, and would snap it back once the drain's grab deferral ends.

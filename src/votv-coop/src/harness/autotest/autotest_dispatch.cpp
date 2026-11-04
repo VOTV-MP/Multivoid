@@ -260,6 +260,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // The cremator drill: the host pulls its lever and the client's copy must show the run, then show it again after a
     // rejoin (1); a client sent into the running machine must die by it (g3).
     SpawnIfEnum(coop::config_registry::rows::cremator_drill, "cremator drill", &coop::dev::cremator_drill::Thread, role);
+    SpawnIf("VOTVCOOP_RUN_JOIN_DROP", "join drop drill", &JoinDropThread, role);
+    SpawnIf("VOTVCOOP_RUN_PROP_FIRE", "burning prop drill", &PropFireThread, role);
 }
 
 }  // namespace harness::autotest

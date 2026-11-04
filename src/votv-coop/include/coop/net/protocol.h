@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 277;
+inline constexpr uint16_t kProtocolVersion = 278;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1223,6 +1223,27 @@ enum class ReliableKind : uint8_t {
     // The host judges it (coop/world/plant_edit_gate) and answers a refused edit of a plant it holds with that plant's
     // PlantState. PlantStatePayload.
     PlantEdit = 225,
+    // ANY->ALL: a prop this peer let go of has come to rest here, and where. Each copy falls by its own physics
+    // from the release, so the copies can rest apart; the releaser's copy is the one its player watched, and every
+    // other peer whose copy no hold, drive or park moves puts it there. The holder sends it once per release, for a
+    // keyed prop that left the hand unfrozen and was not thrown (a throw is streamed to rest); a new hold, a drive or
+    // a ten-second bound cancels it. A client's copy is relayed to the other clients, on the lane of the release it
+    // follows by at least the rest time; a settle that still passes its release is dropped as no released hold.
+    // Not pre-world. Late join: none, the snapshot carries the host's pose. PropSettlePayload.
+    PropSettle = 229,
+    // ANY->ALL: a toolgun tool this peer's player used changed a keyed prop's static, frozen or sleep (the freeze,
+    // the unfreeze, the make-static). The tool runs on its user's machine alone, so every other copy kept the old
+    // flags; the user sends the prop's flags as the tool left them, and every peer whose player does not hold the
+    // prop sets them through prop_C's own setter. A client's copy is relayed to the other clients. Not pre-world.
+    // Late join: none, the snapshot rows carry the host's flags. PropToolFlagsPayload.
+    PropToolFlags = 230,
+    // HOST->ALL: a keyed prop of the host's burns, with its flame's fuel and speed, at the edge, on a refuel and every 2 s while
+    // it burns, or it stopped. A client's copy shows that flame and burns nothing down. Not relayed, not pre-world. Late join:
+    // every burning prop again at the ready edge. PropFirePayload.
+    PropFireState = 231,
+    // CLIENT->HOST: this client's player lit a keyed prop with a lighter or a torch, with the fuel the light gives. Never relayed;
+    // the host lights its own copy and its next PropFireState answers. PropFirePayload.
+    PropFireRequest = 232,
     // HOST->CLIENT: one decision of a Geom Octa, to be replayed into the client's own Blueprint (coop/creatures/
     // geom_octa_relay): op 0, an Aggro, the Octa took a target (the replay runs minSphere's begin-overlap handler with
     // the target's counterpart here), carrying the host's verdict count as the base; op 1, a FireVerdict, the host's
@@ -2047,6 +2068,41 @@ struct SusHoleIntentPayload {
 };
 static_assert(sizeof(SusHoleIntentPayload) == 12, "SusHoleIntentPayload must be 12 bytes");
 static_assert(sizeof(SusHoleIntentPayload) <= 256 - 20 - 8, "SusHoleIntentPayload must fit in one reliable datagram");
+
+// Where a released prop came to rest on its releaser (PropSettle): the prop by key, its world transform at rest,
+// its frozen and sleep there, and the hold whose release it follows.
+struct PropSettlePayload {
+    WireKey  key;                          // 32 -- the prop's Key
+    float    locX, locY, locZ;             // 12 -- world cm
+    float    rotPitch, rotYaw, rotRoll;    // 12 -- degrees
+    uint16_t holdGen;                      // 2  -- the released hold
+    uint8_t  physFlags;                    // 1  -- propspawn_flags of the copy at rest
+    uint8_t  _pad;                         // 1  -- zero
+};
+static_assert(sizeof(PropSettlePayload) == 60, "PropSettlePayload must be 60 bytes");
+static_assert(sizeof(PropSettlePayload) <= 256 - 20 - 8,
+              "PropSettlePayload must fit in one reliable datagram");
+
+// A toolgun tool changed a prop's flags (PropToolFlags): the prop by key, and its propspawn_flags as the tool left
+// them, read off the live prop (kLiveState set).
+struct PropToolFlagsPayload {
+    WireKey  key;          // 32 -- the prop's Key
+    uint8_t  physFlags;    // 1  -- propspawn_flags: kStatic, kFrozen, kSleep with kLiveState
+    uint8_t  _pad[3];      // 3  -- zero
+};
+static_assert(sizeof(PropToolFlagsPayload) == 36, "PropToolFlagsPayload must be 36 bytes");
+static_assert(sizeof(PropToolFlagsPayload) <= 256 - 20 - 8,
+              "PropToolFlagsPayload must fit in one reliable datagram");
+
+// A burning prop (PropFireState), or a client's light (PropFireRequest).
+struct PropFirePayload {
+    WireKey key;        // 32 -- the prop's key
+    float   fuel;       // 4 -- the flame's fuel, or the light's
+    float   fuelSpeed;  // 4 -- how fast the flame spends it; 0 on a request
+    uint8_t burning;    // 1 -- 0: the flame went out
+    uint8_t _pad[3];    // 3 -- zero
+};
+static_assert(sizeof(PropFirePayload) == 44, "PropFirePayload must be 44 bytes");
 
 // One message of the drill filler (DevLoadFiller): its place in the run and the run's length; the rest is fill.
 struct DevLoadFillerPayload {

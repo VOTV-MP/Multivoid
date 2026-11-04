@@ -260,6 +260,10 @@ void SayCounters(const char* when) {
 
 }  // namespace
 
+bool LocalLightRunning() { return RunningTool() != kNoTool; }
+
+bool IsSaltRocket(void* obj) { return detail::IsRocket(obj); }
+
 namespace detail {
 
 coop::net::Session* SessionPtr() { return g_session.load(std::memory_order_acquire); }

@@ -81,6 +81,13 @@ int DrivingSlotOf(void* actor, int except) {
     return -1;
 }
 
+bool IsHoldReleased(int slot, uint16_t holdGen) {
+    UE_ASSERT_GAME_THREAD("g_holds (remote_prop::IsHoldReleased)");
+    if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers) || holdGen == 0) return false;
+    const HoldGate& h = g_holds[slot];
+    return IsHoldClosed(h, holdGen) && !(h.haveDenied && h.deniedGen == holdGen);
+}
+
 void RefuseHold(int slot, uint16_t holdGen) {
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::RefuseHold)");
     if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers) || holdGen == 0) return;
