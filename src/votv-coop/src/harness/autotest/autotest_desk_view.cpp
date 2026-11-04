@@ -3,7 +3,8 @@
 // The bounds (remapValue, moved by the desk's own scrollRemap verbs) and the mode (visualizerMode, graph or spectrogram).
 // The host changes both before the client joins, so the join carries them; then the host moves a bound, and the client
 // moves a bound and flips the mode. Each peer logs `desk-view: STATE <step> min= max= mode=` after each step for the
-// driver to compare; a file per step orders the two peers. Gated by VOTVCOOP_RUN_DESK_VIEW; the folder is
+// driver to compare; a file per step orders the two peers (host_prepared carries the host's state as text, and the
+// joiner reads its own only once it equals that). Gated by VOTVCOOP_RUN_DESK_VIEW; the folder is
 // VOTVCOOP_CAN_DIR. Signals count only when written after this drill began, and every wait is on a game state with
 // a bound, never on a clock.
 
@@ -24,6 +25,8 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <string>
 
 namespace harness::autotest {
 namespace {
@@ -32,6 +35,7 @@ namespace R  = ue_wrap::reflection;
 namespace CD = ue_wrap::console_desk;
 namespace PS = harness::autotest::peer_signal;
 using PS::Await;
+using PS::AwaitText;
 using PS::Mark;
 using PS::WaitFor;
 
@@ -58,6 +62,13 @@ View ReadView() {
         v.mode = sc.visualizerMode;
     });
     return v;
+}
+
+// `min max mode`, formatted as the STATE line formats them: the host sends this text and the joiner compares its own.
+std::string FormatView(const View& v) {
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "%.2f %.2f %d", v.mn, v.mx, v.mode ? 1 : 0);
+    return buf;
 }
 
 bool Differs(float a, float b) { return std::fabs(a - b) > 1e-4f; }
@@ -114,7 +125,7 @@ void RunHost() {
     FlipMode();
     WaitViewChanged(base, false, true, true);
     LogState("0-before-join");
-    Mark("host_prepared");
+    Mark("host_prepared", FormatView(ReadView()));
     if (!Await("client_ready")) return;
     const View beforeMin = ReadView();
     Verb(L"scrollRemapMinUp");
@@ -144,6 +155,14 @@ void RunClient() {
             return have;
         }))
         return;
+    // The join snapshot applies after the puppet shows: read the state only once it equals what the host prepared.
+    // host_prepared is marked before the host awaits client_ready, so this wait cannot deadlock.
+    std::string hostState;
+    if (!AwaitText("host_prepared", hostState)) return;
+    WaitFor("the host's desk state arrived", 30, [&] {
+        const View v = ReadView();
+        return v.ok && FormatView(v) == hostState;
+    }, false);
     LogState("1-after-join");
     const View joined = ReadView();
     Mark("client_ready");

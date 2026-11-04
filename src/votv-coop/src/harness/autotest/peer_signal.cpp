@@ -44,16 +44,26 @@ bool Begin(const char* logTag) {
     return true;
 }
 
-void Mark(const char* name) {
-    std::ofstream(g_dir + "\\" + name, std::ios::binary | std::ios::trunc) << "x";
+void Mark(const char* name) { Mark(name, "x"); }
+
+void Mark(const char* name, const std::string& text) {
+    std::ofstream(g_dir + "\\" + name, std::ios::binary | std::ios::trunc) << text;
 }
 
 bool Await(const char* name, int seconds) {
+    std::string unused;
+    return AwaitText(name, unused, seconds);
+}
+
+bool AwaitText(const char* name, std::string& out, int seconds) {
     for (int i = 0; i < seconds * 10; ++i) {
         const std::string path = g_dir + "\\" + name;
         std::ifstream f(path, std::ios::binary);
         std::string s;
-        if (f && std::getline(f, s) && !s.empty() && WrittenSinceStart(path)) return true;
+        if (f && std::getline(f, s) && !s.empty() && WrittenSinceStart(path)) {
+            out = s;
+            return true;
+        }
         ::Sleep(100);
     }
     UE_LOGW("%hs: VERDICT ABORT -- no '%hs' from the other peer", g_tag.c_str(), name);

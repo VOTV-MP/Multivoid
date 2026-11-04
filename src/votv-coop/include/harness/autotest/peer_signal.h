@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <string>
+
 namespace harness::autotest::peer_signal {
 
 // Reads VOTVCOOP_CAN_DIR, records the run start and remembers `logTag` for the ABORT lines. Logs
@@ -16,9 +18,15 @@ bool Begin(const char* logTag);
 // Leaves the signal `name` for the other peer.
 void Mark(const char* name);
 
+// Leaves the signal `name` carrying `text` (one line) for the other peer to read with AwaitText.
+void Mark(const char* name, const std::string& text);
+
 // Waits for the other peer's signal `name`, written since Begin. A timeout logs
 // `<tag>: VERDICT ABORT -- no '<name>' from the other peer` and returns false.
 bool Await(const char* name, int seconds = 240);
+
+// Await, and `out` receives the signal's first line. Same fresh-only rule and the same ABORT line on a timeout.
+bool AwaitText(const char* name, std::string& out, int seconds = 240);
 
 namespace detail {
 void SleepStep();                                    // one 100 ms poll step
