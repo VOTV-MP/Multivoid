@@ -33,8 +33,7 @@ bool     g_subscribed = false;
 enum class Reg : uint8_t { Pending, Registered, Refused };
 Reg      g_reg = Reg::Pending;
 bool     g_settled = false;
-uint32_t g_saves = 0;            // HOST: the save attempts this session
-uint32_t g_heard = 0;            // CLIENT: the host's save attempts this session
+Counts   g_counts;               // HOST: the save attempts this session by outcome; CLIENT: the ones heard
 bool     g_unknownSaid = false;  // HOST: an event state that could not be read is said once
 
 coop::peer_action_feed::Action LineFor(coop::net::WorldSaveOutcome o) {
@@ -45,11 +44,13 @@ coop::peer_action_feed::Action LineFor(coop::net::WorldSaveOutcome o) {
 // HOST: one save attempt reaches every player.
 void Report(coop::net::Session& s, coop::net::WorldSaveOutcome outcome) {
     coop::net::WorldSavedPayload p{};
-    p.saveNumber = ++g_saves;
+    (outcome == coop::net::WorldSaveOutcome::Saved ? g_counts.savedOk : g_counts.savedFailed)++;
+    const uint32_t saves = g_counts.savedOk + g_counts.savedFailed;
+    p.saveNumber = saves;
     p.outcome = static_cast<uint8_t>(outcome);
     const bool sent = s.SendReliable(coop::net::ReliableKind::WorldSaved, &p, sizeof(p));
     coop::peer_action_feed::AnnounceDirect(0, LineFor(outcome));
-    UE_LOGI("save_notice: the host's save (#%u) %s -- WorldSaved %s", g_saves,
+    UE_LOGI("save_notice: the host's save (#%u) %s -- WorldSaved %s", saves,
             outcome == coop::net::WorldSaveOutcome::Saved ? "took" : "did not take: an event is running",
             sent ? "sent" : "had no peer");
 }
@@ -116,18 +117,22 @@ void Tick() {
 void OnWorldSaved(const coop::net::WorldSavedPayload& p) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Client) return;
-    ++g_heard;
     const auto outcome = static_cast<coop::net::WorldSaveOutcome>(p.outcome);
+    (outcome == coop::net::WorldSaveOutcome::Saved ? g_counts.heardOk : g_counts.heardFailed)++;
+    const uint32_t heard = g_counts.heardOk + g_counts.heardFailed;
     coop::peer_action_feed::AnnounceDirect(0, LineFor(outcome));
     UE_LOGI("save_notice: the host %s (its #%u, heard #%u)",
             outcome == coop::net::WorldSaveOutcome::Saved ? "saved the world" : "tried to save during an event",
-            p.saveNumber, g_heard);
+            p.saveNumber, heard);
 }
 
+Counts GetCounts() { return g_counts; }
+
 void OnDisconnect() {
-    if (g_saves || g_heard) UE_LOGI("save_notice: session end -- saved=%u heard=%u", g_saves, g_heard);
-    g_saves = 0;
-    g_heard = 0;
+    const uint32_t saves = g_counts.savedOk + g_counts.savedFailed;
+    const uint32_t heard = g_counts.heardOk + g_counts.heardFailed;
+    if (saves || heard) UE_LOGI("save_notice: session end -- saved=%u heard=%u", saves, heard);
+    g_counts = Counts{};
     g_unknownSaid = false;
 }
 

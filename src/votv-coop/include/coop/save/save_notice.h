@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace coop::net {
 class Session;
 struct WorldSavedPayload;
@@ -30,6 +32,13 @@ void Tick();
 
 // CLIENT: the host saved its world, or tried to during an event. Validated at the router.
 void OnWorldSaved(const coop::net::WorldSavedPayload& p);
+
+// The save attempts this session by outcome: the host's own (each WorldSaved it sends) and a client's heard ones.
+struct Counts {
+    uint32_t savedOk = 0, savedFailed = 0, heardOk = 0, heardFailed = 0;
+};
+// Read-only, for drills. Game thread.
+Counts GetCounts();
 
 // Session end: the save count and the once-said latches. Game thread.
 void OnDisconnect();
