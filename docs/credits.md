@@ -40,6 +40,7 @@ from `git shortlog -sne` and fold each person's identity variants together.
 | [**archhn0madd**](https://github.com/archhn0madd) | code | Rejoin without a relaunch — the boot poll answered from the dying world | 1 commit |
 | [**AwazonDotCom**](https://github.com/AwazonDotCom) | code | A floppy row lost its line breaks on the way to a client, so the server-data row a host's dish writes, hash code included, did not parse there; and a drive rack written by two lanes at once ([#53](https://github.com/VOTV-MP/Multivoid/pull/53)) | 2 commits · unreleased |
 | [**gust138**](https://github.com/gust138) | code | A drive box or reel case changed twice in quick succession lost its last change on the other peers, and a client's coin pickup credited and destroyed the coin before the host agreed ([#64](https://github.com/VOTV-MP/Multivoid/pull/64)) | 5 commits |
+| [**Ghezra**](https://github.com/Ghezra) | code | A remote player's own body cut a silhouette out of its flashlight beam on every other screen ([#71](https://github.com/VOTV-MP/Multivoid/pull/71)); an empty battery left the other peers' copy of a player lit ([#79](https://github.com/VOTV-MP/Multivoid/pull/79)); a link fix for the Steam networking header ([#66](https://github.com/VOTV-MP/Multivoid/pull/66)) | 4 commits · unreleased |
 | **Moddy** | review · design | The architecture and documentation review that became the UE4SS move; the public UE-Modding-Tools pointer that became the blueprint-CFG rung and the migration scanner (patternsleuth); and design published for [Relay](https://github.com/modestimpala/Relay), Moddy's Blueprint networking API for VOTV ([Thunderstore](https://thunderstore.io/c/voices-of-the-void/p/Moddy/Relay/)), in its README and the [README Blueprint](https://blueprintue.com/blueprint/g3s09x9c/) that README links: the watch surface on a Blueprint function, a watch that reads the parameters before the call and can cancel it, and one that only observes after it, which became the script-body gate; the readable join reason and stable diagnostic codes, which became the join screen's named steps and the end-reason codes; the list of cheap edge protections, of which two were missing here: a per-source limit on connections and a private access list on the identity key file; the rule columns that make an actor's own save record its spawn payload, the general form of what this project's prop save-data work was building case by case; the client-only `Quiesce` column, which made this project state its parking rule once and read every park against it; the one paragraph on container handling, which made it write down and measure its own container invariants; the note that a watch on a parent class misses a child's override, which sent us to audit every hook we install, which found three seams that had never installed and two verbs called on the wrong class; and the list of what a returning player's profile covers, which is the list this project's per-player profile now carries | b122 · b143 · 2026-09-02 · b153 · b157 · b160 · b161 · b167 |
 | **SentientYeet** | review | The substrate critique that re-opened the loader decision | b143 |
 | **Violet** | report | ~9 FPS for a friend joining on Linux — five separate defects behind it | b134 |
@@ -256,6 +257,20 @@ Community commits are adopted with their **original authorship preserved**
 - **A balance nobody took** (the same request): the host now resends its balance until a peer accepts it.
 
 ---
+
+### Ghezra
+- **A beam with a hole in it** ([#71](https://github.com/VOTV-MP/Multivoid/pull/71)): a remote player's flashlight cone starts inside its head, and the game
+  turns shadow casting off on a real player's two body meshes but a puppet kept the class default, so its body
+  cut a flickering silhouette out of its own beam on every other screen. The puppet's spawn now switches both off
+  through the engine's setter. The commits are kept as written; the beam drill logs the flags, `CastShadow=1` on
+  both meshes without the fix and `0` with it.
+- **A battery that ran out for one peer only** ([#79](https://github.com/VOTV-MP/Multivoid/pull/79)): at empty the game's tick clears the flashlight bool and
+  hides the light without calling a function, so nothing went out and the others' puppet stayed lit. The sender
+  now compares the bool with what it last sent. Kept as written; the drill was made to read only its own run's
+  signals and to wait on the game instead of fixed delays (the second of two runs in one folder had judged the
+  first run's signals), and it fails both directions without the fix.
+- **A header for the linker** ([#66](https://github.com/VOTV-MP/Multivoid/pull/66)): `SteamNetworkingIPAddr::ToString`'s inline body lives in
+  `isteamnetworkingutils.h`, which `session_receive.cpp` now includes instead of relying on another file to.
 
 ## Reports
 
