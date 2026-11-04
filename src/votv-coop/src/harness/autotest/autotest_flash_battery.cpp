@@ -5,7 +5,8 @@
 // empty the tick hides the light and clears the bool without calling a function. The other peer reads its puppet's
 // light with the flashlight on and after the drain. Client first, then host; each direction logs
 // `flash-battery: VERDICT <owner> PASS|FAIL`. Gated by VOTVCOOP_RUN_FLASH_BATTERY; the peers' shared folder is
-// VOTVCOOP_CAN_DIR.
+// VOTVCOOP_CAN_DIR. Signals count only when written after this drill began, and every wait is on a game state with
+// a bound, never on a clock.
 
 #include "harness/autotest.h"
 
@@ -35,6 +36,7 @@ namespace E = ue_wrap::engine;
 namespace R = ue_wrap::reflection;
 
 std::string g_dir;
+uint64_t g_start = 0;  // FILETIME of this peer's drill start
 
 template <class Fn>
 void OnGameThread(Fn&& fn) {
@@ -45,14 +47,38 @@ void Mark(const std::string& name) {
     std::ofstream(g_dir + "\\" + name, std::ios::binary | std::ios::trunc) << "x";
 }
 
+// A signal written before this peer's drill began is an earlier run's, so it does not count.
+bool WrittenSinceStart(const std::string& path) {
+    const int n = ::MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, nullptr, 0);
+    if (n <= 0) return false;
+    std::wstring w(static_cast<size_t>(n), L'\0');
+    ::MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, w.data(), n);
+    WIN32_FILE_ATTRIBUTE_DATA a{};
+    if (!::GetFileAttributesExW(w.c_str(), GetFileExInfoStandard, &a)) return false;
+    const uint64_t t = (static_cast<uint64_t>(a.ftLastWriteTime.dwHighDateTime) << 32) | a.ftLastWriteTime.dwLowDateTime;
+    return t >= g_start;
+}
+
 bool Await(const std::string& name, int seconds = 240) {
     for (int i = 0; i < seconds * 10; ++i) {
-        std::ifstream f(g_dir + "\\" + name, std::ios::binary);
+        const std::string path = g_dir + "\\" + name;
+        std::ifstream f(path, std::ios::binary);
         std::string s;
-        if (f && std::getline(f, s) && !s.empty()) return true;
+        if (f && std::getline(f, s) && !s.empty() && WrittenSinceStart(path)) return true;
         ::Sleep(100);
     }
     UE_LOGW("flash-battery: VERDICT ABORT -- no '%hs' from the other peer", name.c_str());
+    return false;
+}
+
+// Polls a game state every 100 ms for at most boundSeconds. A timeout is an ABORT unless the caller judges it.
+template <class Fn>
+bool WaitFor(const char* what, int boundSeconds, Fn pred, bool abortOnTimeout = true) {
+    for (int i = 0; i < boundSeconds * 10; ++i) {
+        if (pred()) return true;
+        ::Sleep(100);
+    }
+    if (abortOnTimeout) UE_LOGW("flash-battery: VERDICT ABORT -- %hs not within %ds", what, boundSeconds);
     return false;
 }
 
@@ -72,14 +98,30 @@ void RunOwner(const std::string& who) {
         if (local) coop::dev::flashlight_setup::EnsureFlashlightReady(local);
     });
     if (!local) { UE_LOGW("flash-battery: VERDICT ABORT -- no local player"); return; }
-    ::Sleep(2000);
+    if (!WaitFor("the local flashlight readable", 30, [&] {
+            bool ok = false;
+            OnGameThread([&] {
+                E::MainPlayerFlashlightState fl{};
+                ok = E::ReadMainPlayerFlashlightState(local, fl);
+            });
+            return ok;
+        }))
+        return;
     bool on = coop::item_activate::DebugForceToggle(local);
     if (!on) on = coop::item_activate::DebugForceToggle(local);
     UE_LOGI("flash-battery: %hs switched its flashlight on (on=%d)", who.c_str(), on ? 1 : 0);
     Mark(who + "_on");
     if (!Await(who + "_seen_on")) return;
     OnGameThread([&] { ue_wrap::vitals::Write(ue_wrap::vitals::Field::Battery, 0.02f); });
-    ::Sleep(4000);
+    if (!WaitFor("the game's tick switching the flashlight off", 30, [&] {
+            bool off = false;
+            OnGameThread([&] {
+                E::MainPlayerFlashlightState fl{};
+                off = E::ReadMainPlayerFlashlightState(local, fl) && !fl.flashlight;
+            });
+            return off;
+        }))
+        return;
     OnGameThread([&] {
         E::MainPlayerFlashlightState fl{};
         const bool read = E::ReadMainPlayerFlashlightState(local, fl);
@@ -90,6 +132,7 @@ void RunOwner(const std::string& who) {
     Mark(who + "_drained");
 }
 
+// Logs only when the (visible, intensity>0) pair changes, so a poll keeps the transitions and not the spam.
 bool PuppetLit(uint8_t ownerSlot) {
     bool lit = false;
     OnGameThread([&] {
@@ -100,8 +143,16 @@ bool PuppetLit(uint8_t ownerSlot) {
         if (!light || !E::ReadFlashlightSnapshot(light, snap)) return;
         const bool visible = Visible(light);
         lit = visible && snap.intensity > 0.f;
-        UE_LOGI("flash-battery: puppet light bVisible=%d intensity=%.2f (offset read %d)", visible ? 1 : 0,
-                snap.intensity, snap.visible ? 1 : 0);
+        static int lastVisible = -1;
+        static int lastPositive = -1;
+        const int vis = visible ? 1 : 0;
+        const int pos = snap.intensity > 0.f ? 1 : 0;
+        if (vis != lastVisible || pos != lastPositive) {
+            lastVisible = vis;
+            lastPositive = pos;
+            UE_LOGI("flash-battery: puppet light bVisible=%d intensity=%.2f (offset read %d)", vis, snap.intensity,
+                    snap.visible ? 1 : 0);
+        }
     });
     return lit;
 }
@@ -109,21 +160,23 @@ bool PuppetLit(uint8_t ownerSlot) {
 // The other peer's half: the owner's puppet, lit and then dark.
 void RunWatcher(const std::string& who, uint8_t ownerSlot) {
     if (!Await(who + "_on")) return;
-    ::Sleep(2000);
-    const bool before = PuppetLit(ownerSlot);
+    const bool before = WaitFor("the owner's puppet lit", 30, [&] { return PuppetLit(ownerSlot); });
     UE_LOGI("flash-battery: %hs's puppet with the flashlight on: lit=%d", who.c_str(), before ? 1 : 0);
     Mark(who + "_seen_on");
     if (!Await(who + "_drained")) return;
-    ::Sleep(1000);
-    const bool after = PuppetLit(ownerSlot);
-    UE_LOGI("flash-battery: %hs's puppet after the drain: lit=%d", who.c_str(), after ? 1 : 0);
-    UE_LOGI("flash-battery: VERDICT %hs %hs", who.c_str(), before && !after ? "PASS" : "FAIL");
+    // A timeout is the FAIL itself (the light stays lit), so this wait logs nothing beyond the verdict.
+    const bool afterDark = WaitFor("the owner's puppet dark", 30, [&] { return !PuppetLit(ownerSlot); }, false);
+    UE_LOGI("flash-battery: %hs's puppet after the drain: lit=%d", who.c_str(), afterDark ? 0 : 1);
+    UE_LOGI("flash-battery: VERDICT %hs %hs", who.c_str(), before && afterDark ? "PASS" : "FAIL");
     Mark(who + "_judged");
 }
 
 }  // namespace
 
 DWORD WINAPI FlashBatteryThread(LPVOID /*arg*/) {
+    FILETIME now{};
+    ::GetSystemTimeAsFileTime(&now);
+    g_start = (static_cast<uint64_t>(now.dwHighDateTime) << 32) | now.dwLowDateTime;
     g_dir = coop::config::ReadEnv("VOTVCOOP_CAN_DIR");
     if (g_dir.empty()) {
         UE_LOGW("flash-battery: VERDICT ABORT -- VOTVCOOP_CAN_DIR is unset");
@@ -135,7 +188,15 @@ DWORD WINAPI FlashBatteryThread(LPVOID /*arg*/) {
             OnGameThread([&] { ready = coop::net_pump::HasAnnouncedWorldReady(); });
             if (!ready) ::Sleep(500);
         }
-        ::Sleep(8000);
+        if (!WaitFor("the host's puppet", 60, [&] {
+                bool have = false;
+                OnGameThread([&] {
+                    coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(0);
+                    have = p && p->valid();
+                });
+                return have;
+            }))
+            return 0;
         RunOwner("client");
         if (!Await("client_judged")) return 0;
         RunWatcher("host", 0);
