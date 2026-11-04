@@ -188,6 +188,7 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIf("VOTVCOOP_RUN_DISH_SOUND", "dish slew sound drill", &DishSoundThread, role);
     // The save notice: the game's own save with and without an event, read on both peers.
     SpawnIf("VOTVCOOP_RUN_SAVE_NOTICE", "save notice drill", &SaveNoticeThread, role);
+    SpawnIf("VOTVCOOP_RUN_VENT_CRAWLER", "vent crawler drill", &VentCrawlerThread, role);
 
     // The bot-director halt probe, solo: measures the path query over the baked NavMesh and a
     // reflected AddMovementInput moving the possessed body.

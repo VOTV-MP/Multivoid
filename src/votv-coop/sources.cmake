@@ -211,6 +211,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_destroy_seam.cpp
     src/coop/props/prop_lifecycle.cpp
     src/coop/props/prop_food_state.cpp
+    src/coop/world/vent_crawler_sync.cpp
     src/coop/props/prop_record_refresh.cpp
     src/coop/props/pack_trash_intent.cpp
     src/coop/props/prop_drop_intent.cpp
@@ -627,6 +628,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_desk_view.cpp
     src/harness/autotest/autotest_dish_sound.cpp
     src/harness/autotest/autotest_save_notice.cpp
+    src/harness/autotest/autotest_vent_crawler.cpp
     src/harness/autotest/autotest_saveui.cpp
     src/harness/autotest/autotest_spill.cpp
     src/ui/input_focus.cpp

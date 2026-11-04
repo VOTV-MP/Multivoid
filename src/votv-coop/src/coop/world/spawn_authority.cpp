@@ -125,9 +125,9 @@ constexpr Row kRows[] = {
     // The story-event creatures: on a client every instance is a host mirror -- the local spawn
     // paths are suppressed through the allowlist or refused below -- so their gameplay entries
     // are refused class-wide; the eventer's own verbs are event_fire_sync's. The AnimBP and the
-    // host's pose stream stay; what a refused BeginPlay also set up is lost on the mirror: the
-    // crawler's footsteps, vent break and metal-break emitter, a ball's and a gray's mesh
-    // attach to its spring arm, a ball's ambient loop.
+    // host's pose stream stay; what a refused BeginPlay also set up is lost on the mirror: a
+    // ball's and a gray's mesh attach to its spring arm, a ball's ambient loop. The crawler's
+    // steps, vent break and burst, vent swing and door power are coop/world/vent_crawler_sync's.
     // ventCrawler_C: the whole scene is the BeginPlay body -- it binds the prop_vent_C ref,
     // plays the moveTL timeline (which itself SetActorLocations the crawl), arms the vent-bang
     // and footstep events, and ends in the door writes, the setEvent flag and K2_DestroyActor

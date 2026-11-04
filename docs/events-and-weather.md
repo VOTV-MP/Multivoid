@@ -157,6 +157,19 @@ generic carries, the brain: the four state-writing timers are cancelled on the m
 gather choreography is relayed, and the wisp it chases is streamed by identity so the mirror
 runs the native chase look (`coop/creatures/piramid_sync`).
 
+The vent crawler (day 5) is a character, so the creature lane mirrors it and refuses its BeginPlay and box overlap
+on a client. The crawl is the host's: the first body in the crawler's box, the host's player or a client's puppet,
+starts it, and the crawl's pose, the signal room and balcony doors' moves and the balcony door's keypads reach a
+client on their own lanes. What the crawler's graph plays itself does not, and it has no lane of its own: the two
+vent steps, the steps along the crawl, the metal break and its burst, the hanging vent's swing to where it stays
+frozen, and the signal room door's power, written as a field. The host watches the box overlap, whose first call is
+the one the graph acts on, and sends one EventCue (id 102); the client plays all of it on the crawl's own schedule,
+the timeline's events at the times and with the volume and pitch its own tracks give, read from the mirror's
+timeline, and the swing through the engine's own transform math, so the vent stops where the host's does
+(`coop/world/vent_crawler_sync`) `[V]` (`harness/autotest/autotest_vent_crawler.cpp`: a client a minute past its join
+starts the crawl with its own player; its door closes and loses its power, 23 sounds and the burst play, and the
+doors, keypads and vent end as the host's).
+
 ### The base alarm
 
 One trigger actor is the base alarm: the siren, every red beacon, the ceiling flicker, the
@@ -236,6 +249,7 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 | Several rolls are still per peer: the rare gamemode rolls (the one-percent forced quit), the server break-minigame variant, the underground loot mounds, the signal scramble and the radio-tower shuffle | `[V]` no lane under `coop/world` carries them; `coop/interactables/garbage_sync` names the mounds |
 | The deer, hexahive, walking-tree, dirt-hole, beehive, flora and mannequin spawners are not refused on a client, so each peer rolls its own; the host's walking mannequin still crosses to clients as a prop, and the client's copy grows a brain of its own | `[V]` no row of `coop/world/spawn_authority` names them; the table in `docs/npcs-and-kerfur.md`, "Which spawners a client refuses"; the walker's crossing was measured on the rig: one key on both peers, `pawn=1` on both |
 | Rain falls inside the base for a player standing indoors, the host included: the game's own effect, the same in single player. The rain emitter follows the player's camera and spawns its drops around it, below the roof's rain-collision mesh, which stops only drops falling onto it from above | `[V]` `coop/world/weather_rain` never moves the emitter or the camera; `[RD]` the decompiled day-night cycle's emitter move |
+| A client that joins during a vent crawl gets the crawler from the join census but not the crawl's sounds, the vent's swing or the door's power, which start from the crawl's one cue; the crawl was forced through the eventer's own verb, not reached by the day 5 schedule | `[?]` `coop/world/vent_crawler_sync` |
 | Trigger-volume fires (a bed event, a scare a player walks into) run per peer, as the single-player design intends | `[V]` by design, not a gap |
 | Only the pyramid and the alarm have had the one-event-at-a-time pass; every other event rides the generic lanes on the per-row replay policy | `[V]` `coop/world/event_fire_sync`, the replay allowlist |
 
@@ -246,7 +260,7 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 | the clock and the sky | `coop/world/time_sync`, `coop/world/day_edge`, `coop/world/sky_sync`, `ue_wrap/world/daynightcycle`, `ue_wrap/world/profile`, `ue_wrap/world/event_list`, `ue_wrap/world/skysphere` |
 | weather | `coop/world/weather_sync`, `coop/world/weather_rain`, `coop/world/weather_fog`, `coop/world/weather_lightning`, `coop/world/weather_redsky`, `coop/world/weather_badsun`, `coop/world/weather_event_births`, `ue_wrap/world/directionalwind`, `ue_wrap/world/bad_sun` |
 | fireflies and the spawners | `coop/world/firefly_sync`, `coop/world/spawn_authority` |
-| events | `coop/world/event_fire_sync`, `coop/world/event_active_sync`, `coop/world/creature_event_relay`, `coop/world/event_cue_sync`, `coop/dev/event_trigger` |
+| events | `coop/world/event_fire_sync`, `coop/world/event_active_sync`, `coop/world/creature_event_relay`, `coop/world/event_cue_sync`, `coop/world/vent_crawler_sync`, `coop/dev/event_trigger` |
 | event actors and the pyramid | `coop/world/world_actor_sync`, `coop/world/world_actor_mirror`, `coop/creatures/piramid_sync` |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
-| tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |
+| tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`, `autotest_vent_crawler.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |

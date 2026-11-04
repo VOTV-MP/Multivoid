@@ -318,6 +318,12 @@ bool TryReadActive(void* door, bool& on) {
     return true;
 }
 
+bool WriteActive(void* door, bool on) {
+    if (!door || !g_resolved.load(std::memory_order_acquire) || g_activeOff < 0) return false;
+    *reinterpret_cast<bool*>(reinterpret_cast<char*>(door) + g_activeOff) = on;
+    return true;
+}
+
 bool TryReadIgnoresBlackout(void* door, bool& ignores) {
     if (!door || !g_resolved.load(std::memory_order_acquire) || g_ignoreBlackoutOff < 0) return false;
     ignores = (*(reinterpret_cast<const uint8_t*>(door) + g_ignoreBlackoutOff) & g_ignoreBlackoutMask) != 0;
