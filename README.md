@@ -143,12 +143,19 @@ a row; the full ledger is [docs/credits.md](docs/credits.md).
 | [**huoyan1231**](https://github.com/huoyan1231) | code · report | CI and automated builds; the b125 host-log pack | 2 commits · b134 |
 | **Marlore** | code · report | Nine symptoms in the trash carry ([#29](https://github.com/VOTV-MP/Multivoid/pull/29)); four were real and are fixed at the root | 6 commits · unreleased |
 | [**archhn0madd**](https://github.com/archhn0madd) | code | Rejoin without a relaunch — the boot poll answered from the dying world | 1 commit |
+| [**Wigard**](https://github.com/wigarddev) | code | A guest of a sandbox host came up in story ([#32](https://github.com/VOTV-MP/Multivoid/pull/32)), then ten more lanes from the VS 2022 link fix to the drone console ([#30](https://github.com/VOTV-MP/Multivoid/pull/30)-[#40](https://github.com/VOTV-MP/Multivoid/pull/40)) | 13 commits · unreleased |
+| [**Shinobu2**](https://github.com/Shinobu2) | code | About twenty lanes in one request ([#45](https://github.com/VOTV-MP/Multivoid/pull/45)), adopted lane by lane | 23 commits · unreleased |
+| [**Slintchen**](https://github.com/Slintchen) | code | The mod's UI in the player's language ([#41](https://github.com/VOTV-MP/Multivoid/pull/41)): the Chinese pack and the translator's guide | 1 commit, 2 co-authored · unreleased |
+| [**AwazonDotCom**](https://github.com/AwazonDotCom) | code | A floppy row that lost its line breaks on a client, and a drive rack written by two lanes ([#53](https://github.com/VOTV-MP/Multivoid/pull/53)) | 2 commits · unreleased |
+| [**gust138**](https://github.com/gust138) | code | A drive box changed twice that lost its last change, and a client's coin pickup credited before the host agreed ([#64](https://github.com/VOTV-MP/Multivoid/pull/64)) | 5 commits |
 | **Moddy** (Discord) | review · design | The architecture and documentation reviews that became the UE4SS move and the repository cleanup; design published for [Relay](https://github.com/modestimpala/Relay) ([Thunderstore](https://thunderstore.io/c/voices-of-the-void/p/Moddy/Relay/)), Moddy's Blueprint networking API for VOTV: the watch surface, readable join reasons and stable codes, host-edge protections, save records as spawn payloads, the hook-override note | b122 · b143 · b160 · b161 |
 | **SentientYeet** | review | The substrate critique that re-opened the loader decision | b143 |
 | **Violet** (Discord) | report | ~9 FPS for a friend joining on Linux — five separate defects behind it | b134 |
 | **decodinatorX** ([#5](https://github.com/VOTV-MP/Multivoid/issues/5)) | report | Couldn't type `sv.request` at the SAT console — `T` kept opening chat | b133 |
 | **gediao** (Discord) | report | The b125 host-log pack, with huoyan1231 | b134 |
+| **doctaaaaa** | report | A ten-item field pack on the released build; four landed on open work, the floppy-disc pair root-caused | b150 · root-caused, unreleased |
 | **SirWilliam** (Discord) | report | Rejoining a session requires fully relaunching the game | fixed, unreleased |
+| **thewittyrobin** | report | Doors that never open for the other peer, twice ([#17](https://github.com/VOTV-MP/Multivoid/pull/17), [#18](https://github.com/VOTV-MP/Multivoid/pull/18)) — one real defect, root-caused | root-caused, unreleased |
 
 Prior art this project learned from, with thanks:
 
