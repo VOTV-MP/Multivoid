@@ -7,11 +7,12 @@
 // seconds -- does its own player hold it, which slot's drive moves its copy, and how many ticks both were true --
 // and logs a RESULT. The client hands its numbers to the host, which judges the two and logs VERDICT PASS or FAIL:
 // one holder, and the other peer's copy driven by that holder's slot. "control" mode fires the host alone.
-// VOTVCOOP_RACE_FIRE_DELAY_MS holds one peer's grab back.
+// VOTVCOOP_RACE_FIRE_DELAY_MS holds the grab of the peer VOTVCOOP_RACE_DELAY_ROLE names (host|client) back.
 
 #include "coop/dev/director/aimed_grab.h"
 #include "coop/dev/director/director.h"
 
+#include "harness/autotest.h"   // IsClientRole
 #include "harness/autotest/peer_signal.h"
 
 #include "coop/config/config.h"
@@ -161,7 +162,8 @@ const char* Judge(bool control, const Result& host, const Result& client, const 
 
 void RunGrabRace() {
     const std::string mode = coop::config::ReadEnv("VOTVCOOP_RACE_MODE");      // "race" | "control"
-    const std::string role = coop::config::ReadEnv("VOTVCOOP_RACE_ROLE");      // "host" | "client"
+    // The peer's own role, from the session it launched as: one env shared by both peers cannot name two roles.
+    const std::string role = harness::autotest::IsClientRole() ? "client" : "host";
     const bool isHost = role == "host";
     const bool control = mode == "control";
     const bool shouldFire = !control || isHost;
@@ -303,7 +305,9 @@ void RunGrabRace() {
     });
     if (shouldFire) {
         // VOTVCOOP_RACE_FIRE_DELAY_MS holds this peer's grab back, so the other peer's hold arrives first.
-        const int fireDelayMs = std::atoi(coop::config::ReadEnv("VOTVCOOP_RACE_FIRE_DELAY_MS").c_str());
+        // VOTVCOOP_RACE_DELAY_ROLE names the one peer it applies to (both peers share one environment).
+        const int fireDelayMs = coop::config::ReadEnv("VOTVCOOP_RACE_DELAY_ROLE") == role
+                                    ? std::atoi(coop::config::ReadEnv("VOTVCOOP_RACE_FIRE_DELAY_MS").c_str()) : 0;
         if (fireDelayMs > 0) ::Sleep(static_cast<DWORD>(fireDelayMs));
         grab->Fire();
         for (int i = 0; i < 60 && *state == GrabState::Working && !g_faultedStep; ++i) {

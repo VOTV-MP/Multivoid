@@ -196,8 +196,8 @@ DWORD WINAPI ContainerRaceThread(LPVOID arg);
 // prop in a peer_signal signal, both peers walk to it and aim, the host names a GO instant, then both run the grab
 // chain at it; each watches the prop for a few seconds and logs who holds it and which slot drives its copy, and the
 // host judges both and logs VERDICT PASS or FAIL. Modes: "race" (both fire) and "control" (the host alone). Env:
-// VOTVCOOP_RUN_GRAB_RACE=1, VOTVCOOP_RACE_MODE, VOTVCOOP_RACE_ROLE, VOTVCOOP_CAN_DIR, and optionally
-// VOTVCOOP_RACE_FIRE_DELAY_MS. Greppable as "grab-race:".
+// VOTVCOOP_RUN_GRAB_RACE=1, VOTVCOOP_RACE_MODE, VOTVCOOP_CAN_DIR, and optionally VOTVCOOP_RACE_FIRE_DELAY_MS with
+// VOTVCOOP_RACE_DELAY_ROLE (the peer it holds back); each peer's role is the session's. Greppable as "grab-race:".
 void RunGrabRace();
 DWORD WINAPI GrabRaceThread(LPVOID arg);
 
