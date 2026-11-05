@@ -55,7 +55,9 @@ UE_FACT_FN(kRowBoxOverlap, "vent_crawler_sync", L"ventCrawler_C",
            Declared);
 constexpr int kTag = 0x56435257;   // 'VCRW'
 
-// The crawl's own delays: the two vent steps, then the timeline.
+// The crawl's own delays, as times from the cue. ventCrawler_C's graph (bp_cpp.py ventCrawler, ExecuteUbergraph) chains
+// Delay(2f) to the first vent step, Delay(0.5f) to the second, and Delay(2.5f) to moveTL->PlayFromStart(): the steps
+// at 2.0 and 2.0 + 0.5 = 2.5 s, the timeline at 2.5 + 2.5 = 5.0 s. The bytecode agrees with these values.
 constexpr float kStep1 = 2.0f, kStep2 = 2.5f, kTimeline = 5.0f;
 constexpr float kShowLimit = 60.f;   // a crawl whose mirror never goes ends here
 
