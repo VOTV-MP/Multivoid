@@ -7,6 +7,7 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/roster_ledger.h"  // PerSlotState
+#include "coop/props/prop_key_index.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
 
@@ -159,8 +160,9 @@ struct Sent {
 };
 std::unordered_map<std::wstring, Sent> g_sent;
 
-// The edit gate. A client's edit is its player's act, so the host takes it as that act could make it: a planting's class is the
-// one its list_farmPlants row plants, every edit lies within the sender's reach and every value within the bounds below.
+// The edit gate. A client's edit is its player's act, so the host takes it as that act could make it: it names a key, a planting
+// plants the class of its own list_farmPlants row (a wire class that differs is refused) and names a pot the host holds (or
+// none), a changed row is one of those rows, every edit lies within the sender's reach and every value within the bounds below.
 //
 // The reach a sender's edit is judged against: a player's look-at trace is mainPlayer.armLength, 200 by default, so twice that,
 // as the door's verbs are (door_verb_intent). The authority adds the plant's own bounds radius and a 600 uu allowance for the
@@ -189,7 +191,19 @@ struct EditSlot {
 coop::roster_ledger::PerSlotState<EditSlot> g_editSlots;
 
 uint64_t g_refusedClass = 0, g_refusedReach = 0, g_clamped = 0;
+uint64_t g_refusedKey = 0, g_refusedRow = 0, g_refusedParent = 0;
 bool g_clampSaid[kFieldCount] = {};
+bool g_keySaid = false, g_rowSaid = false, g_parentSaid = false;
+
+// A refusal that is counted every time and said the first time of a session.
+void RefuseOnce(uint64_t& count, bool& said, uint8_t slot, const wchar_t* what, const std::wstring& key, const wchar_t* why,
+                const std::wstring& named) {
+    ++count;
+    if (said) return;
+    said = true;
+    UE_LOGW("plant_sync: slot %u's %ls of '%ls' refused -- %ls '%ls' (said once a session)", static_cast<unsigned>(slot), what,
+            key.c_str(), why, named.c_str());
+}
 
 template <class T>
 void Bound(T& v, T lo, T hi, Field f, uint8_t slot) {
@@ -241,6 +255,10 @@ Gate Judge(const coop::element::IntentSubject& subject, EditSlot& sl, uint8_t sl
 // refused, and consumed.
 bool HostApplyEdit(coop::net::Session& s, EditSlot& sl, uint8_t slot, Payload p, std::unordered_map<std::wstring, void*>& index) {
     const std::wstring key = coop::net::StringFromWireKey(p.key);
+    if (key.empty()) {
+        RefuseOnce(g_refusedKey, g_keySaid, slot, p.alive ? L"edit" : L"removal", key, L"it names no key:", key);
+        return true;
+    }
     const auto it = index.find(key);
     void* plant = it == index.end() ? nullptr : it->second;
     const coop::element::IntentTarget reach = coop::element::IntentTarget::ForClientIntent(s, slot, kPlantReachUU);
@@ -261,6 +279,10 @@ bool HostApplyEdit(coop::net::Session& s, EditSlot& sl, uint8_t slot, Payload p,
         // that class's, and the class a plant class. A name from the wire starts no lookup of its own.
         const std::wstring className = StringFromClassName(p.cls);
         const std::wstring row = coop::net::StringFromWireKey(p.row);
+        if (!GP::IsFarmRow(row)) {
+            RefuseOnce(g_refusedRow, g_rowSaid, slot, L"planting", key, L"no such list_farmPlants row", row);
+            return true;
+        }
         plantClass = GP::FarmRowPlantClass(row);
         if (!plantClass || !GP::IsPlantClass(plantClass) || _wcsicmp(R::ToString(R::NameOf(plantClass)).c_str(), className.c_str()) != 0) {
             if (++g_refusedClass <= 3 || g_refusedClass % 20 == 0)
@@ -273,10 +295,26 @@ bool HostApplyEdit(coop::net::Session& s, EditSlot& sl, uint8_t slot, Payload p,
         const Gate gate = Judge(reach.AuthorizeSegment(place, place), sl, slot, L"planting", key);
         if (gate == Gate::Wait) return false;
         if (gate == Gate::Refused) return true;
+        // A plant's attachParent is its owner's key, so a pot's planting names the pot. A planting in a dirt hole would name
+        // the hole, which belongs to the bury lane (not synced): refusing it here is intended, not a miss.
+        const std::wstring parent = coop::net::StringFromWireKey(p.attachParent);
+        if (!parent.empty()) {
+            void* pot = coop::prop_key_index::Find(parent);
+            if (!pot || !GP::IsPotClass(R::ClassOf(pot))) {
+                RefuseOnce(g_refusedParent, g_parentSaid, slot, L"planting", key, L"the host holds no pot by key", parent);
+                return true;
+            }
+        }
     } else {
         const Gate gate = Judge(reach.Authorize(plant), sl, slot, L"edit", key);
         if (gate == Gate::Wait) return false;
         if (gate == Gate::Refused) return true;
+        // A changed row is one of the host's own, as a planting's is.
+        const std::wstring row = coop::net::StringFromWireKey(p.row);
+        if ((p.editMask & coop::net::plant_edit::kRow) && !GP::IsFarmRow(row)) {
+            RefuseOnce(g_refusedRow, g_rowSaid, slot, L"edit", key, L"no such list_farmPlants row", row);
+            return true;
+        }
     }
     BoundEdit(p, planting, slot);
     if (planting) {
@@ -535,7 +573,9 @@ void OnEdit(uint8_t senderSlot, const coop::net::PlantStatePayload& p) {
     sl.queue.push_back(p);
 }
 
-Counts GetCounts() { return Counts{g_refusedClass, g_refusedReach, g_clamped}; }
+Counts GetCounts() {
+    return Counts{g_refusedClass, g_refusedReach, g_clamped, g_refusedKey, g_refusedRow, g_refusedParent};
+}
 
 void QueueConnectBroadcastForSlot(int /*slot*/) {
     for (auto& entry : g_sent) entry.second.pending = true;
@@ -544,11 +584,13 @@ void QueueConnectBroadcastForSlot(int /*slot*/) {
 void OnDisconnect() {
     ResetClient();
     g_sent.clear();
-    if (g_refusedClass || g_refusedReach || g_clamped)
-        UE_LOGI("plant_sync: session end -- plantings refused for class=%llu, edits refused for reach=%llu, values clamped=%llu",
+    if (g_refusedClass || g_refusedReach || g_clamped || g_refusedKey || g_refusedRow || g_refusedParent)
+        UE_LOGI("plant_sync: session end -- refused for class=%llu reach=%llu key=%llu row=%llu parent=%llu, values clamped=%llu",
                 static_cast<unsigned long long>(g_refusedClass), static_cast<unsigned long long>(g_refusedReach),
-                static_cast<unsigned long long>(g_clamped));
-    g_refusedClass = g_refusedReach = g_clamped = 0;
+                static_cast<unsigned long long>(g_refusedKey), static_cast<unsigned long long>(g_refusedRow),
+                static_cast<unsigned long long>(g_refusedParent), static_cast<unsigned long long>(g_clamped));
+    g_refusedClass = g_refusedReach = g_clamped = g_refusedKey = g_refusedRow = g_refusedParent = 0;
+    g_keySaid = g_rowSaid = g_parentSaid = false;
     for (bool& said : g_clampSaid) said = false;
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) g_editSlots[slot] = EditSlot{};
     g_session.store(nullptr);

@@ -28,6 +28,10 @@ void List(std::vector<void*>& out);
 // a class with no live instance answers true as well. False while growingPlant_C is not loaded. Game thread.
 bool IsPlantClass(void* cls);
 
+// Whether `cls` is prop_farmPot_C or a class under it (the flat and the small pot): the same walk of the super chain by pointer.
+// False while prop_farmPot_C is not loaded. Game thread.
+bool IsPotClass(void* cls);
+
 // Its key, minted by its own getKey when it has none yet. "" on failure.
 std::wstring Key(void* plant);
 
@@ -38,6 +42,9 @@ std::wstring Row(void* plant);          // its list_farmPlants row
 // at most every few seconds while the table is not readable. The class is not checked against the family: IsPlantClass is the
 // caller's. Game thread.
 void* FarmRowPlantClass(const std::wstring& row);
+// Whether `row` is a row name of the game's list_farmPlants data table (without case, as an FName compares). Read from the same table
+// as FarmRowPlantClass (then false while it is not readable). Game thread.
+bool IsFarmRow(const std::wstring& row);
 std::wstring AttachParent(void* plant); // the key of the pot it stands in
 bool HideDirt(void* plant);
 

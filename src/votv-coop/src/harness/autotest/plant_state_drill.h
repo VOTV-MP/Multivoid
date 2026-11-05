@@ -63,9 +63,9 @@ bool TickArm();
 bool PineHitArm(const std::string& key);
 bool GlowArm(unsigned base, const std::string& sentAt);
 
-// The edit gate's arm. CLIENT: sends a planting of a non-plant class at its own place and a plant class 50000 uu away
-// (`row` is a row the host's plants use). HOST: CraftBegin before the client crafts, CraftJudge after: the host's refusals
-// rose by one for the class and one for the reach, and nothing of either planting stands.
+// The edit gate's arm. CLIENT: sends a planting of a non-plant class at its own place, a plant class 50000 uu away and a plant of
+// a row that is none of the host's (`row` is a row the host's plants use). HOST: CraftBegin before the client crafts, CraftJudge
+// after: the host's refusals rose by one each for the class, the reach and the row, and nothing of the three stands.
 struct CraftBase {
     coop::plant_sync::Counts counts;
     size_t nonPlants = 0;

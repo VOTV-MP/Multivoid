@@ -42,11 +42,15 @@ void OnState(const coop::net::PlantStatePayload& p);
 void OnEdit(uint8_t senderSlot, const coop::net::PlantStatePayload& p);
 
 // HOST, what the edit gate did this session: plantings refused for a class that is no loaded plant class, edits refused for a
-// plant or place outside the sender's reach, and values cut to their bounds. Read-only, for drills. Game thread.
+// plant or place outside the sender's reach, values cut to their bounds, edits that name no key, plantings of a row that is none
+// of list_farmPlants' (or an edit that changes a plant to one) and plantings in a parent that is no pot the host holds. Read-only, for drills. Game thread.
 struct Counts {
     std::uint64_t refusedClass = 0;
     std::uint64_t refusedReach = 0;
     std::uint64_t clamped = 0;
+    std::uint64_t refusedKey = 0;
+    std::uint64_t refusedRow = 0;
+    std::uint64_t refusedParent = 0;
 };
 Counts GetCounts();
 

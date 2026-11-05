@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -183,6 +184,16 @@ bool IsPlantClass(void* cls) {
     return base && R::IsDescendantOfAny(cls, &base, 1, kMaxHops);
 }
 
+bool IsPotClass(void* cls) {
+    static void* s_pot = nullptr;
+    static uint64_t s_listing = 0;
+    if (!s_pot || OI::ClassListingId(s_pot) != s_listing) {
+        s_pot = OI::ClassByName(L"prop_farmPot_C");
+        s_listing = s_pot ? OI::ClassListingId(s_pot) : 0;
+    }
+    return s_pot && cls && R::IsDescendantOfAny(cls, &s_pot, 1, kMaxHops);
+}
+
 std::wstring Key(void* plant) {
     std::wstring key = prop::GetActorSaveKeyString(plant);
     if (!key.empty() && key != L"None") return key;
@@ -244,6 +255,10 @@ void* FarmRowPlantClass(const std::wstring& row) {
     if (row.empty() || !ReadFarmRows()) return nullptr;
     const auto it = g_farmRowClasses.find(Lowered(row));
     return (it != g_farmRowClasses.end() && it->second && R::IsLive(it->second)) ? it->second : nullptr;
+}
+
+bool IsFarmRow(const std::wstring& row) {
+    return !row.empty() && ReadFarmRows() && g_farmRowClasses.count(Lowered(row)) != 0;
 }
 
 std::wstring AttachParent(void* plant) {
