@@ -391,6 +391,7 @@ struct Show {
     float last = -1.f;   // the timeline's time already played
     std::vector<Event> events;
     std::vector<Track> tracks;
+    std::pair<int32_t, int32_t> vent{-1, 0};   // the hanging vent, found once when the show began; index -1 if not there
     bool haveVent = false, swinging = false;
     ue_wrap::FTransform ventA{}, ventB{};   // where the vent hung, and where the swing ends
     float swingAt = 0.f, swingLen = 0.f;    // the swing's start, show time, and its length
@@ -453,6 +454,7 @@ bool OnCue(const coop::net::EventCuePayload& p) {
     DoorPower(false);
     g_show.powerOff = true;
     void* vent = ue_wrap::keyed_objects::Resolve(L"ventHanging");
+    g_show.vent = vent ? IdOf(vent) : std::pair<int32_t, int32_t>{-1, 0};
     g_show.haveVent = vent && ActorTransform(vent, g_show.ventA) && VentB(g_show.ventA, g_show.ventB);
     UE_LOGI("vent_crawler: the host's crawl started at (%.0f, %.0f, %.0f) -- mirror %p", p.x, p.y, p.z, crawler);
     return true;
@@ -576,6 +578,7 @@ void OnState(const coop::net::VentCrawlStatePayload& p) {
     g_show.step2 = p.elapsed >= kStep2;
     DoorPower(p.doorActive != 0);
     g_show.powerOff = p.doorActive == 0;
+    g_show.vent = vent ? IdOf(vent) : std::pair<int32_t, int32_t>{-1, 0};
     // The swing's A is where the host's vent hung when the crawl began, B follows from it (as OnCue's own pair does).
     g_show.haveVent = vent && p.hasVent && HostVentPose(vent, p, g_show.ventA) && VentB(g_show.ventA, g_show.ventB);
     if (!p.hasVent) UE_LOGW("vent_crawler: the host could not read its vent at the crawl's start -- no swing here");
@@ -597,7 +600,7 @@ void Tick() {
         if (void* found = MirrorNear(g_show.near)) g_show.crawler = IdOf(found);
     }
     void* crawler = Resolve(g_show.crawler);
-    void* vent = ue_wrap::keyed_objects::Resolve(L"ventHanging");
+    void* vent = Resolve(g_show.vent);   // a weak-id check, no name lookup per frame
     if (g_show.swinging && vent) {
         const float st = t - g_show.swingAt;
         ue_wrap::FTransform now{};
