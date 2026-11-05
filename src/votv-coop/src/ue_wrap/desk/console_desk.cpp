@@ -113,6 +113,8 @@ constexpr size_t kRefreshCount = sizeof(g_refresh) / sizeof(g_refresh[0]);
 static_assert(kPaintAll == (1u << kRefreshCount) - 1u,
               "a painter verb was added or removed without its Painter bit");
 constexpr size_t kRefreshCoordCoords = 8;  // kPaintCoordCoords' slot, dispatched alone below
+constexpr size_t kRefreshRemap = 9;        // kPaintRemap's slot, dispatched alone by RepaintRemap
+static_assert(kPaintRemap == (1u << kRefreshRemap), "kRefreshRemap is not kPaintRemap's slot");
 void* g_writeToCoordLogFn = nullptr;  // writeToCoordLog_2 (the LIVE log writer)
 
 // The signal-catch consume surface. The signal-spawn struct's member offsets come from the
@@ -713,6 +715,15 @@ bool ApplyVisualizerMode(bool spectrogram) {
     ue_wrap::ParamFrame f(g_setCanvasFn);
     if (!f.valid() || !f.Set<bool>(L"visualizerMode", spectrogram) || !ue_wrap::Call(d, f)) return false;
     return ue_wrap::component_calls::CallParamless(d, g_endCanvasFn);
+}
+
+bool RepaintRemap() {
+    void* d = Instance();
+    void* fn = g_refresh[kRefreshRemap].fn;
+    // updRemap writes the screen widget's SARV text and the visualizer materials: refused while that
+    // widget is not live (the Blueprint would log a None access and paint nothing).
+    if (!d || !fn || !AtlasWidget()) return false;
+    return ue_wrap::component_calls::CallParamless(d, fn);
 }
 
 bool PlayScanEffects() {

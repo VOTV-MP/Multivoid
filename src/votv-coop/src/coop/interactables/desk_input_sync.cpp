@@ -52,6 +52,7 @@ bool g_scanWidgetWarned = false;  // log-once for the spawnDirs null-guard
 bool g_visPending = false;
 bool g_visPendingValue = false;
 bool g_visDeferWarned = false;
+bool g_remapPending = false;  // the join adopt's updRemap repaint, owed until the widget is live
 
 void SendDelta(coop::net::Session* s, DeskInputField field,
                float fv, int32_t iv, bool bv) {
@@ -234,6 +235,10 @@ void Tick() {
                     g_visPendingValue ? 1 : 0);
         }
     }
+    if (g_remapPending && CD::RepaintRemap()) {
+        g_remapPending = false;
+        UE_LOGI("desk_input: deferred remap repaint done (screen widget live)");
+    }
     if (!s->connected()) {
         // Keep the baseline current while unwired so a (re)connect never
         // bursts stale diffs.
@@ -297,6 +302,15 @@ bool ApplyVisualizerModeOrDefer(bool spectrogram) {
         UE_LOGW("desk_input: signal-view mode %d deferred -- desk screen widget not live yet "
                 "(applied by the poll tick when it is; log-once)", spectrogram ? 1 : 0);
     }
+    return false;
+}
+
+bool RepaintRemapOrDefer() {
+    if (CD::RepaintRemap()) {
+        g_remapPending = false;
+        return true;
+    }
+    g_remapPending = true;
     return false;
 }
 
@@ -372,6 +386,7 @@ void OnDisconnect() {
     g_visPending = false;
     g_visPendingValue = false;
     g_visDeferWarned = false;
+    g_remapPending = false;
     g_nextPoll = {};
 }
 

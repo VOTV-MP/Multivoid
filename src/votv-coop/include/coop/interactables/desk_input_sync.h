@@ -45,6 +45,9 @@ void PrimeBaselines();
 // comes up. True when drawn now. Game thread.
 bool ApplyVisualizerModeOrDefer(bool spectrogram);
 
+// The same for the remap bounds' repaint (updRemap), which the join adopt owes after it wrote them.
+bool RepaintRemapOrDefer();
+
 // HOST: a peer left -- if it was the live ping setter, clear the attribution (the
 // desk-claim deny would otherwise outlive the leaver). No machine write: no peer's
 // machine carries a wire-applied ping flag.

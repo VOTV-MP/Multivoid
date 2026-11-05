@@ -251,6 +251,11 @@ bool ApplyPlayVolumeEffects(int32_t value);
 // (nothing is written then; the caller retries). Game thread.
 bool ApplyVisualizerMode(bool spectrogram);
 
+// Run the desk's updRemap alone (the SARV text and the visualizer materials from remapValue). False if
+// unresolved or the desk's screen widget is not live yet (nothing runs then; the caller retries).
+// Game thread.
+bool RepaintRemap();
+
 // The deck-playback replay surface (deck_play_sync): the reflected desk playSignal and
 // stopSound, parameterless. playSignal reads the selected index and gates on active play, a
 // valid index and decoded at least size internally; the caller pre-checks the
