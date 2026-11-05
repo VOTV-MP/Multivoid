@@ -16,6 +16,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -38,7 +39,6 @@
 #include <cstdint>
 #include <cstring>
 #include <cwctype>
-#include <functional>
 #include <string>
 #include <vector>
 
@@ -247,9 +247,34 @@ float TrackAt(const std::vector<Track>& tracks, const wchar_t* name, float t, fl
 
 // ---- CLIENT: the vent's swing, through the engine's own math -------------------------------------------------------
 
-bool MathCall(const wchar_t* name, const std::function<bool(ue_wrap::ParamFrame&)>& set, ue_wrap::FTransform& out) {
-    void* lib = R::FindClassDefaultObject(L"KismetMathLibrary");
-    void* fn = lib ? R::FindFunction(R::ClassOf(lib), name) : nullptr;
+// An engine object or function found by name once, and again only when its ref has died: the lookups walk the object
+// array (FindObject, the class default objects) or a class's function list, so none runs per footstep or swing frame.
+template <class Find>
+void* Held(ue_wrap::CachedObjRef& ref, Find&& find) {
+    if (void* p = ref.Get()) return p;
+    ref.Set(find());
+    return ref.Raw();
+}
+
+// A static library's class default object and one of its functions, each held.
+struct LibFn {
+    const wchar_t* libClass;
+    const wchar_t* name;
+    ue_wrap::CachedObjRef lib, fn;
+    void* Resolve(void*& libOut) {
+        libOut = Held(lib, [&] { return R::FindClassDefaultObject(libClass); });
+        return libOut ? Held(fn, [&] { return R::FindFunction(R::ClassOf(libOut), name); }) : nullptr;
+    }
+};
+LibFn g_makeTransform{L"KismetMathLibrary", L"MakeTransform"};
+LibFn g_composeTransforms{L"KismetMathLibrary", L"ComposeTransforms"};
+LibFn g_tlerp{L"KismetMathLibrary", L"TLerp"};
+LibFn g_spawnEmitter{L"GameplayStatics", L"SpawnEmitterAtLocation"};
+
+template <class Set>
+bool MathCall(LibFn& slot, Set&& set, ue_wrap::FTransform& out) {
+    void* lib = nullptr;
+    void* fn = slot.Resolve(lib);
     if (!fn) return false;
     ue_wrap::ParamFrame f(fn);
     if (!f.valid() || !set(f) || !ue_wrap::Call(lib, f)) return false;
@@ -275,11 +300,11 @@ bool VentB(const ue_wrap::FTransform& a, ue_wrap::FTransform& b) {
     ue_wrap::FTransform local{};
     const ue_wrap::FVector up{0.f, 0.f, 15.f}, one{1.f, 1.f, 1.f};
     const ue_wrap::FRotator turn{4.97946f, 0.f, -15.0295f};
-    return MathCall(L"MakeTransform", [&](ue_wrap::ParamFrame& f) {
+    return MathCall(g_makeTransform, [&](ue_wrap::ParamFrame& f) {
                return f.SetRaw(L"Location", &up, sizeof(up)) && f.SetRaw(L"Rotation", &turn, sizeof(turn)) &&
                       f.SetRaw(L"Scale", &one, sizeof(one));
            }, local) &&
-           MathCall(L"ComposeTransforms", [&](ue_wrap::ParamFrame& f) {
+           MathCall(g_composeTransforms, [&](ue_wrap::ParamFrame& f) {
                return f.SetRaw(L"A", &local, sizeof(local)) && f.SetRaw(L"B", &a, sizeof(a));
            }, b);
 }
@@ -289,7 +314,7 @@ bool VentAt(const ue_wrap::FTransform& va, const ue_wrap::FTransform& vb, float 
     const float root = std::pow((std::max)(a, 0.f), 0.3333333f);
     const float s = std::sin(a * 360.f * 6.f * 3.14159265f / 180.f) + root;
     const float alpha = s + (1.f - s) * root;
-    return MathCall(L"TLerp", [&](ue_wrap::ParamFrame& f) {
+    return MathCall(g_tlerp, [&](ue_wrap::ParamFrame& f) {
         return f.SetRaw(L"A", &va, sizeof(va)) && f.SetRaw(L"B", &vb, sizeof(vb)) && f.Set<float>(L"Alpha", alpha) &&
                f.Set<uint8_t>(L"InterpMode", 0);
     }, out);
@@ -297,27 +322,41 @@ bool VentAt(const ue_wrap::FTransform& va, const ue_wrap::FTransform& vb, float 
 
 // ---- CLIENT: the show ----------------------------------------------------------------------------------------------
 
-void* Asset(const wchar_t* name, const wchar_t* cls, const wchar_t* cls2 = nullptr) {
-    void* a = R::FindObject(name, cls);
-    return a || !cls2 ? a : R::FindObject(name, cls2);
-}
+// A game asset by name and class (`cls2` when the first finds none: a sound is a cue or a bare wave), held.
+struct Asset {
+    const wchar_t* name;
+    const wchar_t* cls;
+    const wchar_t* cls2;
+    ue_wrap::CachedObjRef ref;
+    void* Get() {
+        return Held(ref, [&] {
+            void* a = R::FindObject(name, cls);
+            return a || !cls2 ? a : R::FindObject(name, cls2);
+        });
+    }
+};
+Asset g_stepCue{L"footstepVent_Cue", L"SoundCue", L"SoundWave"};
+Asset g_breakCue{L"break_metal_1", L"SoundCue", L"SoundWave"};
+Asset g_attDefault{L"att_default", L"SoundAttenuation", nullptr};
+Asset g_attNoAo{L"att_default_noao", L"SoundAttenuation", nullptr};
+Asset g_breakFx{L"eff_metalbreak", L"ParticleSystem", nullptr};
 
-void PlayAt(const wchar_t* sound, const wchar_t* att, const ue_wrap::FVector& at, float volume, float pitch) {
+void PlayAt(Asset& sound, Asset& att, const ue_wrap::FVector& at, float volume, float pitch) {
     void* local = coop::players::Registry::Get().Local();
-    void* cue = Asset(sound, L"SoundCue", L"SoundWave");
+    void* cue = sound.Get();
     if (!local || !cue) {
-        UE_LOGW("vent_crawler: %ls did not resolve -- not played", sound);
+        UE_LOGW("vent_crawler: %ls did not resolve -- not played", sound.name);
         return;
     }
-    E::PlaySoundAtLocation(local, cue, at, Asset(att, L"SoundAttenuation"), volume, pitch);
+    E::PlaySoundAtLocation(local, cue, at, att.Get(), volume, pitch);
     g_sounds.fetch_add(1, std::memory_order_relaxed);
 }
 
 void Burst(const ue_wrap::FVector& at) {
     void* local = coop::players::Registry::Get().Local();
-    void* tmpl = Asset(L"eff_metalbreak", L"ParticleSystem");
-    void* statics = R::FindClassDefaultObject(L"GameplayStatics");
-    void* fn = statics ? R::FindFunction(R::ClassOf(statics), L"SpawnEmitterAtLocation") : nullptr;
+    void* tmpl = g_breakFx.Get();
+    void* statics = nullptr;
+    void* fn = g_spawnEmitter.Resolve(statics);
     if (!local || !tmpl || !fn) {
         UE_LOGW("vent_crawler: eff_metalbreak did not resolve -- no burst");
         return;
@@ -437,7 +476,7 @@ bool HostVentPose(void* vent, const coop::net::VentCrawlStatePayload& p, ue_wrap
     const ue_wrap::FVector loc{p.ventLoc[0], p.ventLoc[1], p.ventLoc[2]};
     const ue_wrap::FRotator rot{p.ventRot[0], p.ventRot[1], p.ventRot[2]};
     const ue_wrap::FVector scale{cur.SX, cur.SY, cur.SZ};
-    return MathCall(L"MakeTransform", [&](ue_wrap::ParamFrame& f) {
+    return MathCall(g_makeTransform, [&](ue_wrap::ParamFrame& f) {
         return f.SetRaw(L"Location", &loc, sizeof(loc)) && f.SetRaw(L"Rotation", &rot, sizeof(rot)) &&
                f.SetRaw(L"Scale", &scale, sizeof(scale));
     }, to);
@@ -580,11 +619,11 @@ void Tick() {
     const bool haveVent = vent && E::TryGetActorLocation(vent, ventAt);
     if (!g_show.step1 && t >= kStep1) {
         g_show.step1 = true;
-        if (haveVent) PlayAt(L"footstepVent_Cue", L"att_default", ventAt, 2.f, 0.85f);
+        if (haveVent) PlayAt(g_stepCue, g_attDefault, ventAt, 2.f, 0.85f);
     }
     if (!g_show.step2 && t >= kStep2) {
         g_show.step2 = true;
-        if (haveVent) PlayAt(L"footstepVent_Cue", L"att_default", ventAt, 2.f, 0.95f);
+        if (haveVent) PlayAt(g_stepCue, g_attDefault, ventAt, 2.f, 0.95f);
     }
     if (t < kTimeline || !crawler) return;
     if (!g_show.timelineRead) {
@@ -603,10 +642,10 @@ void Tick() {
             if (gone || !E::TryGetActorLocation(crawler, at)) continue;
             const float volume = TrackAt(g_show.tracks, L"stepvolume", e.time, 1.f) *
                                  TrackAt(g_show.tracks, L"multiplyvolume", e.time, 1.f);
-            PlayAt(L"footstepVent_Cue", L"att_default_noao", at, volume, TrackAt(g_show.tracks, L"pitch", e.time, 1.f));
+            PlayAt(g_stepCue, g_attNoAo, at, volume, TrackAt(g_show.tracks, L"pitch", e.time, 1.f));
         } else if (haveVent) {
             if (!gone) {
-                PlayAt(L"break_metal_1", L"att_default", {ventAt.X, ventAt.Y, ventAt.Z - 50.f}, 0.5f, 1.25f);
+                PlayAt(g_breakCue, g_attDefault, {ventAt.X, ventAt.Y, ventAt.Z - 50.f}, 0.5f, 1.25f);
                 Burst({ventAt.X, ventAt.Y, ventAt.Z + 25.f});
             }
             DoorPower(true);
