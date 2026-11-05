@@ -442,6 +442,15 @@ float GetActorCharacterHalfHeight(void* mainPlayerPawn) {
         reinterpret_cast<uint8_t*>(capsule) + P::off::UCapsuleComponent_CapsuleHalfHeight);
 }
 
+float GetActorCharacterRadius(void* mainPlayerPawn) {
+    if (!mainPlayerPawn) return 0.f;
+    void* capsule = *reinterpret_cast<void**>(
+        reinterpret_cast<uint8_t*>(mainPlayerPawn) + P::off::ACharacter_CapsuleComponent);
+    if (!capsule) return 0.f;
+    return *reinterpret_cast<float*>(
+        reinterpret_cast<uint8_t*>(capsule) + P::off::UCapsuleComponent_CapsuleRadius);
+}
+
 
 FVector GetActorForwardVector(void* actor) {
     FVector fwd;

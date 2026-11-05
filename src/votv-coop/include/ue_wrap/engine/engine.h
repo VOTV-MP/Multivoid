@@ -188,6 +188,8 @@ void LogClassProperties(const wchar_t* className);
 // ACharacter's capsule half-height (UCapsuleComponent::CapsuleHalfHeight); 0.f if none. Game
 // thread.
 float GetActorCharacterHalfHeight(void* mainPlayerPawn);
+// ACharacter's capsule radius (UCapsuleComponent::CapsuleRadius); 0.f if none. Game thread.
+float GetActorCharacterRadius(void* mainPlayerPawn);
 
 // A long-lived WorldContextObject for the deferred-spawn pair: the GameInstance, else the World.
 // One lookup when cached; the objects are the world singleton's. Game thread.

@@ -21,8 +21,9 @@ struct Target {
 
 const char* KindName(Kind k);
 
-// The bed nearest the KPP, projected onto the NavMesh beside it, its capsule's half-height above
-// the floor so the actor's location stands the player on it. Any step that fails yields the KPP
+// The bed nearest the KPP: a NavMesh point beside its colliding box, clear of it by the player's
+// capsule radius (the NavMesh runs under the bed), its capsule's half-height above the floor so the
+// actor's location stands the player on it. Any step that fails yields the KPP
 // with kind KppFallback; the first fallback of a session is logged with its reason. `pawn` is the
 // world context and the capsule's owner. Cold path: the bed lookup walks the object index once per
 // call, and this runs once per death and once per join appearance. Game thread.

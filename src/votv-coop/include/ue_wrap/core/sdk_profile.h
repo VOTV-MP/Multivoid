@@ -415,6 +415,7 @@ inline constexpr size_t ACharacter_Mesh             = 0x0280;          // USkele
 inline constexpr size_t ACharacter_CharacterMovement = 0x0288;         // UCharacterMovementComponent*  Engine.hpp:6971 (mainPlayer_C orphan: must be tick-disabled on the puppet so the satellite is the only Velocity source)
 inline constexpr size_t ACharacter_CapsuleComponent = 0x0290;          // UCapsuleComponent*  Engine.hpp:6972
 inline constexpr size_t UCapsuleComponent_CapsuleHalfHeight = 0x0468;  // float  Engine.hpp:9883
+inline constexpr size_t UCapsuleComponent_CapsuleRadius = 0x046C;      // float  Engine.hpp:9884
 
 // UCharacterMovementComponent::MovementMode @ +0x0168 (Engine.hpp:9917): MOVE_None=0, Walking=1,
 // NavWalking=2, Falling=3, Swimming=4, Flying=5, Custom=6. The source's airborne state rides
