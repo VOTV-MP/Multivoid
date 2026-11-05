@@ -99,7 +99,9 @@ void* Resolve(const std::pair<int32_t, int32_t>& id) {
 // The crawler's first overlap is the one its graph acts on (a DoOnce): the crawl starts there.
 void OnOverlapPost(const SG::Call& call) {
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected() || s->role() != coop::net::Role::Host || !call.object || !R::IsLive(call.object)) return;
+    // A running host session is the world's host whether or not a client is seated (it stays in Handshaking until the
+    // first one arrives), so a crawl begun alone is recorded for the joiner; only the live cue needs a peer.
+    if (!s || s->role() != coop::net::Role::Host || !call.object || !R::IsLive(call.object)) return;
     const auto id = IdOf(call.object);
     const uint32_t world = ue_wrap::world_identity::Generation();
     if (g_host.world != world) {   // another world: its crawls start again
@@ -123,8 +125,10 @@ void OnOverlapPost(const SG::Call& call) {
     p.x = at.X;
     p.y = at.Y;
     p.z = at.Z;
-    if (s->SendReliable(coop::net::ReliableKind::EventCue, &p, sizeof(p))) ++g_sent;
-    UE_LOGI("vent_crawler: the crawl started at (%.0f, %.0f, %.0f) -- EventCue sent (#%u)", at.X, at.Y, at.Z, g_sent);
+    const bool sent = s->connected() && s->SendReliable(coop::net::ReliableKind::EventCue, &p, sizeof(p));
+    if (sent) ++g_sent;
+    UE_LOGI("vent_crawler: the crawl started at (%.0f, %.0f, %.0f) -- %s", at.X, at.Y, at.Z,
+            sent ? "EventCue sent" : "recorded only, no peer to send the cue to");
 }
 
 // ---- CLIENT: the mirror's timeline ---------------------------------------------------------------------------------

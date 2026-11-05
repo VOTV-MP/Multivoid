@@ -8,7 +8,9 @@
 // crawl's sounds play there; each peer then reads the two doors, the keypads and the vent, and the client's must be the
 // host's. The client begins once its join's catch-up window has closed. Then life 1 leaves, and the rejoined life
 // (VOTVCOOP_CRAWLER_REJOIN=1, mp.py smoke --rejoin --rejoin-env) reads the same row against the host's, the crawl being
-// over. The host's verdict counts its own fails, the client's and the rejoined life's. Gated by
+// over. The host's verdict counts its own fails, the client's and the rejoined life's. With VOTVCOOP_CRAWLER_HOST_FIRST=1
+// on both peers the host's player walks into the box before any client has joined, and the client that joins after the
+// crawl must be told of it (a state heard) and find the vent and doors as the host's are. Gated by
 // VOTVCOOP_RUN_VENT_CRAWLER; the folder is VOTVCOOP_CAN_DIR.
 
 #include "harness/autotest.h"
@@ -22,6 +24,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/props/join_membership_sweep.h"
+#include "coop/session/host_world_settle.h"
 #include "coop/session/net_pump.h"
 #include "coop/world/event_fire_sync.h"
 #include "coop/world/vent_crawler_sync.h"
@@ -273,23 +276,56 @@ std::string Where(void* actor) {
 
 // ---- HOST ----------------------------------------------------------------------------------------------------------
 
-void RunHost() {
-    if (!Await("client_ready", 400)) return;
-    // Life 1's occupancy of slot 1: the rejoin step waits for it to change, never for the slot to read closed -- a fast
-    // rejoin closes and refills the slot between two reads.
-    const uint32_t life1Gen = harness::session_runtime::Session().peerGenerationForSlot(1);
-    // The signal room door open, so the crawl's close has something to move.
+// The host's crawler placed in the world (its spawn is deferred, and it stands at the origin until it finishes), with its
+// box ("x|y|z|reach") and its place. Drill thread.
+bool WaitCrawlerPlaced(void*& crawler, std::string& box, std::string& start) {
+    return WaitFor([&] {
+        crawler = Crawler();
+        void* b = ObjField(crawler, L"Box");
+        ue_wrap::FVector at{}, me{};
+        const float reach = BoxReach(b);
+        if (!b || reach <= 0.f || !E::TryGetComponentLocation(b, at) || !E::TryGetActorLocation(crawler, me) ||
+            std::fabs(me.X) + std::fabs(me.Y) < 1.f)
+            return false;
+        char buf[112];
+        std::snprintf(buf, sizeof(buf), "%.0f|%.0f|%.0f|%.0f", at.X, at.Y, at.Z, reach);
+        box = buf;
+        start = Where(crawler);
+        return true;
+    }, 10);
+}
+
+// The signal room door open, so the crawl's close has something to move. isOpened is set where the swing ends, so this
+// waits for the door to have finished opening.
+void OpenSignalRoomDoor() {
     OnGameThread([&] {
         void* door = ue_wrap::keyed_objects::Resolve(L"basedoor_signalroom");
         if (door) D::CallDoorOpen(door, true);
     });
-    // isOpened is set where the swing ends, so this waits for the door to have finished opening.
     Check(WaitFor([&] {
               void* door = ue_wrap::keyed_objects::Resolve(L"basedoor_signalroom");
               bool open = false;
               return door && D::TryReadOpen(door, open) && open;
           }, 15),
           "the signal room door is open before the crawl");
+}
+
+// The crawl's last act opens the balcony door (its keypads first), and isOpened is set where that swing ends.
+void AwaitBalconyOpen() {
+    Check(WaitFor([&] {
+              void* door = ue_wrap::keyed_objects::Resolve(L"basedoor_balcony");
+              bool open = false;
+              return door && D::TryReadOpen(door, open) && open;
+          }, 20),
+          "the balcony door opened at the crawl's end");
+}
+
+void RunHost() {
+    if (!Await("client_ready", 400)) return;
+    // Life 1's occupancy of slot 1: the rejoin step waits for it to change, never for the slot to read closed -- a fast
+    // rejoin closes and refills the slot between two reads.
+    const uint32_t life1Gen = harness::session_runtime::Session().peerGenerationForSlot(1);
+    OpenSignalRoomDoor();
     std::string row;
     OnGameThread([&] { row = StateRow(); });
     UE_LOGI("crawler-drill: host before %hs", row.c_str());
@@ -299,22 +335,7 @@ void RunHost() {
           "the host fired ventCrawler");
     void* crawler = nullptr;
     std::string box, start;
-    // Placed: its spawn is deferred, and it stands at the origin until it finishes.
-    Check(WaitFor([&] {
-              crawler = Crawler();
-              void* b = ObjField(crawler, L"Box");
-              ue_wrap::FVector at{}, me{};
-              const float reach = BoxReach(b);
-              if (!b || reach <= 0.f || !E::TryGetComponentLocation(b, at) || !E::TryGetActorLocation(crawler, me) ||
-                  std::fabs(me.X) + std::fabs(me.Y) < 1.f)
-                  return false;
-              char buf[112];
-              std::snprintf(buf, sizeof(buf), "%.0f|%.0f|%.0f|%.0f", at.X, at.Y, at.Z, reach);
-              box = buf;
-              start = Where(crawler);
-              return true;
-          }, 10),
-          "the host's crawler is in the world");
+    Check(WaitCrawlerPlaced(crawler, box, start), "the host's crawler is in the world");
     UE_LOGI("crawler-drill: host crawler at %hs, its box at %hs", start.c_str(), box.c_str());
     Mark("h_spawn", box);
     if (!Await("c_in")) return;
@@ -343,13 +364,7 @@ void RunHost() {
         ::Sleep(100);
     }
     Check(WaitFor([&] { return Crawler() == nullptr; }, 60), "the host's crawler went at the crawl's end");
-    // The crawl's last act opens the balcony door (its keypads first), and isOpened is set where that swing ends.
-    Check(WaitFor([&] {
-              void* door = ue_wrap::keyed_objects::Resolve(L"basedoor_balcony");
-              bool open = false;
-              return door && D::TryReadOpen(door, open) && open;
-          }, 20),
-          "the balcony door opened at the crawl's end");
+    AwaitBalconyOpen();
     OnGameThread([&] { row = StateRow(); });
     UE_LOGI("crawler-drill: host after %hs", row.c_str());
     Mark("h_after", row);
@@ -372,6 +387,46 @@ void RunHost() {
     const int rejoinFails = AwaitText("rejoin_done", rejoinText, 400) ? ParseFails(rejoinText) : 1;   // no word is no pass
     if (g_fails == 0 && clientFails == 0 && rejoinFails == 0) UE_LOGI("crawler-drill: VERDICT PASS");
     else UE_LOGW("crawler-drill: VERDICT FAIL host=%d client=%d rejoin=%d", g_fails, clientFails, rejoinFails);
+    UE_LOGI("crawler-drill: DONE on host fails=%d", g_fails);
+}
+
+// The host-first arm (VOTVCOOP_CRAWLER_HOST_FIRST=1): the host's player walks into the box right after the host's world
+// settles, before any client has joined, so the crawl is recorded with nobody to hear it. The client that joins after it
+// must be told where it stands, and find the vent and doors as the host's are.
+void RunHostFirst() {
+    if (!PS::WaitFor("the host's world to settle", 300, [&] {
+            bool settled = false;
+            OnGameThread([&] { settled = coop::host_world_settle::Settled() && Me(); });
+            return settled;
+        }))
+        return;
+    OpenSignalRoomDoor();
+    Check(coop::event_fire_sync::HostFire(coop::event_fire_sync::FireKind::RunEvent, L"ventCrawler", L"None"),
+          "the host fired ventCrawler");
+    void* crawler = nullptr;
+    std::string box, start;
+    Check(WaitCrawlerPlaced(crawler, box, start), "the host's crawler is in the world");
+    UE_LOGI("crawler-drill: host crawler at %hs, its box at %hs, no client yet", start.c_str(), box.c_str());
+    const auto s = Split(start);
+    Check(WalkInto(box), "the host's player walked into the box");
+    Check(WaitFor([&] {
+              ue_wrap::FVector at{};
+              return s.size() == 3 && R::IsLive(crawler) && E::TryGetActorLocation(crawler, at) &&
+                     std::fabs(at.Y - std::atof(s[1].c_str())) > 50.f;
+          }, 15),
+          "the host's own player started the crawl");
+    Check(WaitFor([&] { return Crawler() == nullptr; }, 60), "the host's crawler went at the crawl's end");
+    AwaitBalconyOpen();
+    // The client joins after this, as late as it takes it to load: its readiness is the host's cue to read the rows.
+    if (!Await("client_ready", 400)) return;
+    std::string row;
+    OnGameThread([&] { row = StateRow(); });
+    UE_LOGI("crawler-drill: host for the late joiner %hs", row.c_str());
+    Mark("hf_row", row);
+    std::string clientText;
+    const int clientFails = AwaitText("c_done", clientText, 240) ? ParseFails(clientText) : 1;   // no word is no pass
+    if (g_fails == 0 && clientFails == 0) UE_LOGI("crawler-drill: VERDICT PASS");
+    else UE_LOGW("crawler-drill: VERDICT FAIL host=%d client=%d", g_fails, clientFails);
     UE_LOGI("crawler-drill: DONE on host fails=%d", g_fails);
 }
 
@@ -466,6 +521,21 @@ void RunClient() {
     UE_LOGI("crawler-drill: DONE on client fails=%d", g_fails);
 }
 
+// The late joiner of the host-first arm: the crawl began and ran its course on the host before this peer was here, and
+// the vent, both doors and the balcony's keypads here must be the host's, which the join's answer (VentCrawlState) gave.
+void RunLateJoiner() {
+    if (!ClientReady()) return;
+    Mark("client_ready");
+    std::string host, row;
+    if (!AwaitText("hf_row", host, 120)) return;
+    WaitFor([&] { return Agrees(StateRow(), host); }, 20);   // the replay and the join window's corrections have landed
+    OnGameThread([&] { row = StateRow(); });
+    Compare(row, host, "late join");
+    Check(coop::vent_crawler_sync::StatesHeard() > 0, "the host's crawl state reached this joiner");
+    Mark("c_done", std::to_string(g_fails));
+    UE_LOGI("crawler-drill: DONE on client fails=%d", g_fails);
+}
+
 // The rejoined life (VOTVCOOP_CRAWLER_REJOIN=1): the crawl is over on the host, and the vent, both doors and the
 // balcony's keypads here must be the host's, which the join's answer (VentCrawlState) gave this life.
 void RunRejoin() {
@@ -485,7 +555,9 @@ void RunRejoin() {
 
 DWORD WINAPI VentCrawlerThread(LPVOID /*arg*/) {
     if (!PS::Begin("crawler-drill")) return 0;
-    if (!IsClientRole()) RunHost();
+    const bool hostFirst = coop::config::ReadEnv("VOTVCOOP_CRAWLER_HOST_FIRST") == "1";
+    if (!IsClientRole()) hostFirst ? RunHostFirst() : RunHost();
+    else if (hostFirst) RunLateJoiner();
     else if (coop::config::ReadEnv("VOTVCOOP_CRAWLER_REJOIN") == "1") RunRejoin();
     else RunClient();
     return 0;
