@@ -214,49 +214,74 @@ float Wrap(float d) {
     return d;
 }
 
-struct Diff {
-    float maxArm = -1.f, meanArm = -1.f, maxAct = -1.f, moved = 0.f;
+// UE's FRotator -> FQuat (Yaw about Z, Pitch about Y, Roll about X; degrees), as {x, y, z, w}.
+struct Quat {
+    double x, y, z, w;
+};
+
+Quat FromRot(const float* pyr) {
+    const double k = 3.14159265358979323846 / 360.0;
+    const double sp = std::sin(pyr[0] * k), cp = std::cos(pyr[0] * k), sy = std::sin(pyr[1] * k), cy = std::cos(pyr[1] * k),
+                 sr = std::sin(pyr[2] * k), cr = std::cos(pyr[2] * k);
+    return {cr * sp * sy - sr * cp * cy, -cr * sp * cy - sr * cp * sy, cr * cp * sy - sr * sp * cy, cr * cp * cy + sr * sp * sy};
+}
+
+constexpr double kRad = 180.0 / 3.14159265358979323846;
+
+struct Rel {
+    double sumRel = 0, maxRel = 0, sumTilt = 0, maxTilt = 0;
     size_t n = 0;
 };
 
-// The largest angle between a triple and the host's, interpolated at fraction `f` between the host's two samples.
-float Spread(const float* a, const float* b0, const float* b1, double f) {
-    float worst = 0.f;
-    for (int i = 0; i < 3; ++i) {
-        const float host = b0[i] + Wrap(b1[i] - b0[i]) * static_cast<float>(f);
-        worst = (std::max)(worst, std::fabs(Wrap(a[i] - host)));
+// The arm's orientation in its own actor's frame: the geodesic angle, and how far its up axis leans off the actor's up axis.
+Rel Relative(const std::vector<Sample>& v) {
+    Rel r;
+    for (const Sample& s : v) {
+        const Quat a = FromRot(s.arm), c = FromRot(s.act);
+        const double w = c.w * a.w + c.x * a.x + c.y * a.y + c.z * a.z;  // conj(act) * arm: scalar part, then x and y
+        const double x = c.w * a.x - a.w * c.x - (c.y * a.z - c.z * a.y), y = c.w * a.y - a.w * c.y - (c.z * a.x - c.x * a.z);
+        const double rel = 2.0 * std::acos((std::min)(1.0, std::fabs(w))) * kRad;
+        const double tilt = std::acos((std::max)(-1.0, (std::min)(1.0, 1.0 - 2.0 * (x * x + y * y)))) * kRad;
+        r.sumRel += rel, r.maxRel = (std::max)(r.maxRel, rel);
+        r.sumTilt += tilt, r.maxTilt = (std::max)(r.maxTilt, tilt);
+        ++r.n;
     }
-    return worst;
+    return r;
 }
 
-// Each client sample against the host's two samples that bracket it in time, 50 ms apart at most.
-Diff Compare(const std::vector<Sample>& host, const std::vector<Sample>& client) {
-    Diff d;
-    double sumArm = 0;
+void PrintRel(const char* who, const char* tick, const std::vector<Sample>& v) {
+    const Rel r = Relative(v);
+    const double n = r.n ? static_cast<double>(r.n) : 1.0;
+    UE_LOGI("deer-ab: %s rel mean=%.2f max=%.2f tilt mean=%.2f max=%.2f n=%zu tick=%s", who, r.sumRel / n, r.maxRel, r.sumTilt / n,
+            r.maxTilt, r.n, tick);
+}
+
+// The yaw gap of each client sample to the host's actor as it stood kPoseLag earlier, interpolated between the host's two samples
+// that bracket that moment, 50 ms apart at most.
+constexpr double kPoseLag = 0.150;
+
+void PrintYawLagged(const std::vector<Sample>& host, const std::vector<Sample>& client, const char* tick) {
+    double sum = 0, worst = 0, moved = 0;
+    size_t n = 0;
     for (const Sample& c : client) {
+        const double t = c.t - kPoseLag;
         for (size_t i = 0; i + 1 < host.size(); ++i) {
             const Sample &lo = host[i], &hi = host[i + 1];
-            if (c.t < lo.t || c.t > hi.t || hi.t - lo.t > 0.05) continue;
-            const double f = hi.t > lo.t ? (c.t - lo.t) / (hi.t - lo.t) : 0.0;
-            const float arm = Spread(c.arm, lo.arm, hi.arm, f), act = Spread(c.act, lo.act, hi.act, f);
-            d.maxArm = (std::max)(d.maxArm, arm);
-            d.maxAct = (std::max)(d.maxAct, act);
-            sumArm += arm;
-            ++d.n;
+            if (t < lo.t || t > hi.t || hi.t - lo.t > 0.05) continue;
+            const double f = hi.t > lo.t ? (t - lo.t) / (hi.t - lo.t) : 0.0;
+            const double yaw = lo.act[1] + Wrap(hi.act[1] - lo.act[1]) * f;
+            const double d = std::fabs(Wrap(static_cast<float>(c.act[1] - yaw)));
+            sum += d, worst = (std::max)(worst, d);
+            ++n;
             break;
         }
     }
-    if (d.n) d.meanArm = static_cast<float>(sumArm / static_cast<double>(d.n));
     for (const Sample& s : host) {
         const float dx = s.at[0] - host.front().at[0], dy = s.at[1] - host.front().at[1], dz = s.at[2] - host.front().at[2];
-        d.moved = (std::max)(d.moved, std::sqrt(dx * dx + dy * dy + dz * dz));
+        moved = (std::max)(moved, static_cast<double>(std::sqrt(dx * dx + dy * dy + dz * dz)));
     }
-    return d;
-}
-
-void PrintDiff(const Diff& d, const char* tick) {
-    UE_LOGI("deer-ab: max_springarm_diff=%.2f mean=%.2f max_actor_diff=%.2f n=%zu tick=%s moved=%.0f", d.maxArm, d.meanArm, d.maxAct,
-            d.n, tick, d.moved);
+    UE_LOGI("deer-ab: actor yaw lagged max=%.2f mean=%.2f n=%zu tick=%s moved=%.0f", worst, n ? sum / static_cast<double>(n) : -1.0, n,
+            tick, moved);
 }
 
 constexpr double kAbSeconds = 5.0;
@@ -268,8 +293,13 @@ void HostAb(void* deer) {
     const std::vector<Sample> on = Window([&] { return deer; }, kAbSeconds);
     std::string a, b;
     if (!AwaitText("ab_a_samples", a, 60) || !AwaitText("ab_b_samples", b, 60)) return;
-    PrintDiff(Compare(off, Unpack(a)), "off");
-    PrintDiff(Compare(on, Unpack(b)), "on");
+    PrintRel("host", "off", off);  // the host's window beside the mirror's phase of that name
+    PrintRel("host", "on", on);
+    const std::vector<Sample> clientOff = Unpack(a), clientOn = Unpack(b);
+    PrintRel("client", "off", clientOff);
+    PrintRel("client", "on", clientOn);
+    PrintYawLagged(off, clientOff, "off");
+    PrintYawLagged(on, clientOn, "on");
 }
 
 void ClientAb(uint32_t eid) {
@@ -283,6 +313,8 @@ void ClientAb(uint32_t eid) {
     OnGameThread([&] {
         if (void* m = Mirror(eid)) E::SetActorTickEnabled(m, false);
     });
+    PrintRel("client", "off", off);
+    PrintRel("client", "on", on);
     Mark("ab_a_samples", Pack(off));
     Mark("ab_b_samples", Pack(on));
 }
