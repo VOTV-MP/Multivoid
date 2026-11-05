@@ -50,6 +50,11 @@ struct Scalars {
   bool  visualizerMode = false;  // visualizerMode, graph or spectrogram (ApplyVisualizerMode draws it)
 };
 
+// The range the game's own updRemap clamps both remap bounds to. A wire value is clamped to it at the
+// receive edge, so a poll baseline never holds a number the desk will not.
+constexpr float kRemapLimit = 10.0f;
+constexpr float ClampRemap(float v) { return v < -kRemapLimit ? -kRemapLimit : (v > kRemapLimit ? kRemapLimit : v); }
+
 // Resolve the desk class, the singleton instance, every field offset and the refresh
 // UFunctions. A throttled (2 s) lazy retry; idempotent. Game thread.
 bool EnsureResolved();

@@ -226,11 +226,18 @@ void Tick() {
     PollOnce(s);
 }
 
-void OnDeskInput(const coop::net::DeskInputPayload& p, uint8_t senderSlot) {
+void OnDeskInput(const coop::net::DeskInputPayload& wire, uint8_t senderSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
-    if (p.field >= static_cast<uint8_t>(DeskInputField::Count)) return;
-    if (!std::isfinite(p.floatVal)) return;
+    if (wire.field >= static_cast<uint8_t>(DeskInputField::Count)) return;
+    if (!std::isfinite(wire.floatVal)) return;
+    // The remap bounds are clamped to the range updRemap clamps to (the way a wire codec clamps a field
+    // to its range): the echo-prime below then stores what the desk will hold, and a peer's out-of-range
+    // value cannot read as a local edge on the next poll and bounce back through the host.
+    coop::net::DeskInputPayload p = wire;
+    if (p.field == static_cast<uint8_t>(DeskInputField::RemapMin) ||
+        p.field == static_cast<uint8_t>(DeskInputField::RemapMax))
+        p.floatVal = CD::ClampRemap(p.floatVal);
 
     // CoordIsPing is NEVER applied to the machine. The native ping FSM is a latent
     // tick machine gated on that flag, so a raw write here woke a phantom parallel sim
