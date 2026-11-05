@@ -32,6 +32,12 @@ bool IsPlantClass(void* cls);
 std::wstring Key(void* plant);
 
 std::wstring Row(void* plant);          // its list_farmPlants row
+
+// The class the game's own list_farmPlants row plants (the row's plantObject, as a pot reads it), or null for an empty row, a row
+// the table does not have, a table not readable yet or a class no longer live. The row names are read once per world, and again
+// at most every few seconds while the table is not readable. The class is not checked against the family: IsPlantClass is the
+// caller's. Game thread.
+void* FarmRowPlantClass(const std::wstring& row);
 std::wstring AttachParent(void* plant); // the key of the pot it stands in
 bool HideDirt(void* plant);
 
@@ -41,8 +47,10 @@ bool Read(void* plant, Values& out);
 // fruit mesh, its size.
 void Apply(void* plant, const std::wstring& row, const Values& v);
 
-// A copy with the given identity. A pot it names has to exist here. Null when its class is not loaded.
-void* Spawn(const std::wstring& className, const std::wstring& key, const std::wstring& row, const std::wstring& attachParent,
+// A copy of class `cls` with the given identity. A pot it names has to exist here. Null for a null class. The class is the
+// caller's to find and to check against the family (IsPlantClass, for a name that came off the wire): a class just loaded is
+// not listed by the object index until its load drains, so a caller that loaded it passes the pointer it got.
+void* Spawn(void* cls, const std::wstring& key, const std::wstring& row, const std::wstring& attachParent,
             bool hideDirt, const FVector& at, const FRotator& rot);
 
 bool Destroy(void* plant);

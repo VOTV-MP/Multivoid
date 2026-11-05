@@ -7,11 +7,18 @@
 // next state answers. A plant is found by its save key, so what a join's load brought is already the host's. The winter bush
 // and the mushrooms are classes under growingPlant_C, so they are plants here too, and their spawners are refused on a
 // client (coop/world/spawn_authority), so the bushes are the host's.
+//
+// TRANSITIONAL (principle 4): the client's PlantEdit poll stands in for player-act intents, as the door's verbs are. RETIREMENT
+// PLAN: they replace it once (1) a host-run verb's player-facing feedback (PlaySound2D, addHint) reaches the acting client
+// through one shared seam, and (2) the hose and the bury lane are synced. Until then the poll carries only what the client's
+// player changed (its simulation is refused at the gate, plant_gate), and the host takes an edit as a client's act could make
+// it: a plant class, within the sender's reach (coop/element/intent_authority), every value bounded.
 
 #pragma once
 
 #include "ue_wrap/actors/growing_plant.h"
 
+#include <cstdint>
 #include <string>
 
 namespace coop::net {
@@ -29,8 +36,19 @@ void Tick();
 // A client's receiver: a plant's state, or its end.
 void OnState(const coop::net::PlantStatePayload& p);
 
-// The host's receiver: what a client's player did to a plant.
-void OnEdit(const coop::net::PlantStatePayload& p);
+// The host's receiver: what the client in `senderSlot` says its player did to a plant. The next poll applies it, and only after
+// the class, the reach and the bounds are judged; an edit that waits for the sender's body stays queued, in a bounded queue per
+// sender.
+void OnEdit(uint8_t senderSlot, const coop::net::PlantStatePayload& p);
+
+// HOST, what the edit gate did this session: plantings refused for a class that is no loaded plant class, edits refused for a
+// plant or place outside the sender's reach, and values cut to their bounds. Read-only, for drills. Game thread.
+struct Counts {
+    std::uint64_t refusedClass = 0;
+    std::uint64_t refusedReach = 0;
+    std::uint64_t clamped = 0;
+};
+Counts GetCounts();
 
 // Every plant again for a joiner.
 void QueueConnectBroadcastForSlot(int slot);

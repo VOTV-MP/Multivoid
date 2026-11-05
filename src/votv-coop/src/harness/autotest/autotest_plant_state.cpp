@@ -137,12 +137,12 @@ std::string RollBush() {
 std::string SpawnFamily(const wchar_t* path, const wchar_t* cls, float side) {
     std::string key;
     OnGameThread([&] {
-        ue_wrap::asset_load::LoadObjectByPath(path);
+        void* clsPtr = ue_wrap::asset_load::LoadObjectByPath(path);
         void* me = coop::players::Registry::Get().Local();
         void* cdo = R::FindClassDefaultObject(cls);
         ue_wrap::FVector at{};
         if (!me || !cdo || !E::TryGetActorLocation(me, at)) return;
-        void* p = GP::Spawn(cls, L"", GP::Row(cdo), L"", true, {at.X + 300.f, at.Y + side, at.Z - 80.f}, {});
+        void* p = GP::Spawn(clsPtr, L"", GP::Row(cdo), L"", true, {at.X + 300.f, at.Y + side, at.Z - 80.f}, {});
         if (p && R::ClassNameOf(p) == cls) key = Narrow(GP::Key(p));
     });
     return key;
@@ -435,13 +435,14 @@ void RunClient() {
     Mark("harvest_done");
     if (!Await("harvest_seen", kStep)) return;
 
-    // A plant of this player's, as a pot or a seed makes one.
+    // A plant of this player's, as a pot or a seed makes one: of the class its row plants, which is what the host plants for it.
     std::string planted;
     OnGameThread([&] {
         void* pawn = coop::players::Registry::Get().Local();
         ue_wrap::FVector me{};
         if (!pawn || !E::TryGetActorLocation(pawn, me)) return;
-        void* p = GP::Spawn(L"growingPlant_C", L"", Widen(row), L"", true, {me.X + 300.f, me.Y, me.Z - 80.f}, {});
+        void* rowClass = GP::FarmRowPlantClass(Widen(row));
+        void* p = GP::Spawn(rowClass, L"", Widen(row), L"", true, {me.X + 300.f, me.Y, me.Z - 80.f}, {});
         if (p) planted = Narrow(GP::Key(p));
     });
     Check(!planted.empty(), "this player's plant stands");

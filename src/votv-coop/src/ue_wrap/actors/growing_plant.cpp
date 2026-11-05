@@ -9,10 +9,12 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/data_table.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/world_identity.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -25,6 +27,7 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace OI = ue_wrap::object_index;
 namespace WI = ue_wrap::world_identity;
+namespace DT = ue_wrap::data_table;
 
 // The family is every class whose super chain reaches growingPlant_C: ForEachInstance walks one exact class, and a list of
 // the game's classes by hand goes stale with the next game build. The chain is walked by pointer against the base class, found
@@ -193,6 +196,56 @@ std::wstring Key(void* plant) {
 
 std::wstring Row(void* plant) { return ReadName(plant, OffsetsOf(plant).plant); }
 
+namespace {
+
+// The class each row of list_farmPlants plants, by the row's lowercased name (an FName compares without case), read for the
+// world of `g_farmRowsWorld`; 0 is none read. The row's plantObject is a hard class reference (struct_farmPlant: a
+// ClassProperty, 8 bytes), so the table's load loaded every class in it.
+std::unordered_map<std::wstring, void*> g_farmRowClasses;
+uint32_t g_farmRowsWorld = 0;
+uint64_t g_farmRowsTryMs = 0;
+constexpr uint64_t kFarmRowsRetryMs = 3000;
+
+std::wstring Lowered(const std::wstring& s) {
+    std::wstring k = s;
+    for (wchar_t& c : k)
+        if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c - L'A' + L'a');
+    return k;
+}
+
+bool ReadFarmRows() {
+    const uint32_t world = WI::Generation();
+    if (g_farmRowsWorld == world) return true;
+    const uint64_t now = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+    if (g_farmRowsTryMs != 0 && now - g_farmRowsTryMs < kFarmRowsRetryMs) return false;
+    g_farmRowsTryMs = now;
+    void* table = R::FindObject(L"list_farmPlants", L"DataTable");
+    void* rowStruct = table ? DT::RowStruct(table) : nullptr;
+    if (!rowStruct) return false;
+    const int32_t off = R::FindPropertyOffsetByPrefix(rowStruct, L"plantObject_");
+    if (off < 0) {
+        UE_LOGE("growing_plant: list_farmPlants' row struct has no plantObject member");
+        return false;
+    }
+    std::vector<DT::RowRef> refs;
+    if (!DT::Rows(table, refs, "growing_plant") || refs.empty()) return false;
+    g_farmRowClasses.clear();
+    for (const DT::RowRef& ref : refs)
+        g_farmRowClasses[Lowered(R::ToString(ref.key))] = *reinterpret_cast<void* const*>(ref.row + off);
+    g_farmRowsWorld = world;
+    UE_LOGI("growing_plant: list_farmPlants has %zu rows", g_farmRowClasses.size());
+    return true;
+}
+
+}  // namespace
+
+void* FarmRowPlantClass(const std::wstring& row) {
+    if (row.empty() || !ReadFarmRows()) return nullptr;
+    const auto it = g_farmRowClasses.find(Lowered(row));
+    return (it != g_farmRowClasses.end() && it->second && R::IsLive(it->second)) ? it->second : nullptr;
+}
+
 std::wstring AttachParent(void* plant) {
     std::wstring key = ReadName(plant, OffsetsOf(plant).attachParent);
     return key == L"None" ? L"" : key;
@@ -236,10 +289,8 @@ void Apply(void* plant, const std::wstring& row, const Values& v) {
     CallPlain(plant, L"updLoc");
 }
 
-void* Spawn(const std::wstring& className, const std::wstring& key, const std::wstring& row, const std::wstring& attachParent,
+void* Spawn(void* cls, const std::wstring& key, const std::wstring& row, const std::wstring& attachParent,
             bool hideDirt, const FVector& at, const FRotator& rot) {
-    void* cls = OI::ClassByName(className.c_str());
-    if (!cls) cls = R::FindClass(className.c_str());
     if (!cls) return nullptr;
     void* plant = engine::BeginDeferredSpawn(cls, at, rot);
     if (!plant) return nullptr;

@@ -249,7 +249,7 @@ bool HandlePropDriveEvent(net::Session& session,
             UE_LOGW("event_feed: plant message malformed -- dropping");
             break;
         }
-        if (edit) ::coop::plant_sync::OnEdit(p);
+        if (edit) ::coop::plant_sync::OnEdit(static_cast<uint8_t>(msg.senderPeerSlot), p);
         else ::coop::plant_sync::OnState(p);
         break;
     }

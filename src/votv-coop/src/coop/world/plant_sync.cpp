@@ -2,14 +2,18 @@
 
 #include "coop/world/plant_sync.h"
 
+#include "coop/element/intent_authority.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
+#include "coop/player/roster_ledger.h"  // PerSlotState
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
 
 #include "ue_wrap/actors/growing_plant.h"
+#include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
@@ -19,8 +23,10 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <cwchar>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -32,6 +38,7 @@ namespace {
 namespace GP = ue_wrap::growing_plant;
 namespace E = ue_wrap::engine;
 namespace R = ue_wrap::reflection;
+namespace OI = ue_wrap::object_index;
 using Clock = std::chrono::steady_clock;
 using Payload = coop::net::PlantStatePayload;
 
@@ -120,8 +127,24 @@ bool Describe(void* plant, const std::wstring& key, const GP::Values& v, Payload
     return true;
 }
 
-void* Materialize(const Payload& p) {
-    return GP::Spawn(StringFromClassName(p.cls), coop::net::StringFromWireKey(p.key), coop::net::StringFromWireKey(p.row),
+// The class a host's state names, on a client: the object index's, or loaded from its asset when this peer has none yet
+// (a plant class loads with the first plant of it, and the host's may be the first here). Plant classes live under
+// /Game/objects/, one asset to a class. The name is the host's, so loading it is a load the host asked
+// for; the class is checked against the family all the same. A client's planting on the host loads nothing: its class
+// is its row's (GP::FarmRowPlantClass).
+void* HostStateClass(const std::wstring& name) {
+    void* cls = OI::ClassByName(name.c_str());
+    if (!cls && name.size() > 2 && name.compare(name.size() - 2, 2, L"_C") == 0) {
+        const std::wstring path = L"/Game/objects/" + name.substr(0, name.size() - 2) + L"." + name;
+        cls = ue_wrap::asset_load::LoadObjectByPath(path.c_str());
+        UE_LOGI("plant_sync: plant class '%ls' was not loaded here; loading %ls %hs", name.c_str(), path.c_str(),
+                cls ? "found it" : "found nothing");
+    }
+    return (cls && GP::IsPlantClass(cls)) ? cls : nullptr;
+}
+
+void* Materialize(const Payload& p, void* cls) {
+    return GP::Spawn(cls, coop::net::StringFromWireKey(p.key), coop::net::StringFromWireKey(p.row),
                      coop::net::StringFromWireKey(p.attachParent), p.hideDirt != 0, {p.x, p.y, p.z}, {p.pitch, p.yaw, p.roll});
 }
 
@@ -135,36 +158,152 @@ struct Sent {
     bool everSent = false;
 };
 std::unordered_map<std::wstring, Sent> g_sent;
-std::vector<Payload> g_edits;
 
-void HostApplyEdits(std::unordered_map<std::wstring, void*>& index) {
-    std::vector<Payload> edits;
-    edits.swap(g_edits);
-    for (const Payload& p : edits) {
-        const std::wstring key = coop::net::StringFromWireKey(p.key);
-        auto it = index.find(key);
-        if (!p.alive) {
-            if (it != index.end()) GP::Destroy(it->second);
-            index.erase(key);
-            UE_LOGI("plant_sync: a client's player removed plant '%ls'", key.c_str());
-            continue;
+// The edit gate. A client's edit is its player's act, so the host takes it as that act could make it: a planting's class is the
+// one its list_farmPlants row plants, every edit lies within the sender's reach and every value within the bounds below.
+//
+// The reach a sender's edit is judged against: a player's look-at trace is mainPlayer.armLength, 200 by default, so twice that,
+// as the door's verbs are (door_verb_intent). The authority adds the plant's own bounds radius and a 600 uu allowance for the
+// puppet's pose lagging the sender, so the bound refuses a plant the sender cannot be near and never a reach the game allows.
+constexpr float kPlantReachUU = 400.0f;
+
+// The bounds, each a value the game's own writers stay inside.
+constexpr float kMaxFraction = 1.0f;       // grow and fruitGrow are fractions: the plant's own tests are >= 1
+constexpr float kMaxWater = 20000.0f;      // rain adds only below 3600 and a can sets 600
+constexpr float kMaxFertilizer = 20000.0f; // a fertilizer sets 600 and a poo 1200
+constexpr float kMinDryness = -1.0f;       // -1 is a dead plant
+constexpr float kMaxDryness = 20000.0f;    // the plant dies at its row's maxDryness, 10800 by default; twice that
+constexpr int32_t kMaxAmount = 64;         // the berries of a ripe bush
+
+// A sender's edits wait for the next poll; the queue is bounded since one that never gets a body would grow without end.
+constexpr size_t kEditsPerSlotCap = 256;
+
+enum Field : int { kFGrow, kFFertilizer, kFWater, kFFruitGrow, kFDryness, kFAmount, kFieldCount };
+constexpr const char* kFieldName[kFieldCount] = {"grow", "fertilizer", "water", "fruitGrow", "dryness", "amount"};
+
+struct EditSlot {
+    std::vector<Payload> queue;
+    bool fullSaid = false;   // a refused push, said once a streak
+    bool waitSaid = false;   // the wait for the sender's body, said once a streak
+};
+coop::roster_ledger::PerSlotState<EditSlot> g_editSlots;
+
+uint64_t g_refusedClass = 0, g_refusedReach = 0, g_clamped = 0;
+bool g_clampSaid[kFieldCount] = {};
+
+template <class T>
+void Bound(T& v, T lo, T hi, Field f, uint8_t slot) {
+    const T cut = v < lo ? lo : (v > hi ? hi : v);
+    if (cut == v) return;
+    ++g_clamped;
+    if (!g_clampSaid[f]) {
+        g_clampSaid[f] = true;
+        UE_LOGW("plant_sync: slot %u's %s of %.1f is cut to %.1f (said once a session per field)", static_cast<unsigned>(slot),
+                kFieldName[f], static_cast<double>(v), static_cast<double>(cut));
+    }
+    v = cut;
+}
+
+// The values this edit applies: all of a planting's, the masked ones of an edit of a plant the host holds.
+void BoundEdit(Payload& p, bool planting, uint8_t slot) {
+    namespace PE = coop::net::plant_edit;
+    if (planting || (p.editMask & PE::kGrow)) Bound(p.grow, 0.f, kMaxFraction, kFGrow, slot);
+    if (planting || (p.editMask & PE::kFertilizer)) Bound(p.fertilizer, 0.f, kMaxFertilizer, kFFertilizer, slot);
+    if (planting || (p.editMask & PE::kWater)) Bound(p.water, 0.f, kMaxWater, kFWater, slot);
+    if (planting || (p.editMask & PE::kFruitGrow)) Bound(p.fruitGrow, 0.f, kMaxFraction, kFFruitGrow, slot);
+    if (planting || (p.editMask & PE::kDryness)) Bound(p.dryness, kMinDryness, kMaxDryness, kFDryness, slot);
+    if (planting || (p.editMask & PE::kAmount)) Bound(p.amount, int32_t{0}, kMaxAmount, kFAmount, slot);
+}
+
+enum class Gate : uint8_t { Pass, Wait, Refused };
+
+// Wait: the host has no body for the sender yet (its first pose has not arrived), so its reach cannot be measured and the edit
+// stays queued for the body, as the door's verbs do. Refused is counted and said, for its first three and every twentieth.
+Gate Judge(const coop::element::IntentSubject& subject, EditSlot& sl, uint8_t slot, const wchar_t* what, const std::wstring& key) {
+    using coop::element::IntentOutcome;
+    if (subject.outcome == IntentOutcome::NoBody) {
+        if (!sl.waitSaid) {
+            sl.waitSaid = true;
+            UE_LOGI("plant_sync: slot %u's plant edits wait: the host has no body for it yet", static_cast<unsigned>(slot));
         }
-        void* plant = it == index.end() ? nullptr : it->second;
-        const bool known = plant != nullptr;
+        return Gate::Wait;
+    }
+    sl.waitSaid = false;
+    if (subject) return Gate::Pass;
+    if (++g_refusedReach <= 3 || g_refusedReach % 20 == 0)
+        UE_LOGI("plant_sync: slot %u's %ls of '%ls' refused -- %s (%.0f uu of %.0f) (#%llu)", static_cast<unsigned>(slot), what,
+                key.c_str(), coop::element::OutcomeName(subject.outcome), subject.distUU, subject.reachUU,
+                static_cast<unsigned long long>(g_refusedReach));
+    return Gate::Refused;
+}
+
+// False keeps the edit at its sender's queue head: the host has no body for the sender yet. Anything else is applied or
+// refused, and consumed.
+bool HostApplyEdit(coop::net::Session& s, EditSlot& sl, uint8_t slot, Payload p, std::unordered_map<std::wstring, void*>& index) {
+    const std::wstring key = coop::net::StringFromWireKey(p.key);
+    const auto it = index.find(key);
+    void* plant = it == index.end() ? nullptr : it->second;
+    const coop::element::IntentTarget reach = coop::element::IntentTarget::ForClientIntent(s, slot, kPlantReachUU);
+    if (!p.alive) {
+        if (!plant) return true;   // the host holds none by that key
+        const Gate gate = Judge(reach.Authorize(plant), sl, slot, L"removal", key);
+        if (gate == Gate::Wait) return false;
+        if (gate == Gate::Refused) return true;
+        GP::Destroy(plant);
+        index.erase(key);
+        UE_LOGI("plant_sync: a client's player removed plant '%ls'", key.c_str());
+        return true;
+    }
+    const bool planting = plant == nullptr;
+    void* plantClass = nullptr;
+    if (planting) {
+        // The class is the one the host's own list_farmPlants row plants, never one the wire names: the wire's name must be
+        // that class's, and the class a plant class. A name from the wire starts no lookup of its own.
+        const std::wstring className = StringFromClassName(p.cls);
+        const std::wstring row = coop::net::StringFromWireKey(p.row);
+        plantClass = GP::FarmRowPlantClass(row);
+        if (!plantClass || !GP::IsPlantClass(plantClass) || _wcsicmp(R::ToString(R::NameOf(plantClass)).c_str(), className.c_str()) != 0) {
+            if (++g_refusedClass <= 3 || g_refusedClass % 20 == 0)
+                UE_LOGW("plant_sync: slot %u's planting of '%ls' refused -- row '%ls' plants no plant class named '%ls' (#%llu)",
+                        static_cast<unsigned>(slot), key.c_str(), row.c_str(), className.c_str(),
+                        static_cast<unsigned long long>(g_refusedClass));
+            return true;
+        }
+        const ue_wrap::FVector place{p.x, p.y, p.z};
+        const Gate gate = Judge(reach.AuthorizeSegment(place, place), sl, slot, L"planting", key);
+        if (gate == Gate::Wait) return false;
+        if (gate == Gate::Refused) return true;
+    } else {
+        const Gate gate = Judge(reach.Authorize(plant), sl, slot, L"edit", key);
+        if (gate == Gate::Wait) return false;
+        if (gate == Gate::Refused) return true;
+    }
+    BoundEdit(p, planting, slot);
+    if (planting) {
+        plant = Materialize(p, plantClass);   // the row's class, judged a plant class above
         if (!plant) {
-            plant = Materialize(p);
-            if (!plant) {
-                UE_LOGW("plant_sync: a client's plant '%ls' of '%ls' did not spawn", key.c_str(), StringFromClassName(p.cls).c_str());
-                continue;
-            }
-            index[key] = plant;
-            UE_LOGI("plant_sync: a client's player planted '%ls', row '%ls'", key.c_str(), coop::net::StringFromWireKey(p.row).c_str());
+            UE_LOGW("plant_sync: a client's plant '%ls' of '%ls' did not spawn", key.c_str(), StringFromClassName(p.cls).c_str());
+            return true;
         }
-        GP::Values v = ValuesOf(p);
-        if (known && GP::Read(plant, v)) MergeEdit(p, v);
-        const bool takeRow = !known || (p.editMask & coop::net::plant_edit::kRow) != 0;
-        GP::Apply(plant, takeRow ? coop::net::StringFromWireKey(p.row) : GP::Row(plant), v);
-        g_sent[key].pending = true;
+        index[key] = plant;
+        UE_LOGI("plant_sync: a client's player planted '%ls', row '%ls'", key.c_str(), coop::net::StringFromWireKey(p.row).c_str());
+    }
+    GP::Values v = ValuesOf(p);
+    if (!planting && GP::Read(plant, v)) MergeEdit(p, v);
+    const bool takeRow = planting || (p.editMask & coop::net::plant_edit::kRow) != 0;
+    GP::Apply(plant, takeRow ? coop::net::StringFromWireKey(p.row) : GP::Row(plant), v);
+    g_sent[key].pending = true;
+    return true;
+}
+
+void HostApplyEdits(coop::net::Session& s, std::unordered_map<std::wstring, void*>& index) {
+    for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
+        EditSlot& sl = g_editSlots[slot];
+        size_t done = 0;
+        while (done < sl.queue.size() && HostApplyEdit(s, sl, slot, sl.queue[done], index)) ++done;
+        if (done == 0) continue;
+        sl.queue.erase(sl.queue.begin(), sl.queue.begin() + static_cast<std::ptrdiff_t>(done));
+        sl.fullSaid = false;
     }
 }
 
@@ -176,7 +315,7 @@ void HostPoll(coop::net::Session& s, Clock::time_point now) {
         std::wstring key = GP::Key(a);
         if (!key.empty()) index[key] = a;
     }
-    HostApplyEdits(index);
+    HostApplyEdits(s, index);
 
     int sends = 0;
     for (const auto& entry : index) {
@@ -251,7 +390,7 @@ void ApplyInbox(std::unordered_map<std::wstring, void*>& index) {
         if (g_gone.count(key)) continue;
         void* plant = it == index.end() ? nullptr : it->second;
         if (!plant) {
-            plant = Materialize(p);
+            plant = Materialize(p, HostStateClass(StringFromClassName(p.cls)));
             if (!plant) {
                 UE_LOGW("plant_sync: plant '%ls' of '%ls' did not spawn", key.c_str(), StringFromClassName(p.cls).c_str());
                 continue;
@@ -382,7 +521,21 @@ bool LastHostValues(const std::wstring& key, GP::Values& out) {
     return true;
 }
 
-void OnEdit(const coop::net::PlantStatePayload& p) { g_edits.push_back(p); }
+void OnEdit(uint8_t senderSlot, const coop::net::PlantStatePayload& p) {
+    if (senderSlot < 1 || senderSlot >= coop::net::kMaxPeers) return;
+    EditSlot& sl = g_editSlots[senderSlot];
+    if (sl.queue.size() >= kEditsPerSlotCap) {
+        if (!sl.fullSaid) {
+            sl.fullSaid = true;
+            UE_LOGW("plant_sync: slot %u has %zu plant edits waiting; later ones are dropped until they drain",
+                    static_cast<unsigned>(senderSlot), sl.queue.size());
+        }
+        return;
+    }
+    sl.queue.push_back(p);
+}
+
+Counts GetCounts() { return Counts{g_refusedClass, g_refusedReach, g_clamped}; }
 
 void QueueConnectBroadcastForSlot(int /*slot*/) {
     for (auto& entry : g_sent) entry.second.pending = true;
@@ -391,7 +544,13 @@ void QueueConnectBroadcastForSlot(int /*slot*/) {
 void OnDisconnect() {
     ResetClient();
     g_sent.clear();
-    g_edits.clear();
+    if (g_refusedClass || g_refusedReach || g_clamped)
+        UE_LOGI("plant_sync: session end -- plantings refused for class=%llu, edits refused for reach=%llu, values clamped=%llu",
+                static_cast<unsigned long long>(g_refusedClass), static_cast<unsigned long long>(g_refusedReach),
+                static_cast<unsigned long long>(g_clamped));
+    g_refusedClass = g_refusedReach = g_clamped = 0;
+    for (bool& said : g_clampSaid) said = false;
+    for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) g_editSlots[slot] = EditSlot{};
     g_session.store(nullptr);
 }
 
