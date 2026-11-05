@@ -85,9 +85,12 @@ std::wstring Lower(std::wstring s) {
     return s;
 }
 
+// A weak id: the slot and its serial, ALLOCATED when the slot has none (the engine's own weak-pointer rule). The
+// engine hands out serials on demand, so an object no weak reference has asked for reads serial 0, and a {slot, 0} id
+// never resolves: the show would lose its vent and its crawler at once.
 std::pair<int32_t, int32_t> IdOf(void* obj) {
     const int32_t idx = R::InternalIndexOf(obj);
-    return {idx, idx >= 0 ? R::SlotSerial(idx) : 0};
+    return {idx, idx >= 0 ? R::AllocateSlotSerial(idx) : 0};
 }
 
 void* Resolve(const std::pair<int32_t, int32_t>& id) {
@@ -249,18 +252,26 @@ float TrackAt(const std::vector<Track>& tracks, const wchar_t* name, float t, fl
 
 // An engine object or function found by name once, and again only when its ref has died: the lookups walk the object
 // array (FindObject, the class default objects) or a class's function list, so none runs per footstep or swing frame.
+// A miss is asked again at most once a second, so a missing asset or function costs no walk per frame either.
+struct HeldRef {
+    ue_wrap::CachedObjRef ref;
+    Clock::time_point missAt{};
+};
 template <class Find>
-void* Held(ue_wrap::CachedObjRef& ref, Find&& find) {
-    if (void* p = ref.Get()) return p;
-    ref.Set(find());
-    return ref.Raw();
+void* Held(HeldRef& h, Find&& find) {
+    if (void* p = h.ref.Get()) return p;
+    const Clock::time_point now = Clock::now();
+    if (h.missAt != Clock::time_point{} && now - h.missAt < std::chrono::seconds(1)) return nullptr;
+    h.ref.Set(find());
+    h.missAt = h.ref.Raw() ? Clock::time_point{} : now;
+    return h.ref.Raw();
 }
 
 // A static library's class default object and one of its functions, each held.
 struct LibFn {
     const wchar_t* libClass;
     const wchar_t* name;
-    ue_wrap::CachedObjRef lib, fn;
+    HeldRef lib, fn;
     void* Resolve(void*& libOut) {
         libOut = Held(lib, [&] { return R::FindClassDefaultObject(libClass); });
         return libOut ? Held(fn, [&] { return R::FindFunction(R::ClassOf(libOut), name); }) : nullptr;
@@ -327,7 +338,7 @@ struct Asset {
     const wchar_t* name;
     const wchar_t* cls;
     const wchar_t* cls2;
-    ue_wrap::CachedObjRef ref;
+    HeldRef ref;
     void* Get() {
         return Held(ref, [&] {
             void* a = R::FindObject(name, cls);
@@ -605,10 +616,13 @@ void Tick() {
     }
     const Clock::time_point tickAt = Clock::now();
     const float t = std::chrono::duration<float>(tickAt - g_show.t0).count();
-    // A mirror not there when the show began (a joiner's, still spawning) is asked for once a second.
-    if (g_show.crawler.first < 0 && tickAt - g_show.lastLook >= std::chrono::seconds(1)) {
+    // A mirror or a vent not there when the show began (a joiner's, still spawning) is asked for once a second.
+    if ((g_show.crawler.first < 0 || g_show.vent.first < 0) && tickAt - g_show.lastLook >= std::chrono::seconds(1)) {
         g_show.lastLook = tickAt;
-        if (void* found = MirrorNear(g_show.near)) g_show.crawler = IdOf(found);
+        if (g_show.crawler.first < 0)
+            if (void* found = MirrorNear(g_show.near)) g_show.crawler = IdOf(found);
+        if (g_show.vent.first < 0)
+            if (void* v = ue_wrap::keyed_objects::Resolve(L"ventHanging")) g_show.vent = IdOf(v);
     }
     void* crawler = Resolve(g_show.crawler);
     void* vent = Resolve(g_show.vent);   // a weak-id check, no name lookup per frame
