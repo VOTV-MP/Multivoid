@@ -631,10 +631,11 @@ void OnDisconnect() {
     if (g_show.on) EndShow("disconnect");
     if (g_sent || g_sounds.load() || g_bursts)
         UE_LOGI("vent_crawler: session end -- crawls sent=%u sounds=%u bursts=%u", g_sent, g_sounds.load(), g_bursts);
-    g_started.clear();
-    // g_host is NOT cleared: it is the host's world, not the session's. A host whose last client left tears its
-    // session state down here and lives on, and the next joiner of that world is owed the crawl (measured: life 2
-    // got no state, the record wiped when life 1 left). Its world generation (above) is what retires it.
+    // g_host and g_started are NOT cleared: they are the host's world, not the session's. A host whose last client
+    // left tears its session state down here and lives on, and the next joiner of that world is owed the crawl
+    // (measured: life 2 got no state, the record wiped when life 1 left). A crawler whose box fires again after that
+    // is no new crawl: were g_started cleared, the repeat overlap would send a second cue and reset t0. The world
+    // generation (OnOverlapPost) is what retires both.
     g_sent = g_bursts = 0;
     g_sounds.store(0);
     g_states.store(0);
