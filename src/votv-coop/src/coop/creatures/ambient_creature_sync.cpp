@@ -8,23 +8,18 @@
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/session/poll_timer.h"
 #include "coop/world/ambient_births.h"
 
 #include "ue_wrap/actors/ambient_creature.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
-#include "ue_wrap/core/types.h"
-#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
 #include <chrono>
-#include <cmath>
 #include <cstdint>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace coop::ambient_creature_sync {
@@ -32,20 +27,17 @@ namespace {
 
 namespace AB = coop::ambient_births;
 namespace AC = ue_wrap::ambient_creature;
-namespace E = ue_wrap::engine;
 namespace R = ue_wrap::reflection;
 namespace SG = ue_wrap::script_gate;
 using Clock = std::chrono::steady_clock;
 
-constexpr float kDissolveCm = 5000.f;  // deer_C's ReceiveTick compares the camera with this
-constexpr auto  kHeldSaid = std::chrono::seconds(10);
+constexpr auto kHeldSaid = std::chrono::seconds(10);
 
 // The landing's entry on the host: walkingTree_C's OnLanded waits a second and then shows the mesh.
 UE_FACT_FN(kRowOnLandedWalkingTree, "ambient_creature_sync", L"walkingTree_C", L"OnLanded", Declared);
 constexpr int kTag = 0x41435452;  // 'ACTR'
 
 std::atomic<coop::net::Session*> g_session{nullptr};
-coop::session::PollTimer g_poll{std::chrono::milliseconds(250)};  // the deer's dissolve, below
 bool g_watchTaken = false;
 bool g_namesSettled = false;
 
@@ -75,7 +67,6 @@ struct Want {
 };
 std::unordered_map<coop::element::ElementId, Want> g_want;
 bool g_recheck = false;
-std::unordered_set<void*> g_dissolving;
 std::vector<AB::Event> g_events;  // reused by every drain
 Counters g_counters;              // the drill's read
 
@@ -207,37 +198,12 @@ void ApplyWants() {
     }
 }
 
-// The deer's dissolve: a mirror's actor tick stays off, so each viewer's camera test is run here.
-void DeerDissolvePoll() {
-    std::vector<void*> deer;
-    AC::ListDeer(deer);
-
-    const ue_wrap::FVector camera = E::GetCameraLocation();
-    std::unordered_set<void*> stillDissolving;
-    for (void* a : deer) {
-        if (g_dissolving.count(a)) {
-            stillDissolving.insert(a);
-            continue;
-        }
-        ue_wrap::FVector at{};
-        if (!E::TryGetActorLocation(a, at)) continue;
-        const float dx = at.X - camera.X, dy = at.Y - camera.Y, dz = at.Z - camera.Z;
-        if (std::sqrt(dx * dx + dy * dy + dz * dz) >= kDissolveCm) continue;
-        if (AC::Dissolve(a)) {
-            stillDissolving.insert(a);
-            UE_LOGI("ambient_creature_sync: a deer's mirror dissolves for this viewer");
-        }
-    }
-    g_dissolving.swap(stillDissolving);
-}
-
-void ClientTick(Clock::time_point now) {
+void ClientTick() {
     DrainClient();
     if (g_recheck) {
         g_recheck = false;
         ApplyWants();
     }
-    if (g_poll.Due(now)) DeerDissolvePoll();
 }
 
 }  // namespace
@@ -262,7 +228,7 @@ void Tick() {
     g_events.clear();
     AB::Drain(AB::Bit(AB::Class::Tree), g_events);
     if (s->role() == coop::net::Role::Host) HostTick(*s);
-    else if (s->role() == coop::net::Role::Client) ClientTick(Clock::now());
+    else if (s->role() == coop::net::Role::Client) ClientTick();
 }
 
 void OnTreeState(const coop::net::AmbientTreeStatePayload& p) {
@@ -289,7 +255,6 @@ void OnDisconnect() {
     g_anyDirty = false;
     g_want.clear();
     g_recheck = false;
-    g_dissolving.clear();
     g_events.clear();
     g_session.store(nullptr);
 }

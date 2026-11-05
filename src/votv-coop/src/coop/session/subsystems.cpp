@@ -742,7 +742,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; coop::kerfus_lanes::Tick(session); }  // the Kerfus lanes' watches; CLIENT: waiting states; HOST: queued verbs
     { PP::Scope _s{PP::Bucket::Interactable}; coop::served_player::Tick(); }  // HOST: the served robots' seams
     { PP::Scope _s{PP::Bucket::Interactable}; coop::spill_sync::Tick(); }  // the spills the hook saw
-    coop::ambient_creature_sync::Tick();  // the deer's and trees' poll
+    coop::ambient_creature_sync::Tick();  // the walking trees' size and landing
     coop::ambient_fixture_sync::Tick();  // the holes' and branches' poll
     coop::sus_hole_intent::Tick(session);  // CLIENT: its stamped sus holes go to the host; HOST: the queued ones are made
     { PP::Scope _s{PP::Bucket::Balance};       coop::balance_sync::Tick(); }  // host polls saveSlot.Points + broadcasts on change; client retries the pending mirror apply

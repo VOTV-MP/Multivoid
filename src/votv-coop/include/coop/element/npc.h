@@ -46,9 +46,16 @@ public:
     // at materialization for exactly class wisp_C.
     void MarkWispMirror() { isWispMirror_ = true; }
 
+    // Floor mirror: a class whose own tick reads CharacterMovement's CurrentFloor (the deer's body lean) keeps that tick on
+    // its mirror, whose movement tick stays parked, so nothing refreshes the floor. The pose drive asks the engine for it
+    // (ue_wrap::character_floor) each time the mirror has moved kFloorRefreshCm from the last ask. Armed by npc_mirror at
+    // materialization for the classes whose row says so.
+    void MarkFloorMirror() { refreshesFloor_ = true; }
+
 private:
     void AdvanceInterp();   // advance the open window to now (mirrors RemotePlayer::AdvanceInterp)
     bool ApplyToEngine();   // SetActorLocation + SetActorRotation + DriveCharacterMovement; false if a transform write failed
+    void RefreshFloor(void* actor);  // a floor mirror: the engine's floor at curPos_, when the mirror has moved enough
 
     // Receiver-side interpolation state (game thread only; the engine path is single-threaded).
     ue_wrap::FVector curPos_{};
@@ -73,6 +80,9 @@ private:
     bool             dirty_          = true;   // unapplied change to push to the engine
     bool             isWispMirror_   = false;  // wisp_C mirror: replay the landing edge (fade-in)
     bool             wispLanded_     = false;  //   ... one-shot latch (drive succeeded)
+    bool             refreshesFloor_ = false;  // floor mirror: CurrentFloor is asked for as the pose moves it
+    bool             hasFloorAt_     = false;  //   ... a refresh has taken, at floorAt_
+    ue_wrap::FVector floorAt_{};               //   ... the place of the last refresh that took
 
     // What ApplyToEngine last wrote, and onto which actor, so a pose identical to it costs
     // nothing: the host's rotation re-sends a mirror that lies still (an eggvasion's 121 eggs) the

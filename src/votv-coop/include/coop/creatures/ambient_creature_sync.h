@@ -5,8 +5,8 @@
 // through the pose stream, so they cross here, on their edges: the host reads a tree when the engine announces its birth
 // (coop/world/ambient_births) and again at the entry of its landing (a watch on walkingTree_C's OnLanded), and sends only
 // what changed, as a joiner's resend. A client writes the size onto the mirror of that tree, again for a mirror born after
-// the message. A deer dissolves when the viewing camera comes near, and each peer judges that for itself: a mirror's actor
-// tick stays off, because its body turns the mesh by a floor a parked mirror does not have, so this lane runs the test.
+// the message. A deer dissolves when the viewing camera comes near, and each peer judges that for itself: its mirror keeps
+// its actor tick (coop/creatures/npc_mirror), so the deer's own body runs the test, and the pose drive keeps the floor it reads.
 
 #pragma once
 
@@ -22,7 +22,7 @@ namespace coop::ambient_creature_sync {
 // The session the lane sends on, and the landing watch (retried until the gate takes it).
 void Install(coop::net::Session* session);
 
-// Drain the trees' births and deaths, then send (host) or apply (client); a client also runs the deer's dissolve.
+// Drain the trees' births and deaths, then send (host) or apply (client).
 void Tick();
 
 // A client's receiver: the host's tree.

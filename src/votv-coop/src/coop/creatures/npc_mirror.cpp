@@ -29,7 +29,7 @@
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/actors/puppet.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/sdk_profile.h"  // NpcClass_Wisp, NpcClass_GeomOcta (the mirrors that keep their actor tick)
+#include "ue_wrap/core/sdk_profile.h"  // NpcClass_Wisp, NpcClass_GeomOcta, NpcClass_Deer (the mirrors that keep their actor tick)
 #include "ue_wrap/core/types.h"
 
 #include <cmath>
@@ -74,12 +74,26 @@ void ArmWispLanding(coop::element::ElementId eid) {
     }
 }
 
+// The deer's floor: its ReceiveTick turns the mesh's SpringArm by the floor under it (CharacterMovement's CurrentFloor),
+// which a parked movement tick never refreshes, so the pose drive asks the engine for it as the mirror moves.
+void ArmDeerFloor(coop::element::ElementId eid) {
+    if (coop::element::Npc* el = NpcMirrors().Get(eid)) {
+        el->MarkFloorMirror();
+    } else {
+        // Unreachable after a successful install; a silent miss would be a mirror whose body keeps the lean of the
+        // floor it spawned on.
+        UE_LOGW("npc-sync[client OnSpawn]: deer mirror eid=%u not retrievable post-install -- floor refresh NOT armed", eid);
+    }
+}
+
 // What the mirror install parks, by the spawned class's name. A class with a row may keep its actor tick (the
 // movement tick is always parked: an ACharacter mirror whose movement ticks falls under gravity between pose packets)
 // and may arm something on its mirror; every other class takes both ticks off. The wisp keeps its actor tick: its
 // ReceiveTick is per-viewer cosmetics (fade-in, bob, the shy despawn), not AI. The Octa keeps it for its turn toward
 // the target and its charge rings (its decisions are parked by npc_mirror_brain); it needs no landing replay, since
-// the mirror spawns at the host's current pose and the pose stream carries it down.
+// the mirror spawns at the host's current pose and the pose stream carries it down. The deer keeps it for its dissolve
+// (the camera's nearness, each viewer's own) and for the lean of its body on the floor; the floor the tick reads is
+// the pose drive's to refresh.
 struct MirrorTickRow {
     const wchar_t* cls;
     bool           keepActorTick;
@@ -88,6 +102,7 @@ struct MirrorTickRow {
 constexpr MirrorTickRow kMirrorTicks[] = {
     {ue_wrap::profile::name::NpcClass_Wisp,     true, &ArmWispLanding},
     {ue_wrap::profile::name::NpcClass_GeomOcta, true, nullptr},
+    {ue_wrap::profile::name::NpcClass_Deer,     true, &ArmDeerFloor},
 };
 
 constexpr size_t kMirrorTickCount = sizeof(kMirrorTicks) / sizeof(kMirrorTicks[0]);
