@@ -6,6 +6,8 @@
 #include "coop/interactables/coffee_intent.h"
 #include "coop/interactables/coffee_state.h"
 #include "coop/interactables/cord_sync.h"
+#include "coop/interactables/cremator_intent.h"
+#include "coop/interactables/cremator_state.h"
 #include "coop/interactables/desk_verb_intent.h"
 #include "coop/interactables/door_state_verbs.h"
 #include "coop/interactables/door_verb_intent.h"
@@ -35,6 +37,8 @@ void Install(coop::net::Session& session) {
     coop::cord_sync::Install(&session);          // a cord's link is the host's: a client claims its own player's plug, the host answers
     coop::coffee_intent::Install(&session);      // a client's press of the coffee vending machine or the coffee maker is run by the host
     coop::coffee_state::Install(&session);       // the coffee maker's state is the host's: it publishes the maker's record, a client's fill is cancelled
+    coop::cremator_state::Install(&session);     // the cremator's lever run is the host's: it sends isActive at the handle's finish, a client's copy drives its own handle to it
+    coop::cremator_intent::Install(&session);    // a client's press of the cremator's handle is run by the host
 }
 
 void Tick(coop::net::Session& session) {
@@ -51,6 +55,8 @@ void Tick(coop::net::Session& session) {
     { ue_wrap::ScopedWalkTimer _w{"sync:cord"}; coop::cord_sync::Tick(); }  // settle its watches; HOST: the seed a joiner is owed; CLIENT: retry the parked links
     { ue_wrap::ScopedWalkTimer _w{"sync:coffee"}; coop::coffee_intent::Tick(session); }  // settle its gates; HOST: run one queued coffee press a tick a client
     coop::coffee_state::Tick();         // settle the maker's brew and fill gates
+    coop::cremator_state::Tick();       // settle the cremator's handle gates
+    { ue_wrap::ScopedWalkTimer _w{"sync:cremator"}; coop::cremator_intent::Tick(session); }  // settle its gate; HOST: run one queued handle press a tick a client
 }
 
 void ConnectReplayForSlot(int slot) {
@@ -71,6 +77,8 @@ void OnDisconnect() {
     coop::cord_sync::OnDisconnect();
     coop::coffee_intent::OnDisconnect();   // a coffee device's own press runs where it is made
     coop::coffee_state::OnDisconnect();    // the maker's own fill runs where it is made
+    coop::cremator_state::OnDisconnect();  // the held wants go with the session
+    coop::cremator_intent::OnDisconnect(); // a cremator's own press runs where it is made
 }
 
 }  // namespace coop::verb_lanes

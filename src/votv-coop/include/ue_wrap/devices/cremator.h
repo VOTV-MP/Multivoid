@@ -9,6 +9,7 @@
 #include "ue_wrap/core/types.h"
 
 #include <cstdint>
+#include <string>
 
 namespace ue_wrap::cremator {
 
@@ -18,11 +19,16 @@ bool EnsureResolved();
 // True iff the actor's class IS cremator_C, exactly: a pointer compare against the class kept for this world.
 bool IsCremator(void* obj);
 
+// The Aactor_save_C key, the game's own (a local name until a lane's portable identity replaces it); "" for
+// another class.
+std::wstring GetKeyString(void* cremator);
+
 // The lever run: isActive (the burn is on), anim (the handle is mid-travel), isClosed (the door is shut and
-// latched), windup (0..1 ramp), gasAmount.
+// latched), lookingAt_handle (the last look-at hit the handle), windup (0..1 ramp), gasAmount.
 bool ReadActive(void* cremator, bool& value);
 bool ReadAnim(void* cremator, bool& value);
 bool ReadClosed(void* cremator, bool& value);
+bool ReadLookingAtHandle(void* cremator, bool& value);
 bool ReadWindup(void* cremator, float& value);
 bool ReadGasAmount(void* cremator, float& value);
 

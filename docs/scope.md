@@ -18,6 +18,7 @@ the commit that ships the change.
 | Piles and trash | the whole collection loop: piles, clumps, carrying, depositing | the host |
 | NPCs and creatures | pose, spawn and despawn, the kerfur prop-to-NPC cycle; enemies target every peer and a pursuit can switch targets between peers; creatures whose AI reads the local player are owned per peer and visible to all | the host, except the per-peer owned creatures |
 | Doors, lights and devices | doors, light switches and light groups, keypads, power panels, power cords and their socket links, the garage, appliances, locker lids, windows, grime, the wind turbine, containers and their contents, the delivery drone, shop orders, the coin gun and the shared balance | the host holds the state; a client sends an intent that the host performs; a cord's link is the host's, and a client reports the plug its player made |
+| The cremator (`cremator_C`, keyed `actor_save_C`) | its lever run (`isActive`) crosses keyed; a client's handle press is a request the host judges; a player burning in it is hit by the host's machine and takes the hits on its own player | the host: the machine is the host's |
 | The signal workstation | the dish, pinging, signal catch, downloads, decoding, the playback deck, drives and racks, tapes, the physical modules, the laptop and its floppies, the meadow signal database, the signal-server simulation and the notices it produces | one authority per axis: the pressing peer authors inputs, the host runs every simulation |
 | World state | the clock, the sky, weather and lightning, fireflies, ambient spawners, the story and scheduled events, the base alarm, emails, the daily task, world props that change over time | the host; clients mirror and never roll their own randomness |
 | Saves | the joiner boots from the host's world; the host is the only peer that saves | the host |
@@ -35,6 +36,7 @@ the commit that ships the change.
 | Outdoor lamp posts | driven by the shared day and night cycle on every machine; they toggle in lockstep without traffic |
 | Custom content paks and asset replication | a peer without a skin pak sees the default body, by design; nothing is downloaded from another peer |
 | Anti-cheat | the host is trusted and is the admin; every bound and sanity check applies to clients only |
+| The cremator's fuel and what rides on it: the fuel the machine makes (`gasAmount`, which the info gauge reads), the valve and pouring, the gas can it fills, the fireballs, the Erie plush banging | all stay the host's local acts until the gasoline package carries the fuel |
 | Hint toasts, tutorial tips, the per-viewer HUD | local to the machine; the HUD reads shared state, it is not itself replicated |
 | A bite of a food in another player's hand | the holder's own: its count reaches the others with the food's condition, and its hunger and effects stay the holder's. A world food has one author, the host ([props.md](props.md)) |
 

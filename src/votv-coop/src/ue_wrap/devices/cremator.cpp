@@ -2,6 +2,7 @@
 
 #include "ue_wrap/devices/cremator.h"
 
+#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/swinger.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
@@ -41,6 +42,7 @@ struct BoolField {
 BoolField g_active{L"isActive"};
 BoolField g_anim{L"anim"};
 BoolField g_closed{L"isClosed"};
+BoolField g_lookingHandle{L"lookingAt_handle"};
 BoolField g_doorOpened{L"opened"};
 
 R::InstanceOffset g_windup{L"windup"};
@@ -94,9 +96,12 @@ bool IsCremator(void* obj) {
 }
 
 
+std::wstring GetKeyString(void* c) { return IsCremator(c) ? prop::GetActorSaveKeyString(c) : std::wstring(); }
+
 bool ReadActive(void* c, bool& v) { return ReadFlag(c, g_active, v); }
 bool ReadAnim(void* c, bool& v) { return ReadFlag(c, g_anim, v); }
 bool ReadClosed(void* c, bool& v) { return ReadFlag(c, g_closed, v); }
+bool ReadLookingAtHandle(void* c, bool& v) { return ReadFlag(c, g_lookingHandle, v); }
 bool ReadWindup(void* c, float& v) { return ReadFloat(c, g_windup, v); }
 bool ReadGasAmount(void* c, float& v) { return ReadFloat(c, g_gas, v); }
 

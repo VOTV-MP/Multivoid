@@ -436,6 +436,7 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 |---|---|---|
 | a door, a light group | the host | each is sent at its own verbs; a client's own door verb is an intent the host runs, and its own group writes are refused |
 | a security camera's `active` and `isLight` | the host | each is sent after the camera's use, `upd` and `updState` and the cursed camera's tick; a client's use and light button are intents the host runs |
+| a cremator's lever run (`isActive`) | the host | sent when its handle finishes; a client's copy keeps the host's want and drives its own handle to it, its own `useLever` is refused, and its handle press is an intent the host judges and runs |
 | a light switch, a lid, the garage, an appliance, an oven's repair, a locker | any peer | symmetric state edges, relayed |
 | the power panel, the generators | the host | a client's press, repair, service, upgrade install and hit are ops the host takes from a player within reach; the host sends the breakers after its panel's apply and every generator's row after its verbs |
 | a keypad | the host | its verbs replayed on every client and its settled state after each chain; a client's own entries are an intent the host runs |
@@ -454,6 +455,8 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | `DoorVerbIntent` | a client to the host | a door's key, the verb, a hit's damage |
 | `CameraActiveState`, `CameraLightState` | the host to all | a camera's key and one bit |
 | `CameraToggleIntent` | a client to the host | a camera's key, which bit, the value wanted |
+| `CrematorState` | the host to all | a cremator's key and its lever run: on or off |
+| `CrematorIntent` | a client to the host | a cremator's key: the handle was pressed |
 | `KeypadState` | the host to all | a verb the host's keypad ran, or the state a chain settled on: the buffer, the verdict, the set-new-code mode, the password, and whether the chain handed the verdict on |
 | `KeypadIntent` | a client to the host | a keypad's key and the entry: a digit, a submit, a cancel, a keycard's verdict, a reset |
 | `PowerControlState` | a client to the host; the host to all | the breakers a press flipped; the breakers, the lockout, a lever's click and each slot's last press taken |

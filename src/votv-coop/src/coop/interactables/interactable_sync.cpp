@@ -6,10 +6,12 @@
 // kind-to-channel router and the Install, Tick and event facade.
 
 #include "coop/interactables/interactable_sync.h"
+#include "coop/interactables/cremator_state.h"        // the cremator adapter's read and apply
 #include "coop/interactables/interactable_channel.h"  // the generic engine: Adapter and Channel
 #include "coop/interactables/swinger_join_pose.h"     // a joiner's open lids at their host's places
 
 #include "ue_wrap/devices/appliance.h"     // the six-class save-actor toggle family
+#include "ue_wrap/devices/cremator.h"
 #include "ue_wrap/devices/door.h"
 #include "ue_wrap/devices/door_box.h"      // lockers and the drone-console box
 #include "ue_wrap/devices/garage.h"
@@ -227,6 +229,18 @@ const Adapter g_cameraLightAdapter = {
     &ue_wrap::security_camera::ReadLight,
     &ApplyCameraLight,
 };
+// The cremator's lever run (Acremator_C::isActive, an Aactor_save_C), host-authoritative: the flag flips at the end of
+// the handle's travel on the host's copy, which sends it. A client's copy keeps the host's want and drives its own
+// handle to it (coop/interactables/cremator_state), so the apply is the want's write, not a call into the machine; a
+// client's press reaches the host as a CrematorIntent (coop/interactables/cremator_intent).
+const Adapter g_crematorAdapter = {
+    "cremator", coop::net::ReliableKind::CrematorState,
+    &ue_wrap::cremator::EnsureResolved,
+    &ue_wrap::cremator::IsCremator,
+    &ue_wrap::cremator::GetKeyString,
+    &coop::cremator_state::ReadState,
+    &coop::cremator_state::ApplyState,
+};
 Channel g_door{g_doorAdapter, Channel::Mode::HostAuth};  // doors auto-revert: host-authoritative
 Channel g_light{g_lightAdapter};
 // Host-authoritative: the client neither polls nor requests on this kind.
@@ -238,13 +252,14 @@ Channel g_doorBox{g_doorBoxAdapter};  // no auto-revert: symmetric
 Channel g_oven{g_ovenAdapter};  // one way: whoever repairs it
 Channel g_cameraActive{g_cameraActiveAdapter, Channel::Mode::HostAuth};
 Channel g_cameraLight{g_cameraLightAdapter, Channel::Mode::HostAuth};
+Channel g_cremator{g_crematorAdapter, Channel::Mode::HostAuth};  // the lever run is the host's machine
 // Keypads (ApasswordLock_C) are not a toggle (a typed buffer and three state bools, with an
 // accept verb this engine cannot reach) and live in coop::keypad_sync; KeypadState routes there
 // from event_feed, not through ChannelForKind.
 
 // Every channel, once: each list below walks this one, in this order.
 Channel* const kChannels[] = {&g_door, &g_light, &g_lightGroup, &g_container, &g_garage, &g_appliance, &g_doorBox,
-                              &g_oven, &g_cameraActive, &g_cameraLight};
+                              &g_oven, &g_cameraActive, &g_cameraLight, &g_cremator};
 
 Channel* ChannelForKind(coop::net::ReliableKind k) {
     for (Channel* ch : kChannels)
@@ -310,6 +325,15 @@ void* ResolveCamera(const std::wstring& key) {
     if (key.empty() || !ue_wrap::security_camera::EnsureResolved()) return nullptr;
     return g_cameraActive.ActorForKey(key);
 }
+
+std::wstring CrematorKey(void* cremator) { return g_cremator.KeyForActor(cremator); }
+
+void* ResolveCremator(const std::wstring& key) {
+    if (key.empty() || !ue_wrap::cremator::EnsureResolved()) return nullptr;
+    return g_cremator.ActorForKey(key);
+}
+
+void OnCrematorVerb(void* cremator) { g_cremator.OnLocalEdge(cremator); }
 
 bool ApplyingLightGroup(void* root) { return root && root == g_applyingGroup; }
 

@@ -65,6 +65,7 @@ set(VOTVCOOP_SOURCES
     src/coop/comms/peer_action_feed.cpp
     src/coop/dispatch/event_feed.cpp
     src/coop/dispatch/event_dispatch_container_act.cpp
+    src/coop/dispatch/event_dispatch_cremator.cpp
     src/coop/dispatch/event_dispatch_economy.cpp
     src/coop/dispatch/event_dispatch_entity.cpp
     src/coop/dispatch/event_dispatch_intent.cpp
@@ -408,6 +409,8 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/tape_caddy_sync.cpp
     src/coop/interactables/coffee_intent.cpp
     src/coop/interactables/coffee_state.cpp
+    src/coop/interactables/cremator_state.cpp
+    src/coop/interactables/cremator_intent.cpp
     src/coop/interactables/laptop_sync.cpp
     src/coop/interactables/laptop_tab.cpp
     src/coop/interactables/portable_pc_lid.cpp

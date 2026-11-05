@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 274;
+inline constexpr uint16_t kProtocolVersion = 275;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1295,6 +1295,18 @@ enum class ReliableKind : uint8_t {
     // standing holes, makes the hole, and its AmbientFixtureState goes to every peer. A refused intent loses that roll.
     // Nothing at late join (the host's living holes are a joiner's set). SusHoleIntentPayload.
     SusHoleIntent = 223,
+    // HOST->CLIENT: a cremator's `isActive` after its handle finished (the lever run is on or off), keyed by the
+    // cremator's lane key. The receiving copy drives its own handle to match once it is at rest. Host-authored: a
+    // client's copy is refused at the host's receive edge; never relayed; Default lane, not pre-world (a pre-world
+    // copy waits for its index). Late join: the connect snapshot sends every indexed cremator's state to the
+    // joiner's slot at its world-ready edge. KeyedTogglePayload.
+    CrematorState = 226,
+    // CLIENT->HOST: my player pressed this cremator's handle, which the client's own copy refused to run. The host
+    // resolves the cremator by its key, judges the sender's reach and that its own handle is at rest, and pulls its
+    // lever; the run reaches every peer as CrematorState. Never relayed; Default lane, not pre-world; a press whose
+    // sender has no body on the host yet waits in its queue. Late join: none, a press is an act. KeyedTogglePayload,
+    // its action unused.
+    CrematorIntent = 227,
 };
 
 #pragma pack(push, 1)

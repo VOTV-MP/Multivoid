@@ -2,8 +2,9 @@
 // script-body gate, wired in one place: the drone console's press, a door's press, hit and pry and
 // its open state, a light group's runTrigger, a toggle device's verb, a security camera's use and
 // laptop light button, a keypad's verbs, a press on the main desk's save family, a cord's plug and unplug, a press
-// of a coffee device. Each lane registers its watches (Install, a per-tick retry), settles them and runs its host
-// queue (Tick), and says its session's summary (OnDisconnect); a leaver's queues go with its slot's per-slot state. A
+// of a coffee device, a cremator's lever run and its handle press. Each lane registers its watches (Install, a
+// per-tick retry), settles them and runs its host queue (Tick), and says its session's summary (OnDisconnect); a
+// leaver's queues go with its slot's per-slot state. A
 // lane that owes a joiner a seed sends it from ConnectReplayForSlot. This calls them, in that order. Game thread.
 
 #pragma once
