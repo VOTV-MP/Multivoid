@@ -10,6 +10,7 @@
 //    VOTVCOOP_RUN_SPILL; the folder is VOTVCOOP_CAN_DIR.
 
 #include "harness/autotest.h"
+#include "harness/autotest/meet.h"
 #include "harness/autotest/peer_signal.h"
 #include "harness/session_runtime.h"
 
@@ -379,6 +380,7 @@ bool HostPuppetUp() {
 
 void RunClient() {
     if (!HostPuppetUp()) return;
+    if (!meet::WalkToHost("spill-drill")) return;
     Mark("client_ready");
     // A.
     const uint32_t heard = coop::spill_sync::SplashesPlayed();
@@ -535,6 +537,7 @@ void RunClient() {
 
 void RunRejoin() {
     if (!HostPuppetUp()) return;
+    if (!meet::WalkToHost("spill-drill")) return;
     Mark("rejoin_ready");
     std::string e;
     if (!AwaitText("e_rows", e, 120)) return;
