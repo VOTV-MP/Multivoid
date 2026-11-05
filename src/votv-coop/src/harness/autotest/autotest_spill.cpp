@@ -349,6 +349,7 @@ void RunHost() {
     std::string clientText;
     if (!AwaitText("client_done", clientText, 60)) return;
     const int clientFails = ParseFails(clientText);
+    Mark("host_ack");   // now watching slot 1: life 1 may end
     if (!PS::WaitFor("the client's life 1 gone from slot 1", 300, [life1Gen] {
             return harness::session_runtime::Session().peerGenerationForSlot(1) != life1Gen;
         }))
@@ -549,6 +550,9 @@ void RunClient() {
     Mark("d2_pours", std::to_string(poured));
     Await("d2_heard", 30);
     Mark("client_done", std::to_string(g_fails));
+    // The DONE line is the rig's cue to kill this life: printed only once the host watches slot 1, so the host's
+    // E spill lands while this player is away (without it every run measured the client already back).
+    Await("host_ack", 60);
     UE_LOGI("spill-drill: DONE on client fails=%d", g_fails);
 }
 
