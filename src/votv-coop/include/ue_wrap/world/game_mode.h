@@ -24,6 +24,9 @@ constexpr int kStory = 0;
 // Infinite, the second mode whose guns are held only through the exits FungunHoldAllowed reads.
 constexpr int kInfinite = 1;
 
+// Custom, the mode the game's save refuses as "invalid mode" (mainGamemode.cpp, save, label 67624).
+constexpr int kCustom = 3;
+
 // Sandbox, the mode whose rules let a player cheat (ordinal 4 in the name table, game_mode.cpp).
 constexpr int kSandbox = 4;
 

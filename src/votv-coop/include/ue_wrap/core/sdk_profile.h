@@ -424,6 +424,7 @@ inline constexpr size_t UCharacterMovement_MovementMode = 0x0168;
 // UMovementComponent::UpdatedComponent @ +0x00B0 (Engine.hpp:15425): the component a movement moves,
 // whose IsSimulatingPhysics a CharacterMovementComponent's tick asks before it moves anything.
 inline constexpr size_t UMovementComponent_UpdatedComponent = 0x00B0;
+inline constexpr uint8_t kMOVE_Walking = 1;
 inline constexpr uint8_t kMOVE_Falling = 3;
 
 // USceneComponent::AttachParent @ +0x00C0 (Engine.hpp:17900). The puppet spawn's diagnostic dump

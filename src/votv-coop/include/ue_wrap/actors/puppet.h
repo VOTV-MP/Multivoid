@@ -103,6 +103,10 @@ void DriveSprintWalkSpeed(void* puppetActor, bool sprinting);
 // null or dead actor or CMC.
 bool ReadCharacterIsFalling(void* actor);
 
+// Whether `actor`'s CMC reports MOVE_Walking (not falling, swimming, flying or none): the state the game's
+// save test names "not in mid air". False, `walking` untouched, on a null or dead actor or CMC.
+bool ReadCharacterIsWalking(void* actor, bool& walking);
+
 // ---- kerfur head-look ----
 // The kerfur AnimBP (shared by the NPCs and the player puppets) aims the head and neck at its
 // `lookAt` member (a world FVector), which its update recomputes from the local camera

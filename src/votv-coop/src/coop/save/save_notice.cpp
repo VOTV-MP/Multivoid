@@ -5,8 +5,12 @@
 #include "coop/comms/peer_action_feed.h"  // the line, in the player's language
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/player/players_registry.h"  // Local: the pawn whose movement mode the mid-air test reads
 
 #include "ue_wrap/actors/inventory.h"           // ResolveSaveSlot: the hosted world's save object
+#include "ue_wrap/actors/puppet.h"              // ReadCharacterIsWalking
+#include "ue_wrap/actors/vitals.h"              // Dreaming
+#include "ue_wrap/world/game_mode.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
@@ -94,8 +98,27 @@ void OnWorldSaveWritten(void* saveObject, const wchar_t* slotName) {
                                            : coop::net::WorldSaveOutcome::Saved);
 }
 
-// HOST: the game's save was called. Unless told to bypass the event, it shows its error and returns without a
-// write while an event is running, so the write above never hears this attempt.
+// The tests the game's save runs before its event test, in its order (mainGamemode.cpp, the save ubergraph at label
+// 67457 with bypassEvent false): dreaming returns silently, the Custom mode shows "invalid mode", a player not walking
+// shows "Cannot save in mid air", and only then is the event asked. Null when none of them refuses; else why, so the
+// event is blamed only when it is the test that refuses. A test that cannot be read is not a pass.
+const char* EarlierRefusal() {
+    float dreaming = 0.f;
+    if (!ue_wrap::vitals::Read(ue_wrap::vitals::Field::Dreaming, &dreaming)) return "dreaming could not be read";
+    if (dreaming != 0.f) return "dreaming";
+    const int mode = ue_wrap::game_mode::ReadLocal();
+    if (mode < 0) return "the game mode could not be read";
+    if (mode == ue_wrap::game_mode::kCustom) return "invalid mode";
+    bool walking = false;
+    if (!ue_wrap::puppet::ReadCharacterIsWalking(coop::players::Registry::Get().Local(), walking))
+        return "the player's movement mode could not be read";
+    return walking ? nullptr : "mid air";
+}
+
+// HOST: the game's save was called, by a press or by its autosave. Unless told to bypass the event, it shows its
+// error and returns without a write while an event is running, so the write above never hears this attempt. Only
+// the event's refusal is reported: an earlier test that refuses means no save began and the game shows the host
+// its own error, so nothing is sent (said here, once per call).
 sg::Verdict OnSavePre(const sg::Call& c) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return sg::Verdict::Run;
@@ -103,7 +126,12 @@ sg::Verdict OnSavePre(const sg::Call& c) {
     const int32_t off = sBypass.Of(c.function);
     bool bypass = false;
     if (off >= 0 && c.locals) std::memcpy(&bypass, c.locals + off, sizeof(bypass));
-    if (!bypass && ue_wrap::save_capture::GameEventState() == ue_wrap::save_capture::EventState::On)
+    if (bypass) return sg::Verdict::Run;
+    if (const char* why = EarlierRefusal()) {
+        UE_LOGI("save_notice: a save call refused before the event test (%s) -- nothing sent", why);
+        return sg::Verdict::Run;
+    }
+    if (ue_wrap::save_capture::GameEventState() == ue_wrap::save_capture::EventState::On)
         Report(*s, coop::net::WorldSaveOutcome::EventRunning);
     return sg::Verdict::Run;
 }
