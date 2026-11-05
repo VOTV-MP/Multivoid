@@ -6,13 +6,11 @@
 // object under a slot of the game's own, so a join's scratch capture and the save-slot menu's writes do
 // not count -- and puts one line in its chat feed and sends WorldSaved. While the game counts an event as
 // running, its save shows an error and returns without a write, so the host also watches mainGamemode.save;
-// a save told to bypass the event writes the slot without gathering the world. The watch reads the tests the game
-// runs before its event test, in its order (dreaming, the Custom mode, mid air), and reports only when none of
-// them refuses: a save they refuse never began, and sends nothing. Either way the line says the
-// save did not take; a write whose event state cannot be read says it may not have. A client puts the same
-// line in its feed, naming the host. The line is announced Direct, past the peer-actions toggle: a save is the
-// host's word to every player, not one peer's action to mute. The game's own SAVED indicator stays
-// the host's: calling mainGamemode.saveAnim on a client's gamemode was measured to show nothing.
+// a save told to bypass the event writes the slot without gathering the world. The watch reports only when the
+// tests the game runs before its event test (dreaming, the Custom mode, mid air) pass; else nothing is sent. The line
+// says the save did not take, or may not have when the event state could not be read. A client puts the same line in
+// its feed, naming the host; it goes out Direct, as the host's word to every player. The game's own SAVED indicator
+// stays the host's: mainGamemode.saveAnim on a client's gamemode was measured to show nothing.
 //
 // Game thread.
 
