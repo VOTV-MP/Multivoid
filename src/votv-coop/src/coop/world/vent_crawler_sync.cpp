@@ -74,6 +74,7 @@ struct HostCrawl {
     std::pair<int32_t, int32_t> crawler{-1, 0};   // the host's crawler: gone, the crawl is over
 } g_host;
 std::atomic<unsigned> g_sounds{0};
+std::atomic<unsigned> g_states{0};   // crawl states accepted from the host
 uint32_t g_bursts = 0;
 
 std::wstring Lower(std::wstring s) {
@@ -457,6 +458,7 @@ void OnState(const coop::net::VentCrawlStatePayload& p) {
                 static_cast<unsigned>(p.phase), static_cast<unsigned>(p.doorActive));
         return;
     }
+    g_states.fetch_add(1, std::memory_order_relaxed);
     if (g_show.on) EndShow("a crawl state");
     ue_wrap::FTransform a{}, b{};
     const bool ends = CrawlerVentEnds(a, b);
@@ -567,6 +569,8 @@ void Tick() {
 
 unsigned SoundsPlayed() { return g_sounds.load(std::memory_order_relaxed); }
 
+unsigned StatesHeard() { return g_states.load(std::memory_order_relaxed); }
+
 void OnDisconnect() {
     if (g_show.on) EndShow("disconnect");
     if (g_sent || g_sounds.load() || g_bursts)
@@ -575,6 +579,7 @@ void OnDisconnect() {
     g_host = HostCrawl{};
     g_sent = g_bursts = 0;
     g_sounds.store(0);
+    g_states.store(0);
 }
 
 }  // namespace coop::vent_crawler_sync

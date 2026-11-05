@@ -44,6 +44,9 @@ void OnState(const coop::net::VentCrawlStatePayload& p);
 // The crawl's sounds this client has played, for the drill.
 unsigned SoundsPlayed();
 
+// The crawl states this client has accepted from the host, for the drill.
+unsigned StatesHeard();
+
 void OnDisconnect();
 
 }  // namespace coop::vent_crawler_sync

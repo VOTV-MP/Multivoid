@@ -2,15 +2,21 @@
 //
 // The host fires `ventCrawler` through the eventer as the scheduler does. The client meets the host, then has the
 // crawler's mirror; its player walks into the crawler's box with the director, which starts the crawl on the host (the
-// host's own player walks in, if that one does not). The crawl closes the signal room door (opened first) and takes its power, plays its steps, breaks and
-// swings the hanging vent down, gives the power back, and at its end opens the balcony door's keypads and the door,
-// and the crawler goes. The client's door closes and loses its power, and the crawl's sounds play there; each peer
-// then reads the two doors, the keypads and the vent, and the client's must be the host's. The client waits a minute
-// after its join first, past the join's catch-up window. Gated by VOTVCOOP_RUN_VENT_CRAWLER; the folder is VOTVCOOP_CAN_DIR.
+// host's own player walks in, if that one does not). The crawl closes the signal room door (opened first) and takes
+// its power, plays its steps, breaks and swings the hanging vent down, gives the power back, and at its end opens the
+// balcony door's keypads and the door, and the crawler goes. The client's door closes and loses its power, and the
+// crawl's sounds play there; each peer then reads the two doors, the keypads and the vent, and the client's must be the
+// host's. The client begins once its join's catch-up window has closed. Then life 1 leaves, and the rejoined life
+// (VOTVCOOP_CRAWLER_REJOIN=1, mp.py smoke --rejoin --rejoin-env) reads the same row against the host's, the crawl being
+// over. The host's verdict counts its own fails, the client's and the rejoined life's. Gated by
+// VOTVCOOP_RUN_VENT_CRAWLER; the folder is VOTVCOOP_CAN_DIR.
 
 #include "harness/autotest.h"
 #include "harness/autotest/meet.h"
 #include "harness/autotest/peer_signal.h"
+#include "harness/session_runtime.h"
+
+#include "coop/config/config.h"
 
 #include "coop/dev/director/director.h"
 #include "coop/player/players_registry.h"
@@ -39,6 +45,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <sstream>
@@ -64,6 +71,13 @@ int g_fails = 0;
 template <class Fn>
 void OnGameThread(Fn&& fn) {
     ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
+}
+
+// A peer's fails count as it left it in its done signal; text that is no count is a fail.
+int ParseFails(const std::string& text) {
+    char* end = nullptr;
+    const long n = std::strtol(text.c_str(), &end, 10);
+    return end != text.c_str() && n >= 0 ? static_cast<int>(n) : 1;
 }
 
 void Check(bool ok, const char* what) {
@@ -261,6 +275,9 @@ std::string Where(void* actor) {
 
 void RunHost() {
     if (!Await("client_ready", 400)) return;
+    // Life 1's occupancy of slot 1: the rejoin step waits for it to change, never for the slot to read closed -- a fast
+    // rejoin closes and refills the slot between two reads.
+    const uint32_t life1Gen = harness::session_runtime::Session().peerGenerationForSlot(1);
     // The signal room door open, so the crawl's close has something to move.
     OnGameThread([&] {
         void* door = ue_wrap::keyed_objects::Resolve(L"basedoor_signalroom");
@@ -336,23 +353,46 @@ void RunHost() {
     OnGameThread([&] { row = StateRow(); });
     UE_LOGI("crawler-drill: host after %hs", row.c_str());
     Mark("h_after", row);
-    Await("c_done");
+    std::string clientText;
+    if (!AwaitText("c_done", clientText, 240)) return;
+    const int clientFails = ParseFails(clientText);
+    // The rejoin: life 1 leaves once the host watches its slot, the crawl is over, and the rejoined life must find the
+    // vent and the doors as they are. The host marks what it must read only after that life reports its world ready.
+    Mark("host_ack");
+    if (!PS::WaitFor("the client's life 1 gone from slot 1", 300, [life1Gen] {
+            auto& s = harness::session_runtime::Session();
+            return !s.IsSlotConnected(1) || s.peerGenerationForSlot(1) != life1Gen;
+        }))
+        return;
+    if (!Await("rejoin_ready", 400)) return;
+    OnGameThread([&] { row = StateRow(); });
+    UE_LOGI("crawler-drill: host for the rejoin %hs", row.c_str());
+    Mark("e_row", row);
+    std::string rejoinText;
+    const int rejoinFails = AwaitText("rejoin_done", rejoinText, 400) ? ParseFails(rejoinText) : 1;   // no word is no pass
+    if (g_fails == 0 && clientFails == 0 && rejoinFails == 0) UE_LOGI("crawler-drill: VERDICT PASS");
+    else UE_LOGW("crawler-drill: VERDICT FAIL host=%d client=%d rejoin=%d", g_fails, clientFails, rejoinFails);
     UE_LOGI("crawler-drill: DONE on host fails=%d", g_fails);
 }
 
 // ---- CLIENT --------------------------------------------------------------------------------------------------------
 
-void RunClient() {
-    if (!HostPuppetUp()) return;
-    // Past the join's catch-up window, as on day 5 long after a join: the window closes at the load tail's quiescence,
-    // where the sweep runs and the deferred mirrors are revealed (join_membership_sweep.h, mirror_defer.h).
+// This life is ready to act: its world up, the host's puppet here, and past the join's catch-up window, as on day 5 long
+// after a join. The window closes at the load tail's quiescence, where the sweep runs and the deferred mirrors are
+// revealed (join_membership_sweep.h, mirror_defer.h). Then it stands beside the host.
+bool ClientReady() {
+    if (!HostPuppetUp()) return false;
     if (!PS::WaitFor("the join's load tail to quiesce", 180, [&] {
             bool quiet = false;
             OnGameThread([&] { quiet = coop::join_membership_sweep::HasLoadTailQuiesced(); });
             return quiet;
         }))
-        return;
-    if (!meet::WalkToHost("crawler-drill")) return;
+        return false;
+    return meet::WalkToHost("crawler-drill");
+}
+
+void RunClient() {
+    if (!ClientReady()) return;
     Mark("client_ready");
     std::string host, row;
     if (!AwaitText("h_before", host)) return;
@@ -413,8 +453,32 @@ void RunClient() {
     WaitFor([&] { return Agrees(StateRow(), after); }, 20);
     OnGameThread([&] { row = StateRow(); });
     Compare(row, after, "after");
-    Mark("c_done");
+    Mark("c_done", std::to_string(g_fails));
+    // The DONE line is the rig's cue to kill this life: printed only once the host watches slot 1, so the rejoin
+    // happens with the crawl over. Life 1 leaves as a player's quit does (network first), so the host sees slot 1 empty
+    // at once; a killed process only stops sending.
+    Await("host_ack", 60);
+    OnGameThread([] {
+        auto& s = harness::session_runtime::Session();
+        if (s.running()) coop::net_pump::FleeAfterNativeMenuTravel(s, "crawler drill: life 1 leaves for the rejoin");
+    });
+    PS::WaitFor("this life's session stopped", 15, [] { return !harness::session_runtime::Session().running(); }, false);
     UE_LOGI("crawler-drill: DONE on client fails=%d", g_fails);
+}
+
+// The rejoined life (VOTVCOOP_CRAWLER_REJOIN=1): the crawl is over on the host, and the vent, both doors and the
+// balcony's keypads here must be the host's, which the join's answer (VentCrawlState) gave this life.
+void RunRejoin() {
+    if (!ClientReady()) return;
+    Mark("rejoin_ready");
+    std::string host, row;
+    if (!AwaitText("e_row", host, 120)) return;
+    WaitFor([&] { return Agrees(StateRow(), host); }, 20);   // the replay and the join window's corrections have landed
+    OnGameThread([&] { row = StateRow(); });
+    Compare(row, host, "rejoin");
+    Check(coop::vent_crawler_sync::StatesHeard() > 0, "the host's crawl state reached this life");
+    Mark("rejoin_done", std::to_string(g_fails));
+    UE_LOGI("crawler-drill: REJOIN DONE fails=%d", g_fails);
 }
 
 }  // namespace
@@ -422,6 +486,7 @@ void RunClient() {
 DWORD WINAPI VentCrawlerThread(LPVOID /*arg*/) {
     if (!PS::Begin("crawler-drill")) return 0;
     if (!IsClientRole()) RunHost();
+    else if (coop::config::ReadEnv("VOTVCOOP_CRAWLER_REJOIN") == "1") RunRejoin();
     else RunClient();
     return 0;
 }
