@@ -10,10 +10,14 @@
 //    VOTVCOOP_RUN_SPILL; the folder is VOTVCOOP_CAN_DIR.
 
 #include "harness/autotest.h"
+#include "harness/autotest/peer_signal.h"
+#include "harness/session_runtime.h"
 
 #include "coop/config/config.h"
 #include "coop/dev/drill_hand.h"
+#include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/remote_player.h"
 #include "coop/session/net_pump.h"
 #include "coop/world/spill_sync.h"
 #include "ue_wrap/actors/grime_spill.h"
@@ -33,7 +37,6 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
-#include <fstream>
 #include <functional>
 #include <sstream>
 #include <string>
@@ -53,31 +56,16 @@ constexpr const wchar_t* kGasPath = L"/Game/objects/prop_gasBottle.prop_gasBottl
 constexpr const wchar_t* kCoffee = L"grime_coffee_C";
 const wchar_t* const kClasses[] = {L"grime_coffee_C", L"grime_beer_C", L"grime_wine_C", L"grime_gasoline_C"};
 
-std::string g_dir;
+namespace PS = harness::autotest::peer_signal;
+using PS::Await;
+using PS::AwaitText;
+using PS::Mark;
+
 int g_fails = 0;
 
 template <class Fn>
 void OnGameThread(Fn&& fn) {
     ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
-}
-
-void Mark(const char* name, const std::string& body = "x") {
-    std::string tmp = g_dir + "\\" + name + ".tmp";
-    { std::ofstream(tmp, std::ios::binary | std::ios::trunc) << body; }
-    ::MoveFileExA(tmp.c_str(), (g_dir + "\\" + name).c_str(), MOVEFILE_REPLACE_EXISTING);
-}
-
-bool Await(const char* name, std::string* body = nullptr, int seconds = 240) {
-    for (int i = 0; i < seconds * 10; ++i) {
-        std::ifstream f(g_dir + "\\" + name, std::ios::binary);
-        if (f) {
-            if (body) body->assign(std::istreambuf_iterator<char>(f), {});
-            return true;
-        }
-        ::Sleep(100);
-    }
-    UE_LOGW("spill-drill: VERDICT ABORT -- no '%hs' from the other peer", name);
-    return false;
 }
 
 void Check(bool ok, const char* what) {
@@ -137,14 +125,16 @@ size_t Near(const wchar_t* cls, const ue_wrap::FVector& at, float cm) {
     return n;
 }
 
-// "class x y z" lines, one per decal.
+// "class x y z" per decal, joined by single spaces: peer_signal carries one line, and ParseRows reads whitespace-separated
+// tokens.
 std::string Rows(const std::vector<void*>& decals) {
     std::string out;
     for (void* d : decals) {
         ue_wrap::FVector l{};
         if (!E::TryGetActorLocation(d, l)) continue;
         char b[160];
-        std::snprintf(b, sizeof(b), "%s %.3f %.3f %.3f\n", Narrow(R::ClassNameOf(d)).c_str(), l.X, l.Y, l.Z);
+        std::snprintf(b, sizeof(b), "%s %.3f %.3f %.3f", Narrow(R::ClassNameOf(d)).c_str(), l.X, l.Y, l.Z);
+        if (!out.empty()) out += ' ';
         out += b;
     }
     return out;
@@ -272,15 +262,15 @@ std::vector<void*> Pour(const wchar_t* path, const wchar_t* cls, float side, boo
 }
 
 void RunHost() {
-    if (!Await("client_ready", nullptr, 480)) return;
+    if (!Await("client_ready", 480)) return;
     // A.
     void* spill = CoffeeSpill(0.f);
     if (!spill) return;
     ue_wrap::FVector at{};
     OnGameThread([&] { E::TryGetActorLocation(spill, at); });
     Mark("a_spill", Rows({spill}));
-    if (!Await("a_seen", nullptr, 30)) return;
-    // B. The grime lane indexes a decal on its scan; give it the time.
+    if (!Await("a_seen", 30)) return;
+    // B. Stands for the grime lane's scan indexing the new decal, so the wipe below is sent; no signal exposes the index.
     ::Sleep(10000);
     float mine = -1.f;
     OnGameThread([&] {
@@ -294,7 +284,7 @@ void RunHost() {
     std::snprintf(v, sizeof(v), "%.4f", mine);
     Mark("b_host_part", v);
     std::string theirs;
-    if (!Await("b_client_part", &theirs, 40)) return;
+    if (!AwaitText("b_client_part", theirs, 40)) return;
     const float c = std::stof(theirs);
     Check(WaitFor([&] { return Process(spill) <= c + 0.05f; }, 15), "the client's partial wipe reached the host's copy");
     OnGameThread([&] { UE_LOGI("spill-drill: the host's copy now %.2f (client %.2f)", Process(spill), c); });
@@ -302,13 +292,13 @@ void RunHost() {
     OnGameThread([&] { wiped = Clean(spill, 100000.f); });
     Check(wiped && WaitFor([&] { return Near(kCoffee, at, 2.f) == 0; }, 5), "the host wiped its spill away");
     Mark("b_wiped");
-    if (!Await("b_wiped_seen", nullptr, 30)) return;
+    if (!Await("b_wiped_seen", 30)) return;
     void* second = CoffeeSpill(-120.f);
     if (!second) return;
     ue_wrap::FVector at2{};
     OnGameThread([&] { E::TryGetActorLocation(second, at2); });
     Mark("b_spill2", Rows({second}));
-    if (!Await("b_client_wiped", nullptr, 30)) return;
+    if (!Await("b_client_wiped", 30)) return;
     Check(WaitFor([&] { return Near(kCoffee, at2, 2.f) == 0; }, 10), "the client's wipe took the host's spill here");
     // C.
     const uint32_t sent0 = coop::spill_sync::PoursSent();
@@ -324,11 +314,11 @@ void RunHost() {
     UE_LOGI("spill-drill: the host sent %u pours", coop::spill_sync::PoursSent() - sent0);
     Mark("c_rows", rows);
     OnGameThread([&] { LogOff("host", ParseRows(rows)); });
-    if (!Await("c_seen", nullptr, 60)) return;
+    if (!Await("c_seen", 60)) return;
     // D.
     const uint32_t heard = coop::spill_sync::SplashesPlayed();
     std::string where;
-    if (!Await("d_spill", &where, 60)) return;
+    if (!AwaitText("d_spill", where, 60)) return;
     const auto drows = ParseRows(where);
     Check(WaitFor([&] { return AllHere(drows); }, 10), "the client's spill is made here, once");
     OnGameThread([&] { LogOff("host", drows); });
@@ -336,23 +326,32 @@ void RunHost() {
     const uint32_t poured0 = coop::spill_sync::PoursHeard();
     Mark("d_made");
     std::string cp;
-    if (!Await("d2_pours", &cp, 60)) return;
+    if (!AwaitText("d2_pours", cp, 60)) return;
     const uint32_t clientPours = static_cast<uint32_t>(std::stoul(cp));
     Check(clientPours > 0 && WaitFor([&] { return coop::spill_sync::PoursHeard() - poured0 == clientPours; }, 10),
           "every pour of the client's held beer was heard here");
     UE_LOGI("spill-drill: the host heard %u of the client's %u pours", coop::spill_sync::PoursHeard() - poured0, clientPours);
     Mark("d2_heard");
     // E.
-    if (!Await("client_killed", nullptr, 300)) return;
+    // The client's life 1 ends on client_done; the rig then kills it, and the host sees its slot closed.
+    if (!Await("client_done", 60)) return;
+    if (!PS::WaitFor("the client's slot closed", 300,
+                     [] { return !harness::session_runtime::Session().IsSlotConnected(1); }))
+        return;
     CoffeeSpill(60.f);
+    // The rejoined life's drill begins when its process boots: it leaves rejoin_ready once its world is up, and only
+    // then are the rows written, so it reads them as written since its own start.
+    if (!Await("rejoin_ready", 400)) return;
     std::string live;
     OnGameThread([&] { live = Rows(AllDecals()); });
     Mark("e_rows", live);
     UE_LOGI("spill-drill: %zu spills live for the rejoin", ParseRows(live).size());
-    Await("rejoin_done", nullptr, 400);
+    Await("rejoin_done", 400);
     OnGameThread([&] {
         for (void* d : AllDecals()) Clean(d, 100000.f);
     });
+    if (g_fails == 0) UE_LOGI("spill-drill: VERDICT PASS");
+    else UE_LOGW("spill-drill: VERDICT FAIL fails=%d", g_fails);
     UE_LOGI("spill-drill: DONE on host fails=%d", g_fails);
 }
 
@@ -365,25 +364,43 @@ bool WorldReady() {
     return ready;
 }
 
-void RunClient() {
+// The world is up and the host's puppet exists here.
+bool HostPuppetUp() {
     WorldReady();
-    ::Sleep(8000);
+    return PS::WaitFor("the host's puppet", 60, [&] {
+        bool have = false;
+        OnGameThread([&] {
+            coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(0);
+            have = p && p->valid();
+        });
+        return have;
+    });
+}
+
+void RunClient() {
+    if (!HostPuppetUp()) return;
     Mark("client_ready");
     // A.
     const uint32_t heard = coop::spill_sync::SplashesPlayed();
     std::string a;
-    if (!Await("a_spill", &a, 120)) return;
+    if (!AwaitText("a_spill", a, 120)) return;
     const auto arows = ParseRows(a);
     if (arows.empty()) return;
     const ue_wrap::FVector h = arows[0].at;
     Check(WaitFor([&] { return AllHere(arows); }, 10), "the host's spill lies here, at its place");
     Check(coop::spill_sync::SplashesPlayed() > heard, "the host's splash was heard here");
-    ::Sleep(1500);
+    // The check below follows the step's own: this copy's spill is gone once its own flight's decal is removed. A miss
+    // is reported by the check, not by the wait.
+    PS::WaitFor("the host's decal here", 30, [&] {
+        bool one = false;
+        OnGameThread([&] { one = Near(kCoffee, h, 400.f) == 1; });
+        return one;
+    }, false);
     OnGameThread([&] { Check(Near(kCoffee, h, 400.f) == 1, "no spill of this copy's own beside it"); });
     Mark("a_seen");
     // B.
     std::string hp;
-    if (!Await("b_host_part", &hp, 60)) return;
+    if (!AwaitText("b_host_part", hp, 60)) return;
     const float hostPart = std::stof(hp);
     void* copy = nullptr;
     Check(WaitFor([&] {
@@ -401,11 +418,11 @@ void RunClient() {
     char v[32];
     std::snprintf(v, sizeof(v), "%.4f", mine);
     Mark("b_client_part", v);
-    if (!Await("b_wiped", nullptr, 40)) return;
+    if (!Await("b_wiped", 40)) return;
     Check(WaitFor([&] { return Near(kCoffee, h, 2.f) == 0; }, 10), "the host's wipe took the spill here");
     Mark("b_wiped_seen");
     std::string b2;
-    if (!Await("b_spill2", &b2, 60)) return;
+    if (!AwaitText("b_spill2", b2, 60)) return;
     const auto b2rows = ParseRows(b2);
     if (b2rows.empty()) return;
     bool wiped = false;
@@ -416,9 +433,9 @@ void RunClient() {
     // C.
     const uint32_t heard0 = coop::spill_sync::PoursHeard();
     std::string c;
-    if (!Await("c_rows", &c, 120)) return;
+    if (!AwaitText("c_rows", c, 120)) return;
     std::string hp2;
-    if (Await("c_pours", &hp2, 5)) {
+    if (AwaitText("c_pours", hp2, 5)) {
         const uint32_t hostPours = static_cast<uint32_t>(std::stoul(hp2));
         Check(hostPours > 0 && WaitFor([&] { return coop::spill_sync::PoursHeard() - heard0 == hostPours; }, 10),
               "every pour of the host's bottles was heard here");
@@ -472,7 +489,7 @@ void RunClient() {
     std::string drow;
     OnGameThread([&] { drow = Rows({back.front()}); });
     Mark("d_spill", drow);
-    if (!Await("d_made", nullptr, 30)) return;
+    if (!Await("d_made", 30)) return;
     OnGameThread([&] { Check(back.size() == 1, "one spill here, the host's"); });
     // D2. A beer in this player's hand, opened and turned over: its pours go to the host to be heard.
     void* beer = nullptr;
@@ -511,16 +528,19 @@ void RunClient() {
     UE_LOGI("spill-drill: this player's beer poured %u times", poured);
     OnGameThread([] { coop::dev::drill_hand::TakeIntoHandNow(L"None", nullptr); });
     Mark("d2_pours", std::to_string(poured));
-    Await("d2_heard", nullptr, 30);
+    Await("d2_heard", 30);
     Mark("client_done");
     UE_LOGI("spill-drill: DONE on client fails=%d", g_fails);
 }
 
 void RunRejoin() {
-    WorldReady();
+    if (!HostPuppetUp()) return;
+    Mark("rejoin_ready");
     std::string e;
-    if (!Await("e_rows", &e, 120)) return;
+    if (!AwaitText("e_rows", e, 120)) return;
     const auto rows = ParseRows(e);
+    // A dwell, not a readiness wait: a spill this life would make twice lands within seconds, and the check below must
+    // not pass before it can; nothing signals that a copy will not come.
     ::Sleep(5000);
     Check(WaitFor([&] { return AllHere(rows); }, 20), "every live host spill lies here after the rejoin, none twice");
     OnGameThread([&] {
@@ -540,11 +560,7 @@ void RunRejoin() {
 }  // namespace
 
 DWORD WINAPI SpillThread(LPVOID /*arg*/) {
-    g_dir = coop::config::ReadEnv("VOTVCOOP_CAN_DIR");
-    if (g_dir.empty()) {
-        UE_LOGW("spill-drill: VERDICT ABORT -- VOTVCOOP_CAN_DIR is not set");
-        return 0;
-    }
+    if (!PS::Begin("spill-drill")) return 0;
     if (!IsClientRole()) RunHost();
     else if (coop::config::ReadEnv("VOTVCOOP_SPILL_REJOIN") == "1") RunRejoin();
     else RunClient();
