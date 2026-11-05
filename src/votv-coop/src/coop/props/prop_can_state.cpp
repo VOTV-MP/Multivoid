@@ -44,6 +44,10 @@ struct CanState {
 std::unordered_map<std::wstring, CanState> g_known;    // by the can's Key
 std::unordered_map<void*, CanState> g_classDefaults;   // by class
 
+// Where `opened` lives on a class: its byte and its bit among the class's packed bools (off < 0: not declared).
+struct BoolSlot { int32_t off = -1; uint8_t mask = 0; };
+std::unordered_map<void*, BoolSlot> g_openedSlot;      // by class
+
 uint32_t g_published = 0, g_landed = 0;
 
 bool IsCan(void* object) {
@@ -57,12 +61,24 @@ bool IsCan(void* object) {
     return can;
 }
 
+// `opened` is a Blueprint bool: one bit of a byte it may share with its neighbours, so it is read through its mask.
+BoolSlot OpenedSlotOf(void* object) {
+    void* const cls = R::ClassOf(object);
+    auto it = g_openedSlot.find(cls);
+    if (it != g_openedSlot.end()) return it->second;
+    BoolSlot slot;
+    if (!R::FindBoolProperty(cls, L"opened", slot.off, slot.mask)) slot = BoolSlot{};
+    g_openedSlot.emplace(cls, slot);
+    return slot;
+}
+
 bool ReadState(void* object, CanState& out) {
-    static R::InstanceOffset sOpened{L"opened"}, sFoods{L"foods"};
-    const int32_t openedOff = sOpened.Of(object), foodsOff = sFoods.Of(object);
-    if (openedOff < 0 || foodsOff < 0) return false;
+    static R::InstanceOffset sFoods{L"foods"};
+    const BoolSlot opened = OpenedSlotOf(object);
+    const int32_t foodsOff = sFoods.Of(object);
+    if (opened.off < 0 || opened.mask == 0 || foodsOff < 0) return false;
     const auto* base = static_cast<const uint8_t*>(object);
-    out.opened = base[openedOff] != 0;
+    out.opened = (base[opened.off] & opened.mask) != 0;
     out.foods = *reinterpret_cast<const int32_t*>(base + foodsOff);
     return true;
 }
