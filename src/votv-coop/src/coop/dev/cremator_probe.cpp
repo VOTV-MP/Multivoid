@@ -15,14 +15,12 @@
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/cached_obj_ref.h"
-#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/devices/cremator.h"
 #include "ue_wrap/engine/engine.h"
-#include "ue_wrap/engine/engine_component.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/engine/engine_nav.h"
 #include "ue_wrap/facts/function_row.h"
@@ -39,10 +37,6 @@
 namespace coop::dev::cremator_probe {
 namespace detail {
 
-namespace E = ue_wrap::engine;
-namespace OI = ue_wrap::object_index;
-namespace R = ue_wrap::reflection;
-
 Mode ModeOf() {
     static const Mode m = [] {
         const std::string v = coop::config::ResolveEnum(::coop::config_registry::rows::cremator_probe);
@@ -54,101 +48,13 @@ Mode ModeOf() {
     return m;
 }
 
-void* ObjectProperty(void* object, const wchar_t* name) {
-    if (!object || !R::IsLive(object)) return nullptr;
-    const int32_t off = R::FindPropertyOffset(R::ClassOf(object), name);
-    if (off < 0) return nullptr;
-    void* value = nullptr;
-    std::memcpy(&value, static_cast<const char*>(object) + off, sizeof(value));
-    return value && R::IsLive(value) ? value : nullptr;
-}
-
-bool ReadBool(void* object, const wchar_t* name, bool& value) {
-    if (!object || !R::IsLive(object)) return false;
-    int32_t offset = -1;
-    uint8_t mask = 0;
-    if (!R::FindBoolProperty(R::ClassOf(object), name, offset, mask) || offset < 0 || !mask) return false;
-    value = (*reinterpret_cast<const uint8_t*>(static_cast<const char*>(object) + offset) & mask) != 0;
-    return true;
-}
-
-bool ReadFloat(void* object, const wchar_t* name, float& value) {
-    if (!object || !R::IsLive(object)) return false;
-    const int32_t off = R::FindPropertyOffset(R::ClassOf(object), name);
-    if (off < 0) return false;
-    std::memcpy(&value, static_cast<const char*>(object) + off, sizeof(value));
-    return true;
-}
-
-int Bit(void* object, const wchar_t* name) {
-    bool v = false;
-    return ReadBool(object, name, v) ? (v ? 1 : 0) : -1;
-}
-
-bool CallNoParams(void* object, const wchar_t* fnName) {
-    if (!object || !R::IsLive(object)) return false;
-    // The function the instance dispatches: the cremator door is a subclass of the prop_swinger that declares open/close.
-    void* fn = R::FindDispatchFunction(R::ClassOf(object), fnName, nullptr);
-    if (!fn) return false;
-    ue_wrap::ParamFrame f(fn);
-    return ue_wrap::Call(object, f);
-}
-
-void ReadMachine(void* cremator, int& actors, float& health0) {
-    actors = -1;
-    health0 = kNoHealth;
-    if (!cremator || !R::IsLive(cremator)) return;
-    void* cls = R::ClassOf(cremator);
-    // A TArray is { void* Data; int32 Num; int32 Max }.
-    const int32_t actorsOff = R::FindPropertyOffset(cls, L"actors");
-    if (actorsOff >= 0) std::memcpy(&actors, static_cast<const char*>(cremator) + actorsOff + sizeof(void*), sizeof(int32_t));
-    const int32_t healthOff = R::FindPropertyOffset(cls, L"health");
-    if (healthOff < 0) return;
-    void* data = nullptr;
-    int32_t num = 0;
-    std::memcpy(&data, static_cast<const char*>(cremator) + healthOff, sizeof(data));
-    std::memcpy(&num, static_cast<const char*>(cremator) + healthOff + sizeof(void*), sizeof(num));
-    if (num > 0 && data) std::memcpy(&health0, data, sizeof(health0));
-}
-
-Nearest FindNearestFirebox(const ue_wrap::FVector& from) {
-    Nearest n{from, INFINITY, nullptr, {}};
-    void* cls = OI::ClassByName(L"cremator_C");
-    if (!cls) return n;
-    OI::ForEachInstance(cls, [](void* ctx, void* obj, int32_t) {
-        auto& s = *static_cast<Nearest*>(ctx);
-        void* firebox = ObjectProperty(obj, L"firebox");
-        ue_wrap::FVector at{};
-        if (!firebox || !E::TryGetComponentLocation(firebox, at)) return;
-        const float dx = at.X - s.from.X, dy = at.Y - s.from.Y, dz = at.Z - s.from.Z;
-        const float d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 < s.best) { s.best = d2; s.actor = obj; s.at = at; }
-    }, &n);
-    return n;
-}
-
-bool ShutDoor(void* cremator, bool& opened) {
-    opened = false;
-    void* door = ObjectProperty(cremator, L"swingerDoor");
-    return !(door && ReadBool(door, L"opened", opened) && opened) || CallNoParams(door, L"close");
-}
-
-bool OpenDoor(void* cremator, bool& opened) {
-    opened = false;
-    void* door = ObjectProperty(cremator, L"swingerDoor");
-    if (!door) return false;
-    // open(damage): the frame is zeroed, so `damage` is false, the door's own player path.
-    const bool ran = (ReadBool(door, L"opened", opened) && opened) || CallNoParams(door, L"open");
-    ReadBool(door, L"opened", opened);
-    return ran;
-}
-
 }  // namespace detail
 
 namespace {
 
 namespace E = ue_wrap::engine;
 namespace V = ue_wrap::vitals;
+namespace C = ue_wrap::cremator;
 using namespace detail;
 
 enum class Step : uint8_t { Start, Walk, StepIn, Lever, Run, WaitMove, PlacedOnly, Over };
@@ -242,9 +148,9 @@ void StartTick(void* local) {
         g_step = Step::WaitMove;
         return;
     }
-    if (!OI::ClassByName(L"cremator_C")) { Fail("no cremator_C class"); return; }
+    if (!C::EnsureResolved()) { Fail("no cremator_C class"); return; }
 
-    const Nearest n = FindNearestFirebox(pawnAt);
+    const C::Nearest n = C::FindNearestFirebox(pawnAt);
     if (!n.actor) { Fail("no cremator with a firebox is loaded"); return; }
 
     ue_wrap::FRotator rot{};
@@ -255,7 +161,7 @@ void StartTick(void* local) {
 
     // The door is shut at rest, and the firebox is behind it.
     bool opened = false;
-    if (!OpenDoor(n.actor, opened)) { Fail("the door's open() did not run"); return; }
+    if (!C::OpenDoor(n.actor, opened)) { Fail("the door's open() did not run"); return; }
     UE_LOGI("cremator-probe: DOOR opened=%d", opened ? 1 : 0);
 
     // The walk is bounded by the NavMesh route, not the line (meet.cpp's reasoning).
@@ -324,21 +230,19 @@ void StepInTick(void* local) {
 
 void LogSample(void* local, float t, const char* edge) {
     void* cremator = g_cremator.Get();
-    void* door = ObjectProperty(cremator, L"swingerDoor");
-    float hp = -1.f, burn = -1.f, windup = -1.f, health0 = kNoHealth;
-    int actors = -1;
+    float hp = -1.f, burn = -1.f, windup = -1.f;
     V::Read(V::Field::Health, &hp);
     V::Read(V::Field::BurningTime, &burn);
-    ReadFloat(cremator, L"windup", windup);
-    ReadMachine(cremator, actors, health0);
+    C::ReadWindup(cremator, windup);
+    const C::Machine m = C::ReadMachine(cremator);
     bool ragdoll = false, dead = false;
     const int deadBit = local && E::ReadMainPlayerRagdollState(local, ragdoll, dead) ? (dead ? 1 : 0) : -1;
     ue_wrap::FVector pos{};
     if (!local || !E::TryGetActorLocation(local, pos)) pos = {};
     UE_LOGI("cremator-probe: T=%.0f hp=%.1f burn=%.1f active=%d anim=%d windup=%.3f closed=%d doorOpened=%d "
             "actors=%d health0=%.1f dead=%d pos=(%.0f,%.0f,%.0f)%s%s",
-            t, hp, burn, Bit(cremator, L"isActive"), Bit(cremator, L"anim"), windup, Bit(cremator, L"isClosed"),
-            Bit(door, L"opened"), actors, health0, deadBit, pos.X, pos.Y, pos.Z, edge ? " edge=" : "",
+            t, hp, burn, Flag(cremator, C::ReadActive), Flag(cremator, C::ReadAnim), windup, Flag(cremator, C::ReadClosed),
+            Flag(cremator, C::ReadDoorOpened), m.actors, m.health0, deadBit, pos.X, pos.Y, pos.Z, edge ? " edge=" : "",
             edge ? edge : "");
     if (deadBit == 1 && !g_died) {
         g_died = true;
@@ -351,12 +255,12 @@ void LeverTick(void* local) {
     void* cremator = g_cremator.Get();
     if (!cremator) { Fail("the cremator died before the lever"); return; }
     bool opened = false;
-    if (!ShutDoor(cremator, opened)) { Fail("the open door's close() did not run"); return; }
-    if (!CallNoParams(cremator, L"useLever")) { Fail("useLever did not run"); return; }
+    if (!C::ShutDoor(cremator, opened)) { Fail("the open door's close() did not run"); return; }
+    if (!C::CallUseLever(cremator)) { Fail("useLever did not run"); return; }
     g_startMs = coop::net::NowMs();
     g_nextSampleMs = g_startMs + kSampleMs;
     UE_LOGI("cremator-probe: LEVER doorWasOpened=%d", opened ? 1 : 0);
-    g_prevAnim = Bit(cremator, L"anim");
+    g_prevAnim = Flag(cremator, C::ReadAnim);
     LogSample(local, 0.f, "lever");
     g_step = Step::Run;
 }
@@ -366,7 +270,7 @@ void RunTick(void* local) {
     const float t = static_cast<float>(now - g_startMs) / 1000.f;
 
     // The handle's finish is the edge of `anim` going false; a 1 s sample can straddle it, so it is read every tick.
-    const int anim = Bit(g_cremator.Get(), L"anim");
+    const int anim = Flag(g_cremator.Get(), C::ReadAnim);
     if (g_prevAnim == 1 && anim == 0) LogSample(local, t, "handle-finish");
     g_prevAnim = anim;
 
@@ -376,7 +280,7 @@ void RunTick(void* local) {
     // The pull-back goes before the sample so the line of the second it ran in already shows its effect's start.
     if (t >= kPullbackAtS && !g_pulledBack && !g_died) {
         g_pulledBack = true;
-        UE_LOGI("cremator-probe: PULLBACK ran=%d", CallNoParams(g_cremator.Get(), L"useLever") ? 1 : 0);
+        UE_LOGI("cremator-probe: PULLBACK ran=%d", C::CallUseLever(g_cremator.Get()) ? 1 : 0);
     }
     const bool wasDead = g_died;
     LogSample(local, t, nullptr);

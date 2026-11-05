@@ -87,6 +87,7 @@ set(VOTVCOOP_SOURCES_UE_WRAP_2
     src/ue_wrap/devices/garage.cpp
     src/ue_wrap/devices/appliance.cpp
     src/ue_wrap/devices/coffee.cpp
+    src/ue_wrap/devices/cremator.cpp
     src/ue_wrap/devices/power_control.cpp
     src/ue_wrap/devices/generator.cpp
     src/ue_wrap/devices/generator_panel.cpp
