@@ -382,6 +382,7 @@ void DoorPower(bool on) {
 
 struct Show {
     bool on = false;
+    uint32_t world = 0;   // the world generation the show began in: its doors and vent are that world's
     Clock::time_point t0{};
     std::pair<int32_t, int32_t> crawler{-1, 0};   // the mirror; index -1 until one is found
     ue_wrap::FVector near{};                      // where the mirror is looked for
@@ -399,7 +400,8 @@ struct Show {
 } g_show;
 
 void EndShow(const char* why) {
-    if (g_show.powerOff) DoorPower(true);   // the crawl's own end has it on
+    // The crawl's own end has the power on; in another world the door looked up is not the one this show took it from.
+    if (g_show.powerOff && g_show.world == ue_wrap::world_identity::Generation()) DoorPower(true);
     UE_LOGI("vent_crawler: the crawl's show ended (%s) -- %u sounds, %u bursts", why, g_sounds.load(), g_bursts);
     g_show = Show{};
 }
@@ -448,6 +450,7 @@ bool OnCue(const coop::net::EventCuePayload& p) {
     if (g_show.on) EndShow("a new crawl");
     void* crawler = MirrorNear({p.x, p.y, p.z});
     g_show.on = true;
+    g_show.world = ue_wrap::world_identity::Generation();
     g_show.t0 = Clock::now();
     g_show.near = {p.x, p.y, p.z};
     g_show.crawler = crawler ? IdOf(crawler) : std::pair<int32_t, int32_t>{-1, 0};
@@ -500,6 +503,9 @@ void QueueConnectBroadcastForSlot(int slot) {
     // The crawler is destroyed at the crawl's own end; its weak id no longer resolves then.
     void* live = Resolve(g_host.crawler);
     p.phase = live && R::IsLive(live) ? 1 : 2;
+    // Divergence from MTA, which sends a joiner state only (CGame.cpp:1393 InitialDataStream): the crawl is a Blueprint
+    // timeline on a mirror whose BeginPlay is refused, so no property carries it, and the joiner resumes its show at the
+    // seconds since the cue (a relative time, no clock sync).
     const float elapsed = std::chrono::duration<float>(Clock::now() - g_host.t0).count();
     p.elapsed = (std::min)((std::max)(elapsed, 0.f), kShowLimit);
     // The door's power is a field the crawl writes from its graph, so it is read, not remembered.
@@ -571,7 +577,8 @@ void OnState(const coop::net::VentCrawlStatePayload& p) {
         return;
     }
     g_show.on = true;
-    g_show.t0 = Clock::now() - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(p.elapsed));
+    g_show.world = ue_wrap::world_identity::Generation();
+    g_show.t0 = Clock::now() -std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(p.elapsed));
     g_show.near = {};   // the crawler is the only one there is
     g_show.catchUp = (std::max)(p.elapsed - kTimeline, 0.f);
     g_show.step1 = p.elapsed >= kStep1;
@@ -592,6 +599,10 @@ void Tick() {
     if (!g_show.on) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Client) return;
+    if (g_show.world != ue_wrap::world_identity::Generation()) {   // the show's doors and vent are gone with its world
+        EndShow("world changed");
+        return;
+    }
     const Clock::time_point tickAt = Clock::now();
     const float t = std::chrono::duration<float>(tickAt - g_show.t0).count();
     // A mirror not there when the show began (a joiner's, still spawning) is asked for once a second.
@@ -614,6 +625,8 @@ void Tick() {
         }
     }
     if (g_show.swinging) return;   // the swing outlives the mirror
+    // The mirror's end is a weak-id check each frame, not the object listener's destroy event: the schedule it ends is
+    // a clock poll anyway (the mirror's BeginPlay is refused, so nothing announces the times), and one resolve is the cost.
     if ((g_show.crawler.first >= 0 && !crawler && t > kTimeline) || t > kShowLimit) {
         EndShow(crawler ? "out of time" : "the mirror went");
         return;

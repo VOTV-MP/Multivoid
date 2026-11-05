@@ -4215,6 +4215,7 @@ struct StatQueryReplyPayload {
     StatEffectEntry effects[5];
 };
 static_assert(sizeof(StatQueryReplyPayload) == 205, "StatQueryReplyPayload must be 205 bytes");
+static_assert(sizeof(StatQueryReplyPayload) <= 256 - 20 - 8, "StatQueryReplyPayload must fit in one reliable datagram");
 
 // A spilled liquid's decal (SpillState), or a client's (SpillIntent).
 struct SpillPayload {
