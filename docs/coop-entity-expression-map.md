@@ -61,6 +61,7 @@ are peer-gated. `[V]`
 | an ATV (`ATV_C` and its descendants, the witch car included) | the save; a runtime spawn | the object scan's ATV lane (`atv_index`); the host announces each by key (`AtvSpawn`); the seat and the syncer are the host's table (`atv_authority`) | the game's own key, which the save carries; a runtime one gets a synthetic key at its host birth |
 | status effects (effect_C) | each peer's own, from its gamemode's addEffect; never sent | -- | none: a per-process actor; at a join the host's effect records are reset out of the joiner's save at the join |
 | a fuse tower (the three `coordRadarDish_C` and the one `radiotower_C`) | placed in the level; no runtime birth (the gamemode's `radiotower` is its one `GetActorOfClass`) | not caught: the host reads each tower every tick; a client keeps the host's last row of each tower and applies it when the tower resolves (the dish by the object index, the radio tower by the gamemode's field), looking up again once a second while a row waits | the pair (kind, id): a dish's own `id` 0..2, the radio tower's 0; its state, not its life, is what crosses (`coop/world/fuse_tower_rows`) |
+| a plant (`growingPlant_C` and every class under it: a planted seed, the winter bush, the mushrooms, the herb, the pine) | the save; a pot or a seed; the winter bush ticker and the spores, the church's herb roll | not caught at birth: the host's poll lists every plant by the object index's class set; a client's spawners are refused at the script gate | its save key (minted by its own `getKey` when it has none); the class travels with it |
 
 ## Keyed props
 
@@ -447,6 +448,28 @@ registry recycled that id. `[V]`
   flag, so a joiner places its copy once whoever syncs it; a joiner sends no request before its world is ready.
   `[?]`
 
+## Plants
+
+- **Identity.** The plant's save key, on every peer: a joiner's load already holds the host's plants under the same keys,
+  so a plant is found by key and spawned only where none stands under it. A plant that has no key yet is minted one by
+  its own `getKey`. `[?]`
+- **Expression: the host's state.** The host runs every plant and sends `PlantState` for each (its class, row, place,
+  values, pot and `hideDirt`): at once on an edge a viewer sees, every few seconds while a value changes slowly, and for
+  a plant it has never sent. A client applies it by key through `GrowingPlant::Apply`, which refreshes the plant's meshes
+  from the values. A client's copy does not tick: the plant's tick, the herb's `grown`, a sprinkler's timer and a growth
+  area's tick are refused at the script gate (`coop/world/plant_gate`), and the spawners (the winter bush, the spore's
+  hit, the church's herb) are refused in `coop/world/spawn_authority`. `[?]`
+- **Expression: what a client's player does.** A client's water, harvest, removal or a seed it planted is the only change
+  a client's copy can show, and it goes to the host as `PlantEdit` (the changed values in a mask, the row, or the end);
+  the host applies it to its plant, materialises a planted one under the client's key, and its next `PlantState` answers.
+  A lethal hit on a plant is refused on a client (`coop/props/prop_damage_gate`): the plant's end is the host's. `[?]`
+- **Expression: the growth area's glow** is the host's alone to spawn and crosses as a cue (`coop/world/event_cue_sync`).
+  `[?]`
+- **Destroy.** `PlantState` with `alive` 0 from the host, for a plant it no longer lists; the client destroys its copy by
+  key. A client that destroys its own copy tells the host with a `PlantEdit` end. `[?]`
+- **Late join.** `QueueConnectBroadcastForSlot` marks every plant pending, so the next host poll sends each again; a
+  client applies a state it already holds without effect. `PlantState` is not sent before a world is ready. `[?]`
+
 ## The dupe matrix
 
 Every place two seams can express one actor, and what deduplicates it:
@@ -477,6 +500,10 @@ Every place two seams can express one actor, and what deduplicates it:
 | a client's press or fill of a coffee device and the host's | one run: the client's body is cancelled at the gate (the press is sent, the hit handler is counted) and the host performs it once; the maker's flags change on the host's copy and reach a client as the record, never from the client's own run `[V]` (`coffee_drill`) |
 | a client's Octa laser and the host's | two actors, one beam: each peer's Octa runs its own `fire()`; the client's blast is dissolved with no request and the host's `ExplosionSpawn` is the one explosion `[V]` (`octa_drill`) |
 | a client's roll of the night Octa and the host's | one Octa: the client's roll body is refused at the script gate and the host's roll is the only source `[V]` (`octa_drill` births) |
+| a joiner's save-loaded plant and the host's `PlantState` of the same plant | one plant: the state is applied by save key to the copy the load made, and a plant is spawned only where none stands under the key `[?]` |
+| a client's plant spawners (the winter bush, the spore, the church's herb) and the host's | one source: each client body is refused at the script gate and the host's plant reaches the client as `PlantState` `[?]` (the plant-state drill's spawner arm) |
+| a client's plant tick, a sprinkler's timer, a growth area's tick and the host's | one simulation: the client's bodies are refused, so its copy changes only by the host's state or its own player's edit `[?]` (the plant-state drill's tick and sprinkler arms) |
+| a client's lethal hit on a plant and the host's | one break: the client's `impactDamage` is cancelled and the host's break ends the copy `[?]` (the plant-state drill's pine arm) |
 
 ## Needs a probe
 
