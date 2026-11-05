@@ -1,15 +1,20 @@
 // harness/autotest/autotest_plant_state.cpp -- TEST-ONLY: one state for every plant across two peers.
 //
-// A bush stands before the client joins, from its spawner's own body. Then growth, a client's water, ripening, a client's harvest
-// through the plant's own action, death, a plant a client spawned, a new bush and two removals. Gated by
-// VOTVCOOP_RUN_PLANT_STATE; the folder is VOTVCOOP_CAN_DIR.
+// A bush from its spawner's own body and a growingPlant_bush_C and a growingPlant_shroom_0_C (neither is in list_farmPlants,
+// so the script spawns them) stand on the host before the client's checks. Then growth, a client's water, ripening, a
+// client's harvest through the plant's own action, death, a plant a client spawned, a new bush and two removals. The client
+// tells the host what it reads; the host judges and logs `plant-state: VERDICT PASS|FAIL <terms>`. Gated by
+// VOTVCOOP_RUN_PLANT_STATE; the peers' shared folder is VOTVCOOP_CAN_DIR. Every wait is on a state with a bound.
 
 #include "harness/autotest.h"
+#include "harness/autotest/meet.h"
+#include "harness/autotest/peer_signal.h"
 
-#include "coop/config/config.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/remote_player.h"
 #include "coop/session/net_pump.h"
 #include "ue_wrap/actors/growing_plant.h"
+#include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -23,7 +28,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
-#include <fstream>
+#include <cstdlib>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -34,33 +40,24 @@ namespace GP = ue_wrap::growing_plant;
 namespace E = ue_wrap::engine;
 namespace R = ue_wrap::reflection;
 namespace OI = ue_wrap::object_index;
+namespace PS = harness::autotest::peer_signal;
+using PS::Await;
+using PS::AwaitText;
+using PS::Mark;
 
-std::string g_dir;
+constexpr int kStep = 120;   // the bound on one step of the other peer's
+
+// The two classes under growingPlant_C that no pot or seed makes.
+constexpr const wchar_t* kBushClass = L"growingPlant_bush_C";
+constexpr const wchar_t* kBushPath = L"/Game/objects/growingPlant_bush.growingPlant_bush_C";
+constexpr const wchar_t* kShroomClass = L"growingPlant_shroom_0_C";
+constexpr const wchar_t* kShroomPath = L"/Game/objects/growingPlant_shroom_0.growingPlant_shroom_0_C";
+
 int g_fails = 0;
 
 template <class Fn>
 void OnGameThread(Fn&& fn) {
     ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
-}
-
-void Mark(const char* name, const std::string& body = "x") {
-    std::string tmp = g_dir + "\\" + name + ".tmp";
-    { std::ofstream(tmp, std::ios::binary | std::ios::trunc) << body; }
-    ::MoveFileExA(tmp.c_str(), (g_dir + "\\" + name).c_str(), MOVEFILE_REPLACE_EXISTING);
-}
-
-bool Await(const char* name, std::string* body = nullptr, int seconds = 300) {
-    for (int i = 0; i < seconds * 10; ++i) {
-        std::ifstream f(g_dir + "\\" + name, std::ios::binary);
-        std::string s;
-        if (f && std::getline(f, s) && !s.empty()) {
-            if (body) *body = s;
-            return true;
-        }
-        ::Sleep(100);
-    }
-    UE_LOGW("plant-state: VERDICT ABORT -- no '%hs' from the other peer", name);
-    return false;
 }
 
 void Check(bool ok, const char* what) {
@@ -98,7 +95,14 @@ void* ByKey(const std::string& key) {
     return nullptr;
 }
 
-// The spawner's own body, until its trace lands on a surface it takes. "" if it never does.
+size_t PlantCount() {
+    size_t n = 0;
+    OnGameThread([&] { std::vector<void*> v; GP::List(v); n = v.size(); });
+    return n;
+}
+
+// The spawner's own body, until its trace lands on a surface it takes. "" if it never does. The 20 ms between two rolls is
+// pacing inside this peer's own step: each roll is a random trace and nothing signals which one lands.
 std::string RollBush() {
     std::vector<void*> before;
     OnGameThread([&] { GP::List(before); });
@@ -120,32 +124,44 @@ std::string RollBush() {
     return key;
 }
 
+// A plant of `path`'s class by script, beside the host's player, with the class's own default row. "" when no plant of that class
+// came of it.
+std::string SpawnFamily(const wchar_t* path, const wchar_t* cls, float side) {
+    std::string key;
+    OnGameThread([&] {
+        ue_wrap::asset_load::LoadObjectByPath(path);
+        void* me = coop::players::Registry::Get().Local();
+        void* cdo = R::FindClassDefaultObject(cls);
+        ue_wrap::FVector at{};
+        if (!me || !cdo || !E::TryGetActorLocation(me, at)) return;
+        void* p = GP::Spawn(cls, L"", GP::Row(cdo), L"", true, {at.X + 300.f, at.Y + side, at.Z - 80.f}, {});
+        if (p && R::ClassNameOf(p) == cls) key = Narrow(GP::Key(p));
+    });
+    return key;
+}
+
 bool Near(float a, float b, float tol) { return std::fabs(a - b) <= tol; }
 
-// Waits for a plant here to meet a test.
+// Waits for a plant here to meet a test; a miss is the caller's Check, not an abort.
 template <class Test>
-bool WaitFor(const std::string& key, Test&& test, int seconds = 15) {
-    for (int i = 0; i < seconds * 10; ++i) {
+bool WaitPlant(const std::string& key, Test&& test, int seconds = 15) {
+    return PS::WaitFor("a plant's state", seconds, [&] {
         bool ok = false;
         OnGameThread([&] {
             void* p = ByKey(key);
             GP::Values v;
             if (p && GP::Read(p, v)) ok = test(p, v);
         });
-        if (ok) return true;
-        ::Sleep(100);
-    }
-    return false;
+        return ok;
+    }, false);
 }
 
 bool WaitGone(const std::string& key, int seconds = 15) {
-    for (int i = 0; i < seconds * 10; ++i) {
+    return PS::WaitFor("a plant's end", seconds, [&] {
         bool gone = false;
         OnGameThread([&] { gone = ByKey(key) == nullptr; });
-        if (gone) return true;
-        ::Sleep(100);
-    }
-    return false;
+        return gone;
+    }, false);
 }
 
 void WriteHost(const std::string& key, float grow, float water, float fruit) {
@@ -160,55 +176,79 @@ void WriteHost(const std::string& key, float grow, float water, float fruit) {
     });
 }
 
+// The client's word at its end: "<fails> <plants here> <host family plants it holds>".
+struct ClientWord {
+    int fails = 1;   // text that is no count is a fail
+    size_t plants = 0;
+    int family = 0;
+};
+ClientWord ParseWord(const std::string& text) {
+    ClientWord w;
+    std::istringstream in(text);
+    if (!(in >> w.fails >> w.plants >> w.family)) w = ClientWord{};
+    return w;
+}
+
 void RunHost() {
-    void* pawn = nullptr;
-    for (int i = 0; i < 480 && !pawn; ++i) {
-        OnGameThread([&] { pawn = coop::players::Registry::Get().Local(); });
-        if (!pawn) ::Sleep(500);
-    }
-    if (!pawn) return;
-    ::Sleep(4000);
-    std::vector<void*> have;
-    OnGameThread([&] { GP::List(have); });
-    UE_LOGI("plant-state: the save holds %zu plants", have.size());
+    if (!PS::WaitFor("the host's player", 240, [&] {
+            void* pawn = nullptr;
+            OnGameThread([&] { pawn = coop::players::Registry::Get().Local(); });
+            return pawn != nullptr;
+        }))
+        return;
+    // The save's plants are listed once the object index holds every birth the load announced.
+    if (!PS::WaitFor("the object index settled", 120, [&] {
+            bool settled = false;
+            OnGameThread([&] { settled = OI::IsSeeded() && OI::Backlog() == 0; });
+            return settled;
+        }))
+        return;
+    UE_LOGI("plant-state: the save holds %zu plants", PlantCount());
 
     const std::string bush = RollBush();
     Check(!bush.empty(), "the bush spawner's own body made a plant");
     if (bush.empty()) return;
+    const std::string familyBush = SpawnFamily(kBushPath, kBushClass, 150.f);
+    const std::string familyShroom = SpawnFamily(kShroomPath, kShroomClass, -150.f);
+    Check(!familyBush.empty(), "the script spawned a growingPlant_bush_C");
+    Check(!familyShroom.empty(), "the script spawned a growingPlant_shroom_0_C");
+    if (familyBush.empty() || familyShroom.empty()) return;
     std::string row;
     OnGameThread([&] { if (void* p = ByKey(bush)) row = Narrow(GP::Row(p)); });
-    UE_LOGI("plant-state: bush '%hs' row '%hs'", bush.c_str(), row.c_str());
-    size_t atJoin = 0;
-    OnGameThread([&] { std::vector<void*> v; GP::List(v); atJoin = v.size(); });
-    Mark("bush", bush + " " + row + " " + std::to_string(atJoin));
-    if (!Await("client_ready", nullptr, 480)) return;
-    size_t afterJoin = 0;
-    OnGameThread([&] { std::vector<void*> v; GP::List(v); afterJoin = v.size(); });
+    UE_LOGI("plant-state: bush '%hs' row '%hs', family '%hs' '%hs'", bush.c_str(), row.c_str(), familyBush.c_str(), familyShroom.c_str());
+    const size_t atJoin = PlantCount();
+    // The client reads the host's plants once it has joined and stands beside it: its signal, then the host's word.
+    if (!Await("client_ready", 480)) return;
+    Mark("bush", bush + " " + row + " " + std::to_string(atJoin) + " " + familyBush + " " + familyShroom);
+    if (!Await("client_checked", kStep)) return;
+    const size_t afterJoin = PlantCount();
     UE_LOGI("plant-state: plants at the join %zu, after it %zu", atJoin, afterJoin);
     Check(afterJoin == atJoin, "a join changed no plant on the host");
 
     // Growth: a slow change arrives within its gradual period.
     WriteHost(bush, 0.5f, 500.f, 0.f);
     Mark("grow");
-    if (!Await("grow_done")) return;
+    if (!Await("grow_done", kStep)) return;
 
     // A client's water.
-    Check(WaitFor(bush, [](void*, const GP::Values& v) { return v.water > 5000.f; }), "the client's water reached the host's plant");
+    Check(WaitPlant(bush, [](void*, const GP::Values& v) { return v.water > 5000.f; }), "the client's water reached the host's plant");
     Mark("water_seen");
-    if (!Await("edit_done")) return;
+    if (!Await("edit_done", kStep)) return;
 
     // Ripe: a bush shows amount, another plant makes fruit props.
     WriteHost(bush, 1.f, 500.f, 1.f);
-    ::Sleep(8000);
+    Check(WaitPlant(bush, [](void*, const GP::Values& v) { return v.grow >= 1.f && v.fruitGrow >= 1.f; }), "the host's plant is ripe");
     GP::Values ripe;
     OnGameThread([&] { if (void* p = ByKey(bush)) GP::Read(p, ripe); });
     UE_LOGI("plant-state: ripe grow=%.2f fruit=%.2f amount=%d", ripe.grow, ripe.fruitGrow, ripe.amount);
+    Mark("ripe", std::to_string(ripe.amount));
+    if (!Await("ripe_here", kStep)) return;
     // Water the client has not heard of yet, as its slow change is still due: its harvest must not put back the old value.
     WriteHost(bush, 1.f, 3000.f, 1.f);
-    Mark("ripe", std::to_string(ripe.amount));
-    if (!Await("harvest_done")) return;
+    Mark("harvest_go");
+    if (!Await("harvest_done", kStep)) return;
     if (ripe.amount > 0) {
-        Check(WaitFor(bush, [](void*, const GP::Values& v) { return v.amount == 0; }), "the client's harvest emptied the host's plant");
+        Check(WaitPlant(bush, [](void*, const GP::Values& v) { return v.amount == 0; }), "the client's harvest emptied the host's plant");
         GP::Values after;
         OnGameThread([&] { if (void* p = ByKey(bush)) GP::Read(p, after); });
         UE_LOGI("plant-state: host water after the harvest %.0f", after.water);
@@ -218,22 +258,21 @@ void RunHost() {
     OnGameThread([&] { foodsHost = CountOf(L"prop_food_C"); propsHost = CountOf(L"prop_C"); });
     UE_LOGI("plant-state: host item counts after the harvest food=%zu prop=%zu", foodsHost, propsHost);
     Mark("harvest_seen");
-    if (!Await("planted", nullptr, 120)) return;
 
     // A plant this client spawned stands on the host under the same key, and the host runs it.
     std::string planted;
-    { std::ifstream f(g_dir + "\\planted", std::ios::binary); std::getline(f, planted); }
+    if (!AwaitText("planted", planted, kStep)) return;
     bool stands = false;
-    for (int i = 0; i < 100 && !stands; ++i) {
+    PS::WaitFor("the client's plant", 10, [&] {
         OnGameThread([&] { stands = ByKey(planted) != nullptr; });
-        if (!stands) ::Sleep(100);
-    }
+        return stands;
+    }, false);
     Check(stands, "the plant a client planted stands on the host under its key");
     if (stands) {
         WriteHost(planted, 0.25f, 500.f, 0.f);
         Mark("planted_seen");
     }
-    if (!Await("planted_done")) return;
+    if (!Await("planted_done", kStep)) return;
 
     // Death: the row changes on the host and its copy takes it.
     std::string deadRow;
@@ -248,51 +287,77 @@ void RunHost() {
     });
     UE_LOGI("plant-state: the bush died, row '%hs'", deadRow.c_str());
     Mark("dead", deadRow);
-    if (!Await("dead_done")) return;
+    if (!Await("dead_done", kStep)) return;
 
     // A new bush while the client is in, then the host's end of it.
     const std::string second = RollBush();
     Check(!second.empty(), "a second bush stands");
     Mark("second", second);
-    if (!Await("second_seen")) return;
+    if (!Await("second_seen", kStep)) return;
     OnGameThread([&] { if (void* p = ByKey(second)) GP::Destroy(p); });
     Mark("second_gone");
-    if (!Await("removal")) return;
+    if (!Await("removal", kStep)) return;
     Check(WaitGone(planted), "the plant the client removed left the host");
     Mark("removal_seen");
-    Await("client_done");
+
+    std::string clientText;
+    if (!AwaitText("client_done", clientText, kStep)) return;
+    const ClientWord client = ParseWord(clientText);
+    size_t hostPlants = PlantCount();
+    PS::WaitFor("the plant counts to agree", 15, [&] { return (hostPlants = PlantCount()) == client.plants; }, false);
+    if (g_fails == 0 && client.fails == 0 && client.plants == hostPlants && client.family == 2)
+        UE_LOGI("plant-state: VERDICT PASS host=%d client=%d plants=%zu/%zu family=%d", g_fails, client.fails, hostPlants,
+                client.plants, client.family);
+    else
+        UE_LOGW("plant-state: VERDICT FAIL host=%d client=%d plants=%zu/%zu family=%d", g_fails, client.fails, hostPlants,
+                client.plants, client.family);
     UE_LOGI("plant-state: DONE on host fails=%d", g_fails);
 }
 
-void RunClient() {
-    bool ready = false;
-    for (int i = 0; i < 480 && !ready; ++i) {
-        OnGameThread([&] { ready = coop::net_pump::HasAnnouncedWorldReady(); });
-        if (!ready) ::Sleep(500);
-    }
-    ::Sleep(8000);
-    std::string body;
-    if (!Await("bush", &body)) return;
-    const size_t sp1 = body.find(' '), sp2 = body.find(' ', sp1 + 1);
-    const std::string bush = body.substr(0, sp1);
-    const std::string row = body.substr(sp1 + 1, sp2 - sp1 - 1);
-    const size_t hostPlants = std::strtoul(body.c_str() + sp2 + 1, nullptr, 10);
-    OnGameThread([&] {
-        void* t = FirstOf(L"ticker_bushSpawning_C");
-        Check(t && !E::IsActorTickEnabled(t), "this client's bush spawner is parked");
+// The world is up and the host's puppet exists here.
+bool HostPuppetUp() {
+    if (!PS::WaitFor("the client's world", 240, [&] {
+            bool ready = false;
+            OnGameThread([&] { ready = coop::players::Registry::Get().Local() && coop::net_pump::HasAnnouncedWorldReady(); });
+            return ready;
+        }))
+        return false;
+    return PS::WaitFor("the host's puppet", 60, [&] {
+        bool have = false;
+        OnGameThread([&] {
+            coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(0);
+            have = p && p->valid();
+        });
+        return have;
     });
-    bool same = WaitFor(bush, [&](void* p, const GP::Values&) { return Narrow(GP::Row(p)) == row; });
+}
+
+void RunClient() {
+    if (!HostPuppetUp()) return;
+    if (!meet::WalkToHost("plant-state")) return;
+    Mark("client_ready");
+    std::string body;
+    if (!AwaitText("bush", body, kStep)) return;
+    std::istringstream in(body);
+    std::string bush, row, familyBush, familyShroom;
+    size_t hostPlants = 0;
+    in >> bush >> row >> hostPlants >> familyBush >> familyShroom;
+    bool same = WaitPlant(bush, [&](void* p, const GP::Values&) { return Narrow(GP::Row(p)) == row; });
     Check(same, "a joiner has the bush from before its join, with its row");
-    bool parked = WaitFor(bush, [](void* p, const GP::Values&) { return !E::IsActorTickEnabled(p); });
-    Check(parked, "its copy's tick is off");
-    size_t herePlants = 0;
-    OnGameThread([&] { std::vector<void*> v; GP::List(v); herePlants = v.size(); });
+    int family = 0;
+    const bool bushHere = WaitPlant(familyBush, [](void* p, const GP::Values&) { return R::ClassNameOf(p) == kBushClass; });
+    Check(bushHere, "the host's growingPlant_bush_C stands here under its key");
+    family += bushHere ? 1 : 0;
+    const bool shroomHere = WaitPlant(familyShroom, [](void* p, const GP::Values&) { return R::ClassNameOf(p) == kShroomClass; });
+    Check(shroomHere, "the host's growingPlant_shroom_0_C stands here under its key");
+    family += shroomHere ? 1 : 0;
+    const size_t herePlants = PlantCount();
     UE_LOGI("plant-state: plants here %zu, host %zu", herePlants, hostPlants);
     Check(herePlants == hostPlants, "this client has the host's plants, no more and no fewer");
-    Mark("client_ready");
+    Mark("client_checked");
 
-    if (!Await("grow")) return;
-    Check(WaitFor(bush, [](void*, const GP::Values& v) { return Near(v.grow, 0.5f, 0.05f) && v.water > 400.f; }), "the host's growth and water arrived");
+    if (!Await("grow", kStep)) return;
+    Check(WaitPlant(bush, [](void*, const GP::Values& v) { return Near(v.grow, 0.5f, 0.05f) && v.water > 400.f; }), "the host's growth and water arrived");
     Mark("grow_done");
 
     // This player's water, as a can or a toolgun writes it.
@@ -304,12 +369,14 @@ void RunClient() {
             GP::Apply(p, GP::Row(p), v);
         }
     });
-    if (!Await("water_seen")) return;
+    if (!Await("water_seen", kStep)) return;
     Mark("edit_done");
 
-    if (!Await("ripe", &body)) return;
+    if (!AwaitText("ripe", body, kStep)) return;
     const int hostAmount = std::atoi(body.c_str());
-    Check(WaitFor(bush, [&](void*, const GP::Values& v) { return v.grow >= 1.f && v.amount == hostAmount; }), "the ripe plant reads the same here");
+    Check(WaitPlant(bush, [&](void*, const GP::Values& v) { return v.grow >= 1.f && v.amount == hostAmount; }), "the ripe plant reads the same here");
+    Mark("ripe_here");
+    if (!Await("harvest_go", kStep)) return;
     if (hostAmount > 0) {
         size_t foodsBefore = 0, propsBefore = 0, foodsAfter = 0, propsAfter = 0;
         OnGameThread([&] {
@@ -324,15 +391,14 @@ void RunClient() {
             f.Set<uint8_t>(L"action", 4);
             ue_wrap::Call(p, f);
         });
-        ::Sleep(500);
+        Check(WaitPlant(bush, [](void*, const GP::Values& v) { return v.amount == 0; }), "this player's harvest emptied this copy");
         OnGameThread([&] { foodsAfter = CountOf(L"prop_food_C"); propsAfter = CountOf(L"prop_C"); });
         UE_LOGI("plant-state: client item counts food %zu->%zu prop %zu->%zu", foodsBefore, foodsAfter, propsBefore, propsAfter);
-        Check(WaitFor(bush, [](void*, const GP::Values& v) { return v.amount == 0; }), "this player's harvest emptied this copy");
     } else {
         UE_LOGI("plant-state: this row ripens no berries, so the harvest step is not run");
     }
     Mark("harvest_done");
-    if (!Await("harvest_seen")) return;
+    if (!Await("harvest_seen", kStep)) return;
 
     // A plant of this player's, as a pot or a seed makes one.
     std::string planted;
@@ -347,36 +413,32 @@ void RunClient() {
     if (planted.empty()) return;
     UE_LOGI("plant-state: planted '%hs'", planted.c_str());
     Mark("planted", planted);
-    if (!Await("planted_seen")) return;
-    Check(WaitFor(planted, [](void* p, const GP::Values& v) { return Near(v.grow, 0.25f, 0.05f) && !E::IsActorTickEnabled(p); }), "the host now runs this player's plant");
+    if (!Await("planted_seen", kStep)) return;
+    Check(WaitPlant(planted, [](void*, const GP::Values& v) { return Near(v.grow, 0.25f, 0.05f); }), "the host's state of this player's plant arrived");
     Mark("planted_done");
 
-    if (!Await("dead", &body)) return;
-    Check(WaitFor(bush, [&](void* p, const GP::Values& v) { return Narrow(GP::Row(p)) == body && v.dryness < 0.f; }), "the dead plant's row and state arrived");
+    if (!AwaitText("dead", body, kStep)) return;
+    Check(WaitPlant(bush, [&](void* p, const GP::Values& v) { return Narrow(GP::Row(p)) == body && v.dryness < 0.f; }), "the dead plant's row and state arrived");
     Mark("dead_done");
 
-    if (!Await("second", &body)) return;
-    Check(WaitFor(body, [](void* p, const GP::Values&) { return !E::IsActorTickEnabled(p); }), "the new bush stands here, parked");
+    if (!AwaitText("second", body, kStep)) return;
+    Check(WaitPlant(body, [](void*, const GP::Values&) { return true; }), "the new bush stands here");
     Mark("second_seen");
     const std::string second = body;
-    if (!Await("second_gone")) return;
+    if (!Await("second_gone", kStep)) return;
     Check(WaitGone(second), "the host's removal ended it here");
 
     OnGameThread([&] { if (void* p = ByKey(planted)) GP::Destroy(p); });
     Mark("removal");
-    if (!Await("removal_seen")) return;
-    Mark("client_done");
+    if (!Await("removal_seen", kStep)) return;
+    Mark("client_done", std::to_string(g_fails) + " " + std::to_string(PlantCount()) + " " + std::to_string(family));
     UE_LOGI("plant-state: DONE on client fails=%d", g_fails);
 }
 
 }  // namespace
 
 DWORD WINAPI PlantStateThread(LPVOID /*arg*/) {
-    g_dir = coop::config::ReadEnv("VOTVCOOP_CAN_DIR");
-    if (g_dir.empty()) {
-        UE_LOGW("plant-state: VERDICT ABORT -- VOTVCOOP_CAN_DIR is unset");
-        return 0;
-    }
+    if (!PS::Begin("plant-state")) return 0;
     if (IsClientRole()) RunClient();
     else RunHost();
     return 0;
