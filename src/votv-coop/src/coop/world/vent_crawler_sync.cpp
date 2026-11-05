@@ -424,6 +424,29 @@ bool CrawlerVentEnds(ue_wrap::FTransform& a, ue_wrap::FTransform& b) {
     return true;
 }
 
+// The receive boundary of the host's vent pose: finite, inside the world, and a turn in degrees.
+bool VentPoseSane(const coop::net::VentCrawlStatePayload& p) {
+    for (int i = 0; i < 3; ++i) {
+        if (!std::isfinite(p.ventLoc[i]) || std::fabs(p.ventLoc[i]) > coop::net::kMaxCoord) return false;
+        if (!std::isfinite(p.ventRot[i]) || std::fabs(p.ventRot[i]) > 360.f) return false;
+    }
+    return true;
+}
+
+// Puts the vent at the pose the host sent, keeping the scale it has here.
+bool PlaceVentAt(void* vent, const coop::net::VentCrawlStatePayload& p) {
+    ue_wrap::FTransform cur{}, to{};
+    if (!ActorTransform(vent, cur)) return false;
+    const ue_wrap::FVector loc{p.ventLoc[0], p.ventLoc[1], p.ventLoc[2]};
+    const ue_wrap::FRotator rot{p.ventRot[0], p.ventRot[1], p.ventRot[2]};
+    const ue_wrap::FVector scale{cur.SX, cur.SY, cur.SZ};
+    return MathCall(L"MakeTransform", [&](ue_wrap::ParamFrame& f) {
+               return f.SetRaw(L"Location", &loc, sizeof(loc)) && f.SetRaw(L"Rotation", &rot, sizeof(rot)) &&
+                      f.SetRaw(L"Scale", &scale, sizeof(scale));
+           }, to) &&
+           SetActorTransform(vent, to);
+}
+
 }  // namespace
 
 void QueueConnectBroadcastForSlot(int slot) {
@@ -444,18 +467,34 @@ void QueueConnectBroadcastForSlot(int slot) {
         return;
     }
     p.doorActive = on ? 1 : 0;
+    // A crawl that is over left the vent at its end pose, which only the host's own vent holds exactly.
+    if (p.phase == 2) {
+        void* vent = ue_wrap::keyed_objects::Resolve(L"ventHanging");
+        ue_wrap::FVector at{};
+        ue_wrap::FRotator rot{};
+        if (vent && E::TryGetActorLocation(vent, at) && E::TryGetActorRotation(vent, rot)) {
+            p.ventLoc[0] = at.X;
+            p.ventLoc[1] = at.Y;
+            p.ventLoc[2] = at.Z;
+            p.ventRot[0] = rot.Pitch;
+            p.ventRot[1] = rot.Yaw;
+            p.ventRot[2] = rot.Roll;
+            p.hasVent = 1;
+        }
+    }
     if (s->SendReliableToSlot(slot, coop::net::ReliableKind::VentCrawlState, &p, sizeof(p)))
-        UE_LOGI("vent_crawler: the crawl's state to slot %d -- phase %u, %.1f s in, door power %u", slot,
-                static_cast<unsigned>(p.phase), p.elapsed, static_cast<unsigned>(p.doorActive));
+        UE_LOGI("vent_crawler: the crawl's state to slot %d -- phase %u, %.1f s in, door power %u, vent pose %s", slot,
+                static_cast<unsigned>(p.phase), p.elapsed, static_cast<unsigned>(p.doorActive),
+                p.hasVent ? "sent" : (p.phase == 2 ? "not read" : "not due"));
 }
 
 void OnState(const coop::net::VentCrawlStatePayload& p) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Client) return;
     if (!std::isfinite(p.elapsed) || p.elapsed < 0.f || p.elapsed > kShowLimit || p.phase < 1 || p.phase > 2 ||
-        p.doorActive > 1) {
-        UE_LOGW("vent_crawler: a malformed crawl state (elapsed %f, phase %u, door %u) -- dropping", p.elapsed,
-                static_cast<unsigned>(p.phase), static_cast<unsigned>(p.doorActive));
+        p.doorActive > 1 || p.hasVent > 1 || (p.hasVent && !VentPoseSane(p))) {
+        UE_LOGW("vent_crawler: a malformed crawl state (elapsed %f, phase %u, door %u, vent %u) -- dropping", p.elapsed,
+                static_cast<unsigned>(p.phase), static_cast<unsigned>(p.doorActive), static_cast<unsigned>(p.hasVent));
         return;
     }
     g_states.fetch_add(1, std::memory_order_relaxed);
@@ -465,11 +504,21 @@ void OnState(const coop::net::VentCrawlStatePayload& p) {
     void* vent = ue_wrap::keyed_objects::Resolve(L"ventHanging");
     if (p.phase == 2) {
         DoorPower(p.doorActive != 0);
-        if (vent && ends) {
+        const char* ventNow = "left";
+        if (vent && p.hasVent) {
+            if (PlaceVentAt(vent, p)) {
+                ue_wrap::prop::CallSetPropProps(vent, false, true, false);
+                ventNow = "at the host's pose, frozen";
+            }
+        } else if (vent && ends) {
+            // The fallback, for a host that could not read its vent. The class defaults' end is not the placed vent's
+            // real end pose (measured: the drill's rejoin check failed 2 of 2 runs with it), so the host's own pose
+            // above is the truth and this is only what a joiner can reach without it.
             SetActorTransform(vent, b);
             ue_wrap::prop::CallSetPropProps(vent, false, true, false);
+            ventNow = "at the class default end, frozen";
         }
-        UE_LOGI("vent_crawler: the host's crawl is over -- vent %s, door power %u", vent && ends ? "at its end, frozen" : "left",
+        UE_LOGI("vent_crawler: the host's crawl is over -- vent %s, door power %u", ventNow,
                 static_cast<unsigned>(p.doorActive));
         return;
     }

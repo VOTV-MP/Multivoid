@@ -4243,13 +4243,16 @@ static_assert(sizeof(SpillPourPayload) == 16, "SpillPourPayload must be 16 bytes
 // A vent crawl's state for a joiner (VentCrawlState).
 struct VentCrawlStatePayload {
     float   elapsed;       // 4 -- seconds since the crawl's cue on the host (phase 1)
+    float   ventLoc[3];    // 12 -- the hanging vent's world location on the host (phase 2, hasVent)
+    float   ventRot[3];    // 12 -- its world rotation: pitch, yaw, roll in degrees
     uint8_t phase;         // 1 -- 1 crawling, 2 over (0, none, is never sent)
     uint8_t doorActive;    // 1 -- the signal room door's `active` on the host
-    uint8_t _pad[2];       // 2 -- zero
+    uint8_t hasVent;       // 1 -- the host's vent was read: ventLoc and ventRot hold its end pose
+    uint8_t _pad;          // 1 -- zero
 };
-static_assert(sizeof(VentCrawlStatePayload) == 8, "VentCrawlStatePayload must be 8 bytes");
-static_assert(sizeof(StatQueryReplyPayload) <= 256 - 20 - 8,
-              "StatQueryReplyPayload must fit in one reliable datagram");
+static_assert(sizeof(VentCrawlStatePayload) == 32, "VentCrawlStatePayload must be 32 bytes");
+static_assert(sizeof(VentCrawlStatePayload) <= 256 - 20 - 8,
+              "VentCrawlStatePayload must fit in one reliable datagram");
 
 #pragma pack(pop)
 
