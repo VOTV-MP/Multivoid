@@ -23,6 +23,7 @@
 #include "coop/props/prop_syncer_host.h"   // the host's claim judge and a client's End
 
 #include "coop/world/spill_sync.h"
+#include "coop/world/sus_hole_intent.h"
 #include "ue_wrap/core/log.h"
 
 #include <cmath>
@@ -358,6 +359,17 @@ bool HandlePropDriveEvent(net::Session& session,
             break;
         }
         ::coop::ambient_fixture_sync::OnState(p);
+        break;
+    }
+    case net::ReliableKind::SusHoleIntent: {
+        // CLIENT->HOST. The place's finiteness, the ring and the slot's range are the lane's to judge (as the spill case).
+        if (session.role() != net::Role::Host || msg.payloadLen < sizeof(net::SusHoleIntentPayload)) {
+            UE_LOGW("event_feed: a malformed or misdirected SusHoleIntent from slot %d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        net::SusHoleIntentPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        ::coop::sus_hole_intent::OnIntent(session, msg.senderPeerSlot, p);
         break;
     }
     default:

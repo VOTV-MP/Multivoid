@@ -47,11 +47,9 @@ bool ReleaseBranchNest(void* branch);
 // destroy the nest it holds. Game thread.
 void DropBranchNest(void* branch);
 
-// The sus hole spawner's own gate: it rolls only while the game instance's mode is 0 or 1. Game thread.
-bool HolesRoll();
-
 // The sus hole spawner's own test of a spot: a trace 10 m above `point` to 10 m below it against static geometry, kept when it
-// hits grass. `at` is the hit and `rot` its normal as a rotator, as the spawner places the hole. Game thread.
+// hits grass. `at` is the hit and `rot` its normal as a rotator, as the spawner places the hole; the host runs it on the point
+// a client named. Game thread.
 bool HoleSpot(const FVector& point, FVector& at, FRotator& rot);
 
 }  // namespace ue_wrap::ambient_creature

@@ -6,13 +6,12 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/players_registry.h"
-#include "coop/player/remote_player.h"
 #include "coop/props/prop_key_index.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
-#include "coop/session/poll_timer.h"
 #include "coop/world/ambient_births.h"
 #include "coop/world/spawn_authority.h"
+#include "coop/world/sus_hole_intent.h"
 
 #include "ue_wrap/actors/ambient_creature.h"
 #include "ue_wrap/core/log.h"
@@ -23,13 +22,9 @@
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
-#include <chrono>
-#include <cmath>
 #include <cstdint>
-#include <random>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -42,7 +37,6 @@ namespace E = ue_wrap::engine;
 namespace PKI = coop::prop_key_index;
 namespace R = ue_wrap::reflection;
 namespace SG = ue_wrap::script_gate;
-using Clock = std::chrono::steady_clock;
 using Payload = coop::net::AmbientFixtureStatePayload;
 namespace fam = coop::net::ambient_fixture;
 
@@ -57,8 +51,6 @@ UE_FACT_FN(kRowReceiveDestroyedBeehiveBranch, "ambient_fixture_sync", L"beehiveB
 constexpr int kTag = 0x41465853;  // 'AFXS'
 
 std::atomic<coop::net::Session*> g_session{nullptr};
-// The hole roll below runs on this clock; it is the sus hole's lane, not the fixtures'.
-coop::session::PollTimer g_poll{std::chrono::milliseconds(250)};
 std::vector<AB::Event> g_events;  // reused by every drain
 
 bool IsHost() {
@@ -85,59 +77,6 @@ bool g_work = false;               // something in g_known needs a pass: an edge
 uint32_t g_censusSlots = 0;        // the joiners whose census-end is owed (bit = slot)
 std::vector<Payload> g_ends;       // ends not yet sent
 bool g_keylessSaid = false;
-
-// HOST: when each client's next sus hole roll is due, as the spawner's tick sets its own interval: 300 to 600 s.
-std::unordered_map<uint8_t, Clock::time_point> g_nextHole;
-std::mt19937 g_rng{std::random_device{}()};
-uint32_t g_holesMade = 0, g_holesMissed = 0;
-
-// HOST: the holes rolled around a client. A hole ends 10 minutes on unless player 0 is within 50 m or has it on screen, and on
-// the host that is the host, so this copy's end is not sent: each copy ends by its own viewer, the client's by the client.
-std::unordered_set<void*> g_clientHoles;
-
-float Uniform(float lo, float hi) { return std::uniform_real_distribution<float>(lo, hi)(g_rng); }
-
-// The spawner's roll, around `around` instead of player 0's camera: 100 to 500 m off at any angle, on grass or nothing.
-bool RollHole(const ue_wrap::FVector& around, uint8_t slot) {
-    const float angle = Uniform(0.f, 360.f) / 57.29578f, dist = Uniform(10000.f, 50000.f);
-    const ue_wrap::FVector point{around.X + dist * std::cos(angle), around.Y + dist * std::sin(angle), around.Z};
-    ue_wrap::FVector at{};
-    ue_wrap::FRotator rot{};
-    if (!AC::HoleSpot(point, at, rot)) {
-        ++g_holesMissed;
-        return false;
-    }
-    void* hole = AC::SpawnFixture(false, at, rot);
-    if (!hole) return false;
-    g_clientHoles.insert(hole);
-    ++g_holesMade;
-    UE_LOGI("ambient_fixture_sync: a sus hole rolled around slot %u, %.0f m off (made %u, missed %u)", static_cast<unsigned>(slot),
-            dist / 100.f, g_holesMade, g_holesMissed);
-    return true;
-}
-
-bool ClientBody(uint8_t slot, ue_wrap::FVector& at) {
-    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
-    void* body = rp && rp->valid() && rp->HasPose() ? rp->GetActor() : nullptr;
-    return body && E::TryGetActorLocation(body, at);
-}
-
-void HostRollHoles(Clock::time_point now) {
-    std::unordered_map<uint8_t, Clock::time_point> next;
-    for (uint8_t slot = 1; slot < coop::players::kMaxPeers; ++slot) {
-        ue_wrap::FVector at{};
-        if (!ClientBody(slot, at)) continue;
-        auto it = g_nextHole.find(slot);
-        // The spawner's first tick is at its begin play, so a player's first roll is when it is first here.
-        Clock::time_point due = it == g_nextHole.end() ? now : it->second;
-        if (now >= due) {
-            if (AC::HolesRoll()) RollHole(at, slot);
-            due = now + std::chrono::milliseconds(static_cast<int64_t>(Uniform(300.f, 600.f) * 1000.f));
-        }
-        next[slot] = due;
-    }
-    g_nextHole.swap(next);
-}
 
 // ---- HOST ----
 
@@ -230,10 +169,12 @@ bool ReadPlace(void* obj, Known& k) {
     return true;
 }
 
-// A fixture ended. Never sent means no client has it, and a join sends only the living.
-void Retire(void* obj, const Known& k) {
-    const bool clientHole = g_clientHoles.erase(obj) != 0;
-    if (k.sentAny && !clientHole) {
+// A fixture ended. Never sent means no client has it, and a join sends only the living. A branch's end is the host's and
+// crosses; a hole ends by each viewer's own distance and view (susDirtHole's 600 s check), so the host's end of one is its
+// own and no end of a hole is sent.
+void Retire(const Known& k) {
+    const bool branch = k.wire.family == fam::kBranch;
+    if (k.sentAny && branch) {
         Payload end = k.wire;
         end.alive = 0;
         end.hasNest = 0;
@@ -241,7 +182,7 @@ void Retire(void* obj, const Known& k) {
         g_work = true;
     }
     UE_LOGI("ambient_fixture_sync: fixture %u family=%u ended%s", k.wire.id, k.wire.family,
-            clientHole ? " here alone (a client's hole)" : "");
+            branch ? "" : " here alone (a hole's end is each viewer's)");
 }
 
 void DrainHost() {
@@ -249,9 +190,10 @@ void DrainHost() {
         if (e.cls == AB::Class::Nest || e.cls == AB::Class::Tree) continue;  // the prop lane's and the creature lane's
         const uint8_t family = e.cls == AB::Class::Hole ? fam::kHole : fam::kBranch;
         if (e.kind == AB::Kind::Death) {
+            if (family == fam::kHole) coop::sus_hole_intent::OnHoleEnded(e.obj, e.index);  // a client's hole stops counting for it
             const auto it = g_known.find(e.obj);
             if (it == g_known.end() || it->second.index != e.index) continue;
-            Retire(it->first, it->second);
+            Retire(it->second);
             g_known.erase(it);
             continue;
         }
@@ -288,7 +230,7 @@ void HostPass(coop::net::Session& s) {
         Known& k = it->second;
         k.pendingSlots &= connected;
         if (!R::IsLiveByIndex(obj, k.index)) {  // a death the listener has not delivered yet
-            Retire(obj, k);
+            Retire(k);
             it = g_known.erase(it);
             continue;
         }
@@ -361,9 +303,8 @@ void HostPass(coop::net::Session& s) {
     g_work = again;
 }
 
-void HostTick(coop::net::Session& s, Clock::time_point now) {
+void HostTick(coop::net::Session& s) {
     ++g_tick;
-    if (g_poll.Due(now)) HostRollHoles(now);
     DrainHost();
     // With no client there is nobody to send to; a client's connection sets the joiner's census and sends what waits.
     if (g_work && s.connectedPeerCount() > 0) HostPass(s);
@@ -578,7 +519,7 @@ void Tick() {
     ResolveWatches();
     g_events.clear();
     AB::Drain(static_cast<AB::Mask>(AB::Bit(AB::Class::Hole) | AB::Bit(AB::Class::Branch) | AB::Bit(AB::Class::Nest)), g_events);
-    if (s->role() == coop::net::Role::Host) HostTick(*s, Clock::now());
+    if (s->role() == coop::net::Role::Host) HostTick(*s);
     else if (s->role() == coop::net::Role::Client) ClientTick();
 }
 
@@ -611,8 +552,6 @@ void OnDisconnect() {
     g_censusSlots = 0;
     g_ends.clear();
     g_keylessSaid = false;
-    g_nextHole.clear();
-    g_clientHoles.clear();
     g_events.clear();
     g_inbox.clear();
     g_copies.clear();
@@ -624,12 +563,6 @@ void OnDisconnect() {
     g_keyVersionSeen = 0;
     g_anyWant = false;
     g_session.store(nullptr);
-}
-
-bool DebugRollHoleNear(int slot) {
-    ue_wrap::FVector at{};
-    if (slot <= 0 || slot >= coop::players::kMaxPeers || !ClientBody(static_cast<uint8_t>(slot), at)) return false;
-    return RollHole(at, static_cast<uint8_t>(slot));
 }
 
 }  // namespace coop::ambient_fixture_sync

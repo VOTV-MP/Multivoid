@@ -128,20 +128,6 @@ void DropBranchNest(void* branch) {
     if (hiveOff >= 0) engine::WriteObjectField(branch, static_cast<size_t>(hiveOff), nullptr);
 }
 
-bool HolesRoll() {
-    void* gi = engine::GetWorldContext();
-    if (!gi || !R::IsLive(gi) || R::ClassNameOf(gi) != P::name::GameInstanceClass) return false;
-    static void* sCls = nullptr;
-    static int32_t sOff = -1;
-    if (R::ClassOf(gi) != sCls) {
-        sCls = R::ClassOf(gi);
-        sOff = R::FindPropertyOffset(sCls, L"gamemode");
-    }
-    if (sOff < 0) return false;
-    const uint8_t mode = static_cast<uint8_t*>(gi)[sOff];
-    return mode == 0 || mode == 1;
-}
-
 bool HoleSpot(const FVector& point, FVector& at, FRotator& rot) {
     void* ctx = engine::GetWorldContext();
     static void* sGrass = nullptr;

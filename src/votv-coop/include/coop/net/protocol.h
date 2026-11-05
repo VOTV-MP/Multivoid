@@ -1277,11 +1277,17 @@ enum class ReliableKind : uint8_t {
     // again at its landing (its mirror's begin play rolls its own and its movement never lands). Not relayed, not
     // pre-world. Late join: every tree again at the ready edge. AmbientTreeStatePayload.
     AmbientTreeState = 221,
-    // HOST->ALL: a dirt hole's or a beehive branch's place, once, and its end; a branch carries the key its nest was born
-    // with and whether it holds the nest now, and goes again when that changes. Not relayed, not pre-world. Late join: every
-    // one again to the joiner alone, then a census-end (family 2), by which the joiner ends each loaded branch nothing
-    // named; a peer that has the number keeps what it has. AmbientFixtureStatePayload.
+    // HOST->ALL: a dirt hole's or a beehive branch's place, once, and a branch's end (a hole ends by each viewer alone, so none
+    // crosses); a branch carries the key its nest was born with and whether it holds the nest now, and goes again when
+    // that changes. Not relayed, not pre-world. Late join: every one again to the joiner alone, then a census-end
+    // (family 2), by which the joiner ends each loaded branch nothing named; a peer that has the number keeps what it has.
+    // AmbientFixtureStatePayload.
     AmbientFixtureState = 222,
+    // CLIENT->HOST: a sus hole this client's own spawner rolled, on grass 100 to 500 m from its player: the client's hole is
+    // destroyed and this names its place. Never relayed, not pre-world. The host judges the ring, the grass and the player's
+    // standing holes, makes the hole, and its AmbientFixtureState goes to every peer. A refused intent loses that roll.
+    // Nothing at late join (the host's living holes are a joiner's set). SusHoleIntentPayload.
+    SusHoleIntent = 223,
 };
 
 #pragma pack(push, 1)
@@ -1972,7 +1978,7 @@ struct AmbientFixtureStatePayload {
     float    x, y, z;           // 12
     float    pitch, yaw, roll;  // 12
     uint8_t  family;            // 1 -- ambient_fixture
-    uint8_t  alive;             // 1 -- 0: it ended
+    uint8_t  alive;             // 1 -- 0: the branch ended (a hole's end never crosses)
     uint8_t  _pad[2];           // 2 -- zero
     WireKey  birthKey;          // 32 -- a branch: the key its nest had when the host first read it; a hole: len 0
     uint8_t  hasNest;           // 1 -- a branch: the host's branch holds its nest now (read at every send)
@@ -1981,6 +1987,14 @@ struct AmbientFixtureStatePayload {
 static_assert(sizeof(AmbientFixtureStatePayload) == 68, "AmbientFixtureStatePayload must be 68 bytes");
 static_assert(sizeof(AmbientFixtureStatePayload) <= 256 - 20 - 8,
               "AmbientFixtureStatePayload must fit in one reliable datagram");
+
+// A sus hole the client's own spawner rolled (SusHoleIntent): where its hole stood, as the spawner placed it.
+struct SusHoleIntentPayload {
+    float x, y, z;           // 12
+    float pitch, yaw, roll;  // 12
+};
+static_assert(sizeof(SusHoleIntentPayload) == 24, "SusHoleIntentPayload must be 24 bytes");
+static_assert(sizeof(SusHoleIntentPayload) <= 256 - 20 - 8, "SusHoleIntentPayload must fit in one reliable datagram");
 
 // One message of the drill filler (DevLoadFiller): its place in the run and the run's length; the rest is fill.
 struct DevLoadFillerPayload {

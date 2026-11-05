@@ -221,7 +221,7 @@ void RunHost() {
     size_t hiveSpawners = 99;
     OnGameThread([&] { hiveSpawners = CountOf(L"hexahiveSPawner_C"); });
     Check(hiveSpawners == 0, "the hive's spawner destroyed itself");
-    // Read once the client is in: the load's branches come late, and the host's first sus hole roll around a joiner can add a
+    // Read once the client is in: the load's branches come late, and a sus hole the client rolls and the host makes can add a
     // hole of its own.
     if (!Await("client_in", nullptr, 480)) return;
     Field joinBranches;

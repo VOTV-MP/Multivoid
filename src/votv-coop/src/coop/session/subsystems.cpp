@@ -104,6 +104,7 @@
 #include "coop/creatures/ambient_creature_sync.h"
 #include "coop/world/ambient_births.h"
 #include "coop/world/ambient_fixture_sync.h"
+#include "coop/world/sus_hole_intent.h"
 #include "coop/world/explosion_sync.h"
 #include "coop/world/explosion_parking.h"
 #include "coop/world/event_fire_sync.h"
@@ -223,6 +224,7 @@ void InstallLoadWatchers(coop::net::Session& session) {
     coop::explosion_parking::Install(&session);  // the explosion copy's parking watches: the four verbs, the rune check, the force narrowing (client session only)
     coop::world_load_episode::InstallReplayWatch(session);
     coop::trash_native_hold::Install(&session);  // the join load's clumps held still at their spawn: a catch installed with the world would arm after the load
+    coop::sus_hole_intent::Install(&session);  // the sus hole spawner's holes stamped at their birth, a client's roll sent to the host, from the load window on
 }
 
 void Install(coop::net::Session& session) {
@@ -498,6 +500,7 @@ DisconnectStats DisconnectAll() {
     coop::event_cue_sync::OnDisconnect();  // drop the session the cue watch sends on
     coop::ambient_creature_sync::OnDisconnect();
     coop::ambient_fixture_sync::OnDisconnect();
+    coop::sus_hole_intent::OnDisconnect();
     coop::ambient_births::OnDisconnect();
     coop::event_fire_sync::OnDisconnect();  // restore the client scheduler (allEvents.Num) + drop the queued fires
     coop::event_active_sync::OnDisconnect();  // drop the begun-events map and its world stamp
@@ -741,6 +744,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; coop::spill_sync::Tick(); }  // the spills the hook saw
     coop::ambient_creature_sync::Tick();  // the deer's and trees' poll
     coop::ambient_fixture_sync::Tick();  // the holes' and branches' poll
+    coop::sus_hole_intent::Tick(session);  // CLIENT: its stamped sus holes go to the host; HOST: the queued ones are made
     { PP::Scope _s{PP::Bucket::Balance};       coop::balance_sync::Tick(); }  // host polls saveSlot.Points + broadcasts on change; client retries the pending mirror apply
     { PP::Scope _s{PP::Bucket::Balance};       ue_wrap::ScopedWalkTimer _w{"sync:upgrades"}; coop::upgrade_sync::Tick(session); }  // host polls the upgrade struct + broadcasts on change, and runs one queued purchase a tick a client; client retries the pending mirror
     coop::dev::dev_lanes::TickProbes(session, isConnected, isHost);  // [dev] the RE probes, each self-installing when its knob is set

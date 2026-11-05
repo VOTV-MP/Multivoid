@@ -149,6 +149,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::ContainerActCommit:
     case ReliableKind::SpillIntent:
     case ReliableKind::SpillPourIntent:
+    case ReliableKind::SusHoleIntent:
     case ReliableKind::CameraToggleIntent:
     case ReliableKind::LaptopTabReport:
     case ReliableKind::PropDriveEnd:

@@ -1,13 +1,12 @@
-// harness/autotest/autotest_sus_hole.cpp -- TEST-ONLY: a sus hole rolls around a client, not the host alone.
+// harness/autotest/autotest_sus_hole.cpp -- TEST-ONLY: a client's sus hole is made by the host (W6 converts this drill).
 //
-// The host rolls the sus hole spawner's roll around the client's body until one lands on grass. The hole must stand 100 to 500 m
-// from the client, reach the client at the host's place, and stay there when the host's copy ends, as a hole ends by its own
-// viewer. Gated by VOTVCOOP_RUN_SUS_HOLE; the folder is VOTVCOOP_CAN_DIR.
+// The hole must stand 100 to 500 m from the client, reach the client at the host's place, and stay there when the host's copy
+// ends, as a hole ends by its own viewer. Gated by VOTVCOOP_RUN_SUS_HOLE; the folder is VOTVCOOP_CAN_DIR.
 
 #include "harness/autotest.h"
 
 #include "coop/config/config.h"
-#include "coop/world/ambient_fixture_sync.h"
+#include "coop/world/sus_hole_intent.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/session/net_pump.h"
@@ -82,20 +81,16 @@ void* HoleAt(const ue_wrap::FVector& at) {
 
 void RunHost() {
     if (!Await("client_ready", 480)) return;
-    bool rolls = false;
     std::unordered_set<void*> before;
     OnGameThread([&] {
-        rolls = AC::HolesRoll();
         std::vector<void*> holes;
         AC::ListHoles(holes);
         before.insert(holes.begin(), holes.end());
     });
-    Check(rolls, "the game's mode lets sus holes roll");
-    int tries = 0;
+    // W6 converts this step: the client's own spawner rolls, and the host's accepted count is what is read here.
     bool made = false;
-    for (; tries < 400 && !made; ++tries) OnGameThread([&] { made = coop::ambient_fixture_sync::DebugRollHoleNear(1); });
-    UE_LOGI("sus-hole: %d rolls around the client for one on grass", tries);
-    Check(made, "a roll around the client found grass");
+    OnGameThread([&] { made = coop::sus_hole_intent::Read().accepted > 0; });
+    Check(made, "the host made a hole from the client's intent");
     if (!made) return;
     void* hole = nullptr;
     ue_wrap::FVector at{}, client{};
