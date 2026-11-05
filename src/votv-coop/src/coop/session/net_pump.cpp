@@ -99,7 +99,7 @@ bool g_localDeathHandled = false;
 
 // The start-point placement a client's body is owed (JoinPlacement::StartPoint). The spot is beside the
 // base's bed, and the bed is one of the save's props: at a join's first appearance the load has not
-// spawned it yet (measured 2026-11-05: "no bed in the world" at the appearance). So the appearance only
+// spawned it yet (measured on the rig: shelter_spot logs "no bed in the world" there). So the appearance only
 // owes the placement, and it is paid on the first tick the body stands in the world this connection
 // announced ready (IsInAnnouncedWorld: the gate that waits for the load to quiesce, false while a world
 // change's re-announce is owed, so a swapped world's body waits for that world's own announce), in the
