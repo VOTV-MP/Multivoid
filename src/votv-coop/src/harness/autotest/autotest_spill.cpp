@@ -272,6 +272,9 @@ std::vector<void*> Pour(const wchar_t* path, const wchar_t* cls, float side, boo
 
 void RunHost() {
     if (!Await("client_ready", 480)) return;
+    // Life 1's occupancy of slot 1: the E step waits for it to change, never for the slot to read closed -- a fast
+    // rejoin closes and refills the slot between two reads (measured: the host waited 300 s on a slot already back).
+    const uint32_t life1Gen = harness::session_runtime::Session().peerGenerationForSlot(1);
     // A.
     void* spill = CoffeeSpill(0.f);
     if (!spill) return;
@@ -346,10 +349,13 @@ void RunHost() {
     std::string clientText;
     if (!AwaitText("client_done", clientText, 60)) return;
     const int clientFails = ParseFails(clientText);
-    if (!PS::WaitFor("the client's slot closed", 300,
-                     [] { return !harness::session_runtime::Session().IsSlotConnected(1); }))
+    if (!PS::WaitFor("the client's life 1 gone from slot 1", 300, [life1Gen] {
+            return harness::session_runtime::Session().peerGenerationForSlot(1) != life1Gen;
+        }))
         return;
+    const bool absent = harness::session_runtime::Session().peerGenerationForSlot(1) == 0;
     CoffeeSpill(60.f);
+    UE_LOGI("spill-drill: the host spilled with the client %s", absent ? "absent" : "already back (a weaker run)");
     // The rejoined life's drill begins when its process boots: it leaves rejoin_ready once its world is up, and only
     // then are the rows written, so it reads them as written since its own start.
     if (!Await("rejoin_ready", 400)) return;
