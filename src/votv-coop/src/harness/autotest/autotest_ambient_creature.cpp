@@ -6,8 +6,9 @@
 // host judges both peers' counts and prints `ambient-creature: VERDICT`. The client reaches the host with the director.
 // Gated by VOTVCOOP_RUN_AMBIENT_CREATURE; the folder is VOTVCOOP_CAN_DIR. The deer A/B reads the SpringArm's and the actor's
 // rotation on both peers each frame while the host's deer walks, a client mirror's actor tick off for one window and on (as
-// built) for the next. The mirror's lean in the tick-on window is a verdict term: it must be the host's within kTiltTolerance.
-// Red arms: VOTVCOOP_AMBIENT_CREATURE_RED.
+// built) for the next. The host first moves its deer to flat ground beside its own body, so the slope under the host deer
+// differs from the one the mirror spawned on. The mirror's lean in the tick-on window is a verdict term: it must be the host's
+// within kTiltTolerance, and a guard term holds that the window could tell the two apart. Red arms: VOTVCOOP_AMBIENT_CREATURE_RED.
 
 #include "harness/autotest.h"
 #include "harness/autotest/meet.h"
@@ -264,21 +265,26 @@ void PrintRel(const char* who, const char* tick, const std::vector<Sample>& v) {
 // that bracket that moment, 50 ms apart at most.
 constexpr double kPoseLag = 0.150;
 
+bool HostYawAt(const std::vector<Sample>& host, double t, double& yaw) {
+    for (size_t i = 0; i + 1 < host.size(); ++i) {
+        const Sample &lo = host[i], &hi = host[i + 1];
+        if (t < lo.t || t > hi.t || hi.t - lo.t > 0.05) continue;
+        const double f = hi.t > lo.t ? (t - lo.t) / (hi.t - lo.t) : 0.0;
+        yaw = lo.act[1] + Wrap(hi.act[1] - lo.act[1]) * f;
+        return true;
+    }
+    return false;
+}
+
 void PrintYawLagged(const std::vector<Sample>& host, const std::vector<Sample>& client, const char* tick) {
     double sum = 0, worst = 0, moved = 0;
     size_t n = 0;
     for (const Sample& c : client) {
-        const double t = c.t - kPoseLag;
-        for (size_t i = 0; i + 1 < host.size(); ++i) {
-            const Sample &lo = host[i], &hi = host[i + 1];
-            if (t < lo.t || t > hi.t || hi.t - lo.t > 0.05) continue;
-            const double f = hi.t > lo.t ? (t - lo.t) / (hi.t - lo.t) : 0.0;
-            const double yaw = lo.act[1] + Wrap(hi.act[1] - lo.act[1]) * f;
-            const double d = std::fabs(Wrap(static_cast<float>(c.act[1] - yaw)));
-            sum += d, worst = (std::max)(worst, d);
-            ++n;
-            break;
-        }
+        double yaw = 0;
+        if (!HostYawAt(host, c.t - kPoseLag, yaw)) continue;
+        const double d = std::fabs(Wrap(static_cast<float>(c.act[1] - yaw)));
+        sum += d, worst = (std::max)(worst, d);
+        ++n;
     }
     for (const Sample& s : host) {
         const float dx = s.at[0] - host.front().at[0], dy = s.at[1] - host.front().at[1], dz = s.at[2] - host.front().at[2];
@@ -288,10 +294,85 @@ void PrintYawLagged(const std::vector<Sample>& host, const std::vector<Sample>& 
             tick, moved);
 }
 
+// Measurement only, no verdict term: five client samples spread over the window, each beside the host's yaw kPoseLag earlier.
+void PrintYawPairs(const std::vector<Sample>& host, const std::vector<Sample>& client) {
+    constexpr size_t kPairs = 5;
+    if (client.empty()) return;
+    for (size_t k = 0; k < kPairs; ++k) {
+        const Sample& c = client[k * (client.size() - 1) / (kPairs - 1)];
+        const double t = c.t - client.front().t;
+        double yaw = 0;
+        if (HostYawAt(host, c.t - kPoseLag, yaw))
+            UE_LOGI("deer-ab: yaw pair t=%.2f host=%.2f client=%.2f", t, yaw, static_cast<double>(c.act[1]));
+        else
+            UE_LOGI("deer-ab: yaw pair t=%.2f host=none client=%.2f", t, static_cast<double>(c.act[1]));
+    }
+}
+
+// One reflected bitfield bool of an object: 1 or 0, or -1 when the object or the property does not resolve.
+int ReadFlag(void* obj, const wchar_t* name) {
+    int32_t off = -1;
+    uint8_t mask = 0;
+    if (!obj || !R::FindBoolProperty(R::ClassOf(obj), name, off, mask)) return -1;
+    return (*(static_cast<const uint8_t*>(obj) + off) & mask) != 0 ? 1 : 0;
+}
+
+// What could turn the deer's body besides the pose stream: its Controller, whether the pawn takes the controller's yaw, and
+// whether its movement turns it toward its velocity. Game thread.
+void PrintDriveFlags(const char* who, void* deer) {
+    if (!deer || !R::IsLive(deer)) {
+        UE_LOGW("deer-ab: %s drive flags unreadable: no live deer", who);
+        return;
+    }
+    void* const cls = R::ClassOf(deer);
+    const int32_t ctrlOff = R::FindPropertyOffset(cls, L"Controller");
+    const int32_t cmcOff = R::FindPropertyOffset(cls, L"CharacterMovement");
+    void* ctrl = ctrlOff >= 0 ? *reinterpret_cast<void**>(static_cast<uint8_t*>(deer) + ctrlOff) : nullptr;
+    void* cmc = cmcOff >= 0 ? *reinterpret_cast<void**>(static_cast<uint8_t*>(deer) + cmcOff) : nullptr;
+    if (ctrl && !R::IsLive(ctrl)) ctrl = nullptr;
+    if (cmc && !R::IsLive(cmc)) cmc = nullptr;
+    const std::wstring ctrlName = ctrl ? R::ClassNameOf(ctrl) : std::wstring();
+    UE_LOGI("deer-ab: %s controller=%ls useCtrlYaw=%d orientToMove=%d", who, ctrl ? ctrlName.c_str() : L"null",
+            ReadFlag(deer, L"bUseControllerRotationYaw"), ReadFlag(cmc, L"bOrientRotationToMovement"));
+}
+
 constexpr double kAbSeconds = 5.0;
-constexpr double kTiltTolerance = 5.0;  // degrees between the mirror's mean lean and the host deer's
+constexpr double kTiltTolerance = 5.0;   // degrees between the mirror's mean lean and the host deer's
+constexpr double kDiscriminates = 10.0;  // degrees the host deer's new slope must differ from the mirror's spawn floor
+constexpr float  kAheadCm = 400.f;       // how far in front of the host's own body the deer is put
+constexpr float  kArrivedCm = 100.f;     // how near its sent place the mirror must stand before the window opens
+
+// The place the host puts its deer: kAheadCm in front of the host's own body, on the navmesh, the capsule's half height up.
+bool FlatPlaceAhead(void* deer, ue_wrap::FVector& out) {
+    void* const pawn = coop::players::Registry::Get().Local();
+    ue_wrap::FVector me{}, ext{}, org{}, at{};
+    if (!pawn || !E::TryGetActorLocation(pawn, me) || !E::TryGetActorLocation(deer, at)) return false;
+    const ue_wrap::FVector fwd = E::GetActorForwardVector(pawn);
+    ue_wrap::FVector nav{};
+    if (!E::ProjectToNav(pawn, {me.X + fwd.X * kAheadCm, me.Y + fwd.Y * kAheadCm, me.Z}, {200.f, 200.f, 300.f}, &nav)) return false;
+    const float lift = E::GetActorBounds(deer, true, org, ext) ? at.Z - (org.Z - ext.Z) : 100.f;
+    out = {nav.X, nav.Y, nav.Z + lift + 5.f};
+    return true;
+}
 
 void HostAb(void* deer) {
+    // The mirror's spawn floor is the slope the host deer also stands on, so a mirror frozen there would pass: the deer is put on
+    // other ground first, and the window opens when the mirror has come there.
+    std::string preText;
+    if (!AwaitText("deer_pre", preText, 60)) return;
+    const double preTilt = std::strtod(preText.c_str(), nullptr);
+    ue_wrap::FVector place{};
+    bool placed = false;
+    OnGameThread([&] {
+        PrintDriveFlags("host", deer);
+        placed = FlatPlaceAhead(deer, place) && E::TeleportTo(deer, place, {});
+    });
+    Check(placed, "the host put its deer on flat ground beside its body");
+    if (!placed) return;
+    char at[96];
+    std::snprintf(at, sizeof(at), "%.1f %.1f %.1f", place.X, place.Y, place.Z);
+    Mark("deer_tp", at);
+    if (!Await("deer_tp_arrived", 60)) return;
     Mark("ab_a_go");
     const std::vector<Sample> off = Window([&] { return deer; }, kAbSeconds);
     if (!Await("ab_b_go", 60)) return;
@@ -305,6 +386,7 @@ void HostAb(void* deer) {
     PrintRel("client", "on", clientOn);
     PrintYawLagged(off, clientOff, "off");
     PrintYawLagged(on, clientOn, "on");
+    PrintYawPairs(on, clientOn);
 
     // The mirror's tick runs on a floor its pose drive refreshes, so its body leans as the host deer's does. The host's
     // window of the same name is the one concurrent with the client's tick-on window.
@@ -314,10 +396,42 @@ void HostAb(void* deer) {
     UE_LOGI("deer-ab: tilt term host mean=%.2f mirror mean=%.2f tolerance=%.1f", hostTilt, mirrorTilt, kTiltTolerance);
     Check(host.n > 0 && mirror.n > 0 && std::fabs(mirrorTilt - hostTilt) <= kTiltTolerance,
           "the deer mirror's lean is the host deer's");
+
+    // A window where the host deer leans as the spawn floor did cannot fail a mirror frozen on it: that is no pass.
+    UE_LOGI("deer-ab: discriminates pre=%.2f host=%.2f", preTilt, hostTilt);
+    Check(preTilt >= 0.0 && hostTilt >= 0.0 && std::fabs(hostTilt - preTilt) >= kDiscriminates, "the window discriminates");
 }
 
 // The mirror is built with its actor tick on: the off window takes it off, and the on window leaves it as built.
 void ClientAb(uint32_t eid) {
+    // One sample of the mirror on the floor it spawned on, before the host moves its deer.
+    Sample pre;
+    bool sampled = false;
+    OnGameThread([&] {
+        PrintDriveFlags("mirror", Mirror(eid));
+        sampled = SampleDeer(Mirror(eid), pre);
+    });
+    Check(sampled, "the mirror's spawn lean was sampled");
+    const Rel spawn = Relative({pre});
+    Mark("deer_pre", sampled ? std::to_string(spawn.sumTilt) : std::string("-1"));
+    std::string at;
+    if (!AwaitText("deer_tp", at, 60)) return;
+    const char* cur = at.c_str();
+    char* end = nullptr;
+    const float x = std::strtof(cur, &end);
+    const float y = std::strtof(end, &end);
+    const float z = std::strtof(end, &end);
+    float away = -1.f;
+    const bool arrived = WaitGT("the mirror came to the host's new place", 20, [&] {
+        ue_wrap::FVector now{};
+        void* const m = Mirror(eid);
+        if (!m || !E::TryGetActorLocation(m, now)) return false;
+        away = std::sqrt((now.X - x) * (now.X - x) + (now.Y - y) * (now.Y - y) + (now.Z - z) * (now.Z - z));
+        return away <= kArrivedCm;
+    }, false);
+    UE_LOGI("deer-ab: mirror arrival away=%.0f", static_cast<double>(away));
+    Check(arrived, "the mirror came to the host's new place");
+    Mark("deer_tp_arrived");
     if (!Await("ab_a_go", 60)) return;
     OnGameThread([&] {
         if (void* m = Mirror(eid)) E::SetActorTickEnabled(m, false);
