@@ -92,8 +92,8 @@ FieldSlot g_fields[] = {
 // paints, and never from a periodic caller. That is why callers name PAINTERS rather than taking
 // the whole chain: a cooldown charge, which ships every 250 ms while a peer holds the scan, paints
 // nothing, since no verb below reads coord_cooldown. Each verb's scalar dependencies, read off its
-// bytecode, are on its row in the array; none of the nine reads a SIM output, which is why
-// WriteSimOutputs runs none of them.
+// bytecode, are on its row in the array; none of them reads a SIM output (updRemap reads only
+// remapValue), which is why WriteSimOutputs runs none of them.
 struct RefreshSlot { const wchar_t* name; void* fn; };
 // ORDER IS THE CONTRACT: slot i is Painter bit i (console_desk.h). A caller selects verbs by those
 // bits, so re-ordering this array silently re-points every selection.
@@ -245,11 +245,12 @@ void ResolvePass() {
         UE_LOGI("console_desk: offsets[2/2] -- %s", dump);
         int fns = 0;
         for (auto& r : g_refresh) if (r.fn) ++fns;
-        UE_LOGI("console_desk: resolved -- 19/19 fields, %d/9 refresh verbs, "
+        constexpr size_t kFieldCount = sizeof(g_fields) / sizeof(g_fields[0]);
+        UE_LOGI("console_desk: resolved -- %zu/%zu fields, %d/%zu refresh verbs, "
                 "writeToCoordLog_2=%s, widget=%s, "
                 "catch sig/row/dld=0x%X/0x%X/0x%X rowName/mesh=0x%X/0x%X "
                 "form/ping=%s/%s",
-                fns,
+                kFieldCount, kFieldCount, fns, kRefreshCount,
                 g_writeToCoordLogFn ? "yes" : "NO",
                 g_offWidget >= 0 ? "yes" : "NO",
                 g_offCoordSignalData, g_offDLRow, g_offDLData,

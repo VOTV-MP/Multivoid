@@ -213,7 +213,7 @@ struct SimOutputs {
 };
 bool ReadSimOutputs(SimOutputs& out);
 // Raw-write the sim outputs. Every field above is painted by the desk widget's own tick, and not
-// one of them is read by any verb in the WriteScalars refresh chain -- measured over all nine (see
+// one of them is read by any verb in the WriteScalars refresh chain -- measured over every verb in it, updRemap included (see
 // the chain's comment in console_desk.cpp). This function used to pulse that chain at about 3 Hz
 // "for the refresh-only display fields"; there were none, and the pulse cost a visible defect, so
 // it is gone rather than conditioned. The write is not a crossing's apply: the needle's crossing
