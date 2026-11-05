@@ -5,6 +5,7 @@
 #pragma once
 
 #include "harness/autotest/peer_signal.h"
+#include "coop/world/plant_sync.h"
 #include "ue_wrap/actors/growing_plant.h"
 #include "ue_wrap/core/game_thread.h"
 
@@ -61,6 +62,17 @@ bool SpawnerArm();
 bool TickArm();
 bool PineHitArm(const std::string& key);
 bool GlowArm(unsigned base, const std::string& sentAt);
+
+// The edit gate's arm. CLIENT: sends a planting of a non-plant class at its own place and a plant class 50000 uu away
+// (`row` is a row the host's plants use). HOST: CraftBegin before the client crafts, CraftJudge after: the host's refusals
+// rose by one for the class and one for the reach, and nothing of either planting stands.
+struct CraftBase {
+    coop::plant_sync::Counts counts;
+    size_t nonPlants = 0;
+};
+bool CraftArm(const std::string& row);
+CraftBase CraftBegin();
+bool CraftJudge(const CraftBase& base);
 
 // HOST: addDamage with damage no health survives; whether the call was made.
 bool LethalHit(const std::string& key);

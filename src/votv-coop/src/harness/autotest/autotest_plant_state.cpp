@@ -4,9 +4,9 @@
 // so the script spawns them) stand on the host before the client's checks. Then growth, a client's water, ripening, a
 // client's harvest through the plant's own action, death, a plant a client spawned, a new bush and two removals. The arms
 // that hold what the client refuses (a sprinkler, the spawner, a pine's lethal hit, the growth area's glow, the plant tick)
-// are autotest_plant_gate.cpp's. The client tells the host what it reads; the
-// host judges and logs `plant-state: VERDICT PASS|FAIL <terms>`. Gated by VOTVCOOP_RUN_PLANT_STATE; the peers' shared
-// folder is VOTVCOOP_CAN_DIR. Every wait is on a state with a bound.
+// and the host's refusal of two crafted plantings (the edit gate, term f1) are autotest_plant_gate.cpp's. The client tells
+// the host what it reads; the host judges and logs `plant-state: VERDICT PASS|FAIL <terms>`. Gated by VOTVCOOP_RUN_PLANT_STATE;
+// the peers' shared folder is VOTVCOOP_CAN_DIR. Every wait is on a state with a bound.
 
 #include "harness/autotest.h"
 #include "harness/autotest/meet.h"
@@ -331,18 +331,25 @@ void RunHost() {
     Mark("glow", glowAt);
     if (!Await("glow_done", kStep)) return;
 
+    // Two plantings no player's act could make, crafted by the client: the host's edit gate refuses each.
+    const CraftBase craftBase = CraftBegin();
+    Mark("craft_go");
+    if (!Await("craft_sent", kStep)) return;
+    const int f1 = CraftJudge(craftBase) ? 1 : 0;
+
     std::string clientText;
     if (!AwaitText("client_done", clientText, kStep)) return;
     const ClientWord client = ParseWord(clientText);
     size_t hostPlants = PlantCount();
     PS::WaitFor("the plant counts to agree", 15, [&] { return (hostPlants = PlantCount()) == client.plants; }, false);
     const bool pass = Fails() == 0 && client.fails == 0 && client.plants == hostPlants && client.family == 2 &&
-                      client.tick == 1 && client.sprinkler == 1 && client.spawner == 1 && client.pine == 1 && client.glow == 1;
+                      client.tick == 1 && client.sprinkler == 1 && client.spawner == 1 && client.pine == 1 && client.glow == 1 &&
+                      f1 == 1;
     ue_wrap::log::Write(pass ? ue_wrap::log::Level::Info : ue_wrap::log::Level::Warn,
                         "plant-state: VERDICT %hs host=%d client=%d plants=%zu/%zu family=%d tick=%d sprinkler=%d spawner=%d "
-                        "pine=%d glow=%d",
+                        "pine=%d glow=%d f1=%d",
                         pass ? "PASS" : "FAIL", Fails(), client.fails, hostPlants, client.plants, client.family,
-                        client.tick, client.sprinkler, client.spawner, client.pine, client.glow);
+                        client.tick, client.sprinkler, client.spawner, client.pine, client.glow, f1);
     UE_LOGI("plant-state: DONE on host fails=%d", Fails());
 }
 
@@ -482,6 +489,10 @@ void RunClient() {
     if (!AwaitText("glow", body, kStep)) return;
     const int glowOk = GlowArm(glowBase, body) ? 1 : 0;
     Mark("glow_done");
+
+    if (!Await("craft_go", kStep)) return;
+    CraftArm(row);
+    Mark("craft_sent");
 
     const int tickOk = TickArm() ? 1 : 0;
     Mark("client_done", std::to_string(Fails()) + " " + std::to_string(PlantCount()) + " " + std::to_string(family) + " " +
