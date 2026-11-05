@@ -260,6 +260,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // The cremator drill: the host pulls its lever and the client's copy must show the run, then show it again after a
     // rejoin (1); a client sent into the running machine must die by it (g3).
     SpawnIfEnum(coop::config_registry::rows::cremator_drill, "cremator drill", &coop::dev::cremator_drill::Thread, role);
+    // The woodchipper: each peer pours a gas can, the client presses the button; fuel and on/off on both.
+    SpawnIf("VOTVCOOP_RUN_WOODCHIPPER", "woodchipper drill", &WoodchipperThread, role);
 }
 
 }  // namespace harness::autotest

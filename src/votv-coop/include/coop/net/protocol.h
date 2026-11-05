@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 278;
+inline constexpr uint16_t kProtocolVersion = 279;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1235,6 +1235,15 @@ enum class ReliableKind : uint8_t {
     // (reference/mtasa-blue/Server/mods/deathmatch/logic/CPedSync.cpp:141-163): the game's AI has one simulator and the
     // host is a listen server, so the host is the only sender. GeomOctaEventPayload.
     GeomOctaEvent = 200,
+
+    // HOST->ALL: a woodchipper of the host's, its fuel and whether it is on, when either changes, every second while it
+    // runs, and every chipper again at the ready edge. A client's copy takes both. Not relayed, not pre-world.
+    // WoodchipperPayload, op 0.
+    WoodchipperState = 232,
+    // CLIENT->HOST: this client's player poured fuel into a woodchipper (op 1, the fuel it gained) or pressed its button
+    // (op 2, whether it is on after). Never relayed; the host fuels or switches its own, and its WoodchipperState
+    // answers. WoodchipperPayload.
+    WoodchipperIntent = 233,
 
     // CLIENT->HOST: this client pressed a coffee vending machine or a coffee maker (action 4), which its own copy
     // refused to run. The host resolves the device by its key, judges the sender's reach and that the key is
@@ -3676,6 +3685,17 @@ struct TurbineStatePayload {
     float   mult;           // per-instance BeginPlay rand(0.9,1.0) rate skew
 };
 static_assert(sizeof(TurbineStatePayload) == 56, "TurbineStatePayload must be 56 bytes");
+
+// A woodchipper's state (WoodchipperState), or a client's pour or press (WoodchipperIntent).
+inline constexpr uint8_t kWoodchipperOpState = 0, kWoodchipperOpPour = 1, kWoodchipperOpButton = 2;
+struct WoodchipperPayload {
+    WireKey key;       // 32 -- the chipper's key
+    float   fuel;      // 4 -- its fuel (0..100); a pour's gain
+    uint8_t active;    // 1 -- on; a press's result
+    uint8_t op;        // 1 -- kWoodchipperOp*
+    uint8_t _pad[2];   // 2 -- zero
+};
+static_assert(sizeof(WoodchipperPayload) == 40, "WoodchipperPayload must be 40 bytes");
 
 // The edge a PropConvert re-skins.
 namespace propconvert_kind {

@@ -4,8 +4,8 @@
 
 The keyed things around the base that are not the workstation: doors and their keypads, the
 light switches and the light groups, the garage, the appliances, the lockers, the security cameras,
-the power panel, the wind turbine, the windows and the grime, the delivery drone, and the signal
-servers. Who owns each and how a peer's press reaches the others. The laptop and the economy the
+the power panel, the wind turbine, the windows and the grime, the delivery drone, the woodchipper,
+and the signal servers. Who owns each and how a peer's press reaches the others. The laptop and the economy the
 drone serves (the balance, the shop orders, the coin gun) are in
 [base-computer.md](base-computer.md).
 
@@ -431,6 +431,21 @@ door-verb, keypad and container lanes wait. The leave-timer face rides the same 
 its own drone's setting, which every peer's copy takes from the drone's state stream, and the console's
 click plays on the presser's machine and on the host.
 
+### The woodchipper
+
+A woodchipper keeps its fuel (0 to 100) and whether it is on. A gas can fills it through its `gascanFuel`, its button
+flips it on or off, and its own tick burns fuel while it runs and switches it off at 0. Each of those ran only on the
+copy it happened on, so a client's pour or press never reached the host, whose copy the save keeps, and a host's
+never reached a client `[V]`. The host's copy is now the chipper (`coop/interactables/woodchipper_sync`). A client's
+own pour and press still run on its copy, so the can, the click and the button answer at once, and each goes to the
+host: the press from the button's own body, the pour as a rise in the copy's fuel that its burning cannot make (the gas
+can's `gascanFuel` has no row in the fingerprint table, so it is not watched). The host checks the sender's world, the
+chipper and its reach, adds the fuel or writes the button's result, and runs the chipper's `checkActive` as the
+game's bodies end. It sends each chipper's fuel and on/off when either changes and every second while it runs, and a
+client writes both on its copy and runs `checkActive` when on/off changed. A state the host sent before it heard of
+a client's own pour or press waits 1.5 s on that client, so it does not undo the act on the copy
+`[V]` (`harness/autotest/autotest_woodchipper.cpp`).
+
 ### The computer and the economy
 
 The base laptop (its tab and inbox), the shared balance, the upgrade levels, the shop orders, the
@@ -488,6 +503,7 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | a window, the grime | any peer, minimum wins | monotone decreases |
 | a spilled liquid's decal | the host | a client's spill from its hand and its wipe are requests |
 | the drone | the host | a transform stream; the client's tick suppressed |
+| a woodchipper's fuel and on/off | the host | a client's pour and press are intents; the host's state when it changes and every second while it runs |
 
 ## Wire messages
 
@@ -511,6 +527,7 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | `SpillPour`, `SpillPourIntent` | the host to all; a client to the host | where a bottle poured and who poured it; a pour of a bottle in a client's hand |
 | `DroneState` | the host to all | the drone's transform and flags, among them its leave timer |
 | `DroneFlyIntent` | a client to the host | the face pressed, the keyboard or the leave timer; the host finds the console by the sender's reach |
+| `WoodchipperState`, `WoodchipperIntent` | the host to all; a client to the host | a chipper's key, its fuel and on/off; a client's pour (the fuel it gained) or press (on/off after) |
 
 ## Late join
 
@@ -518,8 +535,8 @@ Every channel snapshots the full state of every indexed instance to a joiner at 
 open and closed alike, because the save the joiner loaded, the host's captured at its join, holds
 neither a state the game does not save (a server box's `active`, a sink's tap) nor one changed while
 the joiner loaded; an oven's repair is in that save, and the snapshot says it again; the keypads, the power masks, the turbine, the windows, the grime and the
-drone's pose are sent the same way. Every live spill goes again at the ready edge, and a joiner keeps one it already
-has from the save at that place.
+drone's pose are sent the same way, and so is every woodchipper's fuel and on/off. Every live spill goes again at the
+ready edge, and a joiner keeps one it already has from the save at that place.
 
 The coordinate towers go to a joiner at the same edge, every tower's row. Its own world's load
 would have scrambled again any tower that was saved broken; that roll is refused, so the row is the
@@ -532,6 +549,7 @@ state it shows, and the first rows a world takes play no sound.
 | A cord's link is the host's: a client reports the plug its player made and the host's answer settles both copies, so two clients on one cord settle in arrival order and a claim on a cord the host's player is dragging is answered with the host's link. A socket's power, a generator's outlets and a Kerfus's charging are not this lane's. Not yet exercised in a two-peer game run | `[RD]` the cord and socket Blueprint call surface; `[?]` `coop/interactables/cord_sync`, `ue_wrap/devices/cord` |
 | A client's spill from its hand lands where its own flight put it, which the host takes as is within 15 m. A bottle's opening click and a liquid that leaves something other than a grime decal are not carried | `[V]` `prop_snack_beer_C`'s `openBottle` plays `impact_plastic_cue`; `coop/world/spill_sync` |
 | A client's light-group index has been reported dropping to zero after a join; not reproduced | `[?]` [issue 11](https://github.com/VOTV-MP/Multivoid/issues/11) |
+| A woodchipper's chipping (what it eats and the chips it drops) and the gas can's own fuel after a pour are not this lane's; a client's pour is the rise its copy shows, which the host takes as is within the 100 ceiling | `[?]` `coop/interactables/woodchipper_sync`; no lane carries the intake or the can |
 
 ## Code map
 
@@ -545,6 +563,7 @@ state it shows, and the first rows a world takes play no sound.
 | power, turbine, windows, grime | `coop/world/power_panel`, `coop/world/power_grid`, `ue_wrap/devices/generator`, `coop/interactables/turbine_sync`, `coop/interactables/window_sync`, `coop/interactables/grime_sync`, `ue_wrap/devices/power_control`, `ue_wrap/devices/windturbine`, `ue_wrap/devices/base_window`, `ue_wrap/devices/grime` |
 | the fuse towers | `coop/world/fuse_tower_rows`, `coop/world/fuse_tower_ops`, `coop/world/fuse_tower_kind`, `ue_wrap/devices/coord_tower`, `ue_wrap/devices/radio_tower` |
 | the drone | `coop/interactables/drone_sync`, `coop/interactables/drone_call_intent`, `ue_wrap/devices/drone`, `ue_wrap/devices/drone_console` |
+| the woodchipper | `coop/interactables/woodchipper_sync` |
 | the signal servers | `coop/interactables/serverbox_sync`, `coop/interactables/server_upgrade_sync`, `ue_wrap/devices/serverbox` |
 | identity | `coop/element/portable_identity` |
 | tests and probes | `coop/dev/container_selftest`, `coop/dev/door_drill`, `coop/dev/lightswitch_probe`, `coop/dev/drone_probe`, `coop/dev/drone_call_drill`, `coop/dev/light_group_census`, `coop/dev/tower_drill` |
