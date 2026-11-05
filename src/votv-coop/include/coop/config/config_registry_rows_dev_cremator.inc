@@ -4,7 +4,9 @@
 
 CFG_ENUM(cremator_probe, "cremator_probe", "dev", "off", "off|1|host|placeonly", "VOTVCOOP_CREMATOR_PROBE",
     "Probe (a cremator's own burn on a coop player). 1 -- the CLIENT walks into the nearest cremator's firebox, "
-    "shuts the door and pulls the lever on its own copy. host -- the HOST runs the lever on its own copy once the "
-    "client's puppet has stood in a firebox for two checks. placeonly -- the CLIENT only walks into the firebox "
-    "and reports its health (pair it with host on the host). One line a second; lines tagged 'cremator-probe:'; "
+    "shuts the door and pulls the lever on its own copy. host -- the HOST opens the nearest cremator's door, "
+    "sends the client's puppet to the firebox with the admin verb's teleport order, and once the cremator's own "
+    "begin-overlap sees the puppet shuts the door and pulls the lever on its own copy. placeonly -- the CLIENT "
+    "moves nothing: it waits for the host's move and reports its health (pair it with host on the host). One "
+    "line a second; lines tagged 'cremator-probe:'; "
     "the DONE line ends it ('HOST DONE' on the host). It MUTATES the world.")

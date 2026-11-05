@@ -461,13 +461,19 @@ void Install(coop::net::Session* session) {
     const Mode mode = ModeOf();
     // The client arms that enter the cremator by their own walk and the host arm (which judges the landing) watch.
     if (mode != Mode::Local && mode != Mode::Host) return;
-    // Install is the dev lanes' retry pump, called every tick: WatchName is idempotent, the line is said once.
-    static bool sSaid = false;
-    const bool watching = sg::WatchName(kRowBeginOverlap, kTagBeginOverlap, nullptr, &OnBeginOverlapPost);
-    if (sSaid) return;
-    sSaid = true;
-    if (watching) UE_LOGI("cremator-probe: watching the cremator's begin-overlap");
-    else UE_LOGW("cremator-probe: could not watch the cremator's begin-overlap");
+    // Install is the dev lanes' retry pump, called every tick: a refused registration (the gate not armed yet) is
+    // retried, its warning said once; the first accepted one is latched and said, and ends the retries.
+    static bool sWatching = false;
+    static bool sWarned = false;
+    if (sWatching) return;
+    if (sg::WatchName(kRowBeginOverlap, kTagBeginOverlap, nullptr, &OnBeginOverlapPost)) {
+        sWatching = true;
+        UE_LOGI("cremator-probe: watching the cremator's begin-overlap");
+        return;
+    }
+    if (sWarned) return;
+    sWarned = true;
+    UE_LOGW("cremator-probe: could not watch the cremator's begin-overlap yet (retried every tick)");
 }
 
 void Tick() {

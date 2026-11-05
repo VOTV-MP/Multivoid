@@ -36,9 +36,14 @@ enum class Step : uint8_t { Watch, Landing, Run, Over };
 
 constexpr uint8_t kClientSlot = 1;
 constexpr int kLandingMaxTicks = 600;
-constexpr float kEndAfterS = 160.f;  // past the ~107 s the burn-health takes to drain to 0
+// The run ends on the machine's own state: the burn-health at <= 0 with the puppet still collected, the same
+// actor held for kHeldSamples further 1 s samples. The cap only bounds a run that never got there (the
+// burn-health drains to 0 in ~107 s).
+constexpr int kHeldSamples = 10;
+constexpr float kCapS = 300.f;
 
 Step g_step = Step::Watch;
+int g_heldSamples = -1;  // -1 until the burn-health first reads <= 0 with the puppet collected; then the samples since
 ue_wrap::CachedObjRef g_cremator;
 ue_wrap::FVector g_fireboxAt{};
 uint64_t g_nextSampleMs = 0;
@@ -54,16 +59,17 @@ const char* LifeName(coop::players::PuppetLife life) {
                                                     : "None";
 }
 
-// One line from the host's copy of the machine and the client's puppet. Returns whether the puppet is gone or dead.
-bool LogSample(float t, const char* edge) {
+// One line from the host's copy of the machine and the client's puppet; the machine's reading is handed back.
+void SampleMachine(float t, const char* edge, int& actors, float& health0) {
     auto& reg = coop::players::Registry::Get();
     auto* puppet = reg.Puppet(kClientSlot);
     const bool live = puppet && puppet->valid();
     const auto life = reg.LifeOf(kClientSlot);
     void* cremator = g_cremator.Get();
     void* door = ObjectProperty(cremator, L"swingerDoor");
-    float windup = -1.f, health0 = kNoHealth, gas = -1.f;
-    int actors = -1;
+    float windup = -1.f, gas = -1.f;
+    actors = -1;
+    health0 = kNoHealth;
     ReadFloat(cremator, L"windup", windup);
     ReadFloat(cremator, L"gasAmount", gas);
     ReadMachine(cremator, actors, health0);
@@ -72,22 +78,32 @@ bool LogSample(float t, const char* edge) {
             t, Bit(cremator, L"isActive"), Bit(cremator, L"anim"), windup, Bit(cremator, L"isClosed"),
             Bit(door, L"opened"), actors, health0, gas, LifeName(life), live ? 1 : 0, edge ? " edge=" : "",
             edge ? edge : "");
-    return !live || life == coop::players::PuppetLife::Dead;
+}
+
+// A line at an edge (the lever, the handle's finish, a respawn), whose reading nothing judges.
+void LogEdge(float t, const char* edge) {
+    int actors = -1;
+    float health0 = kNoHealth;
+    SampleMachine(t, edge, actors, health0);
 }
 
 // The run's verdict, then its end. The cremator's tick destroys a collected actor whose burn-health reached 0;
-// the puppet's actor changing (or going) is that destroy and the respawn that follows it.
-void Verdict(bool pass, float t) {
-    if (pass) {
-        float health0 = kNoHealth, gas = -1.f;
-        int actors = -1;
-        void* cremator = g_cremator.Get();
-        ReadMachine(cremator, actors, health0);
-        ReadFloat(cremator, L"gasAmount", gas);
-        UE_LOGI("cremator-probe: HOST VERDICT PASS puppet kept, health0=%.1f gas=%.2f", health0, gas);
-    } else {
-        UE_LOGI("cremator-probe: HOST VERDICT FAIL puppet re-spawned T=%.0f", t);
-    }
+// the puppet's actor changing (or going) is that destroy and the respawn that follows it. PASS is the puppet
+// still collected, with the same actor, kHeldSamples samples after the burn-health reached <= 0.
+void VerdictPass() {
+    float health0 = kNoHealth, gas = -1.f;
+    int actors = -1;
+    void* cremator = g_cremator.Get();
+    ReadMachine(cremator, actors, health0);
+    ReadFloat(cremator, L"gasAmount", gas);
+    UE_LOGI("cremator-probe: HOST VERDICT PASS puppet kept, health0=%.1f gas=%.2f held=%d samples",
+            health0, gas, g_heldSamples);
+    UE_LOGI("cremator-probe: HOST DONE");
+    g_step = Step::Over;
+}
+
+void VerdictFail(const char* why, float t) {
+    UE_LOGI("cremator-probe: HOST VERDICT FAIL %s T=%.0f", why, t);
     UE_LOGI("cremator-probe: HOST DONE");
     g_step = Step::Over;
 }
@@ -170,26 +186,40 @@ void LandingTick(uint64_t now) {
     const std::wstring key = ue_wrap::prop::GetActorSaveKeyString(cremator);
     UE_LOGI("cremator-probe: HOST LEVER key='%ls' doorWasOpened=%d puppetAt=(%.0f,%.0f,%.0f) dist=%.0f",
             key.c_str(), opened ? 1 : 0, at.X, at.Y, at.Z, haveAt ? Between(at, g_fireboxAt) : -1.f);
-    LogSample(0.f, "lever");
+    LogEdge(0.f, "lever");
+    g_heldSamples = -1;
     g_step = Step::Run;
 }
 
 void RunTick(uint64_t now) {
     const float t = static_cast<float>(now - g_startMs) / 1000.f;
     if (!PuppetKept()) {
-        LogSample(t, "respawn");
-        Verdict(false, t);
+        LogEdge(t, "respawn");
+        VerdictFail("puppet re-spawned", t);
         return;
     }
     // The handle's finish is the edge of `anim` going false; a 1 s sample can straddle it, so it is read every tick.
     const int anim = Bit(g_cremator.Get(), L"anim");
-    if (g_prevAnim == 1 && anim == 0) LogSample(t, "handle-finish");
+    if (g_prevAnim == 1 && anim == 0) LogEdge(t, "handle-finish");
     g_prevAnim = anim;
 
     if (now < g_nextSampleMs) return;
     g_nextSampleMs = now + kSampleMs;
-    const bool gone = LogSample(t, nullptr);
-    if (gone || t >= kEndAfterS) Verdict(true, t);
+    int actors = -1;
+    float health0 = kNoHealth;
+    SampleMachine(t, nullptr, actors, health0);
+    // The burn-health reads kNoHealth when unreadable, so a drained reading is a real <= 0, not a missing one.
+    if (actors >= 1 && health0 != kNoHealth && health0 <= 0.f) {
+        ++g_heldSamples;  // the crossing sample is -1 -> 0; each one after it counts
+        if (g_heldSamples >= kHeldSamples) { VerdictPass(); return; }
+    } else {
+        g_heldSamples = -1;
+    }
+    if (t >= kCapS) {
+        char why[80];
+        std::snprintf(why, sizeof(why), "the machine never held the puppet at health0<=0 (held=%d)", g_heldSamples);
+        VerdictFail(why, t);
+    }
 }
 
 }  // namespace
@@ -216,6 +246,7 @@ void HostReset() {
     g_startMs = 0;
     g_landingTicks = 0;
     g_prevAnim = -1;
+    g_heldSamples = -1;
     g_puppetActor = nullptr;
     g_landed.store(0, std::memory_order_release);
 }
