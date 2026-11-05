@@ -5,7 +5,8 @@
 // client's harvest through the plant's own action, death, a plant a client spawned, a new bush and two removals. Three arms
 // hold what the client refuses (coop/world/plant_gate, coop/world/spawn_authority): a sprinkler the host spawned beside the
 // plant, switched on here, adds no water to the client's copy; the client's own spawnBush calls are refused and plant
-// nothing; a lethal hit on a pine here is refused and the copy ends with the host's break; and at the end no plant tick
+// nothing; a lethal hit on a pine here is refused and the copy ends with the host's break; a growth area the host spawned
+// glows at the plant it picked, here too (coop/world/event_cue_sync); and at the end no plant tick
 // ran here while the gate refused them. The client tells the host what it reads; the
 // host judges and logs `plant-state: VERDICT PASS|FAIL <terms>`. Gated by VOTVCOOP_RUN_PLANT_STATE; the peers' shared
 // folder is VOTVCOOP_CAN_DIR. Every wait is on a state with a bound.
@@ -18,6 +19,7 @@
 #include "coop/player/remote_player.h"
 #include "coop/props/prop_damage_gate.h"
 #include "coop/session/net_pump.h"
+#include "coop/world/event_cue_sync.h"
 #include "coop/world/plant_gate.h"
 #include "coop/world/spawn_authority.h"
 #include "ue_wrap/actors/growing_plant.h"
@@ -63,7 +65,9 @@ constexpr const wchar_t* kPineClass = L"growingPlant_pine_C";
 constexpr const wchar_t* kPinePath = L"/Game/objects/growingPlant_pine.growingPlant_pine_C";
 constexpr const wchar_t* kSprinklerClass = L"prop_sprinkler_C";
 constexpr const wchar_t* kSprinklerPath = L"/Game/objects/prop_sprinkler.prop_sprinkler_C";
-constexpr const char* kBushSpawnTag = "bushSpawning.spawnBush";   // spawn_authority's row of the winter bush ticker
+constexpr const wchar_t* kGrowthClass = L"growthArea_C";
+constexpr const wchar_t* kGrowthPath = L"/Game/objects/misc/growthArea.growthArea_C";
+constexpr const char* kBushSpawnTag ="bushSpawning.spawnBush";   // spawn_authority's row of the winter bush ticker
 
 int g_fails = 0;
 
@@ -336,18 +340,94 @@ bool PineHitArm(const std::string& key) {
     return refused && intact;
 }
 
-// The client's word at its end: "<fails> <plants here> <host family plants it holds> <tick> <sprinkler> <spawner> <pine>",
+// HOST: a growth area by script, at the place of a plant that has water and no dryness. nullptr when it did not stand.
+void* SpawnGrowthArea(const std::string& plantKey) {
+    void* area = nullptr;
+    OnGameThread([&] {
+        ue_wrap::asset_load::LoadObjectByPath(kGrowthPath);
+        void* cls = R::FindClass(kGrowthClass);
+        void* plant = ByKey(plantKey);
+        ue_wrap::FVector at{};
+        if (!cls || !plant || !E::TryGetActorLocation(plant, at)) return;
+        void* a = E::BeginDeferredSpawn(cls, at, ue_wrap::FRotator{});
+        if (a && E::FinishDeferredSpawn(a, at, ue_wrap::FRotator{})) area = a;
+    });
+    return area;
+}
+
+// Whether some plant stands within a few units of `at`.
+bool AtAPlant(const float (&at)[3]) {
+    std::vector<void*> plants;
+    GP::List(plants);
+    for (void* p : plants) {
+        ue_wrap::FVector l{};
+        if (E::TryGetActorLocation(p, l) && Near(l.X, at[0], 5.f) && Near(l.Y, at[1], 5.f) && Near(l.Z, at[2], 5.f)) return true;
+    }
+    return false;
+}
+
+// HOST: the growth area's own tick, called until its glow is sent. The body looks at one random plant of those in its box
+// and does nothing for one that is dead or dry, and the game's own tick comes every 20 s, so the drill calls it at its own
+// pace; each call waits for the glow to be sent, and the tries are bounded. Returns "<x> <y> <z>" of the sent place, or
+// "none".
+std::string TickGrowthArea(void* area) {
+    constexpr int kTries = 40;
+    const unsigned was = coop::event_cue_sync::SentCount();
+    int tries = 0;
+    bool sent = false;
+    while (tries < kTries && !sent) {
+        ++tries;
+        OnGameThread([&] {
+            void* fn = R::IsLive(area) ? R::FindDispatchFunctionCached(R::ClassOf(area), L"ReceiveTick") : nullptr;
+            ue_wrap::ParamFrame f(fn);
+            if (!fn || !f.valid()) return;
+            f.Set<float>(L"DeltaSeconds", 0.f);
+            ue_wrap::Call(area, f);
+        });
+        sent = PS::WaitFor("the glow sent", 1, [&] { return coop::event_cue_sync::SentCount() > was; }, false);
+    }
+    float at[3] = {};
+    bool placed = false;
+    OnGameThread([&] {
+        coop::event_cue_sync::LastSentAt(at);
+        placed = sent && AtAPlant(at);
+    });
+    UE_LOGI("plant-state: growth area ticked %d times, glow sent=%d at (%.0f, %.0f, %.0f)", tries, sent ? 1 : 0, at[0], at[1],
+            at[2]);
+    Check(sent, "the growth area's tick sent its glow to the peer");
+    Check(placed, "the glow was sent at the place of a plant");
+    if (!sent) return "none";
+    return std::to_string(at[0]) + " " + std::to_string(at[1]) + " " + std::to_string(at[2]);
+}
+
+// CLIENT: the host's glow replays here, at the place the host sent. `base` is the replay count before the host's tick.
+bool GlowArm(unsigned base, const std::string& sentAt) {
+    float want[3] = {};
+    std::istringstream in(sentAt);
+    if (!Check(static_cast<bool>(in >> want[0] >> want[1] >> want[2]), "the host sent its growth area's glow")) return false;
+    const bool replayed = Check(PS::WaitFor("the glow replayed", 20, [&] { return coop::event_cue_sync::ReplayCount() > base; }, false),
+                                "the host's growth glow replayed here");
+    float got[3] = {};
+    OnGameThread([&] { coop::event_cue_sync::LastReplayAt(got); });
+    UE_LOGI("plant-state: glow replayed at (%.0f, %.0f, %.0f), host sent (%.0f, %.0f, %.0f)", got[0], got[1], got[2], want[0],
+            want[1], want[2]);
+    const bool placed = Check(Near(got[0], want[0], 2.f) && Near(got[1], want[1], 2.f) && Near(got[2], want[2], 2.f),
+                              "the glow replayed at the place the host sent");
+    return replayed && placed;
+}
+
+// The client's word at its end: "<fails> <plants here> <host family plants it holds> <tick> <sprinkler> <spawner> <pine> <glow>",
 // each arm 1 when it held.
 struct ClientWord {
     int fails = 1;   // text that is no count is a fail
     size_t plants = 0;
     int family = 0;
-    int tick = 0, sprinkler = 0, spawner = 0, pine = 0;
+    int tick = 0, sprinkler = 0, spawner = 0, pine = 0, glow = 0;
 };
 ClientWord ParseWord(const std::string& text) {
     ClientWord w;
     std::istringstream in(text);
-    if (!(in >> w.fails >> w.plants >> w.family >> w.tick >> w.sprinkler >> w.spawner >> w.pine)) w = ClientWord{};
+    if (!(in >> w.fails >> w.plants >> w.family >> w.tick >> w.sprinkler >> w.spawner >> w.pine >> w.glow)) w = ClientWord{};
     return w;
 }
 
@@ -480,18 +560,35 @@ void RunHost() {
     Check(WaitGone(pine), "the host's lethal hit broke the pine");
     Mark("pine_broke");
 
+    // A growth area over a watered plant: its glow is the host's alone to spawn (the client's tick is refused), and
+    // crosses as a cue. The client's count is taken before the host's first tick.
+    const std::string glowPlant = SpawnFamily(kBushPath, kBushClass, 500.f);
+    Check(!glowPlant.empty(), "the script spawned a plant for the growth area");
+    if (glowPlant.empty()) return;
+    WriteHost(glowPlant, 0.5f, 500.f, 0.f);
+    GP::Values glowValues;
+    OnGameThread([&] { if (void* p = ByKey(glowPlant)) GP::Read(p, glowValues); });
+    UE_LOGI("plant-state: the growth area's plant has water %.0f dryness %.1f", glowValues.water, glowValues.dryness);
+    void* area = SpawnGrowthArea(glowPlant);
+    Check(area != nullptr, "the script spawned a growthArea_C");
+    Mark("glow_set");
+    if (!Await("glow_base", kStep)) return;
+    const std::string glowAt = area ? TickGrowthArea(area) : "none";
+    Mark("glow", glowAt);
+    if (!Await("glow_done", kStep)) return;
+
     std::string clientText;
     if (!AwaitText("client_done", clientText, kStep)) return;
     const ClientWord client = ParseWord(clientText);
     size_t hostPlants = PlantCount();
     PS::WaitFor("the plant counts to agree", 15, [&] { return (hostPlants = PlantCount()) == client.plants; }, false);
     const bool pass = g_fails == 0 && client.fails == 0 && client.plants == hostPlants && client.family == 2 &&
-                      client.tick == 1 && client.sprinkler == 1 && client.spawner == 1 && client.pine == 1;
+                      client.tick == 1 && client.sprinkler == 1 && client.spawner == 1 && client.pine == 1 && client.glow == 1;
     ue_wrap::log::Write(pass ? ue_wrap::log::Level::Info : ue_wrap::log::Level::Warn,
                         "plant-state: VERDICT %hs host=%d client=%d plants=%zu/%zu family=%d tick=%d sprinkler=%d spawner=%d "
-                        "pine=%d",
+                        "pine=%d glow=%d",
                         pass ? "PASS" : "FAIL", g_fails, client.fails, hostPlants, client.plants, client.family,
-                        client.tick, client.sprinkler, client.spawner, client.pine);
+                        client.tick, client.sprinkler, client.spawner, client.pine, client.glow);
     UE_LOGI("plant-state: DONE on host fails=%d", g_fails);
 }
 
@@ -625,10 +722,17 @@ void RunClient() {
     if (!Await("pine_broke", kStep)) return;
     pineOk &= Check(WaitGone(pine), "the host's break ended the pine here") ? 1 : 0;
 
+    if (!Await("glow_set", kStep)) return;
+    const unsigned glowBase = coop::event_cue_sync::ReplayCount();
+    Mark("glow_base");
+    if (!AwaitText("glow", body, kStep)) return;
+    const int glowOk = GlowArm(glowBase, body) ? 1 : 0;
+    Mark("glow_done");
+
     const int tickOk = TickArm() ? 1 : 0;
     Mark("client_done", std::to_string(g_fails) + " " + std::to_string(PlantCount()) + " " + std::to_string(family) + " " +
                             std::to_string(tickOk) + " " + std::to_string(sprinklerOk) + " " + std::to_string(spawnerOk) +
-                            " " + std::to_string(pineOk));
+                            " " + std::to_string(pineOk) + " " + std::to_string(glowOk));
     UE_LOGI("plant-state: DONE on client fails=%d", g_fails);
 }
 

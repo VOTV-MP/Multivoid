@@ -23,12 +23,14 @@ namespace coop::event_cue_sync {
 // Cache the session and register the host's watch on runEvent. Idempotent, called every net-pump
 // tick from subsystems::Install, which is also the retry until the gate resolves the watch's name.
 //
-// The cue REGISTRY, in the .cpp, maps a runEvent row to a cueId, its emitter template and the
-// location its body spawns it at. starRain is cue 0 and the ONLY cue registered so far; the eye
-// moon, pink beam, TriFO, blinking lights and green fire are candidates, one registry line each once
-// their rows are read. cueId is on the wire, so the registry is APPEND-ONLY. A cue whose body
-// computes its position, or spawns it after a delay, needs the spawned component captured inside
-// the body instead of a row match.
+// The cue REGISTRY, in the .cpp, gives each cue an id, an emitter template and one of two detections.
+// A ROW cue maps a runEvent row to the location its body spawns the emitter at: starRain, cue 0. A
+// BORN cue is for a body that computes its position, or that no row announces: the host takes one
+// object-index listener, keeps each ParticleSystemComponent birth until the next tick, and sends the
+// component's own world place when its template is a born cue's: stolasHeal, cue 1, the growth area's
+// glow at the plant it fertilizes. A client never takes the listener. The eye moon, pink beam, TriFO,
+// blinking lights and green fire are candidates, one registry line each once their rows are read.
+// cueId is on the wire, so the registry is APPEND-ONLY.
 void Install(coop::net::Session* session);
 
 // CLIENT: replay a cue's emitter at the host's broadcast position. Game thread.
@@ -48,5 +50,12 @@ void OnDisconnect();
 
 // [dev] How many cue emitters this peer has replayed, for the event drill. Any thread.
 unsigned ReplayCount();
+
+// [dev] How many cues this peer, as host, has sent (to every peer or to one slot), for the plant drill. Any thread.
+unsigned SentCount();
+
+// [dev] The place of this peer's latest sent / replayed cue, for the plant drill. Game thread.
+void LastSentAt(float (&xyz)[3]);
+void LastReplayAt(float (&xyz)[3]);
 
 }  // namespace coop::event_cue_sync

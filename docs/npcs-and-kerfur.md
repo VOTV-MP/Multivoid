@@ -83,7 +83,7 @@ leaving one leaves nothing to restore.
 | winter bush ticker | spawn refused | its timer plants one bush on a random trace, and a bush is a `growingPlant_C`: the host's crosses as `PlantState` (`coop/world/plant_sync`, `docs/events-and-weather.md`), so a client's own would stand beside it under another key `[?]` |
 | mushroom spore | hit refused | a spore's hit plants a `shroom_7` plant where it lands; a client's spores are the host's mirrors, and the host's plant crosses as `PlantState` `[?]` |
 | outside church | herb roll refused | `trySpawnHerb` rolls the stolas herb while it rains; the host's herb crosses as `PlantState` `[?]` |
-| plants, sprinklers, growth area | tick, the herb's `grown` and the sprinkler's watering refused | not spawners, but what changes a plant on its own: the host runs them and sends the result (`coop/world/plant_gate`) `[?]` |
+| plants, sprinklers, growth area | tick, the herb's `grown` and the sprinkler's watering refused | not spawners, but what changes a plant on its own: the host runs them and sends the result (`coop/world/plant_gate`); the growth area's glow, which its refused tick no longer spawns on a client, crosses as an EventCue born at the plant (`coop/world/event_cue_sync`) `[?]` |
 
 ### The killer wisp
 

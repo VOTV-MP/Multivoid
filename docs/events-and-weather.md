@@ -135,7 +135,9 @@ registration in the event count (`coop/world/creature_event_relay`) [?]; the cre
 is computed from the local camera, render state or player 0 (the killer wisp, the fossilhound, the antibreather, the egg) keep their own per viewer. Events whose only trace is a one-shot particle emitter
 (the meteor shower) are mirrored as cues: the host sees the row's `runEvent` return and broadcasts
 the emitter's identity and position, a joiner's snapshot reads the live emitters from the object
-index, and a client spawns the same emitter (`coop/world/event_cue_sync`).
+index, and a client spawns the same emitter (`coop/world/event_cue_sync`). A cue no row announces is taken
+at its emitter's birth: the host sees the particle component born, reads its template at the next tick and
+sends the component's own place (the growth area's glow at the plant it fertilizes) `[?]`.
 
 ### The actors an event flies in
 
