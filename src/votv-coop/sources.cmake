@@ -129,6 +129,7 @@ set(VOTVCOOP_SOURCES
     src/coop/items/order_queue_sync.cpp
     src/coop/world/firefly_sync.cpp
     src/coop/world/spawn_authority.cpp
+    src/coop/world/plant_gate.cpp
     src/coop/world/explosion_sync.cpp
     src/coop/world/explosion_request.cpp
     src/coop/world/explosion_request_atv.cpp

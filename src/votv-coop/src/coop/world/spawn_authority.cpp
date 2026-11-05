@@ -97,6 +97,11 @@ UE_FACT_FN(kRowReceiveTickTickerTreeSpawner, "spawn_authority", L"ticker_treeSpa
 UE_FACT_FN(kRowReceiveTickTickerHexahiveSpawner, "spawn_authority", L"ticker_hexahiveSpawner_C", L"ReceiveTick",
            Declared);
 UE_FACT_FN(kRowSpawnTickerBeehiveSpawner, "spawn_authority", L"ticker_beehiveSpawner_C", L"spawn", Declared);
+UE_FACT_FN(kRowSpawnBushTickerBushSpawning, "spawn_authority", L"ticker_bushSpawning_C", L"spawnBush", Declared);
+UE_FACT_FN(kRowSphereHitMushroomSpore, "spawn_authority", L"mushroomSpore_C",
+           L"BndEvt__mushroomSpore_Sphere_K2Node_ComponentBoundEvent_0_ComponentHitSignature__DelegateSignature",
+           Declared);
+UE_FACT_FN(kRowTrySpawnHerbOutsideChurch, "spawn_authority", L"outsideChurch_C", L"trySpawnHerb", Declared);
 
 // One row: the facts row a client must not run, and the tag its refusal log carries.
 struct Row {
@@ -207,6 +212,15 @@ constexpr Row kRows[] = {
     {&kRowReceiveTickTickerTreeSpawner,     "treeSpawner.ReceiveTick"},
     {&kRowReceiveTickTickerHexahiveSpawner, "hexahiveSpawner.ReceiveTick"},
     {&kRowSpawnTickerBeehiveSpawner,        "beehiveSpawner.spawn"},
+    // The plant spawners: each product is a growingPlant_C, which the host's plant_sync sends as PlantState, so a
+    // client's own would stand apart from the host's under another key. The winter bush ticker's timer entry plants
+    // one bush on a random trace (ticker_bushSpawning UG @206, spawnBush). A spore's hit plants a shroom_7 at the hit
+    // point on grass, dirt or gravel (mushroomSpore UG @29); the client's spores are the host's mirrors, and its own
+    // hit would plant beside them. The church's trySpawnHerb rolls the stolas herb while it rains, from its begin play
+    // and its tick (outsideChurch UG @2116).
+    {&kRowSpawnBushTickerBushSpawning,    "bushSpawning.spawnBush"},
+    {&kRowSphereHitMushroomSpore,         "mushroomSpore.SphereHit"},
+    {&kRowTrySpawnHerbOutsideChurch,      "outsideChurch.trySpawnHerb"},
 };
 constexpr int kRowCount = static_cast<int>(std::size(kRows));
 constexpr int kTagBase = 0x53410000;   // 'SA', then the row

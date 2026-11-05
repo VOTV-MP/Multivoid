@@ -228,13 +228,6 @@ std::unordered_set<std::wstring> g_gone;      // removed here; ignored until the
 std::unordered_set<void*> g_loaded;           // what the load brought and the host has not named yet
 bool g_loadedRead = false;
 std::vector<Payload> g_inbox;
-bool g_parkedAny = false;
-
-void Park(void* plant) {
-    if (!E::IsActorTickEnabled(plant)) return;
-    E::SetActorTickEnabled(plant, false);
-    g_parkedAny = true;
-}
 
 void ApplyInbox(std::unordered_map<std::wstring, void*>& index) {
     std::vector<Payload> inbox;
@@ -272,21 +265,10 @@ void ApplyInbox(std::unordered_map<std::wstring, void*>& index) {
 }
 
 void ClientPoll(coop::net::Session& s) {
-    // The winter bush's spawner plants bushes of the family on its own tick: on a client it would plant its own.
-    std::vector<void*> spawners;
-    GP::ListBushSpawners(spawners);
-    for (void* a : spawners) {
-        if (!E::IsActorTickEnabled(a)) continue;
-        Park(a);
-        UE_LOGI("plant_sync: parked the winter bush spawner");
-    }
+    // A join's load makes and unmakes plants for its own reasons; none of that was this player.
+    if (!coop::net_pump::HasAnnouncedWorldReady() || coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle) return;
     std::vector<void*> plants;
     GP::List(plants);
-    // A join's load makes and unmakes plants for its own reasons; none of that was this player.
-    if (!coop::net_pump::HasAnnouncedWorldReady() || coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle) {
-        for (void* a : plants) Park(a);
-        return;
-    }
     if (!g_loadedRead) {
         g_loadedRead = true;
         g_loaded.insert(plants.begin(), plants.end());
@@ -343,7 +325,6 @@ void ClientPoll(coop::net::Session& s) {
         c.row = GP::Row(entry.second);
         UE_LOGI("plant_sync: this player planted '%ls'", entry.first.c_str());
     }
-    for (const auto& entry : index) Park(entry.second);
 }
 
 void ResetClient() {
@@ -383,15 +364,6 @@ void QueueConnectBroadcastForSlot(int /*slot*/) {
 }
 
 void OnDisconnect() {
-    if (g_parkedAny) {
-        std::vector<void*> plants;
-        GP::List(plants);
-        for (void* a : plants) E::SetActorTickEnabled(a, true);
-        std::vector<void*> spawners;
-        GP::ListBushSpawners(spawners);
-        for (void* a : spawners) E::SetActorTickEnabled(a, true);
-    }
-    g_parkedAny = false;
     ResetClient();
     g_sent.clear();
     g_edits.clear();

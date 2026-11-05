@@ -24,9 +24,6 @@ struct Values {
 // from the object index, so a class a game build adds is a plant here with no change.
 void List(std::vector<void*>& out);
 
-// Every live winter bush spawner (ticker_bushSpawning_C): its tick plants bushes of this family.
-void ListBushSpawners(std::vector<void*>& out);
-
 // Its key, minted by its own getKey when it has none yet. "" on failure.
 std::wstring Key(void* plant);
 
@@ -37,7 +34,7 @@ bool HideDirt(void* plant);
 bool Read(void* plant, Values& out);
 
 // Writes the values and refreshes what the plant shows from them: its row's data when the row changed, its grown mesh, its
-// fruit mesh, its size. A plant's refresh turns its tick on while it lives, so a client parks it again after.
+// fruit mesh, its size.
 void Apply(void* plant, const std::wstring& row, const Values& v);
 
 // A copy with the given identity. A pot it names has to exist here. Null when its class is not loaded.

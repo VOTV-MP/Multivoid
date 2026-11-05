@@ -80,6 +80,7 @@
 #include "coop/session/teleport_client.h"
 #include "coop/world/explosion_recipe.h"
 #include "coop/props/food_tick_gate.h"
+#include "coop/world/plant_gate.h"
 #include "coop/world/spawn_authority.h"
 #include "ui/server_browser.h"
 #include "coop/net/end_reason.h"  // the named reason a join that reached the world load ends on
@@ -342,6 +343,8 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     // A joining client's world foods tick from its world's first frame as well: the tick rows are keyed here, by
     // class and name, after the session spawn_authority reads. Idempotent across Stop/Start.
     coop::food_tick_gate::Install();
+    // A client's plants are refused the same way, on the session spawn_authority holds: they tick from the world's first frame.
+    coop::plant_gate::Install();
     // And the trash morph gate's three verbs: a joiner's pile loads with the save, and the watch is
     // by class and name, so no pile runs a morph unjudged. Idempotent across Stop/Start.
     coop::trash_morph_gate::Install(&g_session);

@@ -80,7 +80,10 @@ leaving one leaves nothing to restore.
 | sus hole | left running | rolled by each peer's own spawner around its own camera and made by the host: a client's hole is destroyed at its birth and its place sent (`coop/world/sus_hole_intent`), and the host's holes cross by place (`coop/world/ambient_fixture_sync`) |
 | bp7, bush, tick, mannequin | left running | the product has no mirror of its own for these, and refusing a spawner whose output nothing replaces would just remove the content. The walking mannequin is the exception in the making: the host's walker already crosses as a plain prop mirror that runs a second brain on the client (measured on the rig), so the client's spawner stays running only until that mirror is parked and the host's walker is the one walker |
 | deer, bp7, hexahive, walking tree, sus hole, beehive, tick, mannequin | left running | the product has no mirror of its own for these, and refusing a spawner whose output nothing replaces would just remove the content. The walking mannequin is the exception in the making: the host's walker already crosses as a plain prop mirror that runs a second brain on the client (measured on the rig), so the client's spawner stays running only until that mirror is parked and the host's walker is the one walker |
-| bush | tick off, by a poll | a bush is a `growingPlant_C`, the class of a player's own plants, and the host runs them all (`coop/world/plant_sync`, `docs/events-and-weather.md`) |
+| winter bush ticker | spawn refused | its timer plants one bush on a random trace, and a bush is a `growingPlant_C`: the host's crosses as `PlantState` (`coop/world/plant_sync`, `docs/events-and-weather.md`), so a client's own would stand beside it under another key `[?]` |
+| mushroom spore | hit refused | a spore's hit plants a `shroom_7` plant where it lands; a client's spores are the host's mirrors, and the host's plant crosses as `PlantState` `[?]` |
+| outside church | herb roll refused | `trySpawnHerb` rolls the stolas herb while it rains; the host's herb crosses as `PlantState` `[?]` |
+| plants, sprinklers, growth area | tick, the herb's `grown` and the sprinkler's watering refused | not spawners, but what changes a plant on its own: the host runs them and sends the result (`coop/world/plant_gate`) `[?]` |
 
 ### The killer wisp
 

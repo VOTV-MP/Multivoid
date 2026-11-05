@@ -151,14 +151,6 @@ void List(std::vector<void*>& out) {
     }
 }
 
-void ListBushSpawners(std::vector<void*>& out) {
-    void* cls = OI::ClassByName(L"ticker_bushSpawning_C");
-    if (!cls) return;
-    OI::ForEachInstance(cls, [](void* ctx, void* obj, int32_t) {
-        if (R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__")) static_cast<std::vector<void*>*>(ctx)->push_back(obj);
-    }, &out);
-}
-
 std::wstring Key(void* plant) {
     std::wstring key = prop::GetActorSaveKeyString(plant);
     if (!key.empty() && key != L"None") return key;

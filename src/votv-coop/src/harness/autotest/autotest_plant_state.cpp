@@ -2,9 +2,12 @@
 //
 // A bush from its spawner's own body and a growingPlant_bush_C and a growingPlant_shroom_0_C (neither is in list_farmPlants,
 // so the script spawns them) stand on the host before the client's checks. Then growth, a client's water, ripening, a
-// client's harvest through the plant's own action, death, a plant a client spawned, a new bush and two removals. The client
-// tells the host what it reads; the host judges and logs `plant-state: VERDICT PASS|FAIL <terms>`. Gated by
-// VOTVCOOP_RUN_PLANT_STATE; the peers' shared folder is VOTVCOOP_CAN_DIR. Every wait is on a state with a bound.
+// client's harvest through the plant's own action, death, a plant a client spawned, a new bush and two removals. Three arms
+// hold what the client refuses (coop/world/plant_gate, coop/world/spawn_authority): a sprinkler the host spawned beside the
+// plant, switched on here, adds no water to the client's copy; the client's own spawnBush calls are refused and plant
+// nothing; and at the end no plant tick ran here while the gate refused them. The client tells the host what it reads; the
+// host judges and logs `plant-state: VERDICT PASS|FAIL <terms>`. Gated by VOTVCOOP_RUN_PLANT_STATE; the peers' shared
+// folder is VOTVCOOP_CAN_DIR. Every wait is on a state with a bound.
 
 #include "harness/autotest.h"
 #include "harness/autotest/meet.h"
@@ -13,6 +16,8 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/session/net_pump.h"
+#include "coop/world/plant_gate.h"
+#include "coop/world/spawn_authority.h"
 #include "ue_wrap/actors/growing_plant.h"
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/call.h"
@@ -52,6 +57,9 @@ constexpr const wchar_t* kBushClass = L"growingPlant_bush_C";
 constexpr const wchar_t* kBushPath = L"/Game/objects/growingPlant_bush.growingPlant_bush_C";
 constexpr const wchar_t* kShroomClass = L"growingPlant_shroom_0_C";
 constexpr const wchar_t* kShroomPath = L"/Game/objects/growingPlant_shroom_0.growingPlant_shroom_0_C";
+constexpr const wchar_t* kSprinklerClass = L"prop_sprinkler_C";
+constexpr const wchar_t* kSprinklerPath = L"/Game/objects/prop_sprinkler.prop_sprinkler_C";
+constexpr const char* kBushSpawnTag = "bushSpawning.spawnBush";   // spawn_authority's row of the winter bush ticker
 
 int g_fails = 0;
 
@@ -60,9 +68,10 @@ void OnGameThread(Fn&& fn) {
     ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
 }
 
-void Check(bool ok, const char* what) {
+bool Check(bool ok, const char* what) {
     UE_LOGI("plant-state: %hs %hs", ok ? "PASS" : "FAIL", what);
     if (!ok) ++g_fails;
+    return ok;
 }
 
 std::string Narrow(const std::wstring& w) { return std::string(w.begin(), w.end()); }
@@ -176,16 +185,124 @@ void WriteHost(const std::string& key, float grow, float water, float fruit) {
     });
 }
 
-// The client's word at its end: "<fails> <plants here> <host family plants it holds>".
+// The host's sprinkler: spawned beside the plant and left switched off, so the plant's water on the host holds its value.
+// The host's own timer would add to it; the client's is the one under test.
+bool SpawnSprinklerBeside(const std::string& plantKey) {
+    bool made = false;
+    OnGameThread([&] {
+        ue_wrap::asset_load::LoadObjectByPath(kSprinklerPath);
+        void* cls = R::FindClass(kSprinklerClass);
+        void* plant = ByKey(plantKey);
+        ue_wrap::FVector at{};
+        if (!cls || !plant || !E::TryGetActorLocation(plant, at)) return;
+        at.X += 60.f;
+        at.Z += 40.f;
+        void* s = E::BeginDeferredSpawn(cls, at, ue_wrap::FRotator{});
+        made = s && E::FinishDeferredSpawn(s, at, ue_wrap::FRotator{});
+    });
+    return made;
+}
+
+// Every sprinkler on this peer switched on or off: `active` is what the watering timer reads first, and the game sets it
+// from a hose.
+void SetSprinklersActive(bool on) {
+    void* cls = OI::ClassByName(kSprinklerClass);
+    if (!cls) return;
+    OI::ForEachInstance(cls, [](void* ctx, void* obj, int32_t) {
+        if (!R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+        int32_t off = -1;
+        uint8_t mask = 0;
+        if (!R::FindBoolProperty(R::ClassOf(obj), L"active", off, mask)) return;
+        uint8_t& b = static_cast<uint8_t*>(obj)[off];
+        b = *static_cast<bool*>(ctx) ? static_cast<uint8_t>(b | mask) : static_cast<uint8_t>(b & ~mask);
+    }, &on);
+}
+
+// CLIENT: a sprinkler switched on beside a plant whose host water holds. Its 0.1 s watering timer is refused here, so the
+// copy never rises above the host's value. The window is 30 refused firings of that timer, not a time.
+bool SprinklerArm(const std::string& plantKey, float hostWater) {
+    constexpr uint64_t kFirings = 30;
+    const bool here = PS::WaitFor("a sprinkler here", 20, [&] {
+        size_t n = 0;
+        OnGameThread([&] { n = CountOf(kSprinklerClass); });
+        return n > 0;
+    }, false);
+    if (!Check(here, "the sprinkler the host spawned stands here")) return false;
+    uint64_t before = 0, refused = 0;
+    OnGameThread([&] {
+        SetSprinklersActive(true);
+        before = coop::plant_gate::GetCounts().sprinklerWater;
+    });
+    float peak = 0.f;
+    const bool fired = PS::WaitFor("the sprinkler's timer", 20, [&] {
+        OnGameThread([&] {
+            refused = coop::plant_gate::GetCounts().sprinklerWater - before;
+            void* p = ByKey(plantKey);
+            GP::Values v;
+            if (p && GP::Read(p, v)) peak = (std::max)(peak, v.water);
+        });
+        return refused >= kFirings;
+    }, false);
+    OnGameThread([&] { SetSprinklersActive(false); });
+    UE_LOGI("plant-state: sprinkler arm refused %llu timer firings, plant water peak %.1f, host water %.1f",
+            static_cast<unsigned long long>(refused), peak, hostWater);
+    const bool timer = Check(fired, "this client refused the sprinkler's watering timer");
+    const bool held = Check(peak <= hostWater + 1.f, "a switched-on sprinkler added no water to this client's copy");
+    return timer && held;
+}
+
+// CLIENT: the winter ticker's own body, called here, is refused each time and plants nothing.
+bool SpawnerArm() {
+    constexpr int kCalls = 20;
+    std::vector<void*> before;
+    int calls = 0;
+    uint64_t refused = 0;
+    size_t born = 0;
+    OnGameThread([&] {
+        GP::List(before);
+        const uint64_t was = coop::spawn_authority::RefusalCount(kBushSpawnTag);
+        void* ticker = FirstOf(L"ticker_bushSpawning_C");
+        void* fn = ticker ? R::FindDispatchFunctionCached(R::ClassOf(ticker), L"spawnBush") : nullptr;
+        for (int i = 0; fn && i < kCalls; ++i) {
+            ue_wrap::ParamFrame f(fn);
+            if (f.valid() && ue_wrap::Call(ticker, f)) ++calls;
+        }
+        refused = coop::spawn_authority::RefusalCount(kBushSpawnTag) - was;
+        std::vector<void*> now;
+        GP::List(now);
+        for (void* a : now)
+            if (std::find(before.begin(), before.end(), a) == before.end()) ++born;
+    });
+    UE_LOGI("plant-state: spawner arm made %d calls, %llu refused, %zu plants born", calls,
+            static_cast<unsigned long long>(refused), born);
+    const bool all = Check(calls == kCalls && refused == static_cast<uint64_t>(calls), "every spawnBush call here was refused");
+    const bool none = Check(born == 0, "no bush was planted here by this client's own spawner");
+    return all && none;
+}
+
+// CLIENT: by the end the gate has refused plant ticks, and none of a plant's own ran.
+bool TickArm() {
+    coop::plant_gate::Counts c;
+    OnGameThread([&] { c = coop::plant_gate::GetCounts(); });
+    UE_LOGI("plant-state: tick arm refused plant ticks %llu, ran %llu; herb grown %llu, sprinkler %llu, growth area %llu",
+            static_cast<unsigned long long>(c.plantTick), static_cast<unsigned long long>(c.plantTickRan),
+            static_cast<unsigned long long>(c.herbGrown), static_cast<unsigned long long>(c.sprinklerWater),
+            static_cast<unsigned long long>(c.growthAreaTick));
+    return Check(c.plantTick > 0 && c.plantTickRan == 0, "this client ran no plant tick of its own while the gate refused them");
+}
+
+// The client's word at its end: "<fails> <plants here> <host family plants it holds> <tick> <sprinkler> <spawner>", each arm
+// 1 when it held.
 struct ClientWord {
     int fails = 1;   // text that is no count is a fail
     size_t plants = 0;
     int family = 0;
+    int tick = 0, sprinkler = 0, spawner = 0;
 };
 ClientWord ParseWord(const std::string& text) {
     ClientWord w;
     std::istringstream in(text);
-    if (!(in >> w.fails >> w.plants >> w.family)) w = ClientWord{};
+    if (!(in >> w.fails >> w.plants >> w.family >> w.tick >> w.sprinkler >> w.spawner)) w = ClientWord{};
     return w;
 }
 
@@ -229,6 +346,14 @@ void RunHost() {
     WriteHost(bush, 0.5f, 500.f, 0.f);
     Mark("grow");
     if (!Await("grow_done", kStep)) return;
+
+    // A sprinkler beside the plant, switched off here: the host's water holds at the value it was written, and the
+    // client's copy must read no more than that with its own sprinkler switched on.
+    Check(SpawnSprinklerBeside(bush), "the script spawned a sprinkler beside the host's plant");
+    GP::Values held;
+    OnGameThread([&] { if (void* p = ByKey(bush)) GP::Read(p, held); });
+    Mark("sprinkler", std::to_string(held.water));
+    if (!Await("sprinkler_done", kStep)) return;
 
     // A client's water.
     Check(WaitPlant(bush, [](void*, const GP::Values& v) { return v.water > 5000.f; }), "the client's water reached the host's plant");
@@ -305,12 +430,12 @@ void RunHost() {
     const ClientWord client = ParseWord(clientText);
     size_t hostPlants = PlantCount();
     PS::WaitFor("the plant counts to agree", 15, [&] { return (hostPlants = PlantCount()) == client.plants; }, false);
-    if (g_fails == 0 && client.fails == 0 && client.plants == hostPlants && client.family == 2)
-        UE_LOGI("plant-state: VERDICT PASS host=%d client=%d plants=%zu/%zu family=%d", g_fails, client.fails, hostPlants,
-                client.plants, client.family);
-    else
-        UE_LOGW("plant-state: VERDICT FAIL host=%d client=%d plants=%zu/%zu family=%d", g_fails, client.fails, hostPlants,
-                client.plants, client.family);
+    const bool pass = g_fails == 0 && client.fails == 0 && client.plants == hostPlants && client.family == 2 &&
+                      client.tick == 1 && client.sprinkler == 1 && client.spawner == 1;
+    ue_wrap::log::Write(pass ? ue_wrap::log::Level::Info : ue_wrap::log::Level::Warn,
+                        "plant-state: VERDICT %hs host=%d client=%d plants=%zu/%zu family=%d tick=%d sprinkler=%d spawner=%d",
+                        pass ? "PASS" : "FAIL", g_fails, client.fails, hostPlants, client.plants, client.family,
+                        client.tick, client.sprinkler, client.spawner);
     UE_LOGI("plant-state: DONE on host fails=%d", g_fails);
 }
 
@@ -359,6 +484,10 @@ void RunClient() {
     if (!Await("grow", kStep)) return;
     Check(WaitPlant(bush, [](void*, const GP::Values& v) { return Near(v.grow, 0.5f, 0.05f) && v.water > 400.f; }), "the host's growth and water arrived");
     Mark("grow_done");
+
+    if (!AwaitText("sprinkler", body, kStep)) return;
+    const int sprinklerOk = SprinklerArm(bush, static_cast<float>(std::atof(body.c_str()))) ? 1 : 0;
+    Mark("sprinkler_done");
 
     // This player's water, as a can or a toolgun writes it.
     OnGameThread([&] {
@@ -423,6 +552,7 @@ void RunClient() {
 
     if (!AwaitText("second", body, kStep)) return;
     Check(WaitPlant(body, [](void*, const GP::Values&) { return true; }), "the new bush stands here");
+    const int spawnerOk = SpawnerArm() ? 1 : 0;
     Mark("second_seen");
     const std::string second = body;
     if (!Await("second_gone", kStep)) return;
@@ -431,7 +561,9 @@ void RunClient() {
     OnGameThread([&] { if (void* p = ByKey(planted)) GP::Destroy(p); });
     Mark("removal");
     if (!Await("removal_seen", kStep)) return;
-    Mark("client_done", std::to_string(g_fails) + " " + std::to_string(PlantCount()) + " " + std::to_string(family));
+    const int tickOk = TickArm() ? 1 : 0;
+    Mark("client_done", std::to_string(g_fails) + " " + std::to_string(PlantCount()) + " " + std::to_string(family) + " " +
+                            std::to_string(tickOk) + " " + std::to_string(sprinklerOk) + " " + std::to_string(spawnerOk));
     UE_LOGI("plant-state: DONE on client fails=%d", g_fails);
 }
 
