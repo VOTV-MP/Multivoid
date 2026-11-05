@@ -14,6 +14,7 @@ mod and the rules for changing it.
 | [../SECURITY.md](../SECURITY.md) | What the mod does and does not protect, and how to report a vulnerability. Read the "what does not hold" part before hosting for strangers |
 | [../README.md](../README.md) | The front page: what works today, where to get builds, who contributed |
 | [credits.md](credits.md) | Every outside code contribution, report and review that changed the mod, and what shipped from it |
+| [credits-reports.md](credits-reports.md) | The full write-ups of the outside reports and reviews: what each one turned out to be, and what shipped |
 
 ## I want to understand it, or help
 

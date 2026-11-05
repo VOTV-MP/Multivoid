@@ -251,6 +251,7 @@ docs/**
 !docs/coop-entity-expression-map.md
 !docs/coop-sync-doctrine.md
 !docs/credits.md
+!docs/credits-reports.md
 !docs/devs-gauntlet.md
 !docs/feasibility.md
 !docs/install.md
