@@ -15,6 +15,7 @@
 #include "coop/dev/director/director.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/props/join_membership_sweep.h"
 #include "coop/session/net_pump.h"
 #include "coop/world/event_fire_sync.h"
 #include "coop/world/vent_crawler_sync.h"
@@ -229,6 +230,12 @@ bool SameVent(const std::string& a, const std::string& b) {
     return x[6] == y[6];
 }
 
+// Every field of the row the host's: the two doors, the keypads and the vent.
+bool Agrees(const std::string& mine, const std::string& host) {
+    const auto m = Split(mine), h = Split(host);
+    return m.size() == 4 && h.size() == 4 && m[0] == h[0] && m[1] == h[1] && m[2] == h[2] && SameVent(m[3], h[3]);
+}
+
 void Compare(const std::string& mine, const std::string& host, const char* when) {
     const auto m = Split(mine), h = Split(host);
     UE_LOGI("crawler-drill: %hs -- here %hs, the host %hs", when, mine.c_str(), host.c_str());
@@ -259,7 +266,13 @@ void RunHost() {
         void* door = ue_wrap::keyed_objects::Resolve(L"basedoor_signalroom");
         if (door) D::CallDoorOpen(door, true);
     });
-    ::Sleep(4000);
+    // isOpened is set where the swing ends, so this waits for the door to have finished opening.
+    Check(WaitFor([&] {
+              void* door = ue_wrap::keyed_objects::Resolve(L"basedoor_signalroom");
+              bool open = false;
+              return door && D::TryReadOpen(door, open) && open;
+          }, 15),
+          "the signal room door is open before the crawl");
     std::string row;
     OnGameThread([&] { row = StateRow(); });
     UE_LOGI("crawler-drill: host before %hs", row.c_str());
@@ -313,7 +326,13 @@ void RunHost() {
         ::Sleep(100);
     }
     Check(WaitFor([&] { return Crawler() == nullptr; }, 60), "the host's crawler went at the crawl's end");
-    ::Sleep(3000);
+    // The crawl's last act opens the balcony door (its keypads first), and isOpened is set where that swing ends.
+    Check(WaitFor([&] {
+              void* door = ue_wrap::keyed_objects::Resolve(L"basedoor_balcony");
+              bool open = false;
+              return door && D::TryReadOpen(door, open) && open;
+          }, 20),
+          "the balcony door opened at the crawl's end");
     OnGameThread([&] { row = StateRow(); });
     UE_LOGI("crawler-drill: host after %hs", row.c_str());
     Mark("h_after", row);
@@ -325,11 +344,19 @@ void RunHost() {
 
 void RunClient() {
     if (!HostPuppetUp()) return;
-    ::Sleep(60000);   // past the join's catch-up window, as on day 5 long after a join
+    // Past the join's catch-up window, as on day 5 long after a join: the window closes at the load tail's quiescence,
+    // where the sweep runs and the deferred mirrors are revealed (join_membership_sweep.h, mirror_defer.h).
+    if (!PS::WaitFor("the join's load tail to quiesce", 180, [&] {
+            bool quiet = false;
+            OnGameThread([&] { quiet = coop::join_membership_sweep::HasLoadTailQuiesced(); });
+            return quiet;
+        }))
+        return;
     if (!meet::WalkToHost("crawler-drill")) return;
     Mark("client_ready");
     std::string host, row;
     if (!AwaitText("h_before", host)) return;
+    WaitFor([&] { return Agrees(StateRow(), host); }, 20);   // the host's door has reached this copy; Compare reports what differs
     OnGameThread([&] { row = StateRow(); });
     Compare(row, host, "before");
     Mark("c_before");
@@ -382,7 +409,8 @@ void RunClient() {
     std::string after;
     if (!AwaitText("h_after", after, 120)) return;
     Check(WaitFor([&] { return Crawler() == nullptr; }, 5), "the crawler went here");
-    ::Sleep(1000);
+    // The vent's swing outlives the mirror: wait for the state to be the host's; Compare then reports what differs.
+    WaitFor([&] { return Agrees(StateRow(), after); }, 20);
     OnGameThread([&] { row = StateRow(); });
     Compare(row, after, "after");
     Mark("c_done");
