@@ -56,7 +56,9 @@ sg::Verdict OnCrematorActionPre(const sg::Call& c) {
     *out = 1;  // a bool out parameter
     const uint32_t n = ++g_answered;
     // Said once per (puppet, cremator): the tick asks again every frame while the puppet sits at burn-health <= 0
-    // (measured: 60 a second, for as long as it stays), so a periodic line would run for that whole stay.
+    // (measured: 60 a second, for as long as it stays), so a periodic line would run for that whole stay. The key is
+    // the two addresses, so a recycled address (a new puppet in the same slot, same cremator) can suppress one
+    // line: log-only, accepted.
     static void* sSaidPuppet = nullptr;
     static void* sSaidCremator = nullptr;
     if (c.object != sSaidPuppet || c.callerObject != sSaidCremator) {
