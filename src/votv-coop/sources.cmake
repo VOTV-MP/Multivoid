@@ -644,6 +644,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_can_state.cpp
     src/harness/autotest/autotest_food_state.cpp
     src/harness/autotest/autotest_plant_state.cpp
+    src/harness/autotest/autotest_plant_gate.cpp
     src/harness/autotest/autotest_saveui.cpp
     src/harness/autotest/autotest_spill.cpp
     src/harness/autotest/autotest_ambient_creature.cpp
