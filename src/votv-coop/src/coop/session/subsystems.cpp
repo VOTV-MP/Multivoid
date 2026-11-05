@@ -102,6 +102,7 @@
 #include "coop/items/order_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/creatures/ambient_creature_sync.h"
+#include "coop/world/ambient_births.h"
 #include "coop/world/ambient_fixture_sync.h"
 #include "coop/world/explosion_sync.h"
 #include "coop/world/explosion_parking.h"
@@ -248,6 +249,7 @@ void Install(coop::net::Session& session) {
     coop::coingun_sync::Install(&session);  // the sell gun + host-minted coins
     coop::firefly_sync::Install(&session);  // peer-symmetric ambient firefly mirror (each peer captures+shares its own)
     coop::event_cue_sync::Install(&session);  // cosmetic emitter cues: the host's runEvent watch sends them, the client replays
+    coop::ambient_births::Install();  // the ambient actors' births and deaths, named once for the two lanes below
     coop::ambient_creature_sync::Install(&session);  // the host's deer and walking trees
     coop::ambient_fixture_sync::Install(&session);  // the host's dirt holes and beehive branches
     coop::event_fire_sync::Install(&session);  // scheduled events: the host's runEvent/runSpecialEvent watches -> EventFire; client hold + policy replay
@@ -496,6 +498,7 @@ DisconnectStats DisconnectAll() {
     coop::event_cue_sync::OnDisconnect();  // drop the session the cue watch sends on
     coop::ambient_creature_sync::OnDisconnect();
     coop::ambient_fixture_sync::OnDisconnect();
+    coop::ambient_births::OnDisconnect();
     coop::event_fire_sync::OnDisconnect();  // restore the client scheduler (allEvents.Num) + drop the queued fires
     coop::event_active_sync::OnDisconnect();  // drop the begun-events map and its world stamp
     coop::creature_event_relay::OnDisconnect();  // a client's applied creature events back out; both halves' state; the session
