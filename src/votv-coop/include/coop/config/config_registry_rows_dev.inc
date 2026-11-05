@@ -359,7 +359,8 @@ CFG_ENUM(sleep_drill, "sleep_drill", "dev", "off", "off|host_asleep|client_rest|
     "([SLEEP-DRILL] <arm> <role> PASS|FAIL), and a phase that does not come is a FAIL after a bound.")
 CFG_ENUM(badsun_drill, "badsun_drill", "dev", "off", "off|clock|midnight|spawn|cheat|join|end|absent_stale", "VOTVCOOP_BADSUN_DRILL",
     "Drill (BOTH peers), the Bad Sun: does a peer's own loaded copy go "
-    "active by its own clock. clock, join and end need the save that holds one saved Bad Sun; the others a fresh host world. clock: the host parks the clock at 05:00 at hosting and sets 06:30 once a "
+    "active by its own clock. clock, join and end need the save that holds one saved Bad Sun, the slot s_rig_badsun "
+    "(VOTVCOOP_RIG_SLOT=s_rig_badsun: the everyday rig slot had it removed by tools/rig_strip_class.py); the others a fresh host world. clock: the host parks the clock at 05:00 at hosting and sets 06:30 once a "
     "client's join is over; each peer reads its count of live copies (it must be 1), its copy's widget "
     "and its place in the active events' senders, and its own clock every second, from before 07:00; "
     "the copy must stay inactive until the clock reads 07:00 and be active by both tests within 15 s "
