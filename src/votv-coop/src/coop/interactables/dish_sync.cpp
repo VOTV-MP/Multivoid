@@ -95,6 +95,20 @@ struct DishInterp {
 };
 DishInterp g_dishInterp[coop::net::kMaxDishes] = {};
 
+// The client's copy of a slew's sounds. Its own body never runs here, and its `turnoff` timeline must not: its end runs the
+// dish bookkeeping that arms a download. So the order is the body's, read off the stream: an axis moving has the motor on, an
+// axis stopping clunks with the motor off, and the slew's end clunks and fades, then a second later plays its last sound.
+struct DishSound {
+    bool     motor = false;      // this copy's motor is on
+    bool     humming = false;    // this copy's hum is on
+    bool     seen = false;       // lastYaw and lastRoll hold a row
+    float    lastYaw = 0.f, lastRoll = 0.f;
+    int32_t  stillRows = 0;      // rows in a row with no movement while it slews
+    uint64_t fadeFromMs = 0;     // 0: not ending
+    uint64_t fadeMs = 0;
+};
+DishSound g_sound[coop::net::kMaxDishes];
+
 void ResetModuleState() {
     g_havePrevMovingHost = false;
     g_settleLeft = 0;
@@ -103,6 +117,9 @@ void ResetModuleState() {
     g_parkedDisher = nullptr;
     for (int32_t i = 0; i < coop::net::kMaxDishes; ++i) {
         g_dishInterp[i] = DishInterp{};
+        // The whole sound state, not just the flags: a desk replaced mid-slew would keep humming=true (the next
+        // slew silent), and a session end would keep lastYaw/seen (a phantom motor start on the next first row).
+        g_sound[i] = DishSound{};
     }
 }
 
@@ -140,20 +157,6 @@ void AdvanceDishInterpSingle(int32_t index, uint64_t now) {
         d.dirty = false;
     }
 }
-
-// The client's copy of a slew's sounds. Its own body never runs here, and its `turnoff` timeline must not: its end runs the
-// dish bookkeeping that arms a download. So the order is the body's, read off the stream: an axis moving has the motor on, an
-// axis stopping clunks with the motor off, and the slew's end clunks and fades, then a second later plays its last sound.
-struct DishSound {
-    bool     motor = false;      // this copy's motor is on
-    bool     humming = false;    // this copy's hum is on
-    bool     seen = false;       // lastYaw and lastRoll hold a row
-    float    lastYaw = 0.f, lastRoll = 0.f;
-    int32_t  stillRows = 0;      // rows in a row with no movement while it slews
-    uint64_t fadeFromMs = 0;     // 0: not ending
-    uint64_t fadeMs = 0;
-};
-DishSound g_sound[coop::net::kMaxDishes];
 
 constexpr float    kMovedDeg = 0.01f;       // the stream's quantum
 constexpr int32_t  kStillRowsToStop = 2;    // one quiet row is a late packet or a slow ramp
@@ -199,17 +202,14 @@ void ApplyDishSound(int32_t index, bool isMoving, bool wasMoving, float yawZ, fl
         }
         // The host's body hums from the slew's order (isMoving rises before its random 1-12 s wait, dish.cpp
         // Label_6298), and its motor only once the axes turn (Label_3515): the hum on the flag, the motor on motion.
-        if (!s.humming) {
-            D::StartHum(index);
+        // A call that returned false (the dish not live yet, a join snapshot mid-slew) latches nothing: the next row retries.
+        if (!s.humming && D::StartHum(index)) {
             s.humming = true;
             g_cueWatch |= (1u << index);
         }
         if (moved) {
             s.stillRows = 0;
-            if (!s.motor) {
-                D::SetMotor(index, true);
-                s.motor = true;
-            }
+            if (!s.motor && D::SetMotor(index, true)) s.motor = true;
         } else if (s.motor && ++s.stillRows >= kStillRowsToStop) {
             const bool played = D::PlayAxisStop(index);
             UE_LOGI("[dish] %d mirror axis stop (played=%d)", index, played ? 1 : 0);
@@ -227,13 +227,19 @@ void ApplyDishSound(int32_t index, bool isMoving, bool wasMoving, float yawZ, fl
     }
 }
 
-// The per-frame client drive: advance open dish windows and fading sounds.
+// The per-frame client drive: advance open dish windows.
 void AdvanceDishInterp() {
     const uint64_t now = NowMs();
-    for (int32_t i = 0; i < coop::net::kMaxDishes; ++i) {
+    for (int32_t i = 0; i < coop::net::kMaxDishes; ++i)
         AdvanceDishInterpSingle(i, now);
+}
+
+// The per-frame fade clock of the client's sounds. It is local sound state, so it runs whether or not the link is up: a
+// dropped link must not freeze a fade with the hum and motor at a partial volume.
+void AdvanceDishSounds() {
+    const uint64_t now = NowMs();
+    for (int32_t i = 0; i < coop::net::kMaxDishes; ++i)
         AdvanceDishSound(i, now);
-    }
 }
 
 // The one row applier (stream rows and snapshot rows): the shadow, the raw moving flag, the
@@ -443,6 +449,8 @@ void Tick() {
             }
         }
     }
+
+    if (!host) AdvanceDishSounds();
 
     if (now >= g_nextSlow) {
         g_nextSlow = now + kSlowInterval;
