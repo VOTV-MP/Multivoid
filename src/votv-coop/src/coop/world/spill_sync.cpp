@@ -6,6 +6,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
+#include "coop/player/hand_item.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/props/prop_sound.h"
@@ -157,6 +158,18 @@ bool HeldHere(void* actor) {
     return actor && me && E::ReadMainPlayerGrabState(me, gs) && (gs.holdingActor == actor || gs.grabbingActor == actor);
 }
 
+// The slot of another player whose hold this copy is: a prop its hold drives through the pose stream, or the
+// mirror of the item in its hand (measured: a client's cup in hand spilled on the host through the hand mirror, which
+// no pose drive names). 0 when no other player holds it. Game thread, reads only.
+int RemoteHolderOf(void* source) {
+    if (!source) return 0;
+    const int driving = coop::remote_prop::DrivingSlotOf(source);
+    if (driving > 0) return driving;
+    for (uint8_t s = 1; s < coop::net::kMaxPeers; ++s)
+        if (coop::hand_item::MirrorActorForSlot(s) == source) return s;
+    return 0;
+}
+
 // Inside FinishSpawningActor: reads and stamps only, no engine call.
 void OnFinishSpawnPost(void* /*context*/, void* source, void* spawned) {
     if (!g_live.load(std::memory_order_relaxed) || !spawned) return;
@@ -173,7 +186,7 @@ void OnFinishSpawnPost(void* /*context*/, void* source, void* spawned) {
         }
         if (g_host.load(std::memory_order_relaxed)) {
             // The holder authors this spill through its intent; the host's copy only flew because the hold turned it over.
-            const int slot = coop::remote_prop::DrivingSlotOf(source);
+            const int slot = RemoteHolderOf(source);
             if (slot > 0 && g_foreign.size() < kCap) {
                 ForeignFlight ff;
                 ff.projectile.Set(spawned);
