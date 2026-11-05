@@ -113,9 +113,13 @@ identity and pushes it right after the Join, before the world exists, so it is s
 the save object in the one window before the game materialises the world from it
 (`coop/items/player_inventory_sync`). The join boot arms that substitution for the load it is
 about to make, and the placement at the world appearance uses the profile's position once, or
-the start point on a first join. The same position is written to the save object's
-`playerTransform`, which on a client still held the host's: the game's own check for a player
-behind geometry sends them there.
+the start point on a first join: the floor beside the base's bed (`coop/player/shelter_spot`, the
+spot a revive wakes on too), the KPP gate only when no bed is found. The bed is one of the save's
+props, so the start point is placed on the tick the client announces its world ready, before its
+pose streams. The profile's position is
+written to the save object's `playerTransform`, which on a client still held the host's: the
+game's own check for a player behind geometry sends them there. For the start point the save gets
+the KPP, since the bed can only be found once the world exists.
 
 ### 4. World load and quiescence
 

@@ -1,13 +1,15 @@
-// coop/player/revive_target.h -- where a revived player wakes: a standable floor point beside the
-// base's bed, or the KPP landmark when none can be found. The base is roofed; the KPP is open sky,
-// so a revive there during the game's Bad Sun event is killed again by the next hit and loops.
+// coop/player/shelter_spot.h -- where a player is put down in the world by us: a standable floor
+// point beside the base's bed, or the KPP landmark when none can be found. Two callers: a revive
+// (death_revive) and a client's join appearance at the start point (net_pump). The base is roofed;
+// the KPP is open sky, so a revive there during the game's Bad Sun event is killed again by the next
+// hit and loops, and the KPP is a 770 m walk from the base a joiner would otherwise pay.
 // Whether the bed's spot is sheltered from that event's sun trace is read off the rig, not assumed.
 
 #pragma once
 
 #include <cstdint>
 
-namespace coop::revive_target {
+namespace coop::shelter_spot {
 
 enum class Kind : uint8_t { None, Bed, KppFallback };
 
@@ -23,7 +25,7 @@ const char* KindName(Kind k);
 // the floor so the actor's location stands the player on it. Any step that fails yields the KPP
 // with kind KppFallback; the first fallback of a session is logged with its reason. `pawn` is the
 // world context and the capsule's owner. Cold path: the bed lookup walks the object index once per
-// call, and this runs once per death. Game thread.
+// call, and this runs once per death and once per join appearance. Game thread.
 Target Choose(void* pawn);
 
 // A drill's switch, VOTVCOOP_DEATH_NO_BED=1: the bed lookup is treated as finding nothing, so the
@@ -33,4 +35,4 @@ bool BedLookupDisabled();
 // Forget this session's logged fallback. Not on the game thread (the session's own).
 void OnSessionStart();
 
-}  // namespace coop::revive_target
+}  // namespace coop::shelter_spot

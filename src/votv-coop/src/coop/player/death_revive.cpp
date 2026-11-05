@@ -7,7 +7,7 @@
 #include "coop/config/config.h"
 #include "coop/net/session.h"
 #include "coop/player/revive_protection.h"
-#include "coop/player/revive_target.h"
+#include "coop/player/shelter_spot.h"
 #include "coop/session/net_pump.h"
 #include "coop/session/teleport_client.h"
 #include "ue_wrap/actors/vitals.h"
@@ -89,7 +89,7 @@ std::atomic<long long> g_tSeam{-1}, g_tVerbs{-1}, g_tSession{-1}, g_tDeadOff{-1}
 // Pump-side state, game thread only.
 bool  g_wasDead = false;
 bool  g_lastReviveOk = false;
-coop::revive_target::Target g_lastTarget;
+coop::shelter_spot::Target g_lastTarget;
 bool  g_reviveRanThisDeath = false;
 uint64_t g_cancelAtMs = 0;
 
@@ -374,7 +374,7 @@ bool ClearDeadFlag(void* pawn) {
 }
 
 // False when the pawn's location cannot be read.
-bool DistanceToTarget(void* pawn, const coop::revive_target::Target& t, float& out) {
+bool DistanceToTarget(void* pawn, const coop::shelter_spot::Target& t, float& out) {
     ue_wrap::FVector at{};
     if (!E::TryGetActorLocation(pawn, at)) return false;
     const float dx = at.X - t.x;
@@ -425,11 +425,11 @@ bool RunRevive(coop::net::Session& session, void* pawn) {
     //    forceGetUp (a latent delay that re-reads dead) and not wakeup (refuses while dead).
     const bool wokeUp = E::ForceMainPlayerWakeup(pawn);
 
-    // 4. Reposition to a floor point beside the base's bed (revive_target), not spawnLocation, which
+    // 4. Reposition to a floor point beside the base's bed (shelter_spot), not spawnLocation, which
     //    is just the transform at level start and can be kilometres from the corpse after a long
     //    session, and not the open-sky KPP, where the Bad Sun event kills the revived player again.
     //    The KPP is the fallback when no bed or NavMesh point is found.
-    const coop::revive_target::Target target = coop::revive_target::Choose(pawn);
+    const coop::shelter_spot::Target target = coop::shelter_spot::Choose(pawn);
     g_lastTarget = target;
     const bool teleReported = coop::teleport_client::ApplyLocally(
         {target.x, target.y, target.z, 0.f, 0.f, 0.f});
@@ -474,7 +474,7 @@ bool RunRevive(coop::net::Session& session, void* pawn) {
             haveBurnTime ? burnTime : -1.f, haveBurning ? static_cast<int>(burning) : -1,
             blackCleared ? 1 : 0, redBefore, bloodActors, bloodTimeBefore,
             haveState ? (isRagdoll ? 1 : 0) : -1, haveState ? (deadNow ? 1 : 0) : -1,
-            haveHp ? hp : -1.f, coop::revive_target::KindName(target.kind), dist, kAtTargetToleranceCm);
+            haveHp ? hp : -1.f, coop::shelter_spot::KindName(target.kind), dist, kAtTargetToleranceCm);
     (void)session;
     return ok;
 }
@@ -578,7 +578,7 @@ void OnSessionStart() {
     g_reviveRanThisDeath = false;
     g_lastReviveOk = false;
     g_lastTarget = {};
-    coop::revive_target::OnSessionStart();
+    coop::shelter_spot::OnSessionStart();
     g_cancelAtMs = 0;
     g_screenCleanupLeft = 0;
     g_screenCensusAtMs.store(0, std::memory_order_relaxed);
@@ -774,7 +774,7 @@ void Watchdog() {
 
 bool ArmedForThisDeath() { return g_armed.load(std::memory_order_acquire); }
 bool LastReviveSucceeded() { return g_lastReviveOk; }
-coop::revive_target::Target LastReviveTarget() { return g_lastTarget; }
+coop::shelter_spot::Target LastReviveTarget() { return g_lastTarget; }
 
 uint32_t ScreenCleanupsEnded() { return g_screenCleanupsEnded.load(std::memory_order_relaxed); }
 

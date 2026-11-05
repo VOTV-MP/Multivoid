@@ -31,6 +31,7 @@
 #include "coop/props/join_membership_sweep.h"  // the join claim and the divergence sweep
 #include "coop/session/player_handshake.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/shelter_spot.h"     // the start point a join appears at
 #include "coop/player/roster_ledger.h"
 #include "coop/props/prop_snapshot.h"
 #include "coop/player/remote_player.h"
@@ -95,6 +96,16 @@ uint64_t g_tickSerial = 0;
 // the deferred disconnect cleanup, leaving orphan puppets and mirrors in the dying world).
 // OnSessionStart resets it.
 bool g_localDeathHandled = false;
+
+// The start-point placement a client's body is owed (JoinPlacement::StartPoint). The spot is beside the
+// base's bed, and the bed is one of the save's props: at a join's first appearance the load has not
+// spawned it yet (measured 2026-11-05: "no bed in the world" at the appearance). So the appearance only
+// owes the placement, and it is paid on the first tick the body stands in the world this connection
+// announced ready (IsInAnnouncedWorld: the gate that waits for the load to quiesce, false while a world
+// change's re-announce is owed, so a swapped world's body waits for that world's own announce), in the
+// same tick, before the pose stream opens: no peer sees the KPP pose the save left the body at. A later
+// body in a ready world (a respawn) is paid on its next tick. Game thread; cleared with the session and when the connection goes.
+bool g_startPointOwed = false;
 
 // The ceiling on the transparent bypass after a flee. The bypass covers the world teardown (the
 // detour otherwise stalls the 50k-actor untitled_1 teardown) and releases the moment
@@ -183,6 +194,7 @@ void OnSessionStart() {
     g_wasConnected = false;
     g_wasConnectedBySlot.fill(false);
     g_localDeathHandled = false;
+    g_startPointOwed = false;
     g_fleeing = false;  // re-arm the one-shot flee for this new session
     coop::death_revive::OnSessionStart();          // the arm + per-death latches
     coop::player::run_end_travel::OnSessionStart();  // the run-ending seam's counters + one-shots
@@ -226,6 +238,7 @@ void TearDownSession(coop::net::Session& session, const char* why) {
     g_wasConnected = false;
     g_wasConnectedBySlot.fill(false);
     ForgetWorldReadyAnnounce();
+    g_startPointOwed = false;  // owed against the announce just forgotten
     for (int slot = 0; slot < coop::players::kMaxPeers; ++slot) {
         // DestroySlot is the puppet's Destroy plus UnregisterPuppet; its interleave with DisconnectSlot
         // is composed here only.
@@ -405,7 +418,10 @@ void Tick(coop::net::Session& session) {
         return;
     }
 
-    if (!isConnected) ForgetWorldReadyAnnounce();  // re-announce next connection
+    if (!isConnected) {
+        ForgetWorldReadyAnnounce();  // re-announce next connection
+        g_startPointOwed = false;
+    }
 
     if (g_wasConnected && !isConnected) {
         // The aggregate disconnect (all peers gone): the OnDisconnect calls for session-wide state
@@ -534,7 +550,10 @@ void Tick(coop::net::Session& session) {
         // body exists": once per world appearance, while the load screen still covers the swap. A
         // returning player appears once at the spot their profile says they were standing on (a
         // drill's join_at_host leaves that one appearance at the host's); every other body of the
-        // session, a respawn included, at the start point.
+        // session, a respawn included, at the start point: the floor beside the base's bed
+        // (shelter_spot, the spot a revive wakes on), the KPP gate only when no bed is found. The
+        // gate is a 770 m walk from the base, which every drill and every player paid on a join.
+        // The start point is owed here and paid once the world is ready (g_startPointOwed).
         if (localNow && isConnected && !isHost) {
             namespace PIS = coop::player_inventory_sync;
             float x = 0, y = 0, z = 0, yaw = 0;
@@ -549,13 +568,18 @@ void Tick(coop::net::Session& session) {
                         "position (join_at_host)");
                 break;
             case PIS::JoinPlacement::StartPoint:
-                coop::teleport_client::ApplyLocally(
-                    {ue_wrap::profile::name::kKPPSpawnX, ue_wrap::profile::name::kKPPSpawnY,
-                     ue_wrap::profile::name::kKPPSpawnZ, 0.f, 0.f, 0.f});
-                UE_LOGI("net_pump: CLIENT spawn -> KPP start point (join/world appearance)");
+                g_startPointOwed = true;
+                UE_LOGI("net_pump: CLIENT spawn -> the start point, placed once the world is ready");
                 break;
             }
         }
+    }
+    if (g_startPointOwed && g_netLocal.Raw() && IsInAnnouncedWorld(g_netLocal.Raw())) {
+        g_startPointOwed = false;
+        const coop::shelter_spot::Target t = coop::shelter_spot::Choose(g_netLocal.Raw());
+        coop::teleport_client::ApplyLocally({t.x, t.y, t.z, 0.f, 0.f, 0.f});
+        UE_LOGI("net_pump: CLIENT placed at the start point, %s (%.0f, %.0f, %.0f)",
+                coop::shelter_spot::KindName(t.kind), t.x, t.y, t.z);
     }
     // The !g_localDeathHandled gate: once the death is handled every local send stops, or the
     // ragdoll sender would keep reading the dead player's pelvis ~100 times a second on the way to

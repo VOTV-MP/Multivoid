@@ -31,8 +31,8 @@ namespace P = ue_wrap::profile;
 // inside the copy's 7 to 18 test window, so it goes active at its first test.
 constexpr float kAt0800 = (8 * 60) / 1440.f;
 
-// Standing at the KPP: the walk's reach, and the distance under which no walk is made (a client's join put
-// it there).
+// Standing at the KPP: the walk's reach, and the distance under which no walk is made (the arm's solo host
+// starts a New Game there).
 constexpr float kAtKppCm = 400.f;
 // Bounds, not waits: the walk to the gate, and the event's first kill. Each phase ends on its own line.
 constexpr int kWalkBoundSec = 300;
@@ -83,7 +83,7 @@ bool StandAtKpp() {
 
 void RunDeathBadSunArm(bool isClient) {
     UE_LOGI("death_test: BADSUN arm -- role=%s no-bed=%d", isClient ? "CLIENT" : "HOST",
-            coop::revive_target::BedLookupDisabled() ? 1 : 0);
+            coop::shelter_spot::BedLookupDisabled() ? 1 : 0);
     if (isClient) {
         // A client's own Spawn Bad Sun is refused by the lane (the drill's `cheat` arm), and the clock is the host's.
         Verdict("INCONCLUSIVE", "the arm starts the event with the host's own verbs; run it on the host");
@@ -139,11 +139,11 @@ void RunDeathBadSunArm(bool isClient) {
                 *ok = coop::death_revive::LastReviveSucceeded();
                 *j = JudgeRevivedLanding(s, kLandingTolCm);
             });
-            targetBed = *kind == static_cast<int>(coop::revive_target::Kind::Bed);
+            targetBed = *kind == static_cast<int>(coop::shelter_spot::Kind::Bed);
             reviveOk = *ok;
             std::snprintf(landing, sizeof(landing), "%s", j->detail);
             UE_LOGI("death_test: BADSUN the first revive: ok=%d kind=%s -- %s", reviveOk ? 1 : 0,
-                    coop::revive_target::KindName(static_cast<coop::revive_target::Kind>(*kind)), landing);
+                    coop::shelter_spot::KindName(static_cast<coop::shelter_spot::Kind>(*kind)), landing);
         }
         ::Sleep(kSampleMs);
     }

@@ -560,25 +560,25 @@ DeathSnapshot ReadDeathState() {
 
 LandingJudgement JudgeRevivedLanding(const DeathSnapshot& s, float toleranceCm) {
     LandingJudgement j;
-    const coop::revive_target::Target t = coop::death_revive::LastReviveTarget();
-    if (t.kind == coop::revive_target::Kind::None || !s.haveLoc) {
+    const coop::shelter_spot::Target t = coop::death_revive::LastReviveTarget();
+    if (t.kind == coop::shelter_spot::Kind::None || !s.haveLoc) {
         std::snprintf(j.detail, sizeof(j.detail), "no landing to grade: target kind=%s, location %s",
-                      coop::revive_target::KindName(t.kind), s.haveLoc ? "read" : "unread");
+                      coop::shelter_spot::KindName(t.kind), s.haveLoc ? "read" : "unread");
         return j;
     }
     const float dx = s.locX - t.x, dy = s.locY - t.y, dz = s.locZ - t.z;
     j.distCm = std::sqrt(dx * dx + dy * dy + dz * dz);
     // Cold path (once per verdict): the lookup is the one the revive itself ran.
     const bool bedExists = ue_wrap::sleep::NearestBed({P::name::kKPPSpawnX, P::name::kKPPSpawnY, P::name::kKPPSpawnZ}) != nullptr;
-    const coop::revive_target::Kind want = (bedExists && !coop::revive_target::BedLookupDisabled())
-                                               ? coop::revive_target::Kind::Bed
-                                               : coop::revive_target::Kind::KppFallback;
+    const coop::shelter_spot::Kind want = (bedExists && !coop::shelter_spot::BedLookupDisabled())
+                                               ? coop::shelter_spot::Kind::Bed
+                                               : coop::shelter_spot::Kind::KppFallback;
     j.pass = j.distCm <= toleranceCm && t.kind == want;
     std::snprintf(j.detail, sizeof(j.detail),
                   "target=%s (want %s; bed in world=%d) at (%.0f,%.0f,%.0f), the pawn %.0f cm from it (tol %.0f) -- "
                   "delta (%.0f,%.0f,%.0f), horiz %.0f vert %.0f, read back from the pawn, not inferred from the "
                   "teleport's return",
-                  coop::revive_target::KindName(t.kind), coop::revive_target::KindName(want), bedExists ? 1 : 0,
+                  coop::shelter_spot::KindName(t.kind), coop::shelter_spot::KindName(want), bedExists ? 1 : 0,
                   t.x, t.y, t.z, j.distCm, toleranceCm, dx, dy, dz, std::sqrt(dx * dx + dy * dy), dz);
     return j;
 }

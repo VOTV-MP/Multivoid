@@ -64,9 +64,8 @@ CFG_FLAG(client_world_first, "client_world_first", "dev", false, "VOTVCOOP_CLIEN
 CFG_FLAG(join_at_host, "join_at_host", "dev", false, "VOTVCOOP_JOIN_AT_HOST",
     "Drill (CLIENT): the join's first appearance keeps the transferred save's player transform, which "
     "is where the host stood, instead of this player's profile pose or the start point; a respawn "
-    "still goes to the start point. For a drill that needs the client at the base: from the start "
-    "point, a 770 m route, the director does not finish the walk on the rig. Off, the client appears "
-    "at its profile's pose or at the start point.")
+    "still goes to the start point. For a drill that needs the client beside the host, not at the "
+    "base's bed (the start point). Off, the client appears at its profile's pose or at the start point.")
 CFG_FLAG(rehost_rejoin, "rehost_rejoin", "dev", false, "VOTVCOOP_REHOST_REJOIN",
     "Drill (CLIENT): join the host again without restarting the game. At the main menu, with no "
     "session and no join in flight, a file named multivoid-rejoin.trigger beside the game exe is "

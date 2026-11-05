@@ -1,7 +1,7 @@
 // coop/dev/grid_drill_walk.h -- [dev] the grid drill's walk, beside grid_drill.cpp: a client that must stand
 // beside the drill's generator walks there by the director (a navmesh route, never a teleport) and measures that it
-// arrived within the reach the host judges a generator op with. A client joins at the world's start point, far from
-// the generators, so every arm that acts on the generator begins here. Src-local.
+// arrived within the reach the host judges a generator op with. A client joins at the world's start point (beside the
+// base bed), away from the generators, so every arm that acts on the generator begins here. Src-local.
 
 #pragma once
 

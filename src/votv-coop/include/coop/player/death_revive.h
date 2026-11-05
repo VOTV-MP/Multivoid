@@ -15,7 +15,7 @@
 
 #pragma once
 
-#include "coop/player/revive_target.h"
+#include "coop/player/shelter_spot.h"
 
 #include <cstdint>
 
@@ -76,7 +76,7 @@ bool LastReviveSucceeded();
 
 // Where the last revive put the player and by which rule (`bed` or `kpp-fallback`; kind None before
 // any revive of this session). A drill grades the landing against it. Game thread.
-coop::revive_target::Target LastReviveTarget();
+coop::shelter_spot::Target LastReviveTarget();
 
 // How many revives' screen cleanups have ended, cleared or given up; a cleanup cut short by another revive or a session
 // start is not counted. A drill waits on it rather than a clock. Any thread.

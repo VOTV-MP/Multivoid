@@ -203,7 +203,8 @@ starter items as copies under fresh keys, because the game's key index holds one
 key and a copy under its source's key aliases the original the moment either is dropped. The
 same profile carries the player's vitals (health, food, sleep, the flashlight charge, the food
 tolerances and the buffs), which the game keeps in place on that same save object, and where
-the player stood: a first join starts from the game's own defaults at the start point, a
+the player stood: a first join starts from the game's own defaults at the start point (beside the
+base's bed), a
 returning player gets their numbers back and appears at the last spot they were standing on
 (on the ground, not ragdolled, not seated: a position read while driving the ATV is not a place
 a body can be put back), and one who left dead starts a fresh life. The vitals and the position ride a change of the items at once and otherwise go every

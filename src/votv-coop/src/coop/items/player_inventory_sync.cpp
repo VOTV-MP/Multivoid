@@ -282,6 +282,8 @@ void OnSaveObjectReady(void* saveSlotObject) {
     if (g_joinPlacement == JoinPlacement::ProfilePose)
         placed = ue_wrap::vitals::WritePlayerTransform(saveSlotObject, g_joinPose.x, g_joinPose.y,
                                                        g_joinPose.z, g_joinPose.yaw);
+    // The start point's own spot (the base bed, shelter_spot) needs the world to find, and the world
+    // does not exist yet: the save gets the KPP, and the appearance moves the player to the bed's spot.
     else if (g_joinPlacement == JoinPlacement::StartPoint)
         placed = ue_wrap::vitals::WritePlayerTransform(saveSlotObject, N::kKPPSpawnX, N::kKPPSpawnY,
                                                        N::kKPPSpawnZ, 0.f);

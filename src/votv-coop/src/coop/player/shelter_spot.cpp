@@ -1,6 +1,6 @@
-// coop/player/revive_target.cpp -- see coop/player/revive_target.h.
+// coop/player/shelter_spot.cpp -- see coop/player/shelter_spot.h.
 
-#include "coop/player/revive_target.h"
+#include "coop/player/shelter_spot.h"
 
 #include "coop/config/config.h"
 #include "ue_wrap/actors/sleep.h"
@@ -12,7 +12,7 @@
 
 #include <atomic>
 
-namespace coop::revive_target {
+namespace coop::shelter_spot {
 namespace {
 
 namespace E = ue_wrap::engine;
@@ -28,7 +28,7 @@ std::atomic<bool> g_fallbackLogged{false};
 
 Target Fallback(const char* why) {
     if (!g_fallbackLogged.exchange(true, std::memory_order_relaxed))
-        UE_LOGW("revive_target: falling back to the KPP (open sky) -- %s", why);
+        UE_LOGW("shelter_spot: falling back to the KPP (open sky) -- %s", why);
     return {Kind::KppFallback, P::name::kKPPSpawnX, P::name::kKPPSpawnY, P::name::kKPPSpawnZ};
 }
 
@@ -49,7 +49,7 @@ Target Choose(void* pawn) {
         return Fallback("no NavMesh point within the query box of the bed");
     const float halfH = E::GetActorCharacterHalfHeight(pawn);
     if (halfH <= 0.f) return Fallback("the player's capsule half-height could not be read");
-    UE_LOGI("revive_target: bed %p at (%.0f,%.0f,%.0f) -> floor (%.0f,%.0f,%.0f), capsule half-height %.0f",
+    UE_LOGI("shelter_spot: bed %p at (%.0f,%.0f,%.0f) -> floor (%.0f,%.0f,%.0f), capsule half-height %.0f",
             bed, bedAt.X, bedAt.Y, bedAt.Z, floorAt.X, floorAt.Y, floorAt.Z, halfH);
     return {Kind::Bed, floorAt.X, floorAt.Y, floorAt.Z + halfH};
 }
@@ -61,4 +61,4 @@ bool BedLookupDisabled() {
 
 void OnSessionStart() { g_fallbackLogged.store(false, std::memory_order_relaxed); }
 
-}  // namespace coop::revive_target
+}  // namespace coop::shelter_spot
