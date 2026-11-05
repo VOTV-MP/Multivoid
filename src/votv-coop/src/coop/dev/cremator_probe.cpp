@@ -19,10 +19,13 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_component.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/engine/engine_nav.h"
+#include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
 #include <cmath>
@@ -148,19 +151,32 @@ namespace E = ue_wrap::engine;
 namespace V = ue_wrap::vitals;
 using namespace detail;
 
-enum class Step : uint8_t { Start, Walk, Lever, Run, PlacedOnly, Over };
+enum class Step : uint8_t { Start, Walk, StepIn, Lever, Run, PlacedOnly, Over };
 
 constexpr float kPullbackAtS = 40.f;
 constexpr float kSurvivedAtS = 90.f;
 constexpr float kPlaceOnlyEndS = 120.f;
 constexpr int kLinesAfterDeath = 10;
-constexpr float kFireboxReachCm = 50.f;
+// The NavMesh route to the firebox ends 103 cm from its centre (measured): the firebox interior is off the
+// NavMesh, so a walk to a smaller reach runs into its deadline. The last stretch is the step-in leg's.
+constexpr float kFireboxReachCm = 120.f;
+// A tick bound on an input leg that acts every tick; stepping over the lip takes far fewer.
+constexpr int kStepInMaxTicks = 240;
 // The walk's budget is the harness's meet walk's (harness/autotest/meet.cpp): twice a walk's pace over the
 // longer of the route and the line, plus a margin for the director's stuck episodes and the doors on the way.
 constexpr float kPaceCmPerSec = 300.f;
 constexpr int kRouteMarginSec = 60;
 
+namespace sg = ue_wrap::script_gate;
+
+// The cremator's own begin-overlap of its `burning` component: the event that collects the sitter.
+UE_FACT_FN(kRowBeginOverlap, "dev.cremator_probe", L"cremator_C",
+           L"BndEvt__cremator_burning_K2Node_ComponentBoundEvent_1_ComponentBeginOverlapSignature__DelegateSignature",
+           Declared);
+constexpr int kTagBeginOverlap = 0x43524D50;  // 'CRMP'
+
 std::atomic<coop::net::Session*> g_session{nullptr};
+std::atomic<int> g_stepped{0};  // the begin-overlap saw the local pawn enter the probe's cremator
 
 Step g_step = Step::Start;
 ue_wrap::CachedObjRef g_cremator;
@@ -174,6 +190,22 @@ int g_prevAnim = -1;
 bool g_pulledBack = false;
 bool g_died = false;
 int g_linesLeftAfterDeath = 0;
+int g_stepTicks = 0;
+
+// Post, on the game thread: the body has run, so the cremator's own begin-overlap handling is done.
+void OnBeginOverlapPost(const sg::Call& c) {
+    if (!c.object || !c.function || !c.locals || c.object != g_cremator.Get()) return;
+    static void* sFn = nullptr;
+    static int32_t sOtherOff = -1;
+    if (c.function != sFn) {
+        sFn = c.function;
+        sOtherOff = ue_wrap::reflection::FindParamOffset(c.function, L"OtherActor");
+    }
+    if (sOtherOff < 0) return;
+    void* other = nullptr;
+    std::memcpy(&other, c.locals + sOtherOff, sizeof(other));
+    if (other && other == coop::players::Registry::Get().Local()) g_stepped.store(1, std::memory_order_release);
+}
 
 void Fail(const char* why) {
     UE_LOGW("cremator-probe: FAIL %s", why);
@@ -246,15 +278,41 @@ void WalkTick() {
     const float dist = local && E::TryGetActorLocation(local, at) ? Between(at, g_fireboxAt) : -1.f;
     UE_LOGI("cremator-probe: WALKED in route=%.0f distToFirebox=%.0f", g_routeCm, dist);
     g_walk.reset();
-    if (ModeOf() == Mode::PlaceOnly) {
-        bool opened = false;
-        if (!ShutDoor(g_cremator.Get(), opened)) { Fail("the open door's close() did not run"); return; }
-        g_startMs = coop::net::NowMs();
-        g_nextSampleMs = g_startMs + kSampleMs;
-        g_step = Step::PlacedOnly;
+    g_stepTicks = 0;
+    UE_LOGI("cremator-probe: STEPIN start dist=%.0f", dist);
+    g_step = Step::StepIn;
+}
+
+// The walk ends on the NavMesh's edge, short of the firebox: the player steps over the lip with the input a human
+// gives, until the cremator's own begin-overlap says it is in.
+void StepInTick(void* local) {
+    ue_wrap::FVector at{};
+    if (!local || !E::TryGetActorLocation(local, at)) return;
+    const float dist = Between(at, g_fireboxAt);
+    if (g_stepped.load(std::memory_order_acquire)) {
+        UE_LOGI("cremator-probe: STEPPED in dist=%.0f ticks=%d", dist, g_stepTicks);
+        if (ModeOf() == Mode::PlaceOnly) {
+            bool opened = false;
+            if (!ShutDoor(g_cremator.Get(), opened)) { Fail("the open door's close() did not run"); return; }
+            g_startMs = coop::net::NowMs();
+            g_nextSampleMs = g_startMs + kSampleMs;
+            g_step = Step::PlacedOnly;
+            return;
+        }
+        g_step = Step::Lever;
         return;
     }
-    g_step = Step::Lever;
+    if (g_stepTicks >= kStepInMaxTicks) {
+        char why[96];
+        std::snprintf(why, sizeof(why), "stepin dist=%.0f ticks=%d", dist, kStepInMaxTicks);
+        Fail(why);
+        return;
+    }
+    ue_wrap::FVector dir{g_fireboxAt.X - at.X, g_fireboxAt.Y - at.Y, 0.f};
+    const float h = std::sqrt(dir.X * dir.X + dir.Y * dir.Y);
+    if (h > 1.f) { dir.X /= h; dir.Y /= h; }
+    E::AddMovementInput(local, dir, 1.0f, true);
+    ++g_stepTicks;
 }
 
 void LogSample(void* local, float t, const char* edge) {
@@ -357,6 +415,8 @@ void Reset() {
     if (g_walk && g_walk->state.load() == 0) coop::director::CancelBackgroundWalk(*g_walk);
     g_walk.reset();
     g_step = Step::Start;
+    g_stepped.store(0, std::memory_order_release);
+    g_stepTicks = 0;
     g_cremator.Reset();
     g_fireboxAt = {};
     g_routeCm = 0.f;
@@ -374,6 +434,12 @@ void Reset() {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    const Mode mode = ModeOf();
+    if (mode != Mode::Local && mode != Mode::PlaceOnly) return;
+    if (sg::WatchName(kRowBeginOverlap, kTagBeginOverlap, nullptr, &OnBeginOverlapPost))
+        UE_LOGI("cremator-probe: watching the cremator's begin-overlap");
+    else
+        UE_LOGW("cremator-probe: could not watch the cremator's begin-overlap");
 }
 
 void Tick() {
@@ -392,13 +458,14 @@ void Tick() {
     if (g_step == Step::Run) { RunTick(local); return; }
     if (g_step == Step::PlacedOnly) { PlacedOnlyTick(local); return; }
     if (g_step == Step::Walk) { WalkTick(); return; }
+    if (g_step == Step::StepIn) { StepInTick(local); return; }
     if (!local) return;
     if (g_step == Step::Start) StartTick(local);
     else LeverTick(local);
 }
 
 void OnDisconnect() {
-    if (g_step == Step::Walk || g_step == Step::Lever || g_step == Step::Run || g_step == Step::PlacedOnly)
+    if (g_step == Step::Walk || g_step == Step::StepIn || g_step == Step::Lever || g_step == Step::Run || g_step == Step::PlacedOnly)
         UE_LOGW("cremator-probe: FAIL the session ended mid-run");
     g_session.store(nullptr, std::memory_order_release);
     Reset();
