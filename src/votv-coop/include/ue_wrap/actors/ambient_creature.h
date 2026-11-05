@@ -1,6 +1,5 @@
-// ue_wrap/actors/ambient_creature.h -- the deer and the walking tree, the dirt holes and the beehive branches: their spawners,
-// a tree's size and landing, a deer's dissolve, a hole's place and the beehive's timer. Each class is read by reflection on
-// the game thread.
+// ue_wrap/actors/ambient_creature.h -- the deer and the walking tree, the dirt holes and the beehive branches: a tree's size
+// and landing, a deer's dissolve and a hole's place. Each class is read by reflection on the game thread.
 
 #pragma once
 
@@ -10,10 +9,7 @@
 
 namespace ue_wrap::ambient_creature {
 
-// The live spawners a client's tick poll parks: the deer's, the tree's, the hexahive's and the sus hole's.
-void ListSpawners(std::vector<void*>& out);
-
-// Their live creatures.
+// The live deer and walking trees.
 void ListDeer(std::vector<void*>& out);
 void ListTrees(std::vector<void*>& out);
 
@@ -41,12 +37,5 @@ bool HolesRoll();
 // The sus hole spawner's own test of a spot: a trace 10 m above `point` to 10 m below it against static geometry, kept when it
 // hits grass. `at` is the hit and `rot` its normal as a rotator, as the spawner places the hole. Game thread.
 bool HoleSpot(const FVector& point, FVector& at, FRotator& rot);
-
-// The beehive spawner's repeating timer, which has no tick to take off. True once a spawner stands and every one reads as asked:
-// the timer arms a moment into the world, so a pause before that takes nothing.
-bool PauseBeehiveTimers(bool paused);
-
-// Whether a spawner's timer stands paused; false with no spawner.
-bool BeehiveTimerPaused();
 
 }  // namespace ue_wrap::ambient_creature

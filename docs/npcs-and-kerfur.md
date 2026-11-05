@@ -74,9 +74,10 @@ leaving one leaves nothing to restore.
 | firefly, pinecone | left running | anchored on the local player's camera: each peer owns its roll and the others render a mirror |
 | eyer | left running | it stalks its own peer's player: each peer owns its eyer and the others render a mirror (`coop/creatures/owner_entity_sync`) |
 | underground garbage | left running | per-peer loot mounds; refusing one would delete a client's loot with no host replacement |
-| deer, walking tree | tick off, by a poll, and a creature of its own swept | they roll absolute map points, so the host rolls and the npc lane mirrors (`coop/creatures/ambient_creature_sync`). A refusal row would need the fingerprint table's maintainer, so the poll takes the tick off instead, and a tree rolled on the first tick before it is swept |
-| hexahive, sus hole | tick off, by a poll, and a hole of its own swept | a hexahive is a field of dirt holes and a sus hole is one more of the same class, so the host's holes cross by place (`coop/world/ambient_fixture_sync`). A sus hole's spawner rolls around the host's camera, so the host also makes its roll around each client's body on the spawner's own clock, every 5 to 10 minutes, 100 to 500 m off and on grass |
-| beehive | timer paused, by a poll, and a branch of its own swept | it runs on a repeating timer with no tick to take off. The host's branch crosses by place and its nest as a prop; the branches a client's load brought stay, as the host's save made them |
+| deer, walking tree | tick refused | they roll absolute map points, so the host rolls and the npc lane mirrors (`coop/creatures/ambient_creature_sync`); a client's own roll would be a second, unsynced creature |
+| hexahive | tick refused | a hexahive is a field of dirt holes, so the host's holes cross by place (`coop/world/ambient_fixture_sync`) |
+| beehive | the timer's handler (`spawn`) refused | it runs on a repeating timer with no tick to take off, so the row is on the handler. The host's branch crosses by place and its nest as a prop; the branches a client's load brought stay, as the host's save made them |
+| sus hole | left running | rolled by each peer around its own camera and made by the host: the host's holes cross by place (`coop/world/ambient_fixture_sync`) |
 | bp7, bush, tick, mannequin | left running | the product has no mirror of its own for these, and refusing a spawner whose output nothing replaces would just remove the content. The walking mannequin is the exception in the making: the host's walker already crosses as a plain prop mirror that runs a second brain on the client (measured on the rig), so the client's spawner stays running only until that mirror is parked and the host's walker is the one walker |
 
 ### The killer wisp

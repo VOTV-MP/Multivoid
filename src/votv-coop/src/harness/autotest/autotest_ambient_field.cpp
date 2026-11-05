@@ -320,13 +320,11 @@ void RunClient() {
         for (const wchar_t* cls : {L"ticker_hexahiveSpawner_C", L"ticker_susHoleSpawner_C"}) {
             void* t = FirstOf(cls);
             UE_LOGI("ambient-field: spawner '%ls' here=%d", cls, t ? 1 : 0);
-            Check(t && !E::IsActorTickEnabled(t), "this client's spawner is parked");
+            // W6 converts this step: the rows of coop/world/spawn_authority refuse the spawners, not a parked tick.
         }
     });
 
-    bool timerPaused = false;
-    OnGameThread([&] { timerPaused = AC::BeehiveTimerPaused(); });
-    Check(timerPaused, "this client's beehive timer is paused");
+    // W6 converts this step: the beehive spawner's refusal is a row of coop/world/spawn_authority, not a paused timer.
     Mark("client_in");
 
     // The save's branches stand with their nests: none was swept as this client's own.

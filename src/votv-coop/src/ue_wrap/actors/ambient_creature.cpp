@@ -4,7 +4,6 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/component_calls.h"
-#include "ue_wrap/core/kismet_timer.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -47,13 +46,6 @@ void SetVisible(void* comp, bool visible) {
 }
 
 }  // namespace
-
-void ListSpawners(std::vector<void*>& out) {
-    Collect(L"ticker_deerSpawner_C", out);
-    Collect(L"ticker_treeSpawner_C", out);
-    Collect(L"ticker_hexahiveSpawner_C", out);
-    Collect(L"ticker_susHoleSpawner_C", out);
-}
 
 void ListDeer(std::vector<void*>& out) { Collect(P::name::NpcClass_Deer, out); }
 
@@ -139,24 +131,6 @@ bool HoleSpot(const FVector& point, FVector& at, FRotator& rot) {
     const FVector& n = hit.normal;
     rot = FRotator{std::atan2(n.Z, std::sqrt(n.X * n.X + n.Y * n.Y)) * 57.29578f, std::atan2(n.Y, n.X) * 57.29578f, 0.f};
     return true;
-}
-
-bool PauseBeehiveTimers(bool paused) {
-    std::vector<void*> tickers;
-    Collect(L"ticker_beehiveSpawner_C", tickers);
-    bool settled = !tickers.empty();
-    for (void* t : tickers) {
-        if (paused) kismet_timer::Pause(t, L"Spawn");
-        else kismet_timer::UnPause(t, L"Spawn");
-        settled = settled && kismet_timer::IsPaused(t, L"Spawn") == paused;
-    }
-    return settled;
-}
-
-bool BeehiveTimerPaused() {
-    std::vector<void*> tickers;
-    Collect(L"ticker_beehiveSpawner_C", tickers);
-    return !tickers.empty() && kismet_timer::IsPaused(tickers[0], L"Spawn");
 }
 
 }  // namespace ue_wrap::ambient_creature

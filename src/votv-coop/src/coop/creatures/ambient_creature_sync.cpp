@@ -3,7 +3,6 @@
 #include "coop/creatures/ambient_creature_sync.h"
 
 #include "coop/creatures/npc_sync.h"
-#include "coop/element/mirror_managers.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -11,7 +10,6 @@
 
 #include "ue_wrap/actors/ambient_creature.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
 
@@ -28,7 +26,6 @@ namespace {
 
 namespace AC = ue_wrap::ambient_creature;
 namespace E = ue_wrap::engine;
-namespace R = ue_wrap::reflection;
 using Clock = std::chrono::steady_clock;
 
 constexpr auto  kHeartbeat = std::chrono::seconds(5);  // a mirror that came after the last send
@@ -36,8 +33,6 @@ constexpr float kDissolveCm = 5000.f;                  // deer_C's ReceiveTick c
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 coop::session::PollTimer g_poll{std::chrono::milliseconds(250)};
-
-bool g_parkedAny = false;
 
 // HOST: what went out last, by the tree's element.
 struct Sent {
@@ -82,39 +77,13 @@ void HostPoll(coop::net::Session& s, Clock::time_point now) {
         it = alive.count(it->first) ? std::next(it) : g_sent.erase(it);
 }
 
-void ClientPoll(coop::net::Session& /*s*/, Clock::time_point now) {
-    std::vector<void*> spawners;
-    AC::ListSpawners(spawners);
-    for (void* spawner : spawners) {
-        if (!E::IsActorTickEnabled(spawner)) continue;
-        E::SetActorTickEnabled(spawner, false);
-        g_parkedAny = true;
-        UE_LOGI("ambient_creature_sync: parked a spawner of '%ls'", R::ToString(R::NameOf(R::ClassOf(spawner))).c_str());
-    }
-
-    std::vector<coop::element::Npc*> mirrors;
-    coop::element::NpcMirrors().Snapshot(mirrors);
-    std::unordered_set<void*> tracked;
-    for (coop::element::Npc* m : mirrors)
-        if (m && m->GetActor()) tracked.insert(m->GetActor());
-
-    std::vector<void*> deer, trees;
+void ClientPoll(coop::net::Session& /*s*/, Clock::time_point /*now*/) {
+    std::vector<void*> deer;
     AC::ListDeer(deer);
-    AC::ListTrees(trees);
-    // One this client rolled before its spawner was parked, or that a load brought. Only these classes: the npc lane's own
-    // sweep would take a save's kerfur still waiting for its adoption.
-    auto sweep = [&tracked](void* a) {
-        if (tracked.count(a)) return false;
-        const bool gone = AC::Destroy(a);
-        UE_LOGI("ambient_creature_sync: swept this client's own '%ls' (%d)", R::ToString(R::NameOf(R::ClassOf(a))).c_str(), gone ? 1 : 0);
-        return true;
-    };
-    for (void* a : trees) sweep(a);
 
     const ue_wrap::FVector camera = E::GetCameraLocation();
     std::unordered_set<void*> stillDissolving;
     for (void* a : deer) {
-        if (sweep(a)) continue;
         if (g_dissolving.count(a)) {
             stillDissolving.insert(a);
             continue;
@@ -165,12 +134,6 @@ void QueueConnectBroadcastForSlot(int /*slot*/) {
 }
 
 void OnDisconnect() {
-    if (g_parkedAny) {
-        std::vector<void*> spawners;
-        AC::ListSpawners(spawners);
-        for (void* spawner : spawners) E::SetActorTickEnabled(spawner, true);
-    }
-    g_parkedAny = false;
     g_sent.clear();
     g_want.clear();
     g_dissolving.clear();

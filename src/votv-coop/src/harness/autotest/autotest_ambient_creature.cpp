@@ -221,8 +221,7 @@ void RunClient() {
         void* deerTicker = FirstOf(L"ticker_deerSpawner_C");
         void* treeTicker = FirstOf(L"ticker_treeSpawner_C");
         UE_LOGI("ambient-creature: client spawners deer=%d tree=%d", deerTicker ? 1 : 0, treeTicker ? 1 : 0);
-        Check(deerTicker && !E::IsActorTickEnabled(deerTicker), "this client's deer spawner is parked");
-        Check(treeTicker && !E::IsActorTickEnabled(treeTicker), "this client's tree spawner is parked");
+        // W6 converts this step: the four rows of coop/world/spawn_authority refuse the spawners, not a parked tick.
     });
 
     // A roll of this client's own does not stand.

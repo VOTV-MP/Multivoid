@@ -15,7 +15,6 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
-#include "ue_wrap/engine/world_identity.h"
 
 #include <atomic>
 #include <chrono>
@@ -40,7 +39,6 @@ constexpr float kAdoptCm = 50.f;        // a loaded branch at the host's place i
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 coop::session::PollTimer g_poll{std::chrono::milliseconds(250)};
-uint32_t g_beehiveWorld = 0;   // the world whose beehive timer this client has paused; 0 until it holds
 
 // HOST: each fixture's number and place, and whether it still has to go out.
 struct Known {
@@ -207,27 +205,17 @@ void ApplyInbox() {
 }
 
 void ClientPoll() {
-    const uint32_t world = ue_wrap::world_identity::Generation();
-    if (g_beehiveWorld != world && AC::PauseBeehiveTimers(true)) g_beehiveWorld = world;
-    // The save's branches come with its objects, late in the load: one read before then finds none, and a loaded branch swept
-    // as this client's own takes its nest down with it. The host's arrive after, onto what the load made.
+    // The save's branches come with its objects, late in the load: one read before then finds none. The host's arrive after,
+    // onto what the load made.
     if (!coop::net_pump::HasAnnouncedWorldReady() || coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle) return;
-    std::vector<void*> holes, branches;
-    List(holes, branches);
     if (!g_loadedRead) {
         g_loadedRead = true;
+        std::vector<void*> branches;
+        AC::ListBranches(branches);
         g_loaded.insert(branches.begin(), branches.end());
         UE_LOGI("ambient_fixture_sync: the load brought %zu branches", g_loaded.size());
     }
     ApplyInbox();
-    // After the inbox, so what it just made is a copy. The list was read before it, and a new copy is not on it.
-    auto sweep = [](void* a) {
-        if (g_spawned.count(a) || g_loaded.count(a)) return;
-        const bool gone = AC::Destroy(a);
-        UE_LOGI("ambient_fixture_sync: swept this client's own '%ls' (%d)", R::ToString(R::NameOf(R::ClassOf(a))).c_str(), gone ? 1 : 0);
-    };
-    for (void* a : holes) sweep(a);
-    for (void* a : branches) sweep(a);
 }
 
 }  // namespace
@@ -251,7 +239,6 @@ void QueueConnectBroadcastForSlot(int /*slot*/) {
 
 void OnDisconnect() {
     if (g_session.load() && g_session.load()->role() == coop::net::Role::Client) {
-        AC::PauseBeehiveTimers(false);
         for (void* a : g_spawned)
             if (R::IsLive(a)) AC::Destroy(a);
     }
@@ -264,7 +251,6 @@ void OnDisconnect() {
     g_spawned.clear();
     g_loaded.clear();
     g_loadedRead = false;
-    g_beehiveWorld = 0;
     g_session.store(nullptr);
 }
 
