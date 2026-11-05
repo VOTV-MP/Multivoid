@@ -15,6 +15,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/world/vent_crawler_sync.h"
 
+#include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/engine/engine.h"
@@ -56,12 +57,13 @@ struct CueDef {
     const char* name;             // log label, and the list_events row that fires it
     const wchar_t* row;           // ROW: the runEvent row name; BORN: nullptr
     const wchar_t* templateName;  // the UParticleSystem object the SpawnEmitter call uses
+    const wchar_t* assetPath;     // that template's asset, which a client loads when the game has not (the replay needs it)
     ue_wrap::FVector loc;         // ROW: where the body spawns it; BORN: unused, the component's place is sent
     bool born;
 };
 constexpr CueDef kCues[] = {
-    { "starRain", L"starRain", L"eff_shootingStar_rain", { 0.f, 0.f, 6000.f }, false },  // Meteor Shower / Shooting Star
-    { "stolasHeal", nullptr, L"eff_stolasHeal", { 0.f, 0.f, 0.f }, true },  // the growth area's glow at the plant it fertilizes
+    { "starRain", L"starRain", L"eff_shootingStar_rain", L"/Game/particles/eff_shootingStar_rain.eff_shootingStar_rain", { 0.f, 0.f, 6000.f }, false },  // Meteor Shower / Shooting Star
+    { "stolasHeal", nullptr, L"eff_stolasHeal", L"/Game/particles/eff_stolasHeal.eff_stolasHeal", { 0.f, 0.f, 0.f }, true },  // the growth area's glow at the plant it fertilizes
 };
 constexpr int kCueCount = static_cast<int>(sizeof(kCues) / sizeof(kCues[0]));
 
@@ -102,6 +104,19 @@ void* CueTemplate(int cueId) {
     if (!g_cueTemplates[cueId])
         g_cueTemplates[cueId] = R::FindObject(kCues[cueId].templateName, L"ParticleSystem");
     return g_cueTemplates[cueId];
+}
+
+// A client whose game has not loaded a cue's emitter (no class that spawns it has stood here yet) loads it by its asset
+// path for the replay, once per cue: the host's cue is not dropped for what the client has not met.
+bool g_loadTried[kCueCount] = {};
+void* LoadCueTemplate(int cueId) {
+    if (g_loadTried[cueId]) return nullptr;
+    g_loadTried[cueId] = true;
+    void* loaded = ue_wrap::asset_load::LoadObjectByPath(kCues[cueId].assetPath);
+    if (loaded) g_cueTemplates[cueId] = loaded;
+    UE_LOGI("event_cue: cue %d ('%s') emitter was not loaded here; loading %ls by its path %s", cueId, kCues[cueId].name,
+            kCues[cueId].assetPath, loaded ? "found it" : "did not find it");
+    return loaded;
 }
 
 bool ResolveSpawn() {
@@ -254,6 +269,7 @@ void OnReliable(const coop::net::EventCuePayload& payload) {
         return;
     }
     void* tmpl = CueTemplate(static_cast<int>(payload.cueId));
+    if (!tmpl) tmpl = LoadCueTemplate(static_cast<int>(payload.cueId));
     if (!tmpl) {
         UE_LOGW("event_cue: cue %u ('%s') template not loaded on this peer -- dropping",
                 payload.cueId, kCues[payload.cueId].name);

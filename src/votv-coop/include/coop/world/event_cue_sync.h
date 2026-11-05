@@ -33,7 +33,8 @@ namespace coop::event_cue_sync {
 // cueId is on the wire, so the registry is APPEND-ONLY.
 void Install(coop::net::Session* session);
 
-// CLIENT: replay a cue's emitter at the host's broadcast position. Game thread.
+// CLIENT: replay a cue's emitter at the host's broadcast position; an emitter the game has not loaded here is loaded by its asset
+// path first, once per cue. Game thread.
 void OnReliable(const coop::net::EventCuePayload& payload);
 
 // HOST, the answer to joining mid-event: at a joiner's world-ready edge, send every live cue
