@@ -12,6 +12,7 @@
 
 #include "harness/autotest.h"
 
+#include "harness/autotest/death_badsun_arm.h"
 #include "harness/autotest/death_state_probe.h"
 
 #include "coop/net/session.h"
@@ -256,6 +257,13 @@ DWORD WINAPI DeathTestThread(LPVOID) {
                 "state line above; a held canRagdoll, a set startInvinc/immortal, no gameplay "
                 "world, a client that never linked, or an arm that never became ready would "
                 "each swallow the run)");
+        UE_LOGI("death_test: DONE");
+        return 0;
+    }
+
+    // The Bad Sun arm is its own run: the event does the killing and the verdict is its own.
+    if (coop::config::ReadEnv("VOTVCOOP_DEATH_BADSUN") == "1") {
+        RunDeathBadSunArm(isClient);
         UE_LOGI("death_test: DONE");
         return 0;
     }
