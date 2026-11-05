@@ -10,8 +10,8 @@
 // teleports. Gated by VOTVCOOP_RUN_VENT_CRAWLER; the folder is VOTVCOOP_CAN_DIR.
 
 #include "harness/autotest.h"
+#include "harness/autotest/peer_signal.h"
 
-#include "coop/config/config.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/net_pump.h"
 #include "coop/world/event_fire_sync.h"
@@ -37,7 +37,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <functional>
 #include <sstream>
 #include <string>
@@ -51,31 +50,16 @@ namespace E = ue_wrap::engine;
 namespace PL = ue_wrap::passwordlock;
 namespace R = ue_wrap::reflection;
 
-std::string g_dir;
+namespace PS = harness::autotest::peer_signal;
+using PS::Await;
+using PS::AwaitText;
+using PS::Mark;
+
 int g_fails = 0;
 
 template <class Fn>
 void OnGameThread(Fn&& fn) {
     ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
-}
-
-void Mark(const char* name, const std::string& body = "x") {
-    std::string tmp = g_dir + "\\" + name + ".tmp";
-    { std::ofstream(tmp, std::ios::binary | std::ios::trunc) << body; }
-    ::MoveFileExA(tmp.c_str(), (g_dir + "\\" + name).c_str(), MOVEFILE_REPLACE_EXISTING);
-}
-
-bool Await(const char* name, std::string* body = nullptr, int seconds = 240) {
-    for (int i = 0; i < seconds * 10; ++i) {
-        std::ifstream f(g_dir + "\\" + name, std::ios::binary);
-        if (f) {
-            if (body) body->assign(std::istreambuf_iterator<char>(f), {});
-            return true;
-        }
-        ::Sleep(100);
-    }
-    UE_LOGW("crawler-drill: VERDICT ABORT -- no '%hs' from the other peer", name);
-    return false;
 }
 
 void Check(bool ok, const char* what) {
@@ -216,7 +200,7 @@ std::string Where(void* actor) {
 // ---- HOST ----------------------------------------------------------------------------------------------------------
 
 void RunHost() {
-    if (!Await("client_ready", nullptr, 400)) return;
+    if (!Await("client_ready", 400)) return;
     // The signal room door open, so the crawl's close has something to move.
     OnGameThread([&] {
         void* door = ue_wrap::keyed_objects::Resolve(L"basedoor_signalroom");
@@ -300,12 +284,12 @@ void RunClient() {
     ::Sleep(60000);   // past the join's catch-up window, as on day 5 long after a join
     Mark("client_ready");
     std::string host, row;
-    if (!Await("h_before", &host)) return;
+    if (!AwaitText("h_before", host)) return;
     OnGameThread([&] { row = StateRow(); });
     Compare(row, host, "before");
     Mark("c_before");
     std::string box;
-    if (!Await("h_spawn", &box)) return;
+    if (!AwaitText("h_spawn", box)) return;
     void* mirror = nullptr;
     Check(WaitFor([&] {
               ue_wrap::FVector at{};
@@ -367,7 +351,7 @@ void RunClient() {
     UE_LOGI("crawler-drill: the crawl played %u sounds here", sounds);
     Check(sounds >= 4, "the two vent steps, steps along the crawl and the metal break played here");
     std::string after;
-    if (!Await("h_after", &after, 120)) return;
+    if (!AwaitText("h_after", after, 120)) return;
     Check(WaitFor([&] { return Crawler() == nullptr; }, 5), "the crawler went here");
     ::Sleep(1000);
     OnGameThread([&] { row = StateRow(); });
@@ -379,11 +363,7 @@ void RunClient() {
 }  // namespace
 
 DWORD WINAPI VentCrawlerThread(LPVOID /*arg*/) {
-    g_dir = coop::config::ReadEnv("VOTVCOOP_CAN_DIR");
-    if (g_dir.empty()) {
-        UE_LOGW("crawler-drill: VERDICT ABORT -- VOTVCOOP_CAN_DIR is not set");
-        return 0;
-    }
+    if (!PS::Begin("crawler-drill")) return 0;
     if (!IsClientRole()) RunHost();
     else RunClient();
     return 0;
