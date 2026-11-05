@@ -8,6 +8,7 @@
 #include "coop/net/net_clock.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
 #include "coop/session/teleport_client.h"
 
@@ -157,7 +158,10 @@ void Fail(const char* why) {
 }
 
 void PlaceTick(void* local) {
-    if (!coop::net_pump::IsWorldSettled()) return;
+    // The predicate behind `rig: READY joined`: after the join's own start-point placement, which
+    // would otherwise move the player straight back out of the firebox.
+    if (!coop::net_pump::HasAnnouncedWorldReady() ||
+        coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle) return;
     ue_wrap::FVector pawnAt{};
     if (!E::TryGetActorLocation(local, pawnAt)) return;
     if (!OI::ClassByName(L"cremator_C")) { Fail("no cremator_C class"); return; }
