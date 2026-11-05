@@ -2,11 +2,12 @@
 // arm each. Included by config_registry_rows_dev.inc after its last row, as _dev_vulkan.inc is, so each row keeps its place
 // in every expansion of the list. The entry forms are config_registry_rows.inc's.
 
-CFG_ENUM(ambient_creature_red, "ambient_creature_red", "dev", "off", "off|no_rows|no_tree_state|no_deer_end", "VOTVCOOP_AMBIENT_CREATURE_RED",
+CFG_ENUM(ambient_creature_red, "ambient_creature_red", "dev", "off", "off|no_rows|no_tree_state|no_deer_end|no_deer_floor", "VOTVCOOP_AMBIENT_CREATURE_RED",
     "Developer red arm of the ambient creature drill: never set; set on BOTH peers. no_rows: a client's gate leaves the "
     "deer, tree, hexahive and beehive spawner rows out, so the drill's refusal check must FAIL on the counters left at "
     "0. no_tree_state: the host sends no tree state, so the client's tree must FAIL on its size and landing. "
-    "no_deer_end: the host never ends its second deer, so the client's mirror of it must FAIL to end.")
+    "no_deer_end: the host never ends its second deer, so the client's mirror of it must FAIL to end. "
+    "no_deer_floor (the client): a deer mirror's floor is never refreshed, so its lean must FAIL against the host's.")
 CFG_ENUM(ambient_field_red, "ambient_field_red", "dev", "off", "off|no_rows|no_bind|no_census", "VOTVCOOP_AMBIENT_FIELD_RED",
     "Developer red arm of the ambient field drill: never set; set on BOTH peers. no_rows: a client's gate leaves the "
     "hexahive and beehive spawner rows out, so the refusal check must FAIL. no_bind (the client): a loaded branch is "

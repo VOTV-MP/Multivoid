@@ -4,9 +4,10 @@
 // through the spawners' own bodies. The client must have one mirror of each, the tree's size and landing as the host's, a deer
 // that dissolves for its own viewer when the host brings it near, and its mirror of a second deer ends when the host's does. The
 // host judges both peers' counts and prints `ambient-creature: VERDICT`. The client reaches the host with the director.
-// Gated by VOTVCOOP_RUN_AMBIENT_CREATURE; the folder is VOTVCOOP_CAN_DIR. VOTVCOOP_DEER_AB=1 adds a measurement, never a
-// verdict term: a client mirror's actor tick on against off, the SpringArm's and the actor's rotation read on both peers each
-// frame while the host's deer walks. Red arms: VOTVCOOP_AMBIENT_CREATURE_RED.
+// Gated by VOTVCOOP_RUN_AMBIENT_CREATURE; the folder is VOTVCOOP_CAN_DIR. The deer A/B reads the SpringArm's and the actor's
+// rotation on both peers each frame while the host's deer walks, a client mirror's actor tick off for one window and on (as
+// built) for the next. The mirror's lean in the tick-on window is a verdict term: it must be the host's within kTiltTolerance.
+// Red arms: VOTVCOOP_AMBIENT_CREATURE_RED.
 
 #include "harness/autotest.h"
 #include "harness/autotest/meet.h"
@@ -288,6 +289,7 @@ void PrintYawLagged(const std::vector<Sample>& host, const std::vector<Sample>& 
 }
 
 constexpr double kAbSeconds = 5.0;
+constexpr double kTiltTolerance = 5.0;  // degrees between the mirror's mean lean and the host deer's
 
 void HostAb(void* deer) {
     Mark("ab_a_go");
@@ -303,19 +305,29 @@ void HostAb(void* deer) {
     PrintRel("client", "on", clientOn);
     PrintYawLagged(off, clientOff, "off");
     PrintYawLagged(on, clientOn, "on");
+
+    // The mirror's tick runs on a floor its pose drive refreshes, so its body leans as the host deer's does. The host's
+    // window of the same name is the one concurrent with the client's tick-on window.
+    const Rel host = Relative(on), mirror = Relative(clientOn);
+    const double hostTilt = host.n ? host.sumTilt / static_cast<double>(host.n) : -1.0;
+    const double mirrorTilt = mirror.n ? mirror.sumTilt / static_cast<double>(mirror.n) : -1.0;
+    UE_LOGI("deer-ab: tilt term host mean=%.2f mirror mean=%.2f tolerance=%.1f", hostTilt, mirrorTilt, kTiltTolerance);
+    Check(host.n > 0 && mirror.n > 0 && std::fabs(mirrorTilt - hostTilt) <= kTiltTolerance,
+          "the deer mirror's lean is the host deer's");
 }
 
+// The mirror is built with its actor tick on: the off window takes it off, and the on window leaves it as built.
 void ClientAb(uint32_t eid) {
     if (!Await("ab_a_go", 60)) return;
+    OnGameThread([&] {
+        if (void* m = Mirror(eid)) E::SetActorTickEnabled(m, false);
+    });
     const std::vector<Sample> off = Window([&] { return Mirror(eid); }, kAbSeconds);
     OnGameThread([&] {
         if (void* m = Mirror(eid)) E::SetActorTickEnabled(m, true);
     });
     Mark("ab_b_go");
     const std::vector<Sample> on = Window([&] { return Mirror(eid); }, kAbSeconds);
-    OnGameThread([&] {
-        if (void* m = Mirror(eid)) E::SetActorTickEnabled(m, false);
-    });
     PrintRel("client", "off", off);
     PrintRel("client", "on", on);
     Mark("ab_a_samples", Pack(off));
@@ -325,7 +337,6 @@ void ClientAb(uint32_t eid) {
 // ---- the host ----
 
 void HostBody() {
-    const bool ab = coop::config::ReadEnv("VOTVCOOP_DEER_AB") == "1";
     if (!Await("client_ready", 480)) return;
 
     // The tree: one real roll, then its fall and landing.
@@ -371,7 +382,7 @@ void HostBody() {
     OnGameThread([&] { deers = Live(true).size(); });
     Mark("deer", std::to_string(deerEid) + " " + std::to_string(deers));
     if (!Await("deer_mirror", 120)) return;
-    if (ab) HostAb(deer);
+    HostAb(deer);
 
     // Beside both players, with the host's own dissolve off: only the client's can end it. The host places a deer, not a peer.
     ue_wrap::FVector me{};
@@ -512,7 +523,7 @@ bool ClientBody() {
     OnGameThread([&] { deers = Live(true).size(); });
     Check(deers == hostDeer, "one mirror of the host's deer stands here");
     Mark("deer_mirror");
-    if (coop::config::ReadEnv("VOTVCOOP_DEER_AB") == "1") ClientAb(deerEid);
+    ClientAb(deerEid);
 
     // The host brings it near: it dissolves for this viewer alone, in this same world.
     if (!Await("deer_near", 240)) return false;

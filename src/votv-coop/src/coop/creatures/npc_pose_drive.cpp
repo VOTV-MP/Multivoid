@@ -9,6 +9,8 @@
 // as the player puppet). The mirror's CMC tick is parked at spawn (npc_mirror) so this drive
 // is authoritative -- no integration fight.
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/element/npc.h"
 
 #include "coop/net/protocol.h"
@@ -175,6 +177,10 @@ void Npc::RefreshFloor(void* actor) {
         const float dx = curPos_.X - floorAt_.X, dy = curPos_.Y - floorAt_.Y, dz = curPos_.Z - floorAt_.Z;
         if (dx * dx + dy * dy + dz * dz < kFloorRefreshCm * kFloorRefreshCm) return;
     }
+    // The creature drill's red arm: a floor mirror's floor is never refreshed, so the drill's lean term must FAIL.
+    static const bool s_redNoDeerFloor =
+        coop::config::ResolveEnum(coop::config_registry::rows::ambient_creature_red) == "no_deer_floor";
+    if (s_redNoDeerFloor) return;
     // The location write has landed, so the capsule is where the sweep starts: an ACharacter's capsule is its root.
     if (!ue_wrap::character_floor::Refresh(actor, curPos_)) return;  // not taken: asked again at the next pose
     floorAt_ = curPos_;
