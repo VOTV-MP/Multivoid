@@ -351,10 +351,11 @@ void RunHost() {
     const int clientFails = ParseFails(clientText);
     Mark("host_ack");   // now watching slot 1: life 1 may end
     if (!PS::WaitFor("the client's life 1 gone from slot 1", 300, [life1Gen] {
-            return harness::session_runtime::Session().peerGenerationForSlot(1) != life1Gen;
+            auto& s = harness::session_runtime::Session();
+            return !s.IsSlotConnected(1) || s.peerGenerationForSlot(1) != life1Gen;
         }))
         return;
-    const bool absent = harness::session_runtime::Session().peerGenerationForSlot(1) == 0;
+    const bool absent = !harness::session_runtime::Session().IsSlotConnected(1);
     CoffeeSpill(60.f);
     UE_LOGI("spill-drill: the host spilled with the client %s", absent ? "absent" : "already back (a weaker run)");
     // The rejoined life's drill begins when its process boots: it leaves rejoin_ready once its world is up, and only
@@ -553,6 +554,14 @@ void RunClient() {
     // The DONE line is the rig's cue to kill this life: printed only once the host watches slot 1, so the host's
     // E spill lands while this player is away (without it every run measured the client already back).
     Await("host_ack", 60);
+    // A killed process only stops sending, and the host learns of it when the next life connects: life 1 leaves
+    // as a player's quit does (network first), so the host sees slot 1 empty at once (measured: "left" and the next
+    // life's latch in the same second).
+    OnGameThread([] {
+        auto& s = harness::session_runtime::Session();
+        if (s.running()) coop::net_pump::FleeAfterNativeMenuTravel(s, "spill drill: life 1 leaves for the rejoin");
+    });
+    PS::WaitFor("this life's session stopped", 15, [] { return !harness::session_runtime::Session().running(); }, false);
     UE_LOGI("spill-drill: DONE on client fails=%d", g_fails);
 }
 
