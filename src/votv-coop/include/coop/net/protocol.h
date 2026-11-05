@@ -1245,6 +1245,13 @@ enum class ReliableKind : uint8_t {
     // CLIENT->HOST: a bottle in this client's player's hand poured. Never relayed; the host plays it and sends it on as a
     // SpillPour naming this client. SpillPourPayload.
     SpillPourIntent = 215,
+    // HOST->CLIENT: where the vent crawler's crawl stands (VentCrawlStatePayload): 1 under way, with the seconds since
+    // its cue, or 2 over; a crawl not begun is never sent. The cue (EventCue 102) is the live start; this is what a peer
+    // that joined after it needs, so its vent, signal room door power and sounds are the host's. Sent by the join replay
+    // to the joiner's slot alone. Host-authored: a client's copy is refused at the host's receive edge; never relayed;
+    // Default lane, held until the joiner's world is ready (not pre-world). Late join: this is it, one message at the
+    // joiner's world-ready edge when a crawl began in this world.
+    VentCrawlState = 216,
 };
 
 #pragma pack(push, 1)
@@ -4232,6 +4239,15 @@ struct SpillPourPayload {
     uint8_t _pad[2];       // 2 -- zero
 };
 static_assert(sizeof(SpillPourPayload) == 16, "SpillPourPayload must be 16 bytes");
+
+// A vent crawl's state for a joiner (VentCrawlState).
+struct VentCrawlStatePayload {
+    float   elapsed;       // 4 -- seconds since the crawl's cue on the host (phase 1)
+    uint8_t phase;         // 1 -- 1 crawling, 2 over (0, none, is never sent)
+    uint8_t doorActive;    // 1 -- the signal room door's `active` on the host
+    uint8_t _pad[2];       // 2 -- zero
+};
+static_assert(sizeof(VentCrawlStatePayload) == 8, "VentCrawlStatePayload must be 8 bytes");
 static_assert(sizeof(StatQueryReplyPayload) <= 256 - 20 - 8,
               "StatQueryReplyPayload must fit in one reliable datagram");
 

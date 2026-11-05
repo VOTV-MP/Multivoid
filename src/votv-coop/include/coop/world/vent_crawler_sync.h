@@ -6,7 +6,10 @@
 // burst, and the signal room door's power, which the crawl writes as a field. The host watches the crawler's box
 // overlap, whose first call starts the crawl, and sends one EventCue; the client plays the rest on the crawl's own
 // schedule: the steps 2 and 2.5 s after it, the timeline 5 s after it, its events at the times and with the volume
-// and pitch its own tracks give, read from the mirror's timeline. Game thread.
+// and pitch its own tracks give, read from the mirror's timeline. A client that joins after the cue is told where the
+// crawl stands (VentCrawlState, sent by the join replay): a crawl under way starts its show as if the cue arrived that
+// many seconds ago, a crawl over puts the vent at its swing's end, frozen, and the door's power as the host has it.
+// Game thread.
 
 #pragma once
 
@@ -15,6 +18,7 @@
 namespace coop::net {
 class Session;
 struct EventCuePayload;
+struct VentCrawlStatePayload;
 }  // namespace coop::net
 
 namespace coop::vent_crawler_sync {
@@ -30,6 +34,12 @@ void Tick();
 
 // CLIENT: the host's cue. False when the id is not this lane's.
 bool OnCue(const coop::net::EventCuePayload& p);
+
+// HOST, the join replay at a joiner's world-ready: one VentCrawlState to `slot` when a crawl began in this world.
+void QueueConnectBroadcastForSlot(int slot);
+
+// CLIENT: the host's VentCrawlState. Judged here (finite elapsed within the show's limit, phase 1 or 2).
+void OnState(const coop::net::VentCrawlStatePayload& p);
 
 // The crawl's sounds this client has played, for the drill.
 unsigned SoundsPlayed();

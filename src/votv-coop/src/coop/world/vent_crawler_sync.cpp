@@ -27,6 +27,7 @@
 #include "ue_wrap/devices/door.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_audio.h"
+#include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/facts/function_row.h"
 #include "ue_wrap/world/keyed_objects.h"
 
@@ -62,6 +63,14 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_watched = false, g_live = false;
 std::vector<std::pair<int32_t, int32_t>> g_started;   // the host's crawlers whose crawl was sent, by index and serial
 uint32_t g_sent = 0;
+
+// HOST: the crawl a joiner is told of. Stamped with the world it began in, so a crawl of an earlier world is no state.
+struct HostCrawl {
+    bool began = false;
+    uint32_t world = 0;
+    Clock::time_point t0{};                 // when its cue was sent
+    std::pair<int32_t, int32_t> crawler{-1, 0};   // the host's crawler: gone, the crawl is over
+} g_host;
 std::atomic<unsigned> g_sounds{0};
 uint32_t g_bursts = 0;
 
@@ -86,8 +95,17 @@ void OnOverlapPost(const SG::Call& call) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Host || !call.object || !R::IsLive(call.object)) return;
     const auto id = IdOf(call.object);
+    const uint32_t world = ue_wrap::world_identity::Generation();
+    if (g_host.world != world) {   // another world: its crawls start again
+        g_host = HostCrawl{};
+        g_started.clear();
+    }
     if (std::find(g_started.begin(), g_started.end(), id) != g_started.end()) return;
     g_started.push_back(id);
+    g_host.began = true;
+    g_host.world = world;
+    g_host.t0 = Clock::now();
+    g_host.crawler = id;
     ue_wrap::FVector at{};
     E::TryGetActorLocation(call.object, at);
     coop::net::EventCuePayload p{};
@@ -312,7 +330,10 @@ void DoorPower(bool on) {
 struct Show {
     bool on = false;
     Clock::time_point t0{};
-    std::pair<int32_t, int32_t> crawler{-1, 0};
+    std::pair<int32_t, int32_t> crawler{-1, 0};   // the mirror; index -1 until one is found
+    ue_wrap::FVector near{};                      // where the mirror is looked for
+    Clock::time_point lastLook{};
+    float catchUp = 0.f;   // the timeline's seconds already gone when the show began: its events are state, not sound
     bool step1 = false, step2 = false, timelineRead = false, powerOff = false;
     float last = -1.f;   // the timeline's time already played
     std::vector<Event> events;
@@ -374,6 +395,7 @@ bool OnCue(const coop::net::EventCuePayload& p) {
     void* crawler = MirrorNear({p.x, p.y, p.z});
     g_show.on = true;
     g_show.t0 = Clock::now();
+    g_show.near = {p.x, p.y, p.z};
     g_show.crawler = crawler ? IdOf(crawler) : std::pair<int32_t, int32_t>{-1, 0};
     DoorPower(false);
     g_show.powerOff = true;
@@ -383,11 +405,98 @@ bool OnCue(const coop::net::EventCuePayload& p) {
     return true;
 }
 
+namespace {
+
+// Where the vent hangs and where its swing ends, as the crawler's blueprint holds them (vent_A, vent_B on the
+// class default object: the BeginPlay composition's result, since B is A moved 15 cm up its own z and turned). A joiner's
+// vent may already have moved with the crawl, so its own pose is no start.
+bool CrawlerVentEnds(ue_wrap::FTransform& a, ue_wrap::FTransform& b) {
+    void* cdo = R::FindClassDefaultObject(L"ventCrawler_C");
+    void* cls = cdo ? R::ClassOf(cdo) : nullptr;
+    const int32_t oa = cls ? R::FindPropertyOffset(cls, L"vent_A") : -1;
+    const int32_t ob = cls ? R::FindPropertyOffset(cls, L"vent_B") : -1;
+    if (oa < 0 || ob < 0) return false;
+    std::memcpy(&a, static_cast<const uint8_t*>(cdo) + oa, sizeof(a));
+    std::memcpy(&b, static_cast<const uint8_t*>(cdo) + ob, sizeof(b));
+    return true;
+}
+
+}  // namespace
+
+void QueueConnectBroadcastForSlot(int slot) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() != coop::net::Role::Host || !g_host.began || g_host.world != ue_wrap::world_identity::Generation())
+        return;
+    coop::net::VentCrawlStatePayload p{};
+    // The crawler is destroyed at the crawl's own end; its weak id no longer resolves then.
+    void* live = Resolve(g_host.crawler);
+    p.phase = live && R::IsLive(live) ? 1 : 2;
+    const float elapsed = std::chrono::duration<float>(Clock::now() - g_host.t0).count();
+    p.elapsed = (std::min)((std::max)(elapsed, 0.f), kShowLimit);
+    // The door's power is a field the crawl writes from its graph, so it is read, not remembered.
+    bool on = false;
+    void* door = ue_wrap::keyed_objects::Resolve(L"basedoor_signalroom");
+    if (!door || !ue_wrap::door::TryReadActive(door, on)) {
+        UE_LOGW("vent_crawler: the signal room door's power did not read -- no crawl state for slot %d", slot);
+        return;
+    }
+    p.doorActive = on ? 1 : 0;
+    if (s->SendReliableToSlot(slot, coop::net::ReliableKind::VentCrawlState, &p, sizeof(p)))
+        UE_LOGI("vent_crawler: the crawl's state to slot %d -- phase %u, %.1f s in, door power %u", slot,
+                static_cast<unsigned>(p.phase), p.elapsed, static_cast<unsigned>(p.doorActive));
+}
+
+void OnState(const coop::net::VentCrawlStatePayload& p) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() != coop::net::Role::Client) return;
+    if (!std::isfinite(p.elapsed) || p.elapsed < 0.f || p.elapsed > kShowLimit || p.phase < 1 || p.phase > 2 ||
+        p.doorActive > 1) {
+        UE_LOGW("vent_crawler: a malformed crawl state (elapsed %f, phase %u, door %u) -- dropping", p.elapsed,
+                static_cast<unsigned>(p.phase), static_cast<unsigned>(p.doorActive));
+        return;
+    }
+    if (g_show.on) EndShow("a crawl state");
+    ue_wrap::FTransform a{}, b{};
+    const bool ends = CrawlerVentEnds(a, b);
+    void* vent = ue_wrap::keyed_objects::Resolve(L"ventHanging");
+    if (p.phase == 2) {
+        DoorPower(p.doorActive != 0);
+        if (vent && ends) {
+            SetActorTransform(vent, b);
+            ue_wrap::prop::CallSetPropProps(vent, false, true, false);
+        }
+        UE_LOGI("vent_crawler: the host's crawl is over -- vent %s, door power %u", vent && ends ? "at its end, frozen" : "left",
+                static_cast<unsigned>(p.doorActive));
+        return;
+    }
+    g_show.on = true;
+    g_show.t0 = Clock::now() - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(p.elapsed));
+    g_show.near = {};   // the crawler is the only one there is
+    g_show.catchUp = (std::max)(p.elapsed - kTimeline, 0.f);
+    g_show.step1 = p.elapsed >= kStep1;
+    g_show.step2 = p.elapsed >= kStep2;
+    DoorPower(p.doorActive != 0);
+    g_show.powerOff = p.doorActive == 0;
+    g_show.haveVent = vent && ends;
+    g_show.ventA = a;
+    g_show.ventB = b;
+    void* crawler = MirrorNear(g_show.near);
+    g_show.crawler = crawler ? IdOf(crawler) : std::pair<int32_t, int32_t>{-1, 0};
+    UE_LOGI("vent_crawler: joined %.1f s into the host's crawl, door power %u -- mirror %p", p.elapsed,
+            static_cast<unsigned>(p.doorActive), crawler);
+}
+
 void Tick() {
     if (!g_show.on) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Client) return;
-    const float t = std::chrono::duration<float>(Clock::now() - g_show.t0).count();
+    const Clock::time_point tickAt = Clock::now();
+    const float t = std::chrono::duration<float>(tickAt - g_show.t0).count();
+    // A mirror not there when the show began (a joiner's, still spawning) is asked for once a second.
+    if (g_show.crawler.first < 0 && tickAt - g_show.lastLook >= std::chrono::seconds(1)) {
+        g_show.lastLook = tickAt;
+        if (void* found = MirrorNear(g_show.near)) g_show.crawler = IdOf(found);
+    }
     void* crawler = Resolve(g_show.crawler);
     void* vent = ue_wrap::keyed_objects::Resolve(L"ventHanging");
     if (g_show.swinging && vent) {
@@ -403,7 +512,7 @@ void Tick() {
         }
     }
     if (g_show.swinging) return;   // the swing outlives the mirror
-    if ((!crawler && t > kTimeline) || t > kShowLimit) {
+    if ((g_show.crawler.first >= 0 && !crawler && t > kTimeline) || t > kShowLimit) {
         EndShow(crawler ? "out of time" : "the mirror went");
         return;
     }
@@ -429,14 +538,17 @@ void Tick() {
     const float tl = t - kTimeline;
     for (const Event& e : g_show.events) {
         if (e.time <= g_show.last || e.time > tl) continue;
+        const bool gone = e.time <= g_show.catchUp;   // before the show began: its state counts, its sound does not
         if (e.step) {
-            if (!E::TryGetActorLocation(crawler, at)) continue;
+            if (gone || !E::TryGetActorLocation(crawler, at)) continue;
             const float volume = TrackAt(g_show.tracks, L"stepvolume", e.time, 1.f) *
                                  TrackAt(g_show.tracks, L"multiplyvolume", e.time, 1.f);
             PlayAt(L"footstepVent_Cue", L"att_default_noao", at, volume, TrackAt(g_show.tracks, L"pitch", e.time, 1.f));
         } else if (haveVent) {
-            PlayAt(L"break_metal_1", L"att_default", {ventAt.X, ventAt.Y, ventAt.Z - 50.f}, 0.5f, 1.25f);
-            Burst({ventAt.X, ventAt.Y, ventAt.Z + 25.f});
+            if (!gone) {
+                PlayAt(L"break_metal_1", L"att_default", {ventAt.X, ventAt.Y, ventAt.Z - 50.f}, 0.5f, 1.25f);
+                Burst({ventAt.X, ventAt.Y, ventAt.Z + 25.f});
+            }
             DoorPower(true);
             g_show.powerOff = false;
             std::vector<Event> none;
@@ -458,6 +570,7 @@ void OnDisconnect() {
     if (g_sent || g_sounds.load() || g_bursts)
         UE_LOGI("vent_crawler: session end -- crawls sent=%u sounds=%u bursts=%u", g_sent, g_sounds.load(), g_bursts);
     g_started.clear();
+    g_host = HostCrawl{};
     g_sent = g_bursts = 0;
     g_sounds.store(0);
 }

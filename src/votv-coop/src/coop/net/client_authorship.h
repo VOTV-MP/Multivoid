@@ -238,6 +238,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::DevLoadFiller:
     case ReliableKind::SpillState:
     case ReliableKind::SpillPour:
+    case ReliableKind::VentCrawlState:
         return ClientAuthorship::Host;
     }
     return ClientAuthorship::NotAKind;  // a byte value that names no kind: refused like Host
