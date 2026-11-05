@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 269;
+inline constexpr uint16_t kProtocolVersion = 270;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -4243,11 +4243,11 @@ static_assert(sizeof(SpillPourPayload) == 16, "SpillPourPayload must be 16 bytes
 // A vent crawl's state for a joiner (VentCrawlState).
 struct VentCrawlStatePayload {
     float   elapsed;       // 4 -- seconds since the crawl's cue on the host (phase 1)
-    float   ventLoc[3];    // 12 -- the hanging vent's world location on the host (phase 2, hasVent)
-    float   ventRot[3];    // 12 -- its world rotation: pitch, yaw, roll in degrees
+    float   ventLoc[3];    // 12 -- the hanging vent's world location on the host: phase 1 at the crawl's start, phase 2 its end
+    float   ventRot[3];    // 12 -- its world rotation: pitch, yaw, roll in degrees (the same two poses)
     uint8_t phase;         // 1 -- 1 crawling, 2 over (0, none, is never sent)
     uint8_t doorActive;    // 1 -- the signal room door's `active` on the host
-    uint8_t hasVent;       // 1 -- the host's vent was read: ventLoc and ventRot hold its end pose
+    uint8_t hasVent;       // 1 -- the host's vent was read: ventLoc and ventRot hold the pose of its phase
     uint8_t _pad;          // 1 -- zero
 };
 static_assert(sizeof(VentCrawlStatePayload) == 32, "VentCrawlStatePayload must be 32 bytes");

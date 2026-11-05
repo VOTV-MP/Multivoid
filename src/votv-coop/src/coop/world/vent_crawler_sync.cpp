@@ -72,6 +72,9 @@ struct HostCrawl {
     uint32_t world = 0;
     Clock::time_point t0{};                 // when its cue was sent
     std::pair<int32_t, int32_t> crawler{-1, 0};   // the host's crawler: gone, the crawl is over
+    bool haveVentStart = false;             // the hanging vent's pose was read when the crawl began
+    ue_wrap::FVector ventLoc{};             // where the vent hung at the crawl's start: the swing's A
+    ue_wrap::FRotator ventRot{};
 } g_host;
 std::atomic<unsigned> g_sounds{0};
 std::atomic<unsigned> g_states{0};   // crawl states accepted from the host
@@ -109,6 +112,10 @@ void OnOverlapPost(const SG::Call& call) {
     g_host.world = world;
     g_host.t0 = Clock::now();
     g_host.crawler = id;
+    // The vent hangs where its swing starts until the crawl's break; a joiner mid-crawl is owed that pose.
+    void* vent = ue_wrap::keyed_objects::Resolve(L"ventHanging");
+    g_host.haveVentStart =
+        vent && E::TryGetActorLocation(vent, g_host.ventLoc) && E::TryGetActorRotation(vent, g_host.ventRot);
     ue_wrap::FVector at{};
     E::TryGetActorLocation(call.object, at);
     coop::net::EventCuePayload p{};
@@ -410,20 +417,6 @@ bool OnCue(const coop::net::EventCuePayload& p) {
 
 namespace {
 
-// Where the vent hangs and where its swing ends, as the crawler's blueprint holds them (vent_A, vent_B on the
-// class default object: the BeginPlay composition's result, since B is A moved 15 cm up its own z and turned). A joiner's
-// vent may already have moved with the crawl, so its own pose is no start.
-bool CrawlerVentEnds(ue_wrap::FTransform& a, ue_wrap::FTransform& b) {
-    void* cdo = R::FindClassDefaultObject(L"ventCrawler_C");
-    void* cls = cdo ? R::ClassOf(cdo) : nullptr;
-    const int32_t oa = cls ? R::FindPropertyOffset(cls, L"vent_A") : -1;
-    const int32_t ob = cls ? R::FindPropertyOffset(cls, L"vent_B") : -1;
-    if (oa < 0 || ob < 0) return false;
-    std::memcpy(&a, static_cast<const uint8_t*>(cdo) + oa, sizeof(a));
-    std::memcpy(&b, static_cast<const uint8_t*>(cdo) + ob, sizeof(b));
-    return true;
-}
-
 // The receive boundary of the host's vent pose: finite, inside the world, and a turn in degrees.
 bool VentPoseSane(const coop::net::VentCrawlStatePayload& p) {
     for (int i = 0; i < 3; ++i) {
@@ -433,18 +426,23 @@ bool VentPoseSane(const coop::net::VentCrawlStatePayload& p) {
     return true;
 }
 
-// Puts the vent at the pose the host sent, keeping the scale it has here.
-bool PlaceVentAt(void* vent, const coop::net::VentCrawlStatePayload& p) {
-    ue_wrap::FTransform cur{}, to{};
+// The pose the host sent, as a transform with the scale `vent` has here.
+bool HostVentPose(void* vent, const coop::net::VentCrawlStatePayload& p, ue_wrap::FTransform& to) {
+    ue_wrap::FTransform cur{};
     if (!ActorTransform(vent, cur)) return false;
     const ue_wrap::FVector loc{p.ventLoc[0], p.ventLoc[1], p.ventLoc[2]};
     const ue_wrap::FRotator rot{p.ventRot[0], p.ventRot[1], p.ventRot[2]};
     const ue_wrap::FVector scale{cur.SX, cur.SY, cur.SZ};
     return MathCall(L"MakeTransform", [&](ue_wrap::ParamFrame& f) {
-               return f.SetRaw(L"Location", &loc, sizeof(loc)) && f.SetRaw(L"Rotation", &rot, sizeof(rot)) &&
-                      f.SetRaw(L"Scale", &scale, sizeof(scale));
-           }, to) &&
-           SetActorTransform(vent, to);
+        return f.SetRaw(L"Location", &loc, sizeof(loc)) && f.SetRaw(L"Rotation", &rot, sizeof(rot)) &&
+               f.SetRaw(L"Scale", &scale, sizeof(scale));
+    }, to);
+}
+
+// Puts the vent at the pose the host sent, keeping the scale it has here.
+bool PlaceVentAt(void* vent, const coop::net::VentCrawlStatePayload& p) {
+    ue_wrap::FTransform to{};
+    return HostVentPose(vent, p, to) && SetActorTransform(vent, to);
 }
 
 }  // namespace
@@ -467,8 +465,19 @@ void QueueConnectBroadcastForSlot(int slot) {
         return;
     }
     p.doorActive = on ? 1 : 0;
-    // A crawl that is over left the vent at its end pose, which only the host's own vent holds exactly.
-    if (p.phase == 2) {
+    // A crawl under way sends the pose the vent hung at when it began (the swing's A, which the joiner's B follows
+    // from); a crawl that is over left the vent at its end pose, which only the host's own vent holds exactly.
+    if (p.phase == 1) {
+        if (g_host.haveVentStart) {
+            p.ventLoc[0] = g_host.ventLoc.X;
+            p.ventLoc[1] = g_host.ventLoc.Y;
+            p.ventLoc[2] = g_host.ventLoc.Z;
+            p.ventRot[0] = g_host.ventRot.Pitch;
+            p.ventRot[1] = g_host.ventRot.Yaw;
+            p.ventRot[2] = g_host.ventRot.Roll;
+            p.hasVent = 1;
+        }
+    } else {
         void* vent = ue_wrap::keyed_objects::Resolve(L"ventHanging");
         ue_wrap::FVector at{};
         ue_wrap::FRotator rot{};
@@ -485,7 +494,7 @@ void QueueConnectBroadcastForSlot(int slot) {
     if (s->SendReliableToSlot(slot, coop::net::ReliableKind::VentCrawlState, &p, sizeof(p)))
         UE_LOGI("vent_crawler: the crawl's state to slot %d -- phase %u, %.1f s in, door power %u, vent pose %s", slot,
                 static_cast<unsigned>(p.phase), p.elapsed, static_cast<unsigned>(p.doorActive),
-                p.hasVent ? "sent" : (p.phase == 2 ? "not read" : "not due"));
+                p.hasVent ? "sent" : "not read");
 }
 
 void OnState(const coop::net::VentCrawlStatePayload& p) {
@@ -499,24 +508,18 @@ void OnState(const coop::net::VentCrawlStatePayload& p) {
     }
     g_states.fetch_add(1, std::memory_order_relaxed);
     if (g_show.on) EndShow("a crawl state");
-    ue_wrap::FTransform a{}, b{};
-    const bool ends = CrawlerVentEnds(a, b);
     void* vent = ue_wrap::keyed_objects::Resolve(L"ventHanging");
     if (p.phase == 2) {
         DoorPower(p.doorActive != 0);
-        const char* ventNow = "left";
+        // A host that could not read its vent sends none: the vent stays where this peer has it. The blueprint's class
+        // defaults are no end pose (measured: the drill's rejoin check failed 2 of 2 runs with them).
+        const char* ventNow = "left (the host sent no pose)";
         if (vent && p.hasVent) {
+            ventNow = "left";
             if (PlaceVentAt(vent, p)) {
                 ue_wrap::prop::CallSetPropProps(vent, false, true, false);
                 ventNow = "at the host's pose, frozen";
             }
-        } else if (vent && ends) {
-            // The fallback, for a host that could not read its vent. The class defaults' end is not the placed vent's
-            // real end pose (measured: the drill's rejoin check failed 2 of 2 runs with it), so the host's own pose
-            // above is the truth and this is only what a joiner can reach without it.
-            SetActorTransform(vent, b);
-            ue_wrap::prop::CallSetPropProps(vent, false, true, false);
-            ventNow = "at the class default end, frozen";
         }
         UE_LOGI("vent_crawler: the host's crawl is over -- vent %s, door power %u", ventNow,
                 static_cast<unsigned>(p.doorActive));
@@ -530,9 +533,9 @@ void OnState(const coop::net::VentCrawlStatePayload& p) {
     g_show.step2 = p.elapsed >= kStep2;
     DoorPower(p.doorActive != 0);
     g_show.powerOff = p.doorActive == 0;
-    g_show.haveVent = vent && ends;
-    g_show.ventA = a;
-    g_show.ventB = b;
+    // The swing's A is where the host's vent hung when the crawl began, B follows from it (as OnCue's own pair does).
+    g_show.haveVent = vent && p.hasVent && HostVentPose(vent, p, g_show.ventA) && VentB(g_show.ventA, g_show.ventB);
+    if (!p.hasVent) UE_LOGW("vent_crawler: the host could not read its vent at the crawl's start -- no swing here");
     void* crawler = MirrorNear(g_show.near);
     g_show.crawler = crawler ? IdOf(crawler) : std::pair<int32_t, int32_t>{-1, 0};
     UE_LOGI("vent_crawler: joined %.1f s into the host's crawl, door power %u -- mirror %p", p.elapsed,
