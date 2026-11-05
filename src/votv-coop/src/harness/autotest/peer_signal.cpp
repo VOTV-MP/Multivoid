@@ -18,11 +18,18 @@ std::string g_dir;
 std::string g_tag;
 uint64_t g_start = 0;  // FILETIME of this peer's drill start
 
-bool WrittenSinceStart(const std::string& path) {
+// The path in the wide form the file calls take; empty when it does not convert.
+std::wstring Widen(const std::string& path) {
     const int n = ::MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, nullptr, 0);
-    if (n <= 0) return false;
+    if (n <= 0) return {};
     std::wstring w(static_cast<size_t>(n), L'\0');
     ::MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, w.data(), n);
+    return w;
+}
+
+bool WrittenSinceStart(const std::string& path) {
+    const std::wstring w = Widen(path);
+    if (w.empty()) return false;
     WIN32_FILE_ATTRIBUTE_DATA a{};
     if (!::GetFileAttributesExW(w.c_str(), GetFileExInfoStandard, &a)) return false;
     const uint64_t t = (static_cast<uint64_t>(a.ftLastWriteTime.dwHighDateTime) << 32) | a.ftLastWriteTime.dwLowDateTime;
@@ -46,8 +53,15 @@ bool Begin(const char* logTag) {
 
 void Mark(const char* name) { Mark(name, "x"); }
 
+// Written whole: the text goes to `<name>.tmp` and is renamed over `<name>`, so a reader polling the signal never
+// sees a half-written line.
 void Mark(const char* name, const std::string& text) {
-    std::ofstream(g_dir + "\\" + name, std::ios::binary | std::ios::trunc) << text;
+    const std::string path = g_dir + "\\" + name;
+    const std::string tmp = path + ".tmp";
+    { std::ofstream(tmp, std::ios::binary | std::ios::trunc) << text; }
+    const std::wstring from = Widen(tmp), to = Widen(path);
+    if (from.empty() || to.empty() || !::MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING))
+        UE_LOGW("%hs: signal '%hs' could not be left (error %lu)", g_tag.c_str(), name, ::GetLastError());
 }
 
 bool Await(const char* name, int seconds) {
