@@ -415,6 +415,15 @@ void RunHostFirst() {
                      std::fabs(at.Y - std::atof(s[1].c_str())) > 50.f;
           }, 15),
           "the host's own player started the crawl");
+    // The arm measures a crawl begun ALONE: a client already seated makes it measure the live cue instead. The rig holds
+    // the client's launch on the crawl's end (mp.py smoke --client-after); a run without that is not this arm's.
+    bool alone = true;
+    OnGameThread([&] { alone = !harness::session_runtime::Session().connected(); });
+    if (!alone) {
+        UE_LOGW("crawler-drill: VERDICT INCONCLUSIVE -- a client was seated when the host's crawl began "
+                "(launch the client with mp.py smoke --client-after)");
+        return;
+    }
     Check(WaitFor([&] { return Crawler() == nullptr; }, 60), "the host's crawler went at the crawl's end");
     AwaitBalconyOpen();
     // The client joins after this, as late as it takes it to load: its readiness is the host's cue to read the rows.
