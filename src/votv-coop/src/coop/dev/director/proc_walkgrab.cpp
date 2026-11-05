@@ -33,6 +33,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cwctype>
 #include <memory>
 #include <string>
 #include <utility>
@@ -181,6 +182,85 @@ bool BlockerAhead(const PlayerContext& ctx, const ue_wrap::FVector& wp, ue_wrap:
     return found;
 }
 
+bool ContainsNoCase(std::wstring hay, const wchar_t* needle) {
+    for (wchar_t& c : hay) c = static_cast<wchar_t>(std::towlower(c));
+    return hay.find(needle) != std::wstring::npos;
+}
+
+// What a persistent block stands on, said once per run at the first RE-PATH: every waypoint of the route
+// followed, a knee-height trace along each leg, the door-like actors round the walker, and how near the
+// route's last point came to the goal. The traces start at the walker's own knee height above the floor,
+// carried to each waypoint (which sits on the floor).
+void SayWhatBlocks(const PlayerContext& ctx, const std::vector<ue_wrap::FVector>& route, size_t current,
+                   const char* kind, const ue_wrap::FVector& goal) {
+    static bool s_said = false;
+    if (s_said) return;
+    s_said = true;
+    UE_LOGW("director/diag: route kind=%s, %zu points, the walker at (%.0f,%.0f,%.0f) heads for point %zu", kind,
+            route.size(), ctx.pos.X, ctx.pos.Y, ctx.pos.Z, current);
+    for (size_t i = 0; i < route.size(); ++i)
+        UE_LOGW("director/diag: wp[%zu]=(%.0f,%.0f,%.0f)", i, route[i].X, route[i].Y, route[i].Z);
+
+    ue_wrap::trace::Hit under;
+    const bool floorOk = ue_wrap::trace::LineHitStatDyn(ctx.player, ctx.pos,
+                                                         {ctx.pos.X, ctx.pos.Y, ctx.pos.Z - 300.f}, &under) && under.blocked;
+    if (!floorOk) {
+        UE_LOGW("director/diag: the floor under the walker is unread -- no leg traced");
+    } else {
+        const float kneeLift = (ctx.pos.Z - 50.f) - under.point.Z;
+        UE_LOGW("director/diag: knee height %.0f cm above the floor (walker centre %.0f cm above it)", kneeLift,
+                ctx.pos.Z - under.point.Z);
+        for (size_t i = 0; i + 1 < route.size(); ++i) {
+            const ue_wrap::FVector a{route[i].X, route[i].Y, route[i].Z + kneeLift};
+            const ue_wrap::FVector b{route[i + 1].X, route[i + 1].Y, route[i + 1].Z + kneeLift};
+            const float len = HorizDist(a, b);
+            ue_wrap::trace::Hit hit;
+            if (!ue_wrap::trace::LineHitStatDyn(ctx.player, a, b, &hit)) {
+                UE_LOGW("director/diag: seg[%zu] (%.0f,%.0f,%.0f)->(%.0f,%.0f,%.0f) len=%.0f unresolved", i, a.X, a.Y,
+                        a.Z, b.X, b.Y, b.Z, len);
+            } else if (!hit.blocked) {
+                UE_LOGW("director/diag: seg[%zu] (%.0f,%.0f,%.0f)->(%.0f,%.0f,%.0f) len=%.0f clear", i, a.X, a.Y, a.Z,
+                        b.X, b.Y, b.Z, len);
+            } else {
+                const std::wstring actor = hit.actor ? R::ToString(R::NameOf(hit.actor)) : L"?";
+                const std::wstring comp = hit.component ? R::ToString(R::NameOf(hit.component)) : L"?";
+                UE_LOGW("director/diag: seg[%zu] (%.0f,%.0f,%.0f)->(%.0f,%.0f,%.0f) len=%.0f hit=%ls/%ls at=%.0f", i,
+                        a.X, a.Y, a.Z, b.X, b.Y, b.Z, len, actor.c_str(), comp.c_str(),
+                        std::hypot(hit.point.X - a.X, hit.point.Y - a.Y));
+            }
+        }
+    }
+
+    // One pass over every object, here only (a persistent block is rare and already a WARN).
+    void* actorCls = R::FindClass(L"Actor");
+    const bool doorsOk = D::EnsureResolved();
+    int found = 0;
+    const int32_t n = R::NumObjects();
+    for (int32_t i = 0; actorCls && i < n; ++i) {
+        void* o = R::ObjectAt(i);
+        if (!o || !R::IsLive(o)) continue;
+        if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
+        const std::wstring cls = R::ClassNameOf(o);
+        if (!ContainsNoCase(cls, L"door") && !ContainsNoCase(cls, L"hatch") && !ContainsNoCase(cls, L"gate") &&
+            !ContainsNoCase(cls, L"lid"))
+            continue;
+        if (!R::IsDescendantOfAny(R::ClassOf(o), &actorCls, 1)) continue;
+        ue_wrap::FVector at{};
+        if (!E::TryGetActorLocation(o, at)) continue;
+        const float dist = HorizDist(at, ctx.pos);
+        if (dist > 900.f) continue;
+        bool open = false;
+        const int openRead = doorsOk && D::TryReadOpenIntent(o, open) ? (open ? 1 : 0) : -1;
+        UE_LOGW("director/diag: doorlike %ls %ls at=(%.0f,%.0f,%.0f) dist=%.0f dz=%.0f isDoor=%d open=%d", cls.c_str(),
+                R::ToString(R::NameOf(o)).c_str(), at.X, at.Y, at.Z, dist, at.Z - ctx.pos.Z,
+                doorsOk && D::IsDoor(o) ? 1 : 0, openRead);
+        ++found;
+    }
+    UE_LOGW("director/diag: %d door-like actors within 900 cm", found);
+    if (!route.empty())
+        UE_LOGW("director/diag: NavMesh last-point vs goal=%.0f", HorizDist(route.back(), goal));
+}
+
 // ---- GotoProcess -----------------------------------------------------------------------
 class GotoProcess : public IProcess {
 public:
@@ -224,6 +304,7 @@ public:
                 ahead_.Reset(goal_.route);
                 wp_ = 0; lastWp_ = 0; bestWp_ = 1e9f; bestPile_ = 1e9f; sinceProgress_ = 0;
                 pathed_ = true;
+                routeKind_ = "NavMesh";
             } else {
                 jukeSign_ = -jukeSign_;   // no way round held: back to grinding
                 unstickTicks_ = kUnstickTicks;
@@ -241,6 +322,7 @@ public:
             else if (midWalk) waypoints_.push_back(ctx.pos);   // stand and ask again shortly, no beeline
             else waypoints_.push_back(goal_.targetPos);   // the straight line, asked for or the first route's fallback
             routed_ = routed_ || ok;
+            routeKind_ = ok ? "NavMesh" : "beeline";
             retryRouteAt_ = midWalk ? tick_ + kRouteRetryTicks : -1;
             goal_.route.assign(1, ok && !path.empty() ? path.front() : ctx.pos);
             goal_.route.insert(goal_.route.end(), waypoints_.begin(), waypoints_.end());
@@ -332,6 +414,7 @@ public:
                             toPile, stuckEpisodes_);
                     return ProcStatus::Working;
                 }
+                SayWhatBlocks(ctx, goal_.route, wp_ + 1, routeKind_, goal_.targetPos);
                 pathed_ = false; waypoints_.clear(); wp_ = 0; lastWp_ = 0; bestWp_ = 1e9f; bestPile_ = 1e9f;
                 UE_LOGW("director/Goto: persistent stuck (toPile=%.0f) -- RE-PATH (episode %d, never give up)", toPile, stuckEpisodes_);
                 return ProcStatus::Working;
@@ -411,6 +494,7 @@ private:
     bool   partial_ = false;   // the current route stops short of the goal: its end is a leg boundary
     int    legs_ = 0;
     float  legFrom_ = 0.f;     // the walker's distance to the goal where the current route began
+    const char* routeKind_ = "none";   // the route followed, NavMesh or beeline: said on a persistent block
     bool   routed_ = false;    // a NavMesh route was had: a later failed query is no reason to beeline
     bool   fell_ = false;      // the last read found the walker in ragdoll: the edge to standing re-paths
     bool   runHeld_ = false;   // the run key is down (kRunFromCm), let go near the goal or on losing control
