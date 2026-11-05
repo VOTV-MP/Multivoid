@@ -25,6 +25,10 @@ void OnGameThread(Fn&& fn) {
 bool Check(bool ok, const char* what);
 int Fails();
 
+// A key or a class name between the narrow text the peers' files carry and the engine's wide one.
+std::string Narrow(const std::wstring& w);
+std::wstring Widen(const std::string& s);
+
 inline bool Near(float a, float b, float tol) { return std::fabs(a - b) <= tol; }
 
 // The first live instance of a class, and how many there are; nothing of a Default__ object.
@@ -52,7 +56,7 @@ bool WaitPlant(const std::string& key, Test&& test, int seconds = 15) {
 bool SpawnSprinklerBeside(const std::string& plantKey);
 
 // CLIENT: each arm returns whether it held.
-bool SprinklerArm(const std::string& plantKey, float hostWater);
+bool SprinklerArm(const std::string& plantKey);
 bool SpawnerArm();
 bool TickArm();
 bool PineHitArm(const std::string& key);

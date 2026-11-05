@@ -52,10 +52,8 @@ bool Check(bool ok, const char* what) {
 
 int Fails() { return g_fails; }
 
-namespace {
 std::string Narrow(const std::wstring& w) { return std::string(w.begin(), w.end()); }
 std::wstring Widen(const std::string& s) { return std::wstring(s.begin(), s.end()); }
-}  // namespace
 
 void* FirstOf(const wchar_t* cls) {
     void* found = nullptr;
@@ -103,6 +101,7 @@ constexpr const wchar_t* kBushPath = L"/Game/objects/growingPlant_bush.growingPl
 constexpr const wchar_t* kShroomClass = L"growingPlant_shroom_0_C";
 constexpr const wchar_t* kShroomPath = L"/Game/objects/growingPlant_shroom_0.growingPlant_shroom_0_C";
 constexpr const wchar_t* kPinePath = L"/Game/objects/growingPlant_pine.growingPlant_pine_C";
+constexpr int kBerries = 3;   // a ripe bush's berry count, set where its row gives none
 
 size_t PlantCount() {
     size_t n = 0;
@@ -157,7 +156,8 @@ bool WaitGone(const std::string& key, int seconds = 15) {
     }, false);
 }
 
-void WriteHost(const std::string& key, float grow, float water, float fruit) {
+// A negative `amount` leaves the plant's berry count as it is.
+void WriteHost(const std::string& key, float grow, float water, float fruit, int amount = -1) {
     OnGameThread([&] {
         void* p = ByKey(key);
         GP::Values v;
@@ -165,6 +165,7 @@ void WriteHost(const std::string& key, float grow, float water, float fruit) {
         v.grow = grow;
         v.water = water;
         v.fruitGrow = fruit;
+        if (amount >= 0) v.amount = amount;
         GP::Apply(p, GP::Row(p), v);
     });
 }
@@ -225,12 +226,10 @@ void RunHost() {
     Mark("grow");
     if (!Await("grow_done", kStep)) return;
 
-    // A sprinkler beside the plant, switched off here: the host's water holds at the value it was written, and the
-    // client's copy must read no more than that with its own sprinkler switched on.
+    // A sprinkler beside the plant, switched off here: the client's copy must read no more water than the host's last
+    // state gave it, with its own sprinkler switched on.
     Check(SpawnSprinklerBeside(bush), "the script spawned a sprinkler beside the host's plant");
-    GP::Values held;
-    OnGameThread([&] { if (void* p = ByKey(bush)) GP::Read(p, held); });
-    Mark("sprinkler", std::to_string(held.water));
+    Mark("sprinkler");
     if (!Await("sprinkler_done", kStep)) return;
 
     // A client's water.
@@ -238,9 +237,11 @@ void RunHost() {
     Mark("water_seen");
     if (!Await("edit_done", kStep)) return;
 
-    // Ripe: a bush shows amount, another plant makes fruit props.
-    WriteHost(bush, 1.f, 500.f, 1.f);
-    Check(WaitPlant(bush, [](void*, const GP::Values& v) { return v.grow >= 1.f && v.fruitGrow >= 1.f; }), "the host's plant is ripe");
+    // Ripe, with berries: a bush shows amount, another plant makes fruit props. The harvest below is the client's, and a
+    // plant without berries has none to take, so a bush that cannot be made to hold them fails the run.
+    WriteHost(bush, 1.f, 500.f, 1.f, kBerries);
+    Check(WaitPlant(bush, [](void*, const GP::Values& v) { return v.grow >= 1.f && v.fruitGrow >= 1.f && v.amount > 0; }),
+          "the host's plant is ripe and bears berries");
     GP::Values ripe;
     OnGameThread([&] { if (void* p = ByKey(bush)) GP::Read(p, ripe); });
     UE_LOGI("plant-state: ripe grow=%.2f fruit=%.2f amount=%d", ripe.grow, ripe.fruitGrow, ripe.amount);
@@ -391,8 +392,8 @@ void RunClient() {
     Check(WaitPlant(bush, [](void*, const GP::Values& v) { return Near(v.grow, 0.5f, 0.05f) && v.water > 400.f; }), "the host's growth and water arrived");
     Mark("grow_done");
 
-    if (!AwaitText("sprinkler", body, kStep)) return;
-    const int sprinklerOk = SprinklerArm(bush, static_cast<float>(std::atof(body.c_str()))) ? 1 : 0;
+    if (!Await("sprinkler", kStep)) return;
+    const int sprinklerOk = SprinklerArm(bush) ? 1 : 0;
     Mark("sprinkler_done");
 
     // This player's water, as a can or a toolgun writes it.
@@ -412,7 +413,8 @@ void RunClient() {
     Check(WaitPlant(bush, [&](void*, const GP::Values& v) { return v.grow >= 1.f && v.amount == hostAmount; }), "the ripe plant reads the same here");
     Mark("ripe_here");
     if (!Await("harvest_go", kStep)) return;
-    if (hostAmount > 0) {
+    // A bush the host could not make bear berries has nothing to harvest: that is the run's failure, not a step to skip.
+    if (Check(hostAmount > 0, "the host's ripe bush bears berries, so there is a harvest to run")) {
         size_t foodsBefore = 0, propsBefore = 0, foodsAfter = 0, propsAfter = 0;
         OnGameThread([&] {
             foodsBefore = CountOf(L"prop_food_C");
@@ -429,8 +431,6 @@ void RunClient() {
         Check(WaitPlant(bush, [](void*, const GP::Values& v) { return v.amount == 0; }), "this player's harvest emptied this copy");
         OnGameThread([&] { foodsAfter = CountOf(L"prop_food_C"); propsAfter = CountOf(L"prop_C"); });
         UE_LOGI("plant-state: client item counts food %zu->%zu prop %zu->%zu", foodsBefore, foodsAfter, propsBefore, propsAfter);
-    } else {
-        UE_LOGI("plant-state: this row ripens no berries, so the harvest step is not run");
     }
     Mark("harvest_done");
     if (!Await("harvest_seen", kStep)) return;

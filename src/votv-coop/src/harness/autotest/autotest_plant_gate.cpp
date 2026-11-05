@@ -12,6 +12,7 @@
 #include "coop/props/prop_damage_gate.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/world/plant_gate.h"
+#include "coop/world/plant_sync.h"
 #include "coop/world/spawn_authority.h"
 #include "ue_wrap/actors/growing_plant.h"
 #include "ue_wrap/core/asset_load.h"
@@ -88,9 +89,11 @@ bool SpawnSprinklerBeside(const std::string& plantKey) {
     return made;
 }
 
-// CLIENT: a sprinkler switched on beside a plant whose host water holds. Its 0.1 s watering timer is refused here, so the
-// copy never rises above the host's value. The window is 30 refused firings of that timer, not a time.
-bool SprinklerArm(const std::string& plantKey, float hostWater) {
+// CLIENT: a sprinkler switched on beside a plant. Its 0.1 s watering timer is refused here, so the copy's water never rises
+// above the last value the host's state gave it (plant_sync's inbox, which this client's own plant never reaches): each
+// sample reads the copy and that value in one game-thread step, since the host's plant keeps changing and its news arrives
+// whole. The window is 30 refused firings of the timer, not a time.
+bool SprinklerArm(const std::string& plantKey) {
     constexpr uint64_t kFirings = 30;
     const bool here = PS::WaitFor("a sprinkler here", 20, [&] {
         size_t n = 0;
@@ -103,21 +106,25 @@ bool SprinklerArm(const std::string& plantKey, float hostWater) {
         SetSprinklersActive(true);
         before = coop::plant_gate::GetCounts().sprinklerWater;
     });
-    float peak = 0.f;
+    float excess = 0.f;   // the most the copy's water stood above the host's last value
+    int samples = 0;
     const bool fired = PS::WaitFor("the sprinkler's timer", 20, [&] {
         OnGameThread([&] {
             refused = coop::plant_gate::GetCounts().sprinklerWater - before;
             void* p = ByKey(plantKey);
-            GP::Values v;
-            if (p && GP::Read(p, v)) peak = (std::max)(peak, v.water);
+            GP::Values v, host;
+            if (p && GP::Read(p, v) && coop::plant_sync::LastHostValues(Widen(plantKey), host)) {
+                ++samples;
+                excess = (std::max)(excess, v.water - host.water);
+            }
         });
         return refused >= kFirings;
     }, false);
     OnGameThread([&] { SetSprinklersActive(false); });
-    UE_LOGI("plant-state: sprinkler arm refused %llu timer firings, plant water peak %.1f, host water %.1f",
-            static_cast<unsigned long long>(refused), peak, hostWater);
+    UE_LOGI("plant-state: sprinkler arm refused %llu timer firings, %d samples, copy water above the host's last value by at most %.1f",
+            static_cast<unsigned long long>(refused), samples, excess);
     const bool timer = Check(fired, "this client refused the sprinkler's watering timer");
-    const bool held = Check(peak <= hostWater + 1.f, "a switched-on sprinkler added no water to this client's copy");
+    const bool held = Check(samples > 0 && excess <= 1.f, "a switched-on sprinkler added no water to this client's copy");
     return timer && held;
 }
 
@@ -182,22 +189,26 @@ bool PineHitArm(const std::string& key) {
     const bool here = Check(WaitPlant(key, [](void* p, const GP::Values&) { return R::ClassNameOf(p) == kPineClass; }),
                             "the host's growingPlant_pine_C stands here under its key");
     if (!here) return false;
-    unsigned long long refusedWas = 0, refusedNow = 0;
+    namespace PDG = coop::props::prop_damage_gate;
+    // The pine's addDamage hands the call to its physicsImpact component's impactDamage, so the one hit is one refused impact on
+    // a plant: exactly one on each count, where a bump on some other plant would make two.
+    PDG::Counts was, now;
     size_t logsWas = 0, logsNow = 0;
     bool stands = false;
     OnGameThread([&] {
-        refusedWas = coop::props::prop_damage_gate::GetCounts().plant;
+        was = PDG::GetCounts();
         logsWas = CountOf(L"prop_food_C");
     });
     const bool called = LethalHit(key);
     OnGameThread([&] {
-        refusedNow = coop::props::prop_damage_gate::GetCounts().plant;
+        now = PDG::GetCounts();
         logsNow = CountOf(L"prop_food_C");
         stands = ByKey(key) != nullptr;
     });
-    UE_LOGI("plant-state: pine hit called=%d, plant refusals %llu->%llu, logs %zu->%zu, copy stands=%d", called ? 1 : 0,
-            refusedWas, refusedNow, logsWas, logsNow, stands ? 1 : 0);
-    const bool refused = Check(called && refusedNow > refusedWas, "this client's lethal hit on the pine was refused");
+    const unsigned long long impacts = now.impact - was.impact, plants = now.plant - was.plant;
+    UE_LOGI("plant-state: pine hit called=%d, refused impacts %llu, refused on plants %llu, logs %zu->%zu, copy stands=%d",
+            called ? 1 : 0, impacts, plants, logsWas, logsNow, stands ? 1 : 0);
+    const bool refused = Check(called && impacts == 1 && plants == 1, "this client's lethal hit on the pine was refused, once");
     const bool intact = Check(stands && logsNow == logsWas, "this client's pine copy stood and spawned no logs of its own");
     return refused && intact;
 }
