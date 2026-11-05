@@ -36,7 +36,7 @@ enum class Step : uint8_t { Watch, Landing, Run, Over };
 
 constexpr uint8_t kClientSlot = 1;
 constexpr int kLandingMaxTicks = 600;
-constexpr float kEndAfterS = 120.f;
+constexpr float kEndAfterS = 160.f;  // past the ~107 s the burn-health takes to drain to 0
 
 Step g_step = Step::Watch;
 ue_wrap::CachedObjRef g_cremator;
@@ -45,6 +45,7 @@ uint64_t g_nextSampleMs = 0;
 uint64_t g_startMs = 0;
 int g_landingTicks = 0;
 int g_prevAnim = -1;
+void* g_puppetActor = nullptr;  // the puppet's engine actor at the landing; a different one is a respawn
 std::atomic<int> g_landed{0};  // the begin-overlap saw the puppet enter the probe's cremator
 
 const char* LifeName(coop::players::PuppetLife life) {
@@ -61,16 +62,40 @@ bool LogSample(float t, const char* edge) {
     const auto life = reg.LifeOf(kClientSlot);
     void* cremator = g_cremator.Get();
     void* door = ObjectProperty(cremator, L"swingerDoor");
-    float windup = -1.f, health0 = kNoHealth;
+    float windup = -1.f, health0 = kNoHealth, gas = -1.f;
     int actors = -1;
     ReadFloat(cremator, L"windup", windup);
+    ReadFloat(cremator, L"gasAmount", gas);
     ReadMachine(cremator, actors, health0);
     UE_LOGI("cremator-probe: HOST T=%.0f active=%d anim=%d windup=%.3f closed=%d doorOpened=%d actors=%d "
-            "health0=%.1f puppetLife=%s puppetLive=%d%s%s",
+            "health0=%.1f gas=%.2f puppetLife=%s puppetLive=%d%s%s",
             t, Bit(cremator, L"isActive"), Bit(cremator, L"anim"), windup, Bit(cremator, L"isClosed"),
-            Bit(door, L"opened"), actors, health0, LifeName(life), live ? 1 : 0, edge ? " edge=" : "",
+            Bit(door, L"opened"), actors, health0, gas, LifeName(life), live ? 1 : 0, edge ? " edge=" : "",
             edge ? edge : "");
     return !live || life == coop::players::PuppetLife::Dead;
+}
+
+// The run's verdict, then its end. The cremator's tick destroys a collected actor whose burn-health reached 0;
+// the puppet's actor changing (or going) is that destroy and the respawn that follows it.
+void Verdict(bool pass, float t) {
+    if (pass) {
+        float health0 = kNoHealth, gas = -1.f;
+        int actors = -1;
+        void* cremator = g_cremator.Get();
+        ReadMachine(cremator, actors, health0);
+        ReadFloat(cremator, L"gasAmount", gas);
+        UE_LOGI("cremator-probe: HOST VERDICT PASS puppet kept, health0=%.1f gas=%.2f", health0, gas);
+    } else {
+        UE_LOGI("cremator-probe: HOST VERDICT FAIL puppet re-spawned T=%.0f", t);
+    }
+    UE_LOGI("cremator-probe: HOST DONE");
+    g_step = Step::Over;
+}
+
+// Whether slot 1's puppet is still the actor recorded at the landing. A pointer compare, run every tick.
+bool PuppetKept() {
+    auto* puppet = coop::players::Registry::Get().Puppet(kClientSlot);
+    return puppet && puppet->valid() && puppet->GetActor() == g_puppetActor;
 }
 
 void Fail(const char* why) {
@@ -133,6 +158,8 @@ void LandingTick(uint64_t now) {
         return;
     }
     UE_LOGI("cremator-probe: HOST LANDED ticks=%d", g_landingTicks);
+    g_puppetActor = puppet && puppet->valid() ? puppet->GetActor() : nullptr;
+    if (!g_puppetActor) { Fail("the puppet's actor is gone at the landing"); return; }
     void* cremator = g_cremator.Get();
     bool opened = false;
     if (!ShutDoor(cremator, opened)) { Fail("the open door's close() did not run"); return; }
@@ -149,6 +176,11 @@ void LandingTick(uint64_t now) {
 
 void RunTick(uint64_t now) {
     const float t = static_cast<float>(now - g_startMs) / 1000.f;
+    if (!PuppetKept()) {
+        LogSample(t, "respawn");
+        Verdict(false, t);
+        return;
+    }
     // The handle's finish is the edge of `anim` going false; a 1 s sample can straddle it, so it is read every tick.
     const int anim = Bit(g_cremator.Get(), L"anim");
     if (g_prevAnim == 1 && anim == 0) LogSample(t, "handle-finish");
@@ -157,10 +189,7 @@ void RunTick(uint64_t now) {
     if (now < g_nextSampleMs) return;
     g_nextSampleMs = now + kSampleMs;
     const bool gone = LogSample(t, nullptr);
-    if (gone || t >= kEndAfterS) {
-        UE_LOGI("cremator-probe: HOST DONE");
-        g_step = Step::Over;
-    }
+    if (gone || t >= kEndAfterS) Verdict(true, t);
 }
 
 }  // namespace
@@ -187,6 +216,7 @@ void HostReset() {
     g_startMs = 0;
     g_landingTicks = 0;
     g_prevAnim = -1;
+    g_puppetActor = nullptr;
     g_landed.store(0, std::memory_order_release);
 }
 
