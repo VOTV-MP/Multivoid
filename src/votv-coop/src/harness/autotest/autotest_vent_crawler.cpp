@@ -1,22 +1,25 @@
 // harness/autotest/autotest_vent_crawler.cpp -- TEST-ONLY: the day 5 vent crawler event, host and client side by side.
 //
-// The host fires `ventCrawler` through the eventer as the scheduler does. The client has the crawler's mirror; its
-// player goes into the crawler's box, which starts the crawl on the host (the host's own player does, if that one
-// does not). The crawl closes the signal room door (opened first) and takes its power, plays its steps, breaks and
+// The host fires `ventCrawler` through the eventer as the scheduler does. The client meets the host, then has the
+// crawler's mirror; its player walks into the crawler's box with the director, which starts the crawl on the host (the
+// host's own player walks in, if that one does not). The crawl closes the signal room door (opened first) and takes its power, plays its steps, breaks and
 // swings the hanging vent down, gives the power back, and at its end opens the balcony door's keypads and the door,
 // and the crawler goes. The client's door closes and loses its power, and the crawl's sounds play there; each peer
 // then reads the two doors, the keypads and the vent, and the client's must be the host's. The client waits a minute
-// after its join first, past the join's catch-up window, and the game's backrooms clip is off around the drill's
-// teleports. Gated by VOTVCOOP_RUN_VENT_CRAWLER; the folder is VOTVCOOP_CAN_DIR.
+// after its join first, past the join's catch-up window. Gated by VOTVCOOP_RUN_VENT_CRAWLER; the folder is VOTVCOOP_CAN_DIR.
 
 #include "harness/autotest.h"
+#include "harness/autotest/meet.h"
 #include "harness/autotest/peer_signal.h"
 
+#include "coop/dev/director/director.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/remote_player.h"
 #include "coop/session/net_pump.h"
 #include "coop/world/event_fire_sync.h"
 #include "coop/world/vent_crawler_sync.h"
 #include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -27,7 +30,6 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_component.h"
 #include "ue_wrap/world/keyed_objects.h"
-#include "ue_wrap/world/world_singleton.h"
 
 #include <windows.h>
 
@@ -46,6 +48,7 @@ namespace harness::autotest {
 namespace {
 
 namespace D = ue_wrap::door;
+namespace DIR = coop::director;
 namespace E = ue_wrap::engine;
 namespace PL = ue_wrap::passwordlock;
 namespace R = ue_wrap::reflection;
@@ -96,18 +99,68 @@ bool WorldReady() {
     return ready;
 }
 
-// The game's clip check: a camera that crosses static geometry between two frames sends its player to the
-// backrooms, after a save. The drill's teleports into the vent cross walls, so it turns that off around them and
-// gives back what it found. Returns what it was.
-bool Backrooms(bool on) {
-    void* gm = ue_wrap::world_singleton::Gamemode();
-    int32_t off = -1;
-    uint8_t mask = 0;
-    if (!gm || !R::IsLive(gm) || !R::FindBoolProperty(R::ClassOf(gm), L"backroomsEnabled", off, mask)) return false;
-    uint8_t& b = static_cast<uint8_t*>(gm)[off];
-    const bool was = (b & mask) != 0;
-    b = on ? (b | mask) : (b & ~mask);
-    return was;
+// The box's reach: its smaller scaled half-extent in the plane, so a walker within it stands inside the box whatever
+// way the box is turned. Zero when the box or its call does not resolve. Game thread.
+float BoxReach(void* box) {
+    void* fn = box ? R::FindDispatchFunctionCached(R::ClassOf(box), L"GetScaledBoxExtent") : nullptr;
+    ue_wrap::ParamFrame f(fn);
+    if (!fn || !f.valid() || !ue_wrap::Call(box, f)) return 0.f;
+    const ue_wrap::FVector e = f.Get<ue_wrap::FVector>(L"ReturnValue");
+    return (std::min)(e.X, e.Y);
+}
+
+constexpr float kPaceCmPerSec = 300.f;   // a walk's pace, as harness/autotest/meet.cpp budgets it
+
+// Walks the local player into the crawler's box ("x|y|z|reach") with the director: a navmesh route walked through
+// AddMovementInput, never a teleport. Called from the drill's thread. False, with the reason logged, when the walk
+// could not be made or did not arrive.
+bool WalkInto(const std::string& box) {
+    const auto b = Split(box);
+    if (b.size() != 4) {
+        UE_LOGW("crawler-drill: no box to walk into ('%hs')", box.c_str());
+        return false;
+    }
+    DIR::DirectorGoal goal;
+    goal.targetPos = {static_cast<float>(std::atof(b[0].c_str())), static_cast<float>(std::atof(b[1].c_str())),
+                      static_cast<float>(std::atof(b[2].c_str()))};
+    goal.reachCm = static_cast<float>(std::atof(b[3].c_str()));
+    float line = 0.f;
+    bool placed = false;
+    OnGameThread([&] {
+        ue_wrap::FVector mine{};
+        if (!Me() || !E::TryGetActorLocation(Me(), mine)) return;
+        const float dx = mine.X - goal.targetPos.X, dy = mine.Y - goal.targetPos.Y, dz = mine.Z - goal.targetPos.Z;
+        line = std::sqrt(dx * dx + dy * dy + dz * dz);
+        goal.epoch = DIR::WalkEpoch();
+        placed = true;
+    });
+    if (!placed) {
+        UE_LOGW("crawler-drill: the local player's place is not readable to walk from");
+        return false;
+    }
+    const int budget = static_cast<int>(line / kPaceCmPerSec * 2.f) + 30;
+    UE_LOGI("crawler-drill: walking into the box, %.0fcm away, reach %.0fcm, %d s budget", line, goal.reachCm, budget);
+    DIR::ControlManager mgr;
+    DIR::AddWalkToProcesses(mgr, goal);
+    mgr.Run(goal, budget);
+    if (!goal.reached) {
+        UE_LOGW("crawler-drill: could not walk into the box (%hs)", goal.failReason);
+        return false;
+    }
+    return true;
+}
+
+// The world is up and the host's puppet exists here.
+bool HostPuppetUp() {
+    WorldReady();
+    return PS::WaitFor("the host's puppet", 60, [&] {
+        bool have = false;
+        OnGameThread([&] {
+            coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(0);
+            have = p && p->valid();
+        });
+        return have;
+    });
 }
 
 // The live crawler, or null; the class's default object is not one.
@@ -221,11 +274,12 @@ void RunHost() {
               crawler = Crawler();
               void* b = ObjField(crawler, L"Box");
               ue_wrap::FVector at{}, me{};
-              if (!b || !E::TryGetComponentLocation(b, at) || !E::TryGetActorLocation(crawler, me) ||
+              const float reach = BoxReach(b);
+              if (!b || reach <= 0.f || !E::TryGetComponentLocation(b, at) || !E::TryGetActorLocation(crawler, me) ||
                   std::fabs(me.X) + std::fabs(me.Y) < 1.f)
                   return false;
-              char buf[96];
-              std::snprintf(buf, sizeof(buf), "%.0f|%.0f|%.0f", at.X, at.Y, at.Z);
+              char buf[112];
+              std::snprintf(buf, sizeof(buf), "%.0f|%.0f|%.0f|%.0f", at.X, at.Y, at.Z, reach);
               box = buf;
               start = Where(crawler);
               return true;
@@ -244,18 +298,8 @@ void RunHost() {
     const bool byClient = WaitFor(moved, 15);
     Check(byClient, "the client's player in the box started the crawl on the host");
     if (!byClient) {
-        bool backrooms = false;
-        OnGameThread([&] {
-            backrooms = Backrooms(false);
-            const auto b = Split(box);
-            if (b.size() == 3)
-                E::TeleportTo(Me(), {static_cast<float>(std::atof(b[0].c_str())),
-                                     static_cast<float>(std::atof(b[1].c_str())),
-                                     static_cast<float>(std::atof(b[2].c_str()))}, {});
-        });
+        Check(WalkInto(box), "the host's player walked into the box");
         Check(WaitFor(moved, 15), "the host's own player started it");
-        ::Sleep(1000);
-        OnGameThread([&] { Backrooms(backrooms); });
     }
     Mark("h_crawl", byClient ? "client" : "host");
     for (int i = 0; i < 600; ++i) {
@@ -280,8 +324,9 @@ void RunHost() {
 // ---- CLIENT --------------------------------------------------------------------------------------------------------
 
 void RunClient() {
-    WorldReady();
+    if (!HostPuppetUp()) return;
     ::Sleep(60000);   // past the join's catch-up window, as on day 5 long after a join
+    if (!meet::WalkToHost("crawler-drill")) return;
     Mark("client_ready");
     std::string host, row;
     if (!AwaitText("h_before", host)) return;
@@ -297,31 +342,15 @@ void RunClient() {
               return mirror && E::TryGetActorLocation(mirror, at) && std::fabs(at.X) + std::fabs(at.Y) >= 1.f;
           }, 10),
           "the host's crawler is here");
-    std::string start, home;
-    OnGameThread([&] {
-        start = Where(mirror);
-        home = Where(Me());
-    });
+    std::string start;
+    OnGameThread([&] { start = Where(mirror); });
     UE_LOGI("crawler-drill: client crawler at %hs (the host's box %hs)", start.c_str(), box.c_str());
-    // Into the host's box, and back out a second later.
-    bool backrooms = false;
-    OnGameThread([&] {
-        backrooms = Backrooms(false);
-        const auto b = Split(box);
-        if (b.size() == 3)
-            E::TeleportTo(Me(), {static_cast<float>(std::atof(b[0].c_str())), static_cast<float>(std::atof(b[1].c_str())),
-                                 static_cast<float>(std::atof(b[2].c_str()))}, {});
-    });
+    // Into the host's box, which starts the crawl; the player stays there.
+    if (!WalkInto(box)) {
+        UE_LOGW("crawler-drill: VERDICT ABORT -- the client's player could not walk into the box");
+        return;
+    }
     Mark("c_in");
-    ::Sleep(1500);
-    OnGameThread([&] {
-        const auto h = Split(home);
-        if (h.size() == 3)
-            E::TeleportTo(Me(), {static_cast<float>(std::atof(h[0].c_str())), static_cast<float>(std::atof(h[1].c_str())),
-                                 static_cast<float>(std::atof(h[2].c_str()))}, {});
-    });
-    ::Sleep(1000);
-    OnGameThread([&] { Backrooms(backrooms); });
     // The mirror crawls as the host's does, and goes when it goes.
     const auto s = Split(start);
     const unsigned sounds0 = coop::vent_crawler_sync::SoundsPlayed();
