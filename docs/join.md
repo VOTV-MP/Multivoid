@@ -242,7 +242,7 @@ shows the host the game's error and returns without a write, and with `bypassEve
 without gathering the world. The notice watches `save` for the first and hears the write for the second, and
 both lines say the host tried to save but the game cannot save during an event. `[V]`
 `harness/autotest/autotest_save_notice.cpp`: the game's own `save` on the host with no event, with one set by
-`lib_C.setEvent`, with `bypassEvent` during it, and after it; each read on both peers.
+`lib_C.setEvent`, with `bypassEvent` during it, and after it; each read on both peers. A write made while the event state cannot be read says the save may not have taken `[?]` (no drill makes the state unreadable).
 
 On the P2P route a rejoin also depends on something the host does not think about: its own
 registration with the signaling relay, which is one long-lived TCP connection that carries no
@@ -447,7 +447,7 @@ and it is the reason the relay's own silence stays.
 | `SnapshotBegin`, `PropSpawn`, `PropSnapPos`, `PropDestroy`, `SnapshotComplete` | host to one client | the bracket; a `PropSnapPos` carries the host's drive context for its prop, and the client drops one older than a drive END still on its copy `[?]` |
 | `EventSnapshot` | host to one client | one per in-flight event |
 | `ChatLine` | host to one client | the retained chat record, one line each |
-| `WorldSaved` | host to all | the host saved its world or tried to: saved, or an event was running; the host's count of its attempts this session |
+| `WorldSaved` | host to all | the host saved its world or tried to: saved, an event was running, or written with the event state unreadable ("may not have taken"); the host's count of its attempts this session |
 
 Every state lane adds its own kind for step 5.4; the family routers in `coop/dispatch/` own them.
 

@@ -34,24 +34,41 @@ enum class Reg : uint8_t { Pending, Registered, Refused };
 Reg      g_reg = Reg::Pending;
 bool     g_settled = false;
 Counts   g_counts;               // HOST: the save attempts this session by outcome; CLIENT: the ones heard
-bool     g_unknownSaid = false;  // HOST: an event state that could not be read is said once
+bool     g_refusedSaid = false;  // the watch was refused: said once, retried from Tick
 
 coop::peer_action_feed::Action LineFor(coop::net::WorldSaveOutcome o) {
-    return o == coop::net::WorldSaveOutcome::Saved ? coop::peer_action_feed::Action::SavedGame
-                                                   : coop::peer_action_feed::Action::SaveBlockedByEvent;
+    using coop::net::WorldSaveOutcome;
+    using coop::peer_action_feed::Action;
+    switch (o) {
+    case WorldSaveOutcome::Saved:   return Action::SavedGame;
+    case WorldSaveOutcome::Unknown: return Action::SaveMaybeNotTaken;
+    default:                        return Action::SaveBlockedByEvent;
+    }
 }
 
-// HOST: one save attempt reaches every player.
+uint32_t& CountOf(coop::net::WorldSaveOutcome o, uint32_t& ok, uint32_t& failed, uint32_t& unknown) {
+    using coop::net::WorldSaveOutcome;
+    return o == WorldSaveOutcome::Saved ? ok : (o == WorldSaveOutcome::Unknown ? unknown : failed);
+}
+
+const char* VerdictOf(coop::net::WorldSaveOutcome o) {
+    using coop::net::WorldSaveOutcome;
+    return o == WorldSaveOutcome::Saved   ? "took"
+         : o == WorldSaveOutcome::Unknown ? "was written, but an event could not be ruled out"
+                                          : "did not take: an event is running";
+}
+
+// HOST: one save attempt reaches every player. The line goes out Direct, past the peer-actions toggle: a save is
+// the host's word to every player, and on a client this line is the only sign of it, not one peer's action to mute.
 void Report(coop::net::Session& s, coop::net::WorldSaveOutcome outcome) {
     coop::net::WorldSavedPayload p{};
-    (outcome == coop::net::WorldSaveOutcome::Saved ? g_counts.savedOk : g_counts.savedFailed)++;
-    const uint32_t saves = g_counts.savedOk + g_counts.savedFailed;
+    CountOf(outcome, g_counts.savedOk, g_counts.savedFailed, g_counts.savedUnknown)++;
+    const uint32_t saves = g_counts.savedOk + g_counts.savedFailed + g_counts.savedUnknown;
     p.saveNumber = saves;
     p.outcome = static_cast<uint8_t>(outcome);
     const bool sent = s.SendReliable(coop::net::ReliableKind::WorldSaved, &p, sizeof(p));
     coop::peer_action_feed::AnnounceDirect(0, LineFor(outcome));
-    UE_LOGI("save_notice: the host's save (#%u) %s -- WorldSaved %s", saves,
-            outcome == coop::net::WorldSaveOutcome::Saved ? "took" : "did not take: an event is running",
+    UE_LOGI("save_notice: the host's save (#%u) %s -- WorldSaved %s", saves, VerdictOf(outcome),
             sent ? "sent" : "had no peer");
 }
 
@@ -65,18 +82,16 @@ void OnWorldSaveWritten(void* saveObject, const wchar_t* slotName) {
     if (saveObject != ue_wrap::inventory::ResolveSaveSlot()) return;
     // The write is the tail of the game's save, in the same call as its world gather, which skips while the game
     // counts an event as running: the slot is then written with the world as the last gather left it, and the
-    // host sees the game's error. The answer now is the one the gather got. One that cannot be read is not taken
-    // for an event.
-    const ue_wrap::save_capture::EventState ev = ue_wrap::save_capture::GameEventState();
-    if (ev == ue_wrap::save_capture::EventState::Unknown && !g_unknownSaid) {
-        g_unknownSaid = true;
-        UE_LOGW("save_notice: whether an event is running could not be read -- this save is reported as saved "
-                "(said once)");
-    }
-    const coop::net::WorldSaveOutcome outcome = ev == ue_wrap::save_capture::EventState::On
-                                                    ? coop::net::WorldSaveOutcome::EventRunning
-                                                    : coop::net::WorldSaveOutcome::Saved;
-    Report(*s, outcome);
+    // host sees the game's error. An event state that cannot be read is neither "saved" nor an event: it is its own
+    // outcome, and every player is told the save may not have taken.
+    using EventState = ue_wrap::save_capture::EventState;
+    const EventState ev = ue_wrap::save_capture::GameEventState();
+    if (ev == EventState::Unknown)
+        UE_LOGW("save_notice: whether an event is running could not be read -- this save is reported as "
+                "possibly not taken");
+    Report(*s, ev == EventState::On      ? coop::net::WorldSaveOutcome::EventRunning
+               : ev == EventState::Unknown ? coop::net::WorldSaveOutcome::Unknown
+                                           : coop::net::WorldSaveOutcome::Saved);
 }
 
 // HOST: the game's save was called. Unless told to bypass the event, it shows its error and returns without a
@@ -104,10 +119,22 @@ void Install(coop::net::Session* session) {
 
 void Tick() {
     if (g_settled || g_reg == Reg::Pending) return;
-    if (g_reg == Reg::Registered) sg::ResolvePendingNames();
-    if (g_reg == Reg::Registered && sg::NameWatchLive(kRowSave, kTag)) {
+    if (g_reg == Reg::Refused) {
+        // The gate was not installed (or its name table was full) at Install; the gate says why once. Retried
+        // from here until it takes, since the consumer, not the gate, owns the retry.
+        if (!g_refusedSaid) {
+            g_refusedSaid = true;
+            UE_LOGE("save_notice: the watch on the game's save was refused -- retried each tick until it takes; "
+                    "until then a save refused during an event reaches no player");
+        }
+        if (!sg::WatchName(kRowSave, kTag, &OnSavePre, nullptr)) return;
+        g_reg = Reg::Registered;
+        UE_LOGI("save_notice: the watch on the game's save is registered (after a refusal)");
+    }
+    sg::ResolvePendingNames();
+    if (sg::NameWatchLive(kRowSave, kTag)) {
         g_settled = true;
-    } else if (g_reg == Reg::Refused || sg::NameWatchSettled(kRowSave, kTag)) {
+    } else if (sg::NameWatchSettled(kRowSave, kTag)) {
         g_settled = true;
         UE_LOGE("save_notice: the watch on the game's save is dead -- a save refused during an event reaches no "
                 "player");
@@ -118,22 +145,19 @@ void OnWorldSaved(const coop::net::WorldSavedPayload& p) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Client) return;
     const auto outcome = static_cast<coop::net::WorldSaveOutcome>(p.outcome);
-    (outcome == coop::net::WorldSaveOutcome::Saved ? g_counts.heardOk : g_counts.heardFailed)++;
-    const uint32_t heard = g_counts.heardOk + g_counts.heardFailed;
-    coop::peer_action_feed::AnnounceDirect(0, LineFor(outcome));
-    UE_LOGI("save_notice: the host %s (its #%u, heard #%u)",
-            outcome == coop::net::WorldSaveOutcome::Saved ? "saved the world" : "tried to save during an event",
-            p.saveNumber, heard);
+    CountOf(outcome, g_counts.heardOk, g_counts.heardFailed, g_counts.heardUnknown)++;
+    const uint32_t heard = g_counts.heardOk + g_counts.heardFailed + g_counts.heardUnknown;
+    coop::peer_action_feed::AnnounceDirect(0, LineFor(outcome));  // Direct for the reason Report gives
+    UE_LOGI("save_notice: the host's save %s (its #%u, heard #%u)", VerdictOf(outcome), p.saveNumber, heard);
 }
 
 Counts GetCounts() { return g_counts; }
 
 void OnDisconnect() {
-    const uint32_t saves = g_counts.savedOk + g_counts.savedFailed;
-    const uint32_t heard = g_counts.heardOk + g_counts.heardFailed;
+    const uint32_t saves = g_counts.savedOk + g_counts.savedFailed + g_counts.savedUnknown;
+    const uint32_t heard = g_counts.heardOk + g_counts.heardFailed + g_counts.heardUnknown;
     if (saves || heard) UE_LOGI("save_notice: session end -- saved=%u heard=%u", saves, heard);
     g_counts = Counts{};
-    g_unknownSaid = false;
 }
 
 }  // namespace coop::save_notice

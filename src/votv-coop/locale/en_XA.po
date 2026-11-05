@@ -151,6 +151,10 @@ msgid "%1$s saved the game"
 msgstr "[[%1$s saved the game]]"
 
 #, c-format
+msgid "%1$s saved the game, but the save may not have taken"
+msgstr "[[%1$s saved the game, but the save may not have taken]]"
+
+#, c-format
 msgid "%1$s sold it for %2$lld point (the host's price)"
 msgid_plural "%1$s sold it for %2$lld points (the host's price)"
 msgstr[0] "[[%1$s sold it for %2$lld point (the host's price)]]"

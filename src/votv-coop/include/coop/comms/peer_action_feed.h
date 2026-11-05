@@ -45,6 +45,7 @@ enum class Action : uint8_t {
     OrderRefused,
     SavedGame,          // the host saved the world
     SaveBlockedByEvent, // the host's save did not take: an event was running
+    SaveMaybeNotTaken,  // the host's save was written, but an event could not be ruled out
     kCount
 };
 

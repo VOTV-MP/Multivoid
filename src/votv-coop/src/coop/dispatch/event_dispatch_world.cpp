@@ -307,7 +307,7 @@ bool HandleWorldEvent(const net::Session::ReliableMessage& msg) {
         net::WorldSavedPayload sp{};
         std::memcpy(&sp, msg.payload, sizeof(sp));
         if (sp.outcome < static_cast<uint8_t>(net::WorldSaveOutcome::Saved) ||
-            sp.outcome > static_cast<uint8_t>(net::WorldSaveOutcome::EventRunning)) {
+            sp.outcome > static_cast<uint8_t>(net::WorldSaveOutcome::Unknown)) {
             UE_LOGW("event_feed: WorldSaved outcome=%u unknown -- dropping", static_cast<unsigned>(sp.outcome));
             break;
         }

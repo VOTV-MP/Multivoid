@@ -7,7 +7,9 @@
 // not count -- and puts one line in its chat feed and sends WorldSaved. While the game counts an event as
 // running, its save shows an error and returns without a write, so the host also watches mainGamemode.save;
 // a save told to bypass the event writes the slot without gathering the world. Either way the line says the
-// save did not take. A client puts the same line in its feed, naming the host. The game's own SAVED indicator stays
+// save did not take; a write whose event state cannot be read says it may not have. A client puts the same
+// line in its feed, naming the host. The line is announced Direct, past the peer-actions toggle: a save is the
+// host's word to every player, not one peer's action to mute. The game's own SAVED indicator stays
 // the host's: calling mainGamemode.saveAnim on a client's gamemode was measured to show nothing.
 //
 // Game thread.
@@ -36,6 +38,7 @@ void OnWorldSaved(const coop::net::WorldSavedPayload& p);
 // The save attempts this session by outcome: the host's own (each WorldSaved it sends) and a client's heard ones.
 struct Counts {
     uint32_t savedOk = 0, savedFailed = 0, heardOk = 0, heardFailed = 0;
+    uint32_t savedUnknown = 0, heardUnknown = 0;  // written, but an event could not be ruled out
 };
 // Read-only, for drills. Game thread.
 Counts GetCounts();
