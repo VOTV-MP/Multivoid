@@ -1,5 +1,5 @@
-// ue_wrap/actors/growing_plant.h -- a growingPlant_C and its family, read and written by reflection on the game thread: a
-// player's planted seed and the winter bush are the one class.
+// ue_wrap/actors/growing_plant.h -- a growingPlant_C and every class under it, read and written by reflection on the game
+// thread: a player's planted seed, the winter bush and the mushrooms share its fields, inherited from the one base.
 
 #pragma once
 
@@ -20,7 +20,8 @@ struct Values {
     int32_t amount = 0;
 };
 
-// Every live plant of the family.
+// Every live plant: an instance of growingPlant_C or of any class whose super chain reaches it. The classes are found
+// from the object index, so a class a game build adds is a plant here with no change.
 void List(std::vector<void*>& out);
 
 // Every live winter bush spawner (ticker_bushSpawning_C): its tick plants bushes of this family.

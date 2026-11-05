@@ -6,23 +6,70 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/fname_utils.h"
+#include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/world_identity.h"
 
+#include <algorithm>
+#include <cstdint>
+#include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace ue_wrap::growing_plant {
 namespace {
 
 namespace R = ue_wrap::reflection;
 namespace OI = ue_wrap::object_index;
+namespace WI = ue_wrap::world_identity;
 
-// ForEachInstance walks one exact class.
-constexpr const wchar_t* kFamily[] = {
-    L"growingPlant_C",          L"growingPlant_shroom_7_C",  L"growingPlant_pine_C",     L"growingPlant_orangetree_C",
-    L"growingPlant_lemontree_C", L"growingPlant_grassPatch_C", L"growingPlant_deadtree_C", L"growingPlant_stolasHerb_C",
+// The family is every class whose super chain reaches growingPlant_C, by name: ForEachInstance walks one exact class, and a
+// list of the game's classes by hand goes stale with the next game build. The table holds the classes that have a live
+// instance, and is rebuilt when the object index's class set moves (a class gained its first instance or lost its last) or the
+// world changes. A class gains its first instance only once it is loaded with its parents, so its chain is whole by then.
+constexpr const wchar_t* kBase = L"growingPlant_C";
+constexpr int kMaxHops = 32;
+
+struct Family {
+    std::vector<void*> classes;   // sorted, so a rebuild can tell whether the set moved
+    uint64_t classSet = 0;        // the object index's class set at the last build
+    uint32_t world = 0;           // the world generation of the last build; 0 is none built
 };
+Family g_family;
+
+bool ReachesBase(void* cls) {
+    int hop = 0;
+    for (void* c = cls; c && hop < kMaxHops; c = R::SuperStructOf(c), ++hop)
+        if (R::NameEquals(R::NameOf(c), kBase)) return true;
+    return false;
+}
+
+// Game thread, like every ForEachInstance. A line names the classes when their set differs from the last build's or the world
+// is a new one: the class set moves often, and a line at every move would only repeat itself.
+void RefreshFamily() {
+    const uint64_t classSet = OI::ClassSetVersion();
+    const uint32_t world = WI::Generation();
+    if (g_family.world == world && g_family.classSet == classSet) return;
+    const bool newWorld = g_family.world != world;
+    g_family.world = world;
+    g_family.classSet = classSet;
+    std::vector<void*> found;
+    OI::ForEachClass([](void* ctx, void* cls, void*) {
+        if (ReachesBase(cls)) static_cast<std::vector<void*>*>(ctx)->push_back(cls);
+    }, &found);
+    std::sort(found.begin(), found.end());
+    if (found == g_family.classes && !newWorld) return;
+    g_family.classes = std::move(found);
+    std::wstring names;
+    for (void* cls : g_family.classes) {
+        if (!names.empty()) names += L", ";
+        names += R::ToString(R::NameOf(cls));
+    }
+    UE_LOGI("growing_plant: %zu plant classes under %ls: %ls", g_family.classes.size(), kBase, names.c_str());
+}
 
 // Where one class keeps its values: each lookup is a walk of the class's properties, and a poll reads every plant's. An instance's
 // class pointer names that instance's class whatever else has lived at the address, and the family's fields are all inherited
@@ -96,9 +143,8 @@ void CallPlain(void* plant, const wchar_t* fnName) {
 }  // namespace
 
 void List(std::vector<void*>& out) {
-    for (const wchar_t* name : kFamily) {
-        void* cls = OI::ClassByName(name);
-        if (!cls) continue;
+    RefreshFamily();
+    for (void* cls : g_family.classes) {
         OI::ForEachInstance(cls, [](void* ctx, void* obj, int32_t) {
             if (R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__")) static_cast<std::vector<void*>*>(ctx)->push_back(obj);
         }, &out);
