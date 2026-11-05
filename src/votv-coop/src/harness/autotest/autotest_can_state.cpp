@@ -1,14 +1,20 @@
 // harness/autotest/autotest_can_state.cpp -- TEST-ONLY: a canned food's lid and contents across two peers.
 //
-// The host spawns two cans and names them in a folder both peers read. Can A: the host runs Open, the client runs eat.
-// Can B: the client runs Open, the host runs eat. Each step is one peer's reflected call of the can's own verb, and
-// each peer then logs `can-drill: STATE <step> <can> opened= foods= mesh=` for the driver to compare; a file per step
-// orders the two peers. Gated by VOTVCOOP_RUN_CAN_STATE; the folder is VOTVCOOP_CAN_DIR.
+// The client meets the host, then the host spawns two cans and names them in a folder both peers read. Can A: the host
+// runs Open, the client runs eat. Can B: the client runs Open, the host runs eat. Each step is one peer's reflected call
+// of the can's own verb; each peer then waits for the can on ITS copy to differ from the step before and logs
+// `can-drill: STATE <step> <can> opened= foods= type= mesh=`. The client hands its rows to the host, which compares each
+// step's opened, foods and mesh with its own and logs `can-drill: VERDICT PASS|FAIL`, then `can-drill: DONE`. A file per
+// step orders the two peers. Gated by VOTVCOOP_RUN_CAN_STATE; the folder is VOTVCOOP_CAN_DIR. Every wait is on a game
+// state or the other peer's signal, with a bound, never on a clock.
 
 #include "harness/autotest.h"
+#include "harness/autotest/meet.h"
+#include "harness/autotest/peer_signal.h"
 
-#include "coop/config/config.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/remote_player.h"
+#include "coop/props/join_membership_sweep.h"
 #include "coop/props/prop_key_index.h"
 #include "coop/session/net_pump.h"
 #include "ue_wrap/actors/prop.h"
@@ -23,39 +29,50 @@
 #include <windows.h>
 
 #include <atomic>
-#include <fstream>
+#include <cstdint>
+#include <sstream>
 #include <string>
+#include <vector>
 
 namespace harness::autotest {
 namespace {
 
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
+namespace PS = harness::autotest::peer_signal;
+using PS::Await;
+using PS::AwaitText;
+using PS::Mark;
+using PS::WaitFor;
 
-std::string g_dir;
+constexpr int kStepBoundSec = 30;   // a verb's effect, or the other peer's record, on this peer's copy
 
 template <class Fn>
 void OnGameThread(Fn&& fn) {
     ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
 }
 
-void Mark(const char* name, const std::string& body = "x") {
-    std::ofstream(g_dir + "\\" + name, std::ios::binary | std::ios::trunc) << body;
+// One can as a peer reads it.
+struct Row {
+    bool        found = false;
+    int         opened = 0;
+    int32_t     foods = 0;
+    int32_t     type = 0;
+    std::string mesh = "?";
+};
+
+bool SameState(const Row& a, const Row& b) {
+    return a.found == b.found && a.opened == b.opened && a.foods == b.foods && a.mesh == b.mesh;
 }
 
-bool Await(const char* name, std::string* body = nullptr, int seconds = 240) {
-    for (int i = 0; i < seconds * 10; ++i) {
-        std::ifstream f(g_dir + "\\" + name, std::ios::binary);
-        std::string s;
-        if (f && std::getline(f, s) && !s.empty()) {
-            if (body) *body = s;
-            return true;
-        }
-        ::Sleep(100);
-    }
-    UE_LOGW("can-drill: VERDICT ABORT -- no '%hs' from the other peer", name);
-    return false;
-}
+// A step's row, as the peers log and compare it.
+struct StepRow {
+    std::string step, can;
+    Row         row;
+};
+std::vector<StepRow> g_rows;
+
+std::string Narrow(const std::wstring& w) { return std::string(w.begin(), w.end()); }
 
 void* Find(const std::string& key) {
     void* a = nullptr;
@@ -64,27 +81,53 @@ void* Find(const std::string& key) {
     return a;
 }
 
-void LogState(const char* step, const char* can, const std::string& key) {
+Row ReadRow(const std::string& key) {
+    Row r;
     OnGameThread([&] {
         const std::wstring w(key.begin(), key.end());
         void* a = coop::prop_key_index::Find(w);
-        if (!a) {
-            UE_LOGW("can-drill: STATE %hs %hs -- no such can here", step, can);
-            return;
-        }
+        if (!a) return;
+        void* const cls = R::ClassOf(a);
         const auto* base = static_cast<const uint8_t*>(a);
-        const int32_t openedOff = R::FindPropertyOffset(R::ClassOf(a), L"opened");
-        const int32_t foodsOff = R::FindPropertyOffset(R::ClassOf(a), L"foods");
-        const int32_t typeOff = R::FindPropertyOffset(R::ClassOf(a), L"Type");
+        int32_t openedOff = -1;
+        uint8_t openedMask = 0;
+        const int32_t foodsOff = R::FindPropertyOffset(cls, L"foods");
+        const int32_t typeOff = R::FindPropertyOffset(cls, L"Type");
+        if (!R::FindBoolProperty(cls, L"opened", openedOff, openedMask) || foodsOff < 0 || typeOff < 0) return;
         void* mesh = ue_wrap::prop::GetStaticMesh(a);
         void* asset = nullptr;
         if (mesh) {
             const int32_t off = R::FindPropertyOffset(R::ClassOf(mesh), L"StaticMesh");
             if (off >= 0) asset = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(mesh) + off);
         }
-        UE_LOGI("can-drill: STATE %hs %hs opened=%d foods=%d type=%d mesh=%ls", step, can, base[openedOff] ? 1 : 0,
-                *reinterpret_cast<const int32_t*>(base + foodsOff), *reinterpret_cast<const int32_t*>(base + typeOff),
-                asset ? R::ToString(R::NameOf(asset)).c_str() : L"?");
+        r.found = true;
+        r.opened = (base[openedOff] & openedMask) ? 1 : 0;
+        r.foods = *reinterpret_cast<const int32_t*>(base + foodsOff);
+        r.type = *reinterpret_cast<const int32_t*>(base + typeOff);
+        if (asset) r.mesh = Narrow(R::ToString(R::NameOf(asset)));
+    });
+    return r;
+}
+
+// Logs the can's state for the step, keeps the row for the verdict, and returns it.
+Row LogState(const char* step, const char* can, const std::string& key) {
+    const Row r = ReadRow(key);
+    if (!r.found) {
+        UE_LOGW("can-drill: STATE %hs %hs -- no such can here", step, can);
+        return r;
+    }
+    UE_LOGI("can-drill: STATE %hs %hs opened=%d foods=%d type=%d mesh=%hs", step, can, r.opened, r.foods, r.type,
+            r.mesh.c_str());
+    g_rows.push_back({step, can, r});
+    return r;
+}
+
+// The can on this peer's copy has left the state `before`: the step's effect is here, whether the peer ran the verb or
+// the other peer's record arrived. A timeout is an ABORT line.
+bool WaitChanged(const char* what, const std::string& key, const Row& before) {
+    return WaitFor(what, kStepBoundSec, [&] {
+        const Row now = ReadRow(key);
+        return now.found && !SameState(now, before);
     });
 }
 
@@ -104,11 +147,65 @@ void Verb(const std::string& key, const wchar_t* name) {
     });
 }
 
-void Settle() { ::Sleep(1500); }
+bool BothCansHere(const std::string& keyA, const std::string& keyB) {
+    return WaitFor("both cans here", kStepBoundSec, [&] { return Find(keyA) && Find(keyB); });
+}
+
+// The rows one peer saw, as one line: `step can opened foods mesh`, rows apart by ';'.
+std::string RowsText() {
+    std::string out;
+    for (const StepRow& s : g_rows) {
+        if (!out.empty()) out += ';';
+        out += s.step + ' ' + s.can + ' ' + std::to_string(s.row.opened) + ' ' + std::to_string(s.row.foods) + ' ' +
+               s.row.mesh;
+    }
+    return out;
+}
+
+std::vector<StepRow> ParseRows(const std::string& text) {
+    std::vector<StepRow> out;
+    std::stringstream rows(text);
+    std::string one;
+    while (std::getline(rows, one, ';')) {
+        std::stringstream f(one);
+        StepRow s;
+        s.row.found = true;
+        if (f >> s.step >> s.can >> s.row.opened >> s.row.foods >> s.row.mesh) out.push_back(s);
+    }
+    return out;
+}
+
+std::string Describe(const Row& r) {
+    return "opened=" + std::to_string(r.opened) + " foods=" + std::to_string(r.foods) + " mesh=" + r.mesh;
+}
+
+// Every step the host logged must be in the client's rows with the same opened, foods and mesh.
+void Judge(const std::string& clientText) {
+    const std::vector<StepRow> client = ParseRows(clientText);
+    for (const StepRow& h : g_rows) {
+        const StepRow* c = nullptr;
+        for (const StepRow& s : client)
+            if (s.step == h.step && s.can == h.can) c = &s;
+        if (!c) {
+            UE_LOGW("can-drill: VERDICT FAIL %hs/%hs host=%hs client=none", h.step.c_str(), h.can.c_str(),
+                    Describe(h.row).c_str());
+            return;
+        }
+        if (!SameState(h.row, c->row)) {
+            UE_LOGW("can-drill: VERDICT FAIL %hs/%hs host=%hs client=%hs", h.step.c_str(), h.can.c_str(),
+                    Describe(h.row).c_str(), Describe(c->row).c_str());
+            return;
+        }
+    }
+    if (g_rows.size() != client.size()) {
+        UE_LOGW("can-drill: VERDICT FAIL rows host=%zu client=%zu", g_rows.size(), client.size());
+        return;
+    }
+    UE_LOGI("can-drill: VERDICT PASS");
+}
 
 void RunHost() {
-    if (!Await("client_ready")) return;
-    ::Sleep(3000);
+    if (!Await("client_ready", 400)) return;
     std::string keyA, keyB;
     OnGameThread([&] {
         void* cls = ue_wrap::asset_load::LoadObjectByPath(L"/Game/objects/prop_cannedFood_0.prop_cannedFood_0_C");
@@ -126,73 +223,93 @@ void RunHost() {
         UE_LOGW("can-drill: VERDICT ABORT -- the cans did not spawn");
         return;
     }
-    ::Sleep(2000);
-    LogState("0-born", "A", keyA);
-    LogState("0-born", "B", keyB);
+    if (!BothCansHere(keyA, keyB)) return;
+    const Row bornA = LogState("0-born", "A", keyA);
+    const Row bornB = LogState("0-born", "B", keyB);
     Mark("keys", keyA + " " + keyB);
     if (!Await("client_saw_born")) return;
     Verb(keyA, L"Open");   // A: the host opens
-    Settle();
-    LogState("1-host-opened", "A", keyA);
+    if (!WaitChanged("the host's open on can A", keyA, bornA)) return;
+    const Row openedA = LogState("1-host-opened", "A", keyA);
     Mark("host_opened");
     if (!Await("client_ate")) return;   // A: the client eats
-    Settle();
+    if (!WaitChanged("the client's eat on can A", keyA, openedA)) return;
     LogState("2-client-ate", "A", keyA);
     Mark("host_saw_eat");
     if (!Await("client_opened")) return;   // B: the client opens
-    Settle();
-    LogState("3-client-opened", "B", keyB);
+    if (!WaitChanged("the client's open on can B", keyB, bornB)) return;
+    const Row openedB = LogState("3-client-opened", "B", keyB);
     Verb(keyB, L"eat");   // B: the host eats
-    Settle();
+    if (!WaitChanged("the host's eat on can B", keyB, openedB)) return;
     LogState("4-host-ate", "B", keyB);
     Mark("host_ate");
-    if (!Await("client_done")) return;
-    UE_LOGI("can-drill: DONE");
+    std::string clientRows;
+    if (!AwaitText("client_rows", clientRows)) return;
+    Judge(clientRows);
+    UE_LOGI("can-drill: DONE");   // after the verdict: a run ends on DONE
+}
+
+// The world is up, the host's puppet is here, the join's load tail has quiesced (a client's change before it is not
+// published, as prop_can_state holds), and the client stands beside the host, where the cans are spawned.
+bool ClientReady() {
+    if (!WaitFor("the world announced", 240, [&] {
+            bool ready = false;
+            OnGameThread([&] { ready = coop::net_pump::HasAnnouncedWorldReady(); });
+            return ready;
+        }))
+        return false;
+    if (!WaitFor("the host's puppet", 60, [&] {
+            bool have = false;
+            OnGameThread([&] {
+                coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(0);
+                have = p && p->valid();
+            });
+            return have;
+        }))
+        return false;
+    if (!WaitFor("the join's load tail to quiesce", 180, [&] {
+            bool quiet = false;
+            OnGameThread([&] { quiet = coop::join_membership_sweep::HasLoadTailQuiesced(); });
+            return quiet;
+        }))
+        return false;
+    return meet::WalkToHost("can-drill");
 }
 
 void RunClient() {
-    bool ready = false;
-    for (int i = 0; i < 480 && !ready; ++i) {
-        OnGameThread([&] { ready = coop::net_pump::HasAnnouncedWorldReady(); });
-        if (!ready) ::Sleep(500);
-    }
-    ::Sleep(8000);
+    if (!ClientReady()) return;
     Mark("client_ready");
     std::string keys;
-    if (!Await("keys", &keys)) return;
+    if (!AwaitText("keys", keys)) return;
     const size_t sp = keys.find(' ');
     const std::string keyA = keys.substr(0, sp), keyB = keys.substr(sp + 1);
-    for (int i = 0; i < 100 && (!Find(keyA) || !Find(keyB)); ++i) ::Sleep(100);
-    LogState("0-born", "A", keyA);
-    LogState("0-born", "B", keyB);
+    if (!BothCansHere(keyA, keyB)) return;
+    const Row bornA = LogState("0-born", "A", keyA);
+    const Row bornB = LogState("0-born", "B", keyB);
     Mark("client_saw_born");
     if (!Await("host_opened")) return;
-    Settle();
-    LogState("1-host-opened", "A", keyA);
+    if (!WaitChanged("the host's open on can A", keyA, bornA)) return;
+    const Row openedA = LogState("1-host-opened", "A", keyA);
     Verb(keyA, L"eat");
-    Settle();
+    if (!WaitChanged("the client's eat on can A", keyA, openedA)) return;
     LogState("2-client-ate", "A", keyA);
     Mark("client_ate");
     if (!Await("host_saw_eat")) return;
     Verb(keyB, L"Open");
-    Settle();
-    LogState("3-client-opened", "B", keyB);
+    if (!WaitChanged("the client's open on can B", keyB, bornB)) return;
+    const Row openedB = LogState("3-client-opened", "B", keyB);
     Mark("client_opened");
     if (!Await("host_ate")) return;
-    Settle();
+    if (!WaitChanged("the host's eat on can B", keyB, openedB)) return;
     LogState("4-host-ate", "B", keyB);
-    Mark("client_done");
+    Mark("client_rows", RowsText());
     UE_LOGI("can-drill: DONE");
 }
 
 }  // namespace
 
 DWORD WINAPI CanStateThread(LPVOID /*arg*/) {
-    g_dir = coop::config::ReadEnv("VOTVCOOP_CAN_DIR");
-    if (g_dir.empty()) {
-        UE_LOGW("can-drill: VERDICT ABORT -- VOTVCOOP_CAN_DIR is unset");
-        return 0;
-    }
+    if (!PS::Begin("can-drill")) return 0;
     if (IsClientRole()) RunClient();
     else                RunHost();
     return 0;

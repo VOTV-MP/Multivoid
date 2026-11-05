@@ -57,7 +57,8 @@ last knew, a can it has not seen comparing with its class's defaults (`coop/prop
 record landing here updates what is known and does not go back. `[V]`
 `harness/autotest/autotest_can_state.cpp`: two cans, each opened on one peer and eaten from on the
 other, read the same `opened`, `foods` and mesh on both peers after every step, with one record per
-change. The verbs ran by reflection; the can opener's and the use key's own routes into them are `[RD]`.
+change; the client walks to the host first, every step waits on the can's state, and the host judges
+the client's rows (`can-drill: VERDICT`). The verbs ran by reflection; the can opener's and the use key's own routes into them are `[RD]`.
 
 On the host, a prop born during play -- a device's eject, a drop, a place -- gets its record from
 the finish-spawning drain a tick after the birth, because the Blueprint that spawned it fills its
