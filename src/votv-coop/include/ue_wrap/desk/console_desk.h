@@ -247,7 +247,8 @@ bool ReadPrecMult(float& out);
 bool ApplyPlayVolumeEffects(int32_t value);
 
 // Draw the signal view in `spectrogram` mode, as the desk's red button does: setCanvas, which writes
-// visualizerMode, then endCanvas. False if unresolved. Game thread.
+// visualizerMode, then endCanvas. False if unresolved or the desk's screen widget is not live yet
+// (nothing is written then; the caller retries). Game thread.
 bool ApplyVisualizerMode(bool spectrogram);
 
 // The deck-playback replay surface (deck_play_sync): the reflected desk playSignal and

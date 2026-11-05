@@ -46,6 +46,13 @@ uint8_t g_primedRunSlot = 0xFF;
 
 bool g_scanWidgetWarned = false;  // log-once for the spawnDirs null-guard
 
+// A signal-view mode a wire apply could not draw because the desk's screen widget was not live; Tick
+// applies it once the widget is, and only then moves the baseline (the desk's flag still holds the old
+// mode until then, so the poll sees no local edge).
+bool g_visPending = false;
+bool g_visPendingValue = false;
+bool g_visDeferWarned = false;
+
 void SendDelta(coop::net::Session* s, DeskInputField field,
                float fv, int32_t iv, bool bv) {
     coop::net::DeskInputPayload p{};
@@ -124,8 +131,10 @@ bool ApplyField(const coop::net::DeskInputPayload& p, CD::Scalars& sc) {
     if (!CD::WriteScalars(sc, PaintersFor(static_cast<DeskInputField>(p.field)))) return false;
     if (static_cast<DeskInputField>(p.field) == DeskInputField::PlayVolume)
         CD::ApplyPlayVolumeEffects(p.intVal);
-    if (static_cast<DeskInputField>(p.field) == DeskInputField::VisualizerMode)
-        CD::ApplyVisualizerMode(p.boolVal != 0);
+    // A deferred mode is not applied yet: false keeps OnDeskInput from priming the baseline with it.
+    if (static_cast<DeskInputField>(p.field) == DeskInputField::VisualizerMode &&
+        !ApplyVisualizerModeOrDefer(p.boolVal != 0))
+        return false;
     return true;
 }
 
@@ -216,6 +225,15 @@ void Tick() {
     if (now < g_nextPoll) return;
     g_nextPoll = now + kPoll;
     if (!CD::EnsureResolved() || !CD::Instance()) return;
+    if (g_visPending) {
+        coop::desk_snd_fx::ScopedWireApply guard;  // the mode draw is wire-caused
+        if (CD::ApplyVisualizerMode(g_visPendingValue)) {
+            g_visPending = false;
+            if (g_primed) g_baseline.visualizerMode = g_visPendingValue;
+            UE_LOGI("desk_input: deferred signal-view mode %d applied (screen widget live)",
+                    g_visPendingValue ? 1 : 0);
+        }
+    }
     if (!s->connected()) {
         // Keep the baseline current while unwired so a (re)connect never
         // bursts stale diffs.
@@ -265,6 +283,21 @@ void OnDeskInput(const coop::net::DeskInputPayload& wire, uint8_t senderSlot) {
     // same GT task -- the next poll never reads this apply as a local edge.
     if (g_primed) PatchScalar(p, g_baseline);
     else { g_baseline = sc; g_primed = true; }
+}
+
+bool ApplyVisualizerModeOrDefer(bool spectrogram) {
+    if (CD::ApplyVisualizerMode(spectrogram)) {
+        g_visPending = false;  // a newer apply supersedes a deferred one
+        return true;
+    }
+    g_visPending = true;
+    g_visPendingValue = spectrogram;
+    if (!g_visDeferWarned) {
+        g_visDeferWarned = true;
+        UE_LOGW("desk_input: signal-view mode %d deferred -- desk screen widget not live yet "
+                "(applied by the poll tick when it is; log-once)", spectrogram ? 1 : 0);
+    }
+    return false;
 }
 
 void OnDeskScan(const coop::net::DeskScanEventPayload& p, uint8_t senderSlot) {
@@ -336,6 +369,9 @@ void OnDisconnect() {
     g_nextPrimedSlot = 0xFF;
     g_primedRunSlot = 0xFF;
     g_scanWidgetWarned = false;
+    g_visPending = false;
+    g_visPendingValue = false;
+    g_visDeferWarned = false;
     g_nextPoll = {};
 }
 

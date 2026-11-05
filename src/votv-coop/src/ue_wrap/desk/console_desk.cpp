@@ -707,6 +707,9 @@ bool ApplyPlayVolumeEffects(int32_t value) {
 bool ApplyVisualizerMode(bool spectrogram) {
     void* d = Instance();
     if (!d || !g_setCanvasFn || !g_endCanvasFn) return false;
+    // setCanvas dereferences the desk's screen widget (its visualizer images); with the widget not
+    // live the verb would write the flag and skip the picture, so the caller is told to try later.
+    if (!AtlasWidget()) return false;
     ue_wrap::ParamFrame f(g_setCanvasFn);
     if (!f.valid() || !f.Set<bool>(L"visualizerMode", spectrogram) || !ue_wrap::Call(d, f)) return false;
     return ue_wrap::component_calls::CallParamless(d, g_endCanvasFn);

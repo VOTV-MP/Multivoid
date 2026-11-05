@@ -476,7 +476,8 @@ void OnDeskState(const coop::net::DeskStatePayload& p) {
     // A join adopt replaces the WHOLE scalar set, so every painter is owed. This is the one caller
     // entitled to the full chain, and it runs once per adopt.
     if (CD::WriteScalars(sc, CD::kPaintAll)) {
-        CD::ApplyVisualizerMode(sc.visualizerMode);
+        // A desk whose screen widget is not live yet keeps the mode until it is (desk_input_sync's tick).
+        coop::desk_input_sync::ApplyVisualizerModeOrDefer(sc.visualizerMode);
         // Prime the input lane's poll baselines, so the seeded values never read as local edges.
         coop::desk_input_sync::PrimeBaselines();
     }

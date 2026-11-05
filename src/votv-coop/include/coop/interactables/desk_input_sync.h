@@ -40,6 +40,11 @@ void OnDeskScan(const coop::net::DeskScanEventPayload& p, uint8_t senderSlot);
 // seeded values never read as local edges.
 void PrimeBaselines();
 
+// Draw the signal view in `spectrogram` mode on the local desk. A desk whose screen widget is not live
+// yet (a join adopt can land first) cannot draw it: the mode is kept and applied by Tick when the widget
+// comes up. True when drawn now. Game thread.
+bool ApplyVisualizerModeOrDefer(bool spectrogram);
+
 // HOST: a peer left -- if it was the live ping setter, clear the attribution (the
 // desk-claim deny would otherwise outlive the leaver). No machine write: no peer's
 // machine carries a wire-applied ping flag.
