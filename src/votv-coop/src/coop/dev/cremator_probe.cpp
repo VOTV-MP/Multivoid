@@ -84,7 +84,8 @@ int Bit(void* object, const wchar_t* name) {
 
 bool CallNoParams(void* object, const wchar_t* fnName) {
     if (!object || !R::IsLive(object)) return false;
-    void* fn = R::FindFunction(R::ClassOf(object), fnName);
+    // The function the instance dispatches: the cremator door is a subclass of the prop_swinger that declares open/close.
+    void* fn = R::FindDispatchFunction(R::ClassOf(object), fnName, nullptr);
     if (!fn) return false;
     ue_wrap::ParamFrame f(fn);
     return ue_wrap::Call(object, f);
