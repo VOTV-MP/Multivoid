@@ -773,8 +773,7 @@ CFG_FLAG(key_index_forget_one, "key_index_forget_one", "dev", false, "VOTVCOOP_K
 // The permissions and action-log selftests' red arms: their own file, one concept, included as
 // _dev_port.inc is above.
 #include "coop/config/config_registry_rows_dev_selftest.inc"
-// The explosion lane's drill, birth line and selftest red arms: their own file, one concept, included as
-// _dev_port.inc is above.
+// The explosion lane's drill, birth line and selftest red arms: their own file, as _dev_port.inc is above.
 #include "coop/config/config_registry_rows_dev_explosion.inc"
 // The Geom Octa lane's drill and red arm: their own file, one concept, included as _dev_port.inc is above.
 #include "coop/config/config_registry_rows_dev_octa.inc"
@@ -796,5 +795,6 @@ CFG_FLAG(key_index_forget_one, "key_index_forget_one", "dev", false, "VOTVCOOP_K
 #include "coop/config/config_registry_rows_dev_pi.inc"
 // The NPC-spawner arc's native-spawn probe (NB): the same shape, the last rows of the list.
 #include "coop/config/config_registry_rows_dev_nb.inc"
-// The Vulkan overlay arc's probes: their own file, one concept, included as _dev_nb.inc is above.
+// The Vulkan overlay arc's probes and the ambient drills' red arms: a file each, one concept each, as _dev_nb.inc is above.
 #include "coop/config/config_registry_rows_dev_vulkan.inc"
+#include "coop/config/config_registry_rows_dev_ambient.inc"

@@ -2,6 +2,8 @@
 
 #include "coop/world/sus_hole_intent.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/element/intent_authority.h"
 #include "coop/net/intent_queue.h"
 #include "coop/net/protocol.h"
@@ -132,9 +134,16 @@ void ClientTick(coop::net::Session& s) {
         UE_LOGI("[SUS-HOLE] this player's spawner rolled a hole at (%.0f %.0f %.0f) -- the host makes it", at.X, at.Y, at.Z);
     }
     g_stamped.clear();
+    // The drill's red arm: the hole is destroyed as ever and its word is never sent, so the host makes nothing.
+    static const bool s_redNoIntent = coop::config::ResolveEnum(coop::config_registry::rows::sus_hole_red) == "no_intent";
     for (auto it = g_outbox.begin(); it != g_outbox.end();) {
-        if (!s.SendReliable(coop::net::ReliableKind::SusHoleIntent, &*it, sizeof(*it))) break;
-        ++g_counters.sent;
+        if (!s_redNoIntent && !s.SendReliable(coop::net::ReliableKind::SusHoleIntent, &*it, sizeof(*it))) break;
+        if (!s_redNoIntent) {
+            ++g_counters.sent;
+            g_counters.sentX = it->x;
+            g_counters.sentY = it->y;
+            g_counters.sentZ = it->z;
+        }
         it = g_outbox.erase(it);
     }
 }
@@ -187,7 +196,10 @@ bool Execute(coop::net::Session& s, const Payload& p, int slot) {
         Refuse(kTooFar, slot, p, coop::element::OutcomeName(subject.outcome));
         return true;
     }
-    if (subject.distUU < kRingNearUU) {
+    // The drill's red arm: the ring's inner bound is not judged, so a point beside its player goes on to the trace.
+    static const bool s_redNearAccepted =
+        coop::config::ResolveEnum(coop::config_registry::rows::sus_hole_red) == "out_of_ring_accepted";
+    if (subject.distUU < kRingNearUU && !s_redNearAccepted) {
         Refuse(kTooNear, slot, p, nullptr);
         return true;
     }

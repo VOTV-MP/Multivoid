@@ -16,6 +16,8 @@
 
 #include "coop/world/spawn_authority.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/net/session.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/script_gate.h"
@@ -23,6 +25,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <iterator>
 
 namespace coop::spawn_authority {
@@ -225,7 +228,23 @@ SG::Verdict OnRowPre(const SG::Call& call) {
 
 std::atomic<bool> g_watched{false};
 
+// The drills' red arms leave rows out of the table, so a drill that reads the refusal counters must fail. The creature drill's
+// arm leaves all four ambient rows out, the field drill's the hexahive's and the beehive's. Read once, at the install.
+bool LeftOutByRedArm(const char* tag) {
+    const bool fixtureRow = std::strcmp(tag, "hexahiveSpawner.ReceiveTick") == 0 || std::strcmp(tag, "beehiveSpawner.spawn") == 0;
+    const bool creatureRow = std::strcmp(tag, "deerSpawner.ReceiveTick") == 0 || std::strcmp(tag, "treeSpawner.ReceiveTick") == 0;
+    static const bool creatureArm = coop::config::ResolveEnum(::coop::config_registry::rows::ambient_creature_red) == "no_rows";
+    static const bool fieldArm = coop::config::ResolveEnum(::coop::config_registry::rows::ambient_field_red) == "no_rows";
+    return (creatureArm && (creatureRow || fixtureRow)) || (fieldArm && fixtureRow);
+}
+
 }  // namespace
+
+uint64_t RefusalCount(const char* tag) {
+    for (int i = 0; i < kRowCount; ++i)
+        if (std::strcmp(kRows[i].tag, tag) == 0) return g_refused[i];
+    return 0;
+}
 
 // Refuse only while an active client session exists: the running flag flips true in the session
 // start and false in the stop, which every disconnect path reaches; a bare role gate would bleed the
@@ -240,6 +259,10 @@ void Install(coop::net::Session* session) {
     if (g_watched.exchange(true, std::memory_order_acq_rel)) return;
     int watched = 0;
     for (int i = 0; i < kRowCount; ++i) {
+        if (LeftOutByRedArm(kRows[i].tag)) {
+            UE_LOGI("spawn_authority: red arm -- the row %s is left out", kRows[i].tag);
+            continue;
+        }
         if (SG::WatchName(*kRows[i].row, kTagBase + i, &OnRowPre, nullptr)) {
             ++watched;
         } else {

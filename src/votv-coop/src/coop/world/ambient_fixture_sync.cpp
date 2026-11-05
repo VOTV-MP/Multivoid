@@ -2,6 +2,8 @@
 
 #include "coop/world/ambient_fixture_sync.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
@@ -52,6 +54,14 @@ constexpr int kTag = 0x41465853;  // 'AFXS'
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 std::vector<AB::Event> g_events;  // reused by every drain
+Counters g_counters;              // the drill's read
+
+// The field drill's red arms, read once: no_bind leaves a loaded branch unbound by its key (the host's branch then comes as a
+// copy beside it), no_census makes the census-end end nothing.
+bool RedArm(const char* arm) {
+    static const std::string s_arm = coop::config::ResolveEnum(coop::config_registry::rows::ambient_field_red);
+    return s_arm == arm;
+}
 
 bool IsHost() {
     auto* s = g_session.load(std::memory_order_acquire);
@@ -151,7 +161,12 @@ void OnTouchedPost(const SG::Call& call) {
 
 // A client's copy ends with the nest still standing: the nest is the prop lane's.
 SG::Verdict OnDestroyedPre(const SG::Call& call) {
-    if (coop::spawn_authority::IsActiveClientSession() && call.object) AC::DropBranchNest(call.object);
+    if (coop::spawn_authority::IsActiveClientSession() && call.object) {
+        std::wstring key;
+        void* hive = nullptr;
+        if (AC::ReadBranch(call.object, key, hive) && hive) ++g_counters.hiveDropped;
+        AC::DropBranchNest(call.object);
+    }
     return SG::Verdict::Run;
 }
 
@@ -218,6 +233,7 @@ void HostPass(coop::net::Session& s) {
 
     for (size_t i = 0; i < g_ends.size();) {
         if (s.SendReliable(coop::net::ReliableKind::AmbientFixtureState, &g_ends[i], sizeof(Payload))) {
+            ++g_counters.sent;
             g_ends.erase(g_ends.begin() + static_cast<std::ptrdiff_t>(i));
         } else {
             again = true;
@@ -265,15 +281,17 @@ void HostPass(coop::net::Session& s) {
                 k.sentAny = true;
                 k.sentHasNest = hasNest;
                 ++sends;
+                ++g_counters.sent;
             } else {
                 again = true;
             }
         } else if (k.pendingSlots) {
             for (int slot = 1; slot < coop::players::kMaxPeers; ++slot) {
                 if (!(k.pendingSlots & (1u << slot))) continue;
-                if (s.SendReliableToSlot(slot, coop::net::ReliableKind::AmbientFixtureState, &k.wire, sizeof(Payload)))
+                if (s.SendReliableToSlot(slot, coop::net::ReliableKind::AmbientFixtureState, &k.wire, sizeof(Payload))) {
                     k.pendingSlots &= ~(1u << slot);
-                else
+                    ++g_counters.sent;
+                } else
                     again = true;
             }
         }
@@ -294,6 +312,7 @@ void HostPass(coop::net::Session& s) {
         end.alive = 1;
         if (s.SendReliableToSlot(slot, coop::net::ReliableKind::AmbientFixtureState, &end, sizeof(end))) {
             g_censusSlots &= ~(1u << slot);
+            ++g_counters.censusSent;
             UE_LOGI("ambient_fixture_sync: census to slot %d complete, %zu fixtures stand", slot, g_known.size());
         } else {
             again = true;
@@ -363,6 +382,7 @@ void ReadLoaded() {
         void* hive = nullptr;
         if (Live(r) && AC::ReadBranch(r.obj, key, hive) && !key.empty()) g_loaded[key] = r;
     }
+    g_counters.loaded = g_loaded.size();
     UE_LOGI("ambient_fixture_sync: the load brought %zu keyed branches", g_loaded.size());
     g_loadCandidates.clear();
 }
@@ -372,8 +392,8 @@ bool BindNest(Copy& c) {
     void* nest = PKI::Find(c.nestKey);
     if (!nest) return false;
     c.wantNest = false;
-    if (!AC::BindBranchNest(c.actor.obj, nest))
-        UE_LOGW("ambient_fixture_sync: a branch could not bind its nest %p", nest);
+    if (AC::BindBranchNest(c.actor.obj, nest)) ++g_counters.nestsBound;
+    else UE_LOGW("ambient_fixture_sync: a branch could not bind its nest %p", nest);
     return true;
 }
 
@@ -423,12 +443,18 @@ void EndBranch(const Ref& r) {
 }
 
 void ApplyCensus() {
+    ++g_counters.censusEnds;
+    if (RedArm("no_census")) {
+        g_loaded.clear();
+        return;
+    }
     size_t ended = 0;
     for (auto& kv : g_loaded) {
         if (!Live(kv.second)) continue;
         AC::Destroy(kv.second.obj);
         ++ended;
     }
+    g_counters.censusEnded += ended;
     UE_LOGI("ambient_fixture_sync: census end -- %zu loaded branches the host lacks ended", ended);
     g_loaded.clear();
 }
@@ -456,10 +482,13 @@ void ApplyInbox() {
         }
         Copy c;
         c.nestKey = coop::net::StringFromWireKey(p.birthKey);
-        if (branch && !c.nestKey.empty()) {
+        if (branch && !c.nestKey.empty() && !RedArm("no_bind")) {
             const auto lt = g_loaded.find(c.nestKey);
             if (lt != g_loaded.end()) {
-                if (Live(lt->second)) c.actor = lt->second;
+                if (Live(lt->second)) {
+                    c.actor = lt->second;
+                    ++g_counters.bound;
+                }
                 g_loaded.erase(lt);
             }
         }
@@ -471,6 +500,7 @@ void ApplyInbox() {
             }
             c.actor = Ref{copy, R::InternalIndexOf(copy)};
             g_spawned[copy] = c.actor.index;
+            ++(branch ? g_counters.branchCopies : g_counters.holeCopies);
         }
         Copy& stored = g_copies.emplace(p.id, c).first->second;
         if (branch) ApplyNest(stored, p.hasNest);
@@ -525,6 +555,8 @@ void Tick() {
 
 void OnState(const coop::net::AmbientFixtureStatePayload& p) { g_inbox.push_back(p); }
 
+Counters Read() { return g_counters; }
+
 // A joiner is sent every fixture the host holds, to it alone, and then the census-end; a branch whose key is not known yet
 // is sent to everyone when it is.
 void QueueConnectBroadcastForSlot(int slot) {
@@ -541,6 +573,7 @@ void QueueConnectBroadcastForSlot(int slot) {
 }
 
 void OnDisconnect() {
+    g_counters = Counters{};
     if (g_session.load() && g_session.load()->role() == coop::net::Role::Client) {
         for (const auto& kv : g_spawned)
             if (R::IsLiveByIndex(kv.first, kv.second)) AC::Destroy(kv.first);

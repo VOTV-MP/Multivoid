@@ -15,6 +15,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace coop::net {
 class Session;
 struct AmbientFixtureStatePayload;
@@ -32,6 +34,21 @@ void OnState(const coop::net::AmbientFixtureStatePayload& p);
 
 // Every fixture again for a joiner, to that slot alone, then its census-end.
 void QueueConnectBroadcastForSlot(int slot);
+
+// Read-only, for the drill: this session's totals.
+struct Counters {
+    uint64_t sent = 0;          // HOST: fixture messages sent
+    uint64_t censusSent = 0;    // HOST: census-ends sent
+    uint64_t loaded = 0;        // CLIENT: keyed branches the load brought
+    uint64_t bound = 0;         // CLIENT: loaded branches bound to the host's branch by key
+    uint64_t holeCopies = 0;    // CLIENT: hole copies spawned
+    uint64_t branchCopies = 0;  // CLIENT: branch copies spawned
+    uint64_t nestsBound = 0;    // CLIENT: nests given to a branch
+    uint64_t hiveDropped = 0;   // CLIENT: branches that ended holding a nest, which the branch's end let stand
+    uint64_t censusEnds = 0;    // CLIENT: census-ends received
+    uint64_t censusEnded = 0;   // CLIENT: loaded branches those census-ends ended
+};
+Counters Read();
 
 // A client's copies go, for the world it stays in.
 void OnDisconnect();

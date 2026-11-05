@@ -18,6 +18,8 @@
 // left running because their anchor is the LOCAL player, is the table in docs/npcs-and-kerfur.md,
 // "Which spawners a client refuses".
 
+#include <cstdint>
+
 namespace coop::net {
 class Session;
 }  // namespace coop::net
@@ -43,5 +45,9 @@ void Install(coop::net::Session* session);
 // other client-only seams that must not bleed into single player or a host. The running flag flips true in
 // the session start and false in the stop, which every disconnect path reaches. Any thread.
 bool IsActiveClientSession();
+
+// How many calls the row tagged `tag` (its entry in the table, e.g. "deerSpawner.ReceiveTick") has refused on this client, 0
+// for an unknown tag. Read-only, for the drills. Game thread.
+uint64_t RefusalCount(const char* tag);
 
 }  // namespace coop::spawn_authority

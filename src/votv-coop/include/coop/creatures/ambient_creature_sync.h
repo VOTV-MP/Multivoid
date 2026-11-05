@@ -10,6 +10,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace coop::net {
 class Session;
 struct AmbientTreeStatePayload;
@@ -28,6 +30,13 @@ void OnTreeState(const coop::net::AmbientTreeStatePayload& p);
 
 // Every tree again for a joiner.
 void QueueConnectBroadcastForSlot(int slot);
+
+// Read-only, for the drill: this session's totals.
+struct Counters {
+    uint64_t sent = 0;     // HOST: tree states sent
+    uint64_t applied = 0;  // CLIENT: tree states written onto a mirror
+};
+Counters Read();
 
 // The lane's state ends with the session.
 void OnDisconnect();

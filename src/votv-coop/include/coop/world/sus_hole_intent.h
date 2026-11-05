@@ -57,6 +57,7 @@ struct Counters {
     uint64_t received = 0;  // HOST: intents past the dispatcher
     uint64_t accepted = 0;  // HOST: holes made
     uint64_t refused[kReasonCount] = {};  // HOST: by reason
+    float sentX = 0.f, sentY = 0.f, sentZ = 0.f;  // CLIENT: where the last intent sent said its hole stood
 };
 Counters Read();
 

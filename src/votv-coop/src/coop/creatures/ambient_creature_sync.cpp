@@ -2,6 +2,8 @@
 
 #include "coop/creatures/ambient_creature_sync.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/creatures/npc_sync.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
@@ -75,6 +77,7 @@ std::unordered_map<coop::element::ElementId, Want> g_want;
 bool g_recheck = false;
 std::unordered_set<void*> g_dissolving;
 std::vector<AB::Event> g_events;  // reused by every drain
+Counters g_counters;              // the drill's read
 
 // The landing's entry, on the game thread: the lane sends it at its next tick.
 void OnLandedPost(const SG::Call& call) {
@@ -126,6 +129,14 @@ bool SendTree(coop::net::Session& s, void* obj, Tree& t) {
         t.dirty = false;
         return true;
     }
+    // The creature drill's red arm: the host's tree state goes nowhere, so a client's tree keeps what its own begin play rolled.
+    static const bool s_redNoTreeState =
+        coop::config::ResolveEnum(coop::config_registry::rows::ambient_creature_red) == "no_tree_state";
+    if (s_redNoTreeState) {
+        t.dirty = false;
+        t.force = false;
+        return true;
+    }
     coop::net::AmbientTreeStatePayload p{};
     p.treeEid = static_cast<uint32_t>(t.eid);
     p.scale = scale;
@@ -137,6 +148,7 @@ bool SendTree(coop::net::Session& s, void* obj, Tree& t) {
     t.sent = true;
     t.dirty = false;
     t.force = false;
+    ++g_counters.sent;
     UE_LOGI("ambient_creature_sync: tree %u scale=%.2f landed=%d", p.treeEid, scale, landed ? 1 : 0);
     return true;
 }
@@ -188,6 +200,7 @@ void ApplyWants() {
             w.applied = tree;
             w.appliedIndex = R::InternalIndexOf(tree);
             w.ended = false;
+            ++g_counters.applied;
             UE_LOGI("ambient_creature_sync: tree %u here scale=%.2f landed=%d", it->first, w.scale, w.landed ? 1 : 0);
         }
         ++it;
@@ -268,7 +281,10 @@ void QueueConnectBroadcastForSlot(int /*slot*/) {
     g_anyDirty = !g_trees.empty();
 }
 
+Counters Read() { return g_counters; }
+
 void OnDisconnect() {
+    g_counters = Counters{};
     g_trees.clear();
     g_anyDirty = false;
     g_want.clear();
