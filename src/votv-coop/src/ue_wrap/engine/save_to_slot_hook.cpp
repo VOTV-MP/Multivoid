@@ -68,11 +68,11 @@ Verdict Decide(void* saveGameObject, void* slotNameFStr) {
 
 // A fault absorbed by a seam is said, the first few times: a gate that faults cancels every world
 // save of a host, and nobody would know why it stopped saving.
-void LogSeamFault(const char* seam, unsigned long code) {
+void LogSeamFault(const char* seam, unsigned long code, int subscriber = -1) {
     static std::atomic<int> s_said{0};
     if (s_said.fetch_add(1, std::memory_order_relaxed) < 5)
-        UE_LOGE("save_to_slot_hook: the %s seam FAULTED (exception 0x%08lX) -- %s", seam, code,
-                seam[0] == 'g' ? "this world save is cancelled" : "the rest of the notice did not run");
+        UE_LOGE("save_to_slot_hook: the %s seam FAULTED (exception 0x%08lX, subscriber %d) -- %s", seam, code,
+                subscriber, seam[0] == 'g' ? "this world save is cancelled" : "the other subscribers still run");
 }
 
 // The two seams run inside SEH-only frames (no C++ objects to unwind, so the __try is legal). The
@@ -87,20 +87,26 @@ Verdict DecideSEH(void* saveGameObject, void* slotNameFStr) {
     }
 }
 
-void NotifySEH(void* saveGameObject, void* slotNameFStr) {
+// One subscriber per frame, so a fault in one is named and the later ones still hear the write.
+void NotifyOneSEH(Written w, int index, void* saveGameObject, void* slotNameFStr) {
     __try {
-        for (const std::atomic<Written>& slot : g_written)
-            if (const Written w = slot.load(std::memory_order_acquire)) w(saveGameObject, SlotOf(slotNameFStr));
+        w(saveGameObject, SlotOf(slotNameFStr));
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        LogSeamFault("written", GetExceptionCode());
+        LogSeamFault("written", GetExceptionCode(), index);
     }
+}
+
+void Notify(void* saveGameObject, void* slotNameFStr) {
+    for (int i = 0; i < kMaxWritten; ++i)
+        if (const Written w = g_written[i].load(std::memory_order_acquire))
+            NotifyOneSEH(w, i, saveGameObject, slotNameFStr);
 }
 
 bool __fastcall SaveGameToSlotDetour(void* saveGameObject, void* slotNameFStr, int32_t userIndex) {
     const Verdict v = DecideSEH(saveGameObject, slotNameFStr);
     if (v == Verdict::Cancel) return false;
     const bool ok = g_saveGameToSlotTrampoline(saveGameObject, slotNameFStr, userIndex);
-    if (ok && v == Verdict::Write) NotifySEH(saveGameObject, slotNameFStr);
+    if (ok && v == Verdict::Write) Notify(saveGameObject, slotNameFStr);
     return ok;
 }
 
@@ -158,8 +164,12 @@ bool AddWritten(Written written) {
         Written cur = slot.load(std::memory_order_acquire);
         if (cur == written) return true;
         if (!cur && slot.compare_exchange_strong(cur, written, std::memory_order_acq_rel)) return true;
-        if (cur == written) return true;
     }
+    // Every slot is taken: a subscriber that never hears a write. Said once, since a caller may retry.
+    static std::atomic<bool> s_full{false};
+    if (!s_full.exchange(true, std::memory_order_relaxed))
+        UE_LOGE("save_to_slot_hook: the written-subscriber table is full (%d) -- a subscriber was refused and "
+                "will never hear a world save", kMaxWritten);
     return false;
 }
 
