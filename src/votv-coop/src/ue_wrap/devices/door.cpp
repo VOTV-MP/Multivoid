@@ -62,7 +62,8 @@ int32_t g_sensorOverlapsOff = -1;  // Adoor_C::sensorOverlaps (TArray<AActor*>)
 // The door's power flag, which a press gates on first. A keypad's setActive, ventCrawler (the signal room
 // door) and the save write it, and a level trigger's runTrigger 2/3 could; no power path does (the panel's
 // blackout leaves it alone, measured).
-int32_t g_activeOff      = -1;     // Adoor_C::Active (power)
+int32_t g_activeOff      = -1;     // Adoor_C::Active (power): the byte, and its bit among the door's packed bools
+uint8_t g_activeMask     = 0;
 
 // A door class whose required fields or verbs did not resolve: asked again only when another class
 // object comes, said once for it.
@@ -121,8 +122,10 @@ bool EnsureResolved() {
     const int32_t keyOff = R::FindPropertyOffset(doorCls, L"Key");
     const int32_t isOpenedOff = R::FindPropertyOffset(doorCls, L"isOpened");
     const int32_t isMovingOff = R::FindPropertyOffset(doorCls, L"isMoving");
-    const int32_t activeOff = R::FindPropertyOffset(doorCls, L"Active");
-    void* openFn  = R::FindFunction(doorCls, L"doorOpen");
+    int32_t activeOff = -1;
+    uint8_t activeMask = 0;
+    if (!R::FindBoolProperty(doorCls, L"Active", activeOff, activeMask)) activeOff = -1;
+    void* openFn = R::FindFunction(doorCls, L"doorOpen");
     void* closeFn = R::FindFunction(doorCls, L"doorClose");
     if (keyOff < 0 || isOpenedOff < 0 || isMovingOff < 0 || activeOff < 0 || !openFn || !closeFn) {
         g_failedCls = doorCls;
@@ -187,6 +190,7 @@ bool EnsureResolved() {
     g_moveAlphaOff = moveAlphaOff;
     g_moveDirOff   = moveDirOff;
     g_activeOff      = activeOff;
+    g_activeMask     = activeMask;
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("door: resolved door_C=%p Key@0x%04X isOpened@0x%04X dir@0x%04X move@0x%04X "
             "sensorOverlaps@0x%04X Active@0x%04X doorOpen=%p doorClose=%p", doorCls, keyOff,
@@ -314,13 +318,14 @@ bool CallDoorClose(void* door, bool bypass) {
 
 bool TryReadActive(void* door, bool& on) {
     if (!door || !g_resolved.load(std::memory_order_acquire) || g_activeOff < 0) return false;
-    on = *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(door) + g_activeOff);
+    on = (*(reinterpret_cast<const uint8_t*>(door) + g_activeOff) & g_activeMask) != 0;
     return true;
 }
 
 bool WriteActive(void* door, bool on) {
     if (!door || !g_resolved.load(std::memory_order_acquire) || g_activeOff < 0) return false;
-    *reinterpret_cast<bool*>(reinterpret_cast<char*>(door) + g_activeOff) = on;
+    uint8_t& byte = *(reinterpret_cast<uint8_t*>(door) + g_activeOff);
+    byte = on ? static_cast<uint8_t>(byte | g_activeMask) : static_cast<uint8_t>(byte & ~g_activeMask);
     return true;
 }
 
