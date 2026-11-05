@@ -26,7 +26,10 @@ namespace coop::plant_gate {
 // its names (script_gate::ResolvePendingNames, driven by the lanes' ticks). Any thread.
 void Install();
 
-// What the gate did on this process: each row's refusals, and how many plant ticks RAN while a client session was active
+// Session end: say what the gate did this session and start the counts again from zero (the watches stay registered).
+void OnDisconnect();
+
+// What the gate did this session: each row's refusals, and how many plant ticks RAN while a client session was active
 // (a body the gate let through, so it counts a refusal that did not hold). Read-only, for drills. Game thread.
 struct Counts {
     std::uint64_t plantTick = 0;

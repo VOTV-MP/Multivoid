@@ -10,6 +10,10 @@
 
 #pragma once
 
+#include "ue_wrap/actors/growing_plant.h"
+
+#include <string>
+
 namespace coop::net {
 class Session;
 struct PlantStatePayload;
@@ -30,6 +34,10 @@ void OnEdit(const coop::net::PlantStatePayload& p);
 
 // Every plant again for a joiner.
 void QueueConnectBroadcastForSlot(int slot);
+
+// CLIENT, read-only, for drills: the host's last values for a plant that the inbox applied here, whatever this player did to the
+// copy since. False when none was applied. Game thread.
+bool LastHostValues(const std::wstring& key, ue_wrap::growing_plant::Values& out);
 
 // Session end: what this peer held of the plants is forgotten.
 void OnDisconnect();

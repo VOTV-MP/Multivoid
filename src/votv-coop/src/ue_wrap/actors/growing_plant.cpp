@@ -26,10 +26,11 @@ namespace R = ue_wrap::reflection;
 namespace OI = ue_wrap::object_index;
 namespace WI = ue_wrap::world_identity;
 
-// The family is every class whose super chain reaches growingPlant_C, by name: ForEachInstance walks one exact class, and a
-// list of the game's classes by hand goes stale with the next game build. The table holds the classes that have a live
-// instance, and is rebuilt when the object index's class set moves (a class gained its first instance or lost its last) or the
-// world changes. A class gains its first instance only once it is loaded with its parents, so its chain is whole by then.
+// The family is every class whose super chain reaches growingPlant_C: ForEachInstance walks one exact class, and a list of
+// the game's classes by hand goes stale with the next game build. The chain is walked by pointer against the base class, found
+// once through the object index and found again when its listing moves (the class unloaded or loaded again): no name is
+// rendered per hop. The table holds the classes that have a live instance, and is rebuilt when the object index's class set
+// moves (a class gained its first instance or lost its last), the world changes or the base is a different class object.
 constexpr const wchar_t* kBase = L"growingPlant_C";
 constexpr int kMaxHops = 32;
 
@@ -37,14 +38,20 @@ struct Family {
     std::vector<void*> classes;   // sorted, so a rebuild can tell whether the set moved
     uint64_t classSet = 0;        // the object index's class set at the last build
     uint32_t world = 0;           // the world generation of the last build; 0 is none built
+    uint64_t baseListing = 0;     // the base's listing at the last build; 0 is none
 };
 Family g_family;
 
-bool ReachesBase(void* cls) {
-    int hop = 0;
-    for (void* c = cls; c && hop < kMaxHops; c = R::SuperStructOf(c), ++hop)
-        if (R::NameEquals(R::NameOf(c), kBase)) return true;
-    return false;
+// growingPlant_C as the object index lists it, null while it is not loaded.
+void* BaseClass(uint64_t* listing) {
+    static void* s_base = nullptr;
+    static uint64_t s_listing = 0;
+    if (!s_base || OI::ClassListingId(s_base) != s_listing) {
+        s_base = OI::ClassByName(kBase);
+        s_listing = s_base ? OI::ClassListingId(s_base) : 0;
+    }
+    if (listing) *listing = s_listing;
+    return s_base;
 }
 
 // Game thread, like every ForEachInstance. A line names the classes when their set differs from the last build's or the world
@@ -52,14 +59,21 @@ bool ReachesBase(void* cls) {
 void RefreshFamily() {
     const uint64_t classSet = OI::ClassSetVersion();
     const uint32_t world = WI::Generation();
-    if (g_family.world == world && g_family.classSet == classSet) return;
+    uint64_t baseListing = 0;
+    void* base = BaseClass(&baseListing);
+    if (g_family.world == world && g_family.classSet == classSet && g_family.baseListing == baseListing) return;
     const bool newWorld = g_family.world != world;
     g_family.world = world;
     g_family.classSet = classSet;
+    g_family.baseListing = baseListing;
     std::vector<void*> found;
-    OI::ForEachClass([](void* ctx, void* cls, void*) {
-        if (ReachesBase(cls)) static_cast<std::vector<void*>*>(ctx)->push_back(cls);
-    }, &found);
+    if (base) {
+        struct Walk { void* base; std::vector<void*>* out; } walk{base, &found};
+        OI::ForEachClass([](void* ctx, void* cls, void*) {
+            auto* w = static_cast<Walk*>(ctx);
+            if (R::IsDescendantOfAny(cls, &w->base, 1, kMaxHops)) w->out->push_back(cls);
+        }, &walk);
+    }
     std::sort(found.begin(), found.end());
     if (found == g_family.classes && !newWorld) return;
     g_family.classes = std::move(found);
@@ -71,13 +85,24 @@ void RefreshFamily() {
     UE_LOGI("growing_plant: %zu plant classes under %ls: %ls", g_family.classes.size(), kBase, names.c_str());
 }
 
-// Where one class keeps its values: each lookup is a walk of the class's properties, and a poll reads every plant's. An instance's
-// class pointer names that instance's class whatever else has lived at the address, and the family's fields are all inherited
-// from one base, so an entry cannot read another class's layout.
+// Where one class keeps its fields: each lookup is a walk of the class's properties, and a poll reads every plant's. An
+// instance's class pointer names that instance's class whatever else has lived at the address, and the family's fields are all
+// inherited from one base, so an entry cannot read another class's layout.
+struct BoolAt {
+    int32_t off = -1;
+    uint8_t mask = 0;
+};
 struct Offsets {
     int32_t grow = -1, fertilizer = -1, water = -1, fruitGrow = -1, dryness = -1, amount = -1;
+    int32_t plant = -1, attachParent = -1;   // FName fields
+    BoolAt hideDirt, grew;
     bool Complete() const { return grow >= 0 && fertilizer >= 0 && water >= 0 && fruitGrow >= 0 && dryness >= 0 && amount >= 0; }
 };
+BoolAt FindBool(void* cls, const wchar_t* name) {
+    BoolAt b;
+    if (!R::FindBoolProperty(cls, name, b.off, b.mask)) b = BoolAt{};
+    return b;
+}
 const Offsets& OffsetsOf(void* plant) {
     static std::unordered_map<void*, Offsets> s_byClass;
     void* cls = R::ClassOf(plant);
@@ -90,6 +115,10 @@ const Offsets& OffsetsOf(void* plant) {
     o.fruitGrow = R::FindPropertyOffset(cls, L"fruitGrow");
     o.dryness = R::FindPropertyOffset(cls, L"dryness");
     o.amount = R::FindPropertyOffset(cls, L"amount");
+    o.plant = R::FindPropertyOffset(cls, L"plant");
+    o.attachParent = R::FindPropertyOffset(cls, L"attachParent");
+    o.hideDirt = FindBool(cls, L"hideDirt");
+    o.grew = FindBool(cls, L"grew");
     return s_byClass.emplace(cls, o).first->second;
 }
 
@@ -104,23 +133,18 @@ T* Field(void* plant, const wchar_t* name) {
     return off < 0 ? nullptr : reinterpret_cast<T*>(static_cast<uint8_t*>(plant) + off);
 }
 
-bool ReadBool(void* plant, const wchar_t* name) {
-    int32_t off = -1;
-    uint8_t mask = 0;
-    return R::FindBoolProperty(R::ClassOf(plant), name, off, mask) && (static_cast<uint8_t*>(plant)[off] & mask) != 0;
+bool ReadBool(void* plant, const BoolAt& at) {
+    return at.off >= 0 && (static_cast<uint8_t*>(plant)[at.off] & at.mask) != 0;
 }
 
-void WriteBool(void* plant, const wchar_t* name, bool on) {
-    int32_t off = -1;
-    uint8_t mask = 0;
-    if (!R::FindBoolProperty(R::ClassOf(plant), name, off, mask)) return;
-    uint8_t& b = static_cast<uint8_t*>(plant)[off];
-    b = on ? (b | mask) : (b & ~mask);
+void WriteBool(void* plant, const BoolAt& at, bool on) {
+    if (at.off < 0) return;
+    uint8_t& b = static_cast<uint8_t*>(plant)[at.off];
+    b = on ? (b | at.mask) : (b & ~at.mask);
 }
 
-std::wstring ReadName(void* plant, const wchar_t* name) {
-    const R::FName* f = Field<R::FName>(plant, name);
-    return f ? R::ToString(*f) : std::wstring();
+std::wstring ReadName(void* plant, int32_t off) {
+    return off < 0 ? std::wstring() : R::ToString(At<R::FName>(plant, off));
 }
 
 void WriteName(void* plant, const wchar_t* name, const std::wstring& value) {
@@ -152,9 +176,8 @@ void List(std::vector<void*>& out) {
 }
 
 bool IsPlantClass(void* cls) {
-    if (!cls) return false;
-    RefreshFamily();
-    return std::binary_search(g_family.classes.begin(), g_family.classes.end(), cls);
+    void* base = BaseClass(nullptr);
+    return base && R::IsDescendantOfAny(cls, &base, 1, kMaxHops);
 }
 
 std::wstring Key(void* plant) {
@@ -168,14 +191,14 @@ std::wstring Key(void* plant) {
     return key == L"None" ? L"" : key;
 }
 
-std::wstring Row(void* plant) { return ReadName(plant, L"plant"); }
+std::wstring Row(void* plant) { return ReadName(plant, OffsetsOf(plant).plant); }
 
 std::wstring AttachParent(void* plant) {
-    std::wstring key = ReadName(plant, L"attachParent");
+    std::wstring key = ReadName(plant, OffsetsOf(plant).attachParent);
     return key == L"None" ? L"" : key;
 }
 
-bool HideDirt(void* plant) { return ReadBool(plant, L"hideDirt"); }
+bool HideDirt(void* plant) { return ReadBool(plant, OffsetsOf(plant).hideDirt); }
 
 bool Read(void* plant, Values& out) {
     const Offsets& o = OffsetsOf(plant);
@@ -199,16 +222,16 @@ void Apply(void* plant, const std::wstring& row, const Values& v) {
     if (rowChanged) WriteName(plant, L"plant", row);
 
     const bool nowGrown = v.grow >= 1.f;
-    const bool grewEdge = nowGrown && !ReadBool(plant, L"grew");
+    const bool grewEdge = nowGrown && !ReadBool(plant, o.grew);
     const bool fruitEdge = (old.fruitGrow >= 1.f) != (v.fruitGrow >= 1.f) || old.amount != v.amount;
     if (rowChanged || fruitEdge) CallWithBool(plant, L"upd", L"skipDataTable", !rowChanged);
     // upd's own read of a ripe bush sets amount; the sender's count stands.
     At<int32_t>(plant, o.amount) = v.amount;
     if (grewEdge || (rowChanged && nowGrown)) {
-        WriteBool(plant, L"grew", true);
+        WriteBool(plant, o.grew, true);
         CallWithBool(plant, L"processGrown", L"skipGrowCheck", true);
-    } else if (!nowGrown && ReadBool(plant, L"grew")) {
-        WriteBool(plant, L"grew", false);
+    } else if (!nowGrown && ReadBool(plant, o.grew)) {
+        WriteBool(plant, o.grew, false);
     }
     CallPlain(plant, L"updLoc");
 }
@@ -222,7 +245,7 @@ void* Spawn(const std::wstring& className, const std::wstring& key, const std::w
     if (!plant) return nullptr;
     WriteName(plant, L"key", key);
     WriteName(plant, L"plant", row);
-    WriteBool(plant, L"hideDirt", hideDirt);
+    WriteBool(plant, OffsetsOf(plant).hideDirt, hideDirt);
     if (!engine::FinishDeferredSpawn(plant, at, rot)) return nullptr;
     // Begin play clears this with no owner; processKeys finds the pot by it, attaches and joins the two.
     if (!attachParent.empty()) {

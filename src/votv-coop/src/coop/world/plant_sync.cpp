@@ -222,12 +222,17 @@ struct Copy {
     void* actor = nullptr;
     GP::Values applied{};
     std::wstring row;
+    GP::Values host{};   // the host's last values the inbox applied here, whatever this player did since
+    bool hostSeen = false;
 };
 std::unordered_map<std::wstring, Copy> g_copies;
 std::unordered_set<std::wstring> g_gone;      // removed here; ignored until the host's end arrives
 std::unordered_set<void*> g_loaded;           // what the load brought and the host has not named yet
 bool g_loadedRead = false;
 std::vector<Payload> g_inbox;
+// A plant state is 212 bytes; the cap is a few times the plants of a late save, and the host sends a changing plant again.
+constexpr size_t kInboxCap = 2048;
+bool g_inboxFullSaid = false;
 
 void ApplyInbox(std::unordered_map<std::wstring, void*>& index) {
     std::vector<Payload> inbox;
@@ -260,6 +265,8 @@ void ApplyInbox(std::unordered_map<std::wstring, void*>& index) {
         Copy& c = g_copies[key];
         c.actor = plant;
         c.row = row;
+        c.host = ValuesOf(p);
+        c.hostSeen = true;
         GP::Read(plant, c.applied);
     }
 }
@@ -333,6 +340,7 @@ void ResetClient() {
     g_loaded.clear();
     g_loadedRead = false;
     g_inbox.clear();
+    g_inboxFullSaid = false;
 }
 
 }  // namespace
@@ -355,7 +363,24 @@ void Tick() {
     else if (s->role() == coop::net::Role::Client) ClientPoll(*s);
 }
 
-void OnState(const coop::net::PlantStatePayload& p) { g_inbox.push_back(p); }
+void OnState(const coop::net::PlantStatePayload& p) {
+    if (g_inbox.size() >= kInboxCap) {
+        if (!g_inboxFullSaid) {
+            g_inboxFullSaid = true;
+            UE_LOGW("plant_sync: %zu plant states wait to be applied; later ones are dropped until the inbox drains (the host "
+                    "sends each changing plant again)", g_inbox.size());
+        }
+        return;
+    }
+    g_inbox.push_back(p);
+}
+
+bool LastHostValues(const std::wstring& key, GP::Values& out) {
+    const auto it = g_copies.find(key);
+    if (it == g_copies.end() || !it->second.hostSeen) return false;
+    out = it->second.host;
+    return true;
+}
 
 void OnEdit(const coop::net::PlantStatePayload& p) { g_edits.push_back(p); }
 

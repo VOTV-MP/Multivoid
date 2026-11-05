@@ -1985,6 +1985,8 @@ struct PlantStatePayload {
     uint8_t       _pad;              // 1 -- zero
 };
 static_assert(sizeof(PlantStatePayload) == 212, "PlantStatePayload must be 212 bytes");
+static_assert(sizeof(PlantStatePayload) <= 256 - 20 - 8,
+              "PlantStatePayload must fit one reliable datagram");
 
 // A walking tree's size and landing (AmbientTreeState).
 struct AmbientTreeStatePayload {

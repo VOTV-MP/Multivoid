@@ -80,6 +80,18 @@ void Install() {
             watched, kRowCount);
 }
 
+void OnDisconnect() {
+    std::uint64_t total = g_ran;
+    for (int i = 0; i < kRowCount; ++i) total += g_refused[i];
+    if (total != 0)
+        UE_LOGI("plant_gate: this session refused %llu plant ticks, %llu herb grown, %llu sprinkler timers and %llu growth-area "
+                "ticks; %llu plant ticks ran", static_cast<unsigned long long>(g_refused[kPlantTick]),
+                static_cast<unsigned long long>(g_refused[kHerbGrown]), static_cast<unsigned long long>(g_refused[kSprinklerWater]),
+                static_cast<unsigned long long>(g_refused[kGrowthAreaTick]), static_cast<unsigned long long>(g_ran));
+    for (std::uint64_t& n : g_refused) n = 0;
+    g_ran = 0;
+}
+
 Counts GetCounts() {
     return Counts{g_refused[kPlantTick], g_refused[kHerbGrown], g_refused[kSprinklerWater], g_refused[kGrowthAreaTick], g_ran};
 }
