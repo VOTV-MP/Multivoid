@@ -146,6 +146,9 @@ void* RollDeer() {
     return deer;
 }
 
+// Whether the npc lane has enrolled the actor: an actor it has not tracked answers kInvalidId, never 0.
+bool Enrolled(uint32_t eid) { return eid != 0 && eid != coop::element::kInvalidId; }
+
 void* Mirror(uint32_t eid) { return coop::element::LiveActorOfType(eid, coop::element::ElementType::Npc); }
 
 // ---- the deer A/B: a mirror's actor tick on against off ----
@@ -341,9 +344,9 @@ void HostBody() {
     WaitGT("the tree has an element", 15, [&] {
         eid = coop::npc_sync::GetNpcIdForActor(tree);
         AC::ReadTree(tree, scale, landed);
-        return eid != 0;
+        return Enrolled(eid);
     }, false);
-    Check(eid != 0, "the tree has an element");
+    Check(Enrolled(eid), "the tree has an element");
     size_t trees = 0;
     OnGameThread([&] { trees = Live(false).size(); });
     Mark("tree", std::to_string(eid) + " " + std::to_string(scale) + " " + std::to_string(trees));
@@ -362,8 +365,8 @@ void HostBody() {
     Check(deer != nullptr, "the spawner's own body rolled a deer");
     if (!deer) return;
     uint32_t deerEid = 0;
-    WaitGT("the deer has an element", 15, [&] { return (deerEid = coop::npc_sync::GetNpcIdForActor(deer)) != 0; }, false);
-    Check(deerEid != 0, "the deer has an element");
+    WaitGT("the deer has an element", 15, [&] { return (deerEid = coop::npc_sync::GetNpcIdForActor(deer)), Enrolled(deerEid); }, false);
+    Check(Enrolled(deerEid), "the deer has an element");
     size_t deers = 0;
     OnGameThread([&] { deers = Live(true).size(); });
     Mark("deer", std::to_string(deerEid) + " " + std::to_string(deers));
@@ -388,7 +391,7 @@ void HostBody() {
     Check(second != nullptr, "a second deer stands");
     if (!second) return;
     uint32_t secondEid = 0;
-    WaitGT("the second deer has an element", 15, [&] { return (secondEid = coop::npc_sync::GetNpcIdForActor(second)) != 0; }, false);
+    WaitGT("the second deer has an element", 15, [&] { return (secondEid = coop::npc_sync::GetNpcIdForActor(second)), Enrolled(secondEid); }, false);
     Mark("deer2", std::to_string(secondEid));
     if (!Await("deer2_seen", 120)) return;
     if (!RedArm("no_deer_end")) OnGameThread([&] { AC::Dissolve(second); });
