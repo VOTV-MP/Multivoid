@@ -13,7 +13,8 @@ namespace coop::net { class Session; }
 namespace coop::dev::cremator_probe::detail {
 
 // The arm the row selects: "1" runs the probe on the client's own copy, "placeonly" only places the client,
-// "host" runs the lever on the host's copy once the client's puppet stands in a firebox.
+// "host" sends the client to the firebox by the admin verb's own teleport order and runs the lever on the host's copy
+// once the cremator's begin-overlap sees the puppet.
 enum class Mode : uint8_t { Off, Local, PlaceOnly, Host };
 Mode ModeOf();
 
@@ -47,5 +48,7 @@ bool OpenDoor(void* cremator, bool& opened);
 // The host arm, called once per pump tick on the host; and its reset.
 void HostTick(coop::net::Session& session);
 void HostReset();
+// The cremator's begin-overlap, seen on the host: `other` is the overlapping actor.
+void HostOnOverlap(void* cremator, void* other);
 
 }  // namespace coop::dev::cremator_probe::detail

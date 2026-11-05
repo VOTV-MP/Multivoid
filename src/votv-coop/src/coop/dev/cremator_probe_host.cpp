@@ -1,36 +1,51 @@
 // coop/dev/cremator_probe_host.cpp -- the host arm of the cremator probe, see coop/dev/cremator_probe.h.
+//
+// M-b moves the target by the host's TeleportClient order -- the `/cremate` verb under test, not a drill's
+// convenience teleport (the rule that a drill moves its peer with the director binds drills; the admin verb's own
+// move is what is measured here). The landing is the cremator's own `burning` begin-overlap for the puppet's actor.
 
 #include "cremator_probe_detail.h"  // co-located private header (src tree, not include/)
 
 #include "coop/net/net_clock.h"
+#include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/props/prop_snapshot.h"
+#include "coop/save/join_window_baseline.h"
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_component.h"
 
+#include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 
 namespace coop::dev::cremator_probe::detail {
 namespace {
 
-enum class Step : uint8_t { Watch, Run, Over };
+namespace E = ue_wrap::engine;
+
+// Watch: waiting for slot 1's join to settle. Landing: the teleport order is sent, waiting for the overlap.
+enum class Step : uint8_t { Watch, Landing, Run, Over };
 
 constexpr uint8_t kClientSlot = 1;
-constexpr float kInsideUu = 150.f;
-constexpr int kStreakToStart = 2;
+constexpr int kLandingMaxTicks = 600;
 constexpr float kEndAfterS = 120.f;
 
 Step g_step = Step::Watch;
 ue_wrap::CachedObjRef g_cremator;
+ue_wrap::FVector g_fireboxAt{};
 uint64_t g_nextSampleMs = 0;
 uint64_t g_startMs = 0;
-int g_streak = 0;
+int g_landingTicks = 0;
 int g_prevAnim = -1;
+std::atomic<int> g_landed{0};  // the begin-overlap saw the puppet enter the probe's cremator
 
 const char* LifeName(coop::players::PuppetLife life) {
     return life == coop::players::PuppetLife::Alive ? "Alive"
@@ -64,31 +79,70 @@ void Fail(const char* why) {
     g_step = Step::Over;
 }
 
-void WatchTick(coop::net::Session& session, uint64_t now) {
-    if (now < g_nextSampleMs) return;
-    g_nextSampleMs = now + kSampleMs;
+float Between(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
+    const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
 
+// Slot 1 is world-ready, its join traffic is delivered and its puppet stands in the world (the pause-quit
+// drill's settled-host test, for the one slot). Then the host opens the nearest cremator's door and sends slot 1
+// the firebox pose, as the admin verb does.
+void WatchTick(coop::net::Session& session) {
     auto* puppet = coop::players::Registry::Get().Puppet(kClientSlot);
     ue_wrap::FVector at{};
-    if (!puppet || !puppet->valid() || !puppet->HasPose() || !session.IsSlotWorldReady(kClientSlot) ||
-        !puppet->TryGetLocation(at)) {
-        g_streak = 0;
+    if (!puppet || !puppet->valid() || !session.IsSlotWorldReady(kClientSlot) ||
+        !coop::prop_snapshot::IsBracketClosed(kClientSlot) ||
+        coop::join_window_baseline::IsLateWindowOpen(kClientSlot) || !session.SlotReliableIdle(kClientSlot) ||
+        !puppet->TryGetLocation(at))
+        return;
+    const Nearest n = FindNearestFirebox(at);
+    if (!n.actor) { Fail("no cremator with a firebox is loaded"); return; }
+    ue_wrap::FRotator rot{};
+    if (!E::TryGetActorRotation(n.actor, rot)) { Fail("the cremator's rotation is unreadable"); return; }
+
+    g_cremator.Set(n.actor);
+    g_fireboxAt = n.at;
+    bool opened = false;
+    if (!OpenDoor(n.actor, opened)) { Fail("the door's open() did not run"); return; }
+    UE_LOGI("cremator-probe: HOST DOOR opened=%d", opened ? 1 : 0);
+
+    coop::net::TeleportClientPayload pose{};
+    pose.locX = n.at.X; pose.locY = n.at.Y; pose.locZ = n.at.Z;
+    pose.rotPitch = rot.Pitch; pose.rotYaw = rot.Yaw; pose.rotRoll = rot.Roll;
+    if (!session.SendReliableToSlot(kClientSlot, coop::net::ReliableKind::TeleportClient, &pose, sizeof(pose))) {
+        Fail("the teleport order was not sent");
         return;
     }
-    const Nearest n = FindNearestFirebox(at);
-    if (!n.actor || n.best > kInsideUu * kInsideUu) { g_streak = 0; return; }
-    if (++g_streak < kStreakToStart) return;
+    g_landed.store(0, std::memory_order_release);
+    g_landingTicks = 0;
+    UE_LOGI("cremator-probe: HOST SENT teleport to=(%.0f,%.0f,%.0f)", n.at.X, n.at.Y, n.at.Z);
+    g_step = Step::Landing;
+}
 
+// Waiting for the cremator's own begin-overlap; then shut the door, pull the lever and start the samples.
+void LandingTick(uint64_t now) {
+    ++g_landingTicks;
+    auto* puppet = coop::players::Registry::Get().Puppet(kClientSlot);
+    ue_wrap::FVector at{};
+    const bool haveAt = puppet && puppet->valid() && puppet->TryGetLocation(at);
+    if (!g_landed.load(std::memory_order_acquire)) {
+        if (g_landingTicks < kLandingMaxTicks) return;
+        char why[96];
+        std::snprintf(why, sizeof(why), "landing dist=%.0f", haveAt ? Between(at, g_fireboxAt) : -1.f);
+        Fail(why);
+        return;
+    }
+    UE_LOGI("cremator-probe: HOST LANDED ticks=%d", g_landingTicks);
+    void* cremator = g_cremator.Get();
     bool opened = false;
-    if (!ShutDoor(n.actor, opened)) { Fail("the open door's close() did not run"); return; }
-    if (!CallNoParams(n.actor, L"useLever")) { Fail("useLever did not run"); return; }
-    g_cremator.Set(n.actor);
+    if (!ShutDoor(cremator, opened)) { Fail("the open door's close() did not run"); return; }
+    if (!CallNoParams(cremator, L"useLever")) { Fail("useLever did not run"); return; }
     g_startMs = now;
     g_nextSampleMs = now + kSampleMs;
-    g_prevAnim = Bit(n.actor, L"anim");
-    const std::wstring key = ue_wrap::prop::GetActorSaveKeyString(n.actor);
+    g_prevAnim = Bit(cremator, L"anim");
+    const std::wstring key = ue_wrap::prop::GetActorSaveKeyString(cremator);
     UE_LOGI("cremator-probe: HOST LEVER key='%ls' doorWasOpened=%d puppetAt=(%.0f,%.0f,%.0f) dist=%.0f",
-            key.c_str(), opened ? 1 : 0, at.X, at.Y, at.Z, std::sqrt(n.best));
+            key.c_str(), opened ? 1 : 0, at.X, at.Y, at.Z, haveAt ? Between(at, g_fireboxAt) : -1.f);
     LogSample(0.f, "lever");
     g_step = Step::Run;
 }
@@ -111,20 +165,29 @@ void RunTick(uint64_t now) {
 
 }  // namespace
 
+void HostOnOverlap(void* cremator, void* other) {
+    if (g_step != Step::Landing || !cremator || cremator != g_cremator.Get() || !other) return;
+    auto* puppet = coop::players::Registry::Get().Puppet(kClientSlot);
+    if (puppet && puppet->valid() && other == puppet->GetActor()) g_landed.store(1, std::memory_order_release);
+}
+
 void HostTick(coop::net::Session& session) {
     if (g_step == Step::Over) return;
     const uint64_t now = coop::net::NowMs();
-    if (g_step == Step::Watch) WatchTick(session, now);
+    if (g_step == Step::Watch) WatchTick(session);
+    else if (g_step == Step::Landing) LandingTick(now);
     else RunTick(now);
 }
 
 void HostReset() {
     g_step = Step::Watch;
     g_cremator.Reset();
+    g_fireboxAt = {};
     g_nextSampleMs = 0;
     g_startMs = 0;
-    g_streak = 0;
+    g_landingTicks = 0;
     g_prevAnim = -1;
+    g_landed.store(0, std::memory_order_release);
 }
 
 }  // namespace coop::dev::cremator_probe::detail

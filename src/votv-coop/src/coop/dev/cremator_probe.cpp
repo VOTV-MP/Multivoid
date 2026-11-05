@@ -151,7 +151,7 @@ namespace E = ue_wrap::engine;
 namespace V = ue_wrap::vitals;
 using namespace detail;
 
-enum class Step : uint8_t { Start, Walk, StepIn, Lever, Run, PlacedOnly, Over };
+enum class Step : uint8_t { Start, Walk, StepIn, Lever, Run, WaitMove, PlacedOnly, Over };
 
 constexpr float kPullbackAtS = 40.f;
 constexpr float kSurvivedAtS = 90.f;
@@ -166,6 +166,9 @@ constexpr int kStepInMaxTicks = 240;
 // longer of the route and the line, plus a margin for the director's stuck episodes and the doors on the way.
 constexpr float kPaceCmPerSec = 300.f;
 constexpr int kRouteMarginSec = 60;
+// The place-only client's pawn counts as moved by the host's order past this distance from where it stood at join.
+constexpr float kMovedCm = 300.f;
+constexpr float kNoMoveFailS = 300.f;
 
 namespace sg = ue_wrap::script_gate;
 
@@ -191,10 +194,13 @@ bool g_pulledBack = false;
 bool g_died = false;
 int g_linesLeftAfterDeath = 0;
 int g_stepTicks = 0;
+ue_wrap::FVector g_joinedAt{};  // the place-only pawn's position when it was ready, the move's reference
 
 // Post, on the game thread: the body has run, so the cremator's own begin-overlap handling is done.
 void OnBeginOverlapPost(const sg::Call& c) {
-    if (!c.object || !c.function || !c.locals || c.object != g_cremator.Get()) return;
+    if (!c.object || !c.function || !c.locals) return;
+    const bool host = ModeOf() == Mode::Host;
+    if (!host && c.object != g_cremator.Get()) return;
     static void* sFn = nullptr;
     static int32_t sOtherOff = -1;
     if (c.function != sFn) {
@@ -204,6 +210,7 @@ void OnBeginOverlapPost(const sg::Call& c) {
     if (sOtherOff < 0) return;
     void* other = nullptr;
     std::memcpy(&other, c.locals + sOtherOff, sizeof(other));
+    if (host) { HostOnOverlap(c.object, other); return; }
     if (other && other == coop::players::Registry::Get().Local()) g_stepped.store(1, std::memory_order_release);
 }
 
@@ -227,6 +234,14 @@ void StartTick(void* local) {
         coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle) return;
     ue_wrap::FVector pawnAt{};
     if (!E::TryGetActorLocation(local, pawnAt)) return;
+    if (ModeOf() == Mode::PlaceOnly) {
+        // The host's /cremate order moves this pawn; nothing here walks, opens or steps.
+        g_joinedAt = pawnAt;
+        g_startMs = coop::net::NowMs();
+        UE_LOGI("cremator-probe: placeonly waiting for the host's move");
+        g_step = Step::WaitMove;
+        return;
+    }
     if (!OI::ClassByName(L"cremator_C")) { Fail("no cremator_C class"); return; }
 
     const Nearest n = FindNearestFirebox(pawnAt);
@@ -291,14 +306,6 @@ void StepInTick(void* local) {
     const float dist = Between(at, g_fireboxAt);
     if (g_stepped.load(std::memory_order_acquire)) {
         UE_LOGI("cremator-probe: STEPPED in dist=%.0f ticks=%d", dist, g_stepTicks);
-        if (ModeOf() == Mode::PlaceOnly) {
-            bool opened = false;
-            if (!ShutDoor(g_cremator.Get(), opened)) { Fail("the open door's close() did not run"); return; }
-            g_startMs = coop::net::NowMs();
-            g_nextSampleMs = g_startMs + kSampleMs;
-            g_step = Step::PlacedOnly;
-            return;
-        }
         g_step = Step::Lever;
         return;
     }
@@ -387,7 +394,21 @@ void RunTick(void* local) {
     }
 }
 
-// The place-only arm: the client stands in the firebox and says what happens to it, touching nothing.
+// The place-only arm, before the move: the client touches nothing and waits for the host's teleport to apply.
+void WaitMoveTick(void* local) {
+    const uint64_t now = coop::net::NowMs();
+    ue_wrap::FVector at{};
+    if (local && E::TryGetActorLocation(local, at) && Between(at, g_joinedAt) > kMovedCm) {
+        UE_LOGI("cremator-probe: placeonly MOVED to=(%.0f,%.0f,%.0f)", at.X, at.Y, at.Z);
+        g_startMs = now;
+        g_nextSampleMs = now + kSampleMs;
+        g_step = Step::PlacedOnly;
+        return;
+    }
+    if (static_cast<float>(now - g_startMs) / 1000.f >= kNoMoveFailS) Fail("placeonly no move");
+}
+
+// The place-only arm after the move: the client says what happens to it, touching nothing.
 void PlacedOnlyTick(void* local) {
     const uint64_t now = coop::net::NowMs();
     if (now < g_nextSampleMs) return;
@@ -398,8 +419,10 @@ void PlacedOnlyTick(void* local) {
     V::Read(V::Field::BurningTime, &burn);
     bool ragdoll = false, dead = false;
     const bool haveDead = local && E::ReadMainPlayerRagdollState(local, ragdoll, dead);
-    UE_LOGI("cremator-probe: placeonly T=%.0f hp=%.1f burn=%.1f dead=%d", t, hp, burn,
-            haveDead ? (dead ? 1 : 0) : -1);
+    ue_wrap::FVector pos{};
+    if (!local || !E::TryGetActorLocation(local, pos)) pos = {};
+    UE_LOGI("cremator-probe: placeonly T=%.0f hp=%.1f burn=%.1f dead=%d pos=(%.0f,%.0f,%.0f)", t, hp, burn,
+            haveDead ? (dead ? 1 : 0) : -1, pos.X, pos.Y, pos.Z);
     if (haveDead && dead) {
         UE_LOGI("cremator-probe: DIED T=%.0f", t);
     } else if (t < kPlaceOnlyEndS) {
@@ -417,6 +440,7 @@ void Reset() {
     g_step = Step::Start;
     g_stepped.store(0, std::memory_order_release);
     g_stepTicks = 0;
+    g_joinedAt = {};
     g_cremator.Reset();
     g_fireboxAt = {};
     g_routeCm = 0.f;
@@ -435,11 +459,15 @@ void Reset() {
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     const Mode mode = ModeOf();
-    if (mode != Mode::Local && mode != Mode::PlaceOnly) return;
-    if (sg::WatchName(kRowBeginOverlap, kTagBeginOverlap, nullptr, &OnBeginOverlapPost))
-        UE_LOGI("cremator-probe: watching the cremator's begin-overlap");
-    else
-        UE_LOGW("cremator-probe: could not watch the cremator's begin-overlap");
+    // The client arms that enter the cremator by their own walk and the host arm (which judges the landing) watch.
+    if (mode != Mode::Local && mode != Mode::Host) return;
+    // Install is the dev lanes' retry pump, called every tick: WatchName is idempotent, the line is said once.
+    static bool sSaid = false;
+    const bool watching = sg::WatchName(kRowBeginOverlap, kTagBeginOverlap, nullptr, &OnBeginOverlapPost);
+    if (sSaid) return;
+    sSaid = true;
+    if (watching) UE_LOGI("cremator-probe: watching the cremator's begin-overlap");
+    else UE_LOGW("cremator-probe: could not watch the cremator's begin-overlap");
 }
 
 void Tick() {
@@ -457,6 +485,7 @@ void Tick() {
     void* local = coop::players::Registry::Get().Local();
     if (g_step == Step::Run) { RunTick(local); return; }
     if (g_step == Step::PlacedOnly) { PlacedOnlyTick(local); return; }
+    if (g_step == Step::WaitMove) { WaitMoveTick(local); return; }
     if (g_step == Step::Walk) { WalkTick(); return; }
     if (g_step == Step::StepIn) { StepInTick(local); return; }
     if (!local) return;
@@ -465,7 +494,8 @@ void Tick() {
 }
 
 void OnDisconnect() {
-    if (g_step == Step::Walk || g_step == Step::StepIn || g_step == Step::Lever || g_step == Step::Run || g_step == Step::PlacedOnly)
+    if (g_step == Step::Walk || g_step == Step::StepIn || g_step == Step::Lever || g_step == Step::Run || g_step == Step::WaitMove ||
+        g_step == Step::PlacedOnly)
         UE_LOGW("cremator-probe: FAIL the session ended mid-run");
     g_session.store(nullptr, std::memory_order_release);
     Reset();
