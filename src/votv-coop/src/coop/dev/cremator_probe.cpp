@@ -5,12 +5,12 @@
 #include "cremator_probe_detail.h"  // co-located private header (src tree, not include/)
 
 #include "coop/config/config.h"
+#include "coop/dev/director/director.h"
 #include "coop/net/net_clock.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
-#include "coop/session/teleport_client.h"
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/vitals.h"
@@ -22,12 +22,16 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_component.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
+#include "ue_wrap/engine/engine_nav.h"
 
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <memory>
 #include <string>
+#include <vector>
 
 namespace coop::dev::cremator_probe {
 namespace detail {
@@ -125,6 +129,16 @@ bool ShutDoor(void* cremator, bool& opened) {
     return !(door && ReadBool(door, L"opened", opened) && opened) || CallNoParams(door, L"close");
 }
 
+bool OpenDoor(void* cremator, bool& opened) {
+    opened = false;
+    void* door = ObjectProperty(cremator, L"swingerDoor");
+    if (!door) return false;
+    // open(damage): the frame is zeroed, so `damage` is false, the door's own player path.
+    const bool ran = (ReadBool(door, L"opened", opened) && opened) || CallNoParams(door, L"open");
+    ReadBool(door, L"opened", opened);
+    return ran;
+}
+
 }  // namespace detail
 
 namespace {
@@ -133,17 +147,26 @@ namespace E = ue_wrap::engine;
 namespace V = ue_wrap::vitals;
 using namespace detail;
 
-enum class Step : uint8_t { Place, Lever, Run, PlacedOnly, Over };
+enum class Step : uint8_t { Start, Walk, Lever, Run, PlacedOnly, Over };
 
 constexpr float kPullbackAtS = 40.f;
 constexpr float kSurvivedAtS = 90.f;
 constexpr float kPlaceOnlyEndS = 120.f;
 constexpr int kLinesAfterDeath = 10;
+constexpr float kFireboxReachCm = 50.f;
+// The walk's budget is the harness's meet walk's (harness/autotest/meet.cpp): twice a walk's pace over the
+// longer of the route and the line, plus a margin for the director's stuck episodes and the doors on the way.
+constexpr float kPaceCmPerSec = 300.f;
+constexpr int kRouteMarginSec = 60;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-Step g_step = Step::Place;
+Step g_step = Step::Start;
 ue_wrap::CachedObjRef g_cremator;
+std::shared_ptr<coop::director::BackgroundWalk> g_walk;
+ue_wrap::FVector g_fireboxAt{};
+float g_routeCm = 0.f;
+float g_lastToFireboxCm = -1.f;  // the route's last point to the firebox centre; -1 with no route
 uint64_t g_startMs = 0;  // the lever's pull, or the placement in the place-only arm
 uint64_t g_nextSampleMs = 0;
 int g_prevAnim = -1;
@@ -157,7 +180,14 @@ void Fail(const char* why) {
     g_step = Step::Over;
 }
 
-void PlaceTick(void* local) {
+float Between(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
+    const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+// The client finds the nearest firebox, opens the cremator's door, measures the route and starts the director's
+// walk into it; WalkTick then waits for the walk's result.
+void StartTick(void* local) {
     // The predicate behind `rig: READY joined`: after the join's own start-point placement, which
     // would otherwise move the player straight back out of the firebox.
     if (!coop::net_pump::HasAnnouncedWorldReady() ||
@@ -175,14 +205,49 @@ void PlaceTick(void* local) {
     UE_LOGI("cremator-probe: cremator key='%ls' firebox=(%.0f,%.0f,%.0f) yaw=%.1f pawn=(%.0f,%.0f,%.0f)",
             key.c_str(), n.at.X, n.at.Y, n.at.Z, rot.Yaw, pawnAt.X, pawnAt.Y, pawnAt.Z);
 
-    // The placement a host teleport applies on a client, so the probe measures the feature's own landing.
-    const bool moved = coop::teleport_client::ApplyLocally({n.at.X, n.at.Y, n.at.Z, rot.Pitch, rot.Yaw, rot.Roll});
-    bool invinc = false;
-    const bool haveInvinc = E::ReadMainPlayerStartInvinc(local, invinc);
-    UE_LOGI("cremator-probe: PLACED moved=%d startInvinc=%d", moved ? 1 : 0, haveInvinc ? (invinc ? 1 : 0) : -1);
-    if (!moved) { Fail("the placement reported no move"); return; }
+    // The door is shut at rest, and the firebox is behind it.
+    bool opened = false;
+    if (!OpenDoor(n.actor, opened)) { Fail("the door's open() did not run"); return; }
+    UE_LOGI("cremator-probe: DOOR opened=%d", opened ? 1 : 0);
+
+    // The walk is bounded by the NavMesh route, not the line (meet.cpp's reasoning).
+    std::vector<ue_wrap::FVector> pts;
+    float route = 0.f;
+    if (E::FindNavPath(local, pawnAt, n.at, pts))
+        for (size_t i = 1; i < pts.size(); ++i) route += Between(pts[i - 1], pts[i]);
+    const float line = Between(pawnAt, n.at);
+    g_lastToFireboxCm = pts.empty() ? -1.f : Between(pts.back(), n.at);
+    g_routeCm = route;
+    g_fireboxAt = n.at;
+    UE_LOGI("cremator-probe: ROUTE line=%.0f route=%.0f points=%d lastToFirebox=%.0f", line, route,
+            static_cast<int>(pts.size()), g_lastToFireboxCm);
+
+    const float way = route > line ? route : line;
+    const int budget = static_cast<int>(way / kPaceCmPerSec * 2.f) + kRouteMarginSec;
+    g_walk = coop::director::StartBackgroundWalk(n.at, kFireboxReachCm, budget);
+    UE_LOGI("cremator-probe: walking into the firebox, %d s budget", budget);
     g_cremator.Set(n.actor);
+    g_step = Step::Walk;
+}
+
+void WalkTick() {
+    if (!g_walk) { Fail("the walk was not started"); return; }
+    const int state = g_walk->state.load();
+    if (state == 0) return;
+    if (state != 1) {
+        char why[160];
+        std::snprintf(why, sizeof(why), "walk %s lastToFirebox=%.0f", g_walk->goal.failReason, g_lastToFireboxCm);
+        Fail(why);
+        return;
+    }
+    void* local = coop::players::Registry::Get().Local();
+    ue_wrap::FVector at{};
+    const float dist = local && E::TryGetActorLocation(local, at) ? Between(at, g_fireboxAt) : -1.f;
+    UE_LOGI("cremator-probe: WALKED in route=%.0f distToFirebox=%.0f", g_routeCm, dist);
+    g_walk.reset();
     if (ModeOf() == Mode::PlaceOnly) {
+        bool opened = false;
+        if (!ShutDoor(g_cremator.Get(), opened)) { Fail("the open door's close() did not run"); return; }
         g_startMs = coop::net::NowMs();
         g_nextSampleMs = g_startMs + kSampleMs;
         g_step = Step::PlacedOnly;
@@ -288,8 +353,13 @@ void PlacedOnlyTick(void* local) {
 }
 
 void Reset() {
-    g_step = Step::Place;
+    if (g_walk && g_walk->state.load() == 0) coop::director::CancelBackgroundWalk(*g_walk);
+    g_walk.reset();
+    g_step = Step::Start;
     g_cremator.Reset();
+    g_fireboxAt = {};
+    g_routeCm = 0.f;
+    g_lastToFireboxCm = -1.f;
     g_startMs = 0;
     g_nextSampleMs = 0;
     g_prevAnim = -1;
@@ -320,13 +390,14 @@ void Tick() {
     void* local = coop::players::Registry::Get().Local();
     if (g_step == Step::Run) { RunTick(local); return; }
     if (g_step == Step::PlacedOnly) { PlacedOnlyTick(local); return; }
+    if (g_step == Step::Walk) { WalkTick(); return; }
     if (!local) return;
-    if (g_step == Step::Place) PlaceTick(local);
+    if (g_step == Step::Start) StartTick(local);
     else LeverTick(local);
 }
 
 void OnDisconnect() {
-    if (g_step == Step::Lever || g_step == Step::Run || g_step == Step::PlacedOnly)
+    if (g_step == Step::Walk || g_step == Step::Lever || g_step == Step::Run || g_step == Step::PlacedOnly)
         UE_LOGW("cremator-probe: FAIL the session ended mid-run");
     g_session.store(nullptr, std::memory_order_release);
     Reset();

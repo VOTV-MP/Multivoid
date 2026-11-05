@@ -41,6 +41,8 @@ Nearest FindNearestFirebox(const ue_wrap::FVector& from);
 
 // If the door is open, shuts it with its own close(); false when that call did not run. `opened` says what it was.
 bool ShutDoor(void* cremator, bool& opened);
+// If the door is shut, opens it with its own open(); false when that call did not run. `opened` is read after.
+bool OpenDoor(void* cremator, bool& opened);
 
 // The host arm, called once per pump tick on the host; and its reset.
 void HostTick(coop::net::Session& session);
