@@ -1,10 +1,11 @@
 // ue_wrap/actors/ambient_creature.h -- the deer and the walking tree, the dirt holes and the beehive branches: a tree's size
-// and landing, a deer's dissolve and a hole's place. Each class is read by reflection on the game thread.
+// and landing, a deer's dissolve, a hole's place and a branch's nest. Each class is read by reflection on the game thread.
 
 #pragma once
 
 #include "ue_wrap/core/types.h"
 
+#include <string>
 #include <vector>
 
 namespace ue_wrap::ambient_creature {
@@ -30,6 +31,21 @@ void ListBranches(std::vector<void*>& out);
 
 // A plain copy of either: a branch spawned this way makes no nest of its own.
 void* SpawnFixture(bool branch, const FVector& at, const FRotator& rot);
+
+// A beehive branch's nest: `hiveKey` is the key its nest had (empty for None, which `touched` and a keyless save leave), and
+// `hive` is the nest actor it holds, null unless that actor is live. False when the branch has no such fields. Game thread.
+bool ReadBranch(void* branch, std::wstring& hiveKey, void*& hive);
+
+// The game's own binder half, for a copy whose nest is a mirror: write `hive`, then run the branch's `getBee`, which binds the
+// nest's `touched` delegate to the branch.
+bool BindBranchNest(void* branch, void* nest);
+
+// The game's own forget: the branch's `touched` unbinds the nest, nulls `hive` and sets `hiveKey` to None.
+bool ReleaseBranchNest(void* branch);
+
+// Null `hive` and leave the nest and its binding alone: for a branch about to end, whose `ReceiveDestroyed` would otherwise
+// destroy the nest it holds. Game thread.
+void DropBranchNest(void* branch);
 
 // The sus hole spawner's own gate: it rolls only while the game instance's mode is 0 or 1. Game thread.
 bool HolesRoll();

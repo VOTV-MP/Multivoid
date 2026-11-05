@@ -1273,12 +1273,14 @@ enum class ReliableKind : uint8_t {
     // Default lane, held until the joiner's world is ready (not pre-world). Late join: this is it, one message at the
     // joiner's world-ready edge when a crawl began in this world.
     VentCrawlState = 216,
-    // HOST->ALL: a walking tree's random size and whether it has landed, on a change and every few seconds, as its mirror's
-    // begin play rolls its own and its movement never lands. Not relayed, not pre-world. Late join: every tree again at the
-    // ready edge. AmbientTreeStatePayload.
+    // HOST->ALL: a walking tree's random size and whether it has landed, when the host reads it at the tree's birth and
+    // again at its landing (its mirror's begin play rolls its own and its movement never lands). Not relayed, not
+    // pre-world. Late join: every tree again at the ready edge. AmbientTreeStatePayload.
     AmbientTreeState = 221,
-    // HOST->ALL: a dirt hole's or a beehive branch's place, once, and its end. Not relayed, not pre-world. Late join: every
-    // one again at the ready edge, and a peer that has the number keeps what it has. AmbientFixtureStatePayload.
+    // HOST->ALL: a dirt hole's or a beehive branch's place, once, and its end; a branch carries the key its nest was born
+    // with and whether it holds the nest now, and goes again when that changes. Not relayed, not pre-world. Late join: every
+    // one again to the joiner alone, then a census-end (family 2), by which the joiner ends each loaded branch nothing
+    // named; a peer that has the number keeps what it has. AmbientFixtureStatePayload.
     AmbientFixtureState = 222,
 };
 
@@ -1960,9 +1962,11 @@ static_assert(sizeof(AmbientTreeStatePayload) == 12, "AmbientTreeStatePayload mu
 namespace ambient_fixture {
 inline constexpr uint8_t kHole = 0;
 inline constexpr uint8_t kBranch = 1;
+// Not a fixture: the host has sent a joiner every one it holds, so a loaded branch nothing named is one the host lacks.
+inline constexpr uint8_t kCensusEnd = 2;
 }  // namespace ambient_fixture
 
-// A dirt hole or a beehive branch (AmbientFixtureState).
+// A dirt hole or a beehive branch (AmbientFixtureState), or the end of a joiner's census (family kCensusEnd, the rest zero).
 struct AmbientFixtureStatePayload {
     uint32_t id;                // 4 -- the host's number for it
     float    x, y, z;           // 12
@@ -1970,8 +1974,13 @@ struct AmbientFixtureStatePayload {
     uint8_t  family;            // 1 -- ambient_fixture
     uint8_t  alive;             // 1 -- 0: it ended
     uint8_t  _pad[2];           // 2 -- zero
+    WireKey  birthKey;          // 32 -- a branch: the key its nest had when the host first read it; a hole: len 0
+    uint8_t  hasNest;           // 1 -- a branch: the host's branch holds its nest now (read at every send)
+    uint8_t  _pad2[3];          // 3 -- zero
 };
-static_assert(sizeof(AmbientFixtureStatePayload) == 32, "AmbientFixtureStatePayload must be 32 bytes");
+static_assert(sizeof(AmbientFixtureStatePayload) == 68, "AmbientFixtureStatePayload must be 68 bytes");
+static_assert(sizeof(AmbientFixtureStatePayload) <= 256 - 20 - 8,
+              "AmbientFixtureStatePayload must fit in one reliable datagram");
 
 // One message of the drill filler (DevLoadFiller): its place in the run and the run's length; the rest is fill.
 struct DevLoadFillerPayload {

@@ -2,6 +2,7 @@
 
 #include "ue_wrap/actors/ambient_creature.h"
 
+#include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/object_index.h"
@@ -100,6 +101,31 @@ void* SpawnFixture(bool branch, const FVector& at, const FRotator& rot) {
     void* a = cls ? engine::SpawnActor(cls, at) : nullptr;
     if (a) engine::SetActorRotation(a, rot);
     return a;
+}
+
+bool ReadBranch(void* branch, std::wstring& hiveKey, void*& hive) {
+    void* cls = R::ClassOf(branch);
+    const int32_t keyOff = R::FindPropertyOffset(cls, L"hiveKey");
+    const int32_t hiveOff = R::FindPropertyOffset(cls, L"hive");
+    if (keyOff < 0 || hiveOff < 0) return false;
+    hiveKey = save_record::ReadFNameAt(branch, keyOff);
+    void* nest = *reinterpret_cast<void**>(static_cast<uint8_t*>(branch) + hiveOff);
+    hive = nest && R::IsLive(nest) ? nest : nullptr;
+    return true;
+}
+
+bool BindBranchNest(void* branch, void* nest) {
+    const int32_t hiveOff = R::FindPropertyOffset(R::ClassOf(branch), L"hive");
+    if (hiveOff < 0 || !nest) return false;
+    engine::WriteObjectField(branch, static_cast<size_t>(hiveOff), nest);
+    return component_calls::CallParamlessNamed(branch, L"getBee");
+}
+
+bool ReleaseBranchNest(void* branch) { return component_calls::CallParamlessNamed(branch, L"touched"); }
+
+void DropBranchNest(void* branch) {
+    const int32_t hiveOff = R::FindPropertyOffset(R::ClassOf(branch), L"hive");
+    if (hiveOff >= 0) engine::WriteObjectField(branch, static_cast<size_t>(hiveOff), nullptr);
 }
 
 bool HolesRoll() {

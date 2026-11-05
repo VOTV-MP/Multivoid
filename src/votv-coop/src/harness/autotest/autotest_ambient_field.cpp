@@ -328,6 +328,7 @@ void RunClient() {
     Mark("client_in");
 
     // The save's branches stand with their nests: none was swept as this client's own.
+    // W6 converts this step: a joiner binds each loaded branch by its key and a census-end ends the ones the host lacks.
     std::string body;
     if (!Await("join_branches", &body)) return;
     ExpectField(body, true, "a joiner has the host's branches, at its places");
@@ -370,6 +371,7 @@ void RunClient() {
     Check(branchesNow.n == branchesHad.n, "a branch this client rolled itself was swept");
     Mark("branch_done");
 
+    // W6 converts this step: the nest ends by the prop lane, never with the branch's own end on a client.
     ExpectBranchesLive("branch_end", "nests_end", "a branch that ended on the host ended here", "its nest ended with it");
     Mark("branch_end_done");
 

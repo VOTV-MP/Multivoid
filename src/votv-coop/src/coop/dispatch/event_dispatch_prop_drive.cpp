@@ -351,8 +351,9 @@ bool HandlePropDriveEvent(net::Session& session,
         }
         net::AmbientFixtureStatePayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (p.family > net::ambient_fixture::kBranch || p.alive > 1 || !std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z) ||
-            !std::isfinite(p.pitch) || !std::isfinite(p.yaw) || !std::isfinite(p.roll)) {
+        if (p.family > net::ambient_fixture::kCensusEnd || p.alive > 1 || p.hasNest > 1 || p.birthKey.len > sizeof(p.birthKey.data) ||
+            !std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z) || !std::isfinite(p.pitch) || !std::isfinite(p.yaw) ||
+            !std::isfinite(p.roll)) {
             UE_LOGW("event_feed: AmbientFixtureState malformed -- dropping");
             break;
         }
