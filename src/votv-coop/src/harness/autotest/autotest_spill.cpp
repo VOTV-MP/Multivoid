@@ -38,6 +38,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <sstream>
 #include <string>
@@ -82,6 +83,13 @@ bool WaitFor(const std::function<bool()>& pred, int seconds = 10) {
         ::Sleep(100);
     }
     return false;
+}
+
+// A peer's fails count as it left it in its done signal; text that is no count is a fail.
+int ParseFails(const std::string& text) {
+    char* end = nullptr;
+    const long n = std::strtol(text.c_str(), &end, 10);
+    return end != text.c_str() && n >= 0 ? static_cast<int>(n) : 1;
 }
 
 std::wstring Widen(const std::string& s) { return std::wstring(s.begin(), s.end()); }
@@ -335,7 +343,9 @@ void RunHost() {
     Mark("d2_heard");
     // E.
     // The client's life 1 ends on client_done; the rig then kills it, and the host sees its slot closed.
-    if (!Await("client_done", 60)) return;
+    std::string clientText;
+    if (!AwaitText("client_done", clientText, 60)) return;
+    const int clientFails = ParseFails(clientText);
     if (!PS::WaitFor("the client's slot closed", 300,
                      [] { return !harness::session_runtime::Session().IsSlotConnected(1); }))
         return;
@@ -347,12 +357,13 @@ void RunHost() {
     OnGameThread([&] { live = Rows(AllDecals()); });
     Mark("e_rows", live);
     UE_LOGI("spill-drill: %zu spills live for the rejoin", ParseRows(live).size());
-    Await("rejoin_done", 400);
+    std::string rejoinText;
+    const int rejoinFails = AwaitText("rejoin_done", rejoinText, 400) ? ParseFails(rejoinText) : 1;   // no word is no pass
     OnGameThread([&] {
         for (void* d : AllDecals()) Clean(d, 100000.f);
     });
-    if (g_fails == 0) UE_LOGI("spill-drill: VERDICT PASS");
-    else UE_LOGW("spill-drill: VERDICT FAIL fails=%d", g_fails);
+    if (g_fails == 0 && clientFails == 0 && rejoinFails == 0) UE_LOGI("spill-drill: VERDICT PASS");
+    else UE_LOGW("spill-drill: VERDICT FAIL host=%d client=%d rejoin=%d", g_fails, clientFails, rejoinFails);
     UE_LOGI("spill-drill: DONE on host fails=%d", g_fails);
 }
 
@@ -531,7 +542,7 @@ void RunClient() {
     OnGameThread([] { coop::dev::drill_hand::TakeIntoHandNow(L"None", nullptr); });
     Mark("d2_pours", std::to_string(poured));
     Await("d2_heard", 30);
-    Mark("client_done");
+    Mark("client_done", std::to_string(g_fails));
     UE_LOGI("spill-drill: DONE on client fails=%d", g_fails);
 }
 
@@ -556,7 +567,7 @@ void RunRejoin() {
         UE_LOGI("spill-drill: rejoin checked %zu spills: %zu missing, %zu doubled", rows.size(), missing, doubled);
         LogOff("rejoin", rows);
     });
-    Mark("rejoin_done");
+    Mark("rejoin_done", std::to_string(g_fails));
     UE_LOGI("spill-drill: REJOIN DONE fails=%d", g_fails);
 }
 
