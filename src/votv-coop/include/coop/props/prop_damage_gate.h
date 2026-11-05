@@ -1,12 +1,12 @@
-// coop/props/prop_damage_gate.h -- a client never decides the damage of a prop it does not author.
+// coop/props/prop_damage_gate.h -- a client never decides the damage of a prop or a plant it does not author.
 //
 // A prop's physics impact and fire both end in its own destroy, inside comp_physicsImpact_C: `impactDamage` and
 // `fireDamage`. On a client the prop is a mirror of the host's, so its physics runs on a copy the host does not read,
-// and the destroy seam would broadcast the result over the host's prop. Two script-gate watches on those bodies cancel
-// the call on a connected client when the owner is a prop (prop_C) this client does not author; the host decides the
-// prop's damage, and a break reaches the client as the host's destroy.
+// and the destroy seam would broadcast the result over the host's prop. Two script-gate watches on those bodies cancel the
+// call on a connected client when its owner is a prop (prop_C) this client does not author or a plant (growingPlant_C and
+// every class under it, which no client authors); the host decides, and a break reaches the client as the host's destroy.
 //
-// This client authors the owner when it holds it in a hand grab, threw or swung it (coop/props/prop_throw) or syncs it
+// This client authors a prop owner when it holds it in a hand grab, threw or swung it (coop/props/prop_throw) or syncs it
 // (coop/props/prop_syncer, a pending claim included): its own copy is then the truth and its damage stands, except a
 // lethal call while only a throw's or a swing's sequence is pending, which waits for the grant (below). A caller's
 // identity is never read: a physics impact carries the struck prop as its actor, and a drill's call nests under our code.
@@ -42,6 +42,15 @@ void Install(coop::net::Session* session);
 
 // Settle the watches' registration with one line. Game thread.
 void Tick();
+
+// The calls cancelled this session: by verb, and of both verbs those whose owner was a plant. Read-only, for drills. Game
+// thread.
+struct Counts {
+    unsigned long long impact = 0;
+    unsigned long long fire = 0;
+    unsigned long long plant = 0;
+};
+Counts GetCounts();
 
 // Net disconnect: the cancelled counts are said and cleared, and the once-per-class log latches are forgotten.
 void OnDisconnect();

@@ -5,7 +5,8 @@
 // client's harvest through the plant's own action, death, a plant a client spawned, a new bush and two removals. Three arms
 // hold what the client refuses (coop/world/plant_gate, coop/world/spawn_authority): a sprinkler the host spawned beside the
 // plant, switched on here, adds no water to the client's copy; the client's own spawnBush calls are refused and plant
-// nothing; and at the end no plant tick ran here while the gate refused them. The client tells the host what it reads; the
+// nothing; a lethal hit on a pine here is refused and the copy ends with the host's break; and at the end no plant tick
+// ran here while the gate refused them. The client tells the host what it reads; the
 // host judges and logs `plant-state: VERDICT PASS|FAIL <terms>`. Gated by VOTVCOOP_RUN_PLANT_STATE; the peers' shared
 // folder is VOTVCOOP_CAN_DIR. Every wait is on a state with a bound.
 
@@ -15,6 +16,7 @@
 
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/props/prop_damage_gate.h"
 #include "coop/session/net_pump.h"
 #include "coop/world/plant_gate.h"
 #include "coop/world/spawn_authority.h"
@@ -57,6 +59,8 @@ constexpr const wchar_t* kBushClass = L"growingPlant_bush_C";
 constexpr const wchar_t* kBushPath = L"/Game/objects/growingPlant_bush.growingPlant_bush_C";
 constexpr const wchar_t* kShroomClass = L"growingPlant_shroom_0_C";
 constexpr const wchar_t* kShroomPath = L"/Game/objects/growingPlant_shroom_0.growingPlant_shroom_0_C";
+constexpr const wchar_t* kPineClass = L"growingPlant_pine_C";
+constexpr const wchar_t* kPinePath = L"/Game/objects/growingPlant_pine.growingPlant_pine_C";
 constexpr const wchar_t* kSprinklerClass = L"prop_sprinkler_C";
 constexpr const wchar_t* kSprinklerPath = L"/Game/objects/prop_sprinkler.prop_sprinkler_C";
 constexpr const char* kBushSpawnTag = "bushSpawning.spawnBush";   // spawn_authority's row of the winter bush ticker
@@ -291,18 +295,59 @@ bool TickArm() {
     return Check(c.plantTick > 0 && c.plantTickRan == 0, "this client ran no plant tick of its own while the gate refused them");
 }
 
-// The client's word at its end: "<fails> <plants here> <host family plants it holds> <tick> <sprinkler> <spawner>", each arm
-// 1 when it held.
+// addDamage on a plant with damage no health survives: the plant's own entry, which hands the call to its
+// comp_physicsImpact_C, the component that keeps the health and breaks its owner.
+bool LethalHit(const std::string& key) {
+    bool called = false;
+    OnGameThread([&] {
+        void* p = ByKey(key);
+        void* fn = p ? R::FindDispatchFunctionCached(R::ClassOf(p), L"addDamage") : nullptr;
+        ue_wrap::ParamFrame f(fn);
+        if (!fn || !f.valid()) return;
+        f.Set<float>(L"damage", 1.0e7f);
+        called = ue_wrap::Call(p, f);
+    });
+    return called;
+}
+
+// CLIENT: a lethal hit on the host's pine is refused here (the plant is the host's), so the copy stands and spawns no logs
+// of its own until the host's break ends it.
+bool PineHitArm(const std::string& key) {
+    const bool here = Check(WaitPlant(key, [](void* p, const GP::Values&) { return R::ClassNameOf(p) == kPineClass; }),
+                            "the host's growingPlant_pine_C stands here under its key");
+    if (!here) return false;
+    unsigned long long refusedWas = 0, refusedNow = 0;
+    size_t logsWas = 0, logsNow = 0;
+    bool stands = false;
+    OnGameThread([&] {
+        refusedWas = coop::props::prop_damage_gate::GetCounts().plant;
+        logsWas = CountOf(L"prop_food_C");
+    });
+    const bool called = LethalHit(key);
+    OnGameThread([&] {
+        refusedNow = coop::props::prop_damage_gate::GetCounts().plant;
+        logsNow = CountOf(L"prop_food_C");
+        stands = ByKey(key) != nullptr;
+    });
+    UE_LOGI("plant-state: pine hit called=%d, plant refusals %llu->%llu, logs %zu->%zu, copy stands=%d", called ? 1 : 0,
+            refusedWas, refusedNow, logsWas, logsNow, stands ? 1 : 0);
+    const bool refused = Check(called && refusedNow > refusedWas, "this client's lethal hit on the pine was refused");
+    const bool intact = Check(stands && logsNow == logsWas, "this client's pine copy stood and spawned no logs of its own");
+    return refused && intact;
+}
+
+// The client's word at its end: "<fails> <plants here> <host family plants it holds> <tick> <sprinkler> <spawner> <pine>",
+// each arm 1 when it held.
 struct ClientWord {
     int fails = 1;   // text that is no count is a fail
     size_t plants = 0;
     int family = 0;
-    int tick = 0, sprinkler = 0, spawner = 0;
+    int tick = 0, sprinkler = 0, spawner = 0, pine = 0;
 };
 ClientWord ParseWord(const std::string& text) {
     ClientWord w;
     std::istringstream in(text);
-    if (!(in >> w.fails >> w.plants >> w.family >> w.tick >> w.sprinkler >> w.spawner)) w = ClientWord{};
+    if (!(in >> w.fails >> w.plants >> w.family >> w.tick >> w.sprinkler >> w.spawner >> w.pine)) w = ClientWord{};
     return w;
 }
 
@@ -425,17 +470,28 @@ void RunHost() {
     Check(WaitGone(planted), "the plant the client removed left the host");
     Mark("removal_seen");
 
+    // A pine: the client's lethal hit on its copy is refused, the host's own breaks it, and the end crosses.
+    const std::string pine = SpawnFamily(kPinePath, kPineClass, 250.f);
+    Check(!pine.empty(), "the script spawned a growingPlant_pine_C");
+    if (pine.empty()) return;
+    Mark("pine", pine);
+    if (!Await("pine_hit", kStep)) return;
+    Check(LethalHit(pine), "the host's lethal hit on the pine was delivered");
+    Check(WaitGone(pine), "the host's lethal hit broke the pine");
+    Mark("pine_broke");
+
     std::string clientText;
     if (!AwaitText("client_done", clientText, kStep)) return;
     const ClientWord client = ParseWord(clientText);
     size_t hostPlants = PlantCount();
     PS::WaitFor("the plant counts to agree", 15, [&] { return (hostPlants = PlantCount()) == client.plants; }, false);
     const bool pass = g_fails == 0 && client.fails == 0 && client.plants == hostPlants && client.family == 2 &&
-                      client.tick == 1 && client.sprinkler == 1 && client.spawner == 1;
+                      client.tick == 1 && client.sprinkler == 1 && client.spawner == 1 && client.pine == 1;
     ue_wrap::log::Write(pass ? ue_wrap::log::Level::Info : ue_wrap::log::Level::Warn,
-                        "plant-state: VERDICT %hs host=%d client=%d plants=%zu/%zu family=%d tick=%d sprinkler=%d spawner=%d",
+                        "plant-state: VERDICT %hs host=%d client=%d plants=%zu/%zu family=%d tick=%d sprinkler=%d spawner=%d "
+                        "pine=%d",
                         pass ? "PASS" : "FAIL", g_fails, client.fails, hostPlants, client.plants, client.family,
-                        client.tick, client.sprinkler, client.spawner);
+                        client.tick, client.sprinkler, client.spawner, client.pine);
     UE_LOGI("plant-state: DONE on host fails=%d", g_fails);
 }
 
@@ -561,9 +617,18 @@ void RunClient() {
     OnGameThread([&] { if (void* p = ByKey(planted)) GP::Destroy(p); });
     Mark("removal");
     if (!Await("removal_seen", kStep)) return;
+
+    if (!AwaitText("pine", body, kStep)) return;
+    const std::string pine = body;
+    int pineOk = PineHitArm(pine) ? 1 : 0;
+    Mark("pine_hit");
+    if (!Await("pine_broke", kStep)) return;
+    pineOk &= Check(WaitGone(pine), "the host's break ended the pine here") ? 1 : 0;
+
     const int tickOk = TickArm() ? 1 : 0;
     Mark("client_done", std::to_string(g_fails) + " " + std::to_string(PlantCount()) + " " + std::to_string(family) + " " +
-                            std::to_string(tickOk) + " " + std::to_string(sprinklerOk) + " " + std::to_string(spawnerOk));
+                            std::to_string(tickOk) + " " + std::to_string(sprinklerOk) + " " + std::to_string(spawnerOk) +
+                            " " + std::to_string(pineOk));
     UE_LOGI("plant-state: DONE on client fails=%d", g_fails);
 }
 

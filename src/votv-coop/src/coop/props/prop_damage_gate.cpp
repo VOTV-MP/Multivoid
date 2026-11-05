@@ -9,6 +9,7 @@
 #include "coop/props/prop_syncer.h"
 #include "coop/props/prop_throw.h"
 
+#include "ue_wrap/actors/growing_plant.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
@@ -56,6 +57,7 @@ bool Strict() {
 unsigned long long                g_cancelled[kRows] = {};
 unsigned long long                g_held[kRows] = {};   // lethal calls cancelled while a grant is awaited
 unsigned long long                g_replayed = 0;
+unsigned long long                g_plantCancelled = 0;   // the cancelled calls, either verb, whose owner was a plant
 ue_wrap::ObjKeyedCache<bool, 24>  g_said[kRows];   // the owner classes whose first cancelled call has been said
 ue_wrap::ObjKeyedCache<bool, 24>  g_heldSaid[kRows];
 
@@ -160,8 +162,12 @@ sg::Verdict Judge(Row row, const sg::Call& c) {
     coop::net::Session* s = LoadSession();
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return sg::Verdict::Run;
     void* owner = R::OuterOf(c.object);
-    if (!owner || !ue_wrap::prop::IsDescendantOfProp(owner)) return sg::Verdict::Run;
-    if (!Strict() && AuthoredHere(owner)) {
+    if (!owner) return sg::Verdict::Run;
+    // A plant is the host's alone: no client authors one, so its damage is never decided here.
+    const bool isProp = ue_wrap::prop::IsDescendantOfProp(owner);
+    const bool isPlant = !isProp && ue_wrap::growing_plant::IsPlantClass(R::ClassOf(owner));
+    if (!isProp && !isPlant) return sg::Verdict::Run;
+    if (isProp && !Strict() && AuthoredHere(owner)) {
         // A non-lethal call runs; a lethal one waits for the grant, since a break before it would delete the host's
         // prop even when the host refuses the election.
         if (AuthoredByPendingSeqOnly(owner) && Lethal(row, c)) return HoldLethal(row, c, owner);
@@ -174,11 +180,12 @@ sg::Verdict Judge(Row row, const sg::Call& c) {
     // Here the call is cancelled instead, since a mirror that breaks alone stands apart from the host's prop until the
     // host's destroy arrives.
     ++g_cancelled[row];
+    if (isPlant) ++g_plantCancelled;
     void* const cls = R::ClassOf(owner);
     if (!g_said[row].Find(cls)) {
         g_said[row].Insert(cls, true);
-        UE_LOGI("prop_damage_gate: a client's %s on a prop it does not author is the host's (cls=%ls)", kVerb[row],
-                R::ClassNameOf(owner).c_str());
+        UE_LOGI("prop_damage_gate: a client's %s on a %s it does not author is the host's (cls=%ls)", kVerb[row],
+                isPlant ? "plant" : "prop", R::ClassNameOf(owner).c_str());
     }
     return sg::Verdict::Cancel;
 }
@@ -221,6 +228,8 @@ void ReplayAtGrant(void* actor) {
     ue_wrap::Call(comp, f);
 }
 
+Counts GetCounts() { return Counts{g_cancelled[kImpact], g_cancelled[kFire], g_plantCancelled}; }
+
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (!session || session->role() != coop::net::Role::Client) return;
@@ -243,7 +252,7 @@ void Tick() {
             UE_LOGI("prop_damage_gate: the comp_physicsImpact_C %s watch is live", kVerb[i]);
         } else if (g_reg[i] == Reg::Refused || sg::NameWatchSettled(*kRowOf[i], kTag[i])) {
             g_settled[i] = true;
-            UE_LOGE("prop_damage_gate: the %s watch is dead -- a client's %s on a prop it does not author runs",
+            UE_LOGE("prop_damage_gate: the %s watch is dead -- a client's %s on a prop or plant it does not author runs",
                     kVerb[i], kVerb[i]);
         }
     }
@@ -251,12 +260,13 @@ void Tick() {
 
 void OnDisconnect() {
     if (g_cancelled[kImpact] != 0 || g_cancelled[kFire] != 0)
-        UE_LOGI("prop_damage_gate: %llu impactDamage and %llu fireDamage calls cancelled this session",
-                g_cancelled[kImpact], g_cancelled[kFire]);
+        UE_LOGI("prop_damage_gate: %llu impactDamage and %llu fireDamage calls cancelled this session (%llu on plants)",
+                g_cancelled[kImpact], g_cancelled[kFire], g_plantCancelled);
     if (g_held[kImpact] != 0 || g_held[kFire] != 0 || g_replayed != 0)
         UE_LOGI("prop_damage_gate: %llu lethal impactDamage held and %llu replayed, %llu lethal fireDamage dropped "
                 "while a grant was awaited this session", g_held[kImpact], g_replayed, g_held[kFire]);
     g_replayed = 0;
+    g_plantCancelled = 0;
     for (int i = 0; i < kRows; ++i) {
         g_cancelled[i] = 0;
         g_held[i] = 0;

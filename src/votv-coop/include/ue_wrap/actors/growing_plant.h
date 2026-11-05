@@ -24,6 +24,10 @@ struct Values {
 // from the object index, so a class a game build adds is a plant here with no change.
 void List(std::vector<void*>& out);
 
+// Whether `cls` is growingPlant_C or a class under it: a membership test on the same table List walks, which is rebuilt when
+// the object index's class set or the world moves. A class with no live instance is not in it. Game thread.
+bool IsPlantClass(void* cls);
+
 // Its key, minted by its own getKey when it has none yet. "" on failure.
 std::wstring Key(void* plant);
 

@@ -151,6 +151,12 @@ void List(std::vector<void*>& out) {
     }
 }
 
+bool IsPlantClass(void* cls) {
+    if (!cls) return false;
+    RefreshFamily();
+    return std::binary_search(g_family.classes.begin(), g_family.classes.end(), cls);
+}
+
 std::wstring Key(void* plant) {
     std::wstring key = prop::GetActorSaveKeyString(plant);
     if (!key.empty() && key != L"None") return key;
