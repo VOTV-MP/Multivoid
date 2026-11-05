@@ -170,7 +170,7 @@ this machine, so a false death of the copy reaches the same travel: that one is 
 the revive can do, and this machine's player is not revived for it; only the black screen the
 copy's chain put up is cleared.
 
-A refused run-ending is answered with a revive in its place: the position at the base gate,
+A refused run-ending is answered with a revive in its place: a floor point beside the base's bed (the base gate when no bed or NavMesh point is found, which is open sky `[?]`),
 health, the dead flag, the ragdoll, the pause an ending set, and the screen artifacts the travel
 used to dispose of -- the damage quadrants, the red overlay and the blood-loss effect
 (`coop/player/death_revive`). A host that dies is revived the same way, so a host death does not
@@ -319,7 +319,7 @@ dead peer through the ragdoll bit of its next pose.
 |---|---|
 | A remote player casts no shadow from any light, as a real player's own body casts none on its own screen: the game turns that off for a player, and a puppet follows it so its flashlight is not shadowed by its own body | `[V]` `ue_wrap/actors/puppet_spawn` sets `SetCastShadow(false)` on both body meshes; `harness/autotest/autotest_beam_look.cpp` |
 | No chat line announces a death | `[V]` `coop/comms/chat_sync` carries no such kind |
-| After a revive the player can drift horizontally from the base gate, metres over seconds; the cause is unmeasured | `[V]` `harness/autotest/death_state_probe.cpp` reads the position back |
+| After a revive the player can drift horizontally from where it woke, metres over seconds; the cause is unmeasured | `[V]` `harness/autotest/death_state_probe.cpp` reads the position back |
 | Damage a puppet takes on another machine is dropped by design; only the victim's own contacts count | `[V]` `coop/player/player_damage` |
 | A third-party bundle pak cannot be discovered: bundle membership is a fixed table | `[V]` `coop/player/skin_registry` |
 | A ban is by player id and, on a direct link, by address: a banned player with a new identity key who comes from a new address or through a relay is a new player, and an address ban refuses whoever shares that address | `[V]` `coop/moderation/ban_list` |

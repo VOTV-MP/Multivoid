@@ -2,7 +2,7 @@
 // (VOTVCOOP_RUN_DEATH_TEST), one process in two configurations. `mp.py death --session` is a solo
 // host (a session with zero clients), the acceptance run: the native death plays out (about 10 s,
 // the black screen at +5 s), the run-ending travel is cancelled at lib_C::loadLevel, and the
-// player comes back standing at the KPP with the pause menu reachable. `mp.py death` is
+// player comes back standing at its revive target with the pause menu reachable. `mp.py death` is
 // sessionless, the negative control: single player is untouched, so the travel must still happen
 // and the seam refuse nothing. Neither needs a second peer. The observation half never fails (the
 // measured timeline from a real lethal Add Player Damage to the travel or its refusal, a memory
@@ -580,23 +580,14 @@ DWORD WINAPI DeathTestThread(LPVOID) {
                     ? "the player is up, off the ragdoll, with positive health"
                     : "the player is not standing with health");
         // The positional arm: ApplyLocally reports a dispatched call, not a moved player.
-        const float dx = last.locX - P::name::kKPPSpawnX;
-        const float dy = last.locY - P::name::kKPPSpawnY;
-        const float dz = last.locZ - P::name::kKPPSpawnZ;
-        const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-        // The delta, not only the distance: a run once landed the teleport exactly and the player
+        // Graded against the revive's own target, and the target must be the bed's whenever a bed
+        // exists. The delta rides the line: a run once landed the teleport exactly and the player
         // drifted afterwards, and a scalar cannot tell a fall from a walk from a slide.
-        char at[256];
-        if (!last.haveLoc)
-            _snprintf_s(at, sizeof(at), _TRUNCATE, "no location could be read back from the pawn");
-        else
-            _snprintf_s(at, sizeof(at), _TRUNCATE,
-                        "%.0f cm from the coop KPP (%.0f,%.0f,%.0f) -- delta (%.0f,%.0f,%.0f), "
-                        "horiz %.0f vert %.0f -- read back from the pawn, not inferred from the "
-                        "teleport's return", dist,
-                        P::name::kKPPSpawnX, P::name::kKPPSpawnY, P::name::kKPPSpawnZ,
-                        dx, dy, dz, std::sqrt(dx * dx + dy * dy), dz);
-        Verdict("D7 at-KPP", last.haveLoc && dist <= 500.f, at);
+        auto landDone = std::make_shared<std::atomic<int>>(0);
+        auto landing = std::make_shared<LandingJudgement>();
+        GT::Post([landDone, landing, last] { *landing = JudgeRevivedLanding(last, 500.f); landDone->store(1); });
+        WaitDone(landDone, 8000);
+        Verdict("D7 at-target", landDone->load() != 0 && landing->pass, landing->detail);
         // D8 asserted that the revive had RESTORED the menu prep loadLevel stomps. The cut is the
         // loadLevel body now, so those writes are never made and there is nothing to restore: the
         // old assertion would pass whatever happened, which is the same shape as a seam that never

@@ -1,12 +1,15 @@
 // harness/autotest/death_state_probe.cpp -- the readers behind harness/autotest/death_state_probe.h.
 // Every function here runs on the game thread and reads UObject state by reflection; none of them
-// writes anything and none of them decides anything, so a drill can read the same state before it
-// acts, after it acts, and on a cadence in between without the reads meaning three things. What
-// each field is and why it is worth a line is in the header, beside the field.
+// writes anything and none of them decides anything but JudgeRevivedLanding, the one grading the
+// drills share, so a drill can read the same state before it acts, after it acts, and on a cadence
+// in between without the reads meaning three things. What each field is and why it is worth a line
+// is in the header, beside the field.
 
 #include "harness/autotest/death_state_probe.h"
 
+#include "coop/player/death_revive.h"
 #include "coop/player/players_registry.h"
+#include "ue_wrap/actors/sleep.h"
 #include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/reflection.h"
@@ -14,6 +17,9 @@
 #include "ue_wrap/core/sdk_profile_names.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/world/game_mode.h"
+
+#include <cmath>
+#include <cstdio>
 
 namespace harness::autotest {
 namespace {
@@ -550,6 +556,31 @@ DeathSnapshot ReadDeathState() {
         s.inGameplay = R::ToString(R::NameOf(w)).find(L"ntitled") != std::wstring::npos;
     }
     return s;
+}
+
+LandingJudgement JudgeRevivedLanding(const DeathSnapshot& s, float toleranceCm) {
+    LandingJudgement j;
+    const coop::revive_target::Target t = coop::death_revive::LastReviveTarget();
+    if (t.kind == coop::revive_target::Kind::None || !s.haveLoc) {
+        std::snprintf(j.detail, sizeof(j.detail), "no landing to grade: target kind=%s, location %s",
+                      coop::revive_target::KindName(t.kind), s.haveLoc ? "read" : "unread");
+        return j;
+    }
+    const float dx = s.locX - t.x, dy = s.locY - t.y, dz = s.locZ - t.z;
+    j.distCm = std::sqrt(dx * dx + dy * dy + dz * dz);
+    // Cold path (once per verdict): the lookup is the one the revive itself ran.
+    const bool bedExists = ue_wrap::sleep::NearestBed({P::name::kKPPSpawnX, P::name::kKPPSpawnY, P::name::kKPPSpawnZ}) != nullptr;
+    const coop::revive_target::Kind want = (bedExists && !coop::revive_target::BedLookupDisabled())
+                                               ? coop::revive_target::Kind::Bed
+                                               : coop::revive_target::Kind::KppFallback;
+    j.pass = j.distCm <= toleranceCm && t.kind == want;
+    std::snprintf(j.detail, sizeof(j.detail),
+                  "target=%s (want %s; bed in world=%d) at (%.0f,%.0f,%.0f), the pawn %.0f cm from it (tol %.0f) -- "
+                  "delta (%.0f,%.0f,%.0f), horiz %.0f vert %.0f, read back from the pawn, not inferred from the "
+                  "teleport's return",
+                  coop::revive_target::KindName(t.kind), coop::revive_target::KindName(want), bedExists ? 1 : 0,
+                  t.x, t.y, t.z, j.distCm, toleranceCm, dx, dy, dz, std::sqrt(dx * dx + dy * dy), dz);
+    return j;
 }
 
 }  // namespace harness::autotest

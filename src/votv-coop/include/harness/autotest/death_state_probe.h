@@ -3,7 +3,7 @@
 //
 // Extracted from autotest_death.cpp when that file reached 1088 lines: READING the death state
 // and DRIVING a death are two concerns, and the readers had already grown a second consumer --
-// autotest_runend.cpp re-derived the ragdoll flags, the location and the KPP distance by hand.
+// autotest_runend.cpp re-derived the ragdoll flags, the location and the landing distance by hand.
 // A third (the banana drill) needed the same. The drills own their own threading; this module
 // owns the reads, and every entry point here must be called ON the game thread.
 
@@ -45,9 +45,9 @@ struct DeathSnapshot {
     // samples RSS on a cadence wants the sample at its own instant, not at the task's.
     bool  sessionRunning = false;
     double rssMb = -1.0;
-    // Where the player is. The revive repositions to the coop KPP, and its three-tier fallback
-    // reports that a call was dispatched, not that the player moved; the position is the only
-    // honest assertion.
+    // Where the player is. The revive repositions to its target (JudgeRevivedLanding), and its
+    // three-tier fallback reports that a call was dispatched, not that the player moved; the
+    // position is the only honest assertion.
     float locX = 0.f, locY = 0.f, locZ = 0.f;
     bool  haveLoc = false;
     // The menu prep lib.loadLevel WOULD have written, read back. pause_mainMenu lives on the
@@ -79,6 +79,17 @@ struct DeathSnapshot {
 // The whole snapshot, GAME THREAD ONLY. Every field but `sessionRunning` and `rssMb`, which read
 // no UObject state and belong to the caller's own instant.
 DeathSnapshot ReadDeathState();
+
+// The revive's landing graded against ITS OWN target (death_revive's LastReviveTarget): the pawn
+// at `s`'s location within `toleranceCm` of it, and the target's kind `bed` whenever the world
+// holds a bed (the dev switch VOTVCOOP_DEATH_NO_BED expects `kpp-fallback` instead). `detail`
+// carries the reading, delta included. GAME THREAD ONLY: it walks the object index once for the bed.
+struct LandingJudgement {
+    bool  pass = false;
+    float distCm = -1.f;
+    char  detail[320] = {};
+};
+LandingJudgement JudgeRevivedLanding(const DeathSnapshot& s, float toleranceCm);
 
 // Every UUserWidget-descended object on the viewport, by class name: a probe aimed at a suspect
 // cannot find a source nobody thought of, an enumeration can. One array walk, once per run.
