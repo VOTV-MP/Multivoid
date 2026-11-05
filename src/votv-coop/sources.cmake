@@ -164,6 +164,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/grab_observer.cpp
     src/coop/player/item_activate.cpp
     src/coop/player/player_damage.cpp
+    src/coop/player/puppet_cremation.cpp
     src/coop/player/player_hit.cpp
     src/coop/player/hit_intent.cpp
     src/coop/player/hit_judge.cpp

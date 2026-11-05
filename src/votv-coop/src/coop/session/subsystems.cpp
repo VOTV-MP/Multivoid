@@ -154,6 +154,7 @@
 #include "coop/props/grab_observer.h"
 #include "coop/player/item_activate.h"
 #include "coop/player/player_damage.h"
+#include "coop/player/puppet_cremation.h"
 #include "coop/player/player_hit.h"
 #include "coop/session/player_handshake.h"  // TickSkinConverge
 #include "coop/player/skin_preview.h"
@@ -238,6 +239,7 @@ void Install(coop::net::Session& session) {
     coop::geom_octa_sync::Install(&session);  // the Geom Octa's lane: the [OCTA] watches (live once the class loads)
     coop::item_activate::Install(&session);  // flashlight
     coop::player_damage::Install(&session);  // the refusals on a peer's puppet: its impacts, damage, fire and hit verbs
+    coop::puppet_cremation::Install();  // a cremator never consumes a peer's puppet: it answers its crematorAction true
     coop::weather_sync::Install(&session);  // weather
     coop::interactable_sync::Install(&session);  // doors + lights + container lids
     coop::keypad_sync::Install(&session);  // the password keypads' index and wire (its own module)
