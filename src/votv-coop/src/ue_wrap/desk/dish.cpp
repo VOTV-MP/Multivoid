@@ -27,6 +27,11 @@ int32_t g_offAxisY = -1;        // Adish_C::axis_Y (UBillboardComponent*)
 int32_t g_offAxisZ = -1;        // Adish_C::axis_Z (UBillboardComponent*)
 int32_t g_offMoveCue = -1;      // Adish_C::satellite_move_Cue
 int32_t g_offCue = -1;          // Adish_C::satellite_Cue
+// The slew-sound edges' components, looked up once (a miss stays -1: the edge then plays nothing).
+int32_t g_offMoveStop = -1;     // Adish_C::satellite_moveStop
+int32_t g_offStop = -1;         // Adish_C::satellite_stop
+int32_t g_offTurnoff = -1;      // Adish_C::turnoff (the timeline whose length is the fade)
+bool g_edgeOffsetsTried = false;
 int32_t g_offCalibration = -1;  // Adish_C::calibration (float)
 int32_t g_offTechName = -1;     // Adish_C::techName (FString)
 int32_t g_offHashcode = -1;     // Adish_C::hashcode (FString), outside the L4 set: nothing mirrors it
@@ -72,6 +77,15 @@ void ResolvePass() {
     if (g_offAxisZ < 0) g_offAxisZ = R::FindPropertyOffset(dishCls, L"axis_Z");
     if (g_offMoveCue < 0) g_offMoveCue = R::FindPropertyOffset(dishCls, L"satellite_move_Cue");
     if (g_offCue < 0) g_offCue = R::FindPropertyOffset(dishCls, L"satellite_Cue");
+    if (!g_edgeOffsetsTried) {
+        g_edgeOffsetsTried = true;
+        g_offMoveStop = R::FindPropertyOffset(dishCls, L"satellite_moveStop");
+        g_offStop = R::FindPropertyOffset(dishCls, L"satellite_stop");
+        g_offTurnoff = R::FindPropertyOffset(dishCls, L"turnoff");
+        if (g_offMoveStop < 0 || g_offStop < 0 || g_offTurnoff < 0)
+            UE_LOGW("dish: slew-sound edge components unresolved (moveStop=0x%X stop=0x%X turnoff=0x%X)",
+                    g_offMoveStop, g_offStop, g_offTurnoff);
+    }
     if (g_offCalibration < 0) g_offCalibration = R::FindPropertyOffset(dishCls, L"calibration");
     if (g_offTechName < 0) g_offTechName = R::FindPropertyOffset(dishCls, L"techName");
     if (g_offHashcode < 0) g_offHashcode = R::FindPropertyOffset(dishCls, L"hashcode");
@@ -335,8 +349,6 @@ void SetVolumeAt(void* d, int32_t off, float volume) {
     if (f.valid() && f.Set<float>(L"NewVolumeMultiplier", volume)) ue_wrap::Call(c, f);
 }
 
-int32_t OffsetOf(void* d, const wchar_t* name) { return R::FindPropertyOffset(R::ClassOf(d), name); }
-
 }  // namespace
 
 bool StartHum(int32_t index) {
@@ -360,7 +372,7 @@ bool SetMotor(int32_t index, bool on) {
 bool PlayAxisStop(int32_t index) {
     if (!g_l4Resolved) return false;
     void* d = DishByIndex(index);
-    return d && ActivateAt(d, OffsetOf(d, L"satellite_moveStop"));
+    return d && ActivateAt(d, g_offMoveStop);
 }
 
 bool SetFade(int32_t index, float volume) {
@@ -376,7 +388,7 @@ bool PlayStopAndEndHum(int32_t index) {
     if (!g_l4Resolved) return false;
     void* d = DishByIndex(index);
     if (!d) return false;
-    const bool played = ActivateAt(d, OffsetOf(d, L"satellite_stop"));
+    const bool played = ActivateAt(d, g_offStop);
     void* c = ComponentAt(d, g_offCue);
     return (c && CallNoArg(c, g_deactivateFn)) && played;
 }
@@ -384,7 +396,7 @@ bool PlayStopAndEndHum(int32_t index) {
 float FadeSeconds(int32_t index) {
     if (!g_l4Resolved) return 0.f;
     void* d = DishByIndex(index);
-    void* timeline = d ? ComponentAt(d, OffsetOf(d, L"turnoff")) : nullptr;
+    void* timeline = d ? ComponentAt(d, g_offTurnoff) : nullptr;
     void* fn = timeline ? R::FindDispatchFunctionCached(R::ClassOf(timeline), L"GetTimelineLength") : nullptr;
     if (!fn) return 0.f;
     ue_wrap::ParamFrame f(fn);
