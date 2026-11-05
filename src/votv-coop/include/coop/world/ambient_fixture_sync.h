@@ -1,4 +1,4 @@
-// coop/creatures/ambient_fixture_sync.h -- one set of dirt holes and beehive branches: the host's.
+// coop/world/ambient_fixture_sync.h -- one set of dirt holes and beehive branches: the host's.
 //
 // A hexahive is a field of dirt holes, and its spawner destroys itself in its begin play, so the holes are what crosses. A lone
 // sus hole is the same class. A beehive's branch is a saved actor that stands in the world; its nest is a prop and crosses on

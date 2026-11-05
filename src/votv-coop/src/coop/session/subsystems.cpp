@@ -102,7 +102,7 @@
 #include "coop/items/order_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/creatures/ambient_creature_sync.h"
-#include "coop/creatures/ambient_fixture_sync.h"
+#include "coop/world/ambient_fixture_sync.h"
 #include "coop/world/explosion_sync.h"
 #include "coop/world/explosion_parking.h"
 #include "coop/world/event_fire_sync.h"

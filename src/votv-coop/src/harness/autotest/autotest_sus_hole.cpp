@@ -7,7 +7,7 @@
 #include "harness/autotest.h"
 
 #include "coop/config/config.h"
-#include "coop/creatures/ambient_fixture_sync.h"
+#include "coop/world/ambient_fixture_sync.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/session/net_pump.h"

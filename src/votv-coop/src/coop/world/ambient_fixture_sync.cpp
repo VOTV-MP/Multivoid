@@ -1,6 +1,6 @@
-// coop/creatures/ambient_fixture_sync.cpp -- see coop/creatures/ambient_fixture_sync.h.
+// coop/world/ambient_fixture_sync.cpp -- see coop/world/ambient_fixture_sync.h.
 
-#include "coop/creatures/ambient_fixture_sync.h"
+#include "coop/world/ambient_fixture_sync.h"
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"

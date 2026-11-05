@@ -11,7 +11,7 @@
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
 #include "coop/creatures/ambient_creature_sync.h"
-#include "coop/creatures/ambient_fixture_sync.h"
+#include "coop/world/ambient_fixture_sync.h"
 #include "coop/dev/container_parity.h"     // the container join drill's report receiver
 #include "coop/dev/prop_syncer_drill.h"    // the drill's filler receiver
 #include "coop/dev/pile_defer_report.h"    // the pile deferral drill's report receiver

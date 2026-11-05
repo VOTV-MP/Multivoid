@@ -41,7 +41,7 @@
 #include "coop/interactables/drone_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/creatures/ambient_creature_sync.h"
-#include "coop/creatures/ambient_fixture_sync.h"
+#include "coop/world/ambient_fixture_sync.h"
 #include "coop/comms/chat_sync.h"
 #include "coop/interactables/upgrade_sync.h"
 #include "coop/interactables/turbine_sync.h"

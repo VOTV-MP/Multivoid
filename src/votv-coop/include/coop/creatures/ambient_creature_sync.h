@@ -5,7 +5,7 @@
 // that goes. A deer dissolves when the viewing camera comes near, and each peer judges that for itself: a mirror's actor tick
 // stays off, because its body turns the mesh by a floor a parked mirror does not have, so this lane runs the test. A tree's
 // random size and its landing do not reach a mirror through the pose stream, so they cross here. This poll also takes the
-// tick from the hexahive's and sus hole's spawners (coop/creatures/ambient_fixture_sync).
+// tick from the hexahive's and sus hole's spawners (coop/world/ambient_fixture_sync).
 
 #pragma once
 

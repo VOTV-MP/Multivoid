@@ -197,7 +197,7 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/geom_octa_relay.cpp
     src/coop/creatures/roach_sync.cpp
     src/coop/creatures/ambient_creature_sync.cpp
-    src/coop/creatures/ambient_fixture_sync.cpp
+    src/coop/world/ambient_fixture_sync.cpp
     src/coop/creatures/owner_entity_sync.cpp
     src/coop/world/world_actor_sync.cpp
     src/coop/world/world_actor_mirror.cpp
