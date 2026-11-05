@@ -76,6 +76,7 @@ set(VOTVCOOP_SOURCES
     src/coop/comms/chat_sync.cpp
     src/coop/comms/chat_rate.cpp
     src/coop/interactables/turbine_sync.cpp
+    src/coop/interactables/woodchipper_sync.cpp
     src/coop/interactables/upgrade_sync.cpp
     src/coop/interactables/interactable_sync.cpp
     src/coop/interactables/cord_sync.cpp
@@ -660,6 +661,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_ambient_creature.cpp
     src/harness/autotest/autotest_ambient_field.cpp
     src/harness/autotest/autotest_sus_hole.cpp
+    src/harness/autotest/autotest_woodchipper.cpp
     src/ui/input_focus.cpp
     src/harness/screenshot.cpp
     src/harness/mod_environment.cpp

@@ -18,6 +18,7 @@
 #include "coop/element/registry.h"
 #include "coop/world/plant_edit_gate.h"
 #include "coop/world/plant_sync.h"
+#include "coop/interactables/woodchipper_sync.h"
 #include "coop/props/prop_drive_stream.h"  // the driven-prop end edge
 #include "coop/props/prop_hold_claim.h"    // the client's receiver of a refused hold
 #include "coop/props/prop_food_sync.h"     // a world food's condition and a client's bite
@@ -252,6 +253,29 @@ bool HandlePropDriveEvent(net::Session& session,
         }
         if (edit) ::coop::plant_edit_gate::OnEdit(static_cast<uint8_t>(msg.senderPeerSlot), p);
         else ::coop::plant_sync::OnState(p);
+        break;
+    }
+    case net::ReliableKind::WoodchipperState:
+    case net::ReliableKind::WoodchipperIntent: {
+        // WoodchipperState HOST->ALL, WoodchipperIntent CLIENT->HOST.
+        const bool intent = msg.kind == net::ReliableKind::WoodchipperIntent;
+        if (intent != (session.role() == net::Role::Host)) {
+            UE_LOGW("event_feed: a woodchipper message the wrong way from slot %d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::WoodchipperPayload)) {
+            UE_LOGW("event_feed: woodchipper payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::WoodchipperPayload));
+            break;
+        }
+        net::WoodchipperPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.active > 1 || !std::isfinite(p.fuel)) {
+            UE_LOGW("event_feed: woodchipper message malformed -- dropping");
+            break;
+        }
+        if (intent) ::coop::woodchipper_sync::OnIntent(msg.senderPeerSlot, p);
+        else ::coop::woodchipper_sync::OnState(p);
         break;
     }
     case net::ReliableKind::DevLoadFiller: {
