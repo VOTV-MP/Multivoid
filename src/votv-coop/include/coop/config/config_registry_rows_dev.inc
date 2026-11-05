@@ -798,3 +798,6 @@ CFG_FLAG(key_index_forget_one, "key_index_forget_one", "dev", false, "VOTVCOOP_K
 // The Vulkan overlay arc's probes and the ambient drills' red arms: a file each, one concept each, as _dev_nb.inc is above.
 #include "coop/config/config_registry_rows_dev_vulkan.inc"
 #include "coop/config/config_registry_rows_dev_ambient.inc"
+
+// The cremator probe's row: its own file, one concept, included as _dev_vulkan.inc is above.
+#include "coop/config/config_registry_rows_dev_cremator.inc"
