@@ -10,6 +10,7 @@
 #include "harness/autotest/driveslot.h"
 #include "coop/session/join_seed.h"  // the inline seed selftest
 #include "coop/config/config.h"
+#include "coop/dev/cremator_drill.h"
 #include "coop/dev/director/director.h"
 #include "ue_wrap/core/log.h"
 
@@ -242,6 +243,9 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIf("VOTVCOOP_RUN_AMBIENT_CREATURE", "ambient creature drill", &AmbientCreatureThread, role);
     SpawnIf("VOTVCOOP_RUN_AMBIENT_FIELD", "ambient field drill", &AmbientFieldThread, role);
     SpawnIf("VOTVCOOP_RUN_SUS_HOLE", "sus hole drill", &SusHoleThread, role);
+    // The cremator drill: the host pulls its lever and the client's copy must show the run, then show it again after a
+    // rejoin.
+    SpawnIfRow(coop::config_registry::rows::cremator_drill, "cremator lever drill", &coop::dev::cremator_drill::Thread, role);
 }
 
 }  // namespace harness::autotest

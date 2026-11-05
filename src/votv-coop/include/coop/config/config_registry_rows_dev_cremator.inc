@@ -19,3 +19,10 @@ CFG_FLAG(cremator_intent_anim_off, "cremator_intent_anim_off", "dev", false, "VO
 CFG_FLAG(cremator_intent_reach_off, "cremator_intent_reach_off", "dev", false, "VOTVCOOP_CREMATOR_INTENT_REACH_OFF",
     "Developer red arm of the cremator lever drill: never set. The host's judge of a client's handle press skips its "
     "reach check, so a press from beyond the handle's reach pulls the lever.")
+CFG_FLAG(cremator_drill, "cremator_drill", "dev", false, "VOTVCOOP_CREMATOR_DRILL",
+    "Drill (BOTH peers): the cremator's lever run crosses. The host pulls the lever on its copy and the client's copy "
+    "must read it on, its door latched, and then off again (G1); with the rig's --rejoin the host pulls it on once "
+    "more and the client, leaving and coming back, must read it on after its world-ready (G4). The host prints "
+    "'cremator-drill: VERDICT PASS|FAIL <arm>' from what the client signalled; G1 ends at 'cremator-drill: G1 DONE', "
+    "the rejoin run at 'cremator-drill: DONE on host'. The second life carries VOTVCOOP_CREMATOR_DRILL_REJOIN=1. Red "
+    "arm: the host's cremator_state_off. It MUTATES the world.")
