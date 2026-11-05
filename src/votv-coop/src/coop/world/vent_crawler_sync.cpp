@@ -576,7 +576,9 @@ void OnDisconnect() {
     if (g_sent || g_sounds.load() || g_bursts)
         UE_LOGI("vent_crawler: session end -- crawls sent=%u sounds=%u bursts=%u", g_sent, g_sounds.load(), g_bursts);
     g_started.clear();
-    g_host = HostCrawl{};
+    // g_host is NOT cleared: it is the host's world, not the session's. A host whose last client left tears its
+    // session state down here and lives on, and the next joiner of that world is owed the crawl (measured: life 2
+    // got no state, the record wiped when life 1 left). Its world generation (above) is what retires it.
     g_sent = g_bursts = 0;
     g_sounds.store(0);
     g_states.store(0);
