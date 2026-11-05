@@ -99,7 +99,7 @@ inline constexpr const wchar_t* NpcClass_WispBlu      = L"wisp_blu_C";
 // and has only its decisions refused (coop/creatures/npc_mirror_brain).
 inline constexpr const wchar_t* NpcClass_GeomOcta     = L"geomOcta_C";
 // deer_C and walkingTree_C (each : ACharacter): the ambient creatures their tickers roll at absolute map points. Host-rolled;
-// coop/creatures/ambient_creature_sync parks a client's tickers.
+// the spawn_authority rows refuse a client's tickers (coop/world/spawn_authority).
 inline constexpr const wchar_t* NpcClass_Deer         = L"deer_C";
 inline constexpr const wchar_t* NpcClass_WalkingTree  = L"walkingTree_C";
 

@@ -7,11 +7,15 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/session/poll_timer.h"
+#include "coop/world/ambient_births.h"
 
 #include "ue_wrap/actors/ambient_creature.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
 #include <chrono>
@@ -24,60 +28,174 @@
 namespace coop::ambient_creature_sync {
 namespace {
 
+namespace AB = coop::ambient_births;
 namespace AC = ue_wrap::ambient_creature;
 namespace E = ue_wrap::engine;
+namespace R = ue_wrap::reflection;
+namespace SG = ue_wrap::script_gate;
 using Clock = std::chrono::steady_clock;
 
-constexpr auto  kHeartbeat = std::chrono::seconds(5);  // a mirror that came after the last send
-constexpr float kDissolveCm = 5000.f;                  // deer_C's ReceiveTick compares the camera with this
+constexpr float kDissolveCm = 5000.f;  // deer_C's ReceiveTick compares the camera with this
+constexpr auto  kHeldSaid = std::chrono::seconds(10);
+
+// The landing's entry on the host: walkingTree_C's OnLanded waits a second and then shows the mesh.
+UE_FACT_FN(kRowOnLandedWalkingTree, "ambient_creature_sync", L"walkingTree_C", L"OnLanded", Declared);
+constexpr int kTag = 0x41435452;  // 'ACTR'
 
 std::atomic<coop::net::Session*> g_session{nullptr};
-coop::session::PollTimer g_poll{std::chrono::milliseconds(250)};
+coop::session::PollTimer g_poll{std::chrono::milliseconds(250)};  // the deer's dissolve, below
+bool g_watchTaken = false;
+bool g_namesSettled = false;
 
-// HOST: what went out last, by the tree's element.
-struct Sent {
-    float scale = 0.f;
-    bool landed = false;
-    Clock::time_point at{};
+// HOST: each tree this lane knows, by the actor; its element, what it last sent, and whether it must send.
+struct Tree {
+    int32_t                  index = -1;
+    coop::element::ElementId eid = coop::element::kInvalidId;
+    float                    sentScale = 0.f;
+    bool                     sent = false;
+    bool                     sentLanded = false;
+    bool                     landed = false;  // the landing's entry was seen, or the mesh reads shown
+    bool                     dirty = false;
+    bool                     force = false;   // a joiner's resend: send though nothing changed
+    Clock::time_point        heldSince{};
+    bool                     heldSaid = false;
 };
-std::unordered_map<coop::element::ElementId, Sent> g_sent;
+std::unordered_map<void*, Tree> g_trees;
+bool g_anyDirty = false;
 
-// CLIENT: the host's tree, kept until its mirror exists, and whether it has been written.
+// CLIENT: the host's tree, kept until its mirror exists, and the actor it was written to.
 struct Want {
-    float scale = 0.f;
-    bool landed = false;
-    bool applied = false;
+    float   scale = 0.f;
+    bool    landed = false;
+    void*   applied = nullptr;
+    int32_t appliedIndex = -1;
+    bool    ended = false;  // the actor it was written to is gone
 };
 std::unordered_map<coop::element::ElementId, Want> g_want;
+bool g_recheck = false;
 std::unordered_set<void*> g_dissolving;
+std::vector<AB::Event> g_events;  // reused by every drain
 
-void HostPoll(coop::net::Session& s, Clock::time_point now) {
-    std::vector<void*> trees;
-    AC::ListTrees(trees);
-    std::unordered_set<coop::element::ElementId> alive;
-    for (void* tree : trees) {
-        const coop::element::ElementId eid = coop::npc_sync::GetNpcIdForActor(tree);
-        if (eid == 0) continue;
-        alive.insert(eid);
-        float scale = 0.f;
-        bool landed = false;
-        if (!AC::ReadTree(tree, scale, landed)) continue;
-        auto it = g_sent.find(eid);
-        const bool changed = it == g_sent.end() || it->second.scale != scale || it->second.landed != landed;
-        if (!changed && now - it->second.at < kHeartbeat) continue;
-        coop::net::AmbientTreeStatePayload p{};
-        p.treeEid = static_cast<uint32_t>(eid);
-        p.scale = scale;
-        p.landed = landed ? 1 : 0;
-        if (!s.SendReliable(coop::net::ReliableKind::AmbientTreeState, &p, sizeof(p))) continue;
-        if (changed) UE_LOGI("ambient_creature_sync: tree %u scale=%.2f landed=%d", p.treeEid, scale, landed ? 1 : 0);
-        g_sent[eid] = Sent{scale, landed, now};
-    }
-    for (auto it = g_sent.begin(); it != g_sent.end();)
-        it = alive.count(it->first) ? std::next(it) : g_sent.erase(it);
+// The landing's entry, on the game thread: the lane sends it at its next tick.
+void OnLandedPost(const SG::Call& call) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() != coop::net::Role::Host || !call.object) return;
+    const int32_t index = R::InternalIndexOf(call.object);
+    if (index < 0) return;
+    Tree& t = g_trees[call.object];
+    t.index = index;
+    t.landed = true;
+    t.dirty = true;
+    g_anyDirty = true;
 }
 
-void ClientPoll(coop::net::Session& /*s*/, Clock::time_point /*now*/) {
+void DrainHost() {
+    for (const AB::Event& e : g_events) {
+        if (e.kind == AB::Kind::Death) {
+            g_trees.erase(e.obj);
+            continue;
+        }
+        if (!R::IsLiveByIndex(e.obj, e.index)) continue;
+        Tree& t = g_trees[e.obj];
+        t.index = e.index;
+        t.dirty = true;
+        g_anyDirty = true;
+    }
+}
+
+// True when the tree is dealt with: sent, or nothing to send. False keeps it dirty for the next tick.
+bool SendTree(coop::net::Session& s, void* obj, Tree& t) {
+    // An NPC is registered when the host's catch or its world enumeration makes its element, and nothing announces
+    // that, so a tree met before then is held and asked again each tick.
+    if (t.eid == coop::element::kInvalidId) t.eid = coop::npc_sync::GetNpcIdForActor(obj);
+    if (t.eid == coop::element::kInvalidId) {
+        const Clock::time_point now = Clock::now();
+        if (t.heldSince == Clock::time_point{}) t.heldSince = now;
+        if (!t.heldSaid && now - t.heldSince >= kHeldSaid) {
+            t.heldSaid = true;
+            UE_LOGW("ambient_creature_sync: a walking tree %p has no NPC element after %lld s -- its size is not sent",
+                    obj, static_cast<long long>(kHeldSaid.count()));
+        }
+        return false;
+    }
+    float scale = 0.f;
+    bool shown = false;
+    if (!AC::ReadTree(obj, scale, shown)) return false;
+    const bool landed = t.landed || shown;
+    if (!t.force && t.sent && t.sentScale == scale && t.sentLanded == landed) {
+        t.dirty = false;
+        return true;
+    }
+    coop::net::AmbientTreeStatePayload p{};
+    p.treeEid = static_cast<uint32_t>(t.eid);
+    p.scale = scale;
+    p.landed = landed ? 1 : 0;
+    if (!s.SendReliable(coop::net::ReliableKind::AmbientTreeState, &p, sizeof(p))) return false;
+    t.landed = landed;
+    t.sentScale = scale;
+    t.sentLanded = landed;
+    t.sent = true;
+    t.dirty = false;
+    t.force = false;
+    UE_LOGI("ambient_creature_sync: tree %u scale=%.2f landed=%d", p.treeEid, scale, landed ? 1 : 0);
+    return true;
+}
+
+void HostTick(coop::net::Session& s) {
+    DrainHost();
+    if (!g_anyDirty) return;
+    bool held = false;
+    for (auto it = g_trees.begin(); it != g_trees.end();) {
+        Tree& t = it->second;
+        if (!R::IsLiveByIndex(it->first, t.index)) {
+            it = g_trees.erase(it);
+            continue;
+        }
+        if (t.dirty && !SendTree(s, it->first, t)) held = true;
+        ++it;
+    }
+    g_anyDirty = held;
+}
+
+void DrainClient() {
+    for (const AB::Event& e : g_events) {
+        if (e.kind == AB::Kind::Birth) {
+            g_recheck = true;
+            continue;
+        }
+        for (auto& kv : g_want) {
+            Want& w = kv.second;
+            if (w.applied != e.obj || w.appliedIndex != e.index) continue;
+            w.applied = nullptr;
+            w.ended = true;
+            g_recheck = true;
+        }
+    }
+}
+
+// A mirror born for an element is written again, whatever it rolled in its own begin play. An element whose mirror is gone
+// is the tree's end, and its want goes.
+void ApplyWants() {
+    for (auto it = g_want.begin(); it != g_want.end();) {
+        Want& w = it->second;
+        void* tree = coop::element::LiveActorOfType(it->first, coop::element::ElementType::Npc);
+        if (!tree) {
+            it = w.ended ? g_want.erase(it) : std::next(it);
+            continue;
+        }
+        if (tree != w.applied) {
+            AC::WriteTree(tree, w.scale, w.landed);
+            w.applied = tree;
+            w.appliedIndex = R::InternalIndexOf(tree);
+            w.ended = false;
+            UE_LOGI("ambient_creature_sync: tree %u here scale=%.2f landed=%d", it->first, w.scale, w.landed ? 1 : 0);
+        }
+        ++it;
+    }
+}
+
+// The deer's dissolve: a mirror's actor tick stays off, so each viewer's camera test is run here.
+void DeerDissolvePoll() {
     std::vector<void*> deer;
     AC::ListDeer(deer);
 
@@ -98,45 +216,65 @@ void ClientPoll(coop::net::Session& /*s*/, Clock::time_point /*now*/) {
         }
     }
     g_dissolving.swap(stillDissolving);
+}
 
-    for (auto it = g_want.begin(); it != g_want.end(); ++it) {
-        if (it->second.applied) continue;
-        void* tree = coop::element::LiveActorOfType(it->first, coop::element::ElementType::Npc);
-        if (!tree) continue;
-        AC::WriteTree(tree, it->second.scale, it->second.landed);
-        it->second.applied = true;
-        UE_LOGI("ambient_creature_sync: tree %u here scale=%.2f landed=%d", it->first, it->second.scale, it->second.landed ? 1 : 0);
+void ClientTick(Clock::time_point now) {
+    DrainClient();
+    if (g_recheck) {
+        g_recheck = false;
+        ApplyWants();
     }
+    if (g_poll.Due(now)) DeerDissolvePoll();
 }
 
 }  // namespace
 
-void Install(coop::net::Session* session) { g_session.store(session); }
+void Install(coop::net::Session* session) {
+    g_session.store(session);
+    if (!g_watchTaken) {
+        g_watchTaken = SG::WatchName(kRowOnLandedWalkingTree, kTag, nullptr, &OnLandedPost);
+        if (!g_watchTaken) UE_LOGE("ambient_creature_sync: the watch on a walking tree's landing was refused -- retried each pump");
+    }
+}
 
 void Tick() {
     coop::net::Session* s = g_session.load();
     if (!s) return;
-    const Clock::time_point now = Clock::now();
-    if (!g_poll.Due(now)) return;
-    if (s->role() == coop::net::Role::Host) HostPoll(*s, now);
-    else if (s->role() == coop::net::Role::Client) ClientPoll(*s, now);
+    if (g_watchTaken && !g_namesSettled) {
+        SG::ResolvePendingNames();
+        g_namesSettled = SG::NameWatchSettled(kRowOnLandedWalkingTree, kTag);
+        if (g_namesSettled && !SG::NameWatchLive(kRowOnLandedWalkingTree, kTag))
+            UE_LOGE("ambient_creature_sync: the watch on a walking tree's landing is dead -- a landing reaches no mirror");
+    }
+    g_events.clear();
+    AB::Drain(AB::Bit(AB::Class::Tree), g_events);
+    if (s->role() == coop::net::Role::Host) HostTick(*s);
+    else if (s->role() == coop::net::Role::Client) ClientTick(Clock::now());
 }
 
 void OnTreeState(const coop::net::AmbientTreeStatePayload& p) {
     Want& w = g_want[static_cast<coop::element::ElementId>(p.treeEid)];
-    if (w.scale != p.scale || w.landed != (p.landed != 0)) w.applied = false;
+    if (w.scale != p.scale || w.landed != (p.landed != 0)) w.applied = nullptr;
     w.scale = p.scale;
     w.landed = p.landed != 0;
+    g_recheck = true;
 }
 
 void QueueConnectBroadcastForSlot(int /*slot*/) {
-    g_sent.clear();
+    for (auto& kv : g_trees) {
+        kv.second.force = true;
+        kv.second.dirty = true;
+    }
+    g_anyDirty = !g_trees.empty();
 }
 
 void OnDisconnect() {
-    g_sent.clear();
+    g_trees.clear();
+    g_anyDirty = false;
     g_want.clear();
+    g_recheck = false;
     g_dissolving.clear();
+    g_events.clear();
     g_session.store(nullptr);
 }
 
