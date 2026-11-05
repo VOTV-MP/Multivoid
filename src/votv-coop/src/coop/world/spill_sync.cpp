@@ -101,9 +101,13 @@ std::vector<Payload> g_inbox, g_outbox;
 uint32_t g_sent = 0, g_made = 0, g_refused = 0, g_removed = 0;
 std::atomic<uint32_t> g_splashes{0}, g_poursHeard{0}, g_poursSent{0};
 
+// A host is live while its session runs, with or without a client: the spills it records are its world's, and a
+// client that joins later is sent them (measured: a spill made while the only client was away never reached it).
 coop::net::Session* Live() {
     coop::net::Session* s = g_session.load(std::memory_order_acquire);
-    return s && s->connected() ? s : nullptr;
+    if (!s) return nullptr;
+    if (s->role() == coop::net::Role::Host) return s->running() ? s : nullptr;
+    return s->connected() ? s : nullptr;
 }
 
 bool Finite3(const float* v, float bound) {
@@ -213,13 +217,14 @@ void* Body(int slot) {
 }
 
 void Broadcast(coop::net::Session& s, void* decal, const Payload& p) {
-    if (!s.SendReliable(coop::net::ReliableKind::SpillState, &p, sizeof(p))) return;
-    ++g_sent;
+    // The record first: it is the host's world, replayed to every joiner; the send is only its delivery to the
+    // clients connected now, and with none connected it fails.
     if (g_spills.size() >= kMaxSpills) g_spills.erase(g_spills.begin());
     Sent row;
     row.decal.Set(decal);
     row.p = p;
     g_spills.push_back(row);
+    if (s.SendReliable(coop::net::ReliableKind::SpillState, &p, sizeof(p))) ++g_sent;
     UE_LOGI("spill: a %ls landed at (%.0f %.0f %.0f)", coop::net::StringFromWireKey(p.cls).c_str(), p.loc[0], p.loc[1],
             p.loc[2]);
 }
