@@ -51,6 +51,11 @@ void SendConsumed(coop::net::Session* session, uint8_t slot, uint32_t requestId)
 // Game thread.
 void OnAnswer(const coop::net::KerfurCommandAnswerPayload& p);
 
+// Instruments (the kerfur serve drill, leg D), this session: consumed-held answers that destroyed the pledged disc here,
+// and those that did not (the hand held another thing, or the command pledged none).
+uint64_t ConsumedHere();
+uint64_t ConsumeMisses();
+
 // Session end: the counts are said and the held ids and their pledges forgotten.
 void OnDisconnect();
 

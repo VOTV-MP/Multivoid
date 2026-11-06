@@ -3,10 +3,14 @@
 #include "coop/dev/kerfur_serve_drill_disc.h"
 
 #include "coop/config/config.h"
+#include "coop/config/config_registry.h"
+#include "coop/creatures/kerfur_command_answer.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/drill_chat.h"
 #include "coop/dev/kerfur_serve_drill_internal.h"
 #include "coop/dev/spawn_npc.h"
+#include "coop/dispatch/event_feed.h"
+#include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"
 #include "coop/player/players_registry.h"
@@ -52,7 +56,6 @@ namespace GT = ue_wrap::game_thread;
 namespace DC = coop::dev::drill_chat;
 using coop::rig_verdict::Outcome;
 namespace sg = ue_wrap::script_gate;
-using detail::kDisc;
 
 UE_FACT_FN(kRowActionName, "dev.kerfur_serve_drill_disc", L"kerfurOmega_C", L"actionName", Declared);
 constexpr int      kTagVerb        = 0x4B535244;  // 'KSRD'
@@ -72,6 +75,20 @@ constexpr uint64_t kOmegaWindowMs  = 30000;       // the host's Omega found besi
 constexpr uint64_t kBeforeWindowMs = 240000;      // the host waits for the client's line: its walk, pickup and aim
 constexpr uint64_t kVerbWindowMs   = 30000;       // the host waits for the verb, once the client's after line is in
 constexpr uint64_t kLaneWindowMs   = 5000;        // the client's stow applied on the host's hand lane
+constexpr uint64_t kAnswerWindowMs = 30000;       // the host's answer to the press, on the client
+constexpr const wchar_t* kDiscWh   = L"prop_floppyDisc_Wh_C";  // the one disc the game refuses itself
+
+// The knob's values: on is the base measurement; swap takes a second disc into the hand right after the press (the
+// host's answer then finds another disc); wh holds the refused class.
+enum class Variant { Base, Swap, Wh };
+Variant V() {
+    static const Variant v = [] {
+        const std::string s = coop::config::ResolveEnum(::coop::config_registry::rows::kerfur_serve_disc);
+        return s == "swap" ? Variant::Swap : (s == "wh" ? Variant::Wh : Variant::Base);
+    }();
+    return v;
+}
+const wchar_t* DiscClass() { return V() == Variant::Wh ? kDiscWh : detail::kDisc; }
 
 // The chat lines of the two peers; the rest after a prefix is `|`-separated.
 const std::string kBeforeLine = "kerfur-serve client disc: ";        // class|key|item|floppies
@@ -198,7 +215,7 @@ Side ReadSide() {
     Side s;
     s.hasRead = K::ReadHasFloppy(g_omega, s.has);
     const uint8_t slot = static_cast<uint8_t>(g_joined);
-    s.laneHolds = coop::hand_item::HeldClassIs(slot, kDisc);
+    s.laneHolds = coop::hand_item::HeldClassIs(slot, DiscClass());
     s.laneItem = Narrow(coop::hand_item::HeldItem(slot));
     s.keyHeld = !g_clientKey.empty() &&
                 coop::prop_key_index::Find(std::wstring(g_clientKey.begin(), g_clientKey.end())) != nullptr;
@@ -234,8 +251,14 @@ void HostFinish() {
             !g_verbHasRead ? "unread" : (g_verbHas ? "1" : "0"), static_cast<unsigned>(g_verbState),
             f.size() > 2 ? f[2].c_str() : "?", f.size() > 3 ? f[3].c_str() : "?");
     const std::string insert = !g_verbRan ? "none (the verb never ran here)" : (g_verbHas ? "1" : "0");
+    const auto field = [&](size_t i) { return f.size() > i ? f[i].c_str() : "?"; };
+    // The client counted what its own machine did with the host's answer, and what the host sent it in the press: a
+    // published copy of the disc would arrive there as a PropSpawn and a PropDestroy.
+    const std::string carried = std::string("consumed=") + field(4) + " consume-miss=" + field(5) +
+                                " host-sent PropSpawn=" + field(6) + " PropDestroy=" + field(7);
     UE_LOGI("[KERFUR-SERVE] leg D: client disc before=%s after=%s host insert=%s host still holds the client's disc "
-            "key=%d", g_clientCls.c_str(), clientAfter.c_str(), insert.c_str(), after.keyHeld ? 1 : 0);
+            "key=%d; host Omega hasFloppy after=%s; %s", g_clientCls.c_str(), clientAfter.c_str(), insert.c_str(),
+            after.keyHeld ? 1 : 0, !after.hasRead ? "unread" : (after.has ? "1" : "0"), carried.c_str());
     UE_LOGI("[KERFUR-SERVE] leg D detail: the host's key for the client's disc before=%d after=%d; its hand lane held "
             "the disc before=%d after=%d (item '%s' -> '%s'); discs standing on the host %d -> %d; on the client %s -> "
             "%s", g_before.keyHeld ? 1 : 0, after.keyHeld ? 1 : 0, g_before.laneHolds ? 1 : 0, after.laneHolds ? 1 : 0,
@@ -252,8 +275,9 @@ void HostFinish() {
             coop::rig_verdict::Say(kVerdictTag, Outcome::Invalid, "host: the client's press never reached my Omega");
         return;
     }
-    coop::rig_verdict::Say(kVerdictTag, Outcome::Pass, "leg D measured: client disc %s, host insert=%s, key kept=%d",
-                           clientAfter.c_str(), insert.c_str(), after.keyHeld ? 1 : 0);
+    coop::rig_verdict::Say(kVerdictTag, Outcome::Pass,
+                           "leg D measured: client disc %s, host insert=%s, key kept=%d, %s", clientAfter.c_str(),
+                           insert.c_str(), after.keyHeld ? 1 : 0, carried.c_str());
 }
 
 void TickHost(coop::net::Session* s, uint64_t ms) {
@@ -394,7 +418,23 @@ struct Before {
     int discs = 0;
     std::string per;
     uint8_t state = 0xFF;
+    void* held = nullptr;   // the hand's disc, and its slot: the press is measured against this one, not its class
+    int32_t heldIdx = -1;
 };
+
+// What the host sent this client, and what its own machine did with the host's answers, counted before the press
+// and read after it. A copy of the disc the host published would arrive as a PropSpawn and a PropDestroy.
+struct Counted {
+    uint32_t spawns = 0, destroys = 0, feedback = 0;
+    uint64_t consumed = 0, misses = 0;
+};
+Counted CountNow() {
+    namespace EF = coop::event_feed;
+    using Kind = coop::net::ReliableKind;
+    return Counted{EF::DrainedFrom(0, Kind::PropSpawn), EF::DrainedFrom(0, Kind::PropDestroy),
+                   EF::DrainedFrom(0, Kind::RequesterFeedback), coop::kerfur_command_answer::ConsumedHere(),
+                   coop::kerfur_command_answer::ConsumeMisses()};
+}
 
 DWORD WINAPI ClientThread(LPVOID) {
     void* mirror = nullptr;
@@ -422,7 +462,7 @@ DWORD WINAPI ClientThread(LPVOID) {
     Before b;
     if (!Run([&] {
             void* me = coop::players::Registry::Get().Local();
-            void* cls = R::FindClass(kDisc);
+            void* cls = R::FindClass(DiscClass());
             ue_wrap::FVector at{};
             if (!me || !cls || !E::TryGetActorLocation(me, at)) return false;
             void* disc = E::SpawnActor(cls, ue_wrap::FVector{at.X + kDiscAsideCm, at.Y, at.Z});
@@ -434,7 +474,7 @@ DWORD WINAPI ClientThread(LPVOID) {
     }
     if (!WaitGame([&] {
             void* hand = detail::HoldingActor(coop::players::Registry::Get().Local());
-            return hand && R::ClassNameOf(hand) == kDisc && coop::hand_item::OwnAnnounced(kDisc);
+            return hand && R::ClassNameOf(hand) == DiscClass() && coop::hand_item::OwnAnnounced(DiscClass());
         }, kHandWindowMs)) {
         Invalid("the client's hand never announced the red disc");
         return 0;
@@ -468,6 +508,8 @@ DWORD WINAPI ClientThread(LPVOID) {
         void* me = coop::players::Registry::Get().Local();
         void* hand = detail::HoldingActor(me);
         b.cls = hand ? Narrow(R::ClassNameOf(hand)) : "";
+        b.held = hand;
+        b.heldIdx = hand ? R::InternalIndexOf(hand) : -1;
         b.key = hand ? Narrow(ue_wrap::prop::GetKeyString(hand)) : "";
         b.item = Narrow(ue_wrap::inventory::ReadHeldItemName());
         const Discs d = CountDiscs();
@@ -482,7 +524,7 @@ DWORD WINAPI ClientThread(LPVOID) {
         DC::Say(kBeforeLine + b.cls + "|" + b.key + "|" + b.item + "|" + std::to_string(b.discs));
         return true;
     });
-    if (b.cls != Narrow(kDisc)) {
+    if (b.cls != Narrow(DiscClass())) {
         Invalid("the client's hand did not hold the red disc at the press");
         return 0;
     }
@@ -492,19 +534,26 @@ DWORD WINAPI ClientThread(LPVOID) {
     }
 
     // The press, as a player's: the radial dispatch itself (an interface call), which the seat on the Omega's
-    // actionName cancels here and asks the host to run. No reflected relay stands in for it.
-    bool pressOk = false, indexOk = false, aimed = false;
-    bool gone = false;
+    // actionName cancels here and asks the host to run. No reflected relay stands in for it. The counts the host's
+    // answer is measured against are taken first.
+    bool pressOk = false, indexOk = false, aimed = false, swapped = false;
     uint8_t stateAfter = 0xFF;
+    Counted c0;
     Run([&] {
         void* me = coop::players::Registry::Get().Local();
         aimed = AimedAt(mirror);
         if (!aimed) return true;
+        c0 = CountNow();
         indexOk = E::CallMainPlayerSetActionIndex(me, kGetReportsIdx);
         pressOk = E::CallMainPlayerUseSelectedAction(me);
-        void* hand = detail::HoldingActor(me);
-        // A destroyed actor still named by holding_actor is gone: the Blueprint nulls the field after the destroy.
-        gone = !hand || !R::IsLiveByIndex(hand, R::InternalIndexOf(hand)) || R::ClassNameOf(hand) != kDisc;
+        if (V() == Variant::Swap) {
+            // The seat has captured the disc by now; another disc comes into the hand before the host's answer.
+            void* cls = R::FindClass(DiscClass());
+            ue_wrap::FVector at{};
+            void* next = (cls && E::TryGetActorLocation(me, at)) ? E::SpawnActor(cls, ue_wrap::FVector{at.X + kDiscAsideCm, at.Y, at.Z}) : nullptr;
+            bool collected = false;
+            swapped = next && E::CallMainPlayerHoldObject(me, next, collected) && collected;
+        }
         bool spooky = false;
         uint8_t face = 0;
         K::ReadKerfurState(mirror, stateAfter, spooky, face);
@@ -518,19 +567,50 @@ DWORD WINAPI ClientThread(LPVOID) {
         Invalid(!indexOk ? "setActionIndex did not run" : "useSelectedAction did not dispatch");
         return 0;
     }
+    if (V() == Variant::Swap && !swapped) {
+        Invalid("the second disc did not come into the hand after the press");
+        return 0;
+    }
+    // The host's answer, on a signal the client's own machine raises: the answer acted on (a disc destroyed, or a
+    // consume-miss), or for a disc the game refuses the hint the host routed back. A press the client's own copy ran
+    // sends nothing, so that ends the wait as well.
+    const bool answered = WaitGame([&] {
+        const Counted now = CountNow();
+        return g_localBodyRan.load(std::memory_order_acquire) ||
+               (V() == Variant::Wh ? now.feedback > c0.feedback
+                                   : now.consumed + now.misses > c0.consumed + c0.misses);
+    }, kAnswerWindowMs);
+    if (!answered && Alive())
+        UE_LOGW("[KERFUR-SERVE] client: the host's answer to the press did not come in %llu s",
+                static_cast<unsigned long long>(kAnswerWindowMs / 1000));
+    // The disc pressed with is gone when its slot no longer holds the live actor: a destroyed actor still named by
+    // holding_actor reads dead by its slot.
+    bool gone = false;
+    Counted c1;
+    Run([&] {
+        gone = !R::IsLiveByIndex(b.held, b.heldIdx);
+        c1 = CountNow();
+        return true;
+    });
     const bool bodyRan = g_localBodyRan.load(std::memory_order_acquire);
+    const uint64_t consumed = c1.consumed - c0.consumed, misses = c1.misses - c0.misses;
+    const uint32_t spawns = c1.spawns - c0.spawns, destroys = c1.destroys - c0.destroys;
     UE_LOGI("[KERFUR-SERVE] client: pressed get_reports (setActionIndex %d, useSelectedAction) -- the client's own "
             "copy ran the verb=%d, the disc is %s, the Omega mirror in state %u",
-            kGetReportsIdx, bodyRan ? 1 : 0, gone ? "GONE from my hand" : "still in my hand",
-            static_cast<unsigned>(stateAfter));
-    if (gone && !WaitGame([] { return !coop::hand_item::OwnAnnounced(kDisc); }, kStowWindowMs))
+            kGetReportsIdx, bodyRan ? 1 : 0, gone ? "GONE" : "still here", static_cast<unsigned>(stateAfter));
+    UE_LOGI("[KERFUR-SERVE] client: the host's answer destroyed my disc %llu time(s), consume-miss=%llu; the host "
+            "sent me PropSpawn=%u PropDestroy=%u in the press", static_cast<unsigned long long>(consumed),
+            static_cast<unsigned long long>(misses), spawns, destroys);
+    if (gone && V() != Variant::Swap &&
+        !WaitGame([] { return !coop::hand_item::OwnAnnounced(DiscClass()); }, kStowWindowMs))
         UE_LOGW("[KERFUR-SERVE] client: the stow of the destroyed disc was not announced in %llu s",
                 static_cast<unsigned long long>(kStowWindowMs / 1000));
     Run([&] {
         const Discs d = CountDiscs();
         UE_LOGI("[KERFUR-SERVE] client: after the press -- discs standing here=%d (%s)", d.total, d.per.c_str());
         DC::Say(kAfterLine + (gone ? "gone" : "held") + "|" + std::to_string(d.total) + "|" + (bodyRan ? "1" : "0") +
-                "|" + std::to_string(stateAfter));
+                "|" + std::to_string(stateAfter) + "|" + std::to_string(consumed) + "|" + std::to_string(misses) + "|" +
+                std::to_string(spawns) + "|" + std::to_string(destroys));
         return true;
     });
     UE_LOGI("[KERFUR-SERVE] leg D (client side): client disc before=%s after=%s, its own copy ran the verb=%d; the "
@@ -541,7 +621,7 @@ DWORD WINAPI ClientThread(LPVOID) {
 }  // namespace
 
 bool Enabled() {
-    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::kerfur_serve_disc);
+    static const bool s = coop::config::ResolveEnum(::coop::config_registry::rows::kerfur_serve_disc) != "off";
     return s;
 }
 

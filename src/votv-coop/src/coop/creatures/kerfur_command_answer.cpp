@@ -191,6 +191,9 @@ void OnAnswer(const KerfurCommandAnswerPayload& p) {
                 p.result == KA::kResultWaits ? "the wait" : "the refusal", p.requestId, text.c_str());
 }
 
+uint64_t ConsumedHere() { return g_counts.consumed; }
+uint64_t ConsumeMisses() { return g_counts.consumeMiss; }
+
 void OnDisconnect() {
     const Counts& c = g_counts;
     if (c.refusedSent || c.waitsSent || c.refusedShown || c.waitsShown || c.local || c.foreign || c.lost ||
