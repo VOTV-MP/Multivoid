@@ -108,6 +108,27 @@ puppet counts in that list exactly when the client's own player counts in the cl
 it. A device with no auto-revert (the garage, an appliance, an oven's repair, a locker, a lid) is
 symmetric: any peer's edge is the state.
 
+### The cremator's lever run
+
+The cremator is the host's machine. The host sends its `isActive` once, when the handle's travel
+finishes (`handleLimeline__FinishedFunc`), and a client's copy keeps that as the state it wants and
+drives its own handle to it with `useLever`, which it refuses for any call that is not the lane's own.
+A start is driven only with the copy's door shut, and the lane never closes the door: the host shuts
+its lid before it starts and the lid lane brings that to the copy. A copy that finds its door open
+waits, says so once, and looks again at the door's own close. A client's press of the handle is
+cancelled where it is made and sent as a `CrematorIntent` carrying the state it wants (the opposite of
+what its copy shows); the host refuses a press that is out of reach, mid-travel, already so, or, for
+a start, with its own door open, and otherwise pulls its lever.
+
+The host sends the committed `isActive` at the finish and not a start at the press, unlike MTA, which
+broadcasts the start of an act and confirms its end (`CGame.cpp:3196`, `:3373`): a start sent at the
+press could show a client a run that the host's door check still turns back at the forward finish. The
+price is a client display that trails the host's by about one handle travel plus the trip, on every
+run `[?]`. Two windows follow from it for a joiner, and both converge `[?]`: a joiner that arrives
+while the handle is reversing is told `isActive` true, drives forward, and reverses when the host's
+finish arrives, so its display is wrong for about two travels; and in the cool-down after a run, with
+`isActive` false and the fire still fading, it shows idle for up to ten seconds.
+
 ### Security cameras
 
 A camera has two saved bits, each its own lane keyed by the lane's key for the camera (its portable
@@ -436,7 +457,7 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 |---|---|---|
 | a door, a light group | the host | each is sent at its own verbs; a client's own door verb is an intent the host runs, and its own group writes are refused |
 | a security camera's `active` and `isLight` | the host | each is sent after the camera's use, `upd` and `updState` and the cursed camera's tick; a client's use and light button are intents the host runs |
-| a cremator's lever run (`isActive`) | the host | sent when its handle finishes; a client's copy keeps the host's want and drives its own handle to it, its own `useLever` is refused, and its handle press is an intent the host judges and runs |
+| a cremator's lever run (`isActive`) | the host | sent when its handle finishes; a client's copy keeps the host's want and drives its own handle to it, its own `useLever` is refused, and its handle press is an intent, carrying the state it wants, that the host judges and runs |
 | a light switch, a lid, the garage, an appliance, an oven's repair, a locker | any peer | symmetric state edges, relayed |
 | the power panel, the generators | the host | a client's press, repair, service, upgrade install and hit are ops the host takes from a player within reach; the host sends the breakers after its panel's apply and every generator's row after its verbs |
 | a keypad | the host | its verbs replayed on every client and its settled state after each chain; a client's own entries are an intent the host runs |
@@ -456,7 +477,7 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | `CameraActiveState`, `CameraLightState` | the host to all | a camera's key and one bit |
 | `CameraToggleIntent` | a client to the host | a camera's key, which bit, the value wanted |
 | `CrematorState` | the host to all | a cremator's key and its lever run: on or off |
-| `CrematorIntent` | a client to the host | a cremator's key: the handle was pressed |
+| `CrematorIntent` | a client to the host | a cremator's key and the state the press wants: the handle was pressed |
 | `KeypadState` | the host to all | a verb the host's keypad ran, or the state a chain settled on: the buffer, the verdict, the set-new-code mode, the password, and whether the chain handed the verdict on |
 | `KeypadIntent` | a client to the host | a keypad's key and the entry: a digit, a submit, a cancel, a keycard's verdict, a reset |
 | `PowerControlState` | a client to the host; the host to all | the breakers a press flipped; the breakers, the lockout, a lever's click and each slot's last press taken |
