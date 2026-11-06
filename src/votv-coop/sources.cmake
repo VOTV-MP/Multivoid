@@ -271,6 +271,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_park.cpp
     src/coop/props/rider_hold.cpp
     src/coop/world/weather_sync.cpp
+    src/coop/world/build_sync.cpp
     src/coop/world/spill_sync.cpp
     src/coop/world/sus_hole_intent.cpp
     src/coop/world/weather_fog.cpp
@@ -658,6 +659,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_plant_gate.cpp
     src/harness/autotest/autotest_saveui.cpp
     src/harness/autotest/autotest_spill.cpp
+    src/harness/autotest/autotest_build.cpp
     src/harness/autotest/autotest_ambient_creature.cpp
     src/harness/autotest/autotest_ambient_field.cpp
     src/harness/autotest/autotest_sus_hole.cpp

@@ -143,6 +143,7 @@ bool SetComponentWorldRotation(void* component, const FRotator& rotation);
 // AActor::SetActorTickEnabled; a remote pawn must not run the local player's per-frame BP
 // EventTick, which re-applies view and post-process to the shared screen. Game thread.
 bool SetActorTickEnabled(void* actor, bool enabled);
+bool IsActorTickEnabled(void* actor);
 
 // AActor::SetActorHiddenInGame: visual only. Collision is a separate flag with its own setter
 // below. Game thread.
