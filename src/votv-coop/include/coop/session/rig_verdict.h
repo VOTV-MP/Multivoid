@@ -10,17 +10,18 @@
 //   FAIL      it measured a failure (a red arm's expected end).
 //   INVALID   it could not measure (a precondition missing, no route, a peer's signal never came): neither
 //             green nor red.
-// A tag is said once per process life; a second Say for it is dropped and logged in a line that does not carry
-// the contract's prefix.
+// A tag is said once per session: a second Say is dropped (logged without the contract's prefix) until the
+// session ends (Rearm). Say maps a tag into [a-z0-9_-] (upper case lowered, any other byte '_', empty
+// "untagged", 47 bytes at most), so every line a tool counts is a line it can parse.
 
 #pragma once
 
 #include "ue_wrap/core/log.h"
 
-#include <atomic>
 #include <cstdarg>
-#include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <mutex>
 
 namespace coop::rig_verdict {
 
@@ -29,35 +30,61 @@ enum class Outcome { Pass, Fail, Invalid };
 namespace detail {
 
 inline constexpr int kMaxTags = 32;
+inline constexpr int kTagChars = 48;
 inline constexpr int kReasonChars = 384;
 
-// The tags already said, as FNV-1a hashes (0 = a free slot). A slot is claimed by compare-exchange, so Say needs no
-// lock, takes no heap and is safe from any thread: a drill's host and client halves run on the game thread, and a
-// helper thread (peer_signal's wait) may say INVALID.
-inline std::atomic<uint32_t> g_said[kMaxTags]{};
+// The tags already said, as text (a free slot starts with a NUL). A mutex, because a drill's host and client halves
+// run on the game thread but a helper thread (peer_signal's wait) may say INVALID, and a slot is a string that no
+// single atomic claims; a drill says its verdict once, so the lock is never contended in a way that costs.
+struct Latch {
+    std::mutex lock;
+    char said[kMaxTags][kTagChars] = {};
+};
+inline Latch g_latch;
 
-inline uint32_t HashOf(const char* s) {
-    uint32_t h = 2166136261u;
-    for (; *s; ++s) h = (h ^ static_cast<unsigned char>(*s)) * 16777619u;
-    return h ? h : 1u;
+// `out` holds the tag in [a-z0-9_-]+, at most kTagChars - 1 bytes.
+inline void Sanitize(const char* tag, char (&out)[kTagChars]) {
+    int n = 0;
+    for (; tag && *tag && n < kTagChars - 1; ++tag, ++n) {
+        const char c = *tag;
+        const char lower = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+        const bool ok = (lower >= 'a' && lower <= 'z') || (lower >= '0' && lower <= '9') || lower == '_' || lower == '-';
+        out[n] = ok ? lower : '_';
+    }
+    if (n == 0) {
+        std::snprintf(out, kTagChars, "untagged");
+        return;
+    }
+    out[n] = '\0';
 }
 
 // True when `tag` is new, and now claimed. A full table cannot tell a repeat from a first Say, so it lets the line
-// through: a missing verdict would idle the run, a repeated one is dropped by the rig's first-line rule.
+// through: a missing verdict would idle the run, and the rig takes the worst verdict of a life, so a repeat costs
+// nothing.
 inline bool Claim(const char* tag) {
-    const uint32_t h = HashOf(tag);
+    std::lock_guard<std::mutex> hold(g_latch.lock);
     for (int i = 0; i < kMaxTags; ++i) {
-        uint32_t seen = g_said[i].load(std::memory_order_acquire);
-        if (seen == 0 && g_said[i].compare_exchange_strong(seen, h, std::memory_order_acq_rel)) return true;
-        if (seen == h) return false;
+        if (g_latch.said[i][0] == '\0') {
+            std::snprintf(g_latch.said[i], kTagChars, "%s", tag);
+            return true;
+        }
+        if (std::strcmp(g_latch.said[i], tag) == 0) return false;
     }
     return true;
 }
 
 }  // namespace detail
 
+// At the session's end: every tag may be said again by the next session of this process.
+inline void Rearm() {
+    std::lock_guard<std::mutex> hold(detail::g_latch.lock);
+    for (auto& slot : detail::g_latch.said) slot[0] = '\0';
+}
+
 // `reason` is printf-style and may be null (a bare verdict). A line break in it becomes a space.
-inline void Say(const char* tag, Outcome outcome, const char* fmt = nullptr, ...) {
+inline void Say(const char* rawTag, Outcome outcome, const char* fmt = nullptr, ...) {
+    char tag[detail::kTagChars];
+    detail::Sanitize(rawTag, tag);
     if (!detail::Claim(tag)) {
         UE_LOGW("rig: a second verdict for '%s' dropped", tag);
         return;

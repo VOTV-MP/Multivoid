@@ -127,6 +127,7 @@
 #include "coop/interactables/window_sync.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/world_load_episode.h"
+#include "coop/session/rig_verdict.h"  // Rearm: the next session of this process says its own verdicts
 #include "coop/interactables/garbage_sync.h"
 #include "coop/props/pile_look.h"
 #include "coop/props/trash_channel.h"
@@ -461,6 +462,7 @@ DisconnectStats DisconnectAll() {
     coop::npc_adoption::OnSessionEnd();  // drop pending deferred adoptions + reset latches
     coop::kerfur_prop_adoption::OnSessionEnd();  // drop pending prop-form kerfur adoptions
     coop::dev::dev_lanes::EndSession();  // [dev] the probes' verdicts, before the prop seams reset below, then each drill back to its first step
+    coop::rig_verdict::Rearm();  // a drill that restarts in the next session says its own verdict, after the probes said theirs
     coop::prop_drop_intent::Reset();  // clear the client park set + pending places
     coop::prop_spawn_authoring::Reset();  // drop the menu bracket + the resolved spawn verbs
     coop::host_spawn_watcher::OnDisconnect();  // drop the ambient-prop death-watch list
