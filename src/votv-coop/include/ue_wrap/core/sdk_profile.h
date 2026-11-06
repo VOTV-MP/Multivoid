@@ -371,7 +371,10 @@ inline constexpr size_t UField_Next = 0x28;
 // 0x230/0x231, AActor 0x5A/0xF3; EAutoReceiveInput::Disabled = 0).
 inline constexpr size_t AActor_bBlockInput = 0x5A;          // uint8 (set 1)
 inline constexpr size_t AActor_AutoReceiveInput = 0xF3;     // uint8 enum (set 0)
-inline constexpr size_t APawn_Controller = 0x0258;          // AController* (null on an orphan pawn). Engine.hpp:7646. The AnimBP's idle-to-walk transition needs AnimBP.Controller != None, fed from the local player's controller.
+// AController* (null on an orphan pawn). Engine.hpp:7646. The body AnimBPs pose from the pawn's velocity and read no
+// controller: the puppet walks with a null one (ue_wrap/actors/puppet_spawn.cpp:41, :52), and kerfurOmega's AnimBPs
+// assign a `controller` variable they never read. An npc mirror therefore spawns without one (MakePawnInert).
+inline constexpr size_t APawn_Controller = 0x0258;
 inline constexpr size_t APawn_AutoPossessPlayer = 0x230;    // uint8 enum (set 0)
 inline constexpr size_t APawn_AutoPossessAI = 0x231;        // uint8 enum (set 0)
 inline constexpr size_t APawn_AIControllerClass = 0x238;    // UClass* (TSubclassOf<AController>)
