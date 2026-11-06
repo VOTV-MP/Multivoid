@@ -5,7 +5,7 @@
 // client's harvest through the plant's own action (both on a plant the host plants beside the players: the spawner's bush
 // stands out of the client's reach), death, a plant a client spawned, a new bush and two removals. The arms
 // that hold what the client refuses (a sprinkler, the spawner, a pine's lethal hit, the growth area's glow, the plant tick)
-// and the host's refusal of two crafted plantings (the edit gate, term f1) are autotest_plant_gate.cpp's. The client tells
+// and the host's refusal of the plantings and edits a client crafts (the edit gate, term f1) are autotest_plant_gate.cpp's. The client tells
 // the host what it reads; the host judges and logs `plant-state: VERDICT PASS|FAIL <terms>`. Gated by VOTVCOOP_RUN_PLANT_STATE;
 // the peers' shared folder is VOTVCOOP_CAN_DIR. Every wait is on a state with a bound.
 
@@ -368,9 +368,10 @@ void RunHost() {
     Mark("glow", glowAt);
     if (!Await("glow_done", kStep)) return;
 
-    // Two plantings no player's act could make, crafted by the client: the host's edit gate refuses each.
-    const CraftBase craftBase = CraftBegin();
-    Mark("craft_go");
+    // Plantings and edits no player's act could make, crafted by the client: the host's edit gate refuses or cuts each. The pot
+    // the client names stands where no reach allows.
+    const CraftBase craftBase = CraftBegin(drillPlant);
+    Mark("craft_go", (craftBase.potKey.empty() ? std::string("-") : craftBase.potKey) + " " + drillPlant);
     if (!Await("craft_sent", kStep)) return;
     const int f1 = CraftJudge(craftBase) ? 1 : 0;
 
@@ -533,8 +534,11 @@ void RunClient() {
     const int glowOk = GlowArm(glowBase, body) ? 1 : 0;
     Mark("glow_done");
 
-    if (!Await("craft_go", kStep)) return;
-    CraftArm(row);
+    if (!AwaitText("craft_go", body, kStep)) return;
+    std::istringstream craftIn(body);
+    std::string potKey, plantKey;
+    craftIn >> potKey >> plantKey;
+    CraftArm(row, potKey, plantKey);
     Mark("craft_sent");
 
     const int tickOk = TickArm() ? 1 : 0;

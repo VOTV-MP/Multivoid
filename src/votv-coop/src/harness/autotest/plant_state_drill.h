@@ -64,15 +64,19 @@ bool TickArm();
 bool PineHitArm(const std::string& key);
 bool GlowArm(unsigned base, const std::string& sentAt);
 
-// The edit gate's arm. CLIENT: sends a planting of a non-plant class at its own place, a plant class 50000 uu away and a plant of
-// a row that is none of the host's (`row` is a row the host's plants use). HOST: CraftBegin before the client crafts, CraftJudge
-// after: the host's refusals rose by one each for the class, the reach and the row, and nothing of the three stands.
+// The edit gate's arm. CLIENT: sends plantings no player's act could make (a non-plant class at its own place, a plant class
+// 50000 uu away, a row that is none of the host's, no key, the key "None", a pot out of reach) and two edits of the host's plant
+// `plantKey` (an unknown row, water past every bound); `row` is a row the host's plants use and `potKey` the pot the host spawned
+// ("-" when none). HOST: CraftBegin(plantKey) spawns the pot and takes the counts before the client crafts, CraftJudge after: the
+// host's refusals and cuts rose by exactly what was sent, nothing of the plantings stands, and the edited plant kept its row.
 struct CraftBase {
     coop::plant_edit_gate::Counts counts;
     size_t nonPlants = 0;
+    size_t plants = 0;
+    std::string plantKey, plantRow, potKey;
 };
-bool CraftArm(const std::string& row);
-CraftBase CraftBegin();
+bool CraftArm(const std::string& row, const std::string& potKey, const std::string& plantKey);
+CraftBase CraftBegin(const std::string& plantKey);
 bool CraftJudge(const CraftBase& base);
 
 // HOST: addDamage with damage no health survives; whether the call was made.

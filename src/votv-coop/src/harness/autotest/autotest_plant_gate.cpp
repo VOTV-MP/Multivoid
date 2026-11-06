@@ -4,8 +4,9 @@
 // spawnBush calls are refused and plant nothing; a lethal hit on a pine here is refused and the copy ends with the host's
 // break; a growth area the host spawned glows at the plant it picked, here too; and at the end no plant tick ran here
 // while the gate refused them (coop/world/plant_gate, coop/world/spawn_authority, coop/props/prop_damage_gate,
-// coop/world/event_cue_sync). The last arm is the host's edit gate: a client sends three plantings no player's act could
-// make, one of a class that is no plant, one 50000 uu away and one of an unknown row, and the host refuses each
+// coop/world/event_cue_sync). The last arm is the host's edit gate: a client sends six plantings and two edits no player's
+// act could make (a class that is no plant, a place 50000 uu away, an unknown row, no key, the key "None", a pot out of reach;
+// a plant's row changed to an unknown one, its water set past every bound), and the host refuses or cuts each
 // (coop/world/plant_edit_gate). The flows that call them are autotest_plant_state.cpp's.
 
 #include "harness/autotest/peer_signal.h"
@@ -287,19 +288,31 @@ bool GlowArm(unsigned base, const std::string& sentAt) {
     return replayed && placed;
 }
 
-// ---- the host's edit gate (coop/world/plant_edit_gate): a client's crafted planting --------------------------------------------
-// The keys of the three crafted plantings; the host must hold no plant under any.
+// ---- the host's edit gate (coop/world/plant_edit_gate): a client's crafted plantings and edits ----------------------------------
+// The keys of the crafted plantings; the host must hold no plant under any. A planting under an empty key or "None" cannot be
+// looked up by key, so the host's plant count says it was not planted.
 constexpr const char* kCraftedNonPlantKey = "F1DRILL_NONPLANT";
 constexpr const char* kCraftedFarKey = "F1DRILL_FAR";
 constexpr const char* kCraftedRowKey = "F1DRILL_ROW";
+constexpr const char* kCraftedPotKey = "F1DRILL_POT";
 constexpr const wchar_t* kNoSuchRow = L"no_such_row";
 constexpr float kFarUU = 50000.f;   // far beyond any reach the host's authority allows (400 + bounds + 600)
+constexpr float kPotAboveUU = 8000.f;   // a pot this far above the host's player is out of every reach the gate allows
+constexpr float kWaterBeyondUU = 1.0e9f;   // far past any water a plant holds (the gate's bound is 20000)
 constexpr const wchar_t* kPlantClass = L"growingPlant_C";
+constexpr const wchar_t* kPotClass = L"prop_farmPot_C";
+constexpr const wchar_t* kPotPath = L"/Game/objects/prop_farmPot.prop_farmPot_C";
 
-bool SendCrafted(const char* key, const std::wstring& cls, const std::wstring& row, const ue_wrap::FVector& at) {
+bool SendPayload(const coop::net::PlantStatePayload& p) {
+    return harness::session_runtime::Session().SendReliable(coop::net::ReliableKind::PlantEdit, &p, sizeof(p));
+}
+
+bool SendCrafted(const wchar_t* key, const std::wstring& cls, const std::wstring& row, const ue_wrap::FVector& at,
+                 const std::wstring& parent = L"") {
     coop::net::PlantStatePayload p{};
-    coop::net::WireKeyFromString(Widen(key), p.key);
+    coop::net::WireKeyFromString(key, p.key);
     coop::net::WireKeyFromString(row, p.row);
+    coop::net::WireKeyFromString(parent, p.attachParent);
     p.cls.len = static_cast<uint8_t>((std::min)(cls.size(), sizeof(p.cls.data)));
     for (size_t i = 0; i < p.cls.len; ++i) p.cls.data[i] = static_cast<char>(cls[i]);
     p.x = at.X;
@@ -308,13 +321,26 @@ bool SendCrafted(const char* key, const std::wstring& cls, const std::wstring& r
     p.grow = 0.1f;
     p.alive = 1;
     p.hideDirt = 1;
-    return harness::session_runtime::Session().SendReliable(coop::net::ReliableKind::PlantEdit, &p, sizeof(p));
+    return SendPayload(p);
 }
 
-// CLIENT: three PlantEdit plantings no player's act could make, sent as plant_sync sends its own. One names a loaded class that
-// is no plant (the class of a prop standing here) at this player's own place; one a plant class 50000 uu away; one a plant class
-// at this player's own place with a row that is none of list_farmPlants'.
-bool CraftArm(const std::string& row) {
+// An edit of a plant the host holds: only the masked field is meant, the rest is zero.
+bool SendCraftedEdit(const std::string& plantKey, uint8_t mask, const std::wstring& row, float water) {
+    coop::net::PlantStatePayload p{};
+    coop::net::WireKeyFromString(Widen(plantKey), p.key);
+    coop::net::WireKeyFromString(row, p.row);
+    p.editMask = mask;
+    p.water = water;
+    p.alive = 1;
+    return SendPayload(p);
+}
+
+// CLIENT: PlantEdits no player's act could make, sent as plant_sync sends its own. Plantings: one names a loaded class that is no
+// plant (the class of a prop standing here) at this player's own place; one a plant class 50000 uu away; one a plant class at this
+// player's own place with a row that is none of list_farmPlants'; one with no key; one under the key "None"; one in the host's pot
+// 8000 uu above the host's player. Edits of the host's plant `plantKey`: its row changed to none of list_farmPlants', and its
+// water set to a billion.
+bool CraftArm(const std::string& row, const std::string& potKey, const std::string& plantKey) {
     std::wstring nonPlant, rowClass;
     ue_wrap::FVector me{};
     bool placed = false;
@@ -328,53 +354,105 @@ bool CraftArm(const std::string& row) {
     });
     if (!Check(placed && !nonPlant.empty(), "this client has a prop of a non-plant class beside it to name")) return false;
     if (!Check(!rowClass.empty(), "this client reads the class the bush's row plants")) return false;
+    if (!Check(potKey != "-", "the host named a pot to plant in")) return false;
     bool sent = false;
     OnGameThread([&] {
         ue_wrap::FVector atNear = me;
         atNear.X += 200.f;
         ue_wrap::FVector atFar = me;
         atFar.X += kFarUU;
-        sent = SendCrafted(kCraftedNonPlantKey, nonPlant, Widen(row), atNear);
-        sent = SendCrafted(kCraftedFarKey, rowClass, Widen(row), atFar) && sent;
-        sent = SendCrafted(kCraftedRowKey, kPlantClass, kNoSuchRow, atNear) && sent;
+        const std::wstring plantRow = Widen(row);
+        sent = SendCrafted(Widen(kCraftedNonPlantKey).c_str(), nonPlant, plantRow, atNear);
+        sent = SendCrafted(Widen(kCraftedFarKey).c_str(), rowClass, plantRow, atFar) && sent;
+        sent = SendCrafted(Widen(kCraftedRowKey).c_str(), kPlantClass, kNoSuchRow, atNear) && sent;
+        sent = SendCrafted(L"", rowClass, plantRow, atNear) && sent;
+        sent = SendCrafted(L"None", rowClass, plantRow, atNear) && sent;
+        sent = SendCrafted(Widen(kCraftedPotKey).c_str(), rowClass, plantRow, atNear, Widen(potKey)) && sent;
+        sent = SendCraftedEdit(plantKey, coop::net::plant_edit::kRow, kNoSuchRow, 0.f) && sent;
+        sent = SendCraftedEdit(plantKey, coop::net::plant_edit::kWater, plantRow, kWaterBeyondUU) && sent;
     });
-    UE_LOGI("plant-state: crafted plantings sent=%d, class '%ls' at this player's place, '%ls' %.0f uu away, row '%ls'", sent ? 1 : 0,
-            nonPlant.c_str(), rowClass.c_str(), kFarUU, kNoSuchRow);
-    return Check(sent, "this client sent all three crafted plantings");
+    UE_LOGI("plant-state: crafted edits sent=%d: class '%ls' at this player's place, '%ls' %.0f uu away, row '%ls', no key, key None, "
+            "pot '%hs', and two edits of '%hs' (row '%ls', water %.0f)",
+            sent ? 1 : 0, nonPlant.c_str(), rowClass.c_str(), kFarUU, kNoSuchRow, potKey.c_str(), plantKey.c_str(), kNoSuchRow,
+            static_cast<double>(kWaterBeyondUU));
+    return Check(sent, "this client sent all eight crafted edits");
 }
 
-// HOST: what the gate and the world hold before the client crafts.
-CraftBase CraftBegin() {
+// HOST: a pot far above the host's player, spawned by the script. "" when it is not made or keyless.
+std::string SpawnPotAbove() {
+    std::string key;
+    OnGameThread([&] {
+        ue_wrap::asset_load::LoadObjectByPath(kPotPath);
+        void* cls = R::FindClass(kPotClass);
+        void* pawn = coop::players::Registry::Get().Local();
+        ue_wrap::FVector at{};
+        if (!cls || !pawn || !E::TryGetActorLocation(pawn, at)) return;
+        at.Z += kPotAboveUU;
+        void* pot = E::BeginDeferredSpawn(cls, at, ue_wrap::FRotator{});
+        if (pot && E::FinishDeferredSpawn(pot, at, ue_wrap::FRotator{})) key = Narrow(GP::Key(pot));
+    });
+    return key;
+}
+
+// HOST: what the gate and the world hold before the client crafts, and the pot the client will name.
+CraftBase CraftBegin(const std::string& plantKey) {
     CraftBase b;
+    b.plantKey = plantKey;
     OnGameThread([&] {
         b.counts = coop::plant_edit_gate::GetCounts();
         b.nonPlants = CountOf(kSprinklerClass);
+        std::vector<void*> plants;
+        GP::List(plants);
+        b.plants = plants.size();
+        if (void* p = ByKey(plantKey)) b.plantRow = Narrow(GP::Row(p));
     });
+    b.potKey = SpawnPotAbove();
+    Check(!b.potKey.empty(), "the script spawned a pot above the host's player");
     return b;
 }
 
-// HOST: the gate refused the class once, the reach once and the row once, and no actor of any appeared.
+// HOST: the gate refused the class once, the reach once, the unknown row twice (a planting's and an edit's), the key twice (none
+// and "None"), the pot once, and cut the water once; and nothing of any planting appeared, the edited plant kept its row, and its
+// water went in at the bound.
 bool CraftJudge(const CraftBase& base) {
     coop::plant_edit_gate::Counts c;
-    const bool judged = PS::WaitFor("the crafted plantings judged", 20, [&] {
+    const coop::plant_edit_gate::Counts& was = base.counts;
+    const bool judged = PS::WaitFor("the crafted edits judged", 20, [&] {
         OnGameThread([&] { c = coop::plant_edit_gate::GetCounts(); });
-        return c.refusedClass > base.counts.refusedClass && c.refusedReach > base.counts.refusedReach &&
-               c.refusedRow > base.counts.refusedRow;
+        return c.refusedClass > was.refusedClass && c.refusedReach > was.refusedReach && c.refusedRow >= was.refusedRow + 2 &&
+               c.refusedKey >= was.refusedKey + 2 && c.refusedParent > was.refusedParent && c.clamped > was.clamped;
     }, false);
-    size_t nonPlants = 0;
+    size_t nonPlants = 0, plants = 0;
     bool keyed = false;
+    std::string row;
+    float water = 0.f;
     OnGameThread([&] {
         nonPlants = CountOf(kSprinklerClass);
-        keyed = ByKey(kCraftedNonPlantKey) != nullptr || ByKey(kCraftedFarKey) != nullptr || ByKey(kCraftedRowKey) != nullptr;
+        keyed = ByKey(kCraftedNonPlantKey) != nullptr || ByKey(kCraftedFarKey) != nullptr || ByKey(kCraftedRowKey) != nullptr ||
+                ByKey(kCraftedPotKey) != nullptr;
+        std::vector<void*> list;
+        GP::List(list);
+        plants = list.size();
+        if (void* p = ByKey(base.plantKey)) {
+            row = Narrow(GP::Row(p));
+            GP::Values v;
+            if (GP::Read(p, v)) water = v.water;
+        }
     });
-    const unsigned long long dClass = c.refusedClass - base.counts.refusedClass, dReach = c.refusedReach - base.counts.refusedReach,
-                             dRow = c.refusedRow - base.counts.refusedRow;
-    UE_LOGI("plant-state: crafted plantings refused for class %llu, reach %llu and row %llu, non-plant actors %zu->%zu, plant under a crafted key=%d",
-            dClass, dReach, dRow, base.nonPlants, nonPlants, keyed ? 1 : 0);
-    const bool counted = Check(judged && dClass == 1 && dReach == 1 && dRow == 1,
-                               "the host refused the crafted class once, the crafted place once and the crafted row once");
-    const bool none = Check(nonPlants == base.nonPlants && !keyed, "the host spawned nothing of any crafted planting");
-    return counted && none;
+    const unsigned long long dClass = c.refusedClass - was.refusedClass, dReach = c.refusedReach - was.refusedReach,
+                             dRow = c.refusedRow - was.refusedRow, dKey = c.refusedKey - was.refusedKey,
+                             dParent = c.refusedParent - was.refusedParent, dClamped = c.clamped - was.clamped;
+    UE_LOGI("plant-state: crafted edits refused for class %llu, reach %llu, row %llu, key %llu and pot %llu, values cut %llu; non-plant "
+            "actors %zu->%zu, plants %zu->%zu, plant under a crafted key=%d, edited plant row '%hs' (was '%hs') water %.0f",
+            dClass, dReach, dRow, dKey, dParent, dClamped, base.nonPlants, nonPlants, base.plants, plants, keyed ? 1 : 0, row.c_str(),
+            base.plantRow.c_str(), static_cast<double>(water));
+    const bool counted = Check(judged && dClass == 1 && dReach == 1 && dRow == 2 && dKey == 2 && dParent == 1 && dClamped == 1,
+                               "the host refused the crafted class, place, rows, keys and pot, and cut the crafted water, each as many times as sent");
+    const bool none = Check(nonPlants == base.nonPlants && plants == base.plants && !keyed,
+                            "the host spawned nothing of any crafted planting");
+    const bool held = Check(row == base.plantRow && water > 10000.f && water <= 20000.5f,
+                            "the edited plant kept its row and took the water at the gate's bound");
+    return counted && none && held;
 }
 
 }  // namespace harness::autotest::plant_drill
