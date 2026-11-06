@@ -315,13 +315,14 @@ void OnLanding(void* cremator, void* other) {
 
 // The cremator nearest the client's puppet is the one its landing is watched on (the choice the /cremate verb makes
 // too): remembered with the puppet, and the begin-overlap listener added. Game thread; false on a step that failed (said).
-bool WatchLanding(C::Nearest& n) {
+bool WatchLanding(C::FireboxMove& move) {
     coop::RemotePlayer* puppet = coop::players::Registry::Get().Puppet(kClientSlot);
     ue_wrap::FVector from{};
     if (!puppet || !puppet->TryGetLocation(from)) { UE_LOGW("cremator-drill: g3 the client's puppet has no location"); return false; }
-    n = C::FindNearestFirebox(from);
-    if (!n.actor) { UE_LOGW("cremator-drill: g3 no cremator with a firebox is loaded"); return false; }
-    g_g3Cremator.store(n.actor, std::memory_order_release);
+    const C::MoveResult found = C::FindFireboxMove(from, move);
+    if (found == C::MoveResult::NoCremator) { UE_LOGW("cremator-drill: g3 no cremator with a firebox is loaded"); return false; }
+    if (found == C::MoveResult::RotationUnread) { UE_LOGW("cremator-drill: g3 the cremator's rotation is unreadable"); return false; }
+    g_g3Cremator.store(move.actor, std::memory_order_release);
     g_g3Puppet.store(puppet->GetActor(), std::memory_order_release);
     g_g3Landed.store(0, std::memory_order_release);
     if (!coop::cremator_occupancy::AddListener(&OnLanding)) {
@@ -343,25 +344,23 @@ bool ClientSettled() {
 // The nearest cremator to the client's puppet gets its door opened, the overlap watch and the teleport order. Game
 // thread. The cremator's lane key on success, "" on a step that failed (said).
 std::wstring SendClientToFirebox(void*& cremator) {
-    C::Nearest n;
-    if (!WatchLanding(n)) return {};
-    ue_wrap::FRotator rot{};
-    if (!E::TryGetActorRotation(n.actor, rot)) { UE_LOGW("cremator-drill: g3 the cremator's rotation is unreadable"); return {}; }
-    cremator = n.actor;
+    C::FireboxMove move;
+    if (!WatchLanding(move)) return {};
+    cremator = move.actor;
     const std::wstring key = coop::interactable_sync::CrematorKey(cremator);
     if (key.empty()) { UE_LOGW("cremator-drill: g3 the cremator lane does not index the nearest cremator"); return {}; }
     bool doorOpened = false;
     if (!C::OpenDoor(cremator, doorOpened)) { UE_LOGW("cremator-drill: g3 the door's open() did not run"); return {}; }
     coop::net::TeleportClientPayload pose{};
-    pose.locX = n.at.X; pose.locY = n.at.Y; pose.locZ = n.at.Z;
-    pose.rotPitch = rot.Pitch; pose.rotYaw = rot.Yaw; pose.rotRoll = rot.Roll;
+    pose.locX = move.at.X; pose.locY = move.at.Y; pose.locZ = move.at.Z;
+    pose.rotPitch = move.rot.Pitch; pose.rotYaw = move.rot.Yaw; pose.rotRoll = move.rot.Roll;
     if (!harness::session_runtime::Session().SendReliableToSlot(kClientSlot, coop::net::ReliableKind::TeleportClient, &pose,
                                                                 sizeof(pose))) {
         UE_LOGW("cremator-drill: g3 the teleport order was not sent");
         return {};
     }
     UE_LOGI("cremator-drill: HOST g3 door opened=%d, teleport order to=(%.0f,%.0f,%.0f) key='%ls'", doorOpened ? 1 : 0,
-            n.at.X, n.at.Y, n.at.Z, key.c_str());
+            move.at.X, move.at.Y, move.at.Z, key.c_str());
     return key;
 }
 
@@ -584,14 +583,14 @@ void RunHostCremate(const std::string& arm) {
     // applies still walks into the volume).
     const int wantLanded = kick || arm == "cremate-survive" ? 1 : arm == "cremate-dropped" ? 0 : -1;
     if (!Await("client_ready", kJoinSec) || !ClientSettled()) return;
-    C::Nearest n;
+    C::FireboxMove move;
     bool watching = false;
     std::wstring key;
     std::string no;
     OnGameThread([&] {
         CMD::SetReplyObserver(&ObserveLine);
-        watching = WatchLanding(n);
-        if (watching) key = coop::interactable_sync::CrematorKey(n.actor);
+        watching = WatchLanding(move);
+        if (watching) key = coop::interactable_sync::CrematorKey(move.actor);
         no = PlayerNo(kClientSlot);
     });
     if (!watching || key.empty()) { UE_LOGW("cremator-drill: VERDICT ABORT -- the landing cannot be watched"); return; }
@@ -604,7 +603,7 @@ void RunHostCremate(const std::string& arm) {
                          [&] { return g_g3Landed.load(std::memory_order_acquire) == 1 && CopyAt(key, 1); }))
             return;
         bool ran = false;
-        OnGameThread([&] { ran = C::CallUseLever(n.actor); });
+        OnGameThread([&] { ran = C::CallUseLever(move.actor); });
         UE_LOGI("cremator-drill: HOST pulled the lever back ran=%d", ran ? 1 : 0);
         if (!ran) { UE_LOGW("cremator-drill: VERDICT ABORT -- the host's lever did not run"); return; }
     }

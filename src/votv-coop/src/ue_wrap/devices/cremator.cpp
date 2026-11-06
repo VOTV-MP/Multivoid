@@ -220,4 +220,13 @@ Nearest FindNearestFirebox(const FVector& from) {
     return n;
 }
 
+MoveResult FindFireboxMove(const FVector& from, FireboxMove& out) {
+    out = FireboxMove{};
+    const Nearest n = FindNearestFirebox(from);
+    if (!n.actor) return MoveResult::NoCremator;
+    out.actor = n.actor;
+    out.at = n.at;
+    return engine::TryGetActorRotation(n.actor, out.rot) ? MoveResult::Found : MoveResult::RotationUnread;
+}
+
 }  // namespace ue_wrap::cremator

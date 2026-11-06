@@ -131,28 +131,28 @@ void WatchTick(coop::net::Session& session) {
     coop::RemotePlayer* puppet = coop::players::Registry::Get().Puppet(kClientSlot);
     ue_wrap::FVector from{};
     if (!puppet || !puppet->TryGetLocation(from)) { Fail("the client's puppet has no location"); return; }
-    const C::Nearest n = C::FindNearestFirebox(from);
-    if (!n.actor) { Fail("no cremator with a firebox is loaded"); return; }
-    ue_wrap::FRotator rot{};
-    if (!ue_wrap::engine::TryGetActorRotation(n.actor, rot)) { Fail("the cremator's rotation is unreadable"); return; }
+    C::FireboxMove move;
+    const C::MoveResult found = C::FindFireboxMove(from, move);
+    if (found == C::MoveResult::NoCremator) { Fail("no cremator with a firebox is loaded"); return; }
+    if (found == C::MoveResult::RotationUnread) { Fail("the cremator's rotation is unreadable"); return; }
 
-    g_cremator.Set(n.actor);
-    g_fireboxAt = n.at;
+    g_cremator.Set(move.actor);
+    g_fireboxAt = move.at;
     // The landing is judged by the begin-overlap, so the order goes out after the cremator is the one HostOnOverlap
     // compares against and the landing flag is clear.
     g_landed.store(0, std::memory_order_release);
     bool doorOpened = false;
-    if (!C::OpenDoor(n.actor, doorOpened)) { Fail("the door's open() did not run"); return; }
+    if (!C::OpenDoor(move.actor, doorOpened)) { Fail("the door's open() did not run"); return; }
     coop::net::TeleportClientPayload pose{};
-    pose.locX = n.at.X; pose.locY = n.at.Y; pose.locZ = n.at.Z;
-    pose.rotPitch = rot.Pitch; pose.rotYaw = rot.Yaw; pose.rotRoll = rot.Roll;
+    pose.locX = move.at.X; pose.locY = move.at.Y; pose.locZ = move.at.Z;
+    pose.rotPitch = move.rot.Pitch; pose.rotYaw = move.rot.Yaw; pose.rotRoll = move.rot.Roll;
     if (!session.SendReliableToSlot(kClientSlot, coop::net::ReliableKind::TeleportClient, &pose, sizeof(pose))) {
         Fail("the teleport order was not sent");
         return;
     }
     UE_LOGI("cremator-probe: HOST DOOR opened=%d", doorOpened ? 1 : 0);
     g_landingTicks = 0;
-    UE_LOGI("cremator-probe: HOST SENT teleport to=(%.0f,%.0f,%.0f)", n.at.X, n.at.Y, n.at.Z);
+    UE_LOGI("cremator-probe: HOST SENT teleport to=(%.0f,%.0f,%.0f)", move.at.X, move.at.Y, move.at.Z);
     g_step = Step::Landing;
 }
 

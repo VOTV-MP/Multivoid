@@ -291,25 +291,25 @@ Result Start(const Order& order, ReplyFn reply) {
         UE_LOGW("cremate: #%u refused -- the puppet's position did not read", static_cast<unsigned>(token.playerNo));
         return Result::NotSent;
     }
-    const C::Nearest n = C::FindNearestFirebox(from);
-    if (!n.actor) return Result::NoCremator;
-    ue_wrap::FRotator rot{};
-    if (!E::TryGetActorRotation(n.actor, rot)) {
+    C::FireboxMove move;
+    const C::MoveResult found = C::FindFireboxMove(from, move);
+    if (found == C::MoveResult::NoCremator) return Result::NoCremator;
+    if (found == C::MoveResult::RotationUnread) {
         UE_LOGW("cremate: #%u refused -- the cremator's rotation did not read", static_cast<unsigned>(token.playerNo));
         return Result::NotSent;
     }
-    const bool inside = coop::cremator_occupancy::IsOverlapping(n.actor, puppet->GetActor());
+    const bool inside = coop::cremator_occupancy::IsOverlapping(move.actor, puppet->GetActor());
     if (!inside) {
         bool wasOpen = false, opened = false;
-        C::ReadDoorOpened(n.actor, wasOpen);
-        if (!C::OpenDoor(n.actor, opened)) return Result::DoorStuck;
+        C::ReadDoorOpened(move.actor, wasOpen);
+        if (!C::OpenDoor(move.actor, opened)) return Result::DoorStuck;
         coop::net::TeleportClientPayload pose{};
-        pose.locX = n.at.X; pose.locY = n.at.Y; pose.locZ = n.at.Z;
-        pose.rotPitch = rot.Pitch; pose.rotYaw = rot.Yaw; pose.rotRoll = rot.Roll;
+        pose.locX = move.at.X; pose.locY = move.at.Y; pose.locZ = move.at.Z;
+        pose.rotPitch = move.rot.Pitch; pose.rotYaw = move.rot.Yaw; pose.rotRoll = move.rot.Roll;
         if (!s->SendReliableToSlot(token.slot, coop::net::ReliableKind::TeleportClient, &pose, sizeof(pose))) {
             UE_LOGW("cremate: #%u refused -- the teleport order was not sent", static_cast<unsigned>(token.playerNo));
             bool shut = false;
-            if (!wasOpen) C::ShutDoor(n.actor, shut);
+            if (!wasOpen) C::ShutDoor(move.actor, shut);
             return Result::NotSent;
         }
     }
@@ -320,17 +320,17 @@ Result Start(const Order& order, ReplyFn reply) {
     t.caller = order.caller;
     t.told = order.told;
     t.reply = reply;
-    t.cremator.Set(n.actor);
-    t.dest = n.at;
+    t.cremator.Set(move.actor);
+    t.dest = move.at;
     ++g_active;
     UE_LOGI("cremate: #%u (slot %d) sent to the cremator at (%.0f,%.0f,%.0f)%s", static_cast<unsigned>(token.playerNo),
-            token.slot, n.at.X, n.at.Y, n.at.Z, inside ? " (already inside its burn volume)" : "");
+            token.slot, move.at.X, move.at.Y, move.at.Z, inside ? " (already inside its burn volume)" : "");
     if (inside) {
         // The puppet already stands in the volume: no begin-overlap will come, so the verb's next tick takes the
         // landing from the same event.
         t.state = State::Arrived;
         Event e{Kind::Overlap};
-        e.cremator = n.actor;
+        e.cremator = move.actor;
         e.other = puppet->GetActor();
         Record(e);
     }
