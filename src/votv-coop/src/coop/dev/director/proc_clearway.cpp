@@ -1,0 +1,233 @@
+// coop/dev/director/proc_clearway.cpp -- the clearway process (clearway.h): a physics prop on the walker's route that
+// a hand can hold is carried aside, as a player picks a box out of a doorway.
+//
+//   Approach: a Goto leg of its own to the prop, to the grab's reach.
+//   Settle, then Grab: the director's aimed grab (aimed_grab.h), the use key's chain on a prop the player's own trace
+//     takes. The game's hold decides: a prop it refuses never reaches the hand and stays the detour's.
+//   Turn: the camera turns away from the waypoint the walk was heading for, the held prop swinging after it.
+//   Drop: ClearHand's drop (the key a human presses, measured, the effect seam only if the key is inert).
+//
+// Priority 110, above ClearHand (100), which drops whatever the hand holds the tick it holds it. Active only while a
+// carry is in hand, so nothing runs per tick otherwise. All OnTick runs on the game thread.
+
+#include "coop/dev/director/aimed_grab.h"
+#include "coop/dev/director/clear_hand.h"
+#include "coop/dev/director/director.h"
+#include "coop/dev/director/leg_blocker.h"
+
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
+
+#include "ue_wrap/actors/prop_flags.h"
+#include "ue_wrap/actors/prop_gather.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/engine.h"
+
+#include <algorithm>
+#include <cmath>
+#include <memory>
+#include <optional>
+#include <string>
+
+namespace coop::director {
+namespace {
+namespace R = ue_wrap::reflection;
+namespace E = ue_wrap::engine;
+
+constexpr float kGrabReachCm   = 140.f;   // the walk to the prop ends this near it: the grab race's reach for a held aim
+constexpr int   kApproachTicks = 1500;    // a leg of its own to a prop at hand that takes longer is no leg: the detour's
+constexpr int   kSettleTicks   = 12;      // braking before the aim, as the grab process settles
+constexpr int   kTurnTicks     = 90;      // the held prop swings after the camera before it is set down (~1 s)
+constexpr float kRadToDeg      = 180.f / 3.14159265358979323846f;
+
+std::wstring NameOfProp(void* prop) { return R::ToString(R::NameOf(prop)); }
+
+enum class Phase { Idle, Approach, Settle, Grab, Turn, Drop };
+
+class ClearwayProcess : public IProcess {
+public:
+    explicit ClearwayProcess(DirectorGoal& goal) : goal_(goal) {}
+    const char* Name() const override { return "Clearway"; }
+    int Priority() const override { return 110; }
+    bool IsActive(const PlayerContext&) const override {
+        return phase_ != Phase::Idle || (goal_.clearway.request.Raw() && goal_.clearway.request.Get());
+    }
+    ProcStatus OnTick(const PlayerContext& ctx) override {
+        if (phase_ == Phase::Idle && !Begin(ctx)) return ProcStatus::Working;
+        void* prop = prop_.Get();
+        if (!prop && phase_ != Phase::Turn && phase_ != Phase::Drop) {
+            Abort(ctx, "the prop is gone");
+            return ProcStatus::Working;
+        }
+        ++ticks_;
+        switch (phase_) {
+        case Phase::Approach: {
+            E::TryGetActorLocation(prop, approach_.targetPos);   // a prop knocked about moves; its last place stands
+            if (!walk_->IsActive(ctx)) {
+                walk_->OnLostControl();
+                phase_ = Phase::Settle;
+                ticks_ = 0;
+                return ProcStatus::Working;
+            }
+            if (ticks_ > kApproachTicks) {
+                Abort(ctx, "no way to the prop's reach");
+                return ProcStatus::Working;
+            }
+            return walk_->OnTick(ctx);
+        }
+        case Phase::Settle:
+            if (ticks_ >= kSettleTicks) {
+                if (ctx.HandFull()) { Abort(ctx, "the hand is full"); return ProcStatus::Working; }
+                grab_.emplace(ctx.player, prop);
+                phase_ = Phase::Grab;
+                ticks_ = 0;
+            }
+            return ProcStatus::Working;
+        case Phase::Grab: {
+            const GrabState st = grab_->Tick();
+            if (st == GrabState::Failed) {
+                Abort(ctx, grab_->Why());
+            } else if (st == GrabState::Grabbed) {
+                phase_ = Phase::Turn;
+                ticks_ = 0;
+            }
+            return ProcStatus::Working;
+        }
+        case Phase::Turn: {
+            // Away from the way on: the prop hangs in front of the camera, so the way on stays clear of it.
+            const ue_wrap::FVector& to = goal_.clearway.heading;
+            ue_wrap::FRotator away{};
+            away.Yaw = std::atan2(ctx.pos.Y - to.Y, ctx.pos.X - to.X) * kRadToDeg;
+            if (void* ctrl = E::GetController(ctx.player)) E::SetControlRotation(ctrl, away);
+            if (ticks_ >= kTurnTicks) { phase_ = Phase::Drop; ticks_ = 0; }
+            return ProcStatus::Working;
+        }
+        case Phase::Drop: {
+            const ClearState st = clear_.Tick(ctx);
+            if (st == ClearState::Failed) {   // the hand was not emptied: the run cannot walk on, as ClearHand's own
+                UE_LOGW("director/clearway: the hand was not emptied after the carry (%s)", clear_.Why());
+                End(ctx);
+                return ProcStatus::Failed;
+            }
+            if (st == ClearState::Cleared) {
+                ++goal_.clearway.carries;
+                UE_LOGI("director/clearway: carried %ls aside (%d/%d)", name_.c_str(), goal_.clearway.carries, kMaxCarries);
+                End(ctx);
+            }
+            return ProcStatus::Working;
+        }
+        case Phase::Idle: break;
+        }
+        return ProcStatus::Working;
+    }
+    void OnLostControl() override {
+        if (walk_) walk_->OnLostControl();
+    }
+
+private:
+    // Takes up the prop Goto offered. False when it died before this tick.
+    bool Begin(const PlayerContext& ctx) {
+        void* prop = goal_.clearway.request.Get();
+        goal_.clearway.request.Reset();
+        if (!prop) return false;
+        goal_.clearway.MarkTried(prop);
+        prop_.Set(prop);
+        name_ = NameOfProp(prop);
+        approach_ = DirectorGoal{};
+        approach_.targetActor = prop;
+        approach_.reachCm = kGrabReachCm;
+        E::TryGetActorLocation(prop, approach_.targetPos);
+        walk_ = MakeGotoProcess(approach_, /*onLevel*/ true);
+        clear_ = ClearHand{};
+        grab_.reset();
+        phase_ = Phase::Approach;
+        ticks_ = 0;
+        UE_LOGI("director/clearway: taking %ls aside, it stands on the route (%.0f cm away, %d of %d carried)",
+                name_.c_str(), std::hypot(approach_.targetPos.X - ctx.pos.X, approach_.targetPos.Y - ctx.pos.Y),
+                goal_.clearway.carries, kMaxCarries);
+        return true;
+    }
+
+    // The attempt ends without the prop aside: the detour's, at the next persistent stuck.
+    void Abort(const PlayerContext& ctx, const char* why) {
+        UE_LOGW("director/clearway: %ls stays where it is (%s) -- left to the detour", name_.c_str(), why);
+        End(ctx);
+    }
+
+    void End(const PlayerContext&) {
+        if (walk_) walk_->OnLostControl();
+        walk_.reset();
+        grab_.reset();
+        prop_.Reset();
+        phase_ = Phase::Idle;
+        ++goal_.clearway.attempts;
+    }
+
+    DirectorGoal& goal_;
+    Phase phase_ = Phase::Idle;
+    int ticks_ = 0;
+    ue_wrap::CachedObjRef prop_;
+    std::wstring name_;
+    DirectorGoal approach_;
+    std::unique_ptr<IProcess> walk_;
+    std::optional<AimedGrab> grab_;
+    ClearHand clear_;
+};
+
+// The dev row's reading, once: the red arm of the D0 walk.
+bool ClearwayOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::director_clearway_off);
+    return off;
+}
+
+}  // namespace
+
+bool ClearwayBoard::Tried(void* prop) {
+    tried_.erase(std::remove_if(tried_.begin(), tried_.end(), [](const ue_wrap::CachedObjRef& r) { return !r.Get(); }),
+                 tried_.end());
+    return std::any_of(tried_.begin(), tried_.end(), [prop](const ue_wrap::CachedObjRef& r) { return r.Get() == prop; });
+}
+
+void ClearwayBoard::MarkTried(void* prop) {
+    if (Tried(prop)) return;
+    tried_.emplace_back();
+    tried_.back().Set(prop);
+}
+
+bool ClearwayBoard::Offer(void* prop, const ue_wrap::FVector& headingTo) {
+    if (!armed || !prop || request.Get()) return false;
+    if (carries >= kMaxCarries) {
+        UE_LOGW("director/clearway: %d props carried already -- %ls is left to the detour", carries,
+                NameOfProp(prop).c_str());
+        return false;
+    }
+    if (Tried(prop)) {
+        UE_LOGW("director/clearway: %ls was taken up before -- left to the detour", NameOfProp(prop).c_str());
+        return false;
+    }
+    // The game's own flags for a hand holding a prop (Hold Object's tests): the hold would refuse the rest.
+    ue_wrap::prop_gather::HoldFacts hf{};
+    const char* why = nullptr;
+    if (!ue_wrap::prop_gather::ReadHoldFacts(prop, hf)) why = "its hold flags are unread";
+    else if (hf.child) why = "a child actor";
+    else if (!hf.canHold) why = "the game gives it no hold";
+    else if (hf.heavy || ue_wrap::prop::IsHeavy(prop)) why = "too heavy for a hand";
+    else if (hf.pickupRefused) why = "its pickup is refused";
+    if (why) {
+        MarkTried(prop);
+        UE_LOGW("director/clearway: %ls cannot be carried (%s) -- left to the detour", NameOfProp(prop).c_str(), why);
+        return false;
+    }
+    request.Set(prop);
+    heading = headingTo;
+    return true;
+}
+
+std::unique_ptr<IProcess> MakeClearwayProcess(DirectorGoal& goal) {
+    goal.clearway.armed = !ClearwayOff();
+    if (!goal.clearway.armed) UE_LOGI("director/clearway: off (director_clearway_off) -- a blocking prop is the detour's");
+    return std::make_unique<ClearwayProcess>(goal);
+}
+
+}  // namespace coop::director

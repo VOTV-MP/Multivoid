@@ -15,6 +15,8 @@
 
 #pragma once
 
+#include "coop/dev/director/clearway.h"
+
 #include "ue_wrap/core/types.h"
 
 #include <windows.h>   // DWORD/WINAPI/LPVOID for the worker-thread entry
@@ -75,6 +77,8 @@ struct DirectorGoal {
     // The route the Goto last walked, its start first, refilled on each path it takes: ground the
     // walker has crossed, for a scenario that needs a point it can surely stand on again.
     std::vector<ue_wrap::FVector> route;
+    // What Goto and the clearway process pass between them (clearway.h).
+    ClearwayBoard clearway;
 };
 
 enum class ProcStatus { Idle, Working, Done, Failed };
@@ -119,11 +123,19 @@ private:
 uint32_t WalkEpoch();
 void EndWalks();
 
+// A Goto process for `goal` (`onLevel`: arrived at on the goal's own level), for a process that walks a leg of its
+// own inside another's tick. In proc_walkgrab.cpp.
+std::unique_ptr<IProcess> MakeGotoProcess(DirectorGoal& goal, bool onLevel);
+
+// The clearway process for `goal` (clearway.h), prio 110: above ClearHand, which would drop the prop it carries. Arms
+// goal.clearway unless the dev row director_clearway_off is set. In proc_clearway.cpp.
+std::unique_ptr<IProcess> MakeClearwayProcess(DirectorGoal& goal);
+
 // Build the walked-grab process set for `goal` and add it to `mgr`
-// (ClearHand prio 100 > Goto prio 50 > Grab prio 40). In proc_walkgrab.cpp.
+// (Clearway prio 110 > ClearHand prio 100 > Goto prio 50 > Grab prio 40). In proc_walkgrab.cpp.
 void AddWalkGrabProcesses(ControlManager& mgr, DirectorGoal& goal);
 
-// Build the walk-TO process set (no grab): ClearHand prio 100 > Goto prio 50 > Reach prio 40.
+// Build the walk-TO process set (no grab): Clearway prio 110 > ClearHand prio 100 > Goto prio 50 > Reach prio 40.
 // Reach sets goal.reached (terminating the run) after a brief settle once within goal.reachCm.
 // Used by scenarios that walk to a target and then do their OWN interaction (the container
 // probe). In proc_walkgrab.cpp.

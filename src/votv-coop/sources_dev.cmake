@@ -320,6 +320,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/director/stage.cpp
     src/coop/dev/director/detour.cpp
     src/coop/dev/director/leg_blocker.cpp
+    src/coop/dev/director/proc_clearway.cpp
     src/coop/dev/director/proc_walkgrab.cpp
     src/coop/dev/director/director_run.cpp
     src/coop/dev/director/container_take_probe.cpp

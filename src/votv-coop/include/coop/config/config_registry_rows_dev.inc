@@ -796,3 +796,6 @@ CFG_FLAG(class_lifetime_probe, "class_lifetime_probe", "dev", false, "VOTVCOOP_C
 
 // The cremator probe's row: its own file, one concept, included as _dev_vulkan.inc is above.
 #include "coop/config/config_registry_rows_dev_cremator.inc"
+
+// The bot director's rows: their own file, one concept, included as _dev_cremator.inc is above.
+#include "coop/config/config_registry_rows_dev_director.inc"
