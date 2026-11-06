@@ -354,22 +354,39 @@ bool g_retryNest = false;                        // a nest was born: ask for the
 uint64_t g_keyVersionSeen = 0;
 bool g_anyWant = false;
 
+// A copy, or a loaded branch bound to one, that ended: IsLiveByIndex compares a slot's pointer and flags and no serial, so a
+// slot taken again at the same address would pass for it. No reference to it outlives its end.
+void ForgetEnded(void* obj, int32_t index) {
+    const auto sp = g_spawned.find(obj);
+    if (sp != g_spawned.end() && sp->second == index) g_spawned.erase(sp);
+    for (auto it = g_copies.begin(); it != g_copies.end();) {
+        if (it->second.actor.obj == obj && it->second.actor.index == index) it = g_copies.erase(it);
+        else ++it;
+    }
+    for (auto it = g_loaded.begin(); it != g_loaded.end();) {
+        if (it->second.obj == obj && it->second.index == index) it = g_loaded.erase(it);
+        else ++it;
+    }
+}
+
 void DrainClient() {
     for (const AB::Event& e : g_events) {
         if (e.cls == AB::Class::Nest) {
             if (e.kind == AB::Kind::Birth) g_retryNest = true;
             continue;
         }
-        if (e.cls != AB::Class::Branch || g_loadedRead) continue;  // a hole copy is spawned, never taken; W5 stamps the rolled ones
-        if (e.kind == AB::Kind::Birth) {
-            g_loadCandidates.push_back(Ref{e.obj, e.index});
+        if (e.cls != AB::Class::Hole && e.cls != AB::Class::Branch) continue;
+        if (e.kind == AB::Kind::Death) {
+            ForgetEnded(e.obj, e.index);
+            for (size_t i = 0; i < g_loadCandidates.size(); ++i) {
+                if (g_loadCandidates[i].obj != e.obj || g_loadCandidates[i].index != e.index) continue;
+                g_loadCandidates.erase(g_loadCandidates.begin() + static_cast<std::ptrdiff_t>(i));
+                break;
+            }
             continue;
         }
-        for (size_t i = 0; i < g_loadCandidates.size(); ++i) {
-            if (g_loadCandidates[i].obj != e.obj || g_loadCandidates[i].index != e.index) continue;
-            g_loadCandidates.erase(g_loadCandidates.begin() + static_cast<std::ptrdiff_t>(i));
-            break;
-        }
+        // The save's branches are met as births until the load edge reads them; a hole copy is spawned, never taken.
+        if (e.cls == AB::Class::Branch && !g_loadedRead) g_loadCandidates.push_back(Ref{e.obj, e.index});
     }
 }
 
