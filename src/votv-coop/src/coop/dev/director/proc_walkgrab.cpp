@@ -421,8 +421,8 @@ public:
                 const bool onLeg = LegBlocker(ctx, goal_.route, wp_ + 1, &legProp, &legSpot);
                 const bool ahead = BlockerAhead(ctx, waypoints_[wp_], &blocker);
                 if (onLeg) blocker = legSpot;
-                // A prop a hand can hold is carried aside, as a player picks a box out of a doorway (clearway.h);
-                // one the hold refuses, or the bound spent, is the detour's below.
+                // A prop on the leg is dragged aside with the physics grab, as a player moves a box out of a
+                // doorway (clearway.h); one the grab does not take, or the bound spent, is the detour's below.
                 if (onLeg && goal_.clearway.Offer(legProp, waypoints_[wp_])) {
                     UE_LOGW("director/Goto: persistent stuck (toPile=%.0f) at a prop on the route's leg -- carrying it "
                             "aside (episode %d)", toPile, stuckEpisodes_);

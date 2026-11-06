@@ -1,25 +1,25 @@
-// coop/dev/director/proc_clearway.cpp -- the clearway process (clearway.h): a physics prop on the walker's route that
-// a hand can hold is carried aside, as a player picks a box out of a doorway.
+// coop/dev/director/proc_clearway.cpp -- the clearway process (clearway.h): a physics prop on the walker's route is
+// dragged aside with the player's physics grab, as a player moves a box out of a doorway.
 //
 //   Approach: a Goto leg of its own to the prop, to the grab's reach.
 //   Settle, then Grab: the director's aimed grab (aimed_grab.h), the use key's chain on a prop the player's own trace
-//     takes. The game's hold decides: a prop it refuses never reaches the hand and stays the detour's.
+//     takes. The game's grab decides: a prop it does not take (Failed) stays the detour's, counted, said once.
 //   Turn: the camera turns away from the waypoint the walk was heading for, the held prop swinging after it.
-//   Drop: ClearHand's drop (the key a human presses, measured, the effect seam only if the key is inert).
+//   Drag: a straight Goto leg of its own, kDragCm that way, so the prop leaves the doorway with the walker.
+//   Release: dropGrabObject, the game's own let-go of grabbing_actor (the container and camera drills let go with it
+//     alone), verified on the player's grabbing actor.
 //
-// Priority 110, above ClearHand (100), which drops whatever the hand holds the tick it holds it. Active only while a
-// carry is in hand, so nothing runs per tick otherwise. All OnTick runs on the game thread.
+// Priority 110, above ClearHand (100), which drops what the hand holds. Active only while a carry is in hand, so
+// nothing runs per tick otherwise. All OnTick runs on the game thread.
 
 #include "coop/dev/director/aimed_grab.h"
-#include "coop/dev/director/clear_hand.h"
+#include "coop/dev/director/clearway.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/director/leg_blocker.h"
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 
-#include "ue_wrap/actors/prop_flags.h"
-#include "ue_wrap/actors/prop_gather.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
@@ -38,12 +38,16 @@ namespace E = ue_wrap::engine;
 constexpr float kGrabReachCm   = 140.f;   // the walk to the prop ends this near it: the grab race's reach for a held aim
 constexpr int   kApproachTicks = 1500;    // a leg of its own to a prop at hand that takes longer is no leg: the detour's
 constexpr int   kSettleTicks   = 12;      // braking before the aim, as the grab process settles
-constexpr int   kTurnTicks     = 90;      // the held prop swings after the camera before it is set down (~1 s)
+constexpr int   kTurnTicks     = 90;      // the held prop swings after the camera before the walk on (~1 s)
+constexpr float kDragCm        = 200.f;   // the drag's leg: far enough that the prop leaves the doorway with the walker
+constexpr float kDragReachCm   = 30.f;
+constexpr int   kDragTicks     = 400;     // a drag that has not arrived by then is released where it stands
+constexpr int   kReleaseTicks  = 30;      // dropGrabObject has run; the grab must read empty within this
 constexpr float kRadToDeg      = 180.f / 3.14159265358979323846f;
 
 std::wstring NameOfProp(void* prop) { return R::ToString(R::NameOf(prop)); }
 
-enum class Phase { Idle, Approach, Settle, Grab, Turn, Drop };
+enum class Phase { Idle, Approach, Settle, Grab, Turn, Drag, Release };
 
 class ClearwayProcess : public IProcess {
 public:
@@ -56,7 +60,7 @@ public:
     ProcStatus OnTick(const PlayerContext& ctx) override {
         if (phase_ == Phase::Idle && !Begin(ctx)) return ProcStatus::Working;
         void* prop = prop_.Get();
-        if (!prop && phase_ != Phase::Turn && phase_ != Phase::Drop) {
+        if (!prop && phase_ <= Phase::Grab) {
             Abort(ctx, "the prop is gone");
             return ProcStatus::Working;
         }
@@ -96,27 +100,47 @@ public:
         }
         case Phase::Turn: {
             // Away from the way on: the prop hangs in front of the camera, so the way on stays clear of it.
-            const ue_wrap::FVector& to = goal_.clearway.heading;
-            ue_wrap::FRotator away{};
-            away.Yaw = std::atan2(ctx.pos.Y - to.Y, ctx.pos.X - to.X) * kRadToDeg;
+            const ue_wrap::FRotator away = AwayFromHeading(ctx);
             if (void* ctrl = E::GetController(ctx.player)) E::SetControlRotation(ctrl, away);
-            if (ticks_ >= kTurnTicks) { phase_ = Phase::Drop; ticks_ = 0; }
+            if (ticks_ >= kTurnTicks) {
+                const float rad = away.Yaw / kRadToDeg;
+                drag_ = DirectorGoal{};
+                drag_.straight = true;
+                drag_.reachCm = kDragReachCm;
+                drag_.targetPos = {ctx.pos.X + kDragCm * std::cos(rad), ctx.pos.Y + kDragCm * std::sin(rad), ctx.pos.Z};
+                walk_ = MakeGotoProcess(drag_, /*onLevel*/ true);
+                phase_ = Phase::Drag;
+                ticks_ = 0;
+            }
             return ProcStatus::Working;
         }
-        case Phase::Drop: {
-            const ClearState st = clear_.Tick(ctx);
-            if (st == ClearState::Failed) {   // the hand was not emptied: the run cannot walk on, as ClearHand's own
-                UE_LOGW("director/clearway: the hand was not emptied after the carry (%s)", clear_.Why());
+        case Phase::Drag:
+            if (!walk_->IsActive(ctx) || ticks_ > kDragTicks) {
+                if (ticks_ > kDragTicks)
+                    UE_LOGW("director/clearway: %ls drag ended short of its leg, released where it stands", name_.c_str());
+                walk_->OnLostControl();
+                walk_.reset();
+                phase_ = Phase::Release;
+                ticks_ = 0;
+                return ProcStatus::Working;
+            }
+            return walk_->OnTick(ctx);
+        case Phase::Release:
+            if (ticks_ == 1 && !CallOnPlayer(ctx.player, L"dropGrabObject")) {
+                UE_LOGW("director/clearway: dropGrabObject did not run -- the grab cannot be released");
                 End(ctx);
                 return ProcStatus::Failed;
             }
-            if (st == ClearState::Cleared) {
+            if (!Grabbing(ctx.player)) {
                 ++goal_.clearway.carries;
-                UE_LOGI("director/clearway: carried %ls aside (%d/%d)", name_.c_str(), goal_.clearway.carries, kMaxCarries);
+                UE_LOGI("director/clearway: dragged %ls aside (%d/%d)", name_.c_str(), goal_.clearway.carries, kMaxCarries);
                 End(ctx);
+            } else if (ticks_ > kReleaseTicks) {   // the grab stayed: the run cannot walk on, as ClearHand's own failure
+                UE_LOGW("director/clearway: the grab was not released after dropGrabObject");
+                End(ctx);
+                return ProcStatus::Failed;
             }
             return ProcStatus::Working;
-        }
         case Phase::Idle: break;
         }
         return ProcStatus::Working;
@@ -139,7 +163,6 @@ private:
         approach_.reachCm = kGrabReachCm;
         E::TryGetActorLocation(prop, approach_.targetPos);
         walk_ = MakeGotoProcess(approach_, /*onLevel*/ true);
-        clear_ = ClearHand{};
         grab_.reset();
         phase_ = Phase::Approach;
         ticks_ = 0;
@@ -149,9 +172,20 @@ private:
         return true;
     }
 
-    // The attempt ends without the prop aside: the detour's, at the next persistent stuck.
+    // The camera yaw that looks from the waypoint the walk was heading for back through the walker.
+    ue_wrap::FRotator AwayFromHeading(const PlayerContext& ctx) const {
+        const ue_wrap::FVector& to = goal_.clearway.heading;
+        ue_wrap::FRotator away{};
+        away.Yaw = std::atan2(ctx.pos.Y - to.Y, ctx.pos.X - to.X) * kRadToDeg;
+        return away;
+    }
+
+    // The attempt ends without the prop aside: the detour's, at the next persistent stuck. Said once per prop (each
+    // prop is taken up once) and counted.
     void Abort(const PlayerContext& ctx, const char* why) {
-        UE_LOGW("director/clearway: %ls stays where it is (%s) -- left to the detour", name_.c_str(), why);
+        ++goal_.clearway.detoured;
+        UE_LOGW("director/clearway: %ls stays where it is (%s) -- left to the detour (%d so far)", name_.c_str(), why,
+                goal_.clearway.detoured);
         End(ctx);
     }
 
@@ -170,9 +204,9 @@ private:
     ue_wrap::CachedObjRef prop_;
     std::wstring name_;
     DirectorGoal approach_;
+    DirectorGoal drag_;
     std::unique_ptr<IProcess> walk_;
     std::optional<AimedGrab> grab_;
-    ClearHand clear_;
 };
 
 // The dev row's reading, once: the red arm of the D0 walk.
@@ -206,17 +240,16 @@ bool ClearwayBoard::Offer(void* prop, const ue_wrap::FVector& headingTo) {
         UE_LOGW("director/clearway: %ls was taken up before -- left to the detour", NameOfProp(prop).c_str());
         return false;
     }
-    // The game's own flags for a hand holding a prop (Hold Object's tests): the hold would refuse the rest.
-    ue_wrap::prop_gather::HoldFacts hf{};
-    const char* why = nullptr;
-    if (!ue_wrap::prop_gather::ReadHoldFacts(prop, hf)) why = "its hold flags are unread";
-    else if (hf.child) why = "a child actor";
-    else if (!hf.canHold) why = "the game gives it no hold";
-    else if (hf.heavy || ue_wrap::prop::IsHeavy(prop)) why = "too heavy for a hand";
-    else if (hf.pickupRefused) why = "its pickup is refused";
-    if (why) {
+    // The player's physics grab takes what a hand cannot hold (furniture, heavy props), so the in-hand hold flags are
+    // not asked: AimedGrab's verify decides. Refused here is what the game's grab cannot move either, a child actor
+    // (it rides its parent); a frozen or static prop never reaches Offer (IsPhysicsProp, leg_blocker.cpp:22).
+    bool childRead = false;
+    const bool child = E::IsChildActor(prop, childRead);
+    if (!childRead || child) {
         MarkTried(prop);
-        UE_LOGW("director/clearway: %ls cannot be carried (%s) -- left to the detour", NameOfProp(prop).c_str(), why);
+        ++detoured;
+        UE_LOGW("director/clearway: %ls cannot be dragged (%s) -- left to the detour (%d so far)", NameOfProp(prop).c_str(),
+                childRead ? "a child actor" : "its child flag is unread", detoured);
         return false;
     }
     request.Set(prop);
