@@ -118,8 +118,9 @@ bool ApplyHostOrder(const ApplyArgs& args) {
         return false;
     }
     if (coop::config::ResolveFlag(coop::config_registry::rows::cremate_transit_die)) {
-        UE_LOGW("teleport_client: DRILL -- this player dies as the order applies (dev.cremate_transit_die)");
+        UE_LOGW("teleport_client: DRILL -- cremate_transit_die: died on the order, the move not applied");
         ue_wrap::vitals::Write(ue_wrap::vitals::Field::Health, 0.f);
+        return false;
     }
     return ApplyLocally(args);
 }

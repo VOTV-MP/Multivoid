@@ -581,8 +581,8 @@ bool EndsInKick(const std::string& arm) { return arm == "cremate" || arm == "cre
 void RunHostCremate(const std::string& arm) {
     const bool kick = EndsInKick(arm);
     const char* want = kick ? kCremated : arm == "cremate-survive" ? kSurvived : arm == "cremate-transit" ? kDied : kNoLand;
-    // The landing the arm wants: 1 judged landed, 0 judged not, -1 only reported (a player who dies as the order
-    // applies still walks into the volume).
+    // The landing the arm wants: 1 judged landed, 0 judged not, -1 only reported (a player who dies on the order's
+    // receipt does not move, but its landing is not judged here).
     const int wantLanded = kick || arm == "cremate-survive" ? 1 : arm == "cremate-dropped" ? 0 : -1;
     if (!Await("client_ready", kJoinSec) || !ClientSettled()) return;
     C::FireboxMove move;

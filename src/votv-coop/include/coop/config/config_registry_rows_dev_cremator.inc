@@ -42,7 +42,7 @@ CFG_ENUM(cremator_drill, "cremator_drill", "dev", "off",
     "the machine, the host's reply says it was cremated and the client's end reason is MV-H35 (red arm: the host's "
     "cremate_landing_off). cremate-running -- the same with the host's cremator already running. cremate-survive -- "
     "the host pulls the lever back once the run is on: the client survives, no kick. cremate-transit -- the client's "
-    "cremate_transit_die: it dies as the order applies, so the verb ends 'died before landing', no kick. "
+    "cremate_transit_die: it dies on the order's receipt and never moves, so the verb ends 'died before landing', no kick. "
     "cremate-dropped -- the client's cremate_drop_order: the order never applies, so 'did not land', no kick. "
     "cremate-exempt, cremate-self and cremate-host (the first with the rig's --observer): client 1 holds "
     "multivoid.cremate, granted by the host's own /mv and revoked at the end, and sends '/cremate' for the "
@@ -53,8 +53,8 @@ CFG_FLAG(cremate_landing_off, "cremate_landing_off", "dev", false, "VOTVCOOP_CRE
     "Developer red arm of the /cremate drill: never set. The verb does not watch the cremator's burn volume, so a "
     "player it sent is never seen to land: the trip ends 'did not land' and nobody is kicked.")
 CFG_FLAG(cremate_transit_die, "cremate_transit_die", "dev", false, "VOTVCOOP_CREMATE_TRANSIT_DIE",
-    "Developer knob of the /cremate drill: never set. This client's health is set to 0 just before it applies the "
-    "host's teleport order, so the host reads its death before it lands.")
+    "Developer knob of the /cremate drill: never set. This client's health is set to 0 on the receipt of the "
+    "host's teleport order and the move is not applied, so the host reads its death before it lands.")
 CFG_FLAG(cremate_drop_order, "cremate_drop_order", "dev", false, "VOTVCOOP_CREMATE_DROP_ORDER",
     "Developer knob of the /cremate drill: never set. This client does not apply the host's teleport order, so it "
     "never arrives and the verb gives the trip up after its bound of poses.")
