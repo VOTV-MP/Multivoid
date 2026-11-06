@@ -432,17 +432,19 @@ CFG_ENUM(rig_verdict_selftest, "rig_verdict_selftest", "dev", "off", "off|pass|f
     "PASS|FAIL|INVALID' (the value), once per connection life (said again after the host's last client left), so "
     "the rig's end-on-verdict watch can be shown all three endings with no drill: pass ends the run after the done "
     "grace, fail at once as a failure, invalid at once as inconclusive.")
-CFG_ENUM(kerfur_serve_disc, "kerfur_serve_disc", "dev", "off", "off|on|swap|wh", "VOTVCOOP_KERFUR_SERVE_DISC",
+CFG_ENUM(kerfur_serve_disc, "kerfur_serve_disc", "dev", "off", "off|on|swap|wh|busy", "VOTVCOOP_KERFUR_SERVE_DISC",
     "Measurement (BOTH peers, with kerfur_serve_drill=1): replaces the drill's legs A to C. The client walks to the "
     "host, takes a red disc in hand, aims at the host's Omega and presses get_reports through the player's own "
     "radial dispatch (useSelectedAction), which the seat sends to the host. It then says what its hand holds and "
     "how often the host's answer destroyed its disc, and the host says whether the Omega took a disc, whether the "
-    "client's disc still stands on its side, and what the host sent the client in the press (a published copy "
-    "of the disc would show as a PropSpawn or PropDestroy). It reports, it never fails on what it finds; "
-    "'[KERFUR-SERVE] leg D:' is the result line. swap: the client takes a second disc into its hand right after "
-    "the press, so the host's answer finds another disc (a consume-miss). wh: the client holds a Wh disc, which "
-    "the game refuses with its own hint and the client keeps. It ends on 'rig: VERDICT kerfur-serve-disc "
-    "PASS|FAIL|INVALID' (FAIL is a seat that did not take the press, INVALID a step that could not run).")
+    "client's disc still stands on its side, and how many PropSpawn and PropDestroy messages the host's session "
+    "accepted while the carried copy lived (a published copy would show there). It JUDGES: on expects the disc "
+    "consumed once, no consume-miss, the Omega holding it and nothing published; swap takes a second disc into the "
+    "client's hand right after the press (one consume-miss, no consume); wh holds the Wh disc the game refuses "
+    "itself (the disc kept, the game's hint shown, no copy built); busy presses a second time with another disc in "
+    "hand once the first was consumed (refused, the second disc kept, no new copy). '[KERFUR-SERVE] leg D:' is the "
+    "result line and it ends on 'rig: VERDICT kerfur-serve-disc PASS|FAIL|INVALID' (FAIL names the failing field, "
+    "INVALID is a step that could not run).")
 CFG_FLAG(door_drill, "door_drill", "dev", false, "VOTVCOOP_DOOR_DRILL",
     "Drill (BOTH peers): the client walks with the bot director to the nearest door its navmesh "
     "reaches and uses it as a player does -- three presses, each followed by a stay in its sensor until "

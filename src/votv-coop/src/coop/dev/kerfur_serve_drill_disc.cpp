@@ -5,6 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/creatures/kerfur_command_answer.h"
+#include "coop/creatures/kerfur_disc_carry.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/drill_chat.h"
 #include "coop/dev/kerfur_serve_drill_internal.h"
@@ -37,6 +38,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <cstdlib>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -80,11 +82,11 @@ constexpr const wchar_t* kDiscWh   = L"prop_floppyDisc_Wh_C";  // the one disc t
 
 // The knob's values: on is the base measurement; swap takes a second disc into the hand right after the press (the
 // host's answer then finds another disc); wh holds the refused class.
-enum class Variant { Base, Swap, Wh };
+enum class Variant { Base, Swap, Wh, Busy };
 Variant V() {
     static const Variant v = [] {
         const std::string s = coop::config::ResolveEnum(::coop::config_registry::rows::kerfur_serve_disc);
-        return s == "swap" ? Variant::Swap : (s == "wh" ? Variant::Wh : Variant::Base);
+        return s == "swap" ? Variant::Swap : (s == "wh" ? Variant::Wh : (s == "busy" ? Variant::Busy : Variant::Base));
     }();
     return v;
 }
@@ -94,6 +96,7 @@ const wchar_t* DiscClass() { return V() == Variant::Wh ? kDiscWh : detail::kDisc
 const std::string kBeforeLine = "kerfur-serve client disc: ";        // class|key|item|floppies
 const std::string kSnapLine   = "kerfur-serve host snapshot taken";
 const std::string kAfterLine  = "kerfur-serve client disc after: ";  // gone|held|discs|localbody|state
+const std::string kSecondLine = "kerfur-serve client second press: ";  // held|refusals shown|consumed
 
 constexpr const wchar_t* kDiscClasses[] = {L"prop_floppyDisc_R_C",  L"prop_floppyDisc_G_C", L"prop_floppyDisc_Y_C",
                                            L"prop_floppyDisc_Bl_C", L"prop_floppyDisc_Wh_C", L"prop_floppyDisc_B_C",
@@ -150,7 +153,7 @@ Discs CountDiscs() {
 
 // ---- host ----
 
-enum class HostStep { WaitJoin, WaitOmega, WaitBefore, WaitAfter, Done };
+enum class HostStep { WaitJoin, WaitOmega, WaitBefore, WaitAfter, WaitSecond, Done };
 HostStep g_host = HostStep::WaitJoin;
 int g_joined = -1;
 void* g_omega = nullptr;
@@ -170,7 +173,8 @@ struct Side {
 Side g_before;
 bool g_verbRan = false, g_verbHas = false, g_verbHasRead = false;
 uint8_t g_verbState = 0xFF;
-std::string g_afterRest;
+std::string g_afterRest, g_secondRest;
+uint32_t g_carries0 = 0, g_pub0 = 0;   // the carry's counts at the snapshot: the press is judged against them
 bool g_afterSeen = false;
 uint64_t g_afterMs = 0;
 
@@ -238,7 +242,71 @@ void Snapshot(const std::string& rest) {
     g_clientKey = f.size() > 1 ? f[1] : "";
     g_clientDiscs = f.size() > 3 ? f[3] : "?";
     g_before = ReadSide();
+    g_carries0 = coop::kerfur_disc_carry::Carries();
+    g_pub0 = coop::kerfur_disc_carry::PublishedInCarries();
     LogSide("before the press", g_before);
+}
+
+// A field of a client line as a number, -1 when absent.
+long long Num(const std::vector<std::string>& f, size_t i) {
+    return f.size() > i && !f[i].empty() ? std::atoll(f[i].c_str()) : -1;
+}
+
+// The terms of a variant's expected result, collected: each failing one is named with its value.
+struct Terms {
+    std::string bad;
+    void Need(bool ok, const std::string& what) {
+        if (!ok) bad += (bad.empty() ? "" : "; ") + what;
+    }
+};
+
+// What the first press must have done, per variant: empty when every term holds, else the failing terms. consumed and
+// consume-miss are the client's own counts of what the host's answer did to its disc, published the host's PropSpawn +
+// PropDestroy count over the carry's span, carries the spans that built a copy since the snapshot.
+std::string JudgeFirst(const std::vector<std::string>& f, const Side& after, long long carries, long long published) {
+    Terms t;
+    const long long consumed = Num(f, 4), misses = Num(f, 5), feedback = Num(f, 6);
+    const std::string gone = f.size() > 0 ? f[0] : "?";
+    const bool holds = after.hasRead && after.has;
+    const auto n = [](long long v) { return std::to_string(v); };
+    switch (V()) {
+    case Variant::Wh:
+        t.Need(gone == "held", "client disc after=" + gone + " (want held)");
+        t.Need(consumed == 0, "consumed=" + n(consumed) + " (want 0)");
+        t.Need(feedback >= 1, "the game's hint was not shown on the client");
+        t.Need(carries == 0, "carries=" + n(carries) + " (want 0)");
+        t.Need(after.hasRead && !after.has, "host Omega hasFloppy after is not 0");
+        break;
+    case Variant::Swap:
+        t.Need(consumed == 0, "consumed=" + n(consumed) + " (want 0)");
+        t.Need(misses == 1, "consume-miss=" + n(misses) + " (want 1)");
+        t.Need(carries == 1, "carries=" + n(carries) + " (want 1)");
+        t.Need(holds, "host Omega hasFloppy after is not 1");
+        t.Need(published == 0, "host-published=" + n(published) + " (want 0)");
+        break;
+    default:   // on, busy
+        t.Need(gone == "gone", "client disc after=" + gone + " (want gone)");
+        t.Need(consumed == 1, "consumed=" + n(consumed) + " (want 1)");
+        t.Need(misses == 0, "consume-miss=" + n(misses) + " (want 0)");
+        t.Need(carries == 1, "carries=" + n(carries) + " (want 1)");
+        t.Need(holds, "host Omega hasFloppy after is not 1");
+        t.Need(published == 0, "host-published=" + n(published) + " (want 0)");
+        break;
+    }
+    return t.bad;
+}
+
+// The busy variant's second press: refused while the Omega is on its job, the second disc kept, no new copy.
+std::string JudgeSecond(const std::vector<std::string>& f, const Side& after, long long carries, long long published) {
+    Terms t;
+    const std::string held = f.size() > 0 ? f[0] : "?";
+    t.Need(held == "held", "second disc after=" + held + " (want held)");
+    t.Need(Num(f, 1) >= 1, "no refusal was shown for the second press");
+    t.Need(Num(f, 2) == 0, "the second press consumed a disc");
+    t.Need(carries == 1, "carries=" + std::to_string(carries) + " after the second press (want 1)");
+    t.Need(published == 0, "host-published=" + std::to_string(published) + " (want 0)");
+    t.Need(after.hasRead && after.has, "host Omega hasFloppy after the second press is not 1");
+    return t.bad;
 }
 
 void HostFinish() {
@@ -251,11 +319,11 @@ void HostFinish() {
             !g_verbHasRead ? "unread" : (g_verbHas ? "1" : "0"), static_cast<unsigned>(g_verbState),
             f.size() > 2 ? f[2].c_str() : "?", f.size() > 3 ? f[3].c_str() : "?");
     const std::string insert = !g_verbRan ? "none (the verb never ran here)" : (g_verbHas ? "1" : "0");
+    const long long carries = coop::kerfur_disc_carry::Carries() - g_carries0;
+    const long long published = coop::kerfur_disc_carry::PublishedInCarries() - g_pub0;
     const auto field = [&](size_t i) { return f.size() > i ? f[i].c_str() : "?"; };
-    // The client counted what its own machine did with the host's answer, and what the host sent it in the press: a
-    // published copy of the disc would arrive there as a PropSpawn and a PropDestroy.
-    const std::string carried = std::string("consumed=") + field(4) + " consume-miss=" + field(5) +
-                                " host-sent PropSpawn=" + field(6) + " PropDestroy=" + field(7);
+    const std::string carried = std::string("consumed=") + field(4) + " consume-miss=" + field(5) + " hint=" + field(6) +
+                                " carries=" + std::to_string(carries) + " host-published=" + std::to_string(published);
     UE_LOGI("[KERFUR-SERVE] leg D: client disc before=%s after=%s host insert=%s host still holds the client's disc "
             "key=%d; host Omega hasFloppy after=%s; %s", g_clientCls.c_str(), clientAfter.c_str(), insert.c_str(),
             after.keyHeld ? 1 : 0, !after.hasRead ? "unread" : (after.has ? "1" : "0"), carried.c_str());
@@ -264,8 +332,8 @@ void HostFinish() {
             "%s", g_before.keyHeld ? 1 : 0, after.keyHeld ? 1 : 0, g_before.laneHolds ? 1 : 0, after.laneHolds ? 1 : 0,
             g_before.laneItem.c_str(), after.laneItem.c_str(), g_before.discs, after.discs, g_clientDiscs.c_str(),
             f.size() > 1 ? f[1].c_str() : "?");
-    g_host = HostStep::Done;
     if (!g_verbRan) {
+        g_host = HostStep::Done;
         // The client's own copy running the verb means the seat let the press through: a failure of the seat. Else the
         // press never reached my Omega, and the question was not asked of the host.
         if (f.size() > 2 && f[2] == "1")
@@ -275,9 +343,39 @@ void HostFinish() {
             coop::rig_verdict::Say(kVerdictTag, Outcome::Invalid, "host: the client's press never reached my Omega");
         return;
     }
+    const std::string bad = JudgeFirst(f, after, carries, published);
+    if (!bad.empty()) {
+        g_host = HostStep::Done;
+        coop::rig_verdict::Say(kVerdictTag, Outcome::Fail, "leg D: %s [%s]", bad.c_str(), carried.c_str());
+        return;
+    }
+    if (V() == Variant::Busy) {   // the second press is judged when the client's line for it comes
+        g_hostStepMs = ::GetTickCount64();
+        g_host = HostStep::WaitSecond;
+        return;
+    }
+    g_host = HostStep::Done;
+    coop::rig_verdict::Say(kVerdictTag, Outcome::Pass, "leg D: client disc %s, host insert=%s, key kept=%d, %s",
+                           clientAfter.c_str(), insert.c_str(), after.keyHeld ? 1 : 0, carried.c_str());
+}
+
+void HostFinishSecond() {
+    g_host = HostStep::Done;
+    const Side after = ReadSide();
+    const auto f = Fields(g_secondRest);
+    const long long carries = coop::kerfur_disc_carry::Carries() - g_carries0;
+    const long long published = coop::kerfur_disc_carry::PublishedInCarries() - g_pub0;
+    UE_LOGI("[KERFUR-SERVE] leg D second press: second disc after=%s refusals shown=%s consumed=%s -- host carries=%lld "
+            "host-published=%lld Omega hasFloppy=%s", f.size() > 0 ? f[0].c_str() : "?",
+            f.size() > 1 ? f[1].c_str() : "?", f.size() > 2 ? f[2].c_str() : "?", carries, published,
+            !after.hasRead ? "unread" : (after.has ? "1" : "0"));
+    const std::string bad = JudgeSecond(f, after, carries, published);
+    if (!bad.empty()) {
+        coop::rig_verdict::Say(kVerdictTag, Outcome::Fail, "leg D second press: %s", bad.c_str());
+        return;
+    }
     coop::rig_verdict::Say(kVerdictTag, Outcome::Pass,
-                           "leg D measured: client disc %s, host insert=%s, key kept=%d, %s", clientAfter.c_str(),
-                           insert.c_str(), after.keyHeld ? 1 : 0, carried.c_str());
+                           "leg D: the carried disc was consumed once and the second press was refused, its disc kept");
 }
 
 void TickHost(coop::net::Session* s, uint64_t ms) {
@@ -320,6 +418,15 @@ void TickHost(coop::net::Session* s, uint64_t ms) {
             g_host = HostStep::WaitAfter;
         } else if (ms - g_hostStepMs >= kBeforeWindowMs) {
             detail::HostInvalid("the client's disc line never came", kVerdictTag);
+            g_host = HostStep::Done;
+        }
+        return;
+    }
+    if (g_host == HostStep::WaitSecond) {
+        if (DC::SeenRestOf(kSecondLine, &g_secondRest)) {
+            HostFinishSecond();
+        } else if (ms - g_hostStepMs >= kBeforeWindowMs) {
+            detail::HostInvalid("the client's second press line never came", kVerdictTag);
             g_host = HostStep::Done;
         }
         return;
@@ -422,18 +529,74 @@ struct Before {
     int32_t heldIdx = -1;
 };
 
-// What the host sent this client, and what its own machine did with the host's answers, counted before the press
-// and read after it. A copy of the disc the host published would arrive as a PropSpawn and a PropDestroy.
+// What this client's own machine did with the host's answers, counted before a press and read after it: the hints the
+// host routed back, the discs its answers destroyed, the consume-misses, the refusals shown.
 struct Counted {
-    uint32_t spawns = 0, destroys = 0, feedback = 0;
-    uint64_t consumed = 0, misses = 0;
+    uint32_t feedback = 0;
+    uint64_t consumed = 0, misses = 0, refusals = 0;
 };
 Counted CountNow() {
-    namespace EF = coop::event_feed;
-    using Kind = coop::net::ReliableKind;
-    return Counted{EF::DrainedFrom(0, Kind::PropSpawn), EF::DrainedFrom(0, Kind::PropDestroy),
-                   EF::DrainedFrom(0, Kind::RequesterFeedback), coop::kerfur_command_answer::ConsumedHere(),
-                   coop::kerfur_command_answer::ConsumeMisses()};
+    return Counted{coop::event_feed::DrainedFrom(0, coop::net::ReliableKind::RequesterFeedback),
+                   coop::kerfur_command_answer::ConsumedHere(), coop::kerfur_command_answer::ConsumeMisses(),
+                   coop::kerfur_command_answer::RefusalsShown()};
+}
+
+// The busy variant: right after the consumed press the Omega is on its job, so a second press with another disc in hand
+// is refused by the host before anything is built. The second disc must be kept, a refusal shown, nothing consumed.
+void SecondPress(void* mirror, int32_t mirrorIdx) {
+    void* second = nullptr;
+    int32_t secondIdx = -1;
+    if (!Run([&] {
+            void* me = coop::players::Registry::Get().Local();
+            void* cls = R::FindClass(DiscClass());
+            ue_wrap::FVector at{};
+            if (!me || !cls || !E::TryGetActorLocation(me, at)) return false;
+            void* disc = E::SpawnActor(cls, ue_wrap::FVector{at.X + kDiscAsideCm, at.Y, at.Z});
+            bool collected = false;
+            if (!(disc && E::CallMainPlayerHoldObject(me, disc, collected) && collected)) return false;
+            second = detail::HoldingActor(me);
+            secondIdx = second ? R::InternalIndexOf(second) : -1;
+            return second != nullptr;
+        })) {
+        Invalid("the client's second disc did not come into the hand");
+        return;
+    }
+    if (!WaitGame([] { return coop::hand_item::OwnAnnounced(DiscClass()); }, kHandWindowMs)) {
+        Invalid("the client's hand never announced the second disc");
+        return;
+    }
+    bool aimed = false, pressed = false;
+    Counted c2;
+    Run([&] {
+        void* me = coop::players::Registry::Get().Local();
+        aimed = AimedAt(mirror) && R::IsLiveByIndex(mirror, mirrorIdx);
+        if (!aimed) return true;
+        c2 = CountNow();
+        pressed = E::CallMainPlayerSetActionIndex(me, kGetReportsIdx) && E::CallMainPlayerUseSelectedAction(me);
+        return true;
+    });
+    if (!aimed || !pressed) {
+        Invalid(!aimed ? "the aim was lost before the second press" : "the second press did not dispatch");
+        return;
+    }
+    const bool answered = WaitGame([&] {
+        const Counted now = CountNow();
+        return g_localBodyRan.load(std::memory_order_acquire) ||
+               now.consumed + now.misses + now.refusals > c2.consumed + c2.misses + c2.refusals;
+    }, kAnswerWindowMs);
+    if (!answered && Alive())
+        UE_LOGW("[KERFUR-SERVE] client: the host's answer to the second press did not come in %llu s",
+                static_cast<unsigned long long>(kAnswerWindowMs / 1000));
+    Run([&] {
+        const Counted c3 = CountNow();
+        const bool kept = R::IsLiveByIndex(second, secondIdx);
+        const uint64_t refusals = c3.refusals - c2.refusals, consumed = c3.consumed - c2.consumed;
+        UE_LOGI("[KERFUR-SERVE] client: second press -- my second disc is %s, refusals shown=%llu, discs consumed=%llu",
+                kept ? "still here" : "GONE", static_cast<unsigned long long>(refusals),
+                static_cast<unsigned long long>(consumed));
+        DC::Say(kSecondLine + (kept ? "held" : "gone") + "|" + std::to_string(refusals) + "|" + std::to_string(consumed));
+        return true;
+    });
 }
 
 DWORD WINAPI ClientThread(LPVOID) {
@@ -572,13 +735,13 @@ DWORD WINAPI ClientThread(LPVOID) {
         return 0;
     }
     // The host's answer, on a signal the client's own machine raises: the answer acted on (a disc destroyed, or a
-    // consume-miss), or for a disc the game refuses the hint the host routed back. A press the client's own copy ran
-    // sends nothing, so that ends the wait as well.
+    // consume-miss), a refusal shown, or for a disc the game refuses the hint the host routed back. A press the
+    // client's own copy ran sends nothing, so that ends the wait as well.
     const bool answered = WaitGame([&] {
         const Counted now = CountNow();
         return g_localBodyRan.load(std::memory_order_acquire) ||
                (V() == Variant::Wh ? now.feedback > c0.feedback
-                                   : now.consumed + now.misses > c0.consumed + c0.misses);
+                                   : now.consumed + now.misses + now.refusals > c0.consumed + c0.misses + c0.refusals);
     }, kAnswerWindowMs);
     if (!answered && Alive())
         UE_LOGW("[KERFUR-SERVE] client: the host's answer to the press did not come in %llu s",
@@ -594,13 +757,12 @@ DWORD WINAPI ClientThread(LPVOID) {
     });
     const bool bodyRan = g_localBodyRan.load(std::memory_order_acquire);
     const uint64_t consumed = c1.consumed - c0.consumed, misses = c1.misses - c0.misses;
-    const uint32_t spawns = c1.spawns - c0.spawns, destroys = c1.destroys - c0.destroys;
+    const uint32_t hint = c1.feedback - c0.feedback;
     UE_LOGI("[KERFUR-SERVE] client: pressed get_reports (setActionIndex %d, useSelectedAction) -- the client's own "
             "copy ran the verb=%d, the disc is %s, the Omega mirror in state %u",
             kGetReportsIdx, bodyRan ? 1 : 0, gone ? "GONE" : "still here", static_cast<unsigned>(stateAfter));
-    UE_LOGI("[KERFUR-SERVE] client: the host's answer destroyed my disc %llu time(s), consume-miss=%llu; the host "
-            "sent me PropSpawn=%u PropDestroy=%u in the press", static_cast<unsigned long long>(consumed),
-            static_cast<unsigned long long>(misses), spawns, destroys);
+    UE_LOGI("[KERFUR-SERVE] client: the host's answer destroyed my disc %llu time(s), consume-miss=%llu, hints shown=%u",
+            static_cast<unsigned long long>(consumed), static_cast<unsigned long long>(misses), hint);
     if (gone && V() != Variant::Swap &&
         !WaitGame([] { return !coop::hand_item::OwnAnnounced(DiscClass()); }, kStowWindowMs))
         UE_LOGW("[KERFUR-SERVE] client: the stow of the destroyed disc was not announced in %llu s",
@@ -610,11 +772,12 @@ DWORD WINAPI ClientThread(LPVOID) {
         UE_LOGI("[KERFUR-SERVE] client: after the press -- discs standing here=%d (%s)", d.total, d.per.c_str());
         DC::Say(kAfterLine + (gone ? "gone" : "held") + "|" + std::to_string(d.total) + "|" + (bodyRan ? "1" : "0") +
                 "|" + std::to_string(stateAfter) + "|" + std::to_string(consumed) + "|" + std::to_string(misses) + "|" +
-                std::to_string(spawns) + "|" + std::to_string(destroys));
+                std::to_string(hint));
         return true;
     });
     UE_LOGI("[KERFUR-SERVE] leg D (client side): client disc before=%s after=%s, its own copy ran the verb=%d; the "
             "host's line carries the insert and the key", b.cls.c_str(), gone ? "gone" : "held", bodyRan ? 1 : 0);
+    if (V() == Variant::Busy) SecondPress(mirror, mirrorIdx);
     return 0;
 }
 
@@ -658,6 +821,8 @@ void OnDisconnect() {
     g_verbRan = g_verbHas = g_verbHasRead = false;
     g_verbState = 0xFF;
     g_afterRest.clear();
+    g_secondRest.clear();
+    g_carries0 = g_pub0 = 0;
     g_afterSeen = false;
 }
 

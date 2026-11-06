@@ -56,9 +56,10 @@ void OnPeerGone(uint8_t slot);
 void OnAnswer(const coop::net::KerfurCommandAnswerPayload& p);
 
 // Instruments (the kerfur serve drill, leg D), this session: consumed-held answers that destroyed the pledged disc here,
-// and those that did not (the hand held another thing, or the command pledged none).
+// and those that did not (the hand held another thing, or the command pledged none), and the refusals shown as hints.
 uint64_t ConsumedHere();
 uint64_t ConsumeMisses();
+uint64_t RefusalsShown();
 
 // Session end: the counts are said and the held ids and their pledges forgotten.
 void OnDisconnect();

@@ -229,6 +229,7 @@ void OnAnswer(const KerfurCommandAnswerPayload& p) {
 
 uint64_t ConsumedHere() { return g_counts.consumed; }
 uint64_t ConsumeMisses() { return g_counts.consumeMiss; }
+uint64_t RefusalsShown() { return g_counts.refusedShown; }
 
 void OnDisconnect() {
     const Counts& c = g_counts;

@@ -107,4 +107,9 @@ private:
     ue_wrap::CachedObjRef copy_;
 };
 
+// Instruments (the kerfur serve drill, leg D), this process: the spans that built a copy, and the PropSpawn and
+// PropDestroy messages the session accepted inside all of them.
+uint32_t Carries();
+uint32_t PublishedInCarries();
+
 }  // namespace coop::kerfur_disc_carry

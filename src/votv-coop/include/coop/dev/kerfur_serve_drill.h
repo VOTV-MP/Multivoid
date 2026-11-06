@@ -12,7 +12,7 @@
 // murderous and its move() went for the host, not the client it served. It ends on one line
 // (coop/session/rig_verdict.h), tag kerfur-serve: the host's PASS holds legs B and C, a leg that failed or a step
 // that could not run is said by the peer that saw it (leg A, the client's, FAIL or INVALID).
-// With kerfur_serve_disc=on (or swap, wh) leg D (kerfur_serve_drill_disc.h) runs instead of legs A to C.
+// With kerfur_serve_disc=on (or swap, wh, busy) leg D (kerfur_serve_drill_disc.h) runs instead of legs A to C.
 
 #pragma once
 

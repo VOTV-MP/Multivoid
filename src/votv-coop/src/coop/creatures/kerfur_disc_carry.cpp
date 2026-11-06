@@ -246,4 +246,7 @@ void HandScope::Close() {
 bool HandScope::Consumed() const { return ok_ && !copy_.Alive(); }
 
 
+uint32_t Carries() { return g_carries; }
+uint32_t PublishedInCarries() { return g_published; }
+
 }  // namespace coop::kerfur_disc_carry
