@@ -66,7 +66,9 @@ void DestroyLocalProp(void* actor, bool deferred);
 // True on a client inside its world-load episode or the reconcile window: the destroy seam runs the local destroy
 // there and sends no PropDestroy, since the game rebuilds its props as churn. A deliberate destroy made inside
 // the window reaches no peer, so a caller that needs the peers told refuses to destroy while this is true.
-// The seam itself judges by this same predicate. Game thread.
+// The seam itself judges by the same predicate, through ClientDestroyWindow, which names the window it read. Game thread.
+enum class DestroyWindow : uint8_t { None, Episode, Reconcile };
+DestroyWindow ClientDestroyWindow();   // each window flag read once, the episode first
 bool ClientDestroyWindowOpen();
 
 // Express a freshly-spawned KEYED prop on the wire -- the SAME canonical keyed
