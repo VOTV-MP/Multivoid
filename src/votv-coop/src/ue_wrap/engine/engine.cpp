@@ -200,6 +200,30 @@ bool ResolveActorFns() {
 
 }  // namespace
 
+bool MakePawnInert(void* deferredPawn) {
+    if (!deferredPawn) return false;
+    static void* s_pawnClass = nullptr;
+    if (!s_pawnClass) s_pawnClass = R::FindClass(P::name::PawnClassName);
+    void* const cls = R::ClassOf(deferredPawn);
+    if (!s_pawnClass || !cls || !R::IsDescendantOfAny(cls, &s_pawnClass, 1)) return false;
+
+    // Zeroing AutoPossessPlayer keeps the pawn from grabbing a second player controller (which stole the local
+    // player's input and view); zeroing AutoPossessAI keeps BeginPlay from spawning an AI controller for it. Plain
+    // data fields, so direct writes.
+    auto* a = reinterpret_cast<uint8_t*>(deferredPawn);
+    a[P::off::APawn_AutoPossessPlayer] = 0;   // no PLAYER controller (no input/view hijack)
+    a[P::off::APawn_AutoPossessAI] = 0;        // no AI controller either
+    a[P::off::AActor_AutoReceiveInput] = 0;    // EAutoReceiveInput::Disabled
+    a[P::off::AActor_bBlockInput] = 1;         // swallow any stray input
+    // Also null the AI controller class: AutoPossessAI blocks the automatic spawn of an AI controller but not later
+    // code (other blueprint systems iterating pawns and calling SpawnDefaultController) acquiring one from the class
+    // default. Nulling the class closes that path.
+    *reinterpret_cast<void**>(a + P::off::APawn_AIControllerClass) = nullptr;
+    UE_LOGI("engine: MakePawnInert '%ls' -> no player possess, no AI possess, AIControllerClass=null, bBlockInput=1",
+            R::ClassNameOf(deferredPawn).c_str());
+    return true;
+}
+
 void* SpawnActor(void* actorClass, const FVector& location, bool inertPawn, BeforeFinishFn beforeFinish,
                  void* ctx) {
     if (!actorClass) return nullptr;
@@ -229,23 +253,11 @@ void* SpawnActor(void* actorClass, const FVector& location, bool inertPawn, Befo
     // Read while the actor is known live, so the failed-finish branch below can tell it from a recycled address.
     const int32_t actorIdx = R::InternalIndexOf(actor);
 
-    // Before FinishSpawningActor runs BeginPlay, zero the fields that make a pawn behave as a
-    // local player: BeginPlay's native auto-possess reads AutoPossessPlayer, and clearing it
-    // keeps the orphan from grabbing a second player controller (which stole the local player's
-    // input and view). Plain data fields, so direct writes.
-    if (inertPawn) {
-        auto* a = reinterpret_cast<uint8_t*>(actor);
-        a[P::off::APawn_AutoPossessPlayer] = 0;   // no PLAYER controller (no input/view hijack)
-        a[P::off::APawn_AutoPossessAI] = 0;        // we possess explicitly post-spawn
-        a[P::off::AActor_AutoReceiveInput] = 0;    // EAutoReceiveInput::Disabled
-        a[P::off::AActor_bBlockInput] = 1;         // swallow any stray input
-        // Also null the AI controller class: AutoPossessAI blocks the automatic spawn of an AI
-        // controller but not later code (other blueprint systems iterating pawns and calling
-        // SpawnDefaultController) acquiring one from the class default. Nulling the class closes
-        // that path.
-        *reinterpret_cast<void**>(a + P::off::APawn_AIControllerClass) = nullptr;
-        UE_LOGI("engine: SpawnActor inertPawn -> no player possess, AIControllerClass=null, bBlockInput=1");
-    }
+    // Before FinishSpawningActor runs BeginPlay the pawn is made inert: BeginPlay's native auto-possess reads the
+    // fields MakePawnInert clears.
+    if (inertPawn && !MakePawnInert(actor))
+        UE_LOGE("engine: SpawnActor inertPawn requested for '%ls', which is not a pawn -- it is left as spawned",
+                R::ClassNameOf(actor).c_str());
     // The caller's last word on the deferred actor: what must hold from its BeginPlay on is set here.
     if (beforeFinish) beforeFinish(ctx, actor);
 

@@ -46,10 +46,16 @@ bool SetGamePaused(bool paused);
 // failed call. Game thread.
 bool TryGetWorldTimeSeconds(float& seconds);
 
+// A pawn begun by a deferred spawn and not yet finished is made inert: AutoPossessPlayer, AutoPossessAI and
+// AutoReceiveInput zeroed, bBlockInput set, AIControllerClass nulled, so its BeginPlay takes no controller of
+// either kind and no local input, and nothing that asks the class for a default controller gets one. True when
+// `deferredPawn` is an APawn and was written; false (nothing written) for null or a non-pawn actor. Must run
+// between the begin and the finish of the spawn. Game thread.
+bool MakePawnInert(void* deferredPawn);
+
 // Spawn `actorClass` at `location` through the deferred GameplayStatics pair (AlwaysSpawn); the
-// AActor* or nullptr. `inertPawn` zeroes AutoPossessPlayer, AutoPossessAI and AutoReceiveInput and
-// sets bBlockInput in the deferred window, so the pawn never takes a PlayerController or the local
-// input. `beforeFinish`, when set, runs once on the deferred actor after those writes and before
+// AActor* or nullptr. `inertPawn` runs MakePawnInert on the deferred actor, so the pawn never takes a
+// PlayerController or the local input. `beforeFinish`, when set, runs once on the deferred actor after those writes and before
 // FinishSpawning, so its BeginPlay and the overlaps its colliders report as they register already see
 // what the callback set; it is not called on a path that returns null before the actor exists. `ctx` is
 // the caller's and need live only for the call; the callback runs on the game thread inside
