@@ -28,11 +28,13 @@ broadcasts it whole on any change, which catches every writer: the panel, the ph
 transformer prop. A client applies what it is sent and repaints the rows it has open.
 
 A purchase is an intent. A client's button is refused at the script-body gate, so it never debits
-itself, and the host re-derives the price and the bounds from its own table and its own level,
-charges the shared balance and republishes. The rows have no identity of their own to name, so
-holding the laptop claim is the sender's reach, and the index must be one of the fifteen rows that
-buy a level. The host asks exactly what the button asks, including the game's own asymmetry: the
-balance is tested against the row's unaccumulated price and charged the accumulated one.
+itself. A level row (the fifteen that buy a level): the host re-derives the price and the bounds
+from its own table and its own level, charges the shared balance and republishes. A module row: the
+host presses its own row of that index and the game's body decides the price, as a press at the host's
+own panel does; a row the host's panel does not own is refused, and the sender is sent the host's
+balance and levels. The rows have no identity of their own to name, so holding the laptop claim is
+the sender's reach. The host asks exactly what the button asks, including the game's own
+asymmetry: the balance is tested against the row's unaccumulated price and charged the accumulated one.
 
 ### The laptop's tab
 
@@ -199,7 +201,7 @@ disc under another peer's hold on every peer; the holder's own insert is the one
 | `LaptopTabReport`, `LaptopTabState` | the claim holder to the host; the host to the other clients | the switcher's index |
 | `BalanceSync` | the host to all | the absolute balance |
 | `UpgradeLevels` | the host to all | the eighteen levels, whole |
-| `UpgradeIntent` | a client to the host | the panel row's index and whether it is a buy or a sell |
+| `UpgradeIntent` | a client to the host | the panel row's index, whether it is a level row or a module row, and whether it is a buy or a sell |
 | `OrderRequest`, `OrderRefused` | a client to the host; the host to one client | the items by row; a refusal and its reason |
 | `OrderQueue` | the host to all | a change to the delivery queue: a reset, an order queued (its items by row or by class), the first one taken off |
 | `CoinGunSell`, `CoinGunResult`, `CoinCollect` | a client to the host; the host to one client; a client to the host | the sold prop's key; the outcome; a coin the client tripped |

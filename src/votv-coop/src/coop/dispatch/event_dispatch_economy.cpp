@@ -114,10 +114,11 @@ bool HandleEconomyEvent(net::Session& session,
     case net::ReliableKind::UpgradeIntent: {
         // CLIENT->HOST upgrade purchase REQUEST: a client pressed the laptop panel's buy or sell
         // button. Its own body was cancelled at the script gate, so it has not paid and has not
-        // raised its level; the host re-derives the price and the bounds from its own table and
-        // charges itself, then republishes the levels. The row carries no identity but its index,
-        // so holding the laptop claim is the sender's reach -- that test, the arithmetic and the
-        // rate live in the module; the format lives here.
+        // raised its level. A level row (dir 0 and 1): the host re-derives the price and the bounds
+        // from its own table and charges itself. A module row (dir 2 and 3): the host presses its
+        // own row of that index and the game's body decides. The levels are then republished. The
+        // row carries no identity but its index, so holding the laptop claim is the sender's reach
+        // -- that test, the arithmetic and the rate live in the module; the format lives here.
         // coop::upgrade_sync::OnUpgradeIntent.
         if (session.role() != net::Role::Host) {
             UE_LOGW("event_feed: UpgradeIntent received on a client -- dropping");

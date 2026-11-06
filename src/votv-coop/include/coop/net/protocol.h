@@ -800,15 +800,17 @@ enum class ReliableKind : uint8_t {
     // UpgradeLevelsPayload.
     UpgradeLevels = 146,
 
-    // Client to host: buy or sell one level of the laptop panel row this index names. A client's
-    // press was entirely client-local -- it debited the CLIENT's own balance and raised the
-    // CLIENT's own level, so the group paid nothing and the host's next balance broadcast handed
-    // the money back, which made a client's upgrades free for everyone but the host. The client
-    // refuses its own body at the script-body gate and asks here instead, so it never debits
-    // itself and a refusal needs no correction. Trust: the index must be one of the fifteen LEVEL
-    // rows, and the host re-derives the price and the bounds from its own table and its own level
-    // -- nothing about the purchase is taken from the sender. A sender's presses run no faster
-    // than a bounded rate from a bounded queue. The host charges and writes, then republishes
+    // Client to host: buy or sell one row of the laptop panel. A client's press was entirely
+    // client-local -- it debited the CLIENT's own balance and raised the CLIENT's own level, so the
+    // group paid nothing and the host's next balance broadcast handed the money back, which made a
+    // client's upgrades free for everyone but the host. The client refuses its own body at the
+    // script-body gate and asks here instead, so it never debits itself. Trust, by `dir`: 0 and 1
+    // name one of the fifteen LEVEL rows, and the host re-derives the price and the bounds from its
+    // own table and its own level; 2 and 3 name a MODULE row, and the host presses its own row of
+    // that index, so the game's body decides the price and the bounds, and a module row the host's
+    // panel does not own is refused with the host's balance and levels sent back to the sender.
+    // Nothing about a purchase is taken from the sender. A sender's presses run no faster than a
+    // bounded rate from a bounded queue. The host charges and writes, then republishes
     // UpgradeLevels; the money moves on the balance lane that already polls it.
     // Late join: nothing to replay, since a purchase the host has not run changed nothing.
     // UpgradeIntentPayload.
