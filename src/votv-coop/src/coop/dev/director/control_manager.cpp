@@ -36,7 +36,11 @@ void ControlManager::Add(std::unique_ptr<IProcess> proc) { procs_.push_back(std:
 
 bool ControlManager::Run(DirectorGoal& goal, int maxSeconds) {
     char why[96];
-    std::snprintf(why, sizeof why, "the walk to (%.0f,%.0f,%.0f)", goal.targetPos.X, goal.targetPos.Y, goal.targetPos.Z);
+    if (goal.targetPos.X == 0.f && goal.targetPos.Y == 0.f && goal.targetPos.Z == 0.f && goal.targetActor)
+        std::snprintf(why, sizeof why, "the walk to an actor");   // the stage adds where it read the actor
+    else
+        std::snprintf(why, sizeof why, "the walk to (%.0f,%.0f,%.0f)", goal.targetPos.X, goal.targetPos.Y,
+                      goal.targetPos.Z);
     if (!StageWalk(goal, why)) return false;
     const bool done = Drive(goal, maxSeconds);
     // However the run ended, the process that drove its last tick loses control: a key it holds is

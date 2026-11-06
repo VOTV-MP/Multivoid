@@ -68,7 +68,7 @@ bool WalkToHost(const char* logTag, float reachCm) {
         return false;
     }
     float line = 0.f, route = 0.f;
-    bool placed = false;   // false: the walker's place does not read
+    bool pawnRead = false;   // false: the walker's place does not read
     GT::RunAndWait([&](std::atomic<int>& done) {
         void* const me = coop::players::Registry::Get().Local();
         ue_wrap::FVector mine{};
@@ -78,11 +78,11 @@ bool WalkToHost(const char* logTag, float reachCm) {
             // and the route goes round through the doors. Asked in legs, since one path query is a partial
             // route on a long walk and under-counts it.
             if (line > reachCm && !DIR::RouteInLegs(me, mine, theirs, reachCm, &route)) route = 0.f;
-            placed = true;
+            pawnRead = true;
         }
         done.store(1);
     });
-    if (!placed) {
+    if (!pawnRead) {
         UE_LOGW("%hs: VERDICT ABORT -- the pawn's position is not there to walk from", logTag);
         return false;
     }

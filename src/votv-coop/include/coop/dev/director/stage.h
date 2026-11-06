@@ -6,8 +6,10 @@
 // (teleport_client::ApplyLocally), which any role may call. Dev only.
 //
 // Place iff the walker's route to the goal is longer than 100 m AND the best anchor's route is shorter by more than
-// 50 m, or the walker has no route at all and an anchor has one. Turned off for a run that measures the walk itself
-// with VOTVCOOP_DRILL_PLACE=0, and for one walk by DirectorGoal::walkFromHere.
+// 50 m. A walker with no route is judged by its straight distance in the same two tests. Never staged: a straight
+// walk (no route to shorten) and a carry walk (the teleport would drop and re-grab the held prop). Turned off for a
+// run that measures the walk itself with VOTVCOOP_DRILL_PLACE=0, and for one walk by DirectorGoal::walkFromHere.
+// A walk whose epoch has moved or that was cancelled fails the goal ("walks_ended" / "cancelled") and moves nobody.
 
 #pragma once
 

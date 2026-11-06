@@ -17,6 +17,8 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstdio>
+#include <string>
 #include <vector>
 
 namespace coop::director {
@@ -37,8 +39,15 @@ constexpr int   kLandTries = 50;
 constexpr DWORD kLandPollMs = 100;
 
 // VOTVCOOP_DRILL_PLACE=0: every walk starts where the walker stands, for a run that measures the walk itself.
+// Not a config row (no census confirms it), so the process logs its effective value once, at the first stage.
 bool PlacingOff() {
-    static const bool s = (coop::config::ReadEnv("VOTVCOOP_DRILL_PLACE") == "0");
+    static const bool s = [] {
+        const std::string v = coop::config::ReadEnv("VOTVCOOP_DRILL_PLACE");
+        const bool off = (v == "0");
+        UE_LOGI("director: the walk stage is %s (VOTVCOOP_DRILL_PLACE=%s)", off ? "OFF" : "ON",
+                v.empty() ? "unset" : v.c_str());
+        return off;
+    }();
     return s;
 }
 
@@ -51,10 +60,24 @@ void* LivePawn() {
     return me && R::IsLive(me) ? me : nullptr;
 }
 
+// The walk this stage belongs to has ended: its session's walks were ended (EndWalks moved the epoch) or its
+// background walk was cancelled. The stage then fails the goal and never moves the pawn, which by now belongs
+// to the next session or to a drill that gave this walk up. Same two tests as ControlManager::Drive.
+bool Stale(DirectorGoal& goal, uint32_t epoch) {
+    const char* reason = nullptr;
+    if (WalkEpoch() != epoch) reason = "walks_ended";
+    else if (goal.cancel && goal.cancel->load(std::memory_order_acquire)) reason = "cancelled";
+    if (!reason) return false;
+    UE_LOGW("director: the stage stops, the walk is no longer wanted (%s) -- the pawn is not moved", reason);
+    if (!goal.failed) { goal.failed = true; goal.failReason = reason; }
+    return true;
+}
+
 // One game-thread hop. A faulted hop ends the stage with the goal failed, so the walk is never started
-// from a place the stage could not read.
+// from a place the stage could not read. A stale walk (Stale above) hops nowhere.
 template <class F>
-bool Hop(DirectorGoal& goal, const char* what, F&& body) {
+bool Hop(DirectorGoal& goal, uint32_t epoch, const char* what, F&& body) {
+    if (Stale(goal, epoch)) return false;
     const int r = GT::RunAndWait([&body](std::atomic<int>& d) { body(); d.store(1); });
     if (r != GT::kTaskFaulted) return true;
     UE_LOGW("director: the stage's %s task faulted -- the walk is not started", what);
@@ -74,17 +97,22 @@ struct Anchor {
 bool StageWalk(DirectorGoal& goal, const char* why) {
     if (goal.staged) return true;
     goal.staged = true;
-    if (PlacingOff() || goal.walkFromHere) {
+    // A straight walk is not judged by a NavMesh route (the baked mesh may not know the opening it walks
+    // through), so there is no route to shorten and the stage has nothing to compare.
+    if (PlacingOff() || goal.walkFromHere || goal.straight) {
         UE_LOGI("director: walking from here for %s: %s", why,
-                goal.walkFromHere ? "this walk is the measurement" : "VOTVCOOP_DRILL_PLACE=0");
+                PlacingOff()        ? "VOTVCOOP_DRILL_PLACE=0"
+                : goal.walkFromHere ? "this walk is the measurement"
+                                    : "a straight walk has no route to shorten");
         return true;
     }
+    const uint32_t epoch = goal.epoch.value_or(WalkEpoch());
 
     // Hop 1: where the walker stands, where the goal is, and the walker's route to it.
     bool pawnRead = false, goalRead = false, there = false, pawnRouted = false;
     ue_wrap::FVector from{}, to{};
     float pawnRoute = 0.f;
-    if (!Hop(goal, "start", [&] {
+    if (!Hop(goal, epoch, "start", [&] {
             void* const me = LivePawn();
             pawnRead = me && E::TryGetActorLocation(me, from);
             if (!pawnRead) return;
@@ -99,6 +127,12 @@ bool StageWalk(DirectorGoal& goal, const char* why) {
             pawnRouted = RouteInLegs(me, from, to, goal.reachCm, &pawnRoute);
         }))
         return false;
+    // An actor-only goal carries no position of its own: the log line says where the actor was read.
+    char whyBuf[160];
+    if (goalRead && Unset(goal.targetPos)) {
+        std::snprintf(whyBuf, sizeof whyBuf, "%s (actor at %.0f,%.0f,%.0f)", why, to.X, to.Y, to.Z);
+        why = whyBuf;
+    }
     if (!pawnRead || !goalRead || there) {
         UE_LOGI("director: walking from here for %s: %s", why,
                 !pawnRead ? "the walker's place does not read"
@@ -112,7 +146,7 @@ bool StageWalk(DirectorGoal& goal, const char* why) {
 
     // The anchors: the bed spot where the base has one, and the KPP gate.
     std::vector<Anchor> anchors;
-    if (!Hop(goal, "bed", [&] {
+    if (!Hop(goal, epoch, "bed", [&] {
             void* const me = LivePawn();
             if (!me) return;
             const SS::Target bed = SS::Choose(me);
@@ -121,7 +155,7 @@ bool StageWalk(DirectorGoal& goal, const char* why) {
         return false;
     anchors.push_back({"KPP", {PN::kKPPSpawnX, PN::kKPPSpawnY, PN::kKPPSpawnZ}});
     for (Anchor& a : anchors) {
-        if (!Hop(goal, "anchor route", [&] {
+        if (!Hop(goal, epoch, "anchor route", [&] {
                 void* const me = LivePawn();
                 if (me) a.routed = RouteInLegs(me, a.at, to, goal.reachCm, &a.route);
             }))
@@ -131,21 +165,29 @@ bool StageWalk(DirectorGoal& goal, const char* why) {
     for (const Anchor& a : anchors)
         if (a.routed && (!best || a.route < best->route)) best = &a;
 
-    const bool place = best && (!pawnRouted || pawnRoute - best->route > kStageSavingCm);
+    // A walker with no route (or one past the leg cap) is judged by its straight distance, a floor of its
+    // true way: an anchor must still be both worth the hop and nearer than that line.
+    const float walkerCm = pawnRouted ? pawnRoute : Flat(from, to);
+    const bool place = best && walkerCm > kStageMinRouteCm && walkerCm - best->route > kStageSavingCm;
     if (!place) {
         if (pawnRouted) UE_LOGI("director: walking from here for %s: route %.0f m", why, pawnRoute / 100.f);
-        else UE_LOGI("director: walking from here for %s: no route from the walker or from an anchor", why);
+        else
+            UE_LOGI("director: walking from here for %s: no route from the walker, %.0f m away, and no anchor beats it",
+                    why, walkerCm / 100.f);
         return true;
     }
 
     bool teleported = false;
-    if (!Hop(goal, "teleport", [&] {
+    if (!Hop(goal, epoch, "teleport", [&] {
+            // The decision was taken on another thread: the walk may have ended since the hop was posted.
+            if (Stale(goal, epoch)) return;
             teleported = coop::teleport_client::ApplyLocally({best->at.X, best->at.Y, best->at.Z, 0.f, 0.f, 0.f});
         }))
         return false;
+    if (goal.failed) return false;
     float off = -1.f;
     for (int i = 0; teleported && i < kLandTries; ++i) {
-        if (!Hop(goal, "landing", [&] {
+        if (!Hop(goal, epoch, "landing", [&] {
                 void* const me = LivePawn();
                 ue_wrap::FVector now{};
                 off = me && E::TryGetActorLocation(me, now) ? Flat(now, best->at) : -1.f;
@@ -165,8 +207,8 @@ bool StageWalk(DirectorGoal& goal, const char* why) {
         UE_LOGI("director: PLACED at the %s anchor for %s: route %.0f m instead of %.0f m", best->name, why,
                 best->route / 100.f, pawnRoute / 100.f);
     else
-        UE_LOGI("director: PLACED at the %s anchor for %s: route %.0f m instead of no route", best->name, why,
-                best->route / 100.f);
+        UE_LOGI("director: PLACED at the %s anchor for %s: route %.0f m instead of a straight %.0f m with no route",
+                best->name, why, best->route / 100.f, walkerCm / 100.f);
     return true;
 }
 

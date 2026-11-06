@@ -600,6 +600,10 @@ void AddWalkToProcesses(ControlManager& mgr, DirectorGoal& goal) {
 }
 
 void AddCarryToProcesses(ControlManager& mgr, DirectorGoal& goal) {
+    // A carry walk keeps the hand's prop, and the stage's teleport (the game's teleportWObackrooms) would drop
+    // it, move the pawn and re-grab the prop with a null component: a release/re-grab pair and a prop jump in
+    // the very stream the drill judges. The walker grabbed near the base, so there is little to save either.
+    goal.walkFromHere = true;
     mgr.Add(std::make_unique<GotoProcess>(goal, /*onLevel*/ true));
     mgr.Add(std::make_unique<ReachProcess>(goal));
 }
