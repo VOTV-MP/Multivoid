@@ -5,9 +5,9 @@
 #include "coop/player/players_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_player_verbs.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
@@ -118,8 +118,12 @@ bool ApplyHostOrder(const ApplyArgs& args) {
         return false;
     }
     if (coop::config::ResolveFlag(coop::config_registry::rows::cremate_transit_die)) {
-        UE_LOGW("teleport_client: DRILL -- cremate_transit_die: died on the order, the move not applied");
-        ue_wrap::vitals::Write(ue_wrap::vitals::Field::Health, 0.f);
+        // The game's own lethal hit, as the cremator's fire delivers it (cremator_hit.cpp): a raw write of Health 0 is
+        // not a death -- the game never ran its death and the pose stream never carried a zero health.
+        void* local = coop::players::Registry::Get().Local();
+        const bool hit = local && ue_wrap::engine::InvokeAddDamage(local, nullptr, 9999.f, ue_wrap::FVector{});
+        UE_LOGW("teleport_client: DRILL -- cremate_transit_die: the lethal hit %s, the move not applied",
+                hit ? "ran" : "did NOT run");
         return false;
     }
     return ApplyLocally(args);
