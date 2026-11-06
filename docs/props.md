@@ -419,7 +419,7 @@ progression through the existing lanes (the pile shape); a host corrector that r
 deterministic, clamped accrual when the game keeps re-enabling the tick (the tape reel, at one
 hertz); or an anchor, a start stamp every peer computes from, valid only while the rate is
 constant ([architecture.md](architecture.md), where the authority is going). The reel corrector
-and the food's parked brain are built; concrete is designed and not built.
+and the food's tick gate are built; concrete is designed and not built.
 
 A world food takes the first shape (`coop/props/prop_food_sync`). Its tick rolls temperature and spoilage and, at the
 ends of the range, spawns a burnt or frozen copy and destroys itself, so a client's copy is refused its tick at the

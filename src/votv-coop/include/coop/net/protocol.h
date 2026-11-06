@@ -1202,8 +1202,8 @@ enum class ReliableKind : uint8_t {
     // edge; never relayed; not pre-world. Late join: none, a refusal is an act; a joiner gets the kept hold's
     // stream. PropHoldRefusedPayload.
     PropHoldRefused = 210,
-    // HOST->ALL: a world food's temperature, ripeness and use count, sent when they move. A client's food is parked,
-    // so these are its values. Not pre-world. Late join: every food again at the joiner's ready edge, on the poll's
+    // HOST->ALL: a world food's temperature, ripeness and use count, sent when they move. A client's food is refused its tick
+    // at the gate, so these are its values. Not pre-world. Late join: every food again at the joiner's ready edge, on the poll's
     // budget. FoodStatePayload.
     FoodState = 217,
     // CLIENT->HOST: this client's player bit a world food. Its copy ran the bite; the host takes one use off its own

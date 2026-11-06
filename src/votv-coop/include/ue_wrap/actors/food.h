@@ -22,7 +22,7 @@ bool IsFood(void* actor);
 // False when the actor is not a live food or a field did not resolve.
 bool Read(void* actor, Condition& out);
 
-// Writes the condition, and `celsius`, which the tick derives from the temperature and a parked copy never derives.
+// Writes the condition, and `celsius`, which the tick derives from the temperature and a copy refused its tick never derives.
 bool Write(void* actor, const Condition& in);
 
 // What the tick paints from the temperature, for a copy whose tick is off: the steam above 50 C and, across 0 C, the

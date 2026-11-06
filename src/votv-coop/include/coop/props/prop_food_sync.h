@@ -48,7 +48,7 @@ void OnHand(int senderSlot, const coop::net::FoodHandPayload& p);
 // slot's latch.
 void OnBadHand(int senderSlot);
 
-// HOST: a joiner reached its ready edge. Every food goes out again, on the poll's own budget.
+// HOST: a joiner reached its ready edge. Every food goes out again to that slot alone, on the poll's own budget.
 void QueueConnectBroadcastForSlot(int slot);
 
 // Session end: the lane's tallies, latches and waiting records are dropped. Game thread.

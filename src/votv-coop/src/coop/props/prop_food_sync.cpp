@@ -78,7 +78,9 @@ constexpr float  kReachUU = 400.f;
 std::atomic<coop::net::Session*> g_session{nullptr};
 Clock::time_point g_nextPoll{};
 bool g_watched = false;
-bool g_dropWatched = false;
+bool g_simulateDropWatched = false;
+bool g_forceDropWatched = false;
+bool g_dropLogged = false;
 
 std::vector<void*> g_classes;
 uint64_t g_classVersion = ~uint64_t{0};
@@ -94,7 +96,9 @@ struct Pending {
     Clock::time_point           at;
 };
 std::unordered_map<std::wstring, Pending> g_pending;  // CLIENT: a food not born here yet
-uint32_t g_pendingDropped = 0;                        // CLIENT: values dropped at the cap, this session
+std::array<std::vector<std::wstring>, coop::net::kMaxPeers> g_owedKeys;  // HOST: by slot, the foods a joiner is owed
+std::array<size_t, coop::net::kMaxPeers> g_owedAt{};                    // HOST: by slot, how far DrainOwed has got
+uint32_t g_pendingDropped = 0;                       // CLIENT: values dropped at the cap, this session
 
 std::array<Clock::time_point, coop::net::kMaxPeers> g_lastBite{};     // HOST: by slot, the last bite received
 std::array<Clock::time_point, coop::net::kMaxPeers> g_lastRelease{};  // HOST: by slot, the last release received
@@ -214,6 +218,29 @@ bool PublishToSlot(coop::net::Session& s, int slot, const std::wstring& key, con
     return s.SendReliableToSlot(slot, coop::net::ReliableKind::FoodState, &p, sizeof(p));
 }
 
+// HOST: the foods a joiner is owed, sent to its slot alone, up to kSendsPerPoll a poll. A food gone since the keys were
+// taken has nothing to send; a refused send waits for the next poll where it stopped.
+void DrainOwed(coop::net::Session& s) {
+    for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
+        std::vector<std::wstring>& keys = g_owedKeys[slot];
+        size_t& at = g_owedAt[slot];
+        size_t sends = 0;
+        while (at < keys.size() && sends < kSendsPerPoll) {
+            void* const actor = coop::prop_key_index::Find(keys[at]);
+            F::Condition now;
+            if (actor && F::IsFood(actor) && !coop::hand_item::IsHandAxisActor(actor) && F::Read(actor, now)) {
+                if (!PublishToSlot(s, slot, keys[at], now)) break;
+                ++sends;
+            }
+            ++at;
+        }
+        if (at >= keys.size()) {
+            std::vector<std::wstring>().swap(keys);
+            at = 0;
+        }
+    }
+}
+
 void PollHost(coop::net::Session& s) {
     std::vector<void*> foods;
     Collect(foods);
@@ -224,7 +251,7 @@ void PollHost(coop::net::Session& s) {
         const size_t at = (start + i) % foods.size();
         void* const actor = foods[at];
         g_cursor = at;
-        if (coop::hand_item::IsHandAxisActor(actor)) continue;  // the mirror is parked below, the hand is its holder's
+        if (coop::hand_item::IsHandAxisActor(actor)) continue;  // the mirror is written by PollMirrors, the hand is its holder's
         F::Condition now;
         if (!F::Read(actor, now)) continue;
         const std::wstring key = KeyOf(actor);
@@ -463,10 +490,13 @@ void TickHand(coop::net::Session& s) {
 }
 
 void WatchWhenLoaded() {
-    if (!g_dropWatched) {  // a refusal is logged once by the gate itself, and retried here
-        g_dropWatched = sg::WatchName(kRowSimulateDrop, kTag, nullptr, &OnDropPost) &&
-                        sg::WatchName(kRowForceDrop, kTag, nullptr, &OnDropPost);
-        if (g_dropWatched) UE_LOGI("prop_food_sync: the watch on the player's drop is registered");
+    // A refusal is logged once by the gate itself, and retried here; each watch has its own latch, so one that
+    // registered is not registered again for the other's sake.
+    if (!g_simulateDropWatched) g_simulateDropWatched = sg::WatchName(kRowSimulateDrop, kTag, nullptr, &OnDropPost);
+    if (!g_forceDropWatched) g_forceDropWatched = sg::WatchName(kRowForceDrop, kTag, nullptr, &OnDropPost);
+    if (g_simulateDropWatched && g_forceDropWatched && !g_dropLogged) {
+        g_dropLogged = true;
+        UE_LOGI("prop_food_sync: the watch on the player's drop is registered");
     }
     if (g_watched) return;
     const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowAction);
@@ -492,6 +522,7 @@ void Tick() {
     if (s->role() == coop::net::Role::Host) {
         DrainReleases(*s);
         for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) Answer(*s, slot);
+        DrainOwed(*s);
         PollHost(*s);
     } else {
         PollClient();
@@ -613,13 +644,24 @@ void OnBadHand(int senderSlot) {
 }
 
 void QueueConnectBroadcastForSlot(int slot) {
-    g_sent.clear();
     if (slot < 1 || slot >= coop::net::kMaxPeers) return;
     // A recycled slot starts clean: nothing of the last occupant's gaps, refusals or waiting releases is the joiner's.
     g_lastBite[slot] = g_lastRelease[slot] = {};
     g_latch[slot] = {};
     for (auto it = g_releases.begin(); it != g_releases.end();)
         it = it->first.first == slot ? g_releases.erase(it) : std::next(it);
+    // Every food again, to this slot alone: g_sent stays, since every other peer holds what it records. The keys are
+    // taken now and sent on the poll's budget by DrainOwed.
+    g_owedKeys[slot].clear();
+    g_owedAt[slot] = 0;
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() != coop::net::Role::Host) return;
+    std::vector<void*> foods;
+    Collect(foods);
+    for (void* actor : foods) {
+        const std::wstring key = KeyOf(actor);
+        if (!key.empty()) g_owedKeys[slot].push_back(key);
+    }
 }
 
 void OnDisconnect() {
@@ -628,6 +670,8 @@ void OnDisconnect() {
                 "refused=%u", g_published, g_applied, g_bitesSent, g_bitesTaken, g_bitesRefused, g_releasesRefused);
     g_pending.clear();
     g_pendingDropped = 0;
+    for (auto& keys : g_owedKeys) keys.clear();
+    g_owedAt = {};
     g_sent.clear();
     g_lastBite = {};
     g_lastRelease = {};
