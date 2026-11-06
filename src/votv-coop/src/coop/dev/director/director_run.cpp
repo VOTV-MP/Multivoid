@@ -129,6 +129,7 @@ void RunWalkGrabDirector() {
     }
 
     DirectorGoal goal;
+    goal.walkFromHere = true;   // this scenario's verdict is the director's own walk and grab, so no stage
     const int picked = GT::RunAndWait([rsv, &goal](std::atomic<int>& d) {
         d.store(PickReachablePile(rsv->player, kMinPileCm, kMaxPileCm, goal) ? 1 : 2);
     });
