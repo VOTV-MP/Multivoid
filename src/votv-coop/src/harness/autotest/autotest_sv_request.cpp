@@ -199,7 +199,6 @@ std::string LaptopReading() {
         int32_t writes = 0, type = -1;
         if (laptop && ReadSlot(FS::DeviceKind::Laptop, laptop, rows, writes, type)) {
             text = "type=" + std::to_string(type) + " " + Digest(rows, writes);
-            LogRows("laptop", rows);
         }
     });
     return text;
@@ -367,8 +366,11 @@ void RunHost(bool iAct, int seed) {
     if (!ResolveBox(fx, -1)) return;
     UE_LOGI("sv-request: dish %d", fx.dish);
     MeasureFullDiscs();
-    Mark("dish", std::to_string(fx.dish));
+    // The host names the dish once the client says it stands beside it: a signal written before the client's drill began
+    // would not count as its answer.
     if (!Await("client_ready", 480)) return;
+    Mark("dish", std::to_string(fx.dish));
+    if (!Await("client_resolved", kStepSec)) return;
 
     // The fixture: a disc in the first dish's server, seeded, as a player's insert does.
     const int rows = seed;
@@ -392,11 +394,12 @@ void RunHost(bool iAct, int seed) {
 void RunClient(bool iAct, int seed) {
     if (!disc_drill::HostPuppetUp()) return;
     if (!meet::WalkToHost(kTag)) return;
+    Mark("client_ready");
     std::string hostDish;
     if (!AwaitText("dish", hostDish, kStepSec)) return;
     Fixture fx;
     if (!ResolveBox(fx, std::atoi(hostDish.c_str()))) return;
-    Mark("client_ready");
+    Mark("client_resolved");
     if (!Chain(fx, iAct, false, static_cast<size_t>(seed) + 1)) return;
     UE_LOGI("sv-request: DONE on client");
     Mark("client_done");
