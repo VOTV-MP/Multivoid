@@ -97,6 +97,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/desk_verb_drill_desk.cpp
     src/coop/dev/desk_verb_drill_refiner.cpp
     src/coop/dev/kerfur_serve_drill.cpp
+    src/coop/dev/kerfur_serve_drill_disc.cpp
     src/coop/dev/load_reroll_watch.cpp
     src/coop/dev/radio_tower_probe.cpp
     src/coop/dev/container_selftest.cpp

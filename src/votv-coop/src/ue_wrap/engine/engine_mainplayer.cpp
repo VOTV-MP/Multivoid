@@ -191,6 +191,14 @@ bool CallMainPlayerUseSelectedAction(void* mainPlayer) {
     return f.valid() && Call(mainPlayer, f);
 }
 
+bool CallMainPlayerSetActionIndex(void* mainPlayer, int32_t index) {
+    if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(mainPlayer), L"setActionIndex");
+    if (!fn) return false;
+    ParamFrame f(fn);
+    return f.valid() && f.Set<int32_t>(L"actionIndex", index) && Call(mainPlayer, f);
+}
+
 bool MainPlayerHasSelectedAction(void* mainPlayer) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
     void* fn = R::FindDispatchFunctionCached(R::ClassOf(mainPlayer), L"selectedAction");

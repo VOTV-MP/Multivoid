@@ -76,6 +76,10 @@ bool CallMainPlayerUpdateHold(void* mainPlayer);
 // function does not resolve or the call fails. Game thread.
 bool CallMainPlayerUseSelectedAction(void* mainPlayer);
 
+// The player's setActionIndex: the radial menu's selected entry, the index useSelectedAction's names list is read at.
+// False when the function does not resolve or the call fails. Game thread.
+bool CallMainPlayerSetActionIndex(void* mainPlayer, int32_t index);
+
 // Whether useSelectedAction would act now: the player's own selectedAction, true once its look-at actor
 // answers lookAt and the player's look flag holds -- the look took that actor, which the game settles
 // on a later tick than the trace landing, so a press on the tick the trace lands is denied. It does not

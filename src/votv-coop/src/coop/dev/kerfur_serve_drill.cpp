@@ -4,6 +4,8 @@
 
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/kerfur_serve_drill_disc.h"
+#include "coop/dev/kerfur_serve_drill_internal.h"
 #include "coop/dev/spawn_npc.h"
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
@@ -44,7 +46,8 @@ namespace P  = ue_wrap::profile;
 namespace R  = ue_wrap::reflection;
 namespace sg = ue_wrap::script_gate;
 
-constexpr const wchar_t* kDisc = L"prop_floppyDisc_R_C";  // a proper disc: the insert refuses the white one
+using detail::kDisc;
+
 UE_FACT_FN(kRowActionName, "dev.kerfur_serve_drill", L"kerfurOmega_C", L"actionName", Declared);
 constexpr int      kTagVerb        = 0x4B535201;  // 'KSR' 1
 constexpr float    kAwayMinCm      = 1000.f;      // the client's pile, 10 to 30 m out
@@ -89,13 +92,6 @@ bool BodyAt(int slot, ue_wrap::FVector& at) {
     coop::RemotePlayer* rp = reg.Puppet(static_cast<uint8_t>(slot));
     return rp && rp->valid() && rp->HasPose() && E::TryGetActorLocation(rp->GetActor(), at);
 }
-
-// An FString parameter's storage: the TArray<wchar_t> {Data, Num, Max}, Num counting the terminator.
-struct FStringView {
-    const wchar_t* data;
-    int32_t num;
-    int32_t max;
-};
 
 void* HoldingActor(void* player) {
     E::MainPlayerGrabState gs{};
@@ -190,16 +186,8 @@ void RunKill() {
 // word that leg A is judged, sent through the one channel every build runs, the verb.
 void OnVerbPost(const sg::Call& c) {
     if (g_host != HostStep::WaitReports && g_host != HostStep::WaitIdle) return;
-    static void*   sFn = nullptr;
-    static int32_t sNameOff = -1;
-    if (c.function != sFn) {
-        sFn = c.function;
-        sNameOff = R::FindParamOffset(c.function, L"name");
-    }
-    if (sNameOff < 0 || !c.locals) return;
-    const auto* fs = reinterpret_cast<const FStringView*>(c.locals + sNameOff);
-    if (!fs->data || fs->num <= 1) return;
-    const std::wstring name(fs->data, static_cast<size_t>(fs->num - 1));
+    std::wstring name;
+    if (!detail::VerbNameOf(c, name)) return;
     if (g_host == HostStep::WaitReports && name == L"get_reports") {
         g_omega = c.object;
         g_omegaIdx = R::InternalIndexOf(c.object);
@@ -398,6 +386,35 @@ void TickClient() {
 
 }  // namespace
 
+namespace detail {
+
+void ClientInvalid(const char* why) { ::coop::dev::kerfur_serve_drill::ClientInvalid(why); }
+void HostInvalid(const char* why) { ::coop::dev::kerfur_serve_drill::HostInvalid(why); }
+void* HoldingActor(void* player) { return ::coop::dev::kerfur_serve_drill::HoldingActor(player); }
+void* FindMirrorByHost() { return ::coop::dev::kerfur_serve_drill::FindMirrorByHost(); }
+
+bool VerbNameOf(const sg::Call& c, std::wstring& out) {
+    // An FString parameter's storage: the TArray<wchar_t> {Data, Num, Max}, Num counting the terminator.
+    struct FStringView {
+        const wchar_t* data;
+        int32_t num;
+        int32_t max;
+    };
+    static void*   sFn = nullptr;
+    static int32_t sNameOff = -1;
+    if (c.function != sFn) {
+        sFn = c.function;
+        sNameOff = R::FindParamOffset(c.function, L"name");
+    }
+    if (sNameOff < 0 || !c.locals) return false;
+    const auto* fs = reinterpret_cast<const FStringView*>(c.locals + sNameOff);
+    if (!fs->data || fs->num <= 1) return false;
+    out.assign(fs->data, static_cast<size_t>(fs->num - 1));
+    return true;
+}
+
+}  // namespace detail
+
 void Install(coop::net::Session* session) {
     if (!IsEnabled_()) return;
     g_session.store(session, std::memory_order_release);
@@ -411,11 +428,16 @@ void Tick() {
         g_saidArm = true;
         UE_LOGI("[KERFUR-SERVE] %s armed", s->role() == coop::net::Role::Host ? "host" : "client");
     }
+    if (disc::Enabled()) {  // leg D replaces legs A to C
+        disc::Tick(s);
+        return;
+    }
     if (s->role() == coop::net::Role::Host) TickHost(s, ::GetTickCount64());
     else if (s->connected()) TickClient();
 }
 
 void OnDisconnect() {
+    disc::OnDisconnect();
     g_saidArm = false;
     g_host = HostStep::WaitJoin;
     g_joined = -1;
