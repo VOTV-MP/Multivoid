@@ -56,7 +56,7 @@ struct ClassInfo {
     CanState defaults;
 };
 std::unordered_map<void*, ClassInfo> g_class;
-uint32_t g_world = 0;   // the world_identity generation the table above belongs to
+uint32_t g_world = 0;   // the world_identity generation the tables above belong to
 
 uint32_t g_published = 0, g_landed = 0;
 
@@ -66,6 +66,7 @@ void SyncWorld() {
     if (gen == g_world) return;
     g_world = gen;
     g_class.clear();
+    g_known.clear();
 }
 
 ClassInfo& InfoOf(void* cls) {
@@ -127,21 +128,35 @@ void OnInitPost(const sg::Call& c) {
     if (!ReadState(c.object, now)) return;
     auto it = g_known.find(key);
     const CanState before = it != g_known.end() ? it->second : DefaultsOf(c.object);
-    g_known[key] = now;
-    if (now == before) return;
+    // What this peer knows moves with what it sent or saw: a publish that was declined leaves the old value, so the
+    // next init compares again and offers the change again.
+    if (now == before) {
+        g_known[key] = now;
+        return;
+    }
     // A record landing here is the far side's change arriving, not a new one.
     if (ue_wrap::save_record::IsApplying()) {
+        g_known[key] = now;
         ++g_landed;
         UE_LOGI("prop_can_state: a record landed on '%ls' -> opened=%d foods=%d", key.c_str(), now.opened ? 1 : 0,
                 now.foods);
         return;
     }
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected()) return;
+    if (!s || !s->connected()) {   // nothing to tell anyone; a join's snapshot carries the can
+        g_known[key] = now;
+        return;
+    }
     // A joining client's load churn is the host's state arriving through the save, as in prop_record_refresh.
-    if (s->role() == coop::net::Role::Client && !coop::join_membership_sweep::HasLoadTailQuiesced()) return;
+    if (s->role() == coop::net::Role::Client && !coop::join_membership_sweep::HasLoadTailQuiesced()) {
+        g_known[key] = now;
+        return;
+    }
     const bool sent = coop::prop_save_data::Publish(s, c.object, key);
-    if (sent) ++g_published;
+    if (sent) {
+        g_known[key] = now;
+        ++g_published;
+    }
     UE_LOGI("prop_can_state: '%ls' changed here: opened %d->%d foods %d->%d -- record %s (#%u)", key.c_str(),
             before.opened ? 1 : 0, now.opened ? 1 : 0, before.foods, now.foods, sent ? "published" : "NOT sent",
             g_published);
@@ -171,7 +186,6 @@ void Tick() {
 void OnDisconnect() {
     if (g_published || g_landed)
         UE_LOGI("prop_can_state: session end -- published=%u landed=%u", g_published, g_landed);
-    g_known.clear();
     g_published = g_landed = 0;
 }
 
