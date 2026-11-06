@@ -9,6 +9,7 @@
 #include "coop/props/container_act_selftest_internal.h"
 #include "coop/props/container_act_state.h"
 #include "coop/props/container_act_wire.h"
+#include "coop/props/prop_record_wire.h"
 #include "coop/props/container_slice_wire.h"
 
 #include <array>
@@ -21,6 +22,7 @@ namespace {
 
 namespace H   = coop::props::container_act_host::internal;
 namespace caw = coop::props::container_act_wire;
+namespace prw = coop::props::prop_record_wire;
 namespace cas = coop::props::container_act_state;
 namespace cr  = coop::props::container_reach;
 namespace SR  = ue_wrap::save_record;
@@ -343,12 +345,12 @@ void RunPutSelftest(Checks& check) {
 
     // ---- the put's byte slack: the largest record a client may ask still packs once the fridge flag is added ----
     {
-        const size_t limit = caw::kMaxRecordBytes - caw::kPutStoredSlack;
+        const size_t limit = prw::kMaxRecordBytes - caw::kPutStoredSlack;
         // `r` padded in its string to the largest size a client may ask (the grammar's strings step by two bytes).
         const auto largest = [&](SR::SaveRecord r) {
             r.names = {{L"apple", L"tag"}};
             r.strings = {{L""}};
-            r.strings[0][0].assign((limit - caw::RecordBytes(r)) / 2, L'x');
+            r.strings[0][0].assign((limit - prw::RecordBytes(r)) / 2, L'x');
             return r;
         };
         // The commit that carries `r` as the container stored it.
@@ -366,7 +368,7 @@ void RunPutSelftest(Checks& check) {
         const char* why = "";
 
         SR::SaveRecord noGroup = largest(Rec(L"prop_apple_C", 1, L""));
-        check(caw::RecordBytes(noGroup) <= limit && limit - caw::RecordBytes(noGroup) <= 1,
+        check(prw::RecordBytes(noGroup) <= limit && limit - prw::RecordBytes(noGroup) <= 1,
               "slack: the test record is the largest the client may ask");
         noGroup.bools.clear();
         noGroup.bools.push_back({1});   // a record with no bools group gains one: the dearest the flag can cost
@@ -377,7 +379,7 @@ void RunPutSelftest(Checks& check) {
         SR::SaveRecord grouped = Rec(L"prop_apple_C", 1, L"");
         grouped.bools = {{0, 1, 0}};
         grouped = largest(grouped);
-        check(caw::RecordBytes(grouped) <= limit, "slack: the grouped test record is within the ask limit");
+        check(prw::RecordBytes(grouped) <= limit, "slack: the grouped test record is within the ask limit");
         grouped.bools[0].push_back(1);   // a record with a bools group gains one byte
         check(!caw::PackCommit(commitOf(grouped)).empty() &&
                   caw::ParseCommit(caw::PackCommit(commitOf(grouped)), back, &why) == caw::Parse::Ok,
@@ -527,7 +529,7 @@ void RunPutSelftest(Checks& check) {
               "hand-hash: a librarian's seconds and a bucket's dry flag are left out through their rows");
         CheckExclusionRows(check);
 
-        const size_t asked = caw::RecordBytes(hand);
+        const size_t asked = prw::RecordBytes(hand);
         SR::SaveRecord big = hand;
         check(H::DoneSizeOk(asked, hand), "done-size: the asked record itself is within the bound");
         big.strings = {{std::wstring(5, L'x')}};
@@ -536,12 +538,12 @@ void RunPutSelftest(Checks& check) {
         check(!H::DoneSizeOk(asked, big), "done-size: a record larger than asked by more than the slack is refused");
 
         SR::SaveRecord named = hand;
-        named.names = {{std::wstring(caw::kMaxPutNameChars, L'a')}};
-        check(H::PutNameOk(named), "name-bound: a name at the bound is accepted");
-        named.names = {{std::wstring(caw::kMaxPutNameChars + 1, L'a')}};
-        check(!H::PutNameOk(named), "name-bound: a name past the bound is refused");
+        named.names = {{std::wstring(prw::kMaxPutNameChars, L'a')}};
+        check(prw::PutNameOk(named), "name-bound: a name at the bound is accepted");
+        named.names = {{std::wstring(prw::kMaxPutNameChars + 1, L'a')}};
+        check(!prw::PutNameOk(named), "name-bound: a name past the bound is refused");
         named.names.clear();
-        check(!H::PutNameOk(named), "name-bound: a record with no name is refused");
+        check(!prw::PutNameOk(named), "name-bound: a record with no name is refused");
 
         std::vector<SR::SaveRecord> three = {hand, moved, changed};
         check(csw::SliceBytes(three) == csw::Pack(7, three, 0).size() && csw::SliceBytes({}) == csw::Pack(7, {}, 0).size() &&

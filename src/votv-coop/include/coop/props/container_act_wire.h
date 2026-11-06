@@ -9,8 +9,9 @@
 //   `[u16 index][u16 n][n bytes]`             a put's done: where it landed and the record, as the host stored it
 //
 // HOSTILE-INPUT CONTRACT: the peer is not trusted. Every field is bounds-checked, a record's declared length is held
-// to kMaxRecordBytes BEFORE any DeSave (so a refused or unserved put costs a bounds check, not a parse), and any byte
-// after a family's tail is Malformed. The whole blob is already bounded by blob_chunks::MaxBlobBytes at the assembler.
+// to prop_record_wire::kMaxRecordBytes BEFORE any DeSave (so a refused or unserved put costs a bounds check, not a
+// parse), and any byte after a family's tail is Malformed. The whole blob is already bounded by
+// blob_chunks::MaxBlobBytes at the assembler. The record's own codec and bounds are coop/props/prop_record_wire.
 
 #pragma once
 
@@ -22,21 +23,12 @@
 
 namespace coop::props::container_act_wire {
 
-// One record's bytes, at most: 16 times the largest record measured on the wire.
-inline constexpr size_t kMaxRecordBytes = 4096;
-
 // A put's record is stored by the container with the owner's fridge flag appended to bools[0], and the commit carries it
-// as stored. A client asks only a record at most this much under kMaxRecordBytes, so the stored one always packs.
+// as stored. A client asks only a record at most this much under prop_record_wire::kMaxRecordBytes, so the stored one
+// always packs.
 inline constexpr size_t kPutStoredSlack = 64;
 // The most the fridge flag adds to a record's wire form: a new bools group (its u32 element count) and the flag's byte.
 inline constexpr size_t kFridgeElementBytes = sizeof(uint32_t) + sizeof(uint8_t);
-// The longest prop name a put may carry (the game's own are short): a longer one is refused before any engine call.
-inline constexpr size_t kMaxPutNameChars = 128;
-
-// The record's wire form in the grammar a request and a commit carry it in, and its size.
-std::vector<uint8_t> RecordWire(const ue_wrap::save_record::SaveRecord& r);
-size_t RecordBytes(const ue_wrap::save_record::SaveRecord& r);
-
 struct Request {
     uint16_t id = 0;
     uint8_t family = 0;
@@ -57,8 +49,8 @@ struct Commit {
 
 enum class Parse : uint8_t { Ok, Malformed, UnknownFamily };
 
-// PackRequest and PackCommit return an empty vector when the record is past kMaxRecordBytes: a blob the parser
-// would refuse is never built, and the length is never cut to 16 bits.
+// PackRequest and PackCommit return an empty vector when the record is past prop_record_wire::kMaxRecordBytes: a
+// blob the parser would refuse is never built, and the length is never cut to 16 bits.
 std::vector<uint8_t> PackRequest(const Request& r);
 
 // Ok, Malformed (`why` names it), or UnknownFamily: the head parsed and the family is none of ours; `out.id`,

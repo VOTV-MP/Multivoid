@@ -10,6 +10,7 @@
 #include "coop/props/container_act_selftest_internal.h"
 #include "coop/props/container_act_state.h"
 #include "coop/props/container_act_wire.h"
+#include "coop/props/prop_record_wire.h"
 #include "coop/props/container_record_edit.h"
 #include "coop/props/container_slice_wire.h"
 #include "coop/props/container_truth.h"
@@ -24,6 +25,7 @@ namespace coop::props::container_act_host {
 
 namespace H   = coop::props::container_act_host::internal;
 namespace caw = coop::props::container_act_wire;
+namespace prw = coop::props::prop_record_wire;
 namespace cas = coop::props::container_act_state;
 namespace cre = coop::props::container_record_edit;
 namespace cr  = coop::props::container_reach;
@@ -202,7 +204,7 @@ void RunSelftest() {
         big.record.strings = {{std::wstring(6000, L'x')}};
         std::vector<uint8_t> bigRec;
         coop::save_record_wire::SerSave(bigRec, big.record);
-        check(bigRec.size() > caw::kMaxRecordBytes && bigRec.size() <= 0xFFFF,
+        check(bigRec.size() > prw::kMaxRecordBytes && bigRec.size() <= 0xFFFF,
               "codec: the long record is over the cap and still fits a u16 n");
         b.assign(goodPut.begin(), goodPut.begin() + 8);
         coop::save_record_wire::AppU16(b, static_cast<uint16_t>(bigRec.size()));

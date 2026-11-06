@@ -2,7 +2,7 @@
 
 #include "coop/props/container_act_state.h"
 
-#include "coop/props/container_act_wire.h"
+#include "coop/props/prop_record_wire.h"
 
 #include <algorithm>
 #include <utility>
@@ -103,7 +103,7 @@ void State::Lapse(const Hold& h, uint64_t nowMs) {
     t.eid = h.eid;
     t.className = h.record.className;
     ue_wrap::save_record::RecordName(h.record, t.name);
-    t.askedBytes = coop::props::container_act_wire::RecordBytes(h.record);
+    t.askedBytes = coop::props::prop_record_wire::RecordBytes(h.record);
     t.atMs = nowMs;
     size_t ofSlot = 0;
     for (const Tombstone& o : tombstones_) ofSlot += o.slot == h.slot ? 1 : 0;

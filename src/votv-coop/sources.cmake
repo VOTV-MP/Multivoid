@@ -234,6 +234,7 @@ set(VOTVCOOP_SOURCES
     src/coop/world/plant_edit_gate.cpp
     src/ue_wrap/actors/growing_plant.cpp
     src/coop/props/prop_record_refresh.cpp
+    src/coop/props/prop_record_wire.cpp
     src/coop/props/prop_can_state.cpp
     src/coop/props/pack_trash_intent.cpp
     src/coop/props/prop_drop_intent.cpp

@@ -4,12 +4,13 @@
 
 #include "coop/items/save_record_wire.h"
 #include "coop/net/protocol.h"
+#include "coop/props/prop_record_wire.h"
 
 namespace coop::props::container_act_wire {
 namespace {
 
-namespace SR = ue_wrap::save_record;
-namespace W  = coop::save_record_wire;
+namespace W   = coop::save_record_wire;
+namespace prw = coop::props::prop_record_wire;
 using coop::net::ContainerActFamily;
 
 constexpr size_t kHeadBytes = 8;
@@ -21,31 +22,9 @@ void AppHead(std::vector<uint8_t>& b, uint16_t id, uint8_t second, uint32_t eid)
     W::AppU32(b, eid);
 }
 
-// `[u16 n][n bytes]` of one record; false (nothing appended) when it is past the cap the parser refuses.
-bool AppRecord(std::vector<uint8_t>& b, const SR::SaveRecord& r) {
-    std::vector<uint8_t> rec;
-    W::SerSave(rec, r);
-    if (rec.size() > kMaxRecordBytes) return false;
-    W::AppU16(b, static_cast<uint16_t>(rec.size()));
-    b.insert(b.end(), rec.begin(), rec.end());
-    return true;
-}
-
 bool Fail(const char** why, const char* text) {
     if (why) *why = text;
     return false;
-}
-
-// `[u16 n][n bytes]` to the end of the blob: one record that fills the rest exactly.
-bool RdRecordToEnd(const std::vector<uint8_t>& b, size_t& o, SR::SaveRecord& out, const char** why) {
-    uint16_t n = 0;
-    if (!W::RdU16(b, o, n)) return Fail(why, "no record length");
-    if (n == 0) return Fail(why, "empty record");
-    if (n > kMaxRecordBytes) return Fail(why, "record past the byte cap");
-    if (b.size() - o != n) return Fail(why, "record length does not fill the blob");
-    if (!W::DeSave(b, o, out)) return Fail(why, "malformed record");
-    if (o != b.size()) return Fail(why, "record shorter than its length");
-    return true;
 }
 
 // The head's shared checks. `second` is the family (request) or the committed byte (commit).
@@ -65,14 +44,6 @@ bool RdHead(const std::vector<uint8_t>& b, size_t& o, uint16_t& id, uint8_t& sec
 
 }  // namespace
 
-std::vector<uint8_t> RecordWire(const SR::SaveRecord& r) {
-    std::vector<uint8_t> rec;
-    W::SerSave(rec, r);
-    return rec;
-}
-
-size_t RecordBytes(const SR::SaveRecord& r) { return RecordWire(r).size(); }
-
 std::vector<uint8_t> PackRequest(const Request& r) {
     std::vector<uint8_t> b;
     AppHead(b, r.id, r.family, r.eid);
@@ -82,7 +53,7 @@ std::vector<uint8_t> PackRequest(const Request& r) {
             W::AppU64(b, r.hash);
             break;
         case ContainerActFamily::PutRecord:
-            if (!AppRecord(b, r.record)) return {};
+            if (!prw::AppRecord(b, r.record)) return {};
             break;
         default:
             break;   // an unknown family is the head alone
@@ -103,7 +74,7 @@ Parse ParseRequest(const std::vector<uint8_t>& b, Request& out, const char** why
             }
             break;
         case ContainerActFamily::PutRecord:
-            if (!RdRecordToEnd(b, o, out.record, why)) return Parse::Malformed;
+            if (!prw::RdRecordToEnd(b, o, out.record, why)) return Parse::Malformed;
             break;
         default:
             return Parse::UnknownFamily;
@@ -120,7 +91,7 @@ std::vector<uint8_t> PackCommit(const Commit& c) {
     AppHead(b, c.id, c.committed, c.eid);
     if (c.hasRecord && c.committed == 1) {
         W::AppU16(b, c.index);
-        if (!AppRecord(b, c.record)) return {};
+        if (!prw::AppRecord(b, c.record)) return {};
     }
     return b;
 }
@@ -143,7 +114,7 @@ Parse ParseCommit(const std::vector<uint8_t>& b, Commit& out, const char** why) 
         Fail(why, "short record tail");
         return Parse::Malformed;
     }
-    if (!RdRecordToEnd(b, o, out.record, why)) return Parse::Malformed;
+    if (!prw::RdRecordToEnd(b, o, out.record, why)) return Parse::Malformed;
     out.hasRecord = true;
     return Parse::Ok;
 }

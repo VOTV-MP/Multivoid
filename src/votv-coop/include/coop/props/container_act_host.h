@@ -133,9 +133,9 @@ CommitStep DecideCommit(bool matched, uint8_t committed);
 bool StoredMatches(const ue_wrap::save_record::SaveRecord& asked, const ue_wrap::save_record::SaveRecord& stored);
 
 // The client's word is bounded where it is stored (MTA, CGame.cpp:2731-2736, 2743-2753): a done's record is no larger than the
-// one asked plus the slack the container's own flag needs, and a put's name is at most kMaxPutNameChars.
+// one asked plus the slack the container's own flag needs, and a put's name is at most
+// prop_record_wire::kMaxPutNameChars (prop_record_wire::PutNameOk).
 bool DoneSizeOk(size_t askedBytes, const ue_wrap::save_record::SaveRecord& committed);
-bool PutNameOk(const ue_wrap::save_record::SaveRecord& r);
 
 // What a put's Wait waits on, for the line that ends the wait: the first term whose read did not come.
 const char* PutWaitCause(const PutInputs& in);

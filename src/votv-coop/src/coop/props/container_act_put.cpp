@@ -20,6 +20,7 @@
 #include "coop/props/container_contents_io.h"
 #include "coop/props/container_contents_sync.h"
 #include "coop/props/container_slice_wire.h"
+#include "coop/props/prop_record_wire.h"
 
 #include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/actors/container_view.h"
@@ -46,6 +47,7 @@ namespace coop::props::container_act_request::detail {
 namespace {
 
 namespace caw = coop::props::container_act_wire;
+namespace prw = coop::props::prop_record_wire;
 namespace ci  = ue_wrap::container_inventory;
 namespace cio = coop::props::container_contents_io;
 namespace csw = coop::props::container_slice_wire;
@@ -136,8 +138,8 @@ sg::Verdict AskPut(uint8_t route, uint32_t eid, void* container, const SR::SaveR
         return sg::Verdict::Cancel;
     }
     if (!MayTravel(rec)) return sg::Verdict::Cancel;
-    const std::vector<uint8_t> wire = caw::RecordWire(rec);   // serialised once: its size and its hash
-    if (wire.size() > caw::kMaxRecordBytes - caw::kPutStoredSlack) {
+    const std::vector<uint8_t> wire = prw::RecordWire(rec);   // serialised once: its size and its hash
+    if (wire.size() > prw::kMaxRecordBytes - caw::kPutStoredSlack) {
         UE_LOGW("container_act: put eid=%u route=%s: the %ls is past the byte cap a put may ask", eid, RouteName(route),
                 rec.className.c_str());
         ShowBadReason();

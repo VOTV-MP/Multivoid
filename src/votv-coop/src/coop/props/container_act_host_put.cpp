@@ -10,6 +10,7 @@
 #include "coop/net/net_clock.h"
 #include "coop/net/session.h"
 #include "coop/props/container_act_wire.h"
+#include "coop/props/prop_record_wire.h"
 #include "coop/props/container_contents_sync.h"
 #include "coop/props/container_record_edit.h"
 #include "coop/props/container_slice_wire.h"
@@ -29,6 +30,7 @@ namespace {
 namespace cas = coop::props::container_act_state;
 namespace cre = coop::props::container_record_edit;
 namespace caw = coop::props::container_act_wire;
+namespace prw = coop::props::prop_record_wire;
 namespace cr  = coop::props::container_reach;
 namespace csw = coop::props::container_slice_wire;
 namespace ci  = ue_wrap::container_inventory;
@@ -65,7 +67,7 @@ cre::EditResult ReadFit(uint32_t eid, const SR::SaveRecord& rec, size_t flagByte
     }
     if (r != cre::EditResult::Done) return r;
     countAtCap = recs.size() >= csw::kMaxRecords;
-    bytesOver = csw::SliceBytes(recs) + caw::RecordBytes(rec) + flagBytes >
+    bytesOver = csw::SliceBytes(recs) + prw::RecordBytes(rec) + flagBytes >
                 coop::blob_chunks::MaxBlobBytes();
     return cre::EditResult::Done;
 }
@@ -91,7 +93,7 @@ void ReadPutInputs(uint8_t slot, uint32_t eid, const SR::SaveRecord& record, boo
     p.slowed = slowable && !g_noLapse && cas::Live().Slowed(slot, coop::net::NowMs());   // the red: container_act_no_lapse
     if (p.locked || p.slowed) return;
     std::wstring name;
-    p.nameOk = internal::PutNameOk(record);
+    p.nameOk = prw::PutNameOk(record);
     if (!p.nameOk || !SR::RecordName(record, name)) return;
     void* const cls = ue_wrap::object_index::ClassByName(record.className.c_str());
     p.classResolved = cls != nullptr;
@@ -330,12 +332,7 @@ bool StoredMatches(const SR::SaveRecord& asked, const SR::SaveRecord& stored) {
 }
 
 bool DoneSizeOk(size_t askedBytes, const SR::SaveRecord& committed) {
-    return caw::RecordBytes(committed) <= askedBytes + caw::kPutStoredSlack;
-}
-
-bool PutNameOk(const SR::SaveRecord& r) {
-    std::wstring name;
-    return SR::RecordName(r, name) && name.size() <= caw::kMaxPutNameChars;
+    return prw::RecordBytes(committed) <= askedBytes + caw::kPutStoredSlack;
 }
 
 const char* PutWaitCause(const PutInputs& in) {
