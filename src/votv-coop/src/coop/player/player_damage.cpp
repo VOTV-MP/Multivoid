@@ -261,10 +261,12 @@ bool FirstUnkeyed(void* cremator) {
 
 // HOST: the cremator's hit on a puppet. The machine's ubergraph calls addDamage and ignite on the player it burns
 // (its tick, once a second per collected actor), so the caller of the cancelled call is the cremator. Its owner's
-// machine applies the hit to its own player (coop/player/cremator_hit): MTA's remote damage applied by the owner
-// (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientGame.cpp:4509), Source's server-side hit on a
-// client-owned health (reference/source-sdk-2013/src/game/server/hl2/npc_BaseZombie.cpp:1267). Beside PlayerHit and
-// not through it: that kind names its source by an Npc element id and resolves it only through the Npc mirrors.
+// machine applies the hit to its own player (coop/player/cremator_hit): the health is the owner's as in MTA
+// (reference/mtasa-blue/Client/mods/deathmatch/logic/CNetAPI.cpp:1189, applied at CClientGame.cpp:4543), the hit
+// is made where the machine runs as Source's NPC does (reference/source-sdk-2013/src/game/server/hl2/
+// npc_BaseZombie.cpp:1267). The amount is the owner's, where MTA's server computes it (SET_ELEMENT_HEALTH,
+// CStaticFunctionDefinitions.cpp:1771). Beside PlayerHit and not through it: that kind names its source by an Npc
+// element id and resolves it only through the Npc mirrors.
 // A call that carries no caller frame cannot be told from any other, so it delivers nothing; said once per verb.
 bool DeliverFromCremator(const sg::Call& c, uint8_t verb) {
     auto* s = g_session.load(std::memory_order_acquire);
