@@ -1,20 +1,28 @@
 // harness/autotest/autotest_sv_request.cpp -- TEST-ONLY: the server information sv.request writes onto a disc, across two peers.
 //
-// One peer, VOTVCOOP_SV_REQUEST_WHO (host or client), types the line at its own terminal, ejects the disc and inserts it in the
-// laptop. Both peers write what they hold at each step, and the other compares: the server box's slot, the disc, the laptop's
-// slot, and whether the rows name this peer's own dish code. Gated by VOTVCOOP_RUN_SV_REQUEST; the folder is VOTVCOOP_CAN_DIR.
+// The host puts a disc in the first dish's server box, seeded with VOTVCOOP_SV_REQUEST_SEED rows of the length a real
+// one has (31 makes the request's own row the disc's 32nd and last write). One peer, VOTVCOOP_SV_REQUEST_WHO (host
+// or client), types the line at its own terminal, ejects the disc and inserts it in the laptop. After each step the
+// peer that acted publishes what it reads and the other waits to read the same; the host judges and says
+// `rig: VERDICT sv-request PASS|FAIL|INVALID`. Before any of it the host prints the wire size of a full box disc and
+// of a full laptop disc (`sv-request: MEASURE`), beside the ceiling both lanes refuse past. Red arm: the disc_ceiling_32k
+// flag on the peers, whose lanes then refuse the full disc: the box's slot does not cross and the verdict is FAIL.
+// Gated by VOTVCOOP_RUN_SV_REQUEST; the peers' folder is VOTVCOOP_CAN_DIR.
 
 #include "harness/autotest.h"
+#include "disc_drills.h"   // co-located private header (src tree, not include/)
+#include "harness/autotest/meet.h"
+#include "harness/autotest/peer_signal.h"
 
 #include "coop/config/config.h"
+#include "coop/items/save_record_wire.h"
 #include "coop/player/players_registry.h"
-#include "coop/props/prop_key_index.h"
-#include "coop/session/net_pump.h"
+#include "coop/props/disc_record_ceiling.h"
+#include "coop/session/rig_verdict.h"
 #include "ue_wrap/actors/floppy_disc.h"
 #include "ue_wrap/actors/prop.h"
-#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/desk/dish.h"
@@ -23,14 +31,15 @@
 #include "ue_wrap/devices/laptop.h"
 #include "ue_wrap/devices/serverbox.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_pawn.h"
 
 #include <windows.h>
 
-#include <atomic>
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <fstream>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -41,43 +50,36 @@ namespace D = ue_wrap::dish;
 namespace E = ue_wrap::engine;
 namespace FD = ue_wrap::floppy_disc;
 namespace FS = ue_wrap::floppy_slot;
+namespace PS = harness::autotest::peer_signal;
 namespace R = ue_wrap::reflection;
 namespace SB = ue_wrap::serverbox;
 namespace SC = ue_wrap::sat_console;
+namespace SR = ue_wrap::save_record;
+using disc_drill::OnGameThread;
+using PS::Await;
+using PS::AwaitText;
+using PS::Mark;
 
-std::string g_dir;
-int g_fails = 0;
-bool g_isClient = false;
+constexpr const char* kTag = "sv-request";
+constexpr int kDiscWrites = 32;        // a disc's writes (the server box's export loop), 31 rows of them on a laptop
+constexpr int kLaptopRows = 31;        // what the laptop's updFloppy keeps of a disc's rows
+constexpr int kStepSec = 60;           // the bound on one step of the other peer's
+constexpr int kConvergeSec = 45;       // the bound on this peer's reading catching up with the acting peer's
+constexpr int kExportSec = 150;        // ten packets, each a coin toss on a low upgrade
 
-template <class Fn>
-void OnGameThread(Fn&& fn) {
-    ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
-}
+struct Fixture {
+    int dish = -1;
+    void* box = nullptr;
+};
 
-void Mark(const std::string& name, const std::string& body = "x") {
-    std::string tmp = g_dir + "\\" + name + ".tmp";
-    { std::ofstream(tmp, std::ios::binary | std::ios::trunc) << body; }
-    ::MoveFileExA(tmp.c_str(), (g_dir + "\\" + name).c_str(), MOVEFILE_REPLACE_EXISTING);
-}
-
-bool Await(const std::string& name, std::string* body = nullptr, int seconds = 120) {
-    for (int i = 0; i < seconds * 10; ++i) {
-        std::ifstream f(g_dir + "\\" + name, std::ios::binary);
-        std::string s;
-        if (f && std::getline(f, s) && !s.empty()) {
-            if (body) *body = s;
-            return true;
-        }
-        ::Sleep(100);
-    }
-    UE_LOGW("sv-request: VERDICT ABORT -- no '%hs' from the other peer", name.c_str());
-    return false;
-}
-
-void Check(bool ok, const char* what) {
+// The word the drill ends on, said by whichever peer finds the failure.
+bool Need(bool ok, const char* what) {
     UE_LOGI("sv-request: %hs %hs", ok ? "PASS" : "FAIL", what);
-    if (!ok) ++g_fails;
+    if (!ok) coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Fail, "%s", what);
+    return ok;
 }
+
+void Invalid(const char* why) { coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Invalid, "%s", why); }
 
 // A disc's or a slot's rows as one line: their count and a digest of every character.
 std::string Digest(const std::vector<std::wstring>& rows, int32_t writes) {
@@ -117,6 +119,16 @@ int PickDish() {
     return -1;
 }
 
+void ResolveAll() {
+    FS::EnsureResolved(FS::DeviceKind::ServerBox);
+    FS::EnsureResolved(FS::DeviceKind::Laptop);
+    FD::EnsureResolved();
+    SB::EnsureResolved();
+    D::EnsureResolved();
+    SC::EnsureResolved();
+    ue_wrap::laptop::EnsureResolved();
+}
+
 bool ReadSlot(FS::DeviceKind kind, void* device, std::vector<std::wstring>& rows, int32_t& writes, int32_t& type) {
     FS::Scalars s;
     FS::Content c;
@@ -127,7 +139,7 @@ bool ReadSlot(FS::DeviceKind kind, void* device, std::vector<std::wstring>& rows
     return true;
 }
 
-// This peer's reading of a step: what it holds, for the other peer to compare with its own.
+// This peer's reading of the box: what it holds, for the other peer to compare with its own.
 std::string StepBox(void* box) {
     std::vector<std::wstring> rows;
     int32_t writes = 0, type = -1;
@@ -136,6 +148,13 @@ std::string StepBox(void* box) {
         if (ReadSlot(FS::DeviceKind::ServerBox, box, rows, writes, type)) d = "type=" + std::to_string(type) + " " + Digest(rows, writes);
     });
     return d;
+}
+
+size_t BoxRows(void* box) {
+    std::vector<std::wstring> rows;
+    int32_t writes = 0, type = -1;
+    OnGameThread([&] { ReadSlot(FS::DeviceKind::ServerBox, box, rows, writes, type); });
+    return rows.size();
 }
 
 void* FindDisc(const std::wstring& key) {
@@ -153,185 +172,247 @@ std::vector<std::wstring> DiscKeys() {
     return keys;
 }
 
-// Compares this peer's reading with the other's: each writes its own and reads the other's.
-void CompareStep(const std::string& step, const std::string& mine, const char* what) {
-    const std::string me = g_isClient ? "c_" : "h_", other = g_isClient ? "h_" : "c_";
-    Mark(me + step, mine);
-    std::string theirs;
-    if (!Await(other + step, &theirs, 60)) return;
-    UE_LOGI("sv-request: %hs: here %hs, there %hs", step.c_str(), mine.c_str(), theirs.c_str());
-    Check(mine == theirs, what);
+// The key of a disc that stands now and did not stand in `before`; empty when there is none.
+std::wstring NewDiscKey(const std::vector<std::wstring>& before) {
+    for (const std::wstring& k : DiscKeys())
+        if (!k.empty() && std::find(before.begin(), before.end(), k) == before.end()) return k;
+    return std::wstring();
 }
 
-void Run(bool iAct) {
-    // The host makes the fixture: a blank disc in the first dish's server, as a player's insert does.
-    int dishIndex = -1;
-    void* box = nullptr;
-    // The pawn stands before the dishes do.
-    for (int i = 0; i < 240 && !box; ++i) {
-        OnGameThread([&] {
-            FS::EnsureResolved(FS::DeviceKind::ServerBox);
-            FS::EnsureResolved(FS::DeviceKind::Laptop);
-            FD::EnsureResolved();
-            SB::EnsureResolved();
-            D::EnsureResolved();
-            SC::EnsureResolved();
-            ue_wrap::laptop::EnsureResolved();
-            dishIndex = PickDish();
-            box = dishIndex >= 0 ? ServerOf(D::DishByIndex(dishIndex)) : nullptr;
-        });
-        if (!box) ::Sleep(500);
-    }
-    Check(box != nullptr, "a dish has a server box");
-    if (!box) return;
-    UE_LOGI("sv-request: dish %d", dishIndex);
-
-    if (!g_isClient) {
-        Await("client_ready", nullptr, 480);
-        OnGameThread([&] {
-            void* cls = R::FindClass(L"prop_floppyDisc_R_C");
-            void* pawn = coop::players::Registry::Get().Local();
-            ue_wrap::FVector at{};
-            if (!cls || !pawn || !E::TryGetActorLocation(pawn, at)) return;
-            void* disc = E::SpawnActor(cls, {at.X + 100.f, at.Y, at.Z + 50.f});
-            if (!disc) return;
-            FD::DiscContent content;
-            FD::ReadDiscContent(disc, content);
-            UE_LOGI("sv-request: a new disc reads writes=%d rows=%zu", content.readWrites, content.data.size());
-            if (content.readWrites <= 0) content.readWrites = 5;
-            // VOTVCOOP_SV_REQUEST_SEED: the rows a player's earlier requests left, one per other dish, each as long as a real one.
-            const int seed = std::atoi(coop::config::ReadEnv("VOTVCOOP_SV_REQUEST_SEED").c_str());
-            for (int i = 0; i < seed && dishIndex + 1 + i < D::Count(); ++i) {
-                std::wstring code;
-                D::ReadHashcode(dishIndex + 1 + i, code);
-                const std::wstring eol(L"\r\n");
-                content.data.push_back(L"$t" + eol + L"Server data: /n name ; /d data" + eol + L"/n " + D::TechName(dishIndex + 1 + i) + eol + L"/d 00" + eol + code);
-            }
-            UE_LOGI("sv-request: the disc holds %zu rows before the request", content.data.size());
-            FD::WriteDiscContent(disc, content);
-            const bool called = SB::CallProcessFloppy(box, disc);
-            UE_LOGI("sv-request: the insert was called (%d)", called ? 1 : 0);
-        });
-    } else {
-        Mark("client_ready");
-    }
-    ::Sleep(3000);
-    CompareStep("inserted", StepBox(box), "the blank disc in the slot reads the same on both peers");
-    if (iAct) {
-        OnGameThread([&] {
-            void* term = SC::LocalTerminal();
-            void* dish = D::DishByIndex(dishIndex);
-            if (!term || !dish) return;
-            SC::CallInit(term, D::TechName(dishIndex), false, dish);
-            SC::RunCommand(term, L"clr");
-            SC::RunCommand(term, L"sv.request");
-            UE_LOGI("sv-request: typed sv.request at dish %d", dishIndex);
-        });
-    }
-    // Export runs ten packets, each a coin toss on a low upgrade: about fifteen seconds and sometimes more.
-    std::vector<std::wstring> rows;
-    int32_t writes = 0, type = -1;
-    const size_t wantRows = static_cast<size_t>(std::atoi(coop::config::ReadEnv("VOTVCOOP_SV_REQUEST_SEED").c_str())) + 1;
-    for (int i = 0; i < 900 && rows.size() < wantRows; ++i) {
-        OnGameThread([&] { ReadSlot(FS::DeviceKind::ServerBox, box, rows, writes, type); });
-        if (rows.size() < wantRows) ::Sleep(100);
-    }
-    UE_LOGI("sv-request: this peer's slot holds %zu rows, want %zu", rows.size(), wantRows);
-    Check(rows.size() >= wantRows, "the export wrote a row into this peer's slot");
-    LogRows("slot", rows);
-    bool namesCode = false;
-    OnGameThread([&] {
-        std::wstring code;
-        D::ReadHashcode(dishIndex, code);
-        for (const std::wstring& r : rows)
-            if (!code.empty() && r.find(code) != std::wstring::npos) namesCode = true;
-        UE_LOGI("sv-request: this peer's dish code has %zu characters", code.size());
-    });
-    Check(namesCode, "the row holds this peer's own code for that dish");
-    ::Sleep(3000);
-    CompareStep("exported", StepBox(box), "the exported rows read the same on both peers");
-
-    std::vector<std::wstring> before;
-    OnGameThread([&] { before = DiscKeys(); });
-    if (iAct) {
-        OnGameThread([&] { SB::CallEjectFloppy(box); });
-        UE_LOGI("sv-request: ejected");
-    }
-    std::wstring discKey;
-    void* disc = nullptr;
-    for (int i = 0; i < 150 && !disc; ++i) {
-        OnGameThread([&] {
-            for (const std::wstring& k : DiscKeys()) {
-                bool had = false;
-                for (const std::wstring& b : before) had = had || b == k;
-                if (!had && !k.empty()) {
-                    discKey = k;
-                    disc = FindDisc(k);
-                }
-            }
-        });
-        if (!disc) ::Sleep(100);
-    }
-    Check(disc != nullptr, "the ejected disc stands on this peer");
-    if (!disc) return;
-    ::Sleep(3000);
-    std::string discText = "unread";
+std::string DiscReading(const std::wstring& key) {
+    std::string text = "unread";
     OnGameThread([&] {
         FD::DiscContent c;
-        if (FD::ReadDiscContent(disc, c)) {
-            discText = Digest(c.data, c.readWrites);
-            LogRows("disc", c.data);
-        }
+        void* disc = key.empty() ? nullptr : FindDisc(key);
+        if (disc && FD::ReadDiscContent(disc, c)) text = Digest(c.data, c.readWrites);
     });
-    CompareStep("ejected", discText, "the ejected disc's rows read the same on both peers");
+    return text;
+}
 
-    if (iAct) {
-        OnGameThread([&] { ue_wrap::laptop::CallInsertDisc(disc); });
-        UE_LOGI("sv-request: inserted in the laptop");
-    }
-    ::Sleep(5000);
-    std::string laptopText = "unread";
+std::string LaptopReading() {
+    std::string text = "unread";
     OnGameThread([&] {
         void* laptop = nullptr;
         for (void* o : R::FindObjectsByClass(L"laptop_C"))
             if (o && R::IsLive(o) && !R::NameStartsWith(R::NameOf(o), L"Default__")) laptop = o;
-        std::vector<std::wstring> lr;
-        int32_t lw = 0, lt = -1;
-        if (laptop && ReadSlot(FS::DeviceKind::Laptop, laptop, lr, lw, lt)) {
-            laptopText = "type=" + std::to_string(lt) + " " + Digest(lr, lw);
-            LogRows("laptop", lr);
+        std::vector<std::wstring> rows;
+        int32_t writes = 0, type = -1;
+        if (laptop && ReadSlot(FS::DeviceKind::Laptop, laptop, rows, writes, type)) {
+            text = "type=" + std::to_string(type) + " " + Digest(rows, writes);
+            LogRows("laptop", rows);
         }
     });
-    Check(laptopText.find("rows=0") == std::string::npos && laptopText != "unread", "the laptop holds the rows on this peer");
-    CompareStep("laptop", laptopText, "the laptop's rows read the same on both peers");
-    UE_LOGI("sv-request: DONE fails=%d", g_fails);
+    return text;
+}
+
+// A row as a real request leaves one: a dish's own code, the length the game's export writes.
+std::wstring RowOf(int k) {
+    const int n = D::Count();
+    const int dish = n > 0 ? k % n : 0;
+    std::wstring code;
+    D::ReadHashcode(dish, code);
+    const std::wstring eol(L"\r\n");
+    return L"$t" + eol + L"Server data: /n name ; /d data" + eol + L"/n " + D::TechName(dish) + eol + L"/d 00" + eol + code;
+}
+
+std::vector<std::wstring> RowsOf(int count) {
+    std::vector<std::wstring> rows;
+    for (int i = 0; i < count; ++i) rows.push_back(RowOf(i));
+    return rows;
+}
+
+// A disc beside the host's player with `rows` seeded rows and `writesLeft` writes; null when it cannot be made.
+void* SpawnDisc(int rows, int writesLeft) {
+    void* cls = R::FindClass(L"prop_floppyDisc_R_C");
+    void* pawn = coop::players::Registry::Get().Local();
+    ue_wrap::FVector at{};
+    if (!cls || !pawn || !E::TryGetActorLocation(pawn, at)) return nullptr;
+    void* disc = E::SpawnActor(cls, {at.X + 100.f, at.Y, at.Z + 50.f});
+    if (!disc) return nullptr;
+    FD::DiscContent content;
+    content.data = RowsOf(rows);
+    content.readWrites = writesLeft;
+    FD::WriteDiscContent(disc, content);
+    return disc;
+}
+
+// What a disc's record weighs on the wire, built as prop_save_data's body is: the version byte, the key's length, the key,
+// then the record. Zero when the disc cannot be made or captured.
+size_t RecordBytes(int rows, int writesLeft) {
+    size_t bytes = 0;
+    OnGameThread([&] {
+        void* disc = SpawnDisc(rows, writesLeft);
+        if (!disc) return;
+        SR::SaveRecord rec;
+        if (SR::CaptureRecord(disc, rec)) {
+            std::vector<uint8_t> body;
+            coop::save_record_wire::SerSave(body, rec);
+            bytes = 2 + ue_wrap::prop::GetKeyString(disc).size() + body.size();
+        }
+        E::DestroyActor(disc);
+    });
+    return bytes;
+}
+
+// The host's measurement: a box disc at its 32 writes and a laptop disc at its 31, beside the ceiling.
+void MeasureFullDiscs() {
+    size_t rowChars = 0;
+    OnGameThread([&] { rowChars = RowOf(0).size(); });
+    const size_t box = RecordBytes(kDiscWrites, 0);
+    const size_t laptop = RecordBytes(kLaptopRows, kDiscWrites - kLaptopRows);
+    UE_LOGI("sv-request: MEASURE record of a box disc at %d writes (%d rows): %zu B; of a laptop disc at %d writes (%d rows): "
+            "%zu B; the ceiling %zu B; a row is %zu chars", kDiscWrites, kDiscWrites, box, kLaptopRows, kLaptopRows, laptop,
+            coop::disc_record::MaxBodyBytes(), rowChars);
+}
+
+// One step of the chain. The peer that acted publishes what it reads and the other waits to read the same; the host
+// judges, whichever of the two it is. False after the verdict was said (or the other peer's word never came).
+bool Converge(const std::string& step, bool iAct, bool host, const std::function<std::string()>& read, const char* what) {
+    std::string word;
+    if (iAct) {
+        Mark(("ref_" + step).c_str(), read());
+        if (!AwaitText(("seen_" + step).c_str(), word, kStepSec + kConvergeSec)) return false;
+    } else {
+        std::string ref;
+        if (!AwaitText(("ref_" + step).c_str(), ref, kStepSec)) return false;
+        const bool same = PS::WaitFor("this peer's reading to match", kConvergeSec, [&] { return read() == ref; }, false);
+        word = same ? std::string("1") : "0 " + read();
+        UE_LOGI("sv-request: %hs: here %hs, there %hs", step.c_str(), read().c_str(), ref.c_str());
+        Mark(("seen_" + step).c_str(), word);
+    }
+    if (!host) return true;
+    if (word.empty() || word[0] != '1') UE_LOGW("sv-request: %hs: the other peer read '%hs'", step.c_str(), word.c_str());
+    return Need(!word.empty() && word[0] == '1', what);
+}
+
+// The dish and its server box, once both exist here.
+bool ResolveBox(Fixture& fx, int wantDish) {
+    return PS::WaitFor("a dish with a server box", 240, [&] {
+        OnGameThread([&] {
+            ResolveAll();
+            fx.dish = PickDish();
+            fx.box = fx.dish >= 0 ? ServerOf(D::DishByIndex(fx.dish)) : nullptr;
+        });
+        return fx.box && (wantDish < 0 || fx.dish == wantDish);
+    });
+}
+
+// The steps both peers walk, in the one order. `iAct` is whether this peer types the request, ejects and inserts.
+bool Chain(const Fixture& fx, bool iAct, bool host, size_t wantRows) {
+    if (!Converge("inserted", host, host, [&] { return StepBox(fx.box); }, "the full disc in the slot reads the same on both peers"))
+        return false;
+
+    if (iAct) {
+        OnGameThread([&] {
+            void* term = SC::LocalTerminal();
+            void* dish = D::DishByIndex(fx.dish);
+            if (!term || !dish) return;
+            SC::CallInit(term, D::TechName(fx.dish), false, dish);
+            SC::RunCommand(term, L"clr");
+            SC::RunCommand(term, L"sv.request");
+            UE_LOGI("sv-request: typed sv.request at dish %d", fx.dish);
+        });
+        if (!Need(PS::WaitFor("the export's row", kExportSec, [&] { return BoxRows(fx.box) >= wantRows; }, false),
+                  "the export wrote a row into this peer's slot"))
+            return false;
+        bool namesCode = false;
+        std::vector<std::wstring> rows;
+        int32_t writes = 0, type = -1;
+        OnGameThread([&] {
+            ReadSlot(FS::DeviceKind::ServerBox, fx.box, rows, writes, type);
+            std::wstring code;
+            D::ReadHashcode(fx.dish, code);
+            for (const std::wstring& r : rows)
+                if (!code.empty() && r.find(code) != std::wstring::npos) namesCode = true;
+            UE_LOGI("sv-request: this peer's dish code has %zu characters", code.size());
+        });
+        LogRows("slot", rows);
+        if (!Need(namesCode, "the row holds this peer's own code for that dish")) return false;
+    }
+    if (!Converge("exported", iAct, host, [&] { return StepBox(fx.box); }, "the exported rows read the same on both peers")) return false;
+
+    // Both peers note which discs stand before the eject, and only then does the acting peer eject.
+    std::vector<std::wstring> before;
+    OnGameThread([&] { before = DiscKeys(); });
+    if (!Converge("ready_eject", iAct, host, [&] { return std::string("x"); }, "both peers stood ready for the eject")) return false;
+    if (iAct) {
+        OnGameThread([&] { SB::CallEjectFloppy(fx.box); });
+        UE_LOGI("sv-request: ejected");
+    }
+    std::wstring discKey;
+    const bool stands = PS::WaitFor("the ejected disc", 60, [&] {
+        OnGameThread([&] { discKey = NewDiscKey(before); });
+        return !discKey.empty();
+    }, false);
+    if (!Need(stands, "the ejected disc stands on this peer")) return false;
+    if (!Converge("ejected", iAct, host, [&] { return DiscReading(discKey); }, "the ejected disc's rows read the same on both peers"))
+        return false;
+
+    if (iAct) {
+        OnGameThread([&] {
+            if (void* disc = FindDisc(discKey)) ue_wrap::laptop::CallInsertDisc(disc);
+        });
+        UE_LOGI("sv-request: inserted in the laptop");
+        if (!Need(PS::WaitFor("the laptop's rows", 60, [] { return LaptopReading().find("rows=0") == std::string::npos &&
+                                                                    LaptopReading() != "unread"; }, false),
+                  "the laptop holds the rows on this peer"))
+            return false;
+    }
+    return Converge("laptop", iAct, host, [&] { return LaptopReading(); }, "the laptop's rows read the same on both peers");
+}
+
+void RunHost(bool iAct, int seed) {
+    if (!disc_drill::HostWorldUp()) return;
+    Fixture fx;
+    if (!ResolveBox(fx, -1)) return;
+    UE_LOGI("sv-request: dish %d", fx.dish);
+    MeasureFullDiscs();
+    Mark("dish", std::to_string(fx.dish));
+    if (!Await("client_ready", 480)) return;
+
+    // The fixture: a disc in the first dish's server, seeded, as a player's insert does.
+    const int rows = seed;
+    bool inserted = false;
+    OnGameThread([&] {
+        void* disc = SpawnDisc(rows, kDiscWrites - rows);
+        if (disc) inserted = SB::CallProcessFloppy(fx.box, disc);
+        UE_LOGI("sv-request: the disc holds %d rows before the request; the insert was called (%d)", rows, inserted ? 1 : 0);
+    });
+    if (!inserted) return Invalid("the fixture disc could not be made or inserted");
+    if (!PS::WaitFor("the disc in the host's slot", 30, [&] { return BoxRows(fx.box) == static_cast<size_t>(rows); }, false))
+        return Invalid("the fixture disc never read in the host's slot");
+
+    if (!Chain(fx, iAct, true, static_cast<size_t>(rows) + 1)) return;
+    std::string clientWord;
+    if (!AwaitText("client_done", clientWord, kStepSec)) return;
+    UE_LOGI("sv-request: DONE on host");
+    coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Pass, "a disc of %d rows crossed the box, the eject and the laptop", rows + 1);
+}
+
+void RunClient(bool iAct, int seed) {
+    if (!disc_drill::HostPuppetUp()) return;
+    if (!meet::WalkToHost(kTag)) return;
+    std::string hostDish;
+    if (!AwaitText("dish", hostDish, kStepSec)) return;
+    Fixture fx;
+    if (!ResolveBox(fx, std::atoi(hostDish.c_str()))) return;
+    Mark("client_ready");
+    if (!Chain(fx, iAct, false, static_cast<size_t>(seed) + 1)) return;
+    UE_LOGI("sv-request: DONE on client");
+    Mark("client_done");
 }
 
 }  // namespace
 
 DWORD WINAPI SvRequestThread(LPVOID /*arg*/) {
-    g_dir = coop::config::ReadEnv("VOTVCOOP_CAN_DIR");
-    if (g_dir.empty()) {
-        UE_LOGW("sv-request: VERDICT ABORT -- VOTVCOOP_CAN_DIR is unset");
-        return 0;
-    }
-    g_isClient = IsClientRole();
+    if (!PS::Begin(kTag)) return 0;
+    const bool client = IsClientRole();
     const bool clientActs = coop::config::ReadEnv("VOTVCOOP_SV_REQUEST_WHO") == "client";
-    if (g_isClient) {
-        bool ready = false;
-        for (int i = 0; i < 480 && !ready; ++i) {
-            OnGameThread([&] { ready = coop::net_pump::HasAnnouncedWorldReady(); });
-            if (!ready) ::Sleep(500);
-        }
-        ::Sleep(8000);
-    } else {
-        void* pawn = nullptr;
-        for (int i = 0; i < 480 && !pawn; ++i) {
-            OnGameThread([&] { pawn = coop::players::Registry::Get().Local(); });
-            if (!pawn) ::Sleep(500);
-        }
-    }
-    Run(g_isClient == clientActs);
+    // The seeded rows, left one write for the request (a disc has 32).
+    int seed = std::atoi(coop::config::ReadEnv("VOTVCOOP_SV_REQUEST_SEED").c_str());
+    seed = seed < 0 ? 0 : seed > kDiscWrites - 1 ? kDiscWrites - 1 : seed;
+    if (client) RunClient(client == clientActs, seed);
+    else RunHost(client == clientActs, seed);
     return 0;
 }
 

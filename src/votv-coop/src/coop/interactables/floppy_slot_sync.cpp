@@ -420,9 +420,9 @@ void ClientClaim(coop::net::Session* s, FS::DeviceKind kind, size_t index, void*
         auto& aw = g_awaiting[key];
         if (aw.deadline == 0) aw.tries = 0;
         aw.deadline = NowMs() + kAnswerMs;
-        UE_LOGI("floppy_slot_sync: CLIENT claim sent (device=%zu type=%d rw=%d rows=%zu json=%zu "
+        UE_LOGI("floppy_slot_sync: CLIENT claim sent (device=%zu type=%d rw=%d rows=%zu json=%zu entry=%zu B "
                 "key '%ls')", index, cur.st.floppyType, cur.st.readWrites, cur.c.data.size(),
-                cur.c.objectData.size(), FS::ObjectDataKey(cur.c.objectData).c_str());
+                cur.c.objectData.size(), body.size(), FS::ObjectDataKey(cur.c.objectData).c_str());
     } else {
         if (!g_retry.count(ShadowKey(kind, index)))
             UE_LOGW("floppy_slot_sync: claim for device %zu send refused -- retry armed", index);
