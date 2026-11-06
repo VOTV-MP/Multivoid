@@ -272,14 +272,16 @@ void MeasureFullDiscs() {
 
 // One step of the chain. The peer that acted publishes what it reads and the other waits to read the same; the host
 // judges, whichever of the two it is. False after the verdict was said (or the other peer's word never came).
-bool Converge(const std::string& step, bool iAct, bool host, const std::function<std::string()>& read, const char* what) {
+// `refSec` is how long the other peer waits for the acting peer's reference: the acting peer's own work before it.
+bool Converge(const std::string& step, bool iAct, bool host, const std::function<std::string()>& read, const char* what,
+              int refSec = kStepSec) {
     std::string word;
     if (iAct) {
         Mark(("ref_" + step).c_str(), read());
         if (!AwaitText(("seen_" + step).c_str(), word, kStepSec + kConvergeSec)) return false;
     } else {
         std::string ref;
-        if (!AwaitText(("ref_" + step).c_str(), ref, kStepSec)) return false;
+        if (!AwaitText(("ref_" + step).c_str(), ref, refSec)) return false;
         const bool same = PS::WaitFor("this peer's reading to match", kConvergeSec, [&] { return read() == ref; }, false);
         word = same ? std::string("1") : "0 " + read();
         UE_LOGI("sv-request: %hs: here %hs, there %hs", step.c_str(), read().c_str(), ref.c_str());
@@ -317,7 +319,19 @@ bool Chain(const Fixture& fx, bool iAct, bool host, size_t wantRows) {
             SC::RunCommand(term, L"sv.request");
             UE_LOGI("sv-request: typed sv.request at dish %d", fx.dish);
         });
-        if (!Need(PS::WaitFor("the export's row", kExportSec, [&] { return BoxRows(fx.box) >= wantRows; }, false),
+        // The row count is logged every 10 s, so a run shows the export's progress, or that sv.request wrote nothing.
+        const ULONGLONG exportStart = ::GetTickCount64();
+        ULONGLONG lastLog = exportStart;
+        if (!Need(PS::WaitFor("the export's row", kExportSec, [&] {
+                      const size_t rows = BoxRows(fx.box);
+                      const ULONGLONG now = ::GetTickCount64();
+                      if (rows < wantRows && now - lastLog >= 10000) {
+                          lastLog = now;
+                          UE_LOGI("sv-request: export wait %llu s: %zu of %zu rows in this peer's slot",
+                                  static_cast<unsigned long long>((now - exportStart) / 1000), rows, wantRows);
+                      }
+                      return rows >= wantRows;
+                  }, false),
                   "the export wrote a row into this peer's slot"))
             return false;
         bool namesCode = false;
@@ -334,7 +348,9 @@ bool Chain(const Fixture& fx, bool iAct, bool host, size_t wantRows) {
         LogRows("slot", rows);
         if (!Need(namesCode, "the row holds this peer's own code for that dish")) return false;
     }
-    if (!Converge("exported", iAct, host, [&] { return StepBox(fx.box); }, "the exported rows read the same on both peers")) return false;
+    if (!Converge("exported", iAct, host, [&] { return StepBox(fx.box); }, "the exported rows read the same on both peers",
+                  kExportSec + kStepSec))
+        return false;
 
     // Both peers note which discs stand before the eject, and only then does the acting peer eject.
     std::vector<std::wstring> before;
