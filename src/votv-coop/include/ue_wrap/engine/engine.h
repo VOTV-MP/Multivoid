@@ -48,9 +48,10 @@ bool TryGetWorldTimeSeconds(float& seconds);
 
 // Spawn `actorClass` at `location` through the deferred GameplayStatics pair (AlwaysSpawn); the
 // AActor* or nullptr. `inertPawn` runs MakePawnInert (engine_pawn.h) on the deferred actor, so the pawn
-// never takes a PlayerController or the local input. `beforeFinish`, when set, runs once on the deferred actor after those writes and before
-// FinishSpawning, so its BeginPlay and the overlaps its colliders report as they register already see
-// what the callback set; it is not called on a path that returns null before the actor exists. `ctx` is
+// never takes a PlayerController or the local input. `beforeFinish`, when set, runs once on the deferred
+// actor after those writes and before FinishSpawning, so its BeginPlay and the overlaps its colliders
+// report as they register already see what the callback set; it is not called on a path that returns
+// null before the actor exists. `ctx` is
 // the caller's and need live only for the call; the callback runs on the game thread inside
 // SpawnActor and must not re-enter it. A failed FinishSpawning call destroys the begun actor and
 // returns nullptr (the callback has run by then). Game thread.

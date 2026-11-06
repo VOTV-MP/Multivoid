@@ -225,7 +225,6 @@ inline constexpr const wchar_t* GetActorBoundsFn = L"GetActorBounds";   // (bool
 inline constexpr const wchar_t* PawnClassName = L"Pawn";
 inline constexpr const wchar_t* GetControllerFn = L"GetController";
 inline constexpr const wchar_t* DetachFromControllerFn = L"DetachFromControllerPendingDestroy";
-// An AIController poses the body through the possession path with no viewport, input or camera.
 
 // SetSkeletalMesh is owned by USkinnedMeshComponent and SetAnimClass by USkeletalMeshComponent;
 // FindFunction does not climb to super, so each resolves from its own class.
