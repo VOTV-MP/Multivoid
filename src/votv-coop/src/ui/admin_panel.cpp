@@ -112,15 +112,33 @@ bool IdButton(const char* label, bool hasId) {
     return clicked;
 }
 
+// The width a row of IdButtons needs, from the labels the buttons show: the text width, the
+// button's own padding, the gap SameLine leaves between buttons, and the table cell's padding.
+// The style and the font are already at the overlay's scale, so this is the width at any
+// resolution and in any language.
+float ButtonRowWidth(const char* const* labels, int count) {
+    const ImGuiStyle& st = ImGui::GetStyle();
+    float w = st.CellPadding.x * 2.0f + st.ItemSpacing.x * static_cast<float>(count - 1);
+    for (int i = 0; i < count; ++i)
+        w += ImGui::CalcTextSize(labels[i], nullptr, true).x + st.FramePadding.x * 2.0f;
+    return w;
+}
+
 void RenderOnlineSection(const coop::roster::Snapshot& rs) {
     SectionHeader(l10n::T("Online"));
     int shown = 0;
+    const char* const teleportText = l10n::Tc("f1", "Teleport");
+    const char* const kickText = l10n::Tc("f1", "Kick");
+    const char* const cremateText = l10n::Tc("f1", "Send to the crematorium");
+    const char* const banText = l10n::Tc("f1", "Ban...");
+    const char* const actionTexts[] = {teleportText, kickText, cremateText, banText};
+    const float actionsWidth = ButtonRowWidth(actionTexts, 4);
     if (ImGui::BeginTable("##admin_online", 4,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_PadOuterX)) {
         ImGui::TableSetupColumn(l10n::Label(l10n::T("Player"), "player"), ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn(l10n::Label(l10n::T("Link"), "link"), ImGuiTableColumnFlags_WidthFixed, S(72.f));
         ImGui::TableSetupColumn(l10n::Label(l10n::T("Ping"), "ping"), ImGuiTableColumnFlags_WidthFixed, S(52.f));
-        ImGui::TableSetupColumn(l10n::Label(l10n::T("Actions"), "actions"), ImGuiTableColumnFlags_WidthFixed, S(220.f));
+        ImGui::TableSetupColumn(l10n::Label(l10n::T("Actions"), "actions"), ImGuiTableColumnFlags_WidthFixed, actionsWidth);
         ImGui::TableHeadersRow();
         for (int i = 0; i < rs.count; ++i) {
             const coop::roster::Row& r = rs.rows[i];
@@ -151,14 +169,17 @@ void RenderOnlineSection(const coop::roster::Snapshot& rs) {
             // Each button submits a command line for the person's proved id, not their slot --
             // see g_banId. Without a proved id the buttons are off.
             const bool hasId = r.playerId[0] != '\0';
-            if (IdButton(l10n::Label(l10n::Tc("f1", "Teleport"), "teleport"), hasId))
+            if (IdButton(l10n::Label(teleportText, "teleport"), hasId))
                 coop::command_sync::Submit(std::string("tphere ") + r.playerId);
             ImGui::SameLine();
-            if (IdButton(l10n::Label(l10n::Tc("f1", "Kick"), "kick"), hasId))
+            if (IdButton(l10n::Label(kickText, "kick"), hasId))
                 coop::command_sync::Submit(std::string("kick ") + r.playerId);
             ImGui::SameLine();
+            if (IdButton(l10n::Label(cremateText, "cremate"), hasId))
+                coop::command_sync::Submit(std::string("cremate ") + r.playerId);
+            ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.45f, 0.42f, 1.0f));
-            if (IdButton(l10n::Label(l10n::Tc("f1", "Ban..."), "ban_"), hasId)) OpenBanFor(true, r.playerId, r.nick);
+            if (IdButton(l10n::Label(banText, "ban_"), hasId)) OpenBanFor(true, r.playerId, r.nick);
             ImGui::PopStyleColor();
             ImGui::PopID();
         }

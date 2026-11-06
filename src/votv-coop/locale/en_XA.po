@@ -1548,6 +1548,10 @@ msgstr "[[written by a build with another log format]]"
 msgid "your name"
 msgstr "[[your name]]"
 
+msgctxt "cremate"
+msgid "Send to the crematorium"
+msgstr "[[Send to the crematorium]]"
+
 msgctxt "f1"
 msgid "Apply"
 msgstr "[[Apply]]"
@@ -1583,6 +1587,10 @@ msgstr "[[Refresh]]"
 msgctxt "f1"
 msgid "Reset"
 msgstr "[[Reset]]"
+
+msgctxt "f1"
+msgid "Send to the crematorium"
+msgstr "[[Send to the crematorium]]"
 
 msgctxt "f1"
 msgid "Teleport"

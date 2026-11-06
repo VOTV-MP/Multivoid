@@ -240,6 +240,8 @@ void Render() {
                             coop::command_sync::Submit(std::string("tphere ") + g_actId);
                         if (IdMenuItem(l10n::Tc("hud", "Kick"), "kick", hasId))
                             coop::command_sync::Submit(std::string("kick ") + g_actId);
+                        if (IdMenuItem(l10n::Tc("cremate", "Send to the crematorium"), "cremate", hasId))
+                            coop::command_sync::Submit(std::string("cremate ") + g_actId);
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.45f, 0.42f, 1.0f));
                         const bool banClicked = IdMenuItem(l10n::T("Ban (permanent)"), "ban_permanent", hasId);
                         ImGui::PopStyleColor();

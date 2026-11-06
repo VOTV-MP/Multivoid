@@ -246,7 +246,7 @@ The kicked or banned player lands at the menu with a modal saying which, under a
 connections one address may open in a window (four per thirty seconds by default, a host
 setting), the shape of MTA's join-flood protection (`coop/net/connect_history`).
 
-The host's moderation is a set of commands -- `/kick`, `/ban`, `/banid`, `/unban`, `/tphere` --
+The host's moderation is a set of commands -- `/kick`, `/ban`, `/banid`, `/unban`, `/tphere`, `/cremate` --
 which the player list and the Administration panel now run for the host. A friend can be given
 `/kick`, `/ban`, `/banid` or `/unban` by a line in the server's permission files
 (`Mods\Multivoid\multivoid_servers\<server>\permissions\users\<their player id>.json`, LuckPerms' format, e.g.
@@ -256,14 +256,22 @@ teleport. The host can deny itself a command the same way, in a file named by it
 your own row in the player list). A player whose permission file sets `multivoid.kick.exempt` (or
 `.ban.exempt`) cannot be kicked or banned by a friend, only by the host.
 
-The online player row also has **Send to the crematorium**. The host moves that client's local
-pawn into the nearest cremator's firebox, blocks movement while leaving camera look available, and
-closes and locks the door. The client invokes the cremator's `igniteInside` sequence and the game's
-`mainPlayer_C::ignite` and waits for the burning timer to expire before applying a lethal native
-damage call if the player survived the flame. It repeats that call until the pawn reports dead.
-The host watches the puppet's streamed health and disconnects it after death with the English reason
-`You have been sent to the crematorium.` If the host does not observe death within sixty seconds,
-it restores movement controls.
+`/cremate <who>` sends a player to the crematorium; the player list and the Administration panel
+have it as **Send to the crematorium**. The host opens the nearest cremator's door and orders the
+player to its firebox, the way `/tphere` moves a player. The cremator's burn volume taking the player
+in is the landing: the host then shuts the door and pulls the lever, unless the machine is already
+running. From there the game's own cremator does the rest, on the player's own screen, and the host
+reads the death from the player's health in the pose stream. It tells whoever ran the command
+"<name> was cremated.", then ends the player's session with the code MV-H35, "You were sent to the
+crematorium." Nothing is locked: no movement lock, no position lock and no timeout, since the closed
+door and the game's burn replace them. The other outcomes are one line each and no kick: the player
+survived (the run ended while the player lived and had stopped burning), left, died before landing,
+did not land (the order did not apply, or the burn volume never took them in; the door is left
+open and the order is never repeated), or the cremator would not start. The command needs the node
+`multivoid.cremate` for anyone but the host, and a player holding `multivoid.cremate.exempt` cannot
+be sent by a friend; `multivoid.kick.exempt` is not consulted. It refuses the host, the caller
+itself, a player who is still joining or not alive, and one already on the way. Other admins
+holding `multivoid.cremate.notify` are told what was done and how it ended.
 
 The same files can be edited in game with `/mv`, in LuckPerms' `/lp` shape: `/mv user <who> permission set
 <node> [true|false]`, `/mv user <who> parent add <group>`, `/mv group <name> permission set ...`, `/mv creategroup

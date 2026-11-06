@@ -1355,6 +1355,10 @@ msgstr ""
 msgid "your name"
 msgstr "你的名字"
 
+msgctxt "cremate"
+msgid "Send to the crematorium"
+msgstr ""
+
 msgctxt "f1"
 msgid "Apply"
 msgstr ""
@@ -1389,6 +1393,10 @@ msgstr "刷新"
 
 msgctxt "f1"
 msgid "Reset"
+msgstr ""
+
+msgctxt "f1"
+msgid "Send to the crematorium"
 msgstr ""
 
 msgctxt "f1"
