@@ -183,6 +183,8 @@ void PollHost(coop::net::Session& s) {
 }
 
 // Not once per food: the food's Init turns its own tick back on from its table row, so a load or a birth undoes a park.
+// A watch on Init is not enough: prop_food_coffeeCup.cpp:150-154 re-enables the cup's tick after Init (Delay(0)), a
+// call no seam covers, so the poll stays.
 void Park(void* actor) {
     const bool ticking = ue_wrap::engine::IsActorTickEnabled(actor);
     auto it = g_parked.find(actor);
