@@ -82,11 +82,14 @@ constexpr uint8_t     kClientSlot = 1;
 // "out of range" mean it: the host at its start stands far beyond it of every spawn point, so this only guards a changed start.
 constexpr float kRangeCm = 20000.f;
 constexpr float kOutOfRangeMarginCm = 2000.f;
-// Where each player stands, in the range the Blueprint hunts through: the host close, the client farther, then the client close
-// for its gaze (far enough that the walker cannot reach it before the gaze steps are read).
-constexpr float kHostStandoffCm = 12000.f;
-constexpr float kClientStandoffCm = 16000.f;
-constexpr float kCloseCm = 6000.f;
+// Where each player stops, inside the Blueprint's range with a margin and no nearer: the host (walker A's target) at
+// kHostStandoffCm, the client (farther) at kClientStandoffCm, then the client (walker B's target) at kCloseCm. The walker
+// closes on its target while the steps run, and a measurement ends when it is within kApproachEndCm: at that distance it stands
+// at its target's shoulder, where the game's own frustum test of its bounds holds whatever the yaw.
+constexpr float kHostStandoffCm = 15000.f;
+constexpr float kClientStandoffCm = 17000.f;
+constexpr float kCloseCm = 15000.f;
+constexpr float kApproachEndCm = 3000.f;
 constexpr float kKppReachCm = 1500.f;
 
 // Bounds, each a readiness wait that ends sooner on its state. timer_saw is the Blueprint's own 10-20 s release.
@@ -110,6 +113,7 @@ constexpr size_t kStillSamples = 20;
 constexpr float  kStillCm = 30.f;
 constexpr double kWindowS = 8.0;
 constexpr float  kMinMoveCm = 500.f;
+constexpr size_t kMinComparedReadings = 20;   // copy readings that overlap the host's window, or step 2 had too little to compare
 // The copy's distance to where the host's walker stood a short lag before, the nearest of kLagSteps lags of kLagStepS: the
 // stream's own delay is no error, a copy that stands or walks elsewhere is. Measured on the first rig run.
 constexpr float  kFollowTolCm = 150.f;
@@ -330,6 +334,22 @@ float PlayerTo(void* actor) {
     return me && actor && E::TryGetActorLocation(me, a) && E::TryGetActorLocation(actor, b) ? Dist3(a, b) : -1.f;
 }
 
+// On the host: the client's puppet to `actor`, negative when either place does not read.
+float ClientTo(void* actor) {
+    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(kClientSlot);
+    void* puppet = rp && rp->valid() ? rp->GetActor() : nullptr;
+    FVector a{}, b{};
+    return puppet && actor && E::TryGetActorLocation(puppet, a) && E::TryGetActorLocation(actor, b) ? Dist3(a, b) : -1.f;
+}
+
+// The INVALID of a walker that never walked: how far it stands from the player it hunts, and its own `looking` flag.
+bool NeverWalked(const char* who, float cm, bool looking) {
+    char why[220];
+    std::snprintf(why, sizeof(why), "%s never started walking within %d s of its hunted player's view turned away: %.0f cm from "
+                  "that player, looking=%d", who, kMoveBoundS, cm, looking ? 1 : 0);
+    return Invalid(why);
+}
+
 // ---- red arms ----
 
 // The module a red disables reads its own value of the row; this drill only names which are its own.
@@ -369,6 +389,26 @@ bool Hunts(void* walker, uint8_t slot) {
     return WT::TargetOf(walker) == slot;
 }
 
+// The host's readings of its walker for step 2: every kSampleMs for kWindowS, ended early once the walker is within
+// kApproachEndCm of the host; `endCm` is the distance at the last reading.
+std::vector<Sample> ApproachWindow(void* walker, float& endCm) {
+    std::vector<Sample> out;
+    const double end = NowSec() + kWindowS;
+    bool closedIn = false;
+    while (!closedIn && NowSec() < end) {
+        OnGameThread([&] {
+            FVector at{};
+            if (!R::IsLive(walker) || !E::TryGetActorLocation(walker, at)) return;
+            Aim(walker, false);
+            out.push_back(Sample{NowSec(), at.X, at.Y, at.Z});
+            endCm = PlayerTo(walker);
+            closedIn = endCm >= 0.f && endCm < kApproachEndCm;
+        });
+        ::Sleep(kSampleMs);
+    }
+    return out;
+}
+
 bool HostPhaseA(void*& a, std::string& keyA) {
     float hostCm = 0.f;
     if (!SpawnOne(a, keyA, hostCm)) return false;
@@ -399,22 +439,48 @@ bool HostPhaseA(void*& a, std::string& keyA) {
         trk.Push(p);
         return trk.Moving();
     }, false);
-    if (!moving) return Invalid("walker A never walked with the host's view turned away");
+    float startCm = -1.f;
+    bool  looking = false;
+    OnGameThread([&] {
+        startCm = PlayerTo(a);
+        looking = AC::ReadWalkerLooking(a);
+    });
+    if (!moving) return NeverWalked("walker A", startCm, looking);
+    if (startCm < kApproachEndCm) {
+        char why[160];
+        std::snprintf(why, sizeof(why), "walker A is within %.0f cm of the host (%.0f) as step 2 would open: it has closed in", kApproachEndCm,
+                      startCm);
+        return Invalid(why);
+    }
     PS::Mark("window_go");
-    const std::vector<Sample> host = Window([&] { return a; }, kWindowS);
+    float endCm = startCm;
+    const std::vector<Sample> host = ApproachWindow(a, endCm);
     std::string text;
     if (!PS::AwaitText("copy_samples_a", text, 60)) return false;
     const std::vector<Sample> copy = Unpack(text);
     const float moved = Excursion(host);
-    UE_LOGI("mannequin-drill: step 2 window: host walker moved %.0f cm over %zu readings, the copy gave %zu", moved, host.size(), copy.size());
+    UE_LOGI("mannequin-drill: step 2 window: host walker moved %.0f cm over %zu readings (%.0f cm from the host at its start, %.0f at "
+            "its end), the copy gave %zu", moved, host.size(), startCm, endCm, copy.size());
     if (moved < kMinMoveCm || copy.empty()) return Invalid("step 2 had no mover to compare: the host walker did not walk in the window");
     const Follow f = Compare(host, copy);
     UE_LOGI("mannequin-drill: step 2 follow: %zu copy readings, worst %.0f cm, mean %.0f cm (tolerance %.0f)", f.n, f.maxCm,
             f.meanCm, kFollowTolCm);
+    if (f.n < kMinComparedReadings) return Invalid("step 2 had too few copy readings in the host's window to compare");
     char what[128];
     std::snprintf(what, sizeof(what), "the client's copy follows the host's walker (worst %.0f cm, %zu readings)", f.maxCm, f.n);
-    Check(f.n > 0 && f.maxCm <= kFollowTolCm, "2", what);
+    Check(f.maxCm <= kFollowTolCm, "2", what);
     return true;
+}
+
+// Walker B stands at least kApproachEndCm from the client as `when` happens; nearer, the gaze steps are not the measurement.
+bool ClientFarEnough(void* b, const char* when) {
+    float cm = -1.f;
+    OnGameThread([&] { cm = ClientTo(b); });
+    UE_LOGI("mannequin-drill: walker B is %.0f cm from the client as %s", cm, when);
+    if (cm >= kApproachEndCm) return true;
+    char why[200];
+    std::snprintf(why, sizeof(why), "walker B is %.0f cm from the client (under %.0f, or unread) before %s", cm, kApproachEndCm, when);
+    return Invalid(why);
 }
 
 // Step 3, on walker B: the client is its target; the client's gaze stops it, and its look away lets it go again.
@@ -443,9 +509,19 @@ bool HostPhaseB(void* a, void*& b, std::string& keyB) {
         walking.Push(p);
         return walking.Moving();
     }, false);
-    if (!moving) return Invalid("walker B never walked with the client's view turned away");
+    if (!moving) {
+        float cm = -1.f;
+        bool  looking = false;
+        OnGameThread([&] {
+            cm = ClientTo(b);
+            looking = AC::ReadWalkerLooking(b);
+        });
+        return NeverWalked("walker B", cm, looking);
+    }
+    if (!ClientFarEnough(b, "the gaze would be aimed")) return false;
     PS::Mark("aim");
     if (!PS::Await("sees", 60)) return false;
+    if (!ClientFarEnough(b, "the freeze is judged")) return false;
 
     // The client's camera is on the copy: the host's walker must stand still, with its own `looking` set.
     Track standing;
@@ -465,6 +541,7 @@ bool HostPhaseB(void* a, void*& b, std::string& keyB) {
     // The client looks away: the walker moves again when its own timer_saw clears `saw`, within the timer's bound and a margin.
     PS::Mark("look_away");
     if (!PS::Await("away", 60)) return false;
+    if (!ClientFarEnough(b, "the release is judged")) return false;
     Track released;
     const bool goes = WaitGT("walker B walks again after its target looks away", kReleaseBoundS, [&] {
         FVector p{};
