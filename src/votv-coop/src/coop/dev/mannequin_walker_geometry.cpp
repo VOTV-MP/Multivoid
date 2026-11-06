@@ -220,35 +220,34 @@ bool CloseUntilSeen(const std::function<void*()>& copyOf, bool (*seen)(void* cop
         } while (std::chrono::steady_clock::now() < pollEnd);
         if (lastCm >= 0.f && lastCm < kApproachEndCm) return false;   // at its shoulder: no view of it is a measurement
         if (lastCm >= 0.f && lastCm <= kCloseReachCm) continue;       // close enough: only the read, on the walker's own approach
-        // The step: the walk runs kCloseStepS from the pawn's first kCloseMovedCm (a walk cancelled before the director moves the
-        // pawn moves nothing), at most kCloseStartS to get that far. Each poll reads the view with the walk's own facing: seen
-        // ends the step, and the next round aims and confirms it.
+        // The leg: one walk toward the copy's place that runs on, kCloseLegS at most, until the copy is within kCloseReachCm or seen
+        // with the walk's own facing (read every poll); then it lets go, and the next round aims and confirms. A copy past the
+        // mesh's draw distance has frustum=1 and rendered=0 whatever the aim (an inference from two runs: not drawn at 116 m,
+        // drawn at 69 m), so it shows only once the walk has closed in, and the walk is continuous for that.
         std::shared_ptr<DIR::BackgroundWalk> walk;
-        FVector from{};
-        OnGameThread([&] {
-            void* pawn = coop::players::Registry::Get().Local();
-            if (pawn) E::TryGetActorLocation(pawn, from);
-            walk = DIR::StartBackgroundWalk(to, kCloseReachCm, kWalkDeadlineS);
-        });
+        OnGameThread([&] { walk = DIR::StartBackgroundWalk(to, kCloseReachCm, kWalkDeadlineS); });
         using Clock = std::chrono::steady_clock;
-        const Clock::time_point startBy = Clock::now() + std::chrono::seconds(kCloseStartS);
-        Clock::time_point       stepEnd = startBy;
-        bool                    moved = false, sawIt = false;
-        while (!sawIt && walk->state.load() == 0 && Clock::now() < stepEnd) {
+        const Clock::time_point legEnd = Clock::now() + std::chrono::seconds(kCloseLegS);
+        bool                    sawIt = false, closeEnough = false, atShoulder = false;
+        while (!sawIt && !closeEnough && !atShoulder && walk->state.load() == 0 && Clock::now() < legEnd && Clock::now() < end) {
             OnGameThread([&] {
                 void* c = copyOf();
-                if (c) sawIt = seen(c);
-                FVector p{};
-                void* pawn = coop::players::Registry::Get().Local();
-                if (!moved && pawn && E::TryGetActorLocation(pawn, p) && Dist3(p, from) >= kCloseMovedCm) {
-                    moved = true;
-                    stepEnd = Clock::now() + std::chrono::seconds(kCloseStepS);
-                }
+                if (!c) return;
+                sawIt = seen(c);
+                const float d = PlayerTo(c);
+                if (d >= 0.f) lastCm = d;
+                closeEnough = d >= 0.f && d <= kCloseReachCm;
+                atShoulder = d >= 0.f && d < kApproachEndCm;
             });
             ::Sleep(100);
         }
-        UE_LOGI("mannequin-drill: the close-in walk %s%s", moved ? "moved this client" : "did not move this client", sawIt ? ", copy in view" : "");
+        UE_LOGI("mannequin-drill: the close-in leg ended %s%s%s, %.0f cm from the copy", sawIt ? "with the copy in view" : "",
+                closeEnough ? "within reach" : "", walk->state.load() != 0 ? "as the walk ended" : "", lastCm);
         DIR::CancelBackgroundWalk(*walk);
+        if (atShoulder) {
+            PS::WaitFor("the close-in walk lets go", kHuntGraceS, [&] { return walk->state.load() != 0; }, false);
+            return false;   // at its shoulder: no view of it is a measurement
+        }
         PS::WaitFor("the close-in walk lets go", kHuntGraceS, [&] { return walk->state.load() != 0; }, false);
     }
     return false;

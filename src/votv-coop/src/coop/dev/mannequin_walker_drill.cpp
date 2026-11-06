@@ -681,23 +681,27 @@ bool ClientBody() {
     spotIn >> at.X >> at.Y >> at.Z;
     if (!WalkTo(at, kAnchorReachCm, "this client to the host's open spot")) return Invalid("this client's walk to the host's open spot did not arrive");
     // The copy's target as the host's WalkerState delivered it: this client's own slot, from inside the walker's range.
+    const auto takesMe = [](void* c) {
+        return coop::walker_state_client::TargetOfCopy(c) == coop::players::Registry::Get().LocalPeerId() && PlayerTo(c) <= kInRangeCm;
+    };
     const bool taken = WaitGT("walker B takes this client", kHuntGraceS, [&] {
         copy = ByKey(keyB);
-        return copy && coop::walker_state_client::TargetOfCopy(copy) == coop::players::Registry::Get().LocalPeerId() &&
-               PlayerTo(copy) <= kInRangeCm;
+        return copy && takesMe(copy);
     }, false);
+    // Not taken from the spot (the spawn point is farther from it than the host's walker A was): the step-in walk of the host's
+    // own phase, toward the copy until it takes this client.
+    if (!taken && !EnterRange(copy, "this client", [](void* c) {
+            return coop::walker_state_client::TargetOfCopy(c) == coop::players::Registry::Get().LocalPeerId();
+        }))
+        return false;
     float arrivalCm = -1.f;
     OnGameThread([&] {
         copy = ByKey(keyB);
         arrivalCm = PlayerTo(copy);
         Aim(copy, false);
     });
-    UE_LOGI("mannequin-drill: this client stands %.0f cm from walker B's copy at the host's open spot, taken=%d", arrivalCm, taken ? 1 : 0);
-    if (!taken) {
-        char why[200];
-        std::snprintf(why, sizeof(why), "walker B never took this client at the host's open spot: %.0f cm from its copy", arrivalCm);
-        return Invalid(why);
-    }
+    UE_LOGI("mannequin-drill: this client stands %.0f cm from walker B's copy after the host's open spot, taken at once=%d", arrivalCm,
+            taken ? 1 : 0);
     if (arrivalCm < kApproachEndCm || arrivalCm >= kRangeCm) {
         char why[200];
         std::snprintf(why, sizeof(why), "this client stands %.0f cm from walker B's copy at the host's open spot: not between %.0f "
