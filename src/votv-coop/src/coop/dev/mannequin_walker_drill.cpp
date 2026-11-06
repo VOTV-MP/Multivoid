@@ -81,12 +81,13 @@ constexpr const char* kSpawnerTag = "mannequinSpawner.ReceiveTick";
 constexpr float kRangeCm = 20000.f;
 constexpr float kOutOfRangeMarginCm = 2000.f;
 // Where each player stops. A target enters the walker's range at the bed anchor, the spot the director's stage places a walk at
-// (coop/player/shelter_spot, Kind::Bed): a walk to it is placed there at once, with no route to walk. Walker A: the client does
-// not walk (it waits at the KPP gate, out of range, so it is never the target); the host goes to its bed anchor, and its arrival
-// opens the window. Walker B: the host back at the KPP gate, out of range, then the client goes to its own bed anchor, last. The
+// (coop/player/shelter_spot, Kind::Bed): a walk to it is placed there at once, with no route to walk, and EnterRange then steps
+// the player in from there when the anchor leaves it outside kInRangeCm of the walker. Walker A: the client does
+// not walk (it waits at the KPP gate, out of range, so it is never the target); the host goes to its bed anchor and steps into
+// range, and its arrival opens the window. Walker B: the host back at the KPP gate, out of range, then the client goes to its own
+// bed anchor and steps into range, last. The
 // walker closes on its target while the steps run, and a measurement ends when it is within kApproachEndCm: at that distance it
 // stands at its target's shoulder, where the game's own frustum test of its bounds holds whatever the yaw.
-constexpr float kAnchorReachCm = 500.f;   // the walk's reach of the anchor itself: within it the stage places the walk at once
 constexpr float kApproachEndCm = 3000.f;
 constexpr float kKppReachCm = 1500.f;
 
@@ -396,6 +397,7 @@ bool HostPhaseA(void*& a, std::string& keyA) {
     FVector bed{};
     if (!BedAnchor(bed)) return Invalid("the host has no bed anchor to walk to");
     if (!WalkTo(bed, kAnchorReachCm, "the host to the bed anchor")) return Invalid("the host's walk to the bed anchor did not arrive");
+    if (!EnterRange(a, "the host")) return false;
 
     // At the host's arrival: its view turns away, its distance from the walker is judged (in range, not at its shoulder), and the
     // window opens: nothing else sits between.
@@ -406,8 +408,8 @@ bool HostPhaseA(void*& a, std::string& keyA) {
     });
     if (arrivalCm < kApproachEndCm || arrivalCm >= kRangeCm) {
         char why[200];
-        std::snprintf(why, sizeof(why), "the host stands %.0f cm from walker A at the bed anchor: not between %.0f and %.0f", arrivalCm,
-                      kApproachEndCm, kRangeCm);
+        std::snprintf(why, sizeof(why), "the host stands %.0f cm from walker A after stepping into range: not between %.0f and %.0f",
+                      arrivalCm, kApproachEndCm, kRangeCm);
         return Invalid(why);
     }
     PS::Mark("window_go");
@@ -615,17 +617,20 @@ bool ClientBody() {
     PS::Mark("copy_b");
     if (!BedAnchor(at)) return Invalid("this client has no bed anchor to walk to");
     if (!WalkTo(at, kAnchorReachCm, "this client to the bed anchor")) return Invalid("this client's walk to the bed anchor did not arrive");
+    OnGameThread([&] { copy = ByKey(keyB); });
+    if (!copy) return Invalid("walker B's copy is gone before this client steps into range");
+    if (!EnterRange(copy, "this client")) return false;
     float arrivalCm = -1.f;
     OnGameThread([&] {
         copy = ByKey(keyB);
         arrivalCm = PlayerTo(copy);
         Aim(copy, false);
     });
-    UE_LOGI("mannequin-drill: this client stands %.0f cm from walker B's copy at its bed anchor", arrivalCm);
+    UE_LOGI("mannequin-drill: this client stands %.0f cm from walker B's copy after stepping into range", arrivalCm);
     if (arrivalCm < kApproachEndCm || arrivalCm >= kRangeCm) {
         char why[200];
-        std::snprintf(why, sizeof(why), "this client stands %.0f cm from walker B's copy at its bed anchor: not between %.0f and %.0f",
-                      arrivalCm, kApproachEndCm, kRangeCm);
+        std::snprintf(why, sizeof(why), "this client stands %.0f cm from walker B's copy after stepping into range: not between %.0f "
+                      "and %.0f", arrivalCm, kApproachEndCm, kRangeCm);
         return Invalid(why);
     }
     PS::Mark("client_close");

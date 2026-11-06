@@ -91,6 +91,28 @@ bool BedAnchor(FVector& out) {
     return bed;
 }
 
+bool EnterRange(void* walker, const char* who) {
+    FVector me{}, at{};
+    float   cm = -1.f;
+    OnGameThread([&] {
+        void* pawn = coop::players::Registry::Get().Local();
+        cm = pawn && walker && E::TryGetActorLocation(pawn, me) && E::TryGetActorLocation(walker, at) ? Dist3(me, at) : -1.f;
+    });
+    char why[200];
+    if (cm < 0.f) {
+        std::snprintf(why, sizeof(why), "%s: the walker's place or its own did not read before stepping into range", who);
+        return Invalid(why);
+    }
+    if (cm < kInRangeCm) return true;
+    const float f = kInRangeCm / cm;
+    const FVector to{at.X + (me.X - at.X) * f, at.Y + (me.Y - at.Y) * f, me.Z};
+    char what[96];
+    std::snprintf(what, sizeof(what), "%s into the walker's range", who);
+    if (WalkTo(to, kAnchorReachCm, what)) return true;
+    std::snprintf(why, sizeof(why), "%s did not arrive stepping into range from %.0f cm of the walker", who, cm);
+    return Invalid(why);
+}
+
 bool WalkTo(const FVector& to, float reachCm, const char* what) {
     std::shared_ptr<DIR::BackgroundWalk> walk;
     OnGameThread([&] { walk = DIR::StartBackgroundWalk(to, reachCm, kWalkDeadlineS); });

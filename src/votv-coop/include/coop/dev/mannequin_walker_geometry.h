@@ -25,6 +25,11 @@ inline constexpr uint8_t     kClientSlot = 1;
 inline constexpr int kWalkDeadlineS = 400;
 inline constexpr int kWalkWaitS = kWalkDeadlineS + 90;
 
+// The walk's reach of a point it is placed at: within it the director's stage places the walk at once (a bed anchor, the KPP gate).
+inline constexpr float kAnchorReachCm = 500.f;
+// How far from a walker a target is brought: inside the walker's own hunt range with a margin, and far enough from its shoulder.
+inline constexpr float kInRangeCm = 17000.f;
+
 template <class Fn>
 void OnGameThread(Fn&& fn) {
     ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
@@ -58,6 +63,12 @@ float ClientTo(void* actor);
 
 // This player's bed anchor, as the director's stage reads it; false when the base has no bed (the KPP fallback is not one).
 bool BedAnchor(ue_wrap::FVector& out);
+
+// After a bed-anchor walk: brings this player inside kInRangeCm of `walker`, which a bed anchor can leave outside the walker's range.
+// Already inside, no walk. Otherwise the director walks it to the point on the straight line from the walker to the player,
+// kInRangeCm from the walker, at the player's own height. False, with an INVALID naming the distance, when a place does not read or
+// the walk does not arrive. `who` names the player in that text. Called from the drill's own thread.
+bool EnterRange(void* walker, const char* who);
 
 // The bot director walks this player, staged at a known-good anchor when the route is long (the director's stage); true when it
 // arrived within `reachCm`.
