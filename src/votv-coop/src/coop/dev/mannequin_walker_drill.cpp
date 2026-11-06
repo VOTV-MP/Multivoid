@@ -26,6 +26,7 @@
 #include "coop/dev/mannequin_drill.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/player/shelter_spot.h"
 #include "coop/session/net_pump.h"
 #include "coop/session/rig_verdict.h"
 #include "coop/world/spawn_authority.h"
@@ -81,13 +82,13 @@ constexpr uint8_t     kClientSlot = 1;
 // "out of range" mean it: the host at its start stands far beyond it of every spawn point, so this only guards a changed start.
 constexpr float kRangeCm = 20000.f;
 constexpr float kOutOfRangeMarginCm = 2000.f;
-// Where each player stops. Walker A: the client does not walk (it waits at the KPP gate, out of range, so it is never the target);
-// the host walks, staged or not, and stops inside the range with a margin (kHostStandoffCm), and its arrival opens the window.
-// Walker B: the host back at the KPP gate, out of range, then the client walks in last (kCloseCm), staged or not. The walker
-// closes on its target while the steps run, and a measurement ends when it is within kApproachEndCm: at that distance it stands
-// at its target's shoulder, where the game's own frustum test of its bounds holds whatever the yaw.
-constexpr float kHostStandoffCm = 15000.f;
-constexpr float kCloseCm = 15000.f;
+// Where each player stops. A target enters the walker's range at the bed anchor, the spot the director's stage places a walk at
+// (coop/player/shelter_spot, Kind::Bed): a walk to it is placed there at once, with no route to walk. Walker A: the client does
+// not walk (it waits at the KPP gate, out of range, so it is never the target); the host goes to its bed anchor, and its arrival
+// opens the window. Walker B: the host back at the KPP gate, out of range, then the client goes to its own bed anchor, last. The
+// walker closes on its target while the steps run, and a measurement ends when it is within kApproachEndCm: at that distance it
+// stands at its target's shoulder, where the game's own frustum test of its bounds holds whatever the yaw.
+constexpr float kAnchorReachCm = 500.f;   // the walk's reach of the anchor itself: within it the stage places the walk at once
 constexpr float kApproachEndCm = 3000.f;
 constexpr float kKppReachCm = 1500.f;
 
@@ -335,6 +336,20 @@ bool WalkTo(const FVector& to, float reachCm, const char* what) {
     return done && walk->state.load() == 1;
 }
 
+// This player's bed anchor, as the director's stage reads it; false when the base has no bed (the KPP fallback is not one).
+bool BedAnchor(FVector& out) {
+    bool bed = false;
+    OnGameThread([&] {
+        void* me = coop::players::Registry::Get().Local();
+        if (!me) return;
+        const coop::shelter_spot::Target t = coop::shelter_spot::Choose(me);
+        if (t.kind != coop::shelter_spot::Kind::Bed) return;
+        out = FVector{t.x, t.y, t.z};
+        bed = true;
+    });
+    return bed;
+}
+
 float PlayerTo(void* actor) {
     void* me = coop::players::Registry::Get().Local();
     FVector a{}, b{};
@@ -473,11 +488,23 @@ bool HostPhaseA(void*& a, std::string& keyA) {
                       "be hunted", clientCm, kRangeCm);
         return Invalid(why);
     }
-    FVector at{};
-    OnGameThread([&] { E::TryGetActorLocation(a, at); });
-    if (!WalkTo(at, kHostStandoffCm, "the host toward walker A")) return Invalid("the host's walk toward the walker did not arrive");
+    FVector bed{};
+    if (!BedAnchor(bed)) return Invalid("the host has no bed anchor to walk to");
+    if (!WalkTo(bed, kAnchorReachCm, "the host to the bed anchor")) return Invalid("the host's walk to the bed anchor did not arrive");
 
-    // At the host's arrival the window opens: nothing sits between.
+    // At the host's arrival: its view turns away, its distance from the walker is judged (in range, not at its shoulder), and the
+    // window opens: nothing else sits between.
+    float arrivalCm = -1.f;
+    OnGameThread([&] {
+        Aim(a, false);
+        arrivalCm = PlayerTo(a);
+    });
+    if (arrivalCm < kApproachEndCm || arrivalCm >= kRangeCm) {
+        char why[200];
+        std::snprintf(why, sizeof(why), "the host stands %.0f cm from walker A at the bed anchor: not between %.0f and %.0f", arrivalCm,
+                      kApproachEndCm, kRangeCm);
+        return Invalid(why);
+    }
     PS::Mark("window_go");
     const Approach w = ApproachWindow(a);
     uint8_t target = WT::kNoTarget;
@@ -676,18 +703,26 @@ bool ClientBody() {
     PS::Mark("copy_samples_a", Pack(samples, copyStartCm, copyEndCm));
     FVector at{};
 
-    // Walker B: this client is its target. It walks close, turned away; then its camera goes on the copy, and off it.
+    // Walker B: this client is its target. It goes to its own bed anchor, last, with its view turned away; then its camera goes on
+    // the copy, and off it.
     std::string keyB;
     if (!PS::AwaitText("walker_b", keyB, 2 * kWalkWaitS) || !AwaitCopy(keyB, "B")) return false;
     PS::Mark("copy_b");
-    copy = nullptr;
+    if (!BedAnchor(at)) return Invalid("this client has no bed anchor to walk to");
+    if (!WalkTo(at, kAnchorReachCm, "this client to the bed anchor")) return Invalid("this client's walk to the bed anchor did not arrive");
+    float arrivalCm = -1.f;
     OnGameThread([&] {
         copy = ByKey(keyB);
-        if (copy) E::TryGetActorLocation(copy, at);
+        arrivalCm = PlayerTo(copy);
+        Aim(copy, false);
     });
-    if (!copy) return Invalid("walker B's copy is gone before this client's walk");
-    if (!WalkTo(at, kCloseCm, "this client toward walker B")) return Invalid("this client's walk toward walker B did not arrive");
-    OnGameThread([&] { Aim(ByKey(keyB), false); });
+    UE_LOGI("mannequin-drill: this client stands %.0f cm from walker B's copy at its bed anchor", arrivalCm);
+    if (arrivalCm < kApproachEndCm || arrivalCm >= kRangeCm) {
+        char why[200];
+        std::snprintf(why, sizeof(why), "this client stands %.0f cm from walker B's copy at its bed anchor: not between %.0f and %.0f",
+                      arrivalCm, kApproachEndCm, kRangeCm);
+        return Invalid(why);
+    }
     PS::Mark("client_close");
     if (!PS::Await("aim", 240)) return false;
     float cm = -1.f;
