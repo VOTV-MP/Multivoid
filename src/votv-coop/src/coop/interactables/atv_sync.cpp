@@ -321,6 +321,9 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlo
         coop::atv_corrector::ApplyCorrection(e, payload, /*snap*/ false);
         coop::atv_condition_sync::ApplyPayload(e, payload, /*fromHost*/ false);
         coop::net::AtvStatePayload out = payload;
+        // Fuel and health are the host's copy's (atv_host_sync.h): the driver's block lowered them, and the host's go on.
+        out.fuel = A::GetFuel(e.actor);
+        out.health = A::GetHealth(e.actor);
         out.syncerSlot = e.syncerSlot;
         out.occupantSlot = e.occupantSlot;
         out.stateBits = static_cast<uint8_t>((payload.stateBits & 0x07) | coop::net::kAtvFromSyncer);
@@ -747,5 +750,11 @@ bool ReadTable(const std::wstring& key, TableView& out) {
 }
 
 void SetDrillMute(bool on) { g_drillMute = on; }
+
+void ForEachIndexed(void (*fn)(void* ctx, const std::wstring& key, void* actor), void* ctx) {
+    if (!fn || !IndexCurrent()) return;
+    for (const auto& kv : g_atvs)
+        if (R::IsLiveByIndex(kv.second.actor, kv.second.idx)) fn(ctx, kv.first, kv.second.actor);
+}
 
 }  // namespace coop::atv_sync
