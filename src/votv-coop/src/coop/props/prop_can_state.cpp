@@ -12,6 +12,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
@@ -33,68 +34,92 @@ enum class Reg : uint8_t { Pending, Registered, Refused };
 Reg  g_reg = Reg::Pending;
 bool g_settled = false;
 
-// What makes a class a can, asked once per class; a variant (prop_cannedFood_0_C) is a child of the base.
-std::unordered_map<void*, bool> g_isCanClass;
-
 struct CanState {
     bool    opened = false;
     int32_t foods = 0;
     bool operator==(const CanState& o) const { return opened == o.opened && foods == o.foods; }
 };
 std::unordered_map<std::wstring, CanState> g_known;    // by the can's Key
-std::unordered_map<void*, CanState> g_classDefaults;   // by class
 
 // Where `opened` lives on a class: its byte and its bit among the class's packed bools (off < 0: not declared).
 struct BoolSlot { int32_t off = -1; uint8_t mask = 0; };
-std::unordered_map<void*, BoolSlot> g_openedSlot;      // by class
+
+// Everything asked of a class once: whether it is a can (a variant, prop_cannedFood_0_C, is a child of the base),
+// where its two fields live, and the state a fresh one starts as. A class a world reload frees can come back at the
+// address of another, so the table goes with the world (SyncWorld).
+struct ClassInfo {
+    bool     can = false;
+    BoolSlot opened;
+    int32_t  foodsOff = -1;
+    bool     haveDefaults = false;
+    bool     missLogged = false;
+    CanState defaults;
+};
+std::unordered_map<void*, ClassInfo> g_class;
+uint32_t g_world = 0;   // the world_identity generation the table above belongs to
 
 uint32_t g_published = 0, g_landed = 0;
 
-bool IsCan(void* object) {
-    void* const cls = R::ClassOf(object);
-    if (!cls) return false;
-    auto it = g_isCanClass.find(cls);
-    if (it != g_isCanClass.end()) return it->second;
-    bool can = false;
-    for (void* c = cls; c && !can; c = R::SuperStructOf(c)) can = R::NameEquals(R::NameOf(c), L"prop_cannedFood_C");
-    g_isCanClass.emplace(cls, can);
-    return can;
+// Per-world tables go with the world, keyed on the generation as vent_crawler_sync keys its show.
+void SyncWorld() {
+    const uint32_t gen = ue_wrap::world_identity::Generation();
+    if (gen == g_world) return;
+    g_world = gen;
+    g_class.clear();
 }
 
-// `opened` is a Blueprint bool: one bit of a byte it may share with its neighbours, so it is read through its mask.
-BoolSlot OpenedSlotOf(void* object) {
+ClassInfo& InfoOf(void* cls) {
+    auto it = g_class.find(cls);
+    if (it != g_class.end()) return it->second;
+    ClassInfo info;
+    for (void* c = cls; c && !info.can; c = R::SuperStructOf(c))
+        info.can = R::NameEquals(R::NameOf(c), L"prop_cannedFood_C");
+    if (info.can) {
+        // `opened` is a Blueprint bool: one bit of a byte it may share with its neighbours, so it is read through its mask.
+        if (!R::FindBoolProperty(cls, L"opened", info.opened.off, info.opened.mask)) info.opened = BoolSlot{};
+        info.foodsOff = R::FindPropertyOffset(cls, L"foods");
+        UE_LOGI("prop_can_state: class %ls: opened @0x%X mask 0x%02X, foods @0x%X",
+                R::ToString(R::NameOf(cls)).c_str(), info.opened.off, info.opened.mask, info.foodsOff);
+    }
+    return g_class.emplace(cls, info).first->second;
+}
+
+bool IsCan(void* object) {
     void* const cls = R::ClassOf(object);
-    auto it = g_openedSlot.find(cls);
-    if (it != g_openedSlot.end()) return it->second;
-    BoolSlot slot;
-    if (!R::FindBoolProperty(cls, L"opened", slot.off, slot.mask)) slot = BoolSlot{};
-    g_openedSlot.emplace(cls, slot);
-    return slot;
+    return cls && InfoOf(cls).can;
 }
 
 bool ReadState(void* object, CanState& out) {
-    static R::InstanceOffset sFoods{L"foods"};
-    const BoolSlot opened = OpenedSlotOf(object);
-    const int32_t foodsOff = sFoods.Of(object);
-    if (opened.off < 0 || opened.mask == 0 || foodsOff < 0) return false;
+    const ClassInfo& info = InfoOf(R::ClassOf(object));
+    if (!info.can || info.opened.off < 0 || info.opened.mask == 0 || info.foodsOff < 0) return false;
     const auto* base = static_cast<const uint8_t*>(object);
-    out.opened = (base[opened.off] & opened.mask) != 0;
-    out.foods = *reinterpret_cast<const int32_t*>(base + foodsOff);
+    out.opened = (base[info.opened.off] & info.opened.mask) != 0;
+    out.foods = *reinterpret_cast<const int32_t*>(base + info.foodsOff);
     return true;
 }
 
-// What a can this peer has not seen starts as: its class's defaults.
+// What a can this peer has not seen starts as: its class's defaults. A class whose default object cannot be read is
+// said once and asked again at the next can, never remembered as {false, 0}: that would make every fresh can look changed.
 CanState DefaultsOf(void* object) {
-    void* const cls = R::ClassOf(object);
-    auto it = g_classDefaults.find(cls);
-    if (it != g_classDefaults.end()) return it->second;
+    ClassInfo& info = InfoOf(R::ClassOf(object));
+    if (info.haveDefaults) return info.defaults;
     CanState d{};
-    if (void* cdo = R::FindClassDefaultObject(R::ClassNameOf(object).c_str())) ReadState(cdo, d);
-    g_classDefaults.emplace(cls, d);
+    void* const cdo = R::FindClassDefaultObject(R::ClassNameOf(object).c_str());
+    if (cdo && ReadState(cdo, d)) {
+        info.defaults = d;
+        info.haveDefaults = true;
+        return d;
+    }
+    if (!info.missLogged) {
+        info.missLogged = true;
+        UE_LOGW("prop_can_state: no readable default object for class %ls -- a fresh can is compared with opened=0 foods=0",
+                R::ClassNameOf(object).c_str());
+    }
     return d;
 }
 
 void OnInitPost(const sg::Call& c) {
+    SyncWorld();
     if (!c.object || !IsCan(c.object)) return;
     const std::wstring key = ue_wrap::prop::GetInteractableKeyString(c.object);
     if (key.empty() || key == L"None") return;   // mid-construction: the birth paths carry it
