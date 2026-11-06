@@ -167,6 +167,9 @@ struct WindowShell {
     // fills it), so a fit check against it reports slack while a footer sits outside the ring; "is
     // my content inside the frame" needs this rect.
     void* box    = nullptr;
+    // The frame's overlay inside `box`, under the column: what a caller lays a widget over the
+    // window's own corner in (a resize grip).
+    void* frame  = nullptr;
 };
 
 // False if any widget could not be spawned: a build failure to retry, never a window without a
@@ -266,6 +269,8 @@ class FitProbe {
 public:
     FitProbe(const char* screen, float windowH) : screen_(screen), windowH_(windowH) {}
     void MarkDirty() { dirty_ = true; }
+    // A window the player resized: the reading is in the new height's units from the next one.
+    void SetWindowH(float windowH) { windowH_ = windowH; dirty_ = true; }
     void Rearm() { dirty_ = true; last_ = kNever; }
     // `frame` is the window's box (WindowShell::box), `footer` its lowest widget; `layout` names
     // what the height depended on, for the log line: a literal, compared by address.

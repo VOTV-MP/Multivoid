@@ -97,17 +97,19 @@ uint64_t g_lastDataGen  = 0;   // the DATA generation the stamp above was taken 
 // Four cells, not five columns, and no header strip: the game's save browser gives each row a
 // title and one right-hand fact and puts every other detail in a side panel, so the name takes
 // the row, "Players: c/m" sits at the right, and between them a red mismatch mark (its own cell
-// because a UTextBlock has one colour) and one word for how the host's players reach it. The
-// weights are measured against the longest string each cell holds, after every weighted cell's 18 px
-// gutter: a right-aligned cell clips at the left, and with four cells 0.28 clipped "Players: 2/4" to
-// "'layers: 2/4".
-struct Cell { float weight; };
+// because a UTextBlock has one colour) and one word for how the host's players reach it. Only the
+// name grows with the window: the three facts are fixed widths, each what the old weights gave it
+// at the 980-unit window, measured against the longest string the cell holds (a right-aligned cell
+// clips at the left, and 0.28 of the row once clipped "Players: 2/4" to "'layers: 2/4"). Each cell
+// also carries an 18 px right gutter.
+struct Cell { float width; };   // 0 = the name: the row's Fill, whatever the others leave
 constexpr Cell kCells[4] = {
-    {0.40f},   // name        -- accent orange, left
-    {0.14f},   // mismatch    -- #FF0000, left, EMPTY unless the join gate would refuse
-    {0.16f},   // link        -- dim, left: "Relay", "Direct", "LAN", or "--" when the host reports no one
-    {0.30f},   // "Players: n/m" -- white, right
+    {0.f},     // name        -- accent orange, left
+    {60.f},    // mismatch    -- #FF0000, left, EMPTY unless the join gate would refuse
+    {71.f},    // link        -- dim, left: "Relay", "Direct", "LAN", or "--" when the host reports no one
+    {149.f},   // "Players: n/m" -- white, right
 };
+constexpr float kCellGutterPx = 18.f;
 constexpr int kCellName = 0, kCellFlag = 1, kCellLink = 2, kCellPlayers = 3;
 constexpr int kCellCount = 4;
 
@@ -163,8 +165,22 @@ void* AddLockGlyph(void* parent) {
     return box;
 }
 
+// A fact cell: a SizeBox of the cell's fixed width around its text, clipped to it, centred in the
+// row's height. Returns the text.
+void* AddFixedText(void* hb, int32_t size, const FLinearColor& col, uint8_t justify, float width) {
+    void* box = Spawn(L"SizeBox", hb);
+    if (!box) return nullptr;
+    void* t = AddText(box, L"", size, col, justify, 0.f);   // weight 0: the SizeBox bounds it
+    if (!t) return nullptr;
+    U::SetClipping(t, 1);   // EWidgetClipping::ClipToBounds
+    U::SetSizeBoxWidth(box, width);
+    if (void* s = NS::AddHFill(hb, box, 0.f, kFill, kCenter))
+        NS::SetSlotPadding(s, P::off::UHorizontalBoxSlot_Padding, 0.f, 0.f, kCellGutterPx, 0.f);
+    return t;
+}
+
 // One row: USizeBox(64) -> UOverlay (the kit's AddFramedBox: edge, face) -> UHorizontalBox of the
-// lock cell and four texts. No UButton: the native row's own button_select draws nothing in all
+// lock cell, the name's text and three SizeBoxed texts. No UButton: the native row's own button_select draws nothing in all
 // three states, and a UButton would add a press visual to suppress. The frame images are
 // HitTestInvisible; the hit test reads the SizeBox's rect (native_screen::ChildAtCursor).
 void* BuildRow(void* parent) {
@@ -185,10 +201,10 @@ void* BuildRow(void* parent) {
     AddLockGlyph(hb);
     // Sizes and colours are the cell's: the name is the row's title (larger, accent), the three facts
     // beside it body text.
-    AddText(hb, L"", 20, kAccent, kJustLeft,  kCells[kCellName].weight);
-    AddText(hb, L"", 16, kBad,    kJustLeft,  kCells[kCellFlag].weight);
-    AddText(hb, L"", 16, kDim,    kJustLeft,  kCells[kCellLink].weight);
-    AddText(hb, L"", 16, kText,   kJustRight, kCells[kCellPlayers].weight);
+    AddText(hb, L"", 20, kAccent, kJustLeft, 1.f);   // Fill, clipped, its own 18 px gutter
+    AddFixedText(hb, 16, kBad,  kJustLeft,  kCells[kCellFlag].width);
+    AddFixedText(hb, 16, kDim,  kJustLeft,  kCells[kCellLink].width);
+    AddFixedText(hb, 16, kText, kJustRight, kCells[kCellPlayers].width);
     // SizeBox is a UContentWidget: its single child goes through SetContent.
     U::SetContent(box, ovl);
     return box;
@@ -225,9 +241,21 @@ bool RowPartsAt(int32_t i, RowParts& out) {
     out.face = fp.face;
     void* hb = fp.content;
     if (!hb) return false;
-    // Child 0 of the text row is the lock cell; the text cells follow it.
+    // Child 0 of the text row is the lock cell; the text cells follow it, the name a text of its
+    // own and each fixed cell a SizeBox around one.
     out.lock = U::ChildAt(hb, 0);
-    for (int c = 0; c < kCellCount; ++c) out.text[c] = U::ChildAt(hb, c + 1);
+    for (int c = 0; c < kCellCount; ++c) {
+        void* cell = U::ChildAt(hb, c + 1);
+        if (cell && kCells[c].width > 0.f) {
+            void* text = nullptr;
+            if (sGetContent) {
+                ue_wrap::ParamFrame f(sGetContent);
+                if (Call(cell, f)) text = f.Get<void*>(L"ReturnValue");
+            }
+            cell = text;
+        }
+        out.text[c] = cell;
+    }
     return true;
 }
 

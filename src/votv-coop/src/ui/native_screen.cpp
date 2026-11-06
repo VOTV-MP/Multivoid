@@ -246,6 +246,7 @@ bool BuildWindowShell(void* switcher, float widthPx, float heightPx, const wchar
     }
 
     out.box    = winBox;
+    out.frame  = winOvl;
     out.root   = root;
     out.scrim  = scrim;
     out.column = col;
