@@ -1,8 +1,11 @@
 #include "coop/session/teleport_client.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/player/players_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
@@ -105,6 +108,20 @@ bool ApplyLocally(const ApplyArgs& args) {
             local, fn ? (moved ? "teleportWObackrooms" : "fallback") : "fallback-noFn",
             args.locX, args.locY, args.locZ, args.rotPitch, args.rotYaw, args.rotRoll);
     return moved;
+}
+
+bool ApplyHostOrder(const ApplyArgs& args) {
+    // The /cremate drill's two client arms. They sit here and not in ApplyLocally, which a join's placement and the
+    // death revive also call: a knob there would drop or kill those too.
+    if (coop::config::ResolveFlag(coop::config_registry::rows::cremate_drop_order)) {
+        UE_LOGW("teleport_client: DRILL -- the host's order is NOT applied (dev.cremate_drop_order)");
+        return false;
+    }
+    if (coop::config::ResolveFlag(coop::config_registry::rows::cremate_transit_die)) {
+        UE_LOGW("teleport_client: DRILL -- this player dies as the order applies (dev.cremate_transit_die)");
+        ue_wrap::vitals::Write(ue_wrap::vitals::Field::Health, 0.f);
+    }
+    return ApplyLocally(args);
 }
 
 namespace {

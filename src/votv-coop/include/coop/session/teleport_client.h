@@ -51,4 +51,8 @@ struct ApplyArgs {
 // must read the position back (coop::death_revive's revive conjunction does exactly that).
 bool ApplyLocally(const ApplyArgs& args);
 
+// The host's TeleportClient order, as event_feed receives it: ApplyLocally behind the /cremate drill's two default-off
+// client knobs (an order that never applies; a player who dies as it does). Game thread.
+bool ApplyHostOrder(const ApplyArgs& args);
+
 }  // namespace coop::teleport_client
