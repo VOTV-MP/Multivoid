@@ -11,6 +11,7 @@
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
 #include "coop/creatures/ambient_creature_sync.h"
+#include "coop/creatures/walker_gaze_host.h"
 #include "coop/creatures/walker_state_client.h"
 #include "coop/world/ambient_fixture_sync.h"
 #include "coop/dev/container_parity.h"     // the container join drill's report receiver
@@ -424,24 +425,21 @@ bool HandlePropDriveEvent(net::Session& session,
         ::coop::sus_hole_intent::OnIntent(session, msg.senderPeerSlot, p);
         break;
     }
-    case net::ReliableKind::WalkerWatch: {
-        // CLIENT->HOST.
-        if (session.role() != net::Role::Host) {
-            UE_LOGW("event_feed: WalkerWatch from slot %d -- dropping (a client's, to the host)", msg.senderPeerSlot);
+    case net::ReliableKind::WalkerSeen: {
+        // CLIENT->HOST. The flag, the key, the sender's standing as the walker's target and its distance are the module's to
+        // judge, counted there.
+        if (session.role() != net::Role::Host || msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: WalkerSeen from slot %d -- dropping (a client's, to the host)", msg.senderPeerSlot);
             break;
         }
-        if (msg.payloadLen < sizeof(net::WalkerWatchPayload)) {
-            UE_LOGW("event_feed: WalkerWatch payload too short (%zu < %zu)",
-                    static_cast<size_t>(msg.payloadLen), sizeof(net::WalkerWatchPayload));
+        if (msg.payloadLen < sizeof(net::WalkerSeenPayload)) {
+            UE_LOGW("event_feed: WalkerSeen payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::WalkerSeenPayload));
             break;
         }
-        net::WalkerWatchPayload p{};
+        net::WalkerSeenPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (p.watching > 1) {
-            UE_LOGW("event_feed: WalkerWatch malformed -- dropping");
-            break;
-        }
-        ::coop::ambient_creature_sync::OnWalkerWatch(p, msg.senderPeerSlot);
+        ::coop::walker_gaze_host::OnSeen(p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::WalkerState: {

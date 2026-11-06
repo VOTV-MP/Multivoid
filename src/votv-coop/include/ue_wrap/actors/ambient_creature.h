@@ -34,12 +34,14 @@ void ListWalkers(std::vector<void*>& out);
 bool ReadWalkerStanding(void* walker, bool& standing);
 bool WriteWalkerStanding(void* walker, bool standing);
 
+// The controller the walker's own tick reads its gaze through: GetPlayerController(walker, 0). Null when it does not resolve.
+// Game thread.
+void* WalkerGazeController(void* worldContext);
+
 // The walker's own view test, as its tick runs it: inside this controller's frustum and rendered of late.
 bool WalkerInView(void* walker, void* playerController);
 
-// Its saw flag holds it frozen, as its tick reads it, until its own timer clears the flag. An angry walker does not freeze.
-void HoldWalkerSeen(void* walker);
-void ReleaseWalkerSeen(void* walker);
+// Its `looking` flag: true while it holds still.
 bool ReadWalkerLooking(void* walker);
 
 // Is this actor a walker?

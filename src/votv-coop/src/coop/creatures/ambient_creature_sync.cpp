@@ -8,24 +8,18 @@
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/net/wire_key_util.h"
 #include "coop/player/players_registry.h"
 #include "coop/world/ambient_births.h"
 
 #include "ue_wrap/actors/ambient_creature.h"
-#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
-#include "ue_wrap/core/types.h"
-#include "ue_wrap/engine/engine.h"
-#include "ue_wrap/engine/engine_pawn.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstdint>
-#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -34,7 +28,6 @@ namespace {
 
 namespace AB = coop::ambient_births;
 namespace AC = ue_wrap::ambient_creature;
-namespace E = ue_wrap::engine;
 namespace R = ue_wrap::reflection;
 namespace SG = ue_wrap::script_gate;
 using Clock = std::chrono::steady_clock;
@@ -48,93 +41,6 @@ constexpr int kTag = 0x41435452;  // 'ACTR'
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_watchTaken = false;
 bool g_namesSettled = false;
-
-// The walkers this tick, read once by whichever part of it asks first.
-std::vector<void*> g_tickWalkers;
-bool g_tickWalkersRead = false;
-const std::vector<void*>& TickWalkers() {
-    if (!g_tickWalkersRead) {
-        g_tickWalkersRead = true;
-        g_tickWalkers.clear();
-        AC::ListWalkers(g_tickWalkers);
-    }
-    return g_tickWalkers;
-}
-
-// A walker's view test runs more often than the poll: it walks 250 cm in a second.
-constexpr auto kWatchPoll = std::chrono::milliseconds(50);
-constexpr auto kWatchBeat = std::chrono::seconds(1);      // a client's word while it keeps looking
-constexpr auto kWatchExpire = std::chrono::milliseconds(2500);  // a client that left says nothing more
-constexpr auto kWatchLinger = std::chrono::seconds(15);    // as long as the walker's own timer stays frozen after a look
-Clock::time_point g_nextWatch{};
-
-// HOST: who has each walker on screen, by its key, and when they last said so.
-std::unordered_map<std::wstring, std::unordered_map<int, Clock::time_point>> g_watchers;
-
-// HOST: when a walker no client watches any more is let go. Its own timer cannot be relied on: one that fires while the flag
-// is held clears it, the hold sets it again before the tick sees the change, and with no new look no timer follows.
-std::unordered_map<std::wstring, Clock::time_point> g_lingering;
-
-// CLIENT: the walkers this player has on screen, and when it last said so.
-std::unordered_map<std::wstring, Clock::time_point> g_watching;
-
-// Every frame, as the walker's timer can clear its flag and its tick would walk it on the next.
-void HostHoldWatched(Clock::time_point now) {
-    if (g_watchers.empty() && g_lingering.empty()) return;
-    for (auto it = g_watchers.begin(); it != g_watchers.end();) {
-        for (auto w = it->second.begin(); w != it->second.end();)
-            w = now - w->second >= kWatchExpire ? it->second.erase(w) : std::next(w);
-        if (it->second.empty()) {
-            g_lingering[it->first] = now + kWatchLinger;
-            it = g_watchers.erase(it);
-        } else {
-            ++it;
-        }
-    }
-    for (void* w : TickWalkers()) {
-        const std::wstring key = ue_wrap::prop::GetKeyString(w);
-        if (g_watchers.count(key)) {
-            AC::HoldWalkerSeen(w);
-            continue;
-        }
-        auto linger = g_lingering.find(key);
-        if (linger == g_lingering.end() || now < linger->second) continue;
-        // A host that has it on screen sets the flag again on its next tick.
-        AC::ReleaseWalkerSeen(w);
-        g_lingering.erase(linger);
-    }
-}
-
-void ClientWatch(coop::net::Session& s, Clock::time_point now) {
-    const std::vector<void*>& walkers = TickWalkers();
-    if (walkers.empty() && g_watching.empty()) return;
-    void* pawn = coop::players::Registry::Get().Local();
-    void* controller = pawn ? E::GetController(pawn) : nullptr;
-    std::unordered_map<std::wstring, Clock::time_point> still;
-    auto send = [&s](const std::wstring& key, bool watching) {
-        coop::net::WalkerWatchPayload p{};
-        coop::net::WireKeyFromString(key, p.key);
-        p.watching = watching ? 1 : 0;
-        return s.SendReliable(coop::net::ReliableKind::WalkerWatch, &p, sizeof(p));
-    };
-    for (void* w : walkers) {
-        if (!AC::WalkerInView(w, controller)) continue;
-        const std::wstring key = ue_wrap::prop::GetKeyString(w);
-        if (key.empty()) continue;
-        auto was = g_watching.find(key);
-        if (was != g_watching.end() && now - was->second < kWatchBeat) {
-            still[key] = was->second;
-        } else if (send(key, true)) {
-            still[key] = now;
-            if (was == g_watching.end()) UE_LOGI("ambient_creature_sync: this player sees walker '%ls'", key.c_str());
-        }
-        // The pose the host's walker takes in a moment, without its round trip. An angry one does not stop.
-        if (!AC::ReadWalkerAngry(w)) AC::WriteWalkerStanding(w, true);
-    }
-    for (const auto& entry : g_watching)
-        if (!still.count(entry.first) && send(entry.first, false)) UE_LOGI("ambient_creature_sync: this player no longer sees walker '%ls'", entry.first.c_str());
-    g_watching.swap(still);
-}
 
 // HOST: each tree this lane knows, by the actor; its element, what it last sent, and whether it must send.
 struct Tree {
@@ -317,18 +223,6 @@ void ClientTick() {
     }
 }
 
-// The walking mannequins' part of the tick: the host holds the watched ones every tick, a client tests its view every 50 ms.
-void WalkerTick(coop::net::Session& s) {
-    const Clock::time_point now = Clock::now();
-    g_tickWalkersRead = false;
-    if (s.role() == coop::net::Role::Host) {
-        HostHoldWatched(now);
-    } else if (s.role() == coop::net::Role::Client && now >= g_nextWatch) {
-        g_nextWatch = now + kWatchPoll;
-        ClientWatch(s, now);
-    }
-}
-
 }  // namespace
 
 void Install(coop::net::Session* session) {
@@ -355,7 +249,6 @@ void Tick() {
     AB::Drain(AB::Bit(AB::Class::Tree), g_events);
     if (s->role() == coop::net::Role::Host) HostTick(*s);
     else if (s->role() == coop::net::Role::Client) ClientTick();
-    WalkerTick(*s);
 }
 
 void OnTreeState(const coop::net::AmbientTreeStatePayload& p) {
@@ -364,21 +257,6 @@ void OnTreeState(const coop::net::AmbientTreeStatePayload& p) {
     w.scale = p.scale;
     w.landed = p.landed != 0;
     g_recheck = true;
-}
-
-void OnWalkerWatch(const coop::net::WalkerWatchPayload& p, int senderSlot) {
-    const std::wstring key = coop::net::StringFromWireKey(p.key);
-    if (p.watching) {
-        g_watchers[key][senderSlot] = Clock::now();
-        g_lingering.erase(key);
-        return;
-    }
-    auto it = g_watchers.find(key);
-    if (it == g_watchers.end()) return;
-    it->second.erase(senderSlot);
-    if (!it->second.empty()) return;
-    g_lingering[key] = Clock::now() + kWatchLinger;
-    g_watchers.erase(it);
 }
 
 void QueueConnectBroadcastForSlot(int slot) {
@@ -393,10 +271,6 @@ void QueueConnectBroadcastForSlot(int slot) {
 Counters Read() { return g_counters; }
 
 void OnDisconnect() {
-    g_watchers.clear();
-    g_lingering.clear();
-    g_watching.clear();
-    g_nextWatch = Clock::time_point{};
     g_counters = Counters{};
     g_trees.clear();
     g_anyDirty = false;

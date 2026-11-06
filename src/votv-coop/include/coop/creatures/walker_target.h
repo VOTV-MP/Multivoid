@@ -47,6 +47,9 @@ void Install(coop::net::Session& session);
 // queue costs one atomic read. Game thread.
 void Tick(coop::net::Session& session);
 
+// The body of the client at `slot` as the hunt reads it: its puppet's actor once the puppet has a pose, else null. Game thread.
+void* ClientBody(uint8_t slot);
+
 // The slot `walker` hunts, kNoTarget for a walker not held or not yet given one. Game thread.
 uint8_t TargetOf(void* walker);
 

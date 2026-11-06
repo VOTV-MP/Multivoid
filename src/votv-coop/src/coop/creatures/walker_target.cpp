@@ -377,6 +377,8 @@ void Tick(coop::net::Session& session) {
     for (size_t i = 0; i < n; ++i) ClaimWalker(taken[i].actor, taken[i].eid);
 }
 
+void* ClientBody(uint8_t slot) { return PuppetBody(slot); }
+
 uint8_t TargetOf(void* walker) {
     const Walker* w = Find(walker);
     return w ? w->target : kNoTarget;

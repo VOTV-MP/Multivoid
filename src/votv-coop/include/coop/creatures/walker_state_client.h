@@ -3,7 +3,8 @@
 // The host's walker crosses as a prop and a client's copy runs no brain (coop/creatures/walker_brain), so what the walker's own
 // Blueprint decides arrives as a WalkerState {key, looking, target} (coop/creatures/walker_state_host). This module keeps one
 // row per walker key, a fixed table of eight: the copy's `anim.stand` is written from `looking` (the game's own pose variable,
-// the one the walker's tick writes from `looking` on the host), and `target` is kept for the copy for the gaze lane (W5).
+// the one the walker's tick writes from `looking` on the host), and `target` is kept for the copy: the gaze lane
+// (coop/creatures/walker_gaze) hears it through SubscribeHunt.
 //
 // A state for a key whose copy is not here yet is held, and applied at the copy's birth: the prop lane binds every wire-born copy
 // and every adopted twin through RegisterPropMirror, which calls OnBound, so no poll looks for it. A row ends with its copy (the
@@ -14,8 +15,11 @@
 
 #include <string>
 
+#include <cstdint>
+
 namespace coop::net {
 struct WalkerStatePayload;
+struct WireKey;
 }  // namespace coop::net
 
 namespace coop::walker_state_client {
@@ -26,6 +30,13 @@ void OnState(const coop::net::WalkerStatePayload& p);
 // remote_prop::RegisterPropMirror bound `actor` under wire key `key`: a held state for that key is applied to it. With nothing
 // held this is one comparison. Game thread.
 void OnBound(void* actor, const std::wstring& key);
+
+// Told whenever a copy's row is applied (a state arrived for a copy that is here, or the copy was bound under a held state) with
+// the slot the walker hunts (0xFF none), and once more with `ended` when the copy ends, whatever its target was. `copy` is the
+// copy's actor (live except at `ended`, when it is never to be read through). At most two subscribers; false when full or when
+// `fn` is already subscribed. Game thread.
+using HuntFn = void (*)(const coop::net::WireKey& key, void* copy, uint8_t target, bool ended);
+bool SubscribeHunt(HuntFn fn);
 
 // Per gameplay tick on a client: ask again for the copy's end of play while the class has not resolved (only when the class set
 // moved), then one comparison. Game thread.

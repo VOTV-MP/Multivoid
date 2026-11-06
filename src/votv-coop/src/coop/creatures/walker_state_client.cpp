@@ -48,6 +48,10 @@ bool     g_fullSaid = false;
 bool     g_endSubscribed = false;
 uint64_t g_setAsked = ~uint64_t{0};
 
+constexpr size_t kMaxSubs = 2;
+HuntFn           g_subs[kMaxSubs];
+size_t           g_subCount = 0;
+
 bool SameKey(const coop::net::WireKey& a, const coop::net::WireKey& b) {
     return a.len == b.len && std::memcmp(a.data, b.data, a.len) == 0;
 }
@@ -92,7 +96,11 @@ void Drop(Row& r) {
     if (g_count > 0) --g_count;
 }
 
-// Write the row's pose onto its copy.
+void Notify(const Row& r, bool ended) {
+    for (size_t i = 0; i < g_subCount; ++i) g_subs[i](r.key, r.actor, r.target, ended);
+}
+
+// Write the row's pose onto its copy, and tell the hunt's listeners.
 void Apply(Row& r) {
     if (!r.actor) return;
     if (AC::WriteWalkerStanding(r.actor, r.looking != 0))
@@ -100,6 +108,7 @@ void Apply(Row& r) {
                 r.looking, r.target == 0xFF ? -1 : static_cast<int>(r.target));
     else
         UE_LOGW("walker_state: the copy of '%ls' has no anim stand to write", coop::net::StringFromWireKey(r.key).c_str());
+    Notify(r, false);
 }
 
 void Attach(Row& r, void* actor) {
@@ -126,6 +135,7 @@ void* CopyOf(const coop::net::WireKey& key) {
 void OnCopyEnd(const DS::ActorEnd& end) {
     for (Row& r : g_rows) {
         if (!r.used || r.actor != end.actor) continue;
+        Notify(r, true);
         Drop(r);
         return;
     }
@@ -159,6 +169,15 @@ void OnBound(void* actor, const std::wstring& key) {
     if (!r) return;
     Attach(*r, actor);
     Apply(*r);
+}
+
+bool SubscribeHunt(HuntFn fn) {
+    if (!fn) return false;
+    for (size_t i = 0; i < g_subCount; ++i)
+        if (g_subs[i] == fn) return false;
+    if (g_subCount >= kMaxSubs) return false;
+    g_subs[g_subCount++] = fn;
+    return true;
 }
 
 void Tick() {

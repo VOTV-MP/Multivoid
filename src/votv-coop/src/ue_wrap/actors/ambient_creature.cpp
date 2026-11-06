@@ -71,7 +71,6 @@ struct BoolField {
         return off < 0 ? nullptr : static_cast<uint8_t*>(obj) + off;
     }
 };
-BoolField g_saw{L"saw"};
 BoolField g_looking{L"looking"};
 BoolField g_stand{L"stand"};
 BoolField g_angry{L"angry"};
@@ -200,12 +199,20 @@ bool WalkerInView(void* walker, void* playerController) {
     return Call(mesh, rendered) && rendered.Get<bool>(L"ReturnValue");
 }
 
-void HoldWalkerSeen(void* walker) {
-    if (uint8_t* b = g_saw.At(walker)) *b |= g_saw.mask;
-}
-
-void ReleaseWalkerSeen(void* walker) {
-    if (uint8_t* b = g_saw.At(walker)) *b &= static_cast<uint8_t>(~g_saw.mask);
+void* WalkerGazeController(void* worldContext) {
+    if (!worldContext) return nullptr;
+    static void* s_cdo = nullptr;
+    static void* s_fn = nullptr;
+    if (!s_cdo) s_cdo = R::FindClassDefaultObject(L"GameplayStatics");
+    if (!s_fn) {
+        if (void* cls = R::FindClass(L"GameplayStatics")) s_fn = R::FindFunction(cls, L"GetPlayerController");
+    }
+    if (!s_cdo || !s_fn) return nullptr;
+    ParamFrame f(s_fn);
+    if (!f.valid()) return nullptr;
+    f.Set<void*>(L"WorldContextObject", worldContext);
+    f.Set<int32_t>(L"PlayerIndex", 0);
+    return Call(s_cdo, f) ? f.Get<void*>(L"ReturnValue") : nullptr;
 }
 
 bool ReadWalkerLooking(void* walker) {
