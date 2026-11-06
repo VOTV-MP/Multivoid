@@ -13,6 +13,7 @@ struct Condition {
     float   temperature = 0.f;  // kelvin
     float   ripeness = 0.f;
     int32_t uses = 0;
+    float   cookProgress = -1.f;  // a cooking food's, -1 for any other food and when a writer leaves it alone
 };
 
 // True for prop_food_C and every class below it; the answer is kept per class.

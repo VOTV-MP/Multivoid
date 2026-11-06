@@ -229,6 +229,8 @@ set(VOTVCOOP_SOURCES
     src/coop/world/plant_sync.cpp
     src/coop/world/plant_edit_gate.cpp
     src/ue_wrap/actors/growing_plant.cpp
+    src/coop/interactables/kitchen_sync.cpp
+    src/ue_wrap/devices/kitchen.cpp
     src/coop/props/prop_record_refresh.cpp
     src/coop/props/prop_can_state.cpp
     src/coop/props/pack_trash_intent.cpp
@@ -656,6 +658,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_food_state.cpp
     src/harness/autotest/autotest_plant_state.cpp
     src/harness/autotest/autotest_plant_gate.cpp
+    src/harness/autotest/autotest_cook_state.cpp
     src/harness/autotest/autotest_saveui.cpp
     src/harness/autotest/autotest_spill.cpp
     src/harness/autotest/autotest_ambient_creature.cpp

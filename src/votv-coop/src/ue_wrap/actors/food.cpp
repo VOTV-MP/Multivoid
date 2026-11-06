@@ -29,6 +29,7 @@ constexpr int32_t kFrostDataIndex = 1;
 struct ClassInfo {
     bool    food = false;
     int32_t temperature = -1, ripeness = -1, uses = -1, celsius = -1, steam = -1, impact = -1;
+    int32_t cook = -1;        // prop_cookingFood_C's cookProgress; -1 on any other food
     int32_t frozenOff = -1;   // tempLessThan0 is a Blueprint bool: one bit of a byte it may share with its neighbours
     uint8_t frozenMask = 0;
 };
@@ -58,6 +59,7 @@ ClassInfo& InfoOf(void* cls) {
         info.celsius = R::FindPropertyOffset(cls, L"celsius");
         info.steam = R::FindPropertyOffset(cls, L"eff_steam");
         info.impact = R::FindPropertyOffset(cls, L"physicsImpact");
+        info.cook = R::FindPropertyOffset(cls, L"cookProgress");
         if (!R::FindBoolProperty(cls, L"tempLessThan0", info.frozenOff, info.frozenMask) || !info.frozenMask) {
             info.frozenOff = -1;
             info.frozenMask = 0;
@@ -132,6 +134,8 @@ bool Read(void* actor, Condition& out) {
     std::memcpy(&out.temperature, base + info.temperature, sizeof(float));
     std::memcpy(&out.ripeness, base + info.ripeness, sizeof(float));
     std::memcpy(&out.uses, base + info.uses, sizeof(int32_t));
+    out.cookProgress = -1.f;
+    if (info.cook >= 0) std::memcpy(&out.cookProgress, base + info.cook, sizeof(float));
     return true;
 }
 
@@ -145,6 +149,7 @@ bool Write(void* actor, const Condition& in) {
     std::memcpy(base + info.ripeness, &in.ripeness, sizeof(float));
     std::memcpy(base + info.uses, &in.uses, sizeof(int32_t));
     std::memcpy(base + info.celsius, &c, sizeof(float));
+    if (info.cook >= 0 && in.cookProgress >= 0.f) std::memcpy(base + info.cook, &in.cookProgress, sizeof(float));
     return true;
 }
 

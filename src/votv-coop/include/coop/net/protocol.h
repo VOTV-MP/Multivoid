@@ -1223,6 +1223,10 @@ enum class ReliableKind : uint8_t {
     // The host judges it (coop/world/plant_edit_gate) and answers a refused edit of a plant it holds with that plant's
     // PlantState. PlantStatePayload.
     PlantEdit = 225,
+    // ANY->ALL: this peer's player changed a microwave's or a mini oven's setting, started or stopped it, opened or
+    // closed a microwave's door, or changed a grill's coals, fire
+    // or lid; the host's burn of a grill's coals goes the same way. A client's copy is relayed. Not pre-world. Late join: every machine not at its defaults, at the ready edge. KitchenStatePayload.
+    KitchenState = 239,
     // HOST->CLIENT: one decision of a Geom Octa, to be replayed into the client's own Blueprint (coop/creatures/
     // geom_octa_relay): op 0, an Aggro, the Octa took a target (the replay runs minSphere's begin-overlap handler with
     // the target's counterpart here), carrying the host's verdict count as the base; op 1, a FireVerdict, the host's
@@ -1995,8 +1999,9 @@ struct FoodStatePayload {
     float   temperature;  // 4  -- kelvin
     float   ripeness;     // 4
     int32_t uses;         // 4
+    float   cookProgress;  // 4  -- a cooking food's, -1 for any other food
 };
-static_assert(sizeof(FoodStatePayload) == 44, "FoodStatePayload must be 44 bytes");
+static_assert(sizeof(FoodStatePayload) == 48, "FoodStatePayload must be 48 bytes");
 static_assert(sizeof(FoodStatePayload) <= 256 - 20 - 8, "FoodStatePayload must fit in one reliable datagram");
 
 // A client's bite of a world food (FoodBite).
@@ -2078,6 +2083,23 @@ struct SusHoleIntentPayload {
 };
 static_assert(sizeof(SusHoleIntentPayload) == 12, "SusHoleIntentPayload must be 12 bytes");
 static_assert(sizeof(SusHoleIntentPayload) <= 256 - 20 - 8, "SusHoleIntentPayload must fit in one reliable datagram");
+
+namespace kitchen_flags {
+inline constexpr uint8_t kDoorOpen = 1;  // its `opened`
+inline constexpr uint8_t kStopped = 2;   // this peer's run ended before its timer did
+}  // namespace kitchen_flags
+
+// A microwave's, a mini oven's or a grill's controls (KitchenState).
+struct KitchenStatePayload {
+    WireKey key;        // 32 -- the machine's Key
+    uint8_t kind;       // 1  -- ue_wrap::kitchen::Kind
+    uint8_t active;     // 1
+    uint8_t lid;        // 1  -- a grill's
+    uint8_t microwave;  // 1  -- kitchen_flags
+    int32_t mode;       // 4  -- a setting, 0 to 4, or a grill's coals, 0 to 16
+    float   remaining;  // 4  -- a running microwave's seconds left, or a grill's burn through its coal
+};
+static_assert(sizeof(KitchenStatePayload) == 44, "KitchenStatePayload must be 44 bytes");
 
 // One message of the drill filler (DevLoadFiller): its place in the run and the run's length; the rest is fill.
 struct DevLoadFillerPayload {

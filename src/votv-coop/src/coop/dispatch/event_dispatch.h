@@ -93,7 +93,8 @@ bool HandleEconomyEvent(net::Session& session,
 // host to all, FoodBite a client's bite and FoodRelease the food it let go, client to host, FoodHand the
 // food in a hand, holder to all; AmbientTreeState a walking tree's size and landing and AmbientFixtureState a
 // dirt hole's or beehive branch's place, host to all; SusHoleIntent a client's sus hole for the host to make,
-// dropped on a client. DevLoadFiller
+// dropped on a client; KitchenState a machine's controls, from the peer that changed them
+// to all. DevLoadFiller
 // is the developer filler of the syncer drill's load arm, host to client; DevParityReport is the pile deferral
 // drill's report, client to host; DevContainerParity is the container join drill's.
 bool HandlePropDriveEvent(net::Session& session,

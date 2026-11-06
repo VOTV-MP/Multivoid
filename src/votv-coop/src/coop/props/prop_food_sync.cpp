@@ -56,6 +56,7 @@ constexpr auto   kPoll = std::chrono::milliseconds(500);
 // flood is bounded before any other work. It starves only the sender's own slot. An honest press cannot repeat
 // inside it (the eat interaction's own length, to be read on the rig).
 constexpr auto   kBiteGap = std::chrono::milliseconds(200);
+constexpr float  kCookStep = 0.05f;
 constexpr float  kTemperatureStep = 1.f;   // the tick's target is re-rolled every tick, so a smaller step is noise
 constexpr float  kRipenessStep = 5.f;     // a food starts near 7200 (a class's own row: 3600 to 1e9) and falls about
                                            // half a point a second
@@ -181,7 +182,7 @@ void Collect(std::vector<void*>& out) {
 
 bool Moved(const F::Condition& a, const F::Condition& b) {
     return a.uses != b.uses || std::fabs(a.temperature - b.temperature) >= kTemperatureStep ||
-           std::fabs(a.ripeness - b.ripeness) >= kRipenessStep;
+           std::fabs(a.ripeness - b.ripeness) >= kRipenessStep || std::fabs(a.cookProgress - b.cookProgress) >= kCookStep;
 }
 
 std::wstring KeyOf(void* actor) {
@@ -200,6 +201,7 @@ coop::net::FoodStatePayload StatePayload(const std::wstring& key, const F::Condi
     p.temperature = now.temperature;
     p.ripeness = now.ripeness;
     p.uses = now.uses;
+    p.cookProgress = now.cookProgress;
     return p;
 }
 
@@ -266,7 +268,7 @@ bool Apply(const std::wstring& key, const coop::net::FoodStatePayload& p) {
     void* const actor = coop::prop_key_index::Find(key);
     if (!actor || !F::IsFood(actor)) return false;
     if (coop::hand_item::IsHandAxisActor(actor)) return true;  // the hand owns it; its record carries it onward
-    F::Write(actor, {p.temperature, p.ripeness, p.uses});
+    F::Write(actor, {p.temperature, p.ripeness, p.uses, p.cookProgress});
     F::PaintLooks(actor);
     ++g_applied;
     return true;
@@ -357,7 +359,7 @@ const char* CopyFault(int slot, void* actor, const coop::net::FoodStatePayload& 
 
 void TakeRelease(coop::net::Session& s, int slot, const std::wstring& key, void* actor,
                  const coop::net::FoodStatePayload& p) {
-    const F::Condition condition{p.temperature, p.ripeness, p.uses};
+    const F::Condition condition{p.temperature, p.ripeness, p.uses, p.cookProgress};
     F::Write(actor, condition);
     Publish(s, key, condition);
     UE_LOGI("prop_food_sync: slot %d let go of '%ls' -- condition taken", slot, key.c_str());
@@ -443,6 +445,7 @@ void SendRelease(coop::net::Session& s, void* actor) {
     p.temperature = now.temperature;
     p.ripeness = now.ripeness;
     p.uses = now.uses;
+    p.cookProgress = now.cookProgress;
     s.SendReliableToSlot(0, coop::net::ReliableKind::FoodRelease, &p, sizeof(p));
     UE_LOGI("prop_food_sync: let go of '%ls' here, uses=%d -- FoodRelease sent", key.c_str(), now.uses);
 }
