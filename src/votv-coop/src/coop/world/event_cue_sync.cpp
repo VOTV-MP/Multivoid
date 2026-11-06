@@ -20,6 +20,7 @@
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/gc_pin.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -68,8 +69,10 @@ constexpr CueDef kCues[] = {
 constexpr int kCueCount = static_cast<int>(sizeof(kCues) / sizeof(kCues[0]));
 
 // Resolved on demand (a cue's particle asset loads with the eventer's class): the templates for the
-// replay and the join snapshot, the rows' names for the watch. Game thread.
-void* g_cueTemplates[kCueCount] = {};
+// replay and the join snapshot, the rows' names for the watch. Game thread. A template is held by a GC pin once it
+// is found or loaded: the cue exists for the case that nothing else here references its emitter, and a raw pointer
+// to an unreferenced asset dangles after the next collection.
+ue_wrap::GcPin g_cueTemplates[kCueCount];
 R::FName g_cueRows[kCueCount] = {};
 bool g_rowsResolved = false;
 
@@ -100,20 +103,24 @@ bool g_listenRefused = false;
 R::FName g_cueNames[kCueCount] = {};      // a born cue's template name, resolved once
 bool g_cueNamesResolved = false;
 
+// The template this call may use: the pinned one, else the object found now. A pin the engine's own root set refuses leaves
+// the object to that owner and is used for this call only, never kept as a raw pointer.
 void* CueTemplate(int cueId) {
-    if (!g_cueTemplates[cueId])
-        g_cueTemplates[cueId] = R::FindObject(kCues[cueId].templateName, L"ParticleSystem");
-    return g_cueTemplates[cueId];
+    if (g_cueTemplates[cueId].Held()) return g_cueTemplates[cueId].Raw();
+    void* found = R::FindObject(kCues[cueId].templateName, L"ParticleSystem");
+    if (found) g_cueTemplates[cueId].Pin(found);
+    return found;
 }
 
 // A client whose game has not loaded a cue's emitter (no class that spawns it has stood here yet) loads it by its asset
-// path for the replay, once per cue: the host's cue is not dropped for what the client has not met.
+// path for the replay: the host's cue is not dropped for what the client has not met. A load that found nothing is not
+// tried again; one that found it is pinned, so the next replay finds it in CueTemplate.
 bool g_loadTried[kCueCount] = {};
 void* LoadCueTemplate(int cueId) {
     if (g_loadTried[cueId]) return nullptr;
-    g_loadTried[cueId] = true;
     void* loaded = ue_wrap::asset_load::LoadObjectByPath(kCues[cueId].assetPath);
-    if (loaded) g_cueTemplates[cueId] = loaded;
+    if (loaded) g_cueTemplates[cueId].Pin(loaded);
+    else g_loadTried[cueId] = true;
     UE_LOGI("event_cue: cue %d ('%s') emitter was not loaded here; loading %ls by its path %s", cueId, kCues[cueId].name,
             kCues[cueId].assetPath, loaded ? "found it" : "did not find it");
     return loaded;
