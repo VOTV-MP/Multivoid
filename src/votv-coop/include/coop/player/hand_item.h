@@ -16,12 +16,18 @@
 
 #pragma once
 
+#include "coop/net/intent_bucket.h"
 #include "coop/net/session.h"
 
 #include <cstdint>
 #include <string>
 
 namespace coop::hand_item {
+
+// The hand lane's budget: an application is a mirror destroyed and spawned on every peer and two sends. Twelve at
+// once and four a second sit above the most an honest player sent in the archived logs (9 in a second, 32 in ten);
+// past them the newest state lands within a quarter second.
+inline constexpr coop::net::IntentBudget kHandBudget{12.0f, 4.0f};
 
 // Owner side, per tick (from local_streams::Tick). `local` is the local mainPlayer; `holdingProp` is
 // the local player's holding_actor IF it is a live Aprop_C descendant, else nullptr. Announces

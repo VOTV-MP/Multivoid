@@ -142,6 +142,10 @@ std::wstring GetPropNameString(void* prop);
 // prop in the world. Zero ComparisonIndex for null, a non-prop, or an unset row.
 reflection::FName GetPropName(void* prop);
 
+// The Name row alone, written before FinishSpawningActor on a deferred-spawned Aprop_C, whose init pass then resolves it
+// (a hand-item mirror's stamp). False for null, NAME_None or a non-Aprop_C. Game thread.
+bool WritePropName(void* prop, reflection::FName nameRow);
+
 // The pre-Finish identity write on a deferred-spawned Aprop_C mirror: Name (skipped
 // for NAME_None) and the Static, removeWOrespawn, frozen and sleep bools before
 // FinishSpawningActor, whose init pass then resolves list_props[Name] into the true mesh, mass,

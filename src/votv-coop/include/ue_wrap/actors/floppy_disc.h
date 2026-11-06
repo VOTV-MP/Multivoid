@@ -37,6 +37,11 @@ struct DiscContent {
 };
 
 bool ReadDiscContent(void* discActor, DiscContent& out);
+
+// The disc class's default `readWrites` (prop_floppyDisc_C's default object, the most a disc holds; it only counts down, and
+// no skin overrides it), read once. False until the class loads. Game thread.
+bool ReadDefaultReadWrites(int32_t& out);
+
 bool WriteDiscContent(void* discActor, const DiscContent& in);
 
 // Drop the resolved class and offsets (level change).

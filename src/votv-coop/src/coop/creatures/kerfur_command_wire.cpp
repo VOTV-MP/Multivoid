@@ -78,6 +78,12 @@ bool Send(coop::net::Session* session, const Request& r) {
 }
 
 Feed OnChunk(const coop::net::BlobChunkPayload& chunk, uint8_t senderSlot, Request& out, const char** why) {
+    // A header that declares more chunks than the ceiling needs is refused before the assembler reserves for it, as MTA's
+    // latent receiver refuses a declared size at the first part (CLatentReceiver.cpp:128-129).
+    if (chunk.chunks > kMaxChunks) {
+        Fail(why, "header declares more chunks than a command needs");
+        return Feed::Malformed;
+    }
     std::vector<uint8_t> blob;
     if (!g_asm.OnChunk(chunk, senderSlot, blob)) return Feed::Incomplete;
     if (blob.size() > kMaxBlobBytes) {

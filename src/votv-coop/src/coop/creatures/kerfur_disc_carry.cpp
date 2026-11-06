@@ -3,11 +3,15 @@
 #include "coop/creatures/kerfur_disc_carry.h"
 
 #include "coop/player/hand_history.h"
+#include "coop/player/hand_item.h"
+#include "coop/net/net_stats.h"
+#include "coop/net/protocol.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_record_wire.h"
 
+#include "ue_wrap/actors/floppy_disc.h"
 #include "ue_wrap/actors/kerfur.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/fname_utils.h"
@@ -32,10 +36,20 @@ namespace prw = coop::props::prop_record_wire;
 constexpr const wchar_t* kDiscClass   = L"prop_floppyDisc_C";
 constexpr const wchar_t* kDiscWhClass = L"prop_floppyDisc_Wh_C";
 
-// How far behind its owner the hand lane's applied state can be: the newest hand state lands within one refill of the
-// lane's budget (hand_item.cpp, kHandBudget {12, 4 per second}: a quarter second). The tail's class is asked of the lane
-// with this much grace.
-constexpr uint64_t kHandLagMs = 250;
+uint32_t g_carries = 0;     // spans that built a copy
+uint32_t g_published = 0;   // PropSpawn and PropDestroy messages accepted inside them
+
+// The two broadcast kinds a published copy would travel as, as the session counted them accepted
+// (net_stats::AddReliableSent, at Session::SendReliable and SendReliableToSlot).
+uint32_t PublishedNow() {
+    return coop::net::net_stats::ReliableSent(static_cast<uint8_t>(coop::net::ReliableKind::PropSpawn)) +
+           coop::net::net_stats::ReliableSent(static_cast<uint8_t>(coop::net::ReliableKind::PropDestroy));
+}
+
+// The grace the hand lane's history is asked with: one refill of the lane's own budget (hand_item::kHandBudget), the
+// longest the newest hand state waits for its token. A hold that ended up to this long before the command arrived still
+// counts. A take the lane has not applied yet is not in the history at all, and the press is then answered Unavailable.
+constexpr uint64_t kHandLagMs = static_cast<uint64_t>(1000.0f / coop::hand_item::kHandBudget.perSecond);
 
 // The game's own two class casts (get_reports, kerfurOmega.cpp:1869-1882): a disc of the floppy family that is not Wh.
 // A class not loaded here can have no instance, so an unresolved class answers no.
@@ -103,11 +117,33 @@ TailVerdict JudgeTail(const SR::SaveRecord& tail, uint8_t slot, uint64_t arrival
         if (why) *why = "tail class is no floppy disc";
         return TailVerdict::Malformed;
     }
+    int32_t maxReadWrites = 0;
+    if (!ue_wrap::floppy_disc::ReadDefaultReadWrites(maxReadWrites)) {
+        if (why) *why = "the disc class default is not read yet";
+        return TailVerdict::Unavailable;
+    }
+    if (!DiscLeafOk(tail, maxReadWrites, why)) return TailVerdict::Malformed;
     if (!coop::hand_history::HeldWithin(slot, tail.className.c_str(), kHandLagMs, arrivalMs)) {
         if (why) *why = "the hand lane does not show that disc";
         return TailVerdict::Unavailable;
     }
     return TailVerdict::Ok;
+}
+
+bool DiscLeafOk(const SR::SaveRecord& r, int32_t maxReadWrites, const char** why) {
+    if (r.ints.empty() || r.ints[0].empty()) {
+        if (why) *why = "tail has no readWrites";
+        return false;
+    }
+    if (r.ints[0][0] < 0 || r.ints[0][0] > maxReadWrites) {
+        if (why) *why = "tail readWrites is past what a disc holds";
+        return false;
+    }
+    if (r.strings.empty()) {
+        if (why) *why = "tail has no data array";
+        return false;
+    }
+    return true;
 }
 
 Gate ReadGate(void* omega) {
@@ -122,6 +158,7 @@ Gate ReadGate(void* omega) {
 }
 
 HandScope::HandScope(uint8_t slot, const SR::SaveRecord& record) : slot_(slot) {
+    sentBefore_ = PublishedNow();
     coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
     puppet_ = (rp && rp->valid() && rp->HasPose()) ? rp->GetActor() : nullptr;
     std::wstring name;
@@ -146,9 +183,15 @@ HandScope::HandScope(uint8_t slot, const SR::SaveRecord& record) : slot_(slot) {
                 static_cast<unsigned>(slot), record.className.c_str());
         return;
     }
-    PR::WriteSpParityIdentity(actor, ue_wrap::fname_utils::StringToFName(name), false, false, false, false);
     coop::prop_echo_suppress::MarkMirrorSpawn(actor);
     coop::prop_echo_suppress::MarkIncomingDestroy(actor);
+    // The name only, before Init, as the hand-item mirror stamps it.
+    if (!PR::WritePropName(actor, ue_wrap::fname_utils::StringToFName(name))) {
+        UE_LOGW("kerfur_disc_carry[host]: the name of slot %u's disc %ls did not stamp -- the begun actor is destroyed, "
+                "silently to the peers", static_cast<unsigned>(slot), record.className.c_str());
+        E::DestroyActor(actor);
+        return;
+    }
     if (!E::FinishDeferredSpawn(actor, loc, rot)) {
         UE_LOGW("kerfur_disc_carry[host]: the finish of slot %u's disc %ls failed -- the begun actor is destroyed, "
                 "silently to the peers", static_cast<unsigned>(slot), record.className.c_str());
@@ -179,7 +222,11 @@ HandScope::HandScope(uint8_t slot, const SR::SaveRecord& record) : slot_(slot) {
             name.c_str(), actor);
 }
 
-HandScope::~HandScope() {
+HandScope::~HandScope() { Close(); }
+
+void HandScope::Close() {
+    if (closed_) return;
+    closed_ = true;
     if (wrote_) E::WriteMainPlayerHoldingActor(puppet_, previous_);
     if (void* alive = copy_.Get()) {
         E::DestroyActor(alive);
@@ -187,8 +234,16 @@ HandScope::~HandScope() {
             UE_LOGI("kerfur_disc_carry[host]: slot %u's disc copy %p outlived the verb (it refused the disc) -- "
                     "destroyed here, silently to the peers", static_cast<unsigned>(slot_), alive);
     }
+    published_ = PublishedNow() - sentBefore_;
+    if (ok_) {
+        ++g_carries;
+        g_published += published_;
+        UE_LOGI("kerfur_disc_carry[host]: slot %u's disc span closed -- the session accepted %u PropSpawn/PropDestroy "
+                "inside it", static_cast<unsigned>(slot_), published_);
+    }
 }
 
 bool HandScope::Consumed() const { return ok_ && !copy_.Alive(); }
+
 
 }  // namespace coop::kerfur_disc_carry

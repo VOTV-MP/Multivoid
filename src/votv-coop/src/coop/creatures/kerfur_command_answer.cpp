@@ -90,8 +90,9 @@ bool ShowLine(const char* line, std::wstring& text) {
            ue_wrap::votv_lib::AddHint(text, kRefusalHintType, local);
 }
 
-void Send(coop::net::Session* session, uint8_t slot, uint32_t requestId, uint8_t result, uint8_t reason) {
-    if (!session || requestId == 0 || slot == 0 || slot >= coop::net::kMaxPeers) return;
+// True when the answer was accepted, or none was owed (no id, not a client's slot); false when the link refused it.
+bool Send(coop::net::Session* session, uint8_t slot, uint32_t requestId, uint8_t result, uint8_t reason) {
+    if (!session || requestId == 0 || slot == 0 || slot >= coop::net::kMaxPeers) return true;
     KerfurCommandAnswerPayload p{};
     p.requestId = requestId;
     p.result = result;
@@ -99,13 +100,12 @@ void Send(coop::net::Session* session, uint8_t slot, uint32_t requestId, uint8_t
     if (!session->connected() ||
         !session->SendReliableToSlot(slot, coop::net::ReliableKind::KerfurCommandAnswer, &p,
                                      static_cast<int>(sizeof(p)))) {
-        ++g_counts.lost;
-        return;
+        return false;
     }
     const uint64_t n = result == KA::kResultWaits          ? ++g_counts.waitsSent
                        : result == KA::kResultConsumedHeld ? ++g_counts.consumedSent
                                                            : ++g_counts.refusedSent;
-    if (n > kLinesPerKind) return;
+    if (n > kLinesPerKind) return true;
     if (result == KA::kResultWaits)
         UE_LOGI("kerfur_command_answer: HOST told slot %u its command #%u waits", static_cast<unsigned>(slot),
                 requestId);
@@ -115,7 +115,16 @@ void Send(coop::net::Session* session, uint8_t slot, uint32_t requestId, uint8_t
     else
         UE_LOGI("kerfur_command_answer: HOST told slot %u its command #%u is refused: %s", static_cast<unsigned>(slot),
                 requestId, ReasonName(reason));
+    return true;
 }
+
+// A consumed-held answer the link refused. The host's verb already took the disc, so this answer is the only thing that
+// makes the client let go of its own: it is kept and sent again each tick until accepted or its slot leaves.
+struct OwedConsumed {
+    uint8_t slot;
+    uint32_t requestId;
+};
+std::vector<OwedConsumed> g_owed;
 
 }  // namespace
 
@@ -128,15 +137,42 @@ void HoldSent(uint32_t requestId, std::optional<coop::kerfur_disc_carry::Pledge>
 
 void SendRefused(coop::net::Session* session, uint8_t slot, uint32_t requestId, uint8_t reason) {
     if (reason > KA::kRefusalMax) return;
-    Send(session, slot, requestId, KA::kResultRefused, reason);
+    if (!Send(session, slot, requestId, KA::kResultRefused, reason)) ++g_counts.lost;
 }
 
 void SendWaits(coop::net::Session* session, uint8_t slot, uint32_t requestId) {
-    Send(session, slot, requestId, KA::kResultWaits, 0);
+    if (!Send(session, slot, requestId, KA::kResultWaits, 0)) ++g_counts.lost;
 }
 
 void SendConsumed(coop::net::Session* session, uint8_t slot, uint32_t requestId) {
-    Send(session, slot, requestId, KA::kResultConsumedHeld, 0);
+    if (Send(session, slot, requestId, KA::kResultConsumedHeld, 0)) return;
+    g_owed.push_back(OwedConsumed{slot, requestId});
+    UE_LOGW("kerfur_command_answer: the link refused slot %u's consumed-held answer for command #%u -- the Omega holds "
+            "its disc; the answer is sent again each tick until it is accepted or the slot leaves",
+            static_cast<unsigned>(slot), requestId);
+}
+
+void TickOwed(coop::net::Session* session) {
+    for (size_t i = 0; i < g_owed.size();) {
+        const OwedConsumed o = g_owed[i];
+        if (Send(session, o.slot, o.requestId, KA::kResultConsumedHeld, 0)) {
+            UE_LOGI("kerfur_command_answer: slot %u's consumed-held answer for command #%u went after a refusal",
+                    static_cast<unsigned>(o.slot), o.requestId);
+            g_owed.erase(g_owed.begin() + static_cast<std::ptrdiff_t>(i));
+        } else {
+            ++i;
+        }
+    }
+}
+
+void OnPeerGone(uint8_t slot) {
+    for (size_t i = 0; i < g_owed.size();) {
+        if (g_owed[i].slot != slot) { ++i; continue; }
+        UE_LOGW("kerfur_command_answer: slot %u left before its consumed-held answer for command #%u was accepted -- the "
+                "Omega holds its disc and the client's own copy is not destroyed (a duplicate of the disc's data)",
+                static_cast<unsigned>(slot), g_owed[i].requestId);
+        g_owed.erase(g_owed.begin() + static_cast<std::ptrdiff_t>(i));
+    }
 }
 
 void ShowLocal(uint8_t reason) {
@@ -204,6 +240,7 @@ void OnDisconnect() {
                 c.consumeMiss);
     g_counts = Counts{};
     g_nextId = 0;
+    while (!g_owed.empty()) OnPeerGone(g_owed.front().slot);   // the session is ending: none can be delivered
     g_held.clear();
 }
 

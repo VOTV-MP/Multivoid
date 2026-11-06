@@ -31,6 +31,9 @@ inline constexpr uint8_t kFlagRecord = 0x01;  // head.flags: a record follows th
 inline constexpr size_t kHeadBytes = sizeof(coop::net::KerfurCommandPayload);
 // The most a blob completes to: the head, a record's length and the record at its cap.
 inline constexpr size_t kMaxBlobBytes = kHeadBytes + sizeof(uint16_t) + coop::props::prop_record_wire::kMaxRecordBytes;
+// The chunks of that ceiling, at the transport's chunk size (BlobChunkPayload::data, 220 bytes): 19.
+inline constexpr size_t kChunkBytes = sizeof(coop::net::BlobChunkPayload::data);
+inline constexpr size_t kMaxChunks = (kMaxBlobBytes + kChunkBytes - 1) / kChunkBytes;
 
 struct Request {
     coop::net::KerfurCommandPayload head{};

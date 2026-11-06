@@ -270,8 +270,20 @@ void ExecuteHostCommand(ElementId eid, void* actor, Command c, uint8_t requester
         Answer(requesterSlot, requestId, KR::Unavailable);
         return;
     }
-    const bool consumed = hand && hand->Consumed();
-    hand.reset();  // the puppet's hand is its own again, and a copy the verb left is gone, before anyone is told
+    const bool copyGone = hand && hand->Consumed();
+    if (hand) hand->Close();   // the puppet's hand is its own again, and a copy the verb left is gone, before anyone is told
+    // The verb latches the disc into the Omega just before it destroys the copy, so a copy that is gone with the Omega
+    // holding nothing was removed by something else, and the client keeps its disc.
+    bool omegaHolds = false;
+    const bool consumed = copyGone && K::ReadHasFloppy(actor, omegaHolds) && omegaHolds;
+    if (copyGone && !consumed) {
+        UE_LOGW("kerfur_command: slot %u's carried disc copy is gone but the Omega holds no disc -- not consumed, the "
+                "client keeps its disc", static_cast<unsigned>(requesterSlot));
+        hand.reset();
+        Answer(requesterSlot, requestId, KR::Unavailable);
+        return;
+    }
+    hand.reset();
     UE_LOGI("kerfur_command: HOST ran verb '%ls' eid=%u (requester slot %u, serving slot %u)%s", verb, eid,
             requesterSlot, static_cast<unsigned>(requesterSlot),
             consumed ? ", the Omega took the carried disc" : "");
@@ -534,6 +546,7 @@ void Tick() {
     // off this thread, so no Tick touches them outside a running host session; 4) the startKill watch, until settled.
     if (s->running() && s->role() == coop::net::Role::Host) {
         kcw::Sweep();
+        coop::kerfur_command_answer::TickOwed(s);
         ServeQueues();
         g_tally.Flush(coop::net::RefusalTally::Clock::now());
     }

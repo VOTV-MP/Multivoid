@@ -296,6 +296,12 @@ std::wstring GetPropNameString(void* prop) {
     return n.ComparisonIndex == 0 ? std::wstring() : R::ToString(n);
 }
 
+bool WritePropName(void* prop, R::FName nameRow) {
+    if (!prop || nameRow.ComparisonIndex == 0 || !IsDescendantOfProp(prop)) return false;
+    *reinterpret_cast<R::FName*>(reinterpret_cast<uint8_t*>(prop) + P::off::Aprop_Name) = nameRow;
+    return true;
+}
+
 bool WriteSpParityIdentity(void* prop, R::FName nameRow,
                            bool isStatic, bool removeWOrespawn,
                            bool frozen, bool sleep) {

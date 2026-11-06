@@ -26,6 +26,12 @@ void ResetSession();
 // One wire send accepted by GNS (counts 1 packet + `bytes` on the wire, header included).
 void AddSent(uint32_t bytes);
 
+// One reliable message of `kind` (a ReliableKind value) accepted for at least one peer by Session::SendReliable or
+// SendReliableToSlot: the two single-message choke points, so a batch (a blob's chunks) is not counted here. A dev drill
+// reads it as a before/after pair around a span; nothing in the shipping path reads it.
+void AddReliableSent(uint8_t kind);
+uint32_t ReliableSent(uint8_t kind);
+
 // One wire packet entering Session::HandleMessage (full datagram length).
 void AddRecv(uint32_t bytes);
 

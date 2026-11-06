@@ -126,6 +126,7 @@ bool Session::SendReliableToSlot(int peerSlot, ReliableKind kind, const void* pa
     const SendOutcome rc = backlog_.SendOrQueue(peerSlot, static_cast<int>(LaneForKind(kind)),
                                                hConn, wire, total, admission_);
     if (rc == SendOutcome::Streamed) rateControl_.NoteReliableQueued(peerSlot, total);
+    if (rc != SendOutcome::Dropped) net_stats::AddReliableSent(static_cast<uint8_t>(kind));
     return rc != SendOutcome::Dropped;
 }
 
@@ -256,6 +257,7 @@ bool Session::SendReliable(ReliableKind kind, const void* payload, int len, int 
         if (rc == SendOutcome::Streamed) rateControl_.NoteReliableQueued(i, total);
         if (rc != SendOutcome::Dropped) anySuccess = true;
     }
+    if (anySuccess) net_stats::AddReliableSent(static_cast<uint8_t>(kind));
     return anySuccess;
 }
 

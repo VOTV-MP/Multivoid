@@ -43,8 +43,12 @@ void ShowLocal(uint8_t reason);
 // (0), the host's own slot, or an unknown reason is not answered. Game thread.
 void SendRefused(coop::net::Session* session, uint8_t slot, uint32_t requestId, uint8_t reason);
 void SendWaits(coop::net::Session* session, uint8_t slot, uint32_t requestId);
-// HOST: tell `slot` its command `requestId` ran on the disc it carried and the Omega took it (consumed-held). Game thread.
+// HOST: tell `slot` its command `requestId` ran on the disc it carried and the Omega took it (consumed-held). A refused
+// send is kept and sent again each tick (TickOwed) until accepted or the slot leaves (OnPeerGone, said): this answer is
+// the only thing that makes the client let go of its disc once the Omega holds it. Game thread.
 void SendConsumed(coop::net::Session* session, uint8_t slot, uint32_t requestId);
+void TickOwed(coop::net::Session* session);
+void OnPeerGone(uint8_t slot);
 
 // CLIENT: the host's answer: shown as a hint in the player's language when it names a command sent here, else dropped
 // and counted; a consumed-held ends the pledge of its command and destroys the pledged disc here (kerfur_disc_carry).

@@ -236,11 +236,6 @@ void ApplyHandState(coop::net::Session& session, uint8_t slot, const SlotHand& i
     ++g_statesApplied[slot];
 }
 
-// The hand's budget: an application is a mirror destroyed and spawned on every
-// peer and two sends. Twelve at once and four a second sit above the most an honest player sent in the archived logs
-// (9 in a second, 32 in ten); past them the newest state lands within a quarter second.
-constexpr coop::net::IntentBudget kHandBudget{12.0f, 4.0f};
-
 // Host: per slot, the newest changed hand state and its pace (coop/net/latest_wins.h); one struct, so both clear with the
 // occupant.
 struct PendingHand { SlotHand value; coop::net::LatestWins pace; };

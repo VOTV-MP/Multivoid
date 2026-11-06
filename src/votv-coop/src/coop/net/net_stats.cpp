@@ -11,6 +11,7 @@ std::atomic<uint64_t> g_bytesSent{0};
 std::atomic<uint64_t> g_bytesRecv{0};
 std::atomic<uint64_t> g_packetsSent{0};
 std::atomic<uint64_t> g_packetsRecv{0};
+std::atomic<uint32_t> g_reliableSent[256] = {};
 std::atomic<float>    g_inBps{0.f};
 std::atomic<float>    g_outBps{0.f};
 std::atomic<float>    g_inPktps{0.f};
@@ -26,6 +27,7 @@ void ResetSession() {
     g_bytesRecv.store(0, std::memory_order_relaxed);
     g_packetsSent.store(0, std::memory_order_relaxed);
     g_packetsRecv.store(0, std::memory_order_relaxed);
+    for (auto& n : g_reliableSent) n.store(0, std::memory_order_relaxed);
     PublishRates(0.f, 0.f, 0.f, 0.f, 0, -1, false);
 }
 
@@ -33,6 +35,9 @@ void AddSent(uint32_t bytes) {
     g_bytesSent.fetch_add(bytes, std::memory_order_relaxed);
     g_packetsSent.fetch_add(1, std::memory_order_relaxed);
 }
+
+void AddReliableSent(uint8_t kind) { g_reliableSent[kind].fetch_add(1, std::memory_order_relaxed); }
+uint32_t ReliableSent(uint8_t kind) { return g_reliableSent[kind].load(std::memory_order_relaxed); }
 
 void AddRecv(uint32_t bytes) {
     g_bytesRecv.fetch_add(bytes, std::memory_order_relaxed);

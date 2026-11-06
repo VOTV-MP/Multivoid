@@ -81,6 +81,7 @@
 #include "coop/creatures/kerfur_command.h"  // host-authoritative kerfur menu command relay, serving the requester
 #include "coop/creatures/kerfur_command_seat.h"  // the one seat where an Omega's radial command is decided, on every route
 #include "coop/creatures/kerfur_command_wire.h"  // a kerfur command's chunks, dropped with the peer that sent them
+#include "coop/creatures/kerfur_command_answer.h"  // a consumed-held answer owed to a peer that left
 #include "coop/requester_feedback/requester_feedback.h"  // what a verb the host runs for a client shows that client: the desk and the kerfur command both hold on it
 #include "coop/creatures/kerfur_convert_host.h"  // the host half of the kerfur conversion: its queue, served each tick
 #include "coop/creatures/kerfur_entity.h"  // the stable-KerfurId authority table
@@ -410,6 +411,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::props::container_birth::OnPeerGone(static_cast<uint8_t>(slot));  // a container transfer it had in flight
     coop::props::container_act_host::OnPeerGone(static_cast<uint8_t>(slot));  // a record it held in escrow goes back
     coop::kerfur_command_wire::OnPeerGone(static_cast<uint8_t>(slot));  // a kerfur command it had half sent
+    coop::kerfur_command_answer::OnPeerGone(static_cast<uint8_t>(slot));  // a consumed-held answer it was owed
     coop::prop_act_host::OnPeerGone(static_cast<uint8_t>(slot));  // a take or use it had reserved
     coop::signal_sync::OnDisconnectSlot(slot);
     coop::email_sync::OnDisconnectSlot(slot);

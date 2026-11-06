@@ -143,7 +143,8 @@ are peer-gated. `[V]`
   builds a copy in the puppet's hand for the verb's one call, marked so that neither the copy's birth nor the
   verb's destroy of it is published, and the host answers that the copy was taken. The client's own disc dies on
   the client through the game's destroy, if it is still the disc the press pledged; the hand mirror follows the
-  emptied hand. `[?]`
+  emptied hand. The pledge guards the honest race only (a player who swaps the disc inside the round trip keeps it); a
+  forged record can already keep a disc and have its data taken. `[?]`
 - **The connect reconcile.** Explicit deletes, the claim-tracked snapshot bracket, position
   corrections, and the quiescence-gated divergence sweep bounded by a per-class completeness floor
   and a half-of-the-world valve, then the pile bind ([join.md](join.md)). The join barrier means
