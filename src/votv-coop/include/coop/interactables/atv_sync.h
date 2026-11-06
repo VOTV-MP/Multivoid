@@ -141,6 +141,9 @@ struct TableView {
 // this world's, an entry stands under the key and its actor is live. Game thread.
 bool ReadTable(const std::wstring& key, TableView& out);
 
+// Every live entry of this world's index, by key. Nothing when the index is another world's. Game thread.
+void ForEachIndexed(void (*fn)(void* ctx, const std::wstring& key, void* actor), void* ctx);
+
 // DEV, for the ATV health drill's silent arm and the hostile drill's atv_ arms: while set, this CLIENT's syncer
 // stream sends no block (its body, its request and the host's stamps run on), so the host's silence rule is what
 // takes the ATV and the host's counters hold only what the drill sent. Cleared by the drill and by OnDisconnect.

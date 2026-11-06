@@ -76,6 +76,32 @@ turn a divergence into an item loss the host persists. The mirror's own accrual 
 overwrite never races an irreversible act. The battery is an inserted prop's charge and rides
 the prop lane.
 
+### What the host owns beyond the rig
+
+The rig's pose stays with the peer driving it. Everything else the ATV keeps is the host's copy's, and a client submits
+its own acts and takes the host's state (`coop/interactables/atv_host_sync`):
+
+- **Fuel and health.** A client's refuel (a gas can's `fuelUp`) or repair (a toolbox's `toolboxFix`) runs on its copy,
+  and the rise its copy shows, read before the host's next block can write over it, goes to the host as a gain. The host
+  checks the sender's world, the ATV and its reach (8 m), or that it is seated, and adds it on its own copy. A client
+  driver's blocks only lower them: the host takes the lower of its value and the driver's, and its own values ride every
+  block it re-sends. `AtvHostState` carries them with a count of the gains the host applied, so the driver's own copy
+  also takes a gain or a lowering the host made.
+- **Modules.** A fit (`playerUsedOn` with an upgrade in hand) and a take-off (`upgradeTake`) run on the client's copy, and
+  each change to its `Modules` goes to the host, which writes its own and runs `updUpgrades`. A fit the host would not
+  make is refunded with that module's prop at the ATV; the take-off's module travels as the client's own birth.
+- **Lights, brake and turbo.** The seated driver's keys run on its copy, and the state goes to the host, which takes it
+  from the seated driver alone and runs the ATV's own light, brake and turbo bodies on its copy.
+- **The horn.** The seated driver's press and release go to the host, which plays the ATV's own horn and sends it to every
+  other peer; the host's own horn goes straight to every client.
+
+The host sends each ATV's state when any of it changes, every 2 s, and to a joiner at its ready edge. A state the host sent
+before it heard of a client's own act waits 1.5 s on that client, so it does not undo the act on the copy. The map is a
+display of the ATV's own place, and its module is a module. The padlock and the crowbar have no body on the ATV. `[V]`
+(`harness/autotest/autotest_atv_host.cpp`: a client's refuel, repair, seat, lights, brake, turbo, horn, module fit and
+take-off, a seated client's fuel burnt down, the host's module fit and take-off, seat, lights and horn, every step read
+the same on both peers; run on the code before it, each of the client's acts stayed on its own copy.)
+
 ## Who owns what
 
 | State | Owner | Shape |
@@ -88,6 +114,9 @@ the prop lane.
 | every route to an ATV's damage and death (the two blast verbs, the explosion) | the tick owner | a copy that does not own the tick cancels them at the script gate; the owner takes every blast that reaches it |
 | the story event's trap | the host | the host copy's `trap` rides the stamp (bit 4); the driven copy fires it |
 | the condition values | the syncer | overwritten on the mirror, re-derived on edges |
+| fuel and health | the host | a client's refuel or repair is a gain the host adds; a client driver only lowers them |
+| the modules | the host | a client's fit or take-off is a request the host makes on its copy |
+| lights, brake, turbo, the horn | the host, from the seated driver | the driver's keys are requests; the horn plays on every other peer |
 | tyre and spare presence | the host | consumed from the host's own copy only |
 | a runtime ATV's identity | the host | its game key, announced |
 
@@ -101,6 +130,8 @@ the prop lane.
 | `AtvExplodeRequest` | a client to the host | the ATV the client syncs that exploded, by key, and whether the story event's trap fell in that frame; the host blasts at the ATV's own `tp` |
 | `AtvSpawn`, `AtvDestroy` | the host to all | an ATV's key, class and pose; its teardown |
 | `AtvSetComplete` | the host to a joiner | the count of distinct keys its connect snapshot named |
+| `AtvHostState` | the host to all | an ATV's fuel, health and gains applied, its modules, lights, brake and turbo, empty and broken; or a driver's horn |
+| `AtvRequest` | a client to the host | a refuel's or repair's gain, a module fitted or taken off, the seated driver's controls, its horn |
 
 ## Late join
 
@@ -128,7 +159,8 @@ run, join, park and divergence arms, each red arm failing as designed (`coop/dev
 | At a hand-back to the host the old syncer's last blocks may still be in flight; the host drops and counts them, and the stamp moves every client to the host's copy | `[?]` `coop/interactables/atv_authority`, `coop/interactables/atv_sync` |
 | A client's tyre eject is refused by the arbiter, so the host keeps the wheel and the peers disagree until the eject intent lane exists | `[V]` `coop/interactables/atv_condition_sync`, by design |
 | The pose stream rides the reliable lane; a sequenced unreliable stream is the intended shape | `[V]` `coop/interactables/atv_sync` sends it reliable |
-| Not synced: the thirteen modules and every upgrade effect, lights, brake and turbo, honk, the radio, the map, repair, the kerfur passenger, and a remote driver's body is not seated on the ATV | `[V]` nothing under `coop/interactables/atv_*` carries them |
+| Not synced: the radio, the kerfur passenger, and a remote driver's body is not seated on the ATV | `[V]` nothing under `coop/interactables/atv_*` carries them |
+| A client's refuel or repair is the rise its copy shows, which the host takes as is within the 100 ceiling and the reach; the gas can's own fuel after a pour is not carried. A refused take-off of a module the host does not have leaves its author's module in the world | `[V]` `coop/interactables/atv_host_sync` |
 
 ## Code map
 
@@ -140,4 +172,5 @@ run, join, park and divergence arms, each red arm failing as designed (`coop/dev
 | condition | `coop/interactables/atv_condition_sync`, `ue_wrap/devices/atv_condition` |
 | the engine wrapper | `ue_wrap/devices/atv` |
 | the seat | `coop/interactables/device_occupancy` |
+| fuel, health, modules, lights, brake, turbo, the horn | `coop/interactables/atv_host_sync` |
 | tests and probes | `coop/dev/atv_probe` (the drive arm), `coop/dev/atv_tire_probe`, `coop/dev/atv_eject_drill`; the smoke run with the ATV scenario enabled |

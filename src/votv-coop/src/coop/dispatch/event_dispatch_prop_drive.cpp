@@ -18,6 +18,7 @@
 #include "coop/element/registry.h"
 #include "coop/world/plant_edit_gate.h"
 #include "coop/world/plant_sync.h"
+#include "coop/interactables/atv_host_sync.h"
 #include "coop/props/prop_drive_stream.h"  // the driven-prop end edge
 #include "coop/props/prop_hold_claim.h"    // the client's receiver of a refused hold
 #include "coop/props/prop_food_sync.h"     // a world food's condition and a client's bite
@@ -252,6 +253,30 @@ bool HandlePropDriveEvent(net::Session& session,
         }
         if (edit) ::coop::plant_edit_gate::OnEdit(static_cast<uint8_t>(msg.senderPeerSlot), p);
         else ::coop::plant_sync::OnState(p);
+        break;
+    }
+    case net::ReliableKind::AtvHostState:
+    case net::ReliableKind::AtvRequest: {
+        // AtvHostState HOST->ALL, AtvRequest CLIENT->HOST.
+        const bool request = msg.kind == net::ReliableKind::AtvRequest;
+        if (request != (session.role() == net::Role::Host)) {
+            UE_LOGW("event_feed: an ATV host message the wrong way from slot %d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::AtvHostPayload)) {
+            UE_LOGW("event_feed: ATV host payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::AtvHostPayload));
+            break;
+        }
+        net::AtvHostPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (!std::isfinite(p.fuel) || !std::isfinite(p.health) || !std::isfinite(p.amount) ||
+            p.moduleCount > sizeof(p.modules)) {
+            UE_LOGW("event_feed: ATV host message malformed -- dropping");
+            break;
+        }
+        if (request) ::coop::atv_host_sync::OnRequest(msg.senderPeerSlot, p);
+        else ::coop::atv_host_sync::OnState(p);
         break;
     }
     case net::ReliableKind::DevLoadFiller: {

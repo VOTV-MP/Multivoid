@@ -45,6 +45,7 @@
 #include "coop/comms/chat_sync.h"
 #include "coop/interactables/upgrade_sync.h"
 #include "coop/interactables/turbine_sync.h"
+#include "coop/interactables/atv_host_sync.h"
 #include "coop/interactables/keypad_sync.h"
 #include "coop/world/fuse_tower_rows.h"
 #include "coop/world/power_grid.h"
@@ -123,6 +124,7 @@ void ConnectReplayForSlot(int slot) {
     coop::drone_sync::QueueConnectBroadcastForSlot(slot);  // delivery drone pose (adopt=1)
     coop::order_queue_sync::QueueConnectBroadcastForSlot(slot);  // the delivery order queue: a reset + every queued order
     coop::turbine_sync::QueueConnectBroadcastForSlot(slot);  // wind-turbine facing/spin snap
+    coop::atv_host_sync::QueueConnectBroadcastForSlot(slot);  // every ATV's host state again
     coop::device_occupancy::QueueConnectBroadcastForSlot(slot);  // live device claims (busy table)
     coop::download_arm_sync::QueueConnectResetForSlot(slot);  // a reset since the capture, ahead of the desk's seed: the game's order is reset, catch, arm
     coop::console_state_sync::QueueConnectBroadcastForSlot(slot);  // sky-signal snapshot + desk adopt
