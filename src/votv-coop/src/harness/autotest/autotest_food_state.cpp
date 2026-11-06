@@ -2,11 +2,12 @@
 //
 // The client meets the host, then the host spawns seven foods and names them in a folder both peers read. A takes
 // written conditions and bites from each peer, B the client's last bite, C the host's burn, D a burn written on the
-// client's parked copy alone, then its steam and frozen looks. Each peer then holds a food, writes its numbers into
+// client's copy alone, whose tick the gate refuses, then its steam and frozen looks. Each peer then holds a food, writes its numbers into
 // the hand, and lets it go twice: thrown, then placed down. The other peer checks the hand's mirror and the food that
 // lands. Each peer checks every step against the host's numbers, written to the folder, and logs
 // `food-drill: <step> PASS|FAIL`; the client hands its failed steps to the host, which logs `food-drill: VERDICT
-// PASS|FAIL`, then `DONE`. After a new condition the host writes while the client is away, the client rejoins and
+// PASS|FAIL`, then `DONE`; each peer also judges what the food tick gate did (nothing ran against its rule, and the
+// client's gate refused some). After a new condition the host writes while the client is away, the client rejoins and
 // checks it. Gated by VOTVCOOP_RUN_FOOD_STATE; the folder is VOTVCOOP_CAN_DIR; VOTVCOOP_FOOD_REJOIN=1 runs the
 // rejoined client's half. Every wait is on a game state or the other peer's signal, with a bound; the two dwells
 // that stand for an absence or an unobservable order are named where they sit.
@@ -21,6 +22,7 @@
 #include "coop/player/hand_item.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/props/food_tick_gate.h"
 #include "coop/props/join_membership_sweep.h"
 #include "coop/props/prop_key_index.h"
 #include "coop/session/net_pump.h"
@@ -71,7 +73,7 @@ constexpr int kStepBoundSec = 30;  // a step's effect on this peer's copy, once 
 constexpr int kReadyBoundSec = 400;  // the client's walk to the host, or the other peer's whole life
 constexpr int kHandBoundSec = 10;   // the other peer's hand shown here
 
-// A parked copy must not burn on its own after the client wrote 1000 K onto it: an absence, and a burn that does not
+// A client's copy, its tick refused, must not burn on its own after the client wrote 1000 K onto it: an absence, and a burn that does not
 // come has no signal. The host's own burn (step 06) runs on the same tick, which is what bounds the wait.
 constexpr int kNoBurnDwellMs = 3000;
 // Between the second hand write and the let-go. The game's let-go reads the hand itself (checkEquip calls getData),
@@ -269,6 +271,15 @@ void CheckMirror(const char* step, uint8_t slot, const F::Condition& want) {
                 std::to_string(steam));
 }
 
+// What the food tick gate did on this peer over the whole run: no body ran against its rule, and on the client the gate
+// refused some (a dead watch would also read zero ran). The host's refusals are its hand copies of the client's food.
+void CheckTickGate(bool clientSide) {
+    coop::food_tick_gate::Counts c;
+    OnGameThread([&] { c = coop::food_tick_gate::GetCounts(); });
+    Verdict("18-gate-refused-food-ticks", c.ran == 0 && (!clientSide || c.refused > 0),
+            "refused " + std::to_string(c.refused) + " ran " + std::to_string(c.ran));
+}
+
 // This peer's player lets go of what it holds, thrown or placed down; the dropped food's key goes in the folder and
 // comes back (`none` when nothing was dropped).
 std::string LetGo(const char* keyFile, bool place) {
@@ -426,7 +437,7 @@ void RunHost() {
     if (!Publish("00-born", keys[0])) return;
     WriteFood(keys[0], {300.f, 3400.f, 5});
     if (!Publish("01-host-wrote", keys[0])) return;
-    // The step's subject is time: the host's tick rolls the food on while the client's parked copy holds its numbers.
+    // The step's subject is time: the host's tick rolls the food on while the client's copy, its tick refused, holds its numbers.
     F::Condition wrote;
     ReadFood(keys[0], wrote);
     if (!WaitFor("the host's food to roll on", kStepBoundSec, [&] { return RolledOn(keys[0], wrote); }, false))
@@ -468,7 +479,7 @@ void RunHost() {
     if (!Await("client_checked_d")) return;   // after its dwell: a client's write that was going to cross has crossed
     if (!Publish("07-client-burn-stays", keys[3])) return;
 
-    // The looks of a parked copy: steam, then frozen, then neither.
+    // The looks of a client's copy: steam, then frozen, then neither.
     WriteFood(keys[3], {340.f, 3000.f, 4});
     Mark("hot");
     if (!Await("client_saw_hot")) return;
@@ -483,6 +494,7 @@ void RunHost() {
     // let-go reaches the client. Thrown first, placed down second.
     if (!HostLeg(kThrow, keys[4])) return;
     if (!HostLeg(kPlace, keys[6])) return;
+    CheckTickGate(false);
 
     std::string clientText;
     if (!AwaitText("client_rows", clientText)) return;
@@ -610,6 +622,7 @@ void RunClient() {
 
     if (!ClientLeg(kThrow, keys[3])) return;
     if (!ClientLeg(kPlace, keys[5])) return;
+    CheckTickGate(true);
 
     Mark("client_rows", FailText());
     if (!Await("host_ack")) return;
