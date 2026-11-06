@@ -14,7 +14,9 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
+#include "ue_wrap/engine/engine.h"
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cwchar>
@@ -45,6 +47,10 @@ void MergeEdit(const Payload& p, GP::Values& v) {
 // puppet's pose lagging the sender, so the bound refuses a plant the sender cannot be near and never a reach the game allows.
 constexpr float kPlantReachUU = 400.0f;
 
+// The game plants into a pot AT the pot's root, and the plant follows the pot; a planting that names a pot is that near it, the
+// allowance covering the two peers' copies of a pot that moved between the act and its poll.
+constexpr float kPlantAtPotUU = 100.0f;
+
 // The bounds, each a value the game's own writers stay inside.
 constexpr float kMaxFraction = 1.0f;       // grow and fruitGrow are fractions: the plant's own tests are >= 1
 constexpr float kMaxWater = 20000.0f;      // rain adds only below 3600 and a can sets 600
@@ -69,7 +75,12 @@ coop::roster_ledger::PerSlotState<EditSlot> g_editSlots;
 uint64_t g_refusedClass = 0, g_refusedReach = 0, g_clamped = 0;
 uint64_t g_refusedKey = 0, g_refusedRow = 0, g_refusedParent = 0;
 bool g_clampSaid[kFieldCount] = {};
-bool g_keySaid = false, g_rowSaid = false, g_parentSaid = false;
+// Each reason a refusal has is said once a session: the counter holds them all.
+enum KeyWhy : int { kKeyEmpty, kKeyBytes, kKeyNone, kKeyCase, kKeyHeld, kKeyWhyCount };
+enum ParentWhy : int { kParentNoPot, kParentFar, kParentFull, kParentWhyCount };
+bool g_keySaid[kKeyWhyCount] = {};
+bool g_parentSaid[kParentWhyCount] = {};
+bool g_rowSaid = false;
 
 // A refusal that is counted every time and said the first time of a session.
 void RefuseOnce(uint64_t& count, bool& said, uint8_t slot, const wchar_t* what, const std::wstring& key, const wchar_t* why,
@@ -109,22 +120,59 @@ enum class Gate : uint8_t { Pass, Wait, Refused };
 
 // Wait: the host has no body for the sender yet (its first pose has not arrived), so its reach cannot be measured and the edit
 // stays queued for the body, as the door's verbs do. Refused is counted and said, for its first three and every twentieth.
-Gate Judge(const coop::element::IntentSubject& subject, EditSlot& sl, uint8_t slot, const wchar_t* what, const std::wstring& key) {
-    using coop::element::IntentOutcome;
-    if (subject.outcome == IntentOutcome::NoBody) {
-        if (!sl.waitSaid) {
-            sl.waitSaid = true;
-            UE_LOGI("plant_edit_gate: slot %u's plant edits wait: the host has no body for it yet", static_cast<unsigned>(slot));
-        }
-        return Gate::Wait;
+Gate WaitFor(EditSlot& sl, uint8_t slot, const char* why) {
+    if (!sl.waitSaid) {
+        sl.waitSaid = true;
+        UE_LOGI("plant_edit_gate: slot %u's plant edits wait: %s", static_cast<unsigned>(slot), why);
     }
-    sl.waitSaid = false;
+    return Gate::Wait;
+}
+
+// `refused` is the counter the refusal belongs to: the reach count, or the parent count for the pot a planting names.
+Gate Judge(const coop::element::IntentSubject& subject, EditSlot& sl, uint8_t slot, const wchar_t* what, const std::wstring& key,
+           uint64_t& refused) {
+    using coop::element::IntentOutcome;
+    if (subject.outcome == IntentOutcome::NoBody) return WaitFor(sl, slot, "the host has no body for it yet");
     if (subject) return Gate::Pass;
-    if (++g_refusedReach <= 3 || g_refusedReach % 20 == 0)
+    if (++refused <= 3 || refused % 20 == 0)
         UE_LOGI("plant_edit_gate: slot %u's %ls of '%ls' refused -- %s (%.0f uu of %.0f) (#%llu)", static_cast<unsigned>(slot), what,
                 key.c_str(), coop::element::OutcomeName(subject.outcome), subject.distUU, subject.reachUU,
-                static_cast<unsigned long long>(g_refusedReach));
+                static_cast<unsigned long long>(refused));
     return Gate::Refused;
+}
+
+// A plant's key is an ASCII FName the game mints, never "None"; a client's is judged as the game's own would read it.
+bool KeyShapeOk(const std::wstring& key, KeyWhy& why, const wchar_t*& text) {
+    if (key.empty()) {
+        why = kKeyEmpty;
+        text = L"it names no key:";
+        return false;
+    }
+    for (const wchar_t c : key) {
+        if (c < 0x20 || c > 0x7E) {
+            why = kKeyBytes;
+            text = L"its key holds a byte no key holds:";
+            return false;
+        }
+    }
+    if (_wcsicmp(key.c_str(), L"None") == 0) {
+        why = kKeyNone;
+        text = L"its key is the unset name:";
+        return false;
+    }
+    return true;
+}
+
+// An FName compares without case, so a key that the host's index misses may still be a plant's under another case.
+bool HeldInOtherCase(const std::unordered_map<std::wstring, void*>& index, const std::wstring& key) {
+    for (const auto& entry : index)
+        if (_wcsicmp(entry.first.c_str(), key.c_str()) == 0) return true;
+    return false;
+}
+
+float Distance(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
+    const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
 // False keeps the edit at its sender's queue head: the host has no body for the sender yet. Anything else is applied or
@@ -132,8 +180,10 @@ Gate Judge(const coop::element::IntentSubject& subject, EditSlot& sl, uint8_t sl
 bool ApplyEdit(coop::net::Session& s, EditSlot& sl, uint8_t slot, Payload p, std::unordered_map<std::wstring, void*>& index,
                std::vector<std::wstring>& changed) {
     const std::wstring key = coop::net::StringFromWireKey(p.key);
-    if (key.empty()) {
-        RefuseOnce(g_refusedKey, g_keySaid, slot, p.alive ? L"edit" : L"removal", key, L"it names no key:", key);
+    KeyWhy keyWhy = kKeyEmpty;
+    const wchar_t* keyText = L"";
+    if (!KeyShapeOk(key, keyWhy, keyText)) {
+        RefuseOnce(g_refusedKey, g_keySaid[keyWhy], slot, p.alive ? L"edit" : L"removal", key, keyText, key);
         return true;
     }
     const auto it = index.find(key);
@@ -141,7 +191,7 @@ bool ApplyEdit(coop::net::Session& s, EditSlot& sl, uint8_t slot, Payload p, std
     const coop::element::IntentTarget reach = coop::element::IntentTarget::ForClientIntent(s, slot, kPlantReachUU);
     if (!p.alive) {
         if (!plant) return true;   // the host holds none by that key
-        const Gate gate = Judge(reach.Authorize(plant), sl, slot, L"removal", key);
+        const Gate gate = Judge(reach.Authorize(plant), sl, slot, L"removal", key, g_refusedReach);
         if (gate == Gate::Wait) return false;
         if (gate == Gate::Refused) return true;
         GP::Destroy(plant);
@@ -168,22 +218,55 @@ bool ApplyEdit(coop::net::Session& s, EditSlot& sl, uint8_t slot, Payload p, std
                         static_cast<unsigned long long>(g_refusedClass));
             return true;
         }
+        // The key is a new one: no plant of the host's holds it in another case, and no other prop holds it.
+        if (HeldInOtherCase(index, key)) {
+            RefuseOnce(g_refusedKey, g_keySaid[kKeyCase], slot, L"planting", key, L"a plant of the host's holds the key in another case:", key);
+            return true;
+        }
+        void* holder = nullptr;
+        const coop::prop_key_index::Read held = coop::prop_key_index::Resolve(key, &holder);
+        if (held == coop::prop_key_index::Read::Pending) {
+            WaitFor(sl, slot, "the host's key index cannot answer yet");
+            return false;
+        }
+        if (held == coop::prop_key_index::Read::Hit) {
+            RefuseOnce(g_refusedKey, g_keySaid[kKeyHeld], slot, L"planting", key, L"another prop holds the key:", key);
+            return true;
+        }
         const ue_wrap::FVector place{p.x, p.y, p.z};
-        const Gate gate = Judge(reach.AuthorizeSegment(place, place), sl, slot, L"planting", key);
+        const Gate gate = Judge(reach.AuthorizeSegment(place, place), sl, slot, L"planting", key, g_refusedReach);
         if (gate == Gate::Wait) return false;
         if (gate == Gate::Refused) return true;
         // A plant's attachParent is its owner's key, so a pot's planting names the pot. A planting in a dirt hole would name
-        // the hole, which belongs to the bury lane (not synced): refusing it here is intended, not a miss.
+        // the hole, which belongs to the bury lane (not synced): refusing it here is intended, not a miss. The pot is judged
+        // as the plant is, within the sender's reach, and the game plants AT the pot's own place into a pot that holds no plant.
         const std::wstring parent = coop::net::StringFromWireKey(p.attachParent);
         if (!parent.empty()) {
-            void* pot = coop::prop_key_index::Find(parent);
-            if (!pot || !GP::IsPotClass(R::ClassOf(pot))) {
-                RefuseOnce(g_refusedParent, g_parentSaid, slot, L"planting", key, L"the host holds no pot by key", parent);
+            void* pot = nullptr;
+            const coop::prop_key_index::Read potRead = coop::prop_key_index::Resolve(parent, &pot);
+            if (potRead == coop::prop_key_index::Read::Pending) {
+                WaitFor(sl, slot, "the host's key index cannot answer yet");
+                return false;
+            }
+            if (potRead != coop::prop_key_index::Read::Hit || !GP::IsPotClass(R::ClassOf(pot))) {
+                RefuseOnce(g_refusedParent, g_parentSaid[kParentNoPot], slot, L"planting", key, L"the host holds no pot by key", parent);
+                return true;
+            }
+            const Gate potGate = Judge(reach.Authorize(pot), sl, slot, L"planting in a pot", key, g_refusedParent);
+            if (potGate == Gate::Wait) return false;
+            if (potGate == Gate::Refused) return true;
+            ue_wrap::FVector potAt{};
+            if (!ue_wrap::engine::TryGetActorLocation(pot, potAt) || Distance(potAt, place) > kPlantAtPotUU) {
+                RefuseOnce(g_refusedParent, g_parentSaid[kParentFar], slot, L"planting", key, L"the planting is not at the pot", parent);
+                return true;
+            }
+            if (GP::PotHoldsPlant(pot)) {
+                RefuseOnce(g_refusedParent, g_parentSaid[kParentFull], slot, L"planting", key, L"the pot holds a plant already", parent);
                 return true;
             }
         }
     } else {
-        const Gate gate = Judge(reach.Authorize(plant), sl, slot, L"edit", key);
+        const Gate gate = Judge(reach.Authorize(plant), sl, slot, L"edit", key, g_refusedReach);
         if (gate == Gate::Wait) return false;
         if (gate == Gate::Refused) return true;
         // A changed row is one of the host's own, as a planting's is.
@@ -218,7 +301,10 @@ void ApplyEdits(coop::net::Session& s, std::unordered_map<std::wstring, void*>& 
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         EditSlot& sl = g_editSlots[slot];
         size_t done = 0;
-        while (done < sl.queue.size() && ApplyEdit(s, sl, slot, sl.queue[done], index, changed)) ++done;
+        while (done < sl.queue.size() && ApplyEdit(s, sl, slot, sl.queue[done], index, changed)) {
+            ++done;
+            sl.waitSaid = false;   // a consumed edit ends the wait's streak
+        }
         if (done == 0) continue;
         sl.queue.erase(sl.queue.begin(), sl.queue.begin() + static_cast<std::ptrdiff_t>(done));
         sl.fullSaid = false;
@@ -250,7 +336,9 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(g_refusedKey), static_cast<unsigned long long>(g_refusedRow),
                 static_cast<unsigned long long>(g_refusedParent), static_cast<unsigned long long>(g_clamped));
     g_refusedClass = g_refusedReach = g_clamped = g_refusedKey = g_refusedRow = g_refusedParent = 0;
-    g_keySaid = g_rowSaid = g_parentSaid = false;
+    for (bool& said : g_keySaid) said = false;
+    for (bool& said : g_parentSaid) said = false;
+    g_rowSaid = false;
     for (bool& said : g_clampSaid) said = false;
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) g_editSlots[slot] = EditSlot{};
 }

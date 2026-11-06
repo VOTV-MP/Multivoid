@@ -1,9 +1,9 @@
 // coop/world/plant_edit_gate.h -- the host's receive boundary for a client's plant edits.
 //
 // A client's PlantEdit is its player's act, so the host takes it as that act could make it: it names a key, a planting plants the
-// class of its own list_farmPlants row and names a pot the host holds (or none), a changed row is one of those rows, every edit
-// lies within the sender's reach and every value within bounds. The edits wait in a bounded queue per sender and are applied in
-// the host's plant poll (coop/world/plant_sync), on the game thread.
+// class of its own list_farmPlants row under a key no other holds and names an empty pot the host holds in the sender's reach (or
+// none), a changed row is one of those rows, every edit lies within the sender's reach and every value within bounds. The edits
+// wait in a bounded queue per sender and are applied in the host's plant poll (coop/world/plant_sync), on the game thread.
 //
 // TRANSITIONAL (principle 4): this gate belongs to the client's PlantEdit poll and goes with it (plant_sync.h's retirement plan).
 

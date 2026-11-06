@@ -194,6 +194,16 @@ bool IsPotClass(void* cls) {
     return s_pot && cls && R::IsDescendantOfAny(cls, &s_pot, 1, kMaxHops);
 }
 
+bool PotHoldsPlant(void* pot) {
+    static std::unordered_map<void*, int32_t> s_offByClass;
+    void* cls = R::ClassOf(pot);
+    auto it = s_offByClass.find(cls);
+    if (it == s_offByClass.end()) it = s_offByClass.emplace(cls, R::FindPropertyOffset(cls, L"plant")).first;
+    if (it->second < 0) return true;   // a pot whose field is not found is not known to be empty
+    void* held = At<void*>(pot, it->second);
+    return held && R::IsLive(held);
+}
+
 std::wstring Key(void* plant) {
     std::wstring key = prop::GetActorSaveKeyString(plant);
     if (!key.empty() && key != L"None") return key;

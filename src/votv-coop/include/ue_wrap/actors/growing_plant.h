@@ -32,6 +32,11 @@ bool IsPlantClass(void* cls);
 // False while prop_farmPot_C is not loaded. Game thread.
 bool IsPotClass(void* cls);
 
+// Whether the pot's `plant` field (the pot's plant, set when a planting binds to it) names a live actor. True also for a pot whose
+// class has no such field: it is not known to be empty. A plant destroyed since is not live, so its pot reads as empty.
+// Game thread.
+bool PotHoldsPlant(void* pot);
+
 // Its key, minted by its own getKey when it has none yet. "" on failure.
 std::wstring Key(void* plant);
 
