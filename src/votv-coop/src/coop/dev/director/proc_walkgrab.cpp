@@ -14,6 +14,7 @@
 // Every action is at the human-INPUT seam. All OnTick runs on the game thread
 // (inside the ControlManager's per-tick closure), so engine calls are direct.
 
+#include "coop/dev/director/body_floor.h"
 #include "coop/dev/director/clear_hand.h"
 #include "coop/dev/director/detour.h"
 #include "coop/dev/director/director.h"
@@ -201,6 +202,7 @@ void SayWhatBlocks(const PlayerContext& ctx, const std::vector<ue_wrap::FVector>
             route.size(), ctx.pos.X, ctx.pos.Y, ctx.pos.Z, current);
     for (size_t i = 0; i < route.size(); ++i)
         UE_LOGW("director/diag: wp[%zu]=(%.0f,%.0f,%.0f)", i, route[i].X, route[i].Y, route[i].Z);
+    SayWhatBodyStandsOn(ctx);
 
     ue_wrap::trace::Hit under;
     const bool floorOk = ue_wrap::trace::LineHitStatDyn(ctx.player, ctx.pos,

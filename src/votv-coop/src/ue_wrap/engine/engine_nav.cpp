@@ -17,6 +17,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/types.h"
+#include "ue_wrap/engine/hit_result.h"
 #include "ue_wrap/world/world_singleton.h"
 
 #include <cmath>
@@ -132,6 +133,51 @@ bool ReadWalkLimits(void* character, WalkLimits* out) {
     std::memcpy(&cmc, static_cast<const char*>(character) + off, sizeof(cmc));
     return cmc && R::IsLive(cmc) && ReadFloatMember(cmc, L"WalkableFloorZ", &out->floorZ) &&
            ReadFloatMember(cmc, L"MaxStepHeight", &out->stepCm);
+}
+
+bool ReadCurrentFloor(void* character, FloorRead* out) {
+    if (!character || !out) return false;
+    const int32_t cmcOff = R::FindPropertyOffset(R::ClassOf(character), L"CharacterMovement");
+    void* cmc = nullptr;
+    if (cmcOff >= 0) std::memcpy(&cmc, static_cast<const char*>(character) + cmcOff, sizeof(cmc));
+    if (!cmc || !R::IsLive(cmc)) {
+        UE_LOGW("engine_nav: CurrentFloor unread: the character has no live CharacterMovement");
+        return false;
+    }
+    void* cls = R::ClassOf(cmc);
+    const int32_t floorOff = R::FindPropertyOffset(cls, L"CurrentFloor");
+    void* st = R::PropertyInnerStruct(cls, L"CurrentFloor");
+    const int32_t size = R::StructSize(st);
+    if (floorOff < 0 || !st || size <= 0) {
+        UE_LOGW("engine_nav: CurrentFloor unread: the movement component's class has no reflected CurrentFloor "
+                "(offset %d, struct %p, size %d)", floorOff, st, size);
+        return false;
+    }
+    int32_t blockByte = -1, walkByte = -1;
+    uint8_t blockMask = 0, walkMask = 0;
+    const int32_t distOff = R::FindPropertyOffset(st, L"FloorDist");
+    const int32_t hitOff = R::FindPropertyOffset(st, L"HitResult");
+    const bool bools = R::FindBoolProperty(st, L"bBlockingHit", blockByte, blockMask) &&
+                       R::FindBoolProperty(st, L"bWalkableFloor", walkByte, walkMask);
+    if (!bools || distOff < 0 || hitOff < 0 || blockByte >= size || walkByte >= size || distOff + 4 > size ||
+        hitOff >= size) {
+        UE_LOGW("engine_nav: CurrentFloor unread: FFindFloorResult's members did not resolve (size %d, "
+                "bBlockingHit %d, bWalkableFloor %d, FloorDist %d, HitResult %d)", size, blockByte, walkByte, distOff,
+                hitOff);
+        return false;
+    }
+    const auto* base = static_cast<const uint8_t*>(cmc) + floorOff;
+    FloorRead r;
+    r.blocking = (base[blockByte] & blockMask) != 0;
+    r.walkable = (base[walkByte] & walkMask) != 0;
+    std::memcpy(&r.floorDist, base + distOff, sizeof(float));
+    if (!hit_result::Parse(base + hitOff, size - hitOff, &r.hit)) {
+        UE_LOGW("engine_nav: CurrentFloor unread: its FHitResult does not read (HitResult at %d of %d bytes)", hitOff,
+                size);
+        return false;
+    }
+    *out = r;
+    return true;
 }
 
 bool ReadNavLimits(NavLimits* out) {

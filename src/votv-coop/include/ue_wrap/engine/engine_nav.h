@@ -6,6 +6,7 @@
 #pragma once
 
 #include "ue_wrap/core/types.h"
+#include "ue_wrap/engine/hit_result.h"
 
 #include <vector>
 
@@ -31,6 +32,18 @@ struct WalkLimits {
     float stepCm = 0.f;
 };
 bool ReadWalkLimits(void* character, WalkLimits* out);
+
+// What a walking character's movement component says it stands on: its CurrentFloor (FFindFloorResult), the floor
+// its last walking move found, by the struct's reflected member names. `hit` is the floor's FHitResult (actor,
+// component, impact point and normal). False, with the missing step logged, when the character has no movement
+// component, the property or the struct's members do not resolve, or the hit does not read.
+struct FloorRead {
+    bool  blocking = false;     // bBlockingHit: the floor sweep hit something
+    bool  walkable = false;     // bWalkableFloor: what it hit is a floor the body may stand on
+    float floorDist = 0.f;      // FloorDist: capsule bottom to the floor, cm
+    hit_result::Hit hit;
+};
+bool ReadCurrentFloor(void* character, FloorRead* out);
 
 // The limits the level's NavMesh was built with (its RecastNavMesh): the steepest slope in degrees
 // and the highest step a route may take, and the radius a route keeps from walls. False when none
