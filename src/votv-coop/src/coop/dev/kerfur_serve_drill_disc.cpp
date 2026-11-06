@@ -9,6 +9,7 @@
 #include "coop/dev/director/director.h"
 #include "coop/dev/drill_chat.h"
 #include "coop/dev/kerfur_serve_drill_internal.h"
+#include "coop/dev/kerfur_serve_drill_disc_judge.h"
 #include "coop/dev/spawn_npc.h"
 #include "coop/dispatch/event_feed.h"
 #include "coop/net/protocol.h"
@@ -80,9 +81,7 @@ constexpr uint64_t kLaneWindowMs   = 5000;        // the client's stow applied o
 constexpr uint64_t kAnswerWindowMs = 30000;       // the host's answer to the press, on the client
 constexpr const wchar_t* kDiscWh   = L"prop_floppyDisc_Wh_C";  // the one disc the game refuses itself
 
-// The knob's values: on is the base measurement; swap takes a second disc into the hand right after the press (the
-// host's answer then finds another disc); wh holds the refused class.
-enum class Variant { Base, Swap, Wh, Busy };
+// The knob's value: on is the base measurement (see Variant in kerfur_serve_drill_disc_judge.h).
 Variant V() {
     static const Variant v = [] {
         const std::string s = coop::config::ResolveEnum(::coop::config_registry::rows::kerfur_serve_disc);
@@ -161,15 +160,6 @@ int32_t g_omegaIdx = -1;
 uint64_t g_hostStepMs = 0;
 // The client's before line.
 std::string g_clientCls, g_clientKey, g_clientDiscs;
-// The host's side before the press.
-struct Side {
-    bool hasRead = false, has = false;
-    bool laneHolds = false;
-    std::string laneItem;
-    bool keyHeld = false;
-    int discs = 0;
-    std::string per;
-};
 Side g_before;
 bool g_verbRan = false, g_verbHas = false, g_verbHasRead = false;
 uint8_t g_verbState = 0xFF;
@@ -247,68 +237,6 @@ void Snapshot(const std::string& rest) {
     LogSide("before the press", g_before);
 }
 
-// A field of a client line as a number, -1 when absent.
-long long Num(const std::vector<std::string>& f, size_t i) {
-    return f.size() > i && !f[i].empty() ? std::atoll(f[i].c_str()) : -1;
-}
-
-// The terms of a variant's expected result, collected: each failing one is named with its value.
-struct Terms {
-    std::string bad;
-    void Need(bool ok, const std::string& what) {
-        if (!ok) bad += (bad.empty() ? "" : "; ") + what;
-    }
-};
-
-// What the first press must have done, per variant: empty when every term holds, else the failing terms. consumed and
-// consume-miss are the client's own counts of what the host's answer did to its disc, published the host's PropSpawn +
-// PropDestroy count over the carry's span, carries the spans that built a copy since the snapshot.
-std::string JudgeFirst(const std::vector<std::string>& f, const Side& after, long long carries, long long published) {
-    Terms t;
-    const long long consumed = Num(f, 4), misses = Num(f, 5), feedback = Num(f, 6);
-    const std::string gone = f.size() > 0 ? f[0] : "?";
-    const bool holds = after.hasRead && after.has;
-    const auto n = [](long long v) { return std::to_string(v); };
-    switch (V()) {
-    case Variant::Wh:
-        t.Need(gone == "held", "client disc after=" + gone + " (want held)");
-        t.Need(consumed == 0, "consumed=" + n(consumed) + " (want 0)");
-        t.Need(feedback >= 1, "the game's hint was not shown on the client");
-        t.Need(carries == 0, "carries=" + n(carries) + " (want 0)");
-        t.Need(after.hasRead && !after.has, "host Omega hasFloppy after is not 0");
-        break;
-    case Variant::Swap:
-        t.Need(consumed == 0, "consumed=" + n(consumed) + " (want 0)");
-        t.Need(misses == 1, "consume-miss=" + n(misses) + " (want 1)");
-        t.Need(carries == 1, "carries=" + n(carries) + " (want 1)");
-        t.Need(holds, "host Omega hasFloppy after is not 1");
-        t.Need(published == 0, "host-published=" + n(published) + " (want 0)");
-        break;
-    default:   // on, busy
-        t.Need(gone == "gone", "client disc after=" + gone + " (want gone)");
-        t.Need(consumed == 1, "consumed=" + n(consumed) + " (want 1)");
-        t.Need(misses == 0, "consume-miss=" + n(misses) + " (want 0)");
-        t.Need(carries == 1, "carries=" + n(carries) + " (want 1)");
-        t.Need(holds, "host Omega hasFloppy after is not 1");
-        t.Need(published == 0, "host-published=" + n(published) + " (want 0)");
-        break;
-    }
-    return t.bad;
-}
-
-// The busy variant's second press: refused while the Omega is on its job, the second disc kept, no new copy.
-std::string JudgeSecond(const std::vector<std::string>& f, const Side& after, long long carries, long long published) {
-    Terms t;
-    const std::string held = f.size() > 0 ? f[0] : "?";
-    t.Need(held == "held", "second disc after=" + held + " (want held)");
-    t.Need(Num(f, 1) >= 1, "no refusal was shown for the second press");
-    t.Need(Num(f, 2) == 0, "the second press consumed a disc");
-    t.Need(carries == 1, "carries=" + std::to_string(carries) + " after the second press (want 1)");
-    t.Need(published == 0, "host-published=" + std::to_string(published) + " (want 0)");
-    t.Need(after.hasRead && after.has, "host Omega hasFloppy after the second press is not 1");
-    return t.bad;
-}
-
 void HostFinish() {
     const Side after = ReadSide();
     LogSide("after the press", after);
@@ -343,7 +271,7 @@ void HostFinish() {
             coop::rig_verdict::Say(kVerdictTag, Outcome::Invalid, "host: the client's press never reached my Omega");
         return;
     }
-    const std::string bad = JudgeFirst(f, after, carries, published);
+    const std::string bad = JudgeFirst(V(), f, after, carries, published);
     if (!bad.empty()) {
         g_host = HostStep::Done;
         coop::rig_verdict::Say(kVerdictTag, Outcome::Fail, "leg D: %s [%s]", bad.c_str(), carried.c_str());
