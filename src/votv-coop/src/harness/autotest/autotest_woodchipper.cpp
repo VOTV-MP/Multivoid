@@ -1,8 +1,8 @@
 // harness/autotest/autotest_woodchipper.cpp -- TEST-ONLY: the woodchipper lane across two peers (woodchipper_drill).
 //
-// The host finds the world's woodchipper or spawns one beside itself; the client's player is walked to the host by the
-// director (harness/autotest/meet), puts a gas can into its hand the way a player's pick does, and then acts at the
-// machine. Each arm is judged on the HOST from what both peers read, each wait a state with a bound:
+// The host takes the world's woodchipper nearest to it by route, or spawns one beside itself; the client's player is
+// walked to the host by the director (harness/autotest/meet), puts a gas can into its hand the way a player's pick does,
+// and then acts at the machine. Each arm is judged on the HOST from what both peers read, each wait a state with a bound:
 
 #include "harness/autotest.h"   // IsClientRole
 #include "harness/autotest/meet.h"
@@ -10,6 +10,7 @@
 #include "harness/session_runtime.h"
 
 #include "coop/config/config.h"
+#include "coop/dev/director/routes.h"
 #include "coop/dev/drill_hand.h"
 #include "coop/interactables/woodchipper_gate.h"
 #include "coop/interactables/woodchipper_sync.h"
@@ -47,10 +48,11 @@
 //       the host's fuel.
 //   g2  the client presses the button: the host's chipper is on and its fuel falls, the client's copy shows both, and the
 //       gate refused the copy's own tick (the count is the evidence: a copy that ran its tick would not).
-//   g3  a prop dropped into the hopper: the host's chipper eats it (exactly one clump), the client shows the same: the
-//       prop gone and one clump. INVALID, naming the reason, when the host never eats the dropped prop.
+//   g3  a prop dropped into the hopper: the host's chipper eats it (exactly one clump), the client shows the same
+//       change (each peer counts its own before and after): the prop gone and one clump. INVALID, naming the reason,
+//       when the host never eats the dropped prop.
 //   g5  an over-pour (a pour the tank has no room for): the host takes only what fits. Red arm: the host's
-//       woodchipper_pour_check_off.
+//       woodchipper_pour_check_off. INVALID when the tank holds 20 or less before it (a pour of 80 has no excess then).
 //   g6  a pour from a client whose hand holds no gas can: the host refuses it. Red arm: the same.
 //   g4  with the rig's --rejoin: the chipper is on; the client leaves and comes back, and its copy must read it on after
 //       its world-ready. Red arm: the host's woodchipper_replay_off.
@@ -79,6 +81,9 @@ constexpr int kBurnSec = 90;    // the spin-up, then fuel falling by a measurabl
 constexpr int kEatSec = 60;     // the drop, the chip animation, the clump (and a census scan to show it to the client)
 constexpr float kFuelTol = 0.6f;
 constexpr float kBurnDrop = 0.2f;
+constexpr float kChipperRouteCm = 400.f;   // a world chipper this near the host by route is the drill's; else one is spawned
+constexpr float kChipperStandCm = 150.f;   // a route's end this near the chipper is a place its use reaches
+constexpr float kOverPourSpare = 20.f;     // g5 pours 80: a tank holding more than this has no room for all of it
 
 template <class Fn>
 void OnGameThread(Fn&& fn) {
@@ -191,18 +196,33 @@ bool CopyResolves(const std::wstring& key) {
 
 // ---- HOST ------------------------------------------------------------------------------------------------
 
-void* FindOwnChipper() {
-    for (void* o : R::FindObjectsByClass(L"woodchipper_C"))
-        if (W::IsChipper(o) && !W::KeyOf(o).empty()) return o;
-    return nullptr;
+// The world's chipper nearest the host's player by NavMesh route, among those a route from it reaches within
+// kChipperRouteCm. The client stands beside the host's puppet (meet::WalkToHost), so the same chipper is within its reach;
+// a chipper behind a wall, or across the base, is not chosen, and a drill that took it would read the host's reach refusal
+// as a failed pour.
+void* NearestChipper(void* me) {
+    ue_wrap::FVector at{};
+    if (!me || !E::TryGetActorLocation(me, at)) return nullptr;
+    void* best = nullptr;
+    float bestLen = kChipperRouteCm;
+    for (void* o : R::FindObjectsByClass(L"woodchipper_C")) {
+        ue_wrap::FVector pos{};
+        float len = 0.f;
+        if (!W::IsChipper(o) || W::KeyOf(o).empty() || !E::TryGetActorLocation(o, pos)) continue;
+        if (!coop::director::RouteInLegs(me, at, pos, kChipperStandCm, &len) || len > bestLen) continue;
+        best = o;
+        bestLen = len;
+    }
+    return best;
 }
 
-// The world's chipper, or one spawned in front of the host's player; its key.
+// The world's chipper nearest the host, or one spawned in front of the host's player; its key.
 std::wstring ChipperKey() {
     std::wstring key;
+    void* chosen = nullptr;
     bool spawned = false;
     OnGameThread([&] {
-        void* c = FindOwnChipper();
+        void* c = NearestChipper(coop::players::Registry::Get().Local());
         if (!c) {
             void* me = coop::players::Registry::Get().Local();
             ue_wrap::FVector at{};
@@ -213,11 +233,12 @@ std::wstring ChipperKey() {
                 spawned = c != nullptr;
             }
         }
+        chosen = c;
         key = W::KeyOf(c);
     });
-    for (int i = 0; i < 100 && key.empty(); ++i) {
+    for (int i = 0; i < 100 && key.empty() && chosen; ++i) {
         ::Sleep(100);
-        OnGameThread([&] { key = W::KeyOf(FindOwnChipper()); });
+        OnGameThread([&] { key = W::KeyOf(chosen); });
     }
     UE_LOGI("woodchipper: HOST chipper key='%ls' (%s)", key.c_str(), spawned ? "spawned" : "the world's own");
     return key;
@@ -317,7 +338,14 @@ void RunHost() {
     const View v5 = ViewNow();
     std::snprintf(what, sizeof(what), "the host's fuel %.2f -> %.2f after a pour of 80, clamped %llu times", static_cast<double>(f5.fuel),
                   static_cast<double>(h5.fuel), v5.clamped - w5.clamped);
-    Arm(j, "g5", h5.fuel <= W::kMaxFuel + 0.01f && v5.clamped > w5.clamped, what);
+    if (f5.fuel > kOverPourSpare) {
+        Arm(j, "g5", h5.fuel <= W::kMaxFuel + 0.01f && v5.clamped > w5.clamped, what);
+    } else {
+        // The premise: a pour of 80 overflows only a tank holding more than 20. Judging it would read a small g1 pour as a fail.
+        j.invalid += std::string(j.invalid.empty() ? "" : "; ") + "g5: the tank held " + std::to_string(f5.fuel) +
+                     " fuel, not above 20, so a pour of 80 has no excess to clamp";
+        UE_LOGW("woodchipper: ARM g5 INVALID -- %s", j.invalid.c_str());
+    }
     PS::Mark("g5_done");
 
     // g6. A pour from a client with an empty hand.
@@ -338,31 +366,35 @@ void RunHost() {
     Arm(j, "g6", h6.fuel <= f6.fuel + 0.01f && v6.refusedCan > w6.refusedCan, what);
     PS::Mark("g6_done");
 
-    // g3. A prop released over the hopper. The papers are counted before the drop, so a prop eaten leaves the count
-    // where it was, and a clump added is the one the chipper made.
+    // g3. A prop released over the hopper. Each peer counts its own papers and clumps before the drop (the client's
+    // baseline is taken and acknowledged first, so no drop reaches it ahead of it) and reports the change: a prop eaten
+    // leaves the paper count where it was, and the clump added is the one the chipper made. A peer's census may differ
+    // from the other's by a prop one of them does not hold, which a count against the host's absolute would read as a fail.
     const size_t clumps0 = CountOf(L"prop_garbageClump_C");
     const size_t props0 = CountOf(L"prop_paper_C");
+    PS::Mark("g3_base");
+    if (!PS::Await("g3_base_ack", kSignalSec)) return;
     if (!DropPropOverHopper(key)) {
         PS::Mark("g3_go", "none");
         j.invalid += "g3: the prop could not be spawned over the hopper";
     } else {
-        char counts[64];
-        std::snprintf(counts, sizeof(counts), "clumps=%zu props=%zu", clumps0, props0);
-        PS::Mark("g3_go", counts);
+        PS::Mark("g3_go", "dropped");
         const bool ate = PS::WaitFor("the host's chipper eats the prop", kEatSec, [&] { return CountOf(L"prop_garbageClump_C") > clumps0; }, false);
-        const size_t clumps1 = CountOf(L"prop_garbageClump_C"), props1 = CountOf(L"prop_paper_C");
+        const long long dClumps = static_cast<long long>(CountOf(L"prop_garbageClump_C")) - static_cast<long long>(clumps0);
+        const long long dProps = static_cast<long long>(CountOf(L"prop_paper_C")) - static_cast<long long>(props0);
         std::string shown3;
         const bool told = PS::AwaitText("g3_client", shown3, kSignalSec);
-        const double cClumps = FieldOf(shown3, "clumps=", -1.0), cProps = FieldOf(shown3, "props=", -1.0);
-        std::snprintf(what, sizeof(what), "host clumps %zu -> %zu, papers %zu -> %zu; the client's clumps %.0f, papers %.0f",
-                      clumps0, clumps1, props0, props1, cClumps, cProps);
+        constexpr double kNone = 1e9;
+        const double cClumps = FieldOf(shown3, "dClumps=", kNone), cProps = FieldOf(shown3, "dProps=", kNone);
+        std::snprintf(what, sizeof(what), "host clumps %+lld, papers %+lld; the client's clumps %+.0f, papers %+.0f", dClumps,
+                      dProps, cClumps, cProps);
         if (!ate) {
             j.invalid += std::string(j.invalid.empty() ? "" : "; ") +
                          "g3: the host's chipper never ate the prop dropped over its hopper (" + what + ")";
             UE_LOGW("woodchipper: ARM g3 INVALID -- %s", what);
         } else {
-            Arm(j, "g3", told && clumps1 == clumps0 + 1 && props1 == props0 && cClumps == static_cast<double>(clumps0 + 1) &&
-                             cProps == static_cast<double>(props0), what);
+            Arm(j, "g3", told && dClumps == 1 && dProps == 0 && cClumps == static_cast<double>(dClumps) &&
+                             cProps == static_cast<double>(dProps), what);
         }
     }
     Finish(j);
@@ -495,15 +527,23 @@ void RunClient() {
     if (!PS::Await("g6_done", kSignalSec)) return;
 
     // g3.
+    if (!PS::Await("g3_base", kSignalSec)) return;
+    const long long clumpsBefore = static_cast<long long>(CountOf(L"prop_garbageClump_C"));
+    const long long papersBefore = static_cast<long long>(CountOf(L"prop_paper_C"));
+    PS::Mark("g3_base_ack");
     std::string g3;
     if (!PS::AwaitText("g3_go", g3, kSignalSec)) return;
     if (g3 == "none") {
         UE_LOGI("woodchipper: CLIENT no g3 (the host could not drop a prop)");
     } else {
-        const size_t was = static_cast<size_t>(FieldOf(g3, "clumps=", 0.0));
-        PS::WaitFor("a clump here", 2 * kEatSec, [&] { return CountOf(L"prop_garbageClump_C") > was; }, false);
+        // The clump is here and the paper is gone: the host's change, reached. A copy that never gets there is reported as it is.
+        PS::WaitFor("a clump here and the paper gone", 2 * kEatSec, [&] {
+            return static_cast<long long>(CountOf(L"prop_garbageClump_C")) > clumpsBefore &&
+                   static_cast<long long>(CountOf(L"prop_paper_C")) <= papersBefore;
+        }, false);
         char text[64];
-        std::snprintf(text, sizeof(text), "clumps=%zu props=%zu", CountOf(L"prop_garbageClump_C"), CountOf(L"prop_paper_C"));
+        std::snprintf(text, sizeof(text), "dClumps=%lld dProps=%lld", static_cast<long long>(CountOf(L"prop_garbageClump_C")) - clumpsBefore,
+                      static_cast<long long>(CountOf(L"prop_paper_C")) - papersBefore);
         UE_LOGI("woodchipper: CLIENT %s", text);
         PS::Mark("g3_client", text);
     }
