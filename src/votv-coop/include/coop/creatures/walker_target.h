@@ -1,4 +1,4 @@
-// coop/creatures/walker_target.h -- the host's walking mannequin and what the host does with it.
+// coop/creatures/walker_target.h -- the host's walking mannequin: its claim into the drive stream, and the player it hunts.
 //
 // The walking mannequin (prop_wMannequin_C) is a prop that walks by its own Blueprint, with no hand and no verb. It crosses as
 // a prop under its key, and its copies are moved by the host's drive stream (coop/props/prop_drive_host), which holds a
@@ -17,11 +17,27 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace coop::net {
 class Session;
 }  // namespace coop::net
 
 namespace coop::walker_target {
+
+// THE HUNT. Its Blueprint walks to player 0's camera manager and nothing in it names another player, so a claimed walker
+// holds one TARGET slot (0 the host, kNoTarget none) and the host answers the Blueprint's read of that camera manager with
+// the target's body. It is a post hook on GameplayStatics.GetPlayerCameraManager, armed only while a walker is held, that
+// first compares the calling frame's function with the walker's ubergraph (one pointer compare for every other caller) and
+// then acts at the walker's pinned calls of the native (found in the bytecode at the class resolve, two of them). At such a
+// call a walker with no target takes the nearest living player within the Blueprint's own range, the host when none is in
+// range, so the Blueprint's own out-of-range branch waits. It KEEPS that target until it is lost: its slot left, a client's
+// puppet is not alive or has no body when read here (the call is the event: no death edge exists), or it lies beyond the
+// range, which is the Blueprint's own test of the same read. A lost target is chosen again at that same read. A walker is
+// tracked from its claim, so the call that begins its life, before its eid exists, is the Blueprint's own (the host).
+
+// The slot of a walker that has no target; the host is slot 0.
+inline constexpr uint8_t kNoTarget = 0xFF;
 
 // The HOST's subscription to the prop lane's births, once for the process, from the session's first tick (coop/session/
 // subsystems, InstallLoadWatchers). A client pays nothing. Game thread.
@@ -31,7 +47,19 @@ void Install(coop::net::Session& session);
 // queue costs one atomic read. Game thread.
 void Tick(coop::net::Session& session);
 
-// The session ended: the queue is emptied and the class forgotten. Game thread.
+// The slot `walker` hunts, kNoTarget for a walker not held or not yet given one. Game thread.
+uint8_t TargetOf(void* walker);
+
+// Told whenever a held walker's target changes, and when the walker ends or its target's slot leaves (`slot` is then
+// kNoTarget): `walker` may be dying, so compare its pointer and never read through it. At most four, the module's own log
+// line being one; false when full or when `fn` is already subscribed. Game thread, in the order of the changes.
+using TargetChangedFn = void (*)(void* walker, uint8_t slot);
+bool SubscribeTargetChanged(TargetChangedFn fn);
+
+// A peer left: every walker that hunted `slot` has no target until its next read chooses one. Game thread.
+void OnPeerLeft(uint8_t slot);
+
+// The session ended: the queue is emptied, the walkers forgotten, the hook disarmed and the class forgotten. Game thread.
 void OnDisconnect();
 
 }  // namespace coop::walker_target

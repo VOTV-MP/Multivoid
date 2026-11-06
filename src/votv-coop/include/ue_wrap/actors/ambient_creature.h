@@ -52,11 +52,6 @@ void* WalkerClass();
 bool ReadWalkerAngry(void* walker);
 void WriteWalkerAngry(void* walker);
 
-// The points its tick walks, and the index of the next. The tick walks them only while its AI pawn's controller has a path of
-// its own, so WalkerEnsureMove asks for one toward `dest` when that controller has none.
-bool WriteWalkerPath(void* walker, const std::vector<FVector>& points, bool restart);
-void WalkerEnsureMove(void* walker, const FVector& dest);
-
 // A hexahive's and a sus hole's dirt holes, and the beehive spawner's branches.
 void ListHoles(std::vector<void*>& out);
 void ListBranches(std::vector<void*>& out);

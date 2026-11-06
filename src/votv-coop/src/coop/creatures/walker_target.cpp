@@ -2,20 +2,31 @@
 
 #include "coop/creatures/walker_target.h"
 
+#include "coop/element/death_seam.h"
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
+#include "coop/player/players_registry.h"
+#include "coop/player/remote_player.h"
 #include "coop/props/prop_drive_host.h"
 #include "coop/props/prop_element_tracker.h"
 
 #include "ue_wrap/actors/ambient_creature.h"
+#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_calls.h"
+#include "ue_wrap/core/types.h"
+#include "ue_wrap/core/ufunction_hook.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
+#include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <mutex>
 #include <vector>
 
@@ -23,8 +34,28 @@ namespace coop::walker_target {
 namespace {
 
 namespace AC = ue_wrap::ambient_creature;
+namespace DS = coop::element::death_seam;
+namespace E = ue_wrap::engine;
+namespace GT = ue_wrap::game_thread;
 namespace OI = ue_wrap::object_index;
+namespace PL = coop::players;
 namespace R = ue_wrap::reflection;
+namespace SC = ue_wrap::script_calls;
+namespace UH = ue_wrap::ufunction_hook;
+
+// The native the walker's Blueprint reads player 0's camera manager through, at the two places it names a player: the range
+// test of its hunt and the move toward it. Its hunt graph is the one body every entry of its Blueprint runs through.
+UE_FACT_FN(kRowCameraManager, "walker_target", L"GameplayStatics", L"GetPlayerCameraManager", Declared);
+constexpr const wchar_t* kGraphName = L"ExecuteUbergraph_prop_wMannequin";
+constexpr const wchar_t* kClassName = L"prop_wMannequin_C";
+constexpr int            kSites = 2;
+
+// The Blueprint's own range: its hunt waits and asks again when the camera manager is farther than this.
+constexpr float kRangeCm = 20000.f;
+
+// The host holds up to five walkers.
+constexpr size_t kMaxWalkers = 8;
+constexpr size_t kMaxSubs = 4;
 
 // The host holds up to five walkers and the tick drains every frame, so a full queue is a defect: said once, and the walker
 // is not claimed (no retry: a retry is a crutch, the sweep at the class resolve covers only what the class missed).
@@ -51,6 +82,209 @@ std::atomic<void*> g_walkerClass{nullptr};
 
 bool g_subscribed = false;
 
+// A held walker: its slot index and serial name the actor, so an entry that outlived its actor is never taken for a walker
+// born at the same address. Game thread only.
+struct Walker {
+    void*   actor;
+    int32_t index;
+    int32_t serial;
+    uint8_t target;
+};
+Walker            g_walkers[kMaxWalkers];
+size_t            g_walkerCount = 0;
+bool              g_fullSaid = false;
+TargetChangedFn   g_subs[kMaxSubs];
+size_t            g_subCount = 0;
+
+// The hook: installed once for the process, armed while a walker is held and its graph is pinned. `g_ubergraph` is what the
+// hook's one pointer compare reads; `g_ends` are the offsets the two pinned calls end at.
+std::atomic<void*> g_ubergraph{nullptr};
+int32_t            g_ends[kSites] = {-1, -1};
+void*              g_cameraFn = nullptr;
+bool               g_hookInstalled = false;
+bool               g_armed = false;
+bool               g_endSubscribed = false;
+
+void Notify(void* walker, uint8_t slot) {
+    for (size_t i = 0; i < g_subCount; ++i) g_subs[i](walker, slot);
+}
+
+// The module's own subscriber: every change in the log, the drill's marker (slot -1 is none).
+void LogTargetChanged(void* walker, uint8_t slot) {
+    UE_LOGI("walker_target: walker %p hunts slot %d", walker, slot == kNoTarget ? -1 : static_cast<int>(slot));
+}
+
+Walker* Find(void* actor) {
+    for (size_t i = 0; i < g_walkerCount; ++i)
+        if (g_walkers[i].actor == actor) return &g_walkers[i];
+    return nullptr;
+}
+
+void OnCameraManagerPost(void* context, void* source, void* result);
+
+// Armed while a walker is held and its graph is pinned: with none the hook does nothing at all, and the forwarder pays its one
+// load and branch.
+void Rearm() {
+    const bool want = g_walkerCount > 0 && g_ubergraph.load(std::memory_order_relaxed) != nullptr;
+    if (!g_hookInstalled || want == g_armed) return;
+    if (UH::SetArmed(g_cameraFn, &OnCameraManagerPost, want)) g_armed = want;
+}
+
+// The player's body: the host's own, or a client's puppet once it has a pose.
+void* PuppetBody(uint8_t slot) {
+    coop::RemotePlayer* rp = PL::Registry::Get().Puppet(slot);
+    return (rp && rp->valid() && rp->HasPose()) ? rp->GetActor() : nullptr;
+}
+
+void* BodyOf(uint8_t slot) { return slot == PL::kPeerIdHost ? PL::Registry::Get().Local() : PuppetBody(slot); }
+
+// The host is always a player the Blueprint can hunt; a client counts while its puppet lives (LifeOf).
+bool Alive(uint8_t slot) {
+    return slot == PL::kPeerIdHost || PL::Registry::Get().LifeOf(slot) == PL::PuppetLife::Alive;
+}
+
+float Distance(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
+    const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+// The nearest living player in 3D within the Blueprint's range; the host when none is in range, so the Blueprint's own
+// out-of-range branch waits.
+uint8_t Acquire(const ue_wrap::FVector& at) {
+    uint8_t best = PL::kPeerIdHost;
+    float   bestCm = 0.f;
+    bool    found = false;
+    for (uint8_t slot = 0; slot < PL::kMaxPeers; ++slot) {
+        if (!Alive(slot)) continue;
+        void* body = BodyOf(slot);
+        ue_wrap::FVector p{};
+        if (!body || !E::TryGetActorLocation(body, p)) continue;
+        const float cm = Distance(at, p);
+        if (cm > kRangeCm || (found && cm >= bestCm)) continue;
+        best = slot;
+        bestCm = cm;
+        found = true;
+    }
+    return best;
+}
+
+// Is `slot` still the walker's target at this read: a client's puppet alive, with a body, and within the Blueprint's range.
+// The host's range is judged on the camera manager the Blueprint itself read, the object its own test measures to; a host
+// read that cannot be measured is the Blueprint's to judge.
+bool Keeps(uint8_t slot, const ue_wrap::FVector& at, void* camera) {
+    if (!Alive(slot)) return false;
+    void* body = slot == PL::kPeerIdHost ? camera : PuppetBody(slot);
+    if (!body) return slot == PL::kPeerIdHost;
+    ue_wrap::FVector p{};
+    if (!E::TryGetActorLocation(body, p)) return slot == PL::kPeerIdHost;
+    return Distance(at, p) <= kRangeCm;
+}
+
+// The post hook on GameplayStatics.GetPlayerCameraManager, game thread inside the engine's own call. The first thing it does
+// is one compare of the calling frame's function with the walker's graph, which every other caller of the native fails.
+void OnCameraManagerPost(void* /*context*/, void* source, void* /*result*/) {
+    const UH::CallerFrame frame = UH::CurrentCallerFrame();
+    void* const           graph = g_ubergraph.load(std::memory_order_relaxed);
+    if (frame.function != graph || !graph) return;
+    if (!GT::IsGameThread() || (frame.codeOffset != g_ends[0] && frame.codeOffset != g_ends[1])) return;
+    Walker* w = Find(source);
+    void*   slotResult = UH::CurrentResult();
+    if (!w || !slotResult) return;
+    if (R::SlotSerial(w->index) != w->serial || R::InternalIndexOf(source) != w->index) {
+        *w = g_walkers[--g_walkerCount];  // an entry that outlived its actor
+        Rearm();
+        return;
+    }
+    void* const      camera = *static_cast<void**>(slotResult);
+    ue_wrap::FVector at{};
+    if (!E::TryGetActorLocation(source, at)) return;
+    const uint8_t was = w->target;
+    if (was != kNoTarget && !Keeps(was, at, camera)) w->target = kNoTarget;
+    if (w->target == kNoTarget) w->target = Acquire(at);
+    const uint8_t now = w->target;
+    if (now != PL::kPeerIdHost) {
+        // An absent body leaves the read as written: the Blueprint reads through what this returns, and a null would
+        // fault its next read.
+        if (void* body = PuppetBody(now)) *static_cast<void**>(slotResult) = body;
+    }
+    if (now != was) Notify(source, now);
+}
+
+void InstallHook() {
+    if (g_hookInstalled) return;
+    const ue_wrap::facts::Resolved native = ue_wrap::facts::Resolve(kRowCameraManager);
+    g_cameraFn = native.Fn();
+    if (!native || !UH::InstallPostHook(native, &OnCameraManagerPost, /*armed=*/false)) {
+        UE_LOGE("walker_target: the camera manager seam did not install -- a walker hunts only the host for the rest of "
+                "this process");
+        return;
+    }
+    g_hookInstalled = true;
+}
+
+// The walker's calls of the native, found in its bytecode: exactly two, or the hunt is left to the Blueprint. A pin is
+// the graph and the end offsets of the two calls, so a build that moved them is read afresh and no offset is written here.
+void PinSites(void* cls) {
+    g_ubergraph.store(nullptr, std::memory_order_relaxed);
+    void* graph = R::FindFunction(cls, kGraphName);
+    void* native = ue_wrap::facts::Resolve(kRowCameraManager).Fn();
+    std::vector<SC::CallSite> sites;
+    if (!graph || !native || !SC::EnumerateCalls(graph, sites)) {
+        UE_LOGE("walker_target: the walker's graph or its camera manager call did not resolve -- a walker hunts only the "
+                "host in this world");
+        return;
+    }
+    int     found = 0;
+    int32_t ends[kSites] = {-1, -1};
+    for (const SC::CallSite& site : sites) {
+        if (!SC::SameCallee(site, native)) continue;
+        if (found < kSites) ends[found] = site.end;
+        ++found;
+    }
+    if (found != kSites) {
+        UE_LOGE("walker_target: %d call(s) of the camera manager in the walker's graph, %d are pinned -- a walker hunts only "
+                "the host in this world", found, kSites);
+        return;
+    }
+    g_ends[0] = ends[0];
+    g_ends[1] = ends[1];
+    g_ubergraph.store(graph, std::memory_order_relaxed);
+    UE_LOGI("walker_target: the walker reads its player at graph offsets %d and %d", g_ends[0], g_ends[1]);
+}
+
+// A held walker ends, by the death seam: its entry goes, and the hook is disarmed with the last.
+void OnWalkerEnd(const DS::ActorEnd& end) {
+    for (size_t i = 0; i < g_walkerCount; ++i) {
+        if (g_walkers[i].actor != end.actor) continue;
+        const uint8_t was = g_walkers[i].target;
+        void* const   actor = g_walkers[i].actor;
+        g_walkers[i] = g_walkers[--g_walkerCount];
+        Rearm();
+        if (was != kNoTarget) Notify(actor, kNoTarget);
+        return;
+    }
+}
+
+// Hold `actor`: its target is chosen at its next read. A walker held already keeps its target.
+void Hold(void* actor) {
+    const int32_t index = R::InternalIndexOf(actor);
+    const int32_t serial = R::SlotSerial(index);
+    if (Walker* w = Find(actor)) {
+        if (w->index == index && w->serial == serial) return;
+        *w = Walker{actor, index, serial, kNoTarget};
+        return;
+    }
+    if (g_walkerCount >= kMaxWalkers) {
+        if (!g_fullSaid) {
+            g_fullSaid = true;
+            UE_LOGW("walker_target: %zu walkers are held -- another is not hunted (said once)", kMaxWalkers);
+        }
+        return;
+    }
+    g_walkers[g_walkerCount++] = Walker{actor, index, serial, kNoTarget};
+    Rearm();
+}
+
 // MarkPropElement's callback, any thread: a non-walker is rejected by the class pointer, a walker is queued.
 void OnExpressed(void* actor, coop::element::ElementId eid) {
     void* const cls = g_walkerClass.load(std::memory_order_acquire);
@@ -66,24 +300,34 @@ void OnExpressed(void* actor, coop::element::ElementId eid) {
 }
 
 // Claim `actor` if it still holds `eid` and is alive: the registry's reverse is the test for an actor that died in the queue.
+// A claimed walker is held for the hunt.
 void ClaimWalker(void* actor, coop::element::ElementId eid) {
     if (coop::element::Registry::Get().EidForActor(actor) != eid || !R::IsLive(actor)) return;
     coop::prop_drive_host::Claim(actor, "walker");
+    Hold(actor);
 }
 
-// The class resolved: on a new class claim the walkers that already hold an eid.
+// The class resolved: pin its graph, install the hook and the end subscription (the class is loaded, so each resolves), and
+// on a new class claim the walkers that already hold an eid.
 void ResolveClass() {
     void* const cls = AC::WalkerClass();
     if (!cls) return;
     g_class = cls;
     g_listing = OI::ClassListingId(cls);
     g_walkerClass.store(cls, std::memory_order_release);
+    PinSites(cls);
+    InstallHook();
+    if (!g_endSubscribed) {
+        g_endSubscribed = DS::Install() && DS::SubscribeClass(kClassName, &OnWalkerEnd);
+        if (!g_endSubscribed) UE_LOGE("walker_target: the end of play of a walker is not heard -- its target is kept to its slot");
+    }
     std::vector<void*> alive;
     AC::ListWalkers(alive);
     for (void* w : alive) {
         const coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(w);
         if (eid != coop::element::kInvalidId) ClaimWalker(w, eid);
     }
+    Rearm();
 }
 
 // The class again when its listing changed (an unload) and, while it is null, only when the class set moved: a class gaining
@@ -92,7 +336,9 @@ void RefreshClass() {
     if (g_class && OI::ClassListingId(g_class) != g_listing) {
         g_class = nullptr;
         g_walkerClass.store(nullptr, std::memory_order_release);
+        g_ubergraph.store(nullptr, std::memory_order_relaxed);
         g_setAsked = ~uint64_t{0};
+        Rearm();
     }
     if (g_class) return;
     const uint64_t set = OI::ClassSetVersion();
@@ -106,6 +352,7 @@ void RefreshClass() {
 void Install(coop::net::Session& session) {
     UE_ASSERT_GAME_THREAD("walker_target::Install");
     if (session.role() != coop::net::Role::Host || g_subscribed) return;
+    SubscribeTargetChanged(&LogTargetChanged);
     g_subscribed = coop::prop_element_tracker::SubscribeHostPropExpressed(&OnExpressed);
     if (g_subscribed) UE_LOGI("walker_target: the host's walkers are claimed into the drive stream at their eid mint");
     else UE_LOGE("walker_target: the prop lane's subscriber table is full -- the host's walker is not claimed");
@@ -126,7 +373,34 @@ void Tick(coop::net::Session& session) {
     for (size_t i = 0; i < n; ++i) ClaimWalker(taken[i].actor, taken[i].eid);
 }
 
+uint8_t TargetOf(void* walker) {
+    const Walker* w = Find(walker);
+    return w ? w->target : kNoTarget;
+}
+
+bool SubscribeTargetChanged(TargetChangedFn fn) {
+    if (!fn) return false;
+    for (size_t i = 0; i < g_subCount; ++i)
+        if (g_subs[i] == fn) return false;
+    if (g_subCount >= kMaxSubs) return false;
+    g_subs[g_subCount++] = fn;
+    return true;
+}
+
+void OnPeerLeft(uint8_t slot) {
+    if (slot == PL::kPeerIdHost || slot == kNoTarget) return;
+    for (size_t i = 0; i < g_walkerCount; ++i) {
+        if (g_walkers[i].target != slot) continue;
+        g_walkers[i].target = kNoTarget;
+        Notify(g_walkers[i].actor, kNoTarget);
+    }
+}
+
 void OnDisconnect() {
+    g_walkerCount = 0;
+    g_fullSaid = false;
+    g_ubergraph.store(nullptr, std::memory_order_relaxed);
+    Rearm();
     g_walkerClass.store(nullptr, std::memory_order_release);
     g_class = nullptr;
     g_listing = 0;

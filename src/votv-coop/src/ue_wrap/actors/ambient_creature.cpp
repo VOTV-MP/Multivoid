@@ -11,13 +11,11 @@
 #include "ue_wrap/core/trace.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
-#include "ue_wrap/engine/engine_pawn.h"
 
 #include <windows.h>
 
 #include <cmath>
 #include <cstdint>
-#include <cstring>
 
 namespace ue_wrap::ambient_creature {
 namespace {
@@ -77,27 +75,6 @@ BoolField g_saw{L"saw"};
 BoolField g_looking{L"looking"};
 BoolField g_stand{L"stand"};
 BoolField g_angry{L"angry"};
-
-// An object field's or a plain field's place in the walker's class, looked up when the class changes.
-struct WalkerFields {
-    void* cls = nullptr;
-    int32_t path = -1, ind = -1, pawn = -1;
-    void Refresh(void* walker) {
-        void* c = R::ClassOf(walker);
-        if (c == cls) return;
-        cls = c;
-        path = R::FindPropertyOffset(c, L"path");
-        ind = R::FindPropertyOffset(c, L"ind");
-        pawn = R::FindPropertyOffset(c, L"pawn");
-    }
-};
-WalkerFields g_walkerFields;
-
-struct TArrayHeader {
-    void* data;
-    int32_t num;
-    int32_t max;
-};
 
 void* WalkerAnim(void* walker) {
     static void* s_cls = nullptr;
@@ -248,51 +225,6 @@ bool ReadWalkerAngry(void* walker) {
 
 void WriteWalkerAngry(void* walker) {
     if (uint8_t* b = g_angry.At(walker)) *b |= g_angry.mask;
-}
-
-bool WriteWalkerPath(void* walker, const std::vector<FVector>& points, bool restart) {
-    g_walkerFields.Refresh(walker);
-    if (g_walkerFields.path < 0 || g_walkerFields.ind < 0 || points.empty()) return false;
-    auto* a = reinterpret_cast<TArrayHeader*>(static_cast<uint8_t*>(walker) + g_walkerFields.path);
-    const size_t bytes = points.size() * sizeof(FVector);
-    const int32_t n = static_cast<int32_t>(points.size());
-    // The walker's own path update can have replaced the points since the last write, and this runs every frame.
-    if (a->num != n || !a->data || std::memcmp(a->data, points.data(), bytes) != 0) {
-        if (a->max < n) {
-            void* buf = R::EngineAlloc(bytes);
-            if (!buf) return false;
-            if (a->data) R::EngineFree(a->data);
-            a->data = buf;
-            a->max = n;
-        }
-        std::memcpy(a->data, points.data(), bytes);
-        a->num = n;
-    }
-    if (restart) *reinterpret_cast<int32_t*>(static_cast<uint8_t*>(walker) + g_walkerFields.ind) = n > 1 ? 1 : 0;
-    return true;
-}
-
-void WalkerEnsureMove(void* walker, const FVector& dest) {
-    g_walkerFields.Refresh(walker);
-    if (g_walkerFields.pawn < 0) return;
-    void* pawn = *reinterpret_cast<void**>(static_cast<uint8_t*>(walker) + g_walkerFields.pawn);
-    void* controller = pawn && R::IsLive(pawn) ? engine::GetController(pawn) : nullptr;
-    if (!controller) return;
-    void* status = R::FindDispatchFunctionCached(R::ClassOf(controller), L"GetMoveStatus");
-    void* move = R::FindDispatchFunctionCached(R::ClassOf(controller), L"MoveToLocation");
-    if (!status || !move) return;
-    ParamFrame s(status);
-    if (!s.valid() || !Call(controller, s) || s.Get<uint8_t>(L"ReturnValue") != 0) return;  // 0: idle
-    ParamFrame m(move);
-    if (!m.valid()) return;
-    m.Set<FVector>(L"Dest", dest);
-    m.Set<float>(L"AcceptanceRadius", 50.f);
-    m.Set<bool>(L"bStopOnOverlap", false);
-    m.Set<bool>(L"bUsePathfinding", true);
-    m.Set<bool>(L"bProjectDestinationToNavigation", true);
-    m.Set<bool>(L"bCanStrafe", false);
-    m.Set<bool>(L"bAllowPartialPath", true);
-    Call(controller, m);
 }
 
 void ListHoles(std::vector<void*>& out) { Collect(L"susDirtHole_C", out); }

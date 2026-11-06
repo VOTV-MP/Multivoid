@@ -4,6 +4,7 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/creatures/walker_target.h"
 #include "coop/dev/dev_gate.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -284,11 +285,14 @@ void LogSample(const char* role, int index) {
         const int lookingV = ReadWalkerBool(it.obj, L"looking", looking) ? (looking ? 1 : 0) : -1;
         const int sawV = ReadWalkerBool(it.obj, L"saw", saw) ? (saw ? 1 : 0) : -1;
         const int angryV = ReadWalkerBool(it.obj, L"angry", angry) ? (angry ? 1 : 0) : -1;
+        // The slot the host's walker hunts (-1 on a client, which holds none, and before its first read).
+        const uint8_t hunted = coop::walker_target::TargetOf(it.obj);
+        const int huntedV = hunted == coop::walker_target::kNoTarget ? -1 : static_cast<int>(hunted);
         const int driven = (coop::remote_prop::IsActorUnderAnyDrive(it.obj) ||
                             coop::prop_drive_stream::IsParked(it.obj)) ? 1 : 0;
         UE_LOGI("[MANNEQUIN-DRILL] %s: sample %d walker %d key='%ls' loc=(%.0f,%.0f,%.0f) dist=%.0f pawn=%d "
-                "driven=%d looking=%d saw=%d angry=%d",
-                role, index, n, key.c_str(), loc.X, loc.Y, loc.Z, it.dist, pawn, driven, lookingV, sawV, angryV);
+                "driven=%d looking=%d saw=%d angry=%d target=%d",
+                role, index, n, key.c_str(), loc.X, loc.Y, loc.Z, it.dist, pawn, driven, lookingV, sawV, angryV, huntedV);
     }
 }
 

@@ -192,7 +192,7 @@
 #include "coop/creatures/owner_entity_sync.h"
 #include "coop/creatures/npc_mirror_brain.h"  // a parked family's mirror runs none of its Blueprint graph
 #include "coop/creatures/walker_brain.h"  // a client's walker copy runs two entries of its Blueprint graph
-#include "coop/creatures/walker_target.h"  // the host's walker claimed into the drive stream at its eid mint
+#include "coop/creatures/walker_target.h"  // the host's walker: claimed into the drive stream at its eid mint, and the player it hunts
 #include "coop/items/hook_anchor.h"
 #include "coop/items/hook_sync.h"  // the hook lane: owner-phase stream, mirrors, the tick park
 #include "coop/world/event_active_sync.h"  // the native activeEvents registry probe
@@ -447,6 +447,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::desk_snd_fx::OnPeerLeft(slot);  // host-owned teardown of the leaver's loop sounds (broadcast OFF)
     coop::comp_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and the refiner's decode it began is the host's
     coop::served_player::OnPeerLeft(static_cast<uint8_t>(slot));  // robots serving the leaver read the host
+    coop::walker_target::OnPeerLeft(static_cast<uint8_t>(slot));  // a walker that hunted the leaver chooses again at its next read
     coop::power_panel::OnPeerLeft(static_cast<uint8_t>(slot));  // and its presses that wait for its body
     coop::power_grid::OnPeerLeft(static_cast<uint8_t>(slot));  // and its generator ops
     coop::fuse_tower_ops::OnPeerLeft(static_cast<uint8_t>(slot));  // and its tower ops
@@ -540,7 +541,7 @@ DisconnectStats DisconnectAll() {
     coop::creature_event_relay::OnDisconnect();  // a client's applied creature events back out; both halves' state; the session
     coop::npc_mirror_brain::OnDisconnect();  // what the graph watches refused, and every mark
     coop::walker_brain::OnDisconnect();  // what the walker's graph watch refused, and the spawn hook disarmed
-    coop::walker_target::OnDisconnect();  // the claim queue and the walker class
+    coop::walker_target::OnDisconnect();  // the claim queue, the held walkers, the hunt hook and the walker class
     coop::alarm_sync::OnDisconnect();  // drop the cached trigger + poll baseline
     coop::serverbox_sync::OnDisconnect();  // the poll baseline and the session
     coop::server_upgrade_sync::OnDisconnect();  // verb snapshots + parked canonical + deny records
