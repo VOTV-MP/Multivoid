@@ -8,6 +8,11 @@
 // of a full laptop disc (`sv-request: MEASURE`), beside the ceiling both lanes refuse past. Red arm: the disc_ceiling_32k
 // flag on the peers, whose lanes then refuse the full disc: the box's slot does not cross and the verdict is FAIL.
 // Gated by VOTVCOOP_RUN_SV_REQUEST; the peers' folder is VOTVCOOP_CAN_DIR.
+//
+// The join arm (VOTVCOOP_SV_REQUEST_REJOIN=1 on both peers, mp.py smoke --rejoin): the chain ends with the full disc in
+// the host's laptop slot; the client's first life then leaves, and the rejoined life (VOTVCOOP_SV_REQUEST_REJOINED=1,
+// --rejoin-env) must read that slot as the host's, which the connect set carried. The host's verdict waits for it. Red arm:
+// --rejoin-env VOTVCOOP_DISC_CEILING_32K=1 as well, so the rejoined life refuses the full set and its laptop stays empty.
 
 #include "harness/autotest.h"
 #include "disc_drills.h"   // co-located private header (src tree, not include/)
@@ -19,6 +24,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/props/disc_record_ceiling.h"
 #include "coop/session/rig_verdict.h"
+#include "harness/session_runtime.h"
 #include "ue_wrap/actors/floppy_disc.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/save_record.h"
@@ -360,6 +366,57 @@ bool Chain(const Fixture& fx, bool iAct, bool host, size_t wantRows) {
     return Converge("laptop", iAct, host, [&] { return LaptopReading(); }, "the laptop's rows read the same on both peers");
 }
 
+bool JoinArm() { return coop::config::ReadEnv("VOTVCOOP_SV_REQUEST_REJOIN") == "1"; }
+
+// The join arm, host side: once the client's first life has left slot 1, the rejoined life must read the laptop's disc as
+// this peer does. False after the verdict was said (or a word never came).
+bool HostRejoin() {
+    auto& session = harness::session_runtime::Session();
+    const uint32_t life1Gen = session.peerGenerationForSlot(1);
+    Mark("host_ack");
+    if (!PS::WaitFor("the client's life 1 gone from slot 1", 300, [&session, life1Gen] {
+            return !session.IsSlotConnected(1) || session.peerGenerationForSlot(1) != life1Gen;
+        }))
+        return false;
+    if (!Await("rejoin_ready", 400)) return false;
+    const std::string row = LaptopReading();
+    UE_LOGI("sv-request: host for the rejoin: laptop %hs", row.c_str());
+    if (row == "unread" || row.find("rows=0") != std::string::npos) {
+        Invalid("the host's laptop holds no disc for the rejoined client to read");
+        return false;
+    }
+    Mark("e_row", row);
+    std::string word;
+    if (!AwaitText("rejoin_done", word, 400)) return false;
+    if (word.empty() || word[0] != '1') UE_LOGW("sv-request: the rejoined life read '%hs'", word.c_str());
+    return Need(!word.empty() && word[0] == '1', "the rejoined client reads the full disc in the laptop as the host does");
+}
+
+// The client's first life, after the chain: it leaves as a player's quit does (network first) once the host watches its
+// slot, so the host sees slot 1 empty at once.
+void LeaveForRejoin() {
+    Await("host_ack", 60);
+    OnGameThread([] {
+        auto& s = harness::session_runtime::Session();
+        if (s.running()) coop::net_pump::FleeAfterNativeMenuTravel(s, "sv-request: life 1 leaves for the rejoin");
+    });
+    PS::WaitFor("this life's session stopped", 15, [] { return !harness::session_runtime::Session().running(); }, false);
+}
+
+// The rejoined life: the connect set carried the full disc into the laptop slot, and it reads the host's.
+void RunRejoined() {
+    if (!disc_drill::HostPuppetUp()) return;
+    OnGameThread([] { ResolveAll(); });
+    Mark("rejoin_ready");
+    std::string host;
+    if (!AwaitText("e_row", host, kStepSec + kConvergeSec)) return;
+    const bool same = PS::WaitFor("the rejoined laptop to read the host's", kConvergeSec, [&] { return LaptopReading() == host; }, false);
+    const std::string here = LaptopReading();
+    UE_LOGI("sv-request: rejoined: here %hs, there %hs", here.c_str(), host.c_str());
+    Mark("rejoin_done", same ? std::string("1") : "0 " + here);
+    UE_LOGI("sv-request: REJOIN DONE");
+}
+
 void RunHost(bool iAct, int seed) {
     if (!disc_drill::HostWorldUp()) return;
     Fixture fx;
@@ -387,8 +444,10 @@ void RunHost(bool iAct, int seed) {
     if (!Chain(fx, iAct, true, static_cast<size_t>(rows) + 1)) return;
     std::string clientWord;
     if (!AwaitText("client_done", clientWord, kStepSec)) return;
+    if (JoinArm() && !HostRejoin()) return;
     UE_LOGI("sv-request: DONE on host");
-    coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Pass, "a disc of %d rows crossed the box, the eject and the laptop", rows + 1);
+    coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Pass, "a disc of %d rows crossed the box, the eject and the laptop%s", rows + 1,
+                           JoinArm() ? ", and the rejoined client read it" : "");
 }
 
 void RunClient(bool iAct, int seed) {
@@ -401,8 +460,9 @@ void RunClient(bool iAct, int seed) {
     if (!ResolveBox(fx, std::atoi(hostDish.c_str()))) return;
     Mark("client_resolved");
     if (!Chain(fx, iAct, false, static_cast<size_t>(seed) + 1)) return;
-    UE_LOGI("sv-request: DONE on client");
     Mark("client_done");
+    if (JoinArm()) LeaveForRejoin();
+    UE_LOGI("sv-request: DONE on client");
 }
 
 }  // namespace
@@ -414,7 +474,8 @@ DWORD WINAPI SvRequestThread(LPVOID /*arg*/) {
     // The seeded rows, left one write for the request (a disc has 32).
     int seed = std::atoi(coop::config::ReadEnv("VOTVCOOP_SV_REQUEST_SEED").c_str());
     seed = seed < 0 ? 0 : seed > kDiscWrites - 1 ? kDiscWrites - 1 : seed;
-    if (client) RunClient(client == clientActs, seed);
+    if (client && coop::config::ReadEnv("VOTVCOOP_SV_REQUEST_REJOINED") == "1") RunRejoined();
+    else if (client) RunClient(client == clientActs, seed);
     else RunHost(client == clientActs, seed);
     return 0;
 }
