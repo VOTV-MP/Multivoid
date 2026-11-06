@@ -16,6 +16,7 @@
 
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/session/host_world_settle.h"
 #include "coop/session/net_pump.h"
 #include "coop/world/event_cue_sync.h"
 #include "ue_wrap/actors/growing_plant.h"
@@ -217,10 +218,11 @@ void RunHost() {
             return pawn != nullptr;
         }))
         return;
-    // The save's plants are listed once the object index holds every birth the load announced.
-    if (!PS::WaitFor("the object index settled", 120, [&] {
+    // The save's plants are listed once the host's world has settled (the load's own removals are over: a drill that started
+    // before it saw the game take its fresh plants away) and the object index holds every birth announced.
+    if (!PS::WaitFor("the host's world settled and the object index caught up", 120, [&] {
             bool settled = false;
-            OnGameThread([&] { settled = OI::IsSeeded() && OI::Backlog() == 0; });
+            OnGameThread([&] { settled = coop::host_world_settle::Settled() && OI::IsSeeded() && OI::Backlog() == 0; });
             return settled;
         }))
         return;
