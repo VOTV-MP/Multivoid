@@ -34,6 +34,7 @@ set(VOTVCOOP_SOURCES
     src/coop/player/skin_effects.cpp
     src/coop/player/skin_registry.cpp
     src/coop/player/local_body.cpp
+    src/coop/requester_feedback/requester_feedback.cpp
     src/coop/props/prop_act_host.cpp
     src/coop/props/prop_act_request.cpp
     src/coop/props/prop_act_selftest.cpp
@@ -70,6 +71,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dispatch/event_dispatch_entity.cpp
     src/coop/dispatch/event_dispatch_intent.cpp
     src/coop/dispatch/event_dispatch_prop_drive.cpp
+    src/coop/dispatch/event_dispatch_requester_feedback.cpp
     src/coop/dispatch/event_dispatch_signal.cpp
     src/coop/dispatch/event_dispatch_state.cpp
     src/coop/dispatch/event_dispatch_world.cpp
@@ -398,7 +400,6 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/lightgroup_verbs.cpp
     src/coop/interactables/verb_lanes.cpp
     src/coop/interactables/desk_verb_intent.cpp
-    src/coop/interactables/desk_verb_effects.cpp
     src/coop/interactables/toggle_verbs.cpp
     src/coop/interactables/drive_rack_sync.cpp
     src/coop/interactables/desk_snd_fx.cpp

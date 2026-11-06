@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 277;
+inline constexpr uint16_t kProtocolVersion = 278;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -912,8 +912,8 @@ enum class ReliableKind : uint8_t {
     // refiner's upload, start and stop. Client to host: a press the client's gate refused, with what the
     // button acts on as the client saw it; the host finds each on its own desk, within the sender's reach,
     // and replays the press with the sender's puppet as the player, its writes reaching every peer on their
-    // own lanes. Host to that client alone: the verdict; the glossary entry and the sounds the press makes,
-    // for the presser's machine to make; the glossary entry and the profile stat of a decode its start began.
+    // own lanes. Host to that client alone: the verdict; the profile stat of a decode its start began (the
+    // press's own glossary entry and sounds ride RequesterFeedback).
     // Never relayed; a sender's presses run at a bounded rate from a bounded queue. Late join: nothing to
     // replay. DeskVerbPayload.
     DeskVerb = 160,
@@ -1314,6 +1314,13 @@ enum class ReliableKind : uint8_t {
     // slot, never relayed; Default lane, not pre-world. Late join: none, a hit is an act and the machine hits again
     // each second. PROVISIONAL number, final at landing. CrematorHitPayload.
     CrematorHit = 228,
+
+    // HOST->CLIENT: what a verb the host ran on a client's behalf showed or played on the host, refused there and
+    // sent to that client alone for its own machine to show: a hint (lib_C::addHint), a glossary entry
+    // (lib_C::addGloss) or a 2D sound (PlaySound2D) (coop::requester_feedback). Host-authored: refused at the
+    // host's receive edge; never relayed; not pre-world; the Default lane. Late join: none, an act sent to its
+    // requester, not state. RequesterFeedbackPayload.
+    RequesterFeedback = 229,
 };
 
 #pragma pack(push, 1)
@@ -1772,9 +1779,8 @@ static_assert(sizeof(KerfusIntentPayload) == 8, "KerfusIntentPayload must be 8 b
 namespace desk_verb {
 inline constexpr uint8_t kOpPress = 0;    // client to host: a press
 inline constexpr uint8_t kOpVerdict = 1;  // host to the presser: what became of it
-inline constexpr uint8_t kOpGloss = 2;    // host to the presser: lib_C::addGloss(text, level) for its own profile
-inline constexpr uint8_t kOpSound = 3;    // host to the presser: PlaySound2D of the sound SoundName names
 inline constexpr uint8_t kOpStat = 4;     // host to the presser: add `level` to its own profile's stat named `text`
+                                          // (ops 2 and 3 were the press's gloss and sound: now RequesterFeedback)
 inline constexpr uint8_t kSave = 0, kDelete = 1, kDeckDrive = 2, kDeckSend = 3, kUpload = 4;
 inline constexpr uint8_t kCompStart = 5, kCompStop = 6, kButtons = 7;  // the refiner's start and stop
 inline constexpr uint8_t kRan = 0;          // the host ran the press
@@ -1791,25 +1797,49 @@ struct DeskVerbPayload {
     uint8_t  op;             // desk_verb::kOp*
     uint8_t  button;         // desk_verb::kSave..kCompStop
     uint8_t  verdict;        // op 1: desk_verb::kRan..kUnavailable
-    uint8_t  textLen;        // ops 2-4: chars in text
-    uint32_t seq;            // op 0: the presser's press count; echoed by ops 1-4
+    uint8_t  textLen;        // op 4: chars in text
+    uint32_t seq;            // op 0: the presser's press count; echoed by ops 1 and 4
     uint32_t driveEid;       // op 0, deck drive, upload and refiner start: the slot's drive, 0 for none
-    int32_t  level;          // op 2: addGloss's level; op 4: the stat's delta
+    int32_t  level;          // op 4: the stat's delta
     uint64_t driveRow;       // op 0, deck drive and upload: the drive's row hash
     uint64_t selectedRow;    // op 0, deck drive and send: the deck's selected row hash
     uint64_t compRow;        // op 0, upload: the refiner's row hash; start and stop: its decode's (the row less its
                              //   level, id and isCopy, which a completion rewrites)
     float    signal[4];      // op 0, save and delete: the caught signal's x, y, z and frequency
-    float    volume;         // op 3
-    float    pitch;          // op 3
-    float    startTime;      // op 3
     uint8_t  signalArmed;    // op 0, save and delete: a signal is caught (its object name is not None)
-    uint8_t  uiSound;        // op 3: bIsUISound
-    uint8_t  _pad[2];        // zeroed
-    char     text[desk_verb::kTextCap];  // ops 2-4: the gloss name, the sound's SoundName or the stat's name; ASCII
+    uint8_t  _pad[3];        // zeroed
+    char     text[desk_verb::kTextCap];  // op 4: the stat's name; ASCII
 };
-static_assert(sizeof(DeskVerbPayload) == 192, "DeskVerbPayload must be 192 bytes");
+static_assert(sizeof(DeskVerbPayload) == 180, "DeskVerbPayload must be 180 bytes");
 static_assert(sizeof(DeskVerbPayload) <= 228, "DeskVerbPayload must fit the inline reliable buffer");
+
+// RequesterFeedback's ops (coop/requester_feedback).
+namespace requester_feedback {
+inline constexpr uint8_t kOpHint = 0;     // lib_C::addHint(text, hintType)
+inline constexpr uint8_t kOpGloss = 1;    // lib_C::addGloss(text, glossLevel)
+inline constexpr uint8_t kOpSound2D = 2;  // PlaySound2D of the sound whose full name is text
+inline constexpr size_t  kTextCap = 200;
+inline constexpr size_t  kHintTextMax = 160;  // a hint's UTF-8 bytes, cut at a code-point boundary
+}  // namespace requester_feedback
+
+// What a verb the host ran for a client showed on the host, for that client's machine to show (RequesterFeedback).
+// `seq` echoes the request that caused it (0 when the verb has none); `text` is UTF-8 of textLen bytes: the hint's
+// text, the gloss's name or the sound's full name (`Class /Pkg.Leaf`).
+struct RequesterFeedbackPayload {
+    uint32_t seq;
+    uint8_t  op;         // requester_feedback::kOp*
+    uint8_t  hintType;   // op 0: addHint's type (enum_notifyType)
+    uint8_t  glossLevel; // op 1: addGloss's level
+    uint8_t  textLen;
+    float    volume;     // op 2
+    float    pitch;      // op 2
+    float    startTime;  // op 2
+    uint8_t  uiSound;    // op 2: bIsUISound
+    uint8_t  _pad[3];    // zeroed
+    char     text[requester_feedback::kTextCap];
+};
+static_assert(sizeof(RequesterFeedbackPayload) == 224, "RequesterFeedbackPayload must be 224 bytes");
+static_assert(sizeof(RequesterFeedbackPayload) <= 256 - 20 - 8, "RequesterFeedbackPayload must fit one reliable datagram");
 
 // A release (PropRelease): the prop by key, and for a keyless trash entity the eid and its
 // generation; its world transform and its inherited linear and angular velocity at the release edge.

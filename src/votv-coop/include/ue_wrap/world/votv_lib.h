@@ -31,5 +31,9 @@ bool CharacterStep(void* character, float volume);
 // resolves, or when the name does not convert. Game thread (ProcessEvent).
 bool AddGloss(const std::wstring& name, int32_t level, void* worldContext);
 
+// Dispatch lib_C::addHint(text, type, false, worldContext): the hint widget on the machine's own HUD, its sound and
+// icon picked by `type` (enum_notifyType) in ui_hint's begin; the machine's own enablePopups setting decides whether
+// it shows (lib.cpp:1616). False until lib_C resolves, or when the text cannot be minted. Game thread.
+bool AddHint(const std::wstring& text, uint8_t type, void* worldContext);
 
 }  // namespace ue_wrap::votv_lib

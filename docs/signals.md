@@ -132,8 +132,9 @@ the only deactivate is stop, so an organic activate is "someone started playback
 stop (`coop/interactables/deck_play_sync`). A client's press on the desk's save family -- SAVE and
 DELETE, the deck's drive button and send, the refiner's upload, start and stop -- is refused on its
 machine and sent to the host, which replays it with the presser's puppet when what the button acts
-on matches its own desk; the glossary entry, profile stat and sounds it makes go back to the presser
-(`coop/interactables/desk_verb_intent`, `coop/interactables/desk_verb_effects`). The refiner has one
+on matches its own desk; the profile stat it makes goes back to the presser, and its hints, glossary entry
+and sounds go back as `RequesterFeedback`
+(`coop/interactables/desk_verb_intent`, `coop/requester_feedback`). The refiner has one
 simulator, the host's machine: a client's own `comp_start`, its join's restore of a saved decode
 included, is refused, and a decode a client's start began is that client's, its completion gloss and
 processed signal sent to it. The host streams the refiner's state while decoding, on its edges and on
@@ -240,7 +241,8 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 | `DishArm`, `DishSnapshot`, `DishCalib`, `DishPose` (stream) | the host; the host to a joiner; the host, to all, to an intent's author and to a joiner; the host | the download's arm and reset, with the host's decoded and polarity; every dish's pose for a joiner; the changed dishes' precision, the live dishes an intent named (to all once the host performed any of it, to its author alone when it performed none), and every dish's for a joiner; dish poses |
 | `DishCalibIntent` | a client to the host | the dishes whose precision the client's player just set with the toolgun's calibration tool or the uncalibrator |
 | `SavedSignalAppend`, `SavedSignalDelete`, `MeadowAppend`, `MeadowDelete`, `MeadowOrder` | any peer, relayed; order from the host | list rows by content hash; the database's order |
-| `DeskVerb` | a client to the host; the host to that client | a desk press with what its button acts on as the client saw it; the verdict, the gloss and sounds the press makes, and the gloss and profile stat of a decode its start began |
+| `DeskVerb` | a client to the host; the host to that client | a desk press with what its button acts on as the client saw it; the verdict, and the profile stat of a decode its start began |
+| `RequesterFeedback` | the host to the requester | the hint, glossary entry or 2D sound a verb the host ran for that client showed on the host, for its own machine to show (the desk's press today) |
 | `PlayDeckEvent`, `CompState`, `CompData` | the presser; the host | playback edges; the refiner's state, its completions and its loaded signal |
 | `DriveSlotState` | any peer to the host; the host to every other client, a line it accepted; the host to the source, answering a line it refused | a slot's occupant, inserted or ejected |
 | `RackState`, `PhysModsState`, `FloppyBoxState` | any peer to the host; the host canonical | rack operations and arrays; the module set; the crate stack |

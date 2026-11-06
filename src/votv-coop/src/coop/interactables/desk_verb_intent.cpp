@@ -5,7 +5,7 @@
 #include "coop/element/element.h"
 #include "coop/element/intent_authority.h"
 #include "coop/element/registry.h"
-#include "coop/interactables/desk_verb_effects.h"
+#include "coop/requester_feedback/requester_feedback.h"
 #include "coop/interactables/signal_wire.h"
 #include "coop/net/intent_bucket.h"
 #include "coop/net/intent_queue.h"
@@ -291,11 +291,11 @@ void Refuse(coop::net::Session& s, uint8_t slot, const DeskVerbPayload& p, uint8
 bool Execute(coop::net::Session& s, const DeskVerbPayload& p, uint8_t slot) {
     void* desk = ue_wrap::console_desk::Instance();
     void* button = desk ? DP::Member(desk, kButtonMember[p.button]) : nullptr;
-    if (!button || desk_verb_effects::Refused()) {
+    if (!button || requester_feedback::Refused()) {
         Refuse(s, slot, p, DV::kUnavailable, button ? "the effects' seams are refused" : "no desk or no button");
         return true;
     }
-    if (!desk_verb_effects::Ready()) return false;
+    if (!requester_feedback::Ready()) return false;
     const EL::IntentSubject subj = EL::IntentTarget::ForClientIntent(s, slot, kDeskReachUU).Authorize(desk);
     if (subj.outcome == EL::IntentOutcome::NoBody) {
         if (!g_slots[slot].waitSaid) {
@@ -329,7 +329,7 @@ bool Execute(coop::net::Session& s, const DeskVerbPayload& p, uint8_t slot) {
     int dropped = 0;
     bool pressed = false;
     {
-        desk_verb_effects::Replay replay(slot, p.seq);
+        requester_feedback::Scope feedback(slot, p.seq);
         pressed = DP::PressForAnother(desk, puppet, button, &dropped);
     }
     if (!pressed) {
@@ -352,7 +352,7 @@ void Register(coop::net::Session* session) {
                     "its own machine");
         }
     }
-    desk_verb_effects::Install(session);
+    requester_feedback::Install(session);
 }
 
 }  // namespace
@@ -426,7 +426,6 @@ void OnMessage(coop::net::Session& session, const DeskVerbPayload& p, int sender
     }
     // A client hears DeskVerb from the host alone: the kind is never relayed.
     if (p.op == DV::kOpVerdict) OnVerdict(p);
-    else if (p.op == DV::kOpGloss || p.op == DV::kOpSound) desk_verb_effects::OnEffect(p);
     else if (p.op == DV::kOpStat) OnStat(p);
 }
 
@@ -439,7 +438,7 @@ void OnDisconnect() {
     g_sent = g_ran = g_refused = g_dropped = g_heard = 0;
     g_statsSent = g_statsMade = g_statsLost = 0;
     g_saidOffline = false;
-    desk_verb_effects::OnDisconnect();
+    requester_feedback::OnDisconnect();
 }
 
 }  // namespace coop::desk_verb_intent

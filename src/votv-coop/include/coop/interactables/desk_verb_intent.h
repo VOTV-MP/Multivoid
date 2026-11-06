@@ -10,7 +10,7 @@
 // content hash (row order differs per peer), the slot's drive and its row, the refiner's row. The host checks the
 // presser's reach, finds each on its own desk and replays the press with the presser's puppet as the player
 // (desk_press::PressForAnother), its writes reaching every peer on their own lanes; a miss is answered to the
-// presser alone. The press's gloss and sounds are the presser's (desk_verb_effects), as is the decode a start
+// presser alone. The press's gloss and sounds are the presser's (requester_feedback), as is the decode a start
 // begins (comp_sync). Every other button runs where it is pressed; the Kerfus intent is the shape. Game thread.
 
 #pragma once

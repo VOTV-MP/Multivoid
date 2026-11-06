@@ -10,7 +10,7 @@
 #include "coop/dev/director/routes.h"
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
-#include "coop/interactables/desk_verb_effects.h"  // CountsNow: the glosses and sounds sent and made
+#include "coop/requester_feedback/requester_feedback.h"  // CountsNow: the glosses and sounds sent and made
 #include "coop/interactables/signal_catch_sync.h"  // LocalCatchesRelayed: the caught signal is on the wire
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -90,7 +90,7 @@ bool     g_hostPass = true;
 uint64_t g_hostCatches = 0;    // the catches relayed when the leg's caught signal was written
 uint64_t g_hostRow = 0;        // the band row the drive legs move, by identity
 bool     g_hostDecoding = false;  // join: the host's own decode runs as the client joins
-coop::desk_verb_effects::Counts g_hostEffects;  // the glosses and sounds sent when the leg armed
+coop::requester_feedback::Counts g_hostEffects;  // the glosses and sounds sent when the leg armed
 
 void HostGo(HStep s) {
     g_host = s;
@@ -112,7 +112,7 @@ void HostAbandon(const char* why) {
 void HostJudge(int leg) {
     const Census d = Since(g_hostBefore);
     bool ok = true;
-    const coop::desk_verb_effects::Counts e = coop::desk_verb_effects::CountsNow();
+    const coop::requester_feedback::Counts e = coop::requester_feedback::CountsNow();
     if (leg == kSave)  // its gloss entered here and was refused, and its clicks were sent, not played
         ok = d.game[kGetSigObj] == 1 && d.game[kSetSignalID] == 1 && d.game[kSaveSignal] >= 1 &&
              d.game[kAddGloss] == 1 && d.ran[kAddGloss] == 0 && e.glossesSent - g_hostEffects.glossesSent == 1 &&
@@ -273,7 +273,7 @@ void HostTick(coop::net::Session* s, void* player) {
             if (!Detect()) { HostAbandon("the needle did not write"); return; }
         }
         g_hostBefore = CensusNow();
-        g_hostEffects = coop::desk_verb_effects::CountsNow();
+        g_hostEffects = coop::requester_feedback::CountsNow();
         g_hostBand = BandRows().size();
         g_hostLaptop = ue_wrap::meadow_store::Count();
         UE_LOGI("[DESK-VERB-DRILL] host armed leg %s", kLegName[g_hostLeg]);
@@ -313,7 +313,7 @@ uint64_t g_unresolvedSinceMs = 0;  // since when the desk, the saved signals or 
 std::wstring g_aimTook;        // what the trace took instead during the fan, the distinct ones in order
 bool     g_clientPass = true;
 Census   g_before;
-coop::desk_verb_effects::Counts g_effectsBefore;
+coop::requester_feedback::Counts g_effectsBefore;
 size_t   g_bandBefore = 0;
 int32_t  g_laptopBefore = 0;
 uint64_t g_bandRow = 0;       // the band row the drive legs move, by identity, as this client saw it
@@ -390,13 +390,13 @@ void ClientJudge(int leg) {
     std::string extra;
     if (leg == kSend) ok = ok && LaptopNewest() == BandHash();  // the saved row, not the deck's own selection
     if (IsRefinerLeg(leg)) {
-        const coop::desk_verb_effects::Counts e = coop::desk_verb_effects::CountsNow();
+        const coop::requester_feedback::Counts e = coop::requester_feedback::CountsNow();
         ok = RefinerClientJudge(leg, d, e.glossesMade - g_effectsBefore.glossesMade, extra) && ok;
     }
     if (leg == kSave) {
         // The host's gloss made here once, its clicks played here: counted by the effects, since the profile may
         // hold the name from an earlier run already.
-        const coop::desk_verb_effects::Counts e = coop::desk_verb_effects::CountsNow();
+        const coop::requester_feedback::Counts e = coop::requester_feedback::CountsNow();
         const std::vector<int32_t> rows = BandRows();
         RowSeen seen;
         const bool read = !rows.empty() && ReadRowSeen(rows.back(), seen);
@@ -565,7 +565,7 @@ void ClientTick(void* player) {
         return;
     case CStep::Press:
         g_before = CensusNow();
-        g_effectsBefore = coop::desk_verb_effects::CountsNow();
+        g_effectsBefore = coop::requester_feedback::CountsNow();
         g_bandBefore = BandRows().size();
         g_laptopBefore = ue_wrap::meadow_store::Count();
         RefinerBeforePress();

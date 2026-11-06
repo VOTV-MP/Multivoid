@@ -96,6 +96,7 @@ FAMILY_FILES = [
     "src/coop/dispatch/event_dispatch_world.cpp",
     "src/coop/dispatch/event_dispatch_container_act.cpp",
     "src/coop/dispatch/event_dispatch_cremator.cpp",
+    "src/coop/dispatch/event_dispatch_requester_feedback.cpp",
 ]
 # event_feed's own top-level switch: the handful of specials that are disjoint from every
 # family (Join / Balance / Teleport / Wisp / Snapshot / the handshake kinds).

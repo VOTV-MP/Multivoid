@@ -5,6 +5,7 @@
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
+#include "ue_wrap/core/ftext_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 
@@ -70,6 +71,19 @@ bool AddGloss(const std::wstring& name, int32_t level, void* worldContext) {
     if (fname.ComparisonIndex == 0) return false;
     ue_wrap::ParamFrame f(fn);
     return f.valid() && f.Set<R::FName>(L"name", fname) && f.Set<int32_t>(L"level", level) &&
+           f.Set<void*>(L"__WorldContext", worldContext) && ue_wrap::Call(g_libCdo.Raw(), f);
+}
+
+bool AddHint(const std::wstring& text, uint8_t type, void* worldContext) {
+    void* fn = !text.empty() && worldContext ? Fn(L"addHint") : nullptr;
+    if (!fn) return false;
+    uint8_t ftext[ue_wrap::ftext_utils::kFTextSize] = {};
+    if (!ue_wrap::ftext_utils::MintFText(text.c_str(), ftext)) return false;
+    ue_wrap::ParamFrame f(fn);
+    // `debug` is false, as every caller in the game passes it (lib.cpp's addHint returns at once for a true one
+    // outside the editor).
+    return f.valid() && f.SetRaw(L"InText", ftext, ue_wrap::ftext_utils::kFTextSize) &&
+           f.Set<uint8_t>(L"type", type) && f.Set<bool>(L"debug", false) &&
            f.Set<void*>(L"__WorldContext", worldContext) && ue_wrap::Call(g_libCdo.Raw(), f);
 }
 

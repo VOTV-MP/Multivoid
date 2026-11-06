@@ -69,6 +69,11 @@ bool HandleContainerActEvent(net::Session& session,
 // handle press, checked for role()==Host AND a client sender slot.
 bool HandleCrematorEvent(net::Session& session,
                          const net::Session::ReliableMessage& msg);
+// Requester-feedback family: what a verb the host ran for a client showed on the host (a hint, a glossary entry, a
+// 2D sound), sent to that client for its own machine to show. RequesterFeedback is the HOST->CLIENT kind, dropped
+// on the host and from any sender but slot 0.
+bool HandleRequesterFeedbackEvent(net::Session& session,
+                                  const net::Session::ReliableMessage& msg);
 
 // Economy family: the delivery order with its queue, the coin gun's sale and collect, the laptop
 // upgrade purchase and the point sack. OrderRequest, CoinGunSell and CoinCollect check the slot here
