@@ -21,6 +21,11 @@ void Install(coop::net::Session* session);
 // Per gameplay tick: resolve the watch's names until it is live, and say once whether it is.
 void Tick();
 
+// How many records this peer has published for a can's change, and how many landed here, since the session began.
+// For the two-peer drill, which asks that one change costs one record. Game thread.
+struct Counts { unsigned published = 0; unsigned landed = 0; };
+Counts CountsNow();
+
 // Session end: the counters. What is known of every can leaves with the world, not with the session: a host whose
 // last client left is still in the same world.
 void OnDisconnect();

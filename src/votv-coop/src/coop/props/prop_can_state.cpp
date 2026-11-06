@@ -183,6 +183,8 @@ void Tick() {
     }
 }
 
+Counts CountsNow() { return {g_published, g_landed}; }
+
 void OnDisconnect() {
     if (g_published || g_landed)
         UE_LOGI("prop_can_state: session end -- published=%u landed=%u", g_published, g_landed);

@@ -4,7 +4,8 @@
 // runs Open, the client runs eat. Can B: the client runs Open, the host runs eat. Each step is one peer's reflected call
 // of the can's own verb; each peer then waits for the can on ITS copy to differ from the step before and logs
 // `can-drill: STATE <step> <can> opened= foods= type= mesh=`. The client hands its rows to the host, which compares each
-// step's opened, foods and mesh with its own and logs `can-drill: VERDICT PASS|FAIL`, then `can-drill: DONE`. A file per
+// step's opened, foods and mesh with its own, and the records each peer published at the step (exactly one on the peer
+// that changed the can, none on the other), and logs `can-drill: VERDICT PASS|FAIL`, then `can-drill: DONE`. A file per
 // step orders the two peers. Gated by VOTVCOOP_RUN_CAN_STATE; the folder is VOTVCOOP_CAN_DIR. Every wait is on a game
 // state or the other peer's signal, with a bound, never on a clock.
 
@@ -15,6 +16,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/props/join_membership_sweep.h"
+#include "coop/props/prop_can_state.h"
 #include "coop/props/prop_key_index.h"
 #include "coop/session/net_pump.h"
 #include "ue_wrap/actors/prop.h"
@@ -59,6 +61,8 @@ struct Row {
     int32_t     foods = 0;
     int32_t     type = 0;
     std::string mesh = "?";
+    unsigned    published = 0;   // records this peer published since the step before
+    unsigned    landed = 0;      // records that landed on this peer since the step before
 };
 
 bool SameState(const Row& a, const Row& b) {
@@ -109,15 +113,23 @@ Row ReadRow(const std::string& key) {
     return r;
 }
 
-// Logs the can's state for the step, keeps the row for the verdict, and returns it.
+coop::props::prop_can_state::Counts g_counted;   // the counters at the step before
+
+// Logs the can's state for the step, keeps the row for the verdict, and returns it. The row carries the records this
+// peer published and received since the previous row: the step's own, since a step is one peer's one change.
 Row LogState(const char* step, const char* can, const std::string& key) {
-    const Row r = ReadRow(key);
+    Row r = ReadRow(key);
     if (!r.found) {
         UE_LOGW("can-drill: STATE %hs %hs -- no such can here", step, can);
         return r;
     }
-    UE_LOGI("can-drill: STATE %hs %hs opened=%d foods=%d type=%d mesh=%hs", step, can, r.opened, r.foods, r.type,
-            r.mesh.c_str());
+    coop::props::prop_can_state::Counts now;
+    OnGameThread([&] { now = coop::props::prop_can_state::CountsNow(); });
+    r.published = now.published - g_counted.published;
+    r.landed = now.landed - g_counted.landed;
+    g_counted = now;
+    UE_LOGI("can-drill: STATE %hs %hs opened=%d foods=%d type=%d mesh=%hs published=%u landed=%u", step, can, r.opened,
+            r.foods, r.type, r.mesh.c_str(), r.published, r.landed);
     g_rows.push_back({step, can, r});
     return r;
 }
@@ -151,13 +163,13 @@ bool BothCansHere(const std::string& keyA, const std::string& keyB) {
     return WaitFor("both cans here", kStepBoundSec, [&] { return Find(keyA) && Find(keyB); });
 }
 
-// The rows one peer saw, as one line: `step can opened foods mesh`, rows apart by ';'.
+// The rows one peer saw, as one line: `step can opened foods published mesh`, rows apart by ';'.
 std::string RowsText() {
     std::string out;
     for (const StepRow& s : g_rows) {
         if (!out.empty()) out += ';';
         out += s.step + ' ' + s.can + ' ' + std::to_string(s.row.opened) + ' ' + std::to_string(s.row.foods) + ' ' +
-               s.row.mesh;
+               std::to_string(s.row.published) + ' ' + s.row.mesh;
     }
     return out;
 }
@@ -170,16 +182,43 @@ std::vector<StepRow> ParseRows(const std::string& text) {
         std::stringstream f(one);
         StepRow s;
         s.row.found = true;
-        if (f >> s.step >> s.can >> s.row.opened >> s.row.foods >> s.row.mesh) out.push_back(s);
+        if (f >> s.step >> s.can >> s.row.opened >> s.row.foods >> s.row.published >> s.row.mesh) out.push_back(s);
     }
     return out;
 }
 
 std::string Describe(const Row& r) {
-    return "opened=" + std::to_string(r.opened) + " foods=" + std::to_string(r.foods) + " mesh=" + r.mesh;
+    return "opened=" + std::to_string(r.opened) + " foods=" + std::to_string(r.foods) + " mesh=" + r.mesh +
+           " published=" + std::to_string(r.published);
 }
 
-// Every step the host logged must be in the client's rows with the same opened, foods and mesh.
+// Which peer changed the can at a step: 'h' the host, 'c' the client, 0 nobody (the cans' birth).
+char ChangedBy(const std::string& step) {
+    if (step == "1-host-opened" || step == "4-host-ate") return 'h';
+    if (step == "2-client-ate" || step == "3-client-opened") return 'c';
+    return 0;
+}
+
+// VOTVCOOP_CAN_RED_RECORDS=1: the count the host expects is one too many, so the verdict must fail -- a count that
+// cannot fail proves nothing.
+unsigned RedExtra() {
+    char buf[8] = {};
+    const DWORD n = ::GetEnvironmentVariableA("VOTVCOOP_CAN_RED_RECORDS", buf, sizeof(buf));
+    return n > 0 && buf[0] == '1' ? 1u : 0u;
+}
+
+// One change is one record: the peer that changed the can published exactly one at the step, the other none.
+bool RecordsOk(const StepRow& host, const StepRow& client) {
+    const char by = ChangedBy(host.step);
+    const unsigned red = RedExtra();
+    const unsigned wantHost = (by == 'h' ? 1u : 0u) + red, wantClient = (by == 'c' ? 1u : 0u) + red;
+    if (host.row.published == wantHost && client.row.published == wantClient) return true;
+    UE_LOGW("can-drill: VERDICT FAIL records %hs/%hs published host=%u (want %u) client=%u (want %u)", host.step.c_str(),
+            host.can.c_str(), host.row.published, wantHost, client.row.published, wantClient);
+    return false;
+}
+
+// Every step the host logged must be in the client's rows with the same opened, foods and mesh, and cost one record.
 void Judge(const std::string& clientText) {
     const std::vector<StepRow> client = ParseRows(clientText);
     for (const StepRow& h : g_rows) {
@@ -196,6 +235,7 @@ void Judge(const std::string& clientText) {
                     Describe(h.row).c_str(), Describe(c->row).c_str());
             return;
         }
+        if (!RecordsOk(h, *c)) return;
     }
     if (g_rows.size() != client.size()) {
         UE_LOGW("can-drill: VERDICT FAIL rows host=%zu client=%zu", g_rows.size(), client.size());
