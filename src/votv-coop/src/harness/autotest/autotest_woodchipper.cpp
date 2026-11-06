@@ -1,244 +1,543 @@
-// harness/autotest/autotest_woodchipper.cpp -- TEST-ONLY: the woodchipper's fuel and on/off across two peers.
+// harness/autotest/autotest_woodchipper.cpp -- TEST-ONLY: the woodchipper lane across two peers (woodchipper_drill).
 //
-// The host finds the world's woodchipper (or spawns one in front of its player) and names its key. Then: the client
-// pours a gas can into it through the chipper's own gascanFuel, switches it on with its button through the chipper's own
-// actionOptionIndex and lets it run; the host switches it off, sets its fuel to 30 (a long run's stand-in) and pours a
-// can. After each step each peer logs `woodchipper: STATE <step> fuel= active= power=` for the driver to compare; a
-// file per step orders the two peers.
-// Gated by VOTVCOOP_RUN_WOODCHIPPER; the folder is VOTVCOOP_CAN_DIR.
+// The host finds the world's woodchipper or spawns one beside itself; the client's player is walked to the host by the
+// director (harness/autotest/meet), puts a gas can into its hand the way a player's pick does, and then acts at the
+// machine. Each arm is judged on the HOST from what both peers read, each wait a state with a bound:
 
-#include "harness/autotest.h"
+#include "harness/autotest.h"   // IsClientRole
+#include "harness/autotest/meet.h"
+#include "harness/autotest/peer_signal.h"
+#include "harness/session_runtime.h"
 
 #include "coop/config/config.h"
+#include "coop/dev/drill_hand.h"
+#include "coop/interactables/woodchipper_gate.h"
+#include "coop/interactables/woodchipper_sync.h"
+#include "coop/net/protocol.h"
+#include "coop/net/session.h"
+#include "coop/net/wire_key_util.h"
+#include "coop/player/hand_item.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/remote_player.h"
+#include "coop/props/prop_key_index.h"
 #include "coop/session/net_pump.h"
-#include "ue_wrap/actors/prop.h"
-#include "ue_wrap/actors/prop_use.h"
+#include "coop/session/rig_verdict.h"
+
+#include "ue_wrap/actors/woodchipper.h"
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_component.h"
 
 #include <windows.h>
 
 #include <atomic>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
-#include <fstream>
 #include <string>
+
+//   g1  the client pours: the host's fuel rises by the fuel the client's own copy gained, and the client's copy shows
+//       the host's fuel.
+//   g2  the client presses the button: the host's chipper is on and its fuel falls, the client's copy shows both, and the
+//       gate refused the copy's own tick (the count is the evidence: a copy that ran its tick would not).
+//   g3  a prop dropped into the hopper: the host's chipper eats it (exactly one clump), the client shows the same: the
+//       prop gone and one clump. INVALID, naming the reason, when the host never eats the dropped prop.
+//   g5  an over-pour (a pour the tank has no room for): the host takes only what fits. Red arm: the host's
+//       woodchipper_pour_check_off.
+//   g6  a pour from a client whose hand holds no gas can: the host refuses it. Red arm: the same.
+//   g4  with the rig's --rejoin: the chipper is on; the client leaves and comes back, and its copy must read it on after
+//       its world-ready. Red arm: the host's woodchipper_replay_off.
+// Red arms of g2: woodchipper_gate_off (the client's tick runs) and woodchipper_intent_off (the press never reaches the
+// host). Tags: `woodchipper` (g1, g2, g3, g5, g6) and `woodchipper-rejoin` (g4), both said by the host; the lines are
+// tagged `woodchipper:`. The second life carries VOTVCOOP_WOODCHIPPER_DRILL_REJOIN=1.
 
 namespace harness::autotest {
 namespace {
 
-namespace R = ue_wrap::reflection;
-namespace E = ue_wrap::engine;
+namespace R  = ue_wrap::reflection;
+namespace E  = ue_wrap::engine;
+namespace W  = ue_wrap::woodchipper;
+namespace PS = peer_signal;
+namespace RV = coop::rig_verdict;
 
+constexpr const char* kTag = "woodchipper";
+constexpr const char* kTagRejoin = "woodchipper-rejoin";
 constexpr const wchar_t* kChipperPath = L"/Game/objects/woodchipper.woodchipper_C";
-constexpr const wchar_t* kGascanPath  = L"/Game/objects/prop_gascan.prop_gascan_C";
-constexpr uint8_t kUseAction = 4;   // the button's branch of actionOptionIndex
-
-std::string g_dir;
-void* g_chipper = nullptr;   // game thread only
+constexpr const wchar_t* kPropPath = L"/Game/objects/prop_paper.prop_paper_C";   // wood, bag, paper...: canChip's list
+constexpr const wchar_t* kCanClass = L"prop_gascan_C";
+constexpr int kJoinSec = 480;
+constexpr int kSignalSec = 240;
+constexpr int kCopySec = 40;    // a state reaches a copy: the send, the round trip, the apply
+constexpr int kBurnSec = 90;    // the spin-up, then fuel falling by a measurable amount
+constexpr int kEatSec = 60;     // the drop, the chip animation, the clump (and a census scan to show it to the client)
+constexpr float kFuelTol = 0.6f;
+constexpr float kBurnDrop = 0.2f;
 
 template <class Fn>
 void OnGameThread(Fn&& fn) {
     ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
 }
 
-void Write(const char* name, const std::string& text) {
-    std::ofstream(g_dir + "\\" + name, std::ios::binary | std::ios::trunc) << text;
+std::wstring Widen(const std::string& s) { return std::wstring(s.begin(), s.end()); }
+std::string Narrow(const std::wstring& w) {
+    std::string s;
+    for (const wchar_t c : w) s.push_back(static_cast<char>(c));   // a prop key is ASCII
+    return s;
 }
 
-bool Await(const char* name, std::string* text = nullptr, int seconds = 240) {
-    for (int i = 0; i < seconds * 10; ++i) {
-        std::ifstream f(g_dir + "\\" + name, std::ios::binary);
-        std::string s;
-        if (f && std::getline(f, s) && !s.empty()) {
-            if (text) *text = s;
-            return true;
-        }
-        ::Sleep(100);
+// One reading of a chipper's copy, as signalled.
+struct Reading {
+    float fuel = -1.f;
+    int active = -1;
+};
+
+void* ChipperOf(const std::wstring& key) {
+    void* c = coop::prop_key_index::Find(key);
+    return W::IsChipper(c) ? c : nullptr;
+}
+
+Reading ReadCopy(const std::wstring& key) {
+    Reading r;
+    float fuel = 0.f;
+    bool active = false;
+    if (W::Read(ChipperOf(key), fuel, active)) {
+        r.fuel = fuel;
+        r.active = active ? 1 : 0;
     }
-    UE_LOGW("woodchipper: VERDICT ABORT -- no '%hs' from the other peer", name);
-    return false;
+    return r;
 }
 
-template <class T>
-bool Field(void* obj, const wchar_t* name, T& out) {
-    const int32_t off = obj && R::IsLive(obj) ? R::FindPropertyOffset(R::ClassOf(obj), name) : -1;
-    if (off < 0) return false;
-    out = *reinterpret_cast<const T*>(static_cast<const uint8_t*>(obj) + off);
-    return true;
+std::string Text(const Reading& r) {
+    char buf[48];
+    std::snprintf(buf, sizeof(buf), "fuel=%.2f active=%d", static_cast<double>(r.fuel), r.active);
+    return buf;
 }
 
-void LogState(const char* step) {
-    OnGameThread([&] {
-        float fuel = -1.f, power = -1.f;
-        uint8_t active = 0xFF;
-        Field(g_chipper, L"fuel", fuel);
-        Field(g_chipper, L"power", power);
-        Field(g_chipper, L"active", active);
-        UE_LOGI("woodchipper: STATE %hs fuel=%.2f active=%d power=%.2f", step, fuel,
-                active == 0xFF ? -1 : (active != 0 ? 1 : 0), power);
+double FieldOf(const std::string& text, const char* name, double none = -1.0) {
+    const size_t at = text.find(name);
+    return at == std::string::npos ? none : std::strtod(text.c_str() + at + std::strlen(name), nullptr);
+}
+
+Reading Parse(const std::string& text) {
+    Reading r;
+    r.fuel = static_cast<float>(FieldOf(text, "fuel="));
+    r.active = static_cast<int>(FieldOf(text, "active="));
+    return r;
+}
+
+Reading Now(const std::wstring& key) {
+    Reading r;
+    OnGameThread([&] { r = ReadCopy(key); });
+    return r;
+}
+
+using View = coop::woodchipper_sync::DrillView;
+
+View ViewNow() {
+    View v;
+    OnGameThread([&] { v = coop::woodchipper_sync::ReadForDrill(); });
+    return v;
+}
+
+// What the host's arms add up to: the arms that failed, and the reason an arm could not be measured.
+struct Judge {
+    std::string failed;
+    std::string invalid;
+};
+
+void Arm(Judge& j, const char* arm, bool ok, const std::string& what) {
+    UE_LOGI("woodchipper: ARM %s %s -- %s", arm, ok ? "PASS" : "FAIL", what.c_str());
+    if (!ok) j.failed += std::string(j.failed.empty() ? "" : ", ") + arm;
+}
+
+void Finish(const Judge& j) {
+    if (!j.failed.empty()) RV::Say(kTag, RV::Outcome::Fail, "%s", j.failed.c_str());
+    else if (!j.invalid.empty()) RV::Say(kTag, RV::Outcome::Invalid, "%s", j.invalid.c_str());
+    else RV::Say(kTag, RV::Outcome::Pass);
+}
+
+// The announced world and the host's puppet exist here.
+bool HostPuppetUp() {
+    if (!PS::WaitFor("the announced world", kJoinSec, [] {
+            bool ready = false;
+            OnGameThread([&] { ready = coop::net_pump::HasAnnouncedWorldReady(); });
+            return ready;
+        }))
+        return false;
+    return PS::WaitFor("the host's puppet", 60, [] {
+        bool have = false;
+        OnGameThread([&] {
+            coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(0);
+            have = p && p->valid();
+        });
+        return have;
     });
 }
 
-// A gas can poured in, as a player's gas can does: a fresh can by the chipper, the chipper's own gascanFuel.
-void Pour(const char* who) {
-    OnGameThread([&] {
-        void* me = coop::players::Registry::Get().Local();
-        ue_wrap::FVector at{};
-        void* cls = ue_wrap::asset_load::LoadObjectByPath(kGascanPath);
-        void* fn = g_chipper ? R::FindFunction(R::ClassOf(g_chipper), L"gascanFuel") : nullptr;
-        if (!me || !cls || !fn || !E::TryGetActorLocation(g_chipper, at)) {
-            UE_LOGW("woodchipper: %hs cannot pour (player %p, can class %p, gascanFuel %p)", who, me, cls, fn);
-            return;
-        }
-        void* can = E::SpawnActor(cls, {at.X, at.Y, at.Z + 120.f});
-        float canFuel = -1.f;
-        Field(can, L"fuel", canFuel);
-        ue_wrap::ParamFrame f(fn);
-        const bool ok = can && f.valid() && f.Set<void*>(L"gascan", can) && f.Set<void*>(L"player", me) &&
-                        f.Set<bool>(L"back", false) && ue_wrap::Call(g_chipper, f);
-        UE_LOGI("woodchipper: %hs poured a can holding %.2f (ok=%d, fueled=%d)", who, canFuel, ok ? 1 : 0,
-                ok && f.Get<bool>(L"fueled") ? 1 : 0);
+bool CopyResolves(const std::wstring& key) {
+    return PS::WaitFor("the chipper the host named", 120, [&] {
+        void* c = nullptr;
+        OnGameThread([&] { c = ChipperOf(key); });
+        return c != nullptr;
     });
 }
 
-// The on/off button, as a player's press runs it: actionOptionIndex with the use action on button_del.
-void Press(const char* who) {
-    OnGameThread([&] {
-        void* me = coop::players::Registry::Get().Local();
-        void* button = nullptr;
-        ue_wrap::FVector at{};
-        Field(g_chipper, L"button_del", button);
-        E::TryGetActorLocation(g_chipper, at);
-        const bool ok = me && button &&
-                        ue_wrap::prop_use::CallActionOptionIndex(g_chipper, me, button, at, kUseAction, button);
-        UE_LOGI("woodchipper: %hs pressed the button (ok=%d)", who, ok ? 1 : 0);
-    });
-}
+// ---- HOST ------------------------------------------------------------------------------------------------
 
-void* FindChipper(const std::wstring& key) {
+void* FindOwnChipper() {
     for (void* o : R::FindObjectsByClass(L"woodchipper_C"))
-        if (o && R::IsLive(o) && (key.empty() || ue_wrap::prop::GetInteractableKeyString(o) == key)) {
-            const std::wstring k = ue_wrap::prop::GetInteractableKeyString(o);
-            if (!k.empty() && k != L"None") return o;
-        }
+        if (W::IsChipper(o) && !W::KeyOf(o).empty()) return o;
     return nullptr;
 }
 
-// The host's copy set to a fuel, as a long run leaves it: the drill's stand-in for burning it down.
-void SetFuel(float fuel) {
-    OnGameThread([&] {
-        const int32_t off = g_chipper ? R::FindPropertyOffset(R::ClassOf(g_chipper), L"fuel") : -1;
-        if (off >= 0) std::memcpy(static_cast<uint8_t*>(g_chipper) + off, &fuel, sizeof(fuel));
-        UE_LOGI("woodchipper: HOST set its fuel to %.1f", fuel);
-    });
-}
-
-// One step: the actor does it, then both log; the other waits for the actor's mark and logs after it.
-void Step(bool hostActs, const char* name, void (*act)(), int waitMs) {
-    const std::string done = std::string(name) + (hostActs ? "_host" : "_client");
-    const bool mine = hostActs != IsClientRole();
-    if (mine) {
-        act();
-        ::Sleep(waitMs);
-        LogState(name);
-        Write(done.c_str(), "x");
-        Await((std::string(name) + "_seen").c_str());
-    } else {
-        if (!Await(done.c_str())) return;
-        ::Sleep(1500);
-        LogState(name);
-        Write((std::string(name) + "_seen").c_str(), "x");
-    }
-}
-
-void ClientPour() { Pour("CLIENT"); }
-void HostPour() { Pour("HOST"); }
-void ClientPress() { Press("CLIENT"); }
-void HostPress() { Press("HOST"); }
-void HostDrain() { SetFuel(30.f); }
-
-void RunSteps() {
-    LogState("0-start");
-    Step(false, "1-client-poured", &ClientPour, 3000);
-    Step(false, "2-client-on", &ClientPress, 10000);
-    Step(true, "3-host-off", &HostPress, 3000);
-    Step(true, "4-host-fuel-30", &HostDrain, 3000);
-    Step(true, "5-host-poured", &HostPour, 3000);
-    UE_LOGI("woodchipper: DONE");
-}
-
-void RunHost() {
-    ::Sleep(20000);
-    if (!Await("client_ready")) return;
+// The world's chipper, or one spawned in front of the host's player; its key.
+std::wstring ChipperKey() {
+    std::wstring key;
     bool spawned = false;
     OnGameThread([&] {
-        g_chipper = FindChipper(L"");
-        if (g_chipper) return;
-        void* me = coop::players::Registry::Get().Local();
-        ue_wrap::FVector at{};
-        if (!me || !E::TryGetActorLocation(me, at)) return;
-        const ue_wrap::FVector fwd = E::GetActorForwardVector(me);
-        void* cls = ue_wrap::asset_load::LoadObjectByPath(kChipperPath);
-        g_chipper = cls ? E::SpawnActor(cls, {at.X + fwd.X * 250.f, at.Y + fwd.Y * 250.f, at.Z + 60.f}) : nullptr;
-        spawned = g_chipper != nullptr;
+        void* c = FindOwnChipper();
+        if (!c) {
+            void* me = coop::players::Registry::Get().Local();
+            ue_wrap::FVector at{};
+            void* cls = ue_wrap::asset_load::LoadObjectByPath(kChipperPath);
+            if (me && cls && E::TryGetActorLocation(me, at)) {
+                const ue_wrap::FVector fwd = E::GetActorForwardVector(me);
+                c = E::SpawnActor(cls, {at.X + fwd.X * 250.f, at.Y + fwd.Y * 250.f, at.Z + 60.f});
+                spawned = c != nullptr;
+            }
+        }
+        key = W::KeyOf(c);
     });
-    if (!g_chipper) {
+    for (int i = 0; i < 100 && key.empty(); ++i) {
+        ::Sleep(100);
+        OnGameThread([&] { key = W::KeyOf(FindOwnChipper()); });
+    }
+    UE_LOGI("woodchipper: HOST chipper key='%ls' (%s)", key.c_str(), spawned ? "spawned" : "the world's own");
+    return key;
+}
+
+size_t CountOf(const wchar_t* cls) {
+    size_t n = 0;
+    OnGameThread([&] {
+        void* c = ue_wrap::object_index::ClassByName(cls);
+        n = c ? ue_wrap::object_index::ForEachInstance(c, [](void*, void*, int32_t) {}, nullptr) : 0;
+    });
+    return n;
+}
+
+// A paper prop released over the hopper: the host simulates it, as it does a prop a player let go of there.
+bool DropPropOverHopper(const std::wstring& key) {
+    bool made = false;
+    OnGameThread([&] {
+        void* chipper = ChipperOf(key);
+        static R::InstanceOffset sEat{L"eat"};
+        const int32_t off = chipper ? sEat.Of(chipper) : -1;
+        void* eat = nullptr;
+        if (off >= 0) std::memcpy(&eat, static_cast<const uint8_t*>(chipper) + off, sizeof(eat));
+        ue_wrap::asset_load::LoadObjectByPath(kPropPath);
+        void* cls = R::FindClass(L"prop_paper_C");
+        if (!eat || !cls) return;
+        ue_wrap::FVector at = E::GetComponentLocation(eat);
+        at.Z += 120.f;
+        made = E::SpawnActor(cls, at) != nullptr;
+    });
+    return made;
+}
+
+// Everything the host judges is signalled by the client in a line of readings; the host's own reading is taken when the
+// client's arrives.
+void RunHost() {
+    Judge j;
+    if (!PS::Await("client_arrived", kJoinSec)) return;
+    const std::wstring key = ChipperKey();
+    if (key.empty()) {
         UE_LOGW("woodchipper: VERDICT ABORT -- no woodchipper in the world and none spawned");
         return;
     }
-    std::string key;
-    for (int i = 0; i < 100 && key.empty(); ++i) {
-        OnGameThread([&] {
-            const std::wstring k = ue_wrap::prop::GetInteractableKeyString(g_chipper);
-            if (!k.empty() && k != L"None") key.assign(k.begin(), k.end());
-        });
-        if (key.empty()) ::Sleep(100);
+    PS::Mark("chipper_key", Narrow(key));
+    if (!PS::Await("can_in_hand", kSignalSec)) return;
+    if (!PS::WaitFor("the client's gas can in hand here", 30, [&] {
+            bool held = false;
+            OnGameThread([&] { held = coop::hand_item::HeldClassIs(1, kCanClass); });
+            return held;
+        }))
+        return;
+    UE_LOGI("woodchipper: HOST sees the client's hand hold a gas can");
+
+    // g1. The client pours.
+    const Reading f1 = Now(key);
+    PS::Mark("g1_go", Text(f1));
+    std::string poured;
+    if (!PS::AwaitText("g1_poured", poured, kSignalSec)) return;
+    const float gained = static_cast<float>(FieldOf(poured, "gained="));
+    PS::WaitFor("the host's fuel after the pour", kCopySec, [&] { return Now(key).fuel >= f1.fuel + gained - kFuelTol; }, false);
+    const Reading h1 = Now(key);
+    PS::Mark("g1_host", Text(h1));
+    std::string shown1;
+    if (!PS::AwaitText("g1_client", shown1, kSignalSec)) return;
+    const Reading c1 = Parse(shown1);
+    char what[200];
+    std::snprintf(what, sizeof(what), "the client's copy gained %.2f; the host's fuel %.2f -> %.2f, the client's copy then %.2f",
+                  static_cast<double>(gained), static_cast<double>(f1.fuel), static_cast<double>(h1.fuel),
+                  static_cast<double>(c1.fuel));
+    Arm(j, "g1", gained > 1.f && std::fabs(h1.fuel - (f1.fuel + gained)) <= kFuelTol && std::fabs(c1.fuel - h1.fuel) <= kFuelTol, what);
+
+    // g2. The client presses the button.
+    const Reading f2 = Now(key);
+    PS::Mark("g2_go", Text(f2));
+    PS::WaitFor("the host's chipper on, burning", kBurnSec, [&] {
+        const Reading r = Now(key);
+        return r.active == 1 && r.fuel <= f2.fuel - kBurnDrop;
+    }, false);
+    const Reading h2 = Now(key);
+    std::string shown2;
+    if (!PS::AwaitText("g2_client", shown2, kSignalSec)) return;
+    const Reading c2 = Parse(shown2);
+    const Reading h2b = Now(key);
+    const double refused = FieldOf(shown2, "tickRefused=", 0.0);
+    std::snprintf(what, sizeof(what),
+                  "host %s (was %.2f), client's copy %s, the host then %.2f; the client's gate refused %.0f ticks",
+                  Text(h2).c_str(), static_cast<double>(f2.fuel), Text(c2).c_str(), static_cast<double>(h2b.fuel), refused);
+    Arm(j, "g2", h2.active == 1 && h2.fuel <= f2.fuel - kBurnDrop && c2.active == 1 && c2.fuel <= f2.fuel - kBurnDrop &&
+                     std::fabs(c2.fuel - h2b.fuel) <= 2.f && refused >= 5.0, what);
+
+    // g5. An over-pour: more than the tank has room for.
+    const Reading f5 = Now(key);
+    const View w5 = ViewNow();
+    PS::Mark("g5_go");
+    PS::WaitFor("the over-pour judged", kCopySec, [&] { return ViewNow().clamped > w5.clamped || Now(key).fuel > W::kMaxFuel + 1.f; }, false);
+    const Reading h5 = Now(key);
+    const View v5 = ViewNow();
+    std::snprintf(what, sizeof(what), "the host's fuel %.2f -> %.2f after a pour of 80, clamped %llu times", static_cast<double>(f5.fuel),
+                  static_cast<double>(h5.fuel), v5.clamped - w5.clamped);
+    Arm(j, "g5", h5.fuel <= W::kMaxFuel + 0.01f && v5.clamped > w5.clamped, what);
+    PS::Mark("g5_done");
+
+    // g6. A pour from a client with an empty hand.
+    if (!PS::Await("g6_hand_empty", kSignalSec)) return;
+    PS::WaitFor("the client's hand empty here", 30, [&] {
+        bool held = true;
+        OnGameThread([&] { held = coop::hand_item::HeldClassIs(1, kCanClass); });
+        return !held;
+    }, false);
+    const Reading f6 = Now(key);
+    const View w6 = ViewNow();
+    PS::Mark("g6_go");
+    PS::WaitFor("the empty-handed pour judged", kCopySec, [&] { return ViewNow().refusedCan > w6.refusedCan || Now(key).fuel > f6.fuel + 1.f; }, false);
+    const Reading h6 = Now(key);
+    const View v6 = ViewNow();
+    std::snprintf(what, sizeof(what), "the host's fuel %.2f -> %.2f after a pour of 5 with no can in the hand, refused for the can %llu times",
+                  static_cast<double>(f6.fuel), static_cast<double>(h6.fuel), v6.refusedCan - w6.refusedCan);
+    Arm(j, "g6", h6.fuel <= f6.fuel + 0.01f && v6.refusedCan > w6.refusedCan, what);
+    PS::Mark("g6_done");
+
+    // g3. A prop released over the hopper. The papers are counted before the drop, so a prop eaten leaves the count
+    // where it was, and a clump added is the one the chipper made.
+    const size_t clumps0 = CountOf(L"prop_garbageClump_C");
+    const size_t props0 = CountOf(L"prop_paper_C");
+    if (!DropPropOverHopper(key)) {
+        PS::Mark("g3_go", "none");
+        j.invalid += "g3: the prop could not be spawned over the hopper";
+    } else {
+        char counts[64];
+        std::snprintf(counts, sizeof(counts), "clumps=%zu props=%zu", clumps0, props0);
+        PS::Mark("g3_go", counts);
+        const bool ate = PS::WaitFor("the host's chipper eats the prop", kEatSec, [&] { return CountOf(L"prop_garbageClump_C") > clumps0; }, false);
+        const size_t clumps1 = CountOf(L"prop_garbageClump_C"), props1 = CountOf(L"prop_paper_C");
+        std::string shown3;
+        const bool told = PS::AwaitText("g3_client", shown3, kSignalSec);
+        const double cClumps = FieldOf(shown3, "clumps=", -1.0), cProps = FieldOf(shown3, "props=", -1.0);
+        std::snprintf(what, sizeof(what), "host clumps %zu -> %zu, papers %zu -> %zu; the client's clumps %.0f, papers %.0f",
+                      clumps0, clumps1, props0, props1, cClumps, cProps);
+        if (!ate) {
+            j.invalid += std::string(j.invalid.empty() ? "" : "; ") +
+                         "g3: the host's chipper never ate the prop dropped over its hopper (" + what + ")";
+            UE_LOGW("woodchipper: ARM g3 INVALID -- %s", what);
+        } else {
+            Arm(j, "g3", told && clumps1 == clumps0 + 1 && props1 == props0 && cClumps == static_cast<double>(clumps0 + 1) &&
+                             cProps == static_cast<double>(props0), what);
+        }
     }
-    UE_LOGI("woodchipper: HOST chipper key=%hs (%hs)", key.c_str(), spawned ? "spawned" : "the world's own");
-    if (spawned) ::Sleep(5000);   // the spawn reaches the client
-    Write("chipper_key", key);
-    if (!Await("client_found")) return;
-    RunSteps();
+    Finish(j);
+    UE_LOGI("woodchipper: G1-G6 DONE fails='%s'", j.failed.c_str());
+
+    // g4. The chipper stays on; the client leaves and comes back into it.
+    const uint32_t life1Gen = harness::session_runtime::Session().peerGenerationForSlot(1);
+    const Reading f4 = Now(key);
+    PS::Mark("g4_on", Text(f4));
+    if (!PS::Await("client_done", kSignalSec)) return;
+    PS::Mark("host_ack");   // now watching slot 1: life 1 may end
+    if (!PS::WaitFor("the client's life 1 gone from slot 1", 300, [life1Gen] {
+            auto& s = harness::session_runtime::Session();
+            return !s.IsSlotConnected(1) || s.peerGenerationForSlot(1) != life1Gen;
+        }))
+        return;
+    if (!PS::Await("rejoin_ready", 400)) return;
+    PS::Mark("e_key", Narrow(key));
+    std::string again;
+    if (!PS::AwaitText("rejoin_done", again, 400)) return;
+    const Reading r4 = Parse(again);
+    const Reading h4 = Now(key);
+    std::snprintf(what, sizeof(what), "the rejoined client's copy after its world-ready: %s; the host's %s", again.c_str(), Text(h4).c_str());
+    const bool ok = r4.active == 1 && std::fabs(r4.fuel - h4.fuel) <= 8.f;
+    UE_LOGI("woodchipper: ARM g4 %s -- %s", ok ? "PASS" : "FAIL", what);
+    RV::Say(kTagRejoin, ok ? RV::Outcome::Pass : RV::Outcome::Fail, "%s", what);
+    UE_LOGI("woodchipper: DONE on host");
+}
+
+// ---- CLIENT ----------------------------------------------------------------------------------------------
+
+bool CanInHand() {
+    bool in = false;
+    OnGameThread([&] {
+        void* h = coop::hand_item::LocalHandActor();
+        in = h && R::ClassNameOf(h) == kCanClass;
+    });
+    return in;
+}
+
+// The client's player pours its gas can into its copy of the chipper as the can's own use does, through the chipper's
+// gascanFuel; the gate's watch reads the fuel the copy gained and asks the host. The fuel gained is returned.
+float Pour(const std::wstring& key) {
+    float gained = -1.f;
+    OnGameThread([&] {
+        void* chipper = ChipperOf(key);
+        void* me = coop::players::Registry::Get().Local();
+        void* can = coop::hand_item::LocalHandActor();
+        void* fn = chipper ? R::FindFunction(R::ClassOf(chipper), L"gascanFuel") : nullptr;
+        float before = 0.f, after = 0.f;
+        bool active = false;
+        if (!fn || !me || !can || !W::Read(chipper, before, active)) return;
+        ue_wrap::ParamFrame f(fn);
+        if (!f.valid() || !f.Set<void*>(L"gascan", can) || !f.Set<void*>(L"player", me) || !f.Set<bool>(L"back", false) ||
+            !ue_wrap::Call(chipper, f) || !W::Read(chipper, after, active))
+            return;
+        gained = after - before;
+    });
+    return gained;
+}
+
+// A pour no player's can made: sent as the gate sends its own.
+bool SendPour(const std::wstring& key, float amount) {
+    coop::net::WoodchipperPayload p{};
+    coop::net::WireKeyFromString(key, p.key);
+    p.op = coop::net::kWoodchipperOpPour;
+    p.fuel = amount;
+    return harness::session_runtime::Session().SendReliable(coop::net::ReliableKind::WoodchipperIntent, &p, sizeof(p));
+}
+
+void ReportCopy(const std::wstring& key, int active, const char* signal) {
+    PS::WaitFor("the copy at the host's state", kCopySec, [&] { return Now(key).active == active; }, false);
+    const std::string text = Text(Now(key));
+    UE_LOGI("woodchipper: CLIENT copy %s", text.c_str());
+    PS::Mark(signal, text);
 }
 
 void RunClient() {
-    bool ready = false;
-    for (int i = 0; i < 480 && !ready; ++i) {
-        OnGameThread([&] { ready = coop::net_pump::HasAnnouncedWorldReady(); });
-        if (!ready) ::Sleep(500);
+    if (!HostPuppetUp()) return;
+    PS::Mark("client_ready");
+    if (!meet::WalkToHost(kTag)) return;
+    PS::Mark("client_arrived");
+    std::string keyText;
+    if (!PS::AwaitText("chipper_key", keyText, kSignalSec)) return;
+    const std::wstring key = Widen(keyText);
+    if (!CopyResolves(key)) return;
+    OnGameThread([] { coop::dev::drill_hand::TakeIntoHandNow(L"gascan", kCanClass); });
+    if (!PS::WaitFor("the gas can in this hand", 20, [] { return CanInHand(); })) return;
+    PS::Mark("can_in_hand");
+
+    // g1.
+    std::string go;
+    if (!PS::AwaitText("g1_go", go, kSignalSec)) return;
+    const float gained = Pour(key);
+    UE_LOGI("woodchipper: CLIENT poured: the copy gained %.2f", static_cast<double>(gained));
+    PS::Mark("g1_poured", "gained=" + std::to_string(gained));
+    std::string host;
+    if (!PS::AwaitText("g1_host", host, kSignalSec)) return;
+    const float hostFuel = Parse(host).fuel;
+    PS::WaitFor("the copy at the host's fuel", kCopySec, [&] { return std::fabs(Now(key).fuel - hostFuel) <= kFuelTol; }, false);
+    PS::Mark("g1_client", Text(Now(key)));
+
+    // g2.
+    if (!PS::AwaitText("g2_go", go, kSignalSec)) return;
+    const Reading f2 = Parse(go);
+    bool pressed = false;
+    OnGameThread([&] { pressed = W::CallPress(ChipperOf(key), coop::players::Registry::Get().Local()); });
+    UE_LOGI("woodchipper: CLIENT pressed the button (ran=%d)", pressed ? 1 : 0);
+    PS::WaitFor("the copy on and burning", kBurnSec, [&] {
+        const Reading r = Now(key);
+        return r.active == 1 && r.fuel <= f2.fuel - kBurnDrop;
+    }, false);
+    coop::woodchipper_gate::Counts gc;
+    OnGameThread([&] { gc = coop::woodchipper_gate::GetCounts(); });
+    PS::Mark("g2_client", Text(Now(key)) + " tickRefused=" + std::to_string(gc.tickRefused));
+
+    // g5.
+    if (!PS::Await("g5_go", kSignalSec)) return;
+    const bool sent5 = SendPour(key, 80.f);
+    UE_LOGI("woodchipper: CLIENT sent an over-pour of 80 (sent=%d)", sent5 ? 1 : 0);
+    if (!PS::Await("g5_done", kSignalSec)) return;
+
+    // g6.
+    OnGameThread([] { coop::dev::drill_hand::TakeIntoHandNow(L"None", nullptr); });
+    PS::WaitFor("this hand empty", 20, [] { return !CanInHand(); }, false);
+    PS::Mark("g6_hand_empty");
+    if (!PS::Await("g6_go", kSignalSec)) return;
+    const bool sent6 = SendPour(key, 5.f);
+    UE_LOGI("woodchipper: CLIENT sent a pour of 5 with an empty hand (sent=%d)", sent6 ? 1 : 0);
+    if (!PS::Await("g6_done", kSignalSec)) return;
+
+    // g3.
+    std::string g3;
+    if (!PS::AwaitText("g3_go", g3, kSignalSec)) return;
+    if (g3 == "none") {
+        UE_LOGI("woodchipper: CLIENT no g3 (the host could not drop a prop)");
+    } else {
+        const size_t was = static_cast<size_t>(FieldOf(g3, "clumps=", 0.0));
+        PS::WaitFor("a clump here", 2 * kEatSec, [&] { return CountOf(L"prop_garbageClump_C") > was; }, false);
+        char text[64];
+        std::snprintf(text, sizeof(text), "clumps=%zu props=%zu", CountOf(L"prop_garbageClump_C"), CountOf(L"prop_paper_C"));
+        UE_LOGI("woodchipper: CLIENT %s", text);
+        PS::Mark("g3_client", text);
     }
-    ::Sleep(10000);
-    Write("client_ready", "x");
-    std::string key;
-    if (!Await("chipper_key", &key)) return;
-    const std::wstring wkey(key.begin(), key.end());
-    for (int i = 0; i < 300 && !g_chipper; ++i) {
-        OnGameThread([&] { g_chipper = FindChipper(wkey); });
-        if (!g_chipper) ::Sleep(100);
-    }
-    if (!g_chipper) {
-        UE_LOGW("woodchipper: VERDICT ABORT -- the client never had the chipper keyed '%hs'", key.c_str());
-        return;
-    }
-    Write("client_found", "x");
-    RunSteps();
+
+    // g4: this life's end, as the cremator drill's: the DONE line is the rig's cue to kill it.
+    if (!PS::AwaitText("g4_on", go, kSignalSec)) return;
+    PS::Mark("client_done", Text(Now(key)));
+    PS::Await("host_ack", 60);
+    OnGameThread([] {
+        auto& s = harness::session_runtime::Session();
+        if (s.running()) coop::net_pump::FleeAfterNativeMenuTravel(s, "woodchipper drill: life 1 leaves for the rejoin");
+    });
+    PS::WaitFor("this life's session stopped", 15, [] { return !harness::session_runtime::Session().running(); }, false);
+    UE_LOGI("woodchipper: DONE on client");
+}
+
+void RunRejoin() {
+    if (!HostPuppetUp()) return;
+    PS::Mark("rejoin_ready");
+    std::string keyText;
+    if (!PS::AwaitText("e_key", keyText, 120)) return;
+    const std::wstring key = Widen(keyText);
+    if (!CopyResolves(key)) return;
+    ReportCopy(key, 1, "rejoin_done");
+    UE_LOGI("woodchipper: REJOIN DONE");
 }
 
 }  // namespace
 
 DWORD WINAPI WoodchipperThread(LPVOID /*arg*/) {
-    g_dir = coop::config::ReadEnv("VOTVCOOP_CAN_DIR");
-    if (g_dir.empty()) {
-        UE_LOGW("woodchipper: VERDICT ABORT -- VOTVCOOP_CAN_DIR is unset");
-        return 0;
-    }
-    if (IsClientRole()) RunClient();
-    else                RunHost();
+    if (!PS::Begin(kTag)) return 0;
+    if (!IsClientRole()) RunHost();
+    else if (coop::config::ReadEnv("VOTVCOOP_WOODCHIPPER_DRILL_REJOIN") == "1") RunRejoin();
+    else RunClient();
     return 0;
 }
 
