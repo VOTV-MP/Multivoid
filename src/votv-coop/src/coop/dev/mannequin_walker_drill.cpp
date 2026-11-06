@@ -102,6 +102,7 @@ constexpr int kMoveBoundS = kTimerSawS + 25;      // from its birth or from a re
 constexpr int kReleaseBoundS = kTimerSawS + kMarginS;
 constexpr int kFreezeBoundS = 15;
 constexpr int kViewBoundS = 20;
+constexpr int kPuppetBoundS = 60;   // the other peer's puppet, from its ready edge to a pose
 
 // The sampling: one reading per kSampleMs. Moving is the walker's displacement over kMovingSamples readings, still the same
 // over kStillSamples; the window is how long both peers sample for step 2.
@@ -340,10 +341,11 @@ float PlayerTo(void* actor) {
     return me && actor && E::TryGetActorLocation(me, a) && E::TryGetActorLocation(actor, b) ? Dist3(a, b) : -1.f;
 }
 
-// On the host: the client's puppet to `actor`, negative when either place does not read.
+// On the host: the client's puppet to `actor`, negative when either place does not read. The puppet counts once it is spawned and
+// has a pose, the test walker_target's PuppetBody makes.
 float ClientTo(void* actor) {
     coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(kClientSlot);
-    void* puppet = rp && rp->valid() ? rp->GetActor() : nullptr;
+    void* puppet = rp && rp->valid() && rp->HasPose() ? rp->GetActor() : nullptr;
     FVector a{}, b{};
     return puppet && actor && E::TryGetActorLocation(puppet, a) && E::TryGetActorLocation(actor, b) ? Dist3(a, b) : -1.f;
 }
@@ -459,8 +461,11 @@ bool HostPhaseA(void*& a, std::string& keyA) {
     // The client waits where it stands, at the KPP gate beside the host's start and out of the walker's range, so it is never A's
     // target; the host walks, staged or not (it is the intended target), and the walker hunts it from the moment it crosses the
     // range.
+    // The puppet of the client's slot is spawned a moment after its ready edge: the first read waits for it. Every later read of it
+    // (ApproachWindow, ClientFarEnough in phase B) is behind this wait, and an unread value there is only said or judged INVALID.
     float clientCm = -1.f;
-    OnGameThread([&] { clientCm = ClientTo(a); });
+    if (!WaitGT("the client's puppet stands readable on the host", kPuppetBoundS, [&] { return (clientCm = ClientTo(a)) >= 0.f; }, false))
+        return Invalid("the client's puppet never stood readable on the host");
     UE_LOGI("mannequin-drill: the client stands %.0f cm from walker A", clientCm);
     if (clientCm <= kRangeCm + kOutOfRangeMarginCm) {
         char why[200];
@@ -597,9 +602,9 @@ bool WorldReady() {
 }
 
 bool HostPuppetUp() {
-    return WorldReady() && WaitGT("the host's puppet", 60, [] {
+    return WorldReady() && WaitGT("the host's puppet", kPuppetBoundS, [] {
         coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(0);
-        return p && p->valid();
+        return p && p->valid() && p->HasPose();
     });
 }
 
