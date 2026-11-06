@@ -205,4 +205,13 @@ DWORD WINAPI SusHoleThread(LPVOID arg);
 // VOTVCOOP_RUN_PLANT_STATE, both peers -- harness/autotest/autotest_plant_state.cpp
 DWORD WINAPI PlantStateThread(LPVOID arg);
 
+// VOTVCOOP_RUN_WALKER_WATCH, both peers -- harness/autotest/autotest_walker_watch.cpp
+DWORD WINAPI WalkerWatchThread(LPVOID arg);
+
+// VOTVCOOP_RUN_WALKER_TARGET, both peers -- harness/autotest/autotest_walker_target.cpp
+DWORD WINAPI WalkerTargetThread(LPVOID arg);
+
+// VOTVCOOP_RUN_WALKER_STATUE, both peers -- harness/autotest/autotest_walker_statue.cpp
+DWORD WINAPI WalkerStatueThread(LPVOID arg);
+
 }  // namespace harness::autotest

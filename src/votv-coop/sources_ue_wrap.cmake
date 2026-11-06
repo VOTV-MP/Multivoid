@@ -167,6 +167,7 @@ set(VOTVCOOP_SOURCES_UE_WRAP_2
     src/ue_wrap/world/weapon_catalog.cpp
     src/ue_wrap/actors/prop.cpp
     src/ue_wrap/actors/ambient_creature.cpp
+    src/ue_wrap/core/kismet_timer.cpp
     src/ue_wrap/actors/prop_keys.cpp
     src/ue_wrap/actors/prop_flags.cpp
     src/ue_wrap/actors/prop_gather.cpp

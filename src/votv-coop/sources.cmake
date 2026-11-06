@@ -204,6 +204,7 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/geom_octa_relay.cpp
     src/coop/creatures/roach_sync.cpp
     src/coop/creatures/ambient_creature_sync.cpp
+    src/coop/creatures/walker_sync.cpp
     src/coop/world/ambient_births.cpp
     src/coop/world/ambient_fixture_sync.cpp
     src/coop/creatures/owner_entity_sync.cpp
@@ -661,6 +662,9 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_ambient_creature.cpp
     src/harness/autotest/autotest_ambient_field.cpp
     src/harness/autotest/autotest_sus_hole.cpp
+    src/harness/autotest/autotest_walker_watch.cpp
+    src/harness/autotest/autotest_walker_target.cpp
+    src/harness/autotest/autotest_walker_statue.cpp
     src/ui/input_focus.cpp
     src/harness/screenshot.cpp
     src/harness/mod_environment.cpp

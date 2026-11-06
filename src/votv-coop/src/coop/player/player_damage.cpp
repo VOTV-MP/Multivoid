@@ -17,12 +17,15 @@
 #include "coop/player/cremator_hit.h"
 #include "coop/player/player_hit.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/remote_player.h"
+#include "ue_wrap/actors/ambient_creature.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/devices/cremator.h"
+#include "ue_wrap/core/ufunction_hook.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
@@ -51,6 +54,7 @@ UE_FACT_FN(kRowAddDamage, "player_damage", L"mainPlayer_C", L"addDamage", Declar
 UE_FACT_FN(kRowPunch, "player_damage", L"mainPlayer_C", L"punch", Declared);
 UE_FACT_FN(kRowRagdollMode, "player_damage", L"mainPlayer_C", L"ragdollMode", Declared);
 UE_FACT_FN(kRowAchievement, "player_damage", L"lib_C", L"progressAchievement", Declared);
+UE_FACT_FN(kRowPlaySound2D, "player_damage", L"GameplayStatics", L"PlaySound2D", Declared);
 const ue_wrap::facts::Function* const kImpactEntryRows[3] = {
     &kRowImpactDamage, &kRowImpactDamageCpp, &kRowImpactSquishCpp,
 };
@@ -109,11 +113,14 @@ void NoteRefused(const char* verb, void* puppet) {
                 puppet, n);
 }
 
+void DeliverWalkerDamage(const sg::Call& c);
+
 sg::Verdict OnDamageVerbPre(const sg::Call& c) {
     // IsPuppet alone: no session or local-pawn early-out in front of it, since the local pawn reads
     // null for a whole death or travel window, and one call let through then burns for the session.
     if (!c.object || !coop::players::Registry::Get().IsPuppet(c.object)) return sg::Verdict::Run;
     NoteRefused("the damage verb", c.object);
+    DeliverWalkerDamage(c);
     return sg::Verdict::Cancel;
 }
 
@@ -317,6 +324,14 @@ bool DeliverFromCremator(const sg::Call& c, uint8_t verb) {
     return true;
 }
 
+// A walker tests its victim's ragdoll and spares one, but a puppet's flag stays clear: what shows a peer lying down is its
+// puppet's display. Game thread.
+bool WalkerSparesPuppet(void* caller, uint8_t slot) {
+    if (!ue_wrap::ambient_creature::IsWalker(caller)) return false;
+    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
+    return rp && rp->IsRagdollDisplayed();
+}
+
 // HOST: the cancelled hit's delivery. Game thread (a script-gate watch).
 void DeliverToOwner(const sg::Call& c, bool punch) {
     auto* s = g_session.load(std::memory_order_acquire);
@@ -325,6 +340,7 @@ void DeliverToOwner(const sg::Call& c, bool punch) {
     if (!coop::creature_hit::IsDelivered(c.callerObject)) return;
     const uint8_t slot = coop::players::Registry::Get().PeerIdOfActor(c.object);
     if (slot == coop::players::kPeerIdHost || slot >= coop::players::kMaxPeers) return;
+    if (WalkerSparesPuppet(c.callerObject, slot)) return;
     const coop::net::PlayerHitPayload p = punch ? BuildPunch(c) : BuildAddDamage(c);
     if (!coop::player_hit::Deliver(slot, p)) return;   // not sent: not delivered (Deliver says and counts it)
     ++g_delivered;
@@ -334,6 +350,61 @@ void DeliverToOwner(const sg::Call& c, bool punch) {
         UE_LOGI("[HIT] sent verb=%s slot=%u creature=%ls caller=%ls", punch ? "punch" : "addDamage",
                 static_cast<unsigned>(slot), R::ClassNameOf(c.callerObject).c_str(), caller.c_str());
     }
+}
+
+// HOST: the walker's timer_damage ends its hit with a 2D break_flesh_3, which would sound here whoever it hit. While its hit on
+// a puppet runs, a pre hook on PlaySound2D refuses that walker's next call, and the victim plays it beside the hit (the hit's
+// cue); a spared puppet hears none, as the game's own test spares a player lying down. Game thread.
+void* g_soundFn = nullptr;
+bool g_soundHooked = false, g_soundRefused = false;
+void* g_hushWalker = nullptr;
+uint32_t g_hushed = 0;
+
+sg::Verdict OnSound2DPre(void* /*context*/, void* source, const uint8_t* /*parms*/) {
+    if (!g_hushWalker || source != g_hushWalker) return sg::Verdict::Run;
+    g_hushWalker = nullptr;
+    ue_wrap::ufunction_hook::SetArmed(g_soundFn, &OnSound2DPre, false);
+    if (++g_hushed <= 3) UE_LOGI("player_damage: refused the walker's hit sound here -- its victim is a peer (#%u)", g_hushed);
+    return sg::Verdict::Cancel;
+}
+
+void InstallSound() {
+    if (g_soundHooked || g_soundRefused) return;
+    const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowPlaySound2D);
+    if (!fn) return;
+    g_soundFn = fn.Fn();
+    if (!ue_wrap::ufunction_hook::InstallPreHook(fn, &OnSound2DPre, /*armed=*/false)) {
+        g_soundRefused = true;
+        UE_LOGE("player_damage: no pre hook on PlaySound2D -- a walker's hit on a peer sounds on the host");
+        return;
+    }
+    g_soundHooked = true;
+}
+
+void HushWalker(void* walker) {
+    if (!g_soundHooked) return;
+    g_hushWalker = walker;
+    ue_wrap::ufunction_hook::SetArmed(g_soundFn, &OnSound2DPre, true);
+}
+
+// HOST: a walker's hit names the damage verb itself, not addDamage, with no actor to carry. The peer runs its addDamage with
+// no source, as a nameless hit, and the punch that follows is delivered as any other. Game thread (a script-gate watch).
+void DeliverWalkerDamage(const sg::Call& c) {
+    if (!c.callerObject || !ue_wrap::ambient_creature::IsWalker(c.callerObject)) return;
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
+    const uint8_t slot = coop::players::Registry::Get().PeerIdOfActor(c.object);
+    if (slot == coop::players::kPeerIdHost || slot >= coop::players::kMaxPeers) return;
+    HushWalker(c.callerObject);
+    if (WalkerSparesPuppet(c.callerObject, slot)) return;
+    static R::ParamOffset sDamage{L"damage"};
+    coop::net::PlayerHitPayload p{};
+    p.verb = coop::net::kPlayerHitVerbAddDamage;
+    p.cue = coop::net::kPlayerHitCueWalker;
+    p.damage = ReadFloat(c, sDamage);
+    if (!coop::player_hit::Deliver(slot, p)) return;
+    ++g_delivered;
+    UE_LOGI("[HIT] sent the walker's damage %.1f to slot %u", p.damage, static_cast<unsigned>(slot));
 }
 
 // CLIENT: a hit on this machine's own player that a parked creature's mirror made. MTA's guard refuses a remote
@@ -397,11 +468,18 @@ uint32_t RefusedIgnites() { return g_igniteCanceled.load(std::memory_order_relax
 uint32_t RefusedAchievements() { return g_achievementRefused.load(std::memory_order_relaxed); }
 uint32_t DeliveredCount() { return g_delivered.load(std::memory_order_relaxed); }
 uint32_t MirrorHitCount() { return g_mirrorHits.load(std::memory_order_relaxed); }
+uint32_t HushedSounds() { return g_hushed; }
 
 void Tick() {
     // Publish the local pawn for the interceptor's any-thread compare (GT here;
     // Registry::Local() is GT-only and cached).
     g_localPawn.store(coop::players::Registry::Get().Local(), std::memory_order_release);
+    InstallSound();
+    // A hit whose sound did not follow in its own call: the hush is for that call alone.
+    if (g_hushWalker) {
+        g_hushWalker = nullptr;
+        ue_wrap::ufunction_hook::SetArmed(g_soundFn, &OnSound2DPre, false);
+    }
     // The dmghazard probe's red: no refusal is watched, so a puppet takes damage and fire here, and
     // nothing is delivered.
     static const bool s_noRefusal =

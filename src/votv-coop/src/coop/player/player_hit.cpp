@@ -15,6 +15,7 @@
 #include "ue_wrap/core/obj_keyed_cache.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
+#include "ue_wrap/engine/engine_audio.h"
 #include "ue_wrap/engine/engine_player_verbs.h"
 
 #include <atomic>
@@ -46,6 +47,8 @@ uint32_t g_droppedNoBody = 0;
 uint32_t g_droppedSource = 0;
 uint32_t g_failedApplies = 0;
 uint32_t g_refusedSends = 0;
+uint32_t g_cuesPlayed = 0;
+uint32_t g_cuesLost = 0;
 bool g_boneSaid = false;
 bool g_noneSaid = false;                          // the first hit with no source creature has been said
 ue_wrap::ObjKeyedCache<bool, 24> g_appliedSaid;   // the source classes whose first applied hit has been said
@@ -90,11 +93,29 @@ bool FiniteWithin(const float (&v)[3]) {
 // The format check of OnReceived: the host authors the hit, so nothing here weighs its size.
 bool WellFormed(const coop::net::PlayerHitPayload& p) {
     return (p.verb == coop::net::kPlayerHitVerbAddDamage || p.verb == coop::net::kPlayerHitVerbPunch) &&
-           p.bone < coop::net::kPlayerHitBoneCount && std::isfinite(p.damage) && p.damage >= 0.f &&
+           p.bone < coop::net::kPlayerHitBoneCount && p.cue < coop::net::kPlayerHitCueCount && std::isfinite(p.damage) &&
+           p.damage >= 0.f &&
            FiniteWithin(p.v0) && FiniteWithin(p.v1) && FiniteWithin(p.v2);
 }
 
 ue_wrap::FVector Vec(const float (&v)[3]) { return ue_wrap::FVector{v[0], v[1], v[2]}; }
+
+// The hit's 2D sound, as its maker's own call plays it: the walker's timer_damage plays break_flesh_3 at full volume and pitch,
+// as a UI sound. Its class is loaded wherever a walker stands, as one must for its hit.
+void PlayCue(void* body, uint8_t cue) {
+    if (cue != coop::net::kPlayerHitCueWalker) return;
+    static void* sSound = nullptr;
+    if (!sSound || !R::IsLive(sSound)) {
+        sSound = R::FindObject(L"break_flesh_3", L"SoundWave");
+        if (!sSound) sSound = R::FindObject(L"break_flesh_3", L"SoundCue");
+    }
+    if (!sSound) {
+        if (++g_cuesLost == 1) UE_LOGW("player_hit: the walker's hit sound break_flesh_3 is not loaded here -- not played");
+        return;
+    }
+    EN::PlaySound2D(body, sSound, 1.f, 1.f, 0.f, true);
+    ++g_cuesPlayed;
+}
 
 struct ApplyScope {
     ApplyScope() { ++g_applyDepth; }
@@ -140,6 +161,7 @@ void Apply(const coop::net::PlayerHitPayload& p) {
     }
     if (ok) ++g_applied;
     else if (++g_failedApplies == 1) UE_LOGW("player_hit: the verb did not run on the local player");
+    PlayCue(body, p.cue);
     // The first hit of a source class says what it was; the rest are counted (g_applied).
     void* const sourceClass = source ? R::ClassOf(source) : nullptr;
     const bool first = source ? !g_appliedSaid.Find(sourceClass) : !g_noneSaid;
@@ -197,5 +219,7 @@ bool InApply() { return g_applyDepth > 0; }
 uint32_t AppliedCount() { return g_applied; }
 
 uint32_t RefusedSendCount() { return g_refusedSends; }
+
+uint32_t CuesPlayed() { return g_cuesPlayed; }
 
 }  // namespace coop::player_hit

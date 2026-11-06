@@ -5,7 +5,7 @@
 // INVARIANT: a connected CLIENT ticks NO shared-world spawner and rolls NO shared-world spawn RNG;
 // shared-world content arrives ONLY via the host wire (npc_sync / world_actor / the prop mirrors), or
 // it is not shared: a spawner whose product has no mirror yet runs on every peer, each rolling its
-// own, as the bp7 spawner does (measured), and the sus hole's, whose holes are the host's.
+// own, as the bp7 spawner does (measured), and the sus hole's, whose holes are the host's (walker_sync parks one more).
 
 // ONE table: each row is a body a client must not run, a spawner's entry function or its tick,
 // refused at the script gate by a watch keyed on the row's class and function names. So a row holds

@@ -11,6 +11,7 @@
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
 #include "coop/creatures/ambient_creature_sync.h"
+#include "coop/creatures/walker_sync.h"
 #include "coop/world/ambient_fixture_sync.h"
 #include "coop/dev/container_parity.h"     // the container join drill's report receiver
 #include "coop/dev/prop_syncer_drill.h"    // the drill's filler receiver
@@ -397,6 +398,46 @@ bool HandlePropDriveEvent(net::Session& session,
         net::SusHoleIntentPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         ::coop::sus_hole_intent::OnIntent(session, msg.senderPeerSlot, p);
+        break;
+    }
+    case net::ReliableKind::WalkerWatch: {
+        // CLIENT->HOST.
+        if (session.role() != net::Role::Host) {
+            UE_LOGW("event_feed: WalkerWatch from slot %d -- dropping (a client's, to the host)", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::WalkerWatchPayload)) {
+            UE_LOGW("event_feed: WalkerWatch payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::WalkerWatchPayload));
+            break;
+        }
+        net::WalkerWatchPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.watching > 1) {
+            UE_LOGW("event_feed: WalkerWatch malformed -- dropping");
+            break;
+        }
+        ::coop::walker_sync::OnWalkerWatch(p, msg.senderPeerSlot);
+        break;
+    }
+    case net::ReliableKind::WalkerAngry: {
+        // HOST->ALL.
+        if (session.role() == net::Role::Host) {
+            UE_LOGW("event_feed: WalkerAngry from slot %d -- dropping (host-authored)", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::WalkerWatchPayload)) {
+            UE_LOGW("event_feed: WalkerAngry payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::WalkerWatchPayload));
+            break;
+        }
+        net::WalkerWatchPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.angered != 1) {
+            UE_LOGW("event_feed: WalkerAngry malformed -- dropping");
+            break;
+        }
+        ::coop::walker_sync::OnWalkerAngry(p);
         break;
     }
     default:

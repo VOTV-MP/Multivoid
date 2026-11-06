@@ -1321,6 +1321,13 @@ enum class ReliableKind : uint8_t {
     // host's receive edge; never relayed; not pre-world; the Default lane. Late join: none, an act sent to its
     // requester, not state. RequesterFeedbackPayload.
     RequesterFeedback = 229,
+    // CLIENT->HOST: this client's player has a walking mannequin on screen, every second while it does, or no longer has. The
+    // host holds that walker frozen. Its `angered` says this client's copy was just angered, as by a fire. Never relayed, not
+    // pre-world, nothing at late join. WalkerWatchPayload.
+    WalkerWatch = 233,
+    // HOST->ALL: a walking mannequin of the host's is angry, once for each walker, and every angry one again at the ready edge.
+    // A client's copy takes the anger, which nothing undoes. Not relayed, not pre-world. WalkerWatchPayload, `angered` set.
+    WalkerAngry = 234,
 };
 
 #pragma pack(push, 1)
@@ -2078,6 +2085,15 @@ struct SusHoleIntentPayload {
 };
 static_assert(sizeof(SusHoleIntentPayload) == 12, "SusHoleIntentPayload must be 12 bytes");
 static_assert(sizeof(SusHoleIntentPayload) <= 256 - 20 - 8, "SusHoleIntentPayload must fit in one reliable datagram");
+
+// A client's view of a walking mannequin (WalkerWatch), or the host's anger (WalkerAngry).
+struct WalkerWatchPayload {
+    WireKey key;       // 32 -- the walker's prop key
+    uint8_t watching;  // 1
+    uint8_t angered;   // 1 -- this client's copy just turned angry
+    uint8_t _pad[2];   // 2 -- zero
+};
+static_assert(sizeof(WalkerWatchPayload) == 36, "WalkerWatchPayload must be 36 bytes");
 
 // One message of the drill filler (DevLoadFiller): its place in the run and the run's length; the rest is fill.
 struct DevLoadFillerPayload {
@@ -3430,12 +3446,17 @@ inline constexpr uint8_t kItemActivateFlag_HasActorKey = 0x01;
 inline constexpr uint8_t kPlayerHitVerbAddDamage = 0;  // v0 = impact
 inline constexpr uint8_t kPlayerHitVerbPunch     = 1;  // v0 = fullBody, v1 = boneImp, v2 = damageLocation
 inline constexpr uint8_t kPlayerHitBoneCount     = 6;  // bone: None, chest, head, pelvis, torso, lowlegs
+// cue: a sound the hit's maker plays in 2D beside the verb, which the host refused and the victim plays.
+inline constexpr uint8_t kPlayerHitCueNone       = 0;
+inline constexpr uint8_t kPlayerHitCueWalker     = 1;  // a walking mannequin's break_flesh_3
+inline constexpr uint8_t kPlayerHitCueCount      = 2;
 
 struct PlayerHitPayload {
     uint32_t targetElementId;  // the VICTIM's Player Element id (host-stamped)
     uint8_t  verb;             // kPlayerHitVerb*
     uint8_t  bone;             // punch's bn1 as an index into the six names; 0 (None) for addDamage
-    uint16_t pad;              // 0, ignored
+    uint8_t  cue;              // kPlayerHitCue*
+    uint8_t  pad;              // 0, ignored
     uint32_t sourceEid;        // the creature's Npc element, which addDamage's `actor` becomes on the victim's
                                // machine; 0 = a null actor
     float    damage;           // raw amount; the victim's armor and branches act on it

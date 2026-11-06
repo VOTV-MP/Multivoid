@@ -104,6 +104,7 @@
 #include "coop/items/order_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/creatures/ambient_creature_sync.h"
+#include "coop/creatures/walker_sync.h"
 #include "coop/world/ambient_births.h"
 #include "coop/world/ambient_fixture_sync.h"
 #include "coop/world/sus_hole_intent.h"
@@ -260,6 +261,7 @@ void Install(coop::net::Session& session) {
     coop::event_cue_sync::Install(&session);  // cosmetic emitter cues: the host's runEvent watch sends them, the client replays
     coop::ambient_births::Install();  // the ambient actors' births and deaths, named once for the two lanes below
     coop::ambient_creature_sync::Install(&session);  // the host's deer and walking trees
+    coop::walker_sync::Install(&session);  // the host's walking mannequins
     coop::ambient_fixture_sync::Install(&session);  // the host's dirt holes and beehive branches
     coop::event_cue_sync::Install(&session);  // cosmetic emitter cues: the host's runEvent watch and its emitter-birth listener send them, the client replays
     coop::event_fire_sync::Install(&session);  // scheduled events: the host's runEvent/runSpecialEvent watches -> EventFire; client hold + policy replay
@@ -514,6 +516,7 @@ DisconnectStats DisconnectAll() {
     coop::firefly_sync::OnDisconnect();
     coop::event_cue_sync::OnDisconnect();  // drop the session the cue watch sends on
     coop::ambient_creature_sync::OnDisconnect();
+    coop::walker_sync::OnDisconnect();
     coop::ambient_fixture_sync::OnDisconnect();
     coop::sus_hole_intent::OnDisconnect();
     coop::ambient_births::OnDisconnect();
@@ -761,6 +764,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; coop::served_player::Tick(); }  // HOST: the served robots' seams
     { PP::Scope _s{PP::Bucket::Interactable}; coop::spill_sync::Tick(); }  // the spills the hook saw
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:ambient_creature"}; coop::ambient_creature_sync::Tick(); }  // the walking trees' size and landing
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:walker"}; coop::walker_sync::Tick(); }  // the walkers' poll
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:ambient_fixture"}; coop::ambient_fixture_sync::Tick(); }  // the holes' and branches' poll
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sus_hole_intent"}; coop::sus_hole_intent::Tick(session); }  // CLIENT: its stamped sus holes go to the host; HOST: the queued ones are made
     { PP::Scope _s{PP::Bucket::Balance};       coop::balance_sync::Tick(); }  // host polls saveSlot.Points + broadcasts on change; client retries the pending mirror apply

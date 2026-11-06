@@ -13,7 +13,8 @@ namespace coop::creature_hit {
 // Is `actor` a creature: an actor whose element is an Npc. False for null and for an actor with no element.
 bool IsCreature(void* actor);
 
-// Is `actor` a creature of a parked family (npc_mirror_brain::IsParkedClass of its class)?
+// Is `actor` a creature of a parked family (npc_mirror_brain::IsParkedClass of its class), or a walking mannequin, which
+// crosses as a prop with its copy's damage timer off?
 bool IsDelivered(void* actor);
 
 }  // namespace coop::creature_hit

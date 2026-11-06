@@ -41,6 +41,7 @@
 #include "coop/interactables/drone_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/creatures/ambient_creature_sync.h"
+#include "coop/creatures/walker_sync.h"
 #include "coop/world/ambient_fixture_sync.h"
 #include "coop/comms/chat_sync.h"
 #include "coop/interactables/upgrade_sync.h"
@@ -190,6 +191,7 @@ void ConnectReplayForSlot(int slot) {
     // joiner replays the emitter.
     coop::event_cue_sync::QueueConnectBroadcastForSlot(slot);
     coop::ambient_creature_sync::QueueConnectBroadcastForSlot(slot);  // every tree again
+    coop::walker_sync::QueueConnectBroadcastForSlot(slot);  // every angry walker again
     coop::ambient_fixture_sync::QueueConnectBroadcastForSlot(slot);  // every hole and branch again
     // The chat lane's late-join answer: the lobby's chat record, oldest first, one message per
     // line. It lands retained on the joiner: arriving in a lobby must not replay a conversation

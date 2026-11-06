@@ -8,7 +8,8 @@
 // insert's lib.getMainPlayer(), told at the script-body gate by the variable the insert writes; the natives
 // by post-hooks whose source is the calling robot. Each seam is armed only while a record needs it, and a
 // robot is recorded only while all its seams can answer. Which read is which, and which stay the host's:
-// docs/coop-dispatch-visibility.md. Nothing writes a puppet's hand, so a client's get_reports finds it empty
+// docs/coop-dispatch-visibility.md. A walking mannequin going for a client is served the same way, for its tick's
+// read of the player's ragdoll. Nothing writes a puppet's hand, so a client's get_reports finds it empty
 // and gets the game's own refusal hint, shown on the host. Game thread.
 
 #pragma once
