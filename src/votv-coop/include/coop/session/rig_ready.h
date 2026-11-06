@@ -23,8 +23,8 @@
 
 namespace coop::rig_ready {
 
-// Each milestone also reaches the dependency dump, the verdict self-test and the overlay, which judges its draw seams at the first
-// of hosting, world-ready and solo-world.
+// Each milestone also reaches the dependency dump, the verdict self-test and the overlay, which judges its draw
+// seams at the first of hosting, world-ready and solo-world.
 
 inline void Say(const char* milestone) {
     UE_LOGI("rig: READY %s", milestone);

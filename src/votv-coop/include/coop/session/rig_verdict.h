@@ -10,9 +10,9 @@
 //   FAIL      it measured a failure (a red arm's expected end).
 //   INVALID   it could not measure (a precondition missing, no route, a peer's signal never came): neither
 //             green nor red.
-// A tag is said once per session: a second Say is dropped (logged without the contract's prefix) until the
-// session ends (Rearm). Say maps a tag into [a-z0-9_-] (upper case lowered, any other byte '_', empty
-// "untagged", 47 bytes at most), so every line a tool counts is a line it can parse.
+// A tag is said once per connection life: a second Say is dropped (logged without the contract's prefix) until
+// Rearm, which DisconnectAll calls (a client's session end, a host's last client leaving). Say maps a tag into
+// [a-z0-9_-] (upper case lowered, other bytes '_', empty "untagged", 47 bytes at most): every counted line parses.
 
 #pragma once
 
@@ -48,7 +48,8 @@ inline void Sanitize(const char* tag, char (&out)[kTagChars]) {
     for (; tag && *tag && n < kTagChars - 1; ++tag, ++n) {
         const char c = *tag;
         const char lower = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
-        const bool ok = (lower >= 'a' && lower <= 'z') || (lower >= '0' && lower <= '9') || lower == '_' || lower == '-';
+        const bool ok =
+            (lower >= 'a' && lower <= 'z') || (lower >= '0' && lower <= '9') || lower == '_' || lower == '-';
         out[n] = ok ? lower : '_';
     }
     if (n == 0) {
@@ -59,8 +60,7 @@ inline void Sanitize(const char* tag, char (&out)[kTagChars]) {
 }
 
 // True when `tag` is new, and now claimed. A full table cannot tell a repeat from a first Say, so it lets the line
-// through: a missing verdict would idle the run, and the rig takes the worst verdict of a life, so a repeat costs
-// nothing.
+// through: a missing verdict would idle the run, and a repeat is only one more line for the rig to read.
 inline bool Claim(const char* tag) {
     std::lock_guard<std::mutex> hold(g_latch.lock);
     for (int i = 0; i < kMaxTags; ++i) {
@@ -75,7 +75,7 @@ inline bool Claim(const char* tag) {
 
 }  // namespace detail
 
-// At the session's end: every tag may be said again by the next session of this process.
+// From DisconnectAll (a client's session end, or a host's last client leaving): every tag may be said again.
 inline void Rearm() {
     std::lock_guard<std::mutex> hold(detail::g_latch.lock);
     for (auto& slot : detail::g_latch.said) slot[0] = '\0';

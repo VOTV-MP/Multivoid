@@ -455,9 +455,9 @@ CFG_FLAG(kerfur_serve_drill, "kerfur_serve_drill", "dev", false, "VOTVCOOP_KERFU
 CFG_ENUM(rig_verdict_selftest, "rig_verdict_selftest", "dev", "off", "off|pass|fail|invalid",
     "VOTVCOOP_RIG_VERDICT_SELFTEST",
     "Dev self-test (HOST): once a client's world is ready the host says 'rig: VERDICT rig-verdict-selftest "
-    "PASS|FAIL|INVALID' (the value), once per session, so the rig's end-on-verdict watch can be shown all three "
-    "endings with no drill: pass ends the run after the done grace, fail at once as a failure, invalid at once as "
-    "inconclusive.")
+    "PASS|FAIL|INVALID' (the value), once per connection life (said again after the host's last client left), so "
+    "the rig's end-on-verdict watch can be shown all three endings with no drill: pass ends the run after the done "
+    "grace, fail at once as a failure, invalid at once as inconclusive.")
 CFG_FLAG(door_drill, "door_drill", "dev", false, "VOTVCOOP_DOOR_DRILL",
     "Drill (BOTH peers): the client walks with the bot director to the nearest door its navmesh "
     "reaches and uses it as a player does -- three presses, each followed by a stay in its sensor until "
