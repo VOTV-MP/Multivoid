@@ -65,8 +65,8 @@ float ClientTo(void* actor);
 bool BedAnchor(ue_wrap::FVector& out);
 
 // After a bed-anchor walk: brings this player inside kInRangeCm of `walker`, which a bed anchor can leave outside the walker's range.
-// Already inside, no walk. Otherwise the director walks it to the point on the straight line from the walker to the player,
-// kInRangeCm from the walker, at the player's own height. False, with an INVALID naming the distance, when a place does not read or
+// Already inside, no walk. Otherwise the director walks it toward the walker along the NavMesh and the walk ends as it comes
+// within kInRangeCm (flat). False, with an INVALID naming the distance, when a place does not read or
 // the walk does not arrive. `who` names the player in that text. Called from the drill's own thread.
 bool EnterRange(void* walker, const char* who);
 

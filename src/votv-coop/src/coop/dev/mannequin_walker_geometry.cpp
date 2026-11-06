@@ -104,11 +104,11 @@ bool EnterRange(void* walker, const char* who) {
         return Invalid(why);
     }
     if (cm < kInRangeCm) return true;
-    const float f = kInRangeCm / cm;
-    const FVector to{at.X + (me.X - at.X) * f, at.Y + (me.Y - at.Y) * f, me.Z};
+    // The walk goes toward the walker itself and ends as it comes within kInRangeCm: the NavMesh's own way there. A point on the
+    // straight line from the walker is not one (from the bed it lies in the house's walls: no route, measured pr84 s5).
     char what[96];
     std::snprintf(what, sizeof(what), "%s into the walker's range", who);
-    if (WalkTo(to, kAnchorReachCm, what)) return true;
+    if (WalkTo(at, kInRangeCm, what)) return true;
     std::snprintf(why, sizeof(why), "%s did not arrive stepping into range from %.0f cm of the walker", who, cm);
     return Invalid(why);
 }
