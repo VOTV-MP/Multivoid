@@ -46,7 +46,7 @@ struct Watched {
 };
 const Watched kWatched[] = {
     {P::name::MainPlayerClass, L"impactDamage"},  // player_damage's impact interceptors
-    {L"kerfurOmega_C", L"actionName"},           // kerfur_convert's menu interceptor
+    {L"kerfurOmega_C", L"actionName"},           // kerfur_command_seat's watch
     {L"prop_kerfurOmega_C", L"spawnKerfuro"},
     {P::name::DaynightCycleClass, P::name::DaynightCycle_timerRainFn},  // weather's scheduler interceptors
     {P::name::DirectionalWindClass, L"changeWindOrigin"},

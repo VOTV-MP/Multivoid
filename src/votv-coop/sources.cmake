@@ -89,7 +89,7 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/kerfur_convert_client.cpp
     src/coop/creatures/kerfur_convert_host.cpp
     src/coop/creatures/kerfur_command.cpp
-    src/coop/creatures/kerfur_menu_input.cpp
+    src/coop/creatures/kerfur_command_seat.cpp
     src/coop/creatures/kerfur_entity.cpp
     src/coop/creatures/kerfur_form_assembler.cpp
     src/coop/creatures/kerfur_prop_adoption.cpp

@@ -79,8 +79,8 @@
 #include "coop/props/prop_spawn_authoring.h"  // a PLAYER's spawn verb vs the world's own spawns
 #include "coop/creatures/kerfur_convert.h"  // host-authoritative kerfur on/off conversion (the dupe fix)
 #include "coop/creatures/kerfur_command.h"  // host-authoritative kerfur menu command relay, serving the requester
+#include "coop/creatures/kerfur_command_seat.h"  // the one seat where an Omega's radial command is decided, on every route
 #include "coop/creatures/kerfur_convert_host.h"  // the host half of the kerfur conversion: its queue, served each tick
-#include "coop/creatures/kerfur_menu_input.h"  // client radial-menu verb detection (InpActEvt_use PRE -> kerfur_command relay)
 #include "coop/creatures/kerfur_entity.h"  // the stable-KerfurId authority table
 #include "coop/creatures/kerfur_form_assembler.h"  // script-body gate consumer (observe-only + containment counter)
 #include "coop/world/vent_crawler_sync.h"
@@ -348,6 +348,7 @@ void Install(coop::net::Session& session) {
     coop::served_player::Install(&session);  // HOST: the player-0 read seams the next two lanes serve through
     coop::kerfus_lanes::Install(session);  // the plain kerfur: a client refuses its brain and its verbs, the host sends its state
     coop::kerfur_command::Install(&session);  // host-authoritative kerfur menu relay, serving the requester
+    coop::kerfur_command_seat::Install(&session);  // the actionName watch: a relayed radial command is cancelled where it is picked and sent to the host (CLIENT) or handed back (HOST)
     coop::remover_request::Install(&session);  // CLIENT: the remover press becomes a request (init watch); HOST: its judge
     coop::hit_intent::Install(&session);  // CLIENT: a swing that hit a host entity's mirror becomes an intent (addDamage watch); HOST: its judge
     coop::props::prop_damage_gate::Install(&session);  // CLIENT: the impactDamage and fireDamage watches cancel the damage of a prop this client does not author
@@ -355,7 +356,6 @@ void Install(coop::net::Session& session) {
     coop::prop_act_host::Install(&session);  // HOST: the judge of a client's take or use of a shared prop
     coop::props::container_act_request::Install(&session);  // the take watch (CLIENT asks the host first); CLIENT: takes its answer and replays a grant
     coop::prop_act_request::Install(&session);  // the six take-or-use watches (CLIENT asks the host, HOST honours a reservation); CLIENT: the host's answer, and the replay of a grant
-    coop::kerfur_menu_input::Install(&session);  // client radial-menu verb detect (InpActEvt_use PRE -- the actionName dispatch is PE-invisible) -> kerfur_command relay
     coop::kerfur_form_assembler::Install(&session);  // script-body gate consumer: watch the two conversion verbs
     coop::prop_hold_claim::Install(&session);  // one hold per keyed prop: the host keeps the first and refuses a second
     coop::prop_stick_sync::Install(&session);  // wall-attachable stick mirror (camera-on-wall -- commit observer -> PropStickState; receiver replays forceStick)
@@ -481,6 +481,7 @@ DisconnectStats DisconnectAll() {
     ReleaseSessionGateHold();
     coop::kerfur_entity::OnDisconnect();  // clear the KerfurId table + free its reserved host ids
     coop::kerfur_command::OnDisconnect();  // drop pending menu commands
+    coop::kerfur_command_seat::OnDisconnect();  // drop the cached session (the watch stays registered)
     coop::remover_request::OnDisconnect();  // drop the remover queues and the shown notices
     coop::hit_intent::OnDisconnect();  // forget the once-per-session log latches
     coop::cremator_hit::OnDisconnect();  // say the cremator hits sent and applied, forget the once-per-session latches
@@ -489,7 +490,6 @@ DisconnectStats DisconnectAll() {
     coop::prop_act_host::OnDisconnect();  // drop the take-or-use tallies, refusals and reservations
     coop::props::container_act_request::OnDisconnect();  // drop the pending container act, its expired records and unsent commits
     coop::prop_act_request::OnDisconnect();  // drop the pending take or use, its latch and its expired records
-    coop::kerfur_menu_input::OnDisconnect();  // drop the cached session (the InpActEvt_use observer stays registered)
     coop::vent_crawler_sync::OnDisconnect();
     coop::prop_hold_claim::OnDisconnect();  // drop the refusal records and the notice cooldown
     coop::props::prop_food_sync::OnDisconnect();  // the food lane's tallies, latches and waiting records

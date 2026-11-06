@@ -36,24 +36,22 @@ enum class Command : uint8_t {
     Invalid = 0xFF,
 };
 
-// Map a radial actionName verb string to a relayed Command (Invalid if it is not one we relay --
-// the interceptor then leaves that dispatch untouched). turn_off maps to Invalid here (handled by
-// kerfur_convert); take_object/equipment/pat are Invalid (per-player / UI / montage, out of scope).
+// Map a radial actionName verb string, without regard to case (the radial and a reflected call differ), to a relayed
+// Command (Invalid if it is not one we relay -- the seat then lets that dispatch run). turn_off maps to Invalid here
+// (handled by kerfur_convert); take_object/equipment/pat are Invalid (per-player / UI / montage, out of scope).
 Command CommandFromActionName(const std::wstring& name);
 
-// Record a menu verb and cancel its local dispatch. Two seams call it: the actionName
-// PRE-interceptor in kerfur_convert (one interceptor per UFunction) for a non-turn_off verb, and
-// the client's radial E-input seam in kerfur_menu_input. If `name` is a relayed verb AND a session
-// is connected, records the request -- worker-safe, memory reads and a leaf mutex, no engine call,
-// no Post, no registry walk -- and returns true, so the caller cancels the dispatch and the host
-// runs the verb. Returns false, leaving the dispatch alone, for an unrelayed verb, outside a
-// connected session, and when re-entered from our own host-side actionName replay, which a
-// thread-local guard catches.
+// Record a menu verb and cancel its local dispatch. One seam calls it: the actionName watch in
+// kerfur_command_seat, on every route of the call. If `name` is a relayed verb AND a session is connected, records
+// the request (Tick sends it from a client, runs it from the host) and returns true, so the seat cancels the
+// dispatch and the host runs the verb. Returns false, leaving the dispatch alone, for an unrelayed verb, outside a
+// connected session, and when re-entered from our own host-side actionName replay, which a guard catches. Game
+// thread.
 bool TryRecordMenuCommand(void* self, const std::wstring& name, bool isClient);
 
 // Store the session pointer, re-cached on every call so a reconnect lands, and on a host register the
 // startKill watch once and settle it at once; a refused or dead watch is said once, and from then an Omega
-// serves no client. The actionName interceptor belongs to kerfur_convert. Game thread.
+// serves no client. The actionName watch belongs to kerfur_command_seat. Game thread.
 void Install(coop::net::Session* session);
 
 // HOST-only receiver for a KerfurCommand request, wired in event_dispatch_intent. It refuses an unknown sender,

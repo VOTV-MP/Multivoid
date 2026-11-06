@@ -357,7 +357,7 @@ void TickClient() {
         const int w = g_walk ? g_walk->state.load() : 2;
         if (w == 0) return;
         if (w == 2) { ClientInvalid("the walk away did not arrive"); return; }
-        // The radial menu's verb, through the menu interceptor: refused here, sent to the host.
+        // The radial menu's verb, a reflected call: refused here at the seat, sent to the host.
         K::RunActionName(g_mirror, me, L"follow");
         UE_LOGI("[KERFUR-SERVE] client: at my pile -- commanded the Omega to follow");
         g_stepMs = g_sampleMs = g_reportMs = ms;

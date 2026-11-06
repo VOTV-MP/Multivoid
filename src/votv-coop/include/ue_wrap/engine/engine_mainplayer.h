@@ -185,9 +185,8 @@ struct MainPlayerLookAtLocals {
 bool ReadMainPlayerLookAtLocals(void* lookAtFunction, const uint8_t* locals,
                                 MainPlayerLookAtLocals& out);
 
-// The radial-menu confirm state, releaseEToUse and actionIndex, the index into getActionOptions.
-// Both reflection-resolved. The kerfur radial verb is relayed from these because the actionName
-// dispatch is internal to the Blueprint and invisible to ProcessEvent. Game thread.
+// The radial-menu confirm state, releaseEToUse and actionIndex, the index into getActionOptions: read by the
+// dev kerfur_seat_probe. Game thread.
 bool ReadMainPlayerRadialSelect(void* mainPlayer, bool& releaseEToUse, int32_t& actionIndex);
 
 // Write grabbing_actor and grabbing_component in one dispatch (the autotest's synthetic grab keeps

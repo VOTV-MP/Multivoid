@@ -23,10 +23,9 @@ class Session;
 
 namespace coop::kerfur_convert {
 
-// Idempotent install, retried from the pump tick until the kerfur classes load: resolves the menu
-// dispatcher (for the command relay) and its name parameter, the two verbs and the kill flag offset
-// for the host's request path; registers the relay's interceptor and this lane's gate watches on the
-// two verbs. Refuses to install if a verb grew parameters.
+// Idempotent install, retried from the pump tick until the kerfur classes load: resolves the two verbs and the
+// kill flag offset for the host's request path and registers this lane's gate watches on the two verbs. Refuses
+// to install if a verb grew parameters.
 void Install(coop::net::Session* session);
 
 // The host executor half lives in kerfur_convert_host.h, the client half in kerfur_convert_client.h.

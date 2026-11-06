@@ -5,7 +5,6 @@
 
 #include "coop/creatures/kerfur_convert.h"
 
-#include "coop/creatures/kerfur_command.h"         // the menu-verb command relay
 #include "coop/creatures/kerfur_convert_client.h"  // the wire apply
 #include "coop/creatures/kerfur_convert_host.h"    // the converge and the request execution
 #include "coop/creatures/kerfur_entity.h"          // the resolved classes, ReleaseKerfurForEid
@@ -40,15 +39,12 @@ coop::net::Session* LoadSession() {
     return g_session.load(std::memory_order_acquire);
 }
 
-// Resolved engine refs: written by Install on the game thread before the interceptor registers,
-// read-only after, including from parallel-anim workers. The kerfur classes are loaded at the main
-// menu and live for the process (coop/dev/class_lifetime_probe measures it), so these refs and the
-// interceptor hold across a world change.
+// Resolved engine refs: written by Install on the game thread before the gate watches register, read-only after.
+// The kerfur classes are loaded at the main menu and live for the process (coop/dev/class_lifetime_probe measures
+// it), so these refs and the watches hold across a world change.
 void* g_kerfurNpcClass  = nullptr;  // kerfurOmega_C (the NPC base; ~20 data-only skin subclasses)
 void* g_kerfurPropClass = nullptr;  // prop_kerfurOmega_C (the prop base; skins likewise)
-void* g_actionNameFn    = nullptr;  // kerfurOmega_C::actionName (the menu dispatcher -- kerfur_command relay)
-int32_t g_nameParamOff  = -1;       // actionName 'name' FString param offset
-int32_t g_killOff       = -1;       // kerfurOmega_C::kill bool (the BP's own turn_off guard)
+int32_t g_killOff          = -1;  // kerfurOmega_C::kill bool (the BP's own turn_off guard)
 // The base verb declarers, whose signatures the install checks. dropKerfurProp is overridden by the
 // collar variants; the host runs the most-derived declarer, looked up on the target's own class.
 void* g_dropPropFnBase     = nullptr;  // kerfurOmega_C::dropKerfurProp
@@ -57,41 +53,10 @@ void* g_spawnKerfuroFn     = nullptr;  // prop_kerfurOmega_C::spawnKerfuro (sole
 // This lane's gate watches on the two verbs; the form assembler keeps its own on the same names.
 constexpr const wchar_t* kTurnOffVerb = L"dropKerfurProp";
 constexpr const wchar_t* kTurnOnVerb  = L"spawnKerfuro";
-UE_FACT_FN(kRowActionName, "kerfur_convert", L"kerfurOmega_C", L"actionName", Declared);
 UE_FACT_FN(kRowDropKerfurProp, "kerfur_convert", nullptr, L"dropKerfurProp", AnyClass);
 UE_FACT_FN(kRowSpawnKerfuro, "kerfur_convert", nullptr, L"spawnKerfuro", AnyClass);
 constexpr int kWatchTurnOff = 0x4B430001;  // 'KC' 1
 constexpr int kWatchTurnOn  = 0x4B430002;
-
-// An FString param out of a ProcessEvent frame: the 16-byte TArray<wchar_t> {Data, Num, Max}.
-// Memory reads only, so worker-safe. Empty on null or an insane length.
-std::wstring ReadFStringParam(void* params, int32_t off) {
-    if (!params || off < 0) return {};
-    auto* base = reinterpret_cast<uint8_t*>(params) + off;
-    auto* data = *reinterpret_cast<wchar_t* const*>(base);
-    const int32_t num = *reinterpret_cast<const int32_t*>(base + 8);
-    if (!data || num <= 1 || num > 256) return {};  // Num includes the terminator
-    return std::wstring(data, static_cast<size_t>(num - 1));
-}
-
-// The actionName PRE interceptor, for the kerfur_command relay only. Contract: no engine calls,
-// no Post, no ProcessEvent re-entry, no registry walks (Snapshot's raw pointers race game-thread
-// drains off-thread); memory reads and the atomic session load only.
-bool OnKerfurActionNamePre(void* self, void* params) {
-    if (!self || !params || g_nameParamOff < 0) return false;
-    auto* s = LoadSession();
-    if (!s || !s->running() || !s->connected()) return false;  // SP untouched
-    const std::wstring name = ReadFStringParam(params, g_nameParamOff);
-    if (name != L"turn_off") {
-        // The state-changing radial verbs (follow, idle, patrol, fix_servers, get_reports,
-        // fix_transformers) go to the host-authoritative command relay, which records the action
-        // and returns true (cancel) for a relayed verb and false for an unrelayed one.
-        const bool isClient = s->role() == coop::net::Role::Client;
-        return coop::kerfur_command::TryRecordMenuCommand(self, name, isClient);
-    }
-    // turn_off runs on into dropKerfurProp, which this lane's gate watch decides.
-    return false;
-}
 
 // ---- the verb, on a client: refused, and asked of the host ----------------------------------
 
@@ -203,23 +168,15 @@ void Install(coop::net::Session* session) {
     // re-resolving.
     coop::kerfur_entity::SetKerfurClasses(g_kerfurNpcClass, g_kerfurPropClass);
 
-    const ue_wrap::facts::Resolved actionNameRow = ue_wrap::facts::ResolveOn(kRowActionName, g_kerfurNpcClass);
-    if (!g_actionNameFn) {
-        g_actionNameFn = actionNameRow.Fn();
-        if (g_actionNameFn) {
-            g_nameParamOff = R::FindParamOffset(g_actionNameFn, L"name");
-        }
-    }
     if (!g_dropPropFnBase) g_dropPropFnBase = R::FindFunction(g_kerfurNpcClass, kTurnOffVerb);
     if (!g_spawnKerfuroFn) g_spawnKerfuroFn = R::FindFunction(g_kerfurPropClass, kTurnOnVerb);
     if (g_killOff < 0)     g_killOff = R::FindPropertyOffset(g_kerfurNpcClass, L"kill");
 
     coop::kerfur_convert_host::SetClasses(g_kerfurNpcClass, g_kerfurPropClass);
 
-    if (!g_actionNameFn || g_nameParamOff < 0 || !g_dropPropFnBase || !g_spawnKerfuroFn) {
-        UE_LOGE("kerfur_convert: partial resolve (actionName=%p nameOff=%d drop=%p spawn=%p) -- module "
-                "DISABLED (a recooked kerfur Blueprint)",
-                g_actionNameFn, g_nameParamOff, g_dropPropFnBase, g_spawnKerfuroFn);
+    if (!g_dropPropFnBase || !g_spawnKerfuroFn) {
+        UE_LOGE("kerfur_convert: partial resolve (drop=%p spawn=%p) -- module DISABLED (a recooked kerfur Blueprint)",
+                g_dropPropFnBase, g_spawnKerfuroFn);
         return;
     }
     if (g_killOff < 0) {
@@ -235,12 +192,6 @@ void Install(coop::net::Session* session) {
         return;
     }
 
-    // The relay's interceptor on the menu dispatcher.
-    if (!GT::RegisterInterceptor(actionNameRow, &OnKerfurActionNamePre)) {
-        UE_LOGE("kerfur_convert: RegisterInterceptor(actionName) failed (the interceptor table is full) "
-                "-- module DISABLED");
-        return;
-    }
     // The verbs themselves, at the gate: a name watch fires for a collar variant's own override as for
     // the base's. The name resolves on the game thread (kerfur_form_assembler's tick drives the gate's
     // pending names); a refused registration is a full table, logged by the gate.
@@ -254,8 +205,7 @@ void Install(coop::net::Session* session) {
     // The verb refs and the request latch flip only at this success site; the disabled paths above
     // never reach it, so requests drop there (fail closed; see kerfur_convert_host.h).
     coop::kerfur_convert_host::SetVerbs(g_spawnKerfuroFn, g_killOff);
-    UE_LOGI("kerfur_convert: installed (actionName nameOff=%d, killOff=%d; the conversion is decided at the "
-            "verb's gate)", g_nameParamOff, g_killOff);
+    UE_LOGI("kerfur_convert: installed (killOff=%d; the conversion is decided at the verb's gate)", g_killOff);
 }
 
 bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid) {

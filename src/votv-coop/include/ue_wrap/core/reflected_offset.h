@@ -55,7 +55,7 @@ int32_t MainPlayer_lookAtComponent();
 int32_t MainPlayer_lookAtBoundsReplace();
 int32_t MainPlayer_lookAtVerify();
 int32_t MainPlayer_lookAtState();
-// Radial-menu confirm fields (kerfur menu verb detection on the client InpActEvt_use seam).
+// Radial-menu confirm fields (the selected action, read by dev/kerfur_seat_probe).
 int32_t MainPlayer_releaseEToUse();  // the "release E to use" radial confirm flag
 int32_t MainPlayer_actionIndex();    // the highlighted radial-menu option index
 // Ragdoll and faint DISPLAY state. isRagdoll is the AnimBP gate that ragdollMode() flips, so

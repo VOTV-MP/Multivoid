@@ -26,7 +26,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <mutex>
+#include <cwchar>
 #include <vector>
 
 namespace coop::kerfur_command {
@@ -78,19 +78,18 @@ coop::roster_ledger::PerSlotState<uint32_t> g_runs;
 coop::roster_ledger::PerSlotState<uint32_t> g_refused;
 
 // Re-entrancy guard: the host executes a verb by re-invoking actionName via ProcessEvent (HostRunVerb),
-// which re-enters the actionName interceptor. The thread-local flag makes TryRecordMenuCommand pass that
-// re-entry through instead of recording it (else infinite loop). Game thread; the PE dispatch is
-// synchronous on the same thread, so thread_local suffices.
+// which re-enters the seat's actionName watch. The flag makes TryRecordMenuCommand pass that re-entry through
+// instead of recording it (else infinite loop). Game thread; the dispatch is synchronous on the same thread, so
+// thread_local suffices.
 thread_local bool t_inHostExec = false;
 
-// ---- recorded actions (interceptor -> Tick) ----------------------------------------------------
+// ---- recorded actions (the seat -> Tick) ---------------------------------------------------------
 struct PendingCmd {
     void*   actor = nullptr;
     int32_t internalIdx = -1;
     Command command = Command::Invalid;
     bool    isClient = false;
 };
-std::mutex g_qMutex;
 std::vector<PendingCmd> g_queue;
 
 const wchar_t* VerbName(Command c) {
@@ -265,12 +264,13 @@ void ServeQueues() {
 }  // namespace
 
 Command CommandFromActionName(const std::wstring& name) {
-    if (name == L"follow")           return Command::Follow;
-    if (name == L"idle")             return Command::Idle;
-    if (name == L"patrol")           return Command::Patrol;
-    if (name == L"fix_servers")      return Command::FixServers;
-    if (name == L"get_reports")      return Command::GetReports;
-    if (name == L"fix_transformers") return Command::FixTransformers;
+    const auto is = [&](const wchar_t* verb) { return _wcsicmp(name.c_str(), verb) == 0; };
+    if (is(L"follow"))           return Command::Follow;
+    if (is(L"idle"))             return Command::Idle;
+    if (is(L"patrol"))           return Command::Patrol;
+    if (is(L"fix_servers"))      return Command::FixServers;
+    if (is(L"get_reports"))      return Command::GetReports;
+    if (is(L"fix_transformers")) return Command::FixTransformers;
     return Command::Invalid;  // turn_off (kerfur_convert) / take_object / equipment / pat
 }
 
@@ -284,7 +284,7 @@ bool TryRecordMenuCommand(void* self, const std::wstring& name, bool isClient) {
     pc.internalIdx = R::InternalIndexOf(self);
     pc.command = CommandFromActionName(name);
     pc.isClient = isClient;
-    { std::lock_guard<std::mutex> lk(g_qMutex); g_queue.push_back(pc); }
+    g_queue.push_back(pc);
     return true;  // cancel the local dispatch on BOTH roles -- the host runs it authoritatively
 }
 
@@ -334,9 +334,9 @@ void Tick() {
     auto* s = LoadSession();
     if (!s) return;
 
-    // 1) drain recorded actions (interceptor cancelled the local dispatch; we act here).
+    // 1) drain recorded actions (the seat cancelled the local dispatch; we act here).
     std::vector<PendingCmd> ready;
-    { std::lock_guard<std::mutex> lk(g_qMutex); if (!g_queue.empty()) ready.swap(g_queue); }
+    if (!g_queue.empty()) ready.swap(g_queue);
     for (const PendingCmd& pc : ready) {
         if (!pc.actor || !R::IsLiveByIndex(pc.actor, pc.internalIdx)) continue;  // died before drain
         if (pc.isClient) {
@@ -378,7 +378,7 @@ uint32_t RunsFor(int slot) { return slot >= 1 && slot < coop::players::kMaxPeers
 uint32_t RefusedFor(int slot) { return slot >= 1 && slot < coop::players::kMaxPeers ? g_refused[slot] : 0; }
 
 void OnDisconnect() {
-    { std::lock_guard<std::mutex> lk(g_qMutex); g_queue.clear(); }
+    g_queue.clear();
     g_tally.Clear();
 }
 
