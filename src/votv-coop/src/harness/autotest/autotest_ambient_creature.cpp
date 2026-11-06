@@ -6,8 +6,8 @@
 // host judges both peers' counts and prints `ambient-creature: VERDICT`. The client reaches the host with the director.
 // Gated by VOTVCOOP_RUN_AMBIENT_CREATURE; the folder is VOTVCOOP_CAN_DIR. The deer A/B reads the SpringArm's and the actor's
 // rotation on both peers each frame while the host's deer walks, a client mirror's actor tick off for one window and on (as
-// built) for the next. The host first moves its deer to flat ground beside its own body, so the slope under the host deer
-// differs from the one the mirror spawned on. The mirror's lean in the tick-on window is a verdict term: it must be the host's
+// built) for the next. The host first moves its deer to flat ground 7000 uu or more from both bodies, so the slope under the host
+// deer differs from the one the mirror spawned on. The mirror's lean in the tick-on window is a verdict term: it must be the host's
 // within kTiltTolerance, and a guard term holds that the window could tell the two apart. Red arms: VOTVCOOP_AMBIENT_CREATURE_RED.
 
 #include "harness/autotest.h"
@@ -29,6 +29,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/trace.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/world_identity.h"
@@ -339,19 +340,51 @@ void PrintDriveFlags(const char* who, void* deer) {
 constexpr double kAbSeconds = 5.0;
 constexpr double kTiltTolerance = 5.0;   // degrees between the mirror's mean lean and the host deer's
 constexpr double kDiscriminates = 10.0;  // degrees the host deer's new slope must differ from the mirror's spawn floor
-constexpr float  kAheadCm = 400.f;       // how far in front of the host's own body the deer is put
-constexpr float  kArrivedCm = 100.f;     // how near its sent place the mirror must stand before the window opens
+// deer_C's own tick dissolves a deer under 5000 uu from camera 0 (deer.cpp Label_1395), and the client stands beside the host: the
+// window's deer must stand past that reach of both bodies, or it ends on both peers before the mirror is judged.
+constexpr float  kDeerOutOfReachCm = 7000.f;  // the dissolve radius 5000 plus 2000
+constexpr float  kOutwardCm = 8000.f;         // how far from the host's body the candidate headings are cast
+constexpr int    kHeadings = 8;               // candidates at 0, 45 .. 315 degrees
+constexpr float  kArrivedCm = 100.f;          // how near its sent place the mirror must stand before the window opens
 
-// The place the host puts its deer: kAheadCm in front of the host's own body, on the navmesh, the capsule's half height up.
-bool FlatPlaceAhead(void* deer, ue_wrap::FVector& out) {
+float Dist3(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
+    const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+// The slope under a navmesh point, degrees off flat from a line trace down onto it; 90 when the trace reads nothing.
+double TiltUnder(void* pawn, const ue_wrap::FVector& nav) {
+    ue_wrap::trace::Hit hit;
+    if (!ue_wrap::trace::LineHitStatDyn(pawn, {nav.X, nav.Y, nav.Z + 100.f}, {nav.X, nav.Y, nav.Z - 400.f}, &hit) || !hit.blocked)
+        return 90.0;
+    return std::acos((std::max)(-1.0, (std::min)(1.0, static_cast<double>(hit.normal.Z)))) * kRad;
+}
+
+// The place the host puts its deer: the flattest navmesh point, among the eight headings kOutwardCm from the host's body, that
+// stands kDeerOutOfReachCm from the host's body and from the client's puppet; the capsule's half height up.
+bool FarFlatPlace(void* deer, ue_wrap::FVector& out) {
     void* const pawn = coop::players::Registry::Get().Local();
-    ue_wrap::FVector me{}, ext{}, org{}, at{};
-    if (!pawn || !E::TryGetActorLocation(pawn, me) || !E::TryGetActorLocation(deer, at)) return false;
-    const ue_wrap::FVector fwd = E::GetActorForwardVector(pawn);
-    ue_wrap::FVector nav{};
-    if (!E::ProjectToNav(pawn, {me.X + fwd.X * kAheadCm, me.Y + fwd.Y * kAheadCm, me.Z}, {200.f, 200.f, 300.f}, &nav)) return false;
+    coop::RemotePlayer* const peer = coop::players::Registry::Get().Puppet(1);
+    ue_wrap::FVector me{}, other{}, ext{}, org{}, at{};
+    if (!pawn || !peer || !peer->TryGetLocation(other) || !E::TryGetActorLocation(pawn, me) || !E::TryGetActorLocation(deer, at))
+        return false;
+    bool found = false;
+    double bestTilt = 0;
+    ue_wrap::FVector best{};
+    for (int i = 0; i < kHeadings; ++i) {
+        const double a = i * (360.0 / kHeadings) / kRad;
+        const ue_wrap::FVector want{me.X + static_cast<float>(std::cos(a)) * kOutwardCm,
+                                    me.Y + static_cast<float>(std::sin(a)) * kOutwardCm, me.Z};
+        ue_wrap::FVector nav{};
+        if (!E::ProjectToNav(pawn, want, {1500.f, 1500.f, 500.f}, &nav)) continue;
+        if (Dist3(nav, me) < kDeerOutOfReachCm || Dist3(nav, other) < kDeerOutOfReachCm) continue;
+        const double tilt = TiltUnder(pawn, nav);
+        UE_LOGI("deer-ab: candidate heading=%d tilt=%.1f", i * (360 / kHeadings), tilt);
+        if (!found || tilt < bestTilt) found = true, bestTilt = tilt, best = nav;
+    }
+    if (!found) return false;
     const float lift = E::GetActorBounds(deer, true, org, ext) ? at.Z - (org.Z - ext.Z) : 100.f;
-    out = {nav.X, nav.Y, nav.Z + lift + 5.f};
+    out = {best.X, best.Y, best.Z + lift + 5.f};
     return true;
 }
 
@@ -365,9 +398,9 @@ void HostAb(void* deer) {
     bool placed = false;
     OnGameThread([&] {
         PrintDriveFlags("host", deer);
-        placed = FlatPlaceAhead(deer, place) && E::TeleportTo(deer, place, {});
+        placed = FarFlatPlace(deer, place) && E::TeleportTo(deer, place, {});
     });
-    Check(placed, "the host put its deer on flat ground beside its body");
+    Check(placed, "the host put its deer on flat ground out of both players' reach");
     if (!placed) return;
     char at[96];
     std::snprintf(at, sizeof(at), "%.1f %.1f %.1f", place.X, place.Y, place.Z);
