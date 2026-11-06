@@ -27,8 +27,10 @@ inline constexpr int kWalkWaitS = kWalkDeadlineS + 90;
 
 // The walk's reach of a point it is placed at: within it the director's stage places the walk at once (a bed anchor, the KPP gate).
 inline constexpr float kAnchorReachCm = 500.f;
-// How far from a walker a target is brought: inside the walker's own hunt range with a margin, and far enough from its shoulder.
+// Where a walk toward a walker gives up: inside the walker's own hunt range with a margin (it normally ends sooner, on the hunt).
 inline constexpr float kInRangeCm = 17000.f;
+// How long the walker gets, after that walk's end, to show that it took the player (it reads its range every half second).
+inline constexpr int kHuntGraceS = 5;
 
 template <class Fn>
 void OnGameThread(Fn&& fn) {
@@ -64,11 +66,13 @@ float ClientTo(void* actor);
 // This player's bed anchor, as the director's stage reads it; false when the base has no bed (the KPP fallback is not one).
 bool BedAnchor(ue_wrap::FVector& out);
 
-// After a bed-anchor walk: brings this player inside kInRangeCm of `walker`, which a bed anchor can leave outside the walker's range.
-// Already inside, no walk. Otherwise the director walks it toward the walker along the NavMesh and the walk ends as it comes
-// within kInRangeCm (flat). False, with an INVALID naming the distance, when a place does not read or
-// the walk does not arrive. `who` names the player in that text. Called from the drill's own thread.
-bool EnterRange(void* walker, const char* who);
+// After a bed-anchor walk: brings this player to the walker until the walker TAKES it as its target, which a bed anchor can leave
+// outside the walker's range. `hunted` is read on the game thread: "this walker hunts this player". Already hunted, no walk.
+// Otherwise the director walks it toward the walker along the NavMesh and the walk ends on the event, not on a distance: the
+// walker closes on its target whatever the route, so a distance chosen beforehand does not hold. Its reach (kInRangeCm, flat) is
+// only where the walk gives up; the hunt then gets kHuntGraceS to show. False, with an INVALID naming the distance, when a place
+// does not read or the walker never takes this player. `who` names the player in that text. Called from the drill's own thread.
+bool EnterRange(void* walker, const char* who, bool (*hunted)(void* walker));
 
 // The bot director walks this player, staged at a known-good anchor when the route is long (the director's stage); true when it
 // arrived within `reachCm`.

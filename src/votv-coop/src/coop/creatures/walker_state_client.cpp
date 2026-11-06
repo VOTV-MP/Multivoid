@@ -171,6 +171,12 @@ void OnBound(void* actor, const std::wstring& key) {
     Apply(*r);
 }
 
+uint8_t TargetOfCopy(void* copy) {
+    for (const Row& r : g_rows)
+        if (r.used && r.actor == copy && StillThere(r)) return r.target;
+    return 0xFF;
+}
+
 bool SubscribeHunt(HuntFn fn) {
     if (!fn) return false;
     for (size_t i = 0; i < g_subCount; ++i)

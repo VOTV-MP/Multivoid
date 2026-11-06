@@ -38,6 +38,10 @@ void OnBound(void* actor, const std::wstring& key);
 using HuntFn = void (*)(const coop::net::WireKey& key, void* copy, uint8_t target, bool ended);
 bool SubscribeHunt(HuntFn fn);
 
+// [dev], for the walker drill: the slot the host last said the walker of this copy hunts, 0xFF for none, for a copy with no
+// row and for a copy that ended. Game thread.
+uint8_t TargetOfCopy(void* copy);
+
 // Per gameplay tick on a client: ask again for the copy's end of play while the class has not resolved (only when the class set
 // moved), then one comparison. Game thread.
 void Tick();

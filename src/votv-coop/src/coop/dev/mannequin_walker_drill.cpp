@@ -21,6 +21,7 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/creatures/walker_state_client.h"
 #include "coop/creatures/walker_target.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/mannequin_drill.h"
@@ -81,13 +82,13 @@ constexpr const char* kSpawnerTag = "mannequinSpawner.ReceiveTick";
 constexpr float kRangeCm = 20000.f;
 constexpr float kOutOfRangeMarginCm = 2000.f;
 // Where each player stops. A target enters the walker's range at the bed anchor, the spot the director's stage places a walk at
-// (coop/player/shelter_spot, Kind::Bed): a walk to it is placed there at once, with no route to walk, and EnterRange then steps
-// the player in from there when the anchor leaves it outside kInRangeCm of the walker. Walker A: the client does
-// not walk (it waits at the KPP gate, out of range, so it is never the target); the host goes to its bed anchor and steps into
-// range, and its arrival opens the window. Walker B: the host back at the KPP gate, out of range, then the client goes to its own
-// bed anchor and steps into range, last. The
-// walker closes on its target while the steps run, and a measurement ends when it is within kApproachEndCm: at that distance it
-// stands at its target's shoulder, where the game's own frustum test of its bounds holds whatever the yaw.
+// (coop/player/shelter_spot, Kind::Bed): a walk to it is placed there at once, with no route to walk, and EnterRange then walks
+// the player toward the walker until the walker TAKES it as its target (an event, not a distance: the walker closes on its target
+// whatever the route, so a distance chosen beforehand does not hold). Walker A: the client does not walk (it waits at the KPP
+// gate, out of range, so it is never the target); the host goes to its bed anchor and steps into range, and its arrival opens the
+// window. Walker B: the host back at the KPP gate, out of range, then the client goes to its own bed anchor and steps into range,
+// last. The walker closes on its target while the steps run, and a measurement ends when it is within kApproachEndCm: at that
+// distance it stands at its target's shoulder, where the game's own frustum test of its bounds holds whatever the yaw.
 constexpr float kApproachEndCm = 3000.f;
 constexpr float kKppReachCm = 1500.f;
 
@@ -397,7 +398,7 @@ bool HostPhaseA(void*& a, std::string& keyA) {
     FVector bed{};
     if (!BedAnchor(bed)) return Invalid("the host has no bed anchor to walk to");
     if (!WalkTo(bed, kAnchorReachCm, "the host to the bed anchor")) return Invalid("the host's walk to the bed anchor did not arrive");
-    if (!EnterRange(a, "the host")) return false;
+    if (!EnterRange(a, "the host", [](void* w) { return WT::TargetOf(w) == 0; })) return false;
 
     // At the host's arrival: its view turns away, its distance from the walker is judged (in range, not at its shoulder), and the
     // window opens: nothing else sits between.
@@ -619,7 +620,11 @@ bool ClientBody() {
     if (!WalkTo(at, kAnchorReachCm, "this client to the bed anchor")) return Invalid("this client's walk to the bed anchor did not arrive");
     OnGameThread([&] { copy = ByKey(keyB); });
     if (!copy) return Invalid("walker B's copy is gone before this client steps into range");
-    if (!EnterRange(copy, "this client")) return false;
+    // The copy's target as the host's WalkerState delivered it: this client's own slot.
+    if (!EnterRange(copy, "this client", [](void* c) {
+            return coop::walker_state_client::TargetOfCopy(c) == coop::players::Registry::Get().LocalPeerId();
+        }))
+        return false;
     float arrivalCm = -1.f;
     OnGameThread([&] {
         copy = ByKey(keyB);

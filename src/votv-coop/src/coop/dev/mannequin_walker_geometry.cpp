@@ -91,25 +91,47 @@ bool BedAnchor(FVector& out) {
     return bed;
 }
 
-bool EnterRange(void* walker, const char* who) {
+bool EnterRange(void* walker, const char* who, bool (*hunted)(void* walker)) {
     FVector me{}, at{};
     float   cm = -1.f;
+    bool    taken = false;
     OnGameThread([&] {
         void* pawn = coop::players::Registry::Get().Local();
         cm = pawn && walker && E::TryGetActorLocation(pawn, me) && E::TryGetActorLocation(walker, at) ? Dist3(me, at) : -1.f;
+        taken = hunted(walker);
     });
     char why[200];
     if (cm < 0.f) {
         std::snprintf(why, sizeof(why), "%s: the walker's place or its own did not read before stepping into range", who);
         return Invalid(why);
     }
-    if (cm < kInRangeCm) return true;
-    // The walk goes toward the walker itself and ends as it comes within kInRangeCm: the NavMesh's own way there. A point on the
-    // straight line from the walker is not one (from the bed it lies in the house's walls: no route, measured pr84 s5).
+    if (taken) return true;
+    // The walk goes toward the walker itself, along the NavMesh (a point on the straight line from the walker is not one: from the
+    // bed it lies in the house's walls), and it ends on the EVENT, the walker taking this player as its target. Its reach is only
+    // the walk's own end, if the hunt never comes.
     char what[96];
-    std::snprintf(what, sizeof(what), "%s into the walker's range", who);
-    if (WalkTo(at, kInRangeCm, what)) return true;
-    std::snprintf(why, sizeof(why), "%s did not arrive stepping into range from %.0f cm of the walker", who, cm);
+    std::snprintf(what, sizeof(what), "%s toward the walker", who);
+    std::shared_ptr<DIR::BackgroundWalk> walk;
+    OnGameThread([&] { walk = DIR::StartBackgroundWalk(at, kInRangeCm, kWalkDeadlineS); });
+    bool hunting = false;
+    PS::WaitFor(what, kWalkWaitS, [&] {
+        OnGameThread([&] { hunting = hunted(walker); });
+        return hunting || walk->state.load() != 0;
+    }, false);
+    if (!hunting) {
+        // The walk ended at its reach, inside the walker's range: its next read of the range takes this player.
+        PS::WaitFor(what, kHuntGraceS, [&] {
+            OnGameThread([&] { hunting = hunted(walker); });
+            return hunting;
+        }, false);
+    }
+    DIR::CancelBackgroundWalk(*walk);
+    PS::WaitFor("the walk lets go", kHuntGraceS, [&] { return walk->state.load() != 0; }, false);
+    float now = -1.f;
+    OnGameThread([&] { now = PlayerTo(walker); });
+    UE_LOGI("mannequin-drill: %s %s the walker as its target, %.0f cm from it", who, hunting ? "is taken by" : "was never taken by", now);
+    if (hunting) return true;
+    std::snprintf(why, sizeof(why), "the walker never took %s as its target: %.0f cm from it after its walk", who, now);
     return Invalid(why);
 }
 
