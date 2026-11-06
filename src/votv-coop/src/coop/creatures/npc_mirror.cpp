@@ -353,6 +353,14 @@ bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t 
         }
         return false;
     }
+    // A mirror is driven by the host's pose and never thinks: it takes no controller, so no path following, perception
+    // or control-rotation update runs on a body the stream drives (a possessed deer mirror had its yaw overwritten by
+    // its AI controller). MTA's remote ped is the same shape: it has no local brain, and its controller state is the
+    // one the owner's keysync set (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientPed.cpp:876-921,
+    // GetControllerState reads the pad only for the local ped; :961-972, AddKeysync takes a remote ped only). The
+    // AnimBPs read the pawn's velocity, which the pose drive writes, and need no controller.
+    // A non-pawn class is left as spawned.
+    E::MakePawnInert(spawned);
     // A mirror of a parked family is marked before the finish runs its BeginPlay, which the graph watches refuse.
     coop::npc_mirror_brain::PrepareBirth(spawned);
     {
