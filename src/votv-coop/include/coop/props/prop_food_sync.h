@@ -31,7 +31,8 @@ void Tick();
 // CLIENT: the host's condition of one food.
 void OnState(const coop::net::FoodStatePayload& p);
 
-// HOST: a client bit one food. Validated at the router.
+// HOST: a client bit one food. Validated at the router. Judged within reach of the sender's body; a refused bite changes
+// nothing here and is answered with the food's FoodState to that slot.
 void OnBite(int senderSlot, const coop::net::FoodBitePayload& p);
 
 // HOST: a client let go of a food it held; this is the condition its hand kept. Validated at the router.
