@@ -4,7 +4,7 @@
 // pawn/controller/camera-related functions in `namespace ue_wrap::engine`.
 //
 // Covers:
-//   - APawn: GetController, SpawnDefaultController
+//   - APawn: GetController, SpawnDefaultController, MakePawnInert
 //   - AActor: DestroyActor (sharing the same resolver cache as pawn)
 //   - AController: GetControlRotation, SetControlRotation (direct field write)
 //   - APlayerController: SetViewTargetWithBlend
@@ -152,6 +152,28 @@ FRotator GetCameraRotation() {
     if (!Call(mgr, f)) return rot;
     f.GetRaw(L"ReturnValue", &rot, sizeof(rot));
     return rot;
+}
+
+bool MakePawnInert(void* deferredPawn) {
+    if (!deferredPawn || !ResolvePawnFns()) return false;
+    void* const cls = R::ClassOf(deferredPawn);
+    if (!cls || !R::IsDescendantOfAny(cls, &g_pawnClass, 1)) return false;
+
+    // Zeroing AutoPossessPlayer keeps the pawn from grabbing a second player controller (which stole the local
+    // player's input and view); zeroing AutoPossessAI keeps BeginPlay from spawning an AI controller for it. Plain
+    // data fields, so direct writes.
+    auto* a = reinterpret_cast<uint8_t*>(deferredPawn);
+    a[P::off::APawn_AutoPossessPlayer] = 0;   // no PLAYER controller (no input/view hijack)
+    a[P::off::APawn_AutoPossessAI] = 0;        // no AI controller either
+    a[P::off::AActor_AutoReceiveInput] = 0;    // EAutoReceiveInput::Disabled
+    a[P::off::AActor_bBlockInput] = 1;         // swallow any stray input
+    // Also null the AI controller class: AutoPossessAI blocks the automatic spawn of an AI controller but not later
+    // code (other blueprint systems iterating pawns and calling SpawnDefaultController) acquiring one from the class
+    // default. Nulling the class closes that path.
+    *reinterpret_cast<void**>(a + P::off::APawn_AIControllerClass) = nullptr;
+    UE_LOGI("engine: MakePawnInert '%ls' -> no player possess, no AI possess, AIControllerClass=null, bBlockInput=1",
+            R::ClassNameOf(deferredPawn).c_str());
+    return true;
 }
 
 bool DestroyActor(void* actor) {

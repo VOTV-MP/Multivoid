@@ -33,6 +33,13 @@ FRotator GetCameraRotation();
 // viewport, input or camera. Game thread.
 bool SpawnDefaultController(void* pawn);
 
+// A pawn begun by a deferred spawn and not yet finished is made inert: AutoPossessPlayer, AutoPossessAI and
+// AutoReceiveInput zeroed, bBlockInput set, AIControllerClass nulled, so its BeginPlay takes no controller of
+// either kind and no local input, and nothing that asks the class for a default controller gets one. True when
+// `deferredPawn` is an APawn and was written; false (nothing written) for null or a non-pawn actor. Must run
+// between the begin and the finish of the spawn. Game thread.
+bool MakePawnInert(void* deferredPawn);
+
 // AActor::K2_DestroyActor. Game thread.
 bool DestroyActor(void* actor);
 
