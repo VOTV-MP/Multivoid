@@ -54,6 +54,8 @@ constexpr float kPickMinCm = 250.f;    // far enough that both players walk to i
 constexpr float kPickMaxCm = 1500.f;
 constexpr int   kWatchMs   = 4000;
 constexpr int   kGoLeadMs  = 3000;     // the GO instant is this far ahead of the host's word; both re-aim until it
+// How long the refused peer's own grab may hold: the one round trip to the host's word plus a margin.
+constexpr int   kRefusedHoldMaxMs = 250;
 // The share of a watch a result must hold for: the watch starts at fire time, so the first ticks race the grab.
 constexpr double kMajority = 0.8;
 
@@ -154,9 +156,10 @@ const char* Judge(bool control, const Result& host, const Result& client, const 
     const Result& other = hostHolds ? client : host;
     winner = hostHolds ? "host" : "client";
     // The refused grab is the game's own and holds until the host's word arrives, one round trip (docs/props.md's
-    // known limit; measured 1 sample of 157 on loopback): a hold above the minority share is the defect.
-    if (Most(other.held, other.samples) || other.held * 1.0 > (1.0 - kMajority) * other.samples)
-        return "the other peer also held";
+    // known limit; measured 1 sample of 157 on loopback): a hold past kRefusedHoldMaxMs of the watch is the defect.
+    // The watch runs kWatchMs, so its samples convert to time at samples / kWatchMs.
+    const double allowedSamples = std::ceil(kRefusedHoldMaxMs * static_cast<double>(other.samples) / kWatchMs);
+    if (other.held > allowedSamples) return "the other peer also held";
     if (other.slot != (hostHolds ? 0 : 1) || !Most(other.slotCount, other.samples))
         return "the other peer's copy was not driven by the holder's slot";
     return nullptr;
