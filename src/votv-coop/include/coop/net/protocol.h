@@ -1304,8 +1304,8 @@ enum class ReliableKind : uint8_t {
     // CLIENT->HOST: my player pressed this cremator's handle, which the client's own copy refused to run. The host
     // resolves the cremator by its key, judges the sender's reach and that its own handle is at rest, and pulls its
     // lever; the run reaches every peer as CrematorState. Never relayed; Default lane, not pre-world; a press whose
-    // sender has no body on the host yet waits in its queue. Late join: none, a press is an act. KeyedTogglePayload,
-    // its action unused.
+    // sender has no body on the host yet waits in its queue. Late join: none, a press is an act. KeyedTogglePayload;
+    // its action is the state the press wants (1 on, 0 off), and the host refuses a press whose state already holds.
     CrematorIntent = 227,
 };
 

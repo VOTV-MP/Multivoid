@@ -71,7 +71,7 @@ std::wstring CrematorKey(void* cremator);
 void* ResolveCremator(const std::wstring& key);
 
 // Host: a cremator's handle just finished (coop/interactables/cremator_state); the cremator lane sends the isActive it
-// left when that changed. A client calls it too and it does nothing there. Game thread.
+// left when that changed. Only the host calls it (a client's handle finish looks again at its want instead). Game thread.
 void OnCrematorVerb(void* cremator);
 
 // Whether the door lane's own apply is running on `door` now: a client's copy of a door refuses

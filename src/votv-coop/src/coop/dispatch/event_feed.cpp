@@ -1,6 +1,6 @@
 // coop/dispatch/event_feed.cpp -- the per-tick reliable-message drain: the per-slot Join edge, then the
 // ReliableKind dispatch switch. The kind-to-handler table lives here; the case bodies for the
-// eight families (entity, state, signal, intent, container-act, economy, prop-drive, world) live in
+// nine families (entity, state, signal, intent, container-act, economy, prop-drive, world, cremator) live in
 // event_dispatch_<family>.cpp. Session, handshake, snapshot and dev-key cases stay inline.
 
 #include "coop/dispatch/event_feed.h"

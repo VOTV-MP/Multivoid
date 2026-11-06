@@ -8,10 +8,11 @@
 // call, and the press reaches the host as a CrematorIntent (coop/interactables/cremator_intent).
 //
 // The channel applies a state once and keeps no want, and the handle takes seconds, so the adapter below keeps the
-// want per cremator: the apply writes it and returns, and the drive (the door shut first when the run starts, then
-// useLever) runs only when the copy's handle is at rest and its flag differs from the want. It is looked at at exactly
-// two events, the want changing and the copy's handle finishing, never on a poll. A joiner takes the same path from
-// the channel's connect snapshot.
+// want per cremator: the apply writes it and returns, and the drive (useLever) runs only when the copy's handle is at
+// rest, its flag differs from the want, and, for a start, its door reads shut. The drive never closes the door: the
+// host shuts its lid before it starts, and the lid lane brings that to the copy. It is looked at at exactly three
+// events, the want changing, the copy's handle finishing, and the close of that copy's door, never on a poll. A
+// joiner takes the same path from the channel's connect snapshot.
 
 #pragma once
 
@@ -26,11 +27,11 @@ namespace coop::cremator_state {
 bool ReadState(void* cremator, bool& on);
 bool ApplyState(void* cremator, bool on);
 
-// Registers the lane's two name watches. The per-tick retry pump (coop/interactables/verb_lanes), so a watch the
-// gate refused is registered again on a later tick. Game thread.
+// Registers the lane's three name watches, once per session start (coop/interactables/verb_lanes). A watch the gate
+// refused is final for the process and said once. Game thread.
 void Install(coop::net::Session* session);
 
-// Settles the watches and says once when both are live. Game thread, once per pump tick.
+// Settles the watches and says once when all are live. Game thread, once per pump tick.
 void Tick();
 
 // The session ended: the wants and counters, with one summary line.

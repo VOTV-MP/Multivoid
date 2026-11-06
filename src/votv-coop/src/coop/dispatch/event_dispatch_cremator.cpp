@@ -27,24 +27,29 @@ bool HandleCrematorEvent(net::Session& session,
             UE_LOGW("event_feed: CrematorState dropped (role or sender slot %d)", msg.senderPeerSlot);
             break;
         }
-        if (msg.payloadLen < sizeof(net::KeyedTogglePayload)) {
-            UE_LOGW("event_feed: CrematorState payload too short (%zu < %zu)", static_cast<size_t>(msg.payloadLen),
+        if (msg.payloadLen != sizeof(net::KeyedTogglePayload)) {
+            UE_LOGW("event_feed: CrematorState payload size %zu, not %zu", static_cast<size_t>(msg.payloadLen),
                     sizeof(net::KeyedTogglePayload));
             break;
         }
         net::KeyedTogglePayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        // The trust boundary: the action is a byte, but only 0 and 1 are meaningful.
+        // The trust boundary: the action is a byte, but only 0 and 1 are meaningful, and the key is bounded by the wire.
         if (p.action != 0 && p.action != 1) {
             UE_LOGW("event_feed: CrematorState action=%u out of range -- dropping", static_cast<unsigned>(p.action));
+            break;
+        }
+        if (p.key.len > sizeof(p.key.data)) {
+            UE_LOGW("event_feed: CrematorState key length %u out of range -- dropping", static_cast<unsigned>(p.key.len));
             break;
         }
         coop::interactable_sync::OnReliable(static_cast<uint8_t>(msg.kind), p, 0);
         break;
     }
     case net::ReliableKind::CrematorIntent: {
-        // CLIENT->HOST: a client pressed the cremator's handle. The host judges the sender's reach and its own handle
-        // and pulls its lever (coop::cremator_intent). Never relayed.
+        // CLIENT->HOST: a client pressed the cremator's handle, `action` the state it wants. The host judges the
+        // sender's reach, its own handle and door, and that the state is not already so, and pulls its lever
+        // (coop::cremator_intent). Never relayed.
         if (session.role() != net::Role::Host || msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
             UE_LOGW("event_feed: CrematorIntent dropped (role or sender slot %d)", msg.senderPeerSlot);
             break;
@@ -57,6 +62,11 @@ bool HandleCrematorEvent(net::Session& session,
         std::memcpy(&p, msg.payload, sizeof(p));
         if (p.key.len > sizeof(p.key.data)) {
             coop::cremator_intent::CountDropped(coop::cremator_intent::Drop::Key);
+            break;
+        }
+        // The action is the state the press wants: only 0 and 1 are meaningful.
+        if (p.action != 0 && p.action != 1) {
+            coop::cremator_intent::CountDropped(coop::cremator_intent::Drop::Wanted);
             break;
         }
         coop::cremator_intent::OnIntent(session, p, static_cast<uint8_t>(msg.senderPeerSlot));

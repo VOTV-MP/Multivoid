@@ -62,19 +62,24 @@ bool g_settled = false;
 
 R::ParamOffset g_action{L"action"};
 bool g_actionSaid = false;
+bool g_activeUnreadSaid = false;
 
 // Why a press was refused or went nowhere, counted by reason and said at most once in kRefusalSayMs a reason.
-enum Reason : uint8_t { kNoDevice, kWrongClass, kNotWorldReady, kOutOfReach, kBusy, kNotRun, kQueueFull, kReasonCount };
+enum Reason : uint8_t {
+    kNoDevice, kWrongClass, kNotWorldReady, kOutOfReach, kBusy, kAlready, kDoorOpen, kNotRun, kQueueFull, kReasonCount
+};
 const char* const kReasonName[kReasonCount] = {
     "no cremator holds the key", "the key names no cremator", "the sender's world is not ready",
-    "the sender is not within reach", "the host's handle is mid-travel", "the host's copy did not take the call",
+    "the sender is not within reach", "the host's handle is mid-travel",
+    "the machine is already in the state the press wanted", "the host's door is open",
+    "the host's copy did not take the call",
     "the sender's queue is full",
 };
 uint64_t g_refused[kReasonCount] = {};
 struct Said { uint64_t nextMs = 0; uint64_t since = 0; };
 Said g_said[kReasonCount];
 
-uint64_t g_sent = 0, g_ran = 0, g_unkeyed = 0, g_dropSize = 0, g_dropKey = 0, g_loadNative = 0;
+uint64_t g_sent = 0, g_ran = 0, g_unkeyed = 0, g_dropSize = 0, g_dropKey = 0, g_dropWanted = 0, g_loadNative = 0;
 
 // The dev red arms of the lever drill: the judge's check of its own handle, and of the sender's reach, off.
 bool AnimCheckOff() {
@@ -151,13 +156,33 @@ bool Execute(coop::net::Session& s, const coop::net::KeyedTogglePayload& p, uint
         Refuse(kBusy, slot, key, nullptr);
         return true;
     }
+    // The press names the state its sender wants, the opposite of what its copy showed. The host's lever only
+    // toggles, so a press whose wanted state already holds (the copy trails the host's by a handle travel) must not
+    // invert the machine.
+    const bool wantOn = p.action != 0;
+    bool active = false;
+    if (!C::ReadActive(cremator, active)) {
+        Refuse(kNotRun, slot, key, nullptr);
+        return true;
+    }
+    if (active == wantOn) {
+        Refuse(kAlready, slot, key, wantOn ? "on" : "off");
+        return true;
+    }
+    // A start with the host's door open would be turned back by the machine at the forward finish, with its "door is
+    // open" hint on the host's screen for a client's press: refused here, before useLever runs.
+    bool doorOpen = false;
+    if (wantOn && C::ReadDoorOpened(cremator, doorOpen) && doorOpen) {
+        Refuse(kDoorOpen, slot, key, nullptr);
+        return true;
+    }
     if (!C::CallUseLever(cremator)) {
         Refuse(kNotRun, slot, key, nullptr);
         return true;
     }
     ++g_ran;
-    UE_LOGI("[CREMATOR-INTENT] host pulled the lever for slot %u on key='%ls'", static_cast<unsigned>(slot),
-            key.c_str());
+    UE_LOGI("[CREMATOR-INTENT] host pulled the lever for slot %u on key='%ls' (wanted %s)", static_cast<unsigned>(slot),
+            key.c_str(), wantOn ? "on" : "off");
     return true;
 }
 
@@ -195,8 +220,18 @@ sg::Verdict OnPressPre(const sg::Call& call) {
                     "nothing sent (#%llu)", call.object, static_cast<unsigned long long>(g_unkeyed));
         return sg::Verdict::Run;
     }
+    // The press asks for the opposite of what this copy shows.
+    bool active = false;
+    if (!C::ReadActive(call.object, active)) {
+        if (!g_activeUnreadSaid) {
+            g_activeUnreadSaid = true;
+            UE_LOGW("[CREMATOR-INTENT] the copy's isActive did not read -- a handle press here is not sent (said once)");
+        }
+        return sg::Verdict::Cancel;
+    }
     coop::net::KeyedTogglePayload p{};
     coop::net::WireKeyFromString(key, p.key);
+    p.action = active ? 0 : 1;
     if (!s->SendReliable(coop::net::ReliableKind::CrematorIntent, &p, sizeof(p))) {
         UE_LOGW("[CREMATOR-INTENT] the press on key='%ls' was not sent (the session refused it); the machine stays as "
                 "the host has it", key.c_str());
@@ -259,29 +294,32 @@ void OnIntent(coop::net::Session& session, const coop::net::KeyedTogglePayload& 
 }
 
 void CountDropped(Drop why) {
-    ++(why == Drop::Size ? g_dropSize : g_dropKey);
+    ++(why == Drop::Size ? g_dropSize : why == Drop::Key ? g_dropKey : g_dropWanted);
 }
 
 void OnDisconnect() {
     uint64_t refused = 0;
     for (const uint64_t n : g_refused) refused += n;
-    if (g_sent || g_ran || g_unkeyed || g_loadNative || refused || g_dropSize || g_dropKey)
+    if (g_sent || g_ran || g_unkeyed || g_loadNative || refused || g_dropSize || g_dropKey || g_dropWanted)
         UE_LOGI("[CREMATOR-INTENT] session end -- sent=%llu ran=%llu unkeyed=%llu own load run natively=%llu "
                 "denied=%llu (no cremator %llu, wrong class %llu, world not ready %llu, out of reach %llu, handle "
-                "busy %llu, not run %llu, queue full %llu) dropped at the edge: size %llu, key %llu",
+                "busy %llu, already so %llu, door open %llu, not run %llu, queue full %llu) dropped at the edge: size "
+                "%llu, key %llu, wanted state %llu",
                 static_cast<unsigned long long>(g_sent), static_cast<unsigned long long>(g_ran),
                 static_cast<unsigned long long>(g_unkeyed), static_cast<unsigned long long>(g_loadNative),
                 static_cast<unsigned long long>(refused), static_cast<unsigned long long>(g_refused[kNoDevice]),
                 static_cast<unsigned long long>(g_refused[kWrongClass]),
                 static_cast<unsigned long long>(g_refused[kNotWorldReady]),
                 static_cast<unsigned long long>(g_refused[kOutOfReach]),
-                static_cast<unsigned long long>(g_refused[kBusy]), static_cast<unsigned long long>(g_refused[kNotRun]),
+                static_cast<unsigned long long>(g_refused[kBusy]), static_cast<unsigned long long>(g_refused[kAlready]),
+                static_cast<unsigned long long>(g_refused[kDoorOpen]), static_cast<unsigned long long>(g_refused[kNotRun]),
                 static_cast<unsigned long long>(g_refused[kQueueFull]), static_cast<unsigned long long>(g_dropSize),
-                static_cast<unsigned long long>(g_dropKey));
-    g_sent = g_ran = g_unkeyed = g_dropSize = g_dropKey = g_loadNative = 0;
+                static_cast<unsigned long long>(g_dropKey), static_cast<unsigned long long>(g_dropWanted));
+    g_sent = g_ran = g_unkeyed = g_dropSize = g_dropKey = g_dropWanted = g_loadNative = 0;
     for (uint64_t& n : g_refused) n = 0;
     for (Said& sd : g_said) sd = Said{};
     g_actionSaid = false;
+    g_activeUnreadSaid = false;
 }
 
 }  // namespace coop::cremator_intent
