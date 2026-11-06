@@ -18,6 +18,7 @@
 #include "coop/dev/director/detour.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/director/input_stub.h"
+#include "coop/dev/director/leg_blocker.h"
 #include "coop/dev/director/routes.h"
 
 #include "ue_wrap/actors/prop.h"
@@ -405,13 +406,19 @@ public:
             ++stuckEpisodes_;
             if (stuckEpisodes_ % 4 == 0) {   // periodic fresh route from where we actually are
                 // A prop the NavMesh does not know holds the body where a fresh route leads back to: the spot is
-                // remembered like a slope, so a route that passes it again is sent round it (detour.h).
-                ue_wrap::FVector blocker{};
-                if (BlockerAhead(ctx, waypoints_[wp_], &blocker) && detours_ < kMaxDetours && floorZ_ > 0.f &&
+                // remembered like a slope, so a route that passes it again is sent round it (detour.h). The prop is
+                // named on the route's leg, since a walker slid sideways along it ends against a wall, and the wall
+                // is all its own line to the waypoint meets.
+                ue_wrap::FVector blocker{}, legSpot{};
+                void* legProp = nullptr;
+                const bool onLeg = LegBlocker(ctx, goal_.route, wp_ + 1, &legProp, &legSpot);
+                const bool ahead = BlockerAhead(ctx, waypoints_[wp_], &blocker);
+                if (onLeg) blocker = legSpot;
+                if ((onLeg || ahead) && detours_ < kMaxDetours && floorZ_ > 0.f &&
                     detour_.Begin(ctx.pos, goal_.targetPos, blocker, floorZ_, detour::SpotKind::Blocker)) {
                     ++detours_;
-                    UE_LOGW("director/Goto: persistent stuck (toPile=%.0f) at a blocker -- going round it (episode %d)",
-                            toPile, stuckEpisodes_);
+                    UE_LOGW("director/Goto: persistent stuck (toPile=%.0f) at a blocker%s -- going round it (episode %d)",
+                            toPile, onLeg ? " on the route's leg" : "", stuckEpisodes_);
                     return ProcStatus::Working;
                 }
                 SayWhatBlocks(ctx, goal_.route, wp_ + 1, routeKind_, goal_.targetPos);
