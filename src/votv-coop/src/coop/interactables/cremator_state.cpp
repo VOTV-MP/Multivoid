@@ -14,6 +14,7 @@
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/facts/function_row.h"
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <iterator>
@@ -52,6 +53,10 @@ std::unordered_map<void*, Want> g_wants;
 // want, and any other lid's close costs one lookup. Pointers are compared, never dereferenced.
 std::unordered_map<void*, void*> g_doors;
 uint32_t g_wantsGen = 0;
+
+constexpr int kMaxHostRunListeners = 4;
+std::array<HostRunFn, kMaxHostRunListeners> g_hostRun{};
+int g_hostRunCount = 0;
 
 uint64_t g_drives = 0, g_leverRefused = 0, g_hostEdges = 0, g_doorWaits = 0;
 bool g_unreadSaid = false;
@@ -126,6 +131,9 @@ void OnFinishedPost(const sg::Call& call) {
     if (s->role() == coop::net::Role::Host) {
         ++g_hostEdges;
         coop::interactable_sync::OnCrematorVerb(call.object);
+        bool active = false;
+        if (g_hostRunCount > 0 && C::ReadActive(call.object, active))
+            for (int i = 0; i < g_hostRunCount; ++i) g_hostRun[i](call.object, active);
         return;
     }
     Drive(call.object);
@@ -206,6 +214,15 @@ bool ApplyState(void* cremator, bool on) {
     w.ref.Set(cremator);
     if (void* door = C::Door(cremator)) g_doors[door] = cremator;
     Drive(cremator);
+    return true;
+}
+
+bool AddHostRunListener(HostRunFn fn) {
+    if (!fn) return false;
+    for (int i = 0; i < g_hostRunCount; ++i)
+        if (g_hostRun[i] == fn) return true;
+    if (g_hostRunCount == kMaxHostRunListeners) return false;
+    g_hostRun[g_hostRunCount++] = fn;
     return true;
 }
 

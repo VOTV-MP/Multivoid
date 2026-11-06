@@ -49,6 +49,11 @@ Machine ReadMachine(void* cremator);
 // The door (swingerDoor, a prop_swinger) and the firebox box component; null when unreadable or dead.
 void* Door(void* cremator);
 void* Firebox(void* cremator);
+// The burn volume (the `burning` box component whose begin-overlap collects an actor); null when unreadable or dead.
+void* BurnVolume(void* cremator);
+// Whether the burn volume overlaps `actor` now (the component's own IsOverlappingActor). False for another class, a
+// volume that did not resolve, a dead actor, or a call that did not run.
+bool OverlapsBurnVolume(void* cremator, void* actor);
 // The door's `opened`.
 bool ReadDoorOpened(void* cremator, bool& opened);
 // The firebox component's world location.

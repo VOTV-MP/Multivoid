@@ -27,6 +27,13 @@ namespace coop::cremator_state {
 bool ReadState(void* cremator, bool& on);
 bool ApplyState(void* cremator, bool on);
 
+// The host's lever run changed: `cremator`'s `isActive` is now `active`, read at the end of the handle's travel (the
+// same finish that sends the edge on the wire). Raised on the host only. A listener only records.
+using HostRunFn = void (*)(void* cremator, bool active);
+
+// Adds a listener once (the same function again adds nothing). False when the fixed list is full. Game thread.
+bool AddHostRunListener(HostRunFn fn);
+
 // The cremator whose door `door` is, when this client holds a want for it, and what that want is. False for any other
 // lid, one lookup (coop/interactables/cremator_client_guard asks it at every lid's open). Game thread.
 bool HeldWantOfDoor(void* door, void*& cremator, bool& wantOn);

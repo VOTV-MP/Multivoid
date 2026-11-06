@@ -11,7 +11,9 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/interactables/cremator_client_guard.h"  // G5: the refused collections
+#include "coop/interactables/cremator_occupancy.h"  // the burn volume's begin-overlap: the landing
 #include "coop/interactables/interactable_sync.h"  // the cremator lane's key and its resolve
+#include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/player_damage.h"  // g3low: the refusals of the burn loop's achievement
 #include "coop/player/players_registry.h"
@@ -299,25 +301,35 @@ void OnLanding(void* cremator, void* other) {
 // The nearest cremator to the client's puppet gets its door opened, the overlap watch and the teleport order. Game
 // thread. The cremator's lane key on success, "" on a step that failed (said).
 std::wstring SendClientToFirebox(void*& cremator) {
-    CS::Firebox fb;
-    const char* why = nullptr;
-    if (!CS::FindFirebox(kClientSlot, fb, why)) { UE_LOGW("cremator-drill: g3 %s", why); return {}; }
-    cremator = fb.cremator;
+    coop::RemotePlayer* puppet = coop::players::Registry::Get().Puppet(kClientSlot);
+    ue_wrap::FVector from{};
+    if (!puppet || !puppet->TryGetLocation(from)) { UE_LOGW("cremator-drill: g3 the client's puppet has no location"); return {}; }
+    const C::Nearest n = C::FindNearestFirebox(from);
+    if (!n.actor) { UE_LOGW("cremator-drill: g3 no cremator with a firebox is loaded"); return {}; }
+    ue_wrap::FRotator rot{};
+    if (!E::TryGetActorRotation(n.actor, rot)) { UE_LOGW("cremator-drill: g3 the cremator's rotation is unreadable"); return {}; }
+    cremator = n.actor;
     const std::wstring key = coop::interactable_sync::CrematorKey(cremator);
     if (key.empty()) { UE_LOGW("cremator-drill: g3 the cremator lane does not index the nearest cremator"); return {}; }
     g_g3Cremator.store(cremator, std::memory_order_release);
-    g_g3Puppet.store(coop::players::Registry::Get().Puppet(kClientSlot)->GetActor(), std::memory_order_release);
+    g_g3Puppet.store(puppet->GetActor(), std::memory_order_release);
     g_g3Landed.store(0, std::memory_order_release);
-    if (!CS::WatchBurningOverlap(&OnLanding)) {
+    if (!coop::cremator_occupancy::AddListener(&OnLanding)) {
         UE_LOGW("cremator-drill: g3 the begin-overlap watch did not register");
         return {};
     }
-    if (!CS::OpenAndSend(harness::session_runtime::Session(), kClientSlot, fb, why)) {
-        UE_LOGW("cremator-drill: g3 %s", why);
+    bool doorOpened = false;
+    if (!C::OpenDoor(cremator, doorOpened)) { UE_LOGW("cremator-drill: g3 the door's open() did not run"); return {}; }
+    coop::net::TeleportClientPayload pose{};
+    pose.locX = n.at.X; pose.locY = n.at.Y; pose.locZ = n.at.Z;
+    pose.rotPitch = rot.Pitch; pose.rotYaw = rot.Yaw; pose.rotRoll = rot.Roll;
+    if (!harness::session_runtime::Session().SendReliableToSlot(kClientSlot, coop::net::ReliableKind::TeleportClient, &pose,
+                                                                sizeof(pose))) {
+        UE_LOGW("cremator-drill: g3 the teleport order was not sent");
         return {};
     }
-    UE_LOGI("cremator-drill: HOST g3 door opened=%d, teleport order to=(%.0f,%.0f,%.0f) key='%ls'", fb.doorOpened ? 1 : 0,
-            fb.at.X, fb.at.Y, fb.at.Z, key.c_str());
+    UE_LOGI("cremator-drill: HOST g3 door opened=%d, teleport order to=(%.0f,%.0f,%.0f) key='%ls'", doorOpened ? 1 : 0,
+            n.at.X, n.at.Y, n.at.Z, key.c_str());
     return key;
 }
 

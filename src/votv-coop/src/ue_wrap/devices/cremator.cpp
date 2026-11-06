@@ -58,6 +58,7 @@ R::InstanceOffset g_actors{L"actors"};
 R::InstanceOffset g_health{L"health"};
 R::InstanceOffset g_door{L"swingerDoor"};
 R::InstanceOffset g_firebox{L"firebox"};
+R::InstanceOffset g_burning{L"burning"};
 
 bool ReadBoolOn(void* obj, void* cls, BoolField& f, bool& out) {
     if (!obj || !cls) return false;
@@ -132,6 +133,19 @@ Machine ReadMachine(void* c) {
 
 void* Door(void* c) { return ReadObject(c, g_door); }
 void* Firebox(void* c) { return ReadObject(c, g_firebox); }
+void* BurnVolume(void* c) { return ReadObject(c, g_burning); }
+
+bool OverlapsBurnVolume(void* c, void* actor) {
+    void* const volume = BurnVolume(c);
+    if (!volume || !actor || !R::IsLive(actor)) return false;
+    // IsOverlappingActor is UPrimitiveComponent's; the dispatch cache climbs to it.
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(volume), L"IsOverlappingActor");
+    if (!fn) return false;
+    ParamFrame f(fn);
+    if (!f.valid()) return false;
+    f.Set<void*>(L"Other", actor);
+    return Call(volume, f) && f.Get<bool>(L"ReturnValue");
+}
 
 bool ReadDoorOpened(void* c, bool& opened) {
     void* door = Door(c);

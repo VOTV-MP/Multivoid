@@ -2,11 +2,11 @@
 
 #include "coop/dev/cremator_probe.h"
 
-#include "cremator_dev_support.h"   // co-located private headers (src tree, not include/)
-#include "cremator_probe_detail.h"
+#include "cremator_probe_detail.h"  // co-located private header (src tree, not include/)
 
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
+#include "coop/interactables/cremator_occupancy.h"
 #include "coop/net/net_clock.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -348,7 +348,7 @@ void Install(coop::net::Session* session) {
     static bool sWatching = false;
     static bool sWarned = false;
     if (sWatching) return;
-    if (cremator_support::WatchBurningOverlap(mode == Mode::Host ? &HostOnOverlap : &OnLocalOverlap)) {
+    if (coop::cremator_occupancy::AddListener(mode == Mode::Host ? &HostOnOverlap : &OnLocalOverlap)) {
         sWatching = true;
         UE_LOGI("cremator-probe: watching the cremator's begin-overlap");
         return;
