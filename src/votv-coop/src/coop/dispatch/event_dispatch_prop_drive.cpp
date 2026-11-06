@@ -19,8 +19,11 @@
 #include "coop/world/plant_edit_gate.h"
 #include "coop/world/plant_sync.h"
 #include "coop/props/prop_drive_stream.h"  // the driven-prop end edge
+#include "coop/props/prop_fire_sync.h"     // a burning prop, and a client's light
 #include "coop/props/prop_hold_claim.h"    // the client's receiver of a refused hold
 #include "coop/props/prop_food_sync.h"     // a world food's condition and a client's bite
+#include "coop/props/prop_settle.h"        // where a released prop rests
+#include "coop/props/prop_tool_flags.h"    // a toolgun's freeze, unfreeze or make-static
 #include "coop/props/prop_syncer.h"        // the client's answer receiver
 #include "coop/props/prop_syncer_host.h"   // the host's claim judge and a client's End
 
@@ -397,6 +400,82 @@ bool HandlePropDriveEvent(net::Session& session,
         net::SusHoleIntentPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         ::coop::sus_hole_intent::OnIntent(session, msg.senderPeerSlot, p);
+        break;
+    }
+    case net::ReliableKind::PropSettle: {
+        // ANY->ALL: where the sender's released prop came to rest. A client's copy is relayed to the other clients
+        // at the host's receive edge (session_lanes.h); the host applies it as every client does.
+        if (msg.senderPeerSlot < 0 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: PropSettle from invalid senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::PropSettlePayload)) {
+            UE_LOGW("event_feed: PropSettle payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::PropSettlePayload));
+            break;
+        }
+        net::PropSettlePayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        const float vals[6] = { p.locX, p.locY, p.locZ, p.rotPitch, p.rotYaw, p.rotRoll };
+        bool finite = true;
+        for (float v : vals) { if (!std::isfinite(v)) { finite = false; break; } }
+        if (!finite || std::fabs(p.locX) > net::kMaxCoord || std::fabs(p.locY) > net::kMaxCoord ||
+            std::fabs(p.locZ) > net::kMaxCoord || std::fabs(p.rotPitch) > 180.f || std::fabs(p.rotYaw) > 180.f ||
+            std::fabs(p.rotRoll) > 180.f) {
+            UE_LOGW("event_feed: PropSettle pose non-finite or out of bounds -- dropping");
+            break;
+        }
+        if (p.key.len == 0 || p.key.len > sizeof(p.key.data) || p.holdGen == 0) {
+            UE_LOGW("event_feed: PropSettle key.len=%u hold=%u malformed -- dropping",
+                    static_cast<unsigned>(p.key.len), static_cast<unsigned>(p.holdGen));
+            break;
+        }
+        ::coop::prop_settle::OnSettle(msg.senderPeerSlot, p);
+        break;
+    }
+    case net::ReliableKind::PropToolFlags: {
+        // ANY->ALL: a toolgun tool changed a prop's flags on its user's machine. A client's copy is relayed to the
+        // other clients at the host's receive edge (session_lanes.h); the host applies it as every client does.
+        if (msg.senderPeerSlot < 0 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: PropToolFlags from invalid senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::PropToolFlagsPayload)) {
+            UE_LOGW("event_feed: PropToolFlags payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::PropToolFlagsPayload));
+            break;
+        }
+        net::PropToolFlagsPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.key.len == 0 || p.key.len > sizeof(p.key.data) || !(p.physFlags & net::propspawn_flags::kLiveState)) {
+            UE_LOGW("event_feed: PropToolFlags key.len=%u flags=0x%02x malformed -- dropping",
+                    static_cast<unsigned>(p.key.len), static_cast<unsigned>(p.physFlags));
+            break;
+        }
+        ::coop::prop_tool_flags::OnToolFlags(msg.senderPeerSlot, p);
+        break;
+    }
+    case net::ReliableKind::PropFireState:
+    case net::ReliableKind::PropFireRequest: {
+        // PropFireState HOST->ALL, PropFireRequest CLIENT->HOST.
+        const bool request = msg.kind == net::ReliableKind::PropFireRequest;
+        if (request != (session.role() == net::Role::Host)) {
+            UE_LOGW("event_feed: a prop fire message the wrong way from slot %d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::PropFirePayload)) {
+            UE_LOGW("event_feed: prop fire payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::PropFirePayload));
+            break;
+        }
+        net::PropFirePayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.burning > 1 || !std::isfinite(p.fuel) || !std::isfinite(p.fuelSpeed)) {
+            UE_LOGW("event_feed: prop fire message malformed -- dropping");
+            break;
+        }
+        if (request) ::coop::prop_fire_sync::OnRequest(msg.senderPeerSlot, p);
+        else ::coop::prop_fire_sync::OnState(p);
         break;
     }
     default:

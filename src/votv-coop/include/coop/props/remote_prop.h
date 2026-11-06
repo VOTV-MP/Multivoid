@@ -85,6 +85,10 @@ int DrivingSlotOf(void* actor, int except = -1);
 // grab needs a simulating body). A generation of 0 or a slot out of range changes nothing. Game thread.
 void RefuseHold(int slot, uint16_t holdGen);
 
+// True when hold `holdGen` of the peer in `slot` is over here and the host did not refuse it: what a
+// message that follows that hold's release may act on. Game thread.
+bool IsHoldReleased(int slot, uint16_t holdGen);
+
 // Register a wire-received prop mirror Element at `eid` bound to `actor`. Idempotent for
 // duplicate eids (a silent no-op); skips an eid of 0 (an unminted sender) and the invalid id.
 // The register-mirror pattern: allocate, insert under the manager mutex, register, roll back

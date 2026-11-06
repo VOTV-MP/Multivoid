@@ -102,6 +102,10 @@ bool SetActorScale3D(void* actor, const FVector& scale);
 // InitialLifeSpan default gives). False on a resolution miss or a failed call. Game thread.
 bool SetActorLifeSpan(void* actor, float seconds);
 
+// AActor::GetLifeSpan: the seconds left before the actor's lifespan ends it, 0 when it has none. False on a resolution
+// miss or a failed call. Game thread.
+bool TryGetActorLifeSpan(void* actor, float& seconds);
+
 // UKismetSystemLibrary::CollectGarbage: a full purge at the end of the frame, paired with the
 // adoption sweep's destruction burst so pending-kill garbage does not wait for UE's 61 s periodic
 // purge. Game thread.

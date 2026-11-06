@@ -40,6 +40,9 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_act_selftest.cpp
     src/coop/props/prop_hold.cpp
     src/coop/props/prop_hold_claim.cpp
+    src/coop/props/prop_settle.cpp
+    src/coop/props/prop_tool_flags.cpp
+    src/coop/props/prop_fire_sync.cpp
     src/coop/props/remover_request.cpp
     src/coop/props/remote_prop.cpp
     src/coop/props/remote_prop_drive.cpp
@@ -661,6 +664,8 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_ambient_creature.cpp
     src/harness/autotest/autotest_ambient_field.cpp
     src/harness/autotest/autotest_sus_hole.cpp
+    src/harness/autotest/autotest_join_drop.cpp
+    src/harness/autotest/autotest_prop_fire.cpp
     src/ui/input_focus.cpp
     src/harness/screenshot.cpp
     src/harness/mod_environment.cpp

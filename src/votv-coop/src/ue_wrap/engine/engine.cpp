@@ -162,6 +162,7 @@ void* g_setTickFn = nullptr;
 void* g_getScaleFn = nullptr;
 void* g_setScaleFn = nullptr;
 void* g_setLifeFn = nullptr;
+void* g_getLifeFn = nullptr;
 void* g_setHiddenFn = nullptr;     // SetActorHiddenInGame (visual-only; instant-world deferred-hide)
 void* g_setCollisionFn = nullptr;  // SetActorEnableCollision (the Off mode of a mirror hide)
 
@@ -192,6 +193,7 @@ bool ResolveActorFns() {
         if (!g_getScaleFn) g_getScaleFn = R::FindFunction(g_actorClass, P::name::GetActorScale3DFn);
         if (!g_setScaleFn) g_setScaleFn = R::FindFunction(g_actorClass, P::name::SetActorScale3DFn);
         if (!g_setLifeFn) g_setLifeFn = R::FindFunction(g_actorClass, P::name::SetLifeSpanFn);
+        if (!g_getLifeFn) g_getLifeFn = R::FindFunction(g_actorClass, P::name::GetLifeSpanFn);
         if (!g_setHiddenFn) g_setHiddenFn = R::FindFunction(g_actorClass, P::name::SetActorHiddenInGameFn);
         if (!g_setCollisionFn) g_setCollisionFn = R::FindFunction(g_actorClass, P::name::SetActorEnableCollisionFn);
     }
@@ -520,6 +522,12 @@ bool SetActorLifeSpan(void* actor, float seconds) {
     if (!actor || !ResolveActorFns() || !g_setLifeFn) return false;
     ParamFrame f(g_setLifeFn);
     return f.Set<float>(L"InLifespan", seconds) && Call(actor, f);
+}
+
+bool TryGetActorLifeSpan(void* actor, float& seconds) {
+    if (!actor || !ResolveActorFns() || !g_getLifeFn) return false;
+    ParamFrame f(g_getLifeFn);
+    return Call(actor, f) && f.GetRaw(L"ReturnValue", &seconds, sizeof(seconds));
 }
 
 bool TryGetComponentWorldRotation(void* component, FRotator& out) {

@@ -205,4 +205,10 @@ DWORD WINAPI SusHoleThread(LPVOID arg);
 // VOTVCOOP_RUN_PLANT_STATE, both peers -- harness/autotest/autotest_plant_state.cpp
 DWORD WINAPI PlantStateThread(LPVOID arg);
 
+// VOTVCOOP_RUN_JOIN_DROP, both peers -- harness/autotest/autotest_join_drop.cpp
+DWORD WINAPI JoinDropThread(LPVOID arg);
+
+// VOTVCOOP_RUN_PROP_FIRE, both peers -- harness/autotest/autotest_prop_fire.cpp
+DWORD WINAPI PropFireThread(LPVOID arg);
+
 }  // namespace harness::autotest

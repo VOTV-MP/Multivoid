@@ -191,7 +191,11 @@ end marker arms the divergence sweep, deferred to quiescence: the locals the hos
 are the client's save-loaded world minus the host's, and they go
 (`coop/props/join_membership_sweep`). Two bounds keep a racing bracket from wiping a world: a
 per-class completeness floor keeps a class when the host expressed fewer of it than the joiner's
-census counted, and a valve aborts a sweep that would remove more than half of what it sees.
+census counted, and a valve aborts a sweep that would remove more than half of what it sees and
+more than eight props, since a racing bracket leaves hundreds unclaimed. A prop with a lifespan is
+spared like the player's own things: it is no save state, and the pinecone spawner, which a client
+runs around its own camera, gives its drops ten minutes. Before both, a stick that dropped on the
+joiner during the join made 2 of 3 doomed and stopped the sweep in about one join in eight.
 
 Visually the joiner never sees the reconcile. A full-screen curtain rises at connect and fades
 out when the primary world is assembled, at the end marker plus the spawn drain, seconds before
@@ -487,7 +491,7 @@ not raise the game's own active-event counter, whose save and pause blocks the m
 | The stale fallback streams the on-disk slot, which may be older than the live world, and the meadow, signal and email seeds are skipped for that join; it is not taken while the host is loading its world, which the joiner waits for instead | `[V]` `coop/save/save_transfer` logs it |
 | NOTHING stands behind the phase tokens. The whole-join failsafe is deleted (WP-B2): a join ends when a phase's token stops or the transport dies, never because a sum of independent durations crossed a number | `[V]` `coop/session/join_progress` |
 | The tokens are driven from `harness::TickPumpWatchdogs`, on the timeline thread, NOT from the render: an overlay that fails to install is non-fatal and the game boots on without it, which would otherwise leave every join budget dead for that session | `[V]` `harness/session_runtime.cpp`, `harness.cpp` logs the non-fatal install failure |
-| The divergence sweep aborts at its half-of-the-world valve and leaves the joiner's excess keyed props in place, unbound | `[V]` `coop/props/join_membership_sweep` |
+| The divergence sweep aborts at its half-of-the-world valve, past eight props, and leaves the joiner's excess keyed props in place, unbound | `[V]` `coop/props/join_membership_sweep` |
 
 ## Code map
 
