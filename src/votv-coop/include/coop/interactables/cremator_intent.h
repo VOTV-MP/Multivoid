@@ -43,8 +43,10 @@ void CountDropped(Drop why);
 
 // Host, dev: how many presses the judge has refused for this reason since the session began, counted whether or not
 // the DENY line was said (that line is rate-limited). The drill reads them to show why a press did not run. Game
-// thread.
-enum class Denied : uint8_t { HandleMoving, OutOfReach };
+// thread. NotAuthorized counts every refusal of the authorisation (no row, a dead sender, the wrong type, no target,
+// out of reach), not distance alone; HandleBusyOrUnread counts a handle mid-travel and one whose animation cannot be
+// read.
+enum class Denied : uint8_t { HandleBusyOrUnread, NotAuthorized };
 uint64_t DeniedCount(Denied why);
 
 // The session ended: the counters, with one summary line. A sender's queue, its rate and its said-once latches live

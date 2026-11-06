@@ -176,11 +176,11 @@ bool HostG2Double(const std::wstring& key) {
     const Reading on = Parse(seen);
     const int runs = Runs();
     const int presses = FieldOf(pressed, "presses=");
-    const int deniedMoving = DeniedSoFar(coop::cremator_intent::Denied::HandleMoving);
-    char what[460];
+    const int deniedMoving = DeniedSoFar(coop::cremator_intent::Denied::HandleBusyOrUnread);
+    char what[500];
     std::snprintf(what, sizeof(what),
                   "the client made %d press(es) (2 wanted); the host's copy %s, its lever ran %d time(s) (1 wanted), the client's copy '%s'; "
-                  "the judge refused %d press(es) for a moving handle (1 or more wanted)",
+                  "the judge refused %d press(es) for a moving or unread handle (1 or more wanted)",
                   presses, hostOn ? "reached on" : "never reached on", runs, seen.c_str(), deniedMoving);
     Verdict(presses == 2 && hostOn && runs == 1 && on.active == 1 && on.closed == 1 && deniedMoving >= 1, "g2-double", what);
     return true;
@@ -195,7 +195,7 @@ bool HostG2Far(const std::wstring& key) {
     // The client walks back before it says it is ready: a run the far press made would show by now.
     if (!Await("g2f_near_ready", kWalkWaitSec)) return false;
     const int runsFar = Runs();
-    const int deniedReach = DeniedSoFar(coop::cremator_intent::Denied::OutOfReach);
+    const int deniedReach = DeniedSoFar(coop::cremator_intent::Denied::NotAuthorized);
     const Reading hostNow = [&] {
         Reading r;
         OnGameThread([&] { r = ReadCopy(key); });
@@ -204,7 +204,7 @@ bool HostG2Far(const std::wstring& key) {
     char say[32];
     std::snprintf(say, sizeof(say), "runs=%d", runsFar);
     Mark("g2f_far_judged", say);
-    char what[480];
+    char what[520];
     if (runsFar != 0) {
         std::snprintf(what, sizeof(what), "the far press ran the host's lever %d time(s) (0 wanted); the client said '%s'; the host's copy %s",
                       runsFar, farText.c_str(), Text(hostNow).c_str());
@@ -220,7 +220,7 @@ bool HostG2Far(const std::wstring& key) {
     if (!AwaitText("g2f_on_seen", seen, kSignalSec)) return false;
     const Reading on = Parse(seen);
     std::snprintf(what, sizeof(what),
-                  "far press: %s, lever runs 0 (0 wanted), the judge refused %d press(es) for reach (1 or more wanted); near press: the host's "
+                  "far press: %s, lever runs 0 (0 wanted), the authorisation refused %d press(es), reach among its reasons (1 or more wanted); near press: the host's "
                   "copy %s, lever runs %d (1 wanted), the client's copy '%s'",
                   farText.c_str(), deniedReach, hostOn ? "reached on" : "never reached on", runsNear, seen.c_str());
     Verdict(deniedReach >= 1 && hostOn && runsNear == 1 && on.active == 1 && on.closed == 1, "g2-far", what);
