@@ -1,5 +1,5 @@
 // coop/commands/moderation_commands.h -- the moderation verbs as commands: /kick, /ban, /banid,
-// /unban, /tphere.
+// /unban, /tphere, /cremate.
 //
 // A domain's command bindings: this file registers the roots into a Registry and the handlers
 // call the domain through the PORTS handed in, captured by value, so no file static holds them.
@@ -15,6 +15,7 @@
 
 #include "coop/commands/command_registry.h"
 #include "coop/commands/command_targets.h"
+#include "coop/moderation/cremate.h"
 #include "coop/moderation/moderation.h"
 #include "coop/permissions/action_log.h"
 
@@ -32,6 +33,9 @@ struct Ports {
     mod::ModResult (*banOffline)(const char* id, const char* reason, bool byAddress) = nullptr;
     mod::ModResult (*unban)(const char* playerId) = nullptr;
     mod::ModResult (*teleport)(const mod::PlayerToken& token) = nullptr;
+    // Starts the trip to the crematorium; the later lines of the trip reach the order's seats through the port's own
+    // reply function.
+    mod::cremate::Result (*cremate)(const mod::cremate::Order& order) = nullptr;
     // A running hosted session: the verbs act only inside one.
     bool (*hosted)() = nullptr;
     // The banned ids that start with a prefix of an id.
@@ -45,7 +49,7 @@ struct Ports {
     void (*log)(const coop::permissions::Action& action) = nullptr;
 };
 
-// Registers /kick, /ban, /banid, /unban, /tphere into `reg`, in that order. False (and the
+// Registers /kick, /ban, /banid, /unban, /tphere, /cremate into `reg`, in that order. False (and the
 // registry as it was after the last root that registered) when a root is refused.
 bool Register(Registry& reg, const Ports& p);
 

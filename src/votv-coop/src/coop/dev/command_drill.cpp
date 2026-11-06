@@ -68,6 +68,7 @@ constexpr const char* kTooLongLine = "That line is too long.";
 constexpr const char* kHostLines[] = {
     "/ban <who> [reason...] -- Bans a player by id and, on a direct link, by address.",
     "/banid <who> [reason...] -- Bans a player by id only.",
+    "/cremate <who> -- Sends a player to the crematorium.",
     kHelpLine,
     "/kick <who> [reason...] -- Disconnects a player.",
     "/mv user <who> permission set <node> [value] [contexts...] -- Sets a permission on a player.",

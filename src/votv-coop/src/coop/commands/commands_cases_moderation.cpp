@@ -49,6 +49,8 @@ struct Rec {
     std::vector<Told> told;
     std::vector<uint32_t> toldGeneration;
     std::vector<coop::permissions::Action> logged;  // what the log port received
+    coop::moderation::cremate::Result cremateResult = coop::moderation::cremate::Result::Started;
+    coop::moderation::cremate::Order order;  // what the cremate port received
 };
 
 // Two sets of ports with separate records: `Id` is only a name for the statics.
@@ -78,6 +80,10 @@ struct Fakes {
         R().calls++; R().verb = "teleport"; R().token = t;
         return R().result;
     }
+    static coop::moderation::cremate::Result Cremate(const coop::moderation::cremate::Order& o) {
+        R().calls++; R().verb = "cremate"; R().token = o.target; R().order = o;
+        return R().cremateResult;
+    }
     static bool Hosted() { return R().hosted; }
     static std::vector<std::string> IdsWithPrefix(std::string_view prefix) {
         R().prefixAsked = std::string(prefix);
@@ -97,6 +103,7 @@ struct Fakes {
         p.banOffline = &BanOffline;
         p.unban = &Unban;
         p.teleport = &Teleport;
+        p.cremate = &Cremate;
         p.hosted = &Hosted;
         p.idsWithPrefix = &IdsWithPrefix;
         p.recordNick = &RecordNick;
@@ -352,6 +359,49 @@ void TeleportCases(Checker& check, const Registry& reg, const Caller& console, c
           "moderation: /tphere of the host is refused");
 }
 
+void CremateCases(Checker& check, const Registry& reg, const Caller& console, const Caller& bob) {
+    using F = Fakes<1>;
+    using coop::moderation::cremate::Result;
+    const auto runWith = [&](const Caller& who, const char* line, Result result) {
+        F::R() = Rec{};
+        F::R().cremateResult = result;
+        return Dispatch(reg, who, line, Seated(), MakePolicy());
+    };
+    check(Said(Run<1>(reg, console, "cremate Bob"), "Sending Bob to the crematorium.") &&
+              F::R().verb == "cremate" && TokenIs(F::R().token, 1, 2, 7) && F::R().order.targetNick == "Bob" &&
+              F::R().order.caller.slot == 0 && F::R().order.told.size() == 1 && F::R().order.told[0].slot == 3 &&
+              F::R().order.told[0].generation == 4,
+          "moderation: /cremate hands the verb the target's token, its nick, the caller and the notify seats");
+    check(F::R().told == std::vector<Told>{{3, "Host is sending Bob to the crematorium."}},
+          "moderation: /cremate tells the players holding notify that it is under way");
+    check(Said(Run<1>(reg, bob, "cremate Dee"), "Sending Dee to the crematorium.") &&
+              F::R().order.caller.slot == 1 && F::R().order.caller.generation == 7 &&
+              F::R().order.told.size() == 2 && F::R().order.told[1].slot == 0 &&
+              F::R().told == std::vector<Told>{{3, "Bob is sending Dee to the crematorium."},
+                                               {0, "Bob is sending Dee to the crematorium."}},
+          "moderation: a client's /cremate names the host's own feed among the seats it is told to");
+    check(Refused(Run<1>(reg, console, "cremate Host"), "That is the host -- it cannot be cremated.") &&
+              F::R().calls == 0,
+          "moderation: /cremate of the host is refused before the verb");
+    check(Said(Run<1>(reg, bob, "cremate Bob"), "You cannot cremate yourself.") && F::R().calls == 0,
+          "moderation: /cremate of the caller is refused at the command");
+    check(Said(Run<1>(reg, console, "cremate Cy"), "Cy is still joining.") && F::R().calls == 0,
+          "moderation: /cremate of a player still joining does nothing");
+    const struct { Result result; const char* reply; } refusals[] = {
+        {Result::Gone, "Dee already left."},
+        {Result::NoSession, "There is no hosted session."},
+        {Result::NotAlive, "Dee is not alive."},
+        {Result::Busy, "Dee is already on the way to the crematorium."},
+        {Result::NoCremator, "No crematorium is loaded."},
+        {Result::DoorStuck, "The cremator's door would not open."},
+        {Result::NotSent, "Could not send Dee to the crematorium."},
+    };
+    for (const auto& r : refusals) {
+        check(Said(runWith(console, "cremate Dee", r.result), r.reply) && F::R().told.empty() && F::R().logged.empty(),
+              "moderation: /cremate answers each refusal, tells nobody and records nothing");
+    }
+}
+
 // One record, every field: who acted, the target, the command line.
 bool OneRecord(const std::vector<coop::permissions::Action>& logged, const std::string& sourceId,
                const char* sourceName, const std::string& targetId, const char* targetName,
@@ -466,8 +516,15 @@ void LogCases(Checker& check, const Registry& reg, const Caller& console, const 
               "moderation action log: /tphere records nothing for a result that did not act");
     }
 
+    // /cremate
+    Run<1>(reg, console, "cremate Dee");
+    check(OneRecord(F::R().logged, "", "Host", d, "Dee", "/cremate " + d),
+          "moderation action log: /cremate records the target by id");
+    Run<1>(reg, console, "cremate Cy");
+    check(F::R().logged.empty(), "moderation action log: /cremate of a player still joining records nothing");
+
     // Outside a hosted session no verb runs, so none records.
-    for (const char* line : {"kick Cy", "ban Cy", "banid Cy", "unban 12345678", "tphere Dee"}) {
+    for (const char* line : {"kick Cy", "ban Cy", "banid Cy", "unban 12345678", "tphere Dee", "cremate Dee"}) {
         F::R() = Rec{};
         F::R().hosted = false;
         Dispatch(reg, console, line, Seated(), MakePolicy());
@@ -487,11 +544,18 @@ void ModerationCases(Checker& check) {
     bob.playerId = Repeat("b", 32);
 
     Registry reg;
-    check(moderation::Register(reg, Fakes<1>::MakePorts()), "moderation: the five roots register");
+    check(moderation::Register(reg, Fakes<1>::MakePorts()), "moderation: the six roots register");
     check(reg.FindRoot("kick", nullptr) != nullptr && reg.FindRoot("ban", nullptr) != nullptr &&
               reg.FindRoot("banid", nullptr) != nullptr && reg.FindRoot("unban", nullptr) != nullptr &&
-              reg.FindRoot("tphere", nullptr) != nullptr,
-          "moderation: kick, ban, banid, unban and tphere are roots");
+              reg.FindRoot("tphere", nullptr) != nullptr && reg.FindRoot("cremate", nullptr) != nullptr,
+          "moderation: kick, ban, banid, unban, tphere and cremate are roots");
+    {
+        const CommandSpec* cremate = reg.FindRoot("cremate", nullptr);
+        check(cremate != nullptr && reg.NodeOf(*cremate) == "multivoid.cremate" &&
+                  reg.FindNode("multivoid.cremate.exempt") != nullptr &&
+                  reg.FindNode("multivoid.cremate.notify") != nullptr,
+              "moderation: /cremate has its own node and its exempt and notify qualifier nodes");
+    }
     {
         const CommandSpec* ban = reg.FindRoot("ban", nullptr);
         const CommandSpec* banid = reg.FindRoot("banid", nullptr);
@@ -508,9 +572,10 @@ void ModerationCases(Checker& check) {
     BanCases(check, reg, console, bob);
     UnbanCases(check, reg, console);
     TeleportCases(check, reg, console, bob);
+    CremateCases(check, reg, console, bob);
     LogCases(check, reg, console, bob, breakActionLog);
 
-    for (const char* line : {"kick Cy", "ban Cy", "banid Cy", "unban 12345678", "tphere Dee"}) {
+    for (const char* line : {"kick Cy", "ban Cy", "banid Cy", "unban 12345678", "tphere Dee", "cremate Dee"}) {
         Fakes<1>::R() = Rec{};
         Fakes<1>::R().hosted = false;
         const DispatchResult r = Dispatch(reg, console, line, Seated(), MakePolicy());

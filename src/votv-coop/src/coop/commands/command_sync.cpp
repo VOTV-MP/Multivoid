@@ -20,6 +20,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/moderation/ban_list.h"
+#include "coop/moderation/cremate.h"
 #include "coop/moderation/moderation.h"
 #include "coop/moderation/seen_players.h"
 #include "coop/net/intent_bucket.h"
@@ -139,6 +140,18 @@ void LogAction(const coop::permissions::Action& a) {
         UE_LOGW("action log: could not append to actions.jsonl -- the action stands");
 }
 
+// The crematorium trip's lines go out through ReplyTo at the seat's own generation, as every other reply does.
+void CremateReply(const coop::moderation::cremate::ReplySeat& to, std::string_view line) {
+    Caller seat;
+    seat.slot = to.slot;
+    seat.generation = to.generation;
+    ReplyTo(seat, line);
+}
+
+coop::moderation::cremate::Result StartCremate(const coop::moderation::cremate::Order& order) {
+    return coop::moderation::cremate::Start(order, &CremateReply);
+}
+
 // The moderation commands' ports: the verbs of coop/moderation and this transport's ReplyTo.
 coop::commands::moderation::Ports RealModerationPorts() {
     coop::commands::moderation::Ports p;
@@ -147,6 +160,7 @@ coop::commands::moderation::Ports RealModerationPorts() {
     p.banOffline = &coop::moderation::BanOffline;
     p.unban = &coop::moderation::Unban;
     p.teleport = &coop::moderation::TeleportPlayerToMe;
+    p.cremate = &StartCremate;
     p.hosted = &coop::moderation::HostedSessionRunning;
     p.idsWithPrefix = &coop::ban_list::IdsWithPrefix;
     p.recordNick = &RecordNick;

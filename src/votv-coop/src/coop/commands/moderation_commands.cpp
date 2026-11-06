@@ -87,25 +87,31 @@ std::string ReasonOrDefault(const std::string& reason, const char* fallback) {
 
 // "<caller> kicked|banned <target>[: <reason>]" to every player the dispatcher listed as holding
 // the notify node, and to the host's own feed when a client acted (the host's reply is its own).
-void NotifyOthers(const Ports& p, const Context& ctx, const char* verb, const std::string& target,
-                  const std::string& reason) {
-    const PlayerView* caller = ViewOf(ctx.players, ctx.caller.slot);
-    std::string line = (caller != nullptr ? caller->nick : std::string("Someone")) + " " + verb + " " + target;
-    if (!reason.empty()) line += ": " + reason;
+std::vector<Caller> NotifyRecipients(const Context& ctx) {
+    std::vector<Caller> out;
     for (const PlayerView& v : ctx.players) {
         if (std::find(ctx.notifySlots.begin(), ctx.notifySlots.end(), v.slot) == ctx.notifySlots.end())
             continue;
         Caller to;
         to.slot = v.slot;
         to.generation = v.generation;
-        p.notify(to, line);
+        out.push_back(to);
     }
     if (ctx.caller.slot > 0) {
         Caller host;
         host.slot = 0;
         host.isOperator = true;
-        p.notify(host, line);
+        out.push_back(host);
     }
+    return out;
+}
+
+void NotifyOthers(const Ports& p, const Context& ctx, const char* verb, const std::string& target,
+                  const std::string& reason) {
+    const PlayerView* caller = ViewOf(ctx.players, ctx.caller.slot);
+    std::string line = (caller != nullptr ? caller->nick : std::string("Someone")) + " " + verb + " " + target;
+    if (!reason.empty()) line += ": " + reason;
+    for (const Caller& to : NotifyRecipients(ctx)) p.notify(to, line);
 }
 
 Handler KickHandler(const Ports& p) {
@@ -225,6 +231,45 @@ Handler TeleportHandler(const Ports& p) {
     };
 }
 
+mod::cremate::ReplySeat SeatOf(const Caller& c) {
+    mod::cremate::ReplySeat s;
+    s.slot = c.slot;
+    s.generation = c.generation;
+    return s;
+}
+
+// The refusals each answer a line and do nothing. The trip's own end is told by the verb to the caller and to the same
+// notify list this handler builds, so a client admin and the other admins hear what became of the target.
+Handler CremateHandler(const Ports& p) {
+    return [p](Context& ctx) {
+        if (!p.hosted()) { ctx.Reply(kNoSession); return; }
+        const PlayerView* v = TargetView(ctx, 0);
+        if (v == nullptr) { ctx.Reply("Could not find that player."); return; }
+        if (v->slot == ctx.caller.slot) { ctx.Reply("You cannot cremate yourself."); return; }
+        if (!v->worldReady) { ctx.Reply(v->nick + " is still joining."); return; }
+        mod::cremate::Order order;
+        order.target = TokenOf(*v);
+        order.targetNick = v->nick;
+        order.caller = SeatOf(ctx.caller);
+        for (const Caller& to : NotifyRecipients(ctx)) order.told.push_back(SeatOf(to));
+        using mod::cremate::Result;
+        switch (p.cremate(order)) {
+            case Result::Started:
+                ctx.Reply("Sending " + v->nick + " to the crematorium.");
+                NotifyOthers(p, ctx, "is sending", v->nick + " to the crematorium.", std::string());
+                Record(p, ctx, v->playerId, v->nick, "/cremate " + IdOrUnproved(v->playerId));
+                break;
+            case Result::Gone: ctx.Reply(v->nick + " already left."); break;
+            case Result::NoSession: ctx.Reply(kNoSession); break;
+            case Result::NotAlive: ctx.Reply(v->nick + " is not alive."); break;
+            case Result::Busy: ctx.Reply(v->nick + " is already on the way to the crematorium."); break;
+            case Result::NoCremator: ctx.Reply("No crematorium is loaded."); break;
+            case Result::DoorStuck: ctx.Reply("The cremator's door would not open."); break;
+            case Result::NotSent: ctx.Reply("Could not send " + v->nick + " to the crematorium."); break;
+        }
+    };
+}
+
 CommandSpec KickSpec(const Ports& p) {
     CommandSpec c;
     c.name = "kick";
@@ -274,12 +319,26 @@ CommandSpec TeleportSpec(const Ports& p) {
     return c;
 }
 
+// The caller need not be the console: a client admin holding multivoid.cremate may send a player, and a player holding
+// multivoid.cremate.exempt may not be sent (the dispatcher's own refusal, before this handler). The reason is the act's
+// own, so the command takes none.
+CommandSpec CremateSpec(const Ports& p) {
+    CommandSpec c;
+    c.name = "cremate";
+    c.description = "Sends a player to the crematorium.";
+    c.pastTense = "cremated";
+    c.args = {{"who", ArgKind::Player, false, true}};
+    c.qualifiers = {{"exempt", QualKind::Exempt}, {"notify", QualKind::Notify}};
+    c.handler = CremateHandler(p);
+    return c;
+}
+
 }  // namespace
 
 bool Register(Registry& reg, const Ports& p) {
     return reg.Register(KickSpec(p), nullptr) && reg.Register(BanSpec(p, true), nullptr) &&
            reg.Register(BanSpec(p, false), nullptr) && reg.Register(UnbanSpec(p), nullptr) &&
-           reg.Register(TeleportSpec(p), nullptr);
+           reg.Register(TeleportSpec(p), nullptr) && reg.Register(CremateSpec(p), nullptr);
 }
 
 }  // namespace coop::commands::moderation

@@ -548,6 +548,7 @@ set(VOTVCOOP_SOURCES
     src/coop/player/roster_ledger.cpp
     src/coop/moderation/ban_list.cpp
     src/coop/moderation/ban_list_selftest.cpp
+    src/coop/moderation/cremate.cpp
     src/coop/moderation/moderation.cpp
     src/coop/moderation/seen_players.cpp
     src/coop/server_profile/server_profile.cpp
