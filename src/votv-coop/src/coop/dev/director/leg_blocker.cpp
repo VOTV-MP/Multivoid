@@ -19,11 +19,6 @@ constexpr float kFloorProbeCm      = 300.f;  // the floor is traced down this fa
 
 }  // namespace
 
-bool IsPhysicsProp(void* actor) {
-    return actor && ue_wrap::prop::IsDescendantOfProp(actor) && !ue_wrap::prop::IsFrozen(actor) &&
-           !ue_wrap::prop::IsStatic(actor);
-}
-
 bool LegBlocker(const PlayerContext& ctx, const std::vector<ue_wrap::FVector>& route, size_t heading, void** prop,
                 ue_wrap::FVector* spot) {
     if (heading == 0 || heading >= route.size()) return false;
@@ -49,11 +44,11 @@ bool LegBlocker(const PlayerContext& ctx, const std::vector<ue_wrap::FVector>& r
     }
     const std::wstring actor = hit.actor ? R::ToString(R::NameOf(hit.actor)) : L"?";
     const std::wstring actorCls = hit.actor ? R::ClassNameOf(hit.actor) : L"?";
-    const bool isProp = IsPhysicsProp(hit.actor);
+    const bool isProp = hit.actor && ue_wrap::prop::IsDescendantOfProp(hit.actor);
     UE_LOGW("director/Goto:   the route's leg %zu (%.0f,%.0f,%.0f)->(%.0f,%.0f,%.0f) hits '%ls' (%ls) at "
             "(%.0f,%.0f,%.0f), %.0f cm along -- %s", heading, a.X, a.Y, a.Z, b.X, b.Y, b.Z, actor.c_str(),
             actorCls.c_str(), hit.point.X, hit.point.Y, hit.point.Z, std::hypot(hit.point.X - a.X, hit.point.Y - a.Y),
-            isProp ? "a physics prop, the blocker" : "not a prop");
+            isProp ? "a prop, the blocker" : "not a prop");
     if (!isProp) return false;
     *prop = hit.actor;
     *spot = hit.point;

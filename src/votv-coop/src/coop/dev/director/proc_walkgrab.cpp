@@ -14,6 +14,7 @@
 // Every action is at the human-INPUT seam. All OnTick runs on the game thread
 // (inside the ControlManager's per-tick closure), so engine calls are direct.
 
+#include "coop/dev/director/blocker_delete.h"
 #include "coop/dev/director/body_floor.h"
 #include "coop/dev/director/clear_hand.h"
 #include "coop/dev/director/detour.h"
@@ -423,11 +424,12 @@ public:
                 const bool onLeg = LegBlocker(ctx, goal_.route, wp_ + 1, &legProp, &legSpot);
                 const bool ahead = BlockerAhead(ctx, waypoints_[wp_], &blocker);
                 if (onLeg) blocker = legSpot;
-                // A prop on the leg is dragged aside with the physics grab, as a player moves a box out of a
-                // doorway (clearway.h); one the grab does not take, or the bound spent, is the detour's below.
-                if (onLeg && goal_.clearway.Offer(legProp, waypoints_[wp_])) {
-                    UE_LOGW("director/Goto: persistent stuck (toPile=%.0f) at a prop on the route's leg -- carrying it "
-                            "aside (episode %d)", toPile, stuckEpisodes_);
+                // A prop on the leg is deleted, the drill's answer to a box in a doorway (blocker_delete.h); a keyless
+                // one, the delete switched off, or the bound spent goes to the detour below.
+                if (onLeg && DeleteBlocker(ctx.player, legProp, legSpot, "the route's leg")) {
+                    pathed_ = false; waypoints_.clear(); wp_ = 0; lastWp_ = 0; bestWp_ = 1e9f; bestPile_ = 1e9f;
+                    UE_LOGW("director/Goto: persistent stuck (toPile=%.0f) -- deleted the prop on the route's leg, "
+                            "re-pathing (episode %d)", toPile, stuckEpisodes_);
                     return ProcStatus::Working;
                 }
                 if ((onLeg || ahead) && detours_ < kMaxDetours && floorZ_ > 0.f &&
