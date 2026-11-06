@@ -329,6 +329,16 @@ def check(tree: dict):
         fails.append(f"{PROTO}: cannot parse this ReliableKind row -- '{row}'. An enumerator "
                      f"this gate drops is never asked for a receiver, so an unreadable row is "
                      f"a hole in exactly the check it would have been subject to.")
+    # Two enumerators with one value: a rebase can merge two lanes' new kinds onto the same number with no conflict
+    # marker (measured 2026-11-06: PlantState 221 beside AmbientTreeState 221), and the wire then routes one as the other.
+    by_value = {}
+    for name, value in enums.items():
+        if value is not None:
+            by_value.setdefault(value, []).append(name)
+    for value, names in sorted(by_value.items()):
+        if len(names) > 1:
+            fails.append(f"{PROTO}: ReliableKind value {value} is claimed by {', '.join(names)} -- two kinds on one "
+                         f"number reach the same receiver; renumber one.")
     if len(enums) < 100:
         fails.append(f"{PROTO}: parsed {len(enums)} ReliableKind enumerators, expected >=100. "
                      f"The enum moved or its shape changed -- fix this parser before trusting "
@@ -589,6 +599,11 @@ def drill() -> int:
         "switch (msg.kind) {",
         "switch (msg.kind) {\n    case net::ReliableKind::DoorState: break;", 1)
     controls.append(("one kind claimed twice", t, "DoorState = 9 is claimed by"))
+
+    # 4b. two enumerators on one value.
+    t = dict(base)
+    t[PROTO] = t[PROTO].replace("    LightGroupState = 129,", "    LightGroupState = 9,", 1)
+    controls.append(("two kinds on one value", t, "ReliableKind value 9 is claimed by"))
 
     # 5. an enum row this parser cannot read must not pass silently.
     t = dict(base)
