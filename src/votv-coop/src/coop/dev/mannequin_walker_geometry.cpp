@@ -98,7 +98,7 @@ bool EnterRange(void* walker, const char* who, bool (*hunted)(void* walker)) {
     OnGameThread([&] {
         void* pawn = coop::players::Registry::Get().Local();
         cm = pawn && walker && E::TryGetActorLocation(pawn, me) && E::TryGetActorLocation(walker, at) ? Dist3(me, at) : -1.f;
-        taken = hunted(walker);
+        taken = hunted(walker) && cm <= kInRangeCm;
     });
     char why[200];
     if (cm < 0.f) {
@@ -107,21 +107,22 @@ bool EnterRange(void* walker, const char* who, bool (*hunted)(void* walker)) {
     }
     if (taken) return true;
     // The walk goes toward the walker itself, along the NavMesh (a point on the straight line from the walker is not one: from the
-    // bed it lies in the house's walls), and it ends on the EVENT, the walker taking this player as its target. Its reach is only
-    // the walk's own end, if the hunt never comes.
+    // bed it lies in the house's walls), and it ends as soon as the walker hunts this player from inside its own range: the hunt
+    // alone is not that (walker_target gives the host a walker with nobody in range, measured pr84 s7: taken at 20122 cm), so the
+    // 3D distance, the Blueprint's own GetDistanceTo measure, is read beside it. Its reach is only the walk's own end.
     char what[96];
     std::snprintf(what, sizeof(what), "%s toward the walker", who);
     std::shared_ptr<DIR::BackgroundWalk> walk;
-    OnGameThread([&] { walk = DIR::StartBackgroundWalk(at, kInRangeCm, kWalkDeadlineS); });
+    OnGameThread([&] { walk = DIR::StartBackgroundWalk(at, kStepReachCm, kWalkDeadlineS); });
     bool hunting = false;
     PS::WaitFor(what, kWalkWaitS, [&] {
-        OnGameThread([&] { hunting = hunted(walker); });
+        OnGameThread([&] { hunting = hunted(walker) && PlayerTo(walker) <= kInRangeCm; });
         return hunting || walk->state.load() != 0;
     }, false);
     if (!hunting) {
         // The walk ended at its reach, inside the walker's range: its next read of the range takes this player.
         PS::WaitFor(what, kHuntGraceS, [&] {
-            OnGameThread([&] { hunting = hunted(walker); });
+            OnGameThread([&] { hunting = hunted(walker) && PlayerTo(walker) <= kInRangeCm; });
             return hunting;
         }, false);
     }
