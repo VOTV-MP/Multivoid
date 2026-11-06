@@ -251,6 +251,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::AmbientTreeState:
     case ReliableKind::AmbientFixtureState:
     case ReliableKind::CrematorState:
+    case ReliableKind::CrematorHit:
         return ClientAuthorship::Host;
     }
     return ClientAuthorship::NotAKind;  // a byte value that names no kind: refused like Host

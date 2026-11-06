@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 275;
+inline constexpr uint16_t kProtocolVersion = 276;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1307,6 +1307,13 @@ enum class ReliableKind : uint8_t {
     // sender has no body on the host yet waits in its queue. Late join: none, a press is an act. KeyedTogglePayload;
     // its action is the state the press wants (1 on, 0 off), and the host refuses a press whose state already holds.
     CrematorIntent = 227,
+    // HOST->OWNER: a cremator on the host hurt this peer's puppet, and the peer's own machine applies it to its own
+    // player. Verb 0 is the machine's damage call (the owner decides the amount: the Blueprint's own split on its
+    // health), verb 1 its ignite (igniteSeconds, clamped by the receiver). The key is the cremator's lane key, which
+    // the owner's copy resolves. Host-authored: a client's copy is refused at the host's receive edge; sent to one
+    // slot, never relayed; Default lane, not pre-world. Late join: none, a hit is an act and the machine hits again
+    // each second. PROVISIONAL number, final at landing. CrematorHitPayload.
+    CrematorHit = 228,
 };
 
 #pragma pack(push, 1)
@@ -3409,6 +3416,19 @@ static_assert(sizeof(PlayerHitPayload) == 52,
               "PlayerHitPayload must be exactly 52 bytes");
 static_assert(sizeof(PlayerHitPayload) <= 256 - 20 - 8,
               "PlayerHitPayload must fit in one reliable datagram");
+
+// A cremator's hit on a player (CrematorHit), host to the victim's own machine. `key` is the cremator's lane key as
+// KeyedTogglePayload carries it; `verb` is kCrematorHitVerb*; `igniteSeconds` is read for the ignite verb alone.
+inline constexpr uint8_t kCrematorHitVerbDamage = 0;
+inline constexpr uint8_t kCrematorHitVerbIgnite = 1;
+struct CrematorHitPayload {
+    WireKey key;            // 32
+    uint8_t verb;           // 1
+    uint8_t pad[3];         // 3 -- zero
+    float   igniteSeconds;  // 4
+};
+static_assert(sizeof(CrematorHitPayload) == 40, "CrematorHitPayload must be 40 bytes");
+static_assert(sizeof(CrematorHitPayload) <= 256 - 20 - 8, "CrematorHitPayload must fit in one reliable datagram");
 
 // WispGrab, host to one victim: the host's wisp is grabbing this client's puppet; the host
 // neutralized its own false grab and tells the victim to ragdoll-die after a fixed delay. The

@@ -8,7 +8,8 @@
 // four verbs a hit runs on a puppet -- `Add Player Damage`, `addDamage`, `punch` and `ragdollMode` --
 // on every machine, whoever the caller is. On the host, a cancelled `addDamage` or `punch` whose caller
 // is a creature of a parked family (coop/creatures/creature_hit.h) is delivered to the puppet's peer
-// (coop/player/player_hit.h), which runs the same verb on its own player.
+// (coop/player/player_hit.h), which runs the same verb on its own player; so is a cancelled `addDamage` or `ignite`
+// whose caller is a cremator, as a CrematorHit (coop/player/cremator_hit.h).
 
 #pragma once
 

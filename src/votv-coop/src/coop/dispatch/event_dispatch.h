@@ -64,8 +64,9 @@ bool HandleIntentEvent(net::Session& session,
 bool HandleContainerActEvent(net::Session& session,
                              const net::Session::ReliableMessage& msg);
 
-// Cremator family: the machine's lever run. CrematorState is the HOST->CLIENT state, dropped on the host and from any
-// sender but slot 0; CrematorIntent is a client's handle press, checked for role()==Host AND a client sender slot.
+// Cremator family: the machine's lever run and its hits. CrematorState is the HOST->CLIENT state and CrematorHit the
+// HOST->OWNER hit on a player, each dropped on the host and from any sender but slot 0; CrematorIntent is a client's
+// handle press, checked for role()==Host AND a client sender slot.
 bool HandleCrematorEvent(net::Session& session,
                          const net::Session::ReliableMessage& msg);
 

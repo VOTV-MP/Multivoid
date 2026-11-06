@@ -26,3 +26,7 @@ CFG_FLAG(cremator_drill, "cremator_drill", "dev", false, "VOTVCOOP_CREMATOR_DRIL
     "'cremator-drill: VERDICT PASS|FAIL <arm>' from what the client signalled; G1 ends at 'cremator-drill: G1 DONE', "
     "the rejoin run at 'cremator-drill: DONE on host'. The second life carries VOTVCOOP_CREMATOR_DRILL_REJOIN=1. Red "
     "arm: the host's cremator_state_off. It MUTATES the world.")
+CFG_FLAG(cremator_hit_off, "cremator_hit_off", "dev", false, "VOTVCOOP_CREMATOR_HIT_OFF",
+    "Developer red arm of the cremator burn drill: never set. The host sends no hit for a cremator's damage or ignite "
+    "on a client's puppet (the puppet still takes none), so a client standing in the host's running cremator keeps "
+    "its health.")

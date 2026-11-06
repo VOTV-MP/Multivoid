@@ -151,7 +151,7 @@ bool KeybindDisplayName(const wchar_t* name, std::wstring& out) {
     return false;
 }
 
-bool ProgressAchievement(const wchar_t* name) {
+bool ProgressAchievement(const wchar_t* name, bool autosave) {
     void* p = Profile();
     if (!p || g_progressMissing) return false;
     if (!g_progressFn) {
@@ -165,7 +165,7 @@ bool ProgressAchievement(const wchar_t* name) {
     const R::FName achievement = fname_utils::StringToFName(name);
     if (achievement.ComparisonIndex == 0) return false;
     ParamFrame f(g_progressFn);
-    const bool popup = true, autosave = false;
+    const bool popup = true;
     if (!f.valid() || !f.Set(L"achievement", achievement) || !f.Set(L"popup", popup) ||
         !f.Set(L"autosave", autosave))
         return false;

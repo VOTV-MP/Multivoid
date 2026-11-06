@@ -129,6 +129,14 @@ while the handle is reversing is told `isActive` true, drives forward, and rever
 finish arrives, so its display is wrong for about two travels; and in the cool-down after a run, with
 `isActive` false and the fire still fading, it shows idle for up to ten seconds.
 
+A player burning in the host's cremator is hit on the host's machine, where the hit lands on the peer's
+puppet and is refused like any hit on a puppet. The cremator's own call is delivered to the peer instead,
+as a `CrematorHit` naming the cremator by its key (damage, or an ignite with the machine's fuel), and the
+peer's machine applies it to its own player by the Blueprint's own split on its own health: ten damage a
+hit, and the lethal one with the cremator achievement once that health is under ten. A hit whose
+cremator the peer's machine cannot resolve is dropped and counted, and the machine hits again within
+a second `[?]`.
+
 ### Security cameras
 
 A camera has two saved bits, each its own lane keyed by the lane's key for the camera (its portable
@@ -478,6 +486,7 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | `CameraToggleIntent` | a client to the host | a camera's key, which bit, the value wanted |
 | `CrematorState` | the host to all | a cremator's key and its lever run: on or off |
 | `CrematorIntent` | a client to the host | a cremator's key and the state the press wants: the handle was pressed |
+| `CrematorHit` | the host to the victim | a cremator's key and a hit on that peer's player: damage, or an ignite with its seconds |
 | `KeypadState` | the host to all | a verb the host's keypad ran, or the state a chain settled on: the buffer, the verdict, the set-new-code mode, the password, and whether the chain handed the verdict on |
 | `KeypadIntent` | a client to the host | a keypad's key and the entry: a digit, a submit, a cancel, a keycard's verdict, a reset |
 | `PowerControlState` | a client to the host; the host to all | the breakers a press flipped; the breakers, the lockout, a lever's click and each slot's last press taken |

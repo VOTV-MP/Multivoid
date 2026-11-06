@@ -39,9 +39,9 @@ bool AddStat(std::wstring_view name, int32_t n);
 // (mainGamemode.cpp:1757-1765). False when `name` is not bound or a member does not resolve. Game thread.
 bool KeybindDisplayName(const wchar_t* name, std::wstring& out);
 
-// save_main_C::progressAchievement(name, popup, autosave = false), which lib_C's own entry forwards to:
+// save_main_C::progressAchievement(name, popup = true, autosave), which lib_C's own entry forwards to:
 // the achievement progresses on this machine's profile, with its popup. False when it does not resolve.
 // Game thread.
-bool ProgressAchievement(const wchar_t* name);
+bool ProgressAchievement(const wchar_t* name, bool autosave = false);
 
 }  // namespace ue_wrap::profile
