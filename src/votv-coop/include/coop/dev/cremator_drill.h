@@ -6,13 +6,13 @@
 //       handle has finished; the host pulls it back: the copy reads 0.
 //   G4  with `--rejoin`: the host keeps it on; the client leaves, comes back (VOTVCOOP_CREMATOR_DRILL_REJOIN=1), and
 //       its copy must read active after its world-ready.
-// g3 and g5 run a burn alone: the host sends the client to the firebox with the admin verb's teleport order
-// (`/cremate`'s move), judges the landing by the cremator's begin-overlap, shuts the door and pulls the lever. g3: the
-// client dies by the machine. g5: the same, with the client's own copy watched -- its `actors` reads 0 at every look,
-// the client guard refused a collection, and the fireball births are reported, not judged.
-// Lines: "cremator-drill: VERDICT PASS|FAIL g1-on|g1-off|g4|g3|g5 ...", "G1|G3|G5 DONE" (host), "DONE on host|client",
-// "REJOIN DONE", "VERDICT ABORT ...". Red arms: the host's cremator_state_off=1 (G1, G4) and cremator_hit_off=1 (G3);
-// the client's cremator_client_guard_off=1 (G5).
+// g3, g3low and g5 run a burn alone: the host sends the client to the firebox with the admin verb's teleport order,
+// judges the landing by the cremator's begin-overlap, shuts the door and pulls the lever. g3: the client dies by the
+// machine. g3low: the same with the host's own health set to 5 before the lever; the host must refuse the burn loop's
+// achievement call for the puppet. g5: the same, the client's own copy watched (actors, refused collections, fireballs).
+// Lines: "cremator-drill: VERDICT PASS|FAIL g1-on|g1-off|g4|g3|g3low|g5 ...", "G1|G3|G3LOW|G5 DONE" (host), "DONE on
+// host|client", "REJOIN DONE", "VERDICT ABORT ...". Red arms: the host's cremator_state_off=1 (G1, G4),
+// cremator_hit_off=1 (G3) and player_damage_no_refusal=1 (G3LOW); the client's cremator_client_guard_off=1 (G5).
 
 #pragma once
 

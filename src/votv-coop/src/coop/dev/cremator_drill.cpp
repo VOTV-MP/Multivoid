@@ -13,6 +13,7 @@
 #include "coop/interactables/cremator_client_guard.h"  // G5: the refused collections
 #include "coop/interactables/interactable_sync.h"  // the cremator lane's key and its resolve
 #include "coop/net/session.h"
+#include "coop/player/player_damage.h"  // g3low: the refusals of the burn loop's achievement
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/session/net_pump.h"
@@ -273,17 +274,20 @@ void RunRejoin() {
 // ---- G3: a client in the host's running cremator dies by the machine ----------------------------------------------
 // The host moves the client with the admin verb's own order (TeleportClient, the `/cremate` move under test), judges the
 // landing by the cremator's own begin-overlap for the client's puppet, shuts the door and pulls the lever. The client
-// reports its own death, and the host judges it.
+// reports its own death, and the host judges it. g3low sets the host's own health under 10 before the lever: the burn
+// loop's achievement call then runs on the host with a puppet as its actor, and the host must refuse it.
 
 namespace CS = coop::dev::cremator_support;
 
 constexpr uint8_t kClientSlot = 1;
 constexpr int kLandSec  = 60;
 constexpr int kDeathSec = 240;
+constexpr float kLowHostHealth = 5.f;  // under the burn loop's 10-health test
 
 std::atomic<void*> g_g3Cremator{nullptr};
 std::atomic<void*> g_g3Puppet{nullptr};
 std::atomic<int>   g_g3Landed{0};
+float              g_hostHealthWas = -1.f;  // the host's health before BurnRun set it; the drill thread only
 
 // The cremator's begin-overlap: the client's puppet entering the cremator the burn was sent to.
 void OnLanding(void* cremator, void* other) {
@@ -319,9 +323,10 @@ std::wstring SendClientToFirebox(void*& cremator) {
 
 // The burn's host half, shared by the arms that put the client in the firebox: sends the client there, judges the
 // landing by the cremator's own begin-overlap, shuts the door and pulls the lever. `keyMark`, when set, leaves the
-// cremator's key for the client as soon as the order is out; `leverMark` is left once the lever ran. False on an abort
+// cremator's key for the client as soon as the order is out; `leverMark` is left once the lever ran. A `hostHealth`
+// of 0 or more is written to the host's own health once the client has landed, before the lever. False on an abort
 // (said).
-bool BurnRun(const char* arm, const char* keyMark, const char* leverMark) {
+bool BurnRun(const char* arm, const char* keyMark, const char* leverMark, float hostHealth = -1.f) {
     if (!Await("client_ready", kJoinSec)) return false;
     if (!PS::WaitFor("slot 1's join settled", kSignalSec, [] {
             bool ok = false;
@@ -337,6 +342,17 @@ bool BurnRun(const char* arm, const char* keyMark, const char* leverMark) {
     if (!PS::WaitFor("the cremator's overlap for the client's puppet", kLandSec,
                      [] { return g_g3Landed.load(std::memory_order_acquire) == 1; }))
         return false;
+    if (hostHealth >= 0.f) {
+        bool wrote = false;
+        float was = -1.f;
+        OnGameThread([&] {
+            ue_wrap::vitals::Read(ue_wrap::vitals::Field::Health, &was);
+            wrote = ue_wrap::vitals::Write(ue_wrap::vitals::Field::Health, hostHealth);
+        });
+        UE_LOGI("cremator-drill: HOST %hs set its own health to %.0f (was %.1f) ok=%d", arm, hostHealth, was, wrote ? 1 : 0);
+        if (!wrote) { UE_LOGW("cremator-drill: VERDICT ABORT -- the host's health write did not run"); return false; }
+        g_hostHealthWas = was;
+    }
     bool ran = false, wasOpened = false;
     OnGameThread([&] { ran = C::ShutDoor(cremator, wasOpened) && C::CallUseLever(cremator); });
     UE_LOGI("cremator-drill: HOST %hs pulled the lever ran=%d doorWasOpened=%d", arm, ran ? 1 : 0, wasOpened ? 1 : 0);
@@ -345,17 +361,28 @@ bool BurnRun(const char* arm, const char* keyMark, const char* leverMark) {
     return true;
 }
 
-void RunHostG3() {
-    if (!BurnRun("g3", nullptr, "g3_lever")) return;
+// g3: the client dies by the machine. g3low: the same, with the host's health under 10, and the host must also have
+// refused the burn loop's achievement call for the puppet (player_damage's count of refusals went up).
+void RunHostG3(bool low) {
+    const char* arm = low ? "g3low" : "g3";
+    const uint32_t refused0 = coop::player_damage::RefusedAchievements();
+    if (!BurnRun(arm, nullptr, "g3_lever", low ? kLowHostHealth : -1.f)) return;
     std::string text;
     if (!AwaitText("g3_dead", text, kDeathSec + 60)) return;
     const int dead = FieldOf(text, "dead=");
     const int seconds = FieldOf(text, "T=");
-    char what[160];
+    const uint32_t refused = coop::player_damage::RefusedAchievements() - refused0;
+    char what[200];
     if (dead == 1) std::snprintf(what, sizeof(what), "the client died by the machine T=%d", seconds);
     else std::snprintf(what, sizeof(what), "the client survived the host's run: %s", text.c_str());
-    Verdict(dead == 1, "g3", what);
-    UE_LOGI("cremator-drill: G3 DONE fails=%d", g_fails);
+    if (low) {
+        const size_t used = std::strlen(what);
+        std::snprintf(what + used, sizeof(what) - used, "; the host refused the cremator achievement %u time(s) (1 or more wanted)",
+                      refused);
+        OnGameThread([] { ue_wrap::vitals::Write(ue_wrap::vitals::Field::Health, g_hostHealthWas); });
+    }
+    Verdict(dead == 1 && (!low || refused >= 1), arm, what);
+    UE_LOGI("cremator-drill: %hs DONE fails=%d", low ? "G3LOW" : "G3", g_fails);
 }
 
 // This player is dead or has no health left. Game thread.
@@ -458,10 +485,10 @@ void RunClientG5() {
 
 DWORD WINAPI Thread(LPVOID /*arg*/) {
     if (!PS::Begin("cremator-drill")) return 0;
-    // `g3` and `g5` run the burn arms alone; `1` runs the lever arms.
+    // `g3`, `g3low` and `g5` run the burn arms alone; `1` runs the lever arms.
     const std::string arm = coop::config::ResolveEnum(coop::config_registry::rows::cremator_drill);
-    if (arm == "g3") {
-        if (harness::autotest::IsClientRole()) RunClientG3(); else RunHostG3();
+    if (arm == "g3" || arm == "g3low") {
+        if (harness::autotest::IsClientRole()) RunClientG3(); else RunHostG3(arm == "g3low");
         return 0;
     }
     if (arm == "g5") {

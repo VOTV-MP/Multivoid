@@ -34,6 +34,10 @@ void Tick();
 uint32_t RefusedDamage();
 uint32_t RefusedIgnites();
 
+// [dev], for the drill alone. The cremator achievement calls refused on the host because the burn loop's actor was a
+// peer's puppet. Any thread.
+uint32_t RefusedAchievements();
+
 // [dev], for the drill alone. The hits delivered to a peer: every call of player_hit::Deliver this
 // watch made. Any thread.
 uint32_t DeliveredCount();

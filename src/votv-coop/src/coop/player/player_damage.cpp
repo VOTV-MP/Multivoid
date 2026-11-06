@@ -394,6 +394,7 @@ void Install(coop::net::Session* session) {
 
 uint32_t RefusedDamage() { return g_verbCanceled.load(std::memory_order_relaxed); }
 uint32_t RefusedIgnites() { return g_igniteCanceled.load(std::memory_order_relaxed); }
+uint32_t RefusedAchievements() { return g_achievementRefused.load(std::memory_order_relaxed); }
 uint32_t DeliveredCount() { return g_delivered.load(std::memory_order_relaxed); }
 uint32_t MirrorHitCount() { return g_mirrorHits.load(std::memory_order_relaxed); }
 
