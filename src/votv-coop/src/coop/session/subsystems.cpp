@@ -154,6 +154,7 @@
 #include "coop/save/save_notice.h"
 #include "coop/props/grab_observer.h"
 #include "coop/player/item_activate.h"
+#include "coop/player/cremator_hit.h"
 #include "coop/player/player_damage.h"
 #include "coop/player/puppet_cremation.h"
 #include "coop/player/player_hit.h"
@@ -476,6 +477,7 @@ DisconnectStats DisconnectAll() {
     coop::kerfur_command::OnDisconnect();  // drop pending menu commands
     coop::remover_request::OnDisconnect();  // drop the remover queues and the shown notices
     coop::hit_intent::OnDisconnect();  // forget the once-per-session log latches
+    coop::cremator_hit::OnDisconnect();  // say the cremator hits sent and applied, forget the once-per-session latches
     coop::props::prop_damage_gate::OnDisconnect();  // say the cancelled counts, forget the once-per-class latches
     coop::props::container_act_host::OnDisconnect();  // restore the records held in escrow, drop the tallies and refusals
     coop::prop_act_host::OnDisconnect();  // drop the take-or-use tallies, refusals and reservations

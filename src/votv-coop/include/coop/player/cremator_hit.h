@@ -30,8 +30,13 @@ namespace coop::cremator_hit {
 bool Deliver(coop::net::Session& session, uint8_t slot, const std::wstring& key, uint8_t verb, float igniteSeconds);
 
 // Client: the wire, checked by the dispatcher for its role, sender, size, verb and key length. A non-finite or
-// negative ignite time is dropped. Posts the apply to the game thread, where a hit that finds no live player or no
-// cremator under its key is dropped and counted. Any thread.
+// negative ignite time is dropped. Posts the apply to the game thread, where a hit that finds no live player is
+// dropped and counted. A damage whose cremator key this machine's lane does not resolve is applied with no source,
+// counted and said once per key: the cremator is the damage's attribution, and the amount does not read it. Any thread.
 void OnReceived(const coop::net::CrematorHitPayload& payload);
+
+// Session end, either role: says the hits sent, refused, applied (and applied with no source), dropped and failed in
+// one line when any is non-zero, then forgets the counts and the once-per-session latches. Game thread.
+void OnDisconnect();
 
 }  // namespace coop::cremator_hit

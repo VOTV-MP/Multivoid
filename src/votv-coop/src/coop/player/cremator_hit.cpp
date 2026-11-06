@@ -36,10 +36,12 @@ constexpr float kLethalBelow    = 10.f;
 constexpr float kLethalDamage   = 9999.f;
 constexpr float kOrdinaryDamage = 10.f;
 
-// Game thread: the receive and apply side. The counts are in the lines that say them.
+// Game thread: the receive and apply side. The counts are said once, by OnDisconnect.
 uint32_t g_applied = 0;
 uint32_t g_dropped = 0;
+uint32_t g_unsourced = 0;  // damage applied with no source: the cremator's key did not resolve here
 uint32_t g_failedApplies = 0;
+uint32_t g_sent = 0;
 bool g_noPlayerSaid = false;
 bool g_healthSaid = false;
 bool g_igniteSaid = false;  // the first applied ignite has been said
@@ -102,15 +104,6 @@ void Apply(const coop::net::CrematorHitPayload& p) {
         }
         return;
     }
-    void* const cremator = coop::interactable_sync::ResolveCremator(key);
-    if (!cremator) {
-        const uint32_t n = ++g_dropped;
-        if (FirstUnresolved(coop::net::FnvKey(key)))
-            UE_LOGW("[CREMATOR-HIT] a hit from cremator key='%ls', which this machine's cremator lane does not resolve "
-                    "-- dropped; the machine hits again within a second (said once per key; #%u dropped in all)",
-                    key.c_str(), n);
-        return;
-    }
     if (p.verb == coop::net::kCrematorHitVerbIgnite) {
         const float seconds = std::clamp(p.igniteSeconds, kIgniteMinS, kIgniteMaxS);
         const bool ok = EN::InvokeMainPlayerIgnite(body, seconds);
@@ -122,6 +115,16 @@ void Apply(const coop::net::CrematorHitPayload& p) {
                     seconds, ok ? 1 : 0, g_applied);
         }
         return;
+    }
+    // The cremator is the damage's source and nothing else: the amount and the achievement do not read it. A copy this
+    // machine's lane does not resolve costs the hit nothing; it lands with no source, as MTA applies damage whose
+    // damager does not resolve (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientGame.cpp:4540).
+    void* const cremator = coop::interactable_sync::ResolveCremator(key);
+    if (!cremator) {
+        ++g_unsourced;
+        if (FirstUnresolved(coop::net::FnvKey(key)))
+            UE_LOGW("[CREMATOR-HIT] a hit from cremator key='%ls', which this machine's cremator lane does not resolve "
+                    "-- applied with no source (said once per key)", key.c_str());
     }
     float health = 0.f;
     const bool readHealth = ue_wrap::vitals::Read(ue_wrap::vitals::Field::Health, &health);
@@ -153,9 +156,22 @@ bool Deliver(coop::net::Session& session, uint8_t slot, const std::wstring& key,
     coop::net::WireKeyFromString(key, p.key);
     p.verb = verb;
     p.igniteSeconds = verb == coop::net::kCrematorHitVerbIgnite ? igniteSeconds : 0.f;
-    if (session.SendReliableToSlot(slot, coop::net::ReliableKind::CrematorHit, &p, sizeof(p), /*senderSlot=*/0))
+    if (session.SendReliableToSlot(slot, coop::net::ReliableKind::CrematorHit, &p, sizeof(p), /*senderSlot=*/0)) {
+        ++g_sent;
         return true;
+    }
     return Refused(RefusedWhy::SessionRefused, slot);
+}
+
+void OnDisconnect() {
+    if (g_sent || g_refusedSends || g_applied || g_dropped || g_failedApplies)
+        UE_LOGI("[CREMATOR-HIT] session end: sent=%u refused_sends=%u applied=%u (of them no source=%u) "
+                "dropped_no_player=%u failed_applies=%u",
+                g_sent, g_refusedSends, g_applied, g_unsourced, g_dropped, g_failedApplies);
+    g_sent = g_refusedSends = g_applied = g_unsourced = g_dropped = g_failedApplies = 0;
+    g_noPlayerSaid = g_healthSaid = g_igniteSaid = g_damageSaid = false;
+    g_unresolvedCount = 0;
+    for (bool& said : g_refusedSaid) said = false;
 }
 
 void OnReceived(const coop::net::CrematorHitPayload& payload) {
