@@ -139,7 +139,7 @@ a row; the full ledger is [docs/credits.md](docs/credits.md).
 | **Claude** (Anthropic) | code | Implementation, across the whole mod | 1,367 commits |
 | **Tarangok** | code | KO respawn, live skin preview, held-prop visibility, container extraction | 5 commits |
 | **hediiiqq** | code | Dish mirror interpolation | 1 commit |
-| [**arigalit**](https://github.com/arigalit) | code · report | ATV seat contention ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)); join-time prop-count divergence | 2 commits |
+| [**arigalit**](https://github.com/arigalit) | code · report | ATV seat contention ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)); join-time prop-count divergence; the grappling-hook lane ([#16](https://github.com/VOTV-MP/Multivoid/pull/16)); the drone timer, desk ping, sleeping bag, notebook, revive fire, cord plug and coffee machines ([#50](https://github.com/VOTV-MP/Multivoid/pull/50)); the Geom Octa in the NPC lane ([#48](https://github.com/VOTV-MP/Multivoid/pull/48)); an admin's crematorium order ([#57](https://github.com/VOTV-MP/Multivoid/pull/57)) | 15 commits · unreleased |
 | [**huoyan1231**](https://github.com/huoyan1231) | code · report | CI and automated builds; the b125 host-log pack | 2 commits · b134 |
 | **Marlore** | code · report | Nine symptoms in the trash carry ([#29](https://github.com/VOTV-MP/Multivoid/pull/29)); four were real and are fixed at the root | 6 commits · unreleased |
 | [**archhn0madd**](https://github.com/archhn0madd) | code | Rejoin without a relaunch — the boot poll answered from the dying world | 1 commit |
