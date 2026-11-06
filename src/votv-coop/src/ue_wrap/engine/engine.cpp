@@ -231,9 +231,14 @@ void* SpawnActor(void* actorClass, const FVector& location, bool inertPawn, Befo
 
     // Before FinishSpawningActor runs BeginPlay the pawn is made inert: BeginPlay's native auto-possess reads the
     // fields MakePawnInert clears.
-    if (inertPawn && !MakePawnInert(actor))
-        UE_LOGE("engine: SpawnActor inertPawn requested for '%ls', which is not a pawn -- it is left as spawned",
-                R::ClassNameOf(actor).c_str());
+    if (inertPawn) {
+        const PawnInertResult inert = MakePawnInert(actor);
+        if (inert != PawnInertResult::Made)
+            UE_LOGE("engine: SpawnActor inertPawn requested for '%ls', which %s -- it is left as spawned",
+                    R::ClassNameOf(actor).c_str(),
+                    inert == PawnInertResult::Unresolved ? "could not be judged (the Pawn class did not resolve)"
+                                                         : "is not a pawn");
+    }
     // The caller's last word on the deferred actor: what must hold from its BeginPlay on is set here.
     if (beforeFinish) beforeFinish(ctx, actor);
 

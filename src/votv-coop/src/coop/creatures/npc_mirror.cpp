@@ -359,8 +359,19 @@ bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t 
     // one the owner's keysync set (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientPed.cpp:876-921,
     // GetControllerState reads the pad only for the local ped; :961-972, AddKeysync takes a remote ped only). The
     // AnimBPs read the pawn's velocity, which the pose drive writes, and need no controller.
-    // A non-pawn class is left as spawned.
-    E::MakePawnInert(spawned);
+    // A non-pawn class is left as spawned; a pawn that could not be judged is said once per class.
+    if (E::MakePawnInert(spawned) == E::PawnInertResult::Unresolved) {
+        constexpr size_t kInertWarnCap = 32;
+        static void* warned[kInertWarnCap] = {};
+        static size_t warnedCount = 0;
+        bool seen = false;
+        for (size_t i = 0; i < warnedCount && !seen; ++i) seen = (warned[i] == actorClass);
+        if (!seen && warnedCount < kInertWarnCap) {
+            warned[warnedCount++] = actorClass;
+            UE_LOGW("npc-sync[client OnSpawn]: '%ls' could not be made inert (the Pawn class did not resolve) -- "
+                    "its mirror keeps the AI controller the engine gives it", classW.c_str());
+        }
+    }
     // A mirror of a parked family is marked before the finish runs its BeginPlay, which the graph watches refuse.
     coop::npc_mirror_brain::PrepareBirth(spawned);
     {

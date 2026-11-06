@@ -152,10 +152,19 @@ FRotator GetCameraRotation() {
     return rot;
 }
 
-bool MakePawnInert(void* deferredPawn) {
-    if (!deferredPawn || !ResolvePawnFns()) return false;
+PawnInertResult MakePawnInert(void* deferredPawn) {
+    if (!deferredPawn) return PawnInertResult::NotAPawn;
+    if (!g_pawnClass) g_pawnClass = R::FindClass(P::name::PawnClassName);
+    if (!g_pawnClass) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            UE_LOGW("engine: MakePawnInert: the Pawn class did not resolve -- no pawn is made inert");
+        }
+        return PawnInertResult::Unresolved;
+    }
     void* const cls = R::ClassOf(deferredPawn);
-    if (!cls || !R::IsDescendantOfAny(cls, &g_pawnClass, 1)) return false;
+    if (!cls || !R::IsDescendantOfAny(cls, &g_pawnClass, 1)) return PawnInertResult::NotAPawn;
 
     // Zeroing AutoPossessPlayer keeps the pawn from grabbing a second player controller (which stole the local
     // player's input and view); zeroing AutoPossessAI keeps BeginPlay from spawning an AI controller for it. Plain
@@ -169,9 +178,20 @@ bool MakePawnInert(void* deferredPawn) {
     // code (other blueprint systems iterating pawns and calling SpawnDefaultController) acquiring one from the class
     // default. Nulling the class closes that path.
     *reinterpret_cast<void**>(a + P::off::APawn_AIControllerClass) = nullptr;
-    UE_LOGI("engine: MakePawnInert '%ls' -> no player possess, no AI possess, AIControllerClass=null, bBlockInput=1",
-            R::ClassNameOf(deferredPawn).c_str());
-    return true;
+
+    // One INFO line per class: the set of pawn classes a session spawns is small and fixed, so a full table
+    // (past kInertLoggedCap distinct classes) stops logging and nothing else.
+    constexpr size_t kInertLoggedCap = 32;
+    static void* logged[kInertLoggedCap] = {};
+    static size_t loggedCount = 0;
+    bool seen = false;
+    for (size_t i = 0; i < loggedCount && !seen; ++i) seen = (logged[i] == cls);
+    if (!seen && loggedCount < kInertLoggedCap) {
+        logged[loggedCount++] = cls;
+        UE_LOGI("engine: MakePawnInert '%ls' -> no player possess, no AI possess, AIControllerClass=null, bBlockInput=1",
+                R::ClassNameOf(deferredPawn).c_str());
+    }
+    return PawnInertResult::Made;
 }
 
 bool DestroyActor(void* actor) {
