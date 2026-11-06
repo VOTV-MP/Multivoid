@@ -6,6 +6,7 @@
 #include "coop/interactables/coffee_intent.h"
 #include "coop/interactables/coffee_state.h"
 #include "coop/interactables/cord_sync.h"
+#include "coop/interactables/cremator_client_guard.h"
 #include "coop/interactables/cremator_intent.h"
 #include "coop/interactables/cremator_state.h"
 #include "coop/interactables/desk_verb_intent.h"
@@ -39,6 +40,7 @@ void Install(coop::net::Session& session) {
     coop::coffee_state::Install(&session);       // the coffee maker's state is the host's: it publishes the maker's record, a client's fill is cancelled
     coop::cremator_state::Install(&session);     // the cremator's lever run is the host's: it sends isActive at the handle's finish, a client's copy drives its own handle to it
     coop::cremator_intent::Install(&session);    // a client's press of the cremator's handle is run by the host
+    coop::cremator_client_guard::Install(&session);  // a client's cremator copy collects nothing, opens no running door, pours no fuel
 }
 
 void Tick(coop::net::Session& session) {
@@ -57,6 +59,7 @@ void Tick(coop::net::Session& session) {
     coop::coffee_state::Tick();         // settle the maker's brew and fill gates
     coop::cremator_state::Tick();       // settle the cremator's handle gates
     { ue_wrap::ScopedWalkTimer _w{"sync:cremator"}; coop::cremator_intent::Tick(session); }  // settle its gate; HOST: run one queued handle press a tick a client
+    coop::cremator_client_guard::Tick();  // settle the client guard's gates
 }
 
 void ConnectReplayForSlot(int slot) {
@@ -79,6 +82,7 @@ void OnDisconnect() {
     coop::coffee_state::OnDisconnect();    // the maker's own fill runs where it is made
     coop::cremator_state::OnDisconnect();  // the held wants go with the session
     coop::cremator_intent::OnDisconnect(); // a cremator's own press runs where it is made
+    coop::cremator_client_guard::OnDisconnect();  // the guard's counters
 }
 
 }  // namespace coop::verb_lanes

@@ -412,6 +412,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/coffee_state.cpp
     src/coop/interactables/cremator_state.cpp
     src/coop/interactables/cremator_intent.cpp
+    src/coop/interactables/cremator_client_guard.cpp
     src/coop/interactables/laptop_sync.cpp
     src/coop/interactables/laptop_tab.cpp
     src/coop/interactables/portable_pc_lid.cpp

@@ -27,6 +27,10 @@ namespace coop::cremator_state {
 bool ReadState(void* cremator, bool& on);
 bool ApplyState(void* cremator, bool on);
 
+// The cremator whose door `door` is, when this client holds a want for it, and what that want is. False for any other
+// lid, one lookup (coop/interactables/cremator_client_guard asks it at every lid's open). Game thread.
+bool HeldWantOfDoor(void* door, void*& cremator, bool& wantOn);
+
 // Registers the lane's three name watches, once per session start (coop/interactables/verb_lanes). A watch the gate
 // refused is final for the process and said once. Game thread.
 void Install(coop::net::Session* session);

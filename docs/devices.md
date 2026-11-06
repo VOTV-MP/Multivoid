@@ -129,6 +129,15 @@ while the handle is reversing is told `isActive` true, drives forward, and rever
 finish arrives, so its display is wrong for about two travels; and in the cool-down after a run, with
 `isActive` false and the fire still fading, it shows idle for up to ten seconds.
 
+A client's copy of the machine acts on nothing. Its `addObject` is refused, so the copy collects no one and
+holds no prop to burn or destroy: the burn a client's player takes is the host's machine's, delivered below,
+and a burnt prop's destruction is the host's, which reaches the client like any destroy. The copy's door is
+not opened by a player's use while the copy runs or the lane holds an on want for it (the host's door is
+locked for the run; a client's is unlocked until the host's state arrives, so the window is the state's trip).
+A press of the fuel valve is refused and not sent: the pour runs from the fuel the machine makes, which does
+not cross, so the copy holds none to show, and the host pours until the gasoline package carries it. A
+client's fuel gauge therefore reads zero `[?]`.
+
 A player burning in the host's cremator is hit on the host's machine, where the hit lands on the peer's
 puppet and is refused like any hit on a puppet. The cremator's own call is delivered to the peer instead,
 as a `CrematorHit` naming the cremator by its key (damage, or an ignite with the machine's fuel), and the

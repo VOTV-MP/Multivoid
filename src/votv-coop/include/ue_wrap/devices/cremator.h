@@ -23,12 +23,18 @@ bool IsCremator(void* obj);
 // another class.
 std::wstring GetKeyString(void* cremator);
 
+// The action both the handle and the valve answer to: the machine's actionOptionIndex(player, hit, action, ...) pulls
+// the handle, or turns the valve, at this value when the last look-at hit it; every other value is a look-at option.
+inline constexpr uint8_t kPressAction = 4;
+
 // The lever run: isActive (the burn is on), anim (the handle is mid-travel), isClosed (the door is shut and
-// latched), lookingAt_handle (the last look-at hit the handle), windup (0..1 ramp), gasAmount.
+// latched), lookingAt_handle and lookingAt_valve (the last look-at hit the handle, or the fuel valve), windup (0..1
+// ramp), gasAmount.
 bool ReadActive(void* cremator, bool& value);
 bool ReadAnim(void* cremator, bool& value);
 bool ReadClosed(void* cremator, bool& value);
 bool ReadLookingAtHandle(void* cremator, bool& value);
+bool ReadLookingAtValve(void* cremator, bool& value);
 bool ReadWindup(void* cremator, float& value);
 bool ReadGasAmount(void* cremator, float& value);
 

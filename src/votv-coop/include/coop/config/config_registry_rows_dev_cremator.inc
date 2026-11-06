@@ -29,6 +29,10 @@ CFG_ENUM(cremator_drill, "cremator_drill", "dev", "off", "off|1|g3", "VOTVCOOP_C
     "sends the client to the firebox with the admin verb's teleport order, shuts the door and pulls the lever, and "
     "the client signals its death; the host prints 'cremator-drill: VERDICT PASS|FAIL g3' and 'cremator-drill: G3 "
     "DONE'. Red arm: the host's cremator_hit_off. It MUTATES the world.")
+CFG_FLAG(cremator_client_guard_off, "cremator_client_guard_off", "dev", false, "VOTVCOOP_CREMATOR_CLIENT_GUARD_OFF",
+    "Developer red arm of the cremator guard drill: never set. A client's cremator copy collects the sitter, opens its "
+    "door and turns its valve on its own account, so a client standing in the host's running cremator burns in its "
+    "own copy too.")
 CFG_FLAG(cremator_hit_off, "cremator_hit_off", "dev", false, "VOTVCOOP_CREMATOR_HIT_OFF",
     "Developer red arm of the cremator burn drill: never set. The host sends no hit for a cremator's damage or ignite "
     "on a client's puppet (the puppet still takes none), so a client standing in the host's running cremator keeps "

@@ -209,6 +209,17 @@ bool ApplyState(void* cremator, bool on) {
     return true;
 }
 
+bool HeldWantOfDoor(void* door, void*& cremator, bool& wantOn) {
+    SyncGeneration();
+    const auto it = g_doors.find(door);
+    if (it == g_doors.end()) return false;
+    const Want* w = HeldWant(it->second);
+    if (!w) return false;
+    cremator = it->second;
+    wantOn = w->on;
+    return true;
+}
+
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     RegisterWatches();

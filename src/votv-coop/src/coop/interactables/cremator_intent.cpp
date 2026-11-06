@@ -38,10 +38,6 @@ namespace sg = ue_wrap::script_gate;
 UE_FACT_FN(kRowPress, "cremator_intent", L"cremator_C", L"actionOptionIndex", Declared);
 constexpr int kTagPress = 0x43524950;  // 'CRIP'
 
-// The action both the handle and the valve answer to: the machine's actionOptionIndex(player, hit, action, ...) pulls
-// the handle at this value when the last look-at hit it; every other value is a look-at option.
-constexpr uint8_t kPressAction = 4;
-
 // The reach a sender's press is judged against. A player's use reaches as far as the look-at trace, whose length is
 // mainPlayer.armLength: 200 by default. Twice the default is the reach; the authority adds the machine's own bounds
 // radius and a 600 uu allowance for the puppet's pose lagging the sender (coop/element/intent_authority). The
@@ -187,8 +183,8 @@ bool Execute(coop::net::Session& s, const coop::net::KeyedTogglePayload& p, uint
 }
 
 // ---- the client's gate -----------------------------------------------------------------------
-// Before the body, on a client: the handle's press is sent to the host and its body refused. The valve and every
-// other action run natively.
+// Before the body, on a client: the handle's press is sent to the host and its body refused. The valve's press is
+// refused by coop/interactables/cremator_client_guard; every other action runs natively.
 sg::Verdict OnPressPre(const sg::Call& call) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running() || s->role() != coop::net::Role::Client) return sg::Verdict::Run;
@@ -202,7 +198,7 @@ sg::Verdict OnPressPre(const sg::Call& call) {
         }
         return sg::Verdict::Run;
     }
-    if (*(call.locals + off) != kPressAction) return sg::Verdict::Run;
+    if (*(call.locals + off) != C::kPressAction) return sg::Verdict::Run;
     bool handle = false;
     if (!C::ReadLookingAtHandle(call.object, handle) || !handle) return sg::Verdict::Run;
     // A call on an object of a world this client has not announced ready is that world's load, the host's save: it

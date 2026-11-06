@@ -7,7 +7,7 @@
 // press and not in useLever), that the machine is not already in the wanted state, and, for a start, that its door
 // is shut; then it pulls its lever. The run crosses by cremator_state, so every copy shows it. The host does not
 // replay the press itself: its look-at is the host player's own, so the judge calls useLever directly; the 2D lever
-// sound of a replayed press is not played. The valve and every other action of the cremator run natively here.
+// sound of a replayed press is not played. The valve's press is refused by cremator_client_guard; every other action of the cremator runs natively here.
 // MTA precedent: a client's use of a shared element is a request the server checks against its own state and runs
 // (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:3018, Packet_Vehicle_InOut), as the door lane's press.
 
