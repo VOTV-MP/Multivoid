@@ -58,7 +58,10 @@ struct Tree {
 std::unordered_map<void*, Tree> g_trees;
 bool g_anyDirty = false;
 
-// CLIENT: the host's tree, kept until its mirror exists, and the actor it was written to.
+// CLIENT: the host's tree, kept until its mirror exists, and the actor it was written to. MTA writes an object's scale into its
+// add packet (reference/mtasa-blue/Server/mods/deathmatch/logic/packets/CEntityAddPacket.cpp:268-283) and sends a later
+// change as an RPC (CStaticFunctionDefinitions.cpp:8395-8402), so its receiver never holds a state for an element it lacks;
+// here the NPC spawn payload serves every NPC class, so a tree's size is a kind of its own and waits for its mirror.
 struct Want {
     float   scale = 0.f;
     bool    landed = false;
@@ -227,7 +230,8 @@ void Install(coop::net::Session* session) {
     if (!g_watchTaken) {
         g_watchTaken = SG::WatchName(kRowOnLandedWalkingTree, kTag, nullptr, &OnLandedPost);
         static bool sSaid = false;
-        if (!g_watchTaken && !sSaid) UE_LOGE("ambient_creature_sync: the watch on a walking tree's landing was refused -- retried each pump");
+        if (!g_watchTaken && !sSaid)
+            UE_LOGE("ambient_creature_sync: the watch on a walking tree's landing was refused -- retried each pump");
         sSaid = !g_watchTaken;
     }
 }

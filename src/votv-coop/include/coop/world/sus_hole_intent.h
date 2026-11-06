@@ -21,15 +21,18 @@ struct SusHoleIntentPayload;
 // coop/element/intent_authority, the inner one does not), the host's own down-trace must hit grass within 200 uu of the named
 // height (the spawner's own test), and at most 4 holes the host made for that client may stand. A refusal loses that roll
 // (the next is 300 to 600 s away), is counted by reason and said once for that client. The drone, whose camera can be far
-// from the body, is the one honest roll this refuses. A client that leaves and joins again is a new occupant: the holes it
-// had stand, counted by nobody, so the bound is the reconnect rate.
+// from the body, is the one honest roll this refuses: MTA keeps a camera position per player for such a test
+// (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:3000-3004), and the host here has a client's body alone.
+// A client that leaves and joins again is a new occupant: the holes it had stand, counted by nobody, so the bound is the
+// reconnect rate.
 namespace coop::sus_hole_intent {
 
 // A hole's end is not here: a hole ends by its own viewer's distance and view, which only each peer can judge for its own
 // player, so no hole end crosses. The hook installs on the session's first tick, ahead of the world load, and acts only
 // while this process holds an active client session.
 //
-// The hook's install, retried each tick until it settles (client role only; the host pays nothing). Game thread.
+// The hook's install, tried once a second up to 30 times (client role only; the host pays nothing), and armed only while this
+// process holds a client session. Game thread.
 void Install(coop::net::Session* session);
 
 // Both roles, once per pump tick. CLIENT: the stamped holes are read, destroyed and sent once the world is announced ready.
@@ -40,7 +43,8 @@ void Tick(coop::net::Session& session);
 // place's finiteness and the queue's cap are judged here. Game thread.
 void OnIntent(coop::net::Session& session, int senderSlot, const coop::net::SusHoleIntentPayload& p);
 
-// HOST: a dirt hole died (the object index announced it): it no longer counts against the player it was made for. Game thread.
+// HOST: a dirt hole ended (its end of play, from the death seam): it no longer counts against the player it was made for.
+// Game thread.
 void OnHoleEnded(void* obj, int32_t index);
 
 // The session ended: the summary line, the counters, every queue and the stamped holes. Game thread.

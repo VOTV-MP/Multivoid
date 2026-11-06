@@ -186,7 +186,9 @@ bool ReadPlace(void* obj, Known& k) {
 
 // A fixture ended. Never sent means no client has it, and a join sends only the living. A branch's end is the host's and
 // crosses; a hole ends by each viewer's own distance and view (susDirtHole's 600 s check), so the host's end of one is its
-// own and no end of a hole is sent.
+// own and no end of a hole is sent. MTA decides a per-player element's presence on the server and removes it for that player
+// alone (reference/mtasa-blue/Server/mods/deathmatch/logic/CPerPlayerEntity.cpp:186-239); here the game's own camera test
+// decides, on each peer (principle 6).
 void Retire(const Known& k) {
     const bool branch = k.wire.family == fam::kBranch;
     if (k.sentAny && branch) {
@@ -576,7 +578,9 @@ void OnState(const coop::net::AmbientFixtureStatePayload& p) { g_inbox.push_back
 Counters Read() { return g_counters; }
 
 // A joiner is sent every fixture the host holds, to it alone, and then the census-end; a branch whose key is not known yet
-// is sent to everyone when it is.
+// is sent to everyone when it is. MTA sends a joiner the whole element tree in one add packet
+// (reference/mtasa-blue/Server/mods/deathmatch/logic/CMapManager.cpp:195-301), but a joiner's world here is a save, not an
+// empty world, so the snapshot needs an end marker that one atomic packet does not.
 void QueueConnectBroadcastForSlot(int slot) {
     if (slot <= 0 || slot >= coop::players::kMaxPeers) return;
     const uint32_t bit = 1u << slot;

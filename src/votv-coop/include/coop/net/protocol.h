@@ -1275,7 +1275,7 @@ enum class ReliableKind : uint8_t {
     VentCrawlState = 216,
     // HOST->ALL: a walking tree's random size and whether it has landed, when the host reads it at the tree's birth and
     // again at its landing (its mirror's begin play rolls its own and its movement never lands). Not relayed, not
-    // pre-world. Late join: every tree again at the ready edge. AmbientTreeStatePayload.
+    // pre-world. Late join: every tree again at the ready edge, to the joiner alone. AmbientTreeStatePayload.
     AmbientTreeState = 221,
     // HOST->ALL: a dirt hole's or a beehive branch's place, once, and a branch's end (a hole ends by each viewer alone, so none
     // crosses); a branch carries the key its nest was born with and whether it holds the nest now, and goes again when
