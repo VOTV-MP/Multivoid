@@ -418,7 +418,7 @@ bool ClientBody() {
               "the host's branch stands here at its place, holding its nest");
         const coop::ambient_fixture_sync::Counters c = coop::ambient_fixture_sync::Read();
         Check(c.branchCopies >= 1 && c.nestsBound >= 1, "the lane made a copy of the branch and gave it the nest");
-        dropped0 = c.hiveDropped;
+        dropped0 = c.hiveDropped + c.hiveGone;
         // The hole the host ended before the branch was made: the reliable lane keeps order, so an end sent for it has come.
         Check(ActorNear(L"susDirtHole_C", holeAt, 100.f) != nullptr, "a hole the host ended stands here: a hole's end is its viewer's");
     });
@@ -428,7 +428,10 @@ bool ClientBody() {
     WaitGT("the host's branch ended here", 30, [&] { return ActorNear(L"beehiveBranch_C", at, 100.f) == nullptr; }, false);
     OnGameThread([&] { Check(ActorNear(L"beehiveBranch_C", at, 100.f) == nullptr, "a branch that ended on the host ended here"); });
     OnGameThread([&] {
-        Check(coop::ambient_fixture_sync::Read().hiveDropped == dropped0 + 1, "the branch's end left its nest to the prop lane");
+        // The host's branch end destroys the host's nest too, and the prop lane may carry that end here first: the copy's end
+        // then finds no nest. Either way the copy must not destroy one itself.
+        const coop::ambient_fixture_sync::Counters e = coop::ambient_fixture_sync::Read();
+        Check(e.hiveDropped + e.hiveGone == dropped0 + 1, "the branch's end left its nest to the prop lane");
     });
     WaitGT("the nest ended by the prop lane", 30, [&] { return ActorNear(L"prop_waspnest_bee_C", nestAt, 200.f) == nullptr; }, false);
     OnGameThread([&] { Check(ActorNear(L"prop_waspnest_bee_C", nestAt, 200.f) == nullptr, "its nest ended here by the prop lane"); });

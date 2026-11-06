@@ -164,7 +164,7 @@ SG::Verdict OnDestroyedPre(const SG::Call& call) {
     if (coop::spawn_authority::IsActiveClientSession() && call.object) {
         std::wstring key;
         void* hive = nullptr;
-        if (AC::ReadBranch(call.object, key, hive) && hive) ++g_counters.hiveDropped;
+        if (AC::ReadBranch(call.object, key, hive)) ++(hive ? g_counters.hiveDropped : g_counters.hiveGone);
         AC::DropBranchNest(call.object);
     }
     return SG::Verdict::Run;

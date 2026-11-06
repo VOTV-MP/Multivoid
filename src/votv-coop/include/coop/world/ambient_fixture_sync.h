@@ -45,6 +45,7 @@ struct Counters {
     uint64_t branchCopies = 0;  // CLIENT: branch copies spawned
     uint64_t nestsBound = 0;    // CLIENT: nests given to a branch
     uint64_t hiveDropped = 0;   // CLIENT: branches that ended holding a nest, which the branch's end let stand
+    uint64_t hiveGone = 0;      // CLIENT: branches that ended after their nest had already ended by the prop lane
     uint64_t censusEnds = 0;    // CLIENT: census-ends received
     uint64_t censusEnded = 0;   // CLIENT: loaded branches those census-ends ended
 };
