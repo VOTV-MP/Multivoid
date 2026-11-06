@@ -10,8 +10,10 @@
 #include "coop/net/net_clock.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/shelter_spot.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
+#include "coop/session/teleport_client.h"
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/vitals.h"
@@ -55,7 +57,7 @@ namespace V = ue_wrap::vitals;
 namespace C = ue_wrap::cremator;
 using namespace detail;
 
-enum class Step : uint8_t { Start, Walk, StepIn, Lever, Run, WaitMove, PlacedOnly, Over };
+enum class Step : uint8_t { Start, Place, Walk, StepIn, Lever, Run, WaitMove, PlacedOnly, Over };
 
 constexpr float kPullbackAtS = 40.f;
 constexpr float kSurvivedAtS = 90.f;
@@ -73,6 +75,12 @@ constexpr int kRouteMarginSec = 60;
 // The place-only client's pawn counts as moved by the host's order past this distance from where it stood at join.
 constexpr float kMovedCm = 300.f;
 constexpr float kNoMoveFailS = 300.f;
+// The walk starts from the base bed: a client farther than this from the bed's anchor (the join put it at the KPP
+// gate) is placed there first, where harness/autotest/meet.cpp's PlaceBesideHost places a joiner, and landed
+// within kLandedCm of it. The wait for the landing is bounded in ticks.
+constexpr float kFarFromBedCm = 2000.f;
+constexpr float kLandedCm = 150.f;
+constexpr int kPlaceMaxTicks = 240;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 std::atomic<int> g_stepped{0};  // the begin-overlap saw the local pawn enter the probe's cremator
@@ -90,6 +98,10 @@ bool g_pulledBack = false;
 bool g_died = false;
 int g_linesLeftAfterDeath = 0;
 int g_stepTicks = 0;
+bool g_placeChecked = false;  // the start-point check ran: the walk starts from the bed or from where it stands
+ue_wrap::FVector g_anchorAt{};  // the bed anchor the client was placed at
+float g_placedFromCm = 0.f;
+int g_placeTicks = 0;
 ue_wrap::FVector g_joinedAt{};  // the place-only pawn's position when it was ready, the move's reference
 
 // The cremator's begin-overlap on the client arms: the local pawn entering the probe's cremator.
@@ -126,6 +138,27 @@ void StartTick(void* local) {
         g_step = Step::WaitMove;
         return;
     }
+    if (!g_placeChecked) {
+        // The same spot and the same teleport call as PlaceBesideHost's "bed" anchor (shelter_spot::Choose, then
+        // teleport_client::ApplyLocally); a known-good anchor, never a computed point.
+        const coop::shelter_spot::Target bed = coop::shelter_spot::Choose(local);
+        if (bed.kind != coop::shelter_spot::Kind::Bed) { Fail("no base-bed anchor to start the walk from"); return; }
+        g_anchorAt = {bed.x, bed.y, bed.z};
+        const float from = Between(pawnAt, g_anchorAt);
+        g_placeChecked = true;
+        if (from <= kFarFromBedCm) {
+            UE_LOGI("cremator-probe: at the bed anchor already (%.0f cm), walking from here", from);
+        } else {
+            if (!coop::teleport_client::ApplyLocally({bed.x, bed.y, bed.z, 0.f, 0.f, 0.f})) {
+                Fail("the teleport to the bed anchor reported failure");
+                return;
+            }
+            g_placedFromCm = from;
+            g_placeTicks = 0;
+            g_step = Step::Place;
+            return;
+        }
+    }
     if (!C::EnsureResolved()) { Fail("no cremator_C class"); return; }
 
     const C::Nearest n = C::FindNearestFirebox(pawnAt);
@@ -160,6 +193,18 @@ void StartTick(void* local) {
     UE_LOGI("cremator-probe: walking into the firebox, %d s budget", budget);
     g_cremator.Set(n.actor);
     g_step = Step::Walk;
+}
+
+// The teleport may land a tick later: the pawn is read until it stands at the anchor, then the walk starts from
+// the next tick.
+void PlaceTick(void* local) {
+    ue_wrap::FVector at{};
+    if (local && E::TryGetActorLocation(local, at) && Between(at, g_anchorAt) <= kLandedCm) {
+        UE_LOGI("cremator-probe: PLACED at the bed anchor (from %.0f cm)", g_placedFromCm);
+        g_step = Step::Start;
+        return;
+    }
+    if (++g_placeTicks >= kPlaceMaxTicks) Fail("the pawn did not land at the bed anchor");
 }
 
 void WalkTick() {
@@ -322,6 +367,10 @@ void Reset() {
     g_step = Step::Start;
     g_stepped.store(0, std::memory_order_release);
     g_stepTicks = 0;
+    g_placeChecked = false;
+    g_anchorAt = {};
+    g_placedFromCm = 0.f;
+    g_placeTicks = 0;
     g_joinedAt = {};
     g_cremator.Reset();
     g_fireboxAt = {};
@@ -375,6 +424,7 @@ void Tick() {
     if (g_step == Step::PlacedOnly) { PlacedOnlyTick(local); return; }
     if (g_step == Step::WaitMove) { WaitMoveTick(local); return; }
     if (g_step == Step::Walk) { WalkTick(); return; }
+    if (g_step == Step::Place) { PlaceTick(local); return; }
     if (g_step == Step::StepIn) { StepInTick(local); return; }
     if (!local) return;
     if (g_step == Step::Start) StartTick(local);
@@ -382,7 +432,7 @@ void Tick() {
 }
 
 void OnDisconnect() {
-    if (g_step == Step::Walk || g_step == Step::StepIn || g_step == Step::Lever || g_step == Step::Run || g_step == Step::WaitMove ||
+    if (g_step == Step::Place || g_step == Step::Walk || g_step == Step::StepIn || g_step == Step::Lever || g_step == Step::Run || g_step == Step::WaitMove ||
         g_step == Step::PlacedOnly)
         UE_LOGW("cremator-probe: FAIL the session ended mid-run");
     g_session.store(nullptr, std::memory_order_release);
