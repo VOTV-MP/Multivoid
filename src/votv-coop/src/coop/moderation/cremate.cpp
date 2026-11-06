@@ -23,6 +23,7 @@
 #include "coop/player/puppet_events.h"
 #include "coop/player/remote_player.h"
 #include "coop/player/roster_ledger.h"
+#include "coop/session/teleport_client.h"
 
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/hot_path_guard.h"
@@ -429,10 +430,7 @@ Result Start(const Order& order, ReplyFn reply, LogFn log) {
         bool wasOpen = false, opened = false;
         C::ReadDoorOpened(move.actor, wasOpen);
         if (!C::OpenDoor(move.actor, opened)) return Result::DoorStuck;
-        coop::net::TeleportClientPayload pose{};
-        pose.locX = move.at.X; pose.locY = move.at.Y; pose.locZ = move.at.Z;
-        pose.rotPitch = move.rot.Pitch; pose.rotYaw = move.rot.Yaw; pose.rotRoll = move.rot.Roll;
-        if (!s->SendReliableToSlot(token.slot, coop::net::ReliableKind::TeleportClient, &pose, sizeof(pose))) {
+        if (!coop::teleport_client::OrderToPose(*s, token.slot, move.at, move.rot)) {
             UE_LOGW("cremate: #%u refused -- the teleport order was not sent", static_cast<unsigned>(token.playerNo));
             bool shut = false;
             if (!wasOpen) C::ShutDoor(move.actor, shut);

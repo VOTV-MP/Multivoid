@@ -12,6 +12,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/session/teleport_client.h"
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -143,10 +144,7 @@ void WatchTick(coop::net::Session& session) {
     g_landed.store(0, std::memory_order_release);
     bool doorOpened = false;
     if (!C::OpenDoor(move.actor, doorOpened)) { Fail("the door's open() did not run"); return; }
-    coop::net::TeleportClientPayload pose{};
-    pose.locX = move.at.X; pose.locY = move.at.Y; pose.locZ = move.at.Z;
-    pose.rotPitch = move.rot.Pitch; pose.rotYaw = move.rot.Yaw; pose.rotRoll = move.rot.Roll;
-    if (!session.SendReliableToSlot(kClientSlot, coop::net::ReliableKind::TeleportClient, &pose, sizeof(pose))) {
+    if (!coop::teleport_client::OrderToPose(session, kClientSlot, move.at, move.rot)) {
         Fail("the teleport order was not sent");
         return;
     }

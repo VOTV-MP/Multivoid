@@ -178,6 +178,13 @@ void SendPoseToSlotIfStillHeld(coop::net::Session* s, int slot, uint32_t generat
 
 }  // namespace
 
+bool OrderToPose(coop::net::Session& session, int slot, const ue_wrap::FVector& at, const ue_wrap::FRotator& rot) {
+    coop::net::TeleportClientPayload p{};
+    p.locX = at.X; p.locY = at.Y; p.locZ = at.Z;
+    p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
+    return session.SendReliableToSlot(slot, coop::net::ReliableKind::TeleportClient, &p, sizeof(p));
+}
+
 void TeleportClientsToHost() {
     // Sender-gates to Role::Host only -- on a client this is a no-op (per scope:
     // "teleport clients to the host when the host triggers it"). The snapshot runs

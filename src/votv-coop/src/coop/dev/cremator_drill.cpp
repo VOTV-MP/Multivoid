@@ -25,6 +25,7 @@
 #include "coop/session/join_progress.h"  // the client's end-reason notice
 #include "coop/session/net_pump.h"
 #include "coop/session/rig_verdict.h"
+#include "coop/session/teleport_client.h"  // OrderToPose: the order that sends the client to the firebox
 
 #include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/game_thread.h"
@@ -365,11 +366,7 @@ std::wstring SendClientToFirebox(void*& cremator) {
     if (key.empty()) { UE_LOGW("cremator-drill: g3 the cremator lane does not index the nearest cremator"); return {}; }
     bool doorOpened = false;
     if (!C::OpenDoor(cremator, doorOpened)) { UE_LOGW("cremator-drill: g3 the door's open() did not run"); return {}; }
-    coop::net::TeleportClientPayload pose{};
-    pose.locX = move.at.X; pose.locY = move.at.Y; pose.locZ = move.at.Z;
-    pose.rotPitch = move.rot.Pitch; pose.rotYaw = move.rot.Yaw; pose.rotRoll = move.rot.Roll;
-    if (!harness::session_runtime::Session().SendReliableToSlot(kClientSlot, coop::net::ReliableKind::TeleportClient, &pose,
-                                                                sizeof(pose))) {
+    if (!coop::teleport_client::OrderToPose(harness::session_runtime::Session(), kClientSlot, move.at, move.rot)) {
         UE_LOGW("cremator-drill: g3 the teleport order was not sent");
         return {};
     }

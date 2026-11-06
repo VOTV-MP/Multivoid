@@ -91,8 +91,8 @@ struct Nearest {
 Nearest FindNearestFirebox(const FVector& from);
 
 // The nearest cremator's firebox with the pose an order to stand in it carries: the machine, the firebox's location and
-// the cremator's own rotation (so the arrival faces the way the machine does). Read in one place: the admin verb, its
-// drill and its probe all send a player there. NoCremator: none with a firebox is loaded. RotationUnread: the
+// the cremator's own rotation (so the arrival faces the way the machine does). Read in one place, for every caller that
+// sends a player there. NoCremator: none with a firebox is loaded. RotationUnread: the
 // machine's rotation did not read (`out.actor` and `out.at` are set).
 struct FireboxMove {
     void*     actor = nullptr;

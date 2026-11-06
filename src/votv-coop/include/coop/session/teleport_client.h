@@ -12,6 +12,8 @@
 
 #pragma once
 
+#include "ue_wrap/core/types.h"
+
 #include <cstdint>
 
 namespace coop::net { class Session; }
@@ -36,6 +38,12 @@ void TeleportClientsToHost();
 // of range, the generation is not the slot's, or the host's pose cannot be read; the
 // caller tells a changed seat from the rest by reading the slot's generation again.
 bool TeleportSlotToHostWithToken(int peerSlot, uint32_t generation);
+
+// Sends the TeleportClient order that moves the peer at `slot` to `at`, facing `rot`, reliably and to that peer only.
+// The one place a pose order is built, for the callers that name a place other than the host's own (the /cremate
+// verb and its drill and probe). False when the send was refused (not connected, channel closed). The caller owns the
+// seat's occupancy check. Game thread.
+bool OrderToPose(coop::net::Session& session, int slot, const ue_wrap::FVector& at, const ue_wrap::FRotator& rot);
 
 // Receiver: apply the teleport on the local mainPlayer (K2_TeleportTo).
 // Called from event_feed.cpp on incoming ReliableKind::TeleportClient AND
