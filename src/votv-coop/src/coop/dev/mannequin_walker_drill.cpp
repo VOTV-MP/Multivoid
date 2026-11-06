@@ -6,11 +6,10 @@
 // client is the walker's target, its camera turned to the copy stops the host's walker, and when it looks away the walker moves
 // again within the Blueprint's own timer_saw bound plus a margin.
 // THE TWO WALKERS. A walker KEEPS its target until it is lost (coop/creatures/walker_target.h), so one cannot hand a hunt from
-// the host to the client by walking the client nearer. Walker A is hunted by the host while the client stands in its range but
-// farther (the host enters the range first: the first player in range is taken, and a later, nearer one is not); its copy, were
-// its brain not gated, would go for the client's own player, the other direction. Walker B is born while the host stands at the
-// KPP gate, out of every spawn point's range, and the client is the only player in range at its first read: the client is its
-// target. Between them A is destroyed, so one walker stands at a time.
+// the host to the client by walking the client nearer; the first player in range is the one taken. Walker A: the client walks
+// first and stops outside its range, then the host walks in, and the host's arrival opens the window while the walker is still
+// far. Walker B is born while the host stands at the KPP gate, out of every spawn point's range, and the client walks in last:
+// it is the only player in range, so it is B's target. Between them A is destroyed, so one walker stands at a time.
 // THE PEERS. Both reach the same state through peer_signal (VOTVCOOP_CAN_DIR); a wait is on a state the other peer reached
 // (a mark, a read on the game thread), bounded, and a bound that runs out before a verdict is INVALID. The host judges.
 
@@ -82,12 +81,13 @@ constexpr uint8_t     kClientSlot = 1;
 // "out of range" mean it: the host at its start stands far beyond it of every spawn point, so this only guards a changed start.
 constexpr float kRangeCm = 20000.f;
 constexpr float kOutOfRangeMarginCm = 2000.f;
-// Where each player stops, inside the Blueprint's range with a margin and no nearer: the host (walker A's target) at
-// kHostStandoffCm, the client (farther) at kClientStandoffCm, then the client (walker B's target) at kCloseCm. The walker
-// closes on its target while the steps run, and a measurement ends when it is within kApproachEndCm: at that distance it stands
-// at its target's shoulder, where the game's own frustum test of its bounds holds whatever the yaw.
+// Where each player stops. Walker A: the client first, OUTSIDE the range (kClientStandoffCm), so it is never the target; then the
+// host, inside it with a margin (kHostStandoffCm), whose arrival opens the window. Walker B: the host out of range, then the
+// client last, inside it (kCloseCm). The walker closes on its target while the steps run, and a measurement ends when it is within
+// kApproachEndCm: at that distance it stands at its target's shoulder, where the game's own frustum test of its bounds holds
+// whatever the yaw.
 constexpr float kHostStandoffCm = 15000.f;
-constexpr float kClientStandoffCm = 17000.f;
+constexpr float kClientStandoffCm = 25000.f;
 constexpr float kCloseCm = 15000.f;
 constexpr float kApproachEndCm = 3000.f;
 constexpr float kKppReachCm = 1500.f;
@@ -111,7 +111,8 @@ constexpr size_t kMovingSamples = 10;
 constexpr float  kMovingCm = 60.f;
 constexpr size_t kStillSamples = 20;
 constexpr float  kStillCm = 30.f;
-constexpr double kWindowS = 8.0;
+constexpr double kWindowS = 8.0;                       // of walking, in step 2's window
+constexpr int    kApproachWindowS = kMoveBoundS + 8;   // the most the window runs: the walker's wait to be let go, and kWindowS
 constexpr float  kMinMoveCm = 500.f;
 constexpr size_t kMinComparedReadings = 20;   // copy readings that overlap the host's window, or step 2 had too little to compare
 // The copy's distance to where the host's walker stood a short lag before, the nearest of kLagSteps lags of kLagStepS: the
@@ -343,10 +344,15 @@ float ClientTo(void* actor) {
 }
 
 // The INVALID of a walker that never walked: how far it stands from the player it hunts, and its own `looking` flag.
-bool NeverWalked(const char* who, float cm, bool looking) {
+// A walker already at its target had no room to walk: a defect of this drill's geometry, said as such.
+bool NeverWalked(const char* who, float cm, bool looking, int boundS) {
     char why[220];
+    if (cm >= 0.f && cm < kApproachEndCm) {
+        std::snprintf(why, sizeof(why), "%s reached its target before the window opened (%.0f cm)", who, cm);
+        return Invalid(why);
+    }
     std::snprintf(why, sizeof(why), "%s never started walking within %d s of its hunted player's view turned away: %.0f cm from "
-                  "that player, looking=%d", who, kMoveBoundS, cm, looking ? 1 : 0);
+                  "that player, looking=%d", who, boundS, cm, looking ? 1 : 0);
     return Invalid(why);
 }
 
@@ -389,24 +395,48 @@ bool Hunts(void* walker, uint8_t slot) {
     return WT::TargetOf(walker) == slot;
 }
 
-// The host's readings of its walker for step 2: every kSampleMs for kWindowS, ended early once the walker is within
-// kApproachEndCm of the host; `endCm` is the distance at the last reading.
-std::vector<Sample> ApproachWindow(void* walker, float& endCm) {
-    std::vector<Sample> out;
-    const double end = NowSec() + kWindowS;
-    bool closedIn = false;
-    while (!closedIn && NowSec() < end) {
+// What the host read of its walker in step 2's window: the readings, the walker's distance from the host at the first and the last,
+// whether it walked, and its `looking` flag at the last.
+struct Approach {
+    std::vector<Sample> samples;
+    float               startCm = -1.f;
+    float               endCm = -1.f;
+    bool                moved = false;
+    bool                looking = false;
+};
+
+// The host's readings of its walker, from the host's arrival: one every kSampleMs, with the view turned away. The walker has been
+// hunting since the host crossed its range, and its own timer_saw lets it go within kMoveBoundS of that view turning away, so the
+// window runs kApproachWindowS and ends sooner: once the walker has walked kWindowS, or is within kApproachEndCm of the host.
+Approach ApproachWindow(void* walker) {
+    Approach r;
+    Track trk;
+    size_t walkedReadings = 0;
+    const size_t walkedNeeded = static_cast<size_t>(kWindowS * 1000.0 / kSampleMs);
+    const double end = NowSec() + kApproachWindowS;
+    bool done = false;
+    while (!done && NowSec() < end) {
         OnGameThread([&] {
             FVector at{};
-            if (!R::IsLive(walker) || !E::TryGetActorLocation(walker, at)) return;
+            if (!R::IsLive(walker) || !E::TryGetActorLocation(walker, at)) {
+                done = true;
+                return;
+            }
             Aim(walker, false);
-            out.push_back(Sample{NowSec(), at.X, at.Y, at.Z});
-            endCm = PlayerTo(walker);
-            closedIn = endCm >= 0.f && endCm < kApproachEndCm;
+            r.samples.push_back(Sample{NowSec(), at.X, at.Y, at.Z});
+            trk.Push(at);
+            r.endCm = PlayerTo(walker);
+            if (r.startCm < 0.f) r.startCm = r.endCm;
+            r.looking = AC::ReadWalkerLooking(walker);
+            if (trk.Moving()) {
+                r.moved = true;
+                ++walkedReadings;
+            }
+            done = (r.endCm >= 0.f && r.endCm < kApproachEndCm) || walkedReadings >= walkedNeeded;
         });
         ::Sleep(kSampleMs);
     }
-    return out;
+    return r;
 }
 
 bool HostPhaseA(void*& a, std::string& keyA) {
@@ -417,50 +447,41 @@ bool HostPhaseA(void*& a, std::string& keyA) {
     PS::Mark("walker_a", keyA);
     if (!PS::Await("copy_a", 60)) return false;
 
-    // The host enters the range first: it is the first player in it, so the host is the hunted one, and the client enters
-    // after and stays farther.
+    // The client walks first and stops outside the walker's range, so it is never A's target; the host walks last, and the walker
+    // hunts it from the moment it crosses the range.
+    if (!PS::Await("client_out", kWalkWaitS)) return false;
+    float clientCm = -1.f;
+    OnGameThread([&] { clientCm = ClientTo(a); });
+    UE_LOGI("mannequin-drill: the client stands %.0f cm from walker A", clientCm);
+    if (clientCm <= kRangeCm) {
+        char why[200];
+        std::snprintf(why, sizeof(why), "the client stands %.0f cm from walker A, inside its %.0f range (or unread): it would be hunted",
+                      clientCm, kRangeCm);
+        return Invalid(why);
+    }
     FVector at{};
     OnGameThread([&] { E::TryGetActorLocation(a, at); });
     if (!WalkTo(at, kHostStandoffCm, "the host toward walker A")) return Invalid("the host's walk toward the walker did not arrive");
-    float within = 0.f;
-    OnGameThread([&] { Aim(a, false); within = PlayerTo(a); });
-    if (within < 0.f || within > kRangeCm) return Invalid("the host is not within the walker's range after its walk");
-    PS::Mark("host_in");
-    if (!PS::Await("client_in", kWalkWaitS)) return false;
-    if (!WaitGT("walker A hunts the host", kTargetBoundS, [&] { return Hunts(a, 0); }, false))
-        return Invalid("walker A does not hunt the host");
 
-    // It walks once its own timer_saw has let go (the host's view is turned away, and nobody else's counts).
-    Track trk;
-    const bool moving = WaitGT("walker A walks with the host's view turned away", kMoveBoundS, [&] {
-        FVector p{};
-        Aim(a, false);
-        if (!E::TryGetActorLocation(a, p)) return false;
-        trk.Push(p);
-        return trk.Moving();
-    }, false);
-    float startCm = -1.f;
-    bool  looking = false;
-    OnGameThread([&] {
-        startCm = PlayerTo(a);
-        looking = AC::ReadWalkerLooking(a);
-    });
-    if (!moving) return NeverWalked("walker A", startCm, looking);
-    if (startCm < kApproachEndCm) {
-        char why[160];
-        std::snprintf(why, sizeof(why), "walker A is within %.0f cm of the host (%.0f) as step 2 would open: it has closed in", kApproachEndCm,
-                      startCm);
-        return Invalid(why);
-    }
+    // At the host's arrival the window opens: nothing sits between.
     PS::Mark("window_go");
-    float endCm = startCm;
-    const std::vector<Sample> host = ApproachWindow(a, endCm);
+    const Approach w = ApproachWindow(a);
+    uint8_t target = WT::kNoTarget;
+    OnGameThread([&] { target = WT::TargetOf(a); });
+    UE_LOGI("mannequin-drill: walker A hunts slot %d; %.0f cm from the host at the window's start, %.0f at its end", static_cast<int>(target),
+            w.startCm, w.endCm);
+    if (w.startCm < 0.f || w.startCm > kRangeCm) return Invalid("the host is not within walker A's range at its arrival");
+    if (!w.moved) {
+        if (target != 0) return Invalid("walker A does not hunt the host");
+        return NeverWalked("walker A", w.endCm, w.looking, kApproachWindowS);
+    }
     std::string text;
-    if (!PS::AwaitText("copy_samples_a", text, 60)) return false;
+    if (!PS::AwaitText("copy_samples_a", text, 90)) return false;
     const std::vector<Sample> copy = Unpack(text);
+    const std::vector<Sample>& host = w.samples;
     const float moved = Excursion(host);
-    UE_LOGI("mannequin-drill: step 2 window: host walker moved %.0f cm over %zu readings (%.0f cm from the host at its start, %.0f at "
-            "its end), the copy gave %zu", moved, host.size(), startCm, endCm, copy.size());
+    UE_LOGI("mannequin-drill: step 2 window: host walker moved %.0f cm over %zu readings, the copy gave %zu", moved, host.size(),
+            copy.size());
     if (moved < kMinMoveCm || copy.empty()) return Invalid("step 2 had no mover to compare: the host walker did not walk in the window");
     const Follow f = Compare(host, copy);
     UE_LOGI("mannequin-drill: step 2 follow: %zu copy readings, worst %.0f cm, mean %.0f cm (tolerance %.0f)", f.n, f.maxCm,
@@ -516,7 +537,7 @@ bool HostPhaseB(void* a, void*& b, std::string& keyB) {
             cm = ClientTo(b);
             looking = AC::ReadWalkerLooking(b);
         });
-        return NeverWalked("walker B", cm, looking);
+        return NeverWalked("walker B", cm, looking, kMoveBoundS);
     }
     if (!ClientFarEnough(b, "the gaze would be aimed")) return false;
     PS::Mark("aim");
@@ -624,11 +645,10 @@ bool ClientBody() {
     if (!CheckRefusal()) return false;
     PS::Mark("client_ready");
 
-    // Walker A: the host hunts it, and this client comes into its range after the host, farther than the host.
+    // Walker A: the host hunts it. This client walks first and stops outside its range, so it is never its target.
     std::string keyA;
     if (!PS::AwaitText("walker_a", keyA, 240) || !AwaitCopy(keyA, "A")) return false;
     PS::Mark("copy_a");
-    if (!PS::Await("host_in", kWalkWaitS)) return false;
     FVector at{};
     void* copy = nullptr;
     OnGameThread([&] {
@@ -637,10 +657,17 @@ bool ClientBody() {
     });
     if (!copy) return Invalid("walker A's copy is gone before this client's walk");
     if (!WalkTo(at, kClientStandoffCm, "this client toward walker A")) return Invalid("this client's walk toward walker A did not arrive");
-    OnGameThread([&] { Aim(ByKey(keyA), false); });
-    PS::Mark("client_in");
-    if (!PS::Await("window_go", 240)) return false;
-    const std::vector<Sample> samples = Window([&] { return ByKey(keyA); }, kWindowS);
+    float outCm = -1.f;
+    OnGameThread([&] {
+        copy = ByKey(keyA);
+        outCm = PlayerTo(copy);
+        Aim(copy, false);
+    });
+    UE_LOGI("mannequin-drill: this client stands %.0f cm from walker A's copy", outCm);
+    if (outCm <= kRangeCm) return Invalid("this client stands inside walker A's range after its walk (the director's stage may have placed it)");
+    PS::Mark("client_out");
+    if (!PS::Await("window_go", kWalkWaitS)) return false;
+    const std::vector<Sample> samples = Window([&] { return ByKey(keyA); }, kApproachWindowS);
     PS::Mark("copy_samples_a", samples.empty() ? std::string("none") : Pack(samples));
 
     // Walker B: this client is its target. It walks close, turned away; then its camera goes on the copy, and off it.
