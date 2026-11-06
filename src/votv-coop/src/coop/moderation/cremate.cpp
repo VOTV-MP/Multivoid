@@ -99,8 +99,32 @@ std::vector<Event> g_work;
 
 void Record(const Event& e) { g_queue.push_back(e); }
 
+const char* StateName(State s) {
+    switch (s) {
+        case State::Ordered: return "Ordered";
+        case State::Arrived: return "Arrived";
+        case State::RunningWait: return "RunningWait";
+        case State::Running: return "Running";
+        case State::Cooling: return "Cooling";
+    }
+    return "?";
+}
+
+// A life edge is rare (a death, a revive), so each one a running verb sees is said, taken or dropped with the reason:
+// a trip that missed its target's death must show where the edge went.
+void SayLifeEdge(uint8_t slot, bool alive, const char* verdict) {
+    const Trip& t = g_trips[slot];
+    UE_LOGI("cremate: #%u life edge alive=%d state=%s gen=%u -- %s", static_cast<unsigned>(t.target.playerNo),
+            alive ? 1 : 0, t.active ? StateName(t.state) : "none", static_cast<unsigned>(t.target.generation), verdict);
+}
+
 void OnLife(uint8_t slot, bool alive) {
-    if (g_active == 0 || !g_trips[slot].active) return;
+    if (g_active == 0) return;
+    if (!g_trips[slot].active) {
+        UE_LOGI("cremate: slot %u life edge alive=%d -- dropped (no trip for the slot)", static_cast<unsigned>(slot),
+                alive ? 1 : 0);
+        return;
+    }
     Event e{Kind::Life};
     e.slot = slot;
     e.flag = alive;
@@ -321,8 +345,14 @@ void Handle(const Event& e) {
         case Kind::Life:
         case Kind::Pose: {
             Trip& t = g_trips[e.slot];
-            if (!t.active || t.target.generation != e.gen) return;
-            if (e.kind == Kind::Life) OnLifeEvent(t, e.flag);
+            if (!t.active || t.target.generation != e.gen) {
+                if (e.kind == Kind::Life) SayLifeEdge(e.slot, e.flag, "dropped (the trip ended or changed hands first)");
+                return;
+            }
+            if (e.kind == Kind::Life) {
+                SayLifeEdge(e.slot, e.flag, "taken");
+                OnLifeEvent(t, e.flag);
+            }
             else OnPoseEvent(t, e);
             return;
         }
