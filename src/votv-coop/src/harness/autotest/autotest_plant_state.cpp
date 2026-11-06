@@ -2,7 +2,8 @@
 //
 // A bush from its spawner's own body and a growingPlant_bush_C and a growingPlant_shroom_0_C (neither is in list_farmPlants,
 // so the script spawns them) stand on the host before the client's checks. Then growth, a client's water, ripening, a
-// client's harvest through the plant's own action, death, a plant a client spawned, a new bush and two removals. The arms
+// client's harvest through the plant's own action (both on a plant the host plants beside the players: the spawner's bush
+// stands out of the client's reach), death, a plant a client spawned, a new bush and two removals. The arms
 // that hold what the client refuses (a sprinkler, the spawner, a pine's lethal hit, the growth area's glow, the plant tick)
 // and the host's refusal of two crafted plantings (the edit gate, term f1) are autotest_plant_gate.cpp's. The client tells
 // the host what it reads; the host judges and logs `plant-state: VERDICT PASS|FAIL <terms>`. Gated by VOTVCOOP_RUN_PLANT_STATE;
@@ -156,8 +157,25 @@ bool WaitGone(const std::string& key, int seconds = 15) {
     }, false);
 }
 
-// A negative `amount` leaves the plant's berry count as it is.
-void WriteHost(const std::string& key, float grow, float water, float fruit, int amount = -1) {
+// A plant of `row` by script, beside the host's player, of the class the game's own row plants (what a seed planted there would
+// be). "" when the row, its class or the player's place is not there. The plant the client waters and harvests stands here, and
+// not where the spawner's trace landed: the host judges every edit against the sender's reach.
+std::string SpawnRowPlant(const std::string& row, float side) {
+    std::string key;
+    OnGameThread([&] {
+        void* me = coop::players::Registry::Get().Local();
+        void* cls = GP::FarmRowPlantClass(Widen(row));
+        ue_wrap::FVector at{};
+        if (!me || !cls || !E::TryGetActorLocation(me, at)) return;
+        void* p = GP::Spawn(cls, L"", Widen(row), L"", true, {at.X + 300.f, at.Y + side, at.Z - 80.f}, {});
+        if (p) key = Narrow(GP::Key(p));
+    });
+    return key;
+}
+
+// A negative `amount` leaves the plant's berry count as it is. False when the plant is not listed (yet) or cannot be read.
+bool WriteHost(const std::string& key, float grow, float water, float fruit, int amount = -1) {
+    bool wrote = false;
     OnGameThread([&] {
         void* p = ByKey(key);
         GP::Values v;
@@ -167,7 +185,14 @@ void WriteHost(const std::string& key, float grow, float water, float fruit, int
         v.fruitGrow = fruit;
         if (amount >= 0) v.amount = amount;
         GP::Apply(p, GP::Row(p), v);
+        wrote = true;
     });
+    return wrote;
+}
+
+// WriteHost for a plant just spawned: the object index lists it once its birth drains, so the write waits for that.
+bool WriteHostWhenListed(const std::string& key, float grow, float water, float fruit, int amount = -1) {
+    return PS::WaitFor("the plant to be listed", 15, [&] { return WriteHost(key, grow, water, fruit, amount); }, false);
 }
 
 // The client's word at its end: "<fails> <plants here> <host family plants it holds> <tick> <sprinkler> <spawner> <pine> <glow>",
@@ -232,29 +257,37 @@ void RunHost() {
     Mark("sprinkler");
     if (!Await("sprinkler_done", kStep)) return;
 
+    // The plant the client waters and harvests: the drill's own, planted by script beside the met players, since the spawner's
+    // bush stands wherever its trace landed and the host refuses an edit from beyond the sender's reach.
+    const std::string drillPlant = SpawnRowPlant(row, 100.f);
+    Check(!drillPlant.empty(), "the script planted the drill's own plant beside the host");
+    if (drillPlant.empty()) return;
+    Check(WriteHostWhenListed(drillPlant, 0.5f, 500.f, 0.f), "the drill's plant is listed and written");
+    Mark("drill_plant", drillPlant);
+
     // A client's water.
-    Check(WaitPlant(bush, [](void*, const GP::Values& v) { return v.water > 5000.f; }), "the client's water reached the host's plant");
+    Check(WaitPlant(drillPlant, [](void*, const GP::Values& v) { return v.water > 5000.f; }), "the client's water reached the host's plant");
     Mark("water_seen");
     if (!Await("edit_done", kStep)) return;
 
     // Ripe, with berries: a bush shows amount, another plant makes fruit props. The harvest below is the client's, and a
     // plant without berries has none to take, so a bush that cannot be made to hold them fails the run.
-    WriteHost(bush, 1.f, 500.f, 1.f, kBerries);
-    Check(WaitPlant(bush, [](void*, const GP::Values& v) { return v.grow >= 1.f && v.fruitGrow >= 1.f && v.amount > 0; }),
+    WriteHost(drillPlant, 1.f, 500.f, 1.f, kBerries);
+    Check(WaitPlant(drillPlant, [](void*, const GP::Values& v) { return v.grow >= 1.f && v.fruitGrow >= 1.f && v.amount > 0; }),
           "the host's plant is ripe and bears berries");
     GP::Values ripe;
-    OnGameThread([&] { if (void* p = ByKey(bush)) GP::Read(p, ripe); });
+    OnGameThread([&] { if (void* p = ByKey(drillPlant)) GP::Read(p, ripe); });
     UE_LOGI("plant-state: ripe grow=%.2f fruit=%.2f amount=%d", ripe.grow, ripe.fruitGrow, ripe.amount);
     Mark("ripe", std::to_string(ripe.amount));
     if (!Await("ripe_here", kStep)) return;
     // Water the client has not heard of yet, as its slow change is still due: its harvest must not put back the old value.
-    WriteHost(bush, 1.f, 3000.f, 1.f);
+    WriteHost(drillPlant, 1.f, 3000.f, 1.f);
     Mark("harvest_go");
     if (!Await("harvest_done", kStep)) return;
     if (ripe.amount > 0) {
-        Check(WaitPlant(bush, [](void*, const GP::Values& v) { return v.amount == 0; }), "the client's harvest emptied the host's plant");
+        Check(WaitPlant(drillPlant, [](void*, const GP::Values& v) { return v.amount == 0; }), "the client's harvest emptied the host's plant");
         GP::Values after;
-        OnGameThread([&] { if (void* p = ByKey(bush)) GP::Read(p, after); });
+        OnGameThread([&] { if (void* p = ByKey(drillPlant)) GP::Read(p, after); });
         UE_LOGI("plant-state: host water after the harvest %.0f", after.water);
         Check(after.water > 2000.f, "the harvest left the host's newer water alone");
     }
@@ -319,10 +352,12 @@ void RunHost() {
     const std::string glowPlant = SpawnFamily(kBushPath, kBushClass, 500.f);
     Check(!glowPlant.empty(), "the script spawned a plant for the growth area");
     if (glowPlant.empty()) return;
-    WriteHost(glowPlant, 0.5f, 500.f, 0.f);
+    // The area acts only on a plant with water and no dryness (growthArea's tick, before it fertilises): watered here.
+    const bool watered = WriteHostWhenListed(glowPlant, 0.5f, 600.f, 0.f);
     GP::Values glowValues;
     OnGameThread([&] { if (void* p = ByKey(glowPlant)) GP::Read(p, glowValues); });
     UE_LOGI("plant-state: the growth area's plant has water %.0f dryness %.1f", glowValues.water, glowValues.dryness);
+    Check(watered && glowValues.water > 0.f && glowValues.dryness >= 0.f, "the growth area's plant reads watered and not dry");
     void* area = SpawnGrowthArea(glowPlant);
     Check(area != nullptr, "the script spawned a growthArea_C");
     Mark("glow_set");
@@ -403,9 +438,15 @@ void RunClient() {
     const int sprinklerOk = SprinklerArm(bush) ? 1 : 0;
     Mark("sprinkler_done");
 
+    // The host's own plant beside the players, by the key it names.
+    if (!AwaitText("drill_plant", body, kStep)) return;
+    const std::string drillPlant = body;
+    Check(WaitPlant(drillPlant, [](void*, const GP::Values& v) { return Near(v.grow, 0.5f, 0.05f) && v.water > 400.f; }),
+          "the host's plant beside this player arrived");
+
     // This player's water, as a can or a toolgun writes it.
     OnGameThread([&] {
-        void* p = ByKey(bush);
+        void* p = ByKey(drillPlant);
         GP::Values v;
         if (p && GP::Read(p, v)) {
             v.water = 7000.f;
@@ -417,7 +458,7 @@ void RunClient() {
 
     if (!AwaitText("ripe", body, kStep)) return;
     const int hostAmount = std::atoi(body.c_str());
-    Check(WaitPlant(bush, [&](void*, const GP::Values& v) { return v.grow >= 1.f && v.amount == hostAmount; }), "the ripe plant reads the same here");
+    Check(WaitPlant(drillPlant, [&](void*, const GP::Values& v) { return v.grow >= 1.f && v.amount == hostAmount; }), "the ripe plant reads the same here");
     Mark("ripe_here");
     if (!Await("harvest_go", kStep)) return;
     // A bush the host could not make bear berries has nothing to harvest: that is the run's failure, not a step to skip.
@@ -426,7 +467,7 @@ void RunClient() {
         OnGameThread([&] {
             foodsBefore = CountOf(L"prop_food_C");
             propsBefore = CountOf(L"prop_C");
-            void* p = ByKey(bush);
+            void* p = ByKey(drillPlant);
             void* fn = p ? R::FindDispatchFunctionCached(R::ClassOf(p), L"actionOptionIndex") : nullptr;
             if (!fn) return;
             ue_wrap::ParamFrame f(fn);
@@ -435,7 +476,7 @@ void RunClient() {
             f.Set<uint8_t>(L"action", 4);
             ue_wrap::Call(p, f);
         });
-        Check(WaitPlant(bush, [](void*, const GP::Values& v) { return v.amount == 0; }), "this player's harvest emptied this copy");
+        Check(WaitPlant(drillPlant, [](void*, const GP::Values& v) { return v.amount == 0; }), "this player's harvest emptied this copy");
         OnGameThread([&] { foodsAfter = CountOf(L"prop_food_C"); propsAfter = CountOf(L"prop_C"); });
         UE_LOGI("plant-state: client item counts food %zu->%zu prop %zu->%zu", foodsBefore, foodsAfter, propsBefore, propsAfter);
     }
