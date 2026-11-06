@@ -225,21 +225,23 @@ uint32_t ConnectedSlots(const coop::net::Session& s) {
     return mask;
 }
 
-void HostPass(coop::net::Session& s) {
-    const uint32_t connected = ConnectedSlots(s);
-    g_censusSlots &= connected;
-    bool again = false;
-    int sends = 0;
-
+// The ends queued so far, sent; what the channel refused stays in g_ends for the next pass.
+void SendEnds(coop::net::Session& s) {
     for (size_t i = 0; i < g_ends.size();) {
         if (s.SendReliable(coop::net::ReliableKind::AmbientFixtureState, &g_ends[i], sizeof(Payload))) {
             ++g_counters.sent;
             g_ends.erase(g_ends.begin() + static_cast<std::ptrdiff_t>(i));
         } else {
-            again = true;
             ++i;
         }
     }
+}
+
+void HostPass(coop::net::Session& s) {
+    const uint32_t connected = ConnectedSlots(s);
+    g_censusSlots &= connected;
+    bool again = false;
+    int sends = 0;
 
     for (auto it = g_known.begin(); it != g_known.end();) {
         void* obj = it->first;
@@ -292,6 +294,9 @@ void HostPass(coop::net::Session& s) {
         }
     }
 
+    // After the loop: an end queued while the pass ran goes out in it, whatever raised it.
+    SendEnds(s);
+
     // A joiner's census ends once every fixture is sent to it, so the loaded branches nothing named are the host's lack.
     for (int slot = 1; slot < coop::players::kMaxPeers; ++slot) {
         if (!(g_censusSlots & (1u << slot))) continue;
@@ -314,7 +319,7 @@ void HostPass(coop::net::Session& s) {
         }
     }
     if (sends) UE_LOGI("ambient_fixture_sync: sent %d fixtures, %zu stand", sends, g_known.size());
-    g_work = again;
+    g_work = again || !g_ends.empty();
 }
 
 void HostTick(coop::net::Session& s) {
