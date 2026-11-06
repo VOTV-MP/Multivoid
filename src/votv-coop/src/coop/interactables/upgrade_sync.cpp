@@ -2,6 +2,8 @@
 
 #include "coop/interactables/upgrade_sync.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/interactables/device_occupancy.h"
 #include "coop/net/intent_bucket.h"
 #include "coop/net/intent_queue.h"
@@ -221,11 +223,13 @@ void Execute(coop::net::Session& s, const coop::net::UpgradeIntentPayload& p, ui
 
 // The row's `index` and whether it is a MODULE row, both read off the pressed widget.
 //
-// The index alone does not identify a row: the panel really does carry two widgets numbered 27 --
-// the ping-strength level and the 400-credit RC module -- and the module rows are what the level
-// table has no entry for. Without the flag, a press on the module was cancelled as a level buy and
-// re-sent as index 27, so the presser lost the module it paid for and the group bought a
-// ping-strength level for a tenth of the price. `module` is the widget's own discriminator.
+// The index alone does not identify a row: the panel really does carry two widgets numbered 27 -- the level table's
+// triangle-probability row (upg_triangleProb_) and the 400-credit RC module, whose body writes that same store at
+// its own price. Sent as a level buy, a press on the module would be judged by the level's arithmetic. `module` is
+// the widget's own discriminator, and it picks the intent's direction (upgrade_intent::kModuleBuy and kModuleSell).
+// Ten indices have no store: 12-19, 22 and 23 return a temporary of the body's own in both of uicomp_upgradeSlot's
+// level switches (its getLevel and setLevel), so a press on one of them charges its price and holds no level.
+// Which indices are module rows is the widget's flag and not the switch's; the switch is only what each one writes.
 bool RowOf(void* widget, int* outIndex, bool* outModule) {
     static void*   sCls = nullptr;
     static int32_t sIdxOff = -1;
@@ -245,6 +249,13 @@ bool RowOf(void* widget, int* outIndex, bool* outModule) {
     return true;
 }
 
+// The dev red arm of the module-row drill: a module row's press runs on this machine alone, as it did before it was an
+// intent, so the host never takes it and its next balance puts the charge back.
+bool ModuleIntentOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::module_intent_off);
+    return off;
+}
+
 sg::Verdict OnButton(const sg::Call& call, uint8_t dir) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return sg::Verdict::Run;
@@ -255,6 +266,7 @@ sg::Verdict OnButton(const sg::Call& call, uint8_t dir) {
     if (!RowOf(call.object, &index, &isModule)) return sg::Verdict::Run;
     // The flag is tested BEFORE the index, because an index is not unique across the two kinds of row.
     if (!isModule && !UP::IsLevelRow(index)) return sg::Verdict::Run;
+    if (isModule && ModuleIntentOff()) return sg::Verdict::Run;
 
     coop::net::UpgradeIntentPayload p{};
     p.panelIndex = static_cast<uint8_t>(index);

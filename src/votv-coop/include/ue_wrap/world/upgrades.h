@@ -34,8 +34,9 @@ bool WriteLevel(int panelIndex, int32_t value);
 bool IsLevelRow(int panelIndex);
 
 // Presses a module row's own buy or sell button on this machine's live panel. False when no such row stands. Its body
-// is the game's: index 27 writes the triangle level at the module's price, and the other nine write a temporary of the
-// body's own, so they charge and hold nothing (read off the row's switch; measured on a client). Game thread.
+// is the game's: index 27 writes the triangle level at the module's price, and the ten indices without a store (12-19,
+// 22, 23: the row's getLevel and setLevel switches return a temporary) charge their price and hold no level (the switch
+// read; the 30 credits of row 23 measured on a client). Game thread.
 bool PressModuleRow(int panelIndex, bool sell);
 
 // The panel's own arithmetic, baked from the ui_laptop rows (the .cpp carries the table and the

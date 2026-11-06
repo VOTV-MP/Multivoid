@@ -206,9 +206,10 @@ purchase as an intent the host validates against the shared research points, are
 not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 A module row is not a level of the panel's arithmetic: a client's press of one is cancelled at the script-body gate
 and goes to the host as an intent, and the host presses its own copy of the row, whose body charges the balance
-(`coop/interactables/upgrade_sync`). The row numbered 27 writes the triangle level at its 400 credits; the other nine
-have no store, as their index selects a temporary of the button's own, so a press charges and holds nothing, as in
-single player (read off the row's switch; which of them a player can reach is not measured).
+(`coop/interactables/upgrade_sync`). The row numbered 27 writes the triangle level at its 400 credits; ten indices
+(12-19, 22 and 23) have no store, as the row's getLevel and setLevel switches select a temporary of the button's own for
+them, so a press charges its price and holds no level, as in single player (the switch read; row 23's 30 credits
+measured; which of the ten a player can reach is not measured).
 
 ## Who owns what
 
