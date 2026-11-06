@@ -7,15 +7,6 @@
 // next state answers. A plant is found by its save key, so what a join's load brought is already the host's. The winter bush
 // and the mushrooms are classes under growingPlant_C, so they are plants here too, and their spawners are refused on a
 // client (coop/world/spawn_authority), so the bushes are the host's.
-//
-// TRANSITIONAL (principle 4): the client's PlantEdit poll stands in for player-act intents, as the door's verbs are. RETIREMENT
-// PLAN: they replace it once (1) a host-run verb's player-facing feedback (PlaySound2D, addHint) reaches the acting client
-// through one shared seam, and (2) the hose and the bury lane are synced. Until then the poll carries only what the client's
-// player changed (its simulation is refused at the gate, plant_gate), and the host takes an edit as a client's act could make
-// it: a plant class, within the sender's reach (coop/element/intent_authority), every value bounded (coop/world/plant_edit_gate).
-// A refused edit of a plant the host holds is answered with the host's state, so the client's copy returns to the host's value.
-// A refused removal is not (the client skips the states of a plant it removed) and neither is a refused planting: the named
-// limit of this path, reached only by an out-of-reach or cheating client, and ended by the intents that replace it.
 
 #pragma once
 
@@ -29,6 +20,15 @@ class Session;
 struct PlantStatePayload;
 struct WireClassName;
 }  // namespace coop::net
+
+// TRANSITIONAL (principle 4): the client's PlantEdit poll stands in for player-act intents, as the door's verbs are. RETIREMENT
+// PLAN: they replace it once (1) a host-run verb's player-facing feedback (PlaySound2D, addHint) reaches the acting client
+// through one shared seam, and (2) the hose and the bury lane are synced. Until then the poll carries only what the client's
+// player changed (its simulation is refused at the gate, plant_gate), and the host takes an edit as a client's act could make
+// it: a plant class, within the sender's reach (coop/element/intent_authority), every value bounded (coop/world/plant_edit_gate).
+// A refused edit of a plant the host holds is answered with the host's state, so the client's copy returns to the host's value.
+// A refused removal is not (the client skips the states of a plant it removed) and neither is a refused planting: the named
+// limit of this path, reached only by an out-of-reach or cheating client, and ended by the intents that replace it.
 
 namespace coop::plant_sync {
 
