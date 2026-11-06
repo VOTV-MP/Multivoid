@@ -10,7 +10,7 @@
 //     steep for the body is walked round (director/detour).
 //   GrabProcess (prio 40), while in reach and not yet grabbed: settle, aim, then the
 //     proven chippile grab (force lookAtActor + InpActEvt_use + playerGrabbed).
-// ClearwayProcess (prio 110, proc_clearway.cpp) sits beside them: Goto offers it a prop on the route's leg.
+// A prop on the route's leg is deleted by Goto (blocker_delete.h).
 // Every action is at the human-INPUT seam. All OnTick runs on the game thread
 // (inside the ControlManager's per-tick closure), so engine calls are direct.
 
@@ -294,13 +294,6 @@ public:
                 detour_.Cancel();   // a search begun before the fall would install a route from the pre-fall start
             }
         }
-        if (seenAttempts_ != goal_.clearway.attempts) {   // a prop was carried aside: the walker stands elsewhere now
-            seenAttempts_ = goal_.clearway.attempts;
-            pathed_ = false; waypoints_.clear(); wp_ = 0; lastWp_ = 0; bestWp_ = 1e9f; bestPile_ = 1e9f;
-            sinceProgress_ = 0; unstickTicks_ = 0;
-            stuckEpisodes_ += 3 - stuckEpisodes_ % 4;   // the pile has more: the next stuck looks for the next prop
-            detour_.Cancel();
-        }
         if (detour_.Active()) {   // looking for a way round a slope the body cannot climb: stand while it does
             std::vector<ue_wrap::FVector> route;
             const detour::Search::Step step = detour_.Advance(ctx.player, &route);
@@ -534,7 +527,6 @@ private:
     float  jukeSign_ = 1.f;
     float  floorZ_ = -1.f;   // the body's lowest floor normal Z; -1 unread, 0 unreadable (no detours)
     int    detours_ = 0;
-    uint32_t seenAttempts_ = 0;   // goal_.clearway.attempts as last read: a move re-paths
     detour::Search detour_;
     detour::Lookahead ahead_;   // the floor ahead on the route followed
 };
@@ -695,13 +687,8 @@ void ClearHand::LogCleared() const {
             usedEffectFallback_ ? 0 : 1);
 }
 
-std::unique_ptr<IProcess> MakeGotoProcess(DirectorGoal& goal, bool onLevel) {
-    return std::make_unique<GotoProcess>(goal, onLevel);
-}
-
 void AddWalkGrabProcesses(ControlManager& mgr, DirectorGoal& goal) {
     g_clearHandUsedEffectFallback = false;   // reset per run
-    mgr.Add(MakeClearwayProcess(goal));
     mgr.Add(std::make_unique<ClearHandProcess>(goal));
     mgr.Add(std::make_unique<GotoProcess>(goal, /*onLevel*/ false));
     mgr.Add(std::make_unique<GrabProcess>(goal));
@@ -709,7 +696,6 @@ void AddWalkGrabProcesses(ControlManager& mgr, DirectorGoal& goal) {
 
 void AddWalkToProcesses(ControlManager& mgr, DirectorGoal& goal) {
     g_clearHandUsedEffectFallback = false;   // reset per run
-    mgr.Add(MakeClearwayProcess(goal));
     mgr.Add(std::make_unique<ClearHandProcess>(goal));
     mgr.Add(std::make_unique<GotoProcess>(goal, /*onLevel*/ true));
     mgr.Add(std::make_unique<ReachProcess>(goal));
