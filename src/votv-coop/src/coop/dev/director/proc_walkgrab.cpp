@@ -60,9 +60,10 @@ float HorizDist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
 // read the reason once its goal has failed, so the one buffer is enough; a later failing goal overwrites it.
 char g_blockedReason[96];
 
-// How far from the walker (flat, cm) a prop's hit point may be and still be the prop that holds it. The leg's trace
-// names the first prop anywhere along the leg, which may lie metres on or behind the walker; only a hit within the
-// body's own reach is acted on (deleted, or with the deleter off, the goal failed).
+// How far from the walker's capsule (flat, cm, to the closest point of the prop's box) a prop may be and still be the
+// prop that holds it. The leg's trace names the first prop anywhere along the leg, which may lie metres on or behind
+// the walker; only a prop within this reach is acted on (deleted, or with the deleter off, the goal failed). The
+// figure is a stated heuristic, not a measured one.
 constexpr float kHoldReachCm = 150.f;
 
 constexpr float kAdvanceCm      = 70.f;   // hug the path: advance only when CLOSE, so the straight line to
@@ -428,16 +429,24 @@ public:
                 const bool onLeg = LegBlocker(ctx, goal_.route, wp_ + 1, &legProp, &legSpot);
                 const bool ahead = BlockerAhead(ctx, waypoints_[wp_], &blocker);
                 if (onLeg) blocker = legSpot;
-                // Only the prop that holds the walker is acted on: a hit within reach, and not the drill's own
-                // target. Any other prop on the leg goes to the detour below, as before.
+                // Only the prop that holds the walker is acted on: its bounds ahead of the walker along the leg and
+                // within reach of the body, and not the drill's own target. Any other prop on the leg goes to the
+                // detour below, as before.
                 bool holds = false;
                 if (onLeg) {
-                    const float reach = HorizDist(legSpot, ctx.pos);
+                    float gap = 0.f;
+                    const Hold hold = legProp == goal_.targetActor ? Hold::Unread
+                        : PropHoldsWalker(ctx, goal_.route, wp_ + 1, legProp, kHoldReachCm, &gap);
                     if (legProp == goal_.targetActor) {
                         UE_LOGW("director/Goto: the prop on the route's leg is the goal's own target -- not deleted");
-                    } else if (reach > kHoldReachCm) {
-                        UE_LOGW("director/Goto: the prop on the route's leg is %.0f cm away -- a prop further on the "
-                                "leg, not the one holding the walker", reach);
+                    } else if (hold == Hold::Behind) {
+                        UE_LOGW("director/Goto: the prop on the route's leg lies behind the walker -- not the one "
+                                "holding it");
+                    } else if (hold == Hold::TooFar) {
+                        UE_LOGW("director/Goto: the prop on the route's leg is %.0f cm from the body -- a prop further "
+                                "on the leg, not the one holding the walker", gap);
+                    } else if (hold == Hold::Unread) {
+                        UE_LOGW("director/Goto: the prop on the route's leg has unreadable bounds -- not deleted");
                     } else {
                         holds = true;
                     }

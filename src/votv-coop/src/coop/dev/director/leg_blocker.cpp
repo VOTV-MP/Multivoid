@@ -6,7 +6,9 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/trace.h"
+#include "ue_wrap/engine/engine.h"
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 
@@ -53,6 +55,33 @@ bool LegBlocker(const PlayerContext& ctx, const std::vector<ue_wrap::FVector>& r
     *prop = hit.actor;
     *spot = hit.point;
     return true;
+}
+
+Hold PropHoldsWalker(const PlayerContext& ctx, const std::vector<ue_wrap::FVector>& route, size_t heading, void* prop,
+                     float reachCm, float* gapCm) {
+    if (!prop || heading == 0 || heading >= route.size()) return Hold::Unread;
+    float dx = route[heading].X - route[heading - 1].X, dy = route[heading].Y - route[heading - 1].Y;
+    const float len = std::hypot(dx, dy);
+    const float radius = ue_wrap::engine::GetActorCharacterRadius(ctx.player);
+    ue_wrap::FVector centre{}, ext{};
+    // A zero extent is "no colliding components", never a point-sized prop (engine.cpp, ActorReachSphere).
+    if (len < 1.f || radius <= 0.f || !ue_wrap::engine::GetActorBounds(prop, /*onlyColliding=*/true, centre, ext) ||
+        (ext.X == 0.f && ext.Y == 0.f))
+        return Hold::Unread;
+    dx /= len;
+    dy /= len;
+    // The box's closest point to the walker's centre, flat; the body's surface is the capsule radius short of it.
+    const float nx = (std::max)(std::fabs(ctx.pos.X - centre.X) - ext.X, 0.f);
+    const float ny = (std::max)(std::fabs(ctx.pos.Y - centre.Y) - ext.Y, 0.f);
+    const float gap = (std::max)(std::hypot(nx, ny) - radius, 0.f);
+    if (gapCm) *gapCm = gap;
+    // Ahead: some corner of the box lies in front of the walker along the leg.
+    bool ahead = false;
+    for (int sx = -1; sx <= 1 && !ahead; sx += 2)
+        for (int sy = -1; sy <= 1 && !ahead; sy += 2)
+            ahead = (centre.X + sx * ext.X - ctx.pos.X) * dx + (centre.Y + sy * ext.Y - ctx.pos.Y) * dy > 0.f;
+    if (!ahead) return Hold::Behind;
+    return gap <= reachCm ? Hold::Holds : Hold::TooFar;
 }
 
 }  // namespace coop::director
