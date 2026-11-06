@@ -10,6 +10,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/puppet_events.h"
 #include "coop/player/remote_player.h"
 #include "coop/session/player_handshake.h"
 
@@ -58,6 +59,7 @@ bool DestroySlot(int slot) {
     // Unconditional: Destroy also ends a hurt flash on a puppet whose body already went (its pins released) and
     // tears down a stale body's ragdoll and effect actors; on a slot with no body at all it returns after the flash.
     g_puppets[slot].Destroy();
+    coop::puppet_events::ForgetSlot(static_cast<uint8_t>(slot));  // the next puppet's first pose is silent again
     // UnregisterPuppet drops the Player Element from players::Registry, on every path: a puppet never
     // spawned -- the peer disconnected after Join but before any PoseSnapshot -- leaves
     // g_puppets[slot].valid() false while playerBySlot_[slot] may still hold a mirror Element
@@ -162,6 +164,8 @@ void DriveTick(coop::net::Session& session, bool worldReadyAnnounced) {
             // motion. The per-frame advance happens in Tick() below.
             if (isNew) {
                 g_puppets[slot].SetTargetPose(remote);
+                // After the pose reached the puppet: its life edge, then the pose listeners.
+                coop::puppet_events::Announce(static_cast<uint8_t>(slot), remote);
                 ++sPoseFresh[slot];  // pose-diag: a fresh target this second
             }
         }
