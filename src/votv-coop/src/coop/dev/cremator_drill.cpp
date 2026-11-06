@@ -552,7 +552,9 @@ constexpr const char* kCremated = " was cremated.";
 constexpr const char* kSurvived = " survived the crematorium.";
 constexpr const char* kDied     = " died before landing.";
 constexpr const char* kNoLand   = " did not land in the cremator.";
-constexpr const char* kEnds[]   = {kCremated, kSurvived, " left before the end.", kDied, kNoLand, "would not start for"};
+constexpr const char* kEnds[]   = {kCremated, kSurvived, " survived the crematorium (still burning).", " left before the end.", kDied,
+                                    " died in the cremator, but not by its fire.", kNoLand, "would not start for",
+                                    "The cremator is gone"};
 
 std::string EndLine() {
     for (const char* e : kEnds) {
@@ -594,6 +596,10 @@ void RunHostCremate(const std::string& arm) {
         no = PlayerNo(kClientSlot);
     });
     if (!watching || key.empty()) { UE_LOGW("cremator-drill: VERDICT ABORT -- the landing cannot be watched"); return; }
+    // The verb refuses a trip whose landing cannot be seen, so the order waits for the watch to be live (the red arm's
+    // watch is this drill's own listener, as the verb registers none).
+    if (!PS::WaitFor("the burn volume's watch live", kSignalSec, [] { return coop::cremator_occupancy::WatchLive(); }))
+        return;
     if (arm == "cremate-running" && (!Pull(key) || !PS::WaitFor("the host's run on", kHostRunSec, [&] { return CopyAt(key, 1); })))
         return;
     CMD::Submit("cremate " + no);
