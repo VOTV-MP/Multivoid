@@ -4,21 +4,18 @@
 // convenience teleport (the rule that a drill moves its peer with the director binds drills; the admin verb's own
 // move is what is measured here). The landing is the cremator's own `burning` begin-overlap for the puppet's actor.
 
-#include "cremator_probe_detail.h"  // co-located private header (src tree, not include/)
+#include "cremator_dev_support.h"   // co-located private headers (src tree, not include/)
+#include "cremator_probe_detail.h"
 
 #include "coop/net/net_clock.h"
-#include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
-#include "coop/props/prop_snapshot.h"
-#include "coop/save/join_window_baseline.h"
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/devices/cremator.h"
-#include "ue_wrap/engine/engine.h"
 
 #include <atomic>
 #include <cmath>
@@ -29,7 +26,6 @@
 namespace coop::dev::cremator_probe::detail {
 namespace {
 
-namespace E = ue_wrap::engine;
 namespace C = ue_wrap::cremator;
 
 // Watch: waiting for slot 1's join to settle. Landing: the teleport order is sent, waiting for the overlap.
@@ -129,34 +125,20 @@ float Between(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
 // drill's settled-host test, for the one slot). Then the host opens the nearest cremator's door and sends slot 1
 // the firebox pose, as the admin verb does.
 void WatchTick(coop::net::Session& session) {
-    auto* puppet = coop::players::Registry::Get().Puppet(kClientSlot);
-    ue_wrap::FVector at{};
-    if (!puppet || !puppet->valid() || !session.IsSlotWorldReady(kClientSlot) ||
-        !coop::prop_snapshot::IsBracketClosed(kClientSlot) ||
-        coop::join_window_baseline::IsLateWindowOpen(kClientSlot) || !session.SlotReliableIdle(kClientSlot) ||
-        !puppet->TryGetLocation(at))
-        return;
-    const C::Nearest n = C::FindNearestFirebox(at);
-    if (!n.actor) { Fail("no cremator with a firebox is loaded"); return; }
-    ue_wrap::FRotator rot{};
-    if (!E::TryGetActorRotation(n.actor, rot)) { Fail("the cremator's rotation is unreadable"); return; }
+    if (!cremator_support::SlotSettled(session, kClientSlot)) return;
+    cremator_support::Firebox fb;
+    const char* why = nullptr;
+    if (!cremator_support::FindFirebox(kClientSlot, fb, why)) { Fail(why); return; }
 
-    g_cremator.Set(n.actor);
-    g_fireboxAt = n.at;
-    bool opened = false;
-    if (!C::OpenDoor(n.actor, opened)) { Fail("the door's open() did not run"); return; }
-    UE_LOGI("cremator-probe: HOST DOOR opened=%d", opened ? 1 : 0);
-
-    coop::net::TeleportClientPayload pose{};
-    pose.locX = n.at.X; pose.locY = n.at.Y; pose.locZ = n.at.Z;
-    pose.rotPitch = rot.Pitch; pose.rotYaw = rot.Yaw; pose.rotRoll = rot.Roll;
-    if (!session.SendReliableToSlot(kClientSlot, coop::net::ReliableKind::TeleportClient, &pose, sizeof(pose))) {
-        Fail("the teleport order was not sent");
-        return;
-    }
+    g_cremator.Set(fb.cremator);
+    g_fireboxAt = fb.at;
+    // The landing is judged by the begin-overlap, so the order goes out after the cremator is the one HostOnOverlap
+    // compares against and the landing flag is clear.
     g_landed.store(0, std::memory_order_release);
+    if (!cremator_support::OpenAndSend(session, kClientSlot, fb, why)) { Fail(why); return; }
+    UE_LOGI("cremator-probe: HOST DOOR opened=%d", fb.doorOpened ? 1 : 0);
     g_landingTicks = 0;
-    UE_LOGI("cremator-probe: HOST SENT teleport to=(%.0f,%.0f,%.0f)", n.at.X, n.at.Y, n.at.Z);
+    UE_LOGI("cremator-probe: HOST SENT teleport to=(%.0f,%.0f,%.0f)", fb.at.X, fb.at.Y, fb.at.Z);
     g_step = Step::Landing;
 }
 

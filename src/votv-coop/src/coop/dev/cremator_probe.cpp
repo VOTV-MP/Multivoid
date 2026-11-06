@@ -2,7 +2,8 @@
 
 #include "coop/dev/cremator_probe.h"
 
-#include "cremator_probe_detail.h"  // co-located private header (src tree, not include/)
+#include "cremator_dev_support.h"   // co-located private headers (src tree, not include/)
+#include "cremator_probe_detail.h"
 
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
@@ -16,14 +17,11 @@
 #include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
-#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/devices/cremator.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/engine/engine_nav.h"
-#include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
 #include <cmath>
@@ -76,14 +74,6 @@ constexpr int kRouteMarginSec = 60;
 constexpr float kMovedCm = 300.f;
 constexpr float kNoMoveFailS = 300.f;
 
-namespace sg = ue_wrap::script_gate;
-
-// The cremator's own begin-overlap of its `burning` component: the event that collects the sitter.
-UE_FACT_FN(kRowBeginOverlap, "dev.cremator_probe", L"cremator_C",
-           L"BndEvt__cremator_burning_K2Node_ComponentBoundEvent_1_ComponentBeginOverlapSignature__DelegateSignature",
-           Declared);
-constexpr int kTagBeginOverlap = 0x43524D50;  // 'CRMP'
-
 std::atomic<coop::net::Session*> g_session{nullptr};
 std::atomic<int> g_stepped{0};  // the begin-overlap saw the local pawn enter the probe's cremator
 
@@ -102,21 +92,9 @@ int g_linesLeftAfterDeath = 0;
 int g_stepTicks = 0;
 ue_wrap::FVector g_joinedAt{};  // the place-only pawn's position when it was ready, the move's reference
 
-// Post, on the game thread: the body has run, so the cremator's own begin-overlap handling is done.
-void OnBeginOverlapPost(const sg::Call& c) {
-    if (!c.object || !c.function || !c.locals) return;
-    const bool host = ModeOf() == Mode::Host;
-    if (!host && c.object != g_cremator.Get()) return;
-    static void* sFn = nullptr;
-    static int32_t sOtherOff = -1;
-    if (c.function != sFn) {
-        sFn = c.function;
-        sOtherOff = ue_wrap::reflection::FindParamOffset(c.function, L"OtherActor");
-    }
-    if (sOtherOff < 0) return;
-    void* other = nullptr;
-    std::memcpy(&other, c.locals + sOtherOff, sizeof(other));
-    if (host) { HostOnOverlap(c.object, other); return; }
+// The cremator's begin-overlap on the client arms: the local pawn entering the probe's cremator.
+void OnLocalOverlap(void* cremator, void* other) {
+    if (cremator != g_cremator.Get()) return;
     if (other && other == coop::players::Registry::Get().Local()) g_stepped.store(1, std::memory_order_release);
 }
 
@@ -370,7 +348,7 @@ void Install(coop::net::Session* session) {
     static bool sWatching = false;
     static bool sWarned = false;
     if (sWatching) return;
-    if (sg::WatchName(kRowBeginOverlap, kTagBeginOverlap, nullptr, &OnBeginOverlapPost)) {
+    if (cremator_support::WatchBurningOverlap(mode == Mode::Host ? &HostOnOverlap : &OnLocalOverlap)) {
         sWatching = true;
         UE_LOGI("cremator-probe: watching the cremator's begin-overlap");
         return;

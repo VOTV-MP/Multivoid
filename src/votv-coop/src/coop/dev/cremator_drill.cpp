@@ -2,6 +2,8 @@
 
 #include "coop/dev/cremator_drill.h"
 
+#include "cremator_dev_support.h"  // co-located private header (src tree, not include/)
+
 #include "harness/autotest.h"  // IsClientRole
 #include "harness/autotest/peer_signal.h"
 #include "harness/session_runtime.h"
@@ -10,18 +12,14 @@
 #include "coop/config/config_registry.h"
 #include "coop/interactables/cremator_client_guard.h"  // G5: the refused collections
 #include "coop/interactables/interactable_sync.h"  // the cremator lane's key and its resolve
-#include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
-#include "coop/props/prop_snapshot.h"
-#include "coop/save/join_window_baseline.h"
 #include "coop/session/net_pump.h"
 
 #include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/devices/cremator.h"
 #include "ue_wrap/engine/engine.h"
@@ -277,11 +275,7 @@ void RunRejoin() {
 // landing by the cremator's own begin-overlap for the client's puppet, shuts the door and pulls the lever. The client
 // reports its own death, and the host judges it.
 
-// The cremator's own begin-overlap of its `burning` component: the event that collects the sitter.
-UE_FACT_FN(kRowBurningOverlap, "dev.cremator_drill", L"cremator_C",
-           L"BndEvt__cremator_burning_K2Node_ComponentBoundEvent_1_ComponentBeginOverlapSignature__DelegateSignature",
-           Declared);
-constexpr int kTagOverlap = 0x43443347;  // 'CD3G'
+namespace CS = coop::dev::cremator_support;
 
 constexpr uint8_t kClientSlot = 1;
 constexpr int kLandSec  = 60;
@@ -291,60 +285,35 @@ std::atomic<void*> g_g3Cremator{nullptr};
 std::atomic<void*> g_g3Puppet{nullptr};
 std::atomic<int>   g_g3Landed{0};
 
-// Post, on the game thread: the body has run, so the cremator's own begin-overlap handling is done.
-void OnOverlapPost(const sg::Call& c) {
-    if (!c.object || !c.function || !c.locals || c.object != g_g3Cremator.load(std::memory_order_acquire)) return;
-    static void*   sFn = nullptr;
-    static int32_t sOtherOff = -1;
-    if (c.function != sFn) {
-        sFn = c.function;
-        sOtherOff = ue_wrap::reflection::FindParamOffset(c.function, L"OtherActor");
-    }
-    if (sOtherOff < 0) return;
-    void* other = nullptr;
-    std::memcpy(&other, c.locals + sOtherOff, sizeof(other));
-    if (other && other == g_g3Puppet.load(std::memory_order_acquire)) g_g3Landed.store(1, std::memory_order_release);
-}
-
-// Slot 1's join has settled: its world is ready, its join traffic is delivered and its puppet stands here. Game thread.
-bool ClientSettled() {
-    auto& s = harness::session_runtime::Session();
-    coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(kClientSlot);
-    return p && p->valid() && s.IsSlotWorldReady(kClientSlot) && coop::prop_snapshot::IsBracketClosed(kClientSlot) &&
-           !coop::join_window_baseline::IsLateWindowOpen(kClientSlot) && s.SlotReliableIdle(kClientSlot);
+// The cremator's begin-overlap: the client's puppet entering the cremator the burn was sent to.
+void OnLanding(void* cremator, void* other) {
+    if (other && cremator == g_g3Cremator.load(std::memory_order_acquire) &&
+        other == g_g3Puppet.load(std::memory_order_acquire))
+        g_g3Landed.store(1, std::memory_order_release);
 }
 
 // The nearest cremator to the client's puppet gets its door opened, the overlap watch and the teleport order. Game
 // thread. The cremator's lane key on success, "" on a step that failed (said).
 std::wstring SendClientToFirebox(void*& cremator) {
-    coop::RemotePlayer* puppet = coop::players::Registry::Get().Puppet(kClientSlot);
-    ue_wrap::FVector from{};
-    if (!puppet || !puppet->TryGetLocation(from)) { UE_LOGW("cremator-drill: g3 the client's puppet has no location"); return {}; }
-    const C::Nearest n = C::FindNearestFirebox(from);
-    ue_wrap::FRotator rot{};
-    if (!n.actor || !E::TryGetActorRotation(n.actor, rot)) { UE_LOGW("cremator-drill: g3 no cremator with a firebox"); return {}; }
-    cremator = n.actor;
+    CS::Firebox fb;
+    const char* why = nullptr;
+    if (!CS::FindFirebox(kClientSlot, fb, why)) { UE_LOGW("cremator-drill: g3 %s", why); return {}; }
+    cremator = fb.cremator;
     const std::wstring key = coop::interactable_sync::CrematorKey(cremator);
     if (key.empty()) { UE_LOGW("cremator-drill: g3 the cremator lane does not index the nearest cremator"); return {}; }
-    bool opened = false;
-    if (!C::OpenDoor(cremator, opened)) { UE_LOGW("cremator-drill: g3 the door's open() did not run"); return {}; }
     g_g3Cremator.store(cremator, std::memory_order_release);
-    g_g3Puppet.store(puppet->GetActor(), std::memory_order_release);
+    g_g3Puppet.store(coop::players::Registry::Get().Puppet(kClientSlot)->GetActor(), std::memory_order_release);
     g_g3Landed.store(0, std::memory_order_release);
-    if (!sg::WatchName(kRowBurningOverlap, kTagOverlap, nullptr, &OnOverlapPost)) {
+    if (!CS::WatchBurningOverlap(&OnLanding)) {
         UE_LOGW("cremator-drill: g3 the begin-overlap watch did not register");
         return {};
     }
-    coop::net::TeleportClientPayload pose{};
-    pose.locX = n.at.X; pose.locY = n.at.Y; pose.locZ = n.at.Z;
-    pose.rotPitch = rot.Pitch; pose.rotYaw = rot.Yaw; pose.rotRoll = rot.Roll;
-    if (!harness::session_runtime::Session().SendReliableToSlot(kClientSlot, coop::net::ReliableKind::TeleportClient,
-                                                                &pose, sizeof(pose))) {
-        UE_LOGW("cremator-drill: g3 the teleport order was not sent");
+    if (!CS::OpenAndSend(harness::session_runtime::Session(), kClientSlot, fb, why)) {
+        UE_LOGW("cremator-drill: g3 %s", why);
         return {};
     }
-    UE_LOGI("cremator-drill: HOST g3 door opened=%d, teleport order to=(%.0f,%.0f,%.0f) key='%ls'", opened ? 1 : 0, n.at.X,
-            n.at.Y, n.at.Z, key.c_str());
+    UE_LOGI("cremator-drill: HOST g3 door opened=%d, teleport order to=(%.0f,%.0f,%.0f) key='%ls'", fb.doorOpened ? 1 : 0,
+            fb.at.X, fb.at.Y, fb.at.Z, key.c_str());
     return key;
 }
 
@@ -356,7 +325,7 @@ bool BurnRun(const char* arm, const char* keyMark, const char* leverMark) {
     if (!Await("client_ready", kJoinSec)) return false;
     if (!PS::WaitFor("slot 1's join settled", kSignalSec, [] {
             bool ok = false;
-            OnGameThread([&] { ok = ClientSettled(); });
+            OnGameThread([&] { ok = CS::SlotSettled(harness::session_runtime::Session(), kClientSlot); });
             return ok;
         }))
         return false;

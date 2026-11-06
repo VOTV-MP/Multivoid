@@ -104,6 +104,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/drive_selftest.cpp
     src/coop/dev/rack_birth_drill.cpp
     src/coop/dev/burn_revive_drill.cpp
+    src/coop/dev/cremator_dev_support.cpp
     src/coop/dev/cremator_probe.cpp
     src/coop/dev/cremator_probe_host.cpp
     src/coop/dev/cremator_drill.cpp
