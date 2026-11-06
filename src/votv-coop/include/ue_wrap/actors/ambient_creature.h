@@ -1,5 +1,5 @@
 // ue_wrap/actors/ambient_creature.h -- the deer, the walking tree and the walking mannequin, the dirt holes and the beehive
-// branches: a tree's size and landing, a deer's dissolve, a walker's view and anger, a hole's place and a branch's nest. Each
+// branches: a tree's size and landing, a deer's dissolve, a walker's view and stand, a hole's place and a branch's nest. Each
 // class is read by reflection on the game thread.
 
 #pragma once
@@ -50,10 +50,6 @@ bool IsWalker(void* actor);
 // The walker's class object, null until it is loaded; the pointer a caller on any thread compares `ClassOf(actor)` with.
 // Resolved on the game thread.
 void* WalkerClass();
-
-// Its angry flag: an angry walker hits a player it touches, and does not freeze.
-bool ReadWalkerAngry(void* walker);
-void WriteWalkerAngry(void* walker);
 
 // A hexahive's and a sus hole's dirt holes, and the beehive spawner's branches.
 void ListHoles(std::vector<void*>& out);

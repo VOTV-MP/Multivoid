@@ -19,7 +19,8 @@ void SpawnWalker();
 // pending. Game thread.
 void TickFrame();
 
-// The [dev] mannequin_drill row's phases; a single enum read when it is off. Game thread.
+// The [dev] mannequin_drill row's baseline phases (`spawn`, `red`); a single enum read for any other value, the two-peer walker
+// drill's (coop/dev/mannequin_walker_drill.h) included. Game thread.
 void Tick(coop::net::Session* session);
 
 // The local session's last link dropped: the client's samples start over. The host's half runs

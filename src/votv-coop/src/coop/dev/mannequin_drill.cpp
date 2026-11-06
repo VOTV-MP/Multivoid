@@ -400,7 +400,8 @@ void TickFrame() {
 void Tick(coop::net::Session* session) {
     static const std::string s_mode =
         coop::config::ResolveEnum(::coop::config_registry::rows::mannequin_drill);
-    if (s_mode == "off" || !session) return;
+    // The other values are the two-peer walker drill's (coop/dev/mannequin_walker_drill): it spawns through SpawnWalker itself.
+    if ((s_mode != "spawn" && s_mode != "red") || !session) return;
     if (coop::roster::LocalIsHost()) TickHost(*session, s_mode);
     else TickClient();
 }

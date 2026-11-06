@@ -2,6 +2,8 @@
 
 #include "coop/creatures/walker_target.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/element/death_seam.h"
 #include "coop/element/element.h"
 #include "coop/creatures/served_player.h"
@@ -317,7 +319,10 @@ void OnExpressed(void* actor, coop::element::ElementId eid) {
 // A claimed walker is held for the hunt.
 void ClaimWalker(void* actor, coop::element::ElementId eid) {
     if (coop::element::Registry::Get().EidForActor(actor) != eid || !R::IsLive(actor)) return;
-    coop::prop_drive_host::Claim(actor, "walker");
+    // The mannequin drill's red: the walker is held for the hunt and not claimed into the drive stream, so its copy is not moved
+    // and the drill's follow step must FAIL.
+    static const bool s_redNoClaim = coop::config::ResolveEnum(::coop::config_registry::rows::mannequin_drill) == "no_drive_claim";
+    if (!s_redNoClaim) coop::prop_drive_host::Claim(actor, "walker");
     Hold(actor);
 }
 

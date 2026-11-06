@@ -47,7 +47,6 @@ uint32_t g_droppedNoBody = 0;
 uint32_t g_droppedSource = 0;
 uint32_t g_failedApplies = 0;
 uint32_t g_refusedSends = 0;
-uint32_t g_cuesPlayed = 0;
 uint32_t g_cuesLost = 0;
 bool g_boneSaid = false;
 bool g_noneSaid = false;                          // the first hit with no source creature has been said
@@ -114,7 +113,6 @@ void PlayCue(void* body, uint8_t cue) {
         return;
     }
     EN::PlaySound2D(body, sSound, 1.f, 1.f, 0.f, true);
-    ++g_cuesPlayed;
 }
 
 struct ApplyScope {
@@ -220,6 +218,5 @@ uint32_t AppliedCount() { return g_applied; }
 
 uint32_t RefusedSendCount() { return g_refusedSends; }
 
-uint32_t CuesPlayed() { return g_cuesPlayed; }
 
 }  // namespace coop::player_hit

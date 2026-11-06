@@ -474,7 +474,6 @@ uint32_t RefusedIgnites() { return g_igniteCanceled.load(std::memory_order_relax
 uint32_t RefusedAchievements() { return g_achievementRefused.load(std::memory_order_relaxed); }
 uint32_t DeliveredCount() { return g_delivered.load(std::memory_order_relaxed); }
 uint32_t MirrorHitCount() { return g_mirrorHits.load(std::memory_order_relaxed); }
-uint32_t HushedSounds() { return g_hushed; }
 
 void Tick() {
     // Publish the local pawn for the interceptor's any-thread compare (GT here;

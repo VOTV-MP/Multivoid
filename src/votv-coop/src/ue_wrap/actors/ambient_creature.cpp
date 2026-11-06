@@ -73,7 +73,6 @@ struct BoolField {
 };
 BoolField g_looking{L"looking"};
 BoolField g_stand{L"stand"};
-BoolField g_angry{L"angry"};
 
 void* WalkerAnim(void* walker) {
     static void* s_cls = nullptr;
@@ -225,15 +224,6 @@ void* WalkerClass() { return OI::ClassByName(L"prop_wMannequin_C"); }
 bool IsWalker(void* actor) {
     void* cls = actor ? WalkerClass() : nullptr;
     return cls && R::ClassOf(actor) == cls;
-}
-
-bool ReadWalkerAngry(void* walker) {
-    const uint8_t* b = g_angry.At(walker);
-    return b && (*b & g_angry.mask) != 0;
-}
-
-void WriteWalkerAngry(void* walker) {
-    if (uint8_t* b = g_angry.At(walker)) *b |= g_angry.mask;
 }
 
 void ListHoles(std::vector<void*>& out) { Collect(L"susDirtHole_C", out); }

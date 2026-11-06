@@ -2,6 +2,8 @@
 
 #include "coop/creatures/walker_gaze_host.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/creatures/walker_graph.h"
 #include "coop/creatures/walker_target.h"
 #include "coop/net/protocol.h"
@@ -148,7 +150,10 @@ void Disarm() {
 
 // Armed while a client hunts a held walker and the graph is pinned.
 void Rearm() {
-    if (g_count == 0 || !g_heldGraph || g_heldGraph != g_pinnedGraph || !g_hooked) {
+    // The mannequin drill's red: the host never answers the walker's gaze reads with its target's, so they stay the host's own
+    // and the drill's stop step must FAIL.
+    static const bool s_redNoRoute = coop::config::ResolveEnum(::coop::config_registry::rows::mannequin_drill) == "no_gaze_route";
+    if (s_redNoRoute || g_count == 0 || !g_heldGraph || g_heldGraph != g_pinnedGraph || !g_hooked) {
         Disarm();
         return;
     }

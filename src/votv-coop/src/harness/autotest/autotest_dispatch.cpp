@@ -12,6 +12,7 @@
 #include "coop/config/config.h"
 #include "coop/dev/cremator_drill.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/mannequin_walker_drill.h"
 #include "ue_wrap/core/log.h"
 
 #include <windows.h>
@@ -267,9 +268,11 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIfEnum(coop::config_registry::rows::woodchipper_drill, "woodchipper drill", &WoodchipperThread, role);
     // The prop-properties tool: the host presses it on a prop it laid, the client takes a toolgun into its hand.
     SpawnIf("VOTVCOOP_RUN_PROP_PROPS", "prop-properties drill", &PropPropsThread, role);
-    SpawnIf("VOTVCOOP_RUN_WALKER_WATCH", "walker watch drill", &WalkerWatchThread, role);
-    SpawnIf("VOTVCOOP_RUN_WALKER_TARGET", "walker target drill", &WalkerTargetThread, role);
-    SpawnIf("VOTVCOOP_RUN_WALKER_STATUE", "statue walker drill", &WalkerStatueThread, role);
+    // The walking mannequin's two-peer drill: armed by a value of the mannequin_drill row on both peers (`walker` or a red).
+    if (coop::dev::mannequin_walker_drill::Armed()) {
+        UE_LOGI("harness: mannequin_drill is a walker drill value (%s) -- spawning the mannequin drill thread", RoleStr(role));
+        if (HANDLE h = ::CreateThread(nullptr, 0, &coop::dev::mannequin_walker_drill::Thread, nullptr, 0, nullptr)) ::CloseHandle(h);
+    }
 }
 
 }  // namespace harness::autotest

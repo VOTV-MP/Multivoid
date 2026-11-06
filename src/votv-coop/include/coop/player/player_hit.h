@@ -55,7 +55,4 @@ uint32_t AppliedCount();
 // counted each time).
 uint32_t RefusedSendCount();
 
-// [dev], for the drill alone: the hit sounds played beside an applied hit.
-uint32_t CuesPlayed();
-
 }  // namespace coop::player_hit

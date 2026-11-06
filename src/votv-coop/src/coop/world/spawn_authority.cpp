@@ -249,13 +249,16 @@ SG::Verdict OnRowPre(const SG::Call& call) {
 std::atomic<bool> g_watched{false};
 
 // The drills' red arms leave rows out of the table, so a drill that reads the refusal counters must fail. The creature drill's
-// arm leaves all four ambient rows out, the field drill's the hexahive's and the beehive's. Read once, at the install.
+// arm leaves all four ambient rows out, the field drill's the hexahive's and the beehive's, the mannequin drill's (`no_row`) the
+// mannequin spawner's. Read once, at the install.
 bool LeftOutByRedArm(const char* tag) {
     const bool fixtureRow = std::strcmp(tag, "hexahiveSpawner.ReceiveTick") == 0 || std::strcmp(tag, "beehiveSpawner.spawn") == 0;
     const bool creatureRow = std::strcmp(tag, "deerSpawner.ReceiveTick") == 0 || std::strcmp(tag, "treeSpawner.ReceiveTick") == 0;
+    const bool mannequinRow = std::strcmp(tag, "mannequinSpawner.ReceiveTick") == 0;
     static const bool creatureArm = coop::config::ResolveEnum(::coop::config_registry::rows::ambient_creature_red) == "no_rows";
     static const bool fieldArm = coop::config::ResolveEnum(::coop::config_registry::rows::ambient_field_red) == "no_rows";
-    return (creatureArm && (creatureRow || fixtureRow)) || (fieldArm && fixtureRow);
+    static const bool mannequinArm = coop::config::ResolveEnum(::coop::config_registry::rows::mannequin_drill) == "no_row";
+    return (creatureArm && (creatureRow || fixtureRow)) || (fieldArm && fixtureRow) || (mannequinArm && mannequinRow);
 }
 
 }  // namespace

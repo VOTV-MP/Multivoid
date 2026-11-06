@@ -47,9 +47,6 @@ uint32_t DeliveredCount();
 // that still hits. A tripwire; the call runs. Any thread.
 uint32_t MirrorHitCount();
 
-// [dev], for the drill alone. On the host, a walker's hit sounds refused here because its victim was a peer. Game thread.
-uint32_t HushedSounds();
-
 // Test entry (host): confirm slot `ownerSlot` has a puppet, then deliver an addDamage of `damage`
 // with no source to that peer. True if the hit was sent (player_hit::Deliver's result). Drives the relay without a
 // creature. Game thread.

@@ -2,6 +2,8 @@
 
 #include "coop/creatures/walker_brain.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/net/session.h"
 #include "coop/world/spawn_authority.h"
 
@@ -129,6 +131,16 @@ void InstallSpawnHook() {
 
 void Install(coop::net::Session& session) {
     if (session.role() != coop::net::Role::Client) return;
+    // The mannequin drill's red: no gate and no inert pawn, so a copy thinks as it did before this module, and the drill's
+    // follow step must FAIL on its second mover.
+    static const bool s_redNoGate = coop::config::ResolveEnum(::coop::config_registry::rows::mannequin_drill) == "no_brain_gate";
+    if (s_redNoGate) {
+        if (!g_graphAsked) {
+            g_graphAsked = true;
+            UE_LOGW("walker_brain: DRILL -- the copy's brain gate is OFF (dev.mannequin_drill=no_brain_gate)");
+        }
+        return;
+    }
     if (!g_graphAsked) {
         g_graphAsked = true;
         if (SG::WatchName(kRowGraph, kTagGraph, &OnGraphPre, nullptr))

@@ -2,6 +2,8 @@
 
 #include "coop/creatures/walker_gaze.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/creatures/walker_state_client.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -134,6 +136,10 @@ void Tick() {
         if (!controller) controller = AC::WalkerGazeController(r.actor);
         const bool seen = controller && AC::WalkerInView(r.actor, controller);
         const int8_t level = seen ? 1 : 0;
+        // The mannequin drill's red: an unseen level is never sent, so the host keeps the last seen one and the drill's release
+        // step must FAIL.
+        static const bool s_redNoLevel = coop::config::ResolveEnum(::coop::config_registry::rows::mannequin_drill) == "no_level";
+        if (s_redNoLevel && !seen && r.told == 1) continue;
         if (level != r.told && Send(r.key, seen)) r.told = level;
     }
 }
