@@ -89,7 +89,6 @@ constexpr float kOutOfRangeMarginCm = 2000.f;
 // window. Walker B: the host back at the KPP gate, out of range, then the client goes to its own bed anchor and steps into range,
 // last. The walker closes on its target while the steps run, and a measurement ends when it is within kApproachEndCm: at that
 // distance it stands at its target's shoulder, where the game's own frustum test of its bounds holds whatever the yaw.
-constexpr float kApproachEndCm = 3000.f;
 constexpr float kKppReachCm = 1500.f;
 
 // Bounds, each a readiness wait that ends sooner on its state. timer_saw is the Blueprint's own 10-20 s release.
@@ -492,7 +491,7 @@ bool HostPhaseB(void* a, void*& b, std::string& keyB) {
     }
     if (!ClientFarEnough(b, "the gaze would be aimed")) return false;
     PS::Mark("aim");
-    if (!PS::Await("sees", 60)) return false;
+    if (!PS::Await("sees", kCloseInS + kViewBoundS)) return false;
     if (!ClientFarEnough(b, "the freeze is judged")) return false;
 
     // The client's camera is on the copy: the host's walker must stand still, with its own `looking` set.
@@ -640,16 +639,17 @@ bool ClientBody() {
     }
     PS::Mark("client_close");
     if (!PS::Await("aim", 240)) return false;
+    // The bed anchor can stand inside the house, and a copy behind a wall is not rendered: the client closes in until it is seen.
     float cm = -1.f;
-    const bool seen = WaitGT("walker B's copy is in this client's view", kViewBoundS, [&] {
-        void* c = ByKey(keyB);
-        if (!c) return false;
-        Aim(c, true);
-        cm = PlayerTo(c);
-        return InView(c);
-    }, false);
+    bool  lastSeen = false;
+    const bool seen = CloseUntilSeen([&] { return ByKey(keyB); }, &InView, kCloseInS, cm, lastSeen);
     UE_LOGI("mannequin-drill: this client aimed at walker B's copy, %.0f cm away: in view=%d", cm, seen ? 1 : 0);
-    if (!seen) return Invalid("walker B's copy never came into this client's view when aimed at");
+    if (!seen) {
+        char why[200];
+        std::snprintf(why, sizeof(why), "walker B's copy never came into this client's view within %d s: %.0f cm away, last view read %d",
+                      kCloseInS, cm, lastSeen ? 1 : 0);
+        return Invalid(why);
+    }
     PS::Mark("sees");
     if (!PS::Await("look_away", 120)) return false;
     const bool away = WaitGT("walker B's copy leaves this client's view", kViewBoundS, [&] {

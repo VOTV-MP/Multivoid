@@ -14,9 +14,12 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_pawn.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <memory>
+
+#include <windows.h>
 
 namespace coop::dev::mannequin_walker_drill {
 namespace {
@@ -134,6 +137,51 @@ bool EnterRange(void* walker, const char* who, bool (*hunted)(void* walker)) {
     if (hunting) return true;
     std::snprintf(why, sizeof(why), "the walker never took %s as its target: %.0f cm from it after its walk", who, now);
     return Invalid(why);
+}
+
+bool CloseUntilSeen(const std::function<void*()>& copyOf, bool (*seen)(void* copy), int boundS, float& lastCm, bool& lastSeen) {
+    const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(boundS);
+    bool       logged = false;
+    lastCm = -1.f;
+    lastSeen = false;
+    while (std::chrono::steady_clock::now() < end) {
+        FVector to{};
+        // Aim and read for kAimPollMs: the render that makes a copy seen comes a frame after the aim.
+        const auto pollEnd = std::chrono::steady_clock::now() + std::chrono::milliseconds(kAimPollMs);
+        do {
+            bool gone = false;
+            OnGameThread([&] {
+                void* c = copyOf();
+                if (!c) {
+                    gone = true;
+                    return;
+                }
+                Aim(c, true);
+                lastCm = PlayerTo(c);
+                lastSeen = seen(c);
+                E::TryGetActorLocation(c, to);
+                if (!lastSeen && !logged) {
+                    logged = true;
+                    FVector me{};
+                    void* pawn = coop::players::Registry::Get().Local();
+                    if (pawn) E::TryGetActorLocation(pawn, me);
+                    UE_LOGI("mannequin-drill: the copy is not in view: this client at (%.0f,%.0f,%.0f), the copy at (%.0f,%.0f,%.0f), "
+                            "%.0f cm", me.X, me.Y, me.Z, to.X, to.Y, to.Z, lastCm);
+                }
+            });
+            if (gone) return false;
+            if (lastSeen) return true;
+            ::Sleep(100);
+        } while (std::chrono::steady_clock::now() < pollEnd);
+        if (lastCm >= 0.f && lastCm < kApproachEndCm) return false;   // at its shoulder: no view of it is a measurement
+        if (lastCm >= 0.f && lastCm <= kCloseReachCm) continue;       // close enough: only the read, on the walker's own approach
+        std::shared_ptr<DIR::BackgroundWalk> walk;
+        OnGameThread([&] { walk = DIR::StartBackgroundWalk(to, kCloseReachCm, kWalkDeadlineS); });
+        PS::WaitFor("the close-in walk", kCloseStepS, [&] { return walk->state.load() != 0; }, false);
+        DIR::CancelBackgroundWalk(*walk);
+        PS::WaitFor("the close-in walk lets go", kHuntGraceS, [&] { return walk->state.load() != 0; }, false);
+    }
+    return false;
 }
 
 bool WalkTo(const FVector& to, float reachCm, const char* what) {

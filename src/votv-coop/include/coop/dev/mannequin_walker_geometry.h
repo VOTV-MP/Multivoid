@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 
 namespace coop::dev::mannequin_walker_drill {
 
@@ -32,6 +33,15 @@ inline constexpr float kInRangeCm   = 19000.f;   // 3D, inside the Blueprint's 2
 inline constexpr float kStepReachCm = 17000.f;   // the step-in walk's own end (flat), if the in-range hunt never comes
 // How long the walker gets, after that walk's end, to show that it took the player (it reads its range every half second).
 inline constexpr int kHuntGraceS = 5;
+// A walker within this of its target stands at its shoulder, where the game's own frustum test of its bounds holds whatever the
+// yaw: no measurement is made there, and no walk closes in past it.
+inline constexpr float kApproachEndCm = 3000.f;
+// The close-in to a walker that is not seen: how far its walk stops from the copy (flat), how long one walk runs, how long the
+// view is read after the aim (a render needs a frame), and the most the whole close-in takes.
+inline constexpr float kCloseReachCm = 2.f * kApproachEndCm;
+inline constexpr int   kCloseStepS = 2;
+inline constexpr int   kAimPollMs = 1500;
+inline constexpr int   kCloseInS = 60;
 
 template <class Fn>
 void OnGameThread(Fn&& fn) {
@@ -75,6 +85,14 @@ bool BedAnchor(ue_wrap::FVector& out);
 // where the walk gives up; the state then gets kHuntGraceS to show. False, with an INVALID naming the distance, when a place
 // does not read or the walker never takes this player. `who` names the player in that text. Called from the drill's own thread.
 bool EnterRange(void* walker, const char* who, bool (*hunted)(void* walker));
+
+// A walker behind a wall is not seen (the game's own rule: it is not rendered), and a bed anchor inside the house puts the target
+// behind one. Aims this player's view at the copy `copyOf` names (read on the game thread) and reads `seen` of it; while it is not
+// seen, walks toward it along the NavMesh for kCloseStepS, lets go, and aims and reads again for kAimPollMs (a render needs a frame
+// after the aim), for at most boundS in all. The director's walk faces its own way, so aim and walk alternate. Never walks to
+// within kApproachEndCm. True when seen; false with `lastCm` (distance to the copy at the last read) and `lastSeen` otherwise.
+// Logs the two places at the first read that is not seen. Called from the drill's own thread.
+bool CloseUntilSeen(const std::function<void*()>& copyOf, bool (*seen)(void* copy), int boundS, float& lastCm, bool& lastSeen);
 
 // The bot director walks this player, staged at a known-good anchor when the route is long (the director's stage); true when it
 // arrived within `reachCm`.
