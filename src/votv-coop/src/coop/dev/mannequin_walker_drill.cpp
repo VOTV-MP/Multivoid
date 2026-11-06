@@ -522,21 +522,22 @@ bool HostPhaseB(void* a, void*& b, std::string& keyB) {
     if (!PS::Await("sees", kCloseInS + kViewBoundS)) return false;
     if (!ClientFarEnough(b, "the freeze is judged")) return false;
 
-    // The client's camera is on the copy: the host's walker must stand still, with its own `looking` set.
+    // The client's camera is on the copy: the host's walker must FREEZE, the Blueprint's own `looking` set and the walker standing
+    // still together. A stop without `looking` is a pause between the walker's moves, not a freeze (measured pr84 s12
+    // no_gaze_route: stopped=1 looking=0), so it does not pass; a `looking` that never comes is this step's FAIL.
     Track standing;
-    const bool stopped = WaitGT("walker B stops while its target looks at it", kFreezeBoundS, [&] {
+    bool looking = false;
+    const bool frozen = WaitGT("walker B freezes while its target looks at it", kFreezeBoundS, [&] {
         FVector p{};
         Aim(b, false);
         if (!E::TryGetActorLocation(b, p)) return false;
         standing.Push(p);
-        return standing.Still();
+        looking = AC::ReadWalkerLooking(b);
+        return looking && standing.Still();
     }, false);
-    bool looking = false;
-    OnGameThread([&] { looking = AC::ReadWalkerLooking(b); });
-    UE_LOGI("mannequin-drill: step 3 freeze: stopped=%d looking=%d", stopped ? 1 : 0, looking ? 1 : 0);
+    UE_LOGI("mannequin-drill: step 3 freeze: frozen=%d looking=%d", frozen ? 1 : 0, looking ? 1 : 0);
     const char* const stopWhat = "the host's walker stops while its target's camera is on it";
-    if (!Check(stopped, "3", stopWhat)) return Fail("3", stopWhat);
-    if (!looking) return Invalid("walker B stood still without its looking flag set: it stopped for another reason");
+    if (!Check(frozen, "3", stopWhat)) return Fail("3", stopWhat);
 
     // The client looks away: the walker moves again when its own timer_saw clears `saw`, within the timer's bound and a margin.
     PS::Mark("look_away");
