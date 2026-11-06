@@ -23,6 +23,13 @@ CFG_FLAG(feedback_probe, "feedback_probe", "dev", false, "VOTVCOOP_FEEDBACK_PROB
     "sound asset's name, and the script function that began the call. Says where a verb run for another player "
     "shows its feedback. At most 20 lines a second, the drops counted. Observe only: it never cancels a call. "
     "Off, nothing is registered. Lines tagged [FEEDBACK-PROBE].")
+CFG_FLAG(kerfur_seat_probe, "kerfur_seat_probe", "dev", false, "VOTVCOOP_KERFUR_SEAT_PROBE",
+    "Diagnostic probe (every peer to be read): one line per call of kerfurOmega_C::actionName (the Omega, the "
+    "action name, the calling Blueprint function or none, whether the call is a reflected one of ours) and per "
+    "call of mainPlayer_C::useSelectedAction (the player, whether it is this machine's own, the actor the "
+    "interaction trace hit, the radial's selected index). Says which seat sees a kerfur command on the radial "
+    "press and on a reflected call. First 200 lines of each, the rest counted. Observe only: it never cancels "
+    "a call. Off, no watch is registered. Lines tagged [KERFUR-SEAT].")
 CFG_FLAG(requester_feedback_off, "requester_feedback_off", "dev", false, "VOTVCOOP_REQUESTER_FEEDBACK_OFF",
     "Developer red arm: never set. A requester-feedback scope on the host does nothing, so the hint, glossary entry "
     "and 2D sound a verb the host runs for a client makes show on the host again and nothing is routed to the "
