@@ -205,8 +205,10 @@ host runs every plant and sends `PlantState` with its row, place and values: at 
 death, and about every 5 s while it only changes slowly (`coop/world/plant_sync`). A client's copy does not tick: its tick, the herb's
 `grown` and a sprinkler's watering are refused at the script gate (`coop/world/plant_gate`), and so are the spawners that plant
 (`coop/world/spawn_authority`: the winter bush, the mushroom spore, the church's herb), so any change on it was that client's
-player, and it goes to the host as `PlantEdit`, naming only the values that changed. A plant is found by its
-save key, so what a join's load brought is already the host's, and a client's edits wait until its join has settled. A client's
+player, and it goes to the host as `PlantEdit`, naming only the values that changed. The host judges each edit before it
+applies it (`coop/world/plant_edit_gate`): the key, the row and class, the sender's reach, the pot a planting names and the
+bounds of the values, at a bounded rate per client; it answers a refused edit of a plant it holds with that plant's state. A
+plant is found by its save key, so what a join's load brought is already the host's, and a client's edits wait until its join has settled. A client's
 harvest leaves the host's plant empty and the item with the harvester. Tests: `harness/autotest/autotest_plant_state.cpp`.
 
 ## Who owns what

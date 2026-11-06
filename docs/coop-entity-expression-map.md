@@ -461,7 +461,10 @@ registry recycled that id. `[V]`
   hit, the church's herb) are refused in `coop/world/spawn_authority`. `[?]`
 - **Expression: what a client's player does.** A client's water, harvest, removal or a seed it planted is the only change
   a client's copy can show, and it goes to the host as `PlantEdit` (the changed values in a mask, the row, or the end);
-  the host applies it to its plant, materialises a planted one under the client's key, and its next `PlantState` answers.
+  the host judges it first (`coop/world/plant_edit_gate`): a key no other holds, a planting of the class of its own
+  `list_farmPlants` row, in the sender's reach and, if it names a pot, an empty one it holds, every value inside a bound. A
+  passing edit is applied to its plant (a planting is materialised under the client's key) and its next `PlantState`
+  answers. A refused edit of a plant it holds is answered with that state; a refused removal or planting is not answered.
   A lethal hit on a plant is refused on a client (`coop/props/prop_damage_gate`): the plant's end is the host's. `[?]`
 - **Expression: the growth area's glow** is the host's alone to spawn and crosses as a cue (`coop/world/event_cue_sync`).
   `[?]`

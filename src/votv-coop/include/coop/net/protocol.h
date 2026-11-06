@@ -1219,8 +1219,9 @@ enum class ReliableKind : uint8_t {
     // HOST->ALL: a plant's identity, place and values, at once on an edge a viewer sees and every few seconds while it changes,
     // or its end. Not relayed, not pre-world. Late join: every plant again at the ready edge. PlantStatePayload.
     PlantState = 224,
-    // CLIENT->HOST: what this client's player did to a plant, its new values, its removal or a plant it planted. Never relayed;
-    // the host's next PlantState answers. PlantStatePayload.
+    // CLIENT->HOST: what this client's player did to a plant, its new values, its removal or a plant it planted. Never relayed.
+    // The host judges it (coop/world/plant_edit_gate) and answers a refused edit of a plant it holds with that plant's
+    // PlantState. PlantStatePayload.
     PlantEdit = 225,
     // HOST->CLIENT: one decision of a Geom Octa, to be replayed into the client's own Blueprint (coop/creatures/
     // geom_octa_relay): op 0, an Aggro, the Octa took a target (the replay runs minSphere's begin-overlap handler with

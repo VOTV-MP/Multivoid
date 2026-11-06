@@ -33,10 +33,10 @@ void ApplyEdits(coop::net::Session& s, std::unordered_map<std::wstring, void*>& 
 // bodies. Game thread.
 void OnWorldChange();
 
-// What the gate did this session: plantings refused for a class that is no loaded plant class, edits refused for a plant or place
-// outside the sender's reach, values cut to their bounds, edits that name no key, plantings of a row that is none of
-// list_farmPlants' (or an edit that changes a plant to one) and plantings in a parent that is no pot the host holds. Read-only,
-// for drills. Game thread.
+// What the gate did this session: plantings refused because their row plants no plant class named as the wire names it, edits
+// refused for a plant or place outside the sender's reach, values cut to their bounds, edits refused for their key, plantings of
+// a row that is none of list_farmPlants' (or an edit that changes a plant to such a row, or to one of another class) and
+// plantings in a parent that is no empty pot in the sender's reach at the planting. Read-only, for drills. Game thread.
 struct Counts {
     std::uint64_t refusedClass = 0;
     std::uint64_t refusedReach = 0;
