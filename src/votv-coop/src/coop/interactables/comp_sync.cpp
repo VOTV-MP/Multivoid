@@ -2,7 +2,8 @@
 
 #include "coop/interactables/comp_sync.h"
 
-#include "coop/interactables/desk_verb_effects.h"  // the replay's presser; a client's decode's gloss and stat
+#include "coop/interactables/desk_verb_effects.h"  // the replay's presser; a client's decode's gloss
+#include "coop/interactables/desk_verb_intent.h"   // a client's decode's profile stat
 #include "coop/interactables/signal_wire.h"
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
@@ -272,7 +273,7 @@ void OnCalcPost(const sg::Call& c) {
                 static_cast<unsigned>(g_owner), delta);
         return;
     }
-    coop::desk_verb_effects::SendStat(g_owner, g_ownerSeq, L"signals_processed", delta);
+    coop::desk_verb_intent::SendStat(g_owner, g_ownerSeq, L"signals_processed", delta);
     ++g_counts.processedSent;
 }
 

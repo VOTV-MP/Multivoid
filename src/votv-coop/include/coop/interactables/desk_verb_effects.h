@@ -10,7 +10,7 @@
 // itself. The scope is the replay's own rather than the gate's IsBodyActive(actionOptionIndex): the host's own
 // press runs the same body and keeps its gloss and its clicks (drive_sync.cpp:108-132). A client's refiner
 // decode completes long after its press, in calculate_comp's body: its gloss is forwarded on the gate's scope
-// of that body (ForwardGlossesInBody), and its signals_processed point comp_sync sends as a stat. Game thread.
+// of that body (ForwardGlossesInBody), and its signals_processed point comp_sync sends as a stat (desk_verb_intent). Game thread.
 
 #pragma once
 
@@ -56,21 +56,17 @@ uint32_t ReplaySeq();
 // the press (comp_sync). A slot of 0xFF ends it. Game thread.
 void ForwardGlossesInBody(void* bodyFn, uint8_t slot, uint32_t seq);
 
-// HOST: `delta` to `slot`'s own profile stat `stat` (a save_main stats member, as "signals_processed"), which
-// the host's machine counted for it (DeskVerb op 4). Game thread.
-void SendStat(uint8_t slot, uint32_t seq, const wchar_t* stat, int32_t delta);
-
-// CLIENT: the host's gloss, sound or stat for this machine's press (DeskVerb ops 2, 3 and 4): made here, as
+// CLIENT: the host's gloss or sound for this machine's press (DeskVerb ops 2 and 3): made here, as
 // the press would have made it. Game thread.
 void OnEffect(const coop::net::DeskVerbPayload& p);
 
 // Session end: the counts are said and the scope is closed.
 void OnDisconnect();
 
-// This session's counts, for a drill: the glosses, 2D sounds and stats this host sent to their presser, and the
+// This session's counts, for a drill: the glosses and 2D sounds this host sent to their presser, and the
 // ones this presser made from the host's word; `lost`, the ones that did not cross or apply. Game thread.
 struct Counts {
-    uint64_t glossesSent = 0, soundsSent = 0, glossesMade = 0, soundsMade = 0, statsSent = 0, statsMade = 0;
+    uint64_t glossesSent = 0, soundsSent = 0, glossesMade = 0, soundsMade = 0;
     uint64_t lost = 0;
 };
 Counts CountsNow();

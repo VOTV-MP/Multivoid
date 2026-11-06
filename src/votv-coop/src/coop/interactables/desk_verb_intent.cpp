@@ -26,8 +26,11 @@
 #include "ue_wrap/desk/saved_signals.h"
 #include "ue_wrap/desk/signal_dynamic.h"
 #include "ue_wrap/facts/function_row.h"
+#include "ue_wrap/world/profile.h"
 
 #include <atomic>
+#include <string>
+#include <string_view>
 
 namespace coop::desk_verb_intent {
 namespace {
@@ -77,6 +80,7 @@ struct Slot {
 coop::roster_ledger::PerSlotState<Slot> g_slots;
 
 unsigned long long g_sent = 0, g_ran = 0, g_refused = 0, g_dropped = 0, g_heard = 0;
+unsigned long long g_statsSent = 0, g_statsMade = 0, g_statsLost = 0;  // op 4, the decode's profile stat
 
 // ---- what a button acts on ----------------------------------------------------------------------------------
 
@@ -240,6 +244,30 @@ void OnVerdict(const DeskVerbPayload& p) {
     coop::prop_sound::PlayDenyClick(coop::players::Registry::Get().Local());
 }
 
+// A stat's name into the payload, ASCII; false for a name the wire cannot carry.
+bool PutStatName(DeskVerbPayload& p, std::wstring_view text) {
+    if (text.empty() || text.size() > DV::kTextCap) return false;
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (text[i] < 0x20 || text[i] > 0x7E) return false;
+        p.text[i] = static_cast<char>(text[i]);
+    }
+    p.textLen = static_cast<uint8_t>(text.size());
+    return true;
+}
+
+// CLIENT: the host's op 4, `level` added to this profile's stat the text names, as the decode would have.
+void OnStat(const DeskVerbPayload& p) {
+    const size_t n = p.textLen < DV::kTextCap ? p.textLen : DV::kTextCap;
+    const std::wstring text(p.text, p.text + n);
+    if (!ue_wrap::profile::AddStat(text, p.level)) {
+        ++g_statsLost;
+        UE_LOGW("desk_verb: the host's %ls %+d for press #%u did not apply here", text.c_str(), p.level, p.seq);
+        return;
+    }
+    ++g_statsMade;
+    UE_LOGI("desk_verb: CLIENT added %+d to this profile's %ls (press #%u)", p.level, text.c_str(), p.seq);
+}
+
 // ---- the host -----------------------------------------------------------------------------------------------
 
 void Answer(coop::net::Session& s, uint8_t slot, const DeskVerbPayload& press, uint8_t verdict) {
@@ -334,6 +362,21 @@ void Install(coop::net::Session* session) {
     Register(session);
 }
 
+void SendStat(uint8_t slot, uint32_t seq, const wchar_t* stat, int32_t delta) {
+    DeskVerbPayload p{};
+    p.op = DV::kOpStat;
+    p.level = delta;
+    p.seq = seq;
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!stat || !PutStatName(p, stat) || !s || !s->connected() ||
+        !s->SendReliableToSlot(slot, coop::net::ReliableKind::DeskVerb, &p, static_cast<int>(sizeof(p)))) {
+        ++g_statsLost;
+        return;
+    }
+    ++g_statsSent;
+    UE_LOGI("desk_verb: HOST sent slot %u its %ls %+d (#%u)", static_cast<unsigned>(slot), stat, delta, seq);
+}
+
 void Tick(coop::net::Session& session) {
     Register(&session);
     if (!g_saidLive && g_watched && !g_watchRefused) {
@@ -383,14 +426,18 @@ void OnMessage(coop::net::Session& session, const DeskVerbPayload& p, int sender
     }
     // A client hears DeskVerb from the host alone: the kind is never relayed.
     if (p.op == DV::kOpVerdict) OnVerdict(p);
-    else if (p.op == DV::kOpGloss || p.op == DV::kOpSound || p.op == DV::kOpStat) desk_verb_effects::OnEffect(p);
+    else if (p.op == DV::kOpGloss || p.op == DV::kOpSound) desk_verb_effects::OnEffect(p);
+    else if (p.op == DV::kOpStat) OnStat(p);
 }
 
 void OnDisconnect() {
     if (g_sent || g_ran || g_refused || g_dropped || g_heard)
         UE_LOGI("desk_verb: session end -- sent=%llu ran=%llu refused=%llu dropped=%llu verdicts heard=%llu", g_sent,
                 g_ran, g_refused, g_dropped, g_heard);
+    if (g_statsSent || g_statsMade || g_statsLost)
+        UE_LOGI("desk_verb: session end -- stats sent=%llu made=%llu lost=%llu", g_statsSent, g_statsMade, g_statsLost);
     g_sent = g_ran = g_refused = g_dropped = g_heard = 0;
+    g_statsSent = g_statsMade = g_statsLost = 0;
     g_saidOffline = false;
     desk_verb_effects::OnDisconnect();
 }

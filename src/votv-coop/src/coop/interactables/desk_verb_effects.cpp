@@ -13,7 +13,6 @@
 #include "ue_wrap/core/ufunction_hook.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/facts/function_row.h"
-#include "ue_wrap/world/profile.h"
 #include "ue_wrap/world/votv_lib.h"
 
 #include <atomic>
@@ -227,33 +226,9 @@ void ForwardGlossesInBody(void* bodyFn, uint8_t slot, uint32_t seq) {
     g_bodySeq = seq;
 }
 
-void SendStat(uint8_t slot, uint32_t seq, const wchar_t* stat, int32_t delta) {
-    DeskVerbPayload p{};
-    p.op = DV::kOpStat;
-    p.level = delta;
-    if (!stat || !PutText(p, stat)) {
-        ++g_counts.lost;
-        return;
-    }
-    SendTo(slot, seq, p);
-    ++g_counts.statsSent;
-    UE_LOGI("desk_verb: HOST sent slot %u its %ls %+d (#%u)", static_cast<unsigned>(slot), stat, delta, seq);
-}
-
 void OnEffect(const DeskVerbPayload& p) {
     const std::wstring text = TextOf(p);
-    if (p.op == DV::kOpStat) {
-        if (!ue_wrap::profile::AddStat(text, p.level)) {
-            ++g_counts.lost;
-            UE_LOGW("desk_verb: the host's %ls %+d for press #%u did not apply here", text.c_str(), p.level,
-                    p.seq);
-            return;
-        }
-        ++g_counts.statsMade;
-        UE_LOGI("desk_verb: CLIENT added %+d to this profile's %ls (press #%u)", p.level, text.c_str(), p.seq);
-        return;
-    }
-    // A gloss and a sound are made through this machine's player; a stat needs none.
+    // A gloss and a sound are made through this machine's player.
     void* local = coop::players::Registry::Get().Local();
     if (!local) {
         ++g_counts.lost;
@@ -286,10 +261,9 @@ void OnEffect(const DeskVerbPayload& p) {
 
 void OnDisconnect() {
     const Counts& c = g_counts;
-    if (c.glossesSent || c.soundsSent || c.glossesMade || c.soundsMade || c.statsSent || c.statsMade || c.lost)
-        UE_LOGI("desk_verb: session end -- glosses sent=%llu made=%llu, sounds sent=%llu played=%llu, stats "
-                "sent=%llu made=%llu, lost=%llu", c.glossesSent, c.glossesMade, c.soundsSent, c.soundsMade,
-                c.statsSent, c.statsMade, c.lost);
+    if (c.glossesSent || c.soundsSent || c.glossesMade || c.soundsMade || c.lost)
+        UE_LOGI("desk_verb: session end -- glosses sent=%llu made=%llu, sounds sent=%llu played=%llu, "
+                "lost=%llu", c.glossesSent, c.glossesMade, c.soundsSent, c.soundsMade, c.lost);
     g_counts = Counts{};
     g_open = false;
     g_slot = 0;

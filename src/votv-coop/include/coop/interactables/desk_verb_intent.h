@@ -30,6 +30,10 @@ void Install(coop::net::Session* session);
 // Settle the seams; HOST: run one queued press per peer per token. Game thread.
 void Tick(coop::net::Session& session);
 
+// HOST: `delta` to `slot`'s own profile stat `stat` (a save_main stats member, as "signals_processed"), which the
+// host's machine counted for a decode that slot began (DeskVerb op 4; comp_sync). Game thread.
+void SendStat(uint8_t slot, uint32_t seq, const wchar_t* stat, int32_t delta);
+
 // DeskVerb from `senderSlot`: a HOST queues a client's press, a CLIENT takes its verdict and effects.
 void OnMessage(coop::net::Session& session, const coop::net::DeskVerbPayload& p, int senderSlot);
 
