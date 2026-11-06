@@ -2,6 +2,8 @@
 
 #include "coop/creatures/kerfur_command_seat.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/creatures/kerfur_command.h"
 #include "coop/net/session.h"
 
@@ -30,6 +32,12 @@ bool g_live = false;
 bool g_dead = false;
 R::ParamOffset g_nameOff{L"name"};
 
+// Never set in a shipped run: a client's seat runs every action, so its own copy runs a relayed verb (the red arm).
+bool GateOff() {
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::kerfur_command_gate_off);
+    return s;
+}
+
 // The action's case differs by route (the radial's `Get_reports`, a reflected call's `get_reports`): the relayed
 // set matches without case. The decision is the name and the role, never where the call came from.
 sg::Verdict OnActionNamePre(const sg::Call& c) {
@@ -39,6 +47,7 @@ sg::Verdict OnActionNamePre(const sg::Call& c) {
     if (off < 0 || !c.locals) return sg::Verdict::Run;
     const std::wstring name = ue_wrap::field_io::ReadFStringAt(c.locals, off);
     const bool isClient = s->role() == coop::net::Role::Client;
+    if (isClient && GateOff()) return sg::Verdict::Run;
     if (!coop::kerfur_command::TryRecordMenuCommand(c.object, name, isClient)) return sg::Verdict::Run;
     UE_LOGI("kerfur_command_seat: %s '%ls' on kerfur %p taken at the seat, %s", isClient ? "client" : "host",
             name.c_str(), c.object, c.callerFunction ? "from a Blueprint call" : "from a reflected call");

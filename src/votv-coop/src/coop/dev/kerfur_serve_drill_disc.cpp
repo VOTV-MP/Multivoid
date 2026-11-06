@@ -485,9 +485,9 @@ DWORD WINAPI ClientThread(LPVOID) {
         return 0;
     }
 
-    // The press, as a player's: the command goes to the host as the menu interceptor relays it, then the radial
-    // dispatch itself runs the verb on this copy (an interface call, which the interceptor never sees).
-    bool pressOk = false, relayOk = false, indexOk = false, aimed = false;
+    // The press, as a player's: the radial dispatch itself (an interface call), which the seat on the Omega's
+    // actionName cancels here and asks the host to run. No reflected relay stands in for it.
+    bool pressOk = false, indexOk = false, aimed = false;
     bool gone = false;
     uint8_t stateAfter = 0xFF;
     Run([&] {
@@ -495,7 +495,6 @@ DWORD WINAPI ClientThread(LPVOID) {
         aimed = AimedAt(mirror);
         if (!aimed) return true;
         indexOk = E::CallMainPlayerSetActionIndex(me, kGetReportsIdx);
-        relayOk = K::RunActionName(mirror, me, L"get_reports");
         pressOk = E::CallMainPlayerUseSelectedAction(me);
         void* hand = detail::HoldingActor(me);
         // A destroyed actor still named by holding_actor is gone: the Blueprint nulls the field after the destroy.
@@ -509,14 +508,13 @@ DWORD WINAPI ClientThread(LPVOID) {
         Invalid("the aim was lost before the press");
         return 0;
     }
-    if (!indexOk || !relayOk || !pressOk) {
-        Invalid(!indexOk ? "setActionIndex did not run" : !relayOk ? "the relayed command did not run"
-                                                                    : "useSelectedAction did not dispatch");
+    if (!indexOk || !pressOk) {
+        Invalid(!indexOk ? "setActionIndex did not run" : "useSelectedAction did not dispatch");
         return 0;
     }
     const bool bodyRan = g_localBodyRan.load(std::memory_order_acquire);
-    UE_LOGI("[KERFUR-SERVE] client: pressed get_reports (setActionIndex %d, the relay through the menu interceptor, "
-            "useSelectedAction) -- the client's own copy ran the verb=%d, the disc is %s, the Omega mirror in state %u",
+    UE_LOGI("[KERFUR-SERVE] client: pressed get_reports (setActionIndex %d, useSelectedAction) -- the client's own "
+            "copy ran the verb=%d, the disc is %s, the Omega mirror in state %u",
             kGetReportsIdx, bodyRan ? 1 : 0, gone ? "GONE from my hand" : "still in my hand",
             static_cast<unsigned>(stateAfter));
     if (gone && !WaitGame([] { return !coop::hand_item::OwnAnnounced(kDisc); }, kStowWindowMs))

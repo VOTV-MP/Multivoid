@@ -2,8 +2,8 @@
 // does when the client holds a disc (env VOTVCOOP_KERFUR_SERVE_DISC with the drill on; BOTH peers). It replaces legs
 // A to C. The client walks to the host's Omega, takes a red disc, aims at the Omega's mirror and says what it holds;
 // the host snapshots its side (the Omega's hasFloppy, the client's hand on its lane, the disc's key, the discs
-// standing) and answers. The client then presses get_reports as a player does: the relayed command, and the radial
-// dispatch (setActionIndex 5, useSelectedAction) that runs the verb on its own copy. The host prints
+// standing) and answers. The client then presses get_reports as a player does: the radial dispatch (setActionIndex 5,
+// useSelectedAction), which the seat on the Omega's actionName cancels and asks of the host. The host prints
 //   [KERFUR-SERVE] leg D: client disc before=<class> after=<gone|held> host insert=<0|1> host still holds the
 //   client's disc key=<0|1>
 // and says 'rig: VERDICT kerfur-serve-disc PASS' (its own tag, so it does not share kerfur-serve's latch). It never

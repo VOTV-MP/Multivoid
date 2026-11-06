@@ -31,3 +31,9 @@ CFG_FLAG(kerfur_serve_drill, "kerfur_serve_drill", "dev", false, "VOTVCOOP_KERFU
     "follow, and the Omega must settle by it in the follow state (the client's 'leg A' line); then the client "
     "commands idle, the host runs the kill verb, and the murderous Omega must go for the host. The drill ends "
     "on 'rig: VERDICT kerfur-serve PASS|FAIL|INVALID' (INVALID is a step that could not run).")
+CFG_FLAG(kerfur_command_gate_off, "kerfur_command_gate_off", "dev", false, "VOTVCOOP_KERFUR_COMMAND_GATE_OFF",
+    "Developer red arm: never set. On a client the seat on the Omega's actionName runs every action, so a "
+    "relayed radial command (follow, idle, patrol, fix servers, get reports, fix transformers) runs on the client's "
+    "own copy and is not asked of the host: no 'taken at the seat' line, no command sent, and the client's disc is "
+    "destroyed by its own get_reports. The host's side is unchanged. The serve drill's leg D must then show the "
+    "client's copy running the verb.")
