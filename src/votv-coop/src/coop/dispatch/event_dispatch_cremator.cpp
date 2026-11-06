@@ -88,12 +88,13 @@ bool HandleCrematorEvent(net::Session& session,
         }
         net::CrematorHitPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        // The trust boundary: two verbs, and the key is bounded by the wire.
+        // The trust boundary: two verbs, and the key is bounded by the wire. The host never sends an empty key
+        // (cremator_hit::Deliver refuses it), so one that arrives empty is not the host's.
         if (p.verb != net::kCrematorHitVerbDamage && p.verb != net::kCrematorHitVerbIgnite) {
             UE_LOGW("event_feed: CrematorHit verb=%u out of range -- dropping", static_cast<unsigned>(p.verb));
             break;
         }
-        if (p.key.len > sizeof(p.key.data)) {
+        if (p.key.len == 0 || p.key.len > sizeof(p.key.data)) {
             UE_LOGW("event_feed: CrematorHit key length %u out of range -- dropping", static_cast<unsigned>(p.key.len));
             break;
         }
