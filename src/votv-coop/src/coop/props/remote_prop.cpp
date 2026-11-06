@@ -10,6 +10,7 @@
 #include "coop/dev/swinger_drill.h"     // NotePropPose, NotePropUnresolved
 #include "coop/interactables/swinger_join_pose.h"   // Forget: a release supersedes a parked connect pose
 #include "coop/props/active_drive.h"   // the fixed-delay snapshot interp, shared with the trash carry stream
+#include "coop/props/prop_hold_claim.h"  // OnSlotLeft: the leaver's wait line is forgotten with its hold gate
 #include "coop/props/prop_sound.h"
 #include "coop/props/trash_mirror.h"   // Retire (a trash mirror retires whole, pin released after the destroy)
 #include "coop/element/bind_wait.h"  // OnBound / MarkDeferred: the bind funnel releases and marks
@@ -592,6 +593,7 @@ void OnDisconnectForSlot(int peerSlot) {
     // The leaver's generations must not gate the slot's next occupant, whose counter need not start
     // above them.
     g_holds[peerSlot] = {};
+    coop::prop_hold_claim::OnSlotLeft(peerSlot);
     // Ledger rows are keyed by slot and slots recycle lowest-free, so the leaver's counts must not
     // reach the next occupant; cleared before the early return, since a slot can have rows without
     // a drive.

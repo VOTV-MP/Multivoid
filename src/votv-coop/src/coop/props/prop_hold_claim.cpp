@@ -11,9 +11,11 @@
 #include "coop/props/prop_sound.h"        // PlayDenyClick
 #include "coop/props/remote_prop.h"       // DrivingSlotOf, RefuseHold
 #include "coop/props/trash_mirror.h"      // WeMade
+#include "remote_prop_drive.h"            // impl-private (src-local): g_holds, HoldDroveProp
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/swinger.h"
+#include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
@@ -44,6 +46,14 @@ Clock::time_point g_nextNotice{};
 
 uint32_t g_localLetGo = 0, g_hostRefused = 0, g_ownRefused = 0, g_otherRefused = 0;
 
+// Whether a refusal's key (ASCII on the wire) is the key string of the prop the refused hold names.
+bool KeyIs(const coop::net::WireKey& k, const std::wstring& w) {
+    if (k.len != w.size()) return false;
+    for (uint8_t i = 0; i < k.len; ++i)
+        if (static_cast<wchar_t>(static_cast<unsigned char>(k.data[i])) != w[i]) return false;
+    return true;
+}
+
 void Notice(int holderSlot, void* localPlayer) {
     if (localPlayer) coop::prop_sound::PlayDenyClick(localPlayer);
     if (holderSlot < 0 || holderSlot >= static_cast<int>(coop::net::kMaxPeers)) return;
@@ -67,6 +77,7 @@ bool IsArbitrated(void* actor) {
 }
 
 bool AdmitLocalGrab(void* localPlayer, void* actor) {
+    UE_ASSERT_GAME_THREAD("prop_hold_claim::AdmitLocalGrab");
     if (!g_session.load(std::memory_order_acquire) || !IsArbitrated(actor)) return true;
     const int holder = coop::remote_prop::DrivingSlotOf(actor);
     if (holder < 0) return true;
@@ -79,6 +90,7 @@ bool AdmitLocalGrab(void* localPlayer, void* actor) {
 }
 
 bool AdmitRemoteHold(int slot, uint16_t holdGen, const coop::net::WireKey& key, void* actor) {
+    UE_ASSERT_GAME_THREAD("prop_hold_claim::AdmitRemoteHold");
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || holdGen == 0 || slot < 0 || slot >= static_cast<int>(coop::net::kMaxPeers)) return true;
     if (!IsArbitrated(actor)) return true;
@@ -112,10 +124,26 @@ bool AdmitRemoteHold(int slot, uint16_t holdGen, const coop::net::WireKey& key, 
 }
 
 void OnRefused(const coop::net::PropHoldRefusedPayload& p) {
+    UE_ASSERT_GAME_THREAD("prop_hold_claim::OnRefused");
     const uint8_t self = coop::players::Registry::Get().LocalPeerId();
     if (p.slot != self) {
+        // A drive of that very hold must be on the refusal's prop; a hold no drive started yet has no copy to compare.
+        const coop::remote_prop::HoldGate& g = coop::remote_prop::g_holds[p.slot];
+        if (g.driveGen == p.holdGen && !coop::remote_prop::HoldDroveProp(p.slot, p.holdGen, p.key, 0)) {
+            UE_LOGW("prop_hold_claim: refusal of slot %u hold %u names another prop than that hold's drive -- dropped",
+                    static_cast<unsigned>(p.slot), static_cast<unsigned>(p.holdGen));
+            return;
+        }
         ++g_otherRefused;
         coop::remote_prop::RefuseHold(p.slot, p.holdGen);
+        return;
+    }
+    void* const local = coop::players::Registry::Get().Local();
+    void* const held = coop::local_streams::LastHeldActor();
+    const bool current = coop::local_streams::CurrentHoldGen() == p.holdGen && held;
+    if (current && !KeyIs(p.key, ue_wrap::prop::GetInteractableKeyString(held))) {
+        UE_LOGW("prop_hold_claim: refusal of this peer's hold %u names another prop than the one held -- dropped",
+                static_cast<unsigned>(p.holdGen));
         return;
     }
     if (!g_haveOwnRefused || static_cast<int16_t>(p.holdGen - g_ownRefusedGen) > 0) {
@@ -123,9 +151,6 @@ void OnRefused(const coop::net::PropHoldRefusedPayload& p) {
         g_haveOwnRefused = true;
     }
     ++g_ownRefused;
-    void* const local = coop::players::Registry::Get().Local();
-    void* const held = coop::local_streams::LastHeldActor();
-    const bool current = coop::local_streams::CurrentHoldGen() == p.holdGen && held;
     if (current) {
         ue_wrap::engine::ReleaseMainPlayerGrabIfHolding(local, held);
         Notice(p.holder, local);
@@ -136,10 +161,25 @@ void OnRefused(const coop::net::PropHoldRefusedPayload& p) {
 }
 
 bool IsOwnHoldRefused(uint16_t holdGen) {
-    return holdGen != 0 && g_haveOwnRefused && g_ownRefusedGen == holdGen;
+    UE_ASSERT_GAME_THREAD("prop_hold_claim::IsOwnHoldRefused");
+    if (holdGen == 0 || !g_haveOwnRefused) return false;
+    // A newer hold of this peer has started: the record of the refused one retires, so a wrapped counter
+    // cannot meet it again.
+    if (static_cast<int16_t>(holdGen - g_ownRefusedGen) > 0) {
+        g_haveOwnRefused = false;
+        return false;
+    }
+    return g_ownRefusedGen == holdGen;
+}
+
+void OnSlotLeft(int slot) {
+    UE_ASSERT_GAME_THREAD("prop_hold_claim::OnSlotLeft");
+    if (slot >= 0 && slot < static_cast<int>(coop::net::kMaxPeers)) g_waitSaidGen[slot] = 0;
 }
 
 void OnDisconnect() {
+    UE_ASSERT_GAME_THREAD("prop_hold_claim::OnDisconnect");
+    g_session.store(nullptr, std::memory_order_release);
     if (g_localLetGo || g_hostRefused || g_ownRefused || g_otherRefused)
         UE_LOGI("prop_hold_claim: session end -- let go here=%u refused as host=%u own refused=%u other refused=%u",
                 g_localLetGo, g_hostRefused, g_ownRefused, g_otherRefused);

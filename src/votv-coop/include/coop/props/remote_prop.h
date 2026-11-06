@@ -81,8 +81,8 @@ int DrivingSlotOf(void* actor, int except = -1);
 
 // The host refused hold `holdGen` of the peer in `slot` (coop/props/prop_hold_claim): the hold
 // closes, its release moves nothing, and its drive ends if one started. A copy that no other drive
-// moves and this peer's player does not hold goes back to physics where that drive left it. A
-// generation of 0 or a slot out of range changes nothing. Game thread.
+// moves goes back to physics where that drive left it, whether or not this peer's player holds it (a
+// grab needs a simulating body). A generation of 0 or a slot out of range changes nothing. Game thread.
 void RefuseHold(int slot, uint16_t holdGen);
 
 // Register a wire-received prop mirror Element at `eid` bound to `actor`. Idempotent for

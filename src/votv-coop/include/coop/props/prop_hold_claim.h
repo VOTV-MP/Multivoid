@@ -5,11 +5,10 @@
 // can take one prop inside one round trip. Two halves keep one holder. A peer whose copy another hold
 // already drives lets its own player's grab go at the new-held edge, with the deny click and a line naming
 // the holder. And the host judges every remote hold before its drive starts: a hold of a prop its own
-// player holds, or that another client's hold drives, is refused to every client (PropHoldRefused) --
-// MTA's one syncer per unoccupied vehicle, the server keeping the first. The refused holder lets go and
-// sends no release, and every peer drops that hold's drive; a client that meets a second hold waits for
-// the host's word instead of judging. Keyed Aprop_C props only: a dragged swinger and a trash clump keep
-// their own rules, and a hook's pull yields to a hand.
+// player holds, or that another client's hold drives, is refused to every client (PropHoldRefused). The
+// refused holder lets go and sends no release, and every peer drops that hold's drive; a client that meets
+// a second hold waits for the host's word instead of judging. Keyed Aprop_C props only: a dragged swinger
+// and a trash clump keep their own rules, and a hook's pull yields to a hand.
 //
 // Game thread.
 
@@ -23,6 +22,12 @@ struct WireKey;
 struct PropHoldRefusedPayload;
 }  // namespace coop::net
 
+// MTA precedent: the seat of an unoccupied vehicle is first-wins (a later claimant is refused,
+// CGame.cpp:3042), which is this rule. MTA's SYNCER is last-wins (OverrideSyncer forces the new one over
+// the old, CUnoccupiedVehicleSync.cpp:59-81), which this rule is not. Divergence: MTA judges before the
+// client acts and confirms to everyone (CGame.cpp:3196) and fails the requester alone (CGame.cpp:3042);
+// here the grab has already run on the grabbing machine, so the hold streams first and the refusal goes to
+// every client.
 namespace coop::prop_hold_claim {
 
 // Cache the session. Game thread.
@@ -48,7 +53,10 @@ void OnRefused(const coop::net::PropHoldRefusedPayload& p);
 // HOLDER: the host refused this peer's hold `holdGen`, so its release is not sent.
 bool IsOwnHoldRefused(uint16_t holdGen);
 
-// Session end: the refusal records, the notice cooldown and the counters. Game thread.
+// Peer slot `slot` left: the wait line said for its holds is forgotten, so the next occupant's holds say theirs.
+void OnSlotLeft(int slot);
+
+// Session end: the cached session, the refusal records, the notice cooldown and the counters. Game thread.
 void OnDisconnect();
 
 }  // namespace coop::prop_hold_claim

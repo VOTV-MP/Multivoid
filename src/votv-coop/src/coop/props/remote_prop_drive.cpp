@@ -238,6 +238,9 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     // One hold per keyed prop: the host refuses a second, and a client waits for the host's word
     // while its own player or another slot holds the prop.
     if (!coop::prop_hold_claim::AdmitRemoteHold(slot, pose.holdGen, pose.key, prop)) return;
+    // A newer hold of the slot has started: the refusal of an older one retires, so a counter that wrapped
+    // cannot meet it again.
+    if (g_holds[slot].haveDenied && GenAfter(pose.holdGen, g_holds[slot].deniedGen)) g_holds[slot].haveDenied = false;
     // The half of the grab this peer never ran. A grab runs its prelude on the grabbing machine only:
     // prop_C's playerGrabbed_pre clears the prop's lifespan, broadcasts `touched` and runs
     // awakeUnfreeze on a frozen or sleeping prop, and a prop carrying the wall-attach component (the
