@@ -343,6 +343,7 @@ void Tick() {
         g_world = world;
         ResetClient();
         g_sent.clear();
+        coop::plant_edit_gate::OnWorldChange();
     }
     if (s->role() == coop::net::Role::Host) HostPoll(*s, now);
     else if (s->role() == coop::net::Role::Client) ClientPoll(*s);

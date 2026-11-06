@@ -3,6 +3,9 @@
 #include "coop/world/plant_edit_gate.h"
 
 #include "coop/element/intent_authority.h"
+#include "coop/net/intent_bucket.h"
+#include "coop/net/intent_queue.h"
+#include "coop/net/net_clock.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
@@ -21,6 +24,7 @@
 #include <cstdint>
 #include <cwchar>
 #include <string>
+#include <utility>
 #include <unordered_map>
 #include <vector>
 
@@ -59,14 +63,20 @@ constexpr float kMinDryness = -1.0f;       // -1 is a dead plant
 constexpr float kMaxDryness = 20000.0f;    // the plant dies at its row's maxDryness, 10800 by default; twice that
 constexpr int32_t kMaxAmount = 64;         // the berries of a ripe bush
 
-// A sender's edits wait for the next poll; the queue is bounded since one that never gets a body would grow without end.
+// A sender's edits wait for the next poll; the queue is bounded since one that never gets a body would grow without end. They
+// run from it at a bounded rate, the door verbs' shape (door_verb_intent): a client past its budget costs the host a queue of
+// kEditsPerSlotCap and nothing more. An honest client's burst (one poll's changed plants) is inside the burst. The plants
+// the host spawns in one poll are bounded as well, whoever sends them.
 constexpr size_t kEditsPerSlotCap = 256;
+constexpr coop::net::IntentBudget kEditBudget{32.0f, 8.0f};
+constexpr int kSpawnsPerPoll = 4;
+int g_spawnsThisPoll = 0;
 
 enum Field : int { kFGrow, kFFertilizer, kFWater, kFFruitGrow, kFDryness, kFAmount, kFieldCount };
 constexpr const char* kFieldName[kFieldCount] = {"grow", "fertilizer", "water", "fruitGrow", "dryness", "amount"};
 
 struct EditSlot {
-    std::vector<Payload> queue;
+    coop::net::IntentQueue<Payload> queue;
     bool fullSaid = false;   // a refused push, said once a streak
     bool waitSaid = false;   // the wait for the sender's body, said once a streak
 };
@@ -206,6 +216,10 @@ bool ApplyEdit(coop::net::Session& s, EditSlot& sl, uint8_t slot, Payload p, std
         // that class's, and the class a plant class. A name from the wire starts no lookup of its own.
         const std::wstring className = coop::plant_sync::StringFromClassName(p.cls);
         const std::wstring row = coop::net::StringFromWireKey(p.row);
+        if (!GP::FarmRowsReadable()) {
+            WaitFor(sl, slot, "list_farmPlants cannot be read yet");
+            return false;
+        }
         if (!GP::IsFarmRow(row)) {
             RefuseOnce(g_refusedRow, g_rowSaid, slot, L"planting", key, L"no such list_farmPlants row", row);
             return true;
@@ -266,18 +280,35 @@ bool ApplyEdit(coop::net::Session& s, EditSlot& sl, uint8_t slot, Payload p, std
             }
         }
     } else {
+        // A refused edit of a plant the host holds is answered with the host's state, as a door answers each act: the client's
+        // copy returns to the host's value.
         const Gate gate = Judge(reach.Authorize(plant), sl, slot, L"edit", key, g_refusedReach);
         if (gate == Gate::Wait) return false;
-        if (gate == Gate::Refused) return true;
-        // A changed row is one of the host's own, as a planting's is.
-        const std::wstring row = coop::net::StringFromWireKey(p.row);
-        if ((p.editMask & coop::net::plant_edit::kRow) && !GP::IsFarmRow(row)) {
-            RefuseOnce(g_refusedRow, g_rowSaid, slot, L"edit", key, L"no such list_farmPlants row", row);
+        if (gate == Gate::Refused) {
+            changed.push_back(key);
             return true;
         }
+        // A changed row is one of the host's own, as a planting's is.
+        const std::wstring row = coop::net::StringFromWireKey(p.row);
+        if (p.editMask & coop::net::plant_edit::kRow) {
+            if (!GP::FarmRowsReadable()) {
+                WaitFor(sl, slot, "list_farmPlants cannot be read yet");
+                return false;
+            }
+            if (!GP::IsFarmRow(row)) {
+                RefuseOnce(g_refusedRow, g_rowSaid, slot, L"edit", key, L"no such list_farmPlants row", row);
+                changed.push_back(key);
+                return true;
+            }
+        }
+    }
+    if (planting && g_spawnsThisPoll >= kSpawnsPerPoll) {
+        WaitFor(sl, slot, "the host has planted its share for this poll");
+        return false;
     }
     BoundEdit(p, planting, slot);
     if (planting) {
+        ++g_spawnsThisPoll;
         plant = coop::plant_sync::Materialize(p, plantClass);   // the row's class, judged a plant class above
         if (!plant) {
             UE_LOGW("plant_edit_gate: a client's plant '%ls' of '%ls' did not spawn", key.c_str(),
@@ -298,31 +329,38 @@ bool ApplyEdit(coop::net::Session& s, EditSlot& sl, uint8_t slot, Payload p, std
 }  // namespace
 
 void ApplyEdits(coop::net::Session& s, std::unordered_map<std::wstring, void*>& index, std::vector<std::wstring>& changed) {
+    g_spawnsThisPoll = 0;
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         EditSlot& sl = g_editSlots[slot];
-        size_t done = 0;
-        while (done < sl.queue.size() && ApplyEdit(s, sl, slot, sl.queue[done], index, changed)) {
-            ++done;
-            sl.waitSaid = false;   // a consumed edit ends the wait's streak
+        // A head that waits runs nothing and spends no token; one that is served ends the wait's streak and the full queue's.
+        for (bool served = true; served && !sl.queue.empty();) {
+            served = false;
+            sl.queue.Serve(kEditBudget, coop::net::NowMs, [&](const Payload& p) {
+                if (!ApplyEdit(s, sl, slot, p, index, changed)) return coop::net::Served::Wait;
+                served = true;
+                sl.waitSaid = false;
+                sl.fullSaid = false;
+                return coop::net::Served::Done;
+            });
         }
-        if (done == 0) continue;
-        sl.queue.erase(sl.queue.begin(), sl.queue.begin() + static_cast<std::ptrdiff_t>(done));
-        sl.fullSaid = false;
     }
+}
+
+void OnWorldChange() {
+    for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) g_editSlots[slot] = EditSlot{};
 }
 
 void OnEdit(uint8_t senderSlot, const coop::net::PlantStatePayload& p) {
     if (senderSlot < 1 || senderSlot >= coop::net::kMaxPeers) return;
     EditSlot& sl = g_editSlots[senderSlot];
-    if (sl.queue.size() >= kEditsPerSlotCap) {
+    Payload copy = p;
+    if (!sl.queue.Push(std::move(copy), kEditsPerSlotCap)) {
         if (!sl.fullSaid) {
             sl.fullSaid = true;
             UE_LOGW("plant_edit_gate: slot %u has %zu plant edits waiting; later ones are dropped until they drain",
                     static_cast<unsigned>(senderSlot), sl.queue.size());
         }
-        return;
     }
-    sl.queue.push_back(p);
 }
 
 Counts GetCounts() {
@@ -340,7 +378,7 @@ void OnDisconnect() {
     for (bool& said : g_parentSaid) said = false;
     g_rowSaid = false;
     for (bool& said : g_clampSaid) said = false;
-    for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) g_editSlots[slot] = EditSlot{};
+    OnWorldChange();
 }
 
 }  // namespace coop::plant_edit_gate

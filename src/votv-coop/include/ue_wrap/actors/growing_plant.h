@@ -47,6 +47,9 @@ std::wstring Row(void* plant);          // its list_farmPlants row
 // at most every few seconds while the table is not readable. The class is not checked against the family: IsPlantClass is the
 // caller's. Game thread.
 void* FarmRowPlantClass(const std::wstring& row);
+// Whether list_farmPlants is read for this world, so that FarmRowPlantClass and IsFarmRow answer "none" for a row the table lacks
+// and not for a table that could not be read. False retries at most every few seconds. Game thread.
+bool FarmRowsReadable();
 // Whether `row` is a row name of the game's list_farmPlants data table (without case, as an FName compares). Read from the same table
 // as FarmRowPlantClass (then false while it is not readable). Game thread.
 bool IsFarmRow(const std::wstring& row);

@@ -267,6 +267,8 @@ void* FarmRowPlantClass(const std::wstring& row) {
     return (it != g_farmRowClasses.end() && it->second && R::IsLive(it->second)) ? it->second : nullptr;
 }
 
+bool FarmRowsReadable() { return ReadFarmRows(); }
+
 bool IsFarmRow(const std::wstring& row) {
     return !row.empty() && ReadFarmRows() && g_farmRowClasses.count(Lowered(row)) != 0;
 }

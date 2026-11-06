@@ -29,6 +29,10 @@ void OnEdit(uint8_t senderSlot, const coop::net::PlantStatePayload& p);
 // stays at its queue head. Game thread.
 void ApplyEdits(coop::net::Session& s, std::unordered_map<std::wstring, void*>& index, std::vector<std::wstring>& changed);
 
+// The world changed: the edits queued for the old one are dropped, as are the senders' waits, for they named its plants and its
+// bodies. Game thread.
+void OnWorldChange();
+
 // What the gate did this session: plantings refused for a class that is no loaded plant class, edits refused for a plant or place
 // outside the sender's reach, values cut to their bounds, edits that name no key, plantings of a row that is none of
 // list_farmPlants' (or an edit that changes a plant to one) and plantings in a parent that is no pot the host holds. Read-only,
