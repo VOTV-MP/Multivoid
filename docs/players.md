@@ -261,17 +261,22 @@ have it as **Send to the crematorium**. The host opens the nearest cremator's do
 player to its firebox, the way `/tphere` moves a player. The cremator's burn volume taking the player
 in is the landing: the host then shuts the door and pulls the lever, unless the machine is already
 running. From there the game's own cremator does the rest, on the player's own screen, and the host
-reads the death from the player's health in the pose stream. It tells whoever ran the command
-"<name> was cremated.", then ends the player's session with the code MV-H35, "You were sent to the
-crematorium." Nothing is locked: no movement lock, no position lock and no timeout, since the closed
-door and the game's burn replace them. The other outcomes are one line each and no kick: the player
-survived (the run ended while the player lived and had stopped burning), left, died before landing,
-did not land (the order did not apply, or the burn volume never took them in; the door is left
-open and the order is never repeated), or the cremator would not start. The command needs the node
-`multivoid.cremate` for anyone but the host, and a player holding `multivoid.cremate.exempt` cannot
-be sent by a friend; `multivoid.kick.exempt` is not consulted. It refuses the host, the caller
-itself, a player who is still joining or not alive, and one already on the way. Other admins
-holding `multivoid.cremate.notify` are told what was done and how it ended.
+reads the death from the player's health in the pose stream. A death counts as a cremation only when
+the player's pose showed it burning first; it tells whoever ran the command "<name> was cremated.",
+then ends the player's session with the code MV-H35, "You were sent to the crematorium." and the
+name of whoever sent them, and writes that kick to the moderation action log. **`/cremate` ends in a
+kick, and `multivoid.kick.exempt` is not consulted**: the command's own node protects, a player
+holding `multivoid.cremate.exempt` cannot be sent by a friend. Nothing is locked: no movement lock and
+no position lock, since the closed door and the game's burn replace them; the waits are bounded by
+counts of the player's own poses, not by a clock. The other outcomes are one line each and no kick:
+the player survived (the run ended while the player lived and had stopped burning, or kept burning
+past the bound), left, died before landing, died in the cremator but not by its fire, did not land
+(the order did not apply, or the burn volume never took them in; the door is left open and the order
+is never repeated), the cremator would not start, or the cremator is gone. The command needs the node
+`multivoid.cremate` for anyone but the host. It refuses the host, the caller itself, a player who is
+still joining or not alive, one already on the way, a cremator another player is in, and a cremator
+whose burn volume cannot be watched yet. Other admins holding `multivoid.cremate.notify` are told
+what was done and how it ended.
 
 The same files can be edited in game with `/mv`, in LuckPerms' `/lp` shape: `/mv user <who> permission set
 <node> [true|false]`, `/mv user <who> parent add <group>`, `/mv group <name> permission set ...`, `/mv creategroup
