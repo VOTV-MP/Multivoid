@@ -35,11 +35,16 @@ void OnState(const coop::net::FoodStatePayload& p);
 // nothing here and is answered with the food's FoodState to that slot.
 void OnBite(int senderSlot, const coop::net::FoodBitePayload& p);
 
-// HOST: a client let go of a food it held; this is the condition its hand kept. Validated at the router.
+// HOST: a client let go of a food it held; this is the condition its hand kept. Validated at the router. Judged as a
+// bite is, its numbers bounded; one whose copy is not born yet waits 30 s for it, judged against where the sender stood.
 void OnRelease(int senderSlot, const coop::net::FoodStatePayload& p);
 
 // ANY: the condition of the food in `senderSlot`'s hand. Validated at the router.
 void OnHand(int senderSlot, const coop::net::FoodHandPayload& p);
+
+// ANY: `senderSlot`'s hand said a negative use count and was dropped at the router; the refusal is logged under the
+// slot's latch.
+void OnBadHand(int senderSlot);
 
 // HOST: a joiner reached its ready edge. Every food goes out again, on the poll's own budget.
 void QueueConnectBroadcastForSlot(int slot);

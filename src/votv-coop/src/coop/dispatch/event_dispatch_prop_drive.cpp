@@ -217,6 +217,10 @@ bool HandlePropDriveEvent(net::Session& session,
             UE_LOGW("event_feed: FoodHand malformed -- dropping");
             break;
         }
+        if (p.uses < 0) {  // every receiver judges it; the host has relayed it already
+            ::coop::props::prop_food_sync::OnBadHand(msg.senderPeerSlot);
+            break;
+        }
         ::coop::props::prop_food_sync::OnHand(msg.senderPeerSlot, p);
         break;
     }

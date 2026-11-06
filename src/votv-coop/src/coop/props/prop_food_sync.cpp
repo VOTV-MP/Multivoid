@@ -7,6 +7,7 @@
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/remote_player.h"
 #include "coop/props/prop_key_index.h"
 #include "coop/props/remote_prop.h"  // KeyToWString
 
@@ -28,6 +29,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -50,21 +52,27 @@ UE_FACT_FN(kRowForceDrop, "prop_food_sync", L"mainPlayer_C", L"forceDrop", Decla
 constexpr int kTag = 0x464F4F44;  // 'FOOD'
 
 constexpr auto   kPoll = std::chrono::milliseconds(500);
-// The gap between two bites from one slot, counted from the last RECEIVED, accepted or not, so a flood is bounded before
-// any other work. It starves only the sender's own slot. An honest press cannot repeat inside it (the eat
-// interaction's own length, to be read on the rig).
+// The gap between two bites, or two releases, from one slot, counted from the last RECEIVED, accepted or not, so a
+// flood is bounded before any other work. It starves only the sender's own slot. An honest press cannot repeat
+// inside it (the eat interaction's own length, to be read on the rig).
 constexpr auto   kBiteGap = std::chrono::milliseconds(200);
+constexpr float  kTemperatureStep = 1.f;   // the tick's target is re-rolled every tick, so a smaller step is noise
+constexpr float  kRipenessStep = 5.f;     // a food starts near 7200 (a class's own row: 3600 to 1e9) and falls about
+                                           // half a point a second
+constexpr size_t kSendsPerPoll = 64;
+constexpr size_t kMaxPending = 512;
+constexpr size_t kMaxReleasesPerSlot = 64;
+// A copy that has not appeared in this long will not: a release or a state waiting for its copy is dropped after it.
+constexpr auto   kReleaseWaitMs = std::chrono::milliseconds(30000);
 constexpr auto   kSayGap = std::chrono::seconds(1);  // one refusal line, and one corrective FoodState, per slot per this
+constexpr auto   kHandRepeat = std::chrono::seconds(5);  // a mirror rebuilt on a slot switch, a joiner's first copy
+constexpr float  kMaxTemperature = 2000.f;
+// A garbage guard, not a game rule: -1 for the tick guard's dip below 0, 1e9 the largest class default (the soap's).
+constexpr float  kMinRipeness = -1.f;
+constexpr float  kMaxRipeness = 1e9f;
 // Twice the player's armLength 200: the door's and the coffee's reach (door_verb_intent.cpp kDoorReachUU,
 // coffee_intent.cpp kReachUU). Authorize adds the food's bounds and the pose slack.
 constexpr float  kReachUU = 400.f;
-constexpr float  kTemperatureStep = 1.f;   // the tick's target is re-rolled every tick, so a smaller step is noise
-constexpr float  kRipenessStep = 5.f;     // a fresh food starts near 3600 and falls about half a point a second
-constexpr size_t kSendsPerPoll = 64;
-constexpr size_t kMaxPending = 512;
-constexpr auto   kHandRepeat = std::chrono::seconds(5);  // a mirror rebuilt on a slot switch, a joiner's first copy
-constexpr float  kMaxTemperature = 2000.f;
-constexpr int32_t kMaxUses = 1000;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 Clock::time_point g_nextPoll{};
@@ -87,13 +95,17 @@ struct Parked {
     bool wasTicking = false;
 };
 std::unordered_map<void*, Parked> g_parked;
-std::unordered_map<std::wstring, coop::net::FoodStatePayload> g_pending;  // CLIENT: a food not born here yet
+struct Pending {
+    coop::net::FoodStatePayload payload;
+    Clock::time_point           at;
+};
+std::unordered_map<std::wstring, Pending> g_pending;  // CLIENT: a food not born here yet
 
-std::array<Clock::time_point, coop::net::kMaxPeers> g_lastBite{};  // HOST: by slot, the last bite received
+std::array<Clock::time_point, coop::net::kMaxPeers> g_lastBite{};     // HOST: by slot, the last bite received
+std::array<Clock::time_point, coop::net::kMaxPeers> g_lastRelease{};  // HOST: by slot, the last release received
 
-// HOST: what a slot's refusals have said and owe. A refused bite ran on the sender's copy, so the host answers it with
-// the food's own FoodState; both the line and the answer are held to one per kSayGap, the answer to the latest refused
-// food.
+// HOST: what a slot's refusals have said and owe. A refused act ran on the sender's copy, so the host answers it with the
+// food's own FoodState; both the line and the answer are held to one per kSayGap, the answer to the latest refused food.
 struct Latch {
     Clock::time_point nextSay{};
     Clock::time_point nextAnswer{};
@@ -120,9 +132,16 @@ struct MirrorState {
 };
 std::array<MirrorState, coop::net::kMaxPeers> g_mirrors{};
 
-std::unordered_map<std::wstring, std::pair<int, coop::net::FoodStatePayload>> g_releases;  // HOST: a copy not born yet
+// HOST: a release whose copy is not born yet, by (slot, key). It keeps where its sender stood when it arrived, since the
+// copy is judged against that place when it appears.
+struct Release {
+    coop::net::FoodStatePayload payload;
+    Clock::time_point           at;
+    ue_wrap::FVector            from;
+};
+std::map<std::pair<int, std::wstring>, Release> g_releases;
 
-uint32_t g_published = 0, g_applied = 0, g_bitesSent = 0, g_bitesTaken = 0, g_bitesRefused = 0;
+uint32_t g_published = 0, g_applied = 0, g_bitesSent = 0, g_bitesTaken = 0, g_bitesRefused = 0, g_releasesRefused = 0;
 
 void RefreshClasses() {
     const uint64_t version = ue_wrap::object_index::ClassSetVersion();
@@ -190,43 +209,6 @@ bool Publish(coop::net::Session& s, const std::wstring& key, const F::Condition&
 bool PublishToSlot(coop::net::Session& s, int slot, const std::wstring& key, const F::Condition& now) {
     const coop::net::FoodStatePayload p = StatePayload(key, now);
     return s.SendReliableToSlot(slot, coop::net::ReliableKind::FoodState, &p, sizeof(p));
-}
-
-// One refusal line per slot per kSayGap, carrying the count since the last (coffee_state.cpp's shape).
-void SayLatched(int slot, const char* verb, const std::wstring& key, const char* why) {
-    Latch& l = g_latch[slot];
-    const auto now = Clock::now();
-    if (now < l.nextSay) {
-        ++l.since;
-        return;
-    }
-    UE_LOGI("prop_food_sync: slot %d's %s of '%ls' refused: %s (%u more since the last line)", slot, verb,
-            key.c_str(), why, l.since);
-    l.nextSay = now + kSayGap;
-    l.since = 0;
-}
-
-// The sender's copy ran the act, so a refused act is answered with the food's own FoodState to that slot alone: once per
-// kSayGap, for the latest food refused. A food that is gone here or in a hand has nothing to send.
-void Answer(coop::net::Session& s, int slot) {
-    Latch& l = g_latch[slot];
-    if (l.answerKey.empty()) return;
-    const auto now = Clock::now();
-    if (now < l.nextAnswer) return;
-    void* const actor = coop::prop_key_index::Find(l.answerKey);
-    F::Condition condition;
-    if (actor && F::IsFood(actor) && !coop::hand_item::IsHandAxisActor(actor) && F::Read(actor, condition) &&
-        PublishToSlot(s, slot, l.answerKey, condition))
-        l.nextAnswer = now + kSayGap;
-    l.answerKey.clear();
-}
-
-// A bite of `key` from `slot` changed nothing here.
-void Refuse(int slot, const char* verb, const std::wstring& key, const char* why, uint32_t& counter) {
-    ++counter;
-    SayLatched(slot, verb, key, why);
-    g_latch[slot].answerKey = key;
-    if (auto* s = g_session.load(std::memory_order_acquire)) Answer(*s, slot);
 }
 
 void PollHost(coop::net::Session& s) {
@@ -298,20 +280,111 @@ void PollMirrors() {
     }
 }
 
-// Host: a release that came ahead of its copy's birth.
-bool ApplyRelease(coop::net::Session& s, int slot, const std::wstring& key, const coop::net::FoodStatePayload& p) {
-    void* const actor = coop::prop_key_index::Find(key);
-    if (!actor) return false;
-    if (!F::IsFood(actor) || coop::hand_item::IsHandAxisActor(actor) ||
-        !coop::hand_item::LastHeldClassIs(static_cast<uint8_t>(slot), R::ClassNameOf(actor).c_str())) {
-        UE_LOGI("prop_food_sync: slot %d's release of '%ls' refused", slot, key.c_str());
-        return true;
+// One refusal line per slot per kSayGap, carrying the count since the last (coffee_state.cpp's shape), whatever the
+// refusal.
+void SayLatched(int slot, const char* verb, const std::wstring& key, const char* why) {
+    Latch& l = g_latch[slot];
+    const auto now = Clock::now();
+    if (now < l.nextSay) {
+        ++l.since;
+        return;
     }
+    UE_LOGI("prop_food_sync: slot %d's %s of '%ls' refused: %s (%u more since the last line)", slot, verb,
+            key.c_str(), why, l.since);
+    l.nextSay = now + kSayGap;
+    l.since = 0;
+}
+
+// The sender's copy ran the act, so a refused act is answered with the food's own FoodState to that slot alone: once per
+// kSayGap, for the latest food refused. A food that is gone here or in a hand has nothing to send.
+void Answer(coop::net::Session& s, int slot) {
+    Latch& l = g_latch[slot];
+    if (l.answerKey.empty()) return;
+    const auto now = Clock::now();
+    if (now < l.nextAnswer) return;
+    void* const actor = coop::prop_key_index::Find(l.answerKey);
+    F::Condition condition;
+    if (actor && F::IsFood(actor) && !coop::hand_item::IsHandAxisActor(actor) && F::Read(actor, condition) &&
+        PublishToSlot(s, slot, l.answerKey, condition))
+        l.nextAnswer = now + kSayGap;
+    l.answerKey.clear();
+}
+
+// A bite or a release of `key` from `slot` changed nothing here.
+void Refuse(int slot, const char* verb, const std::wstring& key, const char* why, uint32_t& counter) {
+    ++counter;
+    SayLatched(slot, verb, key, why);
+    g_latch[slot].answerKey = key;
+    if (auto* s = g_session.load(std::memory_order_acquire)) Answer(*s, slot);
+}
+
+// The slot's body as the host last placed it, or false when it has none that took a pose (Authorize's NoBody).
+bool PlaceOf(int slot, ue_wrap::FVector& out) {
+    coop::RemotePlayer* const rp = coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot));
+    void* const puppet = (rp && rp->valid() && rp->HasPose()) ? rp->GetActor() : nullptr;
+    return puppet && ue_wrap::engine::TryGetActorLocation(puppet, out);
+}
+
+// Which of a release's numbers is outside what any food holds. A garbage guard, not a game rule.
+const char* ValueFault(const coop::net::FoodStatePayload& p) {
+    if (p.temperature < 0.f || p.temperature > kMaxTemperature) return "temperature out of bound";
+    if (p.ripeness < kMinRipeness || p.ripeness > kMaxRipeness) return "ripeness out of bound";
+    return nullptr;
+}
+
+// Whether this host copy is one `slot` could have let go of, and whether the release refills it: uses never rise.
+const char* CopyFault(int slot, void* actor, const coop::net::FoodStatePayload& p) {
+    F::Condition current;
+    if (!F::IsFood(actor) || !F::Read(actor, current)) return "not a food";
+    if (coop::hand_item::IsHandAxisActor(actor)) return "in a hand";
+    if (!coop::hand_item::LastHeldClassIs(static_cast<uint8_t>(slot), R::ClassNameOf(actor).c_str()))
+        return "not the class that hand held";
+    if (p.uses < 0 || p.uses > current.uses) return "uses out of bound";
+    return nullptr;
+}
+
+void TakeRelease(coop::net::Session& s, int slot, const std::wstring& key, void* actor,
+                 const coop::net::FoodStatePayload& p) {
     const F::Condition condition{p.temperature, p.ripeness, p.uses};
     F::Write(actor, condition);
     Publish(s, key, condition);
     UE_LOGI("prop_food_sync: slot %d let go of '%ls' -- condition taken", slot, key.c_str());
-    return true;
+}
+
+// A release that came ahead of its copy's birth, judged when the copy appears: against where its sender stood when it
+// arrived, with the three terms Authorize sums (intent_authority.cpp:55): the lane's reach, the copy's bounds radius and
+// the pose slack.
+void DrainReleases(coop::net::Session& s) {
+    const auto now = Clock::now();
+    for (auto it = g_releases.begin(); it != g_releases.end();) {
+        const int slot = it->first.first;
+        const std::wstring& key = it->first.second;
+        const Release& r = it->second;
+        if (now - r.at > kReleaseWaitMs) {
+            SayLatched(slot, "release", key, "its copy did not appear in time");
+            it = g_releases.erase(it);
+            continue;
+        }
+        void* const actor = coop::prop_key_index::Find(key);
+        if (!actor) {
+            ++it;
+            continue;
+        }
+        ue_wrap::FVector centre{};
+        float radius = 0.f;
+        const char* why = CopyFault(slot, actor, r.payload);
+        if (!why) {
+            if (!ue_wrap::engine::ActorReachSphere(actor, centre, radius)) why = "no place to measure to";
+            else {
+                const float dx = centre.X - r.from.X, dy = centre.Y - r.from.Y, dz = centre.Z - r.from.Z;
+                if (!(std::sqrt(dx * dx + dy * dy + dz * dz) <= kReachUU + radius + coop::element::kPoseStalenessUU))
+                    why = "out of reach of where its sender stood";
+            }
+        }
+        if (why) Refuse(slot, "release", key, why, g_releasesRefused);
+        else TakeRelease(s, slot, key, actor, r.payload);
+        it = g_releases.erase(it);
+    }
 }
 
 void PollClient() {
@@ -321,8 +394,11 @@ void PollClient() {
         if (coop::hand_item::IsLocalHandViewActor(actor)) Unpark(actor);
         else if (!coop::hand_item::IsHandAxisActor(actor)) Park(actor);
     }
-    for (auto it = g_pending.begin(); it != g_pending.end();)
-        it = Apply(it->first, it->second) ? g_pending.erase(it) : std::next(it);
+    const auto now = Clock::now();
+    for (auto it = g_pending.begin(); it != g_pending.end();) {
+        if (now - it->second.at > kReleaseWaitMs) it = g_pending.erase(it);  // its copy did not appear in time
+        else it = Apply(it->first, it->second.payload) ? g_pending.erase(it) : std::next(it);
+    }
     if (g_parked.size() > foods.size() * 2 + 64)
         for (auto it = g_parked.begin(); it != g_parked.end();)
             it = it->second.ref.Get() ? std::next(it) : g_parked.erase(it);
@@ -439,8 +515,7 @@ void Tick() {
     WatchWhenLoaded();
     PollMirrors();
     if (s->role() == coop::net::Role::Host) {
-        for (auto it = g_releases.begin(); it != g_releases.end();)
-            it = ApplyRelease(*s, it->second.first, it->first, it->second.second) ? g_releases.erase(it) : std::next(it);
+        DrainReleases(*s);
         for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) Answer(*s, slot);
         PollHost(*s);
     } else {
@@ -454,7 +529,7 @@ void OnState(const coop::net::FoodStatePayload& p) {
         g_pending.erase(key);
         return;
     }
-    if (g_pending.size() < kMaxPending || g_pending.count(key)) g_pending[key] = p;
+    if (g_pending.size() < kMaxPending || g_pending.count(key)) g_pending[key] = {p, Clock::now()};
 }
 
 void OnBite(int senderSlot, const coop::net::FoodBitePayload& p) {
@@ -496,10 +571,49 @@ void OnBite(int senderSlot, const coop::net::FoodBitePayload& p) {
 
 void OnRelease(int senderSlot, const coop::net::FoodStatePayload& p) {
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || p.temperature < 0.f || p.temperature > kMaxTemperature || p.uses < 0 || p.uses > kMaxUses) return;
+    if (!s) return;
     const std::wstring key = coop::remote_prop::KeyToWString(p.key);
-    if (ApplyRelease(*s, senderSlot, key, p)) return;
-    if (g_releases.size() < kMaxPending) g_releases[key] = {senderSlot, p};
+    const auto now = Clock::now();
+    const bool tooSoon = now - g_lastRelease[senderSlot] < kBiteGap;
+    g_lastRelease[senderSlot] = now;  // every release received, accepted or not
+    if (tooSoon) {
+        Refuse(senderSlot, "release", key, "inside the gap", g_releasesRefused);
+        return;
+    }
+    if (const char* why = ValueFault(p)) {
+        Refuse(senderSlot, "release", key, why, g_releasesRefused);
+        return;
+    }
+    void* const actor = coop::prop_key_index::Find(key);
+    if (!actor) {
+        // Not born here yet: judged when it is, against where the sender stands now. No body, no release.
+        ue_wrap::FVector from{};
+        if (!PlaceOf(senderSlot, from)) {
+            Refuse(senderSlot, "release", key, "the sender has no body here yet", g_releasesRefused);
+            return;
+        }
+        size_t held = 0;
+        auto oldest = g_releases.end();
+        for (auto it = g_releases.begin(); it != g_releases.end(); ++it) {
+            if (it->first.first != senderSlot || it->first.second == key) continue;
+            ++held;
+            if (oldest == g_releases.end() || it->second.at < oldest->second.at) oldest = it;
+        }
+        if (held >= kMaxReleasesPerSlot) {
+            SayLatched(senderSlot, "release", oldest->first.second, "dropped for the slot's cap");
+            g_releases.erase(oldest);
+        }
+        g_releases[{senderSlot, key}] = {p, now, from};
+        return;
+    }
+    const char* why = CopyFault(senderSlot, actor, p);
+    if (!why) {
+        const coop::element::IntentSubject subject =
+            coop::element::IntentTarget::ForClientIntent(*s, static_cast<uint8_t>(senderSlot), kReachUU).Authorize(actor);
+        if (!subject) why = coop::element::OutcomeName(subject.outcome);
+    }
+    if (why) Refuse(senderSlot, "release", key, why, g_releasesRefused);
+    else TakeRelease(*s, senderSlot, key, actor, p);
 }
 
 void OnHand(int senderSlot, const coop::net::FoodHandPayload& p) {
@@ -507,24 +621,32 @@ void OnHand(int senderSlot, const coop::net::FoodHandPayload& p) {
     g_mirrors[senderSlot].have = true;
 }
 
+void OnBadHand(int senderSlot) {
+    if (senderSlot < 0 || senderSlot >= coop::net::kMaxPeers) return;
+    SayLatched(senderSlot, "hand", std::wstring{}, "a negative use count");
+}
+
 void QueueConnectBroadcastForSlot(int slot) {
     g_sent.clear();
     if (slot < 1 || slot >= coop::net::kMaxPeers) return;
-    // A recycled slot starts clean: nothing of the last occupant's gap or refusals is the joiner's.
-    g_lastBite[slot] = {};
+    // A recycled slot starts clean: nothing of the last occupant's gaps, refusals or waiting releases is the joiner's.
+    g_lastBite[slot] = g_lastRelease[slot] = {};
     g_latch[slot] = {};
+    for (auto it = g_releases.begin(); it != g_releases.end();)
+        it = it->first.first == slot ? g_releases.erase(it) : std::next(it);
 }
 
 void OnDisconnect() {
-    if (g_published || g_applied || g_bitesSent || g_bitesTaken || g_bitesRefused)
-        UE_LOGI("prop_food_sync: session end -- published=%u applied=%u bites sent=%u taken=%u refused=%u", g_published,
-                g_applied, g_bitesSent, g_bitesTaken, g_bitesRefused);
+    if (g_published || g_applied || g_bitesSent || g_bitesTaken || g_bitesRefused || g_releasesRefused)
+        UE_LOGI("prop_food_sync: session end -- published=%u applied=%u bites sent=%u taken=%u refused=%u releases "
+                "refused=%u", g_published, g_applied, g_bitesSent, g_bitesTaken, g_bitesRefused, g_releasesRefused);
     for (auto& [actor, row] : g_parked)
         if (row.ref.Is(actor) && row.wasTicking) ue_wrap::engine::SetActorTickEnabled(actor, true);
     g_parked.clear();
     g_pending.clear();
     g_sent.clear();
     g_lastBite = {};
+    g_lastRelease = {};
     g_latch = {};
     g_biteFood.Reset();
     g_held.Reset();
@@ -534,7 +656,7 @@ void OnDisconnect() {
     g_releases.clear();
     g_cursor = 0;
     g_nextPoll = {};
-    g_published = g_applied = g_bitesSent = g_bitesTaken = g_bitesRefused = 0;
+    g_published = g_applied = g_bitesSent = g_bitesTaken = g_bitesRefused = g_releasesRefused = 0;
 }
 
 }  // namespace coop::props::prop_food_sync
