@@ -523,7 +523,7 @@ void RunClientG5() {
 // ---- /cremate: the verb, asked through the command dispatcher ------------------------------------------------------
 // The host asks as the operator and judges the line the verb answers with, the burn volume's landing and, where the
 // arm ends in a kick, the end reason the client reads. The refusal arms ask from client 1, a player the host's own /mv
-// granted the node (revoked at the end), and the observer is the one who holds the exempt node or only stands.
+// granted the node (cleared before, revoked at the end), and the observer is the one who holds the exempt node or only stands.
 
 namespace CMD = coop::command_sync;
 
@@ -664,8 +664,19 @@ void RunHostRefusal(const std::string& arm) {
         grants.push_back("mv user " + b + " permission set multivoid.cremate.exempt true");
         revoke.lines.push_back("mv user " + b + " permission unset multivoid.cremate.exempt");
     }
+    // A run that died before its own unset left its nodes in the host's permission files; both nodes of every
+    // player the arm names are cleared first, through the dispatcher the grants use, so the arm starts from none.
+    std::vector<std::string> clears;
+    for (const std::string& who : exempt ? std::vector<std::string>{a, b} : std::vector<std::string>{a}) {
+        clears.push_back("mv user " + who + " permission unset multivoid.cremate");
+        clears.push_back("mv user " + who + " permission unset multivoid.cremate.exempt");
+    }
+    for (const std::string& c : clears) CMD::Submit(c);
+    PS::WaitFor("the clears' replies", kLandSec, [&] { return LineCount() >= clears.size(); });
+    for (const std::string& c : clears) UE_LOGI("cremator-drill: HOST cleared with '%hs'", c.c_str());
+    const size_t cleared = LineCount();
     for (const std::string& g : grants) CMD::Submit(g);
-    PS::WaitFor("the grants' replies", kLandSec, [&] { return LineCount() >= grants.size(); });
+    PS::WaitFor("the grants' replies", kLandSec, [&] { return LineCount() >= cleared + grants.size(); });
     for (const std::string& g : grants) UE_LOGI("cremator-drill: HOST granted with '%hs'", g.c_str());
     Mark("perm_ready");
     std::string asked, moved;
