@@ -7,18 +7,27 @@
 #include "harness/session_runtime.h"
 
 #include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/interactables/interactable_sync.h"  // the cremator lane's key and its resolve
+#include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/props/prop_snapshot.h"
+#include "coop/save/join_window_baseline.h"
 #include "coop/session/net_pump.h"
 
+#include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/devices/cremator.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -31,6 +40,7 @@ namespace {
 namespace C  = ue_wrap::cremator;
 namespace E  = ue_wrap::engine;
 namespace PS = harness::autotest::peer_signal;
+namespace sg = ue_wrap::script_gate;
 using PS::Await;
 using PS::AwaitText;
 using PS::Mark;
@@ -261,10 +271,150 @@ void RunRejoin() {
     UE_LOGI("cremator-drill: REJOIN DONE");
 }
 
+// ---- G3: a client in the host's running cremator dies by the machine ----------------------------------------------
+// The host moves the client with the admin verb's own order (TeleportClient, the `/cremate` move under test), judges the
+// landing by the cremator's own begin-overlap for the client's puppet, shuts the door and pulls the lever. The client
+// reports its own death, and the host judges it.
+
+// The cremator's own begin-overlap of its `burning` component: the event that collects the sitter.
+UE_FACT_FN(kRowBurningOverlap, "dev.cremator_drill", L"cremator_C",
+           L"BndEvt__cremator_burning_K2Node_ComponentBoundEvent_1_ComponentBeginOverlapSignature__DelegateSignature",
+           Declared);
+constexpr int kTagOverlap = 0x43443347;  // 'CD3G'
+
+constexpr uint8_t kClientSlot = 1;
+constexpr int kLandSec  = 60;
+constexpr int kDeathSec = 240;
+
+std::atomic<void*> g_g3Cremator{nullptr};
+std::atomic<void*> g_g3Puppet{nullptr};
+std::atomic<int>   g_g3Landed{0};
+
+// Post, on the game thread: the body has run, so the cremator's own begin-overlap handling is done.
+void OnOverlapPost(const sg::Call& c) {
+    if (!c.object || !c.function || !c.locals || c.object != g_g3Cremator.load(std::memory_order_acquire)) return;
+    static void*   sFn = nullptr;
+    static int32_t sOtherOff = -1;
+    if (c.function != sFn) {
+        sFn = c.function;
+        sOtherOff = ue_wrap::reflection::FindParamOffset(c.function, L"OtherActor");
+    }
+    if (sOtherOff < 0) return;
+    void* other = nullptr;
+    std::memcpy(&other, c.locals + sOtherOff, sizeof(other));
+    if (other && other == g_g3Puppet.load(std::memory_order_acquire)) g_g3Landed.store(1, std::memory_order_release);
+}
+
+// Slot 1's join has settled: its world is ready, its join traffic is delivered and its puppet stands here. Game thread.
+bool ClientSettled() {
+    auto& s = harness::session_runtime::Session();
+    coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(kClientSlot);
+    return p && p->valid() && s.IsSlotWorldReady(kClientSlot) && coop::prop_snapshot::IsBracketClosed(kClientSlot) &&
+           !coop::join_window_baseline::IsLateWindowOpen(kClientSlot) && s.SlotReliableIdle(kClientSlot);
+}
+
+// The nearest cremator to the client's puppet gets its door opened, the overlap watch and the teleport order. Game
+// thread. The cremator's lane key on success, "" on a step that failed (said).
+std::wstring SendClientToFirebox(void*& cremator) {
+    coop::RemotePlayer* puppet = coop::players::Registry::Get().Puppet(kClientSlot);
+    ue_wrap::FVector from{};
+    if (!puppet || !puppet->TryGetLocation(from)) { UE_LOGW("cremator-drill: g3 the client's puppet has no location"); return {}; }
+    const C::Nearest n = C::FindNearestFirebox(from);
+    ue_wrap::FRotator rot{};
+    if (!n.actor || !E::TryGetActorRotation(n.actor, rot)) { UE_LOGW("cremator-drill: g3 no cremator with a firebox"); return {}; }
+    cremator = n.actor;
+    const std::wstring key = coop::interactable_sync::CrematorKey(cremator);
+    if (key.empty()) { UE_LOGW("cremator-drill: g3 the cremator lane does not index the nearest cremator"); return {}; }
+    bool opened = false;
+    if (!C::OpenDoor(cremator, opened)) { UE_LOGW("cremator-drill: g3 the door's open() did not run"); return {}; }
+    g_g3Cremator.store(cremator, std::memory_order_release);
+    g_g3Puppet.store(puppet->GetActor(), std::memory_order_release);
+    g_g3Landed.store(0, std::memory_order_release);
+    if (!sg::WatchName(kRowBurningOverlap, kTagOverlap, nullptr, &OnOverlapPost)) {
+        UE_LOGW("cremator-drill: g3 the begin-overlap watch did not register");
+        return {};
+    }
+    coop::net::TeleportClientPayload pose{};
+    pose.locX = n.at.X; pose.locY = n.at.Y; pose.locZ = n.at.Z;
+    pose.rotPitch = rot.Pitch; pose.rotYaw = rot.Yaw; pose.rotRoll = rot.Roll;
+    if (!harness::session_runtime::Session().SendReliableToSlot(kClientSlot, coop::net::ReliableKind::TeleportClient,
+                                                                &pose, sizeof(pose))) {
+        UE_LOGW("cremator-drill: g3 the teleport order was not sent");
+        return {};
+    }
+    UE_LOGI("cremator-drill: HOST g3 door opened=%d, teleport order to=(%.0f,%.0f,%.0f) key='%ls'", opened ? 1 : 0, n.at.X,
+            n.at.Y, n.at.Z, key.c_str());
+    return key;
+}
+
+void RunHostG3() {
+    if (!Await("client_ready", kJoinSec)) return;
+    if (!PS::WaitFor("slot 1's join settled", kSignalSec, [] {
+            bool ok = false;
+            OnGameThread([&] { ok = ClientSettled(); });
+            return ok;
+        }))
+        return;
+    void* cremator = nullptr;
+    std::wstring key;
+    OnGameThread([&] { key = SendClientToFirebox(cremator); });
+    if (key.empty()) { UE_LOGW("cremator-drill: VERDICT ABORT -- the host could not send the client to the firebox"); return; }
+    if (!PS::WaitFor("the cremator's overlap for the client's puppet", kLandSec,
+                     [] { return g_g3Landed.load(std::memory_order_acquire) == 1; }))
+        return;
+    bool ran = false, wasOpened = false;
+    OnGameThread([&] { ran = C::ShutDoor(cremator, wasOpened) && C::CallUseLever(cremator); });
+    UE_LOGI("cremator-drill: HOST g3 pulled the lever ran=%d doorWasOpened=%d", ran ? 1 : 0, wasOpened ? 1 : 0);
+    if (!ran) { UE_LOGW("cremator-drill: VERDICT ABORT -- the host's lever did not run"); return; }
+    Mark("g3_lever");
+    std::string text;
+    if (!AwaitText("g3_dead", text, kDeathSec + 60)) return;
+    const int dead = FieldOf(text, "dead=");
+    const int seconds = FieldOf(text, "T=");
+    char what[160];
+    if (dead == 1) std::snprintf(what, sizeof(what), "the client died by the machine T=%d", seconds);
+    else std::snprintf(what, sizeof(what), "the client survived the host's run: %s", text.c_str());
+    Verdict(dead == 1, "g3", what);
+    UE_LOGI("cremator-drill: G3 DONE fails=%d", g_fails);
+}
+
+// This player is dead or has no health left. Game thread.
+bool PlayerDead(float& health) {
+    float dead = 0.f;
+    const bool readDead = ue_wrap::vitals::Read(ue_wrap::vitals::Field::Dead, &dead);
+    const bool readHealth = ue_wrap::vitals::Read(ue_wrap::vitals::Field::Health, &health);
+    return (readDead && dead > 0.5f) || (readHealth && health <= 0.f);
+}
+
+void RunClientG3() {
+    if (!HostPuppetUp()) return;
+    Mark("client_ready");
+    if (!Await("g3_lever", kSignalSec)) return;
+    const auto since = std::chrono::steady_clock::now();
+    bool dead = false;
+    float health = -1.f;
+    PS::WaitFor("this player's death", kDeathSec, [&] {
+        OnGameThread([&] { dead = PlayerDead(health); });
+        return dead;
+    }, false);
+    const int seconds = static_cast<int>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - since).count());
+    char text[64];
+    std::snprintf(text, sizeof(text), "dead=%d health=%.0f T=%d", dead ? 1 : 0, health, seconds);
+    UE_LOGI("cremator-drill: CLIENT g3 %s", text);
+    Mark("g3_dead", text);
+    UE_LOGI("cremator-drill: DONE on client");
+}
+
 }  // namespace
 
 DWORD WINAPI Thread(LPVOID /*arg*/) {
     if (!PS::Begin("cremator-drill")) return 0;
+    // `g3` runs the burn arm alone; `1` runs the lever arms.
+    if (coop::config::ResolveEnum(coop::config_registry::rows::cremator_drill) == "g3") {
+        if (harness::autotest::IsClientRole()) RunClientG3(); else RunHostG3();
+        return 0;
+    }
     // The rejoined life carries the env the rig sets for it alone (--rejoin-env). The first lives cannot know whether
     // the rig rejoins, so both go on to G4 after G1; a run without --rejoin ends at the host's 'G1 DONE' line.
     if (!harness::autotest::IsClientRole()) RunHost();

@@ -16,6 +16,8 @@
 
 #include <windows.h>
 
+#include <string>
+
 namespace harness::autotest {
 namespace {
 
@@ -41,6 +43,18 @@ void SpawnIfRow(const coop::config_registry::FlagRow& row, const char* label,
                 LPTHREAD_START_ROUTINE thread, coop::net::Role role) {
     if (!cfg::ResolveFlag(row)) return;
     UE_LOGI("harness: %s=1 (%s) -- spawning %s thread", row.row->key, RoleStr(role), label);
+    if (HANDLE h = ::CreateThread(nullptr, 0, thread, nullptr, 0, nullptr)) {
+        ::CloseHandle(h);
+    }
+}
+
+// The same for a drill whose row names its arms: any value but off spawns the thread, which reads the row again to
+// pick its arm.
+void SpawnIfEnum(const coop::config_registry::EnumRow& row, const char* label,
+                 LPTHREAD_START_ROUTINE thread, coop::net::Role role) {
+    const std::string arm = cfg::ResolveEnum(row);
+    if (arm == "off") return;
+    UE_LOGI("harness: %s=%s (%s) -- spawning %s thread", row.row->key, arm.c_str(), RoleStr(role), label);
     if (HANDLE h = ::CreateThread(nullptr, 0, thread, nullptr, 0, nullptr)) {
         ::CloseHandle(h);
     }
@@ -244,8 +258,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIf("VOTVCOOP_RUN_AMBIENT_FIELD", "ambient field drill", &AmbientFieldThread, role);
     SpawnIf("VOTVCOOP_RUN_SUS_HOLE", "sus hole drill", &SusHoleThread, role);
     // The cremator drill: the host pulls its lever and the client's copy must show the run, then show it again after a
-    // rejoin.
-    SpawnIfRow(coop::config_registry::rows::cremator_drill, "cremator lever drill", &coop::dev::cremator_drill::Thread, role);
+    // rejoin (1); a client sent into the running machine must die by it (g3).
+    SpawnIfEnum(coop::config_registry::rows::cremator_drill, "cremator drill", &coop::dev::cremator_drill::Thread, role);
 }
 
 }  // namespace harness::autotest
