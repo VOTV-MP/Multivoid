@@ -10,6 +10,8 @@
 
 #include "coop/moderation/cremate.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/interactables/cremator_occupancy.h"
 #include "coop/interactables/cremator_state.h"
 #include "coop/net/end_reason.h"
@@ -343,7 +345,9 @@ void Install(coop::net::Session* session) {
 }
 
 void Tick() {
-    if (!g_listening && HostedSession()) {
+    // The drill's red arm: the verb never listens to the burn volume, so a player it took in is never seen to land.
+    static const bool sLandingOff = coop::config::ResolveFlag(coop::config_registry::rows::cremate_landing_off);
+    if (!g_listening && !sLandingOff && HostedSession()) {
         g_listening = coop::cremator_occupancy::AddListener(&OnOverlap);
         if (!g_listening && !g_watchWarned) {
             g_watchWarned = true;

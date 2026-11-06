@@ -8,16 +8,20 @@
 #include "harness/autotest/peer_signal.h"
 #include "harness/session_runtime.h"
 
+#include "coop/commands/command_sync.h"  // the /cremate arms ask through the real dispatcher
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/interactables/cremator_client_guard.h"  // G5: the refused collections
 #include "coop/interactables/cremator_occupancy.h"  // the burn volume's begin-overlap: the landing
 #include "coop/interactables/interactable_sync.h"  // the cremator lane's key and its resolve
+#include "coop/net/end_reason.h"  // Describe: the id the client's notice carries
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/player_damage.h"  // g3low: the refusals of the burn loop's achievement
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/player/roster_ledger.h"  // the player number a command line names a seat by
+#include "coop/session/join_progress.h"  // the client's end-reason notice
 #include "coop/session/net_pump.h"
 
 #include "ue_wrap/actors/vitals.h"
@@ -29,12 +33,17 @@
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
+#include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace coop::dev::cremator_drill {
 namespace {
@@ -62,7 +71,12 @@ void OnGameThread(Fn&& fn) {
 }
 
 std::wstring Widen(const std::string& s) { return std::wstring(s.begin(), s.end()); }
-std::string Narrow(const std::wstring& w) { return std::string(w.begin(), w.end()); }
+std::string Narrow(const std::wstring& w) {
+    std::string s;
+    s.reserve(w.size());
+    for (const wchar_t c : w) s.push_back(static_cast<char>(c));  // a lane key is ASCII
+    return s;
+}
 
 // The cremator this peer's lane indexes under `key`; game thread.
 void* Resolve(const std::wstring& key) { return coop::interactable_sync::ResolveCremator(key); }
@@ -294,30 +308,48 @@ float              g_hostHealthWas = -1.f;  // the host's health before BurnRun 
 // The cremator's begin-overlap: the client's puppet entering the cremator the burn was sent to.
 void OnLanding(void* cremator, void* other) {
     if (other && cremator == g_g3Cremator.load(std::memory_order_acquire) &&
-        other == g_g3Puppet.load(std::memory_order_acquire))
-        g_g3Landed.store(1, std::memory_order_release);
+        other == g_g3Puppet.load(std::memory_order_acquire)) {
+        if (g_g3Landed.exchange(1, std::memory_order_acq_rel) == 0) UE_LOGI("cremator-drill: HOST LANDED");
+    }
+}
+
+// The cremator nearest the client's puppet is the one its landing is watched on (the choice the /cremate verb makes
+// too): remembered with the puppet, and the begin-overlap listener added. Game thread; false on a step that failed (said).
+bool WatchLanding(C::Nearest& n) {
+    coop::RemotePlayer* puppet = coop::players::Registry::Get().Puppet(kClientSlot);
+    ue_wrap::FVector from{};
+    if (!puppet || !puppet->TryGetLocation(from)) { UE_LOGW("cremator-drill: g3 the client's puppet has no location"); return false; }
+    n = C::FindNearestFirebox(from);
+    if (!n.actor) { UE_LOGW("cremator-drill: g3 no cremator with a firebox is loaded"); return false; }
+    g_g3Cremator.store(n.actor, std::memory_order_release);
+    g_g3Puppet.store(puppet->GetActor(), std::memory_order_release);
+    g_g3Landed.store(0, std::memory_order_release);
+    if (!coop::cremator_occupancy::AddListener(&OnLanding)) {
+        UE_LOGW("cremator-drill: g3 the begin-overlap watch did not register");
+        return false;
+    }
+    return true;
+}
+
+// Slot 1's join has settled. Waits for a game state; false on the abort line.
+bool ClientSettled() {
+    return PS::WaitFor("slot 1's join settled", kSignalSec, [] {
+        bool ok = false;
+        OnGameThread([&] { ok = CS::SlotSettled(harness::session_runtime::Session(), kClientSlot); });
+        return ok;
+    });
 }
 
 // The nearest cremator to the client's puppet gets its door opened, the overlap watch and the teleport order. Game
 // thread. The cremator's lane key on success, "" on a step that failed (said).
 std::wstring SendClientToFirebox(void*& cremator) {
-    coop::RemotePlayer* puppet = coop::players::Registry::Get().Puppet(kClientSlot);
-    ue_wrap::FVector from{};
-    if (!puppet || !puppet->TryGetLocation(from)) { UE_LOGW("cremator-drill: g3 the client's puppet has no location"); return {}; }
-    const C::Nearest n = C::FindNearestFirebox(from);
-    if (!n.actor) { UE_LOGW("cremator-drill: g3 no cremator with a firebox is loaded"); return {}; }
+    C::Nearest n;
+    if (!WatchLanding(n)) return {};
     ue_wrap::FRotator rot{};
     if (!E::TryGetActorRotation(n.actor, rot)) { UE_LOGW("cremator-drill: g3 the cremator's rotation is unreadable"); return {}; }
     cremator = n.actor;
     const std::wstring key = coop::interactable_sync::CrematorKey(cremator);
     if (key.empty()) { UE_LOGW("cremator-drill: g3 the cremator lane does not index the nearest cremator"); return {}; }
-    g_g3Cremator.store(cremator, std::memory_order_release);
-    g_g3Puppet.store(puppet->GetActor(), std::memory_order_release);
-    g_g3Landed.store(0, std::memory_order_release);
-    if (!coop::cremator_occupancy::AddListener(&OnLanding)) {
-        UE_LOGW("cremator-drill: g3 the begin-overlap watch did not register");
-        return {};
-    }
     bool doorOpened = false;
     if (!C::OpenDoor(cremator, doorOpened)) { UE_LOGW("cremator-drill: g3 the door's open() did not run"); return {}; }
     coop::net::TeleportClientPayload pose{};
@@ -340,12 +372,7 @@ std::wstring SendClientToFirebox(void*& cremator) {
 // (said).
 bool BurnRun(const char* arm, const char* keyMark, const char* leverMark, float hostHealth = -1.f) {
     if (!Await("client_ready", kJoinSec)) return false;
-    if (!PS::WaitFor("slot 1's join settled", kSignalSec, [] {
-            bool ok = false;
-            OnGameThread([&] { ok = CS::SlotSettled(harness::session_runtime::Session(), kClientSlot); });
-            return ok;
-        }))
-        return false;
+    if (!ClientSettled()) return false;
     void* cremator = nullptr;
     std::wstring key;
     OnGameThread([&] { key = SendClientToFirebox(cremator); });
@@ -493,12 +520,212 @@ void RunClientG5() {
     UE_LOGI("cremator-drill: DONE on client");
 }
 
+// ---- /cremate: the verb, asked through the command dispatcher ------------------------------------------------------
+// The host asks as the operator and judges the line the verb answers with, the burn volume's landing and, where the
+// arm ends in a kick, the end reason the client reads. The refusal arms ask from client 1, a player the host's own /mv
+// granted the node (revoked at the end), and the observer is the one who holds the exempt node or only stands.
+
+namespace CMD = coop::command_sync;
+
+std::mutex               g_lineMu;
+std::vector<std::string> g_lines;  // every reply line this peer's command transport delivered, in order
+
+void ObserveLine(std::string_view line) {
+    std::lock_guard<std::mutex> lk(g_lineMu);
+    g_lines.emplace_back(line);
+}
+
+size_t LineCount() {
+    std::lock_guard<std::mutex> lk(g_lineMu);
+    return g_lines.size();
+}
+
+// The first delivered line containing `needle` ("" matches the first line); empty when there is none.
+std::string LineWith(const char* needle) {
+    std::lock_guard<std::mutex> lk(g_lineMu);
+    for (const std::string& l : g_lines)
+        if (l.find(needle) != std::string::npos) return l;
+    return {};
+}
+
+// How the verb words its ends; each ends a trip with exactly one.
+constexpr const char* kCremated = " was cremated.";
+constexpr const char* kSurvived = " survived the crematorium.";
+constexpr const char* kDied     = " died before landing.";
+constexpr const char* kNoLand   = " did not land in the cremator.";
+constexpr const char* kEnds[]   = {kCremated, kSurvived, " left before the end.", kDied, kNoLand, "would not start for"};
+
+std::string EndLine() {
+    for (const char* e : kEnds) {
+        const std::string l = LineWith(e);
+        if (!l.empty()) return l;
+    }
+    return {};
+}
+
+std::string Upper(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return s;
+}
+
+// The player number a command line names the seat by. Game thread.
+std::string PlayerNo(int slot) { return "#" + std::to_string(coop::roster_ledger::Get(slot).playerNo); }
+
+void Done(const std::string& arm) { UE_LOGI("cremator-drill: %hs DONE fails=%d", Upper(arm).c_str(), g_fails); }
+
+bool EndsInKick(const std::string& arm) { return arm == "cremate" || arm == "cremate-running"; }
+
+// The arms that send the client to the crematorium. cremate-running starts the host's cremator first; cremate-survive
+// pulls its lever back once the run is on. The red arm is cremate with the host's cremate_landing_off.
+void RunHostCremate(const std::string& arm) {
+    const bool kick = EndsInKick(arm);
+    const char* want = kick ? kCremated : arm == "cremate-survive" ? kSurvived : arm == "cremate-transit" ? kDied : kNoLand;
+    // The landing the arm wants: 1 judged landed, 0 judged not, -1 only reported (a player who dies as the order
+    // applies still walks into the volume).
+    const int wantLanded = kick || arm == "cremate-survive" ? 1 : arm == "cremate-dropped" ? 0 : -1;
+    if (!Await("client_ready", kJoinSec) || !ClientSettled()) return;
+    C::Nearest n;
+    bool watching = false;
+    std::wstring key;
+    std::string no;
+    OnGameThread([&] {
+        CMD::SetReplyObserver(&ObserveLine);
+        watching = WatchLanding(n);
+        if (watching) key = coop::interactable_sync::CrematorKey(n.actor);
+        no = PlayerNo(kClientSlot);
+    });
+    if (!watching || key.empty()) { UE_LOGW("cremator-drill: VERDICT ABORT -- the landing cannot be watched"); return; }
+    if (arm == "cremate-running" && (!Pull(key) || !PS::WaitFor("the host's run on", kHostRunSec, [&] { return CopyAt(key, 1); })))
+        return;
+    CMD::Submit("cremate " + no);
+    UE_LOGI("cremator-drill: HOST %hs dispatched 'cremate %hs' as the operator", arm.c_str(), no.c_str());
+    if (arm == "cremate-survive") {
+        if (!PS::WaitFor("the landing and the run", kLandSec + kHostRunSec,
+                         [&] { return g_g3Landed.load(std::memory_order_acquire) == 1 && CopyAt(key, 1); }))
+            return;
+        bool ran = false;
+        OnGameThread([&] { ran = C::CallUseLever(n.actor); });
+        UE_LOGI("cremator-drill: HOST pulled the lever back ran=%d", ran ? 1 : 0);
+        if (!ran) { UE_LOGW("cremator-drill: VERDICT ABORT -- the host's lever did not run"); return; }
+    }
+    if (!PS::WaitFor("the verb's end line", kDeathSec + 60, [] { return !EndLine().empty(); })) return;
+    const std::string end = EndLine();
+    Mark("cremate_over");
+    std::string report;
+    if (!AwaitText("cremate_end", report, kSignalSec)) return;
+    const int landed = g_g3Landed.load(std::memory_order_acquire);
+    const bool kicked = report.find("id=MV-H35") != std::string::npos;
+    char what[400];
+    std::snprintf(what, sizeof(what), "the end line '%s' (wanted '%s'), landed=%d (wanted %d, -1 = not judged), the client's report '%s' (MV-H35 %s)",
+                  end.c_str(), want, landed, wantLanded, report.c_str(), kick ? "wanted" : "not wanted");
+    Verdict(end.find(want) != std::string::npos && (wantLanded < 0 || landed == wantLanded) && kicked == kick, arm.c_str(), what);
+    Done(arm);
+}
+
+void RunClientCremate(const std::string& arm) {
+    if (!HostPuppetUp()) return;
+    Mark("client_ready");
+    if (!Await("cremate_over", kDeathSec + 120)) return;
+    // A kick lands moments after the verb's end line, and its notice stays until the dialog is acknowledged.
+    coop::join_progress::Notice notice;
+    if (EndsInKick(arm))
+        PS::WaitFor("the host's end-reason notice", 30, [&] { return coop::join_progress::PeekNotice(notice); }, false);
+    const char* id = coop::join_progress::PeekNotice(notice) ? coop::net::Describe(notice.code).id : "";
+    const std::string text = std::string("id=") + id;
+    UE_LOGI("cremator-drill: CLIENT %hs end reason %hs", arm.c_str(), text.c_str());
+    Mark("cremate_end", text);
+    UE_LOGI("cremator-drill: DONE on client");
+}
+
+// Removes the nodes the host granted, on every way out of the arm. Game thread posts through Submit.
+struct Revoke {
+    std::vector<std::string> lines;
+    ~Revoke() {
+        for (const std::string& l : lines) CMD::Submit(l);
+    }
+};
+
+constexpr int kStillCm = 150;  // an observer nobody ordered stands where it did, give or take its own shuffling
+
+// cremate-exempt / cremate-self / cremate-host: client 1 asks for the observer, for itself, or for the host.
+void RunHostRefusal(const std::string& arm) {
+    const bool exempt = arm == "cremate-exempt";
+    if (!Await("a_ready", kJoinSec) || (exempt && !Await("b_ready", kJoinSec))) return;
+    std::string a, b;
+    OnGameThread([&] {
+        CMD::SetReplyObserver(&ObserveLine);
+        a = PlayerNo(1);
+        b = PlayerNo(2);
+    });
+    std::vector<std::string> grants{"mv user " + a + " permission set multivoid.cremate true"};
+    Revoke revoke;
+    revoke.lines.push_back("mv user " + a + " permission unset multivoid.cremate");
+    if (exempt) {
+        grants.push_back("mv user " + b + " permission set multivoid.cremate.exempt true");
+        revoke.lines.push_back("mv user " + b + " permission unset multivoid.cremate.exempt");
+    }
+    for (const std::string& g : grants) CMD::Submit(g);
+    PS::WaitFor("the grants' replies", kLandSec, [&] { return LineCount() >= grants.size(); });
+    for (const std::string& g : grants) UE_LOGI("cremator-drill: HOST granted with '%hs'", g.c_str());
+    Mark("perm_ready");
+    std::string asked, moved;
+    if (!AwaitText("a_line", asked, kSignalSec)) return;
+    Mark("cremate_over");
+    if (exempt && !AwaitText("b_end", moved, kSignalSec)) return;
+    const char* want = exempt ? " cannot be cremated." : arm == "cremate-self" ? "You cannot cremate yourself."
+                                                                             : "That is the host -- it cannot be cremated.";
+    const int movedCm = exempt ? FieldOf(moved, "moved=") : 0;
+    char what[300];
+    std::snprintf(what, sizeof(what), "client 1 was answered '%s' (wanted '%s'); the observer moved %d cm (%d or less wanted)",
+                  asked.c_str(), want, movedCm, kStillCm);
+    Verdict(asked.find(want) != std::string::npos && movedCm >= 0 && movedCm <= kStillCm, arm.c_str(), what);
+    Done(arm);
+}
+
+void RunClientRefusal(const std::string& arm) {
+    if (!HostPuppetUp()) return;
+    if (coop::players::Registry::Get().LocalPeerId() == 1) {
+        Mark("a_ready");
+        if (!Await("perm_ready", kSignalSec)) return;
+        std::string no;
+        OnGameThread([&] {
+            CMD::SetReplyObserver(&ObserveLine);
+            no = PlayerNo(arm == "cremate-host" ? 0 : arm == "cremate-self" ? 1 : 2);
+        });
+        CMD::Submit("cremate " + no);
+        if (!PS::WaitFor("the host's answer", kLandSec, [] { return LineCount() > 0; })) return;
+        const std::string line = LineWith("");
+        UE_LOGI("cremator-drill: CLIENT %hs asked 'cremate %hs' and was answered '%hs'", arm.c_str(), no.c_str(), line.c_str());
+        Mark("a_line", line);
+    } else {
+        Mark("b_ready");
+        ue_wrap::FVector was{}, now{};
+        OnGameThread([&] { E::TryGetActorLocation(coop::players::Registry::Get().Local(), was); });
+        if (!Await("cremate_over", kSignalSec)) return;
+        OnGameThread([&] { E::TryGetActorLocation(coop::players::Registry::Get().Local(), now); });
+        const float dx = now.X - was.X, dy = now.Y - was.Y, dz = now.Z - was.Z;
+        char text[32];
+        std::snprintf(text, sizeof(text), "moved=%.0f", std::sqrt(dx * dx + dy * dy + dz * dz));
+        UE_LOGI("cremator-drill: OBSERVER %hs %hs", arm.c_str(), text);
+        Mark("b_end", text);
+    }
+    UE_LOGI("cremator-drill: DONE on client");
+}
+
 }  // namespace
 
 DWORD WINAPI Thread(LPVOID /*arg*/) {
     if (!PS::Begin("cremator-drill")) return 0;
     // `g3`, `g3low` and `g5` run the burn arms alone; `1` runs the lever arms.
     const std::string arm = coop::config::ResolveEnum(coop::config_registry::rows::cremator_drill);
+    if (arm.rfind("cremate", 0) == 0) {
+        const bool refusal = arm == "cremate-exempt" || arm == "cremate-self" || arm == "cremate-host";
+        const bool client = harness::autotest::IsClientRole();
+        if (refusal) { if (client) RunClientRefusal(arm); else RunHostRefusal(arm); }
+        else if (client) RunClientCremate(arm);
+        else RunHostCremate(arm);
+        return 0;
+    }
     if (arm == "g3" || arm == "g3low") {
         if (harness::autotest::IsClientRole()) RunClientG3(); else RunHostG3(arm == "g3low");
         return 0;

@@ -19,7 +19,9 @@ CFG_FLAG(cremator_intent_anim_off, "cremator_intent_anim_off", "dev", false, "VO
 CFG_FLAG(cremator_intent_reach_off, "cremator_intent_reach_off", "dev", false, "VOTVCOOP_CREMATOR_INTENT_REACH_OFF",
     "Developer red arm of the cremator lever drill: never set. The host's judge of a client's handle press skips its "
     "reach check, so a press from beyond the handle's reach pulls the lever.")
-CFG_ENUM(cremator_drill, "cremator_drill", "dev", "off", "off|1|g3|g3low|g5", "VOTVCOOP_CREMATOR_DRILL",
+CFG_ENUM(cremator_drill, "cremator_drill", "dev", "off",
+    "off|1|g3|g3low|g5|cremate|cremate-running|cremate-survive|cremate-transit|cremate-dropped|cremate-exempt|"
+    "cremate-self|cremate-host", "VOTVCOOP_CREMATOR_DRILL",
     "Drill (BOTH peers). 1 -- the cremator's lever run crosses. The host pulls the lever on its copy and the client's "
     "copy must read it on, its door latched, and then off again (G1); with the rig's --rejoin the host pulls it on once "
     "more and the client, leaving and coming back, must read it on after its world-ready (G4). The host prints "
@@ -35,7 +37,27 @@ CFG_ENUM(cremator_drill, "cremator_drill", "dev", "off", "off|1|g3|g3low|g5", "V
     "the same burn with the client's own copy watched: the host "
     "prints 'cremator-drill: VERDICT PASS|FAIL g5' (the client died, its copy's actors read 0 at every look, and the "
     "guard refused at least one collection; the fireball births are reported, not judged) and 'cremator-drill: G5 "
-    "DONE'. Red arm: the client's cremator_client_guard_off. It MUTATES the world.")
+    "DONE'. Red arm: the client's cremator_client_guard_off. cremate -- the host dispatches '/cremate #<client>' "
+    "through the command dispatcher as the operator: the burn volume must take the client in, the client dies by "
+    "the machine, the host's reply says it was cremated and the client's end reason is MV-H35 (red arm: the host's "
+    "cremate_landing_off). cremate-running -- the same with the host's cremator already running. cremate-survive -- "
+    "the host pulls the lever back once the run is on: the client survives, no kick. cremate-transit -- the client's "
+    "cremate_transit_die: it dies as the order applies, so the verb ends 'died before landing', no kick. "
+    "cremate-dropped -- the client's cremate_drop_order: the order never applies, so 'did not land', no kick. "
+    "cremate-exempt, cremate-self and cremate-host (the first with the rig's --observer): client 1 holds "
+    "multivoid.cremate, granted by the host's own /mv and revoked at the end, and sends '/cremate' for the "
+    "observer, who holds multivoid.cremate.exempt, for itself, or for the host; each is refused with its own line "
+    "and nobody moves. Each prints 'cremator-drill: VERDICT PASS|FAIL <arm>' and '<ARM> DONE' on the host. It "
+    "MUTATES the world.")
+CFG_FLAG(cremate_landing_off, "cremate_landing_off", "dev", false, "VOTVCOOP_CREMATE_LANDING_OFF",
+    "Developer red arm of the /cremate drill: never set. The verb does not watch the cremator's burn volume, so a "
+    "player it sent is never seen to land: the trip ends 'did not land' and nobody is kicked.")
+CFG_FLAG(cremate_transit_die, "cremate_transit_die", "dev", false, "VOTVCOOP_CREMATE_TRANSIT_DIE",
+    "Developer knob of the /cremate drill: never set. This client's health is set to 0 just before it applies the "
+    "host's teleport order, so the host reads its death before it lands.")
+CFG_FLAG(cremate_drop_order, "cremate_drop_order", "dev", false, "VOTVCOOP_CREMATE_DROP_ORDER",
+    "Developer knob of the /cremate drill: never set. This client does not apply the host's teleport order, so it "
+    "never arrives and the verb gives the trip up after its bound of poses.")
 CFG_FLAG(cremator_client_guard_off, "cremator_client_guard_off", "dev", false, "VOTVCOOP_CREMATOR_CLIENT_GUARD_OFF",
     "Developer red arm of the cremator guard drill: never set. A client's cremator copy collects the sitter, opens its "
     "door and turns its valve on its own account, so a client standing in the host's running cremator burns in its "

@@ -13,10 +13,12 @@
 #include "coop/comms/chat_feed.h"
 #include "coop/comms/chat_sync.h"
 #include "coop/config/config.h"  // ResolveFlag, ReadEnv
+#include "coop/config/config_registry.h"  // the /cremate drill's two client rows
 #include "coop/element/registry.h"           // kInvalidId, for the drill
 #include "coop/props/prop_element_tracker.h"  // GetPropElementIdForActor, for the drill
 #include "coop/session/world_load_episode.h"  // NoteReconcileBegin and Complete at the bracket edges
 #include "ue_wrap/actors/prop.h"             // IsKeyedInteractable, GetInteractableKeyString
+#include "ue_wrap/actors/vitals.h"           // the /cremate drill's death in transit
 #include "ue_wrap/engine/engine.h"           // DestroyActor (drill)
 #include "ue_wrap/core/reflection.h"         // NumObjects/ObjectAt/IsLive (drill)
 #include "coop/interactables/interactable_sync.h"
@@ -304,7 +306,19 @@ void Update(net::Session& session, void* localPlayer) {
                 p.locX, p.locY, p.locZ,
                 p.rotPitch, p.rotYaw, p.rotRoll,
             };
-            ue_wrap::game_thread::Post([args] { ::coop::teleport_client::ApplyLocally(args); });
+            // The /cremate drill's two client arms: an order that never applies, and a player who dies as it does.
+            if (coop::config::ResolveFlag(coop::config_registry::rows::cremate_drop_order)) {
+                UE_LOGW("event_feed: DRILL -- the TeleportClient order is NOT applied (dev.cremate_drop_order)");
+                break;
+            }
+            const bool dieInTransit = coop::config::ResolveFlag(coop::config_registry::rows::cremate_transit_die);
+            ue_wrap::game_thread::Post([args, dieInTransit] {
+                if (dieInTransit) {
+                    UE_LOGW("event_feed: DRILL -- this player dies as the order applies (dev.cremate_transit_die)");
+                    ue_wrap::vitals::Write(ue_wrap::vitals::Field::Health, 0.f);
+                }
+                ::coop::teleport_client::ApplyLocally(args);
+            });
             break;
         }
         case net::ReliableKind::JoinPhaseNote: {
