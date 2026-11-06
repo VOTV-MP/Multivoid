@@ -30,6 +30,7 @@ set(VOTVCOOP_SOURCES
     ${VOTVCOOP_SOURCES_UE_WRAP_2}
     src/coop/player/movement_ledger.cpp
     src/coop/player/remote_player.cpp
+    src/coop/player/puppet_seat.cpp
     src/coop/player/remote_player_ragdoll.cpp
     src/coop/player/client_model.cpp
     src/coop/player/skin_effects.cpp
@@ -267,6 +268,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/desk_short_sync.cpp
     src/coop/interactables/cargo_lift.cpp
     src/coop/world/plant_edit_gate.cpp
+    src/coop/interactables/atv_riders.cpp
     src/ue_wrap/actors/growing_plant.cpp
     src/coop/world/world_sound_sync.cpp
     src/coop/props/prop_record_refresh.cpp
@@ -729,6 +731,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_orb.cpp
     src/harness/autotest/autotest_sky_tp.cpp
     src/harness/autotest/autotest_roomba.cpp
+    src/harness/autotest/autotest_atv_riders.cpp
     src/ui/input_focus.cpp
     src/harness/screenshot.cpp
     src/harness/mod_environment.cpp

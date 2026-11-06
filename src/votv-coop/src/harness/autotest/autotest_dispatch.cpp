@@ -210,6 +210,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIf("VOTVCOOP_RUN_CAN_STATE", "canned food state drill", &CanStateThread, role);
     SpawnIf("VOTVCOOP_RUN_FOOD_STATE", "world food state drill", &FoodStateThread, role);
     SpawnIfEnum(coop::config_registry::rows::world_sound_drill, "world sound drill", &WorldSoundThread, role);
+    // The ATV's riders: the driver's body and the kerfur, on both peers.
+    SpawnIf("VOTVCOOP_RUN_ATV_RIDERS", "ATV riders drill", &AtvRidersThread, role);
 
     SpawnIf("VOTVCOOP_RUN_PLANT_STATE", "plant drill", &PlantStateThread, role);
     // The cargo lift, the base's elevator, as each peer sees it.

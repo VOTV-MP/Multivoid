@@ -53,6 +53,10 @@ void* GetSkeletalMeshComponent(void* puppetActor);
 // the target from the streamed camera yaw and pitch. No-op until an AnimInstance resolves.
 void DriveHeadLookAtWorld(void* puppetActor, const FVector& worldTarget);
 
+// The kerfur AnimBP's ATV seat pose (`isOnAtv`, the pose a kerfur rides in) on both of the puppet's rendered bodies.
+// Class-gated like the head look; false when neither body's AnimInstance takes it. Game thread.
+bool SetOnAtv(void* puppetActor, bool on);
+
 // A read-only probe of the puppet's head-look state: the LookAt clamps and alphas, the AnimBP
 // gate flags, and the world rotation of the head and neck bones. The LookAt nodes live inside
 // the AnimBP state `lookAtPlayer`, exited when lookingAtPlayer flips false, so with the

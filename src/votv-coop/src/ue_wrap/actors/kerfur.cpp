@@ -11,6 +11,7 @@
 
 #include <cstring>
 #include <cwchar>
+#include <vector>
 
 namespace ue_wrap::kerfur {
 namespace {
@@ -222,5 +223,40 @@ void* ReadTargetActor(void* actor) {
     void* t = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(actor) + sOff);
     return (t && R::IsLive(t)) ? t : nullptr;
 }
+
+std::vector<void*> AllKerfurs() {
+    std::vector<void*> classes, out;
+    object_index::ForEachClass([](void* c, void* cls, void* anyInstance) {
+        if (IsKerfurActor(anyInstance)) static_cast<std::vector<void*>*>(c)->push_back(cls);
+    }, &classes);
+    for (void* cls : classes) {
+        object_index::ForEachInstance(cls, [](void* c, void* obj, int32_t idx) {
+            if (R::SlotFlags(idx) & (R::slot_flags::Dying | R::slot_flags::NotYetReadable)) return;
+            if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+            static_cast<std::vector<void*>*>(c)->push_back(obj);
+        }, &out);
+    }
+    return out;
+}
+
+namespace {
+
+// One of the kerfur's own ATV functions, its one parameter (the ATV, or none) set by name.
+bool CallCar(void* kerfur, const wchar_t* fn, const wchar_t* param, void* atv) {
+    if (!IsKerfurActor(kerfur)) return false;
+    void* const f = R::FindDispatchFunctionCached(R::ClassOf(kerfur), fn);
+    if (!f) return false;
+    ParamFrame pf(f);
+    if (!pf.valid()) return false;
+    if (param && !pf.Set<void*>(param, atv)) return false;
+    return Call(kerfur, pf);
+}
+
+}  // namespace
+
+bool TryToOccupyCar(void* kerfur, void* atv) { return atv && CallCar(kerfur, L"tryToOccupyCar", L"car", atv); }
+bool SitOnCar(void* kerfur, void* atv) { return atv && CallCar(kerfur, L"sitOnCar", L"occupyCar", atv); }
+bool GetOffCar(void* kerfur) { return CallCar(kerfur, L"getOffCar", nullptr, nullptr); }  // kill: false, the frame's zero
+bool FailCar(void* kerfur) { return CallCar(kerfur, L"failCar", nullptr, nullptr); }
 
 }  // namespace ue_wrap::kerfur

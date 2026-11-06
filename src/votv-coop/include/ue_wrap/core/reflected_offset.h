@@ -85,6 +85,8 @@ int32_t AnimBP_kerfur_spd();
 int32_t AnimBP_kerfur_useLegIK();
 int32_t AnimBP_kerfur_removeArms();
 int32_t AnimBP_kerfur_isFace();
+// The ATV seat pose: set by a kerfur's own sitOnCar, cleared by its getOffCar.
+int32_t AnimBP_kerfur_isOnAtv();
 // Head-look sync. `lookAt` is the WORLD location the head and neck FAnimNode_LookAt nodes aim
 // at; `customLookAt` gates the AnimBP's per-tick auto-recompute, and is set true on a mirror
 // so a streamed lookAt sticks.

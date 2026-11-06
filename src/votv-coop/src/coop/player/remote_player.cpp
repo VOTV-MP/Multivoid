@@ -400,6 +400,8 @@ void RemotePlayer::Tick() {
         bodyYaw_.Update(NowMs(), curSpeed_, curYaw_, curHeadYawDelta_)) {
         dirty_ = true;
     }
+    // Seated, the body follows its ATV every frame, between the stream's packets too.
+    if (seat_.Active()) dirty_ = true;
 
     // Skip the engine write when nothing changed since the last push: the puppet runs no physics
     // integration (its movement and actor ticks are parked), so a frozen pose stays where it is,
@@ -488,6 +490,7 @@ void RemotePlayer::Destroy() {
     // IsLiveByIndex: if the puppet was GC-freed and its address recycled, plain IsLive would pass
     // and DestroyActor would destroy the foreign object at that address.
     if (R::IsLiveByIndex(actor_, internalIdx_)) E::DestroyActor(actor_);
+    seat_.Forget();
     actor_ = nullptr;
     internalIdx_ = -1;
     hasPose_ = false;
@@ -515,6 +518,13 @@ void RemotePlayer::ApplySkin(const std::string& skinName) {
         appliedSkin_ = skinName;
 }
 
+void RemotePlayer::SetSeat(void* atv) {
+    if (!valid()) return;
+    if (!seat_.Set(actor_, atv)) return;
+    if (!atv) bodyYaw_.Reset(curYaw_);
+    dirty_ = true;
+}
+
 void RemotePlayer::ApplyToEngine() {
     // While ragdolled the puppet is pelvis-attached to the visible flop body (its own meshes
     // hidden), so the engine syncs its transform and a SetActorLocation would fight the attachment;
@@ -530,6 +540,10 @@ void RemotePlayer::ApplyToEngine() {
     case RagdollDisplay::Drive::Inactive:
         break;
     }
+
+    // Seated on an ATV, the seat places the body (coop/player/puppet_seat.h); curPos_ keeps tracking the wire, so the
+    // first apply after the seat lets go resumes from the owner's pose.
+    if (seat_.Drive(actor_)) return;
 
     // The wire carries the source's actor Z (the capsule centre, MTA's vPos shape, unaffected by BP
     // init transients), and the puppet's actor is the wire pose unchanged: both ends are
