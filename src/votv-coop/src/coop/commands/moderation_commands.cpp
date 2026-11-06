@@ -66,16 +66,21 @@ std::string ReasonText(const Context& ctx, size_t arg) {
 // 12050-12054: target, actor, reason; UNBAN the actor only, :12238); ours keeps LuckPerms' action
 // record, the description being the command line, so the one log reads in one grammar with `/mv`'s.
 // Called after the verb's outcome is known, only for the outcomes that acted.
-void Record(const Ports& p, const Context& ctx, const std::string& targetId, const std::string& targetName,
-            const std::string& description) {
-    if (!p.log) return;
+coop::permissions::Action ActionOf(const Context& ctx, const std::string& targetId, const std::string& targetName,
+                                   const std::string& description) {
     coop::permissions::Action a;
     FillSource(ctx, a);
     a.targetType = "user";
     a.targetId = targetId;
     a.targetName = targetName;
     a.description = description;
-    p.log(a);
+    return a;
+}
+
+void Record(const Ports& p, const Context& ctx, const std::string& targetId, const std::string& targetName,
+            const std::string& description) {
+    if (!p.log) return;
+    p.log(ActionOf(ctx, targetId, targetName, description));
 }
 
 std::string IdOrUnproved(const std::string& id) { return id.empty() ? "unproved" : id; }
@@ -250,7 +255,11 @@ Handler CremateHandler(const Ports& p) {
         mod::cremate::Order order;
         order.target = TokenOf(*v);
         order.targetNick = v->nick;
+        const PlayerView* callerView = ViewOf(ctx.players, ctx.caller.slot);
+        order.callerNick = callerView != nullptr ? callerView->nick : std::string("The host");
         order.caller = SeatOf(ctx.caller);
+        // What the log keeps when the trip ends in the kick, where the kick command's own record is its command line.
+        order.kickRecord = ActionOf(ctx, v->playerId, v->nick, "/cremate " + IdOrUnproved(v->playerId) + " (kicked)");
         for (const Caller& to : NotifyRecipients(ctx)) order.told.push_back(SeatOf(to));
         using mod::cremate::Result;
         switch (p.cremate(order)) {
@@ -264,6 +273,8 @@ Handler CremateHandler(const Ports& p) {
             case Result::NotAlive: ctx.Reply(v->nick + " is not alive."); break;
             case Result::Busy: ctx.Reply(v->nick + " is already on the way to the crematorium."); break;
             case Result::NoCremator: ctx.Reply("No crematorium is loaded."); break;
+            case Result::CrematorBusy: ctx.Reply("The crematorium is busy."); break;
+            case Result::NotWatched: ctx.Reply("The cremator cannot be watched yet."); break;
             case Result::DoorStuck: ctx.Reply("The cremator's door would not open."); break;
             case Result::NotSent: ctx.Reply("Could not send " + v->nick + " to the crematorium."); break;
         }
@@ -321,11 +332,15 @@ CommandSpec TeleportSpec(const Ports& p) {
 
 // The caller need not be the console: a client admin holding multivoid.cremate may send a player, and a player holding
 // multivoid.cremate.exempt may not be sent (the dispatcher's own refusal, before this handler). The reason is the act's
-// own, so the command takes none.
+// own, so the command takes none. The burn ends in a kick, and multivoid.kick.exempt is not consulted: the description
+// says so, since /help and the permission editor are where a node's holder reads what it does.
+// MTA grants a right per function through its ACL (CAccessControlListRight.h) and a kill never disconnects; the
+// per-target exempt node has no MTA analogue, it is LuckPerms' qualifier shape.
 CommandSpec CremateSpec(const Ports& p) {
     CommandSpec c;
     c.name = "cremate";
-    c.description = "Sends a player to the crematorium.";
+    c.description = "Sends a player to the crematorium and kicks them after the burn; multivoid.cremate.exempt "
+                    "protects, kick.exempt does not.";
     c.pastTense = "cremated";
     c.args = {{"who", ArgKind::Player, false, true}};
     c.qualifiers = {{"exempt", QualKind::Exempt}, {"notify", QualKind::Notify}};

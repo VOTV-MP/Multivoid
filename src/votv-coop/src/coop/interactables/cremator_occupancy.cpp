@@ -57,6 +57,8 @@ bool AddListener(OverlapFn fn) {
     return sWatching;
 }
 
+bool WatchLive() { return sg::NameWatchLive(kRowBurningOverlap, kTagOverlap); }
+
 bool IsOverlapping(void* cremator, void* actor) {
     return C::OverlapsBurnVolume(cremator, actor);
 }

@@ -5,7 +5,10 @@
 // There is no death packet: a player's health rides every pose (PoseSnapshot::healthFrac) and a health of zero or less
 // is the only value that quantises to 0, so the edge is read from the stream. MTA announces a death as a packet the
 // server receives (CGame.cpp:2141 Packet_PlayerWasted); ours is derived, because the health already travels with each
-// pose and a second message would carry the same fact. Game thread throughout.
+// pose and a second message would carry the same fact. Divergence: that packet also names the killer, the weapon and
+// the body part (CGame.cpp:2141-2185); the pose carries none of them, so the cause of a death is lost here and a
+// listener that needs it reads the evidence on the stream (the burning bit). The stream is level-triggered: every pose
+// repeats the health, so a dropped unreliable pose delays the edge and never loses it. Game thread throughout.
 
 #pragma once
 

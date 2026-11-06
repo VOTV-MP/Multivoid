@@ -19,6 +19,11 @@ using OverlapFn = void (*)(void* cremator, void* other);
 // its next tick; true once the listener is in and the watch is registered.
 bool AddListener(OverlapFn fn);
 
+// Whether the watch on the cremator's begin-overlap is live: registered and its names resolved, so the script gate
+// really will deliver. AddListener answers true the moment it registers; a verb that must be able to SEE a landing asks
+// this before it moves anybody.
+bool WatchLive();
+
 // Whether the cremator's burn volume overlaps `actor` now (the volume's own IsOverlappingActor). False for a dead
 // cremator, a volume that did not resolve, or a dead actor.
 bool IsOverlapping(void* cremator, void* actor);

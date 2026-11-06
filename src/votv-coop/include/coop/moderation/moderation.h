@@ -88,7 +88,9 @@ std::string EnforceableAddress(const coop::net::Session& s, int slot, uint32_t g
 ModResult KickPlayer(const PlayerToken& token, const char* reason);
 
 // KickPlayer with the end reason the kicked player sees: the same checks, the same Gone, `why` as the free detail (null
-// or empty reads kKickDefaultReason). KickPlayer is this with EndReason::KickedByHost.
+// or empty reads kKickDefaultReason). KickPlayer is this with EndReason::KickedByHost. MTA's KickPlayer names the
+// responsible party and a reason (CStaticFunctionDefinitions.cpp:11876); ours is a typed end-reason row plus a free
+// detail, which the localized client shows beside the row's own sentence.
 ModResult KickPlayerWithReason(const PlayerToken& token, const char* why, coop::net::EndReason code);
 
 // Permanently ban the captured player by the id their identity proof established and, when

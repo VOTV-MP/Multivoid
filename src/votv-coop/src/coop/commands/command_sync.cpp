@@ -149,7 +149,7 @@ void CremateReply(const coop::moderation::cremate::ReplySeat& to, std::string_vi
 }
 
 coop::moderation::cremate::Result StartCremate(const coop::moderation::cremate::Order& order) {
-    return coop::moderation::cremate::Start(order, &CremateReply);
+    return coop::moderation::cremate::Start(order, &CremateReply, &LogAction);
 }
 
 // The moderation commands' ports: the verbs of coop/moderation and this transport's ReplyTo.

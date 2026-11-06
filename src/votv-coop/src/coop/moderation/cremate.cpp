@@ -6,7 +6,9 @@
 //   RunningWait   the lever is pulled (or the handle is moving), the run's start is not seen
 //   Running       the host's run is on
 //   Cooling       the run ended with the player alive; waiting for its flames to go out
-// A trip ends with exactly one line, to the caller and to the told seats.
+// A trip ends with exactly one line, to the caller and to the told seats. The exits are the target's leave, its death,
+// the cremator's loss, and a bound in fresh poses on every state that waits for the target or the machine; a run that
+// is on is bounded by the machine, and a player who keeps burning by Cooling's own count.
 
 #include "coop/moderation/cremate.h"
 
@@ -26,7 +28,6 @@
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/devices/cremator.h"
-#include "ue_wrap/engine/engine.h"
 
 #include <array>
 #include <atomic>
@@ -37,31 +38,41 @@ namespace coop::moderation::cremate {
 namespace {
 
 namespace C = ue_wrap::cremator;
-namespace E = ue_wrap::engine;
 
 // A pose this close to the ordered destination is the order's arrival. Past the pose bounds below, an order that
-// never arrived, or a puppet the burn volume never took, is a miss: counts of fresh poses on an event stream, not
-// clocks. The ordered bound sits well past a level-streaming hitch; the arrival logs how many poses it took.
+// never arrived, a puppet the burn volume never took, a machine that never started or a player who never stopped
+// burning is a miss: counts of fresh poses on an event stream, not clocks. The ordered bound sits well past a
+// level-streaming hitch; the arrival logs how many poses it took. The run-wait bound is far past the lever handle's
+// 1 to 3 s; the cooling bound is far past a burn's own length (~14 s to the kill).
+//
+// MTA's setElementPosition is the server's word and is not acknowledged (CStaticFunctionDefinitions.cpp:1303). Here the
+// client owns its pawn, so the landing is judged from its own poses and the burn volume, and a miss is reported.
 constexpr float kArriveCm = 150.f;
 constexpr int   kOrderedPoseBound = 120;
 constexpr int   kArrivedPoseBound = 30;
-
-constexpr const char* kCrematedWhy = "You were sent to the crematorium.";
+constexpr int   kRunWaitPoseBound = 600;
+constexpr int   kCoolingPoseBound = 1800;
 
 enum class State : uint8_t { Ordered, Arrived, RunningWait, Running, Cooling };
-enum class Outcome : uint8_t { Cremated, Survived, Left, DidNotLand, DiedBeforeLanding, WouldNotStart };
+enum class Outcome : uint8_t {
+    Cremated, Survived, SurvivedBurning, Left, DidNotLand, DiedBeforeLanding, DiedNotByFire, WouldNotStart, CrematorGone
+};
 
 struct Trip {
-    bool                   active = false;
-    PlayerToken            target;
-    std::string            nick;
-    ReplySeat              caller;
-    std::vector<ReplySeat> told;
-    ReplyFn                reply = nullptr;
-    ue_wrap::CachedObjRef  cremator;
-    ue_wrap::FVector       dest{};
-    State                  state = State::Ordered;
-    int                    poses = 0;  // fresh poses since the order (Ordered), or since the arrival (Arrived)
+    bool                      active = false;
+    PlayerToken               target;
+    std::string               nick;
+    std::string               kickWhy;
+    ReplySeat                 caller;
+    std::vector<ReplySeat>    told;
+    ReplyFn                   reply = nullptr;
+    LogFn                     log = nullptr;
+    coop::permissions::Action kickRecord;
+    ue_wrap::CachedObjRef     cremator;
+    ue_wrap::FVector          dest{};
+    State                     state = State::Ordered;
+    int                       poses = 0;         // fresh poses since the order, the arrival, the lever, or the run's end
+    bool                      burnSeen = false;  // a fresh pose after the landing had the burning bit set
 };
 
 std::array<Trip, coop::players::kMaxPeers> g_trips;
@@ -71,15 +82,17 @@ bool g_listening = false;
 bool g_watchWarned = false;
 
 // What the listeners recorded, in arrival order. Two buffers swap at the drain, so a handler that starts or ends a trip
-// never grows the list it walks, and the capacity is kept.
+// never grows the list it walks, and the capacity is kept. A slot event carries the generation of the trip it was
+// recorded for: a slot handed to another player in the meantime never feeds the new occupant's trip.
 enum class Kind : uint8_t { Life, Pose, Overlap, HostRun };
 struct Event {
-    Kind    kind;
-    uint8_t slot = 0;
-    bool    flag = false;  // Life: alive. Pose: burning. HostRun: active.
-    float   x = 0, y = 0, z = 0;
-    void*   cremator = nullptr;
-    void*   other = nullptr;
+    Kind     kind;
+    uint8_t  slot = 0;
+    bool     flag = false;  // Life: alive. Pose: burning. HostRun: active.
+    uint32_t gen = 0;
+    float    x = 0, y = 0, z = 0;
+    void*    cremator = nullptr;
+    void*    other = nullptr;
 };
 std::vector<Event> g_queue;
 std::vector<Event> g_work;
@@ -91,6 +104,7 @@ void OnLife(uint8_t slot, bool alive) {
     Event e{Kind::Life};
     e.slot = slot;
     e.flag = alive;
+    e.gen = g_trips[slot].target.generation;
     Record(e);
 }
 
@@ -99,6 +113,7 @@ void OnPose(uint8_t slot, const coop::net::PoseSnapshot& pose) {
     Event e{Kind::Pose};
     e.slot = slot;
     e.flag = (pose.stateBits & coop::net::kStateBitBurning) != 0;
+    e.gen = g_trips[slot].target.generation;
     e.x = pose.x; e.y = pose.y; e.z = pose.z;
     Record(e);
 }
@@ -124,6 +139,12 @@ coop::net::Session* HostedSession() {
     return (s && s->running() && s->role() == coop::net::Role::Host) ? s : nullptr;
 }
 
+// The drill's red arm: the verb never listens to the burn volume, so a player it took in is never seen to land.
+bool LandingOff() {
+    static const bool sOff = coop::config::ResolveFlag(coop::config_registry::rows::cremate_landing_off);
+    return sOff;
+}
+
 void* PuppetActor(int slot) {
     coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot));
     return p && p->valid() ? p->GetActor() : nullptr;
@@ -137,36 +158,67 @@ std::string LineFor(Outcome o, const std::string& nick) {
     switch (o) {
         case Outcome::Cremated: return nick + " was cremated.";
         case Outcome::Survived: return nick + " survived the crematorium.";
+        case Outcome::SurvivedBurning: return nick + " survived the crematorium (still burning).";
         case Outcome::Left: return nick + " left before the end.";
         case Outcome::DidNotLand: return nick + " did not land in the cremator.";
         case Outcome::DiedBeforeLanding: return nick + " died before landing.";
+        case Outcome::DiedNotByFire: return nick + " died in the cremator, but not by its fire.";
         case Outcome::WouldNotStart: return "The cremator would not start for " + nick + ".";
+        case Outcome::CrematorGone: return "The cremator is gone, so " + nick + " was not cremated.";
     }
     return std::string();
 }
 
+const char* KickFailure(ModResult r) {
+    switch (r) {
+        case ModResult::Gone: return "they had already left";
+        case ModResult::NoSession: return "the session ended";
+        default: return "the kick did not run";
+    }
+}
+
 // Ends a trip with its one line: to the caller, then to the told seats; for a cremation, then the kick (the order is the
 // death edge, the line, the kick, so the kick lands well before the game's own revive). The trip is cleared first, so
-// nothing the kick starts finds it.
+// nothing the kick starts finds it. A kick that did not act is said after the cremation line; one that did is written
+// to the action log, as the /kick command's is.
+//
+// The door: a run that never started opens it again, so the player can walk out. A miss never shut it. When the target
+// left, died before landing, or the cremator is gone, the door is left as it is: open or shut is the game's own state
+// then.
 void End(Trip& t, Outcome o) {
     const std::string line = LineFor(o, t.nick);
+    const std::string nick = t.nick;
+    const std::string kickWhy = t.kickWhy;
     const ReplySeat caller = t.caller;
     const std::vector<ReplySeat> told = std::move(t.told);
     const ReplyFn reply = t.reply;
+    const LogFn log = t.log;
+    const coop::permissions::Action kickRecord = t.kickRecord;
     const PlayerToken target = t.target;
     void* const cremator = t.cremator.Get();
     t = Trip{};
     --g_active;
     UE_LOGI("cremate: #%u (slot %d) -- %s", static_cast<unsigned>(target.playerNo), target.slot, line.c_str());
-    // A run that never started opens the door again, so the player can walk out; a miss never shut it.
     if (o == Outcome::WouldNotStart && cremator) {
         bool opened = false;
         C::OpenDoor(cremator, opened);
     }
     Say(caller, reply, line);
     for (const ReplySeat& seat : told) Say(seat, reply, line);
-    if (o == Outcome::Cremated)
-        coop::moderation::KickPlayerWithReason(target, kCrematedWhy, coop::net::EndReason::Cremated);
+    if (o != Outcome::Cremated) return;
+    // MTA's KickPlayer names the responsible party and a reason (CStaticFunctionDefinitions.cpp:11876); ours is the
+    // typed end-reason row plus the caller as the detail.
+    const ModResult kicked =
+        coop::moderation::KickPlayerWithReason(target, kickWhy.c_str(), coop::net::EndReason::Cremated);
+    if (kicked == ModResult::Done) {
+        if (log) log(kickRecord);
+        return;
+    }
+    UE_LOGW("cremate: #%u was cremated but the kick did not run (%s)", static_cast<unsigned>(target.playerNo),
+            KickFailure(kicked));
+    const std::string failed = nick + " was cremated, but the kick failed (" + KickFailure(kicked) + ").";
+    Say(caller, reply, failed);
+    for (const ReplySeat& seat : told) Say(seat, reply, failed);
 }
 
 float Between(const ue_wrap::FVector& a, float x, float y, float z) {
@@ -189,6 +241,7 @@ void Landed(Trip& t) {
         End(t, Outcome::WouldNotStart);
         return;
     }
+    t.poses = 0;
     if (active) {
         t.state = State::Running;
         return;
@@ -198,13 +251,19 @@ void Landed(Trip& t) {
     if (!C::CallUseLever(cremator)) End(t, Outcome::WouldNotStart);
 }
 
+// A death after the landing is a cremation only when the target's own burning bit was seen set first: the machine's
+// ignite reached it. MTA's wasted packet names the killer and weapon (CGame.cpp:2141); the pose stream carries no cause,
+// so this bit is the evidence there is.
+Outcome DeathAfterLanding(const Trip& t) { return t.burnSeen ? Outcome::Cremated : Outcome::DiedNotByFire; }
+
 void OnLifeEvent(Trip& t, bool alive) {
     if (alive) return;
     if (t.state == State::Ordered || t.state == State::Arrived) End(t, Outcome::DiedBeforeLanding);
-    else End(t, Outcome::Cremated);
+    else End(t, DeathAfterLanding(t));
 }
 
 void OnPoseEvent(Trip& t, const Event& e) {
+    if (e.flag && t.state != State::Ordered && t.state != State::Arrived) t.burnSeen = true;
     switch (t.state) {
         case State::Ordered:
             ++t.poses;
@@ -220,8 +279,12 @@ void OnPoseEvent(Trip& t, const Event& e) {
         case State::Arrived:
             if (++t.poses >= kArrivedPoseBound) End(t, Outcome::DidNotLand);
             break;
+        case State::RunningWait:
+            if (++t.poses >= kRunWaitPoseBound) End(t, Outcome::WouldNotStart);
+            break;
         case State::Cooling:
             if (!e.flag) End(t, Outcome::Survived);
+            else if (++t.poses >= kCoolingPoseBound) End(t, Outcome::SurvivedBurning);
             break;
         default: break;
     }
@@ -242,10 +305,14 @@ void OnHostRunEvent(Trip& t, const Event& e) {
         if (e.flag) t.state = State::Running;
         else End(t, Outcome::WouldNotStart);
     } else if (t.state == State::Running && !e.flag) {
-        if (coop::players::Registry::Get().LifeOf(static_cast<uint8_t>(t.target.slot)) ==
-            coop::players::PuppetLife::Alive)
-            t.state = State::Cooling;
-        else End(t, Outcome::Cremated);
+        switch (coop::players::Registry::Get().LifeOf(static_cast<uint8_t>(t.target.slot))) {
+            case coop::players::PuppetLife::Alive:
+                t.state = State::Cooling;
+                t.poses = 0;
+                break;
+            case coop::players::PuppetLife::Dead: End(t, DeathAfterLanding(t)); break;
+            default: End(t, Outcome::Left); break;  // no puppet: the target is gone, which is a leave, not a death
+        }
     }
 }
 
@@ -254,7 +321,7 @@ void Handle(const Event& e) {
         case Kind::Life:
         case Kind::Pose: {
             Trip& t = g_trips[e.slot];
-            if (!t.active) return;
+            if (!t.active || t.target.generation != e.gen) return;
             if (e.kind == Kind::Life) OnLifeEvent(t, e.flag);
             else OnPoseEvent(t, e);
             return;
@@ -272,7 +339,7 @@ void Handle(const Event& e) {
 
 }  // namespace
 
-Result Start(const Order& order, ReplyFn reply) {
+Result Start(const Order& order, ReplyFn reply, LogFn log) {
     UE_ASSERT_GAME_THREAD("moderation::cremate::Start");
     coop::net::Session* s = HostedSession();
     if (!s) return Result::NoSession;
@@ -298,6 +365,16 @@ Result Start(const Order& order, ReplyFn reply) {
         UE_LOGW("cremate: #%u refused -- the cremator's rotation did not read", static_cast<unsigned>(token.playerNo));
         return Result::NotSent;
     }
+    // A second order would open the door of a machine another player is burning behind.
+    for (const Trip& other : g_trips)
+        if (other.active && other.cremator.Get() == move.actor) return Result::CrematorBusy;
+    // Without the burn volume's begin-overlap watch the landing could never be seen: the player would be moved into an
+    // open cremator and then reported as not landed.
+    if (!coop::cremator_occupancy::WatchLive()) {
+        UE_LOGW("cremate: #%u refused -- the burn volume's begin-overlap watch is not live",
+                static_cast<unsigned>(token.playerNo));
+        return Result::NotWatched;
+    }
     const bool inside = coop::cremator_occupancy::IsOverlapping(move.actor, puppet->GetActor());
     if (!inside) {
         bool wasOpen = false, opened = false;
@@ -317,9 +394,12 @@ Result Start(const Order& order, ReplyFn reply) {
     t.active = true;
     t.target = token;
     t.nick = order.targetNick;
+    t.kickWhy = order.callerNick + " sent you to the crematorium.";
     t.caller = order.caller;
     t.told = order.told;
     t.reply = reply;
+    t.log = log;
+    t.kickRecord = order.kickRecord;
     t.cremator.Set(move.actor);
     t.dest = move.at;
     ++g_active;
@@ -338,22 +418,28 @@ Result Start(const Order& order, ReplyFn reply) {
 }
 
 void Install(coop::net::Session* session) {
+    UE_ASSERT_GAME_THREAD("moderation::cremate::Install");
     g_session.store(session, std::memory_order_release);
-    coop::puppet_events::AddLifeListener(&OnLife);
-    coop::puppet_events::AddPoseListener(&OnPose);
-    coop::cremator_state::AddHostRunListener(&OnHostRun);
+    // The fixed listener lists are small: a full one would leave the verb deaf, so it is said.
+    const bool added = coop::puppet_events::AddLifeListener(&OnLife) &&
+                       coop::puppet_events::AddPoseListener(&OnPose) &&
+                       coop::cremator_state::AddHostRunListener(&OnHostRun);
+    if (!added) UE_LOGW("cremate: a listener list is full -- the /cremate verb cannot see every event of a trip");
 }
 
 void Tick() {
-    // The drill's red arm: the verb never listens to the burn volume, so a player it took in is never seen to land.
-    static const bool sLandingOff = coop::config::ResolveFlag(coop::config_registry::rows::cremate_landing_off);
-    if (!g_listening && !sLandingOff && HostedSession()) {
+    UE_ASSERT_GAME_THREAD("moderation::cremate::Tick");
+    if (!g_listening && !LandingOff() && HostedSession()) {
         g_listening = coop::cremator_occupancy::AddListener(&OnOverlap);
         if (!g_listening && !g_watchWarned) {
             g_watchWarned = true;
             UE_LOGW("cremate: the cremator's begin-overlap cannot be watched yet (retried every tick)");
         }
     }
+    // A cremator that died or left with its world ends its trip whatever state it is in: nothing will report for it.
+    if (g_active > 0)
+        for (Trip& t : g_trips)
+            if (t.active && !t.cremator.Get()) End(t, Outcome::CrematorGone);
     if (g_queue.empty()) return;
     g_work.swap(g_queue);
     for (const Event& e : g_work) Handle(e);
@@ -361,11 +447,19 @@ void Tick() {
 }
 
 void OnDisconnectSlot(int slot) {
+    UE_ASSERT_GAME_THREAD("moderation::cremate::OnDisconnectSlot");
     if (slot < 0 || slot >= coop::players::kMaxPeers || !g_trips[slot].active) return;
+    // The session's teardown runs this for every slot after the session stopped: that is the session ending, not a leave.
+    if (!HostedSession()) {
+        g_trips[slot] = Trip{};
+        --g_active;
+        return;
+    }
     End(g_trips[slot], Outcome::Left);
 }
 
 void OnDisconnect() {
+    UE_ASSERT_GAME_THREAD("moderation::cremate::OnDisconnect");
     for (Trip& t : g_trips) t = Trip{};
     g_active = 0;
     g_queue.clear();

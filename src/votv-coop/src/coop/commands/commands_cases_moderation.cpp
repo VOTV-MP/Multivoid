@@ -374,6 +374,15 @@ void CremateCases(Checker& check, const Registry& reg, const Caller& console, co
           "moderation: /cremate hands the verb the target's token, its nick, the caller and the notify seats");
     check(F::R().told == std::vector<Told>{{3, "Host is sending Bob to the crematorium."}},
           "moderation: /cremate tells the players holding notify that it is under way");
+    {
+        // What the verb writes to the action log if the trip ends in the kick: the caller, the target, the command.
+        Run<1>(reg, bob, "cremate Dee");
+        const coop::permissions::Action& k = F::R().order.kickRecord;
+        check(F::R().order.callerNick == "Bob" && k.sourceName == "Bob" && k.targetType == "user" &&
+                  k.targetId == Repeat("d", 32) && k.targetName == "Dee" &&
+                  k.description == "/cremate " + Repeat("d", 32) + " (kicked)",
+              "moderation: /cremate hands the verb its caller's nick and the action record of its kick");
+    }
     check(Said(Run<1>(reg, bob, "cremate Dee"), "Sending Dee to the crematorium.") &&
               F::R().order.caller.slot == 1 && F::R().order.caller.generation == 7 &&
               F::R().order.told.size() == 2 && F::R().order.told[1].slot == 0 &&
@@ -393,6 +402,8 @@ void CremateCases(Checker& check, const Registry& reg, const Caller& console, co
         {Result::NotAlive, "Dee is not alive."},
         {Result::Busy, "Dee is already on the way to the crematorium."},
         {Result::NoCremator, "No crematorium is loaded."},
+        {Result::CrematorBusy, "The crematorium is busy."},
+        {Result::NotWatched, "The cremator cannot be watched yet."},
         {Result::DoorStuck, "The cremator's door would not open."},
         {Result::NotSent, "Could not send Dee to the crematorium."},
     };
