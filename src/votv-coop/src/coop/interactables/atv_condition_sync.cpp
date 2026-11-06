@@ -6,7 +6,9 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/interactables/atv_host_sync.h"
 #include "coop/interactables/atv_sync_internal.h"
+#include "coop/net/wire_key_util.h"
 #include "coop/net/protocol.h"
 
 #include "ue_wrap/core/log.h"
@@ -168,6 +170,10 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
         c01(in.bodyDirt); c100(in.spareDur); c01(in.spareDirt); c100(in.fuel);
         if (in.health < -1.f) in.health = -1.f; else if (in.health > 100.f) in.health = 100.f;
     }
+    // Fuel and health are the host's copy's (atv_host_sync.h): on the host a client driver's block only lowers them, and
+    // on a client this player's own refuel or repair goes to the host before the host's block writes over it.
+    coop::atv_host_sync::FilterVitals(actor, coop::net::StringFromWireKey(p.key), /*hostTakingClientBlock*/ !fromHost,
+                                      in.fuel, in.health);
 
     const AC::Snapshot& ex = e.condExpressed;
     // Presence is consumed from the host's own copy only (a connect snapshot's block included).

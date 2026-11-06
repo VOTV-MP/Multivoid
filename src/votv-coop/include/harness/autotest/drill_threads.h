@@ -218,6 +218,8 @@ DWORD WINAPI ModuleBuyThread(LPVOID arg);
 
 // VOTVCOOP_RUN_PROP_PROPS, both peers -- harness/autotest/autotest_prop_props.cpp
 DWORD WINAPI PropPropsThread(LPVOID arg);
+// VOTVCOOP_RUN_ATV_HOST, both peers -- harness/autotest/autotest_atv_host.cpp
+DWORD WINAPI AtvHostThread(LPVOID arg);
 
 // VOTVCOOP_RUN_SEAT_RAGDOLL, both peers -- harness/autotest/autotest_seat_ragdoll.cpp
 DWORD WINAPI SeatRagdollThread(LPVOID arg);

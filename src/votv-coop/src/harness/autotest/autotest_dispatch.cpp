@@ -278,6 +278,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
         UE_LOGI("harness: mannequin_drill is a walker drill value (%s) -- spawning the mannequin drill thread", RoleStr(role));
         if (HANDLE h = ::CreateThread(nullptr, 0, &coop::dev::mannequin_walker_drill::Thread, nullptr, 0, nullptr)) ::CloseHandle(h);
     }
+    // The ATV: what of it the host owns, from a client's refuel to its horn.
+    SpawnIf("VOTVCOOP_RUN_ATV_HOST", "ATV host-owned state drill", &AtvHostThread, role);
 }
 
 }  // namespace harness::autotest

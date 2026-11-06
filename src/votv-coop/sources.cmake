@@ -85,6 +85,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/turbine_sync.cpp
     src/coop/interactables/woodchipper_sync.cpp
     src/coop/interactables/woodchipper_gate.cpp
+    src/coop/interactables/atv_host_sync.cpp
     src/coop/interactables/upgrade_sync.cpp
     src/coop/interactables/interactable_sync.cpp
     src/coop/interactables/cord_sync.cpp
@@ -693,6 +694,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_woodchipper.cpp
     src/harness/autotest/autotest_class_resolve.cpp
     src/harness/autotest/autotest_prop_props.cpp
+    src/harness/autotest/autotest_atv_host.cpp
     src/ui/input_focus.cpp
     src/harness/screenshot.cpp
     src/harness/mod_environment.cpp
