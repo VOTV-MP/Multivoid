@@ -25,6 +25,7 @@
 #include "coop/world/plant_sync.h"
 #include "coop/world/spawn_authority.h"
 #include "ue_wrap/actors/growing_plant.h"
+#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
@@ -389,7 +390,8 @@ std::string SpawnPotAbove() {
         if (!cls || !pawn || !E::TryGetActorLocation(pawn, at)) return;
         at.Z += kPotAboveUU;
         void* pot = E::BeginDeferredSpawn(cls, at, ue_wrap::FRotator{});
-        if (pot && E::FinishDeferredSpawn(pot, at, ue_wrap::FRotator{})) key = Narrow(GP::Key(pot));
+        if (pot && E::FinishDeferredSpawn(pot, at, ue_wrap::FRotator{}))
+            key = Narrow(ue_wrap::prop::GetInteractableKeyString(pot));  // a pot is a prop: its key is the prop key, not actor_save's
     });
     return key;
 }
