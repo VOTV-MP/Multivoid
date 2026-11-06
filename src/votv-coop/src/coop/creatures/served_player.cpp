@@ -6,6 +6,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 
+#include "ue_wrap/actors/ambient_creature.h"
 #include "ue_wrap/actors/kerfur.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -110,7 +111,8 @@ NativeSeam g_gpp{&kRowGetPlayerPawn, kPlayerPawn, &OnPawnPost};
 // the one it serves (ue_wrap::kerfur::IsInsertPlayerRead, by the variable its out argument writes); murder
 // mode's, the petting's and loadHoldItem's (a function nothing calls) read player 0 as written. An insert
 // read is answered in full, as the body would: the out parameter is the only thing it writes -- null while
-// the client's body is absent, which takes the insert's own refusal rather than the host's hand.
+// the client's body is absent, which takes the insert's own refusal rather than the host's hand. A walking
+// mannequin reads it for one flag with no test of its own, so it keeps the host's while that body is absent.
 sg::Verdict OnMainPlayerPre(const sg::Call& c) {
     if (g_records.empty() || !c.callerObject) return sg::Verdict::Run;
     void* pawn = nullptr;
@@ -122,7 +124,12 @@ sg::Verdict OnMainPlayerPre(const sg::Call& c) {
         sOutOff = R::FindParamOffset(c.function, L"AsMain Player");
     }
     uint8_t* out = sOutOff >= 0 ? sg::OutParamPtr(c, sOutOff) : nullptr;
-    if (!out || !K::IsInsertPlayerRead(c.callerFunction, c.callerLocals, out)) return sg::Verdict::Run;
+    if (!out) return sg::Verdict::Run;
+    if (ue_wrap::ambient_creature::IsWalker(c.callerObject)) {
+        if (!pawn) return sg::Verdict::Run;
+    } else if (!K::IsInsertPlayerRead(c.callerFunction, c.callerLocals, out)) {
+        return sg::Verdict::Run;
+    }
     *reinterpret_cast<void**>(out) = pawn;
     ++g_answered;
     return sg::Verdict::Cancel;

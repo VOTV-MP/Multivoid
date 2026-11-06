@@ -1,4 +1,5 @@
-// harness/autotest/autotest_ambient_field.cpp -- TEST-ONLY: one set of hexahive holes and beehive branches across two peers.
+// harness/autotest/autotest_ambient_field.cpp -- TEST-ONLY: one set of hexahive holes, beehive branches and walking mannequins
+// across two peers.
 //
 // A hexahive field stands on the host before the client joins, and the host ends one beehive branch once the joiner's world is
 // taken. The joiner's branches from the save must bind to the host's by key with no copy beside them, every nest-holding branch
@@ -6,7 +7,8 @@
 // the host's own beehive body makes a branch whose nest and end reach the client, the nest's end by the prop lane. The client's
 // hexahive and beehive rows refuse, read from the gate's counters. The host prints `ambient-field: VERDICT` over both peers'
 // fails and the rejoined life's: the client's second life (VOTVCOOP_AMBIENT_FIELD_REJOIN=1, set by the rig for it) is a new
-// load and a new census. Gated by VOTVCOOP_RUN_AMBIENT_FIELD; the folder is VOTVCOOP_CAN_DIR. Red arms:
+// load and a new census. Last, the host's walking mannequin: it walks while the host looks away, the client's copy follows it
+// with its brain and its spawner parked. Gated by VOTVCOOP_RUN_AMBIENT_FIELD; the folder is VOTVCOOP_CAN_DIR. Red arms:
 // VOTVCOOP_AMBIENT_FIELD_RED.
 
 #include "harness/autotest.h"
@@ -14,6 +16,7 @@
 #include "harness/session_runtime.h"
 
 #include "coop/config/config.h"
+#include "coop/dev/mannequin_drill.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/save/save_transfer.h"
@@ -28,6 +31,9 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_nav.h"
+#include "ue_wrap/engine/engine_pawn.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <windows.h>
 
@@ -54,6 +60,40 @@ using PS::AwaitText;
 using PS::Mark;
 
 int g_fails = 0;
+
+// The game's clip check: a camera that crosses static geometry between two frames sends its player to the backrooms, after a
+// save. This drill's teleports can cross walls, so each one turns that off first; what the switch was the first time is given
+// back when the drill ends. The gamemode is the world's, so this is asked for each teleport, never before the world stands.
+bool g_backroomsHeld = false, g_backroomsWas = false;
+
+uint8_t* BackroomsFlag(uint8_t& mask) {
+    void* gm = ue_wrap::world_singleton::Gamemode();
+    int32_t off = -1;
+    if (!gm || !ue_wrap::reflection::IsLive(gm) ||
+        !ue_wrap::reflection::FindBoolProperty(ue_wrap::reflection::ClassOf(gm), L"backroomsEnabled", off, mask))
+        return nullptr;
+    return static_cast<uint8_t*>(gm) + off;
+}
+
+void HoldBackroomsOff() {
+    uint8_t mask = 0;
+    uint8_t* b = BackroomsFlag(mask);
+    if (!b) return;
+    if (!g_backroomsHeld) {
+        g_backroomsHeld = true;
+        g_backroomsWas = (*b & mask) != 0;
+    }
+    *b = static_cast<uint8_t>(*b & ~mask);
+}
+
+void GiveBackrooms() {
+    uint8_t mask = 0;
+    uint8_t* b = BackroomsFlag(mask);
+    if (!b || !g_backroomsHeld) return;
+    *b = g_backroomsWas ? static_cast<uint8_t>(*b | mask) : static_cast<uint8_t>(*b & ~mask);
+}
+
+constexpr int kWalkerSamples = 12;  // the host's one-a-second marks of the walker's place, once it has moved
 
 template <class Fn>
 void OnGameThread(Fn&& fn) {
@@ -204,6 +244,134 @@ std::string Place(const ue_wrap::FVector& v) {
     return b;
 }
 
+// ---- the walking mannequin ----
+
+// Whether the actor's own tick runs, read by reflection: the lane's parking of a copy and of the mannequin spawner is the state
+// under test, and the engine wrapper does not carry a read of it.
+bool TickEnabled(void* actor) {
+    void* fn = actor ? R::FindDispatchFunctionCached(R::ClassOf(actor), L"IsActorTickEnabled") : nullptr;
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    return f.valid() && ue_wrap::Call(actor, f) && f.Get<bool>(L"ReturnValue");
+}
+
+// The host: its walker walks while it looks away, and its place goes to the client every second after.
+bool HostWalkerArm() {
+    void* pawn = coop::players::Registry::Get().Local();
+    coop::dev::mannequin_drill::SpawnWalker();
+    void* walker = nullptr;
+    for (int i = 0; i < 100 && !walker; ++i) {
+        ::Sleep(100);
+        OnGameThread([&] { std::vector<void*> v; AC::ListWalkers(v); if (!v.empty()) walker = v.back(); });
+    }
+    Check(walker != nullptr, "a walker stands");
+    if (!walker) return false;
+    Mark("walker");
+    if (!Await("walker_seen", 240)) return false;
+    // The host stands 10 m off on the walker's own level: one spawn point is on the floor above the base, where the walker's
+    // route to a host below ends almost where it stands.
+    OnGameThread([&] {
+        ue_wrap::FVector w{};
+        if (!E::TryGetActorLocation(walker, w)) return;
+        ue_wrap::FVector ground{w.X, w.Y + 1000.f, w.Z};
+        if (!E::ProjectToNav(pawn, ground, {300.f, 300.f, 200.f}, &ground))
+            E::ProjectToNav(pawn, ground, {300.f, 300.f, 3000.f}, &ground);
+        HoldBackroomsOff();
+        E::TeleportTo(pawn, {ground.X, ground.Y, ground.Z + 100.f}, {});
+    });
+    ::Sleep(1500);
+    ue_wrap::FVector start{}, at{};
+    OnGameThread([&] { E::TryGetActorLocation(walker, start); });
+    float moved = 0.f;
+    for (int t = 0; t < 900 && moved < 60.f; ++t) {
+        if (t % 5 == 0 && at.X != 0.f) Mark("walker_at", Place(at) + " 0");
+        OnGameThread([&] {
+            if (!R::IsLive(walker) || !E::TryGetActorLocation(walker, at)) return;
+            ue_wrap::FVector me = E::GetCameraLocation();
+            const float yawTo = std::atan2(at.Y - me.Y, at.X - me.X) * 57.29578f;
+            E::SetControlRotation(E::GetController(pawn), ue_wrap::FRotator{0.f, yawTo + 180.f, 0.f});
+            const float dx = at.X - start.X, dy = at.Y - start.Y;
+            moved = std::sqrt(dx * dx + dy * dy);
+        });
+        ::Sleep(100);
+    }
+    UE_LOGI("ambient-field: the host's walker moved %.0f cm", moved);
+    Check(moved >= 60.f, "the host's walker walks while the host looks away");
+    for (int i = 0; i < kWalkerSamples; ++i) {
+        ue_wrap::FVector now{};
+        OnGameThread([&] {
+            ue_wrap::FVector me = E::GetCameraLocation();
+            if (!E::TryGetActorLocation(walker, now)) return;
+            const float yawTo = std::atan2(now.Y - me.Y, now.X - me.X) * 57.29578f;
+            E::SetControlRotation(E::GetController(pawn), ue_wrap::FRotator{0.f, yawTo + 180.f, 0.f});
+        });
+        // The last mark says it is the last: the client samples until then.
+        Mark("walker_at", Place(now) + (i + 1 == kWalkerSamples ? " 1" : " 0"));
+        UE_LOGI("ambient-field: host walker at (%.0f,%.0f,%.0f)", now.X, now.Y, now.Z);
+        ::Sleep(1000);
+    }
+    return true;
+}
+
+// The client: its copy follows the host's walker, shows walking while it moves, and its brain and spawner are parked.
+bool ClientWalkerArm() {
+    if (!Await("walker", 240)) return false;
+    void* spawner = nullptr;
+    OnGameThread([&] {
+        spawner = FirstOf(L"ticker_mannequinSpawner_C");
+        UE_LOGI("ambient-field: spawner 'ticker_mannequinSpawner_C' here=%d", spawner ? 1 : 0);
+        Check(spawner && !TickEnabled(spawner), "this client's mannequin spawner is parked");
+    });
+    void* walker = nullptr;
+    for (int i = 0; i < 300 && !walker; ++i) {
+        ::Sleep(100);
+        OnGameThread([&] { std::vector<void*> v; AC::ListWalkers(v); if (!v.empty()) walker = v.back(); });
+    }
+    Check(walker != nullptr, "the host's walker crossed");
+    if (!walker) return false;
+    ::Sleep(1000);
+    OnGameThread([&] { Check(!TickEnabled(walker), "the walker's brain is parked here"); });
+    ue_wrap::FVector first{}, lastAt{};
+    OnGameThread([&] { E::TryGetActorLocation(walker, first); });
+    Mark("walker_seen");
+    float worst = 0.f;
+    int samples = 0;
+    int moving = 0;
+    for (int i = 0; i < 400; ++i) {
+        std::string line;
+        if (!AwaitText("walker_at", line, 120)) return false;
+        float x = 0, y = 0, z = 0;
+        int lastMark = 0;
+        std::istringstream mark(line);
+        const bool read = static_cast<bool>(mark >> x >> y >> z >> lastMark);
+        if (read) {
+            OnGameThread([&] {
+                ue_wrap::FVector at{};
+                if (!E::TryGetActorLocation(walker, at)) return;
+                const float dx = at.X - x, dy = at.Y - y;
+                const float d = std::sqrt(dx * dx + dy * dy);
+                worst = (std::max)(worst, d);
+                lastAt = at;
+                ++samples;
+                bool standing = true;
+                if (AC::ReadWalkerStanding(walker, standing) && !standing) ++moving;
+                UE_LOGI("ambient-field: client walker at (%.0f,%.0f,%.0f), %.0f cm from the host's last, standing=%d", at.X, at.Y, at.Z, d, standing ? 1 : 0);
+            });
+        }
+        if (read && lastMark) break;
+        ::Sleep(1000);
+    }
+    UE_LOGI("ambient-field: walker worst gap %.0f cm over %d samples, walking in %d", worst, samples, moving);
+    const float cdx = lastAt.X - first.X, cdy = lastAt.Y - first.Y;
+    const float walked = std::sqrt(cdx * cdx + cdy * cdy);
+    UE_LOGI("ambient-field: the client's walker went %.0f cm", walked);
+    Check(walked > 40.f, "the client's walker walked with the host's");
+    // The host's place is up to a second old, and a far walker runs about 250 cm in that second.
+    Check(samples > 0 && worst < 400.f, "the client's walker stays with the host's");
+    Check(moving > 0, "the client's walker shows walking while it moves");
+    return true;
+}
+
 // ---- the host ----
 
 // The last branch ends: a branch the host no longer has, which a joiner's load may still carry.
@@ -288,6 +456,7 @@ void HostBody(int& rejoinFails, int& clientFails) {
     OnGameThread([&] { AC::Destroy(branch); });
     Mark("branch_end");
     if (!Await("branch_end_done", 240)) return;
+    if (!HostWalkerArm()) return;
 
     // The client's first life ends on its done signal; the rig then kills it, and the host sees its slot's occupant change.
     std::string clientText;
@@ -436,7 +605,7 @@ bool ClientBody() {
     WaitGT("the nest ended by the prop lane", 30, [&] { return ActorNear(L"prop_waspnest_bee_C", nestAt, 200.f) == nullptr; }, false);
     OnGameThread([&] { Check(ActorNear(L"prop_waspnest_bee_C", nestAt, 200.f) == nullptr, "its nest ended here by the prop lane"); });
     Mark("branch_end_done");
-    return true;
+    return ClientWalkerArm();
 }
 
 void RunClient() {
@@ -471,6 +640,7 @@ DWORD WINAPI AmbientFieldThread(LPVOID /*arg*/) {
     if (!IsClientRole()) RunHost();
     else if (coop::config::ReadEnv("VOTVCOOP_AMBIENT_FIELD_REJOIN") == "1") RunRejoin();
     else RunClient();
+    ue_wrap::game_thread::RunAndWait([](std::atomic<int>& d) { GiveBackrooms(); d.store(1); });
     return 0;
 }
 

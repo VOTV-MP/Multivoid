@@ -127,6 +127,7 @@ set(VOTVCOOP_SOURCES_UE_WRAP_2
     src/ue_wrap/world/email.cpp
     src/ue_wrap/devices/passwordlock.cpp
     src/ue_wrap/core/trace.cpp
+    src/ue_wrap/core/kismet_timer.cpp
     src/ue_wrap/actors/wisp.cpp
     src/ue_wrap/actors/swinger.cpp
     src/ue_wrap/actors/broom.cpp

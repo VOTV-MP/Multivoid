@@ -1,4 +1,4 @@
-// coop/creatures/ambient_creature_sync.h -- one set of deer and walking trees: the host's.
+// coop/creatures/ambient_creature_sync.h -- one set of deer, walking trees and walking mannequins: the host's.
 //
 // Both spawners roll absolute map points, so the host rolls and the npc lane mirrors what it rolled; a client's two spawner
 // ticks are refused at the gate (coop/world/spawn_authority). A tree's random size and its landing do not reach a mirror
@@ -7,6 +7,11 @@
 // changed, and again to a joiner alone. A client writes the size onto the mirror of that tree, again for a mirror born after
 // the message. A deer dissolves when the viewing camera comes near, and each peer judges that for itself: its mirror keeps
 // its actor tick (coop/creatures/npc_mirror), so the deer's own body runs the test, and the pose drive keeps the floor it reads.
+// A walking mannequin is a prop and crosses as one, with its brain parked on a client (its spawner's tick is taken off here: the
+// gate has no row for it); the host's drive stream carries its walking, and this poll holds it there. A walker freezes for any
+// viewer: a client runs the walker's own view test on its copy and tells the host, which holds the walker's saw flag while any
+// client has it on screen. An anger crosses both ways: a client's fire on its copy angers the host's walker, and the host's
+// angry walker angers every copy.
 
 #pragma once
 
@@ -15,6 +20,7 @@
 namespace coop::net {
 class Session;
 struct AmbientTreeStatePayload;
+struct WalkerWatchPayload;
 }  // namespace coop::net
 
 namespace coop::ambient_creature_sync {
@@ -28,7 +34,13 @@ void Tick();
 // A client's receiver: the host's tree.
 void OnTreeState(const coop::net::AmbientTreeStatePayload& p);
 
-// Every tree again, to that joiner's slot alone.
+// The host's receiver: a client's view of a walker.
+void OnWalkerWatch(const coop::net::WalkerWatchPayload& p, int senderSlot);
+
+// A client's receiver: a walker of the host's is angry.
+void OnWalkerAngry(const coop::net::WalkerWatchPayload& p);
+
+// Every tree again, to that joiner's slot alone, and every angry walker to every peer.
 void QueueConnectBroadcastForSlot(int slot);
 
 // Read-only, for the drill: this session's totals.

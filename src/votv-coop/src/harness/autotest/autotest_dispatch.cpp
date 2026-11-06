@@ -267,6 +267,9 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIfEnum(coop::config_registry::rows::woodchipper_drill, "woodchipper drill", &WoodchipperThread, role);
     // The prop-properties tool: the host presses it on a prop it laid, the client takes a toolgun into its hand.
     SpawnIf("VOTVCOOP_RUN_PROP_PROPS", "prop-properties drill", &PropPropsThread, role);
+    SpawnIf("VOTVCOOP_RUN_WALKER_WATCH", "walker watch drill", &WalkerWatchThread, role);
+    SpawnIf("VOTVCOOP_RUN_WALKER_TARGET", "walker target drill", &WalkerTargetThread, role);
+    SpawnIf("VOTVCOOP_RUN_WALKER_STATUE", "statue walker drill", &WalkerStatueThread, role);
 }
 
 }  // namespace harness::autotest
