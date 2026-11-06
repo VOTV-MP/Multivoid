@@ -155,6 +155,14 @@ bool StageWalk(DirectorGoal& goal, const char* why) {
         return false;
     anchors.push_back({"KPP", {PN::kKPPSpawnX, PN::kKPPSpawnY, PN::kKPPSpawnZ}});
     for (Anchor& a : anchors) {
+        // An anchor already within reach of the goal is the goal itself: a route of nothing, which RouteInLegs does not
+        // answer (it asks the NavMesh for a way, and there is none to take). Without this a walk TO the KPP gate never
+        // placed at the KPP anchor and walked the whole map.
+        if (Flat(a.at, to) <= goal.reachCm) {
+            a.routed = true;
+            a.route  = 0.f;
+            continue;
+        }
         if (!Hop(goal, epoch, "anchor route", [&] {
                 void* const me = LivePawn();
                 if (me) a.routed = RouteInLegs(me, a.at, to, goal.reachCm, &a.route);
