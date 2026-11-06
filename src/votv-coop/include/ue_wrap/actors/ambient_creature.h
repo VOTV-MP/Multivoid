@@ -44,6 +44,10 @@ bool ReadWalkerLooking(void* walker);
 // Is this actor a walker?
 bool IsWalker(void* actor);
 
+// The walker's class object, null until it is loaded; the pointer a caller on any thread compares `ClassOf(actor)` with.
+// Resolved on the game thread.
+void* WalkerClass();
+
 // Its angry flag: an angry walker hits a player it touches, and does not freeze.
 bool ReadWalkerAngry(void* walker);
 void WriteWalkerAngry(void* walker);

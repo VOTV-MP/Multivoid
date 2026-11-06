@@ -66,6 +66,17 @@ enum class EnrollSource : uint8_t { kExpressSeam, kPassiveCensus };
 std::wstring MarkPropElement(void* actor, const std::wstring& key, const std::wstring& cls,
                              EnrollSource src);
 
+// A consumer of the host's prop births: called from MarkPropElement once the HOST has minted `actor`'s eid and the post-alloc
+// recheck kept it, on every route that mints (the Init POST body, the census, the seed, the steady re-seed), never on a
+// client. THREAD CONTRACT: the caller may be any thread (MarkPropElement runs off the game thread, see its comment), the
+// callback runs on that thread and holds no lock of this module, so it must be lock-light, allocate nothing, call no engine
+// UFunction and read nothing it cannot read from any thread; a consumer that needs the game thread queues and drains there.
+// The table is fixed (kMaxHostPropSubscribers); a subscriber is added once at install and never removed, and a second
+// Subscribe of the same function is a no-op. Returns false when the table is full.
+using HostPropExpressedFn = void (*)(void* actor, coop::element::ElementId eid);
+constexpr size_t kMaxHostPropSubscribers = 4;
+bool SubscribeHostPropExpressed(HostPropExpressedFn fn);
+
 // The local element id for `actor`, or kInvalidId.
 coop::element::ElementId GetPropElementIdForActor(void* actor);
 

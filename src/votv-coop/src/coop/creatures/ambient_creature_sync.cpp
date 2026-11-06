@@ -12,7 +12,6 @@
 #include "coop/net/wire_key_util.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
-#include "coop/props/prop_drive_host.h"
 #include "coop/world/ambient_births.h"
 
 #include "ue_wrap/actors/ambient_creature.h"
@@ -443,9 +442,7 @@ void ClientTick() {
 
 // HOST: the walkers' share of the 250 ms poll.
 void HostWalkerPoll(coop::net::Session& s) {
-    // A walker's brain moves it with no hand and no verb, so the host's drive stream holds it for as long as it stands.
     for (void* w : TickWalkers()) {
-        coop::prop_drive_host::Claim(w, "walker");
         // An anger is the game's alone to start, by a fire, and nothing in the game undoes it.
         if (!AC::ReadWalkerAngry(w)) continue;
         const std::wstring key = ue_wrap::prop::GetKeyString(w);

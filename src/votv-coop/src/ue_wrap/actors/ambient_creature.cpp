@@ -234,8 +234,10 @@ bool ReadWalkerLooking(void* walker) {
     return b && (*b & g_looking.mask) != 0;
 }
 
+void* WalkerClass() { return OI::ClassByName(L"prop_wMannequin_C"); }
+
 bool IsWalker(void* actor) {
-    void* cls = actor ? OI::ClassByName(L"prop_wMannequin_C") : nullptr;
+    void* cls = actor ? WalkerClass() : nullptr;
     return cls && R::ClassOf(actor) == cls;
 }
 
