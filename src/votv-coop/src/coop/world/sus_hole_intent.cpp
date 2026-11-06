@@ -56,21 +56,30 @@ constexpr coop::net::IntentBudget kBudget{2.0f, 1.0f / 300.0f};
 constexpr uint64_t kRetryMs = 1000;
 constexpr int kMaxTries = 30;
 
-// A class by name, held by its pointer: a pointer compare per spawn, and the listing identity says when it went stale.
+// A class by name, held by its pointer: a pointer compare per spawn, and the listing identity says when it went stale. A
+// class still null is asked again only when the index's class set has moved since the last ask.
 struct ClassCache {
     const wchar_t* name;
     void*          cls = nullptr;
     uint64_t       listing = 0;
+    uint64_t       setAsked = ~uint64_t{0};
 };
 ClassCache g_holeClass{L"susDirtHole_C"};
 ClassCache g_spawnerClass{L"ticker_susHoleSpawner_C"};
 
 bool IsOfClass(ClassCache& c, void* cls) {
     if (!cls) return false;
-    if (c.cls && OI::ClassListingId(c.cls) != c.listing) c.cls = nullptr;
+    if (c.cls && OI::ClassListingId(c.cls) != c.listing) {
+        c.cls = nullptr;
+        c.setAsked = ~uint64_t{0};
+    }
     if (!c.cls) {
-        c.cls = OI::ClassByName(c.name);
-        c.listing = c.cls ? OI::ClassListingId(c.cls) : 0;
+        const uint64_t set = OI::ClassSetVersion();
+        if (set != c.setAsked) {
+            c.setAsked = set;
+            c.cls = OI::ClassByName(c.name);
+            c.listing = c.cls ? OI::ClassListingId(c.cls) : 0;
+        }
     }
     return c.cls == cls;
 }

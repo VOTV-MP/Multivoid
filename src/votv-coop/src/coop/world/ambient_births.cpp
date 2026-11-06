@@ -28,10 +28,12 @@ bool g_listening = false;
 bool g_fullSaid = false;
 
 // The four class objects, by name. A pointer is dropped when the index unlists its class (the listing id moves), and a
-// null one is asked again at the next birth: a class answers null while it loads.
+// null one is asked again only when the index's class set has moved since the last ask: a class answers null while it
+// loads, and its first instance moves the set before the listener hears of the birth.
 void*    g_cls[kClasses] = {};
 uint64_t g_listingId[kClasses] = {};
 uint64_t g_unlistSeen = 0;
+uint64_t g_setAsked = ~uint64_t{0};
 
 std::vector<Event> g_raw;      // what the listener heard, in order
 std::vector<Event> g_ready;    // what Settle passed on, in order
@@ -48,11 +50,17 @@ bool Recognise(void* cls, Class& out) {
     const uint64_t v = OI::ClassUnlistVersion();
     if (v != g_unlistSeen) {
         g_unlistSeen = v;
-        for (size_t i = 0; i < kClasses; ++i)
-            if (g_cls[i] && OI::ClassListingId(g_cls[i]) != g_listingId[i]) g_cls[i] = nullptr;
+        for (size_t i = 0; i < kClasses; ++i) {
+            if (!g_cls[i] || OI::ClassListingId(g_cls[i]) == g_listingId[i]) continue;
+            g_cls[i] = nullptr;
+            g_setAsked = ~uint64_t{0};  // the dropped class is asked again now
+        }
     }
+    const uint64_t set = OI::ClassSetVersion();
+    const bool ask = set != g_setAsked;
+    g_setAsked = set;
     for (size_t i = 0; i < kClasses; ++i) {
-        if (!g_cls[i]) {
+        if (!g_cls[i] && ask) {
             g_cls[i] = OI::ClassByName(kNames[i]);
             g_listingId[i] = g_cls[i] ? OI::ClassListingId(g_cls[i]) : 0;
         }
@@ -172,6 +180,7 @@ void Install() {
     g_ready.clear();
     g_loading.clear();
     g_fullSaid = false;
+    g_setAsked = ~uint64_t{0};  // the seed below asks each class by name once
     g_active = true;
     for (size_t i = 0; i < kClasses; ++i) {
         Class c = static_cast<Class>(i);

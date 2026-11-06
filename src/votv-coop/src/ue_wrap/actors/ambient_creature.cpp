@@ -30,8 +30,14 @@ void Collect(const wchar_t* className, std::vector<void*>& out) {
     }, &out);
 }
 
-void* ComponentNamed(void* actor, const wchar_t* field) {
-    const int32_t off = R::FindPropertyOffset(R::ClassOf(actor), field);
+// Property offsets on the instance's class, kept per class object.
+R::InstanceOffset g_staticMesh{L"StaticMesh"};
+R::InstanceOffset g_rend{L"rend"};
+R::InstanceOffset g_hiveKey{L"hiveKey"};
+R::InstanceOffset g_hive{L"hive"};
+
+void* ComponentAt(void* actor, R::InstanceOffset& field) {
+    const int32_t off = field.Of(actor);
     if (off < 0) return nullptr;
     return *reinterpret_cast<void**>(static_cast<uint8_t*>(actor) + off);
 }
@@ -53,7 +59,7 @@ void ListDeer(std::vector<void*>& out) { Collect(P::name::NpcClass_Deer, out); }
 void ListTrees(std::vector<void*>& out) { Collect(P::name::NpcClass_WalkingTree, out); }
 
 bool ReadTree(void* tree, float& scale, bool& landed) {
-    void* mesh = ComponentNamed(tree, L"StaticMesh");
+    void* mesh = ComponentAt(tree, g_staticMesh);
     if (!mesh) return false;
     void* scaleFn = R::FindDispatchFunctionCached(R::ClassOf(mesh), L"K2_GetComponentScale");
     void* visibleFn = R::FindDispatchFunctionCached(R::ClassOf(mesh), L"IsVisible");
@@ -67,7 +73,7 @@ bool ReadTree(void* tree, float& scale, bool& landed) {
 }
 
 void WriteTree(void* tree, float scale, bool landed) {
-    void* mesh = ComponentNamed(tree, L"StaticMesh");
+    void* mesh = ComponentAt(tree, g_staticMesh);
     if (!mesh) return;
     if (void* fn = R::FindDispatchFunctionCached(R::ClassOf(mesh), L"SetWorldScale3D")) {
         ParamFrame f(fn);
@@ -77,7 +83,7 @@ void WriteTree(void* tree, float scale, bool landed) {
         }
     }
     SetVisible(mesh, landed);
-    SetVisible(ComponentNamed(tree, L"rend"), false);
+    SetVisible(ComponentAt(tree, g_rend), false);
 }
 
 bool Destroy(void* creature) {
@@ -104,9 +110,8 @@ void* SpawnFixture(bool branch, const FVector& at, const FRotator& rot) {
 }
 
 bool ReadBranch(void* branch, std::wstring& hiveKey, void*& hive) {
-    void* cls = R::ClassOf(branch);
-    const int32_t keyOff = R::FindPropertyOffset(cls, L"hiveKey");
-    const int32_t hiveOff = R::FindPropertyOffset(cls, L"hive");
+    const int32_t keyOff = g_hiveKey.Of(branch);
+    const int32_t hiveOff = g_hive.Of(branch);
     if (keyOff < 0 || hiveOff < 0) return false;
     hiveKey = save_record::ReadFNameAt(branch, keyOff);
     void* nest = *reinterpret_cast<void**>(static_cast<uint8_t*>(branch) + hiveOff);
@@ -115,7 +120,7 @@ bool ReadBranch(void* branch, std::wstring& hiveKey, void*& hive) {
 }
 
 bool BindBranchNest(void* branch, void* nest) {
-    const int32_t hiveOff = R::FindPropertyOffset(R::ClassOf(branch), L"hive");
+    const int32_t hiveOff = g_hive.Of(branch);
     if (hiveOff < 0 || !nest) return false;
     engine::WriteObjectField(branch, static_cast<size_t>(hiveOff), nest);
     return component_calls::CallParamlessNamed(branch, L"getBee");
@@ -124,7 +129,7 @@ bool BindBranchNest(void* branch, void* nest) {
 bool ReleaseBranchNest(void* branch) { return component_calls::CallParamlessNamed(branch, L"touched"); }
 
 void DropBranchNest(void* branch) {
-    const int32_t hiveOff = R::FindPropertyOffset(R::ClassOf(branch), L"hive");
+    const int32_t hiveOff = g_hive.Of(branch);
     if (hiveOff >= 0) engine::WriteObjectField(branch, static_cast<size_t>(hiveOff), nullptr);
 }
 
