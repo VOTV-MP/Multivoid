@@ -11,6 +11,7 @@
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
 #include "coop/creatures/ambient_creature_sync.h"
+#include "coop/creatures/walker_state_client.h"
 #include "coop/world/ambient_fixture_sync.h"
 #include "coop/dev/container_parity.h"     // the container join drill's report receiver
 #include "coop/dev/prop_syncer_drill.h"    // the drill's filler receiver
@@ -443,24 +444,25 @@ bool HandlePropDriveEvent(net::Session& session,
         ::coop::ambient_creature_sync::OnWalkerWatch(p, msg.senderPeerSlot);
         break;
     }
-    case net::ReliableKind::WalkerAngry: {
+    case net::ReliableKind::WalkerState: {
         // HOST->ALL.
         if (session.role() == net::Role::Host) {
-            UE_LOGW("event_feed: WalkerAngry from slot %d -- dropping (host-authored)", msg.senderPeerSlot);
+            UE_LOGW("event_feed: WalkerState from slot %d -- dropping (host-authored)", msg.senderPeerSlot);
             break;
         }
-        if (msg.payloadLen < sizeof(net::WalkerWatchPayload)) {
-            UE_LOGW("event_feed: WalkerAngry payload too short (%zu < %zu)",
-                    static_cast<size_t>(msg.payloadLen), sizeof(net::WalkerWatchPayload));
+        if (msg.payloadLen < sizeof(net::WalkerStatePayload)) {
+            UE_LOGW("event_feed: WalkerState payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::WalkerStatePayload));
             break;
         }
-        net::WalkerWatchPayload p{};
+        net::WalkerStatePayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (p.angered != 1) {
-            UE_LOGW("event_feed: WalkerAngry malformed -- dropping");
+        if (p.looking > 1 || p.key.len == 0 || p.key.len > sizeof(p.key.data) ||
+            (p.target >= net::kMaxPeers && p.target != 0xFF)) {
+            UE_LOGW("event_feed: WalkerState malformed -- dropping");
             break;
         }
-        ::coop::ambient_creature_sync::OnWalkerAngry(p);
+        ::coop::walker_state_client::OnState(p);
         break;
     }
     default:

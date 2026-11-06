@@ -24,11 +24,9 @@
 
 #include <atomic>
 #include <chrono>
-#include <cmath>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace coop::ambient_creature_sync {
@@ -63,21 +61,6 @@ const std::vector<void*>& TickWalkers() {
     return g_tickWalkers;
 }
 
-// The walkers' poll runs a quarter of a second apart, as the host's hold of a watched walker runs every tick.
-constexpr auto  kWalkerPoll = std::chrono::milliseconds(250);
-Clock::time_point g_nextWalkerPoll{};
-
-// CLIENT: where each walker was at the last poll and when it last moved, so a copy's pose shows whether it walks. The
-// host's walker jitters a few cm at a path's end, and stands only once it has been still for a moment.
-struct WalkerSeen {
-    ue_wrap::FVector at{};
-    Clock::time_point moved{};
-    bool angry = false;
-};
-std::unordered_map<void*, WalkerSeen> g_walkers;
-constexpr float kWalkingCm = 3.f;
-constexpr auto  kStandAfter = std::chrono::milliseconds(1500);
-
 // A walker's view test runs more often than the poll: it walks 250 cm in a second.
 constexpr auto kWatchPoll = std::chrono::milliseconds(50);
 constexpr auto kWatchBeat = std::chrono::seconds(1);      // a client's word while it keeps looking
@@ -94,10 +77,6 @@ std::unordered_map<std::wstring, Clock::time_point> g_lingering;
 
 // CLIENT: the walkers this player has on screen, and when it last said so.
 std::unordered_map<std::wstring, Clock::time_point> g_watching;
-
-// HOST: the walkers whose anger went out. CLIENT: the walkers the host said are angry, kept until a copy with the key is here.
-std::unordered_set<std::wstring> g_angerSent;
-std::unordered_set<std::wstring> g_angryKeys;
 
 // Every frame, as the walker's timer can clear its flag and its tick would walk it on the next.
 void HostHoldWatched(Clock::time_point now) {
@@ -338,65 +317,7 @@ void ClientTick() {
     }
 }
 
-
-// HOST: the walkers' share of the 250 ms poll.
-void HostWalkerPoll(coop::net::Session& s) {
-    for (void* w : TickWalkers()) {
-        // An anger is the game's alone to start, by a fire, and nothing in the game undoes it.
-        if (!AC::ReadWalkerAngry(w)) continue;
-        const std::wstring key = ue_wrap::prop::GetKeyString(w);
-        if (key.empty() || g_angerSent.count(key)) continue;
-        coop::net::WalkerWatchPayload p{};
-        coop::net::WireKeyFromString(key, p.key);
-        p.angered = 1;
-        if (!s.SendReliable(coop::net::ReliableKind::WalkerAngry, &p, sizeof(p))) continue;
-        g_angerSent.insert(key);
-        UE_LOGI("ambient_creature_sync: walker '%ls' is angry -- told the clients", key.c_str());
-    }
-}
-
-// CLIENT: the walkers' share of the 250 ms poll.
-void ClientWalkerPoll(coop::net::Session& s, Clock::time_point now) {
-    std::unordered_map<void*, WalkerSeen> walkersNow;
-    for (void* w : TickWalkers()) {
-        auto was = g_walkers.find(w);
-        ue_wrap::FVector at{};
-        if (!E::TryGetActorLocation(w, at)) continue;
-        WalkerSeen seen{at, now};
-        // A fire on this copy angers only this copy; the walker that hits is the host's, so the anger goes there. One the host
-        // told of goes nowhere.
-        const std::wstring walkerKey = ue_wrap::prop::GetKeyString(w);
-        const bool hostSaid = !walkerKey.empty() && g_angryKeys.count(walkerKey) != 0;
-        if (hostSaid && !AC::ReadWalkerAngry(w)) {
-            AC::WriteWalkerAngry(w);
-            UE_LOGI("ambient_creature_sync: the host's walker '%ls' is angry here", walkerKey.c_str());
-        }
-        const bool angry = AC::ReadWalkerAngry(w);
-        bool told = hostSaid || (was != g_walkers.end() && was->second.angry);
-        if (angry && !told && !walkerKey.empty()) {
-            coop::net::WalkerWatchPayload p{};
-            coop::net::WireKeyFromString(walkerKey, p.key);
-            p.watching = g_watching.count(walkerKey) ? 1 : 0;
-            p.angered = 1;
-            if (s.SendReliable(coop::net::ReliableKind::WalkerWatch, &p, sizeof(p))) {
-                told = true;
-                UE_LOGI("ambient_creature_sync: this player angered walker '%ls'", walkerKey.c_str());
-            }
-        }
-        if (was != g_walkers.end()) {
-            const float dx = at.X - was->second.at.X, dy = at.Y - was->second.at.Y;
-            if (std::sqrt(dx * dx + dy * dy) < kWalkingCm) seen = was->second;
-            seen.angry = told;
-            if (!g_watching.count(ue_wrap::prop::GetKeyString(w))) AC::WriteWalkerStanding(w, now - seen.moved >= kStandAfter);
-        }
-        seen.angry = told;
-        walkersNow[w] = seen;
-    }
-    g_walkers.swap(walkersNow);
-}
-
-// The walking mannequins' part of the tick: the host holds the watched ones every tick, a client tests its view every 50 ms, and
-// both walk the walkers' list at the 250 ms poll.
+// The walking mannequins' part of the tick: the host holds the watched ones every tick, a client tests its view every 50 ms.
 void WalkerTick(coop::net::Session& s) {
     const Clock::time_point now = Clock::now();
     g_tickWalkersRead = false;
@@ -406,10 +327,6 @@ void WalkerTick(coop::net::Session& s) {
         g_nextWatch = now + kWatchPoll;
         ClientWatch(s, now);
     }
-    if (now < g_nextWalkerPoll) return;
-    g_nextWalkerPoll = now + kWalkerPoll;
-    if (s.role() == coop::net::Role::Host) HostWalkerPoll(s);
-    else if (s.role() == coop::net::Role::Client) ClientWalkerPoll(s, now);
 }
 
 }  // namespace
@@ -451,15 +368,6 @@ void OnTreeState(const coop::net::AmbientTreeStatePayload& p) {
 
 void OnWalkerWatch(const coop::net::WalkerWatchPayload& p, int senderSlot) {
     const std::wstring key = coop::net::StringFromWireKey(p.key);
-    if (p.angered) {
-        std::vector<void*> walkers;
-        AC::ListWalkers(walkers);
-        for (void* w : walkers) {
-            if (ue_wrap::prop::GetKeyString(w) != key) continue;
-            AC::WriteWalkerAngry(w);
-            UE_LOGI("ambient_creature_sync: slot %d angered walker '%ls'", senderSlot, key.c_str());
-        }
-    }
     if (p.watching) {
         g_watchers[key][senderSlot] = Clock::now();
         g_lingering.erase(key);
@@ -473,14 +381,8 @@ void OnWalkerWatch(const coop::net::WalkerWatchPayload& p, int senderSlot) {
     g_watchers.erase(it);
 }
 
-void OnWalkerAngry(const coop::net::WalkerWatchPayload& p) {
-    const std::wstring key = coop::net::StringFromWireKey(p.key);
-    if (!key.empty() && g_angryKeys.insert(key).second) UE_LOGI("ambient_creature_sync: the host says walker '%ls' is angry", key.c_str());
-}
-
 void QueueConnectBroadcastForSlot(int slot) {
     if (slot <= 0 || slot >= coop::players::kMaxPeers) return;
-    g_angerSent.clear();
     for (auto& kv : g_trees) {
         kv.second.pendingSlots |= 1u << slot;
         kv.second.dirty = true;
@@ -491,13 +393,9 @@ void QueueConnectBroadcastForSlot(int slot) {
 Counters Read() { return g_counters; }
 
 void OnDisconnect() {
-    g_walkers.clear();
     g_watchers.clear();
     g_lingering.clear();
     g_watching.clear();
-    g_angerSent.clear();
-    g_angryKeys.clear();
-    g_nextWalkerPoll = Clock::time_point{};
     g_nextWatch = Clock::time_point{};
     g_counters = Counters{};
     g_trees.clear();

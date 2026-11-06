@@ -7,11 +7,9 @@
 // changed, and again to a joiner alone. A client writes the size onto the mirror of that tree, again for a mirror born after
 // the message. A deer dissolves when the viewing camera comes near, and each peer judges that for itself: its mirror keeps
 // its actor tick (coop/creatures/npc_mirror), so the deer's own body runs the test, and the pose drive keeps the floor it reads.
-// A walking mannequin is a prop and crosses as one, with its brain parked on a client (its spawner's tick is taken off here: the
-// gate has no row for it); the host's drive stream carries its walking, and this poll holds it there. A walker freezes for any
-// viewer: a client runs the walker's own view test on its copy and tells the host, which holds the walker's saw flag while any
-// client has it on screen. An anger crosses both ways: a client's fire on its copy angers the host's walker, and the host's
-// angry walker angers every copy.
+// A walking mannequin is a prop and crosses as one (coop/creatures/walker_target, walker_brain, walker_state_*): the host's
+// drive stream carries its walking, and a client's copy runs no brain. A walker freezes for any viewer: a client runs the
+// walker's own view test on its copy and tells the host, which holds the walker's saw flag while any client has it on screen.
 
 #pragma once
 
@@ -37,10 +35,7 @@ void OnTreeState(const coop::net::AmbientTreeStatePayload& p);
 // The host's receiver: a client's view of a walker.
 void OnWalkerWatch(const coop::net::WalkerWatchPayload& p, int senderSlot);
 
-// A client's receiver: a walker of the host's is angry.
-void OnWalkerAngry(const coop::net::WalkerWatchPayload& p);
-
-// Every tree again, to that joiner's slot alone, and every angry walker to every peer.
+// Every tree again, to that joiner's slot alone.
 void QueueConnectBroadcastForSlot(int slot);
 
 // Read-only, for the drill: this session's totals.

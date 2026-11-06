@@ -203,6 +203,9 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/npc_mirror_brain.cpp
     src/coop/creatures/npc_mirror_brain_table.cpp
     src/coop/creatures/walker_brain.cpp
+    src/coop/creatures/walker_graph.cpp
+    src/coop/creatures/walker_state_client.cpp
+    src/coop/creatures/walker_state_host.cpp
     src/coop/creatures/walker_target.cpp
     src/coop/creatures/creature_hit.cpp
     src/coop/creatures/hit_target_creature.cpp

@@ -4,6 +4,7 @@
 
 #include "coop/element/death_seam.h"
 #include "coop/element/element.h"
+#include "coop/creatures/walker_graph.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -17,7 +18,6 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/script_calls.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/core/ufunction_hook.h"
 #include "ue_wrap/engine/engine.h"
@@ -40,8 +40,8 @@ namespace GT = ue_wrap::game_thread;
 namespace OI = ue_wrap::object_index;
 namespace PL = coop::players;
 namespace R = ue_wrap::reflection;
-namespace SC = ue_wrap::script_calls;
 namespace UH = ue_wrap::ufunction_hook;
+namespace WG = coop::walker_graph;
 
 // The native the walker's Blueprint reads player 0's camera manager through, at the two places it names a player: the range
 // test of its hunt and the move toward it. Its hunt graph is the one body every entry of its Blueprint runs through.
@@ -105,6 +105,11 @@ bool               g_hookInstalled = false;
 bool               g_armed = false;
 bool               g_endSubscribed = false;
 
+// What the graph subscribers were last told: the pinned graph while a walker is held, else null.
+GraphFn g_graphSubs[kMaxSubs];
+size_t  g_graphSubCount = 0;
+void*   g_graphNotified = nullptr;
+
 void Notify(void* walker, uint8_t slot) {
     for (size_t i = 0; i < g_subCount; ++i) g_subs[i](walker, slot);
 }
@@ -123,9 +128,15 @@ Walker* Find(void* actor) {
 void OnCameraManagerPost(void* context, void* source, void* result);
 
 // Armed while a walker is held and its graph is pinned: with none the hook does nothing at all, and the forwarder pays its one
-// load and branch.
+// load and branch. The graph subscribers hear the same state, so their own hooks follow it.
 void Rearm() {
-    const bool want = g_walkerCount > 0 && g_ubergraph.load(std::memory_order_relaxed) != nullptr;
+    void* const graph = g_ubergraph.load(std::memory_order_relaxed);
+    const bool  want = g_walkerCount > 0 && graph != nullptr;
+    void* const held = want ? graph : nullptr;
+    if (held != g_graphNotified) {
+        g_graphNotified = held;
+        for (size_t i = 0; i < g_graphSubCount; ++i) g_graphSubs[i](held);
+    }
     if (!g_hookInstalled || want == g_armed) return;
     if (UH::SetArmed(g_cameraFn, &OnCameraManagerPost, want)) g_armed = want;
 }
@@ -228,26 +239,19 @@ void PinSites(void* cls) {
     g_ubergraph.store(nullptr, std::memory_order_relaxed);
     void* graph = R::FindFunction(cls, kGraphName);
     void* native = ue_wrap::facts::Resolve(kRowCameraManager).Fn();
-    std::vector<SC::CallSite> sites;
-    if (!graph || !native || !SC::EnumerateCalls(graph, sites)) {
+    WG::Calls calls;
+    if (!WG::FindCalls(graph, native, calls)) {
         UE_LOGE("walker_target: the walker's graph or its camera manager call did not resolve -- a walker hunts only the "
                 "host in this world");
         return;
     }
-    int     found = 0;
-    int32_t ends[kSites] = {-1, -1};
-    for (const SC::CallSite& site : sites) {
-        if (!SC::SameCallee(site, native)) continue;
-        if (found < kSites) ends[found] = site.end;
-        ++found;
-    }
-    if (found != kSites) {
+    if (calls.found != kSites) {
         UE_LOGE("walker_target: %d call(s) of the camera manager in the walker's graph, %d are pinned -- a walker hunts only "
-                "the host in this world", found, kSites);
+                "the host in this world", calls.found, kSites);
         return;
     }
-    g_ends[0] = ends[0];
-    g_ends[1] = ends[1];
+    g_ends[0] = calls.ends[0];
+    g_ends[1] = calls.ends[1];
     g_ubergraph.store(graph, std::memory_order_relaxed);
     UE_LOGI("walker_target: the walker reads its player at graph offsets %d and %d", g_ends[0], g_ends[1]);
 }
@@ -385,6 +389,25 @@ bool SubscribeTargetChanged(TargetChangedFn fn) {
     if (g_subCount >= kMaxSubs) return false;
     g_subs[g_subCount++] = fn;
     return true;
+}
+
+bool SubscribeGraph(GraphFn fn) {
+    if (!fn) return false;
+    for (size_t i = 0; i < g_graphSubCount; ++i)
+        if (g_graphSubs[i] == fn) return false;
+    if (g_graphSubCount >= kMaxSubs) return false;
+    g_graphSubs[g_graphSubCount++] = fn;
+    // A subscriber that arrives while a walker is held is told at once.
+    if (g_graphNotified) fn(g_graphNotified);
+    return true;
+}
+
+void ForEachHeld(HeldFn fn, void* ctx) {
+    for (size_t i = 0; i < g_walkerCount; ++i) {
+        const Walker& w = g_walkers[i];
+        if (R::SlotSerial(w.index) != w.serial || R::InternalIndexOf(w.actor) != w.index) continue;
+        fn(ctx, w.actor, w.target);
+    }
 }
 
 void OnPeerLeft(uint8_t slot) {

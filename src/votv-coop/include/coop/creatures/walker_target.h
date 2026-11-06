@@ -56,6 +56,17 @@ uint8_t TargetOf(void* walker);
 using TargetChangedFn = void (*)(void* walker, uint8_t slot);
 bool SubscribeTargetChanged(TargetChangedFn fn);
 
+// Told with the walker's pinned event graph while at least one walker is held, and with null when that stops (no walker held,
+// the graph unpinned or the session ended): a consumer's own hook on a native the walker's graph calls is armed exactly then,
+// and pins its calls in `graph`. A graph that changes is told as the new graph. A subscriber added while a walker is held is told
+// at once. At most four; false when full or when `fn` is already subscribed. Game thread.
+using GraphFn = void (*)(void* graph);
+bool SubscribeGraph(GraphFn fn);
+
+// Every held walker that is still alive, with the slot it hunts (kNoTarget before its first read), in no order. Game thread.
+using HeldFn = void (*)(void* ctx, void* walker, uint8_t target);
+void ForEachHeld(HeldFn fn, void* ctx);
+
 // A peer left: every walker that hunted `slot` has no target until its next read chooses one. Game thread.
 void OnPeerLeft(uint8_t slot);
 

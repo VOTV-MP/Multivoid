@@ -29,9 +29,10 @@ bool Dissolve(void* deer);
 // The walking mannequins.
 void ListWalkers(std::vector<void*>& out);
 
-// Its anim's stand: the pose it holds when watched.
+// Its anim's stand: the pose it holds while its `looking` is true. The write is false when the walker has no anim or its
+// class has no such field.
 bool ReadWalkerStanding(void* walker, bool& standing);
-void WriteWalkerStanding(void* walker, bool standing);
+bool WriteWalkerStanding(void* walker, bool standing);
 
 // The walker's own view test, as its tick runs it: inside this controller's frustum and rendered of late.
 bool WalkerInView(void* walker, void* playerController);

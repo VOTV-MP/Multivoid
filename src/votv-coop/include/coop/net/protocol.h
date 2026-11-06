@@ -1358,12 +1358,12 @@ enum class ReliableKind : uint8_t {
     // KerfurCommandAnswerPayload.
     KerfurCommandAnswer = 234,
     // CLIENT->HOST: this client's player has a walking mannequin on screen, every second while it does, or no longer has. The
-    // host holds that walker frozen. Its `angered` says this client's copy was just angered, as by a fire. Never relayed, not
-    // pre-world, nothing at late join. WalkerWatchPayload.
+    // host holds that walker frozen. Never relayed, not pre-world, nothing at late join. WalkerWatchPayload.
     WalkerWatch = 230,
-    // HOST->ALL: a walking mannequin of the host's is angry, once for each walker, and every angry one again at the ready edge.
-    // A client's copy takes the anger, which nothing undoes. Not relayed, not pre-world. WalkerWatchPayload, `angered` set.
-    WalkerAngry = 231,
+    // HOST->ALL: a walking mannequin of the host's: whether it stands still (`looking`) and the player it hunts, sent on each
+    // change of either and again to a joiner alone at its ready edge. A client holds one for a copy that is not here yet and
+    // applies it at the copy's birth. Not relayed, not pre-world. WalkerStatePayload.
+    WalkerState = 231,
 };
 
 #pragma pack(push, 1)
@@ -2200,13 +2200,25 @@ struct PropPropsStatePayload {
 static_assert(sizeof(PropPropsStatePayload) == 9, "PropPropsStatePayload must be 9 bytes");
 
 // A client's view of a walking mannequin (WalkerWatch), or the host's anger (WalkerAngry).
+// A client's view of a walking mannequin (WalkerWatch).
 struct WalkerWatchPayload {
     WireKey key;       // 32 -- the walker's prop key
     uint8_t watching;  // 1
-    uint8_t angered;   // 1 -- this client's copy just turned angry
-    uint8_t _pad[2];   // 2 -- zero
+    uint8_t _pad[3];   // 3 -- zero
 };
 static_assert(sizeof(WalkerWatchPayload) == 36, "WalkerWatchPayload must be 36 bytes");
+
+// A walking mannequin of the host's (WalkerState): the walker's own `looking` (it holds still while it is true, the pose its
+// copy takes) and the slot it hunts (0 the host, 0xFF none). The walker's anger does not cross: a copy's own fire is the fire
+// lane's, and an angry walker's `looking` is false by the Blueprint's own formula and crosses as such.
+struct WalkerStatePayload {
+    WireKey key;       // 32 -- the walker's prop key
+    uint8_t looking;   // 1  -- 0 or 1
+    uint8_t target;    // 1  -- a slot below kMaxPeers, or 0xFF
+    uint8_t _pad[2];   // 2  -- zero
+};
+static_assert(sizeof(WalkerStatePayload) == 36, "WalkerStatePayload must be 36 bytes");
+static_assert(sizeof(WalkerStatePayload) <= 256 - 20 - 8, "WalkerStatePayload must fit in one reliable datagram");
 
 // One message of the drill filler (DevLoadFiller): its place in the run and the run's length; the rest is fill.
 struct DevLoadFillerPayload {

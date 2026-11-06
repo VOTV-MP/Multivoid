@@ -167,10 +167,12 @@ bool ReadWalkerStanding(void* walker, bool& standing) {
     return true;
 }
 
-void WriteWalkerStanding(void* walker, bool standing) {
+bool WriteWalkerStanding(void* walker, bool standing) {
     void* anim = WalkerAnim(walker);
     uint8_t* b = anim ? g_stand.At(anim) : nullptr;
-    if (b) *b = standing ? (*b | g_stand.mask) : (*b & static_cast<uint8_t>(~g_stand.mask));
+    if (!b) return false;
+    *b = standing ? (*b | g_stand.mask) : (*b & static_cast<uint8_t>(~g_stand.mask));
+    return true;
 }
 
 bool WalkerInView(void* walker, void* playerController) {
