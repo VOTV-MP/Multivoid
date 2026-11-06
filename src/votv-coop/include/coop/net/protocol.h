@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 278;
+inline constexpr uint16_t kProtocolVersion = 279;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1321,6 +1321,13 @@ enum class ReliableKind : uint8_t {
     // host's receive edge; never relayed; not pre-world; the Default lane. Late join: none, an act sent to its
     // requester, not state. RequesterFeedbackPayload.
     RequesterFeedback = 229,
+    // HOST->ALL: a finished garden hose of the host's, as its own save record, when it is new or changed, or its key once
+    // when it went. A client lays it on its copy, tied to its faucet and sprinkler. Not relayed, not pre-world. Late
+    // join: every hose again at the ready edge. BlobChunkPayload: [u8 op 1 state | 2 gone][wstr key][record if state].
+    GroundHoseState = 240,
+    // CLIENT->HOST: a hose this client's player finished laying or changed (op 1, its record), or took up (op 2). Never
+    // relayed; the host lays or takes up its own and its next GroundHoseState answers. BlobChunkPayload, as above.
+    GroundHoseIntent = 241,
 };
 
 #pragma pack(push, 1)

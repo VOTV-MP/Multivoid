@@ -189,6 +189,7 @@
 #include "coop/items/hook_sync.h"  // the hook lane: owner-phase stream, mirrors, the tick park
 #include "coop/world/event_active_sync.h"  // the native activeEvents registry probe
 #include "coop/world/creature_event_relay.h"  // the host's creature events, carried to every client's count
+#include "coop/world/ground_hose_sync.h"
 #include "coop/world/spill_sync.h"
 #include "coop/world/weather_sync.h"
 
@@ -364,6 +365,7 @@ void Install(coop::net::Session& session) {
     // the join's world loads. Its tick and per-slot hooks below stay.
     coop::balance_sync::SetSession(&session);  // shared host-authoritative balance
     coop::spill_sync::Install(&session);  // the host's spilled liquids
+    coop::ground_hose_sync::Install(&session);  // the host's garden hoses
     // The client world-save block: registers its gate and arms the one save detour, in every
     // role (the gate reads the role when a save fires; a host's save passes and is reported).
     coop::save_block::Install(&session);
@@ -438,6 +440,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::voice_chat::OnDisconnectSlot(slot);  // drop the leaver's voice channel + icon state
     coop::sleep_sync::OnDisconnectForSlot(slot);  // the leaver's rest state back to awake, told to every client
     coop::owner_entity_sync::OnPeerLeftSlot(slot);  // destroy the leaver's owner-entity mirrors (its eyer dies with it)
+    coop::ground_hose_sync::OnPeerLeftSlot(slot);  // the leaver's half-sent hoses
     coop::hook_sync::OnPeerLeftSlot(slot);  // the leaver's OWNER-PHASE hook mirrors; anchored ones are the host's and stay
     coop::player_inventory_sync::OnDisconnectForSlot(slot);  // re-arm the on-join push; the leaver's profile stays held
 }
@@ -603,6 +606,7 @@ DisconnectStats DisconnectAll() {
     coop::rider_hold::OnDisconnect();  // last: any movement still held ticks again
     coop::balance_sync::OnDisconnect();  // reset the balance broadcast dedup
     coop::spill_sync::OnDisconnect();
+    coop::ground_hose_sync::OnDisconnect();
     // Last, after every element drain: the client's transfer state, its received identity map and
     // the ephemeral zcoop_<pid> slot the join wrote. The map's binds resolve against Elements, so
     // it must outlive their drain; the slot file is read once at the join and never again, and a
@@ -760,6 +764,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; coop::kerfus_lanes::Tick(session); }  // the Kerfus lanes' watches; CLIENT: waiting states; HOST: queued verbs
     { PP::Scope _s{PP::Bucket::Interactable}; coop::served_player::Tick(); }  // HOST: the served robots' seams
     { PP::Scope _s{PP::Bucket::Interactable}; coop::spill_sync::Tick(); }  // the spills the hook saw
+    { PP::Scope _s{PP::Bucket::Interactable}; coop::ground_hose_sync::Tick(); }  // the hoses' poll
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:ambient_creature"}; coop::ambient_creature_sync::Tick(); }  // the walking trees' size and landing
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:ambient_fixture"}; coop::ambient_fixture_sync::Tick(); }  // the holes' and branches' poll
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sus_hole_intent"}; coop::sus_hole_intent::Tick(session); }  // CLIENT: its stamped sus holes go to the host; HOST: the queued ones are made
