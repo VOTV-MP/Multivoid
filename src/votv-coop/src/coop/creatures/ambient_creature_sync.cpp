@@ -146,7 +146,8 @@ bool SendTree(coop::net::Session& s, void* obj, Tree& t) {
 
 void HostTick(coop::net::Session& s) {
     DrainHost();
-    if (!g_anyDirty) return;
+    // A send reaches only a world-ready peer; the trees stay dirty until one is, and the connect replay marks them all for it.
+    if (!g_anyDirty || !s.AnyWorldReadyPeer()) return;
     bool held = false;
     for (auto it = g_trees.begin(); it != g_trees.end();) {
         Tree& t = it->second;
@@ -208,7 +209,9 @@ void Install(coop::net::Session* session) {
     g_session.store(session);
     if (!g_watchTaken) {
         g_watchTaken = SG::WatchName(kRowOnLandedWalkingTree, kTag, nullptr, &OnLandedPost);
-        if (!g_watchTaken) UE_LOGE("ambient_creature_sync: the watch on a walking tree's landing was refused -- retried each pump");
+        static bool sSaid = false;
+        if (!g_watchTaken && !sSaid) UE_LOGE("ambient_creature_sync: the watch on a walking tree's landing was refused -- retried each pump");
+        sSaid = !g_watchTaken;
     }
 }
 

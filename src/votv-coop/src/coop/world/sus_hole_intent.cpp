@@ -97,6 +97,8 @@ std::vector<ue_wrap::CachedObjRef> g_stamped;
 std::vector<Payload> g_outbox;
 
 bool g_hooked = false;
+bool g_armed = false;       // the hook calls back only while a client session runs: it sits on a native every Blueprint spawn calls
+void* g_hookFn = nullptr;
 bool g_gaveUp = false;
 int g_tries = 0;
 uint64_t g_nextTryMs = 0;
@@ -251,13 +253,19 @@ const char* ReasonName(Reason why) {
 }
 
 void Install(coop::net::Session* session) {
-    if (g_hooked || g_gaveUp || !session || session->role() != coop::net::Role::Client) return;
+    if (g_gaveUp || !session || session->role() != coop::net::Role::Client) return;
+    if (g_hooked) {
+        if (!g_armed) g_armed = UH::SetArmed(g_hookFn, &OnFinishSpawnPost, true);
+        return;
+    }
     const uint64_t now = NowMs();
     if (now < g_nextTryMs) return;
     g_nextTryMs = now + kRetryMs;
     const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowFinishSpawningActor);
-    if (fn && UH::InstallPostHook(fn, &OnFinishSpawnPost)) {
+    if (fn && UH::InstallPostHook(fn, &OnFinishSpawnPost, /*armed=*/false)) {
         g_hooked = true;
+        g_hookFn = fn.Fn();
+        g_armed = UH::SetArmed(g_hookFn, &OnFinishSpawnPost, true);
         UE_LOGI("[SUS-HOLE] watching FinishSpawningActor for the sus hole spawner's holes (a client's roll goes to the host)");
     } else if (++g_tries >= kMaxTries) {
         g_gaveUp = true;
@@ -304,6 +312,7 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(g_counters.received), static_cast<unsigned long long>(g_counters.accepted),
                 static_cast<unsigned long long>(refused));
     g_counters = Counters{};
+    if (g_armed && UH::SetArmed(g_hookFn, &OnFinishSpawnPost, false)) g_armed = false;
     g_stamped.clear();
     g_outbox.clear();
     for (int slot = 1; slot < coop::players::kMaxPeers; ++slot) g_slots[slot] = Slot{};

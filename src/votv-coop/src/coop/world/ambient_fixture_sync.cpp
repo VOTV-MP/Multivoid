@@ -325,8 +325,9 @@ void HostPass(coop::net::Session& s) {
 void HostTick(coop::net::Session& s) {
     ++g_tick;
     DrainHost();
-    // With no client there is nobody to send to; a client's connection sets the joiner's census and sends what waits.
-    if (g_work && s.connectedPeerCount() > 0) HostPass(s);
+    // A send reaches only a world-ready peer; a joiner still loading is answered whole by the connect replay at its edge, so
+    // the pass waits, with its work kept, until one is ready.
+    if (g_work && s.AnyWorldReadyPeer()) HostPass(s);
 }
 
 // ---- CLIENT ----
