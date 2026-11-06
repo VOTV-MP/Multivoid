@@ -138,10 +138,9 @@ void ClientTick(coop::net::Session& s) {
         void* hole = ref.Get();
         if (!hole) continue;
         ue_wrap::FVector at{};
-        ue_wrap::FRotator rot{};
-        if (!E::TryGetActorLocation(hole, at) || !E::TryGetActorRotation(hole, rot)) continue;
+        if (!E::TryGetActorLocation(hole, at)) continue;
         AC::Destroy(hole);  // the host makes the one set; this player's roll is only its word
-        g_outbox.push_back(Payload{at.X, at.Y, at.Z, rot.Pitch, rot.Yaw, rot.Roll});
+        g_outbox.push_back(Payload{at.X, at.Y, at.Z});
         UE_LOGI("[SUS-HOLE] this player's spawner rolled a hole at (%.0f %.0f %.0f) -- the host makes it", at.X, at.Y, at.Z);
     }
     g_stamped.clear();
@@ -292,8 +291,7 @@ void Tick(coop::net::Session& session) {
 void OnIntent(coop::net::Session& session, int senderSlot, const Payload& p) {
     if (session.role() != coop::net::Role::Host) return;
     ++g_counters.received;
-    if (senderSlot < 1 || senderSlot >= coop::players::kMaxPeers || !Finite3(p.x, p.y, p.z, coop::net::kMaxCoord) ||
-        !std::isfinite(p.pitch) || !std::isfinite(p.yaw) || !std::isfinite(p.roll)) {
+    if (senderSlot < 1 || senderSlot >= coop::players::kMaxPeers || !Finite3(p.x, p.y, p.z, coop::net::kMaxCoord)) {
         Refuse(kMalformed, senderSlot, p, nullptr);
         return;
     }

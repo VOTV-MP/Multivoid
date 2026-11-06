@@ -281,7 +281,7 @@ bool ClientBody() {
     OnGameThread([&] {
         ue_wrap::FVector me{};
         if (!Me() || !E::TryGetActorLocation(Me(), me)) return;
-        coop::net::SusHoleIntentPayload p{me.X + 2000.f, me.Y, me.Z, 0.f, 0.f, 0.f};
+        coop::net::SusHoleIntentPayload p{me.X + 2000.f, me.Y, me.Z};
         harness::session_runtime::Session().SendReliable(coop::net::ReliableKind::SusHoleIntent, &p, sizeof(p));
     });
     Mark("bad_sent");

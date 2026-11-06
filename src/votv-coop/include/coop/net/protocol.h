@@ -1988,12 +1988,12 @@ static_assert(sizeof(AmbientFixtureStatePayload) == 68, "AmbientFixtureStatePayl
 static_assert(sizeof(AmbientFixtureStatePayload) <= 256 - 20 - 8,
               "AmbientFixtureStatePayload must fit in one reliable datagram");
 
-// A sus hole the client's own spawner rolled (SusHoleIntent): where its hole stood, as the spawner placed it.
+// A sus hole the client's own spawner rolled (SusHoleIntent): where its hole stood. The host places the hole by its own
+// trace at that point, so no rotation crosses.
 struct SusHoleIntentPayload {
-    float x, y, z;           // 12
-    float pitch, yaw, roll;  // 12
+    float x, y, z;  // 12
 };
-static_assert(sizeof(SusHoleIntentPayload) == 24, "SusHoleIntentPayload must be 24 bytes");
+static_assert(sizeof(SusHoleIntentPayload) == 12, "SusHoleIntentPayload must be 12 bytes");
 static_assert(sizeof(SusHoleIntentPayload) <= 256 - 20 - 8, "SusHoleIntentPayload must fit in one reliable datagram");
 
 // One message of the drill filler (DevLoadFiller): its place in the run and the run's length; the rest is fill.
