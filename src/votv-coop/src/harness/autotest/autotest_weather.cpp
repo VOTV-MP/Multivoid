@@ -1,6 +1,10 @@
 // harness/autotest/autotest_weather.cpp -- the weather-sync test: forced rain cycles
-// (VOTVCOOP_RUN_WEATHER_TEST), a host-only driver; clients apply through the wire. Interfaces and
-// docs in harness/autotest.h.
+// (VOTVCOOP_RUN_WEATHER_TEST), a host-only driver; clients apply through the wire.
+//
+// After the settle, DebugForceRain forces rain on, off, on, off at 5 s intervals; the observer on
+// setRainProperties broadcasts each. Pass: two or more host broadcast lines, two or more client
+// applied lines, and both peers' isRaining diagnostic matching after each toggle. Blocks about
+// 30 s.
 
 #include "harness/autotest.h"
 

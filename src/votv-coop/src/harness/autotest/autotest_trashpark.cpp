@@ -1,6 +1,5 @@
 // harness/autotest/autotest_trashpark.cpp -- the trash morph gate, shown red and green in one
-// run (VOTVCOOP_RUN_TRASH_PARK=1 on both peers). The interface and the per-routine docs live in
-// harness/autotest.h.
+// run (VOTVCOOP_RUN_TRASH_PARK=1 on both peers).
 //
 // Each peer calls the pile's own morph verb, `toClump`, on the nearest chip pile -- the verb the
 // gate guards, and the one every in-game trigger ends in: the collision component's overlap

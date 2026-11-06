@@ -1,5 +1,5 @@
-// harness/autotest/autotest_grab.cpp -- autonomous grab test; no E-press from a human required. The
-// public interface is in harness/autotest.h.
+// harness/autotest/autotest_grab.cpp -- autonomous grab test; no E-press from a human required. Env
+// VOTVCOOP_RUN_GRAB_TEST=1, host.
 //
 // Expected on the host: grab_hook[PHC.Grab] at the GrabComponentAtLocation call,
 // grab_hook[PHC.SetTarget] once a second (throttled one in thirty), grab_hook[PHC.Release PRE]
@@ -45,6 +45,10 @@ namespace cfg = coop::config;
 
 }  // namespace
 
+// The nearest Aprop_C derivative is teleported to the player's hand and driven through
+// grabHandle's GrabComponentAtLocation, SetTargetLocation and ReleaseComponent by reflection, the
+// same ProcessEvent-dispatched UFunctions a real keypress reaches, so the whole observer pipeline
+// runs end to end. Blocks about 20 s.
 void RunAutonomousGrabTest() {
     const bool isHost = !IsClientRole();  // default Host if unset
     const char* roleStr = isHost ? "host" : "client";

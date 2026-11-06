@@ -2,7 +2,12 @@
 // entries and ignite at the host's own slot-1 puppet and judge by what coop::player_damage refused
 // and what the HOST's saveSlot.health did; the same damage on the host's own player is the control
 // that the calls land. Each phase ends on readiness, never a clock. Red:
-// dev.player_damage_no_refusal. Interfaces and per-routine docs in harness/autotest.h.
+// dev.player_damage_no_refusal.
+//
+// Host verdict, once slot 1 is world-ready: the damage verb, addDamage and ignite are invoked at
+// the slot-1 puppet and judged by coop::player_damage's refusal counts against the host's own
+// saveSlot.health (shared per machine, so a puppet's damage written here drains the host); health
+// is restored after. PASS = refused; FAIL = landed. The client only connects.
 
 #include "harness/autotest.h"
 

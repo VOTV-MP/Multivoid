@@ -1,7 +1,11 @@
 // harness/autotest/autotest_playerdmg.cpp -- the PlayerHit delivery end-to-end autotest
 // (VOTVCOOP_RUN_PLAYERDMG_TEST): the HOST delivers a synthetic PlayerHit to slot 1 and observes its
-// puppet flash via the round-trip streamed health drop; the CLIENT is passive. Interfaces and
-// per-routine docs in harness/autotest.h.
+// puppet flash via the round-trip streamed health drop; the CLIENT is passive.
+//
+// The host delivers the hit through player_damage::DebugForceHitPuppet (player_hit::Deliver), the
+// client runs addDamage on its own player, and the client's streamed health drop flashes the
+// host's slot-1 puppet: the full host-to-owner delivery with no creature. Both peers; the host
+// drives and observes.
 
 #include "harness/autotest.h"
 

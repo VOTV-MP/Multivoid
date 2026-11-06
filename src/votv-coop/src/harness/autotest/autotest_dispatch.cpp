@@ -1,5 +1,5 @@
 // harness/autotest/autotest_dispatch.cpp -- see harness/autotest_dispatch.h. Each routine is
-// described at its declaration in harness/autotest.h.
+// named at its declaration in harness/autotest/drill_threads.h.
 
 #include "harness/autotest_dispatch.h"
 

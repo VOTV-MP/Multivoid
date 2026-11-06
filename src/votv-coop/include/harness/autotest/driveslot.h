@@ -1,5 +1,5 @@
 // harness/autotest/driveslot.h -- the drive-slot test's entry points, in their own header for the
-// reason slip_drill.h gives: harness/autotest.h sits at the prose gate's half-comment floor.
+// reason slip_drill.h gives: a drill with a doc of its own is declared beside its implementation.
 
 #pragma once
 

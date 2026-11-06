@@ -1,7 +1,9 @@
 // harness/autotest/autotest_puppetframe.cpp -- the puppet-frame nameplate CAPTURE RIG
 // (VOTVCOOP_RUN_PUPPET_FRAME): frame the slot-1 STANDING puppet up close for an autonomous
-// nameplate screenshot. A capture rig, not a vitals test. Interfaces and per-routine docs in
-// harness/autotest.h.
+// nameplate screenshot. A capture rig, not a vitals test.
+//
+// The host stands about 420 units back from the standing slot-1 puppet, aims at its head and
+// holds the frame so mp.py puppetshot can capture the nameplate; the client stands.
 
 #include "harness/autotest.h"
 

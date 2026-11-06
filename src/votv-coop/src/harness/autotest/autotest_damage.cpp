@@ -1,6 +1,9 @@
 // harness/autotest/autotest_damage.cpp -- the damage hurt-flash end-to-end autotest
 // (VOTVCOOP_RUN_DAMAGE_TEST): the client drives its own health down, the host watches its puppet.
-// Interfaces and per-routine docs in harness/autotest.h.
+//
+// The client lowers its own saveSlot.health in steps, the vitals stream carries the fraction, and
+// the host confirms its slot-1 puppet's nameplate flashes red (RemotePlayer::IsHurtFlashing), with
+// no new wire. Both peers; the host observes, the client drives.
 
 #include "harness/autotest.h"
 #include "harness/screenshot.h"

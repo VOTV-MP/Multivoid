@@ -1,6 +1,11 @@
 // harness/autotest/autotest_flashlight.cpp -- the flashlight-toggle end-to-end test
 // (VOTVCOOP_RUN_FLASHLIGHT_TEST): both peers toggle, and the ItemActivate wire path drives
-// the other peer's puppet. Interface and doc in harness/autotest.h.
+// the other peer's puppet.
+//
+// The local flashlight is toggled five times, 2 s apart, through item_activate::DebugForceToggle
+// -- the Blueprint path is gated on real engine input, which reflection cannot synthesise -- and
+// each toggle sends ItemActivate, so the other peer's puppet reflects it
+// (item_activate::ApplyToPuppet). Blocks about 25 s.
 
 #include "harness/autotest.h"
 

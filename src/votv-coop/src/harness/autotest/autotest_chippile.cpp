@@ -562,8 +562,10 @@ void RunPuppetGrabProbe() {
 // divergence, so the client's join-time orphan census has something to count. Both peers load
 // the same save; in the pre-connect window the host destroys five piles (the snapshot omits
 // them, so the client's natives get no proxy) and moves three (the client's natives sit far
-// from their proxies). It must finish before the client connects, and logs a timestamped
-// completion line to check that against the host log.
+// from their proxies). It must finish before the client connects (mp.py smoke --host-settle), and
+// logs a timestamped completion line to check that against the host log. The client's unmatched
+// natives survive as orphans, which the join sweep's [PILE-CENSUS] reports: the only autonomous
+// way to populate the orphan histogram (a clean same-save join has none).
 void RunPileDriftScenario() {
     const bool isHost = !IsClientRole();
     if (!isHost) {

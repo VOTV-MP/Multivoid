@@ -1,12 +1,8 @@
 // harness/autotest/slip_drill.h -- the slip drill's entry points.
 //
-// Its own header rather than a row in harness/autotest.h. That catalog is 349 lines declaring 45
-// unrelated routines, and it sits at EXACTLY the prose gate's half-comment floor -- 210 comment
-// lines against 90 of code, 300 counted, where the rule trips above 300. Measured: adding one
-// comment and two declarations takes it to 303 and the gate refuses the commit. So a new drill
-// cannot be declared there at all. Declaring it beside its own module is also the shape the
-// tree is moving toward (death_state_probe.h); finishing that move for the other 45 is a lane of
-// its own, and until it runs both homes exist.
+// Its own header rather than a row in harness/autotest/drill_threads.h, which holds one line per
+// older drill. A drill with a doc of its own is declared beside its module
+// (death_state_probe.h is the same shape).
 
 #pragma once
 

@@ -1,6 +1,6 @@
 // harness/autotest/autotest_menuspawn.cpp -- the spawn-menu cross-peer drill
-// (VOTVCOOP_RUN_MENUSPAWN_DRILL=1), both peers. The interface and the description live in
-// harness/autotest.h.
+// (VOTVCOOP_RUN_MENUSPAWN_DRILL=1), both peers. The client drives the menu's own spawn and the
+// host's world must gain the prop.
 //
 // The client drives the spawn menu's OWN spawn(FName) -- the function a click on a catalog slot
 // calls (ui_spawnmenu::spawn[13] -> gamemode->spawnPropThroughGamemode(n, a, 1, ...)), verified on
@@ -189,7 +189,7 @@ bool DriveMenuSpawn(void* processor, const R::FName& row) {
 
 // --- Spawn-menu cross-peer drill (VOTVCOOP_RUN_MENUSPAWN_DRILL=1) --------------------
 //
-// See harness/autotest.h. Both peers take a baseline of the catalog row's actors once they are
+// Both peers take a baseline of the catalog row's actors once they are
 // ready; the client then drives the menu's spawn and both report what their own world gained:
 //   menuspawn: row='<name>' baseline=<n> (role=<host|client>)
 //   menuspawn: CLIENT spawned key='<key>' loc=(x,y,z)

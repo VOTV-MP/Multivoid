@@ -1,7 +1,13 @@
 // harness/autotest/autotest_clump.cpp -- garbage-clump autonomous tests: the held-clump
 // ATTACH e2e (VOTVCOOP_RUN_CLUMP_TEST) + the clump VISIBILITY probe
-// (VOTVCOOP_RUN_CLUMPVIS_PROBE). The interfaces and the per-routine docs live
-// in harness/autotest.h.
+// (VOTVCOOP_RUN_CLUMPVIS_PROBE).
+//
+// The clump-mirror test: the host spawns a prop_garbageClump_C, writes it to grabbing_actor so the
+// held-prop send broadcasts it, then sweeps it; the client mirrors it kinematically. The
+// non-Aprop_C kinematic path, and no crash.
+//
+// The clump visibility probe, solo: spawns a bare prop_garbageClump_C in front of the player and
+// logs whether its StaticMesh asset is null or named. Scenario: mp.py clumpvis.
 
 #include "harness/autotest.h"
 

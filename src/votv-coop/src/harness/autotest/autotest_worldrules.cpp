@@ -1,7 +1,13 @@
 // harness/autotest/autotest_worldrules.cpp -- the world-rules probe
 // (VOTVCOOP_RUN_WORLDRULES_PROBE): reads BOTH copies of the world rules on a peer and logs every
-// rule, so a rig can compare the copies and the peers. The interface and the description live in
-// harness/autotest.h.
+// rule, so a rig can compare the copies and the peers.
+//
+// Both peers. It reads the rules panel's path (ue_wrap::game_rules::ReadLocal) once the peer is
+// ready and logs every rule with BOTH of its copies, the per-process one the game reads and the
+// saved one, marking a rule whose copies differ, then waits for the values the local player keeps
+// from the rules to agree with them. Ends on `worldrules: DONE role=<r> rules=<n>
+// mismatches=<m> latch-disagreements=<k>`. It tells something only on a world whose rules are not
+// the defaults, which a save names in its localGameRules.
 
 #include "harness/autotest.h"
 

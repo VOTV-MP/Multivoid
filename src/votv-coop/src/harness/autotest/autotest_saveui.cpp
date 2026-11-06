@@ -3,9 +3,16 @@
 // The pair belongs together: both are the client-side half of host-only persistence, and both are
 // client-only and verify from the log the module itself writes.
 //   - RunAutonomousSaveBlockTest drives saveSlot.saveToSlot, so the native SaveGameToSlot block is
-//     observable without waiting for an autosave or a menu trigger.
+//     observable without waiting for an autosave or a menu trigger. After the settle the live
+//     saveSlot_C is resolved and its saveToSlot called by reflection, driving
+//     UGameplayStatics::SaveGameToSlot (the hook target); the client log shows the invoke line and
+//     then the block line, so the hook cancels the write rather than merely installing. The host
+//     runs nothing. Env VOTVCOOP_RUN_SAVEBLOCK_TEST=1.
 //   - RunAutonomousSaveBtnDisableTest drives mainPlayer_C::InpActEvt_Escape, so the pause-menu
-//     Save-button grey-out is observable without a real ESC press.
+//     Save-button grey-out is observable without a real ESC press (a real ESC is impossible
+//     autonomously): save_button_disable's observer disables the live pause-menu button_Save and
+//     logs the GetIsEnabled read-back; the visual grey needs a human glance. Env
+//     VOTVCOOP_RUN_SAVEBTN_TEST=1.
 
 #include "harness/autotest.h"
 

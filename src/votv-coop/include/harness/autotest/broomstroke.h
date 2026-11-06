@@ -1,8 +1,7 @@
 // harness/autotest/broomstroke.h -- the broom-stroke drill's own declaration.
 //
-// Beside its implementation rather than in harness/autotest.h, whose catalogue carries a paragraph
-// per drill and has reached the length at which a declaration file counts as an essay. A drill is
-// one feature; this is where its interface belongs.
+// Beside its implementation rather than in harness/autotest/drill_threads.h, the one-line
+// catalogue of the older drills. A drill is one feature; this is where its interface belongs.
 //
 // It measures a whole broom stroke, swung through the broom's own right mouse button on a broom each
 // peer really holds, followed on both peers by element id: each peer holding the button, the host

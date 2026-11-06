@@ -1,7 +1,14 @@
 // harness/autotest/autotest_tracker_selftest.cpp -- prop_element_tracker self-tests: the
 // dead-Prop-Element reaper check (VOTVCOOP_RUN_PROPREAP_TEST) and the re-seed
-// snapshot-completeness probe (VOTVCOOP_RUN_RESEED_TEST). Both are described in
-// harness/autotest.h, which is where the interfaces live.
+// snapshot-completeness probe (VOTVCOOP_RUN_RESEED_TEST). Both run on both peers.
+//
+// The reaper check: a synthetic dead local Prop element must be evicted by
+// ReapDeadLocalPropElements (a level transition flags ~2,000 props PendingKill without
+// K2_DestroyActor, and their shadows leaked until the caps ran out).
+//
+// The re-seed probe: after a 25 s settle (past the boot-time level travel) ReSeedKnownKeyedProps
+// runs on the game thread and logs how many new live keyed props it adds; a large count means the
+// boot seed ran on the pre-travel world and the story map's placed props were untracked.
 
 #include "harness/autotest.h"
 
