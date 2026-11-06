@@ -134,7 +134,9 @@ void OnInitPost(const sg::Call& c) {
         g_known[key] = now;
         return;
     }
-    // A record landing here is the far side's change arriving, not a new one.
+    // A record landing here is the far side's change arriving, not a new one. Not `fromOurCode` as in
+    // prop_record_refresh: the drill runs a can's own verbs through our CallFunction, so that flag would be true for the
+    // change under test too; IsApplying is true only inside ApplyRecord.
     if (ue_wrap::save_record::IsApplying()) {
         g_known[key] = now;
         ++g_landed;
