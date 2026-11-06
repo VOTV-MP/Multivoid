@@ -1,16 +1,16 @@
 // coop/creatures/kerfur_command.h -- the kerfur's radial menu, relayed host-authoritatively; the kerfur
 // serves whoever picked a verb.
 //
-// The game's actionName sets the kerfur's State and calls move(), and its verbs read the player as player 0 --
-// the follow MoveTo and the patrol on GetPlayerPawn(0), the disc insert on lib.getMainPlayer() -- which on the host is
-// always the host. Both roles CANCEL the local dispatch (a client's mirror is a
-// parked actor) and the host runs the real actionName with the requester recorded in served_player first,
-// so those reads answer that player's puppet and the game's own follow follows it; a request waits while
-// the host has no body for its sender. A command the game refuses (kill mode, a job) changes nobody's
-// service, the host's own hands the kerfur back to player 0, a leaver's ends, and murder mode's at its
-// startKill, before the chase reads anyone. A client's verb runs inside its requester_feedback scope, so its hint, gloss
-// or sound (a get_reports refusal too: nothing writes a puppet's hand) goes to that client, and a command refused before
-// it runs, or waiting, is answered to it (kerfur_command_answer). turn_off stays in kerfur_convert. Page: docs/npcs-and-kerfur.md.
+// The game's actionName sets the kerfur's State and calls move(), and its verbs read the player as player 0 (the follow
+// MoveTo and the patrol on GetPlayerPawn(0), the disc insert on lib.getMainPlayer()), which on the host is always the
+// host. Both roles CANCEL the local dispatch (a client's mirror is a parked actor) and the host runs the real actionName
+// with the requester recorded in served_player first, so those reads answer that player's puppet; a request waits while
+// the host has no body for its sender. A command the game refuses (kill mode, a job) changes nobody's service, the host's
+// own hands the kerfur back to player 0, a leaver's ends, and murder mode's at its startKill. A client's verb runs inside
+// its requester_feedback scope, so its hint, gloss or sound goes to that client, and a command refused before it runs,
+// or waiting, is answered to it (kerfur_command_answer). A get_reports reads the hand, which the host cannot see for a
+// client: the press carries the held disc's record (kerfur_command_wire) and the host runs the verb with a copy of it in
+// the puppet's hand (kerfur_disc_carry). turn_off stays in kerfur_convert. Page: docs/npcs-and-kerfur.md.
 //
 // Principle 7: gameplay/network module; engine access through ue_wrap/kerfur and game_thread only.
 

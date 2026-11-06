@@ -47,6 +47,7 @@ std::vector<Held> g_held;
 
 struct Counts {
     uint64_t refusedSent = 0, waitsSent = 0, refusedShown = 0, waitsShown = 0, local = 0, foreign = 0, lost = 0;
+    uint64_t consumedSent = 0, consumed = 0, consumeMiss = 0;
 };
 Counts g_counts;
 
@@ -101,11 +102,16 @@ void Send(coop::net::Session* session, uint8_t slot, uint32_t requestId, uint8_t
         ++g_counts.lost;
         return;
     }
-    const uint64_t n = result == KA::kResultWaits ? ++g_counts.waitsSent : ++g_counts.refusedSent;
+    const uint64_t n = result == KA::kResultWaits          ? ++g_counts.waitsSent
+                       : result == KA::kResultConsumedHeld ? ++g_counts.consumedSent
+                                                           : ++g_counts.refusedSent;
     if (n > kLinesPerKind) return;
     if (result == KA::kResultWaits)
         UE_LOGI("kerfur_command_answer: HOST told slot %u its command #%u waits", static_cast<unsigned>(slot),
                 requestId);
+    else if (result == KA::kResultConsumedHeld)
+        UE_LOGI("kerfur_command_answer: HOST told slot %u its command #%u took the disc it carried",
+                static_cast<unsigned>(slot), requestId);
     else
         UE_LOGI("kerfur_command_answer: HOST told slot %u its command #%u is refused: %s", static_cast<unsigned>(slot),
                 requestId, ReasonName(reason));
@@ -129,6 +135,10 @@ void SendWaits(coop::net::Session* session, uint8_t slot, uint32_t requestId) {
     Send(session, slot, requestId, KA::kResultWaits, 0);
 }
 
+void SendConsumed(coop::net::Session* session, uint8_t slot, uint32_t requestId) {
+    Send(session, slot, requestId, KA::kResultConsumedHeld, 0);
+}
+
 void ShowLocal(uint8_t reason) {
     const char* line = reason <= KA::kRefusalMax ? RefusalLine(reason) : nullptr;
     std::wstring text;
@@ -143,12 +153,28 @@ void ShowLocal(uint8_t reason) {
 
 void OnAnswer(const KerfurCommandAnswerPayload& p) {
     const auto held = std::find_if(g_held.begin(), g_held.end(), [&](const Held& h) { return h.id == p.requestId; });
+    const bool consumedHeld = p.result == KA::kResultConsumedHeld && p.reason == 0;
     const char* line = LineFor(p.result, p.reason);
-    if (held == g_held.end() || !line) {
+    if (held == g_held.end() || (!line && !consumedHeld)) {
         ++g_counts.foreign;
         UE_LOGW("kerfur_command_answer: the host's answer for command #%u (result %u, reason %u) names no command sent "
                 "here, or a value this build does not send -- dropped", p.requestId, static_cast<unsigned>(p.result),
                 static_cast<unsigned>(p.reason));
+        return;
+    }
+    if (consumedHeld) {
+        // The host's verb took the disc this command carried: the pledge ends here, and the disc is destroyed on this
+        // machine only if it is still the one pledged. A command that carried none names no disc to destroy.
+        const std::optional<coop::kerfur_disc_carry::Pledge> pledge = held->pledge;
+        g_held.erase(held);
+        if (pledge && coop::kerfur_disc_carry::OnConsumed(*pledge)) {
+            ++g_counts.consumed;
+        } else {
+            ++g_counts.consumeMiss;
+            if (!pledge)
+                UE_LOGW("kerfur_command_answer: the host's verb took a disc for command #%u, which pledged none here -- "
+                        "consume-miss", p.requestId);
+        }
         return;
     }
     // A wait is not the end of its command: the id stays, and a later refusal of it is shown.
@@ -167,10 +193,12 @@ void OnAnswer(const KerfurCommandAnswerPayload& p) {
 
 void OnDisconnect() {
     const Counts& c = g_counts;
-    if (c.refusedSent || c.waitsSent || c.refusedShown || c.waitsShown || c.local || c.foreign || c.lost)
-        UE_LOGI("kerfur_command_answer: session end -- sent refusals=%llu waits=%llu, showed refusals=%llu waits=%llu "
-                "local=%llu, foreign=%llu lost=%llu", c.refusedSent, c.waitsSent, c.refusedShown, c.waitsShown,
-                c.local, c.foreign, c.lost);
+    if (c.refusedSent || c.waitsSent || c.refusedShown || c.waitsShown || c.local || c.foreign || c.lost ||
+        c.consumedSent || c.consumed || c.consumeMiss)
+        UE_LOGI("kerfur_command_answer: session end -- sent refusals=%llu waits=%llu consumed=%llu, showed refusals=%llu "
+                "waits=%llu local=%llu, foreign=%llu lost=%llu, consumed here=%llu consume-miss=%llu", c.refusedSent,
+                c.waitsSent, c.consumedSent, c.refusedShown, c.waitsShown, c.local, c.foreign, c.lost, c.consumed,
+                c.consumeMiss);
     g_counts = Counts{};
     g_nextId = 0;
     g_held.clear();

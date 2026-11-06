@@ -8,7 +8,9 @@
 // copy of the verb, which would have raised that hint, never ran. A command that never reached the host (its Omega
 // untracked here, the send failed) is worded locally, with no wire. A malformed request is dropped and counted by
 // kerfur_command; a flood is answered once a streak. The client keeps the ids it sent that have no answer yet, a few,
-// and drops an answer that names none of them.
+// and drops an answer that names none of them. A get_reports that carried the client's held disc and took it is answered
+// the same way (consumed-held), on which the client destroys the disc it pledged (kerfur_disc_carry), and the pledge
+// is kept with the id.
 //
 // Principle 7: gameplay/network module; engine access through ue_wrap/world only. Page: docs/npcs-and-kerfur.md.
 
@@ -41,12 +43,15 @@ void ShowLocal(uint8_t reason);
 // (0), the host's own slot, or an unknown reason is not answered. Game thread.
 void SendRefused(coop::net::Session* session, uint8_t slot, uint32_t requestId, uint8_t reason);
 void SendWaits(coop::net::Session* session, uint8_t slot, uint32_t requestId);
+// HOST: tell `slot` its command `requestId` ran on the disc it carried and the Omega took it (consumed-held). Game thread.
+void SendConsumed(coop::net::Session* session, uint8_t slot, uint32_t requestId);
 
 // CLIENT: the host's answer: shown as a hint in the player's language when it names a command sent here, else dropped
-// and counted. Game thread.
+// and counted; a consumed-held ends the pledge of its command and destroys the pledged disc here (kerfur_disc_carry).
+// Game thread.
 void OnAnswer(const coop::net::KerfurCommandAnswerPayload& p);
 
-// Session end: the counts are said and the held ids forgotten.
+// Session end: the counts are said and the held ids and their pledges forgotten.
 void OnDisconnect();
 
 }  // namespace coop::kerfur_command_answer

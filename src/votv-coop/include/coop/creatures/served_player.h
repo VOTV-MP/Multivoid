@@ -8,8 +8,9 @@
 // insert's lib.getMainPlayer(), told at the script-body gate by the variable the insert writes; the natives
 // by post-hooks whose source is the calling robot. Each seam is armed only while a record needs it, and a
 // robot is recorded only while all its seams can answer. Which read is which, and which stay the host's:
-// docs/coop-dispatch-visibility.md. Nothing writes a puppet's hand, so a client's get_reports finds it empty
-// and gets the game's own refusal hint, which the host routes to that client. Game thread.
+// docs/coop-dispatch-visibility.md. This module writes nothing on the puppet: its hand is written only by
+// kerfur_disc_carry, for the span of a get_reports that carries the client's disc. A get_reports with no disc finds
+// the hand empty and gets the game's own refusal hint, which the host routes to that client. Game thread.
 
 #pragma once
 

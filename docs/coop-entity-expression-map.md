@@ -138,6 +138,12 @@ are peer-gated. `[V]`
   itself travels as an ordinary prop birth, on the whitelist a client's fresh spawn needs to reach
   the host at all. `[V]` A desk module plugged in is destroyed in the
   hand by the native path and rides the same seam; an unplugged one is born into the hand. `[V]`
+  **A disc consumed by a host verb** (a client's `get_reports`, which the Omega answers by reading the hand and
+  destroying the disc): the disc is not a world entity here. It travels with the command as its record; the host
+  builds a copy in the puppet's hand for the verb's one call, marked so that neither the copy's birth nor the
+  verb's destroy of it is published, and the host answers that the copy was taken. The client's own disc dies on
+  the client through the game's destroy, if it is still the disc the press pledged; the hand mirror follows the
+  emptied hand. `[?]`
 - **The connect reconcile.** Explicit deletes, the claim-tracked snapshot bracket, position
   corrections, and the quiescence-gated divergence sweep bounded by a per-class completeness floor
   and a half-of-the-world valve, then the pile bind ([join.md](join.md)). The join barrier means

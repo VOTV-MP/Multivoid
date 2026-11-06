@@ -72,10 +72,17 @@ constexpr uint8_t kOmegaSeams = SP::kPlayerPawn | SP::kMainPlayer;
 // joiner's curtain and its first pose, a mid-join window rather than a verdict), or the Omega's seams and its
 // startKill watch still settling -- since the verb's own reads would take the host. A request past the cap, or
 // one that can never run (an unknown sender or command, an eid outside the host range), is refused into the
-// tally. Per-slot state: a leaver's queue goes with its occupant. Game thread.
+// tally. A get_reports that carries a disc keeps with it the verdict of its arrival (the hand lane showed that disc or
+// not). Per-slot state: a leaver's queue, and the discs queued in it, go with its occupant. Game thread.
+
+// A request in a sender's queue: the command, and whether its disc tail passed the host's judge at arrival.
+struct Queued {
+    kcw::Request req;
+    bool tailOk = true;
+};
 
 struct Slot {
-    coop::net::IntentQueue<kcw::Request> queue;
+    coop::net::IntentQueue<Queued> queue;
     bool waitSaid = false;  // the head's wait, said once a streak
     bool preSaid = false;   // a refusal before the queue (full, or an eid outside the host range), answered once a streak
 };
@@ -194,7 +201,15 @@ bool OnAJob(void* actor) {
 // never run for the host's player: when the host cannot serve the Omega as that client (the startKill watch or a
 // seam refused) the command is refused, and the requester is told (Busy). A job refuses any sender's command,
 // whichever player the Omega was serving, since the state is the Omega's own.
-void ExecuteHostCommand(ElementId eid, void* actor, Command c, uint8_t requesterSlot, uint32_t requestId = 0) {
+//
+// `disc` is the record a client's get_reports carried, judged at its arrival: the verb then reads the hand of the
+// puppet of the sender, which holds a copy of that disc for the verb's span (kerfur_disc_carry). The Omega's own
+// gates are read first, since the copy is built only for a verb that will read the hand in the call: one that
+// already holds a disc skips the read and runs as the game runs it, and one a deferral gate holds would read the
+// hand on a later move, outside the span, so it is refused (Busy) with nothing built. The disc is consumed when the
+// verb destroyed the copy, and the requester is told; a copy the verb left is destroyed here, and the client keeps its disc.
+void ExecuteHostCommand(ElementId eid, void* actor, Command c, uint8_t requesterSlot, uint32_t requestId = 0,
+                        const ue_wrap::save_record::SaveRecord* disc = nullptr) {
     const wchar_t* verb = VerbName(c);
     if (!verb) return;
     if (OnAJob(actor)) {
@@ -216,16 +231,51 @@ void ExecuteHostCommand(ElementId eid, void* actor, Command c, uint8_t requester
         Answer(requesterSlot, requestId, KR::Busy);
         return;
     }
-    if (!HostRunVerb(actor, coop::players::Registry::Get().Local(), verb, requesterSlot)) {
+    // Whom the Omega served before goes back to it when the verb is not run.
+    const auto restoreService = [&]() {
         const bool restored = before != coop::players::kPeerIdHost && SP::Serve(actor, before, kOmegaSeams);
         if (!restored) SP::Unserve(actor);
+        return restored ? before : coop::players::kPeerIdHost;
+    };
+    std::optional<coop::kerfur_disc_carry::HandScope> hand;
+    if (disc && c == Command::GetReports) {
+        const auto gate = coop::kerfur_disc_carry::ReadGate(actor);
+        if (gate == coop::kerfur_disc_carry::Gate::Busy) {
+            const uint8_t serves = restoreService();
+            UE_LOGI("kerfur_command: verb '%ls' eid=%u from slot %u refused -- the Omega's task gate is set, its read "
+                    "of the disc would come outside the carry; the kerfur serves slot %u", verb, eid, requesterSlot,
+                    static_cast<unsigned>(serves));
+            Answer(requesterSlot, requestId, KR::Busy);
+            return;
+        }
+        if (gate == coop::kerfur_disc_carry::Gate::HasDisc) {
+            UE_LOGI("kerfur_command: verb '%ls' eid=%u from slot %u runs with no disc carried -- the Omega already "
+                    "holds one, and the game skips the read", verb, eid, requesterSlot);
+        } else {
+            hand.emplace(requesterSlot, *disc);
+            if (!hand->ok()) {
+                hand.reset();
+                const uint8_t serves = restoreService();
+                UE_LOGW("kerfur_command: verb '%ls' eid=%u from slot %u not run -- its disc could not be carried; the "
+                        "kerfur serves slot %u", verb, eid, requesterSlot, static_cast<unsigned>(serves));
+                Answer(requesterSlot, requestId, KR::Unavailable);
+                return;
+            }
+        }
+    }
+    if (!HostRunVerb(actor, coop::players::Registry::Get().Local(), verb, requesterSlot)) {
+        hand.reset();
         UE_LOGW("kerfur_command: verb '%ls' eid=%u did not run -- the kerfur serves slot %u", verb, eid,
-                static_cast<unsigned>(restored ? before : coop::players::kPeerIdHost));
+                static_cast<unsigned>(restoreService()));
         Answer(requesterSlot, requestId, KR::Unavailable);
         return;
     }
-    UE_LOGI("kerfur_command: HOST ran verb '%ls' eid=%u (requester slot %u, serving slot %u)", verb, eid,
-            requesterSlot, static_cast<unsigned>(requesterSlot));
+    const bool consumed = hand && hand->Consumed();
+    hand.reset();  // the puppet's hand is its own again, and a copy the verb left is gone, before anyone is told
+    UE_LOGI("kerfur_command: HOST ran verb '%ls' eid=%u (requester slot %u, serving slot %u)%s", verb, eid,
+            requesterSlot, static_cast<unsigned>(requesterSlot),
+            consumed ? ", the Omega took the carried disc" : "");
+    if (consumed) coop::kerfur_command_answer::SendConsumed(LoadSession(), requesterSlot, requestId);
 }
 
 // The kill verb's event sets the follow state and calls move() before it sets `kill`: murder mode's chase and
@@ -260,7 +310,8 @@ void RefuseAtServe(uint8_t slot, const char* why) {
 }
 
 // A request whose sender has a body: validated against the kerfur as it is now, then run.
-void RunRequest(const kcw::Request& req, uint8_t senderPeerSlot) {
+void RunRequest(const Queued& q, uint8_t senderPeerSlot) {
+    const kcw::Request& req = q.req;
     const coop::net::KerfurCommandPayload& payload = req.head;
     ++g_runs[senderPeerSlot];
     const auto eid = static_cast<ElementId>(payload.elementId);
@@ -299,14 +350,22 @@ void RunRequest(const kcw::Request& req, uint8_t senderPeerSlot) {
         Answer(senderPeerSlot, payload.requestId, KR::Unavailable);
         return;
     }
-    ExecuteHostCommand(eid, actor, static_cast<Command>(payload.command), senderPeerSlot, payload.requestId);
+    // The hand lane did not show that disc, or its class is not loaded here: nothing is run.
+    if (req.hasRecord && !q.tailOk) {
+        RefuseAtServe(senderPeerSlot, "disc tail not judged ok at arrival");
+        Answer(senderPeerSlot, payload.requestId, KR::Unavailable);
+        return;
+    }
+    ExecuteHostCommand(eid, actor, static_cast<Command>(payload.command), senderPeerSlot, payload.requestId,
+                       req.hasRecord ? &req.record : nullptr);
 }
 
 // Each sender's queue head, once a token allows it: waiting while the host cannot serve the sender, else run.
 void ServeQueues() {
     for (uint8_t slot = 1; slot < coop::players::kMaxPeers; ++slot) {
         Slot& sl = g_slots[slot];
-        sl.queue.Serve(kBudget, coop::net::NowMs, [&](const kcw::Request& r) {
+        sl.queue.Serve(kBudget, coop::net::NowMs, [&](const Queued& q) {
+            const kcw::Request& r = q.req;
             if (!CanRunFor(slot)) {
                 if (!sl.waitSaid) {
                     sl.waitSaid = true;
@@ -318,7 +377,7 @@ void ServeQueues() {
             }
             sl.waitSaid = false;
             sl.preSaid = false;
-            RunRequest(r, slot);
+            RunRequest(q, slot);
             return coop::net::Served::Done;
         });
     }
@@ -401,9 +460,20 @@ void OnCommandChunk(const coop::net::BlobChunkPayload& chunk, uint8_t senderPeer
         AnswerOnceAStreak(senderPeerSlot, payload.requestId, KR::Stale);
         return;
     }
+    // A disc tail is judged once, at arrival, against what the sender's hand lane showed then; a hostile one is dropped
+    // and counted, an honest one the host cannot serve yet keeps its verdict and is answered, and counted, at its turn.
+    bool tailOk = true;
+    if (req.hasRecord) {
+        const auto verdict = coop::kerfur_disc_carry::JudgeTail(req.record, senderPeerSlot, coop::net::NowMs(), &why);
+        if (verdict == coop::kerfur_disc_carry::TailVerdict::Malformed) {
+            Refuse(senderPeerSlot, why);
+            return;
+        }
+        tailOk = verdict == coop::kerfur_disc_carry::TailVerdict::Ok;
+    }
     const uint32_t requestId = payload.requestId;
     Slot& sl = g_slots[senderPeerSlot];
-    if (sl.queue.Push(std::move(req), kMaxPending)) return;
+    if (sl.queue.Push(Queued{std::move(req), tailOk}, kMaxPending)) return;
     Refuse(senderPeerSlot, "queue full");
     AnswerOnceAStreak(senderPeerSlot, requestId, KR::QueueFull);
 }

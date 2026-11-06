@@ -1334,10 +1334,11 @@ enum class ReliableKind : uint8_t {
     // requester, not state. RequesterFeedbackPayload.
     RequesterFeedback = 229,
 
-    // HOST->CLIENT: the host's answer to a KerfurCommand it judged and did not run at once: refused, with the
-    // reason as an enum the client words itself, or waiting for the host's body of its sender. Names the request by
-    // the id the client sent. Host-authored: refused at the host's receive edge; never relayed; not pre-world; the
-    // Default lane. Late join: none, an act sent to its requester, not state. PROVISIONAL number, final at landing.
+    // HOST->CLIENT: the host's answer to a KerfurCommand it judged and did not run at once -- refused, with the
+    // reason as an enum the client words itself, or waiting for the host's body of its sender -- or that ran on the
+    // disc it carried and took it (consumed-held: the client destroys its own). Names the request by the id the
+    // client sent. Host-authored: refused at the host's receive edge; never relayed; not pre-world; the Default
+    // lane. Late join: none, an act sent to its requester, not state. PROVISIONAL number, final at landing.
     // KerfurCommandAnswerPayload.
     KerfurCommandAnswer = 234,
 };
@@ -1779,6 +1780,7 @@ static_assert(sizeof(KerfurCommandPayload) == 12, "KerfurCommandPayload must be 
 namespace kerfur_command_answer {
 inline constexpr uint8_t kResultRefused = 0;  // the host judged the command and refused it: `reason` says why
 inline constexpr uint8_t kResultWaits = 1;    // the host has no body for the sender yet, or its seams are settling
+inline constexpr uint8_t kResultConsumedHeld = 2;  // get_reports took the disc the command carried: the client destroys its own
 
 // Why the host refused a command it understood. The client words each itself; malformed or flooding requests are
 // dropped and counted by the host and never answered, so they have no reason here.

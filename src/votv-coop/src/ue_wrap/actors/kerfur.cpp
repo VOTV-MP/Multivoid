@@ -194,6 +194,41 @@ bool ReadHasFloppy(void* actor, bool& has) {
     return true;
 }
 
+namespace {
+
+// One bool property of the Omega's class, by name, resolved once per call site.
+bool ReadOmegaBool(void* actor, const wchar_t* name, int32_t& off, uint8_t& mask, bool& out) {
+    if (!IsKerfurActor(actor)) return false;
+    if (off == -2 && !R::FindBoolProperty(ResolveKerfurClass(), name, off, mask)) off = -1;
+    if (off < 0) return false;
+    out = (static_cast<const uint8_t*>(actor)[off] & mask) != 0;
+    return true;
+}
+
+}  // namespace
+
+bool ReadAnimation(void* actor, bool& set) {
+    static int32_t sOff = -2;
+    static uint8_t sMask = 0;
+    return ReadOmegaBool(actor, L"animation", sOff, sMask, set);
+}
+
+bool ReadRemoteControl(void* actor, bool& set) {
+    static int32_t sOff = -2;
+    static uint8_t sMask = 0;
+    return ReadOmegaBool(actor, L"remoteControl", sOff, sMask, set);
+}
+
+bool ReadServerValid(void* actor, bool& valid) {
+    if (!IsKerfurActor(actor)) return false;
+    static int32_t sOff = -2;
+    if (sOff == -2) sOff = R::FindPropertyOffset(ResolveKerfurClass(), L"server");
+    if (sOff < 0) return false;
+    void* const p = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(actor) + sOff);
+    valid = p && R::IsLive(p);
+    return true;
+}
+
 void* ReadTargetActor(void* actor) {
     if (!IsKerfurActor(actor)) return nullptr;
     static int32_t sOff = -2;

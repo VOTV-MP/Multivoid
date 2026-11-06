@@ -61,6 +61,12 @@ struct MainPlayerGrabState {
 
 bool ReadMainPlayerGrabState(void* mainPlayer, MainPlayerGrabState& out);
 
+// AmainPlayer_C::holding_actor, written as a field: the hand of a pawn the host holds for a remote player, which runs
+// no updateHold of its own (updateHold reads the LOCAL save's hold slot). The caller owns what it writes and restores
+// what it replaced; `actor` may be null. False on a null or dead pawn or an unresolved field, with nothing written. Game
+// thread.
+bool WriteMainPlayerHoldingActor(void* mainPlayer, void* actor);
+
 // mainPlayer_C's input_run, the run key's flag (a packed bitfield bool), which prop_container_C's playerUsedOn reads
 // to tell a put from a look. False on a null or dead pawn or an unresolved field. Game thread.
 bool ReadInputRun(void* mainPlayer, bool& out);

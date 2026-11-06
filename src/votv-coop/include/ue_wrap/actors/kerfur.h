@@ -76,6 +76,13 @@ bool IsInsertPlayerRead(void* callerFunction, const uint8_t* callerLocals, const
 // the field did not resolve. Game thread.
 bool ReadHasFloppy(void* actor, bool& has);
 
+// The gates the Omega's `move` defers a pending task on (the get_reports read happens on a later move while any is
+// set): `animation`, `remoteControl`, and whether `server` holds a live object. Each false when it is not an Omega or the
+// field did not resolve. Game thread.
+bool ReadAnimation(void* actor, bool& set);
+bool ReadRemoteControl(void* actor, bool& set);
+bool ReadServerValid(void* actor, bool& valid);
+
 // The Omega's `targetActor`, what its last move() went for: its follow sets the player it reads, fix_servers
 // the server, a reports task the dish console; patrol and fix_transformers clear it, idle leaves it. Null
 // when it is not an Omega, the field did not resolve, or it is unset. Game thread.
