@@ -1820,6 +1820,7 @@ inline constexpr uint8_t kOpGloss = 1;    // lib_C::addGloss(text, glossLevel)
 inline constexpr uint8_t kOpSound2D = 2;  // PlaySound2D of the sound whose full name is text
 inline constexpr size_t  kTextCap = 200;
 inline constexpr size_t  kHintTextMax = 160;  // a hint's UTF-8 bytes, cut at a code-point boundary
+inline constexpr uint8_t kHintTypeMax = 2;    // the largest enum_notifyType the game's own callers pass
 }  // namespace requester_feedback
 
 // What a verb the host ran for a client showed on the host, for that client's machine to show (RequesterFeedback).

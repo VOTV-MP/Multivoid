@@ -38,7 +38,8 @@ bool Refused();
 
 // HOST: while one lives, the verb running is `slot`'s, request number `seq` (0 for a verb with none): its hints, its
 // glosses and its 2D sounds go there. Restores the scope it found, so a nested one cannot close an outer: the
-// innermost holds. Game thread.
+// innermost holds. A scope for slot 0 (the host's own verb) or a slot no peer holds opens nothing: counted and said
+// once. Game thread.
 class Scope {
   public:
     Scope(uint8_t slot, uint32_t seq);
@@ -74,7 +75,7 @@ void OnDisconnect();
 struct Counts {
     uint64_t hintsSent = 0, glossesSent = 0, soundsSent = 0;
     uint64_t hintsShown = 0, glossesMade = 0, soundsMade = 0;
-    uint64_t lost = 0;
+    uint64_t lost = 0, badOps = 0, scopesRefused = 0;  // badOps: an unknown op or hint type received
 };
 Counts CountsNow();
 

@@ -22,6 +22,7 @@
 #include <atomic>
 #include <cstring>
 #include <string>
+#include <utility>
 
 namespace coop::requester_feedback {
 namespace {
@@ -78,6 +79,8 @@ uint32_t g_bodySeq = 0;
 
 Counts g_counts;
 bool   g_saidSoundMissing = false;
+bool   g_saidSoundRefused = false;
+bool   g_saidHostScope = false;
 
 // Never set in a shipped run: a Scope does nothing, so the host shows its own feedback again (the red arm).
 bool Off() {
@@ -85,10 +88,26 @@ bool Off() {
     return s;
 }
 
-// `text` into the payload as UTF-8, capped at `maxBytes` on a code-point boundary; false for text that is empty or
-// does not fit the payload.
-bool PutText(RequesterFeedbackPayload& p, const std::wstring& text, size_t maxBytes) {
-    std::string u = coop::text::CapUtf8Bytes(coop::text::ToUtf8Exact(text), maxBytes);
+// Whether a Scope for `slot` opens: not while the red arm is on, and never for the host's own slot or a slot no peer
+// holds, since a host's own verb keeps its feedback. The refusal is counted and said once a session.
+bool Admit(uint8_t slot) {
+    if (Off()) return false;
+    if (slot != 0 && slot < coop::net::kMaxPeers) return true;
+    ++g_counts.scopesRefused;
+    if (!g_saidHostScope) {
+        g_saidHostScope = true;
+        UE_LOGW("[REQUESTER-FEEDBACK] a scope for slot %u was refused -- the host's own verb keeps its feedback "
+                "(said once)", static_cast<unsigned>(slot));
+    }
+    return false;
+}
+
+// `text` into the payload as UTF-8. A hint's text is cut to `cutAt` bytes on a code-point boundary (`cutAt` 0 cuts
+// nothing); a name is never cut: a gloss or sound name that does not fit the payload is refused, since a cut one
+// would name another entry or no sound. False for text that is empty or does not fit.
+bool PutText(RequesterFeedbackPayload& p, const std::wstring& text, size_t cutAt = 0) {
+    std::string u = coop::text::ToUtf8Exact(text);
+    if (cutAt != 0) u = coop::text::CapUtf8Bytes(std::move(u), cutAt);
     if (u.empty() || u.size() > RF::kTextCap) return false;
     std::memcpy(p.text, u.data(), u.size());
     p.textLen = static_cast<uint8_t>(u.size());
@@ -144,7 +163,7 @@ sg::Verdict OnGlossPre(const sg::Call& c) {
     const std::wstring name = R::ToString(*reinterpret_cast<const R::FName*>(c.locals + g_offGlossName));
     RequesterFeedbackPayload p{};
     p.op = RF::kOpGloss;
-    if (level < 0 || level > 255 || !PutText(p, name, RF::kTextCap)) {
+    if (level < 0 || level > 255 || !PutText(p, name)) {
         ++g_counts.lost;
         UE_LOGW("[REQUESTER-FEEDBACK] slot %u's gloss '%ls' (level %d) cannot cross the wire -- refused here, not sent",
                 static_cast<unsigned>(slot), name.c_str(), level);
@@ -169,8 +188,13 @@ sg::Verdict OnSound2DPre(void*, void*, const uint8_t* parms) {
     p.startTime = *reinterpret_cast<const float*>(parms + g_offStart);
     p.uiSound = parms[g_offUi] ? 1 : 0;
     const std::wstring name = sound ? E::SoundName(sound) : std::wstring();
-    if (!PutText(p, name, RF::kTextCap)) {
+    if (!PutText(p, name)) {
         ++g_counts.lost;
+        if (!g_saidSoundRefused) {
+            g_saidSoundRefused = true;
+            UE_LOGW("[REQUESTER-FEEDBACK] slot %u's 2D sound '%ls' cannot cross the wire -- refused here, not sent "
+                    "(said once)", static_cast<unsigned>(g_slot), name.c_str());
+        }
         return sg::Verdict::Cancel;
     }
     if (!SendTo(g_slot, g_seq, p)) return sg::Verdict::Cancel;
@@ -256,7 +280,7 @@ bool Refused() { return g_hintRefused || g_glossRefused || g_soundRefused; }
 Counts CountsNow() { return g_counts; }
 
 Scope::Scope(uint8_t slot, uint32_t seq)
-    : outerSlot_(g_slot), outerSeq_(g_seq), outerOpen_(g_open), active_(!Off()) {
+    : outerSlot_(g_slot), outerSeq_(g_seq), outerOpen_(g_open), active_(Admit(slot)) {
     if (!active_) return;
     g_slot = slot;
     g_seq = seq;
@@ -283,6 +307,12 @@ void ForwardInBody(void* bodyFn, uint8_t slot, uint32_t seq) {
 }
 
 void OnFeedback(const RequesterFeedbackPayload& p) {
+    if (p.op > RF::kOpSound2D || (p.op == RF::kOpHint && p.hintType > RF::kHintTypeMax)) {
+        ++g_counts.badOps;
+        UE_LOGW("[REQUESTER-FEEDBACK] the host's feedback (#%u) has an unknown op %u or hint type %u -- dropped",
+                p.seq, static_cast<unsigned>(p.op), static_cast<unsigned>(p.hintType));
+        return;
+    }
     std::wstring text;
     const size_t cap = p.op == RF::kOpHint ? RF::kHintTextMax : RF::kTextCap;
     if (p.textLen == 0 || p.textLen > cap || !coop::text::FromUtf8Strict(p.text, p.textLen, &text)) {
@@ -337,21 +367,20 @@ void OnFeedback(const RequesterFeedbackPayload& p) {
             UE_LOGI("[REQUESTER-FEEDBACK] showed sound2d '%ls' (#%u)", text.c_str(), p.seq);
         return;
     }
-    default:
-        ++g_counts.lost;
-        UE_LOGW("[REQUESTER-FEEDBACK] the host's feedback has an unknown op %u (#%u) -- dropped",
-                static_cast<unsigned>(p.op), p.seq);
     }
 }
 
 void OnDisconnect() {
     const Counts& c = g_counts;
-    if (c.hintsSent || c.glossesSent || c.soundsSent || c.hintsShown || c.glossesMade || c.soundsMade || c.lost)
+    if (c.hintsSent || c.glossesSent || c.soundsSent || c.hintsShown || c.glossesMade || c.soundsMade || c.lost ||
+        c.badOps || c.scopesRefused)
         UE_LOGI("[REQUESTER-FEEDBACK] session end -- routed hints=%llu glosses=%llu sounds=%llu, showed hints=%llu "
-                "glosses=%llu sounds=%llu, lost=%llu", c.hintsSent, c.glossesSent, c.soundsSent, c.hintsShown,
-                c.glossesMade, c.soundsMade, c.lost);
+                "glosses=%llu sounds=%llu, lost=%llu bad=%llu scopes refused=%llu", c.hintsSent, c.glossesSent,
+                c.soundsSent, c.hintsShown, c.glossesMade, c.soundsMade, c.lost, c.badOps, c.scopesRefused);
     g_counts = Counts{};
     g_saidSoundMissing = false;
+    g_saidSoundRefused = false;
+    g_saidHostScope = false;
     g_open = false;
     g_slot = 0;
     g_seq = 0;

@@ -643,8 +643,8 @@ bool HandleIntentEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::DeskVerb: {
-        // CLIENT->HOST a press on the desk's save family its gate refused; HOST->that CLIENT the verdict
-        // and the press's own effects for the presser's machine. The identity, the reach and the rate live
+        // CLIENT->HOST a press on the desk's save family its gate refused; HOST->that CLIENT the verdict and a
+        // decode's profile stat. The identity, the reach and the rate live
         // in the module, the format here. coop::desk_verb_intent.
         if (msg.payloadLen < sizeof(net::DeskVerbPayload)) {
             UE_LOGW("event_feed: DeskVerb payload too short (%zu < %zu)",

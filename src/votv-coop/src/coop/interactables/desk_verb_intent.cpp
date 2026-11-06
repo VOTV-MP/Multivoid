@@ -287,12 +287,13 @@ void Refuse(coop::net::Session& s, uint8_t slot, const DeskVerbPayload& p, uint8
 }
 
 // One press, run or refused and then consumed, or left at the head of its queue while the host has no body for
-// its presser yet or the effects' seams are settling: a window, not a verdict.
+// its presser yet or requester_feedback's seams are settling: a window, not a verdict.
 bool Execute(coop::net::Session& s, const DeskVerbPayload& p, uint8_t slot) {
     void* desk = ue_wrap::console_desk::Instance();
     void* button = desk ? DP::Member(desk, kButtonMember[p.button]) : nullptr;
     if (!button || requester_feedback::Refused()) {
-        Refuse(s, slot, p, DV::kUnavailable, button ? "the effects' seams are refused" : "no desk or no button");
+        Refuse(s, slot, p, DV::kUnavailable,
+               button ? "requester_feedback's seams are refused" : "no desk or no button");
         return true;
     }
     if (!requester_feedback::Ready()) return false;
