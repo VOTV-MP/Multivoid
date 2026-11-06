@@ -13,8 +13,9 @@ namespace coop::dev::kerfur_serve_drill::detail {
 inline constexpr const wchar_t* kDisc = L"prop_floppyDisc_R_C";
 
 // The drill's two ways to end a peer on a step that could not run: each says INVALID on the rig verdict line.
-void ClientInvalid(const char* why);
-void HostInvalid(const char* why);
+// `tag` is the drill's name on its `rig: VERDICT` line.
+void ClientInvalid(const char* why, const char* tag);
+void HostInvalid(const char* why, const char* tag);
 
 // The actor the player's hand holds (holding_actor), or null. Game thread.
 void* HoldingActor(void* player);

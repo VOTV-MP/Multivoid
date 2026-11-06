@@ -437,8 +437,8 @@ CFG_FLAG(kerfur_serve_disc, "kerfur_serve_disc", "dev", false, "VOTVCOOP_KERFUR_
     "host, takes a red disc in hand, aims at the host's Omega and presses get_reports through the player's own "
     "radial dispatch (useSelectedAction), which runs the Omega's verb on the client too. It then says what its "
     "hand holds, and the host says whether the Omega took a disc and whether the client's disc still stands on "
-    "its side. It reports, it never fails on what it finds. '[KERFUR-SERVE] leg D:' is the result line, "
-    "'[KERFUR-SERVE] host DONE' ends it; '[KERFUR-SERVE] INVALID' is a step that could not run.")
+    "its side. It reports, it never fails on what it finds; '[KERFUR-SERVE] leg D:' is the result line. "
+    "It ends on 'rig: VERDICT kerfur-serve-disc PASS|INVALID' (INVALID is a step that could not run).")
 CFG_FLAG(door_drill, "door_drill", "dev", false, "VOTVCOOP_DOOR_DRILL",
     "Drill (BOTH peers): the client walks with the bot director to the nearest door its navmesh "
     "reaches and uses it as a player does -- three presses, each followed by a stay in its sensor until "

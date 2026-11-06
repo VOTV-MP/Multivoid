@@ -13,6 +13,7 @@
 #include "coop/props/join_membership_sweep.h"
 #include "coop/props/prop_key_index.h"
 #include "coop/props/prop_snapshot.h"
+#include "coop/session/rig_verdict.h"
 #include "coop/session/shutdown.h"
 #include "harness/autotest/meet.h"
 
@@ -49,11 +50,13 @@ namespace P  = ue_wrap::profile;
 namespace R  = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
 namespace DC = coop::dev::drill_chat;
+using coop::rig_verdict::Outcome;
 namespace sg = ue_wrap::script_gate;
 using detail::kDisc;
 
 UE_FACT_FN(kRowActionName, "dev.kerfur_serve_drill_disc", L"kerfurOmega_C", L"actionName", Declared);
 constexpr int      kTagVerb        = 0x4B535244;  // 'KSRD'
+constexpr const char* kVerdictTag = "kerfur-serve-disc";  // leg D's name on its `rig: VERDICT` line, its own latch
 constexpr int32_t  kGetReportsIdx  = 5;           // kerfurOmega::getActionOptions: [Turn_off, Follow, Idle, Patrol,
                                                   // Fix_servers, Get_reports, ...] for a kerfur not on a task
 constexpr float    kNearHostCm     = 1000.f;      // the host's Omega spawns 2.5 m in front of it
@@ -238,7 +241,13 @@ void HostFinish() {
             g_before.laneItem.c_str(), after.laneItem.c_str(), g_before.discs, after.discs, g_clientDiscs.c_str(),
             f.size() > 1 ? f[1].c_str() : "?");
     g_host = HostStep::Done;
-    UE_LOGI("[KERFUR-SERVE] host DONE -- leg D measured (see 'leg D:'); legs A to C did not run");
+    if (!g_verbRan) {  // the relayed command never reached the Omega: the question was not asked of the host
+        coop::rig_verdict::Say(kVerdictTag, Outcome::Invalid,
+                               "host: the client's relayed get_reports never ran on my Omega");
+        return;
+    }
+    coop::rig_verdict::Say(kVerdictTag, Outcome::Pass, "leg D measured: client disc %s, host insert=%s, key kept=%d",
+                           clientAfter.c_str(), insert.c_str(), after.keyHeld ? 1 : 0);
 }
 
 void TickHost(coop::net::Session* s, uint64_t ms) {
@@ -262,13 +271,13 @@ void TickHost(coop::net::Session* s, uint64_t ms) {
             g_hostStepMs = ms;
             g_host = HostStep::WaitBefore;
         } else if (ms - g_hostStepMs >= kOmegaWindowMs) {
-            detail::HostInvalid("my Omega never stood beside me");
+            detail::HostInvalid("my Omega never stood beside me", kVerdictTag);
             g_host = HostStep::Done;
         }
         return;
     }
     if (!R::IsLiveByIndex(g_omega, g_omegaIdx)) {
-        detail::HostInvalid("my Omega is gone");
+        detail::HostInvalid("my Omega is gone", kVerdictTag);
         g_host = HostStep::Done;
         return;
     }
@@ -280,7 +289,7 @@ void TickHost(coop::net::Session* s, uint64_t ms) {
             g_hostStepMs = ms;
             g_host = HostStep::WaitAfter;
         } else if (ms - g_hostStepMs >= kBeforeWindowMs) {
-            detail::HostInvalid("the client's disc line never came");
+            detail::HostInvalid("the client's disc line never came", kVerdictTag);
             g_host = HostStep::Done;
         }
         return;
@@ -292,7 +301,7 @@ void TickHost(coop::net::Session* s, uint64_t ms) {
             g_afterSeen = true;
             g_afterMs = ms;
         } else if (ms - g_hostStepMs >= kBeforeWindowMs) {
-            detail::HostInvalid("the client's after line never came");
+            detail::HostInvalid("the client's after line never came", kVerdictTag);
             g_host = HostStep::Done;
         }
         return;
@@ -337,7 +346,7 @@ bool Run(const std::function<bool()>& fn) {
 // A step that could not run: the drill's own client invalid path, unless the session already ended.
 void Invalid(const char* why) {
     Run([&] {
-        if (Alive()) detail::ClientInvalid(why);
+        if (Alive()) detail::ClientInvalid(why, kVerdictTag);
         return true;
     });
 }
@@ -520,7 +529,8 @@ DWORD WINAPI ClientThread(LPVOID) {
                 "|" + std::to_string(stateAfter));
         return true;
     });
-    UE_LOGI("[KERFUR-SERVE] client DONE -- leg D measured on the host's line");
+    UE_LOGI("[KERFUR-SERVE] leg D (client side): client disc before=%s after=%s, its own copy ran the verb=%d; the "
+            "host's line carries the insert and the key", b.cls.c_str(), gone ? "gone" : "held", bodyRan ? 1 : 0);
     return 0;
 }
 

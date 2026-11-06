@@ -111,9 +111,9 @@ int32_t g_handIdx = -1;
 bool g_legB = false;
 uint64_t g_hostStepMs = 0;
 
-void HostInvalid(const char* why) {
+void HostInvalid(const char* why, const char* tag = kVerdictTag) {
     g_host = HostStep::Done;
-    coop::rig_verdict::Say(kVerdictTag, Outcome::Invalid, "host: %s", why);
+    coop::rig_verdict::Say(tag, Outcome::Invalid, "host: %s", why);
 }
 
 // The host's own pickup of a red disc it spawns beside itself; its hand item is what the insert must leave.
@@ -233,9 +233,9 @@ int32_t g_mirrorIdx = -1;
 std::shared_ptr<coop::director::BackgroundWalk> g_walk;
 uint64_t g_stepMs = 0, g_sampleMs = 0, g_reportMs = 0, g_byMeSince = 0, g_byHostSince = 0;
 
-void ClientInvalid(const char* why) {
+void ClientInvalid(const char* why, const char* tag = kVerdictTag) {
     g_client = ClientStep::Done;
-    coop::rig_verdict::Say(kVerdictTag, Outcome::Invalid, "client: %s", why);
+    coop::rig_verdict::Say(tag, Outcome::Invalid, "client: %s", why);
 }
 
 // The Omega mirror nearest the host's body, within the spawn's reach of it.
@@ -388,8 +388,8 @@ void TickClient() {
 
 namespace detail {
 
-void ClientInvalid(const char* why) { ::coop::dev::kerfur_serve_drill::ClientInvalid(why); }
-void HostInvalid(const char* why) { ::coop::dev::kerfur_serve_drill::HostInvalid(why); }
+void ClientInvalid(const char* why, const char* tag) { ::coop::dev::kerfur_serve_drill::ClientInvalid(why, tag); }
+void HostInvalid(const char* why, const char* tag) { ::coop::dev::kerfur_serve_drill::HostInvalid(why, tag); }
 void* HoldingActor(void* player) { return ::coop::dev::kerfur_serve_drill::HoldingActor(player); }
 void* FindMirrorByHost() { return ::coop::dev::kerfur_serve_drill::FindMirrorByHost(); }
 
