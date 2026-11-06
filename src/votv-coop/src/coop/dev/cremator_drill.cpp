@@ -8,6 +8,7 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/interactables/cremator_client_guard.h"  // G5: the refused collections
 #include "coop/interactables/interactable_sync.h"  // the cremator lane's key and its resolve
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -347,26 +348,36 @@ std::wstring SendClientToFirebox(void*& cremator) {
     return key;
 }
 
-void RunHostG3() {
-    if (!Await("client_ready", kJoinSec)) return;
+// The burn's host half, shared by the arms that put the client in the firebox: sends the client there, judges the
+// landing by the cremator's own begin-overlap, shuts the door and pulls the lever. `keyMark`, when set, leaves the
+// cremator's key for the client as soon as the order is out; `leverMark` is left once the lever ran. False on an abort
+// (said).
+bool BurnRun(const char* arm, const char* keyMark, const char* leverMark) {
+    if (!Await("client_ready", kJoinSec)) return false;
     if (!PS::WaitFor("slot 1's join settled", kSignalSec, [] {
             bool ok = false;
             OnGameThread([&] { ok = ClientSettled(); });
             return ok;
         }))
-        return;
+        return false;
     void* cremator = nullptr;
     std::wstring key;
     OnGameThread([&] { key = SendClientToFirebox(cremator); });
-    if (key.empty()) { UE_LOGW("cremator-drill: VERDICT ABORT -- the host could not send the client to the firebox"); return; }
+    if (key.empty()) { UE_LOGW("cremator-drill: VERDICT ABORT -- the host could not send the client to the firebox"); return false; }
+    if (keyMark) Mark(keyMark, Narrow(key));
     if (!PS::WaitFor("the cremator's overlap for the client's puppet", kLandSec,
                      [] { return g_g3Landed.load(std::memory_order_acquire) == 1; }))
-        return;
+        return false;
     bool ran = false, wasOpened = false;
     OnGameThread([&] { ran = C::ShutDoor(cremator, wasOpened) && C::CallUseLever(cremator); });
-    UE_LOGI("cremator-drill: HOST g3 pulled the lever ran=%d doorWasOpened=%d", ran ? 1 : 0, wasOpened ? 1 : 0);
-    if (!ran) { UE_LOGW("cremator-drill: VERDICT ABORT -- the host's lever did not run"); return; }
-    Mark("g3_lever");
+    UE_LOGI("cremator-drill: HOST %hs pulled the lever ran=%d doorWasOpened=%d", arm, ran ? 1 : 0, wasOpened ? 1 : 0);
+    if (!ran) { UE_LOGW("cremator-drill: VERDICT ABORT -- the host's lever did not run"); return false; }
+    Mark(leverMark);
+    return true;
+}
+
+void RunHostG3() {
+    if (!BurnRun("g3", nullptr, "g3_lever")) return;
     std::string text;
     if (!AwaitText("g3_dead", text, kDeathSec + 60)) return;
     const int dead = FieldOf(text, "dead=");
@@ -406,13 +417,86 @@ void RunClientG3() {
     UE_LOGI("cremator-drill: DONE on client");
 }
 
+// ---- G5: a client's copy of the cremator acts on nothing ----------------------------------------------------------
+// The burn of G3 with the client's own copy watched: the client dies by the host's machine, its copy's `actors` reads 0
+// at every look (the guard refused each collection) and the guard's count of refused collections is at least one. The
+// fireballs the client's copy spawns are counted and reported, not judged (M-i).
+
+// A fireball's birth, on the client: the copy's tick spawns one while the copy is active with its door open.
+UE_FACT_FN(kRowFireballBegin, "dev.cremator_drill", L"prop_crematorFireball_C", L"ReceiveBeginPlay", Declared);
+constexpr int kTagFireball = 0x43443546;  // 'CD5F'
+
+std::atomic<int> g_fireballs{0};
+
+void OnFireballPost(const sg::Call&) { g_fireballs.fetch_add(1, std::memory_order_relaxed); }
+
+void RunHostG5() {
+    if (!BurnRun("g5", "g5_key", "g5_lever")) return;
+    std::string text;
+    if (!AwaitText("g5_dead", text, kDeathSec + 60)) return;
+    const int dead = FieldOf(text, "dead=");
+    const int actors = FieldOf(text, "actors=");
+    const int refused = FieldOf(text, "refused=");
+    const int fireballs = FieldOf(text, "fireballs=");
+    char what[240];
+    std::snprintf(what, sizeof(what),
+                  "dead=%d (1 wanted), the client copy's max actors=%d (0 wanted), addObject refused=%d (1 or more wanted), "
+                  "fireball births=%d (reported, not judged)", dead, actors, refused, fireballs);
+    Verdict(dead == 1 && actors == 0 && refused >= 1, "g5", what);
+    UE_LOGI("cremator-drill: G5 DONE fails=%d", g_fails);
+}
+
+void RunClientG5() {
+    if (!HostPuppetUp()) return;
+    OnGameThread([] {
+        if (!sg::WatchName(kRowFireballBegin, kTagFireball, nullptr, &OnFireballPost))
+            UE_LOGW("cremator-drill: g5 the fireball birth watch did not register");
+    });
+    Mark("client_ready");
+    std::string keyText;
+    if (!AwaitText("g5_key", keyText, kSignalSec)) return;
+    const std::wstring key = Widen(keyText);
+    if (!CopyResolves(key)) return;
+    // From the host's order on, every look at the copy's `actors` is kept: a collection that was not refused leaves the
+    // sitter in it until the burn ends.
+    int maxActors = -1;
+    bool dead = false;
+    float health = -1.f;
+    const auto since = std::chrono::steady_clock::now();
+    PS::WaitFor("this player's death", kDeathSec, [&] {
+        OnGameThread([&] {
+            dead = PlayerDead(health);
+            if (void* c = Resolve(key)) {
+                const int n = C::ReadMachine(c).actors;
+                if (n > maxActors) maxActors = n;
+            }
+        });
+        return dead;
+    }, false);
+    const int seconds = static_cast<int>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - since).count());
+    unsigned long long refused = 0;
+    OnGameThread([&] { refused = coop::cremator_client_guard::AddObjectRefused(); });
+    char text[128];
+    std::snprintf(text, sizeof(text), "dead=%d health=%.0f waited=%d actors=%d refused=%llu fireballs=%d", dead ? 1 : 0,
+                  health, seconds, maxActors, refused, g_fireballs.load(std::memory_order_relaxed));
+    UE_LOGI("cremator-drill: CLIENT g5 %s", text);
+    Mark("g5_dead", text);
+    UE_LOGI("cremator-drill: DONE on client");
+}
+
 }  // namespace
 
 DWORD WINAPI Thread(LPVOID /*arg*/) {
     if (!PS::Begin("cremator-drill")) return 0;
-    // `g3` runs the burn arm alone; `1` runs the lever arms.
-    if (coop::config::ResolveEnum(coop::config_registry::rows::cremator_drill) == "g3") {
+    // `g3` and `g5` run the burn arms alone; `1` runs the lever arms.
+    const std::string arm = coop::config::ResolveEnum(coop::config_registry::rows::cremator_drill);
+    if (arm == "g3") {
         if (harness::autotest::IsClientRole()) RunClientG3(); else RunHostG3();
+        return 0;
+    }
+    if (arm == "g5") {
+        if (harness::autotest::IsClientRole()) RunClientG5(); else RunHostG5();
         return 0;
     }
     // The rejoined life carries the env the rig sets for it alone (--rejoin-env). The first lives cannot know whether

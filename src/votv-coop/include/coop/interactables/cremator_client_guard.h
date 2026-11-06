@@ -34,4 +34,8 @@ void Tick();
 // The session ended: the counters, with one summary line.
 void OnDisconnect();
 
+// How many `addObject` calls this client has refused since the session began; the guard drill's verdict reads it.
+// Game thread.
+uint64_t AddObjectRefused();
+
 }  // namespace coop::cremator_client_guard

@@ -201,6 +201,8 @@ void Tick() {
     }
 }
 
+uint64_t AddObjectRefused() { return g_collectRefused; }
+
 void OnDisconnect() {
     if (g_collectRefused || g_doorRefused || g_valveRefused || g_doorLoadNative)
         UE_LOGI("[CREMATOR-GUARD] session end -- a client refused %llu addObject call(s) on %zu cremator copy(ies), %llu "

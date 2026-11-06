@@ -19,7 +19,7 @@ CFG_FLAG(cremator_intent_anim_off, "cremator_intent_anim_off", "dev", false, "VO
 CFG_FLAG(cremator_intent_reach_off, "cremator_intent_reach_off", "dev", false, "VOTVCOOP_CREMATOR_INTENT_REACH_OFF",
     "Developer red arm of the cremator lever drill: never set. The host's judge of a client's handle press skips its "
     "reach check, so a press from beyond the handle's reach pulls the lever.")
-CFG_ENUM(cremator_drill, "cremator_drill", "dev", "off", "off|1|g3", "VOTVCOOP_CREMATOR_DRILL",
+CFG_ENUM(cremator_drill, "cremator_drill", "dev", "off", "off|1|g3|g5", "VOTVCOOP_CREMATOR_DRILL",
     "Drill (BOTH peers). 1 -- the cremator's lever run crosses. The host pulls the lever on its copy and the client's "
     "copy must read it on, its door latched, and then off again (G1); with the rig's --rejoin the host pulls it on once "
     "more and the client, leaving and coming back, must read it on after its world-ready (G4). The host prints "
@@ -28,7 +28,10 @@ CFG_ENUM(cremator_drill, "cremator_drill", "dev", "off", "off|1|g3", "VOTVCOOP_C
     "arm: the host's cremator_state_off. g3 -- a client in the host's running cremator dies by the machine: the host "
     "sends the client to the firebox with the admin verb's teleport order, shuts the door and pulls the lever, and "
     "the client signals its death; the host prints 'cremator-drill: VERDICT PASS|FAIL g3' and 'cremator-drill: G3 "
-    "DONE'. Red arm: the host's cremator_hit_off. It MUTATES the world.")
+    "DONE'. Red arm: the host's cremator_hit_off. g5 -- the same burn with the client's own copy watched: the host "
+    "prints 'cremator-drill: VERDICT PASS|FAIL g5' (the client died, its copy's actors read 0 at every look, and the "
+    "guard refused at least one collection; the fireball births are reported, not judged) and 'cremator-drill: G5 "
+    "DONE'. Red arm: the client's cremator_client_guard_off. It MUTATES the world.")
 CFG_FLAG(cremator_client_guard_off, "cremator_client_guard_off", "dev", false, "VOTVCOOP_CREMATOR_CLIENT_GUARD_OFF",
     "Developer red arm of the cremator guard drill: never set. A client's cremator copy collects the sitter, opens its "
     "door and turns its valve on its own account, so a client standing in the host's running cremator burns in its "
