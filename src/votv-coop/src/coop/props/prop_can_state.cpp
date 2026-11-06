@@ -62,6 +62,9 @@ uint32_t g_published = 0, g_landed = 0;
 
 // Per-world tables go with the world, keyed on the generation as vent_crawler_sync keys its show.
 void SyncWorld() {
+    // Generation() bumps only when CurrentWorld() is observed to change; a can's init in a load burst can run before
+    // the pump's tick has looked, so look here first (world_identity.h:55-58).
+    ue_wrap::world_identity::CurrentWorld();
     const uint32_t gen = ue_wrap::world_identity::Generation();
     if (gen == g_world) return;
     g_world = gen;
@@ -104,6 +107,8 @@ bool ReadState(void* object, CanState& out) {
 CanState DefaultsOf(void* object) {
     ClassInfo& info = InfoOf(R::ClassOf(object));
     if (info.haveDefaults) return info.defaults;
+    // A miss walks the object array once per class per world (the table goes with the world), not on every new can.
+    if (info.missLogged) return CanState{};
     CanState d{};
     void* const cdo = R::FindClassDefaultObject(R::ClassNameOf(object).c_str());
     if (cdo && ReadState(cdo, d)) {

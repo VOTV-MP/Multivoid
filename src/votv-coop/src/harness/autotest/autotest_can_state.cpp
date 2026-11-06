@@ -350,6 +350,8 @@ void RunClient() {
 
 DWORD WINAPI CanStateThread(LPVOID /*arg*/) {
     if (!PS::Begin("can-drill")) return 0;
+    // The step counters start from this drill, not from the session: a can published before it began is not a step's.
+    OnGameThread([&] { g_counted = coop::props::prop_can_state::CountsNow(); });
     if (IsClientRole()) RunClient();
     else                RunHost();
     return 0;
