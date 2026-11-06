@@ -68,9 +68,6 @@ const std::vector<void*>& TickWalkers() {
 }
 bool g_parkedAny = false;
 
-// CLIENT: the mannequin spawners and the walkers this lane took the tick from.
-std::unordered_set<void*> g_parkedSpawners;
-
 // The walkers' poll runs a quarter of a second apart, as the view test and the steering run every tick.
 constexpr auto  kWalkerPoll = std::chrono::milliseconds(250);
 Clock::time_point g_nextWalkerPoll{};
@@ -463,19 +460,8 @@ void HostWalkerPoll(coop::net::Session& s) {
     }
 }
 
-// CLIENT: the walkers' and the mannequin spawner's share of the 250 ms poll.
+// CLIENT: the walkers' share of the 250 ms poll.
 void ClientWalkerPoll(coop::net::Session& s, Clock::time_point now) {
-    // The deer, tree, hexahive and beehive spawners are refused at the gate (coop/world/spawn_authority); the mannequin's has no
-    // row there, so its tick is taken off here, once for each spawner this lane has seen.
-    std::vector<void*> spawners;
-    AC::ListWalkerSpawners(spawners);
-    for (void* spawner : spawners) {
-        if (!g_parkedSpawners.insert(spawner).second) continue;
-        E::SetActorTickEnabled(spawner, false);
-        g_parkedAny = true;
-        UE_LOGI("ambient_creature_sync: parked a spawner of '%ls'", R::ToString(R::NameOf(R::ClassOf(spawner))).c_str());
-    }
-
     std::unordered_map<void*, WalkerSeen> walkersNow;
     for (void* w : TickWalkers()) {
         auto was = g_walkers.find(w);
@@ -618,15 +604,11 @@ Counters Read() { return g_counters; }
 
 void OnDisconnect() {
     if (g_parkedAny) {
-        std::vector<void*> spawners;
-        AC::ListWalkerSpawners(spawners);
-        for (void* spawner : spawners) E::SetActorTickEnabled(spawner, true);
         std::vector<void*> walkers;
         AC::ListWalkers(walkers);
         for (void* w : walkers) AC::UnparkWalker(w);
     }
     g_parkedAny = false;
-    g_parkedSpawners.clear();
     g_walkers.clear();
     g_watchers.clear();
     g_lingering.clear();

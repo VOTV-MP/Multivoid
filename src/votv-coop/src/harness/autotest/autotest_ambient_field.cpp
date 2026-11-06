@@ -246,8 +246,8 @@ std::string Place(const ue_wrap::FVector& v) {
 
 // ---- the walking mannequin ----
 
-// Whether the actor's own tick runs, read by reflection: the lane's parking of a copy and of the mannequin spawner is the state
-// under test, and the engine wrapper does not carry a read of it.
+// Whether the actor's own tick runs, read by reflection: the lane's parking of a copy is the state under test, and the engine
+// wrapper does not carry a read of it.
 bool TickEnabled(void* actor) {
     void* fn = actor ? R::FindDispatchFunctionCached(R::ClassOf(actor), L"IsActorTickEnabled") : nullptr;
     if (!fn) return false;
@@ -313,15 +313,10 @@ bool HostWalkerArm() {
     return true;
 }
 
-// The client: its copy follows the host's walker, shows walking while it moves, and its brain and spawner are parked.
+// The client: its copy follows the host's walker, shows walking while it moves, and its brain is parked. Its spawner is refused
+// at the gate, read in CheckRefusals. W8 measures the stand swap's and the stand destroy's crossing.
 bool ClientWalkerArm() {
     if (!Await("walker", 240)) return false;
-    void* spawner = nullptr;
-    OnGameThread([&] {
-        spawner = FirstOf(L"ticker_mannequinSpawner_C");
-        UE_LOGI("ambient-field: spawner 'ticker_mannequinSpawner_C' here=%d", spawner ? 1 : 0);
-        Check(spawner && !TickEnabled(spawner), "this client's mannequin spawner is parked");
-    });
     void* walker = nullptr;
     for (int i = 0; i < 300 && !walker; ++i) {
         ::Sleep(100);
@@ -494,7 +489,7 @@ bool WorldReady() {
     });
 }
 
-// The hexahive and beehive rows refuse on this client: each spawner's body is run here, and its refusal count must rise.
+// The hexahive, beehive and mannequin rows refuse on this client: each spawner's body is run here, and its refusal count must rise.
 void CheckRefusals() {
     struct Spawner {
         const wchar_t* cls;
@@ -505,6 +500,7 @@ void CheckRefusals() {
     const Spawner spawners[] = {
         {L"ticker_hexahiveSpawner_C", L"ReceiveTick", true, "hexahiveSpawner.ReceiveTick"},
         {L"ticker_beehiveSpawner_C", L"Spawn", false, "beehiveSpawner.spawn"},
+        {L"ticker_mannequinSpawner_C", L"ReceiveTick", true, "mannequinSpawner.ReceiveTick"},
     };
     for (const Spawner& s : spawners) {
         uint64_t before = 0, after = 0;

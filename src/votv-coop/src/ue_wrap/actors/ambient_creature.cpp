@@ -183,8 +183,6 @@ bool Dissolve(void* deer) {
 
 void ListWalkers(std::vector<void*>& out) { Collect(L"prop_wMannequin_C", out); }
 
-void ListWalkerSpawners(std::vector<void*>& out) { Collect(L"ticker_mannequinSpawner_C", out); }
-
 void ParkWalker(void* walker) {
     engine::SetActorTickEnabled(walker, false);
     for (const wchar_t* timer : {L"timer_damage", L"timer_jump", L"timer_pickupWeapon", L"timer_saw", L"timer_unhook"})

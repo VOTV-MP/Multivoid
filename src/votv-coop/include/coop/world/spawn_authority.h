@@ -36,8 +36,10 @@ namespace coop::spawn_authority {
 // A class is added to the table only once its product has a mirror: refusing a spawner whose output
 // nothing replaces just deletes the content. A spawner that reaches its work through a timer delegate
 // is refused by a row on the delegate's handler, as the cockroach master's timers and the beehive
-// ticker's spawn are. One that waits in a Delay needs a finer row than a class and a function, and
-// mannequinSpawner also carries K2_DestroyActor reap duty, so it will need a (class, latent-UUID) grain.
+// ticker's spawn are. One that waits in a Delay is refused at its tick when its graph has no other root,
+// since every resume is then scheduled from the tick: the mannequin spawner's reap and its spawn are
+// exclusive branches of that one entry. A spawner with a second root would need a finer row than a class
+// and a function, a (class, latent-UUID) grain.
 // Discovery of new classes stays with the ini-gated rng_roll_census, not this module.
 void Install(coop::net::Session* session);
 
