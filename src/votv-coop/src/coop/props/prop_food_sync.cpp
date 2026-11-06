@@ -62,7 +62,8 @@ constexpr float  kRipenessStep = 5.f;     // a food starts near 7200 (a class's 
 constexpr size_t kSendsPerPoll = 64;
 constexpr size_t kMaxPending = 512;
 constexpr size_t kMaxReleasesPerSlot = 64;
-// A copy that has not appeared in this long will not: a release or a state waiting for its copy is dropped after it.
+// A copy that has not appeared in this long will not: a release waiting for its copy is dropped after it. A host value
+// waiting on a client is not timed: the host sends a food that stopped moving once, so it waits for the copy (kMaxPending).
 constexpr auto   kReleaseWaitMs = std::chrono::milliseconds(30000);
 constexpr auto   kSayGap = std::chrono::seconds(1);  // one refusal line, and one corrective FoodState, per slot per this
 constexpr auto   kHandRepeat = std::chrono::seconds(5);  // a mirror rebuilt on a slot switch, a joiner's first copy
@@ -93,6 +94,7 @@ struct Pending {
     Clock::time_point           at;
 };
 std::unordered_map<std::wstring, Pending> g_pending;  // CLIENT: a food not born here yet
+uint32_t g_pendingDropped = 0;                        // CLIENT: values dropped at the cap, this session
 
 std::array<Clock::time_point, coop::net::kMaxPeers> g_lastBite{};     // HOST: by slot, the last bite received
 std::array<Clock::time_point, coop::net::kMaxPeers> g_lastRelease{};  // HOST: by slot, the last release received
@@ -373,11 +375,8 @@ void DrainReleases(coop::net::Session& s) {
 // The client's poll: the host's values that waited for their food. The food's own tick is refused at the gate
 // (coop/props/food_tick_gate), so nothing here holds it off.
 void PollClient() {
-    const auto now = Clock::now();
-    for (auto it = g_pending.begin(); it != g_pending.end();) {
-        if (now - it->second.at > kReleaseWaitMs) it = g_pending.erase(it);  // its copy did not appear in time
-        else it = Apply(it->first, it->second.payload) ? g_pending.erase(it) : std::next(it);
-    }
+    for (auto it = g_pending.begin(); it != g_pending.end();)
+        it = Apply(it->first, it->second.payload) ? g_pending.erase(it) : std::next(it);
 }
 
 sg::Verdict OnActionPre(const sg::Call& c) {
@@ -505,7 +504,18 @@ void OnState(const coop::net::FoodStatePayload& p) {
         g_pending.erase(key);
         return;
     }
-    if (g_pending.size() < kMaxPending || g_pending.count(key)) g_pending[key] = {p, Clock::now()};
+    // A food that stopped moving is never sent again, so its value waits for the copy however long that takes. At the
+    // cap the oldest waiting value goes, and is said.
+    if (g_pending.size() >= kMaxPending && !g_pending.count(key)) {
+        auto oldest = g_pending.begin();
+        for (auto it = g_pending.begin(); it != g_pending.end(); ++it)
+            if (it->second.at < oldest->second.at) oldest = it;
+        if (g_pendingDropped++ % 64 == 0)
+            UE_LOGW("prop_food_sync: %zu foods wait for their copy; dropped the oldest, '%ls' (#%u)", g_pending.size(),
+                    oldest->first.c_str(), g_pendingDropped);
+        g_pending.erase(oldest);
+    }
+    g_pending[key] = {p, Clock::now()};
 }
 
 void OnBite(int senderSlot, const coop::net::FoodBitePayload& p) {
@@ -617,6 +627,7 @@ void OnDisconnect() {
         UE_LOGI("prop_food_sync: session end -- published=%u applied=%u bites sent=%u taken=%u refused=%u releases "
                 "refused=%u", g_published, g_applied, g_bitesSent, g_bitesTaken, g_bitesRefused, g_releasesRefused);
     g_pending.clear();
+    g_pendingDropped = 0;
     g_sent.clear();
     g_lastBite = {};
     g_lastRelease = {};

@@ -430,7 +430,7 @@ judges it within 400 uu of the sender's body (the door's and the coffee's reach)
 from a slot, and its count answers. A bite it refuses changes nothing there and is answered with the food's own
 `FoodState` to that slot, once a second at most, which puts the client's count back; the client's hunger and effects
 stay its own. A last bite is already the host's through the prop act lane. A joiner gets every food again at its ready
-edge. A copy whose tick is refused paints what the tick would, its steam and its frozen look. A food in a hand is its
+edge, and a value whose copy is not born yet waits for it with no time limit (512 at most; at the cap the oldest is dropped and logged). A copy whose tick is refused paints what the tick would, its steam and its frozen look. A food in a hand is its
 holder's: it keeps its tick, its condition goes out as `FoodHand`, and the copy the others show in that hand is refused
 its tick on every peer and takes it. A client that lets a food go sends `FoodRelease`, taken from the player's drop bodies (`simulateDrop`,
 `forceDrop`), since the host's new copy has none of what the hand kept, and the host takes over `[V]`
