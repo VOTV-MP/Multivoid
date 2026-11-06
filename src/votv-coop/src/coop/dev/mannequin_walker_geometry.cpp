@@ -6,9 +6,11 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/player/shelter_spot.h"
+#include "coop/session/net_pump.h"
 #include "coop/session/rig_verdict.h"
 
 #include "ue_wrap/actors/ambient_creature.h"
+#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -20,6 +22,7 @@
 #include <cstdio>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <windows.h>
 
@@ -51,6 +54,77 @@ bool Invalid(const char* why) {
     return false;
 }
 
+namespace {
+int g_fails = 0;
+}  // namespace
+
+int FailCount() { return g_fails; }
+
+bool Check(bool ok, const char* step, const char* what) {
+    UE_LOGI("mannequin-drill: step %s %s %s", step, ok ? "PASS" : "FAIL", what);
+    if (!ok) ++g_fails;
+    return ok;
+}
+
+bool Fail(const char* step, const char* what) {
+    coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Fail, "step %s: %s", step, what);
+    return false;
+}
+
+bool AwaitClient(const char* mark, int seconds, std::string* text) {
+    std::string word;
+    if (!PS::AwaitText(mark, word, seconds)) return false;
+    if (text) *text = word;
+    if (word.rfind("fail", 0) != 0) return true;
+    UE_LOGW("mannequin-drill: the client measured a failure: %s", word.c_str());
+    coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Fail, "client %s", word.c_str());
+    return false;
+}
+
+bool FailedToHost(const char* mark, const char* step, const char* what) {
+    PS::Mark(mark, std::string("fail step ") + step + " " + what);
+    return false;
+}
+
+std::vector<void*> Walkers() {
+    std::vector<void*> v;
+    AC::ListWalkers(v);
+    return v;
+}
+
+std::string KeyOf(void* walker) { return Narrow(ue_wrap::prop::GetInteractableKeyString(walker)); }
+
+void* ByKey(const std::string& key, int* count) {
+    void* found = nullptr;
+    int n = 0;
+    for (void* w : Walkers())
+        if (KeyOf(w) == key) {
+            found = w;
+            ++n;
+        }
+    if (count) *count = n;
+    return found;
+}
+
+std::string Narrow(const std::wstring& key) {
+    std::string s;
+    s.reserve(key.size());
+    for (const wchar_t c : key) s.push_back(static_cast<char>(c));
+    return s;
+}
+
+std::wstring Widen(const std::string& key) { return std::wstring(key.begin(), key.end()); }
+
+bool HostPuppetUp() {
+    const bool world = WaitGT("this client's world", 240, [] {
+        return coop::players::Registry::Get().Local() && coop::net_pump::HasAnnouncedWorldReady();
+    });
+    return world && WaitGT("the host's puppet", kPuppetBoundS, [] {
+        coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(coop::players::kPeerIdHost);
+        return p && p->valid() && p->HasPose();
+    });
+}
+
 float Dist3(const FVector& a, const FVector& b) {
     const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
     return std::sqrt(dx * dx + dy * dy + dz * dz);
@@ -77,12 +151,14 @@ float PlayerTo(void* actor) {
     return me && actor && E::TryGetActorLocation(me, a) && E::TryGetActorLocation(actor, b) ? Dist3(a, b) : -1.f;
 }
 
-float ClientTo(void* actor) {
-    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(kClientSlot);
+float PeerTo(uint8_t slot, void* actor) {
+    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
     void* puppet = rp && rp->valid() && rp->HasPose() ? rp->GetActor() : nullptr;
     FVector a{}, b{};
     return puppet && actor && E::TryGetActorLocation(puppet, a) && E::TryGetActorLocation(actor, b) ? Dist3(a, b) : -1.f;
 }
+
+float ClientTo(void* actor) { return PeerTo(kClientSlot, actor); }
 
 bool BedAnchor(FVector& out) {
     bool bed = false;

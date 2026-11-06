@@ -177,6 +177,16 @@ uint8_t TargetOfCopy(void* copy) {
     return 0xFF;
 }
 
+bool RowOf(const std::wstring& key, uint8_t& target, bool& looking) {
+    coop::net::WireKey k{};
+    coop::net::WireKeyFromString(key, k);
+    const Row* r = Find(k);
+    if (!r) return false;
+    target = r->target;
+    looking = r->looking != 0;
+    return true;
+}
+
 bool SubscribeHunt(HuntFn fn) {
     if (!fn) return false;
     for (size_t i = 0; i < g_subCount; ++i)

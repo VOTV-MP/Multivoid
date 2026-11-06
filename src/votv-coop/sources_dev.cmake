@@ -278,6 +278,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/mannequin_drill.cpp
     src/coop/dev/mannequin_walker_drill.cpp
     src/coop/dev/mannequin_walker_geometry.cpp
+    src/coop/dev/mannequin_walker_steps_b.cpp
     src/coop/dev/toggle_drill.cpp
     src/coop/dev/swinger_drill.cpp
     src/coop/dev/swinger_drill_join.cpp

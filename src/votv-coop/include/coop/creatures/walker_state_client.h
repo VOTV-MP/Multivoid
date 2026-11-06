@@ -42,6 +42,10 @@ bool SubscribeHunt(HuntFn fn);
 // row and for a copy that ended. Game thread.
 uint8_t TargetOfCopy(void* copy);
 
+// [dev], for the walker drill: the row held for the walker `key` (applied to its copy, or held without one), as the host last said
+// it: the slot it hunts (0xFF none) and its `looking`. False when no state for the key ever arrived (or the row ended). Game thread.
+bool RowOf(const std::wstring& key, uint8_t& target, bool& looking);
+
 // Per gameplay tick on a client: ask again for the copy's end of play while the class has not resolved (only when the class set
 // moved), then one comparison. Game thread.
 void Tick();

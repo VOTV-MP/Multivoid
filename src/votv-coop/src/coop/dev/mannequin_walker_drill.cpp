@@ -2,9 +2,10 @@
 //
 // WHAT IT MEASURES. (1) A client's mannequin spawner is refused at the gate: the refusal counter of spawn_authority's row
 // rises when the client runs the spawner's own body. (2) One walker, the host's: the client holds exactly one copy for its key,
-// and while the host's walker moves the copy follows it (the drive stream), within kFollowTolCm. (3) The target's gaze: the
-// client is the walker's target, its camera turned to the copy stops the host's walker, and when it looks away the walker moves
-// again within the Blueprint's own timer_saw bound plus a margin.
+// and while the host's walker moves the copy follows it (the drive stream), within kFollowTolCm. (3) KEEP, steps_b: the client
+// walks nearer to it than the host, and it still hunts the host. (4) The target's gaze: the client is walker B's target, its
+// camera on the copy stops the host's walker, and when it looks away the walker moves again within the Blueprint's own timer_saw
+// bound plus a margin. Then steps_b: (6) B's hit lands on the client, (5) the client leaves, (7) it comes back and is told B's state.
 // THE TWO WALKERS. A walker KEEPS its target until it is lost (coop/creatures/walker_target.h), so one cannot hand a hunt from
 // the host to the client by walking the client nearer; the first player in range is the one taken. Walker A: the client waits at
 // the KPP gate, out of its range, the host walks in, and the host's arrival opens the window while the walker is still far.
@@ -27,6 +28,7 @@
 #include "coop/dev/director/director.h"
 #include "coop/dev/mannequin_drill.h"
 #include "coop/dev/mannequin_walker_geometry.h"
+#include "coop/dev/mannequin_walker_steps_b.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/session/net_pump.h"
@@ -102,7 +104,6 @@ constexpr int kReleaseBoundS = kTimerSawS + kMarginS;
 constexpr int kFreezeBoundS = 15;
 constexpr int kViewBoundS = 20;
 constexpr int kThinkBoundS = 20;   // a copy's graph refusals and its nav pawn's controller, from the copy's birth
-constexpr int kPuppetBoundS = 60;   // the other peer's puppet, from its ready edge to a pose
 
 // The sampling: one reading per kSampleMs. Moving is the walker's displacement over kMovingSamples readings, still the same
 // over kStillSamples; the window is how long both peers sample for step 2.
@@ -121,65 +122,8 @@ constexpr float  kFollowTolCm = 150.f;
 constexpr double kLagStepS = 0.05;
 constexpr int    kLagSteps = 10;
 
-int g_fails = 0;
-
-bool Check(bool ok, const char* step, const char* what) {
-    UE_LOGI("mannequin-drill: step %s %s %s", step, ok ? "PASS" : "FAIL", what);
-    if (!ok) ++g_fails;
-    return ok;
-}
-
-// A measured failure is the verdict: the run ends at its step, so that no later precondition can turn it into an INVALID. The
-// host says it; a client's step marks a word the host turns into this (AwaitClient). Returns false for the caller to return.
-bool Fail(const char* step, const char* what) {
-    coop::rig_verdict::Say(kTag, Outcome::Fail, "step %s: %s", step, what);
-    return false;
-}
-
-// The client's word at a mark: "ok", or "fail <step> <what>", a step it measured to fail. False when the run must end: a failure
-// said as the verdict here, or no word within the bound (INVALID, said by the wait).
-bool AwaitClient(const char* mark, int seconds) {
-    std::string text;
-    if (!PS::AwaitText(mark, text, seconds)) return false;
-    if (text.rfind("fail", 0) != 0) return true;
-    UE_LOGW("mannequin-drill: the client measured a failure: %s", text.c_str());
-    coop::rig_verdict::Say(kTag, Outcome::Fail, "client %s", text.c_str());
-    return false;
-}
-
 double NowSec() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
-}
-
-// A key is a GUID's text, so each wide character is one ASCII one.
-std::string Narrow(const std::wstring& w) {
-    std::string s;
-    s.reserve(w.size());
-    for (const wchar_t c : w) s.push_back(static_cast<char>(c));
-    return s;
-}
-
-// ---- the walkers, game thread ----
-
-std::vector<void*> Walkers() {
-    std::vector<void*> v;
-    AC::ListWalkers(v);
-    return v;
-}
-
-std::string KeyOf(void* walker) { return Narrow(ue_wrap::prop::GetInteractableKeyString(walker)); }
-
-// The walker of this key among the live ones, and how many carry it.
-void* ByKey(const std::string& key, int* count = nullptr) {
-    void* found = nullptr;
-    int n = 0;
-    for (void* w : Walkers())
-        if (KeyOf(w) == key) {
-            found = w;
-            ++n;
-        }
-    if (count) *count = n;
-    return found;
 }
 
 // The walker's own view test, as this client's gaze lane judges it.
@@ -468,7 +412,7 @@ bool HostPhaseA(void*& a, std::string& keyA) {
     char what[128];
     std::snprintf(what, sizeof(what), "the client's copy follows the host's walker (worst %.0f cm, %zu readings)", f.maxCm, f.n);
     if (!Check(f.maxCm <= kFollowTolCm, "2", what)) return Fail("2", what);
-    return true;
+    return steps_b::HostKeep(a);
 }
 
 // Walker B stands at least kApproachEndCm from the client as `when` happens; nearer, the gaze steps are not the measurement.
@@ -482,8 +426,10 @@ bool ClientFarEnough(void* b, const char* when) {
     return Invalid(why);
 }
 
-// Step 3, on walker B: the client is its target; the client's gaze stops it, and its look away lets it go again.
-bool HostPhaseB(void* a, void*& b, std::string& keyB) {
+// Walker B, steps 4 to 7 (the sheet's numbers). Step 4: the client is its target; the client's gaze stops it, and its look away lets it
+// go again. Then steps 6, 5 and 7 (coop/dev/mannequin_walker_steps_b): its hit lands on the client, the client leaves, and the
+// rejoined client is told B's state.
+bool HostPhaseB(void* a, void*& b, std::string& keyB, int& clientFails) {
     // Between the walkers: A ends, and the host goes back to the KPP gate, out of every spawn point's range, so that the client
     // is the only player in range at B's first read.
     OnGameThread([&] { AC::Destroy(a); });
@@ -535,9 +481,9 @@ bool HostPhaseB(void* a, void*& b, std::string& keyB) {
         looking = AC::ReadWalkerLooking(b);
         return looking && standing.Still();
     }, false);
-    UE_LOGI("mannequin-drill: step 3 freeze: frozen=%d looking=%d", frozen ? 1 : 0, looking ? 1 : 0);
+    UE_LOGI("mannequin-drill: step 4 freeze: frozen=%d looking=%d", frozen ? 1 : 0, looking ? 1 : 0);
     const char* const stopWhat = "the host's walker stops while its target's camera is on it";
-    if (!Check(frozen, "3", stopWhat)) return Fail("3", stopWhat);
+    if (!Check(frozen, "4", stopWhat)) return Fail("4", stopWhat);
 
     // The client looks away: the walker moves again when its own timer_saw clears `saw`, within the timer's bound and a margin.
     PS::Mark("look_away");
@@ -553,24 +499,11 @@ bool HostPhaseB(void* a, void*& b, std::string& keyB) {
     }, false);
     char what[160];
     std::snprintf(what, sizeof(what), "the host's walker moves again within %d s of its target looking away", kReleaseBoundS);
-    if (!Check(goes, "3", what)) return Fail("3", what);
-    return true;
+    if (!Check(goes, "4", what)) return Fail("4", what);
+    return steps_b::HostB(b, keyB, clientFails);
 }
 
 // ---- the client ----
-
-bool WorldReady() {
-    return WaitGT("this client's world", 240, [] {
-        return coop::players::Registry::Get().Local() && coop::net_pump::HasAnnouncedWorldReady();
-    });
-}
-
-bool HostPuppetUp() {
-    return WorldReady() && WaitGT("the host's puppet", kPuppetBoundS, [] {
-        coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(0);
-        return p && p->valid() && p->HasPose();
-    });
-}
 
 // The mannequin spawner's own body, run here: its refusal counter must rise (step 1).
 bool RunSpawner() {
@@ -585,12 +518,6 @@ bool RunSpawner() {
     if (!f.valid()) return false;
     f.Set<float>(L"DeltaSeconds", 0.016f);
     return ue_wrap::Call(ticker, f);
-}
-
-// A step this client measured to fail ends its run: the host is told through `mark` and says the verdict.
-bool FailedToHost(const char* mark, const char* step, const char* what) {
-    PS::Mark(mark, std::string("fail step ") + step + " " + what);
-    return false;
 }
 
 bool CheckRefusal(const char* mark) {
@@ -667,6 +594,7 @@ bool ClientBody() {
     const std::vector<Sample> samples = Window([&] { return ByKey(keyA); }, kApproachWindowS);
     OnGameThread([&] { copyEndCm = PlayerTo(ByKey(keyA)); });
     PS::Mark("copy_samples_a", Pack(samples, copyStartCm, copyEndCm));
+    if (!steps_b::ClientKeep(keyA)) return false;
     FVector at{};
 
     // Walker B: this client is its target. It walks to the host's open spot, last, with its view turned away; then its camera goes on
@@ -736,34 +664,27 @@ bool ClientBody() {
     }, false);
     if (!away) return Invalid("walker B's copy stayed in this client's view when turned away");
     PS::Mark("away");
-    return true;
+    return steps_b::ClientB(keyB);
 }
 
-// A peer's fails count as it left it in its done signal; text that is no count is a fail.
-int ParseFails(const std::string& text) {
-    char* end = nullptr;
-    const long n = std::strtol(text.c_str(), &end, 10);
-    return end != text.c_str() && n >= 0 ? static_cast<int>(n) : 1;
-}
-
+// The client's first life ends in steps_b::ClientB, which leaves the session for the rig's rejoin (the rig kills this process); the
+// rejoined life is steps_b::RunRejoin.
 void RunClient() {
     const bool ran = ClientBody();
-    PS::Mark("client_done", std::to_string(ran ? g_fails : g_fails + 1));  // a client that stopped short is no pass
-    UE_LOGI("mannequin-drill: DONE on the client fails=%d", g_fails);
+    UE_LOGI("mannequin-drill: DONE on the client's first life fails=%d ran=%d", FailCount(), ran ? 1 : 0);
 }
 
 void RunHost() {
     void* a = nullptr;
     void* b = nullptr;
     std::string keyA, keyB;
-    const bool ran = AwaitClient("client_ready", 480) && HostPhaseA(a, keyA) && HostPhaseB(a, b, keyB);
+    int clientFails = 1;
+    const bool ran = AwaitClient("client_ready", 480) && HostPhaseA(a, keyA) && HostPhaseB(a, b, keyB, clientFails);
     PS::Mark("host_done");
-    UE_LOGI("mannequin-drill: DONE on the host fails=%d ran=%d", g_fails, ran ? 1 : 0);
+    UE_LOGI("mannequin-drill: DONE on the host fails=%d ran=%d", FailCount(), ran ? 1 : 0);
     if (!ran) return;  // the verdict, INVALID or FAIL, was said where the drill stopped
-    std::string clientText;
-    const int clientFails = PS::AwaitText("client_done", clientText, 120) ? ParseFails(clientText) : 1;
-    if (g_fails == 0 && clientFails == 0) coop::rig_verdict::Say(kTag, Outcome::Pass, "host=%d client=%d", g_fails, clientFails);
-    else coop::rig_verdict::Say(kTag, Outcome::Fail, "host=%d client=%d", g_fails, clientFails);
+    if (FailCount() == 0 && clientFails == 0) coop::rig_verdict::Say(kTag, Outcome::Pass, "host=%d client=%d", FailCount(), clientFails);
+    else coop::rig_verdict::Say(kTag, Outcome::Fail, "host=%d client=%d", FailCount(), clientFails);
 }
 
 }  // namespace
@@ -776,8 +697,9 @@ bool Armed() {
 
 DWORD WINAPI Thread(LPVOID /*arg*/) {
     if (!PS::Begin(kTag)) return 0;
-    if (harness::autotest::IsClientRole()) RunClient();
-    else RunHost();
+    if (!harness::autotest::IsClientRole()) RunHost();
+    else if (steps_b::IsRejoinedLife()) steps_b::RunRejoin();
+    else RunClient();
     return 0;
 }
 

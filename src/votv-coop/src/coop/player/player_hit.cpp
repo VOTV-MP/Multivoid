@@ -43,6 +43,7 @@ constexpr float kMaxComponent = 1e7f;  // a world coordinate or an impulse; far 
 
 int  g_applyDepth = 0;  // game thread
 uint32_t g_applied = 0;
+uint32_t g_appliedWalker = 0;
 uint32_t g_droppedNoBody = 0;
 uint32_t g_droppedSource = 0;
 uint32_t g_failedApplies = 0;
@@ -157,8 +158,12 @@ void Apply(const coop::net::PlayerHitPayload& p) {
         else
             ok = EN::InvokePunch(body, Vec(p.v0), Vec(p.v1), kBones[p.bone], p.damage, Vec(p.v2));
     }
-    if (ok) ++g_applied;
-    else if (++g_failedApplies == 1) UE_LOGW("player_hit: the verb did not run on the local player");
+    if (ok) {
+        ++g_applied;
+        if (p.cue == coop::net::kPlayerHitCueWalker) ++g_appliedWalker;
+    } else if (++g_failedApplies == 1) {
+        UE_LOGW("player_hit: the verb did not run on the local player");
+    }
     PlayCue(body, p.cue);
     // The first hit of a source class says what it was; the rest are counted (g_applied).
     void* const sourceClass = source ? R::ClassOf(source) : nullptr;
@@ -215,6 +220,8 @@ uint8_t BoneIndex(const std::wstring& name) {
 bool InApply() { return g_applyDepth > 0; }
 
 uint32_t AppliedCount() { return g_applied; }
+
+uint32_t AppliedWalkerCount() { return g_appliedWalker; }
 
 uint32_t RefusedSendCount() { return g_refusedSends; }
 

@@ -1,9 +1,10 @@
 // coop/dev/mannequin_walker_geometry.h -- the walker drill's places, views and walks (coop/dev/mannequin_walker_drill).
 //
 // Where a player stands against a walker, where it looks, and where the bot director walks it: the drill's measurements are
-// judged in the drill, and everything it asks of the world's geometry is here. Every function but the templates reads or drives
-// the engine and must run on the game thread unless it says otherwise (WalkTo and BedAnchor are called from the drill's own
-// thread and hop onto it themselves).
+// judged in the drill, and everything it asks of the world's geometry is here, with what the drill's two files (the first and the
+// second increment, coop/dev/mannequin_walker_steps_b) share: the step line and verdict helpers and the walkers by key. Every
+// function but the templates reads or drives the engine and must run on the game thread unless it says otherwise (WalkTo and
+// BedAnchor are called from the drill's own thread and hop onto it themselves).
 
 #pragma once
 
@@ -16,12 +17,16 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace coop::dev::mannequin_walker_drill {
 
 // The drill's name on its `rig: VERDICT` line, and the client's slot on the host.
 inline constexpr const char* kTag = "mannequin";
 inline constexpr uint8_t     kClientSlot = 1;
+
+// The other peer's puppet, from its ready edge to a pose.
+inline constexpr int kPuppetBoundS = 60;
 
 // A director walk's own deadline (after the stage), and how long the drill waits for one to end.
 inline constexpr int kWalkDeadlineS = 400;
@@ -63,6 +68,31 @@ bool WaitGT(const char* what, int seconds, Pred pred, bool abort = true) {
 // Says `rig: VERDICT mannequin INVALID -- <why>` and returns false.
 bool Invalid(const char* why);
 
+// The step lines and the verdict of a measured failure, shared by the drill's halves. Check logs `mannequin-drill: step <step>
+// PASS|FAIL <what>` and counts a failure (FailCount); Fail says the measured FAIL as the verdict and returns false for the caller to
+// return: a measured failure ends the run at its step, so that no later precondition can turn it into an INVALID. The host says it;
+// a client's step marks a word the host turns into this: AwaitClient waits for the mark and reads the client's word, "ok" or "fail
+// <step> <what>" (a step the client measured to fail, said as the verdict); false when the run must end, the failure said or no
+// word within the bound (an INVALID said by the wait). `text` receives the word when given. FailedToHost is the client's side: it
+// marks "fail step <step> <what>" at `mark` and returns false.
+int  FailCount();
+bool Check(bool ok, const char* step, const char* what);
+bool Fail(const char* step, const char* what);
+bool AwaitClient(const char* mark, int seconds, std::string* text = nullptr);
+bool FailedToHost(const char* mark, const char* step, const char* what);
+
+// The walkers this peer holds, and one of them by its key (a GUID's text); `count` receives how many carry it. Game thread.
+std::vector<void*> Walkers();
+std::string        KeyOf(void* walker);
+void*              ByKey(const std::string& key, int* count = nullptr);
+// A key as narrow text from its wide form, and back (a key is a GUID's text, so each character is one ASCII one).
+std::string  Narrow(const std::wstring& key);
+std::wstring Widen(const std::string& key);
+
+// This client's world is up and the host's puppet stands with a pose, within the bounds the drills use. A wait that runs out is an
+// INVALID (peer_signal's); false then.
+bool HostPuppetUp();
+
 float Dist3(const ue_wrap::FVector& a, const ue_wrap::FVector& b);
 
 // This player's view on `walker`: toward it, or turned the other way, so that it is not in this view (the camera behind it).
@@ -72,8 +102,11 @@ void Aim(void* walker, bool toward);
 // This player's distance to `actor`, negative when either place does not read. Game thread.
 float PlayerTo(void* actor);
 
-// On the host: the client's puppet to `actor`, negative when either place does not read. The puppet counts once it is spawned and
+// The puppet of the peer at `slot` to `actor`, negative when either place does not read. The puppet counts once it is spawned and
 // has a pose, the test walker_target's PuppetBody makes. Game thread.
+float PeerTo(uint8_t slot, void* actor);
+
+// On the host: the client's puppet to `actor` (PeerTo of the client's slot). Game thread.
 float ClientTo(void* actor);
 
 // This player's bed anchor, as the director's stage reads it; false when the base has no bed (the KPP fallback is not one).
