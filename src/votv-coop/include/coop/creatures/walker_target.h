@@ -55,8 +55,12 @@ void* ClientBody(uint8_t slot);
 // The slot `walker` hunts, kNoTarget for a walker not held or not yet given one. Game thread.
 uint8_t TargetOf(void* walker);
 
+// [dev], for the walker drill: how many times the walker's Blueprint has read the players at its two pinned sites since it was
+// held, each read being a chance for its target to change. 0 for a walker not held. Game thread.
+uint32_t SiteReads(void* walker);
+
 // Told whenever a held walker's target changes, and when the walker ends or its target's slot leaves (`slot` is then
-// kNoTarget): `walker` may be dying, so compare its pointer and never read through it. At most four, the module's own log
+// kNoTarget): `walker` may be dying, so compare its pointer and never read through it. At most six, the module's own log
 // line being one; false when full or when `fn` is already subscribed. Game thread, in the order of the changes.
 using TargetChangedFn = void (*)(void* walker, uint8_t slot);
 bool SubscribeTargetChanged(TargetChangedFn fn);
@@ -64,7 +68,7 @@ bool SubscribeTargetChanged(TargetChangedFn fn);
 // Told with the walker's pinned event graph while at least one walker is held, and with null when that stops (no walker held,
 // the graph unpinned or the session ended): a consumer's own hook on a native the walker's graph calls is armed exactly then,
 // and pins its calls in `graph`. A graph that changes is told as the new graph. A subscriber added while a walker is held is told
-// at once. At most four; false when full or when `fn` is already subscribed. Game thread.
+// at once. At most six; false when full or when `fn` is already subscribed. Game thread.
 using GraphFn = void (*)(void* graph);
 bool SubscribeGraph(GraphFn fn);
 

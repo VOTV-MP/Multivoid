@@ -58,7 +58,9 @@ constexpr float kRangeCm = 20000.f;
 
 // The host holds up to five walkers.
 constexpr size_t kMaxWalkers = 8;
-constexpr size_t kMaxSubs = 4;
+// Six: the target-changed list holds the module's own log line, the served record, the walker state sender and the walker drill's
+// loss reading, and the graph list its consumers, with room left for one more of either.
+constexpr size_t kMaxSubs = 6;
 
 // The host holds up to five walkers and the tick drains every frame, so a full queue is a defect: said once, and the walker
 // is not claimed (no retry: a retry is a crutch, the sweep at the class resolve covers only what the class missed).
@@ -92,6 +94,7 @@ struct Walker {
     int32_t index;
     int32_t serial;
     uint8_t target;
+    uint32_t reads = 0;  // [dev] the walker's reads of the players at its two pinned sites, for the drill (SiteReads)
 };
 Walker            g_walkers[kMaxWalkers];
 size_t            g_walkerCount = 0;
@@ -218,6 +221,7 @@ void OnCameraManagerPost(void* /*context*/, void* source, void* /*result*/) {
         Rearm();
         return;
     }
+    ++w->reads;
     void* const      camera = *static_cast<void**>(slotResult);
     ue_wrap::FVector at{};
     if (!E::TryGetActorLocation(source, at)) return;
@@ -401,6 +405,11 @@ void* ClientBody(uint8_t slot) { return PuppetBody(slot); }
 uint8_t TargetOf(void* walker) {
     const Walker* w = Find(walker);
     return w ? w->target : kNoTarget;
+}
+
+uint32_t SiteReads(void* walker) {
+    const Walker* w = Find(walker);
+    return w ? w->reads : 0;
 }
 
 bool SubscribeTargetChanged(TargetChangedFn fn) {

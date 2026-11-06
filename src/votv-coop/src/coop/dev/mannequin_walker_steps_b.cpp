@@ -1,9 +1,9 @@
 // coop/dev/mannequin_walker_steps_b.cpp -- see coop/dev/mannequin_walker_steps_b.h.
 //
 // THE PEERS. Step 3 runs on walker A, steps 6, 5 and 7 on walker B, and the order of the marks is the order of the steps:
-//   host: keep_go ................ client: keep_near          (3: the client stands nearer; the host then reads the target for 5 s)
+//   host: keep_go ................ client: keep_near          (3: the client stands nearer; the host reads the target across 2 reads)
 //   host: hit_go ................. client: hit_done           (6: "ok ..." or "nohit <cm> ...", the host judges which it is)
-//   host: loss_go ................ client: left, host: loss_seen   (5: the client leaves; the host reads the target)
+//   host: loss_go ................ client: left, host: loss_seen   (5: the client leaves; the host hears the target lost)
 //   client (second life): rejoin_ready, host: join_expect, client: rejoin_done   (7: the row the client holds for B's key)
 // A mark counts only when written since the reader's own start (peer_signal), which is what lets the second life, a new process
 // with a new start, read nothing the first life's host wrote before it.
@@ -29,6 +29,8 @@
 #include "ue_wrap/engine/engine.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
@@ -48,25 +50,26 @@ namespace WT  = coop::walker_target;
 using ue_wrap::FVector;
 
 // Step 3: how much nearer to the walker than the host the client must stand (the walker picks the nearest at a read, so a margin
-// that a puppet's lag cannot cancel), how long the host reads the target after that, and the most the client's walk toward the
-// walker takes (its director walk's own wait).
-constexpr float kNearerCm = 2000.f;
-constexpr int   kKeepS = 5;
-constexpr int   kNearerBoundS = kWalkWaitS;
+// that a puppet's lag cannot cancel), how many of the walker's reads of the players the keep must hold across and the most the host
+// waits for them, and the most the client's walk toward the walker takes (its director walk's own wait).
+constexpr float    kNearerCm = 2000.f;
+constexpr uint32_t kKeepReads = 2;
+constexpr int      kKeepBoundS = 30;
+constexpr int      kNearerBoundS = kWalkWaitS;
 
 // Step 6: how long walker B has to reach the client and hit it, and how close to the client it counts as having reached it (a hit
 // is an overlap, so a walker farther than this after the bound never got there: that is no measurement).
 constexpr int   kHitBoundS = 90;
 constexpr float kHitReachCm = 500.f;
 
-// Step 5: how long the host gets, after the client left, to stop hunting it, and how long the client's leaving takes.
-constexpr int kLossBoundS = 10;
+// Step 5: how long the host gets, after the client left, to hear the walker's target lost, and how long the client's leaving takes.
+constexpr int kLossBoundS = 3;
 constexpr int kLeaveBoundS = 15;
 
-// Step 7: the second life from its launch to its world, the state row from that world, and the slack of a peer's own wait on
-// the other's mark.
+// Step 7: the second life from its launch to its world, the most its state row for the walker may take from its own world-ready
+// (the row comes with the join, before any later edge could bring one), and the slack of a peer's own wait on the other's mark.
 constexpr int kRejoinBoundS = 400;
-constexpr int kRowBoundS = 30;
+constexpr int kJoinRowBoundS = 5;
 constexpr int kSlackS = 30;
 
 constexpr const char* kRejoinEnv = "VOTVCOOP_MANNEQUIN_DRILL_REJOIN";
@@ -98,17 +101,28 @@ bool HostKeep(void* a) {
                       "or unread)", n.mine, n.other);
         return Invalid(why);
     }
-    // Every read of the host's walker for kKeepS: its target stays the host. A walker that chooses again at its next read of the
-    // players takes the nearest, which is now the client.
-    uint8_t seen = WT::TargetOf(a);
-    const bool changed = WaitGT("walker A keeps its target while the client stands nearer", kKeepS, [&] {
+    // The keep holds across kKeepReads reads of the players by the walker's Blueprint (each is a chance to choose again, and takes
+    // the nearest, which is now the client), waited for to kKeepBoundS, the target read as the host at every step of the wait. A
+    // wait that sees fewer reads is no measurement.
+    uint32_t reads0 = 0, reads = 0;
+    uint8_t  seen = 0;
+    OnGameThread([&] { reads0 = WT::SiteReads(a); });
+    bool changed = false;
+    WaitGT("walker A reads the players while the client stands nearer", kKeepBoundS, [&] {
         Aim(a, false);
         seen = WT::TargetOf(a);
-        return seen != 0;
+        reads = WT::SiteReads(a) - reads0;
+        changed = seen != 0;
+        return changed || reads >= kKeepReads;
     }, false);
     char what[200];
-    std::snprintf(what, sizeof(what), "walker A keeps hunting the host while the client stands nearer to it (target %d)",
-                  seen == WT::kNoTarget ? -1 : static_cast<int>(seen));
+    std::snprintf(what, sizeof(what), "walker A keeps hunting the host across %u reads while the client stands nearer to it (target %d)",
+                  reads, seen == WT::kNoTarget ? -1 : static_cast<int>(seen));
+    if (!changed && reads < kKeepReads) {
+        std::snprintf(what, sizeof(what), "walker A read the players %u time(s) in %d s while the client stood nearer (%u needed)", reads,
+                      kKeepBoundS, kKeepReads);
+        return Invalid(what);
+    }
     if (!Check(!changed, "3", what)) return Fail("3", what);
     OnGameThread([&] { n = Nearness{ClientTo(a), PlayerTo(a)}; });
     if (!n.Nearer(0.f)) return Invalid("the client stopped being nearer to walker A than the host during the keep window");
@@ -218,13 +232,33 @@ bool ClientHit(const std::string& keyB) {
 
 // ---- step 5 ----
 
+// The walker's target-lost notices (walker_target::SubscribeTargetChanged, slot kNoTarget), counted for the walker under watch. Only
+// OnPeerLeft and the walker's end send that slot: a later read of the players that picks again sends the new target instead, so the
+// count tells the leave edge's effect from a re-pick that would hide a missing one.
+std::atomic<void*>    g_watched{nullptr};
+std::atomic<uint32_t> g_lostNotices{0};
+bool                  g_lossSubscribed = false;
+
+void OnTargetChanged(void* walker, uint8_t slot) {
+    if (slot == WT::kNoTarget && walker == g_watched.load(std::memory_order_relaxed)) g_lostNotices.fetch_add(1, std::memory_order_relaxed);
+}
+
 bool HostLoss(void* b) {
+    bool subscribed = true;
+    OnGameThread([&] {
+        if (!g_lossSubscribed) g_lossSubscribed = subscribed = WT::SubscribeTargetChanged(&OnTargetChanged);
+    });
+    if (!subscribed) return Invalid("the target module's subscriber table is full: the walker's target loss cannot be heard");
+    g_lostNotices.store(0, std::memory_order_relaxed);
+    g_watched.store(b, std::memory_order_relaxed);
     PS::Mark("loss_go");
     if (!PS::Await("left", kLeaveBoundS + kSlackS)) return false;
-    // The client is gone from the session: the walker that hunted it chooses again (walker_target::OnPeerLeft).
-    const bool lost = WaitGT("walker B stops hunting the client that left", kLossBoundS, [&] { return WT::TargetOf(b) != kClientSlot; }, false);
+    // The client is gone from the session: the walker that hunted it is told (walker_target::OnPeerLeft).
+    const bool lost = PS::WaitFor("walker B's target is lost with the client that left", kLossBoundS,
+                                  [] { return g_lostNotices.load(std::memory_order_relaxed) > 0; }, false);
+    g_watched.store(nullptr, std::memory_order_relaxed);
     char what[160];
-    std::snprintf(what, sizeof(what), "walker B stops hunting the client within %d s of its leaving", kLossBoundS);
+    std::snprintf(what, sizeof(what), "walker B's hunt of the client ends with the client's leaving (told within %d s)", kLossBoundS);
     if (!Check(lost, "5", what)) return Fail("5", what);
     PS::Mark("loss_seen");
     return true;
@@ -259,7 +293,7 @@ bool HostJoin(void* b, const std::string& keyB, int& clientFails) {
     });
     PS::Mark("join_expect", keyB);
     std::string word;
-    if (!PS::AwaitText("rejoin_done", word, kRowBoundS + kSlackS)) return false;
+    if (!PS::AwaitText("rejoin_done", word, kJoinRowBoundS + kSlackS)) return false;
     int fails = 0, has = 0, rowTarget = 0, rowLooking = 0;
     std::istringstream in(word);
     if (!(in >> fails >> has >> rowTarget >> rowLooking)) return Invalid("the rejoined client's word for step 7 is not a reading");
@@ -290,18 +324,30 @@ bool ClientB(const std::string& keyB) { return ClientHit(keyB) && ClientLeave();
 bool IsRejoinedLife() { return coop::config::ReadEnv(kRejoinEnv) == "1"; }
 
 // The client's second life: a new process, a new load, and the host's state for B sent at its ready edge. It reads the row it holds
-// for B's key (the host names the key at its mark) and reports it; the host judges.
+// for B's key (the host names the key at its mark) and reports it; the host judges. The row must be there within kJoinRowBoundS of
+// this life's own world-ready, which is before any later edge of the walker could have brought one: a row that only came later
+// would hide a join that sent none.
 void RunRejoin() {
-    if (!HostPuppetUp()) {
-        Invalid("this rejoined client's world or the host's puppet never came up");
+    if (!WaitGT("this rejoined client's world", 240, [] {
+            return coop::players::Registry::Get().Local() && coop::net_pump::HasAnnouncedWorldReady();
+        }))
         return;
-    }
+    const auto worldReady = std::chrono::steady_clock::now();
+    const auto sinceWorld = [&] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - worldReady).count(); };
     PS::Mark("rejoin_ready");
     std::string key;
-    if (!PS::AwaitText("join_expect", key, kRowBoundS + kSlackS)) return;
+    if (!PS::AwaitText("join_expect", key, kSlackS)) return;
+    if (sinceWorld() >= kJoinRowBoundS) {
+        Invalid("the host's mark for step 7 came too late to judge the joiner's state row against its bound");
+        return;
+    }
     uint8_t target = 0xFF;
     bool    looking = false;
-    const bool has = WaitGT("the joiner holds a state row for walker B", kRowBoundS, [&] { return WSC::RowOf(Widen(key), target, looking); }, false);
+    bool    has = false;
+    PS::WaitFor("the joiner holds a state row for walker B", kJoinRowBoundS + 1, [&] {
+        OnGameThread([&] { has = WSC::RowOf(Widen(key), target, looking); });
+        return has || sinceWorld() >= kJoinRowBoundS;
+    }, false);
     UE_LOGI("mannequin-drill: REJOIN: this client's state row for walker '%s': %s, target %d looking %d", key.c_str(), has ? "held" : "none",
             target == 0xFF ? -1 : static_cast<int>(target), looking ? 1 : 0);
     char word[64];
