@@ -27,6 +27,11 @@ namespace coop::woodchipper_gate {
 // game thread resolves its names (script_gate::ResolvePendingNames, driven by the lanes' ticks). Any thread.
 void Install(coop::net::Session* session);
 
+// Once the registered watches have all settled (their names resolved, the class asked), a row that settled dead is said
+// in one WARN, naming what a client chipper will then run on its own. A settled gate asks nothing. Game thread, from the
+// chipper lane's tick (coop/interactables/woodchipper_sync).
+void SettleWatches();
+
 // Session end: say what the gate did this session and start the counts again from zero (the watches stay registered).
 void OnDisconnect();
 

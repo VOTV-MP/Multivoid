@@ -46,6 +46,8 @@ constexpr int kTagBase = 0x57470000;   // 'WG', then the row
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 std::atomic<bool> g_watched{false};
+std::atomic<uint32_t> g_registered{0};   // bit i: row i's watch registered
+bool g_settled = false;                  // game thread: every registered row settled, and any dead one said
 
 // The drill's red arms: the tick and intake refusals off (a client's copy burns and eats on its own), and the asks off
 // (the client's pour and press reach no host).
@@ -101,6 +103,9 @@ sg::Verdict OnRefusePre(const sg::Call& call) {
 }
 
 // ---- the pour: the copy's own gascanFuel runs; the fuel it gained is asked of the host ----
+// Divergence from MTA, whose client waits for the server's answer to a request (Packet_Vehicle_InOut, CGame.cpp:3018): a
+// press waits below, but the pour cannot, since the can drains inside the game's own body. The copy is optimistic and the
+// host's answer reverts it when the pour is refused (woodchipper_sync's Answer).
 
 void* g_pourChipper = nullptr;
 float g_pourBefore = 0.f;
@@ -191,6 +196,7 @@ void Install(coop::net::Session* session) {
         sg::PreFn pre = i == kPour ? &OnPourPre : i == kPress ? &OnPressPre : &OnRefusePre;
         sg::PostFn post = i == kPour ? &OnPourPost : nullptr;
         if (sg::WatchName(*kRows[i], kTagBase + i, pre, post)) {
+            g_registered.fetch_or(1u << i, std::memory_order_acq_rel);
             ++watched;
         } else {
             UE_LOGE("woodchipper_gate: the watch on %ls::%ls did not register -- a client runs it", kRows[i]->Class(),
@@ -199,6 +205,18 @@ void Install(coop::net::Session* session) {
     }
     UE_LOGI("woodchipper_gate: %d/%d chipper watches registered by class and name; the tick and the intake are "
             "refused on an active client session, its pour and press are asked of the host", watched, kRowCount);
+}
+
+void SettleWatches() {
+    const uint32_t registered = g_registered.load(std::memory_order_acquire);
+    if (g_settled || !registered) return;
+    for (int i = 0; i < kRowCount; ++i)
+        if ((registered & (1u << i)) && !sg::NameWatchSettled(*kRows[i], kTagBase + i)) return;
+    g_settled = true;
+    for (int i = 0; i < kRowCount; ++i)
+        if ((registered & (1u << i)) && !sg::NameWatchLive(*kRows[i], kTagBase + i))
+            UE_LOGW("woodchipper_gate: the watch on %ls::%ls settled dead -- a client chipper will run its own %s",
+                    kRows[i]->Class(), kRows[i]->Name(), kRowTag[i]);
 }
 
 void OnDisconnect() {
