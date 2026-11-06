@@ -6,7 +6,7 @@
 // host judges both peers' counts and prints `ambient-creature: VERDICT`. The client reaches the host with the director.
 // Gated by VOTVCOOP_RUN_AMBIENT_CREATURE; the folder is VOTVCOOP_CAN_DIR. The deer A/B reads the SpringArm's and the actor's
 // rotation on both peers each frame while the host's deer walks, a client mirror's actor tick off for one window and on (as
-// built) for the next. The host first moves its deer to flat ground 7000 uu or more from both bodies, so the slope under the host
+// built) for the next. The host first moves its deer 7000 uu or more from both bodies, to the ground least like its spawn, so the slope under the host
 // deer differs from the one the mirror spawned on. The mirror's lean in the tick-on window is a verdict term: it must be the host's
 // within kTiltTolerance, and a guard term holds that the window could tell the two apart. Red arms: VOTVCOOP_AMBIENT_CREATURE_RED.
 
@@ -360,16 +360,18 @@ double TiltUnder(void* pawn, const ue_wrap::FVector& nav) {
     return std::acos((std::max)(-1.0, (std::min)(1.0, static_cast<double>(hit.normal.Z)))) * kRad;
 }
 
-// The place the host puts its deer: the flattest navmesh point, among the eight headings kOutwardCm from the host's body, that
-// stands kDeerOutOfReachCm from the host's body and from the client's puppet; the capsule's half height up.
-bool FarFlatPlace(void* deer, ue_wrap::FVector& out) {
+// The place the host puts its deer: the navmesh point, among the eight headings kOutwardCm from the host's body, whose slope differs
+// most from `preTilt` (the slope the mirror spawned on), out of reach: kDeerOutOfReachCm from the host's body and from the client's
+// puppet; the capsule's half height up. A candidate whose trace reads nothing is no candidate.
+bool FarPlaceUnlikeSpawn(void* deer, double preTilt, ue_wrap::FVector& out) {
     void* const pawn = coop::players::Registry::Get().Local();
     coop::RemotePlayer* const peer = coop::players::Registry::Get().Puppet(1);
     ue_wrap::FVector me{}, other{}, ext{}, org{}, at{};
     if (!pawn || !peer || !peer->TryGetLocation(other) || !E::TryGetActorLocation(pawn, me) || !E::TryGetActorLocation(deer, at))
         return false;
     bool found = false;
-    double bestTilt = 0;
+    double bestGap = 0;
+    int bestHeading = 0;
     ue_wrap::FVector best{};
     for (int i = 0; i < kHeadings; ++i) {
         const double a = i * (360.0 / kHeadings) / kRad;
@@ -380,9 +382,12 @@ bool FarFlatPlace(void* deer, ue_wrap::FVector& out) {
         if (Dist3(nav, me) < kDeerOutOfReachCm || Dist3(nav, other) < kDeerOutOfReachCm) continue;
         const double tilt = TiltUnder(pawn, nav);
         UE_LOGI("deer-ab: candidate heading=%d tilt=%.1f", i * (360 / kHeadings), tilt);
-        if (!found || tilt < bestTilt) found = true, bestTilt = tilt, best = nav;
+        if (tilt >= 90.0) continue;
+        const double gap = std::fabs(tilt - preTilt);
+        if (!found || gap > bestGap) found = true, bestGap = gap, bestHeading = i * (360 / kHeadings), best = nav;
     }
     if (!found) return false;
+    UE_LOGI("deer-ab: chose heading=%d, %.1f off the spawn slope %.1f", bestHeading, bestGap, preTilt);
     const float lift = E::GetActorBounds(deer, true, org, ext) ? at.Z - (org.Z - ext.Z) : 100.f;
     out = {best.X, best.Y, best.Z + lift + 5.f};
     return true;
@@ -398,9 +403,9 @@ void HostAb(void* deer) {
     bool placed = false;
     OnGameThread([&] {
         PrintDriveFlags("host", deer);
-        placed = FarFlatPlace(deer, place) && E::TeleportTo(deer, place, {});
+        placed = FarPlaceUnlikeSpawn(deer, preTilt, place) && E::TeleportTo(deer, place, {});
     });
-    Check(placed, "the host put its deer on flat ground out of both players' reach");
+    Check(placed, "the host put its deer on ground unlike its spawn, out of both players' reach");
     if (!placed) return;
     char at[96];
     std::snprintf(at, sizeof(at), "%.1f %.1f %.1f", place.X, place.Y, place.Z);
