@@ -88,13 +88,6 @@ struct Sent {
 std::unordered_map<std::wstring, Sent> g_sent;  // HOST: by Key
 size_t g_cursor = 0;                            // HOST: where the next poll starts, so a full budget starves no food
 
-// CLIENT: a parked copy, and whether its tick ran before: a food's table row can leave it off, and the session's end
-// must not start one the game never ran.
-struct Parked {
-    ue_wrap::CachedObjRef ref;
-    bool wasTicking = false;
-};
-std::unordered_map<void*, Parked> g_parked;
 struct Pending {
     coop::net::FoodStatePayload payload;
     Clock::time_point           at;
@@ -232,34 +225,10 @@ void PollHost(coop::net::Session& s) {
     }
 }
 
-// Not once per food: the food's Init turns its own tick back on from its table row, so a load or a birth undoes a park.
-// A watch on Init is not enough: prop_food_coffeeCup.cpp:150-154 re-enables the cup's tick after Init (Delay(0)), a
-// call no seam covers, so the poll stays.
-void Park(void* actor) {
-    const bool ticking = ue_wrap::engine::IsActorTickEnabled(actor);
-    auto it = g_parked.find(actor);
-    if (it == g_parked.end() || !it->second.ref.Is(actor)) {
-        Parked& row = g_parked[actor];
-        row.ref.Set(actor);
-        row.wasTicking = ticking;
-    } else if (ticking) {
-        it->second.wasTicking = true;
-    }
-    if (ticking) ue_wrap::engine::SetActorTickEnabled(actor, false);
-}
-
-void Unpark(void* actor) {
-    auto it = g_parked.find(actor);
-    if (it == g_parked.end()) return;
-    if (it->second.ref.Is(actor) && it->second.wasTicking) ue_wrap::engine::SetActorTickEnabled(actor, true);
-    g_parked.erase(it);
-}
-
 bool Apply(const std::wstring& key, const coop::net::FoodStatePayload& p) {
     void* const actor = coop::prop_key_index::Find(key);
     if (!actor || !F::IsFood(actor)) return false;
     if (coop::hand_item::IsHandAxisActor(actor)) return true;  // the hand owns it; its record carries it onward
-    Park(actor);
     F::Write(actor, {p.temperature, p.ripeness, p.uses});
     F::PaintLooks(actor);
     ++g_applied;
@@ -272,7 +241,6 @@ void PollMirrors() {
         if (slot == local) continue;
         void* const mirror = coop::hand_item::MirrorActorForSlot(static_cast<uint8_t>(slot));
         if (!mirror || !F::IsFood(mirror)) continue;
-        Park(mirror);
         const MirrorState& state = g_mirrors[slot];
         if (!state.have) continue;
         F::Write(mirror, {state.condition.temperature, state.condition.ripeness, state.condition.uses});
@@ -387,21 +355,14 @@ void DrainReleases(coop::net::Session& s) {
     }
 }
 
+// The client's poll: the host's values that waited for their food. The food's own tick is refused at the gate
+// (coop/props/food_tick_gate), so nothing here holds it off.
 void PollClient() {
-    std::vector<void*> foods;
-    Collect(foods);
-    for (void* actor : foods) {
-        if (coop::hand_item::IsLocalHandViewActor(actor)) Unpark(actor);
-        else if (!coop::hand_item::IsHandAxisActor(actor)) Park(actor);
-    }
     const auto now = Clock::now();
     for (auto it = g_pending.begin(); it != g_pending.end();) {
         if (now - it->second.at > kReleaseWaitMs) it = g_pending.erase(it);  // its copy did not appear in time
         else it = Apply(it->first, it->second.payload) ? g_pending.erase(it) : std::next(it);
     }
-    if (g_parked.size() > foods.size() * 2 + 64)
-        for (auto it = g_parked.begin(); it != g_parked.end();)
-            it = it->second.ref.Get() ? std::next(it) : g_parked.erase(it);
 }
 
 sg::Verdict OnActionPre(const sg::Call& c) {
@@ -640,9 +601,6 @@ void OnDisconnect() {
     if (g_published || g_applied || g_bitesSent || g_bitesTaken || g_bitesRefused || g_releasesRefused)
         UE_LOGI("prop_food_sync: session end -- published=%u applied=%u bites sent=%u taken=%u refused=%u releases "
                 "refused=%u", g_published, g_applied, g_bitesSent, g_bitesTaken, g_bitesRefused, g_releasesRefused);
-    for (auto& [actor, row] : g_parked)
-        if (row.ref.Is(actor) && row.wasTicking) ue_wrap::engine::SetActorTickEnabled(actor, true);
-    g_parked.clear();
     g_pending.clear();
     g_sent.clear();
     g_lastBite = {};

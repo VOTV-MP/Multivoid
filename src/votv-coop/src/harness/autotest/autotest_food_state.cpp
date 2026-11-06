@@ -252,21 +252,21 @@ void WriteHand(const F::Condition& c) {
     OnGameThread([&] { F::Write(coop::hand_item::LocalHandActor(), c); });
 }
 
-// The copy this peer shows in `slot`'s hand, checked against what the holder wrote, tick off and steam on.
+// The copy this peer shows in `slot`'s hand, checked against what the holder wrote, with the steam on. That its own
+// tick does not run is the gate's count, judged at the end (coop/props/food_tick_gate).
 void CheckMirror(const char* step, uint8_t slot, const F::Condition& want) {
     F::Condition got;
-    bool read = false, ticking = true, steam = false, frozen = false;
+    bool read = false, steam = false, frozen = false;
     const bool there = WaitFor(step, kHandBoundSec, [&] {
         OnGameThread([&] {
             void* mirror = coop::hand_item::MirrorActorForSlot(slot);
             read = F::Read(mirror, got) && F::ReadLooks(mirror, steam, frozen);
-            if (read) ticking = E::IsActorTickEnabled(mirror);
         });
         return read && std::fabs(got.temperature - want.temperature) <= kTemperatureSlack;
     }, false);
-    Verdict(step, there && !ticking && steam && got.uses == want.uses,
-            (there ? Describe(got) : std::string("no food there at the written numbers")) + " ticking=" +
-                std::to_string(ticking) + " steam=" + std::to_string(steam));
+    Verdict(step, there && steam && got.uses == want.uses,
+            (there ? Describe(got) : std::string("no food there at the written numbers")) + " steam=" +
+                std::to_string(steam));
 }
 
 // This peer's player lets go of what it holds, thrown or placed down; the dropped food's key goes in the folder and

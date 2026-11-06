@@ -422,19 +422,20 @@ constant ([architecture.md](architecture.md), where the authority is going). The
 and the food's parked brain are built; concrete is designed and not built.
 
 A world food takes the first shape (`coop/props/prop_food_sync`). Its tick rolls temperature and spoilage and, at the
-ends of the range, spawns a burnt or frozen copy and destroys itself, so a client's copy is parked, again at each poll
-because the food's `Init` turns the tick back on, and writes the host's temperature, ripeness and uses, sent when they
-move. A client's bite runs on its copy, for its own hunger and effects, and goes to the host as `FoodBite`; the host
+ends of the range, spawns a burnt or frozen copy and destroys itself, so a client's copy is refused its tick at the
+script gate (`coop/props/food_tick_gate`: `prop_food_C.ReceiveTick` and the four subclasses that declare their own, a
+switch on the actor's tick being undone by the food's `init` and the coffee cup's BeginPlay) and takes the host's
+temperature, ripeness and uses, sent when they move. A client's bite runs on its copy, for its own hunger and effects, and goes to the host as `FoodBite`; the host
 judges it within 400 uu of the sender's body (the door's and the coffee's reach) and takes at most one bite per 200 ms
 from a slot, and its count answers. A bite it refuses changes nothing there and is answered with the food's own
 `FoodState` to that slot, once a second at most, which puts the client's count back; the client's hunger and effects
 stay its own. A last bite is already the host's through the prop act lane. A joiner gets every food again at its ready
-edge. A parked copy paints what the tick would, its steam and its frozen look. A food in a hand is its holder's: it
-keeps its tick, its condition goes out as `FoodHand`, and the copy the others show in that hand is parked and takes
-it. A client that lets a food go sends `FoodRelease`, taken from the player's drop bodies (`simulateDrop`,
+edge. A copy whose tick is refused paints what the tick would, its steam and its frozen look. A food in a hand is its
+holder's: it keeps its tick, its condition goes out as `FoodHand`, and the copy the others show in that hand is refused
+its tick on every peer and takes it. A client that lets a food go sends `FoodRelease`, taken from the player's drop bodies (`simulateDrop`,
 `forceDrop`), since the host's new copy has none of what the hand kept, and the host takes over `[V]`
 (`harness/autotest/autotest_food_state.cpp`: conditions, bites from each peer, a last bite, one burnt food on both, a
-burn written on a parked copy, steam and the frozen flag, a held food shown both ways, a throw from each peer, a
+burn written on a client's copy, steam and the frozen flag, a held food shown both ways, a throw from each peer, a
 rejoin; the verbs by reflection and the food `prop_food_C`). The host judges a release as a bite, within reach, with
 its temperature in 0 to 2000, its ripeness finite and in -1 to 1e9, and its use count no higher than the host copy's;
 one whose copy is not born yet waits 30 s for it, judged against where the sender stood, and a refused release is
@@ -504,8 +505,8 @@ prop resolves.
 | A keyed prop a client creates outside the intent door (a place after a pickup, the whitelisted births, a container extract, a player's own spawn verb) never reaches the host. It is logged now: the drain names its exit, and `[dev] prop_birth_key_probe` tallies every exit by name | `[V]` `coop/props/prop_drop_intent` drops it at the drain; `coop/dev/prop_birth_key_probe` |
 | Two peers changing one canned food inside one round trip each publish a whole record, and the last to reach the host stands, so a bite can be lost; a can's `health` travels only with those records, so impact damage short of opening it stays on each peer | `[RD]` `coop/props/prop_can_state` publishes the record and takes no claim |
 | Concrete and every other local-accumulator prop drift between peers; only the tape reel and the world food have one author | `[V]` `coop/interactables/tape_caddy_sync`, `coop/props/prop_food_sync` |
-| A hot food's ignition is the host's alone, since a parked copy does not run it, so a client sees no flame on it | `[RD]` `prop_food_C.ReceiveTick`; `ue_wrap/actors/food` |
-| A parked food's frost, impact material and freeze sound are painted but only its frozen flag and steam were read back | `[RD]` `ue_wrap/actors/food`, `coop/props/prop_food_sync` |
+| A hot food's ignition is the host's alone, since a client's copy is refused its tick, so a client sees no flame on it | `[RD]` `prop_food_C.ReceiveTick`; `ue_wrap/actors/food` |
+| A client's food's frost, impact material and freeze sound are painted but only its frozen flag and steam were read back | `[RD]` `ue_wrap/actors/food`, `coop/props/prop_food_sync` |
 | A food subclass's own counter (the shrimp's `shrimps`) and its own tick are not carried, and a heating device's work on a client's copy is local until the host's next value | `[RD]` `coop/props/prop_food_sync` |
 | A refused bite or release leaves the client's hunger and effects as its copy ran them; only the use count is put back | `[RD]` `coop/props/prop_food_sync` |
 | A prop tied by any hook -- a player's, an anchored one, the level's own -- is parked on every client for as long as the tie holds, since the host streams it, so it cannot be grabbed there until the hook lets go. A joiner parks one at rest on the host's ready-edge re-send, a single unreliable datagram: lost, it leaves that prop unparked there until it moves | `[V]` `coop/items/hook_prop_claim` claims every tied prop on the host every pass; `coop/props/prop_drive_stream` parks it; `coop/props/prop_drive_host` re-sends at the ready edge |

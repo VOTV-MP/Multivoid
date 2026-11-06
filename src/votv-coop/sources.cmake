@@ -214,6 +214,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_food_state.cpp
     src/coop/world/vent_crawler_sync.cpp
     src/coop/props/prop_food_sync.cpp
+    src/coop/props/food_tick_gate.cpp
     src/ue_wrap/actors/food.cpp
     src/coop/props/prop_record_refresh.cpp
     src/coop/props/prop_can_state.cpp

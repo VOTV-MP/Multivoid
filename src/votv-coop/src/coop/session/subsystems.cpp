@@ -86,6 +86,7 @@
 #include "coop/world/vent_crawler_sync.h"
 #include "coop/props/prop_hold_claim.h"
 #include "coop/props/prop_can_state.h"
+#include "coop/props/food_tick_gate.h"  // the food ticks a client refuses: its counts end with the session
 #include "coop/props/prop_food_sync.h"
 #include "coop/props/prop_stick_sync.h"  // wall-attachable stick mirror (camera-on-wall)
 #include "coop/dev/dev_lanes.h"  // the developer drills, probes and selftests, wired in one place
@@ -467,7 +468,8 @@ DisconnectStats DisconnectAll() {
     coop::kerfur_menu_input::OnDisconnect();  // drop the cached session (the InpActEvt_use observer stays registered)
     coop::vent_crawler_sync::OnDisconnect();
     coop::prop_hold_claim::OnDisconnect();  // drop the refusal records and the notice cooldown
-    coop::props::prop_food_sync::OnDisconnect();  // a parked copy gets its tick back
+    coop::props::prop_food_sync::OnDisconnect();  // the food lane's tallies, latches and waiting records
+    coop::food_tick_gate::OnDisconnect();  // say the refused food ticks, start the next session from zero
     coop::prop_stick_sync::OnDisconnect();  // drop commit-pending stick records
     coop::sleepingbag_sync::OnDisconnect();
     coop::item_activate::OnDisconnect();
@@ -633,7 +635,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_drive_host"}; coop::prop_drive_host::Pump(session, isHost); }  // the driven props, both roles: HOST judges a syncing client's rows, publishes the props that moved, closes the streams that rested (after the hook poll that feeds it); then both park + drive what the host streams (an empty set costs one size check)
     coop::vent_crawler_sync::Tick();  // a client's crawl sounds as their times come
     coop::props::prop_can_state::Tick();  // the init watch's names resolve until it is live
-    coop::props::prop_food_sync::Tick();  // the host's poll, the client's parking
+    coop::props::prop_food_sync::Tick();  // the host's poll, the client's wait list
     coop::dev::dev_lanes::TickDrills(session);  // [dev] the drills' and censuses' legs (a single read each when off)
     coop::player_damage::Tick();  // impact-entry PRE cancels lazy install (non-local bodies)
     coop::save_notice::Tick();  // the save watch's name resolves until it is live
