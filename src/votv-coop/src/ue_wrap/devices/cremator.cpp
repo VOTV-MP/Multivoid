@@ -19,7 +19,7 @@
 namespace ue_wrap::cremator {
 
 // The function whose body holds the loop that burns the actors the machine collected: LoopActor reads its ubergraph.
-UE_FACT_FN(kRowIgniteInside, "cremator_hit", L"cremator_C", L"igniteInside", Declared);
+UE_FACT_FN(kRowIgniteInside, "ue_wrap.cremator", L"cremator_C", L"igniteInside", Declared);
 
 namespace {
 
@@ -159,8 +159,8 @@ bool LoopActor(void* callerFunction, const uint8_t* callerLocals, void*& actor) 
         sUberIdx = sUber ? R::InternalIndexOf(sUber) : -1;
         sOff = sUber && facts::ResolveOn(kRowIgniteInside, cls) ? R::FindPropertyOffset(sUber, L"CallFunc_Array_Get_Item") : -1;
         if (sOff < 0)
-            UE_LOGW("cremator: the burn loop's actor variable did not resolve (ubergraph %p) -- the host earns the "
-                    "cremator achievement for a peer's burn while this class lives", sUber);
+            UE_LOGW("cremator: the burn loop's actor variable did not resolve (ubergraph %p) -- the loop's actor cannot be "
+                    "read while this class lives", sUber);
     }
     if (sOff < 0 || callerFunction != sUber) return false;
     std::memcpy(&actor, callerLocals + sOff, sizeof(actor));
