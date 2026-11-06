@@ -293,8 +293,6 @@ void Apply(void* plant, const std::wstring& row, const Values& v) {
     const bool grewEdge = nowGrown && !ReadBool(plant, o.grew);
     const bool fruitEdge = (old.fruitGrow >= 1.f) != (v.fruitGrow >= 1.f) || old.amount != v.amount;
     if (rowChanged || fruitEdge) CallWithBool(plant, L"upd", L"skipDataTable", !rowChanged);
-    // upd's own read of a ripe bush sets amount; the sender's count stands.
-    At<int32_t>(plant, o.amount) = v.amount;
     if (grewEdge || (rowChanged && nowGrown)) {
         WriteBool(plant, o.grew, true);
         CallWithBool(plant, L"processGrown", L"skipGrowCheck", true);
@@ -302,6 +300,16 @@ void Apply(void* plant, const std::wstring& row, const Values& v) {
         WriteBool(plant, o.grew, false);
     }
     CallPlain(plant, L"updLoc");
+    // The refresh (upd, processGrown, updLoc) may set amount from its own read of the row: the sender's count stands. A move is
+    // said once per row, so a run shows which refresh of which row moved it.
+    const int32_t refreshed = At<int32_t>(plant, o.amount);
+    if (refreshed != v.amount) {
+        static std::unordered_set<std::wstring> s_said;
+        if (s_said.insert(row).second)
+            UE_LOGI("growing_plant: the game's refresh of a '%ls' plant set amount %d where the state says %d; the state's stands",
+                    row.c_str(), refreshed, v.amount);
+        At<int32_t>(plant, o.amount) = v.amount;
+    }
 }
 
 void* Spawn(void* cls, const std::wstring& key, const std::wstring& row, const std::wstring& attachParent,
