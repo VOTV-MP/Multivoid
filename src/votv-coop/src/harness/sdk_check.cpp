@@ -191,7 +191,6 @@ const FunctionCheck kFunctions[] = {
     {P::name::ActorClass,               P::name::AddComponentByClassFn,      Severity::Important, "world-space nameplate construction"},
     {P::name::ActorClass,               P::name::FinishAddComponentFn,       Severity::Important, "nameplate registration"},
     {P::name::PawnClassName,            P::name::DetachFromControllerFn,     Severity::Important, "puppet controller cleanup"},
-    {P::name::PawnClassName,            P::name::SpawnDefaultControllerFn,   Severity::Important, "satellite AI controller spawn"},
     {P::name::SceneComponentClass,      P::name::SetVisibilityFn,            Severity::Important, "component visibility (puppet body shown)"},
     {P::name::SceneComponentClass,      P::name::SetHiddenInGameFn,          Severity::Important, "component hide (editor arrow strip)"},
     {P::name::SceneComponentClass,      P::name::GetComponentLocationFn,     Severity::Important, "puppet head-bone world Z"},

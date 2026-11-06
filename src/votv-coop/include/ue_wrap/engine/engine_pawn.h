@@ -29,10 +29,6 @@ FVector GetCameraLocation();
 
 FRotator GetCameraRotation();
 
-// APawn::SpawnDefaultController: an AIController possesses the pawn, so its AnimBP poses, with no
-// viewport, input or camera. Game thread.
-bool SpawnDefaultController(void* pawn);
-
 // A pawn begun by a deferred spawn and not yet finished is made inert: AutoPossessPlayer, AutoPossessAI and
 // AutoReceiveInput zeroed, bBlockInput set, AIControllerClass nulled, so its BeginPlay takes no controller of
 // either kind and no local input, and nothing that asks the class for a default controller gets one. True when

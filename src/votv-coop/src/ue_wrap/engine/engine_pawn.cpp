@@ -4,7 +4,7 @@
 // pawn/controller/camera-related functions in `namespace ue_wrap::engine`.
 //
 // Covers:
-//   - APawn: GetController, SpawnDefaultController, MakePawnInert
+//   - APawn: GetController, MakePawnInert
 //   - AActor: DestroyActor (sharing the same resolver cache as pawn)
 //   - AController: GetControlRotation, SetControlRotation (direct field write)
 //   - APlayerController: SetViewTargetWithBlend
@@ -33,13 +33,11 @@ void* g_pawnClass = nullptr;
 void* g_actorClass = nullptr;  // shared by destroy + checks; engine_actor caches its own
 void* g_getControllerFn = nullptr;
 void* g_destroyActorFn = nullptr;
-void* g_spawnDefControllerFn = nullptr;
 
 bool ResolvePawnFns() {
     if (!g_pawnClass) g_pawnClass = R::FindClass(P::name::PawnClassName);
     if (g_pawnClass) {
         if (!g_getControllerFn) g_getControllerFn = R::FindFunction(g_pawnClass, P::name::GetControllerFn);
-        if (!g_spawnDefControllerFn) g_spawnDefControllerFn = R::FindFunction(g_pawnClass, P::name::SpawnDefaultControllerFn);
     }
     if (!g_actorClass) g_actorClass = R::FindClass(P::name::ActorClassName);
     if (g_actorClass && !g_destroyActorFn) g_destroyActorFn = R::FindFunction(g_actorClass, P::name::DestroyActorFn);
@@ -180,15 +178,6 @@ bool DestroyActor(void* actor) {
     if (!actor || !ResolvePawnFns()) return false;
     ParamFrame f(g_destroyActorFn);  // K2_DestroyActor: no params
     return Call(actor, f);
-}
-
-bool SpawnDefaultController(void* pawn) {
-    if (!pawn || !ResolvePawnFns() || !g_spawnDefControllerFn) {
-        UE_LOGE("engine: SpawnDefaultController unresolved (fn=%p)", g_spawnDefControllerFn);
-        return false;
-    }
-    ParamFrame f(g_spawnDefControllerFn);  // no params; spawns AIControllerClass + possesses
-    return Call(pawn, f);
 }
 
 }  // namespace ue_wrap::engine
