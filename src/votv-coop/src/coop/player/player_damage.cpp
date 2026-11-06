@@ -50,6 +50,7 @@ UE_FACT_FN(kRowIgnite, "player_damage", L"mainPlayer_C", L"ignite", Declared);
 UE_FACT_FN(kRowAddDamage, "player_damage", L"mainPlayer_C", L"addDamage", Declared);
 UE_FACT_FN(kRowPunch, "player_damage", L"mainPlayer_C", L"punch", Declared);
 UE_FACT_FN(kRowRagdollMode, "player_damage", L"mainPlayer_C", L"ragdollMode", Declared);
+UE_FACT_FN(kRowAchievement, "player_damage", L"lib_C", L"progressAchievement", Declared);
 const ue_wrap::facts::Function* const kImpactEntryRows[3] = {
     &kRowImpactDamage, &kRowImpactDamageCpp, &kRowImpactSquishCpp,
 };
@@ -166,6 +167,7 @@ sg::Verdict OnIgnitePre(const sg::Call& c) {
 constexpr int kAddDamageTag = 0x50444144;  // 'PDAD'
 constexpr int kPunchTag     = 0x50445055;  // 'PDPU'
 constexpr int kRagdollTag   = 0x50445247;  // 'PDRG'
+constexpr int kAchievementTag = 0x50444143;  // 'PDAC'
 bool g_hitWatchesDone = false;
 std::atomic<uint32_t> g_delivered{0};
 std::atomic<uint32_t> g_mirrorHits{0};
@@ -362,6 +364,27 @@ sg::Verdict OnHitVerbPre(const sg::Call& c) {
     return sg::Verdict::Cancel;
 }
 
+// The cremator's burn loop earns its machine's player the cremator achievement when the actor it burns is under 10
+// health, read from the machine's own save slot, before it calls addDamage on that actor. When the actor is a peer's
+// puppet that call is cancelled above and the hit is delivered to its owner, who earns the achievement on its own
+// profile; the host's own health says nothing about the burn. The call is refused when its caller is the cremator's
+// own ubergraph and the loop's current actor, read from the caller's frame, is a puppet. A frame variable that did
+// not resolve refuses nothing: the host then earns the achievement for a peer's burn when its own health is under 10.
+bool g_achievementWatchDone = false;
+std::atomic<uint32_t> g_achievementRefused{0};
+
+sg::Verdict OnAchievementPre(const sg::Call& c) {
+    if (!c.callerObject || !ue_wrap::cremator::IsCremator(c.callerObject)) return sg::Verdict::Run;
+    void* actor = nullptr;
+    if (!ue_wrap::cremator::LoopActor(c.callerFunction, c.callerLocals, actor)) return sg::Verdict::Run;
+    if (!coop::players::Registry::Get().IsPuppet(actor)) return sg::Verdict::Run;
+    const uint32_t n = ++g_achievementRefused;
+    if (n <= 3 || (n % 100) == 0)
+        UE_LOGI("player_damage: refused the cremator achievement for the burn of a peer's puppet %p (#%u) -- it is "
+                "the owner's", actor, n);
+    return sg::Verdict::Cancel;
+}
+
 }  // namespace
 
 void Install(coop::net::Session* session) {
@@ -381,8 +404,8 @@ void Tick() {
     // nothing is delivered.
     static const bool s_noRefusal =
         coop::config::ResolveFlag(coop::config_registry::rows::player_damage_no_refusal);
-    if (s_noRefusal && (!g_damageWatchDone || !g_igniteWatchDone || !g_hitWatchesDone)) {
-        g_damageWatchDone = g_igniteWatchDone = g_hitWatchesDone = true;
+    if (s_noRefusal && (!g_damageWatchDone || !g_igniteWatchDone || !g_hitWatchesDone || !g_achievementWatchDone)) {
+        g_damageWatchDone = g_igniteWatchDone = g_hitWatchesDone = g_achievementWatchDone = true;
         UE_LOGW("player_damage: DRILL -- the damage, hit-verb and ignite refusals on a peer's puppet are OFF "
                 "(dev.player_damage_no_refusal); a puppet takes them here and no hit is delivered");
     }
@@ -405,6 +428,12 @@ void Tick() {
             UE_LOGE("player_damage: the punch watch did not register -- a creature's punch runs on a puppet here");
         if (!sg::WatchName(kRowRagdollMode, kRagdollTag, &OnHitVerbPre, nullptr))
             UE_LOGE("player_damage: the ragdollMode watch did not register -- a puppet can ragdoll here");
+    }
+    if (!g_achievementWatchDone) {
+        g_achievementWatchDone = true;
+        if (!sg::WatchName(kRowAchievement, kAchievementTag, &OnAchievementPre, nullptr))
+            UE_LOGE("player_damage: the achievement watch did not register -- the host earns the cremator achievement "
+                    "for a peer's burn when its own health is under 10");
     }
     if (g_impactInterceptorsDone) return;
     void* cls = ue_wrap::object_index::ClassByName(L"mainPlayer_C");

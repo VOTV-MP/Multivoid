@@ -6,15 +6,21 @@
 #include "ue_wrap/actors/swinger.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/engine/engine_component.h"
+#include "ue_wrap/facts/function_row.h"
 
 #include <cmath>
 #include <cstring>
 
 namespace ue_wrap::cremator {
+
+// The function whose body holds the loop that burns the actors the machine collected: LoopActor reads its ubergraph.
+UE_FACT_FN(kRowIgniteInside, "cremator_hit", L"cremator_C", L"igniteInside", Declared);
+
 namespace {
 
 namespace R  = reflection;
@@ -133,6 +139,30 @@ bool ReadDoorOpened(void* c, bool& opened) {
 bool FireboxLocation(void* c, FVector& at) {
     void* firebox = Firebox(c);
     return firebox && engine::TryGetComponentLocation(firebox, at);
+}
+
+bool LoopActor(void* callerFunction, const uint8_t* callerLocals, void*& actor) {
+    // Resolved per class object, and again when the ubergraph held is no longer that class's live function: a world
+    // that reloads the class brings a new function, possibly at the old class's address.
+    static void*   sCls = nullptr;
+    static void*   sUber = nullptr;
+    static int32_t sUberIdx = -1;
+    static int32_t sOff = -1;
+    actor = nullptr;
+    void* cls = ClassFor();
+    if (!cls || !callerFunction || !callerLocals) return false;
+    if (cls != sCls || (sUber && (!R::IsLiveByIndex(sUber, sUberIdx) || R::OuterOf(sUber) != cls))) {
+        sCls = cls;
+        sUber = R::FindFunction(cls, L"ExecuteUbergraph_cremator");
+        sUberIdx = sUber ? R::InternalIndexOf(sUber) : -1;
+        sOff = sUber && facts::ResolveOn(kRowIgniteInside, cls) ? R::FindPropertyOffset(sUber, L"CallFunc_Array_Get_Item") : -1;
+        if (sOff < 0)
+            UE_LOGW("cremator: the burn loop's actor variable did not resolve (ubergraph %p) -- the host earns the "
+                    "cremator achievement for a peer's burn while this class lives", sUber);
+    }
+    if (sOff < 0 || callerFunction != sUber) return false;
+    std::memcpy(&actor, callerLocals + sOff, sizeof(actor));
+    return actor != nullptr;
 }
 
 bool CallUseLever(void* c) {

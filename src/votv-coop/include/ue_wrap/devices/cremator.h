@@ -48,6 +48,12 @@ bool ReadDoorOpened(void* cremator, bool& opened);
 // The firebox component's world location.
 bool FireboxLocation(void* cremator, FVector& at);
 
+// The actor the machine's burn loop stands on, read out of the frame of a call the loop made. `callerFunction` and
+// `callerLocals` are the calling frame's (script_gate::Call): true, with the loop's current actor, only when the
+// call came from cremator_C's own ubergraph and its loop variable (CallFunc_Array_Get_Item) resolves. False, actor
+// null, for any other caller or a variable that did not resolve (said once). Game thread.
+bool LoopActor(void* callerFunction, const uint8_t* callerLocals, void*& actor);
+
 // useLever(): the handle's pull, the run's start or reverse. False when the call did not run.
 bool CallUseLever(void* cremator);
 
