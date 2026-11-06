@@ -3,6 +3,7 @@
 #include "ue_wrap/world/upgrades.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -155,6 +156,29 @@ bool WriteLevel(int panelIndex, int32_t value) {
 }
 
 bool IsLevelRow(int panelIndex) { return RowForPanelIndex(panelIndex) >= 0; }
+
+bool PressModuleRow(int panelIndex, bool sell) {
+    void* cls = R::FindClass(kRowClass);
+    if (!cls) return false;
+    const int32_t offIndex = R::FindPropertyOffset(cls, L"index");
+    const int32_t offGamemode = R::FindPropertyOffset(cls, L"gamemode");
+    int32_t modByte = -1;
+    uint8_t modMask = 0;
+    if (offIndex < 0 || offGamemode < 0 || !R::FindBoolProperty(cls, L"module", modByte, modMask)) return false;
+    struct Ctx { int index; int32_t offIndex, offGamemode, modByte; uint8_t modMask; void* row; } ctx{panelIndex, offIndex, offGamemode, modByte, modMask, nullptr};
+    ue_wrap::object_index::ForEachInstance(cls, [](void* c, void* obj, int32_t) {
+        auto* x = static_cast<Ctx*>(c);
+        if (x->row || !obj || !R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+        const auto* base = static_cast<const uint8_t*>(obj);
+        if (*reinterpret_cast<const int32_t*>(base + x->offIndex) != x->index || !(base[x->modByte] & x->modMask)) return;
+        // A template of the panel stands beside the live one, and its gamemode was never set: its button does nothing.
+        if (*reinterpret_cast<void* const*>(base + x->offGamemode)) x->row = obj;
+    }, &ctx);
+    if (!ctx.row) return false;
+    return ue_wrap::component_calls::CallParamlessNamed(ctx.row, sell
+        ? L"BndEvt__button_upgDown_K2Node_ComponentBoundEvent_1_OnButtonClickedEvent__DelegateSignature"
+        : L"BndEvt__button_upgDownloadSpd_K2Node_ComponentBoundEvent_0_OnButtonClickedEvent__DelegateSignature");
+}
 
 int32_t PriceAtLevel(int panelIndex, int32_t level) {
     const int row = RowForPanelIndex(panelIndex);

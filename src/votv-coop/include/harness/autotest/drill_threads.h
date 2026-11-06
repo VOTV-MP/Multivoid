@@ -205,4 +205,13 @@ DWORD WINAPI SusHoleThread(LPVOID arg);
 // VOTVCOOP_RUN_PLANT_STATE, both peers -- harness/autotest/autotest_plant_state.cpp
 DWORD WINAPI PlantStateThread(LPVOID arg);
 
+// VOTVCOOP_RUN_SV_REQUEST, both peers -- harness/autotest/autotest_sv_request.cpp
+DWORD WINAPI SvRequestThread(LPVOID arg);
+
+// VOTVCOOP_RUN_MODULE_BUY, both peers -- harness/autotest/autotest_module_buy.cpp
+DWORD WINAPI ModuleBuyThread(LPVOID arg);
+
+// VOTVCOOP_RUN_DISC_RACE, both peers -- harness/autotest/autotest_disc_race.cpp
+DWORD WINAPI DiscRaceThread(LPVOID arg);
+
 }  // namespace harness::autotest

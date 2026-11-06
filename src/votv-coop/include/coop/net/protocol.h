@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 277;
+inline constexpr uint16_t kProtocolVersion = 278;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -3710,10 +3710,14 @@ static_assert(sizeof(UpgradeLevelsPayload) <= 256 - 20 - 8,
 // An upgrade purchase (UpgradeIntent): which panel row, and which of its two buttons. The index is
 // the row's own `index` field, the only name the row has -- the widget is designer-placed in
 // ui_laptop and carries no key or element id -- and the host tests it against its own table, so an
-// index naming a module row or nothing at all is refused rather than trusted.
+// index naming no row of that kind is refused rather than trusted.
+namespace upgrade_intent {
+inline constexpr uint8_t kBuy = 0, kSell = 1, kModuleBuy = 2, kModuleSell = 3;
+}  // namespace upgrade_intent
+
 struct UpgradeIntentPayload {
-    uint8_t panelIndex;  // the row's `index`; must be one of the fifteen level rows
-    uint8_t dir;         // 0 = buy one level, 1 = sell one back
+    uint8_t panelIndex;  // the row's `index`: a level row's, or a module row's for those two values of `dir`
+    uint8_t dir;         // upgrade_intent
     uint8_t _pad[6];     // 8-byte alignment; bytes beyond the two zero
 };
 static_assert(sizeof(UpgradeIntentPayload) == 8, "UpgradeIntentPayload must be 8 bytes");
