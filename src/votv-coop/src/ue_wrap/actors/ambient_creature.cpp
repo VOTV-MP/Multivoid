@@ -157,14 +157,6 @@ bool Dissolve(void* deer) {
 
 void ListWalkers(std::vector<void*>& out) { Collect(L"prop_wMannequin_C", out); }
 
-bool ReadWalkerStanding(void* walker, bool& standing) {
-    void* anim = WalkerAnim(walker);
-    const uint8_t* b = anim ? g_stand.At(anim) : nullptr;
-    if (!b) return false;
-    standing = (*b & g_stand.mask) != 0;
-    return true;
-}
-
 bool WriteWalkerStanding(void* walker, bool standing) {
     void* anim = WalkerAnim(walker);
     uint8_t* b = anim ? g_stand.At(anim) : nullptr;

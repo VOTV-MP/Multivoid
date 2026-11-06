@@ -29,9 +29,8 @@ bool Dissolve(void* deer);
 // The walking mannequins.
 void ListWalkers(std::vector<void*>& out);
 
-// Its anim's stand: the pose it holds while its `looking` is true. The write is false when the walker has no anim or its
-// class has no such field.
-bool ReadWalkerStanding(void* walker, bool& standing);
+// Writes its anim's stand: the pose it holds while its `looking` is true. False when the walker has no anim or its class has no
+// such field.
 bool WriteWalkerStanding(void* walker, bool standing);
 
 // The controller the walker's own tick reads its gaze through: GetPlayerController(walker, 0). Null when it does not resolve.
