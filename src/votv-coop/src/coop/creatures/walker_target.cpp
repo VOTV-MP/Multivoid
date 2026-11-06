@@ -4,6 +4,7 @@
 
 #include "coop/element/death_seam.h"
 #include "coop/element/element.h"
+#include "coop/creatures/served_player.h"
 #include "coop/creatures/walker_graph.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
@@ -117,6 +118,15 @@ void Notify(void* walker, uint8_t slot) {
 // The module's own subscriber: every change in the log, the drill's marker (slot -1 is none).
 void LogTargetChanged(void* walker, uint8_t slot) {
     UE_LOGI("walker_target: walker %p hunts slot %d", walker, slot == kNoTarget ? -1 : static_cast<int>(slot));
+}
+
+// The walker's own reads of "the player" answer its target: its tick tests the player's ragdoll through lib.getMainPlayer and
+// its hit lands through the same read, so served_player records the walker against its target's slot (the one record, written
+// only here, from the one source of the target). A client's slot is served; the host, no target, a lost target and a walker's
+// end withdraw it. A seam that is not ready leaves the walker reading the host, which served_player says once.
+void ServeTarget(void* walker, uint8_t slot) {
+    if (slot == kNoTarget) coop::served_player::Unserve(walker);
+    else coop::served_player::Serve(walker, slot, coop::served_player::kMainPlayer);
 }
 
 Walker* Find(void* actor) {
@@ -357,6 +367,7 @@ void Install(coop::net::Session& session) {
     UE_ASSERT_GAME_THREAD("walker_target::Install");
     if (session.role() != coop::net::Role::Host || g_subscribed) return;
     SubscribeTargetChanged(&LogTargetChanged);
+    SubscribeTargetChanged(&ServeTarget);
     g_subscribed = coop::prop_element_tracker::SubscribeHostPropExpressed(&OnExpressed);
     if (g_subscribed) UE_LOGI("walker_target: the host's walkers are claimed into the drive stream at their eid mint");
     else UE_LOGE("walker_target: the prop lane's subscriber table is full -- the host's walker is not claimed");

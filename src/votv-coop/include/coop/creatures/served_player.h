@@ -9,9 +9,10 @@
 // by post-hooks whose source is the calling robot. Each seam is armed only while a record needs it, and a
 // robot is recorded only while all its seams can answer. Which read is which, and which stay the host's:
 // docs/coop-dispatch-visibility.md. A walking mannequin going for a client is served the same way, for its tick's
-// read of the player's ragdoll. This module writes nothing on the puppet: its hand is written only by
-// kerfur_disc_carry, for the span of a get_reports that carries the client's disc. A get_reports with no disc finds
-// the hand empty and gets the game's own refusal hint, which the host routes to that client. Game thread.
+// read of the player's ragdoll and its hit: coop/creatures/walker_target records it against its target. This module
+// writes nothing on the puppet: its hand is written only by kerfur_disc_carry, for the span of a get_reports that
+// carries the client's disc. A get_reports with no disc finds the hand empty and gets the game's own refusal hint,
+// which the host routes to that client. Game thread.
 
 #pragma once
 
