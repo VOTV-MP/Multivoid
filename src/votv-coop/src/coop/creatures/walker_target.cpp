@@ -222,7 +222,10 @@ void OnCameraManagerPost(void* /*context*/, void* source, void* /*result*/) {
     ue_wrap::FVector at{};
     if (!E::TryGetActorLocation(source, at)) return;
     const uint8_t was = w->target;
-    if (was != kNoTarget && !Keeps(was, at, camera)) w->target = kNoTarget;
+    // The mannequin drill's red: the walker chooses again at every read, so it takes the nearest player whenever one is nearer than
+    // its target, and the drill's keep step must FAIL.
+    static const bool s_redNoKeep = coop::config::ResolveEnum(::coop::config_registry::rows::mannequin_drill) == "no_keep";
+    if (was != kNoTarget && (s_redNoKeep || !Keeps(was, at, camera))) w->target = kNoTarget;
     if (w->target == kNoTarget) w->target = Acquire(at);
     const uint8_t now = w->target;
     if (now != PL::kPeerIdHost) {
@@ -430,6 +433,10 @@ void ForEachHeld(HeldFn fn, void* ctx) {
 
 void OnPeerLeft(uint8_t slot) {
     if (slot == PL::kPeerIdHost || slot == kNoTarget) return;
+    // The mannequin drill's red: a leaving player's walkers are not told, so they keep the hunt of a slot nobody holds and the
+    // drill's loss step must FAIL.
+    static const bool s_redNoLoss = coop::config::ResolveEnum(::coop::config_registry::rows::mannequin_drill) == "no_loss";
+    if (s_redNoLoss) return;
     for (size_t i = 0; i < g_walkerCount; ++i) {
         if (g_walkers[i].target != slot) continue;
         g_walkers[i].target = kNoTarget;

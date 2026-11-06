@@ -2,6 +2,8 @@
 
 #include "coop/creatures/walker_state_host.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/creatures/walker_graph.h"
 #include "coop/creatures/walker_target.h"
 #include "coop/net/protocol.h"
@@ -158,6 +160,9 @@ void Install(coop::net::Session& session) {
 
 void SendJoinStateToSlot(int slot) {
     if (!g_session || slot <= 0) return;
+    // The mannequin drill's red: a joiner is sent no walker state, so the drill's join step must FAIL on its missing row.
+    static const bool s_redNoJoinState = coop::config::ResolveEnum(::coop::config_registry::rows::mannequin_drill) == "no_join_state";
+    if (s_redNoJoinState) return;
     JoinCtx ctx{slot};
     WT::ForEachHeld(&SendHeldTo, &ctx);
 }

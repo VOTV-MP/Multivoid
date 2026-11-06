@@ -691,7 +691,8 @@ void RunHost() {
 
 bool Armed() {
     static const bool armed = Is("walker") || Is("no_row") || Is("no_brain_gate") || Is("no_drive_claim") ||
-                              Is("no_gaze_route") || Is("no_level");
+                              Is("no_gaze_route") || Is("no_level") || Is("no_keep") || Is("no_loss") || Is("no_delivery") ||
+                              Is("no_join_state");
     return armed;
 }
 

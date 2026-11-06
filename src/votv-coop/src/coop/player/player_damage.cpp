@@ -397,6 +397,9 @@ void HushWalker(void* walker) {
 // and the walker's served record (walker_target) does not decide it. Game thread (a script-gate watch).
 void DeliverWalkerDamage(const sg::Call& c) {
     if (!c.callerObject || !ue_wrap::ambient_creature::IsWalker(c.callerObject)) return;
+    // The mannequin drill's red: a walker's hit on a client is cancelled here and sent nowhere, so the drill's hit step must FAIL.
+    static const bool s_redNoDelivery = coop::config::ResolveEnum(::coop::config_registry::rows::mannequin_drill) == "no_delivery";
+    if (s_redNoDelivery) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
     const uint8_t slot = coop::players::Registry::Get().PeerIdOfActor(c.object);
