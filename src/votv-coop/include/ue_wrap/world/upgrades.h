@@ -33,10 +33,20 @@ bool WriteLevel(int panelIndex, int32_t value);
 // does not tell them apart: the module numbered 27 shares the level row's index.
 bool IsLevelRow(int panelIndex);
 
-// Presses a module row's own buy or sell button on this machine's live panel. False when no such row stands. Its body
-// is the game's: index 27 writes the triangle level at the module's price, and the ten indices without a store (12-19,
-// 22, 23: the row's getLevel and setLevel switches return a temporary) charge their price and hold no level (the switch
-// read; the 30 credits of row 23 measured on a client). Game thread.
+// The two buttons of a row, by their cooked delegate-binding names: the row's own UFunctions, which nothing else in the
+// game carries. PressModuleRow calls them; a drill that presses a row names them here and not by a second spelling. The
+// script-gate watch rows in coop/interactables/upgrade_sync carry the same text as literals, since the fact-rows gate
+// reads only literals.
+inline constexpr const wchar_t* kBuyButtonFn =
+    L"BndEvt__button_upgDownloadSpd_K2Node_ComponentBoundEvent_0_OnButtonClickedEvent__DelegateSignature";
+inline constexpr const wchar_t* kSellButtonFn =
+    L"BndEvt__button_upgDown_K2Node_ComponentBoundEvent_1_OnButtonClickedEvent__DelegateSignature";
+
+// Presses a module row's own buy or sell button on this machine's live panel. False when no such row stands, and when the
+// row of that index is not one the panel itself owns (see the .cpp). Its body is the game's: index 27 writes the
+// triangle level at the module's price, and the ten indices without a store (12-19, 22, 23: the row's getLevel and
+// setLevel switches return a temporary) charge their price and hold no level (the switch read; the 30 credits of row 23
+// measured on a client). Game thread.
 bool PressModuleRow(int panelIndex, bool sell);
 
 // The panel's own arithmetic, baked from the ui_laptop rows (the .cpp carries the table and the

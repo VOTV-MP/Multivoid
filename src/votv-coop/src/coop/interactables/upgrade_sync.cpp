@@ -10,6 +10,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/roster_ledger.h"  // PerSlotState
+#include "coop/world/balance_sync.h"
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -34,6 +35,7 @@ namespace UP = ue_wrap::upgrades;
 // nothing else in the game carries either name, so a name watch is exact. Watching the BUTTON and
 // not the purchase is deliberate: the handler's whole body is the jump into the ubergraph, so a
 // cancel here takes the debit, the level write, the sound and the repaint together.
+// The fact-rows gate reads only literals, so these two carry the text of UP::kBuyButtonFn and UP::kSellButtonFn.
 UE_FACT_FN(kRowBuy, "upgrade_sync", nullptr,
            L"BndEvt__button_upgDownloadSpd_K2Node_ComponentBoundEvent_0_OnButtonClickedEvent__DelegateSignature",
            AnyClass);
@@ -98,6 +100,14 @@ void Publish(coop::net::Session& s, const char* why) {
             static_cast<unsigned long long>(g_broadcast));
 }
 
+// A refused module press is answered with the host's truth: its balance and its levels, to the sender alone. The client's
+// own body is already cancelled, so nothing on it moved; the reply is what keeps its copy equal to the host's whatever
+// the cause of the refusal. Both sends are the lanes' own (balance_sync, SendCurrentToSlot below).
+void AnswerRefusal(uint8_t slot) {
+    coop::balance_sync::SendCurrentToSlot(slot);
+    SendCurrentToSlot(slot);
+}
+
 void Execute(coop::net::Session& s, const coop::net::UpgradeIntentPayload& p, uint8_t slot) {
     const int index = static_cast<int>(p.panelIndex);
     const bool buying = p.dir == 0;
@@ -116,15 +126,22 @@ void Execute(coop::net::Session& s, const coop::net::UpgradeIntentPayload& p, ui
         ++g_denied;
         UE_LOGW("upgrade_sync: DENY slot=%u -- the laptop is held by slot %u",
                 static_cast<unsigned>(slot), static_cast<unsigned>(holder));
+        if (moduleRow) AnswerRefusal(slot);
         return;
     }
 
     // A module row has no arithmetic of the lane's: the host's own row runs its own button, as a press at its panel does.
     // The balance and the levels then cross by their own routes.
+    //
+    // Shape of MTA's vehicle enter request (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:3079,
+    // VEHICLE_REQUEST_IN): the client only asks, the server runs the request against its own state, and the mirror of
+    // the result is the confirmation. MTA answers a refusal too (VEHICLE_ATTEMPT_FAILED, :3098), and so does this:
+    // AnswerRefusal.
     if (moduleRow) {
         if (!UP::PressModuleRow(index, p.dir == coop::net::upgrade_intent::kModuleSell)) {
             ++g_denied;
-            UE_LOGW("upgrade_sync: DENY slot=%u -- module row %d does not stand here", static_cast<unsigned>(slot), index);
+            UE_LOGW("upgrade_sync: DENY slot=%u -- no module row %d on the host's panel", static_cast<unsigned>(slot), index);
+            AnswerRefusal(slot);
             return;
         }
         UE_LOGI("upgrade_sync: HOST pressed module row %d for slot %u (%s)", index, static_cast<unsigned>(slot),

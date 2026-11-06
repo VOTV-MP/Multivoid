@@ -12,6 +12,7 @@
 
 #include <cmath>
 #include <string>
+#include <vector>
 
 namespace ue_wrap::upgrades {
 namespace {
@@ -117,6 +118,29 @@ int RowForPanelIndex(int panelIndex) {
     return -1;
 }
 
+// Whether the panel a row names as its own (`laptop`, which the row's construct sets from the gamemode) holds the row as one
+// of its named members. ui_laptop_C declares its 25 upgrade rows as members (upgrade_atvsolar ... upgrades_storm), and
+// that member list is what the panel shows; a uicomp_upgradeSlot_C that is no member of the live panel is a stray the
+// player cannot press. The panel's pointer slots are walked once per class.
+bool PanelOwnsRow(const void* row, int32_t offLaptop) {
+    void* panel = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(row) + offLaptop);
+    if (!panel || !R::IsLive(panel)) return false;
+    void* cls = R::ClassOf(panel);
+    if (!cls) return false;
+    static void* sCls = nullptr;
+    static std::vector<int32_t> sSlots;
+    if (cls != sCls) {
+        sSlots.clear();
+        for (const auto& f : R::EnumerateStructFields(cls))
+            if (f.size == static_cast<int32_t>(sizeof(void*))) sSlots.push_back(f.offset);
+        sCls = cls;
+    }
+    const auto* pb = static_cast<const uint8_t*>(panel);
+    for (const int32_t off : sSlots)
+        if (*reinterpret_cast<void* const*>(pb + off) == row) return true;
+    return false;
+}
+
 }  // namespace
 
 bool ReadLevels(int32_t* out) {
@@ -162,22 +186,22 @@ bool PressModuleRow(int panelIndex, bool sell) {
     if (!cls) return false;
     const int32_t offIndex = R::FindPropertyOffset(cls, L"index");
     const int32_t offGamemode = R::FindPropertyOffset(cls, L"gamemode");
+    const int32_t offLaptop = R::FindPropertyOffset(cls, L"laptop");
     int32_t modByte = -1;
     uint8_t modMask = 0;
-    if (offIndex < 0 || offGamemode < 0 || !R::FindBoolProperty(cls, L"module", modByte, modMask)) return false;
-    struct Ctx { int index; int32_t offIndex, offGamemode, modByte; uint8_t modMask; void* row; } ctx{panelIndex, offIndex, offGamemode, modByte, modMask, nullptr};
+    if (offIndex < 0 || offGamemode < 0 || offLaptop < 0 || !R::FindBoolProperty(cls, L"module", modByte, modMask)) return false;
+    struct Ctx { int index; int32_t offIndex, offGamemode, offLaptop, modByte; uint8_t modMask; void* row; } ctx{panelIndex, offIndex, offGamemode, offLaptop, modByte, modMask, nullptr};
     ue_wrap::object_index::ForEachInstance(cls, [](void* c, void* obj, int32_t) {
         auto* x = static_cast<Ctx*>(c);
         if (x->row || !obj || !R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
         const auto* base = static_cast<const uint8_t*>(obj);
         if (*reinterpret_cast<const int32_t*>(base + x->offIndex) != x->index || !(base[x->modByte] & x->modMask)) return;
         // A template of the panel stands beside the live one, and its gamemode was never set: its button does nothing.
-        if (*reinterpret_cast<void* const*>(base + x->offGamemode)) x->row = obj;
+        if (!*reinterpret_cast<void* const*>(base + x->offGamemode)) return;
+        if (PanelOwnsRow(obj, x->offLaptop)) x->row = obj;
     }, &ctx);
     if (!ctx.row) return false;
-    return ue_wrap::component_calls::CallParamlessNamed(ctx.row, sell
-        ? L"BndEvt__button_upgDown_K2Node_ComponentBoundEvent_1_OnButtonClickedEvent__DelegateSignature"
-        : L"BndEvt__button_upgDownloadSpd_K2Node_ComponentBoundEvent_0_OnButtonClickedEvent__DelegateSignature");
+    return ue_wrap::component_calls::CallParamlessNamed(ctx.row, sell ? kSellButtonFn : kBuyButtonFn);
 }
 
 int32_t PriceAtLevel(int panelIndex, int32_t level) {
