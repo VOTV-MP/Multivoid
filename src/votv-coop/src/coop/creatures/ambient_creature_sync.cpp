@@ -66,13 +66,12 @@ const std::vector<void*>& TickWalkers() {
     }
     return g_tickWalkers;
 }
-bool g_parkedAny = false;
 
 // The walkers' poll runs a quarter of a second apart, as the view test and the steering run every tick.
 constexpr auto  kWalkerPoll = std::chrono::milliseconds(250);
 Clock::time_point g_nextWalkerPoll{};
 
-// CLIENT: where each walker was at the last poll and when it last moved, so a parked copy's pose shows whether it walks. The
+// CLIENT: where each walker was at the last poll and when it last moved, so a copy's pose shows whether it walks. The
 // host's walker jitters a few cm at a path's end, and stands only once it has been still for a moment.
 struct WalkerSeen {
     ue_wrap::FVector at{};
@@ -465,12 +464,6 @@ void ClientWalkerPoll(coop::net::Session& s, Clock::time_point now) {
     std::unordered_map<void*, WalkerSeen> walkersNow;
     for (void* w : TickWalkers()) {
         auto was = g_walkers.find(w);
-        // A walker not seen by the last poll is a copy this lane has not parked; its pointer leaves g_walkers with its actor.
-        if (was == g_walkers.end()) {
-            AC::ParkWalker(w);
-            g_parkedAny = true;
-            UE_LOGI("ambient_creature_sync: parked a walker's brain");
-        }
         ue_wrap::FVector at{};
         if (!E::TryGetActorLocation(w, at)) continue;
         WalkerSeen seen{at, now};
@@ -603,12 +596,6 @@ void QueueConnectBroadcastForSlot(int slot) {
 Counters Read() { return g_counters; }
 
 void OnDisconnect() {
-    if (g_parkedAny) {
-        std::vector<void*> walkers;
-        AC::ListWalkers(walkers);
-        for (void* w : walkers) AC::UnparkWalker(w);
-    }
-    g_parkedAny = false;
     g_walkers.clear();
     g_watchers.clear();
     g_lingering.clear();

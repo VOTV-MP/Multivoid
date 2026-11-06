@@ -29,11 +29,6 @@ bool Dissolve(void* deer);
 // The walking mannequins.
 void ListWalkers(std::vector<void*>& out);
 
-// A copy's brain off: its tick, which walks it and reads this peer's view, and the timers its begin play set, which jump, hit
-// and take up weapons. Its AI pawn's move loop keeps asking for paths, and nothing reads them.
-void ParkWalker(void* walker);
-void UnparkWalker(void* walker);
-
 // Its anim's stand: the pose it holds when watched.
 bool ReadWalkerStanding(void* walker, bool& standing);
 void WriteWalkerStanding(void* walker, bool standing);

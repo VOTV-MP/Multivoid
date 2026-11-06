@@ -5,7 +5,6 @@
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/component_calls.h"
-#include "ue_wrap/core/kismet_timer.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -182,14 +181,6 @@ bool Dissolve(void* deer) {
 }
 
 void ListWalkers(std::vector<void*>& out) { Collect(L"prop_wMannequin_C", out); }
-
-void ParkWalker(void* walker) {
-    engine::SetActorTickEnabled(walker, false);
-    for (const wchar_t* timer : {L"timer_damage", L"timer_jump", L"timer_pickupWeapon", L"timer_saw", L"timer_unhook"})
-        kismet_timer::Clear(walker, timer);
-}
-
-void UnparkWalker(void* walker) { engine::SetActorTickEnabled(walker, true); }
 
 bool ReadWalkerStanding(void* walker, bool& standing) {
     void* anim = WalkerAnim(walker);

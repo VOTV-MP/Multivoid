@@ -191,6 +191,7 @@
 #include "coop/creatures/roach_sync.h"  // host-authoritative roach-infestation mirror
 #include "coop/creatures/owner_entity_sync.h"
 #include "coop/creatures/npc_mirror_brain.h"  // a parked family's mirror runs none of its Blueprint graph
+#include "coop/creatures/walker_brain.h"  // a client's walker copy runs two entries of its Blueprint graph
 #include "coop/items/hook_anchor.h"
 #include "coop/items/hook_sync.h"  // the hook lane: owner-phase stream, mirrors, the tick park
 #include "coop/world/event_active_sync.h"  // the native activeEvents registry probe
@@ -237,6 +238,7 @@ void InstallLoadWatchers(coop::net::Session& session) {
     coop::world_load_episode::InstallReplayWatch(session);
     coop::trash_native_hold::Install(&session);  // the join load's clumps held still at their spawn: a catch installed with the world would arm after the load
     coop::sus_hole_intent::Install(&session);  // the sus hole spawner's holes stamped at their birth, a client's roll sent to the host, from the load window on
+    coop::walker_brain::Install(session);  // a client's walker copy never thinks: the graph watch and its nav pawn made inert, from the load window on
 }
 
 void Install(coop::net::Session& session) {
@@ -535,6 +537,7 @@ DisconnectStats DisconnectAll() {
     coop::event_active_sync::OnDisconnect();  // drop the begun-events map and its world stamp
     coop::creature_event_relay::OnDisconnect();  // a client's applied creature events back out; both halves' state; the session
     coop::npc_mirror_brain::OnDisconnect();  // what the graph watches refused, and every mark
+    coop::walker_brain::OnDisconnect();  // what the walker's graph watch refused, and the spawn hook disarmed
     coop::alarm_sync::OnDisconnect();  // drop the cached trigger + poll baseline
     coop::serverbox_sync::OnDisconnect();  // the poll baseline and the session
     coop::server_upgrade_sync::OnDisconnect();  // verb snapshots + parked canonical + deny records

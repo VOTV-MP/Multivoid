@@ -246,15 +246,6 @@ std::string Place(const ue_wrap::FVector& v) {
 
 // ---- the walking mannequin ----
 
-// Whether the actor's own tick runs, read by reflection: the lane's parking of a copy is the state under test, and the engine
-// wrapper does not carry a read of it.
-bool TickEnabled(void* actor) {
-    void* fn = actor ? R::FindDispatchFunctionCached(R::ClassOf(actor), L"IsActorTickEnabled") : nullptr;
-    if (!fn) return false;
-    ue_wrap::ParamFrame f(fn);
-    return f.valid() && ue_wrap::Call(actor, f) && f.Get<bool>(L"ReturnValue");
-}
-
 // The host: its walker walks while it looks away, and its place goes to the client every second after.
 bool HostWalkerArm() {
     void* pawn = coop::players::Registry::Get().Local();
@@ -313,8 +304,9 @@ bool HostWalkerArm() {
     return true;
 }
 
-// The client: its copy follows the host's walker, shows walking while it moves, and its brain is parked. Its spawner is refused
-// at the gate, read in CheckRefusals. W8 measures the stand swap's and the stand destroy's crossing.
+// The client: its copy follows the host's walker and shows walking while it moves. Its spawner is refused at the gate, read in
+// CheckRefusals. W8 measures the stand swap's and the stand destroy's crossing and the copy's brain gate (no AI move logged, its
+// nav pawn without a controller).
 bool ClientWalkerArm() {
     if (!Await("walker", 240)) return false;
     void* walker = nullptr;
@@ -325,7 +317,6 @@ bool ClientWalkerArm() {
     Check(walker != nullptr, "the host's walker crossed");
     if (!walker) return false;
     ::Sleep(1000);
-    OnGameThread([&] { Check(!TickEnabled(walker), "the walker's brain is parked here"); });
     ue_wrap::FVector first{}, lastAt{};
     OnGameThread([&] { E::TryGetActorLocation(walker, first); });
     Mark("walker_seen");
