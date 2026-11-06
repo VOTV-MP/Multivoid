@@ -131,8 +131,11 @@ dispatch on both roles and re-runs the game's own verb with the kerfur serving t
 (`coop/creatures/served_player`), so its reads of the player answer that peer: follow follows it,
 patrol circles it. A request waits while the host has no body for its sender, and a verb the game
 refuses changes nobody's service. Nothing writes a puppet's hand yet, so a client's get the reports
-gets the game's refusal hint, shown on the host. A player's pick, and a drill's reflected call, are caught at one seat, the
-script gate's watch on the Omega's `actionName` (`coop/creatures/kerfur_command_seat`): a client cancels a relayed
+gets the game's refusal hint, which the host routes to that client (`coop/requester_feedback`, the verb runs inside the
+requester's scope), and a command the host refuses before running it, or holds, is answered to its requester as
+`KerfurCommandAnswer` (`coop/creatures/kerfur_command_answer`), worded there in the player's language. A player's pick, and a
+drill's reflected call, are caught at one seat, the script gate's watch on the Omega's `actionName`
+(`coop/creatures/kerfur_command_seat`): a client cancels a relayed
 verb there and asks the host, the host hands the kerfur back to its own player there. At a join a save-loaded kerfur prop is adopted by class and
 nearest pose once the load tail settles (`coop/creatures/kerfur_prop_adoption`), and a kerfur
 that was off in the save but on by the time the joiner is ready has its stale off-prop retired by
@@ -196,6 +199,6 @@ wisp in flight is transient and owes nothing.
 | per-peer creatures | `coop/creatures/owner_entity_sync` |
 | the killer wisp | `coop/creatures/wisp_attack_sync`, `coop/creatures/wisp_grab_hold`, `coop/creatures/wisp_tear_mirror`, `coop/player/ragdoll_gate` |
 | roaches | `coop/creatures/roach_sync` |
-| the kerfur | `coop/creatures/kerfur_entity`, `coop/creatures/kerfur_convert` with its host and client halves, `coop/creatures/kerfur_form_assembler`, `coop/creatures/kerfur_command`, `coop/creatures/kerfur_command_seat`, `coop/creatures/kerfur_prop_adoption`, `coop/creatures/kerfur_reconcile`, `coop/creatures/served_player` |
+| the kerfur | `coop/creatures/kerfur_entity`, `coop/creatures/kerfur_convert` with its host and client halves, `coop/creatures/kerfur_form_assembler`, `coop/creatures/kerfur_command`, `coop/creatures/kerfur_command_seat`, `coop/creatures/kerfur_command_answer`, `coop/creatures/kerfur_prop_adoption`, `coop/creatures/kerfur_reconcile`, `coop/creatures/served_player` |
 | the kerfus | `coop/creatures/kerfus_lanes` with `kerfus_brain`, `kerfus_state`, `kerfus_intent` and `kerfus_follow`; `ue_wrap/actors/kerfus` |
 | tests | `harness/autotest/autotest_kwisp_probe.cpp`, `harness/autotest/autotest_wisplane.cpp`, `coop/dev/kerfur_convert_drill` (a client turns a kerfur off and on beside a disc of its own), `coop/dev/kerfur_serve_drill` (a client's commands to the Omega run for that client), `coop/dev/kerfus_drill` (a kerfus a client turns on follows it) |

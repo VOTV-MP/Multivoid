@@ -9,7 +9,7 @@
 // by post-hooks whose source is the calling robot. Each seam is armed only while a record needs it, and a
 // robot is recorded only while all its seams can answer. Which read is which, and which stay the host's:
 // docs/coop-dispatch-visibility.md. Nothing writes a puppet's hand, so a client's get_reports finds it empty
-// and gets the game's own refusal hint, shown on the host. Game thread.
+// and gets the game's own refusal hint, which the host routes to that client. Game thread.
 
 #pragma once
 

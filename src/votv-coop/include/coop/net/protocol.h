@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 279;
+inline constexpr uint16_t kProtocolVersion = 280;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1332,6 +1332,13 @@ enum class ReliableKind : uint8_t {
     // host's receive edge; never relayed; not pre-world; the Default lane. Late join: none, an act sent to its
     // requester, not state. RequesterFeedbackPayload.
     RequesterFeedback = 229,
+
+    // HOST->CLIENT: the host's answer to a KerfurCommand it judged and did not run at once: refused, with the
+    // reason as an enum the client words itself, or waiting for the host's body of its sender. Names the request by
+    // the id the client sent. Host-authored: refused at the host's receive edge; never relayed; not pre-world; the
+    // Default lane. Late join: none, an act sent to its requester, not state. PROVISIONAL number, final at landing.
+    // KerfurCommandAnswerPayload.
+    KerfurCommandAnswer = 234,
 };
 
 #pragma pack(push, 1)
@@ -1754,13 +1761,44 @@ static_assert(sizeof(KerfurConvertBroadcastPayload) <= 256 - 20 - 8,
               "KerfurConvertBroadcastPayload must fit in one reliable datagram");
 
 // A kerfur menu command (KerfurCommand), client to host. The host takes the requester from the
-// sender slot; a self-declared slot would be spoofable.
+// sender slot; a self-declared slot would be spoofable. `requestId` is the client's own count of its commands, from
+// 1, which the host echoes in its answer (KerfurCommandAnswer) so the client knows which command it answers.
 struct KerfurCommandPayload {
     uint32_t elementId;  // host Npc eid of the target kerfur
+    uint32_t requestId;  // the sender's request number, from 1; 0 names no request
     uint8_t  command;    // KerfurMenuCommand (follow/idle/patrol/fix_servers/get_reports/fix_transformers)
     uint8_t  _pad[3];    // zeroed
 };
-static_assert(sizeof(KerfurCommandPayload) == 8, "KerfurCommandPayload must be 8 bytes");
+static_assert(sizeof(KerfurCommandPayload) == 12, "KerfurCommandPayload must be 12 bytes");
+
+// KerfurCommandAnswer's results and the reasons of a refusal (coop/creatures/kerfur_command_answer).
+namespace kerfur_command_answer {
+inline constexpr uint8_t kResultRefused = 0;  // the host judged the command and refused it: `reason` says why
+inline constexpr uint8_t kResultWaits = 1;    // the host has no body for the sender yet, or its seams are settling
+// 2 is reserved: the host consumed the item the requester held (the disc of get_reports).
+inline constexpr uint8_t kResultMax = 1;
+
+// Why the host refused a command it understood. The client words each itself; malformed or flooding requests are
+// dropped and counted by the host and never answered, so they have no reason here.
+enum class KerfurRefusal : uint8_t {
+    Busy = 0,       // the kerfur is on a job (states 3 to 5)
+    Stale = 1,      // the element is gone or not live
+    KillMode = 2,   // the kerfur is murderous
+    QueueFull = 3,  // the sender's queue is full: said once a streak
+    Unknown = 4,    // the element is not a kerfur, or the host's feedback seams are refused
+};
+inline constexpr uint8_t kRefusalMax = static_cast<uint8_t>(KerfurRefusal::Unknown);
+}  // namespace kerfur_command_answer
+
+// The host's answer to one KerfurCommand (KerfurCommandAnswer): `requestId` echoes the command's, `result` is
+// kerfur_command_answer::kResult*, `reason` a KerfurRefusal for a refusal and 0 otherwise.
+struct KerfurCommandAnswerPayload {
+    uint32_t requestId;
+    uint8_t  result;
+    uint8_t  reason;
+    uint8_t  _pad[2];  // zeroed
+};
+static_assert(sizeof(KerfurCommandAnswerPayload) == 8, "KerfurCommandAnswerPayload must be 8 bytes");
 
 // A Kerfus's live state (KerfusState), host to all: the plain kerfur by its host-range prop eid, the
 // two flags a client shows and its energy (unclamped above 100 while it charges, as the game keeps it).

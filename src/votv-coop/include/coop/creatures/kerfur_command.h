@@ -1,15 +1,16 @@
 // coop/creatures/kerfur_command.h -- the kerfur's radial menu, relayed host-authoritatively; the kerfur
 // serves whoever picked a verb.
 //
-// The game's own actionName sets the kerfur's State and calls move(), and its verbs read the player as
-// player 0 -- the follow MoveTo and the patrol on GetPlayerPawn(0), the disc insert on lib.getMainPlayer()
-// -- which on the host is always the host. Both roles CANCEL the local dispatch (a client's mirror is a
+// The game's actionName sets the kerfur's State and calls move(), and its verbs read the player as player 0 --
+// the follow MoveTo and the patrol on GetPlayerPawn(0), the disc insert on lib.getMainPlayer() -- which on the host is
+// always the host. Both roles CANCEL the local dispatch (a client's mirror is a
 // parked actor) and the host runs the real actionName with the requester recorded in served_player first,
 // so those reads answer that player's puppet and the game's own follow follows it; a request waits while
 // the host has no body for its sender. A command the game refuses (kill mode, a job) changes nobody's
 // service, the host's own hands the kerfur back to player 0, a leaver's ends, and murder mode's at its
-// startKill, before the chase reads anyone. Nothing writes a puppet's hand, so a client's get_reports gets
-// the game's refusal hint, shown on the host. turn_off stays in kerfur_convert. Page: docs/npcs-and-kerfur.md.
+// startKill, before the chase reads anyone. A client's verb runs inside its requester_feedback scope, so its hint, gloss
+// or sound (a get_reports refusal too: nothing writes a puppet's hand) goes to that client, and a command refused before
+// it runs, or waiting, is answered to it (kerfur_command_answer). turn_off stays in kerfur_convert. Page: docs/npcs-and-kerfur.md.
 //
 // Principle 7: gameplay/network module; engine access through ue_wrap/kerfur and game_thread only.
 
@@ -54,7 +55,7 @@ bool TryRecordMenuCommand(void* self, const std::wstring& name, bool isClient);
 // serves no client. The actionName watch belongs to kerfur_command_seat. Game thread.
 void Install(coop::net::Session* session);
 
-// HOST-only receiver for a KerfurCommand request, wired in event_dispatch_intent. It refuses an unknown sender,
+// HOST-only receiver for a KerfurCommand request, wired in event_dispatch_kerfur_command. It refuses an unknown sender,
 // an unknown command and an eid outside the host-allocated range into the lane's refusal tally, and queues the
 // rest per sender, up to a cap, refusing past it. Tick serves one queued request per sender at a bounded rate, in
 // arrival order: the head waits while the host has no posed body for the sender or the Omega's seams are still

@@ -1253,6 +1253,18 @@ msgstr ""
 msgid "That item is too far away."
 msgstr ""
 
+#: src/coop/creatures/kerfur_command_answer.cpp
+msgid "That kerfur is busy with a task."
+msgstr ""
+
+#: src/coop/creatures/kerfur_command_answer.cpp
+msgid "That kerfur is no longer there."
+msgstr ""
+
+#: src/coop/creatures/kerfur_command_answer.cpp
+msgid "That kerfur will not take orders."
+msgstr ""
+
 #: src/coop/commands/command_sync.cpp
 msgid "That line is too long."
 msgstr ""
@@ -1389,6 +1401,10 @@ msgstr ""
 msgid "The host was busy, and this connection was the slowest to prove itself."
 msgstr ""
 
+#: src/coop/creatures/kerfur_command_answer.cpp
+msgid "The host will run that kerfur command in a moment."
+msgstr ""
+
 #: src/coop/net/end_reason.cpp
 msgid "The host's world arrived damaged and could not be used."
 msgstr ""
@@ -1403,6 +1419,10 @@ msgstr ""
 
 #: src/coop/net/end_reason.cpp
 msgid "The join failed before it started. The log has the error."
+msgstr ""
+
+#: src/coop/creatures/kerfur_command_answer.cpp
+msgid "The kerfur could not take that command."
 msgstr ""
 
 #: src/coop/props/remover_request.cpp
@@ -1529,6 +1549,10 @@ msgstr ""
 
 #: src/coop/net/end_reason.cpp
 msgid "Too many connections from you in a short time. Try again shortly."
+msgstr ""
+
+#: src/coop/creatures/kerfur_command_answer.cpp
+msgid "Too many kerfur commands at once, try again."
 msgstr ""
 
 #: src/coop/net/end_reason.cpp

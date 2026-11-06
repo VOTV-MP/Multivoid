@@ -72,6 +72,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dispatch/event_dispatch_intent.cpp
     src/coop/dispatch/event_dispatch_prop_drive.cpp
     src/coop/dispatch/event_dispatch_requester_feedback.cpp
+    src/coop/dispatch/event_dispatch_kerfur_command.cpp
     src/coop/dispatch/event_dispatch_signal.cpp
     src/coop/dispatch/event_dispatch_state.cpp
     src/coop/dispatch/event_dispatch_world.cpp
@@ -89,6 +90,7 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/kerfur_convert_client.cpp
     src/coop/creatures/kerfur_convert_host.cpp
     src/coop/creatures/kerfur_command.cpp
+    src/coop/creatures/kerfur_command_answer.cpp
     src/coop/creatures/kerfur_command_seat.cpp
     src/coop/creatures/kerfur_entity.cpp
     src/coop/creatures/kerfur_form_assembler.cpp

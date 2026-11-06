@@ -14,7 +14,6 @@
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
 #include "coop/player/hit_intent.h"  // CLIENT->HOST a swing that hit a creature's mirror
-#include "coop/creatures/kerfur_command.h"
 #include "coop/creatures/kerfur_convert_host.h"
 #include "coop/creatures/roach_sync.h"    // CLIENT->HOST local roach consumption intent
 #include "coop/interactables/atv_authority.h"  // CLIENT->HOST an ATV seat or takeover request, judged by the host
@@ -218,28 +217,6 @@ bool HandleIntentEvent(net::Session& session,
             break;
         }
         coop::kerfur_convert_host::OnConvertRequest(p, senderSlot);
-        break;
-    }
-    case net::ReliableKind::KerfurCommand: {
-        // client->host kerfur radial-menu command (follow/idle/patrol/...). Host-authoritative; the
-        // handler waits for the sender's body, validates the element + kerfur class + the BP guards,
-        // then runs the verb with the kerfur serving the REQUESTING player (senderSlot).
-        // coop::kerfur_command.
-        if (session.role() != net::Role::Host) {
-            UE_LOGW("event_feed: KerfurCommand received on a client -- dropping");
-            break;
-        }
-        const uint8_t senderSlot =
-            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
-                ? static_cast<uint8_t>(msg.senderPeerSlot)
-                : static_cast<uint8_t>(0xFF);
-        if (msg.payloadLen < sizeof(net::KerfurCommandPayload)) {
-            coop::kerfur_command::NoteRefused(senderSlot, "payload too short");
-            break;
-        }
-        net::KerfurCommandPayload p{};
-        std::memcpy(&p, msg.payload, sizeof(p));
-        coop::kerfur_command::OnCommandRequest(p, senderSlot);
         break;
     }
     case net::ReliableKind::GrabRefused: {

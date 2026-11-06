@@ -3,6 +3,7 @@
 
 #include "coop/creatures/kerfur_command.h"
 
+#include "coop/creatures/kerfur_command_answer.h"  // the host's answer to a refused or waiting command
 #include "coop/creatures/npc_sync.h"          // GetNpcIdForActor (host eid for the host's own menu use)
 #include "coop/creatures/served_player.h"
 #include "coop/element/mirror_manager.h"
@@ -16,6 +17,7 @@
 #include "coop/player/players_registry.h"  // Local() / kPeerIdHost
 #include "coop/player/remote_player.h"
 #include "coop/player/roster_ledger.h"     // PerSlotState
+#include "coop/requester_feedback/requester_feedback.h"  // the scope of a verb the host runs for a client
 #include "ue_wrap/actors/kerfur.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -27,6 +29,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cwchar>
+#include <optional>
 #include <vector>
 
 namespace coop::kerfur_command {
@@ -38,6 +41,7 @@ namespace P  = ue_wrap::profile;
 namespace SP = coop::served_player;
 namespace sg = ue_wrap::script_gate;
 
+using KR = coop::net::kerfur_command_answer::KerfurRefusal;
 using coop::element::ElementId;
 using coop::element::kInvalidId;
 
@@ -69,6 +73,7 @@ constexpr size_t kMaxPending = 8;
 struct Slot {
     coop::net::IntentQueue<coop::net::KerfurCommandPayload> queue;
     bool waitSaid = false;  // the head's wait, said once a streak
+    bool fullSaid = false;  // the queue's being full, answered once a streak
 };
 coop::roster_ledger::PerSlotState<Slot> g_slots;
 coop::net::RefusalTally g_tally{"kerfur_command"};
@@ -118,7 +123,11 @@ ElementId FindWireEidForNpcActor(void* actor) {
     return nonMirror;
 }
 
-bool HostRunVerb(void* actor, void* player, const wchar_t* name) {
+// The verb runs inside the requester's feedback scope when a client asked for it: the hint, gloss or sound it makes
+// goes to that client, not to the host's screen. The host's own command (slot 0) keeps its feedback.
+bool HostRunVerb(void* actor, void* player, const wchar_t* name, uint8_t requesterSlot) {
+    std::optional<coop::requester_feedback::Scope> feedback;
+    if (requesterSlot != coop::players::kPeerIdHost) feedback.emplace(requesterSlot, 0);
     t_inHostExec = true;
     const bool ran = K::RunActionName(actor, player, name);
     t_inHostExec = false;
@@ -135,12 +144,23 @@ bool Settling() {
     return (!g_killLive && !g_killRefused) || (!SP::SeamsReady(kOmegaSeams) && !SP::SeamsRefused(kOmegaSeams));
 }
 
-bool CanRunFor(uint8_t slot) { return HasBody(slot) && !Settling(); }
+// The verb runs inside a feedback scope, whose seams stand only once requester_feedback is ready: the head waits for
+// them, or runs into the refusal when they never will (RunRequest).
+bool CanRunFor(uint8_t slot) {
+    return HasBody(slot) && !Settling() &&
+           (coop::requester_feedback::Ready() || coop::requester_feedback::Refused());
+}
 
 // One refusal into the tally, and into the sender's count when the slot is a client's (1 and up).
 void Refuse(uint8_t slot, const char* why) {
     if (slot >= 1 && slot < coop::players::kMaxPeers) ++g_refused[slot];
     g_tally.Note(slot, why, coop::net::RefusalTally::Clock::now());
+}
+
+// The requester told why its well-formed command was refused: a client's only, the host's own has nobody to tell.
+void Answer(uint8_t slot, uint32_t requestId, KR reason) {
+    if (slot == coop::players::kPeerIdHost) return;
+    coop::kerfur_command_answer::SendRefused(LoadSession(), slot, requestId, static_cast<uint8_t>(reason));
 }
 
 // The game's own guard on every relayed verb (bytecode @20950-@22108): a kerfur on a job -- fixing
@@ -156,12 +176,13 @@ bool OnAJob(void* actor) {
 // the kerfur serving its requester -- its player-0 reads answered with that player's puppet by
 // served_player, the host's own command handing it back to player 0. The verbs read no Player parameter
 // (only take_object and equipment do, which are not relayed), so the host's player stands in.
-void ExecuteHostCommand(ElementId eid, void* actor, Command c, uint8_t requesterSlot) {
+void ExecuteHostCommand(ElementId eid, void* actor, Command c, uint8_t requesterSlot, uint32_t requestId = 0) {
     const wchar_t* verb = VerbName(c);
     if (!verb) return;
     if (OnAJob(actor)) {
         UE_LOGI("kerfur_command: verb '%ls' eid=%u from slot %u refused -- the kerfur is on a job (SP parity)",
                 verb, eid, requesterSlot);
+        Answer(requesterSlot, requestId, KR::Busy);
         return;
     }
     const uint8_t before = SP::ServedSlot(actor);
@@ -177,7 +198,7 @@ void ExecuteHostCommand(ElementId eid, void* actor, Command c, uint8_t requester
         serves = coop::players::kPeerIdHost;  // a refused seam is said by served_player
         SP::Unserve(actor);
     }
-    if (!HostRunVerb(actor, coop::players::Registry::Get().Local(), verb)) {
+    if (!HostRunVerb(actor, coop::players::Registry::Get().Local(), verb, requesterSlot)) {
         const bool restored = before != coop::players::kPeerIdHost && SP::Serve(actor, before, kOmegaSeams);
         if (!restored) SP::Unserve(actor);
         UE_LOGW("kerfur_command: verb '%ls' eid=%u did not run -- the kerfur serves slot %u", verb, eid,
@@ -228,17 +249,25 @@ void RunRequest(const coop::net::KerfurCommandPayload& payload, uint8_t senderPe
     const int32_t idx = el ? el->GetInternalIdx() : -1;
     if (!actor || !R::IsLiveByIndex(actor, idx)) {
         RefuseAtServe(senderPeerSlot, "no live kerfur (stale)");
+        Answer(senderPeerSlot, payload.requestId, KR::Stale);
         return;
     }
     if (!K::IsKerfurActor(actor)) {
         RefuseAtServe(senderPeerSlot, "targets a non-kerfur element");
+        Answer(senderPeerSlot, payload.requestId, KR::Unknown);
         return;
     }
     if (K::ReadKill(actor)) {  // the BP's own actionName guard (a murderfur refuses the menu)
         RefuseAtServe(senderPeerSlot, "kill mode (SP parity)");
+        Answer(senderPeerSlot, payload.requestId, KR::KillMode);
         return;
     }
-    ExecuteHostCommand(eid, actor, static_cast<Command>(payload.command), senderPeerSlot);
+    if (coop::requester_feedback::Refused()) {  // no scope can stand: the verb would show its feedback on the host
+        RefuseAtServe(senderPeerSlot, "requester_feedback's seams are refused");
+        Answer(senderPeerSlot, payload.requestId, KR::Unknown);
+        return;
+    }
+    ExecuteHostCommand(eid, actor, static_cast<Command>(payload.command), senderPeerSlot, payload.requestId);
 }
 
 // Each sender's queue head, once a token allows it: waiting while the host cannot serve the sender, else run.
@@ -249,12 +278,14 @@ void ServeQueues() {
             if (!CanRunFor(slot)) {
                 if (!sl.waitSaid) {
                     sl.waitSaid = true;
-                    UE_LOGI("kerfur_command: slot %u's commands wait: the host has no body for it, or the Omega's "
-                            "seams are still settling", static_cast<unsigned>(slot));
+                    UE_LOGI("kerfur_command: slot %u's commands wait: the host has no body for it, the Omega's "
+                            "seams or requester_feedback's are still settling", static_cast<unsigned>(slot));
+                    coop::kerfur_command_answer::SendWaits(LoadSession(), slot, p.requestId);
                 }
                 return coop::net::Served::Wait;
             }
             sl.waitSaid = false;
+            sl.fullSaid = false;
             RunRequest(p, slot);
             return coop::net::Served::Done;
         });
@@ -325,7 +356,15 @@ void OnCommandRequest(const coop::net::KerfurCommandPayload& payload, uint8_t se
         return;
     }
     coop::net::KerfurCommandPayload copy = payload;
-    if (!g_slots[senderPeerSlot].queue.Push(std::move(copy), kMaxPending)) Refuse(senderPeerSlot, "queue full");
+    Slot& sl = g_slots[senderPeerSlot];
+    if (sl.queue.Push(std::move(copy), kMaxPending)) return;
+    Refuse(senderPeerSlot, "queue full");
+    // A well-formed request the host judged, answered once a streak: a sender that keeps filling the queue is
+    // flooding, and gets the one answer, not one per packet.
+    if (!sl.fullSaid) {
+        sl.fullSaid = true;
+        Answer(senderPeerSlot, payload.requestId, KR::QueueFull);
+    }
 }
 
 void NoteRefused(uint8_t senderPeerSlot, const char* why) { Refuse(senderPeerSlot, why); }
@@ -349,10 +388,12 @@ void Tick() {
             coop::net::KerfurCommandPayload p{};
             p.elementId = static_cast<uint32_t>(eid);
             p.command   = static_cast<uint8_t>(pc.command);
-            if (s->connected())
+            if (s->connected()) {
+                p.requestId = coop::kerfur_command_answer::NextRequestId();
                 s->SendReliable(coop::net::ReliableKind::KerfurCommand, &p, sizeof(p));
-            UE_LOGI("kerfur_command[client]: sent command=%u eid=%u",
-                    static_cast<unsigned>(pc.command), eid);
+            }
+            UE_LOGI("kerfur_command[client]: sent command=%u eid=%u request=%u",
+                    static_cast<unsigned>(pc.command), eid, p.requestId);
         } else {
             // The host's own menu use: requester = host; execute locally.
             const ElementId eid = coop::npc_sync::GetNpcIdForActor(pc.actor);
@@ -380,6 +421,7 @@ uint32_t RefusedFor(int slot) { return slot >= 1 && slot < coop::players::kMaxPe
 void OnDisconnect() {
     g_queue.clear();
     g_tally.Clear();
+    coop::kerfur_command_answer::OnDisconnect();
 }
 
 }  // namespace coop::kerfur_command

@@ -243,6 +243,7 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 | `SavedSignalAppend`, `SavedSignalDelete`, `MeadowAppend`, `MeadowDelete`, `MeadowOrder` | any peer, relayed; order from the host | list rows by content hash; the database's order |
 | `DeskVerb` | a client to the host; the host to that client | a desk press with what its button acts on as the client saw it; the verdict, and the profile stat of a decode its start began |
 | `RequesterFeedback` | the host to the requester | the hint, glossary entry or 2D sound a verb the host ran for that client showed on the host, for its own machine to show (the desk's press today) |
+| `KerfurCommandAnswer` | the host to the requester | the host's refusal of a kerfur command, with the reason as an enum, or its wait for a body of the sender; the client words it itself |
 | `PlayDeckEvent`, `CompState`, `CompData` | the presser; the host | playback edges; the refiner's state, its completions and its loaded signal |
 | `DriveSlotState` | any peer to the host; the host to every other client, a line it accepted; the host to the source, answering a line it refused | a slot's occupant, inserted or ejected |
 | `RackState`, `PhysModsState`, `FloppyBoxState` | any peer to the host; the host canonical | rack operations and arrays; the module set; the crate stack |

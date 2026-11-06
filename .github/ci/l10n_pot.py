@@ -51,6 +51,7 @@ ALLOWLIST = [
     "src/coop/bug_report/report_form.cpp",
     "src/coop/commands/command_sync.cpp",
     "src/coop/comms/peer_action_feed.cpp",
+    "src/coop/creatures/kerfur_command_answer.cpp",
     "src/coop/dispatch/event_feed.cpp",
     "src/coop/net/end_reason.cpp",
     "src/coop/player/local_body.cpp",

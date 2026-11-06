@@ -75,6 +75,13 @@ bool HandleCrematorEvent(net::Session& session,
 bool HandleRequesterFeedbackEvent(net::Session& session,
                                   const net::Session::ReliableMessage& msg);
 
+// Kerfur-command family: a client's radial command for a kerfur and the host's answer to it. KerfurCommand checks
+// role()==Host and the sender slot here and hands the request to the host's lane (its short payload is counted in
+// that lane's tally); KerfurCommandAnswer is the HOST->CLIENT answer, dropped on the host and from any sender but
+// slot 0.
+bool HandleKerfurCommandEvent(net::Session& session,
+                              const net::Session::ReliableMessage& msg);
+
 // Economy family: the delivery order with its queue, the coin gun's sale and collect, the laptop
 // upgrade purchase and the point sack. OrderRequest, CoinGunSell and CoinCollect check the slot here
 // and leave the role gate to the module they call; UpgradeIntent and PointSackRedeem check role()==Host

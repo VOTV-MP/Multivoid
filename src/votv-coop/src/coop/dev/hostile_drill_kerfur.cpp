@@ -249,6 +249,7 @@ void TickClient(coop::net::Session* s, Arm a) {
     for (uint32_t n = 0; n < kPerKind && ok; ++n) {
         coop::net::KerfurCommandPayload c{};
         c.elementId = static_cast<uint32_t>(ids[n]);
+        c.requestId = n + 1;  // the raw flood names its requests, as a client would; no answer to them is held here
         c.command = static_cast<uint8_t>(n % kCommandValues);
         ok = s->SendReliableToSlot(0, coop::net::ReliableKind::KerfurCommand, &c, sizeof(c));
         if (!ok) break;
