@@ -102,7 +102,10 @@ S3 = re.compile(r"(?:flag (?:it )?for|file (?:it )?(?:as|under)|belongs in|shoul
 # `config_registry_rows_dev.inc` (the drive-rack and fire-revive rows) that `CHERRY_PICKING_PR_ARC.md` quotes. All
 # three are code/public-map lines a design doc describes, not prose moved INTO a tracked file; verified against
 # origin/main (the three are the ones new since the 21 baseline).
-OVERLAP_BASELINE = 22
+# 22 -> 23 (2026-11-06), SOURCE side, approved by the maintainer: the maintainer's machine changed and the private
+# notes were copied over again; every one of the 23 public-side lines is already in origin/main at 4fbf1acf0 (each
+# checked with _norm against that tree), so nothing new is published -- a private note quotes public code.
+OVERLAP_BASELINE = 23
 # EXCLUDED because it is a deliberate practice, not a leak: copying memory topics into the public
 # piles archive. It alone contributes ~1,263 of the raw 1,300 overlaps.
 OVERLAP_SKIP = ("docs/piles/_archive/session-log/",)
