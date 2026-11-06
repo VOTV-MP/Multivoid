@@ -24,9 +24,9 @@
 #include "coop/creatures/walker_target.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/mannequin_drill.h"
+#include "coop/dev/mannequin_walker_geometry.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
-#include "coop/player/shelter_spot.h"
 #include "coop/session/net_pump.h"
 #include "coop/session/rig_verdict.h"
 #include "coop/world/spawn_authority.h"
@@ -74,9 +74,7 @@ using coop::rig_verdict::Outcome;
 using ue_wrap::FRotator;
 using ue_wrap::FVector;
 
-constexpr const char* kTag = "mannequin";
 constexpr const char* kSpawnerTag = "mannequinSpawner.ReceiveTick";
-constexpr uint8_t     kClientSlot = 1;
 
 // The walker's own hunt range (walker_target's kRangeCm, the Blueprint's test at its call end 41), and the margin that makes
 // "out of range" mean it: the host at its start stands far beyond it of every spawn point, so this only guards a changed start.
@@ -95,8 +93,6 @@ constexpr float kKppReachCm = 1500.f;
 // Bounds, each a readiness wait that ends sooner on its state. timer_saw is the Blueprint's own 10-20 s release.
 constexpr int kTimerSawS = 20;
 constexpr int kMarginS = 15;
-constexpr int kWalkDeadlineS = 400;
-constexpr int kWalkWaitS = kWalkDeadlineS + 90;
 constexpr int kSpawnBoundS = 30;
 constexpr int kTargetBoundS = 30;
 constexpr int kMoveBoundS = kTimerSawS + 25;      // from its birth or from a release to its first steps
@@ -121,39 +117,12 @@ constexpr size_t kMinComparedReadings = 20;   // copy readings that overlap the 
 constexpr float  kFollowTolCm = 150.f;
 constexpr double kLagStepS = 0.05;
 constexpr int    kLagSteps = 10;
-constexpr float  kAimUpCm = 90.f;   // the mesh's middle, over the actor's origin
 
 int g_fails = 0;
-
-template <class Fn>
-void OnGameThread(Fn&& fn) {
-    ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
-}
-
-// A readiness wait on a state the game thread reads. A judged wait (`abort` false) ends in the caller's check.
-template <class Pred>
-bool WaitGT(const char* what, int seconds, Pred pred, bool abort = true) {
-    return PS::WaitFor(what, seconds, [&] {
-        bool ok = false;
-        OnGameThread([&] { ok = pred(); });
-        return ok;
-    }, abort);
-}
 
 void Check(bool ok, const char* step, const char* what) {
     UE_LOGI("mannequin-drill: step %s %s %s", step, ok ? "PASS" : "FAIL", what);
     if (!ok) ++g_fails;
-}
-
-bool Invalid(const char* why) {
-    UE_LOGW("mannequin-drill: INVALID -- %s", why);
-    coop::rig_verdict::Say(kTag, Outcome::Invalid, "%s", why);
-    return false;
-}
-
-float Dist3(const FVector& a, const FVector& b) {
-    const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
-    return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
 double NowSec() {
@@ -189,28 +158,6 @@ void* ByKey(const std::string& key, int* count = nullptr) {
         }
     if (count) *count = n;
     return found;
-}
-
-// The game's ticker_foodSleeper_C drops a player under 20 food into a ragdoll at random; a ragdoll turns no view and walks nowhere.
-void KeepFed() {
-    V::Write(V::Field::Food, 100.f);
-    V::Write(V::Field::Sleep, 100.f);
-}
-
-// This player's view on `walker`: toward it, or turned the other way, so that it is not in this view (the camera behind it).
-void Aim(void* walker, bool toward) {
-    KeepFed();
-    void* pawn = coop::players::Registry::Get().Local();
-    FVector at{};
-    if (!pawn || !walker || !R::IsLive(walker) || !E::TryGetActorLocation(walker, at)) return;
-    FRotator rot = DIR::LookAt(E::GetCameraLocation(), FVector{at.X, at.Y, at.Z + kAimUpCm});
-    if (!toward) {
-        rot.Yaw += 180.f;
-        rot.Pitch = 0.f;
-    }
-    while (rot.Yaw > 180.f) rot.Yaw -= 360.f;
-    while (rot.Yaw < -180.f) rot.Yaw += 360.f;
-    E::SetControlRotation(E::GetController(pawn), rot);
 }
 
 // The walker's own view test, as this client's gaze lane judges it.
@@ -321,48 +268,6 @@ float Excursion(const std::vector<Sample>& v) {
     float widest = 0.f;
     for (const Sample& s : v) widest = (std::max)(widest, Dist3(FVector{s.x, s.y, s.z}, FVector{v[0].x, v[0].y, v[0].z}));
     return widest;
-}
-
-// ---- the director's walk ----
-
-// The bot director walks this player, staged at a known-good anchor when the route is long (the director's stage); true when it
-// arrived within `reachCm`.
-bool WalkTo(const FVector& to, float reachCm, const char* what) {
-    std::shared_ptr<DIR::BackgroundWalk> walk;
-    OnGameThread([&] { walk = DIR::StartBackgroundWalk(to, reachCm, kWalkDeadlineS); });
-    const bool done = PS::WaitFor(what, kWalkWaitS, [&] { return walk->state.load() != 0; }, false);
-    if (!done) DIR::CancelBackgroundWalk(*walk);
-    UE_LOGI("mannequin-drill: walk '%s' %s", what, done && walk->state.load() == 1 ? "arrived" : "did not arrive");
-    return done && walk->state.load() == 1;
-}
-
-// This player's bed anchor, as the director's stage reads it; false when the base has no bed (the KPP fallback is not one).
-bool BedAnchor(FVector& out) {
-    bool bed = false;
-    OnGameThread([&] {
-        void* me = coop::players::Registry::Get().Local();
-        if (!me) return;
-        const coop::shelter_spot::Target t = coop::shelter_spot::Choose(me);
-        if (t.kind != coop::shelter_spot::Kind::Bed) return;
-        out = FVector{t.x, t.y, t.z};
-        bed = true;
-    });
-    return bed;
-}
-
-float PlayerTo(void* actor) {
-    void* me = coop::players::Registry::Get().Local();
-    FVector a{}, b{};
-    return me && actor && E::TryGetActorLocation(me, a) && E::TryGetActorLocation(actor, b) ? Dist3(a, b) : -1.f;
-}
-
-// On the host: the client's puppet to `actor`, negative when either place does not read. The puppet counts once it is spawned and
-// has a pose, the test walker_target's PuppetBody makes.
-float ClientTo(void* actor) {
-    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(kClientSlot);
-    void* puppet = rp && rp->valid() && rp->HasPose() ? rp->GetActor() : nullptr;
-    FVector a{}, b{};
-    return puppet && actor && E::TryGetActorLocation(puppet, a) && E::TryGetActorLocation(actor, b) ? Dist3(a, b) : -1.f;
 }
 
 // The INVALID of a walker that never walked: how far it stands from the player it hunts, and its own `looking` flag.
