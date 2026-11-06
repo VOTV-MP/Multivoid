@@ -43,6 +43,9 @@ bool CopyAt(const std::wstring& key, int active);
 void Verdict(bool ok, const char* arm, const std::string& what);
 // The failed verdicts so far, for the DONE line.
 int Fails();
+// A drill that could not measure: one `VERDICT ABORT -- <why>` line and the rig's `VERDICT cremator-drill INVALID` line
+// with the same text (printf-style), so the rig ends the run instead of the other peer waiting out its bound.
+void Abort(const char* fmt, ...);
 
 // The world is up and the host's puppet exists here; false after the readiness verdict said why.
 bool HostPuppetUp();

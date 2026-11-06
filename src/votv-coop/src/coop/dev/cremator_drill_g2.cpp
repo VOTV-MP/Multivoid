@@ -14,8 +14,8 @@
 
 #include "coop/dev/director/aim_fan.h"
 #include "coop/dev/director/director.h"
+#include "coop/interactables/cremator_intent.h"  // the judge's refusal counts
 #include "coop/player/players_registry.h"
-#include "coop/session/rig_verdict.h"
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/script_gate.h"
@@ -84,6 +84,13 @@ void OnUseLeverPost(const sg::Call& call) {
 
 int Runs() { return g_runs.load(std::memory_order_relaxed); }
 
+// The judge's refusals for `why` so far (host); its counters are the game thread's.
+int DeniedSoFar(coop::cremator_intent::Denied why) {
+    uint64_t n = 0;
+    OnGameThread([&] { n = coop::cremator_intent::DeniedCount(why); });
+    return static_cast<int>(n);
+}
+
 const char* DoneTag(const std::string& arm) { return arm == "g2" ? "G2" : arm == "g2-double" ? "G2-DOUBLE" : "G2-FAR"; }
 
 float Between(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
@@ -114,8 +121,8 @@ bool HostSetup(std::wstring& key) {
         ran = c && C::ShutDoor(c, wasOpened);
     });
     UE_LOGI("cremator-drill: HOST g2 shut the door ran=%d doorWasOpened=%d", ran ? 1 : 0, wasOpened ? 1 : 0);
-    if (!ran) { UE_LOGW("cremator-drill: VERDICT ABORT -- the host's door did not shut"); return false; }
-    if (!WatchRuns()) { UE_LOGW("cremator-drill: VERDICT ABORT -- the lever count is not live"); return false; }
+    if (!ran) { Abort("the host's door did not shut"); return false; }
+    if (!WatchRuns()) { Abort("the lever count is not live"); return false; }
     Mark("key", Narrow(key));
     return true;
 }
@@ -169,11 +176,13 @@ bool HostG2Double(const std::wstring& key) {
     const Reading on = Parse(seen);
     const int runs = Runs();
     const int presses = FieldOf(pressed, "presses=");
-    char what[400];
+    const int deniedMoving = DeniedSoFar(coop::cremator_intent::Denied::HandleMoving);
+    char what[460];
     std::snprintf(what, sizeof(what),
-                  "the client made %d press(es) (2 wanted); the host's copy %s, its lever ran %d time(s) (1 wanted), the client's copy '%s'",
-                  presses, hostOn ? "reached on" : "never reached on", runs, seen.c_str());
-    Verdict(presses == 2 && hostOn && runs == 1 && on.active == 1 && on.closed == 1, "g2-double", what);
+                  "the client made %d press(es) (2 wanted); the host's copy %s, its lever ran %d time(s) (1 wanted), the client's copy '%s'; "
+                  "the judge refused %d press(es) for a moving handle (1 or more wanted)",
+                  presses, hostOn ? "reached on" : "never reached on", runs, seen.c_str(), deniedMoving);
+    Verdict(presses == 2 && hostOn && runs == 1 && on.active == 1 && on.closed == 1 && deniedMoving >= 1, "g2-double", what);
     return true;
 }
 
@@ -186,6 +195,7 @@ bool HostG2Far(const std::wstring& key) {
     // The client walks back before it says it is ready: a run the far press made would show by now.
     if (!Await("g2f_near_ready", kWalkWaitSec)) return false;
     const int runsFar = Runs();
+    const int deniedReach = DeniedSoFar(coop::cremator_intent::Denied::OutOfReach);
     const Reading hostNow = [&] {
         Reading r;
         OnGameThread([&] { r = ReadCopy(key); });
@@ -194,7 +204,7 @@ bool HostG2Far(const std::wstring& key) {
     char say[32];
     std::snprintf(say, sizeof(say), "runs=%d", runsFar);
     Mark("g2f_far_judged", say);
-    char what[420];
+    char what[480];
     if (runsFar != 0) {
         std::snprintf(what, sizeof(what), "the far press ran the host's lever %d time(s) (0 wanted); the client said '%s'; the host's copy %s",
                       runsFar, farText.c_str(), Text(hostNow).c_str());
@@ -210,9 +220,10 @@ bool HostG2Far(const std::wstring& key) {
     if (!AwaitText("g2f_on_seen", seen, kSignalSec)) return false;
     const Reading on = Parse(seen);
     std::snprintf(what, sizeof(what),
-                  "far press: %s, lever runs 0 (0 wanted); near press: the host's copy %s, lever runs %d (1 wanted), the client's copy '%s'",
-                  farText.c_str(), hostOn ? "reached on" : "never reached on", runsNear, seen.c_str());
-    Verdict(hostOn && runsNear == 1 && on.active == 1 && on.closed == 1, "g2-far", what);
+                  "far press: %s, lever runs 0 (0 wanted), the judge refused %d press(es) for reach (1 or more wanted); near press: the host's "
+                  "copy %s, lever runs %d (1 wanted), the client's copy '%s'",
+                  farText.c_str(), deniedReach, hostOn ? "reached on" : "never reached on", runsNear, seen.c_str());
+    Verdict(deniedReach >= 1 && hostOn && runsNear == 1 && on.active == 1 && on.closed == 1, "g2-far", what);
     return true;
 }
 
@@ -245,11 +256,7 @@ bool WalkTo(const ue_wrap::FVector& to, const char* what) {
     DR::ControlManager mgr;
     DR::AddWalkToProcesses(mgr, goal);
     const bool reached = mgr.Run(goal, budget) && goal.reached;
-    if (!reached) {
-        UE_LOGW("cremator-drill: VERDICT ABORT -- the client did not reach %hs (%hs)", what, goal.failReason);
-        coop::rig_verdict::Say("cremator-drill", coop::rig_verdict::Outcome::Invalid, "the walk failed: %s",
-                               goal.failReason);
-    }
+    if (!reached) Abort("the client did not reach %s (%s)", what, goal.failReason);
     return reached;
 }
 
@@ -290,12 +297,12 @@ bool AimAndPress(const std::wstring& key, std::string& text) {
             return true;
         }
         if (st != Working) {
-            UE_LOGW("cremator-drill: VERDICT ABORT -- the client's %s", st == Lost ? "player or machine is gone"
-                    : st == NoAim ? "aim fan never made the look-at read the handle" : "press did not dispatch");
+            Abort("the client's %s", st == Lost ? "player or machine is gone"
+                  : st == NoAim ? "aim fan never made the look-at read the handle" : "press did not dispatch");
             return false;
         }
         if (std::chrono::steady_clock::now() - since > std::chrono::seconds(kAimBoundSec)) {
-            UE_LOGW("cremator-drill: VERDICT ABORT -- the client's look-at never read the handle in %d s", kAimBoundSec);
+            Abort("the client's look-at never read the handle in %d s", kAimBoundSec);
             return false;
         }
         ::Sleep(kAimStepMs);
@@ -309,7 +316,7 @@ bool HandleAt(const std::wstring& key, ue_wrap::FVector& at) {
         void* c = Resolve(key);
         ok = c && C::HandleLocation(c, at);
     });
-    if (!ok) UE_LOGW("cremator-drill: VERDICT ABORT -- the cremator's handle component does not read");
+    if (!ok) Abort("the cremator's handle component does not read");
     return ok;
 }
 
@@ -362,7 +369,7 @@ bool PressForced(const std::wstring& key, std::string& text) {
     std::snprintf(t, sizeof(t), "dist=%.0f forced=%d dispatched=%d", dist, wrote, dispatched);
     text = t;
     if (!dispatched) {
-        UE_LOGW("cremator-drill: VERDICT ABORT -- the forced far press did not run (%s; %.0f cm wanted at least)", t, kFarMinCm);
+        Abort("the forced far press did not run (%s; %.0f cm wanted at least)", t, kFarMinCm);
         return false;
     }
     UE_LOGI("cremator-drill: CLIENT g2 pressed from afar (lookingAt_handle forced to 1) %s", t);
@@ -424,8 +431,7 @@ void ClientG2Far(const std::wstring& key) {
     bool picked = false;
     OnGameThread([&] { picked = PickFarPoint(handle, farAt, routeCm); });
     if (!picked) {
-        UE_LOGW("cremator-drill: VERDICT ABORT -- no NavMesh point %.0f cm or more from the handle within a %.0f cm route", kFarPickCm,
-                kFarRouteMaxCm);
+        Abort("no NavMesh point %.0f cm or more from the handle within a %.0f cm route", kFarPickCm, kFarRouteMaxCm);
         return;
     }
     UE_LOGI("cremator-drill: CLIENT g2 far point (%.0f,%.0f,%.0f), route %.0f cm", farAt.X, farAt.Y, farAt.Z, routeCm);

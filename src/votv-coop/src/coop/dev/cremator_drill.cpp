@@ -24,6 +24,7 @@
 #include "coop/player/roster_ledger.h"  // the player number a command line names a seat by
 #include "coop/session/join_progress.h"  // the client's end-reason notice
 #include "coop/session/net_pump.h"
+#include "coop/session/rig_verdict.h"
 
 #include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/game_thread.h"
@@ -37,6 +38,7 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -117,6 +119,18 @@ bool CopyAt(const std::wstring& key, int active) {
 void Verdict(bool ok, const char* arm, const std::string& what) {
     if (!ok) ++g_fails;
     UE_LOGI("cremator-drill: VERDICT %hs %hs -- %hs", ok ? "PASS" : "FAIL", arm, what.c_str());
+}
+
+// The drill could not measure: the ABORT line, and the rig's own verdict line, so a peer that would otherwise be waited
+// on stops the run at once.
+void Abort(const char* fmt, ...) {
+    char why[300];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(why, sizeof(why), fmt, args);
+    va_end(args);
+    UE_LOGW("cremator-drill: VERDICT ABORT -- %s", why);
+    coop::rig_verdict::Say("cremator-drill", coop::rig_verdict::Outcome::Invalid, "%s", why);
 }
 
 // The world is up and the host's puppet exists here.
@@ -298,7 +312,7 @@ namespace CS = coop::dev::cremator_support;
 constexpr uint8_t kClientSlot = 1;
 constexpr int kLandSec  = 60;
 constexpr int kDeathSec = 240;
-constexpr float kLowHostHealth = 5.f;  // under the burn loop's 10-health test
+constexpr float kLowHealth = 5.f;  // under the burn loop's 10-health test, the host's (g3low) and the client's (cremate-low)
 
 std::atomic<void*> g_g3Cremator{nullptr};
 std::atomic<void*> g_g3Puppet{nullptr};
@@ -404,7 +418,7 @@ bool BurnRun(const char* arm, const char* keyMark, const char* leverMark, float 
 void RunHostG3(bool low) {
     const char* arm = low ? "g3low" : "g3";
     const uint32_t refused0 = coop::player_damage::RefusedAchievements();
-    if (!BurnRun(arm, nullptr, "g3_lever", low ? kLowHostHealth : -1.f)) return;
+    if (!BurnRun(arm, nullptr, "g3_lever", low ? kLowHealth : -1.f)) return;
     std::string text;
     if (!AwaitText("g3_dead", text, kDeathSec + 60)) return;
     const int dead = FieldOf(text, "dead=");
@@ -636,9 +650,9 @@ void RunClientCremate(const std::string& arm) {
     if (!HostPuppetUp()) return;
     if (LowArm(arm)) {
         bool wrote = false;
-        OnGameThread([&] { wrote = ue_wrap::vitals::Write(ue_wrap::vitals::Field::Health, kLowHostHealth); });
-        UE_LOGI("cremator-drill: CLIENT %hs set its own health to %.0f ok=%d", arm.c_str(), kLowHostHealth, wrote ? 1 : 0);
-        if (!wrote) { UE_LOGW("cremator-drill: VERDICT ABORT %hs -- the client's health did not write", arm.c_str()); return; }
+        OnGameThread([&] { wrote = ue_wrap::vitals::Write(ue_wrap::vitals::Field::Health, kLowHealth); });
+        UE_LOGI("cremator-drill: CLIENT %hs set its own health to %.0f ok=%d", arm.c_str(), kLowHealth, wrote ? 1 : 0);
+        if (!wrote) { Abort("%s: the client's health did not write", arm.c_str()); return; }
     }
     Mark("client_ready");
     if (!Await("cremate_over", kDeathSec + 120)) return;

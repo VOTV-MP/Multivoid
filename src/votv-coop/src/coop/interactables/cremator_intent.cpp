@@ -293,6 +293,8 @@ void CountDropped(Drop why) {
     ++(why == Drop::Size ? g_dropSize : why == Drop::Key ? g_dropKey : g_dropWanted);
 }
 
+uint64_t DeniedCount(Denied why) { return g_refused[why == Denied::HandleMoving ? kBusy : kOutOfReach]; }
+
 void OnDisconnect() {
     uint64_t refused = 0;
     for (const uint64_t n : g_refused) refused += n;

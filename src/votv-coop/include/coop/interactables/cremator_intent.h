@@ -40,6 +40,12 @@ void OnIntent(coop::net::Session& session, const coop::net::KeyedTogglePayload& 
 enum class Drop : uint8_t { Size, Key, Wanted };
 void CountDropped(Drop why);
 
+// Host, dev: how many presses the judge has refused for this reason since the session began, counted whether or not
+// the DENY line was said (that line is rate-limited). The drill reads them to show why a press did not run. Game
+// thread.
+enum class Denied : uint8_t { HandleMoving, OutOfReach };
+uint64_t DeniedCount(Denied why);
+
 // The session ended: the counters, with one summary line. A sender's queue, its rate and its said-once latches live
 // in its per-slot state and go with its occupant.
 void OnDisconnect();
