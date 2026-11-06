@@ -16,6 +16,7 @@
 #include "coop/dev/prop_syncer_drill.h"    // the drill's filler receiver
 #include "coop/dev/pile_defer_report.h"    // the pile deferral drill's report receiver
 #include "coop/element/registry.h"
+#include "coop/world/plant_edit_gate.h"
 #include "coop/world/plant_sync.h"
 #include "coop/props/prop_drive_stream.h"  // the driven-prop end edge
 #include "coop/props/prop_hold_claim.h"    // the client's receiver of a refused hold
@@ -249,7 +250,7 @@ bool HandlePropDriveEvent(net::Session& session,
             UE_LOGW("event_feed: plant message malformed -- dropping");
             break;
         }
-        if (edit) ::coop::plant_sync::OnEdit(static_cast<uint8_t>(msg.senderPeerSlot), p);
+        if (edit) ::coop::plant_edit_gate::OnEdit(static_cast<uint8_t>(msg.senderPeerSlot), p);
         else ::coop::plant_sync::OnState(p);
         break;
     }

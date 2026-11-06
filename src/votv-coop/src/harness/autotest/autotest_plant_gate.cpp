@@ -6,7 +6,7 @@
 // while the gate refused them (coop/world/plant_gate, coop/world/spawn_authority, coop/props/prop_damage_gate,
 // coop/world/event_cue_sync). The last arm is the host's edit gate: a client sends three plantings no player's act could
 // make, one of a class that is no plant, one 50000 uu away and one of an unknown row, and the host refuses each
-// (coop/world/plant_sync). The flows that call them are autotest_plant_state.cpp's.
+// (coop/world/plant_edit_gate). The flows that call them are autotest_plant_state.cpp's.
 
 #include "harness/autotest/peer_signal.h"
 #include "plant_state_drill.h"   // co-located private header (src tree, not include/)
@@ -19,6 +19,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_damage_gate.h"
 #include "coop/world/event_cue_sync.h"
+#include "coop/world/plant_edit_gate.h"
 #include "coop/world/plant_gate.h"
 #include "coop/world/plant_sync.h"
 #include "coop/world/spawn_authority.h"
@@ -286,7 +287,7 @@ bool GlowArm(unsigned base, const std::string& sentAt) {
     return replayed && placed;
 }
 
-// ---- the host's edit gate (coop/world/plant_sync): a client's crafted planting --------------------------------------------
+// ---- the host's edit gate (coop/world/plant_edit_gate): a client's crafted planting --------------------------------------------
 // The keys of the three crafted plantings; the host must hold no plant under any.
 constexpr const char* kCraftedNonPlantKey = "F1DRILL_NONPLANT";
 constexpr const char* kCraftedFarKey = "F1DRILL_FAR";
@@ -346,7 +347,7 @@ bool CraftArm(const std::string& row) {
 CraftBase CraftBegin() {
     CraftBase b;
     OnGameThread([&] {
-        b.counts = coop::plant_sync::GetCounts();
+        b.counts = coop::plant_edit_gate::GetCounts();
         b.nonPlants = CountOf(kSprinklerClass);
     });
     return b;
@@ -354,9 +355,9 @@ CraftBase CraftBegin() {
 
 // HOST: the gate refused the class once, the reach once and the row once, and no actor of any appeared.
 bool CraftJudge(const CraftBase& base) {
-    coop::plant_sync::Counts c;
+    coop::plant_edit_gate::Counts c;
     const bool judged = PS::WaitFor("the crafted plantings judged", 20, [&] {
-        OnGameThread([&] { c = coop::plant_sync::GetCounts(); });
+        OnGameThread([&] { c = coop::plant_edit_gate::GetCounts(); });
         return c.refusedClass > base.counts.refusedClass && c.refusedReach > base.counts.refusedReach &&
                c.refusedRow > base.counts.refusedRow;
     }, false);

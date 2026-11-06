@@ -221,6 +221,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/food_tick_gate.cpp
     src/ue_wrap/actors/food.cpp
     src/coop/world/plant_sync.cpp
+    src/coop/world/plant_edit_gate.cpp
     src/ue_wrap/actors/growing_plant.cpp
     src/coop/props/prop_record_refresh.cpp
     src/coop/props/prop_can_state.cpp

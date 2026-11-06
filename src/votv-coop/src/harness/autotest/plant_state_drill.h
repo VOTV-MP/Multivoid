@@ -5,6 +5,7 @@
 #pragma once
 
 #include "harness/autotest/peer_signal.h"
+#include "coop/world/plant_edit_gate.h"
 #include "coop/world/plant_sync.h"
 #include "ue_wrap/actors/growing_plant.h"
 #include "ue_wrap/core/game_thread.h"
@@ -67,7 +68,7 @@ bool GlowArm(unsigned base, const std::string& sentAt);
 // a row that is none of the host's (`row` is a row the host's plants use). HOST: CraftBegin before the client crafts, CraftJudge
 // after: the host's refusals rose by one each for the class, the reach and the row, and nothing of the three stands.
 struct CraftBase {
-    coop::plant_sync::Counts counts;
+    coop::plant_edit_gate::Counts counts;
     size_t nonPlants = 0;
 };
 bool CraftArm(const std::string& row);
