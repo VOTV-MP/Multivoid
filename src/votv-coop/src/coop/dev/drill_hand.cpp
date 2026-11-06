@@ -9,9 +9,9 @@
 
 namespace coop::dev::drill_hand {
 
-bool TakeIntoHandNow(const wchar_t* item, const wchar_t* cls) {
+bool TakeIntoHandNow(const wchar_t* item, const wchar_t* cls, const float* fuel) {
     void* p = coop::players::Registry::Get().Local();
-    return p && ue_wrap::inventory::WriteHeldItem(item, cls) && ue_wrap::engine::CallMainPlayerUpdateHold(p);
+    return p && ue_wrap::inventory::WriteHeldItem(item, cls, fuel) && ue_wrap::engine::CallMainPlayerUpdateHold(p);
 }
 
 }  // namespace coop::dev::drill_hand

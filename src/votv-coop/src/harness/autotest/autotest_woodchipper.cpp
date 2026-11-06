@@ -84,6 +84,7 @@ constexpr float kBurnDrop = 0.2f;
 constexpr float kChipperRouteCm = 400.f;   // a world chipper this near the host by route is the drill's; else one is spawned
 constexpr float kChipperStandCm = 150.f;   // a route's end this near the chipper is a place its use reaches
 constexpr float kOverPourSpare = 20.f;     // g5 pours 80: a tank holding more than this has no room for all of it
+constexpr float kCanFuel = 100.f;          // the full tank the drill's can loads with; a hold record without it loads empty
 
 template <class Fn>
 void OnGameThread(Fn&& fn) {
@@ -435,6 +436,16 @@ bool CanInHand() {
     return in;
 }
 
+// The can's fuel, its `amount` property; -1 when the property does not resolve. Game thread.
+float CanAmount(void* can) {
+    static int32_t off = -2;
+    if (off == -2) off = can ? R::FindPropertyOffset(R::ClassOf(can), L"amount") : -2;
+    if (!can || off < 0) return -1.f;
+    float v = -1.f;
+    std::memcpy(&v, static_cast<const uint8_t*>(can) + off, sizeof(v));
+    return v;
+}
+
 // The client's player pours its gas can into its copy of the chipper as the can's own use does, through the chipper's
 // gascanFuel; the gate's watch reads the fuel the copy gained and asks the host. The fuel gained is returned.
 float Pour(const std::wstring& key) {
@@ -447,11 +458,14 @@ float Pour(const std::wstring& key) {
         float before = 0.f, after = 0.f;
         bool active = false;
         if (!fn || !me || !can || !W::Read(chipper, before, active)) return;
+        const float canBefore = CanAmount(can);
         ue_wrap::ParamFrame f(fn);
         if (!f.valid() || !f.Set<void*>(L"gascan", can) || !f.Set<void*>(L"player", me) || !f.Set<bool>(L"back", false) ||
             !ue_wrap::Call(chipper, f) || !W::Read(chipper, after, active))
             return;
         gained = after - before;
+        UE_LOGI("woodchipper: CLIENT pour: the can's amount %.2f -> %.2f, the copy's fuel %.2f -> %.2f", static_cast<double>(canBefore),
+                static_cast<double>(CanAmount(can)), static_cast<double>(before), static_cast<double>(after));
     });
     return gained;
 }
@@ -481,8 +495,11 @@ void RunClient() {
     if (!PS::AwaitText("chipper_key", keyText, kSignalSec)) return;
     const std::wstring key = Widen(keyText);
     if (!CopyResolves(key)) return;
-    OnGameThread([] { coop::dev::drill_hand::TakeIntoHandNow(L"gascan", kCanClass); });
+    OnGameThread([] { coop::dev::drill_hand::TakeIntoHandNow(L"gascan", kCanClass, &kCanFuel); });
     if (!PS::WaitFor("the gas can in this hand", 20, [] { return CanInHand(); })) return;
+    float canAmount = -1.f;
+    OnGameThread([&] { canAmount = CanAmount(coop::hand_item::LocalHandActor()); });
+    UE_LOGI("woodchipper: CLIENT the can in hand holds %.2f", static_cast<double>(canAmount));
     PS::Mark("can_in_hand");
 
     // g1.

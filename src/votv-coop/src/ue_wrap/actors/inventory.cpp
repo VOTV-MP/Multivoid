@@ -187,7 +187,7 @@ std::wstring ReadHeldItemName() {
     return name;
 }
 
-bool WriteHeldItem(const std::wstring& name, const wchar_t* classLeaf) {
+bool WriteHeldItem(const std::wstring& name, const wchar_t* classLeaf, const float* fuel) {
     void* save = ResolveSaveSlot();
     if (!save) return false;
     const SR::Arr hd = SR::ReadArr(save, kOff_hold);
@@ -203,6 +203,10 @@ bool WriteHeldItem(const std::wstring& name, const wchar_t* classLeaf) {
     rec.className = classLeaf ? classLeaf : L"";
     if (classLeaf) rec.names.assign(1, std::vector<std::wstring>{name});
     else rec.names.clear();
+    if (fuel) {
+        if (rec.floats.size() < 2) rec.floats.resize(2);
+        rec.floats[1].assign(1, *fuel);
+    }
     std::memset(slot + kEquip_data, 0, SR::kSaveStride);
     SR::WriteSaveRecord(slot + kEquip_data, rec);
     SR::WriteFNameField(slot + kEquip_propName, name);

@@ -112,8 +112,10 @@ bool ApplyToSaveObject(void* saveSlot, const PlayerInventory& inv);
 // hand: the item's name (list_props' row), and in its record the class the player's updateHold
 // spawns as the hand item and the name that item takes as it loads ("None" and a null class empty
 // the hand). False when the save slot or its hold slot cannot be reached, or `classLeaf` names no
-// loaded class. Game thread.
-bool WriteHeldItem(const std::wstring& name, const wchar_t* classLeaf);
+// loaded class. `fuel`, when given, is written as the record's second float group, the slot a gas can's
+// getData fills and its loadData reads back as its amount; null leaves the record's floats as they were.
+// Game thread.
+bool WriteHeldItem(const std::wstring& name, const wchar_t* classLeaf, const float* fuel = nullptr);
 
 // The item name in the live save slot's first hold slot, the hand: the name the player's updateHold
 // keys the game's item tables by (list_props, list_weapons). Empty when the hand holds nothing or the

@@ -18,10 +18,12 @@
 #include "ue_wrap/engine/hit_result.h"
 #include "ue_wrap/facts/function_row.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace coop::woodchipper_gate {
 namespace {
@@ -109,6 +111,7 @@ sg::Verdict OnRefusePre(const sg::Call& call) {
 
 void* g_pourChipper = nullptr;
 float g_pourBefore = 0.f;
+std::vector<void*> g_emptyPours;   // the chippers a zero-gain pour was said for, once each
 
 bool LocalPlayerArg(const sg::Call& call, R::ParamOffset& param) {
     const int32_t off = param.Of(call.function);
@@ -135,7 +138,15 @@ void OnPourPost(const sg::Call& call) {
     bool active = false;
     if (!W::Read(call.object, fuel, active)) return;
     const float gained = std::fmin(fuel - g_pourBefore, W::kMaxFuel);
-    if (!(gained > 0.f)) return;   // the can was empty, or the tank full: nothing went in
+    if (!(gained > 0.f)) {   // the can was empty, or the tank full: nothing went in, so nothing is asked
+        if (std::find(g_emptyPours.begin(), g_emptyPours.end(), call.object) == g_emptyPours.end()) {
+            g_emptyPours.push_back(call.object);
+            UE_LOGI("woodchipper_gate: this player's pour into chipper %p gained %.2f (tank %.2f -> %.2f) -- nothing is "
+                    "asked of the host (said once per chipper)", call.object, static_cast<double>(gained),
+                    static_cast<double>(g_pourBefore), static_cast<double>(fuel));
+        }
+        return;
+    }
     const std::wstring key = W::KeyOf(call.object);
     if (!WireKeyable(key)) {
         UE_LOGW("woodchipper_gate: this player poured %.1f into chipper %p, which holds no key the host could resolve",
@@ -228,6 +239,7 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(c.pressesAsked), static_cast<unsigned long long>(c.notSent));
     g_counts = Counts{};
     g_pourChipper = nullptr;
+    g_emptyPours.clear();
 }
 
 Counts GetCounts() { return g_counts; }

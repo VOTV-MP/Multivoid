@@ -9,6 +9,7 @@ namespace coop::dev::drill_hand {
 // The local hand takes `item` of class `cls` (list_props' row name and its class leaf), or empties with the item
 // `L"None"` and no class. False when there is no local player or either write fails. Game thread only: a drill on
 // another thread runs it through game_thread::RunAndWait, which itself refuses to be called from the game thread.
-bool TakeIntoHandNow(const wchar_t* item, const wchar_t* cls);
+// `fuel`, when given, is the amount a gas can in the hand loads with (ue_wrap/actors/inventory::WriteHeldItem).
+bool TakeIntoHandNow(const wchar_t* item, const wchar_t* cls, const float* fuel = nullptr);
 
 }  // namespace coop::dev::drill_hand
