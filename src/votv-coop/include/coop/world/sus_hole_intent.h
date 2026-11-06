@@ -47,7 +47,8 @@ void OnIntent(coop::net::Session& session, int senderSlot, const coop::net::SusH
 // Game thread.
 void OnHoleEnded(void* obj, int32_t index);
 
-// The session ended: the summary line, the counters, every queue and the stamped holes. Game thread.
+// The session ended: the summary line, the counters, every queue and the stamped holes, and the spawn hook disarmed. Game
+// thread.
 void OnDisconnect();
 
 // Why an intent went nowhere, for the counters.
