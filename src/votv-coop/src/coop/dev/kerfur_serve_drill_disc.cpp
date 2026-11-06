@@ -159,9 +159,10 @@ uint64_t g_afterMs = 0;
 
 // The verb, as it returns. On the host the client's relayed get_reports: whether the Omega took a disc, read inside
 // the call's return. On the client the verb running on its own copy, which only the radial dispatch can bring about.
+// The radial delivers `Get_reports`, a reflected call `get_reports`: the name matches without case.
 void OnVerbPost(const sg::Call& c) {
     std::wstring name;
-    if (!detail::VerbNameOf(c, name) || name != L"get_reports") return;
+    if (!detail::VerbNameOf(c, name) || _wcsicmp(name.c_str(), L"get_reports") != 0) return;
     if (c.object && c.object == g_clientMirror.load(std::memory_order_acquire))
         g_localBodyRan.store(true, std::memory_order_release);
     if (g_host == HostStep::WaitAfter && c.object == g_omega) {
@@ -241,9 +242,14 @@ void HostFinish() {
             g_before.laneItem.c_str(), after.laneItem.c_str(), g_before.discs, after.discs, g_clientDiscs.c_str(),
             f.size() > 1 ? f[1].c_str() : "?");
     g_host = HostStep::Done;
-    if (!g_verbRan) {  // the relayed command never reached the Omega: the question was not asked of the host
-        coop::rig_verdict::Say(kVerdictTag, Outcome::Invalid,
-                               "host: the client's relayed get_reports never ran on my Omega");
+    if (!g_verbRan) {
+        // The client's own copy running the verb means the seat let the press through: a failure of the seat. Else the
+        // press never reached my Omega, and the question was not asked of the host.
+        if (f.size() > 2 && f[2] == "1")
+            coop::rig_verdict::Say(kVerdictTag, Outcome::Fail,
+                                   "the client's own copy ran get_reports: the seat did not take the press");
+        else
+            coop::rig_verdict::Say(kVerdictTag, Outcome::Invalid, "host: the client's press never reached my Omega");
         return;
     }
     coop::rig_verdict::Say(kVerdictTag, Outcome::Pass, "leg D measured: client disc %s, host insert=%s, key kept=%d",

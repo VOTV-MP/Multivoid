@@ -344,7 +344,7 @@ bool Execute(coop::net::Session& s, const DeskVerbPayload& p, uint8_t slot) {
     return true;
 }
 
-void Register(coop::net::Session* session) {
+void Register() {
     if (!g_watched && !g_watchRefused) {
         g_watched = sg::WatchName(kRowActionOptionIndex, kTagPress, &OnPressPre, nullptr);
         if (!g_watched) {
@@ -353,14 +353,13 @@ void Register(coop::net::Session* session) {
                     "its own machine");
         }
     }
-    requester_feedback::Install(session);
 }
 
 }  // namespace
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    Register(session);
+    Register();
 }
 
 void SendStat(uint8_t slot, uint32_t seq, const wchar_t* stat, int32_t delta) {
@@ -379,7 +378,7 @@ void SendStat(uint8_t slot, uint32_t seq, const wchar_t* stat, int32_t delta) {
 }
 
 void Tick(coop::net::Session& session) {
-    Register(&session);
+    Register();
     if (!g_saidLive && g_watched && !g_watchRefused) {
         sg::ResolvePendingNames();
         if (!sg::NameWatchLive(kRowActionOptionIndex, kTagPress)) {
@@ -439,7 +438,6 @@ void OnDisconnect() {
     g_sent = g_ran = g_refused = g_dropped = g_heard = 0;
     g_statsSent = g_statsMade = g_statsLost = 0;
     g_saidOffline = false;
-    requester_feedback::OnDisconnect();
 }
 
 }  // namespace coop::desk_verb_intent

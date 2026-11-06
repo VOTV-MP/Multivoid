@@ -7,7 +7,8 @@
 //   [KERFUR-SERVE] leg D: client disc before=<class> after=<gone|held> host insert=<0|1> host still holds the
 //   client's disc key=<0|1>
 // and says 'rig: VERDICT kerfur-serve-disc PASS' (its own tag, so it does not share kerfur-serve's latch). It never
-// fails on what it finds; a step that could not run, or a command the host never ran, is INVALID.
+// fails on what the host finds; a step that could not run, or a command the host never ran, is INVALID, and a press
+// the client's own copy ran (the seat did not take it) is FAIL.
 
 #pragma once
 

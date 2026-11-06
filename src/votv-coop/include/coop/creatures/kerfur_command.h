@@ -16,6 +16,9 @@
 
 #pragma once
 
+#include "coop/net/intent_bucket.h"
+
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -25,6 +28,11 @@ struct KerfurCommandPayload;
 }  // namespace coop::net
 
 namespace coop::kerfur_command {
+
+// A sender's requests run in arrival order from a bounded queue at a bounded rate: up to kMaxPending wait, and the
+// bucket lets kBudget.burst through at once. The client sizes the ids it holds to match (kerfur_command_answer).
+inline constexpr size_t kMaxPending = 8;
+inline constexpr coop::net::IntentBudget kBudget{4.0f, 2.0f};
 
 // The relayed State-changing radial verbs (values are the WIRE command id, NOT enum_kerfurCommand).
 enum class Command : uint8_t {

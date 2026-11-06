@@ -129,7 +129,7 @@ The radial menu (follow, idle, patrol, fix the servers, get the reports, fix the
 relayed host-authoritatively (`coop/creatures/kerfur_command`): the host cancels the local
 dispatch on both roles and re-runs the game's own verb with the kerfur serving the peer who asked
 (`coop/creatures/served_player`), so its reads of the player answer that peer: follow follows it,
-patrol circles it. A request waits while the host has no body for its sender, and a verb the game
+patrol circles it. A request waits while the host has no body for its sender, is refused when that body is out of an arm's reach of the Omega (the intent authority's reach, as a container act), and a verb the game
 refuses changes nobody's service. Nothing writes a puppet's hand yet, so a client's get the reports
 gets the game's refusal hint, which the host routes to that client (`coop/requester_feedback`, the verb runs inside the
 requester's scope), and a command the host refuses before running it, or holds, is answered to its requester as
@@ -164,7 +164,8 @@ on [players.md](players.md).
 | `WispGrab`, `WispTear` | the host to the victim; the host to all | the grab and its delay; the tear to play on the mirror |
 | `RoachState`, `RoachConsumed` | the host to all; a client to the host | a page of the infestation; a stomped or eaten roach |
 | `KerfurConvertRequest`, `KerfurConvert` | a client to the host; the host to all | a turn-on or turn-off to perform; the form transition with both ids, the form, the class and the pose |
-| `KerfurCommand` | a client to the host | a radial verb, which the host runs serving the sender |
+| `KerfurCommand` | a client to the host | a radial verb with the sender's request number, which the host runs serving the sender |
+| `KerfurCommandAnswer` | the host to the requester | the host's refusal of a command (busy, gone, murderous, out of reach, queue full, not an Omega, unavailable) or its wait for a body of the sender, as an enum the client words itself |
 
 ## Late join
 

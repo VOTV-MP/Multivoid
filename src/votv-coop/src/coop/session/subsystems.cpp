@@ -80,6 +80,7 @@
 #include "coop/creatures/kerfur_convert.h"  // host-authoritative kerfur on/off conversion (the dupe fix)
 #include "coop/creatures/kerfur_command.h"  // host-authoritative kerfur menu command relay, serving the requester
 #include "coop/creatures/kerfur_command_seat.h"  // the one seat where an Omega's radial command is decided, on every route
+#include "coop/requester_feedback/requester_feedback.h"  // what a verb the host runs for a client shows that client: the desk and the kerfur command both hold on it
 #include "coop/creatures/kerfur_convert_host.h"  // the host half of the kerfur conversion: its queue, served each tick
 #include "coop/creatures/kerfur_entity.h"  // the stable-KerfurId authority table
 #include "coop/creatures/kerfur_form_assembler.h"  // script-body gate consumer (observe-only + containment counter)
@@ -334,6 +335,7 @@ void Install(coop::net::Session& session) {
     coop::trash_pile_sync::Install(&session);  // trash pile collect counters
     coop::broom_stroke::Install(&session);  // a client's broom stroke is run by the host, with what the client's stroke read
     coop::pack_trash_intent::Install(&session);  // a client's bagging of a pile is run by the host
+    coop::requester_feedback::Install(&session);  // the hint, gloss and sound seams a verb the host runs for a client is held to (the desk's press and the kerfur command wait on Ready)
     coop::verb_lanes::Install(session);  // drone console, doors, light groups, keypads: each on its own verbs
     coop::broom_push::Install(&session);  // a host's broom push streams what it moves
     coop::trash_collect_sync::Install(&session);  // the chipPile grab observer (the use-press PRE observer, then a PropDestroy by eid)
@@ -482,6 +484,7 @@ DisconnectStats DisconnectAll() {
     coop::kerfur_entity::OnDisconnect();  // clear the KerfurId table + free its reserved host ids
     coop::kerfur_command::OnDisconnect();  // drop pending menu commands
     coop::kerfur_command_seat::OnDisconnect();  // drop the cached session (the watch stays registered)
+    coop::requester_feedback::OnDisconnect();  // say the routed counts, close the scope
     coop::remover_request::OnDisconnect();  // drop the remover queues and the shown notices
     coop::hit_intent::OnDisconnect();  // forget the once-per-session log latches
     coop::cremator_hit::OnDisconnect();  // say the cremator hits sent and applied, forget the once-per-session latches

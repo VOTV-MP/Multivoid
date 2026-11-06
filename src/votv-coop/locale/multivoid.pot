@@ -675,6 +675,10 @@ msgstr ""
 msgid "Keep line %1$d: %2$s"
 msgstr ""
 
+#: src/coop/creatures/kerfur_command_answer.cpp
+msgid "Kerfur commands are not available right now."
+msgstr ""
+
 #: src/ui/link_format.cpp
 msgid "LAN"
 msgstr ""
@@ -1233,6 +1237,10 @@ msgstr ""
 msgid "That can't go in there."
 msgstr ""
 
+#: src/coop/creatures/kerfur_command_answer.cpp
+msgid "That cannot take kerfur commands."
+msgstr ""
+
 #: src/coop/props/container_act_request.cpp
 msgid "That container is locked."
 msgstr ""
@@ -1419,10 +1427,6 @@ msgstr ""
 
 #: src/coop/net/end_reason.cpp
 msgid "The join failed before it started. The log has the error."
-msgstr ""
-
-#: src/coop/creatures/kerfur_command_answer.cpp
-msgid "The kerfur could not take that command."
 msgstr ""
 
 #: src/coop/props/remover_request.cpp
@@ -1745,6 +1749,10 @@ msgstr ""
 
 #: src/coop/net/end_reason.cpp
 msgid "You are banned from this server."
+msgstr ""
+
+#: src/coop/creatures/kerfur_command_answer.cpp
+msgid "You are too far from that kerfur."
 msgstr ""
 
 #: src/ui/game_build_dialog.cpp

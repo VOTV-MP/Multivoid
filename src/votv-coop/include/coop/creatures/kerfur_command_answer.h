@@ -2,12 +2,13 @@
 //
 // A client's radial command is cancelled where it is picked (kerfur_command_seat) and asked of the host, which runs
 // the game's own verb for it or does not: a command the host judged and refused (the kerfur on a job, gone, in kill
-// mode, the sender's queue full) and a command that waits for the host's body of its sender are answered to the
+// mode, out of reach, the sender's queue full) and a command that waits for the host's body of its sender are answered to the
 // requester alone as KerfurCommandAnswer, naming the request by the id the client sent. The refusal crosses as an
 // enum and the client words it through the l10n catalogue and shows it as the game's own refusal hint, since its own
-// copy of the verb, which would have raised that hint, never ran. A malformed or flooding request is dropped and
-// counted by kerfur_command and never answered. The client keeps the ids it sent that have no answer yet, a few, and
-// drops an answer that names none of them.
+// copy of the verb, which would have raised that hint, never ran. A command that never reached the host (its Omega
+// untracked here, the send failed) is worded locally, with no wire. A malformed request is dropped and counted by
+// kerfur_command; a flood is answered once a streak. The client keeps the ids it sent that have no answer yet, a few,
+// and drops an answer that names none of them.
 //
 // Principle 7: gameplay/network module; engine access through ue_wrap/world only. Page: docs/npcs-and-kerfur.md.
 
@@ -22,9 +23,14 @@ struct KerfurCommandAnswerPayload;
 
 namespace coop::kerfur_command_answer {
 
-// CLIENT: the number of the command about to be sent, from 1 and per session, held as sent until its answer or until
-// newer ones push it out. Game thread.
+// CLIENT: the number of the command about to be sent, from 1 and per session. A command that went is held with
+// HoldSent until its answer or until newer ones push it out; one that did not go is never held. Game thread.
 uint32_t NextRequestId();
+void HoldSent(uint32_t requestId);
+
+// CLIENT: the player is told a command this machine cancelled at the seat went nowhere (a KerfurRefusal value, as the
+// host's answer would word it): its Omega is untracked here, or the send failed. No wire. Game thread.
+void ShowLocal(uint8_t reason);
 
 // HOST: tell `slot` its command `requestId` was refused for `reason` (a KerfurRefusal), or waits. A request with no id
 // (0), the host's own slot, or an unknown reason is not answered. Game thread.

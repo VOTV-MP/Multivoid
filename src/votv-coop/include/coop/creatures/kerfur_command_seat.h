@@ -4,8 +4,9 @@
 // a drill's or the host's replay as a reflected one; the script gate's PRE watch on actionName sees both (measured:
 // the radial pick with caller useSelectedAction, the reflected call with none), which the ProcessEvent detour never
 // saw for the first. At the watch, a command in the relayed set (kerfur_command::CommandFromActionName) is cancelled
-// and recorded by kerfur_command, which sends it to the host from a client and hands the kerfur back to the host's own
-// player from the host; every other action (turn_off, take_object, pat, equipment) runs. The host's own replay of a
+// and recorded by kerfur_command, which sends it to the host from a client and, on the host, hands an Omega that serves
+// a client back to the host's own player; the host's press on an Omega nobody serves runs untouched, as does every
+// other action (turn_off, take_object, pat, equipment). The host's own replay of a
 // client's command runs through the watch under kerfur_command's host-exec scope and is let through. The seat never
 // reads whether the call came from our code, and a client never asks whether the Omega is served: a client authors no
 // Omega's command, so every relayed command on every Omega is the host's.

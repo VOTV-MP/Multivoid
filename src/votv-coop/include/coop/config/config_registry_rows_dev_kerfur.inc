@@ -35,5 +35,5 @@ CFG_FLAG(kerfur_command_gate_off, "kerfur_command_gate_off", "dev", false, "VOTV
     "Developer red arm: never set. On a client the seat on the Omega's actionName runs every action, so a "
     "relayed radial command (follow, idle, patrol, fix servers, get reports, fix transformers) runs on the client's "
     "own copy and is not asked of the host: no 'taken at the seat' line, no command sent, and the client's disc is "
-    "destroyed by its own get_reports. The host's side is unchanged. The serve drill's leg D must then show the "
-    "client's copy running the verb.")
+    "destroyed by its own get_reports. The host's side is unchanged. The serve drill's leg D must then end FAIL, "
+    "its own copy having run the verb.")

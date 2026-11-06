@@ -1775,19 +1775,19 @@ static_assert(sizeof(KerfurCommandPayload) == 12, "KerfurCommandPayload must be 
 namespace kerfur_command_answer {
 inline constexpr uint8_t kResultRefused = 0;  // the host judged the command and refused it: `reason` says why
 inline constexpr uint8_t kResultWaits = 1;    // the host has no body for the sender yet, or its seams are settling
-// 2 is reserved: the host consumed the item the requester held (the disc of get_reports).
-inline constexpr uint8_t kResultMax = 1;
 
 // Why the host refused a command it understood. The client words each itself; malformed or flooding requests are
 // dropped and counted by the host and never answered, so they have no reason here.
 enum class KerfurRefusal : uint8_t {
-    Busy = 0,       // the kerfur is on a job (states 3 to 5)
-    Stale = 1,      // the element is gone or not live
-    KillMode = 2,   // the kerfur is murderous
-    QueueFull = 3,  // the sender's queue is full: said once a streak
-    Unknown = 4,    // the element is not a kerfur, or the host's feedback seams are refused
+    Busy = 0,         // the kerfur is on a job (states 3 to 5), or the host cannot serve it for the sender
+    Stale = 1,        // the element is gone or not live
+    KillMode = 2,     // the kerfur is murderous
+    QueueFull = 3,    // the sender's queue is full: said once a streak
+    NotKerfur = 4,    // the element is not an Omega
+    Unavailable = 5,  // the host cannot run it: its seams are refused or the verb did not run; or an untracked Omega
+    TooFar = 6,       // the sender's body is out of reach of the kerfur
 };
-inline constexpr uint8_t kRefusalMax = static_cast<uint8_t>(KerfurRefusal::Unknown);
+inline constexpr uint8_t kRefusalMax = static_cast<uint8_t>(KerfurRefusal::TooFar);
 }  // namespace kerfur_command_answer
 
 // The host's answer to one KerfurCommand (KerfurCommandAnswer): `requestId` echoes the command's, `result` is

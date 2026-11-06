@@ -6,6 +6,7 @@
 #include "coop/creatures/kerfur_command_answer.h"  // the host's answer to a refused or waiting command
 #include "coop/creatures/npc_sync.h"          // GetNpcIdForActor (host eid for the host's own menu use)
 #include "coop/creatures/served_player.h"
+#include "coop/element/intent_authority.h"  // the reach judge a client intent is held to
 #include "coop/element/mirror_manager.h"
 #include "coop/element/npc.h"
 #include "coop/element/registry.h"
@@ -17,6 +18,7 @@
 #include "coop/player/players_registry.h"  // Local() / kPeerIdHost
 #include "coop/player/remote_player.h"
 #include "coop/player/roster_ledger.h"     // PerSlotState
+#include "coop/props/container_reach.h"    // kReachUU: the arm length the use trace is cast with
 #include "coop/requester_feedback/requester_feedback.h"  // the scope of a verb the host runs for a client
 #include "ue_wrap/actors/kerfur.h"
 #include "ue_wrap/core/log.h"
@@ -57,6 +59,7 @@ bool g_killWatched = false;
 bool g_killLive = false;
 bool g_killRefused = false;
 bool g_saidUnserved = false;
+bool g_saidSendFailed = false;
 
 // Its follow, patrol, hand-back and turn read GetPlayerPawn, its disc insert getMainPlayer.
 constexpr uint8_t kOmegaSeams = SP::kPlayerPawn | SP::kMainPlayer;
@@ -67,13 +70,11 @@ constexpr uint8_t kOmegaSeams = SP::kPlayerPawn | SP::kMainPlayer;
 // startKill watch still settling -- since the verb's own reads would take the host. A request past the cap, or
 // one that can never run (an unknown sender or command, an eid outside the host range), is refused into the
 // tally. Per-slot state: a leaver's queue goes with its occupant. Game thread.
-constexpr coop::net::IntentBudget kBudget{4.0f, 2.0f};
-constexpr size_t kMaxPending = 8;
 
 struct Slot {
     coop::net::IntentQueue<coop::net::KerfurCommandPayload> queue;
     bool waitSaid = false;  // the head's wait, said once a streak
-    bool fullSaid = false;  // the queue's being full, answered once a streak
+    bool preSaid = false;   // a refusal before the queue (full, or an eid outside the host range), answered once a streak
 };
 coop::roster_ledger::PerSlotState<Slot> g_slots;
 coop::net::RefusalTally g_tally{"kerfur_command"};
@@ -139,12 +140,13 @@ bool HasBody(uint8_t slot) {
     return rp && rp->valid() && rp->HasPose();
 }
 
-// Settling, not refused: a refusal is final, and its commands run for the host instead of waiting.
+// Settling, not refused: a refusal is final, and a client's commands are answered instead of waiting (ExecuteHostCommand).
 bool Settling() {
     return (!g_killLive && !g_killRefused) || (!SP::SeamsReady(kOmegaSeams) && !SP::SeamsRefused(kOmegaSeams));
 }
 
-// The verb runs inside a feedback scope, whose seams stand only once requester_feedback is ready: the head waits for
+// The verb runs inside a feedback scope, whose seams stand only once requester_feedback is ready (subsystems::Install
+// installs and ticks it for every lane): the head waits for
 // them, or runs into the refusal when they never will (RunRequest).
 bool CanRunFor(uint8_t slot) {
     return HasBody(slot) && !Settling() &&
@@ -163,6 +165,15 @@ void Answer(uint8_t slot, uint32_t requestId, KR reason) {
     coop::kerfur_command_answer::SendRefused(LoadSession(), slot, requestId, static_cast<uint8_t>(reason));
 }
 
+// A refusal made before the queue is answered once a streak (cleared when the sender's next request runs), so a
+// flooding sender is told once and not once a packet.
+void AnswerOnceAStreak(uint8_t slot, uint32_t requestId, KR reason) {
+    Slot& sl = g_slots[slot];
+    if (sl.preSaid) return;
+    sl.preSaid = true;
+    Answer(slot, requestId, reason);
+}
+
 // The game's own guard on every relayed verb (bytecode @20950-@22108): a kerfur on a job -- fixing
 // servers, getting reports, fixing transformers, states 3 to 5 -- refuses the command. Mirrored, as the kill
 // guard is, so that a refused command hands the kerfur to nobody.
@@ -175,7 +186,10 @@ bool OnAJob(void* actor) {
 // Apply a command to the host's real kerfur (eid already resolved + validated): the game's own verb, with
 // the kerfur serving its requester -- its player-0 reads answered with that player's puppet by
 // served_player, the host's own command handing it back to player 0. The verbs read no Player parameter
-// (only take_object and equipment do, which are not relayed), so the host's player stands in.
+// (only take_object and equipment do, which are not relayed), so the host's player stands in. A client's command is
+// never run for the host's player: when the host cannot serve the Omega as that client (the startKill watch or a
+// seam refused) the command is refused, and the requester is told (Busy). A job refuses any sender's command,
+// whichever player the Omega was serving, since the state is the Omega's own.
 void ExecuteHostCommand(ElementId eid, void* actor, Command c, uint8_t requesterSlot, uint32_t requestId = 0) {
     const wchar_t* verb = VerbName(c);
     if (!verb) return;
@@ -186,27 +200,28 @@ void ExecuteHostCommand(ElementId eid, void* actor, Command c, uint8_t requester
         return;
     }
     const uint8_t before = SP::ServedSlot(actor);
-    uint8_t serves = requesterSlot;
-    if (serves != coop::players::kPeerIdHost && !g_killLive) {
-        if (!g_saidUnserved) {
-            g_saidUnserved = true;
-            UE_LOGW("kerfur_command: the Omega's startKill watch is refused -- a client's command runs for the host");
-        }
-        serves = coop::players::kPeerIdHost;
-    }
-    if (serves == coop::players::kPeerIdHost || !SP::Serve(actor, serves, kOmegaSeams)) {
-        serves = coop::players::kPeerIdHost;  // a refused seam is said by served_player
+    if (requesterSlot == coop::players::kPeerIdHost) {
         SP::Unserve(actor);
+    } else if (!g_killLive || !SP::Serve(actor, requesterSlot, kOmegaSeams)) {
+        if (!g_killLive && !g_saidUnserved) {
+            g_saidUnserved = true;
+            UE_LOGW("kerfur_command: the Omega's startKill watch is refused -- a client's command is refused");
+        }
+        UE_LOGI("kerfur_command: verb '%ls' eid=%u from slot %u refused -- the host cannot serve the Omega as that "
+                "player", verb, eid, requesterSlot);  // a refused seam is said by served_player
+        Answer(requesterSlot, requestId, KR::Busy);
+        return;
     }
     if (!HostRunVerb(actor, coop::players::Registry::Get().Local(), verb, requesterSlot)) {
         const bool restored = before != coop::players::kPeerIdHost && SP::Serve(actor, before, kOmegaSeams);
         if (!restored) SP::Unserve(actor);
         UE_LOGW("kerfur_command: verb '%ls' eid=%u did not run -- the kerfur serves slot %u", verb, eid,
                 static_cast<unsigned>(restored ? before : coop::players::kPeerIdHost));
+        Answer(requesterSlot, requestId, KR::Unavailable);
         return;
     }
     UE_LOGI("kerfur_command: HOST ran verb '%ls' eid=%u (requester slot %u, serving slot %u)", verb, eid,
-            requesterSlot, static_cast<unsigned>(serves));
+            requesterSlot, static_cast<unsigned>(requesterSlot));
 }
 
 // The kill verb's event sets the follow state and calls move() before it sets `kill`: murder mode's chase and
@@ -254,7 +269,7 @@ void RunRequest(const coop::net::KerfurCommandPayload& payload, uint8_t senderPe
     }
     if (!K::IsKerfurActor(actor)) {
         RefuseAtServe(senderPeerSlot, "targets a non-kerfur element");
-        Answer(senderPeerSlot, payload.requestId, KR::Unknown);
+        Answer(senderPeerSlot, payload.requestId, KR::NotKerfur);
         return;
     }
     if (K::ReadKill(actor)) {  // the BP's own actionName guard (a murderfur refuses the menu)
@@ -262,9 +277,21 @@ void RunRequest(const coop::net::KerfurCommandPayload& payload, uint8_t senderPe
         Answer(senderPeerSlot, payload.requestId, KR::KillMode);
         return;
     }
+    // The requester's body must be within an arm's reach of the Omega, by the shared intent authority, as a container
+    // act is (coop/props/container_act_host_put.cpp, container_reach::Judge): one anchor sample, the pose-staleness budget
+    // added, and the lane's own reach, which is the game's armLength that the use trace is cast with.
+    const auto reach = coop::element::IntentTarget::ForClientIntent(*LoadSession(), senderPeerSlot,
+                                                                    coop::props::container_reach::kReachUU)
+                           .Authorize(actor);
+    if (!reach) {
+        RefuseAtServe(senderPeerSlot, coop::element::OutcomeName(reach.outcome));
+        Answer(senderPeerSlot, payload.requestId,
+               reach.outcome == coop::element::IntentOutcome::OutOfReach ? KR::TooFar : KR::Unavailable);
+        return;
+    }
     if (coop::requester_feedback::Refused()) {  // no scope can stand: the verb would show its feedback on the host
         RefuseAtServe(senderPeerSlot, "requester_feedback's seams are refused");
-        Answer(senderPeerSlot, payload.requestId, KR::Unknown);
+        Answer(senderPeerSlot, payload.requestId, KR::Unavailable);
         return;
     }
     ExecuteHostCommand(eid, actor, static_cast<Command>(payload.command), senderPeerSlot, payload.requestId);
@@ -285,7 +312,7 @@ void ServeQueues() {
                 return coop::net::Served::Wait;
             }
             sl.waitSaid = false;
-            sl.fullSaid = false;
+            sl.preSaid = false;
             RunRequest(p, slot);
             return coop::net::Served::Done;
         });
@@ -350,21 +377,19 @@ void OnCommandRequest(const coop::net::KerfurCommandPayload& payload, uint8_t se
         Refuse(senderPeerSlot, "unknown command");
         return;
     }
-    // Every legitimate target is a host-range element; an out-of-range id cannot change while the request waits.
+    // Every legitimate target is a host-range element; an out-of-range id cannot change while the request waits. A
+    // well-formed command naming none is answered (Stale), once a streak like a full queue: it was cancelled at the
+    // seat, and a sender that keeps naming them is flooding and gets the one answer, not one per packet.
     if (!coop::element::Registry::IsAllowedHostAllocatedEid(static_cast<ElementId>(payload.elementId))) {
         Refuse(senderPeerSlot, "eid outside the host range");
+        AnswerOnceAStreak(senderPeerSlot, payload.requestId, KR::Stale);
         return;
     }
     coop::net::KerfurCommandPayload copy = payload;
     Slot& sl = g_slots[senderPeerSlot];
     if (sl.queue.Push(std::move(copy), kMaxPending)) return;
     Refuse(senderPeerSlot, "queue full");
-    // A well-formed request the host judged, answered once a streak: a sender that keeps filling the queue is
-    // flooding, and gets the one answer, not one per packet.
-    if (!sl.fullSaid) {
-        sl.fullSaid = true;
-        Answer(senderPeerSlot, payload.requestId, KR::QueueFull);
-    }
+    AnswerOnceAStreak(senderPeerSlot, payload.requestId, KR::QueueFull);
 }
 
 void NoteRefused(uint8_t senderPeerSlot, const char* why) { Refuse(senderPeerSlot, why); }
@@ -381,26 +406,32 @@ void Tick() {
         if (pc.isClient) {
             const ElementId eid = FindWireEidForNpcActor(pc.actor);
             if (eid == kInvalidId) {
+                // The seat cancelled this machine's own copy, so the player is told here, with no send.
                 UE_LOGW("kerfur_command[client]: command %u on an UNTRACKED kerfur -- no request "
                         "(not adopted yet / rogue local)", static_cast<unsigned>(pc.command));
+                coop::kerfur_command_answer::ShowLocal(static_cast<uint8_t>(KR::Unavailable));
                 continue;
             }
             coop::net::KerfurCommandPayload p{};
             p.elementId = static_cast<uint32_t>(eid);
             p.command   = static_cast<uint8_t>(pc.command);
-            if (s->connected()) {
-                p.requestId = coop::kerfur_command_answer::NextRequestId();
-                s->SendReliable(coop::net::ReliableKind::KerfurCommand, &p, sizeof(p));
+            p.requestId = coop::kerfur_command_answer::NextRequestId();
+            if (!s->connected() || !s->SendReliable(coop::net::ReliableKind::KerfurCommand, &p, sizeof(p))) {
+                if (!g_saidSendFailed) {
+                    g_saidSendFailed = true;
+                    UE_LOGW("kerfur_command[client]: command %u eid=%u did not go to the host (said once)",
+                            static_cast<unsigned>(pc.command), eid);
+                }
+                coop::kerfur_command_answer::ShowLocal(static_cast<uint8_t>(KR::Unavailable));
+                continue;
             }
+            coop::kerfur_command_answer::HoldSent(p.requestId);
             UE_LOGI("kerfur_command[client]: sent command=%u eid=%u request=%u",
                     static_cast<unsigned>(pc.command), eid, p.requestId);
         } else {
-            // The host's own menu use: requester = host; execute locally.
+            // The host's own menu use, of an Omega serving a client: requester = host; hand it back and run it. The
+            // eid is for the log only, so an untracked Omega still runs.
             const ElementId eid = coop::npc_sync::GetNpcIdForActor(pc.actor);
-            if (eid == kInvalidId) {
-                UE_LOGW("kerfur_command[host]: own command on an UNTRACKED kerfur -- skipped");
-                continue;
-            }
             ExecuteHostCommand(eid, pc.actor, pc.command, coop::players::kPeerIdHost);
         }
     }
@@ -421,6 +452,7 @@ uint32_t RefusedFor(int slot) { return slot >= 1 && slot < coop::players::kMaxPe
 void OnDisconnect() {
     g_queue.clear();
     g_tally.Clear();
+    g_saidSendFailed = false;
     coop::kerfur_command_answer::OnDisconnect();
 }
 
