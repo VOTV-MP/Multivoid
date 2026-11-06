@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace coop::net {
 class Session;
 }  // namespace coop::net
@@ -29,6 +31,9 @@ namespace coop::walker_brain {
 // InstallLoadWatchers): the graph watch (live once the game thread resolves its names) and the deferred-spawn hook, retried
 // once a second up to 30 times and armed only while a client session runs. The host pays nothing. Game thread.
 void Install(coop::net::Session& session);
+
+// [dev], for the walker drill: the graph entries the gate has refused this session, all of them counted. Game thread.
+uint32_t RefusedCalls();
 
 // The session ended: the hook disarmed, what the gate refused said, the counters dropped. Game thread.
 void OnDisconnect();

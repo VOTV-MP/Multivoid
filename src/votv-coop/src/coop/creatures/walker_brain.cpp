@@ -151,6 +151,12 @@ void Install(coop::net::Session& session) {
     InstallSpawnHook();
 }
 
+uint32_t RefusedCalls() {
+    uint32_t n = g_refusalsUnlisted;
+    for (size_t i = 0; i < g_refusalCount; ++i) n += g_refusals[i].count;
+    return n;
+}
+
 void OnDisconnect() {
     for (size_t i = 0; i < g_refusalCount; ++i)
         UE_LOGI("walker_brain: graph entry %d: %u calls refused over the session", g_refusals[i].entry, g_refusals[i].count);

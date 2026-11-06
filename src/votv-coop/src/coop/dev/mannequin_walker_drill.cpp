@@ -21,6 +21,7 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/creatures/walker_brain.h"
 #include "coop/creatures/walker_state_client.h"
 #include "coop/creatures/walker_target.h"
 #include "coop/dev/director/director.h"
@@ -100,6 +101,7 @@ constexpr int kMoveBoundS = kTimerSawS + 25;      // from its birth or from a re
 constexpr int kReleaseBoundS = kTimerSawS + kMarginS;
 constexpr int kFreezeBoundS = 15;
 constexpr int kViewBoundS = 20;
+constexpr int kThinkBoundS = 20;   // a copy's graph refusals and its nav pawn's controller, from the copy's birth
 constexpr int kPuppetBoundS = 60;   // the other peer's puppet, from its ready edge to a pose
 
 // The sampling: one reading per kSampleMs. Moving is the walker's displacement over kMovingSamples readings, still the same
@@ -619,6 +621,29 @@ bool AwaitCopy(const std::string& key, const char* label, const char* mark) {
     char what[128];
     std::snprintf(what, sizeof(what), "this client holds exactly one copy of walker %s for its key (%d)", label, n);
     if (!Check(n == 1, "2", what)) return FailedToHost(mark, "2", what);
+    return true;
+}
+
+// Step 2c: the copy thinks nothing. Its nav pawn (the walker's `pawn`, a childPawn_C) has no controller, and the gate has refused
+// entries of the walker's graph, within a bound. With the gate off (no_brain_gate) the pawn has its AI controller and nothing is
+// refused. The copy's word goes to the host at `mark`, "ok" or the failure.
+bool CheckThinksNothing(const std::string& key, const char* mark) {
+    uint32_t refused = 0;
+    bool     pawnRead = false, noController = false;
+    WaitGT("the copy's graph is refused and its nav pawn has no controller", kThinkBoundS, [&] {
+        void* c = ByKey(key);
+        if (!c) return false;
+        const int32_t off = R::FindPropertyOffset(R::ClassOf(c), L"pawn");
+        void* pawn = off >= 0 ? *reinterpret_cast<void* const*>(static_cast<uint8_t*>(c) + off) : nullptr;
+        pawnRead = pawn && R::IsLive(pawn);
+        noController = pawnRead && !E::GetController(pawn);
+        refused = coop::walker_brain::RefusedCalls();
+        return refused > 0 && noController;
+    }, false);
+    char what[160];
+    std::snprintf(what, sizeof(what), "this client's copy of walker A thinks nothing (nav pawn controller=%s, %u entries refused)",
+                  noController ? "none" : pawnRead ? "SET" : "unread", refused);
+    if (!Check(refused > 0 && noController, "2", what)) return FailedToHost(mark, "2", what);
     PS::Mark(mark, "ok");
     return true;
 }
@@ -631,7 +656,7 @@ bool ClientBody() {
 
     // Walker A: the host hunts it. This client walks first and stops outside its range, so it is never its target.
     std::string keyA;
-    if (!PS::AwaitText("walker_a", keyA, 240) || !AwaitCopy(keyA, "A", "copy_a")) return false;
+    if (!PS::AwaitText("walker_a", keyA, 240) || !AwaitCopy(keyA, "A", "copy_a") || !CheckThinksNothing(keyA, "copy_a")) return false;
     // It does not walk: it stands at the KPP gate, out of range, with its view turned away from the copy.
     void* copy = nullptr;
     OnGameThread([&] { Aim(ByKey(keyA), false); });
@@ -647,6 +672,7 @@ bool ClientBody() {
     // the copy, and off it.
     std::string keyB;
     if (!PS::AwaitText("walker_b", keyB, 2 * kWalkWaitS) || !AwaitCopy(keyB, "B", "copy_b")) return false;
+    PS::Mark("copy_b", "ok");
     // It walks to the spot the host stood at for walker A: in range of the spawn point and outside the house, where the copy can be
     // seen (a bed anchor stands inside it, behind walls).
     std::string spotText;
