@@ -59,6 +59,7 @@ R::InstanceOffset g_health{L"health"};
 R::InstanceOffset g_door{L"swingerDoor"};
 R::InstanceOffset g_firebox{L"firebox"};
 R::InstanceOffset g_burning{L"burning"};
+R::InstanceOffset g_handle{L"handle"};
 
 bool ReadBoolOn(void* obj, void* cls, BoolField& f, bool& out) {
     if (!obj || !cls) return false;
@@ -75,6 +76,15 @@ bool ReadBoolOn(void* obj, void* cls, BoolField& f, bool& out) {
 
 bool ReadFlag(void* c, BoolField& f, bool& out) {
     return IsCremator(c) && ReadBoolOn(c, R::ClassOf(c), f, out);
+}
+
+// Sets or clears the field's bit; the read resolves the field first. False when the field did not resolve.
+bool WriteFlag(void* c, BoolField& f, bool value) {
+    bool unused = false;
+    if (!ReadFlag(c, f, unused)) return false;
+    uint8_t& byte = *(reinterpret_cast<uint8_t*>(c) + f.off);
+    byte = value ? static_cast<uint8_t>(byte | f.mask) : static_cast<uint8_t>(byte & ~f.mask);
+    return true;
 }
 
 bool ReadFloat(void* c, R::InstanceOffset& off, float& out) {
@@ -111,6 +121,7 @@ bool ReadAnim(void* c, bool& v) { return ReadFlag(c, g_anim, v); }
 bool ReadClosed(void* c, bool& v) { return ReadFlag(c, g_closed, v); }
 bool ReadLookingAtHandle(void* c, bool& v) { return ReadFlag(c, g_lookingHandle, v); }
 bool ReadLookingAtValve(void* c, bool& v) { return ReadFlag(c, g_lookingValve, v); }
+bool WriteLookingAtHandle(void* c, bool v) { return WriteFlag(c, g_lookingHandle, v); }
 bool ReadWindup(void* c, float& v) { return ReadFloat(c, g_windup, v); }
 bool ReadGasAmount(void* c, float& v) { return ReadFloat(c, g_gas, v); }
 
@@ -134,6 +145,12 @@ Machine ReadMachine(void* c) {
 void* Door(void* c) { return ReadObject(c, g_door); }
 void* Firebox(void* c) { return ReadObject(c, g_firebox); }
 void* BurnVolume(void* c) { return ReadObject(c, g_burning); }
+void* Handle(void* c) { return ReadObject(c, g_handle); }
+
+bool HandleLocation(void* c, FVector& at) {
+    void* handle = Handle(c);
+    return handle && engine::TryGetComponentLocation(handle, at);
+}
 
 bool OverlapsBurnVolume(void* c, void* actor) {
     void* const volume = BurnVolume(c);

@@ -21,7 +21,7 @@ CFG_FLAG(cremator_intent_reach_off, "cremator_intent_reach_off", "dev", false, "
     "reach check, so a press from beyond the handle's reach pulls the lever.")
 CFG_ENUM(cremator_drill, "cremator_drill", "dev", "off",
     "off|1|g3|g3low|g5|cremate|cremate-running|cremate-low|cremate-survive|cremate-transit|cremate-dropped|cremate-exempt|"
-    "cremate-self|cremate-host", "VOTVCOOP_CREMATOR_DRILL",
+    "cremate-self|cremate-host|g2|g2-double|g2-far", "VOTVCOOP_CREMATOR_DRILL",
     "Drill (BOTH peers). 1 -- the cremator's lever run crosses. The host pulls the lever on its copy and the client's "
     "copy must read it on, its door latched, and then off again (G1); with the rig's --rejoin the host pulls it on once "
     "more and the client, leaving and coming back, must read it on after its world-ready (G4). The host prints "
@@ -49,8 +49,12 @@ CFG_ENUM(cremator_drill, "cremator_drill", "dev", "off",
     "cremate-exempt, cremate-self and cremate-host (the first with the rig's --observer): client 1 holds "
     "multivoid.cremate, granted by the host's own /mv and revoked at the end, and sends '/cremate' for the "
     "observer, who holds multivoid.cremate.exempt, for itself, or for the host; each is refused with its own line "
-    "and nobody moves. Each prints 'cremator-drill: VERDICT PASS|FAIL <arm>' and '<ARM> DONE' on the host. It "
-    "MUTATES the world.")
+    "and nobody moves. g2, g2-double and g2-far -- the CLIENT walks to the handle with the director, aims until its own "
+    "look-at reads the handle and presses as a player's E: the host judges the intent and runs its lever, counted at "
+    "the body. g2 presses on, then off; g2-double presses twice 0.2 s apart and the host's lever must run once (red "
+    "arm: the host's cremator_intent_anim_off); g2-far presses from 1500 cm or more away with the look-at forced "
+    "and the host must refuse it, then a near press must run (red arm: the host's cremator_intent_reach_off). Each "
+    "prints 'cremator-drill: VERDICT PASS|FAIL <arm>' and '<ARM> DONE' on the host. It MUTATES the world.")
 CFG_FLAG(cremate_landing_off, "cremate_landing_off", "dev", false, "VOTVCOOP_CREMATE_LANDING_OFF",
     "Developer red arm of the /cremate drill: never set. The verb does not watch the cremator's burn volume, so a "
     "player it sent is never seen to land: the trip ends 'did not land' and nobody is kicked.")

@@ -3,6 +3,7 @@
 #include "coop/dev/cremator_drill.h"
 
 #include "cremator_dev_support.h"  // co-located private header (src tree, not include/)
+#include "cremator_drill_g2.h"     // the G2 arms' file, and what it shares with this one
 
 #include "harness/autotest.h"  // IsClientRole
 #include "harness/autotest/peer_signal.h"
@@ -46,29 +47,22 @@
 #include <vector>
 
 namespace coop::dev::cremator_drill {
-namespace {
+// What cremator_drill_g2.cpp shares (declared in cremator_drill_g2.h). A handle's travel is 1 to 3 s a leg, so a copy
+// shows a run within about twice that plus the round trip; the header's bounds are generous.
+namespace detail {
 
 namespace C  = ue_wrap::cremator;
 namespace E  = ue_wrap::engine;
 namespace PS = harness::autotest::peer_signal;
-namespace sg = ue_wrap::script_gate;
 using PS::Await;
 using PS::AwaitText;
 using PS::Mark;
 
-// Bounds on waits for a game state. A handle's travel is 1 to 3 s a leg, so a copy shows a run within about twice
-// that plus the round trip; the bounds are generous and a timeout is the answer FAIL, never a clock to reach a state.
-constexpr int kJoinSec    = 480;
-constexpr int kSignalSec  = 240;
-constexpr int kHostRunSec = 90;
-constexpr int kCopySec    = 40;
-
+namespace {
 int g_fails = 0;
+}  // namespace
 
-template <class Fn>
-void OnGameThread(Fn&& fn) {
-    ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
-}
+int Fails() { return g_fails; }
 
 std::wstring Widen(const std::string& s) { return std::wstring(s.begin(), s.end()); }
 std::string Narrow(const std::wstring& w) {
@@ -78,11 +72,7 @@ std::string Narrow(const std::wstring& w) {
     return s;
 }
 
-// The cremator this peer's lane indexes under `key`; game thread.
 void* Resolve(const std::wstring& key) { return coop::interactable_sync::ResolveCremator(key); }
-
-// One reading of a cremator's copy, as signalled: -1 for a flag that did not read. Game thread.
-struct Reading { int active = -1, closed = -1, anim = -1; };
 
 Reading ReadCopy(const std::wstring& key) {
     Reading r;
@@ -147,7 +137,6 @@ bool HostPuppetUp() {
     });
 }
 
-// Waits for this peer's lane to resolve the cremator `key` names.
 bool CopyResolves(const std::wstring& key) {
     return PS::WaitFor("the cremator the host named", 120, [&] {
         void* c = nullptr;
@@ -155,6 +144,42 @@ bool CopyResolves(const std::wstring& key) {
         return c != nullptr;
     });
 }
+
+// The cremator nearest the host's player; both peers name it by the lane's key.
+std::wstring HostFindKey() {
+    std::wstring key;
+    PS::WaitFor("the host's lane indexing a cremator", 60, [&] {
+        OnGameThread([&] {
+            void* local = coop::players::Registry::Get().Local();
+            ue_wrap::FVector at{};
+            if (!local || !E::TryGetActorLocation(local, at)) return;
+            const C::Nearest n = C::FindNearestFirebox(at);
+            key = n.actor ? coop::interactable_sync::CrematorKey(n.actor) : std::wstring();
+        });
+        return !key.empty();
+    }, false);
+    if (key.empty()) {
+        UE_LOGW("cremator-drill: VERDICT ABORT -- the host's cremator lane indexes no cremator");
+        return key;
+    }
+    UE_LOGI("cremator-drill: HOST cremator key='%ls'", key.c_str());
+    return key;
+}
+
+void ReportCopy(const std::wstring& key, int active, const char* signal) {
+    PS::WaitFor("the copy at the host's state", kCopySec, [&] { return CopyAt(key, active); }, false);
+    std::string text;
+    OnGameThread([&] { text = Text(ReadCopy(key)); });
+    UE_LOGI("cremator-drill: CLIENT copy %s", text.c_str());
+    Mark(signal, text);
+}
+
+}  // namespace detail
+
+namespace {
+
+using namespace detail;
+namespace sg = ue_wrap::script_gate;
 
 // ---- HOST ------------------------------------------------------------------------------------------------
 
@@ -171,23 +196,8 @@ bool Pull(const std::wstring& key) {
 
 void RunHost() {
     if (!Await("client_ready", kJoinSec)) return;
-    // The cremator nearest the host's player; both peers name it by the lane's key.
-    std::wstring key;
-    PS::WaitFor("the host's lane indexing a cremator", 60, [&] {
-        OnGameThread([&] {
-            void* local = coop::players::Registry::Get().Local();
-            ue_wrap::FVector at{};
-            if (!local || !E::TryGetActorLocation(local, at)) return;
-            const C::Nearest n = C::FindNearestFirebox(at);
-            key = n.actor ? coop::interactable_sync::CrematorKey(n.actor) : std::wstring();
-        });
-        return !key.empty();
-    }, false);
-    if (key.empty()) {
-        UE_LOGW("cremator-drill: VERDICT ABORT -- the host's cremator lane indexes no cremator");
-        return;
-    }
-    UE_LOGI("cremator-drill: HOST cremator key='%ls'", key.c_str());
+    const std::wstring key = HostFindKey();
+    if (key.empty()) return;
     if (!PS::WaitFor("the host's handle at rest, run off", kHostRunSec, [&] { return CopyAt(key, 0); })) return;
     Mark("key", Narrow(key));
 
@@ -207,7 +217,7 @@ void RunHost() {
     if (!AwaitText("g1_off_seen", off, kSignalSec)) return;
     const Reading roff = Parse(off);
     Verdict(roff.active == 0, "g1-off", "the client's copy after the host's pull back: " + off);
-    UE_LOGI("cremator-drill: G1 DONE fails=%d", g_fails);
+    UE_LOGI("cremator-drill: G1 DONE fails=%d", Fails());
 
     // G4. The run stays on; the client leaves, and comes back into it.
     if (!Pull(key)) { UE_LOGW("cremator-drill: VERDICT ABORT -- the host's lever did not run"); return; }
@@ -233,20 +243,10 @@ void RunHost() {
     if (!AwaitText("rejoin_done", again, 400)) return;
     const Reading rj = Parse(again);
     Verdict(rj.active == 1 && rj.closed == 1, "g4", "the rejoined client's copy after its world-ready: " + again);
-    UE_LOGI("cremator-drill: DONE on host fails=%d", g_fails);
+    UE_LOGI("cremator-drill: DONE on host fails=%d", Fails());
 }
 
 // ---- CLIENT ----------------------------------------------------------------------------------------------
-
-// Waits for the copy at `active` and signals what it reads; a copy that never gets there is reported as it is, and
-// the host judges it.
-void ReportCopy(const std::wstring& key, int active, const char* signal) {
-    PS::WaitFor("the copy at the host's state", kCopySec, [&] { return CopyAt(key, active); }, false);
-    std::string text;
-    OnGameThread([&] { text = Text(ReadCopy(key)); });
-    UE_LOGI("cremator-drill: CLIENT copy %s", text.c_str());
-    Mark(signal, text);
-}
 
 void RunClient() {
     if (!HostPuppetUp()) return;
@@ -420,7 +420,7 @@ void RunHostG3(bool low) {
         OnGameThread([] { ue_wrap::vitals::Write(ue_wrap::vitals::Field::Health, g_hostHealthWas); });
     }
     Verdict(dead == 1 && (!low || refused >= 1), arm, what);
-    UE_LOGI("cremator-drill: %hs DONE fails=%d", low ? "G3LOW" : "G3", g_fails);
+    UE_LOGI("cremator-drill: %hs DONE fails=%d", low ? "G3LOW" : "G3", Fails());
 }
 
 // This player is dead or has no health left. Game thread.
@@ -477,7 +477,7 @@ void RunHostG5() {
                   "dead=%d (1 wanted), the client copy's max actors=%d (0 wanted), addObject refused=%d (1 or more wanted), "
                   "fireball births=%d (reported, not judged)", dead, actors, refused, fireballs);
     Verdict(dead == 1 && actors == 0 && refused >= 1, "g5", what);
-    UE_LOGI("cremator-drill: G5 DONE fails=%d", g_fails);
+    UE_LOGI("cremator-drill: G5 DONE fails=%d", Fails());
 }
 
 void RunClientG5() {
@@ -572,7 +572,7 @@ std::string Upper(std::string s) {
 // The player number a command line names the seat by. Game thread.
 std::string PlayerNo(int slot) { return "#" + std::to_string(coop::roster_ledger::Get(slot).playerNo); }
 
-void Done(const std::string& arm) { UE_LOGI("cremator-drill: %hs DONE fails=%d", Upper(arm).c_str(), g_fails); }
+void Done(const std::string& arm) { UE_LOGI("cremator-drill: %hs DONE fails=%d", Upper(arm).c_str(), Fails()); }
 
 bool EndsInKick(const std::string& arm) { return arm == "cremate" || arm == "cremate-running" || arm == "cremate-low"; }
 
@@ -740,7 +740,7 @@ void RunClientRefusal(const std::string& arm) {
 
 DWORD WINAPI Thread(LPVOID /*arg*/) {
     if (!PS::Begin("cremator-drill")) return 0;
-    // `g3`, `g3low` and `g5` run the burn arms alone; `1` runs the lever arms.
+    // `g3`, `g3low` and `g5` run the burn arms alone; `g2*` a client's handle press; `1` runs the lever arms.
     const std::string arm = coop::config::ResolveEnum(coop::config_registry::rows::cremator_drill);
     if (arm.rfind("cremate", 0) == 0) {
         const bool refusal = arm == "cremate-exempt" || arm == "cremate-self" || arm == "cremate-host";
@@ -756,6 +756,10 @@ DWORD WINAPI Thread(LPVOID /*arg*/) {
     }
     if (arm == "g5") {
         if (harness::autotest::IsClientRole()) RunClientG5(); else RunHostG5();
+        return 0;
+    }
+    if (arm == "g2" || arm == "g2-double" || arm == "g2-far") {
+        if (harness::autotest::IsClientRole()) RunClientG2(arm); else RunHostG2(arm);
         return 0;
     }
     // The rejoined life carries the env the rig sets for it alone (--rejoin-env). The first lives cannot know whether

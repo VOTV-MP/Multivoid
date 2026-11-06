@@ -35,6 +35,9 @@ bool ReadAnim(void* cremator, bool& value);
 bool ReadClosed(void* cremator, bool& value);
 bool ReadLookingAtHandle(void* cremator, bool& value);
 bool ReadLookingAtValve(void* cremator, bool& value);
+// Writes lookingAt_handle (a bit of a Blueprint bool; no setter exists). False for another class or a field that did
+// not resolve. A dev drill's forced look-at, for a press made from beyond the look-at trace's reach.
+bool WriteLookingAtHandle(void* cremator, bool value);
 bool ReadWindup(void* cremator, float& value);
 bool ReadGasAmount(void* cremator, float& value);
 
@@ -49,6 +52,10 @@ Machine ReadMachine(void* cremator);
 // The door (swingerDoor, a prop_swinger) and the firebox box component; null when unreadable or dead.
 void* Door(void* cremator);
 void* Firebox(void* cremator);
+// The handle (`handle`, the static mesh component whose look-at sets lookingAt_handle) and its world location; null
+// or false when unreadable or dead.
+void* Handle(void* cremator);
+bool HandleLocation(void* cremator, FVector& at);
 // The burn volume (the `burning` box component whose begin-overlap collects an actor); null when unreadable or dead.
 void* BurnVolume(void* cremator);
 // Whether the burn volume overlaps `actor` now (the component's own IsOverlappingActor). False for another class, a

@@ -21,13 +21,19 @@
 // the client lives; cremate-transit: the client dies before landing; cremate-dropped: the order never applies. The
 // refusal arms (cremate-exempt with the rig's --observer, cremate-self, cremate-host) ask from client 1, granted the
 // node by the host's own /mv, and judge the refusal line.
-//
-// Lines: "cremator-drill: VERDICT PASS|FAIL g1-on|g1-off|g4|g3|g3low|g5|<cremate arm> ...", "G1|G3|G3LOW|G5|<CREMATE ARM>
-// DONE" (host), "DONE on host|client", "REJOIN DONE", "VERDICT ABORT ...". Red arms: the host's cremator_state_off=1
-// (G1, G4), cremator_hit_off=1 (G3), player_damage_no_refusal=1 (G3LOW) and cremate_landing_off=1 (cremate); the
-// client's cremator_client_guard_off=1 (G5). The client's knobs: cremate_transit_die, cremate_drop_order.
+
+// g2, g2-double and g2-far (cremator_drill_g2.cpp): the CLIENT walks to the handle with the director, aims until its
+// look-at reads the handle and presses as a player's E. The press is refused on its copy and asked of the host, which
+// judges it and runs its lever, counted at the body. g2: a press on, then off. g2-double: two presses 0.2 s apart, one
+// run. g2-far: a press from 1500 cm or more with the look-at forced, refused, then a near press that runs.
 
 #include <windows.h>
+
+// Lines: "cremator-drill: VERDICT PASS|FAIL g1-on|g1-off|g4|g3|g3low|g5|g2|g2-double|g2-far|<cremate arm> ...",
+// "G1|G2|G2-DOUBLE|G2-FAR|G3|G3LOW|G5|<CREMATE ARM> DONE" (host), "DONE on host|client", "REJOIN DONE", "VERDICT ABORT ...".
+// Red arms: the host's cremator_state_off=1 (G1, G4), cremator_hit_off=1 (G3), player_damage_no_refusal=1 (G3LOW),
+// cremate_landing_off=1 (cremate), cremator_intent_anim_off=1 (g2-double), cremator_intent_reach_off=1 (g2-far); the
+// client's cremator_client_guard_off=1 (G5). The client's knobs: cremate_transit_die, cremate_drop_order.
 
 namespace coop::dev::cremator_drill {
 
