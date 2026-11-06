@@ -9,8 +9,9 @@
 // and at least 10 m from the host, and commands follow. Leg A, judged on the client from its own command,
 // the same moment on every build: its mirror settles within 2 m of it for 5 s in the follow state, inside
 // 60 s. Then it commands idle, and the host runs the kill verb itself. Leg C: as that returns the Omega is
-// murderous and its move() went for the host, not the client it served. '[KERFUR-SERVE] host DONE' ends it,
-// legs B and C in it and leg A in the client's line; '[KERFUR-SERVE] INVALID' is a step that could not run.
+// murderous and its move() went for the host, not the client it served. It ends on one line
+// (coop/session/rig_verdict.h), tag kerfur-serve: the host's PASS holds legs B and C, a leg that failed or a step
+// that could not run is said by the peer that saw it (leg A, the client's, FAIL or INVALID).
 
 #pragma once
 
