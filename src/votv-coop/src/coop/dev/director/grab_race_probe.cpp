@@ -16,12 +16,13 @@
 #include "harness/autotest/peer_signal.h"
 
 #include "coop/config/config.h"
+#include "coop/element/quiescence_drain.h"   // HasPendingWork: the join's reconcile work has drained
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/props/prop_hold_claim.h"
 #include "coop/props/prop_key_index.h"
 #include "coop/props/remote_prop.h"
-#include "coop/session/net_pump.h"   // HasAnnouncedWorldReady: a client's join has settled
+#include "coop/session/net_pump.h"   // IsWorldSettled: a client's join has settled
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/prop_gather.h"
@@ -207,14 +208,19 @@ void RunGrabRace() {
         if (!PS::Await("client_ready")) return;
         PS::Mark("target", std::string(key->begin(), key->end()));
     } else {
-        // The join's corrections replace and move props for a while after the world is up: the target is read once
-        // this client announced its world ready, and some seconds after.
-        auto ready = std::make_shared<bool>(false);
-        for (int i = 0; i < 240 && !*ready && !g_faultedStep; ++i) {
-            Step("the join", [ready](std::atomic<int>& d) { *ready = coop::net_pump::HasAnnouncedWorldReady(); d.store(1); });
-            if (!*ready) ::Sleep(500);
-        }
-        ::Sleep(10000);   // no signal announces the corrections' end: a clock, kept until one does
+        // The join's corrections replace and move props for a while after the world is up. The target is read once
+        // the join has settled (the world announced, no world change waiting) and the reconcile queue the join armed
+        // is drained: both are announced state (net_pump::IsWorldSettled, quiescence_drain::HasPendingWork).
+        auto settled = std::make_shared<bool>(false);
+        const bool joined = PS::WaitFor("this client's join to settle", 120, [&] {
+            Step("the join", [settled](std::atomic<int>& d) {
+                *settled = coop::net_pump::IsWorldSettled() && !coop::element::quiescence_drain::HasPendingWork();
+                d.store(1);
+            });
+            return *settled || g_faultedStep;
+        });
+        if (!joined) return;
+        if (!*settled) { UE_LOGW("grab-race: VERDICT ABORT -- a game-thread step faulted (%s) before the join settled", g_faultedStep); return; }
         PS::Mark("client_ready");
         std::string k;
         if (!PS::AwaitText("target", k)) return;
@@ -370,11 +376,15 @@ void RunGrabRace() {
     };
     if (!isHost) {
         PS::Mark("client_result", Format(mine));
-        ::Sleep(2000);   // the host's watch may still be running: the hold outlasts it
+        // The host's watch may still be running and the hold outlasts it: the host marks its own result when
+        // that watch is over.
+        const bool hostDone = PS::Await("host_result");
         letGo();
+        if (!hostDone) return;
         UE_LOGI("grab-race: DONE");
         return;
     }
+    PS::Mark("host_result");
     // The host's hold outlasts the client's watch: the client's result is written when that watch is over.
     std::string clientText;
     Result theirs;
