@@ -23,6 +23,15 @@ CFG_FLAG(feedback_probe, "feedback_probe", "dev", false, "VOTVCOOP_FEEDBACK_PROB
     "sound asset's name, and the script function that began the call. Says where a verb run for another player "
     "shows its feedback. At most 20 lines a second, the drops counted. Observe only: it never cancels a call. "
     "Off, nothing is registered. Lines tagged [FEEDBACK-PROBE].")
+CFG_FLAG(requester_feedback_off, "requester_feedback_off", "dev", false, "VOTVCOOP_REQUESTER_FEEDBACK_OFF",
+    "Developer red arm: never set. A requester-feedback scope on the host does nothing, so the hint, glossary entry "
+    "and 2D sound a verb the host runs for a client makes show on the host again and nothing is routed to the "
+    "client: the exerciser's client must show no hint.")
+CFG_FLAG(requester_feedback_exercise, "requester_feedback_exercise", "dev", false, "VOTVCOOP_REQUESTER_FEEDBACK_EXERCISE",
+    "Developer exerciser (host): once a client is world-ready, the host opens a requester-feedback scope for slot 1 "
+    "and raises one fixed hint (type 1) inside it. The host logs [REQUESTER-FEEDBACK] routed hint type=1 to slot 1 "
+    "and shows none; the client logs [REQUESTER-FEEDBACK] showed hint. Once a session. With requester_feedback_off "
+    "the host shows it instead. Lines tagged [RF-EXERCISE].")
 CFG_FLAG(spawn_match_probe, "spawn_match_probe", "dev", false, nullptr,
     "Diagnostic probe: the OnSpawn fuzzy-match candidate set -- every same-class prop inside the "
     "30 cm radius with its slot, distance, own key and mirror binding, plus a watch that reports a "

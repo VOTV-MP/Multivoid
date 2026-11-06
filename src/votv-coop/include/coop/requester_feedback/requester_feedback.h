@@ -50,6 +50,7 @@ class Scope {
     uint8_t  outerSlot_;
     uint32_t outerSeq_;
     bool     outerOpen_;
+    bool     active_;
 };
 
 // HOST: the slot and request number of the scope open, 0xFF and 0 outside one. Game thread.

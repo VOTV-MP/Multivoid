@@ -2,6 +2,8 @@
 
 #include "coop/requester_feedback/requester_feedback.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -76,6 +78,12 @@ uint32_t g_bodySeq = 0;
 
 Counts g_counts;
 bool   g_saidSoundMissing = false;
+
+// Never set in a shipped run: a Scope does nothing, so the host shows its own feedback again (the red arm).
+bool Off() {
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::requester_feedback_off);
+    return s;
+}
 
 // `text` into the payload as UTF-8, capped at `maxBytes` on a code-point boundary; false for text that is empty or
 // does not fit the payload.
@@ -247,7 +255,9 @@ bool Refused() { return g_hintRefused || g_glossRefused || g_soundRefused; }
 
 Counts CountsNow() { return g_counts; }
 
-Scope::Scope(uint8_t slot, uint32_t seq) : outerSlot_(g_slot), outerSeq_(g_seq), outerOpen_(g_open) {
+Scope::Scope(uint8_t slot, uint32_t seq)
+    : outerSlot_(g_slot), outerSeq_(g_seq), outerOpen_(g_open), active_(!Off()) {
+    if (!active_) return;
     g_slot = slot;
     g_seq = seq;
     g_open = true;
@@ -255,6 +265,7 @@ Scope::Scope(uint8_t slot, uint32_t seq) : outerSlot_(g_slot), outerSeq_(g_seq),
 }
 
 Scope::~Scope() {
+    if (!active_) return;
     g_slot = outerSlot_;
     g_seq = outerSeq_;
     g_open = outerOpen_;
