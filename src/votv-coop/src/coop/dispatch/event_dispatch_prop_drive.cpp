@@ -270,7 +270,7 @@ bool HandlePropDriveEvent(net::Session& session,
         }
         net::WoodchipperPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (p.active > 1 || !std::isfinite(p.fuel)) {
+        if (p.active > 1 || p.op > net::kWoodchipperOpActiveOnly || !std::isfinite(p.fuel)) {
             UE_LOGW("event_feed: woodchipper message malformed -- dropping");
             break;
         }

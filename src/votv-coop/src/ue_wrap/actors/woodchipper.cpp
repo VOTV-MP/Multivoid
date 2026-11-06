@@ -72,6 +72,20 @@ bool IsChipper(void* obj) {
     return cls && (cls == base || R::IsDescendantOfAny(cls, &base, 1));
 }
 
+size_t ForEachChipper(void (*fn)(void* ctx, void* chipper), void* ctx) {
+    void* cls = fn ? ChipperClass() : nullptr;
+    if (!cls) return 0;
+    struct Thunk {
+        void (*fn)(void*, void*);
+        void* ctx;
+    } thunk{fn, ctx};
+    return object_index::ForEachInstance(cls, [](void* t, void* obj, int32_t) {
+        if (!R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+        const Thunk& th = *static_cast<const Thunk*>(t);
+        th.fn(th.ctx, obj);
+    }, &thunk);
+}
+
 std::wstring KeyOf(void* chipper) {
     if (!IsChipper(chipper) || !R::IsLive(chipper)) return {};
     std::wstring key = prop::GetInteractableKeyString(chipper);

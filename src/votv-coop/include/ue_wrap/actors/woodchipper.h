@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -23,6 +24,10 @@ inline constexpr float kMaxFuel = 100.f;
 
 // True iff `obj` is a woodchipper_C or a subclass, once the class is loaded. Game thread.
 bool IsChipper(void* obj);
+
+// Every live chipper of the world (not the class default object), in no particular order, handed to `fn`; returns the
+// count. The callback must not create or destroy objects. Game thread.
+size_t ForEachChipper(void (*fn)(void* ctx, void* chipper), void* ctx);
 
 // The chipper's prop key, the cross-peer id of this machine; empty for an unkeyed chipper, a null `chipper`, or the
 // key `None`. Game thread.

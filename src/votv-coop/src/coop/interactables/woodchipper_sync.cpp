@@ -2,32 +2,33 @@
 
 #include "coop/interactables/woodchipper_sync.h"
 
-#include "coop/element/object_scan_hub.h"
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
+#include "coop/element/intent_authority.h"
+#include "coop/net/intent_bucket.h"
+#include "coop/net/intent_queue.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
+#include "coop/player/hand_item.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/player/roster_ledger.h"  // PerSlotState
 #include "coop/props/prop_key_index.h"
-#include "coop/session/net_pump.h"
-#include "coop/session/poll_timer.h"
-#include "coop/world/spawn_authority.h"
+#include "coop/requester_feedback/requester_feedback.h"
 
-#include "ue_wrap/actors/prop.h"
-#include "ue_wrap/core/component_calls.h"
+#include "ue_wrap/actors/woodchipper.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/script_gate.h"
-#include "ue_wrap/core/types.h"
-#include "ue_wrap/engine/engine.h"
-#include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
 #include <chrono>
 #include <cmath>
-#include <cstring>
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -36,447 +37,519 @@
 namespace coop::woodchipper_sync {
 namespace {
 
-namespace F  = ue_wrap::prop;
 namespace R  = ue_wrap::reflection;
 namespace sg = ue_wrap::script_gate;
+namespace W  = ue_wrap::woodchipper;
+namespace N  = coop::net;
 using Clock = std::chrono::steady_clock;
-using Payload = coop::net::WoodchipperPayload;
+using Payload = N::WoodchipperPayload;
 
-UE_FACT_FN(kRowAction, "woodchipper_sync", nullptr, L"actionOptionIndex", AnyClass);
-constexpr int kTagAction = 0x57434850;  // 'WCHP'
+// The two bodies whose end announces the machine's state to the host: checkActive (every pour, every press with fuel in
+// the tank, the burn's switch-off) and actionOptionIndex (a press at fuel 0 sets `active` and skips checkActive).
+UE_FACT_FN(kRowCheckActive, "woodchipper_sync", L"woodchipper_C", L"checkActive", Declared);
+UE_FACT_FN(kRowPress, "woodchipper_sync", L"woodchipper_C", L"actionOptionIndex", Declared);
+constexpr int kTagCheckActive = 0x57435341;   // 'WCSA'
+constexpr int kTagPress = 0x57435350;         // 'WCSP'
 
-constexpr uint8_t kUseAction = 4;      // the button's branch of the chipper's actionOptionIndex
-constexpr float kMaxFuel = 100.f;      // gascanFuel's own ceiling, and the tick's clamp
-constexpr float kPourMin = 1.f;        // a client's copy gained this much fuel at once: a pour (burning only lowers it)
-constexpr float kSendFuelStep = 0.5f;  // the host sends when the fuel moved by this
-constexpr float kReachCm = 800.f;      // a pour's or a press's sender from its chipper, on the host
-constexpr size_t kQueueCap = 32;
-constexpr auto kResend = std::chrono::seconds(1);      // a running chipper again, as its fuel burns
-constexpr auto kStateLife = std::chrono::seconds(10);  // a client's unplaced state is dropped after this
+// A player's use reaches as far as the look-at trace, whose length is mainPlayer.armLength: 200 by default. Twice the
+// default is the reach; the authority adds the machine's bounds radius and a 600 uu allowance for the puppet's pose
+// lagging the sender (coop/element/intent_authority), as the cremator lever's and the coffee press's judges do.
+constexpr float kReachUU = 400.0f;
+// A sender's intents run from a bounded queue at a bounded rate (the cremator lever's and the coffee press's bound).
+constexpr N::IntentBudget kBudget{4.0f, 4.0f};
+constexpr size_t kMaxPending = 8;
+constexpr uint64_t kRefusalSayMs = 10000;
+constexpr auto kBurnPeriod = std::chrono::seconds(1);
+constexpr const wchar_t* kCanClass = L"prop_gascan_C";
 
-std::atomic<coop::net::Session*> g_session{nullptr};
-coop::session::PollTimer g_poll{std::chrono::milliseconds(250)};
-uint32_t g_world = 0;
-bool g_watched = false, g_saidLive = false, g_hubRegistered = false;
-int g_applying = 0;   // our own writes on a client run inside this
+std::atomic<N::Session*> g_session{nullptr};
 
-struct ApplyScope {
-    ApplyScope() { ++g_applying; }
-    ~ApplyScope() { --g_applying; }
+N::Session* Running(N::Role role) {
+    N::Session* s = g_session.load(std::memory_order_acquire);
+    return s && s->running() && s->role() == role ? s : nullptr;
+}
+
+// The drill's red arms: the host's pour judge off (no can, no room check), and the join replay off.
+bool PourCheckOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::woodchipper_pour_check_off);
+    return off;
+}
+bool ReplayOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::woodchipper_replay_off);
+    return off;
+}
+
+bool WireKeyable(const std::wstring& key) { return !key.empty() && key.size() <= sizeof(N::WireKey::data); }
+bool ValidFuel(float f) { return std::isfinite(f) && f >= 0.f && f <= W::kMaxFuel; }
+bool ValidAmount(float f) { return std::isfinite(f) && f > 0.f && f <= W::kMaxFuel; }
+
+Payload MakeState(const std::wstring& key, float fuel, bool active, uint8_t op) {
+    Payload p{};
+    N::WireKeyFromString(key, p.key);
+    p.fuel = std::fmin(std::fmax(fuel, 0.f), W::kMaxFuel);
+    p.active = active ? 1 : 0;
+    p.op = op;
+    return p;
+}
+
+DrillView g_view;
+
+// ---- the host's table: the chippers this lane has heard of, and what each peer was last told ----
+
+struct Tracked {
+    ue_wrap::CachedObjRef actor;
+    std::wstring key;
+    float sentFuel = -1.f;
+    bool sentActive = false;
+    bool dirty = false;               // a body announced a change since the last send
+    Clock::time_point nextCheck{};    // the burn's poll, once a second a chipper
 };
+std::vector<Tracked> g_tracked;
 
-// ---- the class ----
+Tracked* FindTracked(void* chipper) {
+    for (Tracked& t : g_tracked)
+        if (t.actor.Is(chipper)) return &t;
+    return nullptr;
+}
 
-void* g_cls = nullptr;
-int32_t g_offFuel = -1, g_offActive = -1;
+// A chipper joins the table at its first change, whoever caused it, and leaves at its destroy.
+Tracked* Track(void* chipper) {
+    if (Tracked* t = FindTracked(chipper)) return t;
+    std::wstring key = W::KeyOf(chipper);
+    if (!WireKeyable(key)) return nullptr;
+    Tracked t;
+    t.actor.Set(chipper);
+    t.key = std::move(key);
+    g_tracked.push_back(std::move(t));
+    return &g_tracked.back();
+}
 
-bool EnsureResolved() {
-    if (g_cls) return true;
-    void* cls = R::FindClass(L"woodchipper_C");
-    if (!cls) return false;
-    g_offFuel = R::FindPropertyOffset(cls, L"fuel");
-    g_offActive = R::FindPropertyOffset(cls, L"active");
-    if (g_offFuel < 0 || g_offActive < 0) {
-        static bool s_warned = false;
-        if (!s_warned) {
-            s_warned = true;
-            UE_LOGE("woodchipper: woodchipper_C has no `fuel` or no `active` (%d, %d) -- not carried", g_offFuel,
-                    g_offActive);
+void NoteChange(void* chipper) {
+    if (Tracked* t = Track(chipper)) t->dirty = true;
+}
+
+void OnCheckActivePost(const sg::Call& call) {
+    if (Running(N::Role::Host)) NoteChange(call.object);
+}
+
+void OnPressPost(const sg::Call& call) {
+    if (!Running(N::Role::Host) || !call.locals) return;
+    static R::ParamOffset sAction{L"action"};
+    const int32_t off = sAction.Of(call.function);
+    if (off >= 0 && call.locals[off] == W::kButtonAction) NoteChange(call.object);
+}
+
+// The table's sends. `slot` -1 is every client. Said on the first send of a chipper and at each on/off edge.
+void SendState(N::Session& s, int slot, const Tracked& t, float fuel, bool active, bool announce) {
+    const Payload p = MakeState(t.key, fuel, active, N::kWoodchipperOpState);
+    if (slot < 0) s.SendReliable(N::ReliableKind::WoodchipperState, &p, sizeof(p));
+    else s.SendReliableToSlot(slot, N::ReliableKind::WoodchipperState, &p, sizeof(p));
+    ++g_view.statesSent;
+    if (announce)
+        UE_LOGI("woodchipper: '%ls' is %s with %.1f fuel", t.key.c_str(), active ? "on" : "off", p.fuel);
+}
+
+void Flush(N::Session& s, Clock::time_point now) {
+    if (g_tracked.empty()) return;
+    const bool peers = s.AnyWorldReadyPeer();
+    for (size_t i = 0; i < g_tracked.size();) {
+        Tracked& t = g_tracked[i];
+        if (!t.dirty && now < t.nextCheck) {
+            ++i;
+            continue;
         }
-        return false;
+        float fuel = 0.f;
+        bool active = false;
+        void* c = t.actor.Get();
+        if (!c || !W::Read(c, fuel, active)) {
+            g_tracked.erase(g_tracked.begin() + static_cast<std::ptrdiff_t>(i));
+            continue;
+        }
+        // The one poll here: nothing announces the burn, which writes `fuel` every frame of the machine's tick with no
+        // seam to watch. It reads a chipper once a second, and sends only a fuel or an on/off that moved since the last
+        // send, so a machine at rest, or one switched on with nothing to burn, costs a read and no message.
+        const bool moved = fuel != t.sentFuel || active != t.sentActive;
+        t.nextCheck = now + kBurnPeriod;
+        if (!t.dirty && !moved) {
+            ++i;
+            continue;
+        }
+        if (peers) {
+            SendState(s, -1, t, fuel, active, t.sentFuel < 0.f || active != t.sentActive);
+            t.sentFuel = fuel;
+            t.sentActive = active;
+        }
+        t.dirty = false;
+        ++i;
     }
-    g_cls = cls;
+}
+
+// ---- the host's judge of a client's intent ----
+
+enum Reason : uint8_t {
+    kNotWorldReady, kNoChipper, kWrongClass, kSenderDead, kOutOfReach, kNoCan, kTankFull, kAlready, kNotRun,
+    kQueueFull, kReasonCount
+};
+const char* const kReasonName[kReasonCount] = {
+    "the sender's world is not ready", "no prop holds the key", "the key names no woodchipper",
+    "the sender's player is not alive", "the sender is not within reach", "the sender's hand holds no gas can",
+    "the tank has no room", "the chipper is already in the state the press wanted", "the host's copy did not take the call",
+    "the sender's queue is full",
+};
+uint64_t g_refused[kReasonCount] = {};
+struct Said { uint64_t nextMs = 0; uint64_t since = 0; };
+Said g_said[kReasonCount];
+
+uint64_t NowMs() {
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count());
+}
+
+void Refuse(Reason why, uint8_t slot, const std::wstring& key, const char* more) {
+    ++g_refused[why];
+    switch (why) {
+    case kOutOfReach: ++g_view.refusedReach; break;
+    case kNoCan: ++g_view.refusedCan; break;
+    case kTankFull: ++g_view.refusedFull; break;
+    case kAlready: ++g_view.refusedAlready; break;
+    default: ++g_view.refusedOther; break;
+    }
+    Said& sd = g_said[why];
+    const uint64_t now = NowMs();
+    if (now < sd.nextMs) { ++sd.since; return; }
+    UE_LOGI("woodchipper: DENY slot=%u key='%ls' -- %s%s%s (%llu more since the last line)", static_cast<unsigned>(slot),
+            key.c_str(), kReasonName[why], more ? ": " : "", more ? more : "", static_cast<unsigned long long>(sd.since));
+    sd.nextMs = now + kRefusalSayMs;
+    sd.since = 0;
+}
+
+// The host's answer to a refused intent: the state, to the sender alone, so its copy goes back to the host's.
+void Answer(N::Session& s, uint8_t slot, void* chipper) {
+    float fuel = 0.f;
+    bool active = false;
+    Tracked* t = Track(chipper);
+    if (!t || !W::Read(chipper, fuel, active)) return;
+    SendState(s, slot, *t, fuel, active, false);
+    ++g_view.answers;
+}
+
+struct Slot {
+    N::IntentQueue<Payload> queue;
+    bool waitSaid = false;   // a wait for the body or the feedback seams, said once a streak
+};
+coop::roster_ledger::PerSlotState<Slot> g_slots;
+
+bool Pour(N::Session& s, const Payload& p, uint8_t slot, void* chipper, const std::wstring& key) {
+    float fuel = 0.f;
+    bool active = false;
+    if (!W::Read(chipper, fuel, active)) {
+        Refuse(kNotRun, slot, key, "unreadable");
+        return true;
+    }
+    float add = p.fuel;
+    if (!PourCheckOff()) {
+        if (!coop::hand_item::HeldClassIs(slot, kCanClass)) {
+            Refuse(kNoCan, slot, key, nullptr);
+            Answer(s, slot, chipper);
+            return true;
+        }
+        // The client's copy ran the pour as the game wrote it, so the amount is the fuel its own can gave; the host's
+        // copy of that can is the hand mirror, which carries no amount, so the bound is the tank's room.
+        const float room = W::kMaxFuel - fuel;
+        if (!(room > 0.f)) {
+            Refuse(kTankFull, slot, key, nullptr);
+            Answer(s, slot, chipper);
+            return true;
+        }
+        if (add > room) {
+            ++g_view.clamped;
+            UE_LOGI("woodchipper: slot %u poured %.1f into '%ls' with room for %.1f -- %.1f of it is not taken",
+                    static_cast<unsigned>(slot), add, key.c_str(), room, add - room);
+            add = room;
+        }
+    }
+    // gascanFuel's own end: the fuel in, then checkActive (its POST marks the chipper changed).
+    if (!W::WriteFuel(chipper, fuel + add) || !W::CallCheckActive(chipper)) {
+        Refuse(kNotRun, slot, key, "the pour");
+        return true;
+    }
+    NoteChange(chipper);
+    ++g_view.pours;
+    UE_LOGI("woodchipper: slot %u poured %.1f into '%ls' on the host: %.1f -> %.1f (#%llu)", static_cast<unsigned>(slot),
+            add, key.c_str(), fuel, fuel + add, g_view.pours);
     return true;
 }
 
-bool IsChipper(void* obj) {
-    if (!obj || !g_cls) return false;
-    void* cls = R::ClassOf(obj);
-    void* bases[1] = {g_cls};
-    return cls && R::IsDescendantOfAny(cls, bases, 1);
-}
-
-struct State {
+// False keeps the intent at its sender's queue head, as the cremator's judge does: the host has no body for the sender
+// yet, or requester_feedback's seams are still settling. Everything else is run or refused, and consumed.
+bool SetActive(N::Session& s, const Payload& p, uint8_t slot, void* chipper, const std::wstring& key) {
     float fuel = 0.f;
     bool active = false;
-};
-
-bool Read(void* c, State& out) {
-    if (!c || !R::IsLive(c) || !g_cls) return false;
-    const uint8_t* b = static_cast<const uint8_t*>(c);
-    std::memcpy(&out.fuel, b + g_offFuel, sizeof(out.fuel));
-    out.active = b[g_offActive] != 0;
-    return std::isfinite(out.fuel);
-}
-
-void WriteFuel(void* c, float fuel) {
-    std::memcpy(static_cast<uint8_t*>(c) + g_offFuel, &fuel, sizeof(fuel));
-}
-
-void WriteActive(void* c, bool active) {
-    static_cast<uint8_t*>(c)[g_offActive] = active ? 1 : 0;
-}
-
-// The chipper's own checkActive: its intake, its particles, its spin-up and its sounds follow `active` and the fuel.
-void CheckActive(void* c) {
-    if (!ue_wrap::component_calls::CallParamlessNamed(c, L"checkActive"))
-        UE_LOGW("woodchipper: checkActive did not run");
-}
-
-std::wstring KeyOf(void* c) {
-    std::wstring key = F::GetInteractableKeyString(c);
-    if (key.empty() || key == L"None" || key.size() >= sizeof(coop::net::WireKey::data)) return {};
-    return key;
-}
-
-// ---- the index: every chipper of this world, by key, from the shared scan pass ----
-
-struct Ref {
-    void* actor;
-    int32_t idx;
-};
-std::unordered_map<std::wstring, Ref> g_index;
-std::vector<std::pair<std::wstring, Ref>> g_scanFound;
-uint32_t g_indexGen = 0;
-size_t g_lastCount = SIZE_MAX;
-
-bool IndexCurrent() { return g_indexGen == ue_wrap::world_identity::Generation(); }
-
-void HubPassBegin(void*, bool) { g_scanFound.clear(); }
-
-void HubMatch(void*, void* obj) {
-    if (!R::IsLive(obj)) return;
-    std::wstring key = KeyOf(obj);
-    if (!key.empty()) g_scanFound.emplace_back(std::move(key), Ref{obj, R::InternalIndexOf(obj)});
-}
-
-size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
-    if (isFull) g_index.clear();
-    for (auto& f : g_scanFound) g_index[f.first] = f.second;
-    if (!isFull) {
-        for (auto it = g_index.begin(); it != g_index.end();)
-            it = R::IsLiveByIndex(it->second.actor, it->second.idx) ? std::next(it) : g_index.erase(it);
+    if (!W::Read(chipper, fuel, active)) {
+        Refuse(kNotRun, slot, key, "unreadable");
+        return true;
     }
-    g_scanFound.clear();
-    g_indexGen = worldGen;
-    if (g_index.size() != g_lastCount) {
-        g_lastCount = g_index.size();
-        UE_LOGI("woodchipper: index -- %zu chipper(s)", g_lastCount);
+    const bool wanted = p.active != 0;
+    if (active == wanted) {   // the copy trailed the host by a send: the press must not invert the machine
+        Refuse(kAlready, slot, key, wanted ? "on" : "off");
+        Answer(s, slot, chipper);
+        return true;
     }
-    return g_index.size();
-}
-
-void* Resolve(const std::wstring& key) {
-    if (IndexCurrent()) {
-        auto it = g_index.find(key);
-        if (it != g_index.end() && R::IsLiveByIndex(it->second.actor, it->second.idx)) return it->second.actor;
+    if (coop::requester_feedback::Refused()) {
+        Refuse(kNotRun, slot, key, "requester_feedback's seams are refused");
+        Answer(s, slot, chipper);
+        return true;
     }
-    void* c = coop::prop_key_index::Find(key);   // one the pass has not reached yet
-    return IsChipper(c) ? c : nullptr;
+    if (!coop::requester_feedback::Ready()) return false;
+    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
+    void* body = rp && rp->valid() ? rp->GetActor() : nullptr;   // Authorize found it
+    bool ran = false;
+    {
+        // The game's own press, as the cremator lever's and the coffee press's judges run theirs: the sender's puppet as
+        // the player, whose click sound and hints go to the sender.
+        coop::requester_feedback::Scope feedback(slot, 0);
+        ran = W::CallPress(chipper, body);
+    }
+    // A press at fuel 0 sets `active` and the machine's tick never switches it off; the state is sent either way.
+    NoteChange(chipper);
+    if (!ran) {
+        Refuse(kNotRun, slot, key, "the press");
+        Answer(s, slot, chipper);
+        return true;
+    }
+    ++g_view.presses;
+    UE_LOGI("woodchipper: host ran slot %u's press on '%ls' (wanted %s, fuel %.1f) (#%llu)", static_cast<unsigned>(slot),
+            key.c_str(), wanted ? "on" : "off", fuel, g_view.presses);
+    return true;
 }
 
-coop::net::Session* Live() {
-    coop::net::Session* s = g_session.load(std::memory_order_acquire);
-    return s && s->connected() ? s : nullptr;
-}
-
-bool ValidFuel(float f) { return std::isfinite(f) && f >= 0.f && f <= kMaxFuel; }
-
-// ---- HOST ----
-
-struct Sent {
-    State state;
-    Clock::time_point at{};
-    bool valid = false, pending = false;
-};
-std::unordered_map<std::wstring, Sent> g_sent;
-
-struct Intent {
-    int slot = 0;
-    Payload p{};
-};
-std::vector<Intent> g_intents;
-uint32_t g_hostPours = 0, g_hostPresses = 0, g_hostRefused = 0;
-
-bool InReach(int slot, void* chipper) {
-    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot));
-    void* body = rp && rp->valid() ? rp->GetActor() : nullptr;
-    ue_wrap::FVector at{}, by{};
-    if (!body || !ue_wrap::engine::TryGetActorLocation(chipper, at) || !ue_wrap::engine::TryGetActorLocation(body, by))
+bool Execute(N::Session& s, const Payload& p, uint8_t slot) {
+    const std::wstring key = N::StringFromWireKey(p.key);
+    if (!s.IsSlotWorldReady(slot)) {
+        Refuse(kNotWorldReady, slot, key, nullptr);
+        return true;
+    }
+    void* chipper = key.empty() ? nullptr : coop::prop_key_index::Find(key);
+    if (!chipper) {
+        Refuse(kNoChipper, slot, key, nullptr);
+        return true;
+    }
+    // Authorize answers reach only; the key is the sender's word, so the actor it names must be a chipper.
+    if (!W::IsChipper(chipper)) {
+        Refuse(kWrongClass, slot, key, nullptr);
+        return true;
+    }
+    if (coop::players::Registry::Get().LifeOf(slot) != coop::players::PuppetLife::Alive) {
+        Refuse(kSenderDead, slot, key, nullptr);
+        return true;
+    }
+    const coop::element::IntentSubject subject =
+        coop::element::IntentTarget::ForClientIntent(s, slot, kReachUU).Authorize(chipper);
+    if (subject.outcome == coop::element::IntentOutcome::NoBody) {
+        if (!g_slots[slot].waitSaid) {
+            g_slots[slot].waitSaid = true;
+            UE_LOGI("woodchipper: slot %u's intents wait: the host has no body for it yet", static_cast<unsigned>(slot));
+        }
         return false;
-    const float dx = at.X - by.X, dy = at.Y - by.Y, dz = at.Z - by.Z;
-    return dx * dx + dy * dy + dz * dz <= kReachCm * kReachCm;
+    }
+    if (!subject) {
+        Refuse(kOutOfReach, slot, key, coop::element::OutcomeName(subject.outcome));
+        Answer(s, slot, chipper);
+        return true;
+    }
+    return p.op == N::kWoodchipperOpPour ? Pour(s, p, slot, chipper, key) : SetActive(s, p, slot, chipper, key);
 }
 
-void HostServe(coop::net::Session& s) {
-    std::vector<Intent> intents;
-    intents.swap(g_intents);
-    for (const Intent& in : intents) {
-        const std::wstring key = coop::net::StringFromWireKey(in.p.key);
-        if (!s.IsSlotWorldReady(in.slot)) continue;
-        void* c = Resolve(key);
-        State st;
-        if (!Read(c, st)) continue;
-        g_sent[key].pending = true;   // the answer, whatever it is
-        if (!InReach(in.slot, c)) {
-            ++g_hostRefused;
-            UE_LOGW("woodchipper: slot %d's %s on '%ls' is out of reach -- refused", in.slot,
-                    in.p.op == coop::net::kWoodchipperOpPour ? "pour" : "press", key.c_str());
-            continue;
-        }
-        if (in.p.op == coop::net::kWoodchipperOpPour) {
-            // gascanFuel's own end: the fuel in, then checkActive.
-            const float to = std::fmin(st.fuel + in.p.fuel, kMaxFuel);
-            WriteFuel(c, to);
-            CheckActive(c);
-            ++g_hostPours;
-            UE_LOGI("woodchipper: slot %d poured %.1f into '%ls' on the host: %.1f -> %.1f (#%u)", in.slot, in.p.fuel,
-                    key.c_str(), st.fuel, to, g_hostPours);
-        } else if (in.p.op == coop::net::kWoodchipperOpSetActive) {
-            // The button's own end: `active` flipped, then checkActive when there is fuel.
-            const bool want = in.p.active != 0;
-            if (want != st.active) {
-                WriteActive(c, want);
-                if (st.fuel > 0.f) CheckActive(c);
-            }
-            ++g_hostPresses;
-            UE_LOGI("woodchipper: slot %d switched '%ls' %s on the host (#%u)", in.slot, key.c_str(), want ? "on" : "off",
-                    g_hostPresses);
-        }
+void Serve(N::Session& s) {
+    for (uint8_t slot = 1; slot < N::kMaxPeers; ++slot) {
+        Slot& sl = g_slots[slot];
+        sl.queue.Serve(kBudget, NowMs, [&](const Payload& p) {
+            if (!Execute(s, p, slot)) return N::Served::Wait;   // a wait runs nothing: no token spent
+            sl.waitSaid = false;
+            return N::Served::Done;
+        });
     }
 }
 
-void HostPoll(coop::net::Session& s, Clock::time_point now) {
-    if (!IndexCurrent()) return;
-    for (const auto& [key, ref] : g_index) {
-        if (!R::IsLiveByIndex(ref.actor, ref.idx)) continue;
-        State st;
-        if (!Read(ref.actor, st)) continue;
-        Sent& sent = g_sent[key];
-        const bool due = sent.pending || !sent.valid || st.active != sent.state.active ||
-                         std::fabs(st.fuel - sent.state.fuel) >= kSendFuelStep || (st.active && now - sent.at >= kResend);
-        if (!due) continue;
-        Payload p{};
-        coop::net::WireKeyFromString(key, p.key);
-        p.fuel = std::fmin(std::fmax(st.fuel, 0.f), kMaxFuel);
-        p.active = st.active ? 1 : 0;
-        p.op = coop::net::kWoodchipperOpState;
-        if (!s.SendReliable(coop::net::ReliableKind::WoodchipperState, &p, sizeof(p))) continue;
-        if (!sent.valid || st.active != sent.state.active)
-            UE_LOGI("woodchipper: '%ls' is %s with %.1f fuel", key.c_str(), st.active ? "on" : "off", p.fuel);
-        sent.state = st;
-        sent.at = now;
-        sent.valid = true;
-        sent.pending = false;
-    }
-    for (auto it = g_sent.begin(); it != g_sent.end();)
-        it = g_index.count(it->first) ? std::next(it) : g_sent.erase(it);
-}
+// ---- the client's held states ----
 
-// ---- CLIENT ----
-
-struct Shown {
-    State state;
-    Clock::time_point at{};
+struct Held {
+    float fuel = 0.f;
+    bool hasFuel = false;
+    bool active = false;
 };
-std::unordered_map<std::wstring, Shown> g_shown;           // the host's state, until it is written
-std::unordered_map<std::wstring, float> g_seen;            // each copy's fuel at the last poll or write
-std::vector<Payload> g_outbox;
-// A chipper this player just poured into or pressed: the host's states sent before it heard of it would undo it on the
-// copy, so they wait out this hold, and the newest is written after.
-std::unordered_map<std::wstring, Clock::time_point> g_hold;
-constexpr auto kHold = std::chrono::milliseconds(1500);
-uint32_t g_clientPours = 0, g_clientPresses = 0, g_clientDropped = 0;
+std::unordered_map<std::wstring, Held> g_held;
+uint64_t g_heldVersion = 0;
 
-void Queue(const Payload& p) {
-    if (g_outbox.size() >= kQueueCap) {
-        ++g_clientDropped;
-        return;
+// True when the state is dealt with: written onto its chipper, or dropped because the key names no chipper. False
+// leaves it held until the prop lane resolves the key.
+bool TryApply(const std::wstring& key, const Held& h) {
+    void* c = coop::prop_key_index::Find(key);
+    if (!c) return false;
+    if (!W::IsChipper(c)) {
+        UE_LOGW("woodchipper: the host's state names '%ls', which is no woodchipper here -- dropped", key.c_str());
+        return true;
     }
-    g_outbox.push_back(p);
-    g_hold[coop::net::StringFromWireKey(p.key)] = Clock::now() + kHold;
+    float fuel = 0.f;
+    bool was = false;
+    if (!W::Read(c, fuel, was)) return false;
+    if (h.hasFuel) W::WriteFuel(c, h.fuel);
+    W::WriteActive(c, h.active);
+    ++g_view.applied;
+    if (was != h.active)
+        UE_LOGI("woodchipper: the host's '%ls' is %s here (%.1f fuel)", key.c_str(), h.active ? "on" : "off",
+                h.hasFuel ? h.fuel : fuel);
+    return true;
 }
 
-// The local player's press on a chipper's button, read across the body: `active` before and after.
-void* g_pressChipper = nullptr;
-bool g_pressBefore = false;
-
-sg::Verdict OnActionPre(const sg::Call& c) {
-    g_pressChipper = nullptr;
-    if (!coop::spawn_authority::IsActiveClientSession() || g_applying || !EnsureResolved() || !IsChipper(c.object))
-        return sg::Verdict::Run;
-    const int32_t playerOff = R::FindParamOffset(c.function, L"Player");
-    const int32_t actionOff = R::FindParamOffset(c.function, L"Action");
-    if (playerOff < 0 || actionOff < 0 || !c.locals || c.locals[actionOff] != kUseAction) return sg::Verdict::Run;
-    void* player = *reinterpret_cast<void* const*>(c.locals + playerOff);
-    if (!coop::players::Registry::Get().IsLocal(player)) return sg::Verdict::Run;
-    State st;
-    if (!Read(c.object, st)) return sg::Verdict::Run;
-    g_pressChipper = c.object;
-    g_pressBefore = st.active;
-    return sg::Verdict::Run;
+void RetryHeld() {
+    if (g_held.empty()) return;
+    const uint64_t version = coop::prop_key_index::Version();
+    if (version == g_heldVersion) return;   // a read that missed cannot answer otherwise until the index moves
+    g_heldVersion = version;
+    for (auto it = g_held.begin(); it != g_held.end();)
+        it = TryApply(it->first, it->second) ? g_held.erase(it) : std::next(it);
+    g_view.held = g_held.size();
 }
 
-void OnActionPost(const sg::Call& c) {
-    if (!g_pressChipper || c.object != g_pressChipper) return;
-    g_pressChipper = nullptr;
-    State st;
-    if (!Read(c.object, st) || st.active == g_pressBefore) return;   // the press missed the button
-    const std::wstring key = KeyOf(c.object);
-    if (key.empty()) return;
-    Payload p{};
-    coop::net::WireKeyFromString(key, p.key);
-    p.op = coop::net::kWoodchipperOpSetActive;
-    p.active = st.active ? 1 : 0;
-    Queue(p);
-    ++g_clientPresses;
-    UE_LOGI("woodchipper: this player switched '%ls' %s -- the host switches it", key.c_str(), st.active ? "on" : "off");
-}
+// ---- the watches ----
 
-// A pour on a copy: its fuel rose past the last reading, which its own burning cannot do. Read before the host's states
-// are written, so a state arriving in the same poll does not hide it.
-void DetectPours() {
-    if (!IndexCurrent()) return;
-    for (const auto& [key, ref] : g_index) {
-        State st;
-        if (!R::IsLiveByIndex(ref.actor, ref.idx) || !Read(ref.actor, st)) continue;
-        auto seen = g_seen.find(key);
-        if (seen != g_seen.end() && st.fuel > seen->second + kPourMin) {
-            Payload p{};
-            coop::net::WireKeyFromString(key, p.key);
-            p.op = coop::net::kWoodchipperOpPour;
-            p.fuel = std::fmin(st.fuel - seen->second, kMaxFuel);
-            Queue(p);
-            ++g_clientPours;
-            UE_LOGI("woodchipper: this player poured %.1f into '%ls' -- the host fuels it", p.fuel, key.c_str());
-        }
-        g_seen[key] = st.fuel;
-    }
-}
-
-void ClientPoll(coop::net::Session& s, Clock::time_point now) {
-    if (!coop::net_pump::HasAnnouncedWorldReady()) return;
-    DetectPours();
-    for (auto it = g_outbox.begin(); it != g_outbox.end();) {
-        if (!s.SendReliable(coop::net::ReliableKind::WoodchipperIntent, &*it, sizeof(*it))) break;
-        it = g_outbox.erase(it);
-    }
-    for (auto it = g_hold.begin(); it != g_hold.end();) it = now >= it->second ? g_hold.erase(it) : std::next(it);
-    // The host's chippers on the copies.
-    for (auto it = g_shown.begin(); it != g_shown.end();) {
-        if (g_hold.count(it->first)) {
-            ++it;
-            continue;
-        }
-        void* c = Resolve(it->first);
-        State cur;
-        if (!Read(c, cur)) {
-            it = now - it->second.at > kStateLife ? g_shown.erase(it) : std::next(it);
-            continue;
-        }
-        const State& want = it->second.state;
-        {
-            ApplyScope applying;
-            WriteFuel(c, want.fuel);
-            if (want.active != cur.active) {
-                WriteActive(c, want.active);
-                CheckActive(c);
-            }
-        }
-        g_seen[it->first] = want.fuel;
-        if (want.active != cur.active)
-            UE_LOGI("woodchipper: the host's '%ls' is %s here (%.1f fuel)", it->first.c_str(), want.active ? "on" : "off",
-                    want.fuel);
-        it = g_shown.erase(it);
-    }
-}
+enum class Reg : uint8_t { Pending, Registered, Refused };
+Reg g_regCheck = Reg::Pending, g_regPress = Reg::Pending;
+bool g_saidLive = false;
 
 void RegisterOnce() {
-    if (!g_watched) {
-        g_watched = sg::WatchName(kRowAction, kTagAction, &OnActionPre, &OnActionPost);
-        if (!g_watched) UE_LOGE("woodchipper: the script-body gate refused the watch on actionOptionIndex -- a client's "
-                                "press stays its own");
+    struct Def { const ue_wrap::facts::Function& row; int tag; sg::PostFn post; Reg& reg; };
+    const Def defs[] = {
+        {kRowCheckActive, kTagCheckActive, &OnCheckActivePost, g_regCheck},
+        {kRowPress, kTagPress, &OnPressPost, g_regPress},
+    };
+    for (const Def& d : defs) {
+        if (d.reg != Reg::Pending) continue;
+        if (sg::WatchName(d.row, d.tag, nullptr, d.post)) {
+            d.reg = Reg::Registered;
+        } else {
+            d.reg = Reg::Refused;
+            UE_LOGE("woodchipper: the script-body gate refused the watch on %ls::%ls -- the host's chipper is not "
+                    "announced for the rest of this process", d.row.Class(), d.row.Name());
+        }
     }
-    if (!g_hubRegistered) {
-        g_hubRegistered = true;
-        coop::element::scan_hub::Register(coop::element::scan_hub::Consumer{
-            "woodchipper", nullptr, &EnsureResolved, &IsChipper, &HubPassBegin, &HubMatch, &HubPassComplete,
-            /*settleScans*/ 15});
+}
+
+void SettleWatches() {
+    if (g_saidLive || g_regCheck != Reg::Registered || g_regPress != Reg::Registered) return;
+    sg::ResolvePendingNames();
+    if (sg::NameWatchLive(kRowCheckActive, kTagCheckActive) && sg::NameWatchLive(kRowPress, kTagPress)) {
+        g_saidLive = true;
+        UE_LOGI("woodchipper: the chipper's checkActive and button press are watched");
     }
+}
+
+struct ReplayCtx {
+    N::Session* s;
+    int slot;
+};
+
+void EachForReplay(void* ctx, void* chipper) {
+    ReplayCtx& c = *static_cast<ReplayCtx*>(ctx);
+    float fuel = 0.f;
+    bool active = false;
+    if (!W::Read(chipper, fuel, active) || !active) return;
+    Tracked* t = Track(chipper);
+    if (!t) return;
+    // `active` alone: a chipper's fuel at the join is the prop record lane's, which this send follows.
+    const Payload p = MakeState(t->key, 0.f, true, N::kWoodchipperOpActiveOnly);
+    c.s->SendReliableToSlot(c.slot, N::ReliableKind::WoodchipperState, &p, sizeof(p));
+    ++g_view.replayed;
+    UE_LOGI("woodchipper: '%ls' is on -- sent to the joiner in slot %d", t->key.c_str(), c.slot);
 }
 
 }  // namespace
 
-void Install(coop::net::Session* session) {
+void Install(N::Session* session) {
     g_session.store(session, std::memory_order_release);
+    coop::requester_feedback::Install(session);
     RegisterOnce();
 }
 
 void Tick() {
     RegisterOnce();
-    if (!g_saidLive && g_watched) {
-        sg::ResolvePendingNames();
-        if (sg::NameWatchLive(kRowAction, kTagAction)) {
-            g_saidLive = true;
-            UE_LOGI("woodchipper: a chipper's button press is watched");
-        }
-    }
-    coop::net::Session* s = Live();
-    if (!s || !EnsureResolved()) return;
-    const Clock::time_point now = Clock::now();
-    if (!g_poll.Due(now)) return;
-    const uint32_t world = ue_wrap::world_identity::Generation();
-    if (world != g_world) {
-        g_world = world;
-        g_sent.clear();
-        g_shown.clear();
-        g_seen.clear();
-        g_outbox.clear();
-        g_hold.clear();
-        g_intents.clear();
-    }
-    if (s->role() == coop::net::Role::Host) {
-        HostServe(*s);
-        HostPoll(*s, now);
-    } else if (s->role() == coop::net::Role::Client) {
-        ClientPoll(*s, now);
+    SettleWatches();
+    if (N::Session* s = Running(N::Role::Host)) {
+        Serve(*s);
+        Flush(*s, Clock::now());
+    } else if (Running(N::Role::Client)) {
+        RetryHeld();
     }
 }
 
-void OnState(const coop::net::WoodchipperPayload& p) {
-    if (p.op != coop::net::kWoodchipperOpState || p.active > 1 || !ValidFuel(p.fuel)) return;
-    const std::wstring key = coop::net::StringFromWireKey(p.key);
+void OnState(const Payload& p) {
+    if ((p.op != N::kWoodchipperOpState && p.op != N::kWoodchipperOpActiveOnly) || p.active > 1) return;
+    if (p.op == N::kWoodchipperOpState && !ValidFuel(p.fuel)) return;
+    const std::wstring key = N::StringFromWireKey(p.key);
     if (key.empty()) return;
-    Shown& sh = g_shown[key];
-    sh.state.fuel = p.fuel;
-    sh.state.active = p.active != 0;
-    sh.at = Clock::now();
+    // The newest state per key: an op 0 carries both fields, an op 3 only `active`, which leaves a fuel already held.
+    Held h = g_held.count(key) ? g_held[key] : Held{};
+    if (p.op == N::kWoodchipperOpState) {
+        h.fuel = p.fuel;
+        h.hasFuel = true;
+    }
+    h.active = p.active != 0;
+    if (TryApply(key, h)) {
+        g_held.erase(key);
+    } else {
+        g_held[key] = h;
+        g_heldVersion = coop::prop_key_index::Version();
+    }
+    g_view.held = g_held.size();
 }
 
-void OnIntent(int senderSlot, const coop::net::WoodchipperPayload& p) {
-    if (senderSlot <= 0 || senderSlot >= static_cast<int>(coop::net::kMaxPeers)) return;
-    const bool pour = p.op == coop::net::kWoodchipperOpPour && ValidFuel(p.fuel) && p.fuel > 0.f;
-    const bool press = p.op == coop::net::kWoodchipperOpSetActive && p.active <= 1;
-    if ((!pour && !press) || g_intents.size() >= kQueueCap) return;
-    g_intents.push_back({senderSlot, p});
+void OnIntent(int senderSlot, const Payload& p) {
+    if (!Running(N::Role::Host) || senderSlot < 1 || senderSlot >= static_cast<int>(N::kMaxPeers)) return;
+    const bool pour = p.op == N::kWoodchipperOpPour && ValidAmount(p.fuel);
+    const bool set = p.op == N::kWoodchipperOpSetActive && p.active <= 1;
+    const std::wstring key = N::StringFromWireKey(p.key);
+    if ((!pour && !set) || key.empty()) {
+        Refuse(kNotRun, static_cast<uint8_t>(senderSlot), key, "a malformed intent");
+        return;
+    }
+    Payload copy = p;
+    if (!g_slots[static_cast<uint8_t>(senderSlot)].queue.Push(std::move(copy), kMaxPending))
+        Refuse(kQueueFull, static_cast<uint8_t>(senderSlot), key, nullptr);
 }
 
-void QueueConnectBroadcastForSlot(int /*slot*/) {
-    for (auto& entry : g_sent) entry.second.pending = true;
+void QueueConnectBroadcastForSlot(int slot) {
+    N::Session* s = Running(N::Role::Host);
+    if (!s || slot < 1 || slot >= static_cast<int>(N::kMaxPeers) || ReplayOff()) return;
+    ReplayCtx ctx{s, slot};
+    W::ForEachChipper(&EachForReplay, &ctx);
 }
+
+void NoteDestroyed(void* actor) {
+    if (g_tracked.empty()) return;
+    for (size_t i = 0; i < g_tracked.size(); ++i) {
+        if (g_tracked[i].actor.Raw() != actor) continue;
+        g_tracked.erase(g_tracked.begin() + static_cast<std::ptrdiff_t>(i));
+        return;
+    }
+}
+
+DrillView ReadForDrill() { return g_view; }
 
 void OnDisconnect() {
-    if (g_hostPours || g_hostPresses || g_hostRefused || g_clientPours || g_clientPresses || g_clientDropped)
-        UE_LOGI("woodchipper: session end -- host pours=%u presses=%u refused=%u; client pours=%u presses=%u dropped=%u",
-                g_hostPours, g_hostPresses, g_hostRefused, g_clientPours, g_clientPresses, g_clientDropped);
-    g_hostPours = g_hostPresses = g_hostRefused = g_clientPours = g_clientPresses = g_clientDropped = 0;
-    g_sent.clear();
-    g_shown.clear();
-    g_seen.clear();
-    g_outbox.clear();
-    g_hold.clear();
-    g_intents.clear();
-    g_pressChipper = nullptr;
+    uint64_t refused = 0;
+    for (const uint64_t n : g_refused) refused += n;
+    if (g_view.pours || g_view.presses || g_view.statesSent || g_view.applied || refused)
+        UE_LOGI("woodchipper: session end -- host pours=%llu presses=%llu clamped=%llu answers=%llu denied=%llu "
+                "states sent=%llu replayed=%llu; client applied=%llu held=%llu", g_view.pours, g_view.presses,
+                g_view.clamped, g_view.answers, static_cast<unsigned long long>(refused), g_view.statesSent,
+                g_view.replayed, g_view.applied, g_view.held);
+    g_view = DrillView{};
+    for (uint64_t& n : g_refused) n = 0;
+    for (Said& sd : g_said) sd = Said{};
+    g_tracked.clear();
+    g_held.clear();
+    g_heldVersion = 0;
     g_session.store(nullptr);
 }
 

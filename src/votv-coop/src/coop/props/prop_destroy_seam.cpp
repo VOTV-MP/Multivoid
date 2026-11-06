@@ -17,6 +17,7 @@
 #include "coop/element/prop.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/interactables/woodchipper_sync.h"  // NoteDestroyed
 #include "coop/player/hand_item.h"  // IsLocalHandViewActor
 #include "coop/props/prop_drop_intent.h"
 #include "coop/items/coingun_sync.h"
@@ -119,6 +120,7 @@ void DestroySeamBody(void* self, HandView handView) {
     coop::dev::spawn_match_probe::NoteDestroy(self, static_cast<uint32_t>(destroyEid));
     PT::UnmarkProcessedInit(self);
     PT::UnmarkKnownKeyedProp(self);
+    coop::woodchipper_sync::NoteDestroyed(self);   // the host's chipper table loses a chipper that left the world
     if (!s->connected()) return;
     if (coop::prop_echo_suppress::IsIncomingDestroy(self)) {
         UE_LOGI("grab_hook[destroy-seam]: actor %p was wire-received destroy -- skip rebroadcast",
