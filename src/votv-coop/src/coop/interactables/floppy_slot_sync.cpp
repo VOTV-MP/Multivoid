@@ -5,6 +5,7 @@
 #include "coop/interactables/laptop_buffer_sync.h"  // the quad's shadow primes after a laptop apply
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
+#include "coop/props/disc_record_ceiling.h"
 #include "coop/text/utf8_codec.h"
 
 #include "ue_wrap/core/game_thread.h"
@@ -42,12 +43,12 @@ constexpr uint64_t kSweepMs = 1000;   // the server lane's own cadence
 // serverbox_sync's, for the same reason -- one lane must not address a box the other cannot.
 constexpr size_t kMaxDevices = 64;
 
-// One slot body's ceiling: what one blob carries, less the set's own header. A disc takes 32 writes, and an
-// sv.request row costs 1.6 KB here (a dish's 706-character code, in the rows and again in the save JSON),
-// so a full disc is about 50 KB; a 32 KB ceiling stopped the slot crossing at 21 servers' rows. A body past
-// this is a claim we refuse and a canonical we cannot send, both loudly -- truncating instead would hand
-// the game a JSON its own stringToSaveData cannot parse, which is worse than not sending.
-constexpr size_t kMaxSlotBytes = coop::blob_chunks::MaxBlobBytes() - 64;
+// One slot entry's ceiling is disc_record::MaxBodyBytes(), the record lane's too: what one blob carries, less the
+// set's own head. A disc takes 32 writes (31 on a laptop), and an sv.request row costs 1.6 KB here (a dish's
+// 706-character code, in the rows and again in the save JSON), so a full disc is about 50 KB; a 32 KB ceiling
+// stopped the slot crossing at 21 servers' rows. An entry past it is a claim we refuse and a canonical we
+// cannot send, both loudly -- truncating instead would hand the game a JSON its own stringToSaveData cannot
+// parse, which is worse than not sending.
 
 // A client's claim is unbounded input. The window is generous next to the 1 Hz poll that
 // produces one, so a peer playing normally never reaches it.
@@ -169,6 +170,7 @@ bool ReadSlotOf(FS::DeviceKind kind, void* device, Slot& out) {
 std::map<uint32_t, uint64_t> g_shadow;
 std::set<uint32_t> g_retry;          // sends the transport refused
 std::set<uint32_t> g_unsendable;     // slots this peer cannot put on the wire at all
+std::set<uint32_t> g_refusedOversize;  // slots whose over-ceiling claim was already logged, one line each
 
 // CLIENT: until the host's canonical has landed, this peer's slots are its own save's, not the
 // session's. Its boxes come up at class defaults, the save's loadData fills them a tick or two
@@ -258,7 +260,7 @@ bool PackOne(uint8_t index, const Slot& cur, std::vector<uint8_t>& out) {
     out.clear();
     out.push_back(index);
     PackSlot(out, cur);
-    return out.size() <= kMaxSlotBytes;
+    return out.size() <= coop::disc_record::MaxBodyBytes();
 }
 
 // Pack a set of devices into canonical blobs, split at the slot cap so one huge slot cannot take
@@ -275,13 +277,14 @@ std::vector<std::vector<uint8_t>> PackCanonicalSet(
             std::vector<uint8_t> one;
             one.push_back(entries[i].first);
             PackSlot(one, entries[i].second);
-            if (one.size() > kMaxSlotBytes) {
+            if (one.size() > coop::disc_record::MaxBodyBytes()) {
                 if (droppedOut) droppedOut->push_back(entries[i].first);
                 ++i;
                 continue;
             }
-            // 4 = the head plus the count; keep a whole entry together.
-            if (count > 0 && body.size() + one.size() + 4 > coop::blob_chunks::MaxBlobBytes())
+            // Keep a whole entry together, and the blob within what one blob carries once its head is on.
+            if (count > 0 && body.size() + one.size() + coop::disc_record::kSlotSetHeadBytes >
+                                 coop::blob_chunks::MaxBlobBytes())
                 break;
             body.insert(body.end(), one.begin(), one.end());
             ++count;
@@ -610,11 +613,6 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
 
     if (op == kOpClaim) {
         if (!host) return;  // a client never takes another peer's claim; only the host's canonical
-        if (blob.size() > coop::blob_chunks::MaxBlobBytes()) {
-            UE_LOGW("floppy_slot_sync: claim from slot %u is %zu B, past the %zu B ceiling -- "
-                    "dropped", static_cast<unsigned>(senderSlot), blob.size(), coop::blob_chunks::MaxBlobBytes());
-            return;
-        }
         bool warnNow = false;
         if (!RateAllows(senderSlot, warnNow)) {
             if (warnNow)
@@ -624,6 +622,17 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
             return;
         }
         const uint8_t index = r.U8();
+        // The entry is what the host re-publishes, so the ceiling is the sender's own: an entry the host could apply
+        // and then not pass on would leave it holding a disc no peer can be given.
+        const size_t entryBytes = blob.size() - r.off + 1;
+        if (entryBytes > coop::disc_record::MaxBodyBytes()) {
+            if (g_refusedOversize.insert(ShadowKey(kind, index)).second)
+                UE_LOGW("floppy_slot_sync: claim for device %u from slot %u is %zu B, past the %zu B ceiling -- "
+                        "refused (said once per device)",
+                        static_cast<unsigned>(index), static_cast<unsigned>(senderSlot), entryBytes,
+                        coop::disc_record::MaxBodyBytes());
+            return;
+        }
         Slot in;
         if (!ParseSlot(r, in)) {
             UE_LOGW("floppy_slot_sync: malformed claim from slot %u -- dropped",
@@ -772,6 +781,7 @@ void OnDisconnect() {
     g_shadow.clear();
     g_retry.clear();
     g_unsendable.clear();
+    g_refusedOversize.clear();
     g_awaiting.clear();
     g_connectRetry.clear();
     for (bool& have : g_haveCanonical) have = false;

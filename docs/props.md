@@ -361,7 +361,8 @@ text is the prop's save record and crosses on the record lane above with no mess
 - **Late join.** A joiner is handed every prop's record in the snapshot, the notebook's last
   published text included, and the claim table, so it reads the text as last published and is
   denied the editor while another peer holds it; the close then reaches it as an ordinary record.
-- **The ceiling.** A record over 32 KiB is refused with a log line and stays on the editing peer.
+- **The ceiling.** A record over 56,092 bytes (one blob, less the slot set's head: `coop/props/disc_record_ceiling.h`, the
+  disc slot's ceiling too) is refused with its size logged once per key and stays on the editing peer.
 
 A page torn out of a notebook is `prop_notebook_paper_C`, born by a client's prop birth route
 (`coop/props/prop_drop_intent`). The drawn pixels of `prop_paper_drawable_C` are in no save
