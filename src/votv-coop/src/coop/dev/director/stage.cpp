@@ -102,7 +102,7 @@ bool StageWalk(DirectorGoal& goal, const char* why) {
     if (PlacingOff() || goal.walkFromHere || goal.straight) {
         UE_LOGI("director: walking from here for %s: %s", why,
                 PlacingOff()        ? "VOTVCOOP_DRILL_PLACE=0"
-                : goal.walkFromHere ? "this walk is the measurement"
+                : goal.walkFromHere ? "this walk opts out (a carry, or a walk that is the measurement)"
                                     : "a straight walk has no route to shorten");
         return true;
     }
@@ -172,8 +172,11 @@ bool StageWalk(DirectorGoal& goal, const char* why) {
     if (!place) {
         if (pawnRouted) UE_LOGI("director: walking from here for %s: route %.0f m", why, pawnRoute / 100.f);
         else
-            UE_LOGI("director: walking from here for %s: no route from the walker, %.0f m away, and no anchor beats it",
-                    why, walkerCm / 100.f);
+            UE_LOGI("director: walking from here for %s: no route from the walker, %.0f m away, and %s", why,
+                    walkerCm / 100.f,
+                    !best                            ? "no anchor has a route"
+                    : walkerCm <= kStageMinRouteCm   ? "the line is short"
+                                                     : "no anchor's route is shorter by enough");
         return true;
     }
 
