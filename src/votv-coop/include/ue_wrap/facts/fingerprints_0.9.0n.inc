@@ -135,6 +135,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"cremator_c", L"bndevt__cremator_burning_k2node_componentboundevent_1_componentbeginoverlapsignature__delegatesignature", L"cremator_c.bndevt__cremator_burning_k2node_componentboundevent_1_componentbeginoverlapsignature__delegatesignature", 0x068571522f5f0453ull, 0xc7eac8f187754a7full},
     {L"cremator_c", L"handlelimeline__finishedfunc", L"cremator_c.handlelimeline__finishedfunc", 0x6a2d5d90ab51fa2dull, 0xaef444c3293525d4ull},
     {L"cremator_c", L"igniteinside", L"cremator_c.igniteinside", 0x6a2d5d90ab51fa2dull, 0x2ca0f9aa7e363eafull},
+    {L"cremator_c", L"spitfireballs_timer", L"cremator_c.spitfireballs_timer", 0x6a2d5d90ab51fa2dull, 0x313e753d70462eb3ull},
     {L"cremator_c", L"uselever", L"cremator_c.uselever", 0x6a2d5d90ab51fa2dull, 0x92c671e84d605dfaull},
     {L"daynightcycle_c", L"causerain", L"daynightcycle_c.causerain", 0x4fe0756439ce9e86ull, 0x345b3eaf3d6d113aull},
     {L"daynightcycle_c", L"createnewtask", L"daynightcycle_c.createnewtask", 0x00e66fce64b40808ull, 0x5697acc2cb49cefeull},
