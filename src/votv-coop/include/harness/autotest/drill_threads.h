@@ -193,6 +193,8 @@ DWORD WINAPI RunEndDrillThread(LPVOID arg);
 
 // VOTVCOOP_RUN_SPILL, both peers -- harness/autotest/autotest_spill.cpp
 DWORD WINAPI SpillThread(LPVOID arg);
+// VOTVCOOP_RUN_GROUND_HOSE, both peers -- harness/autotest/autotest_ground_hose.cpp
+DWORD WINAPI GroundHoseThread(LPVOID arg);
 
 // VOTVCOOP_RUN_AMBIENT_CREATURE -- the ambient creatures: one set of deer and walking trees, the host's
 DWORD WINAPI AmbientCreatureThread(LPVOID arg);

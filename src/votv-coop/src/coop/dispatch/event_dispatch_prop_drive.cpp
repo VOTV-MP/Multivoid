@@ -24,6 +24,7 @@
 #include "coop/props/prop_syncer.h"        // the client's answer receiver
 #include "coop/props/prop_syncer_host.h"   // the host's claim judge and a client's End
 
+#include "coop/world/ground_hose_sync.h"
 #include "coop/world/spill_sync.h"
 #include "coop/world/sus_hole_intent.h"
 #include "ue_wrap/core/log.h"
@@ -397,6 +398,21 @@ bool HandlePropDriveEvent(net::Session& session,
         net::SusHoleIntentPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         ::coop::sus_hole_intent::OnIntent(session, msg.senderPeerSlot, p);
+        break;
+    }
+    case net::ReliableKind::GroundHoseState:
+    case net::ReliableKind::GroundHoseIntent: {
+        // GroundHoseState HOST->ALL, GroundHoseIntent CLIENT->HOST; both chunked blobs.
+        const bool intent = msg.kind == net::ReliableKind::GroundHoseIntent;
+        if (intent != (session.role() == net::Role::Host)) {
+            UE_LOGW("event_feed: a garden hose message the wrong way from slot %d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) break;
+        net::BlobChunkPayload c{};
+        std::memcpy(&c, msg.payload, sizeof(c));
+        if (intent) ::coop::ground_hose_sync::OnIntentChunk(c, msg.senderPeerSlot);
+        else ::coop::ground_hose_sync::OnStateChunk(c, msg.senderPeerSlot);
         break;
     }
     default:
