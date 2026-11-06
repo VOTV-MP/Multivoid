@@ -101,6 +101,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/kerfur_serve_drill.cpp
     src/coop/dev/kerfur_serve_drill_disc.cpp
     src/coop/dev/kerfur_serve_drill_disc_judge.cpp
+    src/coop/dev/kerfur_serve_drill_steps.cpp
     src/coop/dev/load_reroll_watch.cpp
     src/coop/dev/radio_tower_probe.cpp
     src/coop/dev/container_selftest.cpp

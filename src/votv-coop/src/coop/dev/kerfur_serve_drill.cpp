@@ -6,6 +6,7 @@
 #include "coop/dev/director/director.h"
 #include "coop/dev/kerfur_serve_drill_disc.h"
 #include "coop/dev/kerfur_serve_drill_internal.h"
+#include "coop/dev/kerfur_serve_drill_steps.h"
 #include "coop/dev/spawn_npc.h"
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
@@ -16,6 +17,7 @@
 #include "coop/props/join_membership_sweep.h"
 #include "coop/props/prop_snapshot.h"
 #include "coop/session/rig_verdict.h"
+#include "harness/autotest/meet.h"
 
 #include "ue_wrap/actors/kerfur.h"
 #include "ue_wrap/core/log.h"
@@ -32,6 +34,8 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cwchar>
 #include <memory>
 #include <string>
 
@@ -54,16 +58,24 @@ constexpr float    kAwayMinCm      = 1000.f;      // the client's pile, 10 to 30
 constexpr float    kAwayMaxCm      = 3000.f;
 constexpr float    kApartCm        = 1000.f;      // and 10 m from the host, flat
 constexpr float    kNearHostCm     = 1000.f;      // the host's Omega spawns 2.5 m in front of it
+constexpr float    kHostReachCm    = 300.f;       // the client's walk to the host
+constexpr float    kReachCm        = 150.f;       // and up to the Omega's mirror, inside the use reach it commands from
 constexpr float    kFollowCm       = 200.f;       // settled by a player: the 100 uu MoveTo acceptance, the lag
 constexpr float    kDiscAsideCm    = 100.f;
 constexpr uint64_t kSettleMs       = 5000;        // one passing by leaves in under 2 s
-constexpr uint64_t kFollowWindowMs = 60000;       // from the client's follow
-constexpr uint64_t kVerbWindowMs   = 240000;      // a client verb reaching the host: its waits, walk and leg A
+constexpr uint64_t kFollowWindowMs = 60000;       // from the client reaching its pile
+constexpr uint64_t kVerbWindowMs   = 240000;      // a client verb reaching the host: the client's walks, aim and press
+constexpr uint64_t kQuietWindowMs  = 240000;      // the client's load tail
 constexpr uint64_t kMirrorWindowMs = 60000;       // the Omega's mirror, once the load tail quiesced
 constexpr uint64_t kDiscWindowMs   = 60000;       // the host's disc named in its hand, from the mirror's arrival
 constexpr uint64_t kSampleMs       = 100;
 constexpr uint64_t kReportMs       = 5000;
 constexpr uint8_t  kStateFollow    = 0;           // enum_kerfurCommand
+// The radial's entries for an Omega not on a task (kerfurOmega::getActionOptions): Turn_off, Follow, Idle, Patrol,
+// Fix_servers, Get_reports.
+constexpr int32_t  kFollowIdx      = 1;
+constexpr int32_t  kIdleIdx        = 2;
+constexpr int32_t  kGetReportsIdx  = 5;
 constexpr int      kWalkDeadlineS  = 60;
 constexpr const char* kVerdictTag = "kerfur-serve";  // the drill's name on its `rig: VERDICT` line
 
@@ -183,16 +195,17 @@ void RunKill() {
 }
 
 // The client's get_reports and its closing idle, seen as each returns on the host: the idle is the client's
-// word that leg A is judged, sent through the one channel every build runs, the verb.
+// word that leg A is judged, sent through the one channel every build runs, the verb. The radial delivers `Get_reports`
+// and `Idle`: the names match without case.
 void OnVerbPost(const sg::Call& c) {
     if (g_host != HostStep::WaitReports && g_host != HostStep::WaitIdle) return;
     std::wstring name;
     if (!detail::VerbNameOf(c, name)) return;
-    if (g_host == HostStep::WaitReports && name == L"get_reports") {
+    if (g_host == HostStep::WaitReports && _wcsicmp(name.c_str(), L"get_reports") == 0) {
         g_omega = c.object;
         g_omegaIdx = R::InternalIndexOf(c.object);
         JudgeReports();
-    } else if (g_host == HostStep::WaitIdle && name == L"idle" && c.object == g_omega) {
+    } else if (g_host == HostStep::WaitIdle && _wcsicmp(name.c_str(), L"idle") == 0 && c.object == g_omega) {
         g_host = HostStep::Kill;
     }
 }
@@ -226,17 +239,16 @@ void TickHost(coop::net::Session* s, uint64_t ms) {
 
 // ---- client ----
 
-enum class ClientStep { WaitQuiet, WaitMirror, WaitHostDisc, WalkAway, JudgeFollow, Done };
-ClientStep g_client = ClientStep::WaitQuiet;
-void* g_mirror = nullptr;
-int32_t g_mirrorIdx = -1;
-std::shared_ptr<coop::director::BackgroundWalk> g_walk;
-uint64_t g_stepMs = 0, g_sampleMs = 0, g_reportMs = 0, g_byMeSince = 0, g_byHostSince = 0;
+// The client runs on one worker thread, as a player acts: it walks to the host, then walks up to the Omega's mirror
+// for each command, puts the camera on it and presses its radial (kerfur_serve_drill_steps.h). The host judges a
+// client's command by reach, so none is sent from afar.
+std::atomic<bool> g_clientStarted{false};
 
 void ClientInvalid(const char* why, const char* tag = kVerdictTag) {
-    g_client = ClientStep::Done;
     coop::rig_verdict::Say(tag, Outcome::Invalid, "client: %s", why);
 }
+
+void Invalid(const char* why) { steps::Invalid(why, kVerdictTag); }
 
 // The Omega mirror nearest the host's body, within the spawn's reach of it.
 void* FindMirrorByHost() {
@@ -258,130 +270,160 @@ void* FindMirrorByHost() {
     return ctx.best;
 }
 
-void StartWalkAway() {
-    void* me = coop::players::Registry::Get().Local();
-    ue_wrap::FVector host{};
-    coop::director::DirectorGoal goal;
-    if (!me || !BodyAt(0, host) ||
-        !coop::director::PickReachablePile(me, kAwayMinCm, kAwayMaxCm, goal, &host, kApartCm)) {
-        ClientInvalid("no nav-reachable pile 10 to 30 m away and 10 m from the host");
-        return;
+// One command, as a player gives it: up to the mirror, the camera on it, then the radial dispatch itself
+// (setActionIndex, useSelectedAction), which the seat on the Omega's actionName cancels here and sends to the host.
+// No reflected call stands in for it: the drill measures what the host does for a command, not that route.
+bool Command(void* mirror, int32_t mirrorIdx, int32_t actionIndex, const char* verb) {
+    if (const char* bad = steps::WalkUpTo(mirror, kReachCm, kWalkDeadlineS)) {
+        Invalid(bad);
+        return false;
     }
-    UE_LOGI("[KERFUR-SERVE] client: Omega mirror %p by the host -- walking to a pile at (%.0f,%.0f,%.0f), %.0f cm "
-            "from the host", g_mirror, goal.targetPos.X, goal.targetPos.Y, goal.targetPos.Z,
-            Dist(goal.targetPos, host));
-    g_walk = coop::director::StartBackgroundWalk(goal.targetPos, goal.reachCm, kWalkDeadlineS);
-    g_client = ClientStep::WalkAway;
+    if (!steps::AimFan(mirror, mirrorIdx)) {
+        if (steps::Alive()) Invalid("no aim of the fan put the trace and the look-at on the Omega's mirror");
+        return false;
+    }
+    bool aimed = false, pressed = false;
+    steps::Run([&] {
+        void* me = coop::players::Registry::Get().Local();
+        aimed = steps::AimedAt(mirror) && R::IsLiveByIndex(mirror, mirrorIdx);
+        if (aimed)
+            pressed = E::CallMainPlayerSetActionIndex(me, actionIndex) && E::CallMainPlayerUseSelectedAction(me);
+        return true;
+    });
+    if (!aimed || !pressed) {
+        char why[96];
+        std::snprintf(why, sizeof why, "the %s press: %s", verb, !aimed ? "the aim was lost" : "it did not dispatch");
+        Invalid(why);
+        return false;
+    }
+    UE_LOGI("[KERFUR-SERVE] client: pressed %s (setActionIndex %d, useSelectedAction) within reach of the Omega", verb,
+            actionIndex);
+    return true;
 }
 
-// Leg A is judged: the idle tells the host, which runs leg C.
-void LegAOver() {
-    K::RunActionName(g_mirror, coop::players::Registry::Get().Local(), L"idle");
-    UE_LOGI("[KERFUR-SERVE] client: commanded idle -- leg A is judged");
-    g_client = ClientStep::Done;
+// The client's pile 10 to 30 m from where it stands (beside the Omega) and 10 m from the host, walked to with the
+// director. Null on arrival, else the reason it did not.
+const char* WalkToPile(void* mirror) {
+    std::shared_ptr<coop::director::BackgroundWalk> walk;
+    if (!steps::Run([&] {
+            void* me = coop::players::Registry::Get().Local();
+            ue_wrap::FVector host{};
+            coop::director::DirectorGoal goal;
+            if (!me || !BodyAt(0, host) ||
+                !coop::director::PickReachablePile(me, kAwayMinCm, kAwayMaxCm, goal, &host, kApartCm))
+                return false;
+            UE_LOGI("[KERFUR-SERVE] client: Omega mirror %p commanded to follow -- walking to a pile at (%.0f,%.0f,%.0f), "
+                    "%.0f cm from the host", mirror, goal.targetPos.X, goal.targetPos.Y, goal.targetPos.Z,
+                    Dist(goal.targetPos, host));
+            walk = coop::director::StartBackgroundWalk(goal.targetPos, goal.reachCm, kWalkDeadlineS);
+            return true;
+        }))
+        return "no nav-reachable pile 10 to 30 m away and 10 m from the host";
+    if (!walk || !steps::WaitGame([&] { return walk->state.load() != 0; }, (kWalkDeadlineS + 5) * 1000ull))
+        return "the walk away did not end";
+    return walk->state.load() == 1 ? nullptr : "the walk away did not arrive";
 }
+
+enum class Judged { Waiting, Over, MirrorGone, Unread };
+
+struct Watch {
+    uint64_t startMs = 0, reportMs = 0, byMeSince = 0, byHostSince = 0;
+};
 
 // Leg A, judged here from this client's own follow, which is the same moment on every build: where its mirror
-// settles on the host's pose stream, and the state the host's stream gives it there.
-void JudgeFollow(uint64_t ms) {
+// settles on the host's pose stream, and the state the host's stream gives it there. Game thread.
+Judged JudgeFollow(void* mirror, int32_t mirrorIdx, Watch& w, uint64_t ms) {
+    if (!R::IsLiveByIndex(mirror, mirrorIdx)) return Judged::MirrorGone;
     ue_wrap::FVector k{}, m{}, h{};
     const int me = coop::players::Registry::Get().LocalPeerId();
-    if (!E::TryGetActorLocation(g_mirror, k) || !BodyAt(me, m) || !BodyAt(0, h)) {
-        ClientInvalid("a place did not read");
-        return;
-    }
+    if (!E::TryGetActorLocation(mirror, k) || !BodyAt(me, m) || !BodyAt(0, h)) return Judged::Unread;
     const float toMe = Dist(k, m), toHost = Dist(k, h);
     const bool byMe = toMe <= kFollowCm && toHost > 2.f * kFollowCm;
     const bool byHost = toHost <= kFollowCm && toMe > 2.f * kFollowCm;
-    g_byMeSince = byMe ? (g_byMeSince ? g_byMeSince : ms) : 0;
-    g_byHostSince = byHost ? (g_byHostSince ? g_byHostSince : ms) : 0;
-    const double after = static_cast<double>(ms - g_stepMs) / 1000.0;
-    if (g_byMeSince && ms - g_byMeSince >= kSettleMs) {
+    w.byMeSince = byMe ? (w.byMeSince ? w.byMeSince : ms) : 0;
+    w.byHostSince = byHost ? (w.byHostSince ? w.byHostSince : ms) : 0;
+    const double after = static_cast<double>(ms - w.startMs) / 1000.0;
+    if (w.byMeSince && ms - w.byMeSince >= kSettleMs) {
         uint8_t state = 0xFF, face = 0;
         bool spooky = false;
-        K::ReadKerfurState(g_mirror, state, spooky, face);
+        K::ReadKerfurState(mirror, state, spooky, face);
         const bool pass = state == kStateFollow;
-        UE_LOGI("[KERFUR-SERVE] client: leg A %s -- the Omega settled %.0f cm from me, %.1f s after my follow (%.0f cm "
-                "from the host), in state %u%s", pass ? "PASS" : "FAIL", toMe, after, toHost,
+        UE_LOGI("[KERFUR-SERVE] client: leg A %s -- the Omega settled %.0f cm from me, %.1f s after I reached my pile "
+                "(%.0f cm from the host), in state %u%s", pass ? "PASS" : "FAIL", toMe, after, toHost,
                 static_cast<unsigned>(state), pass ? "" : ", not follow");
         if (!pass) coop::rig_verdict::Say(kVerdictTag, Outcome::Fail, "leg A: the Omega settled by me in state %u, "
                                           "not follow", static_cast<unsigned>(state));
-        LegAOver();
-        return;
+        return Judged::Over;
     }
-    if (g_byHostSince && ms - g_byHostSince >= kSettleMs) {
+    if (w.byHostSince && ms - w.byHostSince >= kSettleMs) {
         UE_LOGI("[KERFUR-SERVE] client: leg A FAIL -- the Omega I commanded settled %.0f cm from the host, %.1f s "
-                "after my follow (%.0f cm from me)", toHost, after, toMe);
+                "after I reached my pile (%.0f cm from me)", toHost, after, toMe);
         coop::rig_verdict::Say(kVerdictTag, Outcome::Fail, "leg A: the Omega settled %.0f cm from the host", toHost);
-        LegAOver();
-        return;
+        return Judged::Over;
     }
-    if (ms - g_stepMs >= kFollowWindowMs) {
-        UE_LOGW("[KERFUR-SERVE] client: leg A UNDECIDED -- %llu s after my follow the Omega is %.0f cm from me, "
+    if (ms - w.startMs >= kFollowWindowMs) {
+        UE_LOGW("[KERFUR-SERVE] client: leg A UNDECIDED -- %llu s after I reached my pile the Omega is %.0f cm from me, "
                 "%.0f cm from the host", static_cast<unsigned long long>(kFollowWindowMs / 1000), toMe, toHost);
         coop::rig_verdict::Say(kVerdictTag, Outcome::Invalid, "leg A: undecided, the Omega is %.0f cm from me and "
                                "%.0f cm from the host", toMe, toHost);
-        LegAOver();
-        return;
+        return Judged::Over;
     }
-    if (ms - g_reportMs >= kReportMs) {
-        g_reportMs = ms;
+    if (ms - w.reportMs >= kReportMs) {
+        w.reportMs = ms;
         UE_LOGI("[KERFUR-SERVE] client: the Omega is %.0f cm from me, %.0f cm from the host", toMe, toHost);
     }
+    return Judged::Waiting;
 }
 
-void TickClient() {
-    const uint64_t ms = ::GetTickCount64();
-    if (g_client != ClientStep::WaitQuiet && g_client != ClientStep::WaitMirror && g_client != ClientStep::Done &&
-        !R::IsLiveByIndex(g_mirror, g_mirrorIdx)) {
-        ClientInvalid("the Omega mirror is gone");
-        return;
+DWORD WINAPI ClientThread(LPVOID) {
+    using steps::WaitGame;
+    if (!WaitGame([] { return coop::join_membership_sweep::HasLoadTailQuiesced(); }, kQuietWindowMs)) {
+        Invalid("the load tail never quiesced");
+        return 0;
     }
-    void* me = coop::players::Registry::Get().Local();
-    switch (g_client) {
-    case ClientStep::WaitQuiet:
-        if (!coop::join_membership_sweep::HasLoadTailQuiesced()) return;
-        g_stepMs = ms;
-        g_client = ClientStep::WaitMirror;
-        return;
-    case ClientStep::WaitMirror:
-        if ((g_mirror = FindMirrorByHost())) {
-            g_mirrorIdx = R::InternalIndexOf(g_mirror);
-            g_stepMs = ms;
-            g_client = ClientStep::WaitHostDisc;
-        } else if (ms - g_stepMs >= kMirrorWindowMs) {
-            ClientInvalid("no Omega mirror came by the host");
-        }
-        return;
-    case ClientStep::WalkAway: {
-        const int w = g_walk ? g_walk->state.load() : 2;
-        if (w == 0) return;
-        if (w == 2) { ClientInvalid("the walk away did not arrive"); return; }
-        // The radial menu's verb, a reflected call: refused here at the seat, sent to the host.
-        K::RunActionName(g_mirror, me, L"follow");
-        UE_LOGI("[KERFUR-SERVE] client: at my pile -- commanded the Omega to follow");
-        g_stepMs = g_sampleMs = g_reportMs = ms;
-        g_byMeSince = g_byHostSince = 0;
-        g_client = ClientStep::JudgeFollow;
-        return;
+    if (!harness::autotest::meet::WalkToHost("[KERFUR-SERVE]", kHostReachCm)) {
+        Invalid("the walk to the host did not arrive");
+        return 0;
     }
-    case ClientStep::JudgeFollow:
-        if (ms - g_sampleMs < kSampleMs) return;
-        g_sampleMs = ms;
-        JudgeFollow(ms);
-        return;
-    case ClientStep::WaitHostDisc:
-        // The first command of this client to this Omega: its insert must read this client's hand, not the host's.
-        if (coop::hand_item::HeldClassIs(0, kDisc)) {
-            K::RunActionName(g_mirror, me, L"get_reports");
-            UE_LOGI("[KERFUR-SERVE] client: the host holds a red disc -- commanded get_reports first");
-            StartWalkAway();
-        } else if (ms - g_stepMs >= kDiscWindowMs) {
-            ClientInvalid("the host's hand never named a red disc");
-        }
-        return;
-    default: return;
+    void* mirror = nullptr;
+    int32_t mirrorIdx = -1;
+    if (!WaitGame([&] {
+            mirror = FindMirrorByHost();
+            if (mirror) mirrorIdx = R::InternalIndexOf(mirror);
+            return mirror != nullptr;
+        }, kMirrorWindowMs)) {
+        Invalid("no Omega mirror came by the host");
+        return 0;
     }
+    if (!WaitGame([] { return coop::hand_item::HeldClassIs(0, kDisc); }, kDiscWindowMs)) {
+        Invalid("the host's hand never named a red disc");
+        return 0;
+    }
+
+    // The first command of this client to this Omega: its insert must read this client's hand, not the host's.
+    if (!Command(mirror, mirrorIdx, kGetReportsIdx, "get_reports")) return 0;
+    // Follow is commanded within reach too, and the Omega then follows this client to its pile.
+    if (!Command(mirror, mirrorIdx, kFollowIdx, "follow")) return 0;
+    if (const char* bad = WalkToPile(mirror)) {
+        Invalid(bad);
+        return 0;
+    }
+
+    Watch w;
+    w.startMs = w.reportMs = ::GetTickCount64();
+    for (;;) {
+        Judged j = Judged::Waiting;
+        if (!steps::Run([&] { j = JudgeFollow(mirror, mirrorIdx, w, ::GetTickCount64()); return true; })) return 0;
+        if (j == Judged::MirrorGone) { Invalid("the Omega mirror is gone"); return 0; }
+        if (j == Judged::Unread) { Invalid("a place did not read"); return 0; }
+        if (j == Judged::Over) break;
+        if (!steps::Alive()) return 0;
+        ::Sleep(static_cast<DWORD>(kSampleMs));
+    }
+
+    // Leg A is judged: the idle tells the host, which runs leg C.
+    if (Command(mirror, mirrorIdx, kIdleIdx, "idle")) UE_LOGI("[KERFUR-SERVE] client: commanded idle -- leg A is judged");
+    return 0;
 }
 
 }  // namespace
@@ -428,12 +470,15 @@ void Tick() {
         g_saidArm = true;
         UE_LOGI("[KERFUR-SERVE] %s armed", s->role() == coop::net::Role::Host ? "host" : "client");
     }
+    steps::SetSession(s);
     if (disc::Enabled()) {  // leg D replaces legs A to C
         disc::Tick(s);
         return;
     }
     if (s->role() == coop::net::Role::Host) TickHost(s, ::GetTickCount64());
-    else if (s->connected()) TickClient();
+    else if (s->connected() && !g_clientStarted.exchange(true)) {
+        if (HANDLE h = ::CreateThread(nullptr, 0, &ClientThread, nullptr, 0, nullptr)) ::CloseHandle(h);
+    }
 }
 
 void OnDisconnect() {
@@ -445,11 +490,7 @@ void OnDisconnect() {
     g_omegaIdx = g_handIdx = -1;
     g_legB = false;
     g_hostStepMs = 0;
-    g_client = ClientStep::WaitQuiet;
-    g_mirror = nullptr;
-    g_mirrorIdx = -1;
-    g_walk.reset();
-    g_stepMs = g_sampleMs = g_reportMs = g_byMeSince = g_byHostSince = 0;
+    g_clientStarted.store(false);
 }
 
 }  // namespace coop::dev::kerfur_serve_drill

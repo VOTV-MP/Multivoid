@@ -6,10 +6,10 @@
 #include "coop/config/config_registry.h"
 #include "coop/creatures/kerfur_command_answer.h"
 #include "coop/creatures/kerfur_disc_carry.h"
-#include "coop/dev/director/director.h"
 #include "coop/dev/drill_chat.h"
 #include "coop/dev/kerfur_serve_drill_internal.h"
 #include "coop/dev/kerfur_serve_drill_disc_judge.h"
+#include "coop/dev/kerfur_serve_drill_steps.h"
 #include "coop/dev/spawn_npc.h"
 #include "coop/dispatch/event_feed.h"
 #include "coop/net/protocol.h"
@@ -20,13 +20,11 @@
 #include "coop/props/prop_key_index.h"
 #include "coop/props/prop_snapshot.h"
 #include "coop/session/rig_verdict.h"
-#include "coop/session/shutdown.h"
 #include "harness/autotest/meet.h"
 
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/actors/kerfur.h"
 #include "ue_wrap/actors/prop.h"
-#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -43,7 +41,6 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -55,7 +52,6 @@ namespace K  = ue_wrap::kerfur;
 namespace OI = ue_wrap::object_index;
 namespace P  = ue_wrap::profile;
 namespace R  = ue_wrap::reflection;
-namespace GT = ue_wrap::game_thread;
 namespace DC = coop::dev::drill_chat;
 using coop::rig_verdict::Outcome;
 namespace sg = ue_wrap::script_gate;
@@ -101,7 +97,6 @@ constexpr const wchar_t* kDiscClasses[] = {L"prop_floppyDisc_R_C",  L"prop_flopp
                                            L"prop_floppyDisc_Bl_C", L"prop_floppyDisc_Wh_C", L"prop_floppyDisc_B_C",
                                            L"prop_floppyDisc_O_C"};
 
-std::atomic<coop::net::Session*> g_session{nullptr};
 std::atomic<bool>  g_clientStarted{false};
 std::atomic<void*> g_clientMirror{nullptr};   // the Omega mirror the client presses on, for the verb's watch
 std::atomic<bool>  g_localBodyRan{false};     // the client's own copy ran get_reports
@@ -379,74 +374,14 @@ void TickHost(coop::net::Session* s, uint64_t ms) {
 // ---- client ----
 
 // The walk, the aim and the press run on one worker thread: the director's WalkToHost blocks while it walks. Each
-// engine read goes to the game thread by RunAndWait; a wait is on a state the game thread reads, with a bound.
-bool Alive() {
-    auto* s = g_session.load(std::memory_order_acquire);
-    return s && s->running() && s->connected() && !coop::shutdown::IsShuttingDown();
-}
+// engine read goes to the game thread by RunAndWait (kerfur_serve_drill_steps.h); a wait is on a state it reads, bounded.
+using steps::Alive;
+using steps::WaitGame;
+using steps::Run;
+using steps::AimedAt;
+using steps::AimFan;
 
-bool WaitGame(const std::function<bool()>& pred, uint64_t boundMs) {
-    const uint64_t t0 = ::GetTickCount64();
-    for (;;) {
-        bool ok = false;
-        bool alive = true;
-        if (GT::RunAndWait([&](std::atomic<int>& done) {
-                alive = Alive();
-                ok = alive && pred();
-                done.store(1);
-            }) != 1)
-            return false;
-        if (ok) return true;
-        if (!alive || ::GetTickCount64() - t0 >= boundMs) return false;
-        ::Sleep(100);
-    }
-}
-
-bool Run(const std::function<bool()>& fn) {
-    bool ok = false;
-    if (GT::RunAndWait([&](std::atomic<int>& done) { ok = fn(); done.store(1); }) != 1) return false;
-    return ok;
-}
-
-// A step that could not run: the drill's own client invalid path, unless the session already ended.
-void Invalid(const char* why) {
-    Run([&] {
-        if (Alive()) detail::ClientInvalid(why, kVerdictTag);
-        return true;
-    });
-}
-
-// The camera turned at the mirror through a fan of headings, each held until the player's interaction trace and its
-// look-at name the mirror and the look took it (what useSelectedAction is sent to).
-bool AimedAt(void* mirror) {
-    void* me = coop::players::Registry::Get().Local();
-    return me && E::ReadMainPlayerHitActor(me) == mirror && E::ReadMainPlayerLookAtActor(me) == mirror &&
-           E::MainPlayerHasSelectedAction(me);
-}
-
-bool AimFan(void* mirror, int32_t mirrorIdx) {
-    static constexpr float kYaw[] = {0.f, -5.f, 5.f, -10.f, 10.f, -16.f, 16.f};
-    static constexpr float kPitch[] = {0.f, 8.f, -8.f, 16.f, -16.f};
-    for (float dp : kPitch) {
-        for (float dy : kYaw) {
-            if (!Run([=] {
-                    void* p = coop::players::Registry::Get().Local();
-                    void* c = p ? E::GetController(p) : nullptr;
-                    ue_wrap::FVector at{};
-                    if (!c || !R::IsLiveByIndex(mirror, mirrorIdx) || !E::TryGetActorLocation(mirror, at)) return false;
-                    ue_wrap::FRotator r = coop::director::LookAt(E::GetCameraLocation(), at);
-                    r.Pitch += dp;
-                    r.Yaw += dy;
-                    E::SetControlRotation(c, r);
-                    return true;
-                }))
-                return false;
-            if (WaitGame([=] { return AimedAt(mirror); }, 300)) return true;
-            if (!Alive()) return false;
-        }
-    }
-    return false;
-}
+void Invalid(const char* why) { steps::Invalid(why, kVerdictTag); }
 
 struct Before {
     std::string cls, key, item;
@@ -572,21 +507,8 @@ DWORD WINAPI ClientThread(LPVOID) {
     }
 
     // Within reach of the mirror.
-    std::shared_ptr<coop::director::BackgroundWalk> walk;
-    Run([&] {
-        ue_wrap::FVector me{}, at{};
-        void* p = coop::players::Registry::Get().Local();
-        if (!p || !E::TryGetActorLocation(p, me) || !E::TryGetActorLocation(mirror, at)) return false;
-        const float dx = me.X - at.X, dy = me.Y - at.Y;
-        if (std::sqrt(dx * dx + dy * dy) > kReachCm) walk = coop::director::StartBackgroundWalk(at, kReachCm, kWalkDeadlineS);
-        return true;
-    });
-    if (walk && !WaitGame([&] { return walk->state.load() != 0; }, (kWalkDeadlineS + 5) * 1000ull)) {
-        Invalid("the walk up to the Omega did not end");
-        return 0;
-    }
-    if (walk && walk->state.load() != 1) {
-        Invalid("the walk up to the Omega did not arrive");
+    if (const char* bad = steps::WalkUpTo(mirror, kReachCm, kWalkDeadlineS)) {
+        Invalid(bad);
         return 0;
     }
     if (!AimFan(mirror, mirrorIdx)) {
@@ -717,7 +639,6 @@ bool Enabled() {
 }
 
 void Tick(coop::net::Session* s) {
-    g_session.store(s, std::memory_order_release);
     if (!g_watched) g_watched = sg::WatchName(kRowActionName, kTagVerb, nullptr, &OnVerbPost);
     if (s->role() == coop::net::Role::Host) {
         if (!g_recording) {  // the chat history of the client's lines starts with the first read
