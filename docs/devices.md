@@ -143,8 +143,8 @@ puppet and is refused like any hit on a puppet. The cremator's own call is deliv
 as a `CrematorHit` naming the cremator by its key (damage, or an ignite with the machine's fuel), and the
 peer's machine applies it to its own player by the Blueprint's own split on its own health: ten damage a
 hit, and the lethal one with the cremator achievement once that health is under ten. A hit whose
-cremator the peer's machine cannot resolve is dropped and counted, and the machine hits again within
-a second `[?]`.
+cremator the peer's machine cannot resolve costs the hit nothing: the damage lands with no source, counted, and
+the counts are said once when the session ends `[?]`.
 
 ### Security cameras
 
