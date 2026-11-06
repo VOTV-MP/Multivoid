@@ -32,6 +32,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <utility>
 
 namespace coop::moderation::cremate {
@@ -72,7 +73,9 @@ struct Trip {
     ue_wrap::FVector          dest{};
     State                     state = State::Ordered;
     int                       poses = 0;         // fresh poses since the order, the arrival, the lever, or the run's end
-    bool                      burnSeen = false;  // a fresh pose after the landing had the burning bit set
+    // Set in OnPose, on a pose that arrived with the burning bit while the drained state was past the arrival; it is
+    // set before the drain judges any life edge.
+    bool                      burnSeen = false;
 };
 
 std::array<Trip, coop::players::kMaxPeers> g_trips;
@@ -112,10 +115,15 @@ const char* StateName(State s) {
 
 // A life edge is rare (a death, a revive), so each one a running verb sees is said, taken or dropped with the reason:
 // a trip that missed its target's death must show where the edge went.
-void SayLifeEdge(uint8_t slot, bool alive, const char* verdict) {
+// The line names the EDGE's slot and generation; the slot's trip is told only while one is active, since an ended trip
+// is cleared and a successor's number and state are not the edge's.
+void SayLifeEdge(uint8_t slot, uint32_t gen, bool alive, const char* verdict) {
     const Trip& t = g_trips[slot];
-    UE_LOGI("cremate: #%u life edge alive=%d state=%s gen=%u -- %s", static_cast<unsigned>(t.target.playerNo),
-            alive ? 1 : 0, t.active ? StateName(t.state) : "none", static_cast<unsigned>(t.target.generation), verdict);
+    char trip[48] = "none";
+    if (t.active)
+        std::snprintf(trip, sizeof(trip), "#%u state=%s", static_cast<unsigned>(t.target.playerNo), StateName(t.state));
+    UE_LOGI("cremate: slot %u life edge alive=%d gen=%u, the slot's trip %s -- %s", static_cast<unsigned>(slot),
+            alive ? 1 : 0, static_cast<unsigned>(gen), trip, verdict);
 }
 
 void OnLife(uint8_t slot, bool alive) {
@@ -140,6 +148,10 @@ void OnPose(uint8_t slot, const coop::net::PoseSnapshot& pose) {
     // The burning latch is set as the pose arrives, not at the drain: puppet_events raises a pose's life edge before
     // its pose listeners, so a target under 10 health -- ignited and killed by one burn tick -- has its death recorded
     // ahead of the burning pose that carries it, and a latch set at the drain would judge that death "not by its fire".
+    // A burning pose after the landing is the cremator's: a client's copy burns nothing itself (cremator_client_guard),
+    // its burn is the host's CrematorHits (cremator_hit), which the host sends after its own volume took the puppet,
+    // and that begin-overlap is the Overlap event drained first. A target already burning from another fire before it
+    // lands is not latched, rightly.
     Trip& t = g_trips[slot];
     if (e.flag && !t.burnSeen && t.state != State::Ordered && t.state != State::Arrived) {
         t.burnSeen = true;
@@ -353,11 +365,11 @@ void Handle(const Event& e) {
         case Kind::Pose: {
             Trip& t = g_trips[e.slot];
             if (!t.active || t.target.generation != e.gen) {
-                if (e.kind == Kind::Life) SayLifeEdge(e.slot, e.flag, "dropped (the trip ended or changed hands first)");
+                if (e.kind == Kind::Life) SayLifeEdge(e.slot, e.gen, e.flag, "dropped (the trip ended or changed hands first)");
                 return;
             }
             if (e.kind == Kind::Life) {
-                SayLifeEdge(e.slot, e.flag, "taken");
+                SayLifeEdge(e.slot, e.gen, e.flag, "taken");
                 OnLifeEvent(t, e.flag);
             }
             else OnPoseEvent(t, e);
