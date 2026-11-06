@@ -47,6 +47,9 @@ std::wstring Row(void* plant);          // its list_farmPlants row
 // at most every few seconds while the table is not readable. The class is not checked against the family: IsPlantClass is the
 // caller's. Game thread.
 void* FarmRowPlantClass(const std::wstring& row);
+// The most berries a plant of `row` rolls: the larger end of the row's amount_range in list_farmPlants, 0 for a row that gives
+// none. False for a row the table lacks, a table not readable yet, or a table whose rows carry no amount_range. Game thread.
+bool FarmRowAmountMax(const std::wstring& row, int32_t& out);
 // Whether list_farmPlants is read for this world, so that FarmRowPlantClass and IsFarmRow answer "none" for a row the table lacks
 // and not for a table that could not be read. False retries at most every few seconds. Game thread.
 bool FarmRowsReadable();

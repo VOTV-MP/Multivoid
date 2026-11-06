@@ -61,7 +61,7 @@ constexpr float kMaxWater = 20000.0f;      // rain adds only below 3600 and a ca
 constexpr float kMaxFertilizer = 20000.0f; // a fertilizer sets 600 and a poo 1200
 constexpr float kMinDryness = -1.0f;       // -1 is a dead plant
 constexpr float kMaxDryness = 20000.0f;    // the plant dies at its row's maxDryness, 10800 by default; twice that
-constexpr int32_t kMaxAmount = 64;         // the berries of a ripe bush
+// An amount is bounded by its plant's own row (GP::FarmRowAmountMax), not by a number of ours.
 
 // A sender's edits wait for the next poll; the queue is bounded since one that never gets a body would grow without end. They
 // run from it at a bounded rate, the door verbs' shape (door_verb_intent): a client past its budget costs the host a queue of
@@ -90,7 +90,7 @@ enum KeyWhy : int { kKeyEmpty, kKeyBytes, kKeyNone, kKeyCase, kKeyHeld, kKeyWhyC
 enum ParentWhy : int { kParentNoPot, kParentFar, kParentFull, kParentWhyCount };
 bool g_keySaid[kKeyWhyCount] = {};
 bool g_parentSaid[kParentWhyCount] = {};
-bool g_rowSaid = false;
+bool g_rowSaid = false, g_rowClassSaid = false;
 
 // A refusal that is counted every time and said the first time of a session.
 void RefuseOnce(uint64_t& count, bool& said, uint8_t slot, const wchar_t* what, const std::wstring& key, const wchar_t* why,
@@ -116,14 +116,14 @@ void Bound(T& v, T lo, T hi, Field f, uint8_t slot) {
 }
 
 // The values this edit applies: all of a planting's, the masked ones of an edit of a plant the host holds.
-void BoundEdit(Payload& p, bool planting, uint8_t slot) {
+void BoundEdit(Payload& p, bool planting, uint8_t slot, int32_t amountMax) {
     namespace PE = coop::net::plant_edit;
     if (planting || (p.editMask & PE::kGrow)) Bound(p.grow, 0.f, kMaxFraction, kFGrow, slot);
     if (planting || (p.editMask & PE::kFertilizer)) Bound(p.fertilizer, 0.f, kMaxFertilizer, kFFertilizer, slot);
     if (planting || (p.editMask & PE::kWater)) Bound(p.water, 0.f, kMaxWater, kFWater, slot);
     if (planting || (p.editMask & PE::kFruitGrow)) Bound(p.fruitGrow, 0.f, kMaxFraction, kFFruitGrow, slot);
     if (planting || (p.editMask & PE::kDryness)) Bound(p.dryness, kMinDryness, kMaxDryness, kFDryness, slot);
-    if (planting || (p.editMask & PE::kAmount)) Bound(p.amount, int32_t{0}, kMaxAmount, kFAmount, slot);
+    if (planting || (p.editMask & PE::kAmount)) Bound(p.amount, int32_t{0}, amountMax, kFAmount, slot);
 }
 
 enum class Gate : uint8_t { Pass, Wait, Refused };
@@ -288,7 +288,7 @@ bool ApplyEdit(coop::net::Session& s, EditSlot& sl, uint8_t slot, Payload p, std
             changed.push_back(key);
             return true;
         }
-        // A changed row is one of the host's own, as a planting's is.
+        // A changed row is one of the host's own, as a planting's is, and one this plant's class grows from.
         const std::wstring row = coop::net::StringFromWireKey(p.row);
         if (p.editMask & coop::net::plant_edit::kRow) {
             if (!GP::FarmRowsReadable()) {
@@ -300,13 +300,27 @@ bool ApplyEdit(coop::net::Session& s, EditSlot& sl, uint8_t slot, Payload p, std
                 changed.push_back(key);
                 return true;
             }
+            if (GP::FarmRowPlantClass(row) != R::ClassOf(plant)) {
+                RefuseOnce(g_refusedRow, g_rowClassSaid, slot, L"edit", key, L"a row that plants another class:", row);
+                changed.push_back(key);
+                return true;
+            }
         }
     }
     if (planting && g_spawnsThisPoll >= kSpawnsPerPoll) {
         WaitFor(sl, slot, "the host has planted its share for this poll");
         return false;
     }
-    BoundEdit(p, planting, slot);
+    // The berries are bounded by the row the plant has after this edit: a planting's, a changed row's, else the plant's own. A row
+    // the table does not give a range for lets an edit lower the count and not raise it.
+    const bool takeRow = planting || (p.editMask & coop::net::plant_edit::kRow) != 0;
+    const std::wstring boundRow = takeRow ? coop::net::StringFromWireKey(p.row) : GP::Row(plant);
+    int32_t amountMax = 0;
+    if (!GP::FarmRowAmountMax(boundRow, amountMax)) {
+        GP::Values now;
+        amountMax = (!planting && GP::Read(plant, now)) ? now.amount : 0;
+    }
+    BoundEdit(p, planting, slot, amountMax);
     if (planting) {
         ++g_spawnsThisPoll;
         plant = coop::plant_sync::Materialize(p, plantClass);   // the row's class, judged a plant class above
@@ -320,8 +334,7 @@ bool ApplyEdit(coop::net::Session& s, EditSlot& sl, uint8_t slot, Payload p, std
     }
     GP::Values v = coop::plant_sync::ValuesOf(p);
     if (!planting && GP::Read(plant, v)) MergeEdit(p, v);
-    const bool takeRow = planting || (p.editMask & coop::net::plant_edit::kRow) != 0;
-    GP::Apply(plant, takeRow ? coop::net::StringFromWireKey(p.row) : GP::Row(plant), v);
+    GP::Apply(plant, boundRow, v);
     changed.push_back(key);
     return true;
 }
@@ -376,7 +389,7 @@ void OnDisconnect() {
     g_refusedClass = g_refusedReach = g_clamped = g_refusedKey = g_refusedRow = g_refusedParent = 0;
     for (bool& said : g_keySaid) said = false;
     for (bool& said : g_parentSaid) said = false;
-    g_rowSaid = false;
+    g_rowSaid = g_rowClassSaid = false;
     for (bool& said : g_clampSaid) said = false;
     OnWorldChange();
 }

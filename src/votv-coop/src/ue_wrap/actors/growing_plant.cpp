@@ -219,10 +219,15 @@ std::wstring Row(void* plant) { return ReadName(plant, OffsetsOf(plant).plant); 
 
 namespace {
 
-// The class each row of list_farmPlants plants, by the row's lowercased name (an FName compares without case), read for the
-// world of `g_farmRowsWorld`; 0 is none read. The row's plantObject is a hard class reference (struct_farmPlant: a
-// ClassProperty, 8 bytes), so the table's load loaded every class in it.
-std::unordered_map<std::wstring, void*> g_farmRowClasses;
+// What each row of list_farmPlants gives, by the row's lowercased name (an FName compares without case), read for the world
+// of `g_farmRowsWorld`; 0 is none read. The row's plantObject is a hard class reference (struct_farmPlant: a ClassProperty,
+// 8 bytes), so the table's load loaded every class in it. Its amount_range is an FIntPoint the game rolls a plant's berry
+// count in; a row without the member (-1) bounds nothing.
+struct FarmRow {
+    void* cls = nullptr;
+    int32_t amountMax = -1;
+};
+std::unordered_map<std::wstring, FarmRow> g_farmRowClasses;
 uint32_t g_farmRowsWorld = 0;
 uint64_t g_farmRowsTryMs = 0;
 constexpr uint64_t kFarmRowsRetryMs = 3000;
@@ -249,11 +254,19 @@ bool ReadFarmRows() {
         UE_LOGE("growing_plant: list_farmPlants' row struct has no plantObject member");
         return false;
     }
+    const int32_t rangeOff = R::FindPropertyOffsetByPrefix(rowStruct, L"amount_range_");
     std::vector<DT::RowRef> refs;
     if (!DT::Rows(table, refs, "growing_plant") || refs.empty()) return false;
     g_farmRowClasses.clear();
-    for (const DT::RowRef& ref : refs)
-        g_farmRowClasses[Lowered(R::ToString(ref.key))] = *reinterpret_cast<void* const*>(ref.row + off);
+    for (const DT::RowRef& ref : refs) {
+        FarmRow row;
+        row.cls = *reinterpret_cast<void* const*>(ref.row + off);
+        if (rangeOff >= 0) {
+            const int32_t* range = reinterpret_cast<const int32_t*>(ref.row + rangeOff);   // FIntPoint: X, Y
+            row.amountMax = (std::max)({range[0], range[1], int32_t{0}});
+        }
+        g_farmRowClasses[Lowered(R::ToString(ref.key))] = row;
+    }
     g_farmRowsWorld = world;
     UE_LOGI("growing_plant: list_farmPlants has %zu rows", g_farmRowClasses.size());
     return true;
@@ -264,7 +277,15 @@ bool ReadFarmRows() {
 void* FarmRowPlantClass(const std::wstring& row) {
     if (row.empty() || !ReadFarmRows()) return nullptr;
     const auto it = g_farmRowClasses.find(Lowered(row));
-    return (it != g_farmRowClasses.end() && it->second && R::IsLive(it->second)) ? it->second : nullptr;
+    return (it != g_farmRowClasses.end() && it->second.cls && R::IsLive(it->second.cls)) ? it->second.cls : nullptr;
+}
+
+bool FarmRowAmountMax(const std::wstring& row, int32_t& out) {
+    if (row.empty() || !ReadFarmRows()) return false;
+    const auto it = g_farmRowClasses.find(Lowered(row));
+    if (it == g_farmRowClasses.end() || it->second.amountMax < 0) return false;
+    out = it->second.amountMax;
+    return true;
 }
 
 bool FarmRowsReadable() { return ReadFarmRows(); }
@@ -317,7 +338,7 @@ void Apply(void* plant, const std::wstring& row, const Values& v) {
     const int32_t refreshed = At<int32_t>(plant, o.amount);
     if (refreshed != v.amount) {
         static std::unordered_set<std::wstring> s_said;
-        if (s_said.insert(row).second)
+        if (s_said.insert(Lowered(row)).second)
             UE_LOGI("growing_plant: the game's refresh of a '%ls' plant set amount %d where the state says %d; the state's stands",
                     row.c_str(), refreshed, v.amount);
         At<int32_t>(plant, o.amount) = v.amount;

@@ -111,13 +111,23 @@ bool Describe(void* plant, const std::wstring& key, const GP::Values& v, Payload
 // /Game/objects/, one asset to a class. The name is the host's, so loading it is a load the host asked
 // for; the class is checked against the family all the same. A client's planting on the host loads nothing: its class
 // is its row's (GP::FarmRowPlantClass).
+//
+// A name tried once is not tried again in a world unless it was found: a state for a class that cannot load comes with every
+// plant of it, and the object index lists a class just loaded only after its drain.
+std::unordered_map<std::wstring, bool> g_classLoads;   // name -> the load found it; cleared with the world
 void* HostStateClass(const std::wstring& name) {
     void* cls = OI::ClassByName(name.c_str());
     if (!cls && name.size() > 2 && name.compare(name.size() - 2, 2, L"_C") == 0) {
-        const std::wstring path = L"/Game/objects/" + name.substr(0, name.size() - 2) + L"." + name;
-        cls = ue_wrap::asset_load::LoadObjectByPath(path.c_str());
-        UE_LOGI("plant_sync: plant class '%ls' was not loaded here; loading %ls %hs", name.c_str(), path.c_str(),
-                cls ? "found it" : "found nothing");
+        const auto tried = g_classLoads.find(name);
+        if (tried == g_classLoads.end() || tried->second) {
+            const std::wstring path = L"/Game/objects/" + name.substr(0, name.size() - 2) + L"." + name;
+            cls = ue_wrap::asset_load::LoadObjectByPath(path.c_str());
+            if (tried == g_classLoads.end()) {
+                g_classLoads[name] = cls != nullptr;
+                UE_LOGI("plant_sync: plant class '%ls' was not loaded here; loading %ls %hs", name.c_str(), path.c_str(),
+                        cls ? "found it" : "found nothing");
+            }
+        }
     }
     return (cls && GP::IsPlantClass(cls)) ? cls : nullptr;
 }
@@ -304,6 +314,7 @@ void ClientPoll(coop::net::Session& s) {
 }
 
 void ResetClient() {
+    g_classLoads.clear();
     g_copies.clear();
     g_gone.clear();
     g_loaded.clear();
