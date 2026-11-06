@@ -24,7 +24,7 @@
 
 namespace coop::net {
 class Session;
-struct KerfurCommandPayload;
+struct BlobChunkPayload;
 }  // namespace coop::net
 
 namespace coop::kerfur_command {
@@ -63,14 +63,15 @@ bool TryRecordMenuCommand(void* self, const std::wstring& name, bool isClient);
 // serves no client. The actionName watch belongs to kerfur_command_seat. Game thread.
 void Install(coop::net::Session* session);
 
-// HOST-only receiver for a KerfurCommand request, wired in event_dispatch_kerfur_command. It refuses an unknown sender,
-// an unknown command and an eid outside the host-allocated range into the lane's refusal tally, and queues the
-// rest per sender, up to a cap, refusing past it. Tick serves one queued request per sender at a bounded rate, in
-// arrival order: the head waits while the host has no posed body for the sender or the Omega's seams are still
-// settling, then resolves the eid to a kerfur and drops the request unless the actor is live, it is a kerfur, and
-// the kerfur is not in kill mode or on a job -- the last two matching the game's own guards. Then the kerfur serves the
-// sending slot and the real actionName runs; a verb that did not run restores whom it served. Game thread.
-void OnCommandRequest(const coop::net::KerfurCommandPayload& payload, uint8_t senderPeerSlot);
+// HOST-only receiver for a chunk of a KerfurCommand blob (kerfur_command_wire), wired in event_dispatch_kerfur_command.
+// A blob that completes malformed, an unknown sender, an unknown command and an eid outside the host-allocated range
+// are refused into the lane's refusal tally, and the rest is queued per sender, up to a cap, refused past it. Tick
+// serves one queued request per sender at a bounded rate, in arrival order: the head waits while the host has no posed
+// body for the sender or the Omega's seams are still settling, then resolves the eid to a kerfur and drops the request
+// unless the actor is live, it is a kerfur, and the kerfur is not in kill mode or on a job -- the last two matching the
+// game's own guards. Then the kerfur serves the sending slot and the real actionName runs; a verb that did not run
+// restores whom it served. Game thread.
+void OnCommandChunk(const coop::net::BlobChunkPayload& chunk, uint8_t senderPeerSlot);
 
 // Game thread (net-pump tick): drain the recorded actions (client -> send request; host -> execute
 // locally), serve each sender's queued request, say the refusals' summed line, and settle the startKill watch.

@@ -415,8 +415,9 @@ enum class ReliableKind : uint8_t {
     PlayerInventoryBlob = 69,
 
     // Client to host: a kerfur radial-menu verb for this kerfur. The host runs it; Follow follows
-    // the requesting player's puppet, which the Blueprint cannot do for a remote player.
-    // KerfurCommandPayload.
+    // the requesting player's puppet, which the Blueprint cannot do for a remote player. A chunked blob
+    // (coop::kerfur_command_wire): a KerfurCommandPayload head, and for a get_reports with a floppy disc in the
+    // client's hand, that disc's record. Never relayed.
     KerfurCommand = 70,
 
     // Host to all: an ATV with this game Key exists; a receiver that holds none under that Key
@@ -1760,14 +1761,17 @@ static_assert(sizeof(KerfurConvertBroadcastPayload) == 104, "KerfurConvertBroadc
 static_assert(sizeof(KerfurConvertBroadcastPayload) <= 256 - 20 - 8,
               "KerfurConvertBroadcastPayload must fit in one reliable datagram");
 
-// A kerfur menu command (KerfurCommand), client to host. The host takes the requester from the
-// sender slot; a self-declared slot would be spoofable. `requestId` is the client's own count of its commands, from
-// 1, which the host echoes in its answer (KerfurCommandAnswer) so the client knows which command it answers.
+// A kerfur menu command (KerfurCommand), client to host: the head of a chunked blob (coop::kerfur_command_wire). The
+// host takes the requester from the sender slot; a self-declared slot would be spoofable. `requestId` is the client's
+// own count of its commands, from 1, which the host echoes in its answer (KerfurCommandAnswer) so the client knows
+// which command it answers; it is also the blob's sequence. `flags` bit 0 says a record follows the head, `[u16 n][n
+// bytes]` in coop/props/prop_record_wire's form: the held disc of a get_reports, and of no other command.
 struct KerfurCommandPayload {
     uint32_t elementId;  // host Npc eid of the target kerfur
     uint32_t requestId;  // the sender's request number, from 1; 0 names no request
     uint8_t  command;    // KerfurMenuCommand (follow/idle/patrol/fix_servers/get_reports/fix_transformers)
-    uint8_t  _pad[3];    // zeroed
+    uint8_t  flags;      // bit 0: a record follows
+    uint8_t  _pad[2];    // zeroed
 };
 static_assert(sizeof(KerfurCommandPayload) == 12, "KerfurCommandPayload must be 12 bytes");
 

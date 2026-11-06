@@ -3,12 +3,14 @@
 #include "coop/dev/hostile_drill_kerfur.h"
 
 #include "coop/creatures/kerfur_command.h"
+#include "coop/creatures/kerfur_command_wire.h"
 #include "coop/creatures/kerfur_convert_host.h"
 #include "coop/dispatch/event_feed.h"
 #include "coop/element/mirror_manager.h"
 #include "coop/element/npc.h"
 #include "coop/element/prop.h"
 #include "coop/element/registry.h"
+#include "coop/net/blob_chunks.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -247,11 +249,12 @@ void TickClient(coop::net::Session* s, Arm a) {
     }
     bool ok = true;
     for (uint32_t n = 0; n < kPerKind && ok; ++n) {
-        coop::net::KerfurCommandPayload c{};
-        c.elementId = static_cast<uint32_t>(ids[n]);
-        c.requestId = n + 1;  // the raw flood names its requests, as a client would; no answer to them is held here
-        c.command = static_cast<uint8_t>(n % kCommandValues);
-        ok = s->SendReliableToSlot(0, coop::net::ReliableKind::KerfurCommand, &c, sizeof(c));
+        coop::kerfur_command_wire::Request c;
+        c.head.elementId = static_cast<uint32_t>(ids[n]);
+        c.head.requestId = n + 1;  // the raw flood names its requests, as a client would; no answer to them is held here
+        c.head.command = static_cast<uint8_t>(n % kCommandValues);
+        ok = coop::blob_chunks::SendBlobToSlot(s, 0, coop::net::ReliableKind::KerfurCommand, c.head.requestId,
+                                               coop::kerfur_command_wire::Pack(c));
         if (!ok) break;
         coop::net::KerfurConvertPayload r{};
         r.elementId = static_cast<uint32_t>(ids[kPerKind + n]);

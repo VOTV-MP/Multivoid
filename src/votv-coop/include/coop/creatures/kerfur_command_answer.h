@@ -14,7 +14,10 @@
 
 #pragma once
 
+#include "coop/creatures/kerfur_disc_carry.h"
+
 #include <cstdint>
+#include <optional>
 
 namespace coop::net {
 class Session;
@@ -24,9 +27,11 @@ struct KerfurCommandAnswerPayload;
 namespace coop::kerfur_command_answer {
 
 // CLIENT: the number of the command about to be sent, from 1 and per session. A command that went is held with
-// HoldSent until its answer or until newer ones push it out; one that did not go is never held. Game thread.
+// HoldSent until its answer or until newer ones push it out; one that did not go is never held. A command that carried
+// the held disc holds its pledge with the id: the pledge ends with the id's refusal, its eviction and the session. Game
+// thread.
 uint32_t NextRequestId();
-void HoldSent(uint32_t requestId);
+void HoldSent(uint32_t requestId, std::optional<coop::kerfur_disc_carry::Pledge> pledge = std::nullopt);
 
 // CLIENT: the player is told a command this machine cancelled at the seat went nowhere (a KerfurRefusal value, as the
 // host's answer would word it): its Omega is untracked here, or the send failed. No wire. Game thread.

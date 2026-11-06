@@ -3,6 +3,7 @@
 #include "coop/creatures/kerfur_command_answer.h"
 
 #include "coop/creatures/kerfur_command.h"
+#include "coop/creatures/kerfur_disc_carry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -16,6 +17,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -36,7 +38,12 @@ constexpr uint64_t kLinesPerKind = 20;
 constexpr uint8_t kRefusalHintType = 1;
 
 uint32_t g_nextId = 0;
-std::vector<uint32_t> g_held;
+// A command sent and not yet answered, and the disc it pledged: the pledge is evicted with its id.
+struct Held {
+    uint32_t id;
+    std::optional<coop::kerfur_disc_carry::Pledge> pledge;
+};
+std::vector<Held> g_held;
 
 struct Counts {
     uint64_t refusedSent = 0, waitsSent = 0, refusedShown = 0, waitsShown = 0, local = 0, foreign = 0, lost = 0;
@@ -108,9 +115,9 @@ void Send(coop::net::Session* session, uint8_t slot, uint32_t requestId, uint8_t
 
 uint32_t NextRequestId() { return ++g_nextId; }
 
-void HoldSent(uint32_t requestId) {
+void HoldSent(uint32_t requestId, std::optional<coop::kerfur_disc_carry::Pledge> pledge) {
     if (g_held.size() >= kHeld) g_held.erase(g_held.begin());
-    g_held.push_back(requestId);
+    g_held.push_back(Held{requestId, std::move(pledge)});
 }
 
 void SendRefused(coop::net::Session* session, uint8_t slot, uint32_t requestId, uint8_t reason) {
@@ -135,7 +142,7 @@ void ShowLocal(uint8_t reason) {
 }
 
 void OnAnswer(const KerfurCommandAnswerPayload& p) {
-    const auto held = std::find(g_held.begin(), g_held.end(), p.requestId);
+    const auto held = std::find_if(g_held.begin(), g_held.end(), [&](const Held& h) { return h.id == p.requestId; });
     const char* line = LineFor(p.result, p.reason);
     if (held == g_held.end() || !line) {
         ++g_counts.foreign;

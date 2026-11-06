@@ -92,6 +92,8 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/kerfur_command.cpp
     src/coop/creatures/kerfur_command_answer.cpp
     src/coop/creatures/kerfur_command_seat.cpp
+    src/coop/creatures/kerfur_command_wire.cpp
+    src/coop/creatures/kerfur_disc_carry.cpp
     src/coop/creatures/kerfur_entity.cpp
     src/coop/creatures/kerfur_form_assembler.cpp
     src/coop/creatures/kerfur_prop_adoption.cpp

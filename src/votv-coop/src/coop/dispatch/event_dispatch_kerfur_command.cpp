@@ -19,8 +19,8 @@ bool HandleKerfurCommandEvent(net::Session& session,
                               const net::Session::ReliableMessage& msg) {
     switch (msg.kind) {
     case net::ReliableKind::KerfurCommand: {
-        // client->host kerfur radial-menu command (follow/idle/patrol/...). Host-authoritative; the
-        // handler waits for the sender's body, validates the element + kerfur class + the BP guards,
+        // client->host kerfur radial-menu command (follow/idle/patrol/...), a chunked blob. Host-authoritative; the
+        // handler assembles it, waits for the sender's body, validates the element + kerfur class + the BP guards,
         // then runs the verb with the kerfur serving the REQUESTING player (senderSlot).
         // coop::kerfur_command.
         if (session.role() != net::Role::Host) {
@@ -31,13 +31,13 @@ bool HandleKerfurCommandEvent(net::Session& session,
             (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
-        if (msg.payloadLen < sizeof(net::KerfurCommandPayload)) {
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
             coop::kerfur_command::NoteRefused(senderSlot, "payload too short");
             break;
         }
-        net::KerfurCommandPayload p{};
-        std::memcpy(&p, msg.payload, sizeof(p));
-        coop::kerfur_command::OnCommandRequest(p, senderSlot);
+        net::BlobChunkPayload chunk{};
+        std::memcpy(&chunk, msg.payload, sizeof(chunk));
+        coop::kerfur_command::OnCommandChunk(chunk, senderSlot);
         break;
     }
     case net::ReliableKind::KerfurCommandAnswer: {
