@@ -136,7 +136,12 @@ not opened by a player's use while the copy runs or the lane holds an on want fo
 locked for the run; a client's is unlocked until the host's state arrives, so the window is the state's trip).
 A press of the fuel valve is refused and not sent: the pour runs from the fuel the machine makes, which does
 not cross, so the copy holds none to show, and the host pours until the gasoline package carries it. A
-client's fuel gauge therefore reads zero `[?]`.
+client's fuel gauge therefore reads zero `[?]`. The blow-out's fireballs (`spitFireballs_timer`, every 0.2 s while
+the lid is open on an active machine) are refused on the copy too: a client sees none, and the host's are not
+synced either, a host-only effect. A refused valve press shows the player the game's own hint, once a burst.
+Until the host's forward finish its lid is still unlocked, so a client's own open of the cremator's lid in that
+window passes the guard and reaches the host's lid, and the host turns the start back at the finish with its
+open-door hint, as it would for its own player; the client sees nothing `[?]`.
 
 A player burning in the host's cremator is hit on the host's machine, where the hit lands on the peer's
 puppet and is refused like any hit on a puppet. The cremator's own call is delivered to the peer instead,

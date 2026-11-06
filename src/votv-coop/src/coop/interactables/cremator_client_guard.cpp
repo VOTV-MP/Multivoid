@@ -16,6 +16,7 @@
 #include "ue_wrap/devices/cremator.h"
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/facts/function_row.h"
+#include "ue_wrap/world/votv_lib.h"
 
 #include <atomic>
 #include <chrono>
@@ -35,10 +36,17 @@ namespace sg = ue_wrap::script_gate;
 UE_FACT_FN(kRowAddObject, "cremator_client_guard", L"cremator_C", L"addObject", Declared);
 UE_FACT_FN(kRowDoorOpen, "cremator_client_guard", L"prop_swinger_C", L"open", Declared);
 UE_FACT_FN(kRowValve, "cremator_client_guard", L"cremator_C", L"actionOptionIndex", Declared);
+// The blow-out's 0.2 s timer: it spawns a prop_crematorFireball_C while the machine is active and its lid open.
+UE_FACT_FN(kRowSpit, "cremator_client_guard", L"cremator_C", L"spitFireballs_timer", Declared);
 
 constexpr int kTagAddObject = 0x43474144;  // 'CGAD'
 constexpr int kTagDoorOpen  = 0x4347444F;  // 'CGDO'
 constexpr int kTagValve     = 0x43475650;  // 'CGVP'
+constexpr int kTagSpit      = 0x43475346;  // 'CGSF'
+
+// The game's own refusal hint (lib_C::addHint), the type the cremator's "The door is open" refusal uses.
+constexpr uint8_t kHintRefusal = 1;
+constexpr const wchar_t* kValveHint = L"The valve cannot be opened from here";
 
 // A valve press is one line a burst: the next press within this gap belongs to the same burst.
 constexpr uint64_t kBurstGapMs = 3000;
@@ -46,6 +54,8 @@ constexpr uint64_t kBurstGapMs = 3000;
 std::atomic<coop::net::Session*> g_session{nullptr};
 
 uint64_t g_collectRefused = 0, g_doorRefused = 0, g_valveRefused = 0, g_valveBursts = 0, g_doorLoadNative = 0;
+uint64_t g_spitRefused = 0;
+bool g_spitSaid = false;
 uint64_t g_valveLastMs = 0;
 bool g_valveEver = false;
 bool g_actionSaid = false;
@@ -56,8 +66,8 @@ uint32_t g_saidGen = 0;
 
 R::ParamOffset g_action{L"action"};
 
-// The dev red arm (cremator_client_guard_off): all three gates run the Blueprint's own body, so a client's copy
-// collects the sitter, opens its door and turns its valve on its own account.
+// The dev red arm (cremator_client_guard_off): all four gates run the Blueprint's own body, so a client's copy
+// collects the sitter, opens its door, turns its valve and spits fireballs on its own account.
 bool GuardOff() {
     static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::cremator_client_guard_off);
     return off;
@@ -143,9 +153,27 @@ sg::Verdict OnValvePre(const sg::Call& call) {
         UE_LOGI("[CREMATOR-GUARD] a client cannot open the cremator's fuel valve until the gasoline package carries the "
                 "fuel; the host pours (key='%ls', burst #%llu)", coop::interactable_sync::CrematorKey(call.object).c_str(),
                 static_cast<unsigned long long>(g_valveBursts));
+        // The first press of a burst only: the player is told through the game's own hint, as the machine does for its
+        // own refusals.
+        ue_wrap::votv_lib::AddHint(kValveHint, kHintRefusal, call.object);
     }
     g_valveEver = true;
     g_valveLastMs = now;
+    return sg::Verdict::Cancel;
+}
+
+// Before the body, on a client: the copy spits no fireballs. The host's blow-out opens the copy's lid through the lid
+// lane while the copy is active, and its own 0.2 s timer would then spawn a local fireball each tick, unsynced,
+// beside the host's. Counted, said once a session.
+sg::Verdict OnSpitPre(const sg::Call& call) {
+    if (GuardOff() || !OnClient()) return sg::Verdict::Run;
+    if (!call.object || !C::IsCremator(call.object)) return sg::Verdict::Run;
+    ++g_spitRefused;
+    if (!g_spitSaid) {
+        g_spitSaid = true;
+        UE_LOGI("[CREMATOR-GUARD] a client's cremator copy key='%ls' spits no fireballs: its spitFireballs_timer is "
+                "refused (the rest are counted)", coop::interactable_sync::CrematorKey(call.object).c_str());
+    }
     return sg::Verdict::Cancel;
 }
 
@@ -154,6 +182,7 @@ const Watch kWatches[] = {
     { &kRowAddObject, kTagAddObject, &OnAddObjectPre },
     { &kRowDoorOpen, kTagDoorOpen, &OnDoorOpenPre },
     { &kRowValve, kTagValve, &OnValvePre },
+    { &kRowSpit, kTagSpit, &OnSpitPre },
 };
 constexpr int kWatchCount = static_cast<int>(sizeof(kWatches) / sizeof(kWatches[0]));
 
@@ -193,7 +222,7 @@ void Tick() {
     }
     if (live == kWatchCount) {
         g_settled = true;
-        UE_LOGI("[CREMATOR-GUARD] the client guard's gates are live: addObject, a lid's open and the cremator's press");
+        UE_LOGI("[CREMATOR-GUARD] the client guard's gates are live: addObject, a lid's open, the cremator's press and its fireball timer");
     } else if (pending == 0 && sg::PendingNameCount() == 0) {
         g_settled = true;
         UE_LOGE("[CREMATOR-GUARD] %d of %d client guard gates are dead (refused, or resolved into a full table) -- a "
@@ -204,17 +233,18 @@ void Tick() {
 uint64_t AddObjectRefused() { return g_collectRefused; }
 
 void OnDisconnect() {
-    if (g_collectRefused || g_doorRefused || g_valveRefused || g_doorLoadNative)
+    if (g_collectRefused || g_doorRefused || g_valveRefused || g_doorLoadNative || g_spitRefused)
         UE_LOGI("[CREMATOR-GUARD] session end -- a client refused %llu addObject call(s) on %zu cremator copy(ies), %llu "
                 "own open(s) of a running cremator's door (%llu of its world's load run natively), %llu valve press(es) "
-                "in %llu burst(s)", static_cast<unsigned long long>(g_collectRefused), g_collectSaid.size(),
-                static_cast<unsigned long long>(g_doorRefused),
+                "in %llu burst(s), %llu fireball timer call(s)", static_cast<unsigned long long>(g_collectRefused),
+                g_collectSaid.size(), static_cast<unsigned long long>(g_doorRefused),
                 static_cast<unsigned long long>(g_doorLoadNative), static_cast<unsigned long long>(g_valveRefused),
-                static_cast<unsigned long long>(g_valveBursts));
-    g_collectRefused = g_doorRefused = g_valveRefused = g_valveBursts = g_doorLoadNative = 0;
+                static_cast<unsigned long long>(g_valveBursts), static_cast<unsigned long long>(g_spitRefused));
+    g_collectRefused = g_doorRefused = g_valveRefused = g_valveBursts = g_doorLoadNative = g_spitRefused = 0;
     g_valveLastMs = 0;
     g_valveEver = false;
     g_actionSaid = false;
+    g_spitSaid = false;
     g_collectSaid.clear();
 }
 

@@ -124,7 +124,10 @@ void Drive(void* cremator) {
 // and confirms its end (CGame.cpp:3373), so every copy animates at once.
 // Here the host sends only the COMMITTED `isActive` at the handle's finish: a start sent at the press could show a
 // client a run that the host's own door check (the forward finish at an open door) still rewinds. The price is a
-// client display that trails the host's by about one handle travel plus the trip (docs/devices.md).
+// client display that trails the host's by about one handle travel plus the trip (docs/devices.md). The host's lid
+// is locked only at that finish, so from the press until then a client's own open of the lid reaches the host's
+// unlocked lid and the host turns the start back at the finish with the open-door hint, as for its own player; the
+// client sees nothing.
 void OnFinishedPost(const sg::Call& call) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || !call.object || !C::IsCremator(call.object)) return;
@@ -210,6 +213,7 @@ bool ApplyState(void* cremator, bool on) {
     for (auto it = g_doors.begin(); it != g_doors.end();)
         it = g_wants.count(it->second) ? std::next(it) : g_doors.erase(it);
     Want& w = g_wants[cremator];
+    if (w.on != on) w.doorSaid = false;   // a new streak says its wait once
     w.on = on;
     w.ref.Set(cremator);
     if (void* door = C::Door(cremator)) g_doors[door] = cremator;
