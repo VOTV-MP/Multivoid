@@ -4,6 +4,9 @@
 
 #include "coop/creatures/kerfur_command.h"
 #include "coop/creatures/kerfur_command_wire.h"
+#include "coop/creatures/kerfur_disc_carry.h"
+#include "coop/items/save_record_wire.h"
+#include "coop/props/prop_record_wire.h"
 #include "coop/creatures/kerfur_convert_host.h"
 #include "coop/dispatch/event_feed.h"
 #include "coop/element/mirror_manager.h"
@@ -23,7 +26,9 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string>
+#include <vector>
 
 namespace coop::dev::hostile_drill::kerfur {
 namespace {
@@ -230,9 +235,153 @@ void WaitAccounted(Arm a) {
 
 }  // namespace
 
-const char* ArmName(Arm a) { return a == Arm::KerfurFlood ? "kerfur_flood" : "off"; }
+const char* ArmName(Arm a) {
+    return a == Arm::KerfurFlood ? "kerfur_flood" : (a == Arm::KerfurForged ? "kerfur_forged" : "off");
+}
+
+namespace {
+
+// ---- the forged tails (kerfur_forged) ----
+//
+// A joined client sends five get_reports blobs, each forged in one way the host must drop and count: a record of a class
+// that is no floppy disc, a record past the byte cap, a record followed by a stray byte, a record on a command that takes
+// none, and an unknown flag bit. The host judges by its own counts: all five refused before the serve, none run, no copy
+// built, nothing published.
+constexpr uint32_t kForgedCount = 5;
+
+namespace SR  = ue_wrap::save_record;
+namespace prw = coop::props::prop_record_wire;
+
+SR::SaveRecord ForgedRecord(const wchar_t* cls) {
+    SR::SaveRecord r;
+    r.className = cls;
+    r.key = L"forged";
+    r.xform = {0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f};
+    r.names = {{L"forged"}};
+    r.ints = {{5}};
+    r.strings = {{L"data"}};
+    return r;
+}
+
+// A KerfurCommand blob written by hand: the head, then the tail bytes as given.
+std::vector<uint8_t> ForgedBlob(uint32_t eid, uint32_t requestId, uint8_t command, uint8_t flags,
+                                const std::vector<uint8_t>& tail) {
+    coop::net::KerfurCommandPayload head{};
+    head.elementId = eid;
+    head.requestId = requestId;
+    head.command = command;
+    head.flags = flags;
+    std::vector<uint8_t> b(sizeof(head));
+    std::memcpy(b.data(), &head, sizeof(head));
+    b.insert(b.end(), tail.begin(), tail.end());
+    return b;
+}
+
+// `[u16 n][n bytes]` with n the record's own size, for a record the packer would refuse to build.
+std::vector<uint8_t> RawRecordTail(const SR::SaveRecord& r) {
+    const std::vector<uint8_t> rec = prw::RecordWire(r);
+    std::vector<uint8_t> t;
+    coop::save_record_wire::AppU16(t, static_cast<uint16_t>(rec.size()));
+    t.insert(t.end(), rec.begin(), rec.end());
+    return t;
+}
+
+void SendForged(coop::net::Session* s, Arm a) {
+    if (g_sent || !OwnJoinOver()) return;
+    const uint8_t self = coop::players::Registry::Get().LocalPeerId();
+    if (self == 0 || self >= coop::players::kMaxPeers) return;
+    g_sent = true;
+    // One unheld host-range id: the commands must be refused for their tails, not for naming nothing.
+    EL::ElementId eid = EL::kInvalidId;
+    for (EL::ElementId id = EL::kHostRangeSize - 1; EL::Registry::IsAllowedHostAllocatedEid(id); --id)
+        if (!HeldHere(id)) { eid = id; break; }
+    if (eid == EL::kInvalidId) {
+        UE_LOGW("[HOSTILE-DRILL] %s INCONCLUSIVE: no unheld host-range id found", ArmName(a));
+        return;
+    }
+    constexpr uint8_t kGetReports = 4, kFollow = 0;
+    // The oversize record: a blob that fits the kind's chunk bound yet is past its byte ceiling, so it completes and is
+    // refused once (a larger one is refused chunk by chunk at the header).
+    SR::SaveRecord big = ForgedRecord(L"prop_floppyDisc_C");
+    while (prw::RecordBytes(big) < prw::kMaxRecordBytes + 4) big.strings[0][0].push_back(L'x');
+    std::vector<uint8_t> trailing = RawRecordTail(ForgedRecord(L"prop_floppyDisc_C"));
+    trailing.push_back(0xAB);
+    const std::vector<std::vector<uint8_t>> blobs = {
+        ForgedBlob(eid, 1, kGetReports, coop::kerfur_command_wire::kFlagRecord, RawRecordTail(ForgedRecord(L"prop_C"))),
+        ForgedBlob(eid, 2, kGetReports, coop::kerfur_command_wire::kFlagRecord, RawRecordTail(big)),
+        ForgedBlob(eid, 3, kGetReports, coop::kerfur_command_wire::kFlagRecord, trailing),
+        ForgedBlob(eid, 4, kFollow, coop::kerfur_command_wire::kFlagRecord,
+                   RawRecordTail(ForgedRecord(L"prop_floppyDisc_C"))),
+        ForgedBlob(eid, 5, kGetReports, 0x02, {}),
+    };
+    for (uint32_t i = 0; i < kForgedCount; ++i) {
+        if (!coop::blob_chunks::SendBlobToSlot(s, 0, Kind::KerfurCommand, i + 1, blobs[i])) {
+            UE_LOGW("[HOSTILE-DRILL] %s INCONCLUSIVE: forged blob %u was not sent", ArmName(a), i + 1);
+            return;
+        }
+    }
+    UE_LOGI("[HOSTILE-DRILL] %s sent %u forged KerfurCommand blobs for slot %u (eid %u)", ArmName(a), kForgedCount,
+            static_cast<unsigned>(self), static_cast<unsigned>(eid));
+}
+
+struct ForgedBase {
+    uint32_t refused = 0, runs = 0, carries = 0, published = 0;
+};
+ForgedBase g_forged;
+
+ForgedBase ForgedNow() {
+    return ForgedBase{coop::kerfur_command::RefusedFor(g_slot), coop::kerfur_command::RunsFor(g_slot),
+                      coop::kerfur_disc_carry::Carries(), coop::kerfur_disc_carry::PublishedInCarries()};
+}
+
+void JudgeForged(coop::net::Session* s, Arm a) {
+    if (g_step == Step::Done) return;
+    if (g_step == Step::WaitArm) {
+        for (int slot = 1; slot < static_cast<int>(coop::net::kMaxPeers) && g_slot < 0; ++slot)
+            if (s->IsSlotWorldReady(slot)) g_slot = slot;
+        if (g_slot < 0) return;
+        g_forged = ForgedNow();
+        g_playerNo = coop::roster_ledger::Get(g_slot).playerNo;
+        g_armAt = Clock::now();
+        g_step = Step::WaitAccounted;
+        UE_LOGI("[HOSTILE-DRILL] %s armed on slot %d (refused %u, runs %u, carries %u)", ArmName(a), g_slot,
+                g_forged.refused, g_forged.runs, g_forged.carries);
+        return;
+    }
+    if (!s->HasPeerConn(g_slot) || coop::roster_ledger::Get(g_slot).playerNo != g_playerNo) {
+        UE_LOGW("[HOSTILE-DRILL] %s INCONCLUSIVE judge the judged slot left before the verdict", ArmName(a));
+        g_step = Step::Done;
+        return;
+    }
+    const ForgedBase now = ForgedNow();
+    const uint32_t refused = now.refused - g_forged.refused;
+    if (refused < kForgedCount) {
+        if (Clock::now() - g_armAt > kFailBound) {
+            UE_LOGW("[HOSTILE-DRILL] %s FAIL timeout (%u of %u forged tails refused)", ArmName(a), refused,
+                    kForgedCount);
+            g_step = Step::Done;
+        }
+        return;
+    }
+    g_step = Step::Done;
+    if (refused != kForgedCount || now.runs != g_forged.runs || now.carries != g_forged.carries ||
+        now.published != g_forged.published) {
+        UE_LOGW("[HOSTILE-DRILL] %s FAIL refused %u (want %u), runs +%u, carries +%u, published +%u (want 0)",
+                ArmName(a), refused, kForgedCount, now.runs - g_forged.runs, now.carries - g_forged.carries,
+                now.published - g_forged.published);
+        return;
+    }
+    UE_LOGI("[HOSTILE-DRILL] %s PASS -- %u forged tails refused before the serve, none run, no copy built, nothing "
+            "published", ArmName(a), refused);
+}
+
+}  // namespace
 
 void TickClient(coop::net::Session* s, Arm a) {
+    if (a == Arm::KerfurForged) {
+        SendForged(s, a);
+        return;
+    }
     if (g_sent || !OwnJoinOver()) return;
     const uint8_t self = coop::players::Registry::Get().LocalPeerId();
     if (self == 0 || self >= coop::players::kMaxPeers) return;  // no slot yet; wait
@@ -271,6 +420,10 @@ void TickClient(coop::net::Session* s, Arm a) {
 }
 
 void TickHostJudge(coop::net::Session* s, Arm a) {
+    if (a == Arm::KerfurForged) {
+        JudgeForged(s, a);
+        return;
+    }
     if (g_step == Step::WaitArm) { ArmHost(s, a); return; }
     if (g_step == Step::Done) return;
     if (!s->HasPeerConn(g_slot)) {
@@ -294,6 +447,7 @@ void OnDisconnect() {
     g_slot = -1;
     g_playerNo = 0;
     g_armAt = {};
+    g_forged = ForgedBase{};
     for (KindState& k : g_kind) k = KindState{};
 }
 

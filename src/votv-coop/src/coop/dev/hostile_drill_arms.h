@@ -20,7 +20,7 @@ namespace coop::dev::hostile_drill {
 // those to their module's sender and judge.
 enum class Arm { Off, SignalPark, ChatIllFormed, PropConvert, ReliableFlood, RepeatJoin,
                  RepeatWorldReady, RepeatSaveRequest, RecordBadClasses, BadAlarm, BadPropKey,
-                 BadPropSpawn, BadHandClass, BadHandFamily, KeepLatest, ChatFlood, WorldLatest, KerfurFlood,
+                 BadPropSpawn, BadHandClass, BadHandFamily, KeepLatest, ChatFlood, WorldLatest, KerfurFlood, KerfurForged,
                  RemoverFar, RemoverHidden, RemoverFlood,
                  ActFar, ActGone, ActWrongFamily, ActBadCommit, ActNotYet, ActFlood, ActFloodEarly, Explosion, Ignite,
                  Atv, Cord, Coffee };

@@ -60,6 +60,7 @@
 #include "coop/props/container_birth.h"
 #include "coop/props/container_park.h"
 #include "coop/props/container_act_host.h"
+#include "coop/creatures/kerfur_command_wire.h"
 #include "coop/props/prop_act_host.h"
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/prop_snapshot.h"
@@ -253,6 +254,10 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     // And a container act: the codec and its hostile blobs, one record's hash, the record lookup, the holds, the host's
     // judge and the order it reads in, the commit's rows and the client's reply decision, each from a stated input.
     coop::props::container_act_host::RunSelftest();
+    // And a kerfur command's bytes: a forged blob reaches the host only from a hostile client, so each way a blob is
+    // refused (a stray flag, a stray byte, a record on the wrong command, one past the cap, a lying chunk header) and the
+    // disc record's bound are asserted here, line by line.
+    coop::kerfur_command_wire::RunSelftest();
     // And the deferred-destroy table's retire rule: a destroy naming an element leaves with a spawn of
     // that element only, a key-only destroy with a spawn of its key, a None or empty key with nothing.
     coop::element::quiescence_drain::RunDestroyDeferSelftest();

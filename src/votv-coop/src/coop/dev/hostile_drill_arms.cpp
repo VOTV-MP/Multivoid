@@ -46,6 +46,7 @@ Arm ArmOf() {
              : v == "chat_flood"          ? Arm::ChatFlood
              : v == "world_latest"        ? Arm::WorldLatest
              : v == "kerfur_flood"        ? Arm::KerfurFlood
+             : v == "kerfur_forged"       ? Arm::KerfurForged
              : v == "remover_far"         ? Arm::RemoverFar
              : v == "remover_hidden"      ? Arm::RemoverHidden
              : v == "remover_flood"       ? Arm::RemoverFlood
@@ -129,6 +130,7 @@ const char* ArmName() {
     case Arm::ChatFlood:         return "chat_flood";
     case Arm::WorldLatest:       return "world_latest";
     case Arm::KerfurFlood:       return "kerfur_flood";
+    case Arm::KerfurForged:      return "kerfur_forged";
     case Arm::RemoverFar:        return "remover_far";
     case Arm::RemoverHidden:     return "remover_hidden";
     case Arm::RemoverFlood:      return "remover_flood";
@@ -199,7 +201,9 @@ bool TickFamilyHost(coop::net::Session* s) {
                                                             : hand::Arm::None;
     const latest::Arm latestArm = ArmOf() == Arm::KeepLatest ? latest::Arm::KeepLatest : latest::Arm::None;
     const world::Arm worldArm = ArmOf() == Arm::WorldLatest ? world::Arm::WorldLatest : world::Arm::None;
-    const kerfur::Arm kerfurArm = ArmOf() == Arm::KerfurFlood ? kerfur::Arm::KerfurFlood : kerfur::Arm::None;
+    const kerfur::Arm kerfurArm = ArmOf() == Arm::KerfurFlood    ? kerfur::Arm::KerfurFlood
+                                : ArmOf() == Arm::KerfurForged ? kerfur::Arm::KerfurForged
+                                                               : kerfur::Arm::None;
     const remover::Arm removerArm = ArmOf() == Arm::RemoverFar      ? remover::Arm::RemoverFar
                                   : ArmOf() == Arm::RemoverHidden   ? remover::Arm::RemoverHidden
                                   : ArmOf() == Arm::RemoverFlood    ? remover::Arm::RemoverFlood
@@ -236,7 +240,9 @@ bool TickFamilyClient(coop::net::Session* s) {
                                                             : hand::Arm::None;
     const latest::Arm latestArm = ArmOf() == Arm::KeepLatest ? latest::Arm::KeepLatest : latest::Arm::None;
     const world::Arm worldArm = ArmOf() == Arm::WorldLatest ? world::Arm::WorldLatest : world::Arm::None;
-    const kerfur::Arm kerfurArm = ArmOf() == Arm::KerfurFlood ? kerfur::Arm::KerfurFlood : kerfur::Arm::None;
+    const kerfur::Arm kerfurArm = ArmOf() == Arm::KerfurFlood    ? kerfur::Arm::KerfurFlood
+                                : ArmOf() == Arm::KerfurForged ? kerfur::Arm::KerfurForged
+                                                               : kerfur::Arm::None;
     const remover::Arm removerArm = ArmOf() == Arm::RemoverFar      ? remover::Arm::RemoverFar
                                   : ArmOf() == Arm::RemoverHidden   ? remover::Arm::RemoverHidden
                                   : ArmOf() == Arm::RemoverFlood    ? remover::Arm::RemoverFlood

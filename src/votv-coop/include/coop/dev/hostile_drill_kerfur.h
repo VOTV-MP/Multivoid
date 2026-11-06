@@ -5,7 +5,9 @@
 // path and how many the lane refused: once all 121 of a kind are accounted for, whether the runs reached the lane's
 // cap, followed the lane's pace from the first run, and never held more than the cap unserved and unrefused (the
 // messages the drain handed over, less the runs and the refusals). The ids name
-// no live kerfur, so a run is judged at the cost path, never at a verb's effect. Defensive testing of OUR OWN mod,
+// no live kerfur, so a run is judged at the cost path, never at a verb's effect. The kerfur_forged arm sends five get_reports
+// blobs forged one way each (a non-floppy record, one past the byte cap, a stray byte, a record on another command, an
+// unknown flag); the host must refuse all five before the serve and build no copy. Defensive testing of OUR OWN mod,
 // per coop/dev/hostile_drill.h; nothing here ships enabled.
 
 #pragma once
@@ -15,7 +17,7 @@ namespace coop::net { class Session; }
 namespace coop::dev::hostile_drill::kerfur {
 
 // The sub-arm; None when the active drill arm is not ours.
-enum class Arm { None, KerfurFlood };
+enum class Arm { None, KerfurFlood, KerfurForged };
 
 // The arm's name, for the verdict markers.
 const char* ArmName(Arm a);

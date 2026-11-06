@@ -63,6 +63,9 @@ void Sweep();
 // A peer left: its half-assembled commands go, so a recycled slot never merges into them.
 void OnPeerGone(uint8_t slot);
 
+// The selftest of the blob's hostile contract (pure bytes), run once per process; logs ALL PASS or each failure.
+bool RunSelftest();
+
 // Session end: every half-assembled command goes.
 void OnDisconnect();
 
