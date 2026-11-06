@@ -4,6 +4,7 @@
 
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/drill_chat.h"
 #include "coop/dev/spawn_npc.h"
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
@@ -61,6 +62,11 @@ constexpr uint64_t kSampleMs       = 100;
 constexpr uint64_t kReportMs       = 5000;
 constexpr uint8_t  kStateFollow    = 0;           // enum_kerfurCommand
 constexpr int      kWalkDeadlineS  = 60;
+// The client's word that its leg cannot run, the reason after the prefix: a lobby-chat line, since a verb names
+// only a command and none of the six can say "invalid".
+const std::string  kClientInvalidLine = "kerfur-serve client invalid: ";
+
+namespace DC = coop::dev::drill_chat;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_saidArm = false;
@@ -222,6 +228,11 @@ void TickHost(coop::net::Session* s, uint64_t ms) {
         return;
     }
     if (g_host == HostStep::WaitReports || g_host == HostStep::WaitIdle) {
+        std::string why;
+        if (DC::SeenRestOf(kClientInvalidLine, &why)) {
+            HostInvalid(("the client could not run its leg: " + why).c_str());
+            return;
+        }
         if (ms - g_hostStepMs >= kVerbWindowMs)
             HostInvalid(g_host == HostStep::WaitReports ? "the client's get_reports never ran here"
                                                         : "the client's idle never ran here");
@@ -242,6 +253,7 @@ uint64_t g_stepMs = 0, g_sampleMs = 0, g_reportMs = 0, g_byMeSince = 0, g_byHost
 void ClientInvalid(const char* why) {
     g_client = ClientStep::Done;
     UE_LOGW("[KERFUR-SERVE] INVALID (client) -- %s", why);
+    DC::Say(kClientInvalidLine + why);  // the host ends at once rather than at its verb window
 }
 
 // The Omega mirror nearest the host's body, within the spawn's reach of it.
@@ -399,6 +411,7 @@ void Tick() {
     if (!g_saidArm) {
         g_saidArm = true;
         UE_LOGI("[KERFUR-SERVE] %s armed", s->role() == coop::net::Role::Host ? "host" : "client");
+        if (s->role() == coop::net::Role::Host) DC::SeenHas(kClientInvalidLine);  // starts the chat history's recording
     }
     if (s->role() == coop::net::Role::Host) TickHost(s, ::GetTickCount64());
     else if (s->connected()) TickClient();
