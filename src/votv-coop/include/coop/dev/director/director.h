@@ -59,6 +59,10 @@ struct DirectorGoal {
     // Walk the straight line instead of a NavMesh route: a target in plain view through an opening
     // the baked NavMesh does not know is open, as a door's doorway once the door has swung open.
     bool              straight    = false;
+    // A drill whose verdict IS the walk or its route sets this: the stage (stage.h) leaves the walker where it
+    // stands for this walk, however far the goal.
+    bool              walkFromHere = false;
+    bool              staged      = false;    // the stage has run for this goal: Run's own call is then a no-op
     bool              failed      = false;    // set by any process on a hard failure
     const char*       failReason  = "";
     // The walks' epoch this walk belongs to: WalkEpoch() read on the game thread when its drill started
@@ -97,8 +101,10 @@ public:
 class ControlManager {
 public:
     void Add(std::unique_ptr<IProcess> proc);
-    // Drive until goal.grabbed / goal.reached / goal.failed / the deadline, or until the walks' epoch
-    // moves past the goal's. Returns true iff the goal was grabbed or reached.
+    // First the stage (stage.h): a walk that would cross the map starts at the known-good anchor nearest its
+    // goal, and the deadline counts from there. Then drive until goal.grabbed / goal.reached / goal.failed /
+    // the deadline, or until the walks' epoch moves past the goal's. Returns true iff the goal was grabbed or
+    // reached.
     bool Run(DirectorGoal& goal, int maxSeconds);
 private:
     bool Drive(DirectorGoal& goal, int maxSeconds);   // Run's loop; Run then lets the last driver go

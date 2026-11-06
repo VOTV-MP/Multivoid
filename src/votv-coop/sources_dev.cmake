@@ -317,6 +317,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/dev_gate.cpp
     src/coop/dev/director/player_context.cpp
     src/coop/dev/director/control_manager.cpp
+    src/coop/dev/director/stage.cpp
     src/coop/dev/director/detour.cpp
     src/coop/dev/director/proc_walkgrab.cpp
     src/coop/dev/director/director_run.cpp

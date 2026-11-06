@@ -6,11 +6,13 @@
 
 #include "coop/dev/director/director.h"
 
+#include "coop/dev/director/stage.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <memory>
 #include <utility>
 
@@ -33,6 +35,9 @@ void EndWalks() { g_walkEpoch.fetch_add(1, std::memory_order_acq_rel); }
 void ControlManager::Add(std::unique_ptr<IProcess> proc) { procs_.push_back(std::move(proc)); }
 
 bool ControlManager::Run(DirectorGoal& goal, int maxSeconds) {
+    char why[96];
+    std::snprintf(why, sizeof why, "the walk to (%.0f,%.0f,%.0f)", goal.targetPos.X, goal.targetPos.Y, goal.targetPos.Z);
+    if (!StageWalk(goal, why)) return false;
     const bool done = Drive(goal, maxSeconds);
     // However the run ended, the process that drove its last tick loses control: a key it holds is
     // let go on the game thread, as a person lets go of it when the walk is over.
