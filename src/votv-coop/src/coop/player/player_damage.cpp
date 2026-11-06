@@ -265,7 +265,7 @@ bool FirstUnkeyed(void* cremator) {
 // (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientGame.cpp:4509), Source's server-side hit on a
 // client-owned health (reference/source-sdk-2013/src/game/server/hl2/npc_BaseZombie.cpp:1267). Beside PlayerHit and
 // not through it: that kind names its source by an Npc element id and resolves it only through the Npc mirrors.
-// A call that carries no caller object cannot be told from any other, so it delivers nothing and is said loudly.
+// A call that carries no caller frame cannot be told from any other, so it delivers nothing; said once per verb.
 bool DeliverFromCremator(const sg::Call& c, uint8_t verb) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return false;
@@ -274,8 +274,7 @@ bool DeliverFromCremator(const sg::Call& c, uint8_t verb) {
         bool& said = sSaid[verb == coop::net::kCrematorHitVerbIgnite ? 1 : 0];
         if (!said) {
             said = true;
-            UE_LOGE("player_damage: a refused %s on a puppet carries no caller object -- a cremator's hit cannot be told "
-                    "from another here and none is delivered (said once)",
+            UE_LOGW("player_damage: a refused %s on a puppet carried no caller frame -- not delivered (said once per verb)",
                     verb == coop::net::kCrematorHitVerbIgnite ? "ignite" : "addDamage");
         }
         return false;
