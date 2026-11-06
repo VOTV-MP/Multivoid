@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 274;
+inline constexpr uint16_t kProtocolVersion = 275;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1296,7 +1296,7 @@ enum class ReliableKind : uint8_t {
     // Nothing at late join (the host's living holes are a joiner's set). SusHoleIntentPayload.
     SusHoleIntent = 223,
     // Host to clients: control lock (1), target sequence (2), shared cremator lock (3/release 4).
-    CremationControl = 224,
+    CremationControl = 226,
 };
 
 #pragma pack(push, 1)
