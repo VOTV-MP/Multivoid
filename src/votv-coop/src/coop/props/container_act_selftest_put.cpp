@@ -260,6 +260,16 @@ void RunPutSelftest(Checks& check) {
         p.filterHolds = true;
         check(H::DecidePut(p, &why) == H::Verdict::Refused && why == Tally::PutBadLeaf,
               "put: a floppy record past what a disc holds is refused, counted put_bad_leaf");
+        {
+            SR::SaveRecord disc;
+            disc.ints = {{99}};
+            disc.strings = {{L"d"}};
+            check(!H::FloppyBoundOk(true, true, disc, 32), "put: a client's floppy record past what a disc holds fails the bound");
+            check(H::FloppyBoundOk(false, true, disc, 32), "put: the host's own floppy record is not bounded");
+            check(H::FloppyBoundOk(true, false, disc, 32), "put: a client's record of another class is not bounded");
+            disc.ints = {{32}};
+            check(H::FloppyBoundOk(true, true, disc, 32), "put: a client's floppy record at the class default passes");
+        }
         p = putReady();
         p.filterRead = false;
         p.mailboxContainer = true;

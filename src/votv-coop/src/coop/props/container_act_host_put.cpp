@@ -100,12 +100,12 @@ void ReadPutInputs(uint8_t slot, uint32_t eid, const SR::SaveRecord& record, boo
     p.classResolved = cls != nullptr;
     p.propClass = SR::IsPropClass(cls);
     if (!p.classResolved || !p.propClass) return;
-    // A floppy disc's leaf values are the client's word, as a carried disc's are: held to what a game disc can hold.
+    // A client's floppy disc has leaf values that are its word, as a carried disc's are: held to what a game disc can
+    // hold. `slowable` is false for the host's own capture, which is not bounded (internal::FloppyBoundOk).
     int32_t maxReadWrites = 0;
-    if (ue_wrap::floppy_disc::IsDiscClass(cls) && ue_wrap::floppy_disc::ReadDefaultReadWrites(maxReadWrites)) {
-        p.leafOk = ue_wrap::floppy_disc::DiscLeafOk(record, maxReadWrites, nullptr);
-        if (!p.leafOk) return;
-    }
+    const bool disc = ue_wrap::floppy_disc::IsDiscClass(cls) && ue_wrap::floppy_disc::ReadDefaultReadWrites(maxReadWrites);
+    p.leafOk = internal::FloppyBoundOk(slowable, disc, record, maxReadWrites);
+    if (!p.leafOk) return;
     p.filterRead = ci::FilterHolds(ci::InventoryOf(actor), cls, p.filterHolds);
     if (!p.filterRead || p.filterHolds) return;
     p.mailboxContainer = t.ownerIsMailbox && ci::IsContainerRecord(record);
@@ -337,6 +337,10 @@ bool StoredMatches(const SR::SaveRecord& asked, const SR::SaveRecord& stored) {
     std::wstring askedName, storedName;
     return asked.className == stored.className && SR::RecordName(asked, askedName) &&
            SR::RecordName(stored, storedName) && askedName == storedName;
+}
+
+bool FloppyBoundOk(bool fromClient, bool discClass, const SR::SaveRecord& record, int32_t maxReadWrites) {
+    return !fromClient || !discClass || ue_wrap::floppy_disc::DiscLeafOk(record, maxReadWrites, nullptr);
 }
 
 bool DoneSizeOk(size_t askedBytes, const SR::SaveRecord& committed) {

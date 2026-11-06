@@ -138,6 +138,11 @@ bool StoredMatches(const ue_wrap::save_record::SaveRecord& asked, const ue_wrap:
 // prop_record_wire::kMaxPutNameChars (prop_record_wire::PutNameOk).
 bool DoneSizeOk(size_t askedBytes, const ue_wrap::save_record::SaveRecord& committed);
 
+// Whether a put's record passes the floppy bound: only a CLIENT's record of a floppy disc is held to what a game disc can hold
+// (floppy_disc::DiscLeafOk against `maxReadWrites`); the host's own capture is not (the host may cheat, bounds apply to
+// clients only), nor is a record of another class. `fromClient` is ReadPutInputs's `slowable`: true for a request's wire record.
+bool FloppyBoundOk(bool fromClient, bool discClass, const ue_wrap::save_record::SaveRecord& record, int32_t maxReadWrites);
+
 // What a put's Wait waits on, for the line that ends the wait: the first term whose read did not come.
 const char* PutWaitCause(const PutInputs& in);
 
