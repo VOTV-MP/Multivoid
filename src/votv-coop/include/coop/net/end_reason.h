@@ -114,6 +114,7 @@ enum class EndReason : uint8_t {
     ReliableFlood,           // past the host's bound on a client's messages, or refused for a while after
     RepeatedRequest,         // asked the host for its world save a second time in one visit (no join does)
     RepeatedWorldReady,      // said its world was ready more times than any join does (a flood past the burst)
+    Cremated,                // the host's /cremate sent this player to the crematorium and the burn killed it
 
     // T -- the transport decided. Values 90..127.
     Timeout = 90,           // no answer from the host, at the dial or later
@@ -127,7 +128,7 @@ enum class EndReason : uint8_t {
     kJoinerFirst = MasterUnreachable,
     kJoinerLast = ScriptHooksUnavailable,
     kHostFirst = WrongPassword,
-    kHostLast = RepeatedWorldReady,
+    kHostLast = Cremated,
     kTransportFirst = Timeout,
     kTransportLast = LinkLost,
 };

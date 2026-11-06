@@ -382,6 +382,7 @@ travel, the player is told so (`MV-J31`), unless the reason the session ended is
 | `MV-H32` | This client sent more messages than the host's bound allows (a host setting), or was refused for ten minutes after such a close |
 | `MV-H33` | This client asked the host for its world a second time in one visit, which the game never does |
 | `MV-H34` | This client announced its world ready far more often than a join does (a flood past the host's replay burst) |
+| `MV-H35` | The host's `/cremate` sent this player to the crematorium and the burn killed it |
 | `MV-T01` | No answer from the host, at the dial or later |
 | `MV-T02` | No route to the host through its firewall or router |
 | `MV-T03` | The signaling server could not reach the host |

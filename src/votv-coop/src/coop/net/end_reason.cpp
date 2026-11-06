@@ -91,6 +91,7 @@ constexpr Row kRows[] = {
     {EndReason::ReliableFlood,           {"MV-H32", L10N_MARK("This machine sent the host more than a player can. Wait ten minutes before joining again.")}},
     {EndReason::RepeatedRequest,         {"MV-H33", L10N_MARK("This machine asked the host for its world a second time in one visit, which this game never does.")}},
     {EndReason::RepeatedWorldReady,      {"MV-H34", L10N_MARK("This machine told the host its world was ready far more often than a join does.")}},
+    {EndReason::Cremated,                {"MV-H35", L10N_MARK("You were sent to the crematorium.")}},
     // T -- the transport decided
     {EndReason::Timeout,            {"MV-T01", L10N_MARK("No answer from the host.")}},
     {EndReason::NoRoute,            {"MV-T02", L10N_MARK("No route to the host through its firewall or router.")}},

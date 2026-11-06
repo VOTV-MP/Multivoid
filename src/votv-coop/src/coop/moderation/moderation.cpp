@@ -70,6 +70,10 @@ std::string EnforceableAddress(const coop::net::Session& s, int slot, uint32_t g
 }
 
 ModResult KickPlayer(const PlayerToken& token, const char* reason) {
+    return KickPlayerWithReason(token, reason, coop::net::EndReason::KickedByHost);
+}
+
+ModResult KickPlayerWithReason(const PlayerToken& token, const char* reason, coop::net::EndReason code) {
     UE_ASSERT_GAME_THREAD("moderation::KickPlayer");
     auto* s = HostSession("kick");
     if (!s) return ModResult::NoSession;
@@ -82,8 +86,7 @@ ModResult KickPlayer(const PlayerToken& token, const char* reason) {
         return ModResult::Gone;
     }
     const std::string why = ReasonOr(reason, kKickDefaultReason);
-    if (!s->KickWithToken(token.slot, token.generation, coop::net::EndReason::KickedByHost,
-                          why.c_str())) {
+    if (!s->KickWithToken(token.slot, token.generation, code, why.c_str())) {
         UE_LOGW("moderation: kick of #%u (slot %d) did nothing -- they are already "
                 "gone, or someone else now holds that slot",
                 static_cast<unsigned>(token.playerNo), token.slot);

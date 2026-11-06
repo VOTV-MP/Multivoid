@@ -1385,6 +1385,9 @@ msgstr "[[You can't do that with this item.]]"
 msgid "You can't see that from there"
 msgstr "[[You can't see that from there]]"
 
+msgid "You were sent to the crematorium."
+msgstr "[[You were sent to the crematorium.]]"
+
 #, c-format
 msgid "Your body skin (%s) could not be saved to multivoid.ini this launch -- it is temporary for this session. Fix whatever keeps the file from being read or saved (a lock from an editor or antivirus, permissions, or a file saved as UTF-16); nothing is lost once a launch can save again."
 msgstr "[[Your body skin (%s) could not be saved to multivoid.ini this launch -- it is temporary for this session. Fix whatever keeps the file from being read or saved (a lock from an editor or antivirus, permissions, or a file saved as UTF-16); nothing is lost once a launch can save again.]]"
