@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 278;
+inline constexpr uint16_t kProtocolVersion = 279;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1321,6 +1321,15 @@ enum class ReliableKind : uint8_t {
     // host's receive edge; never relayed; not pre-world; the Default lane. Late join: none, an act sent to its
     // requester, not state. RequesterFeedbackPayload.
     RequesterFeedback = 229,
+    // HOST->ALL: a piece of the host's a player built -- a nail, or a custom wall unfinished, wet or finished -- as its own
+    // save record, when it is new or changed, or its key once when it went. A client makes it on its copy, or applies the
+    // record to its piece of that key, a nail tied to the actors its keys name there. Not relayed, not pre-world. Late join:
+    // every piece again at the ready edge. BlobChunkPayload: [u8 op 1 state | 2 gone][wstr key][record if state].
+    BuildState = 242,
+    // CLIENT->HOST: a piece this client's player made (op 1, its record), took away (op 2), a wall it hit or repaired
+    // (op 3, [f32] the health it lost, negative, or gained), or a nail its pull snapped (op 4). Never relayed; the host
+    // makes, destroys, hits, repairs or snaps its own and its BuildState answers. BlobChunkPayload, as above.
+    BuildIntent = 243,
 };
 
 #pragma pack(push, 1)

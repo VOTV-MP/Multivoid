@@ -72,6 +72,7 @@
 #include "coop/items/hook_anchor.h"
 #include "coop/world/event_active_sync.h"  // the native activeEvents registry probe
 #include "coop/world/creature_event_relay.h"  // the host's creature events, carried to every client's count
+#include "coop/world/build_sync.h"
 #include "coop/world/spill_sync.h"
 #include "coop/world/vent_crawler_sync.h"
 #include "coop/world/weather_sync.h"
@@ -196,6 +197,7 @@ void ConnectReplayForSlot(int slot) {
     // you were not in across your screen; it is there when you open the chat.
     coop::chat_sync::QueueConnectBroadcastForSlot(slot);
     coop::spill_sync::QueueConnectBroadcastForSlot(slot);  // every live spill again
+    coop::build_sync::QueueConnectBroadcastForSlot(slot);  // every nail and wall again
     coop::vent_crawler_sync::QueueConnectBroadcastForSlot(slot);  // the vent crawl's state, when one began in this world
 }
 

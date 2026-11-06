@@ -252,6 +252,7 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // death chain, and our seam shown to refuse the menu travel it asks for.
     SpawnIf("VOTVCOOP_RUN_SLIP_DRILL", "slip / death re-entry drill", &SlipDrillThread, role);
     SpawnIf("VOTVCOOP_RUN_SPILL", "spill drill", &SpillThread, role);
+    SpawnIf("VOTVCOOP_RUN_BUILD", "nail and wall drill", &BuildThread, role);
 
     // The ambient creatures: deer and walking trees; dirt holes and beehive branches; a sus hole around a client.
     SpawnIf("VOTVCOOP_RUN_AMBIENT_CREATURE", "ambient creature drill", &AmbientCreatureThread, role);

@@ -184,5 +184,6 @@ set(VOTVCOOP_SOURCES_UE_WRAP_2
     src/ue_wrap/world/upgrades.cpp
     src/ue_wrap/world/game_rules_pane.cpp
     src/ue_wrap/engine/spawn_menu.cpp
+    src/ue_wrap/actors/build_piece.cpp
     src/ue_wrap/actors/grime_spill.cpp
 )
