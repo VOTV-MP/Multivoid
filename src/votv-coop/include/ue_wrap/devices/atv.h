@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace ue_wrap::atv {
 
@@ -120,5 +121,26 @@ bool DestroyMirror(void* atv);
 // The ATV's own `dismount()`: the seated player is handed back (re-possessed, shown) and `isDriven` clears. False,
 // and nothing done, on a null or dead actor, an unresolved function or a call that did not dispatch. Game thread.
 bool Dismount(void* atv);
+
+// Where a seated driver's body goes: behind the handlebars, 100 cm ahead of the driver's `Camera` along the ATV's
+// facing and 25 cm above `sitarrow` (where a riding kerfur's pivot goes, its AnimBP's seat pose built for it), so it
+// rides on the seat; turned as `sitarrow` is. The ATV's own sit puts its player at
+// `playerHit` instead, 140 cm higher, where only its hidden capsule stands. False on null, an unresolved ATV_C or
+// component, or an unreadable transform. Game thread.
+bool GetSeatTransform(void* atv, FVector& loc, FRotator& rot);
+
+// The ATV whose root is nearest `at` within `reachCm`, or nullptr. Game thread.
+void* NearestAtv(const FVector& at, float reachCm);
+
+// The ATV's rider (`sittingKerfuro`) cleared when it is `kerfur`: a kerfur's own getOffCar leaves it set, and the ATV's
+// dismount is what clears it. Game thread.
+void ForgetSittingKerfur(void* atv, void* kerfur);
+
+// What the ATV's own sit and dismount do for the kerfurs, run on this copy with no player of its own in the seat.
+// InviteKerfurs puts `kerfurs` in `allKerfuros` and asks each to come (its own tryToOccupyCar): the first to reach the
+// ATV sits and turns the rest back. ReleaseKerfurs gets the rider off (its own getOffCar), turns back the rest
+// (failCar) and empties both. False when a field does not resolve. Game thread.
+bool InviteKerfurs(void* atv, const std::vector<void*>& kerfurs);
+bool ReleaseKerfurs(void* atv);
 
 }  // namespace ue_wrap::atv

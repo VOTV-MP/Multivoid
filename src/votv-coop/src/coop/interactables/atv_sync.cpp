@@ -748,4 +748,10 @@ bool ReadTable(const std::wstring& key, TableView& out) {
 
 void SetDrillMute(bool on) { g_drillMute = on; }
 
+void ForEachIndexed(void (*fn)(void* ctx, const std::wstring& key, void* actor), void* ctx) {
+    if (!fn || !IndexCurrent()) return;
+    for (const auto& kv : g_atvs)
+        if (R::IsLiveByIndex(kv.second.actor, kv.second.idx)) fn(ctx, kv.first, kv.second.actor);
+}
+
 }  // namespace coop::atv_sync

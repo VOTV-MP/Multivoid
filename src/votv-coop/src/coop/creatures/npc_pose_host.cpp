@@ -24,6 +24,8 @@
 #include "coop/net/session.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/actors/fossilhound.h"  // ReadBodyYaw -- the hound's body hangs on its SpringArm's end
+#include "ue_wrap/devices/atv.h"  // IsAtv: a kerfur riding one
+#include "ue_wrap/engine/engine_attach.h"  // GetAttachParentActor
 #include "ue_wrap/actors/kerfur.h"  // HasSaveKey (savePersisted flag) + ReadKerfurState (mirror fidelity)
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/puppet.h"
@@ -212,6 +214,10 @@ void TickPoseStream() {
             snap.kerfFace  = kFace;
             snap.stateBits |= coop::net::kEntityPoseBitHasKerfurState;
             if (kSpooky) snap.stateBits |= coop::net::kEntityPoseBitKerfurSpooky;
+            // Riding an ATV: its own sitOnCar attached it to one.
+            void* parent = nullptr;
+            if (ue_wrap::engine::GetAttachParentActor(actor, parent) && parent && ue_wrap::atv::IsAtv(parent))
+                snap.stateBits |= coop::net::kEntityPoseBitKerfurOnAtv;
         }
         batch.push_back(snap);
     }

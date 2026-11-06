@@ -281,6 +281,24 @@ void DriveHeadLookAtWorld(void* puppetActor, const FVector& worldTarget) {
     }
 }
 
+bool SetOnAtv(void* puppetActor, bool on) {
+    const int32_t off = ue_wrap::reflected_offset::AnimBP_kerfur_isOnAtv();
+    if (off < 0 || !puppetActor || !R::IsLive(puppetActor)) return false;
+    void* comp = GetSkeletalMeshComponent(puppetActor);
+    void* anims[2] = {nullptr, nullptr};
+    if (comp && R::IsLive(comp)) anims[0] = LiveAnimInstance(comp);
+    void* meshSlot = ReadPtr(puppetActor, P::off::ACharacter_Mesh);
+    if (meshSlot && meshSlot != comp && R::IsLive(meshSlot)) anims[1] = LiveAnimInstance(meshSlot);
+    if (anims[1] == anims[0]) anims[1] = nullptr;
+    bool any = false;
+    for (void* anim : anims) {
+        if (!anim || !IsKerfurAnimBP(anim)) continue;
+        *reinterpret_cast<bool*>(static_cast<uint8_t*>(anim) + off) = on;
+        any = true;
+    }
+    return any;
+}
+
 bool ReadPuppetHeadLookProbe(void* puppetActor, PuppetHeadLookProbe& out) {
     out = {};
     void* comp = GetSkeletalMeshComponent(puppetActor);

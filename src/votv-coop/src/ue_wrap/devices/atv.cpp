@@ -6,6 +6,8 @@
 
 #include "ue_wrap/devices/atv.h"
 
+#include "ue_wrap/actors/kerfur.h"   // the kerfur's own ATV functions (InviteKerfurs, ReleaseKerfurs)
+#include "ue_wrap/actors/save_record.h"  // allKerfuros, a new array in engine memory
 #include "ue_wrap/core/call.h"      // ParamFrame / Call -- the GameplayStatics spawn (SpawnMirror)
 #include "ue_wrap/core/fname_utils.h"  // StringToFName -- SpawnMirror's key
 #include "ue_wrap/engine/engine.h"
@@ -16,7 +18,9 @@
 #include "ue_wrap/core/types.h"     // FTransform (SpawnMirror)
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -318,6 +322,105 @@ bool DestroyMirror(void* atv) {
                 "unpossessed and hidden after the ATV goes");
     // K2_DestroyActor is declared on Actor, not on ATV_C, so it is resolved there.
     return engine::DestroyActor(atv);
+}
+
+namespace {
+
+// A field of ATV_C by name, resolved once per field: the layout is the same in every world. -1 while ATV_C is not loaded
+// (asked again) or when it has no such field.
+struct Field {
+    const wchar_t* name;
+    int32_t off = -1;
+    bool tried = false;
+    int32_t Get() {
+        if (!tried) {
+            void* cls = AtvClass();
+            if (!cls) return -1;
+            off = R::FindPropertyOffset(cls, name);
+            tried = true;
+            if (off < 0) UE_LOGW("atv: ATV_C has no `%ls`", name);
+        }
+        return off;
+    }
+};
+Field g_camera{L"Camera"}, g_sitarrow{L"sitarrow"}, g_sittingKerfuro{L"sittingKerfuro"}, g_allKerfuros{L"allKerfuros"};
+
+void* ReadObj(void* atv, int32_t off) {
+    if (!atv || off < 0) return nullptr;
+    void* o = *reinterpret_cast<void* const*>(static_cast<const char*>(atv) + off);
+    return o && R::IsLive(o) ? o : nullptr;
+}
+
+bool WriteKerfurList(void* atv, const std::vector<void*>& list) {
+    const int32_t off = g_allKerfuros.Get();
+    if (off < 0) return false;
+    void* buf = list.empty() ? nullptr : save_record::AllocZeroed(list.size(), sizeof(void*));
+    if (!list.empty() && !buf) return false;
+    if (buf) std::memcpy(buf, list.data(), list.size() * sizeof(void*));
+    save_record::WriteArrHeader(atv, off, buf, static_cast<int32_t>(list.size()));
+    return true;
+}
+
+}  // namespace
+
+bool GetSeatTransform(void* atv, FVector& loc, FRotator& rot) {
+    if (!atv || !R::IsLive(atv)) return false;
+    void* camera = ReadObj(atv, g_camera.Get());
+    void* sit = ReadObj(atv, g_sitarrow.Get());
+    FVector eye{}, seat{};
+    if (!camera || !sit || !engine::TryGetComponentLocation(camera, eye) || !engine::TryGetComponentLocation(sit, seat) ||
+        !engine::TryGetComponentWorldRotation(sit, rot))
+        return false;
+    // The camera stands at the back of the seat; the body sits forward of it, at the handlebars.
+    constexpr float kForwardCm = 100.f;
+    constexpr float kUpCm = 25.f;   // on the seat, not in it
+    constexpr float kDeg2Rad = 0.01745329252f;
+    const float yaw = rot.Yaw * kDeg2Rad, pitch = rot.Pitch * kDeg2Rad;
+    loc = FVector{eye.X + std::cos(pitch) * std::cos(yaw) * kForwardCm,
+                  eye.Y + std::cos(pitch) * std::sin(yaw) * kForwardCm,
+                  seat.Z + std::sin(pitch) * kForwardCm + kUpCm};
+    return true;
+}
+
+void* NearestAtv(const FVector& at, float reachCm) {
+    struct Best { FVector at; float d2; void* atv; } best{at, reachCm * reachCm, nullptr};
+    ForEachAtv([](void* ctx, void* actor, int32_t) {
+        auto* b = static_cast<Best*>(ctx);
+        FVector loc{};
+        if (!engine::TryGetActorLocation(actor, loc)) return;
+        const float dx = loc.X - b->at.X, dy = loc.Y - b->at.Y, dz = loc.Z - b->at.Z;
+        const float d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 <= b->d2) { b->d2 = d2; b->atv = actor; }
+    }, &best);
+    return best.atv;
+}
+
+void ForgetSittingKerfur(void* atv, void* kerfur) {
+    const int32_t off = g_sittingKerfuro.Get();
+    if (!atv || !kerfur || !R::IsLive(atv) || off < 0) return;
+    void** slot = reinterpret_cast<void**>(static_cast<char*>(atv) + off);
+    if (*slot == kerfur) *slot = nullptr;
+}
+
+bool InviteKerfurs(void* atv, const std::vector<void*>& kerfurs) {
+    if (!atv || !R::IsLive(atv) || !WriteKerfurList(atv, kerfurs)) return false;
+    for (void* k : kerfurs) kerfur::TryToOccupyCar(k, atv);
+    return true;
+}
+
+bool ReleaseKerfurs(void* atv) {
+    if (!atv || !R::IsLive(atv)) return false;
+    const int32_t listOff = g_allKerfuros.Get(), riderOff = g_sittingKerfuro.Get();
+    if (listOff < 0 || riderOff < 0) return false;
+    if (void* rider = ReadObj(atv, riderOff)) kerfur::GetOffCar(rider);
+    const save_record::Arr arr = save_record::ReadArr(atv, listOff);
+    std::vector<void*> rest;
+    for (int32_t i = 0; arr.data && i < arr.num && i < 256; ++i)
+        rest.push_back(reinterpret_cast<void* const*>(arr.data)[i]);
+    for (void* k : rest)
+        if (k && R::IsLive(k)) kerfur::FailCar(k);
+    *reinterpret_cast<void**>(static_cast<char*>(atv) + riderOff) = nullptr;
+    return WriteKerfurList(atv, {});
 }
 
 }  // namespace ue_wrap::atv
