@@ -44,9 +44,11 @@ constexpr int kTagDoorOpen  = 0x4347444F;  // 'CGDO'
 constexpr int kTagValve     = 0x43475650;  // 'CGVP'
 constexpr int kTagSpit      = 0x43475346;  // 'CGSF'
 
-// The game's own refusal hint (lib_C::addHint), the type the cremator's "The door is open" refusal uses.
+// A refusal hint through the game's own lib_C::addHint, type 1 as the cremator's "The door is open" and the gas can's
+// "Gas tanks is empty". The game has no hint for a refused valve (its valve press toggles `pouring` and says nothing),
+// so the text is ours: what the player did, and who pours.
 constexpr uint8_t kHintRefusal = 1;
-constexpr const wchar_t* kValveHint = L"The valve cannot be opened from here";
+constexpr const wchar_t* kValveHint = L"Turning the valve does nothing: the host pours the fuel";
 
 // A valve press is one line a burst: the next press within this gap belongs to the same burst.
 constexpr uint64_t kBurstGapMs = 3000;
