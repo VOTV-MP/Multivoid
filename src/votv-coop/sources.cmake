@@ -174,7 +174,6 @@ set(VOTVCOOP_SOURCES
     src/coop/player/ragdoll_gate.cpp
     src/coop/player/death_revive.cpp
     src/coop/player/shelter_spot.cpp
-    src/coop/player/cremation.cpp
     src/coop/player/revive_protection.cpp
     src/coop/player/run_end_travel.cpp
     src/coop/player/skin_preview.cpp
