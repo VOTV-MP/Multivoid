@@ -121,9 +121,28 @@ constexpr int    kLagSteps = 10;
 
 int g_fails = 0;
 
-void Check(bool ok, const char* step, const char* what) {
+bool Check(bool ok, const char* step, const char* what) {
     UE_LOGI("mannequin-drill: step %s %s %s", step, ok ? "PASS" : "FAIL", what);
     if (!ok) ++g_fails;
+    return ok;
+}
+
+// A measured failure is the verdict: the run ends at its step, so that no later precondition can turn it into an INVALID. The
+// host says it; a client's step marks a word the host turns into this (AwaitClient). Returns false for the caller to return.
+bool Fail(const char* step, const char* what) {
+    coop::rig_verdict::Say(kTag, Outcome::Fail, "step %s: %s", step, what);
+    return false;
+}
+
+// The client's word at a mark: "ok", or "fail <step> <what>", a step it measured to fail. False when the run must end: a failure
+// said as the verdict here, or no word within the bound (INVALID, said by the wait).
+bool AwaitClient(const char* mark, int seconds) {
+    std::string text;
+    if (!PS::AwaitText(mark, text, seconds)) return false;
+    if (text.rfind("fail", 0) != 0) return true;
+    UE_LOGW("mannequin-drill: the client measured a failure: %s", text.c_str());
+    coop::rig_verdict::Say(kTag, Outcome::Fail, "client %s", text.c_str());
+    return false;
 }
 
 double NowSec() {
@@ -377,7 +396,7 @@ bool HostPhaseA(void*& a, std::string& keyA) {
     if (hostCm <= kRangeCm + kOutOfRangeMarginCm)
         return Invalid("the host stands within the walker's range at its birth: the host must enter it first, from outside");
     PS::Mark("walker_a", keyA);
-    if (!PS::Await("copy_a", 60)) return false;
+    if (!AwaitClient("copy_a", 60)) return false;
 
     // The client waits where it stands, at the KPP gate beside the host's start and out of the walker's range, so it is never A's
     // target; the host walks, staged or not (it is the intended target), and the walker hunts it from the moment it crosses the
@@ -446,7 +465,7 @@ bool HostPhaseA(void*& a, std::string& keyA) {
     if (f.n < kMinComparedReadings) return Invalid("step 2 had too few copy readings in the host's window to compare");
     char what[128];
     std::snprintf(what, sizeof(what), "the client's copy follows the host's walker (worst %.0f cm, %zu readings)", f.maxCm, f.n);
-    Check(f.maxCm <= kFollowTolCm, "2", what);
+    if (!Check(f.maxCm <= kFollowTolCm, "2", what)) return Fail("2", what);
     return true;
 }
 
@@ -473,7 +492,7 @@ bool HostPhaseB(void* a, void*& b, std::string& keyB) {
     if (hostCm <= kRangeCm + kOutOfRangeMarginCm)
         return Invalid("the host stands within walker B's range at its birth: the client must be the only player in it");
     PS::Mark("walker_b", keyB);
-    if (!PS::Await("copy_b", 60)) return false;
+    if (!AwaitClient("copy_b", 60)) return false;
     if (!PS::Await("client_close", kWalkWaitS)) return false;
     if (!WaitGT("walker B hunts the client", kTargetBoundS, [&] { return Hunts(b, kClientSlot); }, false))
         return Invalid("walker B does not hunt the client");
@@ -513,8 +532,9 @@ bool HostPhaseB(void* a, void*& b, std::string& keyB) {
     bool looking = false;
     OnGameThread([&] { looking = AC::ReadWalkerLooking(b); });
     UE_LOGI("mannequin-drill: step 3 freeze: stopped=%d looking=%d", stopped ? 1 : 0, looking ? 1 : 0);
-    Check(stopped, "3", "the host's walker stops while its target's camera is on it");
-    if (stopped && !looking) return Invalid("walker B stood still without its looking flag set: it stopped for another reason");
+    const char* const stopWhat = "the host's walker stops while its target's camera is on it";
+    if (!Check(stopped, "3", stopWhat)) return Fail("3", stopWhat);
+    if (!looking) return Invalid("walker B stood still without its looking flag set: it stopped for another reason");
 
     // The client looks away: the walker moves again when its own timer_saw clears `saw`, within the timer's bound and a margin.
     PS::Mark("look_away");
@@ -530,7 +550,7 @@ bool HostPhaseB(void* a, void*& b, std::string& keyB) {
     }, false);
     char what[160];
     std::snprintf(what, sizeof(what), "the host's walker moves again within %d s of its target looking away", kReleaseBoundS);
-    Check(goes, "3", what);
+    if (!Check(goes, "3", what)) return Fail("3", what);
     return true;
 }
 
@@ -564,7 +584,13 @@ bool RunSpawner() {
     return ue_wrap::Call(ticker, f);
 }
 
-bool CheckRefusal() {
+// A step this client measured to fail ends its run: the host is told through `mark` and says the verdict.
+bool FailedToHost(const char* mark, const char* step, const char* what) {
+    PS::Mark(mark, std::string("fail step ") + step + " " + what);
+    return false;
+}
+
+bool CheckRefusal(const char* mark) {
     uint64_t before = 0, after = 0;
     bool ran = false;
     OnGameThread([&] {
@@ -576,12 +602,12 @@ bool CheckRefusal() {
     char what[128];
     std::snprintf(what, sizeof(what), "this client's mannequin spawner body is refused (%llu -> %llu)",
                   static_cast<unsigned long long>(before), static_cast<unsigned long long>(after));
-    Check(after > before, "1", what);
+    if (!Check(after > before, "1", what)) return FailedToHost(mark, "1", what);
     return true;
 }
 
 // The host's walker `key` has its copy here, once (step 2); a copy that never came is the lane's failure, said at once.
-bool AwaitCopy(const std::string& key, const char* label) {
+bool AwaitCopy(const std::string& key, const char* label, const char* mark) {
     int n = 0;
     const bool there = WaitGT("the walker's copy stands here", 60, [&] { return ByKey(key, &n) != nullptr; }, false);
     if (!there) {
@@ -592,20 +618,20 @@ bool AwaitCopy(const std::string& key, const char* label) {
     OnGameThread([&] { ByKey(key, &n); });
     char what[128];
     std::snprintf(what, sizeof(what), "this client holds exactly one copy of walker %s for its key (%d)", label, n);
-    Check(n == 1, "2", what);
+    if (!Check(n == 1, "2", what)) return FailedToHost(mark, "2", what);
+    PS::Mark(mark, "ok");
     return true;
 }
 
 bool ClientBody() {
     if (!HostPuppetUp()) return Invalid("this client's world or the host's puppet never came up");
     if (!harness::autotest::meet::WalkToHost(kTag)) return Invalid("this client could not reach the host");
-    if (!CheckRefusal()) return false;
-    PS::Mark("client_ready");
+    if (!CheckRefusal("client_ready")) return false;
+    PS::Mark("client_ready", "ok");
 
     // Walker A: the host hunts it. This client walks first and stops outside its range, so it is never its target.
     std::string keyA;
-    if (!PS::AwaitText("walker_a", keyA, 240) || !AwaitCopy(keyA, "A")) return false;
-    PS::Mark("copy_a");
+    if (!PS::AwaitText("walker_a", keyA, 240) || !AwaitCopy(keyA, "A", "copy_a")) return false;
     // It does not walk: it stands at the KPP gate, out of range, with its view turned away from the copy.
     void* copy = nullptr;
     OnGameThread([&] { Aim(ByKey(keyA), false); });
@@ -620,8 +646,7 @@ bool ClientBody() {
     // Walker B: this client is its target. It walks to the host's open spot, last, with its view turned away; then its camera goes on
     // the copy, and off it.
     std::string keyB;
-    if (!PS::AwaitText("walker_b", keyB, 2 * kWalkWaitS) || !AwaitCopy(keyB, "B")) return false;
-    PS::Mark("copy_b");
+    if (!PS::AwaitText("walker_b", keyB, 2 * kWalkWaitS) || !AwaitCopy(keyB, "B", "copy_b")) return false;
     // It walks to the spot the host stood at for walker A: in range of the spawn point and outside the house, where the copy can be
     // seen (a bed anchor stands inside it, behind walls).
     std::string spotText;
@@ -700,7 +725,7 @@ void RunHost() {
     void* a = nullptr;
     void* b = nullptr;
     std::string keyA, keyB;
-    const bool ran = PS::Await("client_ready", 480) && HostPhaseA(a, keyA) && HostPhaseB(a, b, keyB);
+    const bool ran = AwaitClient("client_ready", 480) && HostPhaseA(a, keyA) && HostPhaseB(a, b, keyB);
     PS::Mark("host_done");
     UE_LOGI("mannequin-drill: DONE on the host fails=%d ran=%d", g_fails, ran ? 1 : 0);
     if (!ran) return;  // the verdict, INVALID or FAIL, was said where the drill stopped
