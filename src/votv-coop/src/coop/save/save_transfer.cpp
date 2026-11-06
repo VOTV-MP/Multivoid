@@ -92,6 +92,8 @@ HostStream g_host[coop::net::kMaxPeers];
 coop::roster_ledger::PerSlotState<bool> g_asked;
 // Per slot, whether its world was taken for this connection's join (WorldTakenFor).
 bool g_worldTaken[coop::net::kMaxPeers] = {};
+// Per slot, the captures begun since the process started: never cleared, so a reader names one capture by its count.
+uint32_t g_worldCaptures[coop::net::kMaxPeers] = {};
 
 // Chunks per TickHost pass per slot: a ~13 MB/s ceiling at 60 Hz; the send buffer's backpressure
 // (a failed send stops the pass) is the real pacer on a slower link. Divergence from MTA, which ships
@@ -139,6 +141,7 @@ void BeginStreamFromBlob_(int slot, HostStream& hs, std::vector<uint8_t>&& bytes
     hs.blob = std::move(bytes);  // already framed (identity sidecar prepended) by the caller
     hs.blobReady = true;
     g_worldTaken[slot] = true;
+    ++g_worldCaptures[slot];
     hs.nextChunk = 0;
     hs.chunkCount = static_cast<uint32_t>(
         (hs.blob.size() + coop::net::kSaveChunkBytes - 1) / coop::net::kSaveChunkBytes);
@@ -773,6 +776,10 @@ void OnDisconnect() {
 
 bool WorldTakenFor(int peerSlot) {
     return peerSlot >= 1 && peerSlot < coop::net::kMaxPeers && g_worldTaken[peerSlot];
+}
+
+uint32_t WorldCapturesFor(int peerSlot) {
+    return peerSlot >= 1 && peerSlot < coop::net::kMaxPeers ? g_worldCaptures[peerSlot] : 0;
 }
 
 }  // namespace coop::save_transfer

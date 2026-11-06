@@ -222,9 +222,11 @@ void* NewBranch(const std::vector<void*>& before) {
 }
 
 // A joiner's world is taken: from there the host's changes reach it only through the lanes' own replay, so a branch ended now is
-// one the joiner's load carries and the host lacks.
-void CutAfterWorldTaken(int budgetSeconds, const char* what) {
-    WaitGT("the host took the joiner's world", budgetSeconds, [] { return coop::save_transfer::WorldTakenFor(1); });
+// one the joiner's load carries and the host lacks. The world is the joiner's own when the slot's capture count passes
+// `capturesBefore`, the count an earlier occupant left; the slot's taken flag alone still stands from that occupant.
+void CutAfterWorldTaken(int budgetSeconds, const char* what, uint32_t capturesBefore) {
+    WaitGT("the host took the joiner's world", budgetSeconds,
+           [capturesBefore] { return coop::save_transfer::WorldCapturesFor(1) > capturesBefore; });
     bool cut = false;
     OnGameThread([&] { cut = CutBranch(); });
     Check(cut, what);
@@ -249,7 +251,9 @@ void HostBody(int& rejoinFails, int& clientFails) {
         Check(CountOf(L"hexahiveSPawner_C") == 0, "the hive's spawner destroyed itself");
     });
 
-    CutAfterWorldTaken(480, "the host ended a branch after the joiner's world was taken");
+    CutAfterWorldTaken(480, "the host ended a branch after the joiner's world was taken", 0);
+    uint32_t life1Captures = 0;
+    OnGameThread([&] { life1Captures = coop::save_transfer::WorldCapturesFor(1); });
     if (!Await("client_in", 480)) return;
     Audit audit;
     OnGameThread([&] { audit = ReadAudit(); });
@@ -296,7 +300,7 @@ void HostBody(int& rejoinFails, int& clientFails) {
         rejoinFails = 1;
         return;
     }
-    CutAfterWorldTaken(400, "the host ended a branch after the rejoiner's world was taken");
+    CutAfterWorldTaken(400, "the host ended a branch after the rejoiner's world was taken", life1Captures);
     if (!Await("rejoin_ready", 400)) return;
     Audit second;
     OnGameThread([&] { second = ReadAudit(); });

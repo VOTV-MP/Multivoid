@@ -72,6 +72,11 @@ void CancelForSlot(int peerSlot);
 // replays at its world-ready. False again when the slot leaves. Host, game thread.
 bool WorldTakenFor(int peerSlot);
 
+// How many world captures the host has begun for `peerSlot` since the process started. Never reset: a reader
+// that holds the count of an earlier occupant's capture waits for a larger one to name the next capture
+// itself, which WorldTakenFor cannot do while the slot's old flag still stands. Host, game thread.
+uint32_t WorldCapturesFor(int peerSlot);
+
 // Client side.
 
 enum class ClientState : int {
