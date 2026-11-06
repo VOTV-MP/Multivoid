@@ -59,13 +59,9 @@ enum class TailVerdict : uint8_t { Ok, Malformed, Unavailable };
 
 // The tail's class must be of the floppy family by ClassByName (hostile input) and must EQUAL the class `slot`'s hand
 // lane announced, judged by hand_history at the command's arrival `arrivalMs` with the lane's own pace as its grace, and
-// its leaf values must be ones a game disc can hold (DiscLeafOk, against the class default). `why` names a Malformed.
+// its leaf values must be ones a game disc can hold (floppy_disc::DiscLeafOk, against the class default). `why` names a
+// Malformed.
 TailVerdict JudgeTail(const ue_wrap::save_record::SaveRecord& tail, uint8_t slot, uint64_t arrivalMs, const char** why);
-
-// Pure: the disc record's leaf values the Omega reads are ones a game disc can hold: `readWrites` (ints[0][0]) within
-// 0..`maxReadWrites`, and the `data` array (strings[0]) present; its size is already held by the record's byte cap. False,
-// with `why` naming it, otherwise.
-bool DiscLeafOk(const ue_wrap::save_record::SaveRecord& r, int32_t maxReadWrites, const char** why);
 
 // The Omega's own gates of get_reports, read before anything is spawned. HasDisc: it already holds one, so the verb
 // skips the read and runs as the game runs it, with no carry. Busy: `animation`, `server` or `remoteControl` is set, so

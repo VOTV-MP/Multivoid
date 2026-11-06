@@ -50,7 +50,7 @@ void RunSelftest();                               // the pure decisions, once pe
 // Left (a waiting put ended with no verdict: its prop or container gone, the prop out of the box or no longer a put) and LatchEvicted (a refusal latch fell out of a full table).
 enum class Tally : uint8_t { TargetGone, BadCommit, GrantUnsent, QueueFullUnready, BadSender, ShortPayload,
                              Malformed, UnknownFamilyUnready, RestoreOwed, WaitExpired, ReservationLapsed, LateDone,
-                             LateDoneLost, PutNoName, PutClassUnresolved, PutNotProp, PutFiltered, PutIntoMailbox,
+                             LateDoneLost, PutNoName, PutClassUnresolved, PutNotProp, PutBadLeaf, PutFiltered, PutIntoMailbox,
                              PutRowRefuses, PutUnknownName, PutDoneLost, OwedLost, TakeArmed, PutOverlapFiled,
                              PutOverlapUnarmed, PutOverlapReach, PutOverlapUnread, PutOverlapHeld, PutOverlapFit,
                              PutOverlapGate, PutOverlapGap, PutOverlapWaitDropped, PutOverlapLeft, PutOverlapLatchEvicted, kCount };
@@ -102,6 +102,7 @@ struct PutInputs {
     bool slowed = false;                      // the sender let a reservation lapse and is slowed
     bool nameOk = true;                       // the record carries names[0][0]
     bool classResolved = true, propClass = true;
+    bool leafOk = true;                       // a floppy disc's record holds values a game disc can (floppy_disc::DiscLeafOk)
     bool filterRead = true, filterHolds = false;
     bool mailboxContainer = false;            // the container is a mailbox and the record a container
     bool rowRead = true, rowRefuses = false;  // the list_props row is readable; a row says not collectable or heavy
@@ -112,7 +113,7 @@ struct PutInputs {
 };
 
 // Order: !worldReady -> Wait; holdsWait -> Wait; reach NoBody -> Wait; container Gone -> Gone; NotReady -> Wait;
-// Unreachable -> Reach; !termsRead -> Wait; locked -> Locked; slowed -> Lapsed; !nameOk, !classResolved, !propClass
+// Unreachable -> Reach; !termsRead -> Wait; locked -> Locked; slowed -> Lapsed; !nameOk, !classResolved, !propClass, !leafOk
 // -> Refused; !filterRead -> Wait; filterHolds -> Refused; mailboxContainer -> Refused; !rowRead -> Wait; rowRefuses
 // -> Refused; !volumeRead -> Wait; !volumeKnown -> Refused (the name is not in the game's table, whatever the
 // container); countAtCap, bytesOver -> NoSpace; unless infinite: currVol + volume > maxVol -> NoSpace; else Grant.

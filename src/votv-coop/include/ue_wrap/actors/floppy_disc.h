@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include "ue_wrap/actors/save_record.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -41,6 +43,12 @@ bool ReadDiscContent(void* discActor, DiscContent& out);
 // The disc class's default `readWrites` (prop_floppyDisc_C's default object, the most a disc holds; it only counts down, and
 // no skin overrides it), read once. False until the class loads. Game thread.
 bool ReadDefaultReadWrites(int32_t& out);
+
+// Pure: a disc record's leaf values are ones a game disc can hold: `readWrites` (ints[0][0]) within 0..`maxReadWrites` (the
+// class default, above), and the `data` array (strings[0]) present; its size is held by the record's own byte cap. False,
+// with `why` naming the first failure, otherwise. The judge of a record that came off the wire: a put into a container and
+// a get_reports' carried disc.
+bool DiscLeafOk(const ue_wrap::save_record::SaveRecord& r, int32_t maxReadWrites, const char** why);
 
 bool WriteDiscContent(void* discActor, const DiscContent& in);
 

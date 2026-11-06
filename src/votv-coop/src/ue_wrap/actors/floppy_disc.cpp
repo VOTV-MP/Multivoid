@@ -75,6 +75,22 @@ bool ReadDefaultReadWrites(int32_t& out) {
     return true;
 }
 
+bool DiscLeafOk(const save_record::SaveRecord& r, int32_t maxReadWrites, const char** why) {
+    if (r.ints.empty() || r.ints[0].empty()) {
+        if (why) *why = "record has no readWrites";
+        return false;
+    }
+    if (r.ints[0][0] < 0 || r.ints[0][0] > maxReadWrites) {
+        if (why) *why = "record readWrites is past what a disc holds";
+        return false;
+    }
+    if (r.strings.empty()) {
+        if (why) *why = "record has no data array";
+        return false;
+    }
+    return true;
+}
+
 bool WriteDiscContent(void* discActor, const DiscContent& in) {
     if (!discActor || !EnsureResolved()) return false;
     uint8_t* p = reinterpret_cast<uint8_t*>(discActor);

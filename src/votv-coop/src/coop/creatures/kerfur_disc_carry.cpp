@@ -122,28 +122,12 @@ TailVerdict JudgeTail(const SR::SaveRecord& tail, uint8_t slot, uint64_t arrival
         if (why) *why = "the disc class default is not read yet";
         return TailVerdict::Unavailable;
     }
-    if (!DiscLeafOk(tail, maxReadWrites, why)) return TailVerdict::Malformed;
+    if (!ue_wrap::floppy_disc::DiscLeafOk(tail, maxReadWrites, why)) return TailVerdict::Malformed;
     if (!coop::hand_history::HeldWithin(slot, tail.className.c_str(), kHandLagMs, arrivalMs)) {
         if (why) *why = "the hand lane does not show that disc";
         return TailVerdict::Unavailable;
     }
     return TailVerdict::Ok;
-}
-
-bool DiscLeafOk(const SR::SaveRecord& r, int32_t maxReadWrites, const char** why) {
-    if (r.ints.empty() || r.ints[0].empty()) {
-        if (why) *why = "tail has no readWrites";
-        return false;
-    }
-    if (r.ints[0][0] < 0 || r.ints[0][0] > maxReadWrites) {
-        if (why) *why = "tail readWrites is past what a disc holds";
-        return false;
-    }
-    if (r.strings.empty()) {
-        if (why) *why = "tail has no data array";
-        return false;
-    }
-    return true;
 }
 
 Gate ReadGate(void* omega) {

@@ -8,10 +8,9 @@
 #include "coop/creatures/kerfur_command_wire.h"
 
 #include "coop/creatures/kerfur_command.h"
-#include "coop/creatures/kerfur_disc_carry.h"
 #include "coop/items/save_record_wire.h"
 #include "coop/props/prop_record_wire.h"
-
+#include "ue_wrap/actors/floppy_disc.h"
 #include "ue_wrap/core/log.h"
 
 #include <cstring>
@@ -162,18 +161,18 @@ bool RunSelftest() {
 
         // ---- the disc record's leaf values ----
         const char* why = "";
-        check(coop::kerfur_disc_carry::DiscLeafOk(Disc(32), 32, &why), "leaf: readWrites at the class default is a disc");
-        check(coop::kerfur_disc_carry::DiscLeafOk(Disc(0), 32, &why), "leaf: readWrites of zero is a spent disc");
-        check(!coop::kerfur_disc_carry::DiscLeafOk(Disc(33), 32, &why), "leaf: readWrites past the class default");
-        check(!coop::kerfur_disc_carry::DiscLeafOk(Disc(-1), 32, &why), "leaf: a negative readWrites");
-        check(!coop::kerfur_disc_carry::DiscLeafOk(Disc(2147483647), 32, &why), "leaf: readWrites at INT_MAX");
+        check(ue_wrap::floppy_disc::DiscLeafOk(Disc(32), 32, &why), "leaf: readWrites at the class default is a disc");
+        check(ue_wrap::floppy_disc::DiscLeafOk(Disc(0), 32, &why), "leaf: readWrites of zero is a spent disc");
+        check(!ue_wrap::floppy_disc::DiscLeafOk(Disc(33), 32, &why), "leaf: readWrites past the class default");
+        check(!ue_wrap::floppy_disc::DiscLeafOk(Disc(-1), 32, &why), "leaf: a negative readWrites");
+        check(!ue_wrap::floppy_disc::DiscLeafOk(Disc(2147483647), 32, &why), "leaf: readWrites at INT_MAX");
         {
             SR::SaveRecord r = Disc(5);
             r.ints.clear();
-            check(!coop::kerfur_disc_carry::DiscLeafOk(r, 32, &why), "leaf: a record with no ints group");
+            check(!ue_wrap::floppy_disc::DiscLeafOk(r, 32, &why), "leaf: a record with no ints group");
             r = Disc(5);
             r.strings.clear();
-            check(!coop::kerfur_disc_carry::DiscLeafOk(r, 32, &why), "leaf: a record with no data array");
+            check(!ue_wrap::floppy_disc::DiscLeafOk(r, 32, &why), "leaf: a record with no data array");
         }
 
         verdict = check.pass == check.total;

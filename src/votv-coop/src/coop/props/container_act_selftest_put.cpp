@@ -256,6 +256,11 @@ void RunPutSelftest(Checks& check) {
         check(H::DecidePut(p, &why) == H::Verdict::Refused && why == Tally::PutNotProp,
               "put: a class that is no prop is refused, counted put_not_prop");
         p = putReady();
+        p.leafOk = false;
+        p.filterHolds = true;
+        check(H::DecidePut(p, &why) == H::Verdict::Refused && why == Tally::PutBadLeaf,
+              "put: a floppy record past what a disc holds is refused, counted put_bad_leaf");
+        p = putReady();
         p.filterRead = false;
         p.mailboxContainer = true;
         check(H::DecidePut(p) == H::Verdict::Wait, "put: a filter that did not read waits");
@@ -602,7 +607,8 @@ void RunPutSelftest(Checks& check) {
         w = PutInputsReady();
         w.base.holdsWait = true;
         check(std::strcmp(H::PutWaitCause(w), "a hold stands in its way") == 0, "wait-cause: a hold");
-        check(std::strcmp(TallyName(Tally::PutDoneLost), "put_done_lost") == 0 &&
+        check(std::strcmp(TallyName(Tally::PutBadLeaf), "put_bad_leaf") == 0 &&
+              std::strcmp(TallyName(Tally::PutDoneLost), "put_done_lost") == 0 &&
                   std::strcmp(TallyName(Tally::OwedLost), "owed_lost") == 0,
               "tally: the commit re-check's and the owed give-up's names");
 

@@ -16,6 +16,7 @@
 #include "coop/props/container_slice_wire.h"
 
 #include "ue_wrap/actors/container_inventory.h"
+#include "ue_wrap/actors/floppy_disc.h"
 #include "ue_wrap/actors/prop_gather.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -99,6 +100,12 @@ void ReadPutInputs(uint8_t slot, uint32_t eid, const SR::SaveRecord& record, boo
     p.classResolved = cls != nullptr;
     p.propClass = SR::IsPropClass(cls);
     if (!p.classResolved || !p.propClass) return;
+    // A floppy disc's leaf values are the client's word, as a carried disc's are: held to what a game disc can hold.
+    int32_t maxReadWrites = 0;
+    if (ue_wrap::floppy_disc::IsDiscClass(cls) && ue_wrap::floppy_disc::ReadDefaultReadWrites(maxReadWrites)) {
+        p.leafOk = ue_wrap::floppy_disc::DiscLeafOk(record, maxReadWrites, nullptr);
+        if (!p.leafOk) return;
+    }
     p.filterRead = ci::FilterHolds(ci::InventoryOf(actor), cls, p.filterHolds);
     if (!p.filterRead || p.filterHolds) return;
     p.mailboxContainer = t.ownerIsMailbox && ci::IsContainerRecord(record);
@@ -313,6 +320,7 @@ Verdict DecidePut(const PutInputs& in, Tally* refusal) {
     if (!in.nameOk) { why = Tally::PutNoName; return Verdict::Refused; }
     if (!in.classResolved) { why = Tally::PutClassUnresolved; return Verdict::Refused; }
     if (!in.propClass) { why = Tally::PutNotProp; return Verdict::Refused; }
+    if (!in.leafOk) { why = Tally::PutBadLeaf; return Verdict::Refused; }
     if (!in.filterRead) return Verdict::Wait;
     if (in.filterHolds) { why = Tally::PutFiltered; return Verdict::Refused; }
     if (in.mailboxContainer) { why = Tally::PutIntoMailbox; return Verdict::Refused; }

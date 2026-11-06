@@ -727,7 +727,7 @@ const char* TallyName(Tally t) {
     static const char* const kNames[] = {"target_gone", "bad_commit", "grant_unsent", "queue_full_unready", "bad_sender",
                                          "short_payload", "malformed", "unknown_family_unready", "restore_owed",
                                          "wait_expired", "reservation_lapsed", "late_done", "late_done_lost",
-                                         "put_no_name", "put_class_unresolved", "put_not_prop", "put_filtered",
+                                         "put_no_name", "put_class_unresolved", "put_not_prop", "put_bad_leaf", "put_filtered",
                                          "put_into_mailbox", "put_row_refuses", "put_unknown_name", "put_done_lost",
                                          "owed_lost", "take_armed", "put_overlap_filed", "put_overlap_unarmed",
                                          "put_overlap_reach", "put_overlap_unread", "put_overlap_held", "put_overlap_fit",
