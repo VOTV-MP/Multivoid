@@ -245,11 +245,6 @@ void HostPass(coop::net::Session& s) {
         void* obj = it->first;
         Known& k = it->second;
         k.pendingSlots &= connected;
-        if (!R::IsLiveByIndex(obj, k.index)) {  // a death the listener has not delivered yet
-            Retire(k);
-            it = g_known.erase(it);
-            continue;
-        }
         ++it;
         if (!k.placed && !ReadPlace(obj, k)) {
             again = true;

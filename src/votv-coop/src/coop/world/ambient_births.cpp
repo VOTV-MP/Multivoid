@@ -2,6 +2,8 @@
 
 #include "coop/world/ambient_births.h"
 
+#include "coop/element/death_seam.h"
+
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -11,6 +13,7 @@
 namespace coop::ambient_births {
 namespace {
 
+namespace DS = coop::element::death_seam;
 namespace OI = ue_wrap::object_index;
 namespace R = ue_wrap::reflection;
 
@@ -75,10 +78,28 @@ void OnCreated(void*, void* obj, void* cls, int32_t index) {
     if (g_active && Recognise(cls, c)) Push(Event{obj, index, Kind::Birth, c});
 }
 
-// The object may be freed by now: only its pointer is kept.
-void OnDeleted(void*, void* obj, void* cls, int32_t index) {
-    Class c;
-    if (g_active && Recognise(cls, c)) Push(Event{obj, index, Kind::Death, c});
+// An actor's end of play, from the death seam's drain: the engine ends it at EndPlay, well before the object is freed,
+// and the free is the moment the object index announces, at the next collection. One handler per class, as the seam's
+// handlers carry no context. The object may be marked for death: only its pointer and slot are kept.
+template <Class C>
+void OnEnd(const DS::ActorEnd& end) {
+    if (g_active) Push(Event{end.actor, end.actorIndex, Kind::Death, C});
+}
+
+// The four class subscriptions, asked again each pump until the seam installs and every class name resolves; then
+// never again (the seam's table has no unsubscribe).
+void SubscribeEnds() {
+    static bool s_all = false;
+    static bool s_one[kClasses] = {};
+    if (s_all || !DS::Install()) return;
+    const DS::ClassHandler handlers[kClasses] = {&OnEnd<Class::Tree>, &OnEnd<Class::Hole>, &OnEnd<Class::Branch>,
+                                                 &OnEnd<Class::Nest>};
+    bool all = true;
+    for (size_t i = 0; i < kClasses; ++i) {
+        if (!s_one[i]) s_one[i] = DS::SubscribeClass(kNames[i], handlers[i]);
+        all = all && s_one[i];
+    }
+    s_all = all;
 }
 
 void Ready(const Event& e) {
@@ -131,14 +152,15 @@ void SeedOne(void* ctx, void* obj, int32_t index) {
 
 }  // namespace
 
-// The session pump calls this every tick until the session ends: the listener is added once (the list has no remove)
-// and a session already recording returns at once.
+// The session pump calls this every tick until the session ends: the end subscriptions are asked until they take, the
+// listener is added once (the list has no remove) and a session already recording returns at once.
 void Install() {
+    SubscribeEnds();
     if (g_active) return;
     if (!g_listening) {
         g_raw.reserve(kCap);
         g_ready.reserve(kCap);
-        g_listening = OI::AddListener(OI::Listener{nullptr, &OnCreated, &OnDeleted});
+        g_listening = OI::AddListener(OI::Listener{nullptr, &OnCreated, nullptr});
         if (!g_listening) {
             static bool said = false;
             if (!said) UE_LOGE("ambient_births: the object index's listener list is full -- no ambient actor is announced");

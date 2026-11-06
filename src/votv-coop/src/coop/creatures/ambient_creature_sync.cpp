@@ -150,10 +150,6 @@ void HostTick(coop::net::Session& s) {
     bool held = false;
     for (auto it = g_trees.begin(); it != g_trees.end();) {
         Tree& t = it->second;
-        if (!R::IsLiveByIndex(it->first, t.index)) {
-            it = g_trees.erase(it);
-            continue;
-        }
         if (t.dirty && !SendTree(s, it->first, t)) held = true;
         ++it;
     }
