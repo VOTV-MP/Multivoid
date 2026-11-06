@@ -42,6 +42,10 @@ using Clock  = std::chrono::steady_clock;
 // A press on a world food: the eat is its action branch. A bite from the hand is another function, on a food this lane
 // leaves alone.
 UE_FACT_FN(kRowAction, "prop_food_sync", L"prop_food_C", L"actionOptionIndex", Declared);
+// The two bodies that write the player's droppedItem: simulateDrop (a throw, a place, the inventory's drop) and
+// forceDrop (a faint, a creature's grab). Each spawns the dropped food anew from the hand's data.
+UE_FACT_FN(kRowSimulateDrop, "prop_food_sync", L"mainPlayer_C", L"simulateDrop", Declared);
+UE_FACT_FN(kRowForceDrop, "prop_food_sync", L"mainPlayer_C", L"forceDrop", Declared);
 constexpr int kTag = 0x464F4F44;  // 'FOOD'
 
 constexpr auto   kPoll = std::chrono::milliseconds(500);
@@ -57,6 +61,7 @@ constexpr int32_t kMaxUses = 1000;
 std::atomic<coop::net::Session*> g_session{nullptr};
 Clock::time_point g_nextPoll{};
 bool g_watched = false;
+bool g_dropWatched = false;
 
 std::vector<void*> g_classes;
 uint64_t g_classVersion = ~uint64_t{0};
@@ -82,7 +87,7 @@ std::unordered_map<int, Clock::time_point> g_lastBite;  // HOST: by slot
 ue_wrap::CachedObjRef g_biteFood;
 int32_t g_biteUses = 0;
 
-// The hand here, each tick: what it holds, and the last thing the player dropped.
+// The hand here, each tick: what it holds. And the last thing the player dropped, read when a drop body returns.
 ue_wrap::CachedObjRef g_held;
 ue_wrap::CachedObjRef g_lastDropped;
 F::Condition g_handSent;
@@ -294,22 +299,29 @@ void SendRelease(coop::net::Session& s, void* actor) {
     UE_LOGI("prop_food_sync: let go of '%ls' here, uses=%d -- FoodRelease sent", key.c_str(), now.uses);
 }
 
-// Every tick, since a thrown food's condition is the hand's only until the host's first value lands on it.
+// A drop body has returned on the local player: the food it spawned is the player's droppedItem, and its condition is
+// the hand's only until the host's first value lands on it. The two bodies are Blueprint functions, so the script
+// gate sees them on every route; the field itself signals nothing.
+void OnDropPost(const sg::Call& c) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;
+    void* const local = coop::players::Registry::Get().Local();
+    if (!local || c.object != local) return;
+    void* const dropped = ue_wrap::engine::ReadMainPlayerDroppedItem(local);
+    if (!dropped || g_lastDropped.Is(dropped)) return;  // a drop that spawned nothing leaves the older one named
+    g_lastDropped.Set(dropped);
+    if (F::IsFood(dropped)) SendRelease(*s, dropped);
+}
+
+// Every tick: the hand's food is read for FoodHand, which nothing signals (holding_actor is written by updateHold with
+// no seam of its own), and a hand that emptied with its food still alive is sent as a release.
 void TickHand(coop::net::Session& s) {
     void* const local = coop::players::Registry::Get().Local();
     if (!local) return;
     void* const hand = coop::hand_item::LocalHandActor();
     void* const food = F::IsFood(hand) ? hand : nullptr;
     void* const wasHeld = g_held.Get();
-    if (s.role() == coop::net::Role::Client) {
-        // A throw spawns a new actor and keeps it as droppedItem; a place releases the hand's own.
-        void* const dropped = ue_wrap::engine::ReadMainPlayerDroppedItem(local);
-        if (dropped && !g_lastDropped.Is(dropped)) {
-            g_lastDropped.Set(dropped);
-            if (F::IsFood(dropped)) SendRelease(s, dropped);
-        }
-        if (wasHeld && wasHeld != food) SendRelease(s, wasHeld);
-    }
+    if (s.role() == coop::net::Role::Client && wasHeld && wasHeld != food) SendRelease(s, wasHeld);
     if (wasHeld != food) {
         g_held.Set(food);
         g_handSentAny = false;
@@ -330,6 +342,11 @@ void TickHand(coop::net::Session& s) {
 }
 
 void WatchWhenLoaded() {
+    if (!g_dropWatched) {  // a refusal is logged once by the gate itself, and retried here
+        g_dropWatched = sg::WatchName(kRowSimulateDrop, kTag, nullptr, &OnDropPost) &&
+                        sg::WatchName(kRowForceDrop, kTag, nullptr, &OnDropPost);
+        if (g_dropWatched) UE_LOGI("prop_food_sync: the watch on the player's drop is registered");
+    }
     if (g_watched) return;
     const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowAction);
     if (!fn) return;  // the class loads with the world
