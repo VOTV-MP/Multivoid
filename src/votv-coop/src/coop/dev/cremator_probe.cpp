@@ -12,6 +12,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
+#include "coop/session/rig_verdict.h"
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/vitals.h"
@@ -169,6 +170,7 @@ void WalkTick() {
     if (state != 1) {
         char why[160];
         std::snprintf(why, sizeof(why), "walk %s lastToFirebox=%.0f", g_walk->goal.failReason, g_lastToFireboxCm);
+        coop::rig_verdict::Say("cremator-probe", coop::rig_verdict::Outcome::Invalid, "the walk failed: %s", why);
         Fail(why);
         return;
     }

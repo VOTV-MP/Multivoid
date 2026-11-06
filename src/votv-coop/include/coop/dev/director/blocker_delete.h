@@ -23,4 +23,8 @@ namespace coop::director {
 // to its detour. `at` is the leg's hit point and `why` names the leg in the log line.
 bool DeleteBlocker(void* player, void* prop, const ue_wrap::FVector& at, const char* why);
 
+// True when VOTVCOOP_DRILL_DELETE=0, so a false from DeleteBlocker means "off" and not "keyless prop" or "bound
+// spent". A goal that meets a blocker it was told not to remove fails on it at once.
+bool BlockerDeleteOff();
+
 }  // namespace coop::director

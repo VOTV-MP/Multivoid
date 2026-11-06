@@ -15,6 +15,7 @@
 #include "coop/dev/director/aim_fan.h"
 #include "coop/dev/director/director.h"
 #include "coop/player/players_registry.h"
+#include "coop/session/rig_verdict.h"
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/script_gate.h"
@@ -244,8 +245,11 @@ bool WalkTo(const ue_wrap::FVector& to, const char* what) {
     DR::ControlManager mgr;
     DR::AddWalkToProcesses(mgr, goal);
     const bool reached = mgr.Run(goal, budget) && goal.reached;
-    if (!reached)
+    if (!reached) {
         UE_LOGW("cremator-drill: VERDICT ABORT -- the client did not reach %hs (%hs)", what, goal.failReason);
+        coop::rig_verdict::Say("cremator-drill", coop::rig_verdict::Outcome::Invalid, "the walk failed: %s",
+                               goal.failReason);
+    }
     return reached;
 }
 

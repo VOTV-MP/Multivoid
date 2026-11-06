@@ -19,9 +19,11 @@ constexpr int kMaxDeletes = 6;   // props deleted per process: a pile of boxes, 
 int g_deletes = 0;
 bool g_boundSaid = false;
 
+}  // namespace
+
 // VOTVCOOP_DRILL_DELETE=0: a blocking prop is left to the detour, for a run that measures the walk against its props.
 // Not a config row (as the walk stage's switch is not), so the process logs its effective value once.
-bool DeletingOff() {
+bool BlockerDeleteOff() {
     static const bool s = [] {
         const std::string v = coop::config::ReadEnv("VOTVCOOP_DRILL_DELETE");
         const bool off = (v == "0");
@@ -32,10 +34,8 @@ bool DeletingOff() {
     return s;
 }
 
-}  // namespace
-
 bool DeleteBlocker(void* /*player*/, void* prop, const ue_wrap::FVector& at, const char* why) {
-    if (DeletingOff() || !prop) return false;
+    if (BlockerDeleteOff() || !prop) return false;
     if (g_deletes >= kMaxDeletes) {
         if (!g_boundSaid) {
             g_boundSaid = true;

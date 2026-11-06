@@ -36,6 +36,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cwctype>
 #include <memory>
 #include <string>
@@ -53,6 +54,10 @@ float HorizDist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     const float dx = a.X - b.X, dy = a.Y - b.Y;
     return std::sqrt(dx * dx + dy * dy);
 }
+
+// The reason a walk ended on a prop it was not to delete: goal.failReason points here, so it outlives the process that
+// wrote it (a background walk's drill reads it after the worker is gone). One walker per process.
+char g_blockedReason[96];
 
 constexpr float kAdvanceCm      = 70.f;   // hug the path: advance only when CLOSE, so the straight line to
                                           // the next waypoint stays on the walkable navmesh segment (a wide
@@ -431,6 +436,17 @@ public:
                     UE_LOGW("director/Goto: persistent stuck (toPile=%.0f) at a blocker%s -- going round it (episode %d)",
                             toPile, onLeg ? " on the route's leg" : "", stuckEpisodes_);
                     return ProcStatus::Working;
+                }
+                if (onLeg && BlockerDeleteOff()) {
+                    // A run that switched the delete off measures the walk against its props: a prop it holds and
+                    // cannot go round ends the run here, where the deadline would end it minutes on.
+                    std::snprintf(g_blockedReason, sizeof(g_blockedReason), "blocked by %ls with the deleter off",
+                                  R::ClassNameOf(legProp).c_str());
+                    goal_.failed = true;
+                    goal_.failReason = g_blockedReason;
+                    UE_LOGW("director/Goto: persistent stuck (toPile=%.0f) -- %s, no way round -- the goal FAILS",
+                            toPile, g_blockedReason);
+                    return ProcStatus::Failed;
                 }
                 SayWhatBlocks(ctx, goal_.route, wp_ + 1, routeKind_, goal_.targetPos);
                 pathed_ = false; waypoints_.clear(); wp_ = 0; lastWp_ = 0; bestWp_ = 1e9f; bestPile_ = 1e9f;
