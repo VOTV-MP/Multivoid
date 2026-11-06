@@ -92,6 +92,12 @@ ue_wrap::script_gate::Verdict OnK2DestroyPre(void* context, void* /*srcObj*/, co
     return Verdict::Run;
 }
 
+bool ClientDestroyWindowOpen() {
+    auto* s = LoadSession();
+    return s && s->role() == coop::net::Role::Client &&
+           (coop::world_load_episode::InEpisode() || coop::world_load_episode::InReconcileWindow());
+}
+
 void DestroySeamBody(void* self, HandView handView) {
     auto* s = LoadSession();
     if (!self || !s) return;
@@ -148,9 +154,8 @@ void DestroySeamBody(void* self, HandView handView) {
     // window, of any kind: a junk broadcast costs more than a suppressed destroy, which the
     // bracket re-expresses. A keyed suppression in the reconcile window alone warns with a rate
     // latch, since it is the trace if a player's genuine destroy vanished.
-    const bool inLoadEpisode = coop::world_load_episode::InEpisode();  // read once
-    if (s->role() == coop::net::Role::Client &&
-        (inLoadEpisode || coop::world_load_episode::InReconcileWindow())) {
+    if (ClientDestroyWindowOpen()) {
+        const bool inLoadEpisode = coop::world_load_episode::InEpisode();
         const bool newSegment = !inLoadEpisode;
         if (newSegment && !keyless) {
             static uint32_t sWarned = 0;

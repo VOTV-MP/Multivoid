@@ -63,6 +63,12 @@ bool IsPerPlayerPropClass(const std::wstring& cls);
 // (remote_prop_spawn deferred divergence sweep). Game-thread only.
 void DestroyLocalProp(void* actor, bool deferred);
 
+// True on a client inside its world-load episode or the reconcile window: the destroy seam runs the local destroy
+// there and sends no PropDestroy, since the game rebuilds its props as churn. A deliberate destroy made inside
+// the window reaches no peer, so a caller that needs the peers told refuses to destroy while this is true.
+// The seam itself judges by this same predicate. Game thread.
+bool ClientDestroyWindowOpen();
+
 // Express a freshly-spawned KEYED prop on the wire -- the SAME canonical keyed
 // broadcast as the Aprop_C::Init POST observer (filters + HasProcessedInit
 // dedupe + keyed PropSpawn payload + send + self-claim), callable from a

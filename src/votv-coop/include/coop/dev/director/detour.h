@@ -56,7 +56,7 @@ private:
 };
 
 // What the body could not pass at a remembered spot: a slope too steep to stand on, or a blocker the
-// NavMesh does not know (a physics prop). A route is judged differently near each (PassedSpot).
+// NavMesh does not know (a prop). A route is judged differently near each (PassedSpot).
 enum class SpotKind : uint8_t { Slope, Blocker };
 
 class Search {

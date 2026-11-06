@@ -56,8 +56,14 @@ float HorizDist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
 }
 
 // The reason a walk ended on a prop it was not to delete: goal.failReason points here, so it outlives the process that
-// wrote it (a background walk's drill reads it after the worker is gone). One walker per process.
+// wrote it (a background walk's drill reads it after the worker is gone). The drills run one walker per process and
+// read the reason once its goal has failed, so the one buffer is enough; a later failing goal overwrites it.
 char g_blockedReason[96];
+
+// How far from the walker (flat, cm) a prop's hit point may be and still be the prop that holds it. The leg's trace
+// names the first prop anywhere along the leg, which may lie metres on or behind the walker; only a hit within the
+// body's own reach is acted on (deleted, or with the deleter off, the goal failed).
+constexpr float kHoldReachCm = 150.f;
 
 constexpr float kAdvanceCm      = 70.f;   // hug the path: advance only when CLOSE, so the straight line to
                                           // the next waypoint stays on the walkable navmesh segment (a wide
@@ -422,9 +428,23 @@ public:
                 const bool onLeg = LegBlocker(ctx, goal_.route, wp_ + 1, &legProp, &legSpot);
                 const bool ahead = BlockerAhead(ctx, waypoints_[wp_], &blocker);
                 if (onLeg) blocker = legSpot;
-                // A prop on the leg is deleted, the drill's answer to a box in a doorway (blocker_delete.h); a keyless
-                // one, the delete switched off, or the bound spent goes to the detour below.
-                if (onLeg && DeleteBlocker(ctx.player, legProp, legSpot, "the route's leg")) {
+                // Only the prop that holds the walker is acted on: a hit within reach, and not the drill's own
+                // target. Any other prop on the leg goes to the detour below, as before.
+                bool holds = false;
+                if (onLeg) {
+                    const float reach = HorizDist(legSpot, ctx.pos);
+                    if (legProp == goal_.targetActor) {
+                        UE_LOGW("director/Goto: the prop on the route's leg is the goal's own target -- not deleted");
+                    } else if (reach > kHoldReachCm) {
+                        UE_LOGW("director/Goto: the prop on the route's leg is %.0f cm away -- a prop further on the "
+                                "leg, not the one holding the walker", reach);
+                    } else {
+                        holds = true;
+                    }
+                }
+                // A prop that holds the walker is deleted, the drill's answer to a box in a doorway
+                // (blocker_delete.h); a keyless one, the delete switched off, or the bound spent goes to the detour.
+                if (holds && DeleteBlocker(ctx.player, legProp, legSpot, "the route's leg")) {
                     pathed_ = false; waypoints_.clear(); wp_ = 0; lastWp_ = 0; bestWp_ = 1e9f; bestPile_ = 1e9f;
                     UE_LOGW("director/Goto: persistent stuck (toPile=%.0f) -- deleted the prop on the route's leg, "
                             "re-pathing (episode %d)", toPile, stuckEpisodes_);
@@ -437,7 +457,7 @@ public:
                             toPile, onLeg ? " on the route's leg" : "", stuckEpisodes_);
                     return ProcStatus::Working;
                 }
-                if (onLeg && BlockerDeleteOff()) {
+                if (holds && BlockerDeleteOff()) {
                     // A run that switched the delete off measures the walk against its props: a prop it holds and
                     // cannot go round ends the run here, where the deadline would end it minutes on.
                     std::snprintf(g_blockedReason, sizeof(g_blockedReason), "blocked by %ls with the deleter off",

@@ -17,7 +17,9 @@ namespace coop::director {
 // Traces the leg of `route` the walker is on, at knee height, from `route[heading - 1]` to `route[heading]` (the
 // route's first point is its start, so `heading` is the index of the point the walker heads for), and says what it
 // hits. It names any prop (a prop_C descendant, frozen or not). True with `prop` the prop struck and `spot` the point
-// struck when the first thing the leg meets is one; false when the leg is clear, meets static geometry first, or cannot be read. Logs the leg and what it meets.
+// struck when the first thing the leg meets is one; false when the leg is clear, meets static geometry first, or
+// cannot be read. Logs the leg and what it meets. The hit may lie anywhere along the leg: whether it is the prop
+// holding the walker is the caller's judgement (the walker's distance to `spot`).
 bool LegBlocker(const PlayerContext& ctx, const std::vector<ue_wrap::FVector>& route, size_t heading, void** prop,
                 ue_wrap::FVector* spot);
 

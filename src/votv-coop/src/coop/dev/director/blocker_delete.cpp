@@ -3,6 +3,7 @@
 #include "coop/dev/director/blocker_delete.h"
 
 #include "coop/config/config.h"
+#include "coop/props/prop_lifecycle.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -46,8 +47,22 @@ bool DeleteBlocker(void* /*player*/, void* prop, const ue_wrap::FVector& at, con
     if (!R::IsLive(prop) || !ue_wrap::prop::IsDescendantOfProp(prop)) return false;
     const std::wstring cls = R::ClassNameOf(prop);
     const std::wstring key = ue_wrap::prop::GetInteractableKeyString(prop);
-    if (key.empty()) {
+    // An empty name stringifies to None, which the destroy seam also reads as keyless: it sends no PropDestroy for it.
+    if (key.empty() || key == L"None") {
         UE_LOGW("director: NOT deleting %ls blocking %s -- it has no prop key", cls.c_str(), why);
+        return false;
+    }
+    // The seam leaves a child actor out of the broadcast (the parent's construction script owns it on every peer).
+    // An unreadable answer refuses too: a delete that may not reach the peers is not made.
+    bool childReadable = false;
+    if (ue_wrap::engine::IsChildActor(prop, childReadable) || !childReadable) {
+        UE_LOGW("director: NOT deleting %ls %ls blocking %s -- it is a child actor (or not readable as one), which the "
+                "destroy seam does not carry", cls.c_str(), key.c_str(), why);
+        return false;
+    }
+    if (coop::prop_lifecycle::ClientDestroyWindowOpen()) {
+        UE_LOGW("director: NOT deleting %ls %ls blocking %s -- inside the world-load window, where the destroy seam "
+                "sends nothing", cls.c_str(), key.c_str(), why);
         return false;
     }
     if (!ue_wrap::engine::DestroyActor(prop)) {

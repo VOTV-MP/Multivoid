@@ -6,11 +6,12 @@
 // never persists into the next run. The delete is the game's own destroy (ue_wrap::engine::DestroyActor), which the
 // destroy seam sees (coop/props/prop_destroy_seam.cpp): the host broadcasts PropDestroy, and a client's destroy
 // makes the host destroy its copy by key or eid (coop/dispatch/event_dispatch_entity.cpp), so no peer keeps the
-// prop. The seam holds that back only inside the world-load and reconcile window. DestroyLocalProp is never used:
-// it marks the destroy as incoming and nothing is sent.
+// prop. The seam holds that back inside the world-load and reconcile window, and for a child actor or a prop with no
+// key, so the delete refuses each of those. DestroyLocalProp is never used: it marks the destroy as incoming and
+// nothing is sent.
 //
 // Off with VOTVCOOP_DRILL_DELETE=0 (a run that measures the walk against its props); not a config row. At most six
-// deletes per process, which is one drill.
+// deletes per process, counted across every goal the process runs, never reset.
 
 #pragma once
 
@@ -19,7 +20,7 @@
 namespace coop::director {
 
 // A drill's walker stopped by a prop on its route deletes the prop through the game's own destroy (dev only).
-// False: the delete is off, the actor is not a keyed prop, or the per-goal bound is spent -- the caller goes on
+// False: the delete is off, the actor is not a keyed prop, or the per-process bound is spent -- the caller goes on
 // to its detour. `at` is the leg's hit point and `why` names the leg in the log line.
 bool DeleteBlocker(void* player, void* prop, const ue_wrap::FVector& at, const char* why);
 
