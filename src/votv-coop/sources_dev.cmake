@@ -17,6 +17,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/spawn_order_probe.cpp
     src/coop/dev/prop_birth_key_probe.cpp
     src/coop/dev/impact_damage_probe.cpp
+    src/coop/dev/feedback_probe.cpp
     src/coop/dev/host_settle_drill.cpp
     src/coop/dev/spawn_match_probe.cpp
     src/coop/dev/native_text_probe.cpp

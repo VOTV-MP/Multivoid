@@ -17,6 +17,12 @@ CFG_FLAG(impact_damage_probe, "impact_damage_probe", "dev", false, "VOTVCOOP_IMP
     "authors), the owner prop with its key, whether the call is a reflected one of ours, and who called it. "
     "At most 400 lines a session, the rest counted. Observe only: it never cancels a call. Off, no watch is "
     "registered.")
+CFG_FLAG(feedback_probe, "feedback_probe", "dev", false, "VOTVCOOP_FEEDBACK_PROBE",
+    "Diagnostic probe (every peer to be read): one line per hint (lib_C::addHint) and per 2D sound "
+    "(GameplayStatics::PlaySound2D) this peer makes -- the role (host, client or solo), the hint's text or the "
+    "sound asset's name, and the script function that began the call. Says where a verb run for another player "
+    "shows its feedback. At most 20 lines a second, the drops counted. Observe only: it never cancels a call. "
+    "Off, nothing is registered. Lines tagged [FEEDBACK-PROBE].")
 CFG_FLAG(spawn_match_probe, "spawn_match_probe", "dev", false, nullptr,
     "Diagnostic probe: the OnSpawn fuzzy-match candidate set -- every same-class prop inside the "
     "30 cm radius with its slot, distance, own key and mirror binding, plus a watch that reports a "

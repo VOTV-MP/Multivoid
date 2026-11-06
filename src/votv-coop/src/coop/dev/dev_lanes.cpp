@@ -89,6 +89,7 @@
 #include "coop/dev/settings_drill.h"  // [dev] the host sets its own rows and the modules show they followed
 #include "coop/dev/mannequin_drill.h"  // [dev] the walking mannequin's spawn and baseline drill
 #include "coop/dev/fireext_drill.h"  // [dev] a wall-mounted fire extinguisher taken off and carried, watched on both peers
+#include "coop/dev/feedback_probe.h"  // [dev] every hint and 2D sound this peer makes, logged by role
 #include "coop/dev/floppy_selftest.h"  // [dev] the disc-into-server media transfer, driven
 #include "coop/dev/food_clock_probe.h"  // the food record's arrival catch-up and the two clocks behind it
 #include "coop/dev/grime_drill.h"  // [dev] a clean on either peer reaching the other's copy
@@ -184,6 +185,7 @@ void Install(coop::net::Session& session) {
     coop::dev::pi3_drill::Install(&session);  // [dev] the PI-3 drill's observer (no-op unless pi3_drill is set)
     coop::dev::native_spawn_probe::Install(&session);  // [dev] the native-spawn record (no-op unless native_spawn_probe is set; installed once)
     coop::dev::impact_damage_probe::Install();  // [dev] the impactDamage watch (a latched read unless impact_damage_probe=1)
+    coop::dev::feedback_probe::Install(&session);  // [dev] the hint watch and the 2D sound hook (a latched read unless feedback_probe=1)
 }
 
 void EndSession() {
@@ -217,6 +219,7 @@ void EndSession() {
     coop::dev::container_intent_drill::OnDisconnect();  // [dev] the target, the screen and the walk belong to one session
     coop::dev::join_prop_loss_drill::OnDisconnect();  // [dev] the cans, the pair and the steps belong to one session
     coop::dev::impact_damage_probe::OnDisconnect();  // [dev] the session's call count is said and cleared
+    coop::dev::feedback_probe::OnDisconnect();  // [dev] the window's dropped count is said
     coop::dev::pr64_drill::OnDisconnect();  // [dev] the arm's steps and its walk belong to one session
     coop::dev::container_route_drill::OnDisconnect();  // [dev] the fixtures and the steps belong to one session
     coop::dev::container_route_census::OnDisconnect();  // [dev] the census reports and starts over
