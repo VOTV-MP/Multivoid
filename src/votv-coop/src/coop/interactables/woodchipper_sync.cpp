@@ -232,7 +232,7 @@ void HostServe(coop::net::Session& s) {
             ++g_hostPours;
             UE_LOGI("woodchipper: slot %d poured %.1f into '%ls' on the host: %.1f -> %.1f (#%u)", in.slot, in.p.fuel,
                     key.c_str(), st.fuel, to, g_hostPours);
-        } else if (in.p.op == coop::net::kWoodchipperOpButton) {
+        } else if (in.p.op == coop::net::kWoodchipperOpSetActive) {
             // The button's own end: `active` flipped, then checkActive when there is fuel.
             const bool want = in.p.active != 0;
             if (want != st.active) {
@@ -326,7 +326,7 @@ void OnActionPost(const sg::Call& c) {
     if (key.empty()) return;
     Payload p{};
     coop::net::WireKeyFromString(key, p.key);
-    p.op = coop::net::kWoodchipperOpButton;
+    p.op = coop::net::kWoodchipperOpSetActive;
     p.active = st.active ? 1 : 0;
     Queue(p);
     ++g_clientPresses;
@@ -456,7 +456,7 @@ void OnState(const coop::net::WoodchipperPayload& p) {
 void OnIntent(int senderSlot, const coop::net::WoodchipperPayload& p) {
     if (senderSlot <= 0 || senderSlot >= static_cast<int>(coop::net::kMaxPeers)) return;
     const bool pour = p.op == coop::net::kWoodchipperOpPour && ValidFuel(p.fuel) && p.fuel > 0.f;
-    const bool press = p.op == coop::net::kWoodchipperOpButton && p.active <= 1;
+    const bool press = p.op == coop::net::kWoodchipperOpSetActive && p.active <= 1;
     if ((!pour && !press) || g_intents.size() >= kQueueCap) return;
     g_intents.push_back({senderSlot, p});
 }

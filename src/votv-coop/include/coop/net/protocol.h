@@ -1236,13 +1236,15 @@ enum class ReliableKind : uint8_t {
     // host is a listen server, so the host is the only sender. GeomOctaEventPayload.
     GeomOctaEvent = 200,
 
-    // HOST->ALL: a woodchipper of the host's, its fuel and whether it is on, when either changes, every second while it
-    // runs, and every chipper again at the ready edge. A client's copy takes both. Not relayed, not pre-world.
-    // WoodchipperPayload, op 0.
+    // HOST->ALL: a woodchipper of the host's, its fuel and whether it is on (op 0), when either changes and every second
+    // while its fuel falls; to a joiner at its ready edge, which of them are on (op 3, `active` alone, since the prop
+    // record lane carries the fuel). A client's copy takes it without running the chipper. Reliable, not relayed, not
+    // pre-world. WoodchipperPayload.
     WoodchipperState = 232,
-    // CLIENT->HOST: this client's player poured fuel into a woodchipper (op 1, the fuel it gained) or pressed its button
-    // (op 2, whether it is on after). Never relayed; the host fuels or switches its own, and its WoodchipperState
-    // answers. WoodchipperPayload.
+    // CLIENT->HOST: this client's player poured a gas can into a woodchipper (op 1, the fuel its own copy gained) or
+    // pressed its button (op 2, the state it wanted). Never relayed; the host judges it (reach, rate, the can in the
+    // sender's hand, the room in the tank), does it on its chipper, and its WoodchipperState answers, to the sender alone
+    // when it refused. WoodchipperPayload.
     WoodchipperIntent = 233,
 
     // CLIENT->HOST: this client pressed a coffee vending machine or a coffee maker (action 4), which its own copy
@@ -3686,12 +3688,14 @@ struct TurbineStatePayload {
 };
 static_assert(sizeof(TurbineStatePayload) == 56, "TurbineStatePayload must be 56 bytes");
 
-// A woodchipper's state (WoodchipperState), or a client's pour or press (WoodchipperIntent).
-inline constexpr uint8_t kWoodchipperOpState = 0, kWoodchipperOpPour = 1, kWoodchipperOpButton = 2;
+// A woodchipper's state (WoodchipperState: op 0 fuel and active, op 3 active alone), or a client's pour (op 1) or
+// press (op 2) (WoodchipperIntent).
+inline constexpr uint8_t kWoodchipperOpState = 0, kWoodchipperOpPour = 1, kWoodchipperOpSetActive = 2,
+                         kWoodchipperOpActiveOnly = 3;
 struct WoodchipperPayload {
     WireKey key;       // 32 -- the chipper's key
-    float   fuel;      // 4 -- its fuel (0..100); a pour's gain
-    uint8_t active;    // 1 -- on; a press's result
+    float   fuel;      // 4 -- its fuel (0..100); a pour's gain; unread by op 3
+    uint8_t active;    // 1 -- on; the state a press wanted
     uint8_t op;        // 1 -- kWoodchipperOp*
     uint8_t _pad[2];   // 2 -- zero
 };

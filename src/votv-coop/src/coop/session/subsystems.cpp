@@ -89,6 +89,7 @@
 #include "coop/props/food_tick_gate.h"  // the food ticks a client refuses: its counts end with the session
 #include "coop/props/prop_food_sync.h"
 #include "coop/world/plant_gate.h"  // the plant bodies a client refuses: its counts end with the session
+#include "coop/interactables/woodchipper_gate.h"  // the chipper bodies a client refuses: its counts end with the session
 #include "coop/world/plant_sync.h"
 #include "coop/props/prop_stick_sync.h"  // wall-attachable stick mirror (camera-on-wall)
 #include "coop/dev/dev_lanes.h"  // the developer drills, probes and selftests, wired in one place
@@ -494,6 +495,7 @@ DisconnectStats DisconnectAll() {
     coop::props::prop_food_sync::OnDisconnect();  // the food lane's tallies, latches and waiting records
     coop::food_tick_gate::OnDisconnect();  // say the refused food ticks, start the next session from zero
     coop::plant_gate::OnDisconnect();  // say the refused counts, start the next session from zero
+    coop::woodchipper_gate::OnDisconnect();  // say the refused ticks and the asks, start the next session from zero
     coop::plant_sync::OnDisconnect();
     coop::prop_stick_sync::OnDisconnect();  // drop commit-pending stick records
     coop::sleepingbag_sync::OnDisconnect();

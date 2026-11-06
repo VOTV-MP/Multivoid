@@ -81,6 +81,7 @@
 #include "coop/world/explosion_recipe.h"
 #include "coop/props/food_tick_gate.h"
 #include "coop/world/plant_gate.h"
+#include "coop/interactables/woodchipper_gate.h"
 #include "coop/world/spawn_authority.h"
 #include "ui/server_browser.h"
 #include "coop/net/end_reason.h"  // the named reason a join that reached the world load ends on
@@ -345,6 +346,9 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     coop::food_tick_gate::Install();
     // A client's plants are refused the same way, on the session spawn_authority holds: they tick from the world's first frame.
     coop::plant_gate::Install();
+    // And a client's woodchippers: their tick and intake are refused from the world's first frame, and a player's pour
+    // and press at one is asked of the host (the session it sends on is this one).
+    coop::woodchipper_gate::Install(&g_session);
     // And the trash morph gate's three verbs: a joiner's pile loads with the save, and the watch is
     // by class and name, so no pile runs a morph unjudged. Idempotent across Stop/Start.
     coop::trash_morph_gate::Install(&g_session);
