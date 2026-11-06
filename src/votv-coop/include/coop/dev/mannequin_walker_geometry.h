@@ -40,7 +40,9 @@ inline constexpr float kApproachEndCm = 3000.f;
 // The close-in to a walker that is not seen: how far its walk stops from the copy (flat), how long one walk runs, how long the
 // view is read after the aim (a render needs a frame), and the most the whole close-in takes.
 inline constexpr float kCloseReachCm = 2.f * kApproachEndCm;
-inline constexpr int   kCloseStepS = 2;
+inline constexpr int   kCloseStepS = 6;       // a walk step runs this long from the pawn's first kCloseMovedCm...
+inline constexpr float kCloseMovedCm = 100.f;
+inline constexpr int   kCloseStartS = 10;     // ...and waits at most this long for the director to move the pawn
 inline constexpr int   kAimPollMs = 1500;
 inline constexpr int   kCloseInS = 60;
 
@@ -96,8 +98,9 @@ std::string ViewPartsOf(void* copy);
 
 // A walker behind a wall is not seen (the game's own rule: it is not rendered), and a bed anchor inside the house puts the target
 // behind one. Aims this player's view at the copy `copyOf` names (read on the game thread) and reads `seen` of it; while it is not
-// seen, walks toward it along the NavMesh for kCloseStepS, lets go, and aims and reads again for kAimPollMs (a render needs a frame
-// after the aim), for at most boundS in all. The director's walk faces its own way, so aim and walk alternate. Never walks to
+// seen, walks toward it along the NavMesh (a step runs kCloseStepS from the pawn's first kCloseMovedCm, reading the view as it goes
+// with the walk's own facing, and ends at once on a copy in view), lets go, and aims and reads again for kAimPollMs (a render needs
+// a frame after the aim), for at most boundS in all. The director's walk faces its own way, so aim and walk alternate. Never walks to
 // within kApproachEndCm. True when seen; false with `lastCm` (distance to the copy at the last read) and `lastSeen` otherwise.
 // Logs the two places at the first read that is not seen. Called from the drill's own thread.
 bool CloseUntilSeen(const std::function<void*()>& copyOf, bool (*seen)(void* copy), int boundS, float& lastCm, bool& lastSeen);

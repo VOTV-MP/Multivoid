@@ -86,7 +86,7 @@ constexpr float kOutOfRangeMarginCm = 2000.f;
 // the player toward the walker until the walker TAKES it as its target (an event, not a distance: the walker closes on its target
 // whatever the route, so a distance chosen beforehand does not hold). Walker A: the client does not walk (it waits at the KPP
 // gate, out of range, so it is never the target); the host goes to its bed anchor and steps into range, and its arrival opens the
-// window. Walker B: the host back at the KPP gate, out of range, then the client goes to its own bed anchor and steps into range,
+// window. Walker B: the host back at the KPP gate, out of range, then the client walks to the open spot the host stood at,
 // last. The walker closes on its target while the steps run, and a measurement ends when it is within kApproachEndCm: at that
 // distance it stands at its target's shoulder, where the game's own frustum test of its bounds holds whatever the yaw.
 constexpr float kKppReachCm = 1500.f;
@@ -401,10 +401,12 @@ bool HostPhaseA(void*& a, std::string& keyA) {
 
     // At the host's arrival: its view turns away, its distance from the walker is judged (in range, not at its shoulder), and the
     // window opens: nothing else sits between.
-    float arrivalCm = -1.f;
+    float   arrivalCm = -1.f;
+    FVector spot{};
     OnGameThread([&] {
         Aim(a, false);
         arrivalCm = PlayerTo(a);
+        if (void* me = coop::players::Registry::Get().Local()) E::TryGetActorLocation(me, spot);
     });
     if (arrivalCm < kApproachEndCm || arrivalCm >= kRangeCm) {
         char why[200];
@@ -412,6 +414,11 @@ bool HostPhaseA(void*& a, std::string& keyA) {
                       arrivalCm, kApproachEndCm, kRangeCm);
         return Invalid(why);
     }
+    // Where the host stands is in the spawn point's range and reached over the NavMesh from the bed, so it is outside the house: the
+    // client walks there for walker B, whose copy it can then see.
+    char spotText[96];
+    std::snprintf(spotText, sizeof(spotText), "%.1f %.1f %.1f", spot.X, spot.Y, spot.Z);
+    PS::Mark("host_open_spot", spotText);
     PS::Mark("window_go");
     const Approach w = ApproachWindow(a);
     uint8_t target = WT::kNoTarget;
@@ -610,30 +617,39 @@ bool ClientBody() {
     PS::Mark("copy_samples_a", Pack(samples, copyStartCm, copyEndCm));
     FVector at{};
 
-    // Walker B: this client is its target. It goes to its own bed anchor, last, with its view turned away; then its camera goes on
+    // Walker B: this client is its target. It walks to the host's open spot, last, with its view turned away; then its camera goes on
     // the copy, and off it.
     std::string keyB;
     if (!PS::AwaitText("walker_b", keyB, 2 * kWalkWaitS) || !AwaitCopy(keyB, "B")) return false;
     PS::Mark("copy_b");
-    if (!BedAnchor(at)) return Invalid("this client has no bed anchor to walk to");
-    if (!WalkTo(at, kAnchorReachCm, "this client to the bed anchor")) return Invalid("this client's walk to the bed anchor did not arrive");
-    OnGameThread([&] { copy = ByKey(keyB); });
-    if (!copy) return Invalid("walker B's copy is gone before this client steps into range");
-    // The copy's target as the host's WalkerState delivered it: this client's own slot.
-    if (!EnterRange(copy, "this client", [](void* c) {
-            return coop::walker_state_client::TargetOfCopy(c) == coop::players::Registry::Get().LocalPeerId();
-        }))
-        return false;
+    // It walks to the spot the host stood at for walker A: in range of the spawn point and outside the house, where the copy can be
+    // seen (a bed anchor stands inside it, behind walls).
+    std::string spotText;
+    if (!PS::AwaitText("host_open_spot", spotText, 60)) return false;
+    std::istringstream spotIn(spotText);
+    spotIn >> at.X >> at.Y >> at.Z;
+    if (!WalkTo(at, kAnchorReachCm, "this client to the host's open spot")) return Invalid("this client's walk to the host's open spot did not arrive");
+    // The copy's target as the host's WalkerState delivered it: this client's own slot, from inside the walker's range.
+    const bool taken = WaitGT("walker B takes this client", kHuntGraceS, [&] {
+        copy = ByKey(keyB);
+        return copy && coop::walker_state_client::TargetOfCopy(copy) == coop::players::Registry::Get().LocalPeerId() &&
+               PlayerTo(copy) <= kInRangeCm;
+    }, false);
     float arrivalCm = -1.f;
     OnGameThread([&] {
         copy = ByKey(keyB);
         arrivalCm = PlayerTo(copy);
         Aim(copy, false);
     });
-    UE_LOGI("mannequin-drill: this client stands %.0f cm from walker B's copy after stepping into range", arrivalCm);
+    UE_LOGI("mannequin-drill: this client stands %.0f cm from walker B's copy at the host's open spot, taken=%d", arrivalCm, taken ? 1 : 0);
+    if (!taken) {
+        char why[200];
+        std::snprintf(why, sizeof(why), "walker B never took this client at the host's open spot: %.0f cm from its copy", arrivalCm);
+        return Invalid(why);
+    }
     if (arrivalCm < kApproachEndCm || arrivalCm >= kRangeCm) {
         char why[200];
-        std::snprintf(why, sizeof(why), "this client stands %.0f cm from walker B's copy after stepping into range: not between %.0f "
+        std::snprintf(why, sizeof(why), "this client stands %.0f cm from walker B's copy at the host's open spot: not between %.0f "
                       "and %.0f", arrivalCm, kApproachEndCm, kRangeCm);
         return Invalid(why);
     }

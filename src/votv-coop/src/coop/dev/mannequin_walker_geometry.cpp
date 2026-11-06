@@ -220,9 +220,34 @@ bool CloseUntilSeen(const std::function<void*()>& copyOf, bool (*seen)(void* cop
         } while (std::chrono::steady_clock::now() < pollEnd);
         if (lastCm >= 0.f && lastCm < kApproachEndCm) return false;   // at its shoulder: no view of it is a measurement
         if (lastCm >= 0.f && lastCm <= kCloseReachCm) continue;       // close enough: only the read, on the walker's own approach
+        // The step: the walk runs kCloseStepS from the pawn's first kCloseMovedCm (a walk cancelled before the director moves the
+        // pawn moves nothing), at most kCloseStartS to get that far. Each poll reads the view with the walk's own facing: seen
+        // ends the step, and the next round aims and confirms it.
         std::shared_ptr<DIR::BackgroundWalk> walk;
-        OnGameThread([&] { walk = DIR::StartBackgroundWalk(to, kCloseReachCm, kWalkDeadlineS); });
-        PS::WaitFor("the close-in walk", kCloseStepS, [&] { return walk->state.load() != 0; }, false);
+        FVector from{};
+        OnGameThread([&] {
+            void* pawn = coop::players::Registry::Get().Local();
+            if (pawn) E::TryGetActorLocation(pawn, from);
+            walk = DIR::StartBackgroundWalk(to, kCloseReachCm, kWalkDeadlineS);
+        });
+        using Clock = std::chrono::steady_clock;
+        const Clock::time_point startBy = Clock::now() + std::chrono::seconds(kCloseStartS);
+        Clock::time_point       stepEnd = startBy;
+        bool                    moved = false, sawIt = false;
+        while (!sawIt && walk->state.load() == 0 && Clock::now() < stepEnd) {
+            OnGameThread([&] {
+                void* c = copyOf();
+                if (c) sawIt = seen(c);
+                FVector p{};
+                void* pawn = coop::players::Registry::Get().Local();
+                if (!moved && pawn && E::TryGetActorLocation(pawn, p) && Dist3(p, from) >= kCloseMovedCm) {
+                    moved = true;
+                    stepEnd = Clock::now() + std::chrono::seconds(kCloseStepS);
+                }
+            });
+            ::Sleep(100);
+        }
+        UE_LOGI("mannequin-drill: the close-in walk %s%s", moved ? "moved this client" : "did not move this client", sawIt ? ", copy in view" : "");
         DIR::CancelBackgroundWalk(*walk);
         PS::WaitFor("the close-in walk lets go", kHuntGraceS, [&] { return walk->state.load() != 0; }, false);
     }
