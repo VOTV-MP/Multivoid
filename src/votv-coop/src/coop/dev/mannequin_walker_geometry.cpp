@@ -8,6 +8,7 @@
 #include "coop/player/shelter_spot.h"
 #include "coop/session/rig_verdict.h"
 
+#include "ue_wrap/actors/ambient_creature.h"
 #include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -18,12 +19,14 @@
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <string>
 
 #include <windows.h>
 
 namespace coop::dev::mannequin_walker_drill {
 namespace {
 
+namespace AC  = ue_wrap::ambient_creature;
 namespace DIR = coop::director;
 namespace E   = ue_wrap::engine;
 namespace PS  = harness::autotest::peer_signal;
@@ -137,6 +140,48 @@ bool EnterRange(void* walker, const char* who, bool (*hunted)(void* walker)) {
     if (hunting) return true;
     std::snprintf(why, sizeof(why), "the walker never took %s as its target: %.0f cm from it after its walk", who, now);
     return Invalid(why);
+}
+
+namespace {
+
+// -1 for a part that was not read, else its value.
+int Tri(bool read, bool value) { return read ? (value ? 1 : 0) : -1; }
+
+std::string DescribeView(void* controller, const AC::WalkerView& v) {
+    void* pawn = coop::players::Registry::Get().Local();
+    void* own = pawn ? E::GetController(pawn) : nullptr;
+    const FVector   cam = E::GetCameraLocation();
+    const FRotator  camRot = E::GetCameraRotation();
+    const FRotator  bearing = DIR::LookAt(cam, v.origin);
+    char b[640];
+    std::snprintf(b, sizeof(b),
+                  "ctrl=%p own=%d cam=(%.0f,%.0f,%.0f) camrot=(p%.0f,y%.0f) bearing=(p%.0f,y%.0f) origin=(%.0f,%.0f,%.0f) "
+                  "extent=(%.0f,%.0f,%.0f) bounds=%d frustum=%d rendered=%d visible=%d hiddenInGame=%d actorHidden=%d",
+                  controller, controller && controller == own ? 1 : 0, cam.X, cam.Y, cam.Z, camRot.Pitch, camRot.Yaw, bearing.Pitch,
+                  bearing.Yaw, v.origin.X, v.origin.Y, v.origin.Z, v.extent.X, v.extent.Y, v.extent.Z, v.boundsRead ? 1 : 0,
+                  Tri(v.frustumRead, v.inFrustum), Tri(v.renderedRead, v.rendered), Tri(v.visibleRead, v.visible),
+                  Tri(v.hiddenInGameRead, v.hiddenInGame), Tri(v.actorHiddenRead, v.actorHidden));
+    return b;
+}
+
+}  // namespace
+
+bool InViewReportingParts(void* copy) {
+    void* controller = AC::WalkerGazeController(copy);
+    const AC::WalkerView v = AC::WalkerViewParts(copy, controller, true);
+    if (v.InView()) return true;
+    static auto nextLog = std::chrono::steady_clock::time_point{};
+    const auto  now = std::chrono::steady_clock::now();
+    if (now >= nextLog) {
+        nextLog = now + std::chrono::seconds(kPartsLogEveryS);
+        UE_LOGI("mannequin-drill: view parts: %s", DescribeView(controller, v).c_str());
+    }
+    return false;
+}
+
+std::string ViewPartsOf(void* copy) {
+    void* controller = AC::WalkerGazeController(copy);
+    return DescribeView(controller, AC::WalkerViewParts(copy, controller, true));
 }
 
 bool CloseUntilSeen(const std::function<void*()>& copyOf, bool (*seen)(void* copy), int boundS, float& lastCm, bool& lastSeen) {

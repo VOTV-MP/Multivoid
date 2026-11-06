@@ -173,30 +173,58 @@ bool WriteWalkerStanding(void* walker, bool standing) {
     return true;
 }
 
-bool WalkerInView(void* walker, void* playerController) {
+namespace {
+// A bool field of `obj` by name, read by reflection (the diagnostic reads only).
+bool ReadBoolField(void* obj, const wchar_t* name, bool& out) {
+    int32_t off = -1;
+    uint8_t mask = 0;
+    if (!obj || !R::FindBoolProperty(R::ClassOf(obj), name, off, mask) || off < 0) return false;
+    out = (*(static_cast<const uint8_t*>(obj) + off) & mask) != 0;
+    return true;
+}
+}  // namespace
+
+WalkerView WalkerViewParts(void* walker, void* playerController, bool diagnostics) {
+    WalkerView v;
     void* mesh = ComponentAt(walker, g_skeletalMesh);
-    if (!mesh || !playerController) return false;
+    v.mesh = mesh;
+    if (diagnostics && mesh) {
+        v.visibleRead = ReadBoolField(mesh, L"bVisible", v.visible);
+        v.hiddenInGameRead = ReadBoolField(mesh, L"bHiddenInGame", v.hiddenInGame);
+        v.actorHiddenRead = ReadBoolField(walker, L"bHidden", v.actorHidden);
+    }
+    if (!mesh || !playerController) return v;
     void* renderedFn = R::FindDispatchFunctionCached(R::ClassOf(mesh), L"WasRecentlyRendered");
-    if (!renderedFn || !g_view.Ready()) return false;
+    if (!renderedFn || !g_view.Ready()) return v;
     ParamFrame bounds(g_view.bounds);
-    if (!bounds.valid()) return false;
+    if (!bounds.valid()) return v;
     bounds.Set<void*>(L"Component", mesh);
-    if (!Call(g_view.sysCdo, bounds)) return false;
-    const FVector origin = bounds.Get<FVector>(L"Origin");
-    const FVector extent = bounds.Get<FVector>(L"BoxExtent");
+    if (!Call(g_view.sysCdo, bounds)) return v;
+    v.origin = bounds.Get<FVector>(L"Origin");
+    v.extent = bounds.Get<FVector>(L"BoxExtent");
+    v.boundsRead = true;
     // The library's parameter names are the game's own: by their order, controller, origin, extent, return.
     const std::vector<R::ParamInfo>& names = g_view.frustumParams;
     ParamFrame frustum(g_view.frustum);
-    if (!frustum.valid()) return false;
+    if (!frustum.valid()) return v;
     frustum.Set<void*>(names[0].name.c_str(), playerController);
-    frustum.Set<FVector>(names[1].name.c_str(), origin);
-    frustum.Set<FVector>(names[2].name.c_str(), extent);
-    if (!Call(g_view.libCdo, frustum) || !frustum.Get<bool>(names[3].name.c_str())) return false;
+    frustum.Set<FVector>(names[1].name.c_str(), v.origin);
+    frustum.Set<FVector>(names[2].name.c_str(), v.extent);
+    if (!Call(g_view.libCdo, frustum)) return v;
+    v.frustumRead = true;
+    v.inFrustum = frustum.Get<bool>(names[3].name.c_str());
+    // The game's test is a conjunction: a frustum miss ends it, and only a diagnostic reads the rest.
+    if (!v.inFrustum && !diagnostics) return v;
     ParamFrame rendered(renderedFn);
-    if (!rendered.valid()) return false;
+    if (!rendered.valid()) return v;
     rendered.Set<float>(L"Tolerance", 3.f);
-    return Call(mesh, rendered) && rendered.Get<bool>(L"ReturnValue");
+    if (!Call(mesh, rendered)) return v;
+    v.renderedRead = true;
+    v.rendered = rendered.Get<bool>(L"ReturnValue");
+    return v;
 }
+
+bool WalkerInView(void* walker, void* playerController) { return WalkerViewParts(walker, playerController).InView(); }
 
 void* WalkerGazeController(void* worldContext) {
     if (!worldContext) return nullptr;

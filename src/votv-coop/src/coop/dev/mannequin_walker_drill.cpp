@@ -642,12 +642,16 @@ bool ClientBody() {
     // The bed anchor can stand inside the house, and a copy behind a wall is not rendered: the client closes in until it is seen.
     float cm = -1.f;
     bool  lastSeen = false;
-    const bool seen = CloseUntilSeen([&] { return ByKey(keyB); }, &InView, kCloseInS, cm, lastSeen);
+    const bool seen = CloseUntilSeen([&] { return ByKey(keyB); }, &InViewReportingParts, kCloseInS, cm, lastSeen);
     UE_LOGI("mannequin-drill: this client aimed at walker B's copy, %.0f cm away: in view=%d", cm, seen ? 1 : 0);
     if (!seen) {
-        char why[200];
-        std::snprintf(why, sizeof(why), "walker B's copy never came into this client's view within %d s: %.0f cm away, last view read %d",
-                      kCloseInS, cm, lastSeen ? 1 : 0);
+        std::string parts;
+        OnGameThread([&] {
+            if (void* c = ByKey(keyB)) parts = ViewPartsOf(c);
+        });
+        char why[1100];
+        std::snprintf(why, sizeof(why), "walker B's copy never came into this client's view within %d s: %.0f cm away, last view read %d; %s",
+                      kCloseInS, cm, lastSeen ? 1 : 0, parts.c_str());
         return Invalid(why);
     }
     PS::Mark("sees");

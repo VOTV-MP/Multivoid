@@ -38,6 +38,22 @@ bool WriteWalkerStanding(void* walker, bool standing);
 // Game thread.
 void* WalkerGazeController(void* worldContext);
 
+// The parts of the walker's view test, each read apart: its mesh's bounds, the game's frustum test of them for this controller, and
+// the mesh's WasRecentlyRendered(3). A part that was not read says so; `diagnostics` also reads the rest of the test after a frustum
+// miss and the mesh's and the actor's hidden bits, for a drill that must say which part fails.
+struct WalkerView {
+    void*             mesh = nullptr;
+    ue_wrap::FVector  origin{}, extent{};
+    bool              boundsRead = false;
+    bool              frustumRead = false, inFrustum = false;
+    bool              renderedRead = false, rendered = false;
+    bool              visibleRead = false, visible = false;            // the mesh's bVisible
+    bool              hiddenInGameRead = false, hiddenInGame = false;  // the mesh's bHiddenInGame
+    bool              actorHiddenRead = false, actorHidden = false;    // the walker's bHidden
+    bool              InView() const { return inFrustum && rendered; }
+};
+WalkerView WalkerViewParts(void* walker, void* playerController, bool diagnostics = false);
+
 // The walker's own view test, as its tick runs it: inside this controller's frustum and rendered of late.
 bool WalkerInView(void* walker, void* playerController);
 

@@ -15,6 +15,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <string>
 
 namespace coop::dev::mannequin_walker_drill {
 
@@ -85,6 +86,13 @@ bool BedAnchor(ue_wrap::FVector& out);
 // where the walk gives up; the state then gets kHuntGraceS to show. False, with an INVALID naming the distance, when a place
 // does not read or the walker never takes this player. `who` names the player in that text. Called from the drill's own thread.
 bool EnterRange(void* walker, const char* who, bool (*hunted)(void* walker));
+
+// The walker's view test with each part told apart (ue_wrap::ambient_creature::WalkerViewParts): `seen` for CloseUntilSeen that,
+// while the copy is not in view, logs `mannequin-drill: view parts: ...` at the first read and then every kPartsLogEveryS; and
+// the same line's text for a verdict. A part not read says -1. Game thread.
+inline constexpr int kPartsLogEveryS = 5;
+bool InViewReportingParts(void* copy);
+std::string ViewPartsOf(void* copy);
 
 // A walker behind a wall is not seen (the game's own rule: it is not rendered), and a bed anchor inside the house puts the target
 // behind one. Aims this player's view at the copy `copyOf` names (read on the game thread) and reads `seen` of it; while it is not
