@@ -55,12 +55,14 @@
 #include "coop/items/player_inventory_sync.h"  // TakeJoinPlacement: where the join's appearance goes
 #include "coop/session/teleport_client.h"  // the checkpoint join spawn (the client pawn-Set edge)
 #include "ue_wrap/core/types.h"
+#include "ue_wrap/world/daynightcycle.h"  // ReadSavedTime: the day that picks the start point
 
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -97,8 +99,13 @@ uint64_t g_tickSerial = 0;
 // OnSessionStart resets it.
 bool g_localDeathHandled = false;
 
-// The start-point placement a client's body is owed (JoinPlacement::StartPoint). The spot is beside the
-// base's bed, and the bed is one of the save's props: at a join's first appearance the load has not
+// The last day number a world still counts as a fresh game, whose joiner appears at the KPP gate where a
+// new game's host starts; from the next day on the joiner appears beside the base's bed.
+constexpr int32_t kFreshGameLastDay = 2;
+
+// The start-point placement a client's body is owed (JoinPlacement::StartPoint). The spot is the KPP gate
+// in a fresh game (day <= kFreshGameLastDay) and beside the base's bed after, and the bed is one of the
+// save's props: at a join's first appearance the load has not
 // spawned it yet (measured on the rig: shelter_spot logs "no bed in the world" there). So the appearance only
 // owes the placement, and it is paid on the first tick the body stands in the world this connection
 // announced ready (IsInAnnouncedWorld: the gate that waits for the load to quiesce, false while a world
@@ -550,9 +557,9 @@ void Tick(coop::net::Session& session) {
         // body exists": once per world appearance, while the load screen still covers the swap. A
         // returning player appears once at the spot their profile says they were standing on (a
         // drill's join_at_host leaves that one appearance at the host's); every other body of the
-        // session, a respawn included, at the start point: the floor beside the base's bed
-        // (shelter_spot, the spot a revive wakes on), the KPP gate only when no bed is found. The
-        // gate is a 770 m walk from the base, which every drill and every player paid on a join.
+        // session, a respawn included, at the start point: the KPP gate in a fresh game (day 0 to
+        // kFreshGameLastDay), after that the floor beside the base's bed (shelter_spot, the spot a
+        // revive wakes on; the KPP gate when no bed is found). The gate is a 770 m walk from the base.
         // The start point is owed here and paid once the world is ready (g_startPointOwed).
         if (localNow && isConnected && !isHost) {
             namespace PIS = coop::player_inventory_sync;
@@ -576,10 +583,23 @@ void Tick(coop::net::Session& session) {
     }
     if (g_startPointOwed && g_netLocal.Raw() && IsInAnnouncedWorld(g_netLocal.Raw())) {
         g_startPointOwed = false;
-        const coop::shelter_spot::Target t = coop::shelter_spot::Choose(g_netLocal.Raw());
+        int32_t hour = 0, minute = 0, day = 0;
+        const bool dayRead = ue_wrap::daynightcycle::ReadSavedTime(hour, minute, day);
+        const bool freshGame = dayRead && day <= kFreshGameLastDay;
+        coop::shelter_spot::Target t;
+        if (freshGame) {
+            t = {coop::shelter_spot::Kind::KppFallback, P::name::kKPPSpawnX, P::name::kKPPSpawnY,
+                 P::name::kKPPSpawnZ};
+        } else {
+            t = coop::shelter_spot::Choose(g_netLocal.Raw());
+        }
         coop::teleport_client::ApplyLocally({t.x, t.y, t.z, 0.f, 0.f, 0.f});
-        UE_LOGI("net_pump: CLIENT placed at the start point, %s (%.0f, %.0f, %.0f)",
-                coop::shelter_spot::KindName(t.kind), t.x, t.y, t.z);
+        char rule[48];
+        if (freshGame)     std::snprintf(rule, sizeof rule, "the KPP gate (day %d, a fresh game)", day);
+        else if (dayRead)  std::snprintf(rule, sizeof rule, "the base bed (day %d)", day);
+        else               std::snprintf(rule, sizeof rule, "the base bed (the day unread)");
+        UE_LOGI("net_pump: CLIENT placed at the start point, %s: %s (%.0f, %.0f, %.0f)",
+                rule, coop::shelter_spot::KindName(t.kind), t.x, t.y, t.z);
     }
     // The !g_localDeathHandled gate: once the death is handled every local send stops, or the
     // ragdoll sender would keep reading the dead player's pelvis ~100 times a second on the way to

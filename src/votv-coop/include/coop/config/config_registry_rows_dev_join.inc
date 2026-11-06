@@ -65,7 +65,8 @@ CFG_FLAG(join_at_host, "join_at_host", "dev", false, "VOTVCOOP_JOIN_AT_HOST",
     "Drill (CLIENT): the join's first appearance keeps the transferred save's player transform, which "
     "is where the host stood, instead of this player's profile pose or the start point; a respawn "
     "still goes to the start point. For a drill that needs the client beside the host, not at the "
-    "base's bed (the start point). Off, the client appears at its profile's pose or at the start point.")
+    "start point (the KPP gate in a fresh game, the base's bed from day 3). Off, the client appears at "
+    "its profile's pose or at the start point.")
 CFG_FLAG(rehost_rejoin, "rehost_rejoin", "dev", false, "VOTVCOOP_REHOST_REJOIN",
     "Drill (CLIENT): join the host again without restarting the game. At the main menu, with no "
     "session and no join in flight, a file named multivoid-rejoin.trigger beside the game exe is "

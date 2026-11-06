@@ -1,8 +1,9 @@
 // coop/player/shelter_spot.h -- where a player is put down in the world by us: a standable floor
 // point beside the base's bed, or the KPP landmark when none can be found. Two callers: a revive
-// (death_revive) and a client's join appearance at the start point (net_pump). The base is roofed;
+// (death_revive, always) and a client's join appearance (net_pump, from day 3 on; in a fresh game,
+// day 0 to 2, the joiner is put at the KPP gate and does not ask here). The base is roofed;
 // the KPP is open sky, so a revive there during the game's Bad Sun event is killed again by the next
-// hit and loops, and the KPP is a 770 m walk from the base a joiner would otherwise pay.
+// hit and loops, and the KPP is a 770 m walk from the base.
 // Whether the bed's spot is sheltered from that event's sun trace is read off the rig, not assumed.
 
 #pragma once

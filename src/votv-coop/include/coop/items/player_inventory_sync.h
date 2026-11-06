@@ -64,8 +64,9 @@ void BeginJoinApply();
 // session is a respawn, which belongs at the start point. ProfilePose fills x, y, z and yaw with where
 // the applied profile says the player stood. AtHost (the dev row join_at_host) leaves the player where
 // the transferred save put it, the host's own position. StartPoint on a first join, for a player who
-// left dead, with no profile applied, and for every later body: the floor beside the base's bed
-// (coop/player/shelter_spot), the KPP when none is found. Game thread.
+// left dead, with no profile applied, and for every later body: the KPP gate while the world is a
+// fresh game (day 0 to 2), after that the floor beside the base's bed (coop/player/shelter_spot),
+// the KPP when none is found. net_pump picks between them. Game thread.
 enum class JoinPlacement : uint8_t { StartPoint, ProfilePose, AtHost };
 JoinPlacement TakeJoinPlacement(float& x, float& y, float& z, float& yaw);
 
