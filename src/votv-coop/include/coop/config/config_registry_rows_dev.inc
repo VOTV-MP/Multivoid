@@ -452,6 +452,12 @@ CFG_FLAG(kerfur_serve_drill, "kerfur_serve_drill", "dev", false, "VOTVCOOP_KERFU
     "follow, and the Omega must settle by it in the follow state (the client's 'leg A' line); then the client "
     "commands idle, the host runs the kill verb, and the murderous Omega must go for the host. The drill ends "
     "on 'rig: VERDICT kerfur-serve PASS|FAIL|INVALID' (INVALID is a step that could not run).")
+CFG_ENUM(rig_verdict_selftest, "rig_verdict_selftest", "dev", "off", "off|pass|fail|invalid",
+    "VOTVCOOP_RIG_VERDICT_SELFTEST",
+    "Dev self-test (HOST): once a client's world is ready the host says 'rig: VERDICT rig-verdict-selftest "
+    "PASS|FAIL|INVALID' (the value), once per session, so the rig's end-on-verdict watch can be shown all three "
+    "endings with no drill: pass ends the run after the done grace, fail at once as a failure, invalid at once as "
+    "inconclusive.")
 CFG_FLAG(door_drill, "door_drill", "dev", false, "VOTVCOOP_DOOR_DRILL",
     "Drill (BOTH peers): the client walks with the bot director to the nearest door its navmesh "
     "reaches and uses it as a player does -- three presses, each followed by a stay in its sensor until "
