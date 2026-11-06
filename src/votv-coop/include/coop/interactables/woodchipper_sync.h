@@ -16,10 +16,12 @@
 // a bounded rate and judged -- world, chipper by key and class, reach, a dead player, the gas can in its hand and the
 // room in the tank, the state wanted -- and done on the host's copy: the fuel added and the chipper's own checkActive, or
 // the game's own actionOptionIndex with the sender's puppet as its player, inside a requester_feedback scope. A refused
-// intent is answered with the state, to the sender alone.
+// intent is answered with the state, to the sender alone, whenever the host can name the chipper (a key that names none
+// has no state to send).
 
-// CLIENT: a state is written onto the copy (fuel and active, no checkActive); one for a chipper not resolved yet is held,
-// the newest per key, until the prop lane resolves the key. JOIN: the record lane carries a chipper's fuel with its
+// CLIENT: a state is written onto the copy (fuel and active), and when the on/off changed the game's own checkActive runs
+// on it, so the copy's motor, particles and sounds start as in single player; one for a chipper not resolved yet is
+// held, the newest per key, and the held keys are retried when the prop index moves. JOIN: the record lane carries a chipper's fuel with its
 // spawn; at the joiner's ready edge the host sends which chippers are on (`active` alone), after the record. Game thread.
 
 namespace coop::net {
@@ -29,8 +31,8 @@ struct WoodchipperPayload;
 
 namespace coop::woodchipper_sync {
 
-// Store the session, register the host's two POST watches and requester_feedback's seams. Idempotent; called every
-// load tick.
+// Store the session, register the host's two POST watches and requester_feedback's seams. Idempotent; called at each
+// session start.
 void Install(coop::net::Session* session);
 
 // The host's queues and sends, the client's held states. Game thread, once per pump tick.

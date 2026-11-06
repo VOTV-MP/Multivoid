@@ -445,18 +445,20 @@ now the machine (`coop/interactables/woodchipper_sync`, `coop/interactables/wood
 - Every change of the host's chipper is announced by the game's own `checkActive`, and by the button's body for a press
   at fuel 0, so a watch on each sends the chipper's fuel and on/off at once, one message per changed chipper per tick. The
   burn is the one thing nothing announces: while a chipper's fuel moves it is read and sent once a second. A client
-  writes both onto its copy, with no `checkActive`; a state for a chipper it has not resolved yet is held, the newest
-  per key, until the prop lane resolves the key.
+  writes both onto its copy and, when the on/off changed, runs the game's own `checkActive` on it, so the copy's motor and
+  its sounds start as in single player `[?]`; a state for a chipper it has not resolved yet is held, the newest per key,
+  and the held keys are retried when the prop index moves.
 - A client's pour runs on its copy as the game wrote it (its can drains and sounds), and the fuel the copy gained is
   sent to the host; its press of the button is refused on the copy and sent as the state it wanted. The host judges each
   (the sender's world, the chipper by key and class, a living sender, its reach, a bounded queue and rate, the gas can
   in the sender's hand and the room in the tank for a pour, the state wanted for a press), adds the fuel it has room
   for and runs `checkActive`, or runs the game's own press with the sender's puppet as the player, inside the requester
-  feedback scope, and answers a refused intent with the state, to the sender alone. A client can refill a chipper to
+  feedback scope, and answers a refused intent with the state, to the sender alone, whenever it can name the chipper (a
+  key that names none has no state to send). A client can refill a chipper to
   full on demand, at the intent budget of four a second; it cannot overfill it, and no gas can drains but the one in
   the client's own hand `[?]`.
 - At a joiner's ready edge the host sends which chippers are on; their fuel comes with the prop records. A chipper
-  that is mid-chip at the join, its animation and its sounds are not carried `[?]`.
+  that is mid-chip at the join, its chip animation and its chip sound are not carried `[?]`.
 
 `[?]` until the drill runs (`harness/autotest/autotest_woodchipper.cpp`, the `woodchipper_drill` row).
 
@@ -563,7 +565,7 @@ state it shows, and the first rows a world takes play no sound.
 | A cord's link is the host's: a client reports the plug its player made and the host's answer settles both copies, so two clients on one cord settle in arrival order and a claim on a cord the host's player is dragging is answered with the host's link. A socket's power, a generator's outlets and a Kerfus's charging are not this lane's. Not yet exercised in a two-peer game run | `[RD]` the cord and socket Blueprint call surface; `[?]` `coop/interactables/cord_sync`, `ue_wrap/devices/cord` |
 | A client's spill from its hand lands where its own flight put it, which the host takes as is within 15 m. A bottle's opening click and a liquid that leaves something other than a grime decal are not carried | `[V]` `prop_snack_beer_C`'s `openBottle` plays `impact_plastic_cue`; `coop/world/spill_sync` |
 | A client's light-group index has been reported dropping to zero after a join; not reproduced | `[?]` [issue 11](https://github.com/VOTV-MP/Multivoid/issues/11) |
-| A woodchipper's chip animation and sounds, and the gas can's fuel on the other peers after a pour, are not carried; a client's pour is the fuel its own copy gained, which the host takes up to the room in the tank, and a prop a client holds over the hopper is not eaten while it is held | `[?]` `coop/interactables/woodchipper_sync`; no lane carries the can's fuel |
+| A woodchipper's chip animation and chip sound, and the gas can's fuel on the other peers after a pour, are not carried; a client's pour is the fuel its own copy gained, which the host takes up to the room in the tank, and a prop a client holds over the hopper is not eaten while it is held | `[?]` `coop/interactables/woodchipper_sync`; no lane carries the can's fuel |
 
 ## Code map
 

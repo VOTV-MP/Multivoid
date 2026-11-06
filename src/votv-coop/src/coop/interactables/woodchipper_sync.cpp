@@ -5,6 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/element/intent_authority.h"
+#include "coop/interactables/woodchipper_gate.h"
 #include "coop/net/intent_bucket.h"
 #include "coop/net/intent_queue.h"
 #include "coop/net/protocol.h"
@@ -51,7 +52,8 @@ UE_FACT_FN(kRowPress, "woodchipper_sync", L"woodchipper_C", L"actionOptionIndex"
 constexpr int kTagCheckActive = 0x57435341;   // 'WCSA'
 constexpr int kTagPress = 0x57435350;         // 'WCSP'
 
-// A player's use reaches as far as the look-at trace, whose length is mainPlayer.armLength: 200 by default. Twice the
+// A player's use reaches as far as the look-at trace, whose length is mainPlayer.armLength: 200 by default [RD: the
+// class default; the cremator lever's judge states the same, coop/interactables/cremator_intent.cpp:42]. Twice the
 // default is the reach; the authority adds the machine's bounds radius and a 600 uu allowance for the puppet's pose
 // lagging the sender (coop/element/intent_authority), as the cremator lever's and the coffee press's judges do.
 constexpr float kReachUU = 400.0f;
@@ -102,6 +104,7 @@ struct Tracked {
     float sentFuel = -1.f;
     bool sentActive = false;
     bool dirty = false;               // a body announced a change since the last send
+    uint32_t answerMask = 0;          // the slots owed the host's state at the next flush (a refused intent's answer)
     Clock::time_point nextCheck{};    // the burn's poll, once a second a chipper
 };
 std::vector<Tracked> g_tracked;
@@ -149,12 +152,14 @@ void SendState(N::Session& s, int slot, const Tracked& t, float fuel, bool activ
         UE_LOGI("woodchipper: '%ls' is %s with %.1f fuel", t.key.c_str(), active ? "on" : "off", p.fuel);
 }
 
+// Divergence from MTA: its object sync pulses a syncer's updates on a timer (CObjectSync.cpp:17, :26-32); here a chipper's
+// state leaves when a body announced a change, and the burn, which nothing announces, is read once a second.
 void Flush(N::Session& s, Clock::time_point now) {
     if (g_tracked.empty()) return;
     const bool peers = s.AnyWorldReadyPeer();
     for (size_t i = 0; i < g_tracked.size();) {
         Tracked& t = g_tracked[i];
-        if (!t.dirty && now < t.nextCheck) {
+        if (!t.dirty && !t.answerMask && now < t.nextCheck) {
             ++i;
             continue;
         }
@@ -170,15 +175,24 @@ void Flush(N::Session& s, Clock::time_point now) {
         // send, so a machine at rest, or one switched on with nothing to burn, costs a read and no message.
         const bool moved = fuel != t.sentFuel || active != t.sentActive;
         t.nextCheck = now + kBurnPeriod;
-        if (!t.dirty && !moved) {
+        if (!t.dirty && !moved && !t.answerMask) {
             ++i;
             continue;
         }
-        if (peers) {
+        // At most one message a chipper per slot per tick: the broadcast of a changed chipper is also the answer to the
+        // slots owed one, and a refusal with no change is answered to its sender alone.
+        const bool broadcast = (t.dirty || moved) && peers;
+        if (broadcast) {
             SendState(s, -1, t, fuel, active, t.sentFuel < 0.f || active != t.sentActive);
             t.sentFuel = fuel;
             t.sentActive = active;
         }
+        for (uint8_t slot = 1; slot < N::kMaxPeers; ++slot) {
+            if (!(t.answerMask & (1u << slot))) continue;
+            if (!broadcast) SendState(s, slot, t, fuel, active, false);
+            ++g_view.answers;
+        }
+        t.answerMask = 0;
         t.dirty = false;
         ++i;
     }
@@ -223,23 +237,21 @@ void Refuse(Reason why, uint8_t slot, const std::wstring& key, const char* more)
     sd.since = 0;
 }
 
-// The host's answer to a refused intent: the state, to the sender alone, so its copy goes back to the host's.
-void Answer(N::Session& s, uint8_t slot, void* chipper) {
-    float fuel = 0.f;
-    bool active = false;
-    Tracked* t = Track(chipper);
-    if (!t || !W::Read(chipper, fuel, active)) return;
-    SendState(s, slot, *t, fuel, active, false);
-    ++g_view.answers;
+// The host's answer to a refused intent: the state, to the sender alone, so its copy goes back to the host's. MTA answers
+// every failed vehicle request to its sender (CGame.cpp:3042, :3098, :3358). The answer is owed here and sent by the
+// next flush, in this tick, and a change of the same chipper in the same tick goes out as the one broadcast that covers it.
+void Answer(void* chipper, uint8_t slot) {
+    if (Tracked* t = Track(chipper)) t->answerMask |= 1u << slot;
 }
 
 struct Slot {
     N::IntentQueue<Payload> queue;
     bool waitSaid = false;   // a wait for the body or the feedback seams, said once a streak
+    std::wstring fullKey;    // the chipper of the newest intent a full queue refused, answered at the next serve
 };
 coop::roster_ledger::PerSlotState<Slot> g_slots;
 
-bool Pour(N::Session& s, const Payload& p, uint8_t slot, void* chipper, const std::wstring& key) {
+bool Pour(const Payload& p, uint8_t slot, void* chipper, const std::wstring& key) {
     float fuel = 0.f;
     bool active = false;
     if (!W::Read(chipper, fuel, active)) {
@@ -250,15 +262,16 @@ bool Pour(N::Session& s, const Payload& p, uint8_t slot, void* chipper, const st
     if (!PourCheckOff()) {
         if (!coop::hand_item::HeldClassIs(slot, kCanClass)) {
             Refuse(kNoCan, slot, key, nullptr);
-            Answer(s, slot, chipper);
+            Answer(chipper, slot);
             return true;
         }
         // The client's copy ran the pour as the game wrote it, so the amount is the fuel its own can gave; the host's
-        // copy of that can is the hand mirror, which carries no amount, so the bound is the tank's room.
+        // copy of that can is the hand mirror, which carries no amount, so the bound is the tank's room. MTA trusts a
+        // client's reported ammo the same way (CPlayerPuresyncPacket.cpp:273), bounded by validity alone.
         const float room = W::kMaxFuel - fuel;
         if (!(room > 0.f)) {
             Refuse(kTankFull, slot, key, nullptr);
-            Answer(s, slot, chipper);
+            Answer(chipper, slot);
             return true;
         }
         if (add > room) {
@@ -271,6 +284,7 @@ bool Pour(N::Session& s, const Payload& p, uint8_t slot, void* chipper, const st
     // gascanFuel's own end: the fuel in, then checkActive (its POST marks the chipper changed).
     if (!W::WriteFuel(chipper, fuel + add) || !W::CallCheckActive(chipper)) {
         Refuse(kNotRun, slot, key, "the pour");
+        Answer(chipper, slot);
         return true;
     }
     NoteChange(chipper);
@@ -282,7 +296,7 @@ bool Pour(N::Session& s, const Payload& p, uint8_t slot, void* chipper, const st
 
 // False keeps the intent at its sender's queue head, as the cremator's judge does: the host has no body for the sender
 // yet, or requester_feedback's seams are still settling. Everything else is run or refused, and consumed.
-bool SetActive(N::Session& s, const Payload& p, uint8_t slot, void* chipper, const std::wstring& key) {
+bool SetActive(const Payload& p, uint8_t slot, void* chipper, const std::wstring& key) {
     float fuel = 0.f;
     bool active = false;
     if (!W::Read(chipper, fuel, active)) {
@@ -292,12 +306,12 @@ bool SetActive(N::Session& s, const Payload& p, uint8_t slot, void* chipper, con
     const bool wanted = p.active != 0;
     if (active == wanted) {   // the copy trailed the host by a send: the press must not invert the machine
         Refuse(kAlready, slot, key, wanted ? "on" : "off");
-        Answer(s, slot, chipper);
+        Answer(chipper, slot);
         return true;
     }
     if (coop::requester_feedback::Refused()) {
         Refuse(kNotRun, slot, key, "requester_feedback's seams are refused");
-        Answer(s, slot, chipper);
+        Answer(chipper, slot);
         return true;
     }
     if (!coop::requester_feedback::Ready()) return false;
@@ -314,7 +328,7 @@ bool SetActive(N::Session& s, const Payload& p, uint8_t slot, void* chipper, con
     NoteChange(chipper);
     if (!ran) {
         Refuse(kNotRun, slot, key, "the press");
-        Answer(s, slot, chipper);
+        Answer(chipper, slot);
         return true;
     }
     ++g_view.presses;
@@ -341,6 +355,7 @@ bool Execute(N::Session& s, const Payload& p, uint8_t slot) {
     }
     if (coop::players::Registry::Get().LifeOf(slot) != coop::players::PuppetLife::Alive) {
         Refuse(kSenderDead, slot, key, nullptr);
+        Answer(chipper, slot);
         return true;
     }
     const coop::element::IntentSubject subject =
@@ -354,15 +369,22 @@ bool Execute(N::Session& s, const Payload& p, uint8_t slot) {
     }
     if (!subject) {
         Refuse(kOutOfReach, slot, key, coop::element::OutcomeName(subject.outcome));
-        Answer(s, slot, chipper);
+        Answer(chipper, slot);
         return true;
     }
-    return p.op == N::kWoodchipperOpPour ? Pour(s, p, slot, chipper, key) : SetActive(s, p, slot, chipper, key);
+    return p.op == N::kWoodchipperOpPour ? Pour(p, slot, chipper, key) : SetActive(p, slot, chipper, key);
 }
 
 void Serve(N::Session& s) {
     for (uint8_t slot = 1; slot < N::kMaxPeers; ++slot) {
         Slot& sl = g_slots[slot];
+        if (!sl.fullKey.empty()) {
+            // The refused intent was a pour or press the sender's copy already ran or wanted: the state goes back. The key
+            // is resolved here, once a tick a slot at most, and not in the receive, which a flood would drive.
+            void* c = coop::prop_key_index::Find(sl.fullKey);
+            if (c && W::IsChipper(c)) Answer(c, slot);
+            sl.fullKey.clear();
+        }
         sl.queue.Serve(kBudget, NowMs, [&](const Payload& p) {
             if (!Execute(s, p, slot)) return N::Served::Wait;   // a wait runs nothing: no token spent
             sl.waitSaid = false;
@@ -379,6 +401,7 @@ struct Held {
     bool active = false;
 };
 std::unordered_map<std::wstring, Held> g_held;
+constexpr uint64_t kRetryNow = ~0ull;   // no index version is this: the next tick retries every held key
 uint64_t g_heldVersion = 0;
 
 // True when the state is dealt with: written onto its chipper, or dropped because the key names no chipper. False
@@ -393,8 +416,16 @@ bool TryApply(const std::wstring& key, const Held& h) {
     float fuel = 0.f;
     bool was = false;
     if (!W::Read(c, fuel, was)) return false;
+    // MTA's client applies a state through the entity's setter, which stores the flag and drives the engine entity
+    // (CClientVehicle.cpp:1196-1202, from CPacketHandler.cpp:3474). Here the setter is the game's own checkActive, run
+    // after the fields are written and only when the on/off changed (its spin-up restarts the loop sound otherwise): the
+    // copy's motor, particles and sounds start as in single player. Its intake box toggle re-fires overlaps, which the
+    // gate refuses on a client (coop/interactables/woodchipper_gate), and the watch on it announces only on the host.
     if (h.hasFuel) W::WriteFuel(c, h.fuel);
     W::WriteActive(c, h.active);
+    if (was != h.active && !W::CallCheckActive(c))
+        UE_LOGW("woodchipper: the copy of '%ls' did not run checkActive -- its machine does not show %s", key.c_str(),
+                h.active ? "on" : "off");
     ++g_view.applied;
     if (was != h.active)
         UE_LOGI("woodchipper: the host's '%ls' is %s here (%.1f fuel)", key.c_str(), h.active ? "on" : "off",
@@ -416,7 +447,7 @@ void RetryHeld() {
 
 enum class Reg : uint8_t { Pending, Registered, Refused };
 Reg g_regCheck = Reg::Pending, g_regPress = Reg::Pending;
-bool g_saidLive = false;
+bool g_settled = false;   // both watches settled, live or dead, and said once
 
 void RegisterOnce() {
     struct Def { const ue_wrap::facts::Function& row; int tag; sg::PostFn post; Reg& reg; };
@@ -436,13 +467,21 @@ void RegisterOnce() {
     }
 }
 
+// Until both watches settle, each tick resolves the pending names and asks the two rows; a watch that settled dead (its
+// class declares no such function) is said once, and ends the asking as a live one does.
 void SettleWatches() {
-    if (g_saidLive || g_regCheck != Reg::Registered || g_regPress != Reg::Registered) return;
+    if (g_settled || g_regCheck != Reg::Registered || g_regPress != Reg::Registered) return;
     sg::ResolvePendingNames();
-    if (sg::NameWatchLive(kRowCheckActive, kTagCheckActive) && sg::NameWatchLive(kRowPress, kTagPress)) {
-        g_saidLive = true;
+    if (!sg::NameWatchSettled(kRowCheckActive, kTagCheckActive) || !sg::NameWatchSettled(kRowPress, kTagPress)) return;
+    g_settled = true;
+    const bool checkLive = sg::NameWatchLive(kRowCheckActive, kTagCheckActive);
+    const bool pressLive = sg::NameWatchLive(kRowPress, kTagPress);
+    if (checkLive && pressLive) {
         UE_LOGI("woodchipper: the chipper's checkActive and button press are watched");
+        return;
     }
+    UE_LOGE("woodchipper: the %s watch settled dead -- the host's chipper is not announced for the rest of this process",
+            !checkLive && !pressLive ? "checkActive and button press" : checkLive ? "button press" : "checkActive");
 }
 
 struct ReplayCtx {
@@ -450,6 +489,8 @@ struct ReplayCtx {
     int slot;
 };
 
+// Divergence from MTA, whose entity-add packet carries a vehicle's whole state in one write (CPacketHandler.cpp:3472-3474):
+// a chipper's fuel belongs to the prop record lane (the spawn's record), so this lane sends `active` alone after it.
 void EachForReplay(void* ctx, void* chipper) {
     ReplayCtx& c = *static_cast<ReplayCtx*>(ctx);
     float fuel = 0.f;
@@ -475,6 +516,7 @@ void Install(N::Session* session) {
 void Tick() {
     RegisterOnce();
     SettleWatches();
+    coop::woodchipper_gate::SettleWatches();
     if (N::Session* s = Running(N::Role::Host)) {
         Serve(*s);
         Flush(*s, Clock::now());
@@ -498,8 +540,10 @@ void OnState(const Payload& p) {
     if (TryApply(key, h)) {
         g_held.erase(key);
     } else {
+        // The index version this key missed at is the current one; keys already held missed at an older one and may
+        // resolve at this one, so they are retried by the next tick (the held set only, one lookup each).
+        g_heldVersion = g_held.empty() ? coop::prop_key_index::Version() : kRetryNow;
         g_held[key] = h;
-        g_heldVersion = coop::prop_key_index::Version();
     }
     g_view.held = g_held.size();
 }
@@ -514,8 +558,11 @@ void OnIntent(int senderSlot, const Payload& p) {
         return;
     }
     Payload copy = p;
-    if (!g_slots[static_cast<uint8_t>(senderSlot)].queue.Push(std::move(copy), kMaxPending))
+    Slot& sl = g_slots[static_cast<uint8_t>(senderSlot)];
+    if (!sl.queue.Push(std::move(copy), kMaxPending)) {
         Refuse(kQueueFull, static_cast<uint8_t>(senderSlot), key, nullptr);
+        sl.fullKey = key;
+    }
 }
 
 void QueueConnectBroadcastForSlot(int slot) {
