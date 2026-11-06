@@ -574,10 +574,12 @@ std::string PlayerNo(int slot) { return "#" + std::to_string(coop::roster_ledger
 
 void Done(const std::string& arm) { UE_LOGI("cremator-drill: %hs DONE fails=%d", Upper(arm).c_str(), g_fails); }
 
-bool EndsInKick(const std::string& arm) { return arm == "cremate" || arm == "cremate-running"; }
+bool EndsInKick(const std::string& arm) { return arm == "cremate" || arm == "cremate-running" || arm == "cremate-low"; }
 
 // The arms that send the client to the crematorium. cremate-running starts the host's cremator first; cremate-survive
 // pulls its lever back once the run is on. The red arm is cremate with the host's cremate_landing_off.
+// cremate-low: the client starts under 10 health, so the machine's first burn tick ignites and kills it at once (the
+// one pose carries both); it must still end cremated and kicked.
 void RunHostCremate(const std::string& arm) {
     const bool kick = EndsInKick(arm);
     const char* want = kick ? kCremated : arm == "cremate-survive" ? kSurvived : arm == "cremate-transit" ? kDied : kNoLand;
@@ -629,6 +631,12 @@ void RunHostCremate(const std::string& arm) {
 
 void RunClientCremate(const std::string& arm) {
     if (!HostPuppetUp()) return;
+    if (arm == "cremate-low") {
+        bool wrote = false;
+        OnGameThread([&] { wrote = ue_wrap::vitals::Write(ue_wrap::vitals::Field::Health, kLowHostHealth); });
+        UE_LOGI("cremator-drill: CLIENT cremate-low set its own health to %.0f ok=%d", kLowHostHealth, wrote ? 1 : 0);
+        if (!wrote) { UE_LOGW("cremator-drill: VERDICT ABORT cremate-low -- the client's health did not write"); return; }
+    }
     Mark("client_ready");
     if (!Await("cremate_over", kDeathSec + 120)) return;
     // A kick lands moments after the verb's end line, and its notice stays until the dialog is acknowledged.

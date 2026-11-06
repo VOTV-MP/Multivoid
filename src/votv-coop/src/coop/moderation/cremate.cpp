@@ -137,6 +137,14 @@ void OnPose(uint8_t slot, const coop::net::PoseSnapshot& pose) {
     Event e{Kind::Pose};
     e.slot = slot;
     e.flag = (pose.stateBits & coop::net::kStateBitBurning) != 0;
+    // The burning latch is set as the pose arrives, not at the drain: puppet_events raises a pose's life edge before
+    // its pose listeners, so a target under 10 health -- ignited and killed by one burn tick -- has its death recorded
+    // ahead of the burning pose that carries it, and a latch set at the drain would judge that death "not by its fire".
+    Trip& t = g_trips[slot];
+    if (e.flag && !t.burnSeen && t.state != State::Ordered && t.state != State::Arrived) {
+        t.burnSeen = true;
+        UE_LOGI("cremate: #%u burning seen (state=%s)", static_cast<unsigned>(t.target.playerNo), StateName(t.state));
+    }
     e.gen = g_trips[slot].target.generation;
     e.x = pose.x; e.y = pose.y; e.z = pose.z;
     Record(e);
@@ -287,7 +295,6 @@ void OnLifeEvent(Trip& t, bool alive) {
 }
 
 void OnPoseEvent(Trip& t, const Event& e) {
-    if (e.flag && t.state != State::Ordered && t.state != State::Arrived) t.burnSeen = true;
     switch (t.state) {
         case State::Ordered:
             ++t.poses;

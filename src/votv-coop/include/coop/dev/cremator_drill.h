@@ -16,7 +16,8 @@
 
 // The cremate arms ask the /cremate verb through the command dispatcher (command_sync), judge its end line and the
 // landing, and read the end reason the client was kicked with. cremate: the client is cremated and kicked with MV-H35;
-// cremate-running: the same into a cremator the host already runs; cremate-survive: the host pulls the lever back and
+// cremate-running: the same into a cremator the host already runs; cremate-low: the same with the client under 10
+// health, killed by the burn's first tick; cremate-survive: the host pulls the lever back and
 // the client lives; cremate-transit: the client dies before landing; cremate-dropped: the order never applies. The
 // refusal arms (cremate-exempt with the rig's --observer, cremate-self, cremate-host) ask from client 1, granted the
 // node by the host's own /mv, and judge the refusal line.
