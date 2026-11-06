@@ -174,7 +174,7 @@ std::wstring HostFindKey() {
         return !key.empty();
     }, false);
     if (key.empty()) {
-        UE_LOGW("cremator-drill: VERDICT ABORT -- the host's cremator lane indexes no cremator");
+        Abort("the host's cremator lane indexes no cremator");
         return key;
     }
     UE_LOGI("cremator-drill: HOST cremator key='%ls'", key.c_str());
@@ -217,7 +217,7 @@ void RunHost() {
     Mark("key", Narrow(key));
 
     // G1.
-    if (!Pull(key)) { UE_LOGW("cremator-drill: VERDICT ABORT -- the host's lever did not run"); return; }
+    if (!Pull(key)) { Abort("the host's lever did not run"); return; }
     if (!PS::WaitFor("the host's run on", kHostRunSec, [&] { return CopyAt(key, 1); })) return;
     Mark("g1_on");
     std::string on;
@@ -225,7 +225,7 @@ void RunHost() {
     const Reading ron = Parse(on);
     Verdict(ron.active == 1 && ron.closed == 1, "g1-on", "the client's copy after the host's pull: " + on);
 
-    if (!Pull(key)) { UE_LOGW("cremator-drill: VERDICT ABORT -- the host's lever did not run"); return; }
+    if (!Pull(key)) { Abort("the host's lever did not run"); return; }
     if (!PS::WaitFor("the host's run off", kHostRunSec, [&] { return CopyAt(key, 0); })) return;
     Mark("g1_off");
     std::string off;
@@ -235,7 +235,7 @@ void RunHost() {
     UE_LOGI("cremator-drill: G1 DONE fails=%d", Fails());
 
     // G4. The run stays on; the client leaves, and comes back into it.
-    if (!Pull(key)) { UE_LOGW("cremator-drill: VERDICT ABORT -- the host's lever did not run"); return; }
+    if (!Pull(key)) { Abort("the host's lever did not run"); return; }
     if (!PS::WaitFor("the host's run on", kHostRunSec, [&] { return CopyAt(key, 1); })) return;
     // Life 1's occupancy of slot 1: the wait is for it to change, never for the slot to read closed -- a fast rejoin
     // closes and refills the slot between two reads.
@@ -386,7 +386,7 @@ bool BurnRun(const char* arm, const char* keyMark, const char* leverMark, float 
     void* cremator = nullptr;
     std::wstring key;
     OnGameThread([&] { key = SendClientToFirebox(cremator); });
-    if (key.empty()) { UE_LOGW("cremator-drill: VERDICT ABORT -- the host could not send the client to the firebox"); return false; }
+    if (key.empty()) { Abort("the host could not send the client to the firebox"); return false; }
     if (keyMark) Mark(keyMark, Narrow(key));
     if (!PS::WaitFor("the cremator's overlap for the client's puppet", kLandSec,
                      [] { return g_g3Landed.load(std::memory_order_acquire) == 1; }))
@@ -399,13 +399,13 @@ bool BurnRun(const char* arm, const char* keyMark, const char* leverMark, float 
             wrote = ue_wrap::vitals::Write(ue_wrap::vitals::Field::Health, hostHealth);
         });
         UE_LOGI("cremator-drill: HOST %hs set its own health to %.0f (was %.1f) ok=%d", arm, hostHealth, was, wrote ? 1 : 0);
-        if (!wrote) { UE_LOGW("cremator-drill: VERDICT ABORT -- the host's health write did not run"); return false; }
+        if (!wrote) { Abort("the host's health write did not run"); return false; }
         g_hostHealthWas = was;
     }
     bool ran = false, wasOpened = false;
     OnGameThread([&] { ran = C::ShutDoor(cremator, wasOpened) && C::CallUseLever(cremator); });
     UE_LOGI("cremator-drill: HOST %hs pulled the lever ran=%d doorWasOpened=%d", arm, ran ? 1 : 0, wasOpened ? 1 : 0);
-    if (!ran) { UE_LOGW("cremator-drill: VERDICT ABORT -- the host's lever did not run"); return false; }
+    if (!ran) { Abort("the host's lever did not run"); return false; }
     Mark(leverMark);
     return true;
 }
@@ -611,7 +611,7 @@ void RunHostCremate(const std::string& arm) {
         if (watching) key = coop::interactable_sync::CrematorKey(move.actor);
         no = PlayerNo(kClientSlot);
     });
-    if (!watching || key.empty()) { UE_LOGW("cremator-drill: VERDICT ABORT -- the landing cannot be watched"); return; }
+    if (!watching || key.empty()) { Abort("the landing cannot be watched"); return; }
     // The verb refuses a trip whose landing cannot be seen, so the order waits for the watch to be live (the red arm's
     // watch is this drill's own listener, as the verb registers none).
     if (!PS::WaitFor("the burn volume's watch live", kSignalSec, [] { return coop::cremator_occupancy::WatchLive(); }))
@@ -627,7 +627,7 @@ void RunHostCremate(const std::string& arm) {
         bool ran = false;
         OnGameThread([&] { ran = C::CallUseLever(move.actor); });
         UE_LOGI("cremator-drill: HOST pulled the lever back ran=%d", ran ? 1 : 0);
-        if (!ran) { UE_LOGW("cremator-drill: VERDICT ABORT -- the host's lever did not run"); return; }
+        if (!ran) { Abort("the host's lever did not run"); return; }
     }
     if (!PS::WaitFor("the verb's end line", kDeathSec + 60, [] { return !EndLine().empty(); })) return;
     const std::string end = EndLine();
