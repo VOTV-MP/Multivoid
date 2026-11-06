@@ -205,4 +205,7 @@ DWORD WINAPI SusHoleThread(LPVOID arg);
 // VOTVCOOP_RUN_PLANT_STATE, both peers -- harness/autotest/autotest_plant_state.cpp
 DWORD WINAPI PlantStateThread(LPVOID arg);
 
+// VOTVCOOP_RUN_BROWSER_FILTER, the main menu (harness.cpp) -- harness/autotest/autotest_browser_filter.cpp
+DWORD WINAPI BrowserFilterThread(LPVOID arg);
+
 }  // namespace harness::autotest

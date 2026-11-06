@@ -13,6 +13,8 @@
 #include "ui/host_save_picker.h"
 #include "ui/menu_sfx.h"        // native VOTV button click + rollover sounds
 #include "coop/net/protocol.h"  // kProtocolVersion (the "Ver" mismatch tint)
+#include "ui/server_browser_filter.h"
+#include "ui/server_browser_rows.h"   // IsIncompatible, the one test
 #include "coop/game_build/game_build.h"
 #include "coop/session/session_manager.h"
 #include "coop/config/config.h"   // local-only ini persistence for the name + last direct address
@@ -22,6 +24,7 @@
 
 #include "imgui.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -86,6 +89,9 @@ void Render() {
     // Pull the latest fetched rows (cheap copy of a small list; render thread only), and the
     // master they came from, which a join from them goes through.
     sm::CopyRows(g_rows, &g_rowsMaster);
+    g_rows.erase(std::remove_if(g_rows.begin(), g_rows.end(),
+                                [](const Row& r) { return ui::server_browser_filter::Leaves(r); }),
+                 g_rows.end());
     // Drop a selection whose lobby has left the list: the host quit while the browser
     // was open and there is nothing to connect to. No index clamp is needed or correct.
     if (!g_selectedId.empty()) {
@@ -190,6 +196,14 @@ void Render() {
         const ImGuiTableFlags tflags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
                                        ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable |
                                        ImGuiTableFlags_PadOuterX;
+        namespace F = ui::server_browser_filter;
+        bool hideIncompatible = F::Hides(F::Filter::Incompatible);
+        if (ImGui::Checkbox("Hide incompatible servers", &hideIncompatible))
+            F::SetHides(F::Filter::Incompatible, hideIncompatible);
+        ImGui::SameLine();
+        bool hideLocked = F::Hides(F::Filter::Locked);
+        if (ImGui::Checkbox("Hide locked servers", &hideLocked))
+            F::SetHides(F::Filter::Locked, hideLocked);
         if (ImGui::BeginTable("##serverlist", 7, tflags, ImVec2(0.0f, -footer))) {
             ImGui::TableSetupScrollFreeze(0, 1);
             ImGui::TableSetupColumn("",        ImGuiTableColumnFlags_WidthFixed, S(22.0f));   // lock

@@ -471,6 +471,9 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         // parameter being a boot fact and nothing else.
         UE_LOGI("harness: ==== MENU mode (native launch) -- MULTIPLAYER button drives coop ====");
         ue_wrap::log::Flush();  // the boot sequence lands on disk
+        // TEST ONLY: the drill of a screen that lives at this menu; the env-gated drills start with a session.
+        if (cfg::ReadEnv("VOTVCOOP_RUN_BROWSER_FILTER") == "1")
+            if (HANDLE t = ::CreateThread(nullptr, 0, harness::autotest::BrowserFilterThread, nullptr, 0, nullptr)) ::CloseHandle(t);
         // [dev] menu_autoload=1, TEST ONLY: the save load a player reaches through the menu's own
         // Load button, issued on a worker so the play loop below is ALREADY ticking when the world
         // comes up -- what this exists to measure happens during the load, and a load issued before
