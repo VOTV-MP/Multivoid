@@ -691,6 +691,17 @@ bool ClientBody() {
     bool secondGone = false;
     WaitGT("the host's second deer ended here too", 20, [&] { return (secondGone = Mirror(secondEid) == nullptr); }, false);
     Check(second && secondGone, "the host's ended deer ended here too");
+
+    // After the host's later steps (a second deer rolled and ended), the dissolved deer is still without a mirror: a pose or
+    // snapshot for its eid, while the host's deer stands, must not bring a second one in.
+    bool stillGone = false;
+    size_t deersLeft = 99;
+    OnGameThread([&] {
+        stillGone = Mirror(deerEid) == nullptr;
+        deersLeft = Live(true).size();
+    });
+    Check(stillGone, "the dissolved deer's eid has no second mirror");
+    Check(deersLeft == hostDeer - 1, "no deer mirror stands here but the host's others");
     return true;
 }
 
