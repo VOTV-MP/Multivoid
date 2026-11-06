@@ -3,6 +3,7 @@
 #include "harness/autotest/peer_signal.h"
 
 #include "coop/config/config.h"
+#include "coop/session/rig_verdict.h"
 #include "ue_wrap/core/log.h"
 
 #include <windows.h>
@@ -45,7 +46,7 @@ bool Begin(const char* logTag) {
     g_start = (static_cast<uint64_t>(now.dwHighDateTime) << 32) | now.dwLowDateTime;
     g_dir = coop::config::ReadEnv("VOTVCOOP_CAN_DIR");
     if (g_dir.empty()) {
-        UE_LOGW("%hs: VERDICT ABORT -- VOTVCOOP_CAN_DIR is unset", g_tag.c_str());
+        coop::rig_verdict::Say(g_tag.c_str(), coop::rig_verdict::Outcome::Invalid, "VOTVCOOP_CAN_DIR is unset");
         return false;
     }
     return true;
@@ -80,14 +81,14 @@ bool AwaitText(const char* name, std::string& out, int seconds) {
         }
         ::Sleep(100);
     }
-    UE_LOGW("%hs: VERDICT ABORT -- no '%hs' from the other peer", g_tag.c_str(), name);
+    coop::rig_verdict::Say(g_tag.c_str(), coop::rig_verdict::Outcome::Invalid, "no '%s' from the other peer", name);
     return false;
 }
 
 namespace detail {
 void SleepStep() { ::Sleep(100); }
 void ReportTimeout(const char* what, int boundSeconds) {
-    UE_LOGW("%hs: VERDICT ABORT -- %hs not within %ds", g_tag.c_str(), what, boundSeconds);
+    coop::rig_verdict::Say(g_tag.c_str(), coop::rig_verdict::Outcome::Invalid, "%s not within %ds", what, boundSeconds);
 }
 }  // namespace detail
 

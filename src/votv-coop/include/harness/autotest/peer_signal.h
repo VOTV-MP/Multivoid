@@ -11,8 +11,9 @@
 
 namespace harness::autotest::peer_signal {
 
-// Reads VOTVCOOP_CAN_DIR, records the run start and remembers `logTag` for the ABORT lines. Logs
-// `<tag>: VERDICT ABORT -- VOTVCOOP_CAN_DIR is unset` and returns false when the folder is not set.
+// Reads VOTVCOOP_CAN_DIR, records the run start and remembers `logTag` as the drill's verdict tag. Says
+// `rig: VERDICT <tag> INVALID -- VOTVCOOP_CAN_DIR is unset` (coop/session/rig_verdict.h) and returns false when the
+// folder is not set.
 bool Begin(const char* logTag);
 
 // Leaves the signal `name` for the other peer.
@@ -21,19 +22,19 @@ void Mark(const char* name);
 // Leaves the signal `name` carrying `text` (one line) for the other peer to read with AwaitText.
 void Mark(const char* name, const std::string& text);
 
-// Waits for the other peer's signal `name`, written since Begin. A timeout logs
-// `<tag>: VERDICT ABORT -- no '<name>' from the other peer` and returns false.
+// Waits for the other peer's signal `name`, written since Begin. A timeout says
+// `rig: VERDICT <tag> INVALID -- no '<name>' from the other peer` and returns false.
 bool Await(const char* name, int seconds = 240);
 
-// Await, and `out` receives the signal's first line. Same fresh-only rule and the same ABORT line on a timeout.
+// Await, and `out` receives the signal's first line. Same fresh-only rule and the same INVALID verdict on a timeout.
 bool AwaitText(const char* name, std::string& out, int seconds = 240);
 
 namespace detail {
 void SleepStep();                                    // one 100 ms poll step
-void ReportTimeout(const char* what, int boundSeconds);  // the ABORT line of WaitFor
+void ReportTimeout(const char* what, int boundSeconds);  // the INVALID verdict of WaitFor
 }  // namespace detail
 
-// Polls a state every 100 ms for at most boundSeconds. A timeout is an ABORT line unless the caller judges it.
+// Polls a state every 100 ms for at most boundSeconds. A timeout is an INVALID verdict unless the caller judges it.
 template <class Pred>
 bool WaitFor(const char* what, int boundSeconds, Pred pred, bool abortOnTimeout = true) {
     for (int i = 0; i < boundSeconds * 10; ++i) {
