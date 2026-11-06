@@ -20,7 +20,7 @@ CFG_FLAG(cremator_intent_reach_off, "cremator_intent_reach_off", "dev", false, "
     "Developer red arm of the cremator lever drill: never set. The host's judge of a client's handle press skips its "
     "reach check, so a press from beyond the handle's reach pulls the lever.")
 CFG_ENUM(cremator_drill, "cremator_drill", "dev", "off",
-    "off|1|g3|g3low|g5|cremate|cremate-running|cremate-low|cremate-survive|cremate-transit|cremate-dropped|cremate-exempt|"
+    "off|1|g3|g3low|g5|cremate|cremate-running|cremate-low|cremate-running-low|cremate-survive|cremate-transit|cremate-dropped|cremate-exempt|"
     "cremate-self|cremate-host|g2|g2-double|g2-far", "VOTVCOOP_CREMATOR_DRILL",
     "Drill (BOTH peers). 1 -- the cremator's lever run crosses. The host pulls the lever on its copy and the client's "
     "copy must read it on, its door latched, and then off again (G1); with the rig's --rejoin the host pulls it on once "
@@ -42,7 +42,8 @@ CFG_ENUM(cremator_drill, "cremator_drill", "dev", "off",
     "the machine, the host's reply says it was cremated and the client's end reason is MV-H35 (red arm: the host's "
     "cremate_landing_off). cremate-running -- the same with the host's cremator already running. cremate-low -- the "
     "same with the client's own health set to 5 first: one burn tick ignites and kills it, and it must still end "
-    "cremated and kicked. cremate-survive -- "
+    "cremated and kicked. cremate-running-low -- both: the host's cremator runs first and the client is at 5. "
+    "cremate-survive -- "
     "the host pulls the lever back once the run is on: the client survives, no kick. cremate-transit -- the client's "
     "cremate_transit_die: it dies on the order's receipt and never moves, so the verb ends 'died before landing', no kick. "
     "cremate-dropped -- the client's cremate_drop_order: the order never applies, so 'did not land', no kick. "

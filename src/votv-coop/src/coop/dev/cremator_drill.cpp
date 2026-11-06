@@ -574,12 +574,15 @@ std::string PlayerNo(int slot) { return "#" + std::to_string(coop::roster_ledger
 
 void Done(const std::string& arm) { UE_LOGI("cremator-drill: %hs DONE fails=%d", Upper(arm).c_str(), Fails()); }
 
-bool EndsInKick(const std::string& arm) { return arm == "cremate" || arm == "cremate-running" || arm == "cremate-low"; }
+bool LowArm(const std::string& arm) { return arm == "cremate-low" || arm == "cremate-running-low"; }
+bool RunningArm(const std::string& arm) { return arm == "cremate-running" || arm == "cremate-running-low"; }
+bool EndsInKick(const std::string& arm) { return arm == "cremate" || RunningArm(arm) || LowArm(arm); }
 
 // The arms that send the client to the crematorium. cremate-running starts the host's cremator first; cremate-survive
 // pulls its lever back once the run is on. The red arm is cremate with the host's cremate_landing_off.
 // cremate-low: the client starts under 10 health, so the machine's first burn tick ignites and kills it at once (the
-// one pose carries both); it must still end cremated and kicked.
+// one pose carries both); it must still end cremated and kicked. cremate-running-low: the same into a cremator the host
+// already runs, so the client may burn and die on the pose that lands it.
 void RunHostCremate(const std::string& arm) {
     const bool kick = EndsInKick(arm);
     const char* want = kick ? kCremated : arm == "cremate-survive" ? kSurvived : arm == "cremate-transit" ? kDied : kNoLand;
@@ -602,7 +605,7 @@ void RunHostCremate(const std::string& arm) {
     // watch is this drill's own listener, as the verb registers none).
     if (!PS::WaitFor("the burn volume's watch live", kSignalSec, [] { return coop::cremator_occupancy::WatchLive(); }))
         return;
-    if (arm == "cremate-running" && (!Pull(key) || !PS::WaitFor("the host's run on", kHostRunSec, [&] { return CopyAt(key, 1); })))
+    if (RunningArm(arm) && (!Pull(key) || !PS::WaitFor("the host's run on", kHostRunSec, [&] { return CopyAt(key, 1); })))
         return;
     CMD::Submit("cremate " + no);
     UE_LOGI("cremator-drill: HOST %hs dispatched 'cremate %hs' as the operator", arm.c_str(), no.c_str());
@@ -631,11 +634,11 @@ void RunHostCremate(const std::string& arm) {
 
 void RunClientCremate(const std::string& arm) {
     if (!HostPuppetUp()) return;
-    if (arm == "cremate-low") {
+    if (LowArm(arm)) {
         bool wrote = false;
         OnGameThread([&] { wrote = ue_wrap::vitals::Write(ue_wrap::vitals::Field::Health, kLowHostHealth); });
-        UE_LOGI("cremator-drill: CLIENT cremate-low set its own health to %.0f ok=%d", kLowHostHealth, wrote ? 1 : 0);
-        if (!wrote) { UE_LOGW("cremator-drill: VERDICT ABORT cremate-low -- the client's health did not write"); return; }
+        UE_LOGI("cremator-drill: CLIENT %hs set its own health to %.0f ok=%d", arm.c_str(), kLowHostHealth, wrote ? 1 : 0);
+        if (!wrote) { UE_LOGW("cremator-drill: VERDICT ABORT %hs -- the client's health did not write", arm.c_str()); return; }
     }
     Mark("client_ready");
     if (!Await("cremate_over", kDeathSec + 120)) return;
