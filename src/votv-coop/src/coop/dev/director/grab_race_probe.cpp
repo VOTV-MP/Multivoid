@@ -16,7 +16,7 @@
 #include "harness/autotest/peer_signal.h"
 
 #include "coop/config/config.h"
-#include "coop/element/quiescence_drain.h"   // HasPendingWork: the join's reconcile work has drained
+#include "coop/props/join_membership_sweep.h"  // HasLoadTailQuiesced: the join's corrections have ended
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/props/prop_hold_claim.h"
@@ -212,12 +212,13 @@ void RunGrabRace() {
         PS::Mark("target", std::string(key->begin(), key->end()));
     } else {
         // The join's corrections replace and move props for a while after the world is up. The target is read once
-        // the join has settled (the world announced, no world change waiting) and the reconcile queue the join armed
-        // is drained: both are announced state (net_pump::IsWorldSettled, quiescence_drain::HasPendingWork).
+        // the join's load tail has quiesced (join_membership_sweep::HasLoadTailQuiesced, the signal that announces the
+        // corrections' end: the sweep runs and the deferred mirrors are revealed there), with the world announced and
+        // no world change waiting (net_pump::IsWorldSettled).
         auto settled = std::make_shared<bool>(false);
         const bool joined = PS::WaitFor("this client's join to settle", 120, [&] {
             Step("the join", [settled](std::atomic<int>& d) {
-                *settled = coop::net_pump::IsWorldSettled() && !coop::element::quiescence_drain::HasPendingWork();
+                *settled = coop::net_pump::IsWorldSettled() && coop::join_membership_sweep::HasLoadTailQuiesced();
                 d.store(1);
             });
             return *settled || g_faultedStep;

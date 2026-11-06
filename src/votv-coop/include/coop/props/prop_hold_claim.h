@@ -22,10 +22,11 @@ struct WireKey;
 struct PropHoldRefusedPayload;
 }  // namespace coop::net
 
-// MTA precedent: the seat of an unoccupied vehicle is first-wins (a later claimant is refused,
-// CGame.cpp:3042), which is this rule. MTA's SYNCER is last-wins (OverrideSyncer forces the new one over
+// MTA precedent: a passenger seat is first-wins -- an occupied seat is never taken, and a claimant with no
+// free one is refused (FAIL_SEAT, CGame.cpp:3275-3340), which is this rule; the driver's seat is a jack,
+// last-wins (CGame.cpp:3215-3260), and MTA's SYNCER is last-wins too (OverrideSyncer forces the new one over
 // the old, CUnoccupiedVehicleSync.cpp:59-81), which this rule is not. Divergence: MTA judges before the
-// client acts and confirms to everyone (CGame.cpp:3196) and fails the requester alone (CGame.cpp:3042);
+// client acts and confirms to everyone (CGame.cpp:3196) and fails the requester alone (CGame.cpp:3366);
 // here the grab has already run on the grabbing machine, so the hold streams first and the refusal goes to
 // every client.
 namespace coop::prop_hold_claim {
