@@ -27,13 +27,16 @@ bool g_active = false;
 bool g_listening = false;
 bool g_fullSaid = false;
 
-// The four class objects, by name. A pointer is dropped when the index unlists its class (the listing id moves), and a
-// null one is asked again only when the index's class set has moved since the last ask: a class answers null while it
-// loads, and its first instance moves the set before the listener hears of the birth.
+// The four class objects, by name. A pointer is dropped when the index unlists its class (the listing id moves). A null
+// one is asked again when the index's class set has moved since the last ask, and once per pump tick besides: a class
+// answers null while it loads and its finishing moves no number (object_index.h:55-58). Never per birth. The residual:
+// a birth in the very tick its class finished loading is missed; the class loads with the spawner that hard-references it.
 void*    g_cls[kClasses] = {};
 uint64_t g_listingId[kClasses] = {};
 uint64_t g_unlistSeen = 0;
 uint64_t g_setAsked = ~uint64_t{0};
+uint64_t g_tick = 0;  // the pump tick, counted by Install
+uint64_t g_tickAsked = ~uint64_t{0};
 
 std::vector<Event> g_raw;      // what the listener heard, in order
 std::vector<Event> g_ready;    // what Settle passed on, in order
@@ -57,8 +60,9 @@ bool Recognise(void* cls, Class& out) {
         }
     }
     const uint64_t set = OI::ClassSetVersion();
-    const bool ask = set != g_setAsked;
+    const bool ask = set != g_setAsked || g_tick != g_tickAsked;
     g_setAsked = set;
+    g_tickAsked = g_tick;
     for (size_t i = 0; i < kClasses; ++i) {
         if (!g_cls[i] && ask) {
             g_cls[i] = OI::ClassByName(kNames[i]);
@@ -163,6 +167,7 @@ void SeedOne(void* ctx, void* obj, int32_t index) {
 // The session pump calls this every tick until the session ends: the end subscriptions are asked until they take, the
 // listener is added once (the list has no remove) and a session already recording returns at once.
 void Install() {
+    ++g_tick;
     SubscribeEnds();
     if (g_active) return;
     if (!g_listening) {

@@ -57,13 +57,18 @@ constexpr uint64_t kRetryMs = 1000;
 constexpr int kMaxTries = 30;
 
 // A class by name, held by its pointer: a pointer compare per spawn, and the listing identity says when it went stale. A
-// class still null is asked again only when the index's class set has moved since the last ask.
+// class still null is asked again when the index's class set has moved since the last ask, and once per lane tick besides:
+// a class answers null while it loads and its finishing moves no number (object_index.h:55-58). Never per spawn. The
+// residual: a hole spawned in the very tick its class finished loading is missed; the hole class loads with its
+// hard-referencing spawner.
 struct ClassCache {
     const wchar_t* name;
     void*          cls = nullptr;
     uint64_t       listing = 0;
     uint64_t       setAsked = ~uint64_t{0};
+    uint64_t       tickAsked = ~uint64_t{0};
 };
+uint64_t g_laneTick = 0;  // counted by Tick
 ClassCache g_holeClass{L"susDirtHole_C"};
 ClassCache g_spawnerClass{L"ticker_susHoleSpawner_C"};
 
@@ -75,8 +80,9 @@ bool IsOfClass(ClassCache& c, void* cls) {
     }
     if (!c.cls) {
         const uint64_t set = OI::ClassSetVersion();
-        if (set != c.setAsked) {
+        if (set != c.setAsked || g_laneTick != c.tickAsked) {
             c.setAsked = set;
+            c.tickAsked = g_laneTick;
             c.cls = OI::ClassByName(c.name);
             c.listing = c.cls ? OI::ClassListingId(c.cls) : 0;
         }
@@ -283,6 +289,7 @@ void Install(coop::net::Session* session) {
 }
 
 void Tick(coop::net::Session& session) {
+    ++g_laneTick;
     if (!session.running()) return;
     if (session.role() == coop::net::Role::Host) HostTick(session);
     else if (session.role() == coop::net::Role::Client) ClientTick(session);
