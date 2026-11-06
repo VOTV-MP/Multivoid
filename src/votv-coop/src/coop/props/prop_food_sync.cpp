@@ -125,6 +125,14 @@ struct MirrorState {
 };
 std::array<MirrorState, coop::net::kMaxPeers> g_mirrors{};
 
+// The mirror actor and the numbers it was last written and painted with, by slot: a mirror whose actor and numbers have
+// not changed is not written or painted again.
+struct Painted {
+    ue_wrap::CachedObjRef      actor;
+    coop::net::FoodHandPayload condition{};
+};
+std::array<Painted, coop::net::kMaxPeers> g_painted{};
+
 // HOST: a release whose copy is not born yet, by (slot, key). It keeps where its sender stood when it arrived, since the
 // copy is judged against that place when it appears.
 struct Release {
@@ -243,8 +251,15 @@ void PollMirrors() {
         if (!mirror || !F::IsFood(mirror)) continue;
         const MirrorState& state = g_mirrors[slot];
         if (!state.have) continue;
-        F::Write(mirror, {state.condition.temperature, state.condition.ripeness, state.condition.uses});
+        Painted& painted = g_painted[slot];
+        const coop::net::FoodHandPayload& c = state.condition;
+        if (painted.actor.Is(mirror) && painted.condition.temperature == c.temperature &&
+            painted.condition.ripeness == c.ripeness && painted.condition.uses == c.uses)
+            continue;
+        F::Write(mirror, {c.temperature, c.ripeness, c.uses});
         F::PaintLooks(mirror);
+        painted.actor.Set(mirror);
+        painted.condition = c;
     }
 }
 
@@ -611,6 +626,7 @@ void OnDisconnect() {
     g_lastDropped.Reset();
     g_handSentAny = false;
     g_mirrors = {};
+    for (Painted& p : g_painted) p = Painted{};
     g_releases.clear();
     g_cursor = 0;
     g_nextPoll = {};
