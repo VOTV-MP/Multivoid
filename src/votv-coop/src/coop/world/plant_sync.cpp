@@ -463,7 +463,8 @@ void ClientPoll(coop::net::Session& s) {
         std::wstring key = GP::Key(a);
         if (!key.empty()) index[key] = a;
     }
-    ApplyInbox(index);
+    // What this player did is read before the host's states are applied: a state applied first writes its values over the
+    // copy, and a change the player made since the last poll would then read as no change and never be sent.
 
     for (auto it = g_copies.begin(); it != g_copies.end();) {
         auto live = index.find(it->first);
@@ -509,6 +510,7 @@ void ClientPoll(coop::net::Session& s) {
         c.row = GP::Row(entry.second);
         UE_LOGI("plant_sync: this player planted '%ls'", entry.first.c_str());
     }
+    ApplyInbox(index);
 }
 
 void ResetClient() {
