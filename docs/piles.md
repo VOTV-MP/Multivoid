@@ -215,6 +215,7 @@ replacement for the position key.
 |---|---|---|
 | `GrabIntent`, `ThrowIntent` | a client to the host | the pile id; the release or a hard throw with its direction |
 | `PackTrashIntent` | a client to the host | the id of the pile or clump a client bagged, and whether the tool was a folded bag or a roll |
+| `GarbageBinState` | the host to all | a garbage container's listed props (their keys, the first five) and its canHold and canCollect, on change and to a joiner |
 | `BroomStroke` | a client to the host | the segment, heading and velocity a broom stroke read of its holder |
 | `PropConvert` | the host to all | the atomic pile-clump convert: id, form, pose, scale, chip type, context |
 | `TrashCarryPose` (stream) | the host to all | per-id poses for client-grabbed clumps and the clumps a broom sets rolling |
@@ -251,7 +252,7 @@ the host may have moved or removed the pile since.
 | Limit | Evidence |
 |---|---|
 | A clump has its collision off for its whole life -- carried and in flight -- so a player walks through the ball someone else is holding or has thrown. The pile it lands as has the game's own collision | `[V]` `coop/props/trash_mirror` |
-| Trash dropped into a garbage container updates the container on the host only: every client's container has its brain cancelled, so none of them -- not even the one whose player dropped the trash -- ever learns what is inside it, and the two pickup flags the game writes from those contents stay frozen | `[V]` `coop/interactables/garbage_sync`, and the cancelled Blueprint body read from the cook |
+| Trash dropped into a garbage container is glued by the host's container alone (every client's has its brain cancelled); the host sends what it holds and its two pickup flags (`GarbageBinState`), and a client's copy writes the flags and glues and lets go of the props it lists as the container's own glue does. A prop it lists past the first five travels by count only, and props it holds without a key are not shown | `[V]` `coop/interactables/garbage_bin_sync`; `harness/autotest/autotest_container_gaps.cpp`: on the code before it the client's container showed none of the host's disc and could be picked up, on this one it holds it and cannot, and lets go when the host's tips |
 | Dispenser piles born by an event carry per-process keys and never resolve across peers | `[V]` `coop/props/trash_pile_sync` |
 | A client's vacuum on a dispenser pile spawns its item on that client only: the host runs the broom's stroke, not the vacuum's suction | `[V]` the vacuum verb's bytecode; `coop/items/broom_stroke` refuses the broom's stroke alone |
 | A client's bag is spent whatever the host answers: the tool and the roll's count are per-peer state with no lane, so the client spends its own on the press and a host refusal -- out of reach, a target of another type -- costs it that bag | `[V]` code: `coop/props/pack_trash_intent` sends and spends in the same press, and the host's deny paths answer no one |
@@ -271,6 +272,6 @@ the host may have moved or removed the pile since.
 | the dispenser piles | `coop/props/trash_pile_sync`, `coop/props/trash_collect_sync` |
 | the broom | `coop/items/broom_stroke` (every stroke the host's), `coop/items/broom_push` (what it pushes), `ue_wrap/actors/broom` |
 | bagging a pile | `coop/props/pack_trash_intent`, and the bag family's tests in `ue_wrap/actors/prop` |
-| garbage containers | `coop/interactables/garbage_sync` |
+| garbage containers | `coop/interactables/garbage_sync` (the client's guards), `coop/interactables/garbage_bin_sync` (what one holds) |
 | the join | `coop/props/pile_spawn_bind`, `coop/element/quiescence_drain`, `coop/props/save_time_retire_util.h`, `coop/props/save_identity_map`, `coop/props/save_identity_bind` |
 | tests | `harness/autotest/autotest_chippile.cpp`, `harness/autotest/autotest_clump.cpp`, `harness/autotest/autotest_broomstroke.cpp` |

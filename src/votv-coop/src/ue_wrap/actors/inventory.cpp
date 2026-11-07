@@ -85,10 +85,21 @@ void ReadEquipRecord(const void* base, EquipRecord& rec) {
     rec.tag      = SR::ReadFNameAt(base, kEquip_tag);
 }
 
+// A record as the player inventory writes it: without carried container contents, whatever its sender put there.
+// They are only ever a container slice's, and this apply writes into a save object before the world stands, where
+// placing them (container_inventory::PlaceNested) would address the wrong save object and move the array under it.
+SR::SaveRecord Flat(const SR::SaveRecord& r) {
+    if (!r.nestedCarried && r.nested.empty()) return r;
+    SR::SaveRecord c = r;
+    c.nested.clear();
+    c.nestedCarried = false;
+    return c;
+}
+
 void WriteEquipRecord(uint8_t* base, const EquipRecord& r) {
     SR::WriteFNameField(base + kEquip_propName, r.propName);
     SR::WriteFNameField(base + kEquip_propKey, r.propKey);
-    SR::WriteSaveRecord(base + kEquip_data, r.data);  // embedded Fstruct_save (0x100 slot)
+    SR::WriteSaveRecord(base + kEquip_data, Flat(r.data));  // embedded Fstruct_save (0x100 slot)
     SR::WriteFNameField(base + kEquip_tag, r.tag);
 }
 
@@ -273,7 +284,7 @@ bool ApplyToSaveObject(void* saveSlot, const PlayerInventory& inv) {
         return false;
     }
     BuildAndSwapArray(carried, 0, SR::kSaveStride, inv.inventory,
-                      [](uint8_t* e, const SR::SaveRecord& r) { SR::WriteSaveRecord(e, r); });
+                      [](uint8_t* e, const SR::SaveRecord& r) { SR::WriteSaveRecord(e, Flat(r)); });
     // equipment and hold are FIXED-SHAPE slot arrays: the game finds an empty slot to equip into
     // (AddEquipment: Array_Find, "Not enough space" on -1) and writes hold[0] in place, and
     // nothing in it ever grows them. A profile with fewer slots than the save object -- an empty

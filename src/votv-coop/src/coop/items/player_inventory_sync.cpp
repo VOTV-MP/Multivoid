@@ -121,6 +121,38 @@ void SampleStandingPose() {
     g_standingPose = {at.X, at.Y, at.Z, rot.Yaw, true};
 }
 
+// Client: the items blob, with fewer of its signals' photos when with all of them it would pass the transport ceiling
+// (the vitals and the pose still follow it): the biggest are dropped first. The photos are what a profile carries in
+// bulk; the profile goes with fewer rather than not at all.
+std::vector<uint8_t> ItemsBlob(ue_wrap::inventory::PlayerInventory& items) {
+    namespace SR = ue_wrap::save_record;
+    constexpr size_t kStateRoom = 512;   // what AppendState adds after the items
+    std::vector<uint8_t> blob = coop::inventory_wire::SerializeItems(items);
+    const size_t full = blob.size();
+    size_t dropped = 0;
+    while (blob.size() + kStateRoom > coop::blob_chunks::MaxBlobBytes()) {
+        SR::SaveRecord* biggest = nullptr;
+        size_t bytes = 0;
+        auto consider = [&](SR::SaveRecord& r) {
+            if (SR::LargestPhoto(r) > bytes) { bytes = SR::LargestPhoto(r); biggest = &r; }
+        };
+        for (auto& r : items.inventory) consider(r);
+        for (auto& e : items.equipment) consider(e.data);
+        for (auto& e : items.hold) consider(e.data);
+        if (!biggest) break;
+        SR::DropLargestPhoto(*biggest);
+        ++dropped;
+        blob = coop::inventory_wire::SerializeItems(items);
+    }
+    static size_t s_said = 0;
+    if (dropped > 0 && s_said != full) {
+        s_said = full;
+        UE_LOGW("player_inventory[client]: the items are %zu bytes with their photos, past the transport ceiling -- "
+                "streamed without %zu of them (%zu bytes)", full, dropped, blob.size());
+    }
+    return blob;
+}
+
 // Client: send one built profile -- the items blob plus the vitals and the pose -- to the host.
 // True when the transport took it. The caller owns the poll and the dedup; this owns the vitals
 // read, the size ceiling, the send and the dedup state a send leaves behind.
@@ -173,7 +205,7 @@ void ClientStreamTick(coop::net::Session* s) {
     ue_wrap::inventory::PlayerInventory items;
     if (!ue_wrap::inventory::ReadAll(items)) return;  // world not up yet
     SampleStandingPose();
-    std::vector<uint8_t> blob = coop::inventory_wire::SerializeItems(items);
+    std::vector<uint8_t> blob = ItemsBlob(items);
     const uint64_t itemsHash = coop::blob_chunks::Fnv64(blob);
     if (itemsHash == g_lastItemsHash && now - g_lastSend < kVitalsCadence) return;
     SendProfile(s, std::move(blob), itemsHash, items.inventory.size(), now);
@@ -446,7 +478,7 @@ bool SendProfileNow(coop::net::Session* s) {
     ue_wrap::inventory::PlayerInventory items;
     if (!ue_wrap::inventory::ReadAll(items)) return false;
     SampleStandingPose();
-    std::vector<uint8_t> blob = coop::inventory_wire::SerializeItems(items);
+    std::vector<uint8_t> blob = ItemsBlob(items);
     const uint64_t itemsHash = coop::blob_chunks::Fnv64(blob);
     // No hash or cadence check: the caller has just changed the vitals the profile carries.
     return SendProfile(s, std::move(blob), itemsHash, items.inventory.size(), Clock::now());

@@ -2,6 +2,7 @@
 
 #include "ue_wrap/actors/save_record.h"
 
+#include "ue_wrap/actors/container_inventory.h"   // PlaceNested: a carried container's contents get a slot here
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/fstring_utils.h"
@@ -11,6 +12,7 @@
 #include "ue_wrap/desk/signal_dynamic.h"
 
 #include <chrono>
+#include <algorithm>
 #include <cstring>
 #include <unordered_map>
 
@@ -173,12 +175,31 @@ void ReadSaveRecord(const void* base, SaveRecord& rec) {
     rec.signals.reserve(static_cast<size_t>(sig.num));
     for (int32_t i = 0; i < sig.num; ++i) {
         ue_wrap::signal_dynamic::Row row;
-        if (ue_wrap::signal_dynamic::ReadStruct(sig.data + static_cast<size_t>(i) * kSignalStride, row))
+        if (ue_wrap::signal_dynamic::ReadStruct(sig.data + static_cast<size_t>(i) * kSignalStride, row,
+                                                /*withImage=*/true))
             rec.signals.push_back(std::move(row));
     }
 }
 
+namespace {
+void WriteFlat(uint8_t* base, const SaveRecord& r, ClassResolver resolve);
+}  // namespace
+
 void WriteSaveRecord(uint8_t* base, const SaveRecord& r, ClassResolver resolve) {
+    if (!r.nestedCarried) {
+        WriteFlat(base, r, resolve);
+        return;
+    }
+    // The contents first, into a slot of this machine's array, so the record names it; one that cannot be placed is
+    // written with its index as it came (-1): the container is born empty, as before contents travelled.
+    SaveRecord placed = r;
+    container_inventory::PlaceNested(placed, resolve);
+    WriteFlat(base, placed, resolve);
+}
+
+namespace {
+
+void WriteFlat(uint8_t* base, const SaveRecord& r, ClassResolver resolve) {
     int classMiss = 0;          // non-empty class leaves that did not resolve, said once below
     std::wstring firstMiss;     // the first one's name, so an honest single miss is still debuggable
     auto noteMiss = [&](const std::wstring& leaf) { if (firstMiss.empty()) firstMiss = leaf; ++classMiss; };
@@ -225,16 +246,45 @@ void WriteSaveRecord(uint8_t* base, const SaveRecord& r, ClassResolver resolve) 
     WriteGroups(base, kSave_names, 8, r.names,
                 [](uint8_t* e, const std::wstring& v) { WriteFNameField(e, v); });
     // signals: a FLAT TArray<Fstruct_signalDataDynamic> (0x70). Reuse the proven live writer
-    // (engine-mints the row FStrings, interns the FNames, zeroes image).
+    // (engine-mints the row FStrings, interns the FNames, zeroes image), then the row's photo, a
+    // byte array of its own in engine memory.
     void* sb = AllocZeroed(r.signals.size(), kSignalStride);
     if (!sb) { WriteArrHeader(base, kSave_signals, nullptr, 0); return; }
-    for (size_t i = 0; i < r.signals.size(); ++i)
-        // Ignore the bool: the slot is AllocZeroed, so a partial mint (KismetStringLibrary
-        // unresolved) leaves a valid empty row (null FStrings / NAME_None / empty image) -- a
-        // safe blank fallback, never garbage. We never crash a whole inventory over one signal.
-        ue_wrap::signal_dynamic::WriteStructLive(
-            reinterpret_cast<uint8_t*>(sb) + i * kSignalStride, r.signals[i]);
+    // The row writer's bool is ignored: the slot is AllocZeroed, so a partial mint (KismetStringLibrary
+    // unresolved) leaves a valid empty row (null FStrings / NAME_None / empty image) -- a safe blank
+    // fallback, never garbage. We never crash a whole inventory over one signal.
+    for (size_t i = 0; i < r.signals.size(); ++i) {
+        uint8_t* row = reinterpret_cast<uint8_t*>(sb) + i * kSignalStride;
+        ue_wrap::signal_dynamic::WriteStructLive(row, r.signals[i]);
+        const std::vector<uint8_t>& png = r.signals[i].image;
+        if (png.empty()) continue;
+        // A photo whose buffer does not allocate is left out, as an empty one: the row stands.
+        if (void* ib = AllocZeroed(png.size(), 1)) {
+            std::memcpy(ib, png.data(), png.size());
+            WriteArrHeader(row, ue_wrap::signal_dynamic::kOff_image, ib, static_cast<int32_t>(png.size()));
+        }
+    }
     WriteArrHeader(base, kSave_signals, sb, static_cast<int32_t>(r.signals.size()));
+}
+
+}  // namespace
+
+size_t LargestPhoto(const SaveRecord& r, size_t* row) {
+    size_t best = 0;
+    for (size_t i = 0; i < r.signals.size(); ++i) {
+        if (r.signals[i].image.size() <= best) continue;
+        best = r.signals[i].image.size();
+        if (row) *row = i;
+    }
+    return best;
+}
+
+bool DropLargestPhoto(SaveRecord& r) {
+    size_t row = 0;
+    if (LargestPhoto(r, &row) == 0) return false;
+    r.signals[row].image.clear();
+    r.signals[row].image.shrink_to_fit();
+    return true;
 }
 
 
@@ -471,6 +521,21 @@ bool ApplyRecord(void* actor, const SaveRecord& r, ClassResolver resolve) {
     SpliceGroups(merged.bytes,      base.bytes);
     SpliceGroups(merged.names,      base.names);
     SpliceElements(merged.signals,  base.signals);   // a flat array, so the rule applies one level up
+    // A row that arrives without its photo keeps the one this copy holds for the same signal: its sender left it out to
+    // fit a ceiling (DropLargestPhoto), and taking the row as sent would wipe it here.
+    const bool bare = std::any_of(merged.signals.begin(), merged.signals.end(),
+                                  [](const ue_wrap::signal_dynamic::Row& s) { return s.image.empty(); });
+    SaveRecord own;
+    if (bare && CaptureRecord(actor, own)) {
+        for (auto& s : merged.signals) {
+            if (!s.image.empty()) continue;
+            for (const auto& o : own.signals)
+                if (!o.image.empty() && o.id == s.id && o.name == s.name && o.signal == s.signal) {
+                    s.image = o.image;
+                    break;
+                }
+        }
+    }
 
     ParamFrame f(v->loadData);
     const int32_t off = f.ParamOffset(L"data");

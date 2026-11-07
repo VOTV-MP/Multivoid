@@ -206,6 +206,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIf("VOTVCOOP_RUN_VENT_CRAWLER", "vent crawler drill", &VentCrawlerThread, role);
     SpawnIf("VOTVCOOP_RUN_CAN_STATE", "canned food state drill", &CanStateThread, role);
     SpawnIf("VOTVCOOP_RUN_FOOD_STATE", "world food state drill", &FoodStateThread, role);
+    // Containers: photos in a record, a nested container, a garbage container, a container that breaks.
+    SpawnIf("VOTVCOOP_RUN_CONTAINER_GAPS", "container gaps drill", &ContainerGapsThread, role);
 
     SpawnIf("VOTVCOOP_RUN_PLANT_STATE", "plant drill", &PlantStateThread, role);
     // The bot-director halt probe, solo: measures the path query over the baked NavMesh and a

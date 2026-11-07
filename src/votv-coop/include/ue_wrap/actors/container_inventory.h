@@ -75,6 +75,19 @@ bool CarriesInventoryIndex(const save_record::SaveRecord& r);
 // index 0, which the guard passes, and the container would bind GObjStack[0].
 void ClearInventoryIndex(save_record::SaveRecord& r);
 
+// A container record's contents where its index cannot travel. AttachNested reads the contents of `r`'s own GObjStack
+// slot into r.nested (each nested container's own too, kMaxNestDepth levels deep), marks them carried and clears the
+// index: what a send site ships in the index's place. A record that is no container, or names no slot or an empty
+// one, only has its index cleared. PlaceNested writes carried contents into a slot of this machine's GObjStack and
+// sets `r`'s index to it: the slot this machine gave the same container key before while it stands, else a new one
+// appended, as the container's own Init appends one when it has none. Appending moves every slot of the array, so a
+// caller that writes a carried record must take any slot pointer after the write. False, `r` unchanged, when nothing
+// is carried or the save slot or its array do not resolve. The player inventory's records never carry: its apply
+// writes into a save object before the world stands. Game thread.
+inline constexpr int kMaxNestDepth = 3;
+void AttachNested(save_record::SaveRecord& r);
+bool PlaceNested(save_record::SaveRecord& r, save_record::ClassResolver resolve = nullptr);
+
 // Re-derive what the container shows -- currVol, Mass, the display names -- through the game's own
 // verbs (updateVolumesAndMass on the container, recalculateNames on the inventory), never by raw
 // writes. Either argument may be null. A verb that does not resolve is said once.

@@ -243,7 +243,24 @@ that player's inventory. And a nested container's own index into that array neve
 names a slot in the sender's array and would resolve to an unrelated container on the receiver. A
 record whose class descends from the container class carries a sentinel there instead -- written
 when a slice is sent and again when one is applied, since enforcing it only on the way out would
-trust every sender to be this build -- and the nested container arrives empty rather than broken.
+trust every sender to be this build -- and the slot's own records ride the slice's tail, which the
+receiver writes into a slot of its own array, below.
+
+A nested container's contents travel with it. A container's record names its contents by its slot in the global array,
+which means nothing on another peer, so a slice ships that index as -1 and, in its tail, the
+slot's own records (`container_inventory::AttachNested`, three levels deep). The receiver writes them into a slot of its
+own array, the one it gave the same container key before while it stands, else a new one appended as the container's own
+`Init` appends one (`container_inventory::PlaceNested`), and points the record at it. A client that takes a nested
+container into its own inventory therefore takes its contents too. `[V]` (`harness/autotest/autotest_container_gaps.cpp`:
+a disc in a basket in a backpack, the basket taken through the backpack's screen by the client; on the code before it the
+basket in the client's inventory named no slot and the disc was gone, on this one its slot holds the disc. The container
+join drill's parity, 281 containers on both peers, matched.)
+
+A signal's photo (the PNG the laptop shows) rides its record: a drive box, a container slice and the player inventory all
+carry it now. A record past the transport's 56 KB ceiling drops photos, the biggest first, until it fits, and the receiver
+keeps its own photo of a row that arrives without one (`save_record::ApplyRecord`). `[V]`
+(`harness/autotest/autotest_container_gaps.cpp`: a 30 KB photo filled into a drive box by each peer; on the code before it
+neither crossed, on this one both peers hold both, the second record sent without one and the receiver keeping its own.)
 
 ### Keypads and locks
 

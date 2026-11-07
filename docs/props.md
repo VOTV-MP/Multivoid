@@ -293,8 +293,15 @@ same drive does, until the container changes. A client's own copy of the call on
 comes from the container's own overlap graph. A joiner needs no replay: the put is one host step, so a joiner seeded
 before it receives the prop's destroy and the container's publication, and one seeded after receives the container with
 the record `[?]`. The open and closed state is a keyed-device channel like a
-door's ([devices.md](devices.md)). The full break-and-spill behaviour, and the single-slot verbs, are reverse-engineered
-and designed and not built.
+door's ([devices.md](devices.md)). The single-slot verbs are reverse-engineered and designed and not built.
+
+A container that breaks spills its records (its own `broken`), then its physicsImpact component destroys it. A client's
+lethal hit on a container it authors is cancelled and sent to the host (`ContainerBreakRequest`), which breaks its own copy
+by the same call, checked for world and reach (`coop/props/container_break`), so the spill is the host's records; before,
+the client's spill reached the host as its births, a nested container in it empty. `[V]` (`autotest_container_gaps`: a
+basket of two discs broken on the host and by a client grabbing it; both peers end with the same discs.)
+
+A nested container's contents and a signal's photo travel with their records ([devices.md](devices.md), containers).
 
 ### A record that changes in place
 
@@ -451,6 +458,7 @@ answered like a refused bite. A held food placed down, not thrown, is run by the
 | a prop a hook drags, and one still sliding after the hook lets go | the host | a per-tick stream while it moves; the end edge hands the velocity back |
 | a prop's key | the game, once; the host's copy wins on a mirror | never rewritten on the owner |
 | container contents | the host | slices of its object array; an extraction is an intent |
+| a container's break | the host | a client's lethal hit on one it authors is a request; the host's copy breaks and spills |
 | a stuck prop, and its unstick | the peer that sticks or frees it; every peer runs the component's own verb | one reliable message |
 | a self-changing prop's progression | the host | park, corrector or anchor, per prop |
 | notebook editor occupancy | the host arbitrates | a claim keyed by the owning prop |
@@ -472,7 +480,8 @@ answered like a refused bite. A held food placed down, not thrown, is run by the
 | `PropDropIntent`, `ReelEjectIntent` | a client to the host | a place, a throw or an unavoidable birth, for the host to author, with the placed root's velocity and the throw sequence |
 | `PropStickState` | the peer that sticks or frees it, to all | frozen or static, the commit pose and the hold the stick ended; or an unstick, with the pose and velocity |
 | `PropSnapPos` | the host to one joiner | a position correction for a save-authoritative prop moved in the join window, with a keyed prop's frozen and sleep; it carries the host's drive context for the prop (claim generation and open), the client drops one older than a drive END still on its copy, and a prop a hand held after its correction went out gets a follow-up after the release `[?]` |
-| `ContainerState`, `ContainerContents` | the presser; the host | open or closed; one slice of the host's object array |
+| `ContainerState`, `ContainerContents` | the presser; the host | open or closed; one slice of the host's object array, its nested containers' contents in its tail |
+| `ContainerBreakRequest` | a client to the host | a container this client authors took a lethal hit; the host breaks its copy |
 | `InventoryPickup` | each peer, relayed | the pocket blip, so others hear a pickup |
 
 ## Late join
@@ -502,6 +511,8 @@ prop resolves.
 | A prop whose own grab prelude adds to the base one gets only the base one on a receiver: the sprinkler's also detaches its hose, so the hose stays tied to a sprinkler another peer carries away. The glowstick's replaces the base one with its own release, and a receiver runs the base one | `[V]` the sprinkler and glowstick Blueprints: `prop_sprinkler_C`'s prelude calls `prop_C::playerGrabbed_pre` and `hose->detachSprinkler`, `prop_glowstick_C`'s calls `releaseGlowstick` alone; `coop/props/remote_prop` runs the base prelude |
 | A prop the toolgun freezes, unfreezes or makes static changes on the tool user's machine only; the next hold of it converges frozen and sleep, never static, and a copy static on one peer, without a wall-attach component's unstick, is not driven there while another peer holds the prop -- a refusal that lasts until a lane carries static | `[V]` no lane under `src/coop` catches `setPropProps`; `coop/props/remote_prop` refuses a stream for a copy static here |
 | Another peer's hold can carry away the chair this peer sits in at the laptop, which single player never allows: the laptop freezes the seat only on the machine whose player sits | `[V]` the laptop Blueprint: `stabilizeSeat` sets the seat frozen, and the exit's `setPropProps` clears it; `coop/props/remote_prop` unfreezes a held copy at the hold's first pose |
+| A nested container's contents travel in container slices only: the player inventory's records and a prop's own record never carry them, so a container a client carries in its inventory across a rejoin, or one whose own record a prop lane sends, still names its slot as before | `[V]` `ue_wrap/actors/inventory` and `coop/props/prop_save_data` strip them; `coop/props/container_contents_io` attaches them |
+| A record past the transport ceiling drops signal photos, the biggest first; a receiver keeps its own photo of such a row, one that never had it gets none | `[V]` `coop/props/prop_save_data`, `coop/props/container_contents_publish`, `coop/items/player_inventory_sync` |
 | A keyed prop a client creates outside the intent door (a place after a pickup, the whitelisted births, a container extract, a player's own spawn verb) never reaches the host. It is logged now: the drain names its exit, and `[dev] prop_birth_key_probe` tallies every exit by name | `[V]` `coop/props/prop_drop_intent` drops it at the drain; `coop/dev/prop_birth_key_probe` |
 | Two peers changing one canned food inside one round trip each publish a whole record, and the last to reach the host stands, so a bite can be lost; a can's `health` travels only with those records, so impact damage short of opening it stays on each peer | `[RD]` `coop/props/prop_can_state` publishes the record and takes no claim |
 | Concrete and every other local-accumulator prop drift between peers; only the tape reel and the world food have one author | `[V]` `coop/interactables/tape_caddy_sync`, `coop/props/prop_food_sync` |
@@ -527,7 +538,7 @@ prop resolves.
 | a client's intents | `coop/props/prop_drop_intent`; a thrown prop: `coop/props/prop_throw`, `coop/net/throw_bounds` |
 | the stick | `coop/props/prop_stick_sync` |
 | a prop under a hook's drive or a broom's push | `coop/props/prop_drive_host` (the host's set and stream), `coop/props/prop_drive_stream` (the receiver), `coop/items/hook_prop_claim` (the hook lane feeding it), `coop/items/hook_constraint` (the tie itself, host-only), `coop/items/broom_push` (the broom's push feeding it) |
-| containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync` |
+| containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync`; a break, `coop/props/container_break`; nested contents, `ue_wrap/actors/container_inventory` |
 | a world food's condition | `coop/props/prop_food_sync`, `ue_wrap/actors/food` |
 | a record that changes in place | `coop/props/prop_record_refresh` (the drive box, the reel case), `coop/props/prop_can_state` (the canned food) |
 | notebook sync | `coop/interactables/notebook_sync`, `coop/props/prop_save_data`, `ue_wrap/actors/notebook` |

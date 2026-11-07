@@ -101,7 +101,26 @@ bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSl
         if (it != g_sent.end() && it->second.records == h && it->second.flags == flags)
             return true;  // unchanged -- say nothing
     }
-    const std::vector<uint8_t> blob = cw::Pack(eid, recs, flags);
+    std::vector<uint8_t> blob = cw::Pack(eid, recs, flags);
+    if (blob.size() > coop::blob_chunks::MaxBlobBytes()) {
+        // Its records' signal photos are what a slice carries in bulk: past the ceiling, it goes with fewer, the
+        // biggest dropped first.
+        const size_t full = blob.size();
+        size_t dropped = 0;
+        while (blob.size() > coop::blob_chunks::MaxBlobBytes()) {
+            SR::SaveRecord* biggest = nullptr;
+            size_t bytes = 0;
+            for (auto& r : recs)
+                if (SR::LargestPhoto(r) > bytes) { bytes = SR::LargestPhoto(r); biggest = &r; }
+            if (!biggest) break;
+            SR::DropLargestPhoto(*biggest);
+            ++dropped;
+            blob = cw::Pack(eid, recs, flags);
+        }
+        if (dropped > 0 && blob.size() <= coop::blob_chunks::MaxBlobBytes())
+            UE_LOGW("container_contents: eid=%u blob %zu B with its photos exceeds the transport ceiling -- sent "
+                    "without %zu of them (%zu B)", eid, full, dropped, blob.size());
+    }
     if (blob.size() > coop::blob_chunks::MaxBlobBytes()) {
         UE_LOGW("container_contents: eid=%u blob %zu B exceeds the transport ceiling -- dropped "
                 "(contents stay diverged; there is no bulk path)", eid, blob.size());

@@ -81,6 +81,14 @@ bool RdWStr(const std::vector<uint8_t>& b, size_t& o, std::wstring& s) {
     return true;
 }
 
+namespace {
+void SerNestedAt(std::vector<uint8_t>& b, const SaveRecord& r, int depth);
+bool DeNestedAt(const std::vector<uint8_t>& b, size_t& o, SaveRecord& r, int depth);
+}  // namespace
+
+void SerNested(std::vector<uint8_t>& b, const SaveRecord& r) { SerNestedAt(b, r, 0); }
+bool DeNested(const std::vector<uint8_t>& b, size_t& o, SaveRecord& r) { return DeNestedAt(b, o, r, 0); }
+
 void SerSave(std::vector<uint8_t>& b, const SaveRecord& r) {
     AppWStr(b, r.className);
     for (float f : r.xform) AppF32(b, f);
@@ -131,5 +139,34 @@ bool DeSave(const std::vector<uint8_t>& b, size_t& o, SaveRecord& r) {
     }
     return true;
 }
+
+namespace {
+
+void SerNestedAt(std::vector<uint8_t>& b, const SaveRecord& r, int depth) {
+    const bool carried = r.nestedCarried && depth < kMaxNestDepth;
+    AppU8(b, carried ? 1 : 0);
+    if (!carried) return;
+    AppU32(b, static_cast<uint32_t>(r.nested.size()));
+    for (const auto& child : r.nested) {
+        SerSave(b, child);
+        SerNestedAt(b, child, depth + 1);
+    }
+}
+
+bool DeNestedAt(const std::vector<uint8_t>& b, size_t& o, SaveRecord& r, int depth) {
+    uint8_t carried = 0;
+    if (!RdU8(b, o, carried) || carried > 1) return false;
+    r.nested.clear();
+    r.nestedCarried = carried != 0;
+    if (!r.nestedCarried) return true;
+    uint32_t nc;
+    if (depth >= kMaxNestDepth || !RdU32(b, o, nc) || nc > kMaxRecords || !Feasible(nc, b, o)) return false;
+    r.nested.resize(nc);
+    for (uint32_t i = 0; i < nc; ++i)
+        if (!DeSave(b, o, r.nested[i]) || !DeNestedAt(b, o, r.nested[i], depth + 1)) return false;
+    return true;
+}
+
+}  // namespace
 
 }  // namespace coop::save_record_wire

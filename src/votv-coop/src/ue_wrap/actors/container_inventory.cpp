@@ -12,6 +12,8 @@
 #include "ue_wrap/core/reflection_props.h"
 
 #include <cstring>
+#include <string>
+#include <unordered_map>
 
 namespace ue_wrap::container_inventory {
 namespace {
@@ -209,6 +211,93 @@ void ClearInventoryIndex(SR::SaveRecord& r) {
     if (r.ints.empty()) r.ints.resize(1);
     if (r.ints[0].empty()) r.ints[0].resize(1);
     r.ints[0][0] = -1;
+}
+
+namespace {
+
+constexpr int32_t kMaxNestedRecords = 512;   // a slot past this many records is not carried
+
+void AttachAt(SR::SaveRecord& r, int depth) {
+    if (!IsContainerRecord(r)) return;
+    int32_t idx = -1;
+    ContainerStackIndex(r, idx);
+    ClearInventoryIndex(r);
+    r.nested.clear();
+    r.nestedCarried = false;
+    if (idx < 0 || depth >= kMaxNestDepth) return;
+    uint8_t* const slot = StackSlotAt(idx);
+    if (!slot) return;
+    const SR::Arr objs = SR::ReadArr(slot, 0);   // struct_mObject.obj @ +0
+    if (objs.num <= 0 || objs.num > kMaxNestedRecords) return;
+    r.nested.reserve(static_cast<size_t>(objs.num));
+    for (int32_t i = 0; i < objs.num; ++i) {
+        SR::SaveRecord child;
+        SR::ReadSaveRecord(objs.data + static_cast<size_t>(i) * SR::kSaveStride, child);
+        AttachAt(child, depth + 1);
+        r.nested.push_back(std::move(child));
+    }
+    r.nestedCarried = true;
+}
+
+// The slots this machine gave carried containers, by key, for this save slot: a container that arrives again reuses
+// its slot rather than growing the array with every publication.
+void* g_placedSave = nullptr;
+std::unordered_map<std::wstring, int32_t> g_placed;
+
+// GObjStack grown by one zeroed struct_mObject, as Array_Add grows it: the elements are moved to a new engine buffer
+// (a TArray moves bitwise) and the old one is left to the engine's own lifetime, as save_record's writers leave theirs.
+int32_t AppendStackSlot(void* save) {
+    const SR::Arr stack = SR::ReadArr(save, g_offGObjStack);
+    if (stack.num < 0) return -1;
+    const size_t n = static_cast<size_t>(stack.num);
+    void* buf = SR::AllocZeroed(n + 1, static_cast<size_t>(SR::kMxStride));
+    if (!buf) return -1;
+    if (n > 0 && stack.data) std::memcpy(buf, stack.data, n * static_cast<size_t>(SR::kMxStride));
+    SR::WriteArrHeader(save, g_offGObjStack, buf, static_cast<int32_t>(n + 1));
+    return static_cast<int32_t>(n);
+}
+
+}  // namespace
+
+void AttachNested(SR::SaveRecord& r) { AttachAt(r, 0); }
+
+bool PlaceNested(SR::SaveRecord& r, SR::ClassResolver resolve) {
+    if (!r.nestedCarried) return false;
+    void* save = ue_wrap::inventory::ResolveSaveSlot();
+    if (!save || CachedOffset(g_offGObjStack, R::ClassOf(save), L"GObjStack") < 0) return false;
+    if (save != g_placedSave) {
+        g_placedSave = save;
+        g_placed.clear();
+    }
+    // The nested containers' own contents first: each placement can grow GObjStack, which moves every slot, so no
+    // slot is held across one. They are then written flat, naming the slots they were given.
+    std::vector<SR::SaveRecord> children = r.nested;
+    for (auto& c : children) {
+        if (c.nestedCarried) PlaceNested(c, resolve);
+        c.nestedCarried = false;
+        c.nested.clear();
+    }
+    const bool keyed = !r.key.empty() && r.key != L"None";
+    int32_t idx = -1;
+    if (keyed) {
+        const auto it = g_placed.find(r.key);
+        if (it != g_placed.end() && StackSlotAt(it->second)) idx = it->second;
+    }
+    if (idx < 0) idx = AppendStackSlot(save);
+    if (idx < 0) return false;
+    const size_t n = children.size();
+    void* buf = n ? SR::AllocZeroed(n, static_cast<size_t>(SR::kSaveStride)) : nullptr;
+    if (n && !buf) return false;
+    for (size_t i = 0; i < n; ++i)
+        SR::WriteSaveRecord(static_cast<uint8_t*>(buf) + i * static_cast<size_t>(SR::kSaveStride), children[i], resolve);
+    uint8_t* const slot = StackSlotAt(idx);   // taken now, after every placement
+    if (!slot) return false;
+    SR::WriteArrHeader(slot, 0, buf, static_cast<int32_t>(n));
+    if (r.ints.empty()) r.ints.resize(1);
+    if (r.ints[0].empty()) r.ints[0].resize(1);
+    r.ints[0][0] = idx;
+    if (keyed) g_placed[r.key] = idx;
+    return true;
 }
 
 // updateVolumesAndMass calls only Get Volume; the ejector checkObjectsVolume (which calls takeObj) is

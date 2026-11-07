@@ -214,6 +214,10 @@ bool ParseBody(const std::vector<uint8_t>& body, std::wstring& key, SR::SaveReco
     key.assign(body.begin() + static_cast<long>(o), body.begin() + static_cast<long>(o + keyLen));
     o += keyLen;
     if (!SW::DeSave(body, o, rec)) return false;
+    // A prop's own record never carries container contents (only a container slice's do,
+    // container_inventory::AttachNested): carried ones would give the prop's container items of the sender's choosing.
+    rec.nested.clear();
+    rec.nestedCarried = false;
     // The body ADDRESSES a prop by the head key and CARRIES a record whose own key field the
     // game's loadData would write onto that prop. If the two disagree the message is asking to
     // rename one prop to another's identity, so it is refused whole rather than reconciled.
@@ -380,7 +384,21 @@ bool LandRecord(const std::wstring& key, SR::SaveRecord&& rec, uint8_t senderSlo
 
 bool SendBody(coop::net::Session* s, int peerSlot, const std::wstring& key,
               const SR::SaveRecord& rec, size_t* bytesOut = nullptr) {
-    const std::vector<uint8_t> body = BuildBody(key, rec);
+    std::vector<uint8_t> body = BuildBody(key, rec);
+    if (body.size() > MaxRecordBytes()) {
+        // Its signals' photos are what a record carries in bulk: past the cap, it goes with fewer, the biggest
+        // dropped first, and the receiver keeps its own of those (save_record's ApplyRecord).
+        SR::SaveRecord bare = rec;
+        const size_t full = body.size();
+        size_t dropped = 0;
+        while (body.size() > MaxRecordBytes() && SR::DropLargestPhoto(bare)) {
+            ++dropped;
+            body = BuildBody(key, bare);
+        }
+        if (dropped > 0 && body.size() <= MaxRecordBytes())
+            UE_LOGW("prop_save_data: record for key '%ls' is %zu B with its photos, over the %zu cap -- sent without "
+                    "%zu of them (%zu B)", key.c_str(), full, MaxRecordBytes(), dropped, body.size());
+    }
     if (bytesOut) *bytesOut = body.size();
     if (body.size() > MaxRecordBytes()) {
         UE_LOGW("prop_save_data: record for key '%ls' is %zu B, over the %zu cap -- REFUSED, not "
