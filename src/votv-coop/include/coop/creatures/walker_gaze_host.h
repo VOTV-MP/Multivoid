@@ -28,6 +28,10 @@ struct WalkerSeenPayload;
 // Here the walker's test is a frustum test plus WasRecentlyRendered, and rendering is per viewer: the host cannot render a
 // client's view, so the target's own level is taken and trusted as a pose is. A client that sends a false level freezes or
 // releases only the walker that hunts it, and the checks named above (target, key, reach, flag) bound the rest.
+// MTA also refuses a word from an earlier tenure of the same syncer, by a sync time context regenerated at each start of the sync
+// (reference/mtasa-blue/Server/mods/deathmatch/logic/CPedSync.cpp:243, CElement.cpp:1281-1304). WalkerSeen carries no such
+// field: a word from a client's earlier turn as target that lands after the host chose it again is taken as the new turn's
+// level, until the first judgement a new row always sends (walker_gaze, told -1) arrives behind it on the ordered stream.
 namespace coop::walker_gaze_host {
 
 // The farthest a target's player may be from its walker for its word to count: the Blueprint's own 20000 uu hunt range and a

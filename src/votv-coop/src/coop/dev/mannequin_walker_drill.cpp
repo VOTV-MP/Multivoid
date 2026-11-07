@@ -428,9 +428,9 @@ bool ClientFarEnough(void* b, const char* when) {
     return Invalid(why);
 }
 
-// Walker B, steps 4 to 7 (the sheet's numbers). Step 4: the client is its target; the client's gaze stops it, and its look away lets it
-// go again. Then steps 6, 5 and 7 (coop/dev/mannequin_walker_steps_b): its hit lands on the client, the client leaves, and the
-// rejoined client is told B's state.
+// Walker B, steps 4 to 7 (numbered as in mannequin_walker_drill.h). Step 4: the client is its target; the client's gaze stops it,
+// and its look away lets it go again. Then steps 6, 5 and 7 (coop/dev/mannequin_walker_steps_b): its hit lands on the client, the
+// client leaves, and the rejoined client is told B's state.
 bool HostPhaseB(void* a, void*& b, std::string& keyB, int& clientFails) {
     // Between the walkers: A ends, and the host goes back to the KPP gate, out of every spawn point's range, so that the client
     // is the only player in range at B's first read.
@@ -471,8 +471,8 @@ bool HostPhaseB(void* a, void*& b, std::string& keyB, int& clientFails) {
     if (!ClientFarEnough(b, "the freeze is judged")) return false;
 
     // The client's camera is on the copy: the host's walker must FREEZE, the Blueprint's own `looking` set and the walker standing
-    // still together. A stop without `looking` is a pause between the walker's moves, not a freeze (measured pr84 s12
-    // no_gaze_route: stopped=1 looking=0), so it does not pass; a `looking` that never comes is this step's FAIL.
+    // still together. A stop without `looking` is a pause between the walker's moves, not a freeze (measured under the
+    // no_gaze_route red: the walker stopped with `looking` false), so it does not pass; a `looking` that never comes is this step's FAIL.
     Track standing;
     bool looking = false;
     const bool frozen = WaitGT("walker B freezes while its target looks at it", kFreezeBoundS, [&] {
@@ -493,8 +493,9 @@ bool HostPhaseB(void* a, void*& b, std::string& keyB, int& clientFails) {
     if (!ClientFarEnough(b, "the release is judged")) return false;
     // The host's own camera is on B for the whole release wait: ruling (a) says only the TARGET's gaze freezes the walker, so a
     // host camera that still reached the walker's `looking` would keep it frozen. Two forms, both built, because the aim alone can
-    // prove nothing here: B is born ~63000 cm from the host (measured pr84 t7) and is far beyond the mesh's draw distance, so the
-    // host's own test may be false whatever the aim. The second form needs no sight: the walker's gaze reads, at its pinned sites,
+    // prove nothing here: B is born ~63000 cm from the host (measured at its birth in a green run; its distance at the release
+    // is read below as hostToB) and the mesh may not be drawn at such a distance (an inference, no draw distance is measured),
+    // so the host's own test may be false whatever the aim. The second form needs no sight: the walker's gaze reads, at its pinned sites,
     // are overwritten with the client's level while the client hunts it, and the host's reads in the window are counted.
     uint32_t answered0 = 0, answered1 = 0;
     float    hostToB = -1.f;
@@ -721,7 +722,7 @@ bool Armed() {
 DWORD WINAPI Thread(LPVOID /*arg*/) {
     // The drill is the host's and slot 1's. A third peer (mp.py --observer, there so that slot 1's leave is not the session's
     // last and the host runs the slot's own leave) takes no part: it would join after the marks it needs and say INVALID, or
-    // write a client's marks (measured pr84 t5). It knows its slot only once joined, so it waits for that before peer_signal.
+    // write a client's marks (measured: a third peer did write them). It knows its slot only once joined, so it waits for that before peer_signal.
     if (harness::autotest::IsClientRole()) {
         uint8_t slot = coop::players::kPeerIdUnknown;
         for (int i = 0; i < kSlotBoundS * 10; ++i) {

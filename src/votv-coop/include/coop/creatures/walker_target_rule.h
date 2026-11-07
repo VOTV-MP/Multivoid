@@ -35,12 +35,17 @@ struct PlayerView {
 };
 
 // The rule follows its precedents and departs from them on purpose. KEEP is MTA's syncer, kept while it stays near and chosen
-// again only when lost (reference/mtasa-blue/Server/mods/deathmatch/logic/CPedSync.cpp:106-139), and Source's enemy, kept while it
-// is valid until a hated one comes in sight (reference/source-sdk-2013/src/game/server/ai_basenpc.cpp:10144-10204). ACQUIRE takes the
-// nearest player where MTA elects the one syncing the fewest peds in range (CPedSync.cpp:188-218): a hunt follows its prey, and
-// shares no load. Validity is judged at the Blueprint's own reads, where MTA re-checks on a 500 ms pulse (CPedSync.cpp:40-44), so a
-// target that dies or leaves the range between two reads stays the target until the next; a leaver is cleared at once
-// (walker_target::OnPeerLeft).
+// again only when lost (reference/mtasa-blue/Server/mods/deathmatch/logic/CPedSync.cpp:106-139). Source's enemy is kept less
+// firmly (reference/source-sdk-2013/src/game/server/ai_basenpc.cpp:10144-10204, ShouldChooseNewEnemy): it is chosen again on
+// sight of a hated or feared entity (10161), so a nearer one takes over, and when the enemy eluded it or was last seen over ten
+// seconds ago (10156, 10186). The walker keeps its target through both: it hunts one player, whose gaze alone freezes it, and its
+// Blueprint looks again only at the reads named above, so sight of another player re-chooses nothing and a target out of sight
+// is lost by range, death or leaving alone. ACQUIRE takes the nearest player where MTA elects the one syncing the fewest peds in
+// range (CPedSync.cpp:188-218): a hunt follows its prey, and shares no load. It and KEEP share one range, where MTA acquires
+// inside the keep distance less 20 (CPedSync.cpp:146 against :127) so a player at the edge does not flip the syncer each pulse:
+// the keep test must equal the Blueprint's own range branch, which an acquire margin would contradict. Validity is judged at
+// the Blueprint's own reads, where MTA re-checks on a 500 ms pulse (CPedSync.cpp:40-44), so a target that dies or leaves the
+// range between two reads stays the target until the next; a leaver is cleared at once (walker_target::OnPeerLeft).
 
 // The slot the walker hunts after this read: `current` (kNoTarget for none) kept or replaced as above. `players` lists each
 // slot at most once, in slot order. Pure.

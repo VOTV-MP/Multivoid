@@ -3,7 +3,7 @@
 // its pose and hunt cross as WalkerState (walker_state_host, walker_state_client), and it freezes on its target's gaze
 // only (walker_gaze_host answers the reads, walker_gaze judges on the target's machine). Each registers its watches
 // (Install), settles them and runs its queue (Tick), drops what a leaver held (OnPeerLeft), what a joiner needs at its
-// ready edge (OnPeerWorldReady), and its session state (OnDisconnect). This calls them, in that order. Game thread.
+// world-ready edge (OnPeerWorldReady), and its session state (OnDisconnect). This calls them, in that order. Game thread.
 
 #pragma once
 
@@ -19,7 +19,8 @@ void Install(coop::net::Session& session);
 // Per gameplay tick: the HOST claims the walkers born since the last tick; a CLIENT hears its copies end and judges its gaze.
 void Tick(coop::net::Session& session, bool isHost);
 
-// A joiner's ready edge: every held walker's pose and hunt to `slot` alone.
+// A peer's world-ready edge (a joiner's, and again at every world change the peer makes): every held walker's pose and hunt to
+// `slot` alone.
 void OnPeerWorldReady(int slot);
 
 // A peer left: the walkers that hunted it choose again, and the levels it sent are dropped.

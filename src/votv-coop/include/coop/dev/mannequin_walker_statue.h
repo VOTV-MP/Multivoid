@@ -1,4 +1,4 @@
-// coop/dev/mannequin_walker_statue.h -- [dev] the walker drill's third increment: step 8, the statue route (the sheet's W1 measure).
+// coop/dev/mannequin_walker_statue.h -- [dev] the walker drill's third increment: step 8, the statue route the prop lane carries.
 //
 // The mannequin ticker has a second route besides the walker's spawn: it picks a statue (prop_mannequin_C) from the gamemode's list,
 // spawns a plain prop_C named mann_b (the broken mannequin) at its transform, destroys the statue, and then spawns a walker at a spawn

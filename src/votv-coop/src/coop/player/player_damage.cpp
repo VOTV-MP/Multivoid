@@ -395,8 +395,8 @@ void HushWalker(void* walker) {
 // no source, as a nameless hit, and the punch that follows is delivered as any other. The walker's hit lands on
 // Array_Get(overlap, 0) (pwm 5655), which may not be its target: the damage goes to whichever puppet the game's own choice hit,
 // and the walker's served record (walker_target) does not decide it. The delivery itself is the one DeliverFromCremator cites
-// above: the hit is made where the walker runs (Source's NPC, npc_BaseZombie.cpp:1267) and its victim's machine applies it
-// (MTA's owner, CNetAPI.cpp:1189). Game thread (a script-gate watch).
+// above: the hit is made where the walker runs (Source's NPC, ClawAttack through its hull trace, npc_BaseZombie.cpp:1267-1320)
+// and its victim's machine applies it (MTA's owner, CNetAPI.cpp:1189). Game thread (a script-gate watch).
 void DeliverWalkerDamage(const sg::Call& c) {
     if (!c.callerObject || !ue_wrap::ambient_creature::IsWalker(c.callerObject)) return;
     // The mannequin drill's red: a walker's hit on a client is cancelled here and sent nowhere, so the drill's hit step must FAIL.

@@ -1,7 +1,7 @@
-// coop/dev/mannequin_walker_steps_b.h -- [dev] the walker drill's second increment: steps 6, 5 and 7 (the sheet's numbers; step 3 is absent).
+// coop/dev/mannequin_walker_steps_b.h -- [dev] the walker drill's second increment: steps 6, 5 and 7 (numbered as in mannequin_walker_drill.h; step 3 is absent).
 //
 // The drill (coop/dev/mannequin_walker_drill) runs steps 1, 2 and 4 on walker A and walker B; these continue it, in the order they
-// run (the sheet has no step 3 here: see mannequin_walker_drill.h):
+// run (there is no step 3: see mannequin_walker_drill.h):
 //   6 HIT   (walker B, the client its target, after step 4's release) the host angers B with its own fireDamage (only an angry walker
 //           hits); the client keeps its view away and stands, B reaches it and hits, and the client counts a walker hit delivered to
 //           it and a fall of its health, then leaves at once. Red: no_delivery.

@@ -206,7 +206,7 @@ bool EnterRange(void* walker, const char* who, bool (*hunted)(void* walker)) {
     if (taken) return true;
     // The walk goes toward the walker itself, along the NavMesh (a point on the straight line from the walker is not one: from the
     // bed it lies in the house's walls), and it ends as soon as the walker hunts this player from inside its own range: the hunt
-    // alone is not that (walker_target gives the host a walker with nobody in range, measured pr84 s7: taken at 20122 cm), so the
+    // alone is not that (walker_target gives the host a walker with nobody in range, measured: a hunt taken at 20122 cm), so the
     // 3D distance, the Blueprint's own GetDistanceTo measure, is read beside it. Its reach is only the walk's own end.
     char what[96];
     std::snprintf(what, sizeof(what), "%s toward the walker", who);
