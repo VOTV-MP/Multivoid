@@ -7,7 +7,7 @@
 namespace coop::permissions::gameplay_nodes {
 
 bool Install(coop::commands::Registry& reg) {
-    constexpr const Entry* kAll[] = {&kToolgunRemove};
+    constexpr const Entry* kAll[] = {&kToolgunRemove, &kToolgunPropProps};
     for (const Entry* e : kAll) {
         if (!reg.DeclareNode({e->node, e->defaultGranted, e->description}, nullptr)) return false;
     }

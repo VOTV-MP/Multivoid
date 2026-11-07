@@ -704,6 +704,9 @@ msgstr "[[No tools here yet -- coming soon.]]"
 msgid "Nobody in the registry yet (players are recorded when they join)."
 msgstr "[[Nobody in the registry yet (players are recorded when they join).]]"
 
+msgid "Not changeable right now"
+msgstr "[[Not changeable right now]]"
+
 msgid "Not enough space."
 msgstr "[[Not enough space.]]"
 
@@ -1088,6 +1091,9 @@ msgstr "[[The host could not send its challenge.]]"
 msgid "The host did not answer through the signaling server. It may be offline, or reconnecting -- try again in a minute."
 msgstr "[[The host did not answer through the signaling server. It may be offline, or reconnecting -- try again in a minute.]]"
 
+msgid "The host does not allow the properties tool"
+msgstr "[[The host does not allow the properties tool]]"
+
 msgid "The host does not allow the remover"
 msgstr "[[The host does not allow the remover]]"
 
@@ -1144,6 +1150,9 @@ msgstr "[[The identity proof did not arrive in time.]]"
 
 msgid "The join failed before it started. The log has the error."
 msgstr "[[The join failed before it started. The log has the error.]]"
+
+msgid "The properties tool cannot change that in multiplayer"
+msgstr "[[The properties tool cannot change that in multiplayer]]"
 
 msgid "The remover cannot remove that in multiplayer"
 msgstr "[[The remover cannot remove that in multiplayer]]"
@@ -1396,6 +1405,9 @@ msgstr "[[Wrong password.]]"
 
 msgid "You are banned from this server."
 msgstr "[[You are banned from this server.]]"
+
+msgid "You are not holding a toolgun"
+msgstr "[[You are not holding a toolgun]]"
 
 msgid "You are too far from that kerfur."
 msgstr "[[You are too far from that kerfur.]]"

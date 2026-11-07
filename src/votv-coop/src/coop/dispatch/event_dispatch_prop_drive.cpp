@@ -424,26 +424,42 @@ bool HandlePropDriveEvent(net::Session& session,
         ::coop::sus_hole_intent::OnIntent(session, msg.senderPeerSlot, p);
         break;
     }
-    case net::ReliableKind::PropToolFlags: {
-        // ANY->ALL: a toolgun tool changed a prop's flags on its user's machine. A client's copy is relayed to the
-        // other clients at the host's receive edge (session_lanes.h); the host applies it as every client does.
-        if (msg.senderPeerSlot < 0 || msg.senderPeerSlot >= net::kMaxPeers) {
-            UE_LOGW("event_feed: PropToolFlags from invalid senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
+    case net::ReliableKind::PropPropsIntent: {
+        // CLIENT->HOST: a client pressed the toolgun's prop-properties tool. The host judges the press and runs the
+        // tool's values on its own copy (coop::prop_tool_flags). Never relayed.
+        if (session.role() != net::Role::Host) {
+            UE_LOGW("event_feed: PropPropsIntent received on a client -- dropping");
             break;
         }
-        if (msg.payloadLen < sizeof(net::PropToolFlagsPayload)) {
-            UE_LOGW("event_feed: PropToolFlags payload too short (%zu < %zu)",
-                    static_cast<size_t>(msg.payloadLen), sizeof(net::PropToolFlagsPayload));
+        const uint8_t senderSlot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        // The refusal is the lane's to say, in its tally: a sender cannot make the router's log the cost.
+        if (msg.payloadLen < sizeof(net::PropPropsIntentPayload)) {
+            ::coop::prop_tool_flags::NoteRefused(senderSlot, "payload too short");
             break;
         }
-        net::PropToolFlagsPayload p{};
+        net::PropPropsIntentPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (p.key.len == 0 || p.key.len > sizeof(p.key.data) || !(p.physFlags & net::propspawn_flags::kLiveState)) {
-            UE_LOGW("event_feed: PropToolFlags key.len=%u flags=0x%02x malformed -- dropping",
-                    static_cast<unsigned>(p.key.len), static_cast<unsigned>(p.physFlags));
+        ::coop::prop_tool_flags::OnIntent(p, senderSlot);
+        break;
+    }
+    case net::ReliableKind::PropPropsState: {
+        // HOST->CLIENT: a prop's flags as the host holds them, or why it refused this client's press.
+        if (session.role() != net::Role::Client || msg.senderPeerSlot != 0 ||
+            msg.payloadLen < sizeof(net::PropPropsStatePayload)) {
+            UE_LOGW("event_feed: PropPropsState dropped (role, sender slot %d or length %zu)", msg.senderPeerSlot,
+                    static_cast<size_t>(msg.payloadLen));
             break;
         }
-        ::coop::prop_tool_flags::OnToolFlags(msg.senderPeerSlot, p);
+        net::PropPropsStatePayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.reason >= static_cast<uint8_t>(net::PropPropsReason::Count)) {
+            UE_LOGW("event_feed: PropPropsState reason %u unknown -- dropping", static_cast<unsigned>(p.reason));
+            break;
+        }
+        ::coop::prop_tool_flags::OnState(p);
         break;
     }
     default:

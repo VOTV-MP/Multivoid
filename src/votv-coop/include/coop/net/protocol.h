@@ -1226,12 +1226,19 @@ enum class ReliableKind : uint8_t {
     // The host judges it (coop/world/plant_edit_gate) and answers a refused edit of a plant it holds with that plant's
     // PlantState. PlantStatePayload.
     PlantEdit = 225,
-    // ANY->ALL: a toolgun tool this peer's player used changed a keyed prop's static, frozen or sleep (the freeze,
-    // the unfreeze, the make-static). The tool runs on its user's machine alone, so every other copy kept the old
-    // flags; the user sends the prop's flags as the tool left them, and every peer whose player does not hold the
-    // prop sets them through prop_C's own setter. A client's copy is relayed to the other clients. Not pre-world.
-    // Late join: none, the snapshot rows carry the host's flags. PropToolFlagsPayload.
-    PropToolFlags = 235,
+    // CLIENT->HOST: this client's player pressed the toolgun's prop-properties tool on a keyed prop, with the tool's
+    // own static, frozen, active and sleep, seen from this camera point at this hit point. The host judges the sender's
+    // right, a toolgun in its hand, who holds the prop and the sight, applies the tool's values through the game's
+    // setter and publishes the prop's flags (PropPropsState); the client's own press is cancelled. Never relayed.
+    // Late join: none -- an act; a joiner's snapshot rows carry the flags. Trust: the eid is re-resolved by the host
+    // and the origin and hit are a claim it re-traces. PropPropsIntentPayload.
+    PropPropsIntent = 235,
+    // HOST->CLIENT: a keyed prop's static, frozen and sleep as the host's copy holds them, read back after the tool
+    // set them (reason Applied, to every peer, the sender included), or the host's current flags with the reason it
+    // refused a press (to the sender alone). Host-authored: refused at the host's receive edge; never relayed; not
+    // pre-world. Late join: none, the snapshot rows and the join-window correction carry the flags.
+    // PropPropsStatePayload.
+    PropPropsState = 236,
     // HOST->CLIENT: one decision of a Geom Octa, to be replayed into the client's own Blueprint (coop/creatures/
     // geom_octa_relay): op 0, an Aggro, the Octa took a target (the replay runs minSphere's begin-overlap handler with
     // the target's counterpart here), carrying the host's verdict count as the base; op 1, a FireVerdict, the host's
@@ -2142,16 +2149,45 @@ struct SusHoleIntentPayload {
 static_assert(sizeof(SusHoleIntentPayload) == 12, "SusHoleIntentPayload must be 12 bytes");
 static_assert(sizeof(SusHoleIntentPayload) <= 256 - 20 - 8, "SusHoleIntentPayload must fit in one reliable datagram");
 
-// A toolgun tool changed a prop's flags (PropToolFlags): the prop by key, and its propspawn_flags as the tool left
-// them, read off the live prop (kLiveState set).
-struct PropToolFlagsPayload {
-    WireKey  key;          // 32 -- the prop's Key
-    uint8_t  physFlags;    // 1  -- propspawn_flags: kStatic, kFrozen, kSleep with kLiveState
-    uint8_t  _pad[3];      // 3  -- zero
+// A client's press of the toolgun's prop-properties tool (PropPropsIntent): the element it hit, the camera point it
+// looked from and the point its shot struck in world centimetres, and the tool's own four values as the spawn menu set
+// them. The host judges the first three; none is trusted.
+struct PropPropsIntentPayload {
+    uint32_t eid;          // 4  -- the hit actor's Element id on the sender
+    float    origin[3];    // 12 -- the sender's camera location at the press
+    float    hit[3];       // 12 -- the impact point of the shot
+    uint8_t  isStatic;     // 1  -- the tool's isStatic
+    uint8_t  isFrozen;     // 1  -- the tool's isFrozen
+    uint8_t  isActive;     // 1  -- the tool's isActive
+    uint8_t  isSleeping;   // 1  -- the tool's isSleeping
 };
-static_assert(sizeof(PropToolFlagsPayload) == 36, "PropToolFlagsPayload must be 36 bytes");
-static_assert(sizeof(PropToolFlagsPayload) <= 256 - 20 - 8,
-              "PropToolFlagsPayload must fit in one reliable datagram");
+static_assert(sizeof(PropPropsIntentPayload) == 32, "PropPropsIntentPayload must be 32 bytes");
+static_assert(sizeof(PropPropsIntentPayload) <= 256 - 20 - 8, "PropPropsIntentPayload must fit in one reliable datagram");
+
+// Why the host sent a PropPropsState. Applied is the broadcast of a prop's flags after the tool set them; the rest are
+// refusals to the sender alone. NotReady and Gone are not shown to the player; the others are.
+enum class PropPropsReason : uint8_t {
+    Applied     = 0,  // the host applied the press and read the flags back
+    NotReady    = 1,  // the sender, its body or the host's classes were not ready; nothing was judged
+    Gone        = 2,  // the element is no longer live
+    Unsupported = 3,  // the element is not a prop the tool changes in multiplayer
+    NoRight     = 4,  // the host withholds the tool from this player
+    NoToolgun   = 5,  // the sender's hand holds no toolgun
+    Held        = 6,  // someone is holding or dragging the prop
+    OutOfSight  = 7,  // the sender's shot does not stand: too far from its body, off the prop, or blocked
+    Busy        = 8,  // the host could not judge the sight or run the setter just now
+    Count       = 9,
+};
+
+// A prop's flags on the host (PropPropsState): the element, its static, frozen and sleep, and why it was sent.
+struct PropPropsStatePayload {
+    uint32_t eid;          // 4 -- the prop's Element id on the host
+    uint8_t  isStatic;     // 1
+    uint8_t  isFrozen;     // 1
+    uint8_t  isSleeping;   // 1
+    uint8_t  reason;       // 1 -- PropPropsReason
+};
+static_assert(sizeof(PropPropsStatePayload) == 8, "PropPropsStatePayload must be 8 bytes");
 
 // One message of the drill filler (DevLoadFiller): its place in the run and the run's length; the rest is fill.
 struct DevLoadFillerPayload {

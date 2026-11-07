@@ -60,6 +60,7 @@ ALLOWLIST = [
     "src/coop/player/sleep_sync.cpp",
     "src/coop/props/container_act_request.cpp",
     "src/coop/props/prop_act_request.cpp",
+    "src/coop/props/prop_tool_flags.cpp",
     "src/coop/props/remover_request.cpp",
     "src/coop/session/player_handshake.cpp",
     "src/coop/session/player_handshake_prefs.cpp",

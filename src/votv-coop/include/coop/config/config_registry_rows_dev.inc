@@ -786,5 +786,7 @@ CFG_FLAG(class_lifetime_probe, "class_lifetime_probe", "dev", false, "VOTVCOOP_C
 
 // The woodchipper lane's drill and red arms: their own file, one concept, included as _dev_cremator.inc is above.
 #include "coop/config/config_registry_rows_dev_woodchipper.inc"
+// The prop-properties tool's red arms: their own file, one concept.
+#include "coop/config/config_registry_rows_dev_prop_props.inc"
 // The disc drills' rows: their own file, one concept.
 #include "coop/config/config_registry_rows_dev_disc.inc"

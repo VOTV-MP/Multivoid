@@ -23,6 +23,11 @@ struct Entry {
 inline constexpr Entry kToolgunRemove{"multivoid.gameplay.toolgun.remove", "Remove props with the tool gun's remover.",
                                       true};
 
+// The tool gun's prop-properties tool: a player may set a prop's static, frozen and sleep with it. Guards
+// PropPropsIntent on the host.
+inline constexpr Entry kToolgunPropProps{"multivoid.gameplay.toolgun.propprops",
+                                         "Change props' static, frozen and sleep with the tool gun's properties tool.", true};
+
 // Declares every node of the domain. False when a declaration is refused (one already declared).
 bool Install(coop::commands::Registry& reg);
 

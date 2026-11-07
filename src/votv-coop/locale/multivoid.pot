@@ -884,6 +884,10 @@ msgstr ""
 msgid "Nobody in the registry yet (players are recorded when they join)."
 msgstr ""
 
+#: src/coop/props/prop_tool_flags.cpp
+msgid "Not changeable right now"
+msgstr ""
+
 #: src/coop/props/container_act_request.cpp
 msgid "Not enough space."
 msgstr ""
@@ -1249,7 +1253,7 @@ msgstr ""
 msgid "That container is too far away."
 msgstr ""
 
-#: src/coop/props/remover_request.cpp
+#: src/coop/props/prop_tool_flags.cpp src/coop/props/remover_request.cpp
 msgid "That is being held"
 msgstr ""
 
@@ -1353,6 +1357,10 @@ msgstr ""
 msgid "The host did not answer through the signaling server. It may be offline, or reconnecting -- try again in a minute."
 msgstr ""
 
+#: src/coop/props/prop_tool_flags.cpp
+msgid "The host does not allow the properties tool"
+msgstr ""
+
 #: src/coop/props/remover_request.cpp
 msgid "The host does not allow the remover"
 msgstr ""
@@ -1427,6 +1435,10 @@ msgstr ""
 
 #: src/coop/net/end_reason.cpp
 msgid "The join failed before it started. The log has the error."
+msgstr ""
+
+#: src/coop/props/prop_tool_flags.cpp
+msgid "The properties tool cannot change that in multiplayer"
 msgstr ""
 
 #: src/coop/props/remover_request.cpp
@@ -1751,6 +1763,10 @@ msgstr ""
 msgid "You are banned from this server."
 msgstr ""
 
+#: src/coop/props/prop_tool_flags.cpp
+msgid "You are not holding a toolgun"
+msgstr ""
+
 #: src/coop/creatures/kerfur_command_answer.cpp
 msgid "You are too far from that kerfur."
 msgstr ""
@@ -1763,7 +1779,7 @@ msgstr ""
 msgid "You can't do that with this item."
 msgstr ""
 
-#: src/coop/props/remover_request.cpp
+#: src/coop/props/prop_tool_flags.cpp src/coop/props/remover_request.cpp
 msgid "You can't see that from there"
 msgstr ""
 
