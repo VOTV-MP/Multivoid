@@ -20,6 +20,7 @@
 #include "ue_wrap/engine/engine_player_verbs.h"
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -105,15 +106,21 @@ ue_wrap::FVector Vec(const float (&v)[3]) { return ue_wrap::FVector{v[0], v[1], 
 // as a UI sound. Its class is loaded wherever a walker stands, as one must for its hit.
 void PlayCue(void* body, uint8_t cue) {
     if (cue != coop::net::kPlayerHitCueWalker) return;
-    // The asset is found once and held; a miss is asked again only when the object index's class set has moved, since each ask
-    // walks the whole object table.
+    // The asset is found once and held. A miss walks the whole object table, and an asset finishing its load moves no object-index
+    // number (object_index.h:55-58), so a miss is asked again when the class set has moved and at most once per kSoundReaskMs
+    // besides. This path has no tick to hang a latch on (it runs per hit), hence the clock.
+    constexpr uint64_t kSoundReaskMs = 1000;
     static void*    sSound = nullptr;
     static uint64_t sSetAsked = ~uint64_t{0};
+    static uint64_t sAskedMs = 0;
     if (!sSound || !R::IsLive(sSound)) {
         sSound = nullptr;
         const uint64_t set = ue_wrap::object_index::ClassSetVersion();
-        if (set != sSetAsked) {
+        const uint64_t now = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+        if (set != sSetAsked || now - sAskedMs >= kSoundReaskMs) {
             sSetAsked = set;
+            sAskedMs = now;
             sSound = R::FindObject(L"break_flesh_3", L"SoundWave");
             if (!sSound) sSound = R::FindObject(L"break_flesh_3", L"SoundCue");
         }

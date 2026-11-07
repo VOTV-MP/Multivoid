@@ -29,8 +29,8 @@ namespace coop::walker_brain {
 
 // A CLIENT session's own watch and hook, once for the process, from the session's first tick (coop/session/subsystems,
 // InstallLoadWatchers): the graph watch (live once the game thread resolves its names) and the deferred-spawn hook, asked for
-// again whenever the object index's class set moves until it takes, and armed only while a client session runs. The host pays
-// nothing. Game thread.
+// again each tick while its row does not resolve (a class finishing its load moves no number) and, once resolved but refused,
+// when the object index's class set moves; armed only while a client session runs. The host pays nothing. Game thread.
 void Install(coop::net::Session& session);
 
 // [dev], for the walker drill: the graph entries the gate has refused this session, all of them counted. Game thread.

@@ -12,8 +12,7 @@
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
 
-#include <windows.h>
-
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <optional>
@@ -32,6 +31,26 @@ void Collect(const wchar_t* className, std::vector<void*>& out) {
         if (R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__")) static_cast<std::vector<void*>*>(ctx)->push_back(obj);
     }, &out);
 }
+
+// When a lookup that missed asks again. A class or asset answers null while it loads and its finishing moves no number
+// (object_index.h:55-58), so the class set's move alone would leave a miss unanswered; the lane's tick latch
+// (sus_hole_intent.cpp:77-87) is the coop layer's, and this wrapper has no tick, so the second trigger is the clock: at most
+// once per kReaskMs.
+constexpr uint64_t kReaskMs = 1000;
+struct ReaskLatch {
+    uint64_t setAsked = ~uint64_t{0};
+    uint64_t askedMs = 0;
+    bool Due() {
+        const uint64_t set = OI::ClassSetVersion();
+        const uint64_t now = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+        if (set == setAsked && now - askedMs < kReaskMs) return false;
+        setAsked = set;
+        askedMs = now;
+        return true;
+    }
+    void Reset() { setAsked = ~uint64_t{0}; }
+};
 
 // Property offsets on the instance's class, kept per class object.
 R::InstanceOffset g_staticMesh{L"StaticMesh"};
@@ -87,9 +106,9 @@ void* WalkerAnim(void* walker) {
 }
 
 // The native functions and library objects the view test calls: they last the process, and two of the lookups walk the object
-// table, while the test runs once a frame for each copy that hunts this player. A miss is asked again only when the object index's
-// class set has moved since the last ask. The parameter frames are kept with them: a call sets every input again and the call
-// writes every output, so one frame serves each call and none is allocated per frame.
+// table, while the test runs once a frame for each copy that hunts this player. A miss is asked again by ReaskLatch (the class
+// set's move, or the clock). The parameter frames are kept with them: a call sets every input again and the call writes every
+// output, so one frame serves each call and none is allocated per frame.
 struct ViewCalls {
     void* sysCdo = nullptr;
     void* libCdo = nullptr;
@@ -99,12 +118,10 @@ struct ViewCalls {
     std::optional<ParamFrame> boundsFrame;
     std::optional<ParamFrame> frustumFrame;
     std::optional<ParamFrame> renderedFrame;  // the mesh class's WasRecentlyRendered; rebuilt if the function moves
-    uint64_t setAsked = ~uint64_t{0};
+    ReaskLatch asked;
     bool Ready() {
         if (bounds && frustum && frustumParams.size() >= 4) return true;
-        const uint64_t set = OI::ClassSetVersion();
-        if (set == setAsked) return false;
-        setAsked = set;
+        if (!asked.Due()) return false;
         if (!sysCdo) sysCdo = R::FindClassDefaultObject(L"KismetSystemLibrary");
         if (!libCdo) libCdo = R::FindClassDefaultObject(L"bpCodeLib");
         void* sysCls = sysCdo ? R::FindClass(L"KismetSystemLibrary") : nullptr;
@@ -239,15 +256,11 @@ void* WalkerGazeController(void* worldContext) {
     if (!worldContext) return nullptr;
     static void* s_cdo = nullptr;
     static void* s_fn = nullptr;
-    static uint64_t s_setAsked = ~uint64_t{0};  // a miss is asked again only when the class set moved: each ask walks the object table
-    if (!s_cdo || !s_fn) {
-        const uint64_t set = OI::ClassSetVersion();
-        if (set != s_setAsked) {
-            s_setAsked = set;
-            if (!s_cdo) s_cdo = R::FindClassDefaultObject(L"GameplayStatics");
-            if (!s_fn) {
-                if (void* cls = R::FindClass(L"GameplayStatics")) s_fn = R::FindFunction(cls, L"GetPlayerController");
-            }
+    static ReaskLatch s_asked;  // each ask walks the object table
+    if ((!s_cdo || !s_fn) && s_asked.Due()) {
+        if (!s_cdo) s_cdo = R::FindClassDefaultObject(L"GameplayStatics");
+        if (!s_fn) {
+            if (void* cls = R::FindClass(L"GameplayStatics")) s_fn = R::FindFunction(cls, L"GetPlayerController");
         }
     }
     if (!s_cdo || !s_fn) return nullptr;
@@ -268,22 +281,18 @@ void* WalkerClass() { return OI::ClassByName(L"prop_wMannequin_C"); }
 
 bool IsWalker(void* actor) {
     // The class is held with the listing it was found under (a class unloaded and loaded again, even at the same address, answers
-    // a new id), and asked for again only when the class set moved while it is null: a pointer compare per call, not a name hash.
-    static void*    s_cls = nullptr;
-    static uint64_t s_listing = 0;
-    static uint64_t s_setAsked = ~uint64_t{0};
+    // a new id), and asked for again by ReaskLatch while it is null: a pointer compare per call, not a name hash.
+    static void*       s_cls = nullptr;
+    static uint64_t    s_listing = 0;
+    static ReaskLatch  s_asked;
     if (!actor) return false;
     if (s_cls && OI::ClassListingId(s_cls) != s_listing) {
         s_cls = nullptr;
-        s_setAsked = ~uint64_t{0};
+        s_asked.Reset();
     }
-    if (!s_cls) {
-        const uint64_t set = OI::ClassSetVersion();
-        if (set != s_setAsked) {
-            s_setAsked = set;
-            s_cls = WalkerClass();
-            s_listing = s_cls ? OI::ClassListingId(s_cls) : 0;
-        }
+    if (!s_cls && s_asked.Due()) {
+        s_cls = WalkerClass();
+        s_listing = s_cls ? OI::ClassListingId(s_cls) : 0;
     }
     return s_cls && R::ClassOf(actor) == s_cls;
 }
