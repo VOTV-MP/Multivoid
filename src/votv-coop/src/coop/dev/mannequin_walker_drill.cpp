@@ -98,6 +98,7 @@ constexpr float kKppReachCm = 1500.f;
 constexpr int kTimerSawS = 20;
 constexpr int kMarginS = 15;
 constexpr int kSpawnBoundS = 30;
+constexpr int kSlotBoundS = 240;   // a client learns its slot at its join, within the boot and the world load
 constexpr int kTargetBoundS = 30;
 constexpr int kMoveBoundS = kTimerSawS + 25;      // from its birth or from a release to its first steps
 constexpr int kReleaseBoundS = kTimerSawS + kMarginS;
@@ -696,6 +697,22 @@ bool Armed() {
 }
 
 DWORD WINAPI Thread(LPVOID /*arg*/) {
+    // The drill is the host's and slot 1's. A third peer (mp.py --observer, there so that slot 1's leave is not the session's
+    // last and the host runs the slot's own leave) takes no part: it would join after the marks it needs and say INVALID, or
+    // write a client's marks (measured pr84 t5). It knows its slot only once joined, so it waits for that before peer_signal.
+    if (harness::autotest::IsClientRole()) {
+        uint8_t slot = coop::players::kPeerIdUnknown;
+        for (int i = 0; i < kSlotBoundS * 10; ++i) {
+            slot = coop::players::Registry::Get().LocalPeerId();
+            if (slot != coop::players::kPeerIdUnknown) break;
+            ::Sleep(100);
+        }
+        if (slot != kClientSlot) {
+            UE_LOGI("mannequin-drill: this client is slot %d, not the drill's slot %d -- it takes no part", static_cast<int>(slot),
+                    static_cast<int>(kClientSlot));
+            return 0;
+        }
+    }
     if (!PS::Begin(kTag)) return 0;
     if (!harness::autotest::IsClientRole()) RunHost();
     else if (steps_b::IsRejoinedLife()) steps_b::RunRejoin();
