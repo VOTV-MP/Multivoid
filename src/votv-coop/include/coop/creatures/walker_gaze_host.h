@@ -33,7 +33,7 @@ inline constexpr float kWalkerGazeReachCm = 30000.f;
 void Install(coop::net::Session& session);
 
 // A client's word (WalkerSeen) from `senderSlot`, judged here: refused unless it names a walker whose current target that slot
-// is, from within reach, with a flag of 0 or 1. Game thread.
+// is, from within reach, with a flag of 0 or 1; a word that repeats the level held is ignored at one compare. Game thread.
 void OnSeen(const coop::net::WalkerSeenPayload& p, uint8_t senderSlot);
 
 // A peer left: its level is dropped from every walker. Game thread.

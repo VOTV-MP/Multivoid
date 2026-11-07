@@ -5,6 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/creatures/walker_state_client.h"
+#include "coop/creatures/walker_target_rule.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
@@ -14,7 +15,10 @@
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/types.h"
+#include "ue_wrap/engine/engine.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 
@@ -22,6 +26,7 @@ namespace coop::walker_gaze {
 namespace {
 
 namespace AC = ue_wrap::ambient_creature;
+namespace E = ue_wrap::engine;
 namespace PL = coop::players;
 namespace R = ue_wrap::reflection;
 
@@ -60,6 +65,16 @@ void Drop(Hunted& r) {
 
 bool StillThere(const Hunted& r) {
     return R::SlotSerial(r.index) == r.serial && R::InternalIndexOf(r.actor) == r.index && R::IsLive(r.actor);
+}
+
+// A place read from the actor's root in memory, and through the engine when the root is attached.
+bool Locate(void* actor, ue_wrap::FVector& out) {
+    return actor && (E::TryGetRootLocationRaw(actor, out) || E::TryGetActorLocation(actor, out));
+}
+
+float Distance(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
+    const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
 bool Send(const coop::net::WireKey& key, bool seen) {
@@ -127,15 +142,21 @@ void Install(coop::net::Session& session) {
 void Tick() {
     if (g_count == 0) return;
     void* controller = nullptr;
+    // This player's place and each copy's are read from memory (no engine call) where the root allows; the walker hunts only
+    // within its own range, so a copy beyond it is not in view of anyone worth judging and its level is 0 without a call.
+    ue_wrap::FVector me{};
+    const bool       haveMe = Locate(PL::Registry::Get().Local(), me);
     for (Hunted& r : g_rows) {
         if (!r.used) continue;
         if (!StillThere(r)) {
             Drop(r);
             continue;
         }
+        ue_wrap::FVector at{};
+        const bool       beyondRange = haveMe && Locate(r.actor, at) && Distance(me, at) > coop::walker_target::kRangeCm;
         // The walker's own read: the controller of player 0 and the mesh's bounds, as its tick reads them.
-        if (!controller) controller = AC::WalkerGazeController(r.actor);
-        const bool seen = controller && AC::WalkerInView(r.actor, controller);
+        if (!beyondRange && !controller) controller = AC::WalkerGazeController(r.actor);
+        const bool seen = !beyondRange && controller && AC::WalkerInView(r.actor, controller);
         const int8_t level = seen ? 1 : 0;
         // The mannequin drill's red: an unseen level is never sent, so the host keeps the last seen one and the drill's release
         // step must FAIL.

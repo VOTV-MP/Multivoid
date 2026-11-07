@@ -290,14 +290,19 @@ void Hold(void* actor) {
 void OnExpressed(void* actor, coop::element::ElementId eid) {
     void* const cls = g_walkerClass.load(std::memory_order_acquire);
     if (!cls || !actor || R::ClassOf(actor) != cls) return;
-    std::lock_guard<std::mutex> lk(g_queueMutex);
-    if (g_queueCount >= kQueueCap) {
-        if (!g_overflowSaid.exchange(true))
-            UE_LOGW("walker_target: the birth queue is full (%zu); a walker is not claimed", kQueueCap);
-        return;
+    bool full = false;
+    {
+        std::lock_guard<std::mutex> lk(g_queueMutex);
+        if (g_queueCount >= kQueueCap) {
+            full = true;
+        } else {
+            g_queue[g_queueCount++] = Entry{actor, eid};
+            g_pending.store(g_queueCount, std::memory_order_release);
+        }
     }
-    g_queue[g_queueCount++] = Entry{actor, eid};
-    g_pending.store(g_queueCount, std::memory_order_release);
+    // The log is written after the leaf mutex is let go: nothing is called under it.
+    if (full && !g_overflowSaid.exchange(true))
+        UE_LOGW("walker_target: the birth queue is full (%zu); a walker is not claimed", kQueueCap);
 }
 
 // Claim `actor` if it still holds `eid` and is alive: the registry's reverse is the test for an actor that died in the queue.

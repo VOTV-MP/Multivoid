@@ -6,6 +6,7 @@
 #include "coop/config/config_registry.h"
 #include "coop/creatures/walker_graph.h"
 #include "coop/creatures/walker_target.h"
+#include "coop/net/net_clock.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
@@ -78,6 +79,14 @@ const char* const kReasonText[kReasons] = {"the sender is not the walker's targe
                                            "the flag is not 0 or 1"};
 uint32_t g_refused[kReasons];
 bool     g_said[kReasons];
+
+// The level changes the log has said: per slot, when it last did and how many came since (a line a second a slot at most).
+struct LevelLog {
+    uint64_t lastMs = 0;
+    uint32_t held = 0;
+};
+constexpr uint64_t kLevelLogEveryMs = 1000;
+LevelLog g_levelLog[coop::players::kMaxPeers];
 
 bool In(const WG::Calls& calls, int32_t end) {
     const int n = calls.found < WG::kMaxCalls ? calls.found : WG::kMaxCalls;
@@ -252,10 +261,36 @@ void OnTargetChanged(void* walker, uint8_t slot) {
     Rearm();
 }
 
+// A change of a slot's level, logged at most once a second per slot with the changes held back since (a target that toggles as
+// fast as the lane carries costs the host one counter bump per word, not one log write).
+void LogLevel(uint8_t slot, bool seen, const coop::net::WireKey& key) {
+    LevelLog&      log = g_levelLog[slot];
+    const uint64_t now = coop::net::NowMs();
+    if (now - log.lastMs < kLevelLogEveryMs) {
+        ++log.held;
+        return;
+    }
+    log.lastMs = now;
+    if (log.held > 0)
+        UE_LOGI("walker_gaze_host: slot %d %s walker '%ls' (%u more change(s) in the last second not logged)", static_cast<int>(slot),
+                seen ? "sees" : "no longer sees", coop::net::StringFromWireKey(key).c_str(), log.held);
+    else
+        UE_LOGI("walker_gaze_host: slot %d %s walker '%ls'", static_cast<int>(slot), seen ? "sees" : "no longer sees",
+                coop::net::StringFromWireKey(key).c_str());
+    log.held = 0;
+}
+
 void Refuse(Reason why, uint8_t slot) {
     ++g_refused[why];
     if (g_said[why]) return;
     g_said[why] = true;
+    // A target's last word can cross the host's change of target on the wire: that is ordinary, so it is counted and said once
+    // as information, where every other reason is a warning.
+    if (why == kNotTarget) {
+        UE_LOGI("walker_gaze_host: a WalkerSeen from slot %d is refused: %s (counted, said once; a former target's word in "
+                "flight is ordinary)", static_cast<int>(slot), kReasonText[why]);
+        return;
+    }
     UE_LOGW("walker_gaze_host: a WalkerSeen from slot %d is refused: %s (counted, said once)", static_cast<int>(slot),
             kReasonText[why]);
 }
@@ -283,17 +318,19 @@ void OnSeen(const coop::net::WalkerSeenPayload& p, uint8_t senderSlot) {
         }
     if (!e || !Alive(*e)) return Refuse(kUnknownKey, senderSlot);
     if (e->target != senderSlot) return Refuse(kNotTarget, senderSlot);
+    // The walker was found by its key in this module's own table (fed by the target module's changes), so no lookup is reflected.
+    // A word that repeats the level held costs this one compare: the reach is read, from the sender's body and the walker, only
+    // for a word that changes the level, one read of the sender's distance each.
+    const uint32_t bit = 1u << senderSlot;
+    const bool     was = (e->seen & bit) != 0;
+    if (was == (p.seen != 0)) return;
     ue_wrap::FVector from{}, to{};
     void* const      body = WT::ClientBody(senderSlot);
     if (!body || !E::TryGetActorLocation(body, from) || !E::TryGetActorLocation(e->actor, to)) return Refuse(kTooFar, senderSlot);
     const float dx = from.X - to.X, dy = from.Y - to.Y, dz = from.Z - to.Z;
     if (std::sqrt(dx * dx + dy * dy + dz * dz) > kWalkerGazeReachCm) return Refuse(kTooFar, senderSlot);
-    const uint32_t bit = 1u << senderSlot;
-    const bool     was = (e->seen & bit) != 0;
     e->seen = p.seen ? (e->seen | bit) : (e->seen & ~bit);
-    if (was != (p.seen != 0))
-        UE_LOGI("walker_gaze_host: slot %d %s walker '%ls'", static_cast<int>(senderSlot), p.seen ? "sees" : "no longer sees",
-                coop::net::StringFromWireKey(p.key).c_str());
+    LogLevel(senderSlot, p.seen != 0, p.key);
 }
 
 void OnPeerLeft(uint8_t slot) {
@@ -308,6 +345,7 @@ void OnDisconnect() {
         g_refused[i] = 0;
         g_said[i] = false;
     }
+    for (LevelLog& l : g_levelLog) l = LevelLog{};
     g_count = 0;
     g_fullSaid = false;
     g_heldGraph = nullptr;

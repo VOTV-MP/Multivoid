@@ -23,7 +23,8 @@ namespace coop::walker_gaze {
 // Subscribe to the copies' hunt, once, from a client's session start. Game thread.
 void Install(coop::net::Session& session);
 
-// Per gameplay tick on a client: judge each copy that hunts this client and send a level that changed. Returns on one comparison
+// Per gameplay tick on a client: judge each copy that hunts this client and send a level that changed (a copy beyond the walker's
+// own range is level 0 with no engine call). Returns on one comparison
 // while no copy does. Game thread.
 void Tick();
 

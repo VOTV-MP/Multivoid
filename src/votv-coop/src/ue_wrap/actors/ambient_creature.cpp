@@ -16,6 +16,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <optional>
 
 namespace ue_wrap::ambient_creature {
 namespace {
@@ -86,13 +87,18 @@ void* WalkerAnim(void* walker) {
 }
 
 // The native functions and library objects the view test calls: they last the process, and two of the lookups walk the object
-// table, while the test runs twenty times a second. A miss retries at most once a second.
+// table, while the test runs once a frame for each copy that hunts this player. A miss retries at most once a second. The
+// parameter frames are kept with them: a call sets every input again and the call writes every output, so one frame serves each
+// call and none is allocated per frame.
 struct ViewCalls {
     void* sysCdo = nullptr;
     void* libCdo = nullptr;
     void* bounds = nullptr;
     void* frustum = nullptr;
     std::vector<R::ParamInfo> frustumParams;
+    std::optional<ParamFrame> boundsFrame;
+    std::optional<ParamFrame> frustumFrame;
+    std::optional<ParamFrame> renderedFrame;  // the mesh class's WasRecentlyRendered; rebuilt if the function moves
     uint64_t nextTryMs = 0;
     bool Ready() {
         if (bounds && frustum && frustumParams.size() >= 4) return true;
@@ -110,6 +116,17 @@ struct ViewCalls {
     }
 };
 ViewCalls g_view;
+
+// The frame kept in `slot` for `fn`: built on first use and again if the function changed, null when the function cannot be framed.
+ParamFrame* KeptFrame(std::optional<ParamFrame>& slot, void* fn) {
+    if (slot && slot->function() != fn) slot.reset();
+    if (!slot) slot.emplace(fn);
+    if (!slot->valid()) {
+        slot.reset();
+        return nullptr;
+    }
+    return &*slot;
+}
 
 }  // namespace
 
@@ -188,31 +205,31 @@ WalkerView WalkerViewParts(void* walker, void* playerController, bool diagnostic
     if (!mesh || !playerController) return v;
     void* renderedFn = R::FindDispatchFunctionCached(R::ClassOf(mesh), L"WasRecentlyRendered");
     if (!renderedFn || !g_view.Ready()) return v;
-    ParamFrame bounds(g_view.bounds);
-    if (!bounds.valid()) return v;
-    bounds.Set<void*>(L"Component", mesh);
-    if (!Call(g_view.sysCdo, bounds)) return v;
-    v.origin = bounds.Get<FVector>(L"Origin");
-    v.extent = bounds.Get<FVector>(L"BoxExtent");
+    ParamFrame* bounds = KeptFrame(g_view.boundsFrame, g_view.bounds);
+    if (!bounds) return v;
+    bounds->Set<void*>(L"Component", mesh);
+    if (!Call(g_view.sysCdo, *bounds)) return v;
+    v.origin = bounds->Get<FVector>(L"Origin");
+    v.extent = bounds->Get<FVector>(L"BoxExtent");
     v.boundsRead = true;
     // The library's parameter names are the game's own: by their order, controller, origin, extent, return.
     const std::vector<R::ParamInfo>& names = g_view.frustumParams;
-    ParamFrame frustum(g_view.frustum);
-    if (!frustum.valid()) return v;
-    frustum.Set<void*>(names[0].name.c_str(), playerController);
-    frustum.Set<FVector>(names[1].name.c_str(), v.origin);
-    frustum.Set<FVector>(names[2].name.c_str(), v.extent);
-    if (!Call(g_view.libCdo, frustum)) return v;
+    ParamFrame* frustum = KeptFrame(g_view.frustumFrame, g_view.frustum);
+    if (!frustum) return v;
+    frustum->Set<void*>(names[0].name.c_str(), playerController);
+    frustum->Set<FVector>(names[1].name.c_str(), v.origin);
+    frustum->Set<FVector>(names[2].name.c_str(), v.extent);
+    if (!Call(g_view.libCdo, *frustum)) return v;
     v.frustumRead = true;
-    v.inFrustum = frustum.Get<bool>(names[3].name.c_str());
+    v.inFrustum = frustum->Get<bool>(names[3].name.c_str());
     // The game's test is a conjunction: a frustum miss ends it, and only a diagnostic reads the rest.
     if (!v.inFrustum && !diagnostics) return v;
-    ParamFrame rendered(renderedFn);
-    if (!rendered.valid()) return v;
-    rendered.Set<float>(L"Tolerance", 3.f);
-    if (!Call(mesh, rendered)) return v;
+    ParamFrame* rendered = KeptFrame(g_view.renderedFrame, renderedFn);
+    if (!rendered) return v;
+    rendered->Set<float>(L"Tolerance", 3.f);
+    if (!Call(mesh, *rendered)) return v;
     v.renderedRead = true;
-    v.rendered = rendered.Get<bool>(L"ReturnValue");
+    v.rendered = rendered->Get<bool>(L"ReturnValue");
     return v;
 }
 
@@ -227,11 +244,12 @@ void* WalkerGazeController(void* worldContext) {
         if (void* cls = R::FindClass(L"GameplayStatics")) s_fn = R::FindFunction(cls, L"GetPlayerController");
     }
     if (!s_cdo || !s_fn) return nullptr;
-    ParamFrame f(s_fn);
-    if (!f.valid()) return nullptr;
-    f.Set<void*>(L"WorldContextObject", worldContext);
-    f.Set<int32_t>(L"PlayerIndex", 0);
-    return Call(s_cdo, f) ? f.Get<void*>(L"ReturnValue") : nullptr;
+    static std::optional<ParamFrame> s_frame;  // kept: every input is set again and the call writes the return value
+    ParamFrame* f = KeptFrame(s_frame, s_fn);
+    if (!f) return nullptr;
+    f->Set<void*>(L"WorldContextObject", worldContext);
+    f->Set<int32_t>(L"PlayerIndex", 0);
+    return Call(s_cdo, *f) ? f->Get<void*>(L"ReturnValue") : nullptr;
 }
 
 bool ReadWalkerLooking(void* walker) {
