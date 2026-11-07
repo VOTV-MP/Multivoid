@@ -42,8 +42,8 @@ inline constexpr const wchar_t* kBuyButtonFn =
 inline constexpr const wchar_t* kSellButtonFn =
     L"BndEvt__button_upgDown_K2Node_ComponentBoundEvent_1_OnButtonClickedEvent__DelegateSignature";
 
-// Presses a module row's own buy or sell button on this machine's live panel. False when no such row stands, and when the
-// row of that index is not one the panel itself owns (see the .cpp). Its body is the game's: index 27 writes the
+// Presses a module row's own buy or sell button on this machine's live panel. False when no live module row of that
+// index stands. Its body is the game's: index 27 writes the
 // triangle level at the module's price, and the ten indices without a store (12-19, 22, 23: the row's getLevel and
 // setLevel switches return a temporary) charge their price and hold no level (the switch read; the 30 credits of row 23
 // measured on a client). Game thread.

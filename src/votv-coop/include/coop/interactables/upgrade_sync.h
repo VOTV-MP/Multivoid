@@ -11,8 +11,8 @@
 // row. The physical upgrades keep counts of their own (coop/interactables/server_upgrade_sync, the boxes').
 //
 // The purchase is an intent. The client refuses its own button at the script-body gate, so it never
-// debits itself and a refusal needs no correction; the host re-derives price and bounds from its
-// own table and its own level. The .cpp carries the rest.
+// debits itself. The host prices a level row from the game's own table and presses a module row's own
+// button; a refused module press is answered with the host's balance and levels. The .cpp: the rest.
 
 #pragma once
 
