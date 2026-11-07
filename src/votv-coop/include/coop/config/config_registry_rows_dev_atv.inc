@@ -1,5 +1,6 @@
 // coop/config/config_registry_rows_dev_atv.inc -- the [dev] rows of the ATV lane: its rig probe, the corrector's
-// control arm, the spawn drill and its park, the health drill and its red arm, the eject drill and its red arm.
+// control arm, the spawn drill and its park, the health drill and its red arm, the eject drill and its red arm, the gate
+// probe.
 // Included by config_registry_rows_dev.inc after the fire rows, before the PI and NB rows, which stay the last ones,
 // so each row keeps its place in every expansion of the list. The entry forms are config_registry_rows.inc's.
 // The drill's arms: sit, grab, occupied, synced, silent, gate, owner, trap; the red arm's values: back, occupied,
@@ -70,3 +71,9 @@ CFG_ENUM(atv_eject_drill, "atv_eject_drill", "dev", "off", "off|host|client",
 CFG_FLAG(atv_eject_red, "atv_eject_red", "dev", false, "VOTVCOOP_ATV_EJECT_RED",
     "Developer red arm: never set. The receiving copy inverts its wheel presence rule (the host's own presence is "
     "skipped, a client syncer's is consumed), so both arms of the ATV eject drill must fail.")
+CFG_FLAG(atv_gate_probe, "atv_gate_probe", "dev", false, "VOTVCOOP_ATV_GATE_PROBE",
+    "Probe (BOTH peers): which of an ATV's own functions fire (gascanFuel, fuelUp, toolboxFix, playerUsedOn, upgradeTake, "
+    "Upd Lights, setBrake, unturbo, the lights, brake, turbo and honk input events), one [ATVG] line each -- the role, the "
+    "function, the seam that saw it (the script gate or ProcessEvent), the ATV's key, whether the copy is a mirror and the "
+    "calling Blueprint function. At most 200 lines per function and seam, the rest counted. Observe only: it never "
+    "cancels a call. Off, no watch is registered.")
