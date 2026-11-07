@@ -239,7 +239,7 @@ void RenderSpawnNpc() {
         ImGui::SetTooltip("The game's walking mannequin, spawned at its nearest spawn point that is not on screen "
                           "(it normally appears from day 14).\n"
                           "It opens doors, is saved with the world and returns angry after a load.\n"
-                          "In a session it crosses to each client as a prop mirror that runs a brain of its own.");
+                          "In a session it crosses to each client as a prop mirror whose brain is refused: it is moved by the host's drive stream.");
 }
 
 void RenderGivePoints() {

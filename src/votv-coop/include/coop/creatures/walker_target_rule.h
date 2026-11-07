@@ -34,6 +34,14 @@ struct PlayerView {
     float   distanceCm;
 };
 
+// The rule follows its precedents and departs from them on purpose. KEEP is MTA's syncer, kept while it stays near and chosen
+// again only when lost (reference/mtasa-blue/Server/mods/deathmatch/logic/CPedSync.cpp:106-139), and Source's enemy, kept while it
+// is valid until a hated one comes in sight (reference/source-sdk-2013/src/game/server/ai_basenpc.cpp:10144-10204). ACQUIRE takes the
+// nearest player where MTA elects the one syncing the fewest peds in range (CPedSync.cpp:188-218): a hunt follows its prey, and
+// shares no load. Validity is judged at the Blueprint's own reads, where MTA re-checks on a 500 ms pulse (CPedSync.cpp:40-44), so a
+// target that dies or leaves the range between two reads stays the target until the next; a leaver is cleared at once
+// (walker_target::OnPeerLeft).
+
 // The slot the walker hunts after this read: `current` (kNoTarget for none) kept or replaced as above. `players` lists each
 // slot at most once, in slot order. Pure.
 uint8_t DecideTarget(uint8_t current, const PlayerView* players, size_t n);

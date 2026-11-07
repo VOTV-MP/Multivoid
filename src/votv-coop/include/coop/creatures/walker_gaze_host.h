@@ -22,6 +22,12 @@ class Session;
 struct WalkerSeenPayload;
 }  // namespace coop::net
 
+// WHERE THE LEVEL IS JUDGED. Source and MTA judge a player's view on the server: Source asks the player entity whether a point is
+// in its view cone (reference/source-sdk-2013/src/game/server/ai_playerally.cpp:426-433), and MTA carries the camera rotation to
+// the server in the player's puresync (reference/mtasa-blue/Server/mods/deathmatch/logic/packets/CPlayerPuresyncPacket.cpp:202-204).
+// Here the walker's test is a frustum test plus WasRecentlyRendered, and rendering is per viewer: the host cannot render a
+// client's view, so the target's own level is taken and trusted as a pose is. A client that sends a false level freezes or
+// releases only the walker that hunts it, and the checks named above (target, key, reach, flag) bound the rest.
 namespace coop::walker_gaze_host {
 
 // The farthest a target's player may be from its walker for its word to count: the Blueprint's own 20000 uu hunt range and a
