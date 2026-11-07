@@ -675,6 +675,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_ambient_field.cpp
     src/harness/autotest/autotest_sus_hole.cpp
     src/harness/autotest/autotest_woodchipper.cpp
+    src/harness/autotest/autotest_prop_props.cpp
     src/ui/input_focus.cpp
     src/harness/screenshot.cpp
     src/harness/mod_environment.cpp
