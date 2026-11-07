@@ -4,7 +4,6 @@
 
 #include "coop/comms/chat_feed.h"
 #include "coop/element/element.h"
-#include "coop/element/intent_authority.h"  // kPoseStalenessUU
 #include "coop/element/registry.h"
 #include "coop/creatures/kerfur_entity.h"
 #include "coop/net/intent_queue.h"
@@ -19,6 +18,8 @@
 #include "coop/player/remote_player.h"
 #include "coop/player/roster_ledger.h"
 #include "coop/props/prop_hold.h"
+#include "coop/props/toolgun_limits.h"
+#include "coop/props/toolgun_sight.h"
 #include "coop/session/net_pump.h"
 
 #include "l10n/l10n.h"
@@ -28,7 +29,6 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
-#include "ue_wrap/core/trace.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/hit_result.h"
 #include "ue_wrap/facts/function_row.h"
@@ -156,8 +156,8 @@ sg::Verdict OnInitPre(const sg::Call& c) {
 // A sender's requests run in arrival order from a bounded queue at a bounded rate (kerfur_convert_host's shape). A
 // request past the cap, or from an unknown sender, is refused into the tally. Per-slot state: a leaver's queue goes
 // with its occupant. Game thread.
-constexpr coop::net::IntentBudget kBudget{4.0f, 2.0f};
-constexpr size_t kMaxPending = 8;
+constexpr coop::net::IntentBudget kBudget = coop::toolgun_limits::kBudget;
+constexpr size_t kMaxPending = coop::toolgun_limits::kMaxPending;
 
 // A request with the sender's eye as the host held it when the request arrived: queued presses are judged against the
 // pose they were made at, not the pose of the tick that serves them.
@@ -184,17 +184,6 @@ void Refuse(uint8_t slot, const char* why) {
 
 inline bool Finite3(const float v[3]) { return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]); }
 
-inline float Dist(const FVector& a, const FVector& b) {
-    const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
-    return std::sqrt(dx * dx + dy * dy + dz * dz);
-}
-
-// How far the shot's hit point may lie beyond the prop's bounding sphere, and how far short of the hit point a
-// blocker may stand before the segment counts as blocked: a prop's surface is not its bounds, and the hit point is
-// on a surface.
-constexpr float kOnPropSlackCm = 50.f;
-constexpr float kBlockedSlackCm = 25.f;
-
 // What the judge decided and, for a reason that is not Removed or Gone, the exact branch it took: a static string the
 // tally and the log carry, so a refusal says which check stopped it.
 struct Verdict {
@@ -220,53 +209,17 @@ void NoteBlocked(void* blocker, float blockerCm, float hitCm, float originCm) {
             "the client's origin %.0f uu from the eye", cls.c_str(), blockerCm, hitCm, originCm);
 }
 
-// Could the sender have struck `actor` at the request's hit point, from the eye the host holds for it? The strength
-// against a forged origin is the pose-staleness ball around the eye, not the segment: a sender that names an origin
-// on the hit point leaves a segment of no length. Source takes a shot's origin from the server's own eye and never
-// from the client (reference/source-sdk-2013/src/game/shared/baseplayer_shared.cpp:817 and
-// reference/source-sdk-2013/src/game/shared/basecombatweapon_shared.cpp:2313); MTA bounds the claimed origin to its
-// copy of the player and traces nothing
-// (reference/mtasa-blue/Server/mods/deathmatch/logic/packets/CBulletsyncPacket.cpp:167-191).
-// This lane does both, because the host has the world.
+// Could the sender have struck `actor` at the request's hit point, from the eye the host holds for it? The judge is
+// the toolgun lanes' shared one (coop/props/toolgun_sight); this lane keeps its refusal reasons and the line it says
+// once per window for a blocked segment.
 Verdict JudgeSight(void* puppet, void* actor, const Queued& q) {
     const coop::net::RemoverRequestPayload& p = q.req;
-    const FVector origin{p.origin[0], p.origin[1], p.origin[2]};
-    const FVector hitAt{p.hit[0], p.hit[1], p.hit[2]};
     if (!q.haveEye) return Decided(RemoverReason::NotReady, "no eye (the sender's head position did not read)");
-    // The client's origin is only a consistency check against the eye the host captured when the request arrived.
-    if (!(Dist(origin, q.eye) <= EL::kPoseStalenessUU))   // written so that a NaN fails
-        return Decided(RemoverReason::OutOfSight, "origin far from the eye");
-    // The hit point on the prop: inside the sphere of the bounds of ALL its components, plus a margin. A zero extent is
-    // no bounds, never a point-sized prop at the world origin.
-    FVector centre{}, extent{};
-    float radius = 0.f;
-    if (E::GetActorBounds(actor, /*onlyColliding=*/false, centre, extent) &&
-        !(extent.X == 0.f && extent.Y == 0.f && extent.Z == 0.f)) {
-        radius = std::sqrt(extent.X * extent.X + extent.Y * extent.Y + extent.Z * extent.Z);
-    } else if (!E::TryGetActorLocation(actor, centre)) {
-        return Decided(RemoverReason::Failed, "the prop's bounds and location did not read");
-    }
-    if (!(Dist(hitAt, centre) <= radius + kOnPropSlackCm))
-        return Decided(RemoverReason::OutOfSight, "hit point off the prop");
-    // The segment from the eye to the hit point meets nothing the shot itself would stop at (the toolgun traces these
-    // four object types) before it, but the players' bodies and the prop.
-    const uint8_t types[4] = {0, 1, 2, 3};   // the shot's own set: WorldStatic, WorldDynamic, Pawn, PhysicsBody
-    // Players are people, not cover: every player body (this process's own and each puppet) is ignored, with the prop. A
-    // body that holds the sender's eye -- two players standing at one spot -- would otherwise block at no distance. The
-    // host is deliberately more lenient here than the native shot, which traces the same four types ignoring only its
-    // shooter and so stops at another player's capsule. A modified client gains only the sight through a standing player,
-    // which is mobile cover rather than geometry; the eye ball and the prop's sphere still bound the claim.
-    void* ignore[coop::players::kMaxPeers + 1];
-    int nIgnore = coop::players::Registry::Get().LiveBodies(ignore, coop::players::kMaxPeers);
-    ignore[nIgnore++] = actor;
-    ue_wrap::trace::Hit blocker;
-    if (!ue_wrap::trace::LineHitForObjects(puppet, q.eye, hitAt, types, 4, ignore, nIgnore, &blocker))
-        return Decided(RemoverReason::Failed, "the sight trace did not run");
-    if (blocker.blocked && !(Dist(q.eye, blocker.point) >= Dist(q.eye, hitAt) - kBlockedSlackCm)) {
-        NoteBlocked(blocker.actor, Dist(q.eye, blocker.point), Dist(q.eye, hitAt), Dist(origin, q.eye));
-        return Decided(RemoverReason::OutOfSight, "segment blocked before the hit point");
-    }
-    return Decided(RemoverReason::Removed, "");
+    const coop::toolgun_sight::SightResult s = coop::toolgun_sight::JudgeToolgunSight(
+        puppet, actor, FVector{p.origin[0], p.origin[1], p.origin[2]}, FVector{p.hit[0], p.hit[1], p.hit[2]}, q.eye);
+    if (s.blocked) NoteBlocked(s.blockerActor, s.dEyeBlock, s.dEyeHit, s.dOriginEye);
+    if (s.ok) return Decided(RemoverReason::Removed, "");
+    return Decided(s.judged ? RemoverReason::OutOfSight : RemoverReason::Failed, s.why);
 }
 
 // Judges one request in the lane's order; on Removed `*out` is the prop to remove.
