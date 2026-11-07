@@ -3369,8 +3369,10 @@ struct DroneStatePayload {
     uint8_t _pad;              // 1
     float   dustX, dustY, dustZ;  // 12 -- the dust emitter's world location, which the host's tick pins to its ground
                                   //        trace; the mirror replays the same calls. Valid while bit 0 is set.
+    uint32_t hostMs;              // 4  -- the host's clock when it sent this pose (ms, wraps): the client plays the
+                                  //        poses back on the host's own timing, not on when they happened to arrive
 };
-static_assert(sizeof(DroneStatePayload) == 40, "DroneStatePayload must be 40 bytes");
+static_assert(sizeof(DroneStatePayload) == 44, "DroneStatePayload must be 44 bytes");
 
 // A shop order (OrderRequest), client to host: this header, then chunkItems packed items, each
 //     uint8  head;        // low 7 bits: the name's length (1..kMaxOrderRowName); top bit: the kind,

@@ -1,8 +1,8 @@
 // coop/element/lerp_window.h -- the shared MTA-form interpolation TIMING window.
 //
 // One concept, one implementation: the per-frame alpha/dAlpha bookkeeping that drives a
-// fixed-duration linear interpolation toward a cached error. Its six owners -- the remote player,
-// element::Npc, world actors, the dish, the drone and the desk cursor -- each hold a LerpWindow
+// fixed-duration linear interpolation toward a cached error. Its five owners -- the remote player,
+// element::Npc, world actors, the dish and the desk cursor -- each hold a LerpWindow
 // and apply the returned dAlpha to their OWN cached errors, over whatever field set they
 // interpolate; the window owns only the timing, never a pose field. A lane whose channels arrive
 // independently needs a deadline per channel instead, which is why desk_sim_sync has its own
