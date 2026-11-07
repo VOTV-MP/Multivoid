@@ -33,6 +33,7 @@
 #include "coop/props/prop_act_host.h"  // CLIENT->HOST a take or use of a shared prop, and its commit
 #include "coop/props/prop_act_request.h"  // HOST->CLIENT its answer
 #include "coop/props/prop_drop_intent.h"  // CLIENT->HOST client-placed keyed prop
+#include "coop/props/prop_tool_flags.h"  // CLIENT->HOST a press of the prop-properties tool; HOST->CLIENT its answer
 #include "coop/props/remover_request.h"  // CLIENT->HOST the tool gun's remover; HOST->CLIENT its answer
 #include "coop/items/broom_stroke.h"
 #include "coop/world/explosion_request.h"  // CLIENT->HOST a shot and an explosion request, strictly checked and queued
@@ -347,6 +348,15 @@ bool HandleIntentEvent(net::Session& session,
         coop::remover_request::OnResult(p);
         break;
     }
+    case net::ReliableKind::PropPropsIntent:
+        // CLIENT->HOST: a client pressed the toolgun's prop-properties tool; the lane checks the role and the format,
+        // judges the press and runs the tool's values on the host's copy. Never relayed.
+        coop::prop_tool_flags::OnIntentReceived(msg.senderPeerSlot, msg.payload, msg.payloadLen);
+        break;
+    case net::ReliableKind::PropPropsState:
+        // HOST->CLIENT: a prop's flags as the host holds them, or why it refused this client's press.
+        coop::prop_tool_flags::OnStateReceived(msg.senderPeerSlot, msg.payload, msg.payloadLen);
+        break;
     case net::ReliableKind::HitIntent: {
         // CLIENT->HOST: a client's swing hit a host entity's mirror. The host judges the swing and runs the verb on its
         // own copy (coop::hit_intent); the format lives here. Never relayed.

@@ -20,8 +20,6 @@
 
 namespace coop::net {
 class Session;
-struct PropPropsIntentPayload;
-struct PropPropsStatePayload;
 }  // namespace coop::net
 
 namespace coop::prop_tool_flags {
@@ -33,15 +31,14 @@ void Install(coop::net::Session* session);
 // refusal tally. Game thread.
 void Tick();
 
-// HOST: a client's press, queued. An unknown sender or a full queue is refused into the tally. Game thread.
-void OnIntent(const coop::net::PropPropsIntentPayload& payload, uint8_t senderSlot);
+// HOST receive: raw bytes, as the dispatch hands them; the role and format checks and their refusals live here. A
+// press is queued; an unknown sender, a full queue or a short payload is refused into the tally. Game thread.
+void OnIntentReceived(int senderSlot, const uint8_t* bytes, uint16_t len);
 
-// HOST: a refusal the router made (a short payload), into the lane's tally.
-void NoteRefused(uint8_t senderSlot, const char* why);
-
-// CLIENT: the host's flags for a prop, set on this peer's copy through the game's own setter (an unknown element is
-// dropped), or its refusal of this player's press, shown when visible. Game thread.
-void OnState(const coop::net::PropPropsStatePayload& payload);
+// CLIENT receive: raw bytes from the host. A press the host applied is replayed on this peer's copy through the game's
+// own setter (an unknown element is dropped); a refusal of this player's press puts the host's flags back if the copy
+// differs and is shown when visible. Game thread.
+void OnStateReceived(int senderSlot, const uint8_t* bytes, uint16_t len);
 
 // The tally emptied, the shown notices forgotten and the pending press dropped. Net disconnect.
 void OnDisconnect();

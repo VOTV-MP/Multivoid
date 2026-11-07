@@ -6,11 +6,14 @@
 #include "coop/player/players_registry.h"
 #include "coop/props/toolgun_limits.h"
 
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/trace.h"
 #include "ue_wrap/engine/engine.h"
 
 #include <cmath>
 #include <cstdint>
+#include <string>
 
 namespace coop::toolgun_sight {
 namespace {
@@ -76,6 +79,15 @@ SightResult JudgeToolgunSight(void* puppet, void* actor, const FVector& origin, 
     SightResult ok;
     ok.ok = true;
     return ok;
+}
+
+void NoteBlocked(const char* lane, coop::net::RefusalTally::Clock::time_point& last, const SightResult& s) {
+    const auto now = coop::net::RefusalTally::Clock::now();
+    if (last != coop::net::RefusalTally::Clock::time_point{} && now - last < coop::net::RefusalTally::kWindow) return;
+    last = now;
+    const std::wstring cls = s.blockerActor ? ue_wrap::reflection::ClassNameOf(s.blockerActor) : std::wstring(L"(no actor)");
+    UE_LOGI("%s: a segment was blocked by %ls at %.0f uu from the eye; the hit point is %.0f uu away and the client's "
+            "origin %.0f uu from the eye", lane, cls.c_str(), s.dEyeBlock, s.dEyeHit, s.dOriginEye);
 }
 
 }  // namespace coop::toolgun_sight

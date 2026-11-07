@@ -193,21 +193,7 @@ struct Verdict {
 
 constexpr Verdict Decided(RemoverReason r, const char* why) { return {r, why}; }
 
-// What stopped a segment, said once per tally window at INFO and not per message: the blocker's class and how far it
-// stood from the eye, how far the hit point was, and how far the client's own origin lay from the eye. A diagnostic
-// for an honest shot refused for sight, bounded like the tally's lines.
 std::wstring g_lastBlockerClass;   // the class that stopped the last blocked segment, for the hostile drill
-
-void NoteBlocked(void* blocker, float blockerCm, float hitCm, float originCm) {
-    const std::wstring cls = blocker ? R::ClassNameOf(blocker) : std::wstring(L"(no actor)");
-    g_lastBlockerClass = cls;
-    static coop::net::RefusalTally::Clock::time_point sLast{};
-    const auto now = coop::net::RefusalTally::Clock::now();
-    if (sLast != coop::net::RefusalTally::Clock::time_point{} && now - sLast < coop::net::RefusalTally::kWindow) return;
-    sLast = now;
-    UE_LOGI("remover_request: a segment was blocked by %ls at %.0f uu from the eye; the hit point is %.0f uu away and "
-            "the client's origin %.0f uu from the eye", cls.c_str(), blockerCm, hitCm, originCm);
-}
 
 // Could the sender have struck `actor` at the request's hit point, from the eye the host holds for it? The judge is
 // the toolgun lanes' shared one (coop/props/toolgun_sight); this lane keeps its refusal reasons and the line it says
@@ -217,7 +203,11 @@ Verdict JudgeSight(void* puppet, void* actor, const Queued& q) {
     if (!q.haveEye) return Decided(RemoverReason::NotReady, "no eye (the sender's head position did not read)");
     const coop::toolgun_sight::SightResult s = coop::toolgun_sight::JudgeToolgunSight(
         puppet, actor, FVector{p.origin[0], p.origin[1], p.origin[2]}, FVector{p.hit[0], p.hit[1], p.hit[2]}, q.eye);
-    if (s.blocked) NoteBlocked(s.blockerActor, s.dEyeBlock, s.dEyeHit, s.dOriginEye);
+    if (s.blocked) {
+        g_lastBlockerClass = s.blockerActor ? R::ClassNameOf(s.blockerActor) : std::wstring(L"(no actor)");
+        static coop::net::RefusalTally::Clock::time_point sLast{};
+        coop::toolgun_sight::NoteBlocked("remover_request", sLast, s);
+    }
     if (s.ok) return Decided(RemoverReason::Removed, "");
     return Decided(s.judged ? RemoverReason::OutOfSight : RemoverReason::Failed, s.why);
 }

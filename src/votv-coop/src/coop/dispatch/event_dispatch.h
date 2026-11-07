@@ -54,7 +54,8 @@ bool HandleSignalEvent(const net::Session::ReliableMessage& msg);
 // PropDropIntent, ReelEjectIntent, DoorVerbIntent, CameraToggleIntent, LaptopTabReport and KeypadIntent check role()==Host AND a client
 // sender slot; KerfurConvertRequest checks the role only, mapping an out-of-range
 // slot to the 0xFF sentinel and handing it on; RoachConsumed defers both gates to
-// roach_sync::OnConsumedIntent.
+// roach_sync::OnConsumedIntent. PropPropsIntent (a press of the toolgun's prop-properties tool) and its answer
+// PropPropsState sit beside the remover's pair and hand their bytes to the lane, which checks the role and the format.
 bool HandleIntentEvent(net::Session& session,
                        const net::Session::ReliableMessage& msg);
 
@@ -96,12 +97,11 @@ bool HandleEconomyEvent(net::Session& session,
 // and answer. PropDriveEnd on the host is a syncing client's End, handed to the claim judge; on a client
 // it is the host's End, applied by the stream's receiver. PropSyncClaim checks role()==Host AND a client
 // sender slot; PropSyncAnswer is the HOST->CLIENT verdict, refused from a client at the host's edge, and
-// PropHoldRefused the host's refusal of a second hold, to every client; PropPropsIntent a client's press of the
-// toolgun's prop-properties tool, client to host, and PropPropsState a prop's flags or the host's refusal of that
-// press, host to client; FoodState a world food's condition, host to all, FoodBite a client's bite and FoodRelease
-// the food it let go, client to host, FoodHand the food in a hand, holder to all; AmbientTreeState a walking tree's
-// size and landing and AmbientFixtureState a dirt hole's or beehive branch's place, host to all; SusHoleIntent a
-// client's sus hole for the host to make, dropped on a client. DevLoadFiller
+// PropHoldRefused the host's refusal of a second hold, to every client; FoodState a world food's condition,
+// host to all, FoodBite a client's bite and FoodRelease the food it let go, client to host, FoodHand the
+// food in a hand, holder to all; AmbientTreeState a walking tree's size and landing and AmbientFixtureState a
+// dirt hole's or beehive branch's place, host to all; SusHoleIntent a client's sus hole for the host to make,
+// dropped on a client. DevLoadFiller
 // is the developer filler of the syncer drill's load arm, host to client; DevParityReport is the pile deferral
 // drill's report, client to host; DevContainerParity is the container join drill's.
 bool HandlePropDriveEvent(net::Session& session,

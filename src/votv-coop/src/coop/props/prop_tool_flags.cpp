@@ -30,6 +30,7 @@
 #include "l10n/l10n.h"
 
 #include "ue_wrap/actors/prop.h"
+#include "ue_wrap/actors/prop_events.h"   // CallBaseSetPropProps
 #include "ue_wrap/actors/prop_flags.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
@@ -109,6 +110,16 @@ bool ReadToolValues(void* tool, coop::net::PropPropsIntentPayload* p) {
 
 // ---- the publish point ----------------------------------------------------------------------------------------
 
+// Why `actor`, the live copy of element `el`, is no prop the tool changes in multiplayer, or null when it is one: the
+// judge's Unsupported branches, asked also before the host publishes its own press.
+const char* UnsupportedWhy(const EL::Element* el, void* actor) {
+    if (el->GetType() != EL::ElementType::Prop || !ue_wrap::prop::IsDescendantOfProp(actor)) return "the element is not a prop";
+    if (ue_wrap::prop::IsTrashActor(actor)) return "a trash pile or clump";
+    if (ue_wrap::prop::IsTrashBitsPile(actor)) return "a trash bits pile";
+    if (coop::kerfur_entity::IsKerfurPropClass(R::ClassOf(actor))) return "a kerfur prop";
+    return nullptr;
+}
+
 // The state message for `actor`: its static, frozen and sleep read back from the actor, never from what the press asked.
 // A prop keeps no active field to read back, so `active` is the value the setter ran with.
 coop::net::PropPropsStatePayload StateOf(uint32_t eid, void* actor, PropPropsReason reason, bool active) {
@@ -125,13 +136,20 @@ coop::net::PropPropsStatePayload StateOf(uint32_t eid, void* actor, PropPropsRea
 }
 
 // The one publish point: after the host's judged apply and after its own press, the prop's flags go to every peer. A
-// target that is no published prop publishes nothing.
+// target that is no live prop element the judge would accept publishes nothing.
 void Publish(coop::net::Session& s, void* actor, bool active) {
-    if (!actor || !ue_wrap::prop::IsKeyedInteractable(actor)) return;
+    if (!actor || !coop::kerfur_entity::KerfurPropBound()) return;
     const EL::ElementId eid = EL::Registry::Get().EidForActor(actor);
     if (eid == EL::kInvalidId) return;
+    const EL::Element* el = EL::Registry::Get().Get(eid);
+    if (!el || el->LiveActor() != actor || UnsupportedWhy(el, actor)) return;
     const coop::net::PropPropsStatePayload st = StateOf(static_cast<uint32_t>(eid), actor, PropPropsReason::Applied, active);
-    s.SendReliable(coop::net::ReliableKind::PropPropsState, &st, sizeof(st));
+    static bool sSendFailSaid = false;
+    if (!s.SendReliable(coop::net::ReliableKind::PropPropsState, &st, sizeof(st)) && !sSendFailSaid) {
+        sSendFailSaid = true;
+        UE_LOGW("prop_tool_flags: the flags of element %u were not sent; a peer keeps its old ones until the join-window "
+                "correction or the next press", st.eid);
+    }
     UE_LOGI("prop_tool_flags: element %u static=%d frozen=%d sleep=%d active=%d published", st.eid, st.isStatic,
             st.isFrozen, st.isSleeping, st.isActive);
 }
@@ -198,10 +216,14 @@ sg::Verdict OnClientPress(coop::net::Session& s, const sg::Call& c) {
     ue_wrap::hit_result::Hit hit;
     if (!ReadPress(c, &hit)) return Unplaceable(c, "the toolgun's outHit did not read");
     // The game's body does nothing for a miss and hints "Not a pop" for a hit on a non-prop: both run natively, as does
-    // an actor this session does not publish (the remover's miss path).
+    // an actor this session does not share. A keyed prop this client cannot name is refused, as the remover refuses it:
+    // run natively it would change this copy alone.
     if (!hit.blocking || !hit.actor) return sg::Verdict::Run;
     const EL::ElementId eid = EL::Registry::Get().EidForActor(hit.actor);
-    if (eid == EL::kInvalidId) return sg::Verdict::Run;
+    if (eid == EL::kInvalidId) {
+        if (ue_wrap::prop::IsKeyedInteractable(hit.actor)) return Unplaceable(c, "a keyed prop with no element id");
+        return sg::Verdict::Run;
+    }
     FVector camera{};
     void* player = coop::players::Registry::Get().Local();
     if (!player || !E::ReadMainPlayerCameraLocation(player, camera))
@@ -234,7 +256,15 @@ sg::Verdict OnHostPress(const sg::Call& c) {
     g_pressTool = nullptr;
     g_pressTarget.Reset();
     ue_wrap::hit_result::Hit hit;
-    if (!ReadPress(c, &hit) || !hit.blocking || !hit.actor) return sg::Verdict::Run;
+    if (!ReadPress(c, &hit)) {
+        static bool sUnreadSaid = false;
+        if (!sUnreadSaid) {
+            sUnreadSaid = true;
+            UE_LOGW("prop_tool_flags: the host's press: the toolgun's outHit did not read; its change reaches no peer");
+        }
+        return sg::Verdict::Run;
+    }
+    if (!hit.blocking || !hit.actor) return sg::Verdict::Run;
     g_pressTool = c.object;
     g_pressTarget.Set(hit.actor);
     static R::InstanceOffset sActive{L"isActive"};
@@ -263,7 +293,6 @@ void OnInitPost(const sg::Call& c) {
 // ---- host: a client's press -----------------------------------------------------------------------------------
 
 coop::net::RefusalTally g_tally{"prop_props"};
-coop::roster_ledger::PerSlotState<uint32_t> g_refused;
 
 // A request with the sender's eye as the host held it when the request arrived: queued presses are judged against the
 // pose they were made at, not the pose of the tick that serves them.
@@ -278,10 +307,7 @@ struct Slot {
 };
 coop::roster_ledger::PerSlotState<Slot> g_slots;
 
-void Refuse(uint8_t slot, const char* why) {
-    if (slot >= 1 && slot < coop::players::kMaxPeers) ++g_refused[slot];
-    g_tally.Note(slot, why, coop::net::RefusalTally::Clock::now());
-}
+void Refuse(uint8_t slot, const char* why) { g_tally.Note(slot, why, coop::net::RefusalTally::Clock::now()); }
 
 inline bool Finite3(const float v[3]) { return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]); }
 
@@ -301,16 +327,15 @@ Verdict JudgeSight(void* puppet, void* actor, const Queued& q) {
     const coop::toolgun_sight::SightResult s = coop::toolgun_sight::JudgeToolgunSight(
         puppet, actor, FVector{p.origin[0], p.origin[1], p.origin[2]}, FVector{p.hit[0], p.hit[1], p.hit[2]}, q.eye);
     if (s.blocked) {
-        UE_LOGI("prop_tool_flags: a segment was blocked by %ls at %.0f uu from the eye; the hit point is %.0f uu away "
-                "and the client's origin %.0f uu from the eye",
-                s.blockerActor ? R::ClassNameOf(s.blockerActor).c_str() : L"(no actor)", s.dEyeBlock, s.dEyeHit,
-                s.dOriginEye);
+        static coop::net::RefusalTally::Clock::time_point sLast{};
+        coop::toolgun_sight::NoteBlocked("prop_tool_flags", sLast, s);
     }
     if (s.ok) return Decided(PropPropsReason::Applied, "");
     return Decided(s.judged ? PropPropsReason::OutOfSight : PropPropsReason::Busy, s.why);
 }
 
-// Judges one press in the remover's order; on Applied `*out` is the prop to set.
+// Judges one press in the remover's order; `*out` is the live prop once the element resolves, to set on Applied and to
+// read the flags a refusal carries.
 Verdict Judge(coop::net::Session& s, uint8_t slot, const Queued& q, void** out) {
     const coop::net::PropPropsIntentPayload& p = q.req;
     if (slot < 1 || slot >= coop::players::kMaxPeers) return Decided(PropPropsReason::NotReady, "slot out of range");
@@ -327,14 +352,10 @@ Verdict Judge(coop::net::Session& s, uint8_t slot, const Queued& q, void** out) 
     const EL::Element* el = p.eid < EL::kMaxElements ? EL::Registry::Get().Get(p.eid) : nullptr;
     void* actor = el ? el->LiveActor() : nullptr;
     if (!actor) return Decided(PropPropsReason::Gone, "no live element");
+    *out = actor;
     if (!coop::kerfur_entity::KerfurPropBound())
         return Decided(PropPropsReason::NotReady, "the kerfur prop class is not bound yet");
-    if (el->GetType() != EL::ElementType::Prop)
-        return Decided(PropPropsReason::Unsupported, "the element is not a prop");
-    if (ue_wrap::prop::IsTrashActor(actor)) return Decided(PropPropsReason::Unsupported, "a trash pile or clump");
-    if (ue_wrap::prop::IsTrashBitsPile(actor)) return Decided(PropPropsReason::Unsupported, "a trash bits pile");
-    if (coop::kerfur_entity::IsKerfurPropClass(R::ClassOf(actor)))
-        return Decided(PropPropsReason::Unsupported, "a kerfur prop");
+    if (const char* why = UnsupportedWhy(el, actor)) return Decided(PropPropsReason::Unsupported, why);
 
     namespace GN = coop::permissions::gameplay_nodes;
     if (!JudgeOff() &&
@@ -347,19 +368,21 @@ Verdict Judge(coop::net::Session& s, uint8_t slot, const Queued& q, void** out) 
     if (const coop::prop_hold::Holder h = coop::prop_hold::WhoHolds(actor, slot); h != coop::prop_hold::Holder::None)
         return Decided(PropPropsReason::Held, coop::prop_hold::HolderWhy(h));
 
-    const Verdict sight = JudgeSight(puppet, actor, q);
-    if (sight.reason == PropPropsReason::Applied) *out = actor;
-    return sight;
+    return JudgeSight(puppet, actor, q);
 }
 
 // A refusal goes to the sender alone with the host's current flags; Applied is published to everyone by the publish
 // point. A reason that could not be judged is said at once with its cause.
 void Refusal(coop::net::Session& s, uint8_t slot, uint32_t eid, void* actor, const Verdict& v) {
-    g_tally.Note(slot, v.why, coop::net::RefusalTally::Clock::now());
+    if (v.reason != PropPropsReason::Gone) g_tally.Note(slot, v.why, coop::net::RefusalTally::Clock::now());
     if (v.reason == PropPropsReason::Busy)
         UE_LOGW("prop_tool_flags: slot %u's element %u not changed: %s", slot, eid, v.why);
     const coop::net::PropPropsStatePayload st = StateOf(eid, actor, v.reason, false);
-    s.SendReliableToSlot(slot, coop::net::ReliableKind::PropPropsState, &st, sizeof(st));
+    static bool sSendFailSaid = false;
+    if (!s.SendReliableToSlot(slot, coop::net::ReliableKind::PropPropsState, &st, sizeof(st)) && !sSendFailSaid) {
+        sSendFailSaid = true;
+        UE_LOGW("prop_tool_flags: the answer to slot %u was not sent; its press ends without a notice", slot);
+    }
 }
 
 // A press judged: the host runs the game's own setter on its copy with the tool's four values, so an override (a
@@ -452,6 +475,34 @@ void RetryParked() {
     }
 }
 
+// A refusal after the host resolved the prop carries the host's current flags: if this copy differs (a state it missed,
+// a press it ran before the host's word) they are put back through prop_C's own setter, MTA's resync of a refused
+// change (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:2779-2795); otherwise only the notice shows.
+void ResyncToHost(const coop::net::PropPropsStatePayload& st) {
+    switch (static_cast<PropPropsReason>(st.reason)) {
+    case PropPropsReason::Unsupported:
+    case PropPropsReason::NoRight:
+    case PropPropsReason::NoToolgun:
+    case PropPropsReason::Held:
+    case PropPropsReason::OutOfSight:
+        break;
+    default:
+        return;   // the host had no prop to read: the flags are not its own
+    }
+    void* const actor = PropCopy(st.eid);
+    if (!actor || HeldHere(actor)) return;
+    const bool wantStatic = st.isStatic != 0, wantFrozen = st.isFrozen != 0, wantSleep = st.isSleeping != 0;
+    if (ue_wrap::prop::IsStatic(actor) == wantStatic && ue_wrap::prop::IsFrozen(actor) == wantFrozen &&
+        ue_wrap::prop::IsSleeping(actor) == wantSleep)
+        return;
+    if (!ue_wrap::prop::CallBaseSetPropProps(actor, wantStatic, wantFrozen, wantSleep)) {
+        UE_LOGW("prop_tool_flags: element %u -- the game's setter did not dispatch; the copy keeps its flags", st.eid);
+        return;
+    }
+    UE_LOGI("prop_tool_flags: element %u put back to the host's static=%d frozen=%d sleep=%d", st.eid,
+            wantStatic ? 1 : 0, wantFrozen ? 1 : 0, wantSleep ? 1 : 0);
+}
+
 // ---- the watch's settle --------------------------------------------------------------------------------------
 
 enum class Reg : uint8_t { Pending, Registered, Refused };
@@ -470,7 +521,12 @@ void Install(coop::net::Session* session) {
 
 void Tick() {
     RetryParked();
-    if (!g_settled && g_reg != Reg::Pending) {
+    // The names resolve on a game-thread task the registration posted; the poll of the gate's table runs once a second
+    // until the watch is live or dead, not every tick.
+    static uint64_t sSettleTryAt = 0;
+    const uint64_t tickNow = ::GetTickCount64();
+    if (!g_settled && g_reg != Reg::Pending && tickNow - sSettleTryAt >= 1000) {
+        sSettleTryAt = tickNow;
         if (g_reg == Reg::Registered) sg::ResolvePendingNames();
         if (g_reg == Reg::Registered && sg::NameWatchLive(kRowInit, kTag)) {
             g_settled = true;
@@ -488,36 +544,53 @@ void Tick() {
     }
 }
 
-void OnIntent(const coop::net::PropPropsIntentPayload& payload, uint8_t senderSlot) {
+void OnIntentReceived(int senderSlot, const uint8_t* bytes, uint16_t len) {
     coop::net::Session* s = LoadSession();
     if (!s || s->role() != coop::net::Role::Host) {
         UE_LOGW("prop_tool_flags: PropPropsIntent received on a non-host -- dropping");
         return;
     }
+    const uint8_t slot = (senderSlot >= 0 && senderSlot < coop::net::kMaxPeers) ? static_cast<uint8_t>(senderSlot)
+                                                                                  : static_cast<uint8_t>(0xFF);
+    // The refusal is the lane's to say, in its tally: a sender cannot make the router's log the cost.
+    if (len < sizeof(coop::net::PropPropsIntentPayload)) {
+        Refuse(slot, "payload too short");
+        return;
+    }
     // Slot 0 is the host, whose own presses never arrive over the wire.
-    if (senderSlot == 0 || senderSlot >= coop::players::kMaxPeers) {
-        Refuse(senderSlot, "unknown sender");
+    if (slot == 0 || slot >= coop::players::kMaxPeers) {
+        Refuse(slot, "unknown sender");
         return;
     }
     // A full queue refuses before anything is read: a flood must not pay the eye read per message.
-    if (g_slots[senderSlot].queue.size() >= coop::toolgun_limits::kMaxPending) {
-        Refuse(senderSlot, "queue full");
+    if (g_slots[slot].queue.size() >= coop::toolgun_limits::kMaxPending) {
+        Refuse(slot, "queue full");
         return;
     }
     Queued q;
-    q.req = payload;
+    std::memcpy(&q.req, bytes, sizeof(q.req));
     // Only a puppet that has had its first pose has an eye: before it, it stands at its spawn point.
-    coop::RemotePlayer& rp = coop::puppet_drive::Puppet(senderSlot);
+    coop::RemotePlayer& rp = coop::puppet_drive::Puppet(slot);
     q.haveEye = rp.valid() && rp.HasPose() && rp.TryGetEyePosition(q.eye);
-    g_slots[senderSlot].queue.Push(std::move(q), coop::toolgun_limits::kMaxPending);   // room was checked above
+    g_slots[slot].queue.Push(std::move(q), coop::toolgun_limits::kMaxPending);   // room was checked above
 }
 
-void NoteRefused(uint8_t senderSlot, const char* why) { Refuse(senderSlot, why); }
-
-void OnState(const coop::net::PropPropsStatePayload& payload) {
-    if (payload.reason >= kReasons) return;
+void OnStateReceived(int senderSlot, const uint8_t* bytes, uint16_t len) {
+    coop::net::Session* s = LoadSession();
+    if (!s || s->role() != coop::net::Role::Client || senderSlot != 0 || len < sizeof(coop::net::PropPropsStatePayload)) {
+        UE_LOGW("prop_tool_flags: PropPropsState dropped (role, sender slot %d or length %u)", senderSlot,
+                static_cast<unsigned>(len));
+        return;
+    }
+    coop::net::PropPropsStatePayload payload{};
+    std::memcpy(&payload, bytes, sizeof(payload));
+    if (payload.reason >= kReasons) {
+        UE_LOGW("prop_tool_flags: PropPropsState reason %u unknown -- dropping", static_cast<unsigned>(payload.reason));
+        return;
+    }
     const PropPropsReason reason = static_cast<PropPropsReason>(payload.reason);
     if (reason != PropPropsReason::Applied) {
+        ResyncToHost(payload);
         ShowReason(reason);
         return;
     }

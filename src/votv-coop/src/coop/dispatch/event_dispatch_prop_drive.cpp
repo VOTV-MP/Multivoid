@@ -22,7 +22,6 @@
 #include "coop/props/prop_drive_stream.h"  // the driven-prop end edge
 #include "coop/props/prop_hold_claim.h"    // the client's receiver of a refused hold
 #include "coop/props/prop_food_sync.h"     // a world food's condition and a client's bite
-#include "coop/props/prop_tool_flags.h"    // a toolgun's freeze, unfreeze or make-static
 #include "coop/props/prop_syncer.h"        // the client's answer receiver
 #include "coop/props/prop_syncer_host.h"   // the host's claim judge and a client's End
 
@@ -422,44 +421,6 @@ bool HandlePropDriveEvent(net::Session& session,
         net::SusHoleIntentPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         ::coop::sus_hole_intent::OnIntent(session, msg.senderPeerSlot, p);
-        break;
-    }
-    case net::ReliableKind::PropPropsIntent: {
-        // CLIENT->HOST: a client pressed the toolgun's prop-properties tool. The host judges the press and runs the
-        // tool's values on its own copy (coop::prop_tool_flags). Never relayed.
-        if (session.role() != net::Role::Host) {
-            UE_LOGW("event_feed: PropPropsIntent received on a client -- dropping");
-            break;
-        }
-        const uint8_t senderSlot =
-            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
-                ? static_cast<uint8_t>(msg.senderPeerSlot)
-                : static_cast<uint8_t>(0xFF);
-        // The refusal is the lane's to say, in its tally: a sender cannot make the router's log the cost.
-        if (msg.payloadLen < sizeof(net::PropPropsIntentPayload)) {
-            ::coop::prop_tool_flags::NoteRefused(senderSlot, "payload too short");
-            break;
-        }
-        net::PropPropsIntentPayload p{};
-        std::memcpy(&p, msg.payload, sizeof(p));
-        ::coop::prop_tool_flags::OnIntent(p, senderSlot);
-        break;
-    }
-    case net::ReliableKind::PropPropsState: {
-        // HOST->CLIENT: a prop's flags as the host holds them, or why it refused this client's press.
-        if (session.role() != net::Role::Client || msg.senderPeerSlot != 0 ||
-            msg.payloadLen < sizeof(net::PropPropsStatePayload)) {
-            UE_LOGW("event_feed: PropPropsState dropped (role, sender slot %d or length %zu)", msg.senderPeerSlot,
-                    static_cast<size_t>(msg.payloadLen));
-            break;
-        }
-        net::PropPropsStatePayload p{};
-        std::memcpy(&p, msg.payload, sizeof(p));
-        if (p.reason >= static_cast<uint8_t>(net::PropPropsReason::Count)) {
-            UE_LOGW("event_feed: PropPropsState reason %u unknown -- dropping", static_cast<unsigned>(p.reason));
-            break;
-        }
-        ::coop::prop_tool_flags::OnState(p);
         break;
     }
     default:

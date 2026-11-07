@@ -10,6 +10,8 @@
 
 #pragma once
 
+#include "coop/net/refusal_tally.h"
+
 #include "ue_wrap/core/types.h"
 
 namespace coop::toolgun_sight {
@@ -34,5 +36,11 @@ struct SightResult {
 // sender's claim in world centimetres, `eye` the sender's eye as the host held it when the request arrived.
 SightResult JudgeToolgunSight(void* puppet, void* actor, const ue_wrap::FVector& origin, const ue_wrap::FVector& hit,
                               const ue_wrap::FVector& eye);
+
+// Says a blocked segment, once per refusal-tally window: the blocker's class and how far it stood from the eye, how far
+// the hit point was and how far the claimed origin lay from the eye. A diagnostic for an honest shot refused for sight,
+// bounded like the tally's lines so a sender cannot make the host print per message. `last` is the lane's own latch
+// and `lane` its log prefix. Game thread.
+void NoteBlocked(const char* lane, coop::net::RefusalTally::Clock::time_point& last, const SightResult& s);
 
 }  // namespace coop::toolgun_sight
