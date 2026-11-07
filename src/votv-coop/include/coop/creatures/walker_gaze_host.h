@@ -42,6 +42,10 @@ void Install(coop::net::Session& session);
 // is, from within reach, with a flag of 0 or 1; a word that repeats the level held is ignored at one compare. Game thread.
 void OnSeen(const coop::net::WalkerSeenPayload& p, uint8_t senderSlot);
 
+// [dev], for the walker drill: how many of the walker's gaze reads this session were answered with a client target's level (the
+// host's own camera and render state were overwritten) rather than left to the game. Any thread.
+uint32_t AnsweredReads();
+
 // A peer left: its level is dropped from every walker. Game thread.
 void OnPeerLeft(uint8_t slot);
 

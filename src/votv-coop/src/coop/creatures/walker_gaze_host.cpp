@@ -72,6 +72,9 @@ bool               g_hooked = false;
 bool               g_armed = false;
 bool               g_subscribed = false;
 
+// The gaze reads answered with a target's level, for the session: [dev], read by the walker drill (AnsweredReads).
+std::atomic<uint32_t> g_answered{0};
+
 // Why a word is refused: counted for the session and said once each.
 enum Reason : int { kNotTarget, kUnknownKey, kTooFar, kBadFlag, kReasons };
 const char* const kReasonText[kReasons] = {"the sender is not the walker's target", "no walker of that key is hunted by a client",
@@ -127,6 +130,7 @@ void Answer(void* walker) {
         return;
     }
     *static_cast<uint8_t*>(result) = ((e->seen >> e->target) & 1u) ? 1 : 0;
+    g_answered.fetch_add(1, std::memory_order_relaxed);
 }
 
 // The post hooks, game thread inside the engine's own calls. The first thing each does is one compare of the calling frame's
@@ -333,6 +337,8 @@ void OnSeen(const coop::net::WalkerSeenPayload& p, uint8_t senderSlot) {
     LogLevel(senderSlot, p.seen != 0, p.key);
 }
 
+uint32_t AnsweredReads() { return g_answered.load(std::memory_order_relaxed); }
+
 void OnPeerLeft(uint8_t slot) {
     if (slot >= coop::players::kMaxPeers) return;
     for (size_t i = 0; i < g_count; ++i) g_entries[i].seen &= ~(1u << slot);
@@ -346,6 +352,7 @@ void OnDisconnect() {
         g_said[i] = false;
     }
     for (LevelLog& l : g_levelLog) l = LevelLog{};
+    g_answered.store(0, std::memory_order_relaxed);
     g_count = 0;
     g_fullSaid = false;
     g_heldGraph = nullptr;

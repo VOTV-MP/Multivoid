@@ -1,11 +1,12 @@
 // coop/dev/mannequin_walker_drill.cpp -- see coop/dev/mannequin_walker_drill.h.
-//
 // WHAT IT MEASURES. (1) A client's mannequin spawner is refused at the gate: the refusal counter of spawn_authority's row
 // rises when the client runs the spawner's own body. (2) One walker, the host's: the client holds exactly one copy for its key,
 // and while the host's walker moves the copy follows it (the drive stream), within kFollowTolCm. (3) is absent, see the .h.
 // (4) The target's gaze: the client is walker B's target, its camera on the copy stops the host's walker, and when it looks away
-// the walker moves again within the Blueprint's own timer_saw bound plus a margin. Then steps_b: (6) B's hit lands on the client,
-// (5) the client leaves, (7) it comes back and is told B's state.
+// the walker moves again within the Blueprint's own timer_saw bound plus a margin, the HOST's own camera on it throughout (ruling
+// (a): only the target's gaze freezes it), and the host's gaze reads in that window are counted as answered with the target's
+// level. Then steps_b: (6) B's hit lands on the client, (5) the client leaves, (7) it comes back and is told B's state.
+
 // THE TWO WALKERS. A walker KEEPS its target until it is lost (coop/creatures/walker_target.h), so one cannot hand a hunt from
 // the host to the client by walking the client nearer; the first player in range is the one taken. Walker A: the client waits at
 // the KPP gate, out of its range, the host walks in, and the host's arrival opens the window while the walker is still far.
@@ -23,6 +24,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/creatures/walker_brain.h"
+#include "coop/creatures/walker_gaze_host.h"
 #include "coop/creatures/walker_state_client.h"
 #include "coop/creatures/walker_target.h"
 #include "coop/dev/director/director.h"
@@ -73,6 +75,7 @@ namespace P   = ue_wrap::profile;
 namespace PS  = harness::autotest::peer_signal;
 namespace R   = ue_wrap::reflection;
 namespace V   = ue_wrap::vitals;
+namespace WGH = coop::walker_gaze_host;
 namespace WT  = coop::walker_target;
 using coop::rig_verdict::Outcome;
 using ue_wrap::FRotator;
@@ -490,17 +493,38 @@ bool HostPhaseB(void* a, void*& b, std::string& keyB, int& clientFails) {
     PS::Mark("look_away");
     if (!PS::Await("away", 60)) return false;
     if (!ClientFarEnough(b, "the release is judged")) return false;
+    // The host's own camera is on B for the whole release wait: ruling (a) says only the TARGET's gaze freezes the walker, so a
+    // host camera that still reached the walker's `looking` would keep it frozen. Two forms, both built, because the aim alone can
+    // prove nothing here: B is born ~63000 cm from the host (measured pr84 t7) and is far beyond the mesh's draw distance, so the
+    // host's own test may be false whatever the aim. The second form needs no sight: the walker's gaze reads, at its pinned sites,
+    // are overwritten with the client's level while the client hunts it, and the host's reads in the window are counted.
+    uint32_t answered0 = 0, answered1 = 0;
+    float    hostToB = -1.f;
+    bool     hostSees = false;
+    OnGameThread([&] { answered0 = WGH::AnsweredReads(); });
     Track released;
     const bool goes = WaitGT("walker B walks again after its target looks away", kReleaseBoundS, [&] {
         FVector p{};
-        Aim(b, false);
+        Aim(b, true);
         if (!E::TryGetActorLocation(b, p)) return false;
         released.Push(p);
         return released.Moving();
     }, false);
-    char what[160];
-    std::snprintf(what, sizeof(what), "the host's walker moves again within %d s of its target looking away", kReleaseBoundS);
+    OnGameThread([&] {
+        answered1 = WGH::AnsweredReads();
+        hostToB = PlayerTo(b);
+        hostSees = InView(b);
+        Aim(b, false);   // the host's view goes away again before the hit step
+    });
+    UE_LOGI("mannequin-drill: step 4 release: the host's camera was on walker B (%.0f cm from the host; in the host's view now=%d), "
+            "%u gaze reads answered with the target's level", hostToB, hostSees ? 1 : 0, answered1 - answered0);
+    char what[200];
+    std::snprintf(what, sizeof(what), "the host's walker moves again within %d s of its target looking away, the host's own camera on it",
+                  kReleaseBoundS);
     if (!Check(goes, "4", what)) return Fail("4", what);
+    std::snprintf(what, sizeof(what), "the host's gaze reads at the walker's sites are answered with its target's level, not the host's "
+                  "camera (%u answered in the release window)", answered1 - answered0);
+    if (!Check(answered1 > answered0, "4", what)) return Fail("4", what);
     return steps_b::HostB(b, keyB, clientFails);
 }
 
