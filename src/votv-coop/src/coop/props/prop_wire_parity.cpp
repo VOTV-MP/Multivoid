@@ -104,7 +104,7 @@ void ConvergeStatic(void* actor, uint8_t physFlags) {
     if (ue_wrap::prop::IsStatic(actor) == wantStatic) return;
     const bool wantFrozen = (physFlags & pf::kFrozen) != 0;
     const bool wantSleep  = (physFlags & pf::kSleep) != 0;
-    if (!ue_wrap::prop::CallSetPropProps(actor, wantStatic, wantFrozen, /*active=*/false, wantSleep)) {
+    if (!ue_wrap::prop::CallBaseSetPropProps(actor, wantStatic, wantFrozen, wantSleep)) {
         UE_LOGW("prop_wire_parity: %p static -> %d, frozen=%d sleep=%d -- the game's setter did not dispatch; the "
                 "copy keeps its flags", actor, wantStatic ? 1 : 0, wantFrozen ? 1 : 0, wantSleep ? 1 : 0);
     }

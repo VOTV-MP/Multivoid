@@ -55,11 +55,12 @@ uint8_t FlagBitsOf(void* actor);
 // Game thread.
 void ConvergeFrozenSleep(void* actor, uint8_t physFlags);
 
-// Make this copy's static what `physFlags` (the host's) say, when it differs: the game's own setter on the copy's
-// class (setPropProps, so init() switches the collision and an override takes its own path) with the flags'
-// static, frozen and sleep and `active` false, the converge's value. Nothing else changes a copy's static, so the
-// join-window correction and the toolgun's publication are its only senders. Acts only on flags read off a live
-// prop (kLiveState), only on a difference and only on an Aprop_C. A verb that does not dispatch is said. Game thread.
+// Make this copy's static what `physFlags` (the host's) say, when it differs: prop_C's own setter (setPropProps, so
+// init() switches the collision) with the flags' static, frozen and sleep, the base one as ConvergeFrozenSleep runs it,
+// since an override reads `active` as its own state and a correction cannot know the host's. The join-window correction
+// is its only caller; a toolgun press reaches a copy through the override (coop/props/prop_tool_flags). Acts only on
+// flags read off a live prop (kLiveState), only on a difference and only on an Aprop_C. A verb that does not dispatch
+// is said. Game thread.
 void ConvergeStatic(void* actor, uint8_t physFlags);
 
 // SP-parity simulate state from the wire identity flags. Aprop_C::init() computes

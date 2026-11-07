@@ -20,7 +20,9 @@
 #include "coop/player/puppet_drive.h"
 #include "coop/player/remote_player.h"
 #include "coop/player/roster_ledger.h"
+#include "coop/props/prop_drive_stream.h"   // IsParked
 #include "coop/props/prop_hold.h"
+#include "coop/props/remote_prop.h"          // IsActorUnderAnyDrive
 #include "coop/props/toolgun_limits.h"
 #include "coop/props/toolgun_sight.h"
 #include "coop/session/net_pump.h"
@@ -45,6 +47,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <unordered_map>
 
 namespace coop::prop_tool_flags {
 namespace {
@@ -388,6 +391,67 @@ void ServeQueues(coop::net::Session& s) {
     }
 }
 
+// ---- client: the host's flags ---------------------------------------------------------------------------------
+
+// A state for a prop this player holds, or a drive moves, waits for its release: the setter's init() switches physics
+// and collision, which breaks the physics-handle grab (ue_wrap/engine/engine_mainplayer.cpp, the hold's mirror), so it
+// is deferred as the join-window drain defers a correction on a held or driven prop
+// (coop/element/quiescence_drain.cpp, the held/driven deferral) and dropped under the same ten-second bound.
+struct Parked {
+    coop::net::PropPropsStatePayload state;
+    uint64_t since;
+};
+std::unordered_map<uint32_t, Parked> g_parked;
+constexpr uint64_t kParkMs = 10000;
+
+bool HeldHere(void* actor) {
+    void* const local = coop::players::Registry::Get().Local();
+    return (local && E::IsMainPlayerGrabbing(local, actor)) || coop::remote_prop::IsActorUnderAnyDrive(actor) ||
+           coop::prop_drive_stream::IsParked(actor);
+}
+
+// The element's copy on this peer when it is a prop, else null: an eid this peer does not know, or one that is no
+// prop here, has nothing to set.
+void* PropCopy(uint32_t eid) {
+    const EL::Element* el = eid < EL::kMaxElements ? EL::Registry::Get().Get(eid) : nullptr;
+    void* const actor = el ? el->LiveActor() : nullptr;
+    return actor && ue_wrap::prop::IsDescendantOfProp(actor) ? actor : nullptr;
+}
+
+// The press as the host ran it: the game's setter on the copy's own class with the four values, so an override (a
+// landmine, a TV, a light) takes its own path exactly as in single player. Every state is a press and is applied: an
+// override reads `active` as its own state, so equal flags are no sign that nothing is to be done.
+void ApplyState(const coop::net::PropPropsStatePayload& st, void* actor) {
+    const bool wantStatic = st.isStatic != 0, wantFrozen = st.isFrozen != 0, wantSleep = st.isSleeping != 0;
+    const bool wantActive = st.isActive != 0;
+    if (!ue_wrap::prop::CallSetPropProps(actor, wantStatic, wantFrozen, wantActive, wantSleep)) {
+        UE_LOGW("prop_tool_flags: element %u -- the game's setter did not dispatch; the copy keeps its flags", st.eid);
+        return;
+    }
+    UE_LOGI("prop_tool_flags: element %u set static=%d frozen=%d active=%d sleep=%d", st.eid, wantStatic ? 1 : 0,
+            wantFrozen ? 1 : 0, wantActive ? 1 : 0, wantSleep ? 1 : 0);
+}
+
+void RetryParked() {
+    if (g_parked.empty()) return;
+    const uint64_t now = ::GetTickCount64();
+    for (auto it = g_parked.begin(); it != g_parked.end();) {
+        void* const actor = PropCopy(it->first);
+        if (!actor) {
+            it = g_parked.erase(it);
+        } else if (!HeldHere(actor)) {
+            ApplyState(it->second.state, actor);
+            it = g_parked.erase(it);
+        } else if (now - it->second.since > kParkMs) {
+            UE_LOGW("prop_tool_flags: element %u stayed held or driven for %llu ms -- its flags are not applied; the "
+                    "hold's release states its own", it->first, static_cast<unsigned long long>(kParkMs));
+            it = g_parked.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 // ---- the watch's settle --------------------------------------------------------------------------------------
 
 enum class Reg : uint8_t { Pending, Registered, Refused };
@@ -405,6 +469,7 @@ void Install(coop::net::Session* session) {
 }
 
 void Tick() {
+    RetryParked();
     if (!g_settled && g_reg != Reg::Pending) {
         if (g_reg == Reg::Registered) sg::ResolvePendingNames();
         if (g_reg == Reg::Registered && sg::NameWatchLive(kRowInit, kTag)) {
@@ -456,37 +521,19 @@ void OnState(const coop::net::PropPropsStatePayload& payload) {
         ShowReason(reason);
         return;
     }
-    // The host's flags for this prop: set through the game's own setter on the copy's class, so init() switches the
-    // collision on static and an override (a landmine, a TV) takes its own path. An eid this peer does not know is
-    // dropped; the join-window correction carries the flags of a prop that was born or loaded after.
-    const EL::Element* el = payload.eid < EL::kMaxElements ? EL::Registry::Get().Get(payload.eid) : nullptr;
-    void* const actor = el ? el->LiveActor() : nullptr;
-    if (!actor || !ue_wrap::prop::IsDescendantOfProp(actor)) {
+    // An eid this peer does not know is dropped; the join-window correction carries the flags of a prop that was born
+    // or loaded after.
+    void* const actor = PropCopy(payload.eid);
+    if (!actor) {
         UE_LOGI("prop_tool_flags: flags for element %u name no prop here -- dropped", payload.eid);
         return;
     }
-    // The host refused a press on a prop another peer holds, so a prop this player holds is only the race of a grab
-    // inside one round trip: the flags are applied at once and the hold's release states its own.
-    void* const local = coop::players::Registry::Get().Local();
-    static bool sHeldSaid = false;
-    if (!sHeldSaid && local && E::IsMainPlayerGrabbing(local, actor)) {
-        sHeldSaid = true;
-        UE_LOGI("prop_tool_flags: flags for element %u arrived while this player holds it -- applied", payload.eid);
-    }
-    const bool wantStatic = payload.isStatic != 0, wantFrozen = payload.isFrozen != 0, wantSleep = payload.isSleeping != 0;
-    const bool wantActive = payload.isActive != 0;
-    // A copy at the host's flags is left alone, since the setter's init() wakes the body; an active press still runs, as
-    // a prop that reads active as its own state has nothing to compare it with.
-    if (!wantActive && ue_wrap::prop::IsStatic(actor) == wantStatic && ue_wrap::prop::IsFrozen(actor) == wantFrozen &&
-        ue_wrap::prop::IsSleeping(actor) == wantSleep)
-        return;
-    if (!ue_wrap::prop::CallSetPropProps(actor, wantStatic, wantFrozen, wantActive, wantSleep)) {
-        UE_LOGW("prop_tool_flags: element %u -- the game's setter did not dispatch; the copy keeps its flags",
-                payload.eid);
+    if (HeldHere(actor)) {
+        g_parked[payload.eid] = Parked{payload, ::GetTickCount64()};
+        UE_LOGI("prop_tool_flags: element %u is held or driven here -- its flags wait for the release", payload.eid);
         return;
     }
-    UE_LOGI("prop_tool_flags: element %u set static=%d frozen=%d active=%d sleep=%d", payload.eid, wantStatic ? 1 : 0,
-            wantFrozen ? 1 : 0, wantActive ? 1 : 0, wantSleep ? 1 : 0);
+    ApplyState(payload, actor);
 }
 
 void OnDisconnect() {
@@ -497,6 +544,7 @@ void OnDisconnect() {
     }
     g_pressTool = nullptr;
     g_pressTarget.Reset();
+    g_parked.clear();
 }
 
 }  // namespace coop::prop_tool_flags
