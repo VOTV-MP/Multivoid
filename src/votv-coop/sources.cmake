@@ -224,6 +224,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_food_state.cpp
     src/coop/interactables/garbage_bin_sync.cpp
     src/coop/props/container_break.cpp
+    src/coop/props/hacksaw_cut.cpp
     src/coop/world/vent_crawler_sync.cpp
     src/coop/props/prop_food_sync.cpp
     src/coop/props/food_tick_gate.cpp
@@ -660,6 +661,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_plant_gate.cpp
     src/harness/autotest/autotest_saveui.cpp
     src/harness/autotest/autotest_spill.cpp
+    src/harness/autotest/autotest_hacksaw.cpp
     src/harness/autotest/autotest_ambient_creature.cpp
     src/harness/autotest/autotest_ambient_field.cpp
     src/harness/autotest/autotest_sus_hole.cpp

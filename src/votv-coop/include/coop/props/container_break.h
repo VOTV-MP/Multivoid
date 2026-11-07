@@ -21,8 +21,9 @@ namespace coop::props::container_break {
 void Install(coop::net::Session* session);
 
 // CLIENT: whether `owner` is a container this lane breaks on the host; when it is, the request is queued and the
-// caller cancels the local call. `fire` names a fireDamage. Game thread.
-bool RequestFromClient(void* owner, bool fire);
+// caller cancels the local call. `fire` names a fireDamage; `sawn` a hacksaw's cut (coop/props/hacksaw_cut), which
+// the host makes as the saw does: the container's own broken, then its destroy. Game thread.
+bool RequestFromClient(void* owner, bool fire, bool sawn = false);
 
 // The client's queue, and the host's served requests. Game thread.
 void Tick();

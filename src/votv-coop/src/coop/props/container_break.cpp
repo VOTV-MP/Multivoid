@@ -13,9 +13,11 @@
 #include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_pawn.h"  // DestroyActor
 
 #include <atomic>
 #include <string>
@@ -75,6 +77,13 @@ bool Break(void* container, bool fire) {
     return ue_wrap::Call(comp, f);
 }
 
+// The hacksaw's cut, as its completion makes it: the container's own broken spills, then it is destroyed. A lethal
+// impact would not do: a container whose physicsImpact does not break it (a file cabinet) takes the damage whole.
+bool Saw(void* container) {
+    const bool spilled = ue_wrap::component_calls::CallParamlessNamed(container, L"broken");
+    return ue_wrap::engine::DestroyActor(container) && spilled;
+}
+
 bool InReach(int slot, void* container) {
     coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot));
     void* body = rp && rp->valid() ? rp->GetActor() : nullptr;
@@ -102,10 +111,10 @@ void HostServe(coop::net::Session& s) {
             UE_LOGW("container_break: slot %d's break of '%ls' is out of reach -- refused", in.slot, key.c_str());
             continue;
         }
-        const bool ok = Break(c, in.p.fire != 0);
+        const bool ok = in.p.sawn ? Saw(c) : Break(c, in.p.fire != 0);
         if (ok) ++g_broken;
         UE_LOGI("container_break: slot %d broke '%ls' -- the host's copy breaks and spills (%s, ok=%d, #%u)", in.slot,
-                key.c_str(), in.p.fire ? "fire" : "impact", ok ? 1 : 0, g_broken);
+                key.c_str(), in.p.sawn ? "saw" : in.p.fire ? "fire" : "impact", ok ? 1 : 0, g_broken);
     }
 }
 
@@ -113,7 +122,7 @@ void HostServe(coop::net::Session& s) {
 
 void Install(coop::net::Session* session) { g_session.store(session, std::memory_order_release); }
 
-bool RequestFromClient(void* owner, bool fire) {
+bool RequestFromClient(void* owner, bool fire, bool sawn) {
     if (!owner || !R::IsLive(owner) || !ci::IsContainer(owner)) return false;
     const std::wstring key = KeyOf(owner);
     if (key.empty()) return false;
@@ -121,10 +130,11 @@ bool RequestFromClient(void* owner, bool fire) {
         Payload p{};
         coop::net::WireKeyFromString(key, p.key);
         p.fire = fire ? 1 : 0;
+        p.sawn = sawn ? 1 : 0;
         g_outbox.push_back(p);
         ++g_asked;
         UE_LOGI("container_break: this player broke '%ls' (%s) -- the host breaks it (#%u)", key.c_str(),
-                fire ? "fire" : "impact", g_asked);
+                sawn ? "saw" : fire ? "fire" : "impact", g_asked);
     }
     return true;
 }

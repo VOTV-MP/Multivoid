@@ -89,6 +89,7 @@
 #include "coop/props/food_tick_gate.h"  // the food ticks a client refuses: its counts end with the session
 #include "coop/interactables/garbage_bin_sync.h"
 #include "coop/props/container_break.h"
+#include "coop/props/hacksaw_cut.h"
 #include "coop/props/prop_food_sync.h"
 #include "coop/world/plant_gate.h"  // the plant bodies a client refuses: its counts end with the session
 #include "coop/world/plant_sync.h"
@@ -305,6 +306,7 @@ void Install(coop::net::Session& session) {
     coop::props::prop_can_state::Install(&session);  // a canned food's lid and contents: its record on a change
     coop::garbage_bin_sync::Install(&session);  // what a garbage container holds, and its pickup, are the host's
     coop::props::container_break::Install(&session);  // a container a client breaks breaks on the host
+    coop::props::hacksaw_cut::Install(&session);  // a container a client saws breaks on the host
     coop::props::prop_food_sync::Install(&session);  // a world food's one author, the host
     coop::plant_sync::Install(&session);  // the host runs every plant
     coop::props::prop_food_state::Install();  // the food family claims its own live state off the record lane
@@ -499,6 +501,7 @@ DisconnectStats DisconnectAll() {
     coop::plant_sync::OnDisconnect();
     coop::garbage_bin_sync::OnDisconnect();
     coop::props::container_break::OnDisconnect();
+    coop::props::hacksaw_cut::OnDisconnect();
     coop::prop_stick_sync::OnDisconnect();  // drop commit-pending stick records
     coop::sleepingbag_sync::OnDisconnect();
     coop::item_activate::OnDisconnect();
@@ -669,6 +672,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_drive_host"}; coop::prop_drive_host::Pump(session, isHost); }  // the driven props, both roles: HOST judges a syncing client's rows, publishes the props that moved, closes the streams that rested (after the hook poll that feeds it); then both park + drive what the host streams (an empty set costs one size check)
     coop::garbage_bin_sync::Tick();  // the garbage containers' poll and apply
     coop::props::container_break::Tick();  // a client's container breaks, and the host's
+    coop::props::hacksaw_cut::Tick();  // a saw's cut never spans two ticks
     coop::vent_crawler_sync::Tick();  // a client's crawl sounds as their times come
     coop::props::prop_can_state::Tick();  // the init watch's names resolve until it is live
     coop::props::prop_food_sync::Tick();  // the host's poll, the client's wait list

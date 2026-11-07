@@ -430,7 +430,7 @@ bool HandlePropDriveEvent(net::Session& session,
         if (msg.payloadLen < sizeof(net::ContainerBreakPayload)) break;
         net::ContainerBreakPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (p.fire > 1) break;
+        if (p.fire > 1 || p.sawn > 1) break;
         ::coop::props::container_break::OnRequest(msg.senderPeerSlot, p);
         break;
     }

@@ -223,7 +223,7 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
         // adopting the host's world.
         coop::join_membership_sweep::RecordSelfAuthored(actor);
         UE_LOGI("[PROP-DROP] CLIENT enqueued PLAYER-AUTHORED birth actor=%p cls='%ls' "
-                "(spawn menu or toolgun; admitted at drain, spared by the join sweep)",
+                "(spawn menu, toolgun or hacksaw; admitted at drain, spared by the join sweep)",
                 actor, R::ClassNameOf(actor).c_str());
     }
 }

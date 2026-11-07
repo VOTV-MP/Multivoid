@@ -107,8 +107,8 @@ performs (`coop/props/prop_drop_intent`):
 - **Births the client cannot avoid.** A reel ejected from a caddy, a module or a drive taken from
   a rack, an item extracted from a container all materialise on the client first; they go
   through the same door, class-checked at the host, born asleep where the class needs it.
-- **Births a player asked for.** The sandbox spawn menu and the toolgun. These cannot be named by
-  class -- the menu is the whole catalog, and the world's own spawners, morphs and impacts mint
+- **Births a player asked for.** The spawn menu, the toolgun, and the scrap a hacksaw cuts (the saw
+  runs only where it is held). Not by class -- the menu is the whole catalog, and the world mints
   those same classes per peer, so a class test would double the world. They are admitted on
   AUTHORSHIP instead: the birth seam asks whether a player's own spawn verb is on the stack, which
   is a fact only that instant holds, since the VM still has the calling Blueprint frame there
@@ -295,9 +295,9 @@ before it receives the prop's destroy and the container's publication, and one s
 the record `[?]`. The open and closed state is a keyed-device channel like a
 door's ([devices.md](devices.md)). The single-slot verbs are reverse-engineered and designed and not built.
 
-A container that breaks spills its records (its own `broken`), then its physicsImpact component destroys it. A client's
-lethal hit on a container it authors is cancelled and sent to the host (`ContainerBreakRequest`), which breaks its own copy
-by the same call, checked for world and reach (`coop/props/container_break`), so the spill is the host's records; before,
+A container that breaks spills its records (its own `broken`), then is destroyed. A client's lethal hit on a container it
+authors is cancelled and sent to the host (`ContainerBreakRequest`), which breaks its own copy by the same call, and a
+container its hacksaw cuts goes the same way, its local spill dissolved (`coop/props/hacksaw_cut`); before,
 the client's spill reached the host as its births, a nested container in it empty. `[V]` (`autotest_container_gaps`: a
 basket of two discs broken on the host and by a client grabbing it; both peers end with the same discs.)
 
