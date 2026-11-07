@@ -1384,6 +1384,13 @@ enum class ReliableKind : uint16_t {
     // change of either and again to a joiner alone at its ready edge. A client holds one for a copy that is not here yet and
     // applies it at the copy's birth. Not relayed, not pre-world. WalkerStatePayload.
     WalkerState = 231,
+    // HOST->ALL: the host's base computer shorted (a liquid on it, the host's own or a client's it judged): every client
+    // runs its own copy's shortCircuit, which sparks and then puts the base on solar power. Never relayed, not pre-world,
+    // nothing at late join (the short is over in ten seconds). DeskShortPayload.
+    DeskShortState = 253,
+    // CLIENT->HOST: this client's liquid shorted its copy of the base computer. The host checks the sender's world and
+    // reach and runs its own desk's shortCircuit, whose DeskShortState answers. Never relayed. DeskShortPayload.
+    DeskShortRequest = 254,
 };
 
 #pragma pack(push, 1)
@@ -2245,6 +2252,13 @@ struct WalkerStatePayload {
 };
 static_assert(sizeof(WalkerStatePayload) == 36, "WalkerStatePayload must be 36 bytes");
 static_assert(sizeof(WalkerStatePayload) <= 256 - 20 - 8, "WalkerStatePayload must fit in one reliable datagram");
+
+// The base computer's short circuit (DeskShortState), or a client's (DeskShortRequest).
+struct DeskShortPayload {
+    uint8_t on;        // 1 -- 1: the desk shorted
+    uint8_t _pad[3];   // 3 -- zero
+};
+static_assert(sizeof(DeskShortPayload) == 4, "DeskShortPayload must be 4 bytes");
 
 // One message of the drill filler (DevLoadFiller): its place in the run and the run's length; the rest is fill.
 struct DevLoadFillerPayload {
