@@ -294,6 +294,8 @@ bool Locate(void* actor, ue_wrap::FVector& out) {
 // fast as the lane carries costs the host one counter bump per word, not one log write).
 void LogLevel(uint8_t slot, bool seen, const coop::net::WireKey& key) {
     LevelLog&      log = g_levelLog[slot];
+    // Held changes belong to the walker whose key they were held under: a change of walker writes them first.
+    if (log.held > 0 && !SameKey(log.key, key)) FlushLevel(slot);
     log.seen = seen;
     log.key = key;
     const uint64_t now = coop::net::NowMs();

@@ -11,8 +11,8 @@
 // actor whose class is not the walker's by a pointer compare, then pushes (actor, eid) into a fixed queue under a leaf mutex
 // (no allocation; an overflow is said once). The game-thread tick drains it and claims. A queued actor that died or lost its
 // eid before the drain is skipped by the registry's reverse.
-// THE CLASS. Asked again only when the class set moved while it is null, dropped when its listing changes; the walkers
-// alive at the resolve are claimed in one sweep, so one that minted before the class resolved is not missed.
+// THE CLASS. While null, asked again on a class-set move and then each tick for the load window (class_reask::Latch), dropped
+// when its listing changes; the walkers alive at the resolve are claimed in one sweep, so none minted before it is missed.
 // Coop layer; the subscriber is callable from any thread, the rest is game thread.
 
 #pragma once

@@ -6,6 +6,7 @@
 #include "coop/element/mirror_managers.h"
 #include "coop/element/npc.h"
 #include "coop/element/player.h"
+#include "coop/net/net_clock.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -106,17 +107,23 @@ ue_wrap::FVector Vec(const float (&v)[3]) { return ue_wrap::FVector{v[0], v[1], 
 void PlayCue(void* body, uint8_t cue) {
     if (cue != coop::net::kPlayerHitCueWalker) return;
     // The asset is found once and held. A miss walks the whole object table, and an asset finishing its load moves no
-    // object-index number (the reasoning of object_index.h:55-58, which states it of a class), so a miss is asked again on each
-    // call for the load window after a class-set move and not again until the next move.
+    // object-index number (the reasoning of object_index.h:55-58, which states it of a class), so no class-set move announces
+    // it: a miss is asked again on each call for the load window after a move, and besides at most once per kAssetReaskMs.
+    constexpr uint64_t                 kAssetReaskMs = 1000;
     static void*                       sSound = nullptr;
     static ue_wrap::class_reask::Latch sAsk;
+    static uint64_t                    sNextAskMs = 0;
     if (sSound && !R::IsLive(sSound)) {
         sSound = nullptr;
         sAsk.Reset();
     }
-    if (!sSound && sAsk.Due()) {
-        sSound = R::FindObject(L"break_flesh_3", L"SoundWave");
-        if (!sSound) sSound = R::FindObject(L"break_flesh_3", L"SoundCue");
+    if (!sSound) {
+        const uint64_t now = coop::net::NowMs();
+        if (sAsk.Due() || now >= sNextAskMs) {
+            sNextAskMs = now + kAssetReaskMs;
+            sSound = R::FindObject(L"break_flesh_3", L"SoundWave");
+            if (!sSound) sSound = R::FindObject(L"break_flesh_3", L"SoundCue");
+        }
     }
     if (!sSound) {
         if (++g_cuesLost == 1) UE_LOGW("player_hit: the walker's hit sound break_flesh_3 is not loaded here -- not played");
