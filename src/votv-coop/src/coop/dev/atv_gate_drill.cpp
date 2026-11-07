@@ -66,11 +66,15 @@ std::string Move(float a, float b) {
     return buf;
 }
 
-void Measure(const char* step, bool acted, const PR::Counts& c0, const PR::Counts& c1, const Vitals& v0, const Vitals& v1) {
-    UE_LOGI("[ATVG-DRILL] MEASURE %s role=%s acted=%d sg=%s pe=%s fuel=%s health=%s modules=%d>%d seated=%d", step,
-            harness::autotest::IsClientRole() ? "client" : "host", acted ? 1 : 0, Delta(c0, c1, true).c_str(),
-            Delta(c0, c1, false).c_str(), Move(v0.fuel, v1.fuel).c_str(), Move(v0.health, v1.health).c_str(), v0.modules,
-            v1.modules, v1.seated ? 1 : 0);
+// `actor` is this peer's step to do; `issued` is whether the act was issued (the actor's word, for an observer); `acted`
+// is both, this peer having done it. An act that was not issued says why.
+void Measure(const char* step, bool actor, bool issued, const std::string& why, const PR::Counts& c0, const PR::Counts& c1,
+             const Vitals& v0, const Vitals& v1) {
+    UE_LOGI("[ATVG-DRILL] MEASURE %s role=%s actor=%d acted=%d issued=%d sg=%s pe=%s fuel=%s health=%s modules=%d>%d "
+            "seated=%d%s%s", step, harness::autotest::IsClientRole() ? "client" : "host", actor ? 1 : 0,
+            actor && issued ? 1 : 0, issued ? 1 : 0, Delta(c0, c1, true).c_str(), Delta(c0, c1, false).c_str(),
+            Move(v0.fuel, v1.fuel).c_str(), Move(v0.health, v1.health).c_str(), v0.modules, v1.modules,
+            v1.seated ? 1 : 0, issued ? "" : " why=", issued ? "" : why.c_str());
 }
 
 PR::Counts Counts() {
@@ -79,29 +83,33 @@ PR::Counts Counts() {
     return c;
 }
 
-// One step. The actor does the act, then signals; the other peer reads its own counts at the signal. Both print the
-// MEASURE line for the window. False, with the verdict said, when the act could not be issued or a signal never came.
-bool RunStep(const Step& s, bool iAct, const std::wstring& key) {
+constexpr const char kFailPrefix[] = "fail: ";
+
+// One step. The actor does the act, then signals "ok" or "fail: <why>"; the other peer reads its own counts at the
+// signal. Both print the MEASURE line for the window. An act that could not be issued is measured and the run goes on:
+// its step name is added to `unissued`. False only when a signal never came (the verdict is said by peer_signal).
+bool RunStep(const Step& s, bool iAct, const std::wstring& key, std::string& unissued) {
     const std::string done = std::string(s.name) + "_done";
     const std::string seen = std::string(s.name) + "_seen";
     const PR::Counts c0 = Counts();
     const Vitals v0 = ReadVitals(key);
+    std::string why;
+    bool issued = false;
     if (iAct) {
-        std::string why;
-        const bool ok = s.run(key, why);
-        Measure(s.name, true, c0, Counts(), v0, ReadVitals(key));
-        PS::Mark(done.c_str(), ok ? "ok" : "fail");
-        if (!ok) {
-            Invalid(std::string("step '") + s.name + "' could not be issued: " + why);
-            return false;
-        }
-        return PS::Await(seen.c_str(), kSignalSec);
+        issued = s.run(key, why);
+        Measure(s.name, true, issued, why, c0, Counts(), v0, ReadVitals(key));
+        PS::Mark(done.c_str(), issued ? std::string("ok") : kFailPrefix + why);
+        if (!PS::Await(seen.c_str(), kSignalSec)) return false;
+    } else {
+        std::string result;
+        if (!PS::AwaitText(done.c_str(), result, kSignalSec)) return false;
+        issued = result == "ok";
+        if (!issued) why = result.compare(0, sizeof(kFailPrefix) - 1, kFailPrefix) == 0 ? result.substr(sizeof(kFailPrefix) - 1) : result;
+        Measure(s.name, false, issued, why, c0, Counts(), v0, ReadVitals(key));
+        PS::Mark(seen.c_str());
     }
-    std::string result;
-    if (!PS::AwaitText(done.c_str(), result, kSignalSec)) return false;
-    Measure(s.name, false, c0, Counts(), v0, ReadVitals(key));
-    PS::Mark(seen.c_str());
-    return result == "ok";   // the actor said why when it did not
+    if (!issued) unissued += std::string(unissued.empty() ? "" : ", ") + s.name;
+    return true;
 }
 
 // The announced world and the host's puppet exist here.
@@ -145,18 +153,21 @@ void RunHost() {
     UE_LOGI("[ATVG-DRILL] HOST ATV key='%ls'", key.c_str());
     PS::Mark("atv_key", std::string(key.begin(), key.end()));
     if (!PS::Await("client_has_atv", kSignalSec)) return;
+    std::string unissued;
     for (const Step& s : kClientSteps)
-        if (!RunStep(s, false, key)) return;
+        if (!RunStep(s, false, key, unissued)) return;
     std::string why;
     if (!WalkToAtv(key, why)) {
-        Invalid(why);
+        PS::Mark("host_at_atv", "fail");
+        Invalid(why + (unissued.empty() ? "" : "; steps not issued before it: " + unissued));
         return;
     }
-    PS::Mark("host_at_atv");
+    PS::Mark("host_at_atv", "ok");
     for (const Step& s : kHostSteps)
-        if (!RunStep(s, true, key)) return;
-    UE_LOGI("[ATVG-DRILL] DONE on host");
-    RV::Say(kTag, RV::Outcome::Pass);
+        if (!RunStep(s, true, key, unissued)) return;
+    UE_LOGI("[ATVG-DRILL] DONE on host, steps not issued: %s", unissued.empty() ? "none" : unissued.c_str());
+    if (unissued.empty()) RV::Say(kTag, RV::Outcome::Pass);
+    else Invalid("steps not issued: " + unissued + " (the reasons are on the MEASURE lines)");
 }
 
 void RunClient() {
@@ -172,12 +183,18 @@ void RunClient() {
         Invalid(why);
         return;
     }
+    std::string unissued;
     for (const Step& s : kClientSteps)
-        if (!RunStep(s, true, key)) return;
-    if (!PS::Await("host_at_atv", kWalkSec)) return;
+        if (!RunStep(s, true, key, unissued)) return;
+    std::string hostWalk;
+    if (!PS::AwaitText("host_at_atv", hostWalk, kWalkSec)) return;
+    if (hostWalk != "ok") {
+        UE_LOGW("[ATVG-DRILL] the host's walk to the ATV failed: its steps are not run");
+        return;
+    }
     for (const Step& s : kHostSteps)
-        if (!RunStep(s, false, key)) return;
-    UE_LOGI("[ATVG-DRILL] DONE on client");
+        if (!RunStep(s, false, key, unissued)) return;
+    UE_LOGI("[ATVG-DRILL] DONE on client, steps not issued: %s", unissued.empty() ? "none" : unissued.c_str());
 }
 
 }  // namespace

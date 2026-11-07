@@ -32,6 +32,7 @@
 #include "ue_wrap/engine/engine_pawn.h"
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <initializer_list>
 #include <memory>
@@ -54,6 +55,7 @@ constexpr int   kWalkS = 300;
 constexpr int   kAnswerS = 6;          // the game answers a fire press within this, or it did not
 constexpr int   kToolboxHoldS = 30;    // the toolbox fixes while the key is held, for the ATV's own fix time
 constexpr int   kEffectS = 3;          // a state the answer changed shows within this
+constexpr int   kSlotS = 15;           // the upgrades screen's module slot exists within this of the verb
 constexpr float kLowFuel = 20.f;
 constexpr float kLowHealth = 50.f;
 constexpr float kCanFuel = 100.f;      // a gas can's hold record loads empty without it
@@ -350,6 +352,66 @@ bool FitModule(const std::wstring& key, std::string& why) {
 
 // ---- the take-off ----
 
+namespace {
+
+// The live module slots of the upgrades screen: `total` of them, `named` of those naming `atv` as their actor, and the
+// first one that does (null when none). `firstActor` is the class of the first slot's actor, whoever's. Game thread.
+void* FindSlot(void* atv, int& total, int& named, std::wstring& firstActor) {
+    void* found = nullptr;
+    total = named = 0;
+    for (void* w : R::FindObjectsByClass(kSlotClass)) {
+        if (!w || !R::IsLive(w) || R::NameStartsWith(R::NameOf(w), L"Default__")) continue;
+        ++total;
+        const int32_t off = R::FindPropertyOffset(R::ClassOf(w), L"actor");
+        void* const actor = off >= 0 ? *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(w) + off) : nullptr;
+        if (total == 1) firstActor = actor && R::IsLive(actor) ? R::ClassNameOf(actor) : L"none";
+        if (atv && actor == atv) {
+            ++named;
+            if (!found) found = w;
+        }
+    }
+    return found;
+}
+
+// The upgrades screen (the game keeps one) closed through its own quit, which gives the input back. Game thread.
+void CloseScreen() {
+    for (void* w : R::FindObjectsByClass(kUpgradesClass))
+        if (w && R::IsLive(w) && !R::NameStartsWith(R::NameOf(w), L"Default__")) CallByName(w, L"quit");
+}
+
+int32_t ArrayNum(void* o, const wchar_t* name) {
+    const int32_t off = o ? R::FindPropertyOffset(R::ClassOf(o), name) : -1;
+    return off < 0 ? -1 : *reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(o) + off + 8);
+}
+
+// What stood where the slot should be, for the `why` of a take-off that could not be issued: the lists the screen builds
+// its slots from (the ATV's upgradesNames and modules), the screens that exist and name the ATV, and the slots. Game thread.
+std::string DescribeScreen(void* atv) {
+    int total = 0, named = 0, screens = 0, screensNamingAtv = 0;
+    std::wstring first;
+    FindSlot(atv, total, named, first);
+    for (void* w : R::FindObjectsByClass(kUpgradesClass)) {
+        if (!w || !R::IsLive(w) || R::NameStartsWith(R::NameOf(w), L"Default__")) continue;
+        ++screens;
+        const int32_t off = R::FindPropertyOffset(R::ClassOf(w), L"actor");
+        if (off >= 0 && atv && *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(w) + off) == atv) ++screensNamingAtv;
+    }
+    std::string firstActor;
+    for (const wchar_t c : first) firstActor.push_back(c < 128 ? static_cast<char>(c) : '?');
+    char buf[256];
+    std::snprintf(buf, sizeof(buf),
+                  "upgradesNames=%d modules=%d; screens=%d, naming the ATV=%d; slots=%d, naming the ATV=%d, first slot's actor=%s",
+                  ArrayNum(atv, L"upgradesNames"), ArrayNum(atv, L"modules"), screens, screensNamingAtv, total, named,
+                  firstActor.empty() ? "-" : firstActor.c_str());
+    return buf;
+}
+
+}  // namespace
+
+// The screen is opened by the verb and its slots are built by the screen's own list, which the game fills in the
+// verb's call (objectViewer assign then genList), so a slot is waited for as a state, bounded, before the act is
+// given up. A screen that shows none says what it holds in `why`: whether it needed a frame the drill cannot give is
+// read from those counts.
 bool TakeModuleOff(const std::wstring& key, std::string& why) {
     if (!TakeHand(L"None", nullptr)) {
         why = "the hand could not be emptied";
@@ -366,37 +428,33 @@ bool TakeModuleOff(const std::wstring& key, std::string& why) {
         return false;
     }
     void* slot = nullptr;
-    PS::WaitFor("the upgrades screen builds a module slot", 10, [&] {
+    PS::WaitFor("the upgrades screen builds a module slot", kSlotS, [&] {
         OnGt([&] {
-            void* atv = Atv(key);
-            slot = nullptr;
-            for (void* w : R::FindObjectsByClass(kSlotClass)) {
-                if (!w || !R::IsLive(w) || R::NameStartsWith(R::NameOf(w), L"Default__")) continue;
-                const int32_t off = R::FindPropertyOffset(R::ClassOf(w), L"actor");
-                if (off >= 0 && atv && *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(w) + off) == atv) {
-                    slot = w;
-                    return;
-                }
-            }
+            int total = 0, named = 0;
+            std::wstring first;
+            slot = FindSlot(Atv(key), total, named, first);
         });
         return slot != nullptr;
     }, false);
     if (!slot) {
-        why = "the upgrades screen showed no module of the ATV to take off";
+        std::string what;
+        OnGt([&] {
+            what = DescribeScreen(Atv(key));
+            CloseScreen();
+        });
+        why = "the upgrades screen built no module slot of the ATV in " + std::to_string(kSlotS) + " s (" + what + ")";
         return false;
     }
     const PR::Counts base = Counts();
     bool clicked = false;
     OnGt([&] { clicked = R::IsLive(slot) && CallByName(slot, kSlotClick); });
     if (!clicked) {
+        OnGt([&] { CloseScreen(); });
         why = "the module button's click did not dispatch";
         return false;
     }
     const bool answered = PS::WaitFor("the game answers the click", kAnswerS, [&] { return Rose(base, {PR::kUpgradeTake}); }, false);
-    OnGt([&] {
-        for (void* w : R::FindObjectsByClass(kUpgradesClass))
-            if (w && R::IsLive(w) && !R::NameStartsWith(R::NameOf(w), L"Default__")) CallByName(w, L"quit");
-    });
+    OnGt([&] { CloseScreen(); });
     UE_LOGI("[ATVG-DRILL] take: the module's button was clicked on the upgrades screen; upgradeTake answered=%d",
             answered ? 1 : 0);
     return true;
