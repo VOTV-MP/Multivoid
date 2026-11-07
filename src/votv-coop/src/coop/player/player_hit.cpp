@@ -13,6 +13,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/obj_keyed_cache.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine_audio.h"
@@ -104,10 +105,18 @@ ue_wrap::FVector Vec(const float (&v)[3]) { return ue_wrap::FVector{v[0], v[1], 
 // as a UI sound. Its class is loaded wherever a walker stands, as one must for its hit.
 void PlayCue(void* body, uint8_t cue) {
     if (cue != coop::net::kPlayerHitCueWalker) return;
-    static void* sSound = nullptr;
+    // The asset is found once and held; a miss is asked again only when the object index's class set has moved, since each ask
+    // walks the whole object table.
+    static void*    sSound = nullptr;
+    static uint64_t sSetAsked = ~uint64_t{0};
     if (!sSound || !R::IsLive(sSound)) {
-        sSound = R::FindObject(L"break_flesh_3", L"SoundWave");
-        if (!sSound) sSound = R::FindObject(L"break_flesh_3", L"SoundCue");
+        sSound = nullptr;
+        const uint64_t set = ue_wrap::object_index::ClassSetVersion();
+        if (set != sSetAsked) {
+            sSetAsked = set;
+            sSound = R::FindObject(L"break_flesh_3", L"SoundWave");
+            if (!sSound) sSound = R::FindObject(L"break_flesh_3", L"SoundCue");
+        }
     }
     if (!sSound) {
         if (++g_cuesLost == 1) UE_LOGW("player_hit: the walker's hit sound break_flesh_3 is not loaded here -- not played");
