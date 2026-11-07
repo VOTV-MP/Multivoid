@@ -11,10 +11,12 @@
 #include "coop/world/spawn_authority.h"
 
 #include "ue_wrap/actors/woodchipper.h"
+#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/engine/engine_physics.h"
 #include "ue_wrap/engine/hit_result.h"
 #include "ue_wrap/facts/function_row.h"
 
@@ -92,9 +94,50 @@ bool WireKeyable(const std::wstring& key) { return !key.empty() && key.size() <=
 
 // ---- the tick and the intake: refused on a client ----
 
+// The host's intake, seen and never changed: what entered the eat box and what canChip will read of it. One line per
+// (chipper, other actor) pair, the pairs capped, so a body resting in the box says nothing more.
+struct EatPair {
+    void* chipper;
+    void* other;
+};
+std::vector<EatPair> g_eatPairs;
+constexpr size_t kMaxEatPairs = 64;
+
+void NoteHostEat(const sg::Call& call) {
+    ++g_counts.eatHost;
+    if (!call.locals) return;
+    static R::ParamOffset sOther{L"OtherActor"}, sComp{L"OtherComp"};
+    const int32_t otherOff = sOther.Of(call.function);
+    const int32_t compOff = sComp.Of(call.function);
+    if (otherOff < 0) return;
+    void* const other = *reinterpret_cast<void* const*>(call.locals + otherOff);
+    void* const comp = compOff < 0 ? nullptr : *reinterpret_cast<void* const*>(call.locals + compOff);
+    for (const EatPair& e : g_eatPairs)
+        if (e.chipper == call.object && e.other == other) return;
+    if (g_eatPairs.size() >= kMaxEatPairs) return;
+    g_eatPairs.push_back({call.object, other});
+    float fuel = 0.f;
+    bool active = false;
+    W::Read(call.object, fuel, active);
+    std::wstring key;
+    if (other && R::IsLive(other)) {
+        const ue_wrap::prop::KeyField where = ue_wrap::prop::KeyFieldOf(R::ClassOf(other));
+        if (where != ue_wrap::prop::KeyField::None)
+            key = R::ToString(ue_wrap::prop::ReadKeyField(other, where));
+    }
+    UE_LOGI("woodchipper_gate: HOST intake #%llu chipper %p (active %d, fuel %.1f) was entered by %p class '%ls' key '%ls' "
+            "via component %p class '%ls' (simulating %d)", static_cast<unsigned long long>(g_counts.eatHost),
+            call.object, active ? 1 : 0, static_cast<double>(fuel), other, R::ClassNameOf(other).c_str(), key.c_str(),
+            comp, R::ClassNameOf(comp).c_str(), ue_wrap::engine::IsComponentSimulatingPhysics(comp) ? 1 : 0);
+}
+
 sg::Verdict OnRefusePre(const sg::Call& call) {
-    if (!coop::spawn_authority::IsActiveClientSession() || GateOff()) return sg::Verdict::Run;
     const int row = call.tag - kTagBase;
+    if (!coop::spawn_authority::IsActiveClientSession()) {
+        if (row == kEat) NoteHostEat(call);
+        return sg::Verdict::Run;
+    }
+    if (GateOff()) return sg::Verdict::Run;
     if (row != kTick && row != kEat) return sg::Verdict::Run;
     uint64_t& n = row == kTick ? g_counts.tickRefused : g_counts.eatRefused;
     ++n;
@@ -240,6 +283,7 @@ void OnDisconnect() {
     g_counts = Counts{};
     g_pourChipper = nullptr;
     g_emptyPours.clear();
+    g_eatPairs.clear();
 }
 
 Counts GetCounts() { return g_counts; }

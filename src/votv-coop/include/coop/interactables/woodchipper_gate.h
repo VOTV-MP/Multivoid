@@ -38,6 +38,7 @@ void OnDisconnect();
 // What the gate did this session, for drills: the tick and intake bodies it refused, and the asks it sent. Game thread.
 struct Counts {
     uint64_t tickRefused = 0, eatRefused = 0;
+    uint64_t eatHost = 0;   // the begin-overlaps the host's own chipper ran: seen, never changed
     uint64_t poursAsked = 0, pressesAsked = 0, notSent = 0;
 };
 Counts GetCounts();
