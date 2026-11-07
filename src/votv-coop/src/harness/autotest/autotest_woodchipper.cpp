@@ -10,6 +10,7 @@
 #include "harness/session_runtime.h"
 
 #include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/dev/director/routes.h"
 #include "coop/dev/drill_hand.h"
 #include "coop/interactables/woodchipper_gate.h"
@@ -24,8 +25,10 @@
 #include "coop/session/net_pump.h"
 #include "coop/session/rig_verdict.h"
 
+#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/woodchipper.h"
 #include "ue_wrap/core/asset_load.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -37,28 +40,29 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <set>
 #include <string>
+#include <utility>
+#include <vector>
 
-//   g1  the client pours: the host's fuel rises by the fuel the client's own copy gained, and the client's copy shows
-//       the host's fuel.
-//   g2  the client presses the button: the host's chipper is on and its fuel falls, the client's copy shows both, and the
-//       gate refused the copy's own tick (the count is the evidence: a copy that ran its tick would not).
-//   g3  a prop dropped into the hopper: the host's chipper eats it (exactly one clump), the client shows the same
-//       change (each peer counts its own before and after): the prop gone and one clump. INVALID, naming the reason,
-//       when the host never eats the dropped prop.
-//   g5  an over-pour (a pour the tank has no room for): the host takes only what fits. Red arm: the host's
-//       woodchipper_pour_check_off. INVALID when the tank holds 20 or less before it (a pour of 80 has no excess then).
-//   g6  a pour from a client whose hand holds no gas can: the host refuses it. Red arm: the same.
-//   g4  with the rig's --rejoin: the chipper is on; the client leaves and comes back, and its copy must read it on after
-//       its world-ready. Red arm: the host's woodchipper_replay_off.
-// Red arms of g2: woodchipper_gate_off (the client's tick runs) and woodchipper_intent_off (the press never reaches the
-// host). Tags: `woodchipper` (g1, g2, g3, g5, g6) and `woodchipper-rejoin` (g4), both said by the host; the lines are
-// tagged `woodchipper:`. The second life carries VOTVCOOP_WOODCHIPPER_DRILL_REJOIN=1.
+//   g1  the client pours: the host's fuel rises by what the client's copy gained, and the client's copy shows it.
+//   g2  the client presses the button: the host's chipper is on and burning, the client's copy shows both, and the gate
+//       refused the copy's own tick (the count is the evidence).
+//   g3  its own arm, woodchipper_drill=feed (after g1 and g2): a paper dropped into the hopper. Its key leaves the host,
+//       a clump not in the baseline taken before the drop appears, the client shows that key gone and that clump
+//       present: by identity, never a count. INVALID when the chipper is not running or never eats the paper.
+//   g5  an over-pour: the host takes only what fits. INVALID when the tank holds 20 or less before it.
+//   g6  a pour from a client whose hand holds no gas can: the host refuses it.
+//   g4  with the rig's --rejoin: the chipper is on; the client leaves and comes back, and its copy must read it on.
+// Red arms: g2 woodchipper_gate_off and woodchipper_intent_off; g5, g6 woodchipper_pour_check_off; g4
+// woodchipper_replay_off. Tags, said by the host: `woodchipper` (g1, g2, g5, g6; the arm `1`), `woodchipper-rejoin` (g4)
+// and `woodchipper-feed` (g3); the lines are tagged `woodchipper:`. The second life carries VOTVCOOP_WOODCHIPPER_DRILL_REJOIN=1.
 
 namespace harness::autotest {
 namespace {
@@ -71,6 +75,7 @@ namespace RV = coop::rig_verdict;
 
 constexpr const char* kTag = "woodchipper";
 constexpr const char* kTagRejoin = "woodchipper-rejoin";
+constexpr const char* kTagFeed = "woodchipper-feed";
 constexpr const wchar_t* kChipperPath = L"/Game/objects/woodchipper.woodchipper_C";
 constexpr const wchar_t* kPropPath = L"/Game/objects/prop_paper.prop_paper_C";   // wood, bag, paper...: canChip's list
 constexpr const wchar_t* kCanClass = L"prop_gascan_C";
@@ -245,18 +250,83 @@ std::wstring ChipperKey() {
     return key;
 }
 
-size_t CountOf(const wchar_t* cls) {
-    size_t n = 0;
-    OnGameThread([&] {
-        void* c = ue_wrap::object_index::ClassByName(cls);
-        n = c ? ue_wrap::object_index::ForEachInstance(c, [](void*, void*, int32_t) {}, nullptr) : 0;
-    });
-    return n;
+bool FeedArm() { return coop::config::ResolveEnum(coop::config_registry::rows::woodchipper_drill) == "feed"; }
+
+// ---- the feed arm: identities, never counts ----
+// The pile eid 3136 near the hopper flips between pile and clump about once a second, so a count of clumps moves
+// without the chipper doing anything. A clump is therefore told by its object and its key against a baseline taken
+// before the drop, and the paper by its key.
+
+struct Clump {
+    void* object;   // an identity compared, never dereferenced after the walk
+    std::wstring key;
+};
+
+void CollectInstance(void* ctx, void* obj, int32_t) { static_cast<std::vector<void*>*>(ctx)->push_back(obj); }
+
+// Every clump of the world now, with the key it answers to (empty and "None" ones left out: they cannot be named to the
+// other peer). Game thread. The keys are asked after the walk, since a key may dispatch a function.
+std::vector<Clump> ClumpsNow() {
+    std::vector<void*> all;
+    void* cls = ue_wrap::object_index::ClassByName(L"prop_garbageClump_C");
+    if (cls) ue_wrap::object_index::ForEachInstance(cls, &CollectInstance, &all);
+    std::vector<Clump> out;
+    for (void* o : all) {
+        std::wstring k = ue_wrap::prop::GetInteractableKeyString(o);
+        if (!k.empty() && k != L"None") out.push_back({o, std::move(k)});
+    }
+    return out;
 }
 
-// A paper prop released over the hopper: the host simulates it, as it does a prop a player let go of there.
-bool DropPropOverHopper(const std::wstring& key) {
-    bool made = false;
+struct Baseline {
+    std::vector<void*> objects;
+    std::set<std::wstring> keys;
+};
+
+Baseline TakeBaseline() {
+    Baseline b;
+    OnGameThread([&] {
+        for (const Clump& c : ClumpsNow()) {
+            b.objects.push_back(c.object);
+            b.keys.insert(c.key);
+        }
+    });
+    return b;
+}
+
+// A clump neither in the baseline by object nor by key; its key in `out`.
+bool NewClumpAgainst(const Baseline& b, std::wstring& out) {
+    bool found = false;
+    OnGameThread([&] {
+        for (const Clump& c : ClumpsNow()) {
+            if (std::find(b.objects.begin(), b.objects.end(), c.object) != b.objects.end() || b.keys.count(c.key)) continue;
+            out = c.key;
+            found = true;
+            return;
+        }
+    });
+    return found;
+}
+
+enum class Seen { Yes, No, Unknown };
+
+// Whether an actor of the current world holds `key` (and is of class `cls` when one is named). Unknown while the key
+// index cannot answer yet.
+Seen KeySeen(const std::wstring& key, const wchar_t* cls) {
+    Seen s = Seen::Unknown;
+    OnGameThread([&] {
+        void* a = nullptr;
+        const coop::prop_key_index::Read r = coop::prop_key_index::Resolve(key, &a);
+        if (r == coop::prop_key_index::Read::Miss) s = Seen::No;
+        else if (r == coop::prop_key_index::Read::Hit) s = !cls || R::ClassNameOf(a) == cls ? Seen::Yes : Seen::No;
+    });
+    return s;
+}
+
+// A paper prop released over the hopper: the host simulates it, as it does a prop a player let go of there. Its key in
+// `paperKey` (left empty when the paper holds none within a bound); false when it could not be spawned.
+bool DropPropOverHopper(const std::wstring& key, std::wstring& paperKey) {
+    ue_wrap::CachedObjRef paper;
     OnGameThread([&] {
         void* chipper = ChipperOf(key);
         static R::InstanceOffset sEat{L"eat"};
@@ -268,14 +338,99 @@ bool DropPropOverHopper(const std::wstring& key) {
         if (!eat || !cls) return;
         ue_wrap::FVector at = E::GetComponentLocation(eat);
         at.Z += 120.f;
-        made = E::SpawnActor(cls, at) != nullptr;
+        paper.Set(E::SpawnActor(cls, at));
     });
-    return made;
+    if (!paper.Raw()) return false;
+    PS::WaitFor("the dropped paper's key", 10, [&] {
+        OnGameThread([&] {
+            if (void* p = paper.Get()) {
+                std::wstring k = ue_wrap::prop::GetKeyString(p);
+                if (!k.empty() && k != L"None") paperKey = std::move(k);
+            }
+        });
+        return !paperKey.empty();
+    }, false);
+    return true;
+}
+
+// The host's half of the feed arm, verdict 'woodchipper-feed'. PASS: the dropped paper is gone from the host and from
+// the client, and a clump new against the baseline is on both. INVALID: the chipper was not running, or never ate the
+// paper (nothing was measured). FAIL: it ate the paper and the change did not cross, or no clump followed.
+void HostFeed(const std::wstring& key) {
+    const Reading running = Now(key);
+    const Baseline base = TakeBaseline();
+    if (running.active != 1 || !(running.fuel > 0.f)) {
+        PS::Mark("g3_go", "none");
+        RV::Say(kTagFeed, RV::Outcome::Invalid, "the chipper was not running when the paper was dropped (%s)", Text(running).c_str());
+        return;
+    }
+    std::wstring paperKey;
+    if (!DropPropOverHopper(key, paperKey) || paperKey.empty()) {
+        PS::Mark("g3_go", "none");
+        RV::Say(kTagFeed, RV::Outcome::Invalid, "the paper could not be spawned over the hopper with a key");
+        return;
+    }
+    UE_LOGI("woodchipper: FEED the host dropped prop_paper_C '%ls' over chipper '%ls' (%zu clumps in the baseline)",
+            paperKey.c_str(), key.c_str(), base.objects.size());
+    PS::Mark("g3_go", "paper=" + Narrow(paperKey));
+    if (!PS::WaitFor("the host's chipper eats the dropped paper", kEatSec, [&] { return KeySeen(paperKey, nullptr) == Seen::No; }, false)) {
+        PS::Mark("g3_host", "none");
+        RV::Say(kTagFeed, RV::Outcome::Invalid, "the host's chipper did not eat the dropped prop_paper_C %s in %d s",
+                Narrow(paperKey).c_str(), kEatSec);
+        return;
+    }
+    std::wstring clumpKey;
+    PS::WaitFor("a clump new against the baseline", kEatSec, [&] { return NewClumpAgainst(base, clumpKey); }, false);
+    if (clumpKey.empty()) {
+        PS::Mark("g3_host", "none");
+        RV::Say(kTagFeed, RV::Outcome::Fail, "the host's chipper ate the paper %s, and no clump new against the baseline of %zu appeared in %d s",
+                Narrow(paperKey).c_str(), base.objects.size(), kEatSec);
+        return;
+    }
+    PS::Mark("g3_host", "clump=" + Narrow(clumpKey));
+    std::string shown;
+    if (!PS::AwaitText("g3_client", shown, kSignalSec)) {
+        RV::Say(kTagFeed, RV::Outcome::Invalid, "the client never reported what it saw of the paper and the clump");
+        return;
+    }
+    const bool crossed = shown == "paper=gone clump=present";
+    UE_LOGI("woodchipper: ARM g3 %s -- the host ate paper %ls and made clump %ls; the client reports '%s'", crossed ? "PASS" : "FAIL",
+            paperKey.c_str(), clumpKey.c_str(), shown.c_str());
+    RV::Say(kTagFeed, crossed ? RV::Outcome::Pass : RV::Outcome::Fail, "the host ate paper %s and made clump %s; the client: %s",
+            Narrow(paperKey).c_str(), Narrow(clumpKey).c_str(), shown.c_str());
+}
+
+// The client's half: it waits for what the host names, then reads whether the paper is gone and the clump is here.
+void ClientFeed() {
+    std::string go;
+    if (!PS::AwaitText("g3_go", go, kSignalSec)) return;
+    if (go == "none") {
+        UE_LOGI("woodchipper: CLIENT no feed (the host could not drop a paper)");
+        return;
+    }
+    std::string host;
+    if (!PS::AwaitText("g3_host", host, kSignalSec)) return;
+    if (host == "none") {
+        UE_LOGI("woodchipper: CLIENT no clump to look for (the host reported none)");
+        return;
+    }
+    const std::wstring paperKey = Widen(go.substr(go.find('=') + 1));
+    const std::wstring clumpKey = Widen(host.substr(host.find('=') + 1));
+    PS::WaitFor("the paper gone and the clump here", kEatSec, [&] {
+        return KeySeen(paperKey, nullptr) == Seen::No && KeySeen(clumpKey, L"prop_garbageClump_C") == Seen::Yes;
+    }, false);
+    const Seen paper = KeySeen(paperKey, nullptr);
+    const Seen clump = KeySeen(clumpKey, L"prop_garbageClump_C");
+    const std::string text = std::string("paper=") + (paper == Seen::No ? "gone" : paper == Seen::Yes ? "here" : "unknown") +
+                             " clump=" + (clump == Seen::Yes ? "present" : clump == Seen::No ? "absent" : "unknown");
+    UE_LOGI("woodchipper: CLIENT feed: %s", text.c_str());
+    PS::Mark("g3_client", text);
 }
 
 // Everything the host judges is signalled by the client in a line of readings; the host's own reading is taken when the
 // client's arrives.
 void RunHost() {
+    const bool feed = FeedArm();
     Judge j;
     if (!PS::Await("client_arrived", kJoinSec)) return;
     const std::wstring key = ChipperKey();
@@ -330,73 +485,49 @@ void RunHost() {
     Arm(j, "g2", h2.active == 1 && h2.fuel <= f2.fuel - kBurnDrop && c2.active == 1 && c2.fuel <= f2.fuel - kBurnDrop &&
                      std::fabs(c2.fuel - h2b.fuel) <= 2.f && refused >= 5.0, what);
 
-    // g5. An over-pour: more than the tank has room for.
-    const Reading f5 = Now(key);
-    const View w5 = ViewNow();
-    PS::Mark("g5_go");
-    PS::WaitFor("the over-pour judged", kCopySec, [&] { return ViewNow().clamped > w5.clamped || Now(key).fuel > W::kMaxFuel + 1.f; }, false);
-    const Reading h5 = Now(key);
-    const View v5 = ViewNow();
-    std::snprintf(what, sizeof(what), "the host's fuel %.2f -> %.2f after a pour of 80, clamped %llu times", static_cast<double>(f5.fuel),
-                  static_cast<double>(h5.fuel), v5.clamped - w5.clamped);
-    if (f5.fuel > kOverPourSpare) {
-        Arm(j, "g5", h5.fuel <= W::kMaxFuel + 0.01f && v5.clamped > w5.clamped, what);
-    } else {
-        // The premise: a pour of 80 overflows only a tank holding more than 20. Judging it would read a small g1 pour as a fail.
-        j.invalid += std::string(j.invalid.empty() ? "" : "; ") + "g5: the tank held " + std::to_string(f5.fuel) +
-                     " fuel, not above 20, so a pour of 80 has no excess to clamp";
-        UE_LOGW("woodchipper: ARM g5 INVALID -- %s", j.invalid.c_str());
-    }
-    PS::Mark("g5_done");
-
-    // g6. A pour from a client with an empty hand.
-    if (!PS::Await("g6_hand_empty", kSignalSec)) return;
-    PS::WaitFor("the client's hand empty here", 30, [&] {
-        bool held = true;
-        OnGameThread([&] { held = coop::hand_item::HeldClassIs(1, kCanClass); });
-        return !held;
-    }, false);
-    const Reading f6 = Now(key);
-    const View w6 = ViewNow();
-    PS::Mark("g6_go");
-    PS::WaitFor("the empty-handed pour judged", kCopySec, [&] { return ViewNow().refusedCan > w6.refusedCan || Now(key).fuel > f6.fuel + 1.f; }, false);
-    const Reading h6 = Now(key);
-    const View v6 = ViewNow();
-    std::snprintf(what, sizeof(what), "the host's fuel %.2f -> %.2f after a pour of 5 with no can in the hand, refused for the can %llu times",
-                  static_cast<double>(f6.fuel), static_cast<double>(h6.fuel), v6.refusedCan - w6.refusedCan);
-    Arm(j, "g6", h6.fuel <= f6.fuel + 0.01f && v6.refusedCan > w6.refusedCan, what);
-    PS::Mark("g6_done");
-
-    // g3. A prop released over the hopper. Each peer counts its own papers and clumps before the drop (the client's
-    // baseline is taken and acknowledged first, so no drop reaches it ahead of it) and reports the change: a prop eaten
-    // leaves the paper count where it was, and the clump added is the one the chipper made. A peer's census may differ
-    // from the other's by a prop one of them does not hold, which a count against the host's absolute would read as a fail.
-    const size_t clumps0 = CountOf(L"prop_garbageClump_C");
-    const size_t props0 = CountOf(L"prop_paper_C");
-    PS::Mark("g3_base");
-    if (!PS::Await("g3_base_ack", kSignalSec)) return;
-    if (!DropPropOverHopper(key)) {
-        PS::Mark("g3_go", "none");
-        j.invalid += "g3: the prop could not be spawned over the hopper";
-    } else {
-        PS::Mark("g3_go", "dropped");
-        const bool ate = PS::WaitFor("the host's chipper eats the prop", kEatSec, [&] { return CountOf(L"prop_garbageClump_C") > clumps0; }, false);
-        const long long dClumps = static_cast<long long>(CountOf(L"prop_garbageClump_C")) - static_cast<long long>(clumps0);
-        const long long dProps = static_cast<long long>(CountOf(L"prop_paper_C")) - static_cast<long long>(props0);
-        std::string shown3;
-        const bool told = PS::AwaitText("g3_client", shown3, kSignalSec);
-        constexpr double kNone = 1e9;
-        const double cClumps = FieldOf(shown3, "dClumps=", kNone), cProps = FieldOf(shown3, "dProps=", kNone);
-        std::snprintf(what, sizeof(what), "host clumps %+lld, papers %+lld; the client's clumps %+.0f, papers %+.0f", dClumps,
-                      dProps, cClumps, cProps);
-        if (!ate) {
-            j.invalid += std::string(j.invalid.empty() ? "" : "; ") +
-                         "g3: the host's chipper never ate the prop dropped over its hopper (" + what + ")";
-            UE_LOGW("woodchipper: ARM g3 INVALID -- %s", what);
+    if (!feed) {
+        // g5. An over-pour: more than the tank has room for.
+        const Reading f5 = Now(key);
+        const View w5 = ViewNow();
+        PS::Mark("g5_go");
+        PS::WaitFor("the over-pour judged", kCopySec, [&] { return ViewNow().clamped > w5.clamped || Now(key).fuel > W::kMaxFuel + 1.f; }, false);
+        const Reading h5 = Now(key);
+        const View v5 = ViewNow();
+        std::snprintf(what, sizeof(what), "the host's fuel %.2f -> %.2f after a pour of 80, clamped %llu times", static_cast<double>(f5.fuel),
+                      static_cast<double>(h5.fuel), v5.clamped - w5.clamped);
+        if (f5.fuel > kOverPourSpare) {
+            Arm(j, "g5", h5.fuel <= W::kMaxFuel + 0.01f && v5.clamped > w5.clamped, what);
         } else {
-            Arm(j, "g3", told && dClumps == 1 && dProps == 0 && cClumps == static_cast<double>(dClumps) &&
-                             cProps == static_cast<double>(dProps), what);
+            // The premise: a pour of 80 overflows only a tank holding more than 20. Judging it would read a small g1 pour as a fail.
+            j.invalid += std::string(j.invalid.empty() ? "" : "; ") + "g5: the tank held " + std::to_string(f5.fuel) +
+                         " fuel, not above 20, so a pour of 80 has no excess to clamp";
+            UE_LOGW("woodchipper: ARM g5 INVALID -- %s", j.invalid.c_str());
         }
+        PS::Mark("g5_done");
+    
+        // g6. A pour from a client with an empty hand.
+        if (!PS::Await("g6_hand_empty", kSignalSec)) return;
+        PS::WaitFor("the client's hand empty here", 30, [&] {
+            bool held = true;
+            OnGameThread([&] { held = coop::hand_item::HeldClassIs(1, kCanClass); });
+            return !held;
+        }, false);
+        const Reading f6 = Now(key);
+        const View w6 = ViewNow();
+        PS::Mark("g6_go");
+        PS::WaitFor("the empty-handed pour judged", kCopySec, [&] { return ViewNow().refusedCan > w6.refusedCan || Now(key).fuel > f6.fuel + 1.f; }, false);
+        const Reading h6 = Now(key);
+        const View v6 = ViewNow();
+        std::snprintf(what, sizeof(what), "the host's fuel %.2f -> %.2f after a pour of 5 with no can in the hand, refused for the can %llu times",
+                      static_cast<double>(f6.fuel), static_cast<double>(h6.fuel), v6.refusedCan - w6.refusedCan);
+        Arm(j, "g6", h6.fuel <= f6.fuel + 0.01f && v6.refusedCan > w6.refusedCan, what);
+        PS::Mark("g6_done");
+    }
+
+    if (feed) {
+        HostFeed(key);
+        UE_LOGI("woodchipper: FEED DONE on host");
+        return;
     }
     Finish(j);
     UE_LOGI("woodchipper: G1-G6 DONE fails='%s'", j.failed.c_str());
@@ -487,6 +618,7 @@ void ReportCopy(const std::wstring& key, int active, const char* signal) {
 }
 
 void RunClient() {
+    const bool feed = FeedArm();
     if (!HostPuppetUp()) return;
     PS::Mark("client_ready");
     if (!meet::WalkToHost(kTag)) return;
@@ -528,6 +660,12 @@ void RunClient() {
     OnGameThread([&] { gc = coop::woodchipper_gate::GetCounts(); });
     PS::Mark("g2_client", Text(Now(key)) + " tickRefused=" + std::to_string(gc.tickRefused));
 
+    if (feed) {
+        ClientFeed();
+        UE_LOGI("woodchipper: FEED DONE on client");
+        return;
+    }
+
     // g5.
     if (!PS::Await("g5_go", kSignalSec)) return;
     const bool sent5 = SendPour(key, 80.f);
@@ -542,28 +680,6 @@ void RunClient() {
     const bool sent6 = SendPour(key, 5.f);
     UE_LOGI("woodchipper: CLIENT sent a pour of 5 with an empty hand (sent=%d)", sent6 ? 1 : 0);
     if (!PS::Await("g6_done", kSignalSec)) return;
-
-    // g3.
-    if (!PS::Await("g3_base", kSignalSec)) return;
-    const long long clumpsBefore = static_cast<long long>(CountOf(L"prop_garbageClump_C"));
-    const long long papersBefore = static_cast<long long>(CountOf(L"prop_paper_C"));
-    PS::Mark("g3_base_ack");
-    std::string g3;
-    if (!PS::AwaitText("g3_go", g3, kSignalSec)) return;
-    if (g3 == "none") {
-        UE_LOGI("woodchipper: CLIENT no g3 (the host could not drop a prop)");
-    } else {
-        // The clump is here and the paper is gone: the host's change, reached. A copy that never gets there is reported as it is.
-        PS::WaitFor("a clump here and the paper gone", 2 * kEatSec, [&] {
-            return static_cast<long long>(CountOf(L"prop_garbageClump_C")) > clumpsBefore &&
-                   static_cast<long long>(CountOf(L"prop_paper_C")) <= papersBefore;
-        }, false);
-        char text[64];
-        std::snprintf(text, sizeof(text), "dClumps=%lld dProps=%lld", static_cast<long long>(CountOf(L"prop_garbageClump_C")) - clumpsBefore,
-                      static_cast<long long>(CountOf(L"prop_paper_C")) - papersBefore);
-        UE_LOGI("woodchipper: CLIENT %s", text);
-        PS::Mark("g3_client", text);
-    }
 
     // g4: this life's end, as the cremator drill's: the DONE line is the rig's cue to kill it.
     if (!PS::AwaitText("g4_on", go, kSignalSec)) return;
