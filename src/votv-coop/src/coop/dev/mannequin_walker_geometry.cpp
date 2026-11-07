@@ -12,6 +12,7 @@
 #include "ue_wrap/actors/ambient_creature.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/vitals.h"
+#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
@@ -123,6 +124,23 @@ bool HostPuppetUp() {
         coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(coop::players::kPeerIdHost);
         return p && p->valid() && p->HasPose();
     });
+}
+
+bool AngerWalker(void* walker) {
+    void* fn = walker ? R::FindDispatchFunctionCached(R::ClassOf(walker), L"fireDamage") : nullptr;
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    if (!f.valid()) return false;
+    f.Set<float>(L"damage", 1.f);
+    return ue_wrap::Call(walker, f);
+}
+
+bool ReadAngry(void* walker, bool& angry) {
+    int32_t off = -1;
+    uint8_t mask = 0;
+    if (!walker || !R::FindBoolProperty(R::ClassOf(walker), L"angry", off, mask) || off < 0) return false;
+    angry = (*(static_cast<const uint8_t*>(walker) + off) & mask) != 0;
+    return true;
 }
 
 float Dist3(const FVector& a, const FVector& b) {

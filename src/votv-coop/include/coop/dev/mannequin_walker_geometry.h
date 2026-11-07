@@ -93,6 +93,12 @@ std::wstring Widen(const std::string& key);
 // INVALID (peer_signal's); false then.
 bool HostPuppetUp();
 
+// The walker's own anger route, `fireDamage(1.0)`: it sets the walker's `angry` flag, and only an angry walker hits (its tick
+// reaches the overlap and the damage only when `angry` is set and `looking` is not). False when the call did not dispatch.
+// ReadAngry reads that flag; false when the walker or the field does not read. Game thread.
+bool AngerWalker(void* walker);
+bool ReadAngry(void* walker, bool& angry);
+
 float Dist3(const ue_wrap::FVector& a, const ue_wrap::FVector& b);
 
 // This player's view on `walker`: toward it, or turned the other way, so that it is not in this view (the camera behind it).

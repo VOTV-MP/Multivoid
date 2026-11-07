@@ -2,10 +2,11 @@
 //
 // The drill (coop/dev/mannequin_walker_drill) runs steps 1, 2 and 4 on walker A and walker B; these continue it, in the order they
 // run (the sheet has no step 3 here: see mannequin_walker_drill.h):
-//   6 HIT   (walker B, the client its target, after step 4's release) the client keeps its view away and stands; B reaches it and
-//           hits, and the client counts a walker hit delivered to it and a fall of its health. Red: no_delivery.
-//   5 LOSS  the client leaves the session (network first, as a player's quit does) and prints the rejoin marker; on the host B is
-//           told its target is lost within a bound (the notice, not a later re-pick). Red: no_loss.
+//   6 HIT   (walker B, the client its target, after step 4's release) the host angers B with its own fireDamage (only an angry walker
+//           hits); the client keeps its view away and stands, B reaches it and hits, and the client counts a walker hit delivered to
+//           it and a fall of its health, then leaves at once. Red: no_delivery.
+//   5 LOSS  (B alive and still hunting the client, or INVALID) the client leaves the session (network first, as a quit does) and prints
+//           the rejoin marker; on the host B is told its target is lost within a bound (the notice, not a later re-pick). Red: no_loss.
 //   7 JOIN  the client comes back as a new process (the rig's --rejoin; the second life carries VOTVCOOP_MANNEQUIN_DRILL_REJOIN=1
 //           and finds its place by its own start, peer_signal marks being those written since it began); the host reads B's target
 //           and `looking`, the client reads the state row it was sent for B's key within 5 s of its own world-ready, and the host compares

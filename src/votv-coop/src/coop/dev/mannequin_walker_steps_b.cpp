@@ -23,6 +23,7 @@
 #include "ue_wrap/actors/ambient_creature.h"
 #include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 
 #include <algorithm>
 #include <atomic>
@@ -37,6 +38,7 @@ namespace {
 
 namespace AC  = ue_wrap::ambient_creature;
 namespace PS  = harness::autotest::peer_signal;
+namespace R   = ue_wrap::reflection;
 namespace V   = ue_wrap::vitals;
 namespace WSC = coop::walker_state_client;
 namespace WT  = coop::walker_target;
@@ -45,6 +47,7 @@ namespace WT  = coop::walker_target;
 // is an overlap, so a walker farther than this after the bound never got there: that is no measurement).
 constexpr int   kHitBoundS = 90;
 constexpr float kHitReachCm = 500.f;
+constexpr int   kAngerBoundS = 5;   // from the fireDamage call to the walker's flag
 
 // Step 5: how long the host gets, after the client left, to hear the walker's target lost, and how long the client's leaving takes.
 constexpr int kLossBoundS = 3;
@@ -64,6 +67,19 @@ bool HostHit(void* b) {
     uint8_t target = WT::kNoTarget;
     OnGameThread([&] { target = WT::TargetOf(b); });
     if (target != kClientSlot) return Invalid("walker B does not hunt the client when its hit is awaited");
+    // A walker that is not angry never hits (its tick reaches the overlap only when `angry` is set), and its anger comes only from
+    // fireDamage: the game's own route is called on the host's walker. An angry walker's `looking` is false, so it does not freeze
+    // at the client's shoulder either.
+    bool angry = false, read = false, called = false;
+    OnGameThread([&] { called = AngerWalker(b); });
+    WaitGT("walker B is angry", kAngerBoundS, [&] { return (read = ReadAngry(b, angry)) && angry; }, false);
+    if (!called || !angry) {
+        char why[200];
+        std::snprintf(why, sizeof(why), "walker B did not become angry after fireDamage (call %s, angry flag %s)",
+                      called ? "dispatched" : "not dispatched", !read ? "unread" : angry ? "set" : "clear");
+        return Invalid(why);
+    }
+    UE_LOGI("mannequin-drill: step 6: walker B is angry (fireDamage), so its hit on the client can come");
     PS::Mark("hit_go");
     std::string word;
     if (!AwaitClient("hit_done", kHitBoundS + kSlackS, &word)) return false;
@@ -136,6 +152,17 @@ void OnTargetChanged(void* walker, uint8_t slot) {
 }
 
 bool HostLoss(void* b) {
+    // The loss is told only by the leave edge: a walker that ended sends the same notice, and a target already chosen again was
+    // not lost to the leaver, so either would let the step pass or fail for another reason. The client leaves on the first counted
+    // hit, so the walker's punches do not reach it for long.
+    bool alive = false;
+    uint8_t target = WT::kNoTarget;
+    OnGameThread([&] {
+        alive = R::IsLive(b);
+        target = alive ? WT::TargetOf(b) : WT::kNoTarget;
+    });
+    if (!alive) return Invalid("walker B ended before the client left: its end would send the target-lost notice");
+    if (target != kClientSlot) return Invalid("walker B no longer hunts the client when it leaves: the leave edge has nothing to end");
     bool subscribed = true;
     OnGameThread([&] {
         if (!g_lossSubscribed) g_lossSubscribed = subscribed = WT::SubscribeTargetChanged(&OnTargetChanged);
