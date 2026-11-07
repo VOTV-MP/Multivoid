@@ -18,6 +18,7 @@
 #include "coop/dev/prop_syncer_drill.h"    // the drill's filler receiver
 #include "coop/dev/pile_defer_report.h"    // the pile deferral drill's report receiver
 #include "coop/element/registry.h"
+#include "coop/interactables/desk_short_sync.h"
 #include "coop/world/plant_edit_gate.h"
 #include "coop/world/plant_sync.h"
 #include "coop/interactables/woodchipper_sync.h"
@@ -255,6 +256,22 @@ bool HandlePropDriveEvent(net::Session& session,
         }
         if (edit) ::coop::plant_edit_gate::OnEdit(static_cast<uint8_t>(msg.senderPeerSlot), p);
         else ::coop::plant_sync::OnState(p);
+        break;
+    }
+    case net::ReliableKind::DeskShortState:
+    case net::ReliableKind::DeskShortRequest: {
+        // DeskShortState HOST->ALL, DeskShortRequest CLIENT->HOST.
+        const bool request = msg.kind == net::ReliableKind::DeskShortRequest;
+        if (request != (session.role() == net::Role::Host)) {
+            UE_LOGW("event_feed: a desk short the wrong way from slot %d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::DeskShortPayload)) break;
+        net::DeskShortPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.on > 1) break;
+        if (request) ::coop::desk_short_sync::OnRequest(msg.senderPeerSlot, p);
+        else ::coop::desk_short_sync::OnState(p);
         break;
     }
     case net::ReliableKind::WoodchipperState:
