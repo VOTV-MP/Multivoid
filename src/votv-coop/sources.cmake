@@ -263,6 +263,8 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_destroy_seam.cpp
     src/coop/props/prop_lifecycle.cpp
     src/coop/props/prop_food_state.cpp
+    src/coop/interactables/garbage_bin_sync.cpp
+    src/coop/props/container_break.cpp
     src/coop/world/vent_crawler_sync.cpp
     src/coop/props/prop_food_sync.cpp
     src/coop/props/food_tick_gate.cpp
@@ -735,6 +737,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_orb.cpp
     src/harness/autotest/autotest_sky_tp.cpp
     src/harness/autotest/autotest_roomba.cpp
+    src/harness/autotest/autotest_container_gaps.cpp
     src/ui/input_focus.cpp
     src/harness/screenshot.cpp
     src/harness/mod_environment.cpp

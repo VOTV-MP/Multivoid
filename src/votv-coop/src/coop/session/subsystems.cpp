@@ -94,6 +94,8 @@
 #include "coop/props/food_tick_gate.h"  // the food ticks a client refuses: its counts end with the session
 #include "coop/world/world_sound_sync.h"
 #include "coop/interactables/atv_riders.h"
+#include "coop/interactables/garbage_bin_sync.h"
+#include "coop/props/container_break.h"
 #include "coop/props/prop_food_sync.h"
 #include "coop/world/plant_gate.h"  // the plant bodies a client refuses: its counts end with the session
 #include "coop/interactables/woodchipper_gate.h"  // the chipper bodies a client refuses: its counts end with the session
@@ -326,6 +328,8 @@ void Install(coop::net::Session& session) {
     coop::desk_short_sync::Install(&session);  // the base computer's short circuit is the host's
     coop::world_sound_sync::Install(&session);  // the sky's two sounds, a faucet's click
     coop::atv_riders::Install(&session);  // a remote driver's body in the seat, the kerfurs a client's seat calls
+    coop::garbage_bin_sync::Install(&session);  // what a garbage container holds, and its pickup, are the host's
+    coop::props::container_break::Install(&session);  // a container a client breaks breaks on the host
     coop::props::prop_food_sync::Install(&session);  // a world food's one author, the host
     coop::plant_sync::Install(&session);  // the host runs every plant
     coop::props::prop_food_state::Install();  // the food family claims its own live state off the record lane
@@ -521,6 +525,8 @@ DisconnectStats DisconnectAll() {
     coop::plant_sync::OnDisconnect();
     coop::world_sound_sync::OnDisconnect();
     coop::prop_tool_flags::OnDisconnect();  // drop the pending press and the counters
+    coop::garbage_bin_sync::OnDisconnect();
+    coop::props::container_break::OnDisconnect();
     coop::prop_stick_sync::OnDisconnect();  // drop commit-pending stick records
     coop::sleepingbag_sync::OnDisconnect();
     coop::item_activate::OnDisconnect();
@@ -688,6 +694,8 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::walker_lanes::Tick(session, isHost);  // the walkers: HOST claims the born ones into the drive stream (before the pump below); CLIENT hears its copies end and judges its gaze
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_drive_host"}; coop::prop_drive_host::Pump(session, isHost); }  // the driven props, both roles: HOST judges a syncing client's rows, publishes the props that moved, closes the streams that rested (after the hook poll that feeds it); then both park + drive what the host streams (an empty set costs one size check)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_short"}; coop::desk_short_sync::Tick(); }  // the desk short watch resolves its names, and the host serves the requests (an empty inbox costs one size check)
+    coop::garbage_bin_sync::Tick();  // the garbage containers' poll and apply
+    coop::props::container_break::Tick();  // a client's container breaks, and the host's
     coop::vent_crawler_sync::Tick();  // a client's crawl sounds as their times come
     coop::props::prop_can_state::Tick();  // the init watch's names resolve until it is live
     coop::props::prop_food_sync::Tick();  // the host's poll, the client's wait list

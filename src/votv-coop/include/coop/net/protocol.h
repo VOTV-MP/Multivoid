@@ -1455,6 +1455,15 @@ enum class ReliableKind : uint16_t {
     // The host judges the sender's reach and presses its own cleaner, whose RoombaState answers. Never relayed.
     // RoombaPayload.
     RoombaIntent = 246,
+    // HOST->ALL: a garbage container's contents (the keys of the props its itemsInside lists, the first
+    // kGarbageBinKeys of them) and whether it can be held and collected, when any changes, and every container again
+    // at the ready edge. A client's copy writes the flags and glues the props as the container's own glue does. Not
+    // relayed, not pre-world. GarbageBinPayload.
+    GarbageBinState = 262,
+    // CLIENT->HOST: a container this client authors (it holds it, threw it or syncs it) took a lethal impact or fire
+    // here, which the client cancelled. The host breaks its own copy by the same lethal call, so the spill is the
+    // host's. Never relayed. ContainerBreakPayload.
+    ContainerBreakRequest = 263,
 };
 
 #pragma pack(push, 1)
@@ -2331,6 +2340,27 @@ struct DeskShortPayload {
     uint8_t _pad[3];   // 3 -- zero
 };
 static_assert(sizeof(DeskShortPayload) == 4, "DeskShortPayload must be 4 bytes");
+
+// A garbage container's state (GarbageBinState).
+inline constexpr size_t kGarbageBinKeys = 5;
+inline constexpr uint8_t kGarbageBinCanHold = 0x01, kGarbageBinCanCollect = 0x02;
+struct GarbageBinPayload {
+    WireKey key;                     // 32 -- the container's Key
+    uint8_t flags;                   // 1 -- kGarbageBin*: propData's canHold and canCollect
+    uint8_t count;                   // 1 -- how many props its itemsInside lists (more than `keys` past the cap)
+    uint8_t keys;                    // 1 -- how many of `items` are filled
+    uint8_t _pad;                    // 1 -- zero
+    WireKey items[kGarbageBinKeys];  // 160 -- the listed props' Keys, in the list's order
+};
+static_assert(sizeof(GarbageBinPayload) == 196, "GarbageBinPayload must be 196 bytes");
+
+// A client's break of a container it authors (ContainerBreakRequest).
+struct ContainerBreakPayload {
+    WireKey key;       // 32 -- the container's Key
+    uint8_t fire;      // 1 -- a fireDamage (1) or an impactDamage (0)
+    uint8_t _pad[3];   // 3 -- zero
+};
+static_assert(sizeof(ContainerBreakPayload) == 36, "ContainerBreakPayload must be 36 bytes");
 
 // One message of the drill filler (DevLoadFiller): its place in the run and the run's length; the rest is fill.
 struct DevLoadFillerPayload {

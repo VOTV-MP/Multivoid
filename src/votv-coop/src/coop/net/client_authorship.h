@@ -42,6 +42,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::PlantEdit:
     case ReliableKind::RoombaIntent:
     case ReliableKind::DeskShortRequest:
+    case ReliableKind::ContainerBreakRequest:
     case ReliableKind::PropSpawn:
     case ReliableKind::PropDestroy:
     case ReliableKind::LightState:
@@ -256,6 +257,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::PlantState:
     case ReliableKind::RoombaState:
     case ReliableKind::DeskShortState:
+    case ReliableKind::GarbageBinState:
     case ReliableKind::SwingerRestPose:
     case ReliableKind::GeomOctaEvent:
     case ReliableKind::DevLoadFiller:

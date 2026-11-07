@@ -57,4 +57,11 @@ bool RdWStr(const std::vector<uint8_t>& b, size_t& o, std::wstring& s);
 void SerSave(std::vector<uint8_t>& b, const ue_wrap::save_record::SaveRecord& r);
 bool DeSave(const std::vector<uint8_t>& b, size_t& o, ue_wrap::save_record::SaveRecord& r);
 
+// A record's carried container contents (SaveRecord::nested), apart from the record grammar above, which stored player
+// profiles are written in: u8 carried, then u32 count and that many records, each followed by its own carried tail,
+// kMaxNestDepth deep at most (a deeper one is refused on read). Only a container slice writes it.
+inline constexpr int kMaxNestDepth = 3;
+void SerNested(std::vector<uint8_t>& b, const ue_wrap::save_record::SaveRecord& r);
+bool DeNested(const std::vector<uint8_t>& b, size_t& o, ue_wrap::save_record::SaveRecord& r);
+
 }  // namespace coop::save_record_wire

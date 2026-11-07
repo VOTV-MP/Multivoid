@@ -50,6 +50,11 @@ struct SaveRecord {
     std::vector<std::vector<std::array<float, 10>>> transforms; // FTransform packed
     std::vector<std::vector<uint8_t>>               bytes;
     std::vector<std::vector<std::wstring>>          names;    // FName
+    // A container record's contents, carried with it where its GObjStack index cannot travel (the index names a slot of
+    // the sender's array): container_inventory::AttachNested fills them at a send site and clears the index, and
+    // WriteSaveRecord gives them a slot of this machine's array (container_inventory::PlaceNested). Unset elsewhere.
+    std::vector<SaveRecord>                         nested;
+    bool                                            nestedCarried = false;
 };
 
 // ARRAY ELEMENT STRIDE is the 16-ALIGNED struct size, not the dump's raw `Size:` line.
@@ -121,13 +126,22 @@ void ReadSaveRecord(const void* base, SaveRecord& rec);
 // a buffer it has lost the pointer to. Buffers WE allocate are GMalloc-owned (EngineAlloc), so
 // the engine's later Array realloc / GC free of them is allocator-matched.
 // `load` governs how every class leaf (the record's own class and its `classes` group) resolves
-// (see ClassLoad).
+// (see ClassLoad). A record that carries its container's contents (SaveRecord::nestedCarried) has them written into a
+// slot of this machine's GObjStack first, under the same `load`, and its index set to it.
 void WriteSaveRecord(uint8_t* base, const SaveRecord& r, ClassLoad load);
 
-// Resolves every class the record names (its own class and its `classes` leaves) under `load`, the loads a write would
-// make. False when one answered Pending (the load budget of this tick is spent): a caller that can wait does so and
-// writes once this answers true, when the write finds every class loaded. Game thread.
+// Resolves every class the record names (its own class, its `classes` leaves and its carried contents') under `load`,
+// the loads a write would make. False when one answered Pending (the load budget of this tick is spent): a caller that
+// can wait does so and writes once this answers true, when the write finds every class loaded. Game thread.
 bool ClassesReady(const SaveRecord& r, ClassLoad load);
+
+// A signal's photo (its `image`, the PNG the laptop shows) rides its record both ways: ReadSaveRecord reads it and
+// WriteSaveRecord writes it into engine memory. A record past a transport's ceiling travels with fewer photos rather
+// than not at all: LargestPhoto names the biggest one `r` carries (its bytes, 0 for none, and its row), and
+// DropLargestPhoto clears it, so a sender that repeats it until the record fits drops the fewest, the biggest first.
+// ApplyRecord keeps a photo the receiver's copy holds for a row that arrives without one.
+size_t LargestPhoto(const SaveRecord& r, size_t* row = nullptr);
+bool DropLargestPhoto(SaveRecord& r);
 
 // ---- The GAME's own codec, on a LIVE actor --------------------------------------------------
 //

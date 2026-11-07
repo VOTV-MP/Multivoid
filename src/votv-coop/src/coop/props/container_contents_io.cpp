@@ -17,8 +17,9 @@ namespace ci = ue_wrap::container_inventory;
 // BOUNDARY 1, fail closed: only a world container's own inventory is this lane's to author
 // (ci::IsWorldInventory); authoring a personal inventory from the host would wipe that peer's own.
 // BOUNDARY 2: a nested container's ints[0][0] is its own GObjStack index, a slot number in the
-// sender's array that must not survive the wire, so it is shipped and written as -1
-// (ci::ClearInventoryIndex says why never by clearing ints).
+// sender's array that must not survive the wire, so it is shipped as -1 (ci::ClearInventoryIndex says
+// why never by clearing ints), with the contents of that slot carried beside it (ci::AttachNested); the
+// receiver's writer gives them a slot of its own array.
 bool ReadRecords(void* inv, std::vector<SR::SaveRecord>& out, bool neuterNested) {
     int32_t count = -1;
     if (!ci::ReadContents(inv, out, cw::kMaxRecords, &count)) {
@@ -29,7 +30,7 @@ bool ReadRecords(void* inv, std::vector<SR::SaveRecord>& out, bool neuterNested)
     }
     if (neuterNested)
         for (auto& r : out)
-            if (ci::IsContainerRecord(r)) ci::ClearInventoryIndex(r);
+            if (ci::IsContainerRecord(r)) ci::AttachNested(r);
     return true;
 }
 
@@ -66,6 +67,10 @@ WriteResult WriteRecords(uint32_t eid, void* inv, const std::vector<SR::SaveReco
     // lane is steady-state, and the caller's content-hash gate bounds its own apply, since an apply
     // happens only when the contents changed. The record editor's callers orphan one array per grant
     // and per restore, bounded by the act's queue budget at 4 writes a second per client at most.
+    // Read again: a nested container's carried contents placed above may have grown GObjStack, which moves every
+    // slot (container_inventory::PlaceNested), so the pointer taken before the writes may name the old array.
+    slot = ci::ContentsSlot(inv);
+    if (!slot) return WriteResult::NotReady;
     SR::WriteArrHeader(slot, 0, buf, n);
 
     ci::RederiveShownState(ci::OwnerOf(inv), inv);

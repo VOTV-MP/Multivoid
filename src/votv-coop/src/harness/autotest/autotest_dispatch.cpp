@@ -211,6 +211,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIf("VOTVCOOP_RUN_CAN_STATE", "canned food state drill", &CanStateThread, role);
     SpawnIf("VOTVCOOP_RUN_FOOD_STATE", "world food state drill", &FoodStateThread, role);
     SpawnIfEnum(coop::config_registry::rows::world_sound_drill, "world sound drill", &WorldSoundThread, role);
+    // Containers: photos in a record, a nested container, a garbage container, a container that breaks.
+    SpawnIf("VOTVCOOP_RUN_CONTAINER_GAPS", "container gaps drill", &ContainerGapsThread, role);
 
     SpawnIf("VOTVCOOP_RUN_PLANT_STATE", "plant drill", &PlantStateThread, role);
     // The cargo lift, the base's elevator, as each peer sees it.
