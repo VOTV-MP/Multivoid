@@ -214,6 +214,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIf("VOTVCOOP_RUN_MODULE_BUY", "module row drill", &ModuleBuyThread, role);
     // A device's claim when its user ragdolls.
     SpawnIf("VOTVCOOP_RUN_SEAT_RAGDOLL", "seat ragdoll drill", &SeatRagdollThread, role);
+    // How steadily the delivery drone flies and hovers on each peer.
+    SpawnIf("VOTVCOOP_RUN_DRONE_HOVER", "drone hover drill", &DroneHoverThread, role);
     // The bot-director halt probe, solo: measures the path query over the baked NavMesh and a
     // reflected AddMovementInput moving the possessed body.
     SpawnIf("VOTVCOOP_RUN_NAV_PROBE", "nav HALT probe (director Phase-0)", &NavHaltProbeThread, role);
