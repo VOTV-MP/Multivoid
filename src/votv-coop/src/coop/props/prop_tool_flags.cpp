@@ -22,6 +22,7 @@
 #include "coop/player/roster_ledger.h"
 #include "coop/props/prop_drive_stream.h"   // IsParked
 #include "coop/props/prop_hold.h"
+#include "coop/props/prop_tool_park.h"
 #include "coop/props/remote_prop.h"          // IsActorUnderAnyDrive
 #include "coop/props/toolgun_limits.h"
 #include "coop/props/toolgun_sight.h"
@@ -48,7 +49,6 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
-#include <unordered_map>
 
 namespace coop::prop_tool_flags {
 namespace {
@@ -69,6 +69,12 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 coop::net::Session* LoadSession() { return g_session.load(std::memory_order_acquire); }
 
 constexpr size_t kReasons = static_cast<size_t>(PropPropsReason::Count);
+
+// Each line below is said once per session: OnDisconnect re-arms it.
+bool g_publishSendFailSaid = false;
+bool g_unboundSaid = false;
+bool g_unreadSaid = false;
+bool g_refusalSendFailSaid = false;
 
 // The drill's red arms: the client's press runs locally (gate off), and the host's judge skips the player's right
 // (judge off).
@@ -110,10 +116,15 @@ bool ReadToolValues(void* tool, coop::net::PropPropsIntentPayload* p) {
 
 // ---- the publish point ----------------------------------------------------------------------------------------
 
-// Why `actor`, the live copy of element `el`, is no prop the tool changes in multiplayer, or null when it is one: the
-// judge's Unsupported branches, asked also before the host publishes its own press.
-const char* UnsupportedWhy(const EL::Element* el, void* actor) {
-    if (el->GetType() != EL::ElementType::Prop || !ue_wrap::prop::IsDescendantOfProp(actor)) return "the element is not a prop";
+// Is `actor`, the live copy of element `el`, an Aprop_C of a prop element? Nothing of the prop's layout is read from an
+// actor for which this is false.
+bool IsPropElement(const EL::Element* el, void* actor) {
+    return el->GetType() == EL::ElementType::Prop && ue_wrap::prop::IsDescendantOfProp(actor);
+}
+
+// Why the prop `actor` is none the tool changes in multiplayer, or null when it is one: the judge's Unsupported
+// branches for a prop element, asked also before the host publishes its own press.
+const char* UnsupportedWhy(void* actor) {
     if (ue_wrap::prop::IsTrashActor(actor)) return "a trash pile or clump";
     if (ue_wrap::prop::IsTrashBitsPile(actor)) return "a trash bits pile";
     if (coop::kerfur_entity::IsKerfurPropClass(R::ClassOf(actor))) return "a kerfur prop";
@@ -121,7 +132,8 @@ const char* UnsupportedWhy(const EL::Element* el, void* actor) {
 }
 
 // The state message for `actor`: its static, frozen and sleep read back from the actor, never from what the press asked.
-// A prop keeps no active field to read back, so `active` is the value the setter ran with.
+// A prop keeps no active field to read back, so `active` is the value the setter ran with. `actor` is null, and the
+// flags zero, when the host resolved no prop to read.
 coop::net::PropPropsStatePayload StateOf(uint32_t eid, void* actor, PropPropsReason reason, bool active) {
     coop::net::PropPropsStatePayload st{};
     st.eid = eid;
@@ -139,15 +151,22 @@ coop::net::PropPropsStatePayload StateOf(uint32_t eid, void* actor, PropPropsRea
 // target that is no live prop element the judge would accept publishes nothing. The sender is included, unlike MTA's
 // relay, which skips the source (CGame.cpp:2768): its press was cancelled, so this message alone changes its copy.
 void Publish(coop::net::Session& s, void* actor, bool active) {
-    if (!actor || !coop::kerfur_entity::KerfurPropBound()) return;
+    if (!actor) return;
+    if (!coop::kerfur_entity::KerfurPropBound()) {
+        if (!g_unboundSaid) {
+            g_unboundSaid = true;
+            UE_LOGW("prop_tool_flags: the host's press: the kerfur prop class is not bound yet; its change reaches no peer "
+                    "until the join-window correction or the next press");
+        }
+        return;
+    }
     const EL::ElementId eid = EL::Registry::Get().EidForActor(actor);
     if (eid == EL::kInvalidId) return;
     const EL::Element* el = EL::Registry::Get().Get(eid);
-    if (!el || el->LiveActor() != actor || UnsupportedWhy(el, actor)) return;
+    if (!el || el->LiveActor() != actor || !IsPropElement(el, actor) || UnsupportedWhy(actor)) return;
     const coop::net::PropPropsStatePayload st = StateOf(static_cast<uint32_t>(eid), actor, PropPropsReason::Applied, active);
-    static bool sSendFailSaid = false;
-    if (!s.SendReliable(coop::net::ReliableKind::PropPropsState, &st, sizeof(st)) && !sSendFailSaid) {
-        sSendFailSaid = true;
+    if (!s.SendReliable(coop::net::ReliableKind::PropPropsState, &st, sizeof(st)) && !g_publishSendFailSaid) {
+        g_publishSendFailSaid = true;
         UE_LOGW("prop_tool_flags: the flags of element %u were not sent; a peer keeps its old ones until the join-window "
                 "correction or the next press", st.eid);
     }
@@ -261,9 +280,8 @@ sg::Verdict OnHostPress(const sg::Call& c) {
     g_pressTarget.Reset();
     ue_wrap::hit_result::Hit hit;
     if (!ReadPress(c, &hit)) {
-        static bool sUnreadSaid = false;
-        if (!sUnreadSaid) {
-            sUnreadSaid = true;
+        if (!g_unreadSaid) {
+            g_unreadSaid = true;
             UE_LOGW("prop_tool_flags: the host's press: the toolgun's outHit did not read; its change reaches no peer");
         }
         return sg::Verdict::Run;
@@ -338,8 +356,8 @@ Verdict JudgeSight(void* puppet, void* actor, const Queued& q) {
     return Decided(s.judged ? PropPropsReason::OutOfSight : PropPropsReason::Busy, s.why);
 }
 
-// Judges one press in the remover's order; `*out` is the live prop once the element resolves, to set on Applied and to
-// read the flags a refusal carries.
+// Judges one press in the remover's order; `*out` is the live prop once the element is known to be a prop element, to
+// set on Applied and to read the flags a refusal carries. A refusal before that carries zero flags.
 Verdict Judge(coop::net::Session& s, uint8_t slot, const Queued& q, void** out) {
     const coop::net::PropPropsIntentPayload& p = q.req;
     if (slot < 1 || slot >= coop::players::kMaxPeers) return Decided(PropPropsReason::NotReady, "slot out of range");
@@ -356,10 +374,11 @@ Verdict Judge(coop::net::Session& s, uint8_t slot, const Queued& q, void** out) 
     const EL::Element* el = p.eid < EL::kMaxElements ? EL::Registry::Get().Get(p.eid) : nullptr;
     void* actor = el ? el->LiveActor() : nullptr;
     if (!actor) return Decided(PropPropsReason::Gone, "no live element");
+    if (!IsPropElement(el, actor)) return Decided(PropPropsReason::Unsupported, "the element is not a prop");
     *out = actor;
     if (!coop::kerfur_entity::KerfurPropBound())
         return Decided(PropPropsReason::NotReady, "the kerfur prop class is not bound yet");
-    if (const char* why = UnsupportedWhy(el, actor)) return Decided(PropPropsReason::Unsupported, why);
+    if (const char* why = UnsupportedWhy(actor)) return Decided(PropPropsReason::Unsupported, why);
 
     namespace GN = coop::permissions::gameplay_nodes;
     if (!JudgeOff() &&
@@ -375,16 +394,16 @@ Verdict Judge(coop::net::Session& s, uint8_t slot, const Queued& q, void** out) 
     return JudgeSight(puppet, actor, q);
 }
 
-// A refusal goes to the sender alone with the host's current flags; Applied is published to everyone by the publish
+// A refusal goes to the sender alone with the host's flags when the prop resolved, else with none; Applied is published to everyone by the publish
 // point. A reason that could not be judged is said at once with its cause.
 void Refusal(coop::net::Session& s, uint8_t slot, uint32_t eid, void* actor, const Verdict& v) {
     if (v.reason != PropPropsReason::Gone) g_tally.Note(slot, v.why, coop::net::RefusalTally::Clock::now());
     if (v.reason == PropPropsReason::Busy)
         UE_LOGW("prop_tool_flags: slot %u's element %u not changed: %s", slot, eid, v.why);
     const coop::net::PropPropsStatePayload st = StateOf(eid, actor, v.reason, false);
-    static bool sSendFailSaid = false;
-    if (!s.SendReliableToSlot(slot, coop::net::ReliableKind::PropPropsState, &st, sizeof(st)) && !sSendFailSaid) {
-        sSendFailSaid = true;
+    if (!s.SendReliableToSlot(slot, coop::net::ReliableKind::PropPropsState, &st, sizeof(st)) &&
+        !g_refusalSendFailSaid) {
+        g_refusalSendFailSaid = true;
         UE_LOGW("prop_tool_flags: the answer to slot %u was not sent; its press ends without a notice", slot);
     }
 }
@@ -423,13 +442,10 @@ void ServeQueues(coop::net::Session& s) {
 // A state for a prop this player holds, or a drive moves, waits for its release: the setter's init() switches physics
 // and collision, which breaks the physics-handle grab (ue_wrap/engine/engine_mainplayer.cpp, the hold's mirror), so it
 // is deferred as the join-window drain defers a correction on a held or driven prop
-// (coop/element/quiescence_drain.cpp, the held/driven deferral) and dropped under the same ten-second bound.
-struct Parked {
-    coop::net::PropPropsStatePayload state;
-    uint64_t since;
-};
-std::unordered_map<uint32_t, Parked> g_parked;
-constexpr uint64_t kParkMs = 10000;
+// (coop/element/quiescence_drain.cpp, the held/driven deferral). The drain drops its correction after a bound because
+// the hold's release re-states a pose; nothing re-states a tool press, so the parked state stays until the hold ends and
+// is applied there, and the drive's end edge converges static too (prop_drive_stream.cpp, ApplyEnd).
+coop::prop_tool_park::Ledger g_parked;
 
 bool HeldHere(void* actor) {
     void* const local = coop::players::Registry::Get().Local();
@@ -460,23 +476,9 @@ void ApplyState(const coop::net::PropPropsStatePayload& st, void* actor) {
 }
 
 void RetryParked() {
-    if (g_parked.empty()) return;
-    const uint64_t now = ::GetTickCount64();
-    for (auto it = g_parked.begin(); it != g_parked.end();) {
-        void* const actor = PropCopy(it->first);
-        if (!actor) {
-            it = g_parked.erase(it);
-        } else if (!HeldHere(actor)) {
-            ApplyState(it->second.state, actor);
-            it = g_parked.erase(it);
-        } else if (now - it->second.since > kParkMs) {
-            UE_LOGW("prop_tool_flags: element %u stayed held or driven for %llu ms -- its flags are not applied; the "
-                    "hold's release states its own", it->first, static_cast<unsigned long long>(kParkMs));
-            it = g_parked.erase(it);
-        } else {
-            ++it;
-        }
-    }
+    if (g_parked.Empty()) return;
+    static const coop::prop_tool_park::Env env{&PropCopy, &HeldHere, &ApplyState};
+    g_parked.Retry(::GetTickCount64(), env);
 }
 
 // A refusal after the host resolved the prop carries the host's current flags: if this copy differs (a state it missed,
@@ -489,12 +491,16 @@ void ResyncToHost(const coop::net::PropPropsStatePayload& st) {
     case PropPropsReason::NoToolgun:
     case PropPropsReason::Held:
     case PropPropsReason::OutOfSight:
+    case PropPropsReason::Busy:       // resolved, then the sight or the setter failed: the flags are the host's
         break;
     default:
         return;   // the host had no prop to read: the flags are not its own
     }
+    // An Unsupported answer for an element that is no prop carries zero flags; this peer has no prop copy of it, so
+    // PropCopy is null and nothing is put back.
     void* const actor = PropCopy(st.eid);
     if (!actor || HeldHere(actor)) return;
+    g_parked.Supersede(st.eid);   // the host's current flags are newer than any state parked for this copy
     const bool wantStatic = st.isStatic != 0, wantFrozen = st.isFrozen != 0, wantSleep = st.isSleeping != 0;
     if (ue_wrap::prop::IsStatic(actor) == wantStatic && ue_wrap::prop::IsFrozen(actor) == wantFrozen &&
         ue_wrap::prop::IsSleeping(actor) == wantSleep)
@@ -606,10 +612,11 @@ void OnStateReceived(int senderSlot, const uint8_t* bytes, uint16_t len) {
         return;
     }
     if (HeldHere(actor)) {
-        g_parked[payload.eid] = Parked{payload, ::GetTickCount64()};
+        g_parked.Park(payload, ::GetTickCount64());
         UE_LOGI("prop_tool_flags: element %u is held or driven here -- its flags wait for the release", payload.eid);
         return;
     }
+    g_parked.Supersede(payload.eid);   // an older state parked for this copy is not replayed over this one
     ApplyState(payload, actor);
 }
 
@@ -621,7 +628,8 @@ void OnDisconnect() {
     }
     g_pressTool = nullptr;
     g_pressTarget.Reset();
-    g_parked.clear();
+    g_parked.Clear();
+    g_publishSendFailSaid = g_unboundSaid = g_unreadSaid = g_refusalSendFailSaid = false;
 }
 
 }  // namespace coop::prop_tool_flags

@@ -153,9 +153,11 @@ void ApplyEnd(void* actor, const coop::net::PropDriveEndPayload& p, bool parkedH
     on.actor.Set(actor);
     g_ends[g_endCount++ % kRecentEnds] = AppliedEnd{p.eid, ue_wrap::FVector{p.x, p.y, p.z}, ::GetTickCount64()};
     E::SetActorRotation(actor, ue_wrap::FRotator{p.pitch, p.yaw, p.roll});
-    // The host's frozen and sleep at the end first: a hook that bites a frozen prop unfreezes it on
+    // The host's static, frozen and sleep at the end first: a hook that bites a frozen prop unfreezes it on
     // the host only (hook_C's attach_a runs setPropProps), so a copy still frozen here takes the
-    // host's flags before the physics decision reads them.
+    // host's flags before the physics decision reads them. Static is learned too: a tool press on a prop
+    // this copy was held for waits for the hold's end (prop_tool_flags), and this edge carries the host's.
+    coop::prop_wire_parity::ConvergeStatic(actor, p.physFlags);
     coop::prop_wire_parity::ConvergeFrozenSleep(actor, p.physFlags);
     if (!PhysicsStaysOff(actor)) {
         coop::prop_wire_parity::RestoreSpParityPhysicsAfterConverge(actor, p.physFlags);

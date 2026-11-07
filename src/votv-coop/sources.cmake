@@ -41,6 +41,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_hold.cpp
     src/coop/props/prop_hold_claim.cpp
     src/coop/props/prop_tool_flags.cpp
+    src/coop/props/prop_tool_park.cpp
     src/coop/props/remover_request.cpp
     src/coop/props/toolgun_sight.cpp
     src/coop/props/remote_prop.cpp

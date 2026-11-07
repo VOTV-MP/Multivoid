@@ -262,7 +262,8 @@ toolgun in the sender's hand, no other peer holding the prop, and a shot the hos
 a class that overrides it (a landmine, a TV) takes its own path as in single player, and publishes the static, frozen and
 sleep it reads back from the actor, with the active value it ran the setter with, as `PropPropsState` to every peer.
 The host's own press is published from the tool's
-post row. A refused press returns the reason and the host's current flags to its sender alone: the client shows the
+post row. A refused press returns the reason to its sender alone, with the host's current flags when the host had resolved
+the prop (a press on an element that is no prop, or before the host is ready, carries none): the client shows the
 reason and puts its copy back through `prop_C`'s own setter if it differs.
 
 Every peer that receives `PropPropsState`, the sender included, replays the press on its copy through the same setter
@@ -270,7 +271,8 @@ with the host's four values, each state a press, so the collision follows a stat
 path; an element it does not know is dropped. A joiner's save-loaded copy gets a prop's static from the save and from
 the join-window correction (`coop/save/join_window_baseline`), which now compares static as well as frozen and sleep
 and sets it through `prop_C`'s own setter, and frozen and sleep also from its snapshot row. A copy this player holds,
-or a drive moves, waits for its release (ten seconds at most) before the press is replayed on it.
+or a drive moves, waits for its release before the newest press is replayed on it (an older state parked for the copy is
+dropped when a newer one reaches it); the drive's end edge converges static as well as frozen and sleep.
 
 ### Sticking to a wall
 

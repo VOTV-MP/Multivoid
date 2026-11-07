@@ -1236,8 +1236,8 @@ enum class ReliableKind : uint8_t {
     PropPropsIntent = 235,
     // HOST->CLIENT: a keyed prop's static, frozen and sleep as the host's copy holds them, read back after the tool
     // set them and the active value it applied (reason Applied, to every peer, the sender included), or the host's
-    // current flags with the reason it refused a press (to the sender alone). Host-authored: refused at the host's
-    // receive edge; never relayed; not pre-world. Late join: none, the save and the join-window correction carry the
+    // current flags with the reason it refused a press (to the sender alone; the flags are the host's when it
+    // resolved the prop, else zero). Host-authored: refused at the host's receive edge; never relayed; not pre-world. Late join: none, the save and the join-window correction carry the
     // flags (static included), the snapshot rows frozen and sleep. PropPropsStatePayload.
     PropPropsState = 236,
     // HOST->CLIENT: one decision of a Geom Octa, to be replayed into the client's own Blueprint (coop/creatures/
