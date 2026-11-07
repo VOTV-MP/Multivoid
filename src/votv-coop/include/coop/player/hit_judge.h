@@ -32,7 +32,7 @@ namespace coop::hit_judge {
 // How far past the held item's reach a struck point may lie from the eye, for the pose the host holds trailing the
 // player's own, how far a struck point may lie from the target's location (a creature's body is wider than its
 // origin), and how far short of the struck point a blocker may stand before the line counts as blocked (the remover's
-// own slack, kBlockedSlackCm in coop/props/remover_request.cpp: a point on a surface sits in that surface's own trace).
+// own slack, kBlockedSlackCm in coop/props/toolgun_limits.h: a point on a surface sits in that surface's own trace).
 inline constexpr float kReachSlackCm   = 100.f;
 inline constexpr float kTargetRadiusCm = 300.f;
 inline constexpr float kBlockedSlackCm = 25.f;

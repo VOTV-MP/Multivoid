@@ -1230,14 +1230,15 @@ enum class ReliableKind : uint8_t {
     // own static, frozen, active and sleep, seen from this camera point at this hit point. The host judges the sender's
     // right, a toolgun in its hand, who holds the prop and the sight, applies the tool's values through the game's
     // setter and publishes the prop's flags (PropPropsState); the client's own press is cancelled. Never relayed.
-    // Late join: none -- an act; a joiner's snapshot rows carry the flags. Trust: the eid is re-resolved by the host
+    // Late join: none -- an act; a joiner's flags come from the save and the join-window correction. Trust: the eid
+    // is re-resolved by the host
     // and the origin and hit are a claim it re-traces. PropPropsIntentPayload.
     PropPropsIntent = 235,
     // HOST->CLIENT: a keyed prop's static, frozen and sleep as the host's copy holds them, read back after the tool
     // set them and the active value it applied (reason Applied, to every peer, the sender included), or the host's
     // current flags with the reason it refused a press (to the sender alone). Host-authored: refused at the host's
-    // receive edge; never relayed; not pre-world. Late join: none, the snapshot rows and the join-window correction
-    // carry the flags. PropPropsStatePayload.
+    // receive edge; never relayed; not pre-world. Late join: none, the save and the join-window correction carry the
+    // flags (static included), the snapshot rows frozen and sleep. PropPropsStatePayload.
     PropPropsState = 236,
     // HOST->CLIENT: one decision of a Geom Octa, to be replayed into the client's own Blueprint (coop/creatures/
     // geom_octa_relay): op 0, an Aggro, the Octa took a target (the replay runs minSphere's begin-overlap handler with
@@ -2282,7 +2283,7 @@ inline constexpr uint8_t kRemoveWOrespawn = 0x20;  // Aprop_C.removeWOrespawn
 // own init() derives physics and collision from them, a moment no later message can reach. A
 // sender that spawns something new may state them as a default. kLiveState says they were read off
 // the sender's live Aprop_C instead (PhysFlagsOf), and only then does a receiver make an existing
-// copy's frozen and sleep match them.
+// copy's frozen and sleep match them (the join-window correction also makes static match).
 inline constexpr uint8_t kLiveState       = 0x40;
 }  // namespace propspawn_flags
 

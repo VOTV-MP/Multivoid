@@ -136,7 +136,8 @@ coop::net::PropPropsStatePayload StateOf(uint32_t eid, void* actor, PropPropsRea
 }
 
 // The one publish point: after the host's judged apply and after its own press, the prop's flags go to every peer. A
-// target that is no live prop element the judge would accept publishes nothing.
+// target that is no live prop element the judge would accept publishes nothing. The sender is included, unlike MTA's
+// relay, which skips the source (CGame.cpp:2768): its press was cancelled, so this message alone changes its copy.
 void Publish(coop::net::Session& s, void* actor, bool active) {
     if (!actor || !coop::kerfur_entity::KerfurPropBound()) return;
     const EL::ElementId eid = EL::Registry::Get().EidForActor(actor);
@@ -211,6 +212,9 @@ sg::Verdict Unplaceable(const sg::Call& c, const char* why) {
     return CancelPress(c);
 }
 
+// MTA applies a client's change first and lets a refusal diverge, then resyncs it (Client CStaticFunctionDefinitions.cpp:1050,
+// Server CGame.cpp:2743-2766); a press cancels first, as the remover does, since a setter override (arming a landmine, a
+// TV's state) cannot be undone on a refusal.
 sg::Verdict OnClientPress(coop::net::Session& s, const sg::Call& c) {
     if (!coop::net_pump::IsInAnnouncedWorld(c.object) || GateOff()) return sg::Verdict::Run;
     ue_wrap::hit_result::Hit hit;

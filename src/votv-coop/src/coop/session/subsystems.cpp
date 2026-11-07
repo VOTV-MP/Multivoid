@@ -363,7 +363,7 @@ void Install(coop::net::Session& session) {
     coop::prop_act_request::Install(&session);  // the six take-or-use watches (CLIENT asks the host, HOST honours a reservation); CLIENT: the host's answer, and the replay of a grant
     coop::kerfur_form_assembler::Install(&session);  // script-body gate consumer: watch the two conversion verbs
     coop::prop_hold_claim::Install(&session);  // one hold per keyed prop: the host keeps the first and refuses a second
-    coop::prop_tool_flags::Install(&session);  // a toolgun's freeze, unfreeze or make-static: every tool_*_C's init watched
+    coop::prop_tool_flags::Install(&session);  // the toolgun's prop-properties tool: tool_propProps_C's init watched
     coop::prop_stick_sync::Install(&session);  // wall-attachable stick mirror (camera-on-wall -- commit observer -> PropStickState; receiver replays forceStick)
     coop::sleep_sync::Install(&session);  // who rests: each peer's rest state (client -> host -> clients) and the host's sleeping flag
     coop::sleep_rest::Install(&session);  // a client's rest at the native rate: its own sleep watch and the factor on its body and effects

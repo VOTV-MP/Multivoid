@@ -59,7 +59,7 @@ std::unordered_map<coop::element::ElementId, ue_wrap::FVector>
 // a settle phase (<= 30 s) after the window closes, and clears when the settle ends.
 std::unordered_map<coop::element::ElementId, ue_wrap::FVector>
     g_blobKeyedXforms[coop::net::kMaxPeers];
-// Each of those keyed props' frozen and sleep bits at the same instant: the state the joiner's blob
+// Each of those keyed props' static, frozen and sleep bits at the same instant: the state the joiner's blob
 // holds, so a flag change the host makes in the window without moving the prop is still a change.
 std::unordered_map<coop::element::ElementId, uint8_t> g_blobKeyedState[coop::net::kMaxPeers];
 

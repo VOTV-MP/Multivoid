@@ -253,7 +253,8 @@ does not broadcast it back (`coop/props/prop_echo_suppress`).
 The toolgun's prop-properties tool (`tool_propProps_C`) sets a prop's static, frozen and sleep: its `init` is the whole
 press, calling the prop's own `setPropProps` with the four values the spawn menu gave the tool, and it then destroys
 itself. A client's press is cancelled at the script gate and goes to the host as `PropPropsIntent`: the element it hit,
-its camera point, the shot's hit point and the tool's four values. A hit that names no published actor runs natively. The
+its camera point, the shot's hit point and the tool's four values. A hit on a keyed prop with no element id is refused
+with a notice, as the remover refuses it; an actor the session does not share runs natively. The
 host judges the press in the remover's order (`coop/props/prop_tool_flags`): the sender's world and posed body, a live
 prop element that is not trash or a kerfur, the right `multivoid.gameplay.toolgun.propprops` (granted by default), a
 toolgun in the sender's hand, no other peer holding the prop, and a shot the host's eye could have made
@@ -261,13 +262,15 @@ toolgun in the sender's hand, no other peer holding the prop, and a shot the hos
 a class that overrides it (a landmine, a TV) takes its own path as in single player, and publishes the static, frozen and
 sleep it reads back from the actor, with the active value it ran the setter with, as `PropPropsState` to every peer.
 The host's own press is published from the tool's
-post row. A refused press returns the reason to its sender alone, and the client shows it.
+post row. A refused press returns the reason and the host's current flags to its sender alone: the client shows the
+reason and puts its copy back through `prop_C`'s own setter if it differs.
 
-Every peer that receives `PropPropsState`, the sender included, sets its copy through the same setter, so the
-collision follows a static flag and an override runs its own path; an element it does not know is dropped. A joiner
-gets a prop's flags from the snapshot row, and the join-window correction (`coop/save/join_window_baseline`) now
-compares static as well as frozen and sleep, so a prop made static during the join reaches the joiner through the
-same setter. A copy this player holds when the flags arrive takes them at once; its release states its own.
+Every peer that receives `PropPropsState`, the sender included, replays the press on its copy through the same setter
+with the host's four values, each state a press, so the collision follows a static flag and an override runs its own
+path; an element it does not know is dropped. A joiner's save-loaded copy gets a prop's static from the save and from
+the join-window correction (`coop/save/join_window_baseline`), which now compares static as well as frozen and sleep
+and sets it through `prop_C`'s own setter, and frozen and sleep also from its snapshot row. A copy this player holds,
+or a drive moves, waits for its release (ten seconds at most) before the press is replayed on it.
 
 ### Sticking to a wall
 
@@ -504,7 +507,7 @@ The join page owns the mechanism: explicit deletes for the props the joiner's sa
 gone from the host's world, then the snapshot bracket with one spawn per live keyed prop (adopted by
 key, created when missing, transform converged), then position corrections for what the host moved
 during the window, then the membership sweep that removes the locals the host never claimed. A keyed
-prop's frozen and sleep converge with its snapshot row and its correction, and a flag change without
+prop's frozen and sleep converge with its snapshot row and its correction (static with the correction), and a flag change without
 a move gets a correction too, so an extinguisher taken off its mount during the window is loose on
 the joiner; a wall-attach component's owner converges its stuck state there through the component's
 own unstick or force-stick, so a sign pried in the window is off its wall. A stuck prop otherwise
