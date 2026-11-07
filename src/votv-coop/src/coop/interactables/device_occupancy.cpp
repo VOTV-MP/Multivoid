@@ -8,12 +8,14 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/remote_player.h"  // IsRagdollDisplayed: a client pinger knocked down
 #include "coop/props/prop_sound.h"
 #include "coop/session/net_pump.h"  // TickSerial: the aim memo's freshness clock
 
 #include "ue_wrap/desk/device_screen.h"
 #include "ue_wrap/devices/atv.h"          // EnsureResolved / IsAtv
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_mainplayer.h"  // ReadMainPlayerRagdollState: the host pinger knocked down
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -124,12 +126,26 @@ void ClaimEnded(const std::wstring& key) {
 // never ships, so the presser's dots cannot be stomped mid-machine). The hold flag marks the
 // entry as machine-authored: a physical grant of the desk clears it (the entry now belongs
 // to the sitting player); a physical release mid-machine is re-asserted by the reconciler
-// on the next tick.
+// on the next tick. A pinger knocked down (a faint, a KO, a death) holds nothing for the rest of
+// that run: its ragdoll left the desk as any exit does, and the machine runs on for the next player.
 const wchar_t* const kDeskClaim = L"desk";
 bool g_deskFsmHold = false;
+bool g_pingerDown = false;  // latched for the current ping run, cleared when no ping runs
 std::chrono::steady_clock::time_point g_nextFsmHoldPoll{};
 
 void SendClaim(coop::net::Session* s, const std::wstring& key, uint8_t slot, bool busy);  // fwd
+uint8_t LocalSlot();                                                                     // fwd
+
+// HOST: the player of `slot` lies in its ragdoll: the host's own by its flag, a client's by its puppet's display.
+bool PlayerDown(uint8_t slot) {
+    if (slot == LocalSlot()) {
+        void* local = coop::players::Registry::Get().Local();
+        bool ragdoll = false, dead = false;
+        return local && ue_wrap::engine::ReadMainPlayerRagdollState(local, ragdoll, dead) && (ragdoll || dead);
+    }
+    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
+    return rp && rp->valid() && rp->IsRagdollDisplayed();
+}
 
 void ReconcileDeskFsmHold(coop::net::Session* s) {
     if (s->role() != coop::net::Role::Host || !s->connected()) return;
@@ -137,7 +153,15 @@ void ReconcileDeskFsmHold(coop::net::Session* s) {
     if (now < g_nextFsmHoldPoll) return;
     g_nextFsmHoldPoll = now + std::chrono::milliseconds(250);
 
-    const uint8_t pinger = coop::desk_input_sync::PingActiveSlot();
+    uint8_t pinger = coop::desk_input_sync::PingActiveSlot();
+    if (pinger == 0xFF) {
+        g_pingerDown = false;
+    } else if (!g_pingerDown && PlayerDown(pinger)) {
+        g_pingerDown = true;
+        UE_LOGI("device_occupancy: pinging slot %u is knocked down -- its ping holds the desk no longer",
+                static_cast<unsigned>(pinger));
+    }
+    if (g_pingerDown) pinger = 0xFF;  // the branch below frees a machine-held entry
     if (pinger != 0xFF) {
         bool inserted = false;
         {
