@@ -54,6 +54,12 @@ first-wins claim table, a client claims optimistically and force-exits if the ho
 another slot holds the device, and a second peer's press is denied with the game's own denied
 sound (`coop/interactables/device_occupancy`). The claim engages only on the screen edge; the
 desk's physical buttons never set it, which is why the input lane below is claim-free.
+While a peer's ping runs, the host keeps the desk claimed for that peer after it leaves, so no
+other aim moves the dots its machine is consuming. A pinger knocked down (a faint, a KO, a death)
+holds it no longer: its ragdoll left the desk as any exit does, and the next player can sit while the
+machine runs on `[V]` (`harness/autotest/autotest_seat_ragdoll.cpp`: the host faints mid-ping and the
+client's enter stands; on the code before it the client was force-exited until the ping ended, 13 s;
+a plain exit mid-ping still keeps the desk, and a faint without a ping frees any device within 1 s).
 
 ### The desk: inputs, the simulation, the cursor, the sounds
 
