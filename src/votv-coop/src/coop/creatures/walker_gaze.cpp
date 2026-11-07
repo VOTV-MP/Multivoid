@@ -5,20 +5,17 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/creatures/walker_state_client.h"
-#include "coop/creatures/walker_target_rule.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/players_registry.h"
 
 #include "ue_wrap/actors/ambient_creature.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/types.h"
-#include "ue_wrap/engine/engine.h"
 
-#include <cmath>
 #include <cstdint>
 #include <cstring>
 
@@ -26,7 +23,6 @@ namespace coop::walker_gaze {
 namespace {
 
 namespace AC = ue_wrap::ambient_creature;
-namespace E = ue_wrap::engine;
 namespace PL = coop::players;
 namespace R = ue_wrap::reflection;
 
@@ -42,11 +38,12 @@ struct Hunted {
     int32_t            serial = 0;
     int8_t             told = -1;
 };
-Hunted               g_rows[kRows];
-size_t               g_count = 0;
-bool                 g_fullSaid = false;
-bool                 g_installAsked = false;  // the subscription is asked for once: a full table stays full, said once
-coop::net::Session*  g_session = nullptr;
+Hunted                g_rows[kRows];
+size_t                g_count = 0;
+bool                  g_fullSaid = false;
+bool                  g_installAsked = false;  // the subscription is asked for once: a full table stays full, said once
+coop::net::Session*   g_session = nullptr;
+ue_wrap::CachedObjRef g_controller;  // player 0's controller, held across frames
 
 bool SameKey(const coop::net::WireKey& a, const coop::net::WireKey& b) {
     return a.len == b.len && std::memcmp(a.data, b.data, a.len) == 0;
@@ -65,16 +62,6 @@ void Drop(Hunted& r) {
 
 bool StillThere(const Hunted& r) {
     return R::SlotSerial(r.index) == r.serial && R::InternalIndexOf(r.actor) == r.index && R::IsLive(r.actor);
-}
-
-// A place read from the actor's root in memory, and through the engine when the root is attached.
-bool Locate(void* actor, ue_wrap::FVector& out) {
-    return actor && (E::TryGetRootLocationRaw(actor, out) || E::TryGetActorLocation(actor, out));
-}
-
-float Distance(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
-    const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
-    return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
 bool Send(const coop::net::WireKey& key, bool seen) {
@@ -141,22 +128,22 @@ void Install(coop::net::Session& session) {
 
 void Tick() {
     if (g_count == 0) return;
-    void* controller = nullptr;
-    // This player's place and each copy's are read from memory (no engine call) where the root allows; the walker hunts only
-    // within its own range, so a copy beyond it is not in view of anyone worth judging and its level is 0 without a call.
-    ue_wrap::FVector me{};
-    const bool       haveMe = Locate(PL::Registry::Get().Local(), me);
+    // The walker's own read: the controller of player 0 and the mesh's bounds, as its tick reads them. The Blueprint's test has
+    // no range term, so a copy is judged at any distance (the walker keeps moving toward its target past its acquire range, and
+    // a target that backs away while still looking at it must not unfreeze it). The controller is held across frames and read
+    // again only when it is gone or the world changed.
+    void* controller = g_controller.Get();
     for (Hunted& r : g_rows) {
         if (!r.used) continue;
         if (!StillThere(r)) {
             Drop(r);
             continue;
         }
-        ue_wrap::FVector at{};
-        const bool       beyondRange = haveMe && Locate(r.actor, at) && Distance(me, at) > coop::walker_target::kRangeCm;
-        // The walker's own read: the controller of player 0 and the mesh's bounds, as its tick reads them.
-        if (!beyondRange && !controller) controller = AC::WalkerGazeController(r.actor);
-        const bool seen = !beyondRange && controller && AC::WalkerInView(r.actor, controller);
+        if (!controller) {
+            controller = AC::WalkerGazeController(r.actor);
+            g_controller.Set(controller);
+        }
+        const bool seen = controller && AC::WalkerInView(r.actor, controller);
         const int8_t level = seen ? 1 : 0;
         // The mannequin drill's red: an unseen level is never sent, so the host keeps the last seen one and the drill's release
         // step must FAIL.
@@ -171,6 +158,7 @@ void OnDisconnect() {
     g_count = 0;
     g_fullSaid = false;
     g_session = nullptr;
+    g_controller.Reset();
 }
 
 }  // namespace coop::walker_gaze

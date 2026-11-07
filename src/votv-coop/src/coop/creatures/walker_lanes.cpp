@@ -26,7 +26,7 @@ void Tick(coop::net::Session& session, bool isHost) {
     namespace PP = coop::dev::perf_probe;
     if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:walker_target"}; coop::walker_target::Tick(session); }  // HOST: the walkers born since the last tick are claimed into the drive stream (before the drive pump; an empty queue costs one atomic read)
     if (session.role() == coop::net::Role::Client) coop::walker_state_client::Tick();  // CLIENT: the walker copy's end of play is heard once the class resolves (one comparison after)
-    if (session.role() == coop::net::Role::Client) coop::walker_gaze::Tick();  // CLIENT: the gaze on each copy that hunts this player, judged each frame (one comparison while none does)
+    if (session.role() == coop::net::Role::Client) { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:walker_gaze"}; coop::walker_gaze::Tick(); }  // CLIENT: the gaze on each copy that hunts this player, judged each frame (one comparison while none does)
 }
 
 void OnPeerWorldReady(int slot) {
