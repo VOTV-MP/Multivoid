@@ -1234,10 +1234,10 @@ enum class ReliableKind : uint8_t {
     // and the origin and hit are a claim it re-traces. PropPropsIntentPayload.
     PropPropsIntent = 235,
     // HOST->CLIENT: a keyed prop's static, frozen and sleep as the host's copy holds them, read back after the tool
-    // set them (reason Applied, to every peer, the sender included), or the host's current flags with the reason it
-    // refused a press (to the sender alone). Host-authored: refused at the host's receive edge; never relayed; not
-    // pre-world. Late join: none, the snapshot rows and the join-window correction carry the flags.
-    // PropPropsStatePayload.
+    // set them and the active value it applied (reason Applied, to every peer, the sender included), or the host's
+    // current flags with the reason it refused a press (to the sender alone). Host-authored: refused at the host's
+    // receive edge; never relayed; not pre-world. Late join: none, the snapshot rows and the join-window correction
+    // carry the flags. PropPropsStatePayload.
     PropPropsState = 236,
     // HOST->CLIENT: one decision of a Geom Octa, to be replayed into the client's own Blueprint (coop/creatures/
     // geom_octa_relay): op 0, an Aggro, the Octa took a target (the replay runs minSphere's begin-overlap handler with
@@ -2179,15 +2179,17 @@ enum class PropPropsReason : uint8_t {
     Count       = 9,
 };
 
-// A prop's flags on the host (PropPropsState): the element, its static, frozen and sleep, and why it was sent.
+// A prop's flags on the host (PropPropsState): the element, its static, frozen and sleep, the active value the host's
+// setter ran with (a prop keeps no such field, so it is the applied value), and why it was sent.
 struct PropPropsStatePayload {
     uint32_t eid;          // 4 -- the prop's Element id on the host
     uint8_t  isStatic;     // 1
     uint8_t  isFrozen;     // 1
     uint8_t  isSleeping;   // 1
+    uint8_t  isActive;     // 1 -- the active the host's setter ran with; 0 on a refusal
     uint8_t  reason;       // 1 -- PropPropsReason
 };
-static_assert(sizeof(PropPropsStatePayload) == 8, "PropPropsStatePayload must be 8 bytes");
+static_assert(sizeof(PropPropsStatePayload) == 9, "PropPropsStatePayload must be 9 bytes");
 
 // One message of the drill filler (DevLoadFiller): its place in the run and the run's length; the rest is fill.
 struct DevLoadFillerPayload {

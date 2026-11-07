@@ -107,9 +107,11 @@ bool ReadToolValues(void* tool, coop::net::PropPropsIntentPayload* p) {
 // ---- the publish point ----------------------------------------------------------------------------------------
 
 // The state message for `actor`: its static, frozen and sleep read back from the actor, never from what the press asked.
-coop::net::PropPropsStatePayload StateOf(uint32_t eid, void* actor, PropPropsReason reason) {
+// A prop keeps no active field to read back, so `active` is the value the setter ran with.
+coop::net::PropPropsStatePayload StateOf(uint32_t eid, void* actor, PropPropsReason reason, bool active) {
     coop::net::PropPropsStatePayload st{};
     st.eid = eid;
+    st.isActive = active ? 1 : 0;
     st.reason = static_cast<uint8_t>(reason);
     if (actor) {
         st.isStatic = ue_wrap::prop::IsStatic(actor) ? 1 : 0;
@@ -121,14 +123,14 @@ coop::net::PropPropsStatePayload StateOf(uint32_t eid, void* actor, PropPropsRea
 
 // The one publish point: after the host's judged apply and after its own press, the prop's flags go to every peer. A
 // target that is no published prop publishes nothing.
-void Publish(coop::net::Session& s, void* actor) {
+void Publish(coop::net::Session& s, void* actor, bool active) {
     if (!actor || !ue_wrap::prop::IsKeyedInteractable(actor)) return;
     const EL::ElementId eid = EL::Registry::Get().EidForActor(actor);
     if (eid == EL::kInvalidId) return;
-    const coop::net::PropPropsStatePayload st = StateOf(static_cast<uint32_t>(eid), actor, PropPropsReason::Applied);
+    const coop::net::PropPropsStatePayload st = StateOf(static_cast<uint32_t>(eid), actor, PropPropsReason::Applied, active);
     s.SendReliable(coop::net::ReliableKind::PropPropsState, &st, sizeof(st));
-    UE_LOGI("prop_tool_flags: element %u static=%d frozen=%d sleep=%d published", st.eid, st.isStatic, st.isFrozen,
-            st.isSleeping);
+    UE_LOGI("prop_tool_flags: element %u static=%d frozen=%d sleep=%d active=%d published", st.eid, st.isStatic,
+            st.isFrozen, st.isSleeping, st.isActive);
 }
 
 // ---- client ---------------------------------------------------------------------------------------------------
@@ -219,9 +221,11 @@ sg::Verdict OnClientPress(coop::net::Session& s, const sg::Call& c) {
 
 // ---- host: its own press --------------------------------------------------------------------------------------
 
-// The host's press runs natively; the tool and its target are held to the post row, which publishes the flags.
+// The host's press runs natively; the tool, its target and the tool's active value are held to the post row, which
+// publishes the flags.
 void*                 g_pressTool = nullptr;
 ue_wrap::CachedObjRef g_pressTarget;
+bool                  g_pressActive = false;
 
 sg::Verdict OnHostPress(const sg::Call& c) {
     g_pressTool = nullptr;
@@ -230,6 +234,9 @@ sg::Verdict OnHostPress(const sg::Call& c) {
     if (!ReadPress(c, &hit) || !hit.blocking || !hit.actor) return sg::Verdict::Run;
     g_pressTool = c.object;
     g_pressTarget.Set(hit.actor);
+    static R::InstanceOffset sActive{L"isActive"};
+    uint8_t active = 0;
+    g_pressActive = ToolBool(c.object, sActive, &active) && active != 0;
     return sg::Verdict::Run;
 }
 
@@ -247,7 +254,7 @@ void OnInitPost(const sg::Call& c) {
     void* const target = g_pressTarget.Get();
     g_pressTarget.Reset();
     coop::net::Session* s = LoadSession();
-    if (target && s && s->running() && s->role() == coop::net::Role::Host) Publish(*s, target);
+    if (target && s && s->running() && s->role() == coop::net::Role::Host) Publish(*s, target, g_pressActive);
 }
 
 // ---- host: a client's press -----------------------------------------------------------------------------------
@@ -348,7 +355,7 @@ void Refusal(coop::net::Session& s, uint8_t slot, uint32_t eid, void* actor, con
     g_tally.Note(slot, v.why, coop::net::RefusalTally::Clock::now());
     if (v.reason == PropPropsReason::Busy)
         UE_LOGW("prop_tool_flags: slot %u's element %u not changed: %s", slot, eid, v.why);
-    const coop::net::PropPropsStatePayload st = StateOf(eid, actor, v.reason);
+    const coop::net::PropPropsStatePayload st = StateOf(eid, actor, v.reason, false);
     s.SendReliableToSlot(slot, coop::net::ReliableKind::PropPropsState, &st, sizeof(st));
 }
 
@@ -365,7 +372,7 @@ void Serve(coop::net::Session& s, uint8_t slot, const Queued& q) {
         } else {
             UE_LOGI("prop_tool_flags: slot %u's press on element %u applied (static=%d frozen=%d active=%d sleep=%d)",
                     slot, q.req.eid, p.isStatic, p.isFrozen, p.isActive, p.isSleeping);
-            Publish(s, actor);
+            Publish(s, actor, p.isActive != 0);
             return;
         }
     }
@@ -467,16 +474,19 @@ void OnState(const coop::net::PropPropsStatePayload& payload) {
         UE_LOGI("prop_tool_flags: flags for element %u arrived while this player holds it -- applied", payload.eid);
     }
     const bool wantStatic = payload.isStatic != 0, wantFrozen = payload.isFrozen != 0, wantSleep = payload.isSleeping != 0;
-    if (ue_wrap::prop::IsStatic(actor) == wantStatic && ue_wrap::prop::IsFrozen(actor) == wantFrozen &&
+    const bool wantActive = payload.isActive != 0;
+    // A copy at the host's flags is left alone, since the setter's init() wakes the body; an active press still runs, as
+    // a prop that reads active as its own state has nothing to compare it with.
+    if (!wantActive && ue_wrap::prop::IsStatic(actor) == wantStatic && ue_wrap::prop::IsFrozen(actor) == wantFrozen &&
         ue_wrap::prop::IsSleeping(actor) == wantSleep)
         return;
-    if (!ue_wrap::prop::CallSetPropProps(actor, wantStatic, wantFrozen, /*active=*/false, wantSleep)) {
+    if (!ue_wrap::prop::CallSetPropProps(actor, wantStatic, wantFrozen, wantActive, wantSleep)) {
         UE_LOGW("prop_tool_flags: element %u -- the game's setter did not dispatch; the copy keeps its flags",
                 payload.eid);
         return;
     }
-    UE_LOGI("prop_tool_flags: element %u set static=%d frozen=%d sleep=%d", payload.eid, wantStatic ? 1 : 0,
-            wantFrozen ? 1 : 0, wantSleep ? 1 : 0);
+    UE_LOGI("prop_tool_flags: element %u set static=%d frozen=%d active=%d sleep=%d", payload.eid, wantStatic ? 1 : 0,
+            wantFrozen ? 1 : 0, wantActive ? 1 : 0, wantSleep ? 1 : 0);
 }
 
 void OnDisconnect() {

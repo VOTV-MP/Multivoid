@@ -259,7 +259,8 @@ prop element that is not trash or a kerfur, the right `multivoid.gameplay.toolgu
 toolgun in the sender's hand, no other peer holding the prop, and a shot the host's eye could have made
 (`coop/props/toolgun_sight`, with the limits it shares with the remover). It runs the game's setter on its own copy, so
 a class that overrides it (a landmine, a TV) takes its own path as in single player, and publishes the static, frozen and
-sleep it reads back from the actor as `PropPropsState` to every peer. The host's own press is published from the tool's
+sleep it reads back from the actor, with the active value it ran the setter with, as `PropPropsState` to every peer.
+The host's own press is published from the tool's
 post row. A refused press returns the reason to its sender alone, and the client shows it.
 
 Every peer that receives `PropPropsState`, the sender included, sets its copy through the same setter, so the
