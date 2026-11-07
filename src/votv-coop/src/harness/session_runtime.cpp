@@ -21,6 +21,7 @@
 #include "coop/comms/chat_sync.h"
 #include "coop/config/config.h"
 #include "coop/creatures/npc_sync.h"
+#include "coop/creatures/walker_target_rule.h"
 #include "coop/dev/dev_gate.h"
 #include "coop/dev/force_weather.h"
 #include "coop/dev/hotbar_icon_probe.h"
@@ -264,6 +265,8 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     // And a client's chat rate, Source's two tiers: the interval, a burst's debt, the slowed refill, tier 2's long run
     // and both floors, each row from a stated state -- arithmetic no honest run reaches.
     coop::chat_rate::RunChatRateSelftest();
+    // And the walker's target rule (keep, lose, acquire, fall back): no honest run reads the players with another one nearer.
+    coop::walker_target::RunSelftest();
     // And the commands' line splitter, target resolver, registry and dispatcher: a resolver that
     // picks the wrong player kicks the wrong player, and a wrong pick reads as working until then.
     coop::commands::RunSelftest();

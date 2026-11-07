@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include "coop/creatures/walker_target_rule.h"
+
 #include <cstdint>
 
 namespace coop::net {
@@ -34,12 +36,10 @@ namespace coop::walker_target {
 // range, so the Blueprint's own out-of-range branch waits. It KEEPS that target until it is lost: its slot left, a client's
 // puppet is not alive or has no body when read here (the call is the event: no death edge exists), or it lies beyond the
 // range, which is the Blueprint's own test of the same read. A lost target is chosen again at that same read. A walker is
-// tracked from its claim, so the call that begins its life, before its eid exists, is the Blueprint's own (the host).
+// tracked from its claim, so the call that begins its life, before its eid exists, is the Blueprint's own (the host). The choice
+// itself is a pure function (walker_target_rule.h) with a boot selftest.
 // The walker is served its target through served_player (the Blueprint's getMainPlayer reads, its ragdoll test and its hit),
 // the record following every change of the target through the subscription below.
-
-// The slot of a walker that has no target; the host is slot 0.
-inline constexpr uint8_t kNoTarget = 0xFF;
 
 // The HOST's subscription to the prop lane's births, once for the process, from the session's first tick (coop/session/
 // subsystems, InstallLoadWatchers). A client pays nothing. Game thread.

@@ -209,6 +209,8 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/walker_state_client.cpp
     src/coop/creatures/walker_state_host.cpp
     src/coop/creatures/walker_target.cpp
+    src/coop/creatures/walker_target_rule.cpp
+    src/coop/creatures/walker_target_rule_selftest.cpp
     src/coop/creatures/creature_hit.cpp
     src/coop/creatures/hit_target_creature.cpp
     src/coop/creatures/npc_pose_drive.cpp

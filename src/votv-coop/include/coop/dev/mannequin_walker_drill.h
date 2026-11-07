@@ -11,7 +11,7 @@
 // of its out-of-range loop, and at BeginPlay (prop_wMannequin bytecode, offsets 166-354 and 902). A move toward the target makes no
 // read; at OnSuccess the walker stands within 50 cm of the target, so no other player can be nearer; and the out-of-range loop is
 // the loss rule, not the keep. Measured on the rig: the client stood nearer for about 12 s and the walker made no read. The rule
-// itself is covered by the target module's boot selftest (coop/creatures/walker_target), which needs no walker. The step numbers
+// itself is covered by the target module's boot selftest (coop/creatures/walker_target_rule), which needs no walker. The step numbers
 // stay the sheet's.
 
 #pragma once

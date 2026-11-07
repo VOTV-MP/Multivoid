@@ -53,9 +53,6 @@ constexpr const wchar_t* kGraphName = L"ExecuteUbergraph_prop_wMannequin";
 constexpr const wchar_t* kClassName = L"prop_wMannequin_C";
 constexpr int            kSites = 2;
 
-// The Blueprint's own range: its hunt waits and asks again when the camera manager is farther than this.
-constexpr float kRangeCm = 20000.f;
-
 // The host holds up to five walkers.
 constexpr size_t kMaxWalkers = 8;
 // Six: the target-changed list holds the module's own log line, the served record, the walker state sender and the walker drill's
@@ -155,13 +152,11 @@ void Rearm() {
     if (UH::SetArmed(g_cameraFn, &OnCameraManagerPost, want)) g_armed = want;
 }
 
-// The player's body: the host's own, or a client's puppet once it has a pose.
+// A client's body: its puppet once it has a pose.
 void* PuppetBody(uint8_t slot) {
     coop::RemotePlayer* rp = PL::Registry::Get().Puppet(slot);
     return (rp && rp->valid() && rp->HasPose()) ? rp->GetActor() : nullptr;
 }
-
-void* BodyOf(uint8_t slot) { return slot == PL::kPeerIdHost ? PL::Registry::Get().Local() : PuppetBody(slot); }
 
 // The host is always a player the Blueprint can hunt; a client counts while its puppet lives (LifeOf).
 bool Alive(uint8_t slot) {
@@ -173,36 +168,18 @@ float Distance(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-// The nearest living player in 3D within the Blueprint's range; the host when none is in range, so the Blueprint's own
-// out-of-range branch waits.
-uint8_t Acquire(const ue_wrap::FVector& at) {
-    uint8_t best = PL::kPeerIdHost;
-    float   bestCm = 0.f;
-    bool    found = false;
+// Each slot as the walker's read at `at` finds it, for the rule (walker_target_rule.h). The host's body is the camera manager the
+// Blueprint itself read, the object its own range test measures to; a client's is its puppet once it has a pose. A body that does
+// not read gives a negative distance.
+size_t ViewPlayers(const ue_wrap::FVector& at, void* camera, PlayerView (&out)[PL::kMaxPeers]) {
+    size_t n = 0;
     for (uint8_t slot = 0; slot < PL::kMaxPeers; ++slot) {
-        if (!Alive(slot)) continue;
-        void* body = BodyOf(slot);
+        void*            body = slot == PL::kPeerIdHost ? camera : PuppetBody(slot);
         ue_wrap::FVector p{};
-        if (!body || !E::TryGetActorLocation(body, p)) continue;
-        const float cm = Distance(at, p);
-        if (cm > kRangeCm || (found && cm >= bestCm)) continue;
-        best = slot;
-        bestCm = cm;
-        found = true;
+        const bool       read = body && E::TryGetActorLocation(body, p);
+        out[n++] = PlayerView{slot, Alive(slot), read ? Distance(at, p) : -1.f};
     }
-    return best;
-}
-
-// Is `slot` still the walker's target at this read: a client's puppet alive, with a body, and within the Blueprint's range.
-// The host's range is judged on the camera manager the Blueprint itself read, the object its own test measures to; a host
-// read that cannot be measured is the Blueprint's to judge.
-bool Keeps(uint8_t slot, const ue_wrap::FVector& at, void* camera) {
-    if (!Alive(slot)) return false;
-    void* body = slot == PL::kPeerIdHost ? camera : PuppetBody(slot);
-    if (!body) return slot == PL::kPeerIdHost;
-    ue_wrap::FVector p{};
-    if (!E::TryGetActorLocation(body, p)) return slot == PL::kPeerIdHost;
-    return Distance(at, p) <= kRangeCm;
+    return n;
 }
 
 // The post hook on GameplayStatics.GetPlayerCameraManager, game thread inside the engine's own call. The first thing it does
@@ -224,8 +201,9 @@ void OnCameraManagerPost(void* /*context*/, void* source, void* /*result*/) {
     ue_wrap::FVector at{};
     if (!E::TryGetActorLocation(source, at)) return;
     const uint8_t was = w->target;
-    if (was != kNoTarget && !Keeps(was, at, camera)) w->target = kNoTarget;
-    if (w->target == kNoTarget) w->target = Acquire(at);
+    PlayerView views[PL::kMaxPeers];
+    const size_t n = ViewPlayers(at, camera, views);
+    w->target = DecideTarget(was, views, n);
     const uint8_t now = w->target;
     if (now != PL::kPeerIdHost) {
         // An absent body leaves the read as written: the Blueprint reads through what this returns, and a null would
