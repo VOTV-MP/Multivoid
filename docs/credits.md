@@ -349,12 +349,6 @@ Community commits are adopted with their **original authorship preserved**
   the tank, the state wanted) and answers a refusal to the sender alone. A joiner is told which chippers are
   on, and the drill was moved onto the shared helpers with a host verdict. A client cannot yet feed a prop
   to it: measured, the host's chipper did not eat a dropped paper, so that is a tracker line.
-
-### ElvardFIC and AquaFishhh
-
-From their own coop mod, Watchers of the Void: the shape of the food lane -- the host as a world food's one
-author, a client's bite as an intent, and a held food's condition for the copy others show in that hand.
-Ghezra's ([#76](https://github.com/VOTV-MP/Multivoid/pull/76)) rewrote it on this tree's lanes, and the food sync stands on it.
 - **One state for every plant: the host's** ([#80](https://github.com/VOTV-MP/Multivoid/pull/80)): each peer's plants grew
   on their own water, sun and rain, and the winter bushes were planted on every peer. The host now runs
   every plant and sends its state; a client's player edits go up to it. Kept as written; on top, the
@@ -363,6 +357,12 @@ Ghezra's ([#76](https://github.com/VOTV-MP/Multivoid/pull/76)) rewrote it on thi
   client's own tick, sprinklers, growth areas, fire and spawners are refused at the gate instead of
   parked, the growth area's glow crosses as a cue, an edit is read before a state lands on it, and a
   ripe bush keeps its berry count. The drill moved onto the shared helpers, each arm green and red.
+
+### ElvardFIC and AquaFishhh
+
+From their own coop mod, Watchers of the Void: the shape of the food lane -- the host as a world food's one
+author, a client's bite as an intent, and a held food's condition for the copy others show in that hand.
+Ghezra's ([#76](https://github.com/VOTV-MP/Multivoid/pull/76)) rewrote it on this tree's lanes, and the food sync stands on it.
 
 ## Reports and reviews
 
