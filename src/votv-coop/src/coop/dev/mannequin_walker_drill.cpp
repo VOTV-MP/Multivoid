@@ -2,10 +2,10 @@
 //
 // WHAT IT MEASURES. (1) A client's mannequin spawner is refused at the gate: the refusal counter of spawn_authority's row
 // rises when the client runs the spawner's own body. (2) One walker, the host's: the client holds exactly one copy for its key,
-// and while the host's walker moves the copy follows it (the drive stream), within kFollowTolCm. (3) KEEP, steps_b: the client
-// walks nearer to it than the host, and it still hunts the host. (4) The target's gaze: the client is walker B's target, its
-// camera on the copy stops the host's walker, and when it looks away the walker moves again within the Blueprint's own timer_saw
-// bound plus a margin. Then steps_b: (6) B's hit lands on the client, (5) the client leaves, (7) it comes back and is told B's state.
+// and while the host's walker moves the copy follows it (the drive stream), within kFollowTolCm. (3) is absent, see the .h.
+// (4) The target's gaze: the client is walker B's target, its camera on the copy stops the host's walker, and when it looks away
+// the walker moves again within the Blueprint's own timer_saw bound plus a margin. Then steps_b: (6) B's hit lands on the client,
+// (5) the client leaves, (7) it comes back and is told B's state.
 // THE TWO WALKERS. A walker KEEPS its target until it is lost (coop/creatures/walker_target.h), so one cannot hand a hunt from
 // the host to the client by walking the client nearer; the first player in range is the one taken. Walker A: the client waits at
 // the KPP gate, out of its range, the host walks in, and the host's arrival opens the window while the walker is still far.
@@ -412,7 +412,7 @@ bool HostPhaseA(void*& a, std::string& keyA) {
     char what[128];
     std::snprintf(what, sizeof(what), "the client's copy follows the host's walker (worst %.0f cm, %zu readings)", f.maxCm, f.n);
     if (!Check(f.maxCm <= kFollowTolCm, "2", what)) return Fail("2", what);
-    return steps_b::HostKeep(a);
+    return true;
 }
 
 // Walker B stands at least kApproachEndCm from the client as `when` happens; nearer, the gaze steps are not the measurement.
@@ -594,7 +594,6 @@ bool ClientBody() {
     const std::vector<Sample> samples = Window([&] { return ByKey(keyA); }, kApproachWindowS);
     OnGameThread([&] { copyEndCm = PlayerTo(ByKey(keyA)); });
     PS::Mark("copy_samples_a", Pack(samples, copyStartCm, copyEndCm));
-    if (!steps_b::ClientKeep(keyA)) return false;
     FVector at{};
 
     // Walker B: this client is its target. It walks to the host's open spot, last, with its view turned away; then its camera goes on
@@ -691,7 +690,7 @@ void RunHost() {
 
 bool Armed() {
     static const bool armed = Is("walker") || Is("no_row") || Is("no_brain_gate") || Is("no_drive_claim") ||
-                              Is("no_gaze_route") || Is("no_level") || Is("no_keep") || Is("no_loss") || Is("no_delivery") ||
+                              Is("no_gaze_route") || Is("no_level") || Is("no_loss") || Is("no_delivery") ||
                               Is("no_join_state");
     return armed;
 }

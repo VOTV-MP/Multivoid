@@ -151,14 +151,12 @@ float PlayerTo(void* actor) {
     return me && actor && E::TryGetActorLocation(me, a) && E::TryGetActorLocation(actor, b) ? Dist3(a, b) : -1.f;
 }
 
-float PeerTo(uint8_t slot, void* actor) {
-    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
+float ClientTo(void* actor) {
+    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(kClientSlot);
     void* puppet = rp && rp->valid() && rp->HasPose() ? rp->GetActor() : nullptr;
     FVector a{}, b{};
     return puppet && actor && E::TryGetActorLocation(puppet, a) && E::TryGetActorLocation(actor, b) ? Dist3(a, b) : -1.f;
 }
-
-float ClientTo(void* actor) { return PeerTo(kClientSlot, actor); }
 
 bool BedAnchor(FVector& out) {
     bool bed = false;

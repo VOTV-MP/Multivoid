@@ -102,11 +102,8 @@ void Aim(void* walker, bool toward);
 // This player's distance to `actor`, negative when either place does not read. Game thread.
 float PlayerTo(void* actor);
 
-// The puppet of the peer at `slot` to `actor`, negative when either place does not read. The puppet counts once it is spawned and
+// On the host: the client's puppet to `actor`, negative when either place does not read. The puppet counts once it is spawned and
 // has a pose, the test walker_target's PuppetBody makes. Game thread.
-float PeerTo(uint8_t slot, void* actor);
-
-// On the host: the client's puppet to `actor` (PeerTo of the client's slot). Game thread.
 float ClientTo(void* actor);
 
 // This player's bed anchor, as the director's stage reads it; false when the base has no bed (the KPP fallback is not one).

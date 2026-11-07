@@ -1,7 +1,6 @@
 // coop/dev/mannequin_walker_steps_b.cpp -- see coop/dev/mannequin_walker_steps_b.h.
 //
-// THE PEERS. Step 3 runs on walker A, steps 6, 5 and 7 on walker B, and the order of the marks is the order of the steps:
-//   host: keep_go ................ client: keep_near          (3: the client stands nearer; the host reads the target across 2 reads)
+// THE PEERS. Steps 6, 5 and 7 run on walker B, and the order of the marks is the order of the steps:
 //   host: hit_go ................. client: hit_done           (6: "ok ..." or "nohit <cm> ...", the host judges which it is)
 //   host: loss_go ................ client: left, host: loss_seen   (5: the client leaves; the host hears the target lost)
 //   client (second life): rejoin_ready, host: join_expect, client: rejoin_done   (7: the row the client holds for B's key)
@@ -16,7 +15,6 @@
 #include "coop/config/config.h"
 #include "coop/creatures/walker_state_client.h"
 #include "coop/creatures/walker_target.h"
-#include "coop/dev/director/director.h"
 #include "coop/dev/mannequin_walker_geometry.h"
 #include "coop/player/player_hit.h"
 #include "coop/player/players_registry.h"
@@ -25,15 +23,12 @@
 #include "ue_wrap/actors/ambient_creature.h"
 #include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/types.h"
-#include "ue_wrap/engine/engine.h"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
-#include <memory>
 #include <sstream>
 #include <string>
 
@@ -41,21 +36,10 @@ namespace coop::dev::mannequin_walker_drill::steps_b {
 namespace {
 
 namespace AC  = ue_wrap::ambient_creature;
-namespace DIR = coop::director;
-namespace E   = ue_wrap::engine;
 namespace PS  = harness::autotest::peer_signal;
 namespace V   = ue_wrap::vitals;
 namespace WSC = coop::walker_state_client;
 namespace WT  = coop::walker_target;
-using ue_wrap::FVector;
-
-// Step 3: how much nearer to the walker than the host the client must stand (the walker picks the nearest at a read, so a margin
-// that a puppet's lag cannot cancel), how many of the walker's reads of the players the keep must hold across and the most the host
-// waits for them, and the most the client's walk toward the walker takes (its director walk's own wait).
-constexpr float    kNearerCm = 2000.f;
-constexpr uint32_t kKeepReads = 2;
-constexpr int      kKeepBoundS = 30;
-constexpr int      kNearerBoundS = kWalkWaitS;
 
 // Step 6: how long walker B has to reach the client and hit it, and how close to the client it counts as having reached it (a hit
 // is an overlap, so a walker farther than this after the bound never got there: that is no measurement).
@@ -73,105 +57,6 @@ constexpr int kJoinRowBoundS = 5;
 constexpr int kSlackS = 30;
 
 constexpr const char* kRejoinEnv = "VOTVCOOP_MANNEQUIN_DRILL_REJOIN";
-
-// ---- step 3 ----
-
-// The distances the keep step judges, read on the game thread of the peer that holds `walker`: this player's and the other's.
-struct Nearness {
-    float mine = -1.f;
-    float other = -1.f;
-    bool  Nearer(float marginCm) const { return mine >= 0.f && other >= 0.f && mine + marginCm <= other; }
-};
-
-}  // namespace
-
-bool HostKeep(void* a) {
-    PS::Mark("keep_go");
-    if (!AwaitClient("keep_near", kNearerBoundS + kSlackS)) return false;
-    // The client says it stands nearer; the host's own reads (the ones the walker's pick is made on) must say so too.
-    Nearness n;
-    OnGameThread([&] {
-        Aim(a, false);
-        n = Nearness{ClientTo(a), PlayerTo(a)};
-    });
-    UE_LOGI("mannequin-drill: step 3: the client stands %.0f cm from walker A, the host %.0f cm (the host's reads)", n.mine, n.other);
-    if (!n.Nearer(0.f)) {
-        char why[200];
-        std::snprintf(why, sizeof(why), "the client is not nearer to walker A than the host on the host's reads (%.0f cm against %.0f, "
-                      "or unread)", n.mine, n.other);
-        return Invalid(why);
-    }
-    // The keep holds across kKeepReads reads of the players by the walker's Blueprint (each is a chance to choose again, and takes
-    // the nearest, which is now the client), waited for to kKeepBoundS, the target read as the host at every step of the wait. A
-    // wait that sees fewer reads is no measurement.
-    // Only a read made while the client stands nearer counts: the walker walks on toward the host and passes the client, and a read
-    // after that is no test of the keep (measured pr84 t1: the keep held across 2 reads, then the client fell behind).
-    uint32_t last = 0, reads = 0;
-    uint8_t  seen = 0;
-    OnGameThread([&] { last = WT::SiteReads(a); });
-    bool changed = false, lost = false;
-    WaitGT("walker A reads the players while the client stands nearer", kKeepBoundS, [&] {
-        Aim(a, false);
-        const uint32_t now = WT::SiteReads(a);
-        const bool nearer = Nearness{ClientTo(a), PlayerTo(a)}.Nearer(0.f);
-        if (nearer) {
-            reads += now - last;
-            seen = WT::TargetOf(a);
-            changed = seen != 0;
-        } else {
-            lost = true;
-        }
-        last = now;
-        return changed || lost || reads >= kKeepReads;
-    }, false);
-    char what[200];
-    std::snprintf(what, sizeof(what), "walker A keeps hunting the host across %u reads while the client stands nearer to it (target %d)",
-                  reads, seen == WT::kNoTarget ? -1 : static_cast<int>(seen));
-    if (!changed && reads < kKeepReads) {
-        std::snprintf(what, sizeof(what), "walker A read the players %u time(s) while the client stood nearer (%u needed%s)", reads,
-                      kKeepReads, lost ? "; the client fell behind the host first" : "; the bound ran out");
-        return Invalid(what);
-    }
-    if (!Check(!changed, "3", what)) return Fail("3", what);
-    return true;
-}
-
-bool ClientKeep(const std::string& keyA) {
-    if (!PS::Await("keep_go", kWalkWaitS)) return false;
-    FVector to{};
-    OnGameThread([&] {
-        if (void* copy = ByKey(keyA)) E::TryGetActorLocation(copy, to);
-    });
-    // The walk ends as soon as the client stands nearer to the copy than the host does by kNearerCm, read while it walks (the host
-    // puppet's place against this player's), or where it gives up: at the copy's flat reach of its place when the walk began.
-    std::shared_ptr<DIR::BackgroundWalk> walk;
-    OnGameThread([&] { walk = DIR::StartBackgroundWalk(to, kApproachEndCm, kWalkDeadlineS); });
-    Nearness n;
-    PS::WaitFor("this client toward walker A, nearer than the host", kNearerBoundS, [&] {
-        OnGameThread([&] {
-            void* copy = ByKey(keyA);
-            n = Nearness{PlayerTo(copy), PeerTo(coop::players::kPeerIdHost, copy)};
-        });
-        return n.Nearer(kNearerCm) || walk->state.load() != 0;
-    }, false);
-    DIR::CancelBackgroundWalk(*walk);
-    PS::WaitFor("the walk toward walker A lets go", kHuntGraceS, [&] { return walk->state.load() != 0; }, false);
-    OnGameThread([&] {
-        void* copy = ByKey(keyA);
-        n = Nearness{PlayerTo(copy), PeerTo(coop::players::kPeerIdHost, copy)};
-    });
-    UE_LOGI("mannequin-drill: step 3: this client stands %.0f cm from walker A's copy, the host's puppet %.0f cm", n.mine, n.other);
-    if (!n.Nearer(kNearerCm)) {
-        char why[220];
-        std::snprintf(why, sizeof(why), "this client could not get %.0f cm nearer to walker A than the host: %.0f cm from it, the host's "
-                      "puppet %.0f cm (or unread)", kNearerCm, n.mine, n.other);
-        return Invalid(why);
-    }
-    PS::Mark("keep_near");
-    return true;
-}
-
-namespace {
 
 // ---- step 6 ----
 

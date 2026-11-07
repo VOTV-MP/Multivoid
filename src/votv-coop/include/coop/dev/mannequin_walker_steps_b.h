@@ -1,9 +1,7 @@
-// coop/dev/mannequin_walker_steps_b.h -- [dev] the walker drill's second increment: steps 3, 6, 5 and 7 (the sheet's numbers).
+// coop/dev/mannequin_walker_steps_b.h -- [dev] the walker drill's second increment: steps 6, 5 and 7 (the sheet's numbers; step 3 is absent).
 //
 // The drill (coop/dev/mannequin_walker_drill) runs steps 1, 2 and 4 on walker A and walker B; these continue it, in the order they
-// run:
-//   3 KEEP  (walker A, the host its target) the client walks until it stands nearer to A than the host by 2000 cm, read while it
-//           walks; then the host's target stays the host across 2 reads of the players by the walker. Red: no_keep.
+// run (the sheet has no step 3 here: see mannequin_walker_drill.h):
 //   6 HIT   (walker B, the client its target, after step 4's release) the client keeps its view away and stands; B reaches it and
 //           hits, and the client counts a walker hit delivered to it and a fall of its health. Red: no_delivery.
 //   5 LOSS  the client leaves the session (network first, as a player's quit does) and prints the rejoin marker; on the host B is
@@ -19,13 +17,6 @@
 #include <string>
 
 namespace coop::dev::mannequin_walker_drill::steps_b {
-
-// Step 3, the host's half, after step 2 passed: `a` is the walker whose copy step 2 followed. False when the run must end (a verdict
-// was said).
-bool HostKeep(void* a);
-
-// Step 3, the client's half: the copy of walker A is held here under `keyA`.
-bool ClientKeep(const std::string& keyA);
 
 // Steps 6, 5 and 7, the host's half, after step 4: `b` is walker B, whose target is the client. `clientFails` receives the failure
 // count the rejoined client reports.

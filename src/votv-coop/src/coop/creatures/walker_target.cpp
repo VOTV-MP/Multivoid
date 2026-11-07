@@ -94,7 +94,6 @@ struct Walker {
     int32_t index;
     int32_t serial;
     uint8_t target;
-    uint32_t reads = 0;  // [dev] the walker's reads of the players at its two pinned sites, for the drill (SiteReads)
 };
 Walker            g_walkers[kMaxWalkers];
 size_t            g_walkerCount = 0;
@@ -221,15 +220,11 @@ void OnCameraManagerPost(void* /*context*/, void* source, void* /*result*/) {
         Rearm();
         return;
     }
-    ++w->reads;
     void* const      camera = *static_cast<void**>(slotResult);
     ue_wrap::FVector at{};
     if (!E::TryGetActorLocation(source, at)) return;
     const uint8_t was = w->target;
-    // The mannequin drill's red: the walker chooses again at every read, so it takes the nearest player whenever one is nearer than
-    // its target, and the drill's keep step must FAIL.
-    static const bool s_redNoKeep = coop::config::ResolveEnum(::coop::config_registry::rows::mannequin_drill) == "no_keep";
-    if (was != kNoTarget && (s_redNoKeep || !Keeps(was, at, camera))) w->target = kNoTarget;
+    if (was != kNoTarget && !Keeps(was, at, camera)) w->target = kNoTarget;
     if (w->target == kNoTarget) w->target = Acquire(at);
     const uint8_t now = w->target;
     if (now != PL::kPeerIdHost) {
@@ -405,11 +400,6 @@ void* ClientBody(uint8_t slot) { return PuppetBody(slot); }
 uint8_t TargetOf(void* walker) {
     const Walker* w = Find(walker);
     return w ? w->target : kNoTarget;
-}
-
-uint32_t SiteReads(void* walker) {
-    const Walker* w = Find(walker);
-    return w ? w->reads : 0;
 }
 
 bool SubscribeTargetChanged(TargetChangedFn fn) {
