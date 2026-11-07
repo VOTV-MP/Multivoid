@@ -452,6 +452,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"ticker_treespawner_c", L"receivetick", L"ticker_treespawner_c.receivetick", 0x6082ffdfa2cda429ull, 0x816766efd85f998bull},
     {L"ticker_wispspawner_c", L"receivetick", L"ticker_wispspawner_c.receivetick", 0x6082ffdfa2cda429ull, 0x95894a3c34cf737dull},
     {L"ticker_yellowwispspawner_c", L"receivetick", L"ticker_yellowwispspawner_c.receivetick", 0x6082ffdfa2cda429ull, 0x17811d0a1302ca8eull},
+    {L"tool_propprops_c", L"init", L"tool_propprops_c.init", 0x336e4e8ae3f87919ull, 0x60f982623a7b9088ull},
     {L"tool_remover_c", L"init", L"tool_remover_c.init", 0x336e4e8ae3f87919ull, 0xf8e935a8bb441622ull},
     {L"tool_setdishcalibration_c", L"init", L"tool_setdishcalibration_c.init", 0x336e4e8ae3f87919ull, 0xdf424e7b0bab7961ull},
     {L"transformermgpanel_c", L"executeubergraph_transformermgpanel", L"transformermgpanel_c.executeubergraph_transformermgpanel", 0xd3c93c9d2749b427ull, 0x9709d185e48f5a27ull},
