@@ -210,12 +210,24 @@ std::string LaptopReading() {
     return text;
 }
 
-// A row as a real request leaves one: a dish's own code, the length the game's export writes.
+// A row as a real request leaves one: a dish's code, the length the game's export writes. The code is never the acting
+// dish's own (the one PickDish names, where the request is typed): checkFloppy ends the export on a disc that holds it.
+// With no other dish the row carries a filler of the acting dish's code length that no dish owns.
 std::wstring RowOf(int k) {
     const int n = D::Count();
-    const int dish = n > 0 ? k % n : 0;
+    const int acting = PickDish();
+    std::vector<int> others;
+    for (int i = 0; i < n; ++i)
+        if (i != acting) others.push_back(i);
+    const int dish = others.empty() ? acting : others[static_cast<size_t>(k) % others.size()];
     std::wstring code;
-    D::ReadHashcode(dish, code);
+    if (others.empty()) {
+        std::wstring own;
+        D::ReadHashcode(acting, own);
+        code.assign(own.size(), L'#');
+    } else {
+        D::ReadHashcode(dish, code);
+    }
     const std::wstring eol(L"\r\n");
     return L"$t" + eol + L"Server data: /n name ; /d data" + eol + L"/n " + D::TechName(dish) + eol + L"/d 00" + eol + code;
 }
@@ -454,6 +466,14 @@ void RunHost(bool iAct, int seed) {
         UE_LOGI("sv-request: the disc holds %d rows before the request; the insert was called (%d)", rows, inserted ? 1 : 0);
     });
     if (!inserted) return Invalid("the fixture disc could not be made or inserted");
+    OnGameThread([&] {
+        std::wstring code;
+        D::ReadHashcode(fx.dish, code);
+        bool carried = code.empty();
+        for (const std::wstring& r : RowsOf(rows))
+            if (!code.empty() && r.find(code) != std::wstring::npos) carried = true;
+        UE_LOGI("sv-request: dish %d acts; no seeded row carries its code (%d)", fx.dish, carried ? 0 : 1);
+    });
     if (!PS::WaitFor("the disc in the host's slot", 30, [&] { return BoxRows(fx.box) == static_cast<size_t>(rows); }, false))
         return Invalid("the fixture disc never read in the host's slot");
 
