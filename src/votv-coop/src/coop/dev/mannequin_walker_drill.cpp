@@ -1,19 +1,17 @@
 // coop/dev/mannequin_walker_drill.cpp -- see coop/dev/mannequin_walker_drill.h.
-// WHAT IT MEASURES. (1) A client's mannequin spawner is refused at the gate: the refusal counter of spawn_authority's row
-// rises when the client runs the spawner's own body. (2) One walker, the host's: the client holds exactly one copy for its key,
-// and while the host's walker moves the copy follows it (the drive stream), within kFollowTolCm. (3) is absent, see the .h.
-// (4) The target's gaze: the client is walker B's target, its camera on the copy stops the host's walker, and when it looks away
-// the walker moves again within the Blueprint's own timer_saw bound plus a margin, the HOST's own camera on it throughout (ruling
-// (a): only the target's gaze freezes it), and the host's gaze reads in that window are counted as answered with the target's
-// level. Then steps_b: (6) B's hit lands on the client, (5) the client leaves, (7) it comes back and is told B's state.
-
-// THE TWO WALKERS. A walker KEEPS its target until it is lost (coop/creatures/walker_target.h), so one cannot hand a hunt from
-// the host to the client by walking the client nearer; the first player in range is the one taken. Walker A: the client waits at
-// the KPP gate, out of its range, the host walks in, and the host's arrival opens the window while the walker is still far.
-// Walker B is born while the host stands at the KPP gate, out of every spawn point's range, and the client walks in last:
-// it is the only player in range, so it is B's target. Between them A is destroyed, so one walker stands at a time.
-// THE PEERS. Both reach the same state through peer_signal (VOTVCOOP_CAN_DIR); a wait is on a state the other peer reached
-// (a mark, a read on the game thread), bounded, and a bound that runs out before a verdict is INVALID. The host judges.
+// WHAT IT MEASURES. (1) A client's mannequin spawner is refused at the gate: the refusal counter of spawn_authority's row rises when
+// the client runs the spawner's own body. (2) One walker, the host's: the client holds one copy for its key, and while the host's
+// walker moves the copy follows it (the drive stream), within kFollowTolCm. (3) is absent, see the .h. (4) The target's gaze: the
+// client is walker B's target, its camera on the copy stops the host's walker, and when it looks away the walker moves again within
+// the Blueprint's own timer_saw bound plus a margin, the HOST's own camera on it throughout (ruling (a): only the target's gaze
+// freezes it) and the host's gaze reads in that window counted as answered with the target's level. Then steps_b: (6) B's hit lands
+// on the client, (5) the client leaves, (7) it comes back and is told B's state, (8) the ticker's statue route crosses.
+// THE TWO WALKERS. A walker KEEPS its target until it is lost (coop/creatures/walker_target.h), so the first player in range is the
+// one taken. Walker A: the client waits at the KPP gate, out of its range, the host walks in, and the host's arrival opens the window
+// while the walker is still far. Walker B is born while the host stands at the KPP gate, out of every spawn point's range, and the
+// client walks in last: it is the only player in range, so it is B's target. Between them A is destroyed.
+// THE PEERS. Both reach the same state through peer_signal (VOTVCOOP_CAN_DIR); a wait is on a state the other peer reached, bounded,
+// and a bound that runs out before a verdict is INVALID. The host judges.
 
 #include "coop/dev/mannequin_walker_drill.h"
 

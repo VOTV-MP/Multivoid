@@ -16,6 +16,7 @@
 #include "coop/creatures/walker_state_client.h"
 #include "coop/creatures/walker_target.h"
 #include "coop/dev/mannequin_walker_geometry.h"
+#include "coop/dev/mannequin_walker_statue.h"
 #include "coop/player/player_hit.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/net_pump.h"
@@ -235,7 +236,7 @@ bool HostJoin(void* b, const std::string& keyB, int& clientFails) {
 }  // namespace
 
 bool HostB(void* b, const std::string& keyB, int& clientFails) {
-    return HostHit(b) && HostLoss(b) && HostJoin(b, keyB, clientFails);
+    return HostHit(b) && HostLoss(b) && HostJoin(b, keyB, clientFails) && statue::Host();
 }
 
 bool ClientB(const std::string& keyB) { return ClientHit(keyB) && ClientLeave(); }
@@ -272,6 +273,7 @@ void RunRejoin() {
     char word[64];
     std::snprintf(word, sizeof(word), "%d %d %d %d", FailCount(), has ? 1 : 0, static_cast<int>(target), looking ? 1 : 0);
     PS::Mark("rejoin_done", word);
+    statue::Client();   // step 8, on the rejoined client: the host judges it, so a failure is its word and not this return
     UE_LOGI("mannequin-drill: REJOIN DONE fails=%d", FailCount());
 }
 

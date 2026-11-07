@@ -10,7 +10,7 @@
 //   7 JOIN  the client comes back as a new process (the rig's --rejoin; the second life carries VOTVCOOP_MANNEQUIN_DRILL_REJOIN=1
 //           and finds its place by its own start, peer_signal marks being those written since it began); the host reads B's target
 //           and `looking`, the client reads the state row it was sent for B's key within 5 s of its own world-ready, and the host compares
-//           them. Red: no_join_state.
+//           them. Red: no_join_state. Step 8, the statue route, follows in the rejoined life (coop/dev/mannequin_walker_statue).
 // The host judges; a bound that runs out is an INVALID, and a measured failure ends the run at its step as the verdict.
 
 #pragma once
