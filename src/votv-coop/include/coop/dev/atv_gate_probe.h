@@ -29,10 +29,17 @@ struct Counts {
 };
 
 bool Enabled();                       // the row, latched
+const char* NameOf(Fn fn);            // the function's short label
 
 // Cache the session, for the role; register the watches while the row is on, retried each pump tick until each settles.
 // A latched read when off.
 void Install(coop::net::Session* session);
+
+// Every script-gate watch live and every observer registered. Game thread.
+bool AllLive();
+
+// The counts so far, which coop/dev/atv_gate_drill reads around each step. Game thread.
+Counts Snapshot();
 
 // Session end: the totals are said and cleared.
 void OnDisconnect();

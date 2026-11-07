@@ -62,7 +62,33 @@ void DiagnoseSeatRefusal(void* local, void* atv) {
             holdingClass.c_str(), ue_wrap::atv::GetOccupantPlayer(atv));
 }
 
+// ATV_C::actionName, resolved once.
+bool ResolveActionName() {
+    if (!g_actionNameFn) {
+        if (void* cls = R::FindClass(L"ATV_C")) g_actionNameFn = R::FindFunction(cls, L"actionName");
+        if (!g_actionNameFn) UE_LOGW("[ATVP] actionName unresolved");
+    }
+    return g_actionNameFn != nullptr;
+}
+
+
 }  // namespace
+
+bool CallActionName(void* player, void* atv, const wchar_t* verb) {
+    if (!ResolveActionName()) return false;
+    // The verb dispatches on a string compare, so the frame carries a real FString aliasing this
+    // local for the synchronous call; the callee only compares it.
+    std::wstring name = verb;
+    R::FString fs{ name.data(),
+                   static_cast<int32_t>(name.size()) + 1,
+                   static_cast<int32_t>(name.size()) + 1 };
+
+    ue_wrap::ParamFrame pf(g_actionNameFn);
+    if (!pf.valid()) { UE_LOGE("[ATVP] actionName(%ls): ParamFrame invalid", verb); return false; }
+    pf.Set<void*>(L"player", player);          // `hit` stays the frame's zeroed HitResult
+    pf.Set<R::FString>(L"name", fs);
+    return ue_wrap::Call(atv, pf);
+}
 
 bool TrySit(void* player, void* atv, SitTry& t) {
     // The host's grant is the stamp that names this peer's seat.
@@ -79,26 +105,12 @@ bool TrySit(void* player, void* atv, SitTry& t) {
     const uint64_t now = coop::net::NowMs();
     if (now < t.nextMs) return false;
     if (t.tries >= kSitRetries) return true;   // the verb has been tried and refused kSitRetries times
-    if (!g_actionNameFn) {
-        if (void* cls = R::FindClass(L"ATV_C")) g_actionNameFn = R::FindFunction(cls, L"actionName");
-        if (!g_actionNameFn) {
-            UE_LOGW("[ATVP] ARM sit: actionName unresolved -- arm cannot fire");
-            return true;
-        }
+    if (!ResolveActionName()) {
+        UE_LOGW("[ATVP] ARM sit: actionName unresolved -- arm cannot fire");
+        return true;
     }
 
-    // The verb dispatches on a string compare, so the frame carries a real FString aliasing this
-    // local for the synchronous call; the callee only compares it.
-    std::wstring verb = L"sit";
-    R::FString fs{ verb.data(),
-                   static_cast<int32_t>(verb.size()) + 1,
-                   static_cast<int32_t>(verb.size()) + 1 };
-
-    ue_wrap::ParamFrame pf(g_actionNameFn);
-    if (!pf.valid()) { UE_LOGE("[ATVP] ARM sit: ParamFrame(actionName) invalid"); return true; }
-    pf.Set<void*>(L"player", player);          // `hit` stays the frame's zeroed HitResult
-    pf.Set<R::FString>(L"name", fs);
-    const bool ok = ue_wrap::Call(atv, pf);
+    const bool ok = CallActionName(player, atv, L"sit");
     ++t.tries;
     t.nextMs = now + kSitRetryMs;
 

@@ -10,6 +10,7 @@
 #include "harness/autotest/driveslot.h"
 #include "coop/session/join_seed.h"  // the inline seed selftest
 #include "coop/config/config.h"
+#include "coop/dev/atv_gate_drill.h"
 #include "coop/dev/cremator_drill.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/mannequin_walker_drill.h"
@@ -280,6 +281,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     }
     // The ATV: what of it the host owns, from a client's refuel to its horn.
     SpawnIf("VOTVCOOP_RUN_ATV_HOST", "ATV host-owned state drill", &AtvHostThread, role);
+    // The ATV gate probe's drill: each act a player does at an ATV, with atv_gate_probe saying which functions it reached.
+    SpawnIfRow(coop::config_registry::rows::atv_gate_drill, "ATV gate drill", &coop::dev::atv_gate_drill::Thread, role);
 }
 
 }  // namespace harness::autotest

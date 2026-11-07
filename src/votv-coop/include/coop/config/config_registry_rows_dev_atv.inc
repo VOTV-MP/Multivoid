@@ -1,6 +1,6 @@
 // coop/config/config_registry_rows_dev_atv.inc -- the [dev] rows of the ATV lane: its rig probe, the corrector's
 // control arm, the spawn drill and its park, the health drill and its red arm, the eject drill and its red arm, the gate
-// probe.
+// probe and its drill.
 // Included by config_registry_rows_dev.inc after the fire rows, before the PI and NB rows, which stay the last ones,
 // so each row keeps its place in every expansion of the list. The entry forms are config_registry_rows.inc's.
 // The drill's arms: sit, grab, occupied, synced, silent, gate, owner, trap; the red arm's values: back, occupied,
@@ -77,3 +77,10 @@ CFG_FLAG(atv_gate_probe, "atv_gate_probe", "dev", false, "VOTVCOOP_ATV_GATE_PROB
     "function, the seam that saw it (the script gate or ProcessEvent), the ATV's key, whether the copy is a mirror and the "
     "calling Blueprint function. At most 200 lines per function and seam, the rest counted. Observe only: it never "
     "cancels a call. Off, no watch is registered.")
+CFG_FLAG(atv_gate_drill, "atv_gate_drill", "dev", false, "VOTVCOOP_ATV_GATE_DRILL",
+    "Drill (BOTH peers, with atv_gate_probe=1): the client walks to the save's ATV with the director and does each act the "
+    "player's way -- a gas can, a toolbox and a module in the hand pressed on it with the fire key, the module taken off "
+    "through the upgrades screen, then seated, the lights, brake, turbo and horn keys -- and the host does the can, the "
+    "toolbox and the seat on its own ATV. Each step prints a [ATVG-DRILL] MEASURE line with that peer's [ATVG] counts. "
+    "Ends on rig: VERDICT atvprobe PASS (every step ran) or INVALID with the reason. MUTATES the ATV's fuel, health "
+    "and modules.")

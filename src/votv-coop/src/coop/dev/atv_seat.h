@@ -31,4 +31,8 @@ struct SitTry {
 // arrived for the seat the verb has taken, which is awaited as that edge and not as a count of steps.
 bool TrySit(void* player, void* atv, SitTry& t);
 
+// ATV_C::actionName(player, hit, verb) on `atv`, the verb the radial's named actions end in ("sit", "upgrades"); the hit
+// stays zeroed. False when the function does not resolve, its frame does not build or the call fails. Game thread.
+bool CallActionName(void* player, void* atv, const wchar_t* verb);
+
 }  // namespace coop::dev::atv_seat

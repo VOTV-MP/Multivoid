@@ -189,6 +189,16 @@ bool Enabled() {
     return s;
 }
 
+const char* NameOf(Fn fn) { return fn >= 0 && fn < kFnCount ? g_entries[fn].label : "?"; }
+
+bool AllLive() {
+    for (const Entry& e : g_entries)
+        if (!e.gateLive || !e.peRegistered) return false;
+    return true;
+}
+
+Counts Snapshot() { return g_counts; }
+
 void Install(coop::net::Session* session) {
     if (!Enabled()) return;
     g_session.store(session, std::memory_order_release);

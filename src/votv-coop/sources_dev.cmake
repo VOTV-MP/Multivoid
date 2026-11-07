@@ -320,6 +320,8 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/pile_defer_drill_host.cpp
     src/coop/dev/client_model_probe.cpp
     src/coop/dev/atv_eject_drill.cpp
+    src/coop/dev/atv_gate_drill.cpp
+    src/coop/dev/atv_gate_drill_acts.cpp
     src/coop/dev/atv_gate_probe.cpp
     src/coop/dev/atv_probe.cpp
     src/coop/dev/atv_seat.cpp
