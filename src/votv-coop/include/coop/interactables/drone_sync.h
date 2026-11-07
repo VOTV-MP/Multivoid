@@ -1,20 +1,22 @@
 // coop/interactables/drone_sync.h -- the delivery DRONE (Adrone_C), body pose, on
 // ReliableKind::DroneState. Gameplay/network layer (principle 7): the wire protocol, the
-// host-authoritative transform stream, the receiver's kinematic apply through a LerpWindow, and the
+// host-authoritative transform stream, the receiver's kinematic playback of it, and the
 // connect snapshot, reaching the engine only through ue_wrap::drone.
 //
 // The drone is a host-simulated singleton, MTA's server-simulated entity: its blueprint ReceiveTick
 // is a fragile per-tick float flight integrator, not worth reproducing bit-exact on a remote. The
 // host streams the resolved transform, at most about 20 Hz, while the drone moves -- Active or not, since
 // it glides on after Active drops -- and its state, including the five-minute/indefinite leave mode,
-// the moment it changes; a client suppresses
-// its own drone tick, so the drone there is ALWAYS a mirror rather than a second flier fighting the
-// stream, and drives the streamed transform kinematically through the interpolation window. Host to
+// the moment it changes; a client suppresses its own drone tick, so the drone there is ALWAYS a mirror
+// rather than a second flier fighting the stream, and plays the streamed transforms back on the host's
+// send times, a little behind them, so late and bunched poses do not lurch (drone_sync.cpp). Host to
 // client only and never relayed; the host refuses a client's copy at its receive edge. Identity is the
 // singleton found by class: both peers load the same placed drone, and a joiner gets the current pose
 // with adopt=1. The CARGO (orderbox, giftbox, crate, dronesack, all Aprop_C) rides the prop pipeline.
 
 #pragma once
+
+#include <cstdint>
 
 namespace coop::net {
 class Session;
@@ -50,4 +52,13 @@ void OnDisconnect();
 // thread.
 int HostActive();
 
+// CLIENT: how its mirror has played this session: the frames played while poses were arriving, the frames of
+// them that ran past the newest pose and its extrapolation (the copy held still), and the playback delay now.
+// Game thread.
+struct MirrorStats {
+    uint32_t played = 0;
+    uint32_t starved = 0;
+    double delayMs = 0.0;
+};
+MirrorStats Stats();
 }  // namespace coop::drone_sync

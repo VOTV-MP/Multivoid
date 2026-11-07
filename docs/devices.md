@@ -408,10 +408,10 @@ generators and puts the kept row back onto the tower after each.
 
 ### The drone
 
-The delivery drone is one host-simulated actor: its flight is a fragile per-tick integrator not
-worth reproducing, so the host streams its transform while it moves (it glides on after its active
-flag drops) and its state the moment it changes, the client suppresses
-the drone's own tick and drives the streamed transform through an interpolation window, and the
+The delivery drone is one host-simulated actor: its flight is a fragile per-tick integrator, so the host
+streams its transform, stamped with its send time, while it moves and its state as it changes. The client
+stops the drone's tick and physics (a touched body spun between writes) and plays the poses back a little
+behind the host's times, as late as the link needs, so late or bunched poses do not lurch, and the
 cargo it drops rides the ordinary prop lanes (`coop/interactables/drone_sync`). The drone's sale
 runs on the host only, which is what makes selling into it the one economy path that credits the
 group correctly.
@@ -518,7 +518,7 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | the turbine | the host | six floats a second |
 | a window, the grime | any peer, minimum wins | monotone decreases |
 | a spilled liquid's decal | the host | a client's spill from its hand and its wipe are requests |
-| the drone | the host | a transform stream; the client's tick suppressed |
+| the drone | the host | a timed transform stream; the client's tick and physics off |
 | a woodchipper's fuel and on/off | the host | a client's pour and press are intents the host judges; the host's state when it changes and every second while its fuel moves |
 
 ## Wire messages
