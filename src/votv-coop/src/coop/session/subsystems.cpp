@@ -191,12 +191,7 @@
 #include "coop/creatures/roach_sync.h"  // host-authoritative roach-infestation mirror
 #include "coop/creatures/owner_entity_sync.h"
 #include "coop/creatures/npc_mirror_brain.h"  // a parked family's mirror runs none of its Blueprint graph
-#include "coop/creatures/walker_brain.h"  // a client's walker copy runs two entries of its Blueprint graph
-#include "coop/creatures/walker_target.h"  // the host's walker: claimed into the drive stream at its eid mint, and the player it hunts
-#include "coop/creatures/walker_gaze.h"  // a client's gaze on the walker that hunts it
-#include "coop/creatures/walker_gaze_host.h"  // the host's walker freezes on its target's gaze only
-#include "coop/creatures/walker_state_client.h"  // a client's walker copy: the host's pose and hunt for it
-#include "coop/creatures/walker_state_host.h"  // the host's walker on the wire: its pose and the player it hunts
+#include "coop/creatures/walker_lanes.h"  // the walking mannequin: its brain refused on a client, its claim, state and gaze
 #include "coop/items/hook_anchor.h"
 #include "coop/items/hook_sync.h"  // the hook lane: owner-phase stream, mirrors, the tick park
 #include "coop/world/event_active_sync.h"  // the native activeEvents registry probe
@@ -243,11 +238,7 @@ void InstallLoadWatchers(coop::net::Session& session) {
     coop::world_load_episode::InstallReplayWatch(session);
     coop::trash_native_hold::Install(&session);  // the join load's clumps held still at their spawn: a catch installed with the world would arm after the load
     coop::sus_hole_intent::Install(&session);  // the sus hole spawner's holes stamped at their birth, a client's roll sent to the host, from the load window on
-    coop::walker_brain::Install(session);  // a client's walker copy never thinks: the graph watch and its nav pawn made inert, from the load window on
-    coop::walker_target::Install(session);  // the host: the subscription to the prop lane's eid mints, so a walker is claimed into the drive stream
-    coop::walker_state_host::Install(session);  // the host: the walker's pose edge and its hunt go to the clients (the damping seam arms with the first held walker)
-    coop::walker_gaze_host::Install(session);  // the host: the walker's gaze reads answered with its client target's level (the gaze seams arm with the first client target)
-    coop::walker_gaze::Install(session);  // a client: its gaze on the walker that hunts it, sent as WalkerSeen
+    coop::walker_lanes::Install(session);  // the walking mannequin: a client's copy never thinks, the host claims it and answers its gaze, a client's gaze goes to the host
 }
 
 void Install(coop::net::Session& session) {
@@ -454,8 +445,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::desk_snd_fx::OnPeerLeft(slot);  // host-owned teardown of the leaver's loop sounds (broadcast OFF)
     coop::comp_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and the refiner's decode it began is the host's
     coop::served_player::OnPeerLeft(static_cast<uint8_t>(slot));  // robots serving the leaver read the host
-    coop::walker_target::OnPeerLeft(static_cast<uint8_t>(slot));  // a walker that hunted the leaver chooses again at its next read
-    coop::walker_gaze_host::OnPeerLeft(static_cast<uint8_t>(slot));  // and the level the leaver sent for any walker
+    coop::walker_lanes::OnPeerLeft(static_cast<uint8_t>(slot));  // a walker that hunted the leaver chooses again, and the level the leaver sent is dropped
     coop::power_panel::OnPeerLeft(static_cast<uint8_t>(slot));  // and its presses that wait for its body
     coop::power_grid::OnPeerLeft(static_cast<uint8_t>(slot));  // and its generator ops
     coop::fuse_tower_ops::OnPeerLeft(static_cast<uint8_t>(slot));  // and its tower ops
@@ -548,12 +538,7 @@ DisconnectStats DisconnectAll() {
     coop::event_active_sync::OnDisconnect();  // drop the begun-events map and its world stamp
     coop::creature_event_relay::OnDisconnect();  // a client's applied creature events back out; both halves' state; the session
     coop::npc_mirror_brain::OnDisconnect();  // what the graph watches refused, and every mark
-    coop::walker_brain::OnDisconnect();  // what the walker's graph watch refused, and the spawn hook disarmed
-    coop::walker_target::OnDisconnect();  // the claim queue, the held walkers, the hunt hook and the walker class
-    coop::walker_state_host::OnDisconnect();  // the session the walker states went through, and the damping seam disarmed
-    coop::walker_state_client::OnDisconnect();  // the walker states held for copies
-    coop::walker_gaze_host::OnDisconnect();  // the levels clients sent, the refusals counted, and the gaze seams disarmed
-    coop::walker_gaze::OnDisconnect();  // the copies that hunted this player
+    coop::walker_lanes::OnDisconnect();  // the walker lanes' records, queue and hooks
     coop::alarm_sync::OnDisconnect();  // drop the cached trigger + poll baseline
     coop::serverbox_sync::OnDisconnect();  // the poll baseline and the session
     coop::server_upgrade_sync::OnDisconnect();  // verb snapshots + parked canonical + deny records
@@ -695,9 +680,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:owner_entity"}; coop::owner_entity_sync::Tick(); }  // owner-entity: 4 Hz own-pose stream + keepalive + death-watch + mirror prune
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hook"}; coop::hook_sync::Tick(); }  // hook: one activeHook read, then a gated 4/20 Hz head poll only while a hook exists
     if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:explosion_coast"}; coop::explosion_parking::Tick(&session); }  // HOST: the props a blast flung, handed to the driven-prop channel (before its tick below; an empty list costs one size check)
-    if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:walker_target"}; coop::walker_target::Tick(session); }  // HOST: the walkers born since the last tick are claimed into the drive stream (before its pump below; an empty queue costs one atomic read)
-    if (session.role() == coop::net::Role::Client) coop::walker_state_client::Tick();  // CLIENT: the walker copy's end of play is heard once the class resolves (one comparison after)
-    if (session.role() == coop::net::Role::Client) coop::walker_gaze::Tick();  // CLIENT: the gaze on each copy that hunts this player, judged each frame (one comparison while none does)
+    coop::walker_lanes::Tick(session, isHost);  // the walkers: HOST claims the born ones into the drive stream (before the pump below); CLIENT hears its copies end and judges its gaze
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_drive_host"}; coop::prop_drive_host::Pump(session, isHost); }  // the driven props, both roles: HOST judges a syncing client's rows, publishes the props that moved, closes the streams that rested (after the hook poll that feeds it); then both park + drive what the host streams (an empty set costs one size check)
     coop::vent_crawler_sync::Tick();  // a client's crawl sounds as their times come
     coop::props::prop_can_state::Tick();  // the init watch's names resolve until it is live

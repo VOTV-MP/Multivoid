@@ -206,6 +206,7 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/walker_gaze.cpp
     src/coop/creatures/walker_gaze_host.cpp
     src/coop/creatures/walker_graph.cpp
+    src/coop/creatures/walker_lanes.cpp
     src/coop/creatures/walker_state_client.cpp
     src/coop/creatures/walker_state_host.cpp
     src/coop/creatures/walker_target.cpp
