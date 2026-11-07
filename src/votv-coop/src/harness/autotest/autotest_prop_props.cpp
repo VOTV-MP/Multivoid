@@ -1,6 +1,6 @@
 // harness/autotest/autotest_prop_props.cpp -- TEST-ONLY: the toolgun's prop-properties tool across two peers.
 //
-// One arm per run, VOTVCOOP_PROP_PROPS_ARM on both peers (g1..g5), the drill itself gated by VOTVCOOP_RUN_PROP_PROPS and
+// One arm per run, VOTVCOOP_PROP_PROPS_ARM on both peers (g1..g6), the drill itself gated by VOTVCOOP_RUN_PROP_PROPS and
 // the peers' folder VOTVCOOP_CAN_DIR. The client is walked to the host by the director; the host lays a prop on the floor
 // in the client puppet's sight; the client takes a toolgun into its hand (the host reads it, the premise of every
 // press) and presses tool_propProps_C on its own copy of the prop through the toolgun's outHit and the tool's init, with
@@ -95,6 +95,8 @@ constexpr int kLaySec = 60;
 //   g4  a forged press whose origin lies 2000 uu from the client's body is refused for sight: nothing changes and the
 //       client shows the refusal.
 //   g5  a prop of a class that overrides setPropProps (a rug) is frozen by a client and both copies agree.
+//   g6  the HOST presses the tool on a prop laid near the client (its own press, published from the tool's post row); the
+//       client presses nothing and reports the flags its copy reads.
 // Red arm of g1: prop_props_gate_off, whose press runs on the client's copy alone, so the host's copy keeps its flags.
 
 struct Arm {
@@ -105,14 +107,16 @@ struct Arm {
     bool refused;             // the press must be refused: nothing changes, the client shows `notice`
     const char* notice;
     bool forged;              // the press is a forged request over the wire
+    bool hostPress;           // the host presses; the client only reads
 };
 
 constexpr Arm kArms[] = {
-    {"g1", kSackPath, {0, 1, 0, 0}, "0,1,0", false, nullptr, false},
-    {"g2", kSackPath, {1, 0, 0, 0}, "1,0,0", false, nullptr, false},
-    {"g3", kSackPath, {0, 1, 0, 0}, "0,0,0", true, kNoRight, false},
-    {"g4", kSackPath, {0, 1, 0, 0}, "0,0,0", true, kOutOfSight, true},
-    {"g5", kRugPath, {0, 1, 0, 0}, "0,1,0", false, nullptr, false},
+    {"g1", kSackPath, {0, 1, 0, 0}, "0,1,0", false, nullptr, false, false},
+    {"g2", kSackPath, {1, 0, 0, 0}, "1,0,0", false, nullptr, false, false},
+    {"g3", kSackPath, {0, 1, 0, 0}, "0,0,0", true, kNoRight, false, false},
+    {"g4", kSackPath, {0, 1, 0, 0}, "0,0,0", true, kOutOfSight, true, false},
+    {"g5", kRugPath, {0, 1, 0, 0}, "0,1,0", false, nullptr, false, false},
+    {"g6", kSackPath, {0, 1, 0, 0}, "0,1,0", false, nullptr, false, true},
 };
 
 const Arm* ArmOf(const std::string& name) {
@@ -230,6 +234,30 @@ bool NodeWithheldForSlot1() {
            !coop::permissions::host::Allows(guid, GN::kToolgunPropProps.node, GN::kToolgunPropProps.defaultGranted, false);
 }
 
+bool Press(const Arm& arm, void* target, const char** why);   // defined with the client's side
+
+// The host's own press: the toolgun in the host's hand, then the tool's init on its copy of the prop, the click's path.
+bool HostPresses(const Arm& arm, uint32_t eid, const char** why) {
+    OnGameThread([] { coop::dev::drill_hand::TakeIntoHandNow(kToolgunItem, kToolgunClass); });
+    if (!PS::WaitFor("the toolgun in the host's hand", kHandSec, [] {
+            bool in = false;
+            OnGameThread([&] {
+                void* h = coop::hand_item::LocalHandActor();
+                in = h && R::ClassNameOf(h) == kToolgunClass;
+            });
+            return in;
+        })) {
+        *why = "the toolgun did not reach the host's hand";
+        return false;
+    }
+    bool pressed = false;
+    OnGameThread([&] {
+        void* copy = CopyOf(eid);
+        pressed = copy && Press(arm, copy, why);
+    });
+    return pressed;
+}
+
 // The join arm, host side: once the client's first life has left slot 1, the rejoined life must read the prop as the
 // host's copy does.
 void HostRejoin(const Arm& arm, uint32_t eid, const std::string& hostFlags) {
@@ -293,16 +321,28 @@ void RunHost(const Arm& arm) {
         return;
     }
     PS::Mark("target", std::to_string(eid));
-    if (!PS::Await("toolgun_in_hand", kSignalSec)) return;
-    int held = 0;
-    PS::WaitFor("the client's toolgun in hand here", kHandSec, [&] {
-        OnGameThread([&] { held = coop::hand_item::HeldClassIs(1, kToolgunClass) ? 1 : 0; });
-        return held == 1;
-    }, false);
-    UE_LOGI("prop-props: HeldClassIs(slot 1, prop_toolgun_C)=%d; the prop's element %u holds %s", held, eid, before.c_str());
-    if (!held) {
-        Say(tag, RV::Outcome::Invalid, "the host does not see a toolgun in the client's hand");
-        return;
+    if (arm.hostPress) {
+        // A state for an element the client has no copy of is dropped: the press waits for the client's copy.
+        if (!PS::Await("copy_ready", kSignalSec)) return;
+        const char* why = "";
+        if (!HostPresses(arm, eid, &why)) {
+            Say(tag, RV::Outcome::Invalid, "the press did not run on the host: %s", why);
+            return;
+        }
+        UE_LOGI("prop-props: HOST pressed on element %u (the tool's init)", eid);
+        PS::WaitFor("the host's copy at the press's flags", kApplySec, [&] { return CopyFlags(eid) == arm.expect; }, false);
+    } else {
+        if (!PS::Await("toolgun_in_hand", kSignalSec)) return;
+        int held = 0;
+        PS::WaitFor("the client's toolgun in hand here", kHandSec, [&] {
+            OnGameThread([&] { held = coop::hand_item::HeldClassIs(1, kToolgunClass) ? 1 : 0; });
+            return held == 1;
+        }, false);
+        UE_LOGI("prop-props: HeldClassIs(slot 1, prop_toolgun_C)=%d; the prop's element %u holds %s", held, eid, before.c_str());
+        if (!held) {
+            Say(tag, RV::Outcome::Invalid, "the host does not see a toolgun in the client's hand");
+            return;
+        }
     }
     PS::Mark("go", before);
 
@@ -407,32 +447,37 @@ void RunClient(const Arm& arm) {
     if (!PS::AwaitText("target", eidText, kSignalSec)) return;
     const uint32_t eid = static_cast<uint32_t>(std::strtoul(eidText.c_str(), nullptr, 10));
     if (!PS::WaitFor("this client's copy of the prop", kEidSec, [&] { return CopyLive(eid); })) return;
-    OnGameThread([] { ue_wrap::asset_load::LoadObjectByPath(kToolgunPath); });
-    OnGameThread([] { coop::dev::drill_hand::TakeIntoHandNow(kToolgunItem, kToolgunClass); });
-    if (!PS::WaitFor("the toolgun in this hand", kHandSec, [] {
-            bool in = false;
-            OnGameThread([&] {
-                void* h = coop::hand_item::LocalHandActor();
-                in = h && R::ClassNameOf(h) == kToolgunClass;
-            });
-            return in;
-        }))
-        return;
-    PS::Mark("toolgun_in_hand");
     std::string before;
-    if (!PS::AwaitText("go", before, kSignalSec)) return;
+    if (arm.hostPress) {
+        PS::Mark("copy_ready");
+        if (!PS::AwaitText("go", before, kSignalSec)) return;
+    } else {
+        OnGameThread([] { ue_wrap::asset_load::LoadObjectByPath(kToolgunPath); });
+        OnGameThread([] { coop::dev::drill_hand::TakeIntoHandNow(kToolgunItem, kToolgunClass); });
+        if (!PS::WaitFor("the toolgun in this hand", kHandSec, [] {
+                bool in = false;
+                OnGameThread([&] {
+                    void* h = coop::hand_item::LocalHandActor();
+                    in = h && R::ClassNameOf(h) == kToolgunClass;
+                });
+                return in;
+            }))
+            return;
+        PS::Mark("toolgun_in_hand");
+        if (!PS::AwaitText("go", before, kSignalSec)) return;
 
-    const char* why = "";
-    bool pressed = false;
-    OnGameThread([&] {
-        void* copy = CopyOf(eid);
-        pressed = copy && (arm.forged ? SendForged(arm, eid, copy, &why) : Press(arm, copy, &why));
-    });
-    if (!pressed) {
-        Say(tag, RV::Outcome::Invalid, "the press did not run on the client: %s", why);
-        return;
+        const char* why = "";
+        bool pressed = false;
+        OnGameThread([&] {
+            void* copy = CopyOf(eid);
+            pressed = copy && (arm.forged ? SendForged(arm, eid, copy, &why) : Press(arm, copy, &why));
+        });
+        if (!pressed) {
+            Say(tag, RV::Outcome::Invalid, "the press did not run on the client: %s", why);
+            return;
+        }
+        UE_LOGI("prop-props: CLIENT pressed on element %u (%s)", eid, arm.forged ? "forged" : "the tool's init");
     }
-    UE_LOGI("prop-props: CLIENT pressed on element %u (%s)", eid, arm.forged ? "forged" : "the tool's init");
 
     // A refused press ends in the notice; an applied one ends when this copy reads the flags the press asked for (on a
     // red arm that never happens, and the word says so).
@@ -472,7 +517,7 @@ DWORD WINAPI PropPropsThread(LPVOID /*arg*/) {
     const std::string armName = coop::config::ReadEnv("VOTVCOOP_PROP_PROPS_ARM");
     const Arm* arm = ArmOf(armName);
     if (!arm) {
-        RV::Say("prop-props", RV::Outcome::Invalid, "VOTVCOOP_PROP_PROPS_ARM '%s' is not g1, g2, g3, g4 or g5", armName.c_str());
+        RV::Say("prop-props", RV::Outcome::Invalid, "VOTVCOOP_PROP_PROPS_ARM '%s' is not g1, g2, g3, g4, g5 or g6", armName.c_str());
         return 0;
     }
     if (!PS::Begin(Tag(*arm).c_str())) return 0;

@@ -35,6 +35,7 @@
 #include "coop/dev/fall_drill.h"  // [dev] a falling host birth lands on the client where it lands on the host
 #include "coop/dev/remover_drill.h"  // [dev] the tool gun's remover pressed by a client
 #include "coop/dev/prop_act_drill.h"  // [dev] a client's take or use of a shared prop asks the host first
+#include "coop/dev/prop_tool_park_selftest.h"  // [dev] the order the tool's parked states replay in
 #include "coop/dev/prop_syncer_drill.h"  // [dev] a client syncs a prop its own interaction moves: kick and forge, judged by the host and an observer
 #include "coop/dev/sack_drill.h"  // [dev] a client's point sack is paid by the host, once
 #include "coop/dev/server_upgrade_drill.h"  // [dev] a client's install and take-out at a server box
@@ -450,6 +451,7 @@ void TickProbes(coop::net::Session& session, bool isConnected, bool isHost) {
     coop::dev::store_table_probe::Tick();  // ini store_table_probe=1; ONE-SHOT: which mechanism can read a list_store row
     coop::dev::order_selftest::Tick(&session);  // ini order_selftest=1: a client's shop order, the host's daily order, each once a session
     coop::dev::bind_wait_selftest::Tick(&session);  // ini bind_wait_selftest=1: the bind wait's rules on synthetic eids, a client once its world is announced
+    coop::dev::prop_tool_park_selftest::Tick();  // ini prop_props_park_selftest=1: the tool's parked states replay newest-wins, once a process
     coop::dev::meadow_selftest::Tick(&session);  // ini meadow_selftest=1: the host's row into its signal database and out, once a session
     coop::dev::delivery_census::Tick(isHost);  // ini delivery_census=1; edges only // polls drone/order/radar; with drone_probe_drive=1 ALSO auto-fires one delivery (host) / order (client)
     coop::dev::native_pile_inert_probe::Install();  // GO/NO-GO gate for nativizing the trash mirror (ini native_pile_inert_probe=1)
