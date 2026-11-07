@@ -40,7 +40,7 @@ struct Hunted {
 Hunted               g_rows[kRows];
 size_t               g_count = 0;
 bool                 g_fullSaid = false;
-bool                 g_subscribed = false;
+bool                 g_installAsked = false;  // the subscription is asked for once: a full table stays full, said once
 coop::net::Session*  g_session = nullptr;
 
 bool SameKey(const coop::net::WireKey& a, const coop::net::WireKey& b) {
@@ -118,9 +118,10 @@ void Install(coop::net::Session& session) {
     UE_ASSERT_GAME_THREAD("walker_gaze::Install");
     if (session.role() != coop::net::Role::Client) return;
     g_session = &session;
-    if (g_subscribed) return;
-    g_subscribed = coop::walker_state_client::SubscribeHunt(&OnHunt);
-    if (!g_subscribed) UE_LOGE("walker_gaze: the walker state table's subscriber list is full -- this player's gaze is not sent");
+    if (g_installAsked) return;
+    g_installAsked = true;
+    const bool subscribed = coop::walker_state_client::SubscribeHunt(&OnHunt);
+    if (!subscribed) UE_LOGE("walker_gaze: the walker state table's subscriber list is full -- this player's gaze is not sent");
 }
 
 void Tick() {

@@ -107,7 +107,7 @@ bool RunSelftest() {
         UE_LOGI("walker_target selftest: ALL PASS (%d checks)", total);
         return true;
     }
-    UE_LOGE("walker_target selftest: %d/%d checks passed", pass, total);
+    UE_LOGE("walker_target selftest FAIL: %d/%d checks passed", pass, total);
     return false;
 }
 

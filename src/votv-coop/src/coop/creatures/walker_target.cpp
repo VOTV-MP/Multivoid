@@ -82,7 +82,8 @@ uint64_t           g_listing = 0;
 uint64_t           g_setAsked = ~uint64_t{0};
 std::atomic<void*> g_walkerClass{nullptr};
 
-bool g_subscribed = false;
+// The subscription is asked for once for the process: a table that was full stays full, so the failure is said once and not retried.
+bool g_installAsked = false;
 
 // A held walker: its slot index and serial name the actor, so an entry that outlived its actor is never taken for a walker
 // born at the same address. Game thread only.
@@ -137,6 +138,17 @@ Walker* Find(void* actor) {
 }
 
 void OnCameraManagerPost(void* context, void* source, void* result);
+void Rearm();
+
+// A held walker's entry goes (its end of play, or an entry found to have outlived its actor): the hook is disarmed with the last,
+// and a walker that had a target is told it has none, which withdraws its served record (ServeTarget) and its other subscribers'.
+void Forget(Walker* w) {
+    const uint8_t was = w->target;
+    void* const   actor = w->actor;
+    *w = g_walkers[--g_walkerCount];
+    Rearm();
+    if (was != kNoTarget) Notify(actor, kNoTarget);
+}
 
 // Armed while a walker is held and its graph is pinned: with none the hook does nothing at all, and the forwarder pays its one
 // load and branch. The graph subscribers hear the same state, so their own hooks follow it.
@@ -193,8 +205,7 @@ void OnCameraManagerPost(void* /*context*/, void* source, void* /*result*/) {
     void*   slotResult = UH::CurrentResult();
     if (!w || !slotResult) return;
     if (R::SlotSerial(w->index) != w->serial || R::InternalIndexOf(source) != w->index) {
-        *w = g_walkers[--g_walkerCount];  // an entry that outlived its actor
-        Rearm();
+        Forget(w);  // an entry that outlived its actor: its served record and its subscribers go with it
         return;
     }
     void* const      camera = *static_cast<void**>(slotResult);
@@ -250,15 +261,7 @@ void PinSites(void* cls) {
 
 // A held walker ends, by the death seam: its entry goes, and the hook is disarmed with the last.
 void OnWalkerEnd(const DS::ActorEnd& end) {
-    for (size_t i = 0; i < g_walkerCount; ++i) {
-        if (g_walkers[i].actor != end.actor) continue;
-        const uint8_t was = g_walkers[i].target;
-        void* const   actor = g_walkers[i].actor;
-        g_walkers[i] = g_walkers[--g_walkerCount];
-        Rearm();
-        if (was != kNoTarget) Notify(actor, kNoTarget);
-        return;
-    }
+    if (Walker* w = Find(end.actor)) Forget(w);
 }
 
 // Hold `actor`: its target is chosen at its next read. A walker held already keeps its target.
@@ -267,7 +270,9 @@ void Hold(void* actor) {
     const int32_t serial = R::SlotSerial(index);
     if (Walker* w = Find(actor)) {
         if (w->index == index && w->serial == serial) return;
-        *w = Walker{actor, index, serial, kNoTarget};
+        const uint8_t was = w->target;
+        *w = Walker{actor, index, serial, kNoTarget};  // a new walker at a dead one's address: the dead one's record goes
+        if (was != kNoTarget) Notify(actor, kNoTarget);
         return;
     }
     if (g_walkerCount >= kMaxWalkers) {
@@ -350,11 +355,12 @@ void RefreshClass() {
 
 void Install(coop::net::Session& session) {
     UE_ASSERT_GAME_THREAD("walker_target::Install");
-    if (session.role() != coop::net::Role::Host || g_subscribed) return;
+    if (session.role() != coop::net::Role::Host || g_installAsked) return;
+    g_installAsked = true;
     SubscribeTargetChanged(&LogTargetChanged);
     SubscribeTargetChanged(&ServeTarget);
-    g_subscribed = coop::prop_element_tracker::SubscribeHostPropExpressed(&OnExpressed);
-    if (g_subscribed) UE_LOGI("walker_target: the host's walkers are claimed into the drive stream at their eid mint");
+    const bool expressed = coop::prop_element_tracker::SubscribeHostPropExpressed(&OnExpressed);
+    if (expressed) UE_LOGI("walker_target: the host's walkers are claimed into the drive stream at their eid mint");
     else UE_LOGE("walker_target: the prop lane's subscriber table is full -- the host's walker is not claimed");
 }
 

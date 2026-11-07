@@ -232,6 +232,12 @@ Entry* Make(void* walker) {
 // the host's or none, and a walker that ended, drop it. `walker` may be dying: it is compared and never read through here.
 void OnTargetChanged(void* walker, uint8_t slot) {
     Entry* e = Find(walker);
+    // An entry is the walker of its index and serial, not of its address: one whose actor ended and whose address a new walker
+    // took is dropped, so the new walker is made afresh with its own key, index and serial.
+    if (e && !Alive(*e)) {
+        Remove(e);
+        e = nullptr;
+    }
     const bool client = slot != WT::kNoTarget && slot != 0 && slot < coop::players::kMaxPeers;
     if (!client) {
         if (e) Remove(e);

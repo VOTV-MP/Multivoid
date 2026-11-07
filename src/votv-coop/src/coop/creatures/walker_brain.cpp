@@ -9,13 +9,13 @@
 
 #include "ue_wrap/actors/ambient_creature.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/ufunction_hook.h"
 #include "ue_wrap/engine/engine_pawn.h"
 #include "ue_wrap/facts/function_row.h"
 
-#include <chrono>
 #include <cstdint>
 #include <cstring>
 
@@ -24,6 +24,7 @@ namespace {
 
 namespace AC = ue_wrap::ambient_creature;
 namespace E = ue_wrap::engine;
+namespace OI = ue_wrap::object_index;
 namespace R = ue_wrap::reflection;
 namespace SG = ue_wrap::script_gate;
 namespace UH = ue_wrap::ufunction_hook;
@@ -38,8 +39,6 @@ constexpr int kTagGraph = 0x574B4230;  // 'WKB0'
 // The entries a copy runs: the BeginPlay and the destroy. The graph has thirteen; the other eleven are refused.
 constexpr int32_t kRuns[] = {4411, 5249};
 
-constexpr uint64_t kRetryMs = 1000;
-constexpr int kMaxTries = 30;
 
 R::ParamOffset g_entryParam{L"EntryPoint"};
 
@@ -47,9 +46,10 @@ bool g_graphAsked = false;
 bool g_hooked = false;
 bool g_armed = false;  // the hook sits on a native every Blueprint spawn calls: it calls back only while a client session runs
 void* g_hookFn = nullptr;
-bool g_gaveUp = false;
-int g_tries = 0;
-uint64_t g_nextTryMs = 0;
+// The hook is asked for again when the object index's class set has moved since the last ask, and never given up for the process:
+// a client whose copy keeps its AI controller is a second brain, so the resolve follows the load until it takes.
+uint64_t g_setAsked = ~uint64_t{0};
+bool g_failSaid = false;
 
 // What the gate refused, each entry counted and said at its first, and the pawns made inert.
 struct Refusal {
@@ -61,11 +61,6 @@ Refusal  g_refusals[kMaxRefusals];
 size_t   g_refusalCount = 0;
 uint32_t g_refusalsUnlisted = 0;
 uint32_t g_inert = 0;
-
-uint64_t NowMs() {
-    return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
-}
 
 void NoteRefused(int32_t entry) {
     for (size_t i = 0; i < g_refusalCount; ++i) {
@@ -106,24 +101,23 @@ void OnBeginDeferredPost(void* /*context*/, void* source, void* spawned) {
 }
 
 void InstallSpawnHook() {
-    if (g_gaveUp) return;
     if (g_hooked) {
         if (!g_armed) g_armed = UH::SetArmed(g_hookFn, &OnBeginDeferredPost, true);
         return;
     }
-    const uint64_t now = NowMs();
-    if (now < g_nextTryMs) return;
-    g_nextTryMs = now + kRetryMs;
+    const uint64_t set = OI::ClassSetVersion();
+    if (set == g_setAsked) return;
+    g_setAsked = set;
     const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowBeginDeferred);
     if (fn && UH::InstallPostHook(fn, &OnBeginDeferredPost, /*armed=*/false)) {
         g_hooked = true;
         g_hookFn = fn.Fn();
         g_armed = UH::SetArmed(g_hookFn, &OnBeginDeferredPost, true);
         UE_LOGI("walker_brain: watching deferred spawns for a walker's nav pawn (made inert on a client)");
-    } else if (++g_tries >= kMaxTries) {
-        g_gaveUp = true;
-        UE_LOGE("walker_brain: BeginDeferredActorSpawnFromClass did not resolve or would not take a post hook in %d tries -- a "
-                "walker copy's nav pawn keeps its AI controller", kMaxTries);
+    } else if (!g_failSaid) {
+        g_failSaid = true;
+        UE_LOGE("walker_brain: BeginDeferredActorSpawnFromClass did not resolve or would not take a post hook -- a walker "
+                "copy's nav pawn keeps its AI controller until it does (asked again when the class set moves; said once)");
     }
 }
 
@@ -165,6 +159,8 @@ void OnDisconnect() {
     g_refusalCount = 0;
     g_refusalsUnlisted = 0;
     g_inert = 0;
+    g_setAsked = ~uint64_t{0};
+    g_failSaid = false;
     if (g_armed && UH::SetArmed(g_hookFn, &OnBeginDeferredPost, false)) g_armed = false;
 }
 
