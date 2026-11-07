@@ -204,6 +204,9 @@ std::string LaptopReading() {
         std::vector<std::wstring> rows;
         int32_t writes = 0, type = -1;
         if (laptop && ReadSlot(FS::DeviceKind::Laptop, laptop, rows, writes, type)) {
+            // The laptop shows at most kLaptopRows: its own updFloppy clamps floppyData (ui_laptop.cpp:6510), and a peer
+            // whose laptop has not refreshed since the insert still holds the 32nd row the game will drop.
+            if (rows.size() > static_cast<size_t>(kLaptopRows)) rows.resize(kLaptopRows);
             text = "type=" + std::to_string(type) + " " + Digest(rows, writes);
         }
     });
