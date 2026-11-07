@@ -245,7 +245,8 @@ void Execute(coop::net::Session& s, const coop::net::UpgradeIntentPayload& p, ui
 // its own price. Sent as a level buy, a press on the module would be judged by the level's arithmetic. `module` is
 // the widget's own discriminator, and it picks the intent's direction (upgrade_intent::kModuleBuy and kModuleSell).
 // Ten indices have no store: 12-19, 22 and 23 return a temporary of the body's own in both of uicomp_upgradeSlot's
-// level switches (its getLevel and setLevel), so a press on one of them charges its price and holds no level.
+// level switches (its getLevel and setLevel), so a press on one of them charges its price and holds no level. Nine of
+// them have a row on the laptop: no widget carries 12.
 // Which indices are module rows is the widget's flag and not the switch's; the switch is only what each one writes.
 bool RowOf(void* widget, int* outIndex, bool* outModule) {
     static void*   sCls = nullptr;

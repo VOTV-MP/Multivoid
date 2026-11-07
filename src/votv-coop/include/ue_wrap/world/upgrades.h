@@ -45,8 +45,8 @@ inline constexpr const wchar_t* kSellButtonFn =
 // Presses a module row's own buy or sell button on this machine's live panel. False when no live module row of that
 // index stands. Its body is the game's: index 27 writes the
 // triangle level at the module's price, and the ten indices without a store (12-19, 22, 23: the row's getLevel and
-// setLevel switches return a temporary) charge their price and hold no level (the switch read; the 30 credits of row 23
-// measured on a client). Game thread.
+// setLevel switches return a temporary) charge their price and hold no level; nine of them have a row on the laptop, as
+// no widget carries 12 (ui_laptop's tree). The switch read; the 30 credits of row 23 measured on a client. Game thread.
 bool PressModuleRow(int panelIndex, bool sell);
 
 // The panel's own arithmetic, baked from the ui_laptop rows (the .cpp carries the table and the

@@ -366,7 +366,7 @@ Community commits are adopted with their **original authorship preserved**
   receive (56,092 B), with a record over it refused at the receive and its size logged. A full box disc at
   32 writes measured 48,982 B and a laptop disc at 31 writes 47,460 B, both under it. The host presses
   a module row only for the laptop's holder and at a rate limit, a refused press is answered to the sender alone with the host's
-  balance and levels, and the ten storeless rows are counted from the game's switch. The two drills were
+  balance and levels, and the storeless rows charge their price, as row 23's 30 credits measured. The two drills were
   moved onto the shared helpers, wait on the peers' state, are judged on the host, and have a join arm and
   a red each. The third commit (two discs put in one slot end as a swap) waits: the loss it answers comes
   from the disc slots being read once a second while the game announces both acts, and a swap on top of

@@ -209,7 +209,7 @@ and goes to the host as an intent, and the host presses its own copy of the row,
 (`coop/interactables/upgrade_sync`). The row numbered 27 writes the triangle level at its 400 credits; ten indices
 (12-19, 22 and 23) have no store, as the row's getLevel and setLevel switches select a temporary of the button's own for
 them, so a press charges its price and holds no level, as in single player (the switch read; row 23's 30 credits
-measured; which of the ten a player can reach is not measured).
+measured). Nine of the ten have a row on the laptop's panel, since no widget carries 12 (the panel's widget tree).
 
 ## Who owns what
 
