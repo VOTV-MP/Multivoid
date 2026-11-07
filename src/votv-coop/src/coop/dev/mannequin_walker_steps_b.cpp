@@ -104,28 +104,35 @@ bool HostKeep(void* a) {
     // The keep holds across kKeepReads reads of the players by the walker's Blueprint (each is a chance to choose again, and takes
     // the nearest, which is now the client), waited for to kKeepBoundS, the target read as the host at every step of the wait. A
     // wait that sees fewer reads is no measurement.
-    uint32_t reads0 = 0, reads = 0;
+    // Only a read made while the client stands nearer counts: the walker walks on toward the host and passes the client, and a read
+    // after that is no test of the keep (measured pr84 t1: the keep held across 2 reads, then the client fell behind).
+    uint32_t last = 0, reads = 0;
     uint8_t  seen = 0;
-    OnGameThread([&] { reads0 = WT::SiteReads(a); });
-    bool changed = false;
+    OnGameThread([&] { last = WT::SiteReads(a); });
+    bool changed = false, lost = false;
     WaitGT("walker A reads the players while the client stands nearer", kKeepBoundS, [&] {
         Aim(a, false);
-        seen = WT::TargetOf(a);
-        reads = WT::SiteReads(a) - reads0;
-        changed = seen != 0;
-        return changed || reads >= kKeepReads;
+        const uint32_t now = WT::SiteReads(a);
+        const bool nearer = Nearness{ClientTo(a), PlayerTo(a)}.Nearer(0.f);
+        if (nearer) {
+            reads += now - last;
+            seen = WT::TargetOf(a);
+            changed = seen != 0;
+        } else {
+            lost = true;
+        }
+        last = now;
+        return changed || lost || reads >= kKeepReads;
     }, false);
     char what[200];
     std::snprintf(what, sizeof(what), "walker A keeps hunting the host across %u reads while the client stands nearer to it (target %d)",
                   reads, seen == WT::kNoTarget ? -1 : static_cast<int>(seen));
     if (!changed && reads < kKeepReads) {
-        std::snprintf(what, sizeof(what), "walker A read the players %u time(s) in %d s while the client stood nearer (%u needed)", reads,
-                      kKeepBoundS, kKeepReads);
+        std::snprintf(what, sizeof(what), "walker A read the players %u time(s) while the client stood nearer (%u needed%s)", reads,
+                      kKeepReads, lost ? "; the client fell behind the host first" : "; the bound ran out");
         return Invalid(what);
     }
     if (!Check(!changed, "3", what)) return Fail("3", what);
-    OnGameThread([&] { n = Nearness{ClientTo(a), PlayerTo(a)}; });
-    if (!n.Nearer(0.f)) return Invalid("the client stopped being nearer to walker A than the host during the keep window");
     return true;
 }
 
