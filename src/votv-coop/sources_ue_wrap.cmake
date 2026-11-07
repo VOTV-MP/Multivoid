@@ -16,6 +16,7 @@ set(VOTVCOOP_SOURCES_UE_WRAP_1
     src/ue_wrap/core/reflection_call.cpp
     src/ue_wrap/core/uobject_listeners.cpp
     src/ue_wrap/core/object_index.cpp
+    src/ue_wrap/core/class_reask.cpp
     src/ue_wrap/core/reflection_dispatch.cpp
     src/ue_wrap/core/reflection_props.cpp
     src/ue_wrap/core/asset_load.cpp

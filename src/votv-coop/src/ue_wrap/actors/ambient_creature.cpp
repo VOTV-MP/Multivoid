@@ -4,6 +4,7 @@
 
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/class_reask.h"
 #include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -12,7 +13,6 @@
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
 
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <optional>
@@ -22,6 +22,7 @@ namespace {
 
 namespace R = ue_wrap::reflection;
 namespace OI = ue_wrap::object_index;
+namespace CR = ue_wrap::class_reask;
 namespace P = ue_wrap::profile;
 
 void Collect(const wchar_t* className, std::vector<void*>& out) {
@@ -31,26 +32,6 @@ void Collect(const wchar_t* className, std::vector<void*>& out) {
         if (R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__")) static_cast<std::vector<void*>*>(ctx)->push_back(obj);
     }, &out);
 }
-
-// When a lookup that missed asks again. A class or asset answers null while it loads and its finishing moves no number
-// (object_index.h:55-58), so the class set's move alone would leave a miss unanswered; the lane's tick latch
-// (sus_hole_intent.cpp:77-87) is the coop layer's, and this wrapper has no tick, so the second trigger is the clock: at most
-// once per kReaskMs.
-constexpr uint64_t kReaskMs = 1000;
-struct ReaskLatch {
-    uint64_t setAsked = ~uint64_t{0};
-    uint64_t askedMs = 0;
-    bool Due() {
-        const uint64_t set = OI::ClassSetVersion();
-        const uint64_t now = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
-        if (set == setAsked && now - askedMs < kReaskMs) return false;
-        setAsked = set;
-        askedMs = now;
-        return true;
-    }
-    void Reset() { setAsked = ~uint64_t{0}; }
-};
 
 // Property offsets on the instance's class, kept per class object.
 R::InstanceOffset g_staticMesh{L"StaticMesh"};
@@ -106,9 +87,9 @@ void* WalkerAnim(void* walker) {
 }
 
 // The native functions and library objects the view test calls: they last the process, and two of the lookups walk the object
-// table, while the test runs once a frame for each copy that hunts this player. A miss is asked again by ReaskLatch (the class
-// set's move, or the clock). The parameter frames are kept with them: a call sets every input again and the call writes every
-// output, so one frame serves each call and none is allocated per frame.
+// table, while the test runs once a frame for each copy that hunts this player. A miss is asked again by class_reask::Latch (a
+// class-set move, then each call for its load window). The parameter frames are kept with them: a call sets every input again
+// and the call writes every output, so one frame serves each call and none is allocated per frame.
 struct ViewCalls {
     void* sysCdo = nullptr;
     void* libCdo = nullptr;
@@ -118,7 +99,7 @@ struct ViewCalls {
     std::optional<ParamFrame> boundsFrame;
     std::optional<ParamFrame> frustumFrame;
     std::optional<ParamFrame> renderedFrame;  // the mesh class's WasRecentlyRendered; rebuilt if the function moves
-    ReaskLatch asked;
+    CR::Latch asked;
     bool Ready() {
         if (bounds && frustum && frustumParams.size() >= 4) return true;
         if (!asked.Due()) return false;
@@ -256,7 +237,7 @@ void* WalkerGazeController(void* worldContext) {
     if (!worldContext) return nullptr;
     static void* s_cdo = nullptr;
     static void* s_fn = nullptr;
-    static ReaskLatch s_asked;  // each ask walks the object table
+    static CR::Latch s_asked;  // each ask walks the object table
     if ((!s_cdo || !s_fn) && s_asked.Due()) {
         if (!s_cdo) s_cdo = R::FindClassDefaultObject(L"GameplayStatics");
         if (!s_fn) {
@@ -281,10 +262,10 @@ void* WalkerClass() { return OI::ClassByName(L"prop_wMannequin_C"); }
 
 bool IsWalker(void* actor) {
     // The class is held with the listing it was found under (a class unloaded and loaded again, even at the same address, answers
-    // a new id), and asked for again by ReaskLatch while it is null: a pointer compare per call, not a name hash.
+    // a new id), and asked for again by class_reask::Latch while it is null: a pointer compare per call, not a name hash.
     static void*       s_cls = nullptr;
     static uint64_t    s_listing = 0;
-    static ReaskLatch  s_asked;
+    static CR::Latch    s_asked;
     if (!actor) return false;
     if (s_cls && OI::ClassListingId(s_cls) != s_listing) {
         s_cls = nullptr;

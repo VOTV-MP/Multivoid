@@ -16,6 +16,7 @@
 #include "coop/props/prop_element_tracker.h"
 
 #include "ue_wrap/actors/ambient_creature.h"
+#include "ue_wrap/core/class_reask.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
@@ -75,12 +76,13 @@ std::atomic<size_t> g_pending{0};  // g_queueCount, readable without the lock
 std::atomic<bool>   g_overflowSaid{false};
 
 // The walker's class and the listing it was found under (ObjectIndex ClassListingId: a class unloaded and loaded again, even at
-// the same address, answers a new id). While it is null the lookup is asked again only when the class set moved. The atomic is
-// the pointer the subscriber compares on whichever thread MarkPropElement runs.
-void*              g_class = nullptr;
-uint64_t           g_listing = 0;
-uint64_t           g_setAsked = ~uint64_t{0};
-std::atomic<void*> g_walkerClass{nullptr};
+// the same address, answers a new id). While it is null the lookup is asked again by g_ask: on a class-set move, then each tick
+// for its load window (a class finishing its load moves no number, object_index.h:55-58). The atomic is the pointer the
+// subscriber compares on whichever thread MarkPropElement runs.
+void*                       g_class = nullptr;
+uint64_t                    g_listing = 0;
+ue_wrap::class_reask::Latch g_ask;
+std::atomic<void*>          g_walkerClass{nullptr};
 
 // The subscription is asked for once for the process: a table that was full stays full, so the failure is said once and not retried.
 bool g_installAsked = false;
@@ -339,20 +341,18 @@ void ResolveClass() {
     Rearm();
 }
 
-// The class again when its listing changed (an unload) and, while it is null, only when the class set moved: a class gaining
-// its first instance moves the number, so the lookup is not a poll of the class table.
+// The class again when its listing changed (an unload) and, while it is null, when g_ask says: a class set move and the load
+// window after it, then nothing until the next move, so a class that never loads is not asked every tick.
 void RefreshClass() {
     if (g_class && OI::ClassListingId(g_class) != g_listing) {
         g_class = nullptr;
         g_walkerClass.store(nullptr, std::memory_order_release);
         g_ubergraph.store(nullptr, std::memory_order_relaxed);
-        g_setAsked = ~uint64_t{0};
+        g_ask.Reset();
         Rearm();
     }
     if (g_class) return;
-    const uint64_t set = OI::ClassSetVersion();
-    if (set == g_setAsked) return;
-    g_setAsked = set;
+    if (!g_ask.Due()) return;
     ResolveClass();
 }
 
@@ -440,7 +440,7 @@ void OnDisconnect() {
     g_walkerClass.store(nullptr, std::memory_order_release);
     g_class = nullptr;
     g_listing = 0;
-    g_setAsked = ~uint64_t{0};
+    g_ask.Reset();
     std::lock_guard<std::mutex> lk(g_queueMutex);
     g_queueCount = 0;
     g_pending.store(0, std::memory_order_release);

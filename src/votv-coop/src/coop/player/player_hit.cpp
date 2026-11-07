@@ -10,17 +10,16 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 
+#include "ue_wrap/core/class_reask.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/obj_keyed_cache.h"
-#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine_audio.h"
 #include "ue_wrap/engine/engine_player_verbs.h"
 
 #include <atomic>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -106,24 +105,18 @@ ue_wrap::FVector Vec(const float (&v)[3]) { return ue_wrap::FVector{v[0], v[1], 
 // as a UI sound. Its class is loaded wherever a walker stands, as one must for its hit.
 void PlayCue(void* body, uint8_t cue) {
     if (cue != coop::net::kPlayerHitCueWalker) return;
-    // The asset is found once and held. A miss walks the whole object table, and an asset finishing its load moves no object-index
-    // number (object_index.h:55-58), so a miss is asked again when the class set has moved and at most once per kSoundReaskMs
-    // besides. This path has no tick to hang a latch on (it runs per hit), hence the clock.
-    constexpr uint64_t kSoundReaskMs = 1000;
-    static void*    sSound = nullptr;
-    static uint64_t sSetAsked = ~uint64_t{0};
-    static uint64_t sAskedMs = 0;
-    if (!sSound || !R::IsLive(sSound)) {
+    // The asset is found once and held. A miss walks the whole object table, and an asset finishing its load moves no
+    // object-index number (the reasoning of object_index.h:55-58, which states it of a class), so a miss is asked again on each
+    // call for the load window after a class-set move and not again until the next move.
+    static void*                       sSound = nullptr;
+    static ue_wrap::class_reask::Latch sAsk;
+    if (sSound && !R::IsLive(sSound)) {
         sSound = nullptr;
-        const uint64_t set = ue_wrap::object_index::ClassSetVersion();
-        const uint64_t now = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
-        if (set != sSetAsked || now - sAskedMs >= kSoundReaskMs) {
-            sSetAsked = set;
-            sAskedMs = now;
-            sSound = R::FindObject(L"break_flesh_3", L"SoundWave");
-            if (!sSound) sSound = R::FindObject(L"break_flesh_3", L"SoundCue");
-        }
+        sAsk.Reset();
+    }
+    if (!sSound && sAsk.Due()) {
+        sSound = R::FindObject(L"break_flesh_3", L"SoundWave");
+        if (!sSound) sSound = R::FindObject(L"break_flesh_3", L"SoundCue");
     }
     if (!sSound) {
         if (++g_cuesLost == 1) UE_LOGW("player_hit: the walker's hit sound break_flesh_3 is not loaded here -- not played");

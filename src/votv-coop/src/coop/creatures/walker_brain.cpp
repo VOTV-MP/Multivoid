@@ -5,12 +5,11 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/net/session.h"
-#include "coop/session/net_pump.h"
 #include "coop/world/spawn_authority.h"
 
 #include "ue_wrap/actors/ambient_creature.h"
+#include "ue_wrap/core/class_reask.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/ufunction_hook.h"
@@ -25,7 +24,6 @@ namespace {
 
 namespace AC = ue_wrap::ambient_creature;
 namespace E = ue_wrap::engine;
-namespace OI = ue_wrap::object_index;
 namespace R = ue_wrap::reflection;
 namespace SG = ue_wrap::script_gate;
 namespace UH = ue_wrap::ufunction_hook;
@@ -48,12 +46,10 @@ bool g_hooked = false;
 bool g_armed = false;  // the hook sits on a native every Blueprint spawn calls: it calls back only while a client session runs
 void* g_hookFn = nullptr;
 // The hook is never given up for the process: a client whose copy keeps its AI controller is a second brain, so the resolve
-// follows the load until it takes. A row that does not resolve is asked again once per session tick (a class answers null while
-// it loads and its finishing moves no number, object_index.h:55-58; the precedent is sus_hole_intent's ClassCache); a row that
-// resolved and whose hook was refused is asked again only when the class set moves, since each refusal logs.
-uint64_t g_setAsked = ~uint64_t{0};
-uint64_t g_tickAsked = ~uint64_t{0};
-bool g_rowResolved = false;
+// follows the load until it takes. A row that does not resolve or whose hook is refused is asked again when the class set moves
+// and then each session tick for the load window after it (a class answers null while it loads and its finishing moves no
+// number, object_index.h:55-58), and not again until the next move.
+ue_wrap::class_reask::Latch g_ask;
 bool g_failSaid = false;
 
 // What the gate refused, each entry counted and said at its first, and the pawns made inert.
@@ -110,14 +106,9 @@ void InstallSpawnHook() {
         if (!g_armed) g_armed = UH::SetArmed(g_hookFn, &OnBeginDeferredPost, true);
         return;
     }
-    const uint64_t set = OI::ClassSetVersion();
-    const uint64_t tick = coop::net_pump::TickSerial();
-    if (g_rowResolved ? set == g_setAsked : tick == g_tickAsked) return;
-    g_setAsked = set;
-    g_tickAsked = tick;
+    if (!g_ask.Due()) return;
     const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowBeginDeferred);
-    g_rowResolved = static_cast<bool>(fn);
-    if (fn &&UH::InstallPostHook(fn, &OnBeginDeferredPost, /*armed=*/false)) {
+    if (fn && UH::InstallPostHook(fn, &OnBeginDeferredPost, /*armed=*/false)) {
         g_hooked = true;
         g_hookFn = fn.Fn();
         g_armed = UH::SetArmed(g_hookFn, &OnBeginDeferredPost, true);
@@ -125,8 +116,7 @@ void InstallSpawnHook() {
     } else if (!g_failSaid) {
         g_failSaid = true;
         UE_LOGE("walker_brain: BeginDeferredActorSpawnFromClass did not resolve or would not take a post hook -- a walker "
-                "copy's nav pawn keeps its AI controller until it does (asked again each tick while the row is unresolved, else when the "
-                "class set moves; said once)");
+                "copy's nav pawn keeps its AI controller until it does (asked again for a window after each class-set move; said once)");
     }
 }
 
@@ -168,9 +158,7 @@ void OnDisconnect() {
     g_refusalCount = 0;
     g_refusalsUnlisted = 0;
     g_inert = 0;
-    g_setAsked = ~uint64_t{0};
-    g_tickAsked = ~uint64_t{0};
-    g_rowResolved = false;
+    g_ask.Reset();
     g_failSaid = false;
     if (g_armed && UH::SetArmed(g_hookFn, &OnBeginDeferredPost, false)) g_armed = false;
 }
