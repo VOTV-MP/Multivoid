@@ -262,6 +262,12 @@ a class that overrides it (a landmine, a TV) takes its own path as in single pla
 sleep it reads back from the actor as `PropPropsState` to every peer. The host's own press is published from the tool's
 post row. A refused press returns the reason to its sender alone, and the client shows it.
 
+Every peer that receives `PropPropsState`, the sender included, sets its copy through the same setter, so the
+collision follows a static flag and an override runs its own path; an element it does not know is dropped. A joiner
+gets a prop's flags from the snapshot row, and the join-window correction (`coop/save/join_window_baseline`) now
+compares static as well as frozen and sleep, so a prop made static during the join reaches the joiner through the
+same setter. A copy this player holds when the flags arrive takes them at once; its release states its own.
+
 ### Sticking to a wall
 
 A prop sticks through its wall-attach component, which the wall-attachable props (the cameras, the

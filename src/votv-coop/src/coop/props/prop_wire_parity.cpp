@@ -71,10 +71,11 @@ uint8_t PhysFlagsOf(void* actor) {
     return flags;
 }
 
-uint8_t FrozenSleepBitsOf(void* actor) {
+uint8_t FlagBitsOf(void* actor) {
     namespace pf = coop::net::propspawn_flags;
     if (!actor || !ue_wrap::prop::IsDescendantOfProp(actor)) return 0;
-    return static_cast<uint8_t>((ue_wrap::prop::IsFrozen(actor) ? pf::kFrozen : 0) |
+    return static_cast<uint8_t>((ue_wrap::prop::IsStatic(actor) ? pf::kStatic : 0) |
+                                (ue_wrap::prop::IsFrozen(actor) ? pf::kFrozen : 0) |
                                 (ue_wrap::prop::IsSleeping(actor) ? pf::kSleep : 0));
 }
 
@@ -93,6 +94,19 @@ void ConvergeFrozenSleep(void* actor, uint8_t physFlags) {
         UE_LOGW("prop_wire_parity: %p frozen=%d sleep=%d -> want frozen=%d sleep=%d -- the game's verb did "
                 "not dispatch; the copy keeps its flags", actor, isFrozen ? 1 : 0, isSleep ? 1 : 0,
                 wantFrozen ? 1 : 0, wantSleep ? 1 : 0);
+    }
+}
+
+void ConvergeStatic(void* actor, uint8_t physFlags) {
+    namespace pf = coop::net::propspawn_flags;
+    if (!(physFlags & pf::kLiveState) || !actor || !ue_wrap::prop::IsDescendantOfProp(actor)) return;
+    const bool wantStatic = (physFlags & pf::kStatic) != 0;
+    if (ue_wrap::prop::IsStatic(actor) == wantStatic) return;
+    const bool wantFrozen = (physFlags & pf::kFrozen) != 0;
+    const bool wantSleep  = (physFlags & pf::kSleep) != 0;
+    if (!ue_wrap::prop::CallSetPropProps(actor, wantStatic, wantFrozen, /*active=*/false, wantSleep)) {
+        UE_LOGW("prop_wire_parity: %p static -> %d, frozen=%d sleep=%d -- the game's setter did not dispatch; the "
+                "copy keeps its flags", actor, wantStatic ? 1 : 0, wantFrozen ? 1 : 0, wantSleep ? 1 : 0);
     }
 }
 

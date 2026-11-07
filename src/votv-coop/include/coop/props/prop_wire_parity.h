@@ -40,9 +40,9 @@ void ReconcileToHostPhysics(void* actor, uint8_t physFlags);
 // simulation on over it). 0 for anything not an Aprop_C.
 uint8_t PhysFlagsOf(void* actor);
 
-// Only the frozen and sleep bits of an Aprop_C, read raw (two field reads, no engine call): what a
+// Only the static, frozen and sleep bits of an Aprop_C, read raw (three field reads, no engine call): what a
 // cheap scan compares. 0 for anything else.
-uint8_t FrozenSleepBitsOf(void* actor);
+uint8_t FlagBitsOf(void* actor);
 
 // Make this copy's frozen and sleep what `physFlags` (another peer's) say, through the game's own
 // verbs: its unfreeze when the other copy is neither (a grab's awakeUnfreeze), prop_C's own setter
@@ -54,6 +54,13 @@ uint8_t FrozenSleepBitsOf(void* actor);
 // touched: a write here runs init(), which wakes the body. A verb that does not dispatch is said.
 // Game thread.
 void ConvergeFrozenSleep(void* actor, uint8_t physFlags);
+
+// Make this copy's static what `physFlags` (the host's) say, when it differs: the game's own setter on the copy's
+// class (setPropProps, so init() switches the collision and an override takes its own path) with the flags'
+// static, frozen and sleep and `active` false, the converge's value. Nothing else changes a copy's static, so the
+// join-window correction and the toolgun's publication are its only senders. Acts only on flags read off a live
+// prop (kLiveState), only on a difference and only on an Aprop_C. A verb that does not dispatch is said. Game thread.
+void ConvergeStatic(void* actor, uint8_t physFlags);
 
 // SP-parity simulate state from the wire identity flags. Aprop_C::init() computes
 // SetSimulatePhysics(NOT(static || frozen || sleep)), so a settled prop is simulate-ENABLED but

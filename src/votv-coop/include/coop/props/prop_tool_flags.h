@@ -39,7 +39,8 @@ void OnIntent(const coop::net::PropPropsIntentPayload& payload, uint8_t senderSl
 // HOST: a refusal the router made (a short payload), into the lane's tally.
 void NoteRefused(uint8_t senderSlot, const char* why);
 
-// CLIENT: the host's state or refusal; a refusal that is visible is shown. Game thread.
+// CLIENT: the host's flags for a prop, set on this peer's copy through the game's own setter (an unknown element is
+// dropped), or its refusal of this player's press, shown when visible. Game thread.
 void OnState(const coop::net::PropPropsStatePayload& payload);
 
 // The tally emptied, the shown notices forgotten and the pending press dropped. Net disconnect.

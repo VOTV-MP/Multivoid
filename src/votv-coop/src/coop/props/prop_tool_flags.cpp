@@ -445,7 +445,38 @@ void NoteRefused(uint8_t senderSlot, const char* why) { Refuse(senderSlot, why);
 void OnState(const coop::net::PropPropsStatePayload& payload) {
     if (payload.reason >= kReasons) return;
     const PropPropsReason reason = static_cast<PropPropsReason>(payload.reason);
-    if (reason != PropPropsReason::Applied) ShowReason(reason);
+    if (reason != PropPropsReason::Applied) {
+        ShowReason(reason);
+        return;
+    }
+    // The host's flags for this prop: set through the game's own setter on the copy's class, so init() switches the
+    // collision on static and an override (a landmine, a TV) takes its own path. An eid this peer does not know is
+    // dropped; the join-window correction carries the flags of a prop that was born or loaded after.
+    const EL::Element* el = payload.eid < EL::kMaxElements ? EL::Registry::Get().Get(payload.eid) : nullptr;
+    void* const actor = el ? el->LiveActor() : nullptr;
+    if (!actor || !ue_wrap::prop::IsDescendantOfProp(actor)) {
+        UE_LOGI("prop_tool_flags: flags for element %u name no prop here -- dropped", payload.eid);
+        return;
+    }
+    // The host refused a press on a prop another peer holds, so a prop this player holds is only the race of a grab
+    // inside one round trip: the flags are applied at once and the hold's release states its own.
+    void* const local = coop::players::Registry::Get().Local();
+    static bool sHeldSaid = false;
+    if (!sHeldSaid && local && E::IsMainPlayerGrabbing(local, actor)) {
+        sHeldSaid = true;
+        UE_LOGI("prop_tool_flags: flags for element %u arrived while this player holds it -- applied", payload.eid);
+    }
+    const bool wantStatic = payload.isStatic != 0, wantFrozen = payload.isFrozen != 0, wantSleep = payload.isSleeping != 0;
+    if (ue_wrap::prop::IsStatic(actor) == wantStatic && ue_wrap::prop::IsFrozen(actor) == wantFrozen &&
+        ue_wrap::prop::IsSleeping(actor) == wantSleep)
+        return;
+    if (!ue_wrap::prop::CallSetPropProps(actor, wantStatic, wantFrozen, /*active=*/false, wantSleep)) {
+        UE_LOGW("prop_tool_flags: element %u -- the game's setter did not dispatch; the copy keeps its flags",
+                payload.eid);
+        return;
+    }
+    UE_LOGI("prop_tool_flags: element %u set static=%d frozen=%d sleep=%d", payload.eid, wantStatic ? 1 : 0,
+            wantFrozen ? 1 : 0, wantSleep ? 1 : 0);
 }
 
 void OnDisconnect() {

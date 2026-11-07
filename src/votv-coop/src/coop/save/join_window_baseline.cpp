@@ -110,7 +110,7 @@ bool SendCorrection_(int peerSlot, const char* phase, coop::element::ElementId e
     ue_wrap::FVector cur{};
     if (!ue_wrap::engine::TryGetActorLocation(actor, cur)) return false;   // no read, no correction
     const float dx = cur.X - savePos.X, dy = cur.Y - savePos.Y, dz = cur.Z - savePos.Z;
-    // The full state is read only for a prop that moved, changed its frozen or sleep bits (two raw
+    // The full state is read only for a prop that moved, changed its static, frozen or sleep bits (three raw
     // reads, `capturedBits` -1 for a pile) or was corrected already, never across the whole keyed
     // scan: PhysFlagsOf costs two engine calls. 0 for a pile.
     uint8_t flags = 0;
@@ -118,13 +118,13 @@ bool SendCorrection_(int peerSlot, const char* phase, coop::element::ElementId e
     if (it == lastSent.end()) {
         const bool moved = dx * dx + dy * dy + dz * dz > kDivergeCm2;
         const bool restated = capturedBits >= 0 &&
-                              coop::prop_wire_parity::FrozenSleepBitsOf(actor) != static_cast<uint8_t>(capturedBits);
+                              coop::prop_wire_parity::FlagBitsOf(actor) != static_cast<uint8_t>(capturedBits);
         if (!moved && !restated) return false;  // unmoved and unchanged (save IS current)
         flags = coop::prop_wire_parity::PhysFlagsOf(actor);
     } else {
         flags = coop::prop_wire_parity::PhysFlagsOf(actor);
         const float sx = cur.X - it->second.pos.X, sy = cur.Y - it->second.pos.Y, sz = cur.Z - it->second.pos.Z;
-        const bool sameState = ((flags ^ it->second.flags) & (pf::kFrozen | pf::kSleep)) == 0;
+        const bool sameState = ((flags ^ it->second.flags) & (pf::kStatic | pf::kFrozen | pf::kSleep)) == 0;
         if (sx * sx + sy * sy + sz * sz <= kResendCm2 && sameState)
             return false;  // already delivered at this position and state
     }
@@ -323,7 +323,7 @@ void CaptureForSlot(int peerSlot) {
     for (const auto& [eid, pos] : g_blobKeyedXforms[peerSlot]) {
         coop::element::Element* el = coop::element::Registry::Get().Get(eid);
         if (void* actor = el ? el->LiveActor() : nullptr)
-            g_blobKeyedState[peerSlot][eid] = coop::prop_wire_parity::FrozenSleepBitsOf(actor);
+            g_blobKeyedState[peerSlot][eid] = coop::prop_wire_parity::FlagBitsOf(actor);
     }
     UE_LOGI("join_window_baseline: slot %d -- captured %zu keyed-prop keys + %zu pile + %zu clump + "
             "%zu kerfur + %zu keyed save-time xforms at the blob instant",
