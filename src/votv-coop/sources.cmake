@@ -682,6 +682,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_module_buy.cpp
     src/harness/autotest/autotest_saveui.cpp
     src/harness/autotest/autotest_spill.cpp
+    src/harness/autotest/autotest_drone_hover.cpp
     src/harness/autotest/autotest_ambient_creature.cpp
     src/harness/autotest/autotest_ambient_field.cpp
     src/harness/autotest/autotest_sus_hole.cpp
