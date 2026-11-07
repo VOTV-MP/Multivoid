@@ -83,13 +83,31 @@ const char* const kReasonText[kReasons] = {"the sender is not the walker's targe
 uint32_t g_refused[kReasons];
 bool     g_said[kReasons];
 
-// The level changes the log has said: per slot, when it last did and how many came since (a line a second a slot at most).
+// The level changes the log has said: per slot, when it last did, how many came since (a line a second a slot at most) and the
+// latest level with its walker, so the changes held back are written with the level they ended on.
 struct LevelLog {
-    uint64_t lastMs = 0;
-    uint32_t held = 0;
+    uint64_t           lastMs = 0;
+    uint32_t           held = 0;
+    bool               seen = false;
+    coop::net::WireKey key{};
 };
 constexpr uint64_t kLevelLogEveryMs = 1000;
 LevelLog g_levelLog[coop::players::kMaxPeers];
+
+// The changes held back for `slot`, written now with the level the slot's last change left. Called where the changes stop
+// coming (a target change, a leaver, the session's end), so a burst never ends with its last level unsaid.
+void FlushLevel(uint8_t slot) {
+    LevelLog& log = g_levelLog[slot];
+    if (log.held == 0) return;
+    UE_LOGI("walker_gaze_host: slot %d %s walker '%ls' (%u change(s) since the last line not logged)", static_cast<int>(slot),
+            log.seen ? "sees" : "no longer sees", coop::net::StringFromWireKey(log.key).c_str(), log.held);
+    log.held = 0;
+    log.lastMs = coop::net::NowMs();
+}
+
+void FlushAllLevels() {
+    for (uint8_t s = 0; s < coop::players::kMaxPeers; ++s) FlushLevel(s);
+}
 
 bool In(const WG::Calls& calls, int32_t end) {
     const int n = calls.found < WG::kMaxCalls ? calls.found : WG::kMaxCalls;
@@ -244,6 +262,7 @@ Entry* Make(void* walker) {
 // The hunt changed or ended. A client's target makes (or keeps) the walker's entry with every level cleared; any other target,
 // the host's or none, and a walker that ended, drop it. `walker` may be dying: it is compared and never read through here.
 void OnTargetChanged(void* walker, uint8_t slot) {
+    FlushAllLevels();
     Entry* e = Find(walker);
     // An entry is the walker of its index and serial, not of its address: one whose actor ended and whose address a new walker
     // took is dropped, so the new walker is made afresh with its own key, index and serial.
@@ -265,10 +284,18 @@ void OnTargetChanged(void* walker, uint8_t slot) {
     Rearm();
 }
 
+// An actor's place from its root in memory where the root is unattached, through the engine otherwise (as explosion_parking
+// reads a prop's).
+bool Locate(void* actor, ue_wrap::FVector& out) {
+    return E::TryGetRootLocationRaw(actor, out) || E::TryGetActorLocation(actor, out);
+}
+
 // A change of a slot's level, logged at most once a second per slot with the changes held back since (a target that toggles as
 // fast as the lane carries costs the host one counter bump per word, not one log write).
 void LogLevel(uint8_t slot, bool seen, const coop::net::WireKey& key) {
     LevelLog&      log = g_levelLog[slot];
+    log.seen = seen;
+    log.key = key;
     const uint64_t now = coop::net::NowMs();
     if (now - log.lastMs < kLevelLogEveryMs) {
         ++log.held;
@@ -330,7 +357,7 @@ void OnSeen(const coop::net::WalkerSeenPayload& p, uint8_t senderSlot) {
     if (was == (p.seen != 0)) return;
     ue_wrap::FVector from{}, to{};
     void* const      body = WT::ClientBody(senderSlot);
-    if (!body || !E::TryGetActorLocation(body, from) || !E::TryGetActorLocation(e->actor, to)) return Refuse(kTooFar, senderSlot);
+    if (!body || !Locate(body, from) || !Locate(e->actor, to)) return Refuse(kTooFar, senderSlot);
     const float dx = from.X - to.X, dy = from.Y - to.Y, dz = from.Z - to.Z;
     if (std::sqrt(dx * dx + dy * dy + dz * dz) > kWalkerGazeReachCm) return Refuse(kTooFar, senderSlot);
     e->seen = p.seen ? (e->seen | bit) : (e->seen & ~bit);
@@ -341,6 +368,7 @@ uint32_t AnsweredReads() { return g_answered.load(std::memory_order_relaxed); }
 
 void OnPeerLeft(uint8_t slot) {
     if (slot >= coop::players::kMaxPeers) return;
+    FlushLevel(slot);
     for (size_t i = 0; i < g_count; ++i) g_entries[i].seen &= ~(1u << slot);
 }
 
@@ -351,6 +379,7 @@ void OnDisconnect() {
         g_refused[i] = 0;
         g_said[i] = false;
     }
+    FlushAllLevels();
     for (LevelLog& l : g_levelLog) l = LevelLog{};
     g_answered.store(0, std::memory_order_relaxed);
     g_count = 0;

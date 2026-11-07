@@ -50,7 +50,8 @@ void* g_hookFn = nullptr;
 // and then each session tick for the load window after it (a class answers null while it loads and its finishing moves no
 // number, object_index.h:55-58), and not again until the next move.
 ue_wrap::class_reask::Latch g_ask;
-bool g_failSaid = false;
+bool g_missSaid = false;  // the first miss, at INFO: a class answers null while it loads
+bool g_failSaid = false;  // the load window ran out without a hook, at ERROR
 
 // What the gate refused, each entry counted and said at its first, and the pawns made inert.
 struct Refusal {
@@ -106,17 +107,26 @@ void InstallSpawnHook() {
         if (!g_armed) g_armed = UH::SetArmed(g_hookFn, &OnBeginDeferredPost, true);
         return;
     }
-    if (!g_ask.Due()) return;
+    if (!g_ask.Due()) {
+        // The window ran out with the row still unresolved or refused: a load that should have finished did not.
+        if (g_ask.Expired() && !g_failSaid) {
+            g_failSaid = true;
+            UE_LOGE("walker_brain: BeginDeferredActorSpawnFromClass did not resolve or would not take a post hook in the load "
+                    "window -- a walker copy's nav pawn keeps its AI controller until it does (asked again at the next "
+                    "class-set move; said once)");
+        }
+        return;
+    }
     const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowBeginDeferred);
     if (fn && UH::InstallPostHook(fn, &OnBeginDeferredPost, /*armed=*/false)) {
         g_hooked = true;
         g_hookFn = fn.Fn();
         g_armed = UH::SetArmed(g_hookFn, &OnBeginDeferredPost, true);
         UE_LOGI("walker_brain: watching deferred spawns for a walker's nav pawn (made inert on a client)");
-    } else if (!g_failSaid) {
-        g_failSaid = true;
-        UE_LOGE("walker_brain: BeginDeferredActorSpawnFromClass did not resolve or would not take a post hook -- a walker "
-                "copy's nav pawn keeps its AI controller until it does (asked again for a window after each class-set move; said once)");
+    } else if (!g_missSaid) {
+        g_missSaid = true;
+        UE_LOGI("walker_brain: BeginDeferredActorSpawnFromClass is not hooked yet (the row did not resolve or the hook was "
+                "refused); asked again for the load window (said once)");
     }
 }
 
@@ -159,6 +169,7 @@ void OnDisconnect() {
     g_refusalsUnlisted = 0;
     g_inert = 0;
     g_ask.Reset();
+    g_missSaid = false;
     g_failSaid = false;
     if (g_armed && UH::SetArmed(g_hookFn, &OnBeginDeferredPost, false)) g_armed = false;
 }

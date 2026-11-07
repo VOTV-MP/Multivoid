@@ -40,6 +40,7 @@ void* WalkerGazeController(void* worldContext);
 // The parts of the walker's view test, each read apart: its mesh's bounds, the game's frustum test of them for this controller, and
 // the mesh's WasRecentlyRendered(3). A part that was not read says so; `diagnostics` also reads the rest of the test after a frustum
 // miss and the mesh's and the actor's hidden bits, for a drill that must say which part fails.
+// Game thread: the calls and their frames are kept between calls.
 struct WalkerView {
     void*             mesh = nullptr;
     ue_wrap::FVector  origin{}, extent{};
@@ -53,13 +54,13 @@ struct WalkerView {
 };
 WalkerView WalkerViewParts(void* walker, void* playerController, bool diagnostics = false);
 
-// The walker's own view test, as its tick runs it: inside this controller's frustum and rendered of late.
+// The walker's own view test, as its tick runs it: inside this controller's frustum and rendered of late. Game thread.
 bool WalkerInView(void* walker, void* playerController);
 
 // Its `looking` flag: true while it holds still.
 bool ReadWalkerLooking(void* walker);
 
-// Is this actor a walker?
+// Is this actor a walker? Game thread: the class is held between calls.
 bool IsWalker(void* actor);
 
 // The walker's class object, null until it is loaded; the pointer a caller on any thread compares `ClassOf(actor)` with.

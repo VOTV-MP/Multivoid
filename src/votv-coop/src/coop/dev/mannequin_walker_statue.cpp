@@ -8,6 +8,7 @@
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -146,13 +147,15 @@ std::vector<std::string> Words(const std::string& text) {
 bool HostRoute(std::string& goneKey, std::string& brokenKey, std::string& walkerKey, FVector& goneAt) {
     std::vector<Statue> before;
     std::vector<void*>  propsBefore, walkersBefore;
-    void*               ticker = nullptr;
+    void*                 ticker = nullptr;
+    ue_wrap::CachedObjRef tickerRef;  // held across the client's wait: read through its slot, never through the pointer
     OnGameThread([&] {
         before = Statues();
         propsBefore = AllOf(kPropClass);
         walkersBefore = Walkers();
         const std::vector<void*> t = AllOf(kTickerClass);
         ticker = t.empty() ? nullptr : t.front();
+        tickerRef.Set(ticker);
     });
     if (!ticker) return Invalid("step 8: this world has no mannequin spawner ticker to run");
     if (before.empty()) return Invalid("step 8: this world holds no mannequin statue: the ticker's statue route has nothing to swap");
@@ -169,8 +172,11 @@ bool HostRoute(std::string& goneKey, std::string& brokenKey, std::string& walker
 
     Forced forced;
     bool   ran = false;
-    OnGameThread([&] { ran = RunStatueTick(ticker, forced); });
-    if (!ran) return Invalid("step 8: the ticker's day number, roll weight or tick did not read: the statue route did not run");
+    OnGameThread([&] {
+        void* const live = tickerRef.Get();
+        ran = live && RunStatueTick(live, forced);
+    });
+    if (!ran) return Invalid("step 8: the ticker is gone, or its day number, roll weight or tick did not read: the statue route did not run");
 
     void*   walker = nullptr;
     void*   broken = nullptr;
