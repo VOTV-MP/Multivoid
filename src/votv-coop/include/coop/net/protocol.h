@@ -1461,8 +1461,8 @@ enum class ReliableKind : uint16_t {
     // relayed, not pre-world. GarbageBinPayload.
     GarbageBinState = 262,
     // CLIENT->HOST: a container this client authors (it holds it, threw it or syncs it) took a lethal impact or fire
-    // here, which the client cancelled. The host breaks its own copy by the same lethal call, so the spill is the
-    // host's. Never relayed. ContainerBreakPayload.
+    // here, which the client cancelled, or its hacksaw cut it (sawn). The host breaks its own copy by the same lethal
+    // call, or as the saw does, so the spill is the host's. Never relayed. ContainerBreakPayload.
     ContainerBreakRequest = 263,
 };
 
@@ -2358,7 +2358,8 @@ static_assert(sizeof(GarbageBinPayload) == 196, "GarbageBinPayload must be 196 b
 struct ContainerBreakPayload {
     WireKey key;       // 32 -- the container's Key
     uint8_t fire;      // 1 -- a fireDamage (1) or an impactDamage (0)
-    uint8_t _pad[3];   // 3 -- zero
+    uint8_t sawn;      // 1 -- 1: the hacksaw's cut, which the host makes as the saw does (broken, then destroyed)
+    uint8_t _pad[2];   // 2 -- zero
 };
 static_assert(sizeof(ContainerBreakPayload) == 36, "ContainerBreakPayload must be 36 bytes");
 

@@ -28,6 +28,7 @@ constexpr int kGateTag = 0x53504157;  // 'SPAW'
 void* g_gamemodeSpawnFn = nullptr;   // mainGamemode_C::spawnPropThroughGamemode -- watched
 void* g_menuSpawnFn     = nullptr;   // ui_spawnmenu_C::spawn -- the caller that makes it a player's
 void* g_toolUberFn      = nullptr;   // tool_spawn_C::ExecuteUbergraph_tool_spawn -- the toolgun
+void* g_sawUberFn       = nullptr;   // prop_hacksaw_C::ExecuteUbergraph_prop_hacksaw -- the hacksaw's cut
 bool  g_watchInstalled  = false;
 
 // The negative arm, and it is the half a run cannot otherwise see. Catching every menu spawn and
@@ -42,6 +43,7 @@ unsigned g_verbFromOther = 0;   // ... by anything else (lib_C::replaceProp, com
 // and never a string build. Zeroed ComparisonIndex means "not yet converted".
 R::FName g_menuSpawnName{0, 0};   // "spawn"
 R::FName g_toolUberName{0, 0};    // "ExecuteUbergraph_tool_spawn"
+R::FName g_sawUberName{0, 0};     // "ExecuteUbergraph_prop_hacksaw"
 
 // Is `fn` a function named `name` whose owner (a UFunction's Outer is its declaring class) is
 // called `className`? Both compares are allocation-free: the FName pair is two ints, and the
@@ -110,6 +112,8 @@ void Install(bool isClient) {
         g_menuSpawnName = ue_wrap::fname_utils::StringToFName(L"spawn");
     if (g_toolUberName.ComparisonIndex == 0)
         g_toolUberName = ue_wrap::fname_utils::StringToFName(L"ExecuteUbergraph_tool_spawn");
+    if (g_sawUberName.ComparisonIndex == 0)
+        g_sawUberName = ue_wrap::fname_utils::StringToFName(L"ExecuteUbergraph_prop_hacksaw");
 
     ue_wrap::facts::Resolved gamemodeSpawn;
     if (!g_gamemodeSpawnFn) {
@@ -152,6 +156,16 @@ bool BirthIsPlayerAuthored() {
         g_toolUberFn = const_cast<void*>(caller);
         UE_LOGI("prop_spawn_authoring: the toolgun's ubergraph is the calling frame -- its births "
                 "are a player's");
+        return true;
+    }
+    // The hacksaw's cut: its tick spawns the scrap of the prop it saws, then destroys the prop. The saw runs only
+    // where it is held, so the scrap is this player's doing and none of the other peers' games makes it; the
+    // prop's destroy crosses by the destroy seam.
+    if (caller == g_sawUberFn) return true;
+    if (!g_sawUberFn && FunctionIs(const_cast<void*>(caller), g_sawUberName, L"prop_hacksaw_C")) {
+        g_sawUberFn = const_cast<void*>(caller);
+        UE_LOGI("prop_spawn_authoring: the hacksaw's ubergraph is the calling frame -- the scrap of its cut is a "
+                "player's");
         return true;
     }
     return false;

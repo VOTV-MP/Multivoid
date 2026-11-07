@@ -19,6 +19,7 @@
 #include "coop/net/session.h"
 #include "coop/interactables/woodchipper_sync.h"  // NoteDestroyed
 #include "coop/player/hand_item.h"  // IsLocalHandViewActor
+#include "coop/props/hacksaw_cut.h"  // TakesDestroy, a sawn container the host breaks
 #include "coop/props/prop_drop_intent.h"
 #include "coop/items/coingun_sync.h"
 #include "coop/props/prop_act_request.h"
@@ -190,6 +191,9 @@ void DestroySeamBody(void* self, HandView handView) {
     // teardowns and load churn are not conversions; the kerfur layer owns the wire when it returns
     // true. A cheap class-pointer gate inside.
     if (coop::kerfur_convert::TryCaptureKerfurPropDestroy(self, destroyEid)) return;
+    // A container this client's hacksaw cut is the host's to break: its break request is on the wire, and a destroy
+    // sent now would reach the host first and take its copy, contents and all.
+    if (coop::props::hacksaw_cut::TakesDestroy(self)) return;
     // The local player's hand-view actor is not a world prop: updateHold destroys it on every drop,
     // throw, stow and switch, and its world counterpart died at the pickup. It carries the item's
     // key, so broadcasting its death would name the world prop the drop is about to re-create.
