@@ -249,13 +249,13 @@ const char* LoadBin(void* bin, uint64_t sinceMs, bool* done) {
 // A frozen heavy prop, on the host's copy and on the client's (frozen is not synced, and the client's own hold of a
 // heavy prop would answer "too heavy"): the game's own setter, with active off.
 const char* FreezeHost(void* actor, uint64_t, bool* done) {
-    if (!ue_wrap::prop::CallSetPropProps(actor, false, true, false)) return "setPropProps could not freeze the host's copy";
+    if (!ue_wrap::prop::CallSetPropProps(actor, false, true, false, false)) return "setPropProps could not freeze the host's copy";
     *done = true;
     return nullptr;
 }
 
 const char* FreezeCopy(void*, void* mirror) {
-    return ue_wrap::prop::CallSetPropProps(mirror, false, true, false) ? nullptr : "setPropProps could not freeze this client's copy";
+    return ue_wrap::prop::CallSetPropProps(mirror, false, true, false, false) ? nullptr : "setPropProps could not freeze this client's copy";
 }
 
 constexpr Row kRows[] = {

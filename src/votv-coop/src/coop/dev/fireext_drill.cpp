@@ -238,7 +238,7 @@ void TickRelatchProbe() {
                 continue;
             }
             if (Dist(at, w.start) < kProbeOffCm) continue;
-            const bool ok = PR::CallSetPropProps(o, false, false, false);
+            const bool ok = PR::CallSetPropProps(o, false, false, false, false);
             const bool sim = ue_wrap::engine::IsComponentSimulatingPhysics(PR::GetStaticMesh(o));
             UE_LOGI("[FIREEXT-DRILL] [C] RELATCH PROBE key='%ls' setPropProps(F,F,F,F) on the driven copy (%s) "
                     "-- simulating=%d", w.key.c_str(), ok ? "dispatched" : "did not dispatch", sim ? 1 : 0);

@@ -43,11 +43,11 @@ bool IsSleeping(void* prop);
 bool ReadRemoveWOrespawn(void* prop);
 
 // The game's own setter, setPropProps(static, frozen, active, sleeping), as a caller in the game
-// runs it: resolved on the prop's own class, so an override runs, and with `active` false, as a
-// laptop's exit passes it to its chair. It writes the flags and runs init(), which derives physics
+// runs it: resolved on the prop's own class, so an override runs. `active` is passed as given: a game caller
+// passes false, as a laptop's exit does to its chair. It writes the flags and runs init(), which derives physics
 // and collision from them. A flag converge goes through prop_C's own setter instead
 // (CallBaseSetPropProps), since an override reads `active` as its own state. False if the verb did
 // not resolve or dispatch. Game thread.
-bool CallSetPropProps(void* prop, bool isStatic, bool frozen, bool sleeping);
+bool CallSetPropProps(void* prop, bool isStatic, bool frozen, bool active, bool sleeping);
 
 }  // namespace ue_wrap::prop

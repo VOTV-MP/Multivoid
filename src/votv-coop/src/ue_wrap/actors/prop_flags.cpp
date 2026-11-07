@@ -65,13 +65,13 @@ bool ReadRemoveWOrespawn(void* prop) {
     return ReadField<bool>(prop, P::off::Aprop_removeWOrespawn);
 }
 
-bool CallSetPropProps(void* prop, bool isStatic, bool frozen, bool sleeping) {
+bool CallSetPropProps(void* prop, bool isStatic, bool frozen, bool active, bool sleeping) {
     if (!prop) return false;
     void* fn = R::FindDispatchFunctionCached(R::ClassOf(prop), L"setPropProps");
     if (!fn) return false;
     ParamFrame f(fn);
     return f.valid() && f.Set<bool>(L"static", isStatic) && f.Set<bool>(L"frozen", frozen) &&
-           f.Set<bool>(L"active", false) && f.Set<bool>(L"sleeping", sleeping) && Call(prop, f);
+           f.Set<bool>(L"active", active) && f.Set<bool>(L"sleeping", sleeping) && Call(prop, f);
 }
 
 }  // namespace ue_wrap::prop

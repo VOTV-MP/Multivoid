@@ -579,7 +579,7 @@ void OnState(const coop::net::VentCrawlStatePayload& p) {
         if (vent && p.hasVent) {
             ventNow = "left";
             if (PlaceVentAt(vent, p)) {
-                ue_wrap::prop::CallSetPropProps(vent, false, true, false);
+                ue_wrap::prop::CallSetPropProps(vent, false, true, false, false);
                 ventNow = "at the host's pose, frozen";
             }
         }
@@ -632,7 +632,7 @@ void Tick() {
         if (st >= g_show.swingLen) {
             g_show.swinging = false;
             SetActorTransform(vent, g_show.ventB);
-            ue_wrap::prop::CallSetPropProps(vent, false, true, false);
+            ue_wrap::prop::CallSetPropProps(vent, false, true, false, false);
             UE_LOGI("vent_crawler: the vent's swing ended -- frozen where the host's is");
         } else if (VentAt(g_show.ventA, g_show.ventB, TrackAt(g_show.swingTracks, L"a", st, st / g_show.swingLen), now)) {
             SetActorTransform(vent, now);
