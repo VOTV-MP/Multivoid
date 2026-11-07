@@ -354,21 +354,76 @@ bool FitModule(const std::wstring& key, std::string& why) {
 
 namespace {
 
-// The live module slots of the upgrades screen: `total` of them, `named` of those naming `atv` as their actor, and the
-// first one that does (null when none). `firstActor` is the class of the first slot's actor, whoever's. Game thread.
-void* FindSlot(void* atv, int& total, int& named, std::wstring& firstActor) {
+// A pointer property of `o` by name, or null.
+void* ObjProp(void* o, const wchar_t* name) {
+    const int32_t off = o ? R::FindPropertyOffset(R::ClassOf(o), name) : -1;
+    return off < 0 ? nullptr : *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(o) + off);
+}
+
+// `screen` is the upgrades screen that names `atv` as its actor.
+bool ScreenNames(void* screen, void* atv) {
+    return screen && R::IsLive(screen) && R::ClassNameOf(screen) == kUpgradesClass && ObjProp(screen, L"actor") == atv;
+}
+
+// `start`, or an object up its outer chain, is the ATV or the screen that names it.
+bool BelongsTo(void* start, void* atv) {
+    void* o = start;
+    for (int i = 0; o && i < 8; ++i, o = R::OuterOf(o))
+        if (o == atv || ScreenNames(o, atv)) return true;
+    return false;
+}
+
+// A slot has no actor field: its owner field, its outer chain and its parent widgets' chains say whose it is.
+bool SlotBelongs(void* slot, void* atv) {
+    if (BelongsTo(ObjProp(slot, L"owner"), atv) || BelongsTo(slot, atv)) return true;
+    void* w = slot;
+    for (int i = 0; w && i < 8; ++i) {
+        w = ObjProp(ObjProp(w, L"Slot"), L"Parent");
+        if (w && BelongsTo(w, atv)) return true;
+    }
+    return false;
+}
+
+// The module name the slot carries (its `item`), or null when the class has no such field.
+const R::FName* SlotItem(void* slot) {
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(slot), L"item");
+    return off < 0 ? nullptr : reinterpret_cast<const R::FName*>(static_cast<const uint8_t*>(slot) + off);
+}
+
+// The name is one of the ATV's upgradesNames.
+bool ItemFitted(const R::FName& item, void* atv) {
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(atv), L"upgradesNames");
+    if (off < 0) return false;
+    const R::FName* names = *reinterpret_cast<R::FName* const*>(static_cast<const uint8_t*>(atv) + off);
+    const int32_t num = *reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(atv) + off + 8);
+    for (int32_t i = 0; names && i < num; ++i)
+        if (names[i].ComparisonIndex == item.ComparisonIndex && names[i].Number == item.Number) return true;
+    return false;
+}
+
+std::string Narrow(const std::wstring& w) {
+    std::string s;
+    for (const wchar_t c : w) s.push_back(c < 128 ? static_cast<char>(c) : '?');
+    return s;
+}
+
+// What the module slots of the world are to `atv`: `total` live slots, `owned` of them its (by owner, outer or parent), and
+// the first of those whose module is one of its upgradesNames, which is returned (null when none). `first` describes the
+// first slot of all: its owner's class and its item. Game thread.
+void* FindSlot(void* atv, int& total, int& owned, std::string& first) {
     void* found = nullptr;
-    total = named = 0;
+    total = owned = 0;
     for (void* w : R::FindObjectsByClass(kSlotClass)) {
         if (!w || !R::IsLive(w) || R::NameStartsWith(R::NameOf(w), L"Default__")) continue;
         ++total;
-        const int32_t off = R::FindPropertyOffset(R::ClassOf(w), L"actor");
-        void* const actor = off >= 0 ? *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(w) + off) : nullptr;
-        if (total == 1) firstActor = actor && R::IsLive(actor) ? R::ClassNameOf(actor) : L"none";
-        if (atv && actor == atv) {
-            ++named;
-            if (!found) found = w;
-        }
+        void* const owner = ObjProp(w, L"owner");
+        const R::FName* item = SlotItem(w);
+        if (total == 1)
+            first = "owner " + (owner && R::IsLive(owner) ? Narrow(R::ClassNameOf(owner)) : std::string("none")) + ", item " +
+                    (item ? Narrow(R::ToString(*item)) : std::string("-"));
+        if (!atv || !SlotBelongs(w, atv)) continue;
+        ++owned;
+        if (!found && (!item || ItemFitted(*item, atv))) found = w;
     }
     return found;
 }
@@ -387,22 +442,20 @@ int32_t ArrayNum(void* o, const wchar_t* name) {
 // What stood where the slot should be, for the `why` of a take-off that could not be issued: the lists the screen builds
 // its slots from (the ATV's upgradesNames and modules), the screens that exist and name the ATV, and the slots. Game thread.
 std::string DescribeScreen(void* atv) {
-    int total = 0, named = 0, screens = 0, screensNamingAtv = 0;
-    std::wstring first;
-    FindSlot(atv, total, named, first);
+    int total = 0, owned = 0, screens = 0, screensNamingAtv = 0;
+    std::string first;
+    void* const fitted = FindSlot(atv, total, owned, first);
     for (void* w : R::FindObjectsByClass(kUpgradesClass)) {
         if (!w || !R::IsLive(w) || R::NameStartsWith(R::NameOf(w), L"Default__")) continue;
         ++screens;
-        const int32_t off = R::FindPropertyOffset(R::ClassOf(w), L"actor");
-        if (off >= 0 && atv && *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(w) + off) == atv) ++screensNamingAtv;
+        if (ScreenNames(w, atv)) ++screensNamingAtv;
     }
-    std::string firstActor;
-    for (const wchar_t c : first) firstActor.push_back(c < 128 ? static_cast<char>(c) : '?');
-    char buf[256];
+    char buf[300];
     std::snprintf(buf, sizeof(buf),
-                  "upgradesNames=%d modules=%d; screens=%d, naming the ATV=%d; slots=%d, naming the ATV=%d, first slot's actor=%s",
-                  ArrayNum(atv, L"upgradesNames"), ArrayNum(atv, L"modules"), screens, screensNamingAtv, total, named,
-                  firstActor.empty() ? "-" : firstActor.c_str());
+                  "upgradesNames=%d modules=%d; screens=%d, naming the ATV=%d; slots=%d, the ATV's=%d, with a fitted module=%d, "
+                  "first slot: %s",
+                  ArrayNum(atv, L"upgradesNames"), ArrayNum(atv, L"modules"), screens, screensNamingAtv, total, owned,
+                  fitted ? 1 : 0, first.empty() ? "-" : first.c_str());
     return buf;
 }
 
@@ -430,9 +483,9 @@ bool TakeModuleOff(const std::wstring& key, std::string& why) {
     void* slot = nullptr;
     PS::WaitFor("the upgrades screen builds a module slot", kSlotS, [&] {
         OnGt([&] {
-            int total = 0, named = 0;
-            std::wstring first;
-            slot = FindSlot(Atv(key), total, named, first);
+            int total = 0, owned = 0;
+            std::string first;
+            slot = FindSlot(Atv(key), total, owned, first);
         });
         return slot != nullptr;
     }, false);
