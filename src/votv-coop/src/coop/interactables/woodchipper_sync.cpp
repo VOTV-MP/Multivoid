@@ -5,6 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/element/intent_authority.h"
+#include "coop/interactables/woodchipper_feed.h"
 #include "coop/interactables/woodchipper_gate.h"
 #include "coop/net/intent_bucket.h"
 #include "coop/net/intent_queue.h"
@@ -520,7 +521,9 @@ void Tick() {
     if (N::Session* s = Running(N::Role::Host)) {
         Serve(*s);
         Flush(*s, Clock::now());
-    } else if (Running(N::Role::Client)) {
+        coop::woodchipper_feed::Tick(*s);
+    } else if (N::Session* c = Running(N::Role::Client)) {
+        coop::woodchipper_feed::Tick(*c);
         RetryHeld();
     }
 }
@@ -584,6 +587,7 @@ void NoteDestroyed(void* actor) {
 DrillView ReadForDrill() { return g_view; }
 
 void OnDisconnect() {
+    coop::woodchipper_feed::OnDisconnect();
     uint64_t refused = 0;
     for (const uint64_t n : g_refused) refused += n;
     if (g_view.pours || g_view.presses || g_view.statesSent || g_view.applied || refused)
