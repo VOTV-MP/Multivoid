@@ -3,6 +3,7 @@
 #include "ue_wrap/actors/kerfur.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/kismet_timer.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -104,14 +105,7 @@ void DriveKerfurState(void* actor, uint8_t state, bool spooky) {
 
 void NeutralizeAiTimers(void* actor) {
     if (!IsKerfurActor(actor)) return;
-    static void* sKslCdo  = nullptr;
-    static void* sClearFn = nullptr;
-    if (!sKslCdo) sKslCdo = R::FindClassDefaultObject(L"KismetSystemLibrary");
-    if (sKslCdo && !sClearFn) {
-        if (void* kc = R::FindClass(L"KismetSystemLibrary"))
-            sClearFn = R::FindFunction(kc, L"K2_ClearTimer");
-    }
-    if (!sKslCdo || !sClearFn) {
+    if (!kismet_timer::Resolved()) {
         static bool sWarned = false;
         if (!sWarned) { sWarned = true;
             UE_LOGW("kerfur: K2_ClearTimer unresolved -- mirror AI timers NOT neutralized "
@@ -119,18 +113,9 @@ void NeutralizeAiTimers(void* actor) {
         return;
     }
     // K2_ClearTimer(Object, FunctionName) -- the exact inverse of the BP's K2_SetTimerDelegate
-    // ({self, name}) arm (kerfur BeginPlay @8184/@8714/@24444). FunctionName is an FString
-    // {data, num=len+1, max} (num/max include the null terminator -- the space_renderer pattern).
+    // ({self, name}) arm (kerfur BeginPlay @8184/@8714/@24444).
     static const wchar_t* kTimers[3] = {L"timer_face", L"timer_kerf", L"checkDoor"};
-    for (const wchar_t* fn : kTimers) {
-        ue_wrap::ParamFrame f(sClearFn);
-        if (!f.valid()) continue;
-        f.Set<void*>(L"Object", actor);
-        const int32_t num = static_cast<int32_t>(std::wcslen(fn)) + 1;
-        struct { const wchar_t* data; int32_t n; int32_t m; } fs{fn, num, num};
-        if (!f.SetRaw(L"FunctionName", &fs, sizeof(fs))) continue;
-        ue_wrap::Call(sKslCdo, f);
-    }
+    for (const wchar_t* fn : kTimers) kismet_timer::Clear(actor, fn);
 }
 
 bool ReadKill(void* actor) {

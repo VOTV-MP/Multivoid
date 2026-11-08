@@ -46,6 +46,7 @@
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/kismet_timer.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -61,7 +62,6 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
-#include <cwchar>
 #include <functional>
 #include <string>
 #include <string_view>
@@ -150,26 +150,8 @@ bool HasRow(std::string_view needle) {
 
 void Say(std::string_view line) { coop::chat_sync::QueueSend(std::string(line)); }
 
-// K2_ClearTimer(Object, FunctionName) on KismetSystemLibrary's default object, the name an FString whose count and
-// capacity include the terminator.
 void ClearTimer(void* actor, const wchar_t* fn) {
-    static void* s_ksl = nullptr;
-    static void* s_clear = nullptr;
-    if (!s_ksl) s_ksl = R::FindClassDefaultObject(L"KismetSystemLibrary");
-    if (s_ksl && !s_clear) {
-        if (void* kc = R::FindClass(L"KismetSystemLibrary")) s_clear = R::FindFunction(kc, L"K2_ClearTimer");
-    }
-    if (!s_ksl || !s_clear) {
-        UE_LOGW("[CHD] K2_ClearTimer unresolved -- the creature's timer is NOT cleared");
-        return;
-    }
-    ue_wrap::ParamFrame f(s_clear);
-    if (!f.valid()) return;
-    f.Set<void*>(L"Object", actor);
-    const int32_t num = static_cast<int32_t>(std::wcslen(fn)) + 1;
-    struct { const wchar_t* data; int32_t n; int32_t m; } fs{fn, num, num};
-    if (!f.SetRaw(L"FunctionName", &fs, sizeof(fs))) return;
-    ue_wrap::Call(s_ksl, f);
+    if (!ue_wrap::kismet_timer::Clear(actor, fn)) UE_LOGW("[CHD] K2_ClearTimer unresolved -- the creature's timer is NOT cleared");
 }
 
 // ---- the host -----------------------------------------------------------------------------------
