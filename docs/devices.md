@@ -455,8 +455,9 @@ now the machine (`coop/interactables/woodchipper_sync`, `coop/interactables/wood
   (the sender's world, the chipper by key and class, a living sender, its reach, a bounded queue and rate, the gas can
   in the sender's hand and the room in the tank for a pour, the state wanted for a press), adds the fuel it has room for
   and runs `checkActive`, or runs the game's own press with the sender's puppet as the player, inside the requester
-  feedback scope, and answers a refused intent with the state, to the sender alone, whenever it can name the chipper.
-  A client can refill a chipper to full at the intent budget of four a second; it cannot overfill it `[?]`.
+  feedback scope, and answers a refused intent with the state, to the sender alone, whenever it can name the chipper (a
+  key that names none has no state to send). A client can refill a chipper to full on demand, at the intent budget of
+  four a second; it cannot overfill it, and no gas can drains but the one in the client's own hand `[?]`.
 - At a joiner's ready edge the host sends which chippers are on; their fuel comes with the prop records. A chipper
   that is mid-chip at the join, its chip animation and its chip sound are not carried `[?]`.
 
