@@ -337,6 +337,7 @@ set(VOTVCOOP_SOURCES
     src/coop/element/identity_destroy.cpp
     src/coop/element/portable_identity.cpp
     src/ue_wrap/core/component_calls.cpp
+    src/ue_wrap/core/kismet_timer.cpp
     src/coop/net/peer_admission.cpp
     src/coop/net/peer_admission_selftest.cpp
     src/coop/net/end_reason.cpp

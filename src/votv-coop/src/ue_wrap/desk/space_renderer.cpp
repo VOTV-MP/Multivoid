@@ -18,6 +18,7 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
+#include "ue_wrap/core/kismet_timer.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine_component.h"
@@ -66,8 +67,6 @@ void* g_widgetSetRenderScaleFn = nullptr;  // UWidget::SetRenderScale
 void* g_addSignalFn = nullptr;
 void* g_deleteSignalFn = nullptr;
 void* g_spawnSignalFn = nullptr;
-void* g_kismetSysCdo = nullptr;
-void* g_clearTimerFn = nullptr;
 
 std::chrono::steady_clock::time_point g_nextResolve{};
 bool g_coreResolved = false;
@@ -103,11 +102,6 @@ void ResolvePass() {
         if (void* wc = R::FindClass(L"Widget"))
             g_widgetSetRenderScaleFn = R::FindFunction(wc, L"SetRenderScale");
     }
-    if (!g_kismetSysCdo) g_kismetSysCdo = R::FindClassDefaultObject(L"KismetSystemLibrary");
-    if (g_kismetSysCdo && !g_clearTimerFn) {
-        if (void* kc = R::FindClass(L"KismetSystemLibrary"))
-            g_clearTimerFn = R::FindFunction(kc, L"K2_ClearTimer");
-    }
 
     const bool core = g_offSignals >= 0 && g_offSignalsA >= 0 &&
                       g_addSignalFn && g_deleteSignalFn && g_spawnSignalFn &&
@@ -120,7 +114,7 @@ void ResolvePass() {
                 g_offSignals, g_offSignalsA,
                 g_offWidgetAlpha, g_offWidgetLifeTime, g_offWidgetMaxLifetime,
                 g_offWidgetDirection,
-                g_clearTimerFn ? "yes" : "NO (sweep-only suppression)");
+                kismet_timer::Resolved() ? "yes" : "NO (sweep-only suppression)");
     }
 }
 
@@ -351,7 +345,7 @@ bool RemoveSignalByIdentity(float x, float y, float z, float frequency) {
 bool KillClientSpawnTimer() {
     void* inst = Instance();
     if (!inst) return false;
-    if (!g_clearTimerFn || !g_kismetSysCdo) {
+    if (!kismet_timer::Resolved()) {
         UE_LOGW("space_renderer: K2_ClearTimer unresolved -- roller suppression falls "
                 "back to the per-poll sweep");
         return false;
@@ -359,13 +353,7 @@ bool KillClientSpawnTimer() {
     // K2_ClearTimer(Object, FunctionName): builds the delegate from
     // object+fname internally -- the exact inverse of the BP's
     // K2_SetTimerDelegate({self, spawnSignal}) arm (uber @3880).
-    ue_wrap::ParamFrame f(g_clearTimerFn);
-    if (!f.valid()) return false;
-    f.Set<void*>(L"Object", inst);
-    const wchar_t* fn = L"spawnSignal";
-    struct { const wchar_t* data; int32_t num; int32_t max; } fs{ fn, 12, 12 };
-    if (!f.SetRaw(L"FunctionName", &fs, sizeof(fs))) return false;
-    return ue_wrap::Call(g_kismetSysCdo, f);
+    return kismet_timer::Clear(inst, L"spawnSignal");
 }
 
 bool ZeroMovement() {

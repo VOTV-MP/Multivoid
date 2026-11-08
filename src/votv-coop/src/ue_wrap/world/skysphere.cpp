@@ -8,6 +8,7 @@
 
 #include "ue_wrap/actors/inventory.h"  // ResolveSaveSlot: moonPhase lives on the save, not the actor
 #include "ue_wrap/core/call.h"         // ParamFrame + Call, to clear the BP's own moon-phase timer
+#include "ue_wrap/core/kismet_timer.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -16,7 +17,6 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
-#include <cwchar>
 
 namespace ue_wrap::skysphere {
 namespace {
@@ -46,18 +46,10 @@ void* SkyComponent(void* newsky) {
 // newsky arms a LOOPING 10 s timer on setMoonPhase at BeginPlay (applyMoonPhase defaults true),
 // and that event recomputes saveSlot.moonPhase from this machine's wall clock. On a client that
 // races the host's value in, so clear the timer once per newsky actor and let the host be the only
-// writer. K2_ClearTimer(Object, FunctionName) is the exact inverse of the BP's arm; FunctionName is
-// an FString {data, num, max} whose counts include the null terminator (the kerfur pattern).
+// writer. K2_ClearTimer(Object, FunctionName) is the exact inverse of the BP's arm.
 void ClearMoonPhaseTimer(void* sky) {
     if (!sky || sky == g_timerClearedFor) return;
-    static void* sKslCdo  = nullptr;
-    static void* sClearFn = nullptr;
-    if (!sKslCdo) sKslCdo = R::FindClassDefaultObject(L"KismetSystemLibrary");
-    if (sKslCdo && !sClearFn) {
-        if (void* kc = R::FindClass(L"KismetSystemLibrary"))
-            sClearFn = R::FindFunction(kc, L"K2_ClearTimer");
-    }
-    if (!sKslCdo || !sClearFn) {
+    if (!kismet_timer::Resolved()) {
         static bool sWarned = false;
         if (!sWarned) { sWarned = true;
             UE_LOGW("skysphere: K2_ClearTimer unresolved -- the BP's 10 s setMoonPhase timer still "
@@ -65,14 +57,7 @@ void ClearMoonPhaseTimer(void* sky) {
                     "applies"); }
         return;
     }
-    ue_wrap::ParamFrame f(sClearFn);
-    if (!f.valid()) return;
-    f.Set<void*>(L"Object", sky);
-    static const wchar_t* kFn = L"setMoonPhase";
-    const int32_t num = static_cast<int32_t>(::wcslen(kFn)) + 1;
-    struct { const wchar_t* data; int32_t n; int32_t m; } fs{kFn, num, num};
-    if (!f.SetRaw(L"FunctionName", &fs, sizeof(fs))) return;
-    if (ue_wrap::Call(sKslCdo, f)) {
+    if (kismet_timer::Clear(sky, L"setMoonPhase")) {
         g_timerClearedFor = sky;
         UE_LOGI("skysphere: cleared newsky.setMoonPhase's 10 s timer on %p -- the host owns the "
                 "moon phase on this peer", sky);

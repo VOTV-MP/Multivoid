@@ -3,6 +3,7 @@
 #include "ue_wrap/desk/dish.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/kismet_timer.h"
 #include "ue_wrap/core/field_io.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -45,8 +46,6 @@ void* g_deactivateFn = nullptr; // UActorComponent::Deactivate()
 void* g_isActiveFn = nullptr;   // UActorComponent::IsActive() -> bool
 
 // Tickers: singletons the gamemode's BeginPlay creates.
-void* g_kismetSysCdo = nullptr;
-void* g_clearTimerFn = nullptr;        // KismetSystemLibrary::K2_ClearTimer
 
 std::chrono::steady_clock::time_point g_nextResolve{};
 bool g_coreResolved = false;
@@ -102,15 +101,10 @@ void ResolvePass() {
             if (!g_isActiveFn) g_isActiveFn = R::FindFunction(ac, L"IsActive");
         }
     }
-    if (!g_kismetSysCdo) g_kismetSysCdo = R::FindClassDefaultObject(L"KismetSystemLibrary");
-    if (g_kismetSysCdo && !g_clearTimerFn) {
-        if (void* kc = R::FindClass(L"KismetSystemLibrary"))
-            g_clearTimerFn = R::FindFunction(kc, L"K2_ClearTimer");
-    }
     const bool l4 = g_offActiveDishes >= 0 && g_offAxisY >= 0 && g_offAxisZ >= 0 &&
                     g_offMoveCue >= 0 && g_offCue >= 0 && g_offCalibration >= 0 &&
                     g_offTechName >= 0 && g_offRelRot >= 0 && g_setRelRotFn &&
-                    g_activateFn && g_deactivateFn && g_isActiveFn && g_clearTimerFn;
+                    g_activateFn && g_deactivateFn && g_isActiveFn && kismet_timer::Resolved();
     if (l4 && !g_l4Resolved) {
         g_l4Resolved = true;
         UE_LOGI("dish: L4 surface resolved (axes=0x%X/0x%X cues=0x%X/0x%X activeDishes=0x%X "
@@ -549,17 +543,10 @@ void* DisherInstance() {
 }
 
 bool ParkDisher(void* inst) {
-    if (!inst || !g_clearTimerFn || !g_kismetSysCdo) return false;
     // K2_ClearTimer(Object, FunctionName="do") -- the exact inverse of the blueprint's one-shot
     // K2_SetTimerDelegate({self, do}) arm, the same shape space_renderer's KillClientSpawnTimer
     // uses.
-    ue_wrap::ParamFrame f(g_clearTimerFn);
-    if (!f.valid()) return false;
-    f.Set<void*>(L"Object", inst);
-    const wchar_t* fn = L"do";
-    struct { const wchar_t* data; int32_t num; int32_t max; } fs{ fn, 3, 3 };
-    if (!f.SetRaw(L"FunctionName", &fs, sizeof(fs))) return false;
-    return ue_wrap::Call(g_kismetSysCdo, f);
+    return kismet_timer::Clear(inst, L"do");
 }
 
 bool RestoreDisher(void* inst) {

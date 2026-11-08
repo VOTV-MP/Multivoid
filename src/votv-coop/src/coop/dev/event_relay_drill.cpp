@@ -33,6 +33,7 @@
 #include "ue_wrap/actors/puppet.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/kismet_timer.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
@@ -45,7 +46,6 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
-#include <cwchar>
 #include <functional>
 #include <string>
 #include <string_view>
@@ -99,30 +99,10 @@ int CopiesOf(void* actor) {
     return c;
 }
 
-// The krampus's four BeginPlay timers (npc_krampus.cpp:389-404), cleared as kerfur::NeutralizeAiTimers clears a
-// kerfur's: K2_ClearTimer(Object, FunctionName) on KismetSystemLibrary's default object, the name an FString whose
-// count and capacity include the terminator.
+// The krampus's four BeginPlay timers (npc_krampus.cpp:389-404), cleared as kerfur::NeutralizeAiTimers clears kerfur's.
 void ClearKrampusTimers(void* actor) {
-    static void* s_ksl = nullptr;
-    static void* s_clear = nullptr;
-    if (!s_ksl) s_ksl = R::FindClassDefaultObject(L"KismetSystemLibrary");
-    if (s_ksl && !s_clear) {
-        if (void* kc = R::FindClass(L"KismetSystemLibrary")) s_clear = R::FindFunction(kc, L"K2_ClearTimer");
-    }
-    if (!s_ksl || !s_clear) {
-        UE_LOGW("[EVR] K2_ClearTimer unresolved -- the krampus's timers are NOT cleared");
-        return;
-    }
-    static const wchar_t* kTimers[4] = {L"timerButter", L"playerOverlap", L"tryToDespawn", L"safeTp"};
-    for (const wchar_t* fn : kTimers) {
-        ue_wrap::ParamFrame f(s_clear);
-        if (!f.valid()) continue;
-        f.Set<void*>(L"Object", actor);
-        const int32_t num = static_cast<int32_t>(std::wcslen(fn)) + 1;
-        struct { const wchar_t* data; int32_t n; int32_t m; } fs{fn, num, num};
-        if (!f.SetRaw(L"FunctionName", &fs, sizeof(fs))) continue;
-        ue_wrap::Call(s_ksl, f);
-    }
+    for (const wchar_t* fn : {L"timerButter", L"playerOverlap", L"tryToDespawn", L"safeTp"})
+        if (!ue_wrap::kismet_timer::Clear(actor, fn)) UE_LOGW("[EVR] K2_ClearTimer unresolved -- the krampus's timers are NOT cleared");
 }
 
 // ---- the host -----------------------------------------------------------------------------------
