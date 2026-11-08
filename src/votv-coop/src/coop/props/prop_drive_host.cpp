@@ -1,5 +1,6 @@
 // coop/props/prop_drive_host.cpp -- see coop/props/prop_drive_host.h.
 
+#include "coop/props/body_push.h"
 #include "coop/props/prop_drive_host.h"
 
 #include "coop/config/config.h"
@@ -454,6 +455,7 @@ static void Tick(coop::net::Session& s) {
 
 void Pump(coop::net::Session& s, bool isHost) {
     coop::prop_syncer::Tick(s, isHost);   // first: the role for a feeder's Claim, and a client's rows of the props it syncs
+    coop::props::body_push::Tick(s, isHost);   // a feeder: the props this peer's player walks into
     if (isHost) {
         // The order is the point: a client's rows are judged first, so the row's turn in Tick publishes what
         // this tick admitted, and the apply tick then advances the host's copies they just fed.
@@ -464,6 +466,7 @@ void Pump(coop::net::Session& s, bool isHost) {
 }
 
 void OnDisconnect() {
+    coop::props::body_push::OnDisconnect();
     g_driven.clear();
     g_turn = 0;
     g_genByEid.clear();

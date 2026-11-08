@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 283;
+inline constexpr uint16_t kProtocolVersion = 284;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1982,6 +1982,7 @@ static_assert(sizeof(PropDriveEndPayload) <= 256 - 20 - 8,
 enum class PropSyncReason : uint8_t {
     DevDrill = 1,
     SwingerParent = 2,   // unused until the swinger-parent feeder
+    BodyPush = 3,        // the client's own player walked into the prop and set it moving (coop/props/body_push)
 };
 
 // A client's request to be a prop's syncer (PropSyncClaim): the prop by its key when it has one and by its host eid,
