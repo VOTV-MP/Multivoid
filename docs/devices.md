@@ -441,7 +441,9 @@ now the machine (`coop/interactables/woodchipper_sync`, `coop/interactables/wood
 
 - A client's copy is refused its tick and its intake at the script gate, as the foods' and the plants' ticks are, so it
   burns nothing and eats nothing; the host's copy eats, destroys the prop through the prop destroy path and drops the
-  clump, which reaches a client by the prop census's re-seed `[?]`.
+  clump `[?]`. A prop a client holds or threw is, on the host, a copy its stream drives out of the simulation, which the
+  intake refuses: the client's refused intake asks the host (`WoodchipperIntent`, op Feed) and lets go, and the host
+  puts its copy in the box and runs the intake once no drive moves it (`coop/interactables/woodchipper_feed`) `[V]`.
 - Every change of the host's chipper is announced by the game's own `checkActive`, and by the button's body for a press
   at fuel 0, so a watch on each sends the chipper's fuel and on/off at once, one message per changed chipper per tick. The
   burn is the one thing nothing announces: while a chipper's fuel moves it is read and sent once a second. A client
@@ -451,16 +453,15 @@ now the machine (`coop/interactables/woodchipper_sync`, `coop/interactables/wood
 - A client's pour runs on its copy as the game wrote it (its can drains and sounds), and the fuel the copy gained is
   sent to the host; its press of the button is refused on the copy and sent as the state it wanted. The host judges each
   (the sender's world, the chipper by key and class, a living sender, its reach, a bounded queue and rate, the gas can
-  in the sender's hand and the room in the tank for a pour, the state wanted for a press), adds the fuel it has room
-  for and runs `checkActive`, or runs the game's own press with the sender's puppet as the player, inside the requester
+  in the sender's hand and the room in the tank for a pour, the state wanted for a press), adds the fuel it has room for
+  and runs `checkActive`, or runs the game's own press with the sender's puppet as the player, inside the requester
   feedback scope, and answers a refused intent with the state, to the sender alone, whenever it can name the chipper (a
-  key that names none has no state to send). A client can refill a chipper to
-  full on demand, at the intent budget of four a second; it cannot overfill it, and no gas can drains but the one in
-  the client's own hand `[?]`.
+  key that names none has no state to send). A client can refill a chipper to full on demand, at the intent budget of
+  four a second; it cannot overfill it, and no gas can drains but the one in the client's own hand `[?]`.
 - At a joiner's ready edge the host sends which chippers are on; their fuel comes with the prop records. A chipper
   that is mid-chip at the join, its chip animation and its chip sound are not carried `[?]`.
 
-`[?]` until the drill runs (`harness/autotest/autotest_woodchipper.cpp`, the `woodchipper_drill` row).
+`[?]` until the drill runs (`autotest_woodchipper.cpp`, the `woodchipper_drill` row); `[V]` `autotest_chipper_feed.cpp`.
 
 ### The computer and the economy
 
@@ -565,7 +566,7 @@ state it shows, and the first rows a world takes play no sound.
 | A cord's link is the host's: a client reports the plug its player made and the host's answer settles both copies, so two clients on one cord settle in arrival order and a claim on a cord the host's player is dragging is answered with the host's link. A socket's power, a generator's outlets and a Kerfus's charging are not this lane's. Not yet exercised in a two-peer game run | `[RD]` the cord and socket Blueprint call surface; `[?]` `coop/interactables/cord_sync`, `ue_wrap/devices/cord` |
 | A client's spill from its hand lands where its own flight put it, which the host takes as is within 15 m. A bottle's opening click and a liquid that leaves something other than a grime decal are not carried | `[V]` `prop_snack_beer_C`'s `openBottle` plays `impact_plastic_cue`; `coop/world/spill_sync` |
 | A client's light-group index has been reported dropping to zero after a join; not reproduced | `[?]` [issue 11](https://github.com/VOTV-MP/Multivoid/issues/11) |
-| A woodchipper's chip animation and chip sound, and the gas can's fuel on the other peers after a pour, are not carried; a client's pour is the fuel its own copy gained, which the host takes up to the room in the tank, and a prop a client holds over the hopper is not eaten while it is held | `[?]` `coop/interactables/woodchipper_sync`; no lane carries the can's fuel |
+| A woodchipper's chip animation and chip sound, and the gas can's fuel on the other peers after a pour, are not carried; a client's pour is the fuel its own copy gained, which the host takes up to the room in the tank | `[?]` `coop/interactables/woodchipper_sync`; no lane carries the can's fuel |
 
 ## Code map
 
@@ -579,7 +580,7 @@ state it shows, and the first rows a world takes play no sound.
 | power, turbine, windows, grime | `coop/world/power_panel`, `coop/world/power_grid`, `ue_wrap/devices/generator`, `coop/interactables/turbine_sync`, `coop/interactables/window_sync`, `coop/interactables/grime_sync`, `ue_wrap/devices/power_control`, `ue_wrap/devices/windturbine`, `ue_wrap/devices/base_window`, `ue_wrap/devices/grime` |
 | the fuse towers | `coop/world/fuse_tower_rows`, `coop/world/fuse_tower_ops`, `coop/world/fuse_tower_kind`, `ue_wrap/devices/coord_tower`, `ue_wrap/devices/radio_tower` |
 | the drone | `coop/interactables/drone_sync`, `coop/interactables/drone_call_intent`, `ue_wrap/devices/drone`, `ue_wrap/devices/drone_console` |
-| the woodchipper | `coop/interactables/woodchipper_sync`, `coop/interactables/woodchipper_gate`, `ue_wrap/actors/woodchipper` |
+| the woodchipper | `coop/interactables/woodchipper_sync`, `coop/interactables/woodchipper_gate`, `coop/interactables/woodchipper_feed`, `ue_wrap/actors/woodchipper` |
 | the signal servers | `coop/interactables/serverbox_sync`, `coop/interactables/server_upgrade_sync`, `ue_wrap/devices/serverbox` |
 | identity | `coop/element/portable_identity` |
 | tests and probes | `coop/dev/container_selftest`, `coop/dev/door_drill`, `coop/dev/lightswitch_probe`, `coop/dev/drone_probe`, `coop/dev/drone_call_drill`, `coop/dev/light_group_census`, `coop/dev/tower_drill` |

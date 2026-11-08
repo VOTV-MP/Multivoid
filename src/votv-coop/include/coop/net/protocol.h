@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 283;
+inline constexpr uint16_t kProtocolVersion = 284;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1258,10 +1258,11 @@ enum class ReliableKind : uint8_t {
     // record lane carries the fuel). A client's copy takes it without running the chipper. Reliable, not relayed, not
     // pre-world. WoodchipperPayload.
     WoodchipperState = 232,
-    // CLIENT->HOST: this client's player poured a gas can into a woodchipper (op 1, the fuel its own copy gained) or
-    // pressed its button (op 2, the state it wanted). Never relayed; the host judges it (reach, rate, the can in the
-    // sender's hand, the room in the tank), does it on its chipper, and its WoodchipperState answers, to the sender alone
-    // when it refused. WoodchipperPayload.
+    // CLIENT->HOST: this client's player poured a gas can into a woodchipper (op 1, the fuel its own copy gained),
+    // pressed its button (op 2, the state it wanted) or fed it a prop it holds or syncs (op 4, the payload then a
+    // WoodchipperFeedTail). Never relayed; the host judges it (reach, rate, the can in the sender's hand, the room in the
+    // tank; for a feed, its own chipper running and its own copy of the prop near the box), does it on its chipper, and
+    // its WoodchipperState answers, to the sender alone when it refused. WoodchipperPayload.
     WoodchipperIntent = 233,
 
     // CLIENT->HOST: this client pressed a coffee vending machine or a coffee maker (action 4), which its own copy
@@ -3825,10 +3826,10 @@ struct TurbineStatePayload {
 };
 static_assert(sizeof(TurbineStatePayload) == 56, "TurbineStatePayload must be 56 bytes");
 
-// A woodchipper's state (WoodchipperState: op 0 fuel and active, op 3 active alone), or a client's pour (op 1) or
-// press (op 2) (WoodchipperIntent).
+// A woodchipper's state (WoodchipperState: op 0 fuel and active, op 3 active alone), or a client's pour (op 1),
+// press (op 2) or feed (op 4) (WoodchipperIntent). A feed is this payload, then WoodchipperFeedTail.
 inline constexpr uint8_t kWoodchipperOpState = 0, kWoodchipperOpPour = 1, kWoodchipperOpSetActive = 2,
-                         kWoodchipperOpActiveOnly = 3;
+                         kWoodchipperOpActiveOnly = 3, kWoodchipperOpFeed = 4;
 struct WoodchipperPayload {
     WireKey key;       // 32 -- the chipper's key
     float   fuel;      // 4 -- its fuel (0..100); a pour's gain; unread by op 3
@@ -3837,6 +3838,13 @@ struct WoodchipperPayload {
     uint8_t _pad[2];   // 2 -- zero
 };
 static_assert(sizeof(WoodchipperPayload) == 40, "WoodchipperPayload must be 40 bytes");
+
+// What follows a feed's WoodchipperPayload: the prop the client's copy of the chipper took in its eat box, a prop
+// this client holds or syncs.
+struct WoodchipperFeedTail {
+    WireKey prop;      // 32 -- the fed prop's key
+};
+static_assert(sizeof(WoodchipperFeedTail) == 32, "WoodchipperFeedTail must be 32 bytes");
 
 // The edge a PropConvert re-skins.
 namespace propconvert_kind {
