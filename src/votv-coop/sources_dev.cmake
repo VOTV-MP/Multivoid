@@ -21,6 +21,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/feedback_probe.cpp
     src/coop/dev/kerfur_seat_probe.cpp
     src/coop/dev/requester_feedback_exercise.cpp
+    src/coop/dev/dig_drill.cpp
     src/coop/dev/host_settle_drill.cpp
     src/coop/dev/spawn_match_probe.cpp
     src/coop/dev/native_text_probe.cpp

@@ -203,7 +203,10 @@ that the pile resolves through the sender's own reach token and that no carry or
 it, then runs the pile's own `turnIntoScrap` inside the sender's feedback scope
 (`coop/requester_feedback`), so the dig sound plays on the digger's machine rather than the host's. The
 item and the pile's death then reach every peer as the host's own dig's do. A refused dig changes
-nothing anywhere: the pile stands on every peer.
+nothing anywhere: the pile stands on every peer. `[V]` the dig drill (`coop/dev/dig_drill`): a client
+holding a shovel dug the host's wood pile three times; each time both peers had no pile and one
+`trWood_` scrap 3 to 21 cm from it, and the dig sound was routed to the client and played there. An
+empty-handed client's dig was refused twice, with the pile standing and no scrap on both peers.
 
 ### Save-loaded piles at a join
 
@@ -294,7 +297,7 @@ the host may have moved or removed the pile since.
 | the dispenser piles | `coop/props/trash_pile_sync`, `coop/props/trash_collect_sync` |
 | the broom | `coop/items/broom_stroke` (every stroke the host's), `coop/items/broom_push` (what it pushes), `ue_wrap/actors/broom` |
 | bagging a pile | `coop/props/pack_trash_intent`, and the bag family's tests in `ue_wrap/actors/prop` |
-| digging a pile | `coop/props/scrap_pile_intent`, `coop/dispatch/event_dispatch_dig.cpp`, `ue_wrap/actors/dig_tool` |
+| digging a pile | `coop/props/scrap_pile_intent`, `coop/dispatch/event_dispatch_dig.cpp`, `ue_wrap/actors/dig_tool`, `coop/dev/dig_drill` (the drill) |
 | garbage containers | `coop/interactables/garbage_sync` |
 | the join | `coop/props/pile_spawn_bind`, `coop/element/quiescence_drain`, `coop/props/save_time_retire_util.h`, `coop/props/save_identity_map`, `coop/props/save_identity_bind` |
 | tests | `harness/autotest/autotest_chippile.cpp`, `harness/autotest/autotest_clump.cpp`, `harness/autotest/autotest_broomstroke.cpp` |
