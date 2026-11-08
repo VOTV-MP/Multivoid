@@ -216,4 +216,7 @@ DWORD WINAPI ModuleBuyThread(LPVOID arg);
 // VOTVCOOP_RUN_PROP_PROPS, both peers -- harness/autotest/autotest_prop_props.cpp
 DWORD WINAPI PropPropsThread(LPVOID arg);
 
+// VOTVCOOP_RUN_BODY_PUSH, both peers -- harness/autotest/autotest_body_push.cpp
+DWORD WINAPI BodyPushThread(LPVOID arg);
+
 }  // namespace harness::autotest

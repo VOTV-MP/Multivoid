@@ -232,9 +232,9 @@ spawn: the host catches the finish of each spawn the pile's own `broomed` body m
 streams open after the tick's spawns are named, so each has its id by then. The third feeder is
 the host's own births: a prop it spawns simulating -- a spawn-menu barrel in mid-air, a forage
 drop, a prop built from a client's intent -- coasts from its birth until it rests, since every
-peer would otherwise simulate its own fall and the copies came to rest apart; at most 32 props
-are coasting at once, and a burst past that falls locally (`coop/props/host_spawn_watcher`). A
-prop that a pushed prop knocks has no verb of its own and is not streamed. A receiver parks the prop on the first pose
+peer would otherwise simulate its own fall and the copies came to rest apart; at most 32 coast at once and more fall locally (`coop/props/host_spawn_watcher`).
+A prop a player walks into is that peer's push, streamed (`coop/props/body_push`) `[V]`; one a pushed prop knocks is not.
+A receiver parks the prop on the first pose
 and follows the stream the way a carried trash clump is followed -- the fixed-delay interpolation,
 frozen at the last pose across a gap -- where a held prop snaps to each pose; a reliable end edge
 carries the final pose, the host's physics flags and the velocity once the prop has rested or a hand
