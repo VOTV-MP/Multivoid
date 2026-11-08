@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 283;
+inline constexpr uint16_t kProtocolVersion = 284;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -772,6 +772,19 @@ enum class ReliableKind : uint8_t {
     // Late join: nothing to replay, since a pack the host has not run changed nothing.
     // PackTrashIntentPayload.
     PackTrashIntent = 144,
+
+    // Client to host: dig the chip pile this element id names with a shovel or a rake. A dig ends in the
+    // pile's own turnIntoScrap, which spawns one trash item and destroys the pile; on a client that
+    // authors nothing the host sees -- a client's prop birth is refused at the door -- so the pile
+    // stayed on the host and the item stayed on the client. The client refuses the pile's body at the
+    // script-body gate and asks here instead. Trust: the sender must hold a shovel or a rake on the host's
+    // mirror of its hand, the pile is resolved through the sender's own reach token and must not be
+    // under an open carry, and a sender's digs run no faster than a bounded rate from a bounded
+    // queue. The host runs the pile's own turnIntoScrap inside the sender's feedback scope, so the
+    // prop seams carry the item and the pile's death and the dig sound plays for the digger.
+    // Late join: nothing to replay, since a dig the host has not run changed nothing.
+    // PROVISIONAL number, final at landing. ScrapPileIntentPayload.
+    ScrapPileIntent = 247,
 
     // Client to host: press one of the garage console's two faces -- the keyboard (call/send) or the
     // leave timer (toggle). Every peer's console holds its own drone as a level reference, so a
@@ -3887,6 +3900,15 @@ struct PackTrashIntentPayload {
 static_assert(sizeof(PackTrashIntentPayload) == 8, "PackTrashIntentPayload must be 8 bytes");
 static_assert(sizeof(PackTrashIntentPayload) <= 256 - 20 - 8,
               "PackTrashIntentPayload must fit one datagram");
+
+// A dig intent (ScrapPileIntent): the chip pile the client's shovel or rake dug.
+struct ScrapPileIntentPayload {
+    uint32_t eid;       // the chip pile the client dug
+    uint8_t  _pad[4];   // 8-byte alignment; zero
+};
+static_assert(sizeof(ScrapPileIntentPayload) == 8, "ScrapPileIntentPayload must be 8 bytes");
+static_assert(sizeof(ScrapPileIntentPayload) <= 256 - 20 - 8,
+              "ScrapPileIntentPayload must fit one datagram");
 
 // The upgrade levels (UpgradeLevels), host to all: the whole struct, absolute. The ORDER is
 // ue_wrap::upgrades' table order, fixed in that file precisely so this payload does not depend on

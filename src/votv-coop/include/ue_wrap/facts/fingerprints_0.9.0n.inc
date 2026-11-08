@@ -51,6 +51,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"actor", L"setactortickinterval", L"actor.setactortickinterval", 0x184895b0731c36f2ull, 0xcbf29ce484222325ull},
     {L"actorchippile_c", L"playergrabbed", L"actorchippile_c.playergrabbed", 0xed240d6c0d44084eull, 0xa7b4202fcaf67aceull},
     {L"actorchippile_c", L"toclump", L"actorchippile_c.toclump", 0x852b6353accf5c29ull, 0xf906de8b089f2211ull},
+    {L"actorchippile_c", L"turnintoscrap", L"actorchippile_c.turnintoscrap", 0x6a2d5d90ab51fa2dull, 0x0c8145eb2ec469ddull},
     {L"actorcomponent", L"activate", L"actorcomponent.activate", 0xf74239d40fee881full, 0xcbf29ce484222325ull},
     {L"actorcomponent", L"deactivate", L"actorcomponent.deactivate", 0x6a2d5d90ab51fa2dull, 0xcbf29ce484222325ull},
     {L"actorcomponent", L"setactive", L"actorcomponent.setactive", 0x1a355810e2be1950ull, 0xcbf29ce484222325ull},

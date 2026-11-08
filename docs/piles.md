@@ -184,6 +184,27 @@ out ended its stream on both peers at one pose and came to rest within 0.1 cm of
 over two runs; a prop that something knocked on the host after its stream had ended lay up to 15.9
 cm off in an earlier run, a knock being no verb ([props.md](props.md)) `[V]`.
 
+### The shovel and the rake
+
+Both tools dig a chip pile into scrap. Each traces from its holder's arm, and a chip pile the trace hits
+gets the pile's own `turnIntoScrap`: one trash item named by the pile's chip type, a random variant of
+it (`trWood_1`, `g2_metal_3`, a food for organic chips), spawned 25 cm above the pile, then the pile's
+destroy and the dig sound in 2D (`ue_wrap/actors/dig_tool`). Everything a dig changes in the world is in
+that one function. The host's own dig needs no lane: the item's birth and the pile's eid destroy leave
+on the prop seams, and a client's copy took both. A client's dig was its own alone, since a client's
+prop birth is refused at the door: the host kept the pile and the client kept a scrap the host never
+had.
+
+A client's dig is now the host's (`coop/props/scrap_pile_intent`). The client refuses the pile's
+`turnIntoScrap` at the script-body gate, whoever called it, and sends `ScrapPileIntent` with the pile's
+id; an identity-less pile is refused there and sends nothing. The host serves a sender's digs from a
+bounded queue at a bounded rate, checks that its mirror of that sender's hand is a shovel or a rake,
+that the pile resolves through the sender's own reach token and that no carry or land settle is open on
+it, then runs the pile's own `turnIntoScrap` inside the sender's feedback scope
+(`coop/requester_feedback`), so the dig sound plays on the digger's machine rather than the host's. The
+item and the pile's death then reach every peer as the host's own dig's do. A refused dig changes
+nothing anywhere: the pile stands on every peer.
+
 ### Save-loaded piles at a join
 
 A joiner's world comes from the host's save, so the client has its own copy of every pile. The
@@ -208,6 +229,7 @@ replacement for the position key.
 | a broom stroke | the host | a client's stroke is what it read of its holder; the host runs the stroke with those reads, reach- and rate-checked |
 | a native a joiner has not bound | the host | only host messages move it (converts, position corrections, pose streams); the joiner runs no morph of it (`coop/props/trash_morph_gate`), and a clump of it is held still from its load spawn (`coop/props/trash_native_hold`) |
 | bagging a pile | the host, by intent | a client's press is refused at the script-body gate and sent as the target's id; the host spawns the bag and destroys the target, so the prop seams carry both |
+| digging a pile with a shovel or a rake | the host, by intent | a client's `turnIntoScrap` is refused at the script-body gate and sent as the pile's id; the host checks the tool and the reach and runs the pile's own dig, so the prop seams carry the scrap and the pile's death |
 
 ## Wire messages
 
@@ -216,6 +238,7 @@ replacement for the position key.
 | `GrabIntent`, `ThrowIntent` | a client to the host | the pile id; the release or a hard throw with its direction |
 | `PackTrashIntent` | a client to the host | the id of the pile or clump a client bagged, and whether the tool was a folded bag or a roll |
 | `BroomStroke` | a client to the host | the segment, heading and velocity a broom stroke read of its holder |
+| `ScrapPileIntent` | a client to the host | the id of the chip pile a client's shovel or rake dug |
 | `PropConvert` | the host to all | the atomic pile-clump convert: id, form, pose, scale, chip type, context |
 | `TrashCarryPose` (stream) | the host to all | per-id poses for client-grabbed clumps and the clumps a broom sets rolling |
 | `PropPose` (stream) | the host to all | the host's own held clump and its flight |
@@ -271,6 +294,7 @@ the host may have moved or removed the pile since.
 | the dispenser piles | `coop/props/trash_pile_sync`, `coop/props/trash_collect_sync` |
 | the broom | `coop/items/broom_stroke` (every stroke the host's), `coop/items/broom_push` (what it pushes), `ue_wrap/actors/broom` |
 | bagging a pile | `coop/props/pack_trash_intent`, and the bag family's tests in `ue_wrap/actors/prop` |
+| digging a pile | `coop/props/scrap_pile_intent`, `coop/dispatch/event_dispatch_dig.cpp`, `ue_wrap/actors/dig_tool` |
 | garbage containers | `coop/interactables/garbage_sync` |
 | the join | `coop/props/pile_spawn_bind`, `coop/element/quiescence_drain`, `coop/props/save_time_retire_util.h`, `coop/props/save_identity_map`, `coop/props/save_identity_bind` |
 | tests | `harness/autotest/autotest_chippile.cpp`, `harness/autotest/autotest_clump.cpp`, `harness/autotest/autotest_broomstroke.cpp` |

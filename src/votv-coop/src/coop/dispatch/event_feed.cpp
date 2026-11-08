@@ -484,6 +484,7 @@ void Update(net::Session& session, void* localPlayer) {
             if (HandleCrematorEvent(session, msg)) break;
             if (HandleRequesterFeedbackEvent(session, msg)) break;
             if (HandleKerfurCommandEvent(session, msg)) break;
+            if (HandleDigEvent(session, msg)) break;
             if (HandleEconomyEvent(session, msg, localPlayer)) break;
             if (HandlePropDriveEvent(session, msg)) break;
             if (HandleWorldEvent(msg)) break;

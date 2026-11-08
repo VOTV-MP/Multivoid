@@ -83,6 +83,11 @@ bool HandleRequesterFeedbackEvent(net::Session& session,
 bool HandleKerfurCommandEvent(net::Session& session,
                               const net::Session::ReliableMessage& msg);
 
+// Dig family: a client's dig of a chip pile. ScrapPileIntent checks role()==Host AND a client sender slot here
+// and hands the pile's id to the host's lane (coop/props/scrap_pile_intent).
+bool HandleDigEvent(net::Session& session,
+                       const net::Session::ReliableMessage& msg);
+
 // Economy family: the delivery order with its queue, the coin gun's sale and collect, the laptop
 // upgrade purchase and the point sack. OrderRequest, CoinGunSell and CoinCollect check the slot here
 // and leave the role gate to the module they call; UpgradeIntent and PointSackRedeem check role()==Host
