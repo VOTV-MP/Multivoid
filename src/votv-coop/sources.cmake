@@ -666,6 +666,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_runend.cpp
     src/harness/autotest/autotest_slip.cpp
     src/harness/autotest/autotest_flash_battery.cpp
+    src/harness/autotest/autotest_fill_needs.cpp
     src/harness/autotest/peer_signal.cpp
     src/harness/autotest/meet.cpp
     src/harness/autotest/autotest_move_osc.cpp
