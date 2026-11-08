@@ -53,6 +53,7 @@ bool g_visPending = false;
 bool g_visPendingValue = false;
 bool g_visDeferWarned = false;
 bool g_remapPending = false;  // the join adopt's updRemap repaint, owed until the widget is live
+bool g_capLabelPending = false;  // the cap label's repaint, owed until the widget is live
 
 void SendDelta(coop::net::Session* s, DeskInputField field,
                float fv, int32_t iv, bool bv) {
@@ -132,6 +133,8 @@ bool ApplyField(const coop::net::DeskInputPayload& p, CD::Scalars& sc) {
     if (!CD::WriteScalars(sc, PaintersFor(static_cast<DeskInputField>(p.field)))) return false;
     if (static_cast<DeskInputField>(p.field) == DeskInputField::PlayVolume)
         CD::ApplyPlayVolumeEffects(p.intVal);
+    // The cap's label is not a painter's: only the press and upgraded_pcUpgrades write it.
+    if (static_cast<DeskInputField>(p.field) == DeskInputField::CompMaxLevel) RepaintCapLevelOrDefer();
     // A deferred mode is not applied yet: false keeps OnDeskInput from priming the baseline with it.
     if (static_cast<DeskInputField>(p.field) == DeskInputField::VisualizerMode &&
         !ApplyVisualizerModeOrDefer(p.boolVal != 0))
@@ -239,6 +242,10 @@ void Tick() {
         g_remapPending = false;
         UE_LOGI("desk_input: deferred remap repaint done (screen widget live)");
     }
+    if (g_capLabelPending && CD::RepaintCapLevel()) {
+        g_capLabelPending = false;
+        UE_LOGI("desk_input: deferred cap label repaint done (screen widget live)");
+    }
     if (!s->connected()) {
         // Keep the baseline current while unwired so a (re)connect never
         // bursts stale diffs.
@@ -311,6 +318,15 @@ bool RepaintRemapOrDefer() {
         return true;
     }
     g_remapPending = true;
+    return false;
+}
+
+bool RepaintCapLevelOrDefer() {
+    if (CD::RepaintCapLevel()) {
+        g_capLabelPending = false;
+        return true;
+    }
+    g_capLabelPending = true;
     return false;
 }
 
@@ -387,6 +403,7 @@ void OnDisconnect() {
     g_visPendingValue = false;
     g_visDeferWarned = false;
     g_remapPending = false;
+    g_capLabelPending = false;
     g_nextPoll = {};
 }
 

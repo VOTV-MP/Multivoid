@@ -201,6 +201,7 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // The flashlight battery: each peer's runs out in turn and the other reads its puppet's light.
     SpawnIf("VOTVCOOP_RUN_FLASH_BATTERY", "flashlight battery drill", &FlashBatteryThread, role);
     SpawnIf("VOTVCOOP_RUN_DESK_VIEW", "desk signal view drill", &DeskViewThread, role);
+    SpawnIf("VOTVCOOP_RUN_CAP_LABEL", "refiner cap label drill", &CapLabelThread, role);
     SpawnIf("VOTVCOOP_RUN_DISH_SOUND", "dish slew sound drill", &DishSoundThread, role);
     // The save notice: the game's own save with and without an event, read on both peers.
     SpawnIf("VOTVCOOP_RUN_SAVE_NOTICE", "save notice drill", &SaveNoticeThread, role);

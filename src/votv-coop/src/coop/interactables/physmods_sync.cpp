@@ -2,6 +2,7 @@
 
 #include "coop/interactables/physmods_sync.h"
 
+#include "coop/interactables/desk_input_sync.h"  // RepaintCapLevelOrDefer
 #include "coop/interactables/desk_snd_fx.h"  // ScopedWireApply (the shared desk wire guard)
 #include "coop/element/mirror_manager.h"
 #include "coop/element/prop.h"
@@ -122,11 +123,23 @@ void SendLocalEdit(coop::net::Session* s, const uint8_t before[PM::kSlots], cons
 
 uint64_t g_adopted = 0;  // canonical arrays written into this peer's desk, game thread
 
+// The refiner's cap label reads the Auto Processing module's presence, and the game repaints it from neither a plug
+// nor an unplug (updPhysMods leaves it), so every peer repaints it whenever that presence changes, by any writer.
+void RepaintCapLabelIfModuleChanged(const uint8_t before[PM::kSlots], const uint8_t after[PM::kSlots]) {
+    if (PM::HasAutoProcessing(before) != PM::HasAutoProcessing(after))
+        coop::desk_input_sync::RepaintCapLevelOrDefer();
+}
+
 bool AdoptCanonical(const uint8_t bytes[PM::kSlots]) {
     coop::desk_snd_fx::ScopedWireApply guard;
+    uint8_t before[PM::kSlots];
+    const bool hadBefore = PM::ReadArray(before);
     if (!PM::WriteArray(bytes)) return false;
     ++g_adopted;
     PM::CallUpdPhysMods();
+    // Unread, the label is repainted anyway: a join's first canonical can land over a desk that read nothing.
+    if (hadBefore) RepaintCapLabelIfModuleChanged(before, bytes);
+    else coop::desk_input_sync::RepaintCapLevelOrDefer();
     return true;
 }
 
@@ -178,6 +191,7 @@ void OnEditPost(const sg::Call& call) {
     if (!PM::ReadArray(live) || std::memcmp(before, live, PM::kSlots) == 0) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (s && s->connected()) SendLocalEdit(s, before, live);
+    RepaintCapLabelIfModuleChanged(before, live);
     for (InFlight& outer : g_inFlight) std::memcpy(outer.before, live, PM::kSlots);
 }
 
@@ -291,6 +305,8 @@ void OnPhysMods(const coop::net::PhysModsStatePayload& p, uint8_t senderSlot) {
     }
     uint8_t arr[PM::kSlots];
     if (!PM::ReadArray(arr)) return;
+    uint8_t before[PM::kSlots];
+    std::memcpy(before, arr, PM::kSlots);
 
     if (p.op == kOpPlug) {
         if (arr[p.slot] != 0) {
@@ -332,6 +348,7 @@ void OnPhysMods(const coop::net::PhysModsStatePayload& p, uint8_t senderSlot) {
         }
         PM::CallUpdPhysMods();
     }
+    RepaintCapLabelIfModuleChanged(before, arr);
     HostBroadcastCanonical(s);
     UE_LOGI("physmods: host applied op=%u slot=%u byte=%u from slot %u -- canonical broadcast",
             p.op, p.slot, p.byte, senderSlot);

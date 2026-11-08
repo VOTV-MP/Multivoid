@@ -256,6 +256,20 @@ bool ApplyVisualizerMode(bool spectrogram);
 // Game thread.
 bool RepaintRemap();
 
+// Repaint the refiner's cap label from comp_maxLevel and the modules: the cap button's tag (the hover's
+// "Cap level [N]", or "Upgrade Auto Processing to use" without the module) and the screen's text_comp_maxlvl
+// ("[N]", or "NaN"). Only the cap button's own body and the desk's upgraded_pcUpgrades write them, so a value
+// written from outside the press, or a module plugged or pulled, leaves them stale; this runs
+// upgraded_pcUpgrades, the game's own repaint, which otherwise re-derives only what the save's upgrades already
+// say. It ends by nulling the local player's lookAtComponent, as the press does, so it runs on a change, never
+// on a clock. False if unresolved or the desk's screen widget is not live yet (nothing runs then; the caller
+// retries). Game thread.
+bool RepaintCapLevel();
+
+// The cap label as this peer shows it: the cap button's first tag and the screen's cap text. False if either
+// is not readable. Diagnostic; game thread.
+bool ReadCapLabel(std::wstring& tag, std::wstring& text);
+
 // The deck-playback replay surface (deck_play_sync): the reflected desk playSignal and
 // stopSound, parameterless. playSignal reads the selected index and gates on active play, a
 // valid index and decoded at least size internally; the caller pre-checks the
