@@ -17,11 +17,11 @@ namespace ue_wrap { class ParamFrame; }
 namespace ue_wrap::hit_result {
 
 // Fill `frame`'s FHitResult parameter `param` with a blocking hit on `component` of `actor` at
-// `location`. False when MakeHitResult is unresolved, its call fails, the two parameters differ in
-// size, or the hit it built does not resolve back to that actor and component. Game thread
-// (dispatches a UFunction).
+// `location`, of `physMaterial` when one is given (a hit a Blueprint tests the surface of). False when
+// MakeHitResult is unresolved, its call fails, the two parameters differ in size, or the hit it built
+// does not resolve back to that actor, component and material. Game thread (dispatches a UFunction).
 bool Write(ue_wrap::ParamFrame& frame, const wchar_t* param, void* actor, void* component,
-           const FVector& location);
+           const FVector& location, void* physMaterial = nullptr);
 
 // The same hit, written into `object`'s FHitResult property `field`. False as above, or when the
 // class has no such property or its struct differs in size. Game thread.
