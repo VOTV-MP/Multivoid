@@ -11,6 +11,7 @@
 #include "ue_wrap/core/ftext_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/desk/coords_panel.h"
 #include "ue_wrap/desk/signal_dynamic.h"
 #include "ue_wrap/world/world_singleton.h"
@@ -724,6 +725,36 @@ bool RepaintRemap() {
     // widget is not live (the Blueprint would log a None access and paint nothing).
     if (!d || !fn || !AtlasWidget()) return false;
     return ue_wrap::component_calls::CallParamless(d, fn);
+}
+
+bool RepaintCapLevel() {
+    void* d = Instance();
+    // upgraded_pcUpgrades writes the screen widget's cap text: refused while that widget is not live, as updRemap.
+    if (!d || !AtlasWidget()) return false;
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(d), L"upgraded_pcUpgrades");
+    return fn && ue_wrap::component_calls::CallParamless(d, fn);
+}
+
+bool ReadCapLabel(std::wstring& tag, std::wstring& text) {
+    void* d = Instance();
+    void* w = AtlasWidget();
+    if (!d || !w) return false;
+    static int32_t sOffButton = -1, sOffText = -1, sOffTags = -1, sOffTextBlockText = -1;
+    if (sOffButton < 0) sOffButton = R::FindPropertyOffset(R::ClassOf(d), L"button_comp_maxLevel");
+    if (sOffText < 0) sOffText = R::FindPropertyOffset(R::ClassOf(w), L"text_comp_maxlvl");
+    if (sOffTags < 0)
+        if (void* ac = R::FindClass(L"ActorComponent")) sOffTags = R::FindPropertyOffset(ac, L"ComponentTags");
+    if (sOffTextBlockText < 0)
+        if (void* tb = R::FindClass(L"TextBlock")) sOffTextBlockText = R::FindPropertyOffset(tb, L"Text");
+    if (sOffButton < 0 || sOffText < 0 || sOffTags < 0 || sOffTextBlockText < 0) return false;
+    void* button = *reinterpret_cast<void**>(static_cast<uint8_t*>(d) + sOffButton);
+    void* block = *reinterpret_cast<void**>(static_cast<uint8_t*>(w) + sOffText);
+    if (!button || !R::IsLive(button) || !block || !R::IsLive(block)) return false;
+    struct NameArray { const R::FName* data; int32_t num; int32_t max; };
+    const auto* tags = reinterpret_cast<const NameArray*>(static_cast<const uint8_t*>(button) + sOffTags);
+    tag = tags->data && tags->num > 0 ? R::ToString(tags->data[0]) : std::wstring{};
+    text = ue_wrap::ftext_utils::FTextToString(static_cast<const uint8_t*>(block) + sOffTextBlockText);
+    return true;
 }
 
 bool PlayScanEffects() {

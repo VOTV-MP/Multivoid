@@ -20,6 +20,17 @@ namespace ue_wrap::phys_mods {
 
 inline constexpr int kSlots = 12;
 
+// enum_physicalModules' Auto Processing, the module the refiner's cap needs: without it the cap button reads
+// "Upgrade Auto Processing to use" and the lights stay dark (the desk's updMaxLevelLights and cap press test it).
+inline constexpr uint8_t kAutoProcessing = 3;
+
+// Whether `arr` (kSlots bytes) holds the Auto Processing module in any slot.
+inline bool HasAutoProcessing(const uint8_t arr[kSlots]) {
+    for (int i = 0; i < kSlots; ++i)
+        if (arr[i] == kAutoProcessing) return true;
+    return false;
+}
+
 // Resolve the physMods offset + updPhysMods on the desk class, the module
 // base class (Aprop_physModule_C) and lib.physModToActor. Piggybacks
 // console_desk::EnsureResolved for the desk class/instance. Throttled lazy

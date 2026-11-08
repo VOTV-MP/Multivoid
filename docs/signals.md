@@ -85,6 +85,15 @@ the desk scalars `[V]` (`harness/autotest/autotest_desk_view.cpp`: set before a 
 read the same on both after every step; the verbs by reflection, the buttons' own routes into them `[RD]`, and
 the drawn image not compared).
 
+The refiner's cap label is the cap button's tag (its hover, `Cap level [N]`, or the line asking for the Auto
+Processing module) and the screen's cap text (`[N]`, or `NaN` without the module). The game writes it only from
+the cap press and the desk's `upgraded_pcUpgrades`, so a cap level from the wire, a join adopt, or any module plug
+or unplug, the peer's own included, left it showing an old level. Each of those now runs `upgraded_pcUpgrades`
+(`ue_wrap/desk/console_desk` `RepaintCapLevel`), whose other writes re-derive only what the save's upgrades say;
+it is held while the screen widget is not live `[V]` (`harness/autotest/autotest_cap_label.cpp`: the join, then
+each peer plugging and pulling the module and pressing the cap with and without it, the tag and text read the
+same on both peers after every step, 0 fails; with the repaint off, 5 fails on each peer).
+
 The download simulation runs on the host only (`coop/interactables/desk_sim_sync`): the host
 rolls both random terms and streams the output vector (decoded, the needle, the rate, the
 frequency and polarity data and offsets, the cooldown) unreliable, about ten times a second, and
