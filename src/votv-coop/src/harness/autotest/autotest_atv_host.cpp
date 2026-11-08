@@ -17,8 +17,10 @@
 #include "ue_wrap/actors/prop_use.h"
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflected_offset.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/devices/atv.h"
 #include "ue_wrap/engine/engine.h"
@@ -27,6 +29,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <string>
@@ -101,6 +104,39 @@ int CountClass(const wchar_t* cls) {
     return n;
 }
 
+// The ATV's radio: the child actor of its `radio` component.
+void* Radio() {
+    void* component = nullptr;
+    Field(g_atv, L"radio", component);
+    void* radio = nullptr;
+    if (component && R::IsLive(component)) Field(component, L"ChildActor", radio);
+    return radio && R::IsLive(radio) ? radio : nullptr;
+}
+
+// The ATV radio's own media player, read raw (its URL's file name and whether it plays), the same on every build.
+std::string RadioText() {
+    void* radio = Radio();
+    if (!radio) return "none";
+    void* player = nullptr;
+    Field(radio, L"mediaPlayer", player);
+    if (!player || !R::IsLive(player)) return "off";
+    bool playing = false;
+    std::wstring url;
+    if (void* f = R::FindDispatchFunctionCached(R::ClassOf(player), L"IsPlaying")) {
+        ue_wrap::ParamFrame pf(f);
+        if (pf.valid() && ue_wrap::Call(player, pf)) playing = pf.Get<bool>(L"ReturnValue");
+    }
+    if (void* f = R::FindDispatchFunctionCached(R::ClassOf(player), L"GetUrl")) {
+        ue_wrap::ParamFrame pf(f);
+        R::FString fs{};
+        if (pf.valid() && ue_wrap::Call(player, pf) && pf.GetRaw(L"ReturnValue", &fs, sizeof(fs)) && fs.Data)
+            url.assign(fs.Data);
+    }
+    const size_t slash = url.find_last_of(L"/\\");
+    const std::wstring name = slash == std::wstring::npos ? url : url.substr(slash + 1);
+    return std::string(name.begin(), name.end()) + (playing ? "/playing" : "/stopped");
+}
+
 void LogState(const std::string& step) {
     OnGameThread([&] {
         if (!g_atv || !R::IsLive(g_atv)) {
@@ -113,10 +149,10 @@ void LogState(const std::string& step) {
         Field(g_atv, L"brokenn", brokenn);
         Field(g_atv, L"Empty", empty);
         UE_LOGI("atv-host: STATE %hs fuel=%.1f health=%.1f empty=%d broken=%d modules=%hs lights=%d brake=%d turbo=%d "
-                "driven=%d moduleProps=%d horns=%u", step.c_str(), A::GetFuel(g_atv), A::GetHealth(g_atv), empty ? 1 : 0,
+                "driven=%d moduleProps=%d horns=%u radio=%hs", step.c_str(), A::GetFuel(g_atv), A::GetHealth(g_atv), empty ? 1 : 0,
                 brokenn ? 1 : 0, Modules(g_atv).c_str(), lights ? 1 : 0, A::GetBrake(g_atv) ? 1 : 0, turbo ? 1 : 0,
                 A::IsDriven(g_atv) ? 1 : 0, CountClass(kModuleClass),
-                coop::atv_host_sync::HornsPlayed());
+                coop::atv_host_sync::HornsPlayed(), RadioText().c_str());
     });
 }
 
@@ -299,6 +335,69 @@ void HostSitClean() {
     ClientSit();
 }
 
+// The game's Custom Content rule, in this process's rules and never saved: the radio's openLink refuses without it.
+void AllowCustomContent() {
+    OnGameThread([] {
+        void* instance = R::FindObjectByClass(L"mainGameInstance_C");
+        void* cls = instance ? R::ClassOf(instance) : nullptr;
+        const int32_t rules = cls ? R::FindPropertyOffset(cls, L"gameRules") : -1;
+        void* type = cls ? R::PropertyInnerStruct(cls, L"gameRules") : nullptr;
+        const int32_t rule = type ? R::FindPropertyOffsetByPrefix(type, L"customContent_") : -1;
+        if (rules >= 0 && rule >= 0) static_cast<uint8_t*>(instance)[rules + rule] = 1;
+    });
+}
+
+// A track picked on the ATV radio as a player picks it: its interface opened by the radio's own useRadio, and the
+// interface's own select given the `index`th track slot's row, which runs the radio's own openLink.
+void PickSlot(int index) {
+    OnGameThread([&] {
+        void* radio = Radio();
+        void* fn = radio ? R::FindDispatchFunctionCached(R::ClassOf(radio), L"useRadio") : nullptr;
+        if (fn) {
+            ue_wrap::ParamFrame f(fn);
+            if (f.valid() && f.Set<void*>(L"target", Me())) ue_wrap::Call(radio, f);
+        }
+    });
+    ::Sleep(1500);
+    OnGameThread([&] {
+        const int32_t off = ue_wrap::reflected_offset::MainPlayer_activeInterface();
+        void* widget = nullptr;
+        if (off >= 0) std::memcpy(&widget, static_cast<const uint8_t*>(Me()) + off, sizeof(widget));
+        void* slot = nullptr;
+        int32_t count = -1;
+        const int32_t slotsOff = widget && R::IsLive(widget) ? R::FindPropertyOffset(R::ClassOf(widget), L"slots") : -1;
+        if (slotsOff >= 0) {
+            const uint8_t* base = static_cast<const uint8_t*>(widget) + slotsOff;
+            void* const* data = *reinterpret_cast<void* const* const*>(base);
+            count = *reinterpret_cast<const int32_t*>(base + 8);
+            if (data && index < count) slot = data[index];
+        }
+        // The slot's track row, handed to the interface's own select(data, pausePlayer), which writes the station and
+        // runs the radio's openLink.
+        bool ok = false;
+        const int32_t dataOff = slot && R::IsLive(slot) ? R::FindPropertyOffset(R::ClassOf(slot), L"data") : -1;
+        void* select = widget ? R::FindFunction(R::ClassOf(widget), L"select") : nullptr;
+        const int32_t size = select ? R::FindParamSize(select, L"data") : 0;
+        if (dataOff >= 0 && select && size > 0) {
+            ue_wrap::ParamFrame pf(select);
+            ok = pf.valid() && pf.SetRaw(L"data", static_cast<const uint8_t*>(slot) + dataOff, size) &&
+                 pf.Set<bool>(L"pausePlayer", false) && ue_wrap::Call(widget, pf);
+        }
+        UE_LOGI("atv-host: %hs picked slot %d of %d on the ATV radio (interface=%d ok=%d)",
+                IsClientRole() ? "CLIENT" : "HOST", index, count, widget ? 1 : 0, ok ? 1 : 0);
+    });
+    ::Sleep(2500);
+    OnGameThread([] {
+        const int32_t off = ue_wrap::reflected_offset::MainPlayer_activeInterface();
+        void* widget = nullptr;
+        if (off >= 0) std::memcpy(&widget, static_cast<const uint8_t*>(Me()) + off, sizeof(widget));
+        if (widget && R::IsLive(widget)) ue_wrap::component_calls::CallParamlessNamed(widget, L"quit");
+    });
+}
+
+void ClientRadioA() { PickSlot(0); }
+void HostRadioB() { PickSlot(1); }
+
 // One step: the actor does it, then both log; the other waits for the actor's mark and logs after it.
 void Step(bool hostActs, const char* name, void (*act)(), int waitMs) {
     const std::string done = std::string(name) + (hostActs ? "_host" : "_client");
@@ -318,6 +417,7 @@ void Step(bool hostActs, const char* name, void (*act)(), int waitMs) {
 }
 
 void RunSteps() {
+    AllowCustomContent();
     LogState("0-start");
     Step(true, "1-host-fuel-20", &HostFuel20, 3000);
     Step(false, "2-client-poured", &ClientPour, 4000);
@@ -338,6 +438,8 @@ void RunSteps() {
     Step(true, "16-host-lights", &ClientLights, 3000);
     Step(true, "17-host-honk", &ClientHonk, 3000);
     Step(true, "18-host-off", &ClientOff, 4000);
+    Step(false, "19-client-radio-pick", &ClientRadioA, 3000);
+    Step(true, "20-host-radio-pick", &HostRadioB, 3000);
     UE_LOGI("atv-host: DONE");
 }
 

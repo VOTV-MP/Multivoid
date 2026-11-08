@@ -2,6 +2,7 @@
 
 #include "coop/world/media_device_sync.h"
 
+#include "coop/interactables/atv_sync.h"  // an ATV radio's ATV, by its key
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -11,12 +12,16 @@
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/devices/atv.h"
+#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/world/media_device.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -25,6 +30,7 @@ namespace coop::media_device_sync {
 namespace {
 
 namespace MD = ue_wrap::media_device;
+namespace R = ue_wrap::reflection;
 using Clock = std::chrono::steady_clock;
 
 constexpr auto kPoll = std::chrono::milliseconds(250);
@@ -56,9 +62,33 @@ std::unordered_map<std::wstring, Want> g_want;
 
 uint32_t g_published = 0, g_edits = 0, g_applied = 0, g_missing = 0;
 
+// An ATV's radio is a child actor of the ATV with no key of its own that names it on every peer; it is named by its
+// ATV's key, which does.
+constexpr const wchar_t* kAtvRadioPrefix = L"atv:";
+
 std::wstring KeyOf(void* actor) {
+    if (void* parent = ue_wrap::engine::ParentActorOf(actor)) {
+        if (!ue_wrap::atv::IsAtv(parent)) return {};
+        const std::wstring atv = ue_wrap::atv::GetKeyString(parent);
+        return atv.empty() || atv == L"None" ? std::wstring{} : kAtvRadioPrefix + atv;
+    }
     const std::wstring key = ue_wrap::prop::GetInteractableKeyString(actor);
     return key == L"None" ? std::wstring{} : key;
+}
+
+// The device a key names here: a keyed radio or TV, or the radio of the ATV an `atv:` key names.
+void* FindDevice(const std::wstring& key) {
+    const size_t n = std::char_traits<wchar_t>::length(kAtvRadioPrefix);
+    if (key.compare(0, n, kAtvRadioPrefix) != 0) return coop::prop_key_index::Find(key);
+    coop::atv_sync::TableView t;
+    if (!coop::atv_sync::ReadTable(key.substr(n), t) || !t.actor) return nullptr;
+    void* component = nullptr;
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(t.actor), L"radio");
+    if (off >= 0) std::memcpy(&component, static_cast<const uint8_t*>(t.actor) + off, sizeof(component));
+    const int32_t child = component && R::IsLive(component) ? R::FindPropertyOffset(R::ClassOf(component), L"ChildActor") : -1;
+    void* radio = nullptr;
+    if (child >= 0) std::memcpy(&radio, static_cast<const uint8_t*>(component) + child, sizeof(radio));
+    return radio && R::IsLive(radio) ? radio : nullptr;
 }
 
 std::vector<void*> g_classes;
@@ -218,7 +248,7 @@ void OnState(int senderSlot, const coop::net::MediaDeviceStatePayload& p) {
         ++g_applied;
         return;
     }
-    void* const actor = coop::prop_key_index::Find(key);
+    void* const actor = FindDevice(key);
     if (!actor || !MD::IsDevice(actor)) {
         UE_LOGI("media_device_sync: slot %d's edit of '%ls' names no radio or TV here -- dropped", senderSlot, key.c_str());
         return;

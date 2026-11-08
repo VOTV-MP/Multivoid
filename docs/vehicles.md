@@ -96,11 +96,13 @@ its own acts and takes the host's state (`coop/interactables/atv_host_sync`):
   other peer; the host's own horn goes straight to every client.
 
 The host sends each ATV's state when any of it changes, every 2 s, and to a joiner at its ready edge. A state the host sent
-before it heard of a client's own act waits 1.5 s on that client, so it does not undo the act on the copy. The map is a
-display of the ATV's own place, and its module is a module. The padlock and the crowbar have no body on the ATV. `[V]`
+before it heard of a client's own act waits 1.5 s on that client, so it does not undo the act on the copy. The ATV's
+radio is a placed radio's lane ([props.md](props.md)), named by the ATV's key. The map is a display of the ATV's own
+place, and its module is a module. The padlock and the crowbar have no body on the ATV. `[V]`
 (`harness/autotest/autotest_atv_host.cpp`: a client's refuel, repair, seat, lights, brake, turbo, horn, module fit and
-take-off, a seated client's fuel burnt down, the host's module fit and take-off, seat, lights and horn, every step read
-the same on both peers; run on the code before it, each of the client's acts stayed on its own copy.)
+take-off, a seated client's fuel burnt down, the host's module fit and take-off, seat, lights and horn, and each peer's
+radio pick, every step read the same on both peers; run on the code before it, each of the client's acts stayed on its
+own copy.)
 
 ## Who owns what
 
@@ -159,7 +161,7 @@ run, join, park and divergence arms, each red arm failing as designed (`coop/dev
 | At a hand-back to the host the old syncer's last blocks may still be in flight; the host drops and counts them, and the stamp moves every client to the host's copy | `[?]` `coop/interactables/atv_authority`, `coop/interactables/atv_sync` |
 | A client's tyre eject is refused by the arbiter, so the host keeps the wheel and the peers disagree until the eject intent lane exists | `[V]` `coop/interactables/atv_condition_sync`, by design |
 | The pose stream rides the reliable lane; a sequenced unreliable stream is the intended shape | `[V]` `coop/interactables/atv_sync` sends it reliable |
-| Not synced: the radio, the kerfur passenger, and a remote driver's body is not seated on the ATV | `[V]` nothing under `coop/interactables/atv_*` carries them |
+| Not synced: the kerfur passenger, and a remote driver's body is not seated on the ATV | `[V]` nothing under `coop/interactables/atv_*` carries them |
 | A client's refuel or repair is the rise its copy shows, which the host takes as is within the 100 ceiling and the reach; the gas can's own fuel after a pour is not carried. A refused take-off of a module the host does not have leaves its author's module in the world | `[V]` `coop/interactables/atv_host_sync` |
 
 ## Code map

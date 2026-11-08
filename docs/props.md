@@ -448,7 +448,10 @@ from the peer's own catalog `[V]` (`harness/autotest/autotest_radio_state.cpp`: 
 client, a pick from the host and a rejoin, with silent test tracks, the rule written on and the pick by the radio's own
 function). A TV also carries its channel, volume, brightness and squeeze; its openLink needs its power as well as the
 rule, so a track waits for its cord `[V]` (`harness/autotest/autotest_tv_state.cpp`: the same from each peer with a
-channel and the picture, with a silent audio-only `.mp4`, powered by a write, so no picture was decoded).
+channel and the picture, with a silent audio-only `.mp4`, powered by a write, so no picture was decoded). The ATV's
+radio is one of them, a child actor of the ATV named by the ATV's key (`atv:<key>`) `[V]`
+(`harness/autotest/autotest_atv_host.cpp`: a pick from each peer through the radio's own interface, read off its media
+player on both; on the code before it, each pick stayed on its own peer).
 
 ## Who owns what
 
@@ -515,7 +518,7 @@ prop resolves.
 | A keyed prop a client creates outside the intent door (a place after a pickup, the whitelisted births, a container extract, a player's own spawn verb) never reaches the host. It is logged now: the drain names its exit, and `[dev] prop_birth_key_probe` tallies every exit by name | `[V]` `coop/props/prop_drop_intent` drops it at the drain; `coop/dev/prop_birth_key_probe` |
 | Two peers changing one canned food inside one round trip each publish a whole record, and the last to reach the host stands, so a bite can be lost; a can's `health` travels only with those records, so impact damage short of opening it stays on each peer | `[RD]` `coop/props/prop_can_state` publishes the record and takes no claim |
 | Concrete and every other local-accumulator prop drift between peers; only the tape reel and the world food have one author | `[V]` `coop/interactables/tape_caddy_sync`, `coop/props/prop_food_sync` |
-| A radio or TV plays only on a peer whose own catalog holds the track and whose Custom Content rule is on, and is silent elsewhere; the ATV's radio and a TV showing a security camera are not this lane's | `[V]` `coop/world/media_device_sync`: a track is a hash, so no peer can make another open an address |
+| A radio or TV plays only on a peer whose own catalog holds the track and whose Custom Content rule is on, and is silent elsewhere; a TV showing a security camera is not this lane's | `[V]` `coop/world/media_device_sync`: a track is a hash, so no peer can make another open an address |
 | A hot food's ignition is the host's alone, since a client's copy is refused its tick, so a client sees no flame on it | `[RD]` `prop_food_C.ReceiveTick`; `ue_wrap/actors/food` |
 | A client's food's frost, impact material and freeze sound are painted but only its frozen flag and steam were read back | `[RD]` `ue_wrap/actors/food`, `coop/props/prop_food_sync` |
 | A food subclass's own counter (the shrimp's `shrimps`) and its own tick are not carried, and a heating device's work on a client's copy is local until the host's next value | `[RD]` `coop/props/prop_food_sync` |

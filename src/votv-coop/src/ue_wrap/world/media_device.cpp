@@ -207,10 +207,6 @@ bool IsDeviceClass(void* cls) {
     if (it != g_kinds.end()) return it->second != Kind::None;
     Kind kind = Kind::None;
     for (void* c = cls; c; c = R::SuperStructOf(c)) {
-        if (R::NameEquals(R::NameOf(c), L"prop_radio_atv_C")) {
-            kind = Kind::None;
-            break;
-        }
         if (R::NameEquals(R::NameOf(c), L"prop_radio_internet_C")) kind = Kind::Radio;
         else if (R::NameEquals(R::NameOf(c), L"prop_tv2_C")) kind = Kind::Tv;
     }

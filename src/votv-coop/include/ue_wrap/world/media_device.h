@@ -2,7 +2,8 @@
 // media player.
 //
 // A track crosses as a hash of its catalog link and is opened only from this peer's own catalog, so no peer can make
-// another open an address or a path of its choosing. The ATV's radio is a subclass with its own owner and is left out.
+// another open an address or a path of its choosing. The ATV's radio (prop_radio_atv_C, a child actor of the ATV) is
+// one of them.
 // Engine-wrapper layer: no network. Game thread.
 
 #pragma once
